@@ -60,7 +60,7 @@ constexpr uint32_t CLOUDS_SIDE_SIZES[vkpt::RenderCubemap::QUALITY_LEVELS] = { 25
 // near the base of the layer and a couple of hundred at its top, so the tau the
 // volume holds has no detail finer than that and a texel of a dozen or so units
 // already samples it several times per feature. A level doubles the texels a side
-// over the same CLOUD_SHADOW_EXTENT metres of ground -- four times the volume, and
+// over the same window of ground (CLOUD_SHADOW_EXTENT_PER_ALTITUDE) -- four times the volume, and
 // four times the march filling it, which is the dearest pass the layer has -- from
 // a texel every thirty metres at the bottom of the ladder to one every eight at the
 // top, and eight slices of two bytes per texel of memory.
@@ -79,21 +79,27 @@ constexpr uint32_t CLOUD_SHADOW_SIZES[vkpt::RenderCubemap::QUALITY_LEVELS] = { 5
 // nothing to fill: a slice is a sum over the walk of the steps already made.
 constexpr uint32_t CLOUD_SHADOW_SLICES = 8;
 
-// How much of the world's horizontal plane the volume is laid out over, in world
-// units: the same whatever the level, so that a level buys the sharpness of the
+// How much of the world's horizontal plane the volume is laid out over, as a multiple
+// of the altitude the layer stands at (rt_sky_clouds_height), and the least it is ever
+// laid over. The same whatever the level, so that a level buys the sharpness of the
 // shadow rather than the reach of it. What a texel of it costs to fill is a column
 // walked towards the sun and does not depend on this at all -- the texels a side are
-// the level's, and they are spread over more ground the wider the window is -- so
-// the reach is what has to cover what the eye can see rather than what can be
-// afforded. What it has to cover: a cloud's shadow is what the air, the ground and
-// the sky around the eye are lit by, and the edge of the window is a line a shadow
-// simply stops on. Sixteen thousand units is where that line is far enough out to
-// stop being findable -- the shadow thins out over the last four per cent of it --
-// and the price of it is the texel of a level spreading over four times the ground,
-// eight units across at the finest level, against a cone of light tens of units wide
-// at its narrowest. A quarter of this is where the shadow of a cloud was seen to end
-// over the sky and the ground.
-constexpr float    CLOUD_SHADOW_EXTENT = 16000.0f;
+// the level's, and they are spread over more ground the wider the window is -- so the
+// reach is what has to cover what the eye can see rather than what can be afforded.
+// What it has to cover: a cloud's shadow is what the air, the ground and the sky around
+// the eye are lit by, and the edge of the window is a line a shadow simply stops on.
+// Both of those grow with the height -- the columns the eye can see out to the horizon,
+// and the column the sun crosses to reach the ground under it, the height divided by the
+// tangent of the sun's elevation -- and a window left at a fixed reach would put the
+// horizon back on the fallback walk of the sky, which is the dearest thing the layer
+// does (CloudLayer.h). Twelve times the altitude is where that line is far enough out to
+// stop being findable -- the shadow thins out over the last four per cent of it -- and
+// it is what the fixed sixteen thousand units this used to be was worth for a layer at
+// the altitude the setting used to default to. The price of it is the texel of a level
+// spreading over more ground as the layer rises, which is what a higher layer wants: its
+// shadows are wider.
+constexpr float    CLOUD_SHADOW_EXTENT_PER_ALTITUDE = 12.0f;
+constexpr float    CLOUD_SHADOW_MIN_EXTENT = 4000.0f;
 
 // How far the eye may walk over the volume's window before the map is filled again
 // for it, in texels of the map (UpdateCloudShadow). The window follows the eye, but
@@ -1672,7 +1678,7 @@ void vkpt::RenderCubemap::UpdateCloudShadow(VkCommandBuffer cmd, const Procedura
         return;
     }
 
-    const float extent = CLOUD_SHADOW_EXTENT;
+    const float extent = std::max(params.cloudLayer[0] * CLOUD_SHADOW_EXTENT_PER_ALTITUDE, CLOUD_SHADOW_MIN_EXTENT);
     const float texelSize = extent / float(cloudShadowSize);
 
     // The map is laid out over the world's horizontal plane around the eye. What a

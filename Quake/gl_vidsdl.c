@@ -208,8 +208,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_sky_clouds_coverage, "0.2") \
 	CVAR_DEF_T (rt_sky_clouds_density, "0.8") \
 	CVAR_DEF_T (rt_sky_clouds_speed, "0.3") \
-	CVAR_DEF_T (rt_sky_clouds_height, "1400") \
-	CVAR_DEF_T (rt_sky_clouds_thickness, "900") \
+	CVAR_DEF_T (rt_sky_clouds_height, "140000") \
+	CVAR_DEF_T (rt_sky_clouds_thickness, "90000") \
 	\
 	CVAR_DEF_T (rt_brush_metal, "0.0") \
 	CVAR_DEF_T (rt_brush_rough, "1.0") \

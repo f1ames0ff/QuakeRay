@@ -123,6 +123,15 @@ const float CLOUD_SEQUENCE_STEP = 0.6180339887; // along the march
 // and so averages the grain of the neighbours), and it is what shivers.
 const float CLOUD_SEED_SCALE = 256.0;
 
+// The altitude the two lengths of the world above are written for -- the drift's speed
+// and the seed's own scale. Everything the sky shows is a matter of proportion, so both
+// are multiplied by the layer's altitude over this one: a layer twice as high drifts
+// twice as fast through the world and reads its seed over twice the ground, and the sky
+// it draws is the same -- which is what lets rt_sky_clouds_height be moved up without the
+// clouds changing, apart from the parallax of the eye walking under them, which is the
+// thing a higher layer is for.
+const float CLOUD_REFERENCE_ALTITUDE = 1400.0;
+
 // Where a march to the sun samples the layer: the place it has walked to, offset
 // inside the cone the sunlight of a cloud comes from -- what a cloud sees of the
 // sun is the sky around the sun rather than the sun alone, and the cone is what
@@ -236,7 +245,8 @@ float cloudDensity(CloudLayer layer, vec3 p, bool detail)
     }
 
     // the layer drifts as a whole; the fine noise rides a little faster on it
-    vec2 wind = vec2(layer.time * layer.speed * 30.0, layer.time * layer.speed * 12.0);
+    vec2 wind = vec2(layer.time * layer.speed * 30.0, layer.time * layer.speed * 12.0) *
+                (layer.altitude / CLOUD_REFERENCE_ALTITUDE);
     float frequency = CLOUD_FREQUENCY / layer.thickness;
 
     float shape = cloudShape(vec3(p.xy + wind, p.z / CLOUD_VERTICAL_STRETCH) * frequency, CLOUD_OCTAVES);

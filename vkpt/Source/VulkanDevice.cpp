@@ -854,11 +854,11 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             // the sky they hide.
             if (p.cloudLayer[0] <= 0.0f)
             {
-                p.cloudLayer[0] = 1400.0f;
+                p.cloudLayer[0] = 140000.0f;
             }
             if (p.cloudLayer[1] <= 0.0f)
             {
-                p.cloudLayer[1] = 900.0f;
+                p.cloudLayer[1] = 90000.0f;
             }
             // Sunlight and skylight that reach the clouds. The sun lights them with
             // its own colour (rt_sky_sun_color) and is what makes their edges glow
@@ -1125,7 +1125,7 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
                     // sample of the air asks about the part of the column above it
                     // rather than the whole of it (CmGodRays.comp). The same fallbacks
                     // the sky applies to them.
-                    float cloudHeight = 1400.0f, cloudThickness = 900.0f;
+                    float cloudHeight = 140000.0f, cloudThickness = 90000.0f;
                     if (drawInfo.pSkyParams != nullptr)
                     {
                         const float *cloudSettings = &drawInfo.pSkyParams->skyCubemapRotationTransform.matrix[0][0];

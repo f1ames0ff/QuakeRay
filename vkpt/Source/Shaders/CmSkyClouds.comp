@@ -328,7 +328,11 @@ void main()
         // share leaves a smooth error instead: a read carries it as it is, and a cloud
         // may stand a little soft where a step is coarse, but it does not shiver.
         vec2 seedPos = params.cloudAnchor.xy + dir.xy * historySpan;
-        float jitter = valueNoise3(vec3(seedPos, 0.0) / CLOUD_SEED_SCALE);
+        // The scale the seed is read at travels with the altitude of the layer
+        // (CLOUD_REFERENCE_ALTITUDE, CloudLayer.h): what it has to stay far larger than
+        // is a texel of the map, and a texel of the map grows with the height too.
+        const float seedScale = CLOUD_SEED_SCALE * (layer.altitude / CLOUD_REFERENCE_ALTITUDE);
+        float jitter = valueNoise3(vec3(seedPos, 0.0) / seedScale);
         float t = tIn;
         float step = dt;
 
