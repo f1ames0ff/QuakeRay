@@ -101,6 +101,14 @@ constexpr uint32_t CLOUD_SHADOW_SLICES = 8;
 constexpr float    CLOUD_SHADOW_EXTENT_PER_ALTITUDE = 12.0f;
 constexpr float    CLOUD_SHADOW_MIN_EXTENT = 4000.0f;
 
+// The wind's rates (CloudLayer.h) as a length, and how much of a texel of the volume
+// the drift may carry the field before the map is filled again (UpdateCloudShadow):
+// the light of the clouds -- and of the world under them -- is read from the map, and
+// a map the drift has walked away from makes that light step with the cadence of the
+// fills, which a fast drift turns into a metronome the eye finds on the rim of a cloud.
+constexpr float    CLOUD_WIND_MAGNITUDE = 32.31f; // |(30, 12)|
+constexpr float    CLOUD_SHADOW_DRIFT_TEXELS = 0.1f;
+
 // How far the eye may walk over the volume's window before the map is filled again
 // for it, in texels of the map (UpdateCloudShadow). The window follows the eye, but
 // what the map holds is keyed to the world rather than to the eye, so it is worth
@@ -1701,6 +1709,17 @@ void vkpt::RenderCubemap::UpdateCloudShadow(VkCommandBuffer cmd, const Procedura
 
     const auto differs = [](float a, float b) { return fabsf(a - b) > 1.0e-4f; };
 
+    // The volume is a snapshot of the cloud field at the time it was filled, and it
+    // stands still between the fills while the drift carries the clouds on, so the
+    // light they are read with steps at the cadence of the fills -- the metronome of a
+    // fast drift. The drift since the fill is part of the staleness: the moment it has
+    // carried the field a tenth of a texel of the volume, the map is filled again,
+    // which at the default drift is every frame and at a crawl almost never (the age
+    // clock of the level still caps it either way).
+    const float driftSinceFill =
+        std::abs(params.cloudColor[3] - cloudShadowParams.cloudMarch[0]) *
+        params.cloudParams[2] * CLOUD_WIND_MAGNITUDE;
+
     // A map older than a few frames holds the drifting clouds still, and one the
     // eye has walked off is looking at the wrong ground, so both are redrawn. A
     // layer the host has just changed, or a sun that has moved, has to show at
@@ -1709,6 +1728,7 @@ void vkpt::RenderCubemap::UpdateCloudShadow(VkCommandBuffer cmd, const Procedura
     const bool stale =
         !cloudShadowValid ||
         cloudShadowAge + 1 >= CloudShadowRefreshFrames() ||
+        driftSinceFill >= texelSize * CLOUD_SHADOW_DRIFT_TEXELS ||
         differs(standing.sunDirection[0], params.sunDirection[0]) ||
         differs(standing.sunDirection[1], params.sunDirection[1]) ||
         differs(standing.sunDirection[2], params.sunDirection[2]) ||
