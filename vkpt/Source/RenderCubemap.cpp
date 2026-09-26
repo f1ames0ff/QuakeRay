@@ -116,11 +116,17 @@ constexpr uint32_t CLOUD_SHADOW_REFRESH_FRAMES[vkpt::RenderCubemap::QUALITY_LEVE
 // level: per view ray, and per sunlight sample taken inside the layer. What a
 // cloud's light is estimated from where the volume of the layer's shadow does not
 // reach is the volume's own walk of the column (CLOUD_SHADOW_STEPS, CloudLayer.h),
-// not a march of this pass's own, so the sun has no count of its own here. What
-// noise is left in the march is finer than white noise would leave, its taps being
-// spread by a low-discrepancy sequence (CloudLayer.h), so a step here buys
-// smoothness as much as it buys detail.
-constexpr uint32_t CLOUDS_VIEW_STEPS[vkpt::RenderCubemap::QUALITY_LEVELS] = { 40, 48, 56, 64, 72 };
+// not a march of this pass's own, so the sun has no count of its own here.
+//
+// What a level costs is mostly the map it marches (CLOUDS_SIDE_SIZES: four times the
+// texels every level) and the count is the rest -- measured with the pass timings,
+// 512 a side with 48 steps is 1.0 ms of a 22 ms frame and 1024 with 56 is 3.1 of 24.
+// The samples of a march are jittered by a low-discrepancy sequence turned by a seed
+// drawn from the world (CloudLayer.h), so what a shorter count leaves behind is a
+// finer noise than white noise would leave, and it grows as the count falls but as
+// its square root: the counts below are eight less than they were, about a tenth more
+// grain for the share of the dearest pass the clouds run.
+constexpr uint32_t CLOUDS_VIEW_STEPS[vkpt::RenderCubemap::QUALITY_LEVELS] = { 32, 40, 48, 56, 64 };
 
 // Below this the sun is under the layer rather than over it, and the layer
 // shades nothing that can be
