@@ -39,7 +39,10 @@ namespace vkpt
 
 class Framebuffers;
 class GlobalUniform;
+class RenderResolutionHelper;
 class RhiDebugTracePass;
+class RhiDecalPass;
+class RhiFsrPass;
 class RhiRasterOverlayPass;
 class RhiRtComposePass;
 class RhiRtDirectPass;
@@ -182,6 +185,26 @@ public:
         // compute before the trace only when the uniform selects SKY_TYPE_PROCEDURAL; the module
         // early-outs by these bytes, so an unchanged frame (clouds off) costs one memcmp.
         RhiProceduralSkyPass::Params proceduralSkyParams = {};
+
+        // -- the decals (A5.6) --
+        // The engine DecalManager buffers for this slot: the staging the game's uploads go to and
+        // the device-local instance array the pass's set 3 binds (stride sizeof(ShDecalInstance)).
+        // The skeleton wraps them, copies the frame's live range (skipped at zero) and hands the
+        // device wrap to the pass. Zero handles or a zero copy size skip the copy and the draw.
+        uint64_t decalStaging = 0;
+        uint64_t decalDevice = 0;
+        uint64_t decalBufferSize = 0;
+        uint64_t decalCopySize = 0;
+        uint32_t decalCount = 0;
+
+        // -- the upscaler (A5.7) --
+        // The engine resolution helper the FSR module takes (its own technique selection decides
+        // whether the module runs) and the camera values the FSR Apply takes; the jitter and the
+        // time delta come from the uniform copy already in the frame inputs.
+        const RenderResolutionHelper *renderResolution = nullptr;
+        float cameraNear = 0.0f;
+        float cameraFar = 0.0f;
+        float fovYRadians = 0.0f;
         // The engine's global uniform: the world shader's set 1, the source of the bytes the
         // skeleton writes into the uniform wrap every frame, and the CPU copy the host-only exposure
         // parameters read. The host owns it, so the field keeps the shared_ptr (the traced mode's
@@ -272,6 +295,14 @@ public:
     // the frame's DEFAULT draw list into FINAL and SCREEN_EMISSION, exactly where the legacy frame
     // records `Rasterizer::DrawToFinalImage`; the skeleton installs its geometry and tonemapping
     // wraps. Optional: a null one draws the frame without the raster overlay.
+    // 'pDecalPass' is the host's decal pass (RhiDecalPass, RHI/RhiDecalPass.h): right after the
+    // primary, Render records it over the engine's decal instance buffer, so the direct and
+    // indirect passes see the decal-modified ALBEDO. Optional: a null one draws the frame without
+    // decals; the engine uploads none in this game, so the pass is normally a no-op.
+    // 'pFsrPass' is the host's FSR upscaler module (RhiFsrPass, RHI/RhiFsrPass.h): after the compose
+    // ran, Render drives the engine's own FidelityFX context over the frame's FINAL and, on success,
+    // copies its output into the TAAU target the UI and the present sample; otherwise it records the
+    // TAAU. Optional: a null one keeps the TAAU always.
     // 'pShadowMapPass' and 'pGodRaysPass' are the host's A5.2 passes (RhiShadowMapPass,
     // RhiRtGodRaysPass): in the traced chain, once the primary ran, Render records the shadow map,
     // and when it drew something the god-rays trace and filter whose output CmPrepareFinal adds.
@@ -295,6 +326,8 @@ public:
                                 RhiRtReflRefrPass *pReflRefrPass,
                                 RhiProceduralSkyPass *pProceduralSkyPass,
                                 RhiRasterOverlayPass *pRasterOverlayPass,
+                                RhiDecalPass *pDecalPass,
+                                RhiFsrPass *pFsrPass,
                                 RhiShadowMapPass *pShadowMapPass,
                                 RhiRtGodRaysPass *pGodRaysPass,
                                 RhiUiPass *pUiPass,
@@ -440,6 +473,27 @@ private:
     // SCREEN_EMISSION exactly where the legacy frame records `Rasterizer::DrawToFinalImage`. Not
     // owned; null when the host's creation failed, in which case the frame is drawn without it.
     RhiRasterOverlayPass *rasterOverlayPass = nullptr;
+
+    // The host's decal pass (RhiDecalPass, RHI/RhiDecalPass.h), driven right after the primary: it
+    // blends the engine's decal instances into ALBEDO before the direct and indirect passes read it.
+    // Not owned; null when the host's creation failed, in which case the frame is drawn without
+    // decals (the engine uploads none in this game, so the pass is normally a no-op).
+    RhiDecalPass *decalPass = nullptr;
+
+    // The host's FSR upscaler module (RhiFsrPass, RHI/RhiFsrPass.h), driven after the compose's
+    // Render when the engine's resolution helper selects FSR 2/3: it upscales FINAL into image 30,
+    // which the skeleton copies into the TAAU target (29) so the UI and the present keep their
+    // image; otherwise the TAAU records as before. Not owned; null when the host's creation failed.
+    RhiFsrPass *fsrPass = nullptr;
+
+    // The wraps of the engine DecalManager buffers (A5.6): the per-slot staging as a copy source and
+    // the device-local instance array once as the pass's set 3 buffer (stride
+    // sizeof(ShDecalInstance)). Created on the first frame with a live count, re-created if a handle
+    // ever changes; the replaced ones go through the frame context's retire queue.
+    nvrhi::BufferHandle decalStagingWraps[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BufferHandle decalDeviceWrap;
+    uint64_t decalStagingHandles[MAX_FRAMES_IN_FLIGHT] = {};
+    uint64_t decalDeviceHandle = 0;
 
     // The wraps of the engine PortalList buffers (A5.3): the per-slot staging as a copy source and
     // the device-local array once as a static constant buffer (the set 9 handle the pass keeps).

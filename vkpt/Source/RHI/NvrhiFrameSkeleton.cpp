@@ -24,6 +24,8 @@
 
 #include "RhiAccelStructs.h"
 #include "RhiDebugTracePass.h"
+#include "RhiDecalPass.h"
+#include "RhiFsrPass.h"
 #include "RhiRtComposePass.h"
 #include "RhiRtDirectPass.h"
 #include "RhiRtGodRaysPass.h"
@@ -48,6 +50,7 @@
 #include "../Framebuffers.h"
 #include "../Generated/ShaderCommonC.h"
 #include "../GlobalUniform.h"
+#include "../RenderResolutionHelper.h"
 #include "../Swapchain.h"
 #include "../Tonemapping.h"
 
@@ -100,6 +103,8 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiRtReflRefrPass *pReflRefrPass,
                                        RhiProceduralSkyPass *pProceduralSkyPass,
                                        RhiRasterOverlayPass *pRasterOverlayPass,
+                                       RhiDecalPass *pDecalPass,
+                                       RhiFsrPass *pFsrPass,
                                        RhiShadowMapPass *pShadowMapPass,
                                        RhiRtGodRaysPass *pGodRaysPass,
                                        RhiUiPass *pUiPass,
@@ -117,6 +122,8 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , reflRefrPass(pReflRefrPass)
     , proceduralSkyPass(pProceduralSkyPass)
     , rasterOverlayPass(pRasterOverlayPass)
+    , decalPass(pDecalPass)
+    , fsrPass(pFsrPass)
     , shadowMapPass(pShadowMapPass)
     , godRaysPass(pGodRaysPass)
     , uiPass(pUiPass)
@@ -495,6 +502,75 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             sky.framebuffers,
             sky.width, sky.height);
 
+        // The decals (A5.6): the ported DecalManager::Draw into ALBEDO right after the primary and
+        // before the god-rays block - the legacy order (VulkanDevice.cpp:901 -> :904 -> :909) - so
+        // the direct and indirect passes read the decal-modified G-buffer. The instance buffers are
+        // wrapped here (the device-local once, the staging per slot) and the frame's live range is
+        // copied on this list; the engine uploads no decals in this game, so the count is zero and
+        // both the copy and the draw are skipped, exactly like the legacy early-outs.
+        if (decalPass != nullptr && decalPass->IsCreated() && sky.decalCount > 0 &&
+            sky.decalStaging != 0 && sky.decalDevice != 0 && sky.decalBufferSize != 0)
+        {
+            if (decalStagingWraps[frameIndex] == nullptr ||
+                decalStagingHandles[frameIndex] != sky.decalStaging)
+            {
+                if (decalStagingWraps[frameIndex] != nullptr && frameContext != nullptr)
+                {
+                    frameContext->Retire(decalStagingWraps[frameIndex]);
+                }
+
+                nvrhi::BufferDesc desc;
+                desc.byteSize = sky.decalBufferSize;
+                desc.initialState = nvrhi::ResourceStates::CopySource;
+                desc.keepInitialState = true;
+                desc.debugName = "RHI decal staging (copy source)";
+
+                decalStagingWraps[frameIndex] = device->createHandleForNativeBuffer(
+                    nvrhi::ObjectTypes::VK_Buffer,
+                    nvrhi::Object(static_cast<uint64_t>(sky.decalStaging)),
+                    desc);
+                decalStagingHandles[frameIndex] =
+                    decalStagingWraps[frameIndex] != nullptr ? sky.decalStaging : 0;
+            }
+
+            if (decalDeviceWrap == nullptr || decalDeviceHandle != sky.decalDevice)
+            {
+                if (decalDeviceWrap != nullptr && frameContext != nullptr)
+                {
+                    frameContext->Retire(decalDeviceWrap);
+                }
+
+                nvrhi::BufferDesc desc;
+                desc.byteSize = sky.decalBufferSize;
+                desc.structStride = sizeof(ShDecalInstance);
+                desc.canHaveUAVs = true;
+                desc.initialState = nvrhi::ResourceStates::CopyDest;
+                desc.keepInitialState = true;
+                desc.debugName = "RHI decal instances (set 3)";
+
+                decalDeviceWrap = device->createHandleForNativeBuffer(
+                    nvrhi::ObjectTypes::VK_Buffer,
+                    nvrhi::Object(static_cast<uint64_t>(sky.decalDevice)),
+                    desc);
+                decalDeviceHandle = decalDeviceWrap != nullptr ? sky.decalDevice : 0;
+
+                decalPass->SetInstanceBuffer(decalDeviceWrap.Get());
+            }
+
+            if (decalStagingWraps[frameIndex] != nullptr && decalDeviceWrap != nullptr &&
+                sky.decalCopySize > 0)
+            {
+                commandList->copyBuffer(decalDeviceWrap.Get(), 0,
+                                        decalStagingWraps[frameIndex].Get(), 0, sky.decalCopySize);
+            }
+
+            if (decalStagingWraps[frameIndex] != nullptr && decalDeviceWrap != nullptr)
+            {
+                decalPass->Render(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
+                                  worldUniformBuffer.Get(), sky.decalCount);
+            }
+        }
+
         // A4.5's gradient reproject runs before the direct pass: with the denoiser enabled the two
         // raygens read the gradient-sample-position image 115 it writes, so the host orders
         // primary -> reproject -> direct -> indirect -> compose -> TAAU (RhiRtComposePass.h
@@ -796,8 +872,55 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               sky.view, sky.projection, sky.applyVertexColorGamma);
                                       }
                                   });
-            rtComposePass->RenderTaaU(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
-                                      sky.upscaledWidth, sky.upscaledHeight, worldUniformBuffer.Get());
+            // The frame's upscaler (A5.7): the engine's own FSR 3.1 (the default configuration)
+            // writes image 30 through the module's interop contract; on success the skeleton copies
+            // it into the TAAU target 29, which the 2D UI below and the present sample, and restores
+            // both images' engine state (RhiFsrPass.h documents why the copy needs them). Any other
+            // technique - or a failed dispatch - keeps the A4.5 TAAU, the legacy's own if/else
+            // (VulkanDevice.cpp:1100-1136).
+            bool upscaledByFsr = false;
+            if (fsrPass != nullptr && fsrPass->IsCreated() && sky.renderResolution != nullptr &&
+                uniform != nullptr &&
+                (sky.renderResolution->IsAmdFsr2Enabled() || sky.renderResolution->IsAmdFsr3Enabled()))
+            {
+                // The legacy's camera-cut reset (teleport / respawn / level change): the uniform
+                // carries both positions, the same heuristic CL_LerpEntity uses
+                // (VulkanDevice.cpp:1111-1120).
+                const float *cur = uniform->cameraPosition;
+                const float *prev = uniform->cameraPositionPrev;
+                const float dx = cur[0] - prev[0];
+                const float dy = cur[1] - prev[1];
+                const float dz = cur[2] - prev[2];
+                constexpr float kTeleportDist = 100.0f;
+                const bool reset = (dx * dx + dy * dy + dz * dz) > (kTeleportDist * kTeleportDist);
+
+                upscaledByFsr = fsrPass->Render(
+                    commandList, frameIndex, sky.framebuffers, *sky.renderResolution,
+                    RgFloat2D{ sky.jitter[0], sky.jitter[1] },
+                    uniform->timeDelta, sky.cameraNear, sky.cameraFar, sky.fovYRadians, reset);
+
+                if (upscaledByFsr)
+                {
+                    nvrhi::ITexture *upscaledTarget = rtComposePass->GetUpscaledTexture(frameIndex);
+                    nvrhi::ITexture *fsrOutput = fsrPass->GetOutputTexture(frameIndex);
+
+                    if (upscaledTarget != nullptr && fsrOutput != nullptr)
+                    {
+                        commandList->copyTexture(upscaledTarget, nvrhi::TextureSlice(),
+                                                 fsrOutput, nvrhi::TextureSlice());
+                        commandList->setTextureState(upscaledTarget, nvrhi::AllSubresources,
+                                                     nvrhi::ResourceStates::UnorderedAccess);
+                        commandList->setTextureState(fsrOutput, nvrhi::AllSubresources,
+                                                     nvrhi::ResourceStates::UnorderedAccess);
+                    }
+                }
+            }
+
+            if (!upscaledByFsr)
+            {
+                rtComposePass->RenderTaaU(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
+                                          sky.upscaledWidth, sky.upscaledHeight, worldUniformBuffer.Get());
+            }
 
             // The 2D UI (A5.1): the frame's SWAPCHAIN overlay into the same upscaled image the
             // present samples, right after the TAAU. The pass binds the collector's per-slot staging
@@ -1430,6 +1553,20 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
     if (rasterOverlayPass != nullptr)
     {
         rasterOverlayPass->ReleaseTargets();
+    }
+
+    // The decal pass wraps ALBEDO and the surface-position image, so it drops them here as well; the
+    // instance-buffer wraps are the host's and outlive the pass.
+    if (decalPass != nullptr)
+    {
+        decalPass->ReleaseTargets();
+    }
+
+    // The FSR pass wraps the upscaler images (28/12/31/30) it hands to the engine's context, so it
+    // drops them here as well.
+    if (fsrPass != nullptr)
+    {
+        fsrPass->ReleaseTargets();
     }
 
     // A present binding set references the ALBEDO wrap and the direct-term image of one slot, so it

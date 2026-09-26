@@ -88,8 +88,10 @@ set(vkpt_SOURCES
     Source/RHI/NvrhiRequirements.cpp
     Source/RHI/RhiAccelStructs.cpp
     Source/RHI/RhiDebugTracePass.cpp
+    Source/RHI/RhiDecalPass.cpp
     Source/RHI/RhiDescriptors.cpp
     Source/RHI/RhiFrameContext.cpp
+    Source/RHI/RhiFsrPass.cpp
     Source/RHI/RhiPipeline.cpp
     Source/RHI/RhiProceduralSkyPass.cpp
     Source/RHI/RhiRasterOverlayPass.cpp

@@ -35,6 +35,8 @@
 #include "RHI/NvrhiRequirements.h"
 #include "RHI/RhiAccelStructs.h"
 #include "RHI/RhiDebugTracePass.h"
+#include "RHI/RhiDecalPass.h"
+#include "RHI/RhiFsrPass.h"
 #include "RHI/RhiProceduralSkyPass.h"
 #include "RHI/RhiRasterOverlayPass.h"
 #include "RHI/RhiRtComposePass.h"
@@ -441,6 +443,32 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                     Print("Warning: RHI: the procedural sky pass is unavailable, the RT passes keep the placeholder cubemaps");
                 }
 
+                // The FSR upscaler module of A5.7 (RHI/RhiFsrPass.h): drives the engine's own
+                // FidelityFX FSR 3.1 context on the RHI list, replacing the TAAU when the default
+                // upscaler is selected. A failure leaves the pointer null and the frame keeps the
+                // TAAU path.
+                rhiFsrPass = std::make_shared<RhiFsrPass>();
+                if (!rhiFsrPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(), amdFsr.get(),
+                                        [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiFsrPass.reset();
+                    Print("Warning: RHI: the FSR pass is unavailable, the TAAU upscaler is kept");
+                }
+
+                // The decal pass of A5.6 (RHI/RhiDecalPass.h): the ported DecalManager::Draw that
+                // blends decal cubes into ALBEDO right after the primary, so the direct and indirect
+                // passes see the decal-modified G-buffer. The engine uploads no decals in this game
+                // (no caller of rgUploadDecal), so the pass is a no-op at runtime; the wiring keeps
+                // the parity contract. A failure leaves the pointer null.
+                rhiDecalPass = std::make_shared<RhiDecalPass>();
+                if (!rhiDecalPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                          rhiTextureTable.get(), info->pShaderFolderPath,
+                                          [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiDecalPass.reset();
+                    Print("Warning: RHI: the decal pass is unavailable, decals are skipped");
+                }
+
                 // The raster overlay pass of A5.5 (RHI/RhiRasterOverlayPass.h): the ported RsWorld
                 // pass over the collector's DEFAULT list into FINAL/SCREEN_EMISSION, recorded inside
                 // the compose chain's window (the skeleton hands it as the callback). It needs the
@@ -676,6 +704,8 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 rhiRtReflRefrPass.get(),
                 rhiProceduralSkyPass.get(),
                 rhiRasterOverlayPass.get(),
+                rhiDecalPass.get(),
+                rhiFsrPass.get(),
                 rhiShadowMapPass.get(),
                 rhiRtGodRaysPass.get(),
                 rhiUiPass.get(),
@@ -756,13 +786,14 @@ VulkanDevice::~VulkanDevice()
     // be released before both of them
     nvrhiFrameSkeleton.reset();
 
-    // The skeleton references all of them, so they follow it immediately; all twelve wrap engine
+    // The skeleton references all of them, so they follow it immediately; all fourteen wrap engine
     // buffers/images and quote the RHI device, so they precede the table/context and the device
     // below. The direct pass, the indirect pass and the reflect/refract pass borrow the primary's
-    // layout handles, so they go before the primary; the UI pass and the raster overlay borrow the
-    // table and the frame context only (the compose calls the overlay back), and the god-rays pass
-    // borrows the shadow map's texture and sampler, so it goes before the shadow-map pass. The
-    // procedural sky owns the cubes the three RT passes' sets reference, so it goes after them.
+    // layout handles, so they go before the primary; the UI pass, the raster overlay, the decal
+    // pass and the FSR pass borrow the table and the frame context only (the compose calls the
+    // overlay back), and the god-rays pass borrows the shadow map's texture and sampler, so it goes
+    // before the shadow-map pass. The procedural sky owns the cubes the three RT passes' sets
+    // reference, so it goes after them.
     rhiDebugTracePass.reset();
     rhiRtComposePass.reset();
     rhiRtGodRaysPass.reset();
@@ -773,6 +804,8 @@ VulkanDevice::~VulkanDevice()
     rhiRtReflRefrPass.reset();
     rhiRtPrimaryPass.reset();
     rhiRasterOverlayPass.reset();
+    rhiDecalPass.reset();
+    rhiFsrPass.reset();
     rhiProceduralSkyPass.reset();
     rhiAccelStructs.reset();
 

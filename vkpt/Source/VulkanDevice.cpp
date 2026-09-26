@@ -1431,6 +1431,26 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     sky.portalSize = static_cast<uint64_t>(portalList->GetBufferSize());
     portalList->ResetUploads();
 
+    // The decals (A5.6): the engine's instance buffers for this slot, which the skeleton wraps and
+    // copies on the RHI list before the decal pass. The game uploads none in this tree
+    // (rgUploadDecal has no caller), so the counts are zero and the skeleton skips both the copy
+    // and the draw; the engine's own SubmitForFrame (the copy) never runs under `rhiframe`, and its
+    // bookkeeping needs no reset here because PrepareForFrame clears the count on both paths.
+    sky.decalStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(decalManager->GetStagingBuffer(frameIndex)));
+    sky.decalDevice = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(decalManager->GetDeviceLocalBuffer()));
+    sky.decalBufferSize = static_cast<uint64_t>(decalManager->GetBufferSize());
+    sky.decalCopySize = static_cast<uint64_t>(decalManager->GetCopySize());
+    sky.decalCount = decalManager->GetDecalCount();
+
+    // The upscaler inputs of A5.7: the resolution helper the FSR module takes (the engine object's
+    // own technique selection lives in it) and the camera values its Apply takes (the legacy
+    // arguments of VulkanDevice.cpp:1122-1130); the jitter and timeDelta already reach the skeleton
+    // through the uniform copy.
+    sky.renderResolution = &renderResolution;
+    sky.cameraNear = drawInfo.cameraNear;
+    sky.cameraFar = drawInfo.cameraFar;
+    sky.fovYRadians = drawInfo.fovYRadians;
+
     // The procedural sky (A5.4): the host block of the legacy frame (VulkanDevice.cpp:755-863) that
     // fills the `RenderCubemap::DrawProcedural` params, mirrored exactly; the skeleton records the
     // compute before the trace only when the uniform selects SKY_TYPE_PROCEDURAL.

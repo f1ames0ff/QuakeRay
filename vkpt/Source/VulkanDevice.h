@@ -72,6 +72,8 @@ namespace vkpt
 class NvrhiContext;
 class NvrhiFrameSkeleton;
 class RhiDebugTracePass;
+class RhiDecalPass;
+class RhiFsrPass;
 class RhiProceduralSkyPass;
 class RhiRasterOverlayPass;
 class RhiRtComposePass;
@@ -336,6 +338,16 @@ private:
     // the collector's DEFAULT list into FINAL/SCREEN_EMISSION, recorded inside the compose chain's
     // window. Null when the creation failed; the frame is then drawn without the overlay.
     std::shared_ptr<RhiRasterOverlayPass>   rhiRasterOverlayPass;
+
+    // The RHI decal pass of A5.6 (RHI/RhiDecalPass.h): the ported DecalManager::Draw into ALBEDO
+    // right after the traced primary. The engine uploads no decals in this game, so the pass is a
+    // runtime no-op kept for parity. Null when the creation failed; the frame is drawn without it.
+    std::shared_ptr<RhiDecalPass>           rhiDecalPass;
+
+    // The RHI FSR upscaler module of A5.7 (RHI/RhiFsrPass.h): drives the engine's own FidelityFX
+    // FSR 3.1 context on the RHI list (the default upscaler), replacing the TAAU. Null when the
+    // creation failed; the frame keeps the TAAU path.
+    std::shared_ptr<RhiFsrPass>             rhiFsrPass;
 
     // The RHI 2D-UI pass (RHI/RhiUiPass.h): the game's SWAPCHAIN overlay (the HUD, the console, the
     // menus, the screen effects) drawn into the compose's upscaled image after the TAAU, created
