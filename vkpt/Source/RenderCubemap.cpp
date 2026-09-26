@@ -20,6 +20,8 @@
 
 #include "RenderCubemap.h"
 
+#include "PassTimings.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -1964,7 +1966,8 @@ void vkpt::RenderCubemap::UpdateQualityDescriptors()
     vkUpdateDescriptorSets(device, at, writes, 0, nullptr);
 }
 
-void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSkyParams &inParams, uint32_t frameIndex)
+void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSkyParams &inParams, uint32_t frameIndex,
+                                         PassTimings *timings)
 {
     CmdLabel label(cmd, "Procedural sky");
 
@@ -2054,10 +2057,25 @@ void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSk
         // no changes since the last render - keep the cached cubemap
         if (memcmp(mappedProcSkyParams[frameIndex], &params, sizeof(ProceduralSkyParams)) == 0)
         {
+            // The marks are written all the same, back to back: the pass timings
+            // count them every frame, and a frame missing one of them is a frame the
+            // panel has no numbers for at all.
+            if (timings)
+            {
+                timings->Mark(cmd, frameIndex, GPU_PASS_CLOUDS);
+                timings->Mark(cmd, frameIndex, GPU_PASS_SKY);
+                timings->Mark(cmd, frameIndex, GPU_PASS_SKY_MIPS);
+            }
+
             return;
         }
 
         memcpy(mappedProcSkyParams[frameIndex], &params, sizeof(ProceduralSkyParams));
+    }
+
+    if (timings)
+    {
+        timings->Mark(cmd, frameIndex, GPU_PASS_CLOUDS);
     }
 
     DispatchClouds(cmd, params, frameIndex);
@@ -2087,6 +2105,11 @@ void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSk
             1, &barrier);
     }
 
+    if (timings)
+    {
+        timings->Mark(cmd, frameIndex, GPU_PASS_SKY);
+    }
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, procSkyPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, procSkyPipelineLayout,
                             0, 1, &procSkyDescSet[frameIndex], 0, nullptr);
@@ -2094,6 +2117,11 @@ void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSk
     const uint32_t wgX = Utils::GetWorkGroupCount(cubemapSize, 16);
     const uint32_t wgY = Utils::GetWorkGroupCount(cubemapSize, 16);
     vkCmdDispatch(cmd, wgX, wgY, 6);
+
+    if (timings)
+    {
+        timings->Mark(cmd, frameIndex, GPU_PASS_SKY_MIPS);
+    }
 
     GenerateMipmaps(cmd, cubemap.image, VK_IMAGE_LAYOUT_GENERAL);
     GenerateMipmaps(cmd, envCubemap.image, VK_IMAGE_LAYOUT_GENERAL);

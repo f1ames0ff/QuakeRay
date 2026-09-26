@@ -30,6 +30,10 @@ namespace
     {
         "setup",
         "lights",
+        "cloudshadow",
+        "clouds",
+        "sky",
+        "skymips",
         "primary",
         "godrays",
         "reflrefr",

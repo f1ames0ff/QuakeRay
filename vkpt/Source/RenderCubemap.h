@@ -31,6 +31,8 @@
 namespace vkpt
 {
 
+class PassTimings;
+
 class RenderCubemap : public IShaderDependency
 {
 public:

@@ -924,6 +924,12 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             const bool flatClouds = RenderCubemap::ClampQuality(cloudsQuality) == RenderCubemap::QUALITY_LOW;
             p.skyColor[3] = flatClouds ? 1.0f : 0.0f;
 
+            // The pass timings pick the cloud path up here: the shadow of the layer,
+            // the layer itself, the sky it is composited into and the mip chain of the
+            // sky's cubemaps are four rows of their own (PassTimings.h) instead of
+            // standing inside the row of the lights.
+            passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUD_SHADOW);
+
             // The clouds hang between the sun and the world, so the shadow they
             // throw on it is laid down here, for every pass that lights with the
             // sun (the sun itself, the sky, and the shafts -- CloudShadowMap.h).
@@ -937,7 +943,7 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             {
                 rasterizer->GetRenderCubemap()->UpdateCloudShadow(cmd, p, uniform->GetData()->cameraPosition, frameIndex);
             }
-            rasterizer->GetRenderCubemap()->DrawProcedural(cmd, p, frameIndex);
+            rasterizer->GetRenderCubemap()->DrawProcedural(cmd, p, frameIndex, passTimings.get());
 
             // The world's shading reads the volume's placement from the tail of the
             // global uniform, which was filled before this frame's own refill of the
@@ -958,6 +964,14 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             // No procedural sky: the clouds it draws are gone with it, and the
             // standing shadow map may not keep darkening the sun behind its back
             rasterizer->GetRenderCubemap()->InvalidateCloudShadow();
+
+            // The pass timings carry the four cloud rows of this frame even so, back
+            // to back: they are counted every frame, and a frame missing one of them
+            // is a frame the panel has no numbers for at all.
+            passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUD_SHADOW);
+            passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUDS);
+            passTimings->Mark(cmd, frameIndex, GPU_PASS_SKY);
+            passTimings->Mark(cmd, frameIndex, GPU_PASS_SKY_MIPS);
         }
     }
     else
@@ -965,6 +979,11 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
         // The sky is not drawn at all here, so neither are the clouds that would
         // stand between the sun and the world
         rasterizer->GetRenderCubemap()->InvalidateCloudShadow();
+
+        passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUD_SHADOW);
+        passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUDS);
+        passTimings->Mark(cmd, frameIndex, GPU_PASS_SKY);
+        passTimings->Mark(cmd, frameIndex, GPU_PASS_SKY_MIPS);
     }
 
 

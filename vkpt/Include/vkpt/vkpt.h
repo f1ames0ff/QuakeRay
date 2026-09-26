@@ -1623,7 +1623,7 @@ RGAPI RgBool32 RGCONV rgIsRenderUpscaleTechniqueAvailable(
     RgInstance                          rgInstance,
     RgRenderUpscaleTechnique            technique);
 
-#define RG_GPU_PASS_COUNT 18
+#define RG_GPU_PASS_COUNT 22
 
 #define RG_RAY_STATS_CATEGORY_COUNT 5
 
