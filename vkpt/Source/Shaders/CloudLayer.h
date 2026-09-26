@@ -95,19 +95,21 @@ const int CLOUD_SUN_STEPS_MAX = 64;
 // clouds as a square over the sky, so the count lives here rather than in a pass or
 // in the host.
 //
-// Thirty-two of them. What the count resolves is the noise along the column: the
-// shape octaves are 900, 450 and 225 world units long over the depth of the layer
-// (they are read with the height stretched, CLOUD_VERTICAL_STRETCH), and a step is
-// the layer's depth over the height of the sun over this count -- 49 units at a sun
-// forty degrees up. Measured against a walk of the same column 512 steps deep, the
-// light of a height between two of the volume's slices is off by 0.065 of tau at
-// sixteen steps and by 0.020 at thirty-two, which is the difference between a
-// ripple of about six per cent of the light of the layer, read as a layering of the
-// clouds, and one of two per cent. The walk is the dearest thing the layer does, but
-// what it costs is paid where the sky has no volume to read -- the horizon and the
-// samples beyond the window -- and by the fill of a few million texels, so the finer
-// walk is bought with a fraction of a millisecond rather than with memory.
-const int CLOUD_SHADOW_STEPS = 32;
+// Sixteen of them. What the count resolves is the noise along the column: the shape
+// octaves are 900, 450 and 225 world units long over the depth of the layer (they
+// are read with the height stretched, CLOUD_VERTICAL_STRETCH), and a step is the
+// layer's depth over the height of the sun over this count -- 98 units at a sun
+// forty degrees up, against 49 at thirty-two steps. Measured against a walk of the
+// same column 512 steps deep, the light of a height between two of the volume's
+// slices is off by 0.065 of tau at sixteen steps and by 0.020 at thirty-two: a
+// ripple of about six per cent of the light of the layer against two, read through
+// the cone the taps of the walk are spread over. The walk is the dearest thing the
+// layer does, and it is paid twice over: per texel of the volume's fill, and -- where
+// the volume does not reach, the horizon and the samples beyond the window -- once
+// per sample of every march through the layer. So the count is the first thing a
+// budget buys and the first thing it gives up, and sixteen, with the eight slices it
+// is read through, is the count the layer was drawn at when it was last called right.
+const int CLOUD_SHADOW_STEPS = 16;
 
 // The steps of the sequences the taps of a march are spread by, taken from the
 // golden ratio: successive taps land in different parts of the stretch they stand
