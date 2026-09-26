@@ -2077,7 +2077,18 @@ void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSk
         // and the shadow of it are the same shadow of the same cloud. All of them are
         // part of the params the cache below compares, so the layer is never
         // remembered away while it is being drawn.
-        params.cloudAnchor[3] = cloudsWhole > 0 ? float(CLOUD_UPDATE_FRAMES) : float(cloudsCycle);
+        // The layer's map is marched whole, every frame. The quarter/copy cadence that
+        // used to stand here (a quarter marched, three quarters carried from the frame
+        // before) was what the motion of a fast drift was not smooth under: the carried
+        // quarters and the marched one never agreed perfectly, and the eye read the
+        // four-frame cadence of that disagreement as jerking -- breathing sharpness and
+        // stepping light -- whatever filter the copies were read through (the nearest,
+        // the bilinear and a Catmull-Rom one were all measured). A whole march has no
+        // ages and no copies, so a texel is the cloud it stands over, exactly, every
+        // frame: the motion is the drift's own, one to one, at any quality level -- and
+        // the level's price is the whole march rather than a quarter of it, which is the
+        // price of that. CLOUD_UPDATE_FRAMES is the sentinel that says so (CmSkyClouds.comp).
+        params.cloudAnchor[3] = float(CLOUD_UPDATE_FRAMES);
         for (int i = 0; i < 4; i++)
         {
             // Nothing of the volume may be read while it is not standing: the getter
