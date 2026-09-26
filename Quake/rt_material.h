@@ -11,20 +11,6 @@
 
 #define RT_MAT_EMIS_BLEND_MAX 5
 
-enum {
-    RT_MAT_KIND_INVALID    = 0,
-    RT_MAT_KIND_REGULAR    = 1,
-    RT_MAT_KIND_CHROME     = 2,
-    RT_MAT_KIND_WATER      = 3,
-    RT_MAT_KIND_LAVA       = 4,
-    RT_MAT_KIND_SLIME      = 5,
-    RT_MAT_KIND_GLASS      = 6,
-    RT_MAT_KIND_SKY        = 7,
-    RT_MAT_KIND_INVISIBLE  = 8,
-    RT_MAT_KIND_SCREEN     = 9,
-    RT_MAT_KIND_CAMERA     = 10,
-};
-
 typedef struct rt_material_s {
     char name[MAX_QPATH];
     char filename_base[MAX_QPATH];
