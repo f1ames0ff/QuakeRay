@@ -2006,10 +2006,12 @@ void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSk
     // The eye's own movement since the last frame that marched, plus the wind's:
     // together they are the shift of the column of cloud that stood under a texel,
     // which is what the pass reads its history through (cloudAnchorDelta,
-    // CmSkyClouds.comp). The wind is the pattern's own drift -- `wind = time * speed *
-    // (30, 12)` (CloudLayer.h) -- so its movement over the frame is the time's own
-    // step times the same factors. The point this is measured from is advanced where
-    // the dispatch leaves (DispatchClouds), not here.
+    // CmSkyClouds.comp). The wind is the pattern's own drift -- `time * speed * (30, 12)`
+    // (CloudLayer.h) -- and the speed in the parameters is the drift the layer actually
+    // has: the setting scaled by its height over the reference altitude before any pass
+    // is handed it (VulkanDevice.cpp, CLOUD_REFERENCE_ALTITUDE), so this shift and the
+    // shader's cloudDensity are the same movement by construction. The point this is
+    // measured from is advanced where the dispatch leaves (DispatchClouds), not here.
     {
         const float anchorNow[2] = { params.cloudAnchor[0], params.cloudAnchor[1] };
         const float timeNow = params.cloudColor[3];

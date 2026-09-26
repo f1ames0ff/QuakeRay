@@ -860,6 +860,20 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             {
                 p.cloudLayer[1] = 90000.0f;
             }
+
+            // The drift of the layer's noise is a matter of proportion to its height: the
+            // setting is the speed of a layer at the reference altitude, and what every
+            // consumer is handed -- the passes that march the layer, the pass that lays
+            // its shadow down, and the shift the history of its map is read through
+            // (RenderCubemap::DrawProcedural) -- is the speed the layer actually drifts
+            // at, so that no two of them can disagree. They did once: the factor reached
+            // the wind in CloudLayer.h and not the shift, and the copied three quarters
+            // of the map stood still while the marched one moved -- a quarter of the sky
+            // snapping forward every fourth frame, which is what a drift faster than a
+            // crawl showed as jerking. Must equal CLOUD_REFERENCE_ALTITUDE in
+            // CloudLayer.h, where the seed of the march is scaled by the same ratio.
+            constexpr float CLOUD_REFERENCE_ALTITUDE = 1400.0f;
+            p.cloudParams[2] *= p.cloudLayer[0] / CLOUD_REFERENCE_ALTITUDE;
             // Sunlight and skylight that reach the clouds. The sun lights them with
             // its own colour (rt_sky_sun_color) and is what makes their edges glow
             // towards it; the sky lights them from above, with the sky's colour.

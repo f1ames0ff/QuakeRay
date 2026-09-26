@@ -182,7 +182,7 @@ void main()
     {
         // The layer is read through a small Gaussian. The texels of the map hold the
         // marches of their own columns and the quarters a frame does not march are
-        // copies read at the nearest texel (CmSkyClouds.comp), so the light of the
+        // copies read between texels (CmSkyClouds.comp), so the light of the
         // layer carries a structure the size of a texel that a march itself does not
         // have -- the pixelation of a cloud's edge. Nine reads over a 3 by 3 grid,
         // weighted 1-2-1 on each axis, are the smallest kernel that is smooth in both;
