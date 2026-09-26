@@ -84,7 +84,11 @@ public:
     // Fill the cubemap with a procedural atmospheric sky (compute). `frameIndex`
     // picks the copy of the parameters that belongs to the frame being recorded:
     // the frames in flight may still be reading theirs while this one is written.
-    void DrawProcedural(VkCommandBuffer cmd, const ProceduralSkyParams &params, uint32_t frameIndex);
+    // `timings`, when given, is marked before each of the three passes this runs --
+    // the layer's march, the sky's composite and the mip chain of its cubemaps --
+    // so that the pass panel shows what each of them costs (PassTimings.h).
+    void DrawProcedural(VkCommandBuffer cmd, const ProceduralSkyParams &params, uint32_t frameIndex,
+                        PassTimings *timings = nullptr);
 
     VkDescriptorSetLayout GetDescSetLayout() const;
     VkDescriptorSet GetDescSet() const;
