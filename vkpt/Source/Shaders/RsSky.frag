@@ -34,7 +34,6 @@ layout(push_constant) uniform RasterizerFrag_BT
     layout(offset = 64) vec4 color;
     layout(offset = 80) uint textureIndex;
     layout(offset = 84) uint emissionTextureIndex;
-    layout(offset = 88) float emissionMultiplier;
 } rasterizerFragInfo;
 
 layout (constant_id = 0) const uint alphaTest = 0;

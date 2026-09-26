@@ -520,6 +520,7 @@ typedef enum RgRasterizedGeometryStateFlagBits
     RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST         = 4,
     RG_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE        = 8,
     RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST    = 16,
+    RG_RASTERIZED_GEOMETRY_STATE_SMOKE              = 32,
 } RgRasterizedGeometryStateFlagBits;
 typedef uint32_t RgRasterizedGeometryStateFlags;
 
@@ -548,6 +549,9 @@ typedef struct RgRasterizedGeometryUploadInfo
     // scissor (the whole viewport is used). For RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY
     // it must be zero as well.
     RgRect2D                                scissor;
+
+    RgFloat4D                               smokeNoise;
+    RgFloat4D                               smokeLook;
 } RgRasterizedGeometryUploadInfo;
 
 

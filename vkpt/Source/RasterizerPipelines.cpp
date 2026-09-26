@@ -218,7 +218,8 @@ vkpt::RasterizerPipelines::RasterizerPipelines( VkDevice             _device,
                                                  std::string_view     _shaderNameVert,
                                                  std::string_view     _shaderNameFrag,
                                                  uint32_t             _additionalAttachmentsCount,
-                                                 bool                 _applyVertexColorGamma )
+                                                 bool                 _applyVertexColorGamma,
+                                                 bool                 _smokeVertexLayout )
     : device( _device )
     , shaderNameVert( _shaderNameVert )
     , shaderNameFrag( _shaderNameFrag )
@@ -229,6 +230,7 @@ vkpt::RasterizerPipelines::RasterizerPipelines( VkDevice             _device,
     , pipelineCache( VK_NULL_HANDLE )
     , applyVertexColorGamma( _applyVertexColorGamma )
     , additionalAttachmentsCount( _additionalAttachmentsCount )
+    , smokeVertexLayout( _smokeVertexLayout )
 {
     assert( TestFlags() );
 
@@ -357,7 +359,14 @@ VkPipeline vkpt::RasterizerPipelines::CreatePipeline(RgRasterizedGeometryStateFl
     std::array<VkVertexInputAttributeDescription, 8> attrs = {};
     uint32_t attrsCount;
 
-    RasterizedDataCollector::GetVertexLayout(attrs.data(), &attrsCount);
+    if (smokeVertexLayout)
+    {
+        RasterizedDataCollector::GetSmokeVertexLayout(attrs.data(), &attrsCount);
+    }
+    else
+    {
+        RasterizedDataCollector::GetVertexLayout(attrs.data(), &attrsCount);
+    }
     assert(attrsCount <= attrs.size());
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};

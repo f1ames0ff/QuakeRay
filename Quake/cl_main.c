@@ -617,6 +617,9 @@ static void CL_RocketTrail (entity_t *ent, int type)
 		return;
 	R_RocketTrail (ent->trailorg, ent->origin, type);
 
+	R_SmokeTrail (ent->trailorg, ent->origin,
+		R_SmokeTrailScale (ent->model ? ent->model->name : NULL, type));
+
 	ent->traildelay = q_max (0.f, ent->traildelay + 1.f / 72.f);
 	VectorCopy (ent->origin, ent->trailorg);
 }
