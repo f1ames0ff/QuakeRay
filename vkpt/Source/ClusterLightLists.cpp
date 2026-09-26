@@ -167,6 +167,7 @@ void ClusterLightLists::Reset()
     slotDist2.clear();
     slotSource.clear();
     slotFill.clear();
+    slotHoles.clear();
     slotTopUp.clear();
     slotBits.clear();
     bitsWords = 0;
@@ -363,6 +364,7 @@ void ClusterLightLists::PrepareTables(const WorldLights &worldLightsRef)
     slotDist2.assign(slots, 0.0f);
     slotSource.assign(slots, 0);
     slotFill.assign(numClusters, 0);
+    slotHoles.assign(numClusters, 0);
     slotTopUp.assign(slots, 0);
     slotBits.assign(std::max<size_t>(1, numClusters), 0);
     bitsWords = 0;
@@ -424,6 +426,7 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
        starts from empty lists: keeping the slots of the previous frame let every cluster grow to
        the limit and stay there. */
     std::fill(slotFill.begin(), slotFill.end(), 0);
+    std::fill(slotHoles.begin(), slotHoles.end(), 0);
 
     bitsWords = std::max(1u, (numSources + 63) / 64);
     slotBits.assign(size_t(numClusters) * bitsWords, 0);
@@ -724,8 +727,26 @@ void ClusterLightLists::FillLists(UserPrint *pUserPrint)
 
     for (uint32_t c = 0; c < numClusters; c++)
     {
+        /* A hole at the end of a list is taken off the published count: no light moves, and a
+           fill that stays at a peak the cluster no longer holds would keep the sampling stride
+           of every pixel that reads it at a size the lights there do not need, which loses a
+           sample to a stratum that holds no light at all. */
+        uint32_t        fill = slotFill[c];
+        const uint64_t *pUids = &slotUids[size_t(c) * kMaxPerList];
+
+        while (fill > 0 && pUids[fill - 1] == kLightUidHole)
+        {
+            fill--;
+
+            if (slotHoles[c] > 0)
+            {
+                slotHoles[c]--;
+            }
+        }
+
+        slotFill[c] = fill;
         offsets[c] = total;
-        total += slotFill[c];
+        total += fill;
     }
 
     offsets[numClusters] = total;
@@ -781,6 +802,8 @@ void ClusterLightLists::HoleSlot(uint32_t cluster, uint32_t slot)
     {
         return; // already a hole: no light to take back and no bit to clear
     }
+
+    slotHoles[cluster]++;
 
     // The slot was one of the grants the counters of this light stand for: they follow the
     // slots it holds, so that a light whose slots were all taken back is not reported as one
@@ -1224,17 +1247,22 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
 
     /* A slot the cluster left holding no light is filled before the list grows: the count of a
        list is what the sampling strata of every pixel that reads it are made of, so a hole that
-       stays while a light is added would move the stride of the whole cluster. */
-    for (uint32_t s = 0; s < fill; s++)
+       stays while a light is added would move the stride of the whole cluster. The scan runs
+       only when the cluster has a hole at all, which is what its count says. */
+    if (slotHoles[cluster] > 0)
     {
-        if (pSource[s] == kInvalidSource)
+        for (uint32_t s = 0; s < fill; s++)
         {
-            pUids[s] = sources[sourceIndex].uid;
-            pDist2[s] = dist2;
-            pSource[s] = sourceIndex;
-            pTopUp[s] = fromTopUp ? 1 : 0;
-            pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
-            return true;
+            if (pSource[s] == kInvalidSource)
+            {
+                pUids[s] = sources[sourceIndex].uid;
+                pDist2[s] = dist2;
+                pSource[s] = sourceIndex;
+                pTopUp[s] = fromTopUp ? 1 : 0;
+                pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
+                slotHoles[cluster]--;
+                return true;
+            }
         }
     }
 
