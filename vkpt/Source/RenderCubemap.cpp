@@ -1297,7 +1297,7 @@ void vkpt::RenderCubemap::DispatchClouds(VkCommandBuffer cmd, const ProceduralSk
     const uint32_t wg = Utils::GetWorkGroupCount(cloudsSize, 16);
     vkCmdDispatch(cmd, wg, wg, 6);
 
-    cloudsCycle[frameIndex] = cloudsWhole > 0 ? 0 : (cloudsCycle[frameIndex] + 1) % CLOUD_UPDATE_FRAMES;
+    cloudsCycle = cloudsWhole > 0 ? 0 : (cloudsCycle + 1) % CLOUD_UPDATE_FRAMES;
     if (cloudsWhole > 0)
     {
         cloudsWhole--;
@@ -2055,7 +2055,7 @@ void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSk
         // and the shadow of it are the same shadow of the same cloud. All of them are
         // part of the params the cache below compares, so the layer is never
         // remembered away while it is being drawn.
-        params.cloudAnchor[3] = cloudsWhole > 0 ? float(CLOUD_UPDATE_FRAMES) : float(cloudsCycle[frameIndex]);
+        params.cloudAnchor[3] = cloudsWhole > 0 ? float(CLOUD_UPDATE_FRAMES) : float(cloudsCycle);
         for (int i = 0; i < 4; i++)
         {
             // Nothing of the volume may be read while it is not standing: the getter
