@@ -107,11 +107,13 @@ private:
     void GrantSource(uint32_t sourceIndex);
     // Pass two for one cluster, as the composition runs it for every cluster.
     void TopUpCluster(const WorldLights &worldLights, uint32_t cluster, float reach);
-    // Takes back the slots a light holds and the top-up slots of every cluster that holds one
-    // of them, so that a light that changed can be placed again without composing the lists of
-    // a cluster whose own lights did not change.
+    // Takes back the slots a light holds, leaving each of them holding no light, so that a
+    // light that changed can be placed again without composing the lists of a cluster whose
+    // own lights did not change.
     void VacateSource(uint32_t sourceIndex);
-    void DropTopUpSlots(uint32_t cluster);
+    // Leaves one slot of a cluster holding no light, which is how a light that left it keeps
+    // every other slot of the cluster where it stands.
+    void HoleSlot(uint32_t cluster, uint32_t slot);
     void MarkDirty(uint32_t cluster);
     void FillLists(UserPrint *pUserPrint);
     // Places the lights that changed -- the ones that moved, the ones that appeared and the ones
