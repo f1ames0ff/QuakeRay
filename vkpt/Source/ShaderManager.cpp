@@ -60,6 +60,8 @@ static ShaderModuleDefinition G_SHADERS[] =
     {"CVolumetricProcess",      "CmVolumetricProcess.comp.spv"         },
     {"FragWorld",               "RsWorld.frag.spv"                     },
     {"FragSky",                 "RsSky.frag.spv"                       },
+    {"VertSmoke",               "RsSmoke.vert.spv"                     },
+    {"FragSmoke",               "RsSmoke.frag.spv"                     },
     {"FragSwapchain",           "RsSwapchain.frag.spv"                 },
     {"VertDefault",             "RsRasterizer.vert.spv"                },
     {"VertDefaultMultiview",    "RsRasterizerMultiview.vert.spv"       },

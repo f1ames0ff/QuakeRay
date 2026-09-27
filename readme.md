@@ -1,22 +1,17 @@
 # QuakeRay engine
 
-QuakeRay is Ray Tracing engine for Quake 1, with a Q2RTX-style partial path traced features and a Vulkan backend.
+QuakeRay is a ray tracing engine for Quake 1, with Q2RTX-style partial path tracing features and a Vulkan backend.
 
 ## Features
-
-### Path traced renderer
-
-* Ray tracing with ReSTIR direct light sampling
-* FSR 2.0 and 3.1 support
-* TAL (Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
-* True Light Mode (opt-in): All light sources are TAL, which means all emissive textures are actual light sources.
-* Q2RTX-style path traced lighting.
-* ASVGF denoiser.
+* Q2RTX-style ray tracing and partial path tracing with ReSTIR direct light sampling
+* ASVGF denoiser
 * RT Global Illumination
-* NEE (Next Event Estimation) for the sun, emissives and dynamic lights.
-* per-BSP-cluster light lists.
-* Animated light entities (`rt_light_styles`) make their own fixture flicker, in accordance with the original light style, to preserve the original Quake 1 lighting design.
-* Full material system with per-brush and per-model metalness/roughness, normal map strength and texture-driven gloss maps, plus ray-traced water with animated wave normals and refraction.
+* Dynamic Texture Area Lights (**DTAL**)
+* FSR 2.0 and 3.1 support
+* True Light Mode (opt-in): all light sources are **DTAL**, which means all emissive textures are actual light sources
+* NEE (Next Event Estimation) for the sun, emissive and dynamic lights
+* Material system
+* per-BSP-cluster light lists (legacy)
 
 ## Graphics
 
@@ -25,19 +20,32 @@ QuakeRay is Ray Tracing engine for Quake 1, with a Q2RTX-style partial path trac
 * God rays — volumetric sun shafts, resolved at a quality level of their own (`rt_sky_godrays_quality`)
 * Volumetric fog
 * Bloom
-* Post-processing: chromatic aberration, and a configurable LUT for colour grading
+* Post-processing: chromatic aberration, and a configurable LUT for color grading
+* Shader smoke
 
 ## Roadmap
-
-* In-game light editor for emissive surfaces and dynamic lights.
+* Light and material editor
 * Arcane Dimensions support (the original Quake 1 expansion pack)
 * Quake Remastered (2021) support (the official remaster of Quake 1)
-* Mixed rasterization and ray tracing for better performance on older GPUs (the current renderer is RT only, so it is limited to GPUs with ray tracing support).
-* Full physically correct path tracing.
+* Mixed rasterization and ray tracing for better performance on older GPUs
+* Full physically correct path tracing
+* More shader effects: explosion, fire, etc.
+* DirectX 12
+* FSR 4
+* DLSS
 
-## Changelog
+## Definitions
 
-See [changelog.md](changelog.md).
+* **ASVGF (Adaptive Spatio-Temporal Variance-Guided Filtering)** - the denoiser of the renderer, ported from Q2RTX: 
+a temporal pass accumulates the lighting with the frames before it, and an a-trous (wavelet) pass filters it with weights guided by the variance of the sample and by depth, normal and colour, 
+so a tap on other geometry cannot smear. Direct, indirect (at a third of the resolution, as luma spherical harmonics in YCoCg) and specular light are filtered apart from one another, 
+and a gradient pass shortens the history wherever it stopped matching the frame
+* **TAL (Texture Area Light)** - Q2RTX's name for a light cut out of a surface: the light is a polygon of the face with the face's own uvs,
+and it samples the emission mask of the texture at the point it picks, so a face bright in its center and dark around it lights the scene from its lit part alone
+* **DTAL (Dynamic Texture Area Light)** - QuakeRay's implementation of that idea, and the difference is the word dynamic: 
+a Q2RTX TAL is a polygon of a face of the world, while a DTAL is any emissive surface of this engine, the moving ones included. 
+A face of the world or a brush entity is stored and re-read every frame, following its light styles and animated frames, 
+while an alias model is built from the triangles of the pose it draws, so its light follows the animation, the pose and the movement of the entity
 
 ## Build
 
@@ -80,7 +88,7 @@ Steps:
 
    (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build).
 
-   The build then deploys the ray-traced game data into `build\<Config>\id1`: the material definitions (`vkpt/Source/materials.yaml` → `id1/materials/materials.yaml`), `vkpt/Source/textures`, `vkpt/Source/progs` and `vkpt/Source/mdl_skins`, the blue noise table and the water normal map, and the SPIR-V shaders into `id1/shaders`.
+   The build then deploys the ray-traced game data into `build\<Config>\id1`: the material definitions (`vkpt/Source/materials.yaml` → `id1/materials/materials.yaml`), `vkpt/Source/textures` (the material textures and the model skins, the luma and gloss maps among them), the blue noise table and the water normal map, and the SPIR-V shaders into `id1/shaders`.
 
 4. Run the game:
 
@@ -96,7 +104,7 @@ Steps:
    .\bundle_release.ps1
    ```
 
-   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `mdl_skins`, `progs`, `shaders`, `textures` and the blue noise / water normal KTX2 tables) and `readme.md`, `changelog.md` and `LICENSE.txt`. The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
+   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `shaders`, `textures` and the blue noise / water normal KTX2 tables) and `readme.md`, `changelog.md` and `LICENSE.txt`. The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
 
 ## Ray tracing settings
 
@@ -136,5 +144,7 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 
 ## Game data
 
-Quake 1 game files (`id1/`) are required (registered or shareware). HD texture packs can be used through `.pkz` archives or `.mat` material definitions, and the ray-traced material overrides are deployed into the build's game dir by `build_win.ps1` (`id1/materials/materials.yaml` plus the `id1/textures`, `id1/progs` and `id1/mdl_skins` folders) — nothing has to be packed by hand.
+Quake 1 game files (`id1/`) are required (registered or shareware). HD texture packs can be used through `.pkz` archives or `.mat` material definitions, and the ray-traced material overrides are deployed into the build's game dir by `build_win.ps1` (`id1/materials/materials.yaml` plus the `id1/textures` folder of material textures and model skins) — nothing has to be packed by hand.
 
+## More information
+1. [changelog.md](changelog.md)

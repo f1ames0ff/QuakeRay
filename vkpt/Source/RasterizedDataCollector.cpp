@@ -53,6 +53,41 @@ uint32_t RasterizedDataCollector::GetVertexStride()
     return static_cast<uint32_t>(sizeof(RgVertex));
 }
 
+void RasterizedDataCollector::GetSmokeVertexLayout(VkVertexInputAttributeDescription *outAttrs, uint32_t *outAttrsCount)
+{
+    *outAttrsCount = 6;
+
+    outAttrs[0].binding = 0;
+    outAttrs[0].location = 0;
+    outAttrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    outAttrs[0].offset = offsetof(RgVertex, position);
+
+    outAttrs[1].binding = 0;
+    outAttrs[1].location = 1;
+    outAttrs[1].format = VK_FORMAT_R8G8B8A8_UNORM;
+    outAttrs[1].offset = offsetof(RgVertex, packedColor);
+
+    outAttrs[2].binding = 0;
+    outAttrs[2].location = 2;
+    outAttrs[2].format = VK_FORMAT_R32G32_SFLOAT;
+    outAttrs[2].offset = offsetof(RgVertex, texCoord);
+
+    outAttrs[3].binding = 0;
+    outAttrs[3].location = 3;
+    outAttrs[3].format = VK_FORMAT_R32G32B32_SFLOAT;
+    outAttrs[3].offset = offsetof(RgVertex, normal);
+
+    outAttrs[4].binding = 0;
+    outAttrs[4].location = 4;
+    outAttrs[4].format = VK_FORMAT_R32G32_SFLOAT;
+    outAttrs[4].offset = offsetof(RgVertex, texCoordLayer1);
+
+    outAttrs[5].binding = 0;
+    outAttrs[5].location = 5;
+    outAttrs[5].format = VK_FORMAT_R32_UINT;
+    outAttrs[5].offset = offsetof(RgVertex, cluster);
+}
+
 RasterizedDataCollector::RasterizedDataCollector( VkDevice                            _device,
                                                   std::shared_ptr< MemoryAllocator >& _allocator,
                                                   std::shared_ptr< TextureManager >   _textureMgr,
@@ -197,6 +232,8 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
         .pipelineState        = info.pipelineState,
         .blendFuncSrc         = info.blendFuncSrc,
         .blendFuncDst         = info.blendFuncDst,
+        .smokeNoise           = Float4D( info.smokeNoise.data ),
+        .smokeLook            = Float4D( info.smokeLook.data ),
     };
 
 

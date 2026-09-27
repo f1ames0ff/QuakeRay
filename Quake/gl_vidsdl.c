@@ -77,7 +77,7 @@ static void ClearAllStates (void);
 viddef_t        vid; // global video state
 modestate_t     modestate = MS_UNINIT;
 extern qboolean scr_initialized;
-extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate;
+extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate, r_smoke;
 extern cvar_t   scr_showfps, scr_fov;
 
 //====================================
@@ -162,6 +162,12 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_world_batch_merge, "1") \
 	/* 0 uploads the map's lights one call at a time, for measuring the batched path. */ \
 	CVAR_DEF_T (rt_wmodel_lights_batch, "1") \
+	/* DTAL: 1 lights an alias model from the triangles of the pose it draws, when its material
+	   is a light and carries an emissive mask; 0 keeps the fake dlight for it. The per-model cap
+	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
+	CVAR_DEF_T (rt_model_lights, "1") \
+	CVAR_DEF_T (rt_model_lights_max, "8") \
+	CVAR_DEF_T (rt_model_lights_budget, "256") \
 	\
 	CVAR_DEF_T (rt_poi_distthresh, "2") \
 	CVAR_DEF_T (rt_poi_distthresh_super, "3") \
@@ -285,6 +291,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_reflrefr_earlyout, "1") \
 	CVAR_DEF_T (rt_nee_samples, "1") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
+	CVAR_DEF_T (rt_stats_interval, "0.25") \
 	CVAR_DEF_T (rt_worldcensus, "0") \
 	CVAR_DEF_T (rt_worldlights_stats, "0") \
 	CVAR_DEF_T (rt_worldclusters_grid, "1") \
@@ -310,8 +317,11 @@ RT frame profiler -- rt_stats 3
 
 Times the CPU side of the frame, which the GPU timestamps of panel 2 do not
 cover: the geometry marking chain, the per-pass scene submission and the main
-thread's wait for the task graph. The results are drawn on screen once a second
-by SCR_DrawRTStats, and rt_stats_dump writes one snapshot to qperfdump.log.
+thread's wait for the task graph. The results are drawn on screen by
+SCR_DrawRTStats and SCR_DrawRTProf, and rt_prof_report, which the two of them
+read, is rebuilt every `rt_stats_interval` seconds (a quarter of a second by
+default, so the readout moves instead of standing still for a whole one) by
+RT_Prof_Update; rt_stats_dump writes one snapshot to qperfdump.log.
 
 The slots are written from worker threads without synchronization, so taking the
 report and the reset that follows it can race a running task; for a diagnostic
@@ -326,9 +336,76 @@ static double   rt_prof_window_start;
 static int      rt_prof_frames;
 static qboolean rt_prof_active;
 
+/* rt_bench: the same slots, summed over a whole demo run instead of maximized over one
+   `rt_stats_interval` window. The on-screen panel wants the worst frame of the window; a
+   benchmark wants the cost of an average frame, so every slot is added up and the longest
+   one kept as well.
+   The run is started by CL_Bench_f when the timedemo clock starts and reported when the demo
+   ends, and the profiler is forced on for its duration whatever rt_stats asks for. */
+static qboolean rt_bench_active;
+static qboolean rt_bench_interrupted;
+static int      rt_bench_frames;
+static double   rt_bench_start_time;
+static double   rt_bench_frame_min;
+static double   rt_bench_sum[RT_PROF_COUNT];
+static double   rt_bench_max[RT_PROF_COUNT];
+
+/* What the results screen of the benchmark menu shows, filled by RT_Bench_Report. */
+rt_bench_result_t rt_bench_result;
+
+qboolean RT_Bench_Active (void)
+{
+	return rt_bench_active;
+}
+
+void RT_Bench_Start (void)
+{
+	rt_bench_active = true;
+	rt_bench_interrupted = false;
+	rt_bench_frames = 0;
+	rt_bench_start_time = Sys_DoubleTime ();
+	rt_bench_frame_min = 0.0;
+	memset (rt_bench_sum, 0, sizeof (rt_bench_sum));
+	memset (rt_bench_max, 0, sizeof (rt_bench_max));
+	rt_cluster_cache_hits = 0;
+	rt_cluster_cache_misses = 0;
+	rt_cluster_miss_set = 0;
+	rt_cluster_miss_move = 0;
+	rt_cluster_miss_other = 0;
+}
+
+void RT_Bench_Stop (void)
+{
+	rt_bench_active = false;
+}
+
+void RT_Bench_Interrupt (void)
+{
+	if (rt_bench_active)
+		rt_bench_interrupted = true;
+}
+
+qboolean RT_Bench_Interrupted (void)
+{
+	return rt_bench_interrupted;
+}
+
+static void RT_Bench_Slot (int slot, double ms)
+{
+	if (!rt_bench_active)
+		return;
+
+	rt_bench_sum[slot] += ms;
+	if (ms > rt_bench_max[slot])
+		rt_bench_max[slot] = ms;
+
+	if (slot == RT_PROF_FRAME && (rt_bench_frames == 0 || ms < rt_bench_frame_min))
+		rt_bench_frame_min = ms;
+}
+
 double RT_Prof_Begin (void)
 {
-	return RT_StatsPanel (RT_STATS_PROFILE) ? Sys_DoubleTime () : 0.0;
+	return (RT_StatsPanel (RT_STATS_PROFILE) || rt_bench_active) ? Sys_DoubleTime () : 0.0;
 }
 
 void RT_Prof_End (int slot, double start)
@@ -337,19 +414,21 @@ void RT_Prof_End (int slot, double start)
 		return;
 
 	const double ms = (Sys_DoubleTime () - start) * 1000.0;
+	RT_Bench_Slot (slot, ms);
 	if (ms > rt_prof_ms[slot])
 		rt_prof_ms[slot] = ms;
 }
 
 void RT_Prof_Sample (int slot, double ms)
 {
+	RT_Bench_Slot (slot, ms);
 	if (ms > rt_prof_ms[slot])
 		rt_prof_ms[slot] = ms;
 }
 
 void RT_Prof_FrameStart (void)
 {
-	if (!RT_StatsPanel (RT_STATS_PROFILE))
+	if (!RT_StatsPanel (RT_STATS_PROFILE) && !rt_bench_active)
 		return;
 
 	rt_prof_frame_start = Sys_DoubleTime ();
@@ -358,10 +437,12 @@ void RT_Prof_FrameStart (void)
 
 void RT_Prof_FrameEnd (void)
 {
-	if (!RT_StatsPanel (RT_STATS_PROFILE))
+	if (!RT_StatsPanel (RT_STATS_PROFILE) && !rt_bench_active)
 		return;
 
 	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
+	if (rt_bench_active)
+		++rt_bench_frames;
 }
 
 void RT_Prof_Update (void)
@@ -375,11 +456,14 @@ void RT_Prof_Update (void)
 		rt_prof_report.valid = false;
 		memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
 		rt_prof_frames = 0;
-		rt_cluster_cache_hits = 0;
-		rt_cluster_cache_misses = 0;
-		rt_cluster_miss_set = 0;
-		rt_cluster_miss_move = 0;
-		rt_cluster_miss_other = 0;
+		if (!rt_bench_active)
+		{
+			rt_cluster_cache_hits = 0;
+			rt_cluster_cache_misses = 0;
+			rt_cluster_miss_set = 0;
+			rt_cluster_miss_move = 0;
+			rt_cluster_miss_other = 0;
+		}
 		return;
 	}
 
@@ -392,16 +476,28 @@ void RT_Prof_Update (void)
 		rt_prof_report.valid = false;
 		rt_prof_window_start = now;
 		rt_prof_frames = 0;
-		rt_cluster_cache_hits = 0;
-		rt_cluster_cache_misses = 0;
-		rt_cluster_miss_set = 0;
-		rt_cluster_miss_move = 0;
-		rt_cluster_miss_other = 0;
+		memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
+		if (!rt_bench_active)
+		{
+			rt_cluster_cache_hits = 0;
+			rt_cluster_cache_misses = 0;
+			rt_cluster_miss_set = 0;
+			rt_cluster_miss_move = 0;
+			rt_cluster_miss_other = 0;
+		}
 		return;
 	}
 
+	/* A cvar can hold a value no comparison reaches --- a "nan" typed in the console or
+	   written into a config --- and the clamp would hand it straight back, making every
+	   frame look like the end of a window; such a value falls back to the default. */
+	double interval = CLAMP (0.05, CVAR_TO_FLOAT (rt_stats_interval), 3.0);
+
+	if (!(interval >= 0.05 && interval <= 3.0))
+		interval = 0.25;
+
 	const double elapsed = now - rt_prof_window_start;
-	if (elapsed < 1.0)
+	if (elapsed < interval)
 		return;
 
 	rt_prof_window_start = now;
@@ -431,13 +527,153 @@ void RT_Prof_Update (void)
 	rt_prof_report.clusterDropped = rt_cluster_last_dropped;
 	rt_prof_report.valid = true;
 
-	rt_cluster_cache_hits = 0;
-	rt_cluster_cache_misses = 0;
-	rt_cluster_miss_set = 0;
-	rt_cluster_miss_move = 0;
-	rt_cluster_miss_other = 0;
+	if (!rt_bench_active)
+	{
+		rt_cluster_cache_hits = 0;
+		rt_cluster_cache_misses = 0;
+		rt_cluster_miss_set = 0;
+		rt_cluster_miss_move = 0;
+		rt_cluster_miss_other = 0;
+	}
 	memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
 	rt_prof_frames = 0;
+}
+
+/*
+================
+RT_Bench_Report
+
+Appends the accumulated profile of a demo run to benchmark.log in the game directory. The
+header names the demo, the frame count, the wall time and the settings that shape the host
+frame, so two runs can only differ in what the code does; every slot follows with its average
+and its longest time, and the cluster counters close the run. Play the same demo before and
+after a change and diff the two blocks, which is what the benchmark is for.
+================
+*/
+#define RT_BENCH_FILE "benchmark.log"
+
+static void RT_Bench_Setting (FILE *f, const char *name)
+{
+	const cvar_t *var = Cvar_FindVar (name);
+
+	// a name that no longer exists is marked instead of printed empty
+	fprintf (f, " %s=%s", name, var ? var->string : "?");
+}
+
+qboolean RT_Bench_Report (const char *demo)
+{
+	char        path[MAX_OSPATH];
+	char        stamp[32];
+	time_t      now;
+	struct tm  *local;
+	FILE       *f;
+	const int    frames = rt_bench_frames > 0 ? rt_bench_frames : 1;
+	const double seconds = rt_bench_frames > 0 ? (Sys_DoubleTime () - rt_bench_start_time) : 0.0;
+
+	if (!rt_bench_active)
+		return false;
+
+	/* A run that ended before a single frame was finished has nothing to report and no result
+	   to show; it is not a measurement of zero frames. */
+	if (rt_bench_frames == 0)
+	{
+		rt_bench_active = false;
+		rt_bench_result.valid = false;
+		return false;
+	}
+
+	rt_bench_active = false;
+
+	const double frameAvg = rt_bench_sum[RT_PROF_FRAME] / frames;
+	const double frameMin = rt_bench_frame_min > 0.0 ? rt_bench_frame_min : frameAvg;
+	const double frameMax = rt_bench_max[RT_PROF_FRAME];
+
+	rt_bench_result.valid = true;
+	q_strlcpy (rt_bench_result.demo, (demo && demo[0]) ? demo : "?", sizeof (rt_bench_result.demo));
+	rt_bench_result.frames = rt_bench_frames;
+	rt_bench_result.seconds = seconds;
+	rt_bench_result.frameAvgMs = frameAvg;
+	rt_bench_result.frameMinMs = frameMin;
+	rt_bench_result.frameMaxMs = frameMax;
+	rt_bench_result.fpsAvg = frameAvg > 0.0 ? 1000.0 / frameAvg : 0.0;
+	rt_bench_result.fpsMin = frameMax > 0.0 ? 1000.0 / frameMax : 0.0;
+	rt_bench_result.fpsMax = frameMin > 0.0 ? 1000.0 / frameMin : 0.0;
+
+	q_snprintf (path, sizeof (path), "%s/%s", com_gamedir, RT_BENCH_FILE);
+
+	now = time (NULL);
+	local = localtime (&now);
+	if (local)
+		strftime (stamp, sizeof (stamp), "%Y-%m-%d %H:%M:%S", local);
+	else
+		stamp[0] = 0;
+
+	f = fopen (path, "a");
+
+	if (!f)
+	{
+		Con_Printf ("rt_bench: could not write %s\n", path);
+		return true; // the result itself is there, only the log file is not
+	}
+
+	fprintf (f, "# rt_bench %s demo=%s frames=%d seconds=%.2f fps=%.1f interrupted=%d\n", stamp,
+	         (demo && demo[0]) ? demo : "?", frames, seconds,
+	         seconds > 0.0 ? frames / seconds : 0.0, rt_bench_interrupted ? 1 : 0);
+
+	for (int i = 0; i < RT_PROF_COUNT; i++)
+		fprintf (f, "cpu.slot    %-17s avg_ms=%.2f max_ms=%.2f\n", RT_ProfSlotName (i),
+		         rt_bench_sum[i] / frames, rt_bench_max[i]);
+
+	fprintf (f, "cpu.main    %-17s avg_ms=%.2f\n", "frame minus wait",
+	         (rt_bench_sum[RT_PROF_FRAME] - rt_bench_sum[RT_PROF_WAIT]) / frames);
+
+	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d\n", "lists",
+	         rt_cluster_cache_hits, rt_cluster_cache_misses, rt_cluster_miss_set,
+	         rt_cluster_miss_move, rt_cluster_miss_other);
+
+	fprintf (f, "settings");
+	RT_Bench_Setting (f, "rt_enable_pvs");
+	RT_Bench_Setting (f, "rt_truelight");
+	RT_Bench_Setting (f, "rt_world_batch_merge");
+	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
+	RT_Bench_Setting (f, "rt_cluster_incremental");
+	RT_Bench_Setting (f, "rt_cluster_dlights");
+	RT_Bench_Setting (f, "rt_light_styles");
+	RT_Bench_Setting (f, "rt_model_lights");
+	RT_Bench_Setting (f, "rt_model_lights_max");
+	RT_Bench_Setting (f, "rt_model_lights_budget");
+	RT_Bench_Setting (f, "rt_shadowrays");
+	RT_Bench_Setting (f, "rt_sky_godrays");
+	RT_Bench_Setting (f, "rt_sky_godrays_intensity");
+	RT_Bench_Setting (f, "rt_sky_godrays_quality");
+	RT_Bench_Setting (f, "rt_physical_sky");
+	RT_Bench_Setting (f, "rt_sky_clouds");
+	RT_Bench_Setting (f, "rt_sky_clouds_coverage");
+	RT_Bench_Setting (f, "rt_sky_clouds_density");
+	RT_Bench_Setting (f, "rt_sky_clouds_speed");
+	RT_Bench_Setting (f, "rt_sky_clouds_quality");
+	RT_Bench_Setting (f, "rt_sky_clouds_height");
+	RT_Bench_Setting (f, "rt_sky_clouds_thickness");
+	RT_Bench_Setting (f, "rt_denoiser");
+	RT_Bench_Setting (f, "rt_gi_level");
+	RT_Bench_Setting (f, "rt_nee_samples");
+	RT_Bench_Setting (f, "rt_renderscale");
+	RT_Bench_Setting (f, "rt_upscale_fsr2");
+	RT_Bench_Setting (f, "rt_upscale_fsr31");
+	RT_Bench_Setting (f, "rt_upscale_dlss");
+	RT_Bench_Setting (f, "rt_stats_panels");
+	fprintf (f, " vid=%dx%d version=%s\n", vid.width, vid.height, ENGINE_VER_STRING);
+
+	fclose (f);
+
+	Con_Printf ("rt_bench: %d frames, %.2f s, %.1f fps -> %s\n", rt_bench_frames, seconds,
+	            seconds > 0.0 ? frames / seconds : 0.0, path);
+
+	for (int i = 0; i < RT_PROF_COUNT; i++)
+		Con_Printf ("  %-17s avg %.2f ms, max %.2f ms\n", RT_ProfSlotName (i),
+		            rt_bench_sum[i] / frames, rt_bench_max[i]);
+
+	return true;
 }
 
 
@@ -456,6 +692,30 @@ qboolean RT_StatsPanel (int panel)
 		return false;
 
 	return (CVAR_TO_UINT32 (rt_stats_panels) & (1u << (panel - 1))) != 0;
+}
+
+/*
+================
+RT_StatsPanelsFixup -- keeps the panels cvar a level
+
+The command writes the panels of a level, but the cvar is archived, and a value
+written before the command took levels can name a panel without the ones below
+it: an old "rt_stats 3" was the CPU panel alone, a mask of 4. The readout has no
+such state any more, so the panels below a set one are folded in --- the smallest
+level that shows everything the value asked for --- and the value is written
+back, which is what makes the config, the dump and the benchmark log name a
+level too. A value that is not one of the eight masks at all (a huge or negative
+number typed in the console) folds into the level of no panels, which is off.
+================
+*/
+static void RT_StatsPanelsFixup (cvar_t *var)
+{
+	const float    raw = var->value;
+	const unsigned mask = (raw > 0.0f && raw < 8.0f) ? (unsigned)raw : 0u;
+	const unsigned level = mask | (mask >> 1) | (mask >> 2);
+
+	if (mask != level)
+		Cvar_SetValueQuick (var, (float)level);
 }
 
 /*
@@ -535,7 +795,7 @@ void RT_StatsCapture (rt_stats_snapshot_t *snap)
 
 /*
 ================
-RT_StatsPrintPanels -- state line shared by rt_stats and its old spellings
+RT_StatsPrintPanels -- state line printed by rt_stats after a change or a query
 ================
 */
 static void RT_StatsPrintPanels (const char *prefix)
@@ -548,25 +808,24 @@ static void RT_StatsPrintPanels (const char *prefix)
 			on[n++] = (char)('0' + i);
 	on[n] = 0;
 
-	Con_Printf ("%s showing %s   (1 = ray counters, 2 = GPU pass timings, 3 = CPU profile)\n",
+	Con_Printf ("%s showing %s   (1 = ray counters, 2 = + GPU pass timings, 3 = + CPU profile, 0 = off)\n",
 	            prefix, n ? on : "nothing");
 }
 
 /*
 ================
-RT_Stats_f -- rt_stats 1,2,3
+RT_Stats_f -- rt_stats 1, 2 or 3
 
-Replaces the three readouts that used to be switched one by one: the argument
-lists the panels to show, so "rt_stats 1,2,3" shows all of them, "rt_stats 2"
-only the GPU timings and "rt_stats 0" hides the readout. Without an argument the
-current selection is printed.
+The argument is the level of the readout, and each level stands for the panels
+of the ones below it: 1 is the ray counters, 2 adds the GPU pass timings and 3
+adds the CPU frame profile, which is all of it; 0 hides the readout. Without an
+argument the panels in force are printed, and anything else prints the usage.
 ================
 */
 static void RT_Stats_f (void)
 {
-	unsigned int mask = 0;
-	qboolean     invalid = false;
-	int          i;
+	const char *arg;
+	int         level;
 
 	if (Cmd_Argc () < 2)
 	{
@@ -574,28 +833,19 @@ static void RT_Stats_f (void)
 		return;
 	}
 
-	for (i = 1; i < Cmd_Argc (); i++)
+	arg = Cmd_Argv (1);
+
+	if (Cmd_Argc () > 2 || arg[0] == 0 || arg[1] != 0 || arg[0] < '0' || arg[0] > '0' + RT_STATS_PROFILE)
 	{
-		const char *arg = Cmd_Argv (i);
-
-		for (; *arg; arg++)
-		{
-			const int panel = *arg - '0';
-
-			if (panel < 0 || panel > RT_STATS_PROFILE)
-				invalid = true;
-			else if (panel > 0)
-				mask |= 1u << (panel - 1);
-		}
-	}
-
-	if (invalid)
-	{
-		Con_Printf ("rt_stats: expected the panels 1, 2 and 3, like \"rt_stats 1,2,3\"\n");
+		Con_Printf ("rt_stats: expected one level 0 to %d: 1 = ray counters, 2 = + GPU pass timings, 3 = + CPU profile, 0 = off\n",
+		            (int)RT_STATS_PROFILE);
 		return;
 	}
 
-	Cvar_SetValueQuick (&rt_stats_panels, (float)mask);
+	level = arg[0] - '0';
+
+	// a level is the panels up to it, so the bits below the level's own are set too
+	Cvar_SetValueQuick (&rt_stats_panels, (float)((1u << level) - 1u));
 	RT_StatsPrintPanels ("rt_stats is");
 }
 
@@ -769,7 +1019,7 @@ static void RT_StatsDump_f (void)
 	Con_Printf ("rt_stats_dump: appending the frame to %s\n", rt_stats_dump_job.path);
 
 	if (!RT_StatsPanel (RT_STATS_RAYS) || !RT_StatsPanel (RT_STATS_PASSES))
-		Con_Printf ("rt_stats_dump: ray counters need rt_stats 1 and the GPU timings need rt_stats 2\n");
+		Con_Printf ("rt_stats_dump: the ray counters and the GPU timings are written when rt_stats 2 or higher is on\n");
 }
 
 
@@ -2629,6 +2879,11 @@ void VID_Init (void)
 		Cvar_RegisterVariable (&rt_light_report_filter);
 		Cvar_RegisterVariable (&rt_sky_sun_edit);
 
+		// The panels cvar is archived and used to hold any set of panels; the command
+		// takes a level now, so a value left by the old form --- or typed by hand --- is
+		// folded into the panels of the level it asks for as it is set.
+		Cvar_SetCallback (&rt_stats_panels, RT_StatsPanelsFixup);
+
 		// The colour settings are read per light, so they watch their cvar instead of
 		// comparing its string on every read. Registered after the cvars, which is
 		// where VID_Init has them.
@@ -2996,6 +3251,7 @@ enum
 	VID_OPT_GODRAYS_QUALITY,
 	VID_OPT_CLOUDS,
 	VID_OPT_CLOUDS_QUALITY,
+	VID_OPT_SMOKE_TYPE,
 	VID_OPT_REFLECT,
 	VID_OPT_DENOISER,
 	VID_OPT_TEXTURES,
@@ -3539,6 +3795,9 @@ static void VID_MenuKey (int key)
 		case VID_OPT_CLOUDS_QUALITY:
 			VID_Menu_StepQuality (&rt_sky_clouds_quality, -1);
 			break;
+		case VID_OPT_SMOKE_TYPE:
+			Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
+			break;
 		case VID_OPT_REFLECT:
 			VID_Menu_StepReflDepth (-1.0f);
 			break;
@@ -3633,6 +3892,9 @@ static void VID_MenuKey (int key)
 		case VID_OPT_CLOUDS_QUALITY:
 			VID_Menu_StepQuality (&rt_sky_clouds_quality, 1);
 			break;
+		case VID_OPT_SMOKE_TYPE:
+			Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
+			break;
 		case VID_OPT_REFLECT:
 			VID_Menu_StepReflDepth (1.0f);
 			break;
@@ -3685,6 +3947,9 @@ static void VID_MenuKey (int key)
 			break;
 		case VID_OPT_CLOUDS:
 			Cvar_SetValueQuick (&rt_sky_clouds, !CVAR_TO_BOOL (rt_sky_clouds));
+			break;
+		case VID_OPT_SMOKE_TYPE:
+			Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
 			break;
 		case VID_OPT_DENOISER:
 			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
@@ -3863,6 +4128,10 @@ static void VID_MenuDraw (cb_context_t *cbx)
 		case VID_OPT_CLOUDS_QUALITY:
 			M_Print (cbx, 16, y, "  Clouds quality");
 			M_Print (cbx, 184, y, VID_Menu_GetQualityName (&rt_sky_clouds_quality));
+			break;
+		case VID_OPT_SMOKE_TYPE:
+			M_Print (cbx, 16, y, "      Smoke type");
+			M_Print (cbx, 184, y, CVAR_TO_BOOL (r_smoke) ? "shader" : "classic");
 			break;
 		case VID_OPT_REFLECT:
 			{

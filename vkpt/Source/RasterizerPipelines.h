@@ -38,7 +38,8 @@ namespace vkpt
                                       std::string_view shaderNameVert,
                                       std::string_view shaderNameFrag,
                                       uint32_t         additionalAttachmentsCount,
-                                      bool             applyVertexColorGamma );
+                                      bool             applyVertexColorGamma,
+                                      bool             smokeVertexLayout = false );
 
         ~RasterizerPipelines();
 
@@ -95,6 +96,7 @@ namespace vkpt
 
         uint32_t applyVertexColorGamma;
         uint32_t additionalAttachmentsCount;
+        bool     smokeVertexLayout;
     };
 
 }

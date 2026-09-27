@@ -679,6 +679,13 @@ void vkpt::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
     for (uint32_t i = 0; i < count; i++)
     {
         const uint64_t uid = pLightUniqueIds[i];
+
+        if (uid == kLightUidHole)
+        {
+            dstLights[i] = uint32_t(LIGHT_INDEX_NONE);
+            continue;
+        }
+
         const uint64_t hash = uid * 0x9E3779B97F4A7C15ull;
         uint32_t       slot = static_cast<uint32_t>(hash >> 32) & (kCacheSize - 1);
 
@@ -891,7 +898,7 @@ void vkpt::LightManager::CreateDescriptors()
         b.binding = bnd;
         b.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         b.descriptorCount = 1;
-        b.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT;
+        b.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};

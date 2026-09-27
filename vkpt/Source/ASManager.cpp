@@ -213,7 +213,7 @@ void ASManager::CreateDescriptors()
         bnd.binding = BINDING_ACCELERATION_STRUCTURE_MAIN;
         bnd.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
         bnd.descriptorCount = 1;
-        bnd.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+        bnd.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_VERTEX_BIT;
 
         VkDescriptorSetLayoutCreateInfo layoutInfo = {};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

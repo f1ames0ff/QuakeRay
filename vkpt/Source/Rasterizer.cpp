@@ -36,6 +36,8 @@ struct RasterizedPushConst
     float    c[ 4 ];
     uint32_t t;
     uint32_t e;
+    float    smokeNoise[ 4 ];
+    float    smokeLook[ 4 ];
 
     explicit RasterizedPushConst( const RasterizedDataCollector::DrawInfo& info,
                                   const float*                             defaultViewProj )
@@ -55,6 +57,9 @@ struct RasterizedPushConst
         memcpy( c, info.color.Get(), 4 * sizeof( float ) );
         t     = info.textureIndex;
         e     = info.emissionTextureIndex;
+
+        memcpy( smokeNoise, info.smokeNoise.Get(), 4 * sizeof( float ) );
+        memcpy( smokeLook,  info.smokeLook.Get(),  4 * sizeof( float ) );
     }
 };
 
@@ -62,7 +67,9 @@ static_assert( offsetof( RasterizedPushConst, vp ) == 0 );
 static_assert( offsetof( RasterizedPushConst, c ) == 64 );
 static_assert( offsetof( RasterizedPushConst, t ) == 80 );
 static_assert( offsetof( RasterizedPushConst, e ) == 84 );
-static_assert( sizeof( RasterizedPushConst ) == 88 );
+static_assert( offsetof( RasterizedPushConst, smokeNoise ) == 88 );
+static_assert( offsetof( RasterizedPushConst, smokeLook ) == 104 );
+static_assert( sizeof( RasterizedPushConst ) == 120 );
 
 
 
@@ -77,7 +84,9 @@ Rasterizer::Rasterizer( VkDevice                                 _device,
                         std::shared_ptr< MemoryAllocator >       _allocator,
                         std::shared_ptr< Framebuffers >          _storageFramebuffers,
                         std::shared_ptr< CommandBufferManager >  _cmdManager,
-                        const RgInstanceCreateInfo&              _instanceInfo )
+                        const RgInstanceCreateInfo&              _instanceInfo,
+                        VkDescriptorSetLayout                    _tlasSetLayout,
+                        VkDescriptorSetLayout                    _lightSetLayout )
     : device( _device )
     , rasterPassPipelineLayout( VK_NULL_HANDLE )
     , swapchainPassPipelineLayout( VK_NULL_HANDLE )
@@ -98,6 +107,8 @@ Rasterizer::Rasterizer( VkDevice                                 _device,
         _tonemapping->GetDescSetLayout(),
         _volumetric->GetDescSetLayout(),
         storageFramebuffers->GetDescSetLayout(),
+        _tlasSetLayout,
+        _lightSetLayout,
     };
     CreatePipelineLayouts( layouts, std::size( layouts ), _textureManager->GetDescSetLayout() );
 
@@ -216,6 +227,7 @@ void Rasterizer::DrawSkyToAlbedo( VkCommandBuffer                          cmd,
 
     const DrawParams params = {
         .pipelines       = rasterPass->GetSkyRasterPipelines(),
+        .pSmokePipelines = nullptr,
         .drawInfos       = collector->GetSkyDrawInfos(),
         .renderPass      = rasterPass->GetSkyRenderPass(),
         .framebuffer     = rasterPass->GetSkyFramebuffer( frameIndex ),
@@ -238,6 +250,8 @@ void Rasterizer::DrawToFinalImage( VkCommandBuffer                          cmd,
                                    const std::shared_ptr< GlobalUniform >&  uniform,
                                    const std::shared_ptr< Tonemapping >&    tonemapping,
                                    const std::shared_ptr< Volumetric >&     volumetric,
+                                   VkDescriptorSet                          tlasSet,
+                                   VkDescriptorSet                          lightSet,
                                    const float*                             view,
                                    const float*                             proj,
                                    const RgFloat2D&                         jitter,
@@ -249,7 +263,10 @@ void Rasterizer::DrawToFinalImage( VkCommandBuffer                          cmd,
 
     typedef FramebufferImageIndex FI;
     FI                            fs[] = { FI::FB_IMAGE_INDEX_DEPTH_NDC, FI::FB_IMAGE_INDEX_FINAL,
-                                           FI::FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR };
+                                           FI::FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR,
+                                           FI::FB_IMAGE_INDEX_DEPTH_WORLD,
+                                           FI::FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_S_H,
+                                           FI::FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_C_O_C_G };
     storageFramebuffers->BarrierMultiple( cmd, frameIndex, fs );
 
 
@@ -276,10 +293,13 @@ void Rasterizer::DrawToFinalImage( VkCommandBuffer                          cmd,
         tonemapping->GetDescSet( frameIndex ),
         volumetric->GetDescSet( frameIndex ),
         storageFramebuffers->GetDescSet( frameIndex ),
+        tlasSet,
+        lightSet,
     };
 
     const DrawParams params = {
         .pipelines       = rasterPass->GetRasterPipelines(),
+        .pSmokePipelines = &rasterPass->GetSmokeRasterPipelines(),
         .drawInfos       = collector->GetRasterDrawInfos(),
         .renderPass      = rasterPass->GetWorldRenderPass(),
         .framebuffer     = rasterPass->GetWorldFramebuffer( frameIndex ),
@@ -318,6 +338,7 @@ void Rasterizer::DrawToSwapchain( VkCommandBuffer                          cmd,
 
     const DrawParams params = {
         .pipelines       = swapchainPass->GetSwapchainPipelines(),
+        .pSmokePipelines = nullptr,
         .drawInfos       = collector->GetSwapchainDrawInfos(),
         .renderPass      = swapchainPass->GetSwapchainRenderPass(),
         .framebuffer     = swapchainPass->GetSwapchainFramebuffer( imageToDrawIn, frameIndex ),
@@ -373,7 +394,7 @@ void Rasterizer::Draw(VkCommandBuffer cmd, uint32_t frameIndex, const DrawParams
     if (draw)
     {
         VkPipeline curPipeline = VK_NULL_HANDLE;
-        BindPipelineIfNew(cmd, drawParams.drawInfos[0], drawParams.pipelines, curPipeline);
+        BindPipelineIfNew(cmd, drawParams.drawInfos[0], drawParams, curPipeline);
 
 
         VkDeviceSize offset = 0;
@@ -394,7 +415,7 @@ void Rasterizer::Draw(VkCommandBuffer cmd, uint32_t frameIndex, const DrawParams
         for (const auto &info : drawParams.drawInfos)
         {
             SetViewportIfNew(cmd, info, defaultViewport, curViewport);
-            BindPipelineIfNew(cmd, info, drawParams.pipelines, curPipeline);
+            BindPipelineIfNew(cmd, info, drawParams, curPipeline);
 
             // push const
             {
@@ -446,8 +467,14 @@ void Rasterizer::SetViewportIfNew(VkCommandBuffer cmd, const RasterizedDataColle
 }
 
 void Rasterizer::BindPipelineIfNew(VkCommandBuffer cmd, const RasterizedDataCollector::DrawInfo &info,
-    const std::shared_ptr<RasterizerPipelines> &pipelines, VkPipeline &curPipeline)
+    const DrawParams &drawParams, VkPipeline &curPipeline)
 {
+    const bool smoke = (info.pipelineState & RG_RASTERIZED_GEOMETRY_STATE_SMOKE) != 0 &&
+                       drawParams.pSmokePipelines != nullptr &&
+                       *drawParams.pSmokePipelines != nullptr;
+
+    const std::shared_ptr<RasterizerPipelines> &pipelines = smoke ? *drawParams.pSmokePipelines : drawParams.pipelines;
+
     pipelines->BindPipelineIfNew(cmd, curPipeline, info.pipelineState, info.blendFuncSrc, info.blendFuncDst);
 }
 
