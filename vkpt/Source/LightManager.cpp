@@ -263,7 +263,10 @@ static vkpt::ShLightEncoded EncodeAsSpotLight(const RgSpotLightUploadInfo &info)
     float area = static_cast<float>(vkpt::RG_PI) * radius * radius;
 
     float cosAngleInner = std::cos(std::min(info.angleInner, info.angleOuter));
-    float cosAngleOuter = std::cos(info.angleOuter);
+    const float cosAngleOuter = std::cos(info.angleOuter);
+    /* The cone edge is a smoothstep, and one with equal edges is undefined, so the inner
+       edge always stays strictly inside the outer one. */
+    cosAngleInner = std::max(cosAngleInner, cosAngleOuter + 1e-6f);
 
 
     vkpt::ShLightEncoded lt = {};

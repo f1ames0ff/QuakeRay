@@ -65,7 +65,17 @@ typedef struct
 
 #define SIGNONS 4 // signon messages to receive before connected
 
-#define MAX_DLIGHTS 64 // johnfitz -- was 32
+#define MAX_DLIGHTS 128 // qray -- the editor's lights share the pool with the effects (was 64)
+
+/* How a dlight is shaped. A spherical light is what every effect has always made; a spot
+   ("dlightspot") is the same light with a beam: its type says so and the beam fields below
+   carry the axis and the half-angles. */
+typedef enum
+{
+	DLIGHT_TYPE_SPHERE = 0,
+	DLIGHT_TYPE_SPOT,
+} dlight_type_t;
+
 typedef struct
 {
 	vec3_t origin;
@@ -75,7 +85,26 @@ typedef struct
 	float  minlight; // don't add when contributing less
 	int    key;
 	vec3_t color; // johnfitz -- lit support via lordhavoc
+
+	/* The beam of a spot light: the axis, and the half-angles in radians the beam is cut off
+	   at. The intensity is full up to angleInner and falls to nothing at angleOuter, so 0 as
+	   the inner angle is the softest edge. A spherical light leaves the type at
+	   DLIGHT_TYPE_SPHERE and the three fields zero, and no path reads them then. */
+	dlight_type_t type;
+	vec3_t        dir;
+	float         angleOuter;
+	float         angleInner;
 } dlight_t;
+
+/* The spot flavour of a dlight, what the editor's spot property creates: the same object
+   with its type set to DLIGHT_TYPE_SPOT and the beam fields filled in. */
+typedef dlight_t dlightspot_t;
+
+/* The keys of the lights that are the engine's own rather than an emitter's: entity effects
+   take 1..num_entities and the CSQC trails -1..-num_entities, so these take the far end of
+   the range and no effect can take their slots back. An authored light adds its index. */
+#define DLIGHT_KEY_TEST     (INT_MIN)     // the dlightspot command: one light per run
+#define DLIGHT_KEY_AUTHORED (INT_MIN / 2) // the editor's placed lights: + the index
 
 #define MAX_BEAMS 32 // johnfitz -- was 24
 typedef struct
@@ -328,6 +357,8 @@ extern int          cl_maxvisedicts; // extended if we exceeded it the previous 
 // cl_main
 //
 dlight_t *CL_AllocDlight (int key);
+/* The same, as a spot: the caller fills in dir/angleOuter/angleInner on what it returns. */
+dlightspot_t *CL_AllocDlightSpot (int key);
 void      CL_DecayLights (void);
 
 void CL_RelinkEntities (void);

@@ -344,11 +344,13 @@ void CL_PrintEntities_f (void)
 
 /*
 ===============
-CL_AllocDlight
+CL_AllocDlightOfType
 
+The slot a light of this key takes: the one that key already owns, else a free one, else the
+first. What the slot held before is wiped, so a spot never inherits a sphere's leftovers.
 ===============
 */
-dlight_t *CL_AllocDlight (int key)
+static dlight_t *CL_AllocDlightOfType (int key, dlight_type_t type)
 {
 	int       i;
 	dlight_t *dl;
@@ -363,6 +365,7 @@ dlight_t *CL_AllocDlight (int key)
 			{
 				memset (dl, 0, sizeof (*dl));
 				dl->key = key;
+				dl->type = type;
 				RT_INIT_DEFAULT_LIGHT_COLOR (dl->color);
 				return dl;
 			}
@@ -377,6 +380,7 @@ dlight_t *CL_AllocDlight (int key)
 		{
 			memset (dl, 0, sizeof (*dl));
 			dl->key = key;
+			dl->type = type;
 			RT_INIT_DEFAULT_LIGHT_COLOR (dl->color);
 			return dl;
 		}
@@ -385,8 +389,31 @@ dlight_t *CL_AllocDlight (int key)
 	dl = &cl_dlights[0];
 	memset (dl, 0, sizeof (*dl));
 	dl->key = key;
+	dl->type = type;
 	RT_INIT_DEFAULT_LIGHT_COLOR (dl->color);
 	return dl;
+}
+
+/*
+===============
+CL_AllocDlight
+===============
+*/
+dlight_t *CL_AllocDlight (int key)
+{
+	return CL_AllocDlightOfType (key, DLIGHT_TYPE_SPHERE);
+}
+
+/*
+===============
+CL_AllocDlightSpot
+
+A dlight that shines in a cone. The caller fills in dir, angleOuter and angleInner.
+===============
+*/
+dlightspot_t *CL_AllocDlightSpot (int key)
+{
+	return CL_AllocDlightOfType (key, DLIGHT_TYPE_SPOT);
 }
 
 /*
