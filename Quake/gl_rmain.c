@@ -447,6 +447,52 @@ static void RT_UploadAllDlights ()
 	}
 	}
 
+	// The lights the light editor authored (its Custom tab). Their file is read
+	// once at world load and they do not move on their own, so the renderer keeps
+	// their slots: its light lists change only when the editor moves or edits one.
+	{
+		int                custom_count = 0;
+		rt_custom_light_t *custom = RT_CustomLights (&custom_count);
+
+		for (int i = 0; i < custom_count; i++)
+		{
+			const rt_custom_light_t *l = &custom[i];
+			float                    intensity = (l->intensity > 0.0f) ? l->intensity : 1.0f;
+			vec3_t                   position, color;
+			uint64_t                 uid = (uint64_t)UINT32_MAX + 1 + (uint64_t)i;
+
+			VectorCopy (l->origin, position);
+			if (l->has_offset)
+			{
+				position[0] += l->offset[0];
+				position[1] += l->offset[1];
+				position[2] += l->offset[2];
+			}
+
+			VectorCopy (l->color, color);
+			if (l->style > 0 && l->style < RT_CUSTOM_STYLE_COUNT)
+				intensity *= CLAMP (0.0f, (float)d_lightstylevalue[l->style] / 256.0f, 1.0f);
+			VectorScale (color, intensity, color);
+			RT_FIXUP_LIGHT_INTENSITY (color, true);
+
+			RgSphericalLightUploadInfo info = {
+				.uniqueID = uid,
+				.color = {color[0], color[1], color[2]},
+				.position = {position[0], position[1], position[2]},
+				.radius = METRIC_TO_QUAKEUNIT (l->radius),
+			};
+
+			RgResult r = rgUploadSphericalLight (vulkan_globals.instance, &info);
+			RG_CHECK (r);
+
+			RT_TRACK_Light (info.position.data, info.radius, info.color.data,
+			                uid, RT_LIGHT_KIND_CUSTOM, "");
+
+			if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
+				RT_ClusterLightAdd (uid, position, RT_ClusterLightReach ());
+		}
+	}
+
 	if (CVAR_TO_FLOAT (rt_flashlight) > 0.1f)
 	{
 		vec3_t pos;
