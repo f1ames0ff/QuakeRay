@@ -186,6 +186,13 @@ private:
 
     void FillMatchPrev(uint32_t curFrameIndex, LightArrayIndex lightIndexInCurFrame, UniqueLightID uniqueID, uint32_t ordinal);
 
+    // Whether the words of this slot's last publication are the ones the list device buffers hold.
+    bool DeviceHoldsPublishedList(uint32_t frameIndex) const;
+
+    /* Notes the publication of this slot as the one the list device buffers hold. Called on the
+       copy paths only, after the copies of this slot's staging have been recorded. */
+    void RecordDeviceListPublication(uint32_t frameIndex);
+
     void CreateDescriptors();
     void UpdateDescriptors(uint32_t frameIndex);
 
@@ -213,7 +220,9 @@ private:
        are kept per frame slot, as the registry the places belong to is: an AutoBuffer keeps one
        staging buffer per frame in flight and a single device buffer, so the words a publication is
        written into belong to the slot that made it, and the copy that follows it carries the words
-       that slot published (`publishedListWords`) two frames later. */
+       that slot published (`publishedListWords`) two frames later. That single device buffer is
+       what the record below is for: a note matching proves the words of this slot's staging, not
+       the words of the device, which the other slot's copy may have replaced with its own. */
     bool     lightListCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
     bool     publishedListValid[MAX_FRAMES_IN_FLIGHT] = {};
     uint64_t publishedListGeneration[MAX_FRAMES_IN_FLIGHT] = {};
@@ -223,6 +232,20 @@ private:
     // The place in the light array each of those ids was given, which together with the order is
     // what the ids of a publication resolve to.
     std::vector<uint32_t> publishedLightIndex[MAX_FRAMES_IN_FLIGHT];
+
+    /* The publication whose words the two list device buffers hold, in the shape of the notes
+       above. The buffers are shared by every frame slot, so the note of one slot does not say what
+       the device holds: the other slot may have copied a publication of its own over them since,
+       and a publication of the same generation can still carry different words, because the
+       generation names the composition and not the light-array places its ids were resolved to.
+       The copy paths record the note they copied from here, and SetClusterLightLists re-copies the
+       staged words of a matching note when the device holds another publication. */
+    bool     deviceListValid = false;
+    uint64_t deviceListGeneration = 0;
+    uint32_t deviceListClusters = 0;
+    uint32_t deviceListWords = 0;
+    std::vector<uint64_t> deviceLightOrder;
+    std::vector<uint32_t> deviceLightIndex;
 
     Buffer lightStats;
 

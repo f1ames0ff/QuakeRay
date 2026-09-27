@@ -353,6 +353,11 @@ void vkpt::LightManager::Reset()
         clusterSkyVisCopyPending[i] = true;
     }
 
+    /* The device list buffers still hold the words of the scene that is gone, and every slot has
+       to publish again whatever it gets: the record of what they hold must not outlive the words
+       it described. */
+    deviceListValid = false;
+
     /* No list of the scene to come is known yet, so the statistics fill has to keep covering the
        whole range until one is published. */
     statsClusterTarget = Q2_MAX_CLUSTERS;
@@ -440,6 +445,32 @@ bool vkpt::LightManager::FindRegisteredLight(uint32_t frameIndex, uint64_t uniqu
         outArrayIndex = registry[frameIndex][slot].arrayIndex;
     }
     return found;
+}
+
+bool vkpt::LightManager::DeviceHoldsPublishedList(uint32_t frameIndex) const
+{
+    /* The note of a slot says what its own staging buffer holds; the list device buffers are one
+       buffer shared by every slot, so it does not say what they hold: the copy of another slot's
+       publication may have landed there since. The two are the same only when the whole
+       publication agrees - the composition, the count and the places every id was resolved to. */
+    return deviceListValid &&
+           deviceListGeneration == publishedListGeneration[frameIndex] &&
+           deviceListClusters == publishedListClusters[frameIndex] &&
+           deviceListWords == publishedListWords[frameIndex] &&
+           deviceLightOrder == publishedLightOrder[frameIndex] &&
+           deviceLightIndex == publishedLightIndex[frameIndex];
+}
+
+void vkpt::LightManager::RecordDeviceListPublication(uint32_t frameIndex)
+{
+    // The device list buffers hold this publication from here on: the words are the ones the
+    // recorded copy read from this slot's staging.
+    deviceListValid = true;
+    deviceListGeneration = publishedListGeneration[frameIndex];
+    deviceListClusters = publishedListClusters[frameIndex];
+    deviceListWords = publishedListWords[frameIndex];
+    deviceLightOrder = publishedLightOrder[frameIndex];
+    deviceLightIndex = publishedLightIndex[frameIndex];
 }
 
 void vkpt::LightManager::AddLight(uint32_t frameIndex, uint64_t uniqueId, const vkpt::ShLightEncoded &encodedLight)
@@ -597,6 +628,10 @@ void vkpt::LightManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameInde
            slot has published a count of its own. */
         lightListLights->CopyFromStaging(cmd, frameIndex, sizeof(uint32_t) * publishedListWords[frameIndex]);
 
+        /* The copies above carry the words of this slot's note, so the device list buffers are
+           about to hold that publication: the record has to follow the copy or a matching note
+           would keep skipping the copy the other slot's publication made necessary. */
+        RecordDeviceListPublication(frameIndex);
         lightListCopyPending[frameIndex] = false;
     }
 
@@ -686,7 +721,15 @@ void vkpt::LightManager::ConsumeFrameCopies(uint32_t frame)
        recorded but never submitted is not reachable in the current skeleton
        (NvrhiFrameSkeleton::Render always ends with EndSlot). The light-array prefix has no flag
        and keeps its every-frame copy. */
-    lightListCopyPending[frame] = false;
+    if (lightListCopyPending[frame])
+    {
+        /* The caller recorded the list copies the flag described (a pending list publication
+           always has a non-zero offsets copy), so the shared device list buffers hold this slot's
+           publication now. The record is what lets a matching note of either slot skip its copy
+           of the same words, and only that: words of the same note are the same words. */
+        RecordDeviceListPublication(frame);
+        lightListCopyPending[frame] = false;
+    }
     clusterSkyVisCopyPending[frame] = false;
 }
 
@@ -740,6 +783,19 @@ void vkpt::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
 
     if (sameAsPublished)
     {
+        /* The note says the staging of this slot still holds these words, which is not the same as
+           the device holding them: the two list device buffers are one buffer shared by every
+           frame slot, and the other slot can have copied a publication of its own over them since
+           - one of the same generation even, because the generation names the composition and not
+           the light-array places the composition's ids were resolved to, and those places are a
+           property of the frame that published. The frame would then read the lists with words
+           that name other places, so the copy of this slot's staging has to run again; the staging
+           was not rewritten since the publication that set the note, and the words to copy are the
+           note's count, so nothing else of the publication has to be made again. */
+        if (!DeviceHoldsPublishedList(frameIndex))
+        {
+            lightListCopyPending[frameIndex] = true;
+        }
         return;
     }
 
