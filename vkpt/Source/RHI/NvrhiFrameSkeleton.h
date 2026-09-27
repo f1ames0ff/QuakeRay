@@ -44,6 +44,7 @@ class RhiDebugTracePass;
 class RhiDecalPass;
 class RhiFsrPass;
 class RhiRasterOverlayPass;
+class RhiRasterSkyPass;
 class RhiRtComposePass;
 class RhiRtDirectPass;
 class RhiRtGodRaysPass;
@@ -124,6 +125,14 @@ public:
         float jitter[2] = {};
         float skyViewerPos[3] = {};
         bool applyVertexColorGamma = false;
+
+        // -- the raster sky's cube half (RHI/RhiRasterSkyPass.h) --
+        // The six per-face view-projections of GlobalUniform::viewProjCubemap (ShaderCommonC.h:318),
+        // the same bytes the legacy multiview vertex shader reads by gl_ViewIndex
+        // (RsRasterizerMultiview.vert:55) and the host fills in FillUniform
+        // (VulkanDevice.cpp:258-263). They go to RhiRasterSkyPass::Render, one column-major mat4 per
+        // cube face, face f for array slice f; the ALBEDO half does not read them.
+        float skyFaceViewProj[6][16] = {};
 
         // -- the rasterized world sub-pass --
         const RasterizedDataCollector::DrawInfo *worldDraws = nullptr;
@@ -290,6 +299,11 @@ public:
     // the primary whenever the uniform selects SKY_TYPE_PROCEDURAL, from the params the frame inputs
     // carry, so the RT passes' set 8 samples a written cube. Optional: a null one leaves the passes'
     // placeholders in place.
+    // 'pRasterSkyPass' is the host's raster sky pass (RhiRasterSkyPass, RHI/RhiRasterSkyPass.h): the
+    // cube half of SKY_TYPE_RASTERIZED_GEOMETRY. When it is non-null, the traced chain records its
+    // draws - into the cube the procedural sky pass owns, so that pass has to outlive and be
+    // destroyed after this one - before the primary, next to the sky pass's raster ALBEDO half,
+    // whenever the uniform selects that sky type. Optional: a null one leaves the cube unwritten.
     // 'pRasterOverlayPass' is the host's raster overlay pass (RhiRasterOverlayPass,
     // RHI/RhiRasterOverlayPass.h): when it is non-null, the compose call's window invokes it over
     // the frame's DEFAULT draw list into FINAL and SCREEN_EMISSION, exactly where the legacy frame
@@ -325,6 +339,7 @@ public:
                                 RhiRtComposePass *pRtComposePass,
                                 RhiRtReflRefrPass *pReflRefrPass,
                                 RhiProceduralSkyPass *pProceduralSkyPass,
+                                RhiRasterSkyPass *pRasterSkyPass,
                                 RhiRasterOverlayPass *pRasterOverlayPass,
                                 RhiDecalPass *pDecalPass,
                                 RhiFsrPass *pFsrPass,
@@ -362,7 +377,9 @@ public:
     //  - Traced: the engine's primary-visibility raygen writes the slot's checkerboard G-buffer
     //    (ALBEDO included) and, from A4.2 on, the direct-lighting pass adds the light term; the
     //    present composes the two and follows.
-    // The raster sky/world sub-passes are not recorded in the two traced modes.
+    // The raster world sub-pass is not recorded in the two traced modes; the raster sky's ALBEDO
+    // half is, for the SKY_TYPE_RASTERIZED_GEOMETRY frame only, together with the raster sky pass's
+    // cube half right before the primary (see Render's implementation).
     // 'semaphoreToWait' is the semaphore the swapchain signals on acquire, 'semaphoreToSignal' is
     // the one the presentation engine waits on. Returns false if the pass is unavailable.
     bool Render(const Swapchain *pSwapchain, uint32_t frameIndex, const SkyFrameInputs &sky,
@@ -469,6 +486,13 @@ private:
     // writes the cube the RT passes' set 8 samples. Not owned; null when the host's creation failed,
     // in which case the passes sample their placeholders.
     RhiProceduralSkyPass *proceduralSkyPass = nullptr;
+
+    // The host's raster sky pass (RhiRasterSkyPass, RHI/RhiRasterSkyPass.h), driven in the traced
+    // chain right after the procedural-sky block and before the primary whenever the uniform
+    // selects SKY_TYPE_RASTERIZED_GEOMETRY: it writes the raster sky's cube (the procedural sky
+    // pass's image) with the frame's sky draw list from `skyFaceViewProj`. Not owned; null when the
+    // host's creation failed, in which case the cube stays unwritten.
+    RhiRasterSkyPass *rasterSkyPass = nullptr;
 
     // The host's raster overlay pass (RhiRasterOverlayPass, RHI/RhiRasterOverlayPass.h), invoked by
     // the compose call's window over the frame's DEFAULT draw list: it writes FINAL and

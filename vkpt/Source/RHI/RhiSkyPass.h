@@ -65,6 +65,19 @@ class RhiTextureTable;
 //    before the first draw - NVRHI's loadOp is always LOAD (vulkan-graphics.cpp:80), so the clear
 //    the legacy sky render pass does (RasterPass.cpp:355) is an explicit command here.
 //
+// The viewport convention, and why Render takes a flag for it: the pass draws into the engine's own
+// images, whose contents other parts of the engine read back in the engine's convention - the traced
+// ALBEDO is what the primary raygen's storeSky reads as the raster sky under
+// SKY_TYPE_RASTERIZED_GEOMETRY (RaygenPrimary.hlsli:213-264) - while the raster mode's consumers
+// (this skeleton's present, the raster overlay) are RHI-only and follow NVRHI's DX-coordinate
+// convention. The legacy engine sets a positive-height VkViewport, (x, y, w, +h)
+// (Rasterizer.cpp:356, :389-396), while the pinned Vulkan backend converts every NVRHI viewport to
+// (minX, maxY, w, -h) (VKViewportWithDXCoords, vulkan-graphics.cpp:528-531); Render's trailing
+// 'legacyViewport' selects the inverted rectangle that makes the backend emit the legacy
+// positive-height viewport, the same mapping RhiDecalPass, RhiUiPass, RhiRasterOverlayPass and
+// RhiRasterSkyPass carry. The default, false, leaves the NVRHI viewport the raster-mode callers use
+// today in place, so the traced call has to ask for the legacy convention explicitly.
+//
 // What it needs from the host:
 //  - the shared RHI texture table and the RHI frame context (the same objects the frame skeleton
 //    uses), and the engine shader folder path, in Create();
@@ -224,10 +237,19 @@ public:
     // has no geometry buffers, or has no camera. When the world sub-pass is enabled, the caller
     // records RenderWorld with the frame's raster draw list on the same command list right after
     // this call, before the present.
+    //
+    // 'legacyViewport' selects the viewport convention of the target: false keeps NVRHI's DX
+    // rectangle (the raster-mode default, unchanged), true emits the legacy engine's positive-height
+    // VkViewport through the mapping the class comment describes. The traced frame's ALBEDO half
+    // passes true: the primary raygen reads that image back as the engine's raster ALBEDO
+    // (RaygenPrimary.hlsli:227-237), so it has to see what the legacy DrawSkyToAlbedo left, and the
+    // traced present mirrors its sample coordinate for exactly that convention
+    // (RhiPresent.frag.hlsl:82-88).
     void Render(nvrhi::ICommandList *pCommandList,
                 const RasterizedDataCollector::DrawInfo *pDraws,
                 uint32_t drawCount,
-                bool applyVertexColorGamma);
+                bool applyVertexColorGamma,
+                bool legacyViewport = false);
 
     // Records the world draws into the same target and depth Render just used: binds the texture
     // table as set 0, the uniform as set 1, the slot's tonemapping buffer as set 2, the real empty

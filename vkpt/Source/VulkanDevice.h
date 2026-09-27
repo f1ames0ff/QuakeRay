@@ -76,6 +76,7 @@ class RhiDecalPass;
 class RhiFsrPass;
 class RhiProceduralSkyPass;
 class RhiRasterOverlayPass;
+class RhiRasterSkyPass;
 class RhiRtComposePass;
 class RhiRtDirectPass;
 class RhiRtGodRaysPass;
@@ -333,6 +334,15 @@ private:
     // images and the sampler; the primary, indirect and reflect/refract passes bind them in set 8.
     // Null when the creation failed; the passes then keep their 1x1 placeholders.
     std::shared_ptr<RhiProceduralSkyPass>   rhiProceduralSkyPass;
+
+    // The RHI raster sky pass (RHI/RhiRasterSkyPass.h): the cube half of
+    // SKY_TYPE_RASTERIZED_GEOMETRY, the ported `Rasterizer::DrawSkyToCubemap` ->
+    // `RenderCubemap::Draw` pair. It writes the procedural sky pass's `renderCubemap` - the cube the
+    // primary, indirect and reflect/refract passes sample in set 8 - from this frame's sky draw
+    // list, so it borrows that pass's image and is destroyed before it. It binds the same geometry
+    // wraps the sky pass receives. Null when the creation failed; the traced frame is then drawn
+    // without the raster cube (its reflections keep the unwritten cube).
+    std::shared_ptr<RhiRasterSkyPass>       rhiRasterSkyPass;
 
     // The RHI raster overlay pass of A5.5 (RHI/RhiRasterOverlayPass.h): the ported RsWorld pass over
     // the collector's DEFAULT list into FINAL/SCREEN_EMISSION, recorded inside the compose chain's

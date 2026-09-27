@@ -1315,6 +1315,11 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     sky.jitter[1] = globalUniform->jitterY;
     memcpy(sky.skyViewerPos, skyViewerPosition.data, sizeof(sky.skyViewerPos));
     sky.applyVertexColorGamma = rasterizedVertexColorGamma;
+    // The raster sky's cube half: the six per-face view-projections the legacy multiview vertex
+    // shader reads by gl_ViewIndex (RsRasterizerMultiview.vert:55), filled by FillUniform from the
+    // same sky viewer position (VulkanDevice.cpp:258-263). RhiRasterSkyPass takes the same bytes;
+    // the ALBEDO half does not read them.
+    memcpy(sky.skyFaceViewProj, globalUniform->viewProjCubemap, sizeof(sky.skyFaceViewProj));
     sky.worldDraws = worldDraws.data();
     sky.worldDrawCount = static_cast<uint32_t>(worldDraws.size());
 

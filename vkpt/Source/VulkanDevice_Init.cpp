@@ -39,6 +39,7 @@
 #include "RHI/RhiFsrPass.h"
 #include "RHI/RhiProceduralSkyPass.h"
 #include "RHI/RhiRasterOverlayPass.h"
+#include "RHI/RhiRasterSkyPass.h"
 #include "RHI/RhiRtComposePass.h"
 #include "RHI/RhiRtDirectPass.h"
 #include "RHI/RhiRtGodRaysPass.h"
@@ -443,6 +444,25 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                     Print("Warning: RHI: the procedural sky pass is unavailable, the RT passes keep the placeholder cubemaps");
                 }
 
+                // The raster sky pass (RHI/RhiRasterSkyPass.h): the cube half of
+                // SKY_TYPE_RASTERIZED_GEOMETRY, the ported `Rasterizer::DrawSkyToCubemap` ->
+                // `RenderCubemap::Draw` pair. It borrows the `renderCubemap` the pass above owns -
+                // the cube the primary, indirect and reflect/refract passes sample in set 8 - so it
+                // is created only after that pass and destroyed before it. A failure leaves the
+                // pointer null and the frame's reflections keep the unwritten cube.
+                if (rhiProceduralSkyPass != nullptr && rhiProceduralSkyPass->IsCreated())
+                {
+                    rhiRasterSkyPass = std::make_shared<RhiRasterSkyPass>();
+                    if (!rhiRasterSkyPass->Create(nvrhi->GetDevice(), rhiTextureTable.get(),
+                                                  info->pShaderFolderPath,
+                                                  rhiProceduralSkyPass->GetCubemapTexture(),
+                                                  [this](const char *pMessage) { Print(pMessage); }))
+                    {
+                        rhiRasterSkyPass.reset();
+                        Print("Warning: RHI: the raster sky pass is unavailable, the raster sky cube is not written");
+                    }
+                }
+
                 // The FSR upscaler module of A5.7 (RHI/RhiFsrPass.h): drives the engine's own
                 // FidelityFX FSR 3.1 context on the RHI list, replacing the TAAU when the default
                 // upscaler is selected. A failure leaves the pointer null and the frame keeps the
@@ -703,6 +723,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 rhiRtComposePass.get(),
                 rhiRtReflRefrPass.get(),
                 rhiProceduralSkyPass.get(),
+                rhiRasterSkyPass.get(),
                 rhiRasterOverlayPass.get(),
                 rhiDecalPass.get(),
                 rhiFsrPass.get(),
@@ -768,6 +789,14 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 else
                 {
                     skyPass->SetGeometryBuffers(vertexBuffer, indexBuffer);
+
+                    // The raster sky's cube half binds the same geometry: its Render consumes the
+                    // same frame's sky draw list (RasterizedDataCollector::GetSkyDrawInfos), so it
+                    // gets the same two wraps.
+                    if (rhiRasterSkyPass != nullptr && rhiRasterSkyPass->IsCreated())
+                    {
+                        rhiRasterSkyPass->SetGeometryBuffers(vertexBuffer, indexBuffer);
+                    }
                 }
             }
         }
@@ -792,8 +821,8 @@ VulkanDevice::~VulkanDevice()
     // layout handles, so they go before the primary; the UI pass, the raster overlay, the decal
     // pass and the FSR pass borrow the table and the frame context only (the compose calls the
     // overlay back), and the god-rays pass borrows the shadow map's texture and sampler, so it goes
-    // before the shadow-map pass. The procedural sky owns the cubes the three RT passes' sets
-    // reference, so it goes after them.
+    // before the shadow-map pass. The raster sky borrows the procedural sky's cube, so it goes
+    // before the procedural sky, which owns the cubes the three RT passes' sets reference.
     rhiDebugTracePass.reset();
     rhiRtComposePass.reset();
     rhiRtGodRaysPass.reset();
@@ -806,6 +835,7 @@ VulkanDevice::~VulkanDevice()
     rhiRasterOverlayPass.reset();
     rhiDecalPass.reset();
     rhiFsrPass.reset();
+    rhiRasterSkyPass.reset();
     rhiProceduralSkyPass.reset();
     rhiAccelStructs.reset();
 

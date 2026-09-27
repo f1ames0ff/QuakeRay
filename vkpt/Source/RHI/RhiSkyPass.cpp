@@ -256,6 +256,18 @@ static_assert(offsetof(SkyPushConstants, t) == 80);
 static_assert(offsetof(SkyPushConstants, e) == 84);
 static_assert(sizeof(SkyPushConstants) == 88);
 
+// The legacy viewport of the engine-convention targets, as an NVRHI viewport that makes the Vulkan
+// backend emit the legacy's own VkViewport. The legacy `vkCmdSetViewport` takes (x, y, w, +h)
+// (Rasterizer.cpp:356, :389-396), while `VKViewportWithDXCoords` (vulkan-graphics.cpp:528-531)
+// computes `(minX, maxY, maxX - minX, -(maxY - minY))`: with the rectangle's Y flipped the emitted
+// viewport is (x, y, w, +h) again. The caller builds the NVRHI viewport first (NVRHI's own
+// convention), so the helper flips it instead of starting from a raw VkViewport; the mapping is the
+// point, and it is the one RhiDecalPass, RhiUiPass, RhiRasterOverlayPass and RhiRasterSkyPass carry.
+nvrhi::Viewport ToLegacyViewport(const nvrhi::Viewport &v)
+{
+    return nvrhi::Viewport(v.minX, v.maxX, v.maxY, v.minY, v.minZ, v.maxZ);
+}
+
 void LogMessage(const RhiSkyPass::PrintFunction &print, const std::string &message)
 {
     if (print != nullptr)
@@ -766,7 +778,8 @@ bool RhiSkyPass::Prepare(nvrhi::ICommandList *pCommandList,
 void RhiSkyPass::Render(nvrhi::ICommandList *pCommandList,
                         const RasterizedDataCollector::DrawInfo *pDraws,
                         uint32_t drawCount,
-                        bool applyVertexColorGamma)
+                        bool applyVertexColorGamma,
+                        bool legacyViewport)
 {
     if (!created || pCommandList == nullptr || pDraws == nullptr || drawCount == 0)
     {
@@ -847,6 +860,15 @@ void RhiSkyPass::Render(nvrhi::ICommandList *pCommandList,
         {
             const VkViewport &v = *info.viewport;
             viewport = nvrhi::Viewport(v.x, v.x + v.width, v.y, v.y + v.height, v.minDepth, v.maxDepth);
+        }
+
+        // The target's convention: the inverted rectangle makes the backend emit the legacy
+        // positive-height VkViewport (ToLegacyViewport above and the class comment), which is what
+        // the engine-convention ALBEDO of the traced frame needs; the raster-mode default keeps
+        // NVRHI's DX viewport that the present and the overlay share.
+        if (legacyViewport)
+        {
+            viewport = ToLegacyViewport(viewport);
         }
 
         nvrhi::GraphicsState state;

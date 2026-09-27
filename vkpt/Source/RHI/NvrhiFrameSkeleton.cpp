@@ -40,6 +40,7 @@
 #include "RhiPipeline.h"
 #include "RhiProceduralSkyPass.h"
 #include "RhiRasterOverlayPass.h"
+#include "RhiRasterSkyPass.h"
 #include "RhiResources.h"
 #include "RhiSkyPass.h"
 #include "RhiTextureTable.h"
@@ -102,6 +103,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiRtComposePass *pRtComposePass,
                                        RhiRtReflRefrPass *pReflRefrPass,
                                        RhiProceduralSkyPass *pProceduralSkyPass,
+                                       RhiRasterSkyPass *pRasterSkyPass,
                                        RhiRasterOverlayPass *pRasterOverlayPass,
                                        RhiDecalPass *pDecalPass,
                                        RhiFsrPass *pFsrPass,
@@ -121,6 +123,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , rtComposePass(pRtComposePass)
     , reflRefrPass(pReflRefrPass)
     , proceduralSkyPass(pProceduralSkyPass)
+    , rasterSkyPass(pRasterSkyPass)
     , rasterOverlayPass(pRasterOverlayPass)
     , decalPass(pDecalPass)
     , fsrPass(pFsrPass)
@@ -512,6 +515,57 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             uniform->skyType == SKY_TYPE_PROCEDURAL)
         {
             proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams);
+        }
+
+        // The raster sky (RHI/RhiRasterSkyPass.h): the legacy frame's `DrawSkyToCubemap` ->
+        // `DrawSkyToAlbedo` pair (VulkanDevice.cpp:748-753), recorded on this list before the
+        // primary because under this sky type the primary takes its sky colour from the raster
+        // ALBEDO it reads back (RaygenPrimary.hlsli:213-264, storeSky with
+        // calculateSkyAndStoreToAlbedo false), and the indirect and reflect/refract passes sample
+        // `renderCubemap` for the ambient and the reflections (RaygenCommon.hlsli:393-417) - the
+        // cube the A5.4 pass owns and this block's module writes. The gate is the legacy one
+        // (VulkanDevice.cpp:743, :748) with the frame's own switches: no rasterization means no
+        // raster sky, and any other sky type leaves the cube to the procedural block above (or to
+        // the passes' placeholders).
+        if (skyPass != nullptr && sky.framebuffers != nullptr && !sky.disableRasterization &&
+            uniform != nullptr && uniform->skyType == SKY_TYPE_RASTERIZED_GEOMETRY)
+        {
+            // The frame's camera, which the traced branch never set because the sky never ran
+            // there; the ALBEDO half below does nothing without it. The raster frame's own branch
+            // passes the same values to the same call.
+            skyPass->SetSkyCamera(sky.view, sky.projection, sky.jitter, sky.skyViewerPos);
+
+            // The cube half first, like the legacy `DrawSkyToCubemap` (VulkanDevice.cpp:752): it
+            // writes the cube the RT passes below (and the primary's own ambient) sample through
+            // their set 8. The module is a no-op until its geometry buffers are installed and the
+            // borrowed cube exists.
+            if (rasterSkyPass != nullptr && rasterSkyPass->IsCreated())
+            {
+                rasterSkyPass->Render(commandList, sky.draws, sky.drawCount, sky.skyFaceViewProj,
+                                      sky.applyVertexColorGamma);
+            }
+
+            // The ALBEDO half, with the legacy viewport: the raygen reads this image back as the
+            // engine's raster ALBEDO (RaygenPrimary.hlsli:227-237), so the sky has to be rastered
+            // in the engine's own convention - the same positive-height VkViewport the legacy
+            // DrawSkyToAlbedo records - and not in the NVRHI DX convention the raster mode's
+            // consumers share. The traced present mirrors its sample coordinate for exactly this
+            // convention (`exposure.y` in the present params below).
+            skyPass->Render(commandList, sky.draws, sky.drawCount, sky.applyVertexColorGamma,
+                            /* legacyViewport = */ true);
+
+            // The ALBEDO hand-off: the sky's framebuffer use left the engine image in
+            // COLOR_ATTACHMENT_OPTIMAL, while the primary (and the compose after it) announce
+            // UnorderedAccess - the engine's GENERAL (RhiTextureSource.h:125-139) - for their own
+            // wraps of the same image. The transition has to happen here, on the sky's wrap, before
+            // their first use; the present's own setTextureState at the end of the frame is too
+            // late for the primary's UAV writes.
+            nvrhi::ITexture *albedo = skyPass->GetAlbedoTexture(frameIndex);
+            if (albedo != nullptr)
+            {
+                commandList->setTextureState(albedo, nvrhi::AllSubresources,
+                                             nvrhi::ResourceStates::UnorderedAccess);
+            }
         }
 
         rtPrimaryPass->Render(
