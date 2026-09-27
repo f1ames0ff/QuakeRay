@@ -68,31 +68,36 @@ vkpt::LightManager::LightManager(
         registryGeneration[i] = 1;
     }
 
+    // The five buffers the RHI layer wraps for the direct-lighting pass (RHI/RhiRtDirectPass.cpp)
+    // carry VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT: NVRHI's native-buffer wrap queries the
+    // device address of every buffer when the device has BDA unconditionally
+    // (vulkan-buffer.cpp:215-220), which VUID-VkBufferDeviceAddressInfo-buffer-02601 forbids
+    // without the bit. AutoBuffer propagates the bit to the staging buffer from its owner's usage.
     lightsBuffer    = std::make_shared<AutoBuffer>(device, _allocator);
-    lightsBuffer->Create(sizeof(ShLightEncoded) * LIGHT_ARRAY_MAX_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "Lights buffer");
+    lightsBuffer->Create(sizeof(ShLightEncoded) * LIGHT_ARRAY_MAX_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, "Lights buffer");
 
     lightsBuffer_Prev.Init(_allocator, sizeof(ShLightEncoded) * LIGHT_ARRAY_MAX_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "Lights buffer - prev");
 
     lightListOffsets = std::make_shared<AutoBuffer>(device, _allocator);
     lightListOffsets->Create(sizeof(uint32_t) * (Q2_MAX_CLUSTERS + 1),
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         "Q2 light list offsets");
 
     lightListLights = std::make_shared<AutoBuffer>(device, _allocator);
     lightListLights->Create(sizeof(uint32_t) * Q2_MAX_CLUSTERS * Q2_LIGHT_LIST_MAX_PER_CELL,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         "Q2 light list lights");
 
     lightStats.Init(_allocator,
         sizeof(uint32_t) * Q2_MAX_CLUSTERS * Q2_LIGHT_LIST_MAX_PER_CELL * Q2_LIGHT_LIST_STATS_SIDES * 2 * Q2_LIGHT_LIST_STATS_BUFFERS,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "Q2 light stats");
 
     /* One bit per cluster: whether a sun ray from it can still reach the sky. The staging
        starts all-visible, so a frame before the first map upload traces as it always has. */
     clusterSkyVis = std::make_shared<AutoBuffer>(device, _allocator);
     clusterSkyVis->Create(sizeof(uint32_t) * CLUSTER_SKY_VIS_WORD_COUNT,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         "Q2 cluster sky visibility");
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -348,6 +353,11 @@ void vkpt::LightManager::Reset()
         clusterSkyVisCopyPending[i] = true;
     }
 
+    /* The device list buffers still hold the words of the scene that is gone, and every slot has
+       to publish again whatever it gets: the record of what they hold must not outlive the words
+       it described. */
+    deviceListValid = false;
+
     /* No list of the scene to come is known yet, so the statistics fill has to keep covering the
        whole range until one is published. */
     statsClusterTarget = Q2_MAX_CLUSTERS;
@@ -435,6 +445,32 @@ bool vkpt::LightManager::FindRegisteredLight(uint32_t frameIndex, uint64_t uniqu
         outArrayIndex = registry[frameIndex][slot].arrayIndex;
     }
     return found;
+}
+
+bool vkpt::LightManager::DeviceHoldsPublishedList(uint32_t frameIndex) const
+{
+    /* The note of a slot says what its own staging buffer holds; the list device buffers are one
+       buffer shared by every slot, so it does not say what they hold: the copy of another slot's
+       publication may have landed there since. The two are the same only when the whole
+       publication agrees - the composition, the count and the places every id was resolved to. */
+    return deviceListValid &&
+           deviceListGeneration == publishedListGeneration[frameIndex] &&
+           deviceListClusters == publishedListClusters[frameIndex] &&
+           deviceListWords == publishedListWords[frameIndex] &&
+           deviceLightOrder == publishedLightOrder[frameIndex] &&
+           deviceLightIndex == publishedLightIndex[frameIndex];
+}
+
+void vkpt::LightManager::RecordDeviceListPublication(uint32_t frameIndex)
+{
+    // The device list buffers hold this publication from here on: the words are the ones the
+    // recorded copy read from this slot's staging.
+    deviceListValid = true;
+    deviceListGeneration = publishedListGeneration[frameIndex];
+    deviceListClusters = publishedListClusters[frameIndex];
+    deviceListWords = publishedListWords[frameIndex];
+    deviceLightOrder = publishedLightOrder[frameIndex];
+    deviceLightIndex = publishedLightIndex[frameIndex];
 }
 
 void vkpt::LightManager::AddLight(uint32_t frameIndex, uint64_t uniqueId, const vkpt::ShLightEncoded &encodedLight)
@@ -592,6 +628,10 @@ void vkpt::LightManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameInde
            slot has published a count of its own. */
         lightListLights->CopyFromStaging(cmd, frameIndex, sizeof(uint32_t) * publishedListWords[frameIndex]);
 
+        /* The copies above carry the words of this slot's note, so the device list buffers are
+           about to hold that publication: the record has to follow the copy or a matching note
+           would keep skipping the copy the other slot's publication made necessary. */
+        RecordDeviceListPublication(frameIndex);
         lightListCopyPending[frameIndex] = false;
     }
 
@@ -610,6 +650,104 @@ void vkpt::LightManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameInde
         UpdateDescriptors(frameIndex);
         needDescSetUpdate[frameIndex] = false;
     }
+}
+
+vkpt::LightManager::Buffers vkpt::LightManager::GetBuffers() const
+{
+    return Buffers
+    {
+        lightsBuffer->GetDeviceLocal(),
+        lightListOffsets->GetDeviceLocal(),
+        lightListLights->GetDeviceLocal(),
+        lightStats.GetBuffer(),
+        clusterSkyVis->GetDeviceLocal(),
+    };
+}
+
+vkpt::LightManager::FrameCopies vkpt::LightManager::GetFrameCopies(uint32_t frame) const
+{
+    assert(frame < MAX_FRAMES_IN_FLIGHT);
+
+    FrameCopies copies = {};
+
+    /* The light-array prefix is the one item with no pending flag: the frame's staging always
+       holds it, and the sun sits in slot LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET, so the size is the
+       end of the array and not the count of the regular lights alone. */
+    copies.lights =
+    {
+        lightsBuffer->GetStaging(frame),
+        sizeof(ShLightEncoded) * GetLightArrayEnd(regLightCount, dirLightCount),
+    };
+
+    /* The list buffers are written only when a publication changed them, and the words to copy are
+       the ones the publication of this slot staged: publishedListWords[frame] is the count that
+       publication recorded, not the count of the frame being recorded. */
+    if (lightListCopyPending[frame])
+    {
+        copies.listOffsets =
+        {
+            lightListOffsets->GetStaging(frame),
+            sizeof(uint32_t) * (Q2_MAX_CLUSTERS + 1),
+        };
+        copies.listLights =
+        {
+            lightListLights->GetStaging(frame),
+            sizeof(uint32_t) * publishedListWords[frame],
+        };
+    }
+
+    /* Pending at construction too, so the all-visible table reaches the device before the first
+       map upload. */
+    if (clusterSkyVisCopyPending[frame])
+    {
+        copies.clusterSkyVis =
+        {
+            clusterSkyVis->GetStaging(frame),
+            sizeof(uint32_t) * CLUSTER_SKY_VIS_WORD_COUNT,
+        };
+    }
+
+    return copies;
+}
+
+void vkpt::LightManager::ConsumeFrameCopies(uint32_t frame)
+{
+    assert(frame < MAX_FRAMES_IN_FLIGHT);
+
+    /* The two flags GetFrameCopies reports, cleared exactly where CopyFromStaging clears them
+       once it has copied the staging buffers: the device buffers then hold the bytes the flags
+       described. A new publication or sky-visibility update raises its flag again before either
+       consumer records its next copy, so consuming here cannot lose a copy - and a frame that is
+       recorded but never submitted is not reachable in the current skeleton
+       (NvrhiFrameSkeleton::Render always ends with EndSlot). The light-array prefix has no flag
+       and keeps its every-frame copy. */
+    if (lightListCopyPending[frame])
+    {
+        /* The caller recorded the list copies the flag described (a pending list publication
+           always has a non-zero offsets copy), so the shared device list buffers hold this slot's
+           publication now. The record is what lets a matching note of either slot skip its copy
+           of the same words, and only that: words of the same note are the same words. */
+        RecordDeviceListPublication(frame);
+        lightListCopyPending[frame] = false;
+    }
+    clusterSkyVisCopyPending[frame] = false;
+}
+
+uint32_t vkpt::LightManager::GetLightStatsClusterTarget() const
+{
+    /* The count SetClusterLightLists last recorded (clamped there to Q2_MAX_CLUSTERS) and
+       Q2_MAX_CLUSTERS again after Reset() while no list of the scene is known; the clamp is
+       repeated here so the accessor is the cluster count of ResetLightStats's fill range whatever
+       a later writer of statsClusterTarget does. */
+    return std::min(statsClusterTarget, LIGHT_STATS_CLUSTER_COUNT);
+}
+
+VkDeviceSize vkpt::LightManager::GetLightStatsClusterSize() const
+{
+    /* The bytes one cluster's counter pair spans: the slot size ResetLightStats derives
+       (:862-864) divided by the cluster count, i.e. 6,144 B. */
+    return (sizeof(uint32_t) * Q2_MAX_CLUSTERS * Q2_LIGHT_LIST_MAX_PER_CELL *
+            Q2_LIGHT_LIST_STATS_SIDES * 2) / LIGHT_STATS_CLUSTER_COUNT;
 }
 
 void vkpt::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numClusters,
@@ -645,6 +783,19 @@ void vkpt::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
 
     if (sameAsPublished)
     {
+        /* The note says the staging of this slot still holds these words, which is not the same as
+           the device holding them: the two list device buffers are one buffer shared by every
+           frame slot, and the other slot can have copied a publication of its own over them since
+           - one of the same generation even, because the generation names the composition and not
+           the light-array places the composition's ids were resolved to, and those places are a
+           property of the frame that published. The frame would then read the lists with words
+           that name other places, so the copy of this slot's staging has to run again; the staging
+           was not rewritten since the publication that set the note, and the words to copy are the
+           note's count, so nothing else of the publication has to be made again. */
+        if (!DeviceHoldsPublishedList(frameIndex))
+        {
+            lightListCopyPending[frameIndex] = true;
+        }
         return;
     }
 
@@ -680,6 +831,8 @@ void vkpt::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
     {
         const uint64_t uid = pLightUniqueIds[i];
 
+        /* A slot the cluster list left holding no light names no light, whatever place it
+           holds: it is published as none, and it must not go through the registry lookup. */
         if (uid == kLightUidHole)
         {
             dstLights[i] = uint32_t(LIGHT_INDEX_NONE);

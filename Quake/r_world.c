@@ -39,7 +39,6 @@ extern cvar_t rt_brush_rough;
 extern cvar_t rt_enable_pvs;
 extern cvar_t rt_reflrefr_depth;
 extern cvar_t rt_teleport_portals;
-extern cvar_t rt_wlight_intensity, rt_wlight_radius;
 extern cvar_t rt_emis_light_intensity;
 extern cvar_t rt_cluster_dlights;
 extern cvar_t rt_light_styles;
@@ -2383,7 +2382,12 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 
 static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 {
-	if (!RT_AllowTexturedAreaLights ())
+	/* A static world light is collected regardless of rt_truelight: the cvar gates only its
+	   upload and registration (RT_UploadAllWorldModelLights), so a map loaded while the lights
+	   are switched off still collects its face list and a later rt_truelight 1 has something to
+	   upload without a level reload. Moving emitters follow the cvar immediately. */
+	const qboolean is_static_geom = RT_IsStaticWorldSurface (s);
+	if (!is_static_geom && !RT_AllowTexturedAreaLights ())
 		return;
 
 	gltexture_t *light_tex = s->light_tex ? s->light_tex : s->diffuse_tex;
@@ -2413,8 +2417,6 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		}
 		return;
 	}
-
-	const qboolean is_static_geom = RT_IsStaticWorldSurface (s);
 
 	/* Whether the light reads a mask shapes it (cut into pieces of the face, or a square that
 	   carries no mask), so it is asked of the canonical frame and not of the animation. */

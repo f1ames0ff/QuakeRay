@@ -122,14 +122,17 @@ vkpt::RenderCubemap::~RenderCubemap()
 
     vkDestroyImage(device, cubemap.image, nullptr);
     vkDestroyImageView(device, cubemap.view, nullptr);
+    vkDestroyImageView(device, cubemap.viewArray, nullptr);
     vkFreeMemory(device, cubemap.memory, nullptr);
 
     vkDestroyImage(device, envCubemap.image, nullptr);
     vkDestroyImageView(device, envCubemap.view, nullptr);
+    vkDestroyImageView(device, envCubemap.viewArray, nullptr);
     vkFreeMemory(device, envCubemap.memory, nullptr);
 
     vkDestroyImage(device, cubemapDepth.image, nullptr);
     vkDestroyImageView(device, cubemapDepth.view, nullptr);
+    vkDestroyImageView(device, cubemapDepth.viewArray, nullptr);
     vkFreeMemory(device, cubemapDepth.memory, nullptr);
 
     vkDestroyFramebuffer(device, cubemapFramebuffer, nullptr);
@@ -481,6 +484,8 @@ void vkpt::RenderCubemap::CreateAttch(
     VkCommandBuffer cmd,
     uint32_t sideSize, Attachment &result, bool isDepth)
 {
+    result.viewArray = VK_NULL_HANDLE;
+
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -536,6 +541,20 @@ void vkpt::RenderCubemap::CreateAttch(
     r = vkCreateImageView(device, &viewInfo, nullptr, &result.view);
     VK_CHECKERROR(r);
     SET_DEBUG_NAME(device, result.view, VK_OBJECT_TYPE_IMAGE_VIEW, isDepth ? "Render cubemap depth image view" : "Render cubemap image view");
+
+    // The sky compute pass writes the cubemap through an image2DArray binding -- HLSL has no
+    // writable cube texture and D3D12 has no cube UAV -- so the same six layers get a 2D-array
+    // view beside the cube view. The cube view stays for sampling and for the multiview render
+    // pass; only the storage-image bindings use this one, and a cube view bound to an
+    // image2DArray descriptor would violate VUID-vkCmdDispatch-viewType-07752.
+    // TODO(refactor): the two views of one image are a port shim, not a design; the NVRHI rewrite
+    // (A2/A5, plan §14.14) should drop the double-view path and decide how a cubemap is written
+    // on both backends.
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+
+    r = vkCreateImageView(device, &viewInfo, nullptr, &result.viewArray);
+    VK_CHECKERROR(r);
+    SET_DEBUG_NAME(device, result.viewArray, VK_OBJECT_TYPE_IMAGE_VIEW, isDepth ? "Render cubemap depth array view" : "Render cubemap array view");
 
 
     // make transition from undefined manually, so initialLayout can be specified
@@ -603,21 +622,31 @@ void vkpt::RenderCubemap::CreateFramebuffer(uint32_t sideSize)
 
 void vkpt::RenderCubemap::CreateDescriptors(const std::shared_ptr<SamplerManager> &samplerManager)
 {
-    VkDescriptorSetLayoutBinding bindings[2] = {};
+    VkDescriptorSetLayoutBinding bindings[4] = {};
 
     bindings[0].binding = BINDING_RENDER_CUBEMAP;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags = VK_SHADER_STAGE_ALL;
 
     bindings[1].binding = BINDING_RENDER_CUBEMAP_ENV;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_ALL;
 
+    bindings[2].binding = BINDING_RENDER_CUBEMAP_SAMPLER;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_ALL;
+
+    bindings[3].binding = BINDING_RENDER_CUBEMAP_ENV_SAMPLER;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_ALL;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 2;
+    layoutInfo.bindingCount = 4;
     layoutInfo.pBindings = bindings;
 
     VkResult r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descSetLayout);
@@ -626,15 +655,17 @@ void vkpt::RenderCubemap::CreateDescriptors(const std::shared_ptr<SamplerManager
     SET_DEBUG_NAME(device, descSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "Render cubemap Desc set layout");
 
 
-    VkDescriptorPoolSize poolSize = {};
-    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSize.descriptorCount = 2;
+    VkDescriptorPoolSize poolSizes[2] = {};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    poolSizes[0].descriptorCount = 2;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    poolSizes[1].descriptorCount = 2;
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = 1;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
 
     r = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descPool);
     VK_CHECKERROR(r);
@@ -655,20 +686,25 @@ void vkpt::RenderCubemap::CreateDescriptors(const std::shared_ptr<SamplerManager
 
 
     VkDescriptorImageInfo img = {};
-    img.sampler = samplerManager->GetSampler(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_REPEAT, RG_SAMPLER_ADDRESS_MODE_REPEAT);
+    img.sampler = VK_NULL_HANDLE;
     img.imageView = cubemap.view;
     img.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkDescriptorImageInfo envImg = img;
     envImg.imageView = envCubemap.view;
 
-    VkWriteDescriptorSet wrt[2] = {};
+    VkDescriptorImageInfo samplerImg = {};
+    samplerImg.sampler = samplerManager->GetSampler(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_REPEAT, RG_SAMPLER_ADDRESS_MODE_REPEAT);
+    samplerImg.imageView = VK_NULL_HANDLE;
+    samplerImg.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkWriteDescriptorSet wrt[4] = {};
     wrt[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     wrt[0].dstSet = descSet;
     wrt[0].dstBinding = BINDING_RENDER_CUBEMAP;
     wrt[0].dstArrayElement = 0;
     wrt[0].descriptorCount = 1;
-    wrt[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wrt[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     wrt[0].pImageInfo = &img;
 
     wrt[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -676,10 +712,26 @@ void vkpt::RenderCubemap::CreateDescriptors(const std::shared_ptr<SamplerManager
     wrt[1].dstBinding = BINDING_RENDER_CUBEMAP_ENV;
     wrt[1].dstArrayElement = 0;
     wrt[1].descriptorCount = 1;
-    wrt[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wrt[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     wrt[1].pImageInfo = &envImg;
 
-    vkUpdateDescriptorSets(device, 2, wrt, 0, nullptr);
+    wrt[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wrt[2].dstSet = descSet;
+    wrt[2].dstBinding = BINDING_RENDER_CUBEMAP_SAMPLER;
+    wrt[2].dstArrayElement = 0;
+    wrt[2].descriptorCount = 1;
+    wrt[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    wrt[2].pImageInfo = &samplerImg;
+
+    wrt[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wrt[3].dstSet = descSet;
+    wrt[3].dstBinding = BINDING_RENDER_CUBEMAP_ENV_SAMPLER;
+    wrt[3].dstArrayElement = 0;
+    wrt[3].descriptorCount = 1;
+    wrt[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    wrt[3].pImageInfo = &samplerImg;
+
+    vkUpdateDescriptorSets(device, 4, wrt, 0, nullptr);
 }
 
 void vkpt::RenderCubemap::CreateProceduralSkyParamsBuffer()
@@ -759,11 +811,11 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors()
     SET_DEBUG_NAME(device, procSkyDescSet, VK_OBJECT_TYPE_DESCRIPTOR_SET, "Procedural sky desc set");
 
     VkDescriptorImageInfo imgInfo = {};
-    imgInfo.imageView = cubemap.view;
+    imgInfo.imageView = cubemap.viewArray;   // the sky pass writes through an image2DArray binding
     imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkDescriptorImageInfo envImgInfo = {};
-    envImgInfo.imageView = envCubemap.view;
+    envImgInfo.imageView = envCubemap.viewArray;
     envImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkDescriptorBufferInfo bufInfo = {};

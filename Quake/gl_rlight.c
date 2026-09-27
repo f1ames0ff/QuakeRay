@@ -1226,6 +1226,8 @@ void RT_ClusterLightListsUpload (void)
 		.numLights = (uint32_t)rt_cluster_light_count,
 		.pLights = rt_cluster_sources,
 		.topUpReach = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach)),
+		/* 1 in every run: the cvar is read-only (CVAR_ROM), and 0 - the legacy full
+		   recomposition - is engine-selectable only (Cvar_SetROM). */
 		.allowIncremental = CVAR_TO_BOOL (rt_cluster_incremental) ? 1 : 0,
 	};
 

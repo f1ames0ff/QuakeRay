@@ -31,6 +31,24 @@ namespace vkpt::LibraryConfig
         bool developerMode = false;
         bool dlssValidation = false;
         bool fpsMonitor = false;
+        // Draws the frame through the RHI layer instead of the renderer.
+        // Only for the bring-up of the RHI frame skeleton.
+        bool rhiFrameSkeleton = false;
+        // Draws the frame through the RHI debug ray-tracing pass (A3) instead of the rasterized RHI
+        // chain. Only for the bring-up of the acceleration structures and the first traced image.
+        bool rhiDebugTrace = false;
+        // Draws the frame through the real ray-tracing passes of the RHI path (A4) instead of the
+        // rasterized chain. As of A4.1 this is the primary-visibility pass: the engine's primary
+        // raygen fills the checkerboard G-buffer (ALBEDO included) and the present shows it without
+        // lighting; A4.2 added the direct-lighting pass and the present's diagnostic compose. The
+        // later A4 cuts add the denoiser and the full composition. Requires 'rhiframe'; when
+        // 'rhitrace' is set as well, this mode wins.
+        bool rhiRayTracing = false;
+        // Draws the fully composed traced frame: the real adapter -> interleave -> exposure
+        // histogram/average -> checkerboard -> prepare-final chain writes the display-referred
+        // FINAL (the ASVGF denoiser is not ported yet) and the present shows it raw, instead of the
+        // A4.2a diagnostic present of ALBEDO + the direct term. Requires 'rhirt'.
+        bool rhiCompose = false;
     };
 
     namespace detail
@@ -52,6 +70,22 @@ namespace vkpt::LibraryConfig
             else if (entry == "fpsmonitor")
             {
                 dst.fpsMonitor = true;
+            }
+            else if (entry == "rhiframe")
+            {
+                dst.rhiFrameSkeleton = true;
+            }
+            else if (entry == "rhitrace")
+            {
+                dst.rhiDebugTrace = true;
+            }
+            else if (entry == "rhirt")
+            {
+                dst.rhiRayTracing = true;
+            }
+            else if (entry == "rhicompose")
+            {
+                dst.rhiCompose = true;
             }
         }
     }

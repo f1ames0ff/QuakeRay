@@ -77,9 +77,7 @@ void Scene::PrepareForFrame(VkCommandBuffer cmd, uint32_t frameIndex)
 void Scene::SubmitForFrame(VkCommandBuffer cmd, uint32_t frameIndex, const std::shared_ptr<GlobalUniform> &uniform, 
                            uint32_t uniformData_rayCullMaskWorld, bool allowGeometryWithSkyFlag, bool disableRTGeometry)
 {
-    uint32_t preprocMode = submittedStaticInCurrentFrame ? VERT_PREPROC_MODE_ALL : 
-                           toResubmitMovable             ? VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE : 
-                                                           VERT_PREPROC_MODE_ONLY_DYNAMIC;
+    uint32_t preprocMode = GetVertexPreprocessingMode();
     submittedStaticInCurrentFrame = false;
 
 
@@ -116,6 +114,27 @@ void Scene::SubmitForFrame(VkCommandBuffer cmd, uint32_t frameIndex, const std::
     
 
     asManager->BuildTLAS(cmd, frameIndex, prepare);
+}
+
+void Scene::PreprocessVertices(VkCommandBuffer cmd, uint32_t frameIndex,
+                               const std::shared_ptr<GlobalUniform> &uniform,
+                               const ShVertPreprocessing &push)
+{
+    // Consume the mode exactly as SubmitForFrame does in its own call above: the render path that
+    // owns the frame must call this once per frame, and only the first call after a static
+    // submission (the level load) gets VERT_PREPROC_MODE_ALL, which is what generates the static
+    // world's shading normals. Every later frame runs the dynamic-only mode, as the legacy frame
+    // path does. toResubmitMovable is deliberately not consumed here: the ResubmitStaticMovable
+    // copy that must run together with it is the legacy path's step.
+    vertPreproc->Preprocess(cmd, frameIndex, GetVertexPreprocessingMode(), uniform, asManager, push);
+    submittedStaticInCurrentFrame = false;
+}
+
+uint32_t Scene::GetVertexPreprocessingMode() const
+{
+    return submittedStaticInCurrentFrame ? VERT_PREPROC_MODE_ALL :
+           toResubmitMovable             ? VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE :
+                                           VERT_PREPROC_MODE_ONLY_DYNAMIC;
 }
 
 bool Scene::Upload(uint32_t frameIndex, const RgGeometryUploadInfo &uploadInfo)
