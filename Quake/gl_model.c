@@ -2853,13 +2853,18 @@ static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
 		q_snprintf (name, sizeof (name), "%s:frame%i", mod->name, i);
 		q_snprintf (rtname, sizeof (rtname), "%s/%i", namenoext, i);
 
-		offset = (src_offset_t)(skin) - (src_offset_t)mod_base;
+		// The skin bytes normally point into the loaded mdl buffer; when they do
+		// not, the difference of their address and the buffer underflows and the
+		// address itself is the source instead (see Mod_LoadTextures).
+		const qboolean skin_in_file = (skin >= mod_base);
+
+		offset = skin_in_file ? (src_offset_t)(skin - mod_base) : (src_offset_t)(uintptr_t)skin;
 		if (Mod_SkinHasLumaMaterial (name))
 			mod->flags |= MF_RT_LUMA;
 
 		pheader->gltextures[i][0] = TexMgr_LoadImage (
 			rtname,
-			mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, mod->name, offset, texflags | TEXPREF_MIPMAP);
+			mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, skin_in_file ? mod->name : "", offset, texflags | TEXPREF_MIPMAP);
 		pheader->fbtextures[i][0] = NULL;
 
 		pheader->gltextures[i][3] = pheader->gltextures[i][2] = pheader->gltextures[i][1] = pheader->gltextures[i][0];
