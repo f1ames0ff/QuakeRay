@@ -1340,10 +1340,6 @@ static void QRE_RefreshSelectedLight (void)
 
 // The wireframes of the frame's lights: cyan, the hovered one amber and the
 // selected one white, in one line-list upload.
-// The "C" that marks an authored (custom) light inside its wireframe sphere: an
-// arc of this many line segments, billboarded to the camera.
-#define QRE_CUSTOM_GLYPH_SEGS 8
-
 static void QRE_DrawLightWireframes (void)
 {
 	const rt_tracked_light_t *lights;
@@ -1360,30 +1356,19 @@ static void QRE_DrawLightWireframes (void)
 	if (count <= 0)
 		return;
 
-	// the spheres, the "C" of every custom light, plus the selected custom light's
-	// axis arrows: five segments (three parallel shafts so the line is not a
-	// hairline, and a V head) each
-	verts_bytes = (size_t)count * (3 * (QRE_LIGHT_WIRE_SEGS + 1) + QRE_CUSTOM_GLYPH_SEGS * 2) * sizeof (RgVertex)
-	              + 3 * 5 * 2 * sizeof (RgVertex);
-	ri_bytes = (size_t)count * (3 * QRE_LIGHT_WIRE_SEGS * 2 + QRE_CUSTOM_GLYPH_SEGS * 2) * sizeof (uint32_t)
-	           + 3 * 5 * 2 * sizeof (uint32_t);
+	// the spheres, plus the selected custom light's axis arrows: five segments
+	// (three parallel shafts so the line is not a hairline, and a V head) each
+	verts_bytes = (size_t)count * 3 * (QRE_LIGHT_WIRE_SEGS + 1) * sizeof (RgVertex) + 3 * 5 * 2 * sizeof (RgVertex);
+	ri_bytes    = (size_t)count * 3 * QRE_LIGHT_WIRE_SEGS * 2 * sizeof (uint32_t) + 3 * 5 * 2 * sizeof (uint32_t);
 	block = (byte *)Mem_Alloc (verts_bytes + ri_bytes);
 	rv = (RgVertex *)block;
 	ri = (uint32_t *)(block + verts_bytes);
-
-	// one running cursor for the spheres and the "C" glyphs (the arrows follow
-	// them), and the camera basis the glyphs are billboarded with
-	int    vcursor = 0, icursor = 0;
-	vec3_t cam_fwd, cam_right, cam_up;
-
-	AngleVectors (r_refdef.viewangles, cam_fwd, cam_right, cam_up);
 
 	for (i = 0; i < count; i++)
 	{
 		const rt_tracked_light_t *l = &lights[i];
 		const float               r = l->radius;
-		const int                 base = vcursor;
-		const int                 ibase = icursor;
+		const int                 base = drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1);
 		uint32_t                  color;
 
 		if (!l->ready)
@@ -1418,54 +1403,12 @@ static void QRE_DrawLightWireframes (void)
 		{
 			for (seg = 0; seg < QRE_LIGHT_WIRE_SEGS; seg++)
 			{
-				const int p = ibase + axis * QRE_LIGHT_WIRE_SEGS + seg;
+				const int p = drawn * 3 * QRE_LIGHT_WIRE_SEGS + axis * QRE_LIGHT_WIRE_SEGS + seg;
 
 				ri[p * 2 + 0] = (uint32_t)(base + axis * (QRE_LIGHT_WIRE_SEGS + 1) + seg);
 				ri[p * 2 + 1] = (uint32_t)(base + axis * (QRE_LIGHT_WIRE_SEGS + 1) + seg + 1);
 			}
 		}
-		vcursor += 3 * (QRE_LIGHT_WIRE_SEGS + 1);
-		icursor += 3 * QRE_LIGHT_WIRE_SEGS * 2;
-
-		// the "C" of an authored light: screen-aligned, so a light reads as custom
-		// from any angle
-		if (l->kind == RT_LIGHT_KIND_CUSTOM)
-		{
-			const float deg2rad = 3.14159265f / 180.0f;
-			vec3_t      dvec;
-			float       dist, scale;
-			int         g;
-
-			VectorSubtract (l->position, r_refdef.vieworg, dvec);
-			dist = sqrtf (DotProduct (dvec, dvec));
-			scale = CLAMP (1.0f, dist * 0.005f, 24.0f);
-
-			for (g = 0; g < QRE_CUSTOM_GLYPH_SEGS; g++)
-			{
-				const float a0 = (45.0f + 270.0f * (float)g / (float)QRE_CUSTOM_GLYPH_SEGS) * deg2rad;
-				const float a1 = (45.0f + 270.0f * (float)(g + 1) / (float)QRE_CUSTOM_GLYPH_SEGS) * deg2rad;
-				const uint32_t col = RT_PackColorToUint32 (200, 235, 255, 255);
-				int            k;
-
-				for (k = 0; k < 2; k++)
-				{
-					const float a = k ? a1 : a0;
-					const int   vi = vcursor + g * 2 + k;
-					RgVertex   *v = &rv[vi];
-
-					v->position[0] = l->position[0] + cam_right[0] * cosf (a) * scale + cam_up[0] * sinf (a) * scale;
-					v->position[1] = l->position[1] + cam_right[1] * cosf (a) * scale + cam_up[1] * sinf (a) * scale;
-					v->position[2] = l->position[2] + cam_right[2] * cosf (a) * scale + cam_up[2] * sinf (a) * scale;
-					v->packedColor = col;
-
-					ri[icursor + g * 2 + k] = (uint32_t)vi;
-				}
-			}
-
-			vcursor += QRE_CUSTOM_GLYPH_SEGS * 2;
-			icursor += QRE_CUSTOM_GLYPH_SEGS * 2;
-		}
-
 		drawn++;
 	}
 
@@ -1473,8 +1416,8 @@ static void QRE_DrawLightWireframes (void)
 	// Z blue. They sit at the light itself (origin + offset), so they read as the
 	// handles of the light the panel edits.
 	{
-		int arrow_base   = vcursor;
-		int arrow_i_base = icursor;
+		int arrow_base   = drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1);
+		int arrow_i_base = drawn * 3 * QRE_LIGHT_WIRE_SEGS * 2;
 
 		if (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM &&
 		    qre.sel_light.uniqueID > (uint64_t)UINT32_MAX)
@@ -1564,9 +1507,9 @@ static void QRE_DrawLightWireframes (void)
 	{
 		RgRasterizedGeometryUploadInfo info = {
 			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
-			.vertexCount = (uint32_t)(vcursor + (arrow_drawn ? 30 : 0)),
+			.vertexCount = (uint32_t)(drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1) + (arrow_drawn ? 30 : 0)),
 			.pVertices = rv,
-			.indexCount = (uint32_t)(icursor + (arrow_drawn ? 30 : 0)),
+			.indexCount = (uint32_t)(drawn * 3 * QRE_LIGHT_WIRE_SEGS * 2 + (arrow_drawn ? 30 : 0)),
 			.pIndices = ri,
 			.transform = RT_TRANSFORM_IDENTITY,
 			.color = RT_COLOR_WHITE,
