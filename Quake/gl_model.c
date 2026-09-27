@@ -2549,8 +2549,11 @@ static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffe
 	}
 
 	if (sv.modelname[0] && !q_strcasecmp (loadname, sv.name))
+	{
 		RT_MAT_ChangeMap (loadname);
 		RT_LIGHT_Reload ();
+		RT_CustomLights_ChangeMap (loadname);
+	}
 
 	// swap all the lumps
 	byte *mod_base = (byte *)header;

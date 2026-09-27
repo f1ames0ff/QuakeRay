@@ -94,6 +94,7 @@ enum
     RT_LIGHT_KIND_MATERIAL = 0, // an alias or sprite material light (named by its texture)
     RT_LIGHT_KIND_DLIGHT   = 1, // the legacy dlight pool (named by its source entity's model)
     RT_LIGHT_KIND_MAP      = 2, // a light entity of the map (named by its classname)
+    RT_LIGHT_KIND_CUSTOM   = 3, // a light the editor authored (name is the level)
 };
 
 typedef struct rt_tracked_light_s
@@ -111,5 +112,49 @@ void RT_TRACK_BeginFrame (void);
 void RT_TRACK_Light (const vec3_t position, float radius, const vec3_t color,
                      uint64_t uniqueID, int kind, const char *name);
 const rt_tracked_light_t *RT_TRACK_Lights (int *outCount);
+
+// ----- custom dlights authored in the light editor -----
+
+// Freely placed lights a level does not have. They are loaded per map from
+// <gamedir>/qray/lights.yaml, which holds one section per level (the map file
+// without path or extension), and are uploaded like the classic dlights, with a
+// light style of their own.
+#define RT_CUSTOM_LIGHTS_MAX 64
+#define RT_CUSTOM_RADIUS_DEFAULT 0.4f
+
+// The light styles a custom light may use; the index is the engine's own
+// d_lightstylevalue[] index, so a custom light flickers exactly like a map
+// light of that style.
+#define RT_CUSTOM_STYLE_COUNT 12
+
+extern const char *const rt_custom_style_names[RT_CUSTOM_STYLE_COUNT];
+
+typedef struct rt_custom_light_s
+{
+    vec3_t   origin;       // where the light was placed, Quake units
+    vec3_t   offset;       // shift from the origin
+    qboolean has_offset;
+    float    radius;       // the size, in the units of rt_dlight_radius (0..10)
+    float    intensity;    // a multiplier of the colour
+    vec3_t   color;
+    int      style;        // 0..RT_CUSTOM_STYLE_COUNT-1
+} rt_custom_light_t;
+
+// The current level's list, as loaded (the editor edits it in place and
+// snapshots it for Cancel).
+rt_custom_light_t *RT_CustomLights (int *outCount);
+void               RT_CustomLights_SetCount (int count);
+// Appends a light with the defaults; NULL when the list is full.
+rt_custom_light_t *RT_CustomLights_Ensure (void);
+void               RT_CustomLights_Remove (int index);
+
+// Loads the level's section of <gamedir>/qray/lights.yaml ("maps/x.bsp" and "x"
+// both name the level "x").
+void RT_CustomLights_ChangeMap (const char *mapname);
+
+// The section key of a map and the file's writer, for the editor's session.
+void RT_CustomLights_LevelKey (const char *mapname, char *out, size_t outsize);
+void RT_CustomLights_WriteEntry (FILE *f, const rt_custom_light_t *l);
+const char *RT_CustomLights_Header (void);
 
 #endif /* RT_LIGHTS_H */
