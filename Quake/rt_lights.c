@@ -37,6 +37,16 @@ void RT_TRACK_Light(const vec3_t position, float radius, const vec3_t color,
 
     if (index >= RT_TRACKED_LIGHTS_MAX)
     {
+        /* The editor reads this list for its wireframes and picking, so a light
+           the list refused is one it cannot show or select. Say it once a run. */
+        static qboolean warned;
+
+        if (!warned)
+        {
+            Con_DWarning("RT: more than %d lights in one frame; the rest are not tracked "
+                         "(the editor cannot show or pick them)\n", RT_TRACKED_LIGHTS_MAX);
+            warned = true;
+        }
         return;
     }
 
@@ -814,7 +824,11 @@ static void RT_CustomLightsParse(const char *filebuf, int len, const char *level
 
                 l = RT_CustomLights_Ensure();
                 if (!l)
+                {
+                    Con_DWarning("RT custom light: '%s' lists more than %d lights; the rest of the section is ignored\n",
+                                 level, RT_CUSTOM_LIGHTS_MAX);
                     break;
+                }
 
                 for (field = node->data.mapping.pairs.start; field < node->data.mapping.pairs.top; field++)
                 {
