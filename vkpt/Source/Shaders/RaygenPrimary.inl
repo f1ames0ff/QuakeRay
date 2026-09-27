@@ -89,9 +89,10 @@ vec2 getMotionForInfinitePoint(const ivec2 pix)
 // of a moving layer at a perfectly even frame time. What a cloud moves by is the wind of
 // the layer: the setting scaled by the layer's height over the reference one, times the
 // wind's rates -- the same drift the layer's noise is written with (cloudDensity,
-// CloudLayer.h), and these numbers must stay equal to that one. The column a ray crosses
-// stands its height over the eye away at the lowest, and the eye's own translation at
-// that distance is under a tenth of a pixel, so only the drift is here.
+// CloudLayer.h), and these numbers must stay equal to that one. What is added to the
+// drift is the eye's own shift since the frame before: a column of the layer is a place
+// in the world, so the eye walking moves it as well (at the default height that part is
+// under a tenth of a pixel, but the height is a setting and the term costs nothing).
 //
 // The flat clouds of the lowest level are the other way around: their mask drifts in the
 // dome of directions rather than in the world's plane (cloudMask, CmProceduralSky.comp),
@@ -121,16 +122,25 @@ vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
     }
     else
     {
-        // CLOUD_REFERENCE_ALTITUDE and the wind's rates of CloudLayer.h, cloudDensity.
+        // CLOUD_REFERENCE_ALTITUDE and the wind's rates of CloudLayer.h, cloudDensity;
+        // the height is the floor of the layer, and what the eye sees move is a little
+        // above it -- the profile of the layer is densest a third of its depth up, and
+        // a motion read at the floor would move the pattern by up to half again.
         const float reference = 1400.0;
         const float scale     = height / reference;
         const vec2  windStep  = globalUniform.timeDelta * speed * scale * vec2(30.0, 12.0);
+        const float thickness = globalUniform.skyCubemapRotationTransform[2].y; // c[8], rt_sky_clouds_thickness
+        const float centre    = height + 0.3 * thickness;
 
         // The pattern moves against the wind (the noise is read at p + wind), so the
-        // cloud a ray sees now stood, one frame ago, at the base point the ray crosses
-        // less the wind of that frame.
-        const float distance = height / rayDir.z;
-        dirPrev = normalize(rayDir * distance - vec3(windStep, 0.0));
+        // cloud a ray sees now stood, one frame ago, at the point the ray crosses plus
+        // the wind of that frame -- and the eye has moved since, which is the shift of
+        // the column itself. This is the same sum the history of the layer's map was
+        // read through (cloudAnchorDelta, RenderCubemap.cpp), which is what the sign of
+        // it is to be checked against.
+        const float distance = centre / rayDir.z;
+        const vec3  eyeDelta = globalUniform.cameraPosition.xyz - globalUniform.cameraPositionPrev.xyz;
+        dirPrev = normalize(rayDir * distance + vec3(windStep, 0.0) + eyeDelta);
     }
 
     const vec2 ndcCur  = (mat3(globalUniform.projection)     * (mat3(globalUniform.view)     *  rayDir)).xy  * 0.5 + 0.5;
