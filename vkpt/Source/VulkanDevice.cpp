@@ -30,6 +30,7 @@
 #include "Utils.h"
 #include "Const.h"
 #include "Generated/ShaderCommonC.h"
+#include "RHI/NvrhiFrameSkeleton.h"
 
 using namespace vkpt;
 
@@ -260,18 +261,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const RgDrawFrameInfo &drawI
 
             Matrix::GetCubemapViewProjMat( viewProjDst, i, skyViewerPosition.data, drawInfo.cameraNear, drawInfo.cameraFar );
         }
-
-        // Where the cloud shadow map stands, sent in the last column of the cubemap
-        // transform: the sky's cloud settings already ride in its 3x3, and every
-        // pass that lights with the sun reads this back (CloudShadowMap.h). Left at
-        // zero whenever the sky does not draw the clouds, which is what tells the
-        // shaders there is no map to read.
-        float cloudShadowPlacement[ 4 ] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        if( gu->skyType == SKY_TYPE_PROCEDURAL )
-        {
-            rasterizer->GetRenderCubemap()->GetCloudShadowPlacement( cloudShadowPlacement );
-        }
-        memcpy( gu->skyCubemapRotationTransform + 12, cloudShadowPlacement, sizeof( cloudShadowPlacement ) );
     }
 
     gu->debugShowFlags = 0;
@@ -770,13 +759,13 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
 
             // the sky is exactly the colour it is set to (rt_sky_color), sent by
             // the host via skyColorDefault; this keeps the colour independent from
-            // whether the sun light is enabled (rt_sky_sun) and from the sun's own colour
+            // whether the sun light is enabled (rt_sun) and from the sun's own colour
             p.skyColor[0] = uniform->GetData()->skyColorDefault[0];
             p.skyColor[1] = uniform->GetData()->skyColorDefault[1];
             p.skyColor[2] = uniform->GetData()->skyColorDefault[2];
 
             // the disc is the sun itself, so it is drawn with the sun's own colour
-            // (rt_sky_sun_color, white when the host does not send one) rather than with
+            // (rt_sun_color, white when the host does not send one) rather than with
             // the sky colour above: the sun keeps its colour while the sky around it
             // is set freely. It only reaches the visible cubemap, never the
             // envCubemap the indirect sky samples.
@@ -792,8 +781,8 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             // used: the disc the sky draws is sized by the display radius in skyParams[3].
             float sunColor[3], sunDir[3], sunAngularRadius = 0.0047f;
             // A directional light is uploaded only while the host has the sun
-            // light enabled (rt_sky_sun > 0), so "no directional light" is what
-            // rt_sky_sun 0 looks like from here. The sky then has no sun either:
+            // light enabled (rt_sun > 0), so "no directional light" is what
+            // rt_sun 0 looks like from here. The sky then has no sun either:
             // sunDirection.w is the amount of sun the sky shows, and at 0 the
             // disc is dropped while the sky itself keeps the colour from
             // skyColorDefault above.
@@ -819,7 +808,7 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             }
             p.skyParams[0] = uniform->GetData()->skyColorMultiplier;
             // The sky has no tint strength left to carry, so the host sends the
-            // opacity of its clouds (rt_sky_clouds_alpha) in that slot instead.
+            // opacity of its clouds (rt_sky_cloud_alpha) in that slot instead.
             p.skyParams[1] = uniform->GetData()->skyColorSaturation;
             // Sun disc intensity: the disc carries the sun's own colour and is
             // what makes it brighter than the sky it hangs in. It only reaches
@@ -830,8 +819,7 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
 
             // cloud params are packed into the otherwise-unused skyCubemapRotationTransform field
             // (keeps the public RG_* API unchanged):
-            //   [0..2] cloud color rgb, [3] coverage, [4] density, [5] drift speed, [6] enabled,
-            //   [7] altitude of the cloud layer, [8] thickness of the cloud layer
+            //   [0..2] cloud color rgb, [3] coverage, [4] contour sharpness, [5] drift speed, [6] enabled
             p.cloudColor[3] = uniform->GetData()->time; // cloud animation time
             if (drawInfo.pSkyParams)
             {
@@ -843,61 +831,7 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
                 p.cloudParams[1] = c[4];
                 p.cloudParams[2] = c[5];
                 p.cloudParams[3] = c[6];
-                p.cloudLayer[0] = c[7];
-                p.cloudLayer[1] = c[8];
             }
-
-            // The cloud layer is a slab in world units: where its bottom sits over
-            // the eye, and how deep it is. The noise is scaled by the thickness,
-            // so the clouds keep their look in a layer of any depth; what changes
-            // is how far the light has to travel through them, and so how much of
-            // the sky they hide.
-            if (p.cloudLayer[0] <= 0.0f)
-            {
-                p.cloudLayer[0] = 140000.0f;
-            }
-            if (p.cloudLayer[1] <= 0.0f)
-            {
-                p.cloudLayer[1] = 90000.0f;
-            }
-
-            // The drift of the layer's noise is a matter of proportion to its height: the
-            // setting is the speed of a layer at the reference altitude, and what every
-            // consumer is handed -- the passes that march the layer, the pass that lays
-            // its shadow down, and the shift the history of its map is read through
-            // (RenderCubemap::DrawProcedural) -- is the speed the layer actually drifts
-            // at, so that no two of them can disagree. They did once: the factor reached
-            // the wind in CloudLayer.h and not the shift, and the copied three quarters
-            // of the map stood still while the marched one moved -- a quarter of the sky
-            // snapping forward every fourth frame, which is what a drift faster than a
-            // crawl showed as jerking. Must equal CLOUD_REFERENCE_ALTITUDE in
-            // CloudLayer.h, where the seed of the march is scaled by the same ratio.
-            constexpr float CLOUD_REFERENCE_ALTITUDE = 1400.0f;
-            p.cloudParams[2] *= p.cloudLayer[0] / CLOUD_REFERENCE_ALTITUDE;
-            // Sunlight and skylight that reach the clouds. The sun lights them with
-            // its own colour (rt_sky_sun_color) and is what makes their edges glow
-            // towards it; the sky lights them from above, with the sky's colour.
-            p.cloudLayer[2] = 1.0f;
-            p.cloudLayer[3] = 1.0f;
-            // How finely the clouds are marched, how much the fine noise is allowed
-            // to eat into them, and how strongly they scatter the sunlight forward
-            // (Henyey-Greenstein g) -- which is what draws the bright rim. The steps
-            // of the view march are the renderer's to pick by quality (the value here
-            // is only its default), and the walk of a column towards the sun is the
-            // volume's own (CloudLayer.h), so it is not asked of the host at all.
-            p.cloudMarch[0] = 48.0f;
-            p.cloudMarch[2] = 0.35f;
-            p.cloudMarch[3] = 0.75f;
-
-            // The layer belongs to the world rather than to the eye: the clouds are
-            // anchored in the world's horizontal plane and hang at a fixed height
-            // over it, which is what the pass that puts their shadow on the world
-            // has to agree with. Where the eye stands in that world is therefore
-            // part of what the sky is drawn from.
-            p.cloudAnchor[0] = uniform->GetData()->cameraPosition[0];
-            p.cloudAnchor[1] = uniform->GetData()->cameraPosition[1];
-            p.cloudAnchor[2] = uniform->GetData()->cameraPosition[2];
-            p.cloudAnchor[3] = 0.0f;
 
             // per-face camera bases, matching Matrix::GetCubemapViewProjMat
             constexpr float PI = 3.14159265358979323846f;
@@ -916,104 +850,14 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             {
                 Matrix::GetViewMatrix(view, origin, faceAngles[face][0], faceAngles[face][1], 0.0f);
 
-                // The rows of the view rotation, which are the camera's axes in the
-                // world -- right, up, forward of the face -- taken out of the flat
-                // column-major matrix. The code below is right and this comment was
-                // wrong once: view[0], view[4], view[8] are row 0, not column 0, and
-                // read as a column they do not name the camera's right at all.
+                // column-major columns of the view rotation: right, up, forward
                 p.faceBasis[face * 3 + 0][0] = view[0];  p.faceBasis[face * 3 + 0][1] = view[4];  p.faceBasis[face * 3 + 0][2] = view[8];
                 p.faceBasis[face * 3 + 1][0] = view[1];  p.faceBasis[face * 3 + 1][1] = view[5];  p.faceBasis[face * 3 + 1][2] = view[9];
                 p.faceBasis[face * 3 + 2][0] = view[2];  p.faceBasis[face * 3 + 2][1] = view[6];  p.faceBasis[face * 3 + 2][2] = view[10];
             }
 
-            const uint32_t cloudsQuality = (drawInfo.pSkyParams == nullptr)
-                ? RenderCubemap::QUALITY_HIGH : drawInfo.pSkyParams->skyCloudsQuality;
-            rasterizer->GetRenderCubemap()->SetQuality(cmd, cloudsQuality);
-
-            // The lowest level of rt_sky_clouds_quality draws the flat clouds the
-            // sky had before the layer was a volume: a mask painted into the sky's
-            // own colour (CmProceduralSky.comp), with no layer for the host to march
-            // and no volume of one for the world to be shadowed by. The flag travels
-            // in the tail of skyColor, which has nothing else to carry.
-            const bool flatClouds = RenderCubemap::ClampQuality(cloudsQuality) == RenderCubemap::QUALITY_LOW;
-            p.skyColor[3] = flatClouds ? 1.0f : 0.0f;
-
-            // What the motion vectors of the sky need of the layer (RaygenPrimary.inl,
-            // getMotionForCloudLayer), in three cells of the cubemap transform that the
-            // column-major copy in FillUniform leaves at zero and nothing else reads --
-            // and this frame's uniform is uploaded below, so this is not too late:
-            // [0].w is the drift the layer actually has, in world units per second
-            // (the setting already scaled by the height above), zero when nothing in
-            // the sky drifts; [1].w is the bottom of the layer over the eye, zero for
-            // the flat clouds of the lowest level, which have no layer for a vector to
-            // find a plane in; [2].w is the layer's thickness. Keep these writes equal
-            // to the shader's reads.
-            const bool cloudsDrift = (p.cloudParams[3] > 0.5f) && (p.skyParams[1] > 0.0f);
-            const bool layerStands = cloudsDrift && !flatClouds;
-            uniform->GetData()->skyCubemapRotationTransform[3]  = cloudsDrift ? p.cloudParams[2] : 0.0f;
-            uniform->GetData()->skyCubemapRotationTransform[7]  = layerStands ? p.cloudLayer[0] : 0.0f;
-            uniform->GetData()->skyCubemapRotationTransform[11] = layerStands ? p.cloudLayer[1] : 0.0f;
-
-            // The pass timings pick the cloud path up here: the shadow of the layer,
-            // the layer itself, the sky it is composited into and the mip chain of the
-            // sky's cubemaps are four rows of their own (PassTimings.h) instead of
-            // standing inside the row of the lights.
-            passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUD_SHADOW);
-
-            // The clouds hang between the sun and the world, so the shadow they
-            // throw on it is laid down here, for every pass that lights with the
-            // sun (the sun itself, the sky, and the shafts -- CloudShadowMap.h).
-            // The flat clouds cast none: there is no volume of them, and a standing
-            // one would keep darkening the world behind the sky's back.
-            if (flatClouds)
-            {
-                rasterizer->GetRenderCubemap()->InvalidateCloudShadow();
-            }
-            else
-            {
-                rasterizer->GetRenderCubemap()->UpdateCloudShadow(cmd, p, uniform->GetData()->cameraPosition, frameIndex);
-            }
-            rasterizer->GetRenderCubemap()->DrawProcedural(cmd, p, frameIndex, passTimings.get());
-
-            // The world's shading reads the volume's placement from the tail of the
-            // global uniform, which was filled before this frame's own refill of the
-            // volume could re-anchor it: refresh the tail and upload the uniform
-            // again, so that the passes that light the world read the volume by the
-            // very place it was filled at, as the sky pass already does through its
-            // own parameters. The upload is what carries the tail: it copies the CPU
-            // struct into this frame's staging, which the recorded copy reads later.
-            {
-                float cloudShadowPlacement[4] = {};
-                rasterizer->GetRenderCubemap()->GetCloudShadowPlacement(cloudShadowPlacement);
-                memcpy(uniform->GetData()->skyCubemapRotationTransform + 12, cloudShadowPlacement, sizeof(cloudShadowPlacement));
-                uniform->Upload(cmd, frameIndex);
-            }
+            rasterizer->GetRenderCubemap()->DrawProcedural(cmd, p);
         }
-        else
-        {
-            // No procedural sky: the clouds it draws are gone with it, and the
-            // standing shadow map may not keep darkening the sun behind its back
-            rasterizer->GetRenderCubemap()->InvalidateCloudShadow();
-
-            // The pass timings carry the four cloud rows of this frame even so, back
-            // to back: they are counted every frame, and a frame missing one of them
-            // is a frame the panel has no numbers for at all.
-            passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUD_SHADOW);
-            passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUDS);
-            passTimings->Mark(cmd, frameIndex, GPU_PASS_SKY);
-            passTimings->Mark(cmd, frameIndex, GPU_PASS_SKY_MIPS);
-        }
-    }
-    else
-    {
-        // The sky is not drawn at all here, so neither are the clouds that would
-        // stand between the sun and the world
-        rasterizer->GetRenderCubemap()->InvalidateCloudShadow();
-
-        passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUD_SHADOW);
-        passTimings->Mark(cmd, frameIndex, GPU_PASS_CLOUDS);
-        passTimings->Mark(cmd, frameIndex, GPU_PASS_SKY);
-        passTimings->Mark(cmd, frameIndex, GPU_PASS_SKY_MIPS);
     }
 
 
@@ -1062,11 +906,11 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
         bool godRaysActive = false;
         GodRays::Params gr = {};
         {
-            // Host cvars rt_sky_godrays and rt_sky_godrays_intensity. When disabled the
+            // Host cvars rt_godrays and rt_godrays_intensity. When disabled the
             // shadow map is not rendered and the god rays buffers are cleared by
             // the shader itself (CmGodRays returns early for godRaysEnabled == 0).
             // Like Q2RTX (god_rays.c: enabled && intensity > 0),
-            // rt_sky_godrays_intensity 0 counts as disabled as well, so the shadow map
+            // rt_godrays_intensity 0 counts as disabled as well, so the shadow map
             // that feeds the shafts is skipped rather than marched and thrown away.
             const float godRaysIntensity = (drawInfo.pSkyParams == nullptr)
                 ? 1.0f : std::max(drawInfo.pSkyParams->godRaysIntensity, 0.0f);
@@ -1074,17 +918,12 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
                 ((drawInfo.pSkyParams == nullptr) || (drawInfo.pSkyParams->godRaysEnabled != 0)) &&
                 (godRaysIntensity > 0.0f);
 
-            // rt_sky_godrays_quality: the level the map the shafts are traced through is
-            // drawn at, asked for every frame and rebuilt only when it changes.
-            shadowMap->SetQuality((drawInfo.pSkyParams == nullptr)
-                ? ShadowMap::QUALITY_HIGH : drawInfo.pSkyParams->godRaysQuality);
-
             // The shafts are inscattered sunlight, so they are proportional to the
             // sun light colour exactly as in Q2RTX (inscatter * sun_color *
             // intensity * 1e-4, CmGodRays.comp). That colour carries the light
             // fixup, so 8.0 here is the ratio the shafts were originally
-            // calibrated against; rt_sky_sun, rt_brightness and the light tint now all
-            // reach them through it, and rt_sky_godrays_intensity scales them on top.
+            // calibrated against; rt_sun, rt_brightness and the light tint now all
+            // reach them through it, and rt_godrays_intensity scales them on top.
             constexpr float godRaysIntensityBase = 8.0f;
             gr.godRaysIntensity = godRaysIntensityBase * godRaysIntensity;
             gr.godRaysEccentricity = 0.75f;
@@ -1147,29 +986,6 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
                         gr.sunColor[1] = sunColor[1];
                         gr.sunColor[2] = sunColor[2];
                     }
-
-                    // The layer the volume of the layer's shadow was filled from: the
-                    // world height of its bottom (the eye's own height plus the layer's
-                    // bottom over it) and its depth, in the spare lanes of the sun's own
-                    // parameters -- the shafts read the volume with them, so that a
-                    // sample of the air asks about the part of the column above it
-                    // rather than the whole of it (CmGodRays.comp). The same fallbacks
-                    // the sky applies to them.
-                    float cloudHeight = 140000.0f, cloudThickness = 90000.0f;
-                    if (drawInfo.pSkyParams != nullptr)
-                    {
-                        const float *cloudSettings = &drawInfo.pSkyParams->skyCubemapRotationTransform.matrix[0][0];
-                        if (cloudSettings[7] > 0.0f)
-                        {
-                            cloudHeight = cloudSettings[7];
-                        }
-                        if (cloudSettings[8] > 0.0f)
-                        {
-                            cloudThickness = cloudSettings[8];
-                        }
-                    }
-                    gr.sunColor[3] = uniform->GetData()->cameraPosition[2] + cloudHeight;
-                    gr.sunDirection[3] = cloudThickness;
 
                     for (int k = 0; k < 3; k++)
                     {
@@ -1414,6 +1230,397 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
     passTimings->Mark(cmd, frameIndex, GPU_PASS_COUNT);
 }
 
+bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
+{
+    if (nvrhiFrameSkeleton->IsUnavailable())
+    {
+        return false;
+    }
+
+    const uint32_t frameIndex = currentFrameState.GetFrameIndex();
+
+    // The engine's framebuffers are created by the legacy Render path and nowhere else
+    // (Framebuffers::PrepareForSize, VulkanDevice.cpp:738), and the RHI sky pass draws into their
+    // ALBEDO image. Keeping them prepared here is what makes ALBEDO exist and follow a resolution
+    // change under `rhiframe`; the call is idempotent, so the fallback below can repeat it with the
+    // same resolution state and get the same no-op.
+    framebuffers->PrepareForSize(renderResolution.GetResolutionState());
+
+    // The sky inputs are built from the same sources the legacy DrawSkyToAlbedo call reads
+    // (VulkanDevice.cpp:748-756): the uniform's view/projection/jitter filled by the FillUniform
+    // call of DrawFrame, the sky params' viewer position of the draw info, and the frame's sky draw
+    // list of the collector. No legacy math is duplicated in the RHI path - the pass gets the same
+    // arguments.
+    const ShGlobalUniform *globalUniform = uniform->GetData();
+    const RgFloat3D skyViewerPosition =
+        drawInfo.pSkyParams ? drawInfo.pSkyParams->skyViewerPosition : RgFloat3D{ 0, 0, 0 };
+
+    const std::vector<RasterizedDataCollector::DrawInfo> &skyDraws =
+        rasterizer->GetDataCollector().GetSkyDrawInfos();
+
+    // The world sub-pass draws the frame's raster draw list - what the legacy world draw consumes
+    // (VulkanDevice.cpp:1071-1082, Rasterizer::DrawToFinalImage) - and reads the same engine global
+    // uniform and tonemapping objects the legacy world draw binds (Rasterizer.cpp:273-279). The
+    // skeleton receives them as pointers because it wraps the two buffers itself, on the first
+    // frame the engine's framebuffers exist (see NvrhiFrameSkeleton::PrepareWorld).
+    const std::vector<RasterizedDataCollector::DrawInfo> &worldDraws =
+        rasterizer->GetDataCollector().GetRasterDrawInfos();
+
+    // The smoke half's list (A5.5): the DEFAULT stream carries the smoke entries too - R_DrawSmoke
+    // uploads all live puffs as one batch with the engine's SMOKE state bit (r_smoke.c:358-376;
+    // vkpt.h:514) - and the collector keeps no separate smoke stream, so the host splits the list
+    // the way the legacy pipeline switch does (Rasterizer::BindPipelineIfNew, Rasterizer.cpp:472-476).
+    // The overlay draws these entries with the ported RsSmoke pair in the same compose window and
+    // skips them in its world loop, so each entry is recorded exactly once.
+    smokeDraws.clear();
+    for (const RasterizedDataCollector::DrawInfo &info : worldDraws)
+    {
+        if ((info.pipelineState & RG_RASTERIZED_GEOMETRY_STATE_SMOKE) != 0)
+        {
+            smokeDraws.push_back(info);
+        }
+    }
+
+    // The 2D UI's draw list (A5.1): the same collector stream the legacy Rasterizer::DrawToSwapchain
+    // consumes, read here for the RHI UI pass.
+    const std::vector<RasterizedDataCollector::DrawInfo> &swapchainDraws =
+        rasterizer->GetDataCollector().GetSwapchainDrawInfos();
+
+    // The engine's TLAS preparation and build, the two calls Scene::SubmitForFrame makes on this
+    // frame's legacy command buffer (Scene.cpp:108-118), with exactly the values of the legacy call
+    // site (VulkanDevice.cpp:732-735): the uniform's world-ray cull mask, the instance-wide sky
+    // flag and the draw info's "disable ray-traced geometry" flag. They stay on the legacy buffer:
+    // PrepareForBuildingTLAS fills the uniform's per-instance geometry offsets - the CPU copy the
+    // skeleton writes into the device-local uniform - and BuildTLAS fills the engine's instance
+    // buffer, which the RHI acceleration structures wrap and build their TLAS from.
+    //
+    // The one-frame lag this implies, deliberate for this increment: the legacy command buffer is
+    // submitted after the RHI command list of the same frame (VulkanDevice.cpp:1301-1305), so the
+    // RHI list of frame N builds its TLAS from the instance buffer contents that frame N-1's
+    // submission left behind. The TLAS therefore references the engine's own BLAS addresses (the
+    // ones the engine wrote into the instance buffer), not the RHI module's; the A3.1 increment
+    // moves the instance fill onto the RHI list and flips the references.
+    const std::shared_ptr<ASManager> &asManager = scene->GetASManager();
+    const auto prepare = asManager->PrepareForBuildingTLAS(
+        frameIndex, *uniform->GetData(), uniform->GetData()->rayCullMaskWorld,
+        allowGeometryWithSkyFlag, drawInfo.disableRayTracedGeometry);
+
+    // Fill the engine's instance buffer ahead of the skeleton's Render: the skeleton records the RHI
+    // TLAS build from it, and the raster mode's world branch writes the uniform data (including the
+    // per-instance geometry offsets filled just above) into the device-local uniform. The traced
+    // mode has no such write yet - the debug pass reads the uniform the engine buffer holds, and
+    // under `rhiframe` GlobalUniform::Upload does not run - so a traced frame reads whatever the
+    // last upload left there; refreshing it on the RHI list belongs to the A4 wiring. The TLAS build
+    // is not part of the legacy renderer's frame here, so it has to happen on the legacy buffer
+    // regardless of which mode the skeleton records.
+    asManager->BuildTLAS(currentFrameState.GetCmdBuffer(), frameIndex, prepare.first);
+
+    NvrhiFrameSkeleton::SkyFrameInputs sky = {};
+    sky.framebuffers = framebuffers.get();
+    sky.draws = skyDraws.data();
+    sky.drawCount = static_cast<uint32_t>(skyDraws.size());
+    sky.width = renderResolution.Width();
+    sky.height = renderResolution.Height();
+    sky.upscaledWidth = renderResolution.UpscaledWidth();
+    sky.upscaledHeight = renderResolution.UpscaledHeight();
+    memcpy(sky.view, globalUniform->view, sizeof(sky.view));
+    memcpy(sky.projection, globalUniform->projection, sizeof(sky.projection));
+    sky.jitter[0] = globalUniform->jitterX;
+    sky.jitter[1] = globalUniform->jitterY;
+    memcpy(sky.skyViewerPos, skyViewerPosition.data, sizeof(sky.skyViewerPos));
+    sky.applyVertexColorGamma = rasterizedVertexColorGamma;
+    // The raster sky's cube half: the six per-face view-projections the legacy multiview vertex
+    // shader reads by gl_ViewIndex (RsRasterizerMultiview.vert:55), filled by FillUniform from the
+    // same sky viewer position (VulkanDevice.cpp:258-263). RhiRasterSkyPass takes the same bytes;
+    // the ALBEDO half does not read them.
+    memcpy(sky.skyFaceViewProj, globalUniform->viewProjCubemap, sizeof(sky.skyFaceViewProj));
+    sky.worldDraws = worldDraws.data();
+    sky.worldDrawCount = static_cast<uint32_t>(worldDraws.size());
+    sky.smokeDraws = smokeDraws.data();
+    sky.smokeDrawCount = static_cast<uint32_t>(smokeDraws.size());
+
+    // The 2D UI (A5.1): the draw list and the collector's per-slot staging geometry. The staging
+    // handles are the frame's own - the device copy the engine records on the legacy command buffer
+    // is submitted after this list, so the UI must read the staging.
+    sky.swapchainDraws = swapchainDraws.data();
+    sky.swapchainDrawCount = static_cast<uint32_t>(swapchainDraws.size());
+    sky.swapchainVertexStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        rasterizer->GetDataCollector().GetVertexStagingBuffer(frameIndex)));
+    sky.swapchainIndexStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        rasterizer->GetDataCollector().GetIndexStagingBuffer(frameIndex)));
+    sky.swapchainVertexStagingSize = rasterizer->GetDataCollector().GetVertexBufferSize();
+    sky.swapchainIndexStagingSize = rasterizer->GetDataCollector().GetIndexBufferSize();
+    sky.disableRasterization = drawInfo.disableRasterization;
+    sky.uniform = uniform;
+    sky.tonemapping = tonemapping.get();
+    // The exposure controls with the legacy Render's own defaults and clamping
+    // (VulkanDevice.cpp:1051-1059); the traced mode's Tonemapping::PrepareExposureParams consumes
+    // them, the raster mode's stand-in does not.
+    if (drawInfo.pTonemappingParams != nullptr)
+    {
+        sky.exposureBias = drawInfo.pTonemappingParams->exposureBias;
+        sky.contrast = std::clamp(drawInfo.pTonemappingParams->contrast, 0.0f, 1.0f);
+    }
+    // The module synthesises the instance list itself from the engine's registry, so it takes the
+    // same three frame inputs the engine's own TLAS preparation takes (VulkanDevice.cpp:1285): the
+    // uniform's world-ray cull mask, the instance-wide sky flag, and the draw info's flag.
+    sky.rayCullMaskWorld = uniform->GetData()->rayCullMaskWorld;
+    sky.allowGeometryWithSkyFlag = allowGeometryWithSkyFlag;
+    sky.disableRayTracedGeometry = drawInfo.disableRayTracedGeometry;
+
+    // The god rays and their shadow map (A5.2): the host block of the legacy frame
+    // (VulkanDevice.cpp:908-1007), precomputed here because only the host has the scene, the light
+    // manager and the sky params. The skeleton renders the shadow map and the two dispatches on the
+    // RHI list, between the primary and the reproject, from these inputs. The legacy's exact shape
+    // is kept: the final switch is `godRaysEnabled && (sunExists || useSkyBrightest)`, the intensity
+    // is 8x the clamped sky param, and the sun fields are the toward-the-sun direction and the
+    // fixed-up colour (or the sky texture's brightest point when the god rays take their sun from
+    // it); when the final switch is off the module still records the clear path, so image 64 is
+    // never stale.
+    {
+        const float godRaysIntensity = (drawInfo.pSkyParams == nullptr)
+            ? 1.0f : std::max(drawInfo.pSkyParams->godRaysIntensity, 0.0f);
+        const bool godRaysEnabled =
+            ((drawInfo.pSkyParams == nullptr) || (drawInfo.pSkyParams->godRaysEnabled != 0)) &&
+            (godRaysIntensity > 0.0f);
+
+        float sunColor[3] = {}, sunDir[3] = {}, sunAngularRadius = 0.0047f;
+        const bool sunExists =
+            scene->GetLightManager()->GetLastDirectionalLight(sunColor, sunDir, &sunAngularRadius);
+
+        const bool useSkyBrightest =
+            (drawInfo.pSkyParams != nullptr) &&
+            (drawInfo.pSkyParams->skyType == RG_SKY_TYPE_RASTERIZED_GEOMETRY) &&
+            (drawInfo.pSkyParams->godRaysFromSkyTexture != 0);
+
+        const bool godRaysOn = godRaysEnabled && (sunExists || useSkyBrightest);
+
+        sky.godRays.enabled = godRaysOn;
+        sky.godRays.intensity = 8.0f * godRaysIntensity;
+        sky.godRays.eccentricity = 0.75f;
+
+        if (godRaysOn)
+        {
+            // The shadow map's light direction: from the sun, or the negated sky direction when the
+            // god rays take their sun from the sky texture (VulkanDevice.cpp:945-951).
+            for (int k = 0; k < 3; k++)
+            {
+                if (useSkyBrightest)
+                {
+                    sky.godRays.shadowLightDirection[k] = -drawInfo.pSkyParams->godRaysSkyDirection.data[k];
+                    sky.godRays.sunDirection[k] = drawInfo.pSkyParams->godRaysSkyDirection.data[k];
+                    sky.godRays.sunColor[k] = drawInfo.pSkyParams->godRaysSkyColor.data[k];
+                }
+                else
+                {
+                    sky.godRays.shadowLightDirection[k] = sunDir[k];
+                    sky.godRays.sunDirection[k] = -sunDir[k];
+                    sky.godRays.sunColor[k] = sunColor[k];
+                }
+            }
+        }
+
+        sky.godRays.hasAabb = scene->HasAABB();
+        if (sky.godRays.hasAabb)
+        {
+            float aabbMin[3], aabbMax[3];
+            scene->GetAABB(aabbMin, aabbMax);
+
+            for (int k = 0; k < 3; k++)
+            {
+                const float halfSize = std::max((aabbMax[k] - aabbMin[k]) * 0.5f, 1.0f);
+                sky.godRays.aabbMin[k] = aabbMin[k];
+                sky.godRays.aabbMax[k] = aabbMax[k];
+                sky.godRays.worldCenter[k] = (aabbMin[k] + aabbMax[k]) * 0.5f;
+                sky.godRays.worldHalfSizeInv[k] = 1.0f / halfSize;
+            }
+
+            sky.godRays.staticCollector = scene->GetASManager()->GetStaticCollector().get();
+            sky.godRays.dynamicCollector = scene->GetASManager()->GetDynamicCollector(frameIndex).get();
+        }
+    }
+
+    // The portals (A5.3): the engine's staging and device-local buffers for this slot, which the
+    // skeleton wraps and copies on the RHI list before the reflect/refract dispatch. The engine's
+    // own SubmitForFrame (the copy plus the uploaded-index reset) runs only in the legacy render,
+    // which `rhiframe` skips, so the RHI frame resets the bookkeeping here, after the game's
+    // uploads of this frame and independently of the reflect/refract gate - the game uploads a
+    // teleport every frame while `rt_teleport_portals` is 1, and a leaked index would throw on the
+    // next frame's Upload (PortalList.cpp:58-61).
+    sky.portalStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(portalList->GetStagingBuffer(frameIndex)));
+    sky.portalDevice = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(portalList->GetDeviceLocalBuffer()));
+    sky.portalSize = static_cast<uint64_t>(portalList->GetBufferSize());
+    portalList->ResetUploads();
+
+    // The decals (A5.6): the engine's instance buffers for this slot, which the skeleton wraps and
+    // copies on the RHI list before the decal pass. The game uploads none in this tree
+    // (rgUploadDecal has no caller), so the counts are zero and the skeleton skips both the copy
+    // and the draw; the engine's own SubmitForFrame (the copy) never runs under `rhiframe`, and its
+    // bookkeeping needs no reset here because PrepareForFrame clears the count on both paths.
+    sky.decalStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(decalManager->GetStagingBuffer(frameIndex)));
+    sky.decalDevice = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(decalManager->GetDeviceLocalBuffer()));
+    sky.decalBufferSize = static_cast<uint64_t>(decalManager->GetBufferSize());
+    sky.decalCopySize = static_cast<uint64_t>(decalManager->GetCopySize());
+    sky.decalCount = decalManager->GetDecalCount();
+
+    // The upscaler inputs of A5.7: the resolution helper the FSR module takes (the engine object's
+    // own technique selection lives in it) and the camera values its Apply takes (the legacy
+    // arguments of VulkanDevice.cpp:1122-1130); the jitter and timeDelta already reach the skeleton
+    // through the uniform copy.
+    sky.renderResolution = &renderResolution;
+    sky.cameraNear = drawInfo.cameraNear;
+    sky.cameraFar = drawInfo.cameraFar;
+    sky.fovYRadians = drawInfo.fovYRadians;
+
+    // The post-upscale effect chain (RHI/RhiPostEffectPass.h): the frame's own `postEffectParams`
+    // block and the engine frame counter - the same values the legacy Render hands its effect
+    // objects (VulkanDevice.cpp:1151, :1212). The pointed-to per-effect params are the game's
+    // frame-lifetime objects, exactly as in the legacy call (gl_vidsdl.c:2147-2154), and the
+    // skeleton reads them synchronously during this Render.
+    sky.postEffectParams = drawInfo.postEffectParams;
+    sky.postEffectFrameId = frameId;
+
+    // The procedural sky (A5.4): the host block of the legacy frame (VulkanDevice.cpp:755-863) that
+    // fills the `RenderCubemap::DrawProcedural` params, mirrored exactly; the skeleton records the
+    // compute before the trace only when the uniform selects SKY_TYPE_PROCEDURAL.
+    {
+        RhiProceduralSkyPass::Params p = {};
+
+        // The atmosphere is painted with the sky tint (rt_sky_color), sent by the host via
+        // skyColorDefault; this keeps the tint independent from whether the sun light is enabled.
+        p.skyTint[0] = globalUniform->skyColorDefault[0];
+        p.skyTint[1] = globalUniform->skyColorDefault[1];
+        p.skyTint[2] = globalUniform->skyColorDefault[2];
+
+        // The disc is the sun itself, so it is drawn with the sun's own colour (white when the host
+        // sends none); it only reaches the visible cubemap, never the env one.
+        p.sunDiscColor[0] = p.sunDiscColor[1] = p.sunDiscColor[2] = 1.0f;
+        if (drawInfo.pSkyParams)
+        {
+            p.sunDiscColor[0] = drawInfo.pSkyParams->sunDiscColor.data[0];
+            p.sunDiscColor[1] = drawInfo.pSkyParams->sunDiscColor.data[1];
+            p.sunDiscColor[2] = drawInfo.pSkyParams->sunDiscColor.data[2];
+        }
+
+        float sunColor[3], sunDir[3], sunAngularRadius = 0.0047f;
+        const bool hasSun = scene->GetLightManager()->GetLastDirectionalLight(sunColor, sunDir, &sunAngularRadius);
+        p.sunDirection[3] = hasSun ? 1.0f : 0.0f;
+        if (hasSun)
+        {
+            // The directional light points FROM the sun toward the scene; the sky expects the
+            // direction TOWARD the sun.
+            p.sunDirection[0] = -sunDir[0];
+            p.sunDirection[1] = -sunDir[1];
+            p.sunDirection[2] = -sunDir[2];
+        }
+        else
+        {
+            // Only centres the rayleigh gradient, so it never shows as a sun, but it still has to
+            // be a normalized vector.
+            float d[3] = { 0.3f, 0.5f, 0.8f };
+            const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            p.sunDirection[0] = d[0] / len;
+            p.sunDirection[1] = d[1] / len;
+            p.sunDirection[2] = d[2] / len;
+        }
+        p.skyTint[3] = sunAngularRadius;
+        p.skyParams[0] = globalUniform->skyColorMultiplier;
+        p.skyParams[1] = globalUniform->skyColorSaturation;
+        p.skyParams[2] = 6.0f;      // sun disc intensity (VulkanDevice.cpp:820)
+        p.skyParams[3] = 0.025f;    // display sun disc angular radius, rad (VulkanDevice.cpp:821)
+
+        // Cloud params are packed into the otherwise-unused skyCubemapRotationTransform field:
+        // [0..2] cloud colour, [3] coverage, [4] density, [5] drift speed, [6] enabled.
+        p.cloudColor[3] = globalUniform->time;
+        if (drawInfo.pSkyParams)
+        {
+            const float *c = &drawInfo.pSkyParams->skyCubemapRotationTransform.matrix[0][0];
+            p.cloudColor[0] = c[0];
+            p.cloudColor[1] = c[1];
+            p.cloudColor[2] = c[2];
+            p.cloudParams[0] = c[3];
+            p.cloudParams[1] = c[4];
+            p.cloudParams[2] = c[5];
+            p.cloudParams[3] = c[6];
+        }
+
+        // Per-face camera bases, matching Matrix::GetCubemapViewProjMat.
+        constexpr float PI = 3.14159265358979323846f;
+        const float faceAngles[6][2] = {
+            { 0.0f,        PI / 2.0f }, // POSITIVE_X
+            { 0.0f,       -PI / 2.0f }, // NEGATIVE_X
+            { -PI / 2.0f, 0.0f       }, // POSITIVE_Y
+            {  PI / 2.0f, 0.0f       }, // NEGATIVE_Y
+            { 0.0f,        0.0f      }, // POSITIVE_Z
+            { 0.0f,        PI        }, // NEGATIVE_Z
+        };
+
+        float view[16];
+        const float origin[3] = { 0.0f, 0.0f, 0.0f };
+        for (uint32_t face = 0; face < 6; face++)
+        {
+            Matrix::GetViewMatrix(view, origin, faceAngles[face][0], faceAngles[face][1], 0.0f);
+
+            // Column-major columns of the view rotation: right, up, forward.
+            p.faceBasis[face * 3 + 0][0] = view[0];  p.faceBasis[face * 3 + 0][1] = view[4];  p.faceBasis[face * 3 + 0][2] = view[8];
+            p.faceBasis[face * 3 + 1][0] = view[1];  p.faceBasis[face * 3 + 1][1] = view[5];  p.faceBasis[face * 3 + 1][2] = view[9];
+            p.faceBasis[face * 3 + 2][0] = view[2];  p.faceBasis[face * 3 + 2][1] = view[6];  p.faceBasis[face * 3 + 2][2] = view[10];
+        }
+
+        sky.proceduralSkyParams = p;
+    }
+
+    // The RHI pass waits on the acquire semaphore itself, so the semaphore is
+    // taken away from the renderer: it may be waited on only once per signal.
+    VkPipelineStageFlags semaphoreWaitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    const VkSemaphore semaphoreToWait = currentFrameState.GetSemaphoreForWaitAndRemove(&semaphoreWaitStage);
+
+    assert(semaphoreToWait != VK_NULL_HANDLE);
+
+    if (!nvrhiFrameSkeleton->Render(swapchain.get(), frameIndex, sky, semaphoreToWait, renderFinishedSemaphores[frameIndex]))
+    {
+        // Give it back: the renderer will submit the frame itself.
+        currentFrameState.SetSemaphore(semaphoreToWait, semaphoreWaitStage);
+        return false;
+    }
+
+    // The world's shading normals: the game uploads the world brushes with zero normals plus the
+    // RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT flag (Quake/r_brush.c), and the only pass that fills
+    // ShVertex::normal is the engine's vertex preprocessing, the call Scene::SubmitForFrame makes
+    // for the legacy renderer (Scene.cpp). The RHI path never runs SubmitForFrame, so it records
+    // that pass here, on the same legacy command buffer the TLAS build above uses and with the push
+    // constant this frame's PrepareForBuildingTLAS returned (`prepare.second`). The
+    // Scene::PreprocessVertices method applies the same mode logic as the legacy call:
+    // VERT_PREPROC_MODE_ALL on the first frame after the static submission, the dynamic-only
+    // mode afterwards.
+    //
+    // It is recorded only after the skeleton's Render succeeded (rather than next to the TLAS
+    // build): a frame that falls back to the legacy renderer below keeps the static-submission
+    // marker, so the fallback's own SubmitForFrame still runs the full ALL preprocessing with the
+    // uniform upload of that path, and the marker is never consumed without a delivered RHI frame.
+    //
+    // Ordering: the legacy command buffer is submitted after the RHI list of the same frame (the
+    // cmdManager->Submit call below), so the pass takes effect for the submission that follows
+    // this one - the same one-frame relation the engine's instance buffer and TLAS build have
+    // here. A traced frame N still shades with the normals frame N-1's submission left behind,
+    // so the first traced frame after a level load still reads zero normals and every later frame
+    // is correct. The dynamic/movable geometry keeps zero normals regardless: its traced copy is
+    // made by the RHI layer from the engine's staging buffers, which this pass never touches.
+    scene->PreprocessVertices(currentFrameState.GetCmdBuffer(), frameIndex, uniform, prepare.second);
+
+    // The renderer has not recorded anything into the frame, but its command
+    // buffer still has to be submitted: BeginFrame recorded uploads into it, and
+    // its fence is what the next BeginFrame waits for. The swapchain image is
+    // already acquired by the RHI pass above, so there is nothing to wait on.
+    cmdManager->Submit(currentFrameState.GetCmdBuffer(), frameFences[frameIndex]);
+
+    // The RHI pass signals renderFinishedSemaphores[frameIndex].
+    swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
+
+    frameId++;
+    return true;
+}
+
 void VulkanDevice::EndFrame(VkCommandBuffer cmd)
 {
     uint32_t frameIndex = currentFrameState.GetFrameIndex();
@@ -1498,9 +1705,45 @@ void VulkanDevice::DrawFrame(const RgDrawFrameInfo *drawInfo)
 
     textureManager->CheckForHotReload(cmd, frameIndex);
 
-    if (renderResolution.Width() > 0 && renderResolution.Height() > 0)
+    const bool canRender = renderResolution.Width() > 0 && renderResolution.Height() > 0;
+
+    // The uniform is filled once for both renderers: the RHI sky pass reads the same view,
+    // projection and jitter the legacy path uses (VulkanDevice.cpp:748-756), and FillUniform is what
+    // puts them there. The legacy fallback below keeps its existing FillUniform+Render pair and
+    // fills nothing a second time.
+    if (canRender)
     {
         FillUniform(uniform->GetData(), *drawInfo);
+    }
+
+    // The RHI frame skeleton takes over the frame: the rasterized sky is drawn into the engine's
+    // ALBEDO image and presented through the RHI layer, the renderer is skipped. The collector copy
+    // is what the legacy Rasterizer::SubmitForFrame does (Rasterizer.cpp:160); the legacy command
+    // buffer that carries it is submitted after the RHI list, so the sky of this frame still reads
+    // the copy of the previous frame - the geometry is static per level, so only the first frame
+    // after a level load reads the zeroed buffer (see the geometry wrap in VulkanDevice_Init.cpp).
+    // The availability check keeps the copy out of the fallback path: when the skeleton cannot
+    // render, the legacy Render below calls SubmitForFrame and would copy a second time.
+    if (nvrhiFrameSkeleton != nullptr && !nvrhiFrameSkeleton->IsUnavailable() && canRender)
+    {
+        // The engine's per-frame descriptor flush lives on the legacy path (VulkanDevice.cpp:724-727),
+        // which the RHI takes over. Without it the shared RHI texture table is never filled and every
+        // bindless sample reads an unwritten descriptor - the sky renders black. The cubemap table is a
+        // separate set the ported passes do not use yet, so its flush stays on the legacy path.
+        const bool mipLodBiasUpdated = worldSamplerManager->TryChangeMipLodBias(frameIndex, renderResolution.GetMipLodBias());
+        textureManager->SubmitDescriptors(frameIndex, drawInfo->pTexturesParams, mipLodBiasUpdated);
+
+        rasterizer->GetDataCollector().CopyFromStaging(cmd, frameIndex);
+
+        if (RenderThroughRhi(*drawInfo))
+        {
+            currentFrameState.OnEndFrame();
+            return;
+        }
+    }
+
+    if (canRender)
+    {
         Render(cmd, *drawInfo);
     }
 
@@ -1571,7 +1814,10 @@ void VulkanDevice::GetFrameStatsEx(RgFrameStats *pStats) const
     }
     pStats->fpsX10 = statsFpsX10;
 
-    if (passTimings != nullptr && passTimings->IsSupported())
+    // Query support alone is not enough to call the numbers valid: the legacy Render is the only
+    // producer of marks (VulkanDevice.cpp:720-1231), so a `rhiframe` frame collected nothing and
+    // "not collected" (0) is the honest answer, distinguishable from a measured 0 ms.
+    if (passTimings != nullptr && passTimings->IsSupported() && passTimings->HasRecordedMarks())
     {
         pStats->gpuTimingValid = 1;
         pStats->gpuFrameMs = passTimings->GetTotalMs();

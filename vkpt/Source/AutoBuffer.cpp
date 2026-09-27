@@ -41,13 +41,24 @@ void vkpt::AutoBuffer::Create(VkDeviceSize size, VkBufferUsageFlags usage, const
 
     const std::string debugNameStaging = debugName + " - staging";
 
+    // The staging buffer inherits the owner's address bit (the RHI layer wraps such staging buffers
+    // as copy sources - RHI/RhiAccelStructs.cpp - and NVRHI's native-buffer wrap queries the device
+    // address of every buffer when the device has BDA unconditionally, vulkan-buffer.cpp:215-220,
+    // which VUID-VkBufferDeviceAddressInfo-buffer-02601 forbids without it) and the vertex/index
+    // bits (RhiUiPass binds the RasterizedDataCollector's per-slot staging directly - the UI is
+    // rewritten every frame, so it must read this frame's copy - and Vulkan requires the vertex and
+    // index usage bits for those bindings).
+    const VkBufferUsageFlags stagingUsage =
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) |
+        (usage & (VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+
     for (uint32_t i = 0; i < frameCount; i++)
     {
         assert(!staging[i].IsInitted());
 
         staging[i].Init(
             allocator, size,
-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            stagingUsage,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             debugNameStaging.c_str());
 

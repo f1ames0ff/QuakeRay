@@ -27,8 +27,32 @@
 #include "HaltonSequence.h"
 #include "RenderResolutionHelper.h"
 #include "RgException.h"
+#include "Const.h"
 #include "Generated/ShaderCommonC.h"
 #include "LibraryConfig.h"
+#include "RHI/NvrhiContext.h"
+#include "RHI/NvrhiFrameSkeleton.h"
+#include "RHI/NvrhiRequirements.h"
+#include "RHI/RhiAccelStructs.h"
+#include "RHI/RhiDebugTracePass.h"
+#include "RHI/RhiDecalPass.h"
+#include "RHI/RhiFsrPass.h"
+#include "RHI/RhiPostEffectPass.h"
+#include "RHI/RhiProceduralSkyPass.h"
+#include "RHI/RhiRasterOverlayPass.h"
+#include "RHI/RhiRasterSkyPass.h"
+#include "RHI/RhiRtComposePass.h"
+#include "RHI/RhiRtDirectPass.h"
+#include "RHI/RhiRtGodRaysPass.h"
+#include "RHI/RhiRtIndirectPass.h"
+#include "RHI/RhiRtPrimaryPass.h"
+#include "RHI/RhiRtReflRefrPass.h"
+#include "RHI/RhiShadowMapPass.h"
+#include "RHI/RhiFrameContext.h"
+#include "RHI/RhiSkyPass.h"
+#include "RHI/RhiTextureSource.h"
+#include "RHI/RhiTextureTable.h"
+#include "RHI/RhiUiPass.h"
 
 using namespace vkpt;
 
@@ -47,6 +71,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     , rayCullBackFacingTriangles( info->rayCullBackFacingTriangles )
     , allowGeometryWithSkyFlag( info->allowGeometryWithSkyFlag )
     , lensFlareVerticesInScreenSpace( info->lensFlareVerticesInScreenSpace )
+    , rasterizedVertexColorGamma( info->rasterizedVertexColorGamma != 0 )
     , previousFrameTime( -1.0 / 60.0 )
     , currentFrameTime( 0 )
 {
@@ -74,6 +99,44 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     // set device
     queues->SetDevice( device );
 
+    // the RHI device wraps the device and the queues above, so it is created
+    // once both exist
+    CreateNvrhiDevice();
+
+    // The RHI texture table (RHI/RhiTextureTable.h) has to exist before the sampler managers: the
+    // world manager mirrors its sampler descs into it while it creates the samplers. The capacity is
+    // the same clamped value TextureManager builds its own table with - a bindless table's capacity
+    // is fixed at layout creation, and the two tables address the same slots. On failure the pointer
+    // stays null and the game continues without the RHI textures. The table is built only when the
+    // RHI frame skeleton is on: with `rhiframe` off the engine writes to the legacy table alone, so
+    // the legacy path pays neither the wrapping of every texture nor the descriptor writes. The world
+    // stage of A2 revisits this when the RHI renderer owns the frame.
+    if (libconfig.rhiFrameSkeleton)
+    {
+        const uint32_t maxTextureCount =
+            std::clamp(info->maxTextureCount, TEXTURE_COUNT_MIN, TEXTURE_COUNT_MAX);
+
+        // The frame context comes first: the table retires its dropped samplers and wrapped textures
+        // through it, and the skeleton records through it, one command list per engine frame slot.
+        rhiFrameContext = std::make_shared<rhi::RhiFrameContext>();
+
+        if (!rhiFrameContext->Create(nvrhi->GetDevice(), MAX_FRAMES_IN_FLIGHT))
+        {
+            rhiFrameContext.reset();
+            Print("Warning: RHI: failed to create the frame context, the RHI renderer is unavailable");
+        }
+        else
+        {
+            rhiTextureTable = std::make_shared<rhi::RhiTextureTable>();
+
+            if (!rhiTextureTable->Create(nvrhi->GetDevice(), maxTextureCount, rhiFrameContext.get()))
+            {
+                rhiTextureTable.reset();
+                Print("Warning: RHI: failed to create the texture table, the RHI renderer will not see engine textures");
+            }
+        }
+    }
+
 
     memAllocator        = std::make_shared<MemoryAllocator>(instance, device, physDevice);
 
@@ -84,7 +147,8 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager);
 
     // for world samplers with modifyable lod biad
-    worldSamplerManager     = std::make_shared<SamplerManager>(device, 8, info->textureSamplerForceMinificationFilterLinear);
+    worldSamplerManager     = std::make_shared<SamplerManager>(device, 8, info->textureSamplerForceMinificationFilterLinear,
+                                                               rhiTextureTable.get());
     genericSamplerManager   = std::make_shared<SamplerManager>(device, 0, info->textureSamplerForceMinificationFilterLinear);
 
     framebuffers        = std::make_shared<Framebuffers>(
@@ -108,6 +172,10 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
         userFileLoad,
         *info,
         libconfig);
+
+    // The table was created before the texture manager; attaching it afterwards fills every live
+    // slot of the new table through the manager's all-dirty path (TextureManager::SetRhiTextureTable).
+    textureManager->SetRhiTextureTable(rhiTextureTable.get());
 
     cubemapManager      = std::make_shared<CubemapManager>(
         device,
@@ -181,9 +249,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     shadowMap           = std::make_shared<ShadowMap>(
         device,
         memAllocator,
-        shaderManager,
-        cmdManager,
-        info->godRaysQuality);
+        shaderManager);
 
     godRays             = std::make_shared<GodRays>(
         device,
@@ -192,8 +258,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
         shaderManager,
         uniform,
         blueNoise,
-        shadowMap,
-        rasterizer->GetRenderCubemap());
+        shadowMap);
 
     rayStats            = std::make_shared<RayStats>(device, memAllocator);
     passTimings         = std::make_shared<PassTimings>(device, physDevice->Get(), queues->GetIndexGraphics());
@@ -305,11 +370,520 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     framebuffers->Subscribe(rasterizer);
     framebuffers->Subscribe(decalManager);
     framebuffers->Subscribe(amdFsr);
+
+    // The RHI frame skeleton draws the frame through the RHI layer instead of
+    // the renderer above. Off by default: enabled by 'rhiframe' in vkpt.txt.
+    if (libconfig.rhiFrameSkeleton)
+    {
+        if (nvrhi != nullptr)
+        {
+            // The acceleration structures of the RHI path (RHI/RhiAccelStructs.h): the NVRHI copy of
+            // the engine's static BLAS plus one TLAS per frame slot, built from the engine's
+            // ASManager. Created after the scene exists (the manager is their geometry registry) and
+            // next to the skeleton, which records their builds and reads the TLAS. A failure leaves
+            // the pointer null; the skeleton refuses to be available without it, so the legacy
+            // renderer keeps the frame.
+            rhiAccelStructs = std::make_shared<rhi::RhiAccelStructs>();
+            if (!rhiAccelStructs->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                         scene->GetASManager().get(),
+                                         [this](const char *pMessage) { Print(pMessage); }))
+            {
+                rhiAccelStructs.reset();
+                Print("Warning: RHI: the acceleration structures are unavailable, the legacy renderer is kept");
+            }
+
+            // The debug ray-tracing pass (RHI/RhiDebugTracePass.h), created only when 'rhitrace' is
+            // on. Its set 1 is the engine's global uniform, wrapped here as a static constant buffer
+            // - the same shape the skeleton's world pass wraps it with, because a volatile wrap
+            // would become a dynamic-offset binding the pass's static layout item cannot take. The
+            // binding set the pass builds over the wrap keeps it alive; the pass retires its per-slot
+            // ALBEDO wraps through the frame context. A failure leaves the pointer null: with the
+            // flag on the skeleton then refuses to be available and the legacy renderer keeps the
+            // frame.
+            if (libconfig.rhiDebugTrace)
+            {
+                nvrhi::BufferDesc debugUniformDesc;
+                debugUniformDesc.byteSize = sizeof(ShGlobalUniform);
+                debugUniformDesc.isConstantBuffer = true;
+                debugUniformDesc.initialState = nvrhi::ResourceStates::ConstantBuffer;
+                debugUniformDesc.keepInitialState = true;
+                debugUniformDesc.debugName = "RHI debug trace uniform (GlobalUniform wrap)";
+
+                nvrhi::BufferHandle debugTraceUniformBuffer = nvrhi->GetDevice()->createHandleForNativeBuffer(
+                    nvrhi::ObjectTypes::VK_Buffer,
+                    nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(uniform->GetBuffer()))),
+                    debugUniformDesc);
+
+                rhiDebugTracePass = std::make_shared<RhiDebugTracePass>();
+                if (!rhiDebugTracePass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                               debugTraceUniformBuffer, info->pShaderFolderPath,
+                                               [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiDebugTracePass.reset();
+                    Print("Warning: RHI: the debug trace pass is unavailable, the legacy renderer is kept");
+                }
+            }
+
+            // The real ray-tracing pass of A4.1 (RHI/RhiRtPrimaryPass.h), created only when 'rhirt'
+            // is on: the engine's primary-visibility raygen with the engine's two misses and its two
+            // hit groups, dispatched over the same RHI acceleration structures. Its set 4 is the
+            // shared texture table, so the host hands the table over; set 11 is the engine's
+            // RayStats object, which the pass wraps per frame slot so the ray counters reach the
+            // host's readback; the engine's framebuffer images are resolved per frame by the pass
+            // itself, so no wrap is created here. A failure leaves the pointer null: with the flag
+            // on the skeleton then refuses to be available and the legacy renderer keeps the frame.
+            if (libconfig.rhiRayTracing)
+            {
+                // The procedural sky pass of A5.4 (RHI/RhiProceduralSkyPass.h): the default sky's
+                // cube content, the `RenderCubemap::DrawProcedural` path the legacy frame records
+                // before the trace. It owns its two cube images and the sampler; the primary,
+                // indirect and reflect/refract passes take them for set 8 below. A failure leaves
+                // the pointer null and the passes keep their 1x1 placeholders.
+                rhiProceduralSkyPass = std::make_shared<RhiProceduralSkyPass>();
+                if (!rhiProceduralSkyPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                                  info->pShaderFolderPath,
+                                                  [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiProceduralSkyPass.reset();
+                    Print("Warning: RHI: the procedural sky pass is unavailable, the RT passes keep the placeholder cubemaps");
+                }
+
+                // The raster sky pass (RHI/RhiRasterSkyPass.h): the cube half of
+                // SKY_TYPE_RASTERIZED_GEOMETRY, the ported `Rasterizer::DrawSkyToCubemap` ->
+                // `RenderCubemap::Draw` pair. It borrows the `renderCubemap` the pass above owns -
+                // the cube the primary, indirect and reflect/refract passes sample in set 8 - so it
+                // is created only after that pass and destroyed before it. A failure leaves the
+                // pointer null and the frame's reflections keep the unwritten cube.
+                if (rhiProceduralSkyPass != nullptr && rhiProceduralSkyPass->IsCreated())
+                {
+                    rhiRasterSkyPass = std::make_shared<RhiRasterSkyPass>();
+                    if (!rhiRasterSkyPass->Create(nvrhi->GetDevice(), rhiTextureTable.get(),
+                                                  info->pShaderFolderPath,
+                                                  rhiProceduralSkyPass->GetCubemapTexture(),
+                                                  [this](const char *pMessage) { Print(pMessage); }))
+                    {
+                        rhiRasterSkyPass.reset();
+                        Print("Warning: RHI: the raster sky pass is unavailable, the raster sky cube is not written");
+                    }
+                }
+
+                // The FSR upscaler module of A5.7 (RHI/RhiFsrPass.h): drives the engine's own
+                // FidelityFX FSR 3.1 context on the RHI list, replacing the TAAU when the default
+                // upscaler is selected. A failure leaves the pointer null and the frame keeps the
+                // TAAU path.
+                rhiFsrPass = std::make_shared<RhiFsrPass>();
+                if (!rhiFsrPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(), amdFsr.get(),
+                                        [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiFsrPass.reset();
+                    Print("Warning: RHI: the FSR pass is unavailable, the TAAU upscaler is kept");
+                }
+
+                // The post-upscale effect chain (RHI/RhiPostEffectPass.h): the legacy consumers of
+                // `drawInfo.postEffectParams` - the colour tint and its variants, the inverse-BW
+                // and hue-shift effects, the chromatic aberration, the distorted sides, the waves,
+                // the radial blur, the wipe and the CRT pair (VulkanDevice.cpp:1166-1223) - over
+                // the upscaled image pair, before the UI and (for the wipe/CRT half) after it. The
+                // module wraps the two upscaled images and the sampled ALBEDO itself. A failure
+                // leaves the pointer null and the frame is drawn without the chain - the default-on
+                // chromatic aberration among the losses.
+                rhiPostEffectPass = std::make_shared<RhiPostEffectPass>();
+                if (!rhiPostEffectPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                               info->pShaderFolderPath,
+                                               info->effectWipeIsUsed != 0,
+                                               [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiPostEffectPass.reset();
+                    Print("Warning: RHI: the post-effect pass is unavailable, the frame is drawn without the post-upscale effects");
+                }
+
+                // The decal pass of A5.6 (RHI/RhiDecalPass.h): the ported DecalManager::Draw that
+                // blends decal cubes into ALBEDO right after the primary, so the direct and indirect
+                // passes see the decal-modified G-buffer. The engine uploads no decals in this game
+                // (no caller of rgUploadDecal), so the pass is a no-op at runtime; the wiring keeps
+                // the parity contract. A failure leaves the pointer null.
+                rhiDecalPass = std::make_shared<RhiDecalPass>();
+                if (!rhiDecalPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                          rhiTextureTable.get(), info->pShaderFolderPath,
+                                          [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiDecalPass.reset();
+                    Print("Warning: RHI: the decal pass is unavailable, decals are skipped");
+                }
+
+                // The raster overlay pass of A5.5 (RHI/RhiRasterOverlayPass.h): the ported RsWorld
+                // pass over the collector's DEFAULT list into FINAL/SCREEN_EMISSION, recorded inside
+                // the compose chain's window (the skeleton hands it as the callback). It needs the
+                // device, the table, the frame context and the shader folder; the skeleton installs
+                // its geometry and tonemapping wraps. A failure leaves the pointer null and the
+                // frame is drawn without the raster overlay.
+                rhiRasterOverlayPass = std::make_shared<RhiRasterOverlayPass>();
+                if (!rhiRasterOverlayPass->Create(nvrhi->GetDevice(), rhiTextureTable.get(),
+                                                  rhiFrameContext.get(), info->pShaderFolderPath,
+                                                  [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiRasterOverlayPass.reset();
+                    Print("Warning: RHI: the raster overlay pass is unavailable, the frame is drawn without it");
+                }
+
+                rhiRtPrimaryPass = std::make_shared<RhiRtPrimaryPass>();
+                if (!rhiRtPrimaryPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                              rhiTextureTable.get(), rayStats.get(), info->pShaderFolderPath,
+                                              [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiRtPrimaryPass.reset();
+                    Print("Warning: RHI: the primary ray-tracing pass is unavailable, the legacy renderer is kept");
+                }
+
+                // The direct-lighting pass of A4.2 (RHI/RhiRtDirectPass.h), created only with the
+                // primary: it borrows the primary's shared layout handles, so it must be destroyed
+                // before it, and the light-source buffers it wraps come from the scene's light
+                // manager. A failure leaves the pointer null: with the flag on the skeleton then
+                // refuses to be available and the legacy renderer keeps the frame.
+                if (rhiRtPrimaryPass != nullptr)
+                {
+                    rhiRtDirectPass = std::make_shared<RhiRtDirectPass>();
+                    if (!rhiRtDirectPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                                 rhiTextureTable.get(), scene->GetLightManager().get(),
+                                                 rhiRtPrimaryPass.get(), info->pShaderFolderPath,
+                                                 [this](const char *pMessage) { Print(pMessage); }))
+                    {
+                        rhiRtDirectPass.reset();
+                        Print("Warning: RHI: the direct ray-tracing pass is unavailable, the legacy renderer is kept");
+                    }
+                }
+
+                // The set-6 light layout of the direct pass is what the raster overlay's smoke
+                // pipelines declare at their own position 6, and the direct pass is created after
+                // the overlay, so it is installed here; the per-slot light set itself is passed by
+                // the skeleton per frame (RhiRasterOverlayPass::SetSmokeLightLayout). Without it
+                // (or without the direct pass) the overlay keeps its smoke half disabled and the
+                // world half unchanged.
+                if (rhiRasterOverlayPass != nullptr && rhiRtDirectPass != nullptr)
+                {
+                    rhiRasterOverlayPass->SetSmokeLightLayout(rhiRtDirectPass->GetLightLayout());
+                }
+
+                // The shadow-map pass of A5.2 (RHI/RhiShadowMapPass.h): the depth-only raster pass
+                // that feeds the god-rays compute. It needs only the device and the shader folder; a
+                // failure leaves the pointer null and the skeleton then skips both the shadow render
+                // and the dispatches (the god-rays pass cannot run without it).
+                rhiShadowMapPass = std::make_shared<RhiShadowMapPass>();
+                if (!rhiShadowMapPass->Create(nvrhi->GetDevice(), info->pShaderFolderPath,
+                                              [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiShadowMapPass.reset();
+                    Print("Warning: RHI: the shadow-map pass is unavailable, the god rays will be skipped");
+                }
+
+                // The indirect / GI pass of A4.3 (RHI/RhiRtIndirectPass.h): the bounce-light term of
+                // the traced chain, created only with the primary and the direct pass - it borrows
+                // their layout handles and the light set, so it is destroyed before both. Its set 5
+                // is the engine's blue-noise array, wrapped once here (the image is static) and
+                // announced by the pass on the list that first binds it. A failure leaves the
+                // pointer null: with the flag on the skeleton then refuses to be available and the
+                // legacy renderer keeps the frame.
+                if (rhiRtDirectPass != nullptr)
+                {
+                    const nvrhi::TextureHandle blueNoiseTexture = rhi::wrapEngineTextureArray(
+                        nvrhi->GetDevice(),
+                        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(blueNoise->GetImage())),
+                        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(blueNoise->GetImageView())),
+                        static_cast<uint32_t>(blueNoise->GetFormat()),
+                        blueNoise->GetExtent().width, blueNoise->GetExtent().height,
+                        blueNoise->GetLayerCount(), 1,
+                        "RHI blue noise (indirect set 5)");
+
+                    if (blueNoiseTexture == nullptr)
+                    {
+                        Print("Warning: RHI: failed to wrap the blue-noise texture, the indirect ray-tracing pass is unavailable");
+                    }
+                    else
+                    {
+                        rhiRtIndirectPass = std::make_shared<RhiRtIndirectPass>();
+                        if (!rhiRtIndirectPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                                       rhiTextureTable.get(), rhiRtPrimaryPass.get(),
+                                                       rhiRtDirectPass.get(), info->pShaderFolderPath,
+                                                       [this](const char *pMessage) { Print(pMessage); }))
+                        {
+                            rhiRtIndirectPass.reset();
+                            Print("Warning: RHI: the indirect ray-tracing pass is unavailable, the legacy renderer is kept");
+                        }
+                        else
+                        {
+                            rhiRtIndirectPass->SetBlueNoiseTexture(blueNoiseTexture);
+
+                            // The god-rays pass of A5.2 (RHI/RhiRtGodRaysPass.h): the half-res trace
+                            // and the full-res filter that end in image 64 CmPrepareFinal adds. It
+                            // takes the blue-noise wrap the indirect pass's set 5 binds and, once
+                            // the shadow-map pass exists, its texture and sampler - the exact
+                            // handles, so the shared tracker drives the image (RhiRtGodRaysPass.h
+                            // documents the contract). A failure leaves the pointer null: the frame
+                            // is drawn without shafts.
+                            rhiRtGodRaysPass = std::make_shared<RhiRtGodRaysPass>();
+                            if (!rhiRtGodRaysPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                                          info->pShaderFolderPath,
+                                                          [this](const char *pMessage) { Print(pMessage); }))
+                            {
+                                rhiRtGodRaysPass.reset();
+                                Print("Warning: RHI: the god-rays pass is unavailable, the frame is drawn without shafts");
+                            }
+                            else
+                            {
+                                rhiRtGodRaysPass->SetBlueNoiseTexture(blueNoiseTexture);
+                                if (rhiShadowMapPass != nullptr && rhiShadowMapPass->IsCreated())
+                                {
+                                    rhiRtGodRaysPass->SetShadowMap(rhiShadowMapPass->GetTexture(),
+                                                                   rhiShadowMapPass->GetSampler());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // The Q2 reflect/refract pass of A5.3 (RHI/RhiRtReflRefrPass.h), created only with
+                // the primary - it borrows the primary's layout handles, so it is destroyed before
+                // it, like the direct and indirect passes. The portal buffer wrap and the per-frame
+                // copy are the skeleton's (SkyFrameInputs carries the engine's buffers); a failure
+                // leaves the pointer null and the frame is drawn without reflections.
+                if (rhiRtPrimaryPass != nullptr)
+                {
+                    rhiRtReflRefrPass = std::make_shared<RhiRtReflRefrPass>();
+                    if (!rhiRtReflRefrPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                                   rhiTextureTable.get(), rhiRtPrimaryPass.get(),
+                                                   info->pShaderFolderPath,
+                                                   [this](const char *pMessage) { Print(pMessage); }))
+                    {
+                        rhiRtReflRefrPass.reset();
+                        Print("Warning: RHI: the reflect/refract pass is unavailable, the frame is drawn without reflections");
+                    }
+                }
+
+                // The real set-8 cubemaps (A5.4): the three RT passes bind the procedural sky's
+                // cube and environment textures instead of their 1x1 placeholders. The module owns
+                // them and outlives the passes' use; the setters only store the keys and the sets
+                // rebuild lazily on the next Render.
+                if (rhiProceduralSkyPass != nullptr && rhiProceduralSkyPass->IsCreated())
+                {
+                    if (rhiRtPrimaryPass != nullptr)
+                    {
+                        rhiRtPrimaryPass->SetRenderCubemap(rhiProceduralSkyPass->GetCubemapTexture(),
+                                                           rhiProceduralSkyPass->GetCubemapSampler());
+                    }
+                    if (rhiRtIndirectPass != nullptr)
+                    {
+                        rhiRtIndirectPass->SetRenderCubemaps(rhiProceduralSkyPass->GetCubemapTexture(),
+                                                             rhiProceduralSkyPass->GetEnvironmentTexture(),
+                                                             rhiProceduralSkyPass->GetCubemapSampler());
+                    }
+                    if (rhiRtReflRefrPass != nullptr)
+                    {
+                        rhiRtReflRefrPass->SetRenderCubemaps(rhiProceduralSkyPass->GetCubemapTexture(),
+                                                             rhiProceduralSkyPass->GetEnvironmentTexture(),
+                                                             rhiProceduralSkyPass->GetCubemapSampler());
+                    }
+                }
+
+                // The compose pass of A4.4 (RHI/RhiRtComposePass.h), created only under
+                // 'rhicompose': the real adapter -> interleave -> exposure histogram/average ->
+                // checkerboard -> prepare-final chain ending in the display-referred FINAL, which
+                // the skeleton then presents raw. It wraps the per-slot tonemapping buffers, so the
+                // engine object has to outlive it. A failure leaves the pointer null: the traced
+                // chain keeps the A4.2a diagnostic present instead of failing the frame.
+                if (libconfig.rhiCompose)
+                {
+                    rhiRtComposePass = std::make_shared<RhiRtComposePass>();
+                    if (!rhiRtComposePass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                                  tonemapping.get(),
+                                                  info->pShaderFolderPath,
+                                                  [this](const char *pMessage) { Print(pMessage); }))
+                    {
+                        rhiRtComposePass.reset();
+                        Print("Warning: RHI: the compose pass is unavailable, the diagnostic present is kept");
+                    }
+                }
+
+                // The 2D UI pass of A5.1 (RHI/RhiUiPass.h): the game's SWAPCHAIN overlay drawn into
+                // the compose's upscaled image after the TAAU. It needs the shared texture table and
+                // the frame context only; the per-slot staging geometry wraps are the skeleton's (it
+                // is handed the collector's handles every frame). A failure leaves the pointer null:
+                // the frame is still drawn, just without the UI.
+                rhiUiPass = std::make_shared<RhiUiPass>();
+                if (!rhiUiPass->Create(nvrhi->GetDevice(), rhiTextureTable.get(),
+                                       rhiFrameContext.get(), info->pShaderFolderPath,
+                                       [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiUiPass.reset();
+                    Print("Warning: RHI: the 2D UI pass is unavailable, the frame is drawn without the UI");
+                }
+            }
+
+            // The pass binds the shared RHI texture table (its slot 0 holds the engine's empty
+            // texture: 1x1, VK_FORMAT_R8G8B8A8_UNORM, created and left in the read-only layout by
+            // TextureManager) and records through the shared frame context, so the host hands both
+            // over here.
+            //
+            // The mode the skeleton records for the whole run: 'rhirt' selects the real
+            // ray-tracing pass of A4.1, 'rhitrace' the A3.1 debug trace, and neither the rasterized
+            // chain. 'rhirt' wins when both are set (LibraryConfig.h documents it), and the
+            // skeleton itself refuses to be available when its mode's pass failed to be created.
+            if (libconfig.rhiRayTracing && libconfig.rhiDebugTrace)
+            {
+                Print("Warning: RHI: both 'rhirt' and 'rhitrace' are set, the primary ray-tracing pass is used");
+            }
+
+            NvrhiFrameSkeleton::FrameMode frameMode = NvrhiFrameSkeleton::FrameMode::Rasterized;
+            if (libconfig.rhiRayTracing)
+            {
+                frameMode = NvrhiFrameSkeleton::FrameMode::Traced;
+            }
+            else if (libconfig.rhiDebugTrace)
+            {
+                frameMode = NvrhiFrameSkeleton::FrameMode::DebugTrace;
+            }
+
+            nvrhiFrameSkeleton = std::make_shared<NvrhiFrameSkeleton>(
+                nvrhi->GetDevice(),
+                swapchain.get(),
+                info->pShaderFolderPath,
+                rhiTextureTable.get(),
+                rhiFrameContext.get(),
+                rhiAccelStructs.get(),
+                rhiDebugTracePass.get(),
+                rhiRtPrimaryPass.get(),
+                rhiRtDirectPass.get(),
+                rhiRtIndirectPass.get(),
+                rhiRtComposePass.get(),
+                rhiRtReflRefrPass.get(),
+                rhiProceduralSkyPass.get(),
+                rhiRasterSkyPass.get(),
+                rhiRasterOverlayPass.get(),
+                rhiDecalPass.get(),
+                rhiFsrPass.get(),
+                rhiPostEffectPass.get(),
+                rhiShadowMapPass.get(),
+                rhiRtGodRaysPass.get(),
+                rhiUiPass.get(),
+                frameMode,
+                [this](const char *pMessage) { Print(pMessage); });
+
+            swapchain->Subscribe(nvrhiFrameSkeleton);
+
+            // The sky pass binds the geometry the legacy collector recorded, so its device-local
+            // VkBuffers are wrapped once, here, with NVRHI handles. The legacy command buffer that
+            // fills them (Rasterizer::SubmitForFrame -> CopyFromStaging, VulkanDevice.cpp:1261) is
+            // submitted after the RHI list of the same frame, so the sky of a frame reads the copy
+            // of the previous frame. The geometry is static per level - the collector's copy only
+            // moves what the level uploaded (RasterizedDataCollector::CopyFromStaging) - so only
+            // the very first frame after a level load reads the zeroed buffer; from the second
+            // frame on the sky draws the same data the legacy renderer would draw. The wraps are
+            // deliberately long-lived: the engine's AutoBuffer keeps the same VkBuffer for the
+            // whole run.
+            if (RhiSkyPass *skyPass = nvrhiFrameSkeleton->GetSkyPass())
+            {
+                const RasterizedDataCollector &collector = rasterizer->GetDataCollector();
+
+                // The byte counts are the sizes the collector's AutoBuffers are created with
+                // (RasterizedDataCollector.cpp:69-73); on a native wrap NVRHI only keeps the desc
+                // for bookkeeping (vulkan-buffer.cpp:202-213).
+                nvrhi::BufferDesc vertexBufferDesc;
+                vertexBufferDesc.byteSize =
+                    static_cast<uint64_t>(std::max(info->rasterizedMaxVertexCount, 64u)) * sizeof(RgVertex);
+                vertexBufferDesc.isVertexBuffer = true;
+                // The engine's buffer is written by its own command buffer, so NVRHI cannot have seen
+                // it: the first list that binds it would report an unknown prior state
+                // (state-tracking.cpp:290-297). Declaring the state the engine's AutoBuffer leaves
+                // the data in - readable for vertex fetch (AutoBuffer.cpp:115-125) - makes the first
+                // use transition-free and keeps the claim for every later list.
+                vertexBufferDesc.initialState = nvrhi::ResourceStates::VertexBuffer;
+                vertexBufferDesc.keepInitialState = true;
+                vertexBufferDesc.debugName = "Rasterizer vertex buffer (RHI)";
+
+                nvrhi::BufferDesc indexBufferDesc;
+                indexBufferDesc.byteSize =
+                    static_cast<uint64_t>(std::max(info->rasterizedMaxIndexCount, 64u)) * sizeof(uint32_t);
+                indexBufferDesc.isIndexBuffer = true;
+                indexBufferDesc.initialState = nvrhi::ResourceStates::IndexBuffer;
+                indexBufferDesc.keepInitialState = true;
+                indexBufferDesc.debugName = "Rasterizer index buffer (RHI)";
+
+                nvrhi::BufferHandle vertexBuffer = nvrhi->GetDevice()->createHandleForNativeBuffer(
+                    nvrhi::ObjectTypes::VK_Buffer,
+                    nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(collector.GetVertexBuffer()))),
+                    vertexBufferDesc);
+                nvrhi::BufferHandle indexBuffer = nvrhi->GetDevice()->createHandleForNativeBuffer(
+                    nvrhi::ObjectTypes::VK_Buffer,
+                    nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(collector.GetIndexBuffer()))),
+                    indexBufferDesc);
+
+                if (vertexBuffer == nullptr || indexBuffer == nullptr)
+                {
+                    Print("Warning: RHI: failed to wrap the rasterized geometry buffers, the sky is skipped");
+                }
+                else
+                {
+                    skyPass->SetGeometryBuffers(vertexBuffer, indexBuffer);
+
+                    // The raster sky's cube half binds the same geometry: its Render consumes the
+                    // same frame's sky draw list (RasterizedDataCollector::GetSkyDrawInfos), so it
+                    // gets the same two wraps.
+                    if (rhiRasterSkyPass != nullptr && rhiRasterSkyPass->IsCreated())
+                    {
+                        rhiRasterSkyPass->SetGeometryBuffers(vertexBuffer, indexBuffer);
+                    }
+                }
+            }
+        }
+        else
+        {
+            Print("Warning: RHI: 'rhiframe' is ignored, there is no RHI device");
+        }
+    }
 }
 
 VulkanDevice::~VulkanDevice()
 {
     vkDeviceWaitIdle(device);
+
+    // the skeleton wraps the swapchain images with the RHI device, so it has to
+    // be released before both of them
+    nvrhiFrameSkeleton.reset();
+
+    // The skeleton references all of them, so they follow it immediately; all fourteen wrap engine
+    // buffers/images and quote the RHI device, so they precede the table/context and the device
+    // below. The direct pass, the indirect pass and the reflect/refract pass borrow the primary's
+    // layout handles, so they go before the primary; the UI pass, the raster overlay, the decal
+    // pass and the FSR pass borrow the table and the frame context only (the compose calls the
+    // overlay back), and the god-rays pass borrows the shadow map's texture and sampler, so it goes
+    // before the shadow-map pass. The raster sky borrows the procedural sky's cube, so it goes
+    // before the procedural sky, which owns the cubes the three RT passes' sets reference.
+    rhiDebugTracePass.reset();
+    rhiRtComposePass.reset();
+    rhiRtGodRaysPass.reset();
+    rhiShadowMapPass.reset();
+    rhiUiPass.reset();
+    rhiRtIndirectPass.reset();
+    rhiRtDirectPass.reset();
+    rhiRtReflRefrPass.reset();
+    rhiRtPrimaryPass.reset();
+    rhiRasterOverlayPass.reset();
+    rhiDecalPass.reset();
+    rhiFsrPass.reset();
+    rhiPostEffectPass.reset();
+    rhiRasterSkyPass.reset();
+    rhiProceduralSkyPass.reset();
+    rhiAccelStructs.reset();
+
+    // The table's wrapped textures reference engine images and its samplers belong to the NVRHI
+    // device, so it goes before the texture/sampler managers and the RHI device. The frame context
+    // goes after both of its users (the skeleton and the table) and before the RHI device.
+    rhiTextureTable.reset();
+
+    rhiFrameContext.reset();
+
+    // the RHI device holds Vulkan objects created from this device,
+    // so it has to be released before them
+    nvrhi.reset();
 
     physDevice.reset();
     queues.reset();
@@ -348,6 +922,13 @@ VulkanDevice::~VulkanDevice()
     blueNoise.reset();
     textureManager.reset();
     cubemapManager.reset();
+
+    // not covered by the list above: these own device resources too, and as
+    // members they would otherwise be destroyed after DestroyDevice()
+    passTimings.reset();
+    q2Denoiser.reset();
+    rayStats.reset();
+
     memAllocator.reset();
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
@@ -480,6 +1061,11 @@ void VulkanDevice::CreateInstance(const RgInstanceCreateInfo &info)
         extensions.push_back(n);
     }
 
+    enabledInstanceExtensions.clear();
+    for (const char *n : extensions)
+    {
+        enabledInstanceExtensions.push_back(n);
+    }
 
     VkApplicationInfo appInfo = {};
     appInfo.apiVersion = VK_API_VERSION_1_3;
@@ -586,11 +1172,48 @@ void VulkanDevice::CreateDevice()
     vulkan12Features.shaderFloat16 = 1;
     vulkan12Features.drawIndirectCount = 1;
 
+    // Features the RHI layer depends on, enabled only if the driver supports them.
+    const NvrhiRequirements nvrhiRequirements = QueryNvrhiRequirements(physDevice->Get());
+    const std::vector<std::string> unsupportedNvrhiFeatures = nvrhiRequirements.GetUnsupported();
+
+    if (!nvrhiRequirements.IsCriticalSupported())
+    {
+        std::string message = "RHI: the device does not support the required features:";
+        for (const std::string &name : unsupportedNvrhiFeatures)
+        {
+            message += " ";
+            message += name;
+        }
+
+        throw RgException(RG_GRAPHICS_API_ERROR, message);
+    }
+
+    ApplyNvrhiRequirements(nvrhiRequirements, vulkan12Features);
+
+    if (!unsupportedNvrhiFeatures.empty())
+    {
+        std::string message = "RHI: features not supported by the device:";
+        for (const std::string &name : unsupportedNvrhiFeatures)
+        {
+            message += " ";
+            message += name;
+        }
+        message += "\n";
+
+        Print(message.c_str());
+    }
+
     VkPhysicalDeviceVulkan13Features vulkan13Features = {};
     vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     vulkan13Features.pNext = nullptr; // end of chain
     vulkan13Features.computeFullSubgroups = 1;
     vulkan13Features.subgroupSizeControl = 1;
+    // The RHI layer records every pass with vkCmdBeginRendering. Enabling it
+    // unconditionally is safe here: IsCriticalSupported() above refuses to
+    // continue on a device without dynamic rendering, so this line is only
+    // reached when the feature exists. ApplyNvrhiRequirements cannot set it,
+    // because this structure does not exist yet when it runs.
+    vulkan13Features.dynamicRendering = 1;
 
     vulkan12Features.pNext = &vulkan13Features;  // chain: vk12 → vk13
 
@@ -609,26 +1232,6 @@ void VulkanDevice::CreateDevice()
     sync2Features.pNext = &storage16;
     sync2Features.synchronization2 = 1;
 
-    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures = {};
-    rtPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-    rtPipelineFeatures.pNext = &sync2Features;
-    rtPipelineFeatures.rayTracingPipeline = 1;
-
-    VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = {};
-    asFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-    asFeatures.pNext = &rtPipelineFeatures;
-    asFeatures.accelerationStructure = 1;
-
-    VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
-    rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
-    rayQueryFeatures.pNext = &asFeatures;
-    rayQueryFeatures.rayQuery = 1;
-
-    VkPhysicalDeviceFeatures2 physicalDeviceFeatures2 = {};
-    physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    physicalDeviceFeatures2.pNext = &rayQueryFeatures;
-    physicalDeviceFeatures2.features = features;
-
     std::vector<VkExtensionProperties> supportedDeviceExtensions;
     uint32_t supportedExtensionsCount;
 
@@ -638,13 +1241,44 @@ void VulkanDevice::CreateDevice()
         vkEnumerateDeviceExtensionProperties(physDevice->Get(), nullptr, &supportedExtensionsCount, supportedDeviceExtensions.data());
     }
 
+    // Optional: the ray-query feature. NVRHI's state tracking maps the acceleration-structure-read
+    // state to the compute stage as well as the ray-tracing one (vulkan-constants.cpp:282-285), and
+    // the spec forbids the acceleration-structure-read access at any shader stage except the
+    // ray-tracing ones while rayQuery is disabled (VUID-VkBufferMemoryBarrier2-srcAccessMask-06256).
+    // No shader here uses inline ray tracing, but enabling the feature is what keeps a traced frame
+    // validation-clean, so it is requested whenever the physical device offers the extension.
+    const bool rayQuerySupported = std::any_of(supportedDeviceExtensions.cbegin(), supportedDeviceExtensions.cend(),
+        [](const VkExtensionProperties& ext)
+        {
+            return !std::strcmp(ext.extensionName, VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        });
+
+    VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
+    rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    rayQueryFeatures.pNext = &sync2Features;
+    rayQueryFeatures.rayQuery = rayQuerySupported ? 1 : 0;
+
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures = {};
+    rtPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    rtPipelineFeatures.pNext = rayQuerySupported ? static_cast<void *>(&rayQueryFeatures) : static_cast<void *>(&sync2Features);
+    rtPipelineFeatures.rayTracingPipeline = 1;
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = {};
+    asFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    asFeatures.pNext = &rtPipelineFeatures;
+    asFeatures.accelerationStructure = 1;
+
+    VkPhysicalDeviceFeatures2 physicalDeviceFeatures2 = {};
+    physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    physicalDeviceFeatures2.pNext = &asFeatures;
+    physicalDeviceFeatures2.features = features;
+
     std::vector<const char *> deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
         VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
         VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
         VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-        VK_KHR_RAY_QUERY_EXTENSION_NAME,
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
         VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
         VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,         // FSR 3.1 needs vkGetBufferMemoryRequirements2KHR
@@ -669,6 +1303,17 @@ void VulkanDevice::CreateDevice()
         deviceExtensions.push_back(n);
     }
 
+    if (rayQuerySupported)
+    {
+        deviceExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+    }
+
+    enabledDeviceExtensions.clear();
+    for (const char *n : deviceExtensions)
+    {
+        enabledDeviceExtensions.push_back(n);
+    }
+
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
     queues->GetDeviceQueueCreateInfos(queueCreateInfos);
@@ -691,6 +1336,58 @@ void VulkanDevice::CreateDevice()
     {
         InitDeviceExtensionFunctions_DebugUtils(device);
     }
+}
+
+void VulkanDevice::CreateNvrhiDevice()
+{
+    // The features were already enabled on the device in CreateDevice; they are
+    // queried again here to know which of them the driver actually has.
+    const NvrhiRequirements requirements = QueryNvrhiRequirements(physDevice->Get());
+
+    std::vector<const char *> instanceExtensions;
+    instanceExtensions.reserve(enabledInstanceExtensions.size());
+    for (const std::string &name : enabledInstanceExtensions)
+    {
+        instanceExtensions.push_back(name.c_str());
+    }
+
+    std::vector<const char *> deviceExtensions;
+    deviceExtensions.reserve(enabledDeviceExtensions.size());
+    for (const std::string &name : enabledDeviceExtensions)
+    {
+        deviceExtensions.push_back(name.c_str());
+    }
+
+    NvrhiDeviceInfo info = {};
+    info.instance = instance;
+    info.physicalDevice = physDevice->Get();
+    info.device = device;
+
+    info.graphicsQueue = queues->GetGraphics();
+    info.graphicsQueueIndex = queues->GetIndexGraphics();
+    info.computeQueue = queues->GetCompute();
+    info.computeQueueIndex = queues->GetIndexCompute();
+    info.transferQueue = queues->GetTransfer();
+    info.transferQueueIndex = queues->GetIndexTransfer();
+
+    info.instanceExtensions = instanceExtensions.data();
+    info.instanceExtensionCount = instanceExtensions.size();
+    info.deviceExtensions = deviceExtensions.data();
+    info.deviceExtensionCount = deviceExtensions.size();
+
+    info.bufferDeviceAddressSupported = true;
+    info.uniformBufferUpdateAfterBindSupported = requirements.descriptorBindingUniformBufferUpdateAfterBind;
+
+    nvrhi = std::make_unique<NvrhiContext>();
+
+    std::string errorMessage;
+    if (!nvrhi->Init(info, [this](const char *pMessage) { Print(pMessage); }, errorMessage))
+    {
+        nvrhi.reset();
+        throw RgException(RG_GRAPHICS_API_ERROR, errorMessage);
+    }
+
+    nvrhi->LogCapabilities();
 }
 
 void VulkanDevice::CreateSyncPrimitives()

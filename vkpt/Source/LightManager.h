@@ -34,6 +34,11 @@ namespace vkpt
 
 struct ShLightEncoded;
 
+/* The uid a slot holds while it names no light. A cluster list keeps the slot a light left
+   instead of closing it with its last slot, so that no other light of the cluster changes the
+   index the shaders sample it by; the light manager resolves this uid to LIGHT_INDEX_NONE
+   without a registry lookup. No producer makes it: the light ids the host formats decode
+   types 0..3. */
 constexpr uint64_t kLightUidHole = ~0ull;
 
 class LightManager
@@ -95,8 +100,66 @@ public:
     void ResetLightStats(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t frameId);
     void BarrierQ2ClusterLists(VkCommandBuffer cmd, uint32_t frameIndex);
 
+    /* The read-only fill plan the RHI direct pass mirrors from ResetLightStats: the count of
+       clusters the lists the device holds can name, clamped to LIGHT_STATS_CLUSTER_COUNT, and the
+       bytes one cluster's counter pair spans. One rotating slot spans
+       GetLightStatsClusterSize() * LIGHT_STATS_CLUSTER_COUNT bytes, and there are
+       LIGHT_STATS_SLOT_COUNT of them; both values are what ResetLightStats fills with
+       (LightManager.cpp:858-886). The cleared state itself stays private: the RHI pass keeps its
+       own mirror of statsClusterCleared and reports the fill it actually records, so the legacy
+       path's bookkeeping is untouched. */
+    uint32_t GetLightStatsClusterTarget() const;
+    VkDeviceSize GetLightStatsClusterSize() const;
+
     VkDescriptorSetLayout GetDescSetLayout();
     VkDescriptorSet GetDescSet(uint32_t frameIndex);
+
+    /* The engine buffers the light-source descriptor set binds, as the RHI pass wraps them: the
+       device-local buffer of every item it declares. The statistics buffer is cut into rotating
+       slots, but it is one buffer and is bound whole, as the engine set binds it. */
+    struct Buffers
+    {
+        VkBuffer lights;        // device-local, 4096 * sizeof(ShLightEncoded)
+        VkBuffer listOffsets;
+        VkBuffer listLights;
+        VkBuffer lightStats;
+        VkBuffer clusterSkyVis;
+    };
+
+    // One copy the RHI has to record itself: the frame's staging buffer and the byte count to
+    // copy from it.
+    struct Copy
+    {
+        VkBuffer staging;       // AutoBuffer::GetStaging(frame)
+        VkDeviceSize size;      // 0 == nothing pending this frame
+    };
+
+    struct FrameCopies
+    {
+        Copy lights;
+        Copy listOffsets;
+        Copy listLights;
+        Copy clusterSkyVis;
+    };
+
+    Buffers GetBuffers() const;
+
+    /* Mirrors what CopyFromStaging uploads for the frame: the light-array prefix is copied every
+       frame and always holds the sun slot, while each list buffer is copied only while its
+       publication or sky visibility update is pending. The prefix size is
+       (LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET + GetLightCount()) * sizeof(ShLightEncoded), the sun
+       prefix being what GetLightCount() alone would drop, and the list-word count is
+       publishedListWords[frame], the word count the publication of this slot recorded, not the
+       count of the frame being recorded. */
+    FrameCopies GetFrameCopies(uint32_t frame) const;
+
+    /* Clears the pending flags GetFrameCopies reports for the frame, exactly the way
+       CopyFromStaging clears them once it has copied the staging buffers. It has to be called on
+       the path that recorded the copies and only there: a frame that leaves the flags set is a
+       frame a later pass (or the legacy path) still copies, while a frame that clears them
+       without copying leaves the device buffers stale. The light-array prefix has no flag - it is
+       copied every frame by design - and is not consumed here. */
+    void ConsumeFrameCopies(uint32_t frame);
 
 private:
     /* What one frame has registered so far. A light is looked up once per frame it survives in and
@@ -130,6 +193,13 @@ private:
 
     void FillMatchPrev(uint32_t curFrameIndex, LightArrayIndex lightIndexInCurFrame, UniqueLightID uniqueID, uint32_t ordinal);
 
+    // Whether the words of this slot's last publication are the ones the list device buffers hold.
+    bool DeviceHoldsPublishedList(uint32_t frameIndex) const;
+
+    /* Notes the publication of this slot as the one the list device buffers hold. Called on the
+       copy paths only, after the copies of this slot's staging have been recorded. */
+    void RecordDeviceListPublication(uint32_t frameIndex);
+
     void CreateDescriptors();
     void UpdateDescriptors(uint32_t frameIndex);
 
@@ -157,7 +227,9 @@ private:
        are kept per frame slot, as the registry the places belong to is: an AutoBuffer keeps one
        staging buffer per frame in flight and a single device buffer, so the words a publication is
        written into belong to the slot that made it, and the copy that follows it carries the words
-       that slot published (`publishedListWords`) two frames later. */
+       that slot published (`publishedListWords`) two frames later. That single device buffer is
+       what the record below is for: a note matching proves the words of this slot's staging, not
+       the words of the device, which the other slot's copy may have replaced with its own. */
     bool     lightListCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
     bool     publishedListValid[MAX_FRAMES_IN_FLIGHT] = {};
     uint64_t publishedListGeneration[MAX_FRAMES_IN_FLIGHT] = {};
@@ -167,6 +239,20 @@ private:
     // The place in the light array each of those ids was given, which together with the order is
     // what the ids of a publication resolve to.
     std::vector<uint32_t> publishedLightIndex[MAX_FRAMES_IN_FLIGHT];
+
+    /* The publication whose words the two list device buffers hold, in the shape of the notes
+       above. The buffers are shared by every frame slot, so the note of one slot does not say what
+       the device holds: the other slot may have copied a publication of its own over them since,
+       and a publication of the same generation can still carry different words, because the
+       generation names the composition and not the light-array places its ids were resolved to.
+       The copy paths record the note they copied from here, and SetClusterLightLists re-copies the
+       staged words of a matching note when the device holds another publication. */
+    bool     deviceListValid = false;
+    uint64_t deviceListGeneration = 0;
+    uint32_t deviceListClusters = 0;
+    uint32_t deviceListWords = 0;
+    std::vector<uint64_t> deviceLightOrder;
+    std::vector<uint32_t> deviceLightIndex;
 
     Buffer lightStats;
 

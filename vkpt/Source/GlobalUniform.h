@@ -45,6 +45,14 @@ public:
     ShGlobalUniform *GetData();
     const ShGlobalUniform *GetData() const;
 
+    // The device-local VkBuffer that Upload copies GetData() into. The RHI layer wraps it with
+    // createHandleForNativeBuffer; under `rhiframe` that wrap is also the only way the buffer
+    // gets refreshed, because Upload's single caller (Scene::SubmitForFrame, Scene.cpp:112) does
+    // not run there. What the rasterized world shader reads from this buffer is renderWidth
+    // (member 11, Offset 644 in RsWorld.frag.spv) - the checkerboard remap of the fragment
+    // position is built from it.
+    VkBuffer GetBuffer() const;
+
     VkDescriptorSet GetDescSet(uint32_t frameIndex) const;
     VkDescriptorSetLayout GetDescSetLayout() const;
 
@@ -56,16 +64,13 @@ private:
     VkDevice device;
 
     std::shared_ptr<ShGlobalUniform> uniformData;
-
-    // One buffer and one descriptor set per frame in flight: the frames behind this
-    // one may still be reading the camera, the sun and the place the cloud layer's
-    // shadow volume stands in theirs while this one is written, and a single copy
-    // showed as a frame drawn with another frame's values.
-    std::shared_ptr<AutoBuffer> uniformBuffer[MAX_FRAMES_IN_FLIGHT];
+    std::shared_ptr<AutoBuffer> uniformBuffer;
 
     VkDescriptorPool        descPool;
     VkDescriptorSetLayout   descSetLayout;
-    VkDescriptorSet         descSet[MAX_FRAMES_IN_FLIGHT];
+    // uniform device local buffer won't be changing (only its contents),
+    // so desc set need to be updated once, so there can be only one desc set
+    VkDescriptorSet         descSet;
 };
 
 }

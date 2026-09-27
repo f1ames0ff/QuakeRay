@@ -31,8 +31,6 @@
 namespace vkpt
 {
 
-class PassTimings;
-
 class RenderCubemap : public IShaderDependency
 {
 public:
@@ -41,18 +39,14 @@ public:
     {
         float faceBasis[18][4]; // 6 faces * (right, up, forward)
         float sunDirection[4];  // xyz = direction toward the sun, w = how much sun the sky shows (0 = no sun)
-        float skyColor[4];      // xyz = the colour of the sky itself (rt_sky_color), w = 1 while the sky paints the flat clouds of QUALITY_LOW instead of the layer's volume
-        float skyParams[4];     // x = multiplier, y = cloud opacity (rt_sky_clouds_alpha), z = sun disc intensity, w = sun disc radius
+        float skyColor[4];      // xyz = the colour of the sky itself (rt_sky_color), w unused
+        float skyParams[4];     // x = multiplier, y = cloud opacity (rt_sky_cloud_alpha), z = sun disc intensity, w = sun disc radius
         float cloudColor[4];    // xyz = cloud color, w = cloud time (s)
-        float cloudParams[4];   // x = coverage, y = density (rt_sky_clouds_density), z = drift speed, w = enabled
+        float cloudParams[4];   // x = coverage, y = contour sharpness, z = drift speed, w = enabled
         // Appended after everything else so that a stale compiled shader (which
         // does not know the field) still reads every field it does know at the
         // same offset.
-        float sunDiscColor[4];  // xyz = colour of the sun disc (rt_sky_sun_color), w unused
-        float cloudLayer[4];    // x = altitude of the layer's bottom over the eye, y = thickness, z = sunlight strength, w = sky light strength
-        float cloudMarch[4];    // x = view march steps, y = unused (the walk of a column towards the sun is CLOUD_SHADOW_STEPS, CloudLayer.h), z = detail erosion strength, w = forward scattering
-        float cloudAnchor[4];   // xy = the eye's place in the world's horizontal plane, z = its height in the world, w unused
-        float cloudShadowPlacement[4]; // x = 1 while the layer's shadow volume stands (see GetCloudShadowPlacement), yz = its snapped world origin, w = its extent in metres
+        float sunDiscColor[4];  // xyz = colour of the sun disc (rt_sun_color), w unused
     };
 
 public:
@@ -77,58 +71,11 @@ public:
               const std::shared_ptr<TextureManager> &textureManager,
               const std::shared_ptr<GlobalUniform> &uniform);
 
-    // Fill the cubemap with a procedural atmospheric sky (compute). `frameIndex`
-    // picks the copy of the parameters that belongs to the frame being recorded:
-    // the frames in flight may still be reading theirs while this one is written.
-    // `timings`, when given, is marked before each of the three passes this runs --
-    // the layer's march, the sky's composite and the mip chain of its cubemaps --
-    // so that the pass panel shows what each of them costs (PassTimings.h).
-    void DrawProcedural(VkCommandBuffer cmd, const ProceduralSkyParams &params, uint32_t frameIndex,
-                        PassTimings *timings = nullptr);
+    // Fill the cubemap with a procedural atmospheric sky (compute)
+    void DrawProcedural(VkCommandBuffer cmd, const ProceduralSkyParams &params);
 
     VkDescriptorSetLayout GetDescSetLayout() const;
     VkDescriptorSet GetDescSet() const;
-
-    // Fills the volume of the shadow the cloud layer puts on the world. It is
-    // laid out around `cameraPos` and it is redrawn only when the clouds, the sun
-    // or that placement have moved enough to matter, so the volume the lighting
-    // passes read always matches what GetCloudShadowPlacement() reports.
-    // `frameIndex` picks this frame's copy of the parameters, as in DrawProcedural.
-    void UpdateCloudShadow(VkCommandBuffer cmd, const ProceduralSkyParams &params,
-                           const float cameraPos[3], uint32_t frameIndex);
-
-    // Where the standing volume lies in the world: [0] is 1 while it holds
-    // anything, [1..2] its world-space origin, [3] its extent in metres. The host
-    // puts this in the global uniform for every pass that lights the world, which
-    // is where CloudShadowMap.h reads it back from.
-    void GetCloudShadowPlacement(float placement[4]) const;
-
-    // Drops the standing volume: the clouds it was filled from are no longer drawn,
-    // and until it is filled again nothing may be shadowed by it.
-    void InvalidateCloudShadow();
-
-    // The quality levels of rt_sky_clouds_quality and rt_sky_godrays_quality: low,
-    // medium, high, ultra, extreme. Every level doubles the resolution the clouds
-    // are drawn at and the volume of their shadow is laid over the ground with, and
-    // leaves that volume standing for fewer frames (except the two finest levels,
-    // which share the finest size of it). The lowest level draws the flat clouds the
-    // sky had before the layer became a volume -- a mask painted into the sky's own
-    // colour, with no layer to march and no shadow of one to lay down.
-    static constexpr uint32_t QUALITY_LOW     = 0;
-    static constexpr uint32_t QUALITY_HIGH    = 2;
-    static constexpr uint32_t QUALITY_EXTREME = 4;
-    static constexpr uint32_t QUALITY_LEVELS  = QUALITY_EXTREME + 1;
-
-    static uint32_t ClampQuality(uint32_t quality);
-
-    // Turns the cloud layer and its shadow into the maps the level asks for: a
-    // finer cubemap for the layer, a finer volume of its shadow read slice by
-    // slice, and that volume is left standing for fewer frames. Called from the
-    // sky pass once a frame with the command buffer the frame draws with; it does
-    // nothing while the level is the one already in use. The layer is drawn again
-    // from scratch, so the call is only worth making where the sky is about to be
-    // drawn anyway.
-    void SetQuality(VkCommandBuffer cmd, uint32_t quality);
 
     void OnShaderReload(const ShaderManager *shaderManager) override;
     
@@ -137,7 +84,13 @@ private:
     struct Attachment
     {
         VkImage image;
-        VkImageView view;
+        VkImageView view;       // cube view: sampled as a samplerCube, used by the render pass and the sky pass
+        VkImageView viewArray;  // 2D-array view of the same six layers, for the storage-image bindings:
+                                // the sky compute pass writes the cubemap through an image2DArray binding
+                                // (HLSL has no writable cube texture, and D3D12 has no cube UAV either),
+                                // so a cube view there violates VUID-vkCmdDispatch-viewType-07752
+                                // TODO(refactor): a port shim, not a design -- the cubemap write path gets
+                                // one view model for both backends in the NVRHI rewrite (A2/A5, §14.14)
         VkDeviceMemory memory;
     };
 
@@ -145,8 +98,7 @@ private:
     void CreatePipelineLayout(VkDescriptorSetLayout texturesSetLayout, VkDescriptorSetLayout uniformSetLayout);
     void CreateRenderPass();
     void InitPipelines(const std::shared_ptr<ShaderManager> &shaderManager, uint32_t sideSize, bool applyVertexColorGamma);
-    void CreateAttch(const std::shared_ptr<MemoryAllocator> &allocator, VkCommandBuffer cmd, uint32_t sideSize, uint32_t mipLevels,
-                     const char *debugName, Attachment &result, bool isDepth, bool allowFailure = false);
+    void CreateAttch(const std::shared_ptr<MemoryAllocator> &allocator, VkCommandBuffer cmd, uint32_t sideSize, Attachment &result, bool isDepth);
     void CreateFramebuffer(uint32_t sideSize);
     void CreateDescriptors(const std::shared_ptr<SamplerManager> &samplerManager);
 
@@ -156,54 +108,14 @@ private:
 
     // procedural sky (compute)
     void CreateProceduralSkyPipelineLayout();
-    void CreateProceduralSkyDescriptors(const std::shared_ptr<SamplerManager> &samplerManager);
+    void CreateProceduralSkyDescriptors();
     void CreateProceduralSkyParamsBuffer();
     void CreateProceduralSkyPipeline(const ShaderManager *shaderManager);
     void DestroyProceduralSkyPipelines();
 
-    // cloud layer (compute, writes into the cubemap the sky composites)
-    void CreateCloudsPipeline(const ShaderManager *shaderManager);
-    void DestroyCloudsPipeline();
-    void DispatchClouds(VkCommandBuffer cmd, const ProceduralSkyParams &params, uint32_t frameIndex);
-
-    // cloud shadow volume (compute, read back by every pass that lights the world)
-    void CreateCloudShadowImage(const std::shared_ptr<MemoryAllocator> &allocator, VkCommandBuffer cmd,
-                                uint32_t size, Attachment &image, bool allowFailure = false);
-    void CreateCloudShadowDescriptors();
-    void CreateCloudShadowParamsBuffer();
-    void CreateCloudShadowPipelineLayout();
-    void CreateCloudShadowPipeline(const ShaderManager *shaderManager);
-    void DestroyCloudShadowPipeline();
-    void DispatchCloudShadow(VkCommandBuffer cmd, uint32_t frameIndex);
-
-    // Both are recreated by SetQuality, so the descriptor sets that name them are
-    // written again: nothing else about them changes, so no set, pool or layout is
-    // recreated.
-    void UpdateQualityDescriptors();
-
-    uint32_t CloudShadowRefreshFrames() const;
-
 private:
-    // The cloud layer's shadow on the world: how much of the sun gets past the
-    // clouds on the way down to a spot of it. That only depends on the column of
-    // cloud a sun ray crosses before it reaches the spot, which is the same column
-    // wherever along the ray the spot is, so the layer can be projected onto the
-    // ground along the sun once and read back as a lookup (CloudShadowMap.h) --
-    // walked up the whole column in one go, so that a point standing inside the
-    // layer reads what is left above it rather than the whole of it.
-    struct CloudShadowParams
-    {
-        float sunDirection[4];  // xyz = unit direction towards the sun, w = height of the layer's bottom over the eye
-        float cloudLayer[4];    // x = thickness, y = coverage, z = density, w = detail erosion strength
-        float cloudMarch[4];    // x = cloud time (s), y = drift speed, z = unused (the walk is CLOUD_SHADOW_STEPS, CloudLayer.h), w = height of the layer over the plane the volume is keyed on
-        float mapProjection[4]; // xy = world-space corner of the volume, z = its extent (m), w = its extent in texels a side
-    };
-
     VkDevice device;
     std::shared_ptr<MemoryAllocator> allocator;
-    // SetQuality recreates the maps the frames in flight are still reading, so it
-    // has to be able to wait for them.
-    std::shared_ptr<CommandBufferManager> cmdManager;
 
     VkPipelineLayout pipelineLayout;
     std::shared_ptr<RasterizerPipelines> pipelines;
@@ -223,68 +135,16 @@ private:
     VkDescriptorPool descPool;
     VkDescriptorSet descSet;
 
-    // procedural sky (compute). One buffer, one mapped pointer and one descriptor
-    // set per frame in flight: the frames behind this one may still be reading
-    // theirs while this one is written, and what lives in them (the sun, the time
-    // the layer drifts by, the eye's place) may not be read half rewritten.
-    Buffer procSkyParamsBuffer[MAX_FRAMES_IN_FLIGHT];
-    void *mappedProcSkyParams[MAX_FRAMES_IN_FLIGHT] = {};
+    // procedural sky (compute)
+    Buffer procSkyParamsBuffer;
+    void *mappedProcSkyParams = nullptr;
 
     VkDescriptorSetLayout procSkyDescSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool      procSkyDescPool      = VK_NULL_HANDLE;
-    VkDescriptorSet       procSkyDescSet[MAX_FRAMES_IN_FLIGHT] = {};
+    VkDescriptorSet       procSkyDescSet       = VK_NULL_HANDLE;
 
     VkPipelineLayout procSkyPipelineLayout = VK_NULL_HANDLE;
     VkPipeline       procSkyPipeline       = VK_NULL_HANDLE;
-
-    // The cloud layer that the procedural sky composites in front of everything it
-    // draws: a cubemap (rgb = light scattered in the cloud, a = how much of the sky
-    // behind it gets through) sampled by direction. One per frame in flight: a frame
-    // marches the one its own index names and the sky of the same frame composites it,
-    // while the frame behind this one may still be reading the other -- which is why a
-    // single cubemap is not enough, the two frames overlap on the queue -- and the next
-    // time this frame's slot comes round its fence has passed. Which one a frame uses
-    // follows the frame index, so the descriptor sets that name them never change
-    // (WriteProceduralSkyDescriptors).
-    Attachment clouds[MAX_FRAMES_IN_FLIGHT];
-    uint32_t   cloudsSize = 0;
-    VkPipeline cloudsPipeline = VK_NULL_HANDLE;
-    VkSampler  cloudsSampler  = VK_NULL_HANDLE; // names the layer in the sky's descriptor set
-
-    // The quality level both the cloud cubemap and the volume of its shadow are
-    // sized and refreshed at (see SetQuality).
-    uint32_t   quality = QUALITY_HIGH;
-
-    // A level whose maps could not be made (out of memory) is not asked for again
-    // on every frame -- making and tearing down a map of that size is not free even
-    // when the memory for it is missing -- but once in a while, so that memory freed
-    // by another setting brings the level up on its own. QUALITY_LEVELS in
-    // failedQuality means that no level is waiting to be taken.
-    static constexpr uint32_t QUALITY_RETRY_FRAMES = 600;
-    uint32_t   failedQuality = QUALITY_LEVELS;
-    uint32_t   qualityRetryAge = 0;
-
-    // cloud shadow volume (compute, read back by every pass that lights the world)
-    Attachment cloudShadow;
-    uint32_t   cloudShadowSize = 0;
-    CloudShadowParams cloudShadowParams = {};   // the state the standing volume was filled with
-    bool     cloudShadowValid = false;          // false until it is dispatched once
-    uint32_t cloudShadowAge = 0;                // frames the standing map has been left alone
-    float    cloudShadowPlacement[4] = {};      // where it stands: on, origin.x, origin.z, extent
-
-    VkDescriptorSetLayout cloudShadowDescSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool      cloudShadowDescPool      = VK_NULL_HANDLE;
-    VkDescriptorSet       cloudShadowDescSet[MAX_FRAMES_IN_FLIGHT] = {};
-
-    VkPipelineLayout cloudShadowPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline       cloudShadowPipeline       = VK_NULL_HANDLE;
-    VkSampler        cloudShadowSampler        = VK_NULL_HANDLE; // names the volume in the cubemap descriptor set
-
-    // As with the procedural sky's parameters: one buffer and one mapped pointer per
-    // frame in flight, because the frame behind this one may still be filling the
-    // volume from its own copy (the sun, the projection and the layer's settings).
-    Buffer cloudShadowParamsBuffer[MAX_FRAMES_IN_FLIGHT];
-    void *mappedCloudShadowParams[MAX_FRAMES_IN_FLIGHT] = {};
 };
 
 }

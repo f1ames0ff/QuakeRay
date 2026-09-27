@@ -20,11 +20,8 @@
 
 #include "RenderCubemap.h"
 
-#include "PassTimings.h"
-
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 
 #include "CmdLabel.h"
@@ -38,120 +35,6 @@
 constexpr VkFormat CUBEMAP_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; 
 constexpr VkFormat CUBEMAP_DEPTH_FORMAT = VK_FORMAT_D16_UNORM; 
 constexpr uint32_t CUBEMAP_SIDE_SIZE = 1024;
-
-// The cloud layer is a volume: what the sky shader samples of it is a
-// low-frequency signal (the light that scattered in it, and how much of the sky
-// it hides), and it is marched at a step size that already blurs away anything
-// finer than this. So its cubemap is a small one, without mips -- and how small it
-// is is what the quality level picks.
-constexpr uint32_t CLOUDS_SIDE_SIZES[vkpt::RenderCubemap::QUALITY_LEVELS] = { 256, 512, 1024, 2048, 4096 };
-
-// The layer's shadow on the world is a volume of cloud over the ground, read with
-// whatever resolution the eye needs from it: a texel of it holds the tau of the
-// column of cloud the sun crosses over a spot of the ground, and of the parts of
-// that column standing above each height of the layer, so that the sky can ask what
-// the sun still crosses to reach a point inside it (CloudShadowMap.h). It is what
-// the volumetric sun shafts are gated through as well, so its texels are what the
-// edge of a cloud's shadow is drawn with.
-//
-// How fine a texel has to be is set by the cone a cloud's light is walked through
-// and not by the eye: every tap of the column is spread sideways around the sun by
-// CLOUD_LIGHT_CONE over the distance it has travelled, which is tens of world units
-// near the base of the layer and a couple of hundred at its top, so the tau the
-// volume holds has no detail finer than that and a texel of a dozen or so units
-// already samples it several times per feature. A level doubles the texels a side
-// over the same window of ground (CLOUD_SHADOW_EXTENT_PER_ALTITUDE) -- four times the volume, and
-// four times the march filling it, which is the dearest pass the layer has -- from
-// a texel every thirty metres at the bottom of the ladder to one every eight at the
-// top, and eight slices of two bytes per texel of memory.
-constexpr uint32_t CLOUD_SHADOW_SIZES[vkpt::RenderCubemap::QUALITY_LEVELS] = { 512, 1024, 1024, 2048, 2048 };
-
-// The slices the volume holds over the height of the layer, the base of the layer
-// in the first and the sky above it in the last (CmCloudShadow.comp fills as many,
-// CloudShadowMap.h reads them by the height of a point). They are the only reason
-// the shadow is a volume rather than a map, and how many of them there are is what
-// the light of a cloud is quantized along its height with: a cloud is not a straight
-// line in that direction, so reading a height between two slices is reading a line
-// where the tau curves. Measured against a walk of the same column 256 steps deep,
-// four slices leave a tau of 0.22 at the heights between them and eight leave 0.06 --
-// which is the size of the slabs of brightness an eye can find in a cloud, a band
-// for every slice pair. Eight of them cost twice the memory of the volume and almost
-// nothing to fill: a slice is a sum over the walk of the steps already made.
-constexpr uint32_t CLOUD_SHADOW_SLICES = 8;
-
-// How much of the world's horizontal plane the volume is laid out over, as a multiple
-// of the altitude the layer stands at (rt_sky_clouds_height), and the least it is ever
-// laid over. The same whatever the level, so that a level buys the sharpness of the
-// shadow rather than the reach of it. What a texel of it costs to fill is a column
-// walked towards the sun and does not depend on this at all -- the texels a side are
-// the level's, and they are spread over more ground the wider the window is -- so the
-// reach is what has to cover what the eye can see rather than what can be afforded.
-// What it has to cover: a cloud's shadow is what the air, the ground and the sky around
-// the eye are lit by, and the edge of the window is a line a shadow simply stops on.
-// Both of those grow with the height -- the columns the eye can see out to the horizon,
-// and the column the sun crosses to reach the ground under it, the height divided by the
-// tangent of the sun's elevation -- and a window left at a fixed reach would put the
-// horizon back on the fallback walk of the sky, which is the dearest thing the layer
-// does (CloudLayer.h). Twelve times the altitude is where that line is far enough out to
-// stop being findable -- the shadow thins out over the last four per cent of it -- and
-// it is what the fixed sixteen thousand units this used to be was worth for a layer at
-// the altitude the setting used to default to. The price of it is the texel of a level
-// spreading over more ground as the layer rises, which is what a higher layer wants: its
-// shadows are wider.
-constexpr float    CLOUD_SHADOW_EXTENT_PER_ALTITUDE = 12.0f;
-constexpr float    CLOUD_SHADOW_MIN_EXTENT = 4000.0f;
-
-// The wind's rates (CloudLayer.h) as a length, and how much of a texel of the volume
-// the drift may carry the field before the map is filled again (UpdateCloudShadow):
-// the light of the clouds -- and of the world under them -- is read from the map, and
-// a map the drift has walked away from makes that light step with the cadence of the
-// fills, which a fast drift turns into a metronome the eye finds on the rim of a cloud.
-constexpr float    CLOUD_WIND_MAGNITUDE = 32.31f; // |(30, 12)|
-constexpr float    CLOUD_SHADOW_DRIFT_TEXELS = 0.1f;
-
-// How far the eye may walk over the volume's window before the map is filled again
-// for it, in texels of the map (UpdateCloudShadow). The window follows the eye, but
-// what the map holds is keyed to the world rather than to the eye, so it is worth
-// filling again when the eye has left a good part of a row of it behind, not on
-// every texel of the way.
-constexpr uint32_t CLOUD_SHADOW_WINDOW_STEP = 8;
-
-// The map is redrawn when the eye has moved a window step over it
-// (CLOUD_SHADOW_WINDOW_STEP), and at least this often whatever the eye does: the
-// clouds drift on their own, and a stale map would hold the shadow still under them.
-// The finer the map, the sooner it is filled again -- the two lowest levels redraw it
-// every 4 frames, and above them every 2, and every frame from ultra on -- so a level
-// buys the sharpness of the edge and the freshness of the shadow together. What the
-// freshness is seen in is the shafts and the sunlight under a cloud, which are gated
-// through this map.
-constexpr uint32_t CLOUD_SHADOW_REFRESH_FRAMES[vkpt::RenderCubemap::QUALITY_LEVELS] = { 4, 4, 2, 1, 1 };
-
-// Steps the sky pass marches a ray through the layer in, one entry per quality
-// level: per view ray, and per sunlight sample taken inside the layer. What a
-// cloud's light is estimated from where the volume of the layer's shadow does not
-// reach is the volume's own walk of the column (CLOUD_SHADOW_STEPS, CloudLayer.h),
-// not a march of this pass's own, so the sun has no count of its own here.
-//
-// What a level costs is mostly the map it marches (CLOUDS_SIDE_SIZES: four times the
-// texels every level) and the count is the rest -- measured with the pass timings,
-// 512 a side with 48 steps is 1.0 ms of a 22 ms frame and 1024 with 56 is 3.1 of 24.
-// The samples of a march are jittered by a low-discrepancy sequence turned by a seed
-// drawn from the world (CloudLayer.h), so what a shorter count leaves behind is a
-// finer noise than white noise would leave, and it grows as the count falls but as
-// its square root: the counts below are eight less than they were, about a tenth more
-// grain for the share of the dearest pass the clouds run.
-constexpr uint32_t CLOUDS_VIEW_STEPS[vkpt::RenderCubemap::QUALITY_LEVELS] = { 32, 40, 48, 56, 64 };
-
-// Below this the sun is under the layer rather than over it, and the layer
-// shades nothing that can be
-// seen.
-constexpr float CLOUD_SHADOW_MIN_SUN_HEIGHT = 0.05f;
-
-// What the volume holds is the tau of a column of cloud, so a single channel is
-// all it needs -- and a tau rather than a transmittance because the slices of the
-// volume are read interpolated, which only adds up if what stands between two of
-// them is linear in the cloud.
-constexpr VkFormat CLOUD_SHADOW_FORMAT = VK_FORMAT_R16_SFLOAT;
 
 
 namespace vkpt
@@ -187,7 +70,6 @@ vkpt::RenderCubemap::RenderCubemap(
 :
     device(_device),
     allocator(_allocator),
-    cmdManager(_cmdManager),
     pipelineLayout(VK_NULL_HANDLE),
     multiviewRenderPass(VK_NULL_HANDLE),
     cubemap{},
@@ -198,23 +80,16 @@ vkpt::RenderCubemap::RenderCubemap(
     cubemapMipLevels(static_cast<uint32_t>(std::log2(CUBEMAP_SIDE_SIZE)) + 1),
     descSetLayout(VK_NULL_HANDLE),
     descPool(VK_NULL_HANDLE),
-    descSet(VK_NULL_HANDLE),
-    clouds{},
-    cloudsSize(CLOUDS_SIDE_SIZES[QUALITY_HIGH]),
-    cloudShadow{},
-    cloudShadowSize(CLOUD_SHADOW_SIZES[QUALITY_HIGH])
+    descSet(VK_NULL_HANDLE)
 {
     CreatePipelineLayout(_textureManager->GetDescSetLayout(), _uniform->GetDescSetLayout());
     CreateRenderPass();
     InitPipelines(_shaderManager, cubemapSize, _instanceInfo.rasterizedVertexColorGamma);
 
     VkCommandBuffer cmd = _cmdManager->StartGraphicsCmd();
-    CreateAttch(_allocator, cmd, cubemapSize, cubemapMipLevels, "Render cubemap", cubemap, false);
-    CreateAttch(_allocator, cmd, cubemapSize, cubemapMipLevels, "Render cubemap env", envCubemap, false);
-    CreateAttch(_allocator, cmd, cubemapSize, 1, "Render cubemap depth", cubemapDepth, true);
-    CreateAttch(_allocator, cmd, cloudsSize, 1, "Cloud cubemap", clouds[0], false);
-    CreateAttch(_allocator, cmd, cloudsSize, 1, "Cloud cubemap, the other frame in flight", clouds[1], false);
-    CreateCloudShadowImage(_allocator, cmd, cloudShadowSize, cloudShadow);
+    CreateAttch(_allocator, cmd, cubemapSize, cubemap, false);
+    CreateAttch(_allocator, cmd, cubemapSize, envCubemap, false);
+    CreateAttch(_allocator, cmd, cubemapSize, cubemapDepth, true);
     _cmdManager->Submit(cmd);
     _cmdManager->WaitGraphicsIdle();
 
@@ -222,71 +97,42 @@ vkpt::RenderCubemap::RenderCubemap(
     CreateDescriptors(_samplerManager);
 
     CreateProceduralSkyParamsBuffer();
-    CreateProceduralSkyDescriptors(_samplerManager);
+    CreateProceduralSkyDescriptors();
     CreateProceduralSkyPipelineLayout();
     CreateProceduralSkyPipeline(_shaderManager.get());
-    CreateCloudsPipeline(_shaderManager.get());
-
-    CreateCloudShadowParamsBuffer();
-    CreateCloudShadowDescriptors();
-    CreateCloudShadowPipelineLayout();
-    CreateCloudShadowPipeline(_shaderManager.get());
 }
 
 vkpt::RenderCubemap::~RenderCubemap()
 {
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
+    if (mappedProcSkyParams)
     {
-        if (mappedProcSkyParams[frame])
-        {
-            procSkyParamsBuffer[frame].TryUnmap();
-        }
-        procSkyParamsBuffer[frame].Destroy();
-
-        if (mappedCloudShadowParams[frame])
-        {
-            cloudShadowParamsBuffer[frame].TryUnmap();
-        }
-        cloudShadowParamsBuffer[frame].Destroy();
+        procSkyParamsBuffer.TryUnmap();
     }
-
-    vkDestroyDescriptorPool(device, cloudShadowDescPool, nullptr);
-    vkDestroyDescriptorSetLayout(device, cloudShadowDescSetLayout, nullptr);
-    vkDestroyPipelineLayout(device, cloudShadowPipelineLayout, nullptr);
-    DestroyCloudShadowPipeline();
+    procSkyParamsBuffer.Destroy();
 
     vkDestroyDescriptorPool(device, procSkyDescPool, nullptr);
     vkDestroyDescriptorSetLayout(device, procSkyDescSetLayout, nullptr);
     vkDestroyPipelineLayout(device, procSkyPipelineLayout, nullptr);
     DestroyProceduralSkyPipelines();
-    DestroyCloudsPipeline();
 
     vkDestroyDescriptorPool(device, descPool, nullptr);
     vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyRenderPass(device, multiviewRenderPass, nullptr);
 
-    for (Attachment &image : clouds)
-    {
-        vkDestroyImage(device, image.image, nullptr);
-        vkDestroyImageView(device, image.view, nullptr);
-        vkFreeMemory(device, image.memory, nullptr);
-    }
-
-    vkDestroyImage(device, cloudShadow.image, nullptr);
-    vkDestroyImageView(device, cloudShadow.view, nullptr);
-    vkFreeMemory(device, cloudShadow.memory, nullptr);
-
     vkDestroyImage(device, cubemap.image, nullptr);
     vkDestroyImageView(device, cubemap.view, nullptr);
+    vkDestroyImageView(device, cubemap.viewArray, nullptr);
     vkFreeMemory(device, cubemap.memory, nullptr);
 
     vkDestroyImage(device, envCubemap.image, nullptr);
     vkDestroyImageView(device, envCubemap.view, nullptr);
+    vkDestroyImageView(device, envCubemap.viewArray, nullptr);
     vkFreeMemory(device, envCubemap.memory, nullptr);
 
     vkDestroyImage(device, cubemapDepth.image, nullptr);
     vkDestroyImageView(device, cubemapDepth.view, nullptr);
+    vkDestroyImageView(device, cubemapDepth.viewArray, nullptr);
     vkFreeMemory(device, cubemapDepth.memory, nullptr);
 
     vkDestroyFramebuffer(device, cubemapFramebuffer, nullptr);
@@ -297,10 +143,6 @@ void vkpt::RenderCubemap::OnShaderReload(const ShaderManager *shaderManager)
     pipelines->OnShaderReload( shaderManager );
     DestroyProceduralSkyPipelines();
     CreateProceduralSkyPipeline(shaderManager);
-    DestroyCloudsPipeline();
-    CreateCloudsPipeline(shaderManager);
-    DestroyCloudShadowPipeline();
-    CreateCloudShadowPipeline(shaderManager);
 }
 
 void vkpt::RenderCubemap::Draw(VkCommandBuffer cmd, uint32_t frameIndex,
@@ -640,37 +482,9 @@ void vkpt::RenderCubemap::InitPipelines(const std::shared_ptr<ShaderManager> &sh
 void vkpt::RenderCubemap::CreateAttch(
     const std::shared_ptr<MemoryAllocator> &allocator,
     VkCommandBuffer cmd,
-    uint32_t sideSize, uint32_t mipLevels, const char *debugName,
-    Attachment &result, bool isDepth, bool allowFailure)
+    uint32_t sideSize, Attachment &result, bool isDepth)
 {
-    char nameBuf[128];
-    // One name at a time: the buffer is reused, so a name is only valid until the
-    // next call (which is all a debug name needs to be).
-    const auto name = [debugName, &nameBuf](const char *suffix) -> const char *
-    {
-        snprintf(nameBuf, sizeof(nameBuf), "%s %s", debugName, suffix);
-        return nameBuf;
-    };
-
-    // A map that could not be made leaves nothing behind, so the caller that may go
-    // on without it (a quality level that was asked for) keeps the map it had.
-    const auto giveUp = [this, &result]()
-    {
-        if (result.view != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(device, result.view, nullptr);
-        }
-        if (result.image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(device, result.image, nullptr);
-        }
-        if (result.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(device, result.memory, nullptr);
-        }
-
-        result = {};
-    };
+    result.viewArray = VK_NULL_HANDLE;
 
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -678,7 +492,7 @@ void vkpt::RenderCubemap::CreateAttch(
     imageInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     imageInfo.format = isDepth ? CUBEMAP_DEPTH_FORMAT : CUBEMAP_FORMAT;
     imageInfo.extent = { sideSize, sideSize, 1 };
-    imageInfo.mipLevels = mipLevels;
+    imageInfo.mipLevels = isDepth ? 1 : cubemapMipLevels;
     imageInfo.arrayLayers = 6;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -689,48 +503,26 @@ void vkpt::RenderCubemap::CreateAttch(
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkResult r = vkCreateImage(device, &imageInfo, nullptr, &result.image);
-    if (r != VK_SUCCESS)
-    {
-        // Whether the map may be given up on is the caller's to say.
-        if (!allowFailure)
-        {
-            VK_CHECKERROR(r);
-        }
-
-        giveUp();
-
-        return;
-    }
-    SET_DEBUG_NAME(device, result.image, VK_OBJECT_TYPE_IMAGE, name(isDepth ? "depth image" : "image"));
+    VK_CHECKERROR(r);
+    SET_DEBUG_NAME(device, result.image, VK_OBJECT_TYPE_IMAGE, isDepth ? "Render cubemap depth image" : "Render cubemap image");
 
 
     // allocate dedicated memory
     VkMemoryRequirements memReqs;
     vkGetImageMemoryRequirements(device, result.image, &memReqs);
 
-    result.memory = allowFailure ?
-        allocator->TryAllocDedicated(memReqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, MemoryAllocator::AllocType::DEFAULT, name(isDepth ? "depth image memory" : "image memory")) :
-        allocator->AllocDedicated(memReqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, MemoryAllocator::AllocType::DEFAULT, name(isDepth ? "depth image memory" : "image memory"));
+    result.memory = allocator->AllocDedicated(memReqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, MemoryAllocator::AllocType::DEFAULT, isDepth ? "Render cubemap depth memory" : "Render cubemap image memory");
 
     if (result.memory == VK_NULL_HANDLE)
     {
-        giveUp();
+        vkDestroyImage(device, result.image, nullptr);
+        result.image = VK_NULL_HANDLE;
 
         return;
     }
 
     r = vkBindImageMemory(device, result.image, result.memory, 0);
-    if (r != VK_SUCCESS)
-    {
-        if (!allowFailure)
-        {
-            VK_CHECKERROR(r);
-        }
-
-        giveUp();
-
-        return;
-    }
+    VK_CHECKERROR(r);
 
 
     // create image view
@@ -741,24 +533,28 @@ void vkpt::RenderCubemap::CreateAttch(
     viewInfo.subresourceRange = {};
     viewInfo.subresourceRange.aspectMask = isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = mipLevels;
+    viewInfo.subresourceRange.levelCount = isDepth ? 1 : cubemapMipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 6;
     viewInfo.image = result.image;
 
     r = vkCreateImageView(device, &viewInfo, nullptr, &result.view);
-    if (r != VK_SUCCESS)
-    {
-        if (!allowFailure)
-        {
-            VK_CHECKERROR(r);
-        }
+    VK_CHECKERROR(r);
+    SET_DEBUG_NAME(device, result.view, VK_OBJECT_TYPE_IMAGE_VIEW, isDepth ? "Render cubemap depth image view" : "Render cubemap image view");
 
-        giveUp();
+    // The sky compute pass writes the cubemap through an image2DArray binding -- HLSL has no
+    // writable cube texture and D3D12 has no cube UAV -- so the same six layers get a 2D-array
+    // view beside the cube view. The cube view stays for sampling and for the multiview render
+    // pass; only the storage-image bindings use this one, and a cube view bound to an
+    // image2DArray descriptor would violate VUID-vkCmdDispatch-viewType-07752.
+    // TODO(refactor): the two views of one image are a port shim, not a design; the NVRHI rewrite
+    // (A2/A5, plan §14.14) should drop the double-view path and decide how a cubemap is written
+    // on both backends.
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
 
-        return;
-    }
-    SET_DEBUG_NAME(device, result.view, VK_OBJECT_TYPE_IMAGE_VIEW, name(isDepth ? "depth image view" : "image view"));
+    r = vkCreateImageView(device, &viewInfo, nullptr, &result.viewArray);
+    VK_CHECKERROR(r);
+    SET_DEBUG_NAME(device, result.viewArray, VK_OBJECT_TYPE_IMAGE_VIEW, isDepth ? "Render cubemap depth array view" : "Render cubemap array view");
 
 
     // make transition from undefined manually, so initialLayout can be specified
@@ -783,7 +579,7 @@ void vkpt::RenderCubemap::CreateAttch(
         imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     }
     imageBarrier.subresourceRange.baseMipLevel = 0;
-    imageBarrier.subresourceRange.levelCount = mipLevels;
+    imageBarrier.subresourceRange.levelCount = isDepth ? 1 : cubemapMipLevels;
     imageBarrier.subresourceRange.baseArrayLayer = 0;
     imageBarrier.subresourceRange.layerCount = 6;
 
@@ -826,28 +622,31 @@ void vkpt::RenderCubemap::CreateFramebuffer(uint32_t sideSize)
 
 void vkpt::RenderCubemap::CreateDescriptors(const std::shared_ptr<SamplerManager> &samplerManager)
 {
-    VkDescriptorSetLayoutBinding bindings[3] = {};
+    VkDescriptorSetLayoutBinding bindings[4] = {};
 
     bindings[0].binding = BINDING_RENDER_CUBEMAP;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags = VK_SHADER_STAGE_ALL;
 
     bindings[1].binding = BINDING_RENDER_CUBEMAP_ENV;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_ALL;
 
-    // The cloud layer's shadow on the world, read by the passes that light it
-    // (CloudShadowMap.h).
-    bindings[2].binding = BINDING_RENDER_CUBEMAP_CLOUD_SHADOW;
-    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].binding = BINDING_RENDER_CUBEMAP_SAMPLER;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_ALL;
 
+    bindings[3].binding = BINDING_RENDER_CUBEMAP_ENV_SAMPLER;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_ALL;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 3;
+    layoutInfo.bindingCount = 4;
     layoutInfo.pBindings = bindings;
 
     VkResult r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descSetLayout);
@@ -856,15 +655,17 @@ void vkpt::RenderCubemap::CreateDescriptors(const std::shared_ptr<SamplerManager
     SET_DEBUG_NAME(device, descSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "Render cubemap Desc set layout");
 
 
-    VkDescriptorPoolSize poolSize = {};
-    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSize.descriptorCount = 3;
+    VkDescriptorPoolSize poolSizes[2] = {};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    poolSizes[0].descriptorCount = 2;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    poolSizes[1].descriptorCount = 2;
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = 1;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
 
     r = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descPool);
     VK_CHECKERROR(r);
@@ -885,26 +686,25 @@ void vkpt::RenderCubemap::CreateDescriptors(const std::shared_ptr<SamplerManager
 
 
     VkDescriptorImageInfo img = {};
-    img.sampler = samplerManager->GetSampler(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_REPEAT, RG_SAMPLER_ADDRESS_MODE_REPEAT);
+    img.sampler = VK_NULL_HANDLE;
     img.imageView = cubemap.view;
     img.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkDescriptorImageInfo envImg = img;
     envImg.imageView = envCubemap.view;
 
-    VkDescriptorImageInfo cloudShadowImg = {};
-    cloudShadowSampler = samplerManager->GetSampler(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-    cloudShadowImg.sampler = cloudShadowSampler;
-    cloudShadowImg.imageView = cloudShadow.view;
-    cloudShadowImg.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorImageInfo samplerImg = {};
+    samplerImg.sampler = samplerManager->GetSampler(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_REPEAT, RG_SAMPLER_ADDRESS_MODE_REPEAT);
+    samplerImg.imageView = VK_NULL_HANDLE;
+    samplerImg.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    VkWriteDescriptorSet wrt[3] = {};
+    VkWriteDescriptorSet wrt[4] = {};
     wrt[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     wrt[0].dstSet = descSet;
     wrt[0].dstBinding = BINDING_RENDER_CUBEMAP;
     wrt[0].dstArrayElement = 0;
     wrt[0].descriptorCount = 1;
-    wrt[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wrt[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     wrt[0].pImageInfo = &img;
 
     wrt[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -912,46 +712,49 @@ void vkpt::RenderCubemap::CreateDescriptors(const std::shared_ptr<SamplerManager
     wrt[1].dstBinding = BINDING_RENDER_CUBEMAP_ENV;
     wrt[1].dstArrayElement = 0;
     wrt[1].descriptorCount = 1;
-    wrt[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wrt[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     wrt[1].pImageInfo = &envImg;
 
     wrt[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     wrt[2].dstSet = descSet;
-    wrt[2].dstBinding = BINDING_RENDER_CUBEMAP_CLOUD_SHADOW;
+    wrt[2].dstBinding = BINDING_RENDER_CUBEMAP_SAMPLER;
     wrt[2].dstArrayElement = 0;
     wrt[2].descriptorCount = 1;
-    wrt[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    wrt[2].pImageInfo = &cloudShadowImg;
+    wrt[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    wrt[2].pImageInfo = &samplerImg;
 
-    vkUpdateDescriptorSets(device, 3, wrt, 0, nullptr);
+    wrt[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wrt[3].dstSet = descSet;
+    wrt[3].dstBinding = BINDING_RENDER_CUBEMAP_ENV_SAMPLER;
+    wrt[3].dstArrayElement = 0;
+    wrt[3].descriptorCount = 1;
+    wrt[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    wrt[3].pImageInfo = &samplerImg;
+
+    vkUpdateDescriptorSets(device, 4, wrt, 0, nullptr);
 }
 
 void vkpt::RenderCubemap::CreateProceduralSkyParamsBuffer()
 {
-    // One buffer per frame in flight, so that the frame being recorded writes its
-    // own copy while the frames behind it read theirs (see the header).
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        procSkyParamsBuffer[frame].Init(
-            allocator,
-            sizeof(ProceduralSkyParams),
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            "Procedural sky params buffer");
+    procSkyParamsBuffer.Init(
+        allocator,
+        sizeof(ProceduralSkyParams),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "Procedural sky params buffer");
 
-        mappedProcSkyParams[frame] = procSkyParamsBuffer[frame].Map();
-        if (mappedProcSkyParams[frame])
-        {
-            memset(mappedProcSkyParams[frame], 0, sizeof(ProceduralSkyParams));
-        }
+    mappedProcSkyParams = procSkyParamsBuffer.Map();
+    if (mappedProcSkyParams)
+    {
+        memset(mappedProcSkyParams, 0, sizeof(ProceduralSkyParams));
     }
 }
 
-void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<SamplerManager> &samplerManager)
+void vkpt::RenderCubemap::CreateProceduralSkyDescriptors()
 {
     VkResult r;
 
-    VkDescriptorSetLayoutBinding bindings[6] = {};
+    VkDescriptorSetLayoutBinding bindings[3] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -969,29 +772,9 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // 3: the cloud layer, written by CSkyClouds and read by CProceduralSky
-    bindings[3].binding = 3;
-    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[3].descriptorCount = 1;
-    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    // 4: the same cloud layer, sampled by direction instead of written
-    bindings[4].binding = 4;
-    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[4].descriptorCount = 1;
-    bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    // 5: the map of the layer's shadow on the world, read by the cloud pass itself
-    // so that the light of a cloud is a lookup and not a march to the sun
-    // (CloudShadowMap.h)
-    bindings[5].binding = 5;
-    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[5].descriptorCount = 1;
-    bindings[5].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 6;
+    layoutInfo.bindingCount = 3;
     layoutInfo.pBindings = bindings;
 
     r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &procSkyDescSetLayout);
@@ -999,18 +782,16 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
 
     SET_DEBUG_NAME(device, procSkyDescSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "Procedural sky desc set layout");
 
-    VkDescriptorPoolSize poolSizes[3] = {};
+    VkDescriptorPoolSize poolSizes[2] = {};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 3 * MAX_FRAMES_IN_FLIGHT;
+    poolSizes[0].descriptorCount = 2;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[1].descriptorCount = 1 * MAX_FRAMES_IN_FLIGHT;
-    poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[2].descriptorCount = 2 * MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].descriptorCount = 1;
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 3;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 2;
     poolInfo.pPoolSizes = poolSizes;
 
     r = vkCreateDescriptorPool(device, &poolInfo, nullptr, &procSkyDescPool);
@@ -1021,93 +802,50 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
     VkDescriptorSetAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = procSkyDescPool;
-    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-    VkDescriptorSetLayout setLayouts[MAX_FRAMES_IN_FLIGHT] = {};
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        setLayouts[frame] = procSkyDescSetLayout;
-    }
-    allocInfo.pSetLayouts = setLayouts;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &procSkyDescSetLayout;
 
-    r = vkAllocateDescriptorSets(device, &allocInfo, procSkyDescSet);
+    r = vkAllocateDescriptorSets(device, &allocInfo, &procSkyDescSet);
     VK_CHECKERROR(r);
 
-    SET_DEBUG_NAME(device, procSkyDescSet[0], VK_OBJECT_TYPE_DESCRIPTOR_SET, "Procedural sky desc set 0");
-    SET_DEBUG_NAME(device, procSkyDescSet[1], VK_OBJECT_TYPE_DESCRIPTOR_SET, "Procedural sky desc set 1");
+    SET_DEBUG_NAME(device, procSkyDescSet, VK_OBJECT_TYPE_DESCRIPTOR_SET, "Procedural sky desc set");
 
     VkDescriptorImageInfo imgInfo = {};
-    imgInfo.imageView = cubemap.view;
+    imgInfo.imageView = cubemap.viewArray;   // the sky pass writes through an image2DArray binding
     imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkDescriptorImageInfo envImgInfo = {};
-    envImgInfo.imageView = envCubemap.view;
+    envImgInfo.imageView = envCubemap.viewArray;
     envImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    // The layer for each frame: the cubemap that frame marches, named both as the
-    // storage image it is written through and as the sampler the sky composites it
-    // from. One per frame in flight (see the header).
-    VkDescriptorImageInfo cloudsWritten[MAX_FRAMES_IN_FLIGHT] = {};
-    VkDescriptorImageInfo cloudsSampled[MAX_FRAMES_IN_FLIGHT] = {};
+    VkDescriptorBufferInfo bufInfo = {};
+    bufInfo.buffer = procSkyParamsBuffer.GetBuffer();
+    bufInfo.offset = 0;
+    bufInfo.range = VK_WHOLE_SIZE;
 
-    // The sky reads the layer between texels, the way it reads anything else: a
-    // filtering read of a map that stands for a soft, wide thing is the read it wants.
-    cloudsSampler = samplerManager->GetSampler(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+    VkWriteDescriptorSet writes[3] = {};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = procSkyDescSet;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[0].pImageInfo = &imgInfo;
 
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        cloudsWritten[frame].imageView = clouds[frame].view;
-        cloudsWritten[frame].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = procSkyDescSet;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[1].pBufferInfo = &bufInfo;
 
-        cloudsSampled[frame].sampler = cloudsSampler;
-        cloudsSampled[frame].imageView = clouds[frame].view;
-        cloudsSampled[frame].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    }
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = procSkyDescSet;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[2].pImageInfo = &envImgInfo;
 
-    // The map of the layer's shadow, which is made before this set is (see the
-    // constructor) and is read by the cloud pass through it.
-    VkDescriptorImageInfo cloudShadowImgInfo = {};
-    cloudShadowImgInfo.sampler = cloudShadowSampler;
-    cloudShadowImgInfo.imageView = cloudShadow.view;
-    cloudShadowImgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-    VkDescriptorBufferInfo bufInfo[MAX_FRAMES_IN_FLIGHT] = {};
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        bufInfo[frame].buffer = procSkyParamsBuffer[frame].GetBuffer();
-        bufInfo[frame].offset = 0;
-        bufInfo[frame].range = VK_WHOLE_SIZE;
-    }
-
-    // The same bindings for every frame in flight, each set naming its own copy of
-    // the parameters (binding 1) and its own cubemap of the layer (bindings 3 and 4),
-    // and the same shadow volume for all of them.
-    VkWriteDescriptorSet writes[MAX_FRAMES_IN_FLIGHT * 6] = {};
-    uint32_t at = 0;
-
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        const auto add = [&](uint32_t binding, VkDescriptorType type,
-                             const VkDescriptorImageInfo *image, const VkDescriptorBufferInfo *buffer)
-        {
-            VkWriteDescriptorSet &w = writes[at++];
-            w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            w.dstSet = procSkyDescSet[frame];
-            w.dstBinding = binding;
-            w.descriptorCount = 1;
-            w.descriptorType = type;
-            w.pImageInfo = image;
-            w.pBufferInfo = buffer;
-        };
-
-        add(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgInfo, nullptr);
-        add(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &bufInfo[frame]);
-        add(2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &envImgInfo, nullptr);
-        add(3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &cloudsWritten[frame], nullptr);
-        add(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cloudsSampled[frame], nullptr);
-        add(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cloudShadowImgInfo, nullptr);
-    }
-
-    vkUpdateDescriptorSets(device, at, writes, 0, nullptr);
+    vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
 }
 
 void vkpt::RenderCubemap::CreateProceduralSkyPipelineLayout()
@@ -1149,829 +887,32 @@ void vkpt::RenderCubemap::DestroyProceduralSkyPipelines()
     }
 }
 
-void vkpt::RenderCubemap::CreateCloudsPipeline(const ShaderManager *shaderManager)
-{
-    VkResult r;
-
-    VkComputePipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.layout = procSkyPipelineLayout;
-    pipelineInfo.stage = shaderManager->GetStageInfo("CSkyClouds");
-
-    r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &cloudsPipeline);
-    VK_CHECKERROR(r);
-
-    SET_DEBUG_NAME(device, cloudsPipeline, VK_OBJECT_TYPE_PIPELINE, "Clouds pipeline");
-}
-
-void vkpt::RenderCubemap::DestroyCloudsPipeline()
-{
-    if (cloudsPipeline)
-    {
-        vkDestroyPipeline(device, cloudsPipeline, nullptr);
-        cloudsPipeline = VK_NULL_HANDLE;
-    }
-}
-
-void vkpt::RenderCubemap::DispatchClouds(VkCommandBuffer cmd, const ProceduralSkyParams &params, uint32_t frameIndex)
-{
-    // Nothing to march when the host turned the clouds off, made them fully
-    // transparent, or asked for the flat clouds of the lowest quality level (they
-    // are painted into the sky's colour and no shader reads a map of the layer
-    // then -- CmProceduralSky.comp). The cubemap keeps whatever it holds: nothing
-    // samples it while there is no layer to composite, and the frame the layer comes
-    // back on marches the whole of it.
-    if (params.skyColor[3] > 0.5f || params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f)
-    {
-        return;
-    }
-
-    CmdLabel label(cmd, "Cloud layer");
-
-    // This frame marches the cubemap its own index names, and the sky of the same
-    // frame composites that one. The other cubemap belongs to the frame beside this
-    // one in flight, which may still be reading it; which cubemap a frame uses follows
-    // the frame index, so the descriptor sets that name them -- one per frame, written
-    // once (WriteProceduralSkyDescriptors) -- always name the right one.
-    VkImageMemoryBarrier barrier = {};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.image = clouds[frameIndex].image;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 6;
-
-    vkCmdPipelineBarrier(
-        cmd,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrier);
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cloudsPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, procSkyPipelineLayout,
-                            0, 1, &procSkyDescSet[frameIndex], 0, nullptr);
-
-    // The whole map is dispatched every frame (CmSkyClouds.comp has no other path):
-    // no texel of the layer is older than the frame before, and every texel of the
-    // map stands for the one cloud the whole map shows.
-    const uint32_t wg = Utils::GetWorkGroupCount(cloudsSize, 16);
-    vkCmdDispatch(cmd, wg, wg, 6);
-
-    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    vkCmdPipelineBarrier(
-        cmd,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrier);
-}
-
-void vkpt::RenderCubemap::CreateCloudShadowImage(const std::shared_ptr<MemoryAllocator> &allocator, VkCommandBuffer cmd,
-                                                 uint32_t size, Attachment &image, bool allowFailure)
-{
-    // A map that could not be made leaves nothing behind, so the caller that may go
-    // on without it (a quality level that was asked for) keeps the map it had.
-    const auto giveUp = [this, &image]()
-    {
-        if (image.view != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(device, image.view, nullptr);
-        }
-        if (image.image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(device, image.image, nullptr);
-        }
-        if (image.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(device, image.memory, nullptr);
-        }
-
-        image = {};
-    };
-
-    VkImageCreateInfo imageInfo = {};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_3D;
-    imageInfo.format = CLOUD_SHADOW_FORMAT;
-    imageInfo.extent = { size, size, CLOUD_SHADOW_SLICES };
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    VkResult r = vkCreateImage(device, &imageInfo, nullptr, &image.image);
-    if (r != VK_SUCCESS)
-    {
-        // Whether the map may be given up on is the caller's to say.
-        if (!allowFailure)
-        {
-            VK_CHECKERROR(r);
-        }
-
-        giveUp();
-
-        return;
-    }
-    SET_DEBUG_NAME(device, image.image, VK_OBJECT_TYPE_IMAGE, "Cloud shadow image");
-
-    VkMemoryRequirements memReqs;
-    vkGetImageMemoryRequirements(device, image.image, &memReqs);
-
-    image.memory = allowFailure ?
-        allocator->TryAllocDedicated(memReqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                     MemoryAllocator::AllocType::DEFAULT, "Cloud shadow image memory") :
-        allocator->AllocDedicated(memReqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                  MemoryAllocator::AllocType::DEFAULT, "Cloud shadow image memory");
-    if (image.memory == VK_NULL_HANDLE)
-    {
-        giveUp();
-
-        return;
-    }
-
-    r = vkBindImageMemory(device, image.image, image.memory, 0);
-    if (r != VK_SUCCESS)
-    {
-        if (!allowFailure)
-        {
-            VK_CHECKERROR(r);
-        }
-
-        giveUp();
-
-        return;
-    }
-
-    VkImageViewCreateInfo viewInfo = {};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
-    viewInfo.format = CLOUD_SHADOW_FORMAT;
-    viewInfo.subresourceRange = {};
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.layerCount = 1;
-    viewInfo.image = image.image;
-
-    r = vkCreateImageView(device, &viewInfo, nullptr, &image.view);
-    if (r != VK_SUCCESS)
-    {
-        if (!allowFailure)
-        {
-            VK_CHECKERROR(r);
-        }
-
-        giveUp();
-
-        return;
-    }
-    SET_DEBUG_NAME(device, image.view, VK_OBJECT_TYPE_IMAGE_VIEW, "Cloud shadow image view");
-
-    // Written as a storage image and read as a sampled one, so it settles in
-    // shader-read and the dispatch that fills it moves it to GENERAL and back.
-    VkImageMemoryBarrier barrier = {};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.image = image.image;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-
-    vkCmdPipelineBarrier(
-        cmd,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrier);
-}
-
-void vkpt::RenderCubemap::CreateCloudShadowParamsBuffer()
-{
-    // One buffer per frame in flight, as with the sky's parameters (see the header).
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        cloudShadowParamsBuffer[frame].Init(
-            allocator,
-            sizeof(CloudShadowParams),
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            "Cloud shadow params buffer");
-
-        mappedCloudShadowParams[frame] = cloudShadowParamsBuffer[frame].Map();
-        if (mappedCloudShadowParams[frame])
-        {
-            memset(mappedCloudShadowParams[frame], 0, sizeof(CloudShadowParams));
-        }
-    }
-}
-
-void vkpt::RenderCubemap::CreateCloudShadowDescriptors()
-{
-    VkResult r;
-
-    VkDescriptorSetLayoutBinding bindings[2] = {};
-
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 2;
-    layoutInfo.pBindings = bindings;
-
-    r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &cloudShadowDescSetLayout);
-    VK_CHECKERROR(r);
-
-    SET_DEBUG_NAME(device, cloudShadowDescSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "Cloud shadow desc set layout");
-
-    VkDescriptorPoolSize poolSizes[2] = {};
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 1 * MAX_FRAMES_IN_FLIGHT;
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[1].descriptorCount = 1 * MAX_FRAMES_IN_FLIGHT;
-
-    VkDescriptorPoolCreateInfo poolInfo = {};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 2;
-    poolInfo.pPoolSizes = poolSizes;
-
-    r = vkCreateDescriptorPool(device, &poolInfo, nullptr, &cloudShadowDescPool);
-    VK_CHECKERROR(r);
-
-    SET_DEBUG_NAME(device, cloudShadowDescPool, VK_OBJECT_TYPE_DESCRIPTOR_POOL, "Cloud shadow desc pool");
-
-    VkDescriptorSetAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = cloudShadowDescPool;
-    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-    VkDescriptorSetLayout setLayouts[MAX_FRAMES_IN_FLIGHT] = {};
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        setLayouts[frame] = cloudShadowDescSetLayout;
-    }
-    allocInfo.pSetLayouts = setLayouts;
-
-    r = vkAllocateDescriptorSets(device, &allocInfo, cloudShadowDescSet);
-    VK_CHECKERROR(r);
-
-    SET_DEBUG_NAME(device, cloudShadowDescSet[0], VK_OBJECT_TYPE_DESCRIPTOR_SET, "Cloud shadow desc set 0");
-    SET_DEBUG_NAME(device, cloudShadowDescSet[1], VK_OBJECT_TYPE_DESCRIPTOR_SET, "Cloud shadow desc set 1");
-
-    VkDescriptorImageInfo imgInfo = {};
-    imgInfo.imageView = cloudShadow.view;
-    imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-    VkDescriptorBufferInfo bufInfo[MAX_FRAMES_IN_FLIGHT] = {};
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        bufInfo[frame].buffer = cloudShadowParamsBuffer[frame].GetBuffer();
-        bufInfo[frame].offset = 0;
-        bufInfo[frame].range = VK_WHOLE_SIZE;
-    }
-
-    // The same volume and the same bindings for every frame in flight, each set
-    // naming its own copy of the parameters.
-    VkWriteDescriptorSet writes[MAX_FRAMES_IN_FLIGHT * 2] = {};
-    uint32_t at = 0;
-
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        const auto add = [&](uint32_t binding, VkDescriptorType type,
-                             const VkDescriptorImageInfo *image, const VkDescriptorBufferInfo *buffer)
-        {
-            VkWriteDescriptorSet &w = writes[at++];
-            w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            w.dstSet = cloudShadowDescSet[frame];
-            w.dstBinding = binding;
-            w.descriptorCount = 1;
-            w.descriptorType = type;
-            w.pImageInfo = image;
-            w.pBufferInfo = buffer;
-        };
-
-        add(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgInfo, nullptr);
-        add(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &bufInfo[frame]);
-    }
-
-    vkUpdateDescriptorSets(device, at, writes, 0, nullptr);
-}
-
-void vkpt::RenderCubemap::CreateCloudShadowPipelineLayout()
-{
-    VkResult r;
-
-    VkPipelineLayoutCreateInfo layoutInfo = {};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &cloudShadowDescSetLayout;
-
-    r = vkCreatePipelineLayout(device, &layoutInfo, nullptr, &cloudShadowPipelineLayout);
-    VK_CHECKERROR(r);
-
-    SET_DEBUG_NAME(device, cloudShadowPipelineLayout, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "Cloud shadow pipeline layout");
-}
-
-void vkpt::RenderCubemap::CreateCloudShadowPipeline(const ShaderManager *shaderManager)
-{
-    VkResult r;
-
-    VkComputePipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.layout = cloudShadowPipelineLayout;
-    pipelineInfo.stage = shaderManager->GetStageInfo("CCloudShadow");
-
-    r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &cloudShadowPipeline);
-    VK_CHECKERROR(r);
-
-    SET_DEBUG_NAME(device, cloudShadowPipeline, VK_OBJECT_TYPE_PIPELINE, "Cloud shadow pipeline");
-}
-
-void vkpt::RenderCubemap::DestroyCloudShadowPipeline()
-{
-    if (cloudShadowPipeline)
-    {
-        vkDestroyPipeline(device, cloudShadowPipeline, nullptr);
-        cloudShadowPipeline = VK_NULL_HANDLE;
-    }
-}
-
-void vkpt::RenderCubemap::DispatchCloudShadow(VkCommandBuffer cmd, uint32_t frameIndex)
-{
-    CmdLabel label(cmd, "Cloud shadow");
-
-    VkImageMemoryBarrier barrier = {};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.image = cloudShadow.image;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-
-    vkCmdPipelineBarrier(
-        cmd,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrier);
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cloudShadowPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cloudShadowPipelineLayout,
-                            0, 1, &cloudShadowDescSet[frameIndex], 0, nullptr);
-
-    const uint32_t wg = Utils::GetWorkGroupCount(cloudShadowSize, 16);
-    vkCmdDispatch(cmd, wg, wg, 1);
-
-    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    vkCmdPipelineBarrier(
-        cmd,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrier);
-}
-
-void vkpt::RenderCubemap::GetCloudShadowPlacement(float placement[4]) const
-{
-    for (uint32_t i = 0; i < 4; i++)
-    {
-        placement[i] = cloudShadowValid ? cloudShadowPlacement[i] : 0.0f;
-    }
-}
-
-void vkpt::RenderCubemap::InvalidateCloudShadow()
-{
-    cloudShadowValid = false;
-    cloudShadowAge = 0;
-}
-
-void vkpt::RenderCubemap::UpdateCloudShadow(VkCommandBuffer cmd, const ProceduralSkyParams &params,
-                                            const float cameraPos[3], uint32_t frameIndex)
-{
-    // The layer casts nothing when the clouds are off, when the sky does not draw
-    // them, when the host keeps no sun for them to hide, or when the sun is so low
-    // that the layer is behind the horizon.
-    if (params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f ||
-        params.sunDirection[3] <= 0.5f ||
-        params.sunDirection[2] <= CLOUD_SHADOW_MIN_SUN_HEIGHT ||
-        !mappedCloudShadowParams[frameIndex] || cloudShadow.view == VK_NULL_HANDLE ||
-        cloudShadowSize == 0 || cloudShadowPipeline == VK_NULL_HANDLE)
-    {
-        InvalidateCloudShadow();
-
-        return;
-    }
-
-    const float extent = std::max(params.cloudLayer[0] * CLOUD_SHADOW_EXTENT_PER_ALTITUDE, CLOUD_SHADOW_MIN_EXTENT);
-    const float texelSize = extent / float(cloudShadowSize);
-
-    // The map is laid out over the world's horizontal plane around the eye. What a
-    // texel of it holds is the cloud over the spot it stands on, which does not
-    // change as the eye walks -- the map follows the eye only to keep its coverage
-    // around it -- so it is redrawn when the eye has left a row of texels of that
-    // coverage behind it rather than on every texel of the way. The window is still
-    // snapped to whole texels of its own grid, and that grid is the world's, so a
-    // texel of a redrawn map stands where it stood before and reads the same cloud.
-    // Every texel of that coverage is a texel the fill has to walk, so this is what
-    // the cost of the map is while the eye is walking: at thirty metres a second and
-    // a texel of two metres, one fill every eight texels of the way is a fill every
-    // half second where the map was filled again on every frame of it.
-    const float windowStep = texelSize * float(CLOUD_SHADOW_WINDOW_STEP);
-    const float anchor[2] =
-    {
-        floorf((cameraPos[0] - extent * 0.5f) / windowStep) * windowStep,
-        floorf((cameraPos[1] - extent * 0.5f) / windowStep) * windowStep,
-    };
-
-    const auto differs = [](float a, float b) { return fabsf(a - b) > 1.0e-4f; };
-
-    // The volume is a snapshot of the cloud field at the time it was filled, and it
-    // stands still between the fills while the drift carries the clouds on, so the
-    // light they are read with steps at the cadence of the fills -- the metronome of a
-    // fast drift. The drift since the fill is part of the staleness: the moment it has
-    // carried the field a tenth of a texel of the volume, the map is filled again,
-    // which at the default drift is every frame and at a crawl almost never (the age
-    // clock of the level still caps it either way).
-    const float driftSinceFill =
-        std::abs(params.cloudColor[3] - cloudShadowParams.cloudMarch[0]) *
-        params.cloudParams[2] * CLOUD_WIND_MAGNITUDE;
-
-    // A map older than a few frames holds the drifting clouds still, and one the
-    // eye has walked off is looking at the wrong ground, so both are redrawn. A
-    // layer the host has just changed, or a sun that has moved, has to show at
-    // once rather than on the next tick of that clock.
-    const CloudShadowParams &standing = cloudShadowParams;
-    const bool stale =
-        !cloudShadowValid ||
-        cloudShadowAge + 1 >= CloudShadowRefreshFrames() ||
-        driftSinceFill >= texelSize * CLOUD_SHADOW_DRIFT_TEXELS ||
-        differs(standing.sunDirection[0], params.sunDirection[0]) ||
-        differs(standing.sunDirection[1], params.sunDirection[1]) ||
-        differs(standing.sunDirection[2], params.sunDirection[2]) ||
-        differs(standing.sunDirection[3], params.cloudLayer[0]) ||
-        differs(standing.cloudLayer[0], params.cloudLayer[1]) ||
-        differs(standing.cloudLayer[1], params.cloudParams[0]) ||
-        differs(standing.cloudLayer[2], params.cloudParams[1]) ||
-        differs(standing.cloudLayer[3], params.cloudMarch[2]) ||
-        differs(standing.cloudMarch[1], params.cloudParams[2]) ||
-        differs(standing.cloudMarch[3], cameraPos[2] + params.cloudLayer[0]) ||
-        differs(standing.mapProjection[0], anchor[0]) ||
-        differs(standing.mapProjection[1], anchor[1]);
-
-    if (!stale)
-    {
-        cloudShadowAge++;
-
-        return;
-    }
-
-    cloudShadowParams.sunDirection[0] = params.sunDirection[0];
-    cloudShadowParams.sunDirection[1] = params.sunDirection[1];
-    cloudShadowParams.sunDirection[2] = params.sunDirection[2];
-    // The layer is held over the eye, which is how the sky marches it (its bottom
-    // is that high above the eye), while the map itself is keyed on the world: the
-    // two meet in cloudMarch[3] below.
-    cloudShadowParams.sunDirection[3] = params.cloudLayer[0];
-    cloudShadowParams.cloudLayer[0] = params.cloudLayer[1];
-    cloudShadowParams.cloudLayer[1] = params.cloudParams[0];
-    cloudShadowParams.cloudLayer[2] = params.cloudParams[1];
-    cloudShadowParams.cloudLayer[3] = params.cloudMarch[2];
-    cloudShadowParams.cloudMarch[0] = params.cloudColor[3];
-    cloudShadowParams.cloudMarch[1] = params.cloudParams[2];
-    // Where the base of the layer stands over the plane the map is keyed on, which
-    // is what a spot of that plane has to be moved back along the sun by to reach
-    // the cloud that shades it.
-    cloudShadowParams.cloudMarch[3] = cameraPos[2] + params.cloudLayer[0];
-    cloudShadowParams.mapProjection[0] = anchor[0];
-    cloudShadowParams.mapProjection[1] = anchor[1];
-    cloudShadowParams.mapProjection[2] = extent;
-    cloudShadowParams.mapProjection[3] = float(cloudShadowSize);
-
-    memcpy(mappedCloudShadowParams[frameIndex], &cloudShadowParams, sizeof(CloudShadowParams));
-
-    DispatchCloudShadow(cmd, frameIndex);
-
-    cloudShadowValid = true;
-    cloudShadowAge = 0;
-    cloudShadowPlacement[0] = 1.0f;
-    cloudShadowPlacement[1] = anchor[0];
-    cloudShadowPlacement[2] = anchor[1];
-    cloudShadowPlacement[3] = extent;
-}
-
-uint32_t vkpt::RenderCubemap::ClampQuality(uint32_t quality)
-{
-    return quality > QUALITY_EXTREME ? QUALITY_EXTREME : quality;
-}
-
-uint32_t vkpt::RenderCubemap::CloudShadowRefreshFrames() const
-{
-    return CLOUD_SHADOW_REFRESH_FRAMES[quality];
-}
-
-void vkpt::RenderCubemap::SetQuality(VkCommandBuffer cmd, uint32_t newQuality)
-{
-    newQuality = ClampQuality(newQuality);
-
-    if (newQuality == quality)
-    {
-        // The level in use is the level asked for, so nothing is waiting to be
-        // taken.
-        failedQuality = QUALITY_LEVELS;
-        qualityRetryAge = 0;
-
-        return;
-    }
-
-    // A level whose maps could not be made is not asked for again on every frame
-    // (see failedQuality): once in a while is enough for memory freed elsewhere to
-    // bring it up, and until then the attempt would only cost.
-    if (newQuality == failedQuality)
-    {
-        qualityRetryAge++;
-
-        if (qualityRetryAge < QUALITY_RETRY_FRAMES)
-        {
-            return;
-        }
-    }
-    else
-    {
-        qualityRetryAge = 0;
-    }
-
-    // The maps are named by descriptor sets and read by the passes of the frame
-    // being recorded and of the frames still in flight behind it, so the ones
-    // being replaced may only go once the queue has run dry. What replaces them
-    // is written into the command buffer of the frame in hand, which is still
-    // being recorded and orders itself after those frames by itself.
-    cmdManager->WaitGraphicsIdle();
-
-    if (CLOUDS_SIDE_SIZES[newQuality] != cloudsSize)
-    {
-        Attachment newClouds[2] = {};
-        CreateAttch(allocator, cmd, CLOUDS_SIDE_SIZES[newQuality], 1, "Cloud cubemap", newClouds[0], false, true);
-        CreateAttch(allocator, cmd, CLOUDS_SIDE_SIZES[newQuality], 1, "Cloud cubemap, the other frame in flight", newClouds[1], false, true);
-
-        // A map that could not be made (out of memory) leaves the ones in hand as the
-        // ones the layer is drawn into, and the level is asked for again later (see
-        // failedQuality).
-        if (newClouds[0].image == VK_NULL_HANDLE || newClouds[1].image == VK_NULL_HANDLE)
-        {
-            for (Attachment &image : newClouds)
-            {
-                if (image.view != VK_NULL_HANDLE)
-                {
-                    vkDestroyImageView(device, image.view, nullptr);
-                }
-                if (image.image != VK_NULL_HANDLE)
-                {
-                    vkDestroyImage(device, image.image, nullptr);
-                }
-                if (image.memory != VK_NULL_HANDLE)
-                {
-                    vkFreeMemory(device, image.memory, nullptr);
-                }
-            }
-
-            failedQuality = newQuality;
-            qualityRetryAge = 0;
-
-            return;
-        }
-
-        for (int i = 0; i < 2; i++)
-        {
-            vkDestroyImage(device, clouds[i].image, nullptr);
-            vkDestroyImageView(device, clouds[i].view, nullptr);
-            vkFreeMemory(device, clouds[i].memory, nullptr);
-
-            clouds[i] = newClouds[i];
-        }
-
-        cloudsSize = CLOUDS_SIDE_SIZES[newQuality];
-
-        // The layer that was drawn into the old maps went with them, so the sky pass
-        // draws it into the new one this frame, whatever the host has asked of it
-        // since -- even nothing at all. Every frame in flight forgets its own copy
-        // of the parameters with it.
-        for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-        {
-            if (mappedProcSkyParams[frame])
-            {
-                memset(mappedProcSkyParams[frame], 0, sizeof(ProceduralSkyParams));
-            }
-        }
-    }
-
-    if (CLOUD_SHADOW_SIZES[newQuality] != cloudShadowSize)
-    {
-        Attachment newShadow = {};
-        CreateCloudShadowImage(allocator, cmd, CLOUD_SHADOW_SIZES[newQuality], newShadow, true);
-
-        // A map that could not be made (out of memory) leaves the one in hand as
-        // the one the shadow is drawn into, and the level is asked for again later
-        // (see failedQuality). The cubemap above may already be the new one, and
-        // the descriptors have to name what is here rather than what was asked for.
-        if (newShadow.image == VK_NULL_HANDLE)
-        {
-            UpdateQualityDescriptors();
-
-            failedQuality = newQuality;
-            qualityRetryAge = 0;
-
-            return;
-        }
-
-        vkDestroyImage(device, cloudShadow.image, nullptr);
-        vkDestroyImageView(device, cloudShadow.view, nullptr);
-        vkFreeMemory(device, cloudShadow.memory, nullptr);
-
-        cloudShadow = newShadow;
-        cloudShadowSize = CLOUD_SHADOW_SIZES[newQuality];
-    }
-
-    // Nothing of what either map held is in the new ones.
-    cloudShadowValid = false;
-    cloudShadowAge = 0;
-
-    UpdateQualityDescriptors();
-
-    quality = newQuality;
-    failedQuality = QUALITY_LEVELS;
-    qualityRetryAge = 0;
-}
-
-void vkpt::RenderCubemap::UpdateQualityDescriptors()
-{
-    // The layer's cubemaps per frame, as in WriteProceduralSkyDescriptors.
-    VkDescriptorImageInfo cloudsWritten[MAX_FRAMES_IN_FLIGHT] = {};
-    VkDescriptorImageInfo cloudsSampled[MAX_FRAMES_IN_FLIGHT] = {};
-
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        cloudsWritten[frame].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        cloudsWritten[frame].imageView = clouds[frame].view;
-
-        cloudsSampled[frame].sampler = cloudsSampler;
-        cloudsSampled[frame].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        cloudsSampled[frame].imageView = clouds[frame].view;
-    }
-
-    VkDescriptorImageInfo shadowSampled = {};
-    shadowSampled.sampler = cloudShadowSampler;
-    shadowSampled.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    shadowSampled.imageView = cloudShadow.view;
-
-    // The map as the compute pass that fills it names it. Without this the dispatch
-    // would keep writing into the map the level replaced, which is gone.
-    VkDescriptorImageInfo shadowWritten = {};
-    shadowWritten.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    shadowWritten.imageView = cloudShadow.view;
-
-    // The binding of the cubemap set that names the volume of the layer's shadow,
-    // and, for every frame in flight, the two bindings of the sky pass that name the
-    // layer (the one it is drawn into and the one it is sampled through), the binding
-    // that names the volume it reads, and the binding the pass that fills the volume
-    // writes it through. Which parameters buffer a set names does not change with a
-    // level.
-    VkWriteDescriptorSet writes[1 + MAX_FRAMES_IN_FLIGHT * 4] = {};
-    uint32_t at = 0;
-
-    const auto add = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type,
-                         const VkDescriptorImageInfo *image)
-    {
-        VkWriteDescriptorSet &w = writes[at++];
-        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w.dstSet = set;
-        w.dstBinding = binding;
-        w.descriptorCount = 1;
-        w.descriptorType = type;
-        w.pImageInfo = image;
-    };
-
-    add(descSet, BINDING_RENDER_CUBEMAP_CLOUD_SHADOW, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &shadowSampled);
-
-    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
-    {
-        add(procSkyDescSet[frame], 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &cloudsWritten[frame]);
-        add(procSkyDescSet[frame], 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cloudsSampled[frame]);
-        add(procSkyDescSet[frame], 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &shadowSampled);
-        add(cloudShadowDescSet[frame], 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &shadowWritten);
-    }
-
-    vkUpdateDescriptorSets(device, at, writes, 0, nullptr);
-}
-
-void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSkyParams &inParams, uint32_t frameIndex,
-                                         PassTimings *timings)
+void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSkyParams &inParams)
 {
     CmdLabel label(cmd, "Procedural sky");
 
     ProceduralSkyParams params = inParams;
 
-    // The layer is what the host asks for; how finely it is drawn is what the
-    // quality level decides, and the march is part of that: the map doubles with
-    // the level, so the march has to resolve what the finer map can hold.
-    params.cloudMarch[0] = float(CLOUDS_VIEW_STEPS[quality]);
-
     // Clouds off: freeze the animation time so the cached sky isn't re-rendered
     // every frame (only when sun/sky params change).
     // Clouds on: keep the raw time -> the sky re-renders every frame (smooth per-frame drift).
     // Nothing can be seen drifting when the clouds are disabled or their opacity
-    // is 0 (rt_sky_clouds_alpha), so the time is frozen in either case. The anchor
-    // goes with it: with no clouds drawn, the eye moving over the world is no
-    // reason to redraw, and a live clock in the parameters would keep the cache
-    // below from ever matching.
+    // is 0 (rt_sky_cloud_alpha), so the time is frozen in either case.
     if (params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f)
     {
         params.cloudColor[3] = 0.0f;
-        params.cloudAnchor[0] = 0.0f;
-        params.cloudAnchor[1] = 0.0f;
-        params.cloudAnchor[2] = 0.0f;
-    }
-    else
-    {
-        // The eye's own height in the world stays where the host put it, in
-        // cloudAnchor.z, because the volume of the layer's shadow is read with it.
-        // The volume's own place and extent travel along too, exactly as the world's
-        // shading reads them (GetCloudShadowPlacement), so that the light of a cloud
-        // and the shadow of it are the same shadow of the same cloud. All of them are
-        // part of the params the cache below compares, so the layer is never
-        // remembered away while it is being drawn.
-        for (int i = 0; i < 4; i++)
-        {
-            // Nothing of the volume may be read while it is not standing: the getter
-            // speaks for it, zeros and all (GetCloudShadowPlacement).
-            params.cloudShadowPlacement[i] = cloudShadowValid ? cloudShadowPlacement[i] : 0.0f;
-        }
     }
 
-    if (mappedProcSkyParams[frameIndex])
+    if (mappedProcSkyParams)
     {
         // no changes since the last render - keep the cached cubemap
-        if (memcmp(mappedProcSkyParams[frameIndex], &params, sizeof(ProceduralSkyParams)) == 0)
+        if (memcmp(mappedProcSkyParams, &params, sizeof(ProceduralSkyParams)) == 0)
         {
-            // The marks are written all the same, back to back: the pass timings
-            // count them every frame, and a frame missing one of them is a frame the
-            // panel has no numbers for at all.
-            if (timings)
-            {
-                timings->Mark(cmd, frameIndex, GPU_PASS_CLOUDS);
-                timings->Mark(cmd, frameIndex, GPU_PASS_SKY);
-                timings->Mark(cmd, frameIndex, GPU_PASS_SKY_MIPS);
-            }
-
             return;
         }
 
-        memcpy(mappedProcSkyParams[frameIndex], &params, sizeof(ProceduralSkyParams));
+        memcpy(mappedProcSkyParams, &params, sizeof(ProceduralSkyParams));
     }
-
-    if (timings)
-    {
-        timings->Mark(cmd, frameIndex, GPU_PASS_CLOUDS);
-    }
-
-    DispatchClouds(cmd, params, frameIndex);
 
     for (VkImage image : { cubemap.image, envCubemap.image })
     {
@@ -1998,23 +939,13 @@ void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSk
             1, &barrier);
     }
 
-    if (timings)
-    {
-        timings->Mark(cmd, frameIndex, GPU_PASS_SKY);
-    }
-
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, procSkyPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, procSkyPipelineLayout,
-                            0, 1, &procSkyDescSet[frameIndex], 0, nullptr);
+                            0, 1, &procSkyDescSet, 0, nullptr);
 
     const uint32_t wgX = Utils::GetWorkGroupCount(cubemapSize, 16);
     const uint32_t wgY = Utils::GetWorkGroupCount(cubemapSize, 16);
     vkCmdDispatch(cmd, wgX, wgY, 6);
-
-    if (timings)
-    {
-        timings->Mark(cmd, frameIndex, GPU_PASS_SKY_MIPS);
-    }
 
     GenerateMipmaps(cmd, cubemap.image, VK_IMAGE_LAYOUT_GENERAL);
     GenerateMipmaps(cmd, envCubemap.image, VK_IMAGE_LAYOUT_GENERAL);

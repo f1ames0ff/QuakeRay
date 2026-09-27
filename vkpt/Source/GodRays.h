@@ -34,7 +34,6 @@ namespace vkpt
 class Framebuffers;
 class GlobalUniform;
 class BlueNoise;
-class RenderCubemap;
 class ShadowMap;
 
 // Volumetric sunlight ("god rays") — ray marches through the shadow map.
@@ -62,8 +61,7 @@ public:
             const std::shared_ptr<const ShaderManager> &shaderManager,
             const std::shared_ptr<const GlobalUniform> &uniform,
             const std::shared_ptr<const BlueNoise> &blueNoise,
-            const std::shared_ptr<const ShadowMap> &shadowMap,
-            const std::shared_ptr<const RenderCubemap> &renderCubemap);
+            const std::shared_ptr<const ShadowMap> &shadowMap);
     ~GodRays();
 
     GodRays(const GodRays &other) = delete;
@@ -96,9 +94,6 @@ private:
     std::shared_ptr<const GlobalUniform> uniform;
     std::shared_ptr<const BlueNoise> blueNoise;
     std::shared_ptr<const ShadowMap> shadowMap;
-    // Only for its descriptor set: the cloud layer's shadow map, which the march
-    // reads to let the clouds cover the sun (CloudShadowMap.h).
-    std::shared_ptr<const RenderCubemap> renderCubemap;
 
     // One params buffer per frame in flight: the host writes the params for
     // frame N while the GPU may still be reading frame N-1's copy.

@@ -1218,7 +1218,6 @@ typedef enum RgDebugDrawFlagBits
     RG_DEBUG_DRAW_ALBEDO_WHITE_BIT = 64,
     RG_DEBUG_DRAW_MOTION_VECTORS_BIT = 128,
     RG_DEBUG_DRAW_GRADIENTS_BIT = 256,
-    RG_DEBUG_DRAW_LIGHT_GRID_BIT = 512,
     // Internal: enables the new Q2RTX-style core rendering path.
     // The host sets this bit when the "rt_core_q2rtx" cvar is enabled.
     RG_DEBUG_DRAW_Q2RTX_CORE_BIT = 1024,
@@ -1226,6 +1225,10 @@ typedef enum RgDebugDrawFlagBits
     RG_DEBUG_DRAW_GOD_RAYS_BIT = 2048,
     RG_DEBUG_DRAW_STATS_BIT = 4096,
     RG_DEBUG_DRAW_LUMA_BIT = 8192,
+    // Enables the GPU pass timings of the renderer's own frame (the gpuPassMs of
+    // RgFrameStats). Honored by the legacy render path only: a frame recorded
+    // through the RHI layer marks nothing, and rgGetFrameStatsEx reports
+    // gpuTimingValid = 0 for it.
     RG_DEBUG_DRAW_PASS_STATS_BIT = 16384,
 } RgDebugDrawFlagBits;
 typedef RgFlags RgDebugDrawFlags;
@@ -1245,8 +1248,9 @@ typedef struct RgDrawFrameIlluminationParams
     // since inside of them, shadowed areas are just pitch black.
     // Default: true
     RgBool32    enableSecondBounceForIndirect;
-    // Size of the side of a cell for the light grid. Use RG_DEBUG_DRAW_LIGHT_GRID_BIT for the debug view.
-    // Each cell is used to store a fixed amount of light samples that are important for the cell's center and radius.
+    // Size of the side of a cell for the light grid. Kept for compatibility with
+    // the upstream interface: this renderer places its lights through the cluster
+    // light lists, so no pass reads the field and there is no light-grid debug view.
     // Default: 1.0
     float       cellWorldSize;
     // If 0.0, then the change of illumination won't be checked, i.e. if a light source suddenly disappeared,
@@ -1627,7 +1631,7 @@ RGAPI RgBool32 RGCONV rgIsRenderUpscaleTechniqueAvailable(
     RgInstance                          rgInstance,
     RgRenderUpscaleTechnique            technique);
 
-#define RG_GPU_PASS_COUNT 22
+#define RG_GPU_PASS_COUNT 18
 
 #define RG_RAY_STATS_CATEGORY_COUNT 5
 

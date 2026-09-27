@@ -26,7 +26,6 @@
 
 
 #include "ShaderCommonGLSLFunc.h"
-#include "CloudShadowMap.h"
 
 
 
@@ -74,15 +73,15 @@
 layout(set = DESC_SET_TLAS, binding = BINDING_ACCELERATION_STRUCTURE_MAIN)   uniform accelerationStructureEXT topLevelAS;
 
 #ifdef DESC_SET_CUBEMAPS
-layout(set = DESC_SET_CUBEMAPS, binding = BINDING_CUBEMAPS) uniform samplerCube globalCubemaps[];
+layout(set = DESC_SET_CUBEMAPS, binding = BINDING_CUBEMAPS) uniform textureCube globalCubemaps[];
+layout(set = DESC_SET_CUBEMAPS, binding = BINDING_CUBEMAPS_SAMPLER) uniform sampler globalCubemaps_Sampler[];
 #endif
 
 #ifdef DESC_SET_RENDER_CUBEMAP
-layout(set = DESC_SET_RENDER_CUBEMAP, binding = BINDING_RENDER_CUBEMAP) uniform samplerCube renderCubemap;
-layout(set = DESC_SET_RENDER_CUBEMAP, binding = BINDING_RENDER_CUBEMAP_ENV) uniform samplerCube renderCubemapEnv;
-// The shadow the cloud layer puts on the world, which fades the sun where the
-// clouds are over it (see traceSunVisibility below)
-layout(set = DESC_SET_RENDER_CUBEMAP, binding = BINDING_RENDER_CUBEMAP_CLOUD_SHADOW) uniform sampler3D cloudShadowMap;
+layout(set = DESC_SET_RENDER_CUBEMAP, binding = BINDING_RENDER_CUBEMAP) uniform textureCube renderCubemap;
+layout(set = DESC_SET_RENDER_CUBEMAP, binding = BINDING_RENDER_CUBEMAP_SAMPLER) uniform sampler renderCubemap_Sampler;
+layout(set = DESC_SET_RENDER_CUBEMAP, binding = BINDING_RENDER_CUBEMAP_ENV) uniform textureCube renderCubemapEnv;
+layout(set = DESC_SET_RENDER_CUBEMAP, binding = BINDING_RENDER_CUBEMAP_ENV_SAMPLER) uniform sampler renderCubemapEnv_Sampler;
 #endif
 
 #ifdef DESC_SET_PORTALS
@@ -276,7 +275,7 @@ vec3 getSkyPrimary(vec3 direction)
 #ifdef DESC_SET_RENDER_CUBEMAP
     if (skyType == SKY_TYPE_RASTERIZED_GEOMETRY || skyType == SKY_TYPE_PROCEDURAL)
     {
-        return texture(renderCubemap, direction).rgb;
+        return texture(samplerCube(renderCubemap, renderCubemap_Sampler), direction).rgb;
     }
 #endif
 
@@ -284,7 +283,7 @@ vec3 getSkyPrimary(vec3 direction)
     {
         direction = mat3(globalUniform.skyCubemapRotationTransform) * direction;
         
-        return texture(globalCubemaps[nonuniformEXT(globalUniform.skyCubemapIndex)], direction).rgb;
+        return texture(samplerCube(globalCubemaps[nonuniformEXT(globalUniform.skyCubemapIndex)], globalCubemaps_Sampler[nonuniformEXT(globalUniform.skyCubemapIndex)]), direction).rgb;
     }
 
     return globalUniform.skyColorDefault.xyz;
@@ -306,19 +305,19 @@ vec3 getSkyFiltered(vec3 direction, float lod)
 #ifdef DESC_SET_RENDER_CUBEMAP
     if (skyType == SKY_TYPE_RASTERIZED_GEOMETRY)
     {
-        return textureLod(renderCubemap, direction, lod).rgb;
+        return textureLod(samplerCube(renderCubemap, renderCubemap_Sampler), direction, lod).rgb;
     }
 
     if (skyType == SKY_TYPE_PROCEDURAL)
     {
-        return textureLod(renderCubemapEnv, direction, lod).rgb;
+        return textureLod(samplerCube(renderCubemapEnv, renderCubemapEnv_Sampler), direction, lod).rgb;
     }
 #endif
 
     if (skyType == SKY_TYPE_CUBEMAP)
     {
         direction = mat3(globalUniform.skyCubemapRotationTransform) * direction;
-        return textureLod(globalCubemaps[nonuniformEXT(globalUniform.skyCubemapIndex)], direction, lod).rgb;
+        return textureLod(samplerCube(globalCubemaps[nonuniformEXT(globalUniform.skyCubemapIndex)], globalCubemaps_Sampler[nonuniformEXT(globalUniform.skyCubemapIndex)]), direction, lod).rgb;
     }
 
     return globalUniform.skyColorDefault.xyz;
@@ -432,17 +431,7 @@ float traceSunVisibility(const Surface surf, const LightSample sunLight, out boo
         return 0.0;
     }
 
-    float visibility = traceVisibility(surf, sunLight.position, LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET);
-
-#ifdef DESC_SET_RENDER_CUBEMAP
-    // The clouds stand between the sun and the world, so they take their part of
-    // it away before any of it reaches the surface. What is shaded stands on the
-    // ground, at the base of the layer of cloud, and so does not have to lose any
-    // of the column above it (CloudShadowMap.h).
-    visibility *= cloudShadowTransmittance(cloudShadowMap, surf.position, l, globalUniform.skyCubemapRotationTransform[3], 0.0);
-#endif
-
-    return visibility;
+    return traceVisibility(surf, sunLight.position, LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET);
 }
 
 float traceSkyVisibility(const Surface surf, const vec3 skyDirection)

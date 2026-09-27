@@ -62,17 +62,24 @@ VertexCollector::VertexCollector( VkDevice                                  _dev
         isDynamic ? VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
                   : VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
+    // The vertex/index usage bits serve the raster consumers of these buffers: the RHI shadow-map
+    // pass (RHI/RhiShadowMapPass) and the engine's own ShadowMap both bind the collector's
+    // device-local buffers as Vulkan vertex/index buffers, and Vulkan requires the bits for those
+    // bindings (VUID-vkCmdBindVertexBuffers-pBuffers-00627 and
+    // VUID-vkCmdBindIndexBuffer-buffer-08784). The bits are additive to the storage, device-address
+    // and build-input uses below.
+
     // vertex buffers
     vertBuffer->Init(
         _allocator, _bufferSize,
-        transferUsage | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        transferUsage | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         isDynamic ? "Dynamic Vertices data buffer" : "Static Vertices data buffer");
 
     // index buffers
     indexBuffer->Init(
         _allocator, INDEX_BUFFER_SIZE,
-        transferUsage | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        transferUsage | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         isDynamic ? "Dynamic Index data buffer" : "Static Index data buffer");
 
@@ -117,10 +124,18 @@ void VertexCollector::InitStagingBuffers( const std::shared_ptr< MemoryAllocator
     assert( transformsBuffer && transformsBuffer->GetSize() > 0 );
     assert( geomInfoMgr );
 
+    // The staging buffers are the copy sources of the RHI layer's geometry copies
+    // (RHI/RhiAccelStructs.cpp) and are wrapped through NVRHI there; NVRHI's native-buffer wrap
+    // queries the device address of every buffer when the device has BDA unconditionally
+    // (vulkan-buffer.cpp:215-220), so the staging usage carries
+    // VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, as the device-local buffers already do
+    // (VertexCollector.cpp:66-84). Without it the wrap raises
+    // VUID-VkBufferDeviceAddressInfo-buffer-02601.
+
     // vertex buffers
     stagingVertBuffer.Init( allocator,
                             vertBuffer->GetSize(),
-                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                             filtersFlags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC
                                 ? "Dynamic Vertices data staging buffer"
@@ -129,7 +144,7 @@ void VertexCollector::InitStagingBuffers( const std::shared_ptr< MemoryAllocator
     // index buffers
     stagingIndexBuffer.Init( allocator,
                              indexBuffer->GetSize(),
-                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                              filtersFlags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC
                                  ? "Dynamic Index data staging buffer"
@@ -138,7 +153,7 @@ void VertexCollector::InitStagingBuffers( const std::shared_ptr< MemoryAllocator
     // transforms buffer
     stagingTransformsBuffer.Init( allocator,
                                   transformsBuffer->GetSize(),
-                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                                   filtersFlags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC
                                       ? "Dynamic BLAS transforms staging buffer"
@@ -820,6 +835,46 @@ VkBuffer VertexCollector::GetIndexBuffer() const
     return indexBuffer->GetBuffer();
 }
 
+VkDeviceAddress VertexCollector::GetVertexBufferAddress() const
+{
+    return vertBuffer->GetAddress();
+}
+
+VkDeviceAddress VertexCollector::GetIndexBufferAddress() const
+{
+    return indexBuffer->GetAddress();
+}
+
+VkDeviceAddress VertexCollector::GetTransformsBufferAddress() const
+{
+    return transformsBuffer->GetAddress();
+}
+
+VkDeviceSize VertexCollector::GetVertexBufferSize() const
+{
+    return vertBuffer->GetSize();
+}
+
+VkDeviceSize VertexCollector::GetIndexBufferSize() const
+{
+    return indexBuffer->GetSize();
+}
+
+const VkTransformMatrixKHR *VertexCollector::GetTransformsStaging() const
+{
+    return mappedTransformData;
+}
+
+VkBuffer VertexCollector::GetStagingVertexBuffer() const
+{
+    return stagingVertBuffer.GetBuffer();
+}
+
+VkBuffer VertexCollector::GetStagingIndexBuffer() const
+{
+    return stagingIndexBuffer.GetBuffer();
+}
+
 std::vector<VertexCollector::GeometryDrawInfo> VertexCollector::GetGeometryDrawInfos() const
 {
     std::vector<GeometryDrawInfo> result;
@@ -837,13 +892,10 @@ std::vector<VertexCollector::GeometryDrawInfo> VertexCollector::GetGeometryDrawI
     for (const auto &[filter, f] : filters)
     {
         // Sky geometry (RG_GEOMETRY_VISIBILITY_TYPE_SKY) lives in the PV_WORLD_2
-        // filter. It is in the TLAS like the rest of the world -- the instance is
-        // flagged as sky (INSTANCE_CUSTOM_INDEX_FLAG_SKY, ASManager.cpp) and a ray
-        // that hits it is treated as if it had missed (doesPayloadContainHitInfo,
-        // RaygenCommon.h), because the sky is sampled by direction and not shaded off
-        // a surface. What it must not reach is the shadow map: there the sky faces
-        // would occlude the sun and the god rays would stop exactly at the map's sky
-        // boundary instead of shining through the openings.
+        // filter: it is excluded from the TLAS (rays miss it and sample the sky
+        // cubemap), so it must be excluded from the shadow map too. Otherwise the
+        // sky faces occlude the sun and the god rays stop exactly at the map's
+        // sky boundary instead of shining through the openings.
         if (filter & (VertexCollectorFilterTypeFlags)VertexCollectorFilterTypeFlagBits::PV_WORLD_2)
         {
             continue;

@@ -25,6 +25,8 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "Common.h"
 
@@ -66,6 +68,32 @@
 
 namespace vkpt
 {
+
+class NvrhiContext;
+class NvrhiFrameSkeleton;
+class RhiDebugTracePass;
+class RhiDecalPass;
+class RhiFsrPass;
+class RhiPostEffectPass;
+class RhiProceduralSkyPass;
+class RhiRasterOverlayPass;
+class RhiRasterSkyPass;
+class RhiRtComposePass;
+class RhiRtDirectPass;
+class RhiRtGodRaysPass;
+class RhiRtIndirectPass;
+class RhiRtPrimaryPass;
+class RhiRtReflRefrPass;
+class RhiShadowMapPass;
+class RhiUiPass;
+struct NvrhiRequirements;
+
+namespace rhi
+{
+class RhiAccelStructs;
+class RhiFrameContext;
+class RhiTextureTable;
+}
 
 class VulkanDevice
 {
@@ -139,6 +167,7 @@ public:
 private:
     void CreateInstance(const RgInstanceCreateInfo &info);
     void CreateDevice();
+    void CreateNvrhiDevice();
     void CreateSyncPrimitives();
     static VkSurfaceKHR GetSurfaceFromUser(VkInstance instance, const RgInstanceCreateInfo &info);
     void ValidateCreateInfo(const RgInstanceCreateInfo *pInfo);
@@ -151,6 +180,11 @@ private:
 
     VkCommandBuffer BeginFrame(const RgStartFrameInfo &startInfo);
     void Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo);
+    // Draws the current frame through the RHI layer and submits it, together with
+    // the command buffer of the frame. Returns false if the frame has to be drawn
+    // by the renderer instead. 'drawInfo' is the same struct Render receives; only
+    // the sky params of it are read (the sky viewer position).
+    bool RenderThroughRhi(const RgDrawFrameInfo &drawInfo);
     void EndFrame(VkCommandBuffer cmd);
 
 private:
@@ -219,6 +253,17 @@ private:
     std::shared_ptr<TextureManager>         textureManager;
     std::shared_ptr<CubemapManager>         cubemapManager;
 
+    // The RHI frame model (RHI/RhiFrameContext.h): one command list per engine frame slot plus the
+    // retire queue that keeps a resource alive until the queue finished the submission that used it.
+    // Created next to the NVRHI device, before the texture table (which retires through it) and the
+    // frame skeleton; null if it could not be created.
+    std::shared_ptr<rhi::RhiFrameContext>   rhiFrameContext;
+
+    // The RHI copy of the engine's texture table (RHI/RhiTextureTable.h): created next to the NVRHI
+    // device, shared with the sampler managers and the frame skeleton. Null if it could not be
+    // created; the legacy renderer stays functional then.
+    std::shared_ptr<rhi::RhiTextureTable>   rhiTextureTable;
+
     // World tables of the current map (clusters, PVS, emissive faces), built by the host.
     std::shared_ptr<WorldLights>            worldLights;
     // Per-cluster light lists, composed out of the registered sources and the tables above.
@@ -229,6 +274,117 @@ private:
     std::unique_ptr<UserPrint>              userPrint;
     std::shared_ptr<UserFileLoad>           userFileLoad;
 
+    // Names of the extensions the instance and the device were created with.
+    // The RHI layer reads them to know which Vulkan features are available.
+    std::vector<std::string>                enabledInstanceExtensions;
+    std::vector<std::string>                enabledDeviceExtensions;
+
+    // RHI device (NVIDIA NVRHI) created over the Vulkan device above.
+    std::unique_ptr<NvrhiContext>           nvrhi;
+    // The RHI acceleration structures (RHI/RhiAccelStructs.h): the NVRHI copy of the engine's
+    // static BLAS plus one TLAS per frame slot, built from the engine's ASManager. Created next to
+    // the skeleton and referenced by it; a null one makes the skeleton unavailable. Null when
+    // 'rhiframe' is off.
+    std::shared_ptr<rhi::RhiAccelStructs>   rhiAccelStructs;
+    // The RHI debug ray-tracing pass (RHI/RhiDebugTracePass.h): the first traced image of the RHI
+    // path, created next to the skeleton only when 'rhitrace' is on and referenced by it. Null when
+    // the flag is off or the creation failed; with the flag on and no pass the skeleton stays
+    // unavailable and the legacy renderer is kept.
+    std::shared_ptr<RhiDebugTracePass>      rhiDebugTracePass;
+    // The RHI primary-visibility ray-tracing pass (RHI/RhiRtPrimaryPass.h): the real traced G-buffer
+    // of A4.1, created next to the skeleton only when 'rhirt' is on and referenced by it. Null when
+    // the flag is off or the creation failed; with the flag on and no pass the skeleton stays
+    // unavailable and the legacy renderer is kept.
+    std::shared_ptr<RhiRtPrimaryPass>       rhiRtPrimaryPass;
+    // The RHI direct-lighting ray-tracing pass (RHI/RhiRtDirectPass.h): the light term of the traced
+    // chain (A4.2), created next to the primary pass - it borrows the primary's shared layout
+    // handles, so it has to be destroyed before it - and referenced by the skeleton. Null when the
+    // flag is off or the creation failed; with the flag on and no pair the skeleton stays
+    // unavailable and the legacy renderer is kept.
+    std::shared_ptr<RhiRtDirectPass>        rhiRtDirectPass;
+    // The RHI indirect / GI pass (RHI/RhiRtIndirectPass.h): the bounce-light term of the traced
+    // chain (A4.3), created next to the direct pass - it borrows the primary's layout handles and
+    // the direct pass's light set, so both have to outlive it and be destroyed after it - and
+    // referenced by the skeleton. Null when the flag is off or the creation failed; with the flag
+    // on and no pass the skeleton stays unavailable and the legacy renderer is kept.
+    std::shared_ptr<RhiRtIndirectPass>      rhiRtIndirectPass;
+    // The RHI compose pass (RHI/RhiRtComposePass.h): the real adapter -> interleave -> exposure
+    // histogram/average -> checkerboard -> prepare-final chain writing the display-referred FINAL
+    // for the traced frame, created only when 'rhicompose' is on and referenced by the skeleton,
+    // which then presents its FINAL image. Null when the flag is off or the creation failed; the
+    // traced chain then keeps the A4.2a diagnostic present.
+    std::shared_ptr<RhiRtComposePass>       rhiRtComposePass;
+    // The RHI shadow-map and god-rays passes of A5.2 (RHI/RhiShadowMapPass.h,
+    // RHI/RhiRtGodRaysPass.h): the depth-only raster pass and the two compute dispatches that
+    // produce the shafts CmPrepareFinal adds. Created with the other RT passes; the skeleton drives
+    // them on the traced frame's list, and the god-rays pass takes the shadow map's texture and
+    // sampler plus the blue-noise wrap. Null when the creation failed; the frame is then drawn
+    // without shafts.
+    std::shared_ptr<RhiShadowMapPass>       rhiShadowMapPass;
+    std::shared_ptr<RhiRtGodRaysPass>       rhiRtGodRaysPass;
+
+    // The RHI reflect/refract pass of A5.3 (RHI/RhiRtReflRefrPass.h): the Q2 raygen that overwrites
+    // the G-buffer for reflective/refractive pixels and feeds the reflected god rays; it borrows the
+    // primary's layout handles, so it is destroyed before it. Created with the other RT passes; the
+    // skeleton drives it on the traced frame's list and the engine's portal buffers feed its set 9.
+    // Null when the creation failed; the frame is then drawn without reflections.
+    std::shared_ptr<RhiRtReflRefrPass>      rhiRtReflRefrPass;
+
+    // The RHI procedural sky pass of A5.4 (RHI/RhiProceduralSkyPass.h): the default sky's cube
+    // content, the `RenderCubemap::DrawProcedural` path of the legacy frame. It owns its two cube
+    // images and the sampler; the primary, indirect and reflect/refract passes bind them in set 8.
+    // Null when the creation failed; the passes then keep their 1x1 placeholders.
+    std::shared_ptr<RhiProceduralSkyPass>   rhiProceduralSkyPass;
+
+    // The RHI raster sky pass (RHI/RhiRasterSkyPass.h): the cube half of
+    // SKY_TYPE_RASTERIZED_GEOMETRY, the ported `Rasterizer::DrawSkyToCubemap` ->
+    // `RenderCubemap::Draw` pair. It writes the procedural sky pass's `renderCubemap` - the cube the
+    // primary, indirect and reflect/refract passes sample in set 8 - from this frame's sky draw
+    // list, so it borrows that pass's image and is destroyed before it. It binds the same geometry
+    // wraps the sky pass receives. Null when the creation failed; the traced frame is then drawn
+    // without the raster cube (its reflections keep the unwritten cube).
+    std::shared_ptr<RhiRasterSkyPass>       rhiRasterSkyPass;
+
+    // The RHI raster overlay pass of A5.5 (RHI/RhiRasterOverlayPass.h): the ported RsWorld pass over
+    // the collector's DEFAULT list into FINAL/SCREEN_EMISSION, recorded inside the compose chain's
+    // window, plus the ported RsSmoke half of master's smoke over the same window's smoke list.
+    // Null when the creation failed; the frame is then drawn without the overlay.
+    std::shared_ptr<RhiRasterOverlayPass>   rhiRasterOverlayPass;
+
+    // The raster overlay's smoke list (A5.5): the frame's DEFAULT entries that carry
+    // RG_RASTERIZED_GEOMETRY_STATE_SMOKE, filtered out of
+    // RasterizedDataCollector::GetRasterDrawInfos() in RenderThroughRhi - the collector keeps no
+    // separate smoke stream, the legacy uploads all puffs as one batch (r_smoke.c:358-376) - and
+    // carried to the skeleton through SkyFrameInputs::smokeDraws. A member, not a local, so the
+    // per-frame filter does not allocate.
+    std::vector<RasterizedDataCollector::DrawInfo> smokeDraws;
+
+    // The RHI decal pass of A5.6 (RHI/RhiDecalPass.h): the ported DecalManager::Draw into ALBEDO
+    // right after the traced primary. The engine uploads no decals in this game, so the pass is a
+    // runtime no-op kept for parity. Null when the creation failed; the frame is drawn without it.
+    std::shared_ptr<RhiDecalPass>           rhiDecalPass;
+
+    // The RHI FSR upscaler module of A5.7 (RHI/RhiFsrPass.h): drives the engine's own FidelityFX
+    // FSR 3.1 context on the RHI list (the default upscaler), replacing the TAAU. Null when the
+    // creation failed; the frame keeps the TAAU path.
+    std::shared_ptr<RhiFsrPass>             rhiFsrPass;
+
+    // The RHI post-upscale effect chain (RHI/RhiPostEffectPass.h): the legacy consumers of
+    // `drawInfo.postEffectParams` (the colour tint variants, the chromatic aberration, the waves,
+    // the radial blur, the wipe and the CRT) over the upscaled image pair, recorded before the UI
+    // and - for the wipe/CRT half - after it. Null when the creation failed; the frame is then
+    // drawn without the post-upscale effects.
+    std::shared_ptr<RhiPostEffectPass>      rhiPostEffectPass;
+
+    // The RHI 2D-UI pass (RHI/RhiUiPass.h): the game's SWAPCHAIN overlay (the HUD, the console, the
+    // menus, the screen effects) drawn into the compose's upscaled image after the TAAU, created
+    // with the other RHI passes and referenced by the skeleton. Null when the creation failed; the
+    // frame is then drawn without the UI.
+    std::shared_ptr<RhiUiPass>              rhiUiPass;
+    // The RHI frame skeleton: the first frame pass that is recorded through the
+    // RHI layer. Null unless 'rhiframe' is set in vkpt.txt.
+    std::shared_ptr<NvrhiFrameSkeleton>     nvrhiFrameSkeleton;
+
     // Q2RTX-style fog volumes (host data, uploaded into the uniform each frame)
     std::array<RgFogVolume, RG_MAX_FOG_VOLUMES> fogVolumes{};
     uint32_t                                    fogVolumeCount = 0;
@@ -236,6 +392,10 @@ private:
     bool                                    rayCullBackFacingTriangles;
     bool                                    allowGeometryWithSkyFlag;
     bool                                    lensFlareVerticesInScreenSpace;
+
+    // The instance-wide applyVertexColorGamma of the rasterized geometry (RgInstanceCreateInfo), the
+    // vertex spec constant the RHI sky pipelines bake into their key (RhiSkyPass::Render).
+    bool                                    rasterizedVertexColorGamma;
 
     RenderResolutionHelper                  renderResolution;
 

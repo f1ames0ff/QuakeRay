@@ -29,7 +29,6 @@
 #include "Framebuffers.h"
 #include "GlobalUniform.h"
 #include "Generated/ShaderCommonC.h"
-#include "RenderCubemap.h"
 #include "ShadowMap.h"
 #include "Utils.h"
 
@@ -38,11 +37,9 @@ vkpt::GodRays::GodRays(VkDevice _device, std::shared_ptr<MemoryAllocator> &_allo
                         const std::shared_ptr<const ShaderManager> &_shaderManager,
                         const std::shared_ptr<const GlobalUniform> &_uniform,
                         const std::shared_ptr<const BlueNoise> &_blueNoise,
-                        const std::shared_ptr<const ShadowMap> &_shadowMap,
-                        const std::shared_ptr<const RenderCubemap> &_renderCubemap)
+                        const std::shared_ptr<const ShadowMap> &_shadowMap)
 : device(_device), allocator(_allocator),
-  framebuffers(_framebuffers), uniform(_uniform), blueNoise(_blueNoise), shadowMap(_shadowMap),
-  renderCubemap(_renderCubemap)
+  framebuffers(_framebuffers), uniform(_uniform), blueNoise(_blueNoise), shadowMap(_shadowMap)
 {
     CreateParamsBuffer();
     CreateDescriptors();
@@ -168,7 +165,6 @@ void vkpt::GodRays::CreatePipelineLayout()
         framebuffers->GetDescSetLayout(), // 2: framebuffers
         uniform->GetDescSetLayout(),    // 3: global uniform
         blueNoise->GetDescSetLayout(),  // 4: blue noise
-        renderCubemap->GetDescSetLayout(), // 5: cloud shadow map
     };
 
     // passIndex (CmGodRays.comp): 0 = primary, 1 = reflections
@@ -261,7 +257,6 @@ void vkpt::GodRays::Trace(VkCommandBuffer cmd, uint32_t frameIndex, const Params
         framebuffers->GetDescSet(frameIndex), // 2
         uniform->GetDescSet(frameIndex),      // 3
         blueNoise->GetDescSet(),              // 4
-        renderCubemap->GetDescSet(),          // 5
     };
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tracePipeline);
@@ -298,7 +293,6 @@ void vkpt::GodRays::Filter(VkCommandBuffer cmd, uint32_t frameIndex)
         framebuffers->GetDescSet(frameIndex), // 2
         uniform->GetDescSet(frameIndex),      // 3
         blueNoise->GetDescSet(),              // 4 (unused by the filter)
-        renderCubemap->GetDescSet(),          // 5 (unused by the filter)
     };
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, filterPipeline);

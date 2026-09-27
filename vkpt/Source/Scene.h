@@ -50,6 +50,17 @@ public:
     void SubmitForFrame(VkCommandBuffer cmd, uint32_t frameIndex, const std::shared_ptr<GlobalUniform> &uniform,
                         uint32_t uniformData_rayCullMaskWorld, bool allowGeometryWithSkyFlag, bool disableRTGeometry);
 
+    // The vertex preprocessing that generates the shading normals of the world geometry (the
+    // surfaces uploaded with RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT), for the render path that
+    // owns the frame. `push` is the frame's ASManager::PrepareForBuildingTLAS result. Consumes the
+    // static-submission marker exactly as SubmitForFrame's own call does, so the mode is
+    // VERT_PREPROC_MODE_ALL on the first preprocessing after a static submission (a level load)
+    // and the dynamic-only mode on the frames after it. The movable-resubmission state stays
+    // untouched: its ResubmitStaticMovable copy is still the legacy path's step (SubmitForFrame).
+    void PreprocessVertices(VkCommandBuffer cmd, uint32_t frameIndex,
+                            const std::shared_ptr<GlobalUniform> &uniform,
+                            const ShVertPreprocessing &push);
+
     bool Upload(uint32_t frameIndex, const RgGeometryUploadInfo &uploadInfo);
     bool UpdateTransform(const RgUpdateTransformInfo &updateInfo);
     bool UpdateTexCoords(const RgUpdateTexCoordsInfo &texCoordsInfo);
@@ -76,6 +87,13 @@ public:
 
 private:
     bool TryGetStaticSimpleIndex(uint64_t uniqueID, uint32_t *result) const;
+
+    // The preprocessing mode of the current frame, from the state SubmitForFrame has always used:
+    // a static submission forces VERT_PREPROC_MODE_ALL once, a pending movable resubmission asks
+    // for VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE, and the default is VERT_PREPROC_MODE_ONLY_DYNAMIC.
+    // Read-only: the callers consume the flags themselves (SubmitForFrame at the top, as before;
+    // PreprocessVertices only the static-submission one).
+    uint32_t GetVertexPreprocessingMode() const;
 
 private:
     std::shared_ptr<ASManager> asManager;
