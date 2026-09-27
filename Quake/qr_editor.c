@@ -2745,6 +2745,13 @@ typedef struct
 } qre_global_t;
 
 static const qre_global_t qre_globals[] = {
+	{ "Global", "rt_brightness",    QRE_G_FLOAT, 0, 3,
+	  "The brightness of the whole ray-traced image." },
+	{ NULL,  "rt_globallight",      QRE_G_COLOR, 0, 0,
+	  "The colour every light starts from, before its own colour and the light tint are applied." },
+	{ NULL,  "rt_globallight_mult", QRE_G_FLOAT, 0, 10,
+	  "How much that global light colour counts." },
+
 	{ "Sky", "rt_sky",              QRE_G_FLOAT, 0, 8,
 	  "Intensity of the sky; the classic sky texture is scaled by it." },
 	{ NULL,  "rt_physical_sky",     QRE_G_BOOL,  0, 0,
@@ -2807,6 +2814,8 @@ static void QRE_GlobalColorGet (const char *name, float rgb[3])
 		RT_GetSkyColor (rgb);
 	else if (!strcmp (name, "rt_sun_color"))
 		RT_GetSunColor (rgb);
+	else if (!strcmp (name, "rt_globallight"))
+		RT_GetGlobalLightColor (rgb);
 	else
 		RT_GetSkyCloudsColor (rgb);
 }
