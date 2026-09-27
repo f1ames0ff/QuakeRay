@@ -686,6 +686,41 @@ const char *const rt_custom_style_names[RT_CUSTOM_STYLE_COUNT] = {
 static rt_custom_light_t rt_custom_lights[RT_CUSTOM_LIGHTS_MAX];
 static int               rt_custom_light_count;
 
+// The fog of the loaded level section, and whether the file's fog has been
+// pushed into the engine yet (it waits for the worldspawn keys, see
+// RT_CustomLights_ApplyFog, and goes in once per map load).
+static rt_custom_fog_t rt_custom_fog;
+static qboolean        rt_custom_fog_applied;
+
+void RT_CustomFog(rt_custom_fog_t *out)
+{
+    if (out)
+        *out = rt_custom_fog;
+}
+
+void RT_CustomFogSet(const rt_custom_fog_t *fog)
+{
+    if (fog)
+        rt_custom_fog = *fog;
+    else
+        memset(&rt_custom_fog, 0, sizeof(rt_custom_fog));
+}
+
+void RT_CustomLights_ApplyFog(void)
+{
+    if (!rt_custom_fog.has_fog || rt_custom_fog_applied)
+        return;
+
+    /* The `fog` command is the path the console and the editor's fog widget
+       use; it runs on the next command-buffer pump, after the worldspawn keys
+       have been parsed, so the file's fog wins over the map's own. */
+    rt_custom_fog_applied = true;
+    Cbuf_AddText(va("fog %f %f %f %f\n", rt_custom_fog.density,
+                    CLAMP(0.0f, rt_custom_fog.color[0], 1.0f),
+                    CLAMP(0.0f, rt_custom_fog.color[1], 1.0f),
+                    CLAMP(0.0f, rt_custom_fog.color[2], 1.0f)));
+}
+
 rt_custom_light_t *RT_CustomLights(int *outCount)
 {
     if (outCount)
@@ -779,6 +814,115 @@ static qboolean RT_CustomColorFromString(const char *s, vec3_t out)
     return true;
 }
 
+// One light of a "lights:" sequence (and of the old plain-sequence form, where
+// the level key maps straight to the lights). False when the list is full, so
+// the caller stops reading the section.
+static qboolean RT_CustomParseLight(yaml_document_t *document, yaml_node_t *node, const char *level)
+{
+    rt_custom_light_t *l;
+    yaml_node_pair_t  *field;
+
+    if (!node || node->type != YAML_MAPPING_NODE)
+        return true;
+
+    l = RT_CustomLights_Ensure();
+    if (!l)
+    {
+        Con_DWarning("RT custom light: '%s' lists more than %d lights; the rest of the section is ignored\n",
+                     level, RT_CUSTOM_LIGHTS_MAX);
+        return false;
+    }
+
+    for (field = node->data.mapping.pairs.start; field < node->data.mapping.pairs.top; field++)
+    {
+        yaml_node_t *fk = yaml_document_get_node(document, field->key);
+        yaml_node_t *fv = yaml_document_get_node(document, field->value);
+        char         fkb[64], fvb[256];
+
+        if (!fk || !fv || fk->type != YAML_SCALAR_NODE || fv->type != YAML_SCALAR_NODE)
+            continue;
+        if (fk->data.scalar.length >= sizeof(fkb) || fv->data.scalar.length >= sizeof(fvb))
+            continue;
+
+        memcpy(fkb, fk->data.scalar.value, fk->data.scalar.length);
+        fkb[fk->data.scalar.length] = 0;
+        memcpy(fvb, fv->data.scalar.value, fv->data.scalar.length);
+        fvb[fv->data.scalar.length] = 0;
+
+        if (!q_strcasecmp(fkb, "origin"))
+            sscanf(fvb, "%f %f %f", &l->origin[0], &l->origin[1], &l->origin[2]);
+        else if (!q_strcasecmp(fkb, "offset"))
+        {
+            if (sscanf(fvb, "%f %f %f", &l->offset[0], &l->offset[1], &l->offset[2]) == 3)
+                l->has_offset = true;
+        }
+        else if (!q_strcasecmp(fkb, "radius"))
+            l->radius = (float)atof(fvb);
+        else if (!q_strcasecmp(fkb, "intensity"))
+            l->intensity = (float)atof(fvb);
+        else if (!q_strcasecmp(fkb, "color"))
+            RT_CustomColorFromString(fvb, l->color);
+        else if (!q_strcasecmp(fkb, "style"))
+            l->style = RT_CustomStyleFromString(fvb);
+    }
+
+    return true;
+}
+
+static void RT_CustomParseLights(yaml_document_t *document, yaml_node_t *node, const char *level)
+{
+    yaml_node_item_t *item;
+
+    if (!node || node->type != YAML_SEQUENCE_NODE)
+        return;
+
+    for (item = node->data.sequence.items.start; item < node->data.sequence.items.top; item++)
+    {
+        if (!RT_CustomParseLight(document, yaml_document_get_node(document, *item), level))
+            break;
+    }
+}
+
+// The "fog:" block of a level section: colour ("rrggbb") and density (>= 0).
+static void RT_CustomParseFog(yaml_document_t *document, yaml_node_t *node)
+{
+    rt_custom_fog_t  fog;
+    yaml_node_pair_t *field;
+
+    if (!node || node->type != YAML_MAPPING_NODE)
+        return;
+
+    memset(&fog, 0, sizeof(fog));
+    fog.has_fog = true;
+    fog.color[0] = fog.color[1] = fog.color[2] = 1.0f;
+
+    for (field = node->data.mapping.pairs.start; field < node->data.mapping.pairs.top; field++)
+    {
+        yaml_node_t *fk = yaml_document_get_node(document, field->key);
+        yaml_node_t *fv = yaml_document_get_node(document, field->value);
+        char         fkb[64], fvb[256];
+
+        if (!fk || !fv || fk->type != YAML_SCALAR_NODE || fv->type != YAML_SCALAR_NODE)
+            continue;
+        if (fk->data.scalar.length >= sizeof(fkb) || fv->data.scalar.length >= sizeof(fvb))
+            continue;
+
+        memcpy(fkb, fk->data.scalar.value, fk->data.scalar.length);
+        fkb[fk->data.scalar.length] = 0;
+        memcpy(fvb, fv->data.scalar.value, fv->data.scalar.length);
+        fvb[fv->data.scalar.length] = 0;
+
+        if (!q_strcasecmp(fkb, "color"))
+            RT_CustomColorFromString(fvb, fog.color);
+        else if (!q_strcasecmp(fkb, "density"))
+            fog.density = q_max(0.0f, (float)atof(fvb));
+    }
+
+    RT_CustomFogSet(&fog);
+}
+
+// A level section is either a mapping of "fog:" and "lights:" (the form the
+// editor writes) or, from the older files, a plain sequence of lights.
 static void RT_CustomLightsParse(const char *filebuf, int len, const char *level)
 {
     yaml_parser_t   parser;
@@ -801,9 +945,8 @@ static void RT_CustomLightsParse(const char *filebuf, int len, const char *level
             yaml_node_t *k = yaml_document_get_node(&document, pair->key);
             yaml_node_t *v = yaml_document_get_node(&document, pair->value);
             char         key[128];
-            yaml_node_item_t *item;
 
-            if (!k || !v || k->type != YAML_SCALAR_NODE || v->type != YAML_SEQUENCE_NODE)
+            if (!k || !v || k->type != YAML_SCALAR_NODE)
                 continue;
             if (k->data.scalar.length >= sizeof(key))
                 continue;
@@ -813,54 +956,32 @@ static void RT_CustomLightsParse(const char *filebuf, int len, const char *level
             if (q_strcasecmp(key, level))
                 continue;
 
-            for (item = v->data.sequence.items.start; item < v->data.sequence.items.top; item++)
+            if (v->type == YAML_SEQUENCE_NODE)
             {
-                yaml_node_t       *node = yaml_document_get_node(&document, *item);
-                rt_custom_light_t *l;
-                yaml_node_pair_t  *field;
+                RT_CustomParseLights(&document, v, level);
+            }
+            else if (v->type == YAML_MAPPING_NODE)
+            {
+                yaml_node_pair_t *field;
 
-                if (!node || node->type != YAML_MAPPING_NODE)
-                    continue;
-
-                l = RT_CustomLights_Ensure();
-                if (!l)
-                {
-                    Con_DWarning("RT custom light: '%s' lists more than %d lights; the rest of the section is ignored\n",
-                                 level, RT_CUSTOM_LIGHTS_MAX);
-                    break;
-                }
-
-                for (field = node->data.mapping.pairs.start; field < node->data.mapping.pairs.top; field++)
+                for (field = v->data.mapping.pairs.start; field < v->data.mapping.pairs.top; field++)
                 {
                     yaml_node_t *fk = yaml_document_get_node(&document, field->key);
                     yaml_node_t *fv = yaml_document_get_node(&document, field->value);
-                    char         fkb[64], fvb[256];
+                    char         fkb[64];
 
-                    if (!fk || !fv || fk->type != YAML_SCALAR_NODE || fv->type != YAML_SCALAR_NODE)
+                    if (!fk || !fv || fk->type != YAML_SCALAR_NODE)
                         continue;
-                    if (fk->data.scalar.length >= sizeof(fkb) || fv->data.scalar.length >= sizeof(fvb))
+                    if (fk->data.scalar.length >= sizeof(fkb))
                         continue;
 
                     memcpy(fkb, fk->data.scalar.value, fk->data.scalar.length);
                     fkb[fk->data.scalar.length] = 0;
-                    memcpy(fvb, fv->data.scalar.value, fv->data.scalar.length);
-                    fvb[fv->data.scalar.length] = 0;
 
-                    if (!q_strcasecmp(fkb, "origin"))
-                        sscanf(fvb, "%f %f %f", &l->origin[0], &l->origin[1], &l->origin[2]);
-                    else if (!q_strcasecmp(fkb, "offset"))
-                    {
-                        if (sscanf(fvb, "%f %f %f", &l->offset[0], &l->offset[1], &l->offset[2]) == 3)
-                            l->has_offset = true;
-                    }
-                    else if (!q_strcasecmp(fkb, "radius"))
-                        l->radius = (float)atof(fvb);
-                    else if (!q_strcasecmp(fkb, "intensity"))
-                        l->intensity = (float)atof(fvb);
-                    else if (!q_strcasecmp(fkb, "color"))
-                        RT_CustomColorFromString(fvb, l->color);
-                    else if (!q_strcasecmp(fkb, "style"))
-                        l->style = RT_CustomStyleFromString(fvb);
+                    if (!q_strcasecmp(fkb, "fog"))
+                        RT_CustomParseFog(&document, fv);
+                    else if (!q_strcasecmp(fkb, "lights"))
+                        RT_CustomParseLights(&document, fv, level);
                 }
             }
 
@@ -883,6 +1004,8 @@ void RT_CustomLights_ChangeMap(const char *mapname)
     size_t got;
 
     rt_custom_light_count = 0;
+    RT_CustomFogSet(NULL);
+    rt_custom_fog_applied = false;
 
     if (!mapname || !mapname[0] || !com_gamedir[0])
         return;
@@ -912,36 +1035,47 @@ void RT_CustomLights_ChangeMap(const char *mapname)
     RT_CustomLightsParse(text, (int)got, level);
     Mem_Free(text);
 
-    if (rt_custom_light_count > 0)
-        Con_Printf("qr custom lights: %d light(s) on '%s'\n", rt_custom_light_count, level);
+    if (rt_custom_light_count > 0 || rt_custom_fog.has_fog)
+        Con_Printf("qr custom lights: %d light(s)%s on '%s'\n",
+                   rt_custom_light_count, rt_custom_fog.has_fog ? " and a fog" : "", level);
 }
 
 const char *RT_CustomLights_Header(void)
 {
     return
-        "# Custom dlights authored with the light editor: one section per level,\n"
-        "# named after the map (the file name without path or extension).\n"
-        "#   origin x y z (Quake units), radius (rt_dlight_radius units, 0..10),\n"
-        "#   intensity, color (rrggbb) and style (steady, flicker, candle, ...).\n";
+        "# Custom dlights and fog authored with the light editor: one section per\n"
+        "# level, named after the map (the file name without path or extension).\n"
+        "# A section carries an optional fog and an optional list of lights:\n"
+        "# start:\n"
+        "#   fog:\n"
+        "#     color: 8899aa          # rrggbb\n"
+        "#     density: 1.5           # 0 turns the fog off\n"
+        "#   lights:\n"
+        "#     - origin: 512 -256 64  # x y z, Quake units\n"
+        "#       radius: 0.4          # rt_dlight_radius units, 0..10\n"
+        "#       intensity: 1.0       # a multiplier of the colour\n"
+        "#       color: ff9900        # rrggbb\n"
+        "#       offset: 0 0 16       # optional shift from the origin\n"
+        "#       style: candle        # optional, a light style of the engine\n";
 }
 
 void RT_CustomLights_WriteEntry(FILE *f, const rt_custom_light_t *l)
 {
-    fprintf(f, "  - origin: %.6g %.6g %.6g\n", l->origin[0], l->origin[1], l->origin[2]);
+    fprintf(f, "    - origin: %.6g %.6g %.6g\n", l->origin[0], l->origin[1], l->origin[2]);
 
     if (l->has_offset)
-        fprintf(f, "    offset: %.6g %.6g %.6g\n", l->offset[0], l->offset[1], l->offset[2]);
+        fprintf(f, "      offset: %.6g %.6g %.6g\n", l->offset[0], l->offset[1], l->offset[2]);
 
-    fprintf(f, "    radius: %.6g\n", l->radius);
+    fprintf(f, "      radius: %.6g\n", l->radius);
 
     if (l->intensity != 1.0f)
-        fprintf(f, "    intensity: %.6g\n", l->intensity);
+        fprintf(f, "      intensity: %.6g\n", l->intensity);
 
-    fprintf(f, "    color: %02x%02x%02x\n",
+    fprintf(f, "      color: %02x%02x%02x\n",
             (int)(CLAMP(0.0f, l->color[0], 1.0f) * 255.0f + 0.5f) & 0xff,
             (int)(CLAMP(0.0f, l->color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
             (int)(CLAMP(0.0f, l->color[2], 1.0f) * 255.0f + 0.5f) & 0xff);
 
     if (l->style > 0)
-        fprintf(f, "    style: %s\n", rt_custom_style_names[CLAMP(0, l->style, RT_CUSTOM_STYLE_COUNT - 1)]);
+        fprintf(f, "      style: %s\n", rt_custom_style_names[CLAMP(0, l->style, RT_CUSTOM_STYLE_COUNT - 1)]);
 }

@@ -22,6 +22,11 @@
 // style cvar already uses — which also re-collects its emissive lights. A full
 // snapshot of both material lists is taken on start (and re-taken after Apply)
 // so Cancel/Exit can restore the yaml state.
+//
+// The light editor (qr_light_editor_start) shares the camera and the session
+// flow but owns two files: the emitter overrides of <gamedir>/lights.yaml and
+// the level's custom dlights and fog in <gamedir>/qray/lights.yaml, each with
+// its own session and backup file.
 
 #include "quakedef.h"
 #include "glquake.h"
@@ -234,6 +239,14 @@ static struct
 	char        light_touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int         light_touched_count;
 
+	// snapshot of the custom lights and the fog that was in effect: the Custom
+	// tab and the Global tab edit the live state without marking anything, so
+	// this is what Cancel/Exit restore and what QRE_CustomTouched compares to
+	rt_custom_light_t snap_custom[RT_CUSTOM_LIGHTS_MAX];
+	int               snap_custom_count;
+	float             snap_fog_color[3];
+	float             snap_fog_density;
+
 	// the light editor: the light the crosshair is over, and the one selected
 	// (the panel edits the entry of the selected light's emitter)
 	rt_tracked_light_t sel_light;
@@ -267,6 +280,13 @@ static struct
 	char target_file[MAX_OSPATH];
 	char editor_file[MAX_OSPATH];
 	char backup_file[MAX_OSPATH];
+
+	// the light editor has a second session for the custom lights and the fog:
+	// <gamedir>/qray/lights.yaml with its own session and backup files (the
+	// emitter overrides keep the gamedir's lights.yaml and its session)
+	char custom_target_file[MAX_OSPATH];
+	char custom_editor_file[MAX_OSPATH];
+	char custom_backup_file[MAX_OSPATH];
 
 	// a material created by the editor for a texture that has none in yaml
 	rt_material_t tmp_mat;
@@ -404,6 +424,76 @@ static void QRE_FreeSnapshot (void)
 // Light snapshot (for Cancel/Exit of the light editor)
 // ---------------------------------------------------------------------------
 
+// The custom lights and the fog the level came with: the Custom tab and the
+// Global tab edit the live state in place (they do not mark anything), so the
+// session's "touched" test compares against this snapshot and Cancel/Exit put
+// it back.
+static void QRE_TakeCustomSnapshot (void)
+{
+	int                count = 0;
+	rt_custom_light_t *lights = RT_CustomLights (&count);
+	float              color[4];
+
+	memcpy (qre.snap_custom, lights, (size_t)count * sizeof (rt_custom_light_t));
+	qre.snap_custom_count = count;
+
+	Fog_GetColor (color);
+	qre.snap_fog_color[0] = color[0];
+	qre.snap_fog_color[1] = color[1];
+	qre.snap_fog_color[2] = color[2];
+	qre.snap_fog_density = Fog_GetDensity ();
+}
+
+static void QRE_RestoreCustomSnapshot (void)
+{
+	rt_custom_light_t *lights = RT_CustomLights (NULL);
+	float              color[4];
+
+	if (qre.snap_custom_count > 0)
+		memcpy (lights, qre.snap_custom, (size_t)qre.snap_custom_count * sizeof (rt_custom_light_t));
+	RT_CustomLights_SetCount (qre.snap_custom_count);
+
+	// the fog is engine state, not a cvar: it comes back through the same
+	// `fog` command the Global tab edits it with, and only when it differs
+	Fog_GetColor (color);
+	if (color[0] != qre.snap_fog_color[0] || color[1] != qre.snap_fog_color[1] ||
+	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
+	{
+		Cbuf_AddText (va ("fog %f %f %f %f\n", qre.snap_fog_density,
+		                  CLAMP (0.0f, qre.snap_fog_color[0], 1.0f),
+		                  CLAMP (0.0f, qre.snap_fog_color[1], 1.0f),
+		                  CLAMP (0.0f, qre.snap_fog_color[2], 1.0f)));
+	}
+}
+
+// Whether the live custom list or the fog differs from the snapshot: what the
+// Custom tab's lights and the Global tab's fog contribute to the session.
+static qboolean QRE_CustomTouched (void)
+{
+	int                count = 0;
+	rt_custom_light_t *lights = RT_CustomLights (&count);
+	float              color[4];
+
+	if (count != qre.snap_custom_count)
+		return true;
+	if (count > 0 && memcmp (lights, qre.snap_custom, (size_t)count * sizeof (rt_custom_light_t)))
+		return true;
+
+	Fog_GetColor (color);
+	if (color[0] != qre.snap_fog_color[0] || color[1] != qre.snap_fog_color[1] ||
+	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
+		return true;
+
+	return false;
+}
+
+// The light editor owns two sessions: the emitter overrides of the gamedir's
+// lights.yaml and the custom lights and fog of qray/lights.yaml.
+static qboolean QRE_LightSessionTouched (void)
+{
+	return (qre.light_touched_count > 0 || QRE_CustomTouched ()) ? true : false;
+}
+
 static void QRE_TakeLightSnapshot (void)
 {
 	rt_light_t *list = RT_LIGHT_List (&qre.snap_light_count);
@@ -411,6 +501,8 @@ static void QRE_TakeLightSnapshot (void)
 	if (!qre.snap_lights)
 		qre.snap_lights = (rt_light_t *)Mem_Alloc (RT_LIGHT_NAMES_MAX * sizeof (rt_light_t));
 	memcpy (qre.snap_lights, list, (size_t)qre.snap_light_count * sizeof (rt_light_t));
+
+	QRE_TakeCustomSnapshot ();
 }
 
 static void QRE_RestoreLightSnapshot (void)
@@ -419,6 +511,8 @@ static void QRE_RestoreLightSnapshot (void)
 
 	memcpy (list, qre.snap_lights, (size_t)qre.snap_light_count * sizeof (rt_light_t));
 	RT_LIGHT_SetCount (qre.snap_light_count);
+
+	QRE_RestoreCustomSnapshot ();
 }
 
 static void QRE_FreeLightSnapshot (void)
@@ -427,6 +521,7 @@ static void QRE_FreeLightSnapshot (void)
 		Mem_Free (qre.snap_lights);
 	qre.snap_lights = NULL;
 	qre.snap_light_count = 0;
+	qre.snap_custom_count = 0;
 	qre.light_touched_count = 0;
 }
 
@@ -3008,7 +3103,8 @@ static void QRE_LightGlobalTab (void)
 	}
 
 	QR_GUI_Spacing ();
-	QR_GUI_LabelDim ("these live in the config: Apply and Cancel do not own them");
+	QR_GUI_LabelDim ("the values above live in the config: Apply and Cancel do not own them");
+	QR_GUI_LabelDim ("the fog is part of the level's session: it goes to qray/lights.yaml");
 }
 
 // ---------------------------------------------------------------------------
@@ -3794,8 +3890,17 @@ static void QRE_Apply (void)
 
 	if (qre.mode == QRE_MODE_LIGHT)
 	{
+		const qboolean emitter = QRE_FileExists (qre.editor_file);
+		const qboolean custom = QRE_FileExists (qre.custom_editor_file);
+
 		QRE_TakeLightSnapshot (); // Cancel now reverts to the state just saved
-		QRE_Notify ("session written to lights.editor.yaml");
+
+		if (emitter && custom)
+			QRE_Notify ("session written to lights.editor.yaml and qray/lights.editor.yaml");
+		else if (custom)
+			QRE_Notify ("session written to qray/lights.editor.yaml");
+		else
+			QRE_Notify ("session written to lights.editor.yaml");
 		return;
 	}
 
@@ -3807,14 +3912,14 @@ static void QRE_Cancel (void)
 {
 	if (qre.mode == QRE_MODE_LIGHT)
 	{
-		// the light uploads read the live list every frame, so putting the
-		// snapshot back is enough
+		// the light uploads read the live lists every frame, so putting the
+		// snapshots back is enough; the fog goes back through the fog command
 		QRE_RestoreLightSnapshot ();
 
 		if (QRE_FileExists (qre.editor_file) && !QRE_WriteSession ())
 			remove (qre.editor_file);
 
-		QRE_Notify ("light overrides reverted to the values from lights.yaml");
+		QRE_Notify ("light overrides, custom lights and fog reverted to the files");
 		return;
 	}
 
@@ -4199,59 +4304,275 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 	return true;
 }
 
+// The current level's section: the fog that is in effect and the live custom
+// lights, in the form RT_CustomLightsParse reads back (the key is the map's own
+// level name).
+static void QRE_CustomWriteLevel (FILE *out, const char *level)
+{
+	int                count = 0;
+	rt_custom_light_t *lights = RT_CustomLights (&count);
+	float              color[4];
+	int                i;
+
+	fprintf (out, "%s:\n", level);
+
+	// the fog block is always part of the section: the Global tab authors the
+	// level's fog, so the session has to carry it even when only a light changed
+	Fog_GetColor (color);
+	fprintf (out, "  fog:\n");
+	fprintf (out, "    color: %02x%02x%02x\n",
+	         (int)(CLAMP (0.0f, color[0], 1.0f) * 255.0f + 0.5f) & 0xff,
+	         (int)(CLAMP (0.0f, color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
+	         (int)(CLAMP (0.0f, color[2], 1.0f) * 255.0f + 0.5f) & 0xff);
+	fprintf (out, "    density: %.6g\n", Fog_GetDensity ());
+
+	if (count > 0)
+	{
+		fprintf (out, "  lights:\n");
+		for (i = 0; i < count; i++)
+			RT_CustomLights_WriteEntry (out, &lights[i]);
+	}
+}
+
+// Writes qray/lights.editor.yaml: the target's own text with the current level's
+// section replaced by the live fog and custom lights, so comments, the other
+// levels' sections and keys the loader does not understand survive a save. Only
+// the current level's section is rewritten; a target that does not exist gets
+// the standard header. The level key is the map's own (RT_CustomLights_LevelKey).
+static qboolean QRE_WriteCustomSession (void)
+{
+	FILE    *in;
+	FILE    *out;
+	char     line[2048];
+	char     level[64];
+	qboolean skipping = false;
+	qboolean wrote = false;
+
+	RT_CustomLights_LevelKey (cl.worldmodel ? cl.worldmodel->name : "", level, sizeof (level));
+
+	{
+		// a mod may not have the qray directory yet
+		char dir[MAX_OSPATH];
+
+		q_snprintf (dir, sizeof (dir), "%s/qray", com_gamedir);
+		Sys_mkdir (dir);
+	}
+
+	in = fopen (qre.custom_target_file, "r");
+	out = fopen (qre.custom_editor_file, "w");
+	if (!out)
+	{
+		if (in)
+			fclose (in);
+		QRE_Notify ("cannot write %s", qre.custom_editor_file);
+		return false;
+	}
+
+	if (!in)
+	{
+		// a target that does not exist yet: the standard header and the section
+		fprintf (out, "%s", RT_CustomLights_Header ());
+		QRE_CustomWriteLevel (out, level);
+		wrote = true;
+	}
+	else
+	{
+		qboolean any_line = false;
+
+		while (fgets (line, sizeof (line), in))
+		{
+			char *colon = NULL;
+			char  key[64];
+
+			any_line = true;
+
+			if (skipping)
+			{
+				if (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n')
+					continue; // the body of the section that was replaced
+				skipping = false;
+			}
+
+			// a top-level key starts at column 0 (a level section); comments and
+			// the indented bodies pass through, as does every other key
+			if (line[0] != ' ' && line[0] != '\t' && line[0] != '#' &&
+			    line[0] != '\r' && line[0] != '\n')
+				colon = strchr (line, ':');
+
+			if (colon)
+			{
+				char *e = colon;
+				int   n;
+
+				while (e > line && (e[-1] == ' ' || e[-1] == '\t'))
+					e--;
+				n = (int)(e - line);
+				if (n >= (int)sizeof (key))
+					n = (int)sizeof (key) - 1;
+				memcpy (key, line, (size_t)n);
+				key[n] = '\0';
+				q_strlwr (key);
+
+				if (!wrote && !strcmp (key, level))
+				{
+					QRE_CustomWriteLevel (out, level);
+					wrote = true;
+					skipping = true;
+					continue;
+				}
+			}
+
+			fputs (line, out);
+		}
+		fclose (in);
+
+		if (!wrote)
+		{
+			// the target did not carry the level: the new section goes last
+			if (any_line)
+				fprintf (out, "\n");
+			QRE_CustomWriteLevel (out, level);
+			wrote = true;
+		}
+	}
+
+	if (ferror (out) || fflush (out) != 0)
+	{
+		QRE_Notify ("write error in %s", qre.custom_editor_file);
+		fclose (out);
+		remove (qre.custom_editor_file);
+		return false;
+	}
+	fclose (out);
+
+	Con_Printf ("qr editor: session written to %s\n", qre.custom_editor_file);
+	return true;
+}
+
 static qboolean QRE_WriteSession (void)
 {
+	qboolean wrote = false;
+
 	if (qre.mode == QRE_MODE_LIGHT)
-		return QRE_WriteMergedSession (qre.light_touched, qre.light_touched_count);
+	{
+		// the emitter overrides and the custom lights/fog are two targets; each
+		// half is written when it has something to say
+		if (qre.light_touched_count > 0 &&
+		    QRE_WriteMergedSession (qre.light_touched, qre.light_touched_count))
+			wrote = true;
+		if (QRE_CustomTouched () && QRE_WriteCustomSession ())
+			wrote = true;
+		return wrote;
+	}
 	return QRE_WriteMergedSession (qre.touched, qre.touched_count);
 }
 
-// "Save" of the exit dialog: the target is backed up first, then the session
-// file becomes the target (a mod's materials.yaml, so it overrides id1's). A
-// copy that cannot be made keeps the session file and says so.
+// Saves one session file over its target: the target is backed up first (when
+// it exists), then the session becomes the target. A copy that cannot be made
+// keeps the session file and says so.
+static qboolean QRE_SaveOneSession (const char *editor_file, const char *target_file, const char *backup_file)
+{
+	if (!QRE_FileExists (editor_file))
+		return true; // this half of the session has nothing to save
+
+	if (QRE_FileExists (target_file) && !QRE_CopyFile (target_file, backup_file))
+	{
+		QRE_Notify ("cannot write %s; the session is kept", backup_file);
+		return false;
+	}
+	if (!QRE_CopyFile (editor_file, target_file))
+	{
+		QRE_Notify ("cannot write %s; the session is kept", target_file);
+		return false;
+	}
+	return true;
+}
+
+// "Save" of the exit dialog: the targets are backed up first, then the session
+// files become the targets (a mod's materials.yaml / qray/lights.yaml, so they
+// override id1's). The light editor owns two sessions -- the emitter overrides
+// of the gamedir's lights.yaml and the custom lights and fog of qray/lights.yaml
+// -- and each one that exists is saved.
 static void QRE_SessionSave (void)
 {
-	const qboolean had_target = QRE_FileExists (qre.target_file);
-	const qboolean touched = (qre.mode == QRE_MODE_LIGHT) ? (qre.light_touched_count > 0) : (qre.touched_count > 0);
+	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
+	const qboolean touched = light ? QRE_LightSessionTouched () : (qre.touched_count > 0);
 
 	if (touched && !QRE_WriteSession ())
 	{
 		QRE_Notify ("nothing to save");
 		return;
 	}
-	if (!QRE_FileExists (qre.editor_file))
-	{
-		QRE_Notify ("nothing to save");
-		return;
-	}
 
-	if (had_target && !QRE_CopyFile (qre.target_file, qre.backup_file))
+	if (!light)
 	{
-		QRE_Notify ("cannot write %s; the session is kept", qre.backup_file);
-		return;
-	}
-	if (!QRE_CopyFile (qre.editor_file, qre.target_file))
-	{
-		QRE_Notify ("cannot write %s; the session is kept", qre.target_file);
-		return;
-	}
+		const qboolean had_target = QRE_FileExists (qre.target_file);
 
-	remove (qre.editor_file);
+		if (!QRE_FileExists (qre.editor_file))
+		{
+			QRE_Notify ("nothing to save");
+			return;
+		}
 
-	QRE_StopEditor (false);
-	if (qre.mode == QRE_MODE_LIGHT)
-		QRE_Notify (had_target ? "lights.yaml saved; backup_lights.yaml holds the previous file"
-		                       : "lights.yaml saved");
-	else
+		if (had_target && !QRE_CopyFile (qre.target_file, qre.backup_file))
+		{
+			QRE_Notify ("cannot write %s; the session is kept", qre.backup_file);
+			return;
+		}
+		if (!QRE_CopyFile (qre.editor_file, qre.target_file))
+		{
+			QRE_Notify ("cannot write %s; the session is kept", qre.target_file);
+			return;
+		}
+
+		remove (qre.editor_file);
+
+		QRE_StopEditor (false);
 		QRE_Notify (had_target ? "materials.yaml saved; backup_materials.yaml holds the previous file"
 		                       : "materials.yaml saved");
+		return;
+	}
+
+	{
+		const qboolean had_emitter = QRE_FileExists (qre.target_file);
+		const qboolean had_custom = QRE_FileExists (qre.custom_target_file);
+		const qboolean have_emitter = QRE_FileExists (qre.editor_file);
+		const qboolean have_custom = QRE_FileExists (qre.custom_editor_file);
+
+		if (!have_emitter && !have_custom)
+		{
+			QRE_Notify ("nothing to save");
+			return;
+		}
+
+		if (!QRE_SaveOneSession (qre.editor_file, qre.target_file, qre.backup_file) ||
+		    !QRE_SaveOneSession (qre.custom_editor_file, qre.custom_target_file, qre.custom_backup_file))
+			return; // the session that could not be saved is kept
+
+		remove (qre.editor_file);
+		remove (qre.custom_editor_file);
+
+		QRE_StopEditor (false);
+
+		if (have_emitter && have_custom)
+			QRE_Notify (had_emitter || had_custom
+			                ? "lights.yaml and qray/lights.yaml saved; the backups hold the previous files"
+			                : "lights.yaml and qray/lights.yaml saved");
+		else if (have_custom)
+			QRE_Notify (had_custom ? "qray/lights.yaml saved; qray/backup_lights.yaml holds the previous file"
+			                       : "qray/lights.yaml saved");
+		else
+			QRE_Notify (had_emitter ? "lights.yaml saved; backup_lights.yaml holds the previous file"
+			                        : "lights.yaml saved");
+	}
 }
 
-// "Discard": the session file goes away and the original values come back on
+// "Discard": the session files go away and the original values come back on
 // screen; nothing on disk is touched.
 static void QRE_SessionDiscard (void)
 {
 	remove (qre.editor_file);
+	remove (qre.custom_editor_file);
 	QRE_StopEditor (true);
 	QRE_Notify ("changes discarded");
 }
@@ -4260,9 +4581,9 @@ static void QRE_SessionDiscard (void)
 // one, close straight away when nothing was changed.
 static void QRE_RequestExit (void)
 {
-	const qboolean touched = (qre.mode == QRE_MODE_LIGHT) ? (qre.light_touched_count > 0) : (qre.touched_count > 0);
+	const qboolean touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0);
 
-	if (!touched && !QRE_FileExists (qre.editor_file))
+	if (!touched && !QRE_FileExists (qre.editor_file) && !QRE_FileExists (qre.custom_editor_file))
 	{
 		QRE_StopEditor (true);
 		return;
@@ -4376,7 +4697,10 @@ static void QRE_StopEditor (qboolean restore)
 	if (sv.paused)
 		sv.paused = qre.sv_paused_prev;
 	if (!restore)
+	{
 		remove (qre.editor_file);
+		remove (qre.custom_editor_file);
+	}
 
 	VectorCopy (qre.player_viewangles, cl.viewangles);
 
@@ -4427,11 +4751,17 @@ static void QRE_StartEditor (int mode)
 	{
 		QRE_TakeLightSnapshot ();
 
-		// the light session: the gamedir's lights.yaml is what the light editor
-		// saves to, with the session file and the backup the materials use too
+		// the light session: the gamedir's lights.yaml holds the emitter
+		// overrides, with the session file and the backup the materials use too,
+		// and qray/lights.yaml holds the custom lights and the fog with its own
+		// pair of files
 		q_snprintf (qre.target_file, sizeof (qre.target_file), "%s/lights.yaml", com_gamedir);
 		q_snprintf (qre.editor_file, sizeof (qre.editor_file), "%s/lights.editor.yaml", com_gamedir);
 		q_snprintf (qre.backup_file, sizeof (qre.backup_file), "%s/backup_lights.yaml", com_gamedir);
+
+		q_snprintf (qre.custom_target_file, sizeof (qre.custom_target_file), "%s/qray/lights.yaml", com_gamedir);
+		q_snprintf (qre.custom_editor_file, sizeof (qre.custom_editor_file), "%s/qray/lights.editor.yaml", com_gamedir);
+		q_snprintf (qre.custom_backup_file, sizeof (qre.custom_backup_file), "%s/qray/backup_lights.yaml", com_gamedir);
 	}
 	else
 	{
@@ -4449,6 +4779,7 @@ static void QRE_StartEditor (int mode)
 	// a session file left by a crash or a map change belongs to a session that
 	// is over: it must not be saved by this one
 	remove (qre.editor_file);
+	remove (qre.custom_editor_file);
 
 	// freeze the world: the server stops thinking and moving, cl.time stops
 	// advancing (CL_ReadFromServer) and the frame time handed to the renderer is

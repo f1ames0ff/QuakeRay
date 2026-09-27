@@ -140,6 +140,16 @@ typedef struct rt_custom_light_s
     int      style;        // 0..RT_CUSTOM_STYLE_COUNT-1
 } rt_custom_light_t;
 
+// The fog a level's section carries: it replaces the map's own worldspawn "fog"
+// key when the section is loaded. The colour channels are 0..1, the density is
+// >= 0 (0 turns the fog off).
+typedef struct rt_custom_fog_s
+{
+    qboolean has_fog; // the level's section carries a fog block
+    vec3_t   color;
+    float    density;
+} rt_custom_fog_t;
+
 // The current level's list, as loaded (the editor edits it in place and
 // snapshots it for Cancel).
 rt_custom_light_t *RT_CustomLights (int *outCount);
@@ -148,9 +158,19 @@ void               RT_CustomLights_SetCount (int count);
 rt_custom_light_t *RT_CustomLights_Ensure (void);
 void               RT_CustomLights_Remove (int index);
 
+// The fog the current level's section carries. The loader fills it through
+// RT_CustomFogSet (NULL clears it); the editor's session reads it.
+void RT_CustomFog (rt_custom_fog_t *out);
+void RT_CustomFogSet (const rt_custom_fog_t *fog);
+
 // Loads the level's section of <gamedir>/qray/lights.yaml ("maps/x.bsp" and "x"
-// both name the level "x").
+// both name the level "x"), the fog included.
 void RT_CustomLights_ChangeMap (const char *mapname);
+
+// Issues the level's authored fog through the `fog` command, once per map load.
+// Called after the worldspawn "fog" key has been parsed (R_NewMap), so the
+// file's fog wins over the map's own.
+void RT_CustomLights_ApplyFog (void);
 
 // The section key of a map and the file's writer, for the editor's session.
 void RT_CustomLights_LevelKey (const char *mapname, char *out, size_t outsize);
