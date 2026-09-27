@@ -23,7 +23,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "bgmusic.h"
-#include "qr_editor.h"
 
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
@@ -430,11 +429,6 @@ float CL_LerpPoint (void)
 {
 	float f, frac;
 
-	// The light editor holds the clock: no lerp may pull cl.time forward while
-	// the world is meant to stand still.
-	if (QR_Editor_Active ())
-		return 1;
-
 	f = cl.mtime[0] - cl.mtime[1];
 
 	if (!f || cls.timedemo || (sv.active && !host_netinterval))
@@ -616,6 +610,9 @@ static void CL_RocketTrail (entity_t *ent, int type)
 	if (ent->traildelay > 0.f)
 		return;
 	R_RocketTrail (ent->trailorg, ent->origin, type);
+
+	R_SmokeTrail (ent->trailorg, ent->origin,
+		R_SmokeTrailScale (ent->model ? ent->model->name : NULL, type));
 
 	ent->traildelay = q_max (0.f, ent->traildelay + 1.f / 72.f);
 	VectorCopy (ent->origin, ent->trailorg);
@@ -994,11 +991,7 @@ int CL_ReadFromServer (void)
 	int        i;                 // johnfitz
 
 	cl.oldtime = cl.time;
-	// The light editor freezes the client clock with the server: its camera and
-	// its re-synthesis run on host frames, and a frozen cl.time holds every
-	// animation that reads it (textures, poses, particles) still.
-	if (!QR_Editor_Active ())
-		cl.time += host_frametime;
+	cl.time += host_frametime;
 
 	needs_relink = true;
 	do
@@ -1092,16 +1085,6 @@ void CL_SendCmd (void)
 
 	if (cls.state != ca_connected)
 		return;
-
-	// qr light editor: while the editor camera is flying, the player stands
-	// still -- no commands reach the server (the editor reads the movement keys
-	// and the mouse itself)
-	if (QR_Editor_Active ())
-	{
-		memset (&cl.pendingcmd, 0, sizeof (cl.pendingcmd));
-		cl.pendingcmd.servertime = cl.time;
-		return;
-	}
 
 	// get basic movement from keyboard
 	CL_BaseMove (&cmd);
@@ -1297,6 +1280,7 @@ void CL_Init (void)
 	Cmd_AddCommand ("stop", CL_Stop_f);
 	Cmd_AddCommand ("playdemo", CL_PlayDemo_f);
 	Cmd_AddCommand ("timedemo", CL_TimeDemo_f);
+	Cmd_AddCommand ("rt_bench", CL_Bench_f);
 
 	Cmd_AddCommand ("tracepos", CL_Tracepos_f); // johnfitz
 	Cmd_AddCommand ("viewpos", CL_Viewpos_f);   // johnfitz

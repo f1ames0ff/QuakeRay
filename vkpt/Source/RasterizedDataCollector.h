@@ -55,6 +55,9 @@ namespace vkpt
             RgRasterizedGeometryStateFlags pipelineState = 0;
             RgBlendFactor                  blendFuncSrc  = RG_BLEND_FACTOR_ONE;
             RgBlendFactor                  blendFuncDst  = RG_BLEND_FACTOR_ONE;
+
+            Float4D  smokeNoise = Float4D( NullifyToken );
+            Float4D  smokeLook  = Float4D( NullifyToken );
         };
 
     public:
@@ -85,6 +88,8 @@ namespace vkpt
         static uint32_t GetVertexStride();
         static void     GetVertexLayout( VkVertexInputAttributeDescription* outAttrs,
                                          uint32_t*                          outAttrsCount );
+        static void     GetSmokeVertexLayout( VkVertexInputAttributeDescription* outAttrs,
+                                              uint32_t*                          outAttrsCount );
 
         const std::vector< DrawInfo >& GetRasterDrawInfos() const;
         const std::vector< DrawInfo >& GetSwapchainDrawInfos() const;

@@ -989,6 +989,7 @@ static void R_DrawParticlesTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]); // johnfitz
+	R_DrawSmoke (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 	R_DrawParticles (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 #ifdef PSET_SCRIPT
 	PScript_DrawParticles (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);

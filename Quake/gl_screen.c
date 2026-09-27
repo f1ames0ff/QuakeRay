@@ -24,7 +24,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // screen.c -- master for refresh, status bar, console, chat, notify, etc
 
 #include "quakedef.h"
-#include "qr_editor.h"
 
 #include "cfgfile.h"
 
@@ -606,9 +605,9 @@ under the other, with a blank line between them, so the whole frame can be read
 as a single column.
 
 The GPU numbers come from the backend's frame stats and the CPU numbers from
-rt_prof_report, refreshed once a second by RT_Prof_Update. Slots hold the longest
-sample of the reporting window rather than the values of one frame, so they must
-not be added up.
+rt_prof_report, refreshed every `rt_stats_interval` seconds by RT_Prof_Update.
+Slots hold the longest sample of the reporting window rather than the values of
+one frame, so they must not be added up.
 
 Returns the line the next section should start at.
 ================
@@ -713,7 +712,8 @@ SCR_DrawRTProf
 
 The CPU side of the frame, the last section of the readout. It starts at the line
 the sections above left off at, so that the panels continue one another, and the
-numbers come from rt_prof_report, refreshed once a second by RT_Prof_Update.
+numbers come from rt_prof_report, refreshed every `rt_stats_interval` seconds by
+RT_Prof_Update.
 ================
 */
 void SCR_DrawRTProf (cb_context_t *cbx, int x, int y)
@@ -1249,30 +1249,19 @@ static void SCR_DrawGUI (void *unused)
 	}
 	else
 	{
-		// qr light editor: while it is active the whole interface belongs to it
-		// (ImGui draws the panel, the hints and the crosshair); only the console
-		// stays, being the way the editor is driven as well.
-		if (QR_Editor_Active ())
-		{
-			SCR_DrawConsole (cbx);
-			QR_Editor_DrawPanel (cbx);
-		}
-		else
-		{
-			SCR_DrawCrosshair (cbx); // johnfitz
-			SCR_DrawNet (cbx);
-			SCR_DrawTurtle (cbx);
-			SCR_DrawPause (cbx);
-			SCR_CheckDrawCenterString (cbx);
-			Sbar_Draw (cbx);
-			SCR_DrawDevStats (cbx); // johnfitz
-			SCR_DrawFPS (cbx);      // johnfitz
-			const int stats_y = SCR_DrawRTStats (cbx);
-			SCR_DrawRTProf (cbx, 8, stats_y);
-			SCR_DrawClock (cbx);    // johnfitz
-			SCR_DrawConsole (cbx);
-			M_Draw (cbx);
-		}
+		SCR_DrawCrosshair (cbx); // johnfitz
+		SCR_DrawNet (cbx);
+		SCR_DrawTurtle (cbx);
+		SCR_DrawPause (cbx);
+		SCR_CheckDrawCenterString (cbx);
+		Sbar_Draw (cbx);
+		SCR_DrawDevStats (cbx); // johnfitz
+		SCR_DrawFPS (cbx);      // johnfitz
+		const int stats_y = SCR_DrawRTStats (cbx);
+		SCR_DrawRTProf (cbx, 8, stats_y);
+		SCR_DrawClock (cbx);    // johnfitz
+		SCR_DrawConsole (cbx);
+		M_Draw (cbx);
 	}
 	R_EndDebugUtilsLabel (cbx);
 }

@@ -594,6 +594,7 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
 
     if (!yaml_parser_initialize(&parser))
     {
+        rt_load_file_free((byte *)filebuf);
         return 0;
     }
 
@@ -797,8 +798,6 @@ static int rt_mat_load_yaml_file(const char *file_name, rt_material_t *dest, int
     return count;
 }
 
-// A file addressed by an absolute path: the search path cannot reach it. This
-// is how the base id1 directory is read while a mod is running.
 static int rt_mat_load_abs_file(const char *path, rt_material_t *dest, int max_items)
 {
     FILE  *f = fopen(path, "rb");
@@ -831,17 +830,11 @@ static int rt_mat_load_abs_file(const char *path, rt_material_t *dest, int max_i
 
 static int rt_mat_load_any(const char *name, rt_material_t *dest, int max_items)
 {
-    // the directory scan passes an absolute path; the pkz listing and the map
-    // file pass a name the search path resolves
     if (name[0] && (name[1] == ':' || name[0] == '/' || name[0] == '\\'))
         return rt_mat_load_abs_file(name, dest, max_items);
     return rt_mat_load_yaml_file(name, dest, max_items);
 }
 
-// Every materials/*.yaml of one directory, then its materials.yaml at the root.
-// Paths are absolute: the loader reads them itself, so a lower-priority
-// directory is reached even when a higher-priority one carries a file of the
-// same name (files loaded later override entries by name).
 static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *ctx), void *ctx)
 {
     char pattern[MAX_OSPATH];
@@ -876,7 +869,6 @@ static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *c
         FindClose(h);
     }
 
-    // the mod's override file lives at the gamedir root
     q_snprintf(pattern, sizeof(pattern), "%s/materials.yaml", dir);
     if (Sys_FileTime(pattern) != -1)
     {
@@ -903,10 +895,6 @@ static int rt_mat_load_cb(const char *name, void *vctx)
 
     loaded = rt_mat_load_any(name, ctx->dest + before, ctx->max - before);
 
-    /* A later file overrides the entries of an earlier one with the same name.
-       The load order is the packaged base, then id1, then the running gamedir;
-       this loop is what makes a mod's materials.yaml replace the id1 values it
-       names while id1 still supplies everything the mod does not name. */
     for (n = 0; n < loaded; n++)
     {
         rt_material_t *loaded_mat = ctx->dest + before + n;
@@ -957,8 +945,6 @@ void RT_MAT_Init(void)
 
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
 
-    // packaged materials first, then id1, then the running gamedir (a mod), so
-    // a mod's materials.yaml overrides the id1 entries it names
     RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
     {
         char base[MAX_OSPATH];
@@ -1008,9 +994,6 @@ void RT_MAT_ChangeMap(const char *mapname)
     rt_mat_load_ctx_t ctx = { rt_map_materials, &rt_map_count, RT_MAT_MAX_MAP };
     rt_mat_load_cb(name, &ctx);
 
-    // The gamedir's own materials.yaml is the editor's target: it has to beat
-    // the map file it was saved from, or a saved edit would be shadowed by that
-    // file on the next load of the same map.
     {
         char own[MAX_OSPATH];
         q_snprintf(own, sizeof(own), "%s/materials.yaml", com_gamedir);

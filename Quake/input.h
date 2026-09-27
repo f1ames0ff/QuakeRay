@@ -34,6 +34,9 @@ void IN_Commands (void);
 // mouse moved by dx and dy pixels
 void IN_MouseMotion (int dx, int dy);
 
+// delivering mouse motion events (the ImGui panel reads them for its cursor).
+void IN_FreeCursorForGui (void);
+
 void IN_SendKeyEvents (void);
 // used as a callback for Sys_SendKeyEvents() by some drivers
 
@@ -48,10 +51,6 @@ void IN_ClearStates (void);
 
 // called when the app becomes active
 void IN_Activate ();
-
-// qr light editor: frees the cursor like IN_Deactivate(true), but keeps
-// delivering mouse motion events (the ImGui panel reads them for its cursor).
-void IN_FreeCursorForGui (void);
 
 // called when the app becomes inactive
 void IN_Deactivate (qboolean free_cursor);

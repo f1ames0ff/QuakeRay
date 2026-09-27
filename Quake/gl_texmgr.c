@@ -130,7 +130,14 @@ static THREAD_LOCAL RgMaterialCreateInfo rtspecial_info = {0};
 static THREAD_LOCAL void                *rtspecial_info_albedoAlpha = NULL; // to point to data from rtspecial_info
 static THREAD_LOCAL char                 rtspecial_info_pRelativePath[MAX_QPATH];
 
+static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride);
 static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride);
+
+/* Bumped after every material synthesis writes its fields -- never before them -- so a reader that
+   sees the new revision sees a finished texture. What a texture emits (is_light, the mask, its
+   glow extents) is read off those fields, and the DTAL piece cache of an alias model is only as
+   fresh as the revision it was built and published under (see RT_AddAliasEmissiveLights). */
+atomic_uint32_t rt_material_revision = {0};
 
 
 void TexMgr_RT_SpecialStart (float default_rough, float default_metallic)
@@ -1249,7 +1256,7 @@ static void TexMgr_FeatherEmissive (float *emiss, int w, int h, int radius)
 	Mem_Free (tmp);
 }
 
-static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
+static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
 	if (!mat)
@@ -1602,8 +1609,14 @@ static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoF
 		   all. Above 1 the gain is the only thing that can brighten (the
 		   emission channel saturates); below 1 a mask the area light really
 		   samples (rtemissivetex, the flag its consumer reads) already dims the
-		   light once, so the gain is skipped there. */
-		const float gain = (isBrush && glt->rtemissivetex && lightBright < 1.0f) ? 1.0f : lightBright;
+		   light once, so the gain is skipped there. A brush face and an is_light
+		   alias model both light from that mask -- the model by DTAL -- so both
+		   take the rule; without it the mask and the colour would dim the same
+		   light twice. A sprite is not one of them: its light is the point light
+		   of light_color and samples no mask, so the gain stays its dimming. */
+		const qboolean mask_lit_model = glt->owner && glt->owner->type == mod_alias && mat->is_light;
+		const qboolean light_samples_mask = glt->rtemissivetex && (isBrush || mask_lit_model);
+		const float gain = (light_samples_mask && lightBright < 1.0f) ? 1.0f : lightBright;
 
 		if (glt->rthaslightcolor)
 			VectorScale (glt->rtlightcolor, gain, glt->rtlightcolor);
@@ -1705,6 +1718,24 @@ static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoF
 	Mem_Free (normal);
 
 	return true;
+}
+
+/*
+================
+TexMgr_ApplyMaterialFromMat
+
+The revision moves after the synthesis, and only after it, so a reader that sees a new revision is
+looking at fields that revision produced; one that catches the synthesis mid-flight reads the old
+revision and its DTAL entry is refused as soon as the move lands.
+================
+*/
+static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
+{
+	const qboolean applied = TexMgr_ApplyMaterialFromMatInternal (glt, albedoFallback, fullbrightOverride);
+
+	Atomic_AddUInt32 (&rt_material_revision, 1);
+
+	return applied;
 }
 
 /*

@@ -62,6 +62,7 @@ namespace vkpt
         VkRenderPass                                  GetSkyRenderPass() const;
         const std::shared_ptr< RasterizerPipelines >& GetRasterPipelines() const;
         const std::shared_ptr< RasterizerPipelines >& GetSkyRasterPipelines() const;
+        const std::shared_ptr< RasterizerPipelines >& GetSmokeRasterPipelines() const;
 
         VkFramebuffer                                 GetWorldFramebuffer( uint32_t frameIndex ) const;
         VkFramebuffer GetSkyFramebuffer( uint32_t frameIndex ) const;
@@ -87,6 +88,7 @@ namespace vkpt
 
         std::shared_ptr< RasterizerPipelines > worldPipelines;
         std::shared_ptr< RasterizerPipelines > skyPipelines;
+        std::shared_ptr< RasterizerPipelines > smokePipelines;
 
         VkFramebuffer worldFramebuffers[ MAX_FRAMES_IN_FLIGHT ] = {};
         VkFramebuffer skyFramebuffers[ MAX_FRAMES_IN_FLIGHT ]   = {};
