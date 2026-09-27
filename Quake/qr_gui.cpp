@@ -606,14 +606,19 @@ int QR_GUI_Vec3Input (const char *label, float v[3], float min, float max, const
 	int                i, changed = 0;
 	const ImGuiStyle  &style = ImGui::GetStyle ();
 	const float        letter = ImGui::CalcTextSize ("X").x;
-	float              field = (RowWidth (0.0f) - letter * 3.0f - style.ItemSpacing.x * 5.0f) / 3.0f;
-
-	if (field < 32.0f)
-		field = 32.0f;
+	float              field;
 
 	WidgetId (id, sizeof (id), label);
 
 	LabelColumn (label, tooltip);
+
+	// measured after the label column: the row starts where the fields start,
+	// otherwise the three fields are laid out from the full panel width and
+	// step past the right edge (the reset button's width is already reserved)
+	field = (RowWidth (0.0f) - letter * 3.0f - style.ItemSpacing.x * 5.0f) / 3.0f;
+	if (field < 32.0f)
+		field = 32.0f;
+
 	ImGui::PushID (label);
 	for (i = 0; i < 3; i++)
 	{
