@@ -938,6 +938,22 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
             const bool flatClouds = RenderCubemap::ClampQuality(cloudsQuality) == RenderCubemap::QUALITY_LOW;
             p.skyColor[3] = flatClouds ? 1.0f : 0.0f;
 
+            // What the motion vectors of the sky need of the layer (RaygenPrimary.inl,
+            // getMotionForCloudLayer), in three cells of the cubemap transform that the
+            // column-major copy in FillUniform leaves at zero and nothing else reads --
+            // and this frame's uniform is uploaded below, so this is not too late:
+            // [0].w is the drift the layer actually has, in world units per second
+            // (the setting already scaled by the height above), zero when nothing in
+            // the sky drifts; [1].w is the bottom of the layer over the eye, zero for
+            // the flat clouds of the lowest level, which have no layer for a vector to
+            // find a plane in; [2].w is the layer's thickness. Keep these writes equal
+            // to the shader's reads.
+            const bool cloudsDrift = (p.cloudParams[3] > 0.5f) && (p.skyParams[1] > 0.0f);
+            const bool layerStands = cloudsDrift && !flatClouds;
+            uniform->GetData()->skyCubemapRotationTransform[3]  = cloudsDrift ? p.cloudParams[2] : 0.0f;
+            uniform->GetData()->skyCubemapRotationTransform[7]  = layerStands ? p.cloudLayer[0] : 0.0f;
+            uniform->GetData()->skyCubemapRotationTransform[11] = layerStands ? p.cloudLayer[1] : 0.0f;
+
             // The pass timings pick the cloud path up here: the shadow of the layer,
             // the layer itself, the sky it is composited into and the mip chain of the
             // sky's cubemaps are four rows of their own (PassTimings.h) instead of

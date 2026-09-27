@@ -61,23 +61,23 @@ vec2 getMotionVectorForUpscaler(const vec2 motionCurToPrev)
     return motionCurToPrev;
 }
 
-vec2 getMotionForInfinitePoint(const ivec2 pix)
+// The pixel's own ray is what this takes -- the one it was traced with, jitter and
+// all -- and not a coordinate to rebuild one from: a checkerboard pixel names a
+// different point of the screen than the pixel the vector is stored for.
+//
+// The projection is applied in full, with the division by .w, the way the vectors of
+// the world are built (HitInfo.inl). Without it -- a mat3 and no division, as this
+// used to be -- every motion is short by the cosine of the angle between the ray and
+// the view's axis, which at the edge of the screen is half of it: what reads such a
+// vector reprojects its history too close and drags the content along it.
+vec2 getMotionForInfinitePoint(const vec3 rayDir)
 {
     // treat as a point with .w=0, i.e. at infinite distance
-    vec3 rayDir = getRayDir(getPixelUVWithJitter(pix));
+    const vec4 clipSpacePosCur  = globalUniform.projection     * (globalUniform.view     * vec4(rayDir, 0.0));
+    const vec4 clipSpacePosPrev = globalUniform.projectionPrev * (globalUniform.viewPrev * vec4(rayDir, 0.0));
 
-    vec3 viewSpacePosCur   = mat3(globalUniform.view)     * rayDir;
-    vec3 viewSpacePosPrev  = mat3(globalUniform.viewPrev) * rayDir;
-
-    vec3 clipSpacePosCur   = mat3(globalUniform.projection)     * viewSpacePosCur;
-    vec3 clipSpacePosPrev  = mat3(globalUniform.projectionPrev) * viewSpacePosPrev;
-
-    // don't divide by .w
-    vec3 ndcCur            = clipSpacePosCur.xyz;
-    vec3 ndcPrev           = clipSpacePosPrev.xyz;
-
-    vec2 screenSpaceCur    = ndcCur.xy  * 0.5 + 0.5;
-    vec2 screenSpacePrev   = ndcPrev.xy * 0.5 + 0.5;
+    const vec2 screenSpaceCur   = (clipSpacePosCur.xy  / clipSpacePosCur.w ) * 0.5 + 0.5;
+    const vec2 screenSpacePrev  = (clipSpacePosPrev.xy / clipSpacePosPrev.w) * 0.5 + 0.5;
 
     return screenSpacePrev - screenSpaceCur;
 }
@@ -85,52 +85,53 @@ vec2 getMotionForInfinitePoint(const ivec2 pix)
 // The motion of the clouds over a ray of the sky, which the sky's own vector does not
 // carry: the sky's vector is the camera's rotation alone, so the upscaler (and the
 // denoiser) reproject a drifting pattern as if it stood still -- dragging it along its
-// history and letting it snap back when that history is clamped, which reads as jerking
+// history and letting it snap back when that history is clamped, which reads as jumping
 // of a moving layer at a perfectly even frame time. What a cloud moves by is the wind of
-// the layer: the setting scaled by the layer's height over the reference one, times the
-// wind's rates -- the same drift the layer's noise is written with (cloudDensity,
-// CloudLayer.h), and these numbers must stay equal to that one. What is added to the
-// drift is the eye's own shift since the frame before: a column of the layer is a place
-// in the world, so the eye walking moves it as well (at the default height that part is
-// under a tenth of a pixel, but the height is a setting and the term costs nothing).
+// the layer, and the wind the layer is drawn with is what this carries: the numbers come
+// from the host, which is where the setting is scaled to the layer's height once, for
+// the march and for this to move together (VulkanDevice.cpp, cloudDensity of
+// CloudLayer.h). What is added to the drift is the eye's own shift since the frame
+// before: a column of the layer is a place in the world, so the eye walking moves it as
+// well.
 //
 // The flat clouds of the lowest level are the other way around: their mask drifts in the
 // dome of directions rather than in the world's plane (cloudMask, CmProceduralSky.comp),
-// and the flag in the tail of the settings says which of the two is drawn.
+// and the host says which of the two is drawn by leaving the layer's height at zero.
 vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
 {
-    // The cloud settings ride in the columns of this matrix, as the host packs them
-    // (gl_vidsdl.c): c[5] and c[7] are the speed and the height, in the second column,
-    // and c[9], the flat clouds' flag, opens the third.
-    const float speed      = globalUniform.skyCubemapRotationTransform[1].y; // c[5], rt_sky_clouds_speed
-    const float height     = globalUniform.skyCubemapRotationTransform[1].w; // c[7], rt_sky_clouds_height
-    const float flatClouds = globalUniform.skyCubemapRotationTransform[2].x; // c[9], the flat clouds' flag
+    // Three numbers of the layer ride in the tail cells of the cubemap transform, where
+    // the host puts them (VulkanDevice.cpp, the procedural sky block of Render -- keep
+    // these reads equal to those writes): [0].w is the drift the layer actually has, in
+    // world units per second; [1].w is the bottom of the layer over the eye, zero for
+    // the flat clouds; [2].w is the layer's thickness.
+    const float speed     = globalUniform.skyCubemapRotationTransform[0].w;
+    const float height    = globalUniform.skyCubemapRotationTransform[1].w;
+    const float thickness = globalUniform.skyCubemapRotationTransform[2].w;
 
-    if (speed <= 0.0 || height <= 0.0 || rayDir.z <= 1.0e-3)
+    if (speed == 0.0 || rayDir.z <= 1.0e-3)
     {
         return motionInfinite;
     }
 
     vec3 dirPrev;
 
-    if (flatClouds > 0.5)
+    if (height <= 0.0)
     {
-        // p = dir * 3 + vec3(time * speed, time * speed * 0.4, 0) (CmProceduralSky.comp):
-        // the direction a feature was seen at the frame before stands a third of the
-        // offset it has drifted by away from the one it is seen at now.
+        // The flat clouds: p = dir * 3 + vec3(time * speed, time * speed * 0.4, 0)
+        // (CmProceduralSky.comp), so the direction a feature was seen at the frame
+        // before stands a third of the offset it has drifted by away from the one it is
+        // seen at now.
         dirPrev = normalize(rayDir + (globalUniform.timeDelta * speed / 3.0) * vec3(1.0, 0.4, 0.0));
     }
     else
     {
-        // CLOUD_REFERENCE_ALTITUDE and the wind's rates of CloudLayer.h, cloudDensity;
-        // the height is the floor of the layer, and what the eye sees move is a little
-        // above it -- the profile of the layer is densest a third of its depth up, and
-        // a motion read at the floor would move the pattern by up to half again.
-        const float reference = 1400.0;
-        const float scale     = height / reference;
-        const vec2  windStep  = globalUniform.timeDelta * speed * scale * vec2(30.0, 12.0);
-        const float thickness = globalUniform.skyCubemapRotationTransform[2].y; // c[8], rt_sky_clouds_thickness
-        const float centre    = height + 0.3 * thickness;
+        // The layer's wind, with the rates the noise is read with (CloudLayer.h,
+        // cloudDensity); the height is the floor of the layer, and what the eye sees
+        // move is a little above it -- the profile of the layer is densest about a
+        // third of its depth up, and a motion read at the floor would move the pattern
+        // by up to half again.
+        const float centre   = height + 0.3 * thickness;
+        const vec2  windStep = globalUniform.timeDelta * speed * vec2(30.0, 12.0);
 
         // The pattern moves against the wind (the noise is read at p + wind), so the
         // cloud a ray sees now stood, one frame ago, at the point the ray crosses plus
@@ -143,10 +144,18 @@ vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
         dirPrev = normalize(rayDir * distance + vec3(windStep, 0.0) + eyeDelta);
     }
 
-    const vec2 ndcCur  = (mat3(globalUniform.projection)     * (mat3(globalUniform.view)     *  rayDir)).xy  * 0.5 + 0.5;
-    const vec2 ndcPrev = (mat3(globalUniform.projectionPrev) * (mat3(globalUniform.viewPrev) * dirPrev)).xy * 0.5 + 0.5;
+    // Both points are projected in full, with the division by .w, the way the vectors of
+    // the world are built (HitInfo.inl): the current one is where the traced ray lands,
+    // the previous one is where the same piece of cloud stood a frame ago. Without the
+    // division (a mat3, as this used to be) the motion is short by the cosine of the
+    // angle to the view's axis, and at the edge of the screen that is half of it.
+    const vec4 clipSpacePosCur  = globalUniform.projection     * (globalUniform.view     * vec4(rayDir,  0.0));
+    const vec4 clipSpacePosPrev = globalUniform.projectionPrev * (globalUniform.viewPrev * vec4(dirPrev, 0.0));
 
-    return ndcPrev - ndcCur;
+    const vec2 screenSpaceCur   = (clipSpacePosCur.xy  / clipSpacePosCur.w ) * 0.5 + 0.5;
+    const vec2 screenSpacePrev  = (clipSpacePosPrev.xy / clipSpacePosPrev.w) * 0.5 + 0.5;
+
+    return screenSpacePrev - screenSpaceCur;
 }
 
 // Q2RTX-style path tracer G-buffer, written on the new Q2 core path only.
@@ -210,7 +219,7 @@ void storeSky(
         storeQ2GBuffer(pix, albedo, 0.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
     }
 
-    vec2 m = getMotionForInfinitePoint(pix);
+    vec2 m = getMotionForInfinitePoint(rayDir);
     m = getMotionForCloudLayer(rayDir, m);
 
     imageStoreNormal(                       pix, vec3(0.0));
