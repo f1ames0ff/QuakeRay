@@ -1469,15 +1469,15 @@ static void QRE_DrawLightWireframes (void)
 							const float off = (float)(s - 1) * w;
 
 							VectorMA (pos, off, tup, start[s]);
-							VectorMA (start[s], 48.0f, adir, end[s]);
+							VectorMA (start[s], 24.0f, adir, end[s]);
 						}
 						else
 						{
 							vec3_t tip;
 
-							VectorMA (pos, 48.0f, adir, tip);
+							VectorMA (pos, 24.0f, adir, tip);
 							VectorCopy (tip, start[s]);
-							VectorMA (tip, -48.0f * 0.28f, adir, end[s]);
+							VectorMA (tip, -24.0f * 0.28f, adir, end[s]);
 							VectorMA (end[s], (s == 3 ? 1.0f : -1.0f) * w * 3.0f, tup, end[s]);
 						}
 					}
@@ -3432,7 +3432,7 @@ qboolean QR_Editor_KeyEvent (int key, qboolean down)
 // and the release ends it.
 // ---------------------------------------------------------------------------
 
-#define QRE_GIZMO_LEN 48.0f // the drawn length of an axis arrow, world units
+#define QRE_GIZMO_LEN 24.0f // the drawn length of an axis arrow, world units
 
 static int QRE_CustomSelectedIndex (void)
 {
@@ -4456,6 +4456,21 @@ void QR_Editor_PlaceAtCrosshair (void)
 		VectorMA (qre.pick_impact, -8.0f, vpn, l->origin);
 	else
 		VectorMA (qre.cam_origin, 128.0f, vpn, l->origin);
+
+	// the new light is the editor's selection: its row is open and the axis
+	// arrows sit on it right away
+	{
+		int count = 0;
+
+		(void)RT_CustomLights (&count);
+
+		qre.sel_light_valid = true;
+		qre.sel_light.kind = RT_LIGHT_KIND_CUSTOM;
+		qre.sel_light.uniqueID = (uint64_t)UINT32_MAX + 1 + (uint64_t)(count > 0 ? count - 1 : 0);
+		VectorCopy (l->origin, qre.sel_light.position);
+		qre.sel_light.radius = l->radius;
+		qre.sel_light.color[0] = qre.sel_light.color[1] = qre.sel_light.color[2] = 1.0f;
+	}
 
 	qre.custom_placing = false;
 	qre.light_tab = 1;
