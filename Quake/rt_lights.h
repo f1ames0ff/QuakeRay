@@ -142,10 +142,14 @@ typedef struct rt_custom_light_s
 
 // The fog a level's section carries: it replaces the map's own worldspawn "fog"
 // key when the section is loaded. The colour channels are 0..1, the density is
-// >= 0 (0 turns the fog off).
+// >= 0 (0 turns the fog off). The optional "enabled" is the runtime switch of
+// the fog drawing (rt_level_fog): a level can keep an authored fog that it does
+// not show, and a section without the key leaves the switch alone.
 typedef struct rt_custom_fog_s
 {
-    qboolean has_fog; // the level's section carries a fog block
+    qboolean has_fog;     // the level's section carries a fog block
+    qboolean has_enabled; // the block states "enabled": the value below is authored
+    qboolean enabled;     // whether the level's fog is drawn at all
     vec3_t   color;
     float    density;
 } rt_custom_fog_t;
@@ -168,8 +172,11 @@ void RT_CustomFogSet (const rt_custom_fog_t *fog);
 void RT_CustomLights_ChangeMap (const char *mapname);
 
 // Issues the level's authored fog through the `fog` command, once per map load.
-// Called after the worldspawn "fog" key has been parsed (R_NewMap), so the
-// file's fog wins over the map's own.
+// A section that states "enabled" also sets rt_level_fog (the runtime switch of
+// the fog drawing) to match before the command goes in; a section without the
+// key leaves the cvar as the user configured it. Called after the worldspawn
+// "fog" key has been parsed (R_NewMap), so the file's fog wins over the map's
+// own.
 void RT_CustomLights_ApplyFog (void);
 
 // The section key of a map and the file's writer, for the editor's session.

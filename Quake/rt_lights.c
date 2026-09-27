@@ -711,10 +711,17 @@ void RT_CustomLights_ApplyFog(void)
     if (!rt_custom_fog.has_fog || rt_custom_fog_applied)
         return;
 
+    rt_custom_fog_applied = true;
+
+    /* A section that states "enabled" owns rt_level_fog, the runtime switch of
+       the fog drawing: the level remembers whether its fog is shown. A section
+       without the key leaves the cvar as the user configured it. */
+    if (rt_custom_fog.has_enabled)
+        Cvar_Set("rt_level_fog", rt_custom_fog.enabled ? "1" : "0");
+
     /* The `fog` command is the path the console and the editor's fog widget
        use; it runs on the next command-buffer pump, after the worldspawn keys
        have been parsed, so the file's fog wins over the map's own. */
-    rt_custom_fog_applied = true;
     Cbuf_AddText(va("fog %f %f %f %f\n", rt_custom_fog.density,
                     CLAMP(0.0f, rt_custom_fog.color[0], 1.0f),
                     CLAMP(0.0f, rt_custom_fog.color[1], 1.0f),
@@ -883,7 +890,28 @@ static void RT_CustomParseLights(yaml_document_t *document, yaml_node_t *node, c
     }
 }
 
-// The "fog:" block of a level section: colour ("rrggbb") and density (>= 0).
+// "true"/"false" (any case) and 1/0: the forms the file's booleans take. False
+// when the text is neither, so the caller can leave the value unset.
+static qboolean RT_CustomBoolFromString(const char *s, qboolean *out)
+{
+    while (*s == ' ' || *s == '\t')
+        s++;
+
+    if (!q_strcasecmp(s, "true") || !strcmp(s, "1"))
+    {
+        *out = true;
+        return true;
+    }
+    if (!q_strcasecmp(s, "false") || !strcmp(s, "0"))
+    {
+        *out = false;
+        return true;
+    }
+    return false;
+}
+
+// The "fog:" block of a level section: colour ("rrggbb"), density (>= 0) and
+// the optional "enabled" (true/false, 1/0).
 static void RT_CustomParseFog(yaml_document_t *document, yaml_node_t *node)
 {
     rt_custom_fog_t  fog;
@@ -916,6 +944,16 @@ static void RT_CustomParseFog(yaml_document_t *document, yaml_node_t *node)
             RT_CustomColorFromString(fvb, fog.color);
         else if (!q_strcasecmp(fkb, "density"))
             fog.density = q_max(0.0f, (float)atof(fvb));
+        else if (!q_strcasecmp(fkb, "enabled"))
+        {
+            qboolean enabled;
+
+            if (RT_CustomBoolFromString(fvb, &enabled))
+            {
+                fog.has_enabled = true;
+                fog.enabled = enabled;
+            }
+        }
     }
 
     RT_CustomFogSet(&fog);
@@ -1045,9 +1083,12 @@ const char *RT_CustomLights_Header(void)
     return
         "# Custom dlights and fog authored with the light editor: one section per\n"
         "# level, named after the map (the file name without path or extension).\n"
-        "# A section carries an optional fog and an optional list of lights:\n"
+        "# A section carries an optional fog and an optional list of lights. The fog\n"
+        "# block may state whether the level's fog is drawn at all (rt_level_fog);\n"
+        "# without \"enabled\" the file leaves the cvar as the user configured it:\n"
         "# start:\n"
         "#   fog:\n"
+        "#     enabled: true          # true/false (or 1/0), the level's fog switch\n"
         "#     color: 8899aa          # rrggbb\n"
         "#     density: 1.5           # 0 turns the fog off\n"
         "#   lights:\n"
