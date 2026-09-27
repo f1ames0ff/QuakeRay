@@ -2565,6 +2565,12 @@ void VID_Init (void)
 		CVAR_DEF_LIST (CVAR_DEF_T)
 #undef CVAR_DEF_T
 
+		/* Read-only: the incremental composition is the only mode the renderer selects. The
+		   legacy non-incremental path (0) composes every list of the scene on every frame, and
+		   the light a scene keeps was measured to flicker in it; an engine-side Cvar_SetROM is
+		   the only way to select it. A saved 0 in a configuration is ignored. */
+		rt_cluster_incremental.flags |= CVAR_ROM;
+
 		Cvar_RegisterVariable (&rt_light_report_filter);
 		Cvar_RegisterVariable (&rt_sun_edit);
 
