@@ -67,6 +67,13 @@ static_assert(kSourceMargin >= kSourceQuantum * 1.7320508f, "the source margin m
    composing over the couple of places a light that flickers leaves behind. */
 constexpr uint32_t kMaxTombstones = 16;
 
+/* The source index a slot holds while it names no light. A list keeps such a slot in the place
+   a light left instead of closing it with the last slot of the cluster: the statistics and the
+   sampling strata are addressed by the slot, so moving another light into it would re-sample
+   every pixel that reads the cluster and hand the moved light the counters of the one that
+   left. The slot is filled again by the next light the cluster takes in. */
+constexpr uint32_t kInvalidSource = std::numeric_limits<uint32_t>::max();
+
 constexpr uint8_t kVisUnknown = 0;
 constexpr uint8_t kVisDecoded = 1;
 constexpr uint8_t kVisMissing = 2;
@@ -545,18 +552,75 @@ void ClusterLightLists::GrantSource(uint32_t sourceIndex)
    cluster that is looked at twice on a frame has to come out the same both times. */
 void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t cluster, float reach)
 {
+    const uint32_t base = cluster * kMaxPerList;
+    const uint32_t fill = slotFill[cluster];
+
     if (worldLightsRef.IsClusterSolid(cluster))
     {
+        /* The cluster takes no top-up light: a slot the pass put here earlier is left holding
+           no light. */
+        for (uint32_t s = 0; s < fill; s++)
+        {
+            if (slotTopUp[base + s] != 0)
+            {
+                HoleSlot(cluster, s);
+            }
+        }
+
         return;
     }
 
     const RgFloat3D &mins = worldLightsRef.GetClusterMin(cluster);
     const RgFloat3D &maxs = worldLightsRef.GetClusterMax(cluster);
-    const uint64_t  *pBits = &slotBits[size_t(cluster) * bitsWords];
+    uint64_t        *pBits = &slotBits[size_t(cluster) * bitsWords];
 
     uint32_t best[kTopUpSources];
     float    bestDist2[kTopUpSources];
     uint32_t bestCount = 0;
+
+    // Adds a candidate to the closest few, keeping the list sorted.
+    auto consider = [&](uint32_t li, float dist2)
+    {
+        if (bestCount < kTopUpSources)
+        {
+            uint32_t p = bestCount++;
+
+            while (p > 0 && bestDist2[p - 1] > dist2)
+            {
+                bestDist2[p] = bestDist2[p - 1];
+                best[p] = best[p - 1];
+                p--;
+            }
+
+            bestDist2[p] = dist2;
+            best[p] = li;
+        }
+        else if (dist2 < bestDist2[kTopUpSources - 1])
+        {
+            uint32_t p = kTopUpSources - 1;
+
+            while (p > 0 && bestDist2[p - 1] > dist2)
+            {
+                bestDist2[p] = bestDist2[p - 1];
+                best[p] = best[p - 1];
+                p--;
+            }
+
+            bestDist2[p] = dist2;
+            best[p] = li;
+        }
+    };
+
+    /* The top-up slots the cluster holds take part in the choice: one that is still among the
+       closest keeps its slot, so the pixels that read the cluster keep sampling it through the
+       index they already read instead of being re-sampled for a permutation. */
+    for (uint32_t s = 0; s < fill; s++)
+    {
+        if (slotTopUp[base + s] != 0 && slotSource[base + s] != kInvalidSource)
+        {
+            consider(slotSource[base + s], slotDist2[base + s]);
+        }
+    }
 
     int cellLo[3];
     int cellHi[3];
@@ -596,39 +660,47 @@ void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t
 
         // A small sorted list of the closest candidates: the pass rejects most of them,
         // and only the ones that survive are handed to the cluster.
-        if (bestCount < kTopUpSources)
+        consider(uint32_t(li), dist2);
+    }
+
+    /* A top-up slot the cluster holds that is not one of the closest anymore is left holding no
+       light: the slot pass one gave the light, if any, is untouched, and the next light the
+       cluster takes in takes the free index. */
+    for (uint32_t s = 0; s < fill; s++)
+    {
+        if (slotTopUp[base + s] == 0)
         {
-            uint32_t p = bestCount++;
-
-            while (p > 0 && bestDist2[p - 1] > dist2)
-            {
-                bestDist2[p] = bestDist2[p - 1];
-                best[p] = best[p - 1];
-                p--;
-            }
-
-            bestDist2[p] = dist2;
-            best[p] = uint32_t(li);
+            continue;
         }
-        else if (dist2 < bestDist2[kTopUpSources - 1])
+
+        const uint32_t li = slotSource[base + s];
+        bool           kept = false;
+
+        for (uint32_t b = 0; b < bestCount; b++)
         {
-            uint32_t p = kTopUpSources - 1;
-
-            while (p > 0 && bestDist2[p - 1] > dist2)
+            if (best[b] == li)
             {
-                bestDist2[p] = bestDist2[p - 1];
-                best[p] = best[p - 1];
-                p--;
+                kept = true;
+                break;
             }
-
-            bestDist2[p] = dist2;
-            best[p] = uint32_t(li);
         }
+
+        if (kept)
+        {
+            continue;
+        }
+
+        HoleSlot(cluster, s);
     }
 
     for (uint32_t b = 0; b < bestCount; b++)
     {
         const uint32_t li = best[b];
+
+        if ((pBits[li >> 6] & (1ull << (li & 63))) != 0)
+        {
+            continue; // still listed: a top-up slot the cluster keeps in place
+        }
 
         if (AppendSlot(cluster, li, bestDist2[b], true))
         {
@@ -690,6 +762,21 @@ void ClusterLightLists::FillLists(UserPrint *pUserPrint)
     listGeneration++;
 }
 
+/* Leaves a slot of a cluster holding no light, and clears the bit of the light it named: the
+   slot is free for the next light the cluster takes in, and no light of the cluster moves to
+   another index, because a list is sampled and its statistics are addressed by the index. */
+void ClusterLightLists::HoleSlot(uint32_t cluster, uint32_t slot)
+{
+    const uint32_t base = cluster * kMaxPerList;
+    const uint32_t li = slotSource[base + slot];
+
+    slotUids[base + slot] = kLightUidHole;
+    slotDist2[base + slot] = 0.0f;
+    slotSource[base + slot] = kInvalidSource;
+    slotTopUp[base + slot] = 0;
+    slotBits[size_t(cluster) * bitsWords + (li >> 6)] &= ~(1ull << (li & 63));
+}
+
 /* Takes back every slot a light holds, and queues the clusters that held one: a cluster whose
    lights changed has to choose its top-up set again, and the slot to close is the one slot of
    that cluster that names the light. The lists are cluster major, so which clusters hold the
@@ -712,7 +799,7 @@ void ClusterLightLists::VacateSource(uint32_t sourceIndex)
         }
 
         const uint32_t base = c * kMaxPerList;
-        uint32_t       fill = slotFill[c];
+        const uint32_t fill = slotFill[c];
 
         for (uint32_t s = 0; s < fill; s++)
         {
@@ -721,64 +808,22 @@ void ClusterLightLists::VacateSource(uint32_t sourceIndex)
                 continue;
             }
 
-            /* A list is read as a set, so the slot is closed by moving the last slot of the
-               cluster into it, which costs the same whatever the fill is. */
-            fill--;
-
-            if (s != fill)
-            {
-                slotUids[base + s] = slotUids[base + fill];
-                slotDist2[base + s] = slotDist2[base + fill];
-                slotSource[base + s] = slotSource[base + fill];
-                slotTopUp[base + s] = slotTopUp[base + fill];
-            }
+            /* The slot is left holding no light instead of being closed with the last slot of
+               the cluster: every slot of a cluster is an index the shaders sample and read the
+               statistics by, so closing the hole would move another light of the cluster to a
+               different index and re-sample every pixel that reads it. It is filled again by
+               the next light the cluster takes in. */
+            HoleSlot(c, s);
 
             break;
         }
 
-        slotFill[c] = fill;
         pBits[word] &= ~bit;
 
         // The cluster lost one of the lights its top-up set was chosen against, so it is one of
         // the clusters that have to choose again.
         MarkDirty(c);
     }
-}
-
-/* Takes the top-up slots of a cluster away and leaves the ones pass one gave it. The set the
-   top-up pass keeps is chosen against the lights the cluster holds, so a cluster that lost or
-   can gain one has to let go of the choice made against the lights it had, and the old choice
-   would otherwise stand in the way of the new one: a light taken twice would take two slots. */
-void ClusterLightLists::DropTopUpSlots(uint32_t cluster)
-{
-    const uint32_t base = cluster * kMaxPerList;
-    const uint32_t fill = slotFill[cluster];
-    uint32_t       kept = 0;
-
-    for (uint32_t s = 0; s < fill; s++)
-    {
-        if (slotTopUp[base + s] == 0)
-        {
-            if (kept != s)
-            {
-                slotUids[base + kept] = slotUids[base + s];
-                slotDist2[base + kept] = slotDist2[base + s];
-                slotSource[base + kept] = slotSource[base + s];
-                slotTopUp[base + kept] = slotTopUp[base + s];
-            }
-
-            kept++;
-            continue;
-        }
-
-        // A cluster that no longer holds a light must stop saying that it does, or the top-up
-        // pass would skip the light as one pass one had placed.
-        const uint32_t li = slotSource[base + s];
-
-        slotBits[size_t(cluster) * bitsWords + (li >> 6)] &= ~(1ull << (li & 63));
-    }
-
-    slotFill[cluster] = kept;
 }
 
 /* Queues a cluster whose top-up set has to be looked at again on this frame. */
@@ -904,8 +949,10 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
     /* What a frame of this shape saves is one PVS row per light that did not change, and what it
        costs that a composition does not is the walk over every cluster of the map that taking a
        light's slots back is, once per cluster and not once per light; the composition is the
-       cheaper of the two once the lights that changed are half of the frame. */
-    if (changed * 2 >= uint32_t(incoming.size()))
+       cheaper of the two only once almost the whole set changed, which is a frame of its own:
+       a light that appears or disappears on its own must never renumber the slots of the scene,
+       because every list of it is read by index and its statistics are addressed by that index. */
+    if (changed * 4 >= uint32_t(incoming.size()) * 3)
     {
         return false;
     }
@@ -1073,7 +1120,6 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
     {
         for (uint32_t d = 0; d < uint32_t(dirtyClusters.size()); d++)
         {
-            DropTopUpSlots(dirtyClusters[d]);
             TopUpCluster(worldLightsRef, dirtyClusters[d], reach);
         }
     }
@@ -1155,6 +1201,22 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     uint8_t        *pTopUp = &slotTopUp[base];
     uint64_t       *pBits = &slotBits[size_t(cluster) * bitsWords];
     const uint32_t  fill = slotFill[cluster];
+
+    /* A slot the cluster left holding no light is filled before the list grows: the count of a
+       list is what the sampling strata of every pixel that reads it are made of, so a hole that
+       stays while a light is added would move the stride of the whole cluster. */
+    for (uint32_t s = 0; s < fill; s++)
+    {
+        if (pSource[s] == kInvalidSource)
+        {
+            pUids[s] = sources[sourceIndex].uid;
+            pDist2[s] = dist2;
+            pSource[s] = sourceIndex;
+            pTopUp[s] = fromTopUp ? 1 : 0;
+            pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
+            return true;
+        }
+    }
 
     if (fill < kMaxPerList)
     {
@@ -1587,20 +1649,28 @@ void ClusterLightLists::GetClusterList(uint32_t cluster, uint64_t *pUniqueIds, u
         return;
     }
 
-    const uint32_t count = std::min(maxCount, slotFill[cluster]);
+    const uint32_t  fill = slotFill[cluster];
     const uint64_t *pSrc = &slotUids[size_t(cluster) * kMaxPerList];
+    uint32_t        written = 0;
 
-    for (uint32_t i = 0; i < count; i++)
+    for (uint32_t i = 0; i < fill && written < maxCount; i++)
     {
+        if (pSrc[i] == kLightUidHole)
+        {
+            continue; // a slot a light left, which names no light
+        }
+
         if (pUniqueIds != nullptr)
         {
-            pUniqueIds[i] = pSrc[i];
+            pUniqueIds[written] = pSrc[i];
         }
+
+        written++;
     }
 
     if (pCount != nullptr)
     {
-        *pCount = slotFill[cluster];
+        *pCount = written;
     }
 }
 
