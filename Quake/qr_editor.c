@@ -3094,6 +3094,33 @@ static void QRE_CustomLightsTab (void)
 				l->style = style;
 			}
 
+			if (QR_GUI_Button ("Duplicate"))
+			{
+				rt_custom_light_t *copy = RT_CustomLights_Ensure ();
+
+				if (copy)
+				{
+					int new_count = 0;
+
+					// every property, and a small step up so the copy is visible
+					// next to the original straight away
+					*copy = *l;
+					copy->origin[2] += 32.0f;
+
+					// the copy is the editor's selection: its arrows come with it
+					(void)RT_CustomLights (&new_count);
+					qre.sel_light_valid = true;
+					qre.sel_light.kind = RT_LIGHT_KIND_CUSTOM;
+					qre.sel_light.uniqueID = (uint64_t)UINT32_MAX + 1 + (uint64_t)(new_count > 0 ? new_count - 1 : 0);
+					VectorCopy (copy->origin, qre.sel_light.position);
+					qre.sel_light.radius = copy->radius;
+				}
+				else
+				{
+					QRE_Notify ("no room for another custom light");
+				}
+			}
+			QR_GUI_SameLine ();
 			if (QR_GUI_Button ("Remove"))
 			{
 				RT_CustomLights_Remove (i);
