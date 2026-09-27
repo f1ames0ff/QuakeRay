@@ -516,6 +516,14 @@ float3 processDebug(const int2 pix, const float3 fallback)
         const float3 normal = texelFetchNormal(getCheckerboardPix(pix));
         return SHToIrradiance(sh, normal);
     }
+    else if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_ALBEDO_WHITE) != 0)
+    {
+        // The albedo of the primary hit, at regular pixels like the LUMA view
+        // below. Upstream forced the albedo to white inside the denoiser's
+        // composite; the Q2RTX core bakes it into the resolved signal before
+        // this shader, so the view shows the albedo itself.
+        return framebufAlbedo_Sampled.Load(int3(pix, 0)).rgb;
+    }
 #if GRADIENT_ESTIMATION_ENABLED
     else if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_GRADIENTS) != 0)
     {

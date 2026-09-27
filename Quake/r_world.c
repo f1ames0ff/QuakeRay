@@ -39,7 +39,6 @@ extern cvar_t rt_brush_rough;
 extern cvar_t rt_enable_pvs;
 extern cvar_t rt_reflrefr_depth;
 extern cvar_t rt_teleport_portals;
-extern cvar_t rt_wlight_intensity, rt_wlight_radius;
 extern cvar_t rt_emis_light_intensity;
 extern cvar_t rt_cluster_dlights;
 extern cvar_t rt_light_styles;
