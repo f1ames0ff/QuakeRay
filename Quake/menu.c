@@ -963,6 +963,8 @@ enum
 
 	OPT_VIDEO, // RT: OPT_VIDEO must've been at the end, let's hope nothing breaks
 
+	OPT_BENCHMARK,
+
 	OPT_SNDVOL,
 	OPT_MUSICVOL,
 
@@ -1007,6 +1009,7 @@ static int GapOffset (int opt)
 		return gapsize * 0;
 
 	case OPT_VIDEO:
+	case OPT_BENCHMARK:
 		return gapsize * 1;
 
 	case OPT_SNDVOL:
@@ -1397,6 +1400,9 @@ void M_Options_Draw (cb_context_t *cbx)
 	if (vid_menudrawfn)
 		M_Print (cbx, 16, GetY(OPT_VIDEO), "         Video Options");
 
+	// OPT_BENCHMARK:
+	M_Print (cbx, 16, GetY(OPT_BENCHMARK), "             Benchmark");
+
 	// cursor
 	M_DrawCharacter (cbx, 200, GetY(options_cursor), 12 + ((int)(realtime * 4) & 1));
 }
@@ -1435,6 +1441,9 @@ void M_Options_Key (int k)
 			break;
 		case OPT_VIDEO:
 			M_Menu_Video_f ();
+			break;
+		case OPT_BENCHMARK:
+			M_Menu_Benchmark_f ();
 			break;
 		default:
 			M_AdjustSliders (1);
@@ -1851,6 +1860,257 @@ void M_Mods_Key (int key)
 		prev_mods_cursor = mods_cursor;
 	}
 	first_mod = CLAMP (mods_cursor - MAX_MODS_ON_SCREEN + 1, first_mod, mods_cursor);
+}
+
+//=============================================================================
+/* BENCHMARK MENU */
+
+#define MAX_DEMOS_ON_SCREEN 12
+#define MAX_BENCH_DEMOS     64
+static char demo_names[MAX_BENCH_DEMOS][MAX_QPATH];
+static int  num_demos = 0;
+static int  first_demo = 0;
+static int  demo_cursor = 0;
+static char bench_error[64];
+
+static qboolean M_Benchmark_DemoExists (const char *name)
+{
+	char  path[MAX_QPATH];
+	FILE *file = NULL;
+
+	q_strlcpy (path, name, sizeof (path));
+	COM_AddExtension (path, ".dem", sizeof (path));
+	COM_FOpenFile (path, &file, NULL);
+	if (!file)
+		return false;
+
+	fclose (file);
+	return true;
+}
+
+static void M_Benchmark_AddDemo (const char *name)
+{
+	char base[MAX_QPATH];
+
+	if (!name || !name[0])
+		return;
+
+	// the playback appends the extension itself, so keep the bare name
+	q_strlcpy (base, name, sizeof (base));
+	COM_StripExtension (base, base, sizeof (base));
+	if (!base[0])
+		return;
+
+	for (int i = 0; i < num_demos; i++)
+		if (!q_strcasecmp (demo_names[i], base))
+			return;
+
+	if (num_demos < MAX_BENCH_DEMOS)
+		q_strlcpy (demo_names[num_demos++], base, sizeof (demo_names[0]));
+}
+
+void M_Menu_Benchmark_f (void)
+{
+	IN_Deactivate (modestate == MS_WINDOWED);
+	key_dest = key_menu;
+	m_state = m_benchmark;
+	m_entersound = true;
+
+	num_demos = 0;
+
+	// the demo list below skips the files inside the paks on purpose, so the
+	// standard demos and the intro loop are probed for and listed first: a
+	// long list of loose demos must not push them out
+	for (int i = 1; i <= 3; i++)
+	{
+		char name[MAX_QPATH];
+
+		q_snprintf (name, sizeof (name), "demo%i", i);
+		if (M_Benchmark_DemoExists (name))
+			M_Benchmark_AddDemo (name);
+	}
+
+	for (int i = 0; i < MAX_DEMOS; i++)
+		if (cls.demos[i][0] && M_Benchmark_DemoExists (cls.demos[i]))
+			M_Benchmark_AddDemo (cls.demos[i]);
+
+	// a demo recorded in this session is in the list too
+	DemoList_Rebuild ();
+	for (filelist_item_t *item = demolist; item; item = item->next)
+		M_Benchmark_AddDemo (item->name);
+
+	first_demo = 0;
+	demo_cursor = 0;
+	bench_error[0] = 0;
+}
+
+void M_Benchmark_Draw (cb_context_t *cbx)
+{
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	M_PrintWhite (cbx, 124, 8, "BENCHMARK");
+
+	if (num_demos <= 0)
+	{
+		M_Print (cbx, 105, 40, "no demos found");
+		return;
+	}
+
+	int demo_index = -first_demo;
+
+	for (int i = 0; i < num_demos; i++)
+	{
+		if (demo_index >= MAX_DEMOS_ON_SCREEN)
+			break;
+		if (demo_index >= 0)
+			M_Print (cbx, 105, 32 + demo_index * 8, demo_names[i]);
+		++demo_index;
+	}
+
+	M_DrawCharacter (cbx, 90, 32 + (demo_cursor - first_demo) * 8, 12 + ((int)(realtime * 4) & 1));
+	if (num_demos > MAX_DEMOS_ON_SCREEN)
+		M_DrawScrollbar (cbx, 220, 32 + 8, (float)(first_demo) / (float)(num_demos - MAX_DEMOS_ON_SCREEN), MAX_DEMOS_ON_SCREEN - 2);
+
+	if (bench_error[0])
+		M_PrintWhite (cbx, 40, 140, bench_error);
+}
+
+void M_Benchmark_Key (int key)
+{
+	int prev_demo_cursor = demo_cursor;
+
+	switch (key)
+	{
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_Menu_Options_f ();
+		return;
+
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		if (demo_cursor < 0 || demo_cursor >= num_demos)
+			return;
+
+		{
+			char     name[MAX_OSPATH];
+			FILE    *file = NULL;
+			int      forcetrack;
+			qboolean ok = false;
+
+			/* Check the demo before the playback tears the running game down. */
+			q_strlcpy (name, demo_names[demo_cursor], sizeof (name));
+			COM_AddExtension (name, ".dem", sizeof (name));
+
+			COM_FOpenFile (name, &file, NULL);
+			if (file)
+			{
+				ok = (fscanf (file, "%i", &forcetrack) == 1 && fgetc (file) == '\n');
+				fclose (file);
+			}
+
+			if (!ok || !CL_BenchStart (name, true))
+			{
+				q_snprintf (bench_error, sizeof (bench_error), "could not open %s", demo_names[demo_cursor]);
+				return;
+			}
+
+			m_state = m_none;
+			IN_Activate ();
+			key_dest = key_game;
+		}
+		return;
+
+	case K_HOME:
+		demo_cursor = 0;
+		first_demo = 0;
+		break;
+
+	case K_END:
+		demo_cursor = num_demos - 1;
+		first_demo = q_max (0, num_demos - MAX_DEMOS_ON_SCREEN);
+		break;
+
+	case K_PGUP:
+		demo_cursor -= MAX_DEMOS_ON_SCREEN;
+		first_demo = q_max (0, first_demo - MAX_DEMOS_ON_SCREEN);
+		break;
+
+	case K_PGDN:
+		demo_cursor += MAX_DEMOS_ON_SCREEN;
+		first_demo = q_max (0, q_min (first_demo + MAX_DEMOS_ON_SCREEN, num_demos - 1 - MAX_DEMOS_ON_SCREEN));
+		break;
+
+	case K_UPARROW:
+		--demo_cursor;
+		break;
+
+	case K_DOWNARROW:
+		++demo_cursor;
+		break;
+	}
+
+	if (num_demos <= 0)
+		return;
+
+	demo_cursor = CLAMP (0, demo_cursor, num_demos - 1);
+	if (demo_cursor != prev_demo_cursor)
+		S_LocalSound ("misc/menu1.wav");
+	first_demo = q_max (0, CLAMP (demo_cursor - MAX_DEMOS_ON_SCREEN + 1, first_demo, demo_cursor));
+}
+
+//=============================================================================
+/* BENCHMARK RESULTS */
+
+void M_Menu_BenchmarkResults_f (void)
+{
+	IN_Deactivate (modestate == MS_WINDOWED);
+	key_dest = key_menu;
+	m_state = m_bench_results;
+	m_entersound = true;
+}
+
+void M_BenchmarkResults_Draw (cb_context_t *cbx)
+{
+	const rt_bench_result_t *r = &rt_bench_result;
+	char                     line[64];
+
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	M_PrintWhite (cbx, 96, 8, "BENCHMARK RESULT");
+
+	if (!r->valid)
+	{
+		M_Print (cbx, 105, 48, "no result");
+		return;
+	}
+
+	M_Print (cbx, 72, 44, r->demo);
+	q_snprintf (line, sizeof (line), "%d frames, %.2f seconds", r->frames, r->seconds);
+	M_Print (cbx, 72, 56, line);
+
+	M_PrintWhite (cbx, 72, 76, "FPS");
+	q_snprintf (line, sizeof (line), "min %5.1f   max %5.1f   avg %5.1f", r->fpsMin, r->fpsMax, r->fpsAvg);
+	M_Print (cbx, 72, 86, line);
+
+	M_PrintWhite (cbx, 72, 102, "FRAMETIME, ms");
+	q_snprintf (line, sizeof (line), "min %5.2f   max %5.2f   avg %5.2f", r->frameMinMs, r->frameMaxMs, r->frameAvgMs);
+	M_Print (cbx, 72, 112, line);
+
+	M_PrintWhite (cbx, 88, 140, "Press ENTER to continue");
+}
+
+void M_BenchmarkResults_Key (int key)
+{
+	switch (key)
+	{
+	case K_ESCAPE:
+	case K_BBUTTON:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		S_LocalSound ("misc/menu2.wav");
+		M_Menu_Options_f ();
+		break;
+	}
 }
 
 //=============================================================================
@@ -2886,6 +3146,14 @@ void M_Draw (cb_context_t *cbx)
 		M_Mods_Draw (cbx);
 		break;
 
+	case m_benchmark:
+		M_Benchmark_Draw (cbx);
+		break;
+
+	case m_bench_results:
+		M_BenchmarkResults_Draw (cbx);
+		break;
+
 	case m_quit:
 		if (!fitzmode)
 		{ /* QuakeSpasm customization: */
@@ -2964,6 +3232,14 @@ void M_Keydown (int key)
 
 	case m_mods:
 		M_Mods_Key (key);
+		break;
+
+	case m_benchmark:
+		M_Benchmark_Key (key);
+		break;
+
+	case m_bench_results:
+		M_BenchmarkResults_Key (key);
 		break;
 
 	case m_keys:

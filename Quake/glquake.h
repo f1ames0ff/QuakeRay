@@ -338,7 +338,6 @@ qboolean R_CullBox (vec3_t emins, vec3_t emaxs);
 void     R_StoreEfrags (efrag_t **ppefrag);
 qboolean R_CullModelForEntity (entity_t *e);
 void     R_RotateForEntity (float matrix[16], vec3_t origin, vec3_t angles);
-mspriteframe_t *R_GetSpriteFrame (entity_t *e);
 void     R_MarkLights (dlight_t *light, int num, mnode_t *node);
 
 void R_InitParticles (void);
@@ -633,6 +632,7 @@ void RT_ModelLightsCacheFree (qmodel_t *model);
 
 RgTransform RT_GetModelTransform (const float model_matrix[16]);
 RgTransform RT_GetBrushModelMatrix (entity_t *e);
+
 RgFloat3D RT_AnglesToDir (/* const */ vec3_t angles);
 float     RT_Luminance (const vec3_t color);
 
@@ -697,8 +697,10 @@ typedef struct
 	int      clusterDropped;     // additions refused because the registry was full
 } rt_prof_report_t;
 
-// Which readouts the rt_stats command asks for, as a bit per panel number. The
-// command is the only writer, so the value can be cached for a frame at a time.
+// Which readouts the rt_stats command asks for, as a bit per panel number: its
+// level argument sets the bits up to the level, so 2 is the ray counters and the
+// GPU pass timings and 3 is all of them. The command is the only writer, so the
+// value can be cached for a frame at a time.
 extern cvar_t rt_stats_panels;
 
 enum
@@ -736,6 +738,32 @@ void   RT_Prof_Sample (int slot, double ms);
 void   RT_Prof_FrameStart (void);
 void   RT_Prof_FrameEnd (void);
 void   RT_Prof_Update (void);
+
+// rt_bench: the frame profiler summed over a demo run. CL_Bench_f starts the accumulation when
+// the timedemo clock starts and RT_Bench_Report appends the averages and maxima to
+// benchmark.log when the demo ends; the profiler is forced on for the run.
+typedef struct
+{
+	qboolean valid;
+	char     demo[MAX_QPATH];
+	int      frames;
+	double   seconds;
+	double   frameAvgMs, frameMinMs, frameMaxMs;
+	double   fpsAvg, fpsMin, fpsMax;
+} rt_bench_result_t;
+
+// Filled by RT_Bench_Report; the results screen of the benchmark menu reads it.
+extern rt_bench_result_t rt_bench_result;
+
+qboolean RT_Bench_Active (void);
+void     RT_Bench_Start (void);
+void     RT_Bench_Stop (void);
+// Marks a run that ended before its demo did (a map change, a pause, a disconnect).
+void     RT_Bench_Interrupt (void);
+qboolean RT_Bench_Interrupted (void);
+// Writes the report and returns whether there is a result to show; a run that finished no
+// screen update at all has none.
+qboolean RT_Bench_Report (const char *demo);
 
 
 #endif /* GLQUAKE_H */

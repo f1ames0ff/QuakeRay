@@ -32,8 +32,8 @@
 #endif
 
 #define RT_MAT_MAX_MATERIALS 2048
-#define RT_MAT_MAX_GLOBAL   RT_MAT_CAP_GLOBAL
-#define RT_MAT_MAX_MAP      RT_MAT_CAP_MAP
+#define RT_MAT_MAX_GLOBAL   4096
+#define RT_MAT_MAX_MAP      1024
 
 static rt_material_t rt_global_materials[RT_MAT_MAX_GLOBAL];
 static int rt_global_count = 0;
@@ -435,6 +435,7 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
 
     if (!yaml_parser_initialize(&parser))
     {
+        rt_load_file_free((byte *)filebuf);
         return 0;
     }
 
@@ -496,7 +497,6 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
 
                     if (have_name)
                     {
-                        q_strlcpy(dest->source_file, file_name, sizeof(dest->source_file));
                         dest++;
                         count++;
                     }
@@ -589,13 +589,6 @@ static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *c
             char path[MAX_OSPATH];
 
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            {
-                continue;
-            }
-            // the editor's own files: the session file is not a materials file
-            // until it is saved, and the backup never is
-            if (!q_strcasecmp(fd.cFileName, "materials.editor.yaml") ||
-                !q_strcasecmp(fd.cFileName, "backup_materials.yaml"))
             {
                 continue;
             }
@@ -740,9 +733,8 @@ void RT_MAT_ChangeMap(const char *mapname)
     rt_mat_load_ctx_t ctx = { rt_map_materials, &rt_map_count, RT_MAT_MAX_MAP };
     rt_mat_load_cb(name, &ctx);
 
-    // The gamedir's own materials.yaml is the editor's target: it has to beat
-    // the map file it was saved from, or a saved edit would be shadowed by that
-    // file on the next load of the same map.
+    // the gamedir's own materials.yaml is read after the per-map file, so a
+    // user's or a mod's override beats the map file it names
     {
         char own[MAX_OSPATH];
         q_snprintf(own, sizeof(own), "%s/materials.yaml", com_gamedir);
@@ -804,59 +796,6 @@ static void rt_mat_normalize_name(const char *name, char *out, size_t outsize)
     q_strlwr(out);
 }
 
-void RT_MAT_NormalizeName(const char *name, char *out, size_t outsize)
-{
-    rt_mat_normalize_name(name, out, outsize);
-}
-
-// "textures/+3_med25" -> 3, "progs/flame.mdl:frame2" -> 2 (a model or sprite
-// skin frame), anything else -> -1
-int RT_MAT_FrameDigit(const char *name)
-{
-    if (!q_strncasecmp(name, "textures/+", 10) && name[10] >= '0' && name[10] <= '9')
-    {
-        return name[10] - '0';
-    }
-
-    {
-        const char *p = strstr(name, ":frame");
-
-        if (p && p[6] >= '0' && p[6] <= '9' && (p[7] == '\0' || p[7] == '_'))
-        {
-            return p[6] - '0';
-        }
-    }
-    return -1;
-}
-
-void RT_MAT_GroupBaseOf(const char *name, char *out, size_t outsize)
-{
-    if (!q_strncasecmp(name, "textures/+", 10) && name[10] >= '0' && name[10] <= '9')
-    {
-        q_snprintf(out, outsize, "textures/%s", name + 11);
-        return;
-    }
-
-    {
-        const char *p = strstr(name, ":frame");
-
-        if (p && p[6] >= '0' && p[6] <= '9')
-        {
-            size_t n = (size_t)(p - name);
-
-            if (n >= outsize)
-            {
-                n = outsize - 1;
-            }
-            memcpy(out, name, n);
-            out[n] = '\0';
-            return;
-        }
-    }
-
-    q_strlcpy(out, name, outsize);
-}
-
 static rt_material_t *rt_mat_find_in(const char *name, rt_material_t *first, int count)
 {
     char n[MAX_QPATH];
@@ -908,55 +847,6 @@ rt_material_t *RT_MAT_Find(const char *name)
         return m;
     }
     return rt_mat_find_in(name, rt_global_materials, rt_global_count);
-}
-
-rt_material_t *RT_MAT_GetList(int which, int *outCount)
-{
-    if (which == RT_MAT_LIST_MAP)
-    {
-        if (outCount)
-            *outCount = rt_map_count;
-        return rt_map_materials;
-    }
-
-    if (outCount)
-        *outCount = rt_global_count;
-    return rt_global_materials;
-}
-
-int RT_MAT_AppendGlobal(const rt_material_t *mat)
-{
-    if (!rt_initialized || rt_global_count >= RT_MAT_MAX_GLOBAL)
-        return -1;
-
-    rt_global_materials[rt_global_count] = *mat;
-    return rt_global_count++;
-}
-
-void RT_MAT_SetListCounts(int globalCount, int mapCount)
-{
-    if (globalCount < 0)
-        globalCount = 0;
-    if (mapCount < 0)
-        mapCount = 0;
-    if (globalCount > RT_MAT_MAX_GLOBAL)
-        globalCount = RT_MAT_MAX_GLOBAL;
-    if (mapCount > RT_MAT_MAX_MAP)
-        mapCount = RT_MAT_MAX_MAP;
-
-    /* dropped entries must not stay findable through a stale valid flag */
-    for (int i = globalCount; i < rt_global_count; i++)
-        rt_global_materials[i].valid = false;
-    for (int i = mapCount; i < rt_map_count; i++)
-        rt_map_materials[i].valid = false;
-
-    rt_global_count = globalCount;
-    rt_map_count = mapCount;
-}
-
-const char *RT_MAT_CurrentMap(void)
-{
-    return rt_current_map;
 }
 
 qboolean RT_MAT_Enabled(void)

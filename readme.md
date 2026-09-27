@@ -70,4 +70,3 @@ Steps:
 
 ## More information
 1. [changelog.md](changelog.md)
-2. [material-editor.md](material-editor.md)

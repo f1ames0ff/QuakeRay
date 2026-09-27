@@ -25,7 +25,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "tasks.h"
-#include "qr_editor.h"
 #include <setjmp.h>
 
 /*
@@ -985,6 +984,10 @@ void _Host_Frame (double time)
 	if (host_speeds.value)
 		time1 = Sys_DoubleTime ();
 
+	// a finished benchmark run asks for its results screen here, after the disconnect it may
+	// have ended in has settled
+	CL_BenchShowPendingResults ();
+
 	SCR_UpdateScreen (true);
 
 	CL_RunParticles (); // johnfitz -- seperated from rendering
@@ -1159,8 +1162,6 @@ void Host_Shutdown (void)
 
 	// keep Con_Printf from trying to update the screen
 	scr_disabled_for_loading = true;
-
-	QR_Editor_Shutdown (); // releases the ImGui context and the font material
 
 	Host_WriteConfiguration ();
 
