@@ -63,6 +63,7 @@ extern atomic_uint32_t rt_require_static_submit; // gl_rmain.c
 // The editor edits what the new light system builds (TAL and the fake dlights
 // of materials); the old system has neither, so it refuses to start on it.
 extern cvar_t rt_truelight; // gl_vidsdl.c
+extern cvar_t rt_debugemissive; // gl_vidsdl.c: draw the DTAL of models and sprites
 
 // The level's own fog (gl_fog.c): read through the getters and written through
 // the `fog` command, the same path a map's key and the console use.
@@ -2482,6 +2483,14 @@ static void QRE_BuildPanelGUI (void)
 	QR_GUI_BeginPanel ("qr_material_editor", glwidth - panel_w, 0, panel_w, glheight);
 
 	QR_GUI_Label ("MATERIAL EDITOR");
+
+	{
+		int dbg = CVAR_TO_BOOL (rt_debugemissive) ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("debug DTAL", &dbg,
+		                     "Draw the triangle area lights every model and sprite pose generates (rt_debugemissive)."))
+			Cvar_Set ("rt_debugemissive", dbg ? "1" : "0");
+	}
 	if (qre.pick_glt)
 	{
 		char buf[MAX_QPATH + 16];
