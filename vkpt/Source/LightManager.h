@@ -34,6 +34,8 @@ namespace vkpt
 
 struct ShLightEncoded;
 
+constexpr uint64_t kLightUidHole = ~0ull;
+
 class LightManager
 {
 public:

@@ -1184,9 +1184,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (has_luma_key && !emisBuf)
 		Con_Printf ("RT: material '%s': texture_emissive '%s' could not be loaded; using no emissive mask\n",
 		            mat->name, mat->filename_emissive);
-	const qboolean has_emis_mask = (emisBuf != NULL) || use_color_emissive;
-	const float emissScale = (isBrush && has_emis_mask && mat->is_light) ? mat->light_brightness : 1.0f;
-	const qboolean maskedTAL = (emissScale != 1.0f);
+	const float lightBright = CLAMP (0.0f, mat->light_brightness, 5.0f);
+	const float brightVis   = (lightBright < 1.0f) ? lightBright : 1.0f;
 	/* Per-material rt_emis_blend override, packed into the alpha of the
 	   roughness-metallic-emission texture: 0 = not authored, so the global
 	   cvar applies; otherwise the authored mode plus one. */
@@ -1285,12 +1284,12 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 		emissMeanBase += emiss;
 
-		float emissOut = emiss * emissScale;
-		if (maskedTAL && emissOut > 1.0f)
+		float emissOut = emiss * brightVis;
+		if (emissOut > 1.0f)
 			emissOut = 1.0f;
 		emissMean += emissOut;
 
-		if (emissOut > RT_EMIS_GLOW_THRESHOLD)
+		if (emiss > RT_EMIS_GLOW_THRESHOLD)
 		{
 			const int px = i % tw;
 			const int py = i / tw;
@@ -1353,14 +1352,17 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 		if (use_color_emissive)
 			glt->rtemissivetex = true;
+	}
 
-		if (maskedTAL && mat->light_brightness != 1.0f)
-		{
-			if (glt->rthaslightcolor)
-				ModifyColorValue (glt->rtlightcolor, 1.0f / mat->light_brightness);
-		}
-		else if (mat->light_brightness != 1.0f)
-			ModifyColorValue (glt->rtemissivecolor, mat->light_brightness);
+	if (lightBright != 1.0f)
+	{
+		const qboolean mask_lit_model = glt->owner && glt->owner->type == mod_alias && mat->is_light;
+		const qboolean light_samples_mask = glt->rtemissivetex && (isBrush || mask_lit_model);
+		const float gain = (light_samples_mask && lightBright < 1.0f) ? 1.0f : lightBright;
+
+		if (glt->rthaslightcolor)
+			VectorScale (glt->rtlightcolor, gain, glt->rtlightcolor);
+		VectorScale (glt->rtemissivecolor, gain, glt->rtemissivecolor);
 	}
 
 	glt->rtislight = mat->is_light;
