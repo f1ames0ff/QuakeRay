@@ -168,8 +168,8 @@ private:
     std::vector<uint32_t> slotSource;
     std::vector<uint32_t> slotFill;   // one per cluster
     // Set while a slot holds a light the top-up pass put there rather than the PVS walk, so
-    // that a cluster which loses or can gain a light can let go of the choice that was made
-    // against the lights it had.
+    // that a cluster whose top-up set is looked at again can let go of the ones that fell out
+    // of it and keep the slots of the ones that are still among its closest few.
     std::vector<uint8_t>  slotTopUp;  // kMaxPerList per cluster
     // Membership of a cluster, one bit per source: set while the source holds a slot there, so
     // that the top-up pass does not hand the same light to the same cluster twice.

@@ -548,8 +548,9 @@ void ClusterLightLists::GrantSource(uint32_t sourceIndex)
 
 /* Pass two for one cluster: the lights the cluster's own PVS hides but that stand close enough
    to its bounds, of which it keeps the closest few. The slots the cluster already holds, the
-   ones pass one gave it, are left to stand: the pass runs on the light set of the frame, and a
-   cluster that is looked at twice on a frame has to come out the same both times. */
+   ones pass one gave it, are left to stand, and a top-up slot whose light is still among the
+   closest few keeps its place: the pass runs on the light set of the frame, and a cluster that
+   is looked at twice on a frame has to come out the same both times. */
 void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t cluster, float reach)
 {
     const uint32_t base = cluster * kMaxPerList;
@@ -668,7 +669,7 @@ void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t
        cluster takes in takes the free index. */
     for (uint32_t s = 0; s < fill; s++)
     {
-        if (slotTopUp[base + s] == 0)
+        if (slotTopUp[base + s] == 0 || slotSource[base + s] == kInvalidSource)
         {
             continue;
         }
@@ -721,29 +722,35 @@ void ClusterLightLists::FillLists(UserPrint *pUserPrint)
 {
     uint32_t total = 0;
 
-    stats.fullClusters = 0;
-
     for (uint32_t c = 0; c < numClusters; c++)
     {
         offsets[c] = total;
         total += slotFill[c];
-        stats.fullClusters += (slotFill[c] >= kMaxPerList) ? 1 : 0;
     }
 
     offsets[numClusters] = total;
     listEntries = total;
     stats.listEntries = total;
 
+    /* A cluster is full while every one of its slots holds a light: a slot a light left and no
+       light has taken since is free, and the count is what says a light was turned away by the
+       cap rather than by the reach or the distance. */
+    stats.fullClusters = 0;
+
     for (uint32_t c = 0; c < numClusters; c++)
     {
         const uint32_t  fill = slotFill[c];
         const uint64_t *pSrc = &slotUids[size_t(c) * kMaxPerList];
         uint64_t       *pDst = &list[offsets[c]];
+        uint32_t        live = 0;
 
         for (uint32_t s = 0; s < fill; s++)
         {
             pDst[s] = pSrc[s];
+            live += (pSrc[s] != kLightUidHole) ? 1 : 0;
         }
+
+        stats.fullClusters += (live >= kMaxPerList) ? 1 : 0;
     }
 
     if (stats.fullClusters > 0 && !warnedAboutFullList && pUserPrint != nullptr)
@@ -769,6 +776,19 @@ void ClusterLightLists::HoleSlot(uint32_t cluster, uint32_t slot)
 {
     const uint32_t base = cluster * kMaxPerList;
     const uint32_t li = slotSource[base + slot];
+
+    if (li == kInvalidSource)
+    {
+        return; // already a hole: no light to take back and no bit to clear
+    }
+
+    // The slot was one of the grants the counters of this light stand for: they follow the
+    // slots it holds, so that a light whose slots were all taken back is not reported as one
+    // a cluster still samples.
+    if (granted[li] > 0)
+    {
+        granted[li]--;
+    }
 
     slotUids[base + slot] = kLightUidHole;
     slotDist2[base + slot] = 0.0f;
@@ -1249,6 +1269,12 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     // The evicted light is no longer sampled by this cluster, so its bit must stop claiming the
     // opposite: otherwise the top-up pass would skip it as one that pass 1 had already placed.
     const uint32_t evicted = pSource[farthest];
+
+    if (evicted != kInvalidSource && granted[evicted] > 0)
+    {
+        granted[evicted]--; // the slot the counters of the light stand for went with it
+    }
+
     pBits[evicted >> 6] &= ~(1ull << (evicted & 63));
     pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
 
