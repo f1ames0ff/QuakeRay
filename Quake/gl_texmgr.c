@@ -1938,7 +1938,7 @@ void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants)
 	// get source data
 	//
 
-	if (glt->source_file[0] && glt->source_offset && glt->source_offset <= (src_offset_t)0x7fffffff)
+	if (glt->source_file[0] && glt->source_offset)
 	{
 		// lump inside file
 		FILE *f = NULL;
@@ -1989,9 +1989,9 @@ void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants)
 	{
 		allocated = data = Image_LoadImage (glt->source_file, (int *)&glt->source_width, (int *)&glt->source_height); // simple file
 	}
-	else if (glt->source_offset)
+	else if (!glt->source_file[0] && glt->source_offset)
 	{
-		data = (byte *)glt->source_offset; // image in memory (the offset is its address)
+		data = (byte *)glt->source_offset; // image in memory
 	}
 	if (!data)
 	{
@@ -2160,7 +2160,7 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 	if (!glt)
 		return NULL;
 
-	if (glt->source_file[0] && glt->source_offset && glt->source_offset <= (src_offset_t)0x7fffffff)
+	if (glt->source_file[0] && glt->source_offset)
 	{
 		FILE *f = NULL;
 		int   size;
@@ -2200,9 +2200,9 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 	{
 		allocated = src = Image_LoadImage (glt->source_file, (int *)&glt->source_width, (int *)&glt->source_height);
 	}
-	else if (glt->source_offset)
+	else if (!glt->source_file[0] && glt->source_offset)
 	{
-		src = (byte *)glt->source_offset; // image in memory (the offset is its address)
+		src = (byte *)glt->source_offset;
 	}
 
 	if (!src || glt->source_width <= 0 || glt->source_height <= 0)
