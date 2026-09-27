@@ -974,6 +974,22 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // technique - or a failed dispatch - keeps the A4.5 TAAU, the legacy's own if/else
             // (VulkanDevice.cpp:1100-1136).
             bool upscaledByFsr = false;
+
+            // The DLSS honesty note, at the technique selection point: the RHI path has no NGX
+            // integration, so a frame that asks for RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS (the
+            // helper's IsNvDlssEnabled predicate) falls through to the `RenderTaaU` below - the
+            // legacy's own substitution when DLSS cannot run, but here it is silent. The warning
+            // names the deferral once per run, so `rt_upscale_dlss` does not look like a technique
+            // the frame used. The deferral and its later path are recorded in RhiFsrPass.h:199-201
+            // (A6/A7-ML).
+            if (sky.renderResolution != nullptr && sky.renderResolution->IsNvDlssEnabled() &&
+                !warnedDlssFallback)
+            {
+                warnedDlssFallback = true;
+                print("Warning: RHI: DLSS is not implemented on the RHI path yet; a DLSS-selected "
+                      "frame is upscaled by the TAAU instead (deferred, RhiFsrPass.h)");
+            }
+
             if (fsrPass != nullptr && fsrPass->IsCreated() && sky.renderResolution != nullptr &&
                 uniform != nullptr &&
                 (sky.renderResolution->IsAmdFsr2Enabled() || sky.renderResolution->IsAmdFsr3Enabled()))

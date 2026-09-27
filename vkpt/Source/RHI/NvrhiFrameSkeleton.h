@@ -645,6 +645,10 @@ private:
     bool warnedMissingAlbedo = false;
     // One-shot for a missing or unwrappable direct-lighting image of the traced chain.
     bool warnedMissingDirect = false;
+    // One-shot for the DLSS deferral: the RHI path has no NGX integration, so a frame that asks
+    // for RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS is upscaled by the TAAU instead
+    // (RhiFsrPass.h:199-201, deferred to A6/A7-ML).
+    bool warnedDlssFallback = false;
 
     // Valid only for the format the pipeline was created with: the swapchain can
     // switch between its formats when it is recreated.

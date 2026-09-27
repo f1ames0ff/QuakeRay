@@ -410,7 +410,7 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
         primaryPass->GetTlasLayout() == nullptr || primaryPass->GetUniformLayout() == nullptr ||
         primaryPass->GetVertexDataLayout() == nullptr || primaryPass->GetHoleLayout() == nullptr ||
         primaryPass->GetHoleSet() == nullptr || primaryPass->GetRayStatsLayout() == nullptr ||
-        primaryPass->GetRayStatsSet() == nullptr)
+        primaryPass->GetRayStatsSet(0) == nullptr)
     {
         LogMessage(print, "Warning: RHI: the direct RT pass needs the created primary RT pass for its shared set layouts");
         return false;
@@ -791,7 +791,7 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
     state.addBindingSet(primaryPass->GetHoleSet());       // 8
     state.addBindingSet(primaryPass->GetHoleSet());       // 9
     state.addBindingSet(primaryPass->GetHoleSet());       // 10
-    state.addBindingSet(primaryPass->GetRayStatsSet());   // 11
+    state.addBindingSet(primaryPass->GetRayStatsSet(frameIndex)); // 11
 
     pCommandList->setRayTracingState(state);
 

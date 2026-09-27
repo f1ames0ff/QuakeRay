@@ -9,6 +9,7 @@
 
 #include "../Framebuffers.h"
 #include "../Generated/ShaderCommonC.h"
+#include "../RayStats.h"
 
 #include <cstring>
 #include <string>
@@ -242,8 +243,20 @@ RhiRtPrimaryPass::~RhiRtPrimaryPass()
         target.height = 0;
     }
 
-    rayStatsSet = nullptr;
-    rayStatsBuffer = nullptr;
+    // The engine RayStats buffers are destroyed after this pass (VulkanDevice_Init.cpp:855 before
+    // :917) and the waitForIdle above has drained every list that could reference the wraps.
+    rayStatsFallbackSet = nullptr;
+    rayStatsFallbackBuffer = nullptr;
+    for (nvrhi::BindingSetHandle &set : rayStatsSets)
+    {
+        set = nullptr;
+    }
+    for (nvrhi::BufferHandle &wrap : rayStatsWraps)
+    {
+        wrap = nullptr;
+    }
+    std::memset(rayStatsHandles, 0, sizeof(rayStatsHandles));
+    rayStats = nullptr;
     renderCubemapSet = nullptr;
     renderCubemapSetSampler = nullptr;
     renderCubemapSampler = nullptr;
@@ -272,6 +285,7 @@ RhiRtPrimaryPass::~RhiRtPrimaryPass()
 bool RhiRtPrimaryPass::Create(nvrhi::IDevice *pDevice,
                              rhi::RhiFrameContext *pFrameContext,
                              rhi::RhiTextureTable *pTextureTable,
+                             RayStats *pRayStats,
                              const char *pShaderFolderPath,
                              PrintFunction pfnPrint)
 {
@@ -285,6 +299,7 @@ bool RhiRtPrimaryPass::Create(nvrhi::IDevice *pDevice,
     shaderFolderPath = pShaderFolderPath != nullptr ? pShaderFolderPath : "";
     frameContext = pFrameContext;
     textureTable = pTextureTable;
+    rayStats = pRayStats;
 
     if (device == nullptr)
     {
@@ -529,11 +544,14 @@ bool RhiRtPrimaryPass::Create(nvrhi::IDevice *pDevice,
         }
     }
 
-    // The ray-stats stand-in. The engine's RayStats has no RHI accessor and its buffer is
-    // host-visible and reset by a CPU memset the RHI path never runs (RayStats.cpp:142-149), so
-    // the pass owns a small device-local RWStructuredBuffer; the raygen's `rayStatsAdd` only
-    // increments it and nothing reads it back, so the contents do not matter. The desc carries the
-    // stride and the UAV flag the structured UAV binding requires, and the initial state keeps the
+    // The ray-stats fallback (set 11). The engine's own RayStats object is wrapped per frame slot
+    // (PrepareRayStatsSet below): the raygen's `rayStatsAdd` then accumulates into the very
+    // host-visible buffer VulkanDevice::DrawFrame reads back and resets, so the ray counters are
+    // alive on the RHI path exactly as they are on the legacy one. This module-owned device-local
+    // stand-in covers the case RayStats is unavailable or a slot's buffer cannot be wrapped - the
+    // trace must never stop because a diagnostic buffer is missing, and set 11 must never be null.
+    // Its contents are never read back; only its descriptor has to be valid. The desc carries the
+    // stride and the UAV flag a structured UAV binding requires, and the initial state keeps the
     // automatic-barrier pass from reporting an unknown prior state.
     {
         nvrhi::BufferDesc desc;
@@ -542,21 +560,37 @@ bool RhiRtPrimaryPass::Create(nvrhi::IDevice *pDevice,
         desc.canHaveUAVs = true;
         desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
         desc.keepInitialState = true;
-        desc.debugName = "RhiRtPrimaryPass ray stats";
+        desc.debugName = "RhiRtPrimaryPass ray stats (stand-in)";
 
-        rayStatsBuffer = rhi::createBuffer(device, desc, desc.debugName);
+        rayStatsFallbackBuffer = rhi::createBuffer(device, desc, desc.debugName);
 
-        if (rayStatsBuffer != nullptr)
+        if (rayStatsFallbackBuffer != nullptr)
         {
             nvrhi::BindingSetDesc setDesc;
-            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, rayStatsBuffer));
-            rayStatsSet = device->createBindingSet(setDesc, rayStatsLayout);
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, rayStatsFallbackBuffer));
+            rayStatsFallbackSet = device->createBindingSet(setDesc, rayStatsLayout);
         }
 
-        if (rayStatsBuffer == nullptr || rayStatsSet == nullptr)
+        if (rayStatsFallbackBuffer == nullptr || rayStatsFallbackSet == nullptr)
         {
-            LogMessage(print, "Warning: RHI: failed to create the primary RT pass ray-stats buffer");
+            LogMessage(print, "Warning: RHI: failed to create the primary RT pass ray-stats fallback buffer");
             return false;
+        }
+    }
+
+    // The per-slot wraps of the engine's RayStats buffers, made eagerly for every slot: the direct,
+    // indirect and reflect/refract passes share the set of the slot they dispatch in even on frames
+    // the primary itself skips, and RayStats has one buffer per engine frame slot, so a single set
+    // cannot serve them all. The host resets the slot's buffer by a CPU memset before this frame is
+    // recorded and reads the previous use of the slot back the same way
+    // (VulkanDevice.cpp:1666-1671); the raygen's InterlockedAdd is the only GPU writer of it. A
+    // failure keeps the stand-in fallback and is already warned about inside PrepareRayStatsSet, so
+    // Create stays successful.
+    if (rayStats != nullptr)
+    {
+        for (uint32_t slot = 0; slot < MAX_FRAMES_IN_FLIGHT; slot++)
+        {
+            PrepareRayStatsSet(slot);
         }
     }
 
@@ -846,6 +880,11 @@ void RhiRtPrimaryPass::Render(nvrhi::ICommandList *pCommandList,
         return;
     }
 
+    // Set 11's refresh for this slot. The wrap and the set were made in Create for every slot; this
+    // is the defensive re-check that picks up a re-created engine RayStats buffer. A failure is not
+    // fatal - GetRayStatsSet serves the stand-in fallback and the trace stays alive.
+    PrepareRayStatsSet(frameIndex);
+
     // The image state contract, spelled out on Render in the header: the engine leaves every
     // framebuffer image in VK_IMAGE_LAYOUT_GENERAL - NVRHI's UnorderedAccess - and this native
     // wrap keeps no state between command lists (RhiTextureSource.h), so every list announces that
@@ -888,7 +927,7 @@ void RhiRtPrimaryPass::Render(nvrhi::ICommandList *pCommandList,
     state.addBindingSet(renderCubemapSet);        // 8
     state.addBindingSet(holeSet);                 // 9
     state.addBindingSet(holeSet);                 // 10
-    state.addBindingSet(rayStatsSet);             // 11
+    state.addBindingSet(GetRayStatsSet(frameIndex)); // 11
 
     pCommandList->setRayTracingState(state);
 
@@ -1156,6 +1195,119 @@ bool RhiRtPrimaryPass::PrepareRenderCubemapSet()
 
     renderCubemapSetTexture = renderCubemapTexture.Get();
     renderCubemapSetSampler = renderCubemapSampler.Get();
+    return true;
+}
+
+nvrhi::BindingSetHandle RhiRtPrimaryPass::GetRayStatsSet(uint32_t frameIndex) const
+{
+    if (frameIndex < MAX_FRAMES_IN_FLIGHT && rayStatsSets[frameIndex] != nullptr)
+    {
+        return rayStatsSets[frameIndex];
+    }
+
+    // The fallback is the only set a caller can get when RayStats is unavailable, its buffer is
+    // missing, or the frame index is out of range. It is created in Create, so this never returns
+    // null while the pass is created.
+    return rayStatsFallbackSet;
+}
+
+bool RhiRtPrimaryPass::PrepareRayStatsSet(uint32_t frameIndex)
+{
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
+
+    if (rayStats == nullptr)
+    {
+        // No engine object: the stand-in fallback covers every slot.
+        return false;
+    }
+
+    const VkBuffer rawBuffer = rayStats->GetBuffer(frameIndex);
+
+    if (rawBuffer == VK_NULL_HANDLE)
+    {
+        if (!warnedBadRayStats)
+        {
+            warnedBadRayStats = true;
+            LogMessage(print, "Warning: RHI: the engine ray-stats buffer is missing, the stand-in keeps set 11 valid");
+        }
+        return false;
+    }
+
+    if (rayStatsSets[frameIndex] != nullptr && rayStatsHandles[frameIndex] == rawBuffer)
+    {
+        return true;
+    }
+
+    // A changed raw handle (the engine re-created its RayStats buffers; nothing does that today)
+    // retires the slot's old wrap and set through the frame context, like the module's other wraps.
+    if (frameContext != nullptr)
+    {
+        if (rayStatsSets[frameIndex] != nullptr)
+        {
+            frameContext->Retire(rayStatsSets[frameIndex]);
+        }
+        if (rayStatsWraps[frameIndex] != nullptr)
+        {
+            frameContext->Retire(rayStatsWraps[frameIndex]);
+        }
+    }
+
+    rayStatsSets[frameIndex] = nullptr;
+    rayStatsWraps[frameIndex] = nullptr;
+    rayStatsHandles[frameIndex] = VK_NULL_HANDLE;
+
+    // The engine's RayStats buffer is a host-visible, host-coherent VK_BUFFER_USAGE_STORAGE_BUFFER
+    // buffer of exactly RtRayStats = 5 uints (RayStats.cpp:57-69, RaygenCommon.hlsli:602-605), which
+    // is what the shader's RWStructuredBuffer<RtRayStats> read-write access needs: the wrap claims
+    // canHaveUAVs and the element stride, so the StructuredBuffer_UAV binding is legal, and it
+    // claims UnorderedAccess as the state the raygen's InterlockedAdd leaves the buffer in. The
+    // engine also writes the buffer from the CPU (the per-frame Reset), which NVRHI cannot see; the
+    // claim is that invisible writer's stand-in, exactly as for the fallback.
+    nvrhi::BufferDesc desc;
+    desc.byteSize = RAY_STATS_BUFFER_SIZE;
+    desc.structStride = RAY_STATS_BUFFER_SIZE;
+    desc.canHaveUAVs = true;
+    desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    desc.keepInitialState = true;
+    desc.debugName = "RhiRtPrimaryPass ray stats frame " + std::to_string(frameIndex);
+
+    rayStatsWraps[frameIndex] = device->createHandleForNativeBuffer(
+        nvrhi::ObjectTypes::VK_Buffer,
+        nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(rawBuffer))),
+        desc);
+
+    if (rayStatsWraps[frameIndex] == nullptr)
+    {
+        if (!warnedBadRayStats)
+        {
+            warnedBadRayStats = true;
+            LogMessage(print, "Warning: RHI: failed to wrap the engine ray-stats buffer, the stand-in keeps set 11 valid");
+        }
+        return false;
+    }
+
+    nvrhi::BindingSetDesc setDesc;
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, rayStatsWraps[frameIndex]));
+
+    rayStatsSets[frameIndex] = device->createBindingSet(setDesc, rayStatsLayout);
+
+    if (rayStatsSets[frameIndex] == nullptr)
+    {
+        if (!warnedBadRayStats)
+        {
+            warnedBadRayStats = true;
+            LogMessage(print, "Warning: RHI: failed to create the ray-stats binding set, the stand-in keeps set 11 valid");
+        }
+
+        if (frameContext != nullptr)
+        {
+            frameContext->Retire(rayStatsWraps[frameIndex]);
+        }
+        rayStatsWraps[frameIndex] = nullptr;
+        return false;
+    }
+
+    rayStatsHandles[frameIndex] = rawBuffer;
     return true;
 }
 

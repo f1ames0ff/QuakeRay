@@ -427,10 +427,11 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
             // The real ray-tracing pass of A4.1 (RHI/RhiRtPrimaryPass.h), created only when 'rhirt'
             // is on: the engine's primary-visibility raygen with the engine's two misses and its two
             // hit groups, dispatched over the same RHI acceleration structures. Its set 4 is the
-            // shared texture table, so the host hands the table over; the engine's framebuffer
-            // images are resolved per frame by the pass itself, so no wrap is created here. A
-            // failure leaves the pointer null: with the flag on the skeleton then refuses to be
-            // available and the legacy renderer keeps the frame.
+            // shared texture table, so the host hands the table over; set 11 is the engine's
+            // RayStats object, which the pass wraps per frame slot so the ray counters reach the
+            // host's readback; the engine's framebuffer images are resolved per frame by the pass
+            // itself, so no wrap is created here. A failure leaves the pointer null: with the flag
+            // on the skeleton then refuses to be available and the legacy renderer keeps the frame.
             if (libconfig.rhiRayTracing)
             {
                 // The procedural sky pass of A5.4 (RHI/RhiProceduralSkyPass.h): the default sky's
@@ -527,7 +528,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
 
                 rhiRtPrimaryPass = std::make_shared<RhiRtPrimaryPass>();
                 if (!rhiRtPrimaryPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
-                                              rhiTextureTable.get(), info->pShaderFolderPath,
+                                              rhiTextureTable.get(), rayStats.get(), info->pShaderFolderPath,
                                               [this](const char *pMessage) { Print(pMessage); }))
                 {
                     rhiRtPrimaryPass.reset();

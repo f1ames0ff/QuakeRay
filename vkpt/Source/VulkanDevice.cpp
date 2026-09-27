@@ -1797,7 +1797,10 @@ void VulkanDevice::GetFrameStatsEx(RgFrameStats *pStats) const
     }
     pStats->fpsX10 = statsFpsX10;
 
-    if (passTimings != nullptr && passTimings->IsSupported())
+    // Query support alone is not enough to call the numbers valid: the legacy Render is the only
+    // producer of marks (VulkanDevice.cpp:720-1231), so a `rhiframe` frame collected nothing and
+    // "not collected" (0) is the honest answer, distinguishable from a measured 0 ms.
+    if (passTimings != nullptr && passTimings->IsSupported() && passTimings->HasRecordedMarks())
     {
         pStats->gpuTimingValid = 1;
         pStats->gpuFrameMs = passTimings->GetTotalMs();

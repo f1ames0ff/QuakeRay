@@ -34,6 +34,7 @@ namespace vkpt
 {
 
 class Framebuffers;
+class RayStats;
 
 namespace rhi
 {
@@ -76,7 +77,9 @@ class RhiTextureTable;
 //                                cube until then;
 //   set 9  (portals)           - empty: `RGenPrimary` declares no set 9;
 //   set 10 (volumetric)        - empty: no RT shader declares set 10;
-//   set 11 ray stats           - an RHI-owned RWStructuredBuffer<RtRayStats> stand-in.
+//   set 11 ray stats           - the engine's own RayStats buffers: one wrap of the slot's
+//                                host-visible RtRayStats buffer per frame slot, with the module's
+//                                RHI-owned stand-in as the fallback when RayStats is unavailable.
 // Twelve layouts, so the pinned NVRHI's binding-layout cap has to be the raised one: the module
 // is written against `c_MaxBindingLayouts == 16` (the patch build_win.ps1 applies for the duration
 // of a build, third_party/nvrhi-max-binding-layouts.patch). Every set is laid out with
@@ -86,11 +89,14 @@ class RhiTextureTable;
 // these shaders actually run in.
 //
 // What the pass needs from the host:
-//  - the RHI device, the frame context, the shared texture table and the shader folder once, in
-//    Create() - the pass loads the five engine blobs itself the way RhiDebugTracePass does. The
-//    texture table is an argument Create() adds to the A4 sketch's shape because set 4 has to be
-//    the table's own layout in the pipeline; the table is host-owned and outlives the pass, as it
-//    does for RhiSkyPass;
+//  - the RHI device, the frame context, the shared texture table, the engine's RayStats object and
+//    the shader folder once, in Create() - the pass loads the five engine blobs itself the way
+//    RhiDebugTracePass does. The texture table is an argument Create() adds to the A4 sketch's
+//    shape because set 4 has to be the table's own layout in the pipeline; the table is host-owned
+//    and outlives the pass, as it does for RhiSkyPass. RayStats is the host's own object
+//    (VulkanDevice_Init.cpp:261), also borrowed; the pass wraps its per-slot buffers so the
+//    counters it accumulates are the ones the host reads back and resets, and a null RayStats (or a
+//    missing buffer) falls back to the module-owned stand-in, so set 11 is never null;
 //  - one SetRenderCubemap() after the procedural-sky module (stream S1, RhiProceduralSkyPass) was
 //    created and before the first Render, with that module's real cube and LINEAR/REPEAT sampler;
 //    set 8 keeps the placeholder until then, a null call restores it, and the module's textures
@@ -148,14 +154,17 @@ public:
     // that owns the per-slot command lists and the retire queues every replaced wrap and set goes
     // through; 'pTextureTable' is the host's shared bindless table (RHI/RhiTextureTable.h), whose
     // layout becomes set 4 and whose table is bound with it - neither is owned, both have to
-    // outlive this object, and a null or unusable one makes Create fail. 'pShaderFolderPath' is the
-    // folder ShaderManager loads the engine blobs from, with the trailing separator; the five RT
-    // blobs above are read from it. The pass logs through 'pfnPrint'. Returns false and leaves the
-    // pass unusable if a shader, a layout, a resource, the pipeline or the shader table cannot be
-    // created.
+    // outlive this object, and a null or unusable one makes Create fail. 'pRayStats' is the host's
+    // engine RayStats object (RayStats.h): borrowed like the two above, but it may be null, because
+    // it only serves the diagnostics - set 11 then keeps the module-owned stand-in the class
+    // creates for exactly that case. 'pShaderFolderPath' is the folder ShaderManager loads the
+    // engine blobs from, with the trailing separator; the five RT blobs above are read from it.
+    // The pass logs through 'pfnPrint'. Returns false and leaves the pass unusable if a shader, a
+    // layout, a resource, the pipeline or the shader table cannot be created.
     bool Create(nvrhi::IDevice *pDevice,
                 rhi::RhiFrameContext *pFrameContext,
                 rhi::RhiTextureTable *pTextureTable,
+                RayStats *pRayStats,
                 const char *pShaderFolderPath,
                 PrintFunction pfnPrint);
 
@@ -165,16 +174,22 @@ public:
     // its own: the two pipelines cannot own equal-but-distinct layouts for the positions they share
     // - the backend accepts a state's binding set only when it was created over the very layout
     // handle the pipeline declared (validation-commandlist.cpp:509-520) - and the empty layout
-    // (bound at 5, 7, 8, 9 and 10 by the sibling) and the ray-stats layout/set (11) are cheap to
-    // hand over as they are. Read-only: the handles are owned here, stay valid while this object is
-    // created, and the sibling must not outlive it.
+    // (bound at 5, 7, 8, 9 and 10 by the sibling) and the ray-stats layout with its per-slot sets
+    // (11) are cheap to hand over as they are. Read-only: the handles are owned here, stay valid
+    // while this object is created, and the sibling must not outlive it.
     nvrhi::BindingLayoutHandle GetTlasLayout() const { return tlasLayout; }
     nvrhi::BindingLayoutHandle GetUniformLayout() const { return uniformLayout; }
     nvrhi::BindingLayoutHandle GetVertexDataLayout() const { return vertexDataLayout; }
     nvrhi::BindingLayoutHandle GetHoleLayout() const { return holeLayout; }
     nvrhi::BindingLayoutHandle GetRayStatsLayout() const { return rayStatsLayout; }
     nvrhi::BindingSetHandle GetHoleSet() const { return holeSet; }
-    nvrhi::BindingSetHandle GetRayStatsSet() const { return rayStatsSet; }
+
+    // Set 11 is per frame slot, because the engine's RayStats has one host-visible buffer per engine
+    // slot: this returns the set over the wrap of that slot's buffer, or the module-owned stand-in
+    // while the wrap is missing or RayStats is unavailable. The sibling passes call it with the
+    // frameIndex of their own dispatch; it is never null while this pass is created, so a bind of
+    // set 11 can never be null.
+    nvrhi::BindingSetHandle GetRayStatsSet(uint32_t frameIndex) const;
 
     // Set 8's real content: the coordinator's render cubemap and its sampler - stream S1's
     // RhiProceduralSkyPass objects, handed over as bare pointers (its `GetCubemapTexture()` and
@@ -213,9 +228,11 @@ public:
     // What is recorded: the wraps of the 26 storage images the raygen writes (created on first use,
     // re-created when the engine re-created an image or the size changed; the replaced wraps and
     // the sets over them go through the frame context's retire queue), the per-slot sets 0-3, the
-    // set-8 set over the coordinator's render cubemap (rebuilt when its key changed), then one
-    // `traceRays` at the full render resolution (one ray per pixel; the raygen maps the pixel
-    // to the checkerboard itself through `getCheckerboardPix`, so no halving happens here).
+    // set-11 set over that slot's wrap of the engine RayStats buffer (made in Create, re-checked
+    // here when its raw handle changed), the set-8 set over the coordinator's render cubemap
+    // (rebuilt when its key changed), then one `traceRays` at the full render resolution (one ray
+    // per pixel; the raygen maps the pixel to the checkerboard itself through `getCheckerboardPix`,
+    // so no halving happens here).
     //
     // The image state contract: the engine leaves every framebuffer image in VK_IMAGE_LAYOUT_GENERAL
     // (= NVRHI's UnorderedAccess), and a native wrap keeps no state between command lists, so the
@@ -306,6 +323,13 @@ private:
     // cannot be created; the caller skips the dispatch.
     bool PrepareRenderCubemapSet();
 
+    // Set 11 of one slot: wraps that slot's engine RayStats buffer (RayStats::GetBuffer) and
+    // builds the set over the wrap, rebuilding both when the raw handle changed. Returns false when
+    // RayStats is unavailable or the wrap/set cannot be made; GetRayStatsSet then serves the
+    // stand-in fallback and the caller still records its dispatch - the ray statistics are
+    // diagnostics and must never stop the trace.
+    bool PrepareRayStatsSet(uint32_t frameIndex);
+
     nvrhi::IDevice *device = nullptr;
     PrintFunction print;
     std::string shaderFolderPath;
@@ -336,9 +360,8 @@ private:
     nvrhi::BindingLayoutHandle rayStatsLayout;
 
     // The sets that do not depend on the frame: the four holes (one real empty set bound four
-    // times), the cubemap placeholder table, the set-8 set (the render-cubemap placeholder or the
-    // real cube once SetRenderCubemap delivered it), and the ray-stats stand-in the raygen's
-    // `rayStatsAdd` writes.
+    // times), the cubemap placeholder table and the set-8 set (the render-cubemap placeholder or
+    // the real cube once SetRenderCubemap delivered it).
     nvrhi::BindingSetHandle holeSet;
     nvrhi::DescriptorTableHandle cubemapTable;
     nvrhi::TextureHandle dummyCubemapTexture;
@@ -354,8 +377,24 @@ private:
     nvrhi::ISampler *renderCubemapSetSampler = nullptr;
     nvrhi::BindingSetHandle renderCubemapSet;
 
-    nvrhi::BufferHandle rayStatsBuffer;
-    nvrhi::BindingSetHandle rayStatsSet;
+    // Set 11's per-slot state. 'rayStats' is the host's engine object handed over in Create
+    // (borrowed, may be null); each slot's wrap of its host-visible buffer and the set over the
+    // wrap are created eagerly in Create and rebuilt in Render when the raw handle changes. The
+    // set is per slot because RayStats keeps one buffer per engine frame slot.
+    RayStats *rayStats = nullptr;
+    VkBuffer rayStatsHandles[MAX_FRAMES_IN_FLIGHT] = {};
+    nvrhi::BufferHandle rayStatsWraps[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BindingSetHandle rayStatsSets[MAX_FRAMES_IN_FLIGHT];
+
+    // The fallback that GetRayStatsSet serves while a slot's wrap is missing or RayStats is
+    // unavailable: the module-owned stand-in the raygen's `rayStatsAdd` writes instead. It is
+    // created in Create and never null afterwards, so a bind of set 11 can never be null.
+    nvrhi::BufferHandle rayStatsFallbackBuffer;
+    nvrhi::BindingSetHandle rayStatsFallbackSet;
+
+    // One-shot for any per-slot ray-stats setup problem (a missing engine buffer, a failed wrap or
+    // set); the fallback keeps set 11 valid and the warning is not repeated.
+    bool warnedBadRayStats = false;
 
     // The pipeline and its table: one raygen (RGenPrimary), the two engine misses, the two engine
     // hit groups. Both are created once; the table is uncached, so the backend bakes it per list.

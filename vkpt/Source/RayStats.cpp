@@ -58,10 +58,14 @@ void RayStats::CreateBuffers(std::shared_ptr<MemoryAllocator> &allocator)
 {
     const VkDeviceSize size = RAY_STATS_CATEGORY_COUNT * sizeof(uint32_t);
 
+    // The RHI layer wraps these buffers for the primary pass's ray-stats set
+    // (RHI/RhiRtPrimaryPass.cpp): NVRHI's native-buffer wrap queries the device address of every
+    // buffer when the device has BDA (vulkan-buffer.cpp:215-220), which
+    // VUID-VkBufferDeviceAddressInfo-buffer-02601 forbids without the bit.
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         buffers[i].Init(allocator, size,
-                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                         "RayStats buffer");
         mapped[i] = buffers[i].Map();
@@ -185,6 +189,12 @@ VkDescriptorSetLayout RayStats::GetDescSetLayout() const
 VkDescriptorSet RayStats::GetDescSet(uint32_t frameIndex) const
 {
     return descSets[frameIndex];
+}
+
+VkBuffer RayStats::GetBuffer(uint32_t frameIndex) const
+{
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
+    return buffers[frameIndex].GetBuffer();
 }
 
 }
