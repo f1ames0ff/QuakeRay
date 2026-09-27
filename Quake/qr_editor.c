@@ -1325,7 +1325,7 @@ static void QRE_DrawLightWireframes (void)
 {
 	const rt_tracked_light_t *lights;
 	const float               pi = 3.14159265f;
-	int                       count = 0, i, seg, axis, drawn = 0;
+	int                       count = 0, i, seg, axis, drawn = 0, arrow_drawn = 0;
 	RgVertex                 *rv;
 	uint32_t                 *ri;
 	byte                     *block;
@@ -1337,8 +1337,10 @@ static void QRE_DrawLightWireframes (void)
 	if (count <= 0)
 		return;
 
-	verts_bytes = (size_t)count * 3 * (QRE_LIGHT_WIRE_SEGS + 1) * sizeof (RgVertex);
-	ri_bytes    = (size_t)count * 3 * QRE_LIGHT_WIRE_SEGS * 2 * sizeof (uint32_t);
+	// the spheres, plus three axis arrows (two vertices and one segment each) for
+	// the selected custom light
+	verts_bytes = (size_t)count * 3 * (QRE_LIGHT_WIRE_SEGS + 1) * sizeof (RgVertex) + 3 * 2 * sizeof (RgVertex);
+	ri_bytes    = (size_t)count * 3 * QRE_LIGHT_WIRE_SEGS * 2 * sizeof (uint32_t) + 3 * 2 * sizeof (uint32_t);
 	block = (byte *)Mem_Alloc (verts_bytes + ri_bytes);
 	rv = (RgVertex *)block;
 	ri = (uint32_t *)(block + verts_bytes);
@@ -1391,13 +1393,67 @@ static void QRE_DrawLightWireframes (void)
 		drawn++;
 	}
 
+	// The selected custom light carries the world-axis arrows: X red, Y green,
+	// Z blue. They sit at the light itself (origin + offset), so they read as the
+	// handles of the light the panel edits.
+	{
+		int arrow_base   = drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1);
+		int arrow_i_base = drawn * 3 * QRE_LIGHT_WIRE_SEGS * 2;
+
+		if (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM &&
+		    qre.sel_light.uniqueID > (uint64_t)UINT32_MAX)
+		{
+			int                custom_count = 0;
+			rt_custom_light_t *custom = RT_CustomLights (&custom_count);
+			int                index = (int)(qre.sel_light.uniqueID - ((uint64_t)UINT32_MAX + 1));
+
+			if (index >= 0 && index < custom_count)
+			{
+				const rt_custom_light_t *l = &custom[index];
+				uint32_t                 axis_color[3];
+				vec3_t                   pos;
+				const float              len = 48.0f;
+				int                      a;
+
+				axis_color[0] = RT_PackColorToUint32 (255, 64, 64, 255);
+				axis_color[1] = RT_PackColorToUint32 (64, 255, 64, 255);
+				axis_color[2] = RT_PackColorToUint32 (64, 128, 255, 255);
+
+				VectorCopy (l->origin, pos);
+				if (l->has_offset)
+				{
+					pos[0] += l->offset[0];
+					pos[1] += l->offset[1];
+					pos[2] += l->offset[2];
+				}
+
+				for (a = 0; a < 3; a++)
+				{
+					RgVertex *v0 = &rv[arrow_base + a * 2 + 0];
+					RgVertex *v1 = &rv[arrow_base + a * 2 + 1];
+
+					VectorCopy (pos, v0->position);
+					v0->packedColor = axis_color[a];
+					VectorCopy (pos, v1->position);
+					v1->position[a] += len;
+					v1->packedColor = axis_color[a];
+
+					ri[arrow_i_base + a * 2 + 0] = (uint32_t)(arrow_base + a * 2 + 0);
+					ri[arrow_i_base + a * 2 + 1] = (uint32_t)(arrow_base + a * 2 + 1);
+				}
+
+				arrow_drawn = 1;
+			}
+		}
+	}
+
 	if (drawn > 0)
 	{
 		RgRasterizedGeometryUploadInfo info = {
 			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
-			.vertexCount = (uint32_t)(drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1)),
+			.vertexCount = (uint32_t)(drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1) + (arrow_drawn ? 6 : 0)),
 			.pVertices = rv,
-			.indexCount = (uint32_t)(drawn * 3 * QRE_LIGHT_WIRE_SEGS * 2),
+			.indexCount = (uint32_t)(drawn * 3 * QRE_LIGHT_WIRE_SEGS * 2 + (arrow_drawn ? 6 : 0)),
 			.pIndices = ri,
 			.transform = RT_TRANSFORM_IDENTITY,
 			.color = RT_COLOR_WHITE,
@@ -1406,6 +1462,7 @@ static void QRE_DrawLightWireframes (void)
 			.blendFuncSrc = 0,
 			.blendFuncDst = 0,
 		};
+
 		RgResult res = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
 
 		RG_CHECK (res);
