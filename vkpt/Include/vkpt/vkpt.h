@@ -687,7 +687,7 @@ typedef struct RgTexturedAreaLightUploadInfo
     int             isStatic;
 } RgTexturedAreaLightUploadInfo;
 
-// Only one spotlight is available in a scene.
+/* Spot lights are regular lights in the light array: any number of them can be uploaded. */
 typedef struct RgSpotLightUploadInfo
 {
     // Used to match the same light source from the previous frame.
@@ -695,11 +695,11 @@ typedef struct RgSpotLightUploadInfo
     RgFloat3D       color;
     RgFloat3D       position;
     RgFloat3D       direction;
-    float           radius;
     // Light source disk radius.
-    // Inner cone angle. In radians.
+    float           radius;
+    // Outer cone half-angle. In radians.
     float           angleOuter;
-    // Outer cone angle. In radians.
+    // Inner cone half-angle. In radians; the intensity is full below it.
     float           angleInner;
 } RgSpotLightUploadInfo;
 
