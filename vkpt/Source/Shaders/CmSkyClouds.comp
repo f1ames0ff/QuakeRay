@@ -57,11 +57,6 @@ layout(rgba16f, set = 0, binding = 3) uniform imageCube cloudCubemapOut;
 // a march to the sun (CloudShadowMap.h).
 layout(set = 0, binding = 5) uniform sampler3D cloudShadowMap;
 
-// The cubemap of the frame before this one (binding 6), read as the history of this
-// pass: the texels of the three quarters this frame does not march are taken from it
-// and put where the cloud they hold has moved under the eye since (see main()).
-layout(set = 0, binding = 6) uniform samplerCube cloudCubemapHistory;
-
 layout(std140, set = 0, binding = 1) uniform Params
 {
     vec4 faceBasis[18]; // 6 faces * (right, up, forward)
@@ -73,9 +68,8 @@ layout(std140, set = 0, binding = 1) uniform Params
     vec4 sunDiscColor;  // xyz = colour of the sun (rt_sky_sun_color), w unused
     vec4 cloudLayer;    // x = altitude of the layer's bottom over the eye, y = thickness, z = sunlight strength, w = sky light strength
     vec4 cloudMarch;    // x = view march steps, y = unused (the walk of a column towards the sun is CLOUD_SHADOW_STEPS, CloudLayer.h), z = detail erosion strength, w = forward scattering (Henyey-Greenstein g)
-    vec4 cloudAnchor;   // xy = the eye's place in the world's horizontal plane, z = its height in the world (the volume of the layer's shadow is read with it), w = which quarter of the map this frame marches (CLOUD_UPDATE_FRAMES meaning the map is new)
+    vec4 cloudAnchor;   // xy = the eye's place in the world's horizontal plane, z = its height in the world (the volume of the layer's shadow is read with it), w unused
     vec4 cloudShadowPlacement; // x = 1 while the layer's shadow volume stands, yz = its snapped world origin, w = its extent in metres (RenderCubemap::GetCloudShadowPlacement)
-    vec4 cloudAnchorDelta; // xy = how far the column of cloud a texel stands over has moved over the world since the frame before (the eye's movement plus the wind's)
 } params;
 
 #include "CloudLayer.h"
@@ -97,17 +91,6 @@ const float CLOUD_STEP_GROWTH = 1.045;
 // grazing angle the crossing of the layer is very long, and everything past this
 // is one flat colour anyway.
 const float CLOUD_MAX_MARCH_SPAN = 12.0;
-
-// How many quarters of its map the layer is marched in, a side: a frame marches one
-// quarter of the map it writes (RenderCubemap::DispatchClouds, which keeps the same
-// number), and reads the other three from the frame before. Four frames march every
-// texel of the map.
-const int CLOUD_UPDATE_QUARTERS = 2;
-const int CLOUD_UPDATE_FRAMES = CLOUD_UPDATE_QUARTERS * CLOUD_UPDATE_QUARTERS;
-
-// How a frame's quarter of the map is handed out to the invocations of the dispatch:
-// as runs of them rather than by the texel's own place. See main(), where the run a
-// warp lands in decides whether it marches or copies.
 
 // Henyey-Greenstein, normalized so that isotropic scattering gives 1.
 float henyeyGreenstein(float mu, float g)
@@ -177,68 +160,16 @@ float cloudSunTauFromMap(CloudLayer layer, vec3 p, vec3 sunDir, out float blend)
 
 void main()
 {
-    const ivec3 gid = ivec3(gl_GlobalInvocationID);
+    const ivec3 ipos = ivec3(gl_GlobalInvocationID);
     const ivec2 size = imageSize(cloudCubemapOut).xy;
 
-    // The remap is a bijection over the map's own texels, so an invocation that
-    // stands outside it must not reach it: it would be mapped *into* the map and
-    // write a copy over a texel another invocation is marching in this same
-    // dispatch.
-    if (gid.x >= size.x || gid.y >= size.y || gid.z >= 6)
-    {
-        return;
-    }
-
-    // The whole map is dispatched every frame, and a quarter of it is marched: the
-    // texels of the other three quarters are read back from the frame before and put
-    // where the cloud they hold has moved under the eye since (historyDir below). What
-    // that buys is the quarters agreeing about the one cloud the whole map shows, which
-    // a map filled a quarter at a time could not: each quarter would carry the camera
-    // of the frame that marched it, and the drift of that anchor is a weave over the
-    // sky while the eye moves. A texel here is marched once in four frames and copied
-    // in between -- each copy standing for the column of its own march, one to three
-    // frames back -- and nothing is ever averaged. CLOUD_UPDATE_FRAMES in cloudAnchor.w
-    // means the whole map is marched rather than a quarter, which is what a new map and
-    // a frame the look of the layer changed in get -- and the frame after them, whose
-    // history nothing has written yet.
-    const int packedUpdate = int(params.cloudAnchor.w + 0.5);
-    const bool wholeMap = packedUpdate >= CLOUD_UPDATE_FRAMES;
-    const int  quarter = wholeMap ? 0 : packedUpdate;
-
-    // Which texel this invocation is for, and which of the two things it does with it.
-    //
-    // The quarter a frame marches is a parity class of texels -- every other one along
-    // each axis, four classes for the four frames -- and the classes are handed out to
-    // the invocations in runs here rather than by the texel's own place: the first
-    // quarter of the invocations, one run after another, marches the class this frame
-    // is for, and the three quarters behind it copy the other three. What that is for
-    // is that a warp of the dispatch is thirty-two invocations in a row and the two
-    // paths of this pass, the march and the copy, diverge at the texel: handed out by
-    // texel, a warp would hold a quarter of its lanes on the march and three quarters
-    // on the copy and run both, which is the march, the dearest thing in the pass, run
-    // four times over. Handed out in runs, every warp is wholly on one path.
-    //
-    // What the pattern leaves behind the eye is the age of a texel against its
-    // neighbour's, and a parity class is the finest dither there is: one texel against
-    // one. A tile of the map leaves the same age in squares and a run of rows leaves it
-    // in stripes, both of which the eye finds in a cloud, the thicker the coarser the
-    // map is -- and the light a copy carries is the light of the cloud under the angle
-    // the eye had when it was marched, which is not the angle now.
-    const ivec2 clsSide  = size / 2;                // the side of one class of texels
-    const int   perClass = clsSide.x * clsSide.y;
-    const int   index    = gid.x + gid.y * size.x;  // this invocation's place in the dispatch
-    const int   cls      = index / perClass;        // 0 is the class this frame marches
-    const int   rem      = index - cls * perClass;  // this invocation's place in its class
-    const int   parity   = (quarter + cls) & 3;
-    const ivec2 local    = ivec2(rem % clsSide.x, rem / clsSide.x);
-    const ivec3 ipos     = ivec3(local * 2 + ivec2(parity & 1, parity >> 1), gid.z);
-
+    // The dispatch is counted from the map's own size (RenderCubemap::DispatchClouds),
+    // but the helper that counts workgroups rounds up, so an invocation may stand
+    // outside the map and must not reach it.
     if (ipos.x >= size.x || ipos.y >= size.y || ipos.z >= 6)
     {
         return;
     }
-
-    const bool marched = wholeMap || cls == 0;
 
     int face = ipos.z;
     vec3 right   = params.faceBasis[face * 3 + 0].xyz;
@@ -286,19 +217,11 @@ void main()
     // Where the column of cloud this texel is about stands: the point the ray through
     // it crosses the base of the layer at. That point is the world's and not the
     // eye's -- the layer is anchored in the world's horizontal plane, which is what
-    // the volume of its shadow is laid out by as well (CloudShadowMap.h) -- so an eye
-    // that has moved over the world since the frame before is looking at the same
-    // point through another direction, and the history of a texel is read where that
-    // point was. The wind moves the pattern as well, and it is in the same shift
-    // (cloudAnchorDelta, from the host). What is deliberately not in it: the height of
-    // the eye, because the layer is held over the eye and a direction sees the same
-    // column of it from any height.
-    float historySpan = layer.altitude / max(dir.z, 1.0e-3);
-    vec3  historyDir = (dir.z > 1.0e-3)
-        ? normalize(vec3(dir.xy * historySpan + params.cloudAnchorDelta.xy, layer.altitude))
-        : dir;
+    // the volume of its shadow is laid out by as well (CloudShadowMap.h) -- and the
+    // seed of the march below is drawn from it.
+    const float baseSpan = layer.altitude / max(dir.z, 1.0e-3);
 
-    if (marched && dir.z > 0.0 && lit && opacity > 0.0 && params.cloudParams.w > 0.5 &&
+    if (dir.z > 0.0 && lit && opacity > 0.0 && params.cloudParams.w > 0.5 &&
         layer.coverage < 1.0 && layer.density > 0.0)
     {
         // The ray enters the layer at its base and leaves it at its top, both
@@ -316,16 +239,12 @@ void main()
         // places come from a low-discrepancy sequence (CLOUD_SEQUENCE_STEP), and this
         // is what turns the sequence as a whole, ray by ray.
         //
-        // It is drawn from the world, and it changes only over a distance far larger
-        // than a texel of the map -- and that is the point of it: a texel here is
-        // marched once in four frames and reads its neighbours' march in between (see
-        // the top of the file), and a read is a bilinear one, so a seed of the texel's
-        // own (a per-texel jitter) is smoothed away by the reads and then put back by
-        // the next march of that texel, which the eye sees as the grain of the clouds
-        // flickering at the cadence of the quarters. A seed the texels around a column
-        // share leaves a smooth error instead: a read carries it as it is, and a cloud
-        // may stand a little soft where a step is coarse, but it does not shiver.
-        vec2 seedPos = params.cloudAnchor.xy + dir.xy * historySpan;
+        // It is drawn from the world, and changes only over a distance far larger
+        // than a texel of the map: the texels around a column then sample the march
+        // nearly the same way, so the error the march leaves behind is a smooth field
+        // of the sky rather than the grain of the map, and a ray that keeps to its
+        // column keeps its samples where they were from frame to frame.
+        vec2 seedPos = params.cloudAnchor.xy + dir.xy * baseSpan;
         // The scale the seed is read at travels with the altitude of the layer
         // (CLOUD_REFERENCE_ALTITUDE, CloudLayer.h): what it has to stay far larger than
         // is a texel of the map, and a texel of the map grows with the height too.
@@ -425,26 +344,8 @@ void main()
     }
 
     // rgb = the light scattered towards the eye, a = how much of the sky behind
-    // the layer gets through it. A texel this frame did not march keeps the frame
-    // before, put where its cloud has moved to (historyDir): both name the same column
-    // of the same cloud, and neither is mixed with anything -- a marched texel stores
-    // what it marched, a copied one what it read.
-    //
-    // What a copy carries is the light of the cloud under the angle the eye had when
-    // that texel was marched, and the phase of the sun is a function of that angle.
-    // What it is wrong by is the phase over the few hundredths of a texel the eye has
-    // moved since -- an eye at thirty metres a second moves 0.15 units in a frame,
-    // against a texel of the map that is metres across. Scaling the copied value by
-    // the ratio of the two phases to take even that out was tried (013cfaf2) and
-    // taken back: the ratio multiplies the whole of the value, and the share of it
-    // that the sky lights -- skyLight * skyShield -- does not depend on the angle at
-    // all, so the correction cost more than the error it was for.
-    if (!marched)
-    {
-        imageStore(cloudCubemapOut, ipos, texture(cloudCubemapHistory, historyDir));
-    }
-    else
-    {
-        imageStore(cloudCubemapOut, ipos, vec4(inscatter * albedo * opacity, mix(1.0, transmittance, opacity)));
-    }
+    // the layer gets through it. A texel the march left unwritten -- no light to
+    // scatter, nothing asked for -- stores the empty layer: nothing scattered and
+    // everything behind it through.
+    imageStore(cloudCubemapOut, ipos, vec4(inscatter * albedo * opacity, mix(1.0, transmittance, opacity)));
 }

@@ -247,8 +247,9 @@ float cloudDensity(CloudLayer layer, vec3 p, bool detail)
     // the layer drifts as a whole; the fine noise rides a little faster on it. The speed
     // is the one the host sends: the setting scaled by the layer's altitude over the
     // reference, so that a layer of any height drifts across the sky at the same rate --
-    // and so that the shift the host builds for the history of the map (cloudAnchorDelta,
-    // RenderCubemap.cpp) is built from the very same number.
+    // and so that the drift the sky's motion vectors carry (getMotionForCloudLayer,
+    // RaygenPrimary.inl) and the drift the volume of the layer's shadow is refilled at
+    // (UpdateCloudShadow, RenderCubemap.cpp) are both built from the very same number.
     vec2 wind = vec2(layer.time * layer.speed * 30.0, layer.time * layer.speed * 12.0);
     float frequency = CLOUD_FREQUENCY / layer.thickness;
 
@@ -282,15 +283,11 @@ float cloudDensity(CloudLayer layer, vec3 p, bool detail)
         // it, which is what takes the cloud's edge apart and gives its silhouette
         // the ragged look of a real one.
         //
-        // It rides the same wind as the shape does, and it has to: the copy of a
-        // texel in the layer's map (CmSkyClouds.comp) is the march of the frame
-        // before, put where the column of cloud it holds has moved to, and that
-        // move is measured with the shape's own drift (cloudAnchorDelta, from the
-        // host). A fine noise advected at another speed than the one the copies are
-        // tracked with leaves every edge of every cloud with a standing difference
-        // between the texels that were marched this frame and the ones that were
-        // copied -- a difference that follows the wind and that no dither of the
-        // ages can be asked to hide.
+        // It rides the same wind as the shape does, and it has to: the erosion of a
+        // cloud is read against the shape the whole layer is cut from, so a fine
+        // noise advected at another speed than that shape would leave the erosion
+        // standing against the cloud it eats -- a difference that follows the wind
+        // and that no dither of anything can be asked to hide.
         vec3 q = vec3(p.xy + wind, p.z * 0.75 / CLOUD_VERTICAL_STRETCH) * frequency * CLOUD_DETAIL_FREQUENCY;
         float erosion = layer.detail * cloudShape(q, CLOUD_DETAIL_OCTAVES);
         d = clamp((d - erosion) / max(1.0 - erosion, 1.0e-3), 0.0, 1.0);

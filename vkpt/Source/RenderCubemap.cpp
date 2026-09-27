@@ -147,47 +147,6 @@ constexpr uint32_t CLOUDS_VIEW_STEPS[vkpt::RenderCubemap::QUALITY_LEVELS] = { 32
 // seen.
 constexpr float CLOUD_SHADOW_MIN_SUN_HEIGHT = 0.05f;
 
-// The layer of a frame is marched in a quarter of its map: a dispatch writes one
-// quarter of the texels and four frames fill the map. The clouds drift slowly
-// enough that a texel of the other three quarters, left from the frames before, is
-// the same cloud to any eye that can see it, and the pass then costs a quarter of
-// what the whole map would. CmSkyClouds.comp shifts its texels by the same number.
-constexpr uint32_t CLOUD_UPDATE_QUARTERS = 2;
-constexpr uint32_t CLOUD_UPDATE_FRAMES = CLOUD_UPDATE_QUARTERS * CLOUD_UPDATE_QUARTERS;
-
-// Whether two sets of the sky's parameters describe the same look of the cloud
-// layer: the sun, the sky that lights the layer, the layer's own colour and body,
-// and the march through it. The rest of ProceduralSkyParams is where the frame is
-// rather than what is drawn with it -- the time the layer drifts by, the eye's own
-// place, the quarter of the map the frame marches, and where the volume of the
-// layer's shadow stands -- and a frame that differs in those alone is a frame the
-// layer's own cubemap holds.
-bool SameCloudLook(const vkpt::RenderCubemap::ProceduralSkyParams &a,
-                   const vkpt::RenderCubemap::ProceduralSkyParams &b)
-{
-    const auto same = [](const float *x, const float *y, int count)
-    {
-        for (int i = 0; i < count; i++)
-        {
-            if (fabsf(x[i] - y[i]) > 1.0e-4f)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    };
-
-    return same(a.sunDirection, b.sunDirection, 4) &&   // xyz and how much sun the sky shows
-           same(a.skyColor, b.skyColor, 3) &&           // w is unused
-           same(a.skyParams, b.skyParams, 4) &&
-           same(a.sunDiscColor, b.sunDiscColor, 3) &&   // w is unused
-           same(a.cloudColor, b.cloudColor, 3) &&       // w is the time the layer drifts by
-           same(a.cloudParams, b.cloudParams, 4) &&
-           same(a.cloudLayer, b.cloudLayer, 4) &&
-           same(a.cloudMarch, b.cloudMarch, 4);
-}
-
 // What the volume holds is the tau of a column of cloud, so a single channel is
 // all it needs -- and a tau rather than a transmittance because the slices of the
 // volume are read interpolated, which only adds up if what stands between two of
@@ -254,7 +213,7 @@ vkpt::RenderCubemap::RenderCubemap(
     CreateAttch(_allocator, cmd, cubemapSize, cubemapMipLevels, "Render cubemap env", envCubemap, false);
     CreateAttch(_allocator, cmd, cubemapSize, 1, "Render cubemap depth", cubemapDepth, true);
     CreateAttch(_allocator, cmd, cloudsSize, 1, "Cloud cubemap", clouds[0], false);
-    CreateAttch(_allocator, cmd, cloudsSize, 1, "Cloud cubemap history", clouds[1], false);
+    CreateAttch(_allocator, cmd, cloudsSize, 1, "Cloud cubemap, the other frame in flight", clouds[1], false);
     CreateCloudShadowImage(_allocator, cmd, cloudShadowSize, cloudShadow);
     _cmdManager->Submit(cmd);
     _cmdManager->WaitGraphicsIdle();
@@ -992,7 +951,7 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
 {
     VkResult r;
 
-    VkDescriptorSetLayoutBinding bindings[7] = {};
+    VkDescriptorSetLayoutBinding bindings[6] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1030,16 +989,9 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
     bindings[5].descriptorCount = 1;
     bindings[5].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // 6: the cubemap of the frame before, read by the cloud pass as the history of
-    // the quarters it does not march (CmSkyClouds.comp)
-    bindings[6].binding = 6;
-    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[6].descriptorCount = 1;
-    bindings[6].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 7;
+    layoutInfo.bindingCount = 6;
     layoutInfo.pBindings = bindings;
 
     r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &procSkyDescSetLayout);
@@ -1053,7 +1005,7 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[1].descriptorCount = 1 * MAX_FRAMES_IN_FLIGHT;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[2].descriptorCount = 3 * MAX_FRAMES_IN_FLIGHT;
+    poolSizes[2].descriptorCount = 2 * MAX_FRAMES_IN_FLIGHT;
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1091,30 +1043,15 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
     envImgInfo.imageView = envCubemap.view;
     envImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    // The layer for each frame: the cubemap that frame writes (as a storage image and
-    // as the one the sky composites) and the other one, which is the history the pass
-    // reads the quarters it does not march from (CmSkyClouds.comp).
+    // The layer for each frame: the cubemap that frame marches, named both as the
+    // storage image it is written through and as the sampler the sky composites it
+    // from. One per frame in flight (see the header).
     VkDescriptorImageInfo cloudsWritten[MAX_FRAMES_IN_FLIGHT] = {};
     VkDescriptorImageInfo cloudsSampled[MAX_FRAMES_IN_FLIGHT] = {};
-    VkDescriptorImageInfo cloudsHistory[MAX_FRAMES_IN_FLIGHT] = {};
 
+    // The sky reads the layer between texels, the way it reads anything else: a
+    // filtering read of a map that stands for a soft, wide thing is the read it wants.
     cloudsSampler = samplerManager->GetSampler(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-
-    // The history a copy is read from is sampled between texels, the way the sky
-    // reads the layer itself. It was read at the nearest texel for a while, to keep
-    // a copy as sharp as the march it came from -- a filtering read blurs a copy a
-    // little, and every copy a texel takes before it is marched again pays that
-    // blur once more -- but what that bought came at a price the eye finds harder:
-    // the wind moves the layer about six tenths of a texel a frame at
-    // rt_sky_clouds_speed 4, and a read at the nearest texel can only carry that as
-    // a whole one, so the cloud snaps a texel at a time and the field boils.
-    // Measured on a model of the chain (a translating edge, a quarter of the map
-    // marched a frame, the sky's 3 by 3 over the result), the change of a frame
-    // beyond the cloud's own motion is 0.0047 of its contrast with the read at the
-    // nearest texel -- and 0.0347 when the chain is three copies deep instead of
-    // seven -- against 0.0021 with the filtering read; the edge stands 0.52 (and
-    // 0.93) texels off the truth against 0.15. The blur a filtering read leaves is
-    // bounded by the depth of the chain, and it is what a copy costs.
 
     for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
     {
@@ -1124,10 +1061,6 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
         cloudsSampled[frame].sampler = cloudsSampler;
         cloudsSampled[frame].imageView = clouds[frame].view;
         cloudsSampled[frame].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        cloudsHistory[frame].sampler = cloudsSampler;
-        cloudsHistory[frame].imageView = clouds[1 - frame].view;
-        cloudsHistory[frame].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     // The map of the layer's shadow, which is made before this set is (see the
@@ -1146,9 +1079,9 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
     }
 
     // The same bindings for every frame in flight, each set naming its own copy of
-    // the parameters (binding 1) and its own pair of the layer's cubemaps (bindings 3,
-    // 4 and 6), and the same shadow volume for all of them.
-    VkWriteDescriptorSet writes[MAX_FRAMES_IN_FLIGHT * 7] = {};
+    // the parameters (binding 1) and its own cubemap of the layer (bindings 3 and 4),
+    // and the same shadow volume for all of them.
+    VkWriteDescriptorSet writes[MAX_FRAMES_IN_FLIGHT * 6] = {};
     uint32_t at = 0;
 
     for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
@@ -1172,7 +1105,6 @@ void vkpt::RenderCubemap::CreateProceduralSkyDescriptors(const std::shared_ptr<S
         add(3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &cloudsWritten[frame], nullptr);
         add(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cloudsSampled[frame], nullptr);
         add(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cloudShadowImgInfo, nullptr);
-        add(6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cloudsHistory[frame], nullptr);
     }
 
     vkUpdateDescriptorSets(device, at, writes, 0, nullptr);
@@ -1246,30 +1178,21 @@ void vkpt::RenderCubemap::DispatchClouds(VkCommandBuffer cmd, const ProceduralSk
     // Nothing to march when the host turned the clouds off, made them fully
     // transparent, or asked for the flat clouds of the lowest quality level (they
     // are painted into the sky's colour and no shader reads a map of the layer
-    // then -- CmProceduralSky.comp). The cubemaps keep whatever they hold, and the
-    // next time the layer is drawn, both are marched whole.
+    // then -- CmProceduralSky.comp). The cubemap keeps whatever it holds: nothing
+    // samples it while there is no layer to composite, and the frame the layer comes
+    // back on marches the whole of it.
     if (params.skyColor[3] > 0.5f || params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f)
     {
-        cloudsWhole = 2;
-
         return;
     }
 
     CmdLabel label(cmd, "Cloud layer");
 
-    // The shift the pass was handed is measured from the last frame that marched, and
-    // this is where a dispatch really leaves: a frame whose parameters the cache above
-    // found unchanged dispatches nothing, and the frame after it reads a map one frame
-    // older, so its shift has to reach back that far. (The clouds being off, which
-    // returns above, never marches and never advances this either.)
-    cloudAnchorPrev[0] = params.cloudAnchor[0];
-    cloudAnchorPrev[1] = params.cloudAnchor[1];
-    cloudTimePrev = params.cloudColor[3];
-
-    // This frame writes one of the two cubemaps and reads the other as the history of
-    // the quarters it does not march (CmSkyClouds.comp). Which one is which follows
+    // This frame marches the cubemap its own index names, and the sky of the same
+    // frame composites that one. The other cubemap belongs to the frame beside this
+    // one in flight, which may still be reading it; which cubemap a frame uses follows
     // the frame index, so the descriptor sets that name them -- one per frame, written
-    // once (WriteProceduralSkyDescriptors) -- always name the right pair.
+    // once (WriteProceduralSkyDescriptors) -- always name the right one.
     VkImageMemoryBarrier barrier = {};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.image = clouds[frameIndex].image;
@@ -1296,20 +1219,11 @@ void vkpt::RenderCubemap::DispatchClouds(VkCommandBuffer cmd, const ProceduralSk
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, procSkyPipelineLayout,
                             0, 1, &procSkyDescSet[frameIndex], 0, nullptr);
 
-    // The whole map is dispatched every frame -- a quarter of it is marched, the rest
-    // read back from the other cubemap (CmSkyClouds.comp) -- so that no texel of the
-    // layer is older than the frame before, and all four quarters agree about the one
-    // cloud the whole map shows. A map that is new, or a frame the look of the layer
-    // changed in, marches all of it, and so does the frame after it, whose history is
-    // the cubemap no frame has written yet.
+    // The whole map is dispatched every frame (CmSkyClouds.comp has no other path):
+    // no texel of the layer is older than the frame before, and every texel of the
+    // map stands for the one cloud the whole map shows.
     const uint32_t wg = Utils::GetWorkGroupCount(cloudsSize, 16);
     vkCmdDispatch(cmd, wg, wg, 6);
-
-    cloudsCycle = cloudsWhole > 0 ? 0 : (cloudsCycle + 1) % CLOUD_UPDATE_FRAMES;
-    if (cloudsWhole > 0)
-    {
-        cloudsWhole--;
-    }
 
     barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1835,7 +1749,7 @@ void vkpt::RenderCubemap::SetQuality(VkCommandBuffer cmd, uint32_t newQuality)
     {
         Attachment newClouds[2] = {};
         CreateAttch(allocator, cmd, CLOUDS_SIDE_SIZES[newQuality], 1, "Cloud cubemap", newClouds[0], false, true);
-        CreateAttch(allocator, cmd, CLOUDS_SIDE_SIZES[newQuality], 1, "Cloud cubemap history", newClouds[1], false, true);
+        CreateAttch(allocator, cmd, CLOUDS_SIDE_SIZES[newQuality], 1, "Cloud cubemap, the other frame in flight", newClouds[1], false, true);
 
         // A map that could not be made (out of memory) leaves the ones in hand as the
         // ones the layer is drawn into, and the level is asked for again later (see
@@ -1875,11 +1789,7 @@ void vkpt::RenderCubemap::SetQuality(VkCommandBuffer cmd, uint32_t newQuality)
 
         cloudsSize = CLOUDS_SIDE_SIZES[newQuality];
 
-        // Both cubemaps are new ones: all of the layer is marched into them, this frame
-        // and the one after it, whose history nothing has written yet.
-        cloudsWhole = 2;
-
-        // The layer that was drawn into the old map went with it, so the sky pass
+        // The layer that was drawn into the old maps went with them, so the sky pass
         // draws it into the new one this frame, whatever the host has asked of it
         // since -- even nothing at all. Every frame in flight forgets its own copy
         // of the parameters with it.
@@ -1932,11 +1842,9 @@ void vkpt::RenderCubemap::SetQuality(VkCommandBuffer cmd, uint32_t newQuality)
 
 void vkpt::RenderCubemap::UpdateQualityDescriptors()
 {
-    // The layer's cubemaps per frame, as in WriteProceduralSkyDescriptors: the one a
-    // frame writes and the other one as its history.
+    // The layer's cubemaps per frame, as in WriteProceduralSkyDescriptors.
     VkDescriptorImageInfo cloudsWritten[MAX_FRAMES_IN_FLIGHT] = {};
     VkDescriptorImageInfo cloudsSampled[MAX_FRAMES_IN_FLIGHT] = {};
-    VkDescriptorImageInfo cloudsHistory[MAX_FRAMES_IN_FLIGHT] = {};
 
     for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
     {
@@ -1946,10 +1854,6 @@ void vkpt::RenderCubemap::UpdateQualityDescriptors()
         cloudsSampled[frame].sampler = cloudsSampler;
         cloudsSampled[frame].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         cloudsSampled[frame].imageView = clouds[frame].view;
-
-        cloudsHistory[frame].sampler = cloudsSampler;
-        cloudsHistory[frame].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        cloudsHistory[frame].imageView = clouds[1 - frame].view;
     }
 
     VkDescriptorImageInfo shadowSampled = {};
@@ -1965,11 +1869,11 @@ void vkpt::RenderCubemap::UpdateQualityDescriptors()
 
     // The binding of the cubemap set that names the volume of the layer's shadow,
     // and, for every frame in flight, the two bindings of the sky pass that name the
-    // layer (the one it is drawn into and the one it is sampled through) and the two
-    // that name the volume (the storage image of the pass that fills it and the one
-    // the cloud pass reads it through). Which parameters buffer a set names does not
-    // change with a level.
-    VkWriteDescriptorSet writes[1 + MAX_FRAMES_IN_FLIGHT * 5] = {};
+    // layer (the one it is drawn into and the one it is sampled through), the binding
+    // that names the volume it reads, and the binding the pass that fills the volume
+    // writes it through. Which parameters buffer a set names does not change with a
+    // level.
+    VkWriteDescriptorSet writes[1 + MAX_FRAMES_IN_FLIGHT * 4] = {};
     uint32_t at = 0;
 
     const auto add = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type,
@@ -1991,7 +1895,6 @@ void vkpt::RenderCubemap::UpdateQualityDescriptors()
         add(procSkyDescSet[frame], 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &cloudsWritten[frame]);
         add(procSkyDescSet[frame], 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cloudsSampled[frame]);
         add(procSkyDescSet[frame], 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &shadowSampled);
-        add(procSkyDescSet[frame], 6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cloudsHistory[frame]);
         add(cloudShadowDescSet[frame], 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &shadowWritten);
     }
 
@@ -2010,85 +1913,30 @@ void vkpt::RenderCubemap::DrawProcedural(VkCommandBuffer cmd, const ProceduralSk
     // the level, so the march has to resolve what the finer map can hold.
     params.cloudMarch[0] = float(CLOUDS_VIEW_STEPS[quality]);
 
-    // A frame the look of the layer changed in is not a frame the map can take a
-    // quarter of. The world's shadow of the layer shows such a change on the frame
-    // it is asked for (UpdateCloudShadow compares the sun and the layer's own
-    // settings), and the layer's own light has to keep up with its shadow rather
-    // than come in four parts over four frames -- the sun editor would otherwise
-    // light the ground one way and the clouds another for three frames of every
-    // four. Such a frame fills the whole map at once (CLOUD_UPDATE_FRAMES below).
-    if (mappedProcSkyParams[frameIndex] &&
-        !SameCloudLook(*static_cast<const ProceduralSkyParams *>(mappedProcSkyParams[frameIndex]), params))
-    {
-        cloudsWhole = 2;
-    }
-
-    // The eye's own movement since the last frame that marched, plus the wind's:
-    // together they are the shift of the column of cloud that stood under a texel,
-    // which is what the pass reads its history through (cloudAnchorDelta,
-    // CmSkyClouds.comp). The wind is the pattern's own drift -- `time * speed * (30, 12)`
-    // (CloudLayer.h) -- and the speed in the parameters is the drift the layer actually
-    // has: the setting scaled by its height over the reference altitude before any pass
-    // is handed it (VulkanDevice.cpp, CLOUD_REFERENCE_ALTITUDE), so this shift and the
-    // shader's cloudDensity are the same movement by construction. The point this is
-    // measured from is advanced where the dispatch leaves (DispatchClouds), not here.
-    {
-        const float anchorNow[2] = { params.cloudAnchor[0], params.cloudAnchor[1] };
-        const float timeNow = params.cloudColor[3];
-        const float speed = params.cloudParams[2];
-        const float timeStep = timeNow - cloudTimePrev;
-
-        params.cloudAnchorDelta[0] = (anchorNow[0] - cloudAnchorPrev[0]) + timeStep * speed * 30.0f;
-        params.cloudAnchorDelta[1] = (anchorNow[1] - cloudAnchorPrev[1]) + timeStep * speed * 12.0f;
-        params.cloudAnchorDelta[2] = 0.0f;
-        params.cloudAnchorDelta[3] = 0.0f;
-    }
-
     // Clouds off: freeze the animation time so the cached sky isn't re-rendered
     // every frame (only when sun/sky params change).
     // Clouds on: keep the raw time -> the sky re-renders every frame (smooth per-frame drift).
     // Nothing can be seen drifting when the clouds are disabled or their opacity
     // is 0 (rt_sky_clouds_alpha), so the time is frozen in either case. The anchor
     // goes with it: with no clouds drawn, the eye moving over the world is no
-    // reason to redraw.
+    // reason to redraw, and a live clock in the parameters would keep the cache
+    // below from ever matching.
     if (params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f)
     {
         params.cloudColor[3] = 0.0f;
         params.cloudAnchor[0] = 0.0f;
         params.cloudAnchor[1] = 0.0f;
         params.cloudAnchor[2] = 0.0f;
-        // The shift a texel's history is read through is frozen with them. It is what
-        // the wind and the eye have moved since the last dispatch, and a live clock in
-        // it would keep the parameters changing -- and so keep the cache below from
-        // ever matching -- on every frame while there is no cloud in the sky to
-        // straighten; the pass would then be dispatched, and the whole layer marched
-        // again, for nothing at all.
-        params.cloudAnchorDelta[0] = 0.0f;
-        params.cloudAnchorDelta[1] = 0.0f;
     }
     else
     {
-        // Which quarter of the layer's map this frame marches, CLOUD_UPDATE_FRAMES
-        // meaning the map is new and has to be filled whole (DispatchClouds); the
-        // eye's own height in the world stays where the host put it, in
+        // The eye's own height in the world stays where the host put it, in
         // cloudAnchor.z, because the volume of the layer's shadow is read with it.
         // The volume's own place and extent travel along too, exactly as the world's
         // shading reads them (GetCloudShadowPlacement), so that the light of a cloud
         // and the shadow of it are the same shadow of the same cloud. All of them are
         // part of the params the cache below compares, so the layer is never
         // remembered away while it is being drawn.
-        // The layer's map is marched whole, every frame. The quarter/copy cadence that
-        // used to stand here (a quarter marched, three quarters carried from the frame
-        // before) was what the motion of a fast drift was not smooth under: the carried
-        // quarters and the marched one never agreed perfectly, and the eye read the
-        // four-frame cadence of that disagreement as jerking -- breathing sharpness and
-        // stepping light -- whatever filter the copies were read through (the nearest,
-        // the bilinear and a Catmull-Rom one were all measured). A whole march has no
-        // ages and no copies, so a texel is the cloud it stands over, exactly, every
-        // frame: the motion is the drift's own, one to one, at any quality level -- and
-        // the level's price is the whole march rather than a quarter of it, which is the
-        // price of that. CLOUD_UPDATE_FRAMES is the sentinel that says so (CmSkyClouds.comp).
-        params.cloudAnchor[3] = float(CLOUD_UPDATE_FRAMES);
         for (int i = 0; i < 4; i++)
         {
             // Nothing of the volume may be read while it is not standing: the getter

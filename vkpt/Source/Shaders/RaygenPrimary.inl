@@ -136,9 +136,8 @@ vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
         // The pattern moves against the wind (the noise is read at p + wind), so the
         // cloud a ray sees now stood, one frame ago, at the point the ray crosses plus
         // the wind of that frame -- and the eye has moved since, which is the shift of
-        // the column itself. This is the same sum the history of the layer's map was
-        // read through (cloudAnchorDelta, RenderCubemap.cpp), which is what the sign of
-        // it is to be checked against.
+        // the column itself. The sign is the march's own (cloudDensity reads the noise
+        // at p + wind), which is what it is to be checked against.
         const float distance = centre / rayDir.z;
         const vec3  eyeDelta = globalUniform.cameraPosition.xyz - globalUniform.cameraPositionPrev.xyz;
         dirPrev = normalize(rayDir * distance + vec3(windStep, 0.0) + eyeDelta);

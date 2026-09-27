@@ -51,12 +51,8 @@ public:
         float sunDiscColor[4];  // xyz = colour of the sun disc (rt_sky_sun_color), w unused
         float cloudLayer[4];    // x = altitude of the layer's bottom over the eye, y = thickness, z = sunlight strength, w = sky light strength
         float cloudMarch[4];    // x = view march steps, y = unused (the walk of a column towards the sun is CLOUD_SHADOW_STEPS, CloudLayer.h), z = detail erosion strength, w = forward scattering
-        float cloudAnchor[4];   // xy = the eye's place in the world's horizontal plane, z = its height in the world, w = which quarter of the layer's map this frame marches (CLOUD_UPDATE_FRAMES meaning all of it)
+        float cloudAnchor[4];   // xy = the eye's place in the world's horizontal plane, z = its height in the world, w unused
         float cloudShadowPlacement[4]; // x = 1 while the layer's shadow volume stands (see GetCloudShadowPlacement), yz = its snapped world origin, w = its extent in metres
-        // How far the column of cloud a texel stands over has moved over the world
-        // since the frame before: the eye's own movement plus the wind's. The pass
-        // reads its history through it (CmSkyClouds.comp).
-        float cloudAnchorDelta[4]; // xy = that movement; zw unused
     };
 
 public:
@@ -230,8 +226,7 @@ private:
     // procedural sky (compute). One buffer, one mapped pointer and one descriptor
     // set per frame in flight: the frames behind this one may still be reading
     // theirs while this one is written, and what lives in them (the sun, the time
-    // the layer drifts by, the quarter of its map this frame marches) may not be
-    // read half rewritten.
+    // the layer drifts by, the eye's place) may not be read half rewritten.
     Buffer procSkyParamsBuffer[MAX_FRAMES_IN_FLIGHT];
     void *mappedProcSkyParams[MAX_FRAMES_IN_FLIGHT] = {};
 
@@ -244,51 +239,17 @@ private:
 
     // The cloud layer that the procedural sky composites in front of everything it
     // draws: a cubemap (rgb = light scattered in the cloud, a = how much of the sky
-    // behind it gets through) sampled by direction. Two of them: a frame marches a
-    // quarter of the one it writes and takes the other three quarters from the other
-    // one -- the frame before -- put where the cloud they hold has moved since. A texel
-    // is therefore marched once in four frames and copied in between, each copy
-    // standing for the column its own march was about; nothing is ever averaged with a
-    // frame of its own past. Which one is written and which is read follows the frame
-    // index, so the descriptor sets that name them never change
+    // behind it gets through) sampled by direction. One per frame in flight: a frame
+    // marches the one its own index names and the sky of the same frame composites it,
+    // while the frame behind this one may still be reading the other -- which is why a
+    // single cubemap is not enough, the two frames overlap on the queue -- and the next
+    // time this frame's slot comes round its fence has passed. Which one a frame uses
+    // follows the frame index, so the descriptor sets that name them never change
     // (WriteProceduralSkyDescriptors).
-    Attachment clouds[2];
+    Attachment clouds[MAX_FRAMES_IN_FLIGHT];
     uint32_t   cloudsSize = 0;
     VkPipeline cloudsPipeline = VK_NULL_HANDLE;
     VkSampler  cloudsSampler  = VK_NULL_HANDLE; // names the layer in the sky's descriptor set
-
-    // The layer is marched in a quarter of its map a frame (see DispatchClouds):
-    // which quarter this frame marches, and how many of the frames still to come
-    // march the whole map rather than a quarter of it -- this one included. A map
-    // that is new, or a frame the look of the layer changed in, needs two of them:
-    // the cubemap the second frame would read as its history is the one no frame has
-    // written yet.
-    //
-    // Which quarter that is, is one counter for both cubemaps: the phase is the
-    // frame's own, not the texture's, so a value lives four frames and three copies
-    // rather than eight and seven. The depth of that chain is what the eye reads as
-    // the cloud breathing -- the read of a copy is between texels, so every copy
-    // softens what it carries a little, and the march that ends the chain snaps it
-    // back sharp -- and a drift faster than a crawl shows it as jerking. Measured on a
-    // model of the chain (a translating edge, the sky's 3 by 3 over the result), the
-    // swing of the near-edge error over a cycle of ages is 0.030 of the edge with a
-    // counter per map against 0.016 with this one, at the shift a frame of a fast
-    // drift has (a third of a texel of the map). The phases run 0, 1, 2, 3.
-    //
-    // A note for whoever reads this next: the plain order is the one that measures
-    // best while a frame's shift is a fraction of a texel, which is where the drift of
-    // the layer lives; at a shift of about a whole texel -- a drift many times faster,
-    // or a map four times as fine -- the order 0, 2, 1, 3 is the better one (0.016
-    // against 0.051 on the same model), and this counter is the one line that picks it.
-    uint32_t cloudsCycle = 0;
-    uint32_t cloudsWhole = 2;
-
-    // The eye's place in the world's horizontal plane the frame before, and the time
-    // the layer drifted by then: what the shift between the two frames is made of (the
-    // eye's movement plus the wind's), which is what the history of the layer is read
-    // through (CmSkyClouds.comp).
-    float cloudAnchorPrev[2] = {};
-    float cloudTimePrev = 0.0f;
 
     // The quality level both the cloud cubemap and the volume of its shadow are
     // sized and refreshed at (see SetQuality).
