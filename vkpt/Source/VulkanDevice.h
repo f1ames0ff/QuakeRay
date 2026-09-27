@@ -74,6 +74,7 @@ class NvrhiFrameSkeleton;
 class RhiDebugTracePass;
 class RhiDecalPass;
 class RhiFsrPass;
+class RhiPostEffectPass;
 class RhiProceduralSkyPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
@@ -358,6 +359,13 @@ private:
     // FSR 3.1 context on the RHI list (the default upscaler), replacing the TAAU. Null when the
     // creation failed; the frame keeps the TAAU path.
     std::shared_ptr<RhiFsrPass>             rhiFsrPass;
+
+    // The RHI post-upscale effect chain (RHI/RhiPostEffectPass.h): the legacy consumers of
+    // `drawInfo.postEffectParams` (the colour tint variants, the chromatic aberration, the waves,
+    // the radial blur, the wipe and the CRT) over the upscaled image pair, recorded before the UI
+    // and - for the wipe/CRT half - after it. Null when the creation failed; the frame is then
+    // drawn without the post-upscale effects.
+    std::shared_ptr<RhiPostEffectPass>      rhiPostEffectPass;
 
     // The RHI 2D-UI pass (RHI/RhiUiPass.h): the game's SWAPCHAIN overlay (the HUD, the console, the
     // menus, the screen effects) drawn into the compose's upscaled image after the TAAU, created

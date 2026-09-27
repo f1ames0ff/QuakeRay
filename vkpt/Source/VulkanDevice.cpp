@@ -1456,6 +1456,14 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     sky.cameraFar = drawInfo.cameraFar;
     sky.fovYRadians = drawInfo.fovYRadians;
 
+    // The post-upscale effect chain (RHI/RhiPostEffectPass.h): the frame's own `postEffectParams`
+    // block and the engine frame counter - the same values the legacy Render hands its effect
+    // objects (VulkanDevice.cpp:1151, :1212). The pointed-to per-effect params are the game's
+    // frame-lifetime objects, exactly as in the legacy call (gl_vidsdl.c:2147-2154), and the
+    // skeleton reads them synchronously during this Render.
+    sky.postEffectParams = drawInfo.postEffectParams;
+    sky.postEffectFrameId = frameId;
+
     // The procedural sky (A5.4): the host block of the legacy frame (VulkanDevice.cpp:755-863) that
     // fills the `RenderCubemap::DrawProcedural` params, mirrored exactly; the skeleton records the
     // compute before the trace only when the uniform selects SKY_TYPE_PROCEDURAL.

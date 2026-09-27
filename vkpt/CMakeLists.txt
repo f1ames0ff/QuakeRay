@@ -93,6 +93,7 @@ set(vkpt_SOURCES
     Source/RHI/RhiFrameContext.cpp
     Source/RHI/RhiFsrPass.cpp
     Source/RHI/RhiPipeline.cpp
+    Source/RHI/RhiPostEffectPass.cpp
     Source/RHI/RhiProceduralSkyPass.cpp
     Source/RHI/RhiRasterSkyPass.cpp
     Source/RHI/RhiRasterOverlayPass.cpp

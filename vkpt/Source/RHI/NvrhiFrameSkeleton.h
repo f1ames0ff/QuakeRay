@@ -43,6 +43,7 @@ class RenderResolutionHelper;
 class RhiDebugTracePass;
 class RhiDecalPass;
 class RhiFsrPass;
+class RhiPostEffectPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
 class RhiRtComposePass;
@@ -214,6 +215,19 @@ public:
         float cameraNear = 0.0f;
         float cameraFar = 0.0f;
         float fovYRadians = 0.0f;
+
+        // -- the post-upscale effect chain (RHI/RhiPostEffectPass.h) --
+        // The frame's post-effect params, exactly the `drawInfo.postEffectParams` block the legacy
+        // Render consumes (VulkanDevice.cpp:1166-1223): the pointers the game fills in
+        // gl_vidsdl.c:2147-2154. The pass reads them synchronously during its two calls - the
+        // pointed-to objects are the game's per-frame stack temporaries, exactly as in the legacy
+        // frame - and keeps its own transition state across frames, the way the engine's effect
+        // objects do. `postEffectFrameId` is the engine's frame counter (VulkanDevice::frameId),
+        // the value the legacy wipe carries as its `startFrameId` (VulkanDevice.cpp:1212); only the
+        // wipe reads it.
+        RgDrawFramePostEffectsParams postEffectParams = {};
+        uint32_t postEffectFrameId = 0;
+
         // The engine's global uniform: the world shader's set 1, the source of the bytes the
         // skeleton writes into the uniform wrap every frame, and the CPU copy the host-only exposure
         // parameters read. The host owns it, so the field keeps the shared_ptr (the traced mode's
@@ -317,6 +331,13 @@ public:
     // ran, Render drives the engine's own FidelityFX context over the frame's FINAL and, on success,
     // copies its output into the TAAU target the UI and the present sample; otherwise it records the
     // TAAU. Optional: a null one keeps the TAAU always.
+    // 'pPostEffectPass' is the host's post-upscale effect chain (RhiPostEffectPass,
+    // RHI/RhiPostEffectPass.h): after the upscaler and before the UI, Render records the legacy
+    // `postEffectParams` consumers 1-7 (the colour tint and its variants, the inverse-BW and
+    // hue-shift effects, the chromatic aberration, the distorted sides, the waves, the radial
+    // blur), and after the UI block Render records the wipe and the CRT half - the legacy order
+    // (VulkanDevice.cpp:1166-1223). Optional: a null one draws the frame without the post effects
+    // (the default-on chromatic aberration among them).
     // 'pShadowMapPass' and 'pGodRaysPass' are the host's A5.2 passes (RhiShadowMapPass,
     // RhiRtGodRaysPass): in the traced chain, once the primary ran, Render records the shadow map,
     // and when it drew something the god-rays trace and filter whose output CmPrepareFinal adds.
@@ -343,6 +364,7 @@ public:
                                 RhiRasterOverlayPass *pRasterOverlayPass,
                                 RhiDecalPass *pDecalPass,
                                 RhiFsrPass *pFsrPass,
+                                RhiPostEffectPass *pPostEffectPass,
                                 RhiShadowMapPass *pShadowMapPass,
                                 RhiRtGodRaysPass *pGodRaysPass,
                                 RhiUiPass *pUiPass,
@@ -511,6 +533,12 @@ private:
     // which the skeleton copies into the TAAU target (29) so the UI and the present keep their
     // image; otherwise the TAAU records as before. Not owned; null when the host's creation failed.
     RhiFsrPass *fsrPass = nullptr;
+
+    // The host's post-upscale effect chain (RhiPostEffectPass, RHI/RhiPostEffectPass.h), driven in
+    // the traced chain right after the upscale and, for its wipe/CRT half, after the UI block. Not
+    // owned; null when the host's creation failed, in which case the frame is drawn without the
+    // post-upscale effects.
+    RhiPostEffectPass *postEffectPass = nullptr;
 
     // The wraps of the engine DecalManager buffers (A5.6): the per-slot staging as a copy source and
     // the device-local instance array once as the pass's set 3 buffer (stride

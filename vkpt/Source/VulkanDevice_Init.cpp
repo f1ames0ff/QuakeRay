@@ -37,6 +37,7 @@
 #include "RHI/RhiDebugTracePass.h"
 #include "RHI/RhiDecalPass.h"
 #include "RHI/RhiFsrPass.h"
+#include "RHI/RhiPostEffectPass.h"
 #include "RHI/RhiProceduralSkyPass.h"
 #include "RHI/RhiRasterOverlayPass.h"
 #include "RHI/RhiRasterSkyPass.h"
@@ -475,6 +476,24 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                     Print("Warning: RHI: the FSR pass is unavailable, the TAAU upscaler is kept");
                 }
 
+                // The post-upscale effect chain (RHI/RhiPostEffectPass.h): the legacy consumers of
+                // `drawInfo.postEffectParams` - the colour tint and its variants, the inverse-BW
+                // and hue-shift effects, the chromatic aberration, the distorted sides, the waves,
+                // the radial blur, the wipe and the CRT pair (VulkanDevice.cpp:1166-1223) - over
+                // the upscaled image pair, before the UI and (for the wipe/CRT half) after it. The
+                // module wraps the two upscaled images and the sampled ALBEDO itself. A failure
+                // leaves the pointer null and the frame is drawn without the chain - the default-on
+                // chromatic aberration among the losses.
+                rhiPostEffectPass = std::make_shared<RhiPostEffectPass>();
+                if (!rhiPostEffectPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                               info->pShaderFolderPath,
+                                               info->effectWipeIsUsed != 0,
+                                               [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiPostEffectPass.reset();
+                    Print("Warning: RHI: the post-effect pass is unavailable, the frame is drawn without the post-upscale effects");
+                }
+
                 // The decal pass of A5.6 (RHI/RhiDecalPass.h): the ported DecalManager::Draw that
                 // blends decal cubes into ALBEDO right after the primary, so the direct and indirect
                 // passes see the decal-modified G-buffer. The engine uploads no decals in this game
@@ -727,6 +746,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 rhiRasterOverlayPass.get(),
                 rhiDecalPass.get(),
                 rhiFsrPass.get(),
+                rhiPostEffectPass.get(),
                 rhiShadowMapPass.get(),
                 rhiRtGodRaysPass.get(),
                 rhiUiPass.get(),
@@ -835,6 +855,7 @@ VulkanDevice::~VulkanDevice()
     rhiRasterOverlayPass.reset();
     rhiDecalPass.reset();
     rhiFsrPass.reset();
+    rhiPostEffectPass.reset();
     rhiRasterSkyPass.reset();
     rhiProceduralSkyPass.reset();
     rhiAccelStructs.reset();

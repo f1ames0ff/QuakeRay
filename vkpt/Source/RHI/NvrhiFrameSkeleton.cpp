@@ -26,6 +26,7 @@
 #include "RhiDebugTracePass.h"
 #include "RhiDecalPass.h"
 #include "RhiFsrPass.h"
+#include "RhiPostEffectPass.h"
 #include "RhiRtComposePass.h"
 #include "RhiRtDirectPass.h"
 #include "RhiRtGodRaysPass.h"
@@ -107,6 +108,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiRasterOverlayPass *pRasterOverlayPass,
                                        RhiDecalPass *pDecalPass,
                                        RhiFsrPass *pFsrPass,
+                                       RhiPostEffectPass *pPostEffectPass,
                                        RhiShadowMapPass *pShadowMapPass,
                                        RhiRtGodRaysPass *pGodRaysPass,
                                        RhiUiPass *pUiPass,
@@ -127,6 +129,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , rasterOverlayPass(pRasterOverlayPass)
     , decalPass(pDecalPass)
     , fsrPass(pFsrPass)
+    , postEffectPass(pPostEffectPass)
     , shadowMapPass(pShadowMapPass)
     , godRaysPass(pGodRaysPass)
     , uiPass(pUiPass)
@@ -1014,6 +1017,24 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                           sky.upscaledWidth, sky.upscaledHeight, worldUniformBuffer.Get());
             }
 
+            // The post-upscale effect chain, the pre-UI half (RhiPostEffectPass): the legacy
+            // consumers 1-7 of `drawInfo.postEffectParams` (VulkanDevice.cpp:1166-1193) recorded
+            // over the upscaled image pair, after the upscaler wrote image 29 and before the UI
+            // draws over it. The module leaves its result in 29 for the UI and the present, its
+            // own ping-pong and its parity copy included. The time it book-keeps its transitions
+            // with is the uniform's `time` - the same float the legacy host passes and the shaders
+            // compare against (`FillUniform` writes it from `drawInfo.currentTime`,
+            // VulkanDevice.cpp:174), and the same wrap carries it to the device.
+            if (postEffectPass != nullptr && postEffectPass->IsCreated() && uniform != nullptr)
+            {
+                postEffectPass->Render(commandList, frameIndex, sky.framebuffers,
+                                       sky.width, sky.height,
+                                       sky.upscaledWidth, sky.upscaledHeight,
+                                       uniform->time,
+                                       worldUniformBuffer.Get(),
+                                       sky.postEffectParams);
+            }
+
             // The 2D UI (A5.1): the frame's SWAPCHAIN overlay into the same upscaled image the
             // present samples, right after the TAAU. The pass binds the collector's per-slot staging
             // geometry - wrapped here once, because the UI is rewritten every frame while the
@@ -1079,6 +1100,23 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                    sky.swapchainDraws, sky.swapchainDrawCount,
                                    uniform->view, uniform->projection, sky.applyVertexColorGamma);
                 }
+            }
+
+            // The post-upscale effect chain, the post-UI half (RhiPostEffectPass): the legacy
+            // records the wipe and the CRT after `Rasterizer::DrawToSwapchain` because they "work
+            // on swapchain geometry too" (VulkanDevice.cpp:1199-1223), so the UI that just drew
+            // into image 29 is part of their input. The call leaves the image the present samples
+            // in 29 and is a no-op while no wipe and no CRT is requested (the default
+            // configuration: `pWipe` is never filled, `rt_ef_crt` defaults to 0).
+            if (postEffectPass != nullptr && postEffectPass->IsCreated() && uniform != nullptr)
+            {
+                postEffectPass->RenderPostUi(commandList, frameIndex, sky.framebuffers,
+                                             sky.width, sky.height,
+                                             sky.upscaledWidth, sky.upscaledHeight,
+                                             uniform->time,
+                                             worldUniformBuffer.Get(),
+                                             sky.postEffectParams,
+                                             sky.postEffectFrameId);
             }
         }
     }
@@ -1659,6 +1697,13 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
     if (fsrPass != nullptr)
     {
         fsrPass->ReleaseTargets();
+    }
+
+    // The post-effect chain wraps the two upscaled images, the sampled ALBEDO and - when it exists
+    // - the wipe source, so it drops them here as well.
+    if (postEffectPass != nullptr)
+    {
+        postEffectPass->ReleaseTargets();
     }
 
     // A present binding set references the ALBEDO wrap and the direct-term image of one slot, so it
