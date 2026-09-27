@@ -175,6 +175,13 @@ void R_NewMap (void);
 void R_ParseParticleEffect (void);
 void R_RunParticleEffect (vec3_t org, vec3_t dir, int color, int count);
 void R_RocketTrail (vec3_t start, vec3_t end, int type);
+
+void R_SmokeInit (void);
+void R_SmokeClear (void);
+float R_SmokeTrailScale (const char *modelName, int trailType);
+void R_SmokeTrail (const vec3_t start, const vec3_t end, float sizeScale);
+void R_SmokeUpdate (void);
+void R_DrawSmoke (cb_context_t *cbx);
 void R_EntityParticles (entity_t *ent);
 void R_BlobExplosion (vec3_t org);
 void R_ParticleExplosion (vec3_t org);

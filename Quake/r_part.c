@@ -25,6 +25,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "gl_heap.h"
 
+extern cvar_t r_smoke;
+
 #define MAX_PARTICLES \
 	16384 // default max # of particles at one
 	      //  time
@@ -660,9 +662,17 @@ void R_RocketTrail (vec3_t start, vec3_t end, int type)
 		type -= 128;
 	}
 
+	const qboolean shaderSmoke = (type == 0 || type == 1) && CVAR_TO_BOOL (r_smoke);
+
 	while (len > 0)
 	{
 		len -= dec;
+
+		if (shaderSmoke)
+		{
+			VectorAdd (start, vec, start);
+			continue;
+		}
 
 		if (!free_particles)
 			return;

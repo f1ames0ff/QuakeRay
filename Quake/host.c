@@ -984,9 +984,14 @@ void _Host_Frame (double time)
 	if (host_speeds.value)
 		time1 = Sys_DoubleTime ();
 
+	// a finished benchmark run asks for its results screen here, after the disconnect it may
+	// have ended in has settled
+	CL_BenchShowPendingResults ();
+
 	SCR_UpdateScreen (true);
 
 	CL_RunParticles (); // johnfitz -- seperated from rendering
+	R_SmokeUpdate ();
 
 	if (host_speeds.value)
 		time2 = Sys_DoubleTime ();

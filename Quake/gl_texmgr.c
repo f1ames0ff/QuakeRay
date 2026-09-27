@@ -129,7 +129,14 @@ static THREAD_LOCAL RgMaterialCreateInfo rtspecial_info = {0};
 static THREAD_LOCAL void                *rtspecial_info_albedoAlpha = NULL; // to point to data from rtspecial_info
 static THREAD_LOCAL char                 rtspecial_info_pRelativePath[MAX_QPATH];
 
+static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride);
 static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride);
+
+/* Bumped after every material synthesis writes its fields -- never before them -- so a reader that
+   sees the new revision sees a finished texture. What a texture emits (is_light, the mask, its
+   glow extents) is read off those fields, and the DTAL piece cache of an alias model is only as
+   fresh as the revision it was built and published under (see RT_AddAliasEmissiveLights). */
+atomic_uint32_t rt_material_revision = {0};
 
 
 void TexMgr_RT_SpecialStart (float default_rough, float default_metallic)
@@ -1084,7 +1091,7 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
    as polygons over them; at or above it the whole surface glows and stays a single light. */
 #define RT_EMIS_GLOW_FULL 0.999f
 
-static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
+static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
 	if (!mat)
@@ -1177,9 +1184,8 @@ static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoF
 	if (has_luma_key && !emisBuf)
 		Con_Printf ("RT: material '%s': texture_emissive '%s' could not be loaded; using no emissive mask\n",
 		            mat->name, mat->filename_emissive);
-	const qboolean has_emis_mask = (emisBuf != NULL) || use_color_emissive;
-	const float emissScale = (isBrush && has_emis_mask && mat->is_light) ? mat->light_brightness : 1.0f;
-	const qboolean maskedTAL = (emissScale != 1.0f);
+	const float lightBright = CLAMP (0.0f, mat->light_brightness, 5.0f);
+	const float brightVis   = (lightBright < 1.0f) ? lightBright : 1.0f;
 	/* Per-material rt_emis_blend override, packed into the alpha of the
 	   roughness-metallic-emission texture: 0 = not authored, so the global
 	   cvar applies; otherwise the authored mode plus one. */
@@ -1278,12 +1284,12 @@ static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoF
 
 		emissMeanBase += emiss;
 
-		float emissOut = emiss * emissScale;
-		if (maskedTAL && emissOut > 1.0f)
+		float emissOut = emiss * brightVis;
+		if (emissOut > 1.0f)
 			emissOut = 1.0f;
 		emissMean += emissOut;
 
-		if (emissOut > RT_EMIS_GLOW_THRESHOLD)
+		if (emiss > RT_EMIS_GLOW_THRESHOLD)
 		{
 			const int px = i % tw;
 			const int py = i / tw;
@@ -1346,14 +1352,17 @@ static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoF
 
 		if (use_color_emissive)
 			glt->rtemissivetex = true;
+	}
 
-		if (maskedTAL && mat->light_brightness != 1.0f)
-		{
-			if (glt->rthaslightcolor)
-				ModifyColorValue (glt->rtlightcolor, 1.0f / mat->light_brightness);
-		}
-		else if (mat->light_brightness != 1.0f)
-			ModifyColorValue (glt->rtemissivecolor, mat->light_brightness);
+	if (lightBright != 1.0f)
+	{
+		const qboolean mask_lit_model = glt->owner && glt->owner->type == mod_alias && mat->is_light;
+		const qboolean light_samples_mask = glt->rtemissivetex && (isBrush || mask_lit_model);
+		const float gain = (light_samples_mask && lightBright < 1.0f) ? 1.0f : lightBright;
+
+		if (glt->rthaslightcolor)
+			VectorScale (glt->rtlightcolor, gain, glt->rtlightcolor);
+		VectorScale (glt->rtemissivecolor, gain, glt->rtemissivecolor);
 	}
 
 	glt->rtislight = mat->is_light;
@@ -1431,6 +1440,24 @@ static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoF
 	Mem_Free (normal);
 
 	return true;
+}
+
+/*
+================
+TexMgr_ApplyMaterialFromMat
+
+The revision moves after the synthesis, and only after it, so a reader that sees a new revision is
+looking at fields that revision produced; one that catches the synthesis mid-flight reads the old
+revision and its DTAL entry is refused as soon as the move lands.
+================
+*/
+static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
+{
+	const qboolean applied = TexMgr_ApplyMaterialFromMatInternal (glt, albedoFallback, fullbrightOverride);
+
+	Atomic_AddUInt32 (&rt_material_revision, 1);
+
+	return applied;
 }
 
 /*

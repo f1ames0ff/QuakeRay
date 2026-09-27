@@ -236,6 +236,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_usesops);
 
 	R_InitParticles ();
+	R_SmokeInit ();
 
 	Sky_Init (); // johnfitz
 	Fog_Init (); // johnfitz
@@ -396,6 +397,7 @@ void R_NewMap (void)
 
 	r_viewleaf = NULL;
 	R_ClearParticles ();
+	R_SmokeClear ();
 #ifdef PSET_SCRIPT
 	PScript_ClearParticles ();
 #endif

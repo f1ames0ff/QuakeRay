@@ -61,7 +61,9 @@ namespace vkpt
                              std::shared_ptr< MemoryAllocator >       allocator,
                              std::shared_ptr< Framebuffers >          storageFramebuffers,
                              std::shared_ptr< CommandBufferManager >  cmdManager,
-                             const RgInstanceCreateInfo&              instanceInfo );
+                             const RgInstanceCreateInfo&              instanceInfo,
+                             VkDescriptorSetLayout                    tlasSetLayout,
+                             VkDescriptorSetLayout                    lightSetLayout );
         ~Rasterizer() override;
 
         Rasterizer( const Rasterizer& other )     = delete;
@@ -102,6 +104,8 @@ namespace vkpt
                                const std::shared_ptr< GlobalUniform >&  uniform,
                                const std::shared_ptr< Tonemapping >&    tonemapping,
                                const std::shared_ptr< Volumetric >&     volumetric,
+                               VkDescriptorSet                          tlasSet,
+                               VkDescriptorSet                          lightSet,
                                const float*                             view,
                                const float*                             proj,
                                const RgFloat2D&                         jitter,
@@ -127,6 +131,7 @@ namespace vkpt
         struct DrawParams
         {
             const std::shared_ptr< RasterizerPipelines >&           pipelines;
+            const std::shared_ptr< RasterizerPipelines >*           pSmokePipelines;
             const std::vector< RasterizedDataCollector::DrawInfo >& drawInfos;
             VkRenderPass                                            renderPass;
             VkFramebuffer                                           framebuffer;
@@ -156,8 +161,8 @@ namespace vkpt
 
         void BindPipelineIfNew( VkCommandBuffer                               cmd,
                                 const RasterizedDataCollector::DrawInfo&      info,
-                                const std::shared_ptr< RasterizerPipelines >& pipelines,
-                                VkPipeline&                                   curPipeline );
+                                const DrawParams&                              drawParams,
+                                VkPipeline&                                    curPipeline );
 
     private:
         VkDevice         device;

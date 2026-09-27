@@ -322,6 +322,7 @@ set(CORE_SOURCES
     Quake/r_brush.c
     Quake/r_part.c
     Quake/r_part_fte.c
+    Quake/r_smoke.c
     Quake/r_sprite.c
     Quake/r_world.c
     Quake/rt_material.c

@@ -1051,7 +1051,7 @@ void vkpt::LightManager::CreateDescriptors()
         b.binding = bnd;
         b.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         b.descriptorCount = 1;
-        b.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT;
+        b.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};

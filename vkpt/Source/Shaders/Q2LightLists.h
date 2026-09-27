@@ -30,6 +30,8 @@
 #ifndef Q2_LIGHT_LISTS_H_
 #define Q2_LIGHT_LISTS_H_
 
+#include "Q2ClusterLights.h"
+
 #define Q2_MAX_BRUTEFORCE_SAMPLING 16
 
 // Light statistics modes, mirroring the rt_q2_lightstats cvar: they only affect how
@@ -41,30 +43,6 @@
 #define Q2_LIGHT_STATS_NO_READ      3u
 #define Q2_LIGHT_STATS_NON_ATOMIC   4u
 
-uint q2GetClusterLightCount(const uint cluster)
-{
-    return q2LightListOffsets[cluster + 1] - q2LightListOffsets[cluster];
-}
-
-uint q2GetClusterLight(const uint cluster, const uint slot)
-{
-    return q2LightListLights[q2LightListOffsets[cluster] + slot];
-}
-
-/* Per-cluster sky visibility of the host (Q2RTX's sky_visibility): bit c of the table is
-   1 when a sun ray from cluster c can still reach the sky, which is the union of the PVS
-   of every cluster that holds a sky surface. A cluster the host never classified - the
-   solid cluster 0, or one past the table - keeps its sun ray, as Q2RTX keeps it for an
-   invalid cluster. */
-bool q2ClusterSeesSky(const uint cluster)
-{
-    if (cluster >= uint(Q2_MAX_CLUSTERS))
-    {
-        return true;
-    }
-
-    return (q2ClusterSkyVis[cluster >> 5] & (1u << (cluster & 31u))) != 0u;
-}
 
 bool q2GetIsGradient(const ivec2 pix)
 {
