@@ -42,11 +42,14 @@ namespace
 const char *const VERTEX_SHADER_FILE_NAME = "RsRasterizer.vert.spv";
 const char *const PIXEL_SHADER_FILE_NAME  = "RsSwapchain.frag.spv";
 
-// The legacy push-constant range is 88 bytes (Rasterizer.cpp:66, :485-489) while RsSwapchain.frag
-// declares a 92-byte block: its last member, emissionMultiplier at offset 88, is declared but never
-// read, and the legacy host never writes those four bytes (HLSL/RsSwapchain.frag.hlsl:33-39). The
-// pass mirrors the legacy value, so both renderers push the same bytes and the shader-visible
-// prefix stays what the legacy path produces.
+// The blob declares an 88-byte fragment block: color at offset 64, textureIndex at 80 and
+// emissionTextureIndex at 84, with no member after them (GLSL/RsSwapchain.frag:32-37;
+// HLSL/RsSwapchain.frag.hlsl:30-40 keeps the same offsets; the fragment blob is code-identical to
+// the RsSky.frag.spv RhiSkyPass loads). The unused emissionMultiplier the old block ended with is
+// gone, so the declaration is exactly what the stage reads. The legacy RasterizedPushConst is 120
+// bytes since the smoke fields at 88/104 were appended (Rasterizer.cpp:70-72), but the swapchain
+// fragment stage reads only its first 88 bytes; the pass mirrors that legacy prefix, so both
+// renderers give the stage the same bytes.
 constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
 
 // Both stages use SpecId 0 for their single constant: RsRasterizer.vert declares

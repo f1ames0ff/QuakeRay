@@ -46,11 +46,13 @@ namespace
 const char *const VERTEX_SHADER_FILE_NAME = "RsRasterizer.vert.spv";
 const char *const PIXEL_SHADER_FILE_NAME  = "RsSky.frag.spv";
 
-// The legacy push-constant range is 88 bytes (Rasterizer.cpp:66, :485-489) while both raster sky
-// blobs declare a 92/96-byte block: RsSky.frag's last member, emissionMultiplier at offset 88, is
-// declared but never read, and the legacy host never writes it (HLSL/RsSky.frag.hlsl:30-36). The
-// module mirrors the legacy value, so both renderers push the same bytes and the shader-visible
-// prefix stays what the legacy path produces.
+// The blobs declare an 88-byte fragment block: color at offset 64, textureIndex at 80 and
+// emissionTextureIndex at 84, with no member after them (GLSL/RsSky.frag:32-37 and the
+// code-identical GLSL/RsSwapchain.frag:32-37; HLSL/RsSky.frag.hlsl:27-37 keeps the offsets). The
+// unused emissionMultiplier the old block ended with is gone, so the declaration is exactly what
+// the stage reads. The legacy RasterizedPushConst is 120 bytes since the smoke fields at 88/104
+// were appended (Rasterizer.cpp:70-72), but the sky stage reads only its first 88 bytes; the
+// module mirrors that legacy prefix, so both renderers give the stage the same bytes.
 constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
 
 // Both stages use SpecId 0 for their single constant: RsRasterizer.vert declares

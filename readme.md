@@ -1,6 +1,6 @@
 # QuakeRay engine
 
-QuakeRay is Ray Tracing engine for Quake 1, with a Q2RTX-style partial path traced features and a Vulkan backend.
+QuakeRay is a ray tracing engine for Quake 1, with Q2RTX-style partial path tracing features and a Vulkan backend.
 
 ## Features
 
@@ -8,13 +8,13 @@ QuakeRay is Ray Tracing engine for Quake 1, with a Q2RTX-style partial path trac
 
 * Ray tracing with ReSTIR direct light sampling
 * FSR 2.0 and 3.1 support
-* TAL (Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
-* True Light Mode (opt-in): All light sources are TAL, which means all emissive textures are actual light sources.
+* DTAL (Dynamic Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
+* True Light Mode (opt-in): All light sources are DTAL, which means all emissive textures are actual light sources.
 * Q2RTX-style path traced lighting.
 * ASVGF denoiser.
 * RT Global Illumination
 * NEE (Next Event Estimation) for the sun, emissives and dynamic lights.
-* per-BSP-cluster light lists.
+* per-BSP-cluster light lists (legacy).
 * Animated light entities (`rt_light_styles`) make their own fixture flicker, in accordance with the original light style, to preserve the original Quake 1 lighting design.
 * Full material system with per-brush and per-model metalness/roughness, normal map strength and texture-driven gloss maps, plus ray-traced water with animated wave normals and refraction.
 
@@ -26,14 +26,32 @@ QuakeRay is Ray Tracing engine for Quake 1, with a Q2RTX-style partial path trac
 * Volumetric fog
 * Bloom
 * Post-processing: chromatic aberration, and a configurable LUT for colour grading
+* Shader smoke — the trails of rockets, lava balls and grenades are drawn as soft, lit puffs the room's light falls on, in place of the classic flat sprites
 
 ## Roadmap
 
-* In-game light editor for emissive surfaces and dynamic lights.
+* Light and material editor.
 * Arcane Dimensions support (the original Quake 1 expansion pack)
 * Quake Remastered (2021) support (the official remaster of Quake 1)
 * Mixed rasterization and ray tracing for better performance on older GPUs (the current renderer is RT only, so it is limited to GPUs with ray tracing support).
 * Full physically correct path tracing.
+* More shader effects: explosion, fire, etc.
+* DirectX 12
+* FSR 4
+* DLSS
+
+## Definitions
+
+* **ASVGF (Adaptive Spatio-Temporal Variance-Guided Filtering)** - the denoiser of the renderer, ported from Q2RTX:
+a temporal pass accumulates the lighting with the frames before it, and an a-trous (wavelet) pass filters it with weights guided by the variance of the sample and by depth, normal and colour,
+so a tap on other geometry cannot smear. Direct, indirect (at a third of the resolution, as luma spherical harmonics in YCoCg) and specular light are filtered apart from one another,
+and a gradient pass shortens the history wherever it stopped matching the frame
+* **TAL (Texture Area Light)** - Q2RTX's name for a light cut out of a surface: the light is a polygon of the face with the face's own uvs,
+and it samples the emission mask of the texture at the point it picks, so a face bright in its centre and dark around it lights the scene from its lit part alone
+* **DTAL (Dynamic Texture Area Light)** - QuakeRay's implementation of that idea, and the difference is the word dynamic:
+a Q2RTX TAL is a polygon of a face of the world, while a DTAL is any emissive surface of this engine, the moving ones included.
+A face of the world or a brush entity is stored and re-read every frame, following its light styles and animated frames,
+while an alias model is built from the triangles of the pose it draws, so its light follows the animation, the pose and the movement of the entity
 
 ## Changelog
 
@@ -59,7 +77,7 @@ Steps:
 1. Clone the repository:
 
    ```
-   git clone https://github.com/sdas234f23f/QuakeRay.git
+   git clone --recursive https://github.com/sdas234f23f/QuakeRay.git
    ```
 
 2. (Re)build the SPIR-V shaders — optional: `build_win.ps1` already builds and deploys them (see step 3), so you only need this when iterating on `vkpt/Source/Shaders` on their own:
@@ -130,6 +148,7 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_teleport_portals 0` — the RT portal effect on teleport surfaces is off, so they render as ordinary surfaces; `1` re-enables the mirrored destination
 * `rt_stats 1,2,3` — the on-screen readout, one panel per number: `1` ray statistics (rays per second, per-category counts), `2` GPU timing per render pass, `3` CPU frame profile. The panels stack in one block at one font, each after a blank line; `rt_stats 1 2` and `rt_stats 1 2 3` work the same, `rt_stats 0` hides the readout, and a bare `rt_stats` prints which panels are on. The setting is archived, so the choice survives a restart
 * `rt_stats_dump` — writes every number of the current frame into `qperfdump.log` in the game directory, one `section name value` line per number so runs can be diffed. The file is appended to, not overwritten, and the write happens on a separate thread, so taking a dump does not disturb the frame rate it measures
+* `rt_bench <demoname> [quit]` — play a demo at its own speed with the frame profiler summed over it, and append the per-slot averages and maxima, the FPS and frametime of the run, the cluster counters and a settings fingerprint to `benchmark.log`; `quit` leaves the game when the run is over, so a benchmark can be scripted. The Options menu's Benchmark item below Video Options lists every demo and plays one with the on-screen FPS counter on, and the results screen that follows shows the minimum, maximum and average FPS and frametime of the run. A run that a map change or a disconnect cuts short is marked interrupted instead of reported
 * `rt_debugflags 0` — diagnostic views (raw direct/indirect/specular, gradients, ...)
 * `rt_viewm_scale 0.32` — the size the weapon in hand takes up in the world, one factor on the whole model of it. The weapon is scaled about the eye and not about its own zero, and the setting is both halves of that: the model is drawn `0.32` times smaller and its zero is carried `0.32` times closer to the camera, so the picture of the weapon in the frame is the one it always had while the room it takes up in the world shrinks with the factor. At the default of `0.32` the room it takes up in the world is under a third of what it was, and what that comes to is a weapon that is out of the walls: the barrels of `id1` reach from `19` to `54` units forward of the eye (`v_shot2` to `v_rock2`), and under a third of that is `6` to `18` units where the player's own hull keeps that eye `16` units off a flat wall, so the weapon of the fist is no longer drawn through the wall in front of it — which is the whole of what the setting is for, the ray-traced renderer tracing the weapon as geometry of the same scene the world is traced in and the depth range the classic renderer hid that with having no equivalent in a traced scene. The axe is the one weapon left out of that room: its head is swung over most of `75` units of the room the player stands in, `25` of them at `0.32`, which is more than the `16` units that separate the eye from a flat wall, and the swing of it is where a weapon is still drawn through one; `0.1` brings that under `8` units and puts every weapon of the fist out of reach of a wall altogether. The one thing the weapon can not be drawn past is the near clip distance, which is a distance of the world as well: `GL_GetCameraNear` reads `4` units at the field of view of a weapon, `0.5` of them under the floor of it, so a weapon drawn `0.32` times closer than that stands inside the near plane and is clipped away — the whole distance is taken from the same factor, the `4` units and the `0.5` under them going to `1.28` and `0.16`, which is what keeps a scaled weapon in view. What comes with that is the near plane of the whole scene, the traced frame carrying one near distance and not two: a scaled frame starts its primary rays `1.28` units from the camera instead of `4`, its projection, its FSR2 setup and its volumetric pass read the same number, and the geometry the near plane used to cut away around the player — the floor at his feet, the wall at his shoulder, the weapon's own barrel — is traced. The factor composes with `rt_viewm_fovscale` (`1.2`) and `rt_viewm_wide` (`1.05`), which shape the weapon across the view while this one shapes it away from the player: the length of a weapon and everything that follows from it, the clip included, come from this factor alone. One thing of the weapon does not follow it, and that is the light the weapon makes rather than the weapon: the flash of a shot is a dynamic light placed off the camera by `rt_muzzleoffs_x`, `rt_muzzleoffs_y` and `rt_muzzleoffs_z` (`0`, `-30`, `100` — the reach of the flash rather than the muzzle itself), and those are distances of the world read from the camera, so they do not shrink with the weapon; a weapon of `0.32` whose flash is wanted at its own muzzle again wants the three read as `0`, `-9.6`, `32`, and a flash wanted to light the room ahead can be left as it is. The setting is archived, so a choice survives a restart, and `rt_viewm_scale 1` is the weapon as it always was.
 

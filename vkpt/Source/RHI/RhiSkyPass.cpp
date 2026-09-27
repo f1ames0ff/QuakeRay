@@ -81,11 +81,14 @@ constexpr uint32_t WORLD_FRAMEBUFFERS_SAMPLER_OFFSET = 248;
 // dummy use it.
 constexpr nvrhi::Format WORLD_STORAGE_FORMAT = nvrhi::Format::RGBA32_UINT;
 
-// The legacy push-constant range is 88 bytes (Rasterizer.cpp:66, :485-489) while RsSky.frag and
-// RsSwapchain.frag declare a 92-byte block: their last member, emissionMultiplier at offset 88, is
-// declared but never read, and the legacy host never writes those four bytes (HLSL/RsSky.frag.hlsl:35,
-// recon 2.3). The pass mirrors the legacy value, so both renderers push the same bytes and the
-// shader-visible prefix stays what the legacy path produces.
+// The blobs declare an 88-byte fragment block: color at offset 64, textureIndex at 80 and
+// emissionTextureIndex at 84, with no member after them (GLSL/RsSky.frag:32-37 and the
+// code-identical GLSL/RsSwapchain.frag:32-37; the world sub-pass's GLSL/RsWorld.frag:38-43 is the
+// same block, and HLSL/RsSky.frag.hlsl:27-37 and HLSL/RsWorld.frag.hlsl:77-84 keep its offsets).
+// The unused emissionMultiplier the old sky block ended with is gone, so the declaration is
+// exactly what the stages read. The legacy RasterizedPushConst is 120 bytes since the smoke fields
+// at 88/104 were appended (Rasterizer.cpp:70-72), but these stages read only its first 88 bytes;
+// the pass mirrors that legacy prefix, so both renderers give the stages the same bytes.
 constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
 
 // Both stages use SpecId 0 for their single constant: RsRasterizer.vert declares

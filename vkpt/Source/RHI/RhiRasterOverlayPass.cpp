@@ -52,11 +52,13 @@ const char *const DEPTH_COPY_PIXEL_SHADER_FILE_NAME  = "RsDepthCopying.frag.spv"
 const char *const SMOKE_VERTEX_SHADER_FILE_NAME      = "RsSmoke.vert.spv";
 const char *const SMOKE_PIXEL_SHADER_FILE_NAME       = "RsSmoke.frag.spv";
 
-// The legacy push-constant range is 88 bytes (Rasterizer.cpp:66, :485-489) while RsWorld.frag
-// declares a 92-byte block: its last member, emissionMultiplier at offset 88, is declared but never
-// read, and the legacy host never writes those four bytes (HLSL/RsWorld.frag.hlsl:35). The pass
-// mirrors the legacy value, so both renderers push the same bytes and the shader-visible prefix
-// stays what the legacy path produces.
+// The blob declares an 88-byte fragment block: color at offset 64, textureIndex at 80 and
+// emissionTextureIndex at 84, with no member after them (no unused emissionMultiplier trailer;
+// GLSL/RsWorld.frag:38-43, and HLSL/RsWorld.frag.hlsl:77-84 keeps the same offsets). The
+// declaration is exactly what the world fragment stage reads. The legacy RasterizedPushConst is
+// 120 bytes since the smoke fields at 88/104 were appended (Rasterizer.cpp:70-72), but the world
+// stage reads only its first 88 bytes; the pass mirrors that legacy prefix, so both renderers give
+// the stage the same bytes.
 constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
 
 // The smoke block is the full legacy RasterizedPushConst: 120 bytes (Rasterizer.cpp:72), the two
