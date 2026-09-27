@@ -28,14 +28,13 @@
 #include "ShaderCommonHLSLFunc.hlsli"
 
 // The GLSL push constant block is the fragment half of the host's RasterizedPushConst: it
-// starts at offset 64, so each member keeps its golden offset explicitly. The last member,
-// emissionMultiplier, is declared by the golden but read by no one.
+// starts at offset 64, so each member keeps its golden offset explicitly. The three members
+// end at offset 88, which is exactly the legacy host's 88-byte push constant range.
 struct RasterizerFrag_BT
 {
     [[vk::offset(64)]] float4 color;
     [[vk::offset(80)]] uint   textureIndex;
     [[vk::offset(84)]] uint   emissionTextureIndex;
-    [[vk::offset(88)]] float  emissionMultiplier;
 };
 
 [[vk::push_constant]] ConstantBuffer<RasterizerFrag_BT> rasterizerFragInfo;

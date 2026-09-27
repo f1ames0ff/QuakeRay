@@ -94,6 +94,21 @@ SPIRV_CORE_EXTENSIONS = [
     "SPV_EXT_descriptor_indexing",
 ]
 
+# SPV_KHR_ray_query can not join SPIRV_EXTENSIONS, the list above. It is an allow-list entry of
+# the compiler, and with the ray query extension permitted dxc declares RayQueryKHR and
+# SPV_KHR_ray_query for every module that carries OpTypeAccelerationStructureKHR, TraceRay-only
+# ones included (measured: RtRaygenDirect.rgen gets the extension beside SPV_KHR_ray_tracing once
+# it is allowed), while the glslc goldens of the TraceRay modules declare only
+# SPV_KHR_ray_tracing. The extension is therefore allowed per translation unit: a source whose
+# comment-stripped text, or the text of anything it includes, uses the RayQuery type gets it
+# (RsSmoke.vert.hlsl through SmokeLight.hlsli), everything else keeps the shared list. The scan
+# has to answer the same question as the one in GenerateShaders.py, or the checker and the host
+# build would compile the HLSL half with different flags.
+SPIRV_RAY_QUERY_EXTENSION = "SPV_KHR_ray_query"
+
+# The folders both compiler command lines pass with -I, in the order they pass them.
+INCLUDE_FOLDERS = [".", "LPM", "CAS", "../Generated/"]
+
 TAB = "  "
 
 
@@ -597,9 +612,13 @@ def compileShader(sourcePath, outputPath, isHLSL):
         if profile is None:
             return False, sourcePath + " does not name a known shader stage"
 
+        extensions = list(SPIRV_EXTENSIONS)
+        if sourceUsesRayQuery(sourcePath):
+            extensions.append(SPIRV_RAY_QUERY_EXTENSION)
+
         command = ["dxc", "-spirv", "-T", HLSL_PROFILES[profile], "-fspv-target-env=vulkan1.2"] + \
-            ["-fspv-extension=" + ext for ext in SPIRV_EXTENSIONS] + \
-            ["-I", ".", "-I", "LPM", "-I", "CAS", "-I", "../Generated/", sourcePath, "-Fo", outputPath]
+            ["-fspv-extension=" + ext for ext in extensions] + \
+            getIncludeFoldersProcArg() + [sourcePath, "-Fo", outputPath]
     else:
         # -O on the golden side, so that both compilers are compared at their own full
         # optimization: dxc optimizes by default and drops the resources of dead code, while
@@ -610,8 +629,8 @@ def compileShader(sourcePath, outputPath, isHLSL):
         # (GenerateShaders.py adds every subfolder): CmPrepareFinal.comp includes the AMD
         # header as a bare "ffx_a.h", which lives in LPM/ and CAS/. LPM first, the copy its
         # ported twin names.
-        command = ["glslc", "-O", "--target-env=vulkan1.2", "-I", ".", "-I", "LPM", "-I", "CAS", "-I", "../Generated/",
-            sourcePath, "-o", outputPath]
+        command = ["glslc", "-O", "--target-env=vulkan1.2"] + getIncludeFoldersProcArg() + \
+            [sourcePath, "-o", outputPath]
 
     try:
         r = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -622,6 +641,47 @@ def compileShader(sourcePath, outputPath, isHLSL):
         return False, r.stdout
 
     return True, None
+
+
+def getIncludeFoldersProcArg():
+    return [a for p in INCLUDE_FOLDERS for a in ("-I", p)]
+
+
+# True when the translation unit of filename uses the HLSL RayQuery type, which is what decides
+# whether SPV_KHR_ray_query is allowed for its compile (see above). The search runs over the
+# comment-stripped text and follows the #include lines through INCLUDE_FOLDERS, so a header such
+# as SmokeLight.hlsli is enough to make the stage that includes it a ray query user. The same
+# question is answered the same way in GenerateShaders.py, because the host build and the checker
+# have to compile the HLSL half identically.
+def sourceUsesRayQuery(filename, visited=None):
+    visited = visited if visited is not None else set()
+
+    filename = os.path.abspath(filename).replace('\\', '/')
+    if filename in visited:
+        return False
+    visited.add(filename)
+
+    try:
+        with open(filename, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return False
+
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", " ", text)
+
+    if re.search(r"\bRayQuery\b", text):
+        return True
+
+    for line in text.splitlines():
+        if "#include" in line and '"' in line:
+            includeFile = line.split('"')[1]
+            for folder in INCLUDE_FOLDERS:
+                included = os.path.abspath(folder + "/" + includeFile).replace('\\', '/')
+                if os.path.exists(included) and sourceUsesRayQuery(included, visited):
+                    return True
+
+    return False
 
 
 def disassemble(spvPath, txtPath):

@@ -96,10 +96,16 @@
 // The header declares no descriptor of its own -- it reads the light lists, the light statistics,
 // the cluster sky visibility and the sampled gradient positions of the accessor layer -- so the
 // probe pair GLSL/Q2LightLists.probe.comp <-> Probes/Q2LightLists.probe.comp.hlsl is what pins it.
+//
+// The three cluster accessors (q2GetClusterLightCount, q2GetClusterLight, q2ClusterSeesSky) no
+// longer live in this file: master moved them into Q2ClusterLights.h, and their HLSL bodies live
+// in Q2ClusterLights.hlsli, which is included here in the golden's position -- right after the
+// accessor layer and before the rest of the body. Everything else of the golden is unchanged.
 
 #ifndef Q2_LIGHT_LISTS_HLSLI_
 #define Q2_LIGHT_LISTS_HLSLI_
 #include "ShaderCommonHLSLFunc.hlsli"
+#include "Q2ClusterLights.hlsli"
 #include "Light.hlsli"
 
 #define Q2_MAX_BRUTEFORCE_SAMPLING 16
@@ -112,31 +118,6 @@
 #define Q2_LIGHT_STATS_FIRST_SAMPLE 2u
 #define Q2_LIGHT_STATS_NO_READ      3u
 #define Q2_LIGHT_STATS_NON_ATOMIC   4u
-
-uint q2GetClusterLightCount(const uint cluster)
-{
-    return q2LightListOffsets[cluster + 1] - q2LightListOffsets[cluster];
-}
-
-uint q2GetClusterLight(const uint cluster, const uint slot)
-{
-    return q2LightListLights[q2LightListOffsets[cluster] + slot];
-}
-
-/* Per-cluster sky visibility of the host (Q2RTX's sky_visibility): bit c of the table is
-   1 when a sun ray from cluster c can still reach the sky, which is the union of the PVS
-   of every cluster that holds a sky surface. A cluster the host never classified - the
-   solid cluster 0, or one past the table - keeps its sun ray, as Q2RTX keeps it for an
-   invalid cluster. */
-bool q2ClusterSeesSky(const uint cluster)
-{
-    if (cluster >= uint(Q2_MAX_CLUSTERS))
-    {
-        return true;
-    }
-
-    return (q2ClusterSkyVis[cluster >> 5] & (1u << (cluster & 31u))) != 0u;
-}
 
 bool q2GetIsGradient(const int2 pix)
 {

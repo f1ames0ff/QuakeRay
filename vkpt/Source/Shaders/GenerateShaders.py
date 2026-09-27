@@ -21,6 +21,7 @@
 
 import sys
 import os
+import re
 import subprocess
 import pathlib
 
@@ -80,6 +81,17 @@ SPIRV_EXTENSIONS            = [
     "SPV_EXT_descriptor_indexing",
     "SPV_KHR_compute_shader_derivatives",
 ]
+
+# SPV_KHR_ray_query can not join the list above. That list is an allow-list of the compiler, and
+# with the ray query extension permitted dxc declares RayQueryKHR and SPV_KHR_ray_query for every
+# module that carries OpTypeAccelerationStructureKHR, TraceRay-only ones included (measured:
+# RtRaygenDirect.rgen gets the extension beside SPV_KHR_ray_tracing once it is allowed).
+# CheckShaderProperties.py compares the capabilities and extensions of the two halves, and the
+# glslc goldens of the TraceRay modules declare only SPV_KHR_ray_tracing, so a global allowance
+# would turn every RT pair red. The extension is therefore allowed per translation unit: a source
+# whose comment-stripped text, or the text of anything it includes, uses the RayQuery type gets it
+# (RsSmoke.vert.hlsl through SmokeLight.hlsli), everything else keeps the shared list.
+SPIRV_RAY_QUERY_EXTENSION   = "SPV_KHR_ray_query"
 
 
 CACHE_FILE_DEPENDENCY_MAP_SEPARATOR_LINE = "DEPENDENCY\n"
@@ -154,14 +166,55 @@ def getCompileCommand(filename, outputFilename):
             filename,
             "-o", outputFilename]
 
+    extensions = list(SPIRV_EXTENSIONS)
+    if sourceUsesRayQuery(filename):
+        extensions.append(SPIRV_RAY_QUERY_EXTENSION)
+
     return [
         "dxc",
         "-spirv",
         "-T", HLSL_PROFILES[stage],
         "-fspv-target-env=vulkan1.2"
-        ] + ["-fspv-extension=" + ext for ext in SPIRV_EXTENSIONS] + getDependentFoldersProcArg() + [
+        ] + ["-fspv-extension=" + ext for ext in extensions] + getDependentFoldersProcArg() + [
         filename,
         "-Fo", outputFilename]
+
+
+# True when the translation unit of filename uses the HLSL RayQuery type, which is what decides
+# whether SPV_KHR_ray_query is allowed for its compile (see above). The search runs over the
+# comment-stripped text and follows the #include lines through DEPENDENCY_FOLDERS, so a header
+# such as SmokeLight.hlsli is enough to make the stage that includes it a ray query user. The same
+# question is answered the same way in CheckShaderProperties.py, because the host build and the
+# checker have to compile the HLSL half identically.
+def sourceUsesRayQuery(filename, visited=None):
+    visited = visited if visited is not None else set()
+
+    filename = abspath(filename)
+    if filename in visited:
+        return False
+    visited.add(filename)
+
+    try:
+        with open(filename, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return False
+
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", " ", text)
+
+    if re.search(r"\bRayQuery\b", text):
+        return True
+
+    for line in text.splitlines():
+        if "#include" in line and '"' in line:
+            includeFile = line.split('"')[1]
+            for folder in DEPENDENCY_FOLDERS:
+                included = abspath(folder + includeFile)
+                if os.path.exists(included) and sourceUsesRayQuery(included, visited):
+                    return True
+
+    return False
 
 
 def abspath(filename):

@@ -418,7 +418,17 @@ float3 getSkyFiltered(float3 direction, float lod)
 
 float3 getSkyFilteredMultiplied(float3 direction, float lod)
 {
-    return getSkyFiltered(direction, lod) * globalUniform.skyColorMultiplier;
+    float3 col = getSkyFiltered(direction, lod);
+#ifdef DESC_SET_RENDER_CUBEMAP
+    // The procedural sky bakes the multiplier into the cubemaps it fills -- the
+    // reflection path above reads them without one -- so scaling it again here
+    // would apply the sky brightness to the ambient light twice.
+    if (globalUniform.skyType == SKY_TYPE_PROCEDURAL)
+    {
+        return col;
+    }
+#endif
+    return col * globalUniform.skyColorMultiplier;
 }
 
 float3 getSkyAmbientMultiplied(float3 direction, float lod)
