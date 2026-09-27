@@ -1256,14 +1256,9 @@ void VulkanDevice::CreateDevice()
     asFeatures.pNext = &rtPipelineFeatures;
     asFeatures.accelerationStructure = 1;
 
-    VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
-    rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
-    rayQueryFeatures.pNext = &asFeatures;
-    rayQueryFeatures.rayQuery = 1;
-
     VkPhysicalDeviceFeatures2 physicalDeviceFeatures2 = {};
     physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    physicalDeviceFeatures2.pNext = &rayQueryFeatures;
+    physicalDeviceFeatures2.pNext = &asFeatures;
     physicalDeviceFeatures2.features = features;
 
     std::vector<const char *> deviceExtensions = {
@@ -1272,7 +1267,6 @@ void VulkanDevice::CreateDevice()
         VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
         VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
         VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-        VK_KHR_RAY_QUERY_EXTENSION_NAME,
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
         VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
         VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,         // FSR 3.1 needs vkGetBufferMemoryRequirements2KHR

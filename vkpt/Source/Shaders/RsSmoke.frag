@@ -57,8 +57,10 @@ void main()
     const ivec2 lfPix = ivec2(clamp(cbPix / Q2_GRAD_DWN, ivec2(0), ivec2(globalUniform.renderWidth, globalUniform.renderHeight) / Q2_GRAD_DWN - ivec2(1)));
 
     Q2SH lf;
-    lf.shY = texelFetch(framebufQ2AtrousPingLF_SH_Sampler, lfPix, 0);
-    lf.CoCg = texelFetch(framebufQ2AtrousPingLF_COCG_Sampler, lfPix, 0).xy;
+    // The framebuffer samplers are declared separately here (texture + sampler, the HLSL-port
+    // convention), so the combined samplers these fetches need are built explicitly.
+    lf.shY = texelFetch(sampler2D(framebufQ2AtrousPingLF_SH_Sampled, framebufQ2AtrousPingLF_SH_Sampler), lfPix, 0);
+    lf.CoCg = texelFetch(sampler2D(framebufQ2AtrousPingLF_COCG_Sampled, framebufQ2AtrousPingLF_COCG_Sampler), lfPix, 0).xy;
     lf.shY /= Q2_STORAGE_SCALE_LF;
     lf.CoCg /= Q2_STORAGE_SCALE_LF;
 
