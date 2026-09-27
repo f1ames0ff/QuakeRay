@@ -44,10 +44,16 @@ class RhiFrameContext;
 // The RHI module of the legacy god rays: the half-resolution volumetric sunlight march into image 63
 // (GOD_RAYS) and the full-resolution bilateral upscale into image 64 (GOD_RAYS_FILTERED), which
 // `CmPrepareFinal` consumes. The legacy reference is the `GodRays` class (GodRays.{h,cpp}) and the
-// host block that drives it (VulkanDevice.cpp:906-1028); the RHI host mirrors the same order:
+// host block that drives it (VulkanDevice.cpp:906-1028). The RHI module keeps the block's split
+// around the reflect/refract raygen in two entry points: `RenderInput` records the primary march
+// (and, when no reflected half follows, the filter) before the raygen, `RenderReflections` records
+// the reflected-segment accumulation and the deferred filter after it, so the reflected shafts read
+// the negative `Q2_VIEW_DEPTH`/`Q2_GODRAYS_THROUGHPUT_DIST` the raygen wrote in the same frame. The
+// RHI host mirrors the legacy order:
 //
-//   primary (the G-buffer images the trace reads) -> shadow map -> THIS -> [refl/refr] -> the
-//   compose chain's gradient reproject -> direct -> indirect -> compose -> present
+//   primary (the G-buffer images the trace reads) -> shadow map -> RenderInput -> [refl/refr] ->
+//   RenderReflections (only after a true RenderInput) -> the compose chain's gradient reproject ->
+//   direct -> indirect -> compose -> present
 //
 // The module records the frame's compute dispatches on the caller's open list:
 //
@@ -99,28 +105,40 @@ class RhiFrameContext;
 // `RhiRtPrimaryPass::Render`, which has to run before this module on the same list; image 89 is the
 // primary's `storeQ2GBuffer` output the reflection pass keys on.
 //
-// Image-state contract, per Render call: the module announces UnorderedAccess for all eight wraps
+// Image-state contract, per entry point: each call announces UnorderedAccess for all eight wraps
 // (the engine's real GENERAL layout) before its first binding - the automatic barrier pass then
-// transitions the SRV reads out of it - and after the dispatches moves every image whose last use
-// was a sampled read (63, 9, 19, 23, 26, 81, 89) back to UnorderedAccess, so the frame ends with
-// 63/64 in UnorderedAccess (the engine's convention and what `CmPrepareFinal` and the next frame
-// expect) and no image left in a read-only layout. Between `passIndex` 0 and 1 the module requires
-// image 63 in UnorderedAccess explicitly: the backend re-requires a binding set that has any UAV
-// item on every state set (vulkan-state-tracking.cpp:111, :40-63), which already places the
-// same-state UAV barrier for pass 1, and the explicit call documents and guarantees the write ->
-// read ordering between the two dispatches.
+// transitions the SRV reads out of it - and before returning moves every image whose last use was
+// a sampled read (63, 9, 19, 23, 26, 81, 89) back to UnorderedAccess, so each call hands the list
+// on with the engine's resting state and no image left in a read-only layout. `RenderInput` leaves
+// 63 in UnorderedAccess even when it defers the filter (63's last use there is the primary march's
+// own write), which is the state the deferred trace(1) requires; `RenderReflections` ends the frame
+// with 63/64 in UnorderedAccess (64 is left there by the filter's own write). The second call's
+// announcement is the truth because the first call's restore leaves the seven images in GENERAL
+// and the reflect/refract pass leaves the engine images in GENERAL as well (its own module
+// announces and restores in the same shape).
+//
+// Between the two trace dispatches - now across the reflect/refract pass in between, which is the
+// reason for the split - the module requires image 63 in UnorderedAccess explicitly before
+// trace(1): the backend re-requires a binding set that has any UAV item on every state set
+// (vulkan-state-tracking.cpp:111, :40-63), which already places the same-state UAV barrier for
+// pass 1, and the explicit call documents and guarantees the write -> read ordering between the two
+// dispatches (there the requirement also spans the reflect/refract pass, which does not touch
+// image 63).
 //
 // The clear path keeps the legacy shape (VulkanDevice.cpp:964-969): when the host passes
-// `params.godRaysEnabled == 0`, Render still records trace(0) + filter with those params, and the
-// shader itself writes zeros to the half-resolution image which the filter then upscales into 64.
-// That is one code path, needs no clear API or CopyDest transitions, and matches the reference
-// exactly; a frame with god rays enabled but no shadow map render (no AABB, no geometry) is not
-// dispatched at all and 64 keeps its previous frame, also exactly like the legacy
+// `params.godRaysEnabled == 0`, `RenderInput` still records trace(0) + filter with those params,
+// the shader itself writes zeros to the half-resolution image and the filter upscales them into
+// 64; the call returns false, so no reflected half follows. The same holds for the
+// reflections-disabled path (`traceReflections == false`), the pre-split single-call shape:
+// trace(0) + filter, image 64 is refreshed in the input call and the reflected entry point must
+// not be called. That is one code path, needs no clear API or CopyDest transitions, and matches the
+// reference exactly; a frame with god rays enabled but no shadow map render (no AABB, no geometry)
+// is not dispatched at all and 64 keeps its previous frame, also exactly like the legacy
 // (VulkanDevice.cpp:970-1006). The module does require a shadow map texture and sampler for ANY
 // dispatch, because every item of the trace's layout has to be filled; the host sets them once
 // (SetShadowMap), and the shader never samples them on the clear path.
 //
-// Host inputs of `Render`, and where the legacy takes them from
+// Host inputs of `RenderInput`, and where the legacy takes them from
 // (VulkanDevice.cpp:909-1028):
 //  - `pFramebuffers`/`width`/`height`: the engine framebuffer registry and the render resolution
 //    (`globalUniform.renderWidth/renderHeight`; the shader bounds and the dispatch arithmetic use
@@ -150,16 +168,32 @@ class RhiFrameContext;
 //    shader's `GodRaysParams_BT` carries it, so the coordinator does not pass it.
 //    The `debugShowFlags` god-rays bit needs no argument either: the shader reads it from the
 //    uniform bound at set 3 (the `DEBUG_SHOW_FLAG_GOD_RAYS` branch above), so the only host
-//    requirement is that the frame's uniform bytes were written before Render, as the skeleton
-//    already does.
+//    requirement is that the frame's uniform bytes were written before the entry points, as the
+//    skeleton already does.
 //    The sky-brightest substitution (`RASTERIZED_GEOMETRY` + `godRaysFromSkyTexture`) also feeds
 //    the shadow map's light direction (`-godRaysSkyDirection`, :945-951) - that is the shadow
 //    pass's input, not this one's.
-//  - `traceReflections`: the legacy `reflectRefractMaxDepth > 0` gate (:1011-1014). When true and
-//    `godRaysEnabled != 0`, Render records trace(1) between trace(0) and the filter. The
-//    reflected-segment god rays key on the negative `Q2_VIEW_DEPTH` the refl/refr raygen writes;
-//    until that raygen is ported every pixel early-outs in the shader, so the host passes false (or
-//    the uniform's reflect-refract depth is 0) and the dispatch is then not recorded at all.
+//  - `traceReflections`: the legacy `reflectRefractMaxDepth > 0` gate (:1011-1014). When it is true
+//    and `params.godRaysEnabled != 0`, `RenderInput` records only the primary march and returns
+//    true: the coordinator then records its reflect/refract block on the same list and calls
+//    `RenderReflections`, which records the passIndex 1 accumulation and the filter the input call
+//    deferred. When it is false (or on the clear path), `RenderInput` records trace(0) + filter
+//    itself and returns false: the frame is complete and the reflected entry point must not be
+//    called. The reflected-segment god rays key on the negative `Q2_VIEW_DEPTH` the refl/refr
+//    raygen writes; until that raygen is ported every pixel early-outs in the shader, so the host
+//    passes false (or the uniform's reflect-refract depth is 0) and the dispatch is then not
+//    recorded at all.
+//
+// Host call contract: `RenderInput` runs once per traced frame, in the god-rays slot after the
+// primary and the shadow-map render and before the reflect/refract block, with `traceReflections` =
+// the uniform's `reflectRefractMaxDepth > 0`. Only when it returns true does the coordinator run
+// its reflect/refract block and then call `RenderReflections` for the same frameIndex - the legacy
+// `godRaysActive` gate (:1022) combined with the raygen gate the module applies to trace(1). Both
+// calls target the same open command list of the frame; the second one must not be called after a
+// false return, on the clear path, or without the frame's input call (it then warns once and
+// skips). A frame that skips `RenderInput` entirely (no AABB, no shadow-map render) skips the
+// reflected half with it, exactly like the legacy: neither call runs and image 64 keeps its
+// previous frame.
 //
 // Shadow map contract (`SetShadowMap`): the module binds the exact texture and sampler the host
 // passes, and never owns either. Expected objects:
@@ -195,9 +229,13 @@ class RhiFrameContext;
 //
 // The pass is a no-op until Create succeeded and while an input is missing (no shadow map, no
 // blue-noise texture, no framebuffers, no uniform, an image handle or extent the RHI cannot wrap);
-// every early return is quiet after the first warning. It is not thread-safe: Render uses the
-// per-slot target of the frameIndex it is given, which is the engine's single-threaded per-slot
-// frame model (RhiFrameContext).
+// every early return is quiet after the first warning. `RenderReflections` is additionally skipped
+// (with its own one-shot warning) unless `RenderInput` returned true for the same frameIndex: the
+// module keeps one frame-scoped hand-off flag per slot (Target::reflectionsPending), disarmed by
+// the input call at entry, armed only on the path that defers to the reflected half and consumed
+// by the second call. It is not thread-safe: the entry points use the per-slot target of the
+// frameIndex they are given, which is the engine's single-threaded per-slot frame model
+// (RhiFrameContext).
 class RhiRtGodRaysPass final
 {
 public:
@@ -291,45 +329,79 @@ public:
     // `RhiShadowMapPass::GetTexture()`/`GetSampler()` - the exact NVRHI objects, so the shared
     // tracker state drives the image's transition (see the class comment for the expected objects).
     // The setters may be called any time; a replaced texture rebuilds the set (the old one goes
-    // through the retire queue). A null texture or sampler clears both, and Render then warns once
-    // and skips.
+    // through the retire queue). A null texture or sampler clears both, and the entry points then
+    // warn once and skip.
     void SetShadowMap(nvrhi::ITexture *pShadowMap, nvrhi::ISampler *pShadowMapSampler);
 
     // Set 4's texture: the indirect pass's blue-noise wrap (see the class comment). A null clears
-    // it, a replaced one rebuilds the set; Render skips until a valid texture is set.
+    // it, a replaced one rebuilds the set; the entry points skip until a valid texture is set.
     void SetBlueNoiseTexture(nvrhi::ITexture *pBlueNoise);
 
-    // One call per traced frame, on the frame context's open command list of 'frameIndex', after
-    // RhiRtPrimaryPass::Render (the G-buffer images it reads) and before the compose chain.
+    // The input half of the frame's god-rays block (the legacy :964-1006, with the trace(0) at
+    // :1003): the params write, the primary march (passIndex 0) and, on the two self-contained
+    // paths, the bilateral filter. One call per traced frame, on the frame context's open command
+    // list of 'frameIndex', after RhiRtPrimaryPass::Render (the G-buffer images it reads) and the
+    // shadow-map render, and before the coordinator's reflect/refract block.
     // 'pFramebuffers'/'width'/'height' are the engine framebuffer registry and the render
     // resolution; 'pUniformBuffer' is the engine global uniform as a static constant-buffer wrap;
     // 'params' are the GodRaysParams_BT fields, all host-computed (see the class comment for each
-    // field's legacy source); 'traceReflections' is the legacy `reflectRefractMaxDepth > 0` gate and
-    // records the passIndex 1 dispatch between trace(0) and the filter when it is true and
-    // `params.godRaysEnabled != 0`.
+    // field's legacy source); 'traceReflections' is the legacy `reflectRefractMaxDepth > 0` gate.
     //
     // What is recorded: the wraps of the eight engine images (created on first use, re-created when
     // the engine re-created an image or the size changed; replaced wraps and sets go through the
     // frame context's retire queue), the per-slot framebuffer and uniform sets, the write of the
-    // slot's params buffer, then trace(0) [+ trace(1)] + filter. The images end in UnorderedAccess
-    // (see the class comment). The call is a no-op when the pass is not created, the frame index is
-    // out of range, the size is zero, the shadow map or blue-noise texture is not set, or the
-    // framebuffers/uniform are missing or in a shape NVRHI refuses.
-    void Render(nvrhi::ICommandList *pCommandList,
-                uint32_t frameIndex,
-                const Framebuffers *pFramebuffers,
-                uint32_t width,
-                uint32_t height,
-                nvrhi::IBuffer *pUniformBuffer,
-                const Params &params,
-                bool traceReflections);
+    // slot's params buffer, then trace(0), then the filter - the latter only when the reflected
+    // half does not follow. The images end in UnorderedAccess (see the class comment).
+    //
+    // Returns true when `RenderReflections` must follow for the same frameIndex, on the same list,
+    // after the coordinator's reflect/refract block: this call then recorded trace(0) alone and
+    // `params.godRaysEnabled != 0 && traceReflections` held. Returns false on every other path -
+    // the clear path (`params.godRaysEnabled == 0`) and the reflections-disabled path each
+    // recorded trace(0) + filter here, exactly the legacy clear path (:964-969) and the pre-split
+    // single-call shape, and the frame needs no further god-rays call. Every false return also
+    // clears the frame's hand-off, so a later `RenderReflections` cannot continue from a skipped
+    // call. The call is a no-op when the pass is not created, the frame index is out of range, the
+    // size is zero, the shadow map or blue-noise texture is not set, or the framebuffers/uniform
+    // are missing or in a shape NVRHI refuses.
+    bool RenderInput(nvrhi::ICommandList *pCommandList,
+                     uint32_t frameIndex,
+                     const Framebuffers *pFramebuffers,
+                     uint32_t width,
+                     uint32_t height,
+                     nvrhi::IBuffer *pUniformBuffer,
+                     const Params &params,
+                     bool traceReflections);
+
+    // The reflected half of the frame's block (the legacy :1022-1028): the passIndex 1 accumulation
+    // over the reflected/refracted segments the coordinator's reflect/refract block just wrote into
+    // `Q2_VIEW_DEPTH` (negative) and `Q2_GODRAYS_THROUGHPUT_DIST.w`, then the filter `RenderInput`
+    // deferred. One call per frame, on the same open command list of 'frameIndex', only after
+    // `RenderInput` returned true for it, with the reflect/refract block in between.
+    // 'pFramebuffers'/'width'/'height'/'pUniformBuffer' are the input call's and are re-validated;
+    // 'params' must be the input call's values - its `godRaysEnabled` gates the accumulation and
+    // the params buffer is not written again (the input call's bytes stand for both trace passes).
+    //
+    // What is recorded: trace(1) over the sets the input call prepared, then the filter over the
+    // full resolution, then the restore of the sampled reads, so the frame ends with 63/64 in
+    // UnorderedAccess (see the class comment). The call is a no-op when the pass is not created,
+    // the frame index is out of range, the size is zero, the frame has no armed hand-off
+    // (`RenderInput` did not return true for this frameIndex; one-shot warning), or the frame's
+    // sets cannot be prepared.
+    void RenderReflections(nvrhi::ICommandList *pCommandList,
+                           uint32_t frameIndex,
+                           const Framebuffers *pFramebuffers,
+                           uint32_t width,
+                           uint32_t height,
+                           nvrhi::IBuffer *pUniformBuffer,
+                           const Params &params);
 
     // Drops every slot's image wraps and the sets over them and the per-slot uniform sets, and
     // retires them through the frame context's queue. The caller has to call it before the engine
     // destroys its framebuffer images (the Framebuffers::PrepareForSize path) - otherwise the wraps
-    // reference destroyed VkImages. The next Render re-reads the handles and re-wraps, so the pass
-    // survives a resize without a second Create. The params buffers, the shadow map and blue-noise
-    // sets and the pipelines do not reference framebuffer images and stay.
+    // reference destroyed VkImages. The next RenderInput re-reads the handles and re-wraps, so the
+    // pass survives a resize without a second Create. It also clears every slot's hand-off, so a
+    // resize between the two entry points disarms RenderReflections. The params buffers, the shadow
+    // map and blue-noise sets and the pipelines do not reference framebuffer images and stay.
     void ReleaseTargets();
 
 private:
@@ -347,14 +419,21 @@ private:
         nvrhi::BindingSetHandle filterFramebufferSet;
         nvrhi::IBuffer *uniformBuffer = nullptr;
         nvrhi::BindingSetHandle uniformSet;
+
+        // The frame-scoped hand-off of the split entry points: set by RenderInput on the path that
+        // defers the reflected half (the same path that returns true) and checked and consumed by
+        // RenderReflections. The wraps and sets above stay valid across the reflect/refract block
+        // in between; this flag is what keeps the second call safe against a missing input call.
+        bool reflectionsPending = false;
     };
 
     bool LoadShader(const char *pFileName, nvrhi::ShaderType type, nvrhi::ShaderHandle &result);
 
-    // The shared preamble of Render: validates the arguments, resolves the eight image handles and
-    // extents of 'frameIndex', retires and re-wraps everything when the engine re-created an image
-    // or the size changed, prepares the slot's sets and the uniform set. Returns the slot's target,
-    // or null when the call cannot be recorded (the caller treats it as a silent skip).
+    // The shared preamble of both entry points: validates the arguments, resolves the eight image
+    // handles and extents of 'frameIndex', retires and re-wraps everything when the engine
+    // re-created an image or the size changed, prepares the slot's sets and the uniform set.
+    // Returns the slot's target, or null when the call cannot be recorded (the caller treats it as
+    // a silent skip).
     Target *PrepareFrame(uint32_t frameIndex,
                          const Framebuffers *pFramebuffers,
                          uint32_t width,
@@ -476,6 +555,8 @@ private:
     bool warnedMissingUniform = false;
     bool warnedBadUniform = false;
     bool warnedBadTable = false;
+    // RenderReflections without the frame's matching input call: a host-side ordering mistake.
+    bool warnedReflectionsWithoutInput = false;
 
     bool created = false;
 };

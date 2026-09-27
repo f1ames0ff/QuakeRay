@@ -84,9 +84,11 @@ constexpr GodRaysFramebufferBinding FILTER_FRAMEBUFFER_BINDINGS[FILTER_FRAMEBUFF
     { RhiRtGodRaysPass::IMAGE_Q2_VIEW_DEPTH,     false }, // raw 205 framebufQ2ViewDepth_Sampled
 };
 
-// The images whose last use on a frame list is a sampled read: the trace reads 9/19/23/26/81/89 and
-// the filter reads 63 (image 81 again), so all of them are moved back to UnorderedAccess after the
-// filter dispatch. 64's last use is the filter's write, so it ends in UnorderedAccess already.
+// The images whose last use in an entry point is a sampled read: the trace reads 9/19/23/26/81/89
+// and the filter reads 63 (image 81 again), so every entry point that binds them moves all of them
+// back to UnorderedAccess before returning (on the deferred path 63's requirement is a same-state
+// one: trace(0)'s own write is its last use there). 64's last use is the filter's write, so it ends
+// in UnorderedAccess already.
 constexpr uint32_t GOD_RAYS_RESTORE_IMAGE_COUNT = 7;
 constexpr uint32_t GOD_RAYS_RESTORE_IMAGES[GOD_RAYS_RESTORE_IMAGE_COUNT] =
 {
@@ -894,23 +896,28 @@ void RhiRtGodRaysPass::RecordDispatch(nvrhi::ICommandList *pCommandList,
     pCommandList->dispatch(groupsX, groupsY, groupsZ);
 }
 
-void RhiRtGodRaysPass::Render(nvrhi::ICommandList *pCommandList,
-                              uint32_t frameIndex,
-                              const Framebuffers *pFramebuffers,
-                              uint32_t width,
-                              uint32_t height,
-                              nvrhi::IBuffer *pUniformBuffer,
-                              const Params &params,
-                              bool traceReflections)
+bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
+                                   uint32_t frameIndex,
+                                   const Framebuffers *pFramebuffers,
+                                   uint32_t width,
+                                   uint32_t height,
+                                   nvrhi::IBuffer *pUniformBuffer,
+                                   const Params &params,
+                                   bool traceReflections)
 {
     if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT)
     {
-        return;
+        return false;
     }
+
+    // Disarm the frame's hand-off first: every early return and both self-contained paths below
+    // leave nothing for RenderReflections, and a stale flag of an earlier frame must never arm a
+    // second call for this one.
+    targets[frameIndex].reflectionsPending = false;
 
     if (width == 0 || height == 0)
     {
-        return;
+        return false;
     }
 
     // The two static sets first: a missing shadow map or blue-noise texture skips the frame before
@@ -919,13 +926,13 @@ void RhiRtGodRaysPass::Render(nvrhi::ICommandList *pCommandList,
     // has to be filled, although the shader never samples it when `godRaysEnabled == 0`.
     if (!PrepareShadowSet() || !PrepareBlueNoiseSet(pCommandList))
     {
-        return;
+        return false;
     }
 
     Target *pTarget = PrepareFrame(frameIndex, pFramebuffers, width, height, pUniformBuffer);
     if (pTarget == nullptr)
     {
-        return;
+        return false;
     }
 
     Target &target = *pTarget;
@@ -933,6 +940,8 @@ void RhiRtGodRaysPass::Render(nvrhi::ICommandList *pCommandList,
     // The frame's params. The buffer is 160 bytes (the shader's element stride); the CPU mirror is
     // 148, so the stride padding is zeroed here - the shader never reads it (it only reads element
     // [0] and no member at 144+), but a fully defined buffer keeps the view range deterministic.
+    // RenderReflections does not write the buffer again: one write per frame feeds both trace
+    // dispatches, the bytes the legacy's two `Trace` copies of the same host struct produce.
     uint8_t paramsBytes[GOD_RAYS_PARAMS_STRIDE] = {};
     std::memcpy(paramsBytes, &params, sizeof(params));
     rhi::writeBuffer(pCommandList, paramsBuffers[frameIndex], paramsBytes, sizeof(paramsBytes));
@@ -947,8 +956,6 @@ void RhiRtGodRaysPass::Render(nvrhi::ICommandList *pCommandList,
     const uint32_t halfHeight = (height + 1) / 2;
     const uint32_t traceGroupsX = Utils::GetWorkGroupCount(halfWidth, GOD_RAYS_GROUP_SIZE);
     const uint32_t traceGroupsY = Utils::GetWorkGroupCount(halfHeight, GOD_RAYS_GROUP_SIZE);
-    const uint32_t filterGroupsX = Utils::GetWorkGroupCount(width, GOD_RAYS_GROUP_SIZE);
-    const uint32_t filterGroupsY = Utils::GetWorkGroupCount(height, GOD_RAYS_GROUP_SIZE);
 
     // The primary march (passIndex 0). On the clear path the shader writes zeros to every
     // half-resolution pixel and the filter then zeroes image 64 (the legacy shape,
@@ -959,14 +966,111 @@ void RhiRtGodRaysPass::Render(nvrhi::ICommandList *pCommandList,
                      target.uniformSet, blueNoiseSet },
                    traceGroupsX, traceGroupsY, 1, &passIndexPrimary);
 
-    // The reflected-segment accumulation (passIndex 1), only when the host says the refl/refr
-    // raygen ran and the shader is not on the clear path. It reads the result of pass 0 from the
-    // same UAV; the explicit same-state requirement documents the write -> read ordering (the
-    // backend also re-requires the UAV-binding set on every state set,
-    // vulkan-state-tracking.cpp:111).
-    if (params.godRaysEnabled != 0 && traceReflections)
+    // The reflected-segment accumulation (passIndex 1) belongs after the host's reflect/refract
+    // pass, which is what writes the negative Q2_VIEW_DEPTH and the segment lengths the
+    // accumulation reads (VulkanDevice.cpp:1011-1014 -> :1022-1028): this call stops after the
+    // primary march exactly when the host reports both that the shader is not on the clear path
+    // (there is something to scatter) and that the reflect/refract raygen runs (`traceReflections`,
+    // the legacy `reflectRefractMaxDepth > 0`). Every other frame is complete here, including the
+    // filter the legacy clear path records right next to the input trace (:964-969) and the
+    // reflections-disabled shape the pre-split Render recorded.
+    const bool reflectionsFollow = params.godRaysEnabled != 0 && traceReflections;
+
+    if (!reflectionsFollow)
+    {
+        const uint32_t filterGroupsX = Utils::GetWorkGroupCount(width, GOD_RAYS_GROUP_SIZE);
+        const uint32_t filterGroupsY = Utils::GetWorkGroupCount(height, GOD_RAYS_GROUP_SIZE);
+
+        // The full-resolution bilateral upscale. The blob's framebuffer and uniform bindings live in
+        // engine sets 2 and 3, so the two leading placeholder positions are filled with the empty
+        // set.
+        RecordDispatch(pCommandList, filterPipeline,
+                       { emptySet, emptySet, target.filterFramebufferSet, target.uniformSet },
+                       filterGroupsX, filterGroupsY, 1, nullptr);
+    }
+
+    // The sampled reads rest in a read-only layout now; move them back to UnorderedAccess, the
+    // engine's GENERAL, so this call hands the frame on in the state every engine framebuffer image
+    // rests in. On the path that defers to RenderReflections this also keeps 63 in UnorderedAccess
+    // for the trace(1) that follows - its last use here is the primary march's own write - and
+    // makes the hand-off to the reflect/refract pass and to the second call a resting-state one.
+    for (uint32_t i = 0; i < GOD_RAYS_RESTORE_IMAGE_COUNT; i++)
+    {
+        RequireImageUnorderedAccess(pCommandList, target, GOD_RAYS_RESTORE_IMAGES[i]);
+    }
+
+    target.reflectionsPending = reflectionsFollow;
+    return reflectionsFollow;
+}
+
+void RhiRtGodRaysPass::RenderReflections(nvrhi::ICommandList *pCommandList,
+                                         uint32_t frameIndex,
+                                         const Framebuffers *pFramebuffers,
+                                         uint32_t width,
+                                         uint32_t height,
+                                         nvrhi::IBuffer *pUniformBuffer,
+                                         const Params &params)
+{
+    if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT)
+    {
+        return;
+    }
+
+    if (width == 0 || height == 0)
+    {
+        return;
+    }
+
+    // The hand-off of RenderInput: only a frame whose input call returned true has the params
+    // buffer written and the primary march recorded, and only there must the accumulation follow. A
+    // call outside that window would read a stale (or unwritten) params buffer and upscale a
+    // half-resolution image nothing wrote this frame, so it is a host-side ordering mistake and is
+    // skipped with one warning. Consuming the flag also makes a repeated call a no-op.
+    if (!targets[frameIndex].reflectionsPending)
+    {
+        if (!warnedReflectionsWithoutInput)
+        {
+            warnedReflectionsWithoutInput = true;
+            LogMessage(print, "Warning: RHI: the god-rays reflections call got no matching input call, "
+                              "the call is skipped");
+        }
+        return;
+    }
+    targets[frameIndex].reflectionsPending = false;
+
+    // The static sets and the frame's sets the input call prepared. Re-running the preparation is
+    // idempotent and keeps this entry point's own validation, so a shadow map, a blue-noise texture
+    // or a framebuffer image the host replaced between the two calls cannot be bound stale.
+    if (!PrepareShadowSet() || !PrepareBlueNoiseSet(pCommandList))
+    {
+        return;
+    }
+
+    Target *pTarget = PrepareFrame(frameIndex, pFramebuffers, width, height, pUniformBuffer);
+    if (pTarget == nullptr)
+    {
+        return;
+    }
+
+    Target &target = *pTarget;
+
+    AnnounceFrameImages(pCommandList, target);
+
+    // The reflected-segment accumulation (passIndex 1), only while the host's
+    // `params.godRaysEnabled` still says the shader is not on the clear path (the input call's
+    // return carried the other gate). It adds its inscatter on top of the primary result in the same
+    // UAV; the explicit same-state requirement covers the whole gap since that write - the
+    // reflect/refract pass in between does not touch image 63 - and documents the write -> read
+    // ordering of the accumulation (the backend also re-requires the UAV-binding set on every state
+    // set, vulkan-state-tracking.cpp:111).
+    if (params.godRaysEnabled != 0)
     {
         RequireImageUnorderedAccess(pCommandList, target, IMAGE_GOD_RAYS);
+
+        const uint32_t halfWidth = (width + 1) / 2;
+        const uint32_t halfHeight = (height + 1) / 2;
+        const uint32_t traceGroupsX = Utils::GetWorkGroupCount(halfWidth, GOD_RAYS_GROUP_SIZE);
+        const uint32_t traceGroupsY = Utils::GetWorkGroupCount(halfHeight, GOD_RAYS_GROUP_SIZE);
 
         const uint32_t passIndexReflections = 1;
         RecordDispatch(pCommandList, tracePipeline,
@@ -975,15 +1079,19 @@ void RhiRtGodRaysPass::Render(nvrhi::ICommandList *pCommandList,
                        traceGroupsX, traceGroupsY, 1, &passIndexReflections);
     }
 
-    // The full-resolution bilateral upscale. The blob's framebuffer and uniform bindings live in
-    // engine sets 2 and 3, so the two leading placeholder positions are filled with the empty set.
+    // The full-resolution bilateral upscale the input call deferred: after every trace pass, so it
+    // reads the reflected segments the reflect/refract raygen wrote in between and adds them to the
+    // primary result. The blob's framebuffer and uniform bindings live in engine sets 2 and 3, so
+    // the two leading placeholder positions are filled with the empty set.
+    const uint32_t filterGroupsX = Utils::GetWorkGroupCount(width, GOD_RAYS_GROUP_SIZE);
+    const uint32_t filterGroupsY = Utils::GetWorkGroupCount(height, GOD_RAYS_GROUP_SIZE);
     RecordDispatch(pCommandList, filterPipeline,
                    { emptySet, emptySet, target.filterFramebufferSet, target.uniformSet },
                    filterGroupsX, filterGroupsY, 1, nullptr);
 
-    // The sampled reads rest in a read-only layout now; move them back to UnorderedAccess, the
-    // engine's GENERAL, so the frame ends with 63/64 in the state the engine and `CmPrepareFinal`
-    // expect (64 is left there by its own write).
+    // The same restore as the input call: the sampled reads the filter left in a read-only layout go
+    // back to UnorderedAccess, so the second call ends the frame with 63/64 in the state the engine
+    // and `CmPrepareFinal` expect (64 is left there by its own write above).
     for (uint32_t i = 0; i < GOD_RAYS_RESTORE_IMAGE_COUNT; i++)
     {
         RequireImageUnorderedAccess(pCommandList, target, GOD_RAYS_RESTORE_IMAGES[i]);
@@ -1055,6 +1163,10 @@ void RhiRtGodRaysPass::ReleaseTarget(Target &target)
 
     target.uniformSet = nullptr;
     target.uniformBuffer = nullptr;
+
+    // A released frame has no recorded input to continue from; a resize between the two entry
+    // points therefore disarms the reflected half.
+    target.reflectionsPending = false;
 }
 
 bool RhiRtGodRaysPass::LoadShader(const char *pFileName, nvrhi::ShaderType type, nvrhi::ShaderHandle &result)

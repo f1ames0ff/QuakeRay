@@ -578,24 +578,29 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // dispatched with, i.e. the value of the uniform bytes just uploaded.
         const bool filterEnabled = uniform != nullptr && uniform->fltEnable[0] >= 0.5f;
 
-        // The god rays and their shadow map (A5.2), on the same list right after the primary and
-        // before the reproject - the legacy order (VulkanDevice.cpp:901 -> :908-1028 -> :1032). The
-        // shape mirrors the legacy host block exactly, corners included: everything runs only when
-        // the scene has an AABB (:954); with god rays disabled (or sunless) the module still records
-        // the clear path so image 64 is never stale (:964-969); and a shadow render that draws
-        // nothing skips the dispatches (:970-1006). The shadow map's view-projection goes into the
-        // params in the same call (the shadow render writes it even when it returns false).
+        // The god rays' input half (A5.8), on the same list right after the primary and before the
+        // reproject - the legacy order (VulkanDevice.cpp:901 -> :908-1006 -> :1011-1014 ->
+        // :1022-1028 -> :1032). The shape mirrors the legacy host block exactly, corners included:
+        // everything runs only when the scene has an AABB (:954); with god rays disabled (or
+        // sunless) the module records the clear path - trace(0) + filter - so image 64 is never
+        // stale (:964-969); and a shadow render that draws nothing skips the dispatches (:970-1006).
+        // The shadow map's view-projection goes into the params in the same call (the shadow render
+        // writes it even when it returns false). The call reports whether trace(1) + filter must
+        // follow after the reflect/refract block (the `godRaysActive` half of the legacy frame);
+        // with the raygen gate off it already filtered, so the second call is not due then.
+        bool godRaysReflectionsPending = false;
+        RhiRtGodRaysPass::Params godRaysParams = {};
+
         if (godRaysPass != nullptr && godRaysPass->IsCreated() && sky.godRays.hasAabb)
         {
             if (!sky.godRays.enabled)
             {
-                RhiRtGodRaysPass::Params params = {};
-                params.godRaysIntensity = sky.godRays.intensity;
-                params.godRaysEccentricity = sky.godRays.eccentricity;
-                params.godRaysEnabled = 0;
+                godRaysParams.godRaysIntensity = sky.godRays.intensity;
+                godRaysParams.godRaysEccentricity = sky.godRays.eccentricity;
+                godRaysParams.godRaysEnabled = 0;
 
-                godRaysPass->Render(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
-                                    worldUniformBuffer.Get(), params, false);
+                godRaysPass->RenderInput(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
+                                         worldUniformBuffer.Get(), godRaysParams, false);
             }
             else if (shadowMapPass != nullptr && shadowMapPass->IsCreated())
             {
@@ -613,21 +618,23 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                           sky.godRays.staticCollector, sky.godRays.dynamicCollector,
                                           geometry, shadowMapVP, &shadowMapDepthScale))
                 {
-                    RhiRtGodRaysPass::Params params = {};
-                    memcpy(params.sunDirection, sky.godRays.sunDirection, sizeof(params.sunDirection));
-                    memcpy(params.sunColor, sky.godRays.sunColor, sizeof(params.sunColor));
-                    memcpy(params.worldCenter, sky.godRays.worldCenter, sizeof(params.worldCenter));
-                    memcpy(params.worldHalfSizeInv, sky.godRays.worldHalfSizeInv,
-                           sizeof(params.worldHalfSizeInv));
-                    memcpy(params.shadowMapVP, shadowMapVP, sizeof(params.shadowMapVP));
-                    params.shadowMapDepthScale = shadowMapDepthScale;
-                    params.godRaysIntensity = sky.godRays.intensity;
-                    params.godRaysEccentricity = sky.godRays.eccentricity;
-                    params.godRaysEnabled = 1;
+                    memcpy(godRaysParams.sunDirection, sky.godRays.sunDirection,
+                           sizeof(godRaysParams.sunDirection));
+                    memcpy(godRaysParams.sunColor, sky.godRays.sunColor, sizeof(godRaysParams.sunColor));
+                    memcpy(godRaysParams.worldCenter, sky.godRays.worldCenter,
+                           sizeof(godRaysParams.worldCenter));
+                    memcpy(godRaysParams.worldHalfSizeInv, sky.godRays.worldHalfSizeInv,
+                           sizeof(godRaysParams.worldHalfSizeInv));
+                    memcpy(godRaysParams.shadowMapVP, shadowMapVP, sizeof(godRaysParams.shadowMapVP));
+                    godRaysParams.shadowMapDepthScale = shadowMapDepthScale;
+                    godRaysParams.godRaysIntensity = sky.godRays.intensity;
+                    godRaysParams.godRaysEccentricity = sky.godRays.eccentricity;
+                    godRaysParams.godRaysEnabled = 1;
 
-                    godRaysPass->Render(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
-                                        worldUniformBuffer.Get(), params,
-                                        uniform != nullptr && uniform->reflectRefractMaxDepth > 0);
+                    godRaysReflectionsPending = godRaysPass->RenderInput(
+                        commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
+                        worldUniformBuffer.Get(), godRaysParams,
+                        uniform != nullptr && uniform->reflectRefractMaxDepth > 0);
                 }
             }
         }
@@ -700,6 +707,17 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                      worldUniformBuffer.Get(), passVertexData, sky.framebuffers,
                                      sky.width, sky.height);
             }
+        }
+
+        // The god rays' reflected half (A5.8): trace(1) + filter right after the reflect/refract
+        // block, so the reflected segments' negative view depths are this frame's - the legacy order
+        // (VulkanDevice.cpp:1022-1028). The call is due whenever the input half reported it: the
+        // reflrefr may have been gated off, and image 64 must still be refreshed, exactly as the
+        // legacy records trace(1) + filter on the godRaysActive path.
+        if (godRaysReflectionsPending && godRaysPass != nullptr && godRaysPass->IsCreated())
+        {
+            godRaysPass->RenderReflections(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
+                                           worldUniformBuffer.Get(), godRaysParams);
         }
 
         if (rtComposePass != nullptr && filterEnabled)
