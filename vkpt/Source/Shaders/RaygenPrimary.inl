@@ -98,9 +98,12 @@ vec2 getMotionForInfinitePoint(const ivec2 pix)
 // and the flag in the tail of the settings says which of the two is drawn.
 vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
 {
-    const float speed  = globalUniform.skyCubemapRotationTransform[0][5]; // rt_sky_clouds_speed
-    const float height = globalUniform.skyCubemapRotationTransform[0][7]; // rt_sky_clouds_height
-    const float flat   = globalUniform.skyCubemapRotationTransform[0][9];
+    // The cloud settings ride in the columns of this matrix, as the host packs them
+    // (gl_vidsdl.c): c[5] and c[7] are the speed and the height, in the second column,
+    // and c[9], the flat clouds' flag, opens the third.
+    const float speed      = globalUniform.skyCubemapRotationTransform[1].y; // c[5], rt_sky_clouds_speed
+    const float height     = globalUniform.skyCubemapRotationTransform[1].w; // c[7], rt_sky_clouds_height
+    const float flatClouds = globalUniform.skyCubemapRotationTransform[2].x; // c[9], the flat clouds' flag
 
     if (speed <= 0.0 || height <= 0.0 || rayDir.z <= 1.0e-3)
     {
@@ -109,7 +112,7 @@ vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
 
     vec3 dirPrev;
 
-    if (flat > 0.5)
+    if (flatClouds > 0.5)
     {
         // p = dir * 3 + vec3(time * speed, time * speed * 0.4, 0) (CmProceduralSky.comp):
         // the direction a feature was seen at the frame before stands a third of the
@@ -130,8 +133,8 @@ vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
         dirPrev = normalize(rayDir * distance - vec3(windStep, 0.0));
     }
 
-    const vec3 ndcCur  = (mat3(globalUniform.projection)     * (mat3(globalUniform.view)     *  rayDir)).xy  * 0.5 + 0.5;
-    const vec3 ndcPrev = (mat3(globalUniform.projectionPrev) * (mat3(globalUniform.viewPrev) * dirPrev)).xy * 0.5 + 0.5;
+    const vec2 ndcCur  = (mat3(globalUniform.projection)     * (mat3(globalUniform.view)     *  rayDir)).xy  * 0.5 + 0.5;
+    const vec2 ndcPrev = (mat3(globalUniform.projectionPrev) * (mat3(globalUniform.viewPrev) * dirPrev)).xy * 0.5 + 0.5;
 
     return ndcPrev - ndcCur;
 }

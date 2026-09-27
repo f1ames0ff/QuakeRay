@@ -65,8 +65,18 @@ $genArgs += "-psout"
 
 Push-Location $shaderSrc
 try {
-    python GenerateShaders.py @genArgs
+    $genOutput = python GenerateShaders.py @genArgs 2>&1
+    $genOutput | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "GenerateShaders.py failed (exit $LASTEXITCODE)." }
+    # A shader that fails to compile is reported by the generator, and the run still
+    # ends with a zero exit code: from here it looked exactly like a success with
+    # fewer files. Worse, the deploy below then found no .spv for the failed shader
+    # and removed the one in the game's folder -- a game left without a shader, and a
+    # build that said nothing was wrong. The report is part of the run now, and a
+    # failure stops it before anything is deployed or removed.
+    if ($genOutput -match 'shader builds failed') {
+        throw "GenerateShaders.py reported a failed shader build (see above)."
+    }
 }
 finally {
     Pop-Location
