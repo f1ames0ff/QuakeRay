@@ -257,11 +257,15 @@ static vkpt::ShLightEncoded EncodeAsSpotLight(const RgSpotLightUploadInfo &info)
     float radius = std::max(vkpt::MIN_SPHERE_RADIUS, info.radius);
     float area = static_cast<float>(vkpt::RG_PI) * radius * radius;
 
-    float cosAngleInner = std::cos(std::min(info.angleInner, info.angleOuter));
-    const float cosAngleOuter = std::cos(info.angleOuter);
     /* The cone edge is a smoothstep, and one with equal edges is undefined, so the inner
-       edge always stays strictly inside the outer one. */
-    cosAngleInner = std::max(cosAngleInner, cosAngleOuter + 1e-6f);
+       angle is pulled strictly inside the outer one before the cosines are taken. The clamp
+       stays in angle space and the outer angle keeps a floor, so the cosines of a beam
+       narrow enough to round together still differ. */
+    const float angleOuter = std::max(info.angleOuter, static_cast<float>(vkpt::RG_PI / 180.0));
+    const float angleInner = std::min(std::max(std::isfinite(info.angleInner) ? info.angleInner : 0.0f, 0.0f), angleOuter * 0.999f);
+
+    float cosAngleInner = std::cos(angleInner);
+    const float cosAngleOuter = std::cos(angleOuter);
 
 
     vkpt::ShLightEncoded lt = {};
@@ -521,7 +525,8 @@ void vkpt::LightManager::AddTexturedAreaLight(uint32_t frameIndex, const RgTextu
 
 void vkpt::LightManager::AddSpotlight(uint32_t frameIndex, const RgSpotLightUploadInfo &info)
 {
-    if (IsColorTooDim(info.color.data) || info.radius < 0.0f || info.angleOuter <= 0.0f)
+    /* `!(x > 0)` rather than `x <= 0`: the latter takes a nan angle for a valid one. */
+    if (IsColorTooDim(info.color.data) || info.radius < 0.0f || !(info.angleOuter > 0.0f))
     {
         return;
     }

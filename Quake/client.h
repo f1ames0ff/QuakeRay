@@ -102,9 +102,14 @@ typedef dlight_t dlightspot_t;
 
 /* The keys of the lights that are the engine's own rather than an emitter's: entity effects
    take 1..num_entities and the CSQC trails -1..-num_entities, so these take the far end of
-   the range and no effect can take their slots back. An authored light adds its index. */
-#define DLIGHT_KEY_TEST     (INT_MIN)     // the dlightspot command: one light per run
-#define DLIGHT_KEY_AUTHORED (INT_MIN / 2) // the editor's placed lights: + the index
+   the range and no emitter can name their slots. An authored light adds its index. */
+#define DLIGHT_KEY_TEST          (INT_MIN)                     // the dlightspot command: one light per run
+#define DLIGHT_KEY_AUTHORED      (INT_MIN / 2)                 // the editor's placed lights: + the index
+#define DLIGHT_KEY_AUTHORED_MAX  (INT_MIN / 2 + MAX_DLIGHTS)   // the highest key an authored light takes
+/* True when a key names a light of the engine's rather than of an emitter. The allocator
+   asks this before it takes a live slot, so a busy frame cannot destroy an engine's light. */
+#define DLIGHT_KEY_IS_ENGINE(key) \
+	((key) == DLIGHT_KEY_TEST || ((key) >= DLIGHT_KEY_AUTHORED && (key) <= DLIGHT_KEY_AUTHORED_MAX))
 
 #define MAX_BEAMS 32 // johnfitz -- was 24
 typedef struct

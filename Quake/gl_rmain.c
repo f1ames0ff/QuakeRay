@@ -508,11 +508,26 @@ void RT_DlightSpot_f (void)
 		return;
 	}
 
-	const float outerDeg = CLAMP (0.1f, (float) atof (Cmd_Argv (1)), 89.9f);
-	/* The inner angle has to stay below the outer one: the cone edge is a smoothstep, and a
-	   smoothstep with equal edges is undefined. */
-	const float innerDeg = CLAMP (0.0f, (Cmd_Argc () >= 3) ? (float) atof (Cmd_Argv (2)) : 0.0f, outerDeg * 0.999f);
+	float       outerDeg = (float) atof (Cmd_Argv (1));
+	float       innerDeg = (Cmd_Argc () >= 3) ? (float) atof (Cmd_Argv (2)) : 0.0f;
 	const float dist     = (Cmd_Argc () >= 4) ? (float) atof (Cmd_Argv (3)) : 48.0f;
+
+	/* The comparisons read as they do so that a nan fails them: atof takes nan and inf, and a
+	   nan edge or origin would poison every cell that samples the light. */
+	if (!(outerDeg >= 0.1f && outerDeg <= 89.9f) ||
+	    !(innerDeg >= 0.0f) || !(innerDeg <= outerDeg) ||
+	    !(dist >= 1.0f && dist <= 4096.0f))
+	{
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance]\n", Cmd_Argv (0));
+		return;
+	}
+
+	/* The cone edge is a smoothstep, and one with equal edges is undefined, so the inner
+	   angle stays strictly inside the outer one. */
+	if (innerDeg > outerDeg * 0.999f)
+	{
+		innerDeg = outerDeg * 0.999f;
+	}
 
 	/* DLIGHT_KEY_TEST is a key no emitter makes, so no effect can take the slot back, and
 	   every run of the command reuses it: one command owns one light. */

@@ -386,7 +386,27 @@ static dlight_t *CL_AllocDlightOfType (int key, dlight_type_t type)
 		}
 	}
 
-	dl = &cl_dlights[0];
+	/* Every slot is live: an emitter's light takes the one that dies first among the
+	   emitter's own, so a muzzle flash does not destroy the engine's lights (the test one
+	   and the authored ones). A pool that is all engine falls back to the first slot, as
+	   the allocator always has. */
+	dlight_t *candidate = NULL;
+
+	dl = cl_dlights;
+	for (i = 0; i < MAX_DLIGHTS; i++, dl++)
+	{
+		if (DLIGHT_KEY_IS_ENGINE (dl->key))
+		{
+			continue;
+		}
+
+		if (candidate == NULL || dl->die < candidate->die)
+		{
+			candidate = dl;
+		}
+	}
+
+	dl = candidate != NULL ? candidate : &cl_dlights[0];
 	memset (dl, 0, sizeof (*dl));
 	dl->key = key;
 	dl->type = type;
