@@ -167,6 +167,9 @@ private:
     std::vector<float>    slotDist2;
     std::vector<uint32_t> slotSource;
     std::vector<uint32_t> slotFill;   // one per cluster
+    // Slots below the fill that hold no light, so that the scan for one can be skipped when the
+    // cluster has none, which is the common case.
+    std::vector<uint32_t> slotHoles;  // one per cluster
     // Set while a slot holds a light the top-up pass put there rather than the PVS walk, so
     // that a cluster whose top-up set is looked at again can let go of the ones that fell out
     // of it and keep the slots of the ones that are still among its closest few.
