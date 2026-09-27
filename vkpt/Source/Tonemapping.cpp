@@ -83,10 +83,10 @@ vkpt::Tonemapping::~Tonemapping()
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 }
 
-void vkpt::Tonemapping::CalculateExposure(VkCommandBuffer cmd, uint32_t frameIndex, const std::shared_ptr<const GlobalUniform> &uniform,
-                                          float exposureBias, float contrast)
+void vkpt::Tonemapping::PrepareExposureParams(uint32_t frameIndex, const std::shared_ptr<const GlobalUniform> &uniform,
+                                              float exposureBias, float contrast)
 {
-    CmdLabel label(cmd, "Exposure");
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
 
     // Write tone mapper params from the host. Only the params prefix of the
     // buffer is touched here; the histogram/curve state lives past it and is
@@ -126,6 +126,16 @@ void vkpt::Tonemapping::CalculateExposure(VkCommandBuffer cmd, uint32_t frameInd
 
         resetRequired[frameIndex] = false;
     }
+}
+
+void vkpt::Tonemapping::CalculateExposure(VkCommandBuffer cmd, uint32_t frameIndex, const std::shared_ptr<const GlobalUniform> &uniform,
+                                          float exposureBias, float contrast)
+{
+    CmdLabel label(cmd, "Exposure");
+
+    // The host-side params prefix, written before the barriers and the two dispatches below -
+    // the same bytes the traced RHI path produces through PrepareExposureParams on its own list.
+    PrepareExposureParams(frameIndex, uniform, exposureBias, contrast);
 
     // sync access to histogram buffer
     {
@@ -242,6 +252,29 @@ VkDescriptorSet vkpt::Tonemapping::GetDescSet(uint32_t frameIndex) const
     return tmDescSet[frameIndex];
 }
 
+VkBuffer vkpt::Tonemapping::GetBuffer(uint32_t frameIndex) const
+{
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
+    return tmBuffer[frameIndex].GetBuffer();
+}
+
+uint32_t vkpt::Tonemapping::GetElementSize() const
+{
+    return static_cast<uint32_t>(sizeof(ShTonemapping));
+}
+
+void vkpt::Tonemapping::SetAvgLuminance(uint32_t frameIndex, float avgLuminance)
+{
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
+
+    // Same host-visible mapping the params prefix is written through (CalculateExposure), so the
+    // write is coherent and per-slot: the slot's fence keeps the GPU from reading it in flight.
+    if (mappedTmBuffer[frameIndex] != nullptr)
+    {
+        static_cast<ShTonemapping *>(mappedTmBuffer[frameIndex])->avgLuminance = avgLuminance;
+    }
+}
+
 void vkpt::Tonemapping::OnShaderReload(const ShaderManager *shaderManager)
 {
     DestroyPipelines();
@@ -255,7 +288,13 @@ void vkpt::Tonemapping::CreateTonemappingBuffer(const std::shared_ptr<MemoryAllo
         tmBuffer[i].Init(
             allocator,
             sizeof(ShTonemapping),
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            // The RHI layer wraps this buffer through a native handle, and NVRHI queries the buffer
+            // device address on every wrap - vulkan-buffer.cpp:215-220 - so the usage bit is
+            // mandatory there. The memory is address-capable regardless: Buffer::Init always
+            // allocates through AllocType::WITH_ADDRESS_QUERY (Buffer.cpp:67,
+            // MemoryAllocator.cpp:269-277). Same reason the collector's geometry buffers carry it
+            // (RasterizedDataCollector.cpp:72-81).
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             "Tonemapping buffer");
     }

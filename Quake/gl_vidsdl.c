@@ -104,7 +104,11 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 #define CVAR_DEF_LIST( CVAR_DEF_T ) \
 	\
 	CVAR_DEF_T (rt_enable_pvs, "0") \
+	/* No pass reads maxBounceShadows. Kept as the engine-side setter of the
+	   public field, and old configs keep loading. */ \
 	CVAR_DEF_T (rt_shadowrays, "2") \
+	/* Kept only so old configs load without an unknown-cvar warning: the GI level
+	   below decides the bounce count (see GL_EndRenderingTask). */ \
 	CVAR_DEF_T (rt_indir2bounces, "0") \
 	CVAR_DEF_T (rt_gi_level, "1") \
 	CVAR_DEF_T (rt_sun_bounce_range, "2000") \
@@ -113,17 +117,13 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_godrays_intensity, "1") /* Q2RTX's gr_intensity: strength of the sun shafts */ \
 	CVAR_DEF_T (rt_denoiser, "1") \
 	CVAR_DEF_T (rt_no_textures, "0") \
+	/* No pass reads forceAntiFirefly: CmQ2Adapter's anti-firefly is not gated by
+	   it. Kept as the setter of the public RgDrawFrameInfo field. */ \
 	CVAR_DEF_T (rt_antifirefly, "1") \
 	CVAR_DEF_T (rt_roughmin, "0.02") \
     \
 	CVAR_DEF_T (rt_dlight_intensity, "3.0") \
 	CVAR_DEF_T (rt_dlight_radius, "0.1") \
-	\
-	CVAR_DEF_T (rt_plight_intensity, "3.0") \
-	CVAR_DEF_T (rt_plight_radius, "0.02") \
-	\
-	CVAR_DEF_T (rt_wlight_intensity, "3.0") \
-	CVAR_DEF_T (rt_wlight_radius, "0.01") \
 	\
 	CVAR_DEF_T (rt_emis_light_intensity, "1.0") \
 	\
@@ -222,6 +222,10 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_refr_water, "1.33") \
 	\
 	CVAR_DEF_T (rt_volume_type, "2") \
+	/* The screen-space volumetric these parameterise is gone on the Q2RTX core:
+	   CmPrepareFinal's applyVolumetrics returns at coreQ2RTX != 0, and
+	   Volumetric::ProcessScattering has no caller. No output of either renderer
+	   depends on them; kept as the setters of the public volumetric params. */ \
 	CVAR_DEF_T (rt_volume_far, "1000") \
 	CVAR_DEF_T (rt_volume_scatter, "0.3") \
 	CVAR_DEF_T (rt_volume_ambient, "2.0") \
@@ -245,6 +249,9 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_upscale_fsr31, "2") \
 	CVAR_DEF_T (rt_upscale_dlss, "0") \
 	\
+	/* No pass reads the *SensitivityToChange fields: the ASVGF port is driven by
+	   the depth gradient mode alone. Kept as the setters of the public
+	   illumination params. */ \
 	CVAR_DEF_T (rt_sensit_dir, "0.4") \
 	CVAR_DEF_T (rt_sensit_indir, "0.06") \
 	CVAR_DEF_T (rt_sensit_spec, "0.03") \
@@ -280,9 +287,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_stats_interval, "0.25") \
 	CVAR_DEF_T (rt_worldcensus, "0") \
 	CVAR_DEF_T (rt_worldlights_stats, "0") \
-	CVAR_DEF_T (rt_worldclusters_grid, "1") \
-	\
-	CVAR_DEF_T (_rt_firsttime, "1")
+	CVAR_DEF_T (rt_worldclusters_grid, "1")
 
 
 
@@ -1749,7 +1754,6 @@ static void GL_InitInstance (void)
 	Cmd_AddCommand ("fog", RT_Fog_Cmd);
 	Cmd_AddCommand ("rt_stats", RT_Stats_f);
 	Cmd_AddCommand ("rt_stats_dump", RT_StatsDump_f);
-	Cvar_SetValueQuick (&_rt_firsttime, 0);
 
 
     vulkan_globals.primary_cb_context.batch_indices = Mem_Alloc (sizeof (uint32_t) * MAX_BATCH_INDICES);
@@ -2831,6 +2835,12 @@ void VID_Init (void)
 #define CVAR_DEF_T(name, default_value) Cvar_RegisterVariable (&name);
 		CVAR_DEF_LIST (CVAR_DEF_T)
 #undef CVAR_DEF_T
+
+		/* Read-only: the incremental composition is the only mode the renderer selects. The
+		   legacy non-incremental path (0) composes every list of the scene on every frame, and
+		   the light a scene keeps was measured to flicker in it; an engine-side Cvar_SetROM is
+		   the only way to select it. A saved 0 in a configuration is ignored. */
+		rt_cluster_incremental.flags |= CVAR_ROM;
 
 		Cvar_RegisterVariable (&rt_light_report_filter);
 		Cvar_RegisterVariable (&rt_sun_edit);

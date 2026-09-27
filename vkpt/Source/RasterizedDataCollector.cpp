@@ -104,8 +104,16 @@ RasterizedDataCollector::RasterizedDataCollector( VkDevice                      
     _maxVertexCount = std::max(_maxVertexCount, 64u);
     _maxIndexCount = std::max(_maxIndexCount, 64u);
 
-    vertexBuffer->Create(_maxVertexCount * sizeof(RgVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, "Rasterizer vertex buffer");
-    indexBuffer->Create(_maxIndexCount * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, "Rasterizer index buffer");
+    // The RHI sky pass binds these buffers through a native wrap, and NVRHI queries a buffer device
+    // address when it wraps one (vulkan-buffer.cpp:215-220). The usage bit is what lets MemoryAllocator
+    // request an address-capable memory (Buffer.cpp:72-78) and silences
+    // VUID-VkBufferDeviceAddressInfo-buffer-02601.
+    vertexBuffer->Create(_maxVertexCount * sizeof(RgVertex),
+                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                         "Rasterizer vertex buffer");
+    indexBuffer->Create(_maxIndexCount * sizeof(uint32_t),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        "Rasterizer index buffer");
 }
 
 RasterizedDataCollector::~RasterizedDataCollector()
@@ -336,6 +344,28 @@ VkBuffer RasterizedDataCollector::GetVertexBuffer() const
 VkBuffer RasterizedDataCollector::GetIndexBuffer() const
 {
     return indexBuffer->GetDeviceLocal();
+}
+
+VkBuffer RasterizedDataCollector::GetVertexStagingBuffer(uint32_t frameIndex)
+{
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
+    return vertexBuffer->GetStaging(frameIndex);
+}
+
+VkBuffer RasterizedDataCollector::GetIndexStagingBuffer(uint32_t frameIndex)
+{
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
+    return indexBuffer->GetStaging(frameIndex);
+}
+
+VkDeviceSize RasterizedDataCollector::GetVertexBufferSize() const
+{
+    return vertexBuffer->GetSize();
+}
+
+VkDeviceSize RasterizedDataCollector::GetIndexBufferSize() const
+{
+    return indexBuffer->GetSize();
 }
 
 const std::vector< RasterizedDataCollector::DrawInfo >& RasterizedDataCollector::
