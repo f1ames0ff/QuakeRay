@@ -63,6 +63,11 @@ extern atomic_uint32_t rt_require_static_submit; // gl_rmain.c
 // The editor edits what the new light system builds (TAL and the fake dlights
 // of materials); the old system has neither, so it refuses to start on it.
 extern cvar_t rt_truelight; // gl_vidsdl.c
+
+// The level's own fog (gl_fog.c): read through the getters and written through
+// the `fog` command, the same path a map's key and the console use.
+float Fog_GetDensity (void);
+void  Fog_GetColor (float *c);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
 
 // ---------------------------------------------------------------------------
@@ -1291,7 +1296,13 @@ static void QRE_DoLightPick (qboolean select)
 	Con_Printf ("qr light editor: picked light '%s' (%s)\n",
 	            qre.sel_light.name[0] ? qre.sel_light.name : "(no emitter name)",
 	            qre.sel_light.kind == RT_LIGHT_KIND_MATERIAL ? "material" :
-	            qre.sel_light.kind == RT_LIGHT_KIND_DLIGHT ? "legacy dlight" : "map light");
+	            qre.sel_light.kind == RT_LIGHT_KIND_DLIGHT ? "legacy dlight" :
+	            qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM ? "custom light" : "map light");
+
+	// An authored light is edited in the Custom tab: open it right away, so the
+	// click that selected the light lands on its row.
+	if (qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM)
+		qre.light_tab = 1;
 
 	QRE_CursorMode (true);
 }
@@ -2741,6 +2752,9 @@ static const qre_global_t qre_globals[] = {
 	  "Brightness of the simple fog's colour, which is the sky's flat colour (mode 1)." },
 	{ NULL,  "rt_volume_far",                QRE_G_FLOAT, 0, 4000,
 	  "How far from the camera the volumetric volume reaches (mode 2)." },
+
+	{ "Fog", "rt_level_fog",        QRE_G_BOOL,  0, 0,
+	  "Draw the level's own fog (the worldspawn \"fog\" key or the console `fog` command)." },
 };
 
 static void QRE_GlobalColorGet (const char *name, float rgb[3])
@@ -2845,6 +2859,28 @@ static void QRE_LightGlobalTab (void)
 		default:
 			break;
 		}
+	}
+
+	// The level's fog itself: the colour and the density are map data, not cvars,
+	// so they go through the `fog` command (the same path a map's key and the
+	// console use) while the getters keep the widgets in step with the map.
+	{
+		float    color[4];
+		float    density = Fog_GetDensity ();
+		int      en = 1;
+		qboolean changed = false;
+
+		Fog_GetColor (color);
+		color[3] = 1.0f;
+
+		if (QR_GUI_ColorHex ("fog_color", color, &en, "The colour of the level's fog."))
+			changed = true;
+		if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
+			changed = true;
+
+		if (changed)
+			Cbuf_AddText (va ("fog %f %f %f %f\n", density,
+			                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
 	}
 
 	QR_GUI_Spacing ();
@@ -2986,15 +3022,15 @@ static void QRE_BuildLightPanelGUI (void)
 	QR_GUI_BeginScroll ();
 
 	{
-		static const char *const tabs[] = { "Entity", "Global", "Custom" };
+		static const char *const tabs[] = { "Entity", "Custom", "Global" };
 
 		QR_GUI_Tabs ("light_tabs", tabs, (int)countof (tabs), &qre.light_tab);
 		QR_GUI_Spacing ();
 	}
 
-	if (qre.light_tab == 1)
+	if (qre.light_tab == 2)
 	{
-		// the global tab: the sky, its clouds and the sun
+		// the global tab: the sky, its clouds, the sun and the fog
 		QRE_LightGlobalTab ();
 		QR_GUI_EndScroll ();
 		QR_GUI_EndPanel ();
@@ -3003,7 +3039,7 @@ static void QRE_BuildLightPanelGUI (void)
 		return;
 	}
 
-	if (qre.light_tab == 2)
+	if (qre.light_tab == 1)
 	{
 		// the custom tab: the lights this level does not have
 		QRE_CustomLightsTab ();
@@ -4180,7 +4216,7 @@ void QR_Editor_PlaceAtCrosshair (void)
 		VectorMA (qre.cam_origin, 128.0f, vpn, l->origin);
 
 	qre.custom_placing = false;
-	qre.light_tab = 2;
+	qre.light_tab = 1;
 	QRE_CursorMode (true);
 	QRE_Notify ("light added; tune it in the Custom tab");
 }
