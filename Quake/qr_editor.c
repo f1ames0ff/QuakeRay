@@ -3611,11 +3611,15 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 		{
 			if (e->type == SDL_MOUSEMOTION)
 			{
+				// the bridge owns the cursor position the drag reads: let it see
+				// the motion first, then move the light and swallow the event
+				QR_GUI_ProcessEvent (e);
 				QRE_CustomGizmoMove ();
 				return true;
 			}
 			if (e->type == SDL_MOUSEBUTTONUP && e->button.button == SDL_BUTTON_LEFT)
 			{
+				QR_GUI_ProcessEvent (e);
 				qre.custom_dragging = false;
 				return true;
 			}
