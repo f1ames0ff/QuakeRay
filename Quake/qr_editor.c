@@ -249,6 +249,13 @@ static struct
 	vec3_t   pick_impact;       // the last pick's hit point (QRE_TracePick)
 	unsigned pick_impact_frame; // the frame it was taken in
 
+	// the axis gizmo drag of the selected custom light
+	qboolean custom_dragging;
+	int      custom_drag_axis;
+	int      custom_drag_index;
+	vec3_t   custom_drag_origin;
+	float    custom_drag_mouse[2];
+
 	// which of the two editors this is
 	int mode;
 
@@ -3372,6 +3379,167 @@ qboolean QR_Editor_KeyEvent (int key, qboolean down)
 	return false;
 }
 
+// ---------------------------------------------------------------------------
+// The axis gizmo: the world-axis arrows of the selected custom light are the
+// drag handles (they are drawn in QRE_DrawLightWireframes). A press near one of
+// them in screen space starts a drag along that axis, the motion moves the light
+// and the release ends it.
+// ---------------------------------------------------------------------------
+
+#define QRE_GIZMO_LEN 48.0f // the drawn length of an axis arrow, world units
+
+static int QRE_CustomSelectedIndex (void)
+{
+	int count = 0;
+	int index;
+
+	if (!qre.sel_light_valid || qre.sel_light.kind != RT_LIGHT_KIND_CUSTOM ||
+	    qre.sel_light.uniqueID <= (uint64_t)UINT32_MAX)
+		return -1;
+
+	(void)RT_CustomLights (&count);
+	index = (int)(qre.sel_light.uniqueID - ((uint64_t)UINT32_MAX + 1));
+	return (index >= 0 && index < count) ? index : -1;
+}
+
+// World space to screen pixels, with the view the editor camera uses.
+static qboolean QRE_WorldToScreen (const vec3_t p, float *out_x, float *out_y)
+{
+	const float deg2rad = 3.14159265f / 180.0f;
+	vec3_t      forward, right, up, d;
+	float       depth, tan_x, tan_y;
+
+	AngleVectors (r_refdef.viewangles, forward, right, up);
+	VectorSubtract (p, r_refdef.vieworg, d);
+
+	depth = DotProduct (d, forward);
+	if (depth <= 1.0f)
+		return false;
+
+	tan_x = tanf (r_refdef.fov_x * deg2rad * 0.5f);
+	tan_y = tanf (r_refdef.fov_y * deg2rad * 0.5f);
+	if (tan_x <= 0.0f || tan_y <= 0.0f)
+		return false;
+
+	*out_x = (0.5f + 0.5f * (DotProduct (d, right) / depth) / tan_x) * (float)glwidth;
+	*out_y = (0.5f - 0.5f * (DotProduct (d, up) / depth) / tan_y) * (float)glheight;
+	return true;
+}
+
+static float QRE_DistToSegment (float px, float py, float x0, float y0, float x1, float y1)
+{
+	const float dx = x1 - x0, dy = y1 - y0;
+	const float len2 = dx * dx + dy * dy;
+	float       t = 0.0f, qx, qy;
+
+	if (len2 > 0.0f)
+		t = CLAMP (0.0f, ((px - x0) * dx + (py - y0) * dy) / len2, 1.0f);
+
+	qx = x0 + dx * t;
+	qy = y0 + dy * t;
+	return sqrtf ((px - qx) * (px - qx) + (py - qy) * (py - qy));
+}
+
+static qboolean QRE_CustomGizmoBegin (void)
+{
+	int                index = QRE_CustomSelectedIndex ();
+	int                count = 0;
+	rt_custom_light_t *lights;
+	rt_custom_light_t *l;
+	vec3_t             origin, tip;
+	float              ox, oy, mx = -1.0f, my = -1.0f, best = 10.0f;
+	int                a, axis = -1;
+
+	if (index < 0)
+		return false;
+
+	lights = RT_CustomLights (&count);
+	l = &lights[index];
+	VectorCopy (l->origin, origin);
+
+	if (!QRE_WorldToScreen (origin, &ox, &oy))
+		return false;
+
+	QR_GUI_GetMousePos (&mx, &my);
+	if (mx < 0.0f)
+		return false;
+
+	for (a = 0; a < 3; a++)
+	{
+		float ax, ay, d;
+
+		VectorCopy (origin, tip);
+		tip[a] += QRE_GIZMO_LEN;
+		if (!QRE_WorldToScreen (tip, &ax, &ay))
+			continue;
+
+		d = QRE_DistToSegment (mx, my, ox, oy, ax, ay);
+		if (d < best)
+		{
+			best = d;
+			axis = a;
+		}
+	}
+
+	if (axis < 0)
+		return false;
+
+	qre.custom_dragging = true;
+	qre.custom_drag_axis = axis;
+	qre.custom_drag_index = index;
+	VectorCopy (origin, qre.custom_drag_origin);
+	qre.custom_drag_mouse[0] = mx;
+	qre.custom_drag_mouse[1] = my;
+	return true;
+}
+
+static void QRE_CustomGizmoMove (void)
+{
+	int                count = 0;
+	rt_custom_light_t *lights;
+	rt_custom_light_t *l;
+	vec3_t             origin, tip;
+	float              ox, oy, ax, ay, mx = -1.0f, my = -1.0f, dirx, diry, pixlen, delta;
+
+	if (!qre.custom_dragging)
+		return;
+
+	lights = RT_CustomLights (&count);
+	if (qre.custom_drag_index < 0 || qre.custom_drag_index >= count)
+		return;
+
+	l = &lights[qre.custom_drag_index];
+	VectorCopy (qre.custom_drag_origin, origin);
+
+	if (!QRE_WorldToScreen (origin, &ox, &oy))
+		return;
+
+	VectorCopy (origin, tip);
+	tip[qre.custom_drag_axis] += QRE_GIZMO_LEN;
+	if (!QRE_WorldToScreen (tip, &ax, &ay))
+		return;
+
+	QR_GUI_GetMousePos (&mx, &my);
+	if (mx < 0.0f)
+		return;
+
+	dirx = ax - ox;
+	diry = ay - oy;
+	pixlen = sqrtf (dirx * dirx + diry * diry);
+	if (pixlen < 1.0f)
+		return;
+
+	dirx /= pixlen;
+	diry /= pixlen;
+
+	// how far the cursor moved along the axis' screen direction, in world units
+	delta = ((mx - qre.custom_drag_mouse[0]) * dirx + (my - qre.custom_drag_mouse[1]) * diry) /
+	        pixlen * QRE_GIZMO_LEN;
+
+	VectorCopy (qre.custom_drag_origin, l->origin);
+	l->origin[qre.custom_drag_axis] += floorf (delta + 0.5f);
+}
+
 // Called for every SDL event before the engine handles it.
 qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 {
@@ -3383,6 +3551,30 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 	// while the console is up the engine owns the input
 	if (key_dest != key_game)
 		return false;
+
+	// The axis gizmo of the Custom tab: the arrows of the selected custom light
+	// are the drag handles, and the panel keeps its own clicks.
+	if (qre.mode == QRE_MODE_LIGHT)
+	{
+		if (!qre.custom_dragging && e->type == SDL_MOUSEBUTTONDOWN &&
+		    e->button.button == SDL_BUTTON_LEFT && !QR_GUI_WantsMouse () &&
+		    QRE_CustomGizmoBegin ())
+			return true;
+
+		if (qre.custom_dragging)
+		{
+			if (e->type == SDL_MOUSEMOTION)
+			{
+				QRE_CustomGizmoMove ();
+				return true;
+			}
+			if (e->type == SDL_MOUSEBUTTONUP && e->button.button == SDL_BUTTON_LEFT)
+			{
+				qre.custom_dragging = false;
+				return true;
+			}
+		}
+	}
 
 	// the console toggle key stays available unless an ImGui text field is
 	// editing: the console is the way the editor is driven too

@@ -121,6 +121,8 @@ void QR_GUI_DrawCrosshair (void);
 void QR_GUI_DrawHint (const char *const *lines, int count);
 // One line in the bottom-right corner (the light editor's placement prompts).
 void QR_GUI_LabelBottomRight (const char *text);
+// The cursor position ImGui last saw (the editor's own hit tests).
+void QR_GUI_GetMousePos (float *x, float *y);
 
 #ifdef __cplusplus
 }

@@ -980,3 +980,15 @@ void QR_GUI_LabelBottomRight (const char *text)
 	dl->AddText (ImVec2 (pos.x + 1.0f, pos.y + 1.0f), IM_COL32 (0, 0, 0, 160), text);
 	dl->AddText (pos, IM_COL32 (255, 230, 150, 235), text);
 }
+
+// The cursor position ImGui last saw, for the editor's own hit tests (the axis
+// gizmo).
+void QR_GUI_GetMousePos (float *x, float *y)
+{
+	const ImVec2 pos = ImGui::GetIO ().MousePos;
+
+	if (x)
+		*x = pos.x;
+	if (y)
+		*y = pos.y;
+}
