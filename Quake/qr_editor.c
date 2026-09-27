@@ -238,6 +238,12 @@ static struct
 	// and sun (the global settings)
 	int light_tab;
 
+	// the Custom tab's placement mode: "Add light" waits for the fire button and
+	// drops the new light where the crosshair hits
+	qboolean custom_placing;
+	vec3_t   pick_impact;       // the last pick's hit point (QRE_TracePick)
+	unsigned pick_impact_frame; // the frame it was taken in
+
 	// which of the two editors this is
 	int mode;
 
@@ -1098,6 +1104,8 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 		best = tr.fraction;
 		bestmodel = cl.worldmodel;
 		VectorCopy (tr.endpos, bestimpact);
+		VectorCopy (bestimpact, qre.pick_impact);
+		qre.pick_impact_frame = (unsigned)host_framecount;
 	}
 
 	// brush entities (health boxes, buttons, doors, ...); their traces are in
@@ -1114,6 +1122,8 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 			bestent = &cl.entities[entnum];
 			bestmodel = bestent->model;
 			VectorCopy (eimpact, bestimpact);
+			VectorCopy (bestimpact, qre.pick_impact);
+			qre.pick_impact_frame = (unsigned)host_framecount;
 		}
 	}
 
@@ -2803,19 +2813,10 @@ static void QRE_CustomLightsTab (void)
 
 	if (QR_GUI_Button ("Add light"))
 	{
-		rt_custom_light_t *l = RT_CustomLights_Ensure ();
-
-		if (l)
-		{
-			// at the editor camera, a little above it; the aim-based placement
-			// (snap to the surface under the crosshair) comes with the picking
-			VectorCopy (qre.cam_origin, l->origin);
-			l->origin[2] += 32.0f;
-		}
-		else
-		{
-			QRE_Notify ("no room for another custom light");
-		}
+		// the light is created where the crosshair points: the cursor mode goes
+		// off so the camera aims, and the fire button drops it (in_sdl.c)
+		qre.custom_placing = true;
+		QRE_CursorMode (false);
 	}
 
 	QR_GUI_Spacing ();
@@ -3162,6 +3163,9 @@ static void QRE_BuildFlyingOverlay (void)
 
 	QR_GUI_DrawHint (shown, (int)countof (light_lines));
 	QR_GUI_DrawCrosshair ();
+
+	if (qre.custom_placing)
+		QR_GUI_LabelBottomRight ("Press LMB to add new light at crosshair position");
 }
 
 // ---------------------------------------------------------------------------
@@ -4091,6 +4095,42 @@ void QR_Editor_Pick (void)
 	if (!QR_Editor_Flying ())
 		return;
 	QRE_DoPick (true);
+}
+
+// The Custom tab's placement mode: while it is on, the fire button drops the new
+// light where the crosshair hits (the last hover pick's hit point, just in front
+// of the surface); with nothing under the crosshair it goes a step ahead of the
+// camera. Either way the editor comes back to the cursor mode with the new light
+// selected.
+void QR_Editor_PlaceAtCrosshair (void)
+{
+	rt_custom_light_t *l;
+
+	if (!qre.active || !qre.custom_placing)
+		return;
+
+	l = RT_CustomLights_Ensure ();
+	if (!l)
+	{
+		QRE_Notify ("no room for another custom light");
+		qre.custom_placing = false;
+		return;
+	}
+
+	if (qre.pick_impact_frame == (unsigned)host_framecount && (qre.pick_surf || qre.pick_ent))
+		VectorMA (qre.pick_impact, -8.0f, vpn, l->origin);
+	else
+		VectorMA (qre.cam_origin, 128.0f, vpn, l->origin);
+
+	qre.custom_placing = false;
+	qre.light_tab = 2;
+	QRE_CursorMode (true);
+	QRE_Notify ("light added; tune it in the Custom tab");
+}
+
+qboolean QR_Editor_PlacePending (void)
+{
+	return qre.active && qre.custom_placing;
 }
 
 void QR_Editor_OnNewMap (void)

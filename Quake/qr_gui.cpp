@@ -964,3 +964,19 @@ void QR_GUI_DrawHint (const char *const *lines, int count)
 		pos.y += line_height;
 	}
 }
+
+// One line in the bottom-right corner: the placement prompts of the light
+// editor, where the bottom-left block would sit far from the cursor mode's
+// panel.
+void QR_GUI_LabelBottomRight (const char *text)
+{
+	ImDrawList *dl = ImGui::GetForegroundDrawList ();
+
+	const float  pad = 14.0f;
+	const ImVec2 size = ImGui::CalcTextSize (text);
+	const ImVec2 pos (ImGui::GetIO ().DisplaySize.x - pad - size.x,
+	                  ImGui::GetIO ().DisplaySize.y - pad - size.y);
+
+	dl->AddText (ImVec2 (pos.x + 1.0f, pos.y + 1.0f), IM_COL32 (0, 0, 0, 160), text);
+	dl->AddText (pos, IM_COL32 (255, 230, 150, 235), text);
+}

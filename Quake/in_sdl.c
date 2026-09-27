@@ -975,6 +975,14 @@ void IN_SendKeyEvents (void)
 				Cvar_Set ("rt_sun_edit", "0");
 				break;
 			}
+			// qr light editor: in the Custom tab's placement mode the fire button
+			// drops the new light at the crosshair and is swallowed
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_PlacePending ())
+			{
+				QR_Editor_PlaceAtCrosshair ();
+				break;
+			}
 			// qr light editor: while flying, the fire button selects the face under
 			// the crosshair and is swallowed so the weapon never fires
 			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&

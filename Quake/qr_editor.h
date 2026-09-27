@@ -32,6 +32,10 @@ void QR_Editor_DrawPanel (cb_context_t *cbx);      // panel UI (SCR_DrawGUI)
 
 // Input hooks (keys.c / in_sdl.c).
 qboolean QR_Editor_KeyEvent (int key, qboolean down);      // true = the key was consumed
+// The Custom tab's placement mode: pending while "Add light" waits for the fire
+// button, and the press itself drops the light at the crosshair.
+qboolean QR_Editor_PlacePending (void);
+void     QR_Editor_PlaceAtCrosshair (void);
 qboolean QR_Editor_GuiProcessEvent (const void *sdl_event); // ImGui panel event routing
 qboolean QR_Editor_TextEntryActive (void);                 // SDL text input wanted
 

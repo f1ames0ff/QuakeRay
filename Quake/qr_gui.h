@@ -119,6 +119,8 @@ void QR_GUI_Notify (const char *text);
 void QR_GUI_DrawCrosshair (void);
 // Hint lines in the bottom-left corner, drawn with a soft shadow.
 void QR_GUI_DrawHint (const char *const *lines, int count);
+// One line in the bottom-right corner (the light editor's placement prompts).
+void QR_GUI_LabelBottomRight (const char *text);
 
 #ifdef __cplusplus
 }
