@@ -52,6 +52,12 @@ public:
     VkDescriptorSetLayout GetDescSetLayout() const;
     VkDescriptorSet GetDescSet(uint32_t frameIndex) const;
 
+    // The slot's raw buffer. Additive accessor for consumers that bind the buffer through their own
+    // API instead of this class's descriptor set: the RHI layer wraps each slot's buffer as the
+    // ray-stats structured UAV of the RT passes, so the counters the raygens accumulate are the
+    // very ones GetRays/GetRaysPerCategory read back and Reset clears.
+    VkBuffer GetBuffer(uint32_t frameIndex) const;
+
 private:
     void CreateBuffers(std::shared_ptr<MemoryAllocator> &allocator);
     void CreateDescSetLayout();

@@ -18,11 +18,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-# This script generates two separate header files for C and GLSL but with identical data
+# This script generates separate header files for C, GLSL and HLSL but with identical data.
+# The HLSL header is the source of truth for the shader base that is being ported from GLSL:
+# the same walk emits both, so the two can not drift apart.
 
 import sys
 import os
 import re
+import subprocess
 from math import log2
 
 
@@ -192,16 +195,122 @@ GLSL_IMAGE_2D_TYPE = {
     TYPE_PACK_E5    : "uimage2D",
 }
 
-GLSL_SAMPLER_2D_TYPE = { 
-    TYPE_FLOAT32    : "sampler2D",
-    TYPE_INT32      : "isampler2D",
-    TYPE_UINT32     : "usampler2D",
-    TYPE_UNORM8     : "sampler2D",
-    TYPE_UINT8      : "usampler2D",
-    TYPE_UINT16     : "usampler2D",
-    TYPE_FLOAT16    : "sampler2D",
-    TYPE_PACK_11    : "sampler2D",
-    TYPE_PACK_E5    : "usampler2D",
+# Vulkan has no combined image samplers used through a sampler object: an image is read either
+# through a samplerless texture (this dict) or through a texture paired with a separate sampler
+# (GLSL_SAMPLER_TYPE). Framebuffers expose all three views, see FRAMEBUF_SAMPLED_POSTFIX.
+GLSL_TEXTURE_2D_TYPE = {
+    TYPE_FLOAT32    : "texture2D",
+    TYPE_INT32      : "itexture2D",
+    TYPE_UINT32     : "utexture2D",
+    TYPE_UNORM8     : "texture2D",
+    TYPE_UINT8      : "utexture2D",
+    TYPE_UINT16     : "utexture2D",
+    TYPE_FLOAT16    : "texture2D",
+    TYPE_PACK_11    : "texture2D",
+    TYPE_PACK_E5    : "utexture2D",
+}
+
+# the sampler carries no format, the format comes from the texture it is paired with
+GLSL_SAMPLER_TYPE = "sampler"
+
+
+# The HLSL spelling of the same types, so that one walk can emit both language versions of a
+# declaration. Matrices are declared transposed: dxc reads the bytes of a matrix that glslang
+# lays out as column major as row major, so GLSL `matCxR` becomes HLSL `floatRxC`. A square
+# matrix keeps its spelling, and so does the element count of an array of matrices.
+HLSL_TYPE_NAMES = {
+    TYPE_FLOAT32:       "float",
+    TYPE_INT32:         "int",
+    TYPE_UINT32:        "uint",
+    (TYPE_FLOAT32,  2): "float2",
+    (TYPE_FLOAT32,  3): "float3",
+    (TYPE_FLOAT32,  4): "float4",
+    (TYPE_INT32,    2): "int2",
+    (TYPE_INT32,    3): "int3",
+    (TYPE_INT32,    4): "int4",
+    (TYPE_UINT32,   2): "uint2",
+    (TYPE_UINT32,   3): "uint3",
+    (TYPE_UINT32,   4): "uint4",
+    (TYPE_FLOAT32, 22): "float2x2",
+    (TYPE_FLOAT32, 23): "float3x2",
+    (TYPE_FLOAT32, 32): "float2x3",
+    (TYPE_FLOAT32, 33): "float3x3",
+    (TYPE_FLOAT32, 34): "float4x3",
+    (TYPE_FLOAT32, 43): "float3x4",
+    (TYPE_FLOAT32, 44): "float4x4",
+}
+
+# dxc takes the GLSL spelling of a format for every format that is in use here, except for the
+# packed ones: those names are reported as not supported and the format is silently dropped, so
+# the images end up with no format at all. The spelled out names are the ones dxc accepts, and
+# the resulting OpTypeImage format operand is the one glslang emits for the GLSL name.
+HLSL_IMAGE_FORMAT_OVERRIDES = {
+    (TYPE_PACK_11,  COMPONENT_RGB):     "r11g11b10f",
+}
+
+HLSL_IMAGE_FORMATS = dict(GLSL_IMAGE_FORMATS)
+HLSL_IMAGE_FORMATS.update(HLSL_IMAGE_FORMAT_OVERRIDES)
+
+HLSL_IMAGE_2D_TYPE = {
+    TYPE_FLOAT32    : "RWTexture2D<float4>",
+    TYPE_INT32      : "RWTexture2D<int4>",
+    TYPE_UINT32     : "RWTexture2D<uint4>",
+    TYPE_UNORM8     : "RWTexture2D<float4>",
+    TYPE_UINT8      : "RWTexture2D<uint4>",
+    TYPE_UINT16     : "RWTexture2D<uint4>",
+    TYPE_FLOAT16    : "RWTexture2D<float4>",
+    TYPE_PACK_11    : "RWTexture2D<float4>",
+    TYPE_PACK_E5    : "RWTexture2D<uint4>",
+}
+
+# A sampled view is a texture next to a separate sampler, as in GLSL: Texture2D.SampleLevel(...)
+# becomes a sampled image descriptor plus a sampler descriptor, and dxc emits the same pair of
+# declarations that glslang emits for `texture2D` and `sampler`.
+HLSL_TEXTURE_2D_TYPE = {
+    TYPE_FLOAT32    : "Texture2D<float4>",
+    TYPE_INT32      : "Texture2D<int4>",
+    TYPE_UINT32     : "Texture2D<uint4>",
+    TYPE_UNORM8     : "Texture2D<float4>",
+    TYPE_UINT8      : "Texture2D<uint4>",
+    TYPE_UINT16     : "Texture2D<uint4>",
+    TYPE_FLOAT16    : "Texture2D<float4>",
+    TYPE_PACK_11    : "Texture2D<float4>",
+    TYPE_PACK_E5    : "Texture2D<uint4>",
+}
+
+HLSL_SAMPLER_TYPE = "SamplerState"
+
+
+# How one descriptor is spelled in each language. The three groups of the framebuffer set are
+# walked once and only the spelling differs, so the bindings can not drift apart between the
+# GLSL and the HLSL headers.
+DESCRIPTOR_SPELLINGS = {
+    "glsl": {
+        "format":      lambda baseFormat, components: GLSL_IMAGE_FORMATS[(baseFormat, components)],
+        "storageType": lambda baseFormat: GLSL_IMAGE_2D_TYPE[baseFormat],
+        "sampledType": lambda baseFormat: GLSL_TEXTURE_2D_TYPE[baseFormat],
+        "samplerType": lambda baseFormat: GLSL_SAMPLER_TYPE,
+        "storage":     lambda binding, format, typeName, name:
+            "layout(set = %s, binding = %d, %s) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, format, typeName, name),
+        "sampled":     lambda binding, format, typeName, name:
+            "layout(set = %s, binding = %d) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, typeName, name),
+        "sampler":     lambda binding, format, typeName, name:
+            "layout(set = %s, binding = %d) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, typeName, name),
+    },
+    "hlsl": {
+        "format":      lambda baseFormat, components: HLSL_IMAGE_FORMATS[(baseFormat, components)],
+        "storageType": lambda baseFormat: HLSL_IMAGE_2D_TYPE[baseFormat],
+        "sampledType": lambda baseFormat: HLSL_TEXTURE_2D_TYPE[baseFormat],
+        "samplerType": lambda baseFormat: HLSL_SAMPLER_TYPE,
+        # The set index comes from the macro, so the header must be included after
+        # DESC_SET_FRAMEBUFFERS is defined - the same requirement as in GLSL.
+        "storage":     lambda binding, format, typeName, name:
+            "[[vk::binding(%d, %s), vk::image_format(\"%s\")]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, format, typeName, name),
+        "sampled":     lambda binding, format, typeName, name:
+            "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, typeName, name),
+        "sampler":     lambda binding, format, typeName, name:
+            "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, typeName, name),
+    },
 }
 
 
@@ -252,9 +361,15 @@ CONST = {
     "BINDING_GLOBAL_UNIFORM"                    : 0,
     "BINDING_ACCELERATION_STRUCTURE_MAIN"       : 0,
     "BINDING_TEXTURES"                          : 0,
+    # the sampler half of the split bindless texture table
+    "BINDING_TEXTURES_SAMPLER"                  : 1,
     "BINDING_CUBEMAPS"                          : 0,
+    # the sampler half of the split bindless cubemap table
+    "BINDING_CUBEMAPS_SAMPLER"                  : 1,
     "BINDING_RENDER_CUBEMAP"                    : 0,
+    "BINDING_RENDER_CUBEMAP_SAMPLER"            : 2,
     "BINDING_RENDER_CUBEMAP_ENV"                : 1,
+    "BINDING_RENDER_CUBEMAP_ENV_SAMPLER"        : 3,
     "BINDING_BLUE_NOISE"                        : 0,
     "BINDING_LUM_HISTOGRAM"                     : 0,
     "BINDING_LIGHT_SOURCES"                     : 0,
@@ -275,10 +390,13 @@ CONST = {
     "BINDING_PORTAL_INSTANCES"                  : 0,
     "BINDING_LPM_PARAMS"                        : 0,
     "BINDING_VOLUMETRIC_STORAGE"                : 0,
-    "BINDING_VOLUMETRIC_SAMPLER"                : 1,
-    "BINDING_VOLUMETRIC_SAMPLER_PREV"           : 2,
-    "BINDING_VOLUMETRIC_ILLUMINATION"           : 3,
-    "BINDING_VOLUMETRIC_ILLUMINATION_SAMPLER"   : 4,
+    "BINDING_VOLUMETRIC_SAMPLED"                : 1,
+    "BINDING_VOLUMETRIC_SAMPLER"                : 2,
+    "BINDING_VOLUMETRIC_SAMPLED_PREV"           : 3,
+    "BINDING_VOLUMETRIC_SAMPLER_PREV"           : 4,
+    "BINDING_VOLUMETRIC_ILLUMINATION"           : 5,
+    "BINDING_VOLUMETRIC_ILLUMINATION_SAMPLED"   : 6,
+    "BINDING_VOLUMETRIC_ILLUMINATION_SAMPLER"   : 7,
     
     "INSTANCE_CUSTOM_INDEX_FLAG_DYNAMIC"                : "1 << 0",
     "INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON"           : "1 << 1",
@@ -898,6 +1016,11 @@ STRUCTS = {
 FRAMEBUF_DESC_SET_NAME              = "DESC_SET_FRAMEBUFFERS"
 FRAMEBUF_BASE_BINDING               = 0
 FRAMEBUF_PREFIX                     = "framebuf"
+# A framebuffer exposes three descriptors, one per group, all three at the same slot in their
+# own group: the storage view it is written through (image2D framebufX), the view it is read
+# through (texture2D framebufX_Sampled) and the sampler that view is filtered with
+# (sampler framebufX_Sampler).
+FRAMEBUF_SAMPLED_POSTFIX            = "_Sampled"
 FRAMEBUF_SAMPLER_POSTFIX            = "_Sampler"
 FRAMEBUF_DEBUG_NAME_PREFIX          = "Framebuf "
 FRAMEBUF_STORE_PREV_POSTFIX         = "_Prev"
@@ -1225,28 +1348,27 @@ def capitalizeFirstLetter(s):
 
 
 CURRENT_FRAMEBUF_BINDING_COUNT = 0
+CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT = 0
+CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT = 0
 
-def getGLSLFramebufDeclaration(name, baseFormat, components, flags):
+def getFramebufDeclaration(spelling, name, baseFormat, components, flags):
     global CURRENT_FRAMEBUF_BINDING_COUNT
 
     binding = FRAMEBUF_BASE_BINDING + CURRENT_FRAMEBUF_BINDING_COUNT
-    bindingSampler = binding + 1
     CURRENT_FRAMEBUF_BINDING_COUNT += 1
 
     r = ""
     if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
         r += "#ifndef " + FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE + "\n"
 
-    template = ("layout(set = %s, binding = %d, %s) uniform %s %s;")
-
-    r += template % (FRAMEBUF_DESC_SET_NAME, binding, 
-        GLSL_IMAGE_FORMATS[(baseFormat, components)], 
-        GLSL_IMAGE_2D_TYPE[baseFormat], name)
+    r += spelling["storage"](
+        binding, spelling["format"](baseFormat, components),
+        spelling["storageType"](baseFormat), name)
 
     if flags & FRAMEBUF_FLAGS_STORE_PREV:
         r += "\n"
-        r += getGLSLFramebufDeclaration(
-            name + FRAMEBUF_STORE_PREV_POSTFIX, baseFormat, components, 
+        r += getFramebufDeclaration(
+            spelling, name + FRAMEBUF_STORE_PREV_POSTFIX, baseFormat, components, 
             flags & ~FRAMEBUF_FLAGS_STORE_PREV)
 
     if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
@@ -1255,27 +1377,57 @@ def getGLSLFramebufDeclaration(name, baseFormat, components, flags):
     return r
 
 
-def getGLSLFramebufSamplerDeclaration(name, baseFormat, components, flags):
-    global CURRENT_FRAMEBUF_BINDING_COUNT
+def getFramebufSampledDeclaration(spelling, name, baseFormat, components, flags, bindingOffset):
+    global CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT
 
-    binding = FRAMEBUF_BASE_BINDING + CURRENT_FRAMEBUF_BINDING_COUNT - 1
-    bindingSampler = binding + 1
-    CURRENT_FRAMEBUF_BINDING_COUNT += 1
+    binding = bindingOffset + CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT
+    CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT += 1
 
     r = ""
     if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
         r += "#ifndef " + FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE + "\n"
 
-    templateSampler = ("layout(set = %s, binding = %d) uniform %s %s;")
-
-    r += templateSampler % (FRAMEBUF_DESC_SET_NAME, bindingSampler,
-        GLSL_SAMPLER_2D_TYPE[baseFormat], name + FRAMEBUF_SAMPLER_POSTFIX)
+    r += spelling["sampled"](
+        binding, spelling["format"](baseFormat, components),
+        spelling["sampledType"](baseFormat), name + FRAMEBUF_SAMPLED_POSTFIX)
 
     if flags & FRAMEBUF_FLAGS_STORE_PREV:
         r += "\n"
-        r += getGLSLFramebufSamplerDeclaration(
-            name + FRAMEBUF_STORE_PREV_POSTFIX, baseFormat, components, 
-            flags & ~FRAMEBUF_FLAGS_STORE_PREV)
+        r += getFramebufSampledDeclaration(
+            spelling, name + FRAMEBUF_STORE_PREV_POSTFIX, baseFormat, components,
+            flags & ~FRAMEBUF_FLAGS_STORE_PREV, bindingOffset)
+
+    if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
+        r += "\n#endif"
+
+    return r
+
+
+def getFramebufSamplerDeclaration(spelling, name, baseFormat, components, flags, bindingOffset):
+    global CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT
+
+    if flags & FRAMEBUF_FLAGS_NO_SAMPLER:
+        # Nothing is declared for a framebuffer without a sampler, but its slots are consumed
+        # so that the declarations and the C++ binding arrays stay index-aligned.
+        CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT += 2 if flags & FRAMEBUF_FLAGS_STORE_PREV else 1
+        return ""
+
+    binding = bindingOffset + CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT
+    CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT += 1
+
+    r = ""
+    if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
+        r += "#ifndef " + FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE + "\n"
+
+    r += spelling["sampler"](
+        binding, spelling["format"](baseFormat, components),
+        spelling["samplerType"](baseFormat), name + FRAMEBUF_SAMPLER_POSTFIX)
+
+    if flags & FRAMEBUF_FLAGS_STORE_PREV:
+        r += "\n"
+        r += getFramebufSamplerDeclaration(
+            spelling, name + FRAMEBUF_STORE_PREV_POSTFIX, baseFormat, components, 
+            flags & ~FRAMEBUF_FLAGS_STORE_PREV, bindingOffset)
 
     if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
         r += "\n#endif"
@@ -1289,15 +1441,57 @@ def getGLSLFramebufPackUnpackE5(name, withPrev):
     templateTxlFetch = ("vec3 texelFetch%s(const ivec2 pix)"
                         "{ return decodeE5B9G9R9(texelFetch(%s, pix, 0).r); }")
     r  = templateImgStore % (name, FRAMEBUF_PREFIX + name) + "\n"
-    r += templateTxlFetch % (name, FRAMEBUF_PREFIX + name + FRAMEBUF_SAMPLER_POSTFIX) + "\n"
+    r += templateTxlFetch % (name, FRAMEBUF_PREFIX + name + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
     if withPrev:
-        r += templateTxlFetch % (name + FRAMEBUF_STORE_PREV_POSTFIX, FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + FRAMEBUF_SAMPLER_POSTFIX) + "\n"
+        r += templateTxlFetch % (name + FRAMEBUF_STORE_PREV_POSTFIX, FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
     return r
-    
 
-def getAllGLSLFramebufDeclarations():
+
+def getHLSLFramebufPackUnpackE5(name, withPrev):
+    # The same helpers as in GLSL, so that a ported shader keeps its call sites. GLSL writes
+    # uvec4(v), which splats the packed value over the four components, so the cast keeps the
+    # store identical - the texture is single channel and the extra components are dropped.
+    templateImgStore = ("void imageStore%s(const int2 pix, const float3 unpacked) "
+                        "{ %s[pix] = (uint4)encodeE5B9G9R9(unpacked); }")
+    templateTxlFetch = ("float3 texelFetch%s(const int2 pix)"
+                        "{ return decodeE5B9G9R9(%s.Load(int3(pix, 0)).r); }")
+    r  = templateImgStore % (name, FRAMEBUF_PREFIX + name) + "\n"
+    r += templateTxlFetch % (name, FRAMEBUF_PREFIX + name + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
+    if withPrev:
+        r += templateTxlFetch % (name + FRAMEBUF_STORE_PREV_POSTFIX, FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
+    return r
+
+
+def getAllFramebufDeclarations(spelling, packUnpackE5):
     global CURRENT_FRAMEBUF_BINDING_COUNT
+    global CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT
+    global CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT
     CURRENT_FRAMEBUF_BINDING_COUNT = 0
+    CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT = 0
+    CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT = 0
+
+    # The three groups walk the framebuffers in the same order and use the same number of
+    # slots, so each group knows its offset from the size of the first one.
+    framebuffers = "\n".join(
+        getFramebufDeclaration(spelling, FRAMEBUF_PREFIX + name, baseFormat, components, flags)
+        for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
+    )
+    groupSize = CURRENT_FRAMEBUF_BINDING_COUNT
+
+    sampled = "\n".join(
+        getFramebufSampledDeclaration(
+            spelling, FRAMEBUF_PREFIX + name, baseFormat, components, flags,
+            FRAMEBUF_BASE_BINDING + groupSize)
+        for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
+    )
+
+    samplers = "\n".join(
+        getFramebufSamplerDeclaration(
+            spelling, FRAMEBUF_PREFIX + name, baseFormat, components, flags,
+            FRAMEBUF_BASE_BINDING + 2 * groupSize)
+        for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
+    )
+
     return "#ifdef " + FRAMEBUF_DESC_SET_NAME \
         \
         + "\n\n// framebuffer indices\n" \
@@ -1308,26 +1502,30 @@ def getAllGLSLFramebufDeclarations():
         \
         + "\n\n// framebuffers\n" \
         \
-        + "\n".join(
-            getGLSLFramebufDeclaration(FRAMEBUF_PREFIX + name, baseFormat, components, flags)
-            for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
-        ) \
+        + framebuffers \
+        \
+        + "\n\n// sampled framebuffers\n" \
+        + sampled \
         \
         + "\n\n// samplers\n" \
-        + "\n".join(
-            getGLSLFramebufSamplerDeclaration(FRAMEBUF_PREFIX + name, baseFormat, components, flags)
-            for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
-            if not (flags & FRAMEBUF_FLAGS_NO_SAMPLER)
-        ) \
+        + samplers \
         \
         + "\n\n// pack/unpack formats\n" \
         + "\n".join(
-            getGLSLFramebufPackUnpackE5(name, flags & FRAMEBUF_FLAGS_STORE_PREV)
+            packUnpackE5(name, flags & FRAMEBUF_FLAGS_STORE_PREV)
             for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
             if baseFormat == TYPE_PACK_E5 and not (flags & FRAMEBUF_FLAGS_NO_SAMPLER)
         ) \
         \
         + "\n\n#endif\n"
+
+
+def getAllGLSLFramebufDeclarations():
+    return getAllFramebufDeclarations(DESCRIPTOR_SPELLINGS["glsl"], getGLSLFramebufPackUnpackE5)
+
+
+def getAllHLSLFramebufDeclarations():
+    return getAllFramebufDeclarations(DESCRIPTOR_SPELLINGS["hlsl"], getHLSLFramebufPackUnpackE5)
 
 
 def removeCoupledDuplicateChars(str, charToRemove = '_'):
@@ -1388,9 +1586,43 @@ def getAllVulkanFramebufDeclarations():
             "extern const FramebufferImageFlags ShFramebuffers_Flags[];\n"
             "extern const uint32_t ShFramebuffers_Bindings[];\n"
             "extern const uint32_t ShFramebuffers_BindingsSwapped[];\n"
+            "extern const uint32_t ShFramebuffers_Sampled_Bindings[];\n"
+            "extern const uint32_t ShFramebuffers_Sampled_BindingsSwapped[];\n"
             "extern const uint32_t ShFramebuffers_Sampler_Bindings[];\n"
             "extern const uint32_t ShFramebuffers_Sampler_BindingsSwapped[];\n"
             "extern const char *const ShFramebuffers_DebugNames[];\n\n")
+
+
+def getFramebufBindings(offset, withSampler):
+    # The three descriptor groups (storage image, sampled image, sampler) walk the framebuffers
+    # in the same order and give each one the same slots, so they differ only in their offset.
+    # A framebuffer with a previous-frame counterpart takes two slots and the odd frame swaps
+    # them. Entries of FRAMEBUF_SAMPLER_INVALID_BINDING are framebuffers without a sampler: the
+    # slot is still consumed, to keep every group index-aligned with ShFramebuffers_Count.
+    TAB_STR = "    "
+    bindings = ""
+    bindingsSwapped = ""
+    count = 0
+    for name, (baseFormat, components, flags) in FRAMEBUFFERS.items():
+        if withSampler and flags & FRAMEBUF_FLAGS_NO_SAMPLER:
+            current = next = FRAMEBUF_SAMPLER_INVALID_BINDING
+        else:
+            current = str(offset + count)
+            next = str(offset + count + 1)
+
+        if not flags & FRAMEBUF_FLAGS_STORE_PREV:
+            bindings        += TAB_STR + current + ",\n"
+            bindingsSwapped += TAB_STR + current + ",\n"
+        else:
+            bindings        += TAB_STR + current + ",\n"
+            bindings        += TAB_STR + next    + ",\n"
+            bindingsSwapped += TAB_STR + next    + ",\n"
+            bindingsSwapped += TAB_STR + current + ",\n"
+            count += 1
+
+        count += 1
+
+    return bindings, bindingsSwapped
 
 
 def getAllVulkanFramebufDefinitions():
@@ -1399,6 +1631,8 @@ def getAllVulkanFramebufDefinitions():
                 "const vkpt::FramebufferImageFlags vkpt::ShFramebuffers_Flags[] = \n{\n%s};\n\n"
                 "const uint32_t vkpt::ShFramebuffers_Bindings[] = \n{\n%s};\n\n"
                 "const uint32_t vkpt::ShFramebuffers_BindingsSwapped[] = \n{\n%s};\n\n"
+                "const uint32_t vkpt::ShFramebuffers_Sampled_Bindings[] = \n{\n%s};\n\n"
+                "const uint32_t vkpt::ShFramebuffers_Sampled_BindingsSwapped[] = \n{\n%s};\n\n"
                 "const uint32_t vkpt::ShFramebuffers_Sampler_Bindings[] = \n{\n%s};\n\n"
                 "const uint32_t vkpt::ShFramebuffers_Sampler_BindingsSwapped[] = \n{\n%s};\n\n"
                 "const char *const vkpt::ShFramebuffers_DebugNames[] = \n{\n%s};\n\n")
@@ -1406,26 +1640,13 @@ def getAllVulkanFramebufDefinitions():
     formats = ""
     count = 0
     publicFlags = ""
-    samplerCount = 0
-    bindings = ""    
-    bindingsSwapped = ""
-    samplerBindings = ""
-    samplerBindingsSwapped = ""
     names = ""
     for name, (baseFormat, components, flags) in FRAMEBUFFERS.items():
         formats += TAB_STR + VULKAN_IMAGE_FORMATS[(baseFormat, components)] + ",\n"
         names += TAB_STR + "\"" + FRAMEBUF_DEBUG_NAME_PREFIX + name + "\",\n"
         publicFlags += TAB_STR + getPublicFlags(flags) + ",\n"
 
-        if not flags & FRAMEBUF_FLAGS_STORE_PREV:
-            bindings                += TAB_STR + str(count)         + ",\n"
-            bindingsSwapped         += TAB_STR + str(count)         + ",\n"
-        else:
-            bindings                += TAB_STR + str(count)         + ",\n"
-            bindings                += TAB_STR + str(count + 1)     + ",\n"
-            bindingsSwapped         += TAB_STR + str(count + 1)     + ",\n"
-            bindingsSwapped         += TAB_STR + str(count)         + ",\n"
-            
+        if flags & FRAMEBUF_FLAGS_STORE_PREV:
             formats += TAB_STR + VULKAN_IMAGE_FORMATS[(baseFormat, components)] + ",\n"
             names += TAB_STR + "\"" + FRAMEBUF_DEBUG_NAME_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + "\",\n"
             publicFlags += TAB_STR + getPublicFlags(flags) + ",\n"
@@ -1433,26 +1654,13 @@ def getAllVulkanFramebufDefinitions():
 
         count += 1
 
-    for name, (baseFormat, components, flags) in FRAMEBUFFERS.items():
-        bindingIndex     = str(count + samplerCount)
-        bindingIndexNext = str(count + samplerCount + 1)
-        
-        if flags & FRAMEBUF_FLAGS_NO_SAMPLER:
-            bindingIndex = bindingIndexNext = FRAMEBUF_SAMPLER_INVALID_BINDING
+    bindings, bindingsSwapped = getFramebufBindings(FRAMEBUF_BASE_BINDING, False)
+    sampledBindings, sampledBindingsSwapped = getFramebufBindings(FRAMEBUF_BASE_BINDING + count, False)
+    samplerBindings, samplerBindingsSwapped = getFramebufBindings(FRAMEBUF_BASE_BINDING + 2 * count, True)
 
-        if not flags & FRAMEBUF_FLAGS_STORE_PREV:
-            samplerBindings         += TAB_STR + bindingIndex       + ",\n"
-            samplerBindingsSwapped  += TAB_STR + bindingIndex       + ",\n"
-        else:
-            samplerBindings         += TAB_STR + bindingIndex       + ",\n"
-            samplerBindings         += TAB_STR + bindingIndexNext   + ",\n"
-            samplerBindingsSwapped  += TAB_STR + bindingIndexNext   + ",\n"
-            samplerBindingsSwapped  += TAB_STR + bindingIndex       + ",\n"
-            samplerCount += 1
-
-        samplerCount += 1
-
-    return template % (count, formats, publicFlags, bindings, bindingsSwapped, samplerBindings, samplerBindingsSwapped, names)
+    return template % (count, formats, publicFlags, bindings, bindingsSwapped,
+                       sampledBindings, sampledBindingsSwapped,
+                       samplerBindings, samplerBindingsSwapped, names)
 
 
 FILE_HEADER = "// This file was generated by GenerateShaderCommon.py\n\n"
@@ -1488,6 +1696,33 @@ def writeToGLSL(f):
     f.write(getAllGLSLFramebufDeclarations())
 
 
+# The HLSL twin of the GLSL header. The constants and the structs are emitted verbatim (only the
+# matrix types are transposed), the descriptors are emitted from the same walk as the GLSL ones.
+# The framebuffer section is guarded by the same DESC_SET_FRAMEBUFFERS macro and expects it to be
+# defined, so an HLSL shader includes this header in the same place where a GLSL one included
+# ShaderCommonGLSL.h.
+def writeToHLSL(f):
+    f.write(FILE_HEADER)
+    f.write("#pragma once\n\n")
+    f.write(getAllConstDefs(CONST))
+    f.write(getAllConstDefs(CONST_GLSL_ONLY))
+    f.write(getAllStructDefs(HLSL_TYPE_NAMES))
+    f.write(getAllHLSLFramebufDeclarations())
+
+
+# The probe pair pins what the headers above declare, so it is derived from them and regenerated
+# on every run - a new framebuffer or struct cannot leave the probe silently behind.
+def regenerateProbe():
+    shadersFolder = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "Shaders")
+    scriptName = "GenerateShaderCommonProbe.py"
+
+    if not os.path.isfile(os.path.join(shadersFolder, scriptName)):
+        return
+
+    print("Regenerating the ShaderCommon probe pair...")
+    subprocess.check_call([sys.executable, scriptName], cwd=shadersFolder)
+
+
 def main():
     basePath = ""
 
@@ -1519,6 +1754,10 @@ def main():
                 writeToC(commonHeaderFile, fbHeaderFile, fbSourceFile)
     with open(basePath + "ShaderCommonGLSL.h", "w") as f:
         writeToGLSL(f)
+    with open(basePath + "ShaderCommonHLSL.hlsli", "w") as f:
+        writeToHLSL(f)
+
+    regenerateProbe()
 
 # main
 if __name__ == "__main__":

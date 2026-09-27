@@ -141,6 +141,7 @@ void PassTimings::Mark(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t markIn
     }
 
     marksWritten[frameIndex]++;
+    marksSinceFetch++;
 
     vkCmdWriteTimestamp(cmd,
                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
@@ -170,6 +171,10 @@ void PassTimings::Fetch(uint32_t frameIndex)
         return;
     }
 
+    // The timings below were fed by real marks; the next HasRecordedMarks() is false until the next
+    // Mark writes a timestamp.
+    marksSinceFetch = 0;
+
     float total = 0.0f;
 
     for (uint32_t i = 0; i < GPU_PASS_COUNT; i++)
@@ -196,6 +201,11 @@ float PassTimings::GetPassMs(uint32_t passIndex) const
 float PassTimings::GetTotalMs() const
 {
     return totalMs;
+}
+
+bool PassTimings::HasRecordedMarks() const
+{
+    return marksSinceFetch > 0;
 }
 
 const char *GetGpuPassName(uint32_t passIndex)

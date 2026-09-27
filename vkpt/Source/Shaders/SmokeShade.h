@@ -13,7 +13,9 @@ float smokeErosion(const SmokeField f, const float age01, const SmokeLook look)
 float smokeDepthFade(const vec3 worldPos)
 {
     const ivec2 cbPix     = getCheckerboardPix(ivec2(gl_FragCoord.xy));
-    const float sceneDist = texelFetch(framebufDepthWorld_Sampler, cbPix, 0).r;
+    // The framebuffer samplers are declared separately here (texture + sampler, the HLSL-port
+    // convention), so the combined sampler the fetch needs is built explicitly.
+    const float sceneDist = texelFetch(sampler2D(framebufDepthWorld_Sampled, framebufDepthWorld_Sampler), cbPix, 0).r;
     const float dist      = length(worldPos - globalUniform.cameraPosition.xyz);
 
     return saturate((sceneDist - dist) / SMOKE_DEPTH_FADE);

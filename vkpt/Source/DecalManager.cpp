@@ -51,9 +51,16 @@ vkpt::DecalManager::DecalManager(
     descSet(VK_NULL_HANDLE)
 {
     instanceBuffer = std::make_unique<AutoBuffer>(_allocator);
+    // The RHI layer wraps this buffer (and its staging slots) through NVRHI, and NVRHI's
+    // native-wrap path queries the device address unconditionally when the device has
+    // bufferDeviceAddress enabled (vulkan-buffer.cpp:215-220); without the usage bit that query
+    // trips VUID-VkBufferDeviceAddressInfo-buffer-02601, the same class the A4.1 fix removed for
+    // the collector and staging buffers and the A5.3 fix for the portal buffer. AutoBuffer
+    // propagates the bit to the staging buffer.
     instanceBuffer->Create(
         DECAL_MAX_COUNT * sizeof(ShDecalInstance),
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "Decal instance buffer");
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        "Decal instance buffer");
 
     CreateDescriptors();
     CreateRenderPass();
@@ -198,6 +205,36 @@ void vkpt::DecalManager::Draw(VkCommandBuffer cmd, uint32_t frameIndex, const st
     vkCmdDraw(cmd, CUBE_VERTEX_COUNT, decalCount, 0, 0);
 
     vkCmdEndRenderPass(cmd);
+}
+
+VkBuffer vkpt::DecalManager::GetStagingBuffer(uint32_t frameIndex)
+{
+    return instanceBuffer->GetStaging(frameIndex);
+}
+
+VkBuffer vkpt::DecalManager::GetDeviceLocalBuffer() const
+{
+    return instanceBuffer->GetDeviceLocal();
+}
+
+VkDeviceSize vkpt::DecalManager::GetBufferSize() const
+{
+    return instanceBuffer->GetSize();
+}
+
+VkDeviceSize vkpt::DecalManager::GetCopySize() const
+{
+    return static_cast<VkDeviceSize>(decalCount) * sizeof(ShDecalInstance);
+}
+
+uint32_t vkpt::DecalManager::GetDecalCount() const
+{
+    return decalCount;
+}
+
+void vkpt::DecalManager::ResetUploads()
+{
+    decalCount = 0;
 }
 
 void vkpt::DecalManager::OnShaderReload(const ShaderManager *shaderManager)

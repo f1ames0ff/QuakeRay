@@ -83,6 +83,32 @@ set(vkpt_SOURCES
     Source/Q2Denoiser.cpp
     Source/RayStats.cpp
     Source/PassTimings.cpp
+    Source/RHI/NvrhiContext.cpp
+    Source/RHI/NvrhiFrameSkeleton.cpp
+    Source/RHI/NvrhiRequirements.cpp
+    Source/RHI/RhiAccelStructs.cpp
+    Source/RHI/RhiDebugTracePass.cpp
+    Source/RHI/RhiDecalPass.cpp
+    Source/RHI/RhiDescriptors.cpp
+    Source/RHI/RhiFrameContext.cpp
+    Source/RHI/RhiFsrPass.cpp
+    Source/RHI/RhiPipeline.cpp
+    Source/RHI/RhiPostEffectPass.cpp
+    Source/RHI/RhiProceduralSkyPass.cpp
+    Source/RHI/RhiRasterSkyPass.cpp
+    Source/RHI/RhiRasterOverlayPass.cpp
+    Source/RHI/RhiRtComposePass.cpp
+    Source/RHI/RhiRtDirectPass.cpp
+    Source/RHI/RhiRtGodRaysPass.cpp
+    Source/RHI/RhiRtIndirectPass.cpp
+    Source/RHI/RhiRtPrimaryPass.cpp
+    Source/RHI/RhiRtReflRefrPass.cpp
+    Source/RHI/RhiShadowMapPass.cpp
+    Source/RHI/RhiSkyPass.cpp
+    Source/RHI/RhiResources.cpp
+    Source/RHI/RhiTextureSource.cpp
+    Source/RHI/RhiTextureTable.cpp
+    Source/RHI/RhiUiPass.cpp
     Source/WorldLights.cpp
 )
 
@@ -167,6 +193,10 @@ target_include_directories(vkpt PUBLIC "Include")
 
 # Vulkan (found in the parent scope)
 target_link_libraries(vkpt PUBLIC Vulkan::Vulkan)
+
+# RHI layer: NVRHI built by the root CMakeLists (target nvrhi_vk is the static
+# Vulkan backend, nvrhi holds the shared interface and the validation layer).
+target_link_libraries(vkpt PRIVATE nvrhi_vk nvrhi)
 
 # FSR 2 / FSR 3.1 — prebuilt AMD-signed FidelityFX API DLL
 if(WIN32)
