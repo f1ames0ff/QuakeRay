@@ -347,10 +347,12 @@ public:
     // Records the frame for the image the swapchain acquired into the frame context's slot
     // 'frameIndex' and submits it on the RHI graphics queue; the context owns that slot's command
     // list and its submission. The acceleration-structure stream (RhiAccelStructs) is recorded
-    // first - its builds, and the patch of the uniform's per-instance geometry offsets the traced
-    // modes need - then the sky pass's Prepare (which prepares the ALBEDO wrap the present samples
-    // and, in the traced modes, the announcement the trace's own ALBEDO wrap relies on) and then
-    // the frame splits by frameMode:
+    // first - its builds, the patch of the uniform's per-instance geometry offsets the traced
+    // modes need, and the RHI-side run of the engine's vertex preprocessing over the module's
+    // dynamic copies (the dynamic geometry's generated shading normals, see
+    // RhiAccelStructs::RecordVertexPreprocessing) - then the sky pass's Prepare (which prepares the
+    // ALBEDO wrap the present samples and, in the traced modes, the announcement the trace's own
+    // ALBEDO wrap relies on) and then the frame splits by frameMode:
     //  - Rasterized: the sky pass's SetSkyCamera/Render run, the rasterized world sub-pass (once it
     //    could be created) draws into the same target with the engine's uniform and the
     //    avgLuminance stand-in, and the present samples the ALBEDO wrap of the same slot into the

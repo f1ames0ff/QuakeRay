@@ -1,6 +1,7 @@
 #include "RhiAccelStructs.h"
 
 #include "RhiFrameContext.h"
+#include "RhiPipeline.h"
 
 #include "../ASComponent.h"
 #include "../ASManager.h"
@@ -68,6 +69,17 @@ constexpr nvrhi::rt::AccelStructBuildFlags TOP_LEVEL_BUILD_FLAGS =
 // MAX_TOP_LEVEL_INSTANCE_COUNT). The engine's per-instance uniform arrays index by the same order, so
 // never exceeding this keeps the two indexings aligned.
 constexpr uint32_t MAX_TLAS_INSTANCES = MAX_TOP_LEVEL_INSTANCE_COUNT;
+
+// The engine's vertex-preprocessing blob, by the file name ShaderManager maps "CVertexPreprocess" to
+// (ShaderManager.cpp:66): the RHI pass and the legacy renderer load the same shader.
+const char *const VERTEX_PREPROCESS_SHADER_FILE_NAME = "CmVertexPreprocess.comp.spv";
+
+// The specialization constant of that blob and the mode the RHI pass runs it in:
+// [[vk::constant_id(0)]] const uint preprocessMode (CmVertexPreprocess.comp.hlsl:54), which the
+// engine's own pipelines specialize to each of the three modes (VertexPreprocessing.cpp:124-168).
+// VERT_PREPROC_MODE_ONLY_DYNAMIC processes exactly the instances the push mask marks dynamic, which
+// is what the per-slot copies of this module need.
+constexpr uint32_t VERTEX_PREPROCESS_MODE_SPEC_ID = 0;
 
 // The descriptor of a native wrap of an engine buffer that an acceleration-structure build reads.
 //
@@ -143,6 +155,13 @@ nvrhi::BufferDesc MakeVertexDataBufferDesc(uint64_t byteSize, uint32_t structStr
     // come from the engine's own creation, VertexCollector.cpp - a native wrap cannot add bits).
     desc.isVertexBuffer = isVertexBuffer;
     desc.isIndexBuffer = isIndexBuffer;
+
+    // The RHI vertex-preprocessing pass binds the static vertex buffer as a UAV (binding 0 of its
+    // set 1), so that wrap has to declare the capability too (validation-device.cpp:1709-1715); the
+    // engine's own preprocessing binds the same buffer as a storage buffer, which its creation
+    // carries (VertexCollector.cpp:73-77). The index wrap stays without the flag - the pass reads it
+    // as an SRV.
+    desc.canHaveUAVs = isVertexBuffer;
 
     desc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
     desc.keepInitialState = true;
@@ -319,6 +338,25 @@ RhiAccelStructs::~RhiAccelStructs()
     previousVertexCapacity = 0;
     previousIndexBuffer = nullptr;
     previousIndexCapacity = 0;
+
+    vertexPreprocessPipeline = nullptr;
+    vertexPreprocessSpecializedShader = nullptr;
+    vertexPreprocessShader = nullptr;
+    vertexPreprocessPushLayout = nullptr;
+    vertexPreprocessVertexDataLayout = nullptr;
+    vertexPreprocessUniformLayout = nullptr;
+    vertexPreprocessUniformSet = nullptr;
+    vertexPreprocessUniformBuffer = nullptr;
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vertexPreprocessTargets[i].set = nullptr;
+
+        for (nvrhi::IBuffer *&buffer : vertexPreprocessTargets[i].buffers)
+        {
+            buffer = nullptr;
+        }
+    }
 
     device = nullptr;
     frameContext = nullptr;
@@ -553,6 +591,134 @@ bool RhiAccelStructs::Create(nvrhi::IDevice *pDevice,
     // submitted a static set (see BuildStatic); aligning the counter here keeps that decision
     // correct when the first level was submitted before this object existed.
     staticGeneration = pAsManager->GetStaticGeneration();
+
+    return true;
+}
+
+bool RhiAccelStructs::CreateVertexPreprocessing(const char *pShaderFolderPath)
+{
+    if (vertexPreprocessPipeline != nullptr)
+    {
+        return true;
+    }
+
+    if (device == nullptr || vertexPreprocessCreationFailed)
+    {
+        return false;
+    }
+
+    const std::string folder = pShaderFolderPath != nullptr ? pShaderFolderPath : "";
+    const std::string blobPath = folder + VERTEX_PREPROCESS_SHADER_FILE_NAME;
+
+    // The engine's own blob, so the RHI pass and the legacy pass are the same shader. The load
+    // helper stays silent about a missing or unreadable blob (RhiPipeline.h); the warning here is
+    // the module's, and it is the only one - RecordVertexPreprocessing then records nothing.
+    vertexPreprocessShader = rhi::loadShader(device, blobPath, nvrhi::ShaderType::Compute,
+                                             "RHI vertex preprocessing");
+
+    if (vertexPreprocessShader == nullptr)
+    {
+        vertexPreprocessCreationFailed = true;
+        print(("Warning: RHI: cannot load the engine's vertex-preprocessing shader \"" + blobPath +
+               "\", the dynamic geometry keeps the uploaded normals").c_str());
+        return false;
+    }
+
+    // The engine's own pipelines specialize the blob to their mode (VertexPreprocessing.cpp:141-168);
+    // the RHI pass is the dynamic-only one, set explicitly instead of relying on the blob's default
+    // (the default happens to be the same mode, but the constant is the pipeline's contract).
+    {
+        const nvrhi::ShaderSpecialization specialization =
+            nvrhi::ShaderSpecialization::UInt32(VERTEX_PREPROCESS_MODE_SPEC_ID,
+                                                VERT_PREPROC_MODE_ONLY_DYNAMIC);
+
+        vertexPreprocessSpecializedShader =
+            device->createShaderSpecialization(vertexPreprocessShader.Get(), &specialization, 1);
+
+        if (vertexPreprocessSpecializedShader == nullptr)
+        {
+            vertexPreprocessCreationFailed = true;
+            print("Warning: RHI: failed to specialize the engine's vertex-preprocessing shader, the "
+                  "dynamic geometry keeps the uploaded normals");
+            return false;
+        }
+    }
+
+    // Set 0: the global uniform at raw binding 0, the engine's own set 0 (GlobalUniform.cpp:55-59).
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.setBindingOffsets(nvrhi::VulkanBindingOffsets().setConstantBufferOffset(0));
+        desc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(BINDING_GLOBAL_UNIFORM));
+
+        vertexPreprocessUniformLayout = device->createBindingLayout(desc);
+    }
+
+    // Set 1: the five buffers the compiled blob statically references, at their raw bindings: the
+    // two vertex buffers as UAVs (the engine's own preprocessing layout binds them as storage
+    // buffers, ASManager.cpp:155-195) and the two index buffers plus the geometry-instance buffer as
+    // SRVs. Bindings 5..7 of the engine's layout are not in the blob's interface - the dynamic
+    // branch never reads the match table or the previous-frame pair - so the layout is partial, like
+    // the traced passes' set 3.
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
+                                   .setShaderResourceOffset(0)
+                                   .setUnorderedAccessViewOffset(0));
+
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(BINDING_VERTEX_BUFFER_STATIC));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(BINDING_VERTEX_BUFFER_DYNAMIC));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(BINDING_INDEX_BUFFER_STATIC));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(BINDING_INDEX_BUFFER_DYNAMIC));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(BINDING_GEOMETRY_INSTANCES));
+
+        vertexPreprocessVertexDataLayout = device->createBindingLayout(desc);
+    }
+
+    // The engine's push constant: one compute range at offset 0 of sizeof(ShVertPreprocessing)
+    // (VertexPreprocessing.cpp:100-118). The descriptor-less layout carries it; the backend takes
+    // the pipeline's single VkPushConstantRange from this item and creates an empty descriptor set
+    // layout for the position (vulkan-resource-bindings.cpp:90-94, :1110-1140), the same shape the
+    // god-rays pass uses for its push-constant layout.
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(ShVertPreprocessing)));
+
+        vertexPreprocessPushLayout = device->createBindingLayout(desc);
+    }
+
+    if (vertexPreprocessUniformLayout == nullptr || vertexPreprocessVertexDataLayout == nullptr ||
+        vertexPreprocessPushLayout == nullptr)
+    {
+        vertexPreprocessCreationFailed = true;
+        print("Warning: RHI: failed to create a vertex-preprocessing binding layout, the dynamic "
+              "geometry keeps the uploaded normals");
+        return false;
+    }
+
+    // The engine's set order: set 0 uniform, set 1 buffers, then the descriptor-less push-constant
+    // layout. The backend places the regular layouts into descriptor sets in list order
+    // (vulkan-resource-bindings.cpp:1090-1099), so the two real sets keep their engine numbers.
+    {
+        nvrhi::ComputePipelineDesc desc;
+        desc.setComputeShader(vertexPreprocessSpecializedShader);
+        desc.addBindingLayout(vertexPreprocessUniformLayout);
+        desc.addBindingLayout(vertexPreprocessVertexDataLayout);
+        desc.addBindingLayout(vertexPreprocessPushLayout);
+
+        vertexPreprocessPipeline =
+            rhi::createComputePipeline(device, desc, "RhiAccelStructs vertex preprocessing");
+    }
+
+    if (vertexPreprocessPipeline == nullptr)
+    {
+        vertexPreprocessCreationFailed = true;
+        print("Warning: RHI: failed to create the vertex-preprocessing compute pipeline, the dynamic "
+              "geometry keeps the uploaded normals");
+        return false;
+    }
 
     return true;
 }
@@ -840,6 +1006,13 @@ bool RhiAccelStructs::EnsureDynamicCopyBuffer(nvrhi::BufferHandle &buffer,
     // RHI-created buffer, vulkan-buffer.cpp:51-55) follow the kind of data the call site passes.
     desc.isVertexBuffer = isVertexBuffer;
     desc.isIndexBuffer = isIndexBuffer;
+
+    // The RHI vertex-preprocessing pass writes the dynamic vertex copy as a UAV (binding 1 of its
+    // set 1), so that copy has to declare the capability (validation-device.cpp:1709-1715); on an
+    // RHI-created buffer the flag adds no usage bit of its own, because structStride already
+    // requests VK_BUFFER_USAGE_STORAGE_BUFFER_BIT (vulkan-buffer.cpp:63). The index copy - an SRV in
+    // the same set - stays without it.
+    desc.canHaveUAVs = isVertexBuffer;
 
     desc.initialState = nvrhi::ResourceStates::CopyDest;
     desc.keepInitialState = true;
@@ -1134,6 +1307,14 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 instanceGeomInfo[instanceIndex].offset =
                     static_cast<int32_t>(VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(filter));
                 instanceGeomInfo[instanceIndex].count = static_cast<int32_t>(blas->geometries.size());
+
+                // The vertex-preprocessing mask for this instance (see RecordVertexPreprocessing):
+                // the shader reads word tlasInstanceIndex / 32 and bit tlasInstanceIndex % 32, so the
+                // bits use exactly that packing. (The engine's own writer packs against
+                // MAX_TOP_LEVEL_INSTANCE_COUNT instead, which misplaces every bit from instance 32
+                // on; this module marks its own instance list, so it follows what the shader reads.)
+                vertexPreprocessPush[frameIndex]
+                    .tlasInstanceIsDynamicBits[instanceIndex / 32] |= 1u << (instanceIndex % 32);
             }
 
             instances.push_back(MakeInstanceDesc(record, blas->handle.Get()));
@@ -1265,6 +1446,158 @@ void RhiAccelStructs::RecordVertexDataCopies(nvrhi::ICommandList *pCommandList, 
     }
 }
 
+void RhiAccelStructs::RecordVertexPreprocessing(nvrhi::ICommandList *pCommandList,
+                                                uint32_t frameIndex,
+                                                nvrhi::IBuffer *pUniformBuffer)
+{
+    if (device == nullptr || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT ||
+        vertexPreprocessPipeline == nullptr || vertexPreprocessCreationFailed || vertexDataCreationFailed)
+    {
+        return;
+    }
+
+    // The slot's push: the instance count and the dynamic-instance mask of its last BuildTopLevel.
+    // No instance list (a disabled or all-culled frame) or no dynamic instance in it is nothing to
+    // do - the dynamic copies were either not written this frame or keep the normals an earlier
+    // frame's pass wrote into them.
+    const ShVertPreprocessing &push = vertexPreprocessPush[frameIndex];
+    const bool hasDynamicInstance =
+        (push.tlasInstanceIsDynamicBits[0] | push.tlasInstanceIsDynamicBits[1]) != 0;
+
+    if (push.tlasInstanceCount == 0 || !hasDynamicInstance || pUniformBuffer == nullptr)
+    {
+        return;
+    }
+
+    // Set 0: the frame's uniform, already written on this list by the caller (NvrhiFrameSkeleton
+    // writes its patched CPU copy right before this call), so the per-instance geometry ranges the
+    // pass reads describe this frame's instance list. The validation device requires
+    // isConstantBuffer of a ConstantBuffer item and refuses a volatile one
+    // (validation-device.cpp:1717-1730).
+    if (!pUniformBuffer->getDesc().isConstantBuffer || pUniformBuffer->getDesc().isVolatile)
+    {
+        if (!warnedBadVertexPreprocessUniform)
+        {
+            warnedBadVertexPreprocessUniform = true;
+            print("Warning: RHI: the vertex preprocessing needs the global uniform as a static "
+                  "constant-buffer wrap, the dynamic geometry keeps the uploaded normals");
+        }
+        return;
+    }
+
+    // The very buffers the TLAS describes and the traced passes read: the two vertex buffers as
+    // UAVs, the dynamic index buffer and the geometry records as SRVs. GetVertexDataBuffers answers
+    // with the slot's current handles (a grown copy buffer is a new one), and the static vertex
+    // buffer is the engine's own - the dynamic-only mode never writes it, but the shader declares it.
+    const VertexDataBuffers vertexData = GetVertexDataBuffers(frameIndex);
+
+    nvrhi::IBuffer *const buffers[VERTEX_PREPROCESS_BUFFER_COUNT] =
+    {
+        vertexData.staticVertices,
+        vertexData.dynamicVertices,
+        vertexData.staticIndices,
+        vertexData.dynamicIndices,
+        vertexData.geometryInstances,
+    };
+
+    for (uint32_t i = 0; i < VERTEX_PREPROCESS_BUFFER_COUNT; i++)
+    {
+        if (buffers[i] == nullptr)
+        {
+            return;
+        }
+    }
+
+    // The uniform set: the wrap is created once by the caller and never replaced, so this is the
+    // first frame only.
+    if (vertexPreprocessUniformSet == nullptr || vertexPreprocessUniformBuffer != pUniformBuffer)
+    {
+        if (vertexPreprocessUniformSet != nullptr)
+        {
+            frameContext->Retire(vertexPreprocessUniformSet);
+        }
+        vertexPreprocessUniformSet = nullptr;
+
+        nvrhi::BindingSetDesc setDesc;
+        setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(BINDING_GLOBAL_UNIFORM, pUniformBuffer));
+
+        vertexPreprocessUniformSet = device->createBindingSet(setDesc, vertexPreprocessUniformLayout);
+
+        if (vertexPreprocessUniformSet == nullptr)
+        {
+            // A descriptor set creation failure is a device failure, not a per-frame condition (the
+            // same call the module's other sets go through): stop trying instead of retrying and
+            // logging every frame.
+            vertexPreprocessCreationFailed = true;
+            print("Warning: RHI: failed to create the vertex-preprocessing uniform set, the dynamic "
+                  "geometry keeps the uploaded normals");
+            return;
+        }
+
+        vertexPreprocessUniformBuffer = pUniformBuffer;
+    }
+
+    // Set 1: rebuilt when a copy buffer was replaced (a growth), the pointer keys the same way the
+    // traced passes' vertex-data set does. The replaced set goes through the retire queue, so a
+    // submission that still reads its descriptors keeps them alive.
+    VertexPreprocessTarget &target = vertexPreprocessTargets[frameIndex];
+
+    bool sameBuffers = target.set != nullptr;
+    for (uint32_t i = 0; i < VERTEX_PREPROCESS_BUFFER_COUNT; i++)
+    {
+        sameBuffers = sameBuffers && target.buffers[i] == buffers[i];
+    }
+
+    if (!sameBuffers)
+    {
+        if (target.set != nullptr)
+        {
+            frameContext->Retire(target.set);
+        }
+        target.set = nullptr;
+
+        nvrhi::BindingSetDesc setDesc;
+        setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(
+            BINDING_VERTEX_BUFFER_STATIC, buffers[0]));
+        setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(
+            BINDING_VERTEX_BUFFER_DYNAMIC, buffers[1]));
+        setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(
+            BINDING_INDEX_BUFFER_STATIC, buffers[2]));
+        setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(
+            BINDING_INDEX_BUFFER_DYNAMIC, buffers[3]));
+        setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(
+            BINDING_GEOMETRY_INSTANCES, buffers[4]));
+
+        target.set = device->createBindingSet(setDesc, vertexPreprocessVertexDataLayout);
+
+        if (target.set == nullptr)
+        {
+            // Same as the uniform set above: a failed set creation is permanent.
+            vertexPreprocessCreationFailed = true;
+            print("Warning: RHI: failed to create the vertex-preprocessing binding set, the dynamic "
+                  "geometry keeps the uploaded normals");
+            return;
+        }
+
+        for (uint32_t i = 0; i < VERTEX_PREPROCESS_BUFFER_COUNT; i++)
+        {
+            target.buffers[i] = buffers[i];
+        }
+    }
+
+    // One dispatch, one workgroup per TLAS instance, exactly the engine's shape
+    // (VertexPreprocessing.cpp:88); the push constant is the range the descriptor-less layout
+    // declared, and it has to follow the state, which setPushConstants requires (nvrhi.h:3430-3440).
+    nvrhi::ComputeState state;
+    state.setPipeline(vertexPreprocessPipeline);
+    state.addBindingSet(vertexPreprocessUniformSet);
+    state.addBindingSet(target.set);
+
+    pCommandList->setComputeState(state);
+    pCommandList->setPushConstants(&push, sizeof(push));
+    pCommandList->dispatch(push.tlasInstanceCount, 1, 1);
+}
+
 void RhiAccelStructs::WarnUnresolvedFilter(uint32_t filter)
 {
     if (warnedUnresolvedInstance || print == nullptr)
@@ -1304,6 +1637,11 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
     vertexDataCopyBytes = 0;
     tlasInstanceCount = 0;
 
+    // The vertex-preprocessing push describes this frame's instance list only; a frame that records
+    // none (disabled or all culled) leaves a zero count, and RecordVertexPreprocessing then does
+    // nothing.
+    vertexPreprocessPush[frameIndex] = {};
+
     std::vector<nvrhi::rt::InstanceDesc> instances;
     instances.reserve(MAX_TLAS_INSTANCES);
 
@@ -1329,6 +1667,10 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
     }
 
     tlasInstanceCount = static_cast<uint32_t>(instances.size());
+
+    // The instance count of the push the pass dispatches with (the shader's workgroup count); the
+    // dynamic bits were set on the same instance indices by AppendDynamicSlot.
+    vertexPreprocessPush[frameIndex].tlasInstanceCount = tlasInstanceCount;
 
     // The vertex-data set's per-frame copies (set 3): the geometry records of the instances above
     // and the previous-frame dynamic data. Recorded before the TLAS build so the pass that follows

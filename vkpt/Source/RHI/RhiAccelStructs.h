@@ -87,6 +87,20 @@ class RhiFrameContext;
 //    this frame's instances can read, and the previous-frame dynamic data is copied from the other
 //    slot's dynamic copy - the only source that still holds the previous frame's bytes. The
 //    per-instance geometry ranges the uniform needs are GetInstanceGeometryInfo().
+//  - Dynamic vertex normals: the game uploads the dynamic geometry (entities, water) with zero
+//    normals plus RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT, and the engine's vertex-preprocessing
+//    pass (VertexPreprocessing::Preprocess, CmVertexPreprocess.comp) is what fills ShVertex::normal.
+//    Under `rhiframe` that pass writes the engine's own device-local dynamic buffers, which the
+//    traced passes never read - they read this module's per-slot copies - so the normals would stay
+//    zero. CreateVertexPreprocessing loads the same engine blob and creates that pass's pipeline on
+//    the RHI side (the engine's set 0 uniform, its set 1 vertex-data buffers with the two vertex
+//    buffers as UAVs, and its push constant, specialized to the dynamic-only mode) and
+//    RecordVertexPreprocessing dispatches it over those copies after the frame's uniform upload, so
+//    the bytes the TLAS and the traced passes read carry the generated normals. The static world's
+//    normals keep coming from the engine's own pass on the legacy command buffer (the committed
+//    half), because the RHI's static vertex buffer *is* the engine's static device-local buffer.
+//    The previous-frame dynamic copies need no such pass: no shader reads a normal out of them (the
+//    traced passes take only their positions, VertexData.hlsli:182-185).
 //  - Two-frame warm-up: none. The records are host-side and NVRHI copies them into its own upload
 //    buffer inside buildTopLevelAccelStruct, so the slot's TLAS of frame N describes frame N. The
 //    one-frame lag the A3.0 instance-buffer path documented came from reading the engine's
@@ -116,6 +130,11 @@ class RhiFrameContext;
 //                                                          a no-op while the set is current;
 //   2. BuildTopLevel(commandList, frameIndex, rayCullMaskWorld, allowGeometryWithSkyFlag,
 //      disableRayTracedGeometry)                         - every frame the TLAS is wanted.
+//   3. RecordVertexPreprocessing(commandList, frameIndex, uniformBuffer)
+//                                                       - once the frame's uniform upload - the one
+//                                                         NvrhiFrameSkeleton::Render records after
+//                                                         BuildTopLevel - has made this frame's
+//                                                         per-instance ranges visible.
 // The one-time summary line (static figures as in A3.0, plus the dynamic BLAS/geometry/triangle
 // figures, the frame's dynamic and vertex-data copy volumes and the total TLAS instance count) is
 // printed on the first BuildTopLevel after the static decision, with a grace period of 300 frames
@@ -160,6 +179,18 @@ public:
 
     bool IsCreated() const { return device != nullptr; }
 
+    // Prepares the RHI-side run of the engine's vertex-preprocessing pass over the slot's dynamic
+    // copy buffers (see the class comment, "Dynamic vertex normals"). 'pShaderFolderPath' is the
+    // folder ShaderManager loads the engine blobs from, with the trailing separator; the pass loads
+    // `CmVertexPreprocess.comp.spv` (ShaderManager.cpp:66) from it, so the RHI pass and the legacy
+    // pass run the same shader. Call it after Create and before the first BuildTopLevel; calling it
+    // on a prepared object is a no-op that returns true. Returns false and prints one warning when
+    // the shader, a layout or the pipeline cannot be created: the module then keeps its existing
+    // behaviour and the dynamic geometry keeps the uploaded normals (zero for the surfaces the game
+    // uploads with RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT). Unlike a Create failure this is not
+    // fatal for the frame - only the generated normals are lost.
+    bool CreateVertexPreprocessing(const char *pShaderFolderPath);
+
     // Records the static BLAS of the current static geometry: one rt::IAccelStruct per non-empty
     // static component, one NVRHI geometry per surface. Retires and recreates the whole set when
     // ASManager::GetStaticGeneration changes (a level load, including one that leaves the static
@@ -189,6 +220,21 @@ public:
                        uint32_t rayCullMaskWorld,
                        bool allowGeometryWithSkyFlag,
                        bool disableRayTracedGeometry);
+
+    // Runs the engine's vertex preprocessing over the slot's dynamic copies (see the class comment,
+    // "Dynamic vertex normals"): one dispatch of `CmVertexPreprocess.comp.spv`, specialized to
+    // VERT_PREPROC_MODE_ONLY_DYNAMIC, over the very copies the slot's TLAS and the traced passes
+    // use, so the shading normals the game asked for (RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT)
+    // exist in the bytes that are traced. It has to be recorded after the frame's uniform upload:
+    // the pass reads the per-instance geometry ranges out of that uniform, and the upload is what
+    // makes this frame's ranges - the ones BuildTopLevel's instance synthesis filled - visible to
+    // the GPU, so a call before it would iterate the previous frame's ranges. 'pUniformBuffer' is
+    // that uploaded uniform (NvrhiFrameSkeleton's global-uniform wrap).
+    // Does nothing when the pass was never prepared, the frame produced no dynamic instance, the
+    // uniform is not a static constant-buffer wrap, or one of the vertex-data buffers is missing.
+    void RecordVertexPreprocessing(nvrhi::ICommandList *pCommandList,
+                                   uint32_t frameIndex,
+                                   nvrhi::IBuffer *pUniformBuffer);
 
     // The slot's TLAS, or null while the slot has never been built. The caller does not own the
     // handle; a re-created TLAS replaces it, and the debug-trace pass has to re-read it.
@@ -302,6 +348,24 @@ private:
 
         nvrhi::BufferHandle matchPrev;
         uint64_t matchPrevCapacity = 0;
+    };
+
+    // The buffers of the shader's set 1 (Generated/ShaderCommonC.h:19-26) that the RHI
+    // vertex-preprocessing pass binds: the two vertex buffers as UAVs and the two index buffers plus
+    // the geometry-instance buffer as SRVs. Bindings 5..7 of the engine's own layout
+    // (ASManager.cpp:155-195) are not statically referenced by the compiled blob - the shader's
+    // dynamic branch never touches the match table or the previous-frame pair - so the RHI layout is
+    // partial, like the traced passes' set 3 (RhiRtPrimaryPass.h).
+    static constexpr uint32_t VERTEX_PREPROCESS_BUFFER_COUNT = 5;
+
+    // The per-slot set 1 of the vertex-preprocessing pass, over the buffers above. The pointers are
+    // the keys: a copy buffer is replaced when it grows, and the set has to follow it. A replaced set
+    // goes through the frame context's retire queue - a submission may still be reading its
+    // descriptors.
+    struct VertexPreprocessTarget
+    {
+        nvrhi::IBuffer *buffers[VERTEX_PREPROCESS_BUFFER_COUNT] = {};
+        nvrhi::BindingSetHandle set;
     };
 
     // One instance's values for globalUniform.instanceGeomInfoOffset/Count: the filter's offset in
@@ -418,6 +482,39 @@ private:
     uint64_t previousVertexCapacity = 0;
     nvrhi::BufferHandle previousIndexBuffer;
     uint64_t previousIndexCapacity = 0;
+
+    // The engine's vertex-preprocessing pass, RHI side (CreateVertexPreprocessing): the blob and its
+    // dynamic-only specialization, the three binding layouts (set 0 the global uniform, set 1 the
+    // vertex-data buffers, a descriptor-less push-constant layout) and the pipeline. All null until
+    // that call succeeds.
+    nvrhi::ShaderHandle vertexPreprocessShader;
+    nvrhi::ShaderHandle vertexPreprocessSpecializedShader;
+    nvrhi::BindingLayoutHandle vertexPreprocessUniformLayout;
+    nvrhi::BindingLayoutHandle vertexPreprocessVertexDataLayout;
+    nvrhi::BindingLayoutHandle vertexPreprocessPushLayout;
+    nvrhi::ComputePipelineHandle vertexPreprocessPipeline;
+
+    // Set 0 of the pass: the host's global-uniform wrap. The wrap is created once by the frame
+    // skeleton and never replaced, so one set serves every slot and the pointer is only the key.
+    nvrhi::IBuffer *vertexPreprocessUniformBuffer = nullptr;
+    nvrhi::BindingSetHandle vertexPreprocessUniformSet;
+
+    // Set 1 of the pass, one per slot (see VertexPreprocessTarget).
+    VertexPreprocessTarget vertexPreprocessTargets[MAX_FRAMES_IN_FLIGHT];
+
+    // The push constant of the slot's last BuildTopLevel: the instance count and the dynamic-instance
+    // mask the shader reads (word index / 32, bit index % 32 - the packing the compiled blob uses).
+    // Reset at the top of every BuildTopLevel, so a frame that records no instance list leaves a zero
+    // count and RecordVertexPreprocessing does nothing.
+    ShVertPreprocessing vertexPreprocessPush[MAX_FRAMES_IN_FLIGHT] = {};
+
+    // Set after a failed CreateVertexPreprocessing and after a failed binding-set creation inside
+    // RecordVertexPreprocessing (a device-level failure): the module keeps its warning once and the
+    // pass records nothing.
+    bool vertexPreprocessCreationFailed = false;
+
+    // The one-shot warning for a uniform wrap the pass cannot bind.
+    bool warnedBadVertexPreprocessUniform = false;
 
     // The per-instance geometry information of the slot's last BuildTopLevel, in instance order
     // (see GetInstanceGeometryInfo). Entries beyond tlasInstanceCount are stale.

@@ -166,6 +166,14 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
         return;
     }
 
+    // The engine's vertex-preprocessing pass, RHI side (RhiAccelStructs::RecordVertexPreprocessing):
+    // the game uploads the dynamic geometry with zero normals plus the generate-normals flag
+    // (Quake/r_brush.c), and the module's per-slot copies - not the engine's own dynamic buffers -
+    // are what the traced passes read. The module loads the same blob the legacy pass uses from this
+    // folder. An unavailable or rejected blob is only a loss of the generated normals, so it is not
+    // a reason to take the frame apart: the module prints one warning and the pass stays silent.
+    accelStructs->CreateVertexPreprocessing(shaderFolderPath.c_str());
+
     // The ray-tracing passes are hard dependencies only of their own modes; a pass whose flag is
     // off is not created by the host at all. The traced chain needs both of its passes: they share
     // the pipeline layouts and the per-slot sets, and one without the other is a half-wired frame.
@@ -407,6 +415,18 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // agree.
 
         rhi::writeBuffer(commandList, worldUniformBuffer, sky.uniform->GetData(), sizeof(ShGlobalUniform));
+
+        // The dynamic geometry's shading normals (see RhiAccelStructs::RecordVertexPreprocessing):
+        // the engine's own preprocessing pass writes the engine's dynamic buffers, which the RHI
+        // trace never reads, so the module runs the same shader over its per-slot copies - the very
+        // bytes the TLAS and the traced passes below use. The call has to follow the uniform upload
+        // just above: the pass reads the per-instance geometry ranges out of that uniform, and this
+        // frame's ranges are what the patch above wrote into it. Only the traced modes need it; the
+        // raster chain has no consumer of a normal.
+        if (tracedFrame && accelStructs != nullptr)
+        {
+            accelStructs->RecordVertexPreprocessing(commandList, frameIndex, worldUniformBuffer.Get());
+        }
     }
 
     if (!tracedFrame)
