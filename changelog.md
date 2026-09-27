@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.16.0
+
+### Added
+- **The smoke of rockets, lava balls and grenades is drawn by a shader now.** Instead of the flat, unlit sprites of the classic trail it is a cloud of soft puffs that the light of the room falls on the way it falls on the walls: dark in a dark corridor, warm next to a torch. It is on by default. Video Options → "Smoke type" switches it between `shader` and the `classic` particles, and the same can be done from the console with `r_smoke` (`1` = shader, `0` = classic).
+
 ## v0.13.0
 
 ### Added

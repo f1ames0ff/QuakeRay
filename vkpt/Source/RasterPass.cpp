@@ -76,6 +76,17 @@ vkpt::RasterPass::RasterPass( VkDevice                                _device,
                                                  0,
                                                  _instanceInfo.rasterizedVertexColorGamma );
 
+    smokePipelines =
+        std::make_shared< RasterizerPipelines >( device,
+                                                 _pipelineLayout,
+                                                 worldRenderPass,
+                                                 _shaderManager.get(),
+                                                 "VertSmoke",
+                                                 "FragSmoke",
+                                                 1,
+                                                 false,
+                                                 true );
+
     depthCopying = std::make_shared< DepthCopying >(
         device, DEPTH_FORMAT, _shaderManager, _storageFramebuffers );
 }
@@ -214,6 +225,11 @@ const std::shared_ptr< vkpt::RasterizerPipelines >& vkpt::RasterPass::GetSkyRast
     return skyPipelines;
 }
 
+const std::shared_ptr< vkpt::RasterizerPipelines >& vkpt::RasterPass::GetSmokeRasterPipelines() const
+{
+    return smokePipelines;
+}
+
 VkFramebuffer vkpt::RasterPass::GetWorldFramebuffer( uint32_t frameIndex ) const
 {
     return worldFramebuffers[ frameIndex ];
@@ -228,6 +244,7 @@ void vkpt::RasterPass::OnShaderReload( const ShaderManager* shaderManager )
 {
     worldPipelines->OnShaderReload( shaderManager );
     skyPipelines->OnShaderReload( shaderManager );
+    smokePipelines->OnShaderReload( shaderManager );
 
     depthCopying->OnShaderReload( shaderManager );
 }

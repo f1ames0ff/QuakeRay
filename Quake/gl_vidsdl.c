@@ -77,7 +77,7 @@ static void ClearAllStates (void);
 viddef_t        vid; // global video state
 modestate_t     modestate = MS_UNINIT;
 extern qboolean scr_initialized;
-extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate;
+extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate, r_smoke;
 extern cvar_t   scr_showfps, scr_fov;
 
 //====================================
@@ -3193,6 +3193,7 @@ enum
 
 	VID_OPT_GI_LEVEL,
 	VID_OPT_GODRAYS,
+	VID_OPT_SMOKE_TYPE,
 	VID_OPT_REFLECT,
 	VID_OPT_DENOISER,
 	VID_OPT_TEXTURES,
@@ -3699,6 +3700,9 @@ static void VID_MenuKey (int key)
 		case VID_OPT_GODRAYS:
 			Cvar_SetValueQuick (&rt_godrays, !CVAR_TO_BOOL (rt_godrays));
 			break;
+		case VID_OPT_SMOKE_TYPE:
+			Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
+			break;
 		case VID_OPT_REFLECT:
 			VID_Menu_StepReflDepth (-1.0f);
 			break;
@@ -3784,6 +3788,9 @@ static void VID_MenuKey (int key)
 		case VID_OPT_GODRAYS:
 			Cvar_SetValueQuick (&rt_godrays, !CVAR_TO_BOOL (rt_godrays));
 			break;
+		case VID_OPT_SMOKE_TYPE:
+			Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
+			break;
 		case VID_OPT_REFLECT:
 			VID_Menu_StepReflDepth (1.0f);
 			break;
@@ -3833,6 +3840,9 @@ static void VID_MenuKey (int key)
 			break;
 		case VID_OPT_GODRAYS:
 			Cvar_SetValueQuick (&rt_godrays, !CVAR_TO_BOOL (rt_godrays));
+			break;
+		case VID_OPT_SMOKE_TYPE:
+			Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
 			break;
 		case VID_OPT_DENOISER:
 			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
@@ -3999,6 +4009,10 @@ static void VID_MenuDraw (cb_context_t *cbx)
 		case VID_OPT_GODRAYS:
 			M_Print (cbx, 16, y, "          God rays");
 			M_DrawCheckbox (cbx, 184, y, CVAR_TO_BOOL (rt_godrays));
+			break;
+		case VID_OPT_SMOKE_TYPE:
+			M_Print (cbx, 16, y, "      Smoke type");
+			M_Print (cbx, 184, y, CVAR_TO_BOOL (r_smoke) ? "shader" : "classic");
 			break;
 		case VID_OPT_REFLECT:
 			{

@@ -20,6 +20,7 @@ QuakeRay is a ray tracing engine for Quake 1, with Q2RTX-style partial path trac
 * Bloom
 * Post-processing: chromatic aberration, and a configurable LUT for color grading
 * Dynamic HDR Tone mapping and exposure control
+* Shader smoke
 
 ## Roadmap
 * Light and material editor
@@ -27,7 +28,7 @@ QuakeRay is a ray tracing engine for Quake 1, with Q2RTX-style partial path trac
 * Quake Remastered (2021) support (the official remaster of Quake 1)
 * Mixed rasterization and ray tracing for better performance on older GPUs
 * Full physically correct path tracing
-* Shader effects: explosion, fire, smoke, etc.
+* More shader effects: explosion, fire, etc.
 * DirectX 12
 * FSR 4
 * DLSS
