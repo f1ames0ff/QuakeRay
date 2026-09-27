@@ -680,8 +680,6 @@ void vkpt::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
     {
         const uint64_t uid = pLightUniqueIds[i];
 
-        /* A slot the cluster list left holding no light names no light, whatever place it
-           holds: it is published as none, and it must not go through the registry lookup. */
         if (uid == kLightUidHole)
         {
             dstLights[i] = uint32_t(LIGHT_INDEX_NONE);

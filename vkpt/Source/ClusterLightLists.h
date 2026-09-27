@@ -107,12 +107,7 @@ private:
     void GrantSource(uint32_t sourceIndex);
     // Pass two for one cluster, as the composition runs it for every cluster.
     void TopUpCluster(const WorldLights &worldLights, uint32_t cluster, float reach);
-    // Takes back the slots a light holds, leaving each of them holding no light, so that a
-    // light that changed can be placed again without composing the lists of a cluster whose
-    // own lights did not change.
     void VacateSource(uint32_t sourceIndex);
-    // Leaves one slot of a cluster holding no light, which is how a light that left it keeps
-    // every other slot of the cluster where it stands.
     void HoleSlot(uint32_t cluster, uint32_t slot);
     void MarkDirty(uint32_t cluster);
     void FillLists(UserPrint *pUserPrint);
@@ -167,12 +162,8 @@ private:
     std::vector<float>    slotDist2;
     std::vector<uint32_t> slotSource;
     std::vector<uint32_t> slotFill;   // one per cluster
-    // Slots below the fill that hold no light, so that the scan for one can be skipped when the
-    // cluster has none, which is the common case.
-    std::vector<uint32_t> slotHoles;  // one per cluster
+    std::vector<uint32_t> slotHoles;
     // Set while a slot holds a light the top-up pass put there rather than the PVS walk, so
-    // that a cluster whose top-up set is looked at again can let go of the ones that fell out
-    // of it and keep the slots of the ones that are still among its closest few.
     std::vector<uint8_t>  slotTopUp;  // kMaxPerList per cluster
     // Membership of a cluster, one bit per source: set while the source holds a slot there, so
     // that the top-up pass does not hand the same light to the same cluster twice.

@@ -34,11 +34,6 @@ namespace vkpt
 
 struct ShLightEncoded;
 
-/* The uid a slot holds while it names no light. A cluster list keeps the slot a light left
-   instead of closing it with its last slot, so that no other light of the cluster changes the
-   index the shaders sample it by; the light manager resolves this uid to LIGHT_INDEX_NONE
-   without a registry lookup. No producer makes it: the light ids the host formats decode
-   types 0..3. */
 constexpr uint64_t kLightUidHole = ~0ull;
 
 class LightManager
