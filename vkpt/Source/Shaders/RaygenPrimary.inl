@@ -82,6 +82,60 @@ vec2 getMotionForInfinitePoint(const ivec2 pix)
     return screenSpacePrev - screenSpaceCur;
 }
 
+// The motion of the clouds over a ray of the sky, which the sky's own vector does not
+// carry: the sky's vector is the camera's rotation alone, so the upscaler (and the
+// denoiser) reproject a drifting pattern as if it stood still -- dragging it along its
+// history and letting it snap back when that history is clamped, which reads as jerking
+// of a moving layer at a perfectly even frame time. What a cloud moves by is the wind of
+// the layer: the setting scaled by the layer's height over the reference one, times the
+// wind's rates -- the same drift the layer's noise is written with (cloudDensity,
+// CloudLayer.h), and these numbers must stay equal to that one. The column a ray crosses
+// stands its height over the eye away at the lowest, and the eye's own translation at
+// that distance is under a tenth of a pixel, so only the drift is here.
+//
+// The flat clouds of the lowest level are the other way around: their mask drifts in the
+// dome of directions rather than in the world's plane (cloudMask, CmProceduralSky.comp),
+// and the flag in the tail of the settings says which of the two is drawn.
+vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
+{
+    const float speed  = globalUniform.skyCubemapRotationTransform[0][5]; // rt_sky_clouds_speed
+    const float height = globalUniform.skyCubemapRotationTransform[0][7]; // rt_sky_clouds_height
+    const float flat   = globalUniform.skyCubemapRotationTransform[0][9];
+
+    if (speed <= 0.0 || height <= 0.0 || rayDir.z <= 1.0e-3)
+    {
+        return motionInfinite;
+    }
+
+    vec3 dirPrev;
+
+    if (flat > 0.5)
+    {
+        // p = dir * 3 + vec3(time * speed, time * speed * 0.4, 0) (CmProceduralSky.comp):
+        // the direction a feature was seen at the frame before stands a third of the
+        // offset it has drifted by away from the one it is seen at now.
+        dirPrev = normalize(rayDir + (globalUniform.timeDelta * speed / 3.0) * vec3(1.0, 0.4, 0.0));
+    }
+    else
+    {
+        // CLOUD_REFERENCE_ALTITUDE and the wind's rates of CloudLayer.h, cloudDensity.
+        const float reference = 1400.0;
+        const float scale     = height / reference;
+        const vec2  windStep  = globalUniform.timeDelta * speed * scale * vec2(30.0, 12.0);
+
+        // The pattern moves against the wind (the noise is read at p + wind), so the
+        // cloud a ray sees now stood, one frame ago, at the base point the ray crosses
+        // less the wind of that frame.
+        const float distance = height / rayDir.z;
+        dirPrev = normalize(rayDir * distance - vec3(windStep, 0.0));
+    }
+
+    const vec3 ndcCur  = (mat3(globalUniform.projection)     * (mat3(globalUniform.view)     *  rayDir)).xy  * 0.5 + 0.5;
+    const vec3 ndcPrev = (mat3(globalUniform.projectionPrev) * (mat3(globalUniform.viewPrev) * dirPrev)).xy * 0.5 + 0.5;
+
+    return ndcPrev - ndcCur;
+}
+
 // Q2RTX-style path tracer G-buffer, written on the new Q2 core path only.
 // These feed the Q2 ASVGF gradient pipeline (phase 4.4.2) and the Q2RTX
 // reflections (phase 4.4.3). Q2ViewDepth is the ray distance and is NEGATIVE
@@ -144,6 +198,7 @@ void storeSky(
     }
 
     vec2 m = getMotionForInfinitePoint(pix);
+    m = getMotionForCloudLayer(rayDir, m);
 
     imageStoreNormal(                       pix, vec3(0.0));
     imageStoreNormalGeometry(               pix, vec3(0.0));

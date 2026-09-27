@@ -1975,6 +1975,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		c[6] = CVAR_TO_BOOL (rt_sky_clouds) ? 1.0f : 0.0f;
 		c[7] = CVAR_TO_FLOAT (rt_sky_clouds_height);
 		c[8] = CVAR_TO_FLOAT (rt_sky_clouds_thickness);
+		// The lowest quality level draws the flat clouds the sky had before the layer
+		// became a volume, and their motion is a different one: the mask drifts in the
+		// dome of directions rather than in the world's plane. What reads this -- the
+		// motion vectors of the sky, RaygenPrimary.inl -- has to know which of the two
+		// is drawn, or the vector would carry the wrong drift for one of them.
+		c[9] = (CVAR_TO_UINT32 (rt_sky_clouds_quality) == 0) ? 1.0f : 0.0f;
 	}
 	else if (!CVAR_TO_BOOL (r_fastsky))
 	{
