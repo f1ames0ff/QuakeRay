@@ -1355,10 +1355,10 @@ static void QRE_DrawLightWireframes (void)
 	if (count <= 0)
 		return;
 
-	// the spheres, plus three axis arrows (two vertices and one segment each) for
-	// the selected custom light
-	verts_bytes = (size_t)count * 3 * (QRE_LIGHT_WIRE_SEGS + 1) * sizeof (RgVertex) + 3 * 2 * sizeof (RgVertex);
-	ri_bytes    = (size_t)count * 3 * QRE_LIGHT_WIRE_SEGS * 2 * sizeof (uint32_t) + 3 * 2 * sizeof (uint32_t);
+	// the spheres, plus the selected custom light's axis arrows: five segments
+	// (three parallel shafts so the line is not a hairline, and a V head) each
+	verts_bytes = (size_t)count * 3 * (QRE_LIGHT_WIRE_SEGS + 1) * sizeof (RgVertex) + 3 * 5 * 2 * sizeof (RgVertex);
+	ri_bytes    = (size_t)count * 3 * QRE_LIGHT_WIRE_SEGS * 2 * sizeof (uint32_t) + 3 * 5 * 2 * sizeof (uint32_t);
 	block = (byte *)Mem_Alloc (verts_bytes + ri_bytes);
 	rv = (RgVertex *)block;
 	ri = (uint32_t *)(block + verts_bytes);
@@ -1430,7 +1430,6 @@ static void QRE_DrawLightWireframes (void)
 				const rt_custom_light_t *l = &custom[index];
 				uint32_t                 axis_color[3];
 				vec3_t                   pos;
-				const float              len = 48.0f;
 				int                      a;
 
 				axis_color[0] = RT_PackColorToUint32 (255, 64, 64, 255);
@@ -1447,17 +1446,55 @@ static void QRE_DrawLightWireframes (void)
 
 				for (a = 0; a < 3; a++)
 				{
-					RgVertex *v0 = &rv[arrow_base + a * 2 + 0];
-					RgVertex *v1 = &rv[arrow_base + a * 2 + 1];
+					vec3_t adir, tup, dvec;
+					vec3_t start[5], end[5];
+					float  w;
+					int    s;
 
-					VectorCopy (pos, v0->position);
-					v0->packedColor = axis_color[a];
-					VectorCopy (pos, v1->position);
-					v1->position[a] += len;
-					v1->packedColor = axis_color[a];
+					// the thickness is a fixed angle, so the arrow reads the same
+					// near and far
+					VectorSubtract (pos, r_refdef.vieworg, dvec);
+					w = sqrtf (DotProduct (dvec, dvec)) * 0.003f;
+					w = CLAMP (0.4f, w, 8.0f);
 
-					ri[arrow_i_base + a * 2 + 0] = (uint32_t)(arrow_base + a * 2 + 0);
-					ri[arrow_i_base + a * 2 + 1] = (uint32_t)(arrow_base + a * 2 + 1);
+					adir[0] = adir[1] = adir[2] = 0.0f;
+					adir[a] = 1.0f;
+					tup[0] = tup[1] = tup[2] = 0.0f;
+					tup[(a + 1) % 3] = 1.0f;
+
+					for (s = 0; s < 5; s++)
+					{
+						if (s < 3)
+						{
+							const float off = (float)(s - 1) * w;
+
+							VectorMA (pos, off, tup, start[s]);
+							VectorMA (start[s], 48.0f, adir, end[s]);
+						}
+						else
+						{
+							vec3_t tip;
+
+							VectorMA (pos, 48.0f, adir, tip);
+							VectorCopy (tip, start[s]);
+							VectorMA (tip, -48.0f * 0.28f, adir, end[s]);
+							VectorMA (end[s], (s == 3 ? 1.0f : -1.0f) * w * 3.0f, tup, end[s]);
+						}
+					}
+
+					for (s = 0; s < 5; s++)
+					{
+						RgVertex *v0 = &rv[arrow_base + a * 10 + s * 2 + 0];
+						RgVertex *v1 = &rv[arrow_base + a * 10 + s * 2 + 1];
+
+						VectorCopy (start[s], v0->position);
+						v0->packedColor = axis_color[a];
+						VectorCopy (end[s], v1->position);
+						v1->packedColor = axis_color[a];
+
+						ri[arrow_i_base + a * 10 + s * 2 + 0] = (uint32_t)(arrow_base + a * 10 + s * 2 + 0);
+						ri[arrow_i_base + a * 10 + s * 2 + 1] = (uint32_t)(arrow_base + a * 10 + s * 2 + 1);
+					}
 				}
 
 				arrow_drawn = 1;
@@ -1469,9 +1506,9 @@ static void QRE_DrawLightWireframes (void)
 	{
 		RgRasterizedGeometryUploadInfo info = {
 			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
-			.vertexCount = (uint32_t)(drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1) + (arrow_drawn ? 6 : 0)),
+			.vertexCount = (uint32_t)(drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1) + (arrow_drawn ? 30 : 0)),
 			.pVertices = rv,
-			.indexCount = (uint32_t)(drawn * 3 * QRE_LIGHT_WIRE_SEGS * 2 + (arrow_drawn ? 6 : 0)),
+			.indexCount = (uint32_t)(drawn * 3 * QRE_LIGHT_WIRE_SEGS * 2 + (arrow_drawn ? 30 : 0)),
 			.pIndices = ri,
 			.transform = RT_TRANSFORM_IDENTITY,
 			.color = RT_COLOR_WHITE,
