@@ -1555,6 +1555,30 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
         return false;
     }
 
+    // The world's shading normals: the game uploads the world brushes with zero normals plus the
+    // RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT flag (Quake/r_brush.c), and the only pass that fills
+    // ShVertex::normal is the engine's vertex preprocessing, the call Scene::SubmitForFrame makes
+    // for the legacy renderer (Scene.cpp). The RHI path never runs SubmitForFrame, so it records
+    // that pass here, on the same legacy command buffer the TLAS build above uses and with the push
+    // constant this frame's PrepareForBuildingTLAS returned (`prepare.second`). The
+    // Scene::PreprocessVertices method applies the same mode logic as the legacy call:
+    // VERT_PREPROC_MODE_ALL on the first frame after the static submission, the dynamic-only
+    // mode afterwards.
+    //
+    // It is recorded only after the skeleton's Render succeeded (rather than next to the TLAS
+    // build): a frame that falls back to the legacy renderer below keeps the static-submission
+    // marker, so the fallback's own SubmitForFrame still runs the full ALL preprocessing with the
+    // uniform upload of that path, and the marker is never consumed without a delivered RHI frame.
+    //
+    // Ordering: the legacy command buffer is submitted after the RHI list of the same frame (the
+    // cmdManager->Submit call below), so the pass takes effect for the submission that follows
+    // this one - the same one-frame relation the engine's instance buffer and TLAS build have
+    // here. A traced frame N still shades with the normals frame N-1's submission left behind,
+    // so the first traced frame after a level load still reads zero normals and every later frame
+    // is correct. The dynamic/movable geometry keeps zero normals regardless: its traced copy is
+    // made by the RHI layer from the engine's staging buffers, which this pass never touches.
+    scene->PreprocessVertices(currentFrameState.GetCmdBuffer(), frameIndex, uniform, prepare.second);
+
     // The renderer has not recorded anything into the frame, but its command
     // buffer still has to be submitted: BeginFrame recorded uploads into it, and
     // its fence is what the next BeginFrame waits for. The swapchain image is
