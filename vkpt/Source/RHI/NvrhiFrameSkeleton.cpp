@@ -855,6 +855,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // are built here once. The wrap creation below is the UI block's (whichever module exists
         // runs it first in a frame); both take the same handles. The overlay's pass-owned depth, its
         // engine-image wraps and the callback's state contract live in RhiRasterOverlayPass.h.
+        // The same callback now carries the smoke half's per-frame inputs: the host-filtered smoke
+        // list, the slot's TLAS (the shared accel-struct object the traced passes bind) and this
+        // frame's set-6 light set of the direct pass (its layout was installed once in
+        // VulkanDevice_Init). A null light set - the direct pass skipped the slot - leaves the half
+        // skipped inside the overlay.
         if (rasterOverlayPass != nullptr && rasterOverlayPass->IsCreated() &&
             sky.tonemapping != nullptr && !sky.disableRasterization &&
             sky.swapchainVertexStaging != 0 && sky.swapchainIndexStaging != 0)
@@ -964,7 +969,10 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               sky.width, sky.height, sky.jitter,
                                               worldUniformBuffer.Get(),
                                               sky.worldDraws, sky.worldDrawCount,
-                                              sky.view, sky.projection, sky.applyVertexColorGamma);
+                                              sky.view, sky.projection, sky.applyVertexColorGamma,
+                                              sky.smokeDraws, sky.smokeDrawCount,
+                                              accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
+                                              rtDirectPass != nullptr ? rtDirectPass->GetLightSet(frameIndex).Get() : nullptr);
                                       }
                                   });
             // The frame's upscaler (A5.7): the engine's own FSR 3.1 (the default configuration)

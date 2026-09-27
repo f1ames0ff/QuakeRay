@@ -347,8 +347,17 @@ private:
 
     // The RHI raster overlay pass of A5.5 (RHI/RhiRasterOverlayPass.h): the ported RsWorld pass over
     // the collector's DEFAULT list into FINAL/SCREEN_EMISSION, recorded inside the compose chain's
-    // window. Null when the creation failed; the frame is then drawn without the overlay.
+    // window, plus the ported RsSmoke half of master's smoke over the same window's smoke list.
+    // Null when the creation failed; the frame is then drawn without the overlay.
     std::shared_ptr<RhiRasterOverlayPass>   rhiRasterOverlayPass;
+
+    // The raster overlay's smoke list (A5.5): the frame's DEFAULT entries that carry
+    // RG_RASTERIZED_GEOMETRY_STATE_SMOKE, filtered out of
+    // RasterizedDataCollector::GetRasterDrawInfos() in RenderThroughRhi - the collector keeps no
+    // separate smoke stream, the legacy uploads all puffs as one batch (r_smoke.c:358-376) - and
+    // carried to the skeleton through SkyFrameInputs::smokeDraws. A member, not a local, so the
+    // per-frame filter does not allocate.
+    std::vector<RasterizedDataCollector::DrawInfo> smokeDraws;
 
     // The RHI decal pass of A5.6 (RHI/RhiDecalPass.h): the ported DecalManager::Draw into ALBEDO
     // right after the traced primary. The engine uploads no decals in this game, so the pass is a

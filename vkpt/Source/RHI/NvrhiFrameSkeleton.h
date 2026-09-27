@@ -139,6 +139,17 @@ public:
         const RasterizedDataCollector::DrawInfo *worldDraws = nullptr;
         uint32_t worldDrawCount = 0;
 
+        // -- the smoke half of the raster overlay (A5.5) --
+        // The frame's smoke draws: the entries of the same DEFAULT collector list that carry
+        // RG_RASTERIZED_GEOMETRY_STATE_SMOKE, filtered by the host (the collector keeps no separate
+        // smoke stream - the legacy uploads all puffs as one batch, r_smoke.c:358-376). They go to
+        // RhiRasterOverlayPass::Render beside the world list and are drawn with the ported RsSmoke
+        // pair inside the compose window, after the world draws and before the 2D UI. The half's
+        // other inputs are the skeleton's own: the slot's TLAS (accelStructs->GetTopLevel) and the
+        // direct pass's set-6 light layout and set.
+        const RasterizedDataCollector::DrawInfo *smokeDraws = nullptr;
+        uint32_t smokeDrawCount = 0;
+
         // -- the 2D UI pass (A5.1) --
         // The frame's SWAPCHAIN draw list and the collector's per-slot staging vertex and index
         // buffers: the UI is rewritten every frame, so the pass reads the staging - the device copy
@@ -322,7 +333,9 @@ public:
     // RHI/RhiRasterOverlayPass.h): when it is non-null, the compose call's window invokes it over
     // the frame's DEFAULT draw list into FINAL and SCREEN_EMISSION, exactly where the legacy frame
     // records `Rasterizer::DrawToFinalImage`; the skeleton installs its geometry and tonemapping
-    // wraps. Optional: a null one draws the frame without the raster overlay.
+    // wraps, and passes the frame's smoke list (SkyFrameInputs::smokeDraws), the slot's TLAS and
+    // the direct pass's light set alongside, so the pass's smoke half draws the ported RsSmoke pair
+    // in the same window. Optional: a null one draws the frame without the raster overlay.
     // 'pDecalPass' is the host's decal pass (RhiDecalPass, RHI/RhiDecalPass.h): right after the
     // primary, Render records it over the engine's decal instance buffer, so the direct and
     // indirect passes see the decal-modified ALBEDO. Optional: a null one draws the frame without

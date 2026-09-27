@@ -438,10 +438,11 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
         return false;
     }
 
-    // The two layouts this module owns. Every one is AllRayTracing visibility, for the reason
+    // The two layouts this module owns. Both carry the ray-tracing visibility, for the reason
     // RhiDebugTracePass documents: the acceleration-structure-read barrier names the compute stage
     // too (vulkan-constants.cpp:282-285) and this device has no rayQuery feature to make that
-    // legal (the A3.1 fix).
+    // legal (the A3.1 fix). The set-6 light layout additionally spans the vertex and compute
+    // stages, which the raster overlay's smoke vertex shader needs (see its block below).
     {
         // Set 1: one item per image of `RtgDirect`, at the engine's raw binding of that image. A
         // partial layout in the same sense the primary's set 1 is - only the 12 bindings the
@@ -469,8 +470,14 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
         // Set 6: the five light buffers at their raw bindings, the same offsets as set 1. The
         // statistics buffer is the only UAV item; the other four are structured SRVs. The partial
         // shape is right here too: the engine's layout has nine items, the raygen declares five.
+        // The vertex and compute stages are added to the ray-tracing visibility because the raster
+        // overlay's smoke shaders read the light list from their vertex stage, exactly as the
+        // engine's own set-6 layout spans VK_SHADER_STAGE_RAYGEN|COMPUTE|VERTEX
+        // (LightManager.cpp:1054); without them their pipeline creation fails with
+        // VUID-VkGraphicsPipelineCreateInfo-layout-07988.
         nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::AllRayTracing;
+        desc.visibility = nvrhi::ShaderType::AllRayTracing | nvrhi::ShaderType::Vertex |
+                          nvrhi::ShaderType::Compute;
         desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
                                    .setShaderResourceOffset(0)
                                    .setUnorderedAccessViewOffset(0));

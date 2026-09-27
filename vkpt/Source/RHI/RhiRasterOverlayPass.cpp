@@ -42,11 +42,15 @@ namespace
 // and "FragWorld" is RsWorld.frag.spv, exactly the pair RasterPass hands to its world
 // RasterizerPipelines (RasterPass.cpp:74-75; ShaderManager.cpp:59, :62). "VertFullscreenQuad" is
 // RsFullscreenQuad.vert.spv and "FragDepthCopying" is RsDepthCopying.frag.spv, the pair
-// DepthCopying loads (DepthCopying.cpp:24-25; ShaderManager.cpp:64-65).
+// DepthCopying loads (DepthCopying.cpp:24-25; ShaderManager.cpp:64-65). "VertSmoke" is
+// RsSmoke.vert.spv and "FragSmoke" is RsSmoke.frag.spv, the pair the legacy smoke pipelines load
+// (RasterPass.cpp:79-88; ShaderManager.cpp:61-62).
 const char *const VERTEX_SHADER_FILE_NAME           = "RsRasterizer.vert.spv";
 const char *const WORLD_PIXEL_SHADER_FILE_NAME      = "RsWorld.frag.spv";
 const char *const DEPTH_COPY_VERTEX_SHADER_FILE_NAME = "RsFullscreenQuad.vert.spv";
 const char *const DEPTH_COPY_PIXEL_SHADER_FILE_NAME  = "RsDepthCopying.frag.spv";
+const char *const SMOKE_VERTEX_SHADER_FILE_NAME      = "RsSmoke.vert.spv";
+const char *const SMOKE_PIXEL_SHADER_FILE_NAME       = "RsSmoke.frag.spv";
 
 // The legacy push-constant range is 88 bytes (Rasterizer.cpp:66, :485-489) while RsWorld.frag
 // declares a 92-byte block: its last member, emissionMultiplier at offset 88, is declared but never
@@ -54,6 +58,12 @@ const char *const DEPTH_COPY_PIXEL_SHADER_FILE_NAME  = "RsDepthCopying.frag.spv"
 // mirrors the legacy value, so both renderers push the same bytes and the shader-visible prefix
 // stays what the legacy path produces.
 constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
+
+// The smoke block is the full legacy RasterizedPushConst: 120 bytes (Rasterizer.cpp:72), the two
+// texture indices at 80/84 plus the smokeNoise and smokeLook quartets at 88 and 104 that
+// RsSmoke.frag reads (RsSmoke.frag:24-28). The smoke fragment's push block starts at offset 88, so
+// the pipeline layout has to declare the whole 120 bytes for both stages.
+constexpr uint32_t SMOKE_PUSH_CONSTANT_SIZE = 120;
 
 // The legacy DepthCopying pipeline layout declares exactly the two uints of DepthCopyingFrag_BT
 // (DepthCopying.cpp:205-208) and the process pushes { width, height } to the fragment stage
@@ -87,6 +97,23 @@ constexpr uint32_t WORLD_STORAGE_SLOT = static_cast<uint32_t>(FB_IMAGE_INDEX_PRI
 constexpr uint32_t WORLD_FRAMEBUFFERS_SRV_OFFSET = 124;
 constexpr uint32_t WORLD_FRAMEBUFFERS_UAV_OFFSET = 0;
 constexpr uint32_t WORLD_FRAMEBUFFERS_SAMPLER_OFFSET = 248;
+
+// The smoke fragment's set 4: the six items RsSmoke.frag statically uses, measured with spirv-dis
+// over vkpt/Build/RsSmoke.frag.spv - `framebufDepthWorld_Sampled` at raw 133 (the depth fade,
+// SmokeShade.h:13-22), `framebufQ2AtrousPingLF_SH_Sampled` at raw 225 and
+// `framebufQ2AtrousPingLF_COCG_Sampled` at raw 227 (the ambient term, RsSmoke.frag:56-67), each
+// with its `_Sampler` at raw 248 + image index (257/349/351). The slots are the image indices, the
+// same offset arithmetic as the world framebuffers layout above.
+constexpr uint32_t SMOKE_FRAMEBUFFERS_DEPTH_WORLD_SLOT =
+    static_cast<uint32_t>(FB_IMAGE_INDEX_DEPTH_WORLD);
+constexpr uint32_t SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT =
+    static_cast<uint32_t>(FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_S_H);
+constexpr uint32_t SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT =
+    static_cast<uint32_t>(FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_C_O_C_G);
+
+// The smoke vertex shader's TLAS (`topLevelAS`, SmokeLight.h:6-8) at raw binding 0, so the slot is
+// 0 under the default offsets - the same shape RhiDebugTracePass's TLAS layout has.
+constexpr uint32_t SMOKE_TLAS_SLOT = 0;
 
 // The world shader's set 1 binding 0 is the engine's global uniform block at raw binding 0
 // (BINDING_GLOBAL_UNIFORM, ShaderCommonC.h), so the layout's constant-buffer offset must be 0
@@ -252,6 +279,51 @@ static_assert(offsetof(OverlayPushConstants, t) == 80);
 static_assert(offsetof(OverlayPushConstants, e) == 84);
 static_assert(sizeof(OverlayPushConstants) == 88);
 
+// The smoke block, byte for byte the legacy RasterizedPushConst (Rasterizer.cpp:33-72): the world
+// block above extended with the two quartets the smoke fragment reads at 88 and 104. The vert
+// stage declares only the matrix at offset 0 and the fragment stage only the two quartets at
+// 88/104 (RsSmoke.vert:31-34, RsSmoke.frag:24-28), so the 120-byte union is what the pipeline
+// layout declares and what every smoke draw pushes.
+struct SmokePushConstants
+{
+    float    vp[16];
+    float    c[4];
+    uint32_t t;
+    uint32_t e;
+    float    smokeNoise[4];
+    float    smokeLook[4];
+
+    explicit SmokePushConstants(const RasterizedDataCollector::DrawInfo &info, const float *defaultViewProj)
+    {
+        float model[16];
+        Matrix::ToMat4Transposed(model, info.transform);
+
+        if (info.viewProj)
+        {
+            Matrix::Multiply(vp, model, info.viewProj->Get());
+        }
+        else
+        {
+            Matrix::Multiply(vp, model, defaultViewProj);
+        }
+
+        memcpy(c, info.color.Get(), 4 * sizeof(float));
+        t = info.textureIndex;
+        e = info.emissionTextureIndex;
+
+        memcpy(smokeNoise, info.smokeNoise.Get(), 4 * sizeof(float));
+        memcpy(smokeLook, info.smokeLook.Get(), 4 * sizeof(float));
+    }
+};
+
+static_assert(offsetof(SmokePushConstants, vp) == 0);
+static_assert(offsetof(SmokePushConstants, c) == 64);
+static_assert(offsetof(SmokePushConstants, t) == 80);
+static_assert(offsetof(SmokePushConstants, e) == 84);
+static_assert(offsetof(SmokePushConstants, smokeNoise) == 88);
+static_assert(offsetof(SmokePushConstants, smokeLook) == 104);
+static_assert(sizeof(SmokePushConstants) == SMOKE_PUSH_CONSTANT_SIZE);
+
 // The legacy viewport of a DrawInfo, as an NVRHI viewport that makes the Vulkan backend emit the
 // legacy's own VkViewport. The legacy `vkCmdSetViewport` takes (x, y, w, +h) (Rasterizer.cpp:
 // 436-446), while `VKViewportWithDXCoords` (vulkan-graphics.cpp:528-531) computes
@@ -281,6 +353,13 @@ static_assert(offsetof(RgVertex, texCoord) == 32);
 static_assert(offsetof(RgVertex, packedColor) == 56);
 static_assert(sizeof(RgVertex) == 80);
 
+// The smoke input layout's three extra attributes come from the same struct: the puff parameters
+// (normal) at 16, the look pair (texCoordLayer1) at 40 and the cluster at 60 - the offsets
+// RasterizedDataCollector::GetSmokeVertexLayout uses (RasterizedDataCollector.cpp:56-89).
+static_assert(offsetof(RgVertex, normal) == 16);
+static_assert(offsetof(RgVertex, texCoordLayer1) == 40);
+static_assert(offsetof(RgVertex, cluster) == 60);
+
 }
 
 RhiRasterOverlayPass::RhiRasterOverlayPass() = default;
@@ -298,6 +377,7 @@ RhiRasterOverlayPass::~RhiRasterOverlayPass()
 
     // Pipelines reference their (specialized) shaders, so they go first.
     worldPipelines.clear();
+    smokePipelines.clear();
     depthCopyPipeline = nullptr;
 
     for (Target &target : targets)
@@ -309,10 +389,15 @@ RhiRasterOverlayPass::~RhiRasterOverlayPass()
         target.screenEmissionTexture = nullptr;
         target.depthNdcTexture = nullptr;
         target.storageTexture = nullptr;
+        target.smokeDepthWorldTexture = nullptr;
+        target.smokePingLfShTexture = nullptr;
+        target.smokePingLfCocgTexture = nullptr;
         target.uniformSet = nullptr;
         target.tonemappingSet = nullptr;
         target.depthCopySet = nullptr;
         target.framebuffersSet = nullptr;
+        target.smokeFramebuffersSet = nullptr;
+        target.smokeTlasSet = nullptr;
         target.valid = false;
     }
 
@@ -322,10 +407,19 @@ RhiRasterOverlayPass::~RhiRasterOverlayPass()
     worldUniformLayout = nullptr;
     depthCopyLayout = nullptr;
     worldHoleSet = nullptr;
+    smokeTlasLayout = nullptr;
+    smokeFramebuffersLayout = nullptr;
+    smokePushConstantLayout = nullptr;
+    smokeHoleSet = nullptr;
+    smokeSampler = nullptr;
+    smokeLightLayout = nullptr;
 
     depthCopyPixelShader = nullptr;
     depthCopyVertexShader = nullptr;
     worldPixelShader = nullptr;
+    smokePixelShader = nullptr;
+    smokeVertexShader = nullptr;
+    smokeInputLayout = nullptr;
     inputLayout = nullptr;
     vertexShader = nullptr;
 }
@@ -373,6 +467,18 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         return false;
     }
 
+    // The smoke pair, loaded tolerantly: a tree whose shader build does not carry the pair yet (the
+    // HLSL port of RsSmoke is a parallel step) must not lose the world overlay, so a failed smoke
+    // load leaves the smoke half disabled instead of failing Create. The names are the pair the
+    // legacy smoke pipelines load (RasterPass.cpp:79-88; ShaderManager.cpp:61-62).
+    if (!LoadShader(SMOKE_VERTEX_SHADER_FILE_NAME, nvrhi::ShaderType::Vertex, smokeVertexShader) ||
+        !LoadShader(SMOKE_PIXEL_SHADER_FILE_NAME, nvrhi::ShaderType::Pixel, smokePixelShader))
+    {
+        smokeVertexShader = nullptr;
+        smokePixelShader = nullptr;
+        LogMessage(print, "Warning: RHI: the raster overlay smoke shaders are unavailable, the smoke half is disabled");
+    }
+
     // The RgVertex input layout the collector feeds: one binding at slot 0 with the collector's
     // stride and three attributes, whose order is their location (the Vulkan backend numbers the
     // attributes by their position in the array, vulkan-shader.cpp:176-197). The offsets are taken
@@ -410,6 +516,62 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
     {
         LogMessage(print, "Warning: RHI: failed to create the raster overlay pass input layout");
         return false;
+    }
+
+    // The smoke input layout: the same binding slot and stride with the three extra attributes of
+    // RasterizedDataCollector::GetSmokeVertexLayout (RasterizedDataCollector.cpp:56-89), in the
+    // location order RsSmoke.vert declares them - position, color, corner, puffParameters
+    // (the `normal` member), puffLook (texCoordLayer1) and puffCluster. Built only when the smoke
+    // pair loaded; a failure disables the smoke half, not the pass.
+    if (smokeVertexShader != nullptr)
+    {
+        const nvrhi::VertexAttributeDesc smokeVertexAttributes[] =
+        {
+            nvrhi::VertexAttributeDesc()
+                .setName("POSITION")
+                .setFormat(nvrhi::Format::RGB32_FLOAT)
+                .setBufferIndex(0)
+                .setOffset(offsetof(RgVertex, position))
+                .setElementStride(vertexStride),
+            nvrhi::VertexAttributeDesc()
+                .setName("COLOR")
+                .setFormat(nvrhi::Format::RGBA8_UNORM)
+                .setBufferIndex(0)
+                .setOffset(offsetof(RgVertex, packedColor))
+                .setElementStride(vertexStride),
+            nvrhi::VertexAttributeDesc()
+                .setName("TEXCOORD")
+                .setFormat(nvrhi::Format::RG32_FLOAT)
+                .setBufferIndex(0)
+                .setOffset(offsetof(RgVertex, texCoord))
+                .setElementStride(vertexStride),
+            nvrhi::VertexAttributeDesc()
+                .setName("NORMAL")
+                .setFormat(nvrhi::Format::RGB32_FLOAT)
+                .setBufferIndex(0)
+                .setOffset(offsetof(RgVertex, normal))
+                .setElementStride(vertexStride),
+            nvrhi::VertexAttributeDesc()
+                .setName("TEXCOORD1")
+                .setFormat(nvrhi::Format::RG32_FLOAT)
+                .setBufferIndex(0)
+                .setOffset(offsetof(RgVertex, texCoordLayer1))
+                .setElementStride(vertexStride),
+            nvrhi::VertexAttributeDesc()
+                .setName("CLUSTER")
+                .setFormat(nvrhi::Format::R32_UINT)
+                .setBufferIndex(0)
+                .setOffset(offsetof(RgVertex, cluster))
+                .setElementStride(vertexStride),
+        };
+
+        smokeInputLayout = device->createInputLayout(smokeVertexAttributes, uint32_t(std::size(smokeVertexAttributes)), smokeVertexShader);
+        if (smokeInputLayout == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay smoke input layout, the smoke half is disabled");
+            smokeVertexShader = nullptr;
+            smokePixelShader = nullptr;
+        }
     }
 
     // The world pipeline layout in the shader's own set order: the shared texture table (0), the
@@ -487,12 +649,61 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         depthCopyLayout = rhi::createBindingLayout(device, layoutItems, "RhiRasterOverlay depth copy (DEPTH_NDC SRV)", &offsets);
     }
 
+    // The smoke pipeline's own layouts 3..5 (sets 0..2 are the world pipeline's layouts, bound
+    // identically). Set 3 is the world pass's hole idea with the smoke push range; the framebuffers
+    // layout declares exactly the six sampled items RsSmoke.frag statically uses - the three
+    // Texture_SRVs and their three samplers, at the engine's raw numbers through the same offsets;
+    // the TLAS layout is the one accel-struct item at raw binding 0.
+    {
+        const nvrhi::BindingLayoutItem layoutItems[] =
+        {
+            nvrhi::BindingLayoutItem::PushConstants(0, SMOKE_PUSH_CONSTANT_SIZE),
+        };
+
+        smokePushConstantLayout = rhi::createBindingLayout(device, layoutItems, "RhiRasterOverlay smoke set 3 (push constants)");
+    }
+    {
+        const nvrhi::BindingLayoutItem layoutItems[] =
+        {
+            nvrhi::BindingLayoutItem::Texture_SRV(SMOKE_FRAMEBUFFERS_DEPTH_WORLD_SLOT),
+            nvrhi::BindingLayoutItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT),
+            nvrhi::BindingLayoutItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT),
+            nvrhi::BindingLayoutItem::Sampler(SMOKE_FRAMEBUFFERS_DEPTH_WORLD_SLOT),
+            nvrhi::BindingLayoutItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT),
+            nvrhi::BindingLayoutItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT),
+        };
+        const nvrhi::VulkanBindingOffsets offsets = nvrhi::VulkanBindingOffsets()
+            .setShaderResourceOffset(WORLD_FRAMEBUFFERS_SRV_OFFSET)
+            .setUnorderedAccessViewOffset(WORLD_FRAMEBUFFERS_UAV_OFFSET)
+            .setSamplerOffset(WORLD_FRAMEBUFFERS_SAMPLER_OFFSET);
+
+        smokeFramebuffersLayout = rhi::createBindingLayout(device, layoutItems, "RhiRasterOverlay smoke framebuffers (DEPTH_WORLD + LF ping)", &offsets);
+    }
+    {
+        const nvrhi::BindingLayoutItem layoutItems[] =
+        {
+            nvrhi::BindingLayoutItem::RayTracingAccelStruct(SMOKE_TLAS_SLOT),
+        };
+
+        smokeTlasLayout = rhi::createBindingLayout(device, layoutItems, "RhiRasterOverlay smoke set 5 (TLAS)");
+    }
+
     if (worldUniformLayout == nullptr || worldTonemappingLayout == nullptr ||
         worldPushConstantLayout == nullptr || worldFramebuffersLayout == nullptr ||
         depthCopyLayout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a raster overlay pipeline layout");
         return false;
+    }
+
+    // The smoke layouts are optional, like the smoke shaders: a failure disables the smoke half.
+    if (smokeVertexShader != nullptr &&
+        (smokePushConstantLayout == nullptr || smokeFramebuffersLayout == nullptr ||
+         smokeTlasLayout == nullptr))
+    {
+        LogMessage(print, "Warning: RHI: failed to create a raster overlay smoke pipeline layout, the smoke half is disabled");
+        smokeVertexShader = nullptr;
+        smokePixelShader = nullptr;
     }
 
     // The empty set that fills the set-3 hole. A null entry in GraphicsState::bindings is unsafe in
@@ -505,6 +716,24 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
     {
         LogMessage(print, "Warning: RHI: failed to create the empty set of the raster overlay set-3 hole");
         return false;
+    }
+
+    // The smoke half's own empty set (the same argument as above, over the 120-byte layout) and
+    // the sampler its set 4 binds. The engine's own framebuffer samplers are VkSampler objects the
+    // RHI bridge cannot wrap, and the smoke fragment's texelFetch reads do not depend on the filter
+    // mode, so the bridge's linear/clamp engine-texture sampler serves the three sampled images
+    // (RhiTextureSource.h). A failure disables the smoke half.
+    if (smokeVertexShader != nullptr)
+    {
+        smokeHoleSet = device->createBindingSet(nvrhi::BindingSetDesc(), smokePushConstantLayout);
+        smokeSampler = rhi::createEngineTextureSampler(device, "RhiRasterOverlay smoke framebuffer sampler");
+
+        if (smokeHoleSet == nullptr || smokeSampler == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay smoke hole set or sampler, the smoke half is disabled");
+            smokeVertexShader = nullptr;
+            smokePixelShader = nullptr;
+        }
     }
 
     // The depth copy's pipeline, the legacy's one static pipeline (DepthCopying.cpp:223-329): no
@@ -582,6 +811,25 @@ void RhiRasterOverlayPass::SetGeometryBuffers(nvrhi::IBuffer *pVertexBuffer, nvr
     indexBuffer = pIndexBuffer;
 }
 
+bool RhiRasterOverlayPass::SetSmokeLightLayout(nvrhi::BindingLayoutHandle pLightLayout)
+{
+    if (!created)
+    {
+        LogMessage(print, "Warning: RHI: the raster overlay pass needs the pass created first");
+        return false;
+    }
+
+    if (smokeLightLayout.Get() != pLightLayout.Get())
+    {
+        // The cached smoke pipelines reference the previous layout; the host installs this once, so
+        // a change means a different direct pass and the cache has to follow.
+        ReleaseSmokePipelineCache();
+        smokeLightLayout = pLightLayout;
+    }
+
+    return true;
+}
+
 void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                                   uint32_t frameIndex,
                                   const Framebuffers *pFramebuffers,
@@ -593,7 +841,11 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                                   uint32_t drawCount,
                                   const float *pView,
                                   const float *pProj,
-                                  bool applyVertexColorGamma)
+                                  bool applyVertexColorGamma,
+                                  const RasterizedDataCollector::DrawInfo *pSmokeDraws,
+                                  uint32_t smokeDrawCount,
+                                  nvrhi::rt::IAccelStruct *pSmokeTopLevel,
+                                  nvrhi::IBindingSet *pSmokeLightSet)
 {
     if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT ||
         pFramebuffers == nullptr || width == 0 || height == 0)
@@ -648,7 +900,8 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
 
     Target &target = targets[frameIndex];
 
-    if (!PrepareTarget(pCommandList, frameIndex, target, *pFramebuffers, width, height, pUniformBuffer))
+    if (!PrepareTarget(pCommandList, frameIndex, target, *pFramebuffers, width, height,
+                       pUniformBuffer, pSmokeTopLevel))
     {
         return;
     }
@@ -659,13 +912,32 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
     // early-out of Rasterizer::Draw (Rasterizer.cpp:262-263, :341-347).
     RecordDepthCopy(pCommandList, target, width, height);
 
-    // The legacy has no draws for an empty list; with one it builds the default view-projection and
-    // runs the state/push/draw loop of Rasterizer::Draw (:266-271, :394-420).
-    if (pDraws != nullptr && drawCount > 0)
+    const bool worldDrawable = pDraws != nullptr && drawCount > 0;
+
+    // The smoke half runs only when the whole chain of its inputs is present: the pair of blobs,
+    // the direct pass's light layout, this frame's light set, the slot's TLAS, the slot's smoke
+    // framebuffer set (which needs the three engine images its set 4 binds) and a non-empty smoke
+    // list. A missing piece skips the smoke list alone; the world loop then keeps those entries and
+    // draws them as it did before this half existed - a zero-area draw, because all six vertices of
+    // a puff carry the puff origin.
+    const bool smokeDrawable =
+        smokeVertexShader != nullptr && smokePixelShader != nullptr && smokeInputLayout != nullptr &&
+        smokeHoleSet != nullptr && smokeSampler != nullptr &&
+        smokeLightLayout != nullptr && pSmokeLightSet != nullptr && pSmokeTopLevel != nullptr &&
+        target.smokeFramebuffersSet != nullptr && target.smokeTlasSet != nullptr &&
+        pSmokeDraws != nullptr && smokeDrawCount > 0;
+
+    if (pSmokeDraws != nullptr && smokeDrawCount > 0 && !smokeDrawable && !warnedMissingSmokeInputs)
+    {
+        warnedMissingSmokeInputs = true;
+        LogMessage(print, "Warning: RHI: the raster overlay smoke half is not drawable (a shader, the light layout/set or the TLAS is missing), the smoke draws are skipped");
+    }
+
+    if (worldDrawable || smokeDrawable)
     {
         // The engine textures the table wrapped since the last frame need their first-use state
-        // declared in the first list that binds the table (RhiTextureSource.h); this may be that
-        // list.
+        // declared in the first list that binds the table (RhiTextureSource.h); both halves bind it
+        // as set 0, and either may be that list.
         textureTable->TrackPendingTextures(pCommandList);
 
         // The legacy's ApplyJitter and default view-projection (Rasterizer.cpp:176-184, :266-271):
@@ -680,8 +952,20 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
         float defaultViewProj[16];
         Matrix::Multiply(defaultViewProj, pView, jitteredProj);
 
-        RecordWorldDraws(pCommandList, target, width, height, defaultViewProj,
-                         pDraws, drawCount, applyVertexColorGamma);
+        if (worldDrawable)
+        {
+            // When the smoke half will draw the smoke entries, the world loop skips them so that no
+            // entry is recorded twice; without the smoke half the loop keeps them, which is what
+            // this pass did before the half existed.
+            RecordWorldDraws(pCommandList, target, width, height, defaultViewProj,
+                             pDraws, drawCount, applyVertexColorGamma, smokeDrawable);
+        }
+
+        if (smokeDrawable)
+        {
+            RecordSmokeDraws(pCommandList, target, width, height, defaultViewProj,
+                             pSmokeDraws, smokeDrawCount, pSmokeLightSet);
+        }
     }
 
     // The framebuffer use left FINAL and SCREEN_EMISSION in the render-target layout, and the
@@ -690,6 +974,9 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
     // announcement - naming GENERAL as the old layout is only correct because the physical layouts
     // are moved back here, at the end of the list that used them. The engine's own descriptors
     // declare VK_IMAGE_LAYOUT_GENERAL for every framebuffer image (Framebuffers.cpp:754-758, :786).
+    // The smoke half's three sampled images (DEPTH_WORLD and the two LF ping images) end the same
+    // way: their SRV use left them in the read-only layout, and the compose's continuation and the
+    // next frame's own wraps expect GENERAL again.
     pCommandList->setTextureState(target.finalTexture, nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::UnorderedAccess);
     pCommandList->setTextureState(target.screenEmissionTexture, nvrhi::AllSubresources,
@@ -698,18 +985,37 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                                   nvrhi::ResourceStates::UnorderedAccess);
     pCommandList->setTextureState(target.storageTexture, nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::UnorderedAccess);
+
+    if (target.smokeDepthWorldTexture != nullptr)
+    {
+        pCommandList->setTextureState(target.smokeDepthWorldTexture, nvrhi::AllSubresources,
+                                      nvrhi::ResourceStates::UnorderedAccess);
+    }
+    if (target.smokePingLfShTexture != nullptr)
+    {
+        pCommandList->setTextureState(target.smokePingLfShTexture, nvrhi::AllSubresources,
+                                      nvrhi::ResourceStates::UnorderedAccess);
+    }
+    if (target.smokePingLfCocgTexture != nullptr)
+    {
+        pCommandList->setTextureState(target.smokePingLfCocgTexture, nvrhi::AllSubresources,
+                                      nvrhi::ResourceStates::UnorderedAccess);
+    }
 }
 
 bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint32_t frameIndex,
                                          Target &target, const Framebuffers &framebuffers,
-                                         uint32_t width, uint32_t height, nvrhi::IBuffer *pUniformBuffer)
+                                         uint32_t width, uint32_t height, nvrhi::IBuffer *pUniformBuffer,
+                                         nvrhi::rt::IAccelStruct *pSmokeTopLevel)
 {
     // The engine images of this slot, exactly the ones the legacy pass touches: FINAL and
     // SCREEN_EMISSION as the two colour attachments, DEPTH_NDC as the depth copy's source and
-    // PRIMARY_TO_REFL_REFR as the shader's binding 25. Framebuffers resolves the slot's own image
-    // inside (Framebuffers.cpp:33-53, the `_Prev` role permutation; none of the four is one of the
-    // swapped history images), so the pass keeps every wrap per slot and follows whatever the
-    // accessors answer - an engine framebuffer re-create is picked up without a second Create.
+    // PRIMARY_TO_REFL_REFR as the shader's binding 25, plus the three the smoke fragment samples -
+    // DEPTH_WORLD (9) and the two Q2 a-trous LF ping images (101 SH / 103 COCG). Framebuffers
+    // resolves the slot's own image inside (Framebuffers.cpp:33-53, the `_Prev` role permutation;
+    // none of the seven is one of the swapped history images), so the pass keeps every wrap per
+    // slot and follows whatever the accessors answer - an engine framebuffer re-create is picked up
+    // without a second Create.
     const std::tuple<VkImage, VkImageView, VkFormat> finalImage =
         framebuffers.GetImageHandles(FB_IMAGE_INDEX_FINAL, frameIndex);
     const std::tuple<VkImage, VkImageView, VkFormat> screenEmission =
@@ -718,6 +1024,12 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
         framebuffers.GetImageHandles(FB_IMAGE_INDEX_DEPTH_NDC, frameIndex);
     const std::tuple<VkImage, VkImageView, VkFormat> storageImage =
         framebuffers.GetPrimaryToReflRefrHandles(frameIndex);
+    const std::tuple<VkImage, VkImageView, VkFormat> smokeDepthWorld =
+        framebuffers.GetImageHandles(FB_IMAGE_INDEX_DEPTH_WORLD, frameIndex);
+    const std::tuple<VkImage, VkImageView, VkFormat> smokePingLfSh =
+        framebuffers.GetImageHandles(FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_S_H, frameIndex);
+    const std::tuple<VkImage, VkImageView, VkFormat> smokePingLfCocg =
+        framebuffers.GetImageHandles(FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_C_O_C_G, frameIndex);
 
     if (std::get<0>(finalImage) == VK_NULL_HANDLE || std::get<1>(finalImage) == VK_NULL_HANDLE ||
         std::get<2>(finalImage) == VK_FORMAT_UNDEFINED ||
@@ -737,16 +1049,37 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
         return false;
     }
 
+    // The three smoke images are optional, unlike the four above: an invalid handle is not a reason
+    // to skip the world half, it only leaves the smoke set 4 unbuilt. It is reported once.
+    if ((std::get<0>(smokeDepthWorld) == VK_NULL_HANDLE || std::get<1>(smokeDepthWorld) == VK_NULL_HANDLE ||
+         std::get<2>(smokeDepthWorld) == VK_FORMAT_UNDEFINED) ||
+        (std::get<0>(smokePingLfSh) == VK_NULL_HANDLE || std::get<1>(smokePingLfSh) == VK_NULL_HANDLE ||
+         std::get<2>(smokePingLfSh) == VK_FORMAT_UNDEFINED) ||
+        (std::get<0>(smokePingLfCocg) == VK_NULL_HANDLE || std::get<1>(smokePingLfCocg) == VK_NULL_HANDLE ||
+         std::get<2>(smokePingLfCocg) == VK_FORMAT_UNDEFINED))
+    {
+        if (!warnedMissingSmokeTargets)
+        {
+            warnedMissingSmokeTargets = true;
+            LogMessage(print, "Warning: RHI: the raster overlay smoke half got no engine framebuffer image for frame " + std::to_string(frameIndex));
+        }
+    }
+
     // Nothing to do while the slot still wraps the same images at the same size: replacing the
-    // wraps and the framebuffers every frame would create four textures, one depth and two
-    // framebuffers per frame for nothing. The state announcement below still has to happen, because
-    // a render-target wrap keeps no state between command lists (RhiTextureSource.h:56-70).
+    // wraps and the framebuffers every frame would create seven textures, one depth and two
+    // framebuffers per frame for nothing. The smoke images join the comparison, so a late-created
+    // or re-created one rebuilds the slot once and then stays. The state announcement below still
+    // has to happen, because a render-target wrap keeps no state between command lists
+    // (RhiTextureSource.h:56-70).
     const bool targetChanged =
         !target.valid ||
         target.finalImage != std::get<0>(finalImage) ||
         target.screenEmissionImage != std::get<0>(screenEmission) ||
         target.depthNdcImage != std::get<0>(depthNdc) ||
         target.storageImage != std::get<0>(storageImage) ||
+        target.smokeDepthWorldImage != std::get<0>(smokeDepthWorld) ||
+        target.smokePingLfShImage != std::get<0>(smokePingLfSh) ||
+        target.smokePingLfCocgImage != std::get<0>(smokePingLfCocg) ||
         target.width != width || target.height != height;
 
     if (targetChanged)
@@ -754,6 +1087,7 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
         ReleaseTarget(target);
 
         if (!CreateTargetObjects(target, finalImage, screenEmission, depthNdc, storageImage,
+                                 smokeDepthWorld, smokePingLfSh, smokePingLfCocg,
                                  frameIndex, width, height))
         {
             ReleaseTarget(target);
@@ -765,8 +1099,10 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
     // each image and immediately barriers it there (Framebuffers.cpp:754-758) and never leaves that
     // layout - which NVRHI names UnorderedAccess. Announcing that real state lets the first
     // framebuffer use and the first SRV binding emit the correct transitions; the compose's
-    // checkerboard left FINAL and SCREEN_EMISSION in exactly that state, and the raygens left
-    // DEPTH_NDC and the binding-25 image there.
+    // checkerboard left FINAL and SCREEN_EMISSION in exactly that state, the raygens left DEPTH_NDC
+    // and the binding-25 image there, and the compose chain's a-trous dispatches left DEPTH_WORLD
+    // and the two LF ping images there (the smoke fragment samples all three, so the same
+    // announcement has to precede its SRV use).
     pCommandList->beginTrackingTextureState(target.finalTexture, nvrhi::AllSubresources,
                                             nvrhi::ResourceStates::UnorderedAccess);
     pCommandList->beginTrackingTextureState(target.screenEmissionTexture, nvrhi::AllSubresources,
@@ -775,6 +1111,26 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
                                             nvrhi::ResourceStates::UnorderedAccess);
     pCommandList->beginTrackingTextureState(target.storageTexture, nvrhi::AllSubresources,
                                             nvrhi::ResourceStates::UnorderedAccess);
+
+    if (target.smokeDepthWorldTexture != nullptr)
+    {
+        pCommandList->beginTrackingTextureState(target.smokeDepthWorldTexture, nvrhi::AllSubresources,
+                                                nvrhi::ResourceStates::UnorderedAccess);
+    }
+    if (target.smokePingLfShTexture != nullptr)
+    {
+        pCommandList->beginTrackingTextureState(target.smokePingLfShTexture, nvrhi::AllSubresources,
+                                                nvrhi::ResourceStates::UnorderedAccess);
+    }
+    if (target.smokePingLfCocgTexture != nullptr)
+    {
+        pCommandList->beginTrackingTextureState(target.smokePingLfCocgTexture, nvrhi::AllSubresources,
+                                                nvrhi::ResourceStates::UnorderedAccess);
+    }
+
+    // The smoke TLAS set: a valid one is part of the smoke half's drawability, a failure (or a null
+    // TLAS) is not fatal to the world half.
+    PrepareSmokeTlasSet(target, pSmokeTopLevel);
 
     return UpdateBufferSets(target, frameIndex, pUniformBuffer);
 }
@@ -785,6 +1141,9 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
     const std::tuple<VkImage, VkImageView, VkFormat> &screenEmission,
     const std::tuple<VkImage, VkImageView, VkFormat> &depthNdc,
     const std::tuple<VkImage, VkImageView, VkFormat> &storageImage,
+    const std::tuple<VkImage, VkImageView, VkFormat> &smokeDepthWorld,
+    const std::tuple<VkImage, VkImageView, VkFormat> &smokePingLfSh,
+    const std::tuple<VkImage, VkImageView, VkFormat> &smokePingLfCocg,
     uint32_t frameIndex, uint32_t width, uint32_t height)
 {
     const std::string frameTag = std::to_string(frameIndex);
@@ -820,6 +1179,39 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
     {
         LogMessage(print, "Warning: RHI: failed to wrap an engine image of the raster overlay pass");
         return false;
+    }
+
+    // The smoke fragment's three sampled engine images - DEPTH_WORLD (9) and the two Q2 a-trous LF
+    // ping images (101 SH / 103 COCG, RsSmoke.frag:56-67) - as storage-image wraps, the same form
+    // the compose pass uses for them (they are UAV-writable in the chain, RhiRtComposePass.cpp:
+    // 1563). They are optional inputs: an invalid handle leaves the wrap null and with it the smoke
+    // half's set 4, so the half is skipped for the frame without touching the world half.
+    const auto wrapSmokeImage =
+        [&](const std::tuple<VkImage, VkImageView, VkFormat> &handles, const char *pDebugName) -> nvrhi::TextureHandle
+    {
+        if (std::get<0>(handles) == VK_NULL_HANDLE || std::get<1>(handles) == VK_NULL_HANDLE ||
+            std::get<2>(handles) == VK_FORMAT_UNDEFINED)
+        {
+            return nullptr;
+        }
+
+        return rhi::wrapEngineStorageImage(device, imageHandle(handles), viewHandle(handles),
+                                           std::get<2>(handles), width, height,
+                                           std::string(pDebugName) + " frame " + frameTag);
+    };
+
+    target.smokeDepthWorldTexture =
+        wrapSmokeImage(smokeDepthWorld, "RhiRasterOverlay DEPTH_WORLD");
+    target.smokePingLfShTexture =
+        wrapSmokeImage(smokePingLfSh, "RhiRasterOverlay Q2_ATROUS_PING_LF_SH");
+    target.smokePingLfCocgTexture =
+        wrapSmokeImage(smokePingLfCocg, "RhiRasterOverlay Q2_ATROUS_PING_LF_COCG");
+
+    if ((std::get<0>(smokeDepthWorld) != VK_NULL_HANDLE && target.smokeDepthWorldTexture == nullptr) ||
+        (std::get<0>(smokePingLfSh) != VK_NULL_HANDLE && target.smokePingLfShTexture == nullptr) ||
+        (std::get<0>(smokePingLfCocg) != VK_NULL_HANDLE && target.smokePingLfCocgTexture == nullptr))
+    {
+        LogMessage(print, "Warning: RHI: failed to wrap an engine image of the raster overlay smoke half");
     }
 
     // The pass-owned depth, per frame slot like RasterPass's depthImages (RasterPass.h:96-98) and in
@@ -902,6 +1294,32 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
         }
     }
 
+    // Set 4 of the smoke pipeline, over the three wraps. The set is created only when all three
+    // images are wrapped and the smoke layouts and the sampler exist; a missing piece leaves it
+    // null, which skips the smoke half and leaves the world half untouched.
+    target.smokeFramebuffersSet = nullptr;
+    if (target.smokeDepthWorldTexture != nullptr && target.smokePingLfShTexture != nullptr &&
+        target.smokePingLfCocgTexture != nullptr && smokeSampler != nullptr &&
+        smokeFramebuffersLayout != nullptr)
+    {
+        nvrhi::BindingSetDesc desc;
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(SMOKE_FRAMEBUFFERS_DEPTH_WORLD_SLOT,
+                                                        target.smokeDepthWorldTexture));
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT,
+                                                        target.smokePingLfShTexture));
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT,
+                                                        target.smokePingLfCocgTexture));
+        desc.addItem(nvrhi::BindingSetItem::Sampler(SMOKE_FRAMEBUFFERS_DEPTH_WORLD_SLOT, smokeSampler));
+        desc.addItem(nvrhi::BindingSetItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT, smokeSampler));
+        desc.addItem(nvrhi::BindingSetItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT, smokeSampler));
+
+        target.smokeFramebuffersSet = device->createBindingSet(desc, smokeFramebuffersLayout);
+        if (target.smokeFramebuffersSet == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay smoke framebuffers binding set (set 4)");
+        }
+    }
+
     // The world pipelines are built against the two colour formats; a change means every cached
     // pipeline belongs to the wrong framebuffer info. FINAL and SCREEN_EMISSION are both
     // VK_FORMAT_B10G11R11_UFLOAT_PACK32 (ShaderCommonCFramebuf.cpp:37, :71), but the wrap's own
@@ -919,10 +1337,48 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
     target.screenEmissionImage = std::get<0>(screenEmission);
     target.depthNdcImage = std::get<0>(depthNdc);
     target.storageImage = std::get<0>(storageImage);
+    target.smokeDepthWorldImage = std::get<0>(smokeDepthWorld);
+    target.smokePingLfShImage = std::get<0>(smokePingLfSh);
+    target.smokePingLfCocgImage = std::get<0>(smokePingLfCocg);
     target.width = width;
     target.height = height;
     target.valid = true;
 
+    return true;
+}
+
+bool RhiRasterOverlayPass::PrepareSmokeTlasSet(Target &target, nvrhi::rt::IAccelStruct *pSmokeTopLevel)
+{
+    if (pSmokeTopLevel == nullptr || smokeTlasLayout == nullptr)
+    {
+        return false;
+    }
+
+    if (target.smokeTlasSet != nullptr && target.smokeTopLevel == pSmokeTopLevel)
+    {
+        return true;
+    }
+
+    // The AS object is per frame slot and the set holds a reference that keeps it alive, so a
+    // replaced one goes through the retire queue - the same shape RhiRtPrimaryPass::PrepareTlasSet
+    // has (RhiRtPrimaryPass.cpp:1016-1044).
+    if (target.smokeTlasSet != nullptr && frameContext != nullptr)
+    {
+        frameContext->Retire(target.smokeTlasSet);
+    }
+    target.smokeTlasSet = nullptr;
+
+    nvrhi::BindingSetDesc desc;
+    desc.addItem(nvrhi::BindingSetItem::RayTracingAccelStruct(SMOKE_TLAS_SLOT, pSmokeTopLevel));
+
+    target.smokeTlasSet = device->createBindingSet(desc, smokeTlasLayout);
+    if (target.smokeTlasSet == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create the raster overlay smoke TLAS binding set (set 5)");
+        return false;
+    }
+
+    target.smokeTopLevel = pSmokeTopLevel;
     return true;
 }
 
@@ -1012,7 +1468,8 @@ void RhiRasterOverlayPass::RecordDepthCopy(nvrhi::ICommandList *pCommandList, co
 void RhiRasterOverlayPass::RecordWorldDraws(nvrhi::ICommandList *pCommandList, const Target &target,
                                             uint32_t width, uint32_t height, const float *defaultViewProj,
                                             const RasterizedDataCollector::DrawInfo *pDraws,
-                                            uint32_t drawCount, bool applyVertexColorGamma)
+                                            uint32_t drawCount, bool applyVertexColorGamma,
+                                            bool skipSmokeEntries)
 {
     // The legacy loop keeps the scissor at the whole render area and switches only the viewport
     // (Rasterizer.cpp:356-357, :389-396).
@@ -1032,6 +1489,15 @@ void RhiRasterOverlayPass::RecordWorldDraws(nvrhi::ICommandList *pCommandList, c
         // itself rejects nothing for this stream (only SWAPCHAIN loses its depth state,
         // RasterizedDataCollector.cpp:153-167), so this is the only skip.
         if (info.vertexCount == 0 && info.indexCount == 0)
+        {
+            continue;
+        }
+
+        // The smoke entries the smoke half will draw are skipped here so that no entry is recorded
+        // twice. The bit is the engine's own SMOKE state flag (vkpt.h:514), the one the legacy
+        // BindPipelineIfNew switches pipelines on (Rasterizer.cpp:472-476) and the host filters the
+        // smoke list by (VulkanDevice.cpp).
+        if (skipSmokeEntries && (info.pipelineState & RG_RASTERIZED_GEOMETRY_STATE_SMOKE) != 0)
         {
             continue;
         }
@@ -1100,6 +1566,96 @@ void RhiRasterOverlayPass::RecordWorldDraws(nvrhi::ICommandList *pCommandList, c
     }
 }
 
+void RhiRasterOverlayPass::RecordSmokeDraws(nvrhi::ICommandList *pCommandList, const Target &target,
+                                            uint32_t width, uint32_t height, const float *defaultViewProj,
+                                            const RasterizedDataCollector::DrawInfo *pDraws,
+                                            uint32_t drawCount, nvrhi::IBindingSet *pSmokeLightSet)
+{
+    // The same loop shape the world draws use: the scissor stays at the whole render area, the
+    // viewport is the draw's own when it has one and the full target otherwise (Rasterizer.cpp:
+    // 356-357, :389-396, :436-446).
+    const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(width), 0, static_cast<int>(height));
+
+    const VkViewport legacyDefaultViewport = { 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
+    const nvrhi::Viewport defaultViewport = ToLegacyViewport(legacyDefaultViewport);
+
+    for (uint32_t i = 0; i < drawCount; i++)
+    {
+        const RasterizedDataCollector::DrawInfo &info = pDraws[i];
+
+        if (info.vertexCount == 0 && info.indexCount == 0)
+        {
+            continue;
+        }
+
+        // The state key is the same mirror of RasterizerPipelines::ConvertToStateFlags the world
+        // loop uses; the SMOKE bit itself is not part of the key, exactly as in the legacy conversion
+        // (RasterizerPipelines.cpp:57-113 ignores it), so the smoke pipeline's own cache holds one
+        // entry per blend/depth shape the list asks for - the shipped upload always asks for the
+        // same one.
+        const uint32_t stateFlags =
+            ConvertToStateFlags(info.pipelineState, info.blendFuncSrc, info.blendFuncDst);
+
+        nvrhi::IGraphicsPipeline *pipeline = GetSmokePipeline(stateFlags);
+        if (pipeline == nullptr)
+        {
+            if (!warnedFailedSmokePipeline)
+            {
+                warnedFailedSmokePipeline = true;
+                LogMessage(print, "Warning: RHI: failed to create a raster overlay smoke pipeline, the smoke draws are skipped");
+            }
+            return;
+        }
+
+        const nvrhi::Viewport viewport =
+            info.viewport ? ToLegacyViewport(*info.viewport) : defaultViewport;
+
+        nvrhi::GraphicsState state;
+        state.pipeline = pipeline;
+        state.framebuffer = target.framebuffer;
+        state.viewport.addViewport(viewport);
+        state.viewport.addScissorRect(fullTarget);
+        // Sets 0..6 in the layout order CreateSmokePipeline adds them: the table, the uniform, the
+        // slot's tonemapping buffer, the smoke set-3 hole, the smoke framebuffers set, the slot's
+        // TLAS and the direct pass's light set.
+        state.addBindingSet(textureTable->GetTable());
+        state.addBindingSet(target.uniformSet);
+        state.addBindingSet(target.tonemappingSet);
+        state.addBindingSet(smokeHoleSet);
+        state.addBindingSet(target.smokeFramebuffersSet);
+        state.addBindingSet(target.smokeTlasSet);
+        state.addBindingSet(pSmokeLightSet);
+        state.addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(vertexBuffer).setSlot(0).setOffset(0));
+        state.setIndexBuffer(nvrhi::IndexBufferBinding()
+                                 .setBuffer(indexBuffer)
+                                 .setFormat(nvrhi::Format::R32_UINT)
+                                 .setOffset(0));
+
+        pCommandList->setGraphicsState(state);
+
+        // After the state: changing the state invalidates push constants (nvrhi.h:3430-3432), and
+        // the block is the full 120-byte legacy RasterizedPushConst rebuilt per draw, exactly as
+        // Rasterizer::Draw does for the smoke entries (Rasterizer.cpp:399-409).
+        const SmokePushConstants push(info, defaultViewProj);
+        pCommandList->setPushConstants(&push, sizeof(push));
+
+        nvrhi::DrawArguments args;
+        if (info.indexCount > 0)
+        {
+            args.vertexCount = info.indexCount;
+            args.startIndexLocation = info.firstIndex;
+            args.startVertexLocation = info.firstVertex;
+            pCommandList->drawIndexed(args);
+        }
+        else
+        {
+            args.vertexCount = info.vertexCount;
+            args.startVertexLocation = info.firstVertex;
+            pCommandList->draw(args);
+        }
+    }
+}
+
 void RhiRasterOverlayPass::ReleaseTargets()
 {
     for (Target &target : targets)
@@ -1133,6 +1689,14 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
         {
             frameContext->Retire(target.framebuffersSet);
         }
+        if (target.smokeFramebuffersSet != nullptr)
+        {
+            frameContext->Retire(target.smokeFramebuffersSet);
+        }
+        if (target.smokeTlasSet != nullptr)
+        {
+            frameContext->Retire(target.smokeTlasSet);
+        }
         if (target.framebuffer != nullptr)
         {
             frameContext->Retire(target.framebuffer);
@@ -1161,6 +1725,18 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
         {
             frameContext->Retire(target.storageTexture);
         }
+        if (target.smokeDepthWorldTexture != nullptr)
+        {
+            frameContext->Retire(target.smokeDepthWorldTexture);
+        }
+        if (target.smokePingLfShTexture != nullptr)
+        {
+            frameContext->Retire(target.smokePingLfShTexture);
+        }
+        if (target.smokePingLfCocgTexture != nullptr)
+        {
+            frameContext->Retire(target.smokePingLfCocgTexture);
+        }
     }
 
     target.framebuffer = nullptr;
@@ -1170,16 +1746,25 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
     target.screenEmissionTexture = nullptr;
     target.depthNdcTexture = nullptr;
     target.storageTexture = nullptr;
+    target.smokeDepthWorldTexture = nullptr;
+    target.smokePingLfShTexture = nullptr;
+    target.smokePingLfCocgTexture = nullptr;
     target.uniformSet = nullptr;
     target.tonemappingSet = nullptr;
     target.depthCopySet = nullptr;
     target.framebuffersSet = nullptr;
+    target.smokeFramebuffersSet = nullptr;
+    target.smokeTlasSet = nullptr;
+    target.smokeTopLevel = nullptr;
     target.uniformBuffer = nullptr;
     target.tonemappingBuffer = nullptr;
     target.finalImage = VK_NULL_HANDLE;
     target.screenEmissionImage = VK_NULL_HANDLE;
     target.depthNdcImage = VK_NULL_HANDLE;
     target.storageImage = VK_NULL_HANDLE;
+    target.smokeDepthWorldImage = VK_NULL_HANDLE;
+    target.smokePingLfShImage = VK_NULL_HANDLE;
+    target.smokePingLfCocgImage = VK_NULL_HANDLE;
     target.width = 0;
     target.height = 0;
     target.valid = false;
@@ -1187,6 +1772,8 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
 
 void RhiRasterOverlayPass::ReleasePipelineCache()
 {
+    ReleaseSmokePipelineCache();
+
     if (frameContext != nullptr)
     {
         for (auto &entry : worldPipelines)
@@ -1196,6 +1783,19 @@ void RhiRasterOverlayPass::ReleasePipelineCache()
     }
 
     worldPipelines.clear();
+}
+
+void RhiRasterOverlayPass::ReleaseSmokePipelineCache()
+{
+    if (frameContext != nullptr)
+    {
+        for (auto &entry : smokePipelines)
+        {
+            frameContext->Retire(entry.second);
+        }
+    }
+
+    smokePipelines.clear();
 }
 
 nvrhi::IGraphicsPipeline *RhiRasterOverlayPass::GetWorldPipeline(uint32_t stateFlags, bool applyVertexColorGamma)
@@ -1309,6 +1909,110 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateWorldPipeline(uint32_t
     if (pipeline == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a raster overlay world pipeline");
+    }
+
+    return pipeline;
+}
+
+nvrhi::IGraphicsPipeline *RhiRasterOverlayPass::GetSmokePipeline(uint32_t stateFlags)
+{
+    assert(pipelineColor0Format != nvrhi::Format::UNKNOWN);
+    assert(pipelineColor1Format != nvrhi::Format::UNKNOWN);
+
+    const auto found = smokePipelines.find(stateFlags);
+    if (found != smokePipelines.end())
+    {
+        return found->second;
+    }
+
+    // The same cache argument as the world pipelines: NVRHI deduplicates nothing, so this map is
+    // the cache (RasterizerPipelines.cpp:278-296). The smoke shaders declare no specialization
+    // constant, so the key is the state flags alone - there is no gamma bit to join them.
+    nvrhi::GraphicsPipelineHandle pipeline = CreateSmokePipeline(stateFlags);
+    if (pipeline == nullptr)
+    {
+        return nullptr;
+    }
+
+    const auto inserted = smokePipelines.emplace(stateFlags, std::move(pipeline));
+    return inserted.first->second;
+}
+
+nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateSmokePipeline(uint32_t stateFlags)
+{
+    // The alpha-test bit of the key has no effect here: the legacy pair has no specialization
+    // constant for it and the fragment does not test alpha, so a hypothetical smoke entry that
+    // asked for the bit would land in the same shader as one that did not - the same way the legacy
+    // pipeline's unused SpecId 0 entry is ignored by Vulkan.
+    const bool blendEnable = (stateFlags & PIPELINE_STATE_MASK_BLEND_ENABLE) != 0;
+    const bool depthTest   = (stateFlags & PIPELINE_STATE_MASK_DEPTH_TEST_ENABLE) != 0;
+    const bool depthWrite  = (stateFlags & PIPELINE_STATE_MASK_DEPTH_WRITE_ENABLE) != 0;
+    const bool isLines     = (stateFlags & PIPELINE_STATE_MASK_IS_LINES) != 0;
+
+    if (smokeVertexShader == nullptr || smokePixelShader == nullptr || smokeInputLayout == nullptr ||
+        smokePushConstantLayout == nullptr || smokeFramebuffersLayout == nullptr ||
+        smokeTlasLayout == nullptr || smokeLightLayout == nullptr)
+    {
+        return nullptr;
+    }
+
+    // The legacy smoke pipelines map SpecId 0 for both stages although neither RsSmoke blob
+    // declares one (RasterPass.cpp:79-88; measured with spirv-dis over vkpt/Build/RsSmoke.*.spv):
+    // the values Vulkan ignores are applyVertexColorGamma = false and alphaTest = false, and the
+    // RHI pipeline simply creates no specialization at all, which is the same shader-visible
+    // result.
+    nvrhi::BlendState::RenderTarget blendTarget;
+    blendTarget.setBlendEnable(blendEnable)
+               .setSrcBlend(DecodeBlendFactor(stateFlags, PS_SRC_OFFSET))
+               .setDestBlend(DecodeBlendFactor(stateFlags, PS_DST_OFFSET))
+               .setBlendOp(nvrhi::BlendOp::Add)
+               .setSrcBlendAlpha(DecodeBlendFactor(stateFlags, PS_SRC_OFFSET))
+               .setDestBlendAlpha(DecodeBlendFactor(stateFlags, PS_DST_OFFSET))
+               .setBlendOpAlpha(nvrhi::BlendOp::Add)
+               .setColorWriteMask(nvrhi::ColorMask::All);
+
+    nvrhi::GraphicsPipelineDesc desc;
+    desc.setVertexShader(smokeVertexShader);
+    desc.setPixelShader(smokePixelShader);
+    desc.inputLayout = smokeInputLayout;
+    desc.primType = isLines ? nvrhi::PrimitiveType::LineList : nvrhi::PrimitiveType::TriangleList;
+    // The same legacy rasterization state the world pipeline declares (RasterizerPipelines.cpp:
+    // 382-390), for the same reasons.
+    desc.renderState.rasterState.setFillSolid();
+    desc.renderState.rasterState.setCullMode(nvrhi::RasterCullMode::None);
+    desc.renderState.rasterState.setFrontCounterClockwise(true);
+    desc.renderState.rasterState.setDepthClipEnable(true);
+    desc.renderState.depthStencilState.setDepthFunc(nvrhi::ComparisonFunc::LessOrEqual);
+    desc.renderState.depthStencilState.setDepthTestEnable(depthTest || depthWrite);
+    desc.renderState.depthStencilState.setDepthWriteEnable(depthWrite);
+    desc.renderState.depthStencilState.setStencilEnable(false);
+    desc.renderState.blendState.setRenderTarget(0, blendTarget);
+    desc.renderState.blendState.setRenderTarget(1, blendTarget);
+
+    // The seven sets the two stages declare, in the engine's order: the table, the world uniform,
+    // the world tonemapping, the smoke set-3 hole (the only push-constant item of this pipeline),
+    // the smoke framebuffers set, the TLAS and the direct pass's light layout. The light layout is
+    // borrowed and kept alive by the smokeLightLayout handle.
+    desc.addBindingLayout(textureTable->GetLayout());
+    desc.addBindingLayout(worldUniformLayout);
+    desc.addBindingLayout(worldTonemappingLayout);
+    desc.addBindingLayout(smokePushConstantLayout);
+    desc.addBindingLayout(smokeFramebuffersLayout);
+    desc.addBindingLayout(smokeTlasLayout);
+    desc.addBindingLayout(smokeLightLayout);
+
+    nvrhi::FramebufferInfo framebufferInfo;
+    framebufferInfo.addColorFormat(pipelineColor0Format);
+    framebufferInfo.addColorFormat(pipelineColor1Format);
+    framebufferInfo.setDepthFormat(DEPTH_FORMAT);
+    framebufferInfo.setSampleCount(1);
+
+    nvrhi::GraphicsPipelineHandle pipeline =
+        rhi::createGraphicsPipeline(device, desc, framebufferInfo, "RhiRasterOverlay smoke pipeline");
+
+    if (pipeline == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create a raster overlay smoke pipeline");
     }
 
     return pipeline;

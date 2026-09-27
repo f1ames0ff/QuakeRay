@@ -1266,6 +1266,21 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     const std::vector<RasterizedDataCollector::DrawInfo> &worldDraws =
         rasterizer->GetDataCollector().GetRasterDrawInfos();
 
+    // The smoke half's list (A5.5): the DEFAULT stream carries the smoke entries too - R_DrawSmoke
+    // uploads all live puffs as one batch with the engine's SMOKE state bit (r_smoke.c:358-376;
+    // vkpt.h:514) - and the collector keeps no separate smoke stream, so the host splits the list
+    // the way the legacy pipeline switch does (Rasterizer::BindPipelineIfNew, Rasterizer.cpp:472-476).
+    // The overlay draws these entries with the ported RsSmoke pair in the same compose window and
+    // skips them in its world loop, so each entry is recorded exactly once.
+    smokeDraws.clear();
+    for (const RasterizedDataCollector::DrawInfo &info : worldDraws)
+    {
+        if ((info.pipelineState & RG_RASTERIZED_GEOMETRY_STATE_SMOKE) != 0)
+        {
+            smokeDraws.push_back(info);
+        }
+    }
+
     // The 2D UI's draw list (A5.1): the same collector stream the legacy Rasterizer::DrawToSwapchain
     // consumes, read here for the RHI UI pass.
     const std::vector<RasterizedDataCollector::DrawInfo> &swapchainDraws =
@@ -1321,6 +1336,8 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     memcpy(sky.skyFaceViewProj, globalUniform->viewProjCubemap, sizeof(sky.skyFaceViewProj));
     sky.worldDraws = worldDraws.data();
     sky.worldDrawCount = static_cast<uint32_t>(worldDraws.size());
+    sky.smokeDraws = smokeDraws.data();
+    sky.smokeDrawCount = static_cast<uint32_t>(smokeDraws.size());
 
     // The 2D UI (A5.1): the draw list and the collector's per-slot staging geometry. The staging
     // handles are the frame's own - the device copy the engine records on the legacy command buffer

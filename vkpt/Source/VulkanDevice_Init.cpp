@@ -553,6 +553,17 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                     }
                 }
 
+                // The set-6 light layout of the direct pass is what the raster overlay's smoke
+                // pipelines declare at their own position 6, and the direct pass is created after
+                // the overlay, so it is installed here; the per-slot light set itself is passed by
+                // the skeleton per frame (RhiRasterOverlayPass::SetSmokeLightLayout). Without it
+                // (or without the direct pass) the overlay keeps its smoke half disabled and the
+                // world half unchanged.
+                if (rhiRasterOverlayPass != nullptr && rhiRtDirectPass != nullptr)
+                {
+                    rhiRasterOverlayPass->SetSmokeLightLayout(rhiRtDirectPass->GetLightLayout());
+                }
+
                 // The shadow-map pass of A5.2 (RHI/RhiShadowMapPass.h): the depth-only raster pass
                 // that feeds the god-rays compute. It needs only the device and the shader folder; a
                 // failure leaves the pointer null and the skeleton then skips both the shadow render

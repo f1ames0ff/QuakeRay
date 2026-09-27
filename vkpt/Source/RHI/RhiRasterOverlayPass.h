@@ -154,6 +154,61 @@ class RhiTextureTable;
 // compose itself and any god-rays work. It also cannot be used for the raster mode's world: that is
 // `RhiSkyPass::RenderWorld` into ALBEDO, with the sky's own depth.
 //
+// The smoke half (master's shader smoke): the same Render also draws the frame's smoke draw list -
+// the DEFAULT entries whose pipeline state carries RG_RASTERIZED_GEOMETRY_STATE_SMOKE (r_smoke.c:
+// 358-376 uploads all puffs as one batch, and the collector keeps no separate smoke stream, so the
+// host filters the DEFAULT list in VulkanDevice.cpp) - with the pair the legacy smoke pipelines
+// load: "VertSmoke" = RsSmoke.vert.spv and "FragSmoke" = RsSmoke.frag.spv (RasterPass.cpp:79-88;
+// ShaderManager.cpp:61-62), from the same folder. What the smoke pipeline reproduces from the
+// legacy pair:
+//  - the six-attribute vertex layout of RasterizedDataCollector::GetSmokeVertexLayout
+//    (RasterizedDataCollector.cpp:56-89), in the collector's own struct: position at 0, the packed
+//    color at 56, the corner at 32, the puff parameters (normal) at 16, the look pair
+//    (texCoordLayer1) at 40 and the cluster (R32_UINT) at 60, over the same 80-byte stride the
+//    world layout uses;
+//  - the legacy RasterizedPushConst in full, 120 bytes: the view-projection, the color and the two
+//    texture indices at 0/64/80/84 (Rasterizer.cpp:33-65) plus smokeNoise at 88 and smokeLook at
+//    104, the two blocks RsSmoke.frag reads (RsSmoke.frag:24-28). The legacy host writes them once
+//    per draw from the DrawInfo the collector filled (RasterizedDataCollector.cpp:243-244);
+//  - the state of the DrawInfo, decoded exactly as RasterizerPipelines::CreatePipeline does for the
+//    smoke object (blend on with one / one-minus-src-alpha, depth test on, no depth write, no
+//    alpha test, triangle list; RasterPass.cpp:79-88 and RasterizerPipelines.cpp:305-475);
+//  - no specialization constants: RsSmoke.vert and RsSmoke.frag declare none (measured with
+//    spirv-dis over both blobs), while the legacy pipeline still maps SpecId 0 for both stages -
+//    values Vulkan ignores - so the smoke pipeline has nothing to bake and its cache key is the
+//    state flags alone (unlike the world pipeline, which bakes applyVertexColorGamma);
+//  - the seven sets the two stages declare, in the engine's order:
+//      0 textures    - the shared table, the same layout and set the world draw binds (RsSmoke.vert
+//                      statically uses the `globalTextures` pair through its light helpers);
+//      1 uniform     - the world draw's uniform layout and set;
+//      2 tonemapping - the world draw's tonemapping layout and set (RsSmoke.frag declares set 2 but
+//                      does not read it statically; the engine's set 2 occupies the position, and
+//                      the unfilled-item rule of the validation device is satisfied by binding it);
+//      3 push hole   - the same empty-layout idea as the world pass, with the 120-byte push range;
+//      4 framebuffers- the six items RsSmoke.frag statically uses, the partial-set pattern the world
+//                      pass proves: DEPTH_WORLD (9) and the two Q2 a-trous LF ping images
+//                      (101 SH / 103 COCG) as Texture_SRV slots 9/101/103 (raw 124 + index) and
+//                      their samplers as Sampler slots 9/101/103 (raw 248 + index), the offsets the
+//                      engine's set declares (measured over vkpt/Build/RsSmoke.frag.spv);
+//      5 TLAS        - the slot's rt::IAccelStruct from RhiAccelStructs::GetTopLevel as a raw
+//                      binding 0 (RsSmoke.vert's shadow ray queries, SmokeLight.h:6-31);
+//      6 lights      - the direct pass's own set-6 layout and per-slot set (RhiRtDirectPass::
+//                      GetLightLayout / GetLightSet, the same borrowed pair the indirect pass
+//                      documents): RsSmoke.vert reads lightSources and the q2LightList* buffers
+//                      through SmokeLight.h, and the light copies stay the direct pass's
+//                      single-consumer work. The layout arrives once through SetSmokeLightLayout
+//                      (the direct pass is created after this one, VulkanDevice_Init.cpp) and the
+//                      set is taken per frame by Render.
+// The smoke draws are recorded after the world draws of the same window (the two halves share the
+// pass-owned depth, the FINAL/SCREEN_EMISSION targets and the default view-projection); the legacy
+// alternates the two pipelines inside one Rasterizer::Draw loop in the collector's own order
+// (Rasterizer.cpp:394-420, :469-479), which in Quake is the order the parallel upload tasks
+// appended in and is not a fixed world-then-smoke order (gl_rmain.c:1041-1085 submits the world,
+// the sky/water, the entities, the alpha entities, the particles - R_DrawSmoke included - and the
+// view model as one dependency graph). The window itself is unchanged: both halves run before
+// CmPrepareFinal and the 2D UI, so smoke stays under the HUD exactly as the legacy frame has it
+// (VulkanDevice.cpp:1068 - the raster overlay - then :1084 - Finalize - then :1200 - the UI).
+//
 // A5.0 note: the push-constant struct, the state-key mirror, the pipeline cache and the small
 // layout helpers below are a deliberate third copy of RhiSkyPass's raster-draw machinery - like
 // RhiUiPass, this module stays self-contained instead of refactoring the sky pass. A5.0's shared
@@ -161,9 +216,11 @@ class RhiTextureTable;
 //
 // The pass is a no-op until Create succeeded and while an input is missing (no framebuffers, no
 // engine image, no geometry buffers, no camera, no uniform or tonemapping buffer); every early
-// return is quiet after the first warning. It is not thread-safe: Render uses the per-slot
-// target of the frameIndex it is given, which is the engine's single-threaded per-slot frame model
-// (RhiFrameContext).
+// return is quiet after the first warning. The smoke half is further gated on its own inputs: the
+// two smoke blobs, the direct pass's light layout and set, the slot's TLAS and the three engine
+// images its set 4 binds; a missing one skips the smoke list alone and leaves the world half
+// exactly as it was. It is not thread-safe: Render uses the per-slot target of the frameIndex it
+// is given, which is the engine's single-threaded per-slot frame model (RhiFrameContext).
 class RhiRasterOverlayPass final
 {
 public:
@@ -220,10 +277,21 @@ public:
     // skeleton wires the UI pass.
     void SetGeometryBuffers(nvrhi::IBuffer *pVertexBuffer, nvrhi::IBuffer *pIndexBuffer);
 
+    // Installs the direct pass's set-6 light layout (RhiRtDirectPass::GetLightLayout) for the smoke
+    // pipelines. The direct pass is created after this one in VulkanDevice_Init, so the layout
+    // cannot be a Create argument; the overlay keeps the handle, which also keeps the layout alive
+    // through the engine's teardown order (VulkanDevice_Init.cpp resets the direct pass before this
+    // pass, while this pass still holds pipelines built over that layout). A re-install with a
+    // different layout drops the cached smoke pipelines; a null one disables the smoke half, as
+    // does never calling this. Returns false without changing anything when the pass is not
+    // created.
+    bool SetSmokeLightLayout(nvrhi::BindingLayoutHandle pLightLayout);
+
     // One call per frame, on the frame context's open command list of 'frameIndex', inside the
     // compose's window (see the class comment). It (re)resolves the engine images, (re)wraps them
     // and (re)builds the per-slot depth, framebuffers and sets when an image or the size changed,
-    // announces the states, records the depth copy and the world draws, and restores the states.
+    // announces the states, records the depth copy, the world draws and the smoke draws, and
+    // restores the states.
     //
     // Argument sources, all of them the host's:
     //  - 'pCommandList': the frame context's open list of 'frameIndex'
@@ -257,6 +325,22 @@ public:
     //    (RasterPass.cpp:67); it is baked into the pipeline's vertex spec constant, so it joins the
     //    pipeline key.
     //
+    // Argument sources of the smoke half, also the host's:
+    //  - 'pSmokeDraws'/'smokeDrawCount': the frame's smoke list, `SkyFrameInputs::smokeDraws` - the
+    //    DEFAULT entries the host filtered by RG_RASTERIZED_GEOMETRY_STATE_SMOKE (VulkanDevice.cpp;
+    //    the collector keeps no separate smoke stream). They are drawn with the smoke pipelines and
+    //    their 120-byte push blocks, after the world list, and only when every smoke input below is
+    //    present. A null/zero list, no smoke blobs, no light layout/set or no TLAS skips the smoke
+    //    half alone; the world loop then keeps the entries and draws them as it did before this
+    //    half existed (a zero-area draw - the six vertices of a puff all carry the puff origin);
+    //  - 'pSmokeTopLevel': the slot's rt::IAccelStruct (`RhiAccelStructs::GetTopLevel`, the same
+    //    object the traced passes bind), wrapped into the smoke pipeline's set 5. The set is rebuilt
+    //    when the object changes; a null one skips the smoke half;
+    //  - 'pSmokeLightSet': this frame's set 6 of the direct pass (`RhiRtDirectPass::GetLightSet`,
+    //    the layout `SetSmokeLightLayout` installed). Null - the direct pass did not render this
+    //    frame, or the overlay never got a layout - skips the smoke half. The set is borrowed and
+    //    has to stay valid until the submission completes.
+    //
     // The host records the call only while the frame wants rasterization (`!drawInfo.
     // disableRasterization`, VulkanDevice.cpp:1068); false in every shipped configuration.
     void Render(nvrhi::ICommandList *pCommandList,
@@ -270,7 +354,11 @@ public:
                 uint32_t drawCount,
                 const float *pView,
                 const float *pProj,
-                bool applyVertexColorGamma);
+                bool applyVertexColorGamma,
+                const RasterizedDataCollector::DrawInfo *pSmokeDraws,
+                uint32_t smokeDrawCount,
+                nvrhi::rt::IAccelStruct *pSmokeTopLevel,
+                nvrhi::IBindingSet *pSmokeLightSet);
 
     // Drops the per-slot wraps, the pass-owned depth images, the framebuffers and the sets. The
     // caller has to call it before the engine destroys its framebuffer images (the
@@ -321,38 +409,71 @@ private:
         nvrhi::IBuffer *tonemappingBuffer = nullptr;
         nvrhi::BindingSetHandle tonemappingSet;
 
+        // -- the smoke half (see the class comment) --
+        //
+        // The engine images the smoke shader's set 4 binds, wrapped per slot like the four core
+        // ones: DEPTH_WORLD (9, the depth fade) and the two Q2 a-trous LF ping images (101 SH /
+        // 103 COCG, the ambient term). A missing one leaves smokeFramebuffersSet null and the smoke
+        // half skipped for the frame; a change of one rebuilds the slot like a core image change.
+        VkImage smokeDepthWorldImage = VK_NULL_HANDLE;
+        VkImage smokePingLfShImage = VK_NULL_HANDLE;
+        VkImage smokePingLfCocgImage = VK_NULL_HANDLE;
+        nvrhi::TextureHandle smokeDepthWorldTexture;
+        nvrhi::TextureHandle smokePingLfShTexture;
+        nvrhi::TextureHandle smokePingLfCocgTexture;
+
+        // Set 4 of the smoke pipeline (the six sampled items over those three images) and set 5
+        // (the slot's TLAS over the shared rt::IAccelStruct object; rebuilt when it changes).
+        nvrhi::BindingSetHandle smokeFramebuffersSet;
+        nvrhi::rt::IAccelStruct *smokeTopLevel = nullptr;
+        nvrhi::BindingSetHandle smokeTlasSet;
+
         // False until every wrap, the depth, both framebuffers and the slot's sets exist.
         bool valid = false;
     };
 
     bool LoadShader(const char *pFileName, nvrhi::ShaderType type, nvrhi::ShaderHandle &result);
 
-    // Resolves the four engine images, rebuilds the slot's wraps, depth, framebuffers and sets when
-    // one of them or the size changed, announces the states and refreshes the slot's uniform and
-    // tonemapping sets. Returns false when the call must be skipped.
+    // Resolves the engine images, rebuilds the slot's wraps, depth, framebuffers and sets when one
+    // of them or the size changed, announces the states and refreshes the slot's uniform and
+    // tonemapping sets. The four core images are required; the three the smoke set 4 binds are
+    // optional and only decide whether the smoke half can run. 'pSmokeTopLevel' is the slot's TLAS
+    // object, whose set 5 is (re)built here. Returns false when the call must be skipped.
     bool PrepareTarget(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, Target &target,
                        const Framebuffers &framebuffers, uint32_t width, uint32_t height,
-                       nvrhi::IBuffer *pUniformBuffer);
+                       nvrhi::IBuffer *pUniformBuffer, nvrhi::rt::IAccelStruct *pSmokeTopLevel);
     bool CreateTargetObjects(Target &target,
                              const std::tuple<VkImage, VkImageView, VkFormat> &finalImage,
                              const std::tuple<VkImage, VkImageView, VkFormat> &screenEmission,
                              const std::tuple<VkImage, VkImageView, VkFormat> &depthNdc,
                              const std::tuple<VkImage, VkImageView, VkFormat> &storageImage,
+                             const std::tuple<VkImage, VkImageView, VkFormat> &smokeDepthWorld,
+                             const std::tuple<VkImage, VkImageView, VkFormat> &smokePingLfSh,
+                             const std::tuple<VkImage, VkImageView, VkFormat> &smokePingLfCocg,
                              uint32_t frameIndex, uint32_t width, uint32_t height);
     bool UpdateBufferSets(Target &target, uint32_t frameIndex, nvrhi::IBuffer *pUniformBuffer);
+    bool PrepareSmokeTlasSet(Target &target, nvrhi::rt::IAccelStruct *pSmokeTopLevel);
 
     void RecordDepthCopy(nvrhi::ICommandList *pCommandList, const Target &target,
                          uint32_t width, uint32_t height);
     void RecordWorldDraws(nvrhi::ICommandList *pCommandList, const Target &target,
                           uint32_t width, uint32_t height, const float *defaultViewProj,
                           const RasterizedDataCollector::DrawInfo *pDraws, uint32_t drawCount,
-                          bool applyVertexColorGamma);
+                          bool applyVertexColorGamma, bool skipSmokeEntries);
+    void RecordSmokeDraws(nvrhi::ICommandList *pCommandList, const Target &target,
+                          uint32_t width, uint32_t height, const float *defaultViewProj,
+                          const RasterizedDataCollector::DrawInfo *pDraws, uint32_t drawCount,
+                          nvrhi::IBindingSet *pSmokeLightSet);
 
     void ReleaseTarget(Target &target);
     void ReleasePipelineCache();
+    void ReleaseSmokePipelineCache();
 
     nvrhi::IGraphicsPipeline *GetWorldPipeline(uint32_t stateFlags, bool applyVertexColorGamma);
     nvrhi::GraphicsPipelineHandle CreateWorldPipeline(uint32_t stateFlags, bool applyVertexColorGamma);
+
+    nvrhi::IGraphicsPipeline *GetSmokePipeline(uint32_t stateFlags);
+    nvrhi::GraphicsPipelineHandle CreateSmokePipeline(uint32_t stateFlags);
 
     nvrhi::IDevice *device = nullptr;
     PrintFunction print;
@@ -387,6 +508,42 @@ private:
 
     // The depth-copy pipeline, static: no per-draw state, one full-screen quad per frame.
     nvrhi::GraphicsPipelineHandle depthCopyPipeline;
+
+    // -- the smoke half (see the class comment) --
+
+    // The two blobs the legacy smoke pipelines load (RasterPass.cpp:79-88): "VertSmoke" =
+    // RsSmoke.vert.spv and "FragSmoke" = RsSmoke.frag.spv, and the six-attribute input layout of
+    // RasterizedDataCollector::GetSmokeVertexLayout that goes with them. The pair is optional: a
+    // missing blob disables the smoke half with one warning instead of failing Create, so a tree
+    // whose shader build does not carry the pair yet cannot take the world overlay down with it.
+    nvrhi::ShaderHandle smokeVertexShader;
+    nvrhi::ShaderHandle smokePixelShader;
+    nvrhi::InputLayoutHandle smokeInputLayout;
+
+    // The smoke pipeline's layouts 3..5, in the shader's set order: the set-3 hole with the
+    // 120-byte push range, the partial framebuffers layout of the six sampled items the smoke
+    // fragment statically uses (SRV slots 9/101/103 at raw 124 + index, Sampler slots 9/101/103 at
+    // raw 248 + index) and the TLAS at raw binding 0. Sets 0..2 are the world pipeline's layouts.
+    nvrhi::BindingLayoutHandle smokePushConstantLayout;
+    nvrhi::BindingLayoutHandle smokeFramebuffersLayout;
+    nvrhi::BindingLayoutHandle smokeTlasLayout;
+
+    // The real, empty set of the smoke set-3 hole (the worldHoleSet argument) and the sampler the
+    // smoke set 4 binds for the three images: the engine's own framebuffer samplers are VkSampler
+    // objects the RHI cannot wrap (RhiTextureSource.h), while the shader's texelFetch reads ignore
+    // the filter mode, so the bridge's linear/clamp engine-texture sampler serves them.
+    nvrhi::BindingSetHandle smokeHoleSet;
+    nvrhi::SamplerHandle smokeSampler;
+
+    // The direct pass's set-6 light layout, installed by SetSmokeLightLayout. The handle - not a raw
+    // pointer - also keeps the borrowed layout alive through the engine's teardown order (the
+    // direct pass is destroyed before this pass, VulkanDevice_Init.cpp). A change drops the cached
+    // smoke pipelines, which reference it.
+    nvrhi::BindingLayoutHandle smokeLightLayout;
+
+    // One smoke pipeline per state key, like worldPipelines but with no vertex-gamma bit: the smoke
+    // shaders declare no specialization constant. Built lazily against smokeLightLayout.
+    std::unordered_map<uint32_t, nvrhi::GraphicsPipelineHandle> smokePipelines;
 
     // The host's table and frame model; not owned, both outlive this object. The table provides the
     // bindless set and the first-use tracking of the engine textures it wrapped; the frame context
@@ -423,6 +580,9 @@ private:
     bool warnedMissingUniform = false;
     bool warnedMissingTonemapping = false;
     bool warnedFailedPipeline = false;
+    bool warnedMissingSmokeTargets = false;
+    bool warnedMissingSmokeInputs = false;
+    bool warnedFailedSmokePipeline = false;
 
     bool created = false;
 };
