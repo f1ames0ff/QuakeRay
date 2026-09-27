@@ -1859,7 +1859,12 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const RgFloa
 
 static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 {
-	if (!RT_AllowTexturedAreaLights ())
+	/* A static world light is collected regardless of rt_truelight: the cvar gates only its
+	   upload and registration (RT_UploadAllWorldModelLights), so a map loaded while the lights
+	   are switched off still collects its face list and a later rt_truelight 1 has something to
+	   upload without a level reload. Moving emitters follow the cvar immediately. */
+	const qboolean is_static_geom = RT_IsStaticWorldSurface (s);
+	if (!is_static_geom && !RT_AllowTexturedAreaLights ())
 		return;
 
 	gltexture_t *light_tex = s->light_tex ? s->light_tex : s->diffuse_tex;
@@ -1889,8 +1894,6 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		}
 		return;
 	}
-
-	const qboolean is_static_geom = RT_IsStaticWorldSurface (s);
 
 	/* Whether the light reads a mask shapes it (cut into pieces of the face, or a square that
 	   carries no mask), so it is asked of the canonical frame and not of the animation. */
