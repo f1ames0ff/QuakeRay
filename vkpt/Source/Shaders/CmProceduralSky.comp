@@ -180,16 +180,14 @@ void main()
     vec4 cloud = vec4(0.0, 0.0, 0.0, 1.0);
     if (cloudsOn && flatClouds <= 0.5)
     {
-        // The layer is read through a small Gaussian. The texels of the map hold the
-        // marches of their own columns and the quarters a frame does not march are
-        // copies read between texels (CmSkyClouds.comp), so the light of the
-        // layer carries a structure the size of a texel that a march itself does not
-        // have -- the pixelation of a cloud's edge. Nine reads over a 3 by 3 grid,
-        // weighted 1-2-1 on each axis, are the smallest kernel that is smooth in both;
-        // four reads at the corners of a square, which is what stood here before, are
-        // four lobes and leave a dither of their own. A filter belongs here rather
-        // than at the copies: whatever a copy blurs is paid again by every copy the
-        // texel takes before it is marched, while this is paid once for the sky.
+        // The layer is read through a small Gaussian. A texel of the map holds the march
+        // of its own column, and the filter is what takes the map's own grid out of the
+        // picture: a cloud's edge carries the pixelation of a texel that the march
+        // itself does not have. Nine reads over a 3 by 3 grid, weighted 1-2-1 on each
+        // axis, are the smallest kernel that is smooth in both; four reads at the
+        // corners of a square, which is what stood here before, are four lobes and leave
+        // a dither of their own. The filter belongs here, where it is paid once for the
+        // whole sky, and not in the pass that fills the map.
         vec2 texel = 1.0 / vec2(textureSize(cloudCubemap, 0));
         vec2 spread = texel * CLOUD_READ_SPREAD;
         vec4 centre = texture(cloudCubemap, dir);
@@ -231,17 +229,37 @@ void main()
         : 1.0;
     float discTransmittance = mix(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
 
+    // The share of the layer's own motion a direction carries, which is the alpha of
+    // the cubemap this pass writes and what the frame's motion vectors read
+    // (RaygenPrimary.inl). The layer drifts and the sky it hangs in does not, and of
+    // everything the sky shows only the sun's disc has an edge that stands still at the
+    // world's distances -- a drift carried to the disc drags it along the layer's
+    // history, which is what the eye finds it by, while the sky itself is a smooth
+    // field and an error of a pixel over a smooth field is no error at all. So the
+    // share is everything except what the disc stands for: `disc * discTransmittance`
+    // is how much of the disc shows (a cloud hides it by the fourth power of what it
+    // lets through, SUN_DISC_CLOUD_HIDE), and it is only where that is a real part of
+    // the pixel -- where the disc's edge is the thing the pixel is rather than a glow a
+    // cloud leaves through -- that the layer's motion is given up for the sky's.
+    // Deliberately not the layer's own opacity: a cloud the eye can see through still
+    // moves its haze across the frame, and a vector taken by how much light the layer
+    // holds back is a vector taken away from the clouds the eye watches.
+    float discVisible = clamp(disc * discTransmittance, 0.0, 1.0);
+    float cloudShare = 1.0 - smoothstep(0.02, 0.3, discVisible);
+
     // Every path that reads this cubemap -- the frame itself, the ambient light
     // and the reflections -- carries the colour the sky is set to, with the sun's
     // disc and the clouds of the layer in front of it. The disc is occluded harder
-    // than the sky is; the clouds themselves are not touched by that.
+    // than the sky is; the clouds themselves are not touched by that. The alpha is the
+    // share above, which the frame's motion vectors read and nothing else does.
     vec3 sky = skyColor;
     vec3 visible = sky * cloud.a + params.sunDiscColor.xyz * sunIntensity * disc * discTransmittance + cloud.rgb;
-    imageStore(cubemapOut, ipos, vec4(visible * multiplier, 1.0));
+    imageStore(cubemapOut, ipos, vec4(visible * multiplier, cloudShare));
 
     // The envCubemap is the sky as an ambient probe, so it holds no sun disc (a
     // light of its own, not a piece of the sky) but does hold the clouds, which
-    // are what the sky is made of.
+    // are what the sky is made of. It carries no motion-vector share: nothing
+    // reprojects it from frame to frame.
     vec3 env = sky * cloud.a + cloud.rgb;
     imageStore(envCubemapOut, ipos, vec4(env * multiplier, 1.0));
 }

@@ -97,6 +97,10 @@ vec2 getMotionForInfinitePoint(const vec3 rayDir)
 // The flat clouds of the lowest level are the other way around: their mask drifts in the
 // dome of directions rather than in the world's plane (cloudMask, CmProceduralSky.comp),
 // and the host says which of the two is drawn by leaving the layer's height at zero.
+//
+// What is returned is the layer's own motion and not the sky's: the caller takes it
+// wherever the sky does not hold the sun's disc, whose edge is the one thing up there
+// that stands at the world's distances (storeSky below, CmProceduralSky.comp).
 vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
 {
     // Three numbers of the layer ride in the tail cells of the cubemap transform, where
@@ -218,8 +222,14 @@ void storeSky(
         storeQ2GBuffer(pix, albedo, 0.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
     }
 
+    // What the layer moves by is not what the whole sky moves by, but the sky holds only
+    // one thing that stands still and has an edge to drag: the sun's disc. The share of
+    // a direction that is *not* the disc comes in the alpha of the cubemap the sky pass
+    // writes -- 0 where the disc stands, 1 everywhere else (CmProceduralSky.comp) -- and
+    // that much of the layer's vector is taken. The sky behind the layer is a smooth
+    // field, and a drift carried over a smooth field is no drift at all.
     vec2 m = getMotionForInfinitePoint(rayDir);
-    m = getMotionForCloudLayer(rayDir, m);
+    m = mix(m, getMotionForCloudLayer(rayDir, m), texture(renderCubemap, rayDir).a);
 
     imageStoreNormal(                       pix, vec3(0.0));
     imageStoreNormalGeometry(               pix, vec3(0.0));
