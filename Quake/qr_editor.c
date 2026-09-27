@@ -2784,6 +2784,110 @@ static void QRE_LightGlobalTab (void)
 	QR_GUI_LabelDim ("these live in the config: Apply and Cancel do not own them");
 }
 
+// ---------------------------------------------------------------------------
+// The Custom tab: the lights this level does not have, authored here and stored
+// in <gamedir>/qray/lights.yaml (one section per level).
+// ---------------------------------------------------------------------------
+static void QRE_CustomLightsTab (void)
+{
+	int                count = 0;
+	rt_custom_light_t *lights = RT_CustomLights (&count);
+	char               buf[96];
+	int                i;
+
+	QR_GUI_LabelDim ("lights the level does not have, kept in qray/lights.yaml");
+
+	q_snprintf (buf, sizeof (buf), "%d of %d on this level", count, RT_CUSTOM_LIGHTS_MAX);
+	QR_GUI_LabelDim (buf);
+	QR_GUI_Spacing ();
+
+	if (QR_GUI_Button ("Add light"))
+	{
+		rt_custom_light_t *l = RT_CustomLights_Ensure ();
+
+		if (l)
+		{
+			// at the editor camera, a little above it; the aim-based placement
+			// (snap to the surface under the crosshair) comes with the picking
+			VectorCopy (qre.cam_origin, l->origin);
+			l->origin[2] += 32.0f;
+		}
+		else
+		{
+			QRE_Notify ("no room for another custom light");
+		}
+	}
+
+	QR_GUI_Spacing ();
+
+	for (i = 0; i < count; i++)
+	{
+		rt_custom_light_t *l = &lights[i];
+		char               label[48];
+		int                style = CLAMP (0, l->style, RT_CUSTOM_STYLE_COUNT - 1);
+		float              rgb[3];
+		int                en = 1;
+
+		q_snprintf (label, sizeof (label), "Light %d", i + 1);
+		QR_GUI_PushID (label);
+
+		if (QR_GUI_Section (label, 1))
+		{
+			const char *tip = "A light the editor authored: uploaded like a dlight, with a style of its own.";
+			float       offs[3];
+
+			if (QR_GUI_SliderFloat ("light_radius", &l->radius, 0.0f, 10.0f,
+			                        "The size of the light, in rt_dlight_radius units."))
+			{
+			}
+
+			if (QR_GUI_SliderFloat ("light_intensity", &l->intensity, 0.0f, 8.0f, tip))
+			{
+			}
+
+			if (QR_GUI_Vec3Input ("origin", l->origin, -32768.0f, 32768.0f, "Where the light is, in Quake units."))
+			{
+			}
+
+			offs[0] = l->offset[0];
+			offs[1] = l->offset[1];
+			offs[2] = l->offset[2];
+			if (QR_GUI_Vec3Input ("light_offset", offs, -128.0f, 128.0f, "A shift from the origin, X Y Z."))
+			{
+				l->has_offset = true;
+				l->offset[0] = offs[0];
+				l->offset[1] = offs[1];
+				l->offset[2] = offs[2];
+			}
+
+			rgb[0] = l->color[0];
+			rgb[1] = l->color[1];
+			rgb[2] = l->color[2];
+			if (QR_GUI_ColorHex ("light_color", rgb, &en, "The colour of the light."))
+			{
+				l->color[0] = rgb[0];
+				l->color[1] = rgb[1];
+				l->color[2] = rgb[2];
+			}
+
+			if (QR_GUI_Combo ("light_style", &style, rt_custom_style_names, RT_CUSTOM_STYLE_COUNT,
+			                  "The light style the light flickers with, like the map's own lights (steady, candle, ...)."))
+			{
+				l->style = style;
+			}
+
+			if (QR_GUI_Button ("Remove"))
+			{
+				RT_CustomLights_Remove (i);
+				QR_GUI_PopID ();
+				break;
+			}
+		}
+
+		QR_GUI_PopID ();
+	}
+}
+
 static void QRE_BuildLightPanelGUI (void)
 {
 	int         panel_w = glwidth / 4;
@@ -2824,7 +2928,7 @@ static void QRE_BuildLightPanelGUI (void)
 	QR_GUI_BeginScroll ();
 
 	{
-		static const char *const tabs[] = { "Entity", "Global" };
+		static const char *const tabs[] = { "Entity", "Global", "Custom" };
 
 		QR_GUI_Tabs ("light_tabs", tabs, (int)countof (tabs), &qre.light_tab);
 		QR_GUI_Spacing ();
@@ -2834,6 +2938,17 @@ static void QRE_BuildLightPanelGUI (void)
 	{
 		// the global tab: the sky, its clouds and the sun
 		QRE_LightGlobalTab ();
+		QR_GUI_EndScroll ();
+		QR_GUI_EndPanel ();
+		if (exit_requested)
+			QRE_RequestExit ();
+		return;
+	}
+
+	if (qre.light_tab == 2)
+	{
+		// the custom tab: the lights this level does not have
+		QRE_CustomLightsTab ();
 		QR_GUI_EndScroll ();
 		QR_GUI_EndPanel ();
 		if (exit_requested)
