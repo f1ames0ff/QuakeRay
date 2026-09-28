@@ -401,8 +401,8 @@ struct ShLightEncoded
     float data_7[4];
     float coneCosInner;
     float coneCosOuter;
+    float projectorLens;
     uint32_t __pad0;
-    uint32_t __pad1;
 };
 
 struct ShVertPreprocessing

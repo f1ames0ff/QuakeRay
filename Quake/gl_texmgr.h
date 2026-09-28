@@ -91,6 +91,8 @@ typedef struct gltexture_s
 	float                rtemissivemeanbase;
 	float                rtemisangleinner;
 	float                rtemisangleouter;
+	qboolean             rtemisprojector;
+	float                rtemislens;
 	qboolean             rtemissivetex;
 	/* Glow extents of the emissive mask, normalized to one texture repetition, plus the
 	   density that keeps the emitted power equal to the whole-surface average. See

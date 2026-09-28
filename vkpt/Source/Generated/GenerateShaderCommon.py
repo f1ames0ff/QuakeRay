@@ -908,6 +908,7 @@ LIGHT_ENCODED_STRUCT = [
     (TYPE_FLOAT32,      4,      "data_7",               1),
     (TYPE_FLOAT32,      1,      "coneCosInner",         1),
     (TYPE_FLOAT32,      1,      "coneCosOuter",         1),
+    (TYPE_FLOAT32,      1,      "projectorLens",        1),
     # LIGHT_TYPE_TEXTURED_AREA only: convex-polygon area light. The emitting
     # surface is a convex polygon in texture space (the face's own texcoords,
     # up to MAX_TEXTURED_AREA_LIGHT_VERTS verts), mapped to world through the

@@ -1786,6 +1786,7 @@ typedef struct rt_emissive_params_s
 	float      meanEmiss;
 	float      angleInner;
 	float      angleOuter;
+	float      projectorLens;
 	vec3_t     color;
 	/* The texture glows over part of itself, so the light is built from polygons over those
 	   extents instead of from the whole surface. */
@@ -1817,6 +1818,9 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	p->glow_mean = p->meanEmiss;
 	p->angleInner = light_tex->rtemisangleinner;
 	p->angleOuter = light_tex->rtemisangleouter;
+	p->projectorLens = light_tex->rtemisprojector
+		? ((light_tex->rtemislens > 0.0f) ? light_tex->rtemislens * 0.5f : 0.0f)
+		: -1.0f;
 
 	if (light_tex->rthaslightcolor)
 	{
@@ -2520,6 +2524,7 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		li.meanEmiss = params->glow ? params->glow_mean : params->meanEmiss;
 		li.angleInner = params->angleInner;
 		li.angleOuter = params->angleOuter;
+		li.projectorLens = params->projectorLens;
 		li.fit       = 1;
 		li.isStatic  = 0;
 
@@ -2765,6 +2770,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 			params.meanEmiss = frame_params.meanEmiss;
 			params.angleInner = frame_params.angleInner;
 			params.angleOuter = frame_params.angleOuter;
+			params.projectorLens = frame_params.projectorLens;
 			VectorCopy (frame_params.color, params.color);
 		}
 		else
@@ -2984,6 +2990,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	light_info.meanEmiss = params.meanEmiss;
 	light_info.angleInner = params.angleInner;
 	light_info.angleOuter = params.angleOuter;
+	light_info.projectorLens = params.projectorLens;
 	light_info.area      = total_area;
 	light_info.fit       = 0;
 	light_info.isStatic  = is_static_geom ? 1 : 0;
@@ -3862,6 +3869,7 @@ void RT_UploadAllWorldModelLights (void)
 				li->meanEmiss = params.meanEmiss;
 				li->angleInner = params.angleInner;
 				li->angleOuter = params.angleOuter;
+				li->projectorLens = params.projectorLens;
 				VectorCopy (params.color, li->color.data);
 			}
 			else

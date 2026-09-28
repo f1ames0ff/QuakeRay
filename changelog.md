@@ -4,6 +4,7 @@
 
 ### Added
 - **A DTAL can shine as a spot** — a material may author `emissive_focus: <half-angle in degrees>`: the light of every surface of that material is confined to a cone around its normal — full inside it, nothing outside — so a lit window, a lantern or a lamp casts a beam instead of the default wide lobe. `emissive_focus_soft` (degrees, default a tenth of the angle) is the width of the soft edge the beam is cut with; `0` is a nearly hard one. World faces, brush entities and alias models read it from the material of the frame they show.
+- **A DTAL can project its mask** — `emissive_projector: true` turns a material's light into a projector: every texel emits through a virtual lens instead of inside a cone around the normal, so the pattern of a stained window or a sign lands on the surfaces in front with its shape instead of washing out into a round spot. `emissive_focus` is the aperture there (smaller is sharper; no key = `2` degrees), and `emissive_lens: <units>` puts the lens out in front of the surface: `0`, the default, is the parallel projection of sunlight through glass, while a distance focuses the pattern at 1:1 there — nothing nearer than half of it lights, and the image scales with the throw.
 
 ## v0.18.0
 

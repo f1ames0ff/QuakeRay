@@ -395,6 +395,18 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
             Con_DWarning("RT mat: material '%s': emissive_focus_soft %.1f is not in 0..89 degrees; ignored\n",
                          mat->name, v);
     }
+    else if (!q_strcasecmp(key, "emissive_projector"))
+        mat->emissive_projector = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "emissive_lens"))
+    {
+        const float v = (float)atof(value);
+
+        if (v >= 0.0f && v < 100000.0f)
+            mat->emissive_lens = v;
+        else
+            Con_DWarning("RT mat: material '%s': emissive_lens %.1f is not in 0..100000 units; ignored\n",
+                         mat->name, v);
+    }
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))
