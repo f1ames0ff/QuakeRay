@@ -325,7 +325,7 @@ void R_DrawSmoke (cb_context_t *cbx)
 
 	qsort (smoke_sorted, smoke_count, sizeof (smoke_sorted[0]), R_SmokeSortCompare);
 
-	RgVertex *vertices = RT_AllocScratchMemoryNulled (smoke_count * 6 * sizeof (RgVertex));
+	QrVertex *vertices = RT_AllocScratchMemoryNulled (smoke_count * 6 * sizeof (QrVertex));
 
 	v = 0;
 	for (i = 0; i < smoke_count; i++)
@@ -336,7 +336,7 @@ void R_DrawSmoke (cb_context_t *cbx)
 
 		for (int c = 0; c < 6; c++, v++)
 		{
-			RgVertex *vert = &vertices[v];
+			QrVertex *vert = &vertices[v];
 
 			VectorCopy (p->org, vert->position);
 			vert->packedColor = packed;
@@ -355,28 +355,28 @@ void R_DrawSmoke (cb_context_t *cbx)
 		}
 	}
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 		.vertexCount = smoke_count * 6,
 		.pVertices = vertices,
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
-		.material = RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE |
-		                 RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
-		                 RG_RASTERIZED_GEOMETRY_STATE_SMOKE,
-		.blendFuncSrc = RG_BLEND_FACTOR_ONE,
-		.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.material = QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE |
+		                 QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+		                 QR_RASTERIZED_GEOMETRY_STATE_SMOKE,
+		.blendFuncSrc = QR_BLEND_FACTOR_ONE,
+		.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 		.smokeNoise = {{ r_smoke_shape.value, r_smoke_medium.value,
 		                 r_smoke_detail.value, r_smoke_wind.value }},
 		.smokeLook  = {{ r_smoke_displace.value, r_smoke_breakup.value,
 		                 r_smoke_edge_power.value, r_smoke_edge_gain.value }},
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+	QR_CHECK (r);
 
 	R_EndDebugUtilsLabel (cbx);
 }

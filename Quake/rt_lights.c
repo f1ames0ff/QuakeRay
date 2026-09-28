@@ -79,7 +79,7 @@ const rt_tracked_light_t *RT_TRACK_Lights(int *outCount)
 }
 
 static const char *rt_light_header =
-    "# Dynamic light overrides for the vkpt ray-traced renderer.\n"
+    "# Dynamic light overrides for the qray ray-traced renderer.\n"
     "# A light belongs to an emitter: the texture a model or a sprite draws (the\n"
     "# same name materials.yaml uses for it), the model of the entity that asked\n"
     "# for a legacy dlight, or the classname of a map light entity -- classname\n"

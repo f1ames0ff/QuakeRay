@@ -940,7 +940,7 @@ void RT_UploadAllElights ()
 			VectorScale (color, intens, color);
 			RT_FIXUP_LIGHT_INTENSITY (color, true);
 
-			RgSphericalLightUploadInfo info = {
+			QrSphericalLightUploadInfo info = {
 				.uniqueID = (uint64_t)UINT16_MAX + i,
 				.color = {color[0], color[1], color[2]},
 				.position = {position[0], position[1], position[2]},
@@ -953,8 +953,8 @@ void RT_UploadAllElights ()
 				info.position.data[2] += METRIC_TO_QUAKEUNIT (0.75f);
 			}
 
-			RgResult r = rgUploadSphericalLight (vulkan_globals.instance, &info);
-			RG_CHECK (r);
+			QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
+			QR_CHECK (r);
 
 			RT_TRACK_Light (info.position.data, info.radius, info.color.data,
 			                info.uniqueID, RT_LIGHT_KIND_MAP, src->classname);
@@ -1161,7 +1161,7 @@ int RT_ResolvePointCluster (const vec3_t p)
    so the slot table, the PVS cache and the top-up grid that used to live here are gone: what is
    left on this side is the registry and the two things the renderer cannot derive from the map,
    the leaf each origin resolved into and the reach of the light. */
-static RgClusterLightSource rt_cluster_sources[RT_CLUSTER_MAX_LIGHTS];
+static QrClusterLightSource rt_cluster_sources[RT_CLUSTER_MAX_LIGHTS];
 
 /* The leaf a light last resolved into. The walk is a function of the origin and the map, so a
    light that stands where it stood last frame resolves to the leaf it resolved to then, which is
@@ -1238,7 +1238,7 @@ void RT_ClusterLightListsUpload (void)
 		VectorCopy (rt_cluster_lights[li].origin, rt_cluster_sources[li].origin.data);
 		rt_cluster_sources[li].cluster = (leafIndex >= 0)
 			? (uint32_t)RT_MapWorldCluster (leafIndex)
-			: (uint32_t)RG_CLUSTER_LIGHT_NO_CLUSTER;
+			: (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER;
 		rt_cluster_sources[li].reach = rt_cluster_lights[li].reach;
 
 		rt_light_diag[li].resolved = (leafIndex >= 0);
@@ -1250,7 +1250,7 @@ void RT_ClusterLightListsUpload (void)
 	if (prof_resolve != 0.0)
 		RT_Prof_End (RT_PROF_CLUSTERS_RESOLVE, prof_resolve);
 
-	const RgClusterLightSourcesUploadInfo info = {
+	const QrClusterLightSourcesUploadInfo info = {
 		.numLights = (uint32_t)rt_cluster_light_count,
 		.pLights = rt_cluster_sources,
 		.topUpReach = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach)),
@@ -1259,13 +1259,13 @@ void RT_ClusterLightListsUpload (void)
 		.allowIncremental = CVAR_TO_BOOL (rt_cluster_incremental) ? 1 : 0,
 	};
 
-	RgResult r = rgUploadClusterLightSources (vulkan_globals.instance, &info);
-	RG_CHECK (r);
+	QrResult r = qrUploadClusterLightSources (vulkan_globals.instance, &info);
+	QR_CHECK (r);
 
-	RgClusterLightStats st;
+	QrClusterLightStats st;
 	memset (&st, 0, sizeof (st));
 
-	if (rgGetClusterLightStats (vulkan_globals.instance, &st) == RG_SUCCESS)
+	if (qrGetClusterLightStats (vulkan_globals.instance, &st) == QR_SUCCESS)
 	{
 		rt_cluster_last_grants = (int)st.grants;
 		rt_cluster_last_denied = (int)st.denied;
@@ -1307,8 +1307,8 @@ void RT_ClusterLightListsUpload (void)
 	static uint32_t diagDenied[RT_CLUSTER_MAX_LIGHTS];
 	uint32_t        diagCount = 0;
 
-	if (rgGetClusterLightGrants (vulkan_globals.instance, diagGranted, diagDenied,
-			(uint32_t)countof (diagGranted), &diagCount) == RG_SUCCESS)
+	if (qrGetClusterLightGrants (vulkan_globals.instance, diagGranted, diagDenied,
+			(uint32_t)countof (diagGranted), &diagCount) == QR_SUCCESS)
 	{
 		const int n = (diagCount < (uint32_t)rt_light_diag_count) ? (int)diagCount : rt_light_diag_count;
 
@@ -1409,8 +1409,8 @@ void RT_ClusterLightReport_f (void)
 		{
 			viewCluster = (int)(viewleaf - cl.worldmodel->leafs);
 
-			if (rgGetClusterLightList (vulkan_globals.instance, (uint32_t)viewCluster,
-					viewUids, (uint32_t)countof (viewUids), &viewCount) != RG_SUCCESS)
+			if (qrGetClusterLightList (vulkan_globals.instance, (uint32_t)viewCluster,
+					viewUids, (uint32_t)countof (viewUids), &viewCount) != QR_SUCCESS)
 			{
 				viewCount = 0;
 			}

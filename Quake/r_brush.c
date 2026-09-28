@@ -51,7 +51,7 @@ unsigned blocklights[LMBLOCK_WIDTH * LMBLOCK_HEIGHT * 3 + 1]; // johnfitz -- was
 extern cvar_t r_showtris;
 extern cvar_t r_simd;
 
-RgVertex *rtallbrushvertices;
+QrVertex *rtallbrushvertices;
 
 static int *rt_surfcluster;
 
@@ -186,11 +186,11 @@ DrawGLPoly
 void DrawGLPoly (
 	cb_context_t *cbx, uint64_t uniqueid,
 	glpoly_t *p, float color[3], float alpha,
-	const RgTransform *transform, const gltexture_t *tex, uint32_t type)
+	const QrTransform *transform, const gltexture_t *tex, uint32_t type)
 {
 	const int numverts = p->numverts;
 
-	RgVertex *vertices = RT_AllocScratchMemoryNulled (numverts * sizeof (RgVertex));
+	QrVertex *vertices = RT_AllocScratchMemoryNulled (numverts * sizeof (QrVertex));
 
     float* v = p->verts[0];
 	for (int i = 0; i < numverts; ++i, v += VERTEXSIZE)
@@ -218,23 +218,23 @@ void DrawGLPoly (
 
 	if (rasterize)
 	{
-		RgRasterizedGeometryUploadInfo info = {
-			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+		QrRasterizedGeometryUploadInfo info = {
+			.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 			.vertexCount = numverts,
 			.pVertices = vertices,
 			.indexCount = RT_GetFanIndexCount (numverts),
 			.pIndices = RT_GetFanIndices (numverts),
 			.transform = *transform,
 			.color = {color[0], color[1], color[2], alpha},
-			.material = tex ? tex->rtmaterial : RG_NO_MATERIAL,
-			.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | RG_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
+			.material = tex ? tex->rtmaterial : QR_NO_MATERIAL,
+			.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
 			.blendFuncSrc = 0,
 			.blendFuncDst = 0,
 		};
 
 		if (showtri)
 		{
-			info.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | RG_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE;
+			info.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE;
 		}
 		else if (showtri_nodepth)
 		{
@@ -242,38 +242,38 @@ void DrawGLPoly (
 		}
 		if (alpha < 1.0f)
 		{
-			info.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE;
+			info.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE;
 
-			info.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA;
-			info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+			info.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA;
+			info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 		}
 
-		RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-		RG_CHECK (r);
+		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+		QR_CHECK (r);
 	}
 	else
 	{
-		RgGeometryUploadInfo info = {
+		QrGeometryUploadInfo info = {
 			.uniqueID = uniqueid,
-			.flags = RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
-			.geomType = RG_GEOMETRY_TYPE_DYNAMIC,
-			.passThroughType = RG_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
-			.visibilityType = is_sky ? RG_GEOMETRY_VISIBILITY_TYPE_SKY : RG_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
+			.flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
+			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
+			.passThroughType = QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
+			.visibilityType = is_sky ? QR_GEOMETRY_VISIBILITY_TYPE_SKY : QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
 			.vertexCount = numverts,
 			.pVertices = vertices,
 			.indexCount = RT_GetFanIndexCount (numverts),
 			.pIndices = RT_GetFanIndices (numverts),
 			.layerColors = {{color[0], color[1], color[2], alpha}},
-			.layerBlendingTypes = {RG_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
-			.geomMaterial = {tex ? tex->rtmaterial : RG_NO_MATERIAL},
+			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
+			.geomMaterial = {tex ? tex->rtmaterial : QR_NO_MATERIAL},
 			.defaultRoughness = CVAR_TO_FLOAT (rt_brush_rough),
 			.defaultMetallicity = CVAR_TO_FLOAT (rt_brush_metal),
 			.defaultEmission = 0,
 			.transform = *transform,
 		};
 
-		RgResult r = rgUploadGeometry (vulkan_globals.instance, &info);
-		RG_CHECK (r);
+		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		QR_CHECK (r);
 	}
 }
 
@@ -393,7 +393,7 @@ void R_DrawBrushModel_ShowTris (cb_context_t *cbx, entity_t *e)
 
 	psurf = &clmodel->surfaces[clmodel->firstmodelsurface];
 
-	const RgTransform tr = RT_GetBrushModelMatrix (e);
+	const QrTransform tr = RT_GetBrushModelMatrix (e);
 
 	//
 	// draw it
@@ -780,8 +780,8 @@ void GL_BuildBModelVertexBuffer (void)
 		}
 	}
 
-	rtallbrushvertices = Mem_Alloc (sizeof (RgVertex) * numverts);
-	memset (rtallbrushvertices, 0, sizeof (RgVertex) * numverts);
+	rtallbrushvertices = Mem_Alloc (sizeof (QrVertex) * numverts);
+	memset (rtallbrushvertices, 0, sizeof (QrVertex) * numverts);
 
     int varray_index = 0;
 	for (int j = 1; j < MAX_MODELS; j++)
@@ -797,7 +797,7 @@ void GL_BuildBModelVertexBuffer (void)
 
 			s->vbo_firstvert = varray_index;
 
-			RgVertex *const dst = &rtallbrushvertices[varray_index];
+			QrVertex *const dst = &rtallbrushvertices[varray_index];
 
 			for (int v = 0; v < s->numedges; v++)
 			{

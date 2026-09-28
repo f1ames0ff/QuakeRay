@@ -1,4 +1,4 @@
-// qr_editor.c -- qr light editor: realtime material editor for the vkpt renderer.
+// qr_editor.c -- qr light editor: realtime material editor for the qray renderer.
 //
 // Console commands: qr_editor (which opens the mode chooser) / qr_editor_stop.
 //
@@ -16,7 +16,7 @@
 //
 // Editing model: the editor mutates the live rt_material_t structs and
 // re-synthesizes the affected textures (TexMgr_ReloadImagesForMaterial). That
-// replaces the material's RgMaterial, and the traced world bakes a material's
+// replaces the material's QrMaterial, and the traced world bakes a material's
 // texture indices when it is uploaded, so after a batch of edits the world is
 // asked to re-upload itself — the rt_require_static_submit mechanism the light
 // style cvar already uses — which also re-collects its emissive lights. A full
@@ -180,14 +180,14 @@ static const char *const qre_emissive_blends[] = {
 #define QRE_TOUCHED_MAX  512
 #define QRE_PREVIEW_SLOTS QRE_GROUP_MAX
 
-// One texture preview: the RgMaterial the panel draws and the pixels the colour
+// One texture preview: the QrMaterial the panel draws and the pixels the colour
 // picker samples, cached under the key of what they were built from, one slot
 // per group entry so rebuilding one section never frees a material another
 // section's draw command already names.
 typedef struct qre_preview_s
 {
 	char        key[MAX_QPATH * 2 + 32];
-	RgMaterial  mat;
+	QrMaterial  mat;
 	byte       *pixels;
 	int         w, h;
 	unsigned    last_frame;
@@ -1048,7 +1048,7 @@ static qboolean QRE_PointInPolygon (const glpoly_t *poly, const vec3_t p, const 
 
 // World -> model space for a rigid brush transform (rotation R, translation t):
 // local = R^T * (world - t).
-static void QRE_WorldToModel (const RgTransform *transform, const vec3_t world, vec3_t out)
+static void QRE_WorldToModel (const QrTransform *transform, const vec3_t world, vec3_t out)
 {
 	vec3_t d;
 	int    i;
@@ -1064,7 +1064,7 @@ static void QRE_WorldToModel (const RgTransform *transform, const vec3_t world, 
 // faces are told apart by a polygon test; the nearest plane is the fallback.
 // The impact is world space, while a brush entity's planes and polygons are in
 // its model space, so the point is transformed first (identity for the world).
-static msurface_t *QRE_FindSurface (qmodel_t *model, const vec3_t impact, const RgTransform *transform)
+static msurface_t *QRE_FindSurface (qmodel_t *model, const vec3_t impact, const QrTransform *transform)
 {
 	vec3_t      local;
 	int         i;
@@ -1173,7 +1173,7 @@ static float QRE_RayTriangle (const vec3_t start, const vec3_t dir,
 static float QRE_TraceEntityBox (entity_t *e, const vec3_t start, const vec3_t end)
 {
 	float       m[16];
-	RgTransform transform;
+	QrTransform transform;
 	vec3_t      mins, maxs, local_start, local_dir;
 	float       tmin = 0.0f, tmax = 1.0f;
 	int         i;
@@ -1367,7 +1367,7 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 	}
 
 	{
-		RgTransform transform = RT_GetBrushModelMatrix (bestent);
+		QrTransform transform = RT_GetBrushModelMatrix (bestent);
 
 		*out_surf = QRE_FindSurface (bestmodel, bestimpact, &transform);
 	}
@@ -1775,7 +1775,7 @@ static void QRE_DoPick (qboolean select)
 
 static void QRE_EmitOutline (qmodel_t *model, msurface_t *surf, entity_t *ent, uint32_t color)
 {
-	RgTransform transform = RT_GetBrushModelMatrix (ent);
+	QrTransform transform = RT_GetBrushModelMatrix (ent);
 	vec3_t      verts[QRE_OUTLINE_MAX];
 	float       xy[(QRE_OUTLINE_MAX + 1) * 2];
 	vec3_t      n_world, to_view, first;
@@ -1856,7 +1856,7 @@ static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
 		{ 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 },
 	};
 	float       m[16];
-	RgTransform transform;
+	QrTransform transform;
 	vec3_t      mins, maxs;
 	int         i, j;
 
@@ -2018,8 +2018,8 @@ static void QRE_FreePreview (void)
 	{
 		qre_preview_t *slot = &qre.preview[i];
 
-		if (slot->mat != RG_NO_MATERIAL)
-			rgDestroyMaterial (vulkan_globals.instance, slot->mat);
+		if (slot->mat != QR_NO_MATERIAL)
+			qrDestroyMaterial (vulkan_globals.instance, slot->mat);
 		if (slot->pixels)
 			Mem_Free (slot->pixels);
 		memset (slot, 0, sizeof (*slot));
@@ -2029,7 +2029,7 @@ static void QRE_FreePreview (void)
 // The pixels the emissive mask is synthesized from: the author's texture_base
 // when the material has one, the engine texture of the picked face otherwise.
 // The eyedropper samples this copy, so a picked colour is the colour the
-// synthesis will match, and the same pixels become the preview's RgMaterial.
+// synthesis will match, and the same pixels become the preview's QrMaterial.
 // A slot stays alive while the frame still draws it; a failed load is cached
 // too, so a texture that cannot be read is not decoded once per frame.
 static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
@@ -2050,7 +2050,7 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 		if (!strcmp (key, qre.preview[i].key))
 		{
 			qre.preview[i].last_frame = (unsigned)host_framecount;
-			return (qre.preview[i].mat != RG_NO_MATERIAL) ? &qre.preview[i] : NULL;
+			return (qre.preview[i].mat != QR_NO_MATERIAL) ? &qre.preview[i] : NULL;
 		}
 	}
 
@@ -2067,10 +2067,10 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 
 	slot = &qre.preview[victim];
 
-	if (slot->mat != RG_NO_MATERIAL)
+	if (slot->mat != QR_NO_MATERIAL)
 	{
-		rgDestroyMaterial (vulkan_globals.instance, slot->mat);
-		slot->mat = RG_NO_MATERIAL;
+		qrDestroyMaterial (vulkan_globals.instance, slot->mat);
+		slot->mat = QR_NO_MATERIAL;
 	}
 	if (slot->pixels)
 	{
@@ -2094,19 +2094,19 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 	}
 
 	{
-		RgMaterialCreateInfo info;
+		QrMaterialCreateInfo info;
 
 		memset (&info, 0, sizeof (info));
 		info.size.width = (uint32_t)w;
 		info.size.height = (uint32_t)h;
 		info.textures.pDataAlbedoAlpha = pixels;
-		info.filter = RG_SAMPLER_FILTER_LINEAR;
-		info.addressModeU = RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		info.addressModeV = RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		info.filter = QR_SAMPLER_FILTER_LINEAR;
+		info.addressModeU = QR_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		info.addressModeV = QR_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 
-		if (rgCreateMaterial (vulkan_globals.instance, &info, &slot->mat) != RG_SUCCESS)
+		if (qrCreateMaterial (vulkan_globals.instance, &info, &slot->mat) != QR_SUCCESS)
 		{
-			slot->mat = RG_NO_MATERIAL;
+			slot->mat = QR_NO_MATERIAL;
 			Mem_Free (pixels);
 			return NULL;
 		}
@@ -4448,9 +4448,9 @@ static void QRE_Cancel (void)
 // ---------------------------------------------------------------------------
 
 // Written to the top of materials/materials.yaml. Kept in sync with the header
-// of vkpt/Source/materials.yaml, which documents the accepted keys.
+// of renderer/Source/materials.yaml, which documents the accepted keys.
 static const char *qre_yaml_header =
-	"# Global material definitions for the vkpt ray-traced renderer.\n"
+	"# Global material definitions for the qray ray-traced renderer.\n"
 	"# `is_light: false` marks a *static* surface (textures/*) whose luma\n"
 	"# texture should generate emissive triangle lights. Dynamic surfaces\n"
 	"# (progs/* models and sprites) are gated separately by the engine.\n"

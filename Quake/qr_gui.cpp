@@ -1,7 +1,7 @@
 // qr_gui.cpp -- Dear ImGui bridge for the qr light editor (see qr_gui.h).
 //
-// The render backend lives here: ImGui draw lists are converted to RgVertex
-// arrays and uploaded through rgUploadRasterizedGeometry with the SWAPCHAIN
+// The render backend lives here: ImGui draw lists are converted to QrVertex
+// arrays and uploaded through qrUploadRasterizedGeometry with the SWAPCHAIN
 // render type and a per-draw scissor rect, exactly like the engine's own 2D
 // draws. No ImGui Vulkan backend, pipelines or descriptor pools are involved.
 
@@ -12,7 +12,7 @@
 
 #include <SDL.h>
 
-#include <vkpt/vkpt.h>
+#include <qray/qray.h>
 
 #include <vector>
 #include <cstdio>
@@ -23,8 +23,8 @@
 namespace
 {
 
-RgInstance   g_instance      = 0;
-RgMaterial   g_font_material = RG_NO_MATERIAL;
+QrInstance   g_instance      = 0;
+QrMaterial   g_font_material = QR_NO_MATERIAL;
 bool         g_ready         = false;
 bool         g_frame_open    = false;
 unsigned int g_last_frame_id = 0xFFFFFFFFu;
@@ -34,7 +34,7 @@ int          g_fb_x = 0, g_fb_y = 0, g_fb_w = 0, g_fb_h = 0, g_drawable_h = 0;
 char   g_notify[256] = "";
 double g_notify_time = -1000.0;
 
-std::vector<RgVertex> g_verts;
+std::vector<QrVertex> g_verts;
 std::vector<uint32_t> g_indices;
 
 // The label column of the panel: every widget is drawn next to its key name.
@@ -163,7 +163,7 @@ void UploadDrawData (void)
 	m[15] = 1.0f;
 
 	// Vulkan viewport keeps the Y flip; the scissor is top-left in both.
-	RgViewport vp = {};
+	QrViewport vp = {};
 	vp.x        = (float)g_fb_x;
 	vp.y        = (float)(g_drawable_h - (g_fb_y + g_fb_h));
 	vp.width    = (float)g_fb_w;
@@ -176,8 +176,8 @@ void UploadDrawData (void)
 	const int area_x1 = area_x0 + g_fb_w;
 	const int area_y1 = area_y0 + g_fb_h;
 
-	const RgTransform identity = [] {
-		RgTransform t = {};
+	const QrTransform identity = [] {
+		QrTransform t = {};
 		t.matrix[0][0] = t.matrix[1][1] = t.matrix[2][2] = 1.0f;
 		return t;
 	} ();
@@ -190,9 +190,9 @@ void UploadDrawData (void)
 		for (int i = 0; i < dl->VtxBuffer.Size; i++)
 		{
 			const ImDrawVert &v = dl->VtxBuffer[i];
-			RgVertex         &rv = g_verts[(size_t)i];
+			QrVertex         &rv = g_verts[(size_t)i];
 
-			rv = RgVertex ();
+			rv = QrVertex ();
 			rv.position[0] = v.pos.x;
 			rv.position[1] = v.pos.y;
 			rv.position[2] = 0.0f;
@@ -237,21 +237,21 @@ void UploadDrawData (void)
 					maxv = idx;
 			}
 
-			RgRasterizedGeometryUploadInfo info = {};
-			info.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN;
+			QrRasterizedGeometryUploadInfo info = {};
+			info.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN;
 			info.vertexCount = maxv + 1;
 			info.pVertices = g_verts.data () + cmd.VtxOffset;
 			info.indexCount = cmd.ElemCount;
 			info.pIndices = g_indices.data ();
 			info.transform = identity;
 			info.color.data[0] = info.color.data[1] = info.color.data[2] = info.color.data[3] = 1.0f;
-			info.material = (RgMaterial)(uintptr_t)cmd.GetTexID ();
-			info.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE;
-			info.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA;
-			info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+			info.material = (QrMaterial)(uintptr_t)cmd.GetTexID ();
+			info.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE;
+			info.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA;
+			info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 			info.scissor = { x0, y0, (uint32_t)(x1 - x0), (uint32_t)(y1 - y0) };
 
-			rgUploadRasterizedGeometry (g_instance, &info, m, &vp);
+			qrUploadRasterizedGeometry (g_instance, &info, m, &vp);
 		}
 	}
 }
@@ -276,9 +276,9 @@ void DrawNotification (void)
 
 } // namespace
 
-void QR_GUI_Init (void *sdl_window, void *rg_instance, const char *font_path)
+void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path)
 {
-	if (g_ready || sdl_window == NULL || rg_instance == NULL)
+	if (g_ready || sdl_window == NULL || qr_instance == NULL)
 		return;
 
 	IMGUI_CHECKVERSION ();
@@ -309,7 +309,7 @@ void QR_GUI_Init (void *sdl_window, void *rg_instance, const char *font_path)
 			fprintf (stderr, "qr gui: cannot load '%s', using the default font\n", font_path);
 	}
 
-	g_instance = (RgInstance)rg_instance;
+	g_instance = (QrInstance)qr_instance;
 
 	// The legacy atlas path: one texture, one material, no ImTextureData flow.
 	unsigned char *pixels = nullptr;
@@ -318,20 +318,20 @@ void QR_GUI_Init (void *sdl_window, void *rg_instance, const char *font_path)
 
 	if (pixels && w > 0 && h > 0)
 	{
-		RgMaterialCreateInfo info = {};
+		QrMaterialCreateInfo info = {};
 		info.flags = 0;
 		info.size = { (uint32_t)w, (uint32_t)h };
 		info.textures.pDataAlbedoAlpha = pixels;
 		info.pRelativePath = nullptr;
-		info.filter = RG_SAMPLER_FILTER_LINEAR;
-		info.addressModeU = RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		info.addressModeV = RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		info.filter = QR_SAMPLER_FILTER_LINEAR;
+		info.addressModeU = QR_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		info.addressModeV = QR_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 
-		RgResult r = rgCreateMaterial (g_instance, &info, &g_font_material);
-		if (r != RG_SUCCESS)
+		QrResult r = qrCreateMaterial (g_instance, &info, &g_font_material);
+		if (r != QR_SUCCESS)
 		{
 			fprintf (stderr, "qr gui: font atlas material creation failed (%d)\n", (int)r);
-			g_font_material = RG_NO_MATERIAL;
+			g_font_material = QR_NO_MATERIAL;
 		}
 		io.Fonts->SetTexID ((ImTextureID)(uintptr_t)g_font_material);
 	}
@@ -350,10 +350,10 @@ void QR_GUI_Shutdown (void)
 		return;
 
 	// the font atlas is the bridge's own material and outlives the context
-	if (g_font_material != RG_NO_MATERIAL && g_instance)
+	if (g_font_material != QR_NO_MATERIAL && g_instance)
 	{
-		rgDestroyMaterial (g_instance, g_font_material);
-		g_font_material = RG_NO_MATERIAL;
+		qrDestroyMaterial (g_instance, g_font_material);
+		g_font_material = QR_NO_MATERIAL;
 	}
 
 	ImGui_ImplSDL2_Shutdown ();

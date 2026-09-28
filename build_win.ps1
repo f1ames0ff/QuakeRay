@@ -108,7 +108,7 @@ if ($exitCode -ne 0)
     exit $exitCode
 }
 
-$srcRoot = Join-Path $PSScriptRoot "vkpt\Source"
+$srcRoot = Join-Path $PSScriptRoot "renderer\Source"
 $gameDir = Join-Path $BuildDir "id1"
 if (-not (Test-Path $gameDir)) { New-Item -ItemType Directory -Path $gameDir -Force | Out-Null }
 

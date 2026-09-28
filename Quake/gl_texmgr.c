@@ -84,54 +84,54 @@ static qboolean texmgr_live_reload = false;
 static qboolean texmgr_live_recreate = false;
 qboolean texmgr_live_material_replaced = false;
 
-static RgMaterialCreateFlags TexMgr_GetRtFlags (gltexture_t *glt)
+static QrMaterialCreateFlags TexMgr_GetRtFlags (gltexture_t *glt)
 {
-	RgMaterialCreateFlags fs = 0;
+	QrMaterialCreateFlags fs = 0;
 
 	if (glt->flags & TEXPREF_MIPMAP)
 	{
-		fs |= RG_MATERIAL_CREATE_DONT_GENERATE_MIPMAPS_BIT;
+		fs |= QR_MATERIAL_CREATE_DONT_GENERATE_MIPMAPS_BIT;
 	}
 
 	// if controlled by cvar
 	if (!(glt->flags & TEXPREF_NEAREST) && !(glt->flags & TEXPREF_LINEAR))
 	{
-		fs |= RG_MATERIAL_CREATE_DYNAMIC_SAMPLER_FILTER_BIT;
+		fs |= QR_MATERIAL_CREATE_DYNAMIC_SAMPLER_FILTER_BIT;
 	}
 
 	if (glt->source_format == SRC_LIGHTMAP)
 	{
-		fs |= RG_MATERIAL_CREATE_UPDATEABLE_BIT;
+		fs |= QR_MATERIAL_CREATE_UPDATEABLE_BIT;
 	}
 
 	return fs;
 }
 
-static RgMaterialCreateFlags TexMgr_GetRtCreateFlags (gltexture_t *glt)
+static QrMaterialCreateFlags TexMgr_GetRtCreateFlags (gltexture_t *glt)
 {
-	RgMaterialCreateFlags fs = TexMgr_GetRtFlags (glt);
+	QrMaterialCreateFlags fs = TexMgr_GetRtFlags (glt);
 
 	if (texmgr_live_reload)
 	{
-		fs |= RG_MATERIAL_CREATE_UPDATEABLE_BIT;
+		fs |= QR_MATERIAL_CREATE_UPDATEABLE_BIT;
 	}
 
 	return fs;
 }
 
-static RgSamplerFilter TexMgr_GetFilterMode (gltexture_t *glt)
+static QrSamplerFilter TexMgr_GetFilterMode (gltexture_t *glt)
 {
 	if (glt->flags & TEXPREF_NEAREST)
 	{
-		return RG_SAMPLER_FILTER_NEAREST;
+		return QR_SAMPLER_FILTER_NEAREST;
 	}
 
 	if (glt->flags & TEXPREF_LINEAR)
 	{
-		return RG_SAMPLER_FILTER_LINEAR;
+		return QR_SAMPLER_FILTER_LINEAR;
 	}
 
-	return CVAR_TO_INT32 (vid_filter) == 1 ? RG_SAMPLER_FILTER_NEAREST : RG_SAMPLER_FILTER_LINEAR;
+	return CVAR_TO_INT32 (vid_filter) == 1 ? QR_SAMPLER_FILTER_NEAREST : QR_SAMPLER_FILTER_LINEAR;
 }
 
 static SDL_mutex *rtspecial_mutex;
@@ -142,7 +142,7 @@ static THREAD_LOCAL gltexture_t *rtspecial_target = NULL;
 static THREAD_LOCAL byte         rtspecial_default_rough;
 static THREAD_LOCAL byte         rtspecial_default_metallic;
 
-static THREAD_LOCAL RgMaterialCreateInfo rtspecial_info = {0};
+static THREAD_LOCAL QrMaterialCreateInfo rtspecial_info = {0};
 static THREAD_LOCAL void                *rtspecial_info_albedoAlpha = NULL; // to point to data from rtspecial_info
 static THREAD_LOCAL char                 rtspecial_info_pRelativePath[MAX_QPATH];
 
@@ -167,7 +167,7 @@ void TexMgr_RT_SpecialStart (float default_rough, float default_metallic)
 	rtspecial_default_metallic = CLAMP (0, (int)(default_metallic * 255), 255);
 }
 
-static void TexMgr_RT_SpecialSave (gltexture_t *glt, const RgMaterialCreateInfo *info)
+static void TexMgr_RT_SpecialSave (gltexture_t *glt, const QrMaterialCreateInfo *info)
 {
 	assert (rtspecial_info_albedoAlpha == NULL);
 
@@ -352,7 +352,7 @@ static void TexMgr_RT_SpecialFullbright (unsigned width, unsigned height, uint32
 
 	FullbrightToRME (width, height, (byte *)fullbright);
 
-	if (rtspecial_target->rtmaterial != RG_NULL_HANDLE)
+	if (rtspecial_target->rtmaterial != QR_NULL_HANDLE)
 	{
 		if (TexMgr_ApplyMaterialFromMat (rtspecial_target, (unsigned *)rtspecial_info_albedoAlpha, (byte *)fullbright))
 		{
@@ -392,8 +392,8 @@ static void TexMgr_RT_SpecialFullbright (unsigned width, unsigned height, uint32
 	rtspecial_info.textures.pDataRoughnessMetallicEmission = fullbright;
 
     SDL_LockMutex (rtspecial_mutex);
-	RgResult r = rgCreateMaterial (vulkan_globals.instance, &rtspecial_info, &rtspecial_target->rtmaterial);
-	RG_CHECK (r);
+	QrResult r = qrCreateMaterial (vulkan_globals.instance, &rtspecial_info, &rtspecial_target->rtmaterial);
+	QR_CHECK (r);
 	SDL_UnlockMutex (rtspecial_mutex);
 
 	if (resized)
@@ -412,14 +412,14 @@ void TexMgr_RT_SpecialEnd ()
 		return;
 	}
 
-	if (!rtspecial_foundfullbright && rtspecial_target->rtmaterial == RG_NULL_HANDLE)
+	if (!rtspecial_foundfullbright && rtspecial_target->rtmaterial == QR_NULL_HANDLE)
 	{
 		rtspecial_info.textures.pDataAlbedoAlpha = rtspecial_info_albedoAlpha;
 		rtspecial_info.pRelativePath = rtspecial_info_pRelativePath;
 
 		SDL_LockMutex (rtspecial_mutex);
-		RgResult r = rgCreateMaterial (vulkan_globals.instance, &rtspecial_info, &rtspecial_target->rtmaterial);
-		RG_CHECK (r);
+		QrResult r = qrCreateMaterial (vulkan_globals.instance, &rtspecial_info, &rtspecial_target->rtmaterial);
+		QR_CHECK (r);
 		SDL_UnlockMutex (rtspecial_mutex);
 
 	}
@@ -1075,7 +1075,7 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 	// const VkFormat format = !surface_indices ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R32_UINT;
 
 
-	RgMaterialCreateInfo info = {
+	QrMaterialCreateInfo info = {
 		.flags = TexMgr_GetRtCreateFlags (glt),
 		.size = {glt->width, glt->height},
 		.textures =
@@ -1086,17 +1086,17 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 			},
 		.pRelativePath = glt->rtname,
 		.filter = TexMgr_GetFilterMode (glt),
-		.addressModeU = RG_SAMPLER_ADDRESS_MODE_REPEAT,
-		.addressModeV = RG_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeU = QR_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeV = QR_SAMPLER_ADDRESS_MODE_REPEAT,
 	};
 
 	if (!rtspecial_started)
 	{
-		if (!texmgr_live_reload || glt->rtmaterial == RG_NULL_HANDLE)
+		if (!texmgr_live_reload || glt->rtmaterial == QR_NULL_HANDLE)
 		{
 			SDL_LockMutex (rtspecial_mutex);
-			RgResult r = rgCreateMaterial (vulkan_globals.instance, &info, &glt->rtmaterial);
-			RG_CHECK (r);
+			QrResult r = qrCreateMaterial (vulkan_globals.instance, &info, &glt->rtmaterial);
+			QR_CHECK (r);
 			SDL_UnlockMutex (rtspecial_mutex);
 		}
 	}
@@ -1690,16 +1690,16 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			q_strlcpy (texmgr_dumped[texmgr_dumped_count++], mat->name, MAX_QPATH);
 	}
 
-	RgMaterial oldMaterial = glt->rtmaterial;
-	RgMaterial newMaterial = RG_NULL_HANDLE;
+	QrMaterial oldMaterial = glt->rtmaterial;
+	QrMaterial newMaterial = QR_NULL_HANDLE;
 
-	if (texmgr_live_reload && !texmgr_live_recreate && oldMaterial != RG_NULL_HANDLE)
+	if (texmgr_live_reload && !texmgr_live_recreate && oldMaterial != QR_NULL_HANDLE)
 	{
-		const RgExtent2D updateSize = {(uint32_t)tw, (uint32_t)th};
+		const QrExtent2D updateSize = {(uint32_t)tw, (uint32_t)th};
 
-		if (rgCanUpdateMaterialContents (vulkan_globals.instance, oldMaterial, updateSize) == RG_SUCCESS)
+		if (qrCanUpdateMaterialContents (vulkan_globals.instance, oldMaterial, updateSize) == QR_SUCCESS)
 		{
-			RgMaterialUpdateInfo update = {
+			QrMaterialUpdateInfo update = {
 				.target = oldMaterial,
 				.textures =
 					{
@@ -1710,10 +1710,10 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			};
 
 			SDL_LockMutex (rtspecial_mutex);
-			RgResult ur = rgUpdateMaterialContents (vulkan_globals.instance, &update);
+			QrResult ur = qrUpdateMaterialContents (vulkan_globals.instance, &update);
 			SDL_UnlockMutex (rtspecial_mutex);
 
-			if (ur == RG_SUCCESS)
+			if (ur == QR_SUCCESS)
 			{
 				Mem_Free (albedo);
 				Mem_Free (rme);
@@ -1724,7 +1724,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		}
 	}
 
-	RgMaterialCreateInfo info = {
+	QrMaterialCreateInfo info = {
 		.flags = TexMgr_GetRtCreateFlags (glt),
 		.size = {tw, th},
 		.textures =
@@ -1735,20 +1735,20 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			},
 		.pRelativePath = glt->rtname,
 		.filter = TexMgr_GetFilterMode (glt),
-		.addressModeU = RG_SAMPLER_ADDRESS_MODE_REPEAT,
-		.addressModeV = RG_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeU = QR_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeV = QR_SAMPLER_ADDRESS_MODE_REPEAT,
 	};
 
 	SDL_LockMutex (rtspecial_mutex);
-	RgResult r = rgCreateMaterial (vulkan_globals.instance, &info, &newMaterial);
+	QrResult r = qrCreateMaterial (vulkan_globals.instance, &info, &newMaterial);
 	if (oldMaterial)
-		rgDestroyMaterial (vulkan_globals.instance, oldMaterial);
+		qrDestroyMaterial (vulkan_globals.instance, oldMaterial);
 	SDL_UnlockMutex (rtspecial_mutex);
-	RG_CHECK (r);
+	QR_CHECK (r);
 
 	glt->rtmaterial = newMaterial;
 
-	if (texmgr_live_reload && oldMaterial != RG_NULL_HANDLE && newMaterial != oldMaterial)
+	if (texmgr_live_reload && oldMaterial != QR_NULL_HANDLE && newMaterial != oldMaterial)
 		texmgr_live_material_replaced = true;
 
 	Mem_Free (albedo);
@@ -2550,14 +2550,14 @@ static void GL_DeleteTexture (gltexture_t *texture)
 {
 	SDL_LockMutex (texmgr_mutex);
 
-	if (texture->rtmaterial != RG_NO_MATERIAL && !texmgr_live_reload)
+	if (texture->rtmaterial != QR_NO_MATERIAL && !texmgr_live_reload)
 	{
 		SDL_LockMutex (rtspecial_mutex);
-		RgResult r = rgDestroyMaterial (vulkan_globals.instance, texture->rtmaterial);
+		QrResult r = qrDestroyMaterial (vulkan_globals.instance, texture->rtmaterial);
 		SDL_UnlockMutex (rtspecial_mutex);
-		RG_CHECK (r);
+		QR_CHECK (r);
 
-		texture->rtmaterial = RG_NO_MATERIAL;
+		texture->rtmaterial = QR_NO_MATERIAL;
 	}
 
 	SDL_UnlockMutex (texmgr_mutex);

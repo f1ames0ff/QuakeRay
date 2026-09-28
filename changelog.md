@@ -50,6 +50,27 @@
 - **`light_brightness` is a gain on the emitted light again, and it goes to 10** — the value was folded into the 8-bit emission channel of the RME texture and clamped there, so past the saturation point every value drew the same maximum-bright surface, and below it the surface darkened while the light itself was scaled through an RGB→HSV→RGB round trip that cannot brighten a colour (its V is clamped at 1) and divided by zero at `light_brightness 0`. The visible emission is dimmed by `min(brightness, 1)` — an 8-bit channel cannot brighten — and the emitted light takes the full float gain exactly once: an area light whose mask the shader samples is already dimmed by that mask below 1, so the gain stays out of it there, above 1 the gain on the light colour is what brightens, and a material whose light comes from `light_color` alone is no longer skipped by a mask-shaped gate. The glow extents of a mask are its shape and no longer move with the brightness, and the slider spans `0..10`. A `light_color` or `is_light` switched off mid-session stops lighting at the next re-synthesis rather than at the next map load, the `...` button no longer steps past the right edge of the panel, and the panel is a quarter of the screen wide instead of the two-fifths-and-a-tenth it was pinned to, with a 352-pixel floor below which its fixed columns stop fitting.
 - **The material keys no renderer code ever read are gone** — `kind`, `texture_mask`, `specular_factor`, `bsp_radiance` and `default_radiance` were parsed, offered by the editor, written back by `Save` and read by nothing: `kind` advertised water, lava and glass behaviours this renderer does not switch on, `texture_mask` was a texture path no load ever asked for, `specular_factor` fed no BRDF (the shader's dielectric F0 is its own), and `bsp_radiance` and `default_radiance` named a radiosity pass the engine does not have. The fields, their parser branches, the `kind` name table, the panel rows and the writer's emission of them are removed together, so a save can no longer add a key that does nothing; no shipped material file authored any of them, and a foreign one that does loads with the parser's usual `unknown attribute` note.
 
+### Changed
+- **The renderer is renamed from `vkpt` to `qray`** — the vendored renderer no longer carries the upstream name in its folder, namespace, API prefix or build target. Nothing functional changed; every token moved together, so a patch written against the old names has to apply this mapping:
+
+  | Old | New |
+  |---|---|
+  | `vkpt/` (the folder) | `renderer/` |
+  | CMake target `vkpt`; variables `vkpt_*` | `renderer`; `renderer_*` |
+  | `renderer/Include/vkpt/vkpt.h`, included as `<vkpt/vkpt.h>` | `renderer/Include/qray/qray.h`, included as `<qray/qray.h>` |
+  | `renderer/Source/vkpt.cpp` | `renderer/Source/qray.cpp` |
+  | `renderer/Source/RgException.{h,cpp}` | `renderer/Source/QrException.{h,cpp}` |
+  | C++ namespace `vkpt` / `vkpt::X` | `qray` / `qray::X` |
+  | `Rg*` types and enums (`RgInstance`, `RgDrawFrameInfo`, `RgResult`, …) | `Qr*` (`QrInstance`, `QrDrawFrameInfo`, `QrResult`, …) |
+  | `rg*` functions and callbacks (`rgCreateInstance`, `rgDrawFrame`, `PFN_rgPrint`, …) | `qr*` (`qrCreateInstance`, `qrDrawFrame`, `PFN_qrPrint`, …) |
+  | `RG_*` macros (`RG_SUCCESS`, `RG_STATIC`, `RG_USE_SURFACE_WIN32`, …) | `QR_*` (`QR_SUCCESS`, `QR_STATIC`, `QR_USE_SURFACE_WIN32`, …) |
+  | `RGAPI` / `RGCONV` | `QRAPI` / `QRCONV` |
+  | `RG_RTGL_VERSION_API` (the API-version macro) | `QR_API_VERSION` |
+  | `Quake/gl_vidsdl.c`: `UpscaleCvarsToRtgl` / `ResolutionToRtgl` | `UpscaleCvarsToQray` / `ResolutionToQray` |
+  | the renderer dev-config default file `vkpt.txt` | `qray.txt` |
+
+  The value of the version macro is unchanged (`"1.03.0000"`): it is passed to DLSS as the custom engine type, and NGX keeps its per-application persistence keyed by that string, so the string must not move together with the name.
+
 ## v0.13.0
 
 ### Added

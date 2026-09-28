@@ -1,4 +1,4 @@
-// qr_editor.h -- qr light editor: realtime material editor for the vkpt renderer.
+// qr_editor.h -- qr light editor: realtime material editor for the qray renderer.
 //
 // The editor is started and stopped from the console with qr_editor /
 // qr_editor_stop; qr_editor opens a chooser for the material or the light

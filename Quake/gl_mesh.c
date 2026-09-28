@@ -507,7 +507,7 @@ static void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr)
 
 	// create the vertex buffer (empty)
 	{
-		size_t sz = hdr->numposes * (hdr->numverts_vbo * sizeof (RgVertex));
+		size_t sz = hdr->numposes * (hdr->numverts_vbo * sizeof (QrVertex));
 
 		m->rtvertices = Mem_Alloc (sz);
 		memset (m->rtvertices, 0, sz);
@@ -516,7 +516,7 @@ static void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr)
 	// fill in the vertices at the start of the buffer
 	for (size_t f = 0; f < (size_t)hdr->numposes; f++) // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
 	{
-		RgVertex *dstpose = m->rtvertices + (hdr->numverts_vbo * f);
+		QrVertex *dstpose = m->rtvertices + (hdr->numverts_vbo * f);
 		const trivertx_t *srctv = trivertexes + (hdr->numverts * f);
 
 		for (int v = 0; v < hdr->numverts_vbo; v++)
