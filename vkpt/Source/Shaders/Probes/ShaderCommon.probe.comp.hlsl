@@ -135,7 +135,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += lights[0].color.x + float(lights[0].lightType) + lights[0].data_0.x + lights[0].data_1.x +
          lights[0].data_2.x + lights[0].data_3.x + lights[0].data_4.x + lights[0].data_5.x +
          lights[0].data_6.x + lights[0].data_7.x + lights[0].coneCosInner + lights[0].coneCosOuter +
-         lights[0].projectorLens + float(lights[0].__pad0);
+         lights[0].projector + float(lights[0].__pad0);
 
     // ShIndirectDrawCommand
     v += float(drawCmds[0].indexCount) + float(drawCmds[0].instanceCount) + float(drawCmds[0].firstIndex) +

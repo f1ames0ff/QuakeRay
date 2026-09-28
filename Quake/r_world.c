@@ -1645,7 +1645,7 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 		}
 		else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
 		{
-			RT_DtalDebugAdd (center, li.normal.data, li.area, li.projectorLens >= 0.0f);
+			RT_DtalDebugAdd (center, li.normal.data, li.area, li.projector > 0.5f);
 		}
 	}
 	else if (rt_wldlights_emissive_count < MAX_WORLDLIGHTS_COUNT)
@@ -1678,7 +1678,7 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 		   not once per frame. */
 		RT_TexturedAreaLightCenter (&rt_wldlights_emissive[index], rt_wldlights_emissive_center[index]);
 		rt_emis_stats.static_queued++;
-		if (light_info->projectorLens >= 0.0f)
+		if (light_info->projector > 0.5f)
 			rt_emis_stats.projector++;
 	}
 	else
@@ -1801,7 +1801,7 @@ typedef struct rt_emissive_params_s
 	float      meanEmiss;
 	float      angleInner;
 	float      angleOuter;
-	float      projectorLens;
+	qboolean   projector;
 	vec3_t     color;
 	/* The texture glows over part of itself, so the light is built from polygons over those
 	   extents instead of from the whole surface. */
@@ -1833,9 +1833,7 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	p->glow_mean = p->meanEmiss;
 	p->angleInner = light_tex->rtemisangleinner;
 	p->angleOuter = light_tex->rtemisangleouter;
-	p->projectorLens = light_tex->rtemisprojector
-		? ((light_tex->rtemislens > 0.0f) ? light_tex->rtemislens * 0.5f : 0.0f)
-		: -1.0f;
+	p->projector = light_tex->rtemisprojector;
 
 	if (light_tex->rthaslightcolor)
 	{
@@ -2539,7 +2537,7 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		li.meanEmiss = params->glow ? params->glow_mean : params->meanEmiss;
 		li.angleInner = params->angleInner;
 		li.angleOuter = params->angleOuter;
-		li.projectorLens = params->projectorLens;
+		li.projector = params->projector ? 1.0f : 0.0f;
 		li.fit       = 1;
 		li.isStatic  = 0;
 
@@ -2785,7 +2783,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 			params.meanEmiss = frame_params.meanEmiss;
 			params.angleInner = frame_params.angleInner;
 			params.angleOuter = frame_params.angleOuter;
-			params.projectorLens = frame_params.projectorLens;
+			params.projector = frame_params.projector;
 			VectorCopy (frame_params.color, params.color);
 		}
 		else
@@ -3005,7 +3003,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	light_info.meanEmiss = params.meanEmiss;
 	light_info.angleInner = params.angleInner;
 	light_info.angleOuter = params.angleOuter;
-	light_info.projectorLens = params.projectorLens;
+	light_info.projector = params.projector ? 1.0f : 0.0f;
 	light_info.area      = total_area;
 	light_info.fit       = 0;
 	light_info.isStatic  = is_static_geom ? 1 : 0;
@@ -3818,7 +3816,7 @@ static void RT_RegisterWorldModelLight (const RgTexturedAreaLightUploadInfo *lt,
 	}
 	else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
 	{
-		RT_DtalDebugAdd (center, lt->normal.data, lt->area, lt->projectorLens >= 0.0f);
+		RT_DtalDebugAdd (center, lt->normal.data, lt->area, lt->projector > 0.5f);
 	}
 }
 
@@ -3884,7 +3882,7 @@ void RT_UploadAllWorldModelLights (void)
 				li->meanEmiss = params.meanEmiss;
 				li->angleInner = params.angleInner;
 				li->angleOuter = params.angleOuter;
-				li->projectorLens = params.projectorLens;
+				li->projector = params.projector ? 1.0f : 0.0f;
 				VectorCopy (params.color, li->color.data);
 			}
 			else

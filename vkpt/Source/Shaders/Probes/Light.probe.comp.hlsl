@@ -74,7 +74,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     encoded.data_7 = float4(0.0, 1.0, 0.0, 2.0);
     encoded.coneCosInner = 0.0;
     encoded.coneCosOuter = 0.0;
-    encoded.projectorLens = -1.0;
+    encoded.projector = 0.0;
 
     // The five decoders, and through them every member of every light struct
     const DirectionalLight dirLight = decodeAsDirectionalLight(encoded);
@@ -91,7 +91,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += areaLight.A.x + areaLight.B.y + areaLight.C.z +
          areaLight.normal.x + areaLight.area + areaLight.textureIndex + areaLight.meanEmiss +
          (float)areaLight.numVerts + areaLight.color.y + areaLight.coneCosInner + areaLight.coneCosOuter +
-         areaLight.projectorLens;
+         areaLight.projector;
 
     for (int i = 0; i < MAX_TEXTURED_AREA_LIGHT_VERTS; i++)
     {
@@ -160,7 +160,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += areaSample.position.x + areaSample.color.y + areaSample.dw;
 
     TexturedAreaLight projectorLight = areaLight;
-    projectorLight.projectorLens = 0.0;
+    projectorLight.projector = 1.0;
     projectorLight.coneCosOuter = 0.996;
     const LightSample projectedSample = sampleTexturedAreaLight(projectorLight, surfPosition, pointRnd);
     v += projectedSample.position.x + projectedSample.color.y + projectedSample.dw;

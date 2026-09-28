@@ -397,16 +397,6 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
     }
     else if (!q_strcasecmp(key, "emissive_projector"))
         mat->emissive_projector = rt_mat_parse_bool(value);
-    else if (!q_strcasecmp(key, "emissive_lens"))
-    {
-        const float v = (float)atof(value);
-
-        if (v >= 0.0f && v < 100000.0f)
-            mat->emissive_lens = v;
-        else
-            Con_DWarning("RT mat: material '%s': emissive_lens %.1f is not in 0..100000 units; ignored\n",
-                         mat->name, v);
-    }
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))
@@ -890,7 +880,7 @@ void RT_MAT_Cmd(void)
 
     Con_Printf("material '%s': base=%s normals=%s emissive=%s gloss=%s "
                "bump=%.2f rough=%.2f metal=%.2f emiss=%.2f base=%.2f emis_blend=%d "
-               "focus=%.1f soft=%.1f projector=%d lens=%.1f\n",
+               "focus=%.1f soft=%.1f projector=%d\n",
                m->name,
                m->filename_base[0] ? m->filename_base : "-",
                m->filename_normals[0] ? m->filename_normals : "-",
@@ -900,5 +890,5 @@ void RT_MAT_Cmd(void)
                m->metalness_factor, m->emissive_factor, m->base_factor,
                m->emissive_blend,
                m->emissive_focus, m->emissive_focus_soft,
-               m->emissive_projector ? 1 : 0, m->emissive_lens);
+               m->emissive_projector ? 1 : 0);
 }

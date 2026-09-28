@@ -251,11 +251,11 @@ static vkpt::ShLightEncoded EncodeAsTexturedAreaLight(const RgTexturedAreaLightU
     lt.data_7[2] = info.normal.data[2];
     lt.data_7[3] = info.area;
 
-    const bool projector = std::isfinite(info.projectorLens) && info.projectorLens >= 0.0f;
+    const bool projector = std::isfinite(info.projector) && info.projector > 0.5f;
     const bool angleValid = std::isfinite(info.angleOuter) && info.angleOuter > 0.0f &&
                             info.angleOuter < static_cast<float>(vkpt::RG_PI / 2.0);
     const float angleOuter = angleValid ? info.angleOuter
-                                        : (projector ? static_cast<float>(vkpt::RG_PI / 90.0) : 0.0f);
+                                        : (projector ? static_cast<float>(vkpt::RG_PI / 3.0) : 0.0f);
     const float angleInner = (std::isfinite(info.angleInner) && info.angleInner >= 0.0f) ? info.angleInner : 0.0f;
 
     if (angleOuter > 0.0f)
@@ -269,7 +269,7 @@ static vkpt::ShLightEncoded EncodeAsTexturedAreaLight(const RgTexturedAreaLightU
         lt.coneCosOuter = 0.0f;
     }
 
-    lt.projectorLens = projector ? std::min(info.projectorLens, 1.0e7f) : -1.0f;
+    lt.projector = projector ? 1.0f : 0.0f;
 
     return lt;
 }

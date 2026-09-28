@@ -1104,7 +1104,7 @@ static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, fl
 			return;
 		}
 
-		outerDeg = 2.0f;
+		outerDeg = 60.0f;
 	}
 
 	float softDeg = mat->emissive_focus_soft;
@@ -1141,7 +1141,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtupoffset = mat->light_upoffset;
 	TexMgr_EmissiveCone (mat, &glt->rtemisangleinner, &glt->rtemisangleouter);
 	glt->rtemisprojector = mat->emissive_projector;
-	glt->rtemislens = mat->emissive_lens;
 	glt->rtmirror = mat->mirror;
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
@@ -1647,7 +1646,6 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtemisangleinner = 0.0f;
 	glt->rtemisangleouter = 0.0f;
 	glt->rtemisprojector = false;
-	glt->rtemislens = 0.0f;
 	glt->rtemisuvmin[0] = glt->rtemisuvmin[1] = 0.0f;
 	glt->rtemisuvmax[0] = glt->rtemisuvmax[1] = 1.0f;
 	glt->rtemissiveglow = 0.0f;

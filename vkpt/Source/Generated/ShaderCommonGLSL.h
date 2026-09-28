@@ -396,7 +396,7 @@ struct ShLightEncoded
     vec4 data_7;
     float coneCosInner;
     float coneCosOuter;
-    float projectorLens;
+    float projector;
     uint __pad0;
 };
 

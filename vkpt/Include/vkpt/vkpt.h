@@ -697,7 +697,7 @@ typedef struct RgTexturedAreaLightUploadInfo
     float           meanEmiss;
     float           angleInner;
     float           angleOuter;
-    float           projectorLens;
+    float           projector;
     // Whether A/B/C are a fit of the surface's own uv. Recorded by the host for its own
     // bookkeeping and not sent to the renderer: the shader always places its point as
     // C + A * u + B * v, whatever the fit was.

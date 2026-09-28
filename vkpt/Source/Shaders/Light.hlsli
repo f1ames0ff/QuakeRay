@@ -95,7 +95,7 @@ struct TexturedAreaLight
     float meanEmiss;
     float coneCosInner;
     float coneCosOuter;
-    float projectorLens;
+    float projector;
     int numVerts;
     float2 uvVerts[MAX_TEXTURED_AREA_LIGHT_VERTS];
     float3 color;
@@ -175,7 +175,7 @@ TexturedAreaLight decodeAsTexturedAreaLight(const ShLightEncoded encoded)
     l.color = encoded.color;
     l.coneCosInner = encoded.coneCosInner;
     l.coneCosOuter = encoded.coneCosOuter;
-    l.projectorLens = encoded.projectorLens;
+    l.projector = encoded.projector;
 
     return l;
 }
@@ -504,81 +504,49 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const float3 sur
     r.color = float3(0.0, 0.0, 0.0);
     r.dw = 0.0;
 
-    const uint textureIndex = asuint(l.textureIndex);
-    const float height = dot(surfPosition - l.C, l.normal);
+    const float3 center = getTexturedAreaLightCenter(l);
+    const DirectionAndLength centerToSurf = calcDirectionAndLength(center, surfPosition);
+    const float cosNL = dot(l.normal, centerToSurf.dir);
+    const float spotlight = getSpotFactor(max(cosNL, 0.0), l.coneCosInner, l.coneCosOuter);
 
-    if (!(height > 1e-4))
+    if (!(spotlight > 0.0))
     {
-        return r;
-    }
-
-    float3 chief = float3(0.0, 0.0, 0.0);
-    float lensDist = 0.0;
-
-    if (l.projectorLens > 0.0)
-    {
-        const float3 center = getTexturedAreaLightCenter(l);
-        const float3 pinhole = center + l.normal * l.projectorLens;
-        const DirectionAndLength toPinhole = calcDirectionAndLength(surfPosition, pinhole);
-        const float denom = dot(toPinhole.dir, -l.normal);
-
-        if (!(denom > 1e-3))
-        {
-            return r;
-        }
-
-        chief = pinhole + toPinhole.dir * (l.projectorLens / denom);
-        lensDist = toPinhole.len;
-    }
-    else
-    {
-        chief = surfPosition - l.normal * height;
-    }
-
-    const float cosAperture = clamp(l.coneCosOuter, 0.001, 1.0);
-    const float tanAperture = sqrt(max(1.0 - cosAperture * cosAperture, 0.0)) / cosAperture;
-    const float radius = (l.projectorLens > 0.0)
-        ? tanAperture * l.projectorLens * length(surfPosition - chief) / max(lensDist, 1e-3)
-        : tanAperture * height;
-
-    if (M_PI * radius * radius >= l.area)
-    {
-        const float2 uv = sampleConvexPolygon(l.uvVerts, l.numVerts, pointRnd.x, pointRnd.y);
-
-        float mask = 1.0;
-        float emiss = l.meanEmiss;
-
-        if (textureIndex != 0u)
-        {
-            mask = getTextureSampleLod(textureIndex, uv, 0.0).b;
-            emiss = 1.0;
-        }
-
-        const float3 pos = texturedAreaLightWorldPos(l, uv);
-        const DirectionAndLength lightToSurf = calcDirectionAndLength(pos, surfPosition);
-
-        r.position = pos;
-        r.color = l.color * mask;
-        r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
-
         return r;
     }
 
     float3 axisU = l.A - l.normal * dot(l.A, l.normal);
-    const float axisLen = length(axisU);
+    float3 axisV = l.B - l.normal * dot(l.B, l.normal);
+    const float lenU = length(axisU);
+    const float lenV = length(axisV);
 
-    if (!(axisLen > 1e-6))
+    if (!(lenU > 1e-6) || !(lenV > 1e-6))
     {
         return r;
     }
 
-    axisU /= axisLen;
+    axisU /= lenU;
+    axisV /= lenV;
 
-    const float3 axisV = cross(l.normal, axisU);
-    const float2 disk = sampleDisk(radius, pointRnd.x, pointRnd.y);
-    const float3 pos = chief + axisU * disk.x + axisV * disk.y;
+    const int verts = clamp(l.numVerts, 1, MAX_TEXTURED_AREA_LIGHT_VERTS);
+    float maskRadius = 0.0;
 
+    for (int i = 0; i < verts; i++)
+    {
+        maskRadius = max(maskRadius, length(texturedAreaLightWorldPos(l, l.uvVerts[i]) - center));
+    }
+
+    if (!(maskRadius > 1e-4))
+    {
+        return r;
+    }
+
+    const float angleOuter = max(acos(clamp(l.coneCosOuter, 0.001, 1.0)), 1e-3);
+    const float focal = maskRadius / tan(angleOuter);
+    const float cosNLClamped = max(cosNL, 1e-3);
+    const float3 pos = center + axisU * (focal * dot(centerToSurf.dir, axisU) / cosNLClamped)
+                              + axisV * (focal * dot(centerToSurf.dir, axisV) / cosNLClamped);
     const float3 rel = pos - l.C;
+
     const float a11 = dot(l.A, l.A);
     const float a12 = dot(l.A, l.B);
     const float a22 = dot(l.B, l.B);
@@ -598,6 +566,7 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const float3 sur
         return r;
     }
 
+    const uint textureIndex = asuint(l.textureIndex);
     float mask = 1.0;
     float emiss = l.meanEmiss;
 
@@ -610,7 +579,7 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const float3 sur
     const DirectionAndLength lightToSurf = calcDirectionAndLength(pos, surfPosition);
 
     r.position = pos;
-    r.color = l.color * mask;
+    r.color = l.color * mask * spotlight;
     r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
 
     return r;
@@ -618,7 +587,7 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const float3 sur
 
 LightSample sampleTexturedAreaLight(const TexturedAreaLight l, const float3 surfPosition, const float2 pointRnd)
 {
-    if (l.projectorLens >= 0.0)
+    if (l.projector > 0.5)
     {
         return sampleProjectedAreaLight(l, surfPosition, pointRnd);
     }
