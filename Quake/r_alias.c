@@ -536,6 +536,9 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
         tx = whitetexture;
     }
 
+    if (tx && tx->rtalphatest)
+        alphatest = true;
+
     //
     // draw it
     //

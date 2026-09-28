@@ -394,6 +394,8 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->exact_normals = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "force_rasterize"))
         mat->force_rasterize = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "alpha_test"))
+        mat->alpha_test = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "texture_base"))
         q_strlcpy(mat->filename_base, value, sizeof(mat->filename_base));
     else if (!q_strcasecmp(key, "texture_normals"))

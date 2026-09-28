@@ -3208,7 +3208,8 @@ void R_DrawTextureChains_Animated (cb_context_t *cbx, qmodel_t *model)
 		if (diffuse_tex->rthasmaterial)
 			light_tex = diffuse_tex;
 
-		const qboolean alpha_test = (t->texturechains[chain_world]->flags & SURF_DRAWFENCE) != 0;
+		const qboolean alpha_test = (t->texturechains[chain_world]->flags & SURF_DRAWFENCE) != 0 ||
+		                            (diffuse_tex && diffuse_tex->rtalphatest);
 
 		for (s = t->texturechains[chain_world]; s; s = s->texturechains[chain_world])
 		{
@@ -3276,8 +3277,9 @@ void R_DrawTextureChains_Multitexture (
 
 		RT_ClearBatch (cbx);
 
-		qboolean alpha_test = (t->texturechains[chain]->flags & SURF_DRAWFENCE) != 0;
 		gltexture_t *diffuse_tex = R_TextureAnimation (t, ent_frame)->gltexture;
+		const qboolean alpha_test = (t->texturechains[chain]->flags & SURF_DRAWFENCE) != 0 ||
+		                            (diffuse_tex && diffuse_tex->rtalphatest);
 
 		gltexture_t *light_tex = RT_CanonicalLightTex (t, ent_frame);
 
