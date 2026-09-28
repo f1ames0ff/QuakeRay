@@ -350,6 +350,10 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->q2LightStatsMode           = drawInfo.pIlluminationParams->q2LightStatsMode;
         gu->reflRefrEarlyOut           = drawInfo.pIlluminationParams->reflRefrEarlyOut != 0;
         gu->neeLightSamples            = std::clamp( drawInfo.pIlluminationParams->neeLightSamples, 1u, 2u );
+        gu->restirParams[0]            = drawInfo.pIlluminationParams->restirEnabled != 0 ? 1u : 0u;
+        gu->restirParams[1]            = std::clamp( drawInfo.pIlluminationParams->restirCandidates, 1u, 64u );
+        gu->restirParams[2]            = 0u;
+        gu->restirParams[3]            = 0u;
         gu->giBounceRays[0]            = std::clamp( drawInfo.pIlluminationParams->giBounceRays, 0.0f, 2.0f );
         gu->fltEnable[0]               = drawInfo.pIlluminationParams->denoiserEnabled != 0 ? 1.0f : 0.0f;
         gu->fixedAlbedo[0]             = std::max( drawInfo.pIlluminationParams->fixedAlbedo, 0.0f );
@@ -369,6 +373,10 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->q2LightStatsMode           = 1u;
         gu->reflRefrEarlyOut           = 1u;
         gu->neeLightSamples            = 1u;
+        gu->restirParams[0]            = 0u;
+        gu->restirParams[1]            = 8u;
+        gu->restirParams[2]            = 0u;
+        gu->restirParams[3]            = 0u;
         gu->giBounceRays[0]            = 1.0f;
         gu->fltEnable[0]               = 1.0f;
         gu->fixedAlbedo[0]             = 0.0f;

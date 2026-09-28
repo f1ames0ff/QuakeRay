@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.18.0
+
+### Added
+- **DTAL limits** — `rt_dtal_minarea` (default `0`, world units squared) drops a light polygon under that area, and a face whose pieces all fall under it gets no light; `rt_dtal_maxpolys` (default `64`) caps one surface's lights, the largest pieces kept (`0` = no cuts); `rt_model_lights_minarea` (default `0`) is the same floor for alias models. All apply on change, and `rt_dtal_rebuild` rebuilds by hand.
+- **`rt_dtal_debug`** — replaces `rt_debugemissive`: `1` the wireframe, `2` every light as an arrow along its normal (red X, green Y, blue Z, length by area).
+- **`rt_dtal_clearance`** — default `1`: a light polygon facing solid geometry within that many units is not created (`0` off). The verdict is cached, so unmoving geometry is not traced twice.
+
+### Changed
+- `rt_emis_minarea` and `rt_emis_maxpolys` are renamed `rt_dtal_minarea` and `rt_dtal_maxpolys`; a config that sets the old names needs the new ones.
+
+## v0.17.0
+
+### Added
+- **The rays see transparency now, not only the holes cut out of it.** A material marked `alpha_test: true` in `materials/*.yaml` hands its alpha to the sampler: a ray that hits such a texel keeps the strength of the texel's transparency, `1 - alpha`, so a texel that is 30% transparent passes three rays in ten and what arrives through it is dimmed rather than cut, and a shadow mask casts its own picture at the strength it was painted with instead of a hard silhouette. The decision comes from a hash of the instance, the primitive and the frame, so the temporal filter averages it into a steady attenuation; the classic `{` fence names and the `MF_HOLEY` models keep the crisp cutout they always had, and a texture the key is not given behaves exactly as before. The key also keeps the alpha out of the roughness the engine reads it as, and the surfaces that use the texture take the alpha-tested pass-through type, in the traced and the rasterized paths alike.
+- **`dlightspot`: a dlight that shines in a cone.** A dynamic light can now be a spot: it carries a beam axis and the two half-angles the intensity is cut off between (full inside the inner one, a smooth falloff to nothing at the outer one), `CL_AllocDlightSpot` makes one, and the renderer uploads it as a spot light — the pixel's lights are chosen from the light lists as ever, the sun and the flashlight untouched. The dlight pool grew to 128 slots, because the lights the material editor will place share it with the effects, and the engine's own lights take keys from the far end of the integer range so no monster's muzzle flash can take their slot back. `dlightspot <outer_deg> [inner_deg] [distance] [strength]` places one at the crosshair until the editor does it from its own file; `rt_dlightspot_intensity` is the strength the command takes when the argument is left out, and `rt_dlight_intensity` still scales it as it scales every dlight.
+
+### Fixed
+- **A spot light in the light lists was selected behind itself.** The selection mass of a spot evaluated the cone against the direction from the surface to the light instead of from the light to the surface, so the mass was zero exactly where the beam shines and nonzero behind the lamp: a spot the lists carried could not be picked where it lights, and was picked where it does not. The flashlight never met it (it is not in the lists), the spots the editor places are the first ones that do.
+
 ## v0.16.0
 
 ### Added

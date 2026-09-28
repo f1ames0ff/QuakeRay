@@ -7,6 +7,8 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * NVRHI renderer (Vulkan)
 * Path-traced lighting, ReSTIR-DI
 * DTAL: dynamic textured area lights
+* Alpha-transparent textures are traced through, not only cut out
+* Spot lights: a dynamic light can shine in a cone (`dlightspot` until the editor places them)
 * ASVGF denoiser
 * Ray-traced GI, NEE
 * FSR 3.1 upscaling
@@ -124,6 +126,9 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_denoiser 1` - ASVGF reconstruction of the lighting channels (`0` composites the raw ReSTIR output)
 * `rt_no_textures 0` - `1` swaps the diffuse albedo for a fixed value, i.e. "no textures"
 * `rt_emis_light_intensity 1.0` - how much light the emissive (luma-masked) surfaces emit
+* `rt_dtal_minarea 0` / `rt_dtal_maxpolys 64` - the size floor (world units², `0` off) and the per-surface cap (`0` = no cuts) of the DTAL splits; `rt_dtal_rebuild` re-runs the collection
+* `rt_dtal_clearance 1` - a DTAL polygon facing solid geometry within this many units is not created (`0` off)
+* `rt_dtal_debug 0` - `1` draws the DTAL wireframes, `2` their normals as arrows
 * `rt_light_color 255 255 255` - tint on every light source, as `<r> <g> <b>` in `0-255`; commas, quotes and a bare query work, and it is archived
 * `rt_globallight 255 255 255` - colour a light starts from before its own colour and the tint above, as `<r> <g> <b>` in `0-255`; same forms, and `rt_globallight_mult` is the separate intensity
 * `rt_light_styles 1` with `rt_light_styles_reach 48` - animated light entities flicker on their own fixture; the reach in Quake units keeps the flicker there, and `-1` removes the limit

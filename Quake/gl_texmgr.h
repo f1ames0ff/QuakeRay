@@ -84,6 +84,7 @@ typedef struct gltexture_s
 	qboolean             rtmirror;
 	qboolean             rtexactnormals;
 	qboolean             rtforcerasterize;
+	qboolean             rtalphatest;
 	qboolean             rtemissive;
 	vec3_t               rtemissivecolor;
 	float                rtemissivemean;

@@ -76,6 +76,14 @@ namespace
         };
     }
 
+    VkRect2D ToVkRect2D(const QrRect2D &r)
+    {
+        return VkRect2D{
+            .offset = { r.x, r.y },
+            .extent = { r.width, r.height },
+        };
+    }
+
     uint32_t ResolveTextureIndex_AlbedoAlpha(
         const qray::TextureManager &manager, const QrRasterizedGeometryUploadInfo &info)
     {
@@ -217,6 +225,8 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
         .transform            = info.transform,
         .viewProj             = IfNotNull( pViewProjection, Float16D( pViewProjection ) ),
         .viewport             = IfNotNull( pViewport, ToVkViewport( *pViewport ) ),
+        .scissor              = info.scissor.width > 0 ? std::optional< VkRect2D >( ToVkRect2D( info.scissor ) )
+                                                      : std::nullopt,
         .color                = Float4D( info.color.data ),
         .textureIndex         = ResolveTextureIndex_AlbedoAlpha( *textureMgr, info ),
         .emissionTextureIndex = ResolveTextureIndex_RME( *textureMgr, info ),

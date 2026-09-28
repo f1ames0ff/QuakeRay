@@ -1113,6 +1113,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtmirror = mat->mirror;
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
+	glt->rtalphatest = mat->alpha_test;
 
 	const int tw = glt->width;
 	const int th = glt->height;
@@ -1177,7 +1178,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	const qboolean isBrush = glt->owner && glt->owner->type == mod_brush;
 	const float defaultRough = isBrush ? CVAR_TO_FLOAT (rt_brush_rough) : CVAR_TO_FLOAT (rt_model_rough);
-	const qboolean engineAlpha = (glt->flags & TEXPREF_ALPHA) != 0;
+	const qboolean engineAlpha = (glt->flags & TEXPREF_ALPHA) != 0 || mat->alpha_test;
 
 	const qboolean has_luma_key = (mat->filename_emissive[0] != '\0');
 	const qboolean use_color_emissive = mat->has_color_emissive && !has_luma_key;
@@ -1606,6 +1607,7 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtmirror = false;
 	glt->rtexactnormals = false;
 	glt->rtforcerasterize = false;
+	glt->rtalphatest = false;
 	glt->rtemissive = false;
 	glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 	glt->rtemissivemean = 0.0f;

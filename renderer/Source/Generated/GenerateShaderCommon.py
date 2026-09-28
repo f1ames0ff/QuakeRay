@@ -369,7 +369,7 @@ CONST = {
     "MATERIAL_BLENDING_MASK_SECOND_LAYER"   : RESOLVE_LATER,
     "MATERIAL_BLENDING_MASK_THIRD_LAYER"    : RESOLVE_LATER,
     "GEOM_INST_FLAG_TURB_WARP"              : "1 << 13",
-    "GEOM_INST_FLAG_RESERVED_1"             : "1 << 14",
+    "GEOM_INST_FLAG_ALPHA_TRANSMISSION"     : "1 << 14",
     "GEOM_INST_FLAG_RESERVED_2"             : "1 << 15",
     "GEOM_INST_FLAG_RESERVED_3"             : "1 << 16",
     "GEOM_INST_FLAG_RESERVED_4"             : "1 << 17",
@@ -689,6 +689,11 @@ GLOBAL_UNIFORM_MEMBERS = [
     (FLOAT32, 4, "levelFogColorDensity",     1),
 
     (FLOAT32, 4, "levelFogSkyBlend",         1),
+
+    # Global-light RIS mode (host cvars rt_restir / rt_restir_candidates):
+    # .x = 1 samples the direct lights from the global light array instead of
+    # the per-cluster lists, .y = candidates drawn per NEE light sample.
+    (UINT32,  4, "restirParams",             1),
 ]
 
 GEOM_INSTANCE_MEMBERS = [

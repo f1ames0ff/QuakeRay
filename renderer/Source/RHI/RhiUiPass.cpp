@@ -223,6 +223,14 @@ nvrhi::Viewport ToLegacyViewport(const VkViewport &v)
     return nvrhi::Viewport(v.x, v.x + v.width, v.y + v.height, v.y, v.minDepth, v.maxDepth);
 }
 
+// The scissor of a DrawInfo, from the collector's VkRect2D (offset + extent, top-left origin) to
+// the NVRHI rectangle (minX, maxX, minY, maxY, nvrhi.h:136).
+nvrhi::Rect ToLegacyScissor(const VkRect2D &r)
+{
+    return nvrhi::Rect(r.offset.x, r.offset.x + static_cast<int>(r.extent.width),
+                       r.offset.y, r.offset.y + static_cast<int>(r.extent.height));
+}
+
 void LogMessage(const RhiUiPass::PrintFunction &print, const std::string &message)
 {
     if (print != nullptr)
@@ -489,8 +497,8 @@ void RhiUiPass::Render(nvrhi::ICommandList *pCommandList,
     pCommandList->beginTrackingTextureState(pTarget, nvrhi::AllSubresources,
                                             nvrhi::ResourceStates::UnorderedAccess);
 
-    // The full render area the legacy loop keeps its scissor at (Rasterizer.cpp:356-357): it never
-    // switches the scissor per draw.
+    // The full render area the legacy loop keeps its scissor at unless the draw carries one of its
+    // own (Rasterizer.cpp:356-357, :414-419).
     const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(targetWidth), 0, static_cast<int>(targetHeight));
 
     // The legacy viewport default: {0, 0, width, height, 0, 1}, through the same conversion as the
@@ -542,15 +550,17 @@ void RhiUiPass::Render(nvrhi::ICommandList *pCommandList,
         }
 
         // The viewport of the draw, or the whole target: the legacy loop switches only the
-        // viewport and keeps the scissor at the full render area (Rasterizer.cpp:389-396).
+        // viewport unless the draw carries a scissor of its own (Rasterizer.cpp:389-396, :414-419).
         const nvrhi::Viewport viewport =
             info.viewport ? ToLegacyViewport(*info.viewport) : defaultViewport;
+
+        const nvrhi::Rect scissor = info.scissor ? ToLegacyScissor(*info.scissor) : fullTarget;
 
         nvrhi::GraphicsState state;
         state.pipeline = pipeline;
         state.framebuffer = target.framebuffer;
         state.viewport.addViewport(viewport);
-        state.viewport.addScissorRect(fullTarget);
+        state.viewport.addScissorRect(scissor);
         // Set 0 is the bindless texture table, the pipeline's first layout; the second layout only
         // carries the push constants and has no descriptors to bind.
         state.addBindingSet(textureTable->GetTable());

@@ -111,6 +111,7 @@ cvar_t r_tasks = {"r_tasks", "0", CVAR_NONE};
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;
 extern cvar_t rt_flashlight;
+extern cvar_t rt_dlightspot_intensity;
 extern cvar_t rt_sun;
 extern cvar_t rt_sun_pitch;
 extern cvar_t rt_sun_yaw;
@@ -393,19 +394,41 @@ static void RT_UploadAllDlights ()
 		VectorScale (color, CVAR_TO_FLOAT (rt_dlight_intensity), color);
 		RT_FIXUP_LIGHT_INTENSITY (color, true);
 
-		QrSphericalLightUploadInfo info = {
-			.uniqueID = i,
-			.color = {color[0], color[1], color[2]},
-			.position = {l->origin[0], l->origin[1], l->origin[2]},
-			.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
-		};
+		const uint64_t uniqueID = (uint64_t) i;
 
-		QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
-		QR_CHECK (r);
+		/* A spot is one whose editor property gave it a beam; anything else keeps the
+		   spherical path, a spot whose beam is still empty included. */
+		if (l->type == DLIGHT_TYPE_SPOT && l->angleOuter > 0.0f && DotProduct (l->dir, l->dir) > 0.0f)
+		{
+			QrSpotLightUploadInfo info = {
+				.uniqueID = uniqueID,
+				.color = {color[0], color[1], color[2]},
+				.position = {l->origin[0], l->origin[1], l->origin[2]},
+				.direction = {l->dir[0], l->dir[1], l->dir[2]},
+				.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
+				.angleOuter = l->angleOuter,
+				.angleInner = l->angleInner,
+			};
+
+			QrResult r = qrUploadSpotLight (vulkan_globals.instance, &info);
+			QR_CHECK (r);
+		}
+		else
+		{
+			QrSphericalLightUploadInfo info = {
+				.uniqueID = uniqueID,
+				.color = {color[0], color[1], color[2]},
+				.position = {l->origin[0], l->origin[1], l->origin[2]},
+				.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
+			};
+
+			QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
+			QR_CHECK (r);
+		}
 
 		/* rt_cluster_dlights 0 keeps dlights out of the cluster lists (A/B experiment). */
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (info.uniqueID, l->origin, RT_ClusterLightReach ());
+			RT_ClusterLightAdd (uniqueID, l->origin, RT_ClusterLightReach ());
 	}
 	}
 
@@ -466,6 +489,63 @@ static void RT_UploadAllDlights ()
 		QrResult r = qrUploadDirectionalLight (vulkan_globals.instance, &info);
 		QR_CHECK (r);
 	}
+}
+
+/*
+================
+RT_DlightSpot_f
+
+Places a spot dlight at the crosshair, pointing along the view. The editor's spot property
+is what will create these lights; until it is there, this is how one is made and seen.
+
+dlightspot <outer_deg> [inner_deg] [distance] [strength]
+================
+*/
+void RT_DlightSpot_f (void)
+{
+	if (Cmd_Argc () < 2)
+	{
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance] [strength]\n", Cmd_Argv (0));
+		return;
+	}
+
+	float       outerDeg = (float) atof (Cmd_Argv (1));
+	float       innerDeg = (Cmd_Argc () >= 3) ? (float) atof (Cmd_Argv (2)) : 0.0f;
+	const float dist     = (Cmd_Argc () >= 4) ? (float) atof (Cmd_Argv (3)) : 48.0f;
+	const float strength = (Cmd_Argc () >= 5) ? (float) atof (Cmd_Argv (4)) : CVAR_TO_FLOAT (rt_dlightspot_intensity);
+
+	/* The comparisons read as they do so that a nan fails them: atof takes nan and inf, and a
+	   nan edge or origin would poison every cell that samples the light. */
+	if (!(outerDeg >= 0.1f && outerDeg <= 89.9f) ||
+	    !(innerDeg >= 0.0f) || !(innerDeg <= outerDeg) ||
+	    !(dist >= 1.0f && dist <= 4096.0f) ||
+	    !(strength >= 0.0f && strength <= 1000.0f))
+	{
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance] [strength]\n", Cmd_Argv (0));
+		return;
+	}
+
+	/* The cone edge is a smoothstep, and one with equal edges is undefined, so the inner
+	   angle stays strictly inside the outer one. */
+	if (innerDeg > outerDeg * 0.999f)
+	{
+		innerDeg = outerDeg * 0.999f;
+	}
+
+	/* DLIGHT_KEY_TEST is a key no emitter makes, so no effect can take the slot back, and
+	   every run of the command reuses it: one command owns one light. */
+	dlightspot_t *dl = CL_AllocDlightSpot (DLIGHT_KEY_TEST);
+
+	VectorMA (r_origin, dist, vpn, dl->origin);
+	VectorCopy (vpn, dl->dir);
+	VectorScale (dl->color, strength, dl->color);
+	dl->angleOuter = DEG2RAD (outerDeg);
+	dl->angleInner = DEG2RAD (innerDeg);
+	dl->radius     = 200;
+	dl->decay      = 0;
+	dl->die        = cl.time + 3600;
+
+	Con_Printf ("dlightspot: outer %.1f deg, inner %.1f deg, %.0f units ahead, strength %.2f\n", outerDeg, innerDeg, dist, strength);
 }
 
 /*

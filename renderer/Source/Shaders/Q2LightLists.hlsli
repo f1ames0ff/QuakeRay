@@ -249,8 +249,8 @@ float q2LightSelectionMass(const ShLightEncoded encoded, const float3 p, const f
         if (encoded.lightType == LIGHT_TYPE_SPOT)
         {
             const SpotLight l = decodeAsSpotLight(encoded);
-            const float3 toLight = normalize(encoded.data_0.xyz - p);
-            sa *= getSpotFactor(max(dot(l.direction, toLight), 0.0), l.cosAngleInner, l.cosAngleOuter);
+            const float3 lightToSurf = normalize(p - encoded.data_0.xyz);
+            sa *= getSpotFactor(max(dot(l.direction, lightToSurf), 0.0), l.cosAngleInner, l.cosAngleOuter);
         }
 
         return sa;

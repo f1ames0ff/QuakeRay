@@ -103,6 +103,11 @@ namespace
             flags |= GEOM_INST_FLAG_IGNORE_REFRACT_AFTER;
         }
 
+        if( info.flags & QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT )
+        {
+            flags |= GEOM_INST_FLAG_ALPHA_TRANSMISSION;
+        }
+
         if( geomFlags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE )
         {
             flags |= GEOM_INST_FLAG_IS_MOVABLE;

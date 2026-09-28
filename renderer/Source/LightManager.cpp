@@ -169,6 +169,13 @@ namespace
         const float radius = std::max(kMinSphereRadius, info.radius);
         const float area = static_cast<float>(kPi) * radius * radius;
 
+        /* The cone edge is a smoothstep, and one with equal edges is undefined, so the inner
+           angle is pulled strictly inside the outer one before the cosines are taken. The clamp
+           stays in angle space and the outer angle keeps a floor, so the cosines of a beam
+           narrow enough to round together still differ. */
+        const float angleOuter = std::max(info.angleOuter, static_cast<float>(kPi / 180.0));
+        const float angleInner = std::min(std::max(std::isfinite(info.angleInner) ? info.angleInner : 0.0f, 0.0f), angleOuter * 0.999f);
+
         ShLightEncoded light = {};
         light.lightType = LIGHT_TYPE_SPOT;
 
@@ -180,8 +187,8 @@ namespace
         }
 
         light.data_0[3] = radius;
-        light.data_2[0] = std::cos(std::min(info.angleInner, info.angleOuter));
-        light.data_2[1] = std::cos(info.angleOuter);
+        light.data_2[0] = std::cos(angleInner);
+        light.data_2[1] = std::cos(angleOuter);
 
         return light;
     }
@@ -507,7 +514,8 @@ void qray::LightManager::AddTexturedAreaLight(uint32_t frameIndex, const QrTextu
 
 void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUploadInfo &info)
 {
-    if (IsColorTooDim(info.color.data) || info.radius < 0.0f || info.angleOuter <= 0.0f)
+    /* `!(x > 0)` rather than `x <= 0`: the latter takes a nan angle for a valid one. */
+    if (IsColorTooDim(info.color.data) || info.radius < 0.0f || !(info.angleOuter > 0.0f))
     {
         return;
     }

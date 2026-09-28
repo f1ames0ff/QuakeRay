@@ -334,6 +334,14 @@ nvrhi::Viewport ToLegacyViewport(const VkViewport &v)
     return nvrhi::Viewport(v.x, v.x + v.width, v.y + v.height, v.y, v.minDepth, v.maxDepth);
 }
 
+// The scissor of a DrawInfo, from the collector's VkRect2D (offset + extent, top-left origin) to
+// the NVRHI rectangle (minX, maxX, minY, maxY, nvrhi.h:136).
+nvrhi::Rect ToLegacyScissor(const VkRect2D &r)
+{
+    return nvrhi::Rect(r.offset.x, r.offset.x + static_cast<int>(r.extent.width),
+                       r.offset.y, r.offset.y + static_cast<int>(r.extent.height));
+}
+
 void LogMessage(const RhiRasterOverlayPass::PrintFunction &print, const std::string &message)
 {
     if (print != nullptr)
@@ -1468,8 +1476,8 @@ void RhiRasterOverlayPass::RecordWorldDraws(nvrhi::ICommandList *pCommandList, c
                                             uint32_t drawCount, bool applyVertexColorGamma,
                                             bool skipSmokeEntries)
 {
-    // The legacy loop keeps the scissor at the whole render area and switches only the viewport
-    // (Rasterizer.cpp:356-357, :389-396).
+    // The legacy loop keeps the scissor at the whole render area unless the draw carries one of
+    // its own, and switches the viewport per draw (Rasterizer.cpp:356-357, :389-396, :414-419).
     const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(width), 0, static_cast<int>(height));
 
     // The legacy default viewport: {0, 0, width, height, 0, 1}, through the same conversion as the
@@ -1518,11 +1526,13 @@ void RhiRasterOverlayPass::RecordWorldDraws(nvrhi::ICommandList *pCommandList, c
         const nvrhi::Viewport viewport =
             info.viewport ? ToLegacyViewport(*info.viewport) : defaultViewport;
 
+        const nvrhi::Rect scissor = info.scissor ? ToLegacyScissor(*info.scissor) : fullTarget;
+
         nvrhi::GraphicsState state;
         state.pipeline = pipeline;
         state.framebuffer = target.framebuffer;
         state.viewport.addViewport(viewport);
-        state.viewport.addScissorRect(fullTarget);
+        state.viewport.addScissorRect(scissor);
         // Sets 0..4 in the layout order of Create: the table, the uniform, the slot's tonemapping
         // buffer, the real empty set of the set-3 hole and the partial framebuffers set with the
         // binding-25 storage image.
@@ -1568,9 +1578,9 @@ void RhiRasterOverlayPass::RecordSmokeDraws(nvrhi::ICommandList *pCommandList, c
                                             const RasterizedDataCollector::DrawInfo *pDraws,
                                             uint32_t drawCount, nvrhi::IBindingSet *pSmokeLightSet)
 {
-    // The same loop shape the world draws use: the scissor stays at the whole render area, the
-    // viewport is the draw's own when it has one and the full target otherwise (Rasterizer.cpp:
-    // 356-357, :389-396, :436-446).
+    // The same loop shape the world draws use: the scissor is the draw's own when it has one and
+    // the whole render area otherwise, the viewport is the draw's own when it has one and the full
+    // target otherwise (Rasterizer.cpp:356-357, :389-396, :414-419, :436-446).
     const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(width), 0, static_cast<int>(height));
 
     const VkViewport legacyDefaultViewport = { 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
@@ -1607,11 +1617,13 @@ void RhiRasterOverlayPass::RecordSmokeDraws(nvrhi::ICommandList *pCommandList, c
         const nvrhi::Viewport viewport =
             info.viewport ? ToLegacyViewport(*info.viewport) : defaultViewport;
 
+        const nvrhi::Rect scissor = info.scissor ? ToLegacyScissor(*info.scissor) : fullTarget;
+
         nvrhi::GraphicsState state;
         state.pipeline = pipeline;
         state.framebuffer = target.framebuffer;
         state.viewport.addViewport(viewport);
-        state.viewport.addScissorRect(fullTarget);
+        state.viewport.addScissorRect(scissor);
         // Sets 0..6 in the layout order CreateSmokePipeline adds them: the table, the uniform, the
         // slot's tonemapping buffer, the smoke set-3 hole, the smoke framebuffers set, the slot's
         // TLAS and the direct pass's light set.

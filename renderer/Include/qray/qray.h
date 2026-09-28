@@ -335,6 +335,7 @@ typedef enum QrGeometryUploadFlagBits
     QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT = 64,
 
     QR_GEOMETRY_UPLOAD_TURB_WARP_BIT = 128,
+    QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT = 256,
 } QrGeometryUploadFlagBits;
 typedef QrFlags QrGeometryUploadFlags;
 
@@ -419,6 +420,15 @@ typedef enum QrRasterizedGeometryRenderType
     QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY
 } QrRasterizedGeometryRenderType;
 
+// Rectangle in pixels. (x, y) defines the top-left corner.
+typedef struct QrRect2D
+{
+    int32_t     x;
+    int32_t     y;
+    uint32_t    width;
+    uint32_t    height;
+} QrRect2D;
+
 typedef enum QrRasterizedGeometryStateFlagBits
 {
     QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST         = 1,
@@ -451,6 +461,11 @@ typedef struct QrRasterizedGeometryUploadInfo
 
     QrFloat4D                               smokeNoise;
     QrFloat4D                               smokeLook;
+
+    // Scissor rectangle in pixels, top-left origin. width == 0 means no
+    // scissor (the whole viewport is used). For QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY
+    // it must be zero as well.
+    QrRect2D                                scissor;
 } QrRasterizedGeometryUploadInfo;
 
 typedef struct QrExtent2D
@@ -550,16 +565,20 @@ typedef struct QrTexturedAreaLightUploadInfo
     int             isStatic;
 } QrTexturedAreaLightUploadInfo;
 
+/* Spot lights are regular lights in the light array: any number of them can be uploaded. */
 typedef struct QrSpotLightUploadInfo
 {
     uint64_t        uniqueID;
     QrFloat3D       color;
     QrFloat3D       position;
     QrFloat3D       direction;
+    // Light source disk radius.
     float           radius;
 
+    // Outer cone half-angle. In radians.
     float           angleOuter;
 
+    // Inner cone half-angle. In radians; the intensity is full below it.
     float           angleInner;
 } QrSpotLightUploadInfo;
 
@@ -990,6 +1009,15 @@ typedef struct QrDrawFrameIlluminationParams
     uint32_t    reflRefrEarlyOut;
 
     uint32_t    neeLightSamples;
+
+    // 1: the direct pass samples the global light array with RIS instead of the
+    // per-cluster light lists (host cvar rt_restir; 0 keeps the cluster path).
+    // Default: 0
+    uint32_t    restirEnabled;
+    // Candidates drawn per NEE light sample in the global light RIS (host cvar
+    // rt_restir_candidates), clamped to 1..64.
+    // Default: 8
+    uint32_t    restirCandidates;
 
     float       giBounceRays;
 

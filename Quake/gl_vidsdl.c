@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "cfgfile.h"
 #include "bgmusic.h"
 #include "palette.h"
+#include "qr_gui.h"
 #include "rt_material.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
@@ -163,6 +164,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_model_lights, "1") \
 	CVAR_DEF_T (rt_model_lights_max, "8") \
 	CVAR_DEF_T (rt_model_lights_budget, "256") \
+	CVAR_DEF_T (rt_model_lights_minarea, "0") \
 	\
 	CVAR_DEF_T (rt_poi_distthresh, "2") \
 	CVAR_DEF_T (rt_poi_distthresh_super, "3") \
@@ -181,6 +183,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_sun_yaw, "120") \
 	CVAR_DEF_T (rt_sun_preset, "0") \
 	CVAR_DEF_T (rt_flashlight, "0") \
+	CVAR_DEF_T (rt_dlightspot_intensity, "1") \
 	\
 	CVAR_DEF_T (rt_muzzleoffs_x, "0") \
 	CVAR_DEF_T (rt_muzzleoffs_y, "-30") \
@@ -214,6 +217,9 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_emis_blend, "1") \
 	CVAR_DEF_T (rt_emis_blendstr, "1") \
 	CVAR_DEF_T (rt_tal_selflit, "6") \
+	CVAR_DEF_T (rt_dtal_minarea, "0") \
+	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
+	CVAR_DEF_T (rt_dtal_clearance, "1") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
@@ -276,11 +282,13 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_hud_padding, "8") \
 	\
 	CVAR_DEF_T (rt_debugflags, "0") \
-	CVAR_DEF_T (rt_debugemissive, "0") \
+	CVAR_DEF_T (rt_dtal_debug, "0") \
 	CVAR_DEF_T (rt_q2_depthgrad, "1") \
 	CVAR_DEF_T (rt_q2_lightstats, "1") \
 	CVAR_DEF_T (rt_reflrefr_earlyout, "1") \
 	CVAR_DEF_T (rt_nee_samples, "1") \
+	CVAR_DEF_T (rt_restir, "0") \
+	CVAR_DEF_T (rt_restir_candidates, "8") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
 	CVAR_DEF_T (rt_stats_interval, "0.25") \
 	CVAR_DEF_T (rt_worldcensus, "0") \
@@ -631,6 +639,10 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_model_lights");
 	RT_Bench_Setting (f, "rt_model_lights_max");
 	RT_Bench_Setting (f, "rt_model_lights_budget");
+	RT_Bench_Setting (f, "rt_model_lights_minarea");
+	RT_Bench_Setting (f, "rt_dtal_minarea");
+	RT_Bench_Setting (f, "rt_dtal_maxpolys");
+	RT_Bench_Setting (f, "rt_dtal_clearance");
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_godrays");
 	RT_Bench_Setting (f, "rt_godrays_intensity");
@@ -642,6 +654,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_denoiser");
 	RT_Bench_Setting (f, "rt_gi_level");
 	RT_Bench_Setting (f, "rt_nee_samples");
+	RT_Bench_Setting (f, "rt_restir");
+	RT_Bench_Setting (f, "rt_restir_candidates");
 	RT_Bench_Setting (f, "rt_renderscale");
 	RT_Bench_Setting (f, "rt_upscale_fsr2");
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
@@ -1741,11 +1755,15 @@ static void GL_InitInstance (void)
 
 	RT_MAT_Init ();
 
+	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL);
+
 	Cmd_AddCommand ("rt_pfnreloadshaders", RT_ReloadShaders);
 	Cmd_AddCommand ("rt_water_color", RT_WaterColor);
 	Cmd_AddCommand ("rt_water_acidcolor", RT_AcidColor);
 	Cmd_AddCommand ("rt_light_report", RT_LightReport_f);
 	Cmd_AddCommand ("rt_light_report_dump", RT_LightReportDump_f);
+	Cmd_AddCommand ("rt_dtal_rebuild", RT_DtalRebuild_f);
+	Cmd_AddCommand ("dlightspot", RT_DlightSpot_f);
 	Cmd_AddCommand ("fog", RT_Fog_Cmd);
 	Cmd_AddCommand ("rt_stats", RT_Stats_f);
 	Cmd_AddCommand ("rt_stats_dump", RT_StatsDump_f);
@@ -2069,6 +2087,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.q2LightStatsMode = q2_lightstats_mode,
 		.reflRefrEarlyOut = CVAR_TO_BOOL (rt_reflrefr_earlyout),
 		.neeLightSamples = nee_samples,
+		.restirEnabled = CVAR_TO_BOOL (rt_restir) ? 1u : 0u,
+		.restirCandidates = (uint32_t)CLAMP (1.0f, CVAR_TO_FLOAT (rt_restir_candidates), 64.0f),
 		.giBounceRays = gi_level,
 		// Q2RTX pt_sun_bounce_range / sun_bounce: how far the sun reaches into an
 		// indirect bounce (game units, 0 turns indirect sunlight off) and a
@@ -2463,6 +2483,7 @@ void VID_Shutdown (void)
 	{
 		if (vulkan_globals.instance != QR_NULL_HANDLE)
 		{
+		    QR_GUI_Shutdown ();
 		    RT_MAT_Shutdown ();
 		    QrResult r = qrDestroyInstance (vulkan_globals.instance);
 			QR_CHECK (r);
@@ -2624,6 +2645,12 @@ static void RT_SunPreset_f (cvar_t *var)
 extern atomic_uint32_t rt_require_static_submit;
 
 static void RT_LightStylesChanged_f (cvar_t *var)
+{
+	(void)var;
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+}
+
+static void RT_EmissiveLimitsChanged_f (cvar_t *var)
 {
 	(void)var;
 	Atomic_StoreUInt32 (&rt_require_static_submit, true);
@@ -2852,6 +2879,9 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_sun_edit, RT_SunEditChanged_f);
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
+	Cvar_SetCallback (&rt_dtal_minarea, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_maxpolys, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_clearance, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_worldcensus, RT_WorldCensusChanged_f);
 	Cvar_SetCallback (&rt_worldlights_stats, RT_WorldLightsStatsChanged_f);
 

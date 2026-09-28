@@ -419,6 +419,8 @@ void RT_ClusterLightReport_f (void);
 void RT_LightReport_f (void);
 void RT_PrintEmissiveStats (void);
 void RT_LightReportDump_f (void);
+/* Places a spot dlight at the crosshair; the editor will create them itself later. */
+void RT_DlightSpot_f (void);
 // Non-NULL while rt_light_report_dump is writing; RT_LightReportPrint mirrors every
 // report line into this file in addition to the console so the dump and the readout match.
 extern FILE *rt_light_report_file;
@@ -629,6 +631,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 // own its lifetime.
 void RT_ModelLightsCacheAlloc (qmodel_t *model);
 void RT_ModelLightsCacheFree (qmodel_t *model);
+void RT_DtalRebuild_f (void);
 
 QrTransform RT_GetModelTransform (const float model_matrix[16]);
 QrTransform RT_GetBrushModelMatrix (entity_t *e);

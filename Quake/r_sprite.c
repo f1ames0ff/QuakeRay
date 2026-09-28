@@ -246,7 +246,8 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 	{
 		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetSpriteModelUniqueId (entuniqueid),
-			.flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
+			.flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT |
+			         ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0),
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType = QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED,
 			.visibilityType = QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
