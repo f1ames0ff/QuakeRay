@@ -2393,8 +2393,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	voxel_smoke_params.enabled = CVAR_TO_BOOL (rt_voxel_smoke);
 
-	vec3_t voxel_smoke_forward;
-	AngleVectors (r_refdef.viewangles, voxel_smoke_forward, NULL, NULL);
+	vec3_t voxel_smoke_forward, voxel_smoke_right, voxel_smoke_up;
+	AngleVectors (r_refdef.viewangles, voxel_smoke_forward, voxel_smoke_right, voxel_smoke_up);
 
 	if (cl.worldmodel)
 	{
