@@ -121,6 +121,13 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_roughmin, "0.02") \
     \
 	CVAR_DEF_T (rt_dlight_intensity, "3.0") \
+CVAR_DEF_T (rt_voxel_smoke, "1") \
+CVAR_DEF_T (rt_voxel_smoke_radius, "64") \
+CVAR_DEF_T (rt_voxel_smoke_density, "2.0") \
+CVAR_DEF_T (rt_voxel_smoke_decay, "0.35") \
+CVAR_DEF_T (rt_voxel_smoke_steps, "96") \
+CVAR_DEF_T (rt_voxel_smoke_extinction, "1.5") \
+CVAR_DEF_T (rt_voxel_smoke_grey, "0.5") \
 	CVAR_DEF_T (rt_dlight_radius, "0.1") \
 	\
 	CVAR_DEF_T (rt_emis_light_intensity, "1.0") \
@@ -2382,6 +2389,39 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float cameranear = GL_GetCameraNear (DEG2RAD (r_fovx), DEG2RAD (r_fovy));
 	float camerafar = GL_GetCameraFar ();
 
+	RgDrawFrameVoxelSmokeParams voxel_smoke_params = {};
+
+	voxel_smoke_params.enabled = CVAR_TO_BOOL (rt_voxel_smoke);
+
+	vec3_t voxel_smoke_forward;
+	AngleVectors (r_refdef.viewangles, voxel_smoke_forward, NULL, NULL);
+
+	if (cl.worldmodel)
+	{
+		for (int i = 0; i < 3; i++)
+		{
+			voxel_smoke_params.worldMin.data[i] = cl.worldmodel->mins[i] - 64.0f;
+			voxel_smoke_params.worldMax.data[i] = cl.worldmodel->maxs[i] + 64.0f;
+			voxel_smoke_params.emitterCenter.data[i] = r_refdef.vieworg[i] + voxel_smoke_forward[i] * 128.0f;
+		}
+	}
+	else
+	{
+		for (int i = 0; i < 3; i++)
+		{
+			voxel_smoke_params.worldMin.data[i] = -256.0f;
+			voxel_smoke_params.worldMax.data[i] = 256.0f;
+			voxel_smoke_params.emitterCenter.data[i] = voxel_smoke_forward[i] * 128.0f;
+		}
+	}
+
+	voxel_smoke_params.emitterRadius = CVAR_TO_FLOAT (rt_voxel_smoke_radius);
+	voxel_smoke_params.emitterDensity = CVAR_TO_FLOAT (rt_voxel_smoke_density);
+	voxel_smoke_params.decayPerSecond = CVAR_TO_FLOAT (rt_voxel_smoke_decay);
+	voxel_smoke_params.marchSteps = CVAR_TO_FLOAT (rt_voxel_smoke_steps);
+	voxel_smoke_params.extinction = CVAR_TO_FLOAT (rt_voxel_smoke_extinction);
+	voxel_smoke_params.debugGrey = CVAR_TO_FLOAT (rt_voxel_smoke_grey);
+
 	RgDrawFrameInfo info = {
 		.worldUpVector = {0, 0, 1},
 		.fovYRadians = DEG2RAD (r_fovy),
@@ -2401,6 +2441,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.pTonemappingParams = &tonemap_params,
 		.pReflectRefractParams = &refl_refr_params,
 		.pSkyParams = &sky_params,
+		.pVoxelSmokeParams = &voxel_smoke_params,
 		.pTexturesParams = &texture_params,
 		.pLensFlareParams = &lens_flare_params,
 		.pLevelFogParams = &level_fog_params,

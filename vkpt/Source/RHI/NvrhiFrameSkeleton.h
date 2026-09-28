@@ -148,6 +148,7 @@ public:
         // other inputs are the skeleton's own: the slot's TLAS (accelStructs->GetTopLevel) and the
         // direct pass's set-6 light layout and set.
         const RasterizedDataCollector::DrawInfo *smokeDraws = nullptr;
+    const RgDrawFrameVoxelSmokeParams *voxelSmokeParams = nullptr;
         uint32_t smokeDrawCount = 0;
 
         // -- the 2D UI pass (A5.1) --

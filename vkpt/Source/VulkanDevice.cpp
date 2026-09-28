@@ -1334,6 +1334,7 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     // same sky viewer position (VulkanDevice.cpp:258-263). RhiRasterSkyPass takes the same bytes;
     // the ALBEDO half does not read them.
     memcpy(sky.skyFaceViewProj, globalUniform->viewProjCubemap, sizeof(sky.skyFaceViewProj));
+    sky.voxelSmokeParams = drawInfo.pVoxelSmokeParams;
     sky.worldDraws = worldDraws.data();
     sky.worldDrawCount = static_cast<uint32_t>(worldDraws.size());
     sky.smokeDraws = smokeDraws.data();
