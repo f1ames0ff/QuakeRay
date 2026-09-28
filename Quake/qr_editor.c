@@ -73,6 +73,7 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea;
+extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale, rt_water_aciddensity;
 
 // The level's own fog (gl_fog.c): read through the getters and written through
 // the `fog` command, the same path a map's key and the console use. Whether the
@@ -2751,6 +2752,153 @@ static void QRE_PanelActionRow (void (*on_exit)(void))
 	QR_GUI_BeginScroll ();
 }
 
+#define QRE_SNAPSHOT_MAX 256
+
+static const struct
+{
+	const char *name;
+	float       min, max;
+	const char *tip;
+} qre_water[] = {
+	{ "rt_water_speed",       0.0f,   2.0f, "How fast the water waves travel." },
+	{ "rt_water_normstren",   0.0f,   4.0f, "How strongly the water's normal map bends the surface." },
+	{ "rt_water_normsharp",   0.0f,  16.0f, "Sharpness of the water's normal map: higher tightens the ripple pattern." },
+	{ "rt_water_scale",       0.0f,   4.0f, "Scale of the wave pattern over the water: larger stretches the waves." },
+	{ "rt_water_aciddensity", 0.0f, 100.0f, "How dense the acid is: higher makes its surface look thicker." },
+};
+
+static char     qre_water_snapshot[countof (qre_water)][QRE_SNAPSHOT_MAX];
+static qboolean qre_water_snapshot_set[countof (qre_water)];
+static float    qre_water_color_snapshot[3];
+static float    qre_acid_color_snapshot[3];
+
+static void QRE_WaterColorSet (const char *name, const float rgb[3])
+{
+	Cvar_Set (name, va ("%d %d %d",
+	                    (int)(CLAMP (0.0f, rgb[0], 1.0f) * 255.0f + 0.5f),
+	                    (int)(CLAMP (0.0f, rgb[1], 1.0f) * 255.0f + 0.5f),
+	                    (int)(CLAMP (0.0f, rgb[2], 1.0f) * 255.0f + 0.5f)));
+}
+
+static void QRE_TakeWaterSnapshot (void)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_water); i++)
+	{
+		cvar_t *var = Cvar_FindVar (qre_water[i].name);
+
+		if (!var)
+		{
+			qre_water_snapshot_set[i] = false;
+			qre_water_snapshot[i][0] = '\0';
+			continue;
+		}
+
+		qre_water_snapshot_set[i] = true;
+		q_strlcpy (qre_water_snapshot[i], var->string ? var->string : "", sizeof (qre_water_snapshot[i]));
+	}
+
+	RT_GetWaterColor (qre_water_color_snapshot);
+	RT_GetAcidColor (qre_acid_color_snapshot);
+}
+
+static qboolean QRE_WaterTouched (void)
+{
+	float color[3];
+	int   i;
+
+	for (i = 0; i < (int)countof (qre_water); i++)
+	{
+		cvar_t *var;
+
+		if (!qre_water_snapshot_set[i])
+			continue;
+
+		var = Cvar_FindVar (qre_water[i].name);
+		if (var && strcmp (var->string ? var->string : "", qre_water_snapshot[i]))
+			return true;
+	}
+
+	RT_GetWaterColor (color);
+	if (memcmp (color, qre_water_color_snapshot, sizeof (color)))
+		return true;
+	RT_GetAcidColor (color);
+	return memcmp (color, qre_acid_color_snapshot, sizeof (color)) != 0;
+}
+
+static void QRE_WaterRestore (void)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_water); i++)
+	{
+		if (qre_water_snapshot_set[i])
+			Cvar_Set (qre_water[i].name, qre_water_snapshot[i]);
+	}
+
+	QRE_WaterColorSet ("rt_water_color", qre_water_color_snapshot);
+	QRE_WaterColorSet ("rt_water_acidcolor", qre_acid_color_snapshot);
+}
+
+static void QRE_MatWaterSection (void)
+{
+	int i;
+
+	QR_GUI_Spacing ();
+	QR_GUI_Separator ();
+	QR_GUI_Label ("Water / Acid");
+	QR_GUI_Spacing ();
+
+	for (i = 0; i < (int)countof (qre_water); i++)
+	{
+		cvar_t *var = Cvar_FindVar (qre_water[i].name);
+		float   value;
+		qboolean changed;
+
+		if (!var)
+		{
+			QR_GUI_LabelDim (va ("%s: no such cvar", qre_water[i].name));
+			continue;
+		}
+
+		value = var->value;
+		if (QR_GUI_SliderFloat (qre_water[i].name, &value, qre_water[i].min, qre_water[i].max, qre_water[i].tip))
+			Cvar_Set (qre_water[i].name, va ("%.4g", value));
+
+		changed = qre_water_snapshot_set[i] &&
+		          strcmp (var->string ? var->string : "", qre_water_snapshot[i]) != 0;
+		if (QR_GUI_ResetButton (qre_water[i].name, changed))
+			Cvar_Set (qre_water[i].name, qre_water_snapshot[i]);
+	}
+
+	{
+		float rgb[3];
+		int   en = 1;
+
+		RT_GetWaterColor (rgb);
+		if (QR_GUI_ColorHex ("rt_water_color", rgb, &en, "The colour of the water surface."))
+			QRE_WaterColorSet ("rt_water_color", rgb);
+		if (QR_GUI_ResetButton ("rt_water_color", memcmp (rgb, qre_water_color_snapshot, sizeof (rgb)) != 0))
+		{
+			VectorCopy (qre_water_color_snapshot, rgb);
+			QRE_WaterColorSet ("rt_water_color", rgb);
+		}
+
+		RT_GetAcidColor (rgb);
+		if (QR_GUI_ColorHex ("rt_water_acidcolor", rgb, &en, "The colour of the acid."))
+			QRE_WaterColorSet ("rt_water_acidcolor", rgb);
+		if (QR_GUI_ResetButton ("rt_water_acidcolor", memcmp (rgb, qre_acid_color_snapshot, sizeof (rgb)) != 0))
+		{
+			VectorCopy (qre_acid_color_snapshot, rgb);
+			QRE_WaterColorSet ("rt_water_acidcolor", rgb);
+		}
+	}
+
+	QR_GUI_Spacing ();
+	QR_GUI_LabelDim ("the water and acid values are saved to the config by Save; Cancel puts them back");
+}
+
 static void QRE_MatSystemTab (void)
 {
 	static const char *const dbg_modes[] = { "off", "wireframe", "normals" };
@@ -2780,6 +2928,8 @@ static void QRE_MatSystemTab (void)
 	if (QR_GUI_SliderFloat ("rt_dtal_minarea", &value, 0.0f, 1024.0f,
 	                        "Drops a DTAL polygon under this area, in world units squared (0 off)."))
 		Cvar_Set ("rt_dtal_minarea", va ("%.4g", value));
+
+	QRE_MatWaterSection ();
 }
 
 static void QRE_BuildPanelGUI (void)
@@ -3182,9 +3332,7 @@ static const qre_global_t qre_globals[] = {
 	  "Draw the level's own fog (the worldspawn \"fog\" key or the console `fog` command)." },
 };
 
-#define QRE_GLOBAL_SNAPSHOT_MAX 256
-
-static char     qre_globals_snapshot[countof (qre_globals)][QRE_GLOBAL_SNAPSHOT_MAX];
+static char     qre_globals_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];
 static qboolean qre_globals_snapshot_set[countof (qre_globals)];
 
 static const char *QRE_GlobalCvarName (const qre_global_t *g)
@@ -4013,7 +4161,7 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	else if (qre.exit_prompt)
 	{
 		int answer = QR_GUI_Dialog ((qre.mode == QRE_MODE_LIGHT) ? "Save lights?" : "Save materials?",
-		                            (qre.mode == QRE_MODE_LIGHT) ? "Save all light changes?" : "Save all materials changes?",
+		                            (qre.mode == QRE_MODE_LIGHT) ? "Save all light changes?" : "Save all materials and water changes?",
 		                            "Save all", "Discard");
 
 		if (answer == 1)
@@ -4605,9 +4753,10 @@ static void QRE_ClosePanel (void)
 
 static void QRE_Apply (void)
 {
-	const qboolean globals = (qre.mode == QRE_MODE_LIGHT) ? QRE_GlobalsTouched () : false;
+	const qboolean globals = (qre.mode == QRE_MODE_LIGHT) ? QRE_GlobalsTouched () : QRE_WaterTouched ();
+	const qboolean session = QRE_WriteSession ();
 
-	if (!QRE_WriteSession () && !globals)
+	if (!session && !globals)
 	{
 		QRE_Notify ("nothing to save yet");
 		return;
@@ -4636,7 +4785,11 @@ static void QRE_Apply (void)
 	}
 
 	QRE_TakeSnapshot (); // Cancel now reverts to the state just saved
-	QRE_Notify ("session written to materials.editor.yaml");
+	QRE_TakeWaterSnapshot ();
+	if (session)
+		QRE_Notify ("session written to materials.editor.yaml");
+	if (globals)
+		QRE_Notify ("water settings written to the config");
 }
 
 static void QRE_Cancel (void)
@@ -4656,6 +4809,7 @@ static void QRE_Cancel (void)
 
 	QRE_RestoreSnapshot ();
 	QRE_ReapplyTouched (); // put the yaml values back on screen
+	QRE_WaterRestore ();
 
 	qre.tmp_appended = false;
 
@@ -4681,7 +4835,7 @@ static void QRE_Cancel (void)
 	if (QRE_FileExists (qre.editor_file) && !QRE_WriteSession ())
 		remove (qre.editor_file);
 
-	QRE_Notify ("materials reverted to the values from materials.yaml");
+	QRE_Notify ("materials and water settings reverted to the values from materials.yaml and the config");
 }
 
 // ---------------------------------------------------------------------------
@@ -5264,8 +5418,8 @@ static qboolean QRE_SaveOneSession (const char *editor_file, const char *target_
 static void QRE_SessionSave (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
-	const qboolean globals = light ? QRE_GlobalsTouched () : false;
-	const qboolean touched = light ? QRE_LightSessionTouched () : (qre.touched_count > 0);
+	const qboolean globals = light ? QRE_GlobalsTouched () : QRE_WaterTouched ();
+	const qboolean touched = light ? QRE_LightSessionTouched () : (qre.touched_count > 0 || QRE_WaterTouched ());
 
 	if (touched && !QRE_WriteSession () && !globals)
 	{
@@ -5282,7 +5436,15 @@ static void QRE_SessionSave (void)
 
 		if (!QRE_FileExists (qre.editor_file))
 		{
-			QRE_Notify ("nothing to save");
+			if (globals)
+			{
+				QRE_StopEditor (false);
+				QRE_Notify ("water settings written to the config");
+			}
+			else
+			{
+				QRE_Notify ("nothing to save");
+			}
 			return;
 		}
 
@@ -5302,6 +5464,8 @@ static void QRE_SessionSave (void)
 		QRE_StopEditor (false);
 		QRE_Notify (had_target ? "materials.yaml saved; backup_materials.yaml holds the previous file"
 		                       : "materials.yaml saved");
+		if (globals)
+			QRE_Notify ("water settings written to the config");
 		return;
 	}
 
@@ -5372,7 +5536,7 @@ static void QRE_RequestExit (void)
 		return;
 	}
 
-	touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0);
+	touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0 || QRE_WaterTouched ());
 
 	if (!touched && !QRE_FileExists (qre.editor_file) && !QRE_FileExists (qre.custom_editor_file))
 	{
@@ -5472,6 +5636,7 @@ static void QRE_StopEditor (qboolean restore)
 		{
 			QRE_RestoreSnapshot ();
 			QRE_ReapplyTouched ();
+			QRE_WaterRestore ();
 		}
 	}
 
@@ -5541,6 +5706,7 @@ static void QRE_StartMode (int mode)
 	else
 	{
 		QRE_TakeSnapshot ();
+		QRE_TakeWaterSnapshot ();
 
 		// the session files: the target is the gamedir's own materials.yaml (for
 		// a mod that is the mod's file, which the loader reads after id1's and

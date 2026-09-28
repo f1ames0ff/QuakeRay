@@ -570,6 +570,8 @@ void RT_GetSkyColor (float color[3]);
 // directional light, and with it the indirect sun, the god rays and the fog's
 // sunlit shafts. The sky is not painted with it.
 void RT_GetSunColor (float color[3]);
+void RT_GetWaterColor (float color[3]);
+void RT_GetAcidColor (float color[3]);
 // The sun editor (rt_sun_edit): while it is on, the sun is placed where the
 // crosshair points, and there it stays.
 void RT_UpdateSunEditor (void);
