@@ -2935,6 +2935,27 @@ static void QRE_LightGlobalTab (void)
 // The Custom tab: the lights this level does not have, authored here and stored
 // in <gamedir>/qray/lights.yaml (one section per level).
 // ---------------------------------------------------------------------------
+static void QRE_SelectCustomLight (int index)
+{
+	int                count = 0;
+	rt_custom_light_t *lights = RT_CustomLights (&count);
+
+	if (index < 0 || index >= count)
+	{
+		qre.sel_light_valid = false;
+		return;
+	}
+
+	qre.sel_light_valid = true;
+	qre.sel_light.kind = RT_LIGHT_KIND_CUSTOM;
+	qre.sel_light.uniqueID = (uint64_t)UINT32_MAX + 1 + (uint64_t)index;
+	VectorCopy (lights[index].origin, qre.sel_light.position);
+	if (lights[index].has_offset)
+		VectorAdd (qre.sel_light.position, lights[index].offset, qre.sel_light.position);
+	qre.sel_light.radius = lights[index].radius;
+	VectorCopy (lights[index].color, qre.sel_light.color);
+}
+
 static void QRE_CustomLightsTab (void)
 {
 	int                count = 0;
@@ -2963,13 +2984,21 @@ static void QRE_CustomLightsTab (void)
 		rt_custom_light_t *l = &lights[i];
 		char               label[48];
 		int                style = CLAMP (0, l->style, RT_CUSTOM_STYLE_COUNT - 1);
+		int                selected = (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM &&
+		                               qre.sel_light.uniqueID == (uint64_t)UINT32_MAX + 1 + (uint64_t)i);
 		float              rgb[3];
 		int                en = 1;
 
 		q_snprintf (label, sizeof (label), "Light %d", i + 1);
 		QR_GUI_PushID (label);
 
-		if (QR_GUI_Section (label, 1))
+		if (QR_GUI_SectionSelected (label, selected))
+		{
+			QRE_SelectCustomLight (i);
+			selected = 1;
+		}
+
+		if (selected)
 		{
 			const char *tip = "A light the editor authored: uploaded like a dlight, with a style of its own.";
 			float       offs[3];
@@ -3055,13 +3084,8 @@ static void QRE_CustomLightsTab (void)
 					*copy = *l;
 					copy->origin[2] += 32.0f;
 
-					// the copy is the editor's selection: its arrows come with it
 					(void)RT_CustomLights (&new_count);
-					qre.sel_light_valid = true;
-					qre.sel_light.kind = RT_LIGHT_KIND_CUSTOM;
-					qre.sel_light.uniqueID = (uint64_t)UINT32_MAX + 1 + (uint64_t)(new_count > 0 ? new_count - 1 : 0);
-					VectorCopy (copy->origin, qre.sel_light.position);
-					qre.sel_light.radius = copy->radius;
+					QRE_SelectCustomLight (new_count - 1);
 				}
 				else
 				{
@@ -3072,6 +3096,7 @@ static void QRE_CustomLightsTab (void)
 			if (QR_GUI_Button ("Remove"))
 			{
 				RT_CustomLights_Remove (i);
+				qre.sel_light_valid = false;
 				QR_GUI_PopID ();
 				break;
 			}
@@ -4847,13 +4872,7 @@ void QR_Editor_PlaceAtCrosshair (void)
 		int count = 0;
 
 		(void)RT_CustomLights (&count);
-
-		qre.sel_light_valid = true;
-		qre.sel_light.kind = RT_LIGHT_KIND_CUSTOM;
-		qre.sel_light.uniqueID = (uint64_t)UINT32_MAX + 1 + (uint64_t)(count > 0 ? count - 1 : 0);
-		VectorCopy (l->origin, qre.sel_light.position);
-		qre.sel_light.radius = l->radius;
-		qre.sel_light.color[0] = qre.sel_light.color[1] = qre.sel_light.color[2] = 1.0f;
+		QRE_SelectCustomLight (count - 1);
 	}
 
 	qre.custom_placing = false;

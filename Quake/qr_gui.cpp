@@ -799,6 +799,31 @@ int QR_GUI_Section (const char *label, int default_open)
 	return ImGui::CollapsingHeader (label, flags) ? 1 : 0;
 }
 
+int QR_GUI_SectionSelected (const char *label, int selected)
+{
+	ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Framed;
+	int                clicked;
+
+	ImGui::SetNextItemOpen (selected != 0, ImGuiCond_Always);
+
+	if (selected)
+	{
+		const ImVec4 active = ImGui::GetStyleColorVec4 (ImGuiCol_HeaderActive);
+
+		ImGui::PushStyleColor (ImGuiCol_Header, active);
+		ImGui::PushStyleColor (ImGuiCol_HeaderHovered, active);
+		ImGui::PushStyleColor (ImGuiCol_HeaderActive, active);
+	}
+
+	(void)ImGui::CollapsingHeader (label, flags);
+	clicked = ImGui::IsItemClicked () ? 1 : 0;
+
+	if (selected)
+		ImGui::PopStyleColor (3);
+
+	return clicked;
+}
+
 void QR_GUI_PushID (const char *id)
 {
 	ImGui::PushID (id);

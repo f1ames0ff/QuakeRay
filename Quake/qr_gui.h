@@ -92,6 +92,7 @@ void QR_GUI_PushDisabled (int disabled);
 void QR_GUI_PopDisabled (void);
 // Returns nonzero while the section is open.
 int  QR_GUI_Section (const char *label, int default_open);
+int  QR_GUI_SectionSelected (const char *label, int selected);
 
 // ID scope for the widgets of one material (animation frames share the same
 // parameter names, so their widgets would collide without it).
