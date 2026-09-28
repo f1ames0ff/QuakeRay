@@ -29,6 +29,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "palette.h"
 #include "qr_gui.h"
 #include "rt_material.h"
+#include "rt_lights.h"
+#include "qr_editor.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
 #include <time.h> // for the timestamp of the frame rt_stats_dump appends
@@ -244,6 +246,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_water_normstren, "1") \
 	CVAR_DEF_T (rt_water_normsharp, "5") \
 	CVAR_DEF_T (rt_water_scale, "1") \
+	CVAR_DEF_T (rt_water_color, "171 193 210") \
+	CVAR_DEF_T (rt_water_acidcolor, "0 169 145") \
 	CVAR_DEF_T (rt_turb_warp, "1") \
 	\
 	CVAR_DEF_T (rt_portal_twirl, "1") \
@@ -1456,40 +1460,6 @@ static void RT_ReloadShaders (void)
 	request_shaders_reload = true;
 }
 
-static vec3_t rt_water_color = {171 / 255.0f, 193 / 255.0f, 210 / 255.0f};
-static void RT_WaterColor(void)
-{
-	if (Cmd_Argc () != 4)
-	{
-		Con_Printf ("current: %d %d %d\n", (int)(rt_water_color[0] * 255), (int)(rt_water_color[1] * 255), (int)(rt_water_color[2] * 255));
-		Con_Printf ("usage: <r 0..255> <g 0..255> <b 0..255>\n");
-		return;
-	}
-
-	RT_VEC3_SET (
-		rt_water_color, 
-		strtof (Cmd_Argv (1), NULL) / 255.0f, 
-		strtof (Cmd_Argv (2), NULL) / 255.0f, 
-		strtof (Cmd_Argv (3), NULL) / 255.0f );
-}
-
-static vec3_t rt_acid_color = {0 / 255.0f, 169 / 255.0f, 145 / 255.0f};
-static void RT_AcidColor(void)
-{
-	if (Cmd_Argc () != 4)
-	{
-		Con_Printf ("current: %d %d %d\n", (int)(rt_acid_color[0] * 255), (int)(rt_acid_color[1] * 255), (int)(rt_acid_color[2] * 255));
-		Con_Printf ("usage: <r 0..255> <g 0..255> <b 0..255>\n");
-		return;
-	}
-	
-	RT_VEC3_SET (
-		rt_acid_color, 
-		strtof (Cmd_Argv (1), NULL) / 255.0f, 
-		strtof (Cmd_Argv (2), NULL) / 255.0f, 
-		strtof (Cmd_Argv (3), NULL) / 255.0f );
-}
-
 // A colour setting is a console command plus an archived cvar of the same name,
 // so one setting describes a colour completely. It cannot be a plain cvar:
 // Cvar_Command takes a single token, so "rt_sky_color 32 0 64" would never reach
@@ -1510,6 +1480,8 @@ typedef enum
 	RT_COLOR_CLOUDS,
 	RT_COLOR_LIGHT,
 	RT_COLOR_GLOBALLIGHT,
+	RT_COLOR_WATER,
+	RT_COLOR_ACID,
 
 	RT_COLOR_COUNT
 } rt_color_index_t;
@@ -1520,6 +1492,8 @@ static rt_color_t rt_colors[RT_COLOR_COUNT] = {
 	[RT_COLOR_CLOUDS]      = {.cvar = &rt_sky_clouds_color, .fallback = {0.0f, 0.0f, 0.0f},                .dirty = true},
 	[RT_COLOR_LIGHT]       = {.cvar = &rt_light_color,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_GLOBALLIGHT] = {.cvar = &rt_globallight,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
+	[RT_COLOR_WATER]       = {.cvar = &rt_water_color,      .fallback = {171 / 255.0f, 193 / 255.0f, 210 / 255.0f}, .dirty = true},
+	[RT_COLOR_ACID]        = {.cvar = &rt_water_acidcolor,  .fallback = {0.0f, 169 / 255.0f, 145 / 255.0f}, .dirty = true},
 };
 
 static qboolean RT_ColorParse (const char *s, float *out)
@@ -1604,6 +1578,16 @@ void RT_GetSkyColor (float color[3])
 void RT_GetSunColor (float color[3])
 {
 	RT_ColorGet (&rt_colors[RT_COLOR_SUN], color);
+}
+
+void RT_GetWaterColor (float color[3])
+{
+	RT_ColorGet (&rt_colors[RT_COLOR_WATER], color);
+}
+
+void RT_GetAcidColor (float color[3])
+{
+	RT_ColorGet (&rt_colors[RT_COLOR_ACID], color);
 }
 
 #define RAD2DEG(a) ((a) / M_PI_DIV_180)
@@ -1786,12 +1770,13 @@ static void GL_InitInstance (void)
 	QR_CHECK (r);
 
 	RT_MAT_Init ();
+	RT_LIGHT_Init ();
+
+	QR_Editor_Init (); // qr light editor console commands
 
 	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL);
 
 	Cmd_AddCommand ("rt_pfnreloadshaders", RT_ReloadShaders);
-	Cmd_AddCommand ("rt_water_color", RT_WaterColor);
-	Cmd_AddCommand ("rt_water_acidcolor", RT_AcidColor);
 	Cmd_AddCommand ("rt_light_report", RT_LightReport_f);
 	Cmd_AddCommand ("rt_light_report_dump", RT_LightReportDump_f);
 	Cmd_AddCommand ("rt_dtal_rebuild", RT_DtalRebuild_f);
@@ -2152,6 +2137,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.contrast = CLAMP (0.0f, CVAR_TO_FLOAT (rt_contrast), 1.0f),
 	};
 
+	vec3_t water_color;
+	vec3_t acid_color;
+
+	RT_GetWaterColor (water_color);
+	RT_GetAcidColor (acid_color);
+
 	QrDrawFrameReflectRefractParams refl_refr_params = {
 		.maxReflectRefractDepth = CVAR_TO_UINT32 (rt_reflrefr_depth),
 		.typeOfMediaAroundCamera = rt_cameramedia,
@@ -2160,8 +2151,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.waterWaveSpeed = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_speed)),
 		.waterWaveNormalStrength = CVAR_TO_FLOAT (rt_water_normstren),
 		.turbWarpStrength = CVAR_TO_FLOAT (rt_turb_warp),
-		.waterColor = RT_VEC3 (rt_water_color),
-		.acidColor = RT_VEC3 (rt_acid_color),
+		.waterColor = RT_VEC3 (water_color),
+		.acidColor = RT_VEC3 (acid_color),
 		.acidDensity = CVAR_TO_FLOAT(rt_water_aciddensity),
 		.waterWaveTextureDerivativesMultiplier = CVAR_TO_FLOAT (rt_water_normsharp),
 		.waterTextureAreaScale = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_scale)),
@@ -2434,6 +2425,11 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float cameranear = GL_GetCameraNear (DEG2RAD (r_fovx), DEG2RAD (r_fovy));
 	float camerafar = GL_GetCameraFar ();
 
+	// The light editor's world is frozen: the traced water warp and the cloud
+	// drift follow this clock, so it takes the held client time while the
+	// editor runs instead of the wall clock.
+	const double frame_time = QR_Editor_Active () ? (double)cl.time : (double)SDL_GetTicks () / 1000.0;
+
 	QrDrawFrameInfo info = {
 		.worldUpVector = {0, 0, 1},
 		.fovYRadians = DEG2RAD (r_fovy),
@@ -2443,7 +2439,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.rayCullMaskWorld = QR_DRAW_FRAME_RAY_CULL_WORLD_0_BIT | QR_DRAW_FRAME_RAY_CULL_WORLD_1_BIT | QR_DRAW_FRAME_RAY_CULL_SKY_BIT,
 		.disableRayTracedGeometry = false,
 		.disableRasterization = false,
-		.currentTime = (double)SDL_GetTicks () / 1000.0,
+		.currentTime = frame_time,
 		.disableEyeAdaptation = false,
 		.forceAntiFirefly = CVAR_TO_BOOL (rt_antifirefly),
 		.pRenderResolutionParams = &resolution_params,
@@ -2517,6 +2513,7 @@ void VID_Shutdown (void)
 		{
 		    QR_GUI_Shutdown ();
 		    RT_MAT_Shutdown ();
+		    RT_LIGHT_Shutdown ();
 		    QrResult r = qrDestroyInstance (vulkan_globals.instance);
 			QR_CHECK (r);
 
@@ -3257,6 +3254,7 @@ enum
 	VID_OPT_SHOWFPS,
 
 
+	VID_OPT_LIGHT_SYSTEM,
 	VID_OPT_GI_LEVEL,
 	VID_OPT_GODRAYS,
 	VID_OPT_SMOKE_TYPE,
@@ -3772,6 +3770,10 @@ static void VID_MenuKey (int key)
 		case VID_OPT_SHOWFPS:
 			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
 			break;
+		case VID_OPT_LIGHT_SYSTEM:
+			// the light system is a choice, not a checkbox: new (1) or old (0)
+			Cvar_SetValueQuick (&rt_truelight, CVAR_TO_FLOAT (rt_truelight) > 0.0f ? 0.0f : 1.0f);
+			break;
 		case VID_OPT_GI_LEVEL:
 			VID_Menu_StepGiLevel (-1.0f);
 			break;
@@ -3860,6 +3862,9 @@ static void VID_MenuKey (int key)
 		case VID_OPT_SHOWFPS:
 			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
 			break;
+		case VID_OPT_LIGHT_SYSTEM:
+			Cvar_SetValueQuick (&rt_truelight, CVAR_TO_FLOAT (rt_truelight) > 0.0f ? 0.0f : 1.0f);
+			break;
 		case VID_OPT_GI_LEVEL:
 			VID_Menu_StepGiLevel (1.0f);
 			break;
@@ -3915,6 +3920,9 @@ static void VID_MenuKey (int key)
 			break;
 		case VID_OPT_SHOWFPS:
 			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
+			break;
+		case VID_OPT_LIGHT_SYSTEM:
+			Cvar_SetValueQuick (&rt_truelight, CVAR_TO_FLOAT (rt_truelight) > 0.0f ? 0.0f : 1.0f);
 			break;
 		case VID_OPT_GODRAYS:
 			Cvar_SetValueQuick (&rt_godrays, !CVAR_TO_BOOL (rt_godrays));
@@ -4078,9 +4086,13 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			break;
 
 
-		case VID_OPT_GI_LEVEL:
+		case VID_OPT_LIGHT_SYSTEM:
 			y += 8; // separate
 
+			M_Print (cbx, 16, y, "      Light system");
+			M_Print (cbx, 184, y, CVAR_TO_FLOAT (rt_truelight) > 0.0f ? "new" : "old");
+			break;
+		case VID_OPT_GI_LEVEL:
 			M_Print (cbx, 16, y, " Indirect lighting");
 			M_Print (cbx, 184, y, VID_Menu_GetGiLevelName ());
 			break;

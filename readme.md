@@ -4,22 +4,39 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 
 ## Features
 
-* NVRHI renderer (Vulkan)
-* Path-traced lighting, ReSTIR-DI
-* DTAL: dynamic textured area lights
-* Alpha-transparent textures are traced through, not only cut out
-* Spot lights: a dynamic light can shine in a cone (`dlightspot` until the editor places them)
-* ASVGF denoiser
-* Ray-traced GI, NEE
-* FSR 3.1 upscaling
-* Dynamic HDR tone mapping
-* Procedural sky, god rays
-* Materials, ray-traced water
-* Shader smoke (rockets, fire)
-* Per-cluster light lists (legacy)
-* Animated light styles
-* Post-processing: chromatic, LUT
-* Adaptive vsync/VRR/FreeSync support (off, vsync, adaptive, FreeSync modes)
+### Path traced renderer
+
+* Ray tracing with ReSTIR direct light sampling
+* FSR 2.0 and 3.1 support
+* DTAL (Dynamic Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
+* True Light Mode (opt-in): All light sources are DTAL, which means all emissive textures are actual light sources.
+* Q2RTX-style path traced lighting.
+* ASVGF denoiser.
+* RT Global Illumination
+* NEE (Next Event Estimation) for the sun, emissives and dynamic lights.
+* Alpha-transparent textures are traced through, not only cut out: a material marked `alpha_test` hands its alpha to the sampler, and a ray that crosses such a texel keeps the strength of its transparency.
+* Spot lights: a dynamic light can shine in a cone, with adjustable angles and strength (`dlightspot` at the console until the editor places them).
+* per-BSP-cluster light lists (legacy).
+* Animated light entities (`rt_light_styles`) make their own fixture flicker, in accordance with the original light style, to preserve the original Quake 1 lighting design.
+* Full material system with per-brush and per-model metalness/roughness, normal map strength and texture-driven gloss maps, plus ray-traced water with animated wave normals and refraction.
+
+### Lighting and Material Editor
+
+`qr_editor` opens the editor: a dialog titled with the engine version offers Material Editor and Light Editor, and `qr_editor_stop` (or the Exit button) leaves it. Both editors fly a free camera over the frozen map, pick what the crosshair points at and edit it live — the material or the light changes the moment a control moves, and Save writes the result to the files the engine loads (the emitter overrides to `lights.yaml`, the authored lights and the map fog to each mod's `qray/lights.yaml`; the exit dialog offers Save all and Discard, with a backup of the previous file).
+
+* **Material editor**: the Materials tab edits the parameters of the picked texture's material — every animation frame of a texture ring or model is its own block — with a reset button per row, a hex colour picker with a texture preview and an eyedropper for `color_emissive`, and the System tab holds the DTAL debug view (`off` / `wireframe` / `normals`) and the DTAL limits (`rt_dtal_clearance`, `rt_dtal_maxpolys`, `rt_dtal_minarea`). An edit to the emission is applied to the texture in place and the world is left alone: no scene rebuild, no light flash.
+* **Light editor**: the Entity tab edits the light an emitter casts (radius, intensity, offset, colour, `force_rasterize`, and the group edit that applies an edit to every light of the same model), the Custom tab authors lights a level does not have — points or spot cones, with a direction that is turned by dragging the circular arrows at the light, a cone drawn in yellow (outer angle) and white (inner angle), duplicate, and the light's own style — and the Global tab holds the light system itself: `rt_brightness`, the global light colour and its multiplier, the sky, the clouds, the sun, the god rays, the volumetric fog and the level's fog (`rt_level_fog`, colour, density).
+
+## Graphics
+
+* Dynamic HDR Tone mapping: overall brightness, exposure bias in EV, contrast as a mix of the fixed and the auto-exposure adapted curve
+* Procedural sky with a physical sky model
+* God rays — volumetric sun shafts
+* Volumetric fog
+* Bloom
+* Post-processing: chromatic aberration, and a configurable LUT for colour grading
+* Shader smoke — the trails of rockets, lava balls and grenades are drawn as soft, lit puffs the room's light falls on, in place of the classic flat sprites
+* Adaptive vsync, VRR and FreeSync: `vid_vsync` picks the presentation mode (off, vsync, adaptive, FreeSync), adaptive by default
 
 ## Roadmap
 

@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "rt_material.h"
+#include "rt_lights.h"
 
 static void      Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void      Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer);
@@ -556,6 +557,7 @@ typedef struct load_texture_task_args_s
 {
 	qmodel_t *mod;
 	byte     *mod_base;
+	src_offset_t *fileoffsets; // per texture: the file offset its pixels are copied from, 0 when unknown
 } load_texture_task_args_t;
 
 /*
@@ -566,7 +568,6 @@ Mod_LoadTextureTask
 static void Mod_LoadTextureTask (int i, load_texture_task_args_t *args)
 {
 	qmodel_t  *mod = args->mod;
-	byte      *mod_base = args->mod_base;
 	texture_t *tx = mod->textures[i];
 	if (!tx)
 		return;
@@ -578,6 +579,15 @@ static void Mod_LoadTextureTask (int i, load_texture_task_args_t *args)
 	char         filename[MAX_OSPATH], filename2[MAX_OSPATH], mapname[MAX_OSPATH];
 	char         rtname[MAX_OSPATH];
 	byte        *data = NULL;
+
+	// The pixels are a copy inside tx (the BSP buffer itself is not kept), so a
+	// reload reads either the file the copy came from or the copy itself. The
+	// difference of the copy's address and the file buffer underflows (the copy
+	// is not inside the file), which is what made the reload report an invalid
+	// source for a map texture.
+	offset = (args->fileoffsets && args->fileoffsets[i] > 0)
+	         ? args->fileoffsets[i] : (src_offset_t)(uintptr_t)pixels_p;
+	const char *src_file = (args->fileoffsets && args->fileoffsets[i] > 0) ? mod->name : "";
 
 	if (!q_strncasecmp (tx->name, "sky", 3)) // sky texture //also note -- was strncmp, changed to match qbsp
 	{
@@ -609,8 +619,7 @@ static void Mod_LoadTextureTask (int i, load_texture_task_args_t *args)
 		else // use the texture from the bsp file
 		{
 			q_snprintf (texturename, sizeof (texturename), "%s:%s", mod->name, tx->name);
-			offset = (src_offset_t)(pixels_p) - (src_offset_t)mod_base;
-			tx->gltexture = TexMgr_LoadImage (rtname, mod, texturename, tx->width, tx->height, SRC_INDEXED, (byte *)(tx + 1), mod->name, offset, TEXPREF_NONE);
+			tx->gltexture = TexMgr_LoadImage (rtname, mod, texturename, tx->width, tx->height, SRC_INDEXED, (byte *)(tx + 1), src_file, offset, TEXPREF_NONE);
 		}
 
 		// now create the warpimage, using dummy data from the hunk to create the initial image
@@ -670,10 +679,9 @@ static void Mod_LoadTextureTask (int i, load_texture_task_args_t *args)
 		else // use the texture from the bsp file
 		{
 			q_snprintf (texturename, sizeof (texturename), "%s:%s", mod->name, tx->name);
-			offset = (src_offset_t)(pixels_p) - (src_offset_t)mod_base;
 			tx->gltexture = TexMgr_LoadImage (
 				rtname,
-				mod, texturename, tx->width, tx->height, SRC_INDEXED, (byte *)(tx + 1), mod->name, offset, TEXPREF_MIPMAP | extraflags);
+				mod, texturename, tx->width, tx->height, SRC_INDEXED, (byte *)(tx + 1), src_file, offset, TEXPREF_MIPMAP | extraflags);
 		}
 
 		TexMgr_RT_SpecialEnd ();
@@ -714,6 +722,11 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 
 	mod->numtextures = nummiptex + 2; // johnfitz -- need 2 dummy texture chains for missing textures
 	mod->textures = (texture_t **)Mem_Alloc (mod->numtextures * sizeof (*mod->textures));
+
+	// The file offset each texture's pixels are copied from, so that a reload can
+	// read them back from the bsp file (0 for a texture whose offset is unknown).
+	src_offset_t *fileoffsets = (src_offset_t *)Mem_Alloc ((nummiptex > 0 ? nummiptex : 1) * sizeof (*fileoffsets));
+	memset (fileoffsets, 0, (nummiptex > 0 ? nummiptex : 1) * sizeof (*fileoffsets));
 
 	for (i = 0; i < nummiptex; i++)
 	{
@@ -761,6 +774,11 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 			tx->shift = ReadLongUnaligned (m + dataofs + offsetof (miptex64_t, shift));
 			memcpy (tx + 1, m + dataofs + sizeof (miptex64_t), pixels);
 		}
+
+		// where in the file those pixels came from, for a reload to read again
+		fileoffsets[i] = (src_offset_t)((mod->bspversion != BSPVERSION_QUAKE64
+		                                 ? m + dataofs + sizeof (miptex_t)
+		                                 : m + dataofs + sizeof (miptex64_t)) - mod_base);
 	}
 
 	if (!isDedicated)
@@ -768,6 +786,7 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		load_texture_task_args_t args = {
 			.mod = mod,
 			.mod_base = mod_base,
+			.fileoffsets = fileoffsets,
 		};
 		if (!Tasks_IsWorker () && (nummiptex > 1))
 		{
@@ -780,6 +799,8 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 				Mod_LoadTextureTask (i, &args);
 		}
 	}
+
+	Mem_Free (fileoffsets);
 
 	// johnfitz -- last 2 slots in array should be filled with dummy textures
 	mod->textures[mod->numtextures - 2] = r_notexture_mip;  // for lightmapped surfs
@@ -2528,7 +2549,11 @@ static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffe
 	}
 
 	if (sv.modelname[0] && !q_strcasecmp (loadname, sv.name))
+	{
 		RT_MAT_ChangeMap (loadname);
+		RT_LIGHT_Reload ();
+		RT_CustomLights_ChangeMap (loadname);
+	}
 
 	// swap all the lumps
 	byte *mod_base = (byte *)header;
@@ -2831,13 +2856,18 @@ static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
 		q_snprintf (name, sizeof (name), "%s:frame%i", mod->name, i);
 		q_snprintf (rtname, sizeof (rtname), "%s/%i", namenoext, i);
 
-		offset = (src_offset_t)(skin) - (src_offset_t)mod_base;
+		// The skin bytes normally point into the loaded mdl buffer; when they do
+		// not, the difference of their address and the buffer underflows and the
+		// address itself is the source instead (see Mod_LoadTextures).
+		const qboolean skin_in_file = (skin >= mod_base);
+
+		offset = skin_in_file ? (src_offset_t)(skin - mod_base) : (src_offset_t)(uintptr_t)skin;
 		if (Mod_SkinHasLumaMaterial (name))
 			mod->flags |= MF_RT_LUMA;
 
 		pheader->gltextures[i][0] = TexMgr_LoadImage (
 			rtname,
-			mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, mod->name, offset, texflags | TEXPREF_MIPMAP);
+			mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, skin_in_file ? mod->name : "", offset, texflags | TEXPREF_MIPMAP);
 		pheader->fbtextures[i][0] = NULL;
 
 		pheader->gltextures[i][3] = pheader->gltextures[i][2] = pheader->gltextures[i][1] = pheader->gltextures[i][0];
