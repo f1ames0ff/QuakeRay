@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
@@ -35,7 +32,6 @@
 namespace vkpt
 {
 
-// Hold info for previous and current frames
 #define FRAMEBUFFERS_HISTORY_LENGTH 2
 
 class Framebuffers
@@ -56,7 +52,6 @@ public:
 
     enum class BarrierType { All, Storage, ColorAttachment, Transfer };
 
-    // Barrier framebuffer images for given frameIndex
     template <uint32_t BARRIER_COUNT>
     void BarrierMultiple(VkCommandBuffer cmd,
                          uint32_t frameIndex,
@@ -67,20 +62,9 @@ public:
     std::tuple<VkImage, VkImageView, VkFormat> GetImageHandles(FramebufferImageIndex fbImageIndex, uint32_t frameIndex) const;
     std::tuple<VkImage, VkImageView, VkFormat, VkExtent2D> GetImageHandles(FramebufferImageIndex fbImageIndex, uint32_t frameIndex, const ResolutionState &resolutionState) const;
 
-    // The engine handles of the two images the RHI rasterized world pass needs besides its colour
-    // target. Both follow GetImageHandles (frame-slot swap resolution inside) and both are
-    // recreated by PrepareForSize, so a caller that wrapped them has to re-wrap on size change
-    // (the RhiSkyPass::ReleaseTargets contract).
-    //  - SCREEN_EMISSION (FB_IMAGE_INDEX_SCREEN_EMISSION, 62): the world pass's second colour
-    //    attachment (RasterPass.cpp:53, :118), full render size, B10G11R11_UFLOAT_PACK32.
-    //  - PRIMARY_TO_REFL_REFR (FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR, 25): the image the shader
-    //    reads and writes through set 4 binding 25 (`framebufPrimaryToReflRefr`, rgba32ui,
-    //    ShaderCommonHLSL.hlsli:598), full render size, R32G32B32A32_UINT.
     std::tuple<VkImage, VkImageView, VkFormat> GetScreenEmissionHandles(uint32_t frameIndex) const;
     std::tuple<VkImage, VkImageView, VkFormat> GetPrimaryToReflRefrHandles(uint32_t frameIndex) const;
 
-    // Subscribe to framebuffers' size change event.
-    // shared_ptr will be transformed to weak_ptr
     void Subscribe(std::shared_ptr<IFramebuffersDependency> subscriber);
     void Unsubscribe(const IFramebuffersDependency *subscriber);
 
@@ -117,10 +101,8 @@ private:
 template<uint32_t BARRIER_COUNT>
 inline void Framebuffers::BarrierMultiple(VkCommandBuffer cmd, uint32_t frameIndex, const FramebufferImageIndex(&framebufImageIndices)[BARRIER_COUNT], BarrierType barrierTypeFrom)
 {
-    std::array<VkImageMemoryBarrier2KHR, BARRIER_COUNT> tmpBarriers;
-
-    VkAccessFlags2KHR srcAccess = 0, dstAccess = 0;
-    VkPipelineStageFlags2KHR srcStage = 0, dstStage = 0;
+    VkAccessFlags2KHR srcAccess = 0;
+    VkPipelineStageFlags2KHR srcStage = 0;
 
     switch (barrierTypeFrom)
     {
@@ -129,7 +111,7 @@ inline void Framebuffers::BarrierMultiple(VkCommandBuffer cmd, uint32_t frameInd
             srcStage =
                 VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT_KHR |
                 VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR |
-                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR | 
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR |
                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
             break;
         case BarrierType::Storage:
@@ -152,50 +134,45 @@ inline void Framebuffers::BarrierMultiple(VkCommandBuffer cmd, uint32_t frameInd
         default: assert(0);
     }
 
-    // TODO: add barrierTypeTo, now it just includes all
-    dstAccess = 
+    const VkAccessFlags2KHR dstAccess =
         VK_ACCESS_2_SHADER_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT_KHR |
-        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT_KHR | 
+        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT_KHR |
         VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR | VK_ACCESS_2_TRANSFER_READ_BIT_KHR;
-    dstStage = 
-        VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT_KHR | 
-        VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR | 
+    const VkPipelineStageFlags2KHR dstStage =
+        VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT_KHR |
+        VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR |
         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT_KHR |
         VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT_KHR;
 
+    std::array<VkImageMemoryBarrier2KHR, BARRIER_COUNT> barriers = {};
 
     for (uint32_t i = 0; i < BARRIER_COUNT; i++)
     {
-        // correct framebuf index according to the frame index
-        FramebufferImageIndex fbIndex = FrameIndexToFBIndex(framebufImageIndices[i], frameIndex);
-        VkImage img = images[fbIndex];
+        VkImageMemoryBarrier2KHR &barrier = barriers[i];
 
-        VkImageMemoryBarrier2KHR &b = tmpBarriers[i];
-        b = {};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
+        barrier.image = images[FrameIndexToFBIndex(framebufImageIndices[i], frameIndex)];
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcAccessMask = srcAccess;
+        barrier.dstAccessMask = dstAccess;
+        barrier.srcStageMask = srcStage;
+        barrier.dstStageMask = dstStage;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
-        b.image = img;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.srcAccessMask = srcAccess;
-        b.dstAccessMask = dstAccess;
-        b.srcStageMask = srcStage;
-        b.dstStageMask = dstStage;
-        b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        VkImageSubresourceRange &sub = b.subresourceRange;
-        sub.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        sub.baseMipLevel = 0;
-        sub.levelCount = 1;
-        sub.baseArrayLayer = 0;
-        sub.layerCount = 1;
+        VkImageSubresourceRange &subresource = barrier.subresourceRange;
+        subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        subresource.baseMipLevel = 0;
+        subresource.levelCount = 1;
+        subresource.baseArrayLayer = 0;
+        subresource.layerCount = 1;
     }
 
     VkDependencyInfoKHR dependencyInfo = {};
     dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
-    dependencyInfo.imageMemoryBarrierCount = tmpBarriers.size();
-    dependencyInfo.pImageMemoryBarriers = tmpBarriers.data();
+    dependencyInfo.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+    dependencyInfo.pImageMemoryBarriers = barriers.data();
 
     svkCmdPipelineBarrier2KHR(cmd, &dependencyInfo);
 }

@@ -1,22 +1,19 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "FSR.h"
 
@@ -28,6 +25,7 @@
 #include "RgException.h"
 
 #include <Windows.h>
+#include <cstdio>
 #include <vector>
 
 namespace
@@ -41,21 +39,36 @@ namespace
 
     FfxApiSurfaceFormat MapVkFormat(VkFormat fmt)
     {
-        switch (fmt)
+        struct FormatMapping
         {
-        case VK_FORMAT_R16G16B16A16_SFLOAT:        return FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT;
-        case VK_FORMAT_R32G32B32A32_SFLOAT:        return FFX_API_SURFACE_FORMAT_R32G32B32A32_FLOAT;
-        case VK_FORMAT_R32G32_SFLOAT:              return FFX_API_SURFACE_FORMAT_R32G32_FLOAT;
-        case VK_FORMAT_R32_SFLOAT:                 return FFX_API_SURFACE_FORMAT_R32_FLOAT;
-        case VK_FORMAT_R16G16_SFLOAT:              return FFX_API_SURFACE_FORMAT_R16G16_FLOAT;
-        case VK_FORMAT_R16_SFLOAT:                 return FFX_API_SURFACE_FORMAT_R16_FLOAT;
-        case VK_FORMAT_R8G8B8A8_UNORM:             return FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
-        case VK_FORMAT_B8G8R8A8_UNORM:             return FFX_API_SURFACE_FORMAT_B8G8R8A8_UNORM;
-        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:    return FFX_API_SURFACE_FORMAT_R11G11B10_FLOAT;
-        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:   return FFX_API_SURFACE_FORMAT_R10G10B10A2_UNORM;
-        case VK_FORMAT_R16G16_UINT:                return FFX_API_SURFACE_FORMAT_R16G16_UINT;
-        default:                                   return FFX_API_SURFACE_FORMAT_UNKNOWN;
+            VkFormat vkFormat;
+            FfxApiSurfaceFormat ffxFormat;
+        };
+
+        static const FormatMapping mappings[] =
+        {
+            { VK_FORMAT_R16G16B16A16_SFLOAT,        FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT },
+            { VK_FORMAT_R32G32B32A32_SFLOAT,        FFX_API_SURFACE_FORMAT_R32G32B32A32_FLOAT },
+            { VK_FORMAT_R32G32_SFLOAT,              FFX_API_SURFACE_FORMAT_R32G32_FLOAT },
+            { VK_FORMAT_R32_SFLOAT,                 FFX_API_SURFACE_FORMAT_R32_FLOAT },
+            { VK_FORMAT_R16G16_SFLOAT,              FFX_API_SURFACE_FORMAT_R16G16_FLOAT },
+            { VK_FORMAT_R16_SFLOAT,                 FFX_API_SURFACE_FORMAT_R16_FLOAT },
+            { VK_FORMAT_R8G8B8A8_UNORM,             FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM },
+            { VK_FORMAT_B8G8R8A8_UNORM,             FFX_API_SURFACE_FORMAT_B8G8R8A8_UNORM },
+            { VK_FORMAT_B10G11R11_UFLOAT_PACK32,    FFX_API_SURFACE_FORMAT_R11G11B10_FLOAT },
+            { VK_FORMAT_A2B10G10R10_UNORM_PACK32,   FFX_API_SURFACE_FORMAT_R10G10B10A2_UNORM },
+            { VK_FORMAT_R16G16_UINT,                FFX_API_SURFACE_FORMAT_R16G16_UINT },
+        };
+
+        for (const FormatMapping &mapping : mappings)
+        {
+            if (mapping.vkFormat == fmt)
+            {
+                return mapping.ffxFormat;
+            }
         }
+
+        return FFX_API_SURFACE_FORMAT_UNKNOWN;
     }
 
     constexpr vkpt::FramebufferImageIndex OUTPUT_IMAGE_INDEX = vkpt::FB_IMAGE_INDEX_UPSCALED_PONG;
@@ -66,6 +79,7 @@ namespace
         const vkpt::ResolutionState& resolutionState)
     {
         auto [image, view, format, sz] = framebuffers.GetImageHandles(fbImage, frameIndex, resolutionState);
+        const bool isOutput = fbImage == OUTPUT_IMAGE_INDEX;
 
         FfxApiResource res = {};
         res.resource = (void*)image;
@@ -76,12 +90,8 @@ namespace
         res.description.depth    = 1;
         res.description.mipCount = 1;
         res.description.flags    = FFX_API_RESOURCE_FLAGS_NONE;
-        res.description.usage    = (fbImage == OUTPUT_IMAGE_INDEX)
-            ? FFX_API_RESOURCE_USAGE_UAV
-            : FFX_API_RESOURCE_USAGE_READ_ONLY;
-        res.state = (fbImage == OUTPUT_IMAGE_INDEX)
-            ? FFX_API_RESOURCE_STATE_UNORDERED_ACCESS
-            : FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ;
+        res.description.usage    = isOutput ? FFX_API_RESOURCE_USAGE_UAV : FFX_API_RESOURCE_USAGE_READ_ONLY;
+        res.state                = isOutput ? FFX_API_RESOURCE_STATE_UNORDERED_ACCESS : FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ;
         return res;
     }
 
@@ -97,15 +107,17 @@ namespace
         VkImageMemoryBarrier2 barriers[N];
         for (size_t i = 0; i < N; i++)
         {
-            auto& b = barriers[i];
+            const bool isOutput = inputsAndOutput[i] == OUTPUT_IMAGE_INDEX;
+
+            VkImageMemoryBarrier2& b = barriers[i];
             b = {};
             b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
             b.srcStageMask = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
             b.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT;
             b.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-            b.dstAccessMask = inputsAndOutput[i] == OUTPUT_IMAGE_INDEX ? VK_ACCESS_2_SHADER_WRITE_BIT : VK_ACCESS_2_SHADER_READ_BIT;
+            b.dstAccessMask = isOutput ? VK_ACCESS_2_SHADER_WRITE_BIT : VK_ACCESS_2_SHADER_READ_BIT;
             b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-            b.newLayout = inputsAndOutput[i] == OUTPUT_IMAGE_INDEX ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            b.newLayout = isOutput ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             b.image = framebuffers.GetImage(inputsAndOutput[i], frameIndex);
@@ -155,17 +167,21 @@ vkpt::FidelityFX::FSR::~FSR()
 
 void vkpt::FidelityFX::FSR::SetUpscaleVersion(RgRenderUpscaleTechnique technique)
 {
-    if (technique != RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2 &&
-        technique != RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3)
+    const bool isFsrRequested =
+        technique == RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2 ||
+        technique == RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
+
+    if (!isFsrRequested)
     {
-        // FSR is not used, destroy the context (if any) and remember the technique
         m_requestedTechnique = technique;
         m_technique = technique;
+
         if (m_context)
         {
             vkDeviceWaitIdle(m_device);
             DestroyContext();
         }
+
         return;
     }
 
@@ -174,8 +190,6 @@ void vkpt::FidelityFX::FSR::SetUpscaleVersion(RgRenderUpscaleTechnique technique
         return;
     }
 
-    // The FidelityFX context is recreated on version change. Make sure the GPU
-    // is no longer using the old context's resources before destroying them.
     vkDeviceWaitIdle(m_device);
 
     m_requestedTechnique = technique;
@@ -206,7 +220,7 @@ uint64_t vkpt::FidelityFX::FSR::FindVersionId(bool preferFsr3)
     ffxQueryDescGetVersions q = {};
     q.header.type       = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
     q.createDescType    = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
-    q.device            = nullptr; // Vulkan backend ignores this
+    q.device            = nullptr;
     uint64_t count      = 0;
     q.outputCount       = &count;
 
@@ -225,23 +239,13 @@ uint64_t vkpt::FidelityFX::FSR::FindVersionId(bool preferFsr3)
         return 0;
     }
 
-    // Version names are like "2.3.3" (FSR2) or "3.1.4" (FSR3.1). Match by the major version.
     for (uint64_t i = 0; i < count; i++)
     {
         const char* name = names[i] ? names[i] : "";
-        if (preferFsr3)
+
+        if ((preferFsr3 && name[0] == '3') || (!preferFsr3 && name[0] == '2'))
         {
-            if (name[0] == '3')
-            {
-                return ids[i];
-            }
-        }
-        else
-        {
-            if (name[0] == '2')
-            {
-                return ids[i];
-            }
+            return ids[i];
         }
     }
 
@@ -270,12 +274,11 @@ void vkpt::FidelityFX::FSR::RecreateContext()
         return;
     }
 
-    bool preferFsr3 = (m_requestedTechnique == RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3);
+    const bool preferFsr3 = (m_requestedTechnique == RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3);
     uint64_t versionId = FindVersionId(preferFsr3);
 
     if (versionId == 0)
     {
-        // Requested version is not present in the DLL - fallback to the other one
         const char* requested = preferFsr3 ? "FSR 3.1" : "FSR 2";
         const char* fallback  = preferFsr3 ? "FSR 2" : "FSR 3.1";
 
@@ -307,8 +310,6 @@ void vkpt::FidelityFX::FSR::RecreateContext()
         m_technique = m_requestedTechnique;
     }
 
-    // Explicitly tell the FidelityFX framework which FSR version to use,
-    // instead of letting it pick the "best" provider by itself.
     ffxOverrideVersion overrideDesc = {};
     overrideDesc.header.type = FFX_API_DESC_TYPE_OVERRIDE_VERSION;
     overrideDesc.versionId   = versionId;
@@ -335,11 +336,8 @@ void vkpt::FidelityFX::FSR::RecreateContext()
         throw RgException(RG_GRAPHICS_API_ERROR, "Failed to create FSR context");
     }
 
-    // Update static context for GetJitter (which is a static method)
     s_contextForJitter = m_context;
 
-    // Query the provider that the DLL actually attached to this context -
-    // verifies that the requested FSR version was really selected.
     ffxQueryGetProviderVersion pv = {};
     pv.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
     ffxQuery(&m_context, &pv.header);
@@ -364,6 +362,7 @@ void vkpt::FidelityFX::FSR::DestroyContext()
         ffxDestroyContext(&m_context, nullptr);
         m_context = nullptr;
     }
+
     s_contextForJitter = nullptr;
 }
 
@@ -398,27 +397,29 @@ vkpt::FramebufferImageIndex vkpt::FidelityFX::FSR::Apply(
     };
     InsertBarriers(cmd, frameIndex, *framebuffers, rs, false);
 
+    const vkpt::ResolutionState& resolutionState = renderResolution.GetResolutionState();
+
     ffxDispatchDescUpscale info = {};
     info.header.type       = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
     info.commandList       = cmd;
-    info.color             = ToFfxApiResource(FI::FB_IMAGE_INDEX_FINAL,           frameIndex, *framebuffers, renderResolution.GetResolutionState());
-    info.depth             = ToFfxApiResource(FI::FB_IMAGE_INDEX_DEPTH_NDC,       frameIndex, *framebuffers, renderResolution.GetResolutionState());
-    info.motionVectors     = ToFfxApiResource(FI::FB_IMAGE_INDEX_MOTION_DLSS,     frameIndex, *framebuffers, renderResolution.GetResolutionState());
+    info.color             = ToFfxApiResource(FI::FB_IMAGE_INDEX_FINAL,       frameIndex, *framebuffers, resolutionState);
+    info.depth             = ToFfxApiResource(FI::FB_IMAGE_INDEX_DEPTH_NDC,   frameIndex, *framebuffers, resolutionState);
+    info.motionVectors     = ToFfxApiResource(FI::FB_IMAGE_INDEX_MOTION_DLSS, frameIndex, *framebuffers, resolutionState);
     info.exposure          = {};
     info.reactive          = {};
     info.transparencyAndComposition = {};
-    info.output            = ToFfxApiResource(OUTPUT_IMAGE_INDEX, frameIndex, *framebuffers, renderResolution.GetResolutionState());
+    info.output            = ToFfxApiResource(OUTPUT_IMAGE_INDEX, frameIndex, *framebuffers, resolutionState);
     info.jitterOffset.x    = jitterOffset.data[0];
     info.jitterOffset.y    = jitterOffset.data[1];
-    info.motionVectorScale.x = static_cast<float>(renderResolution.GetResolutionState().renderWidth);
-    info.motionVectorScale.y = static_cast<float>(renderResolution.GetResolutionState().renderHeight);
-    info.renderSize.width  = renderResolution.GetResolutionState().renderWidth;
-    info.renderSize.height = renderResolution.GetResolutionState().renderHeight;
+    info.motionVectorScale.x = static_cast<float>(resolutionState.renderWidth);
+    info.motionVectorScale.y = static_cast<float>(resolutionState.renderHeight);
+    info.renderSize.width  = resolutionState.renderWidth;
+    info.renderSize.height = resolutionState.renderHeight;
     info.upscaleSize.width  = m_displayWidth;
     info.upscaleSize.height = m_displayHeight;
     info.enableSharpening  = false;
     info.sharpness         = 0.0f;
-    info.frameTimeDelta    = timeDelta * 1000.0f; //ms
+    info.frameTimeDelta    = timeDelta * 1000.0f;
     info.preExposure       = 1.0f;
     info.reset             = resetAccumulation;
     info.cameraNear        = nearPlane;

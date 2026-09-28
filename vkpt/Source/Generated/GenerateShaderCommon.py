@@ -1,355 +1,288 @@
-# Copyright (c) 2020-2021 Sultim Tsyrendashiev
-# 
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-# 
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-# 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+# Copyright (c) 2026 QuakeRay contributors
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
 
-# This script generates separate header files for C, GLSL and HLSL but with identical data.
-# The HLSL header is the source of truth for the shader base that is being ported from GLSL:
-# the same walk emits both, so the two can not drift apart.
-
-import sys
 import os
 import re
 import subprocess
+import sys
 from math import log2
 
 
-TYPE_FLOAT32    = 0
-TYPE_INT32      = 1
-TYPE_UINT32     = 2
+FLOAT32 = 0
+INT32   = 1
+UINT32  = 2
+
+UNORM8  = 3
+UINT8   = 4
+UINT16  = 5
+FLOAT16 = 6
+PACKED_11 = 128
+PACKED_E5 = 129
+
+CHANNELS_R    = 0
+CHANNELS_RG   = 1
+CHANNELS_RGB  = 2
+CHANNELS_RGBA = 3
 
 
-C_TYPE_NAMES = {
-    TYPE_FLOAT32:       "float",
-    TYPE_INT32:         "int32_t",
-    TYPE_UINT32:        "uint32_t",
+C_TYPES = {
+    FLOAT32: "float",
+    INT32:   "int32_t",
+    UINT32:  "uint32_t",
 }
 
-GLSL_TYPE_NAMES = {
-    TYPE_FLOAT32:       "float",
-    TYPE_INT32:         "int",
-    TYPE_UINT32:        "uint",
-    (TYPE_FLOAT32,  2): "vec2",
-    (TYPE_FLOAT32,  3): "vec3",
-    (TYPE_FLOAT32,  4): "vec4",
-    (TYPE_INT32,    2): "ivec2",
-    (TYPE_INT32,    3): "ivec3",
-    (TYPE_INT32,    4): "ivec4",
-    (TYPE_UINT32,   2): "uvec2",
-    (TYPE_UINT32,   3): "uvec3",
-    (TYPE_UINT32,   4): "uvec4",
-    (TYPE_FLOAT32, 22): "mat2",
-    (TYPE_FLOAT32, 23): "mat2x3",
-    (TYPE_FLOAT32, 32): "mat3x2",
-    (TYPE_FLOAT32, 33): "mat3",
-    (TYPE_FLOAT32, 34): "mat3x4",
-    (TYPE_FLOAT32, 43): "mat4x3",
-    (TYPE_FLOAT32, 44): "mat4",
-}
-
-
-TYPE_ACTUAL_SIZES = {
-    TYPE_FLOAT32:   4,
-    TYPE_INT32:     4,
-    TYPE_UINT32:    4,
-    (TYPE_FLOAT32,  2): 8,
-    (TYPE_FLOAT32,  3): 12,
-    (TYPE_FLOAT32,  4): 16,
-    (TYPE_INT32,    2): 8,
-    (TYPE_INT32,    3): 12,
-    (TYPE_INT32,    4): 16,
-    (TYPE_UINT32,   2): 8,
-    (TYPE_UINT32,   3): 12,
-    (TYPE_UINT32,   4): 16,
-    (TYPE_FLOAT32, 22): 16,
-    (TYPE_FLOAT32, 23): 24,
-    (TYPE_FLOAT32, 32): 24,
-    (TYPE_FLOAT32, 33): 36,
-    (TYPE_FLOAT32, 34): 48,
-    (TYPE_FLOAT32, 43): 48,
-    (TYPE_FLOAT32, 44): 64,
-}
-
-GLSL_TYPE_SIZES_STD_430 = {
-    TYPE_FLOAT32:   4,
-    TYPE_INT32:     4,
-    TYPE_UINT32:    4,
-    (TYPE_FLOAT32,  2): 8,
-    (TYPE_FLOAT32,  3): 16,
-    (TYPE_FLOAT32,  4): 16,
-    (TYPE_INT32,    2): 8,
-    (TYPE_INT32,    3): 16,
-    (TYPE_INT32,    4): 16,
-    (TYPE_UINT32,   2): 8,
-    (TYPE_UINT32,   3): 16,
-    (TYPE_UINT32,   4): 16,
-    (TYPE_FLOAT32, 22): 16,
-    (TYPE_FLOAT32, 23): 24,
-    (TYPE_FLOAT32, 32): 24,
-    (TYPE_FLOAT32, 33): 36,
-    (TYPE_FLOAT32, 34): 48,
-    (TYPE_FLOAT32, 43): 48,
-    (TYPE_FLOAT32, 44): 64,
+GLSL_TYPES = {
+    FLOAT32: "float",
+    INT32:   "int",
+    UINT32:  "uint",
+    (FLOAT32, 2): "vec2",
+    (FLOAT32, 3): "vec3",
+    (FLOAT32, 4): "vec4",
+    (INT32,   2): "ivec2",
+    (INT32,   3): "ivec3",
+    (INT32,   4): "ivec4",
+    (UINT32,  2): "uvec2",
+    (UINT32,  3): "uvec3",
+    (UINT32,  4): "uvec4",
+    (FLOAT32, 22): "mat2",
+    (FLOAT32, 23): "mat2x3",
+    (FLOAT32, 32): "mat3x2",
+    (FLOAT32, 33): "mat3",
+    (FLOAT32, 34): "mat3x4",
+    (FLOAT32, 43): "mat4x3",
+    (FLOAT32, 44): "mat4",
 }
 
 
-# These types are only for image format use!
-TYPE_UNORM8     = 3
-TYPE_UINT8      = 4
-TYPE_UINT16     = 5
-TYPE_FLOAT16    = 6
-TYPE_PACK_11    = 128   # R11G11B10
-TYPE_PACK_E5    = 129   # shared exponent, E5B9G9R9
-
-COMPONENT_R     = 0
-COMPONENT_RG    = 1
-COMPONENT_RGB   = 2
-COMPONENT_RGBA  = 3
-
-
-VULKAN_IMAGE_FORMATS = {
-    (TYPE_UNORM8,   COMPONENT_R):       "VK_FORMAT_R8_UNORM",
-    (TYPE_UNORM8,   COMPONENT_RG):      "VK_FORMAT_R8G8_UNORM",
-    (TYPE_UNORM8,   COMPONENT_RGBA):    "VK_FORMAT_R8G8B8A8_UNORM",
-
-    (TYPE_UINT8,    COMPONENT_R):       "VK_FORMAT_R8_UINT",
-    (TYPE_UINT8,    COMPONENT_RG):      "VK_FORMAT_R8G8_UINT",
-    (TYPE_UINT8,    COMPONENT_RGBA):    "VK_FORMAT_R8G8B8A8_UINT",
-
-    (TYPE_UINT16,   COMPONENT_R):       "VK_FORMAT_R16_UINT",
-    (TYPE_UINT16,   COMPONENT_RG):      "VK_FORMAT_R16G16_UINT",
-    (TYPE_UINT16,   COMPONENT_RGBA):    "VK_FORMAT_R16G16B16A16_UINT",
-
-    (TYPE_UINT32,   COMPONENT_R):       "VK_FORMAT_R32_UINT",
-    (TYPE_UINT32,   COMPONENT_RG):      "VK_FORMAT_R32G32_UINT",
-    (TYPE_UINT32,   COMPONENT_RGBA):    "VK_FORMAT_R32G32B32A32_UINT",
-
-    (TYPE_FLOAT16,  COMPONENT_R):       "VK_FORMAT_R16_SFLOAT",
-    (TYPE_FLOAT16,  COMPONENT_RG):      "VK_FORMAT_R16G16_SFLOAT",
-    (TYPE_FLOAT16,  COMPONENT_RGBA):    "VK_FORMAT_R16G16B16A16_SFLOAT",
-
-    (TYPE_FLOAT32,  COMPONENT_R):       "VK_FORMAT_R32_SFLOAT",
-    (TYPE_FLOAT32,  COMPONENT_RG):      "VK_FORMAT_R32G32_SFLOAT",
-    (TYPE_FLOAT32,  COMPONENT_RGBA):    "VK_FORMAT_R32G32B32A32_SFLOAT",
-
-    (TYPE_PACK_11,  COMPONENT_RGB):    "VK_FORMAT_B10G11R11_UFLOAT_PACK32",
-    # Should've been VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, 
-    # but not enough devices support storage images with such format.
-    # So pack/unpack is done manually.
-    (TYPE_PACK_E5,  COMPONENT_RGB):    "VK_FORMAT_R32_UINT",
+TYPE_BYTES = {
+    FLOAT32: 4,
+    INT32:   4,
+    UINT32:  4,
+    (FLOAT32,  2): 8,
+    (FLOAT32,  3): 12,
+    (FLOAT32,  4): 16,
+    (INT32,    2): 8,
+    (INT32,    3): 12,
+    (INT32,    4): 16,
+    (UINT32,   2): 8,
+    (UINT32,   3): 12,
+    (UINT32,   4): 16,
+    (FLOAT32, 22): 16,
+    (FLOAT32, 23): 24,
+    (FLOAT32, 32): 24,
+    (FLOAT32, 33): 36,
+    (FLOAT32, 34): 48,
+    (FLOAT32, 43): 48,
+    (FLOAT32, 44): 64,
 }
 
-GLSL_IMAGE_FORMATS = {
-    (TYPE_UNORM8,   COMPONENT_R):       "r8",
-    (TYPE_UNORM8,   COMPONENT_RG):      "rg8",
-    (TYPE_UNORM8,   COMPONENT_RGBA):    "rgba8",
 
-    (TYPE_UINT8,    COMPONENT_R):       "r8ui",
-    (TYPE_UINT8,    COMPONENT_RG):      "rg8ui",
-    (TYPE_UINT8,    COMPONENT_RGBA):    "rgba8ui",
+VULKAN_FORMATS = {
+    (UNORM8,   CHANNELS_R):       "VK_FORMAT_R8_UNORM",
+    (UNORM8,   CHANNELS_RG):      "VK_FORMAT_R8G8_UNORM",
+    (UNORM8,   CHANNELS_RGBA):    "VK_FORMAT_R8G8B8A8_UNORM",
 
-    (TYPE_UINT16,   COMPONENT_R):       "r16ui",
-    (TYPE_UINT16,   COMPONENT_RG):      "rg16ui",
-    (TYPE_UINT16,   COMPONENT_RGBA):    "rgba16ui",
+    (UINT8,    CHANNELS_R):       "VK_FORMAT_R8_UINT",
+    (UINT8,    CHANNELS_RG):      "VK_FORMAT_R8G8_UINT",
+    (UINT8,    CHANNELS_RGBA):    "VK_FORMAT_R8G8B8A8_UINT",
 
-    (TYPE_UINT32,   COMPONENT_R):       "r32ui",
-    (TYPE_UINT32,   COMPONENT_RG):      "rg32ui",
-    (TYPE_UINT32,   COMPONENT_RGBA):    "rgba32ui",
+    (UINT16,   CHANNELS_R):       "VK_FORMAT_R16_UINT",
+    (UINT16,   CHANNELS_RG):      "VK_FORMAT_R16G16_UINT",
+    (UINT16,   CHANNELS_RGBA):    "VK_FORMAT_R16G16B16A16_UINT",
 
-    (TYPE_FLOAT16,  COMPONENT_R):       "r16f",
-    (TYPE_FLOAT16,  COMPONENT_RG):      "rg16f",
-    (TYPE_FLOAT16,  COMPONENT_RGBA):    "rgba16f",
+    (UINT32,   CHANNELS_R):       "VK_FORMAT_R32_UINT",
+    (UINT32,   CHANNELS_RG):      "VK_FORMAT_R32G32_UINT",
+    (UINT32,   CHANNELS_RGBA):    "VK_FORMAT_R32G32B32A32_UINT",
 
-    (TYPE_FLOAT32,  COMPONENT_R):       "r32f",
-    (TYPE_FLOAT32,  COMPONENT_RG):      "rg32f",
-    (TYPE_FLOAT32,  COMPONENT_RGBA):    "rgba32f",
+    (FLOAT16,  CHANNELS_R):       "VK_FORMAT_R16_SFLOAT",
+    (FLOAT16,  CHANNELS_RG):      "VK_FORMAT_R16G16_SFLOAT",
+    (FLOAT16,  CHANNELS_RGBA):    "VK_FORMAT_R16G16B16A16_SFLOAT",
 
-    (TYPE_PACK_11,  COMPONENT_RGB):    "r11f_g11f_b10f",
-    (TYPE_PACK_E5,  COMPONENT_RGB):    "r32ui",
+    (FLOAT32,  CHANNELS_R):       "VK_FORMAT_R32_SFLOAT",
+    (FLOAT32,  CHANNELS_RG):      "VK_FORMAT_R32G32_SFLOAT",
+    (FLOAT32,  CHANNELS_RGBA):    "VK_FORMAT_R32G32B32A32_SFLOAT",
+
+    (PACKED_11, CHANNELS_RGB):    "VK_FORMAT_B10G11R11_UFLOAT_PACK32",
+    (PACKED_E5, CHANNELS_RGB):    "VK_FORMAT_R32_UINT",
 }
 
-GLSL_IMAGE_2D_TYPE = { 
-    TYPE_FLOAT32    : "image2D",
-    TYPE_INT32      : "iimage2D",
-    TYPE_UINT32     : "uimage2D",
-    TYPE_UNORM8     : "image2D",
-    TYPE_UINT8      : "uimage2D",
-    TYPE_UINT16     : "uimage2D",
-    TYPE_FLOAT16    : "image2D",
-    TYPE_PACK_11    : "image2D",
-    TYPE_PACK_E5    : "uimage2D",
+GLSL_FORMATS = {
+    (UNORM8,   CHANNELS_R):       "r8",
+    (UNORM8,   CHANNELS_RG):      "rg8",
+    (UNORM8,   CHANNELS_RGBA):    "rgba8",
+
+    (UINT8,    CHANNELS_R):       "r8ui",
+    (UINT8,    CHANNELS_RG):      "rg8ui",
+    (UINT8,    CHANNELS_RGBA):    "rgba8ui",
+
+    (UINT16,   CHANNELS_R):       "r16ui",
+    (UINT16,   CHANNELS_RG):      "rg16ui",
+    (UINT16,   CHANNELS_RGBA):    "rgba16ui",
+
+    (UINT32,   CHANNELS_R):       "r32ui",
+    (UINT32,   CHANNELS_RG):      "rg32ui",
+    (UINT32,   CHANNELS_RGBA):    "rgba32ui",
+
+    (FLOAT16,  CHANNELS_R):       "r16f",
+    (FLOAT16,  CHANNELS_RG):      "rg16f",
+    (FLOAT16,  CHANNELS_RGBA):    "rgba16f",
+
+    (FLOAT32,  CHANNELS_R):       "r32f",
+    (FLOAT32,  CHANNELS_RG):      "rg32f",
+    (FLOAT32,  CHANNELS_RGBA):    "rgba32f",
+
+    (PACKED_11, CHANNELS_RGB):    "r11f_g11f_b10f",
+    (PACKED_E5, CHANNELS_RGB):    "r32ui",
 }
 
-# Vulkan has no combined image samplers used through a sampler object: an image is read either
-# through a samplerless texture (this dict) or through a texture paired with a separate sampler
-# (GLSL_SAMPLER_TYPE). Framebuffers expose all three views, see FRAMEBUF_SAMPLED_POSTFIX.
-GLSL_TEXTURE_2D_TYPE = {
-    TYPE_FLOAT32    : "texture2D",
-    TYPE_INT32      : "itexture2D",
-    TYPE_UINT32     : "utexture2D",
-    TYPE_UNORM8     : "texture2D",
-    TYPE_UINT8      : "utexture2D",
-    TYPE_UINT16     : "utexture2D",
-    TYPE_FLOAT16    : "texture2D",
-    TYPE_PACK_11    : "texture2D",
-    TYPE_PACK_E5    : "utexture2D",
+GLSL_STORAGE_TYPES = {
+    FLOAT32:  "image2D",
+    INT32:    "iimage2D",
+    UINT32:   "uimage2D",
+    UNORM8:   "image2D",
+    UINT8:    "uimage2D",
+    UINT16:   "uimage2D",
+    FLOAT16:  "image2D",
+    PACKED_11: "image2D",
+    PACKED_E5: "uimage2D",
 }
 
-# the sampler carries no format, the format comes from the texture it is paired with
+GLSL_SAMPLED_TYPES = {
+    FLOAT32:  "texture2D",
+    INT32:    "itexture2D",
+    UINT32:   "utexture2D",
+    UNORM8:   "texture2D",
+    UINT8:    "utexture2D",
+    UINT16:   "utexture2D",
+    FLOAT16:  "texture2D",
+    PACKED_11: "texture2D",
+    PACKED_E5: "utexture2D",
+}
+
 GLSL_SAMPLER_TYPE = "sampler"
 
 
-# The HLSL spelling of the same types, so that one walk can emit both language versions of a
-# declaration. Matrices are declared transposed: dxc reads the bytes of a matrix that glslang
-# lays out as column major as row major, so GLSL `matCxR` becomes HLSL `floatRxC`. A square
-# matrix keeps its spelling, and so does the element count of an array of matrices.
-HLSL_TYPE_NAMES = {
-    TYPE_FLOAT32:       "float",
-    TYPE_INT32:         "int",
-    TYPE_UINT32:        "uint",
-    (TYPE_FLOAT32,  2): "float2",
-    (TYPE_FLOAT32,  3): "float3",
-    (TYPE_FLOAT32,  4): "float4",
-    (TYPE_INT32,    2): "int2",
-    (TYPE_INT32,    3): "int3",
-    (TYPE_INT32,    4): "int4",
-    (TYPE_UINT32,   2): "uint2",
-    (TYPE_UINT32,   3): "uint3",
-    (TYPE_UINT32,   4): "uint4",
-    (TYPE_FLOAT32, 22): "float2x2",
-    (TYPE_FLOAT32, 23): "float3x2",
-    (TYPE_FLOAT32, 32): "float2x3",
-    (TYPE_FLOAT32, 33): "float3x3",
-    (TYPE_FLOAT32, 34): "float4x3",
-    (TYPE_FLOAT32, 43): "float3x4",
-    (TYPE_FLOAT32, 44): "float4x4",
+HLSL_TYPES = {
+    FLOAT32: "float",
+    INT32:   "int",
+    UINT32:  "uint",
+    (FLOAT32, 2): "float2",
+    (FLOAT32, 3): "float3",
+    (FLOAT32, 4): "float4",
+    (INT32,   2): "int2",
+    (INT32,   3): "int3",
+    (INT32,   4): "int4",
+    (UINT32,  2): "uint2",
+    (UINT32,  3): "uint3",
+    (UINT32,  4): "uint4",
+    (FLOAT32, 22): "float2x2",
+    (FLOAT32, 23): "float3x2",
+    (FLOAT32, 32): "float2x3",
+    (FLOAT32, 33): "float3x3",
+    (FLOAT32, 34): "float4x3",
+    (FLOAT32, 43): "float3x4",
+    (FLOAT32, 44): "float4x4",
 }
 
-# dxc takes the GLSL spelling of a format for every format that is in use here, except for the
-# packed ones: those names are reported as not supported and the format is silently dropped, so
-# the images end up with no format at all. The spelled out names are the ones dxc accepts, and
-# the resulting OpTypeImage format operand is the one glslang emits for the GLSL name.
-HLSL_IMAGE_FORMAT_OVERRIDES = {
-    (TYPE_PACK_11,  COMPONENT_RGB):     "r11g11b10f",
+HLSL_FORMAT_OVERRIDES = {
+    (PACKED_11, CHANNELS_RGB): "r11g11b10f",
 }
 
-HLSL_IMAGE_FORMATS = dict(GLSL_IMAGE_FORMATS)
-HLSL_IMAGE_FORMATS.update(HLSL_IMAGE_FORMAT_OVERRIDES)
+HLSL_FORMATS = dict(GLSL_FORMATS)
+HLSL_FORMATS.update(HLSL_FORMAT_OVERRIDES)
 
-HLSL_IMAGE_2D_TYPE = {
-    TYPE_FLOAT32    : "RWTexture2D<float4>",
-    TYPE_INT32      : "RWTexture2D<int4>",
-    TYPE_UINT32     : "RWTexture2D<uint4>",
-    TYPE_UNORM8     : "RWTexture2D<float4>",
-    TYPE_UINT8      : "RWTexture2D<uint4>",
-    TYPE_UINT16     : "RWTexture2D<uint4>",
-    TYPE_FLOAT16    : "RWTexture2D<float4>",
-    TYPE_PACK_11    : "RWTexture2D<float4>",
-    TYPE_PACK_E5    : "RWTexture2D<uint4>",
+HLSL_STORAGE_TYPES = {
+    FLOAT32:  "RWTexture2D<float4>",
+    INT32:    "RWTexture2D<int4>",
+    UINT32:   "RWTexture2D<uint4>",
+    UNORM8:   "RWTexture2D<float4>",
+    UINT8:    "RWTexture2D<uint4>",
+    UINT16:   "RWTexture2D<uint4>",
+    FLOAT16:  "RWTexture2D<float4>",
+    PACKED_11: "RWTexture2D<float4>",
+    PACKED_E5: "RWTexture2D<uint4>",
 }
 
-# A sampled view is a texture next to a separate sampler, as in GLSL: Texture2D.SampleLevel(...)
-# becomes a sampled image descriptor plus a sampler descriptor, and dxc emits the same pair of
-# declarations that glslang emits for `texture2D` and `sampler`.
-HLSL_TEXTURE_2D_TYPE = {
-    TYPE_FLOAT32    : "Texture2D<float4>",
-    TYPE_INT32      : "Texture2D<int4>",
-    TYPE_UINT32     : "Texture2D<uint4>",
-    TYPE_UNORM8     : "Texture2D<float4>",
-    TYPE_UINT8      : "Texture2D<uint4>",
-    TYPE_UINT16     : "Texture2D<uint4>",
-    TYPE_FLOAT16    : "Texture2D<float4>",
-    TYPE_PACK_11    : "Texture2D<float4>",
-    TYPE_PACK_E5    : "Texture2D<uint4>",
+HLSL_SAMPLED_TYPES = {
+    FLOAT32:  "Texture2D<float4>",
+    INT32:    "Texture2D<int4>",
+    UINT32:   "Texture2D<uint4>",
+    UNORM8:   "Texture2D<float4>",
+    UINT8:    "Texture2D<uint4>",
+    UINT16:   "Texture2D<uint4>",
+    FLOAT16:  "Texture2D<float4>",
+    PACKED_11: "Texture2D<float4>",
+    PACKED_E5: "Texture2D<uint4>",
 }
 
 HLSL_SAMPLER_TYPE = "SamplerState"
 
 
-# How one descriptor is spelled in each language. The three groups of the framebuffer set are
-# walked once and only the spelling differs, so the bindings can not drift apart between the
-# GLSL and the HLSL headers.
-DESCRIPTOR_SPELLINGS = {
+DESCRIPTOR_SYNTAX = {
     "glsl": {
-        "format":      lambda baseFormat, components: GLSL_IMAGE_FORMATS[(baseFormat, components)],
-        "storageType": lambda baseFormat: GLSL_IMAGE_2D_TYPE[baseFormat],
-        "sampledType": lambda baseFormat: GLSL_TEXTURE_2D_TYPE[baseFormat],
-        "samplerType": lambda baseFormat: GLSL_SAMPLER_TYPE,
-        "storage":     lambda binding, format, typeName, name:
-            "layout(set = %s, binding = %d, %s) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, format, typeName, name),
-        "sampled":     lambda binding, format, typeName, name:
-            "layout(set = %s, binding = %d) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, typeName, name),
-        "sampler":     lambda binding, format, typeName, name:
-            "layout(set = %s, binding = %d) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, typeName, name),
+        "format":      lambda base_format, channels: GLSL_FORMATS[(base_format, channels)],
+        "storageType": lambda base_format: GLSL_STORAGE_TYPES[base_format],
+        "sampledType": lambda base_format: GLSL_SAMPLED_TYPES[base_format],
+        "samplerType": lambda base_format: GLSL_SAMPLER_TYPE,
+        "storage":     lambda binding, image_format, type_name, name:
+            "layout(set = %s, binding = %d, %s) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, image_format, type_name, name),
+        "sampled":     lambda binding, image_format, type_name, name:
+            "layout(set = %s, binding = %d) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, type_name, name),
+        "sampler":     lambda binding, image_format, type_name, name:
+            "layout(set = %s, binding = %d) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, type_name, name),
     },
     "hlsl": {
-        "format":      lambda baseFormat, components: HLSL_IMAGE_FORMATS[(baseFormat, components)],
-        "storageType": lambda baseFormat: HLSL_IMAGE_2D_TYPE[baseFormat],
-        "sampledType": lambda baseFormat: HLSL_TEXTURE_2D_TYPE[baseFormat],
-        "samplerType": lambda baseFormat: HLSL_SAMPLER_TYPE,
-        # The set index comes from the macro, so the header must be included after
-        # DESC_SET_FRAMEBUFFERS is defined - the same requirement as in GLSL.
-        "storage":     lambda binding, format, typeName, name:
-            "[[vk::binding(%d, %s), vk::image_format(\"%s\")]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, format, typeName, name),
-        "sampled":     lambda binding, format, typeName, name:
-            "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, typeName, name),
-        "sampler":     lambda binding, format, typeName, name:
-            "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, typeName, name),
+        "format":      lambda base_format, channels: HLSL_FORMATS[(base_format, channels)],
+        "storageType": lambda base_format: HLSL_STORAGE_TYPES[base_format],
+        "sampledType": lambda base_format: HLSL_SAMPLED_TYPES[base_format],
+        "samplerType": lambda base_format: HLSL_SAMPLER_TYPE,
+        "storage":     lambda binding, image_format, type_name, name:
+            "[[vk::binding(%d, %s), vk::image_format(\"%s\")]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, image_format, type_name, name),
+        "sampled":     lambda binding, image_format, type_name, name:
+            "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, type_name, name),
+        "sampler":     lambda binding, image_format, type_name, name:
+            "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, type_name, name),
     },
 }
 
 
-USE_BASE_STRUCT_NAME_IN_VARIABLE_STRIDE = False
-USE_MULTIDIMENSIONAL_ARRAYS_IN_C = False
-CONST_TO_EVALUATE = "CONST VALUE MUST BE EVALUATED"
+MULTIDIMENSIONAL_ARRAYS_IN_C = False
+RESOLVE_LATER = "CONST VALUE MUST BE EVALUATED"
 
 
 
-
-
-
-
-# --------------------------------------------------------------------------------------------- #
-# User defined constants
-# --------------------------------------------------------------------------------------------- #
-
-# Legacy DIS gradient estimation (SVGF era) was removed with the ReSTIR passes;
-# the Q2RTX ASVGF gradients come from the Q2Grad* framebuffers instead.
 GRADIENT_ESTIMATION_ENABLED = False
-FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE = "FRAMEBUF_IGNORE_ATTACHMENTS" # define this, to not specify framebufs that are used as attachments
+FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE = "FRAMEBUF_IGNORE_ATTACHMENTS"
 
-# Q2RTX-style fog volumes (matches RG_MAX_FOG_VOLUMES in vkpt.h)
 MAX_FOG_VOLUMES = 8
 
 CONST = {
     "MAX_STATIC_VERTEX_COUNT"               : 1 << 20,
     "MAX_DYNAMIC_VERTEX_COUNT"              : 1 << 21,
     "MAX_INDEXED_PRIMITIVE_COUNT"           : 1 << 20,
-   
+
     "MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT"     : 1 << 12,
-    "MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT_POW" : CONST_TO_EVALUATE,
-    "MAX_GEOMETRY_PRIMITIVE_COUNT"          : CONST_TO_EVALUATE,
-    "MAX_GEOMETRY_PRIMITIVE_COUNT_POW"      : CONST_TO_EVALUATE,
-    # used for first-person geometries
+    "MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT_POW" : RESOLVE_LATER,
+    "MAX_GEOMETRY_PRIMITIVE_COUNT"          : RESOLVE_LATER,
+    "MAX_GEOMETRY_PRIMITIVE_COUNT_POW"      : RESOLVE_LATER,
     "LOWER_BOTTOM_LEVEL_GEOMETRIES_COUNT"   : 1 << 8,
-    
+
     "MAX_TOP_LEVEL_INSTANCE_COUNT"          : 45,
-    
+
     "BINDING_VERTEX_BUFFER_STATIC"              : 0,
     "BINDING_VERTEX_BUFFER_DYNAMIC"             : 1,
     "BINDING_INDEX_BUFFER_STATIC"               : 2,
@@ -361,10 +294,8 @@ CONST = {
     "BINDING_GLOBAL_UNIFORM"                    : 0,
     "BINDING_ACCELERATION_STRUCTURE_MAIN"       : 0,
     "BINDING_TEXTURES"                          : 0,
-    # the sampler half of the split bindless texture table
     "BINDING_TEXTURES_SAMPLER"                  : 1,
     "BINDING_CUBEMAPS"                          : 0,
-    # the sampler half of the split bindless cubemap table
     "BINDING_CUBEMAPS_SAMPLER"                  : 1,
     "BINDING_RENDER_CUBEMAP"                    : 0,
     "BINDING_RENDER_CUBEMAP_SAMPLER"            : 2,
@@ -376,8 +307,6 @@ CONST = {
     "BINDING_LIGHT_SOURCES_PREV"                : 1,
     "BINDING_LIGHT_SOURCES_INDEX_PREV_TO_CUR"   : 2,
     "BINDING_LIGHT_SOURCES_INDEX_CUR_TO_PREV"   : 3,
-    # Q2RTX per-cluster light lists (offsets + concatenated light indices),
-    # uploaded from the CPU each frame; plus the adaptive shadow stats.
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_OFFSETS" : 4,
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_LIGHTS"  : 5,
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_STATS"        : 6,
@@ -397,7 +326,7 @@ CONST = {
     "BINDING_VOLUMETRIC_ILLUMINATION"           : 5,
     "BINDING_VOLUMETRIC_ILLUMINATION_SAMPLED"   : 6,
     "BINDING_VOLUMETRIC_ILLUMINATION_SAMPLER"   : 7,
-    
+
     "INSTANCE_CUSTOM_INDEX_FLAG_DYNAMIC"                : "1 << 0",
     "INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON"           : "1 << 1",
     "INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON_VIEWER"    : "1 << 2",
@@ -411,10 +340,10 @@ CONST = {
     "INSTANCE_MASK_REFRACT"                 : 1 << 5,
     "INSTANCE_MASK_FIRST_PERSON"            : 1 << 6,
     "INSTANCE_MASK_FIRST_PERSON_VIEWER"     : 1 << 7,
-    
+
     "PAYLOAD_INDEX_DEFAULT"                 : 0,
     "PAYLOAD_INDEX_SHADOW"                  : 1,
-    
+
     "SBT_INDEX_RAYGEN_PRIMARY"              : 0,
     "SBT_INDEX_RAYGEN_REFL_REFR"            : 1,
     "SBT_INDEX_RAYGEN_DIRECT"               : 2,
@@ -424,11 +353,11 @@ CONST = {
     "SBT_INDEX_MISS_SHADOW"                 : 1,
     "SBT_INDEX_HITGROUP_FULLY_OPAQUE"       : 0,
     "SBT_INDEX_HITGROUP_ALPHA_TESTED"       : 1,
-    
+
     "MATERIAL_ALBEDO_ALPHA_INDEX"                   : 0,
     "MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX"    : 1,
     "MATERIAL_NORMAL_INDEX"                         : 2,
-    
+
     "MATERIAL_NO_TEXTURE"                   : 0,
 
     "MATERIAL_BLENDING_FLAG_OPAQUE"         : "1 << 0",
@@ -436,11 +365,9 @@ CONST = {
     "MATERIAL_BLENDING_FLAG_ADD"            : "1 << 2",
     "MATERIAL_BLENDING_FLAG_SHADE"          : "1 << 3",
     "MATERIAL_BLENDING_FLAG_BIT_COUNT"      : 4,
-    "MATERIAL_BLENDING_MASK_FIRST_LAYER"    : CONST_TO_EVALUATE,
-    "MATERIAL_BLENDING_MASK_SECOND_LAYER"   : CONST_TO_EVALUATE,
-    "MATERIAL_BLENDING_MASK_THIRD_LAYER"    : CONST_TO_EVALUATE,
-    # 12 first bits are for the blending flags per each layer, others can be used
-    # texture coordinates are animated by the classic "warp" of the turbulent surfaces
+    "MATERIAL_BLENDING_MASK_FIRST_LAYER"    : RESOLVE_LATER,
+    "MATERIAL_BLENDING_MASK_SECOND_LAYER"   : RESOLVE_LATER,
+    "MATERIAL_BLENDING_MASK_THIRD_LAYER"    : RESOLVE_LATER,
     "GEOM_INST_FLAG_TURB_WARP"              : "1 << 13",
     "GEOM_INST_FLAG_RESERVED_1"             : "1 << 14",
     "GEOM_INST_FLAG_RESERVED_2"             : "1 << 15",
@@ -465,14 +392,14 @@ CONST = {
     "SKY_TYPE_CUBEMAP"                      : 1,
     "SKY_TYPE_RASTERIZED_GEOMETRY"          : 2,
     "SKY_TYPE_PROCEDURAL"                   : 3,
-    
+
     "BLUE_NOISE_TEXTURE_COUNT"              : 128,
     "BLUE_NOISE_TEXTURE_SIZE"               : 128,
-    "BLUE_NOISE_TEXTURE_SIZE_POW"           : CONST_TO_EVALUATE,
+    "BLUE_NOISE_TEXTURE_SIZE_POW"           : RESOLVE_LATER,
 
     "COMPUTE_COMPOSE_GROUP_SIZE_X"          : 16,
     "COMPUTE_COMPOSE_GROUP_SIZE_Y"          : 16,
-    
+
     "COMPUTE_BLOOM_UPSAMPLE_GROUP_SIZE_X"   : 16,
     "COMPUTE_BLOOM_UPSAMPLE_GROUP_SIZE_Y"   : 16,
     "COMPUTE_BLOOM_DOWNSAMPLE_GROUP_SIZE_X" : 16,
@@ -503,7 +430,7 @@ CONST = {
     "COMPUTE_SVGF_ATROUS_ITERATION_COUNT"   : 4,
 
     "COMPUTE_ASVGF_STRATA_SIZE"                         : 3,
-    "COMPUTE_ASVGF_GRADIENT_ATROUS_ITERATION_COUNT"     : 4,  
+    "COMPUTE_ASVGF_GRADIENT_ATROUS_ITERATION_COUNT"     : 4,
 
     "COMPUTE_INDIRECT_DRAW_FLARES_GROUP_SIZE_X"         : 256,
     "LENS_FLARES_MAX_DRAW_CMD_COUNT"                    : 512,
@@ -521,10 +448,8 @@ CONST = {
     "DEBUG_SHOW_FLAG_RAY_STATS"             : "1 << 10",
     "DEBUG_SHOW_FLAG_LUMA"                  : "1 << 11",
 
-    # Number of ray categories the RT shaders atomically accumulate per frame
-    # (see vkpt/Source/RayStats.h).
     "RAY_STATS_CATEGORY_COUNT"              : 5,
-    
+
     "MAX_RAY_LENGTH"                        : "10000.0",
 
     "MEDIA_TYPE_VACUUM"                     : 0,
@@ -551,18 +476,6 @@ CONST = {
     "TAL_CDF_EMPTY_ENTRY"                   : "0xFFFFFFFFu",
     "TAL_CDF_GRID_MAX_SIZE"                 : 256,
 
-    # Q2RTX-style per-BSP-cluster light lists. The world model's BSP leaves are
-    # used as clusters (vkQuake's PVS is leaf-indexed). The lists are composed in
-    # the renderer from the registered lights and uploaded per frame as
-    # q2LightListOffsets / q2LightListLights. Q2_MAX_CLUSTERS must cover the
-    # leaf count of any map (Quake BSP allows up to 32767 leaves; real maps
-    # stay well under 8192).
-    #
-    # Q2_LIGHT_LIST_MAX_PER_CELL is the capacity of one cluster's list; the
-    # statistics buffer below is sized by it, so raising it costs 4 bytes of
-    # VRAM per cluster, slot, side, hit/miss flag and frame in flight, and
-    # doubles the per-slot eviction scan in ClusterLightLists. 128 was chosen
-    # after 166 clusters of a dense Arcane Dimensions map filled all 64 slots.
     "Q2_MAX_CLUSTERS"                       : 8192,
     "Q2_LIGHT_LIST_MAX_PER_CELL"            : 128,
     "Q2_LIGHT_LIST_STATS_SIDES"             : 6,
@@ -587,446 +500,329 @@ CONST = {
 }
 
 CONST_GLSL_ONLY = {
-    "SURFACE_POSITION_INCORRECT"            : 10000000.0,  
+    "SURFACE_POSITION_INCORRECT"            : 10000000.0,
 }
 
 
-def align(c, alignment):
-    return ((c + alignment - 1) // alignment) * alignment
+def round_up(value, alignment):
+    return ((value + alignment - 1) // alignment) * alignment
 
 
-def align4(a):
-    return ((a + 3) >> 2) << 2
+def round_up4(value):
+    return ((value + 3) >> 2) << 2
 
 
-def evalConst():
-    # flags for each layer
+def resolve_derived_constants():
     assert CONST["MATERIAL_BLENDING_FLAG_BIT_COUNT"] * 3 <= 12
-    CONST["MATERIAL_BLENDING_MASK_FIRST_LAYER"]     = ((1 << CONST["MATERIAL_BLENDING_FLAG_BIT_COUNT"]) - 1) << (CONST["MATERIAL_BLENDING_FLAG_BIT_COUNT"] * 0)
-    CONST["MATERIAL_BLENDING_MASK_SECOND_LAYER"]    = ((1 << CONST["MATERIAL_BLENDING_FLAG_BIT_COUNT"]) - 1) << (CONST["MATERIAL_BLENDING_FLAG_BIT_COUNT"] * 1)
-    CONST["MATERIAL_BLENDING_MASK_THIRD_LAYER"]     = ((1 << CONST["MATERIAL_BLENDING_FLAG_BIT_COUNT"]) - 1) << (CONST["MATERIAL_BLENDING_FLAG_BIT_COUNT"] * 2)
 
-    CONST["MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT_POW"]  = int(log2(CONST["MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT"]))
-    CONST["MAX_GEOMETRY_PRIMITIVE_COUNT_POW"]       = 32 - CONST["MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT_POW"]
-    CONST["MAX_GEOMETRY_PRIMITIVE_COUNT"]           = 1 << CONST["MAX_GEOMETRY_PRIMITIVE_COUNT_POW"]
-    CONST["BLUE_NOISE_TEXTURE_SIZE_POW"]            = int(log2(CONST["BLUE_NOISE_TEXTURE_SIZE"]))
+    blend_bits = CONST["MATERIAL_BLENDING_FLAG_BIT_COUNT"]
+    blend_mask = (1 << blend_bits) - 1
 
-    assert len([None for _, v in CONST.items() if v == CONST_TO_EVALUATE]) == 0, "All CONST_TO_EVALUATE values must be calculated"
+    CONST["MATERIAL_BLENDING_MASK_FIRST_LAYER"]  = blend_mask << (blend_bits * 0)
+    CONST["MATERIAL_BLENDING_MASK_SECOND_LAYER"] = blend_mask << (blend_bits * 1)
+    CONST["MATERIAL_BLENDING_MASK_THIRD_LAYER"]  = blend_mask << (blend_bits * 2)
+
+    CONST["MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT_POW"] = int(log2(CONST["MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT"]))
+    CONST["MAX_GEOMETRY_PRIMITIVE_COUNT_POW"]      = 32 - CONST["MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT_POW"]
+    CONST["MAX_GEOMETRY_PRIMITIVE_COUNT"]          = 1 << CONST["MAX_GEOMETRY_PRIMITIVE_COUNT_POW"]
+    CONST["BLUE_NOISE_TEXTURE_SIZE_POW"]           = int(log2(CONST["BLUE_NOISE_TEXTURE_SIZE"]))
+
+    assert len([None for _, value in CONST.items() if value == RESOLVE_LATER]) == 0, "Every derived constant must be calculated"
 
 
-# --------------------------------------------------------------------------------------------- #
-# User defined structs
-# --------------------------------------------------------------------------------------------- #
-# Each member is defined as a tuple (base type, dimensions, name, count).
-# Dimensions:   1 - scalar, 
-#               2 - gvec2,
-#               3 - gvec3, 
-#               4 - gvec4, 
-#               [xy] - gmat[xy] (i.e. 32 - gmat32)
-# If count > 1 and dimensions is 2, 3 or 4 (matrices are not supported)
-# then it'll be represented as an array with size (count*dimensions).
-
-VERTEX_STRUCT = [
-    (TYPE_FLOAT32,      4,     "position",              1),
-    (TYPE_FLOAT32,      4,     "normal",                1),
-    (TYPE_FLOAT32,      2,     "texCoord",              1),
-    (TYPE_FLOAT32,      2,     "texCoordLayer1",        1),
-    (TYPE_FLOAT32,      2,     "texCoordLayer2",        1),
-    (TYPE_UINT32,       1,     "packedColor",           1),
-    # BSP cluster (world geometry) - Q2RTX per-cluster light lists. 0 for
-    # non-world / dynamic geometry. Replaces the old __pad0 trailing field.
-    (TYPE_UINT32,       1,     "cluster",               1),
-    # Up to 4 lightstyle indices affecting emission, 8 bits per slot, style + 1.
-    (TYPE_UINT32,       1,     "lightStyles",           1),
+VERTEX_MEMBERS = [
+    (FLOAT32, 4, "position",      1),
+    (FLOAT32, 4, "normal",        1),
+    (FLOAT32, 2, "texCoord",      1),
+    (FLOAT32, 2, "texCoordLayer1", 1),
+    (FLOAT32, 2, "texCoordLayer2", 1),
+    (UINT32,  1, "packedColor",   1),
+    (UINT32,  1, "cluster",       1),
+    (UINT32,  1, "lightStyles",   1),
 ]
 
-# Must be careful with std140 offsets! They are set manually.
-# Other structs are using std430 and padding is done automatically.
-GLOBAL_UNIFORM_STRUCT = [
-    (TYPE_FLOAT32,     44,      "view",                         1),
-    (TYPE_FLOAT32,     44,      "invView",                      1),
-    (TYPE_FLOAT32,     44,      "viewPrev",                     1),
-    (TYPE_FLOAT32,     44,      "projection",                   1),
-    (TYPE_FLOAT32,     44,      "invProjection",                1),
-    (TYPE_FLOAT32,     44,      "projectionPrev",               1),
+GLOBAL_UNIFORM_MEMBERS = [
+    (FLOAT32, 44, "view",                         1),
+    (FLOAT32, 44, "invView",                      1),
+    (FLOAT32, 44, "viewPrev",                     1),
+    (FLOAT32, 44, "projection",                   1),
+    (FLOAT32, 44, "invProjection",                1),
+    (FLOAT32, 44, "projectionPrev",               1),
 
-    (TYPE_FLOAT32,     44,      "volumeViewProj",               1),
-    (TYPE_FLOAT32,     44,      "volumeViewProjInv",            1),
-    (TYPE_FLOAT32,     44,      "volumeViewProj_Prev",          1),
-    (TYPE_FLOAT32,     44,      "volumeViewProjInv_Prev",       1),
+    (FLOAT32, 44, "volumeViewProj",               1),
+    (FLOAT32, 44, "volumeViewProjInv",            1),
+    (FLOAT32, 44, "volumeViewProj_Prev",          1),
+    (FLOAT32, 44, "volumeViewProjInv_Prev",       1),
 
-    (TYPE_FLOAT32,      1,      "cellWorldSize",                1),
-    (TYPE_FLOAT32,      1,      "renderWidth",                  1),
+    (FLOAT32, 1, "cellWorldSize",                 1),
+    (FLOAT32, 1, "renderWidth",                   1),
 
-    # std140 filler: the C mirror is dense (4-byte packed), so every vec4 member
-    # must already land on a 16-byte boundary here. skyColorDefault follows, and
-    # without these 8 bytes its C offset is 696 while std140 moves it to 704,
-    # silently shifting every later member by 8 bytes.
-    (TYPE_UINT32,       1,      "__pad0",                       1),
-    (TYPE_UINT32,       1,      "__pad1",                       1),
+    (UINT32, 1, "__pad0",                         1),
+    (UINT32, 1, "__pad1",                         1),
 
-    (TYPE_FLOAT32,      1,      "renderHeight",                 1),
-    (TYPE_UINT32,       1,      "frameId",                      1),
-    (TYPE_FLOAT32,      1,      "timeDelta",                    1),
-    (TYPE_FLOAT32,      1,      "minLogLuminance",              1),
+    (FLOAT32, 1, "renderHeight",                  1),
+    (UINT32, 1, "frameId",                        1),
+    (FLOAT32, 1, "timeDelta",                     1),
+    (FLOAT32, 1, "minLogLuminance",               1),
 
-    (TYPE_FLOAT32,      1,      "maxLogLuminance",              1),
-    (TYPE_FLOAT32,      1,      "luminanceWhitePoint",          1),
-    (TYPE_UINT32,       1,      "stopEyeAdaptation",            1),
-    (TYPE_UINT32,       1,      "directionalLightExists",       1),
-    
-    (TYPE_FLOAT32,      1,      "polyLightSpotlightFactor",     1),
-    (TYPE_UINT32,       1,      "skyType",                      1),
-    (TYPE_FLOAT32,      1,      "skyColorMultiplier",           1),
-    (TYPE_UINT32,       1,      "skyCubemapIndex",              1),
-    
-    (TYPE_FLOAT32,      4,      "skyColorDefault",              1),
+    (FLOAT32, 1, "maxLogLuminance",               1),
+    (FLOAT32, 1, "luminanceWhitePoint",           1),
+    (UINT32, 1, "stopEyeAdaptation",              1),
+    (UINT32, 1, "directionalLightExists",         1),
 
-    (TYPE_FLOAT32,      4,      "cameraPosition",               1),
-    (TYPE_FLOAT32,      4,      "cameraPositionPrev",           1),
+    (FLOAT32, 1, "polyLightSpotlightFactor",      1),
+    (UINT32, 1, "skyType",                        1),
+    (FLOAT32, 1, "skyColorMultiplier",            1),
+    (UINT32, 1, "skyCubemapIndex",                1),
 
-    (TYPE_UINT32,       1,      "debugShowFlags",               1),
-    (TYPE_UINT32,       1,      "indirSecondBounce",            1),
-    (TYPE_UINT32,       1,      "lightCount",                   1),
-    (TYPE_UINT32,       1,      "lightCountPrev",               1),
+    (FLOAT32, 4, "skyColorDefault",               1),
 
-    (TYPE_FLOAT32,      1,      "emissionMapBoost",             1),
-    (TYPE_FLOAT32,      1,      "emissionMaxScreenColor",       1),
-    (TYPE_FLOAT32,      1,      "normalMapStrength",            1),
-    (TYPE_FLOAT32,      1,      "skyColorSaturation",           1),
+    (FLOAT32, 4, "cameraPosition",                1),
+    (FLOAT32, 4, "cameraPositionPrev",            1),
 
-    (TYPE_FLOAT32,      1,      "emissionSharpMask",            1),
-    (TYPE_FLOAT32,      1,      "talSelfLitOffset",             1),
-    # Layout alignment: ShGlobalUniform is std140, and the C-side struct is a
-    # dense 4-byte-packed mirror of it. Every vec4/mat4 member must start on a
-    # 16-byte boundary, so the number of scalar bytes before a vec4 must stay a
-    # multiple of 16. emissionSharpMask and talSelfLitOffset shift that phase by
-    # 8, so two more scalars are required to keep the offsets identical on both
-    # sides. Only the entry count matters here, not which values they hold.
-    (TYPE_UINT32,       1,      "emissionBlendMode",            1),
-    (TYPE_FLOAT32,      1,      "emissionBlendStrength",        1),
+    (UINT32, 1, "debugShowFlags",                 1),
+    (UINT32, 1, "indirSecondBounce",              1),
+    (UINT32, 1, "lightCount",                     1),
+    (UINT32, 1, "lightCountPrev",                 1),
 
-    (TYPE_FLOAT32,      1,      "skyAmbientLod",                1),
-    (TYPE_FLOAT32,      1,      "rayLength",                        1),
-    (TYPE_UINT32,       1,      "rayCullBackFaces",                 1),
-    (TYPE_UINT32,       1,      "rayCullMaskWorld",                 1),
+    (FLOAT32, 1, "emissionMapBoost",              1),
+    (FLOAT32, 1, "emissionMaxScreenColor",        1),
+    (FLOAT32, 1, "normalMapStrength",             1),
+    (FLOAT32, 1, "skyColorSaturation",            1),
 
-    (TYPE_FLOAT32,      1,      "bloomIntensity",                   1),
-    (TYPE_FLOAT32,      1,      "bloomThreshold",                   1),
-    (TYPE_FLOAT32,      1,      "bloomEmissionMultiplier",          1),
-    (TYPE_UINT32,       1,      "reflectRefractMaxDepth",           1),
+    (FLOAT32, 1, "emissionSharpMask",             1),
+    (FLOAT32, 1, "talSelfLitOffset",              1),
+    (UINT32, 1, "emissionBlendMode",              1),
+    (FLOAT32, 1, "emissionBlendStrength",         1),
 
-    (TYPE_UINT32,       1,      "cameraMediaType",                  1),
-    (TYPE_FLOAT32,      1,      "indexOfRefractionWater",           1),
-    (TYPE_FLOAT32,      1,      "indexOfRefractionGlass",           1),
-    (TYPE_FLOAT32,      1,      "waterTextureDerivativesMultiplier",1),
+    (FLOAT32, 1, "skyAmbientLod",                 1),
+    (FLOAT32, 1, "rayLength",                     1),
+    (UINT32, 1, "rayCullBackFaces",               1),
+    (UINT32, 1, "rayCullMaskWorld",               1),
 
-    (TYPE_UINT32,       1,      "volumeEnableType",                 1),
-    (TYPE_FLOAT32,      1,      "volumeScattering",                 1),
-    (TYPE_UINT32,       1,      "forceNoWaterRefraction",           1),
-    (TYPE_UINT32,       1,      "waterNormalTextureIndex",          1),
+    (FLOAT32, 1, "bloomIntensity",                1),
+    (FLOAT32, 1, "bloomThreshold",                1),
+    (FLOAT32, 1, "bloomEmissionMultiplier",       1),
+    (UINT32, 1, "reflectRefractMaxDepth",         1),
 
-    (TYPE_UINT32,       1,      "noBackfaceReflForNoMediaChange",   1),
-    (TYPE_FLOAT32,      1,      "time",                             1),
-    (TYPE_FLOAT32,      1,      "waterWaveSpeed",                   1),
-    (TYPE_FLOAT32,      1,      "waterWaveStrength",                1),
+    (UINT32, 1, "cameraMediaType",                1),
+    (FLOAT32, 1, "indexOfRefractionWater",        1),
+    (FLOAT32, 1, "indexOfRefractionGlass",        1),
+    (FLOAT32, 1, "waterTextureDerivativesMultiplier", 1),
 
-    (TYPE_FLOAT32,      4,      "waterColorAndDensity",             1),
-    (TYPE_FLOAT32,      4,      "acidColorAndDensity",              1),
+    (UINT32, 1, "volumeEnableType",               1),
+    (FLOAT32, 1, "volumeScattering",              1),
+    (UINT32, 1, "forceNoWaterRefraction",         1),
+    (UINT32, 1, "waterNormalTextureIndex",        1),
 
-    (TYPE_FLOAT32,      1,      "cameraRayConeSpreadAngle",         1),
-    (TYPE_FLOAT32,      1,      "waterTextureAreaScale",            1),
-    (TYPE_UINT32,       1,      "squareInputRoughness",             1),
-    (TYPE_FLOAT32,      1,      "upscaledRenderWidth",              1),
+    (UINT32, 1, "noBackfaceReflForNoMediaChange", 1),
+    (FLOAT32, 1, "time",                          1),
+    (FLOAT32, 1, "waterWaveSpeed",                1),
+    (FLOAT32, 1, "waterWaveStrength",             1),
 
-    (TYPE_FLOAT32,      4,      "worldUpVector",                    1),
+    (FLOAT32, 4, "waterColorAndDensity",          1),
+    (FLOAT32, 4, "acidColorAndDensity",           1),
 
-    (TYPE_FLOAT32,      1,      "upscaledRenderHeight",             1),
-    (TYPE_FLOAT32,      1,      "jitterX",                          1),
-    (TYPE_FLOAT32,      1,      "jitterY",                          1),
-    (TYPE_FLOAT32,      1,      "primaryRayMinDist",                1),
+    (FLOAT32, 1, "cameraRayConeSpreadAngle",      1),
+    (FLOAT32, 1, "waterTextureAreaScale",         1),
+    (UINT32, 1, "squareInputRoughness",           1),
+    (FLOAT32, 1, "upscaledRenderWidth",           1),
 
-    (TYPE_UINT32,       1,      "rayCullMaskWorld_Shadow",          1),
-    (TYPE_UINT32,       1,      "lensFlareCullingInputCount",       1),
-    (TYPE_UINT32,       1,      "applyViewProjToLensFlares",        1),
-    (TYPE_UINT32,       1,      "twirlPortalNormal",                1),
+    (FLOAT32, 4, "worldUpVector",                 1),
 
-    (TYPE_UINT32,       1,      "lightIndexIgnoreFPVShadows",       1),
-    (TYPE_FLOAT32,      1,      "gradientMultDiffuse",              1),
-    (TYPE_FLOAT32,      1,      "gradientMultIndirect",             1),
-    (TYPE_FLOAT32,      1,      "gradientMultSpecular",             1),
+    (FLOAT32, 1, "upscaledRenderHeight",          1),
+    (FLOAT32, 1, "jitterX",                       1),
+    (FLOAT32, 1, "jitterY",                       1),
+    (FLOAT32, 1, "primaryRayMinDist",             1),
 
-    (TYPE_FLOAT32,      1,      "minRoughness",                     1),
-    (TYPE_FLOAT32,      1,      "volumeCameraNear",                 1),
-    (TYPE_FLOAT32,      1,      "volumeCameraFar",                  1),
-    (TYPE_UINT32,       1,      "antiFireflyEnabled",               1),
+    (UINT32, 1, "rayCullMaskWorld_Shadow",        1),
+    (UINT32, 1, "lensFlareCullingInputCount",     1),
+    (UINT32, 1, "applyViewProjToLensFlares",      1),
+    (UINT32, 1, "twirlPortalNormal",              1),
 
-    (TYPE_FLOAT32,      4,      "volumeAmbient",                    1),
-    (TYPE_FLOAT32,      4,      "volumeSourceColor",                1),
-    (TYPE_FLOAT32,      4,      "volumeDirToSource",                1),
+    (UINT32, 1, "lightIndexIgnoreFPVShadows",     1),
+    (FLOAT32, 1, "gradientMultDiffuse",           1),
+    (FLOAT32, 1, "gradientMultIndirect",          1),
+    (FLOAT32, 1, "gradientMultSpecular",          1),
 
-    (TYPE_FLOAT32,      1,      "volumeSourceAsymmetry",            1),
-    # 1 if the new Q2RTX-style core path is enabled (host sets RG_DEBUG_DRAW_Q2RTX_CORE_BIT)
-    (TYPE_UINT32,       1,      "coreQ2RTX",                        1),
-    # 0: legacy Q2 ASVGF depth weighting (a-trous depth gradient as a magnitude)
-    # 1: Q2RTX depth weighting (reciprocal of the per-pixel depth change)
-    (TYPE_UINT32,       1,      "q2DepthGradMode",                  1),
-    (TYPE_FLOAT32,      1,      "skyNee",                           1),
+    (FLOAT32, 1, "minRoughness",                  1),
+    (FLOAT32, 1, "volumeCameraNear",              1),
+    (FLOAT32, 1, "volumeCameraFar",               1),
+    (UINT32, 1, "antiFireflyEnabled",             1),
 
-    # Q2 polygonal light statistics (host cvar rt_q2_lightstats).
-    # 0: disabled (no accumulation and no read of the statistics)
-    # 1: accumulate on every NEE light sample and apply the result (default)
-    # 2: accumulate only on the first NEE light sample of a pixel
-    # 3: accumulate on every sample, but do not apply the result
-    # 4: accumulate without atomics on every sample (diagnostic, racy)
-    (TYPE_UINT32,       1,      "q2LightStatsMode",                 1),
-    # 1: the Q2 reflection/refraction raygen returns before loading the rest of
-    # the G-buffer when the primary surface neither reflects nor refracts
-    # (host cvar rt_reflrefr_earlyout)
-    (TYPE_UINT32,       1,      "reflRefrEarlyOut",                 1),
-    # Number of NEE light samples per pixel in the direct pass (host cvar
-    # rt_nee_samples, clamped to 1..2). The estimator divides by this count, so
-    # both values stay unbiased; the ceiling of 2 comes from the RNG salt
-    # collision documented in RtRaygenDirect.rgen.
-    (TYPE_UINT32,       1,      "neeLightSamples",                  1),
-    # Layout alignment: ShGlobalUniform is std140 and the dense C mirror has no
-    # implicit padding, so every vec4/ivec4 member has to sit on a 16-byte
-    # boundary already in the packed layout. turbWarpStrength - the amplitude of
-    # the classic turbulent surface warp (see Shaders/TurbWarp.h; host cvar
-    # rt_turb_warp) - takes the last 4 bytes of the scalar run that ends here,
-    # right before the instanceGeomInfoOffset arrays at 1088. It cannot be moved
-    # to another spot in the run: waterColorAndDensity (880), acidColorAndDensity
-    # (896) and worldUpVector (928) lie inside it on 16-byte boundaries, so any
-    # extra scalar in front of one of them shifts the whole tail and desyncs the
-    # two layouts.
-    (TYPE_FLOAT32,      1,      "turbWarpStrength",                 1),
+    (FLOAT32, 4, "volumeAmbient",                 1),
+    (FLOAT32, 4, "volumeSourceColor",             1),
+    (FLOAT32, 4, "volumeDirToSource",             1),
 
-    # for std140
-    (TYPE_INT32,        4,      "instanceGeomInfoOffset",       align4(CONST["MAX_TOP_LEVEL_INSTANCE_COUNT"]) // 4),
-    (TYPE_INT32,        4,      "instanceGeomInfoOffsetPrev",   align4(CONST["MAX_TOP_LEVEL_INSTANCE_COUNT"]) // 4),
-    (TYPE_INT32,        4,      "instanceGeomCount",            align4(CONST["MAX_TOP_LEVEL_INSTANCE_COUNT"]) // 4),
-    (TYPE_FLOAT32,     44,      "viewProjCubemap",              6),
-    (TYPE_FLOAT32,     44,      "skyCubemapRotationTransform",  1),
+    (FLOAT32, 1, "volumeSourceAsymmetry",         1),
+    (UINT32, 1, "coreQ2RTX",                      1),
+    (UINT32, 1, "q2DepthGradMode",                1),
+    (FLOAT32, 1, "skyNee",                        1),
 
-    # Q2RTX-style fog volumes (see RgFogVolume). Flat arrays, std140.
-    # fogMins/fogMaxs/fogColor are vec4 (xyz + pad), fogDensity is vec4 (a,b,c,const),
-    # fogIsActive is a uint per volume.
-    (TYPE_FLOAT32,      4,      "fogMins",                  MAX_FOG_VOLUMES),
-    (TYPE_UINT32,       1,      "fogIsActive",              MAX_FOG_VOLUMES),
-    (TYPE_FLOAT32,      4,      "fogMaxs",                  MAX_FOG_VOLUMES),
-    (TYPE_FLOAT32,      4,      "fogColor",                 MAX_FOG_VOLUMES),
-    (TYPE_FLOAT32,      4,      "fogDensity",               MAX_FOG_VOLUMES),
+    (UINT32, 1, "q2LightStatsMode",               1),
+    (UINT32, 1, "reflRefrEarlyOut",               1),
+    (UINT32, 1, "neeLightSamples",                1),
+    (FLOAT32, 1, "turbWarpStrength",              1),
 
-    # Per-lightstyle emission multipliers (64 styles as 16 vec4s).
-    (TYPE_FLOAT32,      4,      "lightStyleScales",         16),
+    (INT32, 4, "instanceGeomInfoOffset",       round_up4(CONST["MAX_TOP_LEVEL_INSTANCE_COUNT"]) // 4),
+    (INT32, 4, "instanceGeomInfoOffsetPrev",   round_up4(CONST["MAX_TOP_LEVEL_INSTANCE_COUNT"]) // 4),
+    (INT32, 4, "instanceGeomCount",            round_up4(CONST["MAX_TOP_LEVEL_INSTANCE_COUNT"]) // 4),
+    (FLOAT32, 44, "viewProjCubemap",              6),
+    (FLOAT32, 44, "skyCubemapRotationTransform",  1),
 
-    # Q2RTX pt_num_bounce_rays (host cvar rt_gi_level): 0 = no indirect lighting
-    # at all, 0.5 = low, 1 = medium (one indirect bounce), 2 = high (two indirect
-    # bounces). Only .x is used; the vec4 keeps the dense C mirror on the std140
-    # 16-byte boundary.
-    (TYPE_FLOAT32,      4,      "giBounceRays",              1),
+    (FLOAT32, 4, "fogMins",                  MAX_FOG_VOLUMES),
+    (UINT32, 1, "fogIsActive",               MAX_FOG_VOLUMES),
+    (FLOAT32, 4, "fogMaxs",                  MAX_FOG_VOLUMES),
+    (FLOAT32, 4, "fogColor",                 MAX_FOG_VOLUMES),
+    (FLOAT32, 4, "fogDensity",               MAX_FOG_VOLUMES),
 
-    # Q2RTX flt_enable: 1 - the ASVGF denoiser reconstructs the lighting
-    # channels, 0 - the raw ReSTIR outputs are composited without any filtering
-    # (see Shaders/CmQ2Adapter.comp). Only .x is used; the vec4 keeps the dense
-    # C mirror on the std140 16-byte boundary.
-    (TYPE_FLOAT32,      4,      "fltEnable",                1),
+    (FLOAT32, 4, "lightStyleScales",         16),
 
-    # Q2RTX flt_fixed_albedo: if nonzero, the diffuse albedo used by the final
-    # composite is replaced with this value, giving a "no textures" mode (host
-    # cvar rt_no_textures). Only .x is used; the vec4 keeps the dense C mirror
-    # on the std140 16-byte boundary.
-    (TYPE_FLOAT32,      4,      "fixedAlbedo",              1),
+    (FLOAT32, 4, "giBounceRays",              1),
 
-    # Q2RTX pt_sun_bounce_range / sun_bounce (host cvars rt_sun_bounce_range
-    # and rt_sun_bounce_scale): how far the sun reaches into an indirect bounce,
-    # in game units, and a straight multiplier on what it delivers there.
-    # .x = range (0 disables indirect sunlight), .y = scale. Only the pair is
-    # packed into one vec4 so the dense C mirror stays on the std140 16-byte
-    # boundary.
-    (TYPE_FLOAT32,      4,      "sunBounce",                1),
+    (FLOAT32, 4, "fltEnable",                1),
 
-    # Level fog (see Quake/gl_fog.c, Shaders/CmPrepareFinal.comp): the classic
-    # Quake fog the level asks for - the worldspawn "fog" key and the `fog`
-    # console command Arcane Dimensions drives through stuffcmd. .rgb is the
-    # colour the level asked for (0..1, treated as a display-referred colour and
-    # blended after tonemapping, as the classic renderer did) and .a is the
-    # density divided by 64, the scale QuakeSpasm's shaders use for their
-    # exp(-(density * distance)^2) falloff. A density of zero disables the fog.
-    (TYPE_FLOAT32,      4,      "levelFogColorDensity",     1),
+    (FLOAT32, 4, "fixedAlbedo",              1),
 
-    # How much of the sky the level fog replaces: .x = the effective `skyfog`
-    # (the cvar, or the worldspawn key overriding it) while the fog is active, 0
-    # otherwise. The sky carries no distance (sky texels report
-    # MAX_RAY_LENGTH), so it is blended by this amount instead of by depth.
-    (TYPE_FLOAT32,      4,      "levelFogSkyBlend",         1),
+    (FLOAT32, 4, "sunBounce",                1),
+
+    (FLOAT32, 4, "levelFogColorDensity",     1),
+
+    (FLOAT32, 4, "levelFogSkyBlend",         1),
 ]
 
-GEOM_INSTANCE_STRUCT = [
-    (TYPE_FLOAT32,     44,      "model",                1),
-    (TYPE_FLOAT32,     44,      "prevModel",            1),
-    (TYPE_FLOAT32,      4,      "materialColors",       3),
-    (TYPE_UINT32,       1,      "materials0A",          1),
-    (TYPE_UINT32,       1,      "materials0B",          1),
-    (TYPE_UINT32,       1,      "materials0C",          1),
-    (TYPE_UINT32,       1,      "materials1A",          1),
-    (TYPE_UINT32,       1,      "materials1B",          1), # not used
-    (TYPE_UINT32,       1,      "portalIndex",          1),
-    (TYPE_UINT32,       1,      "materials2A",          1),
-    (TYPE_UINT32,       1,      "materials2B",          1), # not used
-    (TYPE_UINT32,       1,      "_unused0",             1), 
-    (TYPE_UINT32,       1,      "flags",                1),
-    (TYPE_UINT32,       1,      "baseVertexIndex",      1),
-    (TYPE_UINT32,       1,      "baseIndexIndex",       1),
-    (TYPE_UINT32,       1,      "prevBaseVertexIndex",  1),
-    (TYPE_UINT32,       1,      "prevBaseIndexIndex",   1),
-    (TYPE_UINT32,       1,      "vertexCount",          1),
-    (TYPE_UINT32,       1,      "indexCount",           1),
-    (TYPE_FLOAT32,      1,      "defaultRoughness",     1),
-    (TYPE_FLOAT32,      1,      "defaultMetallicity",   1),
-    (TYPE_FLOAT32,      1,      "defaultEmission",      1),
-    (TYPE_UINT32,       1,      "_unused1",   1),
+GEOM_INSTANCE_MEMBERS = [
+    (FLOAT32, 44, "model",                1),
+    (FLOAT32, 44, "prevModel",            1),
+    (FLOAT32, 4, "materialColors",       3),
+    (UINT32, 1, "materials0A",          1),
+    (UINT32, 1, "materials0B",          1),
+    (UINT32, 1, "materials0C",          1),
+    (UINT32, 1, "materials1A",          1),
+    (UINT32, 1, "materials1B",          1),
+    (UINT32, 1, "portalIndex",          1),
+    (UINT32, 1, "materials2A",          1),
+    (UINT32, 1, "materials2B",          1),
+    (UINT32, 1, "_unused0",             1),
+    (UINT32, 1, "flags",                1),
+    (UINT32, 1, "baseVertexIndex",      1),
+    (UINT32, 1, "baseIndexIndex",       1),
+    (UINT32, 1, "prevBaseVertexIndex",  1),
+    (UINT32, 1, "prevBaseIndexIndex",   1),
+    (UINT32, 1, "vertexCount",          1),
+    (UINT32, 1, "indexCount",           1),
+    (FLOAT32, 1, "defaultRoughness",     1),
+    (FLOAT32, 1, "defaultMetallicity",   1),
+    (FLOAT32, 1, "defaultEmission",      1),
+    (UINT32, 1, "_unused1",   1),
 ]
 
-# TODO: make more compact
-LIGHT_ENCODED_STRUCT = [
-    (TYPE_FLOAT32,      3,      "color",                1),
-    (TYPE_UINT32,       1,      "lightType",            1),
+LIGHT_ENCODED_MEMBERS = [
+    (FLOAT32, 3, "color",                1),
+    (UINT32, 1, "lightType",            1),
 
-    (TYPE_FLOAT32,      4,      "data_0",               1),
-    (TYPE_FLOAT32,      4,      "data_1",               1),
-    (TYPE_FLOAT32,      4,      "data_2",               1),
-    (TYPE_FLOAT32,      4,      "data_3",               1),
-    (TYPE_FLOAT32,      4,      "data_4",               1),
-    (TYPE_FLOAT32,      4,      "data_5",               1),
-    (TYPE_FLOAT32,      4,      "data_6",               1),
-    (TYPE_FLOAT32,      4,      "data_7",               1),
-    # LIGHT_TYPE_TEXTURED_AREA only: convex-polygon area light. The emitting
-    # surface is a convex polygon in texture space (the face's own texcoords,
-    # up to MAX_TEXTURED_AREA_LIGHT_VERTS verts), mapped to world through the
-    # affine map world = A*s + B*t + C so it lies exactly on the brush face.
-    #   data_0.xyz = A (affine S axis), data_0.w = RME texture index (as float)
-    #   data_1.xyz = B (affine T axis), data_1.w = mean emissivity
-    #   data_2.xyz = C (affine offset), data_2.w = numVerts (as float, 3..8)
-    #   data_3..data_6 = uvVerts, two (s,t) pairs per vec4 (verts 0..7)
-    #   data_7.xyz = outward normal, data_7.w = exact world-space polygon area
+    (FLOAT32, 4, "data_0",               1),
+    (FLOAT32, 4, "data_1",               1),
+    (FLOAT32, 4, "data_2",               1),
+    (FLOAT32, 4, "data_3",               1),
+    (FLOAT32, 4, "data_4",               1),
+    (FLOAT32, 4, "data_5",               1),
+    (FLOAT32, 4, "data_6",               1),
+    (FLOAT32, 4, "data_7",               1),
 ]
 
-# Q2RTX-style noise-aware tone mapper (Eilertsen, Mantiuk, Unger + NVIDIA mods).
-# std430, padding is automatic. Host-written params first, then GPU state.
-TONEMAPPING_STRUCT = [
-    (TYPE_FLOAT32,      1,      "tmExposureBias",           1),
-    (TYPE_FLOAT32,      1,      "tmExposureSpeedDown",      1),
-    (TYPE_FLOAT32,      1,      "tmExposureSpeedUp",        1),
-    (TYPE_FLOAT32,      1,      "tmLowPercentile",          1),
-    (TYPE_FLOAT32,      1,      "tmHighPercentile",         1),
-    (TYPE_FLOAT32,      1,      "tmMinLuminance",           1),
-    (TYPE_FLOAT32,      1,      "tmMaxLuminance",           1),
-    (TYPE_FLOAT32,      1,      "tmNoiseBlend",             1),
-    (TYPE_FLOAT32,      1,      "tmNoiseStops",             1),
-    (TYPE_FLOAT32,      1,      "tmDynRangeStops",          1),
-    (TYPE_FLOAT32,      1,      "tmReinhard",               1),
-    (TYPE_FLOAT32,      1,      "tmKneeStart",              1),
-    (TYPE_FLOAT32,      1,      "tmWhitePoint",             1),
-    (TYPE_FLOAT32,      1,      "tmSlopeBlurSigma",         1),
-    (TYPE_FLOAT32,      1,      "frameTime",                1),
-    (TYPE_UINT32,       1,      "resetCurve",               1),
-    (TYPE_FLOAT32,      1,      "kneeW",                    1),
-    (TYPE_FLOAT32,      1,      "kneeA",                    1),
-    (TYPE_FLOAT32,      1,      "kneeB",                    1),
-    (TYPE_UINT32,       1,      "histogram",                CONST["COMPUTE_LUM_HISTOGRAM_BIN_COUNT"]),
-    (TYPE_FLOAT32,      1,      "curve",                    CONST["COMPUTE_LUM_HISTOGRAM_BIN_COUNT"]),
-    (TYPE_FLOAT32,      1,      "normalized",               CONST["COMPUTE_LUM_HISTOGRAM_BIN_COUNT"]),
-    (TYPE_FLOAT32,      1,      "adaptedLuminance",         1),
-    (TYPE_FLOAT32,      1,      "avgLuminance",             1),
+TONEMAPPING_MEMBERS = [
+    (FLOAT32, 1, "tmExposureBias",           1),
+    (FLOAT32, 1, "tmExposureSpeedDown",      1),
+    (FLOAT32, 1, "tmExposureSpeedUp",        1),
+    (FLOAT32, 1, "tmLowPercentile",          1),
+    (FLOAT32, 1, "tmHighPercentile",         1),
+    (FLOAT32, 1, "tmMinLuminance",           1),
+    (FLOAT32, 1, "tmMaxLuminance",           1),
+    (FLOAT32, 1, "tmNoiseBlend",             1),
+    (FLOAT32, 1, "tmNoiseStops",             1),
+    (FLOAT32, 1, "tmDynRangeStops",          1),
+    (FLOAT32, 1, "tmReinhard",               1),
+    (FLOAT32, 1, "tmKneeStart",              1),
+    (FLOAT32, 1, "tmWhitePoint",             1),
+    (FLOAT32, 1, "tmSlopeBlurSigma",         1),
+    (FLOAT32, 1, "frameTime",                1),
+    (UINT32, 1, "resetCurve",               1),
+    (FLOAT32, 1, "kneeW",                    1),
+    (FLOAT32, 1, "kneeA",                    1),
+    (FLOAT32, 1, "kneeB",                    1),
+    (UINT32, 1, "histogram",                CONST["COMPUTE_LUM_HISTOGRAM_BIN_COUNT"]),
+    (FLOAT32, 1, "curve",                    CONST["COMPUTE_LUM_HISTOGRAM_BIN_COUNT"]),
+    (FLOAT32, 1, "normalized",               CONST["COMPUTE_LUM_HISTOGRAM_BIN_COUNT"]),
+    (FLOAT32, 1, "adaptedLuminance",         1),
+    (FLOAT32, 1, "avgLuminance",             1),
 ]
 
-VERT_PREPROC_PUSH_STRUCT = [
-    (TYPE_UINT32,       1,      "tlasInstanceCount",            1),
-    (TYPE_UINT32,       1,      "tlasInstanceIsDynamicBits",    align(CONST["MAX_TOP_LEVEL_INSTANCE_COUNT"], 32) // 32),
+VERT_PREPROC_PUSH_MEMBERS = [
+    (UINT32, 1, "tlasInstanceCount",            1),
+    (UINT32, 1, "tlasInstanceIsDynamicBits",    round_up(CONST["MAX_TOP_LEVEL_INSTANCE_COUNT"], 32) // 32),
 ]
 
-INDIRECT_DRAW_CMD_STRUCT = [
-    (TYPE_UINT32,       1,      "indexCount",           1),
-    (TYPE_UINT32,       1,      "instanceCount",        1),
-    (TYPE_UINT32,       1,      "firstIndex",           1),
-    (TYPE_INT32,        1,      "vertexOffset",         1),
-    (TYPE_UINT32,       1,      "firstInstance",        1),
-    (TYPE_FLOAT32,      1,      "positionToCheck_X",    1),
-    (TYPE_FLOAT32,      1,      "positionToCheck_Y",    1),
-    (TYPE_FLOAT32,      1,      "positionToCheck_Z",    1),
+INDIRECT_DRAW_CMD_MEMBERS = [
+    (UINT32, 1, "indexCount",           1),
+    (UINT32, 1, "instanceCount",        1),
+    (UINT32, 1, "firstIndex",           1),
+    (INT32,  1, "vertexOffset",         1),
+    (UINT32, 1, "firstInstance",        1),
+    (FLOAT32, 1, "positionToCheck_X",    1),
+    (FLOAT32, 1, "positionToCheck_Y",    1),
+    (FLOAT32, 1, "positionToCheck_Z",    1),
 ]
 
-LENS_FLARES_INSTANCE_STRUCT = [
-    (TYPE_UINT32,       1,      "textureIndex",         1),
+LENS_FLARES_INSTANCE_MEMBERS = [
+    (UINT32, 1, "textureIndex",         1),
 ]
 
-DECAL_INSTANCE_STRUCT = [
-    (TYPE_FLOAT32,     44,      "transform",                1),
-    (TYPE_UINT32,       1,      "textureAlbedoAlpha",       1),
-    (TYPE_UINT32,       1,      "textureRougnessMetallic",  1),
-    (TYPE_UINT32,       1,      "textureNormals",           1),
+DECAL_INSTANCE_MEMBERS = [
+    (FLOAT32, 44, "transform",                1),
+    (UINT32, 1, "textureAlbedoAlpha",       1),
+    (UINT32, 1, "textureRougnessMetallic",  1),
+    (UINT32, 1, "textureNormals",           1),
 ]
 
-PORTAL_INSTANCE_STRUCT = [
-    (TYPE_FLOAT32,      4,      "inPosition",               1),
-    (TYPE_FLOAT32,      4,      "outPosition",              1),
-    (TYPE_FLOAT32,      4,      "outDirection",             1),
-    (TYPE_FLOAT32,      4,      "outUp",                    1),
+PORTAL_INSTANCE_MEMBERS = [
+    (FLOAT32, 4, "inPosition",               1),
+    (FLOAT32, 4, "outPosition",              1),
+    (FLOAT32, 4, "outDirection",             1),
+    (FLOAT32, 4, "outUp",                    1),
 ]
 
-STRUCT_ALIGNMENT_NONE       = 0
-STRUCT_ALIGNMENT_STD430     = 1
-STRUCT_ALIGNMENT_STD140     = 2
+ALIGN_NONE   = 0
+ALIGN_STD430 = 1
+ALIGN_STD140 = 2
 
-STRUCT_BREAK_TYPE_NONE      = 0
-STRUCT_BREAK_TYPE_COMPLEX   = 1
-STRUCT_BREAK_TYPE_ONLY_C    = 2
+BREAK_NONE    = 0
+BREAK_COMPLEX = 1
+BREAK_C_ONLY  = 2
 
-# (structTypeName): (structDefinition, onlyForGLSL, alignmentFlags, breakComplex)
-# alignmentFlags    -- if using a struct in dynamic array, it must be aligned with 16 bytes
-# breakType         -- if member's type is not primitive and its count>0 then
-#                      it'll be represented as an array of primitive types
 STRUCTS = {
-    "ShVertex":                 (VERTEX_STRUCT,                 False,  STRUCT_ALIGNMENT_STD430,    0),
-    "ShGlobalUniform":          (GLOBAL_UNIFORM_STRUCT,         False,  STRUCT_ALIGNMENT_STD140,    STRUCT_BREAK_TYPE_ONLY_C),
-    "ShGeometryInstance":       (GEOM_INSTANCE_STRUCT,          False,  STRUCT_ALIGNMENT_STD430,    0),
-    "ShTonemapping":            (TONEMAPPING_STRUCT,            False,  0,                          0),
-    "ShLightEncoded":           (LIGHT_ENCODED_STRUCT,          False,  STRUCT_ALIGNMENT_STD430,    0),
-    "ShVertPreprocessing":      (VERT_PREPROC_PUSH_STRUCT,      False,  0,                          0),
-    "ShIndirectDrawCommand":    (INDIRECT_DRAW_CMD_STRUCT,      False,  STRUCT_ALIGNMENT_STD430,    0),
-    # TODO: should be STRUCT_ALIGNMENT_STD430, but current generator is not great as it just adds pads at the end, so it's 0
-    "ShLensFlareInstance":      (LENS_FLARES_INSTANCE_STRUCT,   False,  0,                          0),
-    "ShDecalInstance":          (DECAL_INSTANCE_STRUCT,         False,  STRUCT_ALIGNMENT_STD430,    0),
-    "ShPortalInstance":         (PORTAL_INSTANCE_STRUCT,        False,  STRUCT_ALIGNMENT_STD140,    0),
+    "ShVertex":                 (VERTEX_MEMBERS,              False, ALIGN_STD430, BREAK_NONE),
+    "ShGlobalUniform":          (GLOBAL_UNIFORM_MEMBERS,      False, ALIGN_STD140, BREAK_C_ONLY),
+    "ShGeometryInstance":       (GEOM_INSTANCE_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
+    "ShTonemapping":            (TONEMAPPING_MEMBERS,         False, ALIGN_NONE,   BREAK_NONE),
+    "ShLightEncoded":           (LIGHT_ENCODED_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
+    "ShVertPreprocessing":      (VERT_PREPROC_PUSH_MEMBERS,   False, ALIGN_NONE,   BREAK_NONE),
+    "ShIndirectDrawCommand":    (INDIRECT_DRAW_CMD_MEMBERS,   False, ALIGN_STD430, BREAK_NONE),
+    "ShLensFlareInstance":      (LENS_FLARES_INSTANCE_MEMBERS, False, ALIGN_NONE,  BREAK_NONE),
+    "ShDecalInstance":          (DECAL_INSTANCE_MEMBERS,      False, ALIGN_STD430, BREAK_NONE),
+    "ShPortalInstance":         (PORTAL_INSTANCE_MEMBERS,     False, ALIGN_STD140, BREAK_NONE),
 }
 
-# --------------------------------------------------------------------------------------------- #
-# User defined buffers: uniform, storage buffer
-# --------------------------------------------------------------------------------------------- #
-
-
-
-
-
-# --------------------------------------------------------------------------------------------- #
-# User defined framebuffers
-# --------------------------------------------------------------------------------------------- #
 
 FRAMEBUF_DESC_SET_NAME              = "DESC_SET_FRAMEBUFFERS"
 FRAMEBUF_BASE_BINDING               = 0
 FRAMEBUF_PREFIX                     = "framebuf"
-# A framebuffer exposes three descriptors, one per group, all three at the same slot in their
-# own group: the storage view it is written through (image2D framebufX), the view it is read
-# through (texture2D framebufX_Sampled) and the sampler that view is filtered with
-# (sampler framebufX_Sampler).
 FRAMEBUF_SAMPLED_POSTFIX            = "_Sampled"
 FRAMEBUF_SAMPLER_POSTFIX            = "_Sampler"
 FRAMEBUF_DEBUG_NAME_PREFIX          = "Framebuf "
 FRAMEBUF_STORE_PREV_POSTFIX         = "_Prev"
 FRAMEBUF_SAMPLER_INVALID_BINDING    = "FB_SAMPLER_INVALID_BINDING"
 
-# only info for 2 frames are used: current and previous
 FRAMEBUF_FLAGS_STORE_PREV           = 1 << 0
 FRAMEBUF_FLAGS_NO_SAMPLER           = 1 << 1
 FRAMEBUF_FLAGS_IS_ATTACHMENT        = 1 << 2
@@ -1041,7 +837,6 @@ FRAMEBUF_FLAGS_UPSCALED_SIZE        = 1 << 10
 FRAMEBUF_FLAGS_SINGLE_PIXEL_SIZE    = 1 << 11
 FRAMEBUF_FLAGS_USAGE_TRANSFER       = 1 << 12
 
-# only these flags are shown for C++ side
 FRAMEBUF_FLAGS_ENUM = {
     "FRAMEBUF_FLAGS_IS_ATTACHMENT"      : FRAMEBUF_FLAGS_IS_ATTACHMENT,
     "FRAMEBUF_FLAGS_FORCE_SIZE_1_2"     : FRAMEBUF_FLAGS_FORCE_SIZE_1_2,
@@ -1057,447 +852,292 @@ FRAMEBUF_FLAGS_ENUM = {
 }
 
 FRAMEBUFFERS = {
-    # (image name)                      : (base format type, components,    flags)
-    "Albedo"                            : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT | FRAMEBUF_FLAGS_STORE_PREV),
-    "IsSky"                             : (TYPE_UINT8,      COMPONENT_R,    0),
-    "Normal"                            : (TYPE_UINT32,     COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
-    "NormalGeometry"                    : (TYPE_UINT32,     COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
-    "MetallicRoughness"                 : (TYPE_UNORM8,     COMPONENT_RG,   FRAMEBUF_FLAGS_STORE_PREV),
-    "DepthWorld"                        : (TYPE_FLOAT16,    COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
-    "DepthGrad"                         : (TYPE_FLOAT16,    COMPONENT_R,    0),
-    "DepthNdc"                          : (TYPE_FLOAT32,    COMPONENT_R,    0),
-    "Motion"                            : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "UnfilteredDirect"                  : (TYPE_PACK_E5,    COMPONENT_RGB,  0),
-    "UnfilteredSpecular"                : (TYPE_PACK_E5,    COMPONENT_RGB,  0),
-    "UnfilteredIndirectSH_R"            : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "UnfilteredIndirectSH_G"            : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "UnfilteredIndirectSH_B"            : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "SurfacePosition"                   : (TYPE_FLOAT32,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-    "VisibilityBuffer"                  : (TYPE_FLOAT32,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-    "ViewDirection"                     : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-    "PrimaryToReflRefr"                 : (TYPE_UINT32,     COMPONENT_RGBA, 0),
-    "Throughput"                        : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "PreFinal"                          : (TYPE_PACK_11,    COMPONENT_RGB,  0),
-    "Final"                             : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT),
+    "Albedo"                            : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT | FRAMEBUF_FLAGS_STORE_PREV),
+    "IsSky"                             : (UINT8,     CHANNELS_R,    0),
+    "Normal"                            : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
+    "NormalGeometry"                    : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
+    "MetallicRoughness"                 : (UNORM8,    CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
+    "DepthWorld"                        : (FLOAT16,   CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
+    "DepthGrad"                         : (FLOAT16,   CHANNELS_R,    0),
+    "DepthNdc"                          : (FLOAT32,   CHANNELS_R,    0),
+    "Motion"                            : (FLOAT16,   CHANNELS_RGBA, 0),
+    "UnfilteredDirect"                  : (PACKED_E5, CHANNELS_RGB,  0),
+    "UnfilteredSpecular"                : (PACKED_E5, CHANNELS_RGB,  0),
+    "UnfilteredIndirectSH_R"            : (FLOAT16,   CHANNELS_RGBA, 0),
+    "UnfilteredIndirectSH_G"            : (FLOAT16,   CHANNELS_RGBA, 0),
+    "UnfilteredIndirectSH_B"            : (FLOAT16,   CHANNELS_RGBA, 0),
+    "SurfacePosition"                   : (FLOAT32,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+    "VisibilityBuffer"                  : (FLOAT32,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+    "ViewDirection"                     : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+    "PrimaryToReflRefr"                 : (UINT32,    CHANNELS_RGBA, 0),
+    "Throughput"                        : (FLOAT16,   CHANNELS_RGBA, 0),
+    "PreFinal"                          : (PACKED_11, CHANNELS_RGB,  0),
+    "Final"                             : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT),
 
-    "UpscaledPing"                      : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT | FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_USAGE_TRANSFER),  # dst for DLSS and blitting in,
-    "UpscaledPong"                      : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT | FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_USAGE_TRANSFER),  #       src for WipeEffectSource 
+    "UpscaledPing"                      : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT | FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_USAGE_TRANSFER),
+    "UpscaledPong"                      : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT | FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_USAGE_TRANSFER),
 
-    "MotionDlss"                        : (TYPE_FLOAT16,    COMPONENT_RG,   0),
+    "MotionDlss"                        : (FLOAT16,   CHANNELS_RG,   0),
 
-    "AccumHistoryLength"                : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-    
-    # TODO: pack float16 to e5
-    "DiffTemporary"                     : (TYPE_PACK_E5,    COMPONENT_RGB,  0),
-    "DiffAccumColor"                    : (TYPE_PACK_E5,    COMPONENT_RGB,  FRAMEBUF_FLAGS_STORE_PREV),
-    "DiffAccumMoments"                  : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_STORE_PREV),
-    "DiffColorHistory"                  : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "DiffPingColorAndVariance"          : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "DiffPongColorAndVariance"          : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    
-    "SpecAccumColor"                    : (TYPE_PACK_E5,    COMPONENT_RGB,  FRAMEBUF_FLAGS_STORE_PREV),
-    "SpecPingColor"                     : (TYPE_PACK_E5,    COMPONENT_RGB,  0),
-    "SpecPongColor"                     : (TYPE_PACK_E5,    COMPONENT_RGB,  0),
-    
-    "IndirAccumSH_R"                    : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-    "IndirAccumSH_G"                    : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-    "IndirAccumSH_B"                    : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-    "IndirPingSH_R"                     : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "IndirPingSH_G"                     : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "IndirPingSH_B"                     : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "IndirPongSH_R"                     : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "IndirPongSH_G"                     : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-    "IndirPongSH_B"                     : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
+    "AccumHistoryLength"                : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
 
-    "AtrousFilteredVariance"            : (TYPE_FLOAT16,    COMPONENT_R,    0),
+    "DiffTemporary"                     : (PACKED_E5, CHANNELS_RGB,  0),
+    "DiffAccumColor"                    : (PACKED_E5, CHANNELS_RGB,  FRAMEBUF_FLAGS_STORE_PREV),
+    "DiffAccumMoments"                  : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
+    "DiffColorHistory"                  : (FLOAT16,   CHANNELS_RGBA, 0),
+    "DiffPingColorAndVariance"          : (FLOAT16,   CHANNELS_RGBA, 0),
+    "DiffPongColorAndVariance"          : (FLOAT16,   CHANNELS_RGBA, 0),
 
-    # TODO: remove after implementing media volumetrics
-    "AcidFogRT"                         : (TYPE_PACK_11,    COMPONENT_RGB,  0),
-    "AcidFog"                           : (TYPE_PACK_11,    COMPONENT_RGB,  0),
-    
-    "ScreenEmisRT"                      : (TYPE_PACK_11,    COMPONENT_RGB,  0),
-    "ScreenEmission"                    : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT),
-    "GodRays"                           : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_2),  # half-res intermediate (Q2RTX god_rays.comp / IMG_GODRAYS_INTERMEDIATE)
-    "GodRaysFiltered"                   : (TYPE_PACK_11,    COMPONENT_RGB,  0),  # full-res bilateral upscale (Q2RTX god_rays_filter.comp)
-    "BloomInput"                        : (TYPE_PACK_11,    COMPONENT_RGB,  0),
-    "Bloom_Mip1"                        : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_2  | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
-    "Bloom_Mip2"                        : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_4  | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
-    "Bloom_Mip3"                        : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_8  | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
-    "Bloom_Mip4"                        : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_16 | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
-    "Bloom_Mip5"                        : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_32 | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
-    "Bloom_Result"                      : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
-    
-    "WipeEffectSource"                  : (TYPE_PACK_11,    COMPONENT_RGB,  FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_USAGE_TRANSFER), # dst to copy in
+    "SpecAccumColor"                    : (PACKED_E5, CHANNELS_RGB,  FRAMEBUF_FLAGS_STORE_PREV),
+    "SpecPingColor"                     : (PACKED_E5, CHANNELS_RGB,  0),
+    "SpecPongColor"                     : (PACKED_E5, CHANNELS_RGB,  0),
+
+    "IndirAccumSH_R"                    : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+    "IndirAccumSH_G"                    : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+    "IndirAccumSH_B"                    : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+    "IndirPingSH_R"                     : (FLOAT16,   CHANNELS_RGBA, 0),
+    "IndirPingSH_G"                     : (FLOAT16,   CHANNELS_RGBA, 0),
+    "IndirPingSH_B"                     : (FLOAT16,   CHANNELS_RGBA, 0),
+    "IndirPongSH_R"                     : (FLOAT16,   CHANNELS_RGBA, 0),
+    "IndirPongSH_G"                     : (FLOAT16,   CHANNELS_RGBA, 0),
+    "IndirPongSH_B"                     : (FLOAT16,   CHANNELS_RGBA, 0),
+
+    "AtrousFilteredVariance"            : (FLOAT16,   CHANNELS_R,    0),
+
+    "AcidFogRT"                         : (PACKED_11, CHANNELS_RGB,  0),
+    "AcidFog"                           : (PACKED_11, CHANNELS_RGB,  0),
+
+    "ScreenEmisRT"                      : (PACKED_11, CHANNELS_RGB,  0),
+    "ScreenEmission"                    : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_IS_ATTACHMENT),
+    "GodRays"                           : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_2),
+    "GodRaysFiltered"                   : (PACKED_11, CHANNELS_RGB,  0),
+    "BloomInput"                        : (PACKED_11, CHANNELS_RGB,  0),
+    "Bloom_Mip1"                        : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_2  | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
+    "Bloom_Mip2"                        : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_4  | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
+    "Bloom_Mip3"                        : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_8  | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
+    "Bloom_Mip4"                        : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_16 | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
+    "Bloom_Mip5"                        : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_FORCE_SIZE_1_32 | FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
+    "Bloom_Result"                      : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_BILINEAR_SAMPLER),
+
+    "WipeEffectSource"                  : (PACKED_11, CHANNELS_RGB,  FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_USAGE_TRANSFER),
 }
 
 if GRADIENT_ESTIMATION_ENABLED:
     FRAMEBUFFERS.update({
-        "GradientInputs"                : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_STORE_PREV),
-        "DISPingGradient"               : (TYPE_UNORM8,     COMPONENT_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "DISPongGradient"               : (TYPE_UNORM8,     COMPONENT_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "DISGradientHistory"            : (TYPE_UNORM8,     COMPONENT_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "GradientPrevPix"               : (TYPE_UINT8,      COMPONENT_R,    FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "GradientInputs"                : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
+        "DISPingGradient"               : (UNORM8,    CHANNELS_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "DISPongGradient"               : (UNORM8,    CHANNELS_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "DISGradientHistory"            : (UNORM8,    CHANNELS_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "GradientPrevPix"               : (UINT8,     CHANNELS_R,    FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
     })
 
-# New Q2RTX-style core path (Slice 4). The ASVGF denoiser works in the Q2RTX
-# channel format: LF (indirect diffuse, YCoCg luma SH + chroma), HF (direct
-# diffuse, packed RGBE), SPEC (specular, packed RGBE).
 Q2_CORE_ENABLED = True
 
 if Q2_CORE_ENABLED:
     FRAMEBUFFERS.update({
-        # ASVGF input colors, written by the ReSTIR -> ASVGF adapter.
-        # Full resolution (checkerboarded). A/B double buffered (STORE_PREV)
-        # so the gradient-reproject pass can read the previous frame colors.
-        "Q2ColorLF_SH"                  : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2ColorLF_COCG"                : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2ColorHF"                     : (TYPE_UINT32,     COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2ColorSpec"                   : (TYPE_UINT32,     COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2ColorLF_SH"                  : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2ColorLF_COCG"                : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2ColorHF"                     : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2ColorSpec"                   : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
 
-        # Q2RTX-style path tracer G-buffer (written by the primary/refl passes).
-        # Q2ViewDepth is the view-space ray distance; it becomes NEGATIVE for
-        # reflections/refractions (Q2RTX reflect_refract convention) so the
-        # ASVGF filters don't bleed across reflection boundaries.
-        "Q2ViewDepth"                   : (TYPE_FLOAT32,    COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2BaseColor"                   : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2Metallic"                    : (TYPE_UNORM8,     COMPONENT_RG,   FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2BounceThroughput"            : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-        "Q2Transparent"                 : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-        "Q2GodRaysThroughputDist"       : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
-        # Accumulated premultiplied fog (color.rgb, alpha.a) along the whole
-        # ray path (primary + reflection segments), written by the RT passes
-        # and blended into the final color by the atrous compositing, so the
-        # fog is denoised and temporally consistent (Q2RTX approach).
-        "Q2FogAccum"                    : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
+        "Q2ViewDepth"                   : (FLOAT32,   CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2BaseColor"                   : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2Metallic"                    : (UNORM8,    CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2BounceThroughput"            : (FLOAT16,   CHANNELS_RGBA, 0),
+        "Q2Transparent"                 : (FLOAT16,   CHANNELS_RGBA, 0),
+        "Q2GodRaysThroughputDist"       : (FLOAT16,   CHANNELS_RGBA, 0),
+        "Q2FogAccum"                    : (FLOAT16,   CHANNELS_RGBA, 0),
 
-        # ASVGF history (A/B double buffered through STORE_PREV)
-        "Q2HistColorLF_SH"              : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2HistColorLF_COCG"            : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2HistColorHF"                 : (TYPE_UINT32,     COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2HistMomentsHF"               : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2FilteredSpec"                : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2HistColorLF_SH"              : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2HistColorLF_COCG"            : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2HistColorHF"                 : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2HistMomentsHF"               : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2FilteredSpec"                : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
 
-        # ASVGF a-trous ping/pong. LF is at 1/3 resolution (like Q2RTX GRAD_DWN).
-        "Q2AtrousPingLF_SH"             : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "Q2AtrousPongLF_SH"             : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "Q2AtrousPingLF_COCG"           : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "Q2AtrousPongLF_COCG"           : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "Q2AtrousPingHF"                : (TYPE_UINT32,     COMPONENT_R,    0),
-        "Q2AtrousPongHF"                : (TYPE_UINT32,     COMPONENT_R,    0),
-        "Q2AtrousPingSpec"              : (TYPE_UINT32,     COMPONENT_R,    0),
-        "Q2AtrousPongSpec"              : (TYPE_UINT32,     COMPONENT_R,    0),
-        "Q2AtrousPingMoments"           : (TYPE_FLOAT16,    COMPONENT_RG,   0),
-        "Q2AtrousPongMoments"           : (TYPE_FLOAT16,    COMPONENT_RG,   0),
+        "Q2AtrousPingLF_SH"             : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "Q2AtrousPongLF_SH"             : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "Q2AtrousPingLF_COCG"           : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "Q2AtrousPongLF_COCG"           : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "Q2AtrousPingHF"                : (UINT32,    CHANNELS_R,    0),
+        "Q2AtrousPongHF"                : (UINT32,    CHANNELS_R,    0),
+        "Q2AtrousPingSpec"              : (UINT32,    CHANNELS_R,    0),
+        "Q2AtrousPongSpec"              : (UINT32,    CHANNELS_R,    0),
+        "Q2AtrousPingMoments"           : (FLOAT16,   CHANNELS_RG,   0),
+        "Q2AtrousPongMoments"           : (FLOAT16,   CHANNELS_RG,   0),
 
-        # ASVGF gradients (1/3 resolution)
-        "Q2GradLFPing"                  : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "Q2GradLFPong"                  : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "Q2GradHFSpecPing"              : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "Q2GradHFSpecPong"              : (TYPE_FLOAT16,    COMPONENT_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
-        "Q2GradSmplPos"                 : (TYPE_UINT32,     COMPONENT_R,    FRAMEBUF_FLAGS_FORCE_SIZE_1_3 | FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2GradLFPing"                  : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "Q2GradLFPong"                  : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "Q2GradHFSpecPing"              : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "Q2GradHFSpecPong"              : (FLOAT16,   CHANNELS_RG,   FRAMEBUF_FLAGS_FORCE_SIZE_1_3),
+        "Q2GradSmplPos"                 : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_FORCE_SIZE_1_3 | FRAMEBUF_FLAGS_STORE_PREV),
 
-        # Composited ASVGF output (half-res checkerboarded, before interleave)
-        "Q2Color"                       : (TYPE_FLOAT16,    COMPONENT_RGBA, 0),
+        "Q2Color"                       : (FLOAT16,   CHANNELS_RGBA, 0),
 
-        # TAAU (temporal antialiasing + upscale)
-        "Q2TaaOutput"                   : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_UPSCALED_SIZE),
-        "Q2TaaHistory"                  : (TYPE_FLOAT16,    COMPONENT_RGBA, FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2RngSeed"                     : (TYPE_UINT32,     COMPONENT_R,    FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2TaaOutput"                   : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_UPSCALED_SIZE),
+        "Q2TaaHistory"                  : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2RngSeed"                     : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
 
-        # BSP cluster (leaf index) of the primary hit, written by the
-        # primary/refl passes from triangle.cluster. The direct/indirect
-        # passes use it to look up the per-cluster light lists (Q2RTX
-        # IMG_PT_CLUSTER_A). ~0u = sky/no cluster.
-        "Q2Cluster"                     : (TYPE_UINT32,     COMPONENT_R,    0),
+        "Q2Cluster"                     : (UINT32,    CHANNELS_R,    0),
     })
 
 
-# ---
-# User defined structs END
-# ---
+def emit_constants(constants):
+    lines = ["#define %s (%s)" % (name, value) for name, value in constants.items()]
+    return "\n".join(lines) + "\n\n"
 
 
-
-
-
-
-
-
-def getAllConstDefs(constDict):
-    return "\n".join([
-        "#define %s (%s)" % (name, str(value))
-        for name, value in constDict.items()
-    ]) + "\n\n"
-
-
-def getMemberSizeStd430(baseType, dim, count):
+def member_size_bytes(base_type, dim, count):
     if dim == 1:
-        return GLSL_TYPE_SIZES_STD_430[baseType] * count
-    elif count == 1:
-        return GLSL_TYPE_SIZES_STD_430[(baseType, dim)]
-    else:
-        return GLSL_TYPE_SIZES_STD_430[baseType] * dim * count
+        return TYPE_BYTES[base_type] * count
+    return TYPE_BYTES[(base_type, dim)] * count
 
 
-def getMemberActualSize(baseType, dim, count):
-    if dim == 1:
-        return TYPE_ACTUAL_SIZES[baseType] * count
-    else:
-        return TYPE_ACTUAL_SIZES[(baseType, dim)] * count
+def member_declaration(base_type, dim, member_name, count, type_names, alignment, break_mode):
+    if count == 1:
+        if dim == 1:
+            return "%s %s" % (type_names[base_type], member_name)
+        if (base_type, dim) in type_names:
+            return "%s %s" % (type_names[(base_type, dim)], member_name)
+        if dim <= 4:
+            return "%s %s[%d]" % (type_names[base_type], member_name, dim)
+        if MULTIDIMENSIONAL_ARRAYS_IN_C:
+            return "%s %s[%d][%d]" % (type_names[base_type], member_name, dim // 10, dim % 10)
+        return "%s %s[%d]" % (type_names[base_type], member_name, (dim // 10) * (dim % 10))
 
-CURRENT_PAD_INDEX = 0
-
-def getPadsForStruct(typeNames, uint32ToAdd):
-    global CURRENT_PAD_INDEX
-    r = ""
-    padStr = "    " + typeNames[TYPE_UINT32] + " __pad%d;\n"
-    for i in range(uint32ToAdd):
-        r += padStr % (CURRENT_PAD_INDEX + i)
-    CURRENT_PAD_INDEX += uint32ToAdd
-    return r
-
-
-# useVecMatTypes:
-def getStruct(name, definition, typeNames, alignmentType, breakType):
-    r = "struct " + name + "\n{\n"
-
-    if alignmentType == STRUCT_ALIGNMENT_STD140 and typeNames == C_TYPE_NAMES:
-        print("Struct \"" + name + "\" is using std140, alignment must be set manually.")
-
-    global CURRENT_PAD_INDEX
-    CURRENT_PAD_INDEX = 0
-
-    curSize = 0
-    curOffset = 0
-
-    for baseType, dim, mname, count in definition:
-        assert(count > 0)
-        r += "    "
-
-        if count == 1:
-            if dim == 1:
-                r +="%s %s" % (typeNames[baseType], mname)
-            elif (baseType, dim) in typeNames:
-                r += "%s %s" % (typeNames[(baseType, dim)], mname)
-            elif dim <= 4:
-                r += "%s %s[%d]" % (typeNames[baseType], mname, dim)
-            else:
-                if USE_MULTIDIMENSIONAL_ARRAYS_IN_C:
-                    r += "%s %s[%d][%d]" % (typeNames[baseType], mname, dim // 10, dim % 10)
-                else:
-                    r += "%s %s[%d]" % (typeNames[baseType], mname, (dim // 10) * (dim % 10))
+    if break_mode == BREAK_COMPLEX or (type_names is C_TYPES and break_mode == BREAK_C_ONLY):
+        if dim <= 4 and alignment == ALIGN_STD140:
+            array_size = round_up4(count * 4)
         else:
-            #if dim > 4 and typeNames == C_TYPE_NAMES:
-            #    raise Exception("If count > 1, dimensions must be in [1..4]")
-            if breakType == STRUCT_BREAK_TYPE_COMPLEX or (typeNames == C_TYPE_NAMES and breakType == STRUCT_BREAK_TYPE_ONLY_C):
-                if dim <= 4:
-                    if alignmentType == STRUCT_ALIGNMENT_STD140:
-                        # std140: every element of an array of scalars or vectors is
-                        # aligned to 16 bytes, so each element occupies 4 C scalars
-                        # (e.g. `uint arr[8]` -> `uint32_t arr[32]` in C).
-                        r += "%s %s[%d]" % (typeNames[baseType], mname, align4(count * 4))
-                    else:
-                        r += "%s %s[%d]" % (typeNames[baseType], mname, align4(count * dim))
-                else:
-                    r += "%s %s[%d]" % (typeNames[baseType], mname, align4(count * int(TYPE_ACTUAL_SIZES[(baseType, dim)] / 4)))
-            else:
-                if dim == 1:
-                    r += "%s %s[%d]" % (typeNames[baseType], mname, count)
-                elif (baseType, dim) in typeNames:
-                    r += "%s %s[%d]" % (typeNames[(baseType, dim)], mname, count)
-                else:
-                    r += "%s %s[%d][%d]" % (typeNames[baseType], mname, count, dim)
+            array_size = round_up4(count * int(TYPE_BYTES[(base_type, dim)] / 4))
+        return "%s %s[%d]" % (type_names[base_type], member_name, array_size)
 
-        r += ";\n"
-
-        if (alignmentType == STRUCT_ALIGNMENT_STD430):
-            for i in range(count):
-                memberSize = getMemberActualSize(baseType, dim, 1)
-                memberAlignment = getMemberSizeStd430(baseType, dim, 1)
-
-                alignedOffset = align(curOffset, memberAlignment)
-                diff = alignedOffset - curOffset
-
-                if diff > 0:
-                    assert (diff) % 4 == 0
-                    r += getPadsForStruct(typeNames, diff // 4)
-
-                curSize += curOffset + memberSize
-
-    if (alignmentType == STRUCT_ALIGNMENT_STD430) and curSize % 16 != 0:
-        if (curSize % 16) % 4 != 0:
-            raise Exception("Size of struct %s is not 4-byte aligned!" % name)
-        uint32ToAdd = (align(curSize, 16) - curSize) // 4
-        r += getPadsForStruct(typeNames, uint32ToAdd)
-
-    r += "};\n"
-    return r
+    if dim == 1:
+        return "%s %s[%d]" % (type_names[base_type], member_name, count)
+    if (base_type, dim) in type_names:
+        return "%s %s[%d]" % (type_names[(base_type, dim)], member_name, count)
+    return "%s %s[%d][%d]" % (type_names[base_type], member_name, count, dim)
 
 
-def getAllStructDefs(typeNames):
+def pad_members(type_names, count):
+    return "\n".join("    " + type_names[UINT32] + " __pad%d;" % index for index in range(count))
+
+
+def emit_struct(struct_name, members, type_names, alignment, break_mode):
+    if alignment == ALIGN_STD140 and type_names is C_TYPES:
+        print("Struct \"" + struct_name + "\" is using std140, alignment must be set manually.")
+
+    lines = ["struct " + struct_name, "{"]
+    size = 0
+
+    for base_type, dim, member_name, count in members:
+        assert count > 0
+        lines.append("    " + member_declaration(base_type, dim, member_name, count, type_names, alignment, break_mode) + ";")
+        if alignment == ALIGN_STD430:
+            size += member_size_bytes(base_type, dim, count)
+
+    if alignment == ALIGN_STD430 and size % 16 != 0:
+        if (size % 16) % 4 != 0:
+            raise Exception("Size of struct %s is not 4-byte aligned!" % struct_name)
+        lines.append(pad_members(type_names, (round_up(size, 16) - size) // 4))
+
+    lines.append("};")
+    return "\n".join(lines) + "\n"
+
+
+def emit_structs(type_names):
     return "\n".join(
-        getStruct(name, structDef, typeNames, alignmentType, breakType)
-        for name, (structDef, onlyForGLSL, alignmentType, breakType) in STRUCTS.items()
-        if not (onlyForGLSL and (typeNames == C_TYPE_NAMES))
+        emit_struct(name, members, type_names, alignment, break_mode)
+        for name, (members, only_for_glsl, alignment, break_mode) in STRUCTS.items()
+        if not (only_for_glsl and type_names is C_TYPES)
     ) + "\n"
 
 
-def capitalizeFirstLetter(s):
-    return s[:1].upper() + s[1:]
+def emit_glsl_pack_unpack(name, with_prev):
+    image_store = ("void imageStore%s(const ivec2 pix, const vec3 unpacked) "
+                   "{ imageStore(%s, pix, uvec4(encodeE5B9G9R9(unpacked))); }")
+    texel_fetch = ("vec3 texelFetch%s(const ivec2 pix)"
+                   "{ return decodeE5B9G9R9(texelFetch(%s, pix, 0).r); }")
+
+    text = image_store % (name, FRAMEBUF_PREFIX + name) + "\n"
+    text += texel_fetch % (name, FRAMEBUF_PREFIX + name + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
+    if with_prev:
+        text += texel_fetch % (name + FRAMEBUF_STORE_PREV_POSTFIX,
+                               FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
+    return text
 
 
+def emit_hlsl_pack_unpack(name, with_prev):
+    image_store = ("void imageStore%s(const int2 pix, const float3 unpacked) "
+                   "{ %s[pix] = (uint4)encodeE5B9G9R9(unpacked); }")
+    texel_fetch = ("float3 texelFetch%s(const int2 pix)"
+                   "{ return decodeE5B9G9R9(%s.Load(int3(pix, 0)).r); }")
 
-CURRENT_FRAMEBUF_BINDING_COUNT = 0
-CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT = 0
-CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT = 0
-
-def getFramebufDeclaration(spelling, name, baseFormat, components, flags):
-    global CURRENT_FRAMEBUF_BINDING_COUNT
-
-    binding = FRAMEBUF_BASE_BINDING + CURRENT_FRAMEBUF_BINDING_COUNT
-    CURRENT_FRAMEBUF_BINDING_COUNT += 1
-
-    r = ""
-    if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
-        r += "#ifndef " + FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE + "\n"
-
-    r += spelling["storage"](
-        binding, spelling["format"](baseFormat, components),
-        spelling["storageType"](baseFormat), name)
-
-    if flags & FRAMEBUF_FLAGS_STORE_PREV:
-        r += "\n"
-        r += getFramebufDeclaration(
-            spelling, name + FRAMEBUF_STORE_PREV_POSTFIX, baseFormat, components, 
-            flags & ~FRAMEBUF_FLAGS_STORE_PREV)
-
-    if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
-        r += "\n#endif"
-
-    return r
+    text = image_store % (name, FRAMEBUF_PREFIX + name) + "\n"
+    text += texel_fetch % (name, FRAMEBUF_PREFIX + name + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
+    if with_prev:
+        text += texel_fetch % (name + FRAMEBUF_STORE_PREV_POSTFIX,
+                               FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
+    return text
 
 
-def getFramebufSampledDeclaration(spelling, name, baseFormat, components, flags, bindingOffset):
-    global CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT
-
-    binding = bindingOffset + CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT
-    CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT += 1
-
-    r = ""
-    if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
-        r += "#ifndef " + FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE + "\n"
-
-    r += spelling["sampled"](
-        binding, spelling["format"](baseFormat, components),
-        spelling["sampledType"](baseFormat), name + FRAMEBUF_SAMPLED_POSTFIX)
-
-    if flags & FRAMEBUF_FLAGS_STORE_PREV:
-        r += "\n"
-        r += getFramebufSampledDeclaration(
-            spelling, name + FRAMEBUF_STORE_PREV_POSTFIX, baseFormat, components,
-            flags & ~FRAMEBUF_FLAGS_STORE_PREV, bindingOffset)
+def emit_guarded_declaration(syntax, kind, name, base_format, channels, flags, binding):
+    declaration = syntax[kind](
+        binding, syntax["format"](base_format, channels),
+        syntax[kind + "Type"](base_format), name)
 
     if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
-        r += "\n#endif"
+        return "#ifndef " + FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE + "\n" + declaration + "\n#endif"
 
-    return r
-
-
-def getFramebufSamplerDeclaration(spelling, name, baseFormat, components, flags, bindingOffset):
-    global CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT
-
-    if flags & FRAMEBUF_FLAGS_NO_SAMPLER:
-        # Nothing is declared for a framebuffer without a sampler, but its slots are consumed
-        # so that the declarations and the C++ binding arrays stay index-aligned.
-        CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT += 2 if flags & FRAMEBUF_FLAGS_STORE_PREV else 1
-        return ""
-
-    binding = bindingOffset + CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT
-    CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT += 1
-
-    r = ""
-    if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
-        r += "#ifndef " + FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE + "\n"
-
-    r += spelling["sampler"](
-        binding, spelling["format"](baseFormat, components),
-        spelling["samplerType"](baseFormat), name + FRAMEBUF_SAMPLER_POSTFIX)
-
-    if flags & FRAMEBUF_FLAGS_STORE_PREV:
-        r += "\n"
-        r += getFramebufSamplerDeclaration(
-            spelling, name + FRAMEBUF_STORE_PREV_POSTFIX, baseFormat, components, 
-            flags & ~FRAMEBUF_FLAGS_STORE_PREV, bindingOffset)
-
-    if flags & FRAMEBUF_FLAGS_IS_ATTACHMENT:
-        r += "\n#endif"
-
-    return r
+    return declaration
 
 
-def getGLSLFramebufPackUnpackE5(name, withPrev):
-    templateImgStore = ("void imageStore%s(const ivec2 pix, const vec3 unpacked) "
-                        "{ imageStore(%s, pix, uvec4(encodeE5B9G9R9(unpacked))); }")
-    templateTxlFetch = ("vec3 texelFetch%s(const ivec2 pix)"
-                        "{ return decodeE5B9G9R9(texelFetch(%s, pix, 0).r); }")
-    r  = templateImgStore % (name, FRAMEBUF_PREFIX + name) + "\n"
-    r += templateTxlFetch % (name, FRAMEBUF_PREFIX + name + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
-    if withPrev:
-        r += templateTxlFetch % (name + FRAMEBUF_STORE_PREV_POSTFIX, FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
-    return r
+def emit_descriptor_group(syntax, kind, first_binding):
+    postfix = {"storage": "", "sampled": FRAMEBUF_SAMPLED_POSTFIX, "sampler": FRAMEBUF_SAMPLER_POSTFIX}[kind]
+
+    entries = []
+    binding = first_binding
+
+    for name, (base_format, channels, flags) in FRAMEBUFFERS.items():
+        if kind == "sampler" and flags & FRAMEBUF_FLAGS_NO_SAMPLER:
+            binding += 2 if flags & FRAMEBUF_FLAGS_STORE_PREV else 1
+            continue
+
+        guarded = flags & FRAMEBUF_FLAGS_IS_ATTACHMENT
+        entry = ""
+
+        if guarded:
+            entry += "#ifndef " + FRAMEBUF_IGNORE_ATTACHMENTS_DEFINE + "\n"
+
+        entry += syntax[kind](
+            binding, syntax["format"](base_format, channels),
+            syntax[kind + "Type"](base_format), FRAMEBUF_PREFIX + name + postfix)
+        binding += 1
+
+        if flags & FRAMEBUF_FLAGS_STORE_PREV:
+            entry += "\n" + emit_guarded_declaration(
+                syntax, kind, FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + postfix,
+                base_format, channels, flags & ~FRAMEBUF_FLAGS_STORE_PREV, binding)
+            binding += 1
+
+        if guarded:
+            entry += "\n#endif"
+
+        entries.append(entry)
+
+    return "\n".join(entries), binding - first_binding
 
 
-def getHLSLFramebufPackUnpackE5(name, withPrev):
-    # The same helpers as in GLSL, so that a ported shader keeps its call sites. GLSL writes
-    # uvec4(v), which splats the packed value over the four components, so the cast keeps the
-    # store identical - the texture is single channel and the extra components are dropped.
-    templateImgStore = ("void imageStore%s(const int2 pix, const float3 unpacked) "
-                        "{ %s[pix] = (uint4)encodeE5B9G9R9(unpacked); }")
-    templateTxlFetch = ("float3 texelFetch%s(const int2 pix)"
-                        "{ return decodeE5B9G9R9(%s.Load(int3(pix, 0)).r); }")
-    r  = templateImgStore % (name, FRAMEBUF_PREFIX + name) + "\n"
-    r += templateTxlFetch % (name, FRAMEBUF_PREFIX + name + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
-    if withPrev:
-        r += templateTxlFetch % (name + FRAMEBUF_STORE_PREV_POSTFIX, FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
-    return r
-
-
-def getAllFramebufDeclarations(spelling, packUnpackE5):
-    global CURRENT_FRAMEBUF_BINDING_COUNT
-    global CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT
-    global CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT
-    CURRENT_FRAMEBUF_BINDING_COUNT = 0
-    CURRENT_FRAMEBUF_SAMPLED_BINDING_COUNT = 0
-    CURRENT_FRAMEBUF_SAMPLER_BINDING_COUNT = 0
-
-    # The three groups walk the framebuffers in the same order and use the same number of
-    # slots, so each group knows its offset from the size of the first one.
-    framebuffers = "\n".join(
-        getFramebufDeclaration(spelling, FRAMEBUF_PREFIX + name, baseFormat, components, flags)
-        for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
-    )
-    groupSize = CURRENT_FRAMEBUF_BINDING_COUNT
-
-    sampled = "\n".join(
-        getFramebufSampledDeclaration(
-            spelling, FRAMEBUF_PREFIX + name, baseFormat, components, flags,
-            FRAMEBUF_BASE_BINDING + groupSize)
-        for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
-    )
-
-    samplers = "\n".join(
-        getFramebufSamplerDeclaration(
-            spelling, FRAMEBUF_PREFIX + name, baseFormat, components, flags,
-            FRAMEBUF_BASE_BINDING + 2 * groupSize)
-        for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
-    )
+def emit_framebuffer_declarations(syntax, pack_unpack):
+    framebuffers, framebuffer_count = emit_descriptor_group(syntax, "storage", FRAMEBUF_BASE_BINDING)
+    sampled, _ = emit_descriptor_group(syntax, "sampled", FRAMEBUF_BASE_BINDING + framebuffer_count)
+    samplers, _ = emit_descriptor_group(syntax, "sampler", FRAMEBUF_BASE_BINDING + 2 * framebuffer_count)
 
     return "#ifdef " + FRAMEBUF_DESC_SET_NAME \
         \
         + "\n\n// framebuffer indices\n" \
         \
         + "\n".join(
-        "#define FB_IMAGE_INDEX_%s %d" % (s, d) for (s, d) in getAllFramebufEnumTuples()
+        "#define FB_IMAGE_INDEX_%s %d" % (name, index) for (name, index) in framebuffer_enum_entries()
         ) \
         \
         + "\n\n// framebuffers\n" \
@@ -1512,75 +1152,70 @@ def getAllFramebufDeclarations(spelling, packUnpackE5):
         \
         + "\n\n// pack/unpack formats\n" \
         + "\n".join(
-            packUnpackE5(name, flags & FRAMEBUF_FLAGS_STORE_PREV)
-            for name, (baseFormat, components, flags) in FRAMEBUFFERS.items()
-            if baseFormat == TYPE_PACK_E5 and not (flags & FRAMEBUF_FLAGS_NO_SAMPLER)
+            pack_unpack(name, flags & FRAMEBUF_FLAGS_STORE_PREV)
+            for name, (base_format, channels, flags) in FRAMEBUFFERS.items()
+            if base_format == PACKED_E5 and not (flags & FRAMEBUF_FLAGS_NO_SAMPLER)
         ) \
         \
         + "\n\n#endif\n"
 
 
-def getAllGLSLFramebufDeclarations():
-    return getAllFramebufDeclarations(DESCRIPTOR_SPELLINGS["glsl"], getGLSLFramebufPackUnpackE5)
+def emit_glsl_framebuffer_declarations():
+    return emit_framebuffer_declarations(DESCRIPTOR_SYNTAX["glsl"], emit_glsl_pack_unpack)
 
 
-def getAllHLSLFramebufDeclarations():
-    return getAllFramebufDeclarations(DESCRIPTOR_SPELLINGS["hlsl"], getHLSLFramebufPackUnpackE5)
+def emit_hlsl_framebuffer_declarations():
+    return emit_framebuffer_declarations(DESCRIPTOR_SYNTAX["hlsl"], emit_hlsl_pack_unpack)
 
 
-def removeCoupledDuplicateChars(str, charToRemove = '_'):
-    r = ""
-    for i in range(0, len(str)):
-        if i == 0 or str[i] != str[i - 1] or str[i] != charToRemove:
-            r += str[i]
-    return r
+def collapse_repeated(characters, character_to_remove="_"):
+    result = ""
+    for index in range(len(characters)):
+        if index == 0 or characters[index] != characters[index - 1] or characters[index] != character_to_remove:
+            result += characters[index]
+    return result
 
 
-# make all letters capital and insert "_" before 
-# capital letters in the original string
-def capitalizeForEnum(s):
-    return removeCoupledDuplicateChars("_".join(filter(None, re.split("([A-Z][^A-Z]*)", s))).upper())
+def enum_name(name):
+    return collapse_repeated("_".join(filter(None, re.split("([A-Z][^A-Z]*)", name))).upper())
 
 
-# returns (name, index) tuples for framebuf-s
-def getAllFramebufEnumTuples():
+def framebuffer_enum_entries():
     names = []
     for name, (_, _, flags) in FRAMEBUFFERS.items():
         names.append(name)
         if flags & FRAMEBUF_FLAGS_STORE_PREV:
             names.append(name + FRAMEBUF_STORE_PREV_POSTFIX)
 
-    return [(capitalizeForEnum(names[i]), i) for i in range(len(names))]
+    return [(enum_name(names[index]), index) for index in range(len(names))]
 
 
-def getAllFramebufConstants():
-    fbConst = "#define " + FRAMEBUF_SAMPLER_INVALID_BINDING + " 0xFFFFFFFF\n\n"
+def emit_framebuffer_constants():
+    binding_constant = "#define " + FRAMEBUF_SAMPLER_INVALID_BINDING + " 0xFFFFFFFF\n\n"
 
-    fbEnum = "enum FramebufferImageIndex\n{\n" + "\n".join(
-        "    FB_IMAGE_INDEX_%s = %d," % (s, d) for (s, d) in getAllFramebufEnumTuples()
+    image_indices = "enum FramebufferImageIndex\n{\n" + "\n".join(
+        "    FB_IMAGE_INDEX_%s = %d," % (name, index) for (name, index) in framebuffer_enum_entries()
     ) + "\n};\n\n"
 
-    fbFlags = "enum FramebufferImageFlagBits\n{\n" + "\n".join(
-        "    FB_IMAGE_FLAGS_%s = %d," % (flName, flValue)
-        for (flName, flValue) in FRAMEBUF_FLAGS_ENUM.items()
+    image_flags = "enum FramebufferImageFlagBits\n{\n" + "\n".join(
+        "    FB_IMAGE_FLAGS_%s = %d," % (name, value)
+        for (name, value) in FRAMEBUF_FLAGS_ENUM.items()
     ) + "\n};\ntypedef uint32_t FramebufferImageFlags;\n\n"
 
-    return fbConst + fbEnum + fbFlags
+    return binding_constant + image_indices + image_flags
 
 
-def getPublicFlags(flags):
-    r = " | ".join(
-        "vkpt::FB_IMAGE_FLAGS_" + flName
-        for (flName, flValue) in FRAMEBUF_FLAGS_ENUM.items()
-        if flValue & flags
+def public_flag_expression(flags):
+    expression = " | ".join(
+        "vkpt::FB_IMAGE_FLAGS_" + name
+        for (name, value) in FRAMEBUF_FLAGS_ENUM.items()
+        if value & flags
     )
-    if r == "":
-        return "0"
-    else:
-        return r
-    
 
-def getAllVulkanFramebufDeclarations():
+    return expression if expression else "0"
+
+
+def emit_vulkan_framebuffer_declarations():
     return ("extern const uint32_t ShFramebuffers_Count;\n"
             "extern const VkFormat ShFramebuffers_Formats[];\n"
             "extern const FramebufferImageFlags ShFramebuffers_Flags[];\n"
@@ -1593,39 +1228,35 @@ def getAllVulkanFramebufDeclarations():
             "extern const char *const ShFramebuffers_DebugNames[];\n\n")
 
 
-def getFramebufBindings(offset, withSampler):
-    # The three descriptor groups (storage image, sampled image, sampler) walk the framebuffers
-    # in the same order and give each one the same slots, so they differ only in their offset.
-    # A framebuffer with a previous-frame counterpart takes two slots and the odd frame swaps
-    # them. Entries of FRAMEBUF_SAMPLER_INVALID_BINDING are framebuffers without a sampler: the
-    # slot is still consumed, to keep every group index-aligned with ShFramebuffers_Count.
-    TAB_STR = "    "
+def emit_bindings(first_binding, with_sampler):
+    tab = "    "
     bindings = ""
-    bindingsSwapped = ""
+    bindings_swapped = ""
     count = 0
-    for name, (baseFormat, components, flags) in FRAMEBUFFERS.items():
-        if withSampler and flags & FRAMEBUF_FLAGS_NO_SAMPLER:
-            current = next = FRAMEBUF_SAMPLER_INVALID_BINDING
+
+    for name, (base_format, channels, flags) in FRAMEBUFFERS.items():
+        if with_sampler and flags & FRAMEBUF_FLAGS_NO_SAMPLER:
+            current = next_binding = FRAMEBUF_SAMPLER_INVALID_BINDING
         else:
-            current = str(offset + count)
-            next = str(offset + count + 1)
+            current = str(first_binding + count)
+            next_binding = str(first_binding + count + 1)
 
         if not flags & FRAMEBUF_FLAGS_STORE_PREV:
-            bindings        += TAB_STR + current + ",\n"
-            bindingsSwapped += TAB_STR + current + ",\n"
+            bindings += tab + current + ",\n"
+            bindings_swapped += tab + current + ",\n"
         else:
-            bindings        += TAB_STR + current + ",\n"
-            bindings        += TAB_STR + next    + ",\n"
-            bindingsSwapped += TAB_STR + next    + ",\n"
-            bindingsSwapped += TAB_STR + current + ",\n"
+            bindings += tab + current + ",\n"
+            bindings += tab + next_binding + ",\n"
+            bindings_swapped += tab + next_binding + ",\n"
+            bindings_swapped += tab + current + ",\n"
             count += 1
 
         count += 1
 
-    return bindings, bindingsSwapped
+    return bindings, bindings_swapped
 
 
-def getAllVulkanFramebufDefinitions():
+def emit_vulkan_framebuffer_definitions():
     template = ("const uint32_t vkpt::ShFramebuffers_Count = %d;\n\n"
                 "const VkFormat vkpt::ShFramebuffers_Formats[] = \n{\n%s};\n\n"
                 "const vkpt::FramebufferImageFlags vkpt::ShFramebuffers_Flags[] = \n{\n%s};\n\n"
@@ -1636,129 +1267,123 @@ def getAllVulkanFramebufDefinitions():
                 "const uint32_t vkpt::ShFramebuffers_Sampler_Bindings[] = \n{\n%s};\n\n"
                 "const uint32_t vkpt::ShFramebuffers_Sampler_BindingsSwapped[] = \n{\n%s};\n\n"
                 "const char *const vkpt::ShFramebuffers_DebugNames[] = \n{\n%s};\n\n")
-    TAB_STR = "    "
+
+    tab = "    "
     formats = ""
-    count = 0
-    publicFlags = ""
+    public_flags = ""
     names = ""
-    for name, (baseFormat, components, flags) in FRAMEBUFFERS.items():
-        formats += TAB_STR + VULKAN_IMAGE_FORMATS[(baseFormat, components)] + ",\n"
-        names += TAB_STR + "\"" + FRAMEBUF_DEBUG_NAME_PREFIX + name + "\",\n"
-        publicFlags += TAB_STR + getPublicFlags(flags) + ",\n"
+    count = 0
+
+    for name, (base_format, channels, flags) in FRAMEBUFFERS.items():
+        formats += tab + VULKAN_FORMATS[(base_format, channels)] + ",\n"
+        names += tab + "\"" + FRAMEBUF_DEBUG_NAME_PREFIX + name + "\",\n"
+        public_flags += tab + public_flag_expression(flags) + ",\n"
 
         if flags & FRAMEBUF_FLAGS_STORE_PREV:
-            formats += TAB_STR + VULKAN_IMAGE_FORMATS[(baseFormat, components)] + ",\n"
-            names += TAB_STR + "\"" + FRAMEBUF_DEBUG_NAME_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + "\",\n"
-            publicFlags += TAB_STR + getPublicFlags(flags) + ",\n"
+            formats += tab + VULKAN_FORMATS[(base_format, channels)] + ",\n"
+            names += tab + "\"" + FRAMEBUF_DEBUG_NAME_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + "\",\n"
+            public_flags += tab + public_flag_expression(flags) + ",\n"
             count += 1
 
         count += 1
 
-    bindings, bindingsSwapped = getFramebufBindings(FRAMEBUF_BASE_BINDING, False)
-    sampledBindings, sampledBindingsSwapped = getFramebufBindings(FRAMEBUF_BASE_BINDING + count, False)
-    samplerBindings, samplerBindingsSwapped = getFramebufBindings(FRAMEBUF_BASE_BINDING + 2 * count, True)
+    bindings, bindings_swapped = emit_bindings(FRAMEBUF_BASE_BINDING, False)
+    sampled_bindings, sampled_bindings_swapped = emit_bindings(FRAMEBUF_BASE_BINDING + count, False)
+    sampler_bindings, sampler_bindings_swapped = emit_bindings(FRAMEBUF_BASE_BINDING + 2 * count, True)
 
-    return template % (count, formats, publicFlags, bindings, bindingsSwapped,
-                       sampledBindings, sampledBindingsSwapped,
-                       samplerBindings, samplerBindingsSwapped, names)
+    return template % (count, formats, public_flags, bindings, bindings_swapped,
+                       sampled_bindings, sampled_bindings_swapped,
+                       sampler_bindings, sampler_bindings_swapped, names)
 
 
 FILE_HEADER = "// This file was generated by GenerateShaderCommon.py\n\n"
 
 
-def writeToC(commonHeaderFile, fbHeaderFile, fbSourceFile):
-    commonHeaderFile.write(FILE_HEADER)
-    commonHeaderFile.write("#pragma once\n\n")
-    commonHeaderFile.write("namespace vkpt\n{\n\n")
-    commonHeaderFile.write("#include <stdint.h>\n\n")
-    commonHeaderFile.write(getAllConstDefs(CONST))
-    commonHeaderFile.write(getAllStructDefs(C_TYPE_NAMES))
-    commonHeaderFile.write("}")
+def write_c_files(common_header_file, framebuffer_header_file, framebuffer_source_file):
+    common_header_file.write(FILE_HEADER)
+    common_header_file.write("#pragma once\n\n")
+    common_header_file.write("namespace vkpt\n{\n\n")
+    common_header_file.write("#include <stdint.h>\n\n")
+    common_header_file.write(emit_constants(CONST))
+    common_header_file.write(emit_structs(C_TYPES))
+    common_header_file.write("}")
 
-    fbHeaderFile.write(FILE_HEADER)
-    fbHeaderFile.write("#pragma once\n\n")
-    fbHeaderFile.write("#include \"../Common.h\"\n\n")
-    fbHeaderFile.write("namespace vkpt\n{\n\n")
-    fbHeaderFile.write(getAllFramebufConstants())
-    fbHeaderFile.write(getAllVulkanFramebufDeclarations())
-    fbHeaderFile.write("}")
+    framebuffer_header_file.write(FILE_HEADER)
+    framebuffer_header_file.write("#pragma once\n\n")
+    framebuffer_header_file.write("#include \"../Common.h\"\n\n")
+    framebuffer_header_file.write("namespace vkpt\n{\n\n")
+    framebuffer_header_file.write(emit_framebuffer_constants())
+    framebuffer_header_file.write(emit_vulkan_framebuffer_declarations())
+    framebuffer_header_file.write("}")
 
-    fbSourceFile.write(FILE_HEADER)
-    fbSourceFile.write("#include \"%s\"\n\n" % os.path.basename(fbHeaderFile.name))
-    fbSourceFile.write(getAllVulkanFramebufDefinitions())
-
-
-def writeToGLSL(f):
-    f.write(FILE_HEADER)
-    f.write(getAllConstDefs(CONST))
-    f.write(getAllConstDefs(CONST_GLSL_ONLY))
-    f.write(getAllStructDefs(GLSL_TYPE_NAMES))
-    f.write(getAllGLSLFramebufDeclarations())
+    framebuffer_source_file.write(FILE_HEADER)
+    framebuffer_source_file.write("#include \"%s\"\n\n" % os.path.basename(framebuffer_header_file.name))
+    framebuffer_source_file.write(emit_vulkan_framebuffer_definitions())
 
 
-# The HLSL twin of the GLSL header. The constants and the structs are emitted verbatim (only the
-# matrix types are transposed), the descriptors are emitted from the same walk as the GLSL ones.
-# The framebuffer section is guarded by the same DESC_SET_FRAMEBUFFERS macro and expects it to be
-# defined, so an HLSL shader includes this header in the same place where a GLSL one included
-# ShaderCommonGLSL.h.
-def writeToHLSL(f):
-    f.write(FILE_HEADER)
-    f.write("#pragma once\n\n")
-    f.write(getAllConstDefs(CONST))
-    f.write(getAllConstDefs(CONST_GLSL_ONLY))
-    f.write(getAllStructDefs(HLSL_TYPE_NAMES))
-    f.write(getAllHLSLFramebufDeclarations())
+def write_glsl_header(file):
+    file.write(FILE_HEADER)
+    file.write(emit_constants(CONST))
+    file.write(emit_constants(CONST_GLSL_ONLY))
+    file.write(emit_structs(GLSL_TYPES))
+    file.write(emit_glsl_framebuffer_declarations())
 
 
-# The probe pair pins what the headers above declare, so it is derived from them and regenerated
-# on every run - a new framebuffer or struct cannot leave the probe silently behind.
-def regenerateProbe():
-    shadersFolder = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "Shaders")
-    scriptName = "GenerateShaderCommonProbe.py"
+def write_hlsl_header(file):
+    file.write(FILE_HEADER)
+    file.write("#pragma once\n\n")
+    file.write(emit_constants(CONST))
+    file.write(emit_constants(CONST_GLSL_ONLY))
+    file.write(emit_structs(HLSL_TYPES))
+    file.write(emit_hlsl_framebuffer_declarations())
 
-    if not os.path.isfile(os.path.join(shadersFolder, scriptName)):
+
+def regenerate_probe():
+    shaders_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "Shaders")
+    script_name = "GenerateShaderCommonProbe.py"
+
+    if not os.path.isfile(os.path.join(shaders_folder, script_name)):
         return
 
     print("Regenerating the ShaderCommon probe pair...")
-    subprocess.check_call([sys.executable, scriptName], cwd=shadersFolder)
+    subprocess.check_call([sys.executable, script_name], cwd=shaders_folder)
 
 
 def main():
-    basePath = ""
+    base_path = ""
 
-    for i in range(len(sys.argv)):
-        if "--help" == sys.argv[i] or "-help" == sys.argv[i]:
+    for index in range(len(sys.argv)):
+        if "--help" == sys.argv[index] or "-help" == sys.argv[index]:
             print("--path     : specify path to target folder in the next argument")
             return
-        if "--path" == sys.argv[i]:
-            if i + 1 < len(sys.argv):
-                basePath = sys.argv[i + 1]
-                if not os.path.exists(basePath):
-                    print("Folder with path \"" + basePath + "\" doesn't exist.")
+        if "--path" == sys.argv[index]:
+            if index + 1 < len(sys.argv):
+                base_path = sys.argv[index + 1]
+                if not os.path.exists(base_path):
+                    print("Folder with path \"" + base_path + "\" doesn't exist.")
                     return
             else:
                 print("--path expects folder path in the next argument.")
                 return
 
-    # The output names are appended to the argument verbatim, so a bare "." or
-    # "C:\dir" (no trailing separator) would land next to the folder, not inside
-    # it - i.e. in ".ShaderCommonC.h" / "C:\dirShaderCommonC.h".
-    if basePath and not basePath.endswith(("/", "\\")):
-        basePath += os.sep
+    if base_path and not base_path.endswith(("/", "\\")):
+        base_path += os.sep
 
-    evalConst()
-    # with open('ShaderConfig.csv', newline='') as csvfile:
-    with open(basePath + "ShaderCommonC.h", "w") as commonHeaderFile:
-        with open(basePath + "ShaderCommonCFramebuf.h", "w") as fbHeaderFile:
-            with open(basePath + "ShaderCommonCFramebuf.cpp", "w") as fbSourceFile:
-                writeToC(commonHeaderFile, fbHeaderFile, fbSourceFile)
-    with open(basePath + "ShaderCommonGLSL.h", "w") as f:
-        writeToGLSL(f)
-    with open(basePath + "ShaderCommonHLSL.hlsli", "w") as f:
-        writeToHLSL(f)
+    resolve_derived_constants()
 
-    regenerateProbe()
+    with open(base_path + "ShaderCommonC.h", "w") as common_header_file:
+        with open(base_path + "ShaderCommonCFramebuf.h", "w") as framebuffer_header_file:
+            with open(base_path + "ShaderCommonCFramebuf.cpp", "w") as framebuffer_source_file:
+                write_c_files(common_header_file, framebuffer_header_file, framebuffer_source_file)
 
-# main
+    with open(base_path + "ShaderCommonGLSL.h", "w") as glsl_header_file:
+        write_glsl_header(glsl_header_file)
+
+    with open(base_path + "ShaderCommonHLSL.hlsli", "w") as hlsl_header_file:
+        write_hlsl_header(hlsl_header_file)
+
+    regenerate_probe()
+
+
 if __name__ == "__main__":
     main()

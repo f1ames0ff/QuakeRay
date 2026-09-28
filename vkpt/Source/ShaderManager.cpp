@@ -1,53 +1,77 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "ShaderManager.h"
 
-#include <fstream>
-#include <vector>
 #include <cstring>
+#include <fstream>
+#include <string>
+#include <vector>
+
 #include "RgException.h"
 
 using namespace vkpt;
 
-struct ShaderModuleDefinition
+namespace
 {
-    const char *name = nullptr;
-    const char *filename = nullptr;
-    // will be parsed from filename once
-    VkShaderStageFlagBits stage = VK_SHADER_STAGE_ALL;
-};
+    struct ShaderDefinition
+    {
+        const char *name = nullptr;
+        const char *filename = nullptr;
+        VkShaderStageFlagBits stage = VK_SHADER_STAGE_ALL;
+    };
 
-// Note: set shader stage to VK_SHADER_STAGE_ALL, to identify stage by the file extension
-static ShaderModuleDefinition G_SHADERS[] =
-{
-    {"CLuminanceHistogram",     "CmLuminanceHistogram.comp.spv"        },
-    {"CLuminanceAvg",           "CmLuminanceAvg.comp.spv"              },
-    {"CVertexPreprocess",       "CmVertexPreprocess.comp.spv"          },
-    {"VertDecal",               "RsDecal.vert.spv"                     },
-    {"FragDecal",               "RsDecal.frag.spv"                     },
-};
+    ShaderDefinition G_SHADERS[] =
+    {
+        {"CLuminanceHistogram",     "CmLuminanceHistogram.comp.spv"        },
+        {"CLuminanceAvg",           "CmLuminanceAvg.comp.spv"              },
+        {"CVertexPreprocess",       "CmVertexPreprocess.comp.spv"          },
+        {"VertDecal",               "RsDecal.vert.spv"                     },
+        {"FragDecal",               "RsDecal.frag.spv"                     },
+    };
 
+    struct ShaderExtension
+    {
+        const char *suffix;
+        VkShaderStageFlagBits stage;
+    };
+
+    constexpr ShaderExtension G_SHADER_EXTENSIONS[] =
+    {
+        {".vert.spv",   VK_SHADER_STAGE_VERTEX_BIT},
+        {".frag.spv",   VK_SHADER_STAGE_FRAGMENT_BIT},
+        {".comp.spv",   VK_SHADER_STAGE_COMPUTE_BIT},
+        {".rgen.spv",   VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {".rahit.spv",  VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
+        {".rchit.spv",  VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
+        {".rmiss.spv",  VK_SHADER_STAGE_MISS_BIT_KHR},
+        {".rcall.spv",  VK_SHADER_STAGE_CALLABLE_BIT_KHR},
+        {".rint.spv",   VK_SHADER_STAGE_INTERSECTION_BIT_KHR},
+        {".tesc.spv",   VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT},
+        {".tese.spv",   VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT},
+        {".mesh.spv",   VK_SHADER_STAGE_MESH_BIT_NV},
+        {".task.spv",   VK_SHADER_STAGE_TASK_BIT_NV},
+    };
+}
 
 ShaderManager::ShaderManager(VkDevice _device, const char *_pShaderFolderPath, std::shared_ptr<UserFileLoad> _userFileLoad)
-    : device(_device), userFileLoad(std::move(_userFileLoad)), shaderFolderPath(_pShaderFolderPath)
+    : device(_device)
+    , userFileLoad(std::move(_userFileLoad))
+    , shaderFolderPath(_pShaderFolderPath)
 {
     LoadShaderModules();
 }
@@ -71,87 +95,80 @@ void ShaderManager::ReloadShaders()
 
 void ShaderManager::LoadShaderModules()
 {
-    for (auto &s : G_SHADERS)
+    for (ShaderDefinition &shader : G_SHADERS)
     {
-        assert(s.filename != nullptr);
-        assert(s.name != nullptr);
+        assert(shader.filename != nullptr);
+        assert(shader.name != nullptr);
 
-        if (s.stage == VK_SHADER_STAGE_ALL)
+        if (shader.stage == VK_SHADER_STAGE_ALL)
         {
-            // parse stage if needed, it's done only once, as names won't be changing
-            s.stage = GetStageByExtension(s.filename);
+            shader.stage = GetStageByExtension(shader.filename);
         }
 
-        auto path = shaderFolderPath + s.filename;
+        const std::string path = shaderFolderPath + shader.filename;
+        const VkShaderModule module = LoadModule(path.c_str());
 
-        VkShaderModule m = LoadModule(path.c_str());
-        SET_DEBUG_NAME(device, m, VK_OBJECT_TYPE_SHADER_MODULE, s.name);
+        SET_DEBUG_NAME(device, module, VK_OBJECT_TYPE_SHADER_MODULE, shader.name);
 
-        modules[s.name] = { m, s.stage };
+        modules[shader.name] = { module, shader.stage };
     }
 }
 
 void ShaderManager::UnloadShaderModules()
 {
-    for (auto &s: modules)
+    for (auto &entry : modules)
     {
-        vkDestroyShaderModule(device, s.second.module, nullptr);
+        vkDestroyShaderModule(device, entry.second.module, nullptr);
     }
 
     modules.clear();
 }
 
-VkShaderModule ShaderManager::GetShaderModule(const char* name) const
+VkShaderModule ShaderManager::GetShaderModule(const char *name) const
 {
-    const auto &m = modules.find(name);
-    return m != modules.end() ? m->second.module : VK_NULL_HANDLE;
+    const auto it = modules.find(name);
+    return it != modules.end() ? it->second.module : VK_NULL_HANDLE;
 }
 
-VkShaderStageFlagBits ShaderManager::GetModuleStage(const char* name) const
+VkShaderStageFlagBits ShaderManager::GetModuleStage(const char *name) const
 {
-    const auto &m = modules.find(name);
-    return m != modules.end() ? m->second.shaderStage : static_cast<VkShaderStageFlagBits>(0);
+    const auto it = modules.find(name);
+    return it != modules.end() ? it->second.shaderStage : static_cast<VkShaderStageFlagBits>(0);
 }
 
 VkPipelineShaderStageCreateInfo ShaderManager::GetStageInfo(const char *name) const
 {
-    const auto &m = modules.find(name);
+    const auto it = modules.find(name);
 
-    if (m == modules.end())
+    if (it == modules.end())
     {
-        using namespace std::string_literals;
-
-        throw RgException(RG_WRONG_ARGUMENT, "Can't find loaded shader with name \""s + name + "\"");
-        return {};
+        throw RgException(RG_WRONG_ARGUMENT, std::string("Can't find loaded shader with name \"") + name + "\"");
     }
 
     VkPipelineShaderStageCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    info.module = m->second.module;
-    info.stage = m->second.shaderStage;
+    info.module = it->second.module;
+    info.stage = it->second.shaderStage;
     info.pName = "main";
 
     return info;
 }
 
-VkShaderModule vkpt::ShaderManager::LoadModule(const char *path)
+VkShaderModule ShaderManager::LoadModule(const char *path)
 {
-    if (userFileLoad->Exists())
-    {
-        auto fileHandle = userFileLoad->Open(path);
-
-        if (!fileHandle.Contains())
-        {
-            using namespace std::string_literals;
-            throw RgException(RG_WRONG_ARGUMENT, "Can't load shader file \""s + path + "\" using user's file load function"s);
-        }
-
-        return LoadModuleFromMemory(static_cast<const uint32_t*>(fileHandle.pData), fileHandle.dataSize);
-    }
-    else
+    if (!userFileLoad->Exists())
     {
         return LoadModuleFromFile(path);
     }
+
+    auto fileHandle = userFileLoad->Open(path);
+
+    if (!fileHandle.Contains())
+    {
+        throw RgException(RG_WRONG_ARGUMENT, std::string("Can't load shader file \"") + path + "\" using user's file load function");
+    }
+
+    return LoadModuleFromMemory(static_cast<const uint32_t *>(fileHandle.pData), fileHandle.dataSize);
 }
 
 VkShaderModule ShaderManager::LoadModuleFromFile(const char *path)
@@ -161,22 +178,20 @@ VkShaderModule ShaderManager::LoadModuleFromFile(const char *path)
 
     if (shaderSource.empty())
     {
-        using namespace std::string_literals;
-        throw RgException(RG_WRONG_ARGUMENT, "Can't find shader file: \""s + path + "\"");
+        throw RgException(RG_WRONG_ARGUMENT, std::string("Can't find shader file: \"") + path + "\"");
     }
 
-    return LoadModuleFromMemory(reinterpret_cast<const uint32_t*>(shaderSource.data()), shaderSource.size());
+    return LoadModuleFromMemory(reinterpret_cast<const uint32_t *>(shaderSource.data()), static_cast<uint32_t>(shaderSource.size()));
 }
 
 VkShaderModule ShaderManager::LoadModuleFromMemory(const uint32_t *pCode, uint32_t codeSize)
 {
-    VkShaderModule shaderModule;
-
     VkShaderModuleCreateInfo moduleInfo = {};
     moduleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     moduleInfo.codeSize = codeSize;
     moduleInfo.pCode = pCode;
 
+    VkShaderModule shaderModule = VK_NULL_HANDLE;
     VkResult r = vkCreateShaderModule(device, &moduleInfo, nullptr, &shaderModule);
     VK_CHECKERROR(r);
 
@@ -185,59 +200,12 @@ VkShaderModule ShaderManager::LoadModuleFromMemory(const uint32_t *pCode, uint32
 
 VkShaderStageFlagBits ShaderManager::GetStageByExtension(const char *name)
 {
-    // assume that file names end with ".spv"
-
-    if (std::strstr(name, ".vert.spv") != nullptr)
+    for (const ShaderExtension &extension : G_SHADER_EXTENSIONS)
     {
-        return VK_SHADER_STAGE_VERTEX_BIT;
-    }
-    else if(std::strstr(name, ".frag.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_FRAGMENT_BIT;
-    }
-    else if (std::strstr(name, ".comp.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_COMPUTE_BIT;
-    }
-    else if (std::strstr(name, ".rgen.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    }
-    else if (std::strstr(name, ".rahit.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
-    }
-    else if (std::strstr(name, ".rchit.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-    }
-    else if (std::strstr(name, ".rmiss.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_MISS_BIT_KHR;
-    }
-    else if (std::strstr(name, ".rcall.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_CALLABLE_BIT_KHR;
-    }
-    else if (std::strstr(name, ".rint.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
-    }
-    else if (std::strstr(name, ".tesc.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
-    }
-    else if (std::strstr(name, ".tese.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
-    }
-    else if (std::strstr(name, ".mesh.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_MESH_BIT_NV;
-    }
-    else if (std::strstr(name, ".task.spv") != nullptr)
-    {
-        return VK_SHADER_STAGE_TASK_BIT_NV;
+        if (std::strstr(name, extension.suffix) != nullptr)
+        {
+            return extension.stage;
+        }
     }
 
     assert(0);
@@ -251,11 +219,11 @@ void ShaderManager::Subscribe(std::shared_ptr<IShaderDependency> subscriber)
 
 void ShaderManager::Unsubscribe(const IShaderDependency *subscriber)
 {
-    subscribers.remove_if([subscriber] (const std::weak_ptr<IShaderDependency> &ws)
+    subscribers.remove_if([subscriber](const std::weak_ptr<IShaderDependency> &weakSubscriber)
     {
-        if (const auto s = ws.lock())
+        if (const auto sharedSubscriber = weakSubscriber.lock())
         {
-            return s.get() == subscriber;
+            return sharedSubscriber.get() == subscriber;
         }
 
         return true;
@@ -264,11 +232,11 @@ void ShaderManager::Unsubscribe(const IShaderDependency *subscriber)
 
 void ShaderManager::NotifySubscribersAboutReload()
 {
-    for (auto &ws : subscribers)
+    for (auto &weakSubscriber : subscribers)
     {
-        if (auto s = ws.lock())
+        if (auto sharedSubscriber = weakSubscriber.lock())
         {
-            s->OnShaderReload(this);
+            sharedSubscriber->OnShaderReload(this);
         }
     }
 }

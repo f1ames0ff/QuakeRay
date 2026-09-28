@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "GlobalUniform.h"
 
@@ -25,20 +22,13 @@
 using namespace vkpt;
 
 GlobalUniform::GlobalUniform(VkDevice _device, std::shared_ptr<MemoryAllocator> &_allocator)
-:
-    device(_device),
-    descPool(VK_NULL_HANDLE),
-    descSetLayout(VK_NULL_HANDLE),
-    descSet(VK_NULL_HANDLE)
+    : device(_device)
+    , uniformData(std::make_shared<ShGlobalUniform>())
+    , uniformBuffer(std::make_shared<AutoBuffer>(_device, _allocator))
+    , descPool(VK_NULL_HANDLE)
+    , descSetLayout(VK_NULL_HANDLE)
+    , descSet(VK_NULL_HANDLE)
 {
-    uniformData = std::make_shared<ShGlobalUniform>();
-
-    uniformBuffer = std::make_shared<AutoBuffer>(_device, _allocator);
-    // The RHI layer wraps this buffer through a native handle, and NVRHI queries the buffer device
-    // address on every wrap - vulkan-buffer.cpp:215-220 - so the usage bit is mandatory there. The
-    // memory is address-capable regardless: Buffer::Init always allocates through
-    // AllocType::WITH_ADDRESS_QUERY (Buffer.cpp:67, MemoryAllocator.cpp:269-277). Same reason the
-    // collector's geometry buffers carry it (RasterizedDataCollector.cpp:72-81).
     uniformBuffer->Create(sizeof(ShGlobalUniform),
                           VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                           "Uniform buffer");
@@ -46,74 +36,60 @@ GlobalUniform::GlobalUniform(VkDevice _device, std::shared_ptr<MemoryAllocator> 
     CreateDescriptors();
 }
 
+GlobalUniform::~GlobalUniform()
+{
+    vkDestroyDescriptorPool(device, descPool, nullptr);
+    vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
+}
+
 void GlobalUniform::CreateDescriptors()
 {
-    VkResult r;
+    const VkDescriptorSetLayoutBinding uniformBinding =
+    {
+        BINDING_GLOBAL_UNIFORM, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL
+    };
 
-    VkDescriptorSetLayoutBinding uniformBinding = {};
-    uniformBinding.binding = BINDING_GLOBAL_UNIFORM;
-    uniformBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uniformBinding.descriptorCount = 1;
-    uniformBinding.stageFlags = VK_SHADER_STAGE_ALL;
+    const VkDescriptorSetLayoutCreateInfo layoutInfo =
+    {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 1, &uniformBinding
+    };
 
-    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uniformBinding;
-
-    r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descSetLayout);
+    VkResult r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descSetLayout);
     VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, descSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "Uniform Desc set layout");
 
-    VkDescriptorPoolSize poolSize = {};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    const VkDescriptorPoolSize poolSize = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT };
 
-    VkDescriptorPoolCreateInfo poolInfo = {};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+    const VkDescriptorPoolCreateInfo poolInfo =
+    {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, MAX_FRAMES_IN_FLIGHT, 1, &poolSize
+    };
 
     r = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descPool);
     VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, descPool, VK_OBJECT_TYPE_DESCRIPTOR_POOL, "Uniform Desc pool");
 
-    VkDescriptorSetAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &descSetLayout;
+    const VkDescriptorSetAllocateInfo allocInfo =
+    {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, descPool, 1, &descSetLayout
+    };
 
     r = vkAllocateDescriptorSets(device, &allocInfo, &descSet);
     VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, descSet, VK_OBJECT_TYPE_DESCRIPTOR_SET, "Uniform Desc set");
 
-    // bind buffers to sets once
-    VkDescriptorBufferInfo bufInfo = {};
-    bufInfo.buffer = uniformBuffer->GetDeviceLocal();
-    bufInfo.offset = 0;
-    bufInfo.range = VK_WHOLE_SIZE;
+    const VkDescriptorBufferInfo bufferInfo = { uniformBuffer->GetDeviceLocal(), 0, VK_WHOLE_SIZE };
 
-    VkWriteDescriptorSet wrt = {};
-    wrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    wrt.dstSet = descSet;
-    wrt.dstBinding = BINDING_GLOBAL_UNIFORM;
-    wrt.dstArrayElement = 0;
-    wrt.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    wrt.descriptorCount = 1;
-    wrt.pBufferInfo = &bufInfo;
+    const VkWriteDescriptorSet write =
+    {
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, descSet, BINDING_GLOBAL_UNIFORM, 0, 1,
+        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &bufferInfo, nullptr
+    };
 
-    vkUpdateDescriptorSets(device, 1, &wrt, 0, nullptr);
-}
-
-GlobalUniform::~GlobalUniform()
-{
-    vkDestroyDescriptorPool(device, descPool, nullptr);
-    vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 }
 
 ShGlobalUniform *GlobalUniform::GetData()
@@ -140,4 +116,3 @@ VkDescriptorSetLayout GlobalUniform::GetDescSetLayout() const
 {
     return descSetLayout;
 }
-
