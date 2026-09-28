@@ -116,6 +116,7 @@ cvar_t r_tasks = {"r_tasks", "0", CVAR_NONE};
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;
 extern cvar_t rt_flashlight;
+extern cvar_t rt_dlightspot_intensity;
 extern cvar_t rt_sun;
 extern cvar_t rt_sun_pitch;
 extern cvar_t rt_sun_yaw;
@@ -428,22 +429,44 @@ static void RT_UploadAllDlights ()
 		VectorScale (color, intensity, color);
 		RT_FIXUP_LIGHT_INTENSITY (color, true);
 
-		RgSphericalLightUploadInfo info = {
-			.uniqueID = i,
-			.color = {color[0], color[1], color[2]},
-			.position = {position[0], position[1], position[2]},
-			.radius = METRIC_TO_QUAKEUNIT (radius),
-		};
+		const uint64_t uniqueID = (uint64_t) i;
 
-		RgResult r = rgUploadSphericalLight (vulkan_globals.instance, &info);
-		RG_CHECK (r);
+		/* A spot is one whose editor property gave it a beam; anything else keeps the
+		   spherical path, a spot whose beam is still empty included. */
+		if (l->type == DLIGHT_TYPE_SPOT && l->angleOuter > 0.0f && DotProduct (l->dir, l->dir) > 0.0f)
+		{
+			RgSpotLightUploadInfo info = {
+				.uniqueID = uniqueID,
+				.color = {color[0], color[1], color[2]},
+				.position = {position[0], position[1], position[2]},
+				.direction = {l->dir[0], l->dir[1], l->dir[2]},
+				.radius = METRIC_TO_QUAKEUNIT (radius),
+				.angleOuter = l->angleOuter,
+				.angleInner = l->angleInner,
+			};
 
-		RT_TRACK_Light (info.position.data, info.radius, info.color.data,
-		                info.uniqueID, RT_LIGHT_KIND_DLIGHT, light_name ? light_name : "");
+			RgResult r = rgUploadSpotLight (vulkan_globals.instance, &info);
+			RG_CHECK (r);
+		}
+		else
+		{
+			RgSphericalLightUploadInfo info = {
+				.uniqueID = uniqueID,
+				.color = {color[0], color[1], color[2]},
+				.position = {position[0], position[1], position[2]},
+				.radius = METRIC_TO_QUAKEUNIT (radius),
+			};
+
+			RgResult r = rgUploadSphericalLight (vulkan_globals.instance, &info);
+			RG_CHECK (r);
+		}
+
+		RT_TRACK_Light (position, METRIC_TO_QUAKEUNIT (radius), color,
+		                uniqueID, RT_LIGHT_KIND_DLIGHT, light_name ? light_name : "");
 
 		/* rt_cluster_dlights 0 keeps dlights out of the cluster lists (A/B experiment). */
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (info.uniqueID, position, RT_ClusterLightReach ());
+			RT_ClusterLightAdd (uniqueID, position, RT_ClusterLightReach ());
 	}
 	}
 
@@ -482,8 +505,34 @@ static void RT_UploadAllDlights ()
 				.radius = METRIC_TO_QUAKEUNIT (l->radius),
 			};
 
-			RgResult r = rgUploadSphericalLight (vulkan_globals.instance, &info);
-			RG_CHECK (r);
+			if (l->spot && (l->dir[0] != 0.0f || l->dir[1] != 0.0f || l->dir[2] != 0.0f))
+			{
+				vec3_t direction;
+				float  angleInner, angleOuter;
+
+				VectorCopy (l->dir, direction);
+				VectorNormalize (direction);
+				angleInner = DEG2RAD (q_min (l->angle_inner, l->angle_outer));
+				angleOuter = DEG2RAD (q_max (l->angle_inner, l->angle_outer));
+
+				RgSpotLightUploadInfo spot = {
+					.uniqueID = info.uniqueID,
+					.color = {info.color.data[0], info.color.data[1], info.color.data[2]},
+					.position = {info.position.data[0], info.position.data[1], info.position.data[2]},
+					.direction = {direction[0], direction[1], direction[2]},
+					.radius = info.radius,
+					.angleOuter = angleOuter,
+					.angleInner = angleInner,
+				};
+
+				RgResult r = rgUploadSpotLight (vulkan_globals.instance, &spot);
+				RG_CHECK (r);
+			}
+			else
+			{
+				RgResult r = rgUploadSphericalLight (vulkan_globals.instance, &info);
+				RG_CHECK (r);
+			}
 
 			RT_TRACK_Light (info.position.data, info.radius, info.color.data,
 			                uid, RT_LIGHT_KIND_CUSTOM, "");
@@ -550,6 +599,63 @@ static void RT_UploadAllDlights ()
 		RgResult r = rgUploadDirectionalLight (vulkan_globals.instance, &info);
 		RG_CHECK (r);
 	}
+}
+
+/*
+================
+RT_DlightSpot_f
+
+Places a spot dlight at the crosshair, pointing along the view. The editor's spot property
+is what will create these lights; until it is there, this is how one is made and seen.
+
+dlightspot <outer_deg> [inner_deg] [distance] [strength]
+================
+*/
+void RT_DlightSpot_f (void)
+{
+	if (Cmd_Argc () < 2)
+	{
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance] [strength]\n", Cmd_Argv (0));
+		return;
+	}
+
+	float       outerDeg = (float) atof (Cmd_Argv (1));
+	float       innerDeg = (Cmd_Argc () >= 3) ? (float) atof (Cmd_Argv (2)) : 0.0f;
+	const float dist     = (Cmd_Argc () >= 4) ? (float) atof (Cmd_Argv (3)) : 48.0f;
+	const float strength = (Cmd_Argc () >= 5) ? (float) atof (Cmd_Argv (4)) : CVAR_TO_FLOAT (rt_dlightspot_intensity);
+
+	/* The comparisons read as they do so that a nan fails them: atof takes nan and inf, and a
+	   nan edge or origin would poison every cell that samples the light. */
+	if (!(outerDeg >= 0.1f && outerDeg <= 89.9f) ||
+	    !(innerDeg >= 0.0f) || !(innerDeg <= outerDeg) ||
+	    !(dist >= 1.0f && dist <= 4096.0f) ||
+	    !(strength >= 0.0f && strength <= 1000.0f))
+	{
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance] [strength]\n", Cmd_Argv (0));
+		return;
+	}
+
+	/* The cone edge is a smoothstep, and one with equal edges is undefined, so the inner
+	   angle stays strictly inside the outer one. */
+	if (innerDeg > outerDeg * 0.999f)
+	{
+		innerDeg = outerDeg * 0.999f;
+	}
+
+	/* DLIGHT_KEY_TEST is a key no emitter makes, so no effect can take the slot back, and
+	   every run of the command reuses it: one command owns one light. */
+	dlightspot_t *dl = CL_AllocDlightSpot (DLIGHT_KEY_TEST);
+
+	VectorMA (r_origin, dist, vpn, dl->origin);
+	VectorCopy (vpn, dl->dir);
+	VectorScale (dl->color, strength, dl->color);
+	dl->angleOuter = DEG2RAD (outerDeg);
+	dl->angleInner = DEG2RAD (innerDeg);
+	dl->radius     = 200;
+	dl->decay      = 0;
+	dl->die        = cl.time + 3600;
+
+	Con_Printf ("dlightspot: outer %.1f deg, inner %.1f deg, %.0f units ahead, strength %.2f\n", outerDeg, innerDeg, dist, strength);
 }
 
 /*

@@ -3014,6 +3014,34 @@ static void QRE_CustomLightsTab (void)
 				l->style = style;
 			}
 
+			{
+				int spot = l->spot ? 1 : 0;
+
+				if (QR_GUI_Checkbox ("light_spot", &spot,
+				                     "Make the light a cone (a spotlight) instead of a sphere, aimed by its direction."))
+				{
+					l->spot = spot ? true : false;
+				}
+			}
+
+			if (l->spot)
+			{
+				if (QR_GUI_Vec3Input ("light_dir", l->dir, -1.0f, 1.0f,
+				                      "The axis of the cone, X Y Z (normalized when uploaded)."))
+				{
+				}
+
+				if (QR_GUI_SliderFloat ("light_angle_inner", &l->angle_inner, 0.0f, 90.0f,
+				                        "The cone's full-intensity core, in degrees."))
+				{
+				}
+
+				if (QR_GUI_SliderFloat ("light_angle_outer", &l->angle_outer, 0.0f, 90.0f,
+				                        "Where the cone falls to nothing, in degrees."))
+				{
+				}
+			}
+
 			if (QR_GUI_Button ("Duplicate"))
 			{
 				rt_custom_light_t *copy = RT_CustomLights_Ensure ();

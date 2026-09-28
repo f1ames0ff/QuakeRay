@@ -74,6 +74,7 @@ typedef struct rt_material_s {
     qboolean mirror;
     qboolean exact_normals;
     qboolean force_rasterize;
+    qboolean alpha_test;
     qboolean valid;
 } rt_material_t;
 

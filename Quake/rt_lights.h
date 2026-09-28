@@ -138,6 +138,10 @@ typedef struct rt_custom_light_s
     float    intensity;    // a multiplier of the colour
     vec3_t   color;
     int      style;        // 0..RT_CUSTOM_STYLE_COUNT-1
+    qboolean spot;
+    vec3_t   dir;
+    float    angle_inner;
+    float    angle_outer;
 } rt_custom_light_t;
 
 // The fog a level's section carries: it replaces the map's own worldspawn "fog"

@@ -386,6 +386,11 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
         geomInfo.flags |= GEOM_INST_FLAG_IGNORE_REFRACT_AFTER;
     }
 
+    if( info.flags & RG_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT )
+    {
+        geomInfo.flags |= GEOM_INST_FLAG_ALPHA_TRANSMISSION;
+    }
+
     if( geomFlags & FT::CF_STATIC_MOVABLE )
     {
         geomInfo.flags |= GEOM_INST_FLAG_IS_MOVABLE;

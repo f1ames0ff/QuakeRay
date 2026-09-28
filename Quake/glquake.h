@@ -425,6 +425,8 @@ void RT_ClusterLightReport_f (void);
 void RT_LightReport_f (void);
 void RT_PrintEmissiveStats (void);
 void RT_LightReportDump_f (void);
+/* Places a spot dlight at the crosshair; the editor will create them itself later. */
+void RT_DlightSpot_f (void);
 // Non-NULL while rt_light_report_dump is writing; RT_LightReportPrint mirrors every
 // report line into this file in addition to the console so the dump and the readout match.
 extern FILE *rt_light_report_file;

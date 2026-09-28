@@ -35,6 +35,7 @@
 #include "RaygenCommon.h"
 #include "Q2Asvgf.h"
 #include "Q2LightLists.h"
+#include "GlobalLightSampling.h"
 
 #define Q2_RNG_CELL_SELECT 200
 #define Q2_RNG_LIGHT_POINT 208
@@ -57,7 +58,8 @@ void main()
         return;
     }
 
-    const bool isGradient = q2GetIsGradient(pix);
+    const bool useGlobalRestir = globalUniform.restirParams.x != 0u;
+    const bool isGradient = useGlobalRestir ? false : q2GetIsGradient(pix);
     const uint cluster = texelFetch(framebufQ2Cluster_Sampled, pix, 0).r;
 
     const float alpha = square(surf.roughness);
@@ -78,18 +80,27 @@ void main()
 
     for (int s = 0; s < numNeeSamples; s++)
     {
-        const uint saltBase = uint(Q2_RNG_CELL_SELECT) + uint(s) * 4u;
-        const vec3 rng = vec3(
-            rnd16(seed, saltBase),
-            rnd16(seed, saltBase + 1u),
-            rnd16(seed, saltBase + 2u));
-
         uint lightIndex = LIGHT_INDEX_NONE;
         uint lightSlot = 0u;
         float lightPdf = 0.0;
-        q2SampleClusterLights(cluster, surf.position, surf.normal, surf.toViewerDir,
-                              phongExp, phongScale, phongWeight, isGradient, rng,
-                              lightIndex, lightSlot, lightPdf);
+
+        if (useGlobalRestir)
+        {
+            q2SampleGlobalLightsRIS(seed, uint(s), surf.position, surf.normal, surf.toViewerDir,
+                                    phongExp, phongScale, phongWeight, lightIndex, lightPdf);
+        }
+        else
+        {
+            const uint saltBase = uint(Q2_RNG_CELL_SELECT) + uint(s) * 4u;
+            const vec3 rng = vec3(
+                rnd16(seed, saltBase),
+                rnd16(seed, saltBase + 1u),
+                rnd16(seed, saltBase + 2u));
+
+            q2SampleClusterLights(cluster, surf.position, surf.normal, surf.toViewerDir,
+                                  phongExp, phongScale, phongWeight, isGradient, rng,
+                                  lightIndex, lightSlot, lightPdf);
+        }
 
         if (lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0)
         {
@@ -112,8 +123,9 @@ void main()
                     rayStatsAdd(RAY_STATS_CATEGORY_SHADOW_DIRECT, 1);
                 }
 
-                if (lightSources[lightIndex].lightType == LIGHT_TYPE_TRIANGLE ||
-                    lightSources[lightIndex].lightType == LIGHT_TYPE_TEXTURED_AREA)
+                if (!useGlobalRestir &&
+                    (lightSources[lightIndex].lightType == LIGHT_TYPE_TRIANGLE ||
+                     lightSources[lightIndex].lightType == LIGHT_TYPE_TEXTURED_AREA))
                 {
                     q2AccumulateLightStats(cluster, lightSlot, surf.normal, vis, uint(s));
                 }

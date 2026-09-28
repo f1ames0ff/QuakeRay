@@ -88,7 +88,7 @@
 #define MATERIAL_BLENDING_MASK_SECOND_LAYER (240)
 #define MATERIAL_BLENDING_MASK_THIRD_LAYER (3840)
 #define GEOM_INST_FLAG_TURB_WARP (1 << 13)
-#define GEOM_INST_FLAG_RESERVED_1 (1 << 14)
+#define GEOM_INST_FLAG_ALPHA_TRANSMISSION (1 << 14)
 #define GEOM_INST_FLAG_RESERVED_2 (1 << 15)
 #define GEOM_INST_FLAG_RESERVED_3 (1 << 16)
 #define GEOM_INST_FLAG_RESERVED_4 (1 << 17)
@@ -324,6 +324,7 @@ struct ShGlobalUniform
     vec4 sunBounce;
     vec4 levelFogColorDensity;
     vec4 levelFogSkyBlend;
+    uvec4 restirParams;
 };
 
 struct ShGeometryInstance

@@ -752,6 +752,7 @@ rt_custom_light_t *RT_CustomLights_Ensure(void)
     l->radius = RT_CUSTOM_RADIUS_DEFAULT;
     l->intensity = 1.0f;
     l->color[0] = l->color[1] = l->color[2] = 1.0f;
+    l->angle_outer = 30.0f;
     return l;
 }
 
@@ -821,6 +822,8 @@ static qboolean RT_CustomColorFromString(const char *s, vec3_t out)
     return true;
 }
 
+static qboolean RT_CustomBoolFromString(const char *s, qboolean *out);
+
 // One light of a "lights:" sequence (and of the old plain-sequence form, where
 // the level key maps straight to the lights). False when the list is full, so
 // the caller stops reading the section.
@@ -871,6 +874,19 @@ static qboolean RT_CustomParseLight(yaml_document_t *document, yaml_node_t *node
             RT_CustomColorFromString(fvb, l->color);
         else if (!q_strcasecmp(fkb, "style"))
             l->style = RT_CustomStyleFromString(fvb);
+        else if (!q_strcasecmp(fkb, "spot"))
+        {
+            qboolean spot;
+
+            if (RT_CustomBoolFromString(fvb, &spot))
+                l->spot = spot;
+        }
+        else if (!q_strcasecmp(fkb, "dir"))
+            sscanf(fvb, "%f %f %f", &l->dir[0], &l->dir[1], &l->dir[2]);
+        else if (!q_strcasecmp(fkb, "angle_inner"))
+            l->angle_inner = (float)atof(fvb);
+        else if (!q_strcasecmp(fkb, "angle_outer"))
+            l->angle_outer = (float)atof(fvb);
     }
 
     return true;
@@ -1097,6 +1113,10 @@ const char *RT_CustomLights_Header(void)
         "#       intensity: 1.0       # a multiplier of the colour\n"
         "#       color: ff9900        # rrggbb\n"
         "#       offset: 0 0 16       # optional shift from the origin\n"
+        "#       spot: true           # optional: a cone instead of a sphere\n"
+        "#       dir: 0 0 1           # the axis of the cone, X Y Z\n"
+        "#       angle_inner: 0       # degrees, the cone's full-intensity core\n"
+        "#       angle_outer: 30      # degrees, where the cone falls to nothing\n"
         "#       style: candle        # optional, a light style of the engine\n";
 }
 
@@ -1116,6 +1136,14 @@ void RT_CustomLights_WriteEntry(FILE *f, const rt_custom_light_t *l)
             (int)(CLAMP(0.0f, l->color[0], 1.0f) * 255.0f + 0.5f) & 0xff,
             (int)(CLAMP(0.0f, l->color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
             (int)(CLAMP(0.0f, l->color[2], 1.0f) * 255.0f + 0.5f) & 0xff);
+
+    if (l->spot)
+    {
+        fprintf(f, "      spot: true\n");
+        fprintf(f, "      dir: %.6g %.6g %.6g\n", l->dir[0], l->dir[1], l->dir[2]);
+        fprintf(f, "      angle_inner: %.6g\n", l->angle_inner);
+        fprintf(f, "      angle_outer: %.6g\n", l->angle_outer);
+    }
 
     if (l->style > 0)
         fprintf(f, "      style: %s\n", rt_custom_style_names[CLAMP(0, l->style, RT_CUSTOM_STYLE_COUNT - 1)]);
