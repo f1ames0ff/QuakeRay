@@ -1267,6 +1267,14 @@ typedef struct RgDrawFrameIlluminationParams
     // RtRaygenDirect.rgen). Q2RTX traces one sample, so 1 is the default.
     // Default: 1
     uint32_t    neeLightSamples;
+    // 1: the direct pass samples the global light array with RIS instead of the
+    // per-cluster light lists (host cvar rt_restir; 0 keeps the cluster path).
+    // Default: 0
+    uint32_t    restirEnabled;
+    // Candidates drawn per NEE light sample in the global light RIS (host cvar
+    // rt_restir_candidates), clamped to 1..64.
+    // Default: 8
+    uint32_t    restirCandidates;
     // Q2RTX pt_num_bounce_rays (host cvar rt_gi_level): 0 - no indirect lighting
     // at all, 0.5 - low, 1 - medium (one indirect bounce), 2 - high (two indirect
     // bounces). Values below 0.25 disable the indirect pass entirely, and the

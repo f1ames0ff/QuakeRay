@@ -45,6 +45,12 @@
 //   * mix -> lerp and the matrix rules of ShaderCommonHLSL.hlsli have no site here: the body
 //     contains no product, no index and no constructor of a matrix.
 //
+// This port also carries the global-light RIS branch: when restirParams.x is set, the NEE lights
+// come from q2SampleGlobalLightsRIS (GlobalLightSampling.hlsli, a new twin with its golden beside
+// it) over the whole light array instead of the per-cluster lists; the gradient fetch stays on the
+// cluster branch and the statistics call stays with it, the same split the pre-migration branch
+// had.
+//
 // What did not change: the DESC_SET_* block, the LIGHT_SAMPLE_METHOD pin (DIRECT, the header's
 // block is compiled for it), every #define (Q2_RNG_CELL_SELECT / Q2_RNG_LIGHT_POINT /
 // Q2_RNG_SUN_DISK, Q2_DIRECT_MAX_SPHERE_SOLID_ANGLE, MATERIAL_MAX_ALBEDO_LAYERS 0), the salt
@@ -69,6 +75,7 @@
 #include "RaygenCommon.hlsli"
 #include "Q2Asvgf.hlsli"
 #include "Q2LightLists.hlsli"
+#include "GlobalLightSampling.hlsli"
 
 #define Q2_RNG_CELL_SELECT 200
 #define Q2_RNG_LIGHT_POINT 208
@@ -92,7 +99,8 @@ void main()
         return;
     }
 
-    const bool isGradient = q2GetIsGradient(pix);
+    const bool useGlobalRestir = globalUniform.restirParams.x != 0u;
+    const bool isGradient = useGlobalRestir ? false : q2GetIsGradient(pix);
     const uint cluster = framebufQ2Cluster_Sampled.Load(int3(pix, 0)).r;
 
     const float alpha = square(surf.roughness);
@@ -113,18 +121,27 @@ void main()
 
     for (int s = 0; s < numNeeSamples; s++)
     {
-        const uint saltBase = (uint)Q2_RNG_CELL_SELECT + (uint)s * 4u;
-        const float3 rng = float3(
-            rnd16(seed, saltBase),
-            rnd16(seed, saltBase + 1u),
-            rnd16(seed, saltBase + 2u));
-
         uint lightIndex = LIGHT_INDEX_NONE;
         uint lightSlot = 0u;
         float lightPdf = 0.0;
-        q2SampleClusterLights(cluster, surf.position, surf.normal, surf.toViewerDir,
-                              phongExp, phongScale, phongWeight, isGradient, rng,
-                              lightIndex, lightSlot, lightPdf);
+
+        if (useGlobalRestir)
+        {
+            q2SampleGlobalLightsRIS(seed, (uint)s, surf.position, surf.normal, surf.toViewerDir,
+                                    phongExp, phongScale, phongWeight, lightIndex, lightPdf);
+        }
+        else
+        {
+            const uint saltBase = (uint)Q2_RNG_CELL_SELECT + (uint)s * 4u;
+            const float3 rng = float3(
+                rnd16(seed, saltBase),
+                rnd16(seed, saltBase + 1u),
+                rnd16(seed, saltBase + 2u));
+
+            q2SampleClusterLights(cluster, surf.position, surf.normal, surf.toViewerDir,
+                                  phongExp, phongScale, phongWeight, isGradient, rng,
+                                  lightIndex, lightSlot, lightPdf);
+        }
 
         if (lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0)
         {
@@ -147,8 +164,9 @@ void main()
                     rayStatsAdd(RAY_STATS_CATEGORY_SHADOW_DIRECT, 1);
                 }
 
-                if (lightSources[lightIndex].lightType == LIGHT_TYPE_TRIANGLE ||
-                    lightSources[lightIndex].lightType == LIGHT_TYPE_TEXTURED_AREA)
+                if (!useGlobalRestir &&
+                    (lightSources[lightIndex].lightType == LIGHT_TYPE_TRIANGLE ||
+                     lightSources[lightIndex].lightType == LIGHT_TYPE_TEXTURED_AREA))
                 {
                     q2AccumulateLightStats(cluster, lightSlot, surf.normal, vis, (uint)s);
                 }
