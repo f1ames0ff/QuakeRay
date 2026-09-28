@@ -290,6 +290,7 @@ else
 			.uniqueID = RT_GetAliasModelUniqueId (entuniqueid),
 			.flags =
 			    (is_invis ? RG_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
+			    ((tx && tx->rtalphatest) ? RG_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 			    (exact_normals ? RG_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT ),
 			.geomType = RG_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType =
@@ -535,6 +536,9 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
     {
         tx = whitetexture;
     }
+
+    if (tx && tx->rtalphatest)
+        alphatest = true;
 
     //
     // draw it

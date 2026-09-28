@@ -14,6 +14,8 @@ QuakeRay is a ray tracing engine for Quake 1, with Q2RTX-style partial path trac
 * ASVGF denoiser.
 * RT Global Illumination
 * NEE (Next Event Estimation) for the sun, emissives and dynamic lights.
+* Alpha-transparent textures are traced through, not only cut out: a material marked `alpha_test` hands its alpha to the sampler, and a ray that crosses such a texel keeps the strength of its transparency.
+* Spot lights: a dynamic light can shine in a cone, with adjustable angles and strength (`dlightspot` at the console until the editor places them).
 * per-BSP-cluster light lists (legacy).
 * Animated light entities (`rt_light_styles`) make their own fixture flicker, in accordance with the original light style, to preserve the original Quake 1 lighting design.
 * Full material system with per-brush and per-model metalness/roughness, normal map strength and texture-driven gloss maps, plus ray-traced water with animated wave normals and refraction.
@@ -140,6 +142,9 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_denoiser 1` — ASVGF reconstruction of the lighting channels (`0` composites the raw ReSTIR output)
 * `rt_no_textures 0` — `1` swaps the diffuse albedo for a fixed value, i.e. "no textures"
 * `rt_emis_light_intensity 1.0` — how much light the emissive (luma-masked) surfaces emit
+* `rt_dtal_minarea 0` / `rt_dtal_maxpolys 64` — the size floor (world units², `0` off) and the per-surface cap (`0` = no cuts) of the DTAL splits; `rt_dtal_rebuild` re-runs the collection
+* `rt_dtal_clearance 1` — a DTAL polygon facing solid geometry within this many units is not created (`0` off)
+* `rt_dtal_debug 0` — `1` draws the DTAL wireframes, `2` their normals as arrows
 * `rt_light_color 255 255 255` — tint multiplied into every light source (sun, dynamic, world, emissive), as `<r> <g> <b>` in `0-255`. It is a command like `rt_sky_color` above, so `cvarlist` does not list it and a bare `rt_light_color` prints the current value; `rt_light_color "255 255 255"` and `255,255,255` work too, and the value is archived
 * `rt_globallight 255 255 255` — colour a light starts from before its own colour and the tint above are applied, as `<r> <g> <b>` in `0-255`; same command form, and `rt_globallight_mult` is still the separate intensity multiplier
 * `rt_light_styles 1` with `rt_light_styles_reach 48` — animated light entities make their own fixture flicker; the reach (Quake units, measured from the surface centre to the light) keeps the flicker on the fixture instead of every surface that light happens to illuminate, `-1` removes the limit

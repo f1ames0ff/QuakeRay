@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 
 #include "cfgfile.h"
+#include "rt_dtal_debug.h"
 
 #include <setjmp.h>
 
@@ -113,6 +114,7 @@ extern cvar_t r_tasks;
 extern cvar_t r_gpulightmapupdate;
 extern cvar_t r_showtris;
 extern cvar_t r_showbboxes;
+extern cvar_t rt_dtal_debug;
 
 qboolean scr_initialized; // ready to draw
 
@@ -1262,6 +1264,8 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawClock (cbx);    // johnfitz
 		SCR_DrawConsole (cbx);
 		M_Draw (cbx);
+		RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), (unsigned int) host_framecount, (float) host_frametime,
+		                     glx, gly, glwidth, glheight, vid.height);
 	}
 	R_EndDebugUtilsLabel (cbx);
 }

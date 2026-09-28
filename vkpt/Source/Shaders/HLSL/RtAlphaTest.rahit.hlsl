@@ -110,8 +110,20 @@ void main(inout ShPayloadShadow g_payloadShadow, in HitAttributes attribs)
 	// check only first material's albedo
  	const float4 color = getTextureSampleLod(tr.materials[0][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord, 0.0) * tr.materialColors[0];
 
+	if ((tr.geometryInstanceFlags & GEOM_INST_FLAG_ALPHA_TRANSMISSION) != 0)
+	{
+		uint h = (uint)InstanceID() * 73856093u ^ (uint)PrimitiveIndex() * 19349663u ^ globalUniform.frameId * 83492791u;
+		h ^= h >> 13;
+		h *= 1274126177u;
+		h ^= h >> 16;
+
+		if (float(h) * (1.0 / 4294967296.0) < 1.0 - color.a)
+		{
+			IgnoreHit();
+		}
+	}
 	// if must be discarded
-	if ((color.r + color.g + color.b) / 3 * color.a + color.a < ALPHA_THRESHOLD)
+	else if ((color.r + color.g + color.b) / 3 * color.a + color.a < ALPHA_THRESHOLD)
 	{
 		// then ignore this intersection, so it won't be the closest hit
 		IgnoreHit();

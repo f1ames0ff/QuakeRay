@@ -386,6 +386,7 @@ typedef enum RgGeometryUploadFlagBits
     // Animate the texture coordinates of the turbulent surfaces (lava, teleport)
     // with the "warp" that the classic engine used for them.
     RG_GEOMETRY_UPLOAD_TURB_WARP_BIT = 128,
+    RG_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT = 256,
 } RgGeometryUploadFlagBits;
 typedef RgFlags RgGeometryUploadFlags;
 
@@ -512,6 +513,15 @@ typedef enum RgRasterizedGeometryRenderType
     RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY
 } RgRasterizedGeometryRenderType;
 
+// Rectangle in pixels. (x, y) defines the top-left corner.
+typedef struct RgRect2D
+{
+    int32_t     x;
+    int32_t     y;
+    uint32_t    width;
+    uint32_t    height;
+} RgRect2D;
+
 typedef enum RgRasterizedGeometryStateFlagBits
 {
     RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST         = 1,
@@ -546,6 +556,11 @@ typedef struct RgRasterizedGeometryUploadInfo
 
     RgFloat4D                               smokeNoise;
     RgFloat4D                               smokeLook;
+
+    // Scissor rectangle in pixels, top-left origin. width == 0 means no
+    // scissor (the whole viewport is used). For RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY
+    // it must be zero as well.
+    RgRect2D                                scissor;
 } RgRasterizedGeometryUploadInfo;
 
 
@@ -695,7 +710,7 @@ typedef struct RgTexturedAreaLightUploadInfo
     int             isStatic;
 } RgTexturedAreaLightUploadInfo;
 
-// Only one spotlight is available in a scene.
+/* Spot lights are regular lights in the light array: any number of them can be uploaded. */
 typedef struct RgSpotLightUploadInfo
 {
     // Used to match the same light source from the previous frame.
@@ -703,11 +718,11 @@ typedef struct RgSpotLightUploadInfo
     RgFloat3D       color;
     RgFloat3D       position;
     RgFloat3D       direction;
-    float           radius;
     // Light source disk radius.
-    // Inner cone angle. In radians.
+    float           radius;
+    // Outer cone half-angle. In radians.
     float           angleOuter;
-    // Outer cone angle. In radians.
+    // Inner cone half-angle. In radians; the intensity is full below it.
     float           angleInner;
 } RgSpotLightUploadInfo;
 
@@ -1290,6 +1305,14 @@ typedef struct RgDrawFrameIlluminationParams
     // RtRaygenDirect.rgen). Q2RTX traces one sample, so 1 is the default.
     // Default: 1
     uint32_t    neeLightSamples;
+    // 1: the direct pass samples the global light array with RIS instead of the
+    // per-cluster light lists (host cvar rt_restir; 0 keeps the cluster path).
+    // Default: 0
+    uint32_t    restirEnabled;
+    // Candidates drawn per NEE light sample in the global light RIS (host cvar
+    // rt_restir_candidates), clamped to 1..64.
+    // Default: 8
+    uint32_t    restirCandidates;
     // Q2RTX pt_num_bounce_rays (host cvar rt_gi_level): 0 - no indirect lighting
     // at all, 0.5 - low, 1 - medium (one indirect bounce), 2 - high (two indirect
     // bounces). Values below 0.25 disable the indirect pass entirely, and the
