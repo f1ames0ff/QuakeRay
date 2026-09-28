@@ -49,8 +49,8 @@ extern cvar_t rt_model_lights;
 extern cvar_t rt_model_lights_max;
 extern cvar_t rt_model_lights_budget;
 extern cvar_t rt_model_lights_minarea;
-extern cvar_t rt_emis_minarea;
-extern cvar_t rt_emis_maxpolys;
+extern cvar_t rt_dtal_minarea;
+extern cvar_t rt_dtal_maxpolys;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
@@ -76,7 +76,7 @@ extern RgVertex *rtallbrushvertices;
    fidelity limit but a hang guard: texture coordinates of a badly scaled surface can span
    hundreds of repetitions, and every one of them would cost a clip, a light and a cluster
    registry slot. Faces above it keep the whole-surface light. It is also the ceiling
-   rt_emis_maxpolys is clamped to: that cvar is the same limit, hand-set and ranked. */
+   rt_dtal_maxpolys is clamped to: that cvar is the same limit, hand-set and ranked. */
 #define RT_MAX_EMISSIVE_POLYS_PER_FACE 64
 
 /* A masked light has to keep the surface's own polygons, so a face with more corners than a light
@@ -135,8 +135,8 @@ typedef struct rt_emis_stats_s
 	int glow_lights;
 	int glow_faces;
 	int glow_fallback;
-	/* The manual DTAL limits: candidates dropped under rt_emis_minarea, glow polygons that
-	   lost the ranking to rt_emis_maxpolys, and model pieces under rt_model_lights_minarea. */
+	/* The manual DTAL limits: candidates dropped under rt_dtal_minarea, glow polygons that
+	   lost the ranking to rt_dtal_maxpolys, and model pieces under rt_model_lights_minarea. */
 	int too_small;
 	int poly_capped;
 	atomic_uint32_t model_lights;
@@ -1912,7 +1912,7 @@ static int RT_SplitUvPolygon (const RgFloat2D *uv, int n, rt_uv_piece_t *out, in
 }
 
 /* Keeps the largest-area polygons a face is cut into, in descending order, so the slot of a
-   polygon is its rank. With rt_emis_maxpolys under what the face would produce, the biggest
+   polygon is its rank. With rt_dtal_maxpolys under what the face would produce, the biggest
    pieces are kept instead of the first ones the tile walk happens to reach; equal areas keep
    the walk order, so a face of identical repetitions is cut exactly as before. Returns false
    when the polygon does not make the cut. */
@@ -1941,10 +1941,13 @@ static qboolean RT_EmissivePolyAdd (RgTexturedAreaLightUploadInfo *polys, int *c
 static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const RgFloat2D *surfuv, int vertcount,
                                     const vec3_t A, const vec3_t B, const rt_emissive_params_t *params,
                                     const RgTexturedAreaLightUploadInfo *base,
-                                    RgTexturedAreaLightUploadInfo *out, int out_max, float min_area)
+                                    RgTexturedAreaLightUploadInfo *out, int out_max, float min_area,
+                                    qboolean *size_refused)
 {
 	float uvmin[2] = {surfuv[0].data[0], surfuv[0].data[1]};
 	float uvmax[2] = {surfuv[0].data[0], surfuv[0].data[1]};
+
+	*size_refused = false;
 
 	for (int i = 1; i < vertcount; i++)
 	{
@@ -1997,6 +2000,7 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const RgFloa
 			if (area < min_area)
 			{
 				rt_emis_stats.too_small++;
+				*size_refused = true;
 				continue;
 			}
 
@@ -2610,8 +2614,8 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	   still become a light of its own (world units squared), and how many lights one surface
 	   may be cut into at most. Read per surface, so a change shows on the next frame; 0 and
 	   RT_MAX_EMISSIVE_POLYS_PER_FACE are the old behaviour. */
-	const float min_area = CVAR_TO_FLOAT (rt_emis_minarea);
-	int       max_polys  = (int) CVAR_TO_FLOAT (rt_emis_maxpolys);
+	const float min_area = CVAR_TO_FLOAT (rt_dtal_minarea);
+	int       max_polys  = (int) CVAR_TO_FLOAT (rt_dtal_maxpolys);
 
 	if (max_polys < 0)
 		max_polys = 0;
@@ -2889,9 +2893,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	   preferred over the square below because the square would read the mask over a shape the
 	   surface does not have, and it is preferred over dropping the light because the surface
 	   does glow, only not evenly. The manual limits hold here as well: the surface is cut
-	   into no more pieces than rt_emis_maxpolys allows (a surface that needs more falls to
-	   the square, as one past the split always did), a piece under rt_emis_minarea is not
-	   made a light, and a surface whose pieces all fall under it keeps the square. */
+	   into no more pieces than rt_dtal_maxpolys allows (a surface that needs more falls to
+	   the square, as one past the split always did), and a piece under rt_dtal_minarea is not
+	   made a light -- a surface whose pieces all fall under it gets no light at all. */
 	if (!poly_ok && fit_ok && uv_ok && light_masked)
 	{
 		rt_uv_piece_t pieces[RT_MAX_UV_SPLIT_PIECES];
@@ -2904,6 +2908,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 			CrossProduct (A, B, ab);
 			const float jacobian = VectorLength (ab);
 			int         uploaded = 0;
+			int         refused  = 0;
 
 			for (int i = 0; i < num; i++)
 			{
@@ -2912,6 +2917,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 				if (area < min_area)
 				{
 					rt_emis_stats.too_small++;
+					refused++;
 					continue;
 				}
 
@@ -2942,6 +2948,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				return;
 			}
+
+			if (refused > 0)
+				return;
 		}
 	}
 
@@ -2998,8 +3007,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		if (poly_ok)
 		{
 			RgTexturedAreaLightUploadInfo polys[RT_MAX_EMISSIVE_POLYS_PER_FACE];
+			qboolean                  size_refused = false;
 			const int num = RT_EmissiveGlowPolygons (s, light_info.uvVerts, light_info.numVerts, A, B, &params,
-			                                        &light_info, polys, max_polys, min_area);
+			                                        &light_info, polys, max_polys, min_area, &size_refused);
 
 			if (num > 0)
 			{
@@ -3011,11 +3021,22 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				return;
 			}
+
+			/* Every repetition of the glow came out under rt_dtal_minarea: the face gets no
+			   light at all instead of the whole-surface fallback below. */
+			if (size_refused)
+				return;
 		}
 
 		/* No glow polygon survived (too many repetitions, or a surface that has no uv fit):
 		   the whole surface keeps the light instead. */
 		rt_emis_stats.glow_fallback++;
+	}
+
+	if (light_info.area < min_area)
+	{
+		rt_emis_stats.too_small++;
+		return;
 	}
 
 	RT_UploadEmissiveLight (&light_info, is_static_geom, s->surf, light_tex);
@@ -5125,7 +5146,7 @@ void RT_PrintEmissiveStats (void)
 			rt_emis_stats.glow_faces, rt_emis_stats.glow_lights, rt_emis_stats.glow_fallback);
 
 	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
-		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_emis_minarea, %i glow polygons cut by rt_emis_maxpolys, %i model pieces under rt_model_lights_minarea\n",
+		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_model_lights_minarea\n",
 			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small));
 
 	if (Atomic_LoadUInt32 (&rt_emis_stats.model_lights) || Atomic_LoadUInt32 (&rt_emis_stats.model_capped))

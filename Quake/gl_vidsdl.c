@@ -215,20 +215,27 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_emis_mapboost, "30") \
 	CVAR_DEF_T (rt_emis_maxscrcolor, "4") \
 	CVAR_DEF_T (rt_emis_fullbright_dflt, "255") \
+	/* The sharp-mask snap of the emission mask is read by the primary and reflection rays \
+	   only, and only where the mask is magnified with a filtering sampler; the shipped \
+	   "classic" texture filter samples NEAREST (vid_filter 1), against which the snap cannot \
+	   change anything. Use "smooth" filtering to see it. */ \
 	CVAR_DEF_T (rt_emis_sharpmask, "1") \
 	CVAR_DEF_T (rt_emis_blend, "1") \
 	CVAR_DEF_T (rt_emis_blendstr, "1") \
+	/* No pass reads talSelfLitOffset -- only the uniform-layout probe names it -- so the knob \
+	   is dead until a pass reads it again; kept as the setter of the public \
+	   RgDrawFrameTexturesParams field and so old configs load. */ \
 	CVAR_DEF_T (rt_tal_selflit, "6") \
 	/* The manual limits of the DTAL cuts of a surface (RT_AddEmissiveLight): a polygon under \
-	   rt_emis_minarea (world units squared) never becomes a light of its own -- a face whose \
-	   pieces all fall under it keeps the one whole-surface light instead -- and one surface \
-	   is cut into at most rt_emis_maxpolys lights, the largest pieces kept rather than the \
-	   first ones the tile walk reaches (0 cuts nothing: every masked face keeps its single \
-	   light; RT_MAX_EMISSIVE_POLYS_PER_FACE is the ceiling a larger value is clamped to). \
-	   Both are read per surface, so they apply on the next frame and can be tuned live \
-	   against rt_dtal_debug 1; the defaults reproduce the old behaviour. */ \
-	CVAR_DEF_T (rt_emis_minarea, "0") \
-	CVAR_DEF_T (rt_emis_maxpolys, "64") \
+	   rt_dtal_minarea (world units squared) never becomes a light, and a face whose pieces \
+	   all fall under it gets no light at all -- no whole-surface or square fallback rescues \
+	   it -- while one surface is cut into at most rt_dtal_maxpolys lights, the largest pieces \
+	   kept rather than the first ones the tile walk reaches (0 cuts nothing: every masked \
+	   face keeps its single light; RT_MAX_EMISSIVE_POLYS_PER_FACE is the ceiling a larger \
+	   value is clamped to). Both are read per surface, so they apply on the next frame and \
+	   can be tuned live against rt_dtal_debug 1; the defaults reproduce the old behaviour. */ \
+	CVAR_DEF_T (rt_dtal_minarea, "0") \
+	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
@@ -647,8 +654,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_model_lights_max");
 	RT_Bench_Setting (f, "rt_model_lights_budget");
 	RT_Bench_Setting (f, "rt_model_lights_minarea");
-	RT_Bench_Setting (f, "rt_emis_minarea");
-	RT_Bench_Setting (f, "rt_emis_maxpolys");
+	RT_Bench_Setting (f, "rt_dtal_minarea");
+	RT_Bench_Setting (f, "rt_dtal_maxpolys");
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_godrays");
 	RT_Bench_Setting (f, "rt_godrays_intensity");
@@ -2880,8 +2887,8 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_sun_edit, RT_SunEditChanged_f);
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
-	Cvar_SetCallback (&rt_emis_minarea, RT_EmissiveLimitsChanged_f);
-	Cvar_SetCallback (&rt_emis_maxpolys, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_minarea, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_maxpolys, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_worldcensus, RT_WorldCensusChanged_f);
 	Cvar_SetCallback (&rt_worldlights_stats, RT_WorldLightsStatsChanged_f);
 
