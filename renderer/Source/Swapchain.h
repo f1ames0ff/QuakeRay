@@ -1,0 +1,107 @@
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
+
+#pragma once
+
+#include <list>
+#include <vector>
+
+#include "Common.h"
+#include "PhysicalDevice.h"
+#include "CommandBufferManager.h"
+#include "ISwapchainDependency.h"
+
+namespace qray
+{
+
+class Swapchain
+{
+public:
+    Swapchain(
+        VkDevice device,
+        VkSurfaceKHR surface,
+        VkPhysicalDevice physDevice,
+        std::shared_ptr<CommandBufferManager> cmdManager);
+    ~Swapchain();
+
+    Swapchain(const Swapchain &other) = delete;
+    Swapchain(Swapchain &&other) noexcept = delete;
+    Swapchain &operator=(const Swapchain &other) = delete;
+    Swapchain &operator=(Swapchain &&other) noexcept = delete;
+
+    bool RequestVsync(bool enable);
+
+    void AcquireImage(VkSemaphore imageAvailableSemaphore);
+    void Present(const std::shared_ptr<Queues> &queues, VkSemaphore renderFinishedSemaphore);
+
+    void Subscribe(std::shared_ptr<ISwapchainDependency> subscriber);
+    void Unsubscribe(const ISwapchainDependency *subscriber);
+
+    VkFormat GetSurfaceFormat() const;
+    uint32_t GetWidth() const;
+    uint32_t GetHeight() const;
+    uint32_t GetCurrentImageIndex() const;
+    uint32_t GetImageCount() const;
+    VkImageView GetImageView(uint32_t index) const;
+    VkImage GetImage(uint32_t index) const;
+    const VkImageView *GetImageViews() const;
+
+    bool IsExtentOptimal() const;
+
+private:
+    VkExtent2D GetOptimalExtent() const;
+    VkResult GetSurfaceCapabilities(VkSurfaceCapabilitiesKHR *outCaps) const;
+    void ResetSurfaceCapabilitiesCache() const;
+
+    bool TryRecreate(const VkExtent2D &newExtent, bool vsync);
+
+    void Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE);
+    void Destroy();
+    VkSwapchainKHR DestroyWithoutSwapchain();
+
+    void CallCreateSubscribers();
+    void CallDestroySubscribers();
+
+private:
+    VkDevice device;
+    VkSurfaceKHR surface;
+    VkPhysicalDevice physDevice;
+    std::shared_ptr<CommandBufferManager> cmdManager;
+
+    VkSurfaceFormatKHR surfaceFormat;
+    VkPresentModeKHR presentModeVsync;
+    VkPresentModeKHR presentModeImmediate;
+
+    bool requestedVsync;
+    VkExtent2D surfaceExtent;
+    bool isVsync;
+
+    VkSwapchainKHR swapchain;
+    std::vector<VkImage> swapchainImages;
+    std::vector<VkImageView> swapchainViews;
+
+    uint32_t currentSwapchainIndex;
+
+    std::list<std::weak_ptr<ISwapchainDependency>> subscribers;
+
+    mutable VkSurfaceCapabilitiesKHR cachedSurfaceCaps;
+    mutable VkResult cachedSurfaceCapsResult;
+    mutable bool cachedSurfaceCapsValid;
+    mutable bool cachedIsExtentOptimal;
+};
+
+}

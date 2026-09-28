@@ -162,9 +162,9 @@ typedef struct cb_context_s
 {
 	canvastype current_canvas;
 	float      cur_viewprojection[16];
-	RgViewport cur_viewport;
+	QrViewport cur_viewport;
 
-	RgVertex *batch_verts;
+	QrVertex *batch_verts;
 	uint32_t *batch_indices;
 	int       batch_verts_count;
 	int       batch_indices_count;
@@ -173,7 +173,7 @@ typedef struct cb_context_s
 typedef struct
 {
 	// RT
-	RgInstance instance;
+	QrInstance instance;
 
 	// Vulkan
 	qboolean     validation;
@@ -193,12 +193,12 @@ typedef struct
 
 extern vulkanglobals_t vulkan_globals;
 
-#define RG_CHECK(rgresult)                                                                      \
+#define QR_CHECK(rgresult)                                                                      \
 	do                                                                                          \
 	{                                                                                           \
-		if ((rgresult) != RG_SUCCESS)                                                           \
+		if ((rgresult) != QR_SUCCESS)                                                           \
 		{                                                                                       \
-			Sys_Error ("%s. Use -condebug to write logs", rgGetResultDescription ((rgresult))); \
+			Sys_Error ("%s. Use -condebug to write logs", qrGetResultDescription ((rgresult))); \
 		}                                                                                       \
 	} while (0)
 
@@ -453,7 +453,7 @@ void RT_UploadAllTeleports (void);
 #define DRAW_GL_POLY_TYPE_SKY 1
 #define DRAW_GL_POLY_TYPE_SHOWTRI 2
 #define DRAW_GL_POLY_TYPE_SHOWTRI_NODEPTH 3
-void DrawGLPoly (cb_context_t *cbx, uint64_t uniqueid, glpoly_t *p, float color[3], float alpha, const RgTransform *transform, const gltexture_t *tex, uint32_t type);
+void DrawGLPoly (cb_context_t *cbx, uint64_t uniqueid, glpoly_t *p, float color[3], float alpha, const QrTransform *transform, const gltexture_t *tex, uint32_t type);
 void GL_MakeAliasModelDisplayLists (qmodel_t *m, aliashdr_t *hdr);
 
 void Sky_Init (void);
@@ -611,9 +611,9 @@ int RT_GetEntityUniqueId (const entity_t *ent);
 // read that scratch. Returns the number of lights uploaded, and the caller keeps the fake dlight
 // of the model when it is zero: no light material, no emissive mask, the feature off, or a frame
 // the budget turned down.
-int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_uniqueid, const RgVertex *pose1,
-                               const RgVertex *pose2, float blend, int numverts, const uint32_t *indices,
-                               int numindices, const RgTransform *transform);
+int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
+                               const QrVertex *pose2, float blend, int numverts, const uint32_t *indices,
+                               int numindices, const QrTransform *transform);
 
 // DTAL cache of an alias model: allocated with its vertex buffers and freed with them. The cache
 // lives far longer than a frame (it holds the pieces for a handful of skin frames and is rebuilt
@@ -623,10 +623,10 @@ void RT_ModelLightsCacheAlloc (qmodel_t *model);
 void RT_ModelLightsCacheFree (qmodel_t *model);
 void RT_DtalRebuild_f (void);
 
-RgTransform RT_GetModelTransform (const float model_matrix[16]);
-RgTransform RT_GetBrushModelMatrix (entity_t *e);
+QrTransform RT_GetModelTransform (const float model_matrix[16]);
+QrTransform RT_GetBrushModelMatrix (entity_t *e);
 
-RgFloat3D RT_AnglesToDir (/* const */ vec3_t angles);
+QrFloat3D RT_AnglesToDir (/* const */ vec3_t angles);
 float     RT_Luminance (const vec3_t color);
 
 // Frame profiler for the CPU side of the render loop, enabled by panel 3 of rt_stats.
@@ -713,7 +713,7 @@ typedef struct
 	qboolean         haveGpu;
 	qboolean         haveProfile;
 	unsigned int     panels;
-	RgFrameStats     gpu;
+	QrFrameStats     gpu;
 	rt_prof_report_t profile;
 } rt_stats_snapshot_t;
 
