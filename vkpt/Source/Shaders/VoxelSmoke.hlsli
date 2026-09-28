@@ -7,11 +7,8 @@ struct VoxelSmokeParams
     float4 worldMax;
     float4 emitterCenter;
     float4 emitterParams;
-    float4 cameraPos;
     float4 marchParams;
     float4 resolution;
-    float4 screenParams;
-    float4x4 invViewProj;
 };
 
 float3 voxelSmokeWorldToVolume( const VoxelSmokeParams p, const float3 world )

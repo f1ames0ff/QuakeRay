@@ -67,11 +67,8 @@ struct VoxelSmokeParams
     float worldMax[4];
     float emitterCenter[4];
     float emitterParams[4];
-    float cameraPos[4];
     float marchParams[4];
     float resolution[4];
-    float screenParams[4];
-    float invViewProj[16];
 };
 
 // The blob declares an 88-byte fragment block: color at offset 64, textureIndex at 80 and
@@ -1031,6 +1028,61 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
         LogMessage(print, "Warning: RHI: the raster overlay smoke half is not drawable (a shader, the light layout/set or the TLAS is missing), the smoke draws are skipped");
     }
 
+    if (pVoxelSmokeParams != nullptr && pVoxelSmokeParams->enabled &&
+        voxelSmokeInjectPipeline != nullptr && target.smokeDepthWorldTexture != nullptr &&
+        target.uniformSet != nullptr)
+    {
+        if (voxelSmokeMarchPipeline == nullptr)
+        {
+            voxelSmokeMarchPipeline = GetVoxelSmokeMarchPipeline();
+        }
+
+        if (voxelSmokeMarchPipeline != nullptr && voxelSmokeMarchSets[frameIndex] == nullptr)
+        {
+            nvrhi::BindingSetDesc setDesc;
+            setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT,
+                                                                  voxelSmokeParamsBuffers[frameIndex]));
+            setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT, voxelSmokeVolume));
+            setDesc.addItem(nvrhi::BindingSetItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT, voxelSmokeSampler));
+            setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT,
+                                                               target.smokeDepthWorldTexture));
+            voxelSmokeMarchSets[frameIndex] = device->createBindingSet(setDesc, voxelSmokeMarchLayout);
+        }
+
+        if (voxelSmokeMarchSets[frameIndex] != nullptr)
+        {
+            VoxelSmokeParams params = {};
+
+            params.worldMin[0] = pVoxelSmokeParams->worldMin.data[0];
+            params.worldMin[1] = pVoxelSmokeParams->worldMin.data[1];
+            params.worldMin[2] = pVoxelSmokeParams->worldMin.data[2];
+            params.worldMax[0] = pVoxelSmokeParams->worldMax.data[0];
+            params.worldMax[1] = pVoxelSmokeParams->worldMax.data[1];
+            params.worldMax[2] = pVoxelSmokeParams->worldMax.data[2];
+            params.emitterCenter[0] = pVoxelSmokeParams->emitterCenter.data[0];
+            params.emitterCenter[1] = pVoxelSmokeParams->emitterCenter.data[1];
+            params.emitterCenter[2] = pVoxelSmokeParams->emitterCenter.data[2];
+            params.emitterParams[0] = pVoxelSmokeParams->emitterRadius;
+            params.emitterParams[1] = pVoxelSmokeParams->emitterDensity;
+            params.emitterParams[2] = pVoxelSmokeParams->decayPerSecond;
+            params.emitterParams[3] = 1.0f / 60.0f;
+            params.marchParams[0] = pVoxelSmokeParams->marchSteps;
+            params.marchParams[1] = pVoxelSmokeParams->extinction;
+            params.marchParams[2] = pVoxelSmokeParams->debugGrey;
+            params.resolution[0] = float(VOXEL_SMOKE_RESOLUTION);
+            params.resolution[1] = float(VOXEL_SMOKE_RESOLUTION);
+            params.resolution[2] = float(VOXEL_SMOKE_RESOLUTION);
+
+            rhi::writeBuffer(pCommandList, voxelSmokeParamsBuffers[frameIndex], &params, sizeof(params));
+
+            nvrhi::ComputeState computeState;
+            computeState.pipeline = voxelSmokeInjectPipeline;
+            computeState.addBindingSet(voxelSmokeInjectSets[frameIndex]);
+            pCommandList->setComputeState(computeState);
+            pCommandList->dispatch(VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8);
+        }
+    }
+
     if (worldDrawable || smokeDrawable)
     {
         // The engine textures the table wrapped since the last frame need their first-use state
@@ -1059,74 +1111,9 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                              pDraws, drawCount, applyVertexColorGamma, smokeDrawable);
         }
 
-        if (pVoxelSmokeParams != nullptr && pVoxelSmokeParams->enabled &&
-            voxelSmokeInjectPipeline != nullptr && target.smokeDepthWorldTexture != nullptr)
-        {
-            if (voxelSmokeMarchPipeline == nullptr)
-            {
-                voxelSmokeMarchPipeline = GetVoxelSmokeMarchPipeline();
-            }
-
-            if (voxelSmokeMarchPipeline != nullptr && voxelSmokeMarchSets[frameIndex] == nullptr)
-            {
-                nvrhi::BindingSetDesc setDesc;
-                setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT,
-                                                                      voxelSmokeParamsBuffers[frameIndex]));
-                setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT, voxelSmokeVolume));
-                setDesc.addItem(nvrhi::BindingSetItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT, voxelSmokeSampler));
-                setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT,
-                                                                   target.smokeDepthWorldTexture));
-                voxelSmokeMarchSets[frameIndex] = device->createBindingSet(setDesc, voxelSmokeMarchLayout);
-            }
-        }
-
         if (voxelSmokeMarchSets[frameIndex] != nullptr && voxelSmokeMarchPipeline != nullptr &&
             pVoxelSmokeParams != nullptr && pVoxelSmokeParams->enabled)
         {
-            VoxelSmokeParams params = {};
-
-            params.worldMin[0] = pVoxelSmokeParams->worldMin.data[0];
-            params.worldMin[1] = pVoxelSmokeParams->worldMin.data[1];
-            params.worldMin[2] = pVoxelSmokeParams->worldMin.data[2];
-            params.worldMax[0] = pVoxelSmokeParams->worldMax.data[0];
-            params.worldMax[1] = pVoxelSmokeParams->worldMax.data[1];
-            params.worldMax[2] = pVoxelSmokeParams->worldMax.data[2];
-            params.emitterCenter[0] = pVoxelSmokeParams->emitterCenter.data[0];
-            params.emitterCenter[1] = pVoxelSmokeParams->emitterCenter.data[1];
-            params.emitterCenter[2] = pVoxelSmokeParams->emitterCenter.data[2];
-            params.emitterParams[0] = pVoxelSmokeParams->emitterRadius;
-            params.emitterParams[1] = pVoxelSmokeParams->emitterDensity;
-            params.emitterParams[2] = pVoxelSmokeParams->decayPerSecond;
-            params.emitterParams[3] = 1.0f / 60.0f;
-            params.marchParams[0] = pVoxelSmokeParams->marchSteps;
-            params.marchParams[1] = pVoxelSmokeParams->extinction;
-            params.marchParams[2] = pVoxelSmokeParams->debugGrey;
-            params.resolution[0] = float(VOXEL_SMOKE_RESOLUTION);
-            params.resolution[1] = float(VOXEL_SMOKE_RESOLUTION);
-            params.resolution[2] = float(VOXEL_SMOKE_RESOLUTION);
-            params.screenParams[0] = float(width);
-            params.screenParams[1] = float(height);
-            params.screenParams[2] = (width > 0) ? 1.0f / float(width) : 0.0f;
-            params.screenParams[3] = (height > 0) ? 1.0f / float(height) : 0.0f;
-
-            Matrix::Inverse(params.invViewProj, defaultViewProj);
-
-            const float nearPoint[4] =
-            {
-                params.invViewProj[12], params.invViewProj[13], params.invViewProj[14], params.invViewProj[15]
-            };
-            params.cameraPos[0] = nearPoint[0] / nearPoint[3];
-            params.cameraPos[1] = nearPoint[1] / nearPoint[3];
-            params.cameraPos[2] = nearPoint[2] / nearPoint[3];
-
-            rhi::writeBuffer(pCommandList, voxelSmokeParamsBuffers[frameIndex], &params, sizeof(params));
-
-            nvrhi::ComputeState computeState;
-            computeState.pipeline = voxelSmokeInjectPipeline;
-            computeState.addBindingSet(voxelSmokeInjectSets[frameIndex]);
-            pCommandList->setComputeState(computeState);
-            pCommandList->dispatch(VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8);
-
             const VkViewport legacyViewport = { 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
             const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(width), 0, static_cast<int>(height));
 
@@ -1136,6 +1123,7 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             graphicsState.viewport.addViewport(ToLegacyViewport(legacyViewport));
             graphicsState.viewport.addScissorRect(fullTarget);
             graphicsState.addBindingSet(voxelSmokeMarchSets[frameIndex]);
+            graphicsState.addBindingSet(target.uniformSet);
             pCommandList->setGraphicsState(graphicsState);
 
             nvrhi::DrawArguments args;
@@ -2239,6 +2227,7 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::GetVoxelSmokeMarchPipeline()
     desc.renderState.blendState.setRenderTarget(0, blendTarget);
     desc.renderState.blendState.setRenderTarget(1, blendTarget);
     desc.addBindingLayout(voxelSmokeMarchLayout);
+    desc.addBindingLayout(worldUniformLayout);
 
     nvrhi::FramebufferInfo framebufferInfo;
     framebufferInfo.addColorFormat(pipelineColor0Format);

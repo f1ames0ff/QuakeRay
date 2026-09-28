@@ -1,3 +1,6 @@
+#define DESC_SET_GLOBAL_UNIFORM 1
+#include "ShaderCommonHLSLFunc.hlsli"
+
 #include "VoxelSmoke.hlsli"
 
 [[vk::binding(256, 0)]] ConstantBuffer<VoxelSmokeParams> params;
@@ -11,12 +14,12 @@ void main( float4 position : SV_Position,
 {
     outEmission = 0.0;
 
-    const float2 ndc = position.xy * params.screenParams.zw * 2.0 - 1.0;
+    const float2 uv = position.xy * float2( 1.0 / globalUniform.renderWidth, 1.0 / globalUniform.renderHeight );
+    const float4 ndc = float4( uv * 2.0 - 1.0, 1.0, 1.0 );
 
-    const float4 near = mul( params.invViewProj, float4( ndc, 0.0, 1.0 ) );
-    const float4 far  = mul( params.invViewProj, float4( ndc, 1.0, 1.0 ) );
-    const float3 origin = params.cameraPos.xyz;
-    const float3 dir    = normalize( far.xyz / far.w - near.xyz / near.w );
+    const float4 farPoint = mul( mul( globalUniform.invView, globalUniform.invProjection ), ndc );
+    const float3 origin = globalUniform.cameraPosition.xyz;
+    const float3 dir = normalize( farPoint.xyz / farPoint.w - origin );
 
     float t0, t1;
     if ( !voxelSmokeBox( params.worldMin.xyz, params.worldMax.xyz, origin, dir, t0, t1 ) )
