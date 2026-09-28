@@ -369,6 +369,46 @@ static void R_SetupContext (cb_context_t *cbx)
 		cbx, glx + r_refdef.vrect.x, gly + glheight - r_refdef.vrect.y - r_refdef.vrect.height, r_refdef.vrect.width, r_refdef.vrect.height, 0.0f, 1.0f);
 }
 
+static void RT_UploadSunLight (void)
+{
+	if (CVAR_TO_BOOL (rt_materials_only))
+	{
+		return;
+	}
+
+	if (CVAR_TO_FLOAT (rt_sun) > 0.001f)
+	{
+		vec3_t angles = {CVAR_TO_FLOAT (rt_sun_pitch), CVAR_TO_FLOAT (rt_sun_yaw), 0};
+
+		vec3_t forward, right, up;
+		AngleVectors (angles, forward, right, up);
+
+		vec3_t color;
+		RT_GetSunColor (color);
+		VectorScale (color, CVAR_TO_FLOAT (rt_sun), color);
+		// The sun is a light source like every other one, so it needs the same
+		// radiometric fixup the world and dlight sources get. Without it its 0..1
+		// colour reached the shading orders of magnitude below them, which is
+		// why rt_sun only did anything from ~10^4 up.
+		RT_FIXUP_LIGHT_INTENSITY (color, true);
+		// A sun emits from no area and covers the whole sky, so it takes that
+		// fixup at a fraction of its strength (RT_SUN_LIGHT_INTENSITY_SCALE) --
+		// otherwise rt_sun 1 overdrives the scene. The god rays read this colour,
+		// so they follow the sun too, including the fraction.
+		VectorScale (color, RT_SUN_LIGHT_INTENSITY_SCALE, color);
+
+		QrDirectionalLightUploadInfo info = {
+			.uniqueID = (uint64_t)UINT32_MAX + 1,
+			.color = {color[0], color[1], color[2]},
+			.direction = {forward[0], forward[1], forward[2]},
+			.angularDiameterDegrees = 0.05f,
+		};
+
+		QrResult r = qrUploadDirectionalLight (vulkan_globals.instance, &info);
+		QR_CHECK (r);
+	}
+}
+
 static void RT_UploadAllDlights ()
 {
 	if (CVAR_TO_BOOL (rt_materials_only))
@@ -569,37 +609,7 @@ static void RT_UploadAllDlights ()
 		QR_CHECK (r);
 	}
 
-	if (CVAR_TO_FLOAT (rt_sun) > 0.001f)
-	{
-		vec3_t angles = {CVAR_TO_FLOAT (rt_sun_pitch), CVAR_TO_FLOAT (rt_sun_yaw), 0};
-
-		vec3_t forward, right, up;
-		AngleVectors (angles, forward, right, up);
-
-		vec3_t color;
-		RT_GetSunColor (color);
-		VectorScale (color, CVAR_TO_FLOAT (rt_sun), color);
-		// The sun is a light source like every other one, so it needs the same
-		// radiometric fixup the world and dlight sources get. Without it its 0..1
-		// colour reached the shading orders of magnitude below them, which is
-		// why rt_sun only did anything from ~10^4 up.
-		RT_FIXUP_LIGHT_INTENSITY (color, true);
-		// A sun emits from no area and covers the whole sky, so it takes that
-		// fixup at a fraction of its strength (RT_SUN_LIGHT_INTENSITY_SCALE) --
-		// otherwise rt_sun 1 overdrives the scene. The god rays read this colour,
-		// so they follow the sun too, including the fraction.
-		VectorScale (color, RT_SUN_LIGHT_INTENSITY_SCALE, color);
-
-		QrDirectionalLightUploadInfo info = {
-			.uniqueID = (uint64_t)UINT32_MAX + 1,
-			.color = {color[0], color[1], color[2]},
-			.direction = {forward[0], forward[1], forward[2]},
-			.angularDiameterDegrees = 0.05f,
-		};
-
-		QrResult r = qrUploadDirectionalLight (vulkan_globals.instance, &info);
-		QR_CHECK (r);
-	}
+	RT_UploadSunLight ();
 }
 
 /*
@@ -1073,6 +1083,8 @@ void R_DrawWorldTask (void *unused)
 	
 	r = qrBeginStaticGeometries (vulkan_globals.instance);
 	QR_CHECK (r);
+
+	RT_UploadSunLight ();
 
 	cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[CBX_WORLD_0];
 	R_SetupContext (cbx);
