@@ -90,12 +90,12 @@ bool cloudShadowUV(vec3 worldPos, vec3 sunDir, vec4 mapPlacement, out vec2 uv, o
 // base and the last at its top, so a height is read with the centres of the slices
 // in mind: each holds the value at one of them, and everything between is what the
 // sampler interpolates.
-float cloudShadowTauFromUV(sampler3D shadowVolume, vec2 uv, float height)
+float cloudShadowTauFromUV(texture3D shadowVolume, sampler shadowVolume_Sampler, vec2 uv, float height)
 {
-    float slices = float(textureSize(shadowVolume, 0).z);
+    float slices = float(textureSize(sampler3D(shadowVolume, shadowVolume_Sampler), 0).z);
     float z = clamp(height, 0.0, 1.0) * (slices - 1.0) / slices + 0.5 / slices;
 
-    return texture(shadowVolume, vec3(uv, z)).r;
+    return texture(sampler3D(shadowVolume, shadowVolume_Sampler), vec3(uv, z)).r;
 }
 
 // The tau of the cloud between a point of the world and the sun, read from the
@@ -119,7 +119,7 @@ float cloudShadowTauFromUV(sampler3D shadowVolume, vec2 uv, float height)
 // `height` is the fraction of the layer the point stands at: 0 at its base (a
 // point on the ground), 1 at its top. `sunDir` points towards the sun and
 // `mapPlacement` is where the volume stands (see cloudShadowUV).
-float cloudShadowTau(sampler3D shadowVolume, vec3 worldPos, vec3 sunDir, vec4 mapPlacement, float height, out float blend)
+float cloudShadowTau(texture3D shadowVolume, sampler shadowVolume_Sampler, vec3 worldPos, vec3 sunDir, vec4 mapPlacement, float height, out float blend)
 {
     vec2 uv;
 
@@ -130,7 +130,7 @@ float cloudShadowTau(sampler3D shadowVolume, vec3 worldPos, vec3 sunDir, vec4 ma
         return -1.0;
     }
 
-    return cloudShadowTauFromUV(shadowVolume, uv, height);
+    return cloudShadowTauFromUV(shadowVolume, shadowVolume_Sampler, uv, height);
 }
 
 // The tau of the cloud between a point of the world and the sun, read from the
@@ -147,7 +147,7 @@ float cloudShadowTau(sampler3D shadowVolume, vec3 worldPos, vec3 sunDir, vec4 ma
 // than a shadow inside a window. A caller that can answer for the column itself --
 // the sky, which walks it (cloudSunDepth, CloudLayer.h) -- is better off with
 // cloudShadowTau and its blend.
-float cloudShadowTauNear(sampler3D shadowVolume, vec3 worldPos, vec3 sunDir, vec4 mapPlacement, float height)
+float cloudShadowTauNear(texture3D shadowVolume, sampler shadowVolume_Sampler, vec3 worldPos, vec3 sunDir, vec4 mapPlacement, float height)
 {
     if (mapPlacement.x <= 0.5 || sunDir.z <= 1.0e-3)
     {
@@ -157,7 +157,7 @@ float cloudShadowTauNear(sampler3D shadowVolume, vec3 worldPos, vec3 sunDir, vec
     vec2 flatPos = worldPos.xy - sunDir.xy * (worldPos.z / sunDir.z);
     vec2 mapped = (flatPos - mapPlacement.yz) / max(mapPlacement.w, 1.0);
 
-    return cloudShadowTauFromUV(shadowVolume, clamp(mapped, vec2(0.0), vec2(1.0)), height);
+    return cloudShadowTauFromUV(shadowVolume, shadowVolume_Sampler, clamp(mapped, vec2(0.0), vec2(1.0)), height);
 }
 
 // How much of the sun gets past the clouds on the way down to a point of the world:
@@ -167,7 +167,7 @@ float cloudShadowTauNear(sampler3D shadowVolume, vec3 worldPos, vec3 sunDir, vec
 // towards the edge of the volume, and a point beyond it is not shaded at all.
 //
 // `height` is the fraction of the layer the point stands at, as in cloudShadowTau.
-float cloudShadowTransmittance(sampler3D shadowVolume, vec3 worldPos, vec3 sunDir, vec4 mapPlacement, float height)
+float cloudShadowTransmittance(texture3D shadowVolume, sampler shadowVolume_Sampler, vec3 worldPos, vec3 sunDir, vec4 mapPlacement, float height)
 {
     vec2 uv;
     float blend;
@@ -177,5 +177,5 @@ float cloudShadowTransmittance(sampler3D shadowVolume, vec3 worldPos, vec3 sunDi
         return 1.0;
     }
 
-    return mix(1.0, exp(-cloudShadowTauFromUV(shadowVolume, uv, height)), blend);
+    return mix(1.0, exp(-cloudShadowTauFromUV(shadowVolume, shadowVolume_Sampler, uv, height)), blend);
 }

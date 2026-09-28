@@ -25,7 +25,7 @@ bool cloudShadowUV(float3 worldPos, float3 sunDir, float4 mapPlacement, out floa
     return true;
 }
 
-float cloudShadowTauFromUV(Texture3D shadowVolume, SamplerState shadowVolume_Sampler, float2 uv, float height)
+float cloudShadowTauFromUV(Texture3D<float> shadowVolume, SamplerState shadowVolume_Sampler, float2 uv, float height)
 {
     uint width, heightTexels, depth;
     shadowVolume.GetDimensions(width, heightTexels, depth);
@@ -36,7 +36,7 @@ float cloudShadowTauFromUV(Texture3D shadowVolume, SamplerState shadowVolume_Sam
     return shadowVolume.SampleLevel(shadowVolume_Sampler, float3(uv, z), 0.0).r;
 }
 
-float cloudShadowTau(Texture3D shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height, out float blend)
+float cloudShadowTau(Texture3D<float> shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height, out float blend)
 {
     float2 uv;
 
@@ -50,7 +50,7 @@ float cloudShadowTau(Texture3D shadowVolume, SamplerState shadowVolume_Sampler, 
     return cloudShadowTauFromUV(shadowVolume, shadowVolume_Sampler, uv, height);
 }
 
-float cloudShadowTauNear(Texture3D shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height)
+float cloudShadowTauNear(Texture3D<float> shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height)
 {
     if (mapPlacement.x <= 0.5 || sunDir.z <= 1.0e-3)
     {
@@ -63,7 +63,7 @@ float cloudShadowTauNear(Texture3D shadowVolume, SamplerState shadowVolume_Sampl
     return cloudShadowTauFromUV(shadowVolume, shadowVolume_Sampler, clamp(mapped, float2(0.0, 0.0), float2(1.0, 1.0)), height);
 }
 
-float cloudShadowTransmittance(Texture3D shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height)
+float cloudShadowTransmittance(Texture3D<float> shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height)
 {
     float2 uv;
     float blend;
