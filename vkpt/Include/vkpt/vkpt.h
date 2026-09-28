@@ -1550,6 +1550,20 @@ typedef enum RgDrawFrameRayCullFlagBits
 } RgDrawFrameRayCullFlagBits;
 typedef RgFlags RgDrawFrameRayCullFlags;
 
+typedef struct RgDrawFrameVoxelSmokeParams
+{
+    RgFloat3D   worldMin;
+    RgFloat3D   worldMax;
+    RgFloat3D   emitterCenter;
+    float       emitterRadius;
+    float       emitterDensity;
+    float       decayPerSecond;
+    float       marchSteps;
+    float       extinction;
+    float       debugGrey;
+    RgBool32    enabled;
+} RgDrawFrameVoxelSmokeParams;
+
 typedef struct RgDrawFrameInfo
 {
     // View matrix is column major.
@@ -1588,6 +1602,7 @@ typedef struct RgDrawFrameInfo
     const RgDrawFrameLevelFogParams             *pLevelFogParams;
     const RgDrawFrameDebugParams                *pDebugParams;
     RgDrawFramePostEffectsParams                postEffectParams;
+    const RgDrawFrameVoxelSmokeParams           *pVoxelSmokeParams;
 
 } RgDrawFrameInfo;
 
