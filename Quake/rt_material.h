@@ -1,7 +1,7 @@
 // Q2RTX-style material definitions (phase 4.5).
 // Ported from Q2RTX material.c and adapted to the vkquake host: materials are
 // loaded from materials/*.yaml files (global + <map>.yaml) found either on disk
-// or inside a mounted .pkz archive, and are used to synthesize the vkpt
+// or inside a mounted .pkz archive, and are used to synthesize the qray
 // RGBA8 material textures (albedo-alpha, roughness-metallic-emissive, normal).
 
 #ifndef RT_MATERIAL_H

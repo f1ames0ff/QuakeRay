@@ -6828,21 +6828,21 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 
 
 	uint8_t *memallc = RT_AllocScratchMemoryNulled (
-		cl_maxstrisvert[current_buffer_index] * sizeof (RgVertex) + 
+		cl_maxstrisvert[current_buffer_index] * sizeof (QrVertex) + 
 	    cl_maxstrisidx[current_buffer_index] * sizeof(uint32_t));
 
-	RgVertex *rtvertices = (RgVertex *)memallc;
+	QrVertex *rtvertices = (QrVertex *)memallc;
 	for (uint32_t v = 0; v < cl_maxstrisvert[current_buffer_index]; v++)
 	{
 		basicvertex_t *src = &cl_strisvert[current_buffer_index][v];
-		RgVertex      *dst = &rtvertices[v];
+		QrVertex      *dst = &rtvertices[v];
 
 		memcpy (dst->position, src->position, sizeof (float) * 3);
 		memcpy (dst->texCoord, src->texcoord, sizeof (float) * 2);
 		dst->packedColor = RT_PackColorToUint32 (src->color[0], src->color[1], src->color[2], src->color[3]);
 	}
 
-	uint32_t *rtindices = (uint32_t *)(memallc + (cl_maxstrisvert[current_buffer_index] * sizeof (RgVertex)));
+	uint32_t *rtindices = (uint32_t *)(memallc + (cl_maxstrisvert[current_buffer_index] * sizeof (QrVertex)));
 	for (uint32_t v = 0; v < cl_maxstrisidx[current_buffer_index]; v++)
 	{
 		rtindices[v] = cl_strisidx[current_buffer_index][v];
@@ -6867,16 +6867,16 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 
 			const int num_indices = tris->numidx;
 			
-			RgRasterizedGeometryUploadInfo info = {
-				.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+			QrRasterizedGeometryUploadInfo info = {
+				.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 				.vertexCount = (uint32_t)tris->numvert,
 				.pVertices = rtvertices + tris->firstvert,
 				.indexCount = num_indices,
 				.pIndices = rtindices + tris->firstidx,
 				.transform = RT_TRANSFORM_IDENTITY,
 				.color = RT_COLOR_WHITE,
-				.material = tex ? tex->rtmaterial : RG_NO_MATERIAL,
-				.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
+				.material = tex ? tex->rtmaterial : QR_NO_MATERIAL,
+				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
 				.blendFuncSrc = 0,
 				.blendFuncDst = 0,
 			};
@@ -6884,36 +6884,36 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
             switch (blend_mode)
 			{
 			case BM_BLEND: /*SRC_ALPHA ONE_MINUS_SRC_ALPHA*/
-				info.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA;
-				info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+				info.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA;
+				info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 				break;
 			case BM_BLENDCOLOUR: /*SRC_COLOR ONE_MINUS_SRC_COLOR*/
-				info.blendFuncSrc = RG_BLEND_FACTOR_SRC_COLOR;
-				info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+				info.blendFuncSrc = QR_BLEND_FACTOR_SRC_COLOR;
+				info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
 				break;
 			case BM_ADDA: /*SRC_ALPHA ONE*/
-				info.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA;
-				info.blendFuncDst = RG_BLEND_FACTOR_ONE;
+				info.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA;
+				info.blendFuncDst = QR_BLEND_FACTOR_ONE;
 				break;
 			case BM_ADDC: /*GL_SRC_COLOR GL_ONE*/
-				info.blendFuncSrc = RG_BLEND_FACTOR_SRC_COLOR;
-				info.blendFuncDst = RG_BLEND_FACTOR_ONE;
+				info.blendFuncSrc = QR_BLEND_FACTOR_SRC_COLOR;
+				info.blendFuncDst = QR_BLEND_FACTOR_ONE;
 				break;
 			case BM_SUBTRACT: /*SRC_ALPHA ONE_MINUS_SRC_COLOR*/
-				info.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA;
-				info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+				info.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA;
+				info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
 				break;
 			case BM_INVMODA: /*ZERO ONE_MINUS_SRC_ALPHA*/
-				info.blendFuncSrc = RG_BLEND_FACTOR_ZERO;
-				info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+				info.blendFuncSrc = QR_BLEND_FACTOR_ZERO;
+				info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 				break;
 			case BM_INVMODC: /*ZERO ONE_MINUS_SRC_COLOR*/
-				info.blendFuncSrc = RG_BLEND_FACTOR_ZERO;
-				info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+				info.blendFuncSrc = QR_BLEND_FACTOR_ZERO;
+				info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
 				break;
 			case BM_PREMUL: /*ONE ONE_MINUS_SRC_ALPHA*/
-				info.blendFuncSrc = RG_BLEND_FACTOR_ONE;
-				info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+				info.blendFuncSrc = QR_BLEND_FACTOR_ONE;
+				info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 				break;
 			default:
 				assert (0);
@@ -6922,11 +6922,11 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 
 			if (draw_lines)
 			{
-				info.pipelineState |= RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST;
+				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST;
 			}
 
-			RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-			RG_CHECK (r);
+			QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+			QR_CHECK (r);
 		}
 	}
 	R_EndDebugUtilsLabel (cbx);

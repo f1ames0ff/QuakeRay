@@ -462,7 +462,7 @@ void Draw_Init (void)
 Draw_FillCharacterQuad
 ================
 */
-static void Draw_FillCharacterQuad (int x, int y, char num, RgVertex *output, int rotation, float scale)
+static void Draw_FillCharacterQuad (int x, int y, char num, QrVertex *output, int rotation, float scale)
 {
 	int   row, col;
 	float frow, fcol, size;
@@ -475,7 +475,7 @@ static void Draw_FillCharacterQuad (int x, int y, char num, RgVertex *output, in
 	fcol = col * 0.0625;
 	size = 0.0625;
 
-	RgVertex corner_verts[4] = {0};
+	QrVertex corner_verts[4] = {0};
 
 	float texcoords[4][2] = {
 		{x, y},
@@ -536,28 +536,28 @@ void Draw_Character (cb_context_t *cbx, int x, int y, int num)
 	if (num == 32)
 		return; // don't waste verts on spaces
 
-	RgVertex vertices[6];
+	QrVertex vertices[6];
 	Draw_FillCharacterQuad (x, y, (char)num, vertices, rotation, 1.0f);
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
 		.vertexCount = countof (vertices),
 		.pVertices = vertices,
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
-		.material = char_texture ? char_texture->rtmaterial : RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
+		.material = char_texture ? char_texture->rtmaterial : QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
 		.blendFuncSrc = 0,
 		.blendFuncDst = 0,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
+	QR_CHECK (r);
 }
 
-void Draw_StringScaled (cb_context_t *cbx, int x, int y, const char *str, float scale, const RgFloat4D *color)
+void Draw_StringScaled (cb_context_t *cbx, int x, int y, const char *str, float scale, const QrFloat4D *color)
 {
 	int         num_verts = 0;
 	int         i;
@@ -571,7 +571,7 @@ void Draw_StringScaled (cb_context_t *cbx, int x, int y, const char *str, float 
 		if (*tmp != 32)
 			num_verts += 6;
 
-	RgVertex *vertices = RT_AllocScratchMemoryNulled (num_verts * sizeof (RgVertex));
+	QrVertex *vertices = RT_AllocScratchMemoryNulled (num_verts * sizeof (QrVertex));
 
 	for (i = 0; *str != 0; ++str)
 	{
@@ -583,7 +583,7 @@ void Draw_StringScaled (cb_context_t *cbx, int x, int y, const char *str, float 
 		x += (int)step;
 	}
 
-	RgFloat4D use_color;
+	QrFloat4D use_color;
 	if (color != NULL)
 		use_color = *color;
 	else
@@ -594,22 +594,22 @@ void Draw_StringScaled (cb_context_t *cbx, int x, int y, const char *str, float 
 		use_color.data[3] = 1.0f;
 	}
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
 		.vertexCount = num_verts,
 		.pVertices = vertices,
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = use_color,
-		.material = char_texture ? char_texture->rtmaterial : RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
+		.material = char_texture ? char_texture->rtmaterial : QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
 		.blendFuncSrc = 0,
 		.blendFuncDst = 0,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
+	QR_CHECK (r);
 }
 
 /*
@@ -635,9 +635,9 @@ void Draw_Pic (cb_context_t *cbx, int x, int y, qpic_t *pic, float alpha, qboole
 		Scrap_Upload ();
 	memcpy (&gl, pic->data, sizeof (glpic_t));
 
-	RgVertex vertices[6];
+	QrVertex vertices[6];
 	{
-		RgVertex corner_verts[4] = {0};
+		QrVertex corner_verts[4] = {0};
 
 		corner_verts[0].position[0] = x;
 		corner_verts[0].position[1] = y;
@@ -675,22 +675,22 @@ void Draw_Pic (cb_context_t *cbx, int x, int y, qpic_t *pic, float alpha, qboole
 		vertices[5] = corner_verts[0];
 	}
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
 		.vertexCount = countof (vertices),
 		.pVertices = vertices,
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = {1.0f, 1.0f, 1.0f, alpha},
-		.material = gl.gltexture ? gl.gltexture->rtmaterial : RG_NO_MATERIAL,
-		.pipelineState = alpha_blend ? RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
-		.blendFuncSrc = alpha_blend ? RG_BLEND_FACTOR_SRC_ALPHA : 0,
-		.blendFuncDst = alpha_blend ? RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : 0,
+		.material = gl.gltexture ? gl.gltexture->rtmaterial : QR_NO_MATERIAL,
+		.pipelineState = alpha_blend ? QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
+		.blendFuncSrc = alpha_blend ? QR_BLEND_FACTOR_SRC_ALPHA : 0,
+		.blendFuncDst = alpha_blend ? QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : 0,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
+	QR_CHECK (r);
 }
 
 void Draw_SubPic (cb_context_t *cbx, float x, float y, float w, float h, qpic_t *pic, float s1, float t1, float s2, float t2, float *rgb, float alpha)
@@ -709,9 +709,9 @@ void Draw_SubPic (cb_context_t *cbx, float x, float y, float w, float h, qpic_t 
 	if (!gl.gltexture)
 		return;
 
-	RgVertex vertices[6];
+	QrVertex vertices[6];
 	{
-		RgVertex corner_verts[4] = {0};
+		QrVertex corner_verts[4] = {0};
 
 		corner_verts[0].position[0] = x;
 		corner_verts[0].position[1] = y;
@@ -749,22 +749,22 @@ void Draw_SubPic (cb_context_t *cbx, float x, float y, float w, float h, qpic_t 
 	    vertices[5] = corner_verts[0];
 	}
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
 		.vertexCount = countof (vertices),
 		.pVertices = vertices,
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = {rgb[0], rgb[1], rgb[2], alpha},
-		.material = gl.gltexture ? gl.gltexture->rtmaterial : RG_NO_MATERIAL,
-		.pipelineState = alpha_blend ? RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
-		.blendFuncSrc = alpha_blend ? RG_BLEND_FACTOR_SRC_ALPHA : 0,
-		.blendFuncDst = alpha_blend ? RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : 0,
+		.material = gl.gltexture ? gl.gltexture->rtmaterial : QR_NO_MATERIAL,
+		.pipelineState = alpha_blend ? QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
+		.blendFuncSrc = alpha_blend ? QR_BLEND_FACTOR_SRC_ALPHA : 0,
+		.blendFuncDst = alpha_blend ? QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : 0,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
+	QR_CHECK (r);
 }
 
 /*
@@ -829,9 +829,9 @@ void Draw_TileClear (cb_context_t *cbx, int x, int y, int w, int h)
 	memcpy (&gl, draw_backtile->data, sizeof (glpic_t));
 
 
-	RgVertex vertices[6];
+	QrVertex vertices[6];
 	{
-		RgVertex corner_verts[4] = {0};
+		QrVertex corner_verts[4] = {0};
 
 		corner_verts[0].position[0] = x;
 		corner_verts[0].position[1] = y;
@@ -869,22 +869,22 @@ void Draw_TileClear (cb_context_t *cbx, int x, int y, int w, int h)
 		vertices[5] = corner_verts[0];
 	}
 	
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
 		.vertexCount = countof (vertices),
 		.pVertices = vertices,
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
-		.material = gl.gltexture ? gl.gltexture->rtmaterial : RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE,
-		.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA,
-		.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.material = gl.gltexture ? gl.gltexture->rtmaterial : QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE,
+		.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
+		.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
+	QR_CHECK (r);
 }
 
 /*
@@ -898,9 +898,9 @@ void Draw_Fill (cb_context_t *cbx, int x, int y, int w, int h, int c, float alph
 {
 	byte *pal = (byte *)d_8to24table; // johnfitz -- use d_8to24table instead of host_basepal
 
-	RgVertex vertices[6];
+	QrVertex vertices[6];
 	{
-		RgVertex corner_verts[4] = {0};
+		QrVertex corner_verts[4] = {0};
 
 		corner_verts[0].position[0] = x;
 		corner_verts[0].position[1] = y;
@@ -926,8 +926,8 @@ void Draw_Fill (cb_context_t *cbx, int x, int y, int w, int h, int c, float alph
 		vertices[5] = corner_verts[0];
 	}
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
 		.vertexCount = countof (vertices),
 		.pVertices = vertices,
 		.indexCount = 0,
@@ -940,14 +940,14 @@ void Draw_Fill (cb_context_t *cbx, int x, int y, int w, int h, int c, float alph
 				pal[c * 4 + 2] / 255.0f,
 				alpha,
 			},
-		.material = RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE,
-		.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA,
-		.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.material = QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE,
+		.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
+		.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
+	QR_CHECK (r);
 }
 
 /*
@@ -961,9 +961,9 @@ void Draw_FadeScreen (cb_context_t *cbx)
 
 	GL_SetCanvas (cbx, CANVAS_DEFAULT);
 
-	RgVertex vertices[6];
+	QrVertex vertices[6];
 	{
-		RgVertex corner_verts[4] = {0};
+		QrVertex corner_verts[4] = {0};
 
 		corner_verts[0].position[0] = 0.0f;
 		corner_verts[0].position[1] = 0.0f;
@@ -989,22 +989,22 @@ void Draw_FadeScreen (cb_context_t *cbx)
 		vertices[5] = corner_verts[0];
 	}
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
 		.vertexCount = countof (vertices),
 		.pVertices = vertices,
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = {0.0f, 0.0f, 0.0f, alpha},
-		.material = RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE,
-		.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA,
-		.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.material = QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE,
+		.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
+		.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
+	QR_CHECK (r);
 }
 
 /*
@@ -1046,7 +1046,7 @@ GL_Viewport
 */
 void GL_Viewport (cb_context_t *cbx, float x, float y, float width, float height, float min_depth, float max_depth)
 {
-	RgViewport viewport;
+	QrViewport viewport;
 	viewport.x = x;
 	viewport.y = (float)vid.height - (y + height);
 	viewport.width = width;

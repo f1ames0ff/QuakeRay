@@ -30,6 +30,27 @@
 ### Added
 - **The smoke of rockets, lava balls and grenades is drawn by a shader now.** Instead of the flat, unlit sprites of the classic trail it is a cloud of soft puffs that the light of the room falls on the way it falls on the walls: dark in a dark corridor, warm next to a torch. It is on by default. Video Options → "Smoke type" switches it between `shader` and the `classic` particles, and the same can be done from the console with `r_smoke` (`1` = shader, `0` = classic).
 
+### Changed
+- **The renderer is renamed from `vkpt` to `qray`** — the vendored renderer no longer carries the upstream name in its folder, namespace, API prefix or build target. Nothing functional changed; every token moved together, so a patch written against the old names has to apply this mapping:
+
+  | Old | New |
+  |---|---|
+  | `vkpt/` (the folder) | `renderer/` |
+  | CMake target `vkpt`; variables `vkpt_*` | `renderer`; `renderer_*` |
+  | `renderer/Include/vkpt/vkpt.h`, included as `<vkpt/vkpt.h>` | `renderer/Include/qray/qray.h`, included as `<qray/qray.h>` |
+  | `renderer/Source/vkpt.cpp` | `renderer/Source/qray.cpp` |
+  | `renderer/Source/RgException.{h,cpp}` | `renderer/Source/QrException.{h,cpp}` |
+  | C++ namespace `vkpt` / `vkpt::X` | `qray` / `qray::X` |
+  | `Rg*` types and enums (`RgInstance`, `RgDrawFrameInfo`, `RgResult`, …) | `Qr*` (`QrInstance`, `QrDrawFrameInfo`, `QrResult`, …) |
+  | `rg*` functions and callbacks (`rgCreateInstance`, `rgDrawFrame`, `PFN_rgPrint`, …) | `qr*` (`qrCreateInstance`, `qrDrawFrame`, `PFN_qrPrint`, …) |
+  | `RG_*` macros (`RG_SUCCESS`, `RG_STATIC`, `RG_USE_SURFACE_WIN32`, …) | `QR_*` (`QR_SUCCESS`, `QR_STATIC`, `QR_USE_SURFACE_WIN32`, …) |
+  | `RGAPI` / `RGCONV` | `QRAPI` / `QRCONV` |
+  | `RG_RTGL_VERSION_API` (the API-version macro) | `QR_API_VERSION` |
+  | `Quake/gl_vidsdl.c`: `UpscaleCvarsToRtgl` / `ResolutionToRtgl` | `UpscaleCvarsToQray` / `ResolutionToQray` |
+  | the renderer dev-config default file `vkpt.txt` | `qray.txt` |
+
+  The value of the version macro is unchanged (`"1.03.0000"`): it is passed to DLSS as the custom engine type, and NGX keeps its per-application persistence keyed by that string, so the string must not move together with the name.
+
 ## v0.13.0
 
 ### Added

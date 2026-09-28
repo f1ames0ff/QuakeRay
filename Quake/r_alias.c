@@ -67,7 +67,7 @@ typedef struct
     unsigned int flags;
 } aliasubo_t;
 
-static const RgVertex* GetModelVerticesForPose(const qmodel_t* m, const aliashdr_t* hdr, int pose)
+static const QrVertex* GetModelVerticesForPose(const qmodel_t* m, const aliashdr_t* hdr, int pose)
 {
     assert(m != NULL && m->rtvertices != NULL);
 
@@ -96,11 +96,11 @@ static void LerpPosition(float* dst, const float* src1, const float* src2, float
     }
 }
 
-static const RgVertex*
+static const QrVertex*
 GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, float blend, int cluster)
 {
-    const RgVertex* v_pose1 = GetModelVerticesForPose(m, hdr, pose1);
-    const RgVertex* v_pose2 = GetModelVerticesForPose(m, hdr, pose2);
+    const QrVertex* v_pose1 = GetModelVerticesForPose(m, hdr, pose1);
+    const QrVertex* v_pose2 = GetModelVerticesForPose(m, hdr, pose2);
 
     // we don't care about per-vertex colors with RT
     if (blend < FLT_EPSILON && cluster <= 0)
@@ -108,23 +108,23 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
         return v_pose1;
     }
 
-    static RgVertex* tempstorage = NULL;
+    static QrVertex* tempstorage = NULL;
     static size_t tempstorage_numverts = 0;
     if ((size_t)hdr->numverts_vbo > tempstorage_numverts)
     {
         tempstorage_numverts = GetNextAllocStep(hdr->numverts_vbo);
         Mem_Free(tempstorage);
-        tempstorage = Mem_Alloc(tempstorage_numverts * sizeof(RgVertex));
+        tempstorage = Mem_Alloc(tempstorage_numverts * sizeof(QrVertex));
     }
 
-    memcpy(tempstorage, v_pose1, hdr->numverts_vbo * sizeof(RgVertex));
+    memcpy(tempstorage, v_pose1, hdr->numverts_vbo * sizeof(QrVertex));
 
     for (int i = 0; i < hdr->numverts_vbo; i++)
     {
-        RgVertex* dst = &tempstorage[i];
+        QrVertex* dst = &tempstorage[i];
 
-        const RgVertex* src1 = &v_pose1[i];
-        const RgVertex* src2 = &v_pose2[i];
+        const QrVertex* src1 = &v_pose1[i];
+        const QrVertex* src2 = &v_pose2[i];
 
         LerpPosition(dst->position, src1->position, src2->position, blend);
 
@@ -135,7 +135,7 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
     return tempstorage;
 }
 
-static RgTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpdata_t* lerpdata, qboolean isfirstperson)
+static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpdata_t* lerpdata, qboolean isfirstperson)
 {
     float model_matrix[16];
     IdentityMatrix(model_matrix);
@@ -205,7 +205,7 @@ static void GL_DrawAliasFrame(
        the shared lerp scratch GetPoseVertices hands the geometry uploads: widening the window in
        which those uploads read it would let the parallel entity passes overwrite each other's
        pose. */
-    const RgTransform transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson);
+    const QrTransform transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson);
 
     /* DTAL: the model lights the scene from its own geometry when its material says it is a
        light and carries an emissive mask. The fake dlight stays as the fallback for everything
@@ -228,15 +228,15 @@ static void GL_DrawAliasFrame(
         VectorScale(color, CVAR_TO_FLOAT(rt_dlight_intensity), color);
         RT_FIXUP_LIGHT_INTENSITY(color, true);
 
-        RgSphericalLightUploadInfo light_info = {
+        QrSphericalLightUploadInfo light_info = {
             .uniqueID = RT_GetAliasModelUniqueId(entuniqueid),
             .color = {color[0], color[1], color[2]},
             .position = {lerpdata.origin[0], lerpdata.origin[1], lerpdata.origin[2] + tx->rtupoffset},
             .radius = METRIC_TO_QUAKEUNIT(CVAR_TO_FLOAT (rt_dlight_radius)),
         };
 
-        RgResult r = rgUploadSphericalLight(vulkan_globals.instance, &light_info);
-        RG_CHECK(r);
+        QrResult r = qrUploadSphericalLight(vulkan_globals.instance, &light_info);
+        QR_CHECK(r);
 
         vec3_t lightorigin;
         VectorCopy(lerpdata.origin, lightorigin);
@@ -258,27 +258,27 @@ if
         return;
     }
 
-    RgRasterizedGeometryUploadInfo info = {
-        .renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+    QrRasterizedGeometryUploadInfo info = {
+        .renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
         .vertexCount = paliashdr->numverts_vbo,
         .pVertices = GetPoseVertices(e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster),
         .indexCount = paliashdr->numindexes,
         .pIndices = e->model->rtindices,
         .transform = transform,
         .color = RT_COLOR_WHITE,
-        .material = tx ? tx->rtmaterial : RG_NO_MATERIAL,
-        .pipelineState = RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | RG_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
+        .material = tx ? tx->rtmaterial : QR_NO_MATERIAL,
+        .pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
         .blendFuncSrc = 0,
         .blendFuncDst = 0,
     };
 
     if (alphatest)
     {
-        info.pipelineState |= RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
+        info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
     }
 
-    RgResult r = rgUploadRasterizedGeometry(vulkan_globals.instance, &info, NULL, NULL);
-    RG_CHECK(r);
+    QrResult r = qrUploadRasterizedGeometry(vulkan_globals.instance, &info, NULL, NULL);
+    QR_CHECK(r);
 }
 
 else
@@ -286,38 +286,38 @@ else
 		qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
 		qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
-		RgGeometryUploadInfo info = {
+		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetAliasModelUniqueId (entuniqueid),
 			.flags =
-			    (is_invis ? RG_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
-			    ((tx && tx->rtalphatest) ? RG_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
-			    (exact_normals ? RG_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT ),
-			.geomType = RG_GEOMETRY_TYPE_DYNAMIC,
+			    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
+			    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT ),
+			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType =
-			    is_invis ? RG_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+			    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 			    // MF_HOLEY models (index 255 = transparent) must keep their alpha in the
 			    // traced path too, where the alpha test runs in the any-hit shader.
-			    alphatest ? RG_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
-		        RG_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
+			    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
+		        QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
 			.visibilityType =
-			    isfirstperson ? RG_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON :
-		        isviewer ? RG_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON_VIEWER :
-		        RG_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
+			    isfirstperson ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON :
+		        isviewer ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON_VIEWER :
+		        QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
 			.vertexCount = paliashdr->numverts_vbo,
 			.pVertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster),
 			.indexCount = paliashdr->numindexes,
 			.pIndices = e->model->rtindices,
 			.layerColors = {RT_COLOR_WHITE},
-			.layerBlendingTypes = {RG_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
-			.geomMaterial = {tx ? tx->rtmaterial : RG_NO_MATERIAL},
+			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
+			.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
 			.defaultRoughness = CVAR_TO_FLOAT(rt_model_rough),
 			.defaultMetallicity = CVAR_TO_FLOAT(rt_model_metal),
 			.defaultEmission = 0,
 			.transform = transform,
 		};
 
-		RgResult r = rgUploadGeometry (vulkan_globals.instance, &info);
-		RG_CHECK(r);
+		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		QR_CHECK(r);
 	}
 
 Atomic_AddUInt32(&rs_aliaspasses, paliashdr->numtris);
