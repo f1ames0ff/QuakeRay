@@ -88,7 +88,7 @@ static cvar_t                   vid_fullscreen = {"vid_fullscreen", "0", CVAR_AR
 static cvar_t                   vid_width = {"vid_width", "-1", CVAR_ARCHIVE};         // RT: set to "-1", so we have 
 static cvar_t                   vid_height = {"vid_height", "-1", CVAR_ARCHIVE};       //     desktop resolution at the first time
 static cvar_t                   vid_refreshrate = {"vid_refreshrate", "60", CVAR_ARCHIVE};
-cvar_t                          vid_vsync = {"vid_vsync", "0", CVAR_ARCHIVE};
+cvar_t                          vid_vsync = {"vid_vsync", "2", CVAR_ARCHIVE};
 
 int                             vid_display_refresh = 0;
 static cvar_t                   vid_desktopfullscreen = {"vid_desktopfullscreen", "0", CVAR_ARCHIVE}; // QuakeSpasm
