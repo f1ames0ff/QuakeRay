@@ -3105,7 +3105,7 @@ static void QRE_CustomLightsTab (void)
 			{
 			}
 
-			if (QR_GUI_SliderFloat ("light_intensity", &l->intensity, 0.0f, 8.0f, tip))
+			if (QR_GUI_SliderFloat ("light_intensity", &l->intensity, 0.0f, 100.0f, tip))
 			{
 			}
 
@@ -3393,7 +3393,7 @@ static void QRE_BuildLightPanelGUI (void)
 		}
 
 		value = light->has_intensity ? light->intensity : QRE_LightDefaultIntensity (qre.sel_light.kind);
-		if (QR_GUI_SliderFloat ("light_intensity", &value, 0.0f, 8.0f,
+		if (QR_GUI_SliderFloat ("light_intensity", &value, 0.0f, 100.0f,
 		                        "The brightness of the light: a multiplier of its colour."))
 			QRE_LightWrite (light, QRE_LIGHT_F_INTENSITY, value, 0, 0, false);
 		if (QR_GUI_ResetButton ("light_intensity", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_INTENSITY)))
