@@ -3,7 +3,7 @@
 ## v0.19.2
 
 ### Added
-- **Presentation is a mode now, not a switch** — `vid_vsync` carries `0` off, `1` vsync, `2` adaptive or `3` FreeSync; the Video Options entry cycles the list instead of toggling a checkbox, the console prints the mode the swapchain took and the display's refresh rate, and the benchmark report records both. `off` shows a finished frame when it is finished (no tearing, the old `0`), `vsync` waits for the display's interval (`FIFO`, where `1` used to take `FIFO_RELAXED`), and `adaptive` waits as well but lets a late frame tear instead of being shown through the next interval (`FIFO_RELAXED`, what `1` used to mean).
+- **Presentation is a mode now, not a switch** — `vid_vsync` carries `0` off, `1` vsync, `2` adaptive (the default) or `3` FreeSync; the Video Options entry cycles the list instead of toggling a checkbox, the console prints the mode the swapchain took and the display's refresh rate, and the benchmark report records both. `off` shows a finished frame when it is finished (no tearing, the old `0`), `vsync` waits for the display's interval (`FIFO`, where `1` used to take `FIFO_RELAXED`), and `adaptive` waits as well but lets a late frame tear instead of being shown through the next interval (`FIFO_RELAXED`, what `1` used to mean).
 - **FreeSync** — `vid_vsync 3` presents with the plain `FIFO` sync and caps the frame rate three below the display's refresh rate (read on video mode changes), so a variable-refresh panel follows the game instead of showing a frame for 2 or 3 of its intervals apiece — the "60 fps that looks like 30" of a fixed 165 Hz panel, which shows a 78 fps game no better than it shows a 30 fps one.
 
 ## v0.19.1
