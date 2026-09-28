@@ -2999,6 +2999,14 @@ static void QRE_LightGlobalTab (void)
 		default:
 			break;
 		}
+
+		{
+			const qboolean changed = qre_globals_snapshot_set[i] &&
+			                         strcmp (var->string ? var->string : "", qre_globals_snapshot[i]) != 0;
+
+			if (QR_GUI_ResetButton (g->name, changed))
+				Cvar_Set (g->name, qre_globals_snapshot[i]);
+		}
 	}
 
 	// The level's fog itself: the colour and the density are map data, not cvars,
@@ -3015,8 +3023,20 @@ static void QRE_LightGlobalTab (void)
 
 		if (QR_GUI_ColorHex ("fog_color", color, &en, "The colour of the level's fog."))
 			changed = true;
+		if (QR_GUI_ResetButton ("fog_color", color[0] != qre.snap_fog_color[0] ||
+		                                        color[1] != qre.snap_fog_color[1] ||
+		                                        color[2] != qre.snap_fog_color[2]))
+		{
+			VectorCopy (qre.snap_fog_color, color);
+			changed = true;
+		}
 		if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
 			changed = true;
+		if (QR_GUI_ResetButton ("fog_density", density != qre.snap_fog_density))
+		{
+			density = qre.snap_fog_density;
+			changed = true;
+		}
 
 		if (changed)
 			Cbuf_AddText (va ("fog %f %f %f %f\n", density,
@@ -3053,6 +3073,76 @@ static void QRE_SelectCustomLight (int index)
 	VectorCopy (lights[index].color, qre.sel_light.color);
 }
 
+enum
+{
+	QRE_CUSTOM_F_RADIUS = 0,
+	QRE_CUSTOM_F_INTENSITY,
+	QRE_CUSTOM_F_ORIGIN,
+	QRE_CUSTOM_F_OFFSET,
+	QRE_CUSTOM_F_COLOR,
+	QRE_CUSTOM_F_STYLE,
+	QRE_CUSTOM_F_SPOT,
+	QRE_CUSTOM_F_DIR,
+	QRE_CUSTOM_F_ANGLE_INNER,
+	QRE_CUSTOM_F_ANGLE_OUTER,
+};
+
+static qboolean QRE_CustomOriginal (int index, rt_custom_light_t *out)
+{
+	if (index >= 0 && index < qre.snap_custom_count)
+	{
+		*out = qre.snap_custom[index];
+		return true;
+	}
+
+	memset (out, 0, sizeof (*out));
+	out->radius = RT_CUSTOM_RADIUS_DEFAULT;
+	out->intensity = RT_CUSTOM_INTENSITY_DEFAULT;
+	out->color[0] = out->color[1] = out->color[2] = 1.0f;
+	out->angle_outer = 30.0f;
+	return false;
+}
+
+static qboolean QRE_CustomFieldChanged (const rt_custom_light_t *l, const rt_custom_light_t *orig, int field)
+{
+	switch (field)
+	{
+	case QRE_CUSTOM_F_RADIUS:    return l->radius != orig->radius;
+	case QRE_CUSTOM_F_INTENSITY: return l->intensity != orig->intensity;
+	case QRE_CUSTOM_F_ORIGIN:    return memcmp (l->origin, orig->origin, sizeof (l->origin)) != 0;
+	case QRE_CUSTOM_F_OFFSET:    return l->has_offset != orig->has_offset ||
+		                                (l->has_offset && memcmp (l->offset, orig->offset, sizeof (l->offset)) != 0);
+	case QRE_CUSTOM_F_COLOR:     return memcmp (l->color, orig->color, sizeof (l->color)) != 0;
+	case QRE_CUSTOM_F_STYLE:     return l->style != orig->style;
+	case QRE_CUSTOM_F_SPOT:      return l->spot != orig->spot;
+	case QRE_CUSTOM_F_DIR:       return memcmp (l->dir, orig->dir, sizeof (l->dir)) != 0;
+	case QRE_CUSTOM_F_ANGLE_INNER: return l->angle_inner != orig->angle_inner;
+	case QRE_CUSTOM_F_ANGLE_OUTER: return l->angle_outer != orig->angle_outer;
+	default: return false;
+	}
+}
+
+static void QRE_CustomResetField (rt_custom_light_t *l, const rt_custom_light_t *orig, int field)
+{
+	switch (field)
+	{
+	case QRE_CUSTOM_F_RADIUS:    l->radius = orig->radius; break;
+	case QRE_CUSTOM_F_INTENSITY: l->intensity = orig->intensity; break;
+	case QRE_CUSTOM_F_ORIGIN:    VectorCopy (orig->origin, l->origin); break;
+	case QRE_CUSTOM_F_OFFSET:
+		l->has_offset = orig->has_offset;
+		VectorCopy (orig->offset, l->offset);
+		break;
+	case QRE_CUSTOM_F_COLOR:     VectorCopy (orig->color, l->color); break;
+	case QRE_CUSTOM_F_STYLE:     l->style = orig->style; break;
+	case QRE_CUSTOM_F_SPOT:      l->spot = orig->spot; break;
+	case QRE_CUSTOM_F_DIR:       VectorCopy (orig->dir, l->dir); break;
+	case QRE_CUSTOM_F_ANGLE_INNER: l->angle_inner = orig->angle_inner; break;
+	case QRE_CUSTOM_F_ANGLE_OUTER: l->angle_outer = orig->angle_outer; break;
+	default: break;
+	}
+}
+
 static void QRE_CustomLightsTab (void)
 {
 	int                count = 0;
@@ -3079,12 +3169,16 @@ static void QRE_CustomLightsTab (void)
 	for (i = 0; i < count; i++)
 	{
 		rt_custom_light_t *l = &lights[i];
+		rt_custom_light_t  orig;
+		qboolean           has_orig;
 		char               label[48];
 		int                style = CLAMP (0, l->style, RT_CUSTOM_STYLE_COUNT - 1);
 		int                selected = (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM &&
 		                               qre.sel_light.uniqueID == (uint64_t)UINT32_MAX + 1 + (uint64_t)i);
 		float              rgb[3];
 		int                en = 1;
+
+		has_orig = QRE_CustomOriginal (i, &orig);
 
 		q_snprintf (label, sizeof (label), "Light %d", i + 1);
 		QR_GUI_PushID (label);
@@ -3104,14 +3198,20 @@ static void QRE_CustomLightsTab (void)
 			                        "The size of the light, in rt_dlight_radius units."))
 			{
 			}
+			if (QR_GUI_ResetButton ("light_radius", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_RADIUS)))
+				QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_RADIUS);
 
 			if (QR_GUI_SliderFloat ("light_intensity", &l->intensity, 0.0f, 100.0f, tip))
 			{
 			}
+			if (QR_GUI_ResetButton ("light_intensity", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_INTENSITY)))
+				QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_INTENSITY);
 
 			if (QR_GUI_Vec3Input ("origin", l->origin, -32768.0f, 32768.0f, "Where the light is, in Quake units."))
 			{
 			}
+			if (QR_GUI_ResetButton ("origin", has_orig && QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_ORIGIN)))
+				QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_ORIGIN);
 
 			offs[0] = l->offset[0];
 			offs[1] = l->offset[1];
@@ -3123,6 +3223,8 @@ static void QRE_CustomLightsTab (void)
 				l->offset[1] = offs[1];
 				l->offset[2] = offs[2];
 			}
+			if (QR_GUI_ResetButton ("light_offset", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_OFFSET)))
+				QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_OFFSET);
 
 			rgb[0] = l->color[0];
 			rgb[1] = l->color[1];
@@ -3133,12 +3235,16 @@ static void QRE_CustomLightsTab (void)
 				l->color[1] = rgb[1];
 				l->color[2] = rgb[2];
 			}
+			if (QR_GUI_ResetButton ("light_color", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_COLOR)))
+				QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_COLOR);
 
 			if (QR_GUI_Combo ("light_style", &style, rt_custom_style_names, RT_CUSTOM_STYLE_COUNT,
 			                  "The light style the light flickers with, like the map's own lights (steady, candle, ...)."))
 			{
 				l->style = style;
 			}
+			if (QR_GUI_ResetButton ("light_style", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_STYLE)))
+				QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_STYLE);
 
 			{
 				int spot = l->spot ? 1 : 0;
@@ -3149,6 +3255,8 @@ static void QRE_CustomLightsTab (void)
 					l->spot = spot ? true : false;
 				}
 			}
+			if (QR_GUI_ResetButton ("light_spot", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_SPOT)))
+				QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_SPOT);
 
 			if (l->spot)
 			{
@@ -3156,16 +3264,22 @@ static void QRE_CustomLightsTab (void)
 				                      "The axis of the cone, X Y Z (normalized when uploaded)."))
 				{
 				}
+				if (QR_GUI_ResetButton ("light_dir", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_DIR)))
+					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_DIR);
 
 				if (QR_GUI_SliderFloat ("light_angle_inner", &l->angle_inner, 0.0f, 90.0f,
 				                        "The cone's full-intensity core, in degrees."))
 				{
 				}
+				if (QR_GUI_ResetButton ("light_angle_inner", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_ANGLE_INNER)))
+					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_ANGLE_INNER);
 
 				if (QR_GUI_SliderFloat ("light_angle_outer", &l->angle_outer, 0.0f, 90.0f,
 				                        "Where the cone falls to nothing, in degrees."))
 				{
 				}
+				if (QR_GUI_ResetButton ("light_angle_outer", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_ANGLE_OUTER)))
+					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_ANGLE_OUTER);
 			}
 
 			if (QR_GUI_Button ("Duplicate"))
