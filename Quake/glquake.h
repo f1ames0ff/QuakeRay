@@ -641,6 +641,7 @@ void RT_DtalRebuild_f (void);
 
 RgTransform RT_GetModelTransform (const float model_matrix[16]);
 RgTransform RT_GetBrushModelMatrix (entity_t *e);
+void      RT_RecollectWorldEmissiveLights (void);
 
 RgFloat3D RT_AnglesToDir (/* const */ vec3_t angles);
 float     RT_Luminance (const vec3_t color);

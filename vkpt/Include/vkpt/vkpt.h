@@ -1029,6 +1029,11 @@ RGAPI RgResult RGCONV rgUpdateMaterialContents(
     RgInstance                          rgInstance,
     const RgMaterialUpdateInfo          *pUpdateInfo);
 
+RGAPI RgResult RGCONV rgCanUpdateMaterialContents(
+    RgInstance                          rgInstance,
+    RgMaterial                          material,
+    RgExtent2D                          size);
+
 // Destroying RG_NO_MATERIAL has no effect.
 RGAPI RgResult RGCONV rgDestroyMaterial(
     RgInstance                          rgInstance,

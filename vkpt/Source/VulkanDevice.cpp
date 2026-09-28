@@ -2249,6 +2249,11 @@ void VulkanDevice::UpdateMaterial(const RgMaterialUpdateInfo *updateInfo)
         currentFrameState.GetCmdBufferForMaterials(cmdManager), currentFrameState.GetFrameIndex(), *updateInfo);
 }
 
+bool VulkanDevice::CanUpdateMaterialContents(RgMaterial material, RgExtent2D size) const
+{
+    return textureManager->CanUpdateMaterialContents(material, size);
+}
+
 void VulkanDevice::DestroyMaterial(RgMaterial material)
 {
     textureManager->DestroyMaterial(currentFrameState.GetFrameIndex(), material);

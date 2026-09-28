@@ -112,6 +112,8 @@ extern gltexture_t *greytexture;
    cache of an alias model is rebuilt when the revision moved (see RT_AddAliasEmissiveLights). */
 extern atomic_uint32_t rt_material_revision;
 
+extern qboolean texmgr_live_material_replaced;
+
 extern unsigned int d_8to24table[256];
 extern unsigned int d_8to24table_fbright[256];
 #if !RT_RENDERER
@@ -147,7 +149,7 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 int TexMgr_CollectGroupNames (const char *texname, char (*names)[MAX_QPATH], int max);
 // Re-synthesizes the textures a material resolves to, so the editor's changes
 // become visible without a map reload. Returns the number of reloaded textures.
-int TexMgr_ReloadImagesForMaterial (const char *materialName);
+int TexMgr_ReloadImagesForMaterial (const char *materialName, qboolean recreate);
 // The same by texture name: for the names a material resolves to when no material
 // does any more (Cancel/Exit drop a material the editor had created).
 int TexMgr_ReloadImagesForTextureName (const char *texname);

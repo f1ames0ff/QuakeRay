@@ -33,6 +33,7 @@ task_handle_t rt_editor_draw_done_task = INVALID_TASK_HANDLE;
 int r_visframecount; // bumped when going to a new PVS
 int r_framecount;    // used for dlight push checking
 atomic_uint32_t rt_require_static_submit;
+atomic_uint32_t rt_require_world_light_recollect;
 
 mplane_t frustum[4];
 
@@ -1050,8 +1051,20 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
-	if (!Atomic_LoadUInt32 (&rt_require_static_submit))
+	const qboolean static_submit = Atomic_LoadUInt32 (&rt_require_static_submit) != 0;
+	const qboolean light_recollect = Atomic_LoadUInt32 (&rt_require_world_light_recollect) != 0;
+
+	if (!static_submit && !light_recollect)
 	{
+		RT_Prof_End (RT_PROF_WORLD, prof_start);
+		return;
+	}
+
+	if (!static_submit)
+	{
+		Atomic_StoreUInt32 (&rt_require_world_light_recollect, false);
+		RT_RecollectWorldEmissiveLights ();
+
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1070,6 +1083,7 @@ void R_DrawWorldTask (void *unused)
 	RG_CHECK (r);
 
 	Atomic_StoreUInt32 (&rt_require_static_submit, false);
+	Atomic_StoreUInt32 (&rt_require_world_light_recollect, false);
 
 	RT_Prof_End (RT_PROF_WORLD, prof_start);
 }

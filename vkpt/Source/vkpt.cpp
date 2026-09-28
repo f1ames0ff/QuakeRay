@@ -291,6 +291,17 @@ RgResult rgUpdateMaterialContents(RgInstance rgInstance, const RgMaterialUpdateI
     return Call(rgInstance, &VulkanDevice::UpdateMaterial, pUpdateInfo);
 }
 
+RgResult rgCanUpdateMaterialContents(RgInstance rgInstance, RgMaterial material, RgExtent2D size)
+{
+    if (material == RG_NO_MATERIAL)
+    {
+        return RG_WRONG_ARGUMENT;
+    }
+
+    return Call(rgInstance, &VulkanDevice::CanUpdateMaterialContents, material, size) ? RG_SUCCESS
+                                                                                     : RG_CANT_UPDATE_MATERIAL;
+}
+
 RgResult rgDestroyMaterial(RgInstance rgInstance, RgMaterial material)
 {
     return Call(rgInstance, &VulkanDevice::DestroyMaterial, material);

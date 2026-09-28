@@ -144,6 +144,7 @@ public:
     void CreateAnimatedMaterial(const RgAnimatedMaterialCreateInfo *pCreateInfo, RgMaterial *pResult);
     void ChangeAnimatedMaterialFrame(RgMaterial animatedMaterial, uint32_t frameIndex);
     void UpdateMaterial(const RgMaterialUpdateInfo *pUpdateInfo);
+    bool CanUpdateMaterialContents(RgMaterial material, RgExtent2D size) const;
     void DestroyMaterial(RgMaterial material);
 
     void CreateSkyboxCubemap(const RgCubemapCreateInfo *pCreateInfo, RgCubemap *pResult);

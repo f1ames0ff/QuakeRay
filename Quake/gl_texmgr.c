@@ -80,6 +80,10 @@ unsigned int d_8to24table_pants[256];
 SDL_mutex *texmgr_mutex;
 
 
+static qboolean texmgr_live_reload = false;
+static qboolean texmgr_live_recreate = false;
+qboolean texmgr_live_material_replaced = false;
+
 static RgMaterialCreateFlags TexMgr_GetRtFlags (gltexture_t *glt)
 {
 	RgMaterialCreateFlags fs = 0;
@@ -96,6 +100,18 @@ static RgMaterialCreateFlags TexMgr_GetRtFlags (gltexture_t *glt)
 	}
 
 	if (glt->source_format == SRC_LIGHTMAP)
+	{
+		fs |= RG_MATERIAL_CREATE_UPDATEABLE_BIT;
+	}
+
+	return fs;
+}
+
+static RgMaterialCreateFlags TexMgr_GetRtCreateFlags (gltexture_t *glt)
+{
+	RgMaterialCreateFlags fs = TexMgr_GetRtFlags (glt);
+
+	if (texmgr_live_reload)
 	{
 		fs |= RG_MATERIAL_CREATE_UPDATEABLE_BIT;
 	}
@@ -1060,7 +1076,7 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 
 
 	RgMaterialCreateInfo info = {
-		.flags = TexMgr_GetRtFlags (glt),
+		.flags = TexMgr_GetRtCreateFlags (glt),
 		.size = {glt->width, glt->height},
 		.textures =
 			{
@@ -1076,10 +1092,13 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 
 	if (!rtspecial_started)
 	{
-		SDL_LockMutex (rtspecial_mutex);
-	    RgResult r = rgCreateMaterial (vulkan_globals.instance, &info, &glt->rtmaterial);
-	    RG_CHECK (r);
-		SDL_UnlockMutex (rtspecial_mutex);
+		if (!texmgr_live_reload || glt->rtmaterial == RG_NULL_HANDLE)
+		{
+			SDL_LockMutex (rtspecial_mutex);
+			RgResult r = rgCreateMaterial (vulkan_globals.instance, &info, &glt->rtmaterial);
+			RG_CHECK (r);
+			SDL_UnlockMutex (rtspecial_mutex);
+		}
 	}
 	else
 	{
@@ -1671,8 +1690,42 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			q_strlcpy (texmgr_dumped[texmgr_dumped_count++], mat->name, MAX_QPATH);
 	}
 
+	RgMaterial oldMaterial = glt->rtmaterial;
+	RgMaterial newMaterial = RG_NULL_HANDLE;
+
+	if (texmgr_live_reload && !texmgr_live_recreate && oldMaterial != RG_NULL_HANDLE)
+	{
+		const RgExtent2D updateSize = {(uint32_t)tw, (uint32_t)th};
+
+		if (rgCanUpdateMaterialContents (vulkan_globals.instance, oldMaterial, updateSize) == RG_SUCCESS)
+		{
+			RgMaterialUpdateInfo update = {
+				.target = oldMaterial,
+				.textures =
+					{
+						.pDataAlbedoAlpha = albedo,
+						.pDataRoughnessMetallicEmission = rme,
+						.pDataNormal = normal,
+					},
+			};
+
+			SDL_LockMutex (rtspecial_mutex);
+			RgResult ur = rgUpdateMaterialContents (vulkan_globals.instance, &update);
+			SDL_UnlockMutex (rtspecial_mutex);
+
+			if (ur == RG_SUCCESS)
+			{
+				Mem_Free (albedo);
+				Mem_Free (rme);
+				Mem_Free (normal);
+
+				return true;
+			}
+		}
+	}
+
 	RgMaterialCreateInfo info = {
-		.flags = TexMgr_GetRtFlags (glt),
+		.flags = TexMgr_GetRtCreateFlags (glt),
 		.size = {tw, th},
 		.textures =
 			{
@@ -1686,8 +1739,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		.addressModeV = RG_SAMPLER_ADDRESS_MODE_REPEAT,
 	};
 
-	RgMaterial oldMaterial = glt->rtmaterial;
-	RgMaterial newMaterial = RG_NULL_HANDLE;
 	SDL_LockMutex (rtspecial_mutex);
 	RgResult r = rgCreateMaterial (vulkan_globals.instance, &info, &newMaterial);
 	if (oldMaterial)
@@ -1696,6 +1747,9 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	RG_CHECK (r);
 
 	glt->rtmaterial = newMaterial;
+
+	if (texmgr_live_reload && oldMaterial != RG_NULL_HANDLE && newMaterial != oldMaterial)
+		texmgr_live_material_replaced = true;
 
 	Mem_Free (albedo);
 	Mem_Free (rme);
@@ -2392,7 +2446,7 @@ a parameter change; the two-pass glow/luma sidecar of each base texture is reloa
 together with it, exactly as a full reload would.
 ================
 */
-int TexMgr_ReloadImagesForMaterial (const char *materialName)
+int TexMgr_ReloadImagesForMaterial (const char *materialName, qboolean recreate)
 {
 	gltexture_t *glt;
 	int          count = 0;
@@ -2403,6 +2457,11 @@ int TexMgr_ReloadImagesForMaterial (const char *materialName)
 	if (CVAR_TO_BOOL (qr_material_editor_debug))
 		Con_Printf ("qr editor: reload material '%s'\n", materialName);
 	texmgr_dumping_reload = true;
+
+	const qboolean prev_live = texmgr_live_reload;
+	const qboolean prev_recreate = texmgr_live_recreate;
+	texmgr_live_reload = true;
+	texmgr_live_recreate = recreate;
 
 	for (glt = active_gltextures; glt; glt = glt->next)
 	{
@@ -2420,6 +2479,8 @@ int TexMgr_ReloadImagesForMaterial (const char *materialName)
 		count++;
 	}
 
+	texmgr_live_reload = prev_live;
+	texmgr_live_recreate = prev_recreate;
 	texmgr_dumping_reload = false;
 
 	return count;
@@ -2489,7 +2550,7 @@ static void GL_DeleteTexture (gltexture_t *texture)
 {
 	SDL_LockMutex (texmgr_mutex);
 
-	if (texture->rtmaterial != RG_NO_MATERIAL)
+	if (texture->rtmaterial != RG_NO_MATERIAL && !texmgr_live_reload)
 	{
 		SDL_LockMutex (rtspecial_mutex);
 		RgResult r = rgDestroyMaterial (vulkan_globals.instance, texture->rtmaterial);

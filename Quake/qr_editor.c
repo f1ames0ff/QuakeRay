@@ -66,6 +66,8 @@ extern vec3_t     vpn, vright, vup, r_origin; // gl_rmain.c
 extern qboolean   keydown[MAX_KEYS];          // keys.c
 extern kbutton_t  in_forward, in_back, in_moveleft, in_moveright, in_up, in_down; // cl_input.c
 extern atomic_uint32_t rt_require_static_submit; // gl_rmain.c
+extern atomic_uint32_t rt_require_world_light_recollect; // gl_rmain.c
+extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 // The editor edits what the new light system builds (TAL and the fake dlights
 // of materials); the old system has neither, so it refuses to start on it.
 extern cvar_t rt_truelight; // gl_vidsdl.c
@@ -322,10 +324,11 @@ static struct
 	qre_preview_t preview[QRE_PREVIEW_SLOTS];
 
 	// materials waiting for live re-synthesis / all touched this session
-	char dirty[QRE_DIRTY_MAX][MAX_QPATH];
-	int  dirty_count;
-	char touched[QRE_TOUCHED_MAX][MAX_QPATH];
-	int  touched_count;
+	char    dirty[QRE_DIRTY_MAX][MAX_QPATH];
+	qboolean dirty_full[QRE_DIRTY_MAX];
+	int     dirty_count;
+	char    touched[QRE_TOUCHED_MAX][MAX_QPATH];
+	int     touched_count;
 } qre;
 
 // forward declarations (the panel code sits above the apply/save code)
@@ -581,9 +584,10 @@ static void QRE_TouchLight (const char *name)
 		q_strlcpy (qre.light_touched[qre.light_touched_count++], name, MAX_QPATH);
 }
 
-static void QRE_MarkDirty (rt_material_t *m)
+static void QRE_MarkDirtyInternal (rt_material_t *m, qboolean full)
 {
 	static qboolean warned = false;
+	int             i;
 
 	if (!m || !m->name[0])
 		return;
@@ -599,44 +603,81 @@ static void QRE_MarkDirty (rt_material_t *m)
 		}
 	}
 
-	if (!QRE_NameInList (qre.dirty, qre.dirty_count, m->name))
+	for (i = 0; i < qre.dirty_count; i++)
 	{
-		if (qre.dirty_count < QRE_DIRTY_MAX)
-			q_strlcpy (qre.dirty[qre.dirty_count++], m->name, MAX_QPATH);
-		else
+		if (!strcmp (qre.dirty[i], m->name))
 		{
-			warned = true;
-			QRE_Notify ("too many materials edited at once; some will not be previewed");
+			if (full)
+				qre.dirty_full[i] = true;
+			return;
 		}
+	}
+
+	if (qre.dirty_count < QRE_DIRTY_MAX)
+	{
+		q_strlcpy (qre.dirty[qre.dirty_count], m->name, MAX_QPATH);
+		qre.dirty_full[qre.dirty_count] = full;
+		qre.dirty_count++;
+	}
+	else
+	{
+		warned = true;
+		QRE_Notify ("too many materials edited at once; some will not be previewed");
 	}
 }
 
-// Re-synthesizes every dirty material and asks the renderer to re-upload the
-// static world: the material handles changed, and the world bakes their texture
-// indices at upload time. R_DrawWorldTask then re-uploads the world (and
-// re-collects its emissive lights) on the next frame.
+static void QRE_MarkDirty (rt_material_t *m)
+{
+	QRE_MarkDirtyInternal (m, false);
+}
+
+static void QRE_MarkDirtyFull (rt_material_t *m)
+{
+	QRE_MarkDirtyInternal (m, true);
+}
+
 static void QRE_FlushDirty (void)
 {
 	static double last_flush = 0.0;
 	double        now = Sys_DoubleTime ();
+	qboolean      full = false;
+	qboolean      lights = false;
 	int           i;
 
 	if (qre.dirty_count == 0)
 		return;
 
-	// While a widget is being dragged the re-synthesis (and the world upload
-	// behind it) runs per frame; throttle it then, and apply at once when the
-	// drag is over.
 	if (QR_GUI_Ready () && QR_GUI_AnyItemActive () && (now - last_flush) < 0.25)
 		return;
 
 	last_flush = now;
 
-	for (i = 0; i < qre.dirty_count; i++)
-		TexMgr_ReloadImagesForMaterial (qre.dirty[i]);
-	qre.dirty_count = 0;
+	texmgr_live_material_replaced = false;
 
-	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+	for (i = 0; i < qre.dirty_count; i++)
+	{
+		rt_material_t *mat;
+
+		TexMgr_ReloadImagesForMaterial (qre.dirty[i], qre.dirty_full[i]);
+
+		if (qre.dirty_full[i])
+			full = true;
+
+		mat = RT_MAT_Find (qre.dirty[i]);
+		if (mat && mat->is_light)
+			lights = true;
+	}
+
+	if (texmgr_live_material_replaced)
+		full = true;
+
+	qre.dirty_count = 0;
+	memset (qre.dirty_full, 0, sizeof (qre.dirty_full));
+
+	if (full)
+		Atomic_StoreUInt32 (&rt_require_static_submit, true);
+	else if (lights)
+		Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 }
 
 static void QRE_ReapplyTouched (void)
@@ -644,6 +685,7 @@ static void QRE_ReapplyTouched (void)
 	int i;
 
 	qre.dirty_count = 0;
+	memset (qre.dirty_full, 0, sizeof (qre.dirty_full));
 	for (i = 0; i < qre.touched_count; i++)
 	{
 		// by texture name: Cancel/Exit drop a material the editor had created,
@@ -705,7 +747,7 @@ static void QRE_SetColorEnabled (int g, int param, qboolean enabled)
 
 	(void)param;
 	m->has_light_color = enabled;
-	QRE_MarkDirty (m);
+	QRE_MarkDirtyFull (m);
 }
 
 static void QRE_SetColorChannel (int g, int param, int channel, float value)
@@ -716,7 +758,7 @@ static void QRE_SetColorChannel (int g, int param, int channel, float value)
 	(void)param;
 	m->has_light_color = true;
 	m->light_color[channel] = value;
-	QRE_MarkDirty (m);
+	QRE_MarkDirtyFull (m);
 }
 
 static float QRE_GetFloat (const rt_material_t *m, int param)
@@ -781,7 +823,11 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_LUPOFF:   m->light_upoffset = value; break;
 	default:             break;
 	}
-	QRE_MarkDirty (m);
+
+	if (param == PARAM_LBRIGHT)
+		QRE_MarkDirtyFull (m);
+	else
+		QRE_MarkDirty (m);
 }
 
 static void QRE_SetInt (int g, int param, int value)
@@ -811,7 +857,11 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	case PARAM_FRAST:      m->force_rasterize = value; break;
 	default:               break;
 	}
-	QRE_MarkDirty (m);
+
+	if (param == PARAM_ISLIGHT)
+		QRE_MarkDirtyFull (m);
+	else
+		QRE_MarkDirty (m);
 }
 
 static void QRE_SetText (int g, int param, const char *value)
@@ -827,7 +877,7 @@ static void QRE_SetText (int g, int param, const char *value)
 	case PARAM_GLOSS:    q_strlcpy (m->filename_gloss, value, sizeof (m->filename_gloss)); break;
 	default:             break;
 	}
-	QRE_MarkDirty (m);
+	QRE_MarkDirtyFull (m);
 }
 
 // ---------------------------------------------------------------------------

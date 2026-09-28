@@ -3258,6 +3258,18 @@ static void RT_CollectWorldEmissiveLights (void)
 	}
 }
 
+void RT_RecollectWorldEmissiveLights (void)
+{
+	rt_wldlights_emissive_count = 0;
+	rt_wldlights_style_accepted_dirty = true;
+
+	memset (&rt_emis_stats, 0, sizeof (rt_emis_stats));
+	rt_emis_skip_num = 0;
+	RT_EmisWatchFrameEnd ();
+
+	RT_CollectWorldEmissiveLights ();
+}
+
 #define RT_BRUSHCLUSTER_CACHE_SIZE 256
 
 typedef struct
