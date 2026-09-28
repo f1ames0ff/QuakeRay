@@ -270,9 +270,11 @@ static struct
 
 	// the axis gizmo drag of the selected custom light
 	qboolean custom_dragging;
+	qboolean custom_drag_dir;
 	int      custom_drag_axis;
 	int      custom_drag_index;
 	vec3_t   custom_drag_origin;
+	vec3_t   custom_drag_dir_start;
 	float    custom_drag_mouse[2];
 
 	// which of the two editors this is
@@ -1472,13 +1474,95 @@ static float QRE_PixelsPerUnit (float depth)
 
 #define QRE_CUSTOM_GLYPH_SEGS 10
 
+#define QRE_SPOT_CONE_LEN 96.0f
+#define QRE_SPOT_CONE_SEGS 24
+#define QRE_SPOT_CONE_RAYS 6
+
+static void QRE_DrawSpotCone (const vec3_t pos, const vec3_t dir_in, float angle_deg, uint32_t color)
+{
+	const float deg2rad = 3.14159265f / 180.0f;
+	vec3_t      dir, up, side, rim[QRE_SPOT_CONE_SEGS];
+	float       angle, radius, xy[4];
+	int         i, r;
+
+	angle = CLAMP (0.0f, angle_deg * deg2rad, 89.5f * deg2rad);
+	radius = QRE_SPOT_CONE_LEN * tanf (angle);
+
+	VectorCopy (dir_in, dir);
+	VectorNormalize (dir);
+
+	if (fabsf (dir[2]) < 0.9f)
+	{
+		up[0] = up[1] = 0.0f;
+		up[2] = 1.0f;
+	}
+	else
+	{
+		up[0] = 1.0f;
+		up[1] = up[2] = 0.0f;
+	}
+
+	CrossProduct (dir, up, side);
+	VectorNormalize (side);
+	CrossProduct (side, dir, up);
+
+	for (i = 0; i < QRE_SPOT_CONE_SEGS; i++)
+	{
+		const float a = 2.0f * 3.14159265f * (float)i / (float)QRE_SPOT_CONE_SEGS;
+		const float cs = cosf (a), sn = sinf (a);
+		int         j;
+
+		for (j = 0; j < 3; j++)
+		{
+			rim[i][j] = pos[j] + dir[j] * QRE_SPOT_CONE_LEN
+			          + (side[j] * cs + up[j] * sn) * radius;
+		}
+	}
+
+	for (r = 0; r < QRE_SPOT_CONE_RAYS; r++)
+	{
+		const int i0 = r * QRE_SPOT_CONE_SEGS / QRE_SPOT_CONE_RAYS;
+		float     x0, y0, x1, y1;
+
+		if (!QRE_WorldToScreen (pos, &x0, &y0))
+			break;
+		if (!QRE_WorldToScreen (rim[i0], &x1, &y1))
+			continue;
+
+		xy[0] = x0;
+		xy[1] = y0;
+		xy[2] = x1;
+		xy[3] = y1;
+		QR_GUI_DrawPolyline (xy, 2, color, 2.0f);
+	}
+
+	for (i = 0; i < QRE_SPOT_CONE_SEGS; i++)
+	{
+		const int j = (i + 1) % QRE_SPOT_CONE_SEGS;
+		float     x0, y0, x1, y1;
+
+		if (!QRE_WorldToScreen (rim[i], &x0, &y0))
+			continue;
+		if (!QRE_WorldToScreen (rim[j], &x1, &y1))
+			continue;
+
+		xy[0] = x0;
+		xy[1] = y0;
+		xy[2] = x1;
+		xy[3] = y1;
+		QR_GUI_DrawPolyline (xy, 2, color, 2.0f);
+	}
+}
+
 static void QRE_DrawLightWireframes (void)
 {
 	const rt_tracked_light_t *lights;
+	const rt_custom_light_t  *custom;
 	const float               deg2rad = 3.14159265f / 180.0f;
-	int                       count = 0, i;
+	int                       count = 0, custom_count = 0, i;
 
 	lights = RT_TRACK_Lights (&count);
+	custom = RT_CustomLights (&custom_count);
 
 	for (i = 0; i < count; i++)
 	{
@@ -1523,6 +1607,19 @@ static void QRE_DrawLightWireframes (void)
 			}
 
 			QR_GUI_DrawPolyline (xy, QRE_CUSTOM_GLYPH_SEGS + 1, RT_PackColorToUint32 (200, 235, 255, 255), 2.0f);
+
+			{
+				const int ci = (int)(l->uniqueID - ((uint64_t)UINT32_MAX + 1));
+
+				if (ci >= 0 && ci < custom_count && custom[ci].spot &&
+				    (custom[ci].dir[0] != 0.0f || custom[ci].dir[1] != 0.0f || custom[ci].dir[2] != 0.0f))
+				{
+					QRE_DrawSpotCone (l->position, custom[ci].dir, custom[ci].angle_outer,
+					                  RT_PackColorToUint32 (255, 214, 64, 255));
+					QRE_DrawSpotCone (l->position, custom[ci].dir, custom[ci].angle_inner,
+					                  RT_PackColorToUint32 (255, 255, 255, 255));
+				}
+			}
 		}
 	}
 
@@ -3528,38 +3625,35 @@ static void QRE_GizmoOrigin (const rt_custom_light_t *l, vec3_t out)
 		VectorAdd (out, l->offset, out);
 }
 
-static void QRE_DrawGizmoArrows (void)
+#define QRE_SPOT_HANDLE_DIST (QRE_GIZMO_LEN * 2.0f)
+
+static qboolean QRE_SpotDirSet (const rt_custom_light_t *l)
 {
-	int                index = QRE_CustomSelectedIndex ();
-	int                count = 0;
-	rt_custom_light_t *custom;
-	uint32_t           axis_color[3];
-	vec3_t             pos;
-	float              ox, oy;
-	int                a;
+	return (l->spot && (l->dir[0] != 0.0f || l->dir[1] != 0.0f || l->dir[2] != 0.0f)) ? true : false;
+}
 
-	if (index < 0)
-		return;
+static void QRE_SpotHandleBase (const vec3_t dir_in, vec3_t origin, vec3_t out)
+{
+	vec3_t dir;
 
-	custom = RT_CustomLights (&count);
-	if (index >= count)
-		return;
+	VectorCopy (dir_in, dir);
+	VectorNormalize (dir);
+	VectorMA (origin, QRE_SPOT_HANDLE_DIST, dir, out);
+}
 
-	axis_color[0] = RT_PackColorToUint32 (255, 64, 64, 255);
-	axis_color[1] = RT_PackColorToUint32 (64, 255, 64, 255);
-	axis_color[2] = RT_PackColorToUint32 (64, 128, 255, 255);
-
-	QRE_GizmoOrigin (&custom[index], pos);
+static void QRE_DrawGizmoAxisArrows (const vec3_t pos, const uint32_t axis_color[3])
+{
+	vec3_t adir, tup, tip, head;
+	float  ox, oy;
+	int    a, h;
 
 	if (!QRE_WorldToScreen (pos, &ox, &oy))
 		return;
 
 	for (a = 0; a < 3; a++)
 	{
-		vec3_t adir, tup, tip, head;
-		float  tx, ty, hx, hy, w;
-		float  xy[4];
-		int    h;
+		float tx, ty, hx, hy, w;
+		float xy[4];
 
 		VectorCopy (pos, tip);
 		tip[a] += QRE_GIZMO_LEN;
@@ -3594,6 +3688,35 @@ static void QRE_DrawGizmoArrows (void)
 			xy[3] = hy;
 			QR_GUI_DrawPolyline (xy, 2, axis_color[a], 2.0f);
 		}
+	}
+}
+
+static void QRE_DrawGizmoArrows (void)
+{
+	int                index = QRE_CustomSelectedIndex ();
+	int                count = 0;
+	rt_custom_light_t *custom;
+	uint32_t           axis_color[3];
+	vec3_t             pos, base;
+
+	if (index < 0)
+		return;
+
+	custom = RT_CustomLights (&count);
+	if (index >= count)
+		return;
+
+	axis_color[0] = RT_PackColorToUint32 (255, 64, 64, 255);
+	axis_color[1] = RT_PackColorToUint32 (64, 255, 64, 255);
+	axis_color[2] = RT_PackColorToUint32 (64, 128, 255, 255);
+
+	QRE_GizmoOrigin (&custom[index], pos);
+	QRE_DrawGizmoAxisArrows (pos, axis_color);
+
+	if (QRE_SpotDirSet (&custom[index]))
+	{
+		QRE_SpotHandleBase (custom[index].dir, pos, base);
+		QRE_DrawGizmoAxisArrows (base, axis_color);
 	}
 }
 
@@ -3642,7 +3765,7 @@ static qboolean QRE_CustomGizmoBegin (void)
 	rt_custom_light_t *lights;
 	rt_custom_light_t *l;
 	vec3_t             origin, tip;
-	float              ox, oy, mx = -1.0f, my = -1.0f, best = 10.0f;
+	float              ox, oy, mx = -1.0f, my = -1.0f;
 	int                a, axis = -1;
 
 	if (index < 0)
@@ -3659,20 +3782,65 @@ static qboolean QRE_CustomGizmoBegin (void)
 	if (mx < 0.0f)
 		return false;
 
-	for (a = 0; a < 3; a++)
+	if (QRE_SpotDirSet (l))
 	{
-		float ax, ay, d;
+		vec3_t base;
+		float  bx, by, best = 10.0f;
 
-		VectorCopy (origin, tip);
-		tip[a] += QRE_GIZMO_LEN;
-		if (!QRE_WorldToScreen (tip, &ax, &ay))
-			continue;
+		QRE_SpotHandleBase (l->dir, origin, base);
 
-		d = QRE_DistToSegment (mx, my, ox, oy, ax, ay);
-		if (d < best)
+		if (QRE_WorldToScreen (base, &bx, &by))
 		{
-			best = d;
-			axis = a;
+			for (a = 0; a < 3; a++)
+			{
+				float ax, ay, d;
+
+				VectorCopy (base, tip);
+				tip[a] += QRE_GIZMO_LEN;
+				if (!QRE_WorldToScreen (tip, &ax, &ay))
+					continue;
+
+				d = QRE_DistToSegment (mx, my, bx, by, ax, ay);
+				if (d < best)
+				{
+					best = d;
+					axis = a;
+				}
+			}
+		}
+	}
+
+	if (axis >= 0)
+	{
+		qre.custom_dragging = true;
+		qre.custom_drag_dir = true;
+		qre.custom_drag_axis = axis;
+		qre.custom_drag_index = index;
+		VectorCopy (l->origin, qre.custom_drag_origin);
+		VectorCopy (l->dir, qre.custom_drag_dir_start);
+		qre.custom_drag_mouse[0] = mx;
+		qre.custom_drag_mouse[1] = my;
+		return true;
+	}
+
+	{
+		float best = 10.0f;
+
+		for (a = 0; a < 3; a++)
+		{
+			float ax, ay, d;
+
+			VectorCopy (origin, tip);
+			tip[a] += QRE_GIZMO_LEN;
+			if (!QRE_WorldToScreen (tip, &ax, &ay))
+				continue;
+
+			d = QRE_DistToSegment (mx, my, ox, oy, ax, ay);
+			if (d < best)
+			{
+				best = d;
+				axis = a;
+			}
 		}
 	}
 
@@ -3680,6 +3848,7 @@ static qboolean QRE_CustomGizmoBegin (void)
 		return false;
 
 	qre.custom_dragging = true;
+	qre.custom_drag_dir = false;
 	qre.custom_drag_axis = axis;
 	qre.custom_drag_index = index;
 	VectorCopy (l->origin, qre.custom_drag_origin);
@@ -3693,7 +3862,7 @@ static void QRE_CustomGizmoMove (void)
 	int                count = 0;
 	rt_custom_light_t *lights;
 	rt_custom_light_t *l;
-	vec3_t             origin, tip;
+	vec3_t             origin, base, tip;
 	float              ox, oy, ax, ay, mx = -1.0f, my = -1.0f, dirx, diry, pixlen, delta;
 
 	if (!qre.custom_dragging)
@@ -3708,10 +3877,15 @@ static void QRE_CustomGizmoMove (void)
 	if (l->has_offset)
 		VectorAdd (origin, l->offset, origin);
 
-	if (!QRE_WorldToScreen (origin, &ox, &oy))
+	if (qre.custom_drag_dir)
+		QRE_SpotHandleBase (qre.custom_drag_dir_start, origin, base);
+	else
+		VectorCopy (origin, base);
+
+	if (!QRE_WorldToScreen (base, &ox, &oy))
 		return;
 
-	VectorCopy (origin, tip);
+	VectorCopy (base, tip);
 	tip[qre.custom_drag_axis] += QRE_GIZMO_LEN;
 	if (!QRE_WorldToScreen (tip, &ax, &ay))
 		return;
@@ -3732,6 +3906,12 @@ static void QRE_CustomGizmoMove (void)
 	// how far the cursor moved along the axis' screen direction, in world units
 	delta = ((mx - qre.custom_drag_mouse[0]) * dirx + (my - qre.custom_drag_mouse[1]) * diry) /
 	        pixlen * QRE_GIZMO_LEN;
+
+	if (qre.custom_drag_dir)
+	{
+		l->dir[qre.custom_drag_axis] = qre.custom_drag_dir_start[qre.custom_drag_axis] + delta;
+		return;
+	}
 
 	VectorCopy (qre.custom_drag_origin, l->origin);
 	l->origin[qre.custom_drag_axis] += floorf (delta + 0.5f);
