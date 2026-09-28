@@ -36,6 +36,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * Bloom
 * Post-processing: chromatic aberration, and a configurable LUT for colour grading
 * Shader smoke — the trails of rockets, lava balls and grenades are drawn as soft, lit puffs the room's light falls on, in place of the classic flat sprites
+* Adaptive vsync, VRR and FreeSync: `vid_vsync` picks the presentation mode (off, vsync, adaptive, FreeSync), adaptive by default
 
 ## Roadmap
 

@@ -181,6 +181,7 @@ private:
     std::shared_ptr<PhysicalDevice>         physDevice;
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
+    std::string                             printedPresentModeName;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;
 

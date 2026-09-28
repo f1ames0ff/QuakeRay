@@ -90,7 +90,9 @@ static cvar_t                   vid_fullscreen = {"vid_fullscreen", "0", CVAR_AR
 static cvar_t                   vid_width = {"vid_width", "-1", CVAR_ARCHIVE};         // RT: set to "-1", so we have 
 static cvar_t                   vid_height = {"vid_height", "-1", CVAR_ARCHIVE};       //     desktop resolution at the first time
 static cvar_t                   vid_refreshrate = {"vid_refreshrate", "60", CVAR_ARCHIVE};
-static cvar_t                   vid_vsync = {"vid_vsync", "0", CVAR_ARCHIVE};
+cvar_t                          vid_vsync = {"vid_vsync", "2", CVAR_ARCHIVE};
+
+int                             vid_display_refresh = 0;
 static cvar_t                   vid_desktopfullscreen = {"vid_desktopfullscreen", "0", CVAR_ARCHIVE}; // QuakeSpasm
 static cvar_t                   vid_borderless = {"vid_borderless", "0", CVAR_ARCHIVE};               // QuakeSpasm
 static cvar_t                   vid_palettize = {"vid_palettize", "0", CVAR_ARCHIVE};
@@ -665,7 +667,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
 	RT_Bench_Setting (f, "rt_upscale_dlss");
 	RT_Bench_Setting (f, "rt_stats_panels");
-	fprintf (f, " vid=%dx%d version=%s\n", vid.width, vid.height, ENGINE_VER_STRING);
+	fprintf (f, " vid=%dx%d@%d vsync=%d version=%s\n", vid.width, vid.height, vid_display_refresh,
+	         (int)vid_vsync.value, ENGINE_VER_STRING);
 
 	fclose (f);
 
@@ -1191,6 +1194,33 @@ qboolean VID_IsMinimized (void)
 	const Uint32 flags = SDL_GetWindowFlags (draw_context);
 
 	return !(flags & SDL_WINDOW_SHOWN) || (flags & SDL_WINDOW_MINIMIZED);
+}
+
+static const char *VID_VsyncModeName (int mode)
+{
+	switch (mode)
+	{
+	case VID_VSYNC_ON:        return "vsync";
+	case VID_VSYNC_ADAPTIVE:  return "adaptive";
+	case VID_VSYNC_FREESYNC:  return "freesync";
+	default:                  return "off";
+	}
+}
+
+static QrPresentMode VID_PresentMode (void)
+{
+	switch ((int)vid_vsync.value)
+	{
+	case VID_VSYNC_ON:        return QR_PRESENT_MODE_VSYNC;
+	case VID_VSYNC_ADAPTIVE:  return QR_PRESENT_MODE_ADAPTIVE;
+	case VID_VSYNC_FREESYNC:  return QR_PRESENT_MODE_VSYNC;
+	default:                  return QR_PRESENT_MODE_MAILBOX;
+	}
+}
+
+static void VID_Vsync_f (cvar_t *var)
+{
+	Con_Printf ("Video: vsync mode is %s\n", VID_VsyncModeName ((int)var->value));
 }
 
 /*
@@ -1777,7 +1807,7 @@ GL_BeginRenderingTask
 void GL_BeginRenderingTask (void *unused)
 {
 	QrStartFrameInfo info = {
-		.requestVSync = CVAR_TO_BOOL (vid_vsync),
+		.presentMode = VID_PresentMode (),
 		.requestShaderReload = request_shaders_reload,
 	};
 
@@ -2831,6 +2861,7 @@ void VID_Init (void)
 	Cvar_RegisterVariable (&vid_height);      // johnfitz
 	Cvar_RegisterVariable (&vid_refreshrate); // johnfitz
 	Cvar_RegisterVariable (&vid_vsync);       // johnfitz
+	Cvar_SetCallback (&vid_vsync, VID_Vsync_f);
 	Cvar_RegisterVariable (&vid_filter);
 	Cvar_RegisterVariable (&vid_desktopfullscreen); // QuakeSpasm
 	Cvar_RegisterVariable (&vid_borderless);        // QuakeSpasm
@@ -3060,6 +3091,9 @@ static void VID_Restart (qboolean set_mode)
 	//
 	VID_SyncCvars ();
 
+	Con_Printf ("Video: %dx%d at %d Hz, vsync %s\n", vid.width, vid.height, vid_display_refresh,
+	            VID_VsyncModeName ((int)vid_vsync.value));
+
 	//
 	// update mouse grab
 	//
@@ -3165,6 +3199,8 @@ void VID_SyncCvars (void)
 		// don't sync vid_desktopfullscreen, it's a user preference that
 		// should persist even if we are in windowed mode.
 	}
+
+	vid_display_refresh = VID_GetCurrentRefreshRate ();
 
 	menu_settings.host_maxfps = CLAMP (0, host_maxfps.value, 1000);
 	menu_settings.r_particles = CLAMP (0, (int)r_particles.value, 2);
@@ -3367,6 +3403,18 @@ static void VID_Menu_ChooseNextMode (int dir)
 		Cvar_SetValueQuick (&vid_height, (float)vid_menu_modes[i].height);
 		VID_Menu_RebuildRateList ();
 	}
+}
+
+static void VID_Menu_ChooseNextVsync (int dir)
+{
+	int mode = (int)vid_vsync.value + dir;
+
+	if (mode < VID_VSYNC_OFF)
+		mode = VID_VSYNC_FREESYNC;
+	else if (mode > VID_VSYNC_FREESYNC)
+		mode = VID_VSYNC_OFF;
+
+	Cvar_SetValueQuick (&vid_vsync, (float)mode);
 }
 
 /*
@@ -3668,7 +3716,7 @@ static void VID_MenuKey (int key)
 		//	VID_Menu_ChooseNextRate (1);
 		//	break;
 		case VID_OPT_VSYNC:
-			Cbuf_AddText ("toggle vid_vsync\n"); // kristian
+			VID_Menu_ChooseNextVsync (-1);
 			break;
 		case VID_OPT_MAX_FPS:
 			VID_Menu_ChooseNextMaxFPS (-1);
@@ -3760,7 +3808,7 @@ static void VID_MenuKey (int key)
 		//	VID_Menu_ChooseNextRate (-1);
 		//	break;
 		case VID_OPT_VSYNC:
-			Cbuf_AddText ("toggle vid_vsync\n");
+			VID_Menu_ChooseNextVsync (1);
 			break;
 		case VID_OPT_MAX_FPS:
 			VID_Menu_ChooseNextMaxFPS (1);
@@ -3862,7 +3910,7 @@ static void VID_MenuKey (int key)
 			Cvar_SetValueQuick (&rt_bloom, !CVAR_TO_BOOL (rt_bloom));
 			break;
 		case VID_OPT_VSYNC:
-			Cbuf_AddText ("toggle vid_vsync\n");
+			VID_Menu_ChooseNextVsync (1);
 			break;
 		case VID_OPT_NEXT_PAGE:
 			VID_Menu_SetPage (1);
@@ -3960,7 +4008,7 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			break;
 		case VID_OPT_VSYNC:
 			M_Print (cbx, 16, y, "     Vertical sync");
-			M_DrawCheckbox (cbx, 184, y, (int)vid_vsync.value);
+			M_Print (cbx, 184, y, VID_VsyncModeName ((int)vid_vsync.value));
 			break;
 		case VID_OPT_MAX_FPS:
 			M_Print (cbx, 16, y, "           Max FPS");
