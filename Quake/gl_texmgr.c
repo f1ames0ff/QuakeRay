@@ -1384,7 +1384,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	   be dimmed there; the emitted light is a float and takes the full value (the
 	   colour gain below). A brush TAL samples the synthesized mask, so below 1 the
 	   mask already dims the light once and the gain must not count it twice. */
-	const float lightBright = CLAMP (0.0f, mat->light_brightness, 10.0f);
+	const float lightBright = CLAMP (0.0f, mat->light_brightness, 100.0f);
 	const float brightVis   = (lightBright < 1.0f) ? lightBright : 1.0f;
 	/* Per-material rt_emis_blend override, packed into the alpha of the
 	   roughness-metallic-emission texture: 0 = not authored, so the global
