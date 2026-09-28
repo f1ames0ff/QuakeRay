@@ -393,6 +393,10 @@ SCR_Conwidth_f -- johnfitz -- called when scr_conwidth or scr_conscale changes
 static void SCR_Conwidth_f (cvar_t *var)
 {
 	vid.recalc_refdef = 1;
+
+	if (vid.width <= 0 || vid.height <= 0)
+		return;
+
 	vid.conwidth = (scr_conwidth.value > 0) ? (int)scr_conwidth.value : (scr_conscale.value > 0) ? (int)(vid.width / scr_conscale.value) : vid.width;
 	vid.conwidth = CLAMP (320, vid.conwidth, vid.width);
 	vid.conwidth &= 0xFFFFFFF8;
@@ -1321,6 +1325,9 @@ void SCR_UpdateScreen (qboolean use_tasks)
 
 	if (Tasks_IsWorker ())
 		return; // not safe
+
+	if (VID_IsMinimized () || qrIsSuspended (vulkan_globals.instance))
+		return;
 
 	in_update_screen = true;
 	RT_Prof_FrameStart ();

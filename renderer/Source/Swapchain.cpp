@@ -131,6 +131,12 @@ bool Swapchain::IsExtentOptimal() const
     return cachedIsExtentOptimal;
 }
 
+bool Swapchain::HasValidExtent() const
+{
+    ResetSurfaceCapabilitiesCache();
+    return IsExtentOptimal();
+}
+
 VkResult Swapchain::GetSurfaceCapabilities(VkSurfaceCapabilitiesKHR *outCaps) const
 {
     if (!cachedSurfaceCapsValid)

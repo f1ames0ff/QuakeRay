@@ -324,6 +324,20 @@ QrBool32 qrIsRenderUpscaleTechniqueAvailable(QrInstance qrInstance, QrRenderUpsc
     return Call(qrInstance, &VulkanDevice::IsRenderUpscaleTechniqueAvailable, technique);
 }
 
+QrBool32 qrIsSuspended(QrInstance qrInstance)
+{
+    try
+    {
+        return GetDevice(qrInstance).IsSurfaceUnavailable() ? QR_TRUE : QR_FALSE;
+    }
+    catch (QrException &e)
+    {
+        TryPrintError(qrInstance, e.what());
+    }
+
+    return QR_TRUE;
+}
+
 QrResult qrGetFrameStats(QrInstance qrInstance, uint32_t *pRays, uint32_t *pFpsX10)
 {
     return Call(qrInstance, &VulkanDevice::GetFrameStats, pRays, pFpsX10);

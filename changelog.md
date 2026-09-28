@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.19.1
+
+### Fixed
+- **Minimizing the window no longer crashes the game** — the host no longer starts a frame while the window has no drawable surface: it asks the renderer first (`qrIsSuspended`, a fresh check of the surface extent), so a minimized window skips its frames instead of failing the frame start on a zero extent; a size the window reports as zero is ignored, and the width/height math can no longer divide by it.
+
 ## v0.19.0
 
 ### Added

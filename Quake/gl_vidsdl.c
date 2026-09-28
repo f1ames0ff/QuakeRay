@@ -1186,7 +1186,9 @@ VID_IsMinimized
 */
 qboolean VID_IsMinimized (void)
 {
-	return !(SDL_GetWindowFlags (draw_context) & SDL_WINDOW_SHOWN);
+	const Uint32 flags = SDL_GetWindowFlags (draw_context);
+
+	return !(flags & SDL_WINDOW_SHOWN) || (flags & SDL_WINDOW_MINIMIZED);
 }
 
 /*
@@ -3060,10 +3062,13 @@ static void VID_Restart (qboolean set_mode)
 		VID_SetMode (width, height, refreshrate, fullscreen);
 
 	// conwidth and conheight need to be recalculated
-	vid.conwidth = (scr_conwidth.value > 0) ? (int)scr_conwidth.value : (scr_conscale.value > 0) ? (int)(vid.width / scr_conscale.value) : vid.width;
-	vid.conwidth = CLAMP (320, vid.conwidth, vid.width);
-	vid.conwidth &= 0xFFFFFFF8;
-	vid.conheight = vid.conwidth * vid.height / vid.width;
+	if (vid.width > 0 && vid.height > 0)
+	{
+		vid.conwidth = (scr_conwidth.value > 0) ? (int)scr_conwidth.value : (scr_conscale.value > 0) ? (int)(vid.width / scr_conscale.value) : vid.width;
+		vid.conwidth = CLAMP (320, vid.conwidth, vid.width);
+		vid.conwidth &= 0xFFFFFFF8;
+		vid.conheight = vid.conwidth * vid.height / vid.width;
+	}
 	//
 	// keep cvars in line with actual mode
 	//

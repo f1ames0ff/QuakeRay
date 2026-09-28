@@ -1053,6 +1053,16 @@ bool VulkanDevice::IsSuspended() const
     return !swapchain->IsExtentOptimal();
 }
 
+bool VulkanDevice::IsSurfaceUnavailable() const
+{
+    if (!swapchain)
+    {
+        return false;
+    }
+
+    return !swapchain->HasValidExtent();
+}
+
 bool VulkanDevice::IsRenderUpscaleTechniqueAvailable(QrRenderUpscaleTechnique technique) const
 {
     switch (technique)

@@ -134,6 +134,7 @@ public:
     void DrawFrame(const QrDrawFrameInfo *pFrameInfo);
 
     bool IsSuspended() const;
+    bool IsSurfaceUnavailable() const;
     bool IsRenderUpscaleTechniqueAvailable(QrRenderUpscaleTechnique technique) const;
 
     void GetFrameStats(uint32_t *pRays, uint32_t *pFpsX10) const;
