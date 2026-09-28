@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "Swapchain.h"
 
@@ -30,27 +27,39 @@ using namespace vkpt;
 
 namespace
 {
-    bool IsNullExtent(const VkExtent2D &a)
+    bool IsNullExtent(const VkExtent2D &extent)
     {
-        return a.width == 0 || a.height == 0;
+        return extent.width == 0 || extent.height == 0;
     }
-    
-    bool operator==(const VkExtent2D &a, const VkExtent2D &b)
+
+    bool AreExtentsEqual(const VkExtent2D &a, const VkExtent2D &b)
     {
         return a.width == b.width && a.height == b.height;
     }
 
-    bool operator!=(const VkExtent2D &a, const VkExtent2D &b)
+    VkSurfaceFormatKHR PickSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats)
     {
-        return !(a == b);
+        for (const VkFormat wanted : { VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB })
+        {
+            const auto match = std::find_if(
+                availableFormats.rbegin(), availableFormats.rend(),
+                [wanted](const VkSurfaceFormatKHR &format) { return format.format == wanted; });
+
+            if (match != availableFormats.rend())
+            {
+                return *match;
+            }
+        }
+
+        return {};
     }
 }
 
-Swapchain::Swapchain(VkDevice _device, 
+Swapchain::Swapchain(
+    VkDevice _device,
     VkSurfaceKHR _surface,
     VkPhysicalDevice _physDevice,
-    std::shared_ptr<CommandBufferManager> _cmdManager
-)
+    std::shared_ptr<CommandBufferManager> _cmdManager)
     : device(_device)
     , surface(_surface)
     , physDevice(_physDevice)
@@ -62,86 +71,55 @@ Swapchain::Swapchain(VkDevice _device,
     , surfaceExtent{ UINT32_MAX, UINT32_MAX }
     , isVsync(true)
     , swapchain(VK_NULL_HANDLE)
+    , swapchainImages{}
+    , swapchainViews{}
     , currentSwapchainIndex(UINT32_MAX)
+    , subscribers{}
     , cachedSurfaceCaps{}
     , cachedSurfaceCapsResult(VK_SUCCESS)
     , cachedSurfaceCapsValid(false)
     , cachedIsExtentOptimal(false)
 {
-    VkResult r;
+    uint32_t formatCount = 0;
+    VkResult r = vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, surface, &formatCount, nullptr);
+    VK_CHECKERROR(r);
 
-    // find surface format
+    std::vector<VkSurfaceFormatKHR> availableFormats(formatCount);
+    r = vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, surface, &formatCount, availableFormats.data());
+    VK_CHECKERROR(r);
+
+    surfaceFormat = PickSurfaceFormat(availableFormats);
+
+    uint32_t presentModeCount = 0;
+    r = vkGetPhysicalDeviceSurfacePresentModesKHR(physDevice, surface, &presentModeCount, nullptr);
+    VK_CHECKERROR(r);
+
+    std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+    r = vkGetPhysicalDeviceSurfacePresentModesKHR(physDevice, surface, &presentModeCount, presentModes.data());
+    VK_CHECKERROR(r);
+
+    for (const VkPresentModeKHR mode : presentModes)
     {
-        uint32_t formatCount = 0;
-        r = vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, surface, &formatCount, nullptr);
-        VK_CHECKERROR(r);
-
-        std::vector<VkSurfaceFormatKHR> surfaceFormats;
-        surfaceFormats.resize(formatCount);
-
-        r = vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, surface, &formatCount, surfaceFormats.data());
-        VK_CHECKERROR(r);
-
-        std::vector<VkFormat> acceptFormats =
+        if (mode == VK_PRESENT_MODE_MAILBOX_KHR)
         {
-            VK_FORMAT_R8G8B8A8_SRGB,
-            VK_FORMAT_B8G8R8A8_SRGB
-        };
-
-        for (VkFormat f : acceptFormats)
-        {
-            for (VkSurfaceFormatKHR sf : surfaceFormats)
-            {
-                if (sf.format == f)
-                {
-                    surfaceFormat = sf;
-                }
-            }
-
-            if (surfaceFormat.format != VK_FORMAT_UNDEFINED)
-            {
-                break;
-            }
+            presentModeImmediate = mode;
         }
-    }
-
-    // find present modes
-    {
-        uint32_t presentModeCount = 0;
-        r = vkGetPhysicalDeviceSurfacePresentModesKHR(physDevice, surface, &presentModeCount, nullptr);
-        VK_CHECKERROR(r);
-
-        std::vector<VkPresentModeKHR> presentModes(presentModeCount);
-        r = vkGetPhysicalDeviceSurfacePresentModesKHR(physDevice, surface, &presentModeCount, presentModes.data());
-        VK_CHECKERROR(r);
-
-        // try to find mailbox / fifo-relaxed
-        for (auto p : presentModes)
+        else if (mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR)
         {
-            if (p == VK_PRESENT_MODE_MAILBOX_KHR)
-            {
-                presentModeImmediate = p;
-            }
-
-            if (p == VK_PRESENT_MODE_FIFO_RELAXED_KHR)
-            {
-                presentModeVsync = p;
-            }
+            presentModeVsync = mode;
         }
     }
 }
 
-bool vkpt::Swapchain::IsExtentOptimal() const
+bool Swapchain::IsExtentOptimal() const
 {
-    // the caps were queried successfully earlier in this frame: cachedIsExtentOptimal is
-    // the check made then
     if (cachedSurfaceCapsValid)
     {
         return cachedIsExtentOptimal;
     }
 
     VkSurfaceCapabilitiesKHR surfCapabilities;
-    VkResult r = GetSurfaceCapabilities(&surfCapabilities);
+    const VkResult r = GetSurfaceCapabilities(&surfCapabilities);
 
     if (r == VK_ERROR_SURFACE_LOST_KHR)
     {
@@ -158,7 +136,6 @@ VkResult Swapchain::GetSurfaceCapabilities(VkSurfaceCapabilitiesKHR *outCaps) co
     if (!cachedSurfaceCapsValid)
     {
         cachedSurfaceCapsResult = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physDevice, surface, &cachedSurfaceCaps);
-        // a failed query is not cached: the surface can come back on the next call
         cachedSurfaceCapsValid = (cachedSurfaceCapsResult == VK_SUCCESS);
 
         if (cachedSurfaceCapsValid)
@@ -181,11 +158,9 @@ void Swapchain::ResetSurfaceCapabilitiesCache() const
 VkExtent2D Swapchain::GetOptimalExtent() const
 {
     VkSurfaceCapabilitiesKHR surfCapabilities;
-    VkResult r = GetSurfaceCapabilities(&surfCapabilities);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(GetSurfaceCapabilities(&surfCapabilities));
 
-    if (IsNullExtent(surfCapabilities.maxImageExtent) ||
-        IsNullExtent(surfCapabilities.currentExtent))
+    if (IsNullExtent(surfCapabilities.maxImageExtent) || IsNullExtent(surfCapabilities.currentExtent))
     {
         throw RgException(RG_WRONG_FUNCTION_CALL, "Surface has 0 extent. Prevent calling vkpt functions in that case");
     }
@@ -206,56 +181,51 @@ bool Swapchain::RequestVsync(bool enable)
 
 void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 {
-    // the surface state is the same for the whole frame, so query it once here
     ResetSurfaceCapabilitiesCache();
 
-    VkExtent2D requestedExtent = GetOptimalExtent();
+    const VkExtent2D requestedExtent = GetOptimalExtent();
 
-    // if requested params are different
-    if (requestedExtent != surfaceExtent || requestedVsync != isVsync)
+    if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedVsync != isVsync)
     {
         TryRecreate(requestedExtent, requestedVsync);
     }
 
     while (true)
     {
-        VkResult r = vkAcquireNextImageKHR(
+        const VkResult r = vkAcquireNextImageKHR(
             device, swapchain, UINT64_MAX,
             imageAvailableSemaphore,
             VK_NULL_HANDLE, &currentSwapchainIndex);
 
         if (r == VK_SUCCESS)
         {
-            break;
+            return;
         }
-        else if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
+
+        if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
         {
             TryRecreate(requestedExtent, requestedVsync);
+            continue;
         }
-        else
-        {
-            assert(0);
-        }
+
+        assert(0);
     }
 }
 
 void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore renderFinishedSemaphore)
 {
-    VkPresentInfoKHR presentInfo = {};
+    VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &swapchain;
     presentInfo.pImageIndices = &currentSwapchainIndex;
-    presentInfo.pResults = nullptr;
 
-    VkResult r = vkQueuePresentKHR(queues->GetGraphics(), &presentInfo);
+    const VkResult r = vkQueuePresentKHR(queues->GetGraphics(), &presentInfo);
 
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
     {
-        // the surface moved under us: drop the frame's cached block so the extent, and the
-        // decision the recreate takes from it, come from a fresh query
         ResetSurfaceCapabilitiesCache();
         TryRecreate(GetOptimalExtent(), requestedVsync);
     }
@@ -263,25 +233,24 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
 
 bool Swapchain::TryRecreate(const VkExtent2D &newExtent, bool vsync)
 {
-    if (surfaceExtent == newExtent && isVsync == vsync)
+    if (AreExtentsEqual(surfaceExtent, newExtent) && isVsync == vsync)
     {
         return false;
     }
 
     cmdManager->WaitDeviceIdle();
 
-    VkSwapchainKHR old = DestroyWithoutSwapchain();
-    Create(newExtent.width, newExtent.height, vsync, old);
+    const VkSwapchainKHR oldSwapchain = DestroyWithoutSwapchain();
+    Create(newExtent.width, newExtent.height, vsync, oldSwapchain);
 
     return true;
 }
 
 void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwapchainKHR oldSwapchain)
 {
-    this->isVsync = vsync;
-    this->surfaceExtent = { newWidth, newHeight };
+    isVsync = vsync;
+    surfaceExtent = { newWidth, newHeight };
 
-    // a swapchain is built against the surface as it is now, so this one reads the driver
     ResetSurfaceCapabilitiesCache();
 
     VkSurfaceCapabilitiesKHR surfCapabilities;
@@ -290,11 +259,11 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwap
 
     if (surfCapabilities.currentExtent.width != UINT32_MAX && surfCapabilities.currentExtent.height != UINT32_MAX)
     {
-        assert(surfaceExtent == surfCapabilities.currentExtent);
+        assert(AreExtentsEqual(surfaceExtent, surfCapabilities.currentExtent));
     }
     else
     {
-        assert(surfCapabilities.minImageExtent.width  <= surfaceExtent.width  && surfaceExtent.width  <= surfCapabilities.maxImageExtent.width);
+        assert(surfCapabilities.minImageExtent.width <= surfaceExtent.width && surfaceExtent.width <= surfCapabilities.maxImageExtent.width);
         assert(surfCapabilities.minImageExtent.height <= surfaceExtent.height && surfaceExtent.height <= surfCapabilities.maxImageExtent.height);
     }
 
@@ -302,13 +271,13 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwap
     assert(swapchainImages.empty());
     assert(swapchainViews.empty());
 
-    uint32_t imageCount = std::max(3U, surfCapabilities.minImageCount);
+    uint32_t imageCount = std::max(3u, surfCapabilities.minImageCount);
     if (surfCapabilities.maxImageCount > 0)
     {
         imageCount = std::min(imageCount, surfCapabilities.maxImageCount);
     }
 
-    VkSwapchainCreateInfoKHR swapchainInfo = {};
+    VkSwapchainCreateInfoKHR swapchainInfo{};
     swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     swapchainInfo.surface = surface;
     swapchainInfo.minImageCount = imageCount;
@@ -346,17 +315,12 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwap
 
     for (uint32_t i = 0; i < imageCount; i++)
     {
-        VkImageViewCreateInfo viewInfo = {};
+        VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = swapchainImages[i];
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = surfaceFormat.format;
-        viewInfo.components = {};
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        viewInfo.subresourceRange.baseMipLevel = 0;
-        viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount = 1;
+        viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 
         r = vkCreateImageView(device, &viewInfo, nullptr, &swapchainViews[i]);
         VK_CHECKERROR(r);
@@ -365,7 +329,7 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwap
         SET_DEBUG_NAME(device, swapchainViews[i], VK_OBJECT_TYPE_IMAGE_VIEW, "Swapchain image view");
     }
 
-    VkCommandBuffer cmd = cmdManager->StartGraphicsCmd();
+    const VkCommandBuffer cmd = cmdManager->StartGraphicsCmd();
 
     for (uint32_t i = 0; i < imageCount; i++)
     {
@@ -383,11 +347,11 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwap
 
 void Swapchain::Destroy()
 {
-    VkSwapchainKHR old = DestroyWithoutSwapchain();
-    vkDestroySwapchainKHR(device, old, nullptr);
+    const VkSwapchainKHR oldSwapchain = DestroyWithoutSwapchain();
+    vkDestroySwapchainKHR(device, oldSwapchain, nullptr);
 }
 
-VkSwapchainKHR vkpt::Swapchain::DestroyWithoutSwapchain()
+VkSwapchainKHR Swapchain::DestroyWithoutSwapchain()
 {
     vkDeviceWaitIdle(device);
 
@@ -396,38 +360,38 @@ VkSwapchainKHR vkpt::Swapchain::DestroyWithoutSwapchain()
         CallDestroySubscribers();
     }
 
-    for (VkImageView v : swapchainViews)
+    for (const VkImageView view : swapchainViews)
     {
-        vkDestroyImageView(device, v, nullptr);
+        vkDestroyImageView(device, view, nullptr);
     }
 
     swapchainViews.clear();
     swapchainImages.clear();
 
-    VkSwapchainKHR old = swapchain;
+    const VkSwapchainKHR oldSwapchain = swapchain;
     swapchain = VK_NULL_HANDLE;
 
-    return old;
+    return oldSwapchain;
 }
 
 void Swapchain::CallCreateSubscribers()
 {
-    for (auto &ws : subscribers)
+    for (const std::weak_ptr<ISwapchainDependency> &subscriber : subscribers)
     {
-        if (auto s = ws.lock())
+        if (const std::shared_ptr<ISwapchainDependency> locked = subscriber.lock())
         {
-            s->OnSwapchainCreate(this);
+            locked->OnSwapchainCreate(this);
         }
     }
 }
 
 void Swapchain::CallDestroySubscribers()
 {
-    for (auto &ws : subscribers)
+    for (const std::weak_ptr<ISwapchainDependency> &subscriber : subscribers)
     {
-        if (auto s = ws.lock())
+        if (const std::shared_ptr<ISwapchainDependency> locked = subscriber.lock())
         {
-            s->OnSwapchainDestroy();
+            locked->OnSwapchainDestroy();
         }
     }
 }
@@ -439,19 +403,21 @@ Swapchain::~Swapchain()
 
 void Swapchain::Subscribe(std::shared_ptr<ISwapchainDependency> subscriber)
 {
-    subscribers.emplace_back(subscriber);
+    subscribers.push_back(std::move(subscriber));
 }
 
 void Swapchain::Unsubscribe(const ISwapchainDependency *subscriber)
 {
-    subscribers.remove_if([subscriber] (const std::weak_ptr<ISwapchainDependency> &ws)
+    subscribers.remove_if([subscriber](const std::weak_ptr<ISwapchainDependency> &weak)
     {
-        if (const auto s = ws.lock())
+        const std::shared_ptr<ISwapchainDependency> locked = weak.lock();
+
+        if (!locked)
         {
-            return s.get() == subscriber;
+            return true;
         }
 
-        return true;
+        return locked.get() == subscriber;
     });
 }
 
@@ -478,7 +444,7 @@ uint32_t Swapchain::GetCurrentImageIndex() const
 uint32_t Swapchain::GetImageCount() const
 {
     assert(swapchainViews.size() == swapchainImages.size());
-    return swapchainViews.size();
+    return static_cast<uint32_t>(swapchainViews.size());
 }
 
 VkImageView Swapchain::GetImageView(uint32_t index) const
@@ -487,7 +453,7 @@ VkImageView Swapchain::GetImageView(uint32_t index) const
     return swapchainViews[index];
 }
 
-VkImage vkpt::Swapchain::GetImage(uint32_t index) const
+VkImage Swapchain::GetImage(uint32_t index) const
 {
     assert(index < swapchainImages.size());
     return swapchainImages[index];
@@ -495,10 +461,10 @@ VkImage vkpt::Swapchain::GetImage(uint32_t index) const
 
 const VkImageView *Swapchain::GetImageViews() const
 {
-    if (!swapchainViews.empty())
+    if (swapchainViews.empty())
     {
-        return swapchainViews.data();
+        return nullptr;
     }
 
-    return nullptr;
+    return swapchainViews.data();
 }

@@ -1,66 +1,84 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "AutoBuffer.h"
 
-vkpt::AutoBuffer::AutoBuffer(std::shared_ptr<MemoryAllocator> _allocator)
-:
-    allocator(std::move(_allocator)),
-    mapped{}
+#include <utility>
+
+using namespace vkpt;
+
+namespace
+{
+    void BarrierAfterCopy(VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size)
+    {
+        VkBufferMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.buffer = buffer;
+        barrier.offset = offset;
+        barrier.size = size;
+
+        vkCmdPipelineBarrier(
+            cmd,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            0, 0, nullptr, 1, &barrier, 0, nullptr);
+    }
+}
+
+AutoBuffer::AutoBuffer(std::shared_ptr<MemoryAllocator> allocator)
+    : allocator(std::move(allocator))
+    , staging{}
+    , deviceLocal{}
+    , mapped{}
 {}
 
-// TODO: remove this constructor
-vkpt::AutoBuffer::AutoBuffer(VkDevice _device, std::shared_ptr<MemoryAllocator> _allocator) : AutoBuffer(std::move(_allocator))
-{}
+AutoBuffer::AutoBuffer(VkDevice device, std::shared_ptr<MemoryAllocator> allocator)
+    : AutoBuffer(std::move(allocator))
+{
+    (void)device;
+}
 
-vkpt::AutoBuffer::~AutoBuffer()
+AutoBuffer::~AutoBuffer()
 {
     Destroy();
 }
 
-void vkpt::AutoBuffer::Create(VkDeviceSize size, VkBufferUsageFlags usage, const std::string &debugName, uint32_t frameCount)
+void AutoBuffer::Create(VkDeviceSize size, VkBufferUsageFlags usage, const std::string &debugName, uint32_t frameCount)
 {
     assert(frameCount > 0 && frameCount <= MAX_FRAMES_IN_FLIGHT);
 
-    const std::string debugNameStaging = debugName + " - staging";
-
-    // The staging buffer inherits the owner's address bit (the RHI layer wraps such staging buffers
-    // as copy sources - RHI/RhiAccelStructs.cpp - and NVRHI's native-buffer wrap queries the device
-    // address of every buffer when the device has BDA unconditionally, vulkan-buffer.cpp:215-220,
-    // which VUID-VkBufferDeviceAddressInfo-buffer-02601 forbids without it) and the vertex/index
-    // bits (RhiUiPass binds the RasterizedDataCollector's per-slot staging directly - the UI is
-    // rewritten every frame, so it must read this frame's copy - and Vulkan requires the vertex and
-    // index usage bits for those bindings).
     const VkBufferUsageFlags stagingUsage =
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+        (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) |
         (usage & (VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+
+    const std::string stagingDebugName = debugName + " - staging";
 
     for (uint32_t i = 0; i < frameCount; i++)
     {
         assert(!staging[i].IsInitted());
 
         staging[i].Init(
-            allocator, size,
-            stagingUsage,
+            allocator, size, stagingUsage,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            debugNameStaging.c_str());
+            stagingDebugName.c_str());
 
         mapped[i] = staging[i].Map();
     }
@@ -74,7 +92,7 @@ void vkpt::AutoBuffer::Create(VkDeviceSize size, VkBufferUsageFlags usage, const
         debugName.c_str());
 }
 
-void vkpt::AutoBuffer::Destroy()
+void AutoBuffer::Destroy()
 {
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
@@ -87,13 +105,10 @@ void vkpt::AutoBuffer::Destroy()
         mapped[i] = nullptr;
     }
 
-    if (deviceLocal.IsInitted());
-    {
-        deviceLocal.Destroy();
-    }
+    deviceLocal.Destroy();
 }
 
-void vkpt::AutoBuffer::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameIndex, VkDeviceSize size, VkDeviceSize offset)
+void AutoBuffer::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameIndex, VkDeviceSize size, VkDeviceSize offset)
 {
     assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
     assert(staging[frameIndex].GetSize() == deviceLocal.GetSize());
@@ -113,31 +128,21 @@ void vkpt::AutoBuffer::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameIndex,
         return;
     }
 
-    VkBufferCopy info = {};
-    info.srcOffset = offset;
-    info.dstOffset = offset;
-    info.size = size;
+    VkBufferCopy copyInfo{};
+    copyInfo.srcOffset = offset;
+    copyInfo.dstOffset = offset;
+    copyInfo.size = size;
 
     vkCmdCopyBuffer(
         cmd,
         staging[frameIndex].GetBuffer(), deviceLocal.GetBuffer(),
-        1, &info);
+        1, &copyInfo);
 
-    // TODO: remove a barrier kludge
-    VkBufferMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer = deviceLocal.GetBuffer();
-    barrier.offset = offset;
-    barrier.size = size;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
+    BarrierAfterCopy(cmd, deviceLocal.GetBuffer(), offset, size);
 }
 
-void vkpt::AutoBuffer::CopyFromStaging(
-    VkCommandBuffer cmd, uint32_t frameIndex, 
+void AutoBuffer::CopyFromStaging(
+    VkCommandBuffer cmd, uint32_t frameIndex,
     const VkBufferCopy *copyInfos, uint32_t copyInfosCount)
 {
     assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
@@ -153,49 +158,38 @@ void vkpt::AutoBuffer::CopyFromStaging(
         staging[frameIndex].GetBuffer(), deviceLocal.GetBuffer(),
         copyInfosCount, copyInfos);
 
-    // TODO: remove a barrier kludge
-    VkBufferMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer = deviceLocal.GetBuffer();
-
-    for (uint32_t i = 0; i < copyInfosCount; ++i)
+    for (uint32_t i = 0; i < copyInfosCount; i++)
     {
-        barrier.offset = copyInfos[i].dstOffset;
-        barrier.size = copyInfos[i].size;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
+        BarrierAfterCopy(cmd, deviceLocal.GetBuffer(), copyInfos[i].dstOffset, copyInfos[i].size);
     }
 }
 
-void *vkpt::AutoBuffer::GetMapped(uint32_t frameIndex)
+void *AutoBuffer::GetMapped(uint32_t frameIndex)
 {
     assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
     assert(staging[frameIndex].IsMapped());
     return mapped[frameIndex];
 }
 
-VkBuffer vkpt::AutoBuffer::GetStaging(uint32_t frameIndex)
+VkBuffer AutoBuffer::GetStaging(uint32_t frameIndex)
 {
     assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
     assert(staging[frameIndex].IsInitted());
     return staging[frameIndex].GetBuffer();
 }
 
-VkBuffer vkpt::AutoBuffer::GetDeviceLocal()
+VkBuffer AutoBuffer::GetDeviceLocal()
 {
     assert(deviceLocal.IsInitted());
     return deviceLocal.GetBuffer();
 }
 
-VkDeviceAddress vkpt::AutoBuffer::GetDeviceAddress()
+VkDeviceAddress AutoBuffer::GetDeviceAddress()
 {
     return deviceLocal.GetAddress();
 }
 
-VkDeviceSize vkpt::AutoBuffer::GetSize() const
+VkDeviceSize AutoBuffer::GetSize() const
 {
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {

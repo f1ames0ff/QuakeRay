@@ -1,53 +1,43 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "CommandBufferManager.h"
-#include "Utils.h"
 
 using namespace vkpt;
 
-CommandBufferManager::CommandBufferManager(VkDevice device, std::shared_ptr<Queues> queues) :
-    currentFrameIndex(MAX_FRAMES_IN_FLIGHT - 1)
+CommandBufferManager::CommandBufferManager(VkDevice _device, std::shared_ptr<Queues> _queues)
+    : device(_device)
+    , currentFrameIndex(MAX_FRAMES_IN_FLIGHT - 1)
+    , queues(_queues)
 {
-    this->device = device;
-    this->queues = queues;
-
-    VkCommandPoolCreateInfo cmdPoolInfo = {};
-    cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    cmdPoolInfo.flags = 0;
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = 0;
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        VkResult r;
+        poolInfo.queueFamilyIndex = _queues->GetIndexGraphics();
+        VK_CHECKERROR(vkCreateCommandPool(device, &poolInfo, nullptr, &graphicsCmds[i].pool));
 
-        cmdPoolInfo.queueFamilyIndex = queues->GetIndexGraphics();
-        r = vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &graphicsCmds[i].pool);
-        VK_CHECKERROR(r);
+        poolInfo.queueFamilyIndex = _queues->GetIndexCompute();
+        VK_CHECKERROR(vkCreateCommandPool(device, &poolInfo, nullptr, &computeCmds[i].pool));
 
-        cmdPoolInfo.queueFamilyIndex = queues->GetIndexCompute();
-        r = vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &computeCmds[i].pool);
-        VK_CHECKERROR(r);
-
-        cmdPoolInfo.queueFamilyIndex = queues->GetIndexTransfer();
-        r = vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &transferCmds[i].pool);
-        VK_CHECKERROR(r);
+        poolInfo.queueFamilyIndex = _queues->GetIndexTransfer();
+        VK_CHECKERROR(vkCreateCommandPool(device, &poolInfo, nullptr, &transferCmds[i].pool));
     }
 }
 
@@ -67,58 +57,45 @@ void CommandBufferManager::PrepareForFrame(uint32_t frameIndex)
 {
     assert(cmdQueues[frameIndex].empty());
 
-    // A pool that recorded no command buffer since the last reset has all its buffers in the
-    // initial state already, so resetting it is a driver call with no effect. Only the graphics
-    // pool is ever used: StartComputeCmd and StartTransferCmd have no callers.
-    AllocatedCmds *allocated[] =
+    const auto resetPool = [this](AllocatedCmds &allocated)
     {
-        &graphicsCmds[frameIndex],
-        &computeCmds[frameIndex],
-        &transferCmds[frameIndex],
+        if (allocated.curCount > 0)
+        {
+            vkResetCommandPool(device, allocated.pool, 0);
+            allocated.curCount = 0;
+        }
     };
 
-    for (AllocatedCmds *a : allocated)
-    {
-        if (a->curCount > 0)
-        {
-            vkResetCommandPool(device, a->pool, 0);
-            a->curCount = 0;
-        }
-    }
+    resetPool(graphicsCmds[frameIndex]);
+    resetPool(computeCmds[frameIndex]);
+    resetPool(transferCmds[frameIndex]);
 
     currentFrameIndex = frameIndex;
 }
 
 VkCommandBuffer CommandBufferManager::StartCmd(uint32_t frameIndex, AllocatedCmds &allocated, VkQueue queue)
 {
-    VkResult r;
-
-    uint32_t oldCount = allocated.cmds.size();
-
-    // if not enough, allocate new buffers
-    if (allocated.curCount + 1 > oldCount)
+    if (allocated.curCount >= allocated.cmds.size())
     {
+        const uint32_t oldCount = static_cast<uint32_t>(allocated.cmds.size());
         allocated.cmds.resize(oldCount + cmdAllocStep);
 
-        VkCommandBufferAllocateInfo allocInfo = {};
+        VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.commandPool = allocated.pool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = cmdAllocStep;
 
-        r = vkAllocateCommandBuffers(device, &allocInfo, &allocated.cmds[oldCount]);
-        VK_CHECKERROR(r);
+        VK_CHECKERROR(vkAllocateCommandBuffers(device, &allocInfo, &allocated.cmds[oldCount]));
     }
 
-    VkCommandBuffer cmd = allocated.cmds[allocated.curCount];
-    allocated.curCount++;
+    const VkCommandBuffer cmd = allocated.cmds[allocated.curCount++];
 
-    VkCommandBufferBeginInfo beginInfo = {};
+    VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-    r = vkBeginCommandBuffer(cmd, &beginInfo);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkBeginCommandBuffer(cmd, &beginInfo));
 
     cmdQueues[frameIndex][cmd] = queue;
 
@@ -127,63 +104,64 @@ VkCommandBuffer CommandBufferManager::StartCmd(uint32_t frameIndex, AllocatedCmd
 
 VkCommandBuffer CommandBufferManager::StartGraphicsCmd()
 {
-    if (queues.expired())
+    const std::shared_ptr<Queues> aliveQueues = queues.lock();
+
+    if (!aliveQueues)
     {
         return VK_NULL_HANDLE;
     }
 
-    return StartCmd(currentFrameIndex, graphicsCmds[currentFrameIndex], queues.lock()->GetGraphics());
+    return StartCmd(currentFrameIndex, graphicsCmds[currentFrameIndex], aliveQueues->GetGraphics());
 }
 
 VkCommandBuffer CommandBufferManager::StartComputeCmd()
 {
-    if (queues.expired())
+    const std::shared_ptr<Queues> aliveQueues = queues.lock();
+
+    if (!aliveQueues)
     {
         return VK_NULL_HANDLE;
     }
 
-    return StartCmd(currentFrameIndex, computeCmds[currentFrameIndex], queues.lock()->GetCompute());
+    return StartCmd(currentFrameIndex, computeCmds[currentFrameIndex], aliveQueues->GetCompute());
 }
 
 VkCommandBuffer CommandBufferManager::StartTransferCmd()
 {
-    if (queues.expired())
+    const std::shared_ptr<Queues> aliveQueues = queues.lock();
+
+    if (!aliveQueues)
     {
         return VK_NULL_HANDLE;
     }
 
-    return StartCmd(currentFrameIndex, transferCmds[currentFrameIndex], queues.lock()->GetTransfer());
+    return StartCmd(currentFrameIndex, transferCmds[currentFrameIndex], aliveQueues->GetTransfer());
 }
 
 void CommandBufferManager::Submit(VkCommandBuffer cmd, VkFence fence)
 {
-    VkResult r = vkEndCommandBuffer(cmd);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkEndCommandBuffer(cmd));
 
-    VkSubmitInfo submitInfo = {};
+    VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd;
 
-    assert(cmdQueues[currentFrameIndex].find(cmd) != cmdQueues[currentFrameIndex].end());
+    auto &frameQueues = cmdQueues[currentFrameIndex];
+    assert(frameQueues.find(cmd) != frameQueues.end());
 
-    auto &qs = cmdQueues[currentFrameIndex];
-    assert(qs.find(cmd) != qs.end());
+    const VkQueue queue = frameQueues[cmd];
+    frameQueues.erase(cmd);
 
-    VkQueue q = qs[cmd];
-    qs.erase(cmd);
-
-    r = vkQueueSubmit(q, 1, &submitInfo, fence);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkQueueSubmit(queue, 1, &submitInfo, fence));
 }
 
 void CommandBufferManager::Submit(VkCommandBuffer cmd, VkSemaphore waitSemaphore, VkPipelineStageFlags waitStages,
     VkSemaphore signalSemaphore, VkFence fence)
 {
-    VkResult r = vkEndCommandBuffer(cmd);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkEndCommandBuffer(cmd));
 
-    VkSubmitInfo submitInfo = {};
+    VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd;
@@ -193,41 +171,36 @@ void CommandBufferManager::Submit(VkCommandBuffer cmd, VkSemaphore waitSemaphore
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &signalSemaphore;
 
-    auto &qs = cmdQueues[currentFrameIndex];
-    assert(qs.find(cmd) != qs.end());
+    auto &frameQueues = cmdQueues[currentFrameIndex];
+    assert(frameQueues.find(cmd) != frameQueues.end());
 
-    VkQueue q = qs[cmd];
-    qs.erase(cmd);
+    const VkQueue queue = frameQueues[cmd];
+    frameQueues.erase(cmd);
 
-    r = vkQueueSubmit(q, 1, &submitInfo, fence);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkQueueSubmit(queue, 1, &submitInfo, fence));
 }
-
 
 void CommandBufferManager::WaitGraphicsIdle()
 {
-    if (auto qs = queues.lock())
+    if (const std::shared_ptr<Queues> aliveQueues = queues.lock())
     {
-        VkResult r = vkQueueWaitIdle(qs->GetGraphics());
-        VK_CHECKERROR(r);
+        VK_CHECKERROR(vkQueueWaitIdle(aliveQueues->GetGraphics()));
     }
 }
 
 void CommandBufferManager::WaitComputeIdle()
 {
-    if (auto qs = queues.lock())
+    if (const std::shared_ptr<Queues> aliveQueues = queues.lock())
     {
-        VkResult r = vkQueueWaitIdle(qs->GetCompute());
-        VK_CHECKERROR(r);
+        VK_CHECKERROR(vkQueueWaitIdle(aliveQueues->GetCompute()));
     }
 }
 
 void CommandBufferManager::WaitTransferIdle()
 {
-    if (auto qs = queues.lock())
+    if (const std::shared_ptr<Queues> aliveQueues = queues.lock())
     {
-        VkResult r = vkQueueWaitIdle(qs->GetTransfer());
-        VK_CHECKERROR(r);
+        VK_CHECKERROR(vkQueueWaitIdle(aliveQueues->GetTransfer()));
     }
 }
 

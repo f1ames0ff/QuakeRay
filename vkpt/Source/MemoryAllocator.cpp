@@ -1,24 +1,23 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "MemoryAllocator.h"
+
+#include <utility>
 
 #include "Const.h"
 
@@ -28,15 +27,14 @@ MemoryAllocator::MemoryAllocator(
     VkInstance _instance,
     VkDevice _device,
     std::shared_ptr<PhysicalDevice> _physDevice)
-:
-    device(_device),
-    physDevice(std::move(_physDevice)),
-    allocator(VK_NULL_HANDLE),
-    texturesStagingPool(VK_NULL_HANDLE),
-    texturesFinalPool(VK_NULL_HANDLE),
-    isAmd(false)
+    : device(_device)
+    , physDevice(std::move(_physDevice))
+    , allocator(VK_NULL_HANDLE)
+    , texturesStagingPool(VK_NULL_HANDLE)
+    , texturesFinalPool(VK_NULL_HANDLE)
+    , isAmd(false)
 {
-    VmaAllocatorCreateInfo allocatorInfo = {};
+    VmaAllocatorCreateInfo allocatorInfo{};
     allocatorInfo.instance = _instance;
     allocatorInfo.device = device;
     allocatorInfo.physicalDevice = physDevice->Get();
@@ -44,17 +42,14 @@ MemoryAllocator::MemoryAllocator(
     allocatorInfo.frameInUseCount = MAX_FRAMES_IN_FLIGHT;
 
     allocatorInfo.flags =
-        // currently, the library uses only one thread
         VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT |
-        // if buffer/image requires a dedicated allocation
         VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT;
 
-    VkResult r = vmaCreateAllocator(&allocatorInfo, &allocator);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vmaCreateAllocator(&allocatorInfo, &allocator));
 
-    VkPhysicalDeviceProperties props;
-    vkGetPhysicalDeviceProperties(physDevice->Get(), &props);
-    isAmd = (props.vendorID == 0x1002);
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physDevice->Get(), &properties);
+    isAmd = (properties.vendorID == 0x1002);
 
     if (!isAmd)
     {
@@ -67,14 +62,22 @@ MemoryAllocator::~MemoryAllocator()
 {
     assert(bufAllocs.size() == 0);
 
-    if (texturesStagingPool != VK_NULL_HANDLE) vmaDestroyPool(allocator, texturesStagingPool);
-    if (texturesFinalPool != VK_NULL_HANDLE) vmaDestroyPool(allocator, texturesFinalPool);
+    if (texturesStagingPool != VK_NULL_HANDLE)
+    {
+        vmaDestroyPool(allocator, texturesStagingPool);
+    }
+
+    if (texturesFinalPool != VK_NULL_HANDLE)
+    {
+        vmaDestroyPool(allocator, texturesFinalPool);
+    }
+
     vmaDestroyAllocator(allocator);
 }
 
 VkBuffer MemoryAllocator::CreateStagingSrcTextureBuffer(const VkBufferCreateInfo *info, const char *pDebugName, void **pOutMappedData, VkDeviceMemory *outMemory)
 {
-    VmaAllocationCreateInfo allocInfo = {};
+    VmaAllocationCreateInfo allocInfo{};
     allocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_USER_DATA_COPY_STRING_BIT;
     allocInfo.pUserData = const_cast<char *>(pDebugName);
 
@@ -87,37 +90,32 @@ VkBuffer MemoryAllocator::CreateStagingSrcTextureBuffer(const VkBufferCreateInfo
         allocInfo.pool = texturesStagingPool;
     }
 
-    VkBuffer buffer;
-    VmaAllocation resultAlloc;
-    VmaAllocationInfo resultAllocInfo = {};
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VmaAllocationInfo allocationInfo{};
 
-    VkResult r = vmaCreateBuffer(allocator, info, &allocInfo, &buffer, &resultAlloc, &resultAllocInfo);
-    
+    const VkResult r = vmaCreateBuffer(allocator, info, &allocInfo, &buffer, &allocation, &allocationInfo);
     VK_CHECKERROR(r);
-    if (r != VK_SUCCESS)
+
+    if (r != VK_SUCCESS || buffer == VK_NULL_HANDLE)
     {
         return VK_NULL_HANDLE;
     }
 
-    if (buffer == VK_NULL_HANDLE)
-    {
-        return VK_NULL_HANDLE;
-    }
-
-    bufAllocs[buffer] = resultAlloc;
+    bufAllocs[buffer] = allocation;
 
     if (outMemory != nullptr)
     {
-        *outMemory = resultAllocInfo.deviceMemory;
+        *outMemory = allocationInfo.deviceMemory;
     }
 
-    *pOutMappedData = resultAllocInfo.pMappedData;
+    *pOutMappedData = allocationInfo.pMappedData;
     return buffer;
 }
 
 VkImage MemoryAllocator::CreateDstTextureImage(const VkImageCreateInfo *info, const char *pDebugName, VkDeviceMemory *outMemory)
 {
-    VmaAllocationCreateInfo allocInfo = {};
+    VmaAllocationCreateInfo allocInfo{};
     allocInfo.flags = VMA_ALLOCATION_CREATE_USER_DATA_COPY_STRING_BIT;
     allocInfo.pUserData = const_cast<char *>(pDebugName);
 
@@ -130,28 +128,23 @@ VkImage MemoryAllocator::CreateDstTextureImage(const VkImageCreateInfo *info, co
         allocInfo.pool = texturesFinalPool;
     }
 
-    VkImage image;
-    VmaAllocation resultAlloc;
-    VmaAllocationInfo resultAllocInfo = {};
+    VkImage image = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VmaAllocationInfo allocationInfo{};
 
-    VkResult r = vmaCreateImage(allocator, info, &allocInfo, &image, &resultAlloc, &resultAllocInfo);
-  
+    const VkResult r = vmaCreateImage(allocator, info, &allocInfo, &image, &allocation, &allocationInfo);
     VK_CHECKERROR(r);
-    if (r != VK_SUCCESS)
+
+    if (r != VK_SUCCESS || image == VK_NULL_HANDLE)
     {
         return VK_NULL_HANDLE;
     }
 
-    if (image == VK_NULL_HANDLE)
-    {
-        return VK_NULL_HANDLE;
-    }
-
-    imgAllocs[image] = resultAlloc;
+    imgAllocs[image] = allocation;
 
     if (outMemory != nullptr)
     {
-        *outMemory = resultAllocInfo.deviceMemory;
+        *outMemory = allocationInfo.deviceMemory;
     }
 
     return image;
@@ -159,53 +152,52 @@ VkImage MemoryAllocator::CreateDstTextureImage(const VkImageCreateInfo *info, co
 
 void MemoryAllocator::DestroyStagingSrcTextureBuffer(VkBuffer buffer)
 {
-    if (bufAllocs.find(buffer) == bufAllocs.end())
+    const auto it = bufAllocs.find(buffer);
+
+    if (it == bufAllocs.end())
     {
         assert(0);
         return;
     }
 
-    vmaDestroyBuffer(allocator, buffer, bufAllocs[buffer]);
-    bufAllocs.erase(buffer);
+    vmaDestroyBuffer(allocator, buffer, it->second);
+    bufAllocs.erase(it);
 }
 
 void MemoryAllocator::DestroyTextureImage(VkImage image)
 {
-    if (imgAllocs.find(image) == imgAllocs.end())
+    const auto it = imgAllocs.find(image);
+
+    if (it == imgAllocs.end())
     {
         assert(0);
         return;
     }
 
-    vmaDestroyImage(allocator, image, imgAllocs[image]);
-    imgAllocs.erase(image);
+    vmaDestroyImage(allocator, image, it->second);
+    imgAllocs.erase(it);
 }
 
 void MemoryAllocator::CreateTexturesStagingPool()
 {
-    VkResult r;
+    VkBufferCreateInfo prototypeInfo{};
+    prototypeInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    prototypeInfo.size = 64;
+    prototypeInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
-    // Vma will create and destroy it for identifying the memory type index 
-    VkBufferCreateInfo bufferInfo = {};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = 64;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VmaAllocationCreateInfo prototypeAllocInfo{};
+    prototypeAllocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+    prototypeAllocInfo.flags = VMA_ALLOCATION_CREATE_USER_DATA_COPY_STRING_BIT;
+    prototypeAllocInfo.pUserData = const_cast<char *>("VMA Image staing pool prototype");
 
-    // transfer source, will be filled from the cpu
-    VmaAllocationCreateInfo prototype = {};
-    prototype.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-    prototype.flags = VMA_ALLOCATION_CREATE_USER_DATA_COPY_STRING_BIT;
-    prototype.pUserData = const_cast<char *>("VMA Image staing pool prototype");
-
-    uint32_t memTypeIndex;
-    r = vmaFindMemoryTypeIndexForBufferInfo(allocator, &bufferInfo, &prototype, &memTypeIndex);
+    uint32_t memoryTypeIndex = 0;
+    VkResult r = vmaFindMemoryTypeIndexForBufferInfo(allocator, &prototypeInfo, &prototypeAllocInfo, &memoryTypeIndex);
     VK_CHECKERROR(r);
 
-    VmaPoolCreateInfo poolInfo = {};
+    VmaPoolCreateInfo poolInfo{};
     poolInfo.frameInUseCount = MAX_FRAMES_IN_FLIGHT;
-    poolInfo.memoryTypeIndex = memTypeIndex;
+    poolInfo.memoryTypeIndex = memoryTypeIndex;
     poolInfo.blockSize = ALLOCATOR_BLOCK_SIZE_STAGING_TEXTURES;
-    // buddy algorithm as textures has commonly a size of power of 2
     poolInfo.flags = VMA_POOL_CREATE_BUDDY_ALGORITHM_BIT;
 
     r = vmaCreatePool(allocator, &poolInfo, &texturesStagingPool);
@@ -214,37 +206,30 @@ void MemoryAllocator::CreateTexturesStagingPool()
 
 void MemoryAllocator::CreateTexturesFinalPool()
 {
-    VkResult r;
+    VkImageCreateInfo prototypeInfo{};
+    prototypeInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    prototypeInfo.imageType = VK_IMAGE_TYPE_2D;
+    prototypeInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    prototypeInfo.extent = { 1, 1, 1 };
+    prototypeInfo.mipLevels = 1;
+    prototypeInfo.arrayLayers = 1;
+    prototypeInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    prototypeInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    prototypeInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 
-    // Vma will create and destroy it for identifying the memory type index 
-    VkImageCreateInfo imageInfo = {};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
-    imageInfo.extent.width = 1;
-    imageInfo.extent.height = 1;
-    imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    VmaAllocationCreateInfo prototypeAllocInfo{};
+    prototypeAllocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    prototypeAllocInfo.flags = VMA_ALLOCATION_CREATE_USER_DATA_COPY_STRING_BIT;
+    prototypeAllocInfo.pUserData = const_cast<char *>("VMA Image pool prototype");
 
-    // transfer destination, data will be copied from staging buffer
-    VmaAllocationCreateInfo prototype = {};
-    prototype.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-    prototype.flags = VMA_ALLOCATION_CREATE_USER_DATA_COPY_STRING_BIT;
-    prototype.pUserData = const_cast<char *>("VMA Image pool prototype");
-
-    uint32_t memTypeIndex;
-    r = vmaFindMemoryTypeIndexForImageInfo(allocator, &imageInfo, &prototype, &memTypeIndex);
+    uint32_t memoryTypeIndex = 0;
+    VkResult r = vmaFindMemoryTypeIndexForImageInfo(allocator, &prototypeInfo, &prototypeAllocInfo, &memoryTypeIndex);
     VK_CHECKERROR(r);
 
-    VmaPoolCreateInfo poolInfo = {};
+    VmaPoolCreateInfo poolInfo{};
     poolInfo.frameInUseCount = MAX_FRAMES_IN_FLIGHT;
-    poolInfo.memoryTypeIndex = memTypeIndex;
+    poolInfo.memoryTypeIndex = memoryTypeIndex;
     poolInfo.blockSize = ALLOCATOR_BLOCK_SIZE_TEXTURES;
-    // buddy algorithm as textures has commonly a size of power of 2
     poolInfo.flags = VMA_POOL_CREATE_BUDDY_ALGORITHM_BIT;
 
     r = vmaCreatePool(allocator, &poolInfo, &texturesFinalPool);
@@ -259,25 +244,22 @@ VkDevice MemoryAllocator::GetDevice()
 VkDeviceMemory MemoryAllocator::AllocDedicated(const VkMemoryRequirements &memReqs, VkMemoryPropertyFlags properties,
                                                AllocType allocType, const char *pDebugName) const
 {
-    VkDeviceMemory memory;
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
 
-    VkMemoryAllocateInfo memAllocInfo = {};
-    memAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    memAllocInfo.allocationSize = memReqs.size;
-    memAllocInfo.memoryTypeIndex = physDevice->GetMemoryTypeIndex(memReqs.memoryTypeBits, properties);
-
-    VkMemoryAllocateFlagsInfo allocFlagInfo = {};
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = physDevice->GetMemoryTypeIndex(memReqs.memoryTypeBits, properties);
 
     if (allocType == AllocType::WITH_ADDRESS_QUERY)
     {
-        allocFlagInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-        allocFlagInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-
-        memAllocInfo.pNext = &allocFlagInfo;
+        allocInfo.pNext = &allocFlagsInfo;
     }
 
-    VkResult r = vkAllocateMemory(device, &memAllocInfo, nullptr, &memory);
-    VK_CHECKERROR(r);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VK_CHECKERROR(vkAllocateMemory(device, &allocInfo, nullptr, &memory));
 
     SET_DEBUG_NAME(device, memory, VK_OBJECT_TYPE_DEVICE_MEMORY, pDebugName);
 

@@ -1,35 +1,31 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "Buffer.h"
 
 using namespace vkpt;
 
 Buffer::Buffer()
-    :
-    device(VK_NULL_HANDLE),
-    buffer(VK_NULL_HANDLE),
-    memory(VK_NULL_HANDLE),
-    address(0),
-    size(0),
-    isMapped(false)
+    : device(VK_NULL_HANDLE)
+    , buffer(VK_NULL_HANDLE)
+    , memory(VK_NULL_HANDLE)
+    , address(0)
+    , size(0)
+    , isMapped(false)
 {}
 
 Buffer::~Buffer()
@@ -39,10 +35,10 @@ Buffer::~Buffer()
 
 void Buffer::Init(
     const std::shared_ptr<MemoryAllocator> &allocator,
-    VkDeviceSize bsize, VkBufferUsageFlags usage,
+    VkDeviceSize newSize, VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties, const char *debugName)
 {
-    if (bsize == 0)
+    if (newSize == 0)
     {
         assert(0);
         return;
@@ -50,36 +46,32 @@ void Buffer::Init(
 
     device = allocator->GetDevice();
 
-    VkResult r;
-
-    VkBufferCreateInfo bufferInfo = {};
+    VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bsize;
+    bufferInfo.size = newSize;
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    r = vkCreateBuffer(device, &bufferInfo, nullptr, &buffer);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer));
 
-    VkMemoryRequirements memReq = {};
-    vkGetBufferMemoryRequirements(device, buffer, &memReq);
+    VkMemoryRequirements memRequirements{};
+    vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
 
-    memory = allocator->AllocDedicated(memReq, properties, MemoryAllocator::AllocType::WITH_ADDRESS_QUERY, debugName);
+    memory = allocator->AllocDedicated(memRequirements, properties, MemoryAllocator::AllocType::WITH_ADDRESS_QUERY, debugName);
 
-    r = vkBindBufferMemory(device, buffer, memory, 0);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkBindBufferMemory(device, buffer, memory, 0));
 
-    if (bufferInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+    if ((usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0)
     {
-        VkBufferDeviceAddressInfoKHR addrInfo = {};
-        addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-        addrInfo.buffer = buffer;
-        address = vkGetBufferDeviceAddress(device, &addrInfo);
+        VkBufferDeviceAddressInfoKHR addressInfo{};
+        addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        addressInfo.buffer = buffer;
+        address = vkGetBufferDeviceAddress(device, &addressInfo);
     }
 
     SET_DEBUG_NAME(device, buffer, VK_OBJECT_TYPE_BUFFER, debugName);
 
-    size = bsize;
+    size = newSize;
 }
 
 void Buffer::Destroy()
@@ -91,7 +83,6 @@ void Buffer::Destroy()
         return;
     }
 
-    // memory is guaranteed to be dedicated
     if (memory != VK_NULL_HANDLE)
     {
         vkFreeMemory(device, memory, nullptr);
@@ -115,10 +106,9 @@ void *Buffer::Map()
     assert(memory != VK_NULL_HANDLE && size > 0);
 
     isMapped = true;
-    void *mapped;
 
-    VkResult r = vkMapMemory(device, memory, 0, size, 0, &mapped);
-    VK_CHECKERROR(r);
+    void *mapped = nullptr;
+    VK_CHECKERROR(vkMapMemory(device, memory, 0, size, 0, &mapped));
 
     return mapped;
 }
@@ -127,6 +117,7 @@ void Buffer::Unmap()
 {
     assert(device != VK_NULL_HANDLE);
     assert(isMapped);
+
     isMapped = false;
     vkUnmapMemory(device, memory);
 }
@@ -135,13 +126,13 @@ bool Buffer::TryUnmap()
 {
     assert(device != VK_NULL_HANDLE);
 
-    if (isMapped)
+    if (!isMapped)
     {
-        Unmap();
-        return true;
+        return false;
     }
 
-    return false;
+    Unmap();
+    return true;
 }
 
 VkBuffer Buffer::GetBuffer() const
@@ -175,5 +166,5 @@ bool Buffer::IsMapped() const
 
 bool Buffer::IsInitted() const
 {
-    return buffer != VK_NULL_HANDLE && memory !=VK_NULL_HANDLE;
+    return buffer != VK_NULL_HANDLE && memory != VK_NULL_HANDLE;
 }

@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
@@ -35,8 +32,8 @@ class Swapchain
 {
 public:
     Swapchain(
-        VkDevice device, 
-        VkSurfaceKHR surface, 
+        VkDevice device,
+        VkSurfaceKHR surface,
         VkPhysicalDevice physDevice,
         std::shared_ptr<CommandBufferManager> cmdManager);
     ~Swapchain();
@@ -51,8 +48,6 @@ public:
     void AcquireImage(VkSemaphore imageAvailableSemaphore);
     void Present(const std::shared_ptr<Queues> &queues, VkSemaphore renderFinishedSemaphore);
 
-    // Subscribe to swapchain size chagne event.
-    // shared_ptr will be transformed to weak_ptr
     void Subscribe(std::shared_ptr<ISwapchainDependency> subscriber);
     void Unsubscribe(const ISwapchainDependency *subscriber);
 
@@ -69,19 +64,13 @@ public:
 
 private:
     VkExtent2D GetOptimalExtent() const;
-
-    // The query below is a driver round trip and sits in every rg* entry point through
-    // VulkanDevice::IsSuspended(), so its result is cached for the duration of a frame and
-    // refreshed once per frame (AcquireImage) and after the frame is presented (Present).
     VkResult GetSurfaceCapabilities(VkSurfaceCapabilitiesKHR *outCaps) const;
     void ResetSurfaceCapabilitiesCache() const;
 
-    // Safe to call even if swapchain wasn't created
     bool TryRecreate(const VkExtent2D &newExtent, bool vsync);
 
     void Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE);
     void Destroy();
-    // Destroy dresources but not the swapchain itself. Old swapchain is returned.
     VkSwapchainKHR DestroyWithoutSwapchain();
 
     void CallCreateSubscribers();
@@ -98,7 +87,6 @@ private:
     VkPresentModeKHR presentModeImmediate;
 
     bool requestedVsync;
-    // current surface's size
     VkExtent2D surfaceExtent;
     bool isVsync;
 
@@ -110,13 +98,9 @@ private:
 
     std::list<std::weak_ptr<ISwapchainDependency>> subscribers;
 
-    // Cached for the duration of a frame: the query is a driver round trip and sits in every
-    // rg* entry point through VulkanDevice::IsSuspended().
     mutable VkSurfaceCapabilitiesKHR cachedSurfaceCaps;
     mutable VkResult cachedSurfaceCapsResult;
     mutable bool cachedSurfaceCapsValid;
-    // Extent check result of cachedSurfaceCaps, so that IsExtentOptimal() does not have to
-    // copy the caps struct on each rg* entry point
     mutable bool cachedIsExtentOptimal;
 };
 

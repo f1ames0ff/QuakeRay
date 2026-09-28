@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "PhysicalDevice.h"
 
@@ -28,49 +25,52 @@
 using namespace vkpt;
 
 PhysicalDevice::PhysicalDevice(VkInstance instance)
-    : physDevice(VK_NULL_HANDLE), memoryProperties{}, rtPipelineProperties{}, asProperties{}
+    : physDevice(VK_NULL_HANDLE)
+    , memoryProperties{}
+    , rtPipelineProperties{}
+    , asProperties{}
 {
-    VkResult r;
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
 
-    uint32_t physCount = 0;
-    r = vkEnumeratePhysicalDevices(instance, &physCount, nullptr);
-
-    if (physCount == 0)
+    if (deviceCount == 0)
     {
         throw RgException(RG_CANT_FIND_PHYSICAL_DEVICE, "Can't find physical devices");
     }
 
-    std::vector<VkPhysicalDevice> physicalDevices;
-    physicalDevices.resize(physCount);
-    r = vkEnumeratePhysicalDevices(instance, &physCount, physicalDevices.data());
-    VK_CHECKERROR(r);
+    std::vector<VkPhysicalDevice> devices(deviceCount);
+    const VkResult enumerateResult = vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+    VK_CHECKERROR(enumerateResult);
 
-    for (VkPhysicalDevice p : physicalDevices)
+    for (const VkPhysicalDevice device : devices)
     {
-        VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures = {};
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures{};
         rtFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
 
-        VkPhysicalDeviceFeatures2 deviceFeatures2 = {};
-        deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        deviceFeatures2.pNext = &rtFeatures;
-        vkGetPhysicalDeviceFeatures2(p, &deviceFeatures2);
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &rtFeatures;
+        vkGetPhysicalDeviceFeatures2(device, &features2);
 
-        if (rtFeatures.rayTracingPipeline)
+        if (!rtFeatures.rayTracingPipeline)
         {
-            physDevice = p;
-
-            rtPipelineProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
-            asProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
-            VkPhysicalDeviceProperties2 deviceProp2 = {};
-            deviceProp2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-            deviceProp2.pNext = &rtPipelineProperties;
-            rtPipelineProperties.pNext = &asProperties;
-
-            vkGetPhysicalDeviceProperties2(physDevice, &deviceProp2);
-            vkGetPhysicalDeviceMemoryProperties(physDevice, &memoryProperties);
-
-            break;
+            continue;
         }
+
+        physDevice = device;
+
+        rtPipelineProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+        asProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+
+        VkPhysicalDeviceProperties2 properties2{};
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties2.pNext = &rtPipelineProperties;
+        rtPipelineProperties.pNext = &asProperties;
+
+        vkGetPhysicalDeviceProperties2(physDevice, &properties2);
+        vkGetPhysicalDeviceMemoryProperties(physDevice, &memoryProperties);
+
+        break;
     }
 
     if (physDevice == VK_NULL_HANDLE)
@@ -86,32 +86,17 @@ VkPhysicalDevice PhysicalDevice::Get() const
 
 uint32_t PhysicalDevice::GetMemoryTypeIndex(uint32_t memoryTypeBits, VkFlags requirementsMask) const
 {
-    VkMemoryPropertyFlags flagsToIgnore = 0;
+    const bool wantsDeviceLocal = (requirementsMask & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+    const VkMemoryPropertyFlags conflictingFlags =
+        wantsDeviceLocal ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
-    if (requirementsMask & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
-    {        
-        // device-local memory must not be host visible
-        flagsToIgnore = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-    }
-    else
-    {
-        // host visible memory must not be device-local
-        flagsToIgnore = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-    }
-    
-
-    // for each memory type available for this device
     for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
     {
-        // if type is available
-        if ((memoryTypeBits & 1u) == 1)
+        if ((memoryTypeBits & 1u) != 0)
         {
-            VkMemoryPropertyFlags flags = memoryProperties.memoryTypes[i].propertyFlags;
+            const VkMemoryPropertyFlags flags = memoryProperties.memoryTypes[i].propertyFlags;
 
-            bool isSuitable = (flags & requirementsMask) == requirementsMask;
-            bool isIgnored = (flags & flagsToIgnore) == flagsToIgnore;
-            
-            if (isSuitable && !isIgnored)
+            if ((flags & requirementsMask) == requirementsMask && (flags & conflictingFlags) != conflictingFlags)
             {
                 return i;
             }
@@ -121,7 +106,6 @@ uint32_t PhysicalDevice::GetMemoryTypeIndex(uint32_t memoryTypeBits, VkFlags req
     }
 
     throw RgException(RG_GRAPHICS_API_ERROR, "Can't find memory type for given memory property flags (" + std::to_string(requirementsMask) + ")");
-    return 0;
 }
 
 const VkPhysicalDeviceMemoryProperties &PhysicalDevice::GetMemoryProperties() const
@@ -134,7 +118,7 @@ const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &PhysicalDevice::GetRTPipe
     return rtPipelineProperties;
 }
 
-const VkPhysicalDeviceAccelerationStructurePropertiesKHR& PhysicalDevice::GetASProperties() const
+const VkPhysicalDeviceAccelerationStructurePropertiesKHR &PhysicalDevice::GetASProperties() const
 {
     return asProperties;
 }
