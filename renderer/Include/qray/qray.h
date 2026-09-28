@@ -880,9 +880,16 @@ QRAPI QrResult QRCONV qrDestroyCubemap(
     QrInstance                          qrInstance,
     QrCubemap                           cubemap);
 
+typedef enum QrPresentMode
+{
+    QR_PRESENT_MODE_MAILBOX = 0,
+    QR_PRESENT_MODE_VSYNC,
+    QR_PRESENT_MODE_ADAPTIVE,
+} QrPresentMode;
+
 typedef struct QrStartFrameInfo
 {
-    QrBool32        requestVSync;
+    QrPresentMode   presentMode;
     QrBool32        requestShaderReload;
 } QrStartFrameInfo;
 

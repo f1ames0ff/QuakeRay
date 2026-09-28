@@ -44,8 +44,18 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
         Utils::WaitAndResetFences(device, frameFences[frameIndex], outOfFrameFences[frameIndex]);
     }
 
-    swapchain->RequestVsync(startInfo.requestVSync);
+    swapchain->RequestPresentMode(startInfo.presentMode);
     swapchain->AcquireImage(imageAvailableSemaphores[frameIndex]);
+
+    {
+        const std::string presentModeName = swapchain->GetPresentModeName();
+
+        if (presentModeName != printedPresentModeName)
+        {
+            printedPresentModeName = presentModeName;
+            Print(("RHI: the swapchain present mode is " + presentModeName).c_str());
+        }
+    }
 
     VkSemaphore semaphoreToWaitOnSubmit = imageAvailableSemaphores[frameIndex];
     VkPipelineStageFlags semaphoreWaitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
