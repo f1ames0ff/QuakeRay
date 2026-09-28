@@ -1091,17 +1091,28 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
    as polygons over them; at or above it the whole surface glows and stays a single light. */
 #define RT_EMIS_GLOW_FULL 0.999f
 
-static float TexMgr_EmissiveFocusExponent (float degrees)
+static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, float *angleOuter)
 {
-	if (!(degrees > 0.0f) || degrees >= 89.0f)
-		return 0.5f;
+	const float outerDeg = mat->emissive_focus;
 
-	const float cosAngle = (float)cos (degrees * M_PI_DIV_180);
+	if (!(outerDeg > 0.0f) || outerDeg >= 89.0f)
+	{
+		*angleInner = 0.0f;
+		*angleOuter = 0.0f;
+		return;
+	}
 
-	if (!(cosAngle > 0.0f) || cosAngle >= 1.0f)
-		return 0.5f;
+	float softDeg = mat->emissive_focus_soft;
 
-	return CLAMP (0.25f, (float)(log (0.5) / log (cosAngle)), 64.0f);
+	if (softDeg < 0.0f)
+		softDeg = outerDeg * 0.1f;
+	if (softDeg < 0.05f)
+		softDeg = 0.05f;
+	if (softDeg > outerDeg)
+		softDeg = outerDeg;
+
+	*angleOuter = (float)(outerDeg * M_PI_DIV_180);
+	*angleInner = (float)((outerDeg - softDeg) * M_PI_DIV_180);
 }
 
 static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
@@ -1123,7 +1134,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			ModifyColorValue (glt->rtlightcolor, mat->light_brightness);
 	}
 	glt->rtupoffset = mat->light_upoffset;
-	glt->rtemissivefocus = TexMgr_EmissiveFocusExponent (mat->emissive_focus);
+	TexMgr_EmissiveCone (mat, &glt->rtemisangleinner, &glt->rtemisangleouter);
 	glt->rtmirror = mat->mirror;
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
@@ -1626,7 +1637,8 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 	glt->rtemissivemean = 0.0f;
 	glt->rtemissivemeanbase = 0.0f;
-	glt->rtemissivefocus = 0.5f;
+	glt->rtemisangleinner = 0.0f;
+	glt->rtemisangleouter = 0.0f;
 	glt->rtemisuvmin[0] = glt->rtemisuvmin[1] = 0.0f;
 	glt->rtemisuvmax[0] = glt->rtemisuvmax[1] = 1.0f;
 	glt->rtemissiveglow = 0.0f;

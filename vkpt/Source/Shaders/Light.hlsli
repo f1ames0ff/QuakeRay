@@ -93,7 +93,8 @@ struct TexturedAreaLight
     float area;
     float textureIndex;
     float meanEmiss;
-    float focus;
+    float coneCosInner;
+    float coneCosOuter;
     int numVerts;
     float2 uvVerts[MAX_TEXTURED_AREA_LIGHT_VERTS];
     float3 color;
@@ -171,7 +172,8 @@ TexturedAreaLight decodeAsTexturedAreaLight(const ShLightEncoded encoded)
     l.normal = encoded.data_7.xyz;
     l.area = encoded.data_7.w;
     l.color = encoded.color;
-    l.focus = encoded.focus;
+    l.coneCosInner = encoded.coneCosInner;
+    l.coneCosOuter = encoded.coneCosOuter;
 
     return l;
 }
@@ -518,10 +520,10 @@ LightSample sampleTexturedAreaLight(const TexturedAreaLight l, const float3 surf
 
     const DirectionAndLength lightToSurf = calcDirectionAndLength(r.position, surfPosition);
 
-    // Match Q2RTX sample_polygonal_lights: sample on the polygon (no normal offset),
-    // soft edge attenuation via a cosine lobe around the normal instead of a hard coplanar cull.
+    // Match Q2RTX sample_polygonal_lights: sample on the polygon (no normal offset). An authored
+    // cone cuts the emission to a spot around the normal; without one the soft sqrt edge stays.
     const float cosNL = max(dot(l.normal, lightToSurf.dir), 0.0);
-    const float spotlight = pow(cosNL, l.focus);
+    const float spotlight = (l.coneCosOuter > 0.0) ? getSpotFactor(cosNL, l.coneCosInner, l.coneCosOuter) : sqrt(cosNL);
 
     r.color = l.color * mask * spotlight;
     r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));

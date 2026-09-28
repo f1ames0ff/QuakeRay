@@ -695,7 +695,8 @@ typedef struct RgTexturedAreaLightUploadInfo
     // that texture at the point it picks, and meanEmiss is the mean of that mask.
     RgMaterial      material;
     float           meanEmiss;
-    float           focus;
+    float           angleInner;
+    float           angleOuter;
     // Whether A/B/C are a fit of the surface's own uv. Recorded by the host for its own
     // bookkeeping and not sent to the renderer: the shader always places its point as
     // C + A * u + B * v, whatever the fit was.

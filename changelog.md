@@ -3,7 +3,7 @@
 ## v0.19.0
 
 ### Added
-- **A DTAL can shine as a spot** — a material may author `emissive_focus: <half-angle in degrees>`: the light of every surface of that material is confined to a cone around its normal, so a lit window, a lantern or a lamp casts a beam instead of the default wide lobe. The angle is where the emission falls to half its brightness; `0` or no key keeps the old lobe, about `75` degrees, and `10`–`30` is a beam. World faces, brush entities and alias models read it from the material of the frame they show.
+- **A DTAL can shine as a spot** — a material may author `emissive_focus: <half-angle in degrees>`: the light of every surface of that material is confined to a cone around its normal — full inside it, nothing outside — so a lit window, a lantern or a lamp casts a beam instead of the default wide lobe. `emissive_focus_soft` (degrees, default a tenth of the angle) is the width of the soft edge the beam is cut with; `0` is a nearly hard one. World faces, brush entities and alias models read it from the material of the frame they show.
 
 ## v0.18.0
 

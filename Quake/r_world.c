@@ -1784,7 +1784,8 @@ typedef struct rt_emissive_params_s
 {
 	RgMaterial material;
 	float      meanEmiss;
-	float      focus;
+	float      angleInner;
+	float      angleOuter;
 	vec3_t     color;
 	/* The texture glows over part of itself, so the light is built from polygons over those
 	   extents instead of from the whole surface. */
@@ -1814,7 +1815,8 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	p->meanEmiss = has_mask ? light_tex->rtemissivemean : 1.0f;
 	p->glow      = false;
 	p->glow_mean = p->meanEmiss;
-	p->focus     = (light_tex->rtemissivefocus > 0.0f) ? light_tex->rtemissivefocus : 0.5f;
+	p->angleInner = light_tex->rtemisangleinner;
+	p->angleOuter = light_tex->rtemisangleouter;
 
 	if (light_tex->rthaslightcolor)
 	{
@@ -2516,7 +2518,8 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		li.numVerts  = piece->numverts;
 		li.material  = params->material;
 		li.meanEmiss = params->glow ? params->glow_mean : params->meanEmiss;
-		li.focus     = params->focus;
+		li.angleInner = params->angleInner;
+		li.angleOuter = params->angleOuter;
 		li.fit       = 1;
 		li.isStatic  = 0;
 
@@ -2760,7 +2763,8 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		{
 			params.material  = frame_params.material;
 			params.meanEmiss = frame_params.meanEmiss;
-			params.focus     = frame_params.focus;
+			params.angleInner = frame_params.angleInner;
+			params.angleOuter = frame_params.angleOuter;
 			VectorCopy (frame_params.color, params.color);
 		}
 		else
@@ -2978,7 +2982,8 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	light_info.uniqueID  = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, 0);
 	light_info.material  = params.material;
 	light_info.meanEmiss = params.meanEmiss;
-	light_info.focus     = params.focus;
+	light_info.angleInner = params.angleInner;
+	light_info.angleOuter = params.angleOuter;
 	light_info.area      = total_area;
 	light_info.fit       = 0;
 	light_info.isStatic  = is_static_geom ? 1 : 0;
@@ -3855,7 +3860,8 @@ void RT_UploadAllWorldModelLights (void)
 				   material moves with it; the geometry stays where the surface is. */
 				li->material  = params.material;
 				li->meanEmiss = params.meanEmiss;
-				li->focus     = params.focus;
+				li->angleInner = params.angleInner;
+				li->angleOuter = params.angleOuter;
 				VectorCopy (params.color, li->color.data);
 			}
 			else

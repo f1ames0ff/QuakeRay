@@ -251,7 +251,20 @@ static vkpt::ShLightEncoded EncodeAsTexturedAreaLight(const RgTexturedAreaLightU
     lt.data_7[2] = info.normal.data[2];
     lt.data_7[3] = info.area;
 
-    lt.focus = (info.focus >= 0.25f && info.focus <= 64.0f) ? info.focus : 0.5f;
+    const bool cone = std::isfinite(info.angleOuter) && info.angleOuter > 0.0f &&
+                      info.angleOuter < static_cast<float>(vkpt::RG_PI / 2.0) &&
+                      std::isfinite(info.angleInner) && info.angleInner >= 0.0f;
+    if (cone)
+    {
+        const float angleInner = std::min(info.angleInner, info.angleOuter * 0.999f);
+        lt.coneCosInner = std::cos(angleInner);
+        lt.coneCosOuter = std::cos(info.angleOuter);
+    }
+    else
+    {
+        lt.coneCosInner = 0.0f;
+        lt.coneCosOuter = 0.0f;
+    }
 
     return lt;
 }

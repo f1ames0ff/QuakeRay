@@ -298,6 +298,7 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->metalness_factor = 0.0f;
     mat->emissive_factor = 1.0f;
     mat->emissive_blend = -1;
+    mat->emissive_focus_soft = -1.0f;
     mat->base_factor = 1.0f;
     mat->light_brightness = 1.0f;
     mat->light_styles = true;
@@ -382,6 +383,16 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
             mat->emissive_focus = v;
         else
             Con_DWarning("RT mat: material '%s': emissive_focus %.1f is not in 0..89 degrees; ignored\n",
+                         mat->name, v);
+    }
+    else if (!q_strcasecmp(key, "emissive_focus_soft"))
+    {
+        const float v = (float)atof(value);
+
+        if (v >= 0.0f && v < 89.0f)
+            mat->emissive_focus_soft = v;
+        else
+            Con_DWarning("RT mat: material '%s': emissive_focus_soft %.1f is not in 0..89 degrees; ignored\n",
                          mat->name, v);
     }
     else if (!q_strcasecmp(key, "is_light"))

@@ -166,7 +166,13 @@ float q2LightSelectionMass(const ShLightEncoded encoded, const vec3 p, const vec
         const TexturedAreaLight l = decodeAsTexturedAreaLight(encoded);
         const vec3 center = getTexturedAreaLightCenter(l);
         const DirectionAndLength centerToSurf = calcDirectionAndLength(center, p);
-        return safeSolidAngle(l.area * getGeometryFactorClamped(l.normal, centerToSurf.dir, centerToSurf.len));
+        const float cosNL = max(dot(l.normal, centerToSurf.dir), 0.0);
+        float mass = safeSolidAngle(l.area * getGeometryFactorClamped(l.normal, centerToSurf.dir, centerToSurf.len));
+
+        if (l.coneCosOuter > 0.0)
+            mass *= getSpotFactor(cosNL, l.coneCosInner, l.coneCosOuter);
+
+        return mass;
     }
     else
     {
