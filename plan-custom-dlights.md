@@ -101,13 +101,53 @@ Rules:
 - The Entity tab stays for existing lights; a custom light picked in the world
   also selects its Custom-tab row (and vice versa) via the shared tracked id.
 
+## Selection gizmo and placement mode (requested)
+
+### Axis gizmo for the selected custom light
+
+- When a custom light is selected (its Custom-tab row, or its wireframe picked in
+  the world), draw three arrows at its origin along the **world axes**: X red,
+  Y green, Z blue.
+  - Drawing: `QR_Editor_DrawSelection` in `gl_rmain.c` already emits the light
+    wireframes through the rasterized-geometry path; the arrows go there too
+    (line shafts plus a small head), with per-vertex colours (`RgVertex`.
+    `packedColor`).
+  - Length: scale by the distance to the camera so the gizmo keeps a usable
+    screen size (`length = 24 * distance / 256`, clamped).
+- Dragging: on LMB press, project the light origin and `origin + axis * length`
+  to screen space; if the cursor is within a few pixels of one axis' screen
+  segment, that axis becomes the drag target. On mouse motion move the light
+  along that axis by the screen delta projected on the axis' screen direction;
+  LMB release ends the drag. This happens in the **cursor mode** (the camera is
+  frozen there), so the gizmo never fights the flight controls.
+- State in `qre`: `custom_drag_axis` (-1 none), `custom_drag_light`,
+  `custom_drag_origin[3]`, `custom_drag_mouse[2]`.
+- The gizmo is shown only for `RT_LIGHT_KIND_CUSTOM` selections: the entity and
+  material lights have no editable position.
+
+### Placement mode ("Add light" then press LMB)
+
+- `Add light` does **not** create the light at once: it sets
+  `qre.custom_placing = true` and leaves the cursor mode (the camera flies), so
+  the crosshair aims.
+- While placing, a hint is shown in the **bottom-right** corner: `Press LMB to
+  add new light at crosshair position` (a new bridge call that draws a text
+  overlay there, near the existing hint block).
+- The LMB that places the light is routed in `in_sdl.c` **before** the editor's
+  pick: the editor already traces the world for its pick and keeps the hit in
+  `bestimpact` (`qr_editor.c:1100`, `tr.endpos`), with the surface normal in
+  `qre.pick_surf->plane->normal` — the new light is created at
+  `bestimpact + normal * 8` (the confirmed snap to the surface) and the editor
+  returns to the cursor mode with the light selected.
+- `ESC` (or `Tab`) cancels the placement without creating a light.
+
 ## Session flow (consistent with the rest of the editor)
 
 - Target file `<gamedir>/qray/lights.yaml`; session file
   `<gamedir>/qray/lights.editor.yaml`; backup `<gamedir>/qray/backup_lights.yaml`.
-- `Apply` merges the touched level section into the target's own text (other
+- `Save` merges the touched level section into the target's own text (other
   levels, comments and unknown keys copied verbatim).
-- `Exit` asks Save/Discard as today; `Cancel` reverts the in-memory list to the
+- `Exit` asks Save all/Discard as today; `Cancel` reverts the in-memory list to the
   snapshot.
 - A map change ends the editor (`QR_Editor_OnNewMap`), so unsaved custom lights
   are dropped with the session file removed — the existing crash-leftover
@@ -124,7 +164,7 @@ Rules:
 - `Quake/gl_rmain.c`: `RT_TRACK_*` — add the custom lights (kind, stable id,
   wireframe colour).
 - `Quake/qr_editor.c`: the third tab, Place/Add/Remove, session files for the
-  new target, snapshot/Cancel for the custom list, Save/Discard messages.
+  new target, snapshot/Cancel for the custom list, Save all/Discard messages.
 
 ## Decisions (confirmed with the user)
 

@@ -1068,7 +1068,6 @@ static void R_DrawViewModelTask (void *unused)
 	R_DrawViewModel (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);     // johnfitz -- moved here from R_RenderView
 	R_ShowTris (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);          // johnfitz
 	R_ShowBoundingBoxes (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]); // johnfitz
-	QR_Editor_DrawSelection (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]); // qr light editor
 	RT_Prof_End (RT_PROF_VIEWMODEL_DRAW, prof_start);
 
 	prof_start = RT_Prof_Begin ();

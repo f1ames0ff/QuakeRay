@@ -51,6 +51,11 @@ float ClampF (float v, float mn, float mx)
 	return v < mn ? mn : (v > mx ? mx : v);
 }
 
+ImU32 PackedColorToU32 (uint32_t argb)
+{
+	return IM_COL32 ((argb >> 0) & 0xFF, (argb >> 8) & 0xFF, (argb >> 16) & 0xFF, (argb >> 24) & 0xFF);
+}
+
 // A tooltip for the item just drawn (SetItemTooltip applies the panel's hover
 // delay, see ApplyStyle).
 void ItemTooltip (const char *text)
@@ -991,4 +996,31 @@ void QR_GUI_GetMousePos (float *x, float *y)
 		*x = pos.x;
 	if (y)
 		*y = pos.y;
+}
+
+void QR_GUI_DrawPolyline (const float *xy, int count, uint32_t argb, float thickness)
+{
+	if (!xy || count < 2)
+		return;
+
+	ImDrawList *dl = ImGui::GetForegroundDrawList ();
+	const ImU32 col = PackedColorToU32 (argb);
+	const float th = thickness > 0.0f ? thickness : 1.0f;
+
+	for (int i = 0; i + 1 < count; i++)
+	{
+		const ImVec2 a (xy[i * 2], xy[i * 2 + 1]);
+		const ImVec2 b (xy[(i + 1) * 2], xy[(i + 1) * 2 + 1]);
+
+		dl->AddLine (a, b, col, th);
+	}
+}
+
+void QR_GUI_DrawCircle (float cx, float cy, float radius, uint32_t argb, float thickness)
+{
+	if (radius <= 0.0f)
+		return;
+
+	ImGui::GetForegroundDrawList ()->AddCircle (ImVec2 (cx, cy), radius, PackedColorToU32 (argb), 0,
+	                                            thickness > 0.0f ? thickness : 1.0f);
 }

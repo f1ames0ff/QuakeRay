@@ -1324,9 +1324,6 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 // The light editor's picking and wireframes
 // ---------------------------------------------------------------------------
 
-#define QRE_LIGHT_WIRE_MAX  96
-#define QRE_LIGHT_WIRE_SEGS 12
-
 // The nearest light along the view ray, or -1.
 static int QRE_LightUnderCrosshair (void)
 {
@@ -1450,61 +1447,52 @@ static void QRE_RefreshSelectedLight (void)
 	}
 }
 
-// The wireframes of the frame's lights: cyan, the hovered one amber and the
-// selected one white, in one line-list upload.
-// The "C" that marks an authored (custom) light inside its wireframe sphere: an
-// arc of this many line segments, billboarded to the camera.
-#define QRE_CUSTOM_GLYPH_SEGS 8
+static qboolean QRE_WorldToScreen (const vec3_t p, float *out_x, float *out_y);
+static void     QRE_DrawGizmoArrows (void);
+
+static float QRE_DepthToCamera (const vec3_t p)
+{
+	vec3_t forward, right, up, d;
+
+	AngleVectors (r_refdef.viewangles, forward, right, up);
+	VectorSubtract (p, r_refdef.vieworg, d);
+	return DotProduct (d, forward);
+}
+
+static float QRE_PixelsPerUnit (float depth)
+{
+	const float deg2rad = 3.14159265f / 180.0f;
+	const float tan_x = tanf (r_refdef.fov_x * deg2rad * 0.5f);
+
+	if (depth <= 0.0f || tan_x <= 0.0f)
+		return 0.0f;
+
+	return (float)glwidth * 0.5f / (depth * tan_x);
+}
+
+#define QRE_CUSTOM_GLYPH_SEGS 10
 
 static void QRE_DrawLightWireframes (void)
 {
 	const rt_tracked_light_t *lights;
-	const float               pi = 3.14159265f;
-	int                       count = 0, i, seg, axis, drawn = 0, glyph_drawn = 0, arrow_drawn = 0;
-	RgVertex                 *rv;
-	uint32_t                 *ri;
-	byte                     *block;
-	size_t                    verts_bytes, ri_bytes;
+	const float               deg2rad = 3.14159265f / 180.0f;
+	int                       count = 0, i;
 
 	lights = RT_TRACK_Lights (&count);
-	if (count > QRE_LIGHT_WIRE_MAX)
-		count = QRE_LIGHT_WIRE_MAX;
-	if (count <= 0)
-		return;
-
-	// the spheres, plus the selected custom light's axis arrows: five segments
-	// (three parallel shafts so the line is not a hairline, and a V head) each
-	// The buffer is one block with three regions: a sphere slot per tracked light
-	// (the cap, whether or not every light is ready), a "C" slot per light, and
-	// the arrows of the selection. The regions are fixed, so nothing can interleave
-	// and every write is inside its slot by construction; the block is zeroed, so
-	// the slots of the lights that did not draw are degenerate lines.
-	verts_bytes = (size_t)count * (3 * (QRE_LIGHT_WIRE_SEGS + 1) + QRE_CUSTOM_GLYPH_SEGS * 2) * sizeof (RgVertex)
-	              + 3 * 5 * 2 * sizeof (RgVertex);
-	ri_bytes = (size_t)count * (3 * QRE_LIGHT_WIRE_SEGS * 2 + QRE_CUSTOM_GLYPH_SEGS * 2) * sizeof (uint32_t)
-	           + 3 * 5 * 2 * sizeof (uint32_t);
-	block = (byte *)Mem_Alloc (verts_bytes + ri_bytes);
-	memset (block, 0, verts_bytes + ri_bytes);
-	rv = (RgVertex *)block;
-	ri = (uint32_t *)(block + verts_bytes);
-
-	// the fixed bases of the "C" and arrow regions, and the camera basis the
-	// glyphs are billboarded with
-	const int glyph_v = count * 3 * (QRE_LIGHT_WIRE_SEGS + 1);
-	const int glyph_i = count * 3 * QRE_LIGHT_WIRE_SEGS * 2;
-	vec3_t    cam_fwd, cam_right, cam_up;
-
-	AngleVectors (r_refdef.viewangles, cam_fwd, cam_right, cam_up);
 
 	for (i = 0; i < count; i++)
 	{
 		const rt_tracked_light_t *l = &lights[i];
-		const float               r = l->radius;
-		const int                 base = drawn * 3 * (QRE_LIGHT_WIRE_SEGS + 1);
 		uint32_t                  color;
+		float                     cx, cy, depth, scale;
 
 		if (!l->ready)
 			continue;
+		if (!QRE_WorldToScreen (l->position, &cx, &cy))
+			continue;
+
+		depth = QRE_DepthToCamera (l->position);
+		scale = QRE_PixelsPerUnit (depth);
 
 		if (qre.sel_light_valid && l->uniqueID == qre.sel_light.uniqueID && l->kind == qre.sel_light.kind)
 			color = RT_PackColorToUint32 (255, 255, 255, 255);
@@ -1513,192 +1501,32 @@ static void QRE_DrawLightWireframes (void)
 		else
 			color = RT_PackColorToUint32 (0, 255, 255, 200);
 
-		for (axis = 0; axis < 3; axis++)
-		{
-			const int c1 = (axis + 1) % 3;
-			const int c2 = (axis + 2) % 3;
+		QR_GUI_DrawCircle (cx, cy, l->radius * scale, color, 2.0f);
 
-			for (seg = 0; seg <= QRE_LIGHT_WIRE_SEGS; seg++)
-			{
-				const float a = (float)seg / (float)QRE_LIGHT_WIRE_SEGS * 2.0f * pi;
-				const int   p = base + axis * (QRE_LIGHT_WIRE_SEGS + 1) + seg;
-
-				rv[p].position[0] = l->position[0];
-				rv[p].position[1] = l->position[1];
-				rv[p].position[2] = l->position[2];
-				rv[p].position[c1] += cosf (a) * r;
-				rv[p].position[c2] += sinf (a) * r;
-				rv[p].packedColor = color;
-			}
-		}
-		for (axis = 0; axis < 3; axis++)
-		{
-			for (seg = 0; seg < QRE_LIGHT_WIRE_SEGS; seg++)
-			{
-				const int p = drawn * 3 * QRE_LIGHT_WIRE_SEGS + axis * QRE_LIGHT_WIRE_SEGS + seg;
-
-				ri[p * 2 + 0] = (uint32_t)(base + axis * (QRE_LIGHT_WIRE_SEGS + 1) + seg);
-				ri[p * 2 + 1] = (uint32_t)(base + axis * (QRE_LIGHT_WIRE_SEGS + 1) + seg + 1);
-			}
-		}
-		// the "C" of an authored light: screen-aligned, so a light reads as custom
-		// from any angle
 		if (l->kind == RT_LIGHT_KIND_CUSTOM)
 		{
-			const float deg2rad = 3.14159265f / 180.0f;
-			vec3_t      dvec;
-			float       dist, scale;
-			int         g;
+			float xy[(QRE_CUSTOM_GLYPH_SEGS + 1) * 2];
+			vec3_t dvec;
+			float  dist, radius;
+			int    g;
 
 			VectorSubtract (l->position, r_refdef.vieworg, dvec);
 			dist = sqrtf (DotProduct (dvec, dvec));
-			scale = CLAMP (1.0f, dist * 0.005f, 24.0f);
+			radius = CLAMP (1.0f, dist * 0.005f, 24.0f) * scale;
 
-			for (g = 0; g < QRE_CUSTOM_GLYPH_SEGS; g++)
+			for (g = 0; g <= QRE_CUSTOM_GLYPH_SEGS; g++)
 			{
-				const float a0 = (45.0f + 270.0f * (float)g / (float)QRE_CUSTOM_GLYPH_SEGS) * deg2rad;
-				const float a1 = (45.0f + 270.0f * (float)(g + 1) / (float)QRE_CUSTOM_GLYPH_SEGS) * deg2rad;
-				const uint32_t col = RT_PackColorToUint32 (200, 235, 255, 255);
-				int            k;
+				const float a = (45.0f + 270.0f * (float)g / (float)QRE_CUSTOM_GLYPH_SEGS) * deg2rad;
 
-				for (k = 0; k < 2; k++)
-				{
-					const float a = k ? a1 : a0;
-					const int   vi = glyph_v + glyph_drawn * QRE_CUSTOM_GLYPH_SEGS * 2 + g * 2 + k;
-					const int   ii = glyph_i + glyph_drawn * QRE_CUSTOM_GLYPH_SEGS * 2 + g * 2 + k;
-					RgVertex   *v = &rv[vi];
-
-					v->position[0] = l->position[0] + cam_right[0] * cosf (a) * scale + cam_up[0] * sinf (a) * scale;
-					v->position[1] = l->position[1] + cam_right[1] * cosf (a) * scale + cam_up[1] * sinf (a) * scale;
-					v->position[2] = l->position[2] + cam_right[2] * cosf (a) * scale + cam_up[2] * sinf (a) * scale;
-					v->packedColor = col;
-
-					ri[ii] = (uint32_t)vi;
-				}
+				xy[g * 2 + 0] = cx + cosf (a) * radius;
+				xy[g * 2 + 1] = cy - sinf (a) * radius;
 			}
 
-			glyph_drawn++;
-		}
-
-		drawn++;
-	}
-
-	// The selected custom light carries the world-axis arrows: X red, Y green,
-	// Z blue. They sit at the light itself (origin + offset), so they read as the
-	// handles of the light the panel edits.
-	{
-		int arrow_base   = glyph_v + glyph_drawn * QRE_CUSTOM_GLYPH_SEGS * 2;
-		int arrow_i_base = glyph_i + glyph_drawn * QRE_CUSTOM_GLYPH_SEGS * 2;
-
-		if (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM &&
-		    qre.sel_light.uniqueID > (uint64_t)UINT32_MAX)
-		{
-			int                custom_count = 0;
-			rt_custom_light_t *custom = RT_CustomLights (&custom_count);
-			int                index = (int)(qre.sel_light.uniqueID - ((uint64_t)UINT32_MAX + 1));
-
-			if (index >= 0 && index < custom_count)
-			{
-				const rt_custom_light_t *l = &custom[index];
-				uint32_t                 axis_color[3];
-				vec3_t                   pos;
-				int                      a;
-
-				axis_color[0] = RT_PackColorToUint32 (255, 64, 64, 255);
-				axis_color[1] = RT_PackColorToUint32 (64, 255, 64, 255);
-				axis_color[2] = RT_PackColorToUint32 (64, 128, 255, 255);
-
-				VectorCopy (l->origin, pos);
-				if (l->has_offset)
-				{
-					pos[0] += l->offset[0];
-					pos[1] += l->offset[1];
-					pos[2] += l->offset[2];
-				}
-
-				for (a = 0; a < 3; a++)
-				{
-					vec3_t adir, tup, dvec;
-					vec3_t start[5], end[5];
-					float  w;
-					int    s;
-
-					// the thickness is a fixed angle, so the arrow reads the same
-					// near and far
-					VectorSubtract (pos, r_refdef.vieworg, dvec);
-					w = sqrtf (DotProduct (dvec, dvec)) * 0.003f;
-					w = CLAMP (0.4f, w, 8.0f);
-
-					adir[0] = adir[1] = adir[2] = 0.0f;
-					adir[a] = 1.0f;
-					tup[0] = tup[1] = tup[2] = 0.0f;
-					tup[(a + 1) % 3] = 1.0f;
-
-					for (s = 0; s < 5; s++)
-					{
-						if (s < 3)
-						{
-							const float off = (float)(s - 1) * w;
-
-							VectorMA (pos, off, tup, start[s]);
-							VectorMA (start[s], 24.0f, adir, end[s]);
-						}
-						else
-						{
-							vec3_t tip;
-
-							VectorMA (pos, 24.0f, adir, tip);
-							VectorCopy (tip, start[s]);
-							VectorMA (tip, -24.0f * 0.28f, adir, end[s]);
-							VectorMA (end[s], (s == 3 ? 1.0f : -1.0f) * w * 3.0f, tup, end[s]);
-						}
-					}
-
-					for (s = 0; s < 5; s++)
-					{
-						RgVertex *v0 = &rv[arrow_base + a * 10 + s * 2 + 0];
-						RgVertex *v1 = &rv[arrow_base + a * 10 + s * 2 + 1];
-
-						VectorCopy (start[s], v0->position);
-						v0->packedColor = axis_color[a];
-						VectorCopy (end[s], v1->position);
-						v1->packedColor = axis_color[a];
-
-						ri[arrow_i_base + a * 10 + s * 2 + 0] = (uint32_t)(arrow_base + a * 10 + s * 2 + 0);
-						ri[arrow_i_base + a * 10 + s * 2 + 1] = (uint32_t)(arrow_base + a * 10 + s * 2 + 1);
-					}
-				}
-
-				arrow_drawn = 1;
-			}
+			QR_GUI_DrawPolyline (xy, QRE_CUSTOM_GLYPH_SEGS + 1, RT_PackColorToUint32 (200, 235, 255, 255), 2.0f);
 		}
 	}
 
-	if (drawn > 0 || glyph_drawn > 0 || arrow_drawn)
-	{
-		const int vcount = glyph_v + glyph_drawn * QRE_CUSTOM_GLYPH_SEGS * 2 + (arrow_drawn ? 30 : 0);
-		const int icount = glyph_i + glyph_drawn * QRE_CUSTOM_GLYPH_SEGS * 2 + (arrow_drawn ? 30 : 0);
-
-		RgRasterizedGeometryUploadInfo info = {
-			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
-			.vertexCount = (uint32_t)vcount,
-			.pVertices = rv,
-			.indexCount = (uint32_t)icount,
-			.pIndices = ri,
-			.transform = RT_TRANSFORM_IDENTITY,
-			.color = RT_COLOR_WHITE,
-			.material = RG_NO_MATERIAL,
-			.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
-			.blendFuncSrc = 0,
-			.blendFuncDst = 0,
-		};
-
-		RgResult res = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-
-		RG_CHECK (res);
-	}
-
-	Mem_Free (block);
+	QRE_DrawGizmoArrows ();
 }
 
 // Hover pick (crosshair, flying) or select pick (fire button).
@@ -1786,21 +1614,18 @@ static void QRE_DoPick (qboolean select)
 // Selection outline
 // ---------------------------------------------------------------------------
 
+#define QRE_OUTLINE_MAX 256
+
 static void QRE_EmitOutline (qmodel_t *model, msurface_t *surf, entity_t *ent, uint32_t color)
 {
 	RgTransform transform = RT_GetBrushModelMatrix (ent);
-	vec3_t     *verts;
-	RgVertex   *rv;
-	uint32_t   *ri;
-	byte       *block;
-	size_t      verts_bytes, rv_bytes, ri_bytes;
-	int         n = 0;
-	int         i, j;
+	vec3_t      verts[QRE_OUTLINE_MAX];
+	float       xy[(QRE_OUTLINE_MAX + 1) * 2];
 	vec3_t      n_world, to_view, first;
 	float       nudge = 0.35f;
+	int         n = 0;
+	int         i, j;
 
-	// The face outline from the BSP edge list, or the polygon when the face
-	// has no edges (should not happen for regular faces).
 	if (surf->numedges > 0)
 		n = surf->numedges;
 	else if (surf->polys && surf->polys->numverts > 0)
@@ -1808,24 +1633,15 @@ static void QRE_EmitOutline (qmodel_t *model, msurface_t *surf, entity_t *ent, u
 
 	if (n < 3)
 		return;
-
-	// One scratch allocation for all three arrays: the allocator hands out a
-	// single shared buffer, so overlapping allocations would zero or free each
-	// other's memory.
-	verts_bytes = (size_t)n * sizeof (vec3_t);
-	rv_bytes    = (size_t)n * sizeof (RgVertex);
-	ri_bytes    = (size_t)n * 2 * sizeof (uint32_t);
-
-	block = (byte *)RT_AllocScratchMemoryNulled (verts_bytes + rv_bytes + ri_bytes);
-	verts = (vec3_t *)block;
-	rv    = (RgVertex *)(block + verts_bytes);
-	ri    = (uint32_t *)(block + verts_bytes + rv_bytes);
+	if (n > QRE_OUTLINE_MAX)
+		n = QRE_OUTLINE_MAX;
 
 	if (surf->numedges > 0)
 	{
 		for (i = 0; i < n; i++)
 		{
-			int e = model->surfedges[surf->firstedge + i];
+			const int e = model->surfedges[surf->firstedge + i];
+
 			if (e >= 0)
 				VectorCopy (model->vertexes[model->edges[e].v[0]].position, verts[i]);
 			else
@@ -1840,16 +1656,11 @@ static void QRE_EmitOutline (qmodel_t *model, msurface_t *surf, entity_t *ent, u
 			VectorCopy (p->verts[i], verts[i]);
 	}
 
-	// The face plane in world space: the rotation of a row-major RgTransform is
-	// applied the same way ApplyTransform (r_world.c) applies it.
 	for (j = 0; j < 3; j++)
 		n_world[j] = transform.matrix[j][0] * surf->plane->normal[0]
 		           + transform.matrix[j][1] * surf->plane->normal[1]
 		           + transform.matrix[j][2] * surf->plane->normal[2];
 
-	// Nudge the outline off the face towards the viewer: the plane normal of a
-	// SURF_PLANEBACK face points away from its visible side, and pushing the
-	// line behind the wall would lose it to the traced surface.
 	for (j = 0; j < 3; j++)
 		first[j] = transform.matrix[j][0] * verts[0][0]
 		         + transform.matrix[j][1] * verts[0][1]
@@ -1859,49 +1670,27 @@ static void QRE_EmitOutline (qmodel_t *model, msurface_t *surf, entity_t *ent, u
 	if (DotProduct (to_view, n_world) < 0.0f)
 		nudge = -nudge;
 
-	// Model -> world (a brush entity carries its own transform), then off the
-	// face; the vertices are uploaded in world space.
 	for (i = 0; i < n; i++)
 	{
+		vec3_t world;
+
 		for (j = 0; j < 3; j++)
-			rv[i].position[j] = transform.matrix[j][0] * verts[i][0]
-			                  + transform.matrix[j][1] * verts[i][1]
-			                  + transform.matrix[j][2] * verts[i][2]
-			                  + transform.matrix[j][3]
-			                  + nudge * n_world[j];
-		rv[i].packedColor = color;
+			world[j] = transform.matrix[j][0] * verts[i][0]
+			         + transform.matrix[j][1] * verts[i][1]
+			         + transform.matrix[j][2] * verts[i][2]
+			         + transform.matrix[j][3]
+			         + nudge * n_world[j];
+
+		if (!QRE_WorldToScreen (world, &xy[i * 2], &xy[i * 2 + 1]))
+			return;
 	}
 
-	for (i = 0; i < n; i++)
-	{
-		ri[i * 2 + 0] = (uint32_t)i;
-		ri[i * 2 + 1] = (uint32_t)((i + 1) % n);
-	}
+	xy[n * 2 + 0] = xy[0];
+	xy[n * 2 + 1] = xy[1];
 
-	// The swapchain render type is the overlay path the engine's own 2D and the
-	// ImGui panel use: the lines go over the finished frame, projected with the
-	// frame's camera matrices (NULL view projection), and there is no depth
-	// buffer to lose them to.
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
-		.vertexCount = (uint32_t)n,
-		.pVertices = rv,
-		.indexCount = (uint32_t)(n * 2),
-		.pIndices = ri,
-		.transform = RT_TRANSFORM_IDENTITY,
-		.color = RT_COLOR_WHITE,
-		.material = RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
-		.blendFuncSrc = 0,
-		.blendFuncDst = 0,
-	};
-
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-	RG_CHECK (r);
+	QR_GUI_DrawPolyline (xy, n + 1, color, 2.0f);
 }
 
-// The outline of a model pick: the entity's model bounds as a wire box, drawn
-// with the same overlay path as a face outline.
 static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
 {
 	static const int edges[12][2] = {
@@ -1912,9 +1701,6 @@ static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
 	float       m[16];
 	RgTransform transform;
 	vec3_t      mins, maxs;
-	RgVertex   *rv;
-	uint32_t   *ri;
-	byte       *block;
 	int         i, j;
 
 	if (!ent || !ent->model)
@@ -1923,48 +1709,25 @@ static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
 	if (ent->model->type == mod_sprite)
 	{
 		mspriteframe_t *frame = R_GetSpriteFrame (ent);
-		RgRasterizedGeometryUploadInfo sfinfo;
-		vec3_t      corner[4];
-		RgVertex   *srv;
-		uint32_t   *sri;
-		byte       *sblock;
-		RgResult    r;
-		int         k;
+		vec3_t          quad[4];
+		float           xy[10];
+		int             k;
 
 		if (!frame)
 			return;
 
-		sblock = (byte *)RT_AllocScratchMemoryNulled (4 * sizeof (RgVertex) + 8 * sizeof (uint32_t));
-		srv = (RgVertex *)sblock;
-		sri = (uint32_t *)(sblock + 4 * sizeof (RgVertex));
-
-		// the quad the renderer draws, axes and all (R_CreateSpriteVertices)
-		R_GetSpriteQuadCorners (ent, frame, corner);
+		R_GetSpriteQuadCorners (ent, frame, quad);
 
 		for (k = 0; k < 4; k++)
 		{
-			VectorCopy (corner[k], srv[k].position);
-			srv[k].packedColor = color;
-		}
-		for (k = 0; k < 4; k++)
-		{
-			sri[k * 2 + 0] = (uint32_t)k;
-			sri[k * 2 + 1] = (uint32_t)((k + 1) & 3);
+			if (!QRE_WorldToScreen (quad[k], &xy[k * 2], &xy[k * 2 + 1]))
+				return;
 		}
 
-		memset (&sfinfo, 0, sizeof (sfinfo));
-		sfinfo.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN;
-		sfinfo.vertexCount = 4;
-		sfinfo.pVertices = srv;
-		sfinfo.indexCount = 8;
-		sfinfo.pIndices = sri;
-		sfinfo.transform.matrix[0][0] = sfinfo.transform.matrix[1][1] = sfinfo.transform.matrix[2][2] = 1.0f;
-		sfinfo.color.data[0] = sfinfo.color.data[1] = sfinfo.color.data[2] = sfinfo.color.data[3] = 1.0f;
-		sfinfo.material = RG_NO_MATERIAL;
-		sfinfo.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST;
+		xy[8] = xy[0];
+		xy[9] = xy[1];
 
-		r = rgUploadRasterizedGeometry (vulkan_globals.instance, &sfinfo, NULL, NULL);
-		RG_CHECK (r);
+		QR_GUI_DrawPolyline (xy, 5, color, 2.0f);
 		return;
 	}
 
@@ -1980,59 +1743,42 @@ static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
 	R_RotateForEntity (m, ent->origin, ent->angles);
 	transform = RT_GetModelTransform (m);
 
-	block = (byte *)RT_AllocScratchMemoryNulled (8 * sizeof (RgVertex) + 24 * sizeof (uint32_t));
-	rv = (RgVertex *)block;
-	ri = (uint32_t *)(block + 8 * sizeof (RgVertex));
-
-	for (i = 0; i < 8; i++)
 	{
-		vec3_t local;
+		vec3_t box[8];
 
-		local[0] = (i & 1) ? maxs[0] : mins[0];
-		local[1] = (i & 2) ? maxs[1] : mins[1];
-		local[2] = (i & 4) ? maxs[2] : mins[2];
-
-		for (j = 0; j < 3; j++)
+		for (i = 0; i < 8; i++)
 		{
-			rv[i].position[j] = transform.matrix[j][0] * local[0]
-			                  + transform.matrix[j][1] * local[1]
-			                  + transform.matrix[j][2] * local[2]
-			                  + transform.matrix[j][3];
+			vec3_t local;
+
+			local[0] = (i & 1) ? maxs[0] : mins[0];
+			local[1] = (i & 2) ? maxs[1] : mins[1];
+			local[2] = (i & 4) ? maxs[2] : mins[2];
+
+			for (j = 0; j < 3; j++)
+			{
+				box[i][j] = transform.matrix[j][0] * local[0]
+				          + transform.matrix[j][1] * local[1]
+				          + transform.matrix[j][2] * local[2]
+				          + transform.matrix[j][3];
+			}
 		}
-		rv[i].packedColor = color;
+
+		for (i = 0; i < 12; i++)
+		{
+			float seg[4];
+
+			if (!QRE_WorldToScreen (box[edges[i][0]], &seg[0], &seg[1]))
+				continue;
+			if (!QRE_WorldToScreen (box[edges[i][1]], &seg[2], &seg[3]))
+				continue;
+
+			QR_GUI_DrawPolyline (seg, 2, color, 2.0f);
+		}
 	}
-
-	for (i = 0; i < 12; i++)
-	{
-		ri[i * 2 + 0] = (uint32_t)edges[i][0];
-		ri[i * 2 + 1] = (uint32_t)edges[i][1];
-	}
-
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
-		.vertexCount = 8,
-		.pVertices = rv,
-		.indexCount = 24,
-		.pIndices = ri,
-		.transform = RT_TRANSFORM_IDENTITY,
-		.color = RT_COLOR_WHITE,
-		.material = RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
-		.blendFuncSrc = 0,
-		.blendFuncDst = 0,
-	};
-
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-	RG_CHECK (r);
 }
 
-void QR_Editor_DrawSelection (cb_context_t *cbx)
+static void QRE_DrawOverlay (void)
 {
-	(void)cbx;
-
-	if (!qre.active)
-		return;
-
 	if (qre.mode == QRE_MODE_LIGHT)
 	{
 		QRE_DrawLightWireframes ();
@@ -3664,6 +3410,8 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	else
 		QRE_BuildFlyingOverlay ();
 
+	QRE_DrawOverlay ();
+
 	QR_GUI_EndFrame ();
 }
 
@@ -3720,6 +3468,82 @@ static int QRE_CustomSelectedIndex (void)
 	return (index >= 0 && index < count) ? index : -1;
 }
 
+static void QRE_GizmoOrigin (const rt_custom_light_t *l, vec3_t out)
+{
+	VectorCopy (l->origin, out);
+	if (l->has_offset)
+		VectorAdd (out, l->offset, out);
+}
+
+static void QRE_DrawGizmoArrows (void)
+{
+	int                index = QRE_CustomSelectedIndex ();
+	int                count = 0;
+	rt_custom_light_t *custom;
+	uint32_t           axis_color[3];
+	vec3_t             pos;
+	float              ox, oy;
+	int                a;
+
+	if (index < 0)
+		return;
+
+	custom = RT_CustomLights (&count);
+	if (index >= count)
+		return;
+
+	axis_color[0] = RT_PackColorToUint32 (255, 64, 64, 255);
+	axis_color[1] = RT_PackColorToUint32 (64, 255, 64, 255);
+	axis_color[2] = RT_PackColorToUint32 (64, 128, 255, 255);
+
+	QRE_GizmoOrigin (&custom[index], pos);
+
+	if (!QRE_WorldToScreen (pos, &ox, &oy))
+		return;
+
+	for (a = 0; a < 3; a++)
+	{
+		vec3_t adir, tup, tip, head;
+		float  tx, ty, hx, hy, w;
+		float  xy[4];
+		int    h;
+
+		VectorCopy (pos, tip);
+		tip[a] += QRE_GIZMO_LEN;
+		if (!QRE_WorldToScreen (tip, &tx, &ty))
+			continue;
+
+		xy[0] = ox;
+		xy[1] = oy;
+		xy[2] = tx;
+		xy[3] = ty;
+		QR_GUI_DrawPolyline (xy, 2, axis_color[a], 2.0f);
+
+		adir[0] = adir[1] = adir[2] = 0.0f;
+		adir[a] = 1.0f;
+		tup[0] = tup[1] = tup[2] = 0.0f;
+		tup[(a + 1) % 3] = 1.0f;
+
+		w = CLAMP (0.4f, QRE_DepthToCamera (pos) * 0.003f, 8.0f);
+
+		for (h = 0; h < 2; h++)
+		{
+			VectorCopy (tip, head);
+			VectorMA (head, -QRE_GIZMO_LEN * 0.28f, adir, head);
+			VectorMA (head, (h == 0 ? 1.0f : -1.0f) * w * 3.0f, tup, head);
+
+			if (!QRE_WorldToScreen (head, &hx, &hy))
+				continue;
+
+			xy[0] = tx;
+			xy[1] = ty;
+			xy[2] = hx;
+			xy[3] = hy;
+			QR_GUI_DrawPolyline (xy, 2, axis_color[a], 2.0f);
+		}
+	}
+}
+
 // World space to screen pixels, with the view the editor camera uses.
 static qboolean QRE_WorldToScreen (const vec3_t p, float *out_x, float *out_y)
 {
@@ -3773,7 +3597,7 @@ static qboolean QRE_CustomGizmoBegin (void)
 
 	lights = RT_CustomLights (&count);
 	l = &lights[index];
-	VectorCopy (l->origin, origin);
+	QRE_GizmoOrigin (l, origin);
 
 	if (!QRE_WorldToScreen (origin, &ox, &oy))
 		return false;
@@ -3805,7 +3629,7 @@ static qboolean QRE_CustomGizmoBegin (void)
 	qre.custom_dragging = true;
 	qre.custom_drag_axis = axis;
 	qre.custom_drag_index = index;
-	VectorCopy (origin, qre.custom_drag_origin);
+	VectorCopy (l->origin, qre.custom_drag_origin);
 	qre.custom_drag_mouse[0] = mx;
 	qre.custom_drag_mouse[1] = my;
 	return true;
@@ -3828,6 +3652,8 @@ static void QRE_CustomGizmoMove (void)
 
 	l = &lights[qre.custom_drag_index];
 	VectorCopy (qre.custom_drag_origin, origin);
+	if (l->has_offset)
+		VectorAdd (origin, l->offset, origin);
 
 	if (!QRE_WorldToScreen (origin, &ox, &oy))
 		return;

@@ -27,7 +27,6 @@ void QR_Editor_Pick (void);
 
 // Per-frame hooks.
 void QR_Editor_UpdateView (void);                  // camera move + r_refdef override (V_CalcRefdef)
-void QR_Editor_DrawSelection (cb_context_t *cbx);  // face outlines (R_DrawViewModelTask)
 void QR_Editor_DrawPanel (cb_context_t *cbx);      // panel UI (SCR_DrawGUI)
 
 // Input hooks (keys.c / in_sdl.c).

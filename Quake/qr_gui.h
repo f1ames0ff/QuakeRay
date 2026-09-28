@@ -124,6 +124,9 @@ void QR_GUI_LabelBottomRight (const char *text);
 // The cursor position ImGui last saw (the editor's own hit tests).
 void QR_GUI_GetMousePos (float *x, float *y);
 
+void QR_GUI_DrawPolyline (const float *xy, int count, uint32_t argb, float thickness);
+void QR_GUI_DrawCircle (float cx, float cy, float radius, uint32_t argb, float thickness);
+
 #ifdef __cplusplus
 }
 #endif
