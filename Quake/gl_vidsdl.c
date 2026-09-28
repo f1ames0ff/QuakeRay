@@ -212,16 +212,9 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_emis_mapboost, "30") \
 	CVAR_DEF_T (rt_emis_maxscrcolor, "4") \
 	CVAR_DEF_T (rt_emis_fullbright_dflt, "255") \
-	/* The sharp-mask snap of the emission mask is read by the primary and reflection rays \
-	   only, and only where the mask is magnified with a filtering sampler; the shipped \
-	   "classic" texture filter samples NEAREST (vid_filter 1), against which the snap cannot \
-	   change anything. Use "smooth" filtering to see it. */ \
 	CVAR_DEF_T (rt_emis_sharpmask, "1") \
 	CVAR_DEF_T (rt_emis_blend, "1") \
 	CVAR_DEF_T (rt_emis_blendstr, "1") \
-	/* No pass reads talSelfLitOffset -- only the uniform-layout probe names it -- so the knob \
-	   is dead until a pass reads it again; kept as the setter of the public \
-	   RgDrawFrameTexturesParams field and so old configs load. */ \
 	CVAR_DEF_T (rt_tal_selflit, "6") \
 	CVAR_DEF_T (rt_dtal_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
