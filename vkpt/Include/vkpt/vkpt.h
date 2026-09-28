@@ -504,6 +504,15 @@ typedef enum RgRasterizedGeometryRenderType
     RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY
 } RgRasterizedGeometryRenderType;
 
+// Rectangle in pixels. (x, y) defines the top-left corner.
+typedef struct RgRect2D
+{
+    int32_t     x;
+    int32_t     y;
+    uint32_t    width;
+    uint32_t    height;
+} RgRect2D;
+
 typedef enum RgRasterizedGeometryStateFlagBits
 {
     RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST         = 1,
@@ -538,6 +547,11 @@ typedef struct RgRasterizedGeometryUploadInfo
 
     RgFloat4D                               smokeNoise;
     RgFloat4D                               smokeLook;
+
+    // Scissor rectangle in pixels, top-left origin. width == 0 means no
+    // scissor (the whole viewport is used). For RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY
+    // it must be zero as well.
+    RgRect2D                                scissor;
 } RgRasterizedGeometryUploadInfo;
 
 

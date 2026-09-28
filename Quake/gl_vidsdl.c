@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "cfgfile.h"
 #include "bgmusic.h"
 #include "palette.h"
+#include "qr_gui.h"
 #include "rt_material.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
@@ -225,7 +226,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   first ones the tile walk reaches (0 cuts nothing: every masked face keeps its single \
 	   light; RT_MAX_EMISSIVE_POLYS_PER_FACE is the ceiling a larger value is clamped to). \
 	   Both are read per surface, so they apply on the next frame and can be tuned live \
-	   against rt_debugemissive 1; the defaults reproduce the old behaviour. */ \
+	   against rt_dtal_debug 1; the defaults reproduce the old behaviour. */ \
 	CVAR_DEF_T (rt_emis_minarea, "0") \
 	CVAR_DEF_T (rt_emis_maxpolys, "64") \
     \
@@ -290,7 +291,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_hud_padding, "8") \
 	\
 	CVAR_DEF_T (rt_debugflags, "0") \
-	CVAR_DEF_T (rt_debugemissive, "0") \
+	CVAR_DEF_T (rt_dtal_debug, "0") \
 	CVAR_DEF_T (rt_q2_depthgrad, "1") \
 	CVAR_DEF_T (rt_q2_lightstats, "1") \
 	CVAR_DEF_T (rt_reflrefr_earlyout, "1") \
@@ -1758,11 +1759,14 @@ static void GL_InitInstance (void)
 
 	RT_MAT_Init ();
 
+	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL);
+
 	Cmd_AddCommand ("rt_pfnreloadshaders", RT_ReloadShaders);
 	Cmd_AddCommand ("rt_water_color", RT_WaterColor);
 	Cmd_AddCommand ("rt_water_acidcolor", RT_AcidColor);
 	Cmd_AddCommand ("rt_light_report", RT_LightReport_f);
 	Cmd_AddCommand ("rt_light_report_dump", RT_LightReportDump_f);
+	Cmd_AddCommand ("rt_dtal_rebuild", RT_DtalRebuild_f);
 	Cmd_AddCommand ("fog", RT_Fog_Cmd);
 	Cmd_AddCommand ("rt_stats", RT_Stats_f);
 	Cmd_AddCommand ("rt_stats_dump", RT_StatsDump_f);
@@ -2480,6 +2484,7 @@ void VID_Shutdown (void)
 	{
 		if (vulkan_globals.instance != RG_NULL_HANDLE)
 		{
+		    QR_GUI_Shutdown ();
 		    RT_MAT_Shutdown ();
 		    RgResult r = rgDestroyInstance (vulkan_globals.instance);
 			RG_CHECK (r);
@@ -2641,6 +2646,12 @@ static void RT_SunPreset_f (cvar_t *var)
 extern atomic_uint32_t rt_require_static_submit;
 
 static void RT_LightStylesChanged_f (cvar_t *var)
+{
+	(void)var;
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+}
+
+static void RT_EmissiveLimitsChanged_f (cvar_t *var)
 {
 	(void)var;
 	Atomic_StoreUInt32 (&rt_require_static_submit, true);
@@ -2869,6 +2880,8 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_sun_edit, RT_SunEditChanged_f);
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
+	Cvar_SetCallback (&rt_emis_minarea, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_emis_maxpolys, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_worldcensus, RT_WorldCensusChanged_f);
 	Cvar_SetCallback (&rt_worldlights_stats, RT_WorldLightsStatsChanged_f);
 

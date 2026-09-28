@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "atomics.h"
+#include "rt_dtal_debug.h"
 
 extern cvar_t gl_fullbrights;
 extern cvar_t r_drawflat;
@@ -53,7 +54,7 @@ extern cvar_t rt_emis_maxpolys;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
-extern cvar_t rt_debugemissive;
+extern cvar_t rt_dtal_debug;
 extern cvar_t rt_light_report_filter;
 extern cvar_t rt_worldcensus;
 extern cvar_t rt_worldlights_stats;
@@ -1382,6 +1383,93 @@ static void RT_EmitEmissiveWirePolygon (const RgTexturedAreaLightUploadInfo *lt)
 		RT_EmitEmissiveWireTriangle (&wv[0], &wv[i], &wv[i + 1]);
 }
 
+#define RT_DTAL_DEBUG_MAX 4096
+
+typedef struct
+{
+	vec3_t center;
+	vec3_t normal;
+	float  len;
+} rt_dtal_debug_arrow_t;
+
+static rt_dtal_debug_arrow_t rt_dtal_debug_arrow[RT_DTAL_DEBUG_MAX];
+static int                   rt_dtal_debug_num;
+static int                   rt_dtal_debug_frame = -1;
+
+static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area)
+{
+	if (rt_dtal_debug_frame != r_framecount)
+	{
+		rt_dtal_debug_frame = r_framecount;
+		rt_dtal_debug_num = 0;
+	}
+
+	if (rt_dtal_debug_num >= RT_DTAL_DEBUG_MAX)
+		return;
+
+	rt_dtal_debug_arrow_t *arrow = &rt_dtal_debug_arrow[rt_dtal_debug_num++];
+
+	VectorCopy (center, arrow->center);
+	VectorCopy (normal, arrow->normal);
+
+	arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+}
+
+int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
+{
+	if (CVAR_TO_FLOAT (rt_dtal_debug) != 2.0f || rt_dtal_debug_frame != r_framecount || fb_w <= 0 || fb_h <= 0)
+		return 0;
+
+	const float *m = vulkan_globals.view_projection_matrix;
+	int          num = 0;
+
+	for (int i = 0; i < rt_dtal_debug_num && num < max_arrows; i++)
+	{
+		const rt_dtal_debug_arrow_t *arrow = &rt_dtal_debug_arrow[i];
+
+		const float cx = m[0] * arrow->center[0] + m[4] * arrow->center[1] + m[8] * arrow->center[2] + m[12];
+		const float cy = m[1] * arrow->center[0] + m[5] * arrow->center[1] + m[9] * arrow->center[2] + m[13];
+		const float cw = m[3] * arrow->center[0] + m[7] * arrow->center[1] + m[11] * arrow->center[2] + m[15];
+
+		if (cw <= 0.05f)
+			continue;
+
+		const float tx = arrow->center[0] + arrow->normal[0] * arrow->len;
+		const float ty = arrow->center[1] + arrow->normal[1] * arrow->len;
+		const float tz = arrow->center[2] + arrow->normal[2] * arrow->len;
+
+		const float nx = m[0] * tx + m[4] * ty + m[8] * tz + m[12];
+		const float ny = m[1] * tx + m[5] * ty + m[9] * tz + m[13];
+		const float nw = m[3] * tx + m[7] * ty + m[11] * tz + m[15];
+
+		if (nw <= 0.05f)
+			continue;
+
+		const float sx0 = (cx / cw * 0.5f + 0.5f) * (float) fb_w;
+		const float sy0 = (cy / cw * 0.5f + 0.5f) * (float) fb_h;
+		const float sx1 = (nx / nw * 0.5f + 0.5f) * (float) fb_w;
+		const float sy1 = (ny / nw * 0.5f + 0.5f) * (float) fb_h;
+
+		if ((sx0 < -64.0f && sx1 < -64.0f) || (sx0 > fb_w + 64.0f && sx1 > fb_w + 64.0f) ||
+		    (sy0 < -64.0f && sy1 < -64.0f) || (sy0 > fb_h + 64.0f && sy1 > fb_h + 64.0f))
+			continue;
+
+		float *o = out + num * RT_DTAL_DEBUG_FLOATS_PER_ARROW;
+
+		o[0] = sx0;
+		o[1] = sy0;
+		o[2] = sx1;
+		o[3] = sy1;
+		o[4] = (float) fabs (arrow->normal[0]);
+		o[5] = (float) fabs (arrow->normal[1]);
+		o[6] = (float) fabs (arrow->normal[2]);
+
+		num++;
+	}
+
+	return num;
+}
+
 static void RT_ScaleEmissiveLightColor (vec3_t color)
 {
 	VectorScale (color, RT_EMIS_INTENSITY_TO_RAW (CVAR_TO_FLOAT (rt_emis_light_intensity)), color);
@@ -1423,9 +1511,13 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
 			RT_ClusterLightAdd (li.uniqueID, center, RT_ClusterLightReach ());
 
-		if (CVAR_TO_BOOL (rt_debugemissive))
+		if (CVAR_TO_FLOAT (rt_dtal_debug) == 1.0f)
 		{
 			RT_EmitEmissiveWirePolygon (&li);
+		}
+		else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
+		{
+			RT_DtalDebugAdd (center, li.normal.data, li.area);
 		}
 	}
 	else if (rt_wldlights_emissive_count < MAX_WORLDLIGHTS_COUNT)
@@ -1982,6 +2074,33 @@ void RT_ModelLightsCacheFree (qmodel_t *model)
 		Mem_Free (model->rt_dtal);
 		model->rt_dtal = NULL;
 	}
+}
+
+extern atomic_uint32_t rt_require_static_submit;
+
+void RT_DtalRebuild_f (void)
+{
+	extern qmodel_t mod_known[];
+	extern int      mod_numknown;
+
+	GL_SynchronizeEndRenderingTask ();
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+
+	int models = 0;
+
+	for (int i = 0; i < mod_numknown; i++)
+	{
+		qmodel_t *model = &mod_known[i];
+
+		if (model->rt_dtal == NULL)
+			continue;
+
+		memset (model->rt_dtal->entries, 0, sizeof (model->rt_dtal->entries));
+		Atomic_StoreUInt32 (&model->rt_dtal->next, 0);
+		models++;
+	}
+
+	Con_Printf ("rt_dtal_rebuild: %i model DTAL caches dropped; the world list is rebuilt on the next frame\n", models);
 }
 
 /*
@@ -3521,9 +3640,13 @@ static void RT_RegisterWorldModelLight (const RgTexturedAreaLightUploadInfo *lt,
 
 	RT_ClusterLightAdd (lt->uniqueID, origin, RT_ClusterLightReachStatic ());
 
-	if (CVAR_TO_BOOL (rt_debugemissive))
+	if (CVAR_TO_FLOAT (rt_dtal_debug) == 1.0f)
 	{
 		RT_EmitEmissiveWirePolygon (lt);
+	}
+	else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
+	{
+		RT_DtalDebugAdd (center, lt->normal.data, lt->area);
 	}
 }
 
