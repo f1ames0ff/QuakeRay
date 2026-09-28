@@ -1,33 +1,31 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <string_view>
 
 namespace vkpt::LibraryConfig
 {
-    // The RHI renderer is the only renderer now, so its bring-up switches ('rhiframe', 'rhirt',
-    // 'rhicompose', 'rhitrace') are retired. A vkpt.txt that still lists them reads cleanly: the
-    // unknown entries are ignored by ProcessEntry below.
     struct Config
     {
         bool vulkanValidation = false;
@@ -38,23 +36,29 @@ namespace vkpt::LibraryConfig
 
     namespace detail
     {
+        struct Entry
+        {
+            std::string_view    name;
+            bool Config::*      setting;
+        };
+
+        inline constexpr Entry ENTRIES[] =
+        {
+            { "vulkanvalidation", &Config::vulkanValidation },
+            { "developer",        &Config::developerMode    },
+            { "dlssvalidation",   &Config::dlssValidation   },
+            { "fpsmonitor",       &Config::fpsMonitor       },
+        };
+
         inline void ProcessEntry(Config &dst, std::string_view entry)
         {
-            if (entry == "vulkanvalidation")
+            for (const Entry &e : ENTRIES)
             {
-                dst.vulkanValidation = true;
-            }
-            else if (entry == "developer")
-            {
-                dst.developerMode = true;
-            }
-            else if (entry == "dlssvalidation")
-            {
-                dst.dlssValidation = true;
-            }
-            else if (entry == "fpsmonitor")
-            {
-                dst.fpsMonitor = true;
+                if (e.name == entry)
+                {
+                    dst.*(e.setting) = true;
+                    break;
+                }
             }
         }
     }
@@ -66,27 +70,29 @@ namespace vkpt::LibraryConfig
             pPath = "vkpt.txt";
         }
 
-        auto path = std::filesystem::path(pPath);
+        const std::filesystem::path path(pPath);
 
-        if (std::filesystem::exists(path))
+        if (!std::filesystem::exists(path))
         {
-            std::ifstream file(path);
-
-            if (file.is_open())
-            {
-                Config result = {};
-
-                for (std::string line; std::getline(file, line); )
-                {
-                    std::ranges::transform(line, line.begin(), ::tolower);
-
-                    detail::ProcessEntry(result, line);
-                }
-
-                return result;
-            }
+            return {};
         }
 
-        return {};
+        std::ifstream file(path);
+
+        if (!file.is_open())
+        {
+            return {};
+        }
+
+        Config result = {};
+
+        for (std::string line; std::getline(file, line); )
+        {
+            std::ranges::transform(line, line.begin(), ::tolower);
+
+            detail::ProcessEntry(result, line);
+        }
+
+        return result;
     }
 }

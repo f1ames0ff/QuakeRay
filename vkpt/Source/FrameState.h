@@ -30,29 +30,21 @@ namespace vkpt
 struct FrameState
 {
 private:
-    // [0..MAX_FRAMES_IN_FLIGHT-1]
     uint32_t            frameIndex;
     VkCommandBuffer     frameCmd;
     VkSemaphore         semaphoreToWait;
-    // Pipeline stage at which the main frame cmd waits on 'semaphoreToWait'.
-    // Different semaphores gate different resources: the swapchain image is only
-    // consumed by the final blit (transfer), while an out-of-frame preFrame cmd
-    // uploads materials that the main frame reads much earlier.
     VkPipelineStageFlags semaphoreWaitStage;
-    // This cmd buffer is used for materials that 
-    // are uploaded out of rgStartFrame - rgDrawFrame when
-    // 'frameCmd' doesn't exist
     VkCommandBuffer     preFrameCmd;
 
 public:
-    FrameState() : 
-        frameIndex(MAX_FRAMES_IN_FLIGHT - 1), 
-        frameCmd(VK_NULL_HANDLE), 
+    FrameState() :
+        frameIndex(MAX_FRAMES_IN_FLIGHT - 1),
+        frameCmd(VK_NULL_HANDLE),
         semaphoreToWait(VK_NULL_HANDLE),
         semaphoreWaitStage(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT),
         preFrameCmd(VK_NULL_HANDLE)
     {}
-   
+
     FrameState(const FrameState &other) = delete;
     FrameState(FrameState &&other) noexcept = delete;
     FrameState &operator=(const FrameState &other) = delete;
@@ -66,13 +58,13 @@ public:
 
     uint32_t GetFrameIndex() const
     {
-        assert(frameIndex >= 0 && frameIndex < MAX_FRAMES_IN_FLIGHT);
+        assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
         return frameIndex;
     }
 
     static uint32_t GetPrevFrameIndex(uint32_t frameIndex)
     {
-        assert(frameIndex >= 0 && frameIndex < MAX_FRAMES_IN_FLIGHT);
+        assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
         return (frameIndex + (MAX_FRAMES_IN_FLIGHT - 1)) % MAX_FRAMES_IN_FLIGHT;
     }
 
@@ -85,28 +77,23 @@ public:
     void OnEndFrame()
     {
         assert(frameCmd != VK_NULL_HANDLE);
-        // pre-frame cmd must be submitted by this time
         assert(preFrameCmd == VK_NULL_HANDLE);
         frameCmd = VK_NULL_HANDLE;
     }
 
     VkCommandBuffer GetCmdBuffer() const
     {
-        // only in-frame usage
         assert(WasFrameStarted());
         return frameCmd;
     }
 
     VkCommandBuffer GetCmdBufferForMaterials(const std::shared_ptr<CommandBufferManager> &cmdManager)
-    {  
+    {
         if (WasFrameStarted())
         {
-            // use default cmd buffer, if frame was started
             return GetCmdBuffer();
         }
 
-        // use custom cmd buffer, if out-of-frame call,
-        // because the default one doesn't exist yet
         if (preFrameCmd == VK_NULL_HANDLE)
         {
             preFrameCmd = cmdManager->StartGraphicsCmd();
@@ -125,7 +112,7 @@ public:
 
     bool WasFrameStarted() const
     {
-        return frameCmd != nullptr;
+        return frameCmd != VK_NULL_HANDLE;
     }
 
     void SetSemaphore(VkSemaphore s, VkPipelineStageFlags waitStage)

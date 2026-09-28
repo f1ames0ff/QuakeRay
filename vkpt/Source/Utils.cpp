@@ -1,28 +1,39 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "Utils.h"
 
 #include <cmath>
 
 using namespace vkpt;
+
+namespace
+{
+    constexpr float ALMOST_ZERO_THRESHOLD = 0.01f;
+
+    VkImageSubresourceRange MakeColorSubresourceRange()
+    {
+        VkImageSubresourceRange range = {};
+        range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        range.levelCount = 1;
+        range.layerCount = 1;
+        return range;
+    }
+}
 
 void Utils::BarrierImage(
     VkCommandBuffer cmd, VkImage image, VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
@@ -31,13 +42,13 @@ void Utils::BarrierImage(
 {
     VkImageMemoryBarrier imageBarrier = {};
     imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    imageBarrier.image = image;
-    imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     imageBarrier.srcAccessMask = srcAccessMask;
     imageBarrier.dstAccessMask = dstAccessMask;
     imageBarrier.oldLayout = oldLayout;
     imageBarrier.newLayout = newLayout;
+    imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imageBarrier.image = image;
     imageBarrier.subresourceRange = subresourceRange;
 
     vkCmdPipelineBarrier(
@@ -62,32 +73,19 @@ void Utils::BarrierImage(
     VkImageLayout oldLayout, VkImageLayout newLayout, VkPipelineStageFlags srcStageMask,
     VkPipelineStageFlags dstStageMask)
 {
-    VkImageSubresourceRange subresourceRange = {};
-    subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    subresourceRange.baseMipLevel = 0;
-    subresourceRange.levelCount = 1;
-    subresourceRange.baseArrayLayer = 0;
-    subresourceRange.layerCount = 1;
-
     BarrierImage(
         cmd, image, srcAccessMask, dstAccessMask, oldLayout, newLayout,
-        srcStageMask, dstStageMask, subresourceRange);
+        srcStageMask, dstStageMask, MakeColorSubresourceRange());
 }
 
 void Utils::BarrierImage(
     VkCommandBuffer cmd, VkImage image, VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
     VkImageLayout oldLayout, VkImageLayout newLayout)
 {
-    VkImageSubresourceRange subresourceRange = {};
-    subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    subresourceRange.baseMipLevel = 0;
-    subresourceRange.levelCount = 1;
-    subresourceRange.baseArrayLayer = 0;
-    subresourceRange.layerCount = 1;
-
     BarrierImage(
         cmd, image, srcAccessMask, dstAccessMask, oldLayout, newLayout,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, subresourceRange);
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        MakeColorSubresourceRange());
 }
 
 void Utils::ASBuildMemoryBarrier(VkCommandBuffer cmd)
@@ -97,10 +95,9 @@ void Utils::ASBuildMemoryBarrier(VkCommandBuffer cmd)
     barrier.srcAccessMask =
         VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR |
         VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    barrier.dstAccessMask = 
+    barrier.dstAccessMask =
         VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
 
-    // wait for all building
     vkCmdPipelineBarrier(
         cmd,
         VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
@@ -113,30 +110,22 @@ void Utils::ASBuildMemoryBarrier(VkCommandBuffer cmd)
 
 void Utils::WaitForFence(VkDevice device, VkFence fence)
 {
-    VkResult r = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX));
 }
 
 void Utils::ResetFence(VkDevice device, VkFence fence)
 {
-    VkResult r = vkResetFences(device, 1, &fence);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkResetFences(device, 1, &fence));
 }
 
 void Utils::WaitAndResetFence(VkDevice device, VkFence fence)
 {
-    VkResult r;
-
-    r = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
-    VK_CHECKERROR(r);
-
-    r = vkResetFences(device, 1, &fence);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX));
+    VK_CHECKERROR(vkResetFences(device, 1, &fence));
 }
 
 void vkpt::Utils::WaitAndResetFences(VkDevice device, VkFence fence_A, VkFence fence_B)
 {
-    VkResult r;
     VkFence fences[2];
     uint32_t count = 0;
 
@@ -150,18 +139,14 @@ void vkpt::Utils::WaitAndResetFences(VkDevice device, VkFence fence_A, VkFence f
         fences[count++] = fence_B;
     }
 
-    r = vkWaitForFences(device, count, fences, VK_TRUE, UINT64_MAX);
-    VK_CHECKERROR(r);
-
-    r = vkResetFences(device, count, fences);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(vkWaitForFences(device, count, fences, VK_TRUE, UINT64_MAX));
+    VK_CHECKERROR(vkResetFences(device, count, fences));
 }
 
 bool Utils::AreViewportsSame(const VkViewport &a, const VkViewport &b)
 {
-    // special epsilons for viewports
-    const float eps = 0.1f;
-    const float depthEps = 0.001f;
+    constexpr float eps = 0.1f;
+    constexpr float depthEps = 0.001f;
 
     return
         std::abs(a.x        - b.x)          < eps &&
@@ -172,13 +157,11 @@ bool Utils::AreViewportsSame(const VkViewport &a, const VkViewport &b)
         std::abs(a.maxDepth - b.maxDepth)   < depthEps;
 }
 
-constexpr float ALMOST_ZERO_THRESHOLD = 0.01f;
-
 bool Utils::IsAlmostZero( const float v[ 3 ] )
 {
     return
-        std::abs( v[ 0 ] ) + 
-        std::abs( v[ 1 ] ) + 
+        std::abs( v[ 0 ] ) +
+        std::abs( v[ 1 ] ) +
         std::abs( v[ 2 ] ) < ALMOST_ZERO_THRESHOLD;
 }
 
@@ -212,7 +195,6 @@ float vkpt::Utils::Length(const float v[3])
     return sqrtf(Dot(v, v));
 }
 
-
 void vkpt::Utils::Normalize(float inout[3])
 {
     float len = Length(inout);
@@ -243,7 +225,6 @@ void Utils::Nullify( float inout[3] )
     inout[ 1 ] = 0;
     inout[ 2 ] = 0;
 }
-
 
 void vkpt::Utils::Cross(const float a[3], const float b[3], float r[3])
 {
@@ -280,27 +261,20 @@ bool vkpt::Utils::GetNormalAndArea(const RgFloat3D positions[3], RgFloat3D &norm
     return area > 0.01f;
 }
 
-
 void vkpt::Utils::SetMatrix3ToGLSLMat4(float dst[16], const RgMatrix3D &src)
 {
-    const bool toColumnMajor = true;
-
     for (int i = 0; i < 4; i++)
     {
         for (int j = 0; j < 4; j++)
         {
-            float v;
-
             if (i < 3 && j < 3)
             {
-                v = toColumnMajor ? src.matrix[j][i] : src.matrix[i][j];
+                dst[i * 4 + j] = src.matrix[j][i];
             }
             else
             {
-                v = i == j ? 1 : 0;
+                dst[i * 4 + j] = i == j ? 1.0f : 0.0f;
             }
-
-            dst[i * 4 + j] = v;
         }
     }
 }
@@ -313,7 +287,7 @@ uint32_t vkpt::Utils::GetPreviousByModulo(uint32_t value, uint32_t count)
 
 uint32_t vkpt::Utils::GetWorkGroupCount(float size, uint32_t groupSize)
 {
-    return GetWorkGroupCount((uint32_t)std::ceil(size), groupSize);
+    return GetWorkGroupCount(static_cast<uint32_t>(std::ceil(size)), groupSize);
 }
 
 uint32_t vkpt::Utils::GetWorkGroupCount(uint32_t size, uint32_t groupSize)

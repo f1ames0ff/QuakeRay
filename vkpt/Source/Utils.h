@@ -1,26 +1,26 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
+#include <algorithm>
+#include <limits>
 #include <optional>
+#include <type_traits>
 
 #include "Common.h"
 #include "vkpt/vkpt.h"
@@ -32,14 +32,14 @@ namespace vkpt
     };
     inline constexpr NullifyTokenType NullifyToken = {};
 
-    template< size_t Size >
+    template<size_t Size>
     struct FloatStorage
     {
         FloatStorage()  = default;
         ~FloatStorage() = default;
 
-        explicit FloatStorage( NullifyTokenType ) { memset( data, 0, sizeof( data ) ); }
-        explicit FloatStorage( const float* ptr ) { memcpy( data, ptr, sizeof( data ) ); }
+        explicit FloatStorage( NullifyTokenType ) : data{} {}
+        explicit FloatStorage( const float* ptr ) { std::copy_n( ptr, Size, data ); }
 
         FloatStorage( const FloatStorage& other )     = default;
         FloatStorage( FloatStorage&& other ) noexcept = default;
@@ -49,19 +49,12 @@ namespace vkpt
         [[nodiscard]] const float* Get() const { return data; }
         float*                     Get() { return data; }
 
-        /*const float& operator[]( size_t i ) const
-        {
-            assert( i < std::size( data ) );
-            return data[ i ];
-        }*/
-
         float data[ Size ];
     };
 
     using Float16D = FloatStorage< 16 >;
     using Float4D = FloatStorage< 4 >;
 
-    // Because std::optional requires explicit constructor
     #define IfNotNull( ptr, ifnotnull ) \
         ( ( ptr ) != nullptr ? std::optional( ( ifnotnull ) ) : std::nullopt )
 
@@ -116,12 +109,10 @@ namespace Utils
     void Cross(const float a[3], const float b[3], float r[3]);
     RgFloat3D GetUnnormalizedNormal(const RgFloat3D positions[3]);
     bool GetNormalAndArea(const RgFloat3D positions[3], RgFloat3D &normal, float &area);
-    // In terms of GLSL: mat3(a), where a is mat4.
-    // The remaining values are initialized with identity matrix.
     void SetMatrix3ToGLSLMat4(float dst[16], const RgMatrix3D &src);
 
     uint32_t GetPreviousByModulo(uint32_t value, uint32_t count);
-    
+
     uint32_t GetWorkGroupCount(float size, uint32_t groupSize);
     uint32_t GetWorkGroupCount(uint32_t size, uint32_t groupSize);
 

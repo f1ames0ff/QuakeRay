@@ -20,10 +20,11 @@
 
 #include "Common.h"
 
+#include <algorithm>
+
 
 namespace vkpt
 {
-// extension functions' definitions
 #define VK_EXTENSION_FUNCTION(fname) PFN_##fname s##fname;
     VK_INSTANCE_DEBUG_UTILS_FUNCTION_LIST
     VK_DEVICE_FUNCTION_LIST
@@ -33,32 +34,32 @@ namespace vkpt
 
 void vkpt::InitInstanceExtensionFunctions_DebugUtils(VkInstance instance)
 {
-    #define VK_EXTENSION_FUNCTION(fname) \
-		s##fname = (PFN_##fname)vkGetInstanceProcAddr(instance, #fname); \
-		assert(s##fname != nullptr);
+#define VK_EXTENSION_FUNCTION(fname) \
+    s##fname = reinterpret_cast<PFN_##fname>(vkGetInstanceProcAddr(instance, #fname)); \
+    assert(s##fname != nullptr);
 
     VK_INSTANCE_DEBUG_UTILS_FUNCTION_LIST
-    #undef VK_EXTENSION_FUNCTION
+#undef VK_EXTENSION_FUNCTION
 }
 
 void vkpt::InitDeviceExtensionFunctions(VkDevice device)
 {
-    #define VK_EXTENSION_FUNCTION(fname) \
-		s##fname = (PFN_##fname)vkGetDeviceProcAddr(device, #fname); \
-		assert(s##fname != nullptr);
+#define VK_EXTENSION_FUNCTION(fname) \
+    s##fname = reinterpret_cast<PFN_##fname>(vkGetDeviceProcAddr(device, #fname)); \
+    assert(s##fname != nullptr);
 
     VK_DEVICE_FUNCTION_LIST
-    #undef VK_EXTENSION_FUNCTION
+#undef VK_EXTENSION_FUNCTION
 }
 
 void vkpt::InitDeviceExtensionFunctions_DebugUtils(VkDevice device)
 {
 #define VK_EXTENSION_FUNCTION(fname) \
-		s##fname = (PFN_##fname)vkGetDeviceProcAddr(device, #fname); \
-		assert(s##fname != nullptr);
+    s##fname = reinterpret_cast<PFN_##fname>(vkGetDeviceProcAddr(device, #fname)); \
+    assert(s##fname != nullptr);
 
     VK_DEVICE_DEBUG_UTILS_FUNCTION_LIST
-    #undef VK_EXTENSION_FUNCTION
+#undef VK_EXTENSION_FUNCTION
 }
 
 void vkpt::AddDebugName(VkDevice device, uint64_t obj, VkObjectType type, const char *pName)
@@ -68,14 +69,16 @@ void vkpt::AddDebugName(VkDevice device, uint64_t obj, VkObjectType type, const 
         return;
     }
 
-    VkDebugUtilsObjectNameInfoEXT nameInfo = {};
-    nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
-    nameInfo.objectHandle = obj;
-    nameInfo.objectType = type;
-    nameInfo.pObjectName = pName;
+    const VkDebugUtilsObjectNameInfoEXT nameInfo =
+    {
+        VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        nullptr,
+        type,
+        obj,
+        pName,
+    };
 
-    VkResult r = svkSetDebugUtilsObjectNameEXT(device, &nameInfo);
-    VK_CHECKERROR(r);
+    VK_CHECKERROR(svkSetDebugUtilsObjectNameEXT(device, &nameInfo));
 }
 
 void vkpt::BeginCmdLabel(VkCommandBuffer cmd, const char *pName, const float pColor[4])
@@ -85,13 +88,17 @@ void vkpt::BeginCmdLabel(VkCommandBuffer cmd, const char *pName, const float pCo
         return;
     }
 
-    VkDebugUtilsLabelEXT labelInfo = {};
-    labelInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
-    labelInfo.pLabelName = pName;
+    VkDebugUtilsLabelEXT labelInfo =
+    {
+        VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+        nullptr,
+        pName,
+        {},
+    };
 
     if (pColor != nullptr)
     {
-        memcpy(labelInfo.color, pColor, sizeof(float) * 4);
+        std::copy_n(pColor, 4, labelInfo.color);
     }
 
     svkCmdBeginDebugUtilsLabelEXT(cmd, &labelInfo);
@@ -99,10 +106,8 @@ void vkpt::BeginCmdLabel(VkCommandBuffer cmd, const char *pName, const float pCo
 
 void vkpt::EndCmdLabel(VkCommandBuffer cmd)
 {
-    if (svkCmdEndDebugUtilsLabelEXT == nullptr)
+    if (svkCmdEndDebugUtilsLabelEXT != nullptr)
     {
-        return;
+        svkCmdEndDebugUtilsLabelEXT(cmd);
     }
-
-    svkCmdEndDebugUtilsLabelEXT(cmd);
 }
