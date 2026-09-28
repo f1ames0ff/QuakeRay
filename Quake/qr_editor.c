@@ -326,6 +326,7 @@ static struct
 	// materials waiting for live re-synthesis / all touched this session
 	char    dirty[QRE_DIRTY_MAX][MAX_QPATH];
 	qboolean dirty_full[QRE_DIRTY_MAX];
+	qboolean dirty_light[QRE_DIRTY_MAX];
 	int     dirty_count;
 	char    touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int     touched_count;
@@ -339,6 +340,7 @@ static void     QRE_ClosePanel (void);
 static void     QRE_RequestExit (void);
 static void     QRE_StartMode (int mode);
 static void     QRE_GlobalsRestore (void);
+static qboolean QRE_GlobalsTouched (void);
 static qboolean QRE_WriteSession (void);
 static qboolean QRE_FileExists (const char *path);
 static void     QRE_SessionSave (void);
@@ -522,7 +524,7 @@ static qboolean QRE_CustomTouched (void)
 // lights.yaml and the custom lights and fog of qray/lights.yaml.
 static qboolean QRE_LightSessionTouched (void)
 {
-	return (qre.light_touched_count > 0 || QRE_CustomTouched ()) ? true : false;
+	return (qre.light_touched_count > 0 || QRE_CustomTouched () || QRE_GlobalsTouched ()) ? true : false;
 }
 
 static void QRE_TakeLightSnapshot (void)
@@ -584,7 +586,7 @@ static void QRE_TouchLight (const char *name)
 		q_strlcpy (qre.light_touched[qre.light_touched_count++], name, MAX_QPATH);
 }
 
-static void QRE_MarkDirtyInternal (rt_material_t *m, qboolean full)
+static void QRE_MarkDirtyInternal (rt_material_t *m, qboolean full, qboolean light)
 {
 	static qboolean warned = false;
 	int             i;
@@ -609,6 +611,8 @@ static void QRE_MarkDirtyInternal (rt_material_t *m, qboolean full)
 		{
 			if (full)
 				qre.dirty_full[i] = true;
+			if (light)
+				qre.dirty_light[i] = true;
 			return;
 		}
 	}
@@ -617,6 +621,7 @@ static void QRE_MarkDirtyInternal (rt_material_t *m, qboolean full)
 	{
 		q_strlcpy (qre.dirty[qre.dirty_count], m->name, MAX_QPATH);
 		qre.dirty_full[qre.dirty_count] = full;
+		qre.dirty_light[qre.dirty_count] = light;
 		qre.dirty_count++;
 	}
 	else
@@ -628,12 +633,17 @@ static void QRE_MarkDirtyInternal (rt_material_t *m, qboolean full)
 
 static void QRE_MarkDirty (rt_material_t *m)
 {
-	QRE_MarkDirtyInternal (m, false);
+	QRE_MarkDirtyInternal (m, false, false);
+}
+
+static void QRE_MarkDirtyLight (rt_material_t *m)
+{
+	QRE_MarkDirtyInternal (m, false, true);
 }
 
 static void QRE_MarkDirtyFull (rt_material_t *m)
 {
-	QRE_MarkDirtyInternal (m, true);
+	QRE_MarkDirtyInternal (m, true, false);
 }
 
 static void QRE_FlushDirty (void)
@@ -663,6 +673,9 @@ static void QRE_FlushDirty (void)
 		if (qre.dirty_full[i])
 			full = true;
 
+		if (qre.dirty_light[i])
+			lights = true;
+
 		mat = RT_MAT_Find (qre.dirty[i]);
 		if (mat && mat->is_light)
 			lights = true;
@@ -673,6 +686,7 @@ static void QRE_FlushDirty (void)
 
 	qre.dirty_count = 0;
 	memset (qre.dirty_full, 0, sizeof (qre.dirty_full));
+	memset (qre.dirty_light, 0, sizeof (qre.dirty_light));
 
 	if (full)
 		Atomic_StoreUInt32 (&rt_require_static_submit, true);
@@ -686,6 +700,7 @@ static void QRE_ReapplyTouched (void)
 
 	qre.dirty_count = 0;
 	memset (qre.dirty_full, 0, sizeof (qre.dirty_full));
+	memset (qre.dirty_light, 0, sizeof (qre.dirty_light));
 	for (i = 0; i < qre.touched_count; i++)
 	{
 		// by texture name: Cancel/Exit drop a material the editor had created,
@@ -747,7 +762,7 @@ static void QRE_SetColorEnabled (int g, int param, qboolean enabled)
 
 	(void)param;
 	m->has_light_color = enabled;
-	QRE_MarkDirtyFull (m);
+	QRE_MarkDirtyLight (m);
 }
 
 static void QRE_SetColorChannel (int g, int param, int channel, float value)
@@ -758,7 +773,7 @@ static void QRE_SetColorChannel (int g, int param, int channel, float value)
 	(void)param;
 	m->has_light_color = true;
 	m->light_color[channel] = value;
-	QRE_MarkDirtyFull (m);
+	QRE_MarkDirtyLight (m);
 }
 
 static float QRE_GetFloat (const rt_material_t *m, int param)
@@ -825,7 +840,7 @@ static void QRE_SetFloat (int g, int param, float value)
 	}
 
 	if (param == PARAM_LBRIGHT)
-		QRE_MarkDirtyFull (m);
+		QRE_MarkDirtyLight (m);
 	else
 		QRE_MarkDirty (m);
 }
@@ -859,7 +874,7 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	}
 
 	if (param == PARAM_ISLIGHT)
-		QRE_MarkDirtyFull (m);
+		QRE_MarkDirtyLight (m);
 	else
 		QRE_MarkDirty (m);
 }
@@ -1113,6 +1128,61 @@ static void QRE_DirToModel (const QrTransform *transform, const vec3_t dir, vec3
 
 #define QRE_PICK_PLANE_EPS 1.0f
 #define QRE_PICK_POLY_EPS  0.05f
+
+static msurface_t *QRE_RayModelSurface (qmodel_t *model, const QrTransform *transform, vec3_t start, vec3_t dir,
+                                        float maxt, float *out_t, vec3_t out_impact)
+{
+	vec3_t      local, localdir;
+	msurface_t *best = NULL;
+	float       best_t = maxt;
+	int         i;
+
+	QRE_WorldToModel (transform, start, local);
+	QRE_DirToModel (transform, dir, localdir);
+
+	for (i = 0; i < model->nummodelsurfaces; i++)
+	{
+		msurface_t *s = &model->surfaces[model->firstmodelsurface + i];
+		vec3_t      snormal, hit;
+		float       sdist, den, t;
+		glpoly_t   *p;
+
+		if (!s->texinfo || !s->texinfo->texture)
+			continue;
+		if (s->flags & (SURF_DRAWSKY | SURF_NOTEXTURE))
+			continue;
+
+		QRE_SurfacePlane (s, snormal, &sdist);
+
+		den = DotProduct (snormal, localdir);
+		if (den >= 0.0f)
+			continue;
+
+		t = (sdist - DotProduct (snormal, local)) / den;
+		if (t < 0.0f || t >= best_t)
+			continue;
+
+		VectorMA (local, t, localdir, hit);
+
+		for (p = s->polys; p; p = p->next)
+		{
+			if (!QRE_PointInPolygon (p, hit, snormal, QRE_PICK_POLY_EPS))
+				continue;
+
+			best = s;
+			best_t = t;
+			break;
+		}
+	}
+
+	if (!best)
+		return NULL;
+
+	if (out_t)
+		*out_t = best_t;
+	VectorMA (start, best_t, dir, out_impact);
+	return best;
+}
 
 // Finds the surface of a model whose face contains the impact point. Coplanar
 // faces are told apart by a polygon test; the nearest plane is the fallback.
@@ -1391,8 +1461,7 @@ static float QRE_TraceEntityBox (entity_t *e, const vec3_t start, const vec3_t e
 
 static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, entity_t **out_ent, gltexture_t **out_glt)
 {
-	vec3_t    start, end;
-	trace_t   tr;
+	vec3_t    start, end, dir;
 	float     best = 1.0f;
 	qmodel_t *bestmodel = NULL;
 	entity_t *bestent = NULL;
@@ -1404,45 +1473,58 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 
 	VectorCopy (r_origin, start);
 	VectorMA (start, 8192.0f, vpn, end);
+	VectorSubtract (end, start, dir);
 
-	// the world, including liquid and lava surfaces (they carry materials too)
-	memset (&tr, 0, sizeof (tr));
-	tr.fraction = 1.0f;
-	SV_RecursiveHullCheck (&cl.worldmodel->hulls[0], start, end, &tr,
-	                       CONTENTMASK_ANYSOLID |
-	                       CONTENTMASK_FROMQ1 (CONTENTS_WATER) |
-	                       CONTENTMASK_FROMQ1 (CONTENTS_SLIME) |
-	                       CONTENTMASK_FROMQ1 (CONTENTS_LAVA));
-	if (!tr.startsolid && tr.fraction < best)
 	{
-		best = tr.fraction;
-		bestmodel = cl.worldmodel;
-		VectorCopy (tr.endpos, bestimpact);
-		VectorCopy (bestimpact, qre.pick_impact);
-		qre.pick_impact_frame = (unsigned)host_framecount;
-	}
+		QrTransform transform = RT_GetBrushModelMatrix (NULL);
+		float       t;
+		vec3_t      impact;
+		msurface_t *surf = QRE_RayModelSurface (cl.worldmodel, &transform, start, dir, best, &t, impact);
 
-	// brush entities (health boxes, buttons, doors, ...); their traces are in
-	// world space, their model data is not (RT_GetBrushModelMatrix below)
-	{
-		vec3_t eimpact, enorm;
-		int    entnum;
-		float  f = CL_TraceLine (start, end, eimpact, enorm, &entnum);
-
-		if (f < best && entnum >= 0 && entnum < MAX_EDICTS &&
-		    cl.entities[entnum].model && cl.entities[entnum].model != cl.worldmodel)
+		if (surf)
 		{
-			best = f;
-			bestent = &cl.entities[entnum];
-			bestmodel = bestent->model;
-			VectorCopy (eimpact, bestimpact);
-			VectorCopy (bestimpact, qre.pick_impact);
-			qre.pick_impact_frame = (unsigned)host_framecount;
+			best = t;
+			bestmodel = cl.worldmodel;
+			bestent = NULL;
+			VectorCopy (impact, bestimpact);
+			Con_DPrintf ("qr editor pick: candidate world surf %d t %.4f tex '%s'\n",
+			             (int)(surf - cl.worldmodel->surfaces), t, surf->texinfo->texture->name);
 		}
 	}
 
-	// alias models and sprites (medkits, items, torches): their textures are
-	// model skins, not BSP surfaces, so the traces above cannot see them
+	{
+		int i;
+
+		for (i = 1; i < cl.num_entities; i++)
+		{
+			entity_t   *e = &cl.entities[i];
+			QrTransform transform;
+			float       t;
+			vec3_t      impact;
+			msurface_t *surf;
+
+			if (!e->model || e->model == cl.worldmodel || e->model->needload)
+				continue;
+			if (e->model->type != mod_brush)
+				continue;
+			if (e->alpha == ENTALPHA_ZERO)
+				continue;
+
+			transform = RT_GetBrushModelMatrix (e);
+			surf = QRE_RayModelSurface (e->model, &transform, start, dir, best, &t, impact);
+			if (!surf)
+				continue;
+
+			best = t;
+			bestmodel = e->model;
+			bestent = e;
+			VectorCopy (impact, bestimpact);
+			Con_DPrintf ("qr editor pick: candidate ent %d model '%s' surf %d t %.4f tex '%s'\n",
+			             i, e->model->name, (int)(surf - e->model->surfaces), t,
+			             surf->texinfo->texture->name);
+		}
+	}
+
 	{
 		int i;
 
@@ -1457,9 +1539,6 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 				continue;
 			if (e == &cl.viewent || i == cl.viewentity)
 				continue;
-			// the renderer draws nothing for these, and a model without a
-			// texture has no material to open: neither may take the pick from
-			// what stands behind it
 			if (e->alpha == ENTALPHA_ZERO || !QRE_EntityTexture (e))
 				continue;
 
@@ -1470,6 +1549,8 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 				bestent = e;
 				bestmodel = e->model;
 				bestisentity = true;
+				Con_DPrintf ("qr editor pick: candidate ent %d model '%s' alias/sprite t %.4f\n",
+				             i, e->model->name, f);
 			}
 		}
 	}
@@ -1490,6 +1571,8 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 			*out_ent = bestent;
 		if (out_glt)
 			*out_glt = glt;
+		Con_DPrintf ("qr editor pick: winner ent %d model '%s' alias/sprite t %.4f tex '%s'\n",
+		             (int)(bestent - cl.entities), bestmodel->name, best, glt->name);
 		return true;
 	}
 
@@ -1501,11 +1584,18 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 	if (!*out_surf)
 		return false;
 
+	VectorCopy (bestimpact, qre.pick_impact);
+	qre.pick_impact_frame = (unsigned)host_framecount;
+
 	*out_model = bestmodel;
 	if (out_ent)
 		*out_ent = bestent;
 	if (out_glt)
 		*out_glt = (*out_surf)->texinfo->texture->gltexture;
+	Con_DPrintf ("qr editor pick: winner ent %d model '%s' surf %d t %.4f tex '%s'\n",
+	             bestent ? (int)(bestent - cl.entities) : 0, bestmodel->name,
+	             (int)(*out_surf - bestmodel->surfaces), best,
+	             (*out_surf)->texinfo->texture->name);
 	return true;
 }
 
@@ -5127,13 +5217,17 @@ static qboolean QRE_SaveOneSession (const char *editor_file, const char *target_
 static void QRE_SessionSave (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
+	const qboolean globals = light ? QRE_GlobalsTouched () : false;
 	const qboolean touched = light ? QRE_LightSessionTouched () : (qre.touched_count > 0);
 
-	if (touched && !QRE_WriteSession ())
+	if (touched && !QRE_WriteSession () && !globals)
 	{
 		QRE_Notify ("nothing to save");
 		return;
 	}
+
+	if (globals)
+		Host_WriteConfiguration ();
 
 	if (!light)
 	{
@@ -5172,7 +5266,15 @@ static void QRE_SessionSave (void)
 
 		if (!have_emitter && !have_custom)
 		{
-			QRE_Notify ("nothing to save");
+			if (globals)
+			{
+				QRE_StopEditor (false);
+				QRE_Notify ("global settings written to the config");
+			}
+			else
+			{
+				QRE_Notify ("nothing to save");
+			}
 			return;
 		}
 
@@ -5195,6 +5297,9 @@ static void QRE_SessionSave (void)
 		else
 			QRE_Notify (had_emitter ? "lights.yaml saved; backup_lights.yaml holds the previous file"
 			                        : "lights.yaml saved");
+
+		if (globals)
+			QRE_Notify ("global settings written to the config");
 	}
 }
 
