@@ -126,6 +126,8 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_denoiser 1` - ASVGF reconstruction of the lighting channels (`0` composites the raw ReSTIR output)
 * `rt_no_textures 0` - `1` swaps the diffuse albedo for a fixed value, i.e. "no textures"
 * `rt_emis_light_intensity 1.0` - how much light the emissive (luma-masked) surfaces emit
+* `emissive_focus` (material key in `materials.yaml`) - half-angle in degrees of the cone a DTAL of that material shines in: full brightness inside it, nothing outside (`0` or no key keeps the default wide lobe); `emissive_focus_soft` (degrees, default a tenth of the angle) is the width of the soft edge, `0` making it nearly hard. With `emissive_projector` it is the projector's beam angle
+* `emissive_projector` (material key in `materials.yaml`) - the material's DTAL reads its mask along the direction it lights, so the pattern of a stained window or a sign is painted across the beam; the light stays the cone around the normal (`emissive_focus`, no key = `60`; `emissive_focus_soft` softens the cone edge in the cone mode and the projected pattern in the projector mode)
 * `rt_dtal_minarea 0` / `rt_dtal_maxpolys 64` - the size floor (world units², `0` off) and the per-surface cap (`0` = no cuts) of the DTAL splits; `rt_dtal_rebuild` re-runs the collection
 * `rt_dtal_clearance 1` - a DTAL polygon facing solid geometry within this many units is not created (`0` off)
 * `rt_dtal_debug 0` - `1` draws the DTAL wireframes, `2` their normals as arrows

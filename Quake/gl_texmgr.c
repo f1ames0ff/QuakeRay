@@ -1091,6 +1091,35 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
    as polygons over them; at or above it the whole surface glows and stays a single light. */
 #define RT_EMIS_GLOW_FULL 0.999f
 
+static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, float *angleOuter)
+{
+	float outerDeg = mat->emissive_focus;
+
+	if (!(outerDeg > 0.0f) || outerDeg >= 89.0f)
+	{
+		if (!mat->emissive_projector)
+		{
+			*angleInner = 0.0f;
+			*angleOuter = 0.0f;
+			return;
+		}
+
+		outerDeg = 60.0f;
+	}
+
+	float softDeg = mat->emissive_focus_soft;
+
+	if (softDeg < 0.0f)
+		softDeg = outerDeg * 0.1f;
+	if (softDeg < 0.05f)
+		softDeg = 0.05f;
+	if (softDeg > outerDeg)
+		softDeg = outerDeg;
+
+	*angleOuter = (float)(outerDeg * M_PI_DIV_180);
+	*angleInner = (float)((outerDeg - softDeg) * M_PI_DIV_180);
+}
+
 static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
@@ -1110,6 +1139,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			ModifyColorValue (glt->rtlightcolor, mat->light_brightness);
 	}
 	glt->rtupoffset = mat->light_upoffset;
+	TexMgr_EmissiveCone (mat, &glt->rtemisangleinner, &glt->rtemisangleouter);
+	glt->rtemisprojector = mat->emissive_projector;
 	glt->rtmirror = mat->mirror;
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
@@ -1612,6 +1643,9 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 	glt->rtemissivemean = 0.0f;
 	glt->rtemissivemeanbase = 0.0f;
+	glt->rtemisangleinner = 0.0f;
+	glt->rtemisangleouter = 0.0f;
+	glt->rtemisprojector = false;
 	glt->rtemisuvmin[0] = glt->rtemisuvmin[1] = 0.0f;
 	glt->rtemisuvmax[0] = glt->rtemisuvmax[1] = 1.0f;
 	glt->rtemissiveglow = 0.0f;

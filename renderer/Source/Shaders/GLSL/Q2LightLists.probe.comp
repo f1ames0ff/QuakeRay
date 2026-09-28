@@ -109,26 +109,26 @@ void main()
     const vec3 rng = vec3(0.25, 0.5, 0.75);
 
     // One light per branch of q2LightSelectionMass, encoded with constants so that the branch the
-    // slot belongs to is the one that folds. ShLightEncoded has ten members -- color, lightType and
-    // data_0..data_7, eight vec4 -- so every constructor below passes exactly eight; a branch reads
-    // only the fields it names, and every other field is left at zero. The mass of the triangle
-    // branch reads data_0..data_2 as its three positions and their w components as the unnormalized
-    // normal of the triangle, the textured area branch reads its polygon out of data_0..data_4 and
-    // its plane out of data_7, and the spot branch reads data_0 as center and radius, data_1 as
-    // direction and data_2.xy as the two cosines
+    // slot belongs to is the one that folds. ShLightEncoded has fourteen members -- color, lightType,
+    // data_0..data_7, the three cone/projector scalars and one pad -- so every constructor below
+    // passes every one of them; a branch reads only the fields it names, and every other field is
+    // left at zero. The mass of the triangle branch reads data_0..data_2 as its three positions and
+    // their w components as the unnormalized normal of the triangle, the textured area branch reads
+    // its polygon out of data_0..data_4 and its plane out of data_7, and the spot branch reads
+    // data_0 as center and radius, data_1 as direction and data_2.xy as the two cosines
     const ShLightEncoded sphereEnc = ShLightEncoded(vec3(0.5, 0.25, 0.125), uint(LIGHT_TYPE_SPHERE),
         vec4(3.0, 0.0, 4.0, 1.5), vec4(0.6, 0.8, 0.0, 0.0), vec4(0.0), vec4(0.0), vec4(0.0),
-        vec4(0.0), vec4(0.0), vec4(0.0));
+        vec4(0.0), vec4(0.0), vec4(0.0), 0.0, 0.0, 0.0, 0u);
     const ShLightEncoded spotEnc = ShLightEncoded(vec3(0.25, 0.5, 0.75), uint(LIGHT_TYPE_SPOT),
         vec4(3.0, 0.0, 4.0, 1.5), vec4(0.0, -1.0, 0.0, 0.0), vec4(0.9, 0.5, 0.0, 0.0),
-        vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0));
+        vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), 0.0, 0.0, 0.0, 0u);
     const ShLightEncoded areaEnc = ShLightEncoded(vec3(1.0, 1.0, 1.0), uint(LIGHT_TYPE_TEXTURED_AREA),
         vec4(1.0, 0.0, 0.0, 2.0), vec4(0.0, 2.0, 0.0, 5.0), vec4(0.0, 0.0, 3.0, 3.0),
         vec4(0.0, 0.0, 1.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(0.0), vec4(0.0),
-        vec4(0.0, 0.0, 1.0, 6.0));
+        vec4(0.0, 0.0, 1.0, 6.0), 0.0, 0.0, 0.0, 0u);
     const ShLightEncoded triEnc = ShLightEncoded(vec3(0.5, 0.5, 0.5), uint(LIGHT_TYPE_TRIANGLE),
         vec4(2.0, 0.0, 1.0, 0.0), vec4(0.0, 2.0, 1.0, 0.0), vec4(-2.0, 1.0, 3.0, 6.0),
-        vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0));
+        vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), 0.0, 0.0, 0.0, 0u);
 
     float v = 0.0;
 

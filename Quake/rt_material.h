@@ -24,6 +24,9 @@ typedef struct rt_material_s {
     /* Overrides the global rt_emis_blend cvar for this material's emission;
        -1 = not authored (use the cvar), 0..RT_MAT_EMIS_BLEND_MAX = mode. */
     int emissive_blend;
+    float emissive_focus;
+    float emissive_focus_soft;
+    qboolean emissive_projector;
     float base_factor;
     qboolean is_light;
     qboolean light_styles;
