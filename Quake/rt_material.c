@@ -539,7 +539,7 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         {
             f = 16.0f;
         }
-        mat->color_emissive_feather = f;
+        mat->color_emissive_feather = (float)(int)(CLAMP(0.0f, f, 16.0f) + 0.5f);
     }
     else if (!q_strcasecmp(key, "light_color"))
         mat->has_light_color = rt_mat_parse_hex_color(value, mat->light_color);
@@ -696,7 +696,7 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
                                             }
                                             else if (!q_strcasecmp(kb, "feather"))
                                             {
-                                                block->feather = CLAMP(0.0f, (float)atof(vb), 16.0f);
+                                                block->feather = CLAMP(0.0f, (float)(int)((float)atof(vb) + 0.5f), 16.0f);
                                                 block->has_feather = true;
                                             }
                                             else if (!q_strcasecmp(kb, "emissive_factor") || !q_strcasecmp(kb, "factor"))

@@ -2317,9 +2317,13 @@ static void QRE_EmissiveEditor (int g)
 			if (QR_GUI_SliderFloat ("color_emissive_threshold", &m->color_emissive[ci].threshold, 0.0f, 1.0f,
 			                        "How far a pixel's colour may differ from this block's colour and still glow."))
 				QRE_MarkDirty (m);
-			if (QR_GUI_SliderFloat ("color_emissive_feather", &m->color_emissive[ci].feather, 0.0f, 16.0f,
-			                        "Softens this block's mask edge over this many pixels, on both sides of it, without comparing colours."))
-				QRE_MarkDirty (m);
+			{
+				int feather = (int)(m->color_emissive[ci].feather + 0.5f);
+
+				if (QR_GUI_SliderInt ("color_emissive_feather", &feather, 0, 16,
+				                      "Softens this block's mask edge over this many pixels, on both sides of it, without comparing colours."))
+					m->color_emissive[ci].feather = (float)feather;
+			}
 			if (QR_GUI_SliderFloat ("emissive_factor", &m->color_emissive[ci].factor, 0.0f, 5.0f,
 			                        "Scales this block's emission: below 1 it dims, above 1 it brightens."))
 				QRE_MarkDirty (m);
