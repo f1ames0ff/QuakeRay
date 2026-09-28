@@ -186,11 +186,6 @@ RgResult rgUploadRasterizedGeometry(RgInstance rgInstance, const RgRasterizedGeo
     return Call(rgInstance, &VulkanDevice::UploadRasterizedGeometry, pUploadInfo, pViewProjection, pViewport);
 }
 
-RgResult rgUploadLensFlare(RgInstance rgInstance, const RgLensFlareUploadInfo *pUploadInfo)
-{
-    return Call(rgInstance, &VulkanDevice::UploadLensFlare, pUploadInfo);
-}
-
 RgResult rgUploadDecal(RgInstance rgInstance, const RgDecalUploadInfo *pUploadInfo)
 {
     return Call(rgInstance, &VulkanDevice::UploadDecal, pUploadInfo);
@@ -349,7 +344,34 @@ RgResult rgGetFrameStatsEx(RgInstance rgInstance, RgFrameStats *pStats)
 
 const char *rgGetGpuPassName(uint32_t passIndex)
 {
-    return vkpt::GetGpuPassName(passIndex);
+    static const char *const passNames[RG_GPU_PASS_COUNT] =
+    {
+        "setup",
+        "lights",
+        "primary",
+        "godrays",
+        "reflrefr",
+        "reflgodr",
+        "gradient",
+        "direct",
+        "indirect",
+        "denoise",
+        "exposure",
+        "composite",
+        "upscale",
+        "upsblit",
+        "sharpen",
+        "post",
+        "present",
+        "swapblit",
+    };
+
+    if (passIndex >= RG_GPU_PASS_COUNT)
+    {
+        return "";
+    }
+
+    return passNames[passIndex];
 }
 
 

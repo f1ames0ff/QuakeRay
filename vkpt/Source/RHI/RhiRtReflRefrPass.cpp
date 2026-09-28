@@ -67,7 +67,7 @@ static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 
               SET_LIGHT_SOURCES == 6 && SET_CUBEMAPS == 7 && SET_RENDER_CUBEMAP == 8 &&
               SET_PORTALS == 9 && SET_VOLUMETRIC == 10 && SET_RAY_STATS == 11 &&
               PIPELINE_SET_COUNT == 12,
-              "the RT set order has to stay RayTracingPipeline.cpp:62-86");
+              "the RT set order is frozen by the engine's RT shaders");
 
 // The 24 images `RtQ2ReflectRefract.rgen` references AFTER stream S1's fix: the 23 storage images
 // the raygen writes and reads (the UAVs) and the one image it only reads (image 25, the primary's

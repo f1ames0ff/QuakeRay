@@ -24,8 +24,6 @@
 #include <cstring>
 #include <stdexcept>
 
-#include "HaltonSequence.h"
-#include "RenderResolutionHelper.h"
 #include "RgException.h"
 #include "Const.h"
 #include "Generated/ShaderCommonC.h"
@@ -69,7 +67,6 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
           info->pfnOpenFile, info->pfnCloseFile, info->pUserLoadFileData ) }
     , rayCullBackFacingTriangles( info->rayCullBackFacingTriangles )
     , allowGeometryWithSkyFlag( info->allowGeometryWithSkyFlag )
-    , lensFlareVerticesInScreenSpace( info->lensFlareVerticesInScreenSpace )
     , rasterizedVertexColorGamma( info->rasterizedVertexColorGamma != 0 )
     , previousFrameTime( -1.0 / 60.0 )
     , currentFrameTime( 0 )
@@ -206,29 +203,11 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
         uniform,
         memAllocator);
 
-    volumetric          = std::make_shared< Volumetric >( 
-        device,
-        cmdManager.get(),
-        memAllocator.get(),
-        shaderManager.get(),
-        uniform.get(),
-        blueNoise.get() );
-
     rasterizer          = std::make_shared<Rasterizer>(
         device,
-        physDevice->Get(),
-        shaderManager,
-        textureManager,
-        uniform,
-        genericSamplerManager,
-        tonemapping,
-        volumetric,
         memAllocator,
-        framebuffers,
-        cmdManager,
-        *info,
-        scene->GetASManager()->GetTLASDescSetLayout(),
-        scene->GetLightManager()->GetDescSetLayout());
+        textureManager,
+        *info);
 
     decalManager        = std::make_shared<DecalManager>(
         device,
@@ -242,57 +221,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
         device,
         memAllocator);
 
-    shadowMap           = std::make_shared<ShadowMap>(
-        device,
-        memAllocator,
-        shaderManager);
-
-    godRays             = std::make_shared<GodRays>(
-        device,
-        memAllocator,
-        framebuffers,
-        shaderManager,
-        uniform,
-        blueNoise,
-        shadowMap);
-
     rayStats            = std::make_shared<RayStats>(device, memAllocator);
-    passTimings         = std::make_shared<PassTimings>(device, physDevice->Get(), queues->GetIndexGraphics());
-
-    rtPipeline = std::make_shared< RayTracingPipeline >( 
-        device,
-        physDevice,
-        memAllocator,
-        shaderManager.get(),
-        scene.get(),
-        uniform.get(),
-        textureManager.get(),
-        framebuffers.get(),
-        blueNoise.get(),
-        cubemapManager.get(),
-        rasterizer->GetRenderCubemap().get(),
-        portalList.get(),
-        volumetric.get(),
-        rayStats.get(),
-        *info );
-
-    pathTracer          = std::make_shared<PathTracer>(device, rtPipeline);
-
-    imageComposition    = std::make_shared<ImageComposition>(
-        device,
-        memAllocator,
-        framebuffers, 
-        shaderManager, 
-        uniform, 
-        tonemapping, 
-        volumetric.get() );
-
-    bloom               = std::make_shared<Bloom>(
-        device,
-        framebuffers,
-        shaderManager,
-        uniform,
-        tonemapping);
 
     amdFsr              = std::make_shared<FidelityFX::FSR>(
         device,
@@ -306,64 +235,11 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
         info->pAppGUID,
         libconfig.dlssValidation);
 
-    sharpening          = std::make_shared<Sharpening>(
-        device,
-        framebuffers,
-        shaderManager);
 
-    q2Denoiser          = std::make_shared<Q2Denoiser>(
-        device,
-        framebuffers,
-        shaderManager,
-        uniform,
-        scene->GetASManager());
-
-    effectWipe          = std::make_shared<EffectWipe>(
-        device,
-        framebuffers,
-        uniform,
-        blueNoise,
-        shaderManager, 
-        info->effectWipeIsUsed );
-
-
-#define CONSTRUCT_SIMPLE_EFFECT(T) std::make_shared<T>(device, framebuffers, uniform, shaderManager)
-    effectRadialBlur            = CONSTRUCT_SIMPLE_EFFECT(EffectRadialBlur);
-    effectChromaticAberration   = CONSTRUCT_SIMPLE_EFFECT(EffectChromaticAberration);
-    effectInverseBW             = CONSTRUCT_SIMPLE_EFFECT(EffectInverseBW);
-    effectHueShift              = CONSTRUCT_SIMPLE_EFFECT(EffectHueShift);
-    effectDistortedSides        = CONSTRUCT_SIMPLE_EFFECT(EffectDistortedSides);
-    effectWaves                 = CONSTRUCT_SIMPLE_EFFECT(EffectWaves);
-    effectColorTint             = CONSTRUCT_SIMPLE_EFFECT(EffectColorTint);
-    effectCrtDemodulateEncode   = CONSTRUCT_SIMPLE_EFFECT(EffectCrtDemodulateEncode);
-    effectCrtDecode             = CONSTRUCT_SIMPLE_EFFECT(EffectCrtDecode);
-#undef SIMPLE_EFFECT_CONSTRUCTOR_PARAMS
-
-
-    shaderManager->Subscribe(q2Denoiser);
-    shaderManager->Subscribe(imageComposition);
-    shaderManager->Subscribe(rasterizer);
-    shaderManager->Subscribe(volumetric);
     shaderManager->Subscribe(decalManager);
-    shaderManager->Subscribe(rtPipeline);
     shaderManager->Subscribe(tonemapping);
     shaderManager->Subscribe(scene->GetVertexPreprocessing());
-    shaderManager->Subscribe(bloom);
-    shaderManager->Subscribe(sharpening);
-    shaderManager->Subscribe(shadowMap);
-    shaderManager->Subscribe(godRays);
-    shaderManager->Subscribe(effectWipe);
-    shaderManager->Subscribe(effectRadialBlur);
-    shaderManager->Subscribe(effectChromaticAberration);
-    shaderManager->Subscribe(effectInverseBW);
-    shaderManager->Subscribe(effectHueShift);
-    shaderManager->Subscribe(effectDistortedSides);
-    shaderManager->Subscribe(effectWaves);
-    shaderManager->Subscribe(effectColorTint);
-    shaderManager->Subscribe(effectCrtDemodulateEncode);
-    shaderManager->Subscribe(effectCrtDecode);
 
-    framebuffers->Subscribe(rasterizer);
     framebuffers->Subscribe(decalManager);
     framebuffers->Subscribe(amdFsr);
 
@@ -387,10 +263,6 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 rhiAccelStructs.reset();
                 Print("Warning: RHI: the acceleration structures are unavailable, the frame skeleton will be unavailable");
             }
-
-            // The debug ray-tracing pass of A3.1 (RHI/RhiDebugTracePass.h) is not created: its
-            // 'rhitrace' switch is retired with the rest of the bring-up flags and nothing selects
-            // FrameMode::DebugTrace any more, so 'nullptr' is handed to the skeleton below.
 
             // The real ray-tracing passes of A4/A5, formerly gated by 'rhirt': with the RHI as the
             // only renderer they are created unconditionally. A failure of the mandatory passes
@@ -695,10 +567,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
             // over here.
             //
             // The mode the skeleton records for the whole run is hard-wired to the traced frame: it
-            // is the only mode left. FrameMode::Rasterized and FrameMode::DebugTrace stay compiled
-            // for Stage 2 of the legacy-renderer removal, but nothing selects them any more - the
-            // rasterized chain and the A3.1 debug trace were the bring-up paths, and the skeleton
-            // itself refuses to be available when a pass of its mode failed to be created.
+            // is the only mode left.
             const NvrhiFrameSkeleton::FrameMode frameMode = NvrhiFrameSkeleton::FrameMode::Traced;
 
             nvrhiFrameSkeleton = std::make_shared<NvrhiFrameSkeleton>(
@@ -708,7 +577,6 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 rhiTextureTable.get(),
                 rhiFrameContext.get(),
                 rhiAccelStructs.get(),
-                nullptr,  // the retired A3.1 debug trace pass (FrameMode::DebugTrace is never selected)
                 rhiRtPrimaryPass.get(),
                 rhiRtDirectPass.get(),
                 rhiRtIndirectPass.get(),
@@ -844,33 +712,15 @@ VulkanDevice::~VulkanDevice()
     swapchain.reset();
     cmdManager.reset();
     framebuffers.reset();
-    volumetric.reset();
     tonemapping.reset();
-    imageComposition.reset();
-    bloom.reset();
     amdFsr.reset();
     nvDlss.reset();
-    sharpening.reset();
-    effectWipe.reset();
-    effectRadialBlur.reset();
-    effectChromaticAberration.reset();
-    effectInverseBW.reset();
-    effectHueShift.reset();
-    effectDistortedSides.reset();
-    effectWaves.reset();
-    effectColorTint.reset();
-    effectCrtDemodulateEncode.reset();
-    effectCrtDecode.reset();
     uniform.reset();
     scene.reset();
     shaderManager.reset();
-    rtPipeline.reset();
-    pathTracer.reset();
     rasterizer.reset();
     decalManager.reset();
     portalList.reset();
-    shadowMap.reset();
-    godRays.reset();
     worldSamplerManager.reset();
     genericSamplerManager.reset();
     blueNoise.reset();
@@ -879,8 +729,6 @@ VulkanDevice::~VulkanDevice()
 
     // not covered by the list above: these own device resources too, and as
     // members they would otherwise be destroyed after DestroyDevice()
-    passTimings.reset();
-    q2Denoiser.reset();
     rayStats.reset();
 
     memAllocator.reset();

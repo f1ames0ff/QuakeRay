@@ -40,7 +40,6 @@ namespace vkpt
 class Framebuffers;
 class GlobalUniform;
 class RenderResolutionHelper;
-class RhiDebugTracePass;
 class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
@@ -267,20 +266,15 @@ public:
     };
 
     // The frame mode of the whole run. Only Traced is reachable now: with the bring-up flags
-    // retired, the host selects it unconditionally. The other two values and the code behind them
-    // stay compiled for Stage 2 of the legacy-renderer removal:
+    // retired, the host selects it unconditionally.
     //  - Rasterized: the raster sky and world sub-passes draw into ALBEDO and the present samples
     //                it;
-    //  - DebugTrace: the A3.1 debug trace of the acceleration structures (the id-coloured image)
-    //                replaces the raster sub-passes; its pass is not created any more, so selecting
-    //                this mode would leave the skeleton unavailable;
     //  - Traced:     the real ray-tracing chain: the primary-visibility pass fills the engine's
     //                checkerboard G-buffer and the direct-lighting pass adds the light term, which
     //                the present composes as its diagnostic.
     enum class FrameMode
     {
         Rasterized,
-        DebugTrace,
         Traced,
     };
 
@@ -295,11 +289,6 @@ public:
     // RHI/RhiAccelStructs.h): Render records its static and per-frame builds on the same open list,
     // in every mode, before the sky/trace and the present. Not owned; a null or not-created one
     // makes the skeleton unavailable.
-    // 'pDebugTracePass' is the host's debug ray-tracing pass (RhiDebugTracePass,
-    // RHI/RhiDebugTracePass.h): when 'mode' is DebugTrace, Render drives it - into the same ALBEDO
-    // the raster chain would draw into - instead of the raster sky/world sub-passes. Not owned; a
-    // null or not-created one with that mode makes the skeleton unavailable. The host passes null
-    // now: the 'rhitrace' mode is retired and stays compiled for Stage 2.
     // 'pRtPrimaryPass' is the host's primary-visibility ray-tracing pass (RhiRtPrimaryPass,
     // RHI/RhiRtPrimaryPass.h): when 'mode' is Traced, Render drives it - into the engine's
     // checkerboard G-buffer images, ALBEDO included. Not owned; a null or not-created one with
@@ -369,7 +358,6 @@ public:
                                 rhi::RhiTextureTable *pTextureTable,
                                 rhi::RhiFrameContext *pFrameContext,
                                 rhi::RhiAccelStructs *pAccelStructs,
-                                RhiDebugTracePass *pDebugTracePass,
                                 RhiRtPrimaryPass *pRtPrimaryPass,
                                 RhiRtDirectPass *pRtDirectPass,
                                 RhiRtIndirectPass *pRtIndirectPass,
@@ -410,9 +398,6 @@ public:
     //    could be created) draws into the same target with the engine's uniform and the
     //    avgLuminance stand-in, and the present samples the ALBEDO wrap of the same slot into the
     //    swapchain image of the acquired index;
-    //  - DebugTrace: (retired, see the FrameMode comment) the debug pass traces one primary ray
-    //    per pixel over the acceleration structures into the slot's ALBEDO and the same present
-    //    follows;
     //  - Traced: the engine's primary-visibility raygen writes the slot's checkerboard G-buffer
     //    (ALBEDO included) and, from A4.2 on, the direct-lighting pass adds the light term; the
     //    present composes the two and follows.
@@ -487,11 +472,6 @@ private:
     // sky/trace and the present. Not owned; the host creates it next to this skeleton and keeps it
     // alive until after the skeleton (VulkanDevice_Init), so it outlives every Render.
     rhi::RhiAccelStructs *accelStructs = nullptr;
-
-    // The host's debug ray-tracing pass (RhiDebugTracePass, RHI/RhiDebugTracePass.h), driven
-    // instead of the raster sky/world chain when frameMode is DebugTrace. Not owned; always null
-    // now - the retired 'rhitrace' path, whose mode and branch stay compiled for Stage 2.
-    RhiDebugTracePass *debugTracePass = nullptr;
 
     // The host's primary-visibility ray-tracing pass (RhiRtPrimaryPass, RHI/RhiRtPrimaryPass.h),
     // driven instead of the raster sky/world chain when frameMode is Traced. Not owned; a null or

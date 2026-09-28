@@ -14,7 +14,6 @@ set(vkpt_PUBLIC_HEADERS
 
 set(vkpt_SOURCES
     Source/vkpt.cpp
-    Source/vkptA.cpp
     Source/VulkanDevice.cpp
     Source/VulkanDevice_Init.cpp
     Source/Buffer.cpp
@@ -25,14 +24,12 @@ set(vkpt_SOURCES
     Source/GlobalUniform.cpp
     Source/CommandBufferManager.cpp
     Source/ShaderManager.cpp
-    Source/RayTracingPipeline.cpp
     Source/VertexCollector.cpp
     Source/ASManager.cpp
     Source/VertexCollectorFilter.cpp
     Source/ASBuilder.cpp
     Source/ScratchBuffer.cpp
     Source/Utils.cpp
-    Source/PathTracer.cpp
     Source/Common.cpp
     Source/Matrix.cpp
     Source/Rasterizer.cpp
@@ -49,7 +46,6 @@ set(vkpt_SOURCES
     Source/Generated/ShaderCommonCFramebuf.cpp
     Source/Framebuffers.cpp
     Source/BlueNoise.cpp
-    Source/ImageComposition.cpp
     Source/Tonemapping.cpp
     Source/ClusterLightLists.cpp
     Source/LightManager.cpp
@@ -59,35 +55,20 @@ set(vkpt_SOURCES
     Source/CubemapUploader.cpp
     Source/GeomInfoManager.cpp
     Source/VertexPreprocessing.cpp
-    Source/RasterizerPipelines.cpp
-    Source/RenderCubemap.cpp
-    Source/DepthCopying.cpp
-    Source/RasterPass.cpp
-    Source/SwapchainPass.cpp
     Source/UserFunction.cpp
     Source/RgException.cpp
-    Source/Bloom.cpp
-    Source/Sharpening.cpp
     Source/DLSS.cpp
     Source/HaltonSequence.cpp
-    Source/LensFlares.cpp
     Source/DecalManager.cpp
-    Source/EffectBase.cpp
     Source/Stb/stb_image.cpp
     Source/ImageLoaderDev.cpp
     Source/PortalList.cpp
     Source/TextureObserver.cpp
-    Source/Volumetric.cpp
-    Source/ShadowMap.cpp
-    Source/GodRays.cpp
-    Source/Q2Denoiser.cpp
     Source/RayStats.cpp
-    Source/PassTimings.cpp
     Source/RHI/NvrhiContext.cpp
     Source/RHI/NvrhiFrameSkeleton.cpp
     Source/RHI/NvrhiRequirements.cpp
     Source/RHI/RhiAccelStructs.cpp
-    Source/RHI/RhiDebugTracePass.cpp
     Source/RHI/RhiDecalPass.cpp
     Source/RHI/RhiDescriptors.cpp
     Source/RHI/RhiFrameContext.cpp

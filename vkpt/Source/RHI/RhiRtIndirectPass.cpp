@@ -70,7 +70,7 @@ static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 
               SET_LIGHT_SOURCES == 6 && SET_CUBEMAPS == 7 && SET_RENDER_CUBEMAP == 8 &&
               SET_PORTALS == 9 && SET_VOLUMETRIC == 10 && SET_RAY_STATS == 11 &&
               PIPELINE_SET_COUNT == 12,
-              "the RT set order has to stay RayTracingPipeline.cpp:62-86");
+              "the RT set order is frozen by the engine's RT shaders");
 
 // The 14 images `RtQ2Indirect.rgen` references after stream 1's fix: the five UAVs (its storage
 // images) first, then the nine SRVs (its sampled images). The list is the direct pass's 12-item list

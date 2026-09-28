@@ -69,7 +69,7 @@ static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 
               SET_LIGHT_SOURCES == 6 && SET_CUBEMAPS == 7 && SET_RENDER_CUBEMAP == 8 &&
               SET_PORTALS == 9 && SET_VOLUMETRIC == 10 && SET_RAY_STATS == 11 &&
               PIPELINE_SET_COUNT == 12,
-              "the RT set order has to stay RayTracingPipeline.cpp:62-86");
+              "the RT set order is frozen by the engine's RT shaders");
 
 // The 26 storage images `RtRaygenPrimary.rgen` writes, by the engine's image indices (measured with
 // spirv-dis over the shipped blob: the 26 UAVs are at these raw bindings, and the engine's

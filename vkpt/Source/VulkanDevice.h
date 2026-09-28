@@ -36,35 +36,24 @@
 #include "Swapchain.h"
 #include "Queues.h"
 #include "GlobalUniform.h"
-#include "PathTracer.h"
 #include "Rasterizer.h"
 #include "Framebuffers.h"
 #include "MemoryAllocator.h"
 #include "TextureManager.h"
 #include "BlueNoise.h"
-#include "ImageComposition.h"
 #include "Tonemapping.h"
 #include "CubemapManager.h"
-#include "Q2Denoiser.h"
 #include "UserFunction.h"
-#include "Bloom.h"
-#include "Sharpening.h"
 #include "DLSS.h"
 #include "RenderResolutionHelper.h"
 #include "DecalManager.h"
-#include "EffectWipe.h"
-#include "EffectSimple_Instances.h"
 #include "FSR.h"
 #include "FrameState.h"
 #include "LibraryConfig.h"
 #include "PortalList.h"
-#include "Volumetric.h"
-#include "ShadowMap.h"
 #include "WorldLights.h"
 #include "ClusterLightLists.h"
-#include "GodRays.h"
 #include "RayStats.h"
-#include "PassTimings.h"
 
 namespace vkpt
 {
@@ -113,7 +102,6 @@ public:
 
     void UploadRasterizedGeometry(const RgRasterizedGeometryUploadInfo *pUploadInfo,
                                   const float *pViewProjection, const RgViewport *pViewport);
-    void UploadLensFlare(const RgLensFlareUploadInfo *pUploadInfo);
     void UploadDecal(const RgDecalUploadInfo *pUploadInfo);
     void UploadPortal(const RgPortalUploadInfo *pUploadInfo);
 
@@ -178,7 +166,6 @@ private:
     void FillUniform(ShGlobalUniform *gu, const RgDrawFrameInfo &drawInfo) const;
 
     VkCommandBuffer BeginFrame(const RgStartFrameInfo &startInfo);
-    void Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo);
     // Draws the current frame through the RHI layer and submits it, together with
     // the command buffer of the frame. The RHI frame skeleton is the only renderer
     // now, so an unavailable (or missing) skeleton is fatal: this throws instead of
@@ -216,38 +203,18 @@ private:
     std::shared_ptr<CommandBufferManager>   cmdManager;
 
     std::shared_ptr<Framebuffers>           framebuffers;
-    std::shared_ptr<Volumetric>             volumetric;
 
     std::shared_ptr<GlobalUniform>          uniform;
     std::shared_ptr<Scene>                  scene;
 
     std::shared_ptr<ShaderManager>          shaderManager;
-    std::shared_ptr<RayTracingPipeline>     rtPipeline;
-    std::shared_ptr<PathTracer>             pathTracer;
     std::shared_ptr<Rasterizer>             rasterizer;
     std::shared_ptr<DecalManager>           decalManager;
     std::shared_ptr<PortalList>             portalList;
-    std::shared_ptr<Q2Denoiser>             q2Denoiser;
     std::shared_ptr<Tonemapping>            tonemapping;
-    std::shared_ptr<ImageComposition>       imageComposition;
-    std::shared_ptr<Bloom>                  bloom;
-    std::shared_ptr<ShadowMap>              shadowMap;
-    std::shared_ptr<GodRays>                godRays;
     std::shared_ptr<RayStats>               rayStats;
-    std::shared_ptr<PassTimings>            passTimings;
     std::shared_ptr<FidelityFX::FSR>        amdFsr;
     std::shared_ptr<DLSS>                   nvDlss;
-    std::shared_ptr<Sharpening>             sharpening;
-    std::shared_ptr<EffectWipe>                 effectWipe;
-    std::shared_ptr<EffectRadialBlur>           effectRadialBlur;
-    std::shared_ptr<EffectChromaticAberration>  effectChromaticAberration;
-    std::shared_ptr<EffectInverseBW>            effectInverseBW;
-    std::shared_ptr<EffectHueShift>             effectHueShift;
-    std::shared_ptr<EffectDistortedSides>       effectDistortedSides;
-    std::shared_ptr<EffectWaves>                effectWaves;
-    std::shared_ptr<EffectColorTint>            effectColorTint;
-    std::shared_ptr<EffectCrtDemodulateEncode>  effectCrtDemodulateEncode;
-    std::shared_ptr<EffectCrtDecode>            effectCrtDecode;
 
     std::shared_ptr<SamplerManager>         worldSamplerManager;
     std::shared_ptr<SamplerManager>         genericSamplerManager;
@@ -389,7 +356,6 @@ private:
 
     bool                                    rayCullBackFacingTriangles;
     bool                                    allowGeometryWithSkyFlag;
-    bool                                    lensFlareVerticesInScreenSpace;
 
     // The instance-wide applyVertexColorGamma of the rasterized geometry (RgInstanceCreateInfo), the
     // vertex spec constant the RHI sky pipelines bake into their key (RhiSkyPass::Render).

@@ -23,7 +23,6 @@
 #include "NvrhiFrameSkeleton.h"
 
 #include "RhiAccelStructs.h"
-#include "RhiDebugTracePass.h"
 #include "RhiDecalPass.h"
 #include "RhiFsrPass.h"
 #include "RhiPostEffectPass.h"
@@ -97,7 +96,6 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        rhi::RhiTextureTable *pTextureTable,
                                        rhi::RhiFrameContext *pFrameContext,
                                        rhi::RhiAccelStructs *pAccelStructs,
-                                       RhiDebugTracePass *pDebugTracePass,
                                        RhiRtPrimaryPass *pRtPrimaryPass,
                                        RhiRtDirectPass *pRtDirectPass,
                                        RhiRtIndirectPass *pRtIndirectPass,
@@ -118,7 +116,6 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , print(std::move(pfnPrint))
     , shaderFolderPath(pShaderFolderPath != nullptr ? pShaderFolderPath : "")
     , accelStructs(pAccelStructs)
-    , debugTracePass(pDebugTracePass)
     , rtPrimaryPass(pRtPrimaryPass)
     , rtDirectPass(pRtDirectPass)
     , rtIndirectPass(pRtIndirectPass)
@@ -183,13 +180,6 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     // The ray-tracing passes are hard dependencies only of their own modes; a pass whose flag is
     // off is not created by the host at all. The traced chain needs both of its passes: they share
     // the pipeline layouts and the per-slot sets, and one without the other is a half-wired frame.
-    if (frameMode == FrameMode::DebugTrace && (debugTracePass == nullptr || !debugTracePass->IsCreated()))
-    {
-        print("Warning: RHI: the debug-traced frame needs the debug ray-tracing pass of the RHI layer");
-        unavailable = true;
-        return;
-    }
-
     if (frameMode == FrameMode::Traced &&
         (rtPrimaryPass == nullptr || !rtPrimaryPass->IsCreated() ||
          rtDirectPass == nullptr || !rtDirectPass->IsCreated() ||
@@ -1144,26 +1134,6 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             }
         }
     }
-    else if (debugTracePass != nullptr && sky.framebuffers != nullptr)
-    {
-        // The debug trace frame: one primary ray per pixel over the TLAS the stream above just
-        // built, into the slot's ALBEDO image. The handles are the same ones the sky pass resolves
-        // for its own target (Framebuffers resolves the slot's swap permutation inside), and the
-        // debug pass wraps them itself; the raster sky/world sub-passes are deliberately not
-        // recorded in this mode, so the trace is ALBEDO's first user of the list. A null TLAS (the
-        // stream has not built one yet) leaves the image untouched and the present shows the
-        // previous frame's content; the pass warns once about it.
-        const auto [albedoImage, albedoView, albedoFormat] =
-            sky.framebuffers->GetImageHandles(FB_IMAGE_INDEX_ALBEDO, frameIndex);
-
-        debugTracePass->Render(
-            commandList, frameIndex,
-            accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
-            sky.width, sky.height,
-            static_cast<uint64_t>(reinterpret_cast<uintptr_t>(albedoImage)),
-            static_cast<uint64_t>(reinterpret_cast<uintptr_t>(albedoView)),
-            albedoFormat);
-    }
 
     // The present samples the source of this slot: the ALBEDO wrap of the raster and diagnostic
     // modes (the sky pass is the only owner of that wrap), or the compose pass's TAAU output when
@@ -1639,14 +1609,6 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
     if (skyPass != nullptr)
     {
         skyPass->ReleaseTargets();
-    }
-
-    // The debug trace pass wraps the same engine ALBEDO images and keeps its own per-slot wrap, UAV
-    // set and TLAS set over them, so it has to drop them at the same point and for the same reason
-    // as the sky pass above.
-    if (debugTracePass != nullptr)
-    {
-        debugTracePass->ReleaseTargets();
     }
 
     // The primary ray-tracing pass wraps the engine's 26 checkerboard G-buffer images and keeps its

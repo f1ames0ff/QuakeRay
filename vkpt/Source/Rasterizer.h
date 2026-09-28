@@ -20,51 +20,27 @@
 
 #pragma once
 
-#include <vector>
+#include <memory>
 
 #include "Common.h"
-#include "Framebuffers.h"
-#include "GlobalUniform.h"
-#include "IFramebuffersDependency.h"
-#include "LensFlares.h"
 #include "RasterizedDataCollector.h"
-#include "RasterizerPipelines.h"
-#include "RasterPass.h"
-#include "RenderCubemap.h"
-#include "ShaderManager.h"
-#include "SwapchainPass.h"
-#include "Tonemapping.h"
-#include "Volumetric.h"
 #include "vkpt/vkpt.h"
 
 namespace vkpt
 {
 
+    class MemoryAllocator;
+    class TextureManager;
 
-    class RenderResolutionHelper;
 
-
-    // This class provides rasterization functionality
     class Rasterizer
-        : public IShaderDependency
-        , public IFramebuffersDependency
     {
     public:
-        explicit Rasterizer( VkDevice                                 device,
-                             VkPhysicalDevice                         physDevice,
-                             const std::shared_ptr< ShaderManager >&  shaderManager,
-                             const std::shared_ptr< TextureManager >& textureManager,
-                             const std::shared_ptr< GlobalUniform >&  uniform,
-                             const std::shared_ptr< SamplerManager >& samplerManager,
-                             const std::shared_ptr< Tonemapping >&    tonemapping,
-                             const std::shared_ptr< Volumetric >&     volumetric,
-                             std::shared_ptr< MemoryAllocator >       allocator,
-                             std::shared_ptr< Framebuffers >          storageFramebuffers,
-                             std::shared_ptr< CommandBufferManager >  cmdManager,
-                             const RgInstanceCreateInfo&              instanceInfo,
-                             VkDescriptorSetLayout                    tlasSetLayout,
-                             VkDescriptorSetLayout                    lightSetLayout );
-        ~Rasterizer() override;
+        Rasterizer( VkDevice                                 device,
+                    std::shared_ptr< MemoryAllocator >       allocator,
+                    const std::shared_ptr< TextureManager >& textureManager,
+                    const RgInstanceCreateInfo&              instanceInfo );
+        ~Rasterizer();
 
         Rasterizer( const Rasterizer& other )     = delete;
         Rasterizer( Rasterizer&& other ) noexcept = delete;
@@ -76,111 +52,14 @@ namespace vkpt
                      const RgRasterizedGeometryUploadInfo& uploadInfo,
                      const float*                          viewProjection,
                      const RgViewport*                     viewport );
-        void UploadLensFlare( uint32_t frameIndex, const RgLensFlareUploadInfo& uploadInfo );
 
-        void SubmitForFrame( VkCommandBuffer cmd, uint32_t frameIndex );
-
-        // The RHI passes read the collector directly: the sky pass takes the collected draw infos, and
-        // the RHI frame runs the per-frame staging copy that the legacy SubmitForFrame would otherwise
-        // do (RasterizedDataCollector::CopyFromStaging, which is not const). The collector stays owned
-        // by this class, and this accessor changes no legacy behaviour.
         RasterizedDataCollector &GetDataCollector() { return *collector; }
-
-        void DrawSkyToCubemap( VkCommandBuffer                          cmd,
-                               uint32_t                                 frameIndex,
-                               const std::shared_ptr< TextureManager >& textureManager,
-                               const std::shared_ptr< GlobalUniform >&  uniform );
-        void DrawSkyToAlbedo( VkCommandBuffer                          cmd,
-                              uint32_t                                 frameIndex,
-                              const std::shared_ptr< TextureManager >& textureManager,
-                              const float*                             view,
-                              const float                              skyViewerPos[ 3 ],
-                              const float*                             proj,
-                              const RgFloat2D&                         jitter,
-                              const RenderResolutionHelper&            renderResolution );
-        void DrawToFinalImage( VkCommandBuffer                          cmd,
-                               uint32_t                                 frameIndex,
-                               const std::shared_ptr< TextureManager >& textureManager,
-                               const std::shared_ptr< GlobalUniform >&  uniform,
-                               const std::shared_ptr< Tonemapping >&    tonemapping,
-                               const std::shared_ptr< Volumetric >&     volumetric,
-                               VkDescriptorSet                          tlasSet,
-                               VkDescriptorSet                          lightSet,
-                               const float*                             view,
-                               const float*                             proj,
-                               const RgFloat2D&                         jitter,
-                               const RenderResolutionHelper&            renderResolution,
-                               const RgDrawFrameLensFlareParams*        pLensFlareParams );
-        void DrawToSwapchain( VkCommandBuffer                          cmd,
-                              uint32_t                                 frameIndex,
-                              FramebufferImageIndex                    imageToDrawIn,
-                              const std::shared_ptr< TextureManager >& textureManager,
-                              const float*                             view,
-                              const float*                             proj,
-                              uint32_t                                 swapchainWidth,
-                              uint32_t                                 swapchainHeight );
-
-        void OnShaderReload( const ShaderManager* shaderManager ) override;
-        void OnFramebuffersSizeChange( const ResolutionState& resolutionState ) override;
-
-        const std::shared_ptr< RenderCubemap >& GetRenderCubemap() const;
-
-        uint32_t GetLensFlareCullingInputCount() const;
-
-    private:
-        struct DrawParams
-        {
-            const std::shared_ptr< RasterizerPipelines >&           pipelines;
-            const std::shared_ptr< RasterizerPipelines >*           pSmokePipelines;
-            const std::vector< RasterizedDataCollector::DrawInfo >& drawInfos;
-            VkRenderPass                                            renderPass;
-            VkFramebuffer                                           framebuffer;
-            uint32_t                                                width;
-            uint32_t                                                height;
-            VkBuffer                                                vertexBuffer;
-            VkBuffer                                                indexBuffer;
-            const VkDescriptorSet*                                  descSets;
-            uint32_t                                                descSetsCount;
-            float*                                                  defaultViewProj;
-            // not the best way to optionally draw lens flares
-            LensFlares*                                             pLensFlares;
-        };
-
-    private:
-        void Draw( VkCommandBuffer cmd, uint32_t frameIndex, const DrawParams& drawParams );
-
-        void CreatePipelineLayouts( VkDescriptorSetLayout* allLayouts,
-                                    size_t                 count,
-                                    VkDescriptorSetLayout  texturesSetLayout );
-
-        // If info's viewport is not the same as current one, new VkViewport will be set.
-        void SetViewportIfNew( VkCommandBuffer                          cmd,
-                               const RasterizedDataCollector::DrawInfo& info,
-                               const VkViewport&                        defaultViewport,
-                               VkViewport&                              curViewport );
-
-        void BindPipelineIfNew( VkCommandBuffer                               cmd,
-                                const RasterizedDataCollector::DrawInfo&      info,
-                                const DrawParams&                              drawParams,
-                                VkPipeline&                                    curPipeline );
 
     private:
         VkDevice         device;
-        VkPipelineLayout rasterPassPipelineLayout;
-        VkPipelineLayout swapchainPassPipelineLayout;
 
-        std::shared_ptr< MemoryAllocator >      allocator;
-        std::shared_ptr< CommandBufferManager > cmdManager;
-        std::shared_ptr< Framebuffers >         storageFramebuffers;
-
-        std::shared_ptr< RasterPass >    rasterPass;
-        std::shared_ptr< SwapchainPass > swapchainPass;
-
+        std::shared_ptr< MemoryAllocator >         allocator;
         std::shared_ptr< RasterizedDataCollector > collector;
-
-        std::shared_ptr< RenderCubemap > renderCubemap;
-
-        std::unique_ptr< LensFlares > lensFlares;
     };
 
 }

@@ -583,26 +583,6 @@ RGAPI RgResult RGCONV rgUploadRasterizedGeometry(
 
 
 
-// Render specified vertex geometry, if 'pointToCheck' is not hidden.
-typedef struct RgLensFlareUploadInfo
-{
-    // Must be in world space.
-    uint32_t                                vertexCount;
-    const RgVertex                          *pVertices;
-    // Must not be null.
-    uint32_t                                indexCount;
-    const uint32_t                          *pIndices;
-    RgMaterial                              material;
-    // Format is defined by 'lensFlarePointToCheckIsInScreenSpace'
-    RgFloat3D                               pointToCheck;
-} RgLensFlareUploadInfo;
-
-RGAPI RgResult RGCONV rgUploadLensFlare(
-    RgInstance                              rgInstance,
-    const RgLensFlareUploadInfo             *pUploadInfo);
-
-
-
 typedef struct RgDecalUploadInfo
 {
     // Transformation from [-0.5, 0.5] cube to a scaled oriented box.
