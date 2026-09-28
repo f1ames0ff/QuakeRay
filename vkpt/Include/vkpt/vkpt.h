@@ -378,6 +378,7 @@ typedef enum RgGeometryUploadFlagBits
     // Animate the texture coordinates of the turbulent surfaces (lava, teleport)
     // with the "warp" that the classic engine used for them.
     RG_GEOMETRY_UPLOAD_TURB_WARP_BIT = 128,
+    RG_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT = 256,
 } RgGeometryUploadFlagBits;
 typedef RgFlags RgGeometryUploadFlags;
 

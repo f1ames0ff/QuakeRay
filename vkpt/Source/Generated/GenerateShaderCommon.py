@@ -442,7 +442,7 @@ CONST = {
     # 12 first bits are for the blending flags per each layer, others can be used
     # texture coordinates are animated by the classic "warp" of the turbulent surfaces
     "GEOM_INST_FLAG_TURB_WARP"              : "1 << 13",
-    "GEOM_INST_FLAG_RESERVED_1"             : "1 << 14",
+    "GEOM_INST_FLAG_ALPHA_TRANSMISSION"     : "1 << 14",
     "GEOM_INST_FLAG_RESERVED_2"             : "1 << 15",
     "GEOM_INST_FLAG_RESERVED_3"             : "1 << 16",
     "GEOM_INST_FLAG_RESERVED_4"             : "1 << 17",
