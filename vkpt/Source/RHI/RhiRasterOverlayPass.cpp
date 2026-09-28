@@ -51,6 +51,28 @@ const char *const DEPTH_COPY_VERTEX_SHADER_FILE_NAME = "RsFullscreenQuad.vert.sp
 const char *const DEPTH_COPY_PIXEL_SHADER_FILE_NAME  = "RsDepthCopying.frag.spv";
 const char *const SMOKE_VERTEX_SHADER_FILE_NAME      = "RsSmoke.vert.spv";
 const char *const SMOKE_PIXEL_SHADER_FILE_NAME       = "RsSmoke.frag.spv";
+const char *const VOXEL_SMOKE_INJECT_SHADER_FILE_NAME = "CmVoxelSmokeInject.comp.spv";
+const char *const VOXEL_SMOKE_PIXEL_SHADER_FILE_NAME  = "RsVoxelSmoke.frag.spv";
+
+constexpr uint32_t VOXEL_SMOKE_RESOLUTION      = 128;
+constexpr uint32_t VOXEL_SMOKE_PARAMS_CB_SLOT  = 0;
+constexpr uint32_t VOXEL_SMOKE_VOLUME_UAV_SLOT = 0;
+constexpr uint32_t VOXEL_SMOKE_VOLUME_SRV_SLOT = 0;
+constexpr uint32_t VOXEL_SMOKE_SAMPLER_SLOT    = 0;
+constexpr uint32_t VOXEL_SMOKE_DEPTH_SRV_SLOT  = 1;
+
+struct VoxelSmokeParams
+{
+    float worldMin[4];
+    float worldMax[4];
+    float emitterCenter[4];
+    float emitterParams[4];
+    float cameraPos[4];
+    float marchParams[4];
+    float resolution[4];
+    float screenParams[4];
+    float invViewProj[16];
+};
 
 // The blob declares an 88-byte fragment block: color at offset 64, textureIndex at 80 and
 // emissionTextureIndex at 84, with no member after them (no unused emissionMultiplier trailer;
@@ -481,6 +503,14 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         LogMessage(print, "Warning: RHI: the raster overlay smoke shaders are unavailable, the smoke half is disabled");
     }
 
+    if (!LoadShader(VOXEL_SMOKE_INJECT_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, voxelSmokeInjectShader) ||
+        !LoadShader(VOXEL_SMOKE_PIXEL_SHADER_FILE_NAME, nvrhi::ShaderType::Pixel, voxelSmokePixelShader))
+    {
+        voxelSmokeInjectShader = nullptr;
+        voxelSmokePixelShader = nullptr;
+        LogMessage(print, "Warning: RHI: the raster overlay voxel smoke shaders are unavailable, the voxel smoke is disabled");
+    }
+
     // The RgVertex input layout the collector feeds: one binding at slot 0 with the collector's
     // stride and three attributes, whose order is their location (the Vulkan backend numbers the
     // attributes by their position in the array, vulkan-shader.cpp:176-197). The offsets are taken
@@ -738,6 +768,71 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         }
     }
 
+    if (voxelSmokeInjectShader != nullptr && voxelSmokePixelShader != nullptr)
+    {
+        nvrhi::TextureDesc volumeDesc;
+        volumeDesc.dimension = nvrhi::TextureDimension::Texture3D;
+        volumeDesc.format = nvrhi::Format::R16_FLOAT;
+        volumeDesc.width = VOXEL_SMOKE_RESOLUTION;
+        volumeDesc.height = VOXEL_SMOKE_RESOLUTION;
+        volumeDesc.depth = VOXEL_SMOKE_RESOLUTION;
+        volumeDesc.mipLevels = 1;
+        volumeDesc.sampleCount = 1;
+        volumeDesc.isUAV = true;
+
+        voxelSmokeVolume = rhi::createTexture(device, volumeDesc, "RhiRasterOverlay voxel smoke volume");
+        voxelSmokeSampler = rhi::createEngineTextureSampler(device, "RhiRasterOverlay voxel smoke sampler");
+
+        nvrhi::BindingLayoutDesc injectLayoutDesc;
+        injectLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT));
+        injectLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_UAV(VOXEL_SMOKE_VOLUME_UAV_SLOT));
+        voxelSmokeInjectLayout = device->createBindingLayout(injectLayoutDesc);
+
+        nvrhi::BindingLayoutDesc marchLayoutDesc;
+        marchLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT));
+        marchLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT));
+        marchLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT));
+        marchLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT));
+        voxelSmokeMarchLayout = device->createBindingLayout(marchLayoutDesc);
+
+        bool ok = voxelSmokeVolume != nullptr && voxelSmokeSampler != nullptr &&
+                  voxelSmokeInjectLayout != nullptr && voxelSmokeMarchLayout != nullptr;
+
+        for (uint32_t i = 0; ok && i < MAX_FRAMES_IN_FLIGHT; i++)
+        {
+            nvrhi::BufferDesc bufferDesc;
+            bufferDesc.byteSize = sizeof(VoxelSmokeParams);
+            bufferDesc.isConstantBuffer = true;
+            bufferDesc.initialState = nvrhi::ResourceStates::CopyDest;
+            bufferDesc.keepInitialState = true;
+
+            voxelSmokeParamsBuffers[i] = rhi::createBuffer(device, bufferDesc, "RhiRasterOverlay voxel smoke params " + std::to_string(i));
+
+            nvrhi::BindingSetDesc setDesc;
+            setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT, voxelSmokeParamsBuffers[i]));
+            setDesc.addItem(nvrhi::BindingSetItem::Texture_UAV(VOXEL_SMOKE_VOLUME_UAV_SLOT, voxelSmokeVolume));
+            voxelSmokeInjectSets[i] = device->createBindingSet(setDesc, voxelSmokeInjectLayout);
+
+            ok = voxelSmokeParamsBuffers[i] != nullptr && voxelSmokeInjectSets[i] != nullptr;
+        }
+
+        if (ok)
+        {
+            nvrhi::ComputePipelineDesc desc;
+            desc.setComputeShader(voxelSmokeInjectShader);
+            desc.addBindingLayout(voxelSmokeInjectLayout);
+            voxelSmokeInjectPipeline = rhi::createComputePipeline(device, desc, "RhiRasterOverlay voxel smoke inject pipeline");
+            ok = voxelSmokeInjectPipeline != nullptr;
+        }
+
+        if (!ok)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay voxel smoke objects, the voxel smoke is disabled");
+            voxelSmokeInjectShader = nullptr;
+            voxelSmokePixelShader = nullptr;
+        }
+    }
+
     // The depth copy's pipeline, the legacy's one static pipeline (DepthCopying.cpp:223-329): no
     // vertex input (the fullscreen quad is driven by SV_VertexID, DepthCopying.cpp:240-249), a
     // depth-only target, `comparison ALWAYS` with the write on so `SV_Depth` replaces the value
@@ -847,7 +942,8 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                                   const RasterizedDataCollector::DrawInfo *pSmokeDraws,
                                   uint32_t smokeDrawCount,
                                   nvrhi::rt::IAccelStruct *pSmokeTopLevel,
-                                  nvrhi::IBindingSet *pSmokeLightSet)
+                                  nvrhi::IBindingSet *pSmokeLightSet,
+                const RgDrawFrameVoxelSmokeParams *pVoxelSmokeParams)
 {
     if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT ||
         pFramebuffers == nullptr || width == 0 || height == 0)

@@ -358,7 +358,8 @@ public:
                 const RasterizedDataCollector::DrawInfo *pSmokeDraws,
                 uint32_t smokeDrawCount,
                 nvrhi::rt::IAccelStruct *pSmokeTopLevel,
-                nvrhi::IBindingSet *pSmokeLightSet);
+                nvrhi::IBindingSet *pSmokeLightSet,
+                const RgDrawFrameVoxelSmokeParams *pVoxelSmokeParams);
 
     // Drops the per-slot wraps, the pass-owned depth images, the framebuffers and the sets. The
     // caller has to call it before the engine destroys its framebuffer images (the
@@ -475,6 +476,8 @@ private:
     nvrhi::IGraphicsPipeline *GetSmokePipeline(uint32_t stateFlags);
     nvrhi::GraphicsPipelineHandle CreateSmokePipeline(uint32_t stateFlags);
 
+    nvrhi::GraphicsPipelineHandle GetVoxelSmokeMarchPipeline();
+
     nvrhi::IDevice *device = nullptr;
     PrintFunction print;
     std::string shaderFolderPath;
@@ -544,6 +547,18 @@ private:
     // One smoke pipeline per state key, like worldPipelines but with no vertex-gamma bit: the smoke
     // shaders declare no specialization constant. Built lazily against smokeLightLayout.
     std::unordered_map<uint32_t, nvrhi::GraphicsPipelineHandle> smokePipelines;
+
+    nvrhi::ShaderHandle voxelSmokeInjectShader;
+    nvrhi::ShaderHandle voxelSmokePixelShader;
+    nvrhi::BindingLayoutHandle voxelSmokeInjectLayout;
+    nvrhi::BindingLayoutHandle voxelSmokeMarchLayout;
+    nvrhi::TextureHandle voxelSmokeVolume;
+    nvrhi::SamplerHandle voxelSmokeSampler;
+    nvrhi::BufferHandle voxelSmokeParamsBuffers[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BindingSetHandle voxelSmokeInjectSets[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BindingSetHandle voxelSmokeMarchSets[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::ComputePipelineHandle voxelSmokeInjectPipeline;
+    nvrhi::GraphicsPipelineHandle voxelSmokeMarchPipeline;
 
     // The host's table and frame model; not owned, both outlive this object. The table provides the
     // bindless set and the first-use tracking of the engine textures it wrapped; the frame context

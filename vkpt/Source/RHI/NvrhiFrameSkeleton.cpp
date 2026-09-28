@@ -972,7 +972,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               sky.view, sky.projection, sky.applyVertexColorGamma,
                                               sky.smokeDraws, sky.smokeDrawCount,
                                               accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
-                                              rtDirectPass != nullptr ? rtDirectPass->GetLightSet(frameIndex).Get() : nullptr);
+                                              rtDirectPass != nullptr ? rtDirectPass->GetLightSet(frameIndex).Get() : nullptr,
+                                              nullptr);
                                       }
                                   });
             // The frame's upscaler (A5.7): the engine's own FSR 3.1 (the default configuration)
