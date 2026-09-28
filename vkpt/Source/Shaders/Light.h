@@ -573,7 +573,7 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const vec3 surfP
 
     r.position = pos;
     r.color = l.color * mask;
-    r.dw = safeSolidAngle(emiss * M_PI * radius * radius * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
+    r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
 
     return r;
 }
