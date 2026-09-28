@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "cfgfile.h"
 #include "bgmusic.h"
 #include "palette.h"
+#include "qr_gui.h"
 #include "rt_material.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
@@ -116,7 +117,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_denoiser, "1") \
 	CVAR_DEF_T (rt_no_textures, "0") \
 	/* No pass reads forceAntiFirefly: CmQ2Adapter's anti-firefly is not gated by
-	   it. Kept as the setter of the public RgDrawFrameInfo field. */ \
+	   it. Kept as the setter of the public QrDrawFrameInfo field. */ \
 	CVAR_DEF_T (rt_antifirefly, "1") \
 	CVAR_DEF_T (rt_roughmin, "0.02") \
     \
@@ -170,6 +171,7 @@ CVAR_DEF_T (rt_voxel_smoke_grey, "0.5") \
 	CVAR_DEF_T (rt_model_lights, "1") \
 	CVAR_DEF_T (rt_model_lights_max, "8") \
 	CVAR_DEF_T (rt_model_lights_budget, "256") \
+	CVAR_DEF_T (rt_model_lights_minarea, "0") \
 	\
 	CVAR_DEF_T (rt_poi_distthresh, "2") \
 	CVAR_DEF_T (rt_poi_distthresh_super, "3") \
@@ -188,6 +190,7 @@ CVAR_DEF_T (rt_voxel_smoke_grey, "0.5") \
 	CVAR_DEF_T (rt_sun_yaw, "120") \
 	CVAR_DEF_T (rt_sun_preset, "0") \
 	CVAR_DEF_T (rt_flashlight, "0") \
+	CVAR_DEF_T (rt_dlightspot_intensity, "1") \
 	\
 	CVAR_DEF_T (rt_muzzleoffs_x, "0") \
 	CVAR_DEF_T (rt_muzzleoffs_y, "-30") \
@@ -221,6 +224,9 @@ CVAR_DEF_T (rt_voxel_smoke_grey, "0.5") \
 	CVAR_DEF_T (rt_emis_blend, "1") \
 	CVAR_DEF_T (rt_emis_blendstr, "1") \
 	CVAR_DEF_T (rt_tal_selflit, "6") \
+	CVAR_DEF_T (rt_dtal_minarea, "0") \
+	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
+	CVAR_DEF_T (rt_dtal_clearance, "1") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
@@ -283,11 +289,13 @@ CVAR_DEF_T (rt_voxel_smoke_grey, "0.5") \
 	CVAR_DEF_T (rt_hud_padding, "8") \
 	\
 	CVAR_DEF_T (rt_debugflags, "0") \
-	CVAR_DEF_T (rt_debugemissive, "0") \
+	CVAR_DEF_T (rt_dtal_debug, "0") \
 	CVAR_DEF_T (rt_q2_depthgrad, "1") \
 	CVAR_DEF_T (rt_q2_lightstats, "1") \
 	CVAR_DEF_T (rt_reflrefr_earlyout, "1") \
 	CVAR_DEF_T (rt_nee_samples, "1") \
+	CVAR_DEF_T (rt_restir, "0") \
+	CVAR_DEF_T (rt_restir_candidates, "8") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
 	CVAR_DEF_T (rt_stats_interval, "0.25") \
 	CVAR_DEF_T (rt_worldcensus, "0") \
@@ -638,6 +646,10 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_model_lights");
 	RT_Bench_Setting (f, "rt_model_lights_max");
 	RT_Bench_Setting (f, "rt_model_lights_budget");
+	RT_Bench_Setting (f, "rt_model_lights_minarea");
+	RT_Bench_Setting (f, "rt_dtal_minarea");
+	RT_Bench_Setting (f, "rt_dtal_maxpolys");
+	RT_Bench_Setting (f, "rt_dtal_clearance");
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_godrays");
 	RT_Bench_Setting (f, "rt_godrays_intensity");
@@ -649,6 +661,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_denoiser");
 	RT_Bench_Setting (f, "rt_gi_level");
 	RT_Bench_Setting (f, "rt_nee_samples");
+	RT_Bench_Setting (f, "rt_restir");
+	RT_Bench_Setting (f, "rt_restir_candidates");
 	RT_Bench_Setting (f, "rt_renderscale");
 	RT_Bench_Setting (f, "rt_upscale_fsr2");
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
@@ -747,7 +761,7 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_CLUSTERS_TOPUP, "clust topup" },
 		{ RT_PROF_CLUSTERS_FILL, "clust fill" },
 		{ RT_PROF_CLUSTERS_UPLOAD, "clust upload" },
-		{ RT_PROF_DRAWFRAME, "rgDrawFrame" },
+		{ RT_PROF_DRAWFRAME, "qrDrawFrame" },
 		{ RT_PROF_WAIT, "wait" },
 		{ RT_PROF_FRAME, "frame" },
 	};
@@ -775,7 +789,7 @@ void RT_StatsCapture (rt_stats_snapshot_t *snap)
 	snap->panels = CVAR_TO_UINT32 (rt_stats_panels);
 
 	if (vulkan_globals.instance != NULL)
-		snap->haveGpu = (rgGetFrameStatsEx (vulkan_globals.instance, &snap->gpu) == RG_SUCCESS);
+		snap->haveGpu = (qrGetFrameStatsEx (vulkan_globals.instance, &snap->gpu) == QR_SUCCESS);
 
 	if (rt_prof_report.valid)
 	{
@@ -880,8 +894,8 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 		fprintf (f, "%-11s %-17s %.2f\n", "gpu.frame", "ms", snap->gpu.gpuFrameMs);
 
 		if (snap->gpu.gpuTimingValid)
-			for (i = 0; i < RG_GPU_PASS_COUNT; i++)
-				fprintf (f, "%-11s %-17s %.2f\n", "gpu.pass", rgGetGpuPassName (i), snap->gpu.gpuPassMs[i]);
+			for (i = 0; i < QR_GPU_PASS_COUNT; i++)
+				fprintf (f, "%-11s %-17s %.2f\n", "gpu.pass", qrGetGpuPassName (i), snap->gpu.gpuPassMs[i]);
 		else
 			fprintf (f, "%-11s %-17s %s\n", "gpu.pass", "timings", "not collected, rt_stats 2 was off");
 
@@ -1688,23 +1702,23 @@ static void GL_InitInstance (void)
 	SDL_VERSION (&wmInfo.version);
 	SDL_GetWindowWMInfo (draw_context, &wmInfo);
 
-#ifdef RG_USE_SURFACE_WIN32
-	RgWin32SurfaceCreateInfo win32Info = {.hinstance = wmInfo.info.win.hinstance, .hwnd = wmInfo.info.win.window};
-#elif RG_USE_SURFACE_XLIB
-	RgXlibSurfaceCreateInfo x11Info = {.dpy = wmInfo.info.x11.display, .window = wmInfo.info.x11.window};
+#ifdef QR_USE_SURFACE_WIN32
+	QrWin32SurfaceCreateInfo win32Info = {.hinstance = wmInfo.info.win.hinstance, .hwnd = wmInfo.info.win.window};
+#elif QR_USE_SURFACE_XLIB
+	QrXlibSurfaceCreateInfo x11Info = {.dpy = wmInfo.info.x11.display, .window = wmInfo.info.x11.window};
 #endif
 
 	const char pShaderPath[] = RT_OVERRIDEN_FOLDER "shaders/";
 	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "BlueNoise_LDR_RGBA_128.ktx2";
 	const char pWaterTexturePath[] = RT_OVERRIDEN_FOLDER "WaterNormal_n.ktx2";
 
-	RgInstanceCreateInfo info = {
+	QrInstanceCreateInfo info = {
 		.pAppName = "QuakeRay",
 		.pAppGUID = "8d1f551a-b0e4-4365-985c-5e1182f3c54a",
 
-#ifdef RG_USE_SURFACE_WIN32
+#ifdef QR_USE_SURFACE_WIN32
 		.pWin32SurfaceInfo = &win32Info,
-#elif RG_USE_SURFACE_XLIB
+#elif QR_USE_SURFACE_XLIB
 		.pXlibSurfaceCreateInfo = &x11Info,
 #endif
 		
@@ -1743,29 +1757,33 @@ static void GL_InitInstance (void)
 		.pWaterNormalTexturePath = pWaterTexturePath,
 	};
 
-	RgResult r = rgCreateInstance (&info, &vulkan_globals.instance);
-	RG_CHECK (r);
+	QrResult r = qrCreateInstance (&info, &vulkan_globals.instance);
+	QR_CHECK (r);
 
 	RT_MAT_Init ();
+
+	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL);
 
 	Cmd_AddCommand ("rt_pfnreloadshaders", RT_ReloadShaders);
 	Cmd_AddCommand ("rt_water_color", RT_WaterColor);
 	Cmd_AddCommand ("rt_water_acidcolor", RT_AcidColor);
 	Cmd_AddCommand ("rt_light_report", RT_LightReport_f);
 	Cmd_AddCommand ("rt_light_report_dump", RT_LightReportDump_f);
+	Cmd_AddCommand ("rt_dtal_rebuild", RT_DtalRebuild_f);
+	Cmd_AddCommand ("dlightspot", RT_DlightSpot_f);
 	Cmd_AddCommand ("fog", RT_Fog_Cmd);
 	Cmd_AddCommand ("rt_stats", RT_Stats_f);
 	Cmd_AddCommand ("rt_stats_dump", RT_StatsDump_f);
 
 
     vulkan_globals.primary_cb_context.batch_indices = Mem_Alloc (sizeof (uint32_t) * MAX_BATCH_INDICES);
-	vulkan_globals.primary_cb_context.batch_verts = Mem_Alloc (sizeof (RgVertex) * MAX_BATCH_VERTS);
+	vulkan_globals.primary_cb_context.batch_verts = Mem_Alloc (sizeof (QrVertex) * MAX_BATCH_VERTS);
 	vulkan_globals.primary_cb_context.batch_verts_count = 0;
 	vulkan_globals.primary_cb_context.batch_indices_count = 0;
 	for (int i = 0; i < CBX_NUM; i++)
 	{
 		vulkan_globals.secondary_cb_contexts[i].batch_indices = Mem_Alloc (sizeof (uint32_t) * MAX_BATCH_INDICES);
-		vulkan_globals.secondary_cb_contexts[i].batch_verts = Mem_Alloc (sizeof (RgVertex) * MAX_BATCH_VERTS);
+		vulkan_globals.secondary_cb_contexts[i].batch_verts = Mem_Alloc (sizeof (QrVertex) * MAX_BATCH_VERTS);
 		vulkan_globals.secondary_cb_contexts[i].batch_verts_count = 0;
 		vulkan_globals.secondary_cb_contexts[i].batch_indices_count = 0;
 	}
@@ -1778,13 +1796,13 @@ GL_BeginRenderingTask
 */
 void GL_BeginRenderingTask (void *unused)
 {
-	RgStartFrameInfo info = {
+	QrStartFrameInfo info = {
 		.requestVSync = CVAR_TO_BOOL (vid_vsync),
 		.requestShaderReload = request_shaders_reload,
 	};
 
-	RgResult r = rgStartFrame (vulkan_globals.instance, &info);
-	RG_CHECK (r);
+	QrResult r = qrStartFrame (vulkan_globals.instance, &info);
+	QR_CHECK (r);
 
 	request_shaders_reload = false;
 
@@ -1844,22 +1862,22 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 	return true;
 }
 
-static RgRenderSharpenTechnique GetSharpenTechniqueFromCvar ()
+static QrRenderSharpenTechnique GetSharpenTechniqueFromCvar ()
 {
 	int t = CVAR_TO_INT32 (rt_sharpen);
 
 	switch (t)
 	{
 	case 2:
-		return RG_RENDER_SHARPEN_TECHNIQUE_AMD_CAS;
+		return QR_RENDER_SHARPEN_TECHNIQUE_AMD_CAS;
 	case 1:
-		return RG_RENDER_SHARPEN_TECHNIQUE_NAIVE;
+		return QR_RENDER_SHARPEN_TECHNIQUE_NAIVE;
 	default:
-		return RG_RENDER_SHARPEN_TECHNIQUE_NONE;
+		return QR_RENDER_SHARPEN_TECHNIQUE_NONE;
 	}
 }
 
-static void UpscaleCvarsToRtgl (RgDrawFrameRenderResolutionParams *pDst)
+static void UpscaleCvarsToQray (QrDrawFrameRenderResolutionParams *pDst)
 {
 	int nvDlss = CVAR_TO_INT32 (rt_upscale_dlss);
 	int amdFsr = CVAR_TO_INT32 (rt_upscale_fsr2);
@@ -1869,26 +1887,26 @@ static void UpscaleCvarsToRtgl (RgDrawFrameRenderResolutionParams *pDst)
 	{
 	case 1:
 		// start with Quality
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_QUALITY;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_QUALITY;
 		break;
 	case 2:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_BALANCED;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_BALANCED;
 		break;
 	case 3:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_PERFORMANCE;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_PERFORMANCE;
 		break;
 	case 4:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_ULTRA_PERFORMANCE;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_ULTRA_PERFORMANCE;
 		break;
 
 	case 5:
 		// use DLSS with rt_renderscale
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_CUSTOM;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_CUSTOM;
 		break;
 
 	default:
@@ -1899,26 +1917,26 @@ static void UpscaleCvarsToRtgl (RgDrawFrameRenderResolutionParams *pDst)
 	switch (amdFsr)
 	{
 	case 1:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_QUALITY;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_QUALITY;
 		break;
 	case 2:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_BALANCED;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_BALANCED;
 		break;
 	case 3:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_PERFORMANCE;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_PERFORMANCE;
 		break;
 	case 4:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_ULTRA_PERFORMANCE;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_ULTRA_PERFORMANCE;
 		break;
 
 	case 5:
 		// use FSR2 with rt_renderscale
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_CUSTOM;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_CUSTOM;
 		break;
 
 	default:
@@ -1929,24 +1947,24 @@ static void UpscaleCvarsToRtgl (RgDrawFrameRenderResolutionParams *pDst)
 	switch (amdFsr31)
 	{
 	case 1:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_NATIVE_AA;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_NATIVE_AA;
 		break;
 	case 2:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_QUALITY;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_QUALITY;
 		break;
 	case 3:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_BALANCED;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_BALANCED;
 		break;
 	case 4:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_PERFORMANCE;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_PERFORMANCE;
 		break;
 	case 5:
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_ULTRA_PERFORMANCE;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_ULTRA_PERFORMANCE;
 		break;
 
 	default:
@@ -1957,13 +1975,13 @@ static void UpscaleCvarsToRtgl (RgDrawFrameRenderResolutionParams *pDst)
 	// both disabled
 	if (nvDlss == 0 && amdFsr == 0 && amdFsr31 == 0)
 	{
-		pDst->upscaleTechnique = RG_RENDER_UPSCALE_TECHNIQUE_NEAREST;
-		pDst->resolutionMode = RG_RENDER_RESOLUTION_MODE_CUSTOM;
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_NEAREST;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_CUSTOM;
 	}
 
 	if (amdFsr)
 	{
-		pDst->sharpenTechnique = RG_RENDER_SHARPEN_TECHNIQUE_AMD_CAS;
+		pDst->sharpenTechnique = QR_RENDER_SHARPEN_TECHNIQUE_AMD_CAS;
 	}
 	else
 	{
@@ -1971,9 +1989,9 @@ static void UpscaleCvarsToRtgl (RgDrawFrameRenderResolutionParams *pDst)
 	}
 }
 
-static const char *GetUpscalerOptionName (int i, RgRenderUpscaleTechnique technique)
+static const char *GetUpscalerOptionName (int i, QrRenderUpscaleTechnique technique)
 {
-	if (!rgIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, technique))
+	if (!qrIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, technique))
 	{
 		return "Not Available";
 	}
@@ -1983,13 +2001,13 @@ static const char *GetUpscalerOptionName (int i, RgRenderUpscaleTechnique techni
 	case 0:
 		return "Off";
     case 1:
-		return (technique == RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3) ? "Native AA" : "Quality";
+		return (technique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3) ? "Native AA" : "Quality";
 	case 2:
-		return (technique == RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3) ? "Quality" : "Balanced";
+		return (technique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3) ? "Quality" : "Balanced";
 	case 3:
-		return (technique == RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3) ? "Balanced" : "Performance";
+		return (technique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3) ? "Balanced" : "Performance";
 	case 4:
-		return (technique == RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3) ? "Performance" : "Ultra Performance";
+		return (technique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3) ? "Performance" : "Ultra Performance";
 	case 5:
 		return "Ultra Performance";
 	default:
@@ -2014,10 +2032,10 @@ extern float  skyflatcolor[3];
 extern float  skyfog;
 extern float    rt_dmg_value;
 extern qboolean rt_dmg_inthisframe;
-extern RgMediaType rt_cameramedia;
+extern QrMediaType rt_cameramedia;
 extern qboolean rt_lavaeffects;
 
-static void ResolutionToRtgl (RgDrawFrameRenderResolutionParams *dst, const RgExtent2D winsize)
+static void ResolutionToQray (QrDrawFrameRenderResolutionParams *dst, const QrExtent2D winsize)
 {
 	if (CVAR_TO_INT32 (rt_renderscale) > 0)
 	{
@@ -2042,11 +2060,11 @@ GL_EndRenderingTask
 */
 static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 {
-	const RgExtent2D winsize = {.width = parms->vid_width, .height = parms->vid_height};
+	const QrExtent2D winsize = {.width = parms->vid_width, .height = parms->vid_height};
 
-	RgDrawFrameRenderResolutionParams resolution_params = {0};
-	ResolutionToRtgl (&resolution_params, winsize);
-	UpscaleCvarsToRtgl (&resolution_params);
+	QrDrawFrameRenderResolutionParams resolution_params = {0};
+	ResolutionToQray (&resolution_params, winsize);
+	UpscaleCvarsToQray (&resolution_params);
 
 	const float q2_lightstats_value = CVAR_TO_FLOAT (rt_q2_lightstats);
 	const uint32_t q2_lightstats_mode = (q2_lightstats_value < 0.0f || q2_lightstats_value > 4.0f) ? 1u : (uint32_t)q2_lightstats_value;
@@ -2061,7 +2079,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// second indirect bounce.
 	const float gi_level = CLAMP (0.0f, CVAR_TO_FLOAT (rt_gi_level), 2.0f);
 
-	RgDrawFrameIlluminationParams illum_params = {
+	QrDrawFrameIlluminationParams illum_params = {
 	    .maxBounceShadows = CVAR_TO_UINT32 (rt_shadowrays),
 		// The level alone decides the bounce count, like Q2RTX pt_num_bounce_rays.
 		// rt_indir2bounces is kept for config compatibility but no longer forces the
@@ -2076,6 +2094,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.q2LightStatsMode = q2_lightstats_mode,
 		.reflRefrEarlyOut = CVAR_TO_BOOL (rt_reflrefr_earlyout),
 		.neeLightSamples = nee_samples,
+		.restirEnabled = CVAR_TO_BOOL (rt_restir) ? 1u : 0u,
+		.restirCandidates = (uint32_t)CLAMP (1.0f, CVAR_TO_FLOAT (rt_restir_candidates), 64.0f),
 		.giBounceRays = gi_level,
 		// Q2RTX pt_sun_bounce_range / sun_bounce: how far the sun reaches into an
 		// indirect bounce (game units, 0 turns indirect sunlight off) and a
@@ -2091,7 +2111,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.lightUniqueIdIgnoreFirstPersonViewerShadows = NULL,
 	};
 
-	RgDrawFrameBloomParams bloom_params = {
+	QrDrawFrameBloomParams bloom_params = {
 		.bloomIntensity = !CVAR_TO_BOOL (rt_bloom) ? 0 : CVAR_TO_FLOAT (rt_bloom_intensity),
 		.inputThreshold = 0.0f,
 		.bloomEmissionMultiplier = CVAR_TO_FLOAT (rt_bloom_emis_mult),
@@ -2099,7 +2119,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	// Exposure bias is in EV and darkens the image when negative; contrast blends
 	// the adaptive tone curve with Reinhard (Q2RTX tm_exposure_bias / tm_reinhard).
-	RgDrawFrameTonemappingParams tonemap_params = {
+	QrDrawFrameTonemappingParams tonemap_params = {
 		.minLogLuminance = -3.9f,
 		.maxLogLuminance = -2.8f,
 		.luminanceWhitePoint = 10.0f,
@@ -2107,7 +2127,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.contrast = CLAMP (0.0f, CVAR_TO_FLOAT (rt_contrast), 1.0f),
 	};
 
-	RgDrawFrameReflectRefractParams refl_refr_params = {
+	QrDrawFrameReflectRefractParams refl_refr_params = {
 		.maxReflectRefractDepth = CVAR_TO_UINT32 (rt_reflrefr_depth),
 		.typeOfMediaAroundCamera = rt_cameramedia,
 		.indexOfRefractionGlass = CVAR_TO_FLOAT (rt_refr_glass),
@@ -2166,16 +2186,16 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	vec3_t sun_disc_color;
 	RT_GetSunColor (sun_disc_color);
 
-	RgDrawFrameSkyParams sky_params = {
-		.skyType = CVAR_TO_BOOL (r_fastsky) ? RG_SKY_TYPE_COLOR
-		         : usePhysicalSky ? RG_SKY_TYPE_PROCEDURAL
-		         : RG_SKY_TYPE_RASTERIZED_GEOMETRY,
+	QrDrawFrameSkyParams sky_params = {
+		.skyType = CVAR_TO_BOOL (r_fastsky) ? QR_SKY_TYPE_COLOR
+		         : usePhysicalSky ? QR_SKY_TYPE_PROCEDURAL
+		         : QR_SKY_TYPE_RASTERIZED_GEOMETRY,
 		.skyColorDefault = RT_VEC3 (sky_base_color),
 		.sunDiscColor = RT_VEC3 (sun_disc_color),
 		.skyColorMultiplier = materials_only ? 0.0f : (usePhysicalSky ? skyBrightness : skyMult * skyBrightness),
 		// The procedural sky has no tint strength any more -- its colour is its
 		// own -- so the slot carries the opacity the clouds are composited with
-		// instead (rt_sky_cloud_alpha); see RgDrawFrameSkyParams.
+		// instead (rt_sky_cloud_alpha); see QrDrawFrameSkyParams.
 		.skyColorSaturation = CVAR_TO_FLOAT (rt_sky_cloud_alpha),
 		.skyAmbientLod = CVAR_TO_FLOAT (rt_sky_ambient_lod),
 		.skyNee = CVAR_TO_FLOAT (rt_sky_nee) > 0.0f,
@@ -2191,7 +2211,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	{
 		float *c = &sky_params.skyCubemapRotationTransform.matrix[0][0];
 		// the cloud settings ride in the otherwise unused rotation matrix of this
-		// sky type (keeps the public RgDrawFrameSkyParams layout unchanged)
+		// sky type (keeps the public QrDrawFrameSkyParams layout unchanged)
 		RT_GetSkyCloudsColor (c);
 		c[3] = CVAR_TO_FLOAT (rt_sky_cloud_coverage);
 		c[4] = CVAR_TO_FLOAT (rt_sky_cloud_density);
@@ -2241,7 +2261,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		volume_ambient_color[0] = volume_ambient_color[1] = volume_ambient_color[2] = 0.0f;
 	}
 
-	RgDrawFrameVolumetricParams volumetric_params = {
+	QrDrawFrameVolumetricParams volumetric_params = {
 		.enable = !materials_only && CVAR_TO_UINT32 (rt_volume_type) != 0,
 		.useSimpleDepthBased = CVAR_TO_UINT32 (rt_volume_type) == 1,
 		.volumetricFar = CVAR_TO_FLOAT (rt_volume_far),
@@ -2252,8 +2272,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.sourceAssymetry = CVAR_TO_FLOAT (rt_volume_lassymetry),
 	};
 
-	RgDrawFrameTexturesParams texture_params = {
-		.dynamicSamplerFilter = CVAR_TO_INT32 (vid_filter) == 1 ? RG_SAMPLER_FILTER_NEAREST : RG_SAMPLER_FILTER_LINEAR,
+	QrDrawFrameTexturesParams texture_params = {
+		.dynamicSamplerFilter = CVAR_TO_INT32 (vid_filter) == 1 ? QR_SAMPLER_FILTER_NEAREST : QR_SAMPLER_FILTER_LINEAR,
 		.normalMapStrength = CVAR_TO_FLOAT (rt_normalmap_stren),
 		.emissionMapBoost = CVAR_TO_FLOAT (rt_emis_mapboost) * CVAR_TO_FLOAT (rt_emis_light_intensity),
 		.emissionMaxScreenColor = CVAR_TO_FLOAT (rt_emis_maxscrcolor),
@@ -2267,9 +2287,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	for (int i = 0; i < MAX_LIGHTSTYLES; i++)
 		texture_params.lightStyleScales[i] = (float)d_lightstylevalue[i] * (1.0f / 256.0f);
 
-	RgDrawFrameLensFlareParams lens_flare_params = {
-		.lensFlareBlendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA,
-		.lensFlareBlendFuncDst = RG_BLEND_FACTOR_ONE,
+	QrDrawFrameLensFlareParams lens_flare_params = {
+		.lensFlareBlendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
+		.lensFlareBlendFuncDst = QR_BLEND_FACTOR_ONE,
 	};
 
 	// Classic level fog: the worldspawn "fog" key and the `fog` console
@@ -2285,59 +2305,59 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	const qboolean level_fog_active = CVAR_TO_BOOL (rt_level_fog) && Fog_GetDensity () > 0;
 
-	RgDrawFrameLevelFogParams level_fog_params = {
+	QrDrawFrameLevelFogParams level_fog_params = {
 		.color = RT_VEC3 (level_fog_color),
 		.density = (level_fog_active && !materials_only) ? Fog_GetDensity () / 64.0f : 0.0f,
 		.skyBlend = (level_fog_active && !materials_only) ? skyfog : 0.0f,
 	};
 
-	RgPostEffectCRT crt_effect = {
+	QrPostEffectCRT crt_effect = {
 		.isActive = CVAR_TO_BOOL (rt_ef_crt),
 	};
 
-	RgPostEffectChromaticAberration chromatic_aberration_effect = {
+	QrPostEffectChromaticAberration chromatic_aberration_effect = {
 		.isActive = CVAR_TO_FLOAT (rt_ef_chraber) > 0.0f,
 		.transitionDurationIn = 0,
 		.transitionDurationOut = 0,
 		.intensity = CVAR_TO_FLOAT (rt_ef_chraber),
 	};
 
-	RgPostEffectColorTint tint_quad = {
+	QrPostEffectColorTint tint_quad = {
 		.isActive = true,
 		.transitionDurationIn = 1.0f,
 		.transitionDurationOut = 1.0f,
 		.intensity = 4.0f,
 		.color = {0.25f, 0.0f, 1.0f},
 	};
-	RgPostEffectColorTint tint_invuln = {
+	QrPostEffectColorTint tint_invuln = {
 		.isActive = true,
 		.transitionDurationIn = 1.0f,
 		.transitionDurationOut = 1.0f,
 		.intensity = 4.0f,
 		.color = {1.0f, 0.0f, 0.0f},
 	};
-	RgPostEffectColorTint tint_lava = {
+	QrPostEffectColorTint tint_lava = {
 		.isActive = true,
 		.transitionDurationIn = 0.05f,
 		.transitionDurationOut = 0.5f,
 		.intensity = 10.0f,
 		.color = {1.0f, 0.1f, 0.0f},
 	};
-	RgPostEffectColorTint tint_radsuit = {
+	QrPostEffectColorTint tint_radsuit = {
 		.isActive = true,
 		.transitionDurationIn = 1.0f,
 		.transitionDurationOut = 1.0f,
 		.intensity = 1.0f,
 		.color = {0.2f, 1.0f, 0.4f},
 	};
-	RgPostEffectColorTint tint_bonus = {
+	QrPostEffectColorTint tint_bonus = {
 		.isActive = true,
 		.transitionDurationIn = 0.0f,
 		.transitionDurationOut = 0.7f,
 		.intensity = 0.5f,
 		.color = {0.85f, 0.72f, 0.27f},
 	};
-	RgPostEffectColorTint tint_damage = {
+	QrPostEffectColorTint tint_damage = {
 		.isActive = true,
 		.transitionDurationIn = 0.0f,
 		.transitionDurationOut = 0.2f + rt_dmg_value * 0.8f,
@@ -2345,7 +2365,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.color = FROMCOLOR255 (cl.cshifts[CSHIFT_DAMAGE].destcolor),
 	};
 
-	static RgPostEffectColorTint tint_effect = {0}; // static, so prev state's transition durations are preserved
+	static QrPostEffectColorTint tint_effect = {0}; // static, so prev state's transition durations are preserved
 	tint_effect.isActive = false;
 	if (cl.stats[STAT_HEALTH] > 0)
 	{
@@ -2358,14 +2378,14 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	}
 	rt_dmg_inthisframe = false;
 
-    RgPostEffectRadialBlur radial_effect = {
+    QrPostEffectRadialBlur radial_effect = {
 		.isActive = (cl.items & (IT_QUAD | IT_INVULNERABILITY)) && cl.stats[STAT_HEALTH] > 0,
 		.transitionDurationIn = 1.0f,
 		.transitionDurationOut = 2.0f,
 	};
 
-	RgPostEffectWaves waves_effect = {
-		.isActive = rt_cameramedia != RG_MEDIA_TYPE_VACUUM,
+	QrPostEffectWaves waves_effect = {
+		.isActive = rt_cameramedia != QR_MEDIA_TYPE_VACUUM,
 		.transitionDurationIn = 0.1f,
 		.transitionDurationOut = 0.75f,
 		.amplitude = CVAR_TO_FLOAT (rt_ef_waves_stren) * 0.01f,
@@ -2373,23 +2393,23 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.xMultiplier = 0.5f,
 	};
 
-	RgDrawFrameDebugParams debug_params = {
+	QrDrawFrameDebugParams debug_params = {
 		.drawFlags = CVAR_TO_UINT32 (rt_debugflags),
 	};
-	debug_params.drawFlags |= RG_DEBUG_DRAW_Q2RTX_CORE_BIT;
+	debug_params.drawFlags |= QR_DEBUG_DRAW_Q2RTX_CORE_BIT;
 	if (RT_StatsPanel (RT_STATS_RAYS))
 	{
-		debug_params.drawFlags |= RG_DEBUG_DRAW_STATS_BIT;
+		debug_params.drawFlags |= QR_DEBUG_DRAW_STATS_BIT;
 	}
 	if (RT_StatsPanel (RT_STATS_PASSES))
 	{
-		debug_params.drawFlags |= RG_DEBUG_DRAW_PASS_STATS_BIT;
+		debug_params.drawFlags |= QR_DEBUG_DRAW_PASS_STATS_BIT;
 	}
 
 	float cameranear = GL_GetCameraNear (DEG2RAD (r_fovx), DEG2RAD (r_fovy));
 	float camerafar = GL_GetCameraFar ();
 
-	RgDrawFrameVoxelSmokeParams voxel_smoke_params = {};
+	QrDrawFrameVoxelSmokeParams voxel_smoke_params = {};
 
 	voxel_smoke_params.enabled = CVAR_TO_BOOL (rt_voxel_smoke);
 
@@ -2422,13 +2442,13 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	voxel_smoke_params.extinction = CVAR_TO_FLOAT (rt_voxel_smoke_extinction);
 	voxel_smoke_params.debugGrey = CVAR_TO_FLOAT (rt_voxel_smoke_grey);
 
-	RgDrawFrameInfo info = {
+	QrDrawFrameInfo info = {
 		.worldUpVector = {0, 0, 1},
 		.fovYRadians = DEG2RAD (r_fovy),
 		.cameraNear = cameranear,
 		.cameraFar = camerafar,
 		.rayLength = 10000.0f,
-		.rayCullMaskWorld = RG_DRAW_FRAME_RAY_CULL_WORLD_0_BIT | RG_DRAW_FRAME_RAY_CULL_WORLD_1_BIT | RG_DRAW_FRAME_RAY_CULL_SKY_BIT,
+		.rayCullMaskWorld = QR_DRAW_FRAME_RAY_CULL_WORLD_0_BIT | QR_DRAW_FRAME_RAY_CULL_WORLD_1_BIT | QR_DRAW_FRAME_RAY_CULL_SKY_BIT,
 		.disableRayTracedGeometry = false,
 		.disableRasterization = false,
 		.currentTime = (double)SDL_GetTicks () / 1000.0,
@@ -2458,9 +2478,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	memcpy (info.view, vulkan_globals.view_matrix, 16 * sizeof(float));
 
 	double prof_start = RT_Prof_Begin ();
-	RgResult r = rgDrawFrame (vulkan_globals.instance, &info);
+	QrResult r = qrDrawFrame (vulkan_globals.instance, &info);
 	RT_Prof_End (RT_PROF_DRAWFRAME, prof_start);
-	RG_CHECK (r);
+	QR_CHECK (r);
 }
 
 /*
@@ -2502,11 +2522,12 @@ void VID_Shutdown (void)
 {
 	if (vid_initialized)
 	{
-		if (vulkan_globals.instance != RG_NULL_HANDLE)
+		if (vulkan_globals.instance != QR_NULL_HANDLE)
 		{
+		    QR_GUI_Shutdown ();
 		    RT_MAT_Shutdown ();
-		    RgResult r = rgDestroyInstance (vulkan_globals.instance);
-			RG_CHECK (r);
+		    QrResult r = qrDestroyInstance (vulkan_globals.instance);
+			QR_CHECK (r);
 
 			Mem_Free (vulkan_globals.primary_cb_context.batch_indices);
 			Mem_Free (vulkan_globals.primary_cb_context.batch_verts);
@@ -2670,6 +2691,12 @@ static void RT_LightStylesChanged_f (cvar_t *var)
 	Atomic_StoreUInt32 (&rt_require_static_submit, true);
 }
 
+static void RT_EmissiveLimitsChanged_f (cvar_t *var)
+{
+	(void)var;
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+}
+
 // Both diagnostics run on the current map, so they do not wait for a map reload.
 static void RT_WorldCensusChanged_f (cvar_t *var)
 {
@@ -2683,7 +2710,7 @@ static void RT_WorldLightsStatsChanged_f (cvar_t *var)
 	RT_UploadWorldLights ();
 }
 
-static RgFogVolume rt_fog_volumes[RG_MAX_FOG_VOLUMES];
+static QrFogVolume rt_fog_volumes[QR_MAX_FOG_VOLUMES];
 
 static void RT_Fog_ParsePoint (const char *s, float *out)
 {
@@ -2720,7 +2747,7 @@ static const char *RT_Fog_SoftFaceName (uint32_t softface)
 	return names[softface];
 }
 
-static void RT_Fog_PrintVolume (int index, const RgFogVolume *vol)
+static void RT_Fog_PrintVolume (int index, const QrFogVolume *vol)
 {
 	Con_Printf ("fog -v %d -a %.2f,%.2f,%.2f -b %.2f,%.2f,%.2f -c %.2f,%.2f,%.2f -d %.0f -f %s\n",
 	            index,
@@ -2752,7 +2779,7 @@ static void RT_Fog_Cmd (void)
 	}
 
 	int          index = -1;
-	RgFogVolume *vol   = NULL;
+	QrFogVolume *vol   = NULL;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -2766,7 +2793,7 @@ static void RT_Fog_Cmd (void)
 		else if (!strcmp (arg, "-v") && i + 1 < argc)
 		{
 			index = atoi (Cmd_Argv (++i));
-			if (index < 0 || index >= RG_MAX_FOG_VOLUMES)
+			if (index < 0 || index >= QR_MAX_FOG_VOLUMES)
 			{
 				Con_Printf ("invalid volume index '%d'\n", index);
 				return;
@@ -2819,7 +2846,7 @@ static void RT_Fog_Cmd (void)
 		}
 	}
 
-	rgSetFogVolumes (vulkan_globals.instance, RG_MAX_FOG_VOLUMES, rt_fog_volumes);
+	qrSetFogVolumes (vulkan_globals.instance, QR_MAX_FOG_VOLUMES, rt_fog_volumes);
 	return;
 
 no_volume:
@@ -2893,6 +2920,9 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_sun_edit, RT_SunEditChanged_f);
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
+	Cvar_SetCallback (&rt_dtal_minarea, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_maxpolys, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_clearance, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_worldcensus, RT_WorldCensusChanged_f);
 	Cvar_SetCallback (&rt_worldlights_stats, RT_WorldLightsStatsChanged_f);
 
@@ -3092,24 +3122,9 @@ VID_Restart_f -- johnfitz -- change video modes on the fly
 */
 static void VID_Restart_f (void)
 {
-	/* Temporarily disabled: re-initializing the renderer in place corrupts the
-	   textures (the material/image caches are not rebuilt consistently), so the
-	   command is a no-op until that is fixed. */
-	Con_Printf ("vid_restart is temporarily disabled\n");
-
-#if 0
-	if (vid_locked)
+	if (vid_locked || !vid_changed)
 		return;
-
-	/* Re-read materials.yaml and re-apply the material properties to every
-	   texture so edits are picked up without a full engine restart. */
-	GL_WaitForDeviceIdle ();
-	RT_MAT_Reload ();
-	TexMgr_ReloadAllImages ();
-
-	if (vid_changed)
-		VID_Restart (true);
-#endif
+	VID_Restart (true);
 }
 
 /*
@@ -3465,9 +3480,9 @@ static void VID_Menu_ChooseNextRate (int dir)
 
 static void VID_Menu_ChooseNextAA (int vidopt, int dir)
 {
-	RgBool32 fsr2_ok = rgIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2);
-	RgBool32 fsr31_ok = rgIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3);
-	RgBool32 dlss_ok = rgIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS);
+	QrBool32 fsr2_ok = qrIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2);
+	QrBool32 fsr31_ok = qrIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3);
+	QrBool32 dlss_ok = qrIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS);
 
 	const int prev_type = menu_settings.upscaler_type;
 	const int maxq_fsr2 = fsr2_ok ? 4 : 0;
@@ -4002,14 +4017,14 @@ static void VID_MenuDraw (cb_context_t *cbx)
 		case VID_OPT_UPSCALER_QUALITY:
 			M_Print (cbx, 16, y, "            Preset");
 			{
-				RgRenderUpscaleTechnique tech;
+				QrRenderUpscaleTechnique tech;
 				int q = menu_settings.upscaler_quality;
 				switch (menu_settings.upscaler_type)
 				{
-				case UPSCALER_FSR2:  tech = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2; break;
-				case UPSCALER_FSR31: tech = RG_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3; break;
-				case UPSCALER_DLSS:  tech = RG_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS; break;
-				default:             tech = RG_RENDER_UPSCALE_TECHNIQUE_NEAREST; q = 0; break;
+				case UPSCALER_FSR2:  tech = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2; break;
+				case UPSCALER_FSR31: tech = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3; break;
+				case UPSCALER_DLSS:  tech = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS; break;
+				default:             tech = QR_RENDER_UPSCALE_TECHNIQUE_NEAREST; q = 0; break;
 				}
 				if (q < 1 && menu_settings.upscaler_type != UPSCALER_OFF)
 					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);

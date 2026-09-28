@@ -45,8 +45,8 @@ include(CheckCCompilerFlag)
 
 if(MSVC)
     # Match VS project: /W4, WX, no exceptions, multiprocessor.
-    # The strict flags are scoped to C only: the vendored vkpt renderer
-    # (C++) sets its own /W3 /EHsc flags in vkpt/CMakeLists.txt.
+    # The strict flags are scoped to C only: the vendored qray renderer
+    # (C++) sets its own /W3 /EHsc flags in renderer/CMakeLists.txt.
     add_compile_options("$<$<COMPILE_LANGUAGE:C>:/W4>" "$<$<COMPILE_LANGUAGE:C>:/WX>" "$<$<COMPILE_LANGUAGE:C>:/MP>")
     add_compile_options("$<$<COMPILE_LANGUAGE:C>:/wd4100>" "$<$<COMPILE_LANGUAGE:C>:/wd4127>" "$<$<COMPILE_LANGUAGE:C>:/wd4389>" "$<$<COMPILE_LANGUAGE:C>:/wd4702>" "$<$<COMPILE_LANGUAGE:C>:/wd4706>" "$<$<COMPILE_LANGUAGE:C>:/wd5286>")
 
@@ -213,7 +213,7 @@ endif()
 # ============================================================================
 # NVRHI — NVIDIA RHI, used by the renderer (Vulkan backend)
 # ============================================================================
-# vkpt keeps creating the instance, the device and the queues itself, and the
+# qray keeps creating the instance, the device and the queues itself, and the
 # RHI layer wraps those handles, so only the Vulkan backend is built here.
 # The D3D11 and D3D12 backends (and their fetched headers) stay off.
 option(NVRHI_BUILD_SHARED "Build NVRHI as a shared library" OFF)
@@ -240,14 +240,14 @@ endif()
 add_subdirectory(third_party/nvrhi)
 
 # ============================================================================
-# vkpt renderer — vendored
+# qray renderer — vendored
 # ============================================================================
-# The renderer source lives in the vkpt/ subdirectory and is built as a
-# static library linked into quakeray. The public RG_* API remains an internal
-# interface (RG_STATIC is defined in vkpt/CMakeLists.txt).
-add_subdirectory(vkpt)
+# The renderer source lives in the renderer/ subdirectory and is built as a
+# static library linked into quakeray. The public QR_* API remains an internal
+# interface (QR_STATIC is defined in renderer/CMakeLists.txt).
+add_subdirectory(renderer)
 
-message(STATUS "vkpt renderer: vendored (static, built from vkpt/)")
+message(STATUS "qray renderer: vendored (static, built from renderer/)")
 
 # ============================================================================
 # libyaml — vendored YAML parser (used by rt_material.c for materials.yaml)
@@ -271,6 +271,33 @@ if(MSVC)
 else()
     target_compile_options(libyaml PRIVATE -w)
 endif()
+
+# ============================================================================
+# Dear ImGui - vendored immediate-mode GUI (MIT)
+# ============================================================================
+# Core + the SDL2 input backend. The render backend is our own
+# (Quake/qr_gui.cpp): ImGui draw lists are uploaded through the renderer's
+# rasterizer, so ImGui's own Vulkan backend and pipelines are not used.
+# Built as a separate static lib so the strict /W4 /WX C flags don't apply.
+add_library(imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/backends/imgui_impl_sdl2.cpp
+)
+target_include_directories(imgui PUBLIC
+    ${CMAKE_SOURCE_DIR}/third_party/imgui
+    ${CMAKE_SOURCE_DIR}/third_party/imgui/backends
+)
+
+if(MSVC)
+    target_compile_options(imgui PRIVATE /W3 /WX- /EHsc)
+else()
+    target_compile_options(imgui PRIVATE -w)
+endif()
+
+target_link_libraries(imgui PUBLIC SDL2::SDL2)
 
 # ============================================================================
 # Source files
@@ -325,6 +352,8 @@ set(CORE_SOURCES
     Quake/r_smoke.c
     Quake/r_sprite.c
     Quake/r_world.c
+    Quake/qr_gui.cpp
+    Quake/rt_dtal_debug.cpp
     Quake/rt_material.c
     Quake/rt_pkz.c
     Quake/sbar.c
@@ -466,8 +495,8 @@ endif()
 target_compile_definitions(quakeray PRIVATE
     $<$<CONFIG:Debug>:_DEBUG>
     $<$<CONFIG:Release>:NDEBUG>
-    # The vendored vkpt renderer is linked statically: RGAPI must be empty.
-    RG_STATIC
+    # The vendored qray renderer is linked statically: QRAPI must be empty.
+    QR_STATIC
 )
 
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -485,8 +514,9 @@ endif()
 # Link libraries
 # ============================================================================
 target_link_libraries(quakeray PRIVATE Vulkan::Vulkan)
-target_link_libraries(quakeray PRIVATE vkpt)
+target_link_libraries(quakeray PRIVATE renderer)
 target_link_libraries(quakeray PRIVATE libyaml)
+target_link_libraries(quakeray PRIVATE imgui)
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE SDL2::SDL2 SDL2::SDL2main)
@@ -615,10 +645,10 @@ if(QUAKERAY_PLATFORM_WINDOWS)
         COMMENT "Copying SDL2.dll..."
     )
 
-    # amd_fidelityfx_vk.dll (AMD-signed, FSR 2/3.1) — from the vendored vkpt
+    # amd_fidelityfx_vk.dll (AMD-signed, FSR 2/3.1) — from the vendored qray
     add_custom_command(TARGET quakeray POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/vkpt/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"
+            "${CMAKE_SOURCE_DIR}/renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"
             "$<TARGET_FILE_DIR:quakeray>"
         COMMENT "Copying amd_fidelityfx_vk.dll..."
     )

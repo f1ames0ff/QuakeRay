@@ -7,8 +7,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$shaderSrc = Join-Path $PSScriptRoot "vkpt\Source\Shaders"
-$shaderOut = Join-Path $PSScriptRoot "vkpt\Build"
+$shaderSrc = Join-Path $PSScriptRoot "renderer\Source\Shaders"
+$shaderOut = Join-Path $PSScriptRoot "renderer\Build"
 if (-not $DestDir) { $DestDir = Join-Path $PSScriptRoot "build\Debug\id1\shaders" }
 $destDir   = $DestDir
 
@@ -31,7 +31,7 @@ if ($hlslSources.Count -gt 0 -and -not (Get-Command dxc -ErrorAction SilentlyCon
 }
 
 if ($GenCommon) {
-    Push-Location (Join-Path $PSScriptRoot "vkpt\Source\Generated")
+    Push-Location (Join-Path $PSScriptRoot "renderer\Source\Generated")
     try {
         python GenerateShaderCommon.py --path .
         if ($LASTEXITCODE -ne 0) { throw "GenerateShaderCommon.py failed (exit $LASTEXITCODE)." }

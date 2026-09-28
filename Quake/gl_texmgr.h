@@ -77,13 +77,14 @@ typedef struct gltexture_s
 	signed char          pants;                  // 0-13 pants color, or -1 if never colormapped
 
 	char                 rtname[64];
-	RgMaterial           rtmaterial;
+	QrMaterial           rtmaterial;
 	vec3_t	             rtlightcolor;
 	qboolean             rthaslightcolor;
 	float                rtupoffset;
 	qboolean             rtmirror;
 	qboolean             rtexactnormals;
 	qboolean             rtforcerasterize;
+	qboolean             rtalphatest;
 	qboolean             rtemissive;
 	vec3_t               rtemissivecolor;
 	float                rtemissivemean;
@@ -141,10 +142,10 @@ void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants);
 void TexMgr_ReloadNobrightImages (void);
 void TexMgr_ReloadAllImages (void);
 
-// RT: kludge to load fullbright image as an emissive part of RgMaterial.
-// 1st call of TexMgr_LoadImage - prepare everything for 'rgCreateStaticMaterial', but hold until:
-// - either 2nd call of TexMgr_LoadImage with TEXPREF_RT_IS_EMISSIVE - submit 'rgCreateStaticMaterial' with data from 1st and 2nd call
-// - or call of TexMgr_RT_SpecialNullEnd - just submit 'rgCreateStaticMaterial' with data from 1st call
+// RT: kludge to load fullbright image as an emissive part of QrMaterial.
+// 1st call of TexMgr_LoadImage - prepare everything for 'qrCreateStaticMaterial', but hold until:
+// - either 2nd call of TexMgr_LoadImage with TEXPREF_RT_IS_EMISSIVE - submit 'qrCreateStaticMaterial' with data from 1st and 2nd call
+// - or call of TexMgr_RT_SpecialNullEnd - just submit 'qrCreateStaticMaterial' with data from 1st call
 void TexMgr_RT_SpecialStart (float default_rough, float default_metallic);
 void TexMgr_RT_SpecialEnd (void);
 

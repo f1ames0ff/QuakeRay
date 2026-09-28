@@ -31,7 +31,7 @@ atomic_uint32_t rt_require_static_submit;
 
 mplane_t frustum[4];
 
-RgMediaType rt_cameramedia = RG_MEDIA_TYPE_VACUUM;
+QrMediaType rt_cameramedia = QR_MEDIA_TYPE_VACUUM;
 qboolean    rt_lavaeffects = false;
 
 // johnfitz -- rendering statistics
@@ -111,6 +111,7 @@ cvar_t r_tasks = {"r_tasks", "0", CVAR_NONE};
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;
 extern cvar_t rt_flashlight;
+extern cvar_t rt_dlightspot_intensity;
 extern cvar_t rt_sun;
 extern cvar_t rt_sun_pitch;
 extern cvar_t rt_sun_yaw;
@@ -393,19 +394,41 @@ static void RT_UploadAllDlights ()
 		VectorScale (color, CVAR_TO_FLOAT (rt_dlight_intensity), color);
 		RT_FIXUP_LIGHT_INTENSITY (color, true);
 
-		RgSphericalLightUploadInfo info = {
-			.uniqueID = i,
-			.color = {color[0], color[1], color[2]},
-			.position = {l->origin[0], l->origin[1], l->origin[2]},
-			.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
-		};
+		const uint64_t uniqueID = (uint64_t) i;
 
-		RgResult r = rgUploadSphericalLight (vulkan_globals.instance, &info);
-		RG_CHECK (r);
+		/* A spot is one whose editor property gave it a beam; anything else keeps the
+		   spherical path, a spot whose beam is still empty included. */
+		if (l->type == DLIGHT_TYPE_SPOT && l->angleOuter > 0.0f && DotProduct (l->dir, l->dir) > 0.0f)
+		{
+			QrSpotLightUploadInfo info = {
+				.uniqueID = uniqueID,
+				.color = {color[0], color[1], color[2]},
+				.position = {l->origin[0], l->origin[1], l->origin[2]},
+				.direction = {l->dir[0], l->dir[1], l->dir[2]},
+				.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
+				.angleOuter = l->angleOuter,
+				.angleInner = l->angleInner,
+			};
+
+			QrResult r = qrUploadSpotLight (vulkan_globals.instance, &info);
+			QR_CHECK (r);
+		}
+		else
+		{
+			QrSphericalLightUploadInfo info = {
+				.uniqueID = uniqueID,
+				.color = {color[0], color[1], color[2]},
+				.position = {l->origin[0], l->origin[1], l->origin[2]},
+				.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
+			};
+
+			QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
+			QR_CHECK (r);
+		}
 
 		/* rt_cluster_dlights 0 keeps dlights out of the cluster lists (A/B experiment). */
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (info.uniqueID, l->origin, RT_ClusterLightReach ());
+			RT_ClusterLightAdd (uniqueID, l->origin, RT_ClusterLightReach ());
 	}
 	}
 
@@ -421,7 +444,7 @@ static void RT_UploadAllDlights ()
 		VectorScale (color, CVAR_TO_FLOAT (rt_flashlight), color);
 		RT_FIXUP_LIGHT_INTENSITY (color, true);
 
-		RgSpotLightUploadInfo info = {
+		QrSpotLightUploadInfo info = {
 			.uniqueID = (uint64_t)UINT32_MAX + 0,
 			.color = {color[0], color[1], color[2]},
 			.position = {pos[0], pos[1], pos[2]},
@@ -431,8 +454,8 @@ static void RT_UploadAllDlights ()
 			.angleInner = 0,
 		};
 
-		RgResult r = rgUploadSpotLight (vulkan_globals.instance, &info);
-		RG_CHECK (r);
+		QrResult r = qrUploadSpotLight (vulkan_globals.instance, &info);
+		QR_CHECK (r);
 	}
 
 	if (CVAR_TO_FLOAT (rt_sun) > 0.001f)
@@ -456,16 +479,73 @@ static void RT_UploadAllDlights ()
 		// so they follow the sun too, including the fraction.
 		VectorScale (color, RT_SUN_LIGHT_INTENSITY_SCALE, color);
 
-		RgDirectionalLightUploadInfo info = {
+		QrDirectionalLightUploadInfo info = {
 			.uniqueID = (uint64_t)UINT32_MAX + 1,
 			.color = {color[0], color[1], color[2]},
 			.direction = {forward[0], forward[1], forward[2]},
 			.angularDiameterDegrees = 0.05f,
 		};
 
-		RgResult r = rgUploadDirectionalLight (vulkan_globals.instance, &info);
-		RG_CHECK (r);
+		QrResult r = qrUploadDirectionalLight (vulkan_globals.instance, &info);
+		QR_CHECK (r);
 	}
+}
+
+/*
+================
+RT_DlightSpot_f
+
+Places a spot dlight at the crosshair, pointing along the view. The editor's spot property
+is what will create these lights; until it is there, this is how one is made and seen.
+
+dlightspot <outer_deg> [inner_deg] [distance] [strength]
+================
+*/
+void RT_DlightSpot_f (void)
+{
+	if (Cmd_Argc () < 2)
+	{
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance] [strength]\n", Cmd_Argv (0));
+		return;
+	}
+
+	float       outerDeg = (float) atof (Cmd_Argv (1));
+	float       innerDeg = (Cmd_Argc () >= 3) ? (float) atof (Cmd_Argv (2)) : 0.0f;
+	const float dist     = (Cmd_Argc () >= 4) ? (float) atof (Cmd_Argv (3)) : 48.0f;
+	const float strength = (Cmd_Argc () >= 5) ? (float) atof (Cmd_Argv (4)) : CVAR_TO_FLOAT (rt_dlightspot_intensity);
+
+	/* The comparisons read as they do so that a nan fails them: atof takes nan and inf, and a
+	   nan edge or origin would poison every cell that samples the light. */
+	if (!(outerDeg >= 0.1f && outerDeg <= 89.9f) ||
+	    !(innerDeg >= 0.0f) || !(innerDeg <= outerDeg) ||
+	    !(dist >= 1.0f && dist <= 4096.0f) ||
+	    !(strength >= 0.0f && strength <= 1000.0f))
+	{
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance] [strength]\n", Cmd_Argv (0));
+		return;
+	}
+
+	/* The cone edge is a smoothstep, and one with equal edges is undefined, so the inner
+	   angle stays strictly inside the outer one. */
+	if (innerDeg > outerDeg * 0.999f)
+	{
+		innerDeg = outerDeg * 0.999f;
+	}
+
+	/* DLIGHT_KEY_TEST is a key no emitter makes, so no effect can take the slot back, and
+	   every run of the command reuses it: one command owns one light. */
+	dlightspot_t *dl = CL_AllocDlightSpot (DLIGHT_KEY_TEST);
+
+	VectorMA (r_origin, dist, vpn, dl->origin);
+	VectorCopy (vpn, dl->dir);
+	VectorScale (dl->color, strength, dl->color);
+	dl->angleOuter = DEG2RAD (outerDeg);
+	dl->angleInner = DEG2RAD (innerDeg);
+	dl->radius     = 200;
+	dl->decay      = 0;
+	dl->die        = cl.time + 3600;
+
+	Con_Printf ("dlightspot: outer %.1f deg, inner %.1f deg, %.0f units ahead, strength %.2f\n", outerDeg, innerDeg, dist, strength);
 }
 
 /*
@@ -504,23 +584,23 @@ void R_SetupViewBeforeMark (void *unused)
 
 		if (contents == CONTENTS_WATER)
 		{
-			rt_cameramedia = RG_MEDIA_TYPE_WATER;
+			rt_cameramedia = QR_MEDIA_TYPE_WATER;
 		}
 		else if (contents == CONTENTS_LAVA)
 		{
-			rt_cameramedia = RG_MEDIA_TYPE_WATER;
+			rt_cameramedia = QR_MEDIA_TYPE_WATER;
 			rt_lavaeffects = true;
 		}
 		else if (contents == CONTENTS_SLIME)
 		{
-			rt_cameramedia = RG_MEDIA_TYPE_ACID;
+			rt_cameramedia = QR_MEDIA_TYPE_ACID;
 		}
 		else
 		{
-			rt_cameramedia = RG_MEDIA_TYPE_VACUUM;
+			rt_cameramedia = QR_MEDIA_TYPE_VACUUM;
 		}
 
-		if (rt_cameramedia != RG_MEDIA_TYPE_VACUUM && CVAR_TO_INT32 (r_waterwarp) == 2)
+		if (rt_cameramedia != QR_MEDIA_TYPE_VACUUM && CVAR_TO_INT32 (r_waterwarp) == 2)
 		{
 			// variance is a percentage of width, where width = 2 * tan(fov / 2) otherwise the effect is too dramatic at high FOV and too subtle at low FOV.
 			// what a mess!
@@ -664,7 +744,7 @@ void R_EmitWirePoint (cb_context_t *cbx, vec3_t origin)
 {
 	const int size = 8;
 
-	RgVertex vertices[6] = {0};
+	QrVertex vertices[6] = {0};
 
 	vertices[0].position[0] = origin[0] - size;
 	vertices[0].position[1] = origin[1];
@@ -690,22 +770,22 @@ void R_EmitWirePoint (cb_context_t *cbx, vec3_t origin)
 		vertices[i].packedColor = RT_PACKED_COLOR_WHITE;
 	}
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 		.vertexCount = countof (vertices),
 		.pVertices = vertices,
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
-		.material = RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
+		.material = QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
 		.blendFuncSrc = 0,
 		.blendFuncDst = 0,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+	QR_CHECK (r);
 }
 
 /*
@@ -717,7 +797,7 @@ void R_EmitWireBox (cb_context_t *cbx, vec3_t mins, vec3_t maxs)
 {
 	const static uint32_t box_indices[24] = {0, 1, 2, 3, 4, 5, 6, 7, 0, 4, 1, 5, 2, 6, 3, 7, 0, 2, 1, 3, 4, 6, 5, 7};
 
-	RgVertex vertices[8] = {0};
+	QrVertex vertices[8] = {0};
 
 	for (int i = 0; i < 8; ++i)
 	{
@@ -727,22 +807,22 @@ void R_EmitWireBox (cb_context_t *cbx, vec3_t mins, vec3_t maxs)
 		vertices[i].packedColor = RT_PACKED_COLOR_WHITE;
 	}
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 		.vertexCount = countof (vertices),
 		.pVertices = vertices,
 		.indexCount = countof (box_indices),
 		.pIndices = box_indices,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
-		.material = RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
+		.material = QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
 		.blendFuncSrc = 0,
 		.blendFuncDst = 0,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+	QR_CHECK (r);
 }
 
 /*
@@ -866,18 +946,18 @@ void R_DrawWorldTask (void *unused)
 		return;
 	}
 
-	RgResult r;
+	QrResult r;
 	
-	r = rgBeginStaticGeometries (vulkan_globals.instance);
-	RG_CHECK (r);
+	r = qrBeginStaticGeometries (vulkan_globals.instance);
+	QR_CHECK (r);
 
 	cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[CBX_WORLD_0];
 	R_SetupContext (cbx);
 	Fog_EnableGFog (cbx);
 	R_DrawWorld (cbx);
 
-	r = rgSubmitStaticGeometries (vulkan_globals.instance);
-	RG_CHECK (r);
+	r = qrSubmitStaticGeometries (vulkan_globals.instance);
+	QR_CHECK (r);
 
 	Atomic_StoreUInt32 (&rt_require_static_submit, false);
 

@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "atomics.h"
+#include "rt_dtal_debug.h"
 
 extern cvar_t gl_fullbrights;
 extern cvar_t r_drawflat;
@@ -47,10 +48,14 @@ extern cvar_t rt_wmodel_lights_batch;
 extern cvar_t rt_model_lights;
 extern cvar_t rt_model_lights_max;
 extern cvar_t rt_model_lights_budget;
+extern cvar_t rt_model_lights_minarea;
+extern cvar_t rt_dtal_minarea;
+extern cvar_t rt_dtal_maxpolys;
+extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
-extern cvar_t rt_debugemissive;
+extern cvar_t rt_dtal_debug;
 extern cvar_t rt_light_report_filter;
 extern cvar_t rt_worldcensus;
 extern cvar_t rt_worldlights_stats;
@@ -63,7 +68,7 @@ byte *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
 static int world_texstart[NUM_WORLD_CBX];
 static int world_texend[NUM_WORLD_CBX];
 
-extern RgVertex *rtallbrushvertices;
+extern QrVertex *rtallbrushvertices;
 
 #define MAX_WORLDLIGHTS_COUNT 8192
 
@@ -97,14 +102,14 @@ extern RgVertex *rtallbrushvertices;
 #define RT_DTAL_MAX_PIECES    32
 #define RT_DTAL_CACHE_ENTRIES 4
 
-static RgTexturedAreaLightUploadInfo rt_wldlights_emissive[MAX_WORLDLIGHTS_COUNT];
+static QrTexturedAreaLightUploadInfo rt_wldlights_emissive[MAX_WORLDLIGHTS_COUNT];
 static int                           rt_wldlights_emissive_count = 0;
 
 static const msurface_t *rt_wldlights_emissive_surf[MAX_WORLDLIGHTS_COUNT];
 static gltexture_t      *rt_wldlights_emissive_tex[MAX_WORLDLIGHTS_COUNT];
 
 /* The map's lights as handed to the renderer, and the center each one is placed by. */
-static RgTexturedAreaLightUploadInfo rt_wldlights_emissive_upload[MAX_WORLDLIGHTS_COUNT];
+static QrTexturedAreaLightUploadInfo rt_wldlights_emissive_upload[MAX_WORLDLIGHTS_COUNT];
 static vec3_t                        rt_wldlights_emissive_center[MAX_WORLDLIGHTS_COUNT];
 
 /* Whether a style of a stored light is accepted by the reach test of RT_SurfaceLightStyleScale.
@@ -128,8 +133,12 @@ typedef struct rt_emis_stats_s
 	int glow_lights;
 	int glow_faces;
 	int glow_fallback;
+	int too_small;
+	int poly_capped;
+	atomic_uint32_t buried;
 	atomic_uint32_t model_lights;
 	atomic_uint32_t model_capped;
+	atomic_uint32_t model_small;
 } rt_emis_stats_t;
 
 static rt_emis_stats_t rt_emis_stats;
@@ -937,11 +946,11 @@ static void RT_ClearBatch (cb_context_t *cbx)
 	cbx->batch_indices_count = 0;
 }
 
-RgTransform RT_GetBrushModelMatrix (entity_t *e)
+QrTransform RT_GetBrushModelMatrix (entity_t *e)
 {
 	if (e == NULL)
 	{
-		const static RgTransform identity = RT_TRANSFORM_IDENTITY;
+		const static QrTransform identity = RT_TRANSFORM_IDENTITY;
 		return identity;
 	}
 
@@ -956,8 +965,8 @@ RgTransform RT_GetBrushModelMatrix (entity_t *e)
 	return RT_GetModelTransform (model_matrix);
 }
 
-static qboolean  RT_FindNearestTeleport (const RgGeometryUploadInfo *info, uint8_t *result, qboolean *potentially_mirror);
-static RgFloat3D ApplyTransform (const RgTransform *transform, const vec3_t v);
+static qboolean  RT_FindNearestTeleport (const QrGeometryUploadInfo *info, uint8_t *result, qboolean *potentially_mirror);
+static QrFloat3D ApplyTransform (const QrTransform *transform, const vec3_t v);
 static gltexture_t *RT_CanonicalLightTex (texture_t *base, int alt);
 static void         RT_KeepEmissiveLightColor (vec3_t color);
 
@@ -971,6 +980,7 @@ typedef struct rt_uploadsurf_state_t
 	gltexture_t *light_tex;
 	gltexture_t *lightmap_tex;
 	qboolean     alpha_test;
+	qboolean     alpha_transmission;
 	float        alpha;
 	qboolean     use_zbias;
 	qboolean     is_warp;
@@ -980,12 +990,12 @@ typedef struct rt_uploadsurf_state_t
 	qboolean     is_animated;
 } rt_uploadsurf_state_t;
 
-static void RT_EmitEmissiveWireTriangle (const RgFloat3D *p0, const RgFloat3D *p1, const RgFloat3D *p2)
+static void RT_EmitEmissiveWireTriangle (const QrFloat3D *p0, const QrFloat3D *p1, const QrFloat3D *p2)
 {
 	const static uint32_t tri_indices[6] = {0, 1, 1, 2, 2, 0};
 	const uint32_t        cyan        = RT_PackColorToUint32 (0, 255, 255, 255);
 
-	RgVertex vertices[3] = {0};
+	QrVertex vertices[3] = {0};
 
 	vertices[0].position[0] = p0->data[0];
 	vertices[0].position[1] = p0->data[1];
@@ -1000,22 +1010,22 @@ static void RT_EmitEmissiveWireTriangle (const RgFloat3D *p0, const RgFloat3D *p
 	for (int i = 0; i < 3; i++)
 		vertices[i].packedColor = cyan;
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 		.vertexCount = 3,
 		.pVertices = vertices,
 		.indexCount = countof (tri_indices),
 		.pIndices = tri_indices,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
-		.material = RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
+		.material = QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST,
 		.blendFuncSrc = 0,
 		.blendFuncDst = 0,
 	};
 
-	RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-	RG_CHECK (r);
+	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+	QR_CHECK (r);
 }
 
 typedef struct
@@ -1033,7 +1043,7 @@ typedef struct
 	const entity_t   *ent;
 	const msurface_t *surf;
 	const texture_t  *tex;
-	RgTransform       transform;
+	QrTransform       transform;
 	uint32_t          packed;
 	float             reach;
 	qboolean          light_styles;
@@ -1076,7 +1086,7 @@ static void RT_SurfacePacksReset (void)
 }
 
 static uint32_t RT_SurfacePackLightStyles (
-	const rt_uploadsurf_state_t *s, const RgVertex *verts, int num_verts, const RgTransform *transform, qboolean light_styles, float reach)
+	const rt_uploadsurf_state_t *s, const QrVertex *verts, int num_verts, const QrTransform *transform, qboolean light_styles, float reach)
 {
 	uint32_t packed = 0;
 	int      slot   = 0;
@@ -1091,7 +1101,7 @@ static uint32_t RT_SurfacePackLightStyles (
 		VectorAdd (accum, verts[i].position, accum);
 	vec3_t center;
 	VectorScale (accum, 1.0f / num_verts, center);
-	const RgFloat3D world_center = ApplyTransform (transform, center);
+	const QrFloat3D world_center = ApplyTransform (transform, center);
 
 	for (int i = 0; i < MAXLIGHTMAPS && s->surf->styles[i] != 255; i++)
 	{
@@ -1113,7 +1123,7 @@ static uint32_t RT_SurfacePackLightStyles (
 	return packed;
 }
 
-static uint32_t RT_PackSurfaceLightStyles (const rt_uploadsurf_state_t *s, const RgVertex *verts, int num_verts, const RgTransform *transform)
+static uint32_t RT_PackSurfaceLightStyles (const rt_uploadsurf_state_t *s, const QrVertex *verts, int num_verts, const QrTransform *transform)
 {
 	const qboolean light_styles = CVAR_TO_BOOL (rt_light_styles);
 	const float    reach        = CVAR_TO_FLOAT (rt_light_styles_reach);
@@ -1144,7 +1154,7 @@ static uint32_t RT_PackSurfaceLightStyles (const rt_uploadsurf_state_t *s, const
 		if (ententry->set && ententry->ent == s->ent && ententry->surf == s->surf &&
 		    ententry->tex == s->surf->texinfo->texture &&
 		    ententry->light_styles == light_styles && ententry->reach == reach &&
-		    memcmp (&ententry->transform, transform, sizeof (RgTransform)) == 0)
+		    memcmp (&ententry->transform, transform, sizeof (QrTransform)) == 0)
 			return ententry->packed;
 
 		const uint32_t entpacked = RT_SurfacePackLightStyles (s, verts, num_verts, transform, light_styles, reach);
@@ -1181,7 +1191,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 		return;
 	}
 
-    const RgVertex *vertices = cbx->batch_verts;
+    const QrVertex *vertices = cbx->batch_verts;
 	const uint32_t *indices = cbx->batch_indices;
 	const int       num_surf_verts = cbx->batch_verts_count;
 	const int       num_surf_indices = cbx->batch_indices_count;
@@ -1228,8 +1238,8 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 		// worldmodel must be uploaded only once
 		assert (!is_static_geom);
 
-		RgRasterizedGeometryUploadInfo info = {
-			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+		QrRasterizedGeometryUploadInfo info = {
+			.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 			.vertexCount = num_surf_verts,
 			.pVertices = vertices,
 			.indexCount = num_surf_indices,
@@ -1237,52 +1247,53 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			.transform = RT_GetBrushModelMatrix (s->ent),
 			.color = RT_COLOR_WHITE,
 			.material = diffuse_tex ? diffuse_tex->rtmaterial : greytexture->rtmaterial,
-			.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
+			.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
 			.blendFuncSrc = 0,
 			.blendFuncDst = 0,
 		};
 
 		if (s->alpha_test)
 		{
-			info.pipelineState |= RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
+			info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
 		}
 
 		if (alpha < 1.0f)
 		{
 			info.color.data[3] = alpha;
-			info.pipelineState |= RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE;
-			info.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA;
-			info.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+			info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE;
+			info.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA;
+			info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 		}
 		else
 		{
-			info.pipelineState |= RG_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE;
+			info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE;
 		}
 
-		RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-		RG_CHECK (r);
+		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+		QR_CHECK (r);
 	}
 	else
 	{
-		RgGeometryUploadInfo info = {
+		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, 0),
 			.flags = 
-			    (is_mirror ? RG_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_MULTIPLY_BIT : 0) |
-			    (is_teleport_portal ? RG_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_ADD_BIT : 0) |
+			    (is_mirror ? QR_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_MULTIPLY_BIT : 0) |
+			    (is_teleport_portal ? QR_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_ADD_BIT : 0) |
 			    // water and slime already churn through the RT wave normals
-			    (s->is_warp && !s->is_water && !s->is_acid ? RG_GEOMETRY_UPLOAD_TURB_WARP_BIT : 0) |
-                RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
-			.geomType = is_static_geom ? RG_GEOMETRY_TYPE_STATIC : RG_GEOMETRY_TYPE_DYNAMIC,
+			    (s->is_warp && !s->is_water && !s->is_acid ? QR_GEOMETRY_UPLOAD_TURB_WARP_BIT : 0) |
+			    (s->alpha_transmission ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+                QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
+			.geomType = is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType = 
-			    is_mirror ? RG_GEOMETRY_PASS_THROUGH_TYPE_MIRROR :
-			    s->is_water ? RG_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT :
-			    s->is_acid ? RG_GEOMETRY_PASS_THROUGH_TYPE_ACID_REFLECT_REFRACT :
-			    is_teleport_portal ? RG_GEOMETRY_PASS_THROUGH_TYPE_PORTAL :
+			    is_mirror ? QR_GEOMETRY_PASS_THROUGH_TYPE_MIRROR :
+			    s->is_water ? QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT :
+			    s->is_acid ? QR_GEOMETRY_PASS_THROUGH_TYPE_ACID_REFLECT_REFRACT :
+			    is_teleport_portal ? QR_GEOMETRY_PASS_THROUGH_TYPE_PORTAL :
 			    // A fence texture keeps its alpha only in the traced path: the rasterized
 			    // one is reserved for translucent surfaces, which a fence is not.
-			    s->alpha_test ? RG_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
-		        RG_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
-			.visibilityType = RG_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
+			    s->alpha_test ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
+		        QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
+			.visibilityType = QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
 			.vertexCount = num_surf_verts,
 			.pVertices = vertices,
 			.indexCount = num_surf_indices,
@@ -1293,7 +1304,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 				},
 			.layerBlendingTypes =
 				{
-					RG_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE,
+					QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE,
 				},
 			.geomMaterial =
 				{
@@ -1313,7 +1324,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			{
 				if (portal_is_mirror)
 				{
-					info.passThroughType = RG_GEOMETRY_PASS_THROUGH_TYPE_MIRROR;
+					info.passThroughType = QR_GEOMETRY_PASS_THROUGH_TYPE_MIRROR;
 				}
 				else
 				{
@@ -1322,15 +1333,15 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			}
 		}
 
-		RgResult r = rgUploadGeometry (vulkan_globals.instance, &info);
-		RG_CHECK (r);
+		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		QR_CHECK (r);
 	}
 
 	RT_ClearBatch (cbx);
 	++(*brushpasses);
 }
 
-static void RT_TexturedAreaLightCenter (const RgTexturedAreaLightUploadInfo *lt, vec3_t out)
+static void RT_TexturedAreaLightCenter (const QrTexturedAreaLightUploadInfo *lt, vec3_t out)
 {
 	float s = 0.0f, t = 0.0f;
 	const int n = lt->numVerts;
@@ -1350,9 +1361,9 @@ static void RT_TexturedAreaLightCenter (const RgTexturedAreaLightUploadInfo *lt,
 	out[2] = lt->A.data[2] * s + lt->B.data[2] * t + lt->C.data[2];
 }
 
-static void RT_EmitEmissiveWirePolygon (const RgTexturedAreaLightUploadInfo *lt)
+static void RT_EmitEmissiveWirePolygon (const QrTexturedAreaLightUploadInfo *lt)
 {
-	RgFloat3D wv[MAX_TEXTURED_AREA_LIGHT_VERTS];
+	QrFloat3D wv[MAX_TEXTURED_AREA_LIGHT_VERTS];
 	const int n = lt->numVerts;
 
 	if (n < 3)
@@ -1371,6 +1382,93 @@ static void RT_EmitEmissiveWirePolygon (const RgTexturedAreaLightUploadInfo *lt)
 		RT_EmitEmissiveWireTriangle (&wv[0], &wv[i], &wv[i + 1]);
 }
 
+#define RT_DTAL_DEBUG_MAX 4096
+
+typedef struct
+{
+	vec3_t center;
+	vec3_t normal;
+	float  len;
+} rt_dtal_debug_arrow_t;
+
+static rt_dtal_debug_arrow_t rt_dtal_debug_arrow[RT_DTAL_DEBUG_MAX];
+static int                   rt_dtal_debug_num;
+static int                   rt_dtal_debug_frame = -1;
+
+static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area)
+{
+	if (rt_dtal_debug_frame != r_framecount)
+	{
+		rt_dtal_debug_frame = r_framecount;
+		rt_dtal_debug_num = 0;
+	}
+
+	if (rt_dtal_debug_num >= RT_DTAL_DEBUG_MAX)
+		return;
+
+	rt_dtal_debug_arrow_t *arrow = &rt_dtal_debug_arrow[rt_dtal_debug_num++];
+
+	VectorCopy (center, arrow->center);
+	VectorCopy (normal, arrow->normal);
+
+	arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+}
+
+int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
+{
+	if (CVAR_TO_FLOAT (rt_dtal_debug) != 2.0f || rt_dtal_debug_frame != r_framecount || fb_w <= 0 || fb_h <= 0)
+		return 0;
+
+	const float *m = vulkan_globals.view_projection_matrix;
+	int          num = 0;
+
+	for (int i = 0; i < rt_dtal_debug_num && num < max_arrows; i++)
+	{
+		const rt_dtal_debug_arrow_t *arrow = &rt_dtal_debug_arrow[i];
+
+		const float cx = m[0] * arrow->center[0] + m[4] * arrow->center[1] + m[8] * arrow->center[2] + m[12];
+		const float cy = m[1] * arrow->center[0] + m[5] * arrow->center[1] + m[9] * arrow->center[2] + m[13];
+		const float cw = m[3] * arrow->center[0] + m[7] * arrow->center[1] + m[11] * arrow->center[2] + m[15];
+
+		if (cw <= 0.05f)
+			continue;
+
+		const float tx = arrow->center[0] + arrow->normal[0] * arrow->len;
+		const float ty = arrow->center[1] + arrow->normal[1] * arrow->len;
+		const float tz = arrow->center[2] + arrow->normal[2] * arrow->len;
+
+		const float nx = m[0] * tx + m[4] * ty + m[8] * tz + m[12];
+		const float ny = m[1] * tx + m[5] * ty + m[9] * tz + m[13];
+		const float nw = m[3] * tx + m[7] * ty + m[11] * tz + m[15];
+
+		if (nw <= 0.05f)
+			continue;
+
+		const float sx0 = (cx / cw * 0.5f + 0.5f) * (float) fb_w;
+		const float sy0 = (cy / cw * 0.5f + 0.5f) * (float) fb_h;
+		const float sx1 = (nx / nw * 0.5f + 0.5f) * (float) fb_w;
+		const float sy1 = (ny / nw * 0.5f + 0.5f) * (float) fb_h;
+
+		if ((sx0 < -64.0f && sx1 < -64.0f) || (sx0 > fb_w + 64.0f && sx1 > fb_w + 64.0f) ||
+		    (sy0 < -64.0f && sy1 < -64.0f) || (sy0 > fb_h + 64.0f && sy1 > fb_h + 64.0f))
+			continue;
+
+		float *o = out + num * RT_DTAL_DEBUG_FLOATS_PER_ARROW;
+
+		o[0] = sx0;
+		o[1] = sy0;
+		o[2] = sx1;
+		o[3] = sy1;
+		o[4] = (float) fabs (arrow->normal[0]);
+		o[5] = (float) fabs (arrow->normal[1]);
+		o[6] = (float) fabs (arrow->normal[2]);
+
+		num++;
+	}
+
+	return num;
+}
+
 static void RT_ScaleEmissiveLightColor (vec3_t color)
 {
 	VectorScale (color, RT_EMIS_INTENSITY_TO_RAW (CVAR_TO_FLOAT (rt_emis_light_intensity)), color);
@@ -1387,14 +1485,100 @@ static qboolean RT_AllowTexturedAreaLights (void)
 	return CVAR_TO_BOOL (rt_materials_only) || CVAR_TO_FLOAT (rt_truelight) > 0.0f;
 }
 
-static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_info, qboolean is_static_geom,
+#define RT_DTAL_BURIED_CACHE 1024
+
+typedef struct
+{
+	vec3_t   center;
+	vec3_t   normal;
+	float    clearance;
+	qboolean buried;
+} rt_dtal_buried_entry_t;
+
+static rt_dtal_buried_entry_t rt_dtal_buried_cache[RT_DTAL_BURIED_CACHE];
+
+static atomic_uint32_t rt_buried_traces;
+static atomic_uint32_t rt_buried_hits;
+static atomic_uint32_t rt_buried_model_traces;
+static atomic_uint32_t rt_buried_model_hits;
+
+static void RT_BuriedCacheReset (void)
+{
+	memset (rt_dtal_buried_cache, 0, sizeof (rt_dtal_buried_cache));
+	Atomic_StoreUInt32 (&rt_buried_traces, 0);
+	Atomic_StoreUInt32 (&rt_buried_hits, 0);
+	Atomic_StoreUInt32 (&rt_buried_model_traces, 0);
+	Atomic_StoreUInt32 (&rt_buried_model_hits, 0);
+}
+
+static unsigned int RT_BuriedHash (const float *center, const float *normal, float clearance)
+{
+	unsigned int h = 2166136261u;
+
+	for (int i = 0; i < 3; i++)
+	{
+		unsigned int bits;
+
+		memcpy (&bits, &center[i], sizeof (bits));
+		h = (h ^ bits) * 16777619u;
+
+		memcpy (&bits, &normal[i], sizeof (bits));
+		h = (h ^ bits) * 16777619u;
+	}
+
+	{
+		unsigned int bits;
+
+		memcpy (&bits, &clearance, sizeof (bits));
+		h = (h ^ bits) * 16777619u;
+	}
+
+	return h % RT_DTAL_BURIED_CACHE;
+}
+
+static qboolean RT_LightBuried (vec3_t center, const float *normal, float clearance, qboolean *traced)
+{
+	vec3_t                  n = {normal[0], normal[1], normal[2]};
+	rt_dtal_buried_entry_t *entry = &rt_dtal_buried_cache[RT_BuriedHash (center, n, clearance)];
+
+	if (entry->clearance == clearance && VectorCompare (entry->center, center) && VectorCompare (entry->normal, n))
+	{
+		*traced = false;
+		return entry->buried;
+	}
+
+	vec3_t  start, end;
+	trace_t trace;
+
+	VectorMA (center, 0.5f, n, start);
+	VectorMA (center, 0.5f + clearance, n, end);
+
+	memset (&trace, 0, sizeof (trace));
+	trace.fraction = 1.0f;
+	trace.allsolid = true;
+
+	SV_RecursiveHullCheck (cl.worldmodel->hulls, start, end, &trace, CONTENTMASK_ANYSOLID);
+
+	*traced = true;
+
+	const qboolean buried = trace.startsolid || trace.allsolid || trace.fraction < 1.0f;
+
+	VectorCopy (center, entry->center);
+	VectorCopy (n, entry->normal);
+	entry->clearance = clearance;
+	entry->buried    = buried;
+
+	return buried;
+}
+
+static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_info, qboolean is_static_geom,
                                     const msurface_t *surf, gltexture_t *light_tex)
 {
 	if (!is_static_geom)
 	{
 		rt_emis_stats.dynamic++;
 
-		RgTexturedAreaLightUploadInfo li = *light_info;
+		QrTexturedAreaLightUploadInfo li = *light_info;
 		RT_ScaleEmissiveLightColor (li.color.data);
 
 		/* Same clamp as a stored light gets: without it a light dimmed to nothing by its
@@ -1402,23 +1586,77 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 		   from the light array, which costs the cluster lists an id they name. */
 		RT_KeepEmissiveLightColor (li.color.data);
 
-		RgResult r = rgUploadTexturedAreaLight (vulkan_globals.instance, &li);
-		RG_CHECK (r);
-
 		vec3_t center;
 		RT_TexturedAreaLightCenter (&li, center);
+
+		const float clearance = CVAR_TO_FLOAT (rt_dtal_clearance);
+
+		if (clearance > 0.0f)
+		{
+			qboolean       traced = false;
+			const qboolean buried = RT_LightBuried (center, li.normal.data, clearance, &traced);
+
+			if (traced)
+			{
+				if (surf == NULL)
+					Atomic_AddUInt32 (&rt_buried_model_traces, 1);
+				else
+					Atomic_AddUInt32 (&rt_buried_traces, 1);
+			}
+			else
+			{
+				if (surf == NULL)
+					Atomic_AddUInt32 (&rt_buried_model_hits, 1);
+				else
+					Atomic_AddUInt32 (&rt_buried_hits, 1);
+			}
+
+			if (buried)
+			{
+				Atomic_AddUInt32 (&rt_emis_stats.buried, 1);
+				return;
+			}
+		}
+
+		QrResult r = qrUploadTexturedAreaLight (vulkan_globals.instance, &li);
+		QR_CHECK (r);
+
 		/* The geometry moved to get here, so the light is only promised the reach of a light of
 		   a moving entity. */
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
 			RT_ClusterLightAdd (li.uniqueID, center, RT_ClusterLightReach ());
 
-		if (CVAR_TO_BOOL (rt_debugemissive))
+		if (CVAR_TO_FLOAT (rt_dtal_debug) == 1.0f)
 		{
 			RT_EmitEmissiveWirePolygon (&li);
+		}
+		else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
+		{
+			RT_DtalDebugAdd (center, li.normal.data, li.area);
 		}
 	}
 	else if (rt_wldlights_emissive_count < MAX_WORLDLIGHTS_COUNT)
 	{
+		const float clearance = CVAR_TO_FLOAT (rt_dtal_clearance);
+
+		if (clearance > 0.0f)
+		{
+			vec3_t         center;
+			qboolean       traced = false;
+			RT_TexturedAreaLightCenter (light_info, center);
+
+			if (RT_LightBuried (center, light_info->normal.data, clearance, &traced))
+			{
+				Atomic_AddUInt32 (&rt_emis_stats.buried, 1);
+				return;
+			}
+
+			if (traced)
+				Atomic_AddUInt32 (&rt_buried_traces, 1);
+			else
+				Atomic_AddUInt32 (&rt_buried_hits, 1);
+		}
+
 		const int index = rt_wldlights_emissive_count++;
 		rt_wldlights_emissive[index]      = *light_info;
 		rt_wldlights_emissive_surf[index] = surf;
@@ -1544,7 +1782,7 @@ static qboolean RT_IsStaticWorldSurface (const rt_uploadsurf_state_t *s)
 
 typedef struct rt_emissive_params_s
 {
-	RgMaterial material;
+	QrMaterial material;
 	float      meanEmiss;
 	vec3_t     color;
 	/* The texture glows over part of itself, so the light is built from polygons over those
@@ -1571,7 +1809,7 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	/* The light has to glow where the surface glows, so a masked texture sends its material along
 	   and the shader reads the mask at the point it sampled. Only a texture with no mask is
 	   uniform over its polygon, and only there does meanEmiss describe the emission. */
-	p->material  = has_mask ? light_tex->rtmaterial : RG_NO_MATERIAL;
+	p->material  = has_mask ? light_tex->rtmaterial : QR_NO_MATERIAL;
 	p->meanEmiss = has_mask ? light_tex->rtemissivemean : 1.0f;
 	p->glow      = false;
 	p->glow_mean = p->meanEmiss;
@@ -1671,14 +1909,14 @@ static gltexture_t *RT_AnimatedLightTex (texture_t *base)
 	return (frame && frame->rthasmaterial) ? frame : base->gltexture;
 }
 
-static float RT_UvPolyArea (const RgFloat2D *p, int n)
+static float RT_UvPolyArea (const QrFloat2D *p, int n)
 {
 	float a = 0.0f;
 
 	for (int i = 0; i < n; i++)
 	{
-		const RgFloat2D p0 = p[i];
-		const RgFloat2D p1 = p[(i + 1) % n];
+		const QrFloat2D p0 = p[i];
+		const QrFloat2D p1 = p[(i + 1) % n];
 
 		a += p0.data[0] * p1.data[1] - p1.data[0] * p0.data[1];
 	}
@@ -1686,14 +1924,14 @@ static float RT_UvPolyArea (const RgFloat2D *p, int n)
 	return 0.5f * a;
 }
 
-static int RT_ClipUvPolyEdge (const RgFloat2D *in, int n, int axis, float limit, qboolean keep_greater, RgFloat2D *out)
+static int RT_ClipUvPolyEdge (const QrFloat2D *in, int n, int axis, float limit, qboolean keep_greater, QrFloat2D *out)
 {
 	int m = 0;
 
 	for (int i = 0; i < n; i++)
 	{
-		const RgFloat2D a  = in[i];
-		const RgFloat2D b  = in[(i + 1) % n];
+		const QrFloat2D a  = in[i];
+		const QrFloat2D b  = in[(i + 1) % n];
 		const float     da = a.data[axis] - limit;
 		const float     db = b.data[axis] - limit;
 		const qboolean  ia = keep_greater ? (da >= 0.0f) : (da <= 0.0f);
@@ -1709,7 +1947,7 @@ static int RT_ClipUvPolyEdge (const RgFloat2D *in, int n, int axis, float limit,
 		if (ia != ib)
 		{
 			const float t = da / (da - db);
-			RgFloat2D   p;
+			QrFloat2D   p;
 
 			p.data[0] = a.data[0] + t * (b.data[0] - a.data[0]);
 			p.data[1] = a.data[1] + t * (b.data[1] - a.data[1]);
@@ -1725,9 +1963,9 @@ static int RT_ClipUvPolyEdge (const RgFloat2D *in, int n, int axis, float limit,
 
 /* Sutherland-Hodgman against one repetition of the glow extents. The result stays in the uv
    space of the surface fit, so A/B/C map it back to world without any world-space vertices. */
-static int RT_ClipUvPolyToRect (const RgFloat2D *in, int n, const float *uvmin, const float *uvmax, RgFloat2D *out)
+static int RT_ClipUvPolyToRect (const QrFloat2D *in, int n, const float *uvmin, const float *uvmax, QrFloat2D *out)
 {
-	RgFloat2D tmp[MAX_TEXTURED_AREA_LIGHT_VERTS];
+	QrFloat2D tmp[MAX_TEXTURED_AREA_LIGHT_VERTS];
 	int       m;
 
 	m = RT_ClipUvPolyEdge (in, n, 0, uvmin[0], true, tmp);
@@ -1745,7 +1983,7 @@ static int RT_ClipUvPolyToRect (const RgFloat2D *in, int n, const float *uvmin, 
 
 typedef struct rt_uv_piece_s
 {
-	RgFloat2D verts[MAX_TEXTURED_AREA_LIGHT_VERTS];
+	QrFloat2D verts[MAX_TEXTURED_AREA_LIGHT_VERTS];
 	int       count;
 } rt_uv_piece_t;
 
@@ -1761,9 +1999,9 @@ what a light reading the mask needs, since a square standing in for a face would
 a shape the surface does not have.
 =================
 */
-static int RT_SplitUvPolygon (const RgFloat2D *uv, int n, rt_uv_piece_t *out, int out_max)
+static int RT_SplitUvPolygon (const QrFloat2D *uv, int n, rt_uv_piece_t *out, int out_max)
 {
-	RgFloat2D rest[RT_MAX_UV_SPLIT_VERTS];
+	QrFloat2D rest[RT_MAX_UV_SPLIT_VERTS];
 	int       num = 0;
 
 	if (n < 3 || n > RT_MAX_UV_SPLIT_VERTS || out_max < 1)
@@ -1808,13 +2046,38 @@ static int RT_SplitUvPolygon (const RgFloat2D *uv, int n, rt_uv_piece_t *out, in
 	return num + 1;
 }
 
-static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const RgFloat2D *surfuv, int vertcount,
+static qboolean RT_EmissivePolyAdd (QrTexturedAreaLightUploadInfo *polys, int *count, int max,
+                                    const QrTexturedAreaLightUploadInfo *poly)
+{
+	int at = *count;
+
+	while (at > 0 && polys[at - 1].area < poly->area)
+		at--;
+
+	if (at >= max)
+		return false;
+
+	if (*count < max)
+		(*count)++;
+
+	for (int i = *count - 1; i > at; i--)
+		polys[i] = polys[i - 1];
+
+	polys[at] = *poly;
+
+	return true;
+}
+
+static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const QrFloat2D *surfuv, int vertcount,
                                     const vec3_t A, const vec3_t B, const rt_emissive_params_t *params,
-                                    const RgTexturedAreaLightUploadInfo *base,
-                                    RgTexturedAreaLightUploadInfo *out, int out_max)
+                                    const QrTexturedAreaLightUploadInfo *base,
+                                    QrTexturedAreaLightUploadInfo *out, int out_max, float min_area,
+                                    qboolean *size_refused)
 {
 	float uvmin[2] = {surfuv[0].data[0], surfuv[0].data[1]};
 	float uvmax[2] = {surfuv[0].data[0], surfuv[0].data[1]};
+
+	*size_refused = false;
 
 	for (int i = 1; i < vertcount; i++)
 	{
@@ -1841,16 +2104,17 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const RgFloa
 
 	vec3_t ab;
 	CrossProduct (A, B, ab);
+	const float jacobian = VectorLength (ab);
 
 	int num = 0;
 
-	for (int ty = tileminy; ty <= tilemaxy && num < out_max; ty++)
+	for (int ty = tileminy; ty <= tilemaxy; ty++)
 	{
-		for (int tx = tileminx; tx <= tilemaxx && num < out_max; tx++)
+		for (int tx = tileminx; tx <= tilemaxx; tx++)
 		{
 			const float uvmin_t[2] = {(float)tx + params->glow_uvmin[0], (float)ty + params->glow_uvmin[1]};
 			const float uvmax_t[2] = {(float)tx + params->glow_uvmax[0], (float)ty + params->glow_uvmax[1]};
-			RgFloat2D   clipped[MAX_TEXTURED_AREA_LIGHT_VERTS];
+			QrFloat2D   clipped[MAX_TEXTURED_AREA_LIGHT_VERTS];
 			const int   n = RT_ClipUvPolyToRect (surfuv, vertcount, uvmin_t, uvmax_t, clipped);
 
 			if (n < 3)
@@ -1861,19 +2125,31 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const RgFloa
 			if (uvare <= 1e-9f)
 				continue;
 
-			RgTexturedAreaLightUploadInfo li = *base;
+			const float area = uvare * jacobian;
+
+			if (area < min_area)
+			{
+				rt_emis_stats.too_small++;
+				*size_refused = true;
+				continue;
+			}
+
+			QrTexturedAreaLightUploadInfo li = *base;
 
 			for (int i = 0; i < n; i++)
 				li.uvVerts[i] = clipped[i];
 
 			li.numVerts  = n;
-			li.area      = uvare * VectorLength (ab);
+			li.area      = area;
 			li.meanEmiss = params->glow_mean;
-			li.uniqueID  = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, (uint64_t)(num + 1));
 
-			out[num++] = li;
+			if (!RT_EmissivePolyAdd (out, &num, out_max, &li))
+				rt_emis_stats.poly_capped++;
 		}
 	}
+
+	for (int i = 0; i < num; i++)
+		out[i].uniqueID = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, (uint64_t)(i + 1));
 
 	return num;
 }
@@ -1881,7 +2157,7 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const RgFloa
 typedef struct rt_dtal_piece_s
 {
 	uint32_t  i0, i1, i2;
-	RgFloat2D uv[MAX_TEXTURED_AREA_LIGHT_VERTS];
+	QrFloat2D uv[MAX_TEXTURED_AREA_LIGHT_VERTS];
 	int       numverts;
 	/* The affine map of the texture onto the world of the triangle, kept as the uv of its
 	   corners and the solved fit: the world points move with the pose, the fit does not. */
@@ -1932,6 +2208,33 @@ void RT_ModelLightsCacheFree (qmodel_t *model)
 	}
 }
 
+extern atomic_uint32_t rt_require_static_submit;
+
+void RT_DtalRebuild_f (void)
+{
+	extern qmodel_t mod_known[];
+	extern int      mod_numknown;
+
+	GL_SynchronizeEndRenderingTask ();
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+
+	int models = 0;
+
+	for (int i = 0; i < mod_numknown; i++)
+	{
+		qmodel_t *model = &mod_known[i];
+
+		if (model->rt_dtal == NULL)
+			continue;
+
+		memset (model->rt_dtal->entries, 0, sizeof (model->rt_dtal->entries));
+		Atomic_StoreUInt32 (&model->rt_dtal->next, 0);
+		models++;
+	}
+
+	Con_Printf ("rt_dtal_rebuild: %i model DTAL caches dropped; the world list is rebuilt on the next frame\n", models);
+}
+
 /*
 =================
 RT_ModelLightPieceAdd
@@ -1976,7 +2279,7 @@ at what one model may light with. The uv of a vertex is the same in every pose, 
 half of RT_AddAliasEmissiveLights that does not depend on the pose or on the transform.
 =================
 */
-static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_count, const RgVertex *pose1,
+static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_count, const QrVertex *pose1,
                                            int numverts, const uint32_t *indices, int numindices,
                                            const rt_emissive_params_t *params)
 {
@@ -1991,9 +2294,9 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 		if (i0 >= (uint32_t) numverts || i1 >= (uint32_t) numverts || i2 >= (uint32_t) numverts)
 			continue;
 
-		const RgVertex *v0 = &pose1[i0];
-		const RgVertex *v1 = &pose1[i1];
-		const RgVertex *v2 = &pose1[i2];
+		const QrVertex *v0 = &pose1[i0];
+		const QrVertex *v1 = &pose1[i1];
+		const QrVertex *v2 = &pose1[i2];
 
 		/* The map from the texture to the world of a triangle is affine, and three points fix
 		   it exactly, so the light reads the mask where the triangle really is. */
@@ -2019,7 +2322,7 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 		piece.v0     = v0->texCoord[1];
 		piece.uvarea = 0.5f * fabs (det);
 
-		RgFloat2D triuv[3];
+		QrFloat2D triuv[3];
 		triuv[0].data[0] = v0->texCoord[0];
 		triuv[0].data[1] = v0->texCoord[1];
 		triuv[1].data[0] = v1->texCoord[0];
@@ -2076,7 +2379,7 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 			{
 				const float uvmin_t[2] = {(float) tx + params->glow_uvmin[0], (float) ty + params->glow_uvmin[1]};
 				const float uvmax_t[2] = {(float) tx + params->glow_uvmax[0], (float) ty + params->glow_uvmax[1]};
-				RgFloat2D   clipped[MAX_TEXTURED_AREA_LIGHT_VERTS];
+				QrFloat2D   clipped[MAX_TEXTURED_AREA_LIGHT_VERTS];
 				const int   n = RT_ClipUvPolyToRect (triuv, 3, uvmin_t, uvmax_t, clipped);
 
 				if (n < 3)
@@ -2111,11 +2414,13 @@ more pieces than that can lower the count.
 =================
 */
 static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int numpieces, const rt_emissive_params_t *params,
-                                         gltexture_t *tex, uint64_t base_uniqueid, const RgVertex *pose1,
-                                         const RgVertex *pose2, float blend, const RgTransform *transform,
+                                         gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
+                                         const QrVertex *pose2, float blend, const QrTransform *transform,
                                          int max_lights, int budget)
 {
 	int uploaded = 0;
+
+	const float min_area = CVAR_TO_FLOAT (rt_model_lights_minarea);
 
 	for (int i = 0; i < numpieces && uploaded < max_lights; i++)
 	{
@@ -2127,12 +2432,12 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 
 		const rt_dtal_piece_t *piece = &pieces[i];
 
-		const RgVertex *v0 = &pose1[piece->i0];
-		const RgVertex *v1 = &pose1[piece->i1];
-		const RgVertex *v2 = &pose1[piece->i2];
-		const RgVertex *w0 = &pose2[piece->i0];
-		const RgVertex *w1 = &pose2[piece->i1];
-		const RgVertex *w2 = &pose2[piece->i2];
+		const QrVertex *v0 = &pose1[piece->i0];
+		const QrVertex *v1 = &pose1[piece->i1];
+		const QrVertex *v2 = &pose1[piece->i2];
+		const QrVertex *w0 = &pose2[piece->i0];
+		const QrVertex *w1 = &pose2[piece->i1];
+		const QrVertex *w2 = &pose2[piece->i2];
 
 		/* The pose the draw shows: positions lerp between the two poses, while uv and normals
 		   are the first pose's, exactly as GetPoseVertices builds them. */
@@ -2145,9 +2450,9 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 			bp2[k] = v2->position[k] + (w2->position[k] - v2->position[k]) * blend;
 		}
 
-		const RgFloat3D p0 = ApplyTransform (transform, bp0);
-		const RgFloat3D p1 = ApplyTransform (transform, bp1);
-		const RgFloat3D p2 = ApplyTransform (transform, bp2);
+		const QrFloat3D p0 = ApplyTransform (transform, bp0);
+		const QrFloat3D p1 = ApplyTransform (transform, bp1);
+		const QrFloat3D p2 = ApplyTransform (transform, bp2);
 
 		vec3_t e1, e2, cross;
 		VectorSubtract (p1.data, p0.data, e1);
@@ -2175,6 +2480,12 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		if (jacobian <= 1e-9f)
 			continue;
 
+		if (piece->uvarea * jacobian < min_area)
+		{
+			Atomic_AddUInt32 (&rt_emis_stats.model_small, 1);
+			continue;
+		}
+
 		/* The light leaves the triangle through its front, and the front of a model triangle is
 		   the side its vertex normals face: the geometric normal only says where the plane is,
 		   the normals of the pose say which side of it glows. */
@@ -2189,7 +2500,7 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		if (side < 0.0f)
 			VectorScale (normal, -1.0f, normal);
 
-		RgTexturedAreaLightUploadInfo li = {0};
+		QrTexturedAreaLightUploadInfo li = {0};
 
 		/* A slot of its own per piece: the base id names the geometry, the slot suffix names
 		   the light of that piece, and both stay put while the model is drawn. */
@@ -2256,9 +2567,9 @@ frame counter is atomic because the entity passes that call this run in parallel
 RT_UploadAllWorldModelLights resets it once per frame after every draw has uploaded.
 =================
 */
-int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_uniqueid, const RgVertex *pose1,
-                               const RgVertex *pose2, float blend, int numverts, const uint32_t *indices,
-                               int numindices, const RgTransform *transform)
+int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
+                               const QrVertex *pose2, float blend, int numverts, const uint32_t *indices,
+                               int numindices, const QrTransform *transform)
 {
 	if (!CVAR_TO_BOOL (rt_model_lights) || !RT_AllowTexturedAreaLights ())
 		return 0;
@@ -2281,7 +2592,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	/* An unmasked model keeps its fake dlight: the mask is what makes the light follow the shape
 	   of the model, and without one a handful of triangles cannot stand for the whole mesh the
 	   way one face of the world stands for a surface. */
-	if (params.material == RG_NO_MATERIAL)
+	if (params.material == QR_NO_MATERIAL)
 		return 0;
 
 	int max_lights = (int) CVAR_TO_FLOAT (rt_model_lights_max);
@@ -2420,7 +2731,15 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	/* Whether the light reads a mask shapes it (cut into pieces of the face, or a square that
 	   carries no mask), so it is asked of the canonical frame and not of the animation. */
-	const qboolean light_masked = (params.material != RG_NO_MATERIAL);
+	const qboolean light_masked = (params.material != QR_NO_MATERIAL);
+
+	const float min_area = CVAR_TO_FLOAT (rt_dtal_minarea);
+	int       max_polys  = (int) CVAR_TO_FLOAT (rt_dtal_maxpolys);
+
+	if (max_polys < 0)
+		max_polys = 0;
+	if (max_polys > RT_MAX_EMISSIVE_POLYS_PER_FACE)
+		max_polys = RT_MAX_EMISSIVE_POLYS_PER_FACE;
 
 	/* Emission follows the animation, identity does not. s->diffuse_tex is the frame the
 	   visible pass renders of this surface, so a surface that steps to another frame steps its
@@ -2450,9 +2769,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		}
 	}
 
-	const RgTransform transf = RT_GetBrushModelMatrix (s->ent);
+	const QrTransform transf = RT_GetBrushModelMatrix (s->ent);
 	const int        vertcount = s->surf->numedges;
-	const RgVertex  *verts = rtallbrushvertices + s->surf->vbo_firstvert;
+	const QrVertex  *verts = rtallbrushvertices + s->surf->vbo_firstvert;
 
 	if (vertcount < 3)
 	{
@@ -2472,7 +2791,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	for (int i = 0; i < vertcount; i++)
 	{
-		RgFloat3D    p = ApplyTransform (&transf, verts[i].position);
+		QrFloat3D    p = ApplyTransform (&transf, verts[i].position);
 		const float  su = verts[i].texCoord[0];
 		const float  tv = verts[i].texCoord[1];
 
@@ -2488,9 +2807,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 		if (i >= 2)
 		{
-			const RgFloat3D p0 = ApplyTransform (&transf, verts[0].position);
-			const RgFloat3D p1 = ApplyTransform (&transf, verts[i - 1].position);
-			const RgFloat3D p2 = p;
+			const QrFloat3D p0 = ApplyTransform (&transf, verts[0].position);
+			const QrFloat3D p1 = ApplyTransform (&transf, verts[i - 1].position);
+			const QrFloat3D p2 = p;
 
 			vec3_t e1, e2, cross;
 			VectorSubtract (p1.data, p0.data, e1);
@@ -2651,7 +2970,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		}
 	}
 
-	RgTexturedAreaLightUploadInfo light_info = {0};
+	QrTexturedAreaLightUploadInfo light_info = {0};
 	light_info.uniqueID  = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, 0);
 	light_info.material  = params.material;
 	light_info.meanEmiss = params.meanEmiss;
@@ -2665,7 +2984,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	/* A light reading the mask has to keep the surface's own geometry, so the surface's uv is
 	   kept aside whether or not a single polygon can hold the face. */
 	const qboolean uv_ok = (vertcount <= RT_MAX_UV_SPLIT_VERTS);
-	RgFloat2D      surfuv[RT_MAX_UV_SPLIT_VERTS];
+	QrFloat2D      surfuv[RT_MAX_UV_SPLIT_VERTS];
 
 	if (uv_ok)
 	{
@@ -2696,22 +3015,35 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	if (!poly_ok && fit_ok && uv_ok && light_masked)
 	{
 		rt_uv_piece_t pieces[RT_MAX_UV_SPLIT_PIECES];
-		const int     num = RT_SplitUvPolygon (surfuv, vertcount, pieces, RT_MAX_UV_SPLIT_PIECES);
+		const int     max_pieces = (max_polys < RT_MAX_UV_SPLIT_PIECES) ? max_polys : RT_MAX_UV_SPLIT_PIECES;
+		const int     num = RT_SplitUvPolygon (surfuv, vertcount, pieces, max_pieces);
 
 		if (num > 0)
 		{
 			vec3_t ab;
 			CrossProduct (A, B, ab);
+			const float jacobian = VectorLength (ab);
+			int         uploaded = 0;
+			int         refused  = 0;
 
 			for (int i = 0; i < num; i++)
 			{
-				RgTexturedAreaLightUploadInfo piece = light_info;
+				const float area = (float) fabs (RT_UvPolyArea (pieces[i].verts, pieces[i].count)) * jacobian;
+
+				if (area < min_area)
+				{
+					rt_emis_stats.too_small++;
+					refused++;
+					continue;
+				}
+
+				QrTexturedAreaLightUploadInfo piece = light_info;
 
 				for (int k = 0; k < pieces[i].count; k++)
 					piece.uvVerts[k] = pieces[i].verts[k];
 
 				piece.numVerts = pieces[i].count;
-				piece.area     = (float) fabs (RT_UvPolyArea (pieces[i].verts, pieces[i].count)) * VectorLength (ab);
+				piece.area     = area;
 				piece.uniqueID = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, (uint64_t) (i + 1));
 				piece.fit      = 1;
 				VectorCopy (A, piece.A.data);
@@ -2720,12 +3052,19 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 				VectorCopy (params.color, piece.color.data);
 
 				RT_UploadEmissiveLight (&piece, is_static_geom, s->surf, light_tex);
+				uploaded++;
 			}
 
-			if (watch)
-				watch->lights += num;
+			if (uploaded > 0)
+			{
+				if (watch)
+					watch->lights += uploaded;
 
-			return;
+				return;
+			}
+
+			if (refused > 0)
+				return;
 		}
 	}
 
@@ -2740,7 +3079,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		   not cover, and a face whose uv the light cannot follow, or one larger than the cut
 		   takes, would flicker with that sample instead of glowing evenly. It keeps the mean of
 		   the mask instead, which is the emission an unmasked light carries as well. */
-		light_info.material = RG_NO_MATERIAL;
+		light_info.material = QR_NO_MATERIAL;
 
 		VectorScale (accum_center, 1.0f / total_area, accum_center);
 
@@ -2781,9 +3120,10 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	{
 		if (poly_ok)
 		{
-			RgTexturedAreaLightUploadInfo polys[RT_MAX_EMISSIVE_POLYS_PER_FACE];
+			QrTexturedAreaLightUploadInfo polys[RT_MAX_EMISSIVE_POLYS_PER_FACE];
+			qboolean                  size_refused = false;
 			const int num = RT_EmissiveGlowPolygons (s, light_info.uvVerts, light_info.numVerts, A, B, &params,
-			                                        &light_info, polys, RT_MAX_EMISSIVE_POLYS_PER_FACE);
+			                                        &light_info, polys, max_polys, min_area, &size_refused);
 
 			if (num > 0)
 			{
@@ -2795,11 +3135,20 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				return;
 			}
+
+			if (size_refused)
+				return;
 		}
 
 		/* No glow polygon survived (too many repetitions, or a surface that has no uv fit):
 		   the whole surface keeps the light instead. */
 		rt_emis_stats.glow_fallback++;
+	}
+
+	if (light_info.area < min_area)
+	{
+		rt_emis_stats.too_small++;
+		return;
 	}
 
 	RT_UploadEmissiveLight (&light_info, is_static_geom, s->surf, light_tex);
@@ -2925,13 +3274,15 @@ void RT_BrushClusterCacheReset (void)
 {
 	memset (rt_brushcluster_cache, 0, sizeof (rt_brushcluster_cache));
 
+	RT_BuriedCacheReset ();
+
 	/* New faces and a new light set: the per surface answers of the old map are void. Both
 	   tables are sized here, where no render task runs, and never during a frame. */
 	RT_SurfacePacksReset ();
 	RT_OwnedFacesReset ();
 }
 
-static int RT_ResolveBrushSurfCluster (const rt_uploadsurf_state_t *s, const RgVertex *verts, int numverts)
+static int RT_ResolveBrushSurfCluster (const rt_uploadsurf_state_t *s, const QrVertex *verts, int numverts)
 {
 	const size_t idx = ((size_t) s->ent / sizeof (void *) + (size_t) s->surf->vbo_firstvert) % RT_BRUSHCLUSTER_CACHE_SIZE;
 	rt_brushcluster_cacheentry_t *ce = &rt_brushcluster_cache[idx];
@@ -2978,8 +3329,8 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 	}
 
 	R_TriangleIndicesForSurf (cbx->batch_verts_count, num_surf_verts, &cbx->batch_indices[cbx->batch_indices_count]);
-	RgVertex *batch_verts = &cbx->batch_verts[cbx->batch_verts_count];
-	memcpy (batch_verts, rtallbrushvertices + s->surf->vbo_firstvert, sizeof (RgVertex) * num_surf_verts);
+	QrVertex *batch_verts = &cbx->batch_verts[cbx->batch_verts_count];
+	memcpy (batch_verts, rtallbrushvertices + s->surf->vbo_firstvert, sizeof (QrVertex) * num_surf_verts);
 
 	if (s->ent && s->model != cl.worldmodel)
 	{
@@ -2990,7 +3341,7 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 	}
 
 	{
-		const RgTransform transform = RT_GetBrushModelMatrix (s->ent);
+		const QrTransform transform = RT_GetBrushModelMatrix (s->ent);
 		const uint32_t    packed_styles = RT_PackSurfaceLightStyles (s, batch_verts, num_surf_verts, &transform);
 
 		if (packed_styles != 0)
@@ -3034,7 +3385,7 @@ void R_DrawTextureChains_ShowTris (cb_context_t *cbx, qmodel_t *model, texchain_
 	float       color[] = {1.0f, 1.0f, 1.0f};
 	const float alpha = 1.0f;
 
-    const static RgTransform tr = RT_TRANSFORM_IDENTITY;
+    const static QrTransform tr = RT_TRANSFORM_IDENTITY;
 
 	for (i = 0; i < model->numtextures; i++)
 	{
@@ -3078,6 +3429,7 @@ static qboolean RT_UploadStatesMatch (const rt_uploadsurf_state_t *cur, const rt
 	       cur->diffuse_tex == last->diffuse_tex &&
 	       cur->light_tex == last->light_tex &&
 	       cur->alpha_test == last->alpha_test &&
+	       cur->alpha_transmission == last->alpha_transmission &&
 	       cur->alpha == last->alpha &&
 	       cur->use_zbias == last->use_zbias &&
 	       cur->is_warp == last->is_warp &&
@@ -3208,7 +3560,8 @@ void R_DrawTextureChains_Animated (cb_context_t *cbx, qmodel_t *model)
 		if (diffuse_tex->rthasmaterial)
 			light_tex = diffuse_tex;
 
-		const qboolean alpha_test = (t->texturechains[chain_world]->flags & SURF_DRAWFENCE) != 0;
+		const qboolean alpha_test = (t->texturechains[chain_world]->flags & SURF_DRAWFENCE) != 0 ||
+		                            (diffuse_tex && diffuse_tex->rtalphatest);
 
 		for (s = t->texturechains[chain_world]; s; s = s->texturechains[chain_world])
 		{
@@ -3224,6 +3577,7 @@ void R_DrawTextureChains_Animated (cb_context_t *cbx, qmodel_t *model)
 				.light_tex = light_tex,
 				.lightmap_tex = (s->lightmaptexturenum >= 0) ? lightmaps[s->lightmaptexturenum].texture : greytexture,
 				.alpha_test = alpha_test,
+				.alpha_transmission = diffuse_tex && diffuse_tex->rtalphatest,
 				.alpha = 1.0f,
 				.use_zbias = false,
 				.is_warp = false,
@@ -3276,8 +3630,9 @@ void R_DrawTextureChains_Multitexture (
 
 		RT_ClearBatch (cbx);
 
-		qboolean alpha_test = (t->texturechains[chain]->flags & SURF_DRAWFENCE) != 0;
 		gltexture_t *diffuse_tex = R_TextureAnimation (t, ent_frame)->gltexture;
+		const qboolean alpha_test = (t->texturechains[chain]->flags & SURF_DRAWFENCE) != 0 ||
+		                            (diffuse_tex && diffuse_tex->rtalphatest);
 
 		gltexture_t *light_tex = RT_CanonicalLightTex (t, ent_frame);
 
@@ -3295,6 +3650,7 @@ void R_DrawTextureChains_Multitexture (
 				.light_tex = light_tex,
 				.lightmap_tex = (s->lightmaptexturenum >= 0) ? lightmaps[s->lightmaptexturenum].texture : greytexture,
 				.alpha_test = alpha_test,
+				.alpha_transmission = diffuse_tex && diffuse_tex->rtalphatest,
 				.alpha = alpha,
 				.use_zbias = use_zbias,
 				.is_warp = false,
@@ -3413,7 +3769,7 @@ the doorways of the map make it, and a light given the whole of it fills the lis
 only sees into, where the lights standing there are then the ones the pass has to drop.
 =============
 */
-static void RT_RegisterWorldModelLight (const RgTexturedAreaLightUploadInfo *lt, vec3_t center)
+static void RT_RegisterWorldModelLight (const QrTexturedAreaLightUploadInfo *lt, vec3_t center)
 {
 	const float nudge = 2.0f;
 	const vec3_t origin = {
@@ -3424,14 +3780,18 @@ static void RT_RegisterWorldModelLight (const RgTexturedAreaLightUploadInfo *lt,
 
 	RT_ClusterLightAdd (lt->uniqueID, origin, RT_ClusterLightReachStatic ());
 
-	if (CVAR_TO_BOOL (rt_debugemissive))
+	if (CVAR_TO_FLOAT (rt_dtal_debug) == 1.0f)
 	{
 		RT_EmitEmissiveWirePolygon (lt);
+	}
+	else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
+	{
+		RT_DtalDebugAdd (center, lt->normal.data, lt->area);
 	}
 }
 
 /* The light manager drops a light whose colour channels sum to less than 0.0001
-   (IsColorTooDim in vkpt). A light style or a dark animation frame switching the light off must
+   (IsColorTooDim in qray). A light style or a dark animation frame switching the light off must
    not push the colour below that: a dropped id leaves a hole in every cluster list naming it,
    which is the whole-scene flicker. Keep the faintest possible emission instead. */
 #define RT_MIN_EMISSIVE_COLOR_SUM 0.0002f
@@ -3469,7 +3829,7 @@ void RT_UploadAllWorldModelLights (void)
 
 	for (int i = 0; i < rt_wldlights_emissive_count; i++)
 	{
-		RgTexturedAreaLightUploadInfo *li = &rt_wldlights_emissive_upload[i];
+		QrTexturedAreaLightUploadInfo *li = &rt_wldlights_emissive_upload[i];
 		const msurface_t *surf = rt_wldlights_emissive_surf[i];
 		gltexture_t *light_tex = rt_wldlights_emissive_tex[i];
 
@@ -3521,9 +3881,9 @@ void RT_UploadAllWorldModelLights (void)
 	if (CVAR_TO_BOOL (rt_wmodel_lights_batch))
 	{
 		/* The per-light cost is the call, not the light: hand the whole map over in one. */
-		RgResult r = rgUploadTexturedAreaLights (vulkan_globals.instance, rt_wldlights_emissive_upload,
+		QrResult r = qrUploadTexturedAreaLights (vulkan_globals.instance, rt_wldlights_emissive_upload,
 		                                         (uint32_t) rt_wldlights_emissive_count);
-		RG_CHECK (r);
+		QR_CHECK (r);
 
 		for (int i = 0; i < rt_wldlights_emissive_count; i++)
 		{
@@ -3534,10 +3894,10 @@ void RT_UploadAllWorldModelLights (void)
 	{
 		for (int i = 0; i < rt_wldlights_emissive_count; i++)
 		{
-			const RgTexturedAreaLightUploadInfo *lt = &rt_wldlights_emissive_upload[i];
+			const QrTexturedAreaLightUploadInfo *lt = &rt_wldlights_emissive_upload[i];
 
-			RgResult r = rgUploadTexturedAreaLight (vulkan_globals.instance, lt);
-			RG_CHECK (r);
+			QrResult r = qrUploadTexturedAreaLight (vulkan_globals.instance, lt);
+			QR_CHECK (r);
 
 			RT_RegisterWorldModelLight (lt, rt_wldlights_emissive_center[i]);
 		}
@@ -3712,7 +4072,7 @@ static struct rt_parsetriggers_result_t ParseTeleportTriggers (void)
 	}
 }
 
-#define RG_MAX_PORTALS 62
+#define QR_MAX_PORTALS 62
 
 void RT_ParseTeleports (void)
 {
@@ -3765,9 +4125,9 @@ void RT_ParseTeleports (void)
 		}
 	}
 
-	if (rt_teleports_count > RG_MAX_PORTALS)
+	if (rt_teleports_count > QR_MAX_PORTALS)
 	{
-		rt_teleports_count = RG_MAX_PORTALS;
+		rt_teleports_count = QR_MAX_PORTALS;
 		Con_Warning ("Too many teleports to render, limit is 62");
 	}
 
@@ -3776,9 +4136,9 @@ void RT_ParseTeleports (void)
 }
 
 
-static RgFloat3D ApplyTransform (const RgTransform *transform, const vec3_t v)
+static QrFloat3D ApplyTransform (const QrTransform *transform, const vec3_t v)
 {
-	RgFloat3D r = {0};
+	QrFloat3D r = {0};
 	for (int i = 0; i < 3; i++)
 	{
 		r.data[i] = 
@@ -3800,14 +4160,14 @@ static float DistanceSqr (const vec3_t a, const vec3_t b)
 }
 
 
-static qboolean RT_FindNearestTeleport (const RgGeometryUploadInfo *info, uint8_t *result, qboolean *potentially_mirror)
+static qboolean RT_FindNearestTeleport (const QrGeometryUploadInfo *info, uint8_t *result, qboolean *potentially_mirror)
 {
 	vec3_t emin = {FLT_MAX, FLT_MAX, FLT_MAX};
 	vec3_t emax = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
 
 	for (uint32_t i = 0; i < info->vertexCount; i++)
 	{
-		RgFloat3D v = ApplyTransform (&info->transform, info->pVertices[i].position);
+		QrFloat3D v = ApplyTransform (&info->transform, info->pVertices[i].position);
 
 		for (int k = 0; k < 3; k++)
 		{
@@ -3839,7 +4199,7 @@ static qboolean RT_FindNearestTeleport (const RgGeometryUploadInfo *info, uint8_
 		return false;
 	}
 
-	assert (nearest <= RG_MAX_PORTALS);
+	assert (nearest <= QR_MAX_PORTALS);
 
 	*result = (uint8_t)nearest;
 	*potentially_mirror = rt_teleports[nearest].potentially_mirror;
@@ -3849,7 +4209,7 @@ static qboolean RT_FindNearestTeleport (const RgGeometryUploadInfo *info, uint8_
 
 void RT_UploadAllTeleports ()
 {
-	assert (rt_teleports_count >= 0 && rt_teleports_count <= RG_MAX_PORTALS);
+	assert (rt_teleports_count >= 0 && rt_teleports_count <= QR_MAX_PORTALS);
 
 	if (!CVAR_TO_BOOL (rt_teleport_portals))
 	{
@@ -3868,7 +4228,7 @@ void RT_UploadAllTeleports ()
 			AngleVectors (out_angles, forward, right, up);
 		}
 
-		RgPortalUploadInfo info = 
+		QrPortalUploadInfo info = 
 		{
 			.portalIndex = (uint8_t)i,
 			.inPosition = RT_VEC3 (tele->a),
@@ -3879,8 +4239,8 @@ void RT_UploadAllTeleports ()
 
 		VectorAdd (info.outPosition.data, outoffset, info.outPosition.data);
 
-		RgResult r = rgUploadPortal (vulkan_globals.instance, &info);
-		RG_CHECK (r);
+		QrResult r = qrUploadPortal (vulkan_globals.instance, &info);
+		QR_CHECK (r);
 	}
 }
 
@@ -3893,7 +4253,7 @@ The texture that makes a surface emissive, or NULL. Mirrors the gate inside
 RT_CollectWorldEmissiveLights. The out parameters are optional.
 =================
 */
-static gltexture_t *RT_EmissiveLightTex (msurface_t *surf, RgMaterial *material, float *meanEmiss, vec3_t color)
+static gltexture_t *RT_EmissiveLightTex (msurface_t *surf, QrMaterial *material, float *meanEmiss, vec3_t color)
 {
 	if (!surf || !surf->texinfo || (surf->flags & (SURF_DRAWSKY | SURF_NOTEXTURE)))
 		return NULL;
@@ -3930,7 +4290,7 @@ static qboolean RT_SurfaceOwnedBySubmodel (const qmodel_t *model, int surfindex)
 RT_WorldCensus
 
 Reports the BSP tables the renderer has to own once the light polygons (and later the
-cluster light lists) move into it, so the payload of rgUploadWorldLights can be sized
+cluster light lists) move into it, so the payload of qrUploadWorldLights can be sized
 before any of it is written. Read only: nothing is uploaded and nothing is built.
 Enable with rt_worldcensus 1 and reload the map.
 =================
@@ -4014,7 +4374,7 @@ void RT_WorldCensus (void)
 	Con_Printf ("world census: %s\n", model->name);
 	Con_Printf ("  bsp: %i leafs (clusters), %i submodels, %i surfaces, %i edges, %i vertexes\n",
 		model->numleafs, model->numsubmodels, model->numsurfaces, model->numedges, model->numvertexes);
-	Con_Printf ("  faces: %i stand in the world, %i belong to %i inline models; %i RgVertex for all of them\n",
+	Con_Printf ("  faces: %i stand in the world, %i belong to %i inline models; %i QrVertex for all of them\n",
 		world_only_faces, inline_faces, inline_models, all_verts);
 	Con_Printf ("  emissive faces: %i world + %i inline = %i total, %i of them carry a mask (%i inline vertexes)\n",
 		world_only_light_faces, inline_light_faces, all_light_faces, masked_light_faces, inline_verts);
@@ -4065,8 +4425,8 @@ typedef struct
 	qmodel_t *model;
 
 	int        num_clusters;
-	RgFloat3D *cluster_mins;
-	RgFloat3D *cluster_maxs;
+	QrFloat3D *cluster_mins;
+	QrFloat3D *cluster_maxs;
 	uint8_t   *cluster_flags;
 	int32_t   *vis_offsets;
 	uint32_t   pvs_row_bytes;
@@ -4089,8 +4449,8 @@ static rt_worldclusters_t rt_worldclusters;
 static void RT_AllocClusterTables (int num_clusters)
 {
 	rt_worldclusters.num_clusters  = num_clusters;
-	rt_worldclusters.cluster_mins  = (RgFloat3D *)Mem_Alloc (sizeof (RgFloat3D) * num_clusters);
-	rt_worldclusters.cluster_maxs  = (RgFloat3D *)Mem_Alloc (sizeof (RgFloat3D) * num_clusters);
+	rt_worldclusters.cluster_mins  = (QrFloat3D *)Mem_Alloc (sizeof (QrFloat3D) * num_clusters);
+	rt_worldclusters.cluster_maxs  = (QrFloat3D *)Mem_Alloc (sizeof (QrFloat3D) * num_clusters);
 	rt_worldclusters.cluster_flags = (uint8_t *)Mem_Alloc (sizeof (uint8_t) * num_clusters);
 	rt_worldclusters.vis_offsets   = (int32_t *)Mem_Alloc (sizeof (int32_t) * num_clusters);
 }
@@ -4266,7 +4626,7 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 	rt_worldclusters.leaf_cluster[0] = 0;
 	VectorCopy (model->mins, rt_worldclusters.cluster_mins[0].data);
 	VectorCopy (model->maxs, rt_worldclusters.cluster_maxs[0].data);
-	rt_worldclusters.cluster_flags[0] = RG_WORLD_CLUSTER_SOLID_BIT;
+	rt_worldclusters.cluster_flags[0] = QR_WORLD_CLUSTER_SOLID_BIT;
 	rt_worldclusters.vis_offsets[0] = -1;
 
 	for (int i = 1; i <= num_leafs; i++)
@@ -4277,7 +4637,7 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 		rt_worldclusters.leaf_cluster[i] = i;
 		VectorCopy (leaf->minmaxs, rt_worldclusters.cluster_mins[i].data);
 		VectorCopy (leaf->minmaxs + 3, rt_worldclusters.cluster_maxs[i].data);
-		rt_worldclusters.cluster_flags[i] = (leaf->contents == CONTENTS_SOLID) ? RG_WORLD_CLUSTER_SOLID_BIT : 0;
+		rt_worldclusters.cluster_flags[i] = (leaf->contents == CONTENTS_SOLID) ? QR_WORLD_CLUSTER_SOLID_BIT : 0;
 
 		if (leaf->compressed_vis)
 		{
@@ -4359,7 +4719,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 			rt_worldclusters.cluster_maxs[c].data[a] = map_mins[a];
 		}
 
-		rt_worldclusters.cluster_flags[c] = RG_WORLD_CLUSTER_SOLID_BIT;
+		rt_worldclusters.cluster_flags[c] = QR_WORLD_CLUSTER_SOLID_BIT;
 	}
 
 	rt_worldclusters.vis_offsets[0] = -1;
@@ -4761,8 +5121,8 @@ can grow light polygons out of these faces.
 */
 typedef struct
 {
-	RgWorldLightFace *faces;
-	RgVertex         *face_vertices;
+	QrWorldLightFace *faces;
+	QrVertex         *face_vertices;
 
 	int num_clusters;
 	int num_faces;
@@ -4811,8 +5171,8 @@ void RT_UploadWorldLights (void)
 
 	if (rt_worldlights.num_faces > 0)
 	{
-		rt_worldlights.faces = (RgWorldLightFace *)Mem_Alloc (sizeof (RgWorldLightFace) * rt_worldlights.num_faces);
-		rt_worldlights.face_vertices = (RgVertex *)Mem_Alloc (sizeof (RgVertex) * rt_worldlights.num_face_vertices);
+		rt_worldlights.faces = (QrWorldLightFace *)Mem_Alloc (sizeof (QrWorldLightFace) * rt_worldlights.num_faces);
+		rt_worldlights.face_vertices = (QrVertex *)Mem_Alloc (sizeof (QrVertex) * rt_worldlights.num_face_vertices);
 	}
 
 	// Second pass: the faces themselves, with their corners in world space.
@@ -4821,14 +5181,14 @@ void RT_UploadWorldLights (void)
 	for (int i = 0; i < model->numsurfaces; i++)
 	{
 		msurface_t *surf = &model->surfaces[i];
-		RgMaterial  material;
+		QrMaterial  material;
 		float       meanEmiss;
 		vec3_t      color;
 
 		if (!RT_EmissiveLightTex (surf, &material, &meanEmiss, color) || !surf->polys || surf->numedges < 3)
 			continue;
 
-		RgWorldLightFace *face = &rt_worldlights.faces[face_index++];
+		QrWorldLightFace *face = &rt_worldlights.faces[face_index++];
 		const qboolean    owned_by_submodel = RT_SurfaceOwnedBySubmodel (model, i);
 
 		face->uniqueID    = RT_GetBrushSurfUniqueId (ENT_UNIQUEID_WORLD, model, surf, 0);
@@ -4836,7 +5196,7 @@ void RT_UploadWorldLights (void)
 		face->numVertices = (uint32_t)surf->numedges;
 		face->cluster     = (uint32_t)RT_MapWorldCluster (RT_GetSurfaceCluster (model, surf));
 		// has_mask of RT_EmissiveLightParamsForTex: only a part of the texture glows.
-		face->flags     = (material != RG_NO_MATERIAL) ? RG_WORLD_LIGHT_FACE_MASKED_BIT : 0;
+		face->flags     = (material != QR_NO_MATERIAL) ? QR_WORLD_LIGHT_FACE_MASKED_BIT : 0;
 		face->material  = material;
 		face->meanEmiss = meanEmiss;
 		// Inline models (doors, platforms) still move, so the host keeps their corners
@@ -4844,14 +5204,14 @@ void RT_UploadWorldLights (void)
 		face->isStatic = owned_by_submodel ? 0 : 1;
 
 		if (owned_by_submodel)
-			face->flags |= RG_WORLD_LIGHT_FACE_INLINE_MODEL_BIT;
+			face->flags |= QR_WORLD_LIGHT_FACE_INLINE_MODEL_BIT;
 
 		VectorCopy (color, face->color.data);
 
 		for (int v = 0; v < surf->numedges; v++)
 		{
 			const float *srcv = surf->polys->verts[v];
-			RgVertex    *dstv = &rt_worldlights.face_vertices[vertex_index++];
+			QrVertex    *dstv = &rt_worldlights.face_vertices[vertex_index++];
 
 			dstv->position[0] = srcv[0];
 			dstv->position[1] = srcv[1];
@@ -4871,9 +5231,9 @@ void RT_UploadWorldLights (void)
 	if (rt_worldclusters.vis_data)
 		pvis_data = rt_worldclusters.vis_data;
 
-	RgWorldLightsUploadInfo info =
+	QrWorldLightsUploadInfo info =
 	{
-		.flags           = CVAR_TO_BOOL (rt_worldlights_stats) ? RG_WORLD_LIGHTS_UPLOAD_PRINT_STATS_BIT : 0,
+		.flags           = CVAR_TO_BOOL (rt_worldlights_stats) ? QR_WORLD_LIGHTS_UPLOAD_PRINT_STATS_BIT : 0,
 		.numClusters     = (uint32_t)rt_worldlights.num_clusters,
 		.pClusterMins    = rt_worldclusters.cluster_mins,
 		.pClusterMaxs    = rt_worldclusters.cluster_maxs,
@@ -4889,8 +5249,8 @@ void RT_UploadWorldLights (void)
 		.pClusterSkyVisibility = rt_worldclusters.sky_vis,
 	};
 
-	RgResult r = rgUploadWorldLights (vulkan_globals.instance, &info);
-	RG_CHECK (r);
+	QrResult r = qrUploadWorldLights (vulkan_globals.instance, &info);
+	QR_CHECK (r);
 }
 
 void RT_PrintEmissiveStats (void)
@@ -4903,6 +5263,16 @@ void RT_PrintEmissiveStats (void)
 	if (rt_emis_stats.glow_lights || rt_emis_stats.glow_fallback)
 		RT_LightReportPrint ("partial-glow textures: %i faces built %i polygon lights, %i faces fell back to the whole surface\n",
 			rt_emis_stats.glow_faces, rt_emis_stats.glow_lights, rt_emis_stats.glow_fallback);
+
+	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || Atomic_LoadUInt32 (&rt_emis_stats.buried) || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
+		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_model_lights_minarea, %i polygons buried under rt_dtal_clearance\n",
+			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.buried));
+
+	if (Atomic_LoadUInt32 (&rt_buried_traces) || Atomic_LoadUInt32 (&rt_buried_hits) ||
+	    Atomic_LoadUInt32 (&rt_buried_model_traces) || Atomic_LoadUInt32 (&rt_buried_model_hits))
+		RT_LightReportPrint ("rt_dtal_clearance: %i polygons traced, %i served from the cache; alias models: %i traced, %i served from the cache\n",
+			(int) Atomic_LoadUInt32 (&rt_buried_traces), (int) Atomic_LoadUInt32 (&rt_buried_hits),
+			(int) Atomic_LoadUInt32 (&rt_buried_model_traces), (int) Atomic_LoadUInt32 (&rt_buried_model_hits));
 
 	if (Atomic_LoadUInt32 (&rt_emis_stats.model_lights) || Atomic_LoadUInt32 (&rt_emis_stats.model_capped))
 		RT_LightReportPrint ("alias models: %i textured-area lights built from model geometry, %i models turned down by the frame budget\n",

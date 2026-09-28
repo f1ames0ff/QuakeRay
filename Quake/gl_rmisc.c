@@ -529,12 +529,12 @@ int RT_GetEntityUniqueId (const entity_t *ent)
 	return 0;
 }
 
-RgFloat3D RT_AnglesToDir (vec3_t angles)
+QrFloat3D RT_AnglesToDir (vec3_t angles)
 {
 	vec3_t f, r, u;
 	AngleVectors (angles, f, r, u);
 
-	RgFloat3D dir = RT_VEC3 (f);
+	QrFloat3D dir = RT_VEC3 (f);
 	return dir;
 }
 
@@ -545,7 +545,7 @@ float RT_Luminance(const vec3_t color)
 
 #define MODEL_MAT(i, j) (model_matrix[(i)*4 + (j)])
 
-RgTransform RT_GetModelTransform(const float model_matrix[16])
+QrTransform RT_GetModelTransform(const float model_matrix[16])
 {
 	// right side should be 0, and translation values on bottom
 	assert (
@@ -553,7 +553,7 @@ RgTransform RT_GetModelTransform(const float model_matrix[16])
 		fabsf (MODEL_MAT (1, 3)) < 0.001f && 
 		fabsf (MODEL_MAT (2, 3)) < 0.001f);
 
-	RgTransform t = {
+	QrTransform t = {
 		MODEL_MAT (0, 0), MODEL_MAT (1, 0), MODEL_MAT (2, 0), MODEL_MAT (3, 0),
 	    MODEL_MAT (0, 1), MODEL_MAT (1, 1), MODEL_MAT (2, 1), MODEL_MAT (3, 1), MODEL_MAT (0, 2), MODEL_MAT (1, 2), MODEL_MAT (2, 2), MODEL_MAT (3, 2),
 	};
