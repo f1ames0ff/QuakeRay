@@ -14,6 +14,8 @@ QuakeRay is a ray tracing engine for Quake 1, with Q2RTX-style partial path trac
 * ASVGF denoiser.
 * RT Global Illumination
 * NEE (Next Event Estimation) for the sun, emissives and dynamic lights.
+* Alpha-transparent textures are traced through, not only cut out: a material marked `alpha_test` hands its alpha to the sampler, and a ray that crosses such a texel keeps the strength of its transparency.
+* Spot lights: a dynamic light can shine in a cone, with adjustable angles and strength (`dlightspot` at the console until the editor places them).
 * per-BSP-cluster light lists (legacy).
 * Animated light entities (`rt_light_styles`) make their own fixture flicker, in accordance with the original light style, to preserve the original Quake 1 lighting design.
 * Full material system with per-brush and per-model metalness/roughness, normal map strength and texture-driven gloss maps, plus ray-traced water with animated wave normals and refraction.
