@@ -39,6 +39,7 @@
 #include "RHI/RhiFsrPass.h"
 #include "RHI/RhiPostEffectPass.h"
 #include "RHI/RhiProceduralSkyPass.h"
+#include "RHI/RhiCloudsPass.h"
 #include "RHI/RhiRasterOverlayPass.h"
 #include "RHI/RhiRasterSkyPass.h"
 #include "RHI/RhiRtComposePass.h"
@@ -446,6 +447,15 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 {
                     rhiProceduralSkyPass.reset();
                     Print("Warning: RHI: the procedural sky pass is unavailable, the RT passes keep the placeholder cubemaps");
+                }
+
+                rhiCloudsPass = std::make_shared<RhiCloudsPass>();
+                if (!rhiCloudsPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                           info->pShaderFolderPath,
+                                           [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiCloudsPass.reset();
+                    Print("Warning: RHI: the cloud layer pass is unavailable");
                 }
 
                 // The raster sky pass (RHI/RhiRasterSkyPass.h): the cube half of
@@ -872,6 +882,7 @@ VulkanDevice::~VulkanDevice()
     rhiPostEffectPass.reset();
     rhiRasterSkyPass.reset();
     rhiProceduralSkyPass.reset();
+    rhiCloudsPass.reset();
     rhiAccelStructs.reset();
 
     // The table's wrapped textures reference engine images and its samplers belong to the NVRHI

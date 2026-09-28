@@ -76,6 +76,7 @@ class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
 class RhiProceduralSkyPass;
+class RhiCloudsPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
 class RhiRtComposePass;
@@ -335,6 +336,7 @@ private:
     // images and the sampler; the primary, indirect and reflect/refract passes bind them in set 8.
     // Null when the creation failed; the passes then keep their 1x1 placeholders.
     std::shared_ptr<RhiProceduralSkyPass>   rhiProceduralSkyPass;
+    std::shared_ptr<RhiCloudsPass>          rhiCloudsPass;
 
     // The RHI raster sky pass (RHI/RhiRasterSkyPass.h): the cube half of
     // SKY_TYPE_RASTERIZED_GEOMETRY, the ported `Rasterizer::DrawSkyToCubemap` ->
