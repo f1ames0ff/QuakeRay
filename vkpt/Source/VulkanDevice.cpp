@@ -1531,14 +1531,31 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
             p.sunDirection[1] = d[1] / len;
             p.sunDirection[2] = d[2] / len;
         }
-        p.skyTint[3] = sunAngularRadius;
         p.skyParams[0] = globalUniform->skyColorMultiplier;
         p.skyParams[1] = globalUniform->skyColorSaturation;
         p.skyParams[2] = 6.0f;      // sun disc intensity (VulkanDevice.cpp:820)
         p.skyParams[3] = 0.025f;    // display sun disc angular radius, rad (VulkanDevice.cpp:821)
 
+        // The quality level of rt_sky_clouds_quality (anything above extreme is read as extreme).
+        // The flat level draws the mask the sky had before the layer was a volume: no layer for
+        // the host to march and no shadow volume of one, so the flag travels in the tail of the
+        // sky tint, which has nothing else to carry.
+        const uint32_t cloudsQuality = drawInfo.pSkyParams != nullptr
+            ? (drawInfo.pSkyParams->skyCloudsQuality > 4 ? 4 : drawInfo.pSkyParams->skyCloudsQuality)
+            : 2;
+        const bool flatClouds = cloudsQuality == 0;
+
+        // The view march steps of the quality ladder, the legacy table (RenderCubemap.cpp
+        // CLOUDS_VIEW_STEPS). The layer and its shadow volume are drawn at the legacy HIGH sizes.
+        constexpr float CLOUDS_VIEW_STEPS[5] = { 32.0f, 40.0f, 48.0f, 56.0f, 64.0f };
+        constexpr float CLOUD_REFERENCE_ALTITUDE = 1400.0f;
+
+        float cloudAltitude = 140000.0f;
+        float cloudThickness = 90000.0f;
+
         // Cloud params are packed into the otherwise-unused skyCubemapRotationTransform field:
-        // [0..2] cloud colour, [3] coverage, [4] density, [5] drift speed, [6] enabled.
+        // [0..2] cloud colour, [3] coverage, [4] density, [5] drift speed, [6] enabled,
+        // [7] the layer's altitude, [8] its thickness.
         p.cloudColor[3] = globalUniform->time;
         if (drawInfo.pSkyParams)
         {
@@ -1550,7 +1567,24 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
             p.cloudParams[1] = c[4];
             p.cloudParams[2] = c[5];
             p.cloudParams[3] = c[6];
+
+            if (c[7] > 0.0f)
+            {
+                cloudAltitude = c[7];
+            }
+            if (c[8] > 0.0f)
+            {
+                cloudThickness = c[8];
+            }
         }
+
+        p.skyTint[3] = flatClouds ? 1.0f : 0.0f;
+
+        // The drift of the layer's noise is a matter of proportion to its height, or the noise
+        // would crawl over the layer at one rate whatever its altitude. Must equal
+        // CLOUD_REFERENCE_ALTITUDE in CloudLayer.hlsli, where the seed of the march is scaled by
+        // the same ratio.
+        p.cloudParams[2] *= cloudAltitude / CLOUD_REFERENCE_ALTITUDE;
 
         // Per-face camera bases, matching Matrix::GetCubemapViewProjMat.
         constexpr float PI = 3.14159265358979323846f;
@@ -1574,6 +1608,43 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
             p.faceBasis[face * 3 + 1][0] = view[1];  p.faceBasis[face * 3 + 1][1] = view[5];  p.faceBasis[face * 3 + 1][2] = view[9];
             p.faceBasis[face * 3 + 2][0] = view[2];  p.faceBasis[face * 3 + 2][1] = view[6];  p.faceBasis[face * 3 + 2][2] = view[10];
         }
+
+        // The layer itself (RHI/RhiCloudsPass.h). Its bounds are the slab of the sky's march; the
+        // march is the quality's step count, and the sunlight and the sky light that reach the
+        // clouds are 1 (the colours they are lit with arrive in the other fields). The layer
+        // belongs to the world rather than to the eye: the clouds hang at a fixed height over the
+        // world's plane, so where the eye stands in that world is part of what they are drawn from.
+        RhiCloudsPass::LayerParams clouds = {};
+        static_assert(offsetof(RhiCloudsPass::LayerParams, cloudLayer) == sizeof(RhiProceduralSkyPass::Params),
+                      "the layer params must start with the procedural sky params");
+        memcpy(&clouds, &p, sizeof(p));
+
+        clouds.cloudLayer[0] = cloudAltitude;
+        clouds.cloudLayer[1] = cloudThickness;
+        clouds.cloudLayer[2] = 1.0f;
+        clouds.cloudLayer[3] = 1.0f;
+        clouds.cloudMarch[0] = CLOUDS_VIEW_STEPS[cloudsQuality];
+        clouds.cloudMarch[2] = 0.35f;
+        clouds.cloudMarch[3] = 0.75f;
+        clouds.cloudAnchor[0] = globalUniform->cameraPosition[0];
+        clouds.cloudAnchor[1] = globalUniform->cameraPosition[1];
+        clouds.cloudAnchor[2] = globalUniform->cameraPosition[2];
+        sky.cloudsParams = clouds;
+
+        RhiCloudsPass::ShadowParams cloudsShadow = {};
+        cloudsShadow.sunDirection[0] = p.sunDirection[0];
+        cloudsShadow.sunDirection[1] = p.sunDirection[1];
+        cloudsShadow.sunDirection[2] = p.sunDirection[2];
+        cloudsShadow.sunDirection[3] = cloudAltitude;
+        cloudsShadow.cloudLayer[0] = cloudThickness;
+        cloudsShadow.cloudLayer[1] = p.cloudParams[0];
+        cloudsShadow.cloudLayer[2] = p.cloudParams[1];
+        cloudsShadow.cloudLayer[3] = clouds.cloudMarch[2];
+        cloudsShadow.cloudMarch[0] = p.cloudColor[3];
+        cloudsShadow.cloudMarch[1] = p.cloudParams[2];
+        sky.cloudsShadowParams = cloudsShadow;
+
+        sky.cloudsLayer = !flatClouds && p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;
 
         sky.proceduralSkyParams = p;
     }

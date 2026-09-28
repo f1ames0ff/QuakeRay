@@ -64,7 +64,8 @@ layout(rgba16f, set = 0, binding = 2) uniform imageCube envCubemapOut;
 
 // rgb = the light scattered in the cloud layer along this direction, a = how much
 // of what is behind the layer gets through it. Filled by CmSkyClouds.comp.
-layout(set = 0, binding = 4) uniform samplerCube cloudCubemap;
+layout(set = 0, binding = 3) uniform textureCube cloudCubemap;
+layout(set = 0, binding = 4) uniform sampler cloudCubemap_Sampler;
 
 // How far from the direction asked for the nine reads of the layer stand, as a
 // fraction of the map's texel: a spread of 1.0 puts them half a texel out on each
@@ -82,8 +83,6 @@ layout(std140, set = 0, binding = 1) uniform Params
     vec4 cloudColor;    // xyz = cloud colour (rt_sky_clouds_color), w = cloud time (seconds)
     vec4 cloudParams;   // x = cloud coverage, y = cloud density (rt_sky_clouds_density), z = drift speed, w = clouds enabled
     vec4 sunDiscColor;  // xyz = color of the sun disc (rt_sky_sun_color), w unused
-    vec4 cloudLayer;    // x = altitude of the cloud layer, y = thickness, z = sunlight strength, w = sky light strength
-    vec4 cloudMarch;    // x = view march steps, y = unused (the walk of a column towards the sun is CLOUD_SHADOW_STEPS, CloudLayer.h), z = detail erosion strength, w = forward scattering
 } params;
 
 // --- the flat clouds of the lowest quality level (rt_sky_clouds_quality 0) ---
@@ -188,17 +187,17 @@ void main()
         // corners of a square, which is what stood here before, are four lobes and leave
         // a dither of their own. The filter belongs here, where it is paid once for the
         // whole sky, and not in the pass that fills the map.
-        vec2 texel = 1.0 / vec2(textureSize(cloudCubemap, 0));
+        vec2 texel = 1.0 / vec2(textureSize(samplerCube(cloudCubemap, cloudCubemap_Sampler), 0));
         vec2 spread = texel * CLOUD_READ_SPREAD;
-        vec4 centre = texture(cloudCubemap, dir);
-        vec4 edges  = texture(cloudCubemap, dir - right * spread.x) +
-                      texture(cloudCubemap, dir + right * spread.x) +
-                      texture(cloudCubemap, dir - up * spread.y) +
-                      texture(cloudCubemap, dir + up * spread.y);
-        vec4 corners = texture(cloudCubemap, dir - right * spread.x - up * spread.y) +
-                       texture(cloudCubemap, dir - right * spread.x + up * spread.y) +
-                       texture(cloudCubemap, dir + right * spread.x - up * spread.y) +
-                       texture(cloudCubemap, dir + right * spread.x + up * spread.y);
+        vec4 centre = texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir);
+        vec4 edges  = texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir - right * spread.x) +
+                      texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir + right * spread.x) +
+                      texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir - up * spread.y) +
+                      texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir + up * spread.y);
+        vec4 corners = texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir - right * spread.x - up * spread.y) +
+                       texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir - right * spread.x + up * spread.y) +
+                       texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir + right * spread.x - up * spread.y) +
+                       texture(samplerCube(cloudCubemap, cloudCubemap_Sampler), dir + right * spread.x + up * spread.y);
         // The separable 1-2-1 kernel: the centre weighs 4, the four edges 2, the
         // four corners 1, and sixteen is what all of them weigh together.
         cloud = (centre * 4.0 + edges * 2.0 + corners) / 16.0;

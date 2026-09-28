@@ -32,6 +32,7 @@
 #include "../Common.h"
 #include "../ISwapchainDependency.h"
 #include "../RasterizedDataCollector.h"
+#include "RhiCloudsPass.h"
 #include "RhiProceduralSkyPass.h"
 
 namespace vkpt
@@ -207,6 +208,16 @@ public:
         // early-outs by these bytes, so an unchanged frame (clouds off) costs one memcmp.
         RhiProceduralSkyPass::Params proceduralSkyParams = {};
 
+        // -- the volumetric clouds of that sky (RHI/RhiCloudsPass.h) --
+        // The cloud layer's own inputs: 'cloudsLayer' is the host's gate (clouds on and not the
+        // flat level of rt_sky_clouds_quality), 'cloudsParams' the layer march and
+        // 'cloudsShadowParams' the seed of its shadow volume; the pass fills the placement of both
+        // itself. The skeleton records the pass before the sky, so the composite samples a layer
+        // the same list wrote.
+        bool cloudsLayer = false;
+        RhiCloudsPass::LayerParams cloudsParams = {};
+        RhiCloudsPass::ShadowParams cloudsShadowParams = {};
+
         // -- the decals (A5.6) --
         // The engine DecalManager buffers for this slot: the staging the game's uploads go to and
         // the device-local instance array the pass's set 3 binds (stride sizeof(ShDecalInstance)).
@@ -373,6 +384,7 @@ public:
                                 RhiRtComposePass *pRtComposePass,
                                 RhiRtReflRefrPass *pReflRefrPass,
                                 RhiProceduralSkyPass *pProceduralSkyPass,
+                                RhiCloudsPass *pCloudsPass,
                                 RhiRasterSkyPass *pRasterSkyPass,
                                 RhiRasterOverlayPass *pRasterOverlayPass,
                                 RhiDecalPass *pDecalPass,
@@ -521,6 +533,13 @@ private:
     // writes the cube the RT passes' set 8 samples. Not owned; null when the host's creation failed,
     // in which case the passes sample their placeholders.
     RhiProceduralSkyPass *proceduralSkyPass = nullptr;
+
+    // The host's cloud layer pass (RhiCloudsPass, RHI/RhiCloudsPass.h), driven in the traced chain
+    // right before the procedural sky when the frame asks for the layer: it writes the layer the
+    // sky's composite samples and the shadow volume of that layer. Not owned; null when the host's
+    // creation failed or the frame's `cloudsLayer` is off, in which case the sky keeps its flat
+    // clouds.
+    RhiCloudsPass *cloudsPass = nullptr;
 
     // The host's raster sky pass (RhiRasterSkyPass, RHI/RhiRasterSkyPass.h), driven in the traced
     // chain right after the procedural-sky block and before the primary whenever the uniform

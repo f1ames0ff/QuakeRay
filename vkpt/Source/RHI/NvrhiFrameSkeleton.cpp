@@ -104,6 +104,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiRtComposePass *pRtComposePass,
                                        RhiRtReflRefrPass *pReflRefrPass,
                                        RhiProceduralSkyPass *pProceduralSkyPass,
+                                       RhiCloudsPass *pCloudsPass,
                                        RhiRasterSkyPass *pRasterSkyPass,
                                        RhiRasterOverlayPass *pRasterOverlayPass,
                                        RhiDecalPass *pDecalPass,
@@ -125,6 +126,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , rtComposePass(pRtComposePass)
     , reflRefrPass(pReflRefrPass)
     , proceduralSkyPass(pProceduralSkyPass)
+    , cloudsPass(pCloudsPass)
     , rasterSkyPass(pRasterSkyPass)
     , rasterOverlayPass(pRasterOverlayPass)
     , decalPass(pDecalPass)
@@ -517,6 +519,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (proceduralSkyPass != nullptr && proceduralSkyPass->IsCreated() && uniform != nullptr &&
             uniform->skyType == SKY_TYPE_PROCEDURAL)
         {
+            if (cloudsPass != nullptr && cloudsPass->IsCreated() && sky.cloudsLayer)
+            {
+                cloudsPass->Render(commandList, frameIndex, sky.cloudsParams, sky.cloudsShadowParams);
+            }
+
             proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams);
         }
 

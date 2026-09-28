@@ -435,20 +435,6 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
             // on the skeleton then refuses to be available and the legacy renderer keeps the frame.
             if (libconfig.rhiRayTracing)
             {
-                // The procedural sky pass of A5.4 (RHI/RhiProceduralSkyPass.h): the default sky's
-                // cube content, the `RenderCubemap::DrawProcedural` path the legacy frame records
-                // before the trace. It owns its two cube images and the sampler; the primary,
-                // indirect and reflect/refract passes take them for set 8 below. A failure leaves
-                // the pointer null and the passes keep their 1x1 placeholders.
-                rhiProceduralSkyPass = std::make_shared<RhiProceduralSkyPass>();
-                if (!rhiProceduralSkyPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
-                                                  info->pShaderFolderPath,
-                                                  [this](const char *pMessage) { Print(pMessage); }))
-                {
-                    rhiProceduralSkyPass.reset();
-                    Print("Warning: RHI: the procedural sky pass is unavailable, the RT passes keep the placeholder cubemaps");
-                }
-
                 rhiCloudsPass = std::make_shared<RhiCloudsPass>();
                 if (!rhiCloudsPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
                                            info->pShaderFolderPath,
@@ -456,6 +442,23 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 {
                     rhiCloudsPass.reset();
                     Print("Warning: RHI: the cloud layer pass is unavailable");
+                }
+
+                // The procedural sky pass of A5.4 (RHI/RhiProceduralSkyPass.h): the default sky's
+                // cube content, the `RenderCubemap::DrawProcedural` path the legacy frame records
+                // before the trace. It owns its two cube images and the sampler; the primary,
+                // indirect and reflect/refract passes take them for set 8 below, and its composite
+                // binds the cloud layer of the pass above, so it is created after it. A failure
+                // leaves the pointer null and the passes keep their 1x1 placeholders.
+                rhiProceduralSkyPass = std::make_shared<RhiProceduralSkyPass>();
+                if (!rhiProceduralSkyPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                                  info->pShaderFolderPath,
+                                                  rhiCloudsPass != nullptr ? rhiCloudsPass->GetLayerTexture() : nullptr,
+                                                  rhiCloudsPass != nullptr ? rhiCloudsPass->GetLayerSampler() : nullptr,
+                                                  [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiProceduralSkyPass.reset();
+                    Print("Warning: RHI: the procedural sky pass is unavailable, the RT passes keep the placeholder cubemaps");
                 }
 
                 // The raster sky pass (RHI/RhiRasterSkyPass.h): the cube half of
@@ -766,6 +769,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 rhiRtComposePass.get(),
                 rhiRtReflRefrPass.get(),
                 rhiProceduralSkyPass.get(),
+                rhiCloudsPass.get(),
                 rhiRasterSkyPass.get(),
                 rhiRasterOverlayPass.get(),
                 rhiDecalPass.get(),

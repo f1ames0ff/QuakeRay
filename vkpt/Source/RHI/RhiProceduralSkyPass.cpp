@@ -52,6 +52,8 @@ constexpr uint32_t SKY_GROUP_SIZE = 16;
 constexpr uint32_t SKY_CUBEMAP_UAV_SLOT = 0;
 constexpr uint32_t SKY_PARAMS_CB_SLOT = 1;
 constexpr uint32_t SKY_ENV_CUBEMAP_UAV_SLOT = 2;
+constexpr uint32_t SKY_CLOUD_LAYER_SRV_SLOT = 3;
+constexpr uint32_t SKY_CLOUD_LAYER_SAMPLER_SLOT = 4;
 
 // The extent of one mip of a CUBEMAP_SIZE x CUBEMAP_SIZE face: 1024 >> m for m = 0..10, floored at
 // one texel for the last level (the same halving the legacy's blit chain walks,
@@ -96,6 +98,25 @@ nvrhi::TextureHandle CreateCubemapTexture(nvrhi::IDevice *device, const char *pD
     return rhi::createTexture(device, desc, pDebugName);
 }
 
+nvrhi::TextureHandle CreatePlaceholderCloudLayer(nvrhi::IDevice *device)
+{
+    nvrhi::TextureDesc desc;
+    desc.dimension = nvrhi::TextureDimension::TextureCube;
+    desc.format = nvrhi::Format::RGBA16_FLOAT;
+    desc.width = 1;
+    desc.height = 1;
+    desc.arraySize = RhiProceduralSkyPass::CUBEMAP_FACE_COUNT;
+    desc.mipLevels = 1;
+    desc.sampleCount = 1;
+
+    desc.isShaderResource = true;
+
+    desc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
+    desc.keepInitialState = true;
+
+    return rhi::createTexture(device, desc, "RhiProceduralSkyPass placeholder cloud layer (RGBA16F 1)");
+}
+
 // One binding set of the blob's set 0, bound for exactly one dispatch: the two images' UAVs at
 // mipLevel and the params constant buffer. The UAV items carry the mip as a single-level
 // subresource range and an explicit Texture2DArray dimension: that is how the engine's
@@ -112,6 +133,8 @@ nvrhi::BindingSetHandle CreateSkySet(nvrhi::IDevice *device,
                                     nvrhi::ITexture *pCubemap,
                                     nvrhi::ITexture *pEnvironment,
                                     nvrhi::IBuffer *pParamsBuffer,
+                                    nvrhi::ITexture *pCloudLayer,
+                                    nvrhi::ISampler *pCloudLayerSampler,
                                     uint32_t mipLevel)
 {
     const nvrhi::TextureSubresourceSet subresources(
@@ -126,6 +149,8 @@ nvrhi::BindingSetHandle CreateSkySet(nvrhi::IDevice *device,
     setDesc.addItem(nvrhi::BindingSetItem::Texture_UAV(
         SKY_ENV_CUBEMAP_UAV_SLOT, pEnvironment, nvrhi::Format::RGBA16_FLOAT, subresources,
         nvrhi::TextureDimension::Texture2DArray));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(SKY_CLOUD_LAYER_SRV_SLOT, pCloudLayer));
+    setDesc.addItem(nvrhi::BindingSetItem::Sampler(SKY_CLOUD_LAYER_SAMPLER_SLOT, pCloudLayerSampler));
 
     return device->createBindingSet(setDesc, pLayout);
 }
@@ -168,11 +193,17 @@ RhiProceduralSkyPass::~RhiProceduralSkyPass()
     skyPipeline = nullptr;
     skyLayout = nullptr;
     skyShader = nullptr;
+    placeholderCloudLayer = nullptr;
+    cloudLayerSampler = nullptr;
+    cloudLayerTexture = nullptr;
+    cloudLayerReal = false;
 }
 
 bool RhiProceduralSkyPass::Create(nvrhi::IDevice *pDevice,
                                   rhi::RhiFrameContext *pFrameContext,
                                   const char *pShaderFolderPath,
+                                  nvrhi::ITexture *pCloudLayer,
+                                  nvrhi::ISampler *pCloudLayerSampler,
                                   PrintFunction pfnPrint)
 {
     if (created)
@@ -208,17 +239,22 @@ bool RhiProceduralSkyPass::Create(nvrhi::IDevice *pDevice,
 
     // Set 0 of the blob, in its raw binding order: the visible cube's UAV at 0, the params constant
     // buffer at 1, the env cube's UAV at 2. Both offsets are 0 so an item's slot is its raw binding
-    // (RhiPipeline.h documents the offset rule). The visibility is Compute, the stage the blob runs
-    // in; a sampler offset is irrelevant because the set declares no sampler.
+    // (RhiPipeline.h documents the offset rule); the shader-resource and sampler offsets have to be
+    // zeroed too, or the layer's binding 3 would land at 3 and its sampler at 4 + 128. The
+    // visibility is Compute, the stage the blob runs in.
     {
         nvrhi::BindingLayoutDesc desc;
         desc.visibility = nvrhi::ShaderType::Compute;
         desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
+                                   .setShaderResourceOffset(0)
                                    .setUnorderedAccessViewOffset(0)
-                                   .setConstantBufferOffset(0));
+                                   .setConstantBufferOffset(0)
+                                   .setSamplerOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_UAV(SKY_CUBEMAP_UAV_SLOT));
         desc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(SKY_PARAMS_CB_SLOT));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_UAV(SKY_ENV_CUBEMAP_UAV_SLOT));
+        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(SKY_CLOUD_LAYER_SRV_SLOT));
+        desc.addItem(nvrhi::BindingLayoutItem::Sampler(SKY_CLOUD_LAYER_SAMPLER_SLOT));
 
         skyLayout = device->createBindingLayout(desc);
     }
@@ -257,6 +293,21 @@ bool RhiProceduralSkyPass::Create(nvrhi::IDevice *pDevice,
     {
         LogMessage(print, "Warning: RHI: failed to create the procedural-sky pass sampler");
         return false;
+    }
+
+    cloudLayerTexture = pCloudLayer;
+    cloudLayerSampler = pCloudLayerSampler != nullptr ? pCloudLayerSampler : skySampler.Get();
+    cloudLayerReal = pCloudLayer != nullptr;
+
+    if (!cloudLayerReal)
+    {
+        placeholderCloudLayer = CreatePlaceholderCloudLayer(device);
+
+        if (placeholderCloudLayer == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the procedural-sky pass cloud placeholder");
+            return false;
+        }
     }
 
     // The compute pipeline: the blob declares exactly one descriptor set, so the layout list is one
@@ -301,9 +352,10 @@ bool RhiProceduralSkyPass::Create(nvrhi::IDevice *pDevice,
 
         for (uint32_t mipLevel = 0; mipLevel < CUBEMAP_MIP_LEVELS; mipLevel++)
         {
-            skySets[frameIndex][mipLevel] = CreateSkySet(device, skyLayout, cubemapTexture,
-                                                         environmentTexture, paramsBuffers[frameIndex],
-                                                         mipLevel);
+            skySets[frameIndex][mipLevel] = CreateSkySet(
+                device, skyLayout, cubemapTexture, environmentTexture, paramsBuffers[frameIndex],
+                cloudLayerReal ? cloudLayerTexture : placeholderCloudLayer.Get(), cloudLayerSampler,
+                mipLevel);
 
             if (skySets[frameIndex][mipLevel] == nullptr)
             {
@@ -327,6 +379,11 @@ void RhiProceduralSkyPass::Render(nvrhi::ICommandList *pCommandList,
     }
 
     Params params = inParams;
+
+    if (!cloudLayerReal)
+    {
+        params.skyTint[3] = 1.0f;
+    }
 
     // Clouds off: freeze the animation time so the cached sky is not re-rendered every frame (only
     // when the sun/sky params change). Clouds on: keep the raw time, so the sky re-renders every
