@@ -242,6 +242,7 @@ bool RhiCloudsPass::Create(nvrhi::IDevice *pDevice,
             desc.byteSize = sizeof(LayerParams);
             desc.isConstantBuffer = true;
             desc.initialState = nvrhi::ResourceStates::CopyDest;
+            desc.keepInitialState = true;
 
             layerParamsBuffers[frameIndex] = rhi::createBuffer(device, desc, "RhiCloudsPass layer params");
         }
@@ -251,6 +252,7 @@ bool RhiCloudsPass::Create(nvrhi::IDevice *pDevice,
             desc.byteSize = sizeof(ShadowParams);
             desc.isConstantBuffer = true;
             desc.initialState = nvrhi::ResourceStates::CopyDest;
+            desc.keepInitialState = true;
 
             shadowParamsBuffers[frameIndex] = rhi::createBuffer(device, desc, "RhiCloudsPass shadow params");
         }
