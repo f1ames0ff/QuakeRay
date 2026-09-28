@@ -3051,24 +3051,9 @@ VID_Restart_f -- johnfitz -- change video modes on the fly
 */
 static void VID_Restart_f (void)
 {
-	/* Temporarily disabled: re-initializing the renderer in place corrupts the
-	   textures (the material/image caches are not rebuilt consistently), so the
-	   command is a no-op until that is fixed. */
-	Con_Printf ("vid_restart is temporarily disabled\n");
-
-#if 0
-	if (vid_locked)
+	if (vid_locked || !vid_changed)
 		return;
-
-	/* Re-read materials.yaml and re-apply the material properties to every
-	   texture so edits are picked up without a full engine restart. */
-	GL_WaitForDeviceIdle ();
-	RT_MAT_Reload ();
-	TexMgr_ReloadAllImages ();
-
-	if (vid_changed)
-		VID_Restart (true);
-#endif
+	VID_Restart (true);
 }
 
 /*
