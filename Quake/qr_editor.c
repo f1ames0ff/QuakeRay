@@ -1015,16 +1015,16 @@ static void QRE_ResolveGroup (const char *texname)
 // Picking
 // ---------------------------------------------------------------------------
 
-static qboolean QRE_PointInPolygon (const glpoly_t *poly, const vec3_t p, const mplane_t *plane)
+static qboolean QRE_PointInPolygon (const glpoly_t *poly, const vec3_t p, const vec3_t normal, float eps)
 {
 	int ax, ay, i, j, n;
 	int inside = 0;
 
-	if (fabsf (plane->normal[0]) >= fabsf (plane->normal[1]) && fabsf (plane->normal[0]) >= fabsf (plane->normal[2]))
+	if (fabsf (normal[0]) >= fabsf (normal[1]) && fabsf (normal[0]) >= fabsf (normal[2]))
 	{
 		ax = 1; ay = 2;
 	}
-	else if (fabsf (plane->normal[1]) >= fabsf (plane->normal[2]))
+	else if (fabsf (normal[1]) >= fabsf (normal[2]))
 	{
 		ax = 0; ay = 2;
 	}
@@ -1043,7 +1043,34 @@ static qboolean QRE_PointInPolygon (const glpoly_t *poly, const vec3_t p, const 
 		    (p[ax] < (xj - xi) * (p[ay] - yi) / (yj - yi) + xi))
 			inside = !inside;
 	}
-	return inside != 0;
+
+	if (inside || eps <= 0.0f)
+		return inside != 0;
+
+	for (i = 0, j = n - 1; i < n; j = i++)
+	{
+		const float x0 = poly->verts[j][ax], y0 = poly->verts[j][ay];
+		const float x1 = poly->verts[i][ax], y1 = poly->verts[i][ay];
+		const float dx = x1 - x0, dy = y1 - y0;
+		const float len2 = dx * dx + dy * dy;
+		float       t, ex, ey;
+
+		if (len2 <= 0.0f)
+			continue;
+
+		t = ((p[ax] - x0) * dx + (p[ay] - y0) * dy) / len2;
+		if (t < 0.0f)
+			t = 0.0f;
+		else if (t > 1.0f)
+			t = 1.0f;
+
+		ex = p[ax] - (x0 + t * dx);
+		ey = p[ay] - (y0 + t * dy);
+		if (ex * ex + ey * ey <= eps * eps)
+			return true;
+	}
+
+	return false;
 }
 
 // World -> model space for a rigid brush transform (rotation R, translation t):
@@ -1060,48 +1087,148 @@ static void QRE_WorldToModel (const QrTransform *transform, const vec3_t world, 
 		out[i] = transform->matrix[0][i] * d[0] + transform->matrix[1][i] * d[1] + transform->matrix[2][i] * d[2];
 }
 
+static void QRE_SurfacePlane (const msurface_t *s, vec3_t normal, float *dist)
+{
+	if (s->flags & SURF_PLANEBACK)
+	{
+		VectorSubtract (vec3_origin, s->plane->normal, normal);
+		*dist = -s->plane->dist;
+	}
+	else
+	{
+		VectorCopy (s->plane->normal, normal);
+		*dist = s->plane->dist;
+	}
+}
+
+static void QRE_DirToModel (const QrTransform *transform, const vec3_t dir, vec3_t out)
+{
+	int i;
+
+	for (i = 0; i < 3; i++)
+		out[i] = transform->matrix[0][i] * dir[0]
+		       + transform->matrix[1][i] * dir[1]
+		       + transform->matrix[2][i] * dir[2];
+}
+
+#define QRE_PICK_PLANE_EPS 1.0f
+#define QRE_PICK_POLY_EPS  0.05f
+
 // Finds the surface of a model whose face contains the impact point. Coplanar
 // faces are told apart by a polygon test; the nearest plane is the fallback.
 // The impact is world space, while a brush entity's planes and polygons are in
 // its model space, so the point is transformed first (identity for the world).
-static msurface_t *QRE_FindSurface (qmodel_t *model, const vec3_t impact, const QrTransform *transform)
+static msurface_t *QRE_FindSurface (qmodel_t *model, const vec3_t impact, const vec3_t raydir, const QrTransform *transform)
 {
-	vec3_t      local;
+	vec3_t      local, localdir;
 	int         i;
-	msurface_t *best = NULL;
-	float       bestd = 1.0f;
+	msurface_t *exactface = NULL, *exactany = NULL;
+	msurface_t *nearface = NULL, *nearany = NULL;
+	msurface_t *bestplane = NULL;
+	float       exactface_t = 0.0f, exactface_fd = 0.0f, exactany_d = 0.0f;
+	float       nearface_t = 0.0f, nearface_fd = 0.0f, nearany_d = 0.0f;
+	float       bestplane_d = QRE_PICK_PLANE_EPS;
 
 	QRE_WorldToModel (transform, impact, local);
+	QRE_DirToModel (transform, raydir, localdir);
 
 	for (i = 0; i < model->nummodelsurfaces; i++)
 	{
 		msurface_t *s = &model->surfaces[model->firstmodelsurface + i];
+		vec3_t      snormal;
+		float       sdist, fd, den, t;
+		qboolean    exact = false, nearpoly = false;
 		glpoly_t   *p;
-		float       d;
 
 		if (!s->texinfo || !s->texinfo->texture)
 			continue;
 		if (s->flags & (SURF_DRAWSKY | SURF_NOTEXTURE))
 			continue;
 
-		d = DotProduct (s->plane->normal, local) - s->plane->dist;
-		if (fabsf (d) > 1.0f)
+		QRE_SurfacePlane (s, snormal, &sdist);
+		fd = DotProduct (snormal, local) - sdist;
+		if (fabsf (fd) > QRE_PICK_PLANE_EPS)
 			continue;
 
 		for (p = s->polys; p; p = p->next)
 		{
-			if (QRE_PointInPolygon (p, local, s->plane))
-				return s;
+			if (QRE_PointInPolygon (p, local, snormal, 0.0f))
+			{
+				exact = true;
+				break;
+			}
 		}
 
-		if (fabsf (d) < bestd)
+		if (exact)
+			nearpoly = true;
+		else
 		{
-			bestd = fabsf (d);
-			best = s;
+			for (p = s->polys; p; p = p->next)
+			{
+				if (QRE_PointInPolygon (p, local, snormal, QRE_PICK_POLY_EPS))
+				{
+					nearpoly = true;
+					break;
+				}
+			}
+		}
+
+		if (!nearpoly)
+		{
+			if (fabsf (fd) < bestplane_d)
+			{
+				bestplane_d = fabsf (fd);
+				bestplane = s;
+			}
+			continue;
+		}
+
+		if (exact)
+		{
+			if (!exactany || fabsf (fd) < exactany_d)
+			{
+				exactany_d = fabsf (fd);
+				exactany = s;
+			}
+		}
+		else if (!nearany || fabsf (fd) < nearany_d)
+		{
+			nearany_d = fabsf (fd);
+			nearany = s;
+		}
+
+		den = DotProduct (snormal, localdir);
+		if (den >= 0.0f)
+			continue;
+
+		t = (sdist - DotProduct (snormal, local)) / den;
+
+		if (exact)
+		{
+			if (!exactface || t < exactface_t || (t == exactface_t && fabsf (fd) < fabsf (exactface_fd)))
+			{
+				exactface = s;
+				exactface_t = t;
+				exactface_fd = fd;
+			}
+		}
+		else if (!nearface || t < nearface_t || (t == nearface_t && fabsf (fd) < fabsf (nearface_fd)))
+		{
+			nearface = s;
+			nearface_t = t;
+			nearface_fd = fd;
 		}
 	}
 
-	return best;
+	if (exactface)
+		return exactface;
+	if (exactany)
+		return exactany;
+	if (nearface)
+		return nearface;
+	if (nearany)
+		return nearany;
+	return bestplane;
 }
 
 // The skin texture a model entity draws: the alias frame at the animation the
@@ -1369,7 +1496,7 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 	{
 		QrTransform transform = RT_GetBrushModelMatrix (bestent);
 
-		*out_surf = QRE_FindSurface (bestmodel, bestimpact, &transform);
+		*out_surf = QRE_FindSurface (bestmodel, bestimpact, vpn, &transform);
 	}
 	if (!*out_surf)
 		return false;
