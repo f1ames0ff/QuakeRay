@@ -51,6 +51,7 @@ extern cvar_t rt_model_lights_budget;
 extern cvar_t rt_model_lights_minarea;
 extern cvar_t rt_dtal_minarea;
 extern cvar_t rt_dtal_maxpolys;
+extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
@@ -134,6 +135,7 @@ typedef struct rt_emis_stats_s
 	int glow_fallback;
 	int too_small;
 	int poly_capped;
+	int buried;
 	atomic_uint32_t model_lights;
 	atomic_uint32_t model_capped;
 	atomic_uint32_t model_small;
@@ -1483,6 +1485,24 @@ static qboolean RT_AllowTexturedAreaLights (void)
 	return CVAR_TO_BOOL (rt_materials_only) || CVAR_TO_FLOAT (rt_truelight) > 0.0f;
 }
 
+static qboolean RT_LightBuried (vec3_t center, const float *normal, float clearance)
+{
+	vec3_t  n = {normal[0], normal[1], normal[2]};
+	vec3_t  start, end;
+	trace_t trace;
+
+	VectorMA (center, 0.5f, n, start);
+	VectorMA (center, 0.5f + clearance, n, end);
+
+	memset (&trace, 0, sizeof (trace));
+	trace.fraction = 1.0f;
+	trace.allsolid = true;
+
+	SV_RecursiveHullCheck (cl.worldmodel->hulls, start, end, &trace, CONTENTMASK_ANYSOLID);
+
+	return trace.startsolid || trace.allsolid || trace.fraction < 1.0f;
+}
+
 static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_info, qboolean is_static_geom,
                                     const msurface_t *surf, gltexture_t *light_tex)
 {
@@ -1519,6 +1539,20 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 	}
 	else if (rt_wldlights_emissive_count < MAX_WORLDLIGHTS_COUNT)
 	{
+		const float clearance = CVAR_TO_FLOAT (rt_dtal_clearance);
+
+		if (clearance > 0.0f)
+		{
+			vec3_t center;
+			RT_TexturedAreaLightCenter (light_info, center);
+
+			if (RT_LightBuried (center, light_info->normal.data, clearance))
+			{
+				rt_emis_stats.buried++;
+				return;
+			}
+		}
+
 		const int index = rt_wldlights_emissive_count++;
 		rt_wldlights_emissive[index]      = *light_info;
 		rt_wldlights_emissive_surf[index] = surf;
@@ -5124,9 +5158,9 @@ void RT_PrintEmissiveStats (void)
 		RT_LightReportPrint ("partial-glow textures: %i faces built %i polygon lights, %i faces fell back to the whole surface\n",
 			rt_emis_stats.glow_faces, rt_emis_stats.glow_lights, rt_emis_stats.glow_fallback);
 
-	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
-		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_model_lights_minarea\n",
-			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small));
+	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || rt_emis_stats.buried || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
+		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_model_lights_minarea, %i surface polygons buried under rt_dtal_clearance\n",
+			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), rt_emis_stats.buried);
 
 	if (Atomic_LoadUInt32 (&rt_emis_stats.model_lights) || Atomic_LoadUInt32 (&rt_emis_stats.model_capped))
 		RT_LightReportPrint ("alias models: %i textured-area lights built from model geometry, %i models turned down by the frame budget\n",
