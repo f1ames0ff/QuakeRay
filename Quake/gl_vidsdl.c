@@ -181,6 +181,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_sun_yaw, "120") \
 	CVAR_DEF_T (rt_sun_preset, "0") \
 	CVAR_DEF_T (rt_flashlight, "0") \
+	CVAR_DEF_T (rt_dlightspot_intensity, "1") \
 	\
 	CVAR_DEF_T (rt_muzzleoffs_x, "0") \
 	CVAR_DEF_T (rt_muzzleoffs_y, "-30") \

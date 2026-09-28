@@ -111,6 +111,7 @@ cvar_t r_tasks = {"r_tasks", "0", CVAR_NONE};
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;
 extern cvar_t rt_flashlight;
+extern cvar_t rt_dlightspot_intensity;
 extern cvar_t rt_sun;
 extern cvar_t rt_sun_pitch;
 extern cvar_t rt_sun_yaw;
@@ -497,28 +498,30 @@ RT_DlightSpot_f
 Places a spot dlight at the crosshair, pointing along the view. The editor's spot property
 is what will create these lights; until it is there, this is how one is made and seen.
 
-dlightspot <outer_deg> [inner_deg] [distance]
+dlightspot <outer_deg> [inner_deg] [distance] [strength]
 ================
 */
 void RT_DlightSpot_f (void)
 {
 	if (Cmd_Argc () < 2)
 	{
-		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance]\n", Cmd_Argv (0));
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance] [strength]\n", Cmd_Argv (0));
 		return;
 	}
 
 	float       outerDeg = (float) atof (Cmd_Argv (1));
 	float       innerDeg = (Cmd_Argc () >= 3) ? (float) atof (Cmd_Argv (2)) : 0.0f;
 	const float dist     = (Cmd_Argc () >= 4) ? (float) atof (Cmd_Argv (3)) : 48.0f;
+	const float strength = (Cmd_Argc () >= 5) ? (float) atof (Cmd_Argv (4)) : CVAR_TO_FLOAT (rt_dlightspot_intensity);
 
 	/* The comparisons read as they do so that a nan fails them: atof takes nan and inf, and a
 	   nan edge or origin would poison every cell that samples the light. */
 	if (!(outerDeg >= 0.1f && outerDeg <= 89.9f) ||
 	    !(innerDeg >= 0.0f) || !(innerDeg <= outerDeg) ||
-	    !(dist >= 1.0f && dist <= 4096.0f))
+	    !(dist >= 1.0f && dist <= 4096.0f) ||
+	    !(strength >= 0.0f && strength <= 1000.0f))
 	{
-		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance]\n", Cmd_Argv (0));
+		Con_Printf ("usage: %s <outer_deg> [inner_deg] [distance] [strength]\n", Cmd_Argv (0));
 		return;
 	}
 
@@ -535,13 +538,14 @@ void RT_DlightSpot_f (void)
 
 	VectorMA (r_origin, dist, vpn, dl->origin);
 	VectorCopy (vpn, dl->dir);
+	VectorScale (dl->color, strength, dl->color);
 	dl->angleOuter = DEG2RAD (outerDeg);
 	dl->angleInner = DEG2RAD (innerDeg);
 	dl->radius     = 200;
 	dl->decay      = 0;
 	dl->die        = cl.time + 3600;
 
-	Con_Printf ("dlightspot: outer %.1f deg, inner %.1f deg, %.0f units ahead\n", outerDeg, innerDeg, dist);
+	Con_Printf ("dlightspot: outer %.1f deg, inner %.1f deg, %.0f units ahead, strength %.2f\n", outerDeg, innerDeg, dist, strength);
 }
 
 /*
