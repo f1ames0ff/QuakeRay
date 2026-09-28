@@ -102,6 +102,7 @@ void QR_GUI_PopID (void);
 // A small centred yes/no dialog drawn on top of the editor. Returns 1 for the
 // first button, 2 for the second and 0 while it is up.
 int  QR_GUI_Dialog (const char *title, const char *text, const char *yes, const char *no);
+int  QR_GUI_DialogCentered (const char *title, const char *text, const char *yes, const char *no);
 
 // A texture preview drawn at the current cursor position (texture is an
 // RgMaterial handle). While the left mouse button is held over it, returns 1

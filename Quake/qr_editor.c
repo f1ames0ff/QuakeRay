@@ -3617,7 +3617,7 @@ static void QRE_Frame (void)
 
 static void QRE_DrawChooser (void)
 {
-	int answer = QR_GUI_Dialog ("QuakeRay v." ENGINE_VER_STRING,
+	int answer = QR_GUI_DialogCentered ("QuakeRay v." ENGINE_VER_STRING,
 	                            "Choose the editor to run on this level (Esc closes).",
 	                            "Material Editor", "Light Editor");
 

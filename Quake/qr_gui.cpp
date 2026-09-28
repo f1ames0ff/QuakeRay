@@ -949,6 +949,50 @@ void QR_GUI_Notify (const char *text)
 	g_notify_time = ImGui::GetTime ();
 }
 
+int QR_GUI_DialogCentered (const char *title, const char *text, const char *yes, const char *no)
+{
+	const ImVec2 center (ImGui::GetIO ().DisplaySize.x * 0.5f, ImGui::GetIO ().DisplaySize.y * 0.5f);
+	int          result = 0;
+
+	ImGui::SetNextWindowPos (center, ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
+	ImGui::SetNextWindowSize (ImVec2 (640.0f, 0.0f), ImGuiCond_Always);
+
+	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+	                               ImGuiWindowFlags_AlwaysAutoResize;
+
+	if (ImGui::Begin (title, nullptr, flags))
+	{
+		const ImGuiStyle &style = ImGui::GetStyle ();
+		const float       avail = ImGui::GetContentRegionAvail ().x;
+		const float       line = ImGui::CalcTextSize (text).x;
+		const float       buttons = 180.0f * 2.0f + style.ItemSpacing.x;
+
+		ImGui::SetWindowFontScale (1.5f);
+
+		if (line < avail)
+			ImGui::SetCursorPosX ((avail - line) * 0.5f);
+		ImGui::TextUnformatted (text);
+
+		ImGui::Spacing ();
+		ImGui::Spacing ();
+
+		if (buttons < ImGui::GetContentRegionAvail ().x)
+			ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail ().x - buttons) * 0.5f);
+
+		if (ImGui::Button (yes, ImVec2 (180.0f, 0.0f)))
+			result = 1;
+		ImGui::SameLine ();
+		if (ImGui::Button (no, ImVec2 (180.0f, 0.0f)))
+			result = 2;
+
+		ImGui::SetWindowFontScale (1.0f);
+	}
+	ImGui::End ();
+
+	return result;
+}
+
 void QR_GUI_DrawCrosshair (void)
 {
 	ImDrawList  *dl = ImGui::GetForegroundDrawList ();
