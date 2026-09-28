@@ -129,6 +129,7 @@ typedef struct rt_emis_stats_s
 	int frame_off;
 	int static_queued;
 	int static_dropped;
+	int projector;
 	int dynamic;
 	int glow_lights;
 	int glow_faces;
@@ -1665,6 +1666,8 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 		   not once per frame. */
 		RT_TexturedAreaLightCenter (&rt_wldlights_emissive[index], rt_wldlights_emissive_center[index]);
 		rt_emis_stats.static_queued++;
+		if (light_info->projectorLens >= 0.0f)
+			rt_emis_stats.projector++;
 	}
 	else
 	{
@@ -5275,8 +5278,8 @@ void RT_UploadWorldLights (void)
 
 void RT_PrintEmissiveStats (void)
 {
-	RT_LightReportPrint ("emissive pass: %i surfaces considered -> %i static world lights baked (whole map), %i entity lights uploaded (all passes)\n",
-		rt_emis_stats.surfaces, rt_emis_stats.static_queued, rt_emis_stats.dynamic);
+	RT_LightReportPrint ("emissive pass: %i surfaces considered -> %i static world lights baked (whole map, %i projectors), %i entity lights uploaded (all passes)\n",
+		rt_emis_stats.surfaces, rt_emis_stats.static_queued, rt_emis_stats.projector, rt_emis_stats.dynamic);
 	RT_LightReportPrint ("rejected: %i no light material, %i no light color, %i lightstyle off, %i degenerate, %i of a dark animation frame\n",
 		rt_emis_stats.no_material, rt_emis_stats.no_color, rt_emis_stats.style_off, rt_emis_stats.degenerate, rt_emis_stats.frame_off);
 
