@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
@@ -41,7 +38,7 @@ class CubemapManager
 {
 public:
     CubemapManager(
-        VkDevice device, 
+        VkDevice device,
         std::shared_ptr<MemoryAllocator> allocator,
         std::shared_ptr<SamplerManager> samplerManager,
         const std::shared_ptr<CommandBufferManager> &cmdManager,
@@ -69,7 +66,6 @@ public:
 private:
     void CreateEmptyCubemap(VkCommandBuffer cmd);
 
-    // Descriptor writes are tracked per slot instead of rescanning every slot each frame
     void MarkDescDirty(uint32_t cubemapIndex);
     void MarkAllDescDirty();
 
@@ -85,12 +81,8 @@ private:
     std::vector<Texture>    cubemaps;
     std::vector<Texture>    cubemapsToDestroy[MAX_FRAMES_IN_FLIGHT];
 
-    // Cubemap indices whose descriptor is not written yet. Per descriptor set, because
-    // each frame in flight has its own: a changed slot must reach all of them.
     std::vector<uint32_t>   cubemapsToUpdateDesc[MAX_FRAMES_IN_FLIGHT];
 
-    // Marks the slots that are already in the matching cubemapsToUpdateDesc list: a slot can be
-    // marked dirty many times between two submits, but must be written only once per desc set.
     std::vector<uint8_t>    cubemapsToUpdateDescMarked[MAX_FRAMES_IN_FLIGHT];
 
     std::string defaultTexturesPath;

@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "CubemapManager.h"
 
@@ -29,7 +26,6 @@ namespace
 {
     constexpr uint32_t MAX_CUBEMAP_COUNT = 32;
 
-    // use albedo-alpha texture data
     constexpr uint32_t MATERIAL_COLOR_TEXTURE_INDEX = 0;
     static_assert(MATERIAL_COLOR_TEXTURE_INDEX < vkpt::TEXTURES_PER_MATERIAL_COUNT);
 
@@ -75,7 +71,6 @@ vkpt::CubemapManager::CubemapManager(
         cubemapsToUpdateDescMarked[i].assign(MAX_CUBEMAP_COUNT, 0);
     }
 
-    // desc sets are allocated with undefined content: every slot needs a write
     MarkAllDescDirty();
 
     VkCommandBuffer cmd = _cmdManager->StartGraphicsCmd();
@@ -86,7 +81,7 @@ vkpt::CubemapManager::CubemapManager(
 
 void vkpt::CubemapManager::CreateEmptyCubemap(VkCommandBuffer cmd)
 {
-    uint32_t whitePixel = 0xFFFFFFFF;
+    const uint32_t whitePixel = 0xFFFFFFFF;
 
     RgCubemapCreateInfo info = {};
     info.sideSize = 1;
@@ -98,7 +93,7 @@ void vkpt::CubemapManager::CreateEmptyCubemap(VkCommandBuffer cmd)
         info.pData[i] = &whitePixel;
     }
 
-    uint32_t index = CreateCubemap(cmd, 0, info);
+    const uint32_t index = CreateCubemap(cmd, 0, info);
     assert(index == RG_EMPTY_CUBEMAP);
 
     cubemapDesc->SetEmptyTextureInfo(cubemaps[RG_EMPTY_CUBEMAP].view);
@@ -106,73 +101,72 @@ void vkpt::CubemapManager::CreateEmptyCubemap(VkCommandBuffer cmd)
 
 vkpt::CubemapManager::~CubemapManager()
 {
-    std::vector<Texture> *arrays[MAX_FRAMES_IN_FLIGHT + 1] = {};
-    arrays[MAX_FRAMES_IN_FLIGHT] = &cubemaps;
-    
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    const auto destroyTextures = [this](std::vector<Texture> &textures)
     {
-        arrays[i] = &cubemapsToDestroy[i];
-    }
-
-    for (auto *arr : arrays)
-    {
-        for (auto &t : *arr)
+        for (auto &texture : textures)
         {
-            assert((t.image == VK_NULL_HANDLE && t.view == VK_NULL_HANDLE) ||
-                   (t.image != VK_NULL_HANDLE && t.view != VK_NULL_HANDLE));
+            assert((texture.image == VK_NULL_HANDLE && texture.view == VK_NULL_HANDLE) ||
+                   (texture.image != VK_NULL_HANDLE && texture.view != VK_NULL_HANDLE));
 
-            if (t.image != VK_NULL_HANDLE)
+            if (texture.image != VK_NULL_HANDLE)
             {
-                cubemapUploader->DestroyImage(t.image, t.view);
+                cubemapUploader->DestroyImage(texture.image, texture.view);
             }
         }
+    };
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        destroyTextures(cubemapsToDestroy[i]);
     }
+
+    destroyTextures(cubemaps);
 }
 
 uint32_t vkpt::CubemapManager::CreateCubemap(VkCommandBuffer cmd, uint32_t frameIndex, const RgCubemapCreateInfo &info)
 {
     using namespace std::string_literals;
 
-    auto f = std::find_if(cubemaps.begin(), cubemaps.end(), [] (const Texture &t)
+    const auto slotIt = std::find_if(cubemaps.begin(), cubemaps.end(), [] (const Texture &texture)
     {
-        // also check if texture's members are all empty or all filled
-        assert((t.image == VK_NULL_HANDLE && t.view == VK_NULL_HANDLE) ||
-               (t.image != VK_NULL_HANDLE && t.view != VK_NULL_HANDLE));
+        assert((texture.image == VK_NULL_HANDLE && texture.view == VK_NULL_HANDLE) ||
+               (texture.image != VK_NULL_HANDLE && texture.view != VK_NULL_HANDLE));
 
-        return t.image == VK_NULL_HANDLE && t.view == VK_NULL_HANDLE;
+        return texture.image == VK_NULL_HANDLE && texture.view == VK_NULL_HANDLE;
     });
 
-    TextureUploader::UploadInfo upload = 
-    {
-        .cmd = cmd,
-        .frameIndex = frameIndex,
-        .useMipmaps = !!info.useMipmaps,
-        .isUpdateable = false,
-        .pDebugName = nullptr,
-        .isCubemap = true,
-    };
+    TextureUploader::UploadInfo upload = {};
+    upload.cmd = cmd;
+    upload.frameIndex = frameIndex;
+    upload.useMipmaps = info.useMipmaps != 0;
+    upload.isUpdateable = false;
+    upload.pDebugName = nullptr;
+    upload.isCubemap = true;
 
-    // must be '0' to use special TextureOverrides constructor 
     static_assert(MATERIAL_COLOR_TEXTURE_INDEX == 0);
 
-    TextureOverrides::OverrideInfo parseInfo = {
-        .commonFolderPath = defaultTexturesPath.c_str(),
-        .postfixes = { overridenTexturePostfix.c_str(), "", "" },
-        .overridenIsSRGB = { true, false, false },
-        .originalIsSRGB = { true, false, false },
-    };
+    TextureOverrides::OverrideInfo parseInfo = {};
+    parseInfo.commonFolderPath = defaultTexturesPath.c_str();
+    parseInfo.postfixes[0] = overridenTexturePostfix.c_str();
+    parseInfo.postfixes[1] = "";
+    parseInfo.postfixes[2] = "";
+    parseInfo.overridenIsSRGB[0] = true;
+    parseInfo.overridenIsSRGB[1] = false;
+    parseInfo.overridenIsSRGB[2] = false;
+    parseInfo.originalIsSRGB[0] = true;
+    parseInfo.originalIsSRGB[1] = false;
+    parseInfo.originalIsSRGB[2] = false;
 
-    RgExtent2D size = { info.sideSize, info.sideSize };
+    const RgExtent2D size = { info.sideSize, info.sideSize };
 
-    // load additional textures, they'll be freed after leaving the scope
     TextureOverrides ovrd0(info.pRelativePaths[0], RgTextureSet{ .pDataAlbedoAlpha = info.pData[0] }, size, parseInfo, imageLoader.get());
     TextureOverrides ovrd1(info.pRelativePaths[1], RgTextureSet{ .pDataAlbedoAlpha = info.pData[1] }, size, parseInfo, imageLoader.get());
     TextureOverrides ovrd2(info.pRelativePaths[2], RgTextureSet{ .pDataAlbedoAlpha = info.pData[2] }, size, parseInfo, imageLoader.get());
     TextureOverrides ovrd3(info.pRelativePaths[3], RgTextureSet{ .pDataAlbedoAlpha = info.pData[3] }, size, parseInfo, imageLoader.get());
     TextureOverrides ovrd4(info.pRelativePaths[4], RgTextureSet{ .pDataAlbedoAlpha = info.pData[4] }, size, parseInfo, imageLoader.get());
     TextureOverrides ovrd5(info.pRelativePaths[5], RgTextureSet{ .pDataAlbedoAlpha = info.pData[5] }, size, parseInfo, imageLoader.get());
-    
-    TextureOverrides *ovrd[] =
+
+    TextureOverrides *overrides[6] =
     {
         &ovrd0,
         &ovrd1,
@@ -182,34 +176,29 @@ uint32_t vkpt::CubemapManager::CreateCubemap(VkCommandBuffer cmd, uint32_t frame
         &ovrd5,
     };
 
-    // all overrides must have albedo data and the same and square size
-    bool useOvrd = true;
+    bool useOverrides = true;
 
+    RgExtent2D commonSize = {};
+    VkFormat commonFormat = VK_FORMAT_UNDEFINED;
 
-    RgExtent2D commonSize = {}; 
-    VkFormat commonFormat = VK_FORMAT_UNDEFINED; 
+    if (const auto &firstAlbedo = overrides[0]->GetResult(MATERIAL_COLOR_TEXTURE_INDEX))
     {
-        if (const auto &firstAlbedo = ovrd[0]->GetResult(MATERIAL_COLOR_TEXTURE_INDEX))
-        {
-            commonSize = { firstAlbedo->baseSize.width, firstAlbedo->baseSize.height };
-            commonFormat = firstAlbedo->format;
-        }
-        else
-        {
-            useOvrd = false;
-        }
+        commonSize = { firstAlbedo->baseSize.width, firstAlbedo->baseSize.height };
+        commonFormat = firstAlbedo->format;
+    }
+    else
+    {
+        useOverrides = false;
     }
 
-
-    // check if all entries are correct
-    for (auto &o : ovrd)
+    for (TextureOverrides *o : overrides)
     {
         if (const auto &albedo = o->GetResult(MATERIAL_COLOR_TEXTURE_INDEX))
         {
             const char *debugName = o->GetDebugName();
             assert(albedo->pData != nullptr);
 
-            const auto &faceSize = albedo->baseSize;
+            const RgExtent2D &faceSize = albedo->baseSize;
 
             if (albedo->format != commonFormat)
             {
@@ -231,26 +220,23 @@ uint32_t vkpt::CubemapManager::CreateCubemap(VkCommandBuffer cmd, uint32_t frame
         }
         else
         {
-            useOvrd = false;
+            useOverrides = false;
         }
     }
 
-
-    if (useOvrd)
+    if (useOverrides)
     {
-        upload.pDebugName = ovrd[0]->GetDebugName();
+        upload.pDebugName = overrides[0]->GetDebugName();
 
         for (uint32_t i = 0; i < 6; i++)
         {
-            upload.cubemap.pFaces[i] = ovrd[i]->GetResult(MATERIAL_COLOR_TEXTURE_INDEX)->pData;
+            upload.cubemap.pFaces[i] = overrides[i]->GetResult(MATERIAL_COLOR_TEXTURE_INDEX)->pData;
         }
     }
     else
     {
-        // use data provided by user
         commonSize = { info.sideSize, info.sideSize };
         commonFormat = VK_FORMAT_R8G8B8A8_SRGB;
-
 
         if (info.sideSize == 0)
         {
@@ -259,7 +245,6 @@ uint32_t vkpt::CubemapManager::CreateCubemap(VkCommandBuffer cmd, uint32_t frame
 
         for (uint32_t i = 0; i < 6; i++)
         {
-            // if original data is not valid
             if (info.pData[i] == nullptr)
             {
                 return RG_EMPTY_CUBEMAP;
@@ -269,32 +254,29 @@ uint32_t vkpt::CubemapManager::CreateCubemap(VkCommandBuffer cmd, uint32_t frame
         }
     }
 
-
-
-    // TODO: KTX cubemap image uploading with proper formats
     upload.format = commonFormat;
+
     if (commonFormat != VK_FORMAT_R8G8B8A8_SRGB && commonFormat != VK_FORMAT_R8G8B8A8_UNORM)
     {
         assert(false && "For now, cubemaps only support only R8G8B8A8 formats!");
         return RG_EMPTY_CUBEMAP;
     }
+
     upload.baseSize = commonSize;
     upload.dataSize = 4 * commonSize.width * commonSize.height;
-    // 
 
+    const TextureUploader::UploadResult result = cubemapUploader->UploadImage(upload);
 
-    auto i = cubemapUploader->UploadImage(upload);
-
-    if (!i.wasUploaded)
+    if (!result.wasUploaded)
     {
         return RG_EMPTY_CUBEMAP;
     }
 
-    f->image = i.image;
-    f->view = i.view;
-    f->samplerHandle = SamplerManager::Handle(info.filter, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0);
+    slotIt->image = result.image;
+    slotIt->view = result.view;
+    slotIt->samplerHandle = SamplerManager::Handle(info.filter, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, RG_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0);
 
-    const uint32_t cubemapIndex = (uint32_t)std::distance(cubemaps.begin(), f);
+    const uint32_t cubemapIndex = static_cast<uint32_t>(std::distance(cubemaps.begin(), slotIt));
 
     MarkDescDirty(cubemapIndex);
 
@@ -308,20 +290,18 @@ void vkpt::CubemapManager::DestroyCubemap(uint32_t frameIndex, uint32_t cubemapI
         throw RgException(RG_WRONG_ARGUMENT, "Wrong cubemap ID=" + std::to_string(cubemapIndex));
     }
 
-    if (cubemaps[cubemapIndex].image == VK_NULL_HANDLE)
+    Texture &texture = cubemaps[cubemapIndex];
+
+    if (texture.image == VK_NULL_HANDLE)
     {
         return;
     }
 
-    Texture &t = cubemaps[cubemapIndex];
+    cubemapsToDestroy[frameIndex].push_back(texture);
 
-    // add to be destroyed later
-    cubemapsToDestroy[frameIndex].push_back(t);
-
-    // clear data
-    t.image = VK_NULL_HANDLE;
-    t.view = VK_NULL_HANDLE;
-    t.samplerHandle = SamplerManager::Handle();
+    texture.image = VK_NULL_HANDLE;
+    texture.view = VK_NULL_HANDLE;
+    texture.samplerHandle = SamplerManager::Handle();
 
     MarkDescDirty(cubemapIndex);
 }
@@ -337,26 +317,22 @@ VkDescriptorSet vkpt::CubemapManager::GetDescSet(uint32_t frameIndex) const
 }
 
 void vkpt::CubemapManager::PrepareForFrame(uint32_t frameIndex)
-{    
-    // destroy delayed textures
-    for (auto &t : cubemapsToDestroy[frameIndex])
+{
+    for (auto &texture : cubemapsToDestroy[frameIndex])
     {
-        vkDestroyImage(device, t.image, nullptr);
-        vkDestroyImageView(device, t.view, nullptr);
+        vkDestroyImage(device, texture.image, nullptr);
+        vkDestroyImageView(device, texture.view, nullptr);
     }
+
     cubemapsToDestroy[frameIndex].clear();
 
-    // clear staging buffer that are not in use
     cubemapUploader->ClearStaging(frameIndex);
 }
 
 void vkpt::CubemapManager::MarkDescDirty(uint32_t cubemapIndex)
 {
-    // all desc sets must be updated, as the next frame in flight uses another one
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        // a slot which is already pending does not need a second entry: the desc is written
-        // from the current cubemap state, not from the state at the moment of this call
         if (cubemapsToUpdateDescMarked[i][cubemapIndex] == 0)
         {
             cubemapsToUpdateDescMarked[i][cubemapIndex] = 1;
@@ -385,12 +361,8 @@ void vkpt::CubemapManager::MarkAllDescDirty()
 
 void vkpt::CubemapManager::SubmitDescriptors(uint32_t frameIndex)
 {
-    // update desc set with current values, for the slots that were changed since
-    // their descriptor was written to this desc set
     auto &dirty = cubemapsToUpdateDesc[frameIndex];
 
-    // no slot was written before this call: the desc set already holds what the write cache
-    // describes, so there is nothing to flush either
     const bool hasDescWrites = !dirty.empty();
 
     for (uint32_t i : dirty)
@@ -401,11 +373,9 @@ void vkpt::CubemapManager::SubmitDescriptors(uint32_t frameIndex)
         }
         else
         {
-            // reset descriptor to empty texture
             cubemapDesc->ResetTextureDesc(frameIndex, i);
         }
 
-        // the slot is written to this desc set, changes made after this call will mark it again
         cubemapsToUpdateDescMarked[frameIndex][i] = 0;
     }
 

@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
@@ -66,7 +63,7 @@ public:
     void PrepareForFrame(uint32_t frameIndex);
     void SubmitDescriptors(uint32_t frameIndex,
                            const RgDrawFrameTexturesParams *pTexturesParams,
-                           bool forceUpdateAllDescriptors = false); // true, if mip lod bias was changed, for example
+                           bool forceUpdateAllDescriptors = false);
 
     uint32_t CreateMaterial(VkCommandBuffer cmd, uint32_t frameIndex, const RgMaterialCreateInfo &createInfo);
     uint32_t CreateAnimatedMaterial(VkCommandBuffer cmd, uint32_t frameIndex, const RgAnimatedMaterialCreateInfo &createInfo);
@@ -83,16 +80,11 @@ public:
     static constexpr uint32_t GetEmptyTextureIndex();
     uint32_t GetWaterNormalTextureIndex() const;
 
-    // The RHI texture table (vkpt::rhi::RhiTextureTable) mirrors this manager's texture and sampler
-    // slots. The host sets it after creating the table; while it is null every RHI call is skipped,
-    // so the legacy behaviour is unchanged. The manager does not own the table.
     void SetRhiTextureTable(rhi::RhiTextureTable *pTable);
 
     VkDescriptorSet GetDescSet(uint32_t frameIndex) const;
     VkDescriptorSetLayout GetDescSetLayout() const;
 
-    // Subscribe to material change event.
-    // shared_ptr will be transformed to weak_ptr
     void Subscribe(std::shared_ptr<IMaterialDependency> subscriber);
     void Unsubscribe(const IMaterialDependency *subscriber);
 
@@ -115,7 +107,6 @@ private:
     void DestroyTexture(const Texture &texture);
     void AddToBeDestroyed(uint32_t frameIndex, const Texture &texture);
 
-    // Descriptor writes are tracked per slot instead of rescanning every slot each frame
     void MarkDescDirty(uint32_t textureIndex);
     void MarkAllDescDirty();
 
@@ -154,19 +145,11 @@ private:
     std::vector<TalCdfSource> talCdfSources;
 
     std::vector<Texture> textures;
-    // Optional mirror of 'textures' in the RHI bindless table (RHI/RhiTextureTable.h). Not owned;
-    // the host sets it with SetRhiTextureTable. All RHI writes are guarded by it being non-null.
     rhi::RhiTextureTable *rhiTextureTable = nullptr;
-    // Textures are not destroyed immediately, but when
-    // they won't be in use
     std::vector<Texture> texturesToDestroy[MAX_FRAMES_IN_FLIGHT];
 
-    // Texture indices whose descriptor is not written yet. Per descriptor set, because
-    // each frame in flight has its own: a changed slot must reach all of them.
     std::vector<uint32_t> texturesToUpdateDesc[MAX_FRAMES_IN_FLIGHT];
 
-    // Marks the slots that are already in the matching texturesToUpdateDesc list: a slot can be
-    // marked dirty many times between two submits, but must be written only once per desc set.
     std::vector<uint8_t> texturesToUpdateDescMarked[MAX_FRAMES_IN_FLIGHT];
 
     rgl::unordered_map<uint32_t, AnimatedMaterial> animatedMaterials;

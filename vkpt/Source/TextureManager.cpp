@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "TextureManager.h"
 
@@ -39,7 +36,7 @@ namespace
 {
     static_assert(TEXTURES_PER_MATERIAL_COUNT == sizeof(RgTextureSet) / sizeof(const void *), "TEXTURES_PER_MATERIAL_COUNT must be same as in RgTextureSet");
 
-    constexpr MaterialTextures EmptyMaterialTextures = { EMPTY_TEXTURE_INDEX, EMPTY_TEXTURE_INDEX,EMPTY_TEXTURE_INDEX };
+    constexpr MaterialTextures EmptyMaterialTextures = { EMPTY_TEXTURE_INDEX, EMPTY_TEXTURE_INDEX, EMPTY_TEXTURE_INDEX };
 
     constexpr RgSamplerFilter DefaultDynamicSamplerFilter = RG_SAMPLER_FILTER_LINEAR;
 
@@ -54,40 +51,47 @@ namespace
         return devLoader ? TextureOverrides::Loader(devLoader.get()) : TextureOverrides::Loader(defaultLoader.get());
     }
 
+    bool IsTextureSetEmpty(const RgTextureSet &textures)
+    {
+        return textures.pDataAlbedoAlpha == nullptr &&
+               textures.pDataRoughnessMetallicEmission == nullptr &&
+               textures.pDataNormal == nullptr;
+    }
+
     constexpr uint32_t TalCdfGridMaxSize = TAL_CDF_GRID_MAX_SIZE;
 
     bool GetTalCdfPixelLayout(VkFormat format, uint32_t *pBytesPerPixel, uint32_t *pEmissiveOffset)
     {
         switch (format)
         {
-        case VK_FORMAT_R8G8B8A8_UNORM:
-        case VK_FORMAT_R8G8B8A8_SRGB:
-        case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
-        case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
-            *pBytesPerPixel = 4;
-            *pEmissiveOffset = 2;
-            return true;
+            case VK_FORMAT_R8G8B8A8_UNORM:
+            case VK_FORMAT_R8G8B8A8_SRGB:
+            case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
+            case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+                *pBytesPerPixel = 4;
+                *pEmissiveOffset = 2;
+                return true;
 
-        case VK_FORMAT_B8G8R8A8_UNORM:
-        case VK_FORMAT_B8G8R8A8_SRGB:
-            *pBytesPerPixel = 4;
-            *pEmissiveOffset = 0;
-            return true;
+            case VK_FORMAT_B8G8R8A8_UNORM:
+            case VK_FORMAT_B8G8R8A8_SRGB:
+                *pBytesPerPixel = 4;
+                *pEmissiveOffset = 0;
+                return true;
 
-        case VK_FORMAT_R8G8B8_UNORM:
-        case VK_FORMAT_R8G8B8_SRGB:
-            *pBytesPerPixel = 3;
-            *pEmissiveOffset = 2;
-            return true;
+            case VK_FORMAT_R8G8B8_UNORM:
+            case VK_FORMAT_R8G8B8_SRGB:
+                *pBytesPerPixel = 3;
+                *pEmissiveOffset = 2;
+                return true;
 
-        case VK_FORMAT_B8G8R8_UNORM:
-        case VK_FORMAT_B8G8R8_SRGB:
-            *pBytesPerPixel = 3;
-            *pEmissiveOffset = 0;
-            return true;
+            case VK_FORMAT_B8G8R8_UNORM:
+            case VK_FORMAT_B8G8R8_SRGB:
+                *pBytesPerPixel = 3;
+                *pEmissiveOffset = 0;
+                return true;
 
-        default:
-            return false;
+            default:
+                return false;
         }
     }
 
@@ -102,74 +106,70 @@ namespace
         const uint32_t gridWidth = std::min(width, TalCdfGridMaxSize);
         const uint32_t gridHeight = std::min(height, TalCdfGridMaxSize);
 
-        std::vector<uint32_t> grid(gridWidth * gridHeight, 0);
+        std::vector<uint32_t> grid(static_cast<size_t>(gridWidth) * gridHeight, 0);
 
         for (uint32_t gy = 0; gy < gridHeight; gy++)
         {
-            const uint32_t y0 = gy * height / gridHeight;
-            const uint32_t y1 = std::max((gy + 1) * height / gridHeight, y0 + 1);
+            const uint32_t rowBegin = gy * height / gridHeight;
+            const uint32_t rowEnd = std::max((gy + 1) * height / gridHeight, rowBegin + 1);
 
             for (uint32_t gx = 0; gx < gridWidth; gx++)
             {
-                const uint32_t x0 = gx * width / gridWidth;
-                const uint32_t x1 = std::max((gx + 1) * width / gridWidth, x0 + 1);
+                const uint32_t columnBegin = gx * width / gridWidth;
+                const uint32_t columnEnd = std::max((gx + 1) * width / gridWidth, columnBegin + 1);
 
-                uint32_t sum = 0;
+                uint32_t cellSum = 0;
 
-                for (uint32_t y = y0; y < y1; y++)
+                for (uint32_t y = rowBegin; y < rowEnd; y++)
                 {
                     const uint8_t *pRow = pPixels + uint64_t(y) * width * bytesPerPixel;
 
-                    for (uint32_t x = x0; x < x1; x++)
+                    for (uint32_t x = columnBegin; x < columnEnd; x++)
                     {
-                        sum += pRow[x * bytesPerPixel + emissiveOffset];
+                        cellSum += pRow[x * bytesPerPixel + emissiveOffset];
                     }
                 }
 
-                grid[gy * gridWidth + gx] = sum;
+                grid[static_cast<size_t>(gy) * gridWidth + gx] = cellSum;
             }
         }
 
-        uint64_t total = 0;
+        uint64_t totalSum = 0;
 
-        for (uint32_t value : grid)
+        for (const uint32_t cellSum : grid)
         {
-            total += value;
+            totalSum += cellSum;
         }
 
-        if (total == 0)
+        if (totalSum == 0)
         {
             return 0;
         }
 
         uint32_t cellIndex = 0;
-        uint64_t cumulative = 0;
+        uint64_t cumulativeSum = 0;
 
-        for (uint32_t i = 0; i < maxEntries; i++)
+        for (uint32_t entryIndex = 0; entryIndex < maxEntries; entryIndex++)
         {
-            const uint64_t target = total * (2 * uint64_t(i) + 1) / (2 * uint64_t(maxEntries));
+            const uint64_t target = totalSum * (2 * uint64_t(entryIndex) + 1) / (2 * uint64_t(maxEntries));
 
-            while (cumulative < target && cellIndex < grid.size())
+            while (cumulativeSum < target && cellIndex < grid.size())
             {
-                cumulative += grid[cellIndex];
+                cumulativeSum += grid[cellIndex];
                 cellIndex++;
             }
 
             const uint32_t cell = cellIndex > 0 ? cellIndex - 1 : 0;
+
             const uint32_t s = uint32_t((float(cell % gridWidth) + 0.5f) / float(gridWidth) * 65535.0f);
             const uint32_t t = uint32_t((float(cell / gridWidth) + 0.5f) / float(gridHeight) * 65535.0f);
 
-            pEntries[i] = s | (t << 16);
+            pEntries[entryIndex] = s | (t << 16);
         }
 
         return maxEntries;
     }
 
-    // Mirror of TextureUploader::GetMipmapCount (TextureUploader.cpp:74-90) for the image that
-    // UploadImage is about to create. The uploader's rule is protected and UploadResult carries no
-    // mip count, but the RHI table needs the real level count of the created image. The uploader
-    // computes it from the UploadInfo that PrepareTexture builds, in which
-    // pregeneratedLevelCount = isPregenerated ? levelCount : 0.
     uint32_t GetUploadedMipLevelCount(const ImageLoader::ResultInfo &imageInfo, bool useMipmaps)
     {
         if (!useMipmaps)
@@ -182,10 +182,10 @@ namespace
             return std::min(imageInfo.levelCount, MAX_PREGENERATED_MIPMAP_LEVELS);
         }
 
-        const auto widthCount = static_cast<uint32_t>(std::log2(imageInfo.baseSize.width));
-        const auto heightCount = static_cast<uint32_t>(std::log2(imageInfo.baseSize.height));
+        const auto widthLevelCount = static_cast<uint32_t>(std::log2(imageInfo.baseSize.width));
+        const auto heightLevelCount = static_cast<uint32_t>(std::log2(imageInfo.baseSize.height));
 
-        return std::min(widthCount, heightCount) + 1;
+        return std::min(widthLevelCount, heightLevelCount) + 1;
     }
 }
 
@@ -260,10 +260,8 @@ TextureManager::TextureManager( VkDevice                                       _
         texturesToUpdateDescMarked[i].assign(maxTextureCount, 0);
     }
 
-    // desc sets are allocated with undefined content: every slot needs a write
     MarkAllDescDirty();
 
-    // submit cmd to create empty texture
     VkCommandBuffer cmd = _cmdManager->StartGraphicsCmd();
 
     uint32_t *pTalCdfDefault = static_cast< uint32_t * >( talCdfBuffer->GetMapped( 0 ) );
@@ -290,7 +288,7 @@ void TextureManager::CreateEmptyTexture(VkCommandBuffer cmd, uint32_t frameIndex
     assert(textures[EMPTY_TEXTURE_INDEX].image == VK_NULL_HANDLE && textures[EMPTY_TEXTURE_INDEX].view == VK_NULL_HANDLE);
 
     const uint32_t data[] = { 0xFFFFFFFF };
-    const RgExtent2D size = { 1,1 };
+    const RgExtent2D size = { 1, 1 };
 
     ImageLoader::ResultInfo info = {};
     info.pData = reinterpret_cast<const uint8_t*>(data);
@@ -301,32 +299,27 @@ void TextureManager::CreateEmptyTexture(VkCommandBuffer cmd, uint32_t frameIndex
     info.isPregenerated = false;
     info.levelSizes[0] = sizeof(data);
 
-    SamplerManager::Handle samplerHandle(RG_SAMPLER_FILTER_NEAREST, RG_SAMPLER_ADDRESS_MODE_REPEAT, RG_SAMPLER_ADDRESS_MODE_REPEAT, 0);
+    const SamplerManager::Handle samplerHandle(RG_SAMPLER_FILTER_NEAREST, RG_SAMPLER_ADDRESS_MODE_REPEAT, RG_SAMPLER_ADDRESS_MODE_REPEAT, 0);
 
-    uint32_t textureIndex = PrepareTexture(cmd, frameIndex, info, samplerHandle, false, "Empty texture", false, std::nullopt);
+    const uint32_t textureIndex = PrepareTexture(cmd, frameIndex, info, samplerHandle, false, "Empty texture", false, std::nullopt);
 
-    // must have specific index
     assert(textureIndex == EMPTY_TEXTURE_INDEX);
 
-    VkImage emptyImage = textures[textureIndex].image;
-    VkImageView emptyView = textures[textureIndex].view;
+    const VkImage emptyImage = textures[textureIndex].image;
+    const VkImageView emptyView = textures[textureIndex].view;
 
     assert(emptyImage != VK_NULL_HANDLE && emptyView != VK_NULL_HANDLE);
 
-    // if texture will be reset, it will use empty texture's info
     textureDesc->SetEmptyTextureInfo(emptyView);
 }
 
-// Check CreateStaticMaterial for notes
 void vkpt::TextureManager::CreateWaterNormalTexture(VkCommandBuffer cmd, uint32_t frameIndex, const char *pFilePath)
 {
-    SamplerManager::Handle samplerHandle(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_REPEAT, RG_SAMPLER_ADDRESS_MODE_REPEAT, 0);
+    const SamplerManager::Handle samplerHandle(RG_SAMPLER_FILTER_LINEAR, RG_SAMPLER_ADDRESS_MODE_REPEAT, RG_SAMPLER_ADDRESS_MODE_REPEAT, 0);
 
-    TextureOverrides::OverrideInfo parseInfo = 
-    {
-        // use absolute path
-        .commonFolderPath = ""
-    };
+    TextureOverrides::OverrideInfo parseInfo = {};
+    parseInfo.commonFolderPath = "";
+
     for (uint32_t i = 0; i < TEXTURES_PER_MATERIAL_COUNT; i++)
     {
         parseInfo.postfixes[i] = "";
@@ -336,7 +329,7 @@ void vkpt::TextureManager::CreateWaterNormalTexture(VkCommandBuffer cmd, uint32_
 
     constexpr uint32_t defaultData[] = { 0x7F7FFFFF };
     constexpr RgExtent2D defaultSize = { 1, 1 };
-    // try to load image file
+
     TextureOverrides ovrd(pFilePath, RgTextureSet{ .pDataAlbedoAlpha = defaultData }, defaultSize, parseInfo, imageLoader.get());
 
     this->waterNormalTextureIndex = PrepareTexture( cmd,
@@ -351,46 +344,44 @@ void vkpt::TextureManager::CreateWaterNormalTexture(VkCommandBuffer cmd, uint32_
 
 TextureManager::~TextureManager()
 {
-    for (auto &texture : textures)
+    const auto destroyTextures = [this](std::vector<Texture> &textureList)
     {
-        assert((texture.image == VK_NULL_HANDLE && texture.view == VK_NULL_HANDLE) ||
-               (texture.image != VK_NULL_HANDLE && texture.view != VK_NULL_HANDLE));
-
-        if (texture.image != VK_NULL_HANDLE)
+        for (auto &texture : textureList)
         {
-            DestroyTexture(texture);
+            assert((texture.image == VK_NULL_HANDLE && texture.view == VK_NULL_HANDLE) ||
+                   (texture.image != VK_NULL_HANDLE && texture.view != VK_NULL_HANDLE));
+
+            if (texture.image != VK_NULL_HANDLE)
+            {
+                DestroyTexture(texture);
+            }
         }
-    }
+    };
+
+    destroyTextures(textures);
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        for (auto &texture : texturesToDestroy[i])
-        {
-            DestroyTexture(texture);
-        }
+        destroyTextures(texturesToDestroy[i]);
     }
 }
 
 void TextureManager::PrepareForFrame(uint32_t frameIndex)
 {
-    // destroy delayed textures
     for (auto &texture : texturesToDestroy[frameIndex])
     {
         DestroyTexture(texture);
     }
+
     texturesToDestroy[frameIndex].clear();
 
-    // clear staging buffer that are not in use
     textureUploader->ClearStaging(frameIndex);
 }
 
 void TextureManager::MarkDescDirty(uint32_t textureIndex)
 {
-    // all desc sets must be updated, as the next frame in flight uses another one
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        // a slot which is already pending does not need a second entry: the desc is written
-        // from the current texture state, not from the state at the moment of this call
         if (texturesToUpdateDescMarked[i][textureIndex] == 0)
         {
             texturesToUpdateDescMarked[i][textureIndex] = 1;
@@ -405,24 +396,18 @@ void TextureManager::MarkAllDescDirty()
     {
         auto &dirty = texturesToUpdateDesc[i];
 
-        dirty.clear();
-        dirty.reserve(textures.size());
-
-        for (uint32_t t = 0; t < textures.size(); t++)
-        {
-            dirty.push_back(t);
-        }
+        dirty.resize(textures.size());
+        std::iota(dirty.begin(), dirty.end(), 0u);
 
         std::fill(texturesToUpdateDescMarked[i].begin(), texturesToUpdateDescMarked[i].end(), 1);
     }
 }
 
-void TextureManager::SubmitDescriptors(uint32_t frameIndex, 
+void TextureManager::SubmitDescriptors(uint32_t frameIndex,
                                        const RgDrawFrameTexturesParams *pTexturesParams,
                                        bool forceUpdateAllDescriptors)
 {
-    // check if dynamic sampler filter was changed
-    RgSamplerFilter newDynamicSamplerFilter = pTexturesParams != nullptr ?
+    const RgSamplerFilter newDynamicSamplerFilter = pTexturesParams != nullptr ?
         pTexturesParams->dynamicSamplerFilter : DefaultDynamicSamplerFilter;
 
     if (currentDynamicSamplerFilter != newDynamicSamplerFilter)
@@ -431,50 +416,39 @@ void TextureManager::SubmitDescriptors(uint32_t frameIndex,
         forceUpdateAllDescriptors = true;
     }
 
-
     if (forceUpdateAllDescriptors)
     {
         textureDesc->ResetAllCache(frameIndex);
 
-        // samplers were recreated: every slot in every desc set must be written again
         MarkAllDescDirty();
     }
 
-    // update desc set with current values, for the slots that were changed since
-    // their descriptor was written to this desc set
     auto &dirty = texturesToUpdateDesc[frameIndex];
 
-    // no slot was written before this call: the desc set already holds what the write cache
-    // describes, so there is nothing to flush either
     const bool hasDescWrites = !dirty.empty();
 
     for (uint32_t i : dirty)
     {
-        textures[i].samplerHandle.SetIfHasDynamicSamplerFilter(newDynamicSamplerFilter);
+        Texture &texture = textures[i];
 
+        texture.samplerHandle.SetIfHasDynamicSamplerFilter(newDynamicSamplerFilter);
 
-        if (textures[i].image != VK_NULL_HANDLE)
+        if (texture.image != VK_NULL_HANDLE)
         {
-            textureDesc->UpdateTextureDesc(frameIndex, i, textures[i].view, textures[i].samplerHandle);
+            textureDesc->UpdateTextureDesc(frameIndex, i, texture.view, texture.samplerHandle);
 
-            // RHI dual write (RHI/RhiTextureTable.h): the same moment the legacy descriptor is
-            // written. Slots without an image are left to ResetSlot in DestroyMaterialTextures.
-            // GetIndex() runs after SetIfHasDynamicSamplerFilter above, so the slot's sampler is the
-            // engine index the dynamic filter left behind.
             if (rhiTextureTable != nullptr)
             {
-                rhiTextureTable->SetSlot(i, textures[i].image, textures[i].format,
-                                         textures[i].baseSize.width, textures[i].baseSize.height,
-                                         textures[i].mipLevels, textures[i].samplerHandle.GetIndex());
+                rhiTextureTable->SetSlot(i, texture.image, texture.format,
+                                         texture.baseSize.width, texture.baseSize.height,
+                                         texture.mipLevels, texture.samplerHandle.GetIndex());
             }
         }
         else
         {
-            // reset descriptor to empty texture
             textureDesc->ResetTextureDesc(frameIndex, i);
         }
 
-        // the slot is written to this desc set, changes made after this call will mark it again
         texturesToUpdateDescMarked[frameIndex][i] = 0;
     }
 
@@ -490,49 +464,45 @@ uint32_t TextureManager::CreateMaterial( VkCommandBuffer             cmd,
                                          uint32_t                    frameIndex,
                                          const RgMaterialCreateInfo& createInfo )
 {
-    if( createInfo.pRelativePath == nullptr && createInfo.textures.pDataAlbedoAlpha == nullptr &&
-        createInfo.textures.pDataRoughnessMetallicEmission == nullptr &&
-        createInfo.textures.pDataNormal == nullptr )
+    if( createInfo.pRelativePath == nullptr && IsTextureSetEmpty( createInfo.textures ) )
     {
         throw RgException(
             RG_WRONG_MATERIAL_PARAMETER,
             R"(At least one of 'pRelativePath' or 'textures' members must be not null)" );
     }
 
-    auto samplerHandle = SamplerManager::Handle(
+    const auto samplerHandle = SamplerManager::Handle(
         createInfo.filter, createInfo.addressModeU, createInfo.addressModeV, createInfo.flags );
 
-    auto normalMapSamplerHandle = SamplerManager::Handle(
+    const auto normalMapSamplerHandle = SamplerManager::Handle(
         forceNormalMapFilterLinear ? RG_SAMPLER_FILTER_LINEAR : createInfo.filter,
         createInfo.addressModeU,
         createInfo.addressModeV,
         createInfo.flags & ( ~RG_MATERIAL_CREATE_DYNAMIC_SAMPLER_FILTER_BIT ) );
 
-    TextureOverrides::OverrideInfo parseInfo = {
-        .commonFolderPath = defaultTexturesPath.c_str(),
-    };
-    for( uint32_t i = 0; i < TEXTURES_PER_MATERIAL_COUNT; i++ )
-    {
-        parseInfo.postfixes[ i ]       = postfixes[ i ].c_str();
-        parseInfo.overridenIsSRGB[ i ] = overridenIsSRGB[ i ];
-        parseInfo.originalIsSRGB[ i ]  = originalIsSRGB[ i ];
-    }
+    TextureOverrides::OverrideInfo parseInfo = {};
+    parseInfo.commonFolderPath = defaultTexturesPath.c_str();
+    parseInfo.postfixes[0] = postfixes[0].c_str();
+    parseInfo.postfixes[1] = postfixes[1].c_str();
+    parseInfo.postfixes[2] = postfixes[2].c_str();
+    parseInfo.overridenIsSRGB[0] = overridenIsSRGB[0];
+    parseInfo.overridenIsSRGB[1] = overridenIsSRGB[1];
+    parseInfo.overridenIsSRGB[2] = overridenIsSRGB[2];
+    parseInfo.originalIsSRGB[0] = originalIsSRGB[0];
+    parseInfo.originalIsSRGB[1] = originalIsSRGB[1];
+    parseInfo.originalIsSRGB[2] = originalIsSRGB[2];
 
-    // load additional textures, they'll be freed after leaving the scope
     TextureOverrides ovrd( createInfo.pRelativePath,
                            createInfo.textures,
                            createInfo.size,
                            parseInfo,
                            GetLoader( imageLoader, imageLoaderDev ) );
 
-
-    bool isUpdateable = createInfo.flags & RG_MATERIAL_CREATE_UPDATEABLE_BIT;
+    bool isUpdateable = ( createInfo.flags & RG_MATERIAL_CREATE_UPDATEABLE_BIT ) != 0;
     if( observer )
     {
-        // treat everything as updateable
         isUpdateable = true;
     }
-
 
     MaterialTextures mtextures = {};
     for( uint32_t i = 0; i < TEXTURES_PER_MATERIAL_COUNT; i++ )
@@ -552,7 +522,7 @@ uint32_t TextureManager::CreateMaterial( VkCommandBuffer             cmd,
                                                             : std::nullopt );
     }
 
-    uint32_t materialIndex = InsertMaterial( mtextures, isUpdateable );
+    const uint32_t materialIndex = InsertMaterial( mtextures, isUpdateable );
 
     const uint32_t rmeIndex = mtextures.indices[ MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX ];
 
@@ -566,7 +536,6 @@ uint32_t TextureManager::CreateMaterial( VkCommandBuffer             cmd,
         }
     }
 
-
     if( observer )
     {
         for( uint32_t i = 0; i < TEXTURES_PER_MATERIAL_COUNT; i++ )
@@ -576,57 +545,54 @@ uint32_t TextureManager::CreateMaterial( VkCommandBuffer             cmd,
         }
     }
 
-
     return materialIndex;
 }
 
 bool TextureManager::UpdateMaterial(VkCommandBuffer cmd, uint32_t frameIndex, const RgMaterialUpdateInfo &updateInfo)
 {
-    const auto it = materials.find(updateInfo.target);
+    const auto materialIt = materials.find(updateInfo.target);
 
-    // must exist
-    if (it == materials.end())
+    if (materialIt == materials.end())
     {
         throw RgException(RG_CANT_UPDATE_MATERIAL,
             "Material with ID=" + std::to_string(updateInfo.target) + " was not created");
     }
 
-    // must be updateable
-    if (!it->second.isUpdateable)
+    if (!materialIt->second.isUpdateable)
     {
         throw RgException(RG_CANT_UPDATE_MATERIAL,
             "Material with ID=" + std::to_string(updateInfo.target) + " was not marked as updateable");
     }
 
-    const void *updateData[TEXTURES_PER_MATERIAL_COUNT] = 
+    const void *updateData[TEXTURES_PER_MATERIAL_COUNT] =
     {
         updateInfo.textures.pDataAlbedoAlpha,
         updateInfo.textures.pDataRoughnessMetallicEmission,
         updateInfo.textures.pDataNormal,
     };
 
-    auto &textureIndices = it->second.textures.indices;
+    auto &textureIndices = materialIt->second.textures.indices;
     static_assert(sizeof(textureIndices) / sizeof(textureIndices[0]) == TEXTURES_PER_MATERIAL_COUNT);
 
     bool wasUpdated = false;
 
     for (uint32_t i = 0; i < TEXTURES_PER_MATERIAL_COUNT; i++)
     {
-        uint32_t textureIndex = textureIndices[i];
+        const uint32_t textureIndex = textureIndices[i];
 
         if (textureIndex == EMPTY_TEXTURE_INDEX)
         {
             continue;
         }
 
-        VkImage img = textures[textureIndex].image;
+        const VkImage image = textures[textureIndex].image;
 
-        if (img == VK_NULL_HANDLE || updateData[i] == nullptr)
+        if (image == VK_NULL_HANDLE || updateData[i] == nullptr)
         {
             continue;
         }
 
-        textureUploader->UpdateImage(cmd, img, updateData[i]);
+        textureUploader->UpdateImage(cmd, image, updateData[i]);
 
         if (i == MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX)
         {
@@ -653,6 +619,7 @@ uint32_t TextureManager::PrepareTexture(
     {
         return EMPTY_TEXTURE_INDEX;
     }
+
     const auto& imageInfo = optImageInfo.value();
 
     if( imageInfo.baseSize.width == 0 || imageInfo.baseSize.height == 0 )
@@ -669,23 +636,21 @@ uint32_t TextureManager::PrepareTexture(
     assert( imageInfo.dataSize > 0 );
     assert( imageInfo.levelCount > 0 && imageInfo.levelSizes[ 0 ] > 0 );
 
-    TextureUploader::UploadInfo info = {
-        .cmd                    = cmd,
-        .frameIndex             = frameIndex,
-        .pData                  = imageInfo.pData,
-        .dataSize               = imageInfo.dataSize,
-        .cubemap                = {},
-        .baseSize               = imageInfo.baseSize,
-        .format                 = imageInfo.format,
-        .useMipmaps             = useMipmaps,
-        .pregeneratedLevelCount = imageInfo.isPregenerated ? imageInfo.levelCount : 0,
-        .pLevelDataOffsets      = imageInfo.levelOffsets,
-        .pLevelDataSizes        = imageInfo.levelSizes,
-        .isUpdateable           = isUpdateable,
-        .pDebugName             = debugName,
-        .isCubemap              = false,
-        .swizzling              = swizzling,
-    };
+    TextureUploader::UploadInfo info = {};
+    info.cmd                    = cmd;
+    info.frameIndex             = frameIndex;
+    info.pData                  = imageInfo.pData;
+    info.dataSize               = imageInfo.dataSize;
+    info.baseSize               = imageInfo.baseSize;
+    info.format                 = imageInfo.format;
+    info.useMipmaps             = useMipmaps;
+    info.pregeneratedLevelCount = imageInfo.isPregenerated ? imageInfo.levelCount : 0;
+    info.pLevelDataOffsets      = imageInfo.levelOffsets;
+    info.pLevelDataSizes        = imageInfo.levelSizes;
+    info.isUpdateable           = isUpdateable;
+    info.pDebugName             = debugName;
+    info.isCubemap              = false;
+    info.swizzling              = swizzling;
 
     auto [ wasUploaded, image, view ] = textureUploader->UploadImage( info );
 
@@ -720,16 +685,19 @@ void TextureManager::RebuildTalCdf(VkCommandBuffer cmd, uint32_t frameIndex, uin
 
     const TalCdfSource &source = talCdfSources[textureIndex];
 
-    const bool isEmissiveInBlue = pbrSwizzling == RG_TEXTURE_SWIZZLING_ROUGHNESS_METALLIC_EMISSIVE ||
-                                  pbrSwizzling == RG_TEXTURE_SWIZZLING_METALLIC_ROUGHNESS_EMISSIVE;
+    const bool isEmissiveChannelBlue = pbrSwizzling == RG_TEXTURE_SWIZZLING_ROUGHNESS_METALLIC_EMISSIVE ||
+                                       pbrSwizzling == RG_TEXTURE_SWIZZLING_METALLIC_ROUGHNESS_EMISSIVE;
 
     uint32_t bytesPerPixel = 0;
     uint32_t emissiveOffset = 0;
 
+    const bool layoutMatches = isEmissiveChannelBlue &&
+                               GetTalCdfPixelLayout(source.format, &bytesPerPixel, &emissiveOffset) &&
+                               uint64_t(source.baseSize.width) * source.baseSize.height * bytesPerPixel == source.level0Size;
+
     std::vector<uint32_t> entries(TAL_CDF_LUT_ENTRIES, TAL_CDF_EMPTY_ENTRY);
 
-    if (isEmissiveInBlue && GetTalCdfPixelLayout(source.format, &bytesPerPixel, &emissiveOffset) &&
-        uint64_t(source.baseSize.width) * source.baseSize.height * bytesPerPixel == source.level0Size)
+    if (layoutMatches)
     {
         BuildTalCdfEntries(pData,
                            source.baseSize.width,
@@ -744,7 +712,7 @@ void TextureManager::RebuildTalCdf(VkCommandBuffer cmd, uint32_t frameIndex, uin
     const VkDeviceSize offset = VkDeviceSize(textureIndex) * lutSize;
 
     uint32_t *pStaging = static_cast<uint32_t *>(talCdfBuffer->GetMapped(frameIndex)) +
-                         VkDeviceSize(textureIndex) * TAL_CDF_LUT_ENTRIES;
+                         static_cast<size_t>(textureIndex) * TAL_CDF_LUT_ENTRIES;
 
     std::memcpy(pStaging, entries.data(), size_t(lutSize));
 
@@ -758,12 +726,12 @@ uint32_t TextureManager::CreateAnimatedMaterial(VkCommandBuffer cmd, uint32_t fr
         return RG_NO_MATERIAL;
     }
 
-    std::vector<uint32_t> materialIndices(createInfo.frameCount);
+    std::vector<uint32_t> materialIndices;
+    materialIndices.reserve(createInfo.frameCount);
 
-    // animated material is a series of static materials
     for (uint32_t i = 0; i < createInfo.frameCount; i++)
     {
-        materialIndices[i] = CreateMaterial(cmd, frameIndex, createInfo.pFrames[i]);
+        materialIndices.push_back(CreateMaterial(cmd, frameIndex, createInfo.pFrames[i]));
     }
 
     return InsertAnimatedMaterial(materialIndices);
@@ -781,7 +749,8 @@ bool TextureManager::ChangeAnimatedMaterialFrame(uint32_t animMaterial, uint32_t
     AnimatedMaterial &anim = animIt->second;
 
     {
-        auto maxFrameCount = static_cast<uint32_t>(anim.materialIndices.size());
+        const auto maxFrameCount = static_cast<uint32_t>(anim.materialIndices.size());
+
         if (materialFrame >= maxFrameCount)
         {
             throw RgException(RG_CANT_UPDATE_ANIMATED_MATERIAL,
@@ -793,20 +762,17 @@ bool TextureManager::ChangeAnimatedMaterialFrame(uint32_t animMaterial, uint32_t
 
     anim.currentFrame = materialFrame;
 
-    // notify subscribers
-    for (auto &ws : subscribers)
+    for (auto &weakSubscriber : subscribers)
     {
-        // if subscriber still exist
-        if (auto s = ws.lock())
+        if (auto subscriber = weakSubscriber.lock())
         {
-            uint32_t frameMatIndex = anim.materialIndices[anim.currentFrame];
+            const uint32_t frameMatIndex = anim.materialIndices[anim.currentFrame];
 
-            // find MaterialTextures
-            auto it = materials.find(frameMatIndex);
+            const auto materialIt = materials.find(frameMatIndex);
 
-            if (it != materials.end())
+            if (materialIt != materials.end())
             {
-                s->OnMaterialChange(animMaterial, it->second.textures);
+                subscriber->OnMaterialChange(animMaterial, materialIt->second.textures);
             }
         }
     }
@@ -816,122 +782,103 @@ bool TextureManager::ChangeAnimatedMaterialFrame(uint32_t animMaterial, uint32_t
 
 uint32_t TextureManager::GenerateMaterialIndex(const MaterialTextures &materialTextures)
 {
-    uint32_t matIndex = materialTextures.indices[0] + materialTextures.indices[1] + materialTextures.indices[2];
+    uint32_t materialIndex = std::accumulate(materialTextures.indices, materialTextures.indices + TEXTURES_PER_MATERIAL_COUNT, 0u);
 
-    while (materials.find(matIndex) != materials.end())
+    while (materials.count(materialIndex) != 0)
     {
-        matIndex++;
+        materialIndex++;
     }
 
-    return matIndex;
+    return materialIndex;
 }
 
 uint32_t TextureManager::GenerateMaterialIndex(const std::vector<uint32_t> &materialIndices)
 {
-    uint32_t matIndex = std::accumulate(materialIndices.begin(), materialIndices.end(), 0u);
+    uint32_t materialIndex = std::accumulate(materialIndices.begin(), materialIndices.end(), 0u);
 
-    // all materials share the same pool of indices
-    while (materials.find(matIndex) != materials.end())
+    while (materials.count(materialIndex) != 0)
     {
-        matIndex++;
+        materialIndex++;
     }
 
-    return matIndex;
+    return materialIndex;
 }
 
 uint32_t TextureManager::InsertMaterial(const MaterialTextures &materialTextures, bool isUpdateable)
 {
-    bool isEmpty = true;
-
-    for (uint32_t t : materialTextures.indices)
-    {
-        if (t != EMPTY_TEXTURE_INDEX)
-        {
-            isEmpty = false;
-            break;
-        }
-    }
+    const bool isEmpty = std::none_of(materialTextures.indices, materialTextures.indices + TEXTURES_PER_MATERIAL_COUNT,
+                                      [] (uint32_t textureIndex) { return textureIndex != EMPTY_TEXTURE_INDEX; });
 
     if (isEmpty)
     {
         return RG_NO_MATERIAL;
     }
 
-    uint32_t matIndex = GenerateMaterialIndex(materialTextures);
-    materials[matIndex] = Material
+    const uint32_t materialIndex = GenerateMaterialIndex(materialTextures);
+
+    materials[materialIndex] = Material
     {
         .textures = materialTextures,
         .isUpdateable = isUpdateable,
     };
 
-    return matIndex;
+    return materialIndex;
 }
 
 uint32_t TextureManager::InsertAnimatedMaterial(std::vector<uint32_t> &materialIndices)
 {
-    bool isEmpty = true;
-
-    for (uint32_t m : materialIndices)
-    {
-        if (m != RG_NO_MATERIAL)
-        {
-            isEmpty = false;
-            break;
-        }    
-    }
+    const bool isEmpty = std::none_of(materialIndices.begin(), materialIndices.end(),
+                                      [] (uint32_t materialIndex) { return materialIndex != RG_NO_MATERIAL; });
 
     if (isEmpty)
     {
         return RG_NO_MATERIAL;
     }
 
-    uint32_t animMatIndex = GenerateMaterialIndex(materialIndices);
-    animatedMaterials[animMatIndex] = AnimatedMaterial
+    const uint32_t animMaterialIndex = GenerateMaterialIndex(materialIndices);
+
+    animatedMaterials[animMaterialIndex] = AnimatedMaterial
     {
         .materialIndices = std::move(materialIndices),
         .currentFrame = 0,
     };
 
-    return animMatIndex;
+    return animMaterialIndex;
 }
 
 void TextureManager::DestroyMaterialTextures(uint32_t frameIndex, uint32_t materialIndex)
 {
-    auto it = materials.find(materialIndex);
+    const auto materialIt = materials.find(materialIndex);
 
-    if (it != materials.end())
+    if (materialIt != materials.end())
     {
-        DestroyMaterialTextures(frameIndex, it->second);
+        DestroyMaterialTextures(frameIndex, materialIt->second);
     }
 }
 
 void TextureManager::DestroyMaterialTextures(uint32_t frameIndex, const Material &material)
 {
-    for (auto t : material.textures.indices)
+    for (uint32_t textureIndex : material.textures.indices)
     {
-        if (t != EMPTY_TEXTURE_INDEX)
+        if (textureIndex == EMPTY_TEXTURE_INDEX)
         {
-            Texture &texture = textures[t];
-
-            AddToBeDestroyed(frameIndex, texture);
-
-            // Slot t is freed right here: its fields are nulled below and MarkDescDirty makes
-            // SubmitDescriptors reset the legacy descriptor to the empty texture. The delayed
-            // destroy list only holds a copy that DestroyTexture frees a frame later, so resetting
-            // the RHI slot there could clobber a slot that InsertTexture has already reused. The
-            // fallback stays in the slot until the next SetSlot from SubmitDescriptors.
-            if (rhiTextureTable != nullptr)
-            {
-                rhiTextureTable->ResetSlot(t);
-            }
-
-            // null data
-            texture.image = VK_NULL_HANDLE;
-            texture.view = VK_NULL_HANDLE;
-            texture.samplerHandle = SamplerManager::Handle();
-
-            MarkDescDirty(t);
+            continue;
         }
+
+        Texture &texture = textures[textureIndex];
+
+        AddToBeDestroyed(frameIndex, texture);
+
+        if (rhiTextureTable != nullptr)
+        {
+            rhiTextureTable->ResetSlot(textureIndex);
+        }
+
+        texture.image = VK_NULL_HANDLE;
+        texture.view = VK_NULL_HANDLE;
+        texture.samplerHandle = SamplerManager::Handle();
+
+        MarkDescDirty(textureIndex);
     }
 }
 
@@ -942,47 +889,40 @@ void TextureManager::DestroyMaterial(uint32_t currentFrameIndex, uint32_t materi
         return;
     }
 
-
     const auto animIt = animatedMaterials.find(materialIndex);
 
-    // if it's an animated material
     if (animIt != animatedMaterials.end())
     {
         AnimatedMaterial &anim = animIt->second;
 
-        // destroy each material
-        for (auto &mat : anim.materialIndices)
+        for (auto &material : anim.materialIndices)
         {
-            DestroyMaterialTextures(currentFrameIndex, mat);
+            DestroyMaterialTextures(currentFrameIndex, material);
         }
 
         animatedMaterials.erase(animIt);
     }
     else
     {
-        auto it = materials.find(materialIndex);
+        const auto materialIt = materials.find(materialIndex);
 
-        if (it != materials.end())
+        if (materialIt != materials.end())
         {
-            DestroyMaterialTextures(currentFrameIndex, it->second);
-            materials.erase(it);
+            DestroyMaterialTextures(currentFrameIndex, materialIt->second);
+            materials.erase(materialIt);
         }
     }
-
 
     if (observer)
     {
         observer->Remove(materialIndex);
     }
 
-
-    // notify subscribers
-    for (auto &ws : subscribers)
+    for (auto &weakSubscriber : subscribers)
     {
-        if (auto s = ws.lock())
+        if (auto subscriber = weakSubscriber.lock())
         {
-            // send them empty texture indices as material is destroyed
-            s->OnMaterialChange(materialIndex, EmptyMaterialTextures);
+            subscriber->OnMaterialChange(materialIndex, EmptyMaterialTextures);
         }
     }
 }
@@ -999,34 +939,34 @@ uint32_t TextureManager::InsertTexture(uint32_t frameIndex, VkImage image, VkIma
                                        SamplerManager::Handle samplerHandle, VkFormat format,
                                        VkExtent2D baseSize, uint32_t mipLevels)
 {
-    auto texture = std::find_if(textures.begin(), textures.end(), [] (const Texture &t)
+    const auto textureIt = std::find_if(textures.begin(), textures.end(), [] (const Texture &texture)
     {
-        return t.image == VK_NULL_HANDLE && t.view == VK_NULL_HANDLE;
+        return texture.image == VK_NULL_HANDLE && texture.view == VK_NULL_HANDLE;
     });
 
-    // if coudn't find empty space, use empty texture
-    if (texture == textures.end())
+    if (textureIt == textures.end())
     {
-        // clean created data
-        Texture t = {};
-        t.image = image;
-        t.view = view;
-        AddToBeDestroyed(frameIndex, t);
+        Texture pending = {};
+        pending.image = image;
+        pending.view = view;
+        AddToBeDestroyed(frameIndex, pending);
 
-        // TODO: properly warn user, add severity to print
         assert(false && "Too many textures");
 
         return EMPTY_TEXTURE_INDEX;
     }
 
-    texture->image = image;
-    texture->view = view;
-    texture->samplerHandle = samplerHandle;
-    texture->format = format;
-    texture->baseSize = baseSize;
-    texture->mipLevels = mipLevels;
+    *textureIt = Texture
+    {
+        .image = image,
+        .view = view,
+        .samplerHandle = samplerHandle,
+        .format = format,
+        .baseSize = baseSize,
+        .mipLevels = mipLevels,
+    };
 
-    const uint32_t textureIndex = (uint32_t)std::distance(textures.begin(), texture);
+    const uint32_t textureIndex = static_cast<uint32_t>(std::distance(textures.begin(), textureIt));
 
     MarkDescDirty(textureIndex);
 
@@ -1059,18 +999,17 @@ MaterialTextures TextureManager::GetMaterialTextures(uint32_t materialIndex) con
     {
         const AnimatedMaterial &anim = animIt->second;
 
-        // return material textures of the current frame
         return GetMaterialTextures(anim.materialIndices[anim.currentFrame]);
     }
 
-    const auto it = materials.find(materialIndex);
+    const auto materialIt = materials.find(materialIndex);
 
-    if (it == materials.end())
+    if (materialIt == materials.end())
     {
         return EmptyMaterialTextures;
     }
 
-    return it->second.textures;
+    return materialIt->second.textures;
 }
 
 VkBuffer TextureManager::GetTalCdfBuffer() const
@@ -1095,16 +1034,16 @@ VkDescriptorSetLayout TextureManager::GetDescSetLayout() const
 
 void TextureManager::Subscribe(std::shared_ptr<IMaterialDependency> subscriber)
 {
-    subscribers.emplace_back(subscriber);
+    subscribers.push_back(subscriber);
 }
 
 void TextureManager::Unsubscribe(const IMaterialDependency *subscriber)
 {
-    subscribers.remove_if([subscriber] (const std::weak_ptr<IMaterialDependency> &ws)
+    subscribers.remove_if([subscriber] (const std::weak_ptr<IMaterialDependency> &weakSubscriber)
     {
-        if (const auto s = ws.lock())
+        if (const auto lockedSubscriber = weakSubscriber.lock())
         {
-            return s.get() == subscriber;
+            return lockedSubscriber.get() == subscriber;
         }
 
         return true;
@@ -1125,9 +1064,6 @@ void TextureManager::SetRhiTextureTable(rhi::RhiTextureTable *pTable)
 
     rhiTextureTable = pTable;
 
-    // A table attached after the first frame has seen no slot yet: every live texture must reach it
-    // through the same all-dirty path the constructor's initial fill and the dynamic-filter changes
-    // use (MarkAllDescDirty), so the next SubmitDescriptors writes the whole table into it.
     if (rhiTextureTable != nullptr)
     {
         MarkAllDescDirty();
