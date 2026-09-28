@@ -129,6 +129,7 @@ typedef struct rt_emis_stats_s
 	int frame_off;
 	int static_queued;
 	int static_dropped;
+	int projector;
 	int dynamic;
 	int glow_lights;
 	int glow_faces;
@@ -1386,16 +1387,17 @@ static void RT_EmitEmissiveWirePolygon (const QrTexturedAreaLightUploadInfo *lt)
 
 typedef struct
 {
-	vec3_t center;
-	vec3_t normal;
-	float  len;
+	vec3_t   center;
+	vec3_t   normal;
+	float    len;
+	qboolean projector;
 } rt_dtal_debug_arrow_t;
 
 static rt_dtal_debug_arrow_t rt_dtal_debug_arrow[RT_DTAL_DEBUG_MAX];
 static int                   rt_dtal_debug_num;
 static int                   rt_dtal_debug_frame = -1;
 
-static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area)
+static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area, qboolean projector)
 {
 	if (rt_dtal_debug_frame != r_framecount)
 	{
@@ -1411,6 +1413,7 @@ static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float are
 	VectorCopy (center, arrow->center);
 	VectorCopy (normal, arrow->normal);
 
+	arrow->projector = projector;
 	arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
 }
 
@@ -1459,9 +1462,19 @@ int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
 		o[1] = sy0;
 		o[2] = sx1;
 		o[3] = sy1;
-		o[4] = (float) fabs (arrow->normal[0]);
-		o[5] = (float) fabs (arrow->normal[1]);
-		o[6] = (float) fabs (arrow->normal[2]);
+
+		if (arrow->projector)
+		{
+			o[4] = 1.0f;
+			o[5] = 0.2f;
+			o[6] = 1.0f;
+		}
+		else
+		{
+			o[4] = (float) fabs (arrow->normal[0]);
+			o[5] = (float) fabs (arrow->normal[1]);
+			o[6] = (float) fabs (arrow->normal[2]);
+		}
 
 		num++;
 	}
@@ -1632,7 +1645,7 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 		}
 		else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
 		{
-			RT_DtalDebugAdd (center, li.normal.data, li.area);
+			RT_DtalDebugAdd (center, li.normal.data, li.area, li.projector > 0.5f);
 		}
 	}
 	else if (rt_wldlights_emissive_count < MAX_WORLDLIGHTS_COUNT)
@@ -1665,6 +1678,8 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 		   not once per frame. */
 		RT_TexturedAreaLightCenter (&rt_wldlights_emissive[index], rt_wldlights_emissive_center[index]);
 		rt_emis_stats.static_queued++;
+		if (light_info->projector > 0.5f)
+			rt_emis_stats.projector++;
 	}
 	else
 	{
@@ -1784,6 +1799,9 @@ typedef struct rt_emissive_params_s
 {
 	QrMaterial material;
 	float      meanEmiss;
+	float      angleInner;
+	float      angleOuter;
+	qboolean   projector;
 	vec3_t     color;
 	/* The texture glows over part of itself, so the light is built from polygons over those
 	   extents instead of from the whole surface. */
@@ -1813,6 +1831,9 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	p->meanEmiss = has_mask ? light_tex->rtemissivemean : 1.0f;
 	p->glow      = false;
 	p->glow_mean = p->meanEmiss;
+	p->angleInner = light_tex->rtemisangleinner;
+	p->angleOuter = light_tex->rtemisangleouter;
+	p->projector = light_tex->rtemisprojector;
 
 	if (light_tex->rthaslightcolor)
 	{
@@ -2514,6 +2535,9 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		li.numVerts  = piece->numverts;
 		li.material  = params->material;
 		li.meanEmiss = params->glow ? params->glow_mean : params->meanEmiss;
+		li.angleInner = params->angleInner;
+		li.angleOuter = params->angleOuter;
+		li.projector = params->projector ? 1.0f : 0.0f;
 		li.fit       = 1;
 		li.isStatic  = 0;
 
@@ -2757,6 +2781,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		{
 			params.material  = frame_params.material;
 			params.meanEmiss = frame_params.meanEmiss;
+			params.angleInner = frame_params.angleInner;
+			params.angleOuter = frame_params.angleOuter;
+			params.projector = frame_params.projector;
 			VectorCopy (frame_params.color, params.color);
 		}
 		else
@@ -2974,6 +3001,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	light_info.uniqueID  = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, 0);
 	light_info.material  = params.material;
 	light_info.meanEmiss = params.meanEmiss;
+	light_info.angleInner = params.angleInner;
+	light_info.angleOuter = params.angleOuter;
+	light_info.projector = params.projector ? 1.0f : 0.0f;
 	light_info.area      = total_area;
 	light_info.fit       = 0;
 	light_info.isStatic  = is_static_geom ? 1 : 0;
@@ -3786,7 +3816,7 @@ static void RT_RegisterWorldModelLight (const QrTexturedAreaLightUploadInfo *lt,
 	}
 	else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
 	{
-		RT_DtalDebugAdd (center, lt->normal.data, lt->area);
+		RT_DtalDebugAdd (center, lt->normal.data, lt->area, lt->projector > 0.5f);
 	}
 }
 
@@ -3850,6 +3880,9 @@ void RT_UploadAllWorldModelLights (void)
 				   material moves with it; the geometry stays where the surface is. */
 				li->material  = params.material;
 				li->meanEmiss = params.meanEmiss;
+				li->angleInner = params.angleInner;
+				li->angleOuter = params.angleOuter;
+				li->projector = params.projector ? 1.0f : 0.0f;
 				VectorCopy (params.color, li->color.data);
 			}
 			else
@@ -5255,8 +5288,8 @@ void RT_UploadWorldLights (void)
 
 void RT_PrintEmissiveStats (void)
 {
-	RT_LightReportPrint ("emissive pass: %i surfaces considered -> %i static world lights baked (whole map), %i entity lights uploaded (all passes)\n",
-		rt_emis_stats.surfaces, rt_emis_stats.static_queued, rt_emis_stats.dynamic);
+	RT_LightReportPrint ("emissive pass: %i surfaces considered -> %i static world lights baked (whole map, %i projectors), %i entity lights uploaded (all passes)\n",
+		rt_emis_stats.surfaces, rt_emis_stats.static_queued, rt_emis_stats.projector, rt_emis_stats.dynamic);
 	RT_LightReportPrint ("rejected: %i no light material, %i no light color, %i lightstyle off, %i degenerate, %i of a dark animation frame\n",
 		rt_emis_stats.no_material, rt_emis_stats.no_color, rt_emis_stats.style_off, rt_emis_stats.degenerate, rt_emis_stats.frame_off);
 

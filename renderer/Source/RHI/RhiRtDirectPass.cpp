@@ -155,7 +155,7 @@ constexpr uint32_t MAX_ATTRIBUTE_SIZE = 2 * sizeof(float);
 // raw bindings are the generated BINDING_LIGHT_SOURCES* numbers (0, 4, 5, 6, 8); the sizes are the
 // engine's own creation sizes (LightManager.cpp:71-96) and are what a native wrap has to carry,
 // because `LightManager::Buffers` hands out the VkBuffers without their sizes. The strides are the
-// shader's element strides: ShLightEncoded is 144 B and every other buffer is a uint array.
+// shader's element strides: ShLightEncoded is 160 B and every other buffer is a uint array.
 //
 // The statistics buffer is the only UAV item (the raygen's `q2AccumulateLightStats` writes it) and
 // the only one the RHI never copies. While `globalUniform.q2LightStatsMode` is
@@ -215,8 +215,8 @@ static_assert(LIGHT_BUFFER_BINDINGS[LIGHT_STATS_BUFFER_INDEX].binding ==
               LIGHT_BUFFER_BINDINGS[LIGHT_STATS_BUFFER_INDEX].isUAV,
               "LIGHT_STATS_BUFFER_INDEX has to name the statistics buffer of the set-6 table");
 
-static_assert(sizeof(ShLightEncoded) == 144,
-              "the shader's StructuredBuffer<ShLightEncoded> strides by 144 B (Generated/ShaderCommonC.h:389-401)");
+static_assert(sizeof(ShLightEncoded) == 160,
+              "the shader's StructuredBuffer<ShLightEncoded> strides by 160 B (Generated/ShaderCommonC.h:389-401)");
 
 // The four items `LightManager::GetFrameCopies` reports, mapped to the set-6 buffer each one copies
 // into: the light-array prefix (binding 0), the list offsets (4), the list words (5) and the sky

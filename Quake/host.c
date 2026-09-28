@@ -60,6 +60,8 @@ float  host_netinterval = 1.0 / 72;
 cvar_t host_framerate = {"host_framerate", "0", CVAR_NONE}; // set for slow motion
 cvar_t host_speeds = {"host_speeds", "0", CVAR_NONE};       // set for running times
 cvar_t host_maxfps = {"host_maxfps", "200", CVAR_ARCHIVE};  // johnfitz
+
+extern cvar_t vid_vsync;
 cvar_t host_timescale = {"host_timescale", "0", CVAR_NONE}; // johnfitz
 cvar_t max_edicts = {"max_edicts", "8192", CVAR_NONE};      // johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};           // spike -- blocks the loading of any csqc modules
@@ -705,7 +707,7 @@ Returns false if the time is too short to run a frame
 */
 qboolean Host_FilterTime (float time)
 {
-	float maxfps; // johnfitz
+	float maxfps = 0.0f; // johnfitz
 	float min_frame_time;
 	float delta_since_last_frame;
 
@@ -716,7 +718,18 @@ qboolean Host_FilterTime (float time)
 	{
 		// johnfitz -- max fps cvar
 		maxfps = CLAMP (10.0, host_maxfps.value, 1000.0);
+	}
 
+	if ((int)vid_vsync.value == VID_VSYNC_FREESYNC && vid_display_refresh > 10)
+	{
+		const float cap = (float)(vid_display_refresh - 3);
+
+		if (maxfps <= 0.0f || cap < maxfps)
+			maxfps = cap;
+	}
+
+	if (maxfps > 0.0f)
+	{
 		// Check if we still have more than 2ms till next frame and if so wait for "1ms"
 		// E.g. Windows is not a real time OS and the sleeps can vary in length even with timeBeginPeriod(1)
 		min_frame_time = 1.0f / maxfps;
@@ -737,7 +750,7 @@ qboolean Host_FilterTime (float time)
 	// johnfitz
 	else if (host_framerate.value > 0)
 		host_frametime = host_framerate.value;
-	else if (host_maxfps.value)                               // don't allow really long or short frames
+	else if (maxfps > 0.0f)                                   // don't allow really long or short frames
 		host_frametime = CLAMP (0.0001, host_frametime, 0.1); // johnfitz -- use CLAMP
 
 	return true;

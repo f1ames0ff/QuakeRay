@@ -560,6 +560,9 @@ typedef struct QrTexturedAreaLightUploadInfo
 
     QrMaterial      material;
     float           meanEmiss;
+    float           angleInner;
+    float           angleOuter;
+    float           projector;
 
     int             fit;
     int             isStatic;
@@ -877,9 +880,16 @@ QRAPI QrResult QRCONV qrDestroyCubemap(
     QrInstance                          qrInstance,
     QrCubemap                           cubemap);
 
+typedef enum QrPresentMode
+{
+    QR_PRESENT_MODE_MAILBOX = 0,
+    QR_PRESENT_MODE_VSYNC,
+    QR_PRESENT_MODE_ADAPTIVE,
+} QrPresentMode;
+
 typedef struct QrStartFrameInfo
 {
-    QrBool32        requestVSync;
+    QrPresentMode   presentMode;
     QrBool32        requestShaderReload;
 } QrStartFrameInfo;
 
@@ -1297,6 +1307,9 @@ QRAPI QrResult QRCONV qrSetFogVolumes(
 QRAPI QrBool32 QRCONV qrIsRenderUpscaleTechniqueAvailable(
     QrInstance                          qrInstance,
     QrRenderUpscaleTechnique            technique);
+
+QRAPI QrBool32 QRCONV qrIsSuspended(
+    QrInstance                          qrInstance);
 
 #define QR_GPU_PASS_COUNT 18
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.19.2
+
+### Added
+- **Presentation is a mode now, not a switch** — `vid_vsync` carries `0` off, `1` vsync, `2` adaptive (the default) or `3` FreeSync; the Video Options entry cycles the list instead of toggling a checkbox, the console prints the mode the swapchain took and the display's refresh rate, and the benchmark report records both. `off` shows a finished frame when it is finished (no tearing, the old `0`), `vsync` waits for the display's interval (`FIFO`, where `1` used to take `FIFO_RELAXED`), and `adaptive` waits as well but lets a late frame tear instead of being shown through the next interval (`FIFO_RELAXED`, what `1` used to mean).
+- **FreeSync** — `vid_vsync 3` presents with the plain `FIFO` sync and caps the frame rate three below the display's refresh rate (read on video mode changes), so a variable-refresh panel follows the game instead of showing a frame for 2 or 3 of its intervals apiece — the "60 fps that looks like 30" of a fixed 165 Hz panel, which shows a 78 fps game no better than it shows a 30 fps one.
+
+## v0.19.1
+
+### Fixed
+- **Minimizing the window no longer crashes the game** — the host no longer starts a frame while the window has no drawable surface: it asks the renderer first (`qrIsSuspended`, a fresh check of the surface extent), so a minimized window skips its frames instead of failing the frame start on a zero extent; a size the window reports as zero is ignored, and the width/height math can no longer divide by it.
+
+## v0.19.0
+
+### Added
+- **A DTAL can shine as a spot** — a material may author `emissive_focus: <half-angle in degrees>`: the light of every surface of that material is confined to a cone around its normal — full inside it, nothing outside — so a lit window, a lantern or a lamp casts a beam instead of the default wide lobe. `emissive_focus_soft` (degrees, default a tenth of the angle) is the width of the soft edge the beam is cut with; `0` is a nearly hard one. World faces, brush entities and alias models read it from the material of the frame they show.
+- **A DTAL can shine through its mask** — `emissive_projector: true` makes a material's light read the emissive mask along the direction of the point it lights instead of at a random point of the surface, so the pattern of a stained window or a sign is painted across the beam instead of washing out. The beam stays the cone around the normal — `emissive_focus` is its half-angle there (degrees; no key = `60`), and `emissive_focus_soft` softens the beam's edge, and in the projector the pattern itself: the mask is read from a blurrier mip as the soft edge grows, `0` keeping it sharp — so the light keeps filling the room while the pattern rides on it.
+
 ## v0.18.0
 
 ### Added

@@ -70,6 +70,16 @@ typedef struct
 
 extern viddef_t vid; // global video state
 
+enum
+{
+	VID_VSYNC_OFF = 0,
+	VID_VSYNC_ON,
+	VID_VSYNC_ADAPTIVE,
+	VID_VSYNC_FREESYNC,
+};
+
+extern int vid_display_refresh;
+
 extern void (*vid_menudrawfn) (cb_context_t *cbx);
 extern void (*vid_menukeyfn) (int key);
 extern void (*vid_menucmdfn) (void); // johnfitz

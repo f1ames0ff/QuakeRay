@@ -52,6 +52,9 @@ struct TexturedAreaLight
     float area;
     float textureIndex;
     float meanEmiss;
+    float coneCosInner;
+    float coneCosOuter;
+    float projector;
     int numVerts;
     vec2 uvVerts[MAX_TEXTURED_AREA_LIGHT_VERTS];
     vec3 color;
@@ -128,6 +131,9 @@ TexturedAreaLight decodeAsTexturedAreaLight(const ShLightEncoded encoded)
     l.normal = encoded.data_7.xyz;
     l.area = encoded.data_7.w;
     l.color = encoded.color;
+    l.coneCosInner = encoded.coneCosInner;
+    l.coneCosOuter = encoded.coneCosOuter;
+    l.projector = encoded.projector;
 
     return l;
 }
@@ -443,8 +449,103 @@ void getTalUvTiles(const TexturedAreaLight l, out vec2 tileMin, out vec2 tileMax
     tileMax = max(ceil(uvMax) - 1.0, tileMin);
 }
 
+LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const vec3 surfPosition, const vec2 pointRnd)
+{
+    LightSample r;
+    r.position = surfPosition;
+    r.color = vec3(0.0);
+    r.dw = 0.0;
+
+    const vec3 center = getTexturedAreaLightCenter(l);
+    const DirectionAndLength centerToSurf = calcDirectionAndLength(center, surfPosition);
+    const float cosNL = dot(l.normal, centerToSurf.dir);
+    const float spotlight = getSpotFactor(max(cosNL, 0.0), l.coneCosInner, l.coneCosOuter);
+
+    if (!(spotlight > 0.0))
+    {
+        return r;
+    }
+
+    vec3 axisU = l.A - l.normal * dot(l.A, l.normal);
+    vec3 axisV = l.B - l.normal * dot(l.B, l.normal);
+    const float lenU = length(axisU);
+    const float lenV = length(axisV);
+
+    if (!(lenU > 1e-6) || !(lenV > 1e-6))
+    {
+        return r;
+    }
+
+    axisU /= lenU;
+    axisV /= lenV;
+
+    const int verts = clamp(l.numVerts, 1, MAX_TEXTURED_AREA_LIGHT_VERTS);
+    float maskRadius = 0.0;
+
+    for (int i = 0; i < verts; i++)
+    {
+        maskRadius = max(maskRadius, length(texturedAreaLightWorldPos(l, l.uvVerts[i]) - center));
+    }
+
+    if (!(maskRadius > 1e-4))
+    {
+        return r;
+    }
+
+    const float angleOuter = max(acos(clamp(l.coneCosOuter, 0.001, 1.0)), 1e-3);
+    const float angleInner = max(acos(clamp(l.coneCosInner, 0.001, 1.0)), 1e-3);
+    const float maskLod = clamp((angleOuter - angleInner) / angleOuter, 0.0, 1.0) * 8.0;
+    const float focal = maskRadius / tan(angleOuter);
+    const float cosNLClamped = max(cosNL, 1e-3);
+    const vec3 pos = center + axisU * (focal * dot(centerToSurf.dir, axisU) / cosNLClamped)
+                            + axisV * (focal * dot(centerToSurf.dir, axisV) / cosNLClamped);
+    const vec3 rel = pos - l.C;
+
+    const float a11 = dot(l.A, l.A);
+    const float a12 = dot(l.A, l.B);
+    const float a22 = dot(l.B, l.B);
+    const float b1 = dot(l.A, rel);
+    const float b2 = dot(l.B, rel);
+    const float det = a11 * a22 - a12 * a12;
+
+    if (!(abs(det) > 1e-12))
+    {
+        return r;
+    }
+
+    const vec2 uv = vec2(b1 * a22 - b2 * a12, b2 * a11 - b1 * a12) / det;
+
+    if (!isUvInsideConvexPolygon(l.uvVerts, l.numVerts, uv))
+    {
+        return r;
+    }
+
+    const uint textureIndex = floatBitsToUint(l.textureIndex);
+    float mask = 1.0;
+    float emiss = l.meanEmiss;
+
+    if (textureIndex != 0u)
+    {
+        mask = getTextureSampleLod(textureIndex, uv, maskLod).b;
+        emiss = 1.0;
+    }
+
+    const DirectionAndLength lightToSurf = calcDirectionAndLength(pos, surfPosition);
+
+    r.position = pos;
+    r.color = l.color * mask * spotlight;
+    r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
+
+    return r;
+}
+
 LightSample sampleTexturedAreaLight(const TexturedAreaLight l, const vec3 surfPosition, const vec2 pointRnd)
 {
+    if (l.projector > 0.5)
+    {
+        return sampleProjectedAreaLight(l, surfPosition, pointRnd);
+    }
+
     LightSample r;
 
     const uint textureIndex = floatBitsToUint(l.textureIndex);
@@ -464,7 +565,8 @@ LightSample sampleTexturedAreaLight(const TexturedAreaLight l, const vec3 surfPo
 
     const DirectionAndLength lightToSurf = calcDirectionAndLength(r.position, surfPosition);
 
-    const float spotlight = sqrt(max(0.0, dot(l.normal, lightToSurf.dir)));
+    const float cosNL = max(dot(l.normal, lightToSurf.dir), 0.0);
+    const float spotlight = (l.coneCosOuter > 0.0) ? getSpotFactor(cosNL, l.coneCosInner, l.coneCosOuter) : sqrt(cosNL);
 
     r.color = l.color * mask * spotlight;
     r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));

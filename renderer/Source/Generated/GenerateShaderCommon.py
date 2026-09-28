@@ -734,6 +734,9 @@ LIGHT_ENCODED_MEMBERS = [
     (FLOAT32, 4, "data_5",               1),
     (FLOAT32, 4, "data_6",               1),
     (FLOAT32, 4, "data_7",               1),
+    (FLOAT32, 1, "coneCosInner",         1),
+    (FLOAT32, 1, "coneCosOuter",         1),
+    (FLOAT32, 1, "projector",            1),
 ]
 
 TONEMAPPING_MEMBERS = [
