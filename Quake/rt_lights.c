@@ -750,7 +750,7 @@ rt_custom_light_t *RT_CustomLights_Ensure(void)
     l = &rt_custom_lights[rt_custom_light_count++];
     memset(l, 0, sizeof(*l));
     l->radius = RT_CUSTOM_RADIUS_DEFAULT;
-    l->intensity = 1.0f;
+    l->intensity = RT_CUSTOM_INTENSITY_DEFAULT;
     l->color[0] = l->color[1] = l->color[2] = 1.0f;
     l->angle_outer = 30.0f;
     return l;
@@ -1129,7 +1129,7 @@ void RT_CustomLights_WriteEntry(FILE *f, const rt_custom_light_t *l)
 
     fprintf(f, "      radius: %.6g\n", l->radius);
 
-    if (l->intensity != 1.0f)
+    if (l->intensity != RT_CUSTOM_INTENSITY_DEFAULT)
         fprintf(f, "      intensity: %.6g\n", l->intensity);
 
     fprintf(f, "      color: %02x%02x%02x\n",

@@ -121,6 +121,7 @@ const rt_tracked_light_t *RT_TRACK_Lights (int *outCount);
 // light style of their own.
 #define RT_CUSTOM_LIGHTS_MAX 64
 #define RT_CUSTOM_RADIUS_DEFAULT 0.4f
+#define RT_CUSTOM_INTENSITY_DEFAULT 3.0f
 
 // The light styles a custom light may use; the index is the engine's own
 // d_lightstylevalue[] index, so a custom light flickers exactly like a map
