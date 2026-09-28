@@ -1387,16 +1387,17 @@ static void RT_EmitEmissiveWirePolygon (const RgTexturedAreaLightUploadInfo *lt)
 
 typedef struct
 {
-	vec3_t center;
-	vec3_t normal;
-	float  len;
+	vec3_t   center;
+	vec3_t   normal;
+	float    len;
+	qboolean projector;
 } rt_dtal_debug_arrow_t;
 
 static rt_dtal_debug_arrow_t rt_dtal_debug_arrow[RT_DTAL_DEBUG_MAX];
 static int                   rt_dtal_debug_num;
 static int                   rt_dtal_debug_frame = -1;
 
-static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area)
+static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area, qboolean projector)
 {
 	if (rt_dtal_debug_frame != r_framecount)
 	{
@@ -1412,6 +1413,7 @@ static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float are
 	VectorCopy (center, arrow->center);
 	VectorCopy (normal, arrow->normal);
 
+	arrow->projector = projector;
 	arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
 }
 
@@ -1460,9 +1462,19 @@ int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
 		o[1] = sy0;
 		o[2] = sx1;
 		o[3] = sy1;
-		o[4] = (float) fabs (arrow->normal[0]);
-		o[5] = (float) fabs (arrow->normal[1]);
-		o[6] = (float) fabs (arrow->normal[2]);
+
+		if (arrow->projector)
+		{
+			o[4] = 1.0f;
+			o[5] = 0.2f;
+			o[6] = 1.0f;
+		}
+		else
+		{
+			o[4] = (float) fabs (arrow->normal[0]);
+			o[5] = (float) fabs (arrow->normal[1]);
+			o[6] = (float) fabs (arrow->normal[2]);
+		}
 
 		num++;
 	}
@@ -1633,7 +1645,7 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 		}
 		else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
 		{
-			RT_DtalDebugAdd (center, li.normal.data, li.area);
+			RT_DtalDebugAdd (center, li.normal.data, li.area, li.projectorLens >= 0.0f);
 		}
 	}
 	else if (rt_wldlights_emissive_count < MAX_WORLDLIGHTS_COUNT)
@@ -3806,7 +3818,7 @@ static void RT_RegisterWorldModelLight (const RgTexturedAreaLightUploadInfo *lt,
 	}
 	else if (CVAR_TO_FLOAT (rt_dtal_debug) == 2.0f)
 	{
-		RT_DtalDebugAdd (center, lt->normal.data, lt->area);
+		RT_DtalDebugAdd (center, lt->normal.data, lt->area, lt->projectorLens >= 0.0f);
 	}
 }
 
