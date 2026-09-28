@@ -3,7 +3,7 @@
 // The host stays C: this header exposes ImGui as a small function set and the
 // panel is built from qr_editor.c. The C++ side (qr_gui.cpp) owns the ImGui
 // context, the SDL2 input backend, the style and fonts, and the render
-// backend: ImGui draw lists are uploaded through rgUploadRasterizedGeometry
+// backend: ImGui draw lists are uploaded through qrUploadRasterizedGeometry
 // (SWAPCHAIN render type) with per-draw scissor, so no ImGui Vulkan pipelines
 // or descriptor pools exist next to the renderer.
 
@@ -18,9 +18,9 @@ extern "C" {
 #endif
 
 // Creates the ImGui context, the SDL2 input backend and the font atlas.
-// rg_instance is the RgInstance the draw lists are uploaded to; font_path may
+// qr_instance is the QrInstance the draw lists are uploaded to; font_path may
 // be NULL, the default ImGui font is used then.
-void QR_GUI_Init (void *sdl_window, void *rg_instance, const char *font_path);
+void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path);
 int  QR_GUI_Ready (void);
 void QR_GUI_Shutdown (void);
 
@@ -103,7 +103,7 @@ void QR_GUI_PopID (void);
 int  QR_GUI_Dialog (const char *title, const char *text, const char *yes, const char *no);
 
 // A texture preview drawn at the current cursor position (texture is an
-// RgMaterial handle). While the left mouse button is held over it, returns 1
+// QrMaterial handle). While the left mouse button is held over it, returns 1
 // and fills out_u/out_v with the cursor's normalised position (0..1).
 int  QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, float *out_u, float *out_v);
 // 1 while any ImGui item is being dragged or edited.

@@ -902,11 +902,11 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		num_particles += 1;
 
 
-	RgVertex *vertices;
+	QrVertex *vertices;
 	if (QUAD_PARTICLES)
-		vertices = RT_AllocScratchMemoryNulled (num_particles * 4 * sizeof (RgVertex));
+		vertices = RT_AllocScratchMemoryNulled (num_particles * 4 * sizeof (QrVertex));
 	else
-		vertices = RT_AllocScratchMemoryNulled (num_particles * 3 * sizeof (RgVertex));
+		vertices = RT_AllocScratchMemoryNulled (num_particles * 3 * sizeof (QrVertex));
 
 
 	int current_vertex = 0;
@@ -965,22 +965,22 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 	// One add for the whole batch: nothing reads the counter while the particles are emitted.
 	Atomic_AddUInt32 (&rs_particles, num_particles);
 
-	RgRasterizedGeometryUploadInfo info = {
-		.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+	QrRasterizedGeometryUploadInfo info = {
+		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 		.vertexCount = current_vertex,
 		.pVertices = vertices,
 		.indexCount = QUAD_PARTICLES ? num_particles * 6 : 0,
 		.pIndices = QUAD_PARTICLES ? quadindices : NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
-		.material = texture ? texture->rtmaterial : RG_NO_MATERIAL,
-		.pipelineState = RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
-		.blendFuncSrc = RG_BLEND_FACTOR_SRC_ALPHA,
-		.blendFuncDst = RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.material = texture ? texture->rtmaterial : QR_NO_MATERIAL,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
+		.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
+		.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 	};
 
-    RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-	RG_CHECK (r);
+    QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+	QR_CHECK (r);
 }
 
 /*

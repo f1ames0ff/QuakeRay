@@ -8,7 +8,7 @@ build-cmake/
 .cproject
 .DS_Store
 history.txt
-vkpt.txt
+qray.txt
 
 # third-party reference checkouts (nested clones, kept out of the tree)
 references/
