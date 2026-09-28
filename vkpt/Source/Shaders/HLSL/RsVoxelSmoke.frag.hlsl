@@ -28,7 +28,10 @@ void main( float4 position : SV_Position,
         return;
     }
 
-    const float sceneDist = sceneDepth.Load( int3( getCheckerboardPix( (int2)position.xy ), 0 ) );
+    const float ndcZ = sceneDepth.Load( int3( (int2)position.xy, 0 ) ).r;
+    const float4 hitPoint = mul( mul( globalUniform.invView, globalUniform.invProjection ),
+                                 float4( uv * 2.0 - 1.0, ndcZ, 1.0 ) );
+    const float sceneDist = length( hitPoint.xyz / hitPoint.w - origin );
 
     t0 = max( t0, 0.0 );
     t1 = min( t1, max( sceneDist, 0.0 ) );

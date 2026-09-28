@@ -54,7 +54,7 @@ const char *const SMOKE_PIXEL_SHADER_FILE_NAME       = "RsSmoke.frag.spv";
 const char *const VOXEL_SMOKE_INJECT_SHADER_FILE_NAME = "CmVoxelSmokeInject.comp.spv";
 const char *const VOXEL_SMOKE_PIXEL_SHADER_FILE_NAME  = "RsVoxelSmoke.frag.spv";
 
-constexpr uint32_t VOXEL_SMOKE_RESOLUTION      = 128;
+constexpr uint32_t VOXEL_SMOKE_RESOLUTION      = 256;
 constexpr uint32_t VOXEL_SMOKE_PARAMS_CB_SLOT  = 0;
 constexpr uint32_t VOXEL_SMOKE_VOLUME_UAV_SLOT = 0;
 constexpr uint32_t VOXEL_SMOKE_VOLUME_SRV_SLOT = 0;
@@ -1042,12 +1042,12 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
     {
         const bool injectReady =
             voxelSmokeInjectPipeline != nullptr && voxelSmokeInjectSets[frameIndex] != nullptr;
-        const bool marchReady = target.smokeDepthWorldTexture != nullptr && target.uniformSet != nullptr;
+        const bool marchReady = target.depthNdcTexture != nullptr && target.uniformSet != nullptr;
 
         if ((!injectReady || !marchReady) && !warnedMissingVoxelSmokeInputs)
         {
             warnedMissingVoxelSmokeInputs = true;
-            LogMessage(print, "Warning: RHI: the voxel smoke is enabled but cannot draw (an injection or march object, the depth world texture or the uniform set is missing)");
+            LogMessage(print, "Warning: RHI: the voxel smoke is enabled but cannot draw (an injection or march object, the depth NDC texture or the uniform set is missing)");
         }
 
         if (injectReady)
@@ -1098,7 +1098,7 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                 setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT, voxelSmokeVolume));
                 setDesc.addItem(nvrhi::BindingSetItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT, voxelSmokeSampler));
                 setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT,
-                                                                   target.smokeDepthWorldTexture));
+                                                                   target.depthNdcTexture));
                 voxelSmokeMarchSets[frameIndex] = device->createBindingSet(setDesc, voxelSmokeMarchLayout);
             }
         }
