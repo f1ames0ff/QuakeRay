@@ -269,6 +269,10 @@ static struct
 	// the Custom tab's placement mode: "Add light" waits for the fire button and
 	// drops the new light where the crosshair hits
 	qboolean custom_placing;
+
+	qboolean panel_drawing;
+	qboolean stop_pending;
+	qboolean stop_pending_restore;
 	vec3_t   pick_impact;       // the last pick's hit point (QRE_TracePick)
 	unsigned pick_impact_frame; // the frame it was taken in
 
@@ -3640,6 +3644,13 @@ static void QRE_Frame (void)
 {
 	static keydest_t prev_key_dest = key_game;
 
+	if (qre.stop_pending)
+	{
+		qre.stop_pending = false;
+		QRE_StopEditor (qre.stop_pending_restore);
+		return;
+	}
+
 	// the level went away under the editor: drop it (the material snapshot may
 	// be stale relative to a freshly loaded map list, so nothing is restored)
 	if (cls.state != ca_connected || !cl.worldmodel)
@@ -3695,6 +3706,8 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	if (!QR_GUI_BeginFrame ((unsigned int)host_framecount, (float)host_frametime, glx, gly, glwidth, glheight, vid.height))
 		return;
 
+	qre.panel_drawing = true;
+
 	if (qre.choosing)
 	{
 		QRE_DrawChooser ();
@@ -3730,6 +3743,8 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	QRE_DrawOverlay ();
 	RT_DtalDebugDrawGui (CVAR_TO_INT32 (rt_dtal_debug), (unsigned int)host_framecount, (float)host_frametime,
 	                     glx, gly, glwidth, glheight, vid.height);
+
+	qre.panel_drawing = false;
 
 	QR_GUI_EndFrame ();
 }
@@ -5102,6 +5117,13 @@ static void QRE_StopEditor (qboolean restore)
 {
 	if (!qre.active)
 		return;
+
+	if (qre.panel_drawing)
+	{
+		qre.stop_pending = true;
+		qre.stop_pending_restore = restore;
+		return;
+	}
 
 	// revert whatever was not applied, then restore the player's view
 	if (restore)
