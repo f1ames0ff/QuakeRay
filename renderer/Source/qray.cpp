@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "VulkanDevice.h"
 #include "QrException.h"
@@ -28,8 +25,6 @@ using namespace qray;
 constexpr uint32_t MAX_DEVICE_COUNT = 8;
 static rgl::unordered_map<QrInstance, std::unique_ptr<VulkanDevice>> G_DEVICES;
 
-// Counted in Call<> below and reported by qrGetFrameStatsEx: the entry points the host calls per
-// frame. Some of them end in a driver round trip, so this is a piece of the fixed per-frame cost.
 static std::atomic<uint32_t> G_EntryPointCalls{ 0 };
 
 static QrInstance GetNextID()
@@ -39,11 +34,11 @@ static QrInstance GetNextID()
 
 static VulkanDevice &GetDevice(QrInstance qrInstance)
 {
-    auto it = G_DEVICES.find(qrInstance); 
+    auto it = G_DEVICES.find(qrInstance);
 
     if (it == G_DEVICES.end())
     {
-        throw qray::QrException(QR_WRONG_INSTANCE);
+        throw QrException(QR_WRONG_INSTANCE);
     }
 
     return *(it->second);
@@ -59,8 +54,6 @@ static void TryPrintError(QrInstance qrInstance, const char *pMessage)
     }
 }
 
-
-
 QrResult qrCreateInstance(const QrInstanceCreateInfo *pInfo, QrInstance *pResult)
 {
     *pResult = nullptr;
@@ -70,7 +63,6 @@ QrResult qrCreateInstance(const QrInstanceCreateInfo *pInfo, QrInstance *pResult
         return QR_TOO_MANY_INSTANCES;
     }
 
-    // insert new
     const QrInstance qrInstance = GetNextID();
     assert(G_DEVICES.find(qrInstance) == G_DEVICES.end());
 
@@ -79,18 +71,15 @@ QrResult qrCreateInstance(const QrInstanceCreateInfo *pInfo, QrInstance *pResult
         G_DEVICES[qrInstance] = std::make_unique<VulkanDevice>(pInfo);
         *pResult = qrInstance;
     }
-    // TODO: VulkanDevice must clean all the resources if initialization failed!
-    // So for now exceptions should not happen. But if they did, target application must be closed.
-    catch (qray::QrException &e) 
-    { 
-        // UserPrint class probably wasn't initialized, print manually
+    catch (QrException &e)
+    {
         if (pInfo->pfnPrint != nullptr)
         {
             pInfo->pfnPrint(e.what(), pInfo->pUserPrintData);
         }
 
-        return e.GetErrorCode(); 
-    } 
+        return e.GetErrorCode();
+    }
     return QR_SUCCESS;
 }
 
@@ -105,11 +94,11 @@ QrResult qrDestroyInstance(QrInstance qrInstance)
     {
         G_DEVICES.erase(qrInstance);
     }
-    catch (qray::QrException &e) 
-    { 
-        TryPrintError(qrInstance, e.what()); 
-        return e.GetErrorCode(); 
-    } 
+    catch (QrException &e)
+    {
+        TryPrintError(qrInstance, e.what());
+        return e.GetErrorCode();
+    }
     return QR_SUCCESS;
 }
 
@@ -131,7 +120,7 @@ static auto Call(QrInstance qrInstance, Func f, Args&&... args)
 
         (dev.*f)(std::forward<Args>(args)...);
     }
-    catch (qray::QrException &e) 
+    catch (QrException &e)
     {
         TryPrintError(qrInstance, e.what());
         return e.GetErrorCode();
@@ -158,7 +147,7 @@ static auto Call(QrInstance qrInstance, Func f, Args&&... args)
             return (dev.*f)(std::forward<Args>(args)...);
         }
     }
-    catch (qray::QrException &e)
+    catch (QrException &e)
     {
         TryPrintError(qrInstance, e.what());
     }
@@ -180,7 +169,7 @@ QrResult qrUpdateGeometryTexCoords(QrInstance qrInstance, const QrUpdateTexCoord
     return Call(qrInstance, &VulkanDevice::UpdateGeometryTexCoords, pUpdateInfo);
 }
 
-QrResult qrUploadRasterizedGeometry(QrInstance qrInstance, const QrRasterizedGeometryUploadInfo *pUploadInfo, 
+QrResult qrUploadRasterizedGeometry(QrInstance qrInstance, const QrRasterizedGeometryUploadInfo *pUploadInfo,
                                     const float *pViewProjection, const QrViewport *pViewport)
 {
     return Call(qrInstance, &VulkanDevice::UploadRasterizedGeometry, pUploadInfo, pViewProjection, pViewport);
@@ -304,7 +293,6 @@ QrResult qrDestroyCubemap(QrInstance qrInstance, QrCubemap cubemap)
 
 QrResult qrStartFrame(QrInstance qrInstance, const QrStartFrameInfo *pStartInfo)
 {
-    // Frame boundary for the call counter that qrGetFrameStatsEx reports.
     G_EntryPointCalls.store(0, std::memory_order_relaxed);
 
     return Call(qrInstance, &VulkanDevice::StartFrame, pStartInfo);
@@ -373,7 +361,6 @@ const char *qrGetGpuPassName(uint32_t passIndex)
 
     return passNames[passIndex];
 }
-
 
 const char *qrGetResultDescription(QrResult result)
 {

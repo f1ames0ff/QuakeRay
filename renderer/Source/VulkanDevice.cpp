@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "VulkanDevice.h"
 
@@ -40,7 +37,6 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
 
     if (!waitForOutOfFrameFence)
     {
-        // wait for previous cmd with the same frame index
         Utils::WaitAndResetFence(device, frameFences[frameIndex]);
     }
     else
@@ -52,30 +48,18 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
     swapchain->AcquireImage(imageAvailableSemaphores[frameIndex]);
 
     VkSemaphore semaphoreToWaitOnSubmit = imageAvailableSemaphores[frameIndex];
-    // The swapchain image is only consumed by the final present blit (transfer),
-    // so the offscreen render can run before the image is acquired back.
     VkPipelineStageFlags semaphoreWaitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 
-
-    // if out-of-frame cmd exist, submit it
     {
         VkCommandBuffer preFrameCmd = currentFrameState.GetPreFrameCmdAndRemove();
         if (preFrameCmd != VK_NULL_HANDLE)
         {
-            // Signal inFrameSemaphore after completion.
-            // Signal outOfFrameFences, but for the next frame
-            // because we can't reset cmd pool with cmds (in this case
-            // it's preFrameCmd) that are in use.
             cmdManager->Submit(preFrameCmd,
                                semaphoreToWaitOnSubmit, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                inFrameSemaphores[frameIndex],
                                outOfFrameFences[(frameIndex + 1) % MAX_FRAMES_IN_FLIGHT]);
 
-            // should wait other semaphore in this case
             semaphoreToWaitOnSubmit = inFrameSemaphores[frameIndex];
-            // Now waiting on the preFrame completion, which gates material
-            // uploads the frame reads immediately (compute/graphics), so the
-            // main cmd must block at the earliest stage.
             semaphoreWaitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 
             waitForOutOfFrameFence = true;
@@ -87,17 +71,13 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
     }
     currentFrameState.SetSemaphore(semaphoreToWaitOnSubmit, semaphoreWaitStage);
 
-
     if (startInfo.requestShaderReload)
     {
         shaderManager->ReloadShaders();
     }
 
-
-    // reset cmds for current frame index
     cmdManager->PrepareForFrame(frameIndex);
 
-    // clear the data that were created MAX_FRAMES_IN_FLIGHT ago
     worldSamplerManager->PrepareForFrame(frameIndex);
     genericSamplerManager->PrepareForFrame(frameIndex);
     textureManager->PrepareForFrame(frameIndex);
@@ -109,7 +89,6 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
 
     BeginCmdLabel(cmd, "Prepare for frame");
 
-    // start dynamic geometry recording to current frame
     scene->PrepareForFrame(cmd, frameIndex);
 
     return cmd;
@@ -177,7 +156,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
     {
         gu->renderWidth  = static_cast< float >( renderResolution.Width() );
         gu->renderHeight = static_cast< float >( renderResolution.Height() );
-        // render width must be always even for checkerboarding!
         assert( ( int )gu->renderWidth % 2 == 0 );
 
         gu->upscaledRenderWidth  = static_cast< float >( renderResolution.UpscaledWidth() );
@@ -319,9 +297,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
             gu->debugShowFlags |= DEBUG_SHOW_FLAG_LUMA;
         }
 
-        // Indirect-path GI probe bits (rt_debugflags 1<<15 .. 1<<19). They are read only
-        // by RtQ2Indirect.rgen (sphere/spot dw clamp A/B, second-bounce x50, sanity) and
-        // have no display branch, so they pass straight through.
         const uint32_t giProbeBits =
             ( 1u << 15 ) | ( 1u << 16 ) | ( 1u << 17 ) | ( 1u << 18 ) | ( 1u << 19 );
         gu->debugShowFlags |= ( fs & giProbeBits );
@@ -530,7 +505,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
     #error Handle QR_DRAW_FRAME_RAY_CULL_SKY_BIT, if there is no WORLD_2
 #endif
 
-
         if( allowGeometryWithSkyFlag )
         {
             gu->rayCullMaskWorld_Shadow = gu->rayCullMaskWorld & ( ~INSTANCE_MASK_WORLD_2 );
@@ -618,7 +592,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
 
     gu->antiFireflyEnabled = !!drawInfo.forceAntiFirefly;
 
-    // Classic level fog (host data set from the engine's fog state)
     if( drawInfo.pLevelFogParams != nullptr )
     {
         QR_SET_VEC3_A( gu->levelFogColorDensity, drawInfo.pLevelFogParams->color.data );
@@ -636,11 +609,9 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         QR_SET_VEC3( gu->levelFogSkyBlend, 0.0f, 0.0f, 0.0f );
     }
 
-    // Q2RTX-style fog volumes (host data set via qrSetFogVolumes)
     {
         for (uint32_t i = 0; i < MAX_FOG_VOLUMES; i++)
         {
-            // std140: scalar arrays have 16-byte element stride
             gu->fogIsActive[i * 4] = 0;
         }
 
@@ -672,7 +643,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
             gu->fogColor[i * 4 + 2] = v.color.data[2];
             gu->fogColor[i * 4 + 3] = 0.0f;
 
-            // exp(-kx) = 0.5  =>  k = -ln(0.5) / x
             const float density = 0.69315f / v.halfExtinctionDistance;
 
             gu->fogDensity[i * 4 + 0] = 0.0f;
@@ -681,7 +651,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
 
             if (1 <= v.softface && v.softface <= 6)
             {
-                // linear density gradient along one axis (zero on the soft face)
                 const int axis = (v.softface - 1) / 2;
                 const float pos0 = (v.softface & 1) ? pa[axis] : pb[axis];
                 const float pos1 = (v.softface & 1) ? pb[axis] : pa[axis];
@@ -695,7 +664,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
                 gu->fogDensity[i * 4 + 3] = density;
             }
 
-            // std140: scalar arrays have 16-byte element stride
             gu->fogIsActive[i * 4] = 1;
         }
     }
@@ -703,9 +671,6 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
 
 bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 {
-    // The RHI frame skeleton is the only renderer: a missing or unavailable one cannot be papered
-    // over by the legacy path any more, so the frame is reported as fatal instead of drawn. The
-    // constructor has already printed the reason (which pass or resource failed to be created).
     if (nvrhiFrameSkeleton == nullptr || nvrhiFrameSkeleton->IsUnavailable())
     {
         throw QrException(QR_GRAPHICS_API_ERROR,
@@ -714,19 +679,8 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 
     const uint32_t frameIndex = currentFrameState.GetFrameIndex();
 
-    // The engine's framebuffers are created by this call and nowhere else now: the legacy Render
-    // path that used to run Framebuffers::PrepareForSize (VulkanDevice.cpp:738) is no longer
-    // dispatched, and the RHI sky pass draws into their ALBEDO image. Keeping them prepared here is
-    // what makes ALBEDO exist and follow a resolution change. The call is idempotent, so a frame
-    // the skeleton refuses below can repeat it with the same resolution state and get the same
-    // no-op.
     framebuffers->PrepareForSize(renderResolution.GetResolutionState());
 
-    // The sky inputs are built from the same sources the legacy DrawSkyToAlbedo call reads
-    // (VulkanDevice.cpp:748-756): the uniform's view/projection/jitter filled by the FillUniform
-    // call of DrawFrame, the sky params' viewer position of the draw info, and the frame's sky draw
-    // list of the collector. No legacy math is duplicated in the RHI path - the pass gets the same
-    // arguments.
     const ShGlobalUniform *globalUniform = uniform->GetData();
     const QrFloat3D skyViewerPosition =
         drawInfo.pSkyParams ? drawInfo.pSkyParams->skyViewerPosition : QrFloat3D{ 0, 0, 0 };
@@ -734,20 +688,9 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     const std::vector<RasterizedDataCollector::DrawInfo> &skyDraws =
         rasterizedDataCollector->GetSkyDrawInfos();
 
-    // The world sub-pass draws the frame's raster draw list - what the legacy world draw consumes
-    // (VulkanDevice.cpp:1071-1082, Rasterizer::DrawToFinalImage) - and reads the same engine global
-    // uniform and tonemapping objects the legacy world draw binds (Rasterizer.cpp:273-279). The
-    // skeleton receives them as pointers because it wraps the two buffers itself, on the first
-    // frame the engine's framebuffers exist (see NvrhiFrameSkeleton::PrepareWorld).
     const std::vector<RasterizedDataCollector::DrawInfo> &worldDraws =
         rasterizedDataCollector->GetRasterDrawInfos();
 
-    // The smoke half's list (A5.5): the DEFAULT stream carries the smoke entries too - R_DrawSmoke
-    // uploads all live puffs as one batch with the engine's SMOKE state bit (r_smoke.c:358-376;
-    // qray.h:514) - and the collector keeps no separate smoke stream, so the host splits the list
-    // the way the legacy pipeline switch does (Rasterizer::BindPipelineIfNew, Rasterizer.cpp:472-476).
-    // The overlay draws these entries with the ported RsSmoke pair in the same compose window and
-    // skips them in its world loop, so each entry is recorded exactly once.
     smokeDraws.clear();
     for (const RasterizedDataCollector::DrawInfo &info : worldDraws)
     {
@@ -757,37 +700,14 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         }
     }
 
-    // The 2D UI's draw list (A5.1): the same collector stream the legacy Rasterizer::DrawToSwapchain
-    // consumes, read here for the RHI UI pass.
     const std::vector<RasterizedDataCollector::DrawInfo> &swapchainDraws =
         rasterizedDataCollector->GetSwapchainDrawInfos();
 
-    // The engine's TLAS preparation and build, the two calls Scene::SubmitForFrame makes on this
-    // frame's legacy command buffer (Scene.cpp:108-118), with exactly the values of the legacy call
-    // site (VulkanDevice.cpp:732-735): the uniform's world-ray cull mask, the instance-wide sky
-    // flag and the draw info's "disable ray-traced geometry" flag. They stay on the legacy buffer:
-    // PrepareForBuildingTLAS fills the uniform's per-instance geometry offsets - the CPU copy the
-    // skeleton writes into the device-local uniform - and BuildTLAS fills the engine's instance
-    // buffer, which the RHI acceleration structures wrap and build their TLAS from.
-    //
-    // The one-frame lag this implies, deliberate for this increment: the legacy command buffer is
-    // submitted after the RHI command list of the same frame (VulkanDevice.cpp:1301-1305), so the
-    // RHI list of frame N builds its TLAS from the instance buffer contents that frame N-1's
-    // submission left behind. The TLAS therefore references the engine's own BLAS addresses (the
-    // ones the engine wrote into the instance buffer), not the RHI module's; the A3.1 increment
-    // moves the instance fill onto the RHI list and flips the references.
     const std::shared_ptr<ASManager> &asManager = scene->GetASManager();
     const auto prepare = asManager->PrepareForBuildingTLAS(
         frameIndex, *uniform->GetData(), uniform->GetData()->rayCullMaskWorld,
         allowGeometryWithSkyFlag, drawInfo.disableRayTracedGeometry);
 
-    // Fill the engine's instance buffer ahead of the skeleton's Render: the skeleton records the RHI
-    // TLAS build from it, and the raster mode's world branch writes the uniform data (including the
-    // per-instance geometry offsets filled just above) into the device-local uniform. On the RHI
-    // path GlobalUniform::Upload never runs, so the traced frame reads the uniform the skeleton
-    // writes on its own list (NvrhiFrameSkeleton::Render); the CPU copy prepared here is what that
-    // write uploads. The TLAS build is not part of the legacy renderer's frame, so it has to happen
-    // on the legacy buffer regardless of which mode the skeleton records.
     asManager->BuildTLAS(currentFrameState.GetCmdBuffer(), frameIndex, prepare.first);
 
     NvrhiFrameSkeleton::SkyFrameInputs sky = {};
@@ -804,19 +724,12 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.jitter[1] = globalUniform->jitterY;
     memcpy(sky.skyViewerPos, skyViewerPosition.data, sizeof(sky.skyViewerPos));
     sky.applyVertexColorGamma = rasterizedVertexColorGamma;
-    // The raster sky's cube half: the six per-face view-projections the legacy multiview vertex
-    // shader reads by gl_ViewIndex (RsRasterizerMultiview.vert:55), filled by FillUniform from the
-    // same sky viewer position (VulkanDevice.cpp:258-263). RhiRasterSkyPass takes the same bytes;
-    // the ALBEDO half does not read them.
     memcpy(sky.skyFaceViewProj, globalUniform->viewProjCubemap, sizeof(sky.skyFaceViewProj));
     sky.worldDraws = worldDraws.data();
     sky.worldDrawCount = static_cast<uint32_t>(worldDraws.size());
     sky.smokeDraws = smokeDraws.data();
     sky.smokeDrawCount = static_cast<uint32_t>(smokeDraws.size());
 
-    // The 2D UI (A5.1): the draw list and the collector's per-slot staging geometry. The staging
-    // handles are the frame's own - the device copy the engine records on the legacy command buffer
-    // is submitted after this list, so the UI must read the staging.
     sky.swapchainDraws = swapchainDraws.data();
     sky.swapchainDrawCount = static_cast<uint32_t>(swapchainDraws.size());
     sky.swapchainVertexStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
@@ -828,30 +741,15 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.disableRasterization = drawInfo.disableRasterization;
     sky.uniform = uniform;
     sky.tonemapping = tonemapping.get();
-    // The exposure controls with the legacy Render's own defaults and clamping
-    // (VulkanDevice.cpp:1051-1059); the traced mode's Tonemapping::PrepareExposureParams consumes
-    // them, the raster mode's stand-in does not.
     if (drawInfo.pTonemappingParams != nullptr)
     {
         sky.exposureBias = drawInfo.pTonemappingParams->exposureBias;
         sky.contrast = std::clamp(drawInfo.pTonemappingParams->contrast, 0.0f, 1.0f);
     }
-    // The module synthesises the instance list itself from the engine's registry, so it takes the
-    // same three frame inputs the engine's own TLAS preparation takes (VulkanDevice.cpp:1285): the
-    // uniform's world-ray cull mask, the instance-wide sky flag, and the draw info's flag.
     sky.rayCullMaskWorld = uniform->GetData()->rayCullMaskWorld;
     sky.allowGeometryWithSkyFlag = allowGeometryWithSkyFlag;
     sky.disableRayTracedGeometry = drawInfo.disableRayTracedGeometry;
 
-    // The god rays and their shadow map (A5.2): the host block of the legacy frame
-    // (VulkanDevice.cpp:908-1007), precomputed here because only the host has the scene, the light
-    // manager and the sky params. The skeleton renders the shadow map and the two dispatches on the
-    // RHI list, between the primary and the reproject, from these inputs. The legacy's exact shape
-    // is kept: the final switch is `godRaysEnabled && (sunExists || useSkyBrightest)`, the intensity
-    // is 8x the clamped sky param, and the sun fields are the toward-the-sun direction and the
-    // fixed-up colour (or the sky texture's brightest point when the god rays take their sun from
-    // it); when the final switch is off the module still records the clear path, so image 64 is
-    // never stale.
     {
         const float godRaysIntensity = (drawInfo.pSkyParams == nullptr)
             ? 1.0f : std::max(drawInfo.pSkyParams->godRaysIntensity, 0.0f);
@@ -876,8 +774,6 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 
         if (godRaysOn)
         {
-            // The shadow map's light direction: from the sun, or the negated sky direction when the
-            // god rays take their sun from the sky texture (VulkanDevice.cpp:945-951).
             for (int k = 0; k < 3; k++)
             {
                 if (useSkyBrightest)
@@ -915,60 +811,32 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         }
     }
 
-    // The portals (A5.3): the engine's staging and device-local buffers for this slot, which the
-    // skeleton wraps and copies on the RHI list before the reflect/refract dispatch. The engine's
-    // own SubmitForFrame (the copy plus the uploaded-index reset) runs only in the legacy render,
-    // which is no longer dispatched, so the RHI frame resets the bookkeeping here, after the game's
-    // uploads of this frame and independently of the reflect/refract gate - the game uploads a
-    // teleport every frame while `rt_teleport_portals` is 1, and a leaked index would throw on the
-    // next frame's Upload (PortalList.cpp:58-61).
     sky.portalStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(portalList->GetStagingBuffer(frameIndex)));
     sky.portalDevice = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(portalList->GetDeviceLocalBuffer()));
     sky.portalSize = static_cast<uint64_t>(portalList->GetBufferSize());
     portalList->ResetUploads();
 
-    // The decals (A5.6): the engine's instance buffers for this slot, which the skeleton wraps and
-    // copies on the RHI list before the decal pass. The game uploads none in this tree
-    // (qrUploadDecal has no caller), so the counts are zero and the skeleton skips both the copy
-    // and the draw; the engine's own SubmitForFrame (the copy) never runs on the RHI path, and its
-    // bookkeeping needs no reset here because PrepareForFrame clears the count for the frame.
     sky.decalStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(decalManager->GetStagingBuffer(frameIndex)));
     sky.decalDevice = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(decalManager->GetDeviceLocalBuffer()));
     sky.decalBufferSize = static_cast<uint64_t>(decalManager->GetBufferSize());
     sky.decalCopySize = static_cast<uint64_t>(decalManager->GetCopySize());
     sky.decalCount = decalManager->GetDecalCount();
 
-    // The upscaler inputs of A5.7: the resolution helper the FSR module takes (the engine object's
-    // own technique selection lives in it) and the camera values its Apply takes (the legacy
-    // arguments of VulkanDevice.cpp:1122-1130); the jitter and timeDelta already reach the skeleton
-    // through the uniform copy.
     sky.renderResolution = &renderResolution;
     sky.cameraNear = drawInfo.cameraNear;
     sky.cameraFar = drawInfo.cameraFar;
     sky.fovYRadians = drawInfo.fovYRadians;
 
-    // The post-upscale effect chain (RHI/RhiPostEffectPass.h): the frame's own `postEffectParams`
-    // block and the engine frame counter - the same values the legacy Render hands its effect
-    // objects (VulkanDevice.cpp:1151, :1212). The pointed-to per-effect params are the game's
-    // frame-lifetime objects, exactly as in the legacy call (gl_vidsdl.c:2147-2154), and the
-    // skeleton reads them synchronously during this Render.
     sky.postEffectParams = drawInfo.postEffectParams;
     sky.postEffectFrameId = frameId;
 
-    // The procedural sky (A5.4): the host block of the legacy frame (VulkanDevice.cpp:755-863) that
-    // fills the `RenderCubemap::DrawProcedural` params, mirrored exactly; the skeleton records the
-    // compute before the trace only when the uniform selects SKY_TYPE_PROCEDURAL.
     {
         RhiProceduralSkyPass::Params p = {};
 
-        // The atmosphere is painted with the sky tint (rt_sky_color), sent by the host via
-        // skyColorDefault; this keeps the tint independent from whether the sun light is enabled.
         p.skyTint[0] = globalUniform->skyColorDefault[0];
         p.skyTint[1] = globalUniform->skyColorDefault[1];
         p.skyTint[2] = globalUniform->skyColorDefault[2];
 
-        // The disc is the sun itself, so it is drawn with the sun's own colour (white when the host
-        // sends none); it only reaches the visible cubemap, never the env one.
         p.sunDiscColor[0] = p.sunDiscColor[1] = p.sunDiscColor[2] = 1.0f;
         if (drawInfo.pSkyParams)
         {
@@ -982,16 +850,12 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         p.sunDirection[3] = hasSun ? 1.0f : 0.0f;
         if (hasSun)
         {
-            // The directional light points FROM the sun toward the scene; the sky expects the
-            // direction TOWARD the sun.
             p.sunDirection[0] = -sunDir[0];
             p.sunDirection[1] = -sunDir[1];
             p.sunDirection[2] = -sunDir[2];
         }
         else
         {
-            // Only centres the rayleigh gradient, so it never shows as a sun, but it still has to
-            // be a normalized vector.
             float d[3] = { 0.3f, 0.5f, 0.8f };
             const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
             p.sunDirection[0] = d[0] / len;
@@ -1001,11 +865,9 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         p.skyTint[3] = sunAngularRadius;
         p.skyParams[0] = globalUniform->skyColorMultiplier;
         p.skyParams[1] = globalUniform->skyColorSaturation;
-        p.skyParams[2] = 6.0f;      // sun disc intensity (VulkanDevice.cpp:820)
-        p.skyParams[3] = 0.025f;    // display sun disc angular radius, rad (VulkanDevice.cpp:821)
+        p.skyParams[2] = 6.0f;
+        p.skyParams[3] = 0.025f;
 
-        // Cloud params are packed into the otherwise-unused skyCubemapRotationTransform field:
-        // [0..2] cloud colour, [3] coverage, [4] density, [5] drift speed, [6] enabled.
         p.cloudColor[3] = globalUniform->time;
         if (drawInfo.pSkyParams)
         {
@@ -1019,15 +881,14 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             p.cloudParams[3] = c[6];
         }
 
-        // Per-face camera bases, matching Matrix::GetCubemapViewProjMat.
         constexpr float PI = 3.14159265358979323846f;
         const float faceAngles[6][2] = {
-            { 0.0f,        PI / 2.0f }, // POSITIVE_X
-            { 0.0f,       -PI / 2.0f }, // NEGATIVE_X
-            { -PI / 2.0f, 0.0f       }, // POSITIVE_Y
-            {  PI / 2.0f, 0.0f       }, // NEGATIVE_Y
-            { 0.0f,        0.0f      }, // POSITIVE_Z
-            { 0.0f,        PI        }, // NEGATIVE_Z
+            { 0.0f,        PI / 2.0f },
+            { 0.0f,       -PI / 2.0f },
+            { -PI / 2.0f, 0.0f       },
+            {  PI / 2.0f, 0.0f       },
+            { 0.0f,        0.0f      },
+            { 0.0f,        PI        },
         };
 
         float view[16];
@@ -1036,7 +897,6 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         {
             Matrix::GetViewMatrix(view, origin, faceAngles[face][0], faceAngles[face][1], 0.0f);
 
-            // Column-major columns of the view rotation: right, up, forward.
             p.faceBasis[face * 3 + 0][0] = view[0];  p.faceBasis[face * 3 + 0][1] = view[4];  p.faceBasis[face * 3 + 0][2] = view[8];
             p.faceBasis[face * 3 + 1][0] = view[1];  p.faceBasis[face * 3 + 1][1] = view[5];  p.faceBasis[face * 3 + 1][2] = view[9];
             p.faceBasis[face * 3 + 2][0] = view[2];  p.faceBasis[face * 3 + 2][1] = view[6];  p.faceBasis[face * 3 + 2][2] = view[10];
@@ -1045,8 +905,6 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         sky.proceduralSkyParams = p;
     }
 
-    // The RHI pass waits on the acquire semaphore itself, so the semaphore is
-    // taken away from the renderer: it may be waited on only once per signal.
     VkPipelineStageFlags semaphoreWaitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     const VkSemaphore semaphoreToWait = currentFrameState.GetSemaphoreForWaitAndRemove(&semaphoreWaitStage);
 
@@ -1054,43 +912,14 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 
     if (!nvrhiFrameSkeleton->Render(swapchain.get(), frameIndex, sky, semaphoreToWait, renderFinishedSemaphores[frameIndex]))
     {
-        // Give it back: DrawFrame ends the frame itself, and its EndFrame submit is what waits on
-        // the semaphore then. The skeleton refuses only defensively (a zero-sized swapchain or a
-        // stale swapchain framebuffer list); an unavailable skeleton threw above.
         currentFrameState.SetSemaphore(semaphoreToWait, semaphoreWaitStage);
         return false;
     }
 
-    // The world's shading normals: the game uploads the world brushes with zero normals plus the
-    // QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT flag (Quake/r_brush.c), and the only pass that fills
-    // ShVertex::normal is the engine's vertex preprocessing, the call Scene::SubmitForFrame makes
-    // for the legacy renderer (Scene.cpp). The RHI path never runs SubmitForFrame, so it records
-    // that pass here, on the same legacy command buffer the TLAS build above uses and with the push
-    // constant this frame's PrepareForBuildingTLAS returned (`prepare.second`). The
-    // Scene::PreprocessVertices method applies the same mode logic as the legacy call:
-    // VERT_PREPROC_MODE_ALL on the first frame after the static submission, the dynamic-only
-    // mode afterwards.
-    //
-    // It is recorded only after the skeleton's Render succeeded (rather than next to the TLAS
-    // build): a frame the skeleton refuses keeps the static-submission marker for a later frame, so
-    // the full ALL preprocessing is never consumed without a delivered RHI frame.
-    //
-    // Ordering: the legacy command buffer is submitted after the RHI list of the same frame (the
-    // cmdManager->Submit call below), so the pass takes effect for the submission that follows
-    // this one - the same one-frame relation the engine's instance buffer and TLAS build have
-    // here. A traced frame N still shades with the normals frame N-1's submission left behind,
-    // so the first traced frame after a level load still reads zero normals and every later frame
-    // is correct. The dynamic/movable geometry keeps zero normals regardless: its traced copy is
-    // made by the RHI layer from the engine's staging buffers, which this pass never touches.
     scene->PreprocessVertices(currentFrameState.GetCmdBuffer(), frameIndex, uniform, prepare.second);
 
-    // The renderer has not recorded anything into the frame, but its command
-    // buffer still has to be submitted: BeginFrame recorded uploads into it, and
-    // its fence is what the next BeginFrame waits for. The swapchain image is
-    // already acquired by the RHI pass above, so there is nothing to wait on.
     cmdManager->Submit(currentFrameState.GetCmdBuffer(), frameFences[frameIndex]);
 
-    // The RHI pass signals renderFinishedSemaphores[frameIndex].
     swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
 
     frameId++;
@@ -1103,7 +932,6 @@ void VulkanDevice::EndFrame(VkCommandBuffer cmd)
     VkPipelineStageFlags semaphoreWaitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     VkSemaphore semaphoreToWait = currentFrameState.GetSemaphoreForWaitAndRemove(&semaphoreWaitStage);
 
-    // submit command buffer, but wait until presentation engine has completed using image
     cmdManager->Submit(
         cmd,
         semaphoreToWait,
@@ -1111,13 +939,10 @@ void VulkanDevice::EndFrame(VkCommandBuffer cmd)
         renderFinishedSemaphores[frameIndex],
         frameFences[frameIndex]);
 
-    // present on a surface when rendering will be finished
     swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
 
     frameId++;
 }
-
-
 
 #pragma region qray interface implementation
 
@@ -1170,8 +995,6 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
     renderResolution.Setup(drawInfo->pRenderResolutionParams,
                            swapchain->GetWidth(), swapchain->GetHeight(), nvDlss);
 
-    // Tell the FidelityFX framework which FSR version to use (FSR 2 or FSR 3.1),
-    // but only when the technique actually changes (or on the first frame).
     if (!lastUpscaleTechnique.has_value() ||
         *lastUpscaleTechnique != renderResolution.GetUpscaleTechnique())
     {
@@ -1183,29 +1006,13 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
 
     const bool canRender = renderResolution.Width() > 0 && renderResolution.Height() > 0;
 
-    // The uniform is filled for the RHI frame: the traced passes read the view, projection and
-    // jitter the legacy path used to read (VulkanDevice.cpp:748-756), and FillUniform is what puts
-    // them there.
     if (canRender)
     {
         FillUniform(uniform->GetData(), *drawInfo);
     }
 
-    // The RHI frame skeleton owns every frame: it traces and presents it through the RHI layer. An
-    // unavailable skeleton inside RenderThroughRhi is fatal; a refusal by the skeleton itself (a
-    // zero-sized swapchain or a stale framebuffer list) ends the frame without drawing anything.
-    // The collector copy is what the legacy Rasterizer::SubmitForFrame does (Rasterizer.cpp:160);
-    // the legacy command buffer that carries it is submitted after the RHI list, so the sky of this
-    // frame still reads the copy of the previous frame - the geometry is static per level, so only
-    // the first frame after a level load reads the zeroed buffer (see the geometry wrap in
-    // VulkanDevice_Init.cpp).
     if (canRender)
     {
-        // The engine's per-frame descriptor flush used to live on the legacy path
-        // (VulkanDevice.cpp:724-727), which the RHI takes over. Without it the shared RHI texture
-        // table is never filled and every bindless sample reads an unwritten descriptor - the sky
-        // renders black. The cubemap table is a separate set the ported passes do not use yet, so
-        // its flush stays on the legacy upload machinery.
         const bool mipLodBiasUpdated = worldSamplerManager->TryChangeMipLodBias(frameIndex, renderResolution.GetMipLodBias());
         textureManager->SubmitDescriptors(frameIndex, drawInfo->pTexturesParams, mipLodBiasUpdated);
 
@@ -1217,9 +1024,6 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
             return;
         }
 
-        // The skeleton refused the frame defensively. Nothing is drawn for it and nothing legacy is
-        // substituted; the frame is still ended below, which submits the command buffer's begin-frame
-        // work and presents the acquired image untouched. The refusal is reported once.
         if (!warnedSkeletonRefusedFrame)
         {
             warnedSkeletonRefusedFrame = true;
@@ -1227,9 +1031,6 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
         }
     }
 
-    // The legacy renderer is never called any more; EndFrame only performs the frame accounting the
-    // RHI path itself does not: it submits the frame's command buffer (the begin-frame uploads and
-    // the per-frame copies are recorded on it) and presents the acquired image.
     EndFrame(cmd);
     currentFrameState.OnEndFrame();
 }
@@ -1244,7 +1045,7 @@ bool VulkanDevice::IsSuspended() const
     return !swapchain->IsExtentOptimal();
 }
 
-bool qray::VulkanDevice::IsRenderUpscaleTechniqueAvailable(QrRenderUpscaleTechnique technique) const
+bool VulkanDevice::IsRenderUpscaleTechniqueAvailable(QrRenderUpscaleTechnique technique) const
 {
     switch (technique)
     {
@@ -1295,13 +1096,7 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
         pStats->raysPerCategory[i] = statsRaysPerCategory[i];
     }
     pStats->fpsX10 = statsFpsX10;
-
-    // Query support alone is not enough to call the numbers valid: the legacy Render was the only
-    // producer of marks (VulkanDevice.cpp:720-1231) and it is no longer dispatched, so no frame
-    // collects any - "not collected" (0) is the honest answer, distinguishable from a measured
-    // 0 ms. The marks return when the RHI path grows its own timing instrumentation.
 }
-
 
 void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)
 {
@@ -1405,7 +1200,7 @@ void VulkanDevice::UpdateGeometryTransform(const QrUpdateTransformInfo *updateIn
     scene->UpdateTransform(*updateInfo);
 }
 
-void qray::VulkanDevice::UpdateGeometryTexCoords(const QrUpdateTexCoordsInfo *updateInfo)
+void VulkanDevice::UpdateGeometryTexCoords(const QrUpdateTexCoordsInfo *updateInfo)
 {
     if (updateInfo == nullptr)
     {
@@ -1444,7 +1239,7 @@ void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo
     rasterizedDataCollector->AddGeometry(currentFrameState.GetFrameIndex(), *pUploadInfo, pViewProjection, pViewport);
 }
 
-void qray::VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)
+void VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)
 {
     if (pUploadInfo == nullptr)
     {
@@ -1454,7 +1249,7 @@ void qray::VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)
     decalManager->Upload(currentFrameState.GetFrameIndex(), *pUploadInfo, textureManager);
 }
 
-void qray::VulkanDevice::UploadPortal(const QrPortalUploadInfo *pUploadInfo)
+void VulkanDevice::UploadPortal(const QrPortalUploadInfo *pUploadInfo)
 {
     if (pUploadInfo == nullptr)
     {
@@ -1504,7 +1299,7 @@ void VulkanDevice::UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo)
     scene->UploadLight(currentFrameState.GetFrameIndex(), *pLightInfo);
 }
 
-void qray::VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLightInfo)
+void VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLightInfo)
 {
     if (pLightInfo == nullptr)
     {
@@ -1514,7 +1309,7 @@ void qray::VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *
     scene->UploadLight(currentFrameState.GetFrameIndex(), *pLightInfo);
 }
 
-void qray::VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *pLightInfo)
+void VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *pLightInfo)
 {
     if (pLightInfo == nullptr)
     {
@@ -1527,17 +1322,13 @@ void qray::VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUpload
     scene->UploadLight(currentFrameState.GetFrameIndex(), *pLightInfo, textureIndex);
 }
 
-void qray::VulkanDevice::UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo *pLightInfos, uint32_t count)
+void VulkanDevice::UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo *pLightInfos, uint32_t count)
 {
     if (pLightInfos == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
     }
 
-    /* Lights of one batch share a handful of materials, so the lookup is cached per material. A
-       material index is a sum of texture indices, so the indices a batch holds are scattered over
-       the table's slots instead of filling them in order, and the table has to be wide enough that
-       a slot is unlikely to hold a different material than the one being looked up. */
     const uint32_t materialCacheSize = 512;
     uint32_t cachedMaterial[materialCacheSize];
     uint32_t cachedTextureIndex[materialCacheSize];
@@ -1611,8 +1402,6 @@ void VulkanDevice::UploadWorldLights(const QrWorldLightsUploadInfo *pInfo)
 
     worldLights->Upload(*pInfo, userPrint.get());
 
-    // The sky visibility of the new tables replaces the one the light manager gates the sun
-    // shadow rays with; a map that sent none keeps every cluster tracing.
     scene->GetLightManager()->SetClusterSkyVisibility(worldLights->GetClusterSkyVisibility(),
                                                       worldLights->GetClusterCount());
 }
@@ -1699,13 +1488,14 @@ void VulkanDevice::DestroyMaterial(QrMaterial material)
 {
     textureManager->DestroyMaterial(currentFrameState.GetFrameIndex(), material);
 }
+
 void VulkanDevice::CreateSkyboxCubemap(const QrCubemapCreateInfo *createInfo, QrCubemap *result)
 {
     *result = cubemapManager->CreateCubemap(currentFrameState.GetCmdBufferForMaterials(cmdManager), currentFrameState.GetFrameIndex(), *createInfo);
 }
+
 void VulkanDevice::DestroyCubemap(QrCubemap cubemap)
 {
     cubemapManager->DestroyCubemap(currentFrameState.GetFrameIndex(), cubemap);
 }
 #pragma endregion
-
