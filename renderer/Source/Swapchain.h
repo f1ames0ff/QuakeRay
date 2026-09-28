@@ -61,6 +61,7 @@ public:
     const VkImageView *GetImageViews() const;
 
     bool IsExtentOptimal() const;
+    bool HasValidExtent() const;
 
 private:
     VkExtent2D GetOptimalExtent() const;
