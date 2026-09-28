@@ -20,7 +20,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * Animated light entities (`rt_light_styles`) make their own fixture flicker, in accordance with the original light style, to preserve the original Quake 1 lighting design.
 * Full material system with per-brush and per-model metalness/roughness, normal map strength and texture-driven gloss maps, plus ray-traced water with animated wave normals and refraction.
 
-### Editor
+### Lighting and Material Editor
 
 `qr_editor` opens the editor: a dialog titled with the engine version offers Material Editor and Light Editor, and `qr_editor_stop` (or the Exit button) leaves it. Both editors fly a free camera over the frozen map, pick what the crosshair points at and edit it live — the material or the light changes the moment a control moves, and Save writes the result to the files the engine loads (the emitter overrides to `lights.yaml`, the authored lights and the map fog to each mod's `qray/lights.yaml`; the exit dialog offers Save all and Discard, with a backup of the previous file).
 
