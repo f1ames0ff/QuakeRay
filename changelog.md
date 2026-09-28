@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Manual limits for the DTAL cuts** — three cvars bound how emissive surfaces are split into textured area lights, all applying on the next frame so they can be tuned live against the `rt_debugemissive 1` wireframe. `rt_emis_minarea` (default `0`, world units squared) keeps a polygon under that area from becoming a light of its own — a face whose pieces all fall under it keeps its single whole-surface light instead, so no emission is lost. `rt_emis_maxpolys` (default `64`, the built-in ceiling of the glow tiling) caps how many lights one surface may be cut into: with the cap under what a face would produce, the largest pieces are kept rather than the first ones the tile walk reached, and `0` turns the cutting off entirely. `rt_model_lights_minarea` (default `0`) does the same for the pieces an alias model lights with — a piece under the area is passed over for the next ranked one, so the per-model cap of `rt_model_lights_max` is spent on the pieces that matter. The defaults reproduce the previous behaviour exactly, and `rt_light_report` counts what the limits refused.
+
 ## v0.16.0
 
 ### Added
