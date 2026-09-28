@@ -1,7 +1,8 @@
 // qr_editor.h -- qr light editor: realtime material editor for the vkpt renderer.
 //
-// The editor is started and stopped from the console with qr_material_editor_start /
-// qr_material_editor_stop. While it runs, the view is driven by a free camera (the
+// The editor is started and stopped from the console with qr_editor /
+// qr_editor_stop; qr_editor opens a chooser for the material or the light
+// editor. While it runs, the view is driven by a free camera (the
 // player stands still); aiming at a face and pressing fire opens the material
 // panel (Dear ImGui, Quake/qr_gui.cpp) on the right side of the screen, where
 // the materials.yaml parameters of every animation frame of the picked texture

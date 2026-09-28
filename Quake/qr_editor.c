@@ -1,6 +1,6 @@
 // qr_editor.c -- qr light editor: realtime material editor for the vkpt renderer.
 //
-// Console commands: qr_material_editor_start / qr_material_editor_stop.
+// Console commands: qr_editor (which opens the mode chooser) / qr_editor_stop.
 //
 // While the editor runs the view belongs to a free camera (the player stands
 // still): aim with the crosshair, fire selects the face under it and opens the
@@ -23,7 +23,7 @@
 // snapshot of both material lists is taken on start (and re-taken after Apply)
 // so Cancel/Exit can restore the yaml state.
 //
-// The light editor (qr_light_editor_start) shares the camera and the session
+// The light editor shares the camera and the session
 // flow but owns two files: the emitter overrides of <gamedir>/lights.yaml and
 // the level's custom dlights and fog in <gamedir>/qray/lights.yaml, each with
 // its own session and backup file.
@@ -279,6 +279,7 @@ static struct
 
 	// which of the two editors this is
 	int mode;
+	qboolean choosing;
 
 	// the session files, resolved on start: <gamedir>/materials.yaml is the file
 	// the editor saves to (a mod's file overrides the id1 one), while
@@ -325,6 +326,7 @@ static void     QRE_Cancel (void);
 static void     QRE_StopEditor (qboolean restore);
 static void     QRE_ClosePanel (void);
 static void     QRE_RequestExit (void);
+static void     QRE_StartMode (int mode);
 static void     QRE_GlobalsRestore (void);
 static qboolean QRE_WriteSession (void);
 static qboolean QRE_FileExists (const char *path);
@@ -2429,11 +2431,24 @@ static void QRE_ParamWidgets (int g)
 	}
 }
 
+static void QRE_PanelActionRow (void (*on_exit)(void))
+{
+	if (QR_GUI_Button ("Save"))
+		QRE_Apply ();
+	QR_GUI_SameLine ();
+	if (QR_GUI_Button ("Cancel"))
+		QRE_Cancel ();
+	QR_GUI_SameLine ();
+	if (QR_GUI_Button ("Exit"))
+		on_exit ();
+	QR_GUI_Separator ();
+	QR_GUI_BeginScroll ();
+}
+
 static void QRE_BuildPanelGUI (void)
 {
 	int      panel_w = glwidth / 4; // a quarter of the screen wide, as asked
 	int      g;
-	qboolean exit_requested = false;
 
 	// Below this the fixed label column and the browse and reset buttons stop
 	// fitting: a quarter of a small window is not worth an unusable panel.
@@ -2461,16 +2476,7 @@ static void QRE_BuildPanelGUI (void)
 	}
 	QR_GUI_Spacing ();
 
-	if (QR_GUI_Button ("Save"))
-		QRE_Apply ();
-	QR_GUI_SameLine ();
-	if (QR_GUI_Button ("Cancel"))
-		QRE_Cancel ();
-	QR_GUI_SameLine ();
-	if (QR_GUI_Button ("Exit"))
-		exit_requested = true;
-	QR_GUI_Separator ();
-	QR_GUI_BeginScroll ();
+	QRE_PanelActionRow (QRE_RequestExit);
 
 	for (g = 0; g < qre.group_count; g++)
 	{
@@ -2484,9 +2490,6 @@ static void QRE_BuildPanelGUI (void)
 
 	QR_GUI_EndScroll ();
 	QR_GUI_EndPanel ();
-
-	if (exit_requested)
-		QRE_RequestExit ();
 }
 
 // ---------------------------------------------------------------------------
@@ -3320,7 +3323,6 @@ static void QRE_CustomLightsTab (void)
 static void QRE_BuildLightPanelGUI (void)
 {
 	int         panel_w = glwidth / 4;
-	qboolean    exit_requested = false;
 	rt_light_t *light = NULL;
 	rt_light_t *inst = NULL;
 	rt_light_t *shared = NULL;
@@ -3345,16 +3347,7 @@ static void QRE_BuildLightPanelGUI (void)
 	}
 	QR_GUI_Spacing ();
 
-	if (QR_GUI_Button ("Save"))
-		QRE_Apply ();
-	QR_GUI_SameLine ();
-	if (QR_GUI_Button ("Cancel"))
-		QRE_Cancel ();
-	QR_GUI_SameLine ();
-	if (QR_GUI_Button ("Exit"))
-		exit_requested = true;
-	QR_GUI_Separator ();
-	QR_GUI_BeginScroll ();
+	QRE_PanelActionRow (QRE_RequestExit);
 
 	{
 		static const char *const tabs[] = { "Entity", "Custom", "Global" };
@@ -3369,8 +3362,6 @@ static void QRE_BuildLightPanelGUI (void)
 		QRE_LightGlobalTab ();
 		QR_GUI_EndScroll ();
 		QR_GUI_EndPanel ();
-		if (exit_requested)
-			QRE_RequestExit ();
 		return;
 	}
 
@@ -3380,8 +3371,6 @@ static void QRE_BuildLightPanelGUI (void)
 		QRE_CustomLightsTab ();
 		QR_GUI_EndScroll ();
 		QR_GUI_EndPanel ();
-		if (exit_requested)
-			QRE_RequestExit ();
 		return;
 	}
 
@@ -3566,9 +3555,6 @@ static void QRE_BuildLightPanelGUI (void)
 
 	QR_GUI_EndScroll ();
 	QR_GUI_EndPanel ();
-
-	if (exit_requested)
-		QRE_RequestExit ();
 }
 
 static void QRE_BuildFlyingOverlay (void)
@@ -3629,6 +3615,18 @@ static void QRE_Frame (void)
 	QRE_FlushDirty ();
 }
 
+static void QRE_DrawChooser (void)
+{
+	int answer = QR_GUI_Dialog ("QuakeRay v." ENGINE_VER_STRING,
+	                            "Choose the editor to run on this level (Esc closes).",
+	                            "Material Editor", "Light Editor");
+
+	if (answer == 1)
+		QRE_StartMode (QRE_MODE_MATERIAL);
+	else if (answer == 2)
+		QRE_StartMode (QRE_MODE_LIGHT);
+}
+
 void QR_Editor_DrawPanel (cb_context_t *cbx)
 {
 	(void)cbx;
@@ -3647,7 +3645,11 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	if (!QR_GUI_BeginFrame ((unsigned int)host_framecount, (float)host_frametime, glx, gly, glwidth, glheight, vid.height))
 		return;
 
-	if (qre.exit_prompt)
+	if (qre.choosing)
+	{
+		QRE_DrawChooser ();
+	}
+	else if (qre.exit_prompt)
 	{
 		int answer = QR_GUI_Dialog ((qre.mode == QRE_MODE_LIGHT) ? "Save lights?" : "Save materials?",
 		                            (qre.mode == QRE_MODE_LIGHT) ? "Save all light changes?" : "Save all materials changes?",
@@ -4186,7 +4188,8 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 	// fire button and flies again); a text field keeps its own Tab
 	if (e->type == SDL_KEYDOWN && e->key.keysym.scancode == SDL_SCANCODE_TAB && !QR_GUI_WantsKeyboard ())
 	{
-		QRE_CursorMode (false);
+		if (!qre.choosing)
+			QRE_CursorMode (false);
 		return true;
 	}
 
@@ -4194,7 +4197,11 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 	// text field is editing
 	if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_ESCAPE && !QR_GUI_WantsKeyboard ())
 	{
-		if (qre.exit_prompt)
+		if (qre.choosing)
+		{
+			QRE_RequestExit ();
+		}
+		else if (qre.exit_prompt)
 		{
 			qre.exit_prompt = false; // back to editing
 			if (qre.prompt_from_flying)
@@ -4953,7 +4960,15 @@ static void QRE_SessionDiscard (void)
 // one, close straight away when nothing was changed.
 static void QRE_RequestExit (void)
 {
-	const qboolean touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0);
+	qboolean touched;
+
+	if (qre.choosing)
+	{
+		QRE_StopEditor (false);
+		return;
+	}
+
+	touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0);
 
 	if (!touched && !QRE_FileExists (qre.editor_file) && !QRE_FileExists (qre.custom_editor_file))
 	{
@@ -5050,6 +5065,7 @@ static void QRE_StopEditor (qboolean restore)
 	}
 
 	qre.active = false;
+	qre.choosing = false;
 	qre.panel_open = false;
 	qre.exit_prompt = false;
 	qre.pick_model = NULL;
@@ -5086,38 +5102,12 @@ static void QRE_StopEditor (qboolean restore)
 	QRE_Notify ("editor closed");
 }
 
-static void QRE_StartEditor (int mode)
+static void QRE_StartMode (int mode)
 {
 	const char *name = (mode == QRE_MODE_LIGHT) ? "light" : "material";
 
-	if (qre.active)
-	{
-		Con_Printf ("qr %s editor: already running\n", name);
-		return;
-	}
-	if (cls.state != ca_connected || !cl.worldmodel)
-	{
-		Con_Printf ("qr %s editor: a level must be loaded first\n", name);
-		return;
-	}
-	if (!sv.active || svs.maxclients > 1 || cls.demoplayback)
-	{
-		Con_Printf ("qr %s editor: single player only (the world has to be frozen)\n", name);
-		return;
-	}
-	if (CVAR_TO_FLOAT (rt_truelight) != 1.0f)
-	{
-		Con_Printf ("qr %s editor: rt_truelight must be 1 (the new light system)\n", name);
-		return;
-	}
-
-	memset (&qre, 0, sizeof (qre));
-	qre.active = true;
-	qre.panel_open = false;
+	qre.choosing = false;
 	qre.mode = mode;
-
-	VectorCopy (r_refdef.vieworg, qre.cam_origin);
-	VectorCopy (cl.viewangles, qre.player_viewangles);
 
 	if (mode == QRE_MODE_LIGHT)
 	{
@@ -5154,6 +5144,41 @@ static void QRE_StartEditor (int mode)
 	remove (qre.editor_file);
 	remove (qre.custom_editor_file);
 
+	Con_Printf ("qr %s editor: on (fly: WASD + mouse; LMB selects a face; ESC exits)\n", name);
+}
+
+static void QRE_StartEditor (void)
+{
+	if (qre.active)
+	{
+		Con_Printf ("qr editor: already running\n");
+		return;
+	}
+	if (cls.state != ca_connected || !cl.worldmodel)
+	{
+		Con_Printf ("qr editor: a level must be loaded first\n");
+		return;
+	}
+	if (!sv.active || svs.maxclients > 1 || cls.demoplayback)
+	{
+		Con_Printf ("qr editor: single player only (the world has to be frozen)\n");
+		return;
+	}
+	if (CVAR_TO_FLOAT (rt_truelight) != 1.0f)
+	{
+		Con_Printf ("qr editor: rt_truelight must be 1 (the new light system)\n");
+		return;
+	}
+
+	memset (&qre, 0, sizeof (qre));
+	qre.active = true;
+	qre.panel_open = false;
+	qre.mode = QRE_MODE_MATERIAL;
+	qre.choosing = true;
+
+	VectorCopy (r_refdef.vieworg, qre.cam_origin);
+	VectorCopy (cl.viewangles, qre.player_viewangles);
+
 	// freeze the world: the server stops thinking and moving, cl.time stops
 	// advancing (CL_ReadFromServer) and the frame time handed to the renderer is
 	// the held clock, so poses, textures, particles, the water warp and the
@@ -5162,17 +5187,14 @@ static void QRE_StartEditor (int mode)
 	qre.sv_paused_prev = sv.paused;
 	sv.paused = true;
 
-	Con_Printf ("qr %s editor: on (fly: WASD + mouse; LMB selects a face; ESC exits)\n", name);
+	QRE_CursorMode (true);
+
+	Con_Printf ("qr editor: choose the mode (Material Editor / Light Editor)\n");
 }
 
 static void QR_Editor_Start_f (void)
 {
-	QRE_StartEditor (QRE_MODE_MATERIAL);
-}
-
-static void QR_LightEditor_Start_f (void)
-{
-	QRE_StartEditor (QRE_MODE_LIGHT);
+	QRE_StartEditor ();
 }
 
 static void QR_Editor_Stop_f (void)
@@ -5197,11 +5219,8 @@ void QR_Editor_Init (void)
 
 	Cvar_RegisterVariable (&qr_material_editor_debug);
 
-	Cmd_AddCommand ("qr_material_editor_start", QR_Editor_Start_f);
-	Cmd_AddCommand ("qr_material_editor_stop", QR_Editor_Stop_f);
-
-	Cmd_AddCommand ("qr_light_editor_start", QR_LightEditor_Start_f);
-	Cmd_AddCommand ("qr_light_editor_stop", QR_Editor_Stop_f);
+	Cmd_AddCommand ("qr_editor", QR_Editor_Start_f);
+	Cmd_AddCommand ("qr_editor_stop", QR_Editor_Stop_f);
 
 	// the font is deployed next to the executable by the build
 	q_snprintf (font_path, sizeof (font_path), "%s/fonts/Roboto-Regular.ttf", host_parms->basedir);
@@ -5283,7 +5302,7 @@ void QR_Editor_OnNewMap (void)
 {
 	if (qre.active)
 	{
-		Con_Printf ("qr light editor: closed by a map change\n");
+		Con_Printf ("qr editor: closed by a map change\n");
 		QRE_StopEditor (false);
 	}
 }
