@@ -35,6 +35,7 @@
 #include "gl_heap.h"
 #include "rt_material.h"
 #include "rt_lights.h"
+#include "rt_dtal_debug.h"
 #include "keys.h"
 #include "client.h"
 #include "server.h"
@@ -3727,6 +3728,8 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 
 	QRE_DrawHints ();
 	QRE_DrawOverlay ();
+	RT_DtalDebugDrawGui (CVAR_TO_INT32 (rt_dtal_debug), (unsigned int)host_framecount, (float)host_frametime,
+	                     glx, gly, glwidth, glheight, vid.height);
 
 	QR_GUI_EndFrame ();
 }
