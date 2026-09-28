@@ -49,7 +49,6 @@ public:
     bool RequestVsync(bool enable);
 
     void AcquireImage(VkSemaphore imageAvailableSemaphore);
-    void BlitForPresent(VkCommandBuffer cmd, VkImage srcImage, uint32_t srcImageWidth, uint32_t srcImageHeight, VkFilter filter, VkImageLayout srcImageLayout = VK_IMAGE_LAYOUT_GENERAL);
     void Present(const std::shared_ptr<Queues> &queues, VkSemaphore renderFinishedSemaphore);
 
     // Subscribe to swapchain size chagne event.

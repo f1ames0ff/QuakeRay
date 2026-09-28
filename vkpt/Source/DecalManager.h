@@ -48,11 +48,6 @@ public:
     void PrepareForFrame(uint32_t frameIndex);
     void Upload(uint32_t frameIndex, const RgDecalUploadInfo &uploadInfo,
                 const std::shared_ptr<TextureManager> &textureManager);
-    void SubmitForFrame(VkCommandBuffer cmd, uint32_t frameIndex);
-    void Draw(VkCommandBuffer cmd, uint32_t frameIndex,
-              const std::shared_ptr<GlobalUniform> &uniform,
-              const std::shared_ptr<Framebuffers> &framebuffers,
-              const std::shared_ptr<TextureManager> &textureManager);
 
     // Read-only views for the RHI layer's decal-instance copy: the engine's own
     // DecalManager::SubmitForFrame runs only from the legacy VulkanDevice::Render
@@ -109,30 +104,8 @@ public:
     void OnFramebuffersSizeChange(const ResolutionState &resolutionState) override;
 
 private:
-    void CreateRenderPass();
-    void CreateFramebuffers(uint32_t width, uint32_t height);
-    void DestroyFramebuffers();
-    void CreatePipelineLayout(const VkDescriptorSetLayout *pSetLayouts, uint32_t setLayoutCount);
-    void CreatePipelines(const ShaderManager *shaderManager);
-    void DestroyPipelines();
-    void CreateDescriptors();
-
-private:
-    VkDevice device;
-    std::shared_ptr<Framebuffers> storageFramebuffers;
-
     std::unique_ptr<AutoBuffer> instanceBuffer;
     uint32_t decalCount;
-
-    VkRenderPass renderPass;
-    VkFramebuffer passFramebuffers[MAX_FRAMES_IN_FLIGHT];
-
-    VkPipelineLayout pipelineLayout;
-    VkPipeline pipeline;
-
-    VkDescriptorPool descPool;
-    VkDescriptorSetLayout descSetLayout;
-    VkDescriptorSet descSet;
 };
 
 }

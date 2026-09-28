@@ -20,7 +20,6 @@
 
 #include "PortalList.h"
 
-#include "CmdLabel.h"
 #include "RgException.h"
 
 
@@ -78,14 +77,6 @@ void vkpt::PortalList::Upload(uint32_t frameIndex, const RgPortalUploadInfo& inf
     auto *dstArr = static_cast<ShPortalInstance*>(buffer->GetMapped(frameIndex));
 
     memcpy(&dstArr[info.portalIndex], &src, sizeof(ShPortalInstance));
-}
-
-void vkpt::PortalList::SubmitForFrame(VkCommandBuffer cmd, uint32_t frameIndex)
-{
-    CmdLabel label(cmd, "Copying portal infos");
-
-    buffer->CopyFromStaging(cmd, frameIndex);
-    uploadedIndices.reset();
 }
 
 VkBuffer vkpt::PortalList::GetStagingBuffer(uint32_t frameIndex)

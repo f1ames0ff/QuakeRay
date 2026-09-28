@@ -239,58 +239,6 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
     }
 }
 
-void Swapchain::BlitForPresent(VkCommandBuffer cmd, VkImage srcImage, uint32_t srcImageWidth,
-                               uint32_t srcImageHeight, VkFilter filter, VkImageLayout srcImageLayout)
-{
-    // if source has almost the same size as the surface, then use nearest blit
-    if (std::abs((int)srcImageWidth  - (int)surfaceExtent.width ) < 8 && 
-        std::abs((int)srcImageHeight - (int)surfaceExtent.height) < 8)
-    {
-        filter = VK_FILTER_NEAREST;
-    }
-
-
-    VkImageBlit region = {};
-
-    region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    region.srcOffsets[0] = { 0, 0, 0 };
-    region.srcOffsets[1] = { static_cast<int32_t>(srcImageWidth), static_cast<int32_t>(srcImageHeight), 1 };
-
-    region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    region.dstOffsets[0] = { 0, 0, 0 };
-    region.dstOffsets[1] = { static_cast<int32_t>(surfaceExtent.width), static_cast<int32_t>(surfaceExtent.height), 1 };
-
-    VkImage swapchainImage = swapchainImages[currentSwapchainIndex];
-    VkImageLayout swapchainImageLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    // set layout for blit
-    Utils::BarrierImage(
-        cmd, srcImage,
-        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-        srcImageLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-
-    Utils::BarrierImage(
-        cmd, swapchainImage,
-        0, VK_ACCESS_TRANSFER_WRITE_BIT,
-        swapchainImageLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-    vkCmdBlitImage(
-        cmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        swapchainImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1, &region, filter);
-
-    // restore layouts
-    Utils::BarrierImage(
-        cmd, srcImage,
-        VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcImageLayout);
-
-    Utils::BarrierImage(
-        cmd, swapchainImage,
-        VK_ACCESS_TRANSFER_WRITE_BIT, 0,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, swapchainImageLayout);
-}
-
 void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore renderFinishedSemaphore)
 {
     VkPresentInfoKHR presentInfo = {};

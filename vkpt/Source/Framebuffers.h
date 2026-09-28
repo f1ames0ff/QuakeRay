@@ -56,11 +56,6 @@ public:
 
     enum class BarrierType { All, Storage, ColorAttachment, Transfer };
 
-    void BarrierOne(VkCommandBuffer cmd,
-                    uint32_t frameIndex,
-                    FramebufferImageIndex framebufImageIndex,
-                    BarrierType barrierTypeFrom = BarrierType::All);
-
     // Barrier framebuffer images for given frameIndex
     template <uint32_t BARRIER_COUNT>
     void BarrierMultiple(VkCommandBuffer cmd,
@@ -68,23 +63,7 @@ public:
                          const FramebufferImageIndex (&framebufImageIndices)[BARRIER_COUNT],
                          BarrierType barrierTypeFrom = BarrierType::All);
 
-    void PresentToSwapchain( VkCommandBuffer                     cmd,
-                             uint32_t                            frameIndex,
-                             const std::shared_ptr< Swapchain >& swapchain,
-                             FramebufferImageIndex               framebufImageIndex,
-                             VkFilter                            filter );
-
-    FramebufferImageIndex BlitForEffects( VkCommandBuffer       cmd,
-                                          uint32_t              frameIndex,
-                                          FramebufferImageIndex framebufImageIndex,
-                                          VkFilter              filter,
-                                          const RgExtent2D*     pPixelizedRenderSize );
-
-    VkDescriptorSet GetDescSet(uint32_t frameIndex) const;
-    VkDescriptorSetLayout GetDescSetLayout() const;
-
     VkImage GetImage(FramebufferImageIndex fbImageIndex, uint32_t frameIndex) const;
-    VkImageView GetImageView(FramebufferImageIndex fbImageIndex, uint32_t frameIndex) const;
     std::tuple<VkImage, VkImageView, VkFormat> GetImageHandles(FramebufferImageIndex fbImageIndex, uint32_t frameIndex) const;
     std::tuple<VkImage, VkImageView, VkFormat, VkExtent2D> GetImageHandles(FramebufferImageIndex fbImageIndex, uint32_t frameIndex, const ResolutionState &resolutionState) const;
 
@@ -108,11 +87,7 @@ public:
 private:
     static FramebufferImageIndex FrameIndexToFBIndex(FramebufferImageIndex framebufferImageIndex, uint32_t frameIndex);
 
-    void CreateDescriptors();
-    void CreateSamplers();
-
     void CreateImages(ResolutionState resolutionState);
-    void UpdateDescriptors();
 
     VkExtent2D GetFramebufSize( const ResolutionState& resolutionState,
                                 FramebufferImageIndex  index ) const;
@@ -125,9 +100,6 @@ private:
     VkDevice device;
     bool     effectWipeIsUsed;
 
-    VkSampler bilinearSampler;
-    VkSampler nearestSampler;
-
     std::shared_ptr<MemoryAllocator> allocator;
     std::shared_ptr<CommandBufferManager> cmdManager;
 
@@ -136,10 +108,6 @@ private:
     std::vector<VkImage> images;
     std::vector<VkDeviceMemory> imageMemories;
     std::vector<VkImageView> imageViews;
-
-    VkDescriptorSetLayout descSetLayout;
-    VkDescriptorPool descPool;
-    VkDescriptorSet descSets[FRAMEBUFFERS_HISTORY_LENGTH];
 
     std::list<std::weak_ptr<IFramebuffersDependency>> subscribers;
 };

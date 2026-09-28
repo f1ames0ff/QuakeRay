@@ -61,16 +61,6 @@ public:
         const std::shared_ptr<const GlobalUniform> &uniform,
         float exposureBias, float contrast);
 
-    // The full legacy exposure chain: the host write above, then CmLuminanceHistogram and
-    // CmLuminanceAvg over the same slot's buffer on 'cmd'. Not used by the RHI path.
-    void CalculateExposure(
-        VkCommandBuffer cmd, uint32_t frameIndex,
-        const std::shared_ptr<const GlobalUniform> &uniform,
-        float exposureBias, float contrast);
-
-    VkDescriptorSetLayout GetDescSetLayout() const;
-    VkDescriptorSet GetDescSet(uint32_t frameIndex) const;
-
     // The host-visible VkBuffer of 'frameIndex' (one buffer per frame in flight, see
     // CreateTonemappingBuffer). The RHI layer wraps it as the world shader's set 2 binding 0,
     // which the shader declares as StructuredBuffer<ShTonemapping>; pass GetElementSize() as the
@@ -97,34 +87,17 @@ public:
 
 private:
     void CreateTonemappingBuffer(const std::shared_ptr<MemoryAllocator> &allocator);
-    void CreateTonemappingDescriptors();
-
-    void CreatePipelineLayout(VkDescriptorSetLayout *pSetLayouts, uint32_t setLayoutCount);
-    void CreatePipelines(const ShaderManager *shaderManager);
-    void DestroyPipelines();
 
 private:
-    VkDevice device;
-
-    std::shared_ptr<Framebuffers> framebuffers;
-
     // One buffer per frame in flight: the host rewrites the params prefix each
     // frame, while the GPU owns the histogram/curve/adaptedLuminance state that
     // lives past it. The temporal state is naturally double-buffered as well,
     // which is harmless for eye adaptation (slow convergence).
     Buffer tmBuffer[MAX_FRAMES_IN_FLIGHT];
-    VkDescriptorSetLayout tmDescSetLayout;
-    VkDescriptorPool tmDescPool;
-    VkDescriptorSet tmDescSet[MAX_FRAMES_IN_FLIGHT] = {};
 
     // host-mapped views of tmBuffer (HOST_VISIBLE) for writing tone mapper params
     void *mappedTmBuffer[MAX_FRAMES_IN_FLIGHT] = {};
     bool  resetRequired[MAX_FRAMES_IN_FLIGHT] = {};
-
-    VkPipelineLayout pipelineLayout;
-
-    VkPipeline histogramPipeline;
-    VkPipeline avgLuminancePipeline;
 };
 
 }

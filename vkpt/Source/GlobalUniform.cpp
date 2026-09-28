@@ -21,8 +21,6 @@
 #include "GlobalUniform.h"
 
 #include "Generated/ShaderCommonC.h"
-#include "CmdLabel.h"
-#include <cstring>
 
 using namespace vkpt;
 
@@ -118,14 +116,6 @@ GlobalUniform::~GlobalUniform()
     vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
 }
 
-void GlobalUniform::Upload(VkCommandBuffer cmd, uint32_t frameIndex)
-{
-    CmdLabel label(cmd, "Copying uniform");
-
-    SetData(frameIndex, uniformData.get(), sizeof(ShGlobalUniform));
-    uniformBuffer->CopyFromStaging(cmd, frameIndex, sizeof(ShGlobalUniform));
-}
-
 ShGlobalUniform *GlobalUniform::GetData()
 {
     return uniformData.get();
@@ -149,14 +139,5 @@ VkDescriptorSet GlobalUniform::GetDescSet(uint32_t frameIndex) const
 VkDescriptorSetLayout GlobalUniform::GetDescSetLayout() const
 {
     return descSetLayout;
-}
-
-void GlobalUniform::SetData(uint32_t frameIndex, const void *data, VkDeviceSize dataSize)
-{
-    assert(frameIndex >= 0 && frameIndex < MAX_FRAMES_IN_FLIGHT);
-    assert(uniformBuffer->GetSize() <= dataSize);
-
-    void *mapped = uniformBuffer->GetMapped(frameIndex);
-    memcpy(mapped, data, dataSize);
 }
 

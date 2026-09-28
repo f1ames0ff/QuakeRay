@@ -21,7 +21,6 @@
 #include "Scene.h"
 #include "Generated/ShaderCommonC.h"
 #include "RgException.h"
-#include "CmdLabel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -72,48 +71,6 @@ void Scene::PrepareForFrame(VkCommandBuffer cmd, uint32_t frameIndex)
 
     // dynamic geomtry
     asManager->BeginDynamicGeometry(cmd, frameIndex);
-}
-
-void Scene::SubmitForFrame(VkCommandBuffer cmd, uint32_t frameIndex, const std::shared_ptr<GlobalUniform> &uniform, 
-                           uint32_t uniformData_rayCullMaskWorld, bool allowGeometryWithSkyFlag, bool disableRTGeometry)
-{
-    uint32_t preprocMode = GetVertexPreprocessingMode();
-    submittedStaticInCurrentFrame = false;
-
-
-    lightManager->CopyFromStaging(cmd, frameIndex);
-
-
-    // copy to device-local, if there were any tex coords change for static geometry
-    asManager->ResubmitStaticTexCoords(cmd);
-
-    if (toResubmitMovable)
-    {
-        // at least one transform of static movable geometry was changed
-        asManager->ResubmitStaticMovable(cmd);
-        toResubmitMovable = false;
-    }
-
-    // always submit dynamic geomtetry on the frame ending
-    asManager->SubmitDynamicGeometry(cmd, frameIndex);
-
-
-    // copy geom and tri infos to device-local
-    geomInfoMgr->CopyFromStaging(cmd, frameIndex);
-
-
-    // prepare tlas infos, and fill uniform with info about that tlas
-    const auto [prepare, push] = 
-        asManager->PrepareForBuildingTLAS(frameIndex, *uniform->GetData(), uniformData_rayCullMaskWorld, allowGeometryWithSkyFlag, disableRTGeometry);
-
-    // upload uniform data
-    uniform->Upload(cmd, frameIndex);
-    
-    
-    vertPreproc->Preprocess(cmd, frameIndex, preprocMode, uniform, asManager, push);
-    
-
-    asManager->BuildTLAS(cmd, frameIndex, prepare);
 }
 
 void Scene::PreprocessVertices(VkCommandBuffer cmd, uint32_t frameIndex,

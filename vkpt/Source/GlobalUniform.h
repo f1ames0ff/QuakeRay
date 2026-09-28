@@ -38,9 +38,6 @@ public:
     GlobalUniform &operator=(const GlobalUniform &other) = delete;
     GlobalUniform &operator=(GlobalUniform &&other) noexcept = delete;
 
-    // Send current data
-    void Upload(VkCommandBuffer cmd, uint32_t frameIndex);
-
     // Getters for modifying uniform buffer data that will be uploaded
     ShGlobalUniform *GetData();
     const ShGlobalUniform *GetData() const;
@@ -58,7 +55,6 @@ public:
 
 private:
     void CreateDescriptors();
-    void SetData(uint32_t frameIndex, const void *data, VkDeviceSize dataSize);
 
 private:
     VkDevice device;

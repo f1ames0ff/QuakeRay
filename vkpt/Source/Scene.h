@@ -47,8 +47,6 @@ public:
     Scene& operator=(Scene&& other) noexcept = delete;
 
     void PrepareForFrame(VkCommandBuffer cmd, uint32_t frameIndex);
-    void SubmitForFrame(VkCommandBuffer cmd, uint32_t frameIndex, const std::shared_ptr<GlobalUniform> &uniform,
-                        uint32_t uniformData_rayCullMaskWorld, bool allowGeometryWithSkyFlag, bool disableRTGeometry);
 
     // The vertex preprocessing that generates the shading normals of the world geometry (the
     // surfaces uploaded with RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT), for the render path that

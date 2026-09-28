@@ -45,7 +45,6 @@ namespace vkpt
         PortalList &operator=(PortalList &&other) noexcept = delete;
 
         void Upload(uint32_t frameIndex, const RgPortalUploadInfo &info);
-        void SubmitForFrame(VkCommandBuffer cmd, uint32_t frameIndex);
 
         // Read-only views for the RHI layer's portal-buffer copy: the engine's own
         // PortalList::SubmitForFrame runs only from the legacy VulkanDevice::Render
