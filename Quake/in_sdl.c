@@ -889,10 +889,13 @@ void IN_SendKeyEvents (void)
 			}
 			else if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
 			{
-				vid.width = event.window.data1;
-				vid.height = event.window.data2;
-				vid.restart_next_frame = true;
-				Cvar_FindVar ("scr_conscale")->callback (NULL);
+				if (event.window.data1 > 0 && event.window.data2 > 0)
+				{
+					vid.width = event.window.data1;
+					vid.height = event.window.data2;
+					vid.restart_next_frame = true;
+					Cvar_FindVar ("scr_conscale")->callback (NULL);
+				}
 			}
 			break;
 		case SDL_TEXTINPUT:
