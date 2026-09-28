@@ -1232,18 +1232,23 @@ void VulkanDevice::Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo)
 
 bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
 {
-    if (nvrhiFrameSkeleton->IsUnavailable())
+    // The RHI frame skeleton is the only renderer: a missing or unavailable one cannot be papered
+    // over by the legacy path any more, so the frame is reported as fatal instead of drawn. The
+    // constructor has already printed the reason (which pass or resource failed to be created).
+    if (nvrhiFrameSkeleton == nullptr || nvrhiFrameSkeleton->IsUnavailable())
     {
-        return false;
+        throw RgException(RG_GRAPHICS_API_ERROR,
+                          "RHI: the frame skeleton is unavailable, the frame cannot be drawn");
     }
 
     const uint32_t frameIndex = currentFrameState.GetFrameIndex();
 
-    // The engine's framebuffers are created by the legacy Render path and nowhere else
-    // (Framebuffers::PrepareForSize, VulkanDevice.cpp:738), and the RHI sky pass draws into their
-    // ALBEDO image. Keeping them prepared here is what makes ALBEDO exist and follow a resolution
-    // change under `rhiframe`; the call is idempotent, so the fallback below can repeat it with the
-    // same resolution state and get the same no-op.
+    // The engine's framebuffers are created by this call and nowhere else now: the legacy Render
+    // path that used to run Framebuffers::PrepareForSize (VulkanDevice.cpp:738) is no longer
+    // dispatched, and the RHI sky pass draws into their ALBEDO image. Keeping them prepared here is
+    // what makes ALBEDO exist and follow a resolution change. The call is idempotent, so a frame
+    // the skeleton refuses below can repeat it with the same resolution state and get the same
+    // no-op.
     framebuffers->PrepareForSize(renderResolution.GetResolutionState());
 
     // The sky inputs are built from the same sources the legacy DrawSkyToAlbedo call reads
@@ -1307,12 +1312,11 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
 
     // Fill the engine's instance buffer ahead of the skeleton's Render: the skeleton records the RHI
     // TLAS build from it, and the raster mode's world branch writes the uniform data (including the
-    // per-instance geometry offsets filled just above) into the device-local uniform. The traced
-    // mode has no such write yet - the debug pass reads the uniform the engine buffer holds, and
-    // under `rhiframe` GlobalUniform::Upload does not run - so a traced frame reads whatever the
-    // last upload left there; refreshing it on the RHI list belongs to the A4 wiring. The TLAS build
-    // is not part of the legacy renderer's frame here, so it has to happen on the legacy buffer
-    // regardless of which mode the skeleton records.
+    // per-instance geometry offsets filled just above) into the device-local uniform. On the RHI
+    // path GlobalUniform::Upload never runs, so the traced frame reads the uniform the skeleton
+    // writes on its own list (NvrhiFrameSkeleton::Render); the CPU copy prepared here is what that
+    // write uploads. The TLAS build is not part of the legacy renderer's frame, so it has to happen
+    // on the legacy buffer regardless of which mode the skeleton records.
     asManager->BuildTLAS(currentFrameState.GetCmdBuffer(), frameIndex, prepare.first);
 
     NvrhiFrameSkeleton::SkyFrameInputs sky = {};
@@ -1443,7 +1447,7 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     // The portals (A5.3): the engine's staging and device-local buffers for this slot, which the
     // skeleton wraps and copies on the RHI list before the reflect/refract dispatch. The engine's
     // own SubmitForFrame (the copy plus the uploaded-index reset) runs only in the legacy render,
-    // which `rhiframe` skips, so the RHI frame resets the bookkeeping here, after the game's
+    // which is no longer dispatched, so the RHI frame resets the bookkeeping here, after the game's
     // uploads of this frame and independently of the reflect/refract gate - the game uploads a
     // teleport every frame while `rt_teleport_portals` is 1, and a leaked index would throw on the
     // next frame's Upload (PortalList.cpp:58-61).
@@ -1455,8 +1459,8 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     // The decals (A5.6): the engine's instance buffers for this slot, which the skeleton wraps and
     // copies on the RHI list before the decal pass. The game uploads none in this tree
     // (rgUploadDecal has no caller), so the counts are zero and the skeleton skips both the copy
-    // and the draw; the engine's own SubmitForFrame (the copy) never runs under `rhiframe`, and its
-    // bookkeeping needs no reset here because PrepareForFrame clears the count on both paths.
+    // and the draw; the engine's own SubmitForFrame (the copy) never runs on the RHI path, and its
+    // bookkeeping needs no reset here because PrepareForFrame clears the count for the frame.
     sky.decalStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(decalManager->GetStagingBuffer(frameIndex)));
     sky.decalDevice = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(decalManager->GetDeviceLocalBuffer()));
     sky.decalBufferSize = static_cast<uint64_t>(decalManager->GetBufferSize());
@@ -1579,7 +1583,9 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
 
     if (!nvrhiFrameSkeleton->Render(swapchain.get(), frameIndex, sky, semaphoreToWait, renderFinishedSemaphores[frameIndex]))
     {
-        // Give it back: the renderer will submit the frame itself.
+        // Give it back: DrawFrame ends the frame itself, and its EndFrame submit is what waits on
+        // the semaphore then. The skeleton refuses only defensively (a zero-sized swapchain or a
+        // stale swapchain framebuffer list); an unavailable skeleton threw above.
         currentFrameState.SetSemaphore(semaphoreToWait, semaphoreWaitStage);
         return false;
     }
@@ -1595,9 +1601,8 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     // mode afterwards.
     //
     // It is recorded only after the skeleton's Render succeeded (rather than next to the TLAS
-    // build): a frame that falls back to the legacy renderer below keeps the static-submission
-    // marker, so the fallback's own SubmitForFrame still runs the full ALL preprocessing with the
-    // uniform upload of that path, and the marker is never consumed without a delivered RHI frame.
+    // build): a frame the skeleton refuses keeps the static-submission marker for a later frame, so
+    // the full ALL preprocessing is never consumed without a delivered RHI frame.
     //
     // Ordering: the legacy command buffer is submitted after the RHI list of the same frame (the
     // cmdManager->Submit call below), so the pass takes effect for the submission that follows
@@ -1707,29 +1712,29 @@ void VulkanDevice::DrawFrame(const RgDrawFrameInfo *drawInfo)
 
     const bool canRender = renderResolution.Width() > 0 && renderResolution.Height() > 0;
 
-    // The uniform is filled once for both renderers: the RHI sky pass reads the same view,
-    // projection and jitter the legacy path uses (VulkanDevice.cpp:748-756), and FillUniform is what
-    // puts them there. The legacy fallback below keeps its existing FillUniform+Render pair and
-    // fills nothing a second time.
+    // The uniform is filled for the RHI frame: the traced passes read the view, projection and
+    // jitter the legacy path used to read (VulkanDevice.cpp:748-756), and FillUniform is what puts
+    // them there.
     if (canRender)
     {
         FillUniform(uniform->GetData(), *drawInfo);
     }
 
-    // The RHI frame skeleton takes over the frame: the rasterized sky is drawn into the engine's
-    // ALBEDO image and presented through the RHI layer, the renderer is skipped. The collector copy
-    // is what the legacy Rasterizer::SubmitForFrame does (Rasterizer.cpp:160); the legacy command
-    // buffer that carries it is submitted after the RHI list, so the sky of this frame still reads
-    // the copy of the previous frame - the geometry is static per level, so only the first frame
-    // after a level load reads the zeroed buffer (see the geometry wrap in VulkanDevice_Init.cpp).
-    // The availability check keeps the copy out of the fallback path: when the skeleton cannot
-    // render, the legacy Render below calls SubmitForFrame and would copy a second time.
-    if (nvrhiFrameSkeleton != nullptr && !nvrhiFrameSkeleton->IsUnavailable() && canRender)
+    // The RHI frame skeleton owns every frame: it traces and presents it through the RHI layer, and
+    // the legacy Render below is no longer dispatched. An unavailable skeleton inside
+    // RenderThroughRhi is fatal; a refusal by the skeleton itself (a zero-sized swapchain or a stale
+    // framebuffer list) ends the frame without drawing anything. The collector copy is what the
+    // legacy Rasterizer::SubmitForFrame does (Rasterizer.cpp:160); the legacy command buffer that
+    // carries it is submitted after the RHI list, so the sky of this frame still reads the copy of
+    // the previous frame - the geometry is static per level, so only the first frame after a level
+    // load reads the zeroed buffer (see the geometry wrap in VulkanDevice_Init.cpp).
+    if (canRender)
     {
-        // The engine's per-frame descriptor flush lives on the legacy path (VulkanDevice.cpp:724-727),
-        // which the RHI takes over. Without it the shared RHI texture table is never filled and every
-        // bindless sample reads an unwritten descriptor - the sky renders black. The cubemap table is a
-        // separate set the ported passes do not use yet, so its flush stays on the legacy path.
+        // The engine's per-frame descriptor flush used to live on the legacy path
+        // (VulkanDevice.cpp:724-727), which the RHI takes over. Without it the shared RHI texture
+        // table is never filled and every bindless sample reads an unwritten descriptor - the sky
+        // renders black. The cubemap table is a separate set the ported passes do not use yet, so
+        // its flush stays on the legacy upload machinery.
         const bool mipLodBiasUpdated = worldSamplerManager->TryChangeMipLodBias(frameIndex, renderResolution.GetMipLodBias());
         textureManager->SubmitDescriptors(frameIndex, drawInfo->pTexturesParams, mipLodBiasUpdated);
 
@@ -1740,13 +1745,20 @@ void VulkanDevice::DrawFrame(const RgDrawFrameInfo *drawInfo)
             currentFrameState.OnEndFrame();
             return;
         }
+
+        // The skeleton refused the frame defensively. Nothing is drawn for it and nothing legacy is
+        // substituted; the frame is still ended below, which submits the command buffer's begin-frame
+        // work and presents the acquired image untouched. The refusal is reported once.
+        if (!warnedSkeletonRefusedFrame)
+        {
+            warnedSkeletonRefusedFrame = true;
+            Print("Warning: RHI: the frame skeleton refused the frame, the acquired image is presented as-is");
+        }
     }
 
-    if (canRender)
-    {
-        Render(cmd, *drawInfo);
-    }
-
+    // The legacy renderer is never called any more; EndFrame only performs the frame accounting the
+    // RHI path itself does not: it submits the frame's command buffer (the begin-frame uploads and
+    // the per-frame copies are recorded on it) and presents the acquired image.
     EndFrame(cmd);
     currentFrameState.OnEndFrame();
 }
@@ -1814,9 +1826,10 @@ void VulkanDevice::GetFrameStatsEx(RgFrameStats *pStats) const
     }
     pStats->fpsX10 = statsFpsX10;
 
-    // Query support alone is not enough to call the numbers valid: the legacy Render is the only
-    // producer of marks (VulkanDevice.cpp:720-1231), so a `rhiframe` frame collected nothing and
-    // "not collected" (0) is the honest answer, distinguishable from a measured 0 ms.
+    // Query support alone is not enough to call the numbers valid: the legacy Render was the only
+    // producer of marks (VulkanDevice.cpp:720-1231) and it is no longer dispatched, so no frame
+    // collects any - "not collected" (0) is the honest answer, distinguishable from a measured
+    // 0 ms. The marks return when the RHI path grows its own timing instrumentation.
     if (passTimings != nullptr && passTimings->IsSupported() && passTimings->HasRecordedMarks())
     {
         pStats->gpuTimingValid = 1;

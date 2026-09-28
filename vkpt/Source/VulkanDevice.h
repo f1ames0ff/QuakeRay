@@ -71,7 +71,6 @@ namespace vkpt
 
 class NvrhiContext;
 class NvrhiFrameSkeleton;
-class RhiDebugTracePass;
 class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
@@ -181,9 +180,12 @@ private:
     VkCommandBuffer BeginFrame(const RgStartFrameInfo &startInfo);
     void Render(VkCommandBuffer cmd, const RgDrawFrameInfo &drawInfo);
     // Draws the current frame through the RHI layer and submits it, together with
-    // the command buffer of the frame. Returns false if the frame has to be drawn
-    // by the renderer instead. 'drawInfo' is the same struct Render receives; only
-    // the sky params of it are read (the sky viewer position).
+    // the command buffer of the frame. The RHI frame skeleton is the only renderer
+    // now, so an unavailable (or missing) skeleton is fatal: this throws instead of
+    // handing the frame back. It returns false only for the skeleton's own defensive
+    // refusals (a zero-sized swapchain, a stale swapchain framebuffer list), which
+    // the caller ends without drawing. 'drawInfo' is the same struct Render
+    // receives; only the sky params of it are read (the sky viewer position).
     bool RenderThroughRhi(const RgDrawFrameInfo &drawInfo);
     void EndFrame(VkCommandBuffer cmd);
 
@@ -261,7 +263,7 @@ private:
 
     // The RHI copy of the engine's texture table (RHI/RhiTextureTable.h): created next to the NVRHI
     // device, shared with the sampler managers and the frame skeleton. Null if it could not be
-    // created; the legacy renderer stays functional then.
+    // created; the skeleton is then unavailable, which the frame dispatch treats as fatal.
     std::shared_ptr<rhi::RhiTextureTable>   rhiTextureTable;
 
     // World tables of the current map (clusters, PVS, emissive faces), built by the host.
@@ -283,36 +285,28 @@ private:
     std::unique_ptr<NvrhiContext>           nvrhi;
     // The RHI acceleration structures (RHI/RhiAccelStructs.h): the NVRHI copy of the engine's
     // static BLAS plus one TLAS per frame slot, built from the engine's ASManager. Created next to
-    // the skeleton and referenced by it; a null one makes the skeleton unavailable. Null when
-    // 'rhiframe' is off.
+    // the skeleton and referenced by it; a null one makes the skeleton unavailable, which the frame
+    // dispatch treats as fatal.
     std::shared_ptr<rhi::RhiAccelStructs>   rhiAccelStructs;
-    // The RHI debug ray-tracing pass (RHI/RhiDebugTracePass.h): the first traced image of the RHI
-    // path, created next to the skeleton only when 'rhitrace' is on and referenced by it. Null when
-    // the flag is off or the creation failed; with the flag on and no pass the skeleton stays
-    // unavailable and the legacy renderer is kept.
-    std::shared_ptr<RhiDebugTracePass>      rhiDebugTracePass;
     // The RHI primary-visibility ray-tracing pass (RHI/RhiRtPrimaryPass.h): the real traced G-buffer
-    // of A4.1, created next to the skeleton only when 'rhirt' is on and referenced by it. Null when
-    // the flag is off or the creation failed; with the flag on and no pass the skeleton stays
-    // unavailable and the legacy renderer is kept.
+    // of A4.1, created with the other RHI passes and referenced by the skeleton. A null one makes
+    // the skeleton unavailable, which the frame dispatch treats as fatal.
     std::shared_ptr<RhiRtPrimaryPass>       rhiRtPrimaryPass;
     // The RHI direct-lighting ray-tracing pass (RHI/RhiRtDirectPass.h): the light term of the traced
     // chain (A4.2), created next to the primary pass - it borrows the primary's shared layout
-    // handles, so it has to be destroyed before it - and referenced by the skeleton. Null when the
-    // flag is off or the creation failed; with the flag on and no pair the skeleton stays
-    // unavailable and the legacy renderer is kept.
+    // handles, so it has to be destroyed before it - and referenced by the skeleton. A null one
+    // makes the skeleton unavailable, which the frame dispatch treats as fatal.
     std::shared_ptr<RhiRtDirectPass>        rhiRtDirectPass;
     // The RHI indirect / GI pass (RHI/RhiRtIndirectPass.h): the bounce-light term of the traced
     // chain (A4.3), created next to the direct pass - it borrows the primary's layout handles and
     // the direct pass's light set, so both have to outlive it and be destroyed after it - and
-    // referenced by the skeleton. Null when the flag is off or the creation failed; with the flag
-    // on and no pass the skeleton stays unavailable and the legacy renderer is kept.
+    // referenced by the skeleton. A null one makes the skeleton unavailable, which the frame
+    // dispatch treats as fatal.
     std::shared_ptr<RhiRtIndirectPass>      rhiRtIndirectPass;
     // The RHI compose pass (RHI/RhiRtComposePass.h): the real adapter -> interleave -> exposure
     // histogram/average -> checkerboard -> prepare-final chain writing the display-referred FINAL
-    // for the traced frame, created only when 'rhicompose' is on and referenced by the skeleton,
-    // which then presents its FINAL image. Null when the flag is off or the creation failed; the
-    // traced chain then keeps the A4.2a diagnostic present.
+    // for the traced frame, referenced by the skeleton, which then presents its FINAL image. Null
+    // when the creation failed; the traced chain then keeps the A4.2a diagnostic present.
     std::shared_ptr<RhiRtComposePass>       rhiRtComposePass;
     // The RHI shadow-map and god-rays passes of A5.2 (RHI/RhiShadowMapPass.h,
     // RHI/RhiRtGodRaysPass.h): the depth-only raster pass and the two compute dispatches that
@@ -381,9 +375,13 @@ private:
     // with the other RHI passes and referenced by the skeleton. Null when the creation failed; the
     // frame is then drawn without the UI.
     std::shared_ptr<RhiUiPass>              rhiUiPass;
-    // The RHI frame skeleton: the first frame pass that is recorded through the
-    // RHI layer. Null unless 'rhiframe' is set in vkpt.txt.
+    // The RHI frame skeleton: the only renderer. Created unconditionally at startup; a null or
+    // unavailable one makes the frame dispatch throw, because nothing else can draw the frame.
     std::shared_ptr<NvrhiFrameSkeleton>     nvrhiFrameSkeleton;
+
+    // One-shot for the log when the skeleton refuses a frame for a defensive reason (a zero-sized
+    // swapchain or a stale swapchain framebuffer list); the frame is then ended without drawing.
+    bool                                    warnedSkeletonRefusedFrame = false;
 
     // Q2RTX-style fog volumes (host data, uploaded into the uniform each frame)
     std::array<RgFogVolume, RG_MAX_FOG_VOLUMES> fogVolumes{};

@@ -104,7 +104,7 @@ public:
     //    (VulkanDevice.cpp:1071-1082);
     //  - 'uniform', the engine's global uniform: the world shader's set 1, and the source of the
     //    bytes the skeleton writes into the uniform wrap every frame (the engine's own
-    //    GlobalUniform::Upload never runs under `rhiframe`);
+    //    GlobalUniform::Upload never runs on the RHI path);
     //  - 'tonemapping', the engine's tonemapping object: the source of the per-slot set 2 buffers
     //    and the carrier of the avgLuminance stand-in the exposure chain would normally fill.
     // All three are optional: when one is null, or the world could not be created, the skeleton
@@ -266,15 +266,17 @@ public:
         bool disableRayTracedGeometry = false;
     };
 
-    // The frame mode of the whole run, chosen by the host from the library config flags:
-    //  - Rasterized: 'rhirt' and 'rhitrace' off - the raster sky and world sub-passes draw into
-    //                ALBEDO and the present samples it;
-    //  - DebugTrace: 'rhitrace' - the A3.1 debug trace of the acceleration structures (the
-    //                id-coloured image) replaces the raster sub-passes;
-    //  - Traced:     'rhirt' - the real ray-tracing chain of A4: the primary-visibility pass fills
-    //                the engine's checkerboard G-buffer and the direct-lighting pass (A4.2) adds
-    //                the light term, which the present composes as its diagnostic.
-    // The host resolves 'rhirt' over 'rhitrace' when both are set.
+    // The frame mode of the whole run. Only Traced is reachable now: with the bring-up flags
+    // retired, the host selects it unconditionally. The other two values and the code behind them
+    // stay compiled for Stage 2 of the legacy-renderer removal:
+    //  - Rasterized: the raster sky and world sub-passes draw into ALBEDO and the present samples
+    //                it;
+    //  - DebugTrace: the A3.1 debug trace of the acceleration structures (the id-coloured image)
+    //                replaces the raster sub-passes; its pass is not created any more, so selecting
+    //                this mode would leave the skeleton unavailable;
+    //  - Traced:     the real ray-tracing chain: the primary-visibility pass fills the engine's
+    //                checkerboard G-buffer and the direct-lighting pass adds the light term, which
+    //                the present composes as its diagnostic.
     enum class FrameMode
     {
         Rasterized,
@@ -296,7 +298,8 @@ public:
     // 'pDebugTracePass' is the host's debug ray-tracing pass (RhiDebugTracePass,
     // RHI/RhiDebugTracePass.h): when 'mode' is DebugTrace, Render drives it - into the same ALBEDO
     // the raster chain would draw into - instead of the raster sky/world sub-passes. Not owned; a
-    // null or not-created one with that mode makes the skeleton unavailable.
+    // null or not-created one with that mode makes the skeleton unavailable. The host passes null
+    // now: the 'rhitrace' mode is retired and stays compiled for Stage 2.
     // 'pRtPrimaryPass' is the host's primary-visibility ray-tracing pass (RhiRtPrimaryPass,
     // RHI/RhiRtPrimaryPass.h): when 'mode' is Traced, Render drives it - into the engine's
     // checkerboard G-buffer images, ALBEDO included. Not owned; a null or not-created one with
@@ -313,7 +316,7 @@ public:
     // 'pRtComposePass' is the host's compose pass (RhiRtComposePass, RHI/RhiRtComposePass.h): when
     // it is non-null, the traced chain runs it after the indirect pass and the present samples its
     // display-referred FINAL image directly, instead of ALBEDO plus the direct term. Optional: a
-    // null one keeps the A4.2a present, and the host creates it only under 'rhicompose'.
+    // null one keeps the A4.2a present; the host creates it unconditionally with the other passes.
     // 'pReflRefrPass' is the host's Q2 reflect/refract pass (RhiRtReflRefrPass,
     // RHI/RhiRtReflRefrPass.h): in the traced chain, after the god-rays input trace and before the
     // reproject, Render records it when the uniform's reflect-refract depth is positive, from the
@@ -407,8 +410,9 @@ public:
     //    could be created) draws into the same target with the engine's uniform and the
     //    avgLuminance stand-in, and the present samples the ALBEDO wrap of the same slot into the
     //    swapchain image of the acquired index;
-    //  - DebugTrace: the debug pass traces one primary ray per pixel over the acceleration
-    //    structures into the slot's ALBEDO and the same present follows;
+    //  - DebugTrace: (retired, see the FrameMode comment) the debug pass traces one primary ray
+    //    per pixel over the acceleration structures into the slot's ALBEDO and the same present
+    //    follows;
     //  - Traced: the engine's primary-visibility raygen writes the slot's checkerboard G-buffer
     //    (ALBEDO included) and, from A4.2 on, the direct-lighting pass adds the light term; the
     //    present composes the two and follows.
@@ -485,29 +489,32 @@ private:
     rhi::RhiAccelStructs *accelStructs = nullptr;
 
     // The host's debug ray-tracing pass (RhiDebugTracePass, RHI/RhiDebugTracePass.h), driven
-    // instead of the raster sky/world chain when frameMode is DebugTrace. Not owned; null when the
-    // host's 'rhitrace' flag is off.
+    // instead of the raster sky/world chain when frameMode is DebugTrace. Not owned; always null
+    // now - the retired 'rhitrace' path, whose mode and branch stay compiled for Stage 2.
     RhiDebugTracePass *debugTracePass = nullptr;
 
     // The host's primary-visibility ray-tracing pass (RhiRtPrimaryPass, RHI/RhiRtPrimaryPass.h),
-    // driven instead of the raster sky/world chain when frameMode is Traced. Not owned; null when
-    // the host's 'rhirt' flag is off.
+    // driven instead of the raster sky/world chain when frameMode is Traced. Not owned; a null or
+    // not-created one with that mode makes the skeleton unavailable, which the frame dispatch
+    // treats as fatal.
     RhiRtPrimaryPass *rtPrimaryPass = nullptr;
 
     // The host's direct-lighting ray-tracing pass (RhiRtDirectPass, RHI/RhiRtDirectPass.h), driven
     // right after the primary when frameMode is Traced. It borrows the primary's layout handles, so
-    // the host destroys it before the primary. Not owned; null when the host's 'rhirt' flag is off.
+    // the host destroys it before the primary. Not owned; a null or not-created one makes the
+    // skeleton unavailable, which the frame dispatch treats as fatal.
     RhiRtDirectPass *rtDirectPass = nullptr;
 
     // The host's indirect / GI pass (RhiRtIndirectPass, RHI/RhiRtIndirectPass.h), driven right after
     // the direct pass when frameMode is Traced. It borrows the primary's layout handles and the
-    // direct pass's light set, so the host destroys it before both. Not owned; null when the host's
-    // 'rhirt' flag is off.
+    // direct pass's light set, so the host destroys it before both. Not owned; a null or not-created
+    // one makes the skeleton unavailable, which the frame dispatch treats as fatal.
     RhiRtIndirectPass *rtIndirectPass = nullptr;
 
     // The host's compose pass (RhiRtComposePass, RHI/RhiRtComposePass.h), driven after the indirect
     // pass when it is non-null; the present then samples its display-referred FINAL image. Not
-    // owned; null when the host's 'rhicompose' flag is off or the creation failed.
+    // owned; null when the creation failed, in which case the traced chain keeps the A4.2a
+    // diagnostic present.
     RhiRtComposePass *rtComposePass = nullptr;
 
     // The host's reflect/refract pass (RhiRtReflRefrPass, RHI/RhiRtReflRefrPass.h), driven in the
@@ -593,9 +600,8 @@ private:
     uint64_t uiVertexStagingHandles[MAX_FRAMES_IN_FLIGHT] = {};
     uint64_t uiIndexStagingHandles[MAX_FRAMES_IN_FLIGHT] = {};
 
-    // The frame mode of the whole run: which chain Render records into ALBEDO. The host picks it
-    // once from 'rhirt'/'rhitrace' (VulkanDevice_Init.cpp) and it does not change while the
-    // skeleton lives.
+    // The frame mode of the whole run: which chain Render records into ALBEDO. The host hard-wires
+    // it to Traced (VulkanDevice_Init.cpp) and it does not change while the skeleton lives.
     FrameMode frameMode = FrameMode::Rasterized;
 
     // Descriptor set 0 of the present: the constant buffer (binding 256), the ALBEDO texture

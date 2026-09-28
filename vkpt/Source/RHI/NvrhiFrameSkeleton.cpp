@@ -209,13 +209,13 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
 
     // The rasterized sky pass: the engine's first real pass on the RHI path. It is created here
     // because this class already owns every input its Create needs (the device, the table, the
-    // frame context and the shader folder). A failure is not fatal for the engine: it makes this
-    // skeleton unavailable, RenderThroughRhi returns false and the legacy renderer keeps the frame.
+    // frame context and the shader folder). A failure makes this skeleton unavailable, and the
+    // frame dispatch then reports the frame as fatal - there is no fallback renderer any more.
     skyPass = std::make_unique<RhiSkyPass>();
     if (!skyPass->Create(device, textureTable, frameContext, shaderFolderPath.c_str(), print))
     {
         skyPass.reset();
-        print("Warning: RHI: the rasterized sky pass is unavailable, the legacy renderer is kept");
+        print("Warning: RHI: the rasterized sky pass is unavailable, the frame skeleton will be unavailable");
         unavailable = true;
         return;
     }
@@ -338,7 +338,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
     // The sky pass's Prepare runs in both modes: it selects the slot's ALBEDO target, wraps it and
     // announces the state the engine leaves it in (UnorderedAccess, i.e. GENERAL) - the wrap the
-    // present samples below and, in the traced mode, the announcement the debug pass's UAV write
+    // present samples below and, in the traced mode, the announcement the primary trace's UAV write
     // relies on (the trace is then the image's first use of the list, so no transition precedes it).
     if (skyPass != nullptr && sky.framebuffers != nullptr)
     {
@@ -350,7 +350,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // mode reads it - the world shader takes renderWidth from it (member 11, byte 644) for its
     // checkerboard remap, and the traced raygens take the camera, the jitter, the ray limits and the
     // cull masks - so this write is a common step of the frame. It is a static wrap of the engine's
-    // buffer, and under `rhiframe` nothing else touches that buffer.
+    // buffer, and on the RHI path nothing else touches that buffer.
     // The world's wrap of the engine uniform is what the write below targets, and the traced mode
     // never runs PrepareWorld, so the wrap is created here, lazily, for both modes. The wrap's desc
     // mirrors the one PrepareWorld uses: isConstantBuffer (the validation device refuses a

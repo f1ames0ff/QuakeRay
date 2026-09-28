@@ -34,7 +34,6 @@
 #include "RHI/NvrhiFrameSkeleton.h"
 #include "RHI/NvrhiRequirements.h"
 #include "RHI/RhiAccelStructs.h"
-#include "RHI/RhiDebugTracePass.h"
 #include "RHI/RhiDecalPass.h"
 #include "RHI/RhiFsrPass.h"
 #include "RHI/RhiPostEffectPass.h"
@@ -106,12 +105,9 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     // The RHI texture table (RHI/RhiTextureTable.h) has to exist before the sampler managers: the
     // world manager mirrors its sampler descs into it while it creates the samplers. The capacity is
     // the same clamped value TextureManager builds its own table with - a bindless table's capacity
-    // is fixed at layout creation, and the two tables address the same slots. On failure the pointer
-    // stays null and the game continues without the RHI textures. The table is built only when the
-    // RHI frame skeleton is on: with `rhiframe` off the engine writes to the legacy table alone, so
-    // the legacy path pays neither the wrapping of every texture nor the descriptor writes. The world
-    // stage of A2 revisits this when the RHI renderer owns the frame.
-    if (libconfig.rhiFrameSkeleton)
+    // is fixed at layout creation, and the two tables address the same slots. The table is built
+    // unconditionally: the RHI renderer is the only renderer now. On failure the pointer stays null
+    // and the frame skeleton is unavailable, which the frame dispatch treats as fatal.
     {
         const uint32_t maxTextureCount =
             std::clamp(info->maxTextureCount, TEXTURE_COUNT_MIN, TEXTURE_COUNT_MAX);
@@ -371,9 +367,9 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     framebuffers->Subscribe(decalManager);
     framebuffers->Subscribe(amdFsr);
 
-    // The RHI frame skeleton draws the frame through the RHI layer instead of
-    // the renderer above. Off by default: enabled by 'rhiframe' in vkpt.txt.
-    if (libconfig.rhiFrameSkeleton)
+    // The RHI frame skeleton draws every frame now: the legacy renderer above is no longer
+    // dispatched. The NVRHI device cannot be null here - CreateNvrhiDevice throws instead of
+    // returning one - so the guard only keeps the block defensive.
     {
         if (nvrhi != nullptr)
         {
@@ -381,58 +377,25 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
             // the engine's static BLAS plus one TLAS per frame slot, built from the engine's
             // ASManager. Created after the scene exists (the manager is their geometry registry) and
             // next to the skeleton, which records their builds and reads the TLAS. A failure leaves
-            // the pointer null; the skeleton refuses to be available without it, so the legacy
-            // renderer keeps the frame.
+            // the pointer null; the skeleton refuses to be available without it, and the frame
+            // dispatch then reports the frame as fatal - there is no fallback renderer any more.
             rhiAccelStructs = std::make_shared<rhi::RhiAccelStructs>();
             if (!rhiAccelStructs->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
                                          scene->GetASManager().get(),
                                          [this](const char *pMessage) { Print(pMessage); }))
             {
                 rhiAccelStructs.reset();
-                Print("Warning: RHI: the acceleration structures are unavailable, the legacy renderer is kept");
+                Print("Warning: RHI: the acceleration structures are unavailable, the frame skeleton will be unavailable");
             }
 
-            // The debug ray-tracing pass (RHI/RhiDebugTracePass.h), created only when 'rhitrace' is
-            // on. Its set 1 is the engine's global uniform, wrapped here as a static constant buffer
-            // - the same shape the skeleton's world pass wraps it with, because a volatile wrap
-            // would become a dynamic-offset binding the pass's static layout item cannot take. The
-            // binding set the pass builds over the wrap keeps it alive; the pass retires its per-slot
-            // ALBEDO wraps through the frame context. A failure leaves the pointer null: with the
-            // flag on the skeleton then refuses to be available and the legacy renderer keeps the
-            // frame.
-            if (libconfig.rhiDebugTrace)
-            {
-                nvrhi::BufferDesc debugUniformDesc;
-                debugUniformDesc.byteSize = sizeof(ShGlobalUniform);
-                debugUniformDesc.isConstantBuffer = true;
-                debugUniformDesc.initialState = nvrhi::ResourceStates::ConstantBuffer;
-                debugUniformDesc.keepInitialState = true;
-                debugUniformDesc.debugName = "RHI debug trace uniform (GlobalUniform wrap)";
+            // The debug ray-tracing pass of A3.1 (RHI/RhiDebugTracePass.h) is not created: its
+            // 'rhitrace' switch is retired with the rest of the bring-up flags and nothing selects
+            // FrameMode::DebugTrace any more, so 'nullptr' is handed to the skeleton below.
 
-                nvrhi::BufferHandle debugTraceUniformBuffer = nvrhi->GetDevice()->createHandleForNativeBuffer(
-                    nvrhi::ObjectTypes::VK_Buffer,
-                    nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(uniform->GetBuffer()))),
-                    debugUniformDesc);
-
-                rhiDebugTracePass = std::make_shared<RhiDebugTracePass>();
-                if (!rhiDebugTracePass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
-                                               debugTraceUniformBuffer, info->pShaderFolderPath,
-                                               [this](const char *pMessage) { Print(pMessage); }))
-                {
-                    rhiDebugTracePass.reset();
-                    Print("Warning: RHI: the debug trace pass is unavailable, the legacy renderer is kept");
-                }
-            }
-
-            // The real ray-tracing pass of A4.1 (RHI/RhiRtPrimaryPass.h), created only when 'rhirt'
-            // is on: the engine's primary-visibility raygen with the engine's two misses and its two
-            // hit groups, dispatched over the same RHI acceleration structures. Its set 4 is the
-            // shared texture table, so the host hands the table over; set 11 is the engine's
-            // RayStats object, which the pass wraps per frame slot so the ray counters reach the
-            // host's readback; the engine's framebuffer images are resolved per frame by the pass
-            // itself, so no wrap is created here. A failure leaves the pointer null: with the flag
-            // on the skeleton then refuses to be available and the legacy renderer keeps the frame.
-            if (libconfig.rhiRayTracing)
+            // The real ray-tracing passes of A4/A5, formerly gated by 'rhirt': with the RHI as the
+            // only renderer they are created unconditionally. A failure of the mandatory passes
+            // (primary, direct, indirect) leaves the skeleton unavailable and the frame fatal; the
+            // optional ones keep their skip-and-warn degradations, named at each creation below.
             {
                 // The procedural sky pass of A5.4 (RHI/RhiProceduralSkyPass.h): the default sky's
                 // cube content, the `RenderCubemap::DrawProcedural` path the legacy frame records
@@ -526,20 +489,28 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                     Print("Warning: RHI: the raster overlay pass is unavailable, the frame is drawn without it");
                 }
 
+                // The primary-visibility ray-tracing pass of A4.1 (RHI/RhiRtPrimaryPass.h): the
+                // engine's primary raygen with the engine's two misses and its two hit groups,
+                // dispatched over the RHI acceleration structures. Its set 4 is the shared texture
+                // table, so the host hands the table over; set 11 is the engine's RayStats object,
+                // which the pass wraps per frame slot so the ray counters reach the host's readback;
+                // the engine's framebuffer images are resolved per frame by the pass itself, so no
+                // wrap is created here. Mandatory: a failure leaves the pointer null and the
+                // skeleton refuses to be available, which makes every frame fatal.
                 rhiRtPrimaryPass = std::make_shared<RhiRtPrimaryPass>();
                 if (!rhiRtPrimaryPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
                                               rhiTextureTable.get(), rayStats.get(), info->pShaderFolderPath,
                                               [this](const char *pMessage) { Print(pMessage); }))
                 {
                     rhiRtPrimaryPass.reset();
-                    Print("Warning: RHI: the primary ray-tracing pass is unavailable, the legacy renderer is kept");
+                    Print("Warning: RHI: the primary ray-tracing pass is unavailable, the frame skeleton will be unavailable");
                 }
 
                 // The direct-lighting pass of A4.2 (RHI/RhiRtDirectPass.h), created only with the
                 // primary: it borrows the primary's shared layout handles, so it must be destroyed
                 // before it, and the light-source buffers it wraps come from the scene's light
-                // manager. A failure leaves the pointer null: with the flag on the skeleton then
-                // refuses to be available and the legacy renderer keeps the frame.
+                // manager. Mandatory, like the primary: a failure leaves the pointer null and the
+                // skeleton refuses to be available, which makes every frame fatal.
                 if (rhiRtPrimaryPass != nullptr)
                 {
                     rhiRtDirectPass = std::make_shared<RhiRtDirectPass>();
@@ -549,7 +520,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                                                  [this](const char *pMessage) { Print(pMessage); }))
                     {
                         rhiRtDirectPass.reset();
-                        Print("Warning: RHI: the direct ray-tracing pass is unavailable, the legacy renderer is kept");
+                        Print("Warning: RHI: the direct ray-tracing pass is unavailable, the frame skeleton will be unavailable");
                     }
                 }
 
@@ -580,9 +551,9 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 // the traced chain, created only with the primary and the direct pass - it borrows
                 // their layout handles and the light set, so it is destroyed before both. Its set 5
                 // is the engine's blue-noise array, wrapped once here (the image is static) and
-                // announced by the pass on the list that first binds it. A failure leaves the
-                // pointer null: with the flag on the skeleton then refuses to be available and the
-                // legacy renderer keeps the frame.
+                // announced by the pass on the list that first binds it. Mandatory, like the primary
+                // and the direct pass: a failure leaves the pointer null and the skeleton refuses to
+                // be available, which makes every frame fatal.
                 if (rhiRtDirectPass != nullptr)
                 {
                     const nvrhi::TextureHandle blueNoiseTexture = rhi::wrapEngineTextureArray(
@@ -607,7 +578,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                                                        [this](const char *pMessage) { Print(pMessage); }))
                         {
                             rhiRtIndirectPass.reset();
-                            Print("Warning: RHI: the indirect ray-tracing pass is unavailable, the legacy renderer is kept");
+                            Print("Warning: RHI: the indirect ray-tracing pass is unavailable, the frame skeleton will be unavailable");
                         }
                         else
                         {
@@ -684,13 +655,13 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                     }
                 }
 
-                // The compose pass of A4.4 (RHI/RhiRtComposePass.h), created only under
-                // 'rhicompose': the real adapter -> interleave -> exposure histogram/average ->
-                // checkerboard -> prepare-final chain ending in the display-referred FINAL, which
-                // the skeleton then presents raw. It wraps the per-slot tonemapping buffers, so the
-                // engine object has to outlive it. A failure leaves the pointer null: the traced
-                // chain keeps the A4.2a diagnostic present instead of failing the frame.
-                if (libconfig.rhiCompose)
+                // The compose pass of A4.4 (RHI/RhiRtComposePass.h): the real adapter -> interleave
+                // -> exposure histogram/average -> checkerboard -> prepare-final chain ending in the
+                // display-referred FINAL, which the skeleton then presents raw. It was created only
+                // under 'rhicompose' and is unconditional now. It wraps the per-slot tonemapping
+                // buffers, so the engine object has to outlive it. A failure leaves the pointer
+                // null: the traced chain keeps the A4.2a diagnostic present instead of failing the
+                // frame.
                 {
                     rhiRtComposePass = std::make_shared<RhiRtComposePass>();
                     if (!rhiRtComposePass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
@@ -723,24 +694,12 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
             // TextureManager) and records through the shared frame context, so the host hands both
             // over here.
             //
-            // The mode the skeleton records for the whole run: 'rhirt' selects the real
-            // ray-tracing pass of A4.1, 'rhitrace' the A3.1 debug trace, and neither the rasterized
-            // chain. 'rhirt' wins when both are set (LibraryConfig.h documents it), and the
-            // skeleton itself refuses to be available when its mode's pass failed to be created.
-            if (libconfig.rhiRayTracing && libconfig.rhiDebugTrace)
-            {
-                Print("Warning: RHI: both 'rhirt' and 'rhitrace' are set, the primary ray-tracing pass is used");
-            }
-
-            NvrhiFrameSkeleton::FrameMode frameMode = NvrhiFrameSkeleton::FrameMode::Rasterized;
-            if (libconfig.rhiRayTracing)
-            {
-                frameMode = NvrhiFrameSkeleton::FrameMode::Traced;
-            }
-            else if (libconfig.rhiDebugTrace)
-            {
-                frameMode = NvrhiFrameSkeleton::FrameMode::DebugTrace;
-            }
+            // The mode the skeleton records for the whole run is hard-wired to the traced frame: it
+            // is the only mode left. FrameMode::Rasterized and FrameMode::DebugTrace stay compiled
+            // for Stage 2 of the legacy-renderer removal, but nothing selects them any more - the
+            // rasterized chain and the A3.1 debug trace were the bring-up paths, and the skeleton
+            // itself refuses to be available when a pass of its mode failed to be created.
+            const NvrhiFrameSkeleton::FrameMode frameMode = NvrhiFrameSkeleton::FrameMode::Traced;
 
             nvrhiFrameSkeleton = std::make_shared<NvrhiFrameSkeleton>(
                 nvrhi->GetDevice(),
@@ -749,7 +708,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 rhiTextureTable.get(),
                 rhiFrameContext.get(),
                 rhiAccelStructs.get(),
-                rhiDebugTracePass.get(),
+                nullptr,  // the retired A3.1 debug trace pass (FrameMode::DebugTrace is never selected)
                 rhiRtPrimaryPass.get(),
                 rhiRtDirectPass.get(),
                 rhiRtIndirectPass.get(),
@@ -834,10 +793,6 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
                 }
             }
         }
-        else
-        {
-            Print("Warning: RHI: 'rhiframe' is ignored, there is no RHI device");
-        }
     }
 }
 
@@ -849,7 +804,7 @@ VulkanDevice::~VulkanDevice()
     // be released before both of them
     nvrhiFrameSkeleton.reset();
 
-    // The skeleton references all of them, so they follow it immediately; all fourteen wrap engine
+    // The skeleton references all of them, so they follow it immediately; all of them wrap engine
     // buffers/images and quote the RHI device, so they precede the table/context and the device
     // below. The direct pass, the indirect pass and the reflect/refract pass borrow the primary's
     // layout handles, so they go before the primary; the UI pass, the raster overlay, the decal
@@ -857,7 +812,6 @@ VulkanDevice::~VulkanDevice()
     // overlay back), and the god-rays pass borrows the shadow map's texture and sampler, so it goes
     // before the shadow-map pass. The raster sky borrows the procedural sky's cube, so it goes
     // before the procedural sky, which owns the cubes the three RT passes' sets reference.
-    rhiDebugTracePass.reset();
     rhiRtComposePass.reset();
     rhiRtGodRaysPass.reset();
     rhiShadowMapPass.reset();
