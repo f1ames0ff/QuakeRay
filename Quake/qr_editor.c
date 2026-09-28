@@ -4110,12 +4110,6 @@ static void QRE_ClosePanel (void)
 		return;
 
 	qre.panel_open = false;
-	qre.pick_model = NULL;
-	qre.pick_surf = NULL;
-	qre.pick_ent = NULL;
-	qre.pick_glt = NULL;
-
-	QRE_FreePreview ();
 
 	IN_Activate ();
 	SDL_ShowCursor (SDL_ENABLE);
