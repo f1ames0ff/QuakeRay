@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.18.0
+
+### Added
+- **DTAL limits** — `rt_dtal_minarea` (default `0`, world units squared) drops a light polygon under that area, and a face whose pieces all fall under it gets no light; `rt_dtal_maxpolys` (default `64`) caps one surface's lights, the largest pieces kept (`0` = no cuts); `rt_model_lights_minarea` (default `0`) is the same floor for alias models. All apply on change, and `rt_dtal_rebuild` rebuilds by hand.
+- **`rt_dtal_debug`** — replaces `rt_debugemissive`: `1` the wireframe, `2` every light as an arrow along its normal (red X, green Y, blue Z, length by area).
+- **`rt_dtal_clearance`** — default `1`: a light polygon facing solid geometry within that many units is not created (`0` off). The verdict is cached, so unmoving geometry is not traced twice.
+
+### Changed
+- `rt_emis_minarea` and `rt_emis_maxpolys` are renamed `rt_dtal_minarea` and `rt_dtal_maxpolys`; a config that sets the old names needs the new ones.
+
 ## v0.17.0
 
 ### Added

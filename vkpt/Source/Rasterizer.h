@@ -159,6 +159,12 @@ namespace vkpt
                                const VkViewport&                        defaultViewport,
                                VkViewport&                              curViewport );
 
+        // If info's scissor is not the same as current one, new VkRect2D will be set.
+        void SetScissorIfNew( VkCommandBuffer                          cmd,
+                              const RasterizedDataCollector::DrawInfo& info,
+                              const VkRect2D&                          defaultScissor,
+                              VkRect2D&                                curScissor );
+
         void BindPipelineIfNew( VkCommandBuffer                               cmd,
                                 const RasterizedDataCollector::DrawInfo&      info,
                                 const DrawParams&                              drawParams,
