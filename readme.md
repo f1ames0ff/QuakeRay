@@ -19,6 +19,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * Per-cluster light lists (legacy)
 * Animated light styles
 * Post-processing: chromatic, LUT
+* Adaptive vsync/VRR/FreeSync support (off, vsync, adaptive, FreeSync modes)
 
 ## Roadmap
 

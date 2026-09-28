@@ -20,6 +20,8 @@
 #include <list>
 #include <vector>
 
+#include <qray/qray.h>
+
 #include "Common.h"
 #include "PhysicalDevice.h"
 #include "CommandBufferManager.h"
@@ -43,7 +45,7 @@ public:
     Swapchain &operator=(const Swapchain &other) = delete;
     Swapchain &operator=(Swapchain &&other) noexcept = delete;
 
-    bool RequestVsync(bool enable);
+    bool RequestPresentMode(QrPresentMode mode);
 
     void AcquireImage(VkSemaphore imageAvailableSemaphore);
     void Present(const std::shared_ptr<Queues> &queues, VkSemaphore renderFinishedSemaphore);
@@ -62,15 +64,17 @@ public:
 
     bool IsExtentOptimal() const;
     bool HasValidExtent() const;
+    const char *GetPresentModeName() const;
 
 private:
     VkExtent2D GetOptimalExtent() const;
     VkResult GetSurfaceCapabilities(VkSurfaceCapabilitiesKHR *outCaps) const;
     void ResetSurfaceCapabilitiesCache() const;
+    VkPresentModeKHR GetVkPresentMode(QrPresentMode mode) const;
 
-    bool TryRecreate(const VkExtent2D &newExtent, bool vsync);
+    bool TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode);
 
-    void Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE);
+    void Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE);
     void Destroy();
     VkSwapchainKHR DestroyWithoutSwapchain();
 
@@ -85,11 +89,12 @@ private:
 
     VkSurfaceFormatKHR surfaceFormat;
     VkPresentModeKHR presentModeVsync;
-    VkPresentModeKHR presentModeImmediate;
+    VkPresentModeKHR presentModeAdaptive;
+    VkPresentModeKHR presentModeMailbox;
 
-    bool requestedVsync;
+    QrPresentMode requestedPresentMode;
     VkExtent2D surfaceExtent;
-    bool isVsync;
+    QrPresentMode isPresentMode;
 
     VkSwapchainKHR swapchain;
     std::vector<VkImage> swapchainImages;
