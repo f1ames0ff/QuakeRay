@@ -1,62 +1,55 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "CubemapUploader.h"
 
 vkpt::CubemapUploader::CubemapUploader(VkDevice device, std::shared_ptr<MemoryAllocator> memAllocator)
-    :TextureUploader(device, std::move(memAllocator))
-{}
+    : TextureUploader(device, std::move(memAllocator))
+{
+}
 
 vkpt::TextureUploader::UploadResult vkpt::CubemapUploader::UploadImage(const UploadInfo &info)
 {
     assert(info.isCubemap);
-    // cubemaps can't be updateable
     assert(!info.isUpdateable);
+
+    constexpr uint32_t FaceCount = 6;
 
     const RgExtent2D &size = info.baseSize;
 
-    UploadResult result = {};
+    UploadResult result{};
     result.wasUploaded = false;
 
-    VkImage image;
+    VkBuffer stagingBuffers[FaceCount] = {};
+    void *mappedData[FaceCount] = {};
 
-    VkBuffer stagingBuffers[6] = {};
-    void *mappedData[6] = {};
+    const VkDeviceSize faceSize = static_cast<VkDeviceSize>(info.dataSize);
 
-    // 1. Allocate and fill buffer
-    const uint32_t faceNumber = 6;
-    VkDeviceSize faceSize = (VkDeviceSize)info.dataSize;
-
-    VkBufferCreateInfo stagingInfo = {};
+    VkBufferCreateInfo stagingInfo{};
     stagingInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     stagingInfo.size = faceSize;
     stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
-    for (uint32_t i = 0; i < 6; i++)
+    for (uint32_t i = 0; i < FaceCount; i++)
     {
         stagingBuffers[i] = memAllocator->CreateStagingSrcTextureBuffer(&stagingInfo, info.pDebugName, &mappedData[i]);
 
-        // if couldn't allocate memory
         if (stagingBuffers[i] == VK_NULL_HANDLE)
         {
-            // clear allocated
             for (uint32_t j = 0; j < i; j++)
             {
                 memAllocator->DestroyStagingSrcTextureBuffer(stagingBuffers[j]);
@@ -68,42 +61,37 @@ vkpt::TextureUploader::UploadResult vkpt::CubemapUploader::UploadImage(const Upl
         SET_DEBUG_NAME(device, stagingBuffers[i], VK_OBJECT_TYPE_BUFFER, info.pDebugName);
     }
 
+    VkImage image = VK_NULL_HANDLE;
+    const bool wasCreated = CreateImage(info, &image);
 
-    bool wasCreated = CreateImage(info, &image);
     if (!wasCreated)
     {
-        // clean created resources
-        for (uint32_t j = 0; j < 6; j++)
+        for (uint32_t i = 0; i < FaceCount; i++)
         {
-            memAllocator->DestroyStagingSrcTextureBuffer(stagingBuffers[j]);
+            memAllocator->DestroyStagingSrcTextureBuffer(stagingBuffers[i]);
         }
 
         return result;
     }
 
-    // copy image data to buffer
-    for (uint32_t i = 0; i < 6; i++)
+    for (uint32_t i = 0; i < FaceCount; i++)
     {
         memcpy(mappedData[i], info.cubemap.pFaces[i], faceSize);
     }
 
-
-    // and copy it to image
     PrepareImage(image, stagingBuffers, info, ImagePrepareType::INIT);
 
-    // create image view
-    VkImageView imageView = CreateImageView(image, info.format, info.isCubemap, GetMipmapCount(size, info), RG_TEXTURE_SWIZZLING_ROUGHNESS_METALLIC_EMISSIVE);
+    const VkImageView imageView = CreateImageView(
+        image, info.format, info.isCubemap, GetMipmapCount(size, info),
+        RG_TEXTURE_SWIZZLING_ROUGHNESS_METALLIC_EMISSIVE);
 
     SET_DEBUG_NAME(device, imageView, VK_OBJECT_TYPE_IMAGE_VIEW, info.pDebugName);
 
-
-    // push staging buffer to be deleted when it won't be in use
-    for (uint32_t i = 0; i < 6; i++)
+    for (uint32_t i = 0; i < FaceCount; i++)
     {
         stagingToFree[info.frameIndex].push_back(stagingBuffers[i]);
     }
 
-    // return results
     result.wasUploaded = true;
     result.image = image;
     result.view = imageView;

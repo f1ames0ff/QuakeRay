@@ -1,26 +1,23 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "TextureOverrides.h"
 
-#include <array>
+#include <cstring>
 #include <filesystem>
 #include <span>
 
@@ -31,9 +28,9 @@ using namespace vkpt;
 
 namespace
 {
-    VkFormat ToUnorm(VkFormat f)
+    VkFormat ToUnorm(VkFormat format)
     {
-        switch (f)
+        switch (format)
         {
             case VK_FORMAT_R8_SRGB: return VK_FORMAT_R8_UNORM;
             case VK_FORMAT_R8G8_SRGB: return VK_FORMAT_R8G8_UNORM;
@@ -47,13 +44,13 @@ namespace
             case VK_FORMAT_BC2_SRGB_BLOCK: return VK_FORMAT_BC2_UNORM_BLOCK;
             case VK_FORMAT_BC3_SRGB_BLOCK: return VK_FORMAT_BC3_UNORM_BLOCK;
             case VK_FORMAT_BC7_SRGB_BLOCK: return VK_FORMAT_BC7_UNORM_BLOCK;
-            default: return f;
+            default: return format;
         }
     }
 
-    VkFormat ToSRGB(VkFormat f)
+    VkFormat ToSRGB(VkFormat format)
     {
-        switch (f)
+        switch (format)
         {
             case VK_FORMAT_R8_UNORM: return VK_FORMAT_R8_SRGB;
             case VK_FORMAT_R8G8_UNORM: return VK_FORMAT_R8G8_SRGB;
@@ -67,7 +64,7 @@ namespace
             case VK_FORMAT_BC2_UNORM_BLOCK: return VK_FORMAT_BC2_SRGB_BLOCK;
             case VK_FORMAT_BC3_UNORM_BLOCK: return VK_FORMAT_BC3_SRGB_BLOCK;
             case VK_FORMAT_BC7_UNORM_BLOCK: return VK_FORMAT_BC7_SRGB_BLOCK;
-            default: return f;
+            default: return format;
         }
     }
 
@@ -76,17 +73,19 @@ namespace
     {
         memset(dst, 0, N);
 
-        if (src != nullptr)
+        if (src == nullptr)
         {
-            for (uint32_t i = 0; i < N - 1; i++)
-            {
-                if (src[i] == '\0')
-                {
-                    break;
-                }
+            return;
+        }
 
-                dst[i] = src[i];
+        for (uint32_t i = 0; i < N - 1; i++)
+        {
+            if (src[i] == '\0')
+            {
+                break;
             }
+
+            dst[i] = src[i];
         }
     }
 
@@ -98,10 +97,8 @@ namespace
             {
                 return std::get<ImageLoaderDev *>(loader)->Load(filepath);
             }
-            else
-            {
-                return std::get<ImageLoader *>(loader)->Load(filepath);
-            }
+
+            return std::get<ImageLoader *>(loader)->Load(filepath);
         }
 
         void FreeLoaded(TextureOverrides::Loader loader)
@@ -109,29 +106,27 @@ namespace
             if (std::holds_alternative<ImageLoaderDev *>(loader))
             {
                 std::get<ImageLoaderDev *>(loader)->FreeLoaded();
+                return;
             }
-            else
-            {
-                std::get<ImageLoader *>(loader)->FreeLoaded();
-            }
+
+            std::get<ImageLoader *>(loader)->FreeLoaded();
         }
 
         std::span<const char *> GetExtensions(TextureOverrides::Loader loader)
         {
             if (std::holds_alternative<ImageLoaderDev *>(loader))
             {
-                static const char *arr[] = {".png", ".tga"};
-                return arr;
+                static const char *devExtensions[] = { ".png", ".tga" };
+                return devExtensions;
             }
-            else
-            {
-                static const char *arr[] = { ".ktx2" };
-                return arr;
-            }
+
+            static const char *extensions[] = { ".ktx2" };
+            return extensions;
         }
     }
 
-    std::optional<std::filesystem::path> GetTexturePath(const char *commonFolderPath, const char *relativePath, const char *postfix, const char *extension)
+    std::optional<std::filesystem::path> GetTexturePath(
+        const char *commonFolderPath, const char *relativePath, const char *postfix, const char *extension)
     {
         if (relativePath == nullptr || relativePath[0] == '\0')
         {
@@ -140,7 +135,8 @@ namespace
 
         return std::filesystem::path(commonFolderPath)
             .append(relativePath)
-            .replace_extension("").concat(postfix)
+            .replace_extension("")
+            .concat(postfix)
             .replace_extension(extension);
     }
 }
@@ -150,11 +146,11 @@ TextureOverrides::TextureOverrides(
     const RgTextureSet &_defaultTextures,
     const RgExtent2D &_defaultSize,
     const OverrideInfo &_info,
-    Loader _loader
-)
+    Loader _loader)
     : loader(_loader)
     , results{}
     , debugname{}
+    , paths{}
 {
     SafeCopy(debugname, _relativePath);
 
@@ -169,46 +165,53 @@ TextureOverrides::TextureOverrides(
     constexpr VkFormat defaultLinearFormat = VK_FORMAT_R8G8B8A8_UNORM;
     constexpr uint32_t defaultBytesPerPixel = 4;
 
-
     for (uint32_t i = 0; i < TEXTURES_PER_MATERIAL_COUNT; i++)
     {
-        for (const char *ext : loader::GetExtensions(loader))
+        for (const char *extension : loader::GetExtensions(loader))
         {
-            if (auto p = GetTexturePath(_info.commonFolderPath, _relativePath, _info.postfixes[i], ext))
+            auto filepath = GetTexturePath(_info.commonFolderPath, _relativePath, _info.postfixes[i], extension);
+
+            if (!filepath)
             {
-                if (auto r = loader::Load(loader, p.value()))
-                {
-                    r->format = _info.overridenIsSRGB[i] ? ToSRGB(r->format) : ToUnorm(r->format);
-
-                    paths[i] = std::move(p);
-                    results[i] = r;
-
-                    break;
-                }
+                continue;
             }
+
+            auto image = loader::Load(loader, filepath.value());
+
+            if (!image)
+            {
+                continue;
+            }
+
+            image->format = _info.overridenIsSRGB[i] ? ToSRGB(image->format) : ToUnorm(image->format);
+
+            paths[i] = std::move(filepath);
+            results[i] = image;
+
+            break;
         }
     }
-
 
     const uint32_t defaultDataSize = defaultBytesPerPixel * _defaultSize.width * _defaultSize.height;
 
     for (uint32_t i = 0; i < TEXTURES_PER_MATERIAL_COUNT; i++)
     {
-        // if file wasn't found, use default data instead
-        if ( !results[i] && defaultData[i] )
+        if (results[i] || defaultData[i] == nullptr)
         {
-            results[i] = ImageLoader::ResultInfo
-            {
-                .levelOffsets = {0},
-                .levelSizes = {defaultDataSize},
-                .levelCount = 1,
-                .isPregenerated = false,
-                .pData = static_cast<const uint8_t *>(defaultData[i]) ,
-                .dataSize = defaultDataSize,
-                .baseSize = _defaultSize,
-                .format = _info.originalIsSRGB[i] ? defaultSRGBFormat : defaultLinearFormat,
-            };
+            continue;
         }
+
+        ImageLoader::ResultInfo defaultResult{};
+        defaultResult.levelOffsets[0] = 0;
+        defaultResult.levelSizes[0] = defaultDataSize;
+        defaultResult.levelCount = 1;
+        defaultResult.isPregenerated = false;
+        defaultResult.pData = static_cast<const uint8_t *>(defaultData[i]);
+        defaultResult.dataSize = defaultDataSize;
+        defaultResult.baseSize = _defaultSize;
+        defaultResult.format = _info.originalIsSRGB[i] ? defaultSRGBFormat : defaultLinearFormat;
+
+        results[i] = defaultResult;
     }
 }
 
@@ -217,13 +220,13 @@ TextureOverrides::~TextureOverrides()
     loader::FreeLoaded(loader);
 }
 
-const std::optional<ImageLoader::ResultInfo> &vkpt::TextureOverrides::GetResult(uint32_t index) const
+const std::optional<ImageLoader::ResultInfo> &TextureOverrides::GetResult(uint32_t index) const
 {
     assert(index < TEXTURES_PER_MATERIAL_COUNT);
     return results[index];
 }
 
-const char *vkpt::TextureOverrides::GetDebugName() const
+const char *TextureOverrides::GetDebugName() const
 {
     return debugname;
 }

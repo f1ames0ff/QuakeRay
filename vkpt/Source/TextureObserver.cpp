@@ -1,22 +1,19 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "TextureObserver.h"
 
@@ -27,13 +24,13 @@ bool vkpt::TextureObserver::HaveChanged(std::vector<DependentFile> &files)
 {
     bool changed = false;
 
-    for (DependentFile &f : files)
+    for (DependentFile &file : files)
     {
-        auto tm = std::filesystem::last_write_time(f.path);
+        const auto lastWriteTime = std::filesystem::last_write_time(file.path);
 
-        if (tm > f.lastWriteTime)
+        if (lastWriteTime > file.lastWriteTime)
         {
-            f.lastWriteTime = tm;
+            file.lastWriteTime = lastWriteTime;
             changed = true;
         }
     }
@@ -53,12 +50,12 @@ void vkpt::TextureObserver::CheckPathsAndReupload(VkCommandBuffer cmd, uint32_t 
 
         constexpr auto frequency = 0.05s;
 
-        auto now = std::chrono::system_clock::now();
+        const auto now = std::chrono::system_clock::now();
         if (now - lastCheck < frequency)
         {
             return;
         }
-        
+
         lastCheck = now;
     }
 
@@ -69,33 +66,37 @@ void vkpt::TextureObserver::CheckPathsAndReupload(VkCommandBuffer cmd, uint32_t 
             continue;
         }
 
-        for (const DependentFile &f : files)
+        for (const DependentFile &file : files)
         {
-            if (auto newImage = loader->Load(f.path))
+            auto newImage = loader->Load(file.path);
+
+            if (!newImage)
             {
-                if (newImage->dataSize != f.dataSize)
-                {
-                    assert(0 && 
-                        "Trying to hot-reload the image, but the data size is mismatching with what originally was specified."
-                        "A new texture file must have the same image size.");
-                    continue;
-                }
-
-                RgMaterialUpdateInfo info =
-                {
-                    .target = materialIndex,
-                    .textures = 
-                    {
-                        .pDataAlbedoAlpha               = f.textureType == MATERIAL_ALBEDO_ALPHA_INDEX                  ? newImage->pData : nullptr,
-                        .pDataRoughnessMetallicEmission = f.textureType == MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX   ? newImage->pData : nullptr,
-                        .pDataNormal                    = f.textureType == MATERIAL_NORMAL_INDEX                        ? newImage->pData : nullptr,
-                    },
-                };
-
-                manager.UpdateMaterial(cmd, frameIndex, info);
-
-                loader->FreeLoaded();
+                continue;
             }
+
+            if (newImage->dataSize != file.dataSize)
+            {
+                assert(0 &&
+                    "Trying to hot-reload the image, but the data size is mismatching with what originally was specified."
+                    "A new texture file must have the same image size.");
+                continue;
+            }
+
+            RgMaterialUpdateInfo info =
+            {
+                .target = materialIndex,
+                .textures =
+                {
+                    .pDataAlbedoAlpha               = file.textureType == MATERIAL_ALBEDO_ALPHA_INDEX                 ? newImage->pData : nullptr,
+                    .pDataRoughnessMetallicEmission = file.textureType == MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX  ? newImage->pData : nullptr,
+                    .pDataNormal                    = file.textureType == MATERIAL_NORMAL_INDEX                       ? newImage->pData : nullptr,
+                },
+            };
+
+            manager.UpdateMaterial(cmd, frameIndex, info);
+
+            loader->FreeLoaded();
         }
     }
 }
@@ -127,13 +128,13 @@ void vkpt::TextureObserver::RegisterPath(RgMaterial index, std::optional<std::fi
         return;
     }
 
-    auto tm = std::filesystem::last_write_time(path.value());
+    const auto lastWriteTime = std::filesystem::last_write_time(path.value());
 
     materials[index].emplace_back(
         DependentFile
         {
             .path = std::move(path.value()),
-            .lastWriteTime = tm,
+            .lastWriteTime = lastWriteTime,
             .dataSize = imageInfo->dataSize,
             .format = imageInfo->format,
             .textureType = textureType,
