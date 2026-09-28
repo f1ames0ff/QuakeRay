@@ -978,6 +978,7 @@ typedef struct rt_uploadsurf_state_t
 	gltexture_t *light_tex;
 	gltexture_t *lightmap_tex;
 	qboolean     alpha_test;
+	qboolean     alpha_transmission;
 	float        alpha;
 	qboolean     use_zbias;
 	qboolean     is_warp;
@@ -1278,6 +1279,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    (is_teleport_portal ? RG_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_ADD_BIT : 0) |
 			    // water and slime already churn through the RT wave normals
 			    (s->is_warp && !s->is_water && !s->is_acid ? RG_GEOMETRY_UPLOAD_TURB_WARP_BIT : 0) |
+			    (s->alpha_transmission ? RG_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
                 RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
 			.geomType = is_static_geom ? RG_GEOMETRY_TYPE_STATIC : RG_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType = 
@@ -3287,6 +3289,7 @@ static qboolean RT_UploadStatesMatch (const rt_uploadsurf_state_t *cur, const rt
 	       cur->diffuse_tex == last->diffuse_tex &&
 	       cur->light_tex == last->light_tex &&
 	       cur->alpha_test == last->alpha_test &&
+	       cur->alpha_transmission == last->alpha_transmission &&
 	       cur->alpha == last->alpha &&
 	       cur->use_zbias == last->use_zbias &&
 	       cur->is_warp == last->is_warp &&
@@ -3417,7 +3420,8 @@ void R_DrawTextureChains_Animated (cb_context_t *cbx, qmodel_t *model)
 		if (diffuse_tex->rthasmaterial)
 			light_tex = diffuse_tex;
 
-		const qboolean alpha_test = (t->texturechains[chain_world]->flags & SURF_DRAWFENCE) != 0;
+		const qboolean alpha_test = (t->texturechains[chain_world]->flags & SURF_DRAWFENCE) != 0 ||
+		                            (diffuse_tex && diffuse_tex->rtalphatest);
 
 		for (s = t->texturechains[chain_world]; s; s = s->texturechains[chain_world])
 		{
@@ -3433,6 +3437,7 @@ void R_DrawTextureChains_Animated (cb_context_t *cbx, qmodel_t *model)
 				.light_tex = light_tex,
 				.lightmap_tex = (s->lightmaptexturenum >= 0) ? lightmaps[s->lightmaptexturenum].texture : greytexture,
 				.alpha_test = alpha_test,
+				.alpha_transmission = diffuse_tex && diffuse_tex->rtalphatest,
 				.alpha = 1.0f,
 				.use_zbias = false,
 				.is_warp = false,
@@ -3485,8 +3490,9 @@ void R_DrawTextureChains_Multitexture (
 
 		RT_ClearBatch (cbx);
 
-		qboolean alpha_test = (t->texturechains[chain]->flags & SURF_DRAWFENCE) != 0;
 		gltexture_t *diffuse_tex = R_TextureAnimation (t, ent_frame)->gltexture;
+		const qboolean alpha_test = (t->texturechains[chain]->flags & SURF_DRAWFENCE) != 0 ||
+		                            (diffuse_tex && diffuse_tex->rtalphatest);
 
 		gltexture_t *light_tex = RT_CanonicalLightTex (t, ent_frame);
 
@@ -3504,6 +3510,7 @@ void R_DrawTextureChains_Multitexture (
 				.light_tex = light_tex,
 				.lightmap_tex = (s->lightmaptexturenum >= 0) ? lightmaps[s->lightmaptexturenum].texture : greytexture,
 				.alpha_test = alpha_test,
+				.alpha_transmission = diffuse_tex && diffuse_tex->rtalphatest,
 				.alpha = alpha,
 				.use_zbias = use_zbias,
 				.is_warp = false,
