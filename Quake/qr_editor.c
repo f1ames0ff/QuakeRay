@@ -69,6 +69,7 @@ extern atomic_uint32_t rt_require_static_submit; // gl_rmain.c
 // of materials); the old system has neither, so it refuses to start on it.
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
+extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea;
 
 // The level's own fog (gl_fog.c): read through the getters and written through
 // the `fog` command, the same path a map's key and the console use. Whether the
@@ -261,6 +262,8 @@ static struct
 	// the light editor's tabs: 0 = the selected emitter, 1 = the sky, clouds
 	// and sun (the global settings)
 	int light_tab;
+
+	int mat_tab;
 
 	// the Custom tab's placement mode: "Add light" waits for the fire button and
 	// drops the new light where the crosshair hits
@@ -2445,6 +2448,37 @@ static void QRE_PanelActionRow (void (*on_exit)(void))
 	QR_GUI_BeginScroll ();
 }
 
+static void QRE_MatSystemTab (void)
+{
+	static const char *const dbg_modes[] = { "off", "wireframe", "normals" };
+	float                     value;
+	int                       dbg = CVAR_TO_INT32 (rt_dtal_debug);
+	int                       maxpolys;
+
+	if (dbg < 0 || dbg > 2)
+		dbg = 0;
+	if (QR_GUI_Combo ("debug DTAL", &dbg, dbg_modes, (int)countof (dbg_modes),
+	                  "Draw the triangle area lights every model and sprite pose generates: the polygons (wireframe) or their centers and normals (rt_dtal_debug)."))
+		Cvar_Set ("rt_dtal_debug", va ("%d", dbg));
+
+	QR_GUI_Spacing ();
+
+	value = CVAR_TO_FLOAT (rt_dtal_clearance);
+	if (QR_GUI_SliderFloat ("rt_dtal_clearance", &value, 0.0f, 16.0f,
+	                        "A DTAL polygon facing solid geometry within this many units is not created (0 off)."))
+		Cvar_Set ("rt_dtal_clearance", va ("%.4g", value));
+
+	maxpolys = CVAR_TO_INT32 (rt_dtal_maxpolys);
+	if (QR_GUI_SliderInt ("rt_dtal_maxpolys", &maxpolys, 0, 64,
+	                      "Caps one surface's DTAL pieces, the largest kept (0 = no cuts)."))
+		Cvar_Set ("rt_dtal_maxpolys", va ("%d", maxpolys));
+
+	value = CVAR_TO_FLOAT (rt_dtal_minarea);
+	if (QR_GUI_SliderFloat ("rt_dtal_minarea", &value, 0.0f, 1024.0f,
+	                        "Drops a DTAL polygon under this area, in world units squared (0 off)."))
+		Cvar_Set ("rt_dtal_minarea", va ("%.4g", value));
+}
+
 static void QRE_BuildPanelGUI (void)
 {
 	int      panel_w = glwidth / 4; // a quarter of the screen wide, as asked
@@ -2459,13 +2493,6 @@ static void QRE_BuildPanelGUI (void)
 
 	QR_GUI_Label ("MATERIAL EDITOR");
 
-	{
-		int dbg = CVAR_TO_BOOL (rt_dtal_debug) ? 1 : 0;
-
-		if (QR_GUI_Checkbox ("debug DTAL", &dbg,
-		                     "Draw the triangle area lights every model and sprite pose generates (rt_dtal_debug)."))
-			Cvar_Set ("rt_dtal_debug", dbg ? "1" : "0");
-	}
 	if (qre.pick_glt)
 	{
 		char buf[MAX_QPATH + 16];
@@ -2477,6 +2504,21 @@ static void QRE_BuildPanelGUI (void)
 	QR_GUI_Spacing ();
 
 	QRE_PanelActionRow (QRE_RequestExit);
+
+	{
+		static const char *const tabs[] = { "Materials", "System" };
+
+		QR_GUI_Tabs ("material_tabs", tabs, (int)countof (tabs), &qre.mat_tab);
+		QR_GUI_Spacing ();
+	}
+
+	if (qre.mat_tab == 1)
+	{
+		QRE_MatSystemTab ();
+		QR_GUI_EndScroll ();
+		QR_GUI_EndPanel ();
+		return;
+	}
 
 	for (g = 0; g < qre.group_count; g++)
 	{
