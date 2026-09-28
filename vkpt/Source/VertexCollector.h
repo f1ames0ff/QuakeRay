@@ -28,7 +28,6 @@
 #include "GeomInfoManager.h"
 #include "IMaterialDependency.h"
 #include "Material.h"
-#include "VertexBufferProperties.h"
 #include "VertexCollectorFilter.h"
 #include "vkpt/vkpt.h"
 

@@ -25,7 +25,6 @@
 #include "GlobalUniform.h"
 #include "ScratchBuffer.h"
 #include "TextureManager.h"
-#include "VertexBufferProperties.h"
 #include "VertexCollector.h"
 #include "ASComponent.h"
 
