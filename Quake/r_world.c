@@ -1499,12 +1499,16 @@ static rt_dtal_buried_entry_t rt_dtal_buried_cache[RT_DTAL_BURIED_CACHE];
 
 static atomic_uint32_t rt_buried_traces;
 static atomic_uint32_t rt_buried_hits;
+static atomic_uint32_t rt_buried_model_traces;
+static atomic_uint32_t rt_buried_model_hits;
 
 static void RT_BuriedCacheReset (void)
 {
 	memset (rt_dtal_buried_cache, 0, sizeof (rt_dtal_buried_cache));
 	Atomic_StoreUInt32 (&rt_buried_traces, 0);
 	Atomic_StoreUInt32 (&rt_buried_hits, 0);
+	Atomic_StoreUInt32 (&rt_buried_model_traces, 0);
+	Atomic_StoreUInt32 (&rt_buried_model_hits, 0);
 }
 
 static unsigned int RT_BuriedHash (const float *center, const float *normal, float clearance)
@@ -1532,14 +1536,14 @@ static unsigned int RT_BuriedHash (const float *center, const float *normal, flo
 	return h % RT_DTAL_BURIED_CACHE;
 }
 
-static qboolean RT_LightBuried (vec3_t center, const float *normal, float clearance)
+static qboolean RT_LightBuried (vec3_t center, const float *normal, float clearance, qboolean *traced)
 {
 	vec3_t                  n = {normal[0], normal[1], normal[2]};
 	rt_dtal_buried_entry_t *entry = &rt_dtal_buried_cache[RT_BuriedHash (center, n, clearance)];
 
 	if (entry->clearance == clearance && VectorCompare (entry->center, center) && VectorCompare (entry->normal, n))
 	{
-		Atomic_AddUInt32 (&rt_buried_hits, 1);
+		*traced = false;
 		return entry->buried;
 	}
 
@@ -1555,7 +1559,7 @@ static qboolean RT_LightBuried (vec3_t center, const float *normal, float cleara
 
 	SV_RecursiveHullCheck (cl.worldmodel->hulls, start, end, &trace, CONTENTMASK_ANYSOLID);
 
-	Atomic_AddUInt32 (&rt_buried_traces, 1);
+	*traced = true;
 
 	const qboolean buried = trace.startsolid || trace.allsolid || trace.fraction < 1.0f;
 
@@ -1587,10 +1591,31 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 
 		const float clearance = CVAR_TO_FLOAT (rt_dtal_clearance);
 
-		if (clearance > 0.0f && RT_LightBuried (center, li.normal.data, clearance))
+		if (clearance > 0.0f)
 		{
-			Atomic_AddUInt32 (&rt_emis_stats.buried, 1);
-			return;
+			qboolean       traced = false;
+			const qboolean buried = RT_LightBuried (center, li.normal.data, clearance, &traced);
+
+			if (traced)
+			{
+				if (surf == NULL)
+					Atomic_AddUInt32 (&rt_buried_model_traces, 1);
+				else
+					Atomic_AddUInt32 (&rt_buried_traces, 1);
+			}
+			else
+			{
+				if (surf == NULL)
+					Atomic_AddUInt32 (&rt_buried_model_hits, 1);
+				else
+					Atomic_AddUInt32 (&rt_buried_hits, 1);
+			}
+
+			if (buried)
+			{
+				Atomic_AddUInt32 (&rt_emis_stats.buried, 1);
+				return;
+			}
 		}
 
 		RgResult r = rgUploadTexturedAreaLight (vulkan_globals.instance, &li);
@@ -1616,14 +1641,20 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 
 		if (clearance > 0.0f)
 		{
-			vec3_t center;
+			vec3_t         center;
+			qboolean       traced = false;
 			RT_TexturedAreaLightCenter (light_info, center);
 
-			if (RT_LightBuried (center, light_info->normal.data, clearance))
+			if (RT_LightBuried (center, light_info->normal.data, clearance, &traced))
 			{
 				Atomic_AddUInt32 (&rt_emis_stats.buried, 1);
 				return;
 			}
+
+			if (traced)
+				Atomic_AddUInt32 (&rt_buried_traces, 1);
+			else
+				Atomic_AddUInt32 (&rt_buried_hits, 1);
 		}
 
 		const int index = rt_wldlights_emissive_count++;
@@ -5237,9 +5268,11 @@ void RT_PrintEmissiveStats (void)
 		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_model_lights_minarea, %i polygons buried under rt_dtal_clearance\n",
 			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.buried));
 
-	if (Atomic_LoadUInt32 (&rt_buried_traces) || Atomic_LoadUInt32 (&rt_buried_hits))
-		RT_LightReportPrint ("rt_dtal_clearance: %i polygons traced, %i served from the cache\n",
-			(int) Atomic_LoadUInt32 (&rt_buried_traces), (int) Atomic_LoadUInt32 (&rt_buried_hits));
+	if (Atomic_LoadUInt32 (&rt_buried_traces) || Atomic_LoadUInt32 (&rt_buried_hits) ||
+	    Atomic_LoadUInt32 (&rt_buried_model_traces) || Atomic_LoadUInt32 (&rt_buried_model_hits))
+		RT_LightReportPrint ("rt_dtal_clearance: %i polygons traced, %i served from the cache; alias models: %i traced, %i served from the cache\n",
+			(int) Atomic_LoadUInt32 (&rt_buried_traces), (int) Atomic_LoadUInt32 (&rt_buried_hits),
+			(int) Atomic_LoadUInt32 (&rt_buried_model_traces), (int) Atomic_LoadUInt32 (&rt_buried_model_hits));
 
 	if (Atomic_LoadUInt32 (&rt_emis_stats.model_lights) || Atomic_LoadUInt32 (&rt_emis_stats.model_capped))
 		RT_LightReportPrint ("alias models: %i textured-area lights built from model geometry, %i models turned down by the frame budget\n",
