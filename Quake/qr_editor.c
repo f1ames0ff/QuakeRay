@@ -2322,7 +2322,10 @@ static void QRE_EmissiveEditor (int g)
 
 				if (QR_GUI_SliderInt ("color_emissive_feather", &feather, 0, 16,
 				                      "Softens this block's mask edge over this many pixels, on both sides of it, without comparing colours."))
+				{
 					m->color_emissive[ci].feather = (float)feather;
+					QRE_MarkDirty (m);
+				}
 			}
 			if (QR_GUI_SliderFloat ("emissive_factor", &m->color_emissive[ci].factor, 0.0f, 5.0f,
 			                        "Scales this block's emission: below 1 it dims, above 1 it brightens."))
