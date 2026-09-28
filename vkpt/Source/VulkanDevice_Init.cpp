@@ -203,11 +203,12 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
         uniform,
         memAllocator);
 
-    rasterizer          = std::make_shared<Rasterizer>(
+    rasterizedDataCollector   = std::make_shared<RasterizedDataCollector>(
         device,
         memAllocator,
         textureManager,
-        *info);
+        info->rasterizedMaxVertexCount,
+        info->rasterizedMaxIndexCount);
 
     decalManager        = std::make_shared<DecalManager>(
         device,
@@ -608,7 +609,7 @@ VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
             // whole run.
             if (RhiSkyPass *skyPass = nvrhiFrameSkeleton->GetSkyPass())
             {
-                const RasterizedDataCollector &collector = rasterizer->GetDataCollector();
+                const RasterizedDataCollector &collector = *rasterizedDataCollector;
 
                 // The byte counts are the sizes the collector's AutoBuffers are created with
                 // (RasterizedDataCollector.cpp:69-73); on a native wrap NVRHI only keeps the desc
@@ -718,7 +719,7 @@ VulkanDevice::~VulkanDevice()
     uniform.reset();
     scene.reset();
     shaderManager.reset();
-    rasterizer.reset();
+    rasterizedDataCollector.reset();
     decalManager.reset();
     portalList.reset();
     worldSamplerManager.reset();

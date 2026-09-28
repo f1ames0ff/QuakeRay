@@ -31,7 +31,6 @@ set(vkpt_SOURCES
     Source/Utils.cpp
     Source/Common.cpp
     Source/Matrix.cpp
-    Source/Rasterizer.cpp
     Source/RasterizedDataCollector.cpp
     Source/Vma/vk_mem_alloc_imp.cpp
     Source/ImageLoader.cpp

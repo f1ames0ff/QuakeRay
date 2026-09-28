@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "GeomInfoManager.h"
 
@@ -29,8 +26,7 @@
 
 static_assert(sizeof(vkpt::ShGeometryInstance) % 16 == 0, "Std430 structs must be aligned by 16 bytes");
 
-vkpt::GeomInfoManager::GeomInfoManager(VkDevice _device, std::shared_ptr<MemoryAllocator> &_allocator)
-:
+vkpt::GeomInfoManager::GeomInfoManager(VkDevice _device, std::shared_ptr<MemoryAllocator> &_allocator) :
     device(_device),
     staticGeomCount(0),
     dynamicGeomCount(0)
@@ -40,14 +36,16 @@ vkpt::GeomInfoManager::GeomInfoManager(VkDevice _device, std::shared_ptr<MemoryA
 
     const uint32_t allBottomLevelGeomsCount = VertexCollectorFilterTypeFlags_GetAllBottomLevelGeomsCount();
 
-    // The address bit on the geometry-info buffer follows the pointers that use it: the RHI layer
-    // wraps the staging buffers as copy sources for its own geometry-record copies
-    // (RHI/RhiAccelStructs.cpp), and NVRHI's native-buffer wrap queries the device address of every
-    // buffer when the device has BDA unconditionally (vulkan-buffer.cpp:215-220), so a wrap without
-    // the bit would raise VUID-VkBufferDeviceAddressInfo-buffer-02601. The match table is copied
-    // from its CPU shadow and is never wrapped, so it keeps the plain storage usage.
-    buffer->Create(allBottomLevelGeomsCount * sizeof(vkpt::ShGeometryInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, "Geometry info buffer");
-    matchPrev->Create(allBottomLevelGeomsCount * sizeof(int32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "Match previous Geometry infos buffer");
+    buffer->Create(
+        allBottomLevelGeomsCount * sizeof(vkpt::ShGeometryInstance),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        "Geometry info buffer");
+
+    matchPrev->Create(
+        allBottomLevelGeomsCount * sizeof(int32_t),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        "Match previous Geometry infos buffer");
+
     matchPrevShadow = std::make_unique<int32_t[]>(allBottomLevelGeomsCount);
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -65,6 +63,30 @@ bool vkpt::GeomInfoManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameI
 {
     CmdLabel label(cmd, "Copying geom infos");
 
+    const auto appendCopyRegion =
+        [](VkBufferCopy *pCopyInfos, VkBufferMemoryBarrier *pBarriers, uint32_t &infoCount,
+           VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size)
+    {
+        VkBufferCopy &copy = pCopyInfos[infoCount];
+        copy = {};
+        copy.srcOffset = offset;
+        copy.dstOffset = offset;
+        copy.size = size;
+
+        VkBufferMemoryBarrier &barrier = pBarriers[infoCount];
+        barrier = {};
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.buffer = buffer;
+        barrier.offset = offset;
+        barrier.size = size;
+
+        infoCount++;
+    };
+
     {
         VkBufferCopy copyInfos[MAX_TOP_LEVEL_INSTANCE_COUNT];
         VkBufferMemoryBarrier barriers[MAX_TOP_LEVEL_INSTANCE_COUNT];
@@ -73,7 +95,7 @@ bool vkpt::GeomInfoManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameI
 
         for (auto cf : VertexCollectorFilterGroup_ChangeFrequency)
         {
-            uint64_t upperBoundSize = cf & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC ?
+            const uint64_t upperBoundSize = cf & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC ?
                 matchPrevCopyInfo.maxDynamicGeomCount * sizeof(int32_t) :
                 matchPrevCopyInfo.maxStaticGeomCount * sizeof(int32_t);
 
@@ -86,46 +108,19 @@ bool vkpt::GeomInfoManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameI
             {
                 for (auto pm : VertexCollectorFilterGroup_PrimaryVisibility)
                 {
-                    uint64_t offset = VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(cf | pt | pm);
-                    offset *= sizeof(int32_t);
+                    const uint64_t offset =
+                        VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(cf | pt | pm) * sizeof(int32_t);
 
-                    // min of upper-bound size and max size of the group
-                    uint64_t size = std::min(upperBoundSize, VertexCollectorFilterTypeFlags_GetAmountInGlobalArray(cf | pt | pm) * sizeof(int32_t));
+                    const uint64_t size = std::min(
+                        upperBoundSize,
+                        VertexCollectorFilterTypeFlags_GetAmountInGlobalArray(cf | pt | pm) * sizeof(int32_t));
 
-                    // copy to staging
-                    {
-                        uint8_t *pDst = (uint8_t*)matchPrev->GetMapped(frameIndex);
-                        uint8_t *pSrc = (uint8_t*)matchPrevShadow.get();
+                    uint8_t *pDst = (uint8_t *)matchPrev->GetMapped(frameIndex);
+                    const uint8_t *pSrc = (const uint8_t *)matchPrevShadow.get();
 
-                        memcpy(pDst + offset, pSrc + offset, size);
-                    }
+                    memcpy(pDst + offset, pSrc + offset, size);
 
-                    // copy from staging
-                    {
-                        VkBufferCopy &c = copyInfos[infoCount];
-
-                        c = {};
-                        c.srcOffset = offset;
-                        c.dstOffset = offset;
-                        c.size = size;
-                    }
-
-                    {
-                        VkBufferMemoryBarrier &b = barriers[infoCount];
-
-                        b = {};
-                        b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-                        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-                        b.buffer = matchPrev->GetDeviceLocal();
-                        b.offset = offset;
-                        b.size = size;
-                    }
-
-                    infoCount++;
+                    appendCopyRegion(copyInfos, barriers, infoCount, matchPrev->GetDeviceLocal(), offset, size);
                 }
             }
         }
@@ -138,7 +133,8 @@ bool vkpt::GeomInfoManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameI
             {
                 vkCmdPipelineBarrier(
                     cmd,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                     0,
                     0, nullptr,
                     infoCount, barriers,
@@ -146,7 +142,6 @@ bool vkpt::GeomInfoManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameI
             }
         }
     }
-
 
     {
         VkBufferCopy copyInfos[MAX_TOP_LEVEL_INSTANCE_COUNT];
@@ -160,44 +155,22 @@ bool vkpt::GeomInfoManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameI
             {
                 for (auto pm : VertexCollectorFilterGroup_PrimaryVisibility)
                 {
-                    uint32_t flagsId = VertexCollectorFilterTypeFlags_GetID(cf | pt | pm);
+                    const uint32_t flagsId = VertexCollectorFilterTypeFlags_GetID(cf | pt | pm);
 
                     const uint32_t lower = copyRegionLowerBounds[frameIndex][flagsId];
                     const uint32_t upper = copyRegionUpperBounds[frameIndex][flagsId];
 
-                    if (lower < upper)
+                    if (lower >= upper)
                     {
-                        const uint32_t offsetInArray = VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(cf | pt | pm);
-
-                        const uint64_t offset = sizeof(ShGeometryInstance) * (offsetInArray + lower);
-                        const uint64_t size = sizeof(ShGeometryInstance) * (upper - lower);
-
-                        {
-                            VkBufferCopy &c = copyInfos[infoCount];
-
-                            c = {};
-                            c.srcOffset = offset;
-                            c.dstOffset = offset;
-                            c.size = size;
-                        }
-
-                        {
-                            VkBufferMemoryBarrier &b = barriers[infoCount];
-
-                            b = {};
-                            b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-                            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                            b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                            b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-                            b.buffer = buffer->GetDeviceLocal();
-                            b.offset = offset;
-                            b.size = size;
-                        }
-
-                        infoCount++;
+                        continue;
                     }
+
+                    const uint64_t offset = sizeof(ShGeometryInstance) *
+                        (uint64_t)(VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(cf | pt | pm) + lower);
+
+                    const uint64_t size = sizeof(ShGeometryInstance) * (upper - lower);
+
+                    appendCopyRegion(copyInfos, barriers, infoCount, buffer->GetDeviceLocal(), offset, size);
                 }
             }
         }
@@ -213,7 +186,8 @@ bool vkpt::GeomInfoManager::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameI
         {
             vkCmdPipelineBarrier(
                 cmd,
-                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                 0,
                 0, nullptr,
                 infoCount, barriers,
@@ -228,39 +202,26 @@ void vkpt::GeomInfoManager::ResetMatchPrevForGroup(uint32_t frameIndex, VertexCo
 {
     int32_t *prevIndexToCurIndex = matchPrevShadow.get();
 
-    uint32_t offsetInArray = VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(groupFlags);
+    const uint32_t offsetInArray = VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(groupFlags);
     int32_t *toReset = prevIndexToCurIndex + offsetInArray;
 
-    // approximate exact size with dynamicGeomCount
-    uint32_t maxGeomCount = groupFlags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC ? dynamicGeomCount : staticGeomCount;
+    const uint32_t maxGeomCount = groupFlags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC ?
+        dynamicGeomCount : staticGeomCount;
 
-    uint32_t resetCount = std::min(maxGeomCount, VertexCollectorFilterTypeFlags_GetAmountInGlobalArray(groupFlags));
+    const uint32_t resetCount = std::min(maxGeomCount, VertexCollectorFilterTypeFlags_GetAmountInGlobalArray(groupFlags));
 
-    // reset matchPrev data for dynamic
     memset(toReset, 0xFF, resetCount * sizeof(int32_t));
 }
 
 void vkpt::GeomInfoManager::ResetOnlyDynamic(uint32_t frameIndex)
 {
-    typedef VertexCollectorFilterTypeFlags FL;
     typedef VertexCollectorFilterTypeFlagBits FT;
 
-    // do nothing, if there were no dynamic indices
     if (dynamicGeomCount > 0)
     {
-        // trim before static indices
-        if (staticGeomCount > 0)
-        {
-            geomType.resize(staticGeomCount);
-            simpleToLocalIndex.resize(staticGeomCount);
-        }
-        else
-        {
-            geomType.clear();
-            simpleToLocalIndex.clear();
-        }
+        geomType.resize(staticGeomCount);
+        simpleToLocalIndex.resize(staticGeomCount);
 
-        // reset each dynamic group
         for (auto pt : VertexCollectorFilterGroup_PassThrough)
         {
             for (auto pm : VertexCollectorFilterGroup_PrimaryVisibility)
@@ -269,15 +230,11 @@ void vkpt::GeomInfoManager::ResetOnlyDynamic(uint32_t frameIndex)
             }
         }
 
-        // reset only dynamic count
         dynamicGeomCount = 0;
     }
 
-    for (uint32_t type = 0; type < MAX_TOP_LEVEL_INSTANCE_COUNT; type++)
-    {
-        std::fill(copyRegionLowerBounds[frameIndex].begin(), copyRegionLowerBounds[frameIndex].end(), UINT32_MAX);
-        std::fill(copyRegionUpperBounds[frameIndex].begin(), copyRegionUpperBounds[frameIndex].end(), 0);
-    }
+    std::fill(copyRegionLowerBounds[frameIndex].begin(), copyRegionLowerBounds[frameIndex].end(), UINT32_MAX);
+    std::fill(copyRegionUpperBounds[frameIndex].begin(), copyRegionUpperBounds[frameIndex].end(), 0);
 }
 
 void vkpt::GeomInfoManager::ResetWithStatic()
@@ -286,7 +243,6 @@ void vkpt::GeomInfoManager::ResetWithStatic()
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        // reset each group
         for (auto cf : VertexCollectorFilterGroup_ChangeFrequency)
         {
             for (auto pt : VertexCollectorFilterGroup_PassThrough)
@@ -316,7 +272,8 @@ uint32_t vkpt::GeomInfoManager::GetGlobalGeomIndex(uint32_t localGeomIndex, Vert
     return VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(flags) + localGeomIndex;
 }
 
-vkpt::ShGeometryInstance * vkpt::GeomInfoManager::GetGeomInfoAddressByGlobalIndex(uint32_t frameIndex, uint32_t globalGeomIndex)
+vkpt::ShGeometryInstance *vkpt::GeomInfoManager::GetGeomInfoAddressByGlobalIndex(
+    uint32_t frameIndex, uint32_t globalGeomIndex)
 {
     auto *mapped = (ShGeometryInstance *)buffer->GetMapped(frameIndex);
 
@@ -325,7 +282,6 @@ vkpt::ShGeometryInstance * vkpt::GeomInfoManager::GetGeomInfoAddressByGlobalInde
 
 uint32_t vkpt::GeomInfoManager::ConvertSimpleIndexToGlobal(uint32_t simpleIndex) const
 {
-    // must exist
     assert(simpleIndex < geomType.size());
     assert(geomType.size() == simpleToLocalIndex.size());
 
@@ -337,7 +293,6 @@ uint32_t vkpt::GeomInfoManager::ConvertSimpleIndexToGlobal(uint32_t simpleIndex)
 
 void vkpt::GeomInfoManager::PrepareForFrame(uint32_t frameIndex)
 {
-    // save counts before resetting
     matchPrevCopyInfo.maxDynamicGeomCount = dynamicGeomCount;
     matchPrevCopyInfo.maxStaticGeomCount = staticGeomCount;
 
@@ -352,49 +307,40 @@ uint32_t vkpt::GeomInfoManager::WriteGeomInfo(
     VertexCollectorFilterTypeFlags flags,
     ShGeometryInstance &src)
 {
-    // must be aligned for per-triangle vertex attributes
     assert(src.baseVertexIndex % 3 == 0);
     assert(src.baseIndexIndex % 3 == 0);
 
     const uint32_t simpleIndex = GetCount();
 
-    // must not exist
     assert(simpleIndex == geomType.size());
     assert(geomType.size() == simpleToLocalIndex.size());
 
     geomType.push_back(flags);
     simpleToLocalIndex.push_back(localGeomIndex);
 
+    const bool isStatic = !(flags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC);
+
     uint32_t frameBegin = frameIndex;
     uint32_t frameEnd = frameIndex + 1;
 
-    bool isStatic = !(flags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC);
-
     if (isStatic)
     {
-        // no dynamic geoms before static ones
         assert(dynamicGeomCount == 0);
-
-        // make sure that indices are added sequentially
         assert(staticGeomCount == simpleIndex);
         staticGeomCount++;
 
-        // copy to all staging buffers
         frameBegin = 0;
         frameEnd = MAX_FRAMES_IN_FLIGHT;
     }
     else
     {
-        // dynamic geoms only after static ones
         assert(staticGeomCount <= simpleIndex);
-
         assert(dynamicGeomCount == simpleIndex - staticGeomCount);
         dynamicGeomCount++;
     }
 
-    uint32_t globalGeomIndex = GetGlobalGeomIndex(localGeomIndex, flags);
-
-    uint32_t flagsId = VertexCollectorFilterTypeFlags_GetID(flags);
+    const uint32_t globalGeomIndex = GetGlobalGeomIndex(localGeomIndex, flags);
+    const uint32_t flagsId = VertexCollectorFilterTypeFlags_GetID(flags);
 
     for (uint32_t i = frameBegin; i < frameEnd; i++)
     {
@@ -406,7 +352,7 @@ uint32_t vkpt::GeomInfoManager::WriteGeomInfo(
         MarkGeomInfoIndexToCopy(i, localGeomIndex, flagsId);
     }
 
-    WriteInfoForNextUsage(flags, geomUniqueID, globalGeomIndex, src, frameIndex);        
+    WriteInfoForNextUsage(flags, geomUniqueID, globalGeomIndex, src, frameIndex);
 
     return simpleIndex;
 }
@@ -415,37 +361,35 @@ void vkpt::GeomInfoManager::MarkGeomInfoIndexToCopy(uint32_t frameIndex, uint32_
 {
     assert(flagsId < MAX_TOP_LEVEL_INSTANCE_COUNT);
 
-    copyRegionLowerBounds[frameIndex][flagsId] = std::min(localGeomIndex,     copyRegionLowerBounds[frameIndex][flagsId]);
+    copyRegionLowerBounds[frameIndex][flagsId] = std::min(localGeomIndex, copyRegionLowerBounds[frameIndex][flagsId]);
     copyRegionUpperBounds[frameIndex][flagsId] = std::max(localGeomIndex + 1, copyRegionUpperBounds[frameIndex][flagsId]);
 }
 
 void vkpt::GeomInfoManager::FillWithPrevFrameData(
-    VertexCollectorFilterTypeFlags flags, uint64_t geomUniqueID, 
+    VertexCollectorFilterTypeFlags flags, uint64_t geomUniqueID,
     uint32_t currentGlobalGeomIndex, ShGeometryInstance &dst, int32_t frameIndex)
 {
     int32_t *prevIndexToCurIndex = matchPrevShadow.get();
 
     const rgl::unordered_map<uint64_t, GeomFrameInfo> *prevIdToInfo = nullptr;
 
-    bool isMovable = flags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE;
-    bool isDynamic = flags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC;
+    const bool isMovable = flags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE;
+    const bool isDynamic = flags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC;
 
-    // fill prev info, but only for movable and dynamic geoms
     if (isDynamic)
     {
         static_assert(MAX_FRAMES_IN_FLIGHT == 2, "Assuming MAX_FRAMES_IN_FLIGHT==2");
-        uint32_t prevFrame = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+        const uint32_t prevFrame = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 
         prevIdToInfo = &dynamicIDToGeomFrameInfo[prevFrame];
     }
-    else 
+    else
     {
-        // global geom indices are not changing for static geometry
         prevIndexToCurIndex[currentGlobalGeomIndex] = (int32_t)currentGlobalGeomIndex;
 
         if (isMovable)
         {
-            prevIdToInfo = &movableIDToGeomFrameInfo; 
+            prevIdToInfo = &movableIDToGeomFrameInfo;
         }
         else
         {
@@ -456,29 +400,25 @@ void vkpt::GeomInfoManager::FillWithPrevFrameData(
 
     const auto prev = prevIdToInfo->find(geomUniqueID);
 
-    // if no previous info
     if (prev == prevIdToInfo->end())
     {
         MarkNoPrevInfo(dst);
         return;
     }
 
-    // if counts are not the same
-    if (prev->second.vertexCount != dst.vertexCount || 
+    if (prev->second.vertexCount != dst.vertexCount ||
         prev->second.indexCount != dst.indexCount)
     {
         MarkNoPrevInfo(dst);
         return;
     }
 
-    // copy data from previous frame to current ShGeometryInstance
     dst.prevBaseVertexIndex = prev->second.baseVertexIndex;
     dst.prevBaseIndexIndex = prev->second.baseIndexIndex;
     memcpy(dst.prevModel, prev->second.model, sizeof(float) * 16);
 
     if (isDynamic)
     {
-        // save index to access ShGeometryInfo using previous frame's global geom index
         prevIndexToCurIndex[prev->second.prevGlobalGeomIndex] = currentGlobalGeomIndex;
     }
 }
@@ -494,45 +434,43 @@ void vkpt::GeomInfoManager::MarkMovableHasPrevInfo(ShGeometryInstance &dst)
 }
 
 void vkpt::GeomInfoManager::WriteInfoForNextUsage(
-    VertexCollectorFilterTypeFlags flags, uint64_t geomUniqueID, 
+    VertexCollectorFilterTypeFlags flags, uint64_t geomUniqueID,
     uint32_t currentGlobalGeomIndex, const ShGeometryInstance &src, int32_t frameIndex)
 {
-    bool isMovable = flags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE;
-    bool isDynamic = flags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC;
+    const bool isMovable = flags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE;
+    const bool isDynamic = flags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC;
 
     rgl::unordered_map<uint64_t, GeomFrameInfo> *idToInfo = nullptr;
 
     if (isDynamic)
     {
-        idToInfo = &dynamicIDToGeomFrameInfo[frameIndex];    
+        idToInfo = &dynamicIDToGeomFrameInfo[frameIndex];
     }
     else if (isMovable)
     {
-        idToInfo = &movableIDToGeomFrameInfo; 
+        idToInfo = &movableIDToGeomFrameInfo;
     }
     else
     {
         return;
     }
 
-    // IDs must be unique
     assert(idToInfo->find(geomUniqueID) == idToInfo->end());
 
-    GeomFrameInfo f = {};
-    memcpy(f.model, src.model, sizeof(float) * 16);
-    f.baseVertexIndex = src.baseVertexIndex;
-    f.baseIndexIndex = src.baseIndexIndex;
-    f.vertexCount = src.vertexCount;
-    f.indexCount = src.indexCount;
-    f.prevGlobalGeomIndex = currentGlobalGeomIndex;
+    GeomFrameInfo frameInfo = {};
+    memcpy(frameInfo.model, src.model, sizeof(float) * 16);
+    frameInfo.baseVertexIndex = src.baseVertexIndex;
+    frameInfo.baseIndexIndex = src.baseIndexIndex;
+    frameInfo.vertexCount = src.vertexCount;
+    frameInfo.indexCount = src.indexCount;
+    frameInfo.prevGlobalGeomIndex = currentGlobalGeomIndex;
 
-    (*idToInfo)[geomUniqueID] = f;
+    (*idToInfo)[geomUniqueID] = frameInfo;
 }
 
-void vkpt::GeomInfoManager::WriteStaticGeomInfoMaterials(uint32_t simpleIndex, uint32_t layer, const MaterialTextures &src)
+void vkpt::GeomInfoManager::WriteStaticGeomInfoMaterials(
+    uint32_t simpleIndex, uint32_t layer, const MaterialTextures &src)
 {
-    // only static
-    // geoms are allowed to rewrite material info
     assert(simpleIndex < geomType.size());
     assert(!(geomType[simpleIndex] & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC));
     assert(geomType.size() == simpleToLocalIndex.size());
@@ -540,22 +478,20 @@ void vkpt::GeomInfoManager::WriteStaticGeomInfoMaterials(uint32_t simpleIndex, u
     const uint32_t flagsId = VertexCollectorFilterTypeFlags_GetID(geomType[simpleIndex]);
     const uint32_t globalIndex = ConvertSimpleIndexToGlobal(simpleIndex);
 
-    // need to write to both staging buffers for static geometry
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         ShGeometryInstance *dst = GetGeomInfoAddressByGlobalIndex(i, globalIndex);
 
-        // copy new material info
         uint32_t *pMatArr = &dst->materials0A;
 
         memcpy(&pMatArr[layer * TEXTURES_PER_MATERIAL_COUNT], src.indices, TEXTURES_PER_MATERIAL_COUNT * sizeof(uint32_t));
 
-        // mark to be copied
         MarkGeomInfoIndexToCopy(i, simpleToLocalIndex[simpleIndex], flagsId);
     }
 }
 
-void vkpt::GeomInfoManager::WriteStaticGeomInfoTransform(uint32_t simpleIndex, uint64_t geomUniqueID, const RgTransform &src)
+void vkpt::GeomInfoManager::WriteStaticGeomInfoTransform(
+    uint32_t simpleIndex, uint64_t geomUniqueID, const RgTransform &src)
 {
     if (simpleIndex >= geomType.size())
     {
@@ -565,25 +501,20 @@ void vkpt::GeomInfoManager::WriteStaticGeomInfoTransform(uint32_t simpleIndex, u
 
     assert(geomType.size() == simpleToLocalIndex.size());
 
-
     const auto flags = geomType[simpleIndex];
     const uint32_t flagsId = VertexCollectorFilterTypeFlags_GetID(flags);
 
-    // only static and movable
-    // geoms are allowed to update transforms
     if (!(flags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE))
     {
         assert(0);
         return;
     }
 
-
-    float modelMatix[16];
-    Matrix::ToMat4Transposed(modelMatix, src);
+    float modelMatrix[16];
+    Matrix::ToMat4Transposed(modelMatrix, src);
 
     auto prev = movableIDToGeomFrameInfo.find(geomUniqueID);
 
-    // if movable is updated, then it must be added previously
     if (prev == movableIDToGeomFrameInfo.end())
     {
         assert(0);
@@ -595,24 +526,19 @@ void vkpt::GeomInfoManager::WriteStaticGeomInfoTransform(uint32_t simpleIndex, u
     const uint32_t localGeomIndex = simpleToLocalIndex[simpleIndex];
     const uint32_t globalIndex = GetGlobalGeomIndex(localGeomIndex, flags);
 
-    // need to write to both staging buffers for static geometry
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         ShGeometryInstance *dst = GetGeomInfoAddressByGlobalIndex(i, globalIndex);
 
-        memcpy(dst->model, modelMatix, 16 * sizeof(float));
+        memcpy(dst->model, modelMatrix, 16 * sizeof(float));
         memcpy(dst->prevModel, prevModelMatrix, 16 * sizeof(float));
 
-        // mark that movable has a previous info now
         MarkMovableHasPrevInfo(*dst);
 
-        // mark to be copied
         MarkGeomInfoIndexToCopy(i, localGeomIndex, flagsId);
     }
 
-
-    // save new prev data
-    memcpy(prevModelMatrix, modelMatix, 16 * sizeof(float));
+    memcpy(prevModelMatrix, modelMatrix, 16 * sizeof(float));
 }
 
 uint32_t vkpt::GeomInfoManager::GetCount() const
@@ -662,6 +588,5 @@ const int32_t *vkpt::GeomInfoManager::GetMatchPrevData() const
 
 uint32_t vkpt::GeomInfoManager::GetStaticGeomBaseVertexIndex(uint32_t simpleIndex)
 {
-    // just use frame 0, as infos have same values in both staging buffers
     return GetGeomInfoAddressByGlobalIndex(0, ConvertSimpleIndexToGlobal(simpleIndex))->baseVertexIndex;
 }

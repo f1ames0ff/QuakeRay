@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "ASManager.h"
 
@@ -50,8 +47,6 @@ ASManager::ASManager(
     typedef VertexCollectorFilterTypeFlags FL;
     typedef VertexCollectorFilterTypeFlagBits FT;
 
-
-    // init AS structs for each dimension
     VertexCollectorFilterTypeFlags_IterateOverFlags([this] (FL filter)
     {
         if (filter & FT::CF_DYNAMIC)
@@ -72,34 +67,26 @@ ASManager::ASManager(
         tlas[i] = std::make_unique<TLASComponent>(device, "TLAS main");
     }
 
-    const uint32_t scratchOffsetAligment = physDevice->GetASProperties().minAccelerationStructureScratchOffsetAlignment;
-    scratchBuffer = std::make_shared<ScratchBuffer>(allocator, scratchOffsetAligment);
+    const uint32_t scratchOffsetAlignment = physDevice->GetASProperties().minAccelerationStructureScratchOffsetAlignment;
+    scratchBuffer = std::make_shared<ScratchBuffer>(allocator, scratchOffsetAlignment);
     asBuilder = std::make_shared<ASBuilder>(device, scratchBuffer);
 
-
-    // static and movable static vertices share the same buffer as their data won't be changing
     collectorStatic = std::make_shared<VertexCollector>(
         device, allocator, geomInfoMgr,
         MAX_STATIC_VERTEX_COUNT * sizeof(ShVertex),
-        FT::CF_STATIC_NON_MOVABLE | FT::CF_STATIC_MOVABLE | 
-        FT::MASK_PASS_THROUGH_GROUP | 
+        FT::CF_STATIC_NON_MOVABLE | FT::CF_STATIC_MOVABLE |
+        FT::MASK_PASS_THROUGH_GROUP |
         FT::MASK_PRIMARY_VISIBILITY_GROUP);
 
-    // subscribe to texture manager only static collector,
-    // as static geometries aren't updating its material info (in ShGeometryInstance)
-    // every frame unlike dynamic ones
     textureMgr->Subscribe(collectorStatic);
 
-
-    // dynamic vertices
     collectorDynamic[0] = std::make_shared<VertexCollector>(
         device, allocator, geomInfoMgr,
         MAX_DYNAMIC_VERTEX_COUNT * sizeof(ShVertex),
-        FT::CF_DYNAMIC | 
-        FT::MASK_PASS_THROUGH_GROUP | 
+        FT::CF_DYNAMIC |
+        FT::MASK_PASS_THROUGH_GROUP |
         FT::MASK_PRIMARY_VISIBILITY_GROUP);
 
-    // other dynamic vertex collectors should share the same device local buffers as the first one
     for (uint32_t i = 1; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         collectorDynamic[i] = std::make_shared<VertexCollector>(collectorDynamic[0], allocator);
@@ -107,118 +94,83 @@ ASManager::ASManager(
 
     previousDynamicPositions.Init(
         allocator, MAX_DYNAMIC_VERTEX_COUNT * sizeof(ShVertex),
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "Previous frame's vertex data");
+
     previousDynamicIndices.Init(
         allocator, MAX_DYNAMIC_VERTEX_COUNT * sizeof(uint32_t),
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "Previous frame's index data");
 
-
-    // instance buffer for TLAS
     instanceBuffer = std::make_unique<AutoBuffer>(device, allocator);
 
-    VkDeviceSize instanceBufferSize = MAX_TOP_LEVEL_INSTANCE_COUNT * sizeof(VkAccelerationStructureInstanceKHR);
-    instanceBuffer->Create(instanceBufferSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, "TLAS instance buffer");
+    const VkDeviceSize instanceBufferSize = MAX_TOP_LEVEL_INSTANCE_COUNT * sizeof(VkAccelerationStructureInstanceKHR);
+    instanceBuffer->Create(
+        instanceBufferSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        "TLAS instance buffer");
 
     static_assert(std::size(TLASPrepareResult{}.instances) == MAX_TOP_LEVEL_INSTANCE_COUNT);
 
-
     CreateDescriptors();
 
-    // buffers won't be changing, update once
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         UpdateBufferDescriptors(i);
     }
 
-
     VkFenceCreateInfo fenceInfo = {};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = 0;
+
     VkResult r = vkCreateFence(device, &fenceInfo, nullptr, &staticCopyFence);
     VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, staticCopyFence, VK_OBJECT_TYPE_FENCE, "Static BLAS fence");
 }
 
-#pragma region AS descriptors
-
 void ASManager::CreateDescriptors()
 {
-    VkResult r;
+    VkResult r = VK_SUCCESS;
+
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
 
     {
-        std::array<VkDescriptorSetLayoutBinding, 8> bindings{};
-
-        // static vertex data
-        bindings[0].binding = BINDING_VERTEX_BUFFER_STATIC;
-        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[0].descriptorCount = 1;
-        bindings[0].stageFlags = VK_SHADER_STAGE_ALL;
-
-        // dynamic vertex data
-        bindings[1].binding = BINDING_VERTEX_BUFFER_DYNAMIC;
-        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[1].descriptorCount = 1;
-        bindings[1].stageFlags = VK_SHADER_STAGE_ALL;
-
-        bindings[2].binding = BINDING_INDEX_BUFFER_STATIC;
-        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[2].descriptorCount = 1;
-        bindings[2].stageFlags = VK_SHADER_STAGE_ALL;
-
-        bindings[3].binding = BINDING_INDEX_BUFFER_DYNAMIC;
-        bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[3].descriptorCount = 1;
-        bindings[3].stageFlags = VK_SHADER_STAGE_ALL;
-
-        bindings[4].binding = BINDING_GEOMETRY_INSTANCES;
-        bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[4].descriptorCount = 1;
-        bindings[4].stageFlags = VK_SHADER_STAGE_ALL;
-
-        bindings[5].binding = BINDING_GEOMETRY_INSTANCES_MATCH_PREV;
-        bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[5].descriptorCount = 1;
-        bindings[5].stageFlags = VK_SHADER_STAGE_ALL;
-
-        bindings[6].binding = BINDING_PREV_POSITIONS_BUFFER_DYNAMIC;
-        bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[6].descriptorCount = 1;
-        bindings[6].stageFlags = VK_SHADER_STAGE_ALL;
-
-        bindings[7].binding = BINDING_PREV_INDEX_BUFFER_DYNAMIC;
-        bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[7].descriptorCount = 1;
-        bindings[7].stageFlags = VK_SHADER_STAGE_ALL;
-
-        static_assert(bindings.size() == 8);
+        const VkDescriptorSetLayoutBinding bindings[] =
+        {
+            { BINDING_VERTEX_BUFFER_STATIC,          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+            { BINDING_VERTEX_BUFFER_DYNAMIC,         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+            { BINDING_INDEX_BUFFER_STATIC,           VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+            { BINDING_INDEX_BUFFER_DYNAMIC,          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+            { BINDING_GEOMETRY_INSTANCES,            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+            { BINDING_GEOMETRY_INSTANCES_MATCH_PREV, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+            { BINDING_PREV_POSITIONS_BUFFER_DYNAMIC, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+            { BINDING_PREV_INDEX_BUFFER_DYNAMIC,     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+        };
 
         VkDescriptorSetLayoutCreateInfo layoutInfo = {};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = bindings.size();
-        layoutInfo.pBindings = bindings.data();
+        layoutInfo.bindingCount = (uint32_t)std::size(bindings);
+        layoutInfo.pBindings = bindings;
 
         r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &buffersDescSetLayout);
         VK_CHECKERROR(r);
 
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * bindings.size();
+        poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * (uint32_t)std::size(bindings);
     }
 
     {
-        VkDescriptorSetLayoutBinding bnd = {};
-        bnd.binding = BINDING_ACCELERATION_STRUCTURE_MAIN;
-        bnd.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-        bnd.descriptorCount = 1;
-        bnd.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_VERTEX_BIT;
+        VkDescriptorSetLayoutBinding binding = {};
+        binding.binding = BINDING_ACCELERATION_STRUCTURE_MAIN;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_VERTEX_BIT;
 
         VkDescriptorSetLayoutCreateInfo layoutInfo = {};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.bindingCount = 1;
-        layoutInfo.pBindings = &bnd;
+        layoutInfo.pBindings = &binding;
 
         r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &asDescSetLayout);
         VK_CHECKERROR(r);
@@ -229,7 +181,7 @@ void ASManager::CreateDescriptors()
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = poolSizes.size();
+    poolInfo.poolSizeCount = (uint32_t)poolSizes.size();
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT * 2;
 
@@ -237,14 +189,13 @@ void ASManager::CreateDescriptors()
     VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, descPool, VK_OBJECT_TYPE_DESCRIPTOR_POOL, "AS manager Desc pool");
+    SET_DEBUG_NAME(device, buffersDescSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "Vertex data Desc set layout");
+    SET_DEBUG_NAME(device, asDescSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "TLAS Desc set layout");
 
     VkDescriptorSetAllocateInfo descSetInfo = {};
     descSetInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     descSetInfo.descriptorPool = descPool;
     descSetInfo.descriptorSetCount = 1;
-
-    SET_DEBUG_NAME(device, buffersDescSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "Vertex data Desc set layout");
-    SET_DEBUG_NAME(device, asDescSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "TLAS Desc set layout");
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
@@ -263,136 +214,61 @@ void ASManager::CreateDescriptors()
 
 void ASManager::UpdateBufferDescriptors(uint32_t frameIndex)
 {
-    constexpr  uint32_t bindingCount = 8;
+    const VkBuffer buffers[] =
+    {
+        collectorStatic->GetVertexBuffer(),
+        collectorDynamic[frameIndex]->GetVertexBuffer(),
+        collectorStatic->GetIndexBuffer(),
+        collectorDynamic[frameIndex]->GetIndexBuffer(),
+        geomInfoMgr->GetBuffer(),
+        geomInfoMgr->GetMatchPrevBuffer(),
+        previousDynamicPositions.GetBuffer(),
+        previousDynamicIndices.GetBuffer(),
+    };
+
+    const uint32_t bindings[] =
+    {
+        BINDING_VERTEX_BUFFER_STATIC,
+        BINDING_VERTEX_BUFFER_DYNAMIC,
+        BINDING_INDEX_BUFFER_STATIC,
+        BINDING_INDEX_BUFFER_DYNAMIC,
+        BINDING_GEOMETRY_INSTANCES,
+        BINDING_GEOMETRY_INSTANCES_MATCH_PREV,
+        BINDING_PREV_POSITIONS_BUFFER_DYNAMIC,
+        BINDING_PREV_INDEX_BUFFER_DYNAMIC,
+    };
+
+    constexpr uint32_t bindingCount = 8;
+    static_assert(std::size(buffers) == bindingCount);
+    static_assert(std::size(bindings) == bindingCount);
 
     std::array<VkDescriptorBufferInfo, bindingCount> bufferInfos{};
     std::array<VkWriteDescriptorSet, bindingCount> writes{};
 
-    // buffer infos
-    VkDescriptorBufferInfo &stVertsBufInfo = bufferInfos[BINDING_VERTEX_BUFFER_STATIC];
-    stVertsBufInfo.buffer = collectorStatic->GetVertexBuffer();
-    stVertsBufInfo.offset = 0;
-    stVertsBufInfo.range = VK_WHOLE_SIZE;
+    for (uint32_t i = 0; i < bindingCount; i++)
+    {
+        bufferInfos[i].buffer = buffers[i];
+        bufferInfos[i].offset = 0;
+        bufferInfos[i].range = VK_WHOLE_SIZE;
 
-    VkDescriptorBufferInfo &dnVertsBufInfo = bufferInfos[BINDING_VERTEX_BUFFER_DYNAMIC];
-    dnVertsBufInfo.buffer = collectorDynamic[frameIndex]->GetVertexBuffer();
-    dnVertsBufInfo.offset = 0;
-    dnVertsBufInfo.range = VK_WHOLE_SIZE;
+        writes[i] = {};
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = buffersDescSets[frameIndex];
+        writes[i].dstBinding = bindings[i];
+        writes[i].dstArrayElement = 0;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i].descriptorCount = 1;
+        writes[i].pBufferInfo = &bufferInfos[i];
+    }
 
-    VkDescriptorBufferInfo &stIndexBufInfo = bufferInfos[BINDING_INDEX_BUFFER_STATIC];
-    stIndexBufInfo.buffer = collectorStatic->GetIndexBuffer();
-    stIndexBufInfo.offset = 0;
-    stIndexBufInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo &dnIndexBufInfo = bufferInfos[BINDING_INDEX_BUFFER_DYNAMIC];
-    dnIndexBufInfo.buffer = collectorDynamic[frameIndex]->GetIndexBuffer();
-    dnIndexBufInfo.offset = 0;
-    dnIndexBufInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo &gsBufInfo = bufferInfos[BINDING_GEOMETRY_INSTANCES];
-    gsBufInfo.buffer = geomInfoMgr->GetBuffer();
-    gsBufInfo.offset = 0;
-    gsBufInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo &gpBufInfo = bufferInfos[BINDING_GEOMETRY_INSTANCES_MATCH_PREV];
-    gpBufInfo.buffer = geomInfoMgr->GetMatchPrevBuffer();
-    gpBufInfo.offset = 0;
-    gpBufInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo &ppBufInfo = bufferInfos[BINDING_PREV_POSITIONS_BUFFER_DYNAMIC];
-    ppBufInfo.buffer = previousDynamicPositions.GetBuffer();
-    ppBufInfo.offset = 0;
-    ppBufInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo &piBufInfo = bufferInfos[BINDING_PREV_INDEX_BUFFER_DYNAMIC];
-    piBufInfo.buffer = previousDynamicIndices.GetBuffer();
-    piBufInfo.offset = 0;
-    piBufInfo.range = VK_WHOLE_SIZE;
-
-
-    // writes
-    VkWriteDescriptorSet &stVertWrt = writes[BINDING_VERTEX_BUFFER_STATIC];
-    stVertWrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    stVertWrt.dstSet = buffersDescSets[frameIndex];
-    stVertWrt.dstBinding = BINDING_VERTEX_BUFFER_STATIC;
-    stVertWrt.dstArrayElement = 0;
-    stVertWrt.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    stVertWrt.descriptorCount = 1;
-    stVertWrt.pBufferInfo = &stVertsBufInfo;
-
-    VkWriteDescriptorSet &dnVertWrt = writes[BINDING_VERTEX_BUFFER_DYNAMIC];
-    dnVertWrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    dnVertWrt.dstSet = buffersDescSets[frameIndex];
-    dnVertWrt.dstBinding = BINDING_VERTEX_BUFFER_DYNAMIC;
-    dnVertWrt.dstArrayElement = 0;
-    dnVertWrt.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    dnVertWrt.descriptorCount = 1;
-    dnVertWrt.pBufferInfo = &dnVertsBufInfo;
-
-    VkWriteDescriptorSet &stIndexWrt = writes[BINDING_INDEX_BUFFER_STATIC];
-    stIndexWrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    stIndexWrt.dstSet = buffersDescSets[frameIndex];
-    stIndexWrt.dstBinding = BINDING_INDEX_BUFFER_STATIC;
-    stIndexWrt.dstArrayElement = 0;
-    stIndexWrt.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    stIndexWrt.descriptorCount = 1;
-    stIndexWrt.pBufferInfo = &stIndexBufInfo;
-
-    VkWriteDescriptorSet &dnIndexWrt = writes[BINDING_INDEX_BUFFER_DYNAMIC];
-    dnIndexWrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    dnIndexWrt.dstSet = buffersDescSets[frameIndex];
-    dnIndexWrt.dstBinding = BINDING_INDEX_BUFFER_DYNAMIC;
-    dnIndexWrt.dstArrayElement = 0;
-    dnIndexWrt.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    dnIndexWrt.descriptorCount = 1;
-    dnIndexWrt.pBufferInfo = &dnIndexBufInfo;
-
-    VkWriteDescriptorSet &gmWrt = writes[BINDING_GEOMETRY_INSTANCES];
-    gmWrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    gmWrt.dstSet = buffersDescSets[frameIndex];
-    gmWrt.dstBinding = BINDING_GEOMETRY_INSTANCES;
-    gmWrt.dstArrayElement = 0;
-    gmWrt.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    gmWrt.descriptorCount = 1;
-    gmWrt.pBufferInfo = &gsBufInfo;
-
-    VkWriteDescriptorSet &gpWrt = writes[BINDING_GEOMETRY_INSTANCES_MATCH_PREV];
-    gpWrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    gpWrt.dstSet = buffersDescSets[frameIndex];
-    gpWrt.dstBinding = BINDING_GEOMETRY_INSTANCES_MATCH_PREV;
-    gpWrt.dstArrayElement = 0;
-    gpWrt.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    gpWrt.descriptorCount = 1;
-    gpWrt.pBufferInfo = &gpBufInfo;
-    
-    VkWriteDescriptorSet &ppWrt = writes[BINDING_PREV_POSITIONS_BUFFER_DYNAMIC];
-    ppWrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    ppWrt.dstSet = buffersDescSets[frameIndex];
-    ppWrt.dstBinding = BINDING_PREV_POSITIONS_BUFFER_DYNAMIC;
-    ppWrt.dstArrayElement = 0;
-    ppWrt.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ppWrt.descriptorCount = 1;
-    ppWrt.pBufferInfo = &ppBufInfo;
-
-    VkWriteDescriptorSet &piWrt = writes[BINDING_PREV_INDEX_BUFFER_DYNAMIC];
-    piWrt.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    piWrt.dstSet = buffersDescSets[frameIndex];
-    piWrt.dstBinding = BINDING_PREV_INDEX_BUFFER_DYNAMIC;
-    piWrt.dstArrayElement = 0;
-    piWrt.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    piWrt.descriptorCount = 1;
-    piWrt.pBufferInfo = &piBufInfo;
-
-    vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
+    vkUpdateDescriptorSets(device, bindingCount, writes.data(), 0, nullptr);
 }
 
 void ASManager::UpdateASDescriptors(uint32_t frameIndex)
 {
-    VkAccelerationStructureKHR asHandle = tlas[frameIndex]->GetAS();
+    const VkAccelerationStructureKHR asHandle = tlas[frameIndex]->GetAS();
     assert(asHandle != VK_NULL_HANDLE);
 
-    // this descriptor set is written nowhere else, so a handle that didn't
-    // change doesn't need a new write
     if (asDescHandles[frameIndex] == asHandle)
     {
         return;
@@ -416,8 +292,6 @@ void ASManager::UpdateASDescriptors(uint32_t frameIndex)
 
     vkUpdateDescriptorSets(device, 1, &wrt, 0, nullptr);
 }
-
-#pragma endregion 
 
 ASManager::~ASManager()
 {
@@ -444,7 +318,7 @@ ASManager::~ASManager()
 
 bool ASManager::SetupBLAS(BLASComponent &blas, const std::shared_ptr<VertexCollector> &vertCollector)
 {
-    auto filter = blas.GetFilter();
+    const VertexCollectorFilterTypeFlags filter = blas.GetFilter();
     const std::vector<VkAccelerationStructureGeometryKHR> &geoms = vertCollector->GetASGeometries(filter);
 
     blas.SetGeometryCount((uint32_t)geoms.size());
@@ -460,148 +334,19 @@ bool ASManager::SetupBLAS(BLASComponent &blas, const std::shared_ptr<VertexColle
     const bool fastTrace = !IsFastBuild(filter);
     const bool update = false;
 
-    // get AS size and create buffer for AS
     const auto buildSizes = asBuilder->GetBottomBuildSizes(geoms.size(), geoms.data(), primCounts.data(), fastTrace);
 
-    // if no buffer, or it was created, but its size is too small for current AS
     blas.RecreateIfNotValid(buildSizes, allocator);
 
     assert(blas.GetAS() != VK_NULL_HANDLE);
 
-    // add BLAS, all passed arrays must be alive until BuildBottomLevel() call
-    asBuilder->AddBLAS(blas.GetAS(), geoms.size(),
+    asBuilder->AddBLAS(blas.GetAS(), (uint32_t)geoms.size(),
                        geoms.data(), ranges.data(),
                        buildSizes,
                        fastTrace, update, blas.GetFilter() & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE);
 
     return true;
 }
-
-void ASManager::UpdateBLAS(BLASComponent &blas, const std::shared_ptr<VertexCollector> &vertCollector)
-{
-    auto filter = blas.GetFilter();
-    const std::vector<VkAccelerationStructureGeometryKHR> &geoms = vertCollector->GetASGeometries(filter);
-
-    blas.SetGeometryCount((uint32_t)geoms.size());
-
-    if (blas.IsEmpty())
-    {
-        return;
-    }
-
-    const std::vector<VkAccelerationStructureBuildRangeInfoKHR> &ranges = vertCollector->GetASBuildRangeInfos(filter);
-    const std::vector<uint32_t> &primCounts = vertCollector->GetPrimitiveCounts(filter);
-
-    const bool fastTrace = !IsFastBuild(filter);
-
-    // must be just updated
-    const bool update = true;
-
-    const auto buildSizes = asBuilder->GetBottomBuildSizes(
-        geoms.size(), geoms.data(), primCounts.data(), fastTrace);
-
-    assert(blas.IsValid(buildSizes));
-    assert(blas.GetAS() != VK_NULL_HANDLE);
-
-    // add BLAS, all passed arrays must be alive until BuildBottomLevel() call
-    asBuilder->AddBLAS(blas.GetAS(), geoms.size(),
-                       geoms.data(), ranges.data(),
-                       buildSizes,
-                       fastTrace, update, blas.GetFilter() & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE);
-}
-
-// Information about a dynamic geometry is spread between the collector's staging memory
-// and its device-local buffers, so the input that a BLAS is built from is hashed while
-// the geometries are added. The hash is then used to tell whether the previous BLAS of
-// the same frame slot still describes the geometry.
-
-static_assert(
-    (sizeof(VertexCollectorFilterGroup_ChangeFrequency) / sizeof(VertexCollectorFilterGroup_ChangeFrequency[0])) *
-    (sizeof(VertexCollectorFilterGroup_PassThrough) / sizeof(VertexCollectorFilterGroup_PassThrough[0])) *
-    (sizeof(VertexCollectorFilterGroup_PrimaryVisibility) / sizeof(VertexCollectorFilterGroup_PrimaryVisibility[0]))
-    == MAX_TOP_LEVEL_INSTANCE_COUNT, "");
-
-namespace
-{
-    // FNV-1a, over the input that the BVH builder reads
-    uint64_t HashBytes(uint64_t h, const void *data, size_t size)
-    {
-        const uint8_t *p = (const uint8_t *)data;
-
-        while (size >= sizeof(uint64_t))
-        {
-            uint64_t v;
-            memcpy(&v, p, sizeof(v));
-            h = (h ^ v) * 0x100000001b3ull;
-            p += sizeof(v);
-            size -= sizeof(uint64_t);
-        }
-
-        while (size > 0)
-        {
-            h = (h ^ *p) * 0x100000001b3ull;
-            p++;
-            size--;
-        }
-
-        return h;
-    }
-
-    constexpr uint64_t DYNAMIC_BUILD_HASH_SEED = 0xcbf29ce484222325ull;
-
-    // Only the vertex positions are the BVH input of a geometry, but the transform
-    // belongs to it too, as it is applied to the positions when the TLAS is traversed.
-    uint64_t HashDynamicGeometryInput(uint64_t h, const RgGeometryUploadInfo &info)
-    {
-        if (info.pVertices != nullptr && info.vertexCount > 0)
-        {
-            for (uint32_t i = 0; i < info.vertexCount; i++)
-            {
-                h = HashBytes(h, info.pVertices[i].position, sizeof(float) * 3);
-            }
-        }
-
-        if (info.pIndices != nullptr && info.indexCount > 0)
-        {
-            h = HashBytes(h, info.pIndices, (size_t)info.indexCount * sizeof(uint32_t));
-        }
-
-        h = HashBytes(h, &info.transform, sizeof(VkTransformMatrixKHR));
-
-        return h;
-    }
-
-    // AS geometries are built from addresses and offsets in the collector's buffers, so a
-    // changed set of geometries or a changed order of them also changes the hash. The AS
-    // handle is included as well, because a recreated AS has undefined contents.
-    uint64_t HashDynamicBLASInput(
-        uint64_t h,
-        const std::shared_ptr<VertexCollector> &vertCollector,
-        VertexCollectorFilterTypeFlags filter,
-        VkAccelerationStructureKHR as)
-    {
-        h = HashBytes(h, &as, sizeof(as));
-
-        const std::vector<VkAccelerationStructureGeometryKHR> &geoms = vertCollector->GetASGeometries(filter);
-        const std::vector<VkAccelerationStructureBuildRangeInfoKHR> &ranges = vertCollector->GetASBuildRangeInfos(filter);
-        const std::vector<uint32_t> &primCounts = vertCollector->GetPrimitiveCounts(filter);
-
-        assert(geoms.size() == ranges.size());
-        assert(geoms.size() == primCounts.size());
-
-        for (size_t i = 0; i < geoms.size(); i++)
-        {
-            h = HashBytes(h, &geoms[i], sizeof(VkAccelerationStructureGeometryKHR));
-            h = HashBytes(h, &ranges[i], sizeof(VkAccelerationStructureBuildRangeInfoKHR));
-            h = HashBytes(h, &primCounts[i], sizeof(uint32_t));
-        }
-
-        return h;
-    }
-}
-
-
-// separate functions to make adding between Begin..Geometry() and Submit..Geometry() a bit clearer
 
 uint32_t ASManager::AddStaticGeometry(uint32_t frameIndex, const RgGeometryUploadInfo &info)
 {
@@ -632,14 +377,6 @@ uint32_t ASManager::AddDynamicGeometry(uint32_t frameIndex, const RgGeometryUplo
             textureMgr->GetMaterialTextures(info.geomMaterial.layerMaterials[2]),
         };
 
-        // remember the input of this geometry, so that SubmitDynamicGeometry
-        // can tell whether the previous BLAS is still up to date
-        const uint32_t filterID = VertexCollectorFilterTypeFlags_GetID(
-            VertexCollectorFilterTypeFlags_GetForGeometry(info));
-
-        dynBuildHash[frameIndex][filterID] =
-            HashDynamicGeometryInput(dynBuildHash[frameIndex][filterID], info);
-
         return collectorDynamic[frameIndex]->AddGeometry(frameIndex, info, materials);
     }
 
@@ -655,7 +392,6 @@ void ASManager::ResetStaticGeometry()
 
 void ASManager::BeginStaticGeometry()
 {
-    // the whole static vertex data must be recreated, clear previous data
     collectorStatic->Reset();
     geomInfoMgr->ResetWithStatic();
 
@@ -666,19 +402,16 @@ void ASManager::SubmitStaticGeometry()
 {
     collectorStatic->EndCollecting();
 
-    // static geometry submission happens very infrequently, e.g. on level load
     vkDeviceWaitIdle(device);
 
     typedef VertexCollectorFilterTypeFlagBits FT;
 
-    auto staticFlags = FT::CF_STATIC_NON_MOVABLE | FT::CF_STATIC_MOVABLE;
+    const auto staticFlags = FT::CF_STATIC_NON_MOVABLE | FT::CF_STATIC_MOVABLE;
 
-    // destroy previous static
     for (auto &staticBlas : allStaticBlas)
     {
         assert(!(staticBlas->GetFilter() & FT::CF_DYNAMIC));
 
-        // if flags have any of static bits
         if (staticBlas->GetFilter() & staticFlags)
         {
             staticBlas->Destroy();
@@ -688,39 +421,28 @@ void ASManager::SubmitStaticGeometry()
 
     assert(asBuilder->IsEmpty());
 
-    // skip if all static geometries are empty
     if (collectorStatic->AreGeometriesEmpty(staticFlags))
     {
-        // the empty state is a new static generation too: the RHI layer must retire
-        // the static set that it has built for the previous one
         staticGeneration++;
         return;
     }
 
     VkCommandBuffer cmd = cmdManager->StartGraphicsCmd();
 
-    // copy from staging with barrier
     collectorStatic->CopyFromStaging(cmd);
 
-    // setup static blas
     for (auto &staticBlas : allStaticBlas)
     {
-        // if flags have any of static bits
         if (staticBlas->GetFilter() & staticFlags)
         {
             SetupBLAS(*staticBlas, collectorStatic);
         }
     }
-    
-    // build AS
+
     asBuilder->BuildBottomLevel(cmd);
 
-    // submit geom info, in case if rgStartNewScene and rgSubmitStaticGeometries 
-    // were out of rgStartFrame - rgDrawFrame, so static geominfo-s won't be
-    // erased on GeomInfoManager::PrepareForFrame
     geomInfoMgr->CopyFromStaging(cmd, 0, false);
 
-    // submit and wait
     cmdManager->Submit(cmd, staticCopyFence);
     Utils::WaitAndResetFence(device, staticCopyFence);
 
@@ -732,92 +454,12 @@ void ASManager::BeginDynamicGeometry(VkCommandBuffer cmd, uint32_t frameIndex)
     scratchBuffer->Reset();
 
     static_assert(MAX_FRAMES_IN_FLIGHT == 2, "");
-    uint32_t prevFrameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+    const uint32_t prevFrameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 
-    // store data of current frame to use it in the next one
     CopyDynamicDataToPrevBuffers(cmd, prevFrameIndex);
 
-    // dynamic AS must be recreated
     collectorDynamic[frameIndex]->Reset();
     collectorDynamic[frameIndex]->BeginCollecting(false);
-
-    for (uint64_t &h : dynBuildHash[frameIndex])
-    {
-        h = DYNAMIC_BUILD_HASH_SEED;
-    }
-}
-
-void ASManager::SubmitDynamicGeometry(VkCommandBuffer cmd, uint32_t frameIndex)
-{
-    typedef VertexCollectorFilterTypeFlagBits FT;
-
-    CmdLabel label(cmd, "Building dynamic BLAS");
-
-    const auto &colDyn = collectorDynamic[frameIndex];
-
-    colDyn->EndCollecting();
-    colDyn->CopyFromStaging(cmd);
-
-    assert(asBuilder->IsEmpty());
-
-    bool toBuild = false;
-
-    // recreate dynamic blas
-    for (auto &dynamicBlas : allDynamicBlas[frameIndex])
-    {
-        // must be dynamic
-        assert(dynamicBlas->GetFilter() & FT::CF_DYNAMIC);
-
-        const VertexCollectorFilterTypeFlags filter = dynamicBlas->GetFilter();
-        const uint32_t filterID = VertexCollectorFilterTypeFlags_GetID(filter);
-
-        const uint32_t geomCount = (uint32_t)colDyn->GetASGeometries(filter).size();
-
-        // an empty BLAS is not added to the TLAS, so its count must be actual
-        // even if the building of the BLAS itself is skipped
-        dynamicBlas->SetGeometryCount(geomCount);
-
-        if (geomCount == 0)
-        {
-            dynBlasKeyValid[frameIndex][filterID] = false;
-            continue;
-        }
-
-        // The key is kept per frame slot: the AS that this slot builds into is the one that
-        // was built for the same slot MAX_FRAMES_IN_FLIGHT frames ago, so the comparison
-        // must be against the data of this slot, not against the last frame globally.
-        const uint64_t buildKey = HashDynamicBLASInput(
-            dynBuildHash[frameIndex][filterID], colDyn, filter, dynamicBlas->GetAS());
-
-        // skip the building if the AS already describes the collected geometry: the
-        // build input is the same, and the device local data that the AS refers to
-        // is written from the same staging data
-        if (dynBlasKeyValid[frameIndex][filterID] && dynBlasKey[frameIndex][filterID] == buildKey)
-        {
-            continue;
-        }
-
-        if (SetupBLAS(*dynamicBlas, colDyn))
-        {
-            toBuild = true;
-
-            // the AS might have been recreated inside SetupBLAS, and so have a new handle
-            dynBlasKey[frameIndex][filterID] = HashDynamicBLASInput(
-                dynBuildHash[frameIndex][filterID], colDyn, filter, dynamicBlas->GetAS());
-            dynBlasKeyValid[frameIndex][filterID] = true;
-        }
-    }
-    
-    if (!toBuild)
-    {
-        return;
-    }
-
-    // build BLAS
-    asBuilder->BuildBottomLevel(cmd);
-
-    // sync AS access
-    Utils::ASBuildMemoryBarrier(cmd);
 }
 
 void ASManager::UpdateStaticMovableTransform(uint32_t simpleIndex, const RgUpdateTransformInfo &updateInfo)
@@ -825,60 +467,16 @@ void ASManager::UpdateStaticMovableTransform(uint32_t simpleIndex, const RgUpdat
     collectorStatic->UpdateTransform(simpleIndex, updateInfo);
 }
 
-void vkpt::ASManager::UpdateStaticTexCoords(uint32_t simpleIndex, const RgUpdateTexCoordsInfo &texCoordsInfo)
+void ASManager::UpdateStaticTexCoords(uint32_t simpleIndex, const RgUpdateTexCoordsInfo &texCoordsInfo)
 {
     collectorStatic->UpdateTexCoords(simpleIndex, texCoordsInfo, true);
-}
-
-void vkpt::ASManager::ResubmitStaticTexCoords(VkCommandBuffer cmd)
-{
-    typedef VertexCollectorFilterTypeFlagBits FT;
-
-    if (collectorStatic->AreGeometriesEmpty(FT::CF_STATIC_NON_MOVABLE | FT::CF_STATIC_MOVABLE))
-    {
-        return;
-    }
-
-    CmdLabel label(cmd, "Recopying static tex coords");
-
-    collectorStatic->RecopyTexCoordsFromStaging(cmd);
-}
-
-void ASManager::ResubmitStaticMovable(VkCommandBuffer cmd)
-{
-    typedef VertexCollectorFilterTypeFlagBits FT;
-
-    if (collectorStatic->AreGeometriesEmpty(FT::CF_STATIC_MOVABLE))
-    {
-        return;
-    }
-
-    assert(asBuilder->IsEmpty());
-
-    // update movable blas
-    for (auto &blas : allStaticBlas)
-    {
-        assert(!(blas->GetFilter() & FT::CF_DYNAMIC));
-
-        if (blas->GetFilter() & FT::CF_STATIC_MOVABLE)
-        {
-            UpdateBLAS(*blas, collectorStatic);
-        }
-    }
-
-    CmdLabel label(cmd, "Building static movable BLAS");
-
-    // copy transforms to device-local memory
-    collectorStatic->RecopyTransformsFromStaging(cmd);
-
-    asBuilder->BuildBottomLevel(cmd);
 }
 
 bool ASManager::GetTLASInstanceForFilter(VertexCollectorFilterTypeFlags filter, uint32_t rayCullMaskWorld, bool allowGeometryWithSkyFlag, VkAccelerationStructureInstanceKHR &instance)
 {
     typedef VertexCollectorFilterTypeFlagBits FT;
 
-    instance.transform = 
+    instance.transform =
     {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
@@ -887,13 +485,10 @@ bool ASManager::GetTLASInstanceForFilter(VertexCollectorFilterTypeFlags filter, 
 
     instance.instanceCustomIndex = 0;
 
-
     if (filter & FT::CF_DYNAMIC)
     {
-        // for choosing buffers with dynamic data
         instance.instanceCustomIndex = INSTANCE_CUSTOM_INDEX_FLAG_DYNAMIC;
     }
-
 
     if (filter & FT::PV_FIRST_PERSON)
     {
@@ -907,9 +502,6 @@ bool ASManager::GetTLASInstanceForFilter(VertexCollectorFilterTypeFlags filter, 
     }
     else
     {
-        // also check rayCullMaskWorld, if world part is not included in the cull mask,
-        // then don't add it to BLAS at all, it helps culling PT_REFLECT if it was a world part
-
         if (filter & FT::PV_WORLD_0)
         {
             instance.mask = INSTANCE_MASK_WORLD_0;
@@ -955,41 +547,32 @@ bool ASManager::GetTLASInstanceForFilter(VertexCollectorFilterTypeFlags filter, 
         }
     }
 
-
-    if( filter & FT::PT_REFRACT )
+    if (filter & FT::PT_REFRACT)
     {
-        // don't touch first-person
-        bool isworld = !( filter & FT::PV_FIRST_PERSON ) && !( filter & FT::PV_FIRST_PERSON_VIEWER );
+        const bool isWorld = !(filter & FT::PV_FIRST_PERSON) && !(filter & FT::PV_FIRST_PERSON_VIEWER);
 
-        if( isworld )
+        if (isWorld)
         {
-            // completely rewrite mask, ignoring INSTANCE_MASK_WORLD_*,
-            // if mask contains those world bits, then (mask & (~INSTANCE_MASK_REFRACT))
-            // won't actually cull INSTANCE_MASK_REFRACT
             instance.mask = INSTANCE_MASK_REFRACT;
         }
     }
 
-
-    if( filter & FT::PT_ALPHA_TESTED )
+    if (filter & FT::PT_ALPHA_TESTED)
     {
         instance.instanceShaderBindingTableRecordOffset = SBT_INDEX_HITGROUP_ALPHA_TESTED;
         instance.flags =
             VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR |
-            VK_GEOMETRY_INSTANCE_TRIANGLE_FRONT_COUNTERCLOCKWISE_BIT_KHR /*|
-            VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR*/;
+            VK_GEOMETRY_INSTANCE_TRIANGLE_FRONT_COUNTERCLOCKWISE_BIT_KHR;
     }
     else
     {
-        assert( ( filter & FT::PT_OPAQUE ) || ( filter & FT::PT_REFRACT ) );
+        assert((filter & FT::PT_OPAQUE) || (filter & FT::PT_REFRACT));
 
         instance.instanceShaderBindingTableRecordOffset = SBT_INDEX_HITGROUP_FULLY_OPAQUE;
         instance.flags =
             VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR |
-            VK_GEOMETRY_INSTANCE_TRIANGLE_FRONT_COUNTERCLOCKWISE_BIT_KHR /*|
-            VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR*/;
+            VK_GEOMETRY_INSTANCE_TRIANGLE_FRONT_COUNTERCLOCKWISE_BIT_KHR;
     }
-
 
     return true;
 }
@@ -1001,8 +584,6 @@ bool ASManager::SetupTLASInstanceFromBLAS(const BLASComponent &blas, uint32_t ra
         return false;
     }
 
-    // the attribute rules live in GetTLASInstanceForFilter, so that the engine and the RHI
-    // layer apply the same ones; this wrapper only binds them to the engine's BLAS
     if (!GetTLASInstanceForFilter(blas.GetFilter(), rayCullMaskWorld, allowGeometryWithSkyFlag, instance))
     {
         return false;
@@ -1013,18 +594,20 @@ bool ASManager::SetupTLASInstanceFromBLAS(const BLASComponent &blas, uint32_t ra
     return true;
 }
 
-static void WriteInstanceGeomInfo(int32_t *instanceGeomInfoOffset, int32_t *instanceGeomCount, uint32_t index, const BLASComponent &blas)
+namespace
 {
-    assert(index < MAX_TOP_LEVEL_INSTANCE_COUNT);
+    void WriteInstanceGeomInfo(int32_t *instanceGeomInfoOffset, int32_t *instanceGeomCount, uint32_t index, const BLASComponent &blas)
+    {
+        assert(index < MAX_TOP_LEVEL_INSTANCE_COUNT);
 
-    int32_t arrayOffset = VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(blas.GetFilter());
-    int32_t geomCount = blas.GetGeomCount();
+        const int32_t arrayOffset = VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(blas.GetFilter());
+        const int32_t geomCount = blas.GetGeomCount();
 
-    // BLAS must not be empty, if it's added to TLAS
-    assert(geomCount > 0 && geomCount < MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT);
+        assert(geomCount > 0 && geomCount < MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT);
 
-    instanceGeomInfoOffset[index] = arrayOffset;
-    instanceGeomCount[index] = geomCount;
+        instanceGeomInfoOffset[index] = arrayOffset;
+        instanceGeomCount[index] = geomCount;
+    }
 }
 
 std::pair<ASManager::TLASPrepareResult, ShVertPreprocessing> ASManager::PrepareForBuildingTLAS(
@@ -1038,23 +621,15 @@ std::pair<ASManager::TLASPrepareResult, ShVertPreprocessing> ASManager::PrepareF
 
     static_assert(std::size(TLASPrepareResult{}.instances) == MAX_TOP_LEVEL_INSTANCE_COUNT, "Change TLASPrepareResult sizes");
 
-
-    TLASPrepareResult r = {};
+    TLASPrepareResult result = {};
     ShVertPreprocessing push = {};
-
 
     if (disableRTGeometry)
     {
-        return std::make_pair(r, push);
+        return std::make_pair(result, push);
     }
 
-
-    // write geometry offsets to uniform to access geomInfos
-    // with instance ID and local (in terms of BLAS) geometry index in shaders;
-    // Note: std140 requires elements to be aligned by sizeof(vec4)
     int32_t *instanceGeomInfoOffset = uniformData.instanceGeomInfoOffset;
-
-    // write geometry counts of each BLAS for iterating in vertex preprocessing 
     int32_t *instanceGeomCount = uniformData.instanceGeomCount;
 
     const std::vector<std::unique_ptr<BLASComponent>> *blasArrays[] =
@@ -1063,65 +638,60 @@ std::pair<ASManager::TLASPrepareResult, ShVertPreprocessing> ASManager::PrepareF
         &allDynamicBlas[frameIndex],
     };
 
-    for (const auto *blasArr : blasArrays)
+    for (const auto *blasArray : blasArrays)
     {
-        for (const auto &blas : *blasArr)
+        for (const auto &blas : *blasArray)
         {
-            bool isDynamic = blas->GetFilter() & FT::CF_DYNAMIC;
+            const bool isDynamic = blas->GetFilter() & FT::CF_DYNAMIC;
 
-            // add to TLAS instances array
-            bool isAdded = ASManager::SetupTLASInstanceFromBLAS(*blas, uniformData_rayCullMaskWorld, allowGeometryWithSkyFlag, r.instances[r.instanceCount]);
+            const bool isAdded = SetupTLASInstanceFromBLAS(
+                *blas, uniformData_rayCullMaskWorld, allowGeometryWithSkyFlag, result.instances[result.instanceCount]);
 
-            if (isAdded)
+            if (!isAdded)
             {
-                // mark bit if dynamic
-                if (isDynamic)
-                {
-                    push.tlasInstanceIsDynamicBits[ r.instanceCount / MAX_TOP_LEVEL_INSTANCE_COUNT] |= 1 << (r.instanceCount % MAX_TOP_LEVEL_INSTANCE_COUNT);
-                }
-
-                WriteInstanceGeomInfo(instanceGeomInfoOffset, instanceGeomCount, r.instanceCount, *blas);
-                r.instanceCount++;
+                continue;
             }
+
+            if (isDynamic)
+            {
+                push.tlasInstanceIsDynamicBits[result.instanceCount / MAX_TOP_LEVEL_INSTANCE_COUNT] |= 1 << (result.instanceCount % MAX_TOP_LEVEL_INSTANCE_COUNT);
+            }
+
+            WriteInstanceGeomInfo(instanceGeomInfoOffset, instanceGeomCount, result.instanceCount, *blas);
+            result.instanceCount++;
         }
     }
 
-    push.tlasInstanceCount = r.instanceCount;
+    push.tlasInstanceCount = result.instanceCount;
 
-    return std::make_pair(r, push);
+    return std::make_pair(result, push);
 }
 
 void ASManager::BuildTLAS(VkCommandBuffer cmd, uint32_t frameIndex, const TLASPrepareResult &r)
 {
     CmdLabel label(cmd, "Building TLAS");
 
-
     if (r.instanceCount > 0)
     {
-        // fill buffer
-        auto *mapped = (VkAccelerationStructureInstanceKHR*)instanceBuffer->GetMapped(frameIndex);
+        auto *mapped = (VkAccelerationStructureInstanceKHR *)instanceBuffer->GetMapped(frameIndex);
 
         memcpy(mapped, r.instances, r.instanceCount * sizeof(VkAccelerationStructureInstanceKHR));
 
         instanceBuffer->CopyFromStaging(cmd, frameIndex);
     }
 
-
     TLASComponent *pCurrentTLAS = tlas[frameIndex].get();
-
 
     VkAccelerationStructureGeometryKHR instGeom = {};
     instGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     instGeom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
     instGeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+
     auto &instData = instGeom.geometry.instances;
     instData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
     instData.arrayOfPointers = VK_FALSE;
     instData.data.deviceAddress = r.instanceCount > 0 ? instanceBuffer->GetDeviceAddress() : 0;
 
-    // get AS size and create buffer for AS. The sizes depend only on the instance
-    // count, and the device addresses are ignored by vkGetAccelerationStructureBuildSizesKHR,
-    // so the call is done only when the count changes
     if (!tlasBuildSizesValid[frameIndex] || tlasBuildSizesInstanceCount[frameIndex] != r.instanceCount)
     {
         tlasBuildSizes[frameIndex] = asBuilder->GetTopBuildSizes(&instGeom, r.instanceCount, false);
@@ -1131,34 +701,27 @@ void ASManager::BuildTLAS(VkCommandBuffer cmd, uint32_t frameIndex, const TLASPr
 
     const VkAccelerationStructureBuildSizesInfoKHR &buildSizes = tlasBuildSizes[frameIndex];
 
-    // if previous buffer's size is not enough
     pCurrentTLAS->RecreateIfNotValid(buildSizes, allocator);
 
     VkAccelerationStructureBuildRangeInfoKHR range = {};
     range.primitiveCount = r.instanceCount;
 
-
-    // build
     assert(asBuilder->IsEmpty());
-
     assert(pCurrentTLAS->GetAS() != VK_NULL_HANDLE);
+
     asBuilder->AddTLAS(pCurrentTLAS->GetAS(), &instGeom, &range, buildSizes, true, false);
 
     asBuilder->BuildTopLevel(cmd);
 
-
-    // sync AS access
     Utils::ASBuildMemoryBarrier(cmd);
 
-
-    // shader desc access
     UpdateASDescriptors(frameIndex);
 }
 
 void ASManager::CopyDynamicDataToPrevBuffers(VkCommandBuffer cmd, uint32_t frameIndex)
 {
-    uint32_t vertCount = collectorDynamic[frameIndex]->GetCurrentVertexCount();
-    uint32_t indexCount = collectorDynamic[frameIndex]->GetCurrentIndexCount();
+    const uint32_t vertCount = collectorDynamic[frameIndex]->GetCurrentVertexCount();
+    const uint32_t indexCount = collectorDynamic[frameIndex]->GetCurrentIndexCount();
 
     if (vertCount > 0)
     {
@@ -1168,8 +731,8 @@ void ASManager::CopyDynamicDataToPrevBuffers(VkCommandBuffer cmd, uint32_t frame
         vertRegion.size = vertCount * sizeof(ShVertex);
 
         vkCmdCopyBuffer(
-            cmd, 
-            collectorDynamic[frameIndex]->GetVertexBuffer(), 
+            cmd,
+            collectorDynamic[frameIndex]->GetVertexBuffer(),
             previousDynamicPositions.GetBuffer(),
             1, &vertRegion);
     }
@@ -1182,8 +745,8 @@ void ASManager::CopyDynamicDataToPrevBuffers(VkCommandBuffer cmd, uint32_t frame
         indexRegion.size = indexCount * sizeof(uint32_t);
 
         vkCmdCopyBuffer(
-            cmd, 
-            collectorDynamic[frameIndex]->GetIndexBuffer(), 
+            cmd,
+            collectorDynamic[frameIndex]->GetIndexBuffer(),
             previousDynamicIndices.GetBuffer(),
             1, &indexRegion);
     }
@@ -1213,10 +776,7 @@ bool ASManager::IsFastBuild(VertexCollectorFilterTypeFlags filter)
 {
     typedef VertexCollectorFilterTypeFlagBits FT;
 
-    // fast trace for static non-movable,
-    // fast build for dynamic and movable
-    // (TODO: fix: device lost occurs on heavy scenes if with movable)
-    return (filter & FT::CF_DYNAMIC)/* || (filter & FT::CF_STATIC_MOVABLE)*/;
+    return (filter & FT::CF_DYNAMIC) != 0;
 }
 
 VkDescriptorSet ASManager::GetBuffersDescSet(uint32_t frameIndex) const
@@ -1226,7 +786,6 @@ VkDescriptorSet ASManager::GetBuffersDescSet(uint32_t frameIndex) const
 
 VkDescriptorSet ASManager::GetTLASDescSet(uint32_t frameIndex) const
 {
-    // if TLAS wasn't built, return null
     if (tlas[frameIndex]->GetAS() == VK_NULL_HANDLE)
     {
         return VK_NULL_HANDLE;

@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
@@ -34,9 +31,6 @@ namespace vkpt
 
 struct ShGeometryInstance;
 
-// SimpleIndex -- linear index, incremented with each addition of new geometry
-// LocalGeomIndex -- geometry index in its filter's space
-// GlobalGeomIndex = ToOffset(geomType) * MAX_BLAS_GEOMS + geomLocalIndex
 class GeomInfoManager
 {
 public:
@@ -55,14 +49,10 @@ public:
     void ResetWithStatic();
 
 
-    // Save instance for copying into buffer and fill previous frame's data.
-    // For dynamic geometry it should be called every frame,
-    // and for static geometry -- only when whole static scene was changed.
-    // Returns simple index.
     uint32_t WriteGeomInfo(
         uint32_t frameIndex,
-        uint64_t geomUniqueID, 
-        uint32_t localGeomIndex, 
+        uint64_t geomUniqueID,
+        uint32_t localGeomIndex,
         VertexCollectorFilterTypeFlags flags,
         ShGeometryInstance &src);
 
@@ -81,22 +71,11 @@ public:
     VkBuffer GetMatchPrevBuffer() const;
     uint32_t GetStaticGeomBaseVertexIndex(uint32_t simpleIndex);
 
-    // Read-only views for the RHI layer's vertex-data copies (RHI/RhiAccelStructs.cpp): the engine's
-    // own GeomInfoManager::CopyFromStaging runs only from Scene::SubmitForFrame and from the
-    // level-load submission in ASManager::SubmitStaticGeometry (for slot 0 alone), neither of which
-    // is part of the `rhiframe` frame, so the RHI keeps per-slot copies of the geometry-instance
-    // buffer (GetBuffer) and of the match table (GetMatchPrevBuffer) itself. The staging buffer is
-    // the copy source of the former - the same host-visible buffer CopyFromStaging would read, per
-    // frame slot; the CPU shadow is the source of the latter, because its write into the staging
-    // buffer is part of the same CopyFromStaging. All four stay valid while this object lives.
-    // (Non-const for the staging buffer only: AutoBuffer's accessor is not const.)
     VkBuffer GetStagingBuffer(uint32_t frameIndex);
-    // Byte size of the buffers GetBuffer/GetMatchPrevBuffer/GetStagingBuffer expose.
     VkDeviceSize GetBufferSize() const;
     VkDeviceSize GetMatchPrevSize() const;
-    // The current match table, one int32 per global geometry index.
     const int32_t *GetMatchPrevData() const;
-    
+
 private:
     struct GeomFrameInfo
     {
@@ -121,53 +100,39 @@ private:
 
     static uint32_t GetGlobalGeomIndex(uint32_t localGeomIndex, VertexCollectorFilterTypeFlags flags);
     ShGeometryInstance *GetGeomInfoAddressByGlobalIndex(uint32_t frameIndex, uint32_t globalGeomIndex);
-    
+
     uint32_t ConvertSimpleIndexToGlobal(uint32_t simpleIndex) const;
 
-    // Mark memory to be copied to device local buffer
     void MarkGeomInfoIndexToCopy(uint32_t frameIndex, uint32_t localGeomIndex, uint32_t flagsOffset);
 
-    // Fill ShGeometryInstance with the data from previous frame
-    // Note: frameIndex is not used if geom is not dynamic
     void FillWithPrevFrameData(
-        VertexCollectorFilterTypeFlags flags, uint64_t geomUniqueID, 
+        VertexCollectorFilterTypeFlags flags, uint64_t geomUniqueID,
         uint32_t currentGlobalGeomIndex, ShGeometryInstance &dst, int32_t frameIndex = 0);
 
     void MarkNoPrevInfo(ShGeometryInstance &dst);
     void MarkMovableHasPrevInfo(ShGeometryInstance &dst);
-    // Save data for the next frame
-    // Note: frameIndex is not used if geom is not dynamic
     void WriteInfoForNextUsage(
-        VertexCollectorFilterTypeFlags flags, uint64_t geomUniqueID, 
+        VertexCollectorFilterTypeFlags flags, uint64_t geomUniqueID,
         uint32_t currentGlobalGeomIndex, const ShGeometryInstance &src, int32_t frameIndex = 0);
 
 private:
     VkDevice device;
 
-    // Dynamic geoms must be added only after static ones
-    // so the variable "staticGeomCount" is used to "protect" static geoms
-    // from deletion as dynamic geoms are readded every frame,
-    // but static ones are added very infrequently, e.g. on level load
     uint32_t staticGeomCount;
     uint32_t dynamicGeomCount;
 
-    // buffer for getting info for geometry in BLAS
     std::shared_ptr<AutoBuffer> buffer;
     std::shared_ptr<AutoBuffer> matchPrev;
-    // special CPU side buffer to reduce granular writes to staging
     std::unique_ptr<int32_t[]> matchPrevShadow;
     MatchPrevCopyInfo matchPrevCopyInfo;
 
     std::vector<uint32_t> copyRegionLowerBounds[MAX_FRAMES_IN_FLIGHT];
     std::vector<uint32_t> copyRegionUpperBounds[MAX_FRAMES_IN_FLIGHT];
 
-    // each geometry has its type as they're can be in different filters
     std::vector<VertexCollectorFilterTypeFlags> geomType;
 
     std::vector<uint32_t> simpleToLocalIndex;
 
-    // geometry's uniqueID to geom frame info,
-    // used for getting info from previous frame
     rgl::unordered_map<uint64_t, GeomFrameInfo> dynamicIDToGeomFrameInfo[MAX_FRAMES_IN_FLIGHT];
     rgl::unordered_map<uint64_t, GeomFrameInfo> movableIDToGeomFrameInfo;
 };

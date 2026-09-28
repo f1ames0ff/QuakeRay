@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "Scene.h"
 #include "Generated/ShaderCommonC.h"
@@ -28,7 +25,7 @@
 
 using namespace vkpt;
 
-Scene::Scene(
+vkpt::Scene::Scene(
     VkDevice _device,
     std::shared_ptr<PhysicalDevice> _physDevice,
     std::shared_ptr<MemoryAllocator> &_allocator,
@@ -42,9 +39,6 @@ Scene::Scene(
     submittedStaticInCurrentFrame(false),
     aabbInitialized(false)
 {
-    // the world bounds are accumulated in Upload(); start from an empty range
-    // (std::make_shared uses direct-initialization, so members not listed here
-    // would be left uninitialized - e.g. 0xCD in MSVC debug - poisoning the AABB)
     const float maxF = std::numeric_limits<float>::max();
     aabbMin[0] = aabbMin[1] = aabbMin[2] = maxF;
     aabbMax[0] = aabbMax[1] = aabbMax[2] = -maxF;
@@ -55,73 +49,73 @@ Scene::Scene(
     geomInfoMgr = std::make_shared<GeomInfoManager>(_device, _allocator);
 
     asManager = std::make_shared<ASManager>(_device, _physDevice, _allocator, _cmdManager, _textureManager, geomInfoMgr);
-  
+
     vertPreproc = std::make_shared<VertexPreprocessing>(_device, _uniform, asManager, _shaderManager);
 }
 
-Scene::~Scene()
-{}
+vkpt::Scene::~Scene()
+{
+}
 
-void Scene::PrepareForFrame(VkCommandBuffer cmd, uint32_t frameIndex)
+void vkpt::Scene::PrepareForFrame(VkCommandBuffer cmd, uint32_t frameIndex)
 {
     dynamicUniqueIDToSimpleIndex.clear();
 
     geomInfoMgr->PrepareForFrame(frameIndex);
     lightManager->PrepareForFrame(cmd, frameIndex);
 
-    // dynamic geomtry
     asManager->BeginDynamicGeometry(cmd, frameIndex);
 }
 
-void Scene::PreprocessVertices(VkCommandBuffer cmd, uint32_t frameIndex,
-                               const std::shared_ptr<GlobalUniform> &uniform,
-                               const ShVertPreprocessing &push)
+void vkpt::Scene::PreprocessVertices(VkCommandBuffer cmd, uint32_t frameIndex,
+                                     const std::shared_ptr<GlobalUniform> &uniform,
+                                     const ShVertPreprocessing &push)
 {
-    // Consume the mode exactly as SubmitForFrame does in its own call above: the render path that
-    // owns the frame must call this once per frame, and only the first call after a static
-    // submission (the level load) gets VERT_PREPROC_MODE_ALL, which is what generates the static
-    // world's shading normals. Every later frame runs the dynamic-only mode, as the legacy frame
-    // path does. toResubmitMovable is deliberately not consumed here: the ResubmitStaticMovable
-    // copy that must run together with it is the legacy path's step.
     vertPreproc->Preprocess(cmd, frameIndex, GetVertexPreprocessingMode(), uniform, asManager, push);
     submittedStaticInCurrentFrame = false;
 }
 
-uint32_t Scene::GetVertexPreprocessingMode() const
+uint32_t vkpt::Scene::GetVertexPreprocessingMode() const
 {
-    return submittedStaticInCurrentFrame ? VERT_PREPROC_MODE_ALL :
-           toResubmitMovable             ? VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE :
-                                           VERT_PREPROC_MODE_ONLY_DYNAMIC;
+    if (submittedStaticInCurrentFrame)
+    {
+        return VERT_PREPROC_MODE_ALL;
+    }
+
+    if (toResubmitMovable)
+    {
+        return VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE;
+    }
+
+    return VERT_PREPROC_MODE_ONLY_DYNAMIC;
 }
 
-bool Scene::Upload(uint32_t frameIndex, const RgGeometryUploadInfo &uploadInfo)
+bool vkpt::Scene::Upload(uint32_t frameIndex, const RgGeometryUploadInfo &uploadInfo)
 {
     assert(!DoesUniqueIDExist(uploadInfo.uniqueID));
 
-    // accumulate world bounds for the shadow map (never shrinks)
     {
         const RgVertex *verts = uploadInfo.pVertices;
-        const uint32_t  count = uploadInfo.vertexCount;
+        const uint32_t count = uploadInfo.vertexCount;
 
         for (uint32_t i = 0; i < count; i++)
         {
-            // apply the geometry transform (world space; the AS uses the same
-            // transform, so the bounds stay consistent with the camera space)
+            const float *src = verts[i].position;
             float p[3];
+
             for (int k = 0; k < 3; k++)
             {
-                p[k] = uploadInfo.transform.matrix[k][0] * verts[i].position[0] +
-                       uploadInfo.transform.matrix[k][1] * verts[i].position[1] +
-                       uploadInfo.transform.matrix[k][2] * verts[i].position[2] +
+                p[k] = uploadInfo.transform.matrix[k][0] * src[0] +
+                       uploadInfo.transform.matrix[k][1] * src[1] +
+                       uploadInfo.transform.matrix[k][2] * src[2] +
                        uploadInfo.transform.matrix[k][3];
             }
 
-            // skip invalid vertices (non-finite or absurd coordinates) - they
-            // would poison the world bounds used for the shadow map / god rays
             if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2]))
             {
                 continue;
             }
+
             if (std::abs(p[0]) > 1.0e7f || std::abs(p[1]) > 1.0e7f || std::abs(p[2]) > 1.0e7f)
             {
                 continue;
@@ -130,18 +124,16 @@ bool Scene::Upload(uint32_t frameIndex, const RgGeometryUploadInfo &uploadInfo)
             if (!aabbInitialized)
             {
                 aabbInitialized = true;
-                aabbMin[0] = aabbMax[0] = p[0];
-                aabbMin[1] = aabbMax[1] = p[1];
-                aabbMin[2] = aabbMax[2] = p[2];
+                std::copy(p, p + 3, aabbMin);
+                std::copy(p, p + 3, aabbMax);
             }
             else
             {
-                aabbMin[0] = std::min(aabbMin[0], p[0]);
-                aabbMax[0] = std::max(aabbMax[0], p[0]);
-                aabbMin[1] = std::min(aabbMin[1], p[1]);
-                aabbMax[1] = std::max(aabbMax[1], p[1]);
-                aabbMin[2] = std::min(aabbMin[2], p[2]);
-                aabbMax[2] = std::max(aabbMax[2], p[2]);
+                for (int k = 0; k < 3; k++)
+                {
+                    aabbMin[k] = std::min(aabbMin[k], p[k]);
+                    aabbMax[k] = std::max(aabbMax[k], p[k]);
+                }
             }
         }
     }
@@ -153,7 +145,7 @@ bool Scene::Upload(uint32_t frameIndex, const RgGeometryUploadInfo &uploadInfo)
             throw RgException(RG_WRONG_FUNCTION_CALL, "Dynamic geometry must not be uploaded between rgStartNewScene and rgSubmitStaticGeometries calls");
         }
 
-        uint32_t simpleIndex = asManager->AddDynamicGeometry(frameIndex, uploadInfo);
+        const uint32_t simpleIndex = asManager->AddDynamicGeometry(frameIndex, uploadInfo);
 
         if (simpleIndex != UINT32_MAX)
         {
@@ -164,12 +156,11 @@ bool Scene::Upload(uint32_t frameIndex, const RgGeometryUploadInfo &uploadInfo)
     else
     {
         if (!isRecordingStatic)
-        {          
-            // never allow submitting static geometry out of StartNewStatic-SubmitStatic
+        {
             throw RgException(RG_WRONG_FUNCTION_CALL, "Submitting static geometry is only allowed between rgStartNewScene and rgSubmitStaticGeometries calls");
         }
 
-        uint32_t simpleIndex = asManager->AddStaticGeometry(frameIndex, uploadInfo);
+        const uint32_t simpleIndex = asManager->AddStaticGeometry(frameIndex, uploadInfo);
 
         if (simpleIndex != UINT32_MAX)
         {
@@ -187,12 +178,12 @@ bool Scene::Upload(uint32_t frameIndex, const RgGeometryUploadInfo &uploadInfo)
     return false;
 }
 
-bool Scene::HasAABB() const
+bool vkpt::Scene::HasAABB() const
 {
     return aabbInitialized;
 }
 
-void Scene::GetAABB(float outMin[3], float outMax[3]) const
+void vkpt::Scene::GetAABB(float outMin[3], float outMax[3]) const
 {
     outMin[0] = aabbMin[0];
     outMin[1] = aabbMin[1];
@@ -202,15 +193,15 @@ void Scene::GetAABB(float outMin[3], float outMax[3]) const
     outMax[2] = aabbMax[2];
 }
 
-bool Scene::UpdateTransform(const RgUpdateTransformInfo &updateInfo)
+bool vkpt::Scene::UpdateTransform(const RgUpdateTransformInfo &updateInfo)
 {
     uint32_t simpleIndex;
+
     if (!TryGetStaticSimpleIndex(updateInfo.movableStaticUniqueID, &simpleIndex))
     {
         throw RgException(RG_CANT_UPDATE_TRANSFORM, "Can't find static geometry with unique ID=" + std::to_string(updateInfo.movableStaticUniqueID));
     }
 
-    // check if it's actually movable
     if (std::find(movableGeomIndices.begin(), movableGeomIndices.end(), simpleIndex) == movableGeomIndices.end())
     {
         throw RgException(RG_CANT_UPDATE_TRANSFORM, "Static geometry with unique ID=" + std::to_string(updateInfo.movableStaticUniqueID) + " isn't movable");
@@ -218,8 +209,6 @@ bool Scene::UpdateTransform(const RgUpdateTransformInfo &updateInfo)
 
     asManager->UpdateStaticMovableTransform(simpleIndex, updateInfo);
 
-    // if not recording, then static geometries were already submitted,
-    // as some movable transform was changed AS must be rebuilt
     if (!isRecordingStatic)
     {
         toResubmitMovable = true;
@@ -231,6 +220,7 @@ bool Scene::UpdateTransform(const RgUpdateTransformInfo &updateInfo)
 bool vkpt::Scene::UpdateTexCoords(const RgUpdateTexCoordsInfo &texCoordsInfo)
 {
     uint32_t simpleIndex;
+
     if (!TryGetStaticSimpleIndex(texCoordsInfo.staticUniqueID, &simpleIndex))
     {
         throw RgException(RG_CANT_UPDATE_TEXCOORDS, "Can't find static geometry with unique ID=" + std::to_string(texCoordsInfo.staticUniqueID));
@@ -240,10 +230,8 @@ bool vkpt::Scene::UpdateTexCoords(const RgUpdateTexCoordsInfo &texCoordsInfo)
     return true;
 }
 
-void Scene::SubmitStatic()
+void vkpt::Scene::SubmitStatic()
 {
-    // submit even if nothing was recorded, 
-    // so the static scene will be empty
     if (!isRecordingStatic)
     {
         asManager->BeginStaticGeometry();
@@ -255,7 +243,7 @@ void Scene::SubmitStatic()
     submittedStaticInCurrentFrame = true;
 }
 
-void Scene::StartNewStatic()
+void vkpt::Scene::StartNewStatic()
 {
     if (isRecordingStatic)
     {
@@ -270,7 +258,7 @@ void Scene::StartNewStatic()
     movableGeomIndices.clear();
 }
 
-const std::shared_ptr<ASManager> &Scene::GetASManager()
+const std::shared_ptr<ASManager> &vkpt::Scene::GetASManager()
 {
     return asManager;
 }
@@ -285,21 +273,21 @@ const std::shared_ptr<VertexPreprocessing> &vkpt::Scene::GetVertexPreprocessing(
     return vertPreproc;
 }
 
-bool Scene::DoesUniqueIDExist(uint64_t uniqueID) const
+bool vkpt::Scene::DoesUniqueIDExist(uint64_t uniqueID) const
 {
     return
         staticUniqueIDToSimpleIndex.find(uniqueID) != staticUniqueIDToSimpleIndex.end() ||
         dynamicUniqueIDToSimpleIndex.find(uniqueID) != dynamicUniqueIDToSimpleIndex.end();
 }
 
-bool Scene::DoesDynamicUniqueIDExist(uint64_t uniqueID) const
+bool vkpt::Scene::DoesDynamicUniqueIDExist(uint64_t uniqueID) const
 {
     return dynamicUniqueIDToSimpleIndex.find(uniqueID) != dynamicUniqueIDToSimpleIndex.end();
 }
 
-bool Scene::TryGetStaticSimpleIndex(uint64_t uniqueID, uint32_t *result) const
+bool vkpt::Scene::TryGetStaticSimpleIndex(uint64_t uniqueID, uint32_t *result) const
 {
-    auto f = staticUniqueIDToSimpleIndex.find(uniqueID);
+    const auto f = staticUniqueIDToSimpleIndex.find(uniqueID);
 
     if (f != staticUniqueIDToSimpleIndex.end())
     {
@@ -310,12 +298,12 @@ bool Scene::TryGetStaticSimpleIndex(uint64_t uniqueID, uint32_t *result) const
     return false;
 }
 
-void Scene::UploadLight(uint32_t frameIndex, const RgDirectionalLightUploadInfo &lightInfo)
+void vkpt::Scene::UploadLight(uint32_t frameIndex, const RgDirectionalLightUploadInfo &lightInfo)
 {
     lightManager->AddDirectionalLight(frameIndex, lightInfo);
 }
 
-void Scene::UploadLight(uint32_t frameIndex, const RgSphericalLightUploadInfo &lightInfo)
+void vkpt::Scene::UploadLight(uint32_t frameIndex, const RgSphericalLightUploadInfo &lightInfo)
 {
     lightManager->AddSphericalLight(frameIndex, lightInfo);
 }
@@ -330,7 +318,7 @@ void vkpt::Scene::UploadLight(uint32_t frameIndex, const RgTexturedAreaLightUplo
     lightManager->AddTexturedAreaLight(frameIndex, lightInfo, textureIndex);
 }
 
-void Scene::UploadLight(uint32_t frameIndex,const RgSpotLightUploadInfo &lightInfo)
+void vkpt::Scene::UploadLight(uint32_t frameIndex, const RgSpotLightUploadInfo &lightInfo)
 {
     lightManager->AddSpotlight(frameIndex, lightInfo);
 }

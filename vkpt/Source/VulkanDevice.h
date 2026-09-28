@@ -36,7 +36,7 @@
 #include "Swapchain.h"
 #include "Queues.h"
 #include "GlobalUniform.h"
-#include "Rasterizer.h"
+#include "RasterizedDataCollector.h"
 #include "Framebuffers.h"
 #include "MemoryAllocator.h"
 #include "TextureManager.h"
@@ -208,7 +208,7 @@ private:
     std::shared_ptr<Scene>                  scene;
 
     std::shared_ptr<ShaderManager>          shaderManager;
-    std::shared_ptr<Rasterizer>             rasterizer;
+    std::shared_ptr<RasterizedDataCollector> rasterizedDataCollector;
     std::shared_ptr<DecalManager>           decalManager;
     std::shared_ptr<PortalList>             portalList;
     std::shared_ptr<Tonemapping>            tonemapping;

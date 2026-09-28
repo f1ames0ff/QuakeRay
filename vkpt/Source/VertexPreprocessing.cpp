@@ -1,27 +1,24 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "VertexPreprocessing.h"
 
 #include <vector>
-#include <cmath>
+
 #include "Generated/ShaderCommonC.h"
 #include "CmdLabel.h"
 
@@ -30,8 +27,7 @@ vkpt::VertexPreprocessing::VertexPreprocessing(
     const std::shared_ptr<const GlobalUniform> &_uniform,
     const std::shared_ptr<const ASManager> &_asManager,
     const std::shared_ptr<const ShaderManager> &_shaderManager)
-:
-    device(_device)
+    : device(_device)
 {
     std::vector<VkDescriptorSetLayout> setLayouts =
     {
@@ -57,38 +53,37 @@ void vkpt::VertexPreprocessing::Preprocess(
 {
     CmdLabel label(cmd, "Vertex preprocessing");
 
+    const bool onlyDynamic = preprocMode == VERT_PREPROC_MODE_ONLY_DYNAMIC;
 
-    asManager->OnVertexPreprocessingBegin(cmd, frameIndex, preprocMode == VERT_PREPROC_MODE_ONLY_DYNAMIC);
+    asManager->OnVertexPreprocessingBegin(cmd, frameIndex, onlyDynamic);
 
+    VkPipeline pipeline =
+        preprocMode == VERT_PREPROC_MODE_ALL ?
+            pipelineAll :
+        preprocMode == VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE ?
+            pipelineDynamicAndMovable :
+            pipelineOnlyDynamic;
 
-    VkPipeline pl = 
-        preprocMode == VERT_PREPROC_MODE_ALL ? pipelineAll :
-        preprocMode == VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE ? pipelineDynamicAndMovable :
-        pipelineOnlyDynamic;
-   
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pl);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
-
-    VkDescriptorSet sets[] =
+    const VkDescriptorSet sets[] =
     {
         uniform->GetDescSet(frameIndex),
         asManager->GetBuffersDescSet(frameIndex)
     };
-    const uint32_t setCount = sizeof(sets) / sizeof(VkDescriptorSet);
-    
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            pipelineLayout,
-                            0, setCount, sets,
-                            0, nullptr);
+    const uint32_t setCount = sizeof(sets) / sizeof(sets[0]);
 
+    vkCmdBindDescriptorSets(
+        cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout,
+        0, setCount, sets, 0, nullptr);
 
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ShVertPreprocessing), &push);
-
+    vkCmdPushConstants(
+        cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+        0, sizeof(ShVertPreprocessing), &push);
 
     vkCmdDispatch(cmd, push.tlasInstanceCount, 1, 1);
 
-
-    asManager->OnVertexPreprocessingFinish(cmd, frameIndex, preprocMode == VERT_PREPROC_MODE_ONLY_DYNAMIC);
+    asManager->OnVertexPreprocessingFinish(cmd, frameIndex, onlyDynamic);
 }
 
 void vkpt::VertexPreprocessing::OnShaderReload(const ShaderManager *shaderManager)
@@ -97,21 +92,21 @@ void vkpt::VertexPreprocessing::OnShaderReload(const ShaderManager *shaderManage
     CreatePipelines(shaderManager);
 }
 
-void vkpt::VertexPreprocessing::CreatePipelineLayout(VkDescriptorSetLayout*pSetLayouts, uint32_t setLayoutCount)
+void vkpt::VertexPreprocessing::CreatePipelineLayout(VkDescriptorSetLayout *pSetLayouts, uint32_t setLayoutCount)
 {
-    VkPushConstantRange pc = {};
-    pc.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pc.offset = 0;
-    pc.size = sizeof(ShVertPreprocessing);
+    VkPushConstantRange pushConstant = {};
+    pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushConstant.offset = 0;
+    pushConstant.size = sizeof(ShVertPreprocessing);
 
-    VkPipelineLayoutCreateInfo plLayoutInfo = {};
-    plLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plLayoutInfo.setLayoutCount = setLayoutCount;
-    plLayoutInfo.pSetLayouts = pSetLayouts;
-    plLayoutInfo.pushConstantRangeCount = 1;
-    plLayoutInfo.pPushConstantRanges = &pc;
+    VkPipelineLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = setLayoutCount;
+    layoutInfo.pSetLayouts = pSetLayouts;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstant;
 
-    VkResult r = vkCreatePipelineLayout(device, &plLayoutInfo, nullptr, &pipelineLayout);
+    VkResult r = vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout);
     VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, pipelineLayout, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "Vertex preprocessing pipeline layout");
@@ -119,52 +114,46 @@ void vkpt::VertexPreprocessing::CreatePipelineLayout(VkDescriptorSetLayout*pSetL
 
 void vkpt::VertexPreprocessing::CreatePipelines(const ShaderManager *shaderManager)
 {
-    VkResult r;
+    struct PipelineSpec
+    {
+        uint32_t mode;
+        VkPipeline *pipeline;
+        const char *debugName;
+    };
 
-    uint32_t specInfoDataOnlyDynamic = 0;
-
-    VkSpecializationMapEntry specEntry = {};
-    specEntry.constantID = 0;
-    specEntry.offset = 0;
-    specEntry.size = sizeof(uint32_t);
-
-    VkSpecializationInfo specInfo = {};
-    specInfo.mapEntryCount = 1;
-    specInfo.pMapEntries = &specEntry;
-    specInfo.dataSize = sizeof(uint32_t);
-    specInfo.pData = &specInfoDataOnlyDynamic;
+    const PipelineSpec specs[] =
+    {
+        { VERT_PREPROC_MODE_ONLY_DYNAMIC,        &pipelineOnlyDynamic,       "Vertex only dynamic preprocessing pipeline"        },
+        { VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE, &pipelineDynamicAndMovable, "Vertex movable/dynamic preprocessing pipeline"     },
+        { VERT_PREPROC_MODE_ALL,                 &pipelineAll,               "Vertex static/movable/dynamic preprocessing pipeline" },
+    };
 
     VkComputePipelineCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     plInfo.layout = pipelineLayout;
     plInfo.stage = shaderManager->GetStageInfo("CVertexPreprocess");
-    plInfo.stage.pSpecializationInfo = &specInfo;
-    
-    {
-        specInfoDataOnlyDynamic = VERT_PREPROC_MODE_ONLY_DYNAMIC;
 
-        r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &plInfo, nullptr, &pipelineOnlyDynamic);
+    for (const PipelineSpec &spec : specs)
+    {
+        uint32_t mode = spec.mode;
+
+        VkSpecializationMapEntry specEntry = {};
+        specEntry.constantID = 0;
+        specEntry.offset = 0;
+        specEntry.size = sizeof(uint32_t);
+
+        VkSpecializationInfo specInfo = {};
+        specInfo.mapEntryCount = 1;
+        specInfo.pMapEntries = &specEntry;
+        specInfo.dataSize = sizeof(uint32_t);
+        specInfo.pData = &mode;
+
+        plInfo.stage.pSpecializationInfo = &specInfo;
+
+        VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &plInfo, nullptr, spec.pipeline);
         VK_CHECKERROR(r);
 
-        SET_DEBUG_NAME(device, pipelineOnlyDynamic, VK_OBJECT_TYPE_PIPELINE, "Vertex only dynamic preprocessing pipeline");
-    }
-    
-    {
-        specInfoDataOnlyDynamic = VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE;
-
-        r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &plInfo, nullptr, &pipelineDynamicAndMovable);
-        VK_CHECKERROR(r);
-
-        SET_DEBUG_NAME(device, pipelineDynamicAndMovable, VK_OBJECT_TYPE_PIPELINE, "Vertex movable/dynamic preprocessing pipeline");
-    }
-
-    {
-        specInfoDataOnlyDynamic = VERT_PREPROC_MODE_ALL;
-
-        r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &plInfo, nullptr, &pipelineAll);
-        VK_CHECKERROR(r);
-
-        SET_DEBUG_NAME(device, pipelineAll, VK_OBJECT_TYPE_PIPELINE, "Vertex static/movable/dynamic preprocessing pipeline");
+        SET_DEBUG_NAME(device, *spec.pipeline, VK_OBJECT_TYPE_PIPELINE, spec.debugName);
     }
 }
 

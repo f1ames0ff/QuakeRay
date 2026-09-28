@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
@@ -48,13 +45,6 @@ public:
 
     void PrepareForFrame(VkCommandBuffer cmd, uint32_t frameIndex);
 
-    // The vertex preprocessing that generates the shading normals of the world geometry (the
-    // surfaces uploaded with RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT), for the render path that
-    // owns the frame. `push` is the frame's ASManager::PrepareForBuildingTLAS result. Consumes the
-    // static-submission marker exactly as SubmitForFrame's own call does, so the mode is
-    // VERT_PREPROC_MODE_ALL on the first preprocessing after a static submission (a level load)
-    // and the dynamic-only mode on the frames after it. The movable-resubmission state stays
-    // untouched: its ResubmitStaticMovable copy is still the legacy path's step (SubmitForFrame).
     void PreprocessVertices(VkCommandBuffer cmd, uint32_t frameIndex,
                             const std::shared_ptr<GlobalUniform> &uniform,
                             const ShVertPreprocessing &push);
@@ -76,7 +66,6 @@ public:
     const std::shared_ptr<LightManager> &GetLightManager();
     const std::shared_ptr<VertexPreprocessing> &GetVertexPreprocessing();
 
-    // World-space AABB accumulated over all uploaded geometry (never shrinks).
     bool HasAABB() const;
     void GetAABB(float outMin[3], float outMax[3]) const;
 
@@ -86,11 +75,6 @@ public:
 private:
     bool TryGetStaticSimpleIndex(uint64_t uniqueID, uint32_t *result) const;
 
-    // The preprocessing mode of the current frame, from the state SubmitForFrame has always used:
-    // a static submission forces VERT_PREPROC_MODE_ALL once, a pending movable resubmission asks
-    // for VERT_PREPROC_MODE_DYNAMIC_AND_MOVABLE, and the default is VERT_PREPROC_MODE_ONLY_DYNAMIC.
-    // Read-only: the callers consume the flags themselves (SubmitForFrame at the top, as before;
-    // PreprocessVertices only the static-submission one).
     uint32_t GetVertexPreprocessingMode() const;
 
 private:
@@ -99,18 +83,15 @@ private:
     std::shared_ptr<GeomInfoManager> geomInfoMgr;
     std::shared_ptr<VertexPreprocessing> vertPreproc;
 
-    // Dynamic indices are cleared every frame
     rgl::unordered_map<uint64_t, uint32_t> dynamicUniqueIDToSimpleIndex;
     rgl::unordered_map<uint64_t, uint32_t> staticUniqueIDToSimpleIndex;
 
-    // Movable geometry IDs
     std::vector<uint32_t> movableGeomIndices;
     bool toResubmitMovable;
 
     bool isRecordingStatic;
     bool submittedStaticInCurrentFrame;
 
-    // accumulated world-space bounds
     float aabbMin[3];
     float aabbMax[3];
     bool  aabbInitialized;

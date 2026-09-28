@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "RasterizedDataCollector.h"
 
@@ -28,24 +25,96 @@
 
 using namespace vkpt;
 
-void RasterizedDataCollector::GetVertexLayout(VkVertexInputAttributeDescription *outAttrs, uint32_t *outAttrsCount)
+namespace
 {
-    *outAttrsCount = 3;
+    struct VertexAttribute
+    {
+        uint32_t location;
+        VkFormat format;
+        size_t   offset;
+    };
 
-    outAttrs[0].binding = 0;
-    outAttrs[0].location = 0;
-    outAttrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    outAttrs[0].offset = offsetof(RgVertex, position);
+    void FillVertexAttributes(
+        const VertexAttribute *attrs, size_t attrCount,
+        VkVertexInputAttributeDescription *outAttrs, uint32_t *outAttrsCount)
+    {
+        for (size_t i = 0; i < attrCount; i++)
+        {
+            outAttrs[i].binding = 0;
+            outAttrs[i].location = attrs[i].location;
+            outAttrs[i].format = attrs[i].format;
+            outAttrs[i].offset = (uint32_t)attrs[i].offset;
+        }
 
-    outAttrs[1].binding = 0;
-    outAttrs[1].location = 1;
-    outAttrs[1].format = VK_FORMAT_R8G8B8A8_UNORM;
-    outAttrs[1].offset = offsetof(RgVertex, packedColor);
+        *outAttrsCount = (uint32_t)attrCount;
+    }
 
-    outAttrs[2].binding = 0;
-    outAttrs[2].location = 2;
-    outAttrs[2].format = VK_FORMAT_R32G32_SFLOAT;
-    outAttrs[2].offset = offsetof(RgVertex, texCoord);
+    bool IsWorld(RgRasterizedGeometryRenderType type)
+    {
+        return type == RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT;
+    }
+
+    bool IsSwapchain(RgRasterizedGeometryRenderType type)
+    {
+        return type == RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN;
+    }
+
+    bool IsSky(RgRasterizedGeometryRenderType type)
+    {
+        return type == RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY;
+    }
+
+    VkViewport ToVkViewport(const RgViewport &v)
+    {
+        return VkViewport{
+            .x        = v.x,
+            .y        = v.y,
+            .width    = v.width,
+            .height   = v.height,
+            .minDepth = v.minDepth,
+            .maxDepth = v.maxDepth,
+        };
+    }
+
+    uint32_t ResolveTextureIndex_AlbedoAlpha(
+        const vkpt::TextureManager &manager, const RgRasterizedGeometryUploadInfo &info)
+    {
+        if (info.material == RG_NO_MATERIAL)
+        {
+            return EMPTY_TEXTURE_INDEX;
+        }
+
+        return manager.GetMaterialTextures(info.material).indices[MATERIAL_ALBEDO_ALPHA_INDEX];
+    }
+
+    uint32_t ResolveTextureIndex_RME(
+        const vkpt::TextureManager &manager, const RgRasterizedGeometryUploadInfo &info)
+    {
+        if (info.material == RG_NO_MATERIAL)
+        {
+            return EMPTY_TEXTURE_INDEX;
+        }
+
+        if (!IsWorld(info.renderType))
+        {
+            return EMPTY_TEXTURE_INDEX;
+        }
+
+        return manager.GetMaterialTextures(info.material).indices[MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX];
+    }
+}
+
+void RasterizedDataCollector::GetVertexLayout(
+    VkVertexInputAttributeDescription *outAttrs, uint32_t *outAttrsCount)
+{
+    const VertexAttribute attrs[] =
+    {
+        { 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(RgVertex, position)    },
+        { 1, VK_FORMAT_R8G8B8A8_UNORM,   offsetof(RgVertex, packedColor) },
+        { 2, VK_FORMAT_R32G32_SFLOAT,    offsetof(RgVertex, texCoord)    },
+    };
+
+    FillVertexAttributes(attrs, std::size(attrs), outAttrs, outAttrsCount);
 }
 
 uint32_t RasterizedDataCollector::GetVertexStride()
@@ -53,39 +122,20 @@ uint32_t RasterizedDataCollector::GetVertexStride()
     return static_cast<uint32_t>(sizeof(RgVertex));
 }
 
-void RasterizedDataCollector::GetSmokeVertexLayout(VkVertexInputAttributeDescription *outAttrs, uint32_t *outAttrsCount)
+void RasterizedDataCollector::GetSmokeVertexLayout(
+    VkVertexInputAttributeDescription *outAttrs, uint32_t *outAttrsCount)
 {
-    *outAttrsCount = 6;
+    const VertexAttribute attrs[] =
+    {
+        { 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(RgVertex, position)     },
+        { 1, VK_FORMAT_R8G8B8A8_UNORM,   offsetof(RgVertex, packedColor)  },
+        { 2, VK_FORMAT_R32G32_SFLOAT,    offsetof(RgVertex, texCoord)     },
+        { 3, VK_FORMAT_R32G32B32_SFLOAT, offsetof(RgVertex, normal)       },
+        { 4, VK_FORMAT_R32G32_SFLOAT,    offsetof(RgVertex, texCoordLayer1) },
+        { 5, VK_FORMAT_R32_UINT,         offsetof(RgVertex, cluster)      },
+    };
 
-    outAttrs[0].binding = 0;
-    outAttrs[0].location = 0;
-    outAttrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    outAttrs[0].offset = offsetof(RgVertex, position);
-
-    outAttrs[1].binding = 0;
-    outAttrs[1].location = 1;
-    outAttrs[1].format = VK_FORMAT_R8G8B8A8_UNORM;
-    outAttrs[1].offset = offsetof(RgVertex, packedColor);
-
-    outAttrs[2].binding = 0;
-    outAttrs[2].location = 2;
-    outAttrs[2].format = VK_FORMAT_R32G32_SFLOAT;
-    outAttrs[2].offset = offsetof(RgVertex, texCoord);
-
-    outAttrs[3].binding = 0;
-    outAttrs[3].location = 3;
-    outAttrs[3].format = VK_FORMAT_R32G32B32_SFLOAT;
-    outAttrs[3].offset = offsetof(RgVertex, normal);
-
-    outAttrs[4].binding = 0;
-    outAttrs[4].location = 4;
-    outAttrs[4].format = VK_FORMAT_R32G32_SFLOAT;
-    outAttrs[4].offset = offsetof(RgVertex, texCoordLayer1);
-
-    outAttrs[5].binding = 0;
-    outAttrs[5].location = 5;
-    outAttrs[5].format = VK_FORMAT_R32_UINT;
-    outAttrs[5].offset = offsetof(RgVertex, cluster);
+    FillVertexAttributes(attrs, std::size(attrs), outAttrs, outAttrsCount);
 }
 
 RasterizedDataCollector::RasterizedDataCollector( VkDevice                            _device,
@@ -104,10 +154,6 @@ RasterizedDataCollector::RasterizedDataCollector( VkDevice                      
     _maxVertexCount = std::max(_maxVertexCount, 64u);
     _maxIndexCount = std::max(_maxIndexCount, 64u);
 
-    // The RHI sky pass binds these buffers through a native wrap, and NVRHI queries a buffer device
-    // address when it wraps one (vulkan-buffer.cpp:215-220). The usage bit is what lets MemoryAllocator
-    // request an address-capable memory (Buffer.cpp:72-78) and silences
-    // VUID-VkBufferDeviceAddressInfo-buffer-02601.
     vertexBuffer->Create(_maxVertexCount * sizeof(RgVertex),
                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                          "Rasterizer vertex buffer");
@@ -117,95 +163,34 @@ RasterizedDataCollector::RasterizedDataCollector( VkDevice                      
 }
 
 RasterizedDataCollector::~RasterizedDataCollector()
-{}
-
-namespace 
 {
-    bool IsWorld( RgRasterizedGeometryRenderType type )
-    {
-        return type == RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT;
-    }
-
-    bool IsSwapchain( RgRasterizedGeometryRenderType type )
-    {
-        return type == RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN;
-    }
-
-    bool IsSky( RgRasterizedGeometryRenderType type)
-    {
-        return type == RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY;
-    }
-
-    VkViewport ToVk(const RgViewport &v)
-    {
-        return VkViewport{
-            .x        = v.x,
-            .y        = v.y,
-            .width    = v.width,
-            .height   = v.height,
-            .minDepth = v.minDepth,
-            .maxDepth = v.maxDepth,
-        };
-    }
-
-    uint32_t ResolveTextureIndex_AlbedoAlpha( const vkpt::TextureManager& manager,
-                                              const RgRasterizedGeometryUploadInfo& info )
-    {
-        if( info.material == RG_NO_MATERIAL )
-        {
-            return EMPTY_TEXTURE_INDEX;
-        }
-
-        return manager.GetMaterialTextures( info.material )
-            .indices[ MATERIAL_ALBEDO_ALPHA_INDEX ];
-    }
-
-    uint32_t ResolveTextureIndex_RME( const vkpt::TextureManager&          manager,
-                                              const RgRasterizedGeometryUploadInfo& info )
-    {
-        if( info.material == RG_NO_MATERIAL )
-        {
-            return EMPTY_TEXTURE_INDEX;
-        }
-
-        if( !IsWorld( info.renderType ) )
-        {
-            return EMPTY_TEXTURE_INDEX;
-        }
-
-        return manager.GetMaterialTextures( info.material )
-            .indices[ MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX ];
-    }
 }
 
-void RasterizedDataCollector::AddGeometry(uint32_t frameIndex, 
-                                          const RgRasterizedGeometryUploadInfo &info, 
+void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
+                                          const RgRasterizedGeometryUploadInfo &info,
                                           const float *pViewProjection, const RgViewport *pViewport)
 {
     assert(info.vertexCount > 0);
     assert(info.pVertices != nullptr);
 
-    // for swapchain, depth data is not available
-    if( IsSwapchain( info.renderType ) )
+    if (IsSwapchain(info.renderType))
     {
-        if( info.pipelineState & RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST )
+        if (info.pipelineState & RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST)
         {
-            assert( 0 );
+            assert(0);
             return;
         }
 
-        if( info.pipelineState & RG_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE )
+        if (info.pipelineState & RG_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE)
         {
-            assert( 0 );
+            assert(0);
             return;
         }
     }
 
-    // for sky, default pViewProjection and pViewport must be used,
-    // as sky geometry can be updated not in each frame
-    if( IsSky( info.renderType ) )
+    if (IsSky(info.renderType))
     {
-        if( pViewProjection != nullptr || pViewport != nullptr )
+        if (pViewProjection != nullptr || pViewport != nullptr)
         {
             throw RgException(RG_CANT_UPLOAD_RASTERIZED_GEOMETRY, "pViewProjection and pViewport must be null if renderType is RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY");
         }
@@ -223,17 +208,15 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
         return;
     }
 
-
     DrawInfo &drawInfo = PushInfo(info.renderType);
 
     ShVertex* const vertsBase   = static_cast< ShVertex* >( vertexBuffer->GetMapped( frameIndex ) );
     uint32_t* const indicesBase = static_cast< uint32_t* >( indexBuffer->GetMapped( frameIndex ) );
 
-
     drawInfo = {
         .transform            = info.transform,
         .viewProj             = IfNotNull( pViewProjection, Float16D( pViewProjection ) ),
-        .viewport             = IfNotNull( pViewport, ToVk( *pViewport ) ),
+        .viewport             = IfNotNull( pViewport, ToVkViewport( *pViewport ) ),
         .color                = Float4D( info.color.data ),
         .textureIndex         = ResolveTextureIndex_AlbedoAlpha( *textureMgr, info ),
         .emissionTextureIndex = ResolveTextureIndex_RME( *textureMgr, info ),
@@ -244,16 +227,12 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
         .smokeLook            = Float4D( info.smokeLook.data ),
     };
 
-
-    // copy vertex data
     CopyFromArrayOfStructs( info, &vertsBase[ curVertexCount ] );
 
     drawInfo.vertexCount = info.vertexCount;
     drawInfo.firstVertex  = static_cast< uint32_t >( curVertexCount );
     curVertexCount += info.vertexCount;
 
-
-    // copy index data
     if( info.indexCount != 0 && info.pIndices != nullptr )
     {
         if( curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof( uint32_t ) )
@@ -262,10 +241,9 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
             return;
         }
 
-        memcpy(
-            &indicesBase[ curIndexCount ], info.pIndices, info.indexCount * sizeof( uint32_t ) );
+        memcpy( &indicesBase[ curIndexCount ], info.pIndices, info.indexCount * sizeof( uint32_t ) );
 
-        drawInfo.indexCount   = info.indexCount;
+        drawInfo.indexCount = info.indexCount;
         drawInfo.firstIndex = static_cast< uint32_t >( curIndexCount );
 
         curIndexCount += info.indexCount;
@@ -293,11 +271,11 @@ RasterizedDataCollector::DrawInfo& RasterizedDataCollector::PushInfo(
     throw RgException( RG_GRAPHICS_API_ERROR, "RasterizedDataCollector::PushInfo error" );
 }
 
-void RasterizedDataCollector::CopyFromArrayOfStructs(const RgRasterizedGeometryUploadInfo &info, ShVertex *dstVerts)
+void RasterizedDataCollector::CopyFromArrayOfStructs(
+    const RgRasterizedGeometryUploadInfo &info, ShVertex *dstVerts)
 {
     assert(info.pVertices != nullptr);
 
-    // must be same to copy
     static_assert(std::is_same_v<decltype(info.pVertices), const RgVertex * >);
     static_assert(sizeof(ShVertex)                      == sizeof(RgVertex));
     static_assert(offsetof(ShVertex, position)          == offsetof(RgVertex, position));

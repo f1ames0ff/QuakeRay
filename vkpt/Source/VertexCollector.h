@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #pragma once
 
@@ -37,20 +34,16 @@ namespace vkpt
 struct ShGeometryInstance;
 struct ShVertex;
 
-// The class collects vertex data to buffers with shader struct types.
-// Geometries are passed to the class by chunks and the result of collecting
-// is a vertex buffer with ready data and infos for acceleration structure creation/building.
 class VertexCollector : public IMaterialDependency
 {
 public:
     explicit VertexCollector(
-        VkDevice device, 
+        VkDevice device,
         const std::shared_ptr<MemoryAllocator> &allocator,
         std::shared_ptr<GeomInfoManager> geomInfoManager,
         VkDeviceSize bufferSize,
         VertexCollectorFilterTypeFlags filters);
 
-    // Create new vertex collector, but with shared device local buffers
     explicit VertexCollector(
         const std::shared_ptr<const VertexCollector> &src,
         const std::shared_ptr<MemoryAllocator> &allocator);
@@ -64,30 +57,18 @@ public:
 
 
     void BeginCollecting(bool isStatic);
-    // materials[3] is a lightmap
     uint32_t AddGeometry(uint32_t frameIndex, const RgGeometryUploadInfo &info, std::span<MaterialTextures, 3> materials);
     void EndCollecting();
 
 
-    // Clear data that was generated while collecting.
-    // Should be called when blasGeometries is not needed anymore
     virtual void Reset();
-    // Copy buffer from staging and set barrier for processing in compute shader
-    // "isStaticVertexData" is required to determine what GLSL struct to use for copying
     bool CopyFromStaging(VkCommandBuffer cmd);
-    // Returns false, if wasn't copied
-    bool RecopyTransformsFromStaging(VkCommandBuffer cmd);
-    bool RecopyTexCoordsFromStaging(VkCommandBuffer cmd);
 
 
-    // Update transform, only for movable static geometry as dynamic geometry
-    // will be updated every frame and thus their transforms.
     void UpdateTransform(uint32_t simpleIndex, const RgUpdateTransformInfo &updateInfo);
-    // Update texture coordinates 
     void UpdateTexCoords(uint32_t simpleIndex, const RgUpdateTexCoordsInfo &texCoordsInfo, bool isStatic);
 
 
-    // When material data is changed, this function is called
     void OnMaterialChange(uint32_t materialIndex, const MaterialTextures &newInfo) override;
 
 
@@ -96,86 +77,59 @@ public:
     uint32_t GetCurrentVertexCount() const;
     uint32_t GetCurrentIndexCount() const;
 
-    // Read-only views for the RHI layer's acceleration-structure builds (RHI/RhiAccelStructs.cpp);
-    // no behaviour change, the accessors only read what the collector already holds.
-    // Device address of the device-local vertex buffer, so that the RHI side can turn the absolute
-    // addresses in the AS geometry descriptors into NVRHI buffer offsets.
     VkDeviceAddress GetVertexBufferAddress() const;
-    // Device address of the device-local index buffer, for the same offset arithmetic.
     VkDeviceAddress GetIndexBufferAddress() const;
-    // Device address of the transforms buffer: the RHI side reads the transform values from the CPU
-    // copy below, so the address only serves to locate a geometry's transform index in it.
     VkDeviceAddress GetTransformsBufferAddress() const;
-    // Byte sizes of the two device-local buffers, for the RHI wrap's bookkeeping desc (a native
-    // wrap has no other source for them).
     VkDeviceSize GetVertexBufferSize() const;
     VkDeviceSize GetIndexBufferSize() const;
-    // The CPU-side staging copy of the per-geometry transforms (VkTransformMatrixKHR, one per
-    // geometry): the same array GetGeometryDrawInfos reads; valid while the collector lives.
     const VkTransformMatrixKHR *GetTransformsStaging() const;
-    // The host-visible staging buffers that AddGeometry fills (the device-local buffers above are
-    // their copy targets): the copy source for the RHI layer's per-frame transfer of the used
-    // vertex/index prefix (RHI/RhiAccelStructs.cpp). The staging sizes equal the device-local
-    // sizes; valid while the collector lives.
     VkBuffer GetStagingVertexBuffer() const;
     VkBuffer GetStagingIndexBuffer() const;
 
-    // Convenience data for drawing the collected geometry with a custom
-    // graphics pipeline (e.g. the shadow map). One entry per geometry.
     struct GeometryDrawInfo
     {
         VkBuffer vertexBuffer;
         VkBuffer indexBuffer;
         uint32_t baseVertex;
-        uint32_t firstIndex; // in uint32 elements; 0 when not indexed
-        uint32_t indexCount; // in elements (0 when not indexed)
-        float model[16];     // column-major world/model transform (identity for world-space geometry)
+        uint32_t firstIndex;
+        uint32_t indexCount;
+        float model[16];
     };
     std::vector<GeometryDrawInfo> GetGeometryDrawInfos() const;
 
 
-    // Get primitive counts from filters. Null if corresponding filter wasn't found.
     const std::vector<uint32_t> &GetPrimitiveCounts(VertexCollectorFilterTypeFlags filter) const;
 
-    // Get AS geometries data from filters. Null if corresponding filter wasn't found.
     const std::vector<VkAccelerationStructureGeometryKHR> &GetASGeometries(VertexCollectorFilterTypeFlags filter) const;
 
-    // Get AS build range infos from filters. Null if corresponding filter wasn't found.
     const std::vector<VkAccelerationStructureBuildRangeInfoKHR> &GetASBuildRangeInfos(VertexCollectorFilterTypeFlags filter) const;
 
 
-    // Are all geometries for each filter type in "flags" empty?
     bool AreGeometriesEmpty(VertexCollectorFilterTypeFlags flags) const;
-    // Are all geometries of this type empty?
     bool AreGeometriesEmpty(VertexCollectorFilterTypeFlagBits type) const;
 
 
-    // Make sure that copying was done
     void InsertVertexPreprocessBeginBarrier(VkCommandBuffer cmd);
-    // Make sure that preprocessing is done, and prepare for use in AS build and in shaders
     void InsertVertexPreprocessFinishBarrier(VkCommandBuffer cmd);
 
 private:
     void InitStagingBuffers(const std::shared_ptr<MemoryAllocator> &allocator);
 
     void CopyDataToStaging(const RgGeometryUploadInfo &info, uint32_t vertIndex);
-    
+
     bool CopyVertexDataFromStaging(VkCommandBuffer cmd);
     bool CopyIndexDataFromStaging(VkCommandBuffer cmd);
-    bool CopyTransformsFromStaging(VkCommandBuffer cmd, bool insertMemBarrier);
+    bool CopyTransformsFromStaging(VkCommandBuffer cmd);
 
     void AddMaterialDependency(uint32_t simpleIndex, uint32_t layer, uint32_t materialIndex);
 
-    // Parse flags to flag bit pairs and create instances of
-    // VertexCollectorFilter. Flag bit pair contains one bit from
-    // each flag bit group (e.g. change frequency group and pass through group).
     void InitFilters(VertexCollectorFilterTypeFlags flags);
 
     void AddFilter(VertexCollectorFilterTypeFlags filterGroup);
     uint32_t PushGeometry(VertexCollectorFilterTypeFlags type, const VkAccelerationStructureGeometryKHR &geom);
     void PushPrimitiveCount(VertexCollectorFilterTypeFlags type, uint32_t primCount);
     void PushRangeInfo(VertexCollectorFilterTypeFlags type, const VkAccelerationStructureBuildRangeInfoKHR &rangeInfo);
-   
+
     uint32_t GetGeometryCount(VertexCollectorFilterTypeFlags type);
     uint32_t GetAllGeometryCount() const;
 
@@ -210,13 +164,8 @@ private:
     uint32_t *mappedIndexData;
     VkTransformMatrixKHR *mappedTransformData;
 
-    // material index to a list of () that have that material
     rgl::unordered_map<uint32_t, std::vector<MaterialRef>> materialDependencies;
     rgl::unordered_map<VertexCollectorFilterTypeFlags, std::shared_ptr<VertexCollectorFilter>> filters;
-
-    // if some static geometries changed their tex coords, then they should be copied 
-    // from staging to device-local; this array holds copy ranges; freed after vkCmdCopy call
-    std::vector<VkBufferCopy> texCoordsToCopy;
 
     rgl::unordered_map<uint32_t, uint32_t> simpleIndexToTransformIndex;
 };

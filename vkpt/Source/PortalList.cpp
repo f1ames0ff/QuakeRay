@@ -1,49 +1,40 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "PortalList.h"
 
 #include "RgException.h"
 
-
 #include "Generated/ShaderCommonC.h"
+
 static_assert(sizeof(vkpt::ShPortalInstance) % 16 == 0);
-// to avoid include
 static_assert(vkpt::detail::PORTAL_LIST_BITCOUNT == PORTAL_MAX_COUNT);
 
-
-vkpt::PortalList::PortalList(VkDevice _device, std::shared_ptr<MemoryAllocator> _allocator)
-    : device(_device)
-    , descPool{}
-    , descSetLayout{}
-    , descSet{}
+vkpt::PortalList::PortalList(VkDevice _device, std::shared_ptr<MemoryAllocator> _allocator) :
+    device(_device),
+    descPool(VK_NULL_HANDLE),
+    descSetLayout(VK_NULL_HANDLE),
+    descSet(VK_NULL_HANDLE)
 {
     buffer = std::make_shared<AutoBuffer>(std::move(_allocator));
-    // The RHI layer wraps this buffer (and its staging slots) through NVRHI, and NVRHI's
-    // native-wrap path queries the device address unconditionally when the device has
-    // bufferDeviceAddress enabled (vulkan-buffer.cpp:215-220); without the usage bit that query
-    // trips VUID-VkBufferDeviceAddressInfo-buffer-02601, the same class the A4.1 fix removed for
-    // the collector and staging buffers. AutoBuffer propagates the bit to the staging buffer.
-    buffer->Create(PORTAL_MAX_COUNT * sizeof(ShPortalInstance),
-                   VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                   "Portals buffer");
+    buffer->Create(
+        PORTAL_MAX_COUNT * sizeof(ShPortalInstance),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        "Portals buffer");
 
     CreateDescriptors();
 }
@@ -54,7 +45,7 @@ vkpt::PortalList::~PortalList()
     vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
 }
 
-void vkpt::PortalList::Upload(uint32_t frameIndex, const RgPortalUploadInfo& info)
+void vkpt::PortalList::Upload(uint32_t frameIndex, const RgPortalUploadInfo &info)
 {
     if (info.portalIndex >= PORTAL_MAX_COUNT)
     {
@@ -66,17 +57,15 @@ void vkpt::PortalList::Upload(uint32_t frameIndex, const RgPortalUploadInfo& inf
         throw RgException(RG_WRONG_ARGUMENT, "Portal with such index was already uploaded in this frame");
     }
 
-    ShPortalInstance src = {};
-    {
-        memcpy(src.inPosition, info.inPosition.data, 3 * sizeof(float));
-        memcpy(src.outPosition, info.outPosition.data, 3 * sizeof(float));
-        memcpy(src.outDirection, info.outDirection.data, 3 * sizeof(float));
-        memcpy(src.outUp, info.outUp.data, 3 * sizeof(float));
-    }
+    ShPortalInstance instance = {};
 
-    auto *dstArr = static_cast<ShPortalInstance*>(buffer->GetMapped(frameIndex));
+    memcpy(instance.inPosition, info.inPosition.data, 3 * sizeof(float));
+    memcpy(instance.outPosition, info.outPosition.data, 3 * sizeof(float));
+    memcpy(instance.outDirection, info.outDirection.data, 3 * sizeof(float));
+    memcpy(instance.outUp, info.outUp.data, 3 * sizeof(float));
 
-    memcpy(&dstArr[info.portalIndex], &src, sizeof(ShPortalInstance));
+    auto *frameInstances = static_cast<ShPortalInstance *>(buffer->GetMapped(frameIndex));
+    memcpy(&frameInstances[info.portalIndex], &instance, sizeof(ShPortalInstance));
 }
 
 VkBuffer vkpt::PortalList::GetStagingBuffer(uint32_t frameIndex)
@@ -111,26 +100,18 @@ VkDescriptorSetLayout vkpt::PortalList::GetDescSetLayout() const
 
 void vkpt::PortalList::CreateDescriptors()
 {
-    VkResult r;
+    VkDescriptorSetLayoutBinding binding = {};
+    binding.binding = BINDING_PORTAL_INSTANCES;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
-    VkDescriptorSetLayoutBinding binding =
-    {
-        .binding = BINDING_PORTAL_INSTANCES,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
-    };
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &binding;
 
-    VkDescriptorSetLayoutCreateInfo layoutInfo =
-    {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
-        .bindingCount = 1,
-        .pBindings = &binding,
-    };
-
-    r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descSetLayout);
+    VkResult r = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descSetLayout);
     VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, descSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, "Portals Desc set layout");
@@ -160,7 +141,7 @@ void vkpt::PortalList::CreateDescriptors()
     VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, descSet, VK_OBJECT_TYPE_DESCRIPTOR_SET, "Portals Desc set");
-    
+
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = buffer->GetDeviceLocal();
     bufInfo.offset = 0;

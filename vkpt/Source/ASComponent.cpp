@@ -1,43 +1,67 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "ASComponent.h"
+
+namespace vkpt
+{
+namespace
+{
+    VkAccelerationStructureKHR CreateAccelerationStructure(
+        VkDevice device, VkAccelerationStructureTypeKHR type, VkBuffer buffer,
+        VkDeviceSize size, const char *debugName)
+    {
+        VkAccelerationStructureCreateInfoKHR info = {};
+        info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        info.type = type;
+        info.size = size;
+        info.buffer = buffer;
+
+        VkAccelerationStructureKHR as = VK_NULL_HANDLE;
+        VkResult r = svkCreateAccelerationStructureKHR(device, &info, nullptr, &as);
+        VK_CHECKERROR(r);
+
+        SET_DEBUG_NAME(device, as, VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR, debugName);
+        return as;
+    }
+}
+}
 
 vkpt::ASComponent::ASComponent(VkDevice _device, const char *_debugName)
 :
     device(_device),
     as(VK_NULL_HANDLE),
     debugName(_debugName)
-{}
+{
+}
 
 vkpt::BLASComponent::BLASComponent(VkDevice _device, VertexCollectorFilterTypeFlags _filter)
 :
     ASComponent(_device, VertexCollectorFilterTypeFlags_GetNameForBLAS(_filter)),
     filter(_filter),
     geomCount(0)
-{}
+{
+}
 
 vkpt::TLASComponent::TLASComponent(VkDevice _device, const char *_debugName)
-: 
+:
     ASComponent(_device, _debugName)
-{}
+{
+}
 
 vkpt::ASComponent::~ASComponent()
 {
@@ -52,8 +76,7 @@ void vkpt::ASComponent::CreateBuffer(const std::shared_ptr<MemoryAllocator> &all
         allocator, size,
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        GetBufferDebugName()
-    );
+        GetBufferDebugName());
 }
 
 void vkpt::ASComponent::Destroy()
@@ -69,49 +92,37 @@ void vkpt::ASComponent::Destroy()
     }
 }
 
-void vkpt::ASComponent::RecreateIfNotValid(const VkAccelerationStructureBuildSizesInfoKHR &buildSizes, const std::shared_ptr<MemoryAllocator> &allocator)
+void vkpt::ASComponent::RecreateIfNotValid(
+    const VkAccelerationStructureBuildSizesInfoKHR &buildSizes,
+    const std::shared_ptr<MemoryAllocator> &allocator)
 {
-    if (!IsValid(buildSizes))
+    if (IsValid(buildSizes))
     {
-        // destroy
-        Destroy();
-
-        // create
-        CreateBuffer(allocator, buildSizes.accelerationStructureSize);
-        CreateAS(buildSizes.accelerationStructureSize);
+        return;
     }
+
+    Destroy();
+
+    CreateBuffer(allocator, buildSizes.accelerationStructureSize);
+    CreateAS(buildSizes.accelerationStructureSize);
 }
 
 void vkpt::BLASComponent::CreateAS(VkDeviceSize size)
 {
     assert(device != VK_NULL_HANDLE);
 
-    VkAccelerationStructureCreateInfoKHR info = {};
-    info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-    info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    info.size = size;
-    info.buffer = buffer.GetBuffer();
-
-    VkResult r = svkCreateAccelerationStructureKHR(device, &info, nullptr, &as);
-    VK_CHECKERROR(r);
-
-    SET_DEBUG_NAME(device, as, VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR, debugName);
+    as = CreateAccelerationStructure(
+        device, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+        buffer.GetBuffer(), size, debugName);
 }
 
 void vkpt::TLASComponent::CreateAS(VkDeviceSize size)
 {
     assert(device != VK_NULL_HANDLE);
 
-    VkAccelerationStructureCreateInfoKHR tlasInfo = {};
-    tlasInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-    tlasInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    tlasInfo.size = size;
-    tlasInfo.buffer = buffer.GetBuffer();
-
-    VkResult r = svkCreateAccelerationStructureKHR(device, &tlasInfo, nullptr, &as);
-    VK_CHECKERROR(r);
-
-    SET_DEBUG_NAME(device, as, VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR, debugName);
+    as = CreateAccelerationStructure(
+        device, VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
+        buffer.GetBuffer(), size, debugName);
 }
 
 bool vkpt::ASComponent::IsValid(const VkAccelerationStructureBuildSizesInfoKHR &buildSizes) const
@@ -130,14 +141,14 @@ VkDeviceAddress vkpt::ASComponent::GetASAddress() const
     return GetASAddress(as);
 }
 
-VkDeviceAddress vkpt::ASComponent::GetASAddress(VkAccelerationStructureKHR as) const
+VkDeviceAddress vkpt::ASComponent::GetASAddress(VkAccelerationStructureKHR _as) const
 {
     assert(device != VK_NULL_HANDLE);
-    assert(as != VK_NULL_HANDLE);
+    assert(_as != VK_NULL_HANDLE);
 
     VkAccelerationStructureDeviceAddressInfoKHR addressInfo = {};
     addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-    addressInfo.accelerationStructure = as;
+    addressInfo.accelerationStructure = _as;
 
     return svkGetAccelerationStructureDeviceAddressKHR(device, &addressInfo);
 }
@@ -157,9 +168,9 @@ vkpt::VertexCollectorFilterTypeFlags vkpt::BLASComponent::GetFilter() const
     return filter;
 }
 
-void vkpt::BLASComponent::SetGeometryCount(uint32_t geomCount)
+void vkpt::BLASComponent::SetGeometryCount(uint32_t _geomCount)
 {
-    this->geomCount = geomCount;
+    geomCount = _geomCount;
 }
 
 bool vkpt::BLASComponent::IsEmpty() const

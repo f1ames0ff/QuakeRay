@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "ASBuilder.h"
 
@@ -27,30 +24,56 @@
 
 using namespace vkpt;
 
+namespace
+{
+    VkBuildAccelerationStructureFlagsKHR GetBuildFlags(bool fastTrace)
+    {
+        return fastTrace ?
+            VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR :
+            VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+    }
+
+    void SetupBuildGeometryInfo(
+        VkAccelerationStructureBuildGeometryInfoKHR &buildInfo,
+        VkAccelerationStructureTypeKHR type,
+        VkAccelerationStructureKHR as,
+        VkDeviceAddress scratchAddress,
+        VkBuildAccelerationStructureFlagsKHR flags,
+        bool update)
+    {
+        buildInfo = {};
+        buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        buildInfo.type = type;
+        buildInfo.flags = flags;
+        buildInfo.mode = update ?
+            VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR :
+            VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        buildInfo.srcAccelerationStructure = update ? as : VK_NULL_HANDLE;
+        buildInfo.dstAccelerationStructure = as;
+        buildInfo.scratchData.deviceAddress = scratchAddress;
+        buildInfo.ppGeometries = nullptr;
+    }
+}
+
 ASBuilder::ASBuilder(VkDevice device, std::shared_ptr<ScratchBuffer> commonScratchBuffer) :
+    device(device),
     scratchBuffer(std::move(commonScratchBuffer))
 {
-    this->device = device;
 }
 
 VkAccelerationStructureBuildSizesInfoKHR ASBuilder::GetBuildSizes(
     VkAccelerationStructureTypeKHR type,
-    uint32_t geometryCount, 
+    uint32_t geometryCount,
     const VkAccelerationStructureGeometryKHR *pGeometries,
-    const uint32_t *pMaxPrimitiveCount, 
+    const uint32_t *pMaxPrimitiveCount,
     bool fastTrace) const
 {
     assert(geometryCount > 0);
 
-    // mode, srcAccelerationStructure, dstAccelerationStructure
-    // and all VkDeviceOrHostAddressKHR except transformData are ignored
-    // in vkGetAccelerationStructureBuildSizesKHR(..)
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildInfo.type = type;
-    buildInfo.flags = fastTrace ?
-        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR :
-        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+    buildInfo.flags = GetBuildFlags(fastTrace);
     buildInfo.geometryCount = geometryCount;
     buildInfo.pGeometries = pGeometries;
     buildInfo.ppGeometries = nullptr;
@@ -67,7 +90,8 @@ VkAccelerationStructureBuildSizesInfoKHR ASBuilder::GetBuildSizes(
 
 VkAccelerationStructureBuildSizesInfoKHR ASBuilder::GetBottomBuildSizes(
     uint32_t geometryCount,
-    const VkAccelerationStructureGeometryKHR *pGeometries, const uint32_t *pMaxPrimitiveCount, bool fastTrace) const
+    const VkAccelerationStructureGeometryKHR *pGeometries,
+    const uint32_t *pMaxPrimitiveCount, bool fastTrace) const
 {
     return GetBuildSizes(
         VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geometryCount,
@@ -75,7 +99,8 @@ VkAccelerationStructureBuildSizesInfoKHR ASBuilder::GetBottomBuildSizes(
 }
 
 VkAccelerationStructureBuildSizesInfoKHR ASBuilder::GetTopBuildSizes(
-    const VkAccelerationStructureGeometryKHR *pGeometry, uint32_t maxPrimitiveCount, bool fastTrace)  const
+    const VkAccelerationStructureGeometryKHR *pGeometry,
+    uint32_t maxPrimitiveCount, bool fastTrace) const
 {
     return GetBuildSizes(
         VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, 1,
@@ -84,21 +109,17 @@ VkAccelerationStructureBuildSizesInfoKHR ASBuilder::GetTopBuildSizes(
 
 void ASBuilder::AddBLAS(
     VkAccelerationStructureKHR as, uint32_t geometryCount,
-    const VkAccelerationStructureGeometryKHR* pGeometries,
+    const VkAccelerationStructureGeometryKHR *pGeometries,
     const VkAccelerationStructureBuildRangeInfoKHR *pRangeInfos,
     const VkAccelerationStructureBuildSizesInfoKHR &buildSizes,
     bool fastTrace, bool update, bool isBLASUpdateable)
 {
-    // while building bottom level, top level must be not
     assert(topLBuildInfo.geomInfos.empty() && topLBuildInfo.rangeInfos.empty());
-
     assert(geometryCount > 0);
 
-    VkDeviceSize scratchSize = std::max(buildSizes.updateScratchSize, buildSizes.buildScratchSize);
+    const VkDeviceSize scratchSize = std::max(buildSizes.updateScratchSize, buildSizes.buildScratchSize);
 
-    VkBuildAccelerationStructureFlagsKHR flags = fastTrace ?
-        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR :
-        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+    VkBuildAccelerationStructureFlagsKHR flags = GetBuildFlags(fastTrace);
 
     if (isBLASUpdateable || update)
     {
@@ -106,18 +127,12 @@ void ASBuilder::AddBLAS(
     }
 
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
-    buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    buildInfo.flags = flags;
-    buildInfo.mode = update ? 
-        VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR :
-        VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    buildInfo.srcAccelerationStructure = update ? as : VK_NULL_HANDLE;
-    buildInfo.dstAccelerationStructure = as;
-    buildInfo.scratchData.deviceAddress = scratchBuffer->GetScratchAddress(scratchSize);
+    SetupBuildGeometryInfo(
+        buildInfo, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, as,
+        scratchBuffer->GetScratchAddress(scratchSize), flags, update);
+
     buildInfo.geometryCount = geometryCount;
     buildInfo.pGeometries = pGeometries;
-    buildInfo.ppGeometries = nullptr;
 
     bottomLBuildInfo.geomInfos.push_back(buildInfo);
     bottomLBuildInfo.rangeInfos.push_back(pRangeInfos);
@@ -128,9 +143,9 @@ void ASBuilder::BuildBottomLevel(VkCommandBuffer cmd)
     assert(bottomLBuildInfo.geomInfos.size() == bottomLBuildInfo.rangeInfos.size());
     assert(!bottomLBuildInfo.geomInfos.empty());
 
-    // build bottom level
-    svkCmdBuildAccelerationStructuresKHR(cmd, bottomLBuildInfo.geomInfos.size(), 
-                                        bottomLBuildInfo.geomInfos.data(), bottomLBuildInfo.rangeInfos.data());
+    svkCmdBuildAccelerationStructuresKHR(
+        cmd, bottomLBuildInfo.geomInfos.size(),
+        bottomLBuildInfo.geomInfos.data(), bottomLBuildInfo.rangeInfos.data());
 
     bottomLBuildInfo.geomInfos.clear();
     bottomLBuildInfo.rangeInfos.clear();
@@ -143,26 +158,17 @@ void ASBuilder::AddTLAS(
     const VkAccelerationStructureBuildSizesInfoKHR &buildSizes,
     bool fastTrace, bool update)
 {
-    // while building top level, bottom level must be not
     assert(bottomLBuildInfo.geomInfos.empty() && bottomLBuildInfo.rangeInfos.empty());
 
-    VkDeviceSize scratchSize = update ? buildSizes.updateScratchSize : buildSizes.buildScratchSize;
+    const VkDeviceSize scratchSize = update ? buildSizes.updateScratchSize : buildSizes.buildScratchSize;
 
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
-    buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    buildInfo.flags = fastTrace ?
-        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR :
-        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
-    buildInfo.mode = update ?
-        VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR :
-        VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    buildInfo.srcAccelerationStructure = update ? as : VK_NULL_HANDLE;
-    buildInfo.dstAccelerationStructure = as;
-    buildInfo.scratchData.deviceAddress = scratchBuffer->GetScratchAddress(scratchSize);
+    SetupBuildGeometryInfo(
+        buildInfo, VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, as,
+        scratchBuffer->GetScratchAddress(scratchSize), GetBuildFlags(fastTrace), update);
+
     buildInfo.geometryCount = 1;
     buildInfo.pGeometries = pGeometry;
-    buildInfo.ppGeometries = nullptr;
 
     topLBuildInfo.geomInfos.push_back(buildInfo);
     topLBuildInfo.rangeInfos.push_back(pRangeInfo);
@@ -173,9 +179,9 @@ void ASBuilder::BuildTopLevel(VkCommandBuffer cmd)
     assert(topLBuildInfo.geomInfos.size() == topLBuildInfo.rangeInfos.size());
     assert(!topLBuildInfo.geomInfos.empty());
 
-    // build bottom level
-    svkCmdBuildAccelerationStructuresKHR(cmd, topLBuildInfo.geomInfos.size(),
-                                        topLBuildInfo.geomInfos.data(), topLBuildInfo.rangeInfos.data());
+    svkCmdBuildAccelerationStructuresKHR(
+        cmd, topLBuildInfo.geomInfos.size(),
+        topLBuildInfo.geomInfos.data(), topLBuildInfo.rangeInfos.data());
 
     topLBuildInfo.geomInfos.clear();
     topLBuildInfo.rangeInfos.clear();

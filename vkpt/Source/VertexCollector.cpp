@@ -1,22 +1,19 @@
-// Copyright (c) 2020-2021 Sultim Tsyrendashiev
+// Copyright (c) 2026 QuakeRay contributors
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
 //
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "VertexCollector.h"
 
@@ -32,6 +29,127 @@ using namespace vkpt;
 constexpr uint32_t INDEX_BUFFER_SIZE     = MAX_INDEXED_PRIMITIVE_COUNT * 3 * sizeof( uint32_t );
 constexpr uint32_t TRANSFORM_BUFFER_SIZE =  MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT * sizeof( VkTransformMatrixKHR );
 
+namespace
+{
+    uint32_t AlignUpBy3( uint32_t x )
+    {
+        return ( ( x + 2 ) / 3 ) * 3;
+    }
+
+    uint32_t GetMaterialsBlendFlags( const RgGeometryMaterialBlendType blendingTypes[],
+                                     uint32_t                          count )
+    {
+        uint32_t r = 0;
+
+        for( uint32_t i = 0; i < count; i++ )
+        {
+            const uint32_t bitOffset = MATERIAL_BLENDING_FLAG_BIT_COUNT * i;
+
+            switch( blendingTypes[ i ] )
+            {
+                case RG_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE: r |= MATERIAL_BLENDING_FLAG_OPAQUE << bitOffset; break;
+                case RG_GEOMETRY_MATERIAL_BLEND_TYPE_ALPHA:  r |= MATERIAL_BLENDING_FLAG_ALPHA  << bitOffset; break;
+                case RG_GEOMETRY_MATERIAL_BLEND_TYPE_ADD:    r |= MATERIAL_BLENDING_FLAG_ADD    << bitOffset; break;
+                case RG_GEOMETRY_MATERIAL_BLEND_TYPE_SHADE:  r |= MATERIAL_BLENDING_FLAG_SHADE  << bitOffset; break;
+                default: assert(0); break;
+            }
+        }
+
+        return r;
+    }
+
+    uint32_t GetGeometryInstanceUploadFlags(
+        const RgGeometryUploadInfo &info, VertexCollectorFilterTypeFlags geomFlags )
+    {
+        uint32_t flags = 0;
+
+        if( info.flags & RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT )
+        {
+            flags |= GEOM_INST_FLAG_GENERATE_NORMALS;
+        }
+
+        if( info.flags & RG_GEOMETRY_UPLOAD_GENERATE_INVERTED_NORMALS_BIT )
+        {
+            flags |= GEOM_INST_FLAG_GENERATE_NORMALS;
+            flags |= GEOM_INST_FLAG_INVERTED_NORMALS;
+        }
+
+        if( info.flags & RG_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT )
+        {
+            flags |= GEOM_INST_FLAG_EXACT_NORMALS;
+        }
+
+        if( info.flags & RG_GEOMETRY_UPLOAD_NO_MEDIA_CHANGE_ON_REFRACT_BIT )
+        {
+            flags |= GEOM_INST_FLAG_NO_MEDIA_CHANGE;
+        }
+
+        if( info.flags & RG_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_MULTIPLY_BIT )
+        {
+            flags |= GEOM_INST_FLAG_REFL_REFR_ALBEDO_MULT;
+        }
+        else if( info.flags & RG_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_ADD_BIT )
+        {
+            flags |= GEOM_INST_FLAG_REFL_REFR_ALBEDO_ADD;
+        }
+
+        if( info.flags & RG_GEOMETRY_UPLOAD_TURB_WARP_BIT )
+        {
+            flags |= GEOM_INST_FLAG_TURB_WARP;
+        }
+
+        if( info.flags & RG_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT )
+        {
+            flags |= GEOM_INST_FLAG_IGNORE_REFRACT_AFTER;
+        }
+
+        if( geomFlags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE )
+        {
+            flags |= GEOM_INST_FLAG_IS_MOVABLE;
+        }
+
+        switch( info.passThroughType )
+        {
+            case RG_GEOMETRY_PASS_THROUGH_TYPE_MIRROR:
+                flags |= GEOM_INST_FLAG_REFLECT;
+                break;
+
+            case RG_GEOMETRY_PASS_THROUGH_TYPE_PORTAL:
+                if( info.pPortalIndex )
+                {
+                    flags |= GEOM_INST_FLAG_PORTAL;
+                }
+                break;
+
+            case RG_GEOMETRY_PASS_THROUGH_TYPE_WATER_ONLY_REFLECT:
+                flags |= GEOM_INST_FLAG_MEDIA_TYPE_WATER;
+                flags |= GEOM_INST_FLAG_REFLECT;
+                break;
+
+            case RG_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT:
+                flags |= GEOM_INST_FLAG_MEDIA_TYPE_WATER;
+                flags |= GEOM_INST_FLAG_REFLECT;
+                flags |= GEOM_INST_FLAG_REFRACT;
+                break;
+
+            case RG_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT:
+                flags |= GEOM_INST_FLAG_MEDIA_TYPE_GLASS;
+                flags |= GEOM_INST_FLAG_REFLECT;
+                flags |= GEOM_INST_FLAG_REFRACT;
+                break;
+
+            case RG_GEOMETRY_PASS_THROUGH_TYPE_ACID_REFLECT_REFRACT:
+                flags |= GEOM_INST_FLAG_MEDIA_TYPE_ACID;
+                flags |= GEOM_INST_FLAG_REFLECT;
+                flags |= GEOM_INST_FLAG_REFRACT;
+                break;
+
+            default: break;
+        }
+
+        return flags;
+    }
+}
 
 VertexCollector::VertexCollector( VkDevice                                  _device,
                                   const std::shared_ptr< MemoryAllocator >& _allocator,
@@ -51,46 +169,34 @@ VertexCollector::VertexCollector( VkDevice                                  _dev
 {
     assert( filtersFlags != 0 );
 
-    bool isDynamic = filtersFlags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC;
+    const bool isDynamic = filtersFlags & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC;
 
     vertBuffer       = std::make_shared< Buffer >();
     indexBuffer      = std::make_shared< Buffer >();
     transformsBuffer = std::make_shared< Buffer >();
 
-    // dynamic vertices need also be copied to previous frame buffer
-    VkBufferUsageFlags transferUsage =
+    const VkBufferUsageFlags transferUsage =
         isDynamic ? VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
                   : VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
-    // The vertex/index usage bits serve the raster consumers of these buffers: the RHI shadow-map
-    // pass (RHI/RhiShadowMapPass) and the engine's own ShadowMap both bind the collector's
-    // device-local buffers as Vulkan vertex/index buffers, and Vulkan requires the bits for those
-    // bindings (VUID-vkCmdBindVertexBuffers-pBuffers-00627 and
-    // VUID-vkCmdBindIndexBuffer-buffer-08784). The bits are additive to the storage, device-address
-    // and build-input uses below.
-
-    // vertex buffers
     vertBuffer->Init(
         _allocator, _bufferSize,
         transferUsage | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         isDynamic ? "Dynamic Vertices data buffer" : "Static Vertices data buffer");
 
-    // index buffers
     indexBuffer->Init(
         _allocator, INDEX_BUFFER_SIZE,
         transferUsage | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         isDynamic ? "Dynamic Index data buffer" : "Static Index data buffer");
 
-    // transforms buffer
     transformsBuffer->Init(
         _allocator, TRANSFORM_BUFFER_SIZE,
         transferUsage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         isDynamic ? "Dynamic BLAS transforms buffer" : "Static BLAS transforms buffer");
 
-    // device local buffers are
     InitStagingBuffers( _allocator );
     InitFilters( filtersFlags );
 }
@@ -111,28 +217,17 @@ VertexCollector::VertexCollector( const std::shared_ptr< const VertexCollector >
     , mappedIndexData( nullptr )
     , mappedTransformData( nullptr )
 {
-    // device local buffers are shared with the "src" vertex collector
     InitStagingBuffers( _allocator );
     InitFilters( filtersFlags );
 }
 
 void VertexCollector::InitStagingBuffers( const std::shared_ptr< MemoryAllocator >& allocator )
 {
-    // device local buffers must not be empty
     assert( vertBuffer && vertBuffer->GetSize() > 0 );
     assert( indexBuffer && indexBuffer->GetSize() > 0 );
     assert( transformsBuffer && transformsBuffer->GetSize() > 0 );
     assert( geomInfoMgr );
 
-    // The staging buffers are the copy sources of the RHI layer's geometry copies
-    // (RHI/RhiAccelStructs.cpp) and are wrapped through NVRHI there; NVRHI's native-buffer wrap
-    // queries the device address of every buffer when the device has BDA unconditionally
-    // (vulkan-buffer.cpp:215-220), so the staging usage carries
-    // VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, as the device-local buffers already do
-    // (VertexCollector.cpp:66-84). Without it the wrap raises
-    // VUID-VkBufferDeviceAddressInfo-buffer-02601.
-
-    // vertex buffers
     stagingVertBuffer.Init( allocator,
                             vertBuffer->GetSize(),
                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -141,7 +236,6 @@ void VertexCollector::InitStagingBuffers( const std::shared_ptr< MemoryAllocator
                                 ? "Dynamic Vertices data staging buffer"
                                 : "Static Vertices data staging buffer" );
 
-    // index buffers
     stagingIndexBuffer.Init( allocator,
                              indexBuffer->GetSize(),
                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -150,7 +244,6 @@ void VertexCollector::InitStagingBuffers( const std::shared_ptr< MemoryAllocator
                                  ? "Dynamic Index data staging buffer"
                                  : "Static Index data staging buffer" );
 
-    // transforms buffer
     stagingTransformsBuffer.Init( allocator,
                                   transformsBuffer->GetSize(),
                                   VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -166,34 +259,9 @@ void VertexCollector::InitStagingBuffers( const std::shared_ptr< MemoryAllocator
 
 VertexCollector::~VertexCollector()
 {
-    // unmap buffers to destroy them
     stagingVertBuffer.TryUnmap();
     stagingIndexBuffer.TryUnmap();
     stagingTransformsBuffer.TryUnmap();
-}
-
-static uint32_t GetMaterialsBlendFlags( const RgGeometryMaterialBlendType blendingTypes[],
-                                        uint32_t                          count )
-{
-    uint32_t r = 0;
-
-    for( uint32_t i = 0; i < count; i++ )
-    {
-        RgGeometryMaterialBlendType b = blendingTypes[ i ];
-
-        uint32_t bitOffset = MATERIAL_BLENDING_FLAG_BIT_COUNT * i;
-
-        switch (b)
-        {
-            case RG_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE:    r |= MATERIAL_BLENDING_FLAG_OPAQUE  << bitOffset; break;
-            case RG_GEOMETRY_MATERIAL_BLEND_TYPE_ALPHA:     r |= MATERIAL_BLENDING_FLAG_ALPHA   << bitOffset; break;
-            case RG_GEOMETRY_MATERIAL_BLEND_TYPE_ADD:       r |= MATERIAL_BLENDING_FLAG_ADD     << bitOffset; break;
-            case RG_GEOMETRY_MATERIAL_BLEND_TYPE_SHADE:     r |= MATERIAL_BLENDING_FLAG_SHADE   << bitOffset; break;
-            default: assert(0); break;
-        }
-    }
-
-    return r;
 }
 
 void VertexCollector::BeginCollecting( bool isStatic )
@@ -204,11 +272,6 @@ void VertexCollector::BeginCollecting( bool isStatic )
     assert( GetAllGeometryCount() == 0 );
 }
 
-static uint32_t AlignUpBy3( uint32_t x )
-{
-    return ( ( x + 2 ) / 3 ) * 3;
-}
-
 uint32_t VertexCollector::AddGeometry( uint32_t                         frameIndex,
                                        const RgGeometryUploadInfo&      info,
                                        std::span< MaterialTextures, 3 > materials )
@@ -217,8 +280,6 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
     const VertexCollectorFilterTypeFlags      geomFlags =
         VertexCollectorFilterTypeFlags_GetForGeometry( info );
 
-
-    // if exceeds a limit of geometries in a group with specified geomFlags
     if( GetGeometryCount( geomFlags ) + 1 >=
         VertexCollectorFilterTypeFlags_GetAmountInGlobalArray( geomFlags ) )
     {
@@ -226,12 +287,10 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
         return UINT32_MAX;
     }
 
-
     const bool collectStatic = geomFlags & ( FT::CF_STATIC_NON_MOVABLE | FT::CF_STATIC_MOVABLE );
 
     const uint32_t maxVertexCount =
         collectStatic ? MAX_STATIC_VERTEX_COUNT : MAX_DYNAMIC_VERTEX_COUNT;
-
 
     const uint32_t vertIndex      = AlignUpBy3( curVertexCount );
     const uint32_t indIndex       = AlignUpBy3( curIndexCount );
@@ -240,14 +299,11 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
     const bool     useIndices     = info.indexCount != 0 && info.pIndices != nullptr;
     const uint32_t primitiveCount = useIndices ? info.indexCount / 3 : info.vertexCount / 3;
 
-
     curVertexCount = vertIndex + info.vertexCount;
     curIndexCount  = indIndex + ( useIndices ? info.indexCount : 0 );
     curPrimitiveCount += primitiveCount;
     curTransformCount += 1;
 
-
-    // check bounds
     if( curVertexCount >= maxVertexCount )
     {
         assert( 0 );
@@ -266,8 +322,6 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
         return UINT32_MAX;
     }
 
-
-    // copy data to buffer
     assert( stagingVertBuffer.IsMapped() );
     CopyDataToStaging( info, vertIndex );
 
@@ -282,25 +336,21 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
                    "in AS building" );
     memcpy( mappedTransformData + transformIndex, &info.transform, sizeof( VkTransformMatrixKHR ) );
 
-    // use positions and index data in the device local buffers: AS shouldn't be built using staging
-    // buffers
     const VkDeviceAddress vertexDataDeviceAddress =
         vertBuffer->GetAddress() + vertIndex * sizeof( ShVertex ) + offsetof( ShVertex, position );
 
-    // geometry info
     VkAccelerationStructureGeometryKHR geom = {};
-    geom.sType                              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geom.geometryType                       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-
+    geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
     geom.flags = geomFlags & FT::PT_OPAQUE ? VK_GEOMETRY_OPAQUE_BIT_KHR
                                            : VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
 
     VkAccelerationStructureGeometryTrianglesDataKHR& trData = geom.geometry.triangles;
-    trData.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    trData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     trData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    trData.maxVertex    = info.vertexCount;
+    trData.maxVertex = info.vertexCount;
     trData.vertexData.deviceAddress = vertexDataDeviceAddress;
-    trData.vertexStride             = sizeof( ShVertex );
+    trData.vertexStride = sizeof( ShVertex );
     trData.transformData.deviceAddress =
         transformsBuffer->GetAddress() + transformIndex * sizeof( VkTransformMatrixKHR );
 
@@ -309,7 +359,7 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
         const VkDeviceAddress indexDataDeviceAddress =
             indexBuffer->GetAddress() + indIndex * sizeof( uint32_t );
 
-        trData.indexType               = VK_INDEX_TYPE_UINT32;
+        trData.indexType = VK_INDEX_TYPE_UINT32;
         trData.indexData.deviceAddress = indexDataDeviceAddress;
     }
     else
@@ -318,20 +368,16 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
         trData.indexData = {};
     }
 
-
-    uint32_t localIndex = PushGeometry( geomFlags, geom );
-
+    const uint32_t localIndex = PushGeometry( geomFlags, geom );
 
     VkAccelerationStructureBuildRangeInfoKHR rangeInfo = {};
-    rangeInfo.primitiveCount                           = primitiveCount;
-    rangeInfo.primitiveOffset                          = 0;
-    rangeInfo.firstVertex                              = 0;
-    rangeInfo.transformOffset                          = 0;
+    rangeInfo.primitiveCount = primitiveCount;
+    rangeInfo.primitiveOffset = 0;
+    rangeInfo.firstVertex = 0;
+    rangeInfo.transformOffset = 0;
     PushRangeInfo( geomFlags, rangeInfo );
 
-
     PushPrimitiveCount( geomFlags, primitiveCount );
-
 
     ShGeometryInstance geomInfo = {};
     geomInfo.baseVertexIndex    = vertIndex;
@@ -344,91 +390,8 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
 
     Matrix::ToMat4Transposed( geomInfo.model, info.transform );
 
-    geomInfo.flags = GetMaterialsBlendFlags( info.layerBlendingTypes, MATERIALS_MAX_LAYER_COUNT );
-
-    if( info.flags & RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_GENERATE_NORMALS;
-    }
-
-    if( info.flags & RG_GEOMETRY_UPLOAD_GENERATE_INVERTED_NORMALS_BIT )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_GENERATE_NORMALS;
-        geomInfo.flags |= GEOM_INST_FLAG_INVERTED_NORMALS;
-    }
-
-    if( info.flags & RG_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_EXACT_NORMALS;
-    }
-
-    if( info.flags & RG_GEOMETRY_UPLOAD_NO_MEDIA_CHANGE_ON_REFRACT_BIT )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_NO_MEDIA_CHANGE;
-    }
-
-    if( info.flags & RG_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_MULTIPLY_BIT )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_REFL_REFR_ALBEDO_MULT;
-    }
-    else if( info.flags & RG_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_ADD_BIT )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_REFL_REFR_ALBEDO_ADD;
-    }
-
-    if( info.flags & RG_GEOMETRY_UPLOAD_TURB_WARP_BIT )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_TURB_WARP;
-    }
-
-    if( info.flags & RG_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_IGNORE_REFRACT_AFTER;
-    }
-
-    if( geomFlags & FT::CF_STATIC_MOVABLE )
-    {
-        geomInfo.flags |= GEOM_INST_FLAG_IS_MOVABLE;
-    }
-
-    switch( info.passThroughType )
-    {
-        case RG_GEOMETRY_PASS_THROUGH_TYPE_MIRROR:
-            geomInfo.flags |= GEOM_INST_FLAG_REFLECT;
-            break;
-
-        case RG_GEOMETRY_PASS_THROUGH_TYPE_PORTAL:
-            if( info.pPortalIndex )
-            {
-                geomInfo.flags |= GEOM_INST_FLAG_PORTAL;
-            }
-            break;
-
-        case RG_GEOMETRY_PASS_THROUGH_TYPE_WATER_ONLY_REFLECT:
-            geomInfo.flags |= GEOM_INST_FLAG_MEDIA_TYPE_WATER;
-            geomInfo.flags |= GEOM_INST_FLAG_REFLECT;
-            break;
-
-        case RG_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT:
-            geomInfo.flags |= GEOM_INST_FLAG_MEDIA_TYPE_WATER;
-            geomInfo.flags |= GEOM_INST_FLAG_REFLECT;
-            geomInfo.flags |= GEOM_INST_FLAG_REFRACT;
-            break;
-
-        case RG_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT:
-            geomInfo.flags |= GEOM_INST_FLAG_MEDIA_TYPE_GLASS;
-            geomInfo.flags |= GEOM_INST_FLAG_REFLECT;
-            geomInfo.flags |= GEOM_INST_FLAG_REFRACT;
-            break;
-
-        case RG_GEOMETRY_PASS_THROUGH_TYPE_ACID_REFLECT_REFRACT:
-            geomInfo.flags |= GEOM_INST_FLAG_MEDIA_TYPE_ACID;
-            geomInfo.flags |= GEOM_INST_FLAG_REFLECT;
-            geomInfo.flags |= GEOM_INST_FLAG_REFRACT;
-            break;
-
-        default: break;
-    }
+    geomInfo.flags = GetMaterialsBlendFlags( info.layerBlendingTypes, MATERIALS_MAX_LAYER_COUNT ) |
+                     GetGeometryInstanceUploadFlags( info, geomFlags );
 
     static_assert( sizeof( RgLayeredMaterial ) / sizeof( RgMaterial ) == MATERIALS_MAX_LAYER_COUNT,
                    "Layer count mismatch with ShGeometryInstance" );
@@ -439,20 +402,10 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
 
         geomInfo.materials1A = materials[ 1 ].indices[ 0 ];
         geomInfo.materials1B = materials[ 1 ].indices[ 1 ];
-        // no materials1C member
 
         geomInfo.materials2A = materials[ 2 ].indices[ 0 ];
         geomInfo.materials2B = materials[ 2 ].indices[ 1 ];
-        // no materials2C member
     }
-    const std::tuple<uint32_t, RgMaterial, std::array<uint32_t, TEXTURES_PER_MATERIAL_COUNT>> layerDependencies[] =
-    {
-        /* layer index - its material - corresponding texture indices */
-        { 0, info.geomMaterial.layerMaterials[0], { materials[0].indices[0], materials[0].indices[1], materials[0].indices[2] } },
-        { 1, info.geomMaterial.layerMaterials[1], { materials[1].indices[0], materials[1].indices[1], EMPTY_TEXTURE_INDEX     } },
-        { 2, info.geomMaterial.layerMaterials[2], { materials[2].indices[0], materials[2].indices[1], EMPTY_TEXTURE_INDEX     } },
-    };
-
 
     for( uint32_t layer = 0; layer < MATERIALS_MAX_LAYER_COUNT; layer++ )
     {
@@ -461,38 +414,35 @@ uint32_t VertexCollector::AddGeometry( uint32_t                         frameInd
                 sizeof( info.layerColors[ layer ].data ) );
     }
 
-
     geomInfo.portalIndex = info.pPortalIndex ? *info.pPortalIndex : PORTAL_INDEX_NONE;
 
+    const uint32_t simpleIndex = geomInfoMgr->WriteGeomInfo( frameIndex, info.uniqueID, localIndex, geomFlags, geomInfo );
 
-    // simple index -- calculated as (global cur static count + global cur dynamic count)
-    // global geometry index -- for indexing in geom infos buffer
-    // local geometry index -- index of geometry in BLAS
-    uint32_t simpleIndex = geomInfoMgr->WriteGeomInfo( frameIndex, info.uniqueID, localIndex, geomFlags, geomInfo );
-
-
-    // add material dependency but only for static geometry,
-    // dynamic is updated each frame, so their materials will be updated anyway
     if( collectStatic )
     {
-        for( const auto& [ layerIndex, materialIndex, textureIndices ] : layerDependencies )
+        const uint32_t layerTextureCounts[ MATERIALS_MAX_LAYER_COUNT ] = { 3, 2, 2 };
+
+        for( uint32_t layer = 0; layer < MATERIALS_MAX_LAYER_COUNT; layer++ )
         {
-            // if at least one texture is not empty on this layer, add dependency to the material
-            // layer
-            for( uint32_t textureIndex : textureIndices )
+            bool hasTexture = false;
+
+            for( uint32_t texture = 0; texture < layerTextureCounts[ layer ]; texture++ )
             {
-                if( textureIndex != EMPTY_TEXTURE_INDEX )
+                if( materials[ layer ].indices[ texture ] != EMPTY_TEXTURE_INDEX )
                 {
-                    AddMaterialDependency( simpleIndex, layerIndex, materialIndex );
+                    hasTexture = true;
                     break;
                 }
             }
+
+            if( hasTexture )
+            {
+                AddMaterialDependency( simpleIndex, layer, info.geomMaterial.layerMaterials[ layer ] );
+            }
         }
 
-        // also, save transform index for updating static movable's transforms
         simpleIndexToTransformIndex[ simpleIndex ] = transformIndex;
     }
-
 
     return simpleIndex;
 }
@@ -503,7 +453,6 @@ void VertexCollector::CopyDataToStaging(const RgGeometryUploadInfo &info, uint32
 
     ShVertex* const pDst = &mappedVertexData[ vertIndex ];
 
-    // must be same to copy
     static_assert( std::is_same_v< decltype( info.pVertices ), const RgVertex* > );
     static_assert( sizeof( ShVertex )                   == sizeof( RgVertex ) );
     static_assert( offsetof( ShVertex, position )       == offsetof( RgVertex, position ) );
@@ -516,7 +465,9 @@ void VertexCollector::CopyDataToStaging(const RgGeometryUploadInfo &info, uint32
     memcpy( pDst, info.pVertices, info.vertexCount * sizeof( ShVertex ) );
 }
 
-void VertexCollector::EndCollecting() {}
+void VertexCollector::EndCollecting()
+{
+}
 
 void VertexCollector::Reset()
 {
@@ -542,7 +493,8 @@ bool VertexCollector::CopyVertexDataFromStaging( VkCommandBuffer cmd )
         return false;
     }
 
-    VkBufferCopy info = {
+    const VkBufferCopy info =
+    {
         .srcOffset = 0,
         .dstOffset = 0,
         .size      = curVertexCount * sizeof( ShVertex ),
@@ -560,7 +512,8 @@ bool VertexCollector::CopyIndexDataFromStaging( VkCommandBuffer cmd )
         return false;
     }
 
-    VkBufferCopy info = {
+    const VkBufferCopy info =
+    {
         .srcOffset = 0,
         .dstOffset = 0,
         .size      = curIndexCount * sizeof( uint32_t ),
@@ -571,143 +524,64 @@ bool VertexCollector::CopyIndexDataFromStaging( VkCommandBuffer cmd )
     return true;
 }
 
-bool VertexCollector::CopyTransformsFromStaging( VkCommandBuffer cmd, bool insertMemBarrier )
+bool VertexCollector::CopyTransformsFromStaging( VkCommandBuffer cmd )
 {
     if( curTransformCount == 0 )
     {
         return false;
     }
 
-    VkBufferCopy info = {
+    const VkBufferCopy info =
+    {
         .srcOffset = 0,
         .dstOffset = 0,
         .size      = curTransformCount * sizeof( VkTransformMatrixKHR ),
     };
 
-    vkCmdCopyBuffer(
-        cmd, stagingTransformsBuffer.GetBuffer(), transformsBuffer->GetBuffer(), 1, &info );
-
-    if( insertMemBarrier )
-    {
-        VkBufferMemoryBarrier trnBr = {};
-        trnBr.sType                 = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        trnBr.srcQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED;
-        trnBr.dstQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED;
-        trnBr.srcAccessMask         = VK_ACCESS_TRANSFER_WRITE_BIT;
-        trnBr.dstAccessMask         = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-        trnBr.buffer                = transformsBuffer->GetBuffer();
-        trnBr.size                  = curTransformCount * sizeof( VkTransformMatrixKHR );
-
-        vkCmdPipelineBarrier( cmd,
-                              VK_PIPELINE_STAGE_TRANSFER_BIT,
-                              VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                              0,
-                              0,
-                              nullptr,
-                              1,
-                              &trnBr,
-                              0,
-                              nullptr );
-    }
-
-    return true;
-}
-
-bool VertexCollector::RecopyTransformsFromStaging( VkCommandBuffer cmd )
-{
-    return CopyTransformsFromStaging( cmd, true );
-}
-
-bool vkpt::VertexCollector::RecopyTexCoordsFromStaging( VkCommandBuffer cmd )
-{
-    if( texCoordsToCopy.empty() )
-    {
-        return false;
-    }
-    assert( curTransformCount > 0 );
-
-    vkCmdCopyBuffer( cmd,
-                     stagingVertBuffer.GetBuffer(),
-                     vertBuffer->GetBuffer(),
-                     texCoordsToCopy.size(),
-                     texCoordsToCopy.data() );
-
-    VkDeviceSize lowerBound = UINT64_MAX;
-    VkDeviceSize upperBound = 0;
-    for( const auto& c : texCoordsToCopy )
-    {
-        lowerBound = std::min( lowerBound, c.dstOffset );
-        upperBound = std::max( upperBound, c.dstOffset + c.size );
-    }
-    assert( lowerBound < upperBound );
-
-    VkBufferMemoryBarrier txcBr = {};
-    txcBr.sType                 = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    txcBr.srcQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED;
-    txcBr.dstQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED;
-    txcBr.srcAccessMask         = VK_ACCESS_TRANSFER_WRITE_BIT;
-    txcBr.dstAccessMask         = VK_ACCESS_SHADER_READ_BIT;
-    txcBr.buffer                = vertBuffer->GetBuffer();
-    txcBr.offset                = lowerBound;
-    txcBr.size                  = upperBound - lowerBound;
-
-    vkCmdPipelineBarrier( cmd,
-                          VK_PIPELINE_STAGE_TRANSFER_BIT,
-                          VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                          0,
-                          0,
-                          nullptr,
-                          1,
-                          &txcBr,
-                          0,
-                          nullptr );
-
-    texCoordsToCopy.clear();
+    vkCmdCopyBuffer( cmd, stagingTransformsBuffer.GetBuffer(), transformsBuffer->GetBuffer(), 1, &info );
 
     return true;
 }
 
 bool VertexCollector::CopyFromStaging( VkCommandBuffer cmd )
 {
-    bool vrtCopied = CopyVertexDataFromStaging( cmd );
-    bool indCopied = CopyIndexDataFromStaging( cmd );
-    bool trnCopied = CopyTransformsFromStaging( cmd, false );
+    const bool vertCopied = CopyVertexDataFromStaging( cmd );
+    const bool indexCopied = CopyIndexDataFromStaging( cmd );
+    const bool transformsCopied = CopyTransformsFromStaging( cmd );
 
     std::array< VkBufferMemoryBarrier, 2 > barriers     = {};
     uint32_t                               barrierCount = 0;
 
-    // just prepare for preprocessing - so no AS for this moment
-    if( vrtCopied )
+    if( vertCopied )
     {
-        VkBufferMemoryBarrier& vrtBr = barriers[ barrierCount ];
+        VkBufferMemoryBarrier& barrier = barriers[ barrierCount ];
         barrierCount++;
 
-        vrtBr                     = {};
-        vrtBr.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        vrtBr.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        vrtBr.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        vrtBr.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
-        vrtBr.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        vrtBr.buffer              = vertBuffer->GetBuffer();
-        vrtBr.offset              = 0;
-        vrtBr.size                = curVertexCount * sizeof( ShVertex );
+        barrier = {};
+        barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.buffer              = vertBuffer->GetBuffer();
+        barrier.offset              = 0;
+        barrier.size                = curVertexCount * sizeof( ShVertex );
     }
 
-    // just prepare for preprocessing - so no AS for this moment
-    if( indCopied )
+    if( indexCopied )
     {
-        VkBufferMemoryBarrier& indBr = barriers[ barrierCount ];
+        VkBufferMemoryBarrier& barrier = barriers[ barrierCount ];
         barrierCount++;
 
-        indBr                     = {};
-        indBr.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        indBr.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        indBr.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        indBr.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
-        indBr.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        indBr.buffer              = indexBuffer->GetBuffer();
-        indBr.offset              = 0;
-        indBr.size                = curIndexCount * sizeof( uint32_t );
+        barrier = {};
+        barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.buffer              = indexBuffer->GetBuffer();
+        barrier.offset              = 0;
+        barrier.size                = curIndexCount * sizeof( uint32_t );
     }
 
     if( barrierCount > 0 )
@@ -725,16 +599,16 @@ bool VertexCollector::CopyFromStaging( VkCommandBuffer cmd )
                               nullptr );
     }
 
-    if( trnCopied )
+    if( transformsCopied )
     {
-        VkBufferMemoryBarrier trnBr = {};
-        trnBr.sType                 = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        trnBr.srcQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED;
-        trnBr.dstQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED;
-        trnBr.srcAccessMask         = VK_ACCESS_TRANSFER_WRITE_BIT;
-        trnBr.dstAccessMask         = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-        trnBr.buffer                = transformsBuffer->GetBuffer();
-        trnBr.size                  = curTransformCount * sizeof( VkTransformMatrixKHR );
+        VkBufferMemoryBarrier barrier = {};
+        barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask       = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        barrier.buffer              = transformsBuffer->GetBuffer();
+        barrier.size                = curTransformCount * sizeof( VkTransformMatrixKHR );
 
         vkCmdPipelineBarrier( cmd,
                               VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -743,13 +617,12 @@ bool VertexCollector::CopyFromStaging( VkCommandBuffer cmd )
                               0,
                               nullptr,
                               1,
-                              &trnBr,
+                              &barrier,
                               0,
                               nullptr );
     }
 
-
-    return vrtCopied || indCopied || trnCopied;
+    return vertCopied || indexCopied || transformsCopied;
 }
 
 void VertexCollector::UpdateTransform( uint32_t                     simpleIndex,
@@ -774,18 +647,17 @@ void VertexCollector::UpdateTransform( uint32_t                     simpleIndex,
         simpleIndex, updateInfo.movableStaticUniqueID, updateInfo.transform );
 }
 
-void vkpt::VertexCollector::UpdateTexCoords( uint32_t                     simpleIndex,
-                                              const RgUpdateTexCoordsInfo& texCoordsInfo,
-                                              bool                         isStatic )
+void VertexCollector::UpdateTexCoords( uint32_t                     simpleIndex,
+                                       const RgUpdateTexCoordsInfo& texCoordsInfo,
+                                       bool                         isStatic )
 {
     assert( isStatic );
     assert( mappedVertexData != nullptr );
 
     const uint32_t maxVertexCount = isStatic ? MAX_STATIC_VERTEX_COUNT : MAX_DYNAMIC_VERTEX_COUNT;
 
-    // base vertex index is saved in geometry instance info
-    uint32_t globalVertIndex = geomInfoMgr->GetStaticGeomBaseVertexIndex( simpleIndex );
-    uint32_t dstVertIndex    = globalVertIndex + texCoordsInfo.vertexOffset;
+    const uint32_t globalVertIndex = geomInfoMgr->GetStaticGeomBaseVertexIndex( simpleIndex );
+    const uint32_t dstVertIndex    = globalVertIndex + texCoordsInfo.vertexOffset;
 
     if( dstVertIndex + texCoordsInfo.vertexCount >= maxVertexCount )
     {
@@ -793,7 +665,6 @@ void vkpt::VertexCollector::UpdateTexCoords( uint32_t                     simple
         return;
     }
 
-    // TODO: UpdateTexCoords not implemented
     assert( 0 );
 }
 
@@ -801,29 +672,19 @@ void VertexCollector::AddMaterialDependency( uint32_t simpleIndex,
                                              uint32_t layer,
                                              uint32_t materialIndex )
 {
-    // ignore empty materials
     if( materialIndex != RG_NO_MATERIAL )
     {
-        auto it = materialDependencies.find( materialIndex );
-
-        if( it == materialDependencies.end() )
-        {
-            materialDependencies[ materialIndex ] = {};
-            it                                    = materialDependencies.find( materialIndex );
-        }
-
-        it->second.push_back( { simpleIndex, layer } );
+        materialDependencies[ materialIndex ].push_back( { simpleIndex, layer } );
     }
 }
+
 void VertexCollector::OnMaterialChange( uint32_t materialIndex, const MaterialTextures& newInfo )
 {
-    // for each geom index that has this material, update geometry instance infos
     for( const auto& p : materialDependencies[ materialIndex ] )
     {
         geomInfoMgr->WriteStaticGeomInfoMaterials( p.simpleIndex, p.layer, newInfo );
     }
 }
-
 
 VkBuffer VertexCollector::GetVertexBuffer() const
 {
@@ -879,67 +740,56 @@ std::vector<VertexCollector::GeometryDrawInfo> VertexCollector::GetGeometryDrawI
 {
     std::vector<GeometryDrawInfo> result;
 
-    if (vertBuffer == nullptr || indexBuffer == nullptr)
+    if( vertBuffer == nullptr || indexBuffer == nullptr )
     {
         return result;
     }
 
-    const VkDeviceAddress vertexBase     = vertBuffer->GetAddress() + offsetof(ShVertex, position);
+    const VkDeviceAddress vertexBase     = vertBuffer->GetAddress() + offsetof( ShVertex, position );
     const VkDeviceAddress indexBase      = indexBuffer->GetAddress();
     const VkDeviceAddress transformsBase = transformsBuffer->GetAddress();
-    const uint32_t        stride         = sizeof(ShVertex);
 
-    for (const auto &[filter, f] : filters)
+    for( const auto& [filter, f] : filters )
     {
-        // Sky geometry (RG_GEOMETRY_VISIBILITY_TYPE_SKY) lives in the PV_WORLD_2
-        // filter: it is excluded from the TLAS (rays miss it and sample the sky
-        // cubemap), so it must be excluded from the shadow map too. Otherwise the
-        // sky faces occlude the sun and the god rays stop exactly at the map's
-        // sky boundary instead of shining through the openings.
-        if (filter & (VertexCollectorFilterTypeFlags)VertexCollectorFilterTypeFlagBits::PV_WORLD_2)
+        if( filter & (VertexCollectorFilterTypeFlags)VertexCollectorFilterTypeFlagBits::PV_WORLD_2 )
         {
             continue;
         }
 
-        const auto &geoms  = f->GetASGeometries();
-        const auto &ranges = f->GetASBuildRangeInfos();
+        const auto& geoms  = f->GetASGeometries();
+        const auto& ranges = f->GetASBuildRangeInfos();
 
-        const size_t count = std::min(geoms.size(), ranges.size());
+        const size_t count = std::min( geoms.size(), ranges.size() );
 
-        for (size_t i = 0; i < count; i++)
+        for( size_t i = 0; i < count; i++ )
         {
-            const auto &tr = geoms[i].geometry.triangles;
+            const auto& tr = geoms[ i ].geometry.triangles;
 
             GeometryDrawInfo info = {};
             info.vertexBuffer = vertBuffer->GetBuffer();
             info.indexBuffer  = indexBuffer->GetBuffer();
-            info.baseVertex   = static_cast<uint32_t>((tr.vertexData.deviceAddress - vertexBase) / stride);
-            info.indexCount   = ranges[i].primitiveCount * 3;
+            info.baseVertex   = static_cast< uint32_t >( ( tr.vertexData.deviceAddress - vertexBase ) / sizeof( ShVertex ) );
+            info.indexCount   = ranges[ i ].primitiveCount * 3;
 
-            if (tr.indexType == VK_INDEX_TYPE_UINT32)
+            if( tr.indexType == VK_INDEX_TYPE_UINT32 )
             {
-                info.firstIndex = static_cast<uint32_t>((tr.indexData.deviceAddress - indexBase) / sizeof(uint32_t));
+                info.firstIndex = static_cast< uint32_t >( ( tr.indexData.deviceAddress - indexBase ) / sizeof( uint32_t ) );
             }
             else
             {
                 info.firstIndex = 0;
             }
 
-            // Recover the transform index for this geometry from its device
-            // address in the transforms buffer, then convert the CPU-side
-            // RgTransform (kept up to date for movable/dynamic geometry) into
-            // the same column-major model matrix the RT shaders apply.
             const VkDeviceAddress transformAddr = tr.transformData.deviceAddress;
             const uint32_t        transformIndex =
-                (transformsBase != 0 && transformAddr >= transformsBase)
-                    ? static_cast<uint32_t>((transformAddr - transformsBase) / sizeof(VkTransformMatrixKHR))
+                ( transformsBase != 0 && transformAddr >= transformsBase )
+                    ? static_cast< uint32_t >( ( transformAddr - transformsBase ) / sizeof( VkTransformMatrixKHR ) )
                     : 0;
 
-            const RgTransform &t =
-                reinterpret_cast<const RgTransform &>(mappedTransformData[transformIndex]);
-            Matrix::ToMat4Transposed(info.model, t);
+            const RgTransform& t = reinterpret_cast< const RgTransform& >( mappedTransformData[ transformIndex ] );
+            Matrix::ToMat4Transposed( info.model, t );
 
-            result.push_back(info);
+            result.push_back( info );
         }
     }
 
@@ -949,7 +799,7 @@ std::vector<VertexCollector::GeometryDrawInfo> VertexCollector::GetGeometryDrawI
 const std::vector< uint32_t >& VertexCollector::GetPrimitiveCounts(
     VertexCollectorFilterTypeFlags filter ) const
 {
-    auto f = filters.find( filter );
+    const auto f = filters.find( filter );
     assert( f != filters.end() );
 
     return f->second->GetPrimitiveCounts();
@@ -958,7 +808,7 @@ const std::vector< uint32_t >& VertexCollector::GetPrimitiveCounts(
 const std::vector< VkAccelerationStructureGeometryKHR >& VertexCollector::GetASGeometries(
     VertexCollectorFilterTypeFlags filter ) const
 {
-    auto f = filters.find( filter );
+    const auto f = filters.find( filter );
     assert( f != filters.end() );
 
     return f->second->GetASGeometries();
@@ -967,7 +817,7 @@ const std::vector< VkAccelerationStructureGeometryKHR >& VertexCollector::GetASG
 const std::vector< VkAccelerationStructureBuildRangeInfoKHR >& VertexCollector::
     GetASBuildRangeInfos( VertexCollectorFilterTypeFlags filter ) const
 {
-    auto f = filters.find( filter );
+    const auto f = filters.find( filter );
     assert( f != filters.end() );
 
     return f->second->GetASBuildRangeInfos();
@@ -979,8 +829,6 @@ bool VertexCollector::AreGeometriesEmpty( VertexCollectorFilterTypeFlags flags )
     {
         const auto& f = p.second;
 
-        // if filter includes any type from flags
-        // and it's not empty
         if( ( f->GetFilter() & flags ) && f->GetGeometryCount() > 0 )
         {
             return false;
@@ -997,7 +845,6 @@ bool VertexCollector::AreGeometriesEmpty( VertexCollectorFilterTypeFlagBits type
 
 void VertexCollector::InsertVertexPreprocessBeginBarrier( VkCommandBuffer cmd )
 {
-    // barriers were already inserted in CopyFromStaging()
 }
 
 void VertexCollector::InsertVertexPreprocessFinishBarrier( VkCommandBuffer cmd )
@@ -1007,36 +854,36 @@ void VertexCollector::InsertVertexPreprocessFinishBarrier( VkCommandBuffer cmd )
 
     if( curVertexCount > 0 )
     {
-        VkBufferMemoryBarrier& vrtBr = barriers[ barrierCount ];
+        VkBufferMemoryBarrier& barrier = barriers[ barrierCount ];
         barrierCount++;
 
-        vrtBr                     = {};
-        vrtBr.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        vrtBr.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        vrtBr.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        vrtBr.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        vrtBr.dstAccessMask =
+        barrier = {};
+        barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask =
             VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_SHADER_READ_BIT;
-        vrtBr.buffer = vertBuffer->GetBuffer();
-        vrtBr.offset = 0;
-        vrtBr.size   = curVertexCount * sizeof( ShVertex );
+        barrier.buffer = vertBuffer->GetBuffer();
+        barrier.offset = 0;
+        barrier.size   = curVertexCount * sizeof( ShVertex );
     }
 
     if( curIndexCount > 0 )
     {
-        VkBufferMemoryBarrier& indBr = barriers[ barrierCount ];
+        VkBufferMemoryBarrier& barrier = barriers[ barrierCount ];
         barrierCount++;
 
-        indBr                     = {};
-        indBr.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        indBr.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        indBr.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        indBr.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        indBr.dstAccessMask =
+        barrier = {};
+        barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask =
             VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_SHADER_READ_BIT;
-        indBr.buffer = indexBuffer->GetBuffer();
-        indBr.offset = 0;
-        indBr.size   = curIndexCount * sizeof( uint32_t );
+        barrier.buffer = indexBuffer->GetBuffer();
+        barrier.offset = 0;
+        barrier.size   = curIndexCount * sizeof( uint32_t );
     }
 
     if( barrierCount == 0 )
@@ -1080,7 +927,7 @@ void VertexCollector::PushRangeInfo( VertexCollectorFilterTypeFlags             
     filters[ type ]->PushRangeInfo( type, rangeInfo );
 }
 
-uint32_t vkpt::VertexCollector::GetGeometryCount( VertexCollectorFilterTypeFlags type )
+uint32_t VertexCollector::GetGeometryCount( VertexCollectorFilterTypeFlags type )
 {
     assert( filters.find( type ) != filters.end() );
 
@@ -1121,15 +968,11 @@ void VertexCollector::AddFilter( VertexCollectorFilterTypeFlags filterGroup )
     filters[ filterGroup ] = std::make_shared< VertexCollectorFilter >( filterGroup );
 }
 
-// try create filters for each group (mask)
 void VertexCollector::InitFilters( VertexCollectorFilterTypeFlags flags )
 {
     typedef VertexCollectorFilterTypeFlags    FL;
-    typedef VertexCollectorFilterTypeFlagBits FT;
 
-    // iterate over all pairs of group bits
     VertexCollectorFilterTypeFlags_IterateOverFlags( [ this, flags ]( FL f ) {
-        // if flags contain this pair of group bits
         if( ( flags & f ) == f )
         {
             AddFilter( f );

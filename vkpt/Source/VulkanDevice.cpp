@@ -102,7 +102,7 @@ VkCommandBuffer VulkanDevice::BeginFrame(const RgStartFrameInfo &startInfo)
     genericSamplerManager->PrepareForFrame(frameIndex);
     textureManager->PrepareForFrame(frameIndex);
     cubemapManager->PrepareForFrame(frameIndex);
-    rasterizer->PrepareForFrame(frameIndex);
+    rasterizedDataCollector->Clear(frameIndex);
     decalManager->PrepareForFrame(frameIndex);
 
     VkCommandBuffer cmd = cmdManager->StartGraphicsCmd();
@@ -732,7 +732,7 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
         drawInfo.pSkyParams ? drawInfo.pSkyParams->skyViewerPosition : RgFloat3D{ 0, 0, 0 };
 
     const std::vector<RasterizedDataCollector::DrawInfo> &skyDraws =
-        rasterizer->GetDataCollector().GetSkyDrawInfos();
+        rasterizedDataCollector->GetSkyDrawInfos();
 
     // The world sub-pass draws the frame's raster draw list - what the legacy world draw consumes
     // (VulkanDevice.cpp:1071-1082, Rasterizer::DrawToFinalImage) - and reads the same engine global
@@ -740,7 +740,7 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     // skeleton receives them as pointers because it wraps the two buffers itself, on the first
     // frame the engine's framebuffers exist (see NvrhiFrameSkeleton::PrepareWorld).
     const std::vector<RasterizedDataCollector::DrawInfo> &worldDraws =
-        rasterizer->GetDataCollector().GetRasterDrawInfos();
+        rasterizedDataCollector->GetRasterDrawInfos();
 
     // The smoke half's list (A5.5): the DEFAULT stream carries the smoke entries too - R_DrawSmoke
     // uploads all live puffs as one batch with the engine's SMOKE state bit (r_smoke.c:358-376;
@@ -760,7 +760,7 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     // The 2D UI's draw list (A5.1): the same collector stream the legacy Rasterizer::DrawToSwapchain
     // consumes, read here for the RHI UI pass.
     const std::vector<RasterizedDataCollector::DrawInfo> &swapchainDraws =
-        rasterizer->GetDataCollector().GetSwapchainDrawInfos();
+        rasterizedDataCollector->GetSwapchainDrawInfos();
 
     // The engine's TLAS preparation and build, the two calls Scene::SubmitForFrame makes on this
     // frame's legacy command buffer (Scene.cpp:108-118), with exactly the values of the legacy call
@@ -820,11 +820,11 @@ bool VulkanDevice::RenderThroughRhi(const RgDrawFrameInfo &drawInfo)
     sky.swapchainDraws = swapchainDraws.data();
     sky.swapchainDrawCount = static_cast<uint32_t>(swapchainDraws.size());
     sky.swapchainVertexStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
-        rasterizer->GetDataCollector().GetVertexStagingBuffer(frameIndex)));
+        rasterizedDataCollector->GetVertexStagingBuffer(frameIndex)));
     sky.swapchainIndexStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
-        rasterizer->GetDataCollector().GetIndexStagingBuffer(frameIndex)));
-    sky.swapchainVertexStagingSize = rasterizer->GetDataCollector().GetVertexBufferSize();
-    sky.swapchainIndexStagingSize = rasterizer->GetDataCollector().GetIndexBufferSize();
+        rasterizedDataCollector->GetIndexStagingBuffer(frameIndex)));
+    sky.swapchainVertexStagingSize = rasterizedDataCollector->GetVertexBufferSize();
+    sky.swapchainIndexStagingSize = rasterizedDataCollector->GetIndexBufferSize();
     sky.disableRasterization = drawInfo.disableRasterization;
     sky.uniform = uniform;
     sky.tonemapping = tonemapping.get();
@@ -1209,7 +1209,7 @@ void VulkanDevice::DrawFrame(const RgDrawFrameInfo *drawInfo)
         const bool mipLodBiasUpdated = worldSamplerManager->TryChangeMipLodBias(frameIndex, renderResolution.GetMipLodBias());
         textureManager->SubmitDescriptors(frameIndex, drawInfo->pTexturesParams, mipLodBiasUpdated);
 
-        rasterizer->GetDataCollector().CopyFromStaging(cmd, frameIndex);
+        rasterizedDataCollector->CopyFromStaging(cmd, frameIndex);
 
         if (RenderThroughRhi(*drawInfo))
         {
@@ -1441,7 +1441,7 @@ void VulkanDevice::UploadRasterizedGeometry(const RgRasterizedGeometryUploadInfo
         throw RgException(RG_WRONG_ARGUMENT, "Index data / count must be both not null or null");
     }
 
-    rasterizer->Upload(currentFrameState.GetFrameIndex(), *pUploadInfo, pViewProjection, pViewport);
+    rasterizedDataCollector->AddGeometry(currentFrameState.GetFrameIndex(), *pUploadInfo, pViewProjection, pViewport);
 }
 
 void vkpt::VulkanDevice::UploadDecal(const RgDecalUploadInfo *pUploadInfo)
