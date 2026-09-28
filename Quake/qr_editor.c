@@ -3557,7 +3557,7 @@ static void QRE_BuildLightPanelGUI (void)
 	QR_GUI_EndPanel ();
 }
 
-static void QRE_BuildFlyingOverlay (void)
+static void QRE_DrawHints (void)
 {
 	static const char *const lines[] = {
 		"QR MATERIAL EDITOR",
@@ -3575,7 +3575,14 @@ static void QRE_BuildFlyingOverlay (void)
 	};
 	const char *const *shown = (qre.mode == QRE_MODE_LIGHT) ? light_lines : lines;
 
+	if (qre.choosing)
+		return;
+
 	QR_GUI_DrawHint (shown, (int)countof (light_lines));
+}
+
+static void QRE_BuildFlyingOverlay (void)
+{
 	QR_GUI_DrawCrosshair ();
 
 	if (qre.custom_placing)
@@ -3676,6 +3683,7 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	else
 		QRE_BuildFlyingOverlay ();
 
+	QRE_DrawHints ();
 	QRE_DrawOverlay ();
 
 	QR_GUI_EndFrame ();
