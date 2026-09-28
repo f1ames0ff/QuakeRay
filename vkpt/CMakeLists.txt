@@ -9,8 +9,7 @@ set(vkpt_CXX_STANDARD 20)
 
 # The renderer source + public headers + shaders live in this folder.
 set(vkpt_PUBLIC_HEADERS
-    Include/vkpt/vkpt.h
-    Include/vkpt/vkptA.h)
+    Include/vkpt/vkpt.h)
 
 set(vkpt_SOURCES
     Source/vkpt.cpp
