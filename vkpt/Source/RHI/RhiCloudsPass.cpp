@@ -36,6 +36,7 @@ nvrhi::TextureHandle CreateLayerTexture(nvrhi::IDevice *device, const char *pDeb
     desc.height = RhiCloudsPass::LAYER_CUBEMAP_SIZE;
     desc.arraySize = RhiCloudsPass::LAYER_CUBEMAP_FACE_COUNT;
     desc.mipLevels = 1;
+    desc.isUAV = true;
     desc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
     desc.keepInitialState = true;
 
@@ -51,6 +52,7 @@ nvrhi::TextureHandle CreateShadowTexture(nvrhi::IDevice *device, const char *pDe
     desc.height = RhiCloudsPass::SHADOW_VOLUME_SIZE;
     desc.depth = RhiCloudsPass::SHADOW_VOLUME_SLICES;
     desc.mipLevels = 1;
+    desc.isUAV = true;
     desc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
     desc.keepInitialState = true;
 
@@ -154,6 +156,11 @@ bool RhiCloudsPass::Create(nvrhi::IDevice *pDevice,
     {
         nvrhi::BindingLayoutDesc desc;
         desc.visibility = nvrhi::ShaderType::Compute;
+        desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
+                                   .setShaderResourceOffset(0)
+                                   .setUnorderedAccessViewOffset(0)
+                                   .setConstantBufferOffset(0)
+                                   .setSamplerOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(LAYER_PARAMS_CB_SLOT));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_UAV(LAYER_UAV_SLOT));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(LAYER_SHADOW_SRV_SLOT));
@@ -170,6 +177,11 @@ bool RhiCloudsPass::Create(nvrhi::IDevice *pDevice,
     {
         nvrhi::BindingLayoutDesc desc;
         desc.visibility = nvrhi::ShaderType::Compute;
+        desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
+                                   .setShaderResourceOffset(0)
+                                   .setUnorderedAccessViewOffset(0)
+                                   .setConstantBufferOffset(0)
+                                   .setSamplerOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_UAV(SHADOW_UAV_SLOT));
         desc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(SHADOW_PARAMS_CB_SLOT));
 
