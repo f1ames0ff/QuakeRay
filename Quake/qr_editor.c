@@ -323,6 +323,7 @@ static void     QRE_Cancel (void);
 static void     QRE_StopEditor (qboolean restore);
 static void     QRE_ClosePanel (void);
 static void     QRE_RequestExit (void);
+static void     QRE_GlobalsRestore (void);
 static qboolean QRE_WriteSession (void);
 static qboolean QRE_FileExists (const char *path);
 static void     QRE_SessionSave (void);
@@ -528,6 +529,7 @@ static void QRE_RestoreLightSnapshot (void)
 	RT_LIGHT_SetCount (qre.snap_light_count);
 
 	QRE_RestoreCustomSnapshot ();
+	QRE_GlobalsRestore ();
 }
 
 static void QRE_FreeLightSnapshot (void)
@@ -2616,7 +2618,7 @@ static void QRE_BuildPanelGUI (void)
 	}
 	QR_GUI_Spacing ();
 
-	if (QR_GUI_Button ("Apply"))
+	if (QR_GUI_Button ("Save"))
 		QRE_Apply ();
 	QR_GUI_SameLine ();
 	if (QR_GUI_Button ("Cancel"))
@@ -2989,6 +2991,67 @@ static const qre_global_t qre_globals[] = {
 	  "Draw the level's own fog (the worldspawn \"fog\" key or the console `fog` command)." },
 };
 
+#define QRE_GLOBAL_SNAPSHOT_MAX 256
+
+static char     qre_globals_snapshot[countof (qre_globals)][QRE_GLOBAL_SNAPSHOT_MAX];
+static qboolean qre_globals_snapshot_set[countof (qre_globals)];
+
+static const char *QRE_GlobalCvarName (const qre_global_t *g)
+{
+	return (g->type == QRE_G_BUTTON) ? g->action : g->name;
+}
+
+static void QRE_TakeGlobalsSnapshot (void)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_globals); i++)
+	{
+		const char *name = QRE_GlobalCvarName (&qre_globals[i]);
+		cvar_t     *var = name ? Cvar_FindVar (name) : NULL;
+
+		if (!var)
+		{
+			qre_globals_snapshot_set[i] = false;
+			qre_globals_snapshot[i][0] = '\0';
+			continue;
+		}
+
+		qre_globals_snapshot_set[i] = true;
+		q_strlcpy (qre_globals_snapshot[i], var->string ? var->string : "", sizeof (qre_globals_snapshot[i]));
+	}
+}
+
+static qboolean QRE_GlobalsTouched (void)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_globals); i++)
+	{
+		cvar_t *var;
+
+		if (!qre_globals_snapshot_set[i])
+			continue;
+
+		var = Cvar_FindVar (QRE_GlobalCvarName (&qre_globals[i]));
+		if (var && strcmp (var->string ? var->string : "", qre_globals_snapshot[i]))
+			return true;
+	}
+
+	return false;
+}
+
+static void QRE_GlobalsRestore (void)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_globals); i++)
+	{
+		if (qre_globals_snapshot_set[i])
+			Cvar_Set (QRE_GlobalCvarName (&qre_globals[i]), qre_globals_snapshot[i]);
+	}
+}
+
 static void QRE_GlobalColorGet (const char *name, float rgb[3])
 {
 	if (!strcmp (name, "rt_sky_color"))
@@ -3118,7 +3181,7 @@ static void QRE_LightGlobalTab (void)
 	}
 
 	QR_GUI_Spacing ();
-	QR_GUI_LabelDim ("the values above live in the config: Apply and Cancel do not own them");
+	QR_GUI_LabelDim ("the values above are saved to the config by Save; Cancel puts them back");
 	QR_GUI_LabelDim ("the fog is part of the level's session: it goes to qray/lights.yaml");
 }
 
@@ -3272,7 +3335,7 @@ static void QRE_BuildLightPanelGUI (void)
 	}
 	QR_GUI_Spacing ();
 
-	if (QR_GUI_Button ("Apply"))
+	if (QR_GUI_Button ("Save"))
 		QRE_Apply ();
 	QR_GUI_SameLine ();
 	if (QR_GUI_Button ("Cancel"))
@@ -3578,7 +3641,7 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	{
 		int answer = QR_GUI_Dialog ((qre.mode == QRE_MODE_LIGHT) ? "Save lights?" : "Save materials?",
 		                            (qre.mode == QRE_MODE_LIGHT) ? "Save all light changes?" : "Save all materials changes?",
-		                            "Save", "Discard");
+		                            "Save all", "Discard");
 
 		if (answer == 1)
 		{
@@ -3897,11 +3960,16 @@ static void QRE_ClosePanel (void)
 
 static void QRE_Apply (void)
 {
-	if (!QRE_WriteSession ())
+	const qboolean globals = (qre.mode == QRE_MODE_LIGHT) ? QRE_GlobalsTouched () : false;
+
+	if (!QRE_WriteSession () && !globals)
 	{
 		QRE_Notify ("nothing to save yet");
 		return;
 	}
+
+	if (globals)
+		Host_WriteConfiguration ();
 
 	if (qre.mode == QRE_MODE_LIGHT)
 	{
@@ -3909,13 +3977,16 @@ static void QRE_Apply (void)
 		const qboolean custom = QRE_FileExists (qre.custom_editor_file);
 
 		QRE_TakeLightSnapshot (); // Cancel now reverts to the state just saved
+		QRE_TakeGlobalsSnapshot ();
 
 		if (emitter && custom)
 			QRE_Notify ("session written to lights.editor.yaml and qray/lights.editor.yaml");
 		else if (custom)
 			QRE_Notify ("session written to qray/lights.editor.yaml");
-		else
+		else if (emitter)
 			QRE_Notify ("session written to lights.editor.yaml");
+		if (globals)
+			QRE_Notify ("global settings written to the config");
 		return;
 	}
 
@@ -3934,7 +4005,7 @@ static void QRE_Cancel (void)
 		if (QRE_FileExists (qre.editor_file) && !QRE_WriteSession ())
 			remove (qre.editor_file);
 
-		QRE_Notify ("light overrides, custom lights and fog reverted to the files");
+		QRE_Notify ("light overrides, custom lights, fog and global settings reverted");
 		return;
 	}
 
@@ -4779,6 +4850,7 @@ static void QRE_StartEditor (int mode)
 	if (mode == QRE_MODE_LIGHT)
 	{
 		QRE_TakeLightSnapshot ();
+		QRE_TakeGlobalsSnapshot ();
 
 		// the light session: the gamedir's lights.yaml holds the emitter
 		// overrides, with the session file and the backup the materials use too,
