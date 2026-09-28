@@ -281,6 +281,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_q2_lightstats, "1") \
 	CVAR_DEF_T (rt_reflrefr_earlyout, "1") \
 	CVAR_DEF_T (rt_nee_samples, "1") \
+	CVAR_DEF_T (rt_restir, "0") \
+	CVAR_DEF_T (rt_restir_candidates, "8") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
 	CVAR_DEF_T (rt_stats_interval, "0.25") \
 	CVAR_DEF_T (rt_worldcensus, "0") \
@@ -642,6 +644,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_denoiser");
 	RT_Bench_Setting (f, "rt_gi_level");
 	RT_Bench_Setting (f, "rt_nee_samples");
+	RT_Bench_Setting (f, "rt_restir");
+	RT_Bench_Setting (f, "rt_restir_candidates");
 	RT_Bench_Setting (f, "rt_renderscale");
 	RT_Bench_Setting (f, "rt_upscale_fsr2");
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
@@ -2070,6 +2074,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.q2LightStatsMode = q2_lightstats_mode,
 		.reflRefrEarlyOut = CVAR_TO_BOOL (rt_reflrefr_earlyout),
 		.neeLightSamples = nee_samples,
+		.restirEnabled = CVAR_TO_BOOL (rt_restir) ? 1u : 0u,
+		.restirCandidates = (uint32_t)CLAMP (1.0f, CVAR_TO_FLOAT (rt_restir_candidates), 64.0f),
 		.giBounceRays = gi_level,
 		// Q2RTX pt_sun_bounce_range / sun_bounce: how far the sun reaches into an
 		// indirect bounce (game units, 0 turns indirect sunlight off) and a
@@ -3052,24 +3058,9 @@ VID_Restart_f -- johnfitz -- change video modes on the fly
 */
 static void VID_Restart_f (void)
 {
-	/* Temporarily disabled: re-initializing the renderer in place corrupts the
-	   textures (the material/image caches are not rebuilt consistently), so the
-	   command is a no-op until that is fixed. */
-	Con_Printf ("vid_restart is temporarily disabled\n");
-
-#if 0
-	if (vid_locked)
+	if (vid_locked || !vid_changed)
 		return;
-
-	/* Re-read materials.yaml and re-apply the material properties to every
-	   texture so edits are picked up without a full engine restart. */
-	GL_WaitForDeviceIdle ();
-	RT_MAT_Reload ();
-	TexMgr_ReloadAllImages ();
-
-	if (vid_changed)
-		VID_Restart (true);
-#endif
+	VID_Restart (true);
 }
 
 /*

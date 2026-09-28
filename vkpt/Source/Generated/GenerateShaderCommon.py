@@ -860,6 +860,11 @@ GLOBAL_UNIFORM_STRUCT = [
     # otherwise. The sky carries no distance (sky texels report
     # MAX_RAY_LENGTH), so it is blended by this amount instead of by depth.
     (TYPE_FLOAT32,      4,      "levelFogSkyBlend",         1),
+
+    # Global-light RIS mode (host cvars rt_restir / rt_restir_candidates):
+    # .x = 1 samples the direct lights from the global light array instead of
+    # the per-cluster lists, .y = candidates drawn per NEE light sample.
+    (TYPE_UINT32,       4,      "restirParams",             1),
 ]
 
 GEOM_INSTANCE_STRUCT = [

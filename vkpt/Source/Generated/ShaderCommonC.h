@@ -329,6 +329,7 @@ struct ShGlobalUniform
     float sunBounce[4];
     float levelFogColorDensity[4];
     float levelFogSkyBlend[4];
+    uint32_t restirParams[4];
 };
 
 struct ShGeometryInstance
