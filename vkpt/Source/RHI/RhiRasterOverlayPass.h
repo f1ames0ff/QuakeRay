@@ -598,6 +598,7 @@ private:
     bool warnedMissingSmokeTargets = false;
     bool warnedMissingSmokeInputs = false;
     bool warnedFailedSmokePipeline = false;
+    bool warnedMissingVoxelSmokeInputs = false;
 
     bool created = false;
 };

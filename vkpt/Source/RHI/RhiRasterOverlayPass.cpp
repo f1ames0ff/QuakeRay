@@ -1082,6 +1082,11 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             pCommandList->dispatch(VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8);
         }
     }
+    else if (pVoxelSmokeParams != nullptr && pVoxelSmokeParams->enabled && !warnedMissingVoxelSmokeInputs)
+    {
+        warnedMissingVoxelSmokeInputs = true;
+        LogMessage(print, "Warning: RHI: the voxel smoke is enabled but cannot draw (an injection or march object, the depth world texture or the uniform set is missing)");
+    }
 
     if (worldDrawable || smokeDrawable)
     {
