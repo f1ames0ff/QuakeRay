@@ -568,12 +568,12 @@ void SCR_DrawFPS (cb_context_t *cbx)
 	}
 }
 
-static const RgFloat4D color_orange = { 1.0f, 0.30f, 0.05f, 1.0f };
-static const RgFloat4D color_detail = { 0.60f, 0.85f, 1.00f, 1.0f };
-static const RgFloat4D color_shadow = { 0.0f, 0.0f, 0.0f, 1.0f };
+static const QrFloat4D color_orange = { 1.0f, 0.30f, 0.05f, 1.0f };
+static const QrFloat4D color_detail = { 0.60f, 0.85f, 1.00f, 1.0f };
+static const QrFloat4D color_shadow = { 0.0f, 0.0f, 0.0f, 1.0f };
 
 static void SCR_DrawRTStatsString (cb_context_t *cbx, int x, int y, const char *str, float scale,
-                                   const RgFloat4D *color, const RgFloat4D *shadow)
+                                   const QrFloat4D *color, const QrFloat4D *shadow)
 {
 	Draw_StringScaled (cbx, x + 4, y + 4, str, scale, shadow);
 	Draw_StringScaled (cbx, x, y, str, scale, color);
@@ -586,7 +586,7 @@ static const int   rt_stats_step = 16;  // 8 pixels of glyph times the scale
 static const int   rt_stats_col = 360;  // the table columns: 22 characters at that scale
 
 static void SCR_DrawRTStatsRow (cb_context_t *cbx, int x, int y, const char *name, float ms,
-                                const RgFloat4D *color)
+                                const QrFloat4D *color)
 {
 	const unsigned ms10 = (unsigned)(ms * 10.0f + 0.5f);
 	char           st[64];
@@ -688,7 +688,7 @@ int SCR_DrawRTStats (cb_context_t *cbx)
 	if (passes && snap.haveGpu && snap.gpu.gpuTimingValid)
 	{
 		const unsigned gpu_ms10 = (unsigned)(snap.gpu.gpuFrameMs * 10.0f + 0.5f);
-		const int      rows = (RG_GPU_PASS_COUNT + 1) / 2;
+		const int      rows = (QR_GPU_PASS_COUNT + 1) / 2;
 
 		y += rt_stats_step; // blank line before the section
 
@@ -696,9 +696,9 @@ int SCR_DrawRTStats (cb_context_t *cbx)
 		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
 		y += rt_stats_step;
 
-		for (i = 0; i < RG_GPU_PASS_COUNT; i++)
+		for (i = 0; i < QR_GPU_PASS_COUNT; i++)
 			SCR_DrawRTStatsRow (cbx, x + (i / rows) * rt_stats_col, y + (i % rows) * rt_stats_step,
-			                    rgGetGpuPassName (i), snap.gpu.gpuPassMs[i], &color_detail);
+			                    qrGetGpuPassName (i), snap.gpu.gpuPassMs[i], &color_detail);
 
 		y += rows * rt_stats_step;
 	}
@@ -761,7 +761,7 @@ void SCR_DrawRTProf (cb_context_t *cbx, int x, int y)
 	SCR_DrawRTStatsRow (cbx, x, y, "WAIT", rep->waitMs, &color_orange);
 	y += rt_stats_step;
 
-	SCR_DrawRTStatsRow (cbx, x, y, "rgDrawFrame", rep->ms[RT_PROF_DRAWFRAME], &color_orange);
+	SCR_DrawRTStatsRow (cbx, x, y, "qrDrawFrame", rep->ms[RT_PROF_DRAWFRAME], &color_orange);
 	y += rt_stats_step;
 
 	for (i = 0; i < (int)countof (left); i++)

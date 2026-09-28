@@ -92,7 +92,7 @@ extern cvar_t rt_enable_pvs;
 
 typedef struct
 {
-	RgVertex *verts;
+	QrVertex *verts;
 	int       verts_count;
 	int       verts_allocated;
 } rt_skybatch_t;
@@ -827,7 +827,7 @@ Sky_ProcessPoly
 */
 static void Sky_ProcessPoly (cb_context_t *cbx, glpoly_t *p, float color[3], uint64_t uniqueid)
 {
-	const static RgTransform tr = RT_TRANSFORM_IDENTITY;
+	const static QrTransform tr = RT_TRANSFORM_IDENTITY;
 
 	// draw it
 	DrawGLPoly (cbx, uniqueid, p, color, 1.0f, &tr, NULL, DRAW_GL_POLY_TYPE_SKY);
@@ -984,7 +984,7 @@ void Sky_ProcessEntities (cb_context_t *cbx, float color[3])
 Sky_EmitSkyBoxVertex
 ==============
 */
-void Sky_EmitSkyBoxVertex (RgVertex *vertex, float s, float t, int axis)
+void Sky_EmitSkyBoxVertex (QrVertex *vertex, float s, float t, int axis)
 {
 	vec3_t v, b;
 	int    j, k;
@@ -1046,7 +1046,7 @@ void Sky_DrawSkyBox (cb_context_t *cbx, const float skyTint[3])
 
 		gltexture_t *texture = skybox_textures[skytexorder[i]];
 
-		RgVertex vertices[4] = {0};
+		QrVertex vertices[4] = {0};
 
 #if RT_SKY_CULLING
     #if 1 // FIXME: this is to avoid tjunctions until i can do it the right way
@@ -1068,22 +1068,22 @@ void Sky_DrawSkyBox (cb_context_t *cbx, const float skyTint[3])
 		Sky_EmitSkyBoxVertex (vertices + 3, skymaxs[0], skymins[1], i);
 #endif
 
-		RgRasterizedGeometryUploadInfo info = {
-			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY,
+		QrRasterizedGeometryUploadInfo info = {
+			.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY,
 			.vertexCount = countof (vertices),
 			.pVertices = vertices,
 			.indexCount = RT_GetFanIndexCount (countof (vertices)),
 			.pIndices = RT_GetFanIndices (countof (vertices)),
 			.transform = RT_TRANSFORM_IDENTITY,
 			.color = {skyTint[0], skyTint[1], skyTint[2], 1.0f},
-			.material = texture ? texture->rtmaterial : RG_NO_MATERIAL,
+			.material = texture ? texture->rtmaterial : QR_NO_MATERIAL,
 			.pipelineState = 0,
 			.blendFuncSrc = 0,
 			.blendFuncDst = 0,
 		};
 
-		RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-		RG_CHECK (r);
+		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+		QR_CHECK (r);
 
 		Atomic_IncrementUInt32 (&rs_skypolys);
 		Atomic_IncrementUInt32 (&rs_skypasses);
@@ -1167,11 +1167,11 @@ void Sky_DrawFaceQuad (cb_context_t *cbx, glpoly_t *p, float alpha, const float 
 		if (batch->verts_count + indexcount >= batch->verts_allocated)
 		{
 			batch->verts_allocated += 1024;
-			batch->verts = Mem_Realloc (batch->verts, sizeof (RgVertex) * batch->verts_allocated);
+			batch->verts = Mem_Realloc (batch->verts, sizeof (QrVertex) * batch->verts_allocated);
 		}
 
 
-		RgVertex *dst = &batch->verts[batch->verts_count];
+		QrVertex *dst = &batch->verts[batch->verts_count];
 
 		for (int i = 0; i < indexcount; i++)
 		{
@@ -1255,20 +1255,20 @@ void Sky_DrawFace (cb_context_t *cbx, int axis, float alpha, const float skyTint
 	{
 		gltexture_t *texture = alphalayer ? alphaskytexture : solidskytexture;
 
-		RgRasterizedGeometryUploadInfo info = {
-			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY,
+		QrRasterizedGeometryUploadInfo info = {
+			.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SKY,
 			.vertexCount = alphalayer ? rt_skybatch_alpha.verts_count : rt_skybatch_solid.verts_count,
 			.pVertices = alphalayer ? rt_skybatch_alpha.verts : rt_skybatch_solid.verts,
 			.transform = RT_TRANSFORM_IDENTITY,
 			.color = {1.0f, 1.0f, 1.0f, alpha},
-			.material = texture ? texture->rtmaterial : RG_NO_MATERIAL,
-			.pipelineState = alphalayer ? RG_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : 0,
-			.blendFuncSrc = alphalayer ? RG_BLEND_FACTOR_SRC_ALPHA : 0,
-			.blendFuncDst = alphalayer ? RG_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : 0,
+			.material = texture ? texture->rtmaterial : QR_NO_MATERIAL,
+			.pipelineState = alphalayer ? QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : 0,
+			.blendFuncSrc = alphalayer ? QR_BLEND_FACTOR_SRC_ALPHA : 0,
+			.blendFuncDst = alphalayer ? QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : 0,
 		};
 
-		RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-		RG_CHECK (r);
+		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+		QR_CHECK (r);
 	}
 
 	rt_skybatch_solid.verts_count = 0;

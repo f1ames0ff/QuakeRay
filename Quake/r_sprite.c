@@ -85,7 +85,7 @@ static mspriteframe_t *R_GetSpriteFrame (entity_t *currentent)
 R_CreateSpriteVertices
 ================
 */
-static void R_CreateSpriteVertices (entity_t *e, mspriteframe_t *frame, RgVertex vertices[4])
+static void R_CreateSpriteVertices (entity_t *e, mspriteframe_t *frame, QrVertex vertices[4])
 {
 	vec3_t     point, v_forward, v_right, v_up;
 	msprite_t *psprite;
@@ -191,7 +191,7 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 	gltexture_t    *tx = frame->gltexture;
 
 
-    RgVertex vertices[4] = {0};
+    QrVertex vertices[4] = {0};
 	R_CreateSpriteVertices (e, frame, vertices);
 
 	qboolean is_decal = psprite->type == SPR_ORIENTED;
@@ -206,15 +206,15 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 		VectorScale (color, CVAR_TO_FLOAT (rt_dlight_intensity), color);
 		RT_FIXUP_LIGHT_INTENSITY (color, true);
 
-		RgSphericalLightUploadInfo light_info = {
+		QrSphericalLightUploadInfo light_info = {
 			.uniqueID = RT_GetSpriteModelUniqueId (entuniqueid),
 			.color = {color[0], color[1], color[2]},
 			.position = {e->origin[0], e->origin[1], e->origin[2]},
 			.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
 		};
 
-		RgResult r = rgUploadSphericalLight (vulkan_globals.instance, &light_info);
-		RG_CHECK (r);
+		QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &light_info);
+		QR_CHECK (r);
 
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
 			RT_ClusterLightAdd (light_info.uniqueID, e->origin, RT_ClusterLightReach ());
@@ -222,49 +222,49 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 
 	if (is_rasterized)
 	{
-		RgRasterizedGeometryUploadInfo info = {
-			.renderType = RG_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+		QrRasterizedGeometryUploadInfo info = {
+			.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
 			.vertexCount = countof (vertices),
 			.pVertices = vertices,
 			.indexCount = RT_GetFanIndexCount (countof (vertices)),
 			.pIndices = RT_GetFanIndices (countof (vertices)),
 			.transform = RT_TRANSFORM_IDENTITY,
 			.color = RT_COLOR_WHITE,
-			.material = tx ? tx->rtmaterial : RG_NO_MATERIAL,
+			.material = tx ? tx->rtmaterial : QR_NO_MATERIAL,
 			.pipelineState = 
-			    RG_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | 
-			    RG_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE | 
-			    RG_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
+			    QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | 
+			    QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE | 
+			    QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
 			.blendFuncSrc = 0,
 			.blendFuncDst = 0,
 		};
 
-		RgResult r = rgUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
-		RG_CHECK (r);
+		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+		QR_CHECK (r);
 	}
 	else
 	{
-		RgGeometryUploadInfo info = {
+		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetSpriteModelUniqueId (entuniqueid),
-			.flags = RG_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
-			.geomType = RG_GEOMETRY_TYPE_DYNAMIC,
-			.passThroughType = RG_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED,
-			.visibilityType = RG_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
+			.flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
+			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
+			.passThroughType = QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED,
+			.visibilityType = QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
 			.vertexCount = countof (vertices),
 			.pVertices = vertices,
 			.indexCount = RT_GetFanIndexCount (countof (vertices)),
 			.pIndices = RT_GetFanIndices (countof (vertices)),
 			.layerColors = {RT_COLOR_WHITE},
-			.layerBlendingTypes = {RG_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
+			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
 			.defaultRoughness = CVAR_TO_FLOAT (rt_model_rough),
 			.defaultMetallicity = CVAR_TO_FLOAT (rt_model_metal),
 			.defaultEmission = 0,
-			.geomMaterial = {tx ? tx->rtmaterial : RG_NO_MATERIAL},
+			.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
 			.transform = RT_TRANSFORM_IDENTITY,
 		};
 
-		RgResult r = rgUploadGeometry (vulkan_globals.instance, &info);
-		RG_CHECK (r);
+		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		QR_CHECK (r);
 	}
 }
 

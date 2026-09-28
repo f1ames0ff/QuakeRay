@@ -293,11 +293,11 @@ static inline int FindFirstBitNonZero (const uint32_t mask)
 #include "platform.h"
 
 #ifdef _WIN32
-    #define RG_USE_SURFACE_WIN32
+    #define QR_USE_SURFACE_WIN32
 #else
-    #define RG_USE_SURFACE_XLIB
+    #define QR_USE_SURFACE_XLIB
 #endif
-#include <vkpt/vkpt.h>
+#include <qray/qray.h>
 #define RT_RENDERER 1
 
 #include "console.h"
