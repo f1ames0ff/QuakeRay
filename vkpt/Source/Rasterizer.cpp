@@ -473,9 +473,9 @@ void Rasterizer::SetScissorIfNew(VkCommandBuffer cmd, const RasterizedDataCollec
 {
     const VkRect2D& newScissor = info.scissor.value_or( defaultScissor );
 
-    if( curScissor.offset.x      != newScissor.offset.x
-     || curScissor.offset.y      != newScissor.offset.y
-     || curScissor.extent.width  != newScissor.extent.width
+    if( curScissor.offset.x     != newScissor.offset.x
+     || curScissor.offset.y     != newScissor.offset.y
+     || curScissor.extent.width != newScissor.extent.width
      || curScissor.extent.height != newScissor.extent.height )
     {
         vkCmdSetScissor( cmd, 0, 1, &newScissor );
