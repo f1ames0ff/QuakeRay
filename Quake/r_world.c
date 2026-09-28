@@ -135,7 +135,7 @@ typedef struct rt_emis_stats_s
 	int glow_fallback;
 	int too_small;
 	int poly_capped;
-	int buried;
+	atomic_uint32_t buried;
 	atomic_uint32_t model_lights;
 	atomic_uint32_t model_capped;
 	atomic_uint32_t model_small;
@@ -1485,9 +1485,56 @@ static qboolean RT_AllowTexturedAreaLights (void)
 	return CVAR_TO_BOOL (rt_materials_only) || CVAR_TO_FLOAT (rt_truelight) > 0.0f;
 }
 
+#define RT_DTAL_BURIED_CACHE 1024
+
+typedef struct
+{
+	vec3_t   center;
+	vec3_t   normal;
+	float    clearance;
+	qboolean buried;
+} rt_dtal_buried_entry_t;
+
+static rt_dtal_buried_entry_t rt_dtal_buried_cache[RT_DTAL_BURIED_CACHE];
+
+static void RT_BuriedCacheReset (void)
+{
+	memset (rt_dtal_buried_cache, 0, sizeof (rt_dtal_buried_cache));
+}
+
+static unsigned int RT_BuriedHash (const float *center, const float *normal, float clearance)
+{
+	unsigned int h = 2166136261u;
+
+	for (int i = 0; i < 3; i++)
+	{
+		unsigned int bits;
+
+		memcpy (&bits, &center[i], sizeof (bits));
+		h = (h ^ bits) * 16777619u;
+
+		memcpy (&bits, &normal[i], sizeof (bits));
+		h = (h ^ bits) * 16777619u;
+	}
+
+	{
+		unsigned int bits;
+
+		memcpy (&bits, &clearance, sizeof (bits));
+		h = (h ^ bits) * 16777619u;
+	}
+
+	return h % RT_DTAL_BURIED_CACHE;
+}
+
 static qboolean RT_LightBuried (vec3_t center, const float *normal, float clearance)
 {
-	vec3_t  n = {normal[0], normal[1], normal[2]};
+	vec3_t                  n = {normal[0], normal[1], normal[2]};
+	rt_dtal_buried_entry_t *entry = &rt_dtal_buried_cache[RT_BuriedHash (center, n, clearance)];
+
+	if (entry->clearance == clearance && VectorCompare (entry->center, center) && VectorCompare (entry->normal, n))
+		return entry->buried;
+
 	vec3_t  start, end;
 	trace_t trace;
 
@@ -1500,7 +1547,14 @@ static qboolean RT_LightBuried (vec3_t center, const float *normal, float cleara
 
 	SV_RecursiveHullCheck (cl.worldmodel->hulls, start, end, &trace, CONTENTMASK_ANYSOLID);
 
-	return trace.startsolid || trace.allsolid || trace.fraction < 1.0f;
+	const qboolean buried = trace.startsolid || trace.allsolid || trace.fraction < 1.0f;
+
+	VectorCopy (center, entry->center);
+	VectorCopy (n, entry->normal);
+	entry->clearance = clearance;
+	entry->buried    = buried;
+
+	return buried;
 }
 
 static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_info, qboolean is_static_geom,
@@ -1518,11 +1572,20 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 		   from the light array, which costs the cluster lists an id they name. */
 		RT_KeepEmissiveLightColor (li.color.data);
 
+		vec3_t center;
+		RT_TexturedAreaLightCenter (&li, center);
+
+		const float clearance = CVAR_TO_FLOAT (rt_dtal_clearance);
+
+		if (clearance > 0.0f && RT_LightBuried (center, li.normal.data, clearance))
+		{
+			Atomic_AddUInt32 (&rt_emis_stats.buried, 1);
+			return;
+		}
+
 		RgResult r = rgUploadTexturedAreaLight (vulkan_globals.instance, &li);
 		RG_CHECK (r);
 
-		vec3_t center;
-		RT_TexturedAreaLightCenter (&li, center);
 		/* The geometry moved to get here, so the light is only promised the reach of a light of
 		   a moving entity. */
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
@@ -1548,7 +1611,7 @@ static void RT_UploadEmissiveLight (const RgTexturedAreaLightUploadInfo *light_i
 
 			if (RT_LightBuried (center, light_info->normal.data, clearance))
 			{
-				rt_emis_stats.buried++;
+				Atomic_AddUInt32 (&rt_emis_stats.buried, 1);
 				return;
 			}
 		}
@@ -3169,6 +3232,8 @@ static rt_brushcluster_cacheentry_t rt_brushcluster_cache[RT_BRUSHCLUSTER_CACHE_
 void RT_BrushClusterCacheReset (void)
 {
 	memset (rt_brushcluster_cache, 0, sizeof (rt_brushcluster_cache));
+
+	RT_BuriedCacheReset ();
 
 	/* New faces and a new light set: the per surface answers of the old map are void. Both
 	   tables are sized here, where no render task runs, and never during a frame. */
@@ -5158,9 +5223,9 @@ void RT_PrintEmissiveStats (void)
 		RT_LightReportPrint ("partial-glow textures: %i faces built %i polygon lights, %i faces fell back to the whole surface\n",
 			rt_emis_stats.glow_faces, rt_emis_stats.glow_lights, rt_emis_stats.glow_fallback);
 
-	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || rt_emis_stats.buried || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
-		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_model_lights_minarea, %i surface polygons buried under rt_dtal_clearance\n",
-			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), rt_emis_stats.buried);
+	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || Atomic_LoadUInt32 (&rt_emis_stats.buried) || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
+		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_model_lights_minarea, %i polygons buried under rt_dtal_clearance\n",
+			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.buried));
 
 	if (Atomic_LoadUInt32 (&rt_emis_stats.model_lights) || Atomic_LoadUInt32 (&rt_emis_stats.model_capped))
 		RT_LightReportPrint ("alias models: %i textured-area lights built from model geometry, %i models turned down by the frame budget\n",
