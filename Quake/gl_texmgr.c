@@ -1380,12 +1380,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (has_luma_key && !emisBuf)
 		Con_Printf ("RT: material '%s': texture_emissive '%s' could not be loaded; using no emissive mask\n",
 		            mat->name, mat->filename_emissive);
-	/* light_brightness: the visible emission is an 8-bit channel, so it can only
-	   be dimmed there; the emitted light is a float and takes the full value (the
-	   colour gain below). A brush TAL samples the synthesized mask, so below 1 the
-	   mask already dims the light once and the gain must not count it twice. */
 	const float lightBright = CLAMP (0.0f, mat->light_brightness, 100.0f);
-	const float brightVis   = (lightBright < 1.0f) ? lightBright : 1.0f;
 	/* Per-material rt_emis_blend override, packed into the alpha of the
 	   roughness-metallic-emission texture: 0 = not authored, so the global
 	   cvar applies; otherwise the authored mode plus one. */
@@ -1528,7 +1523,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 		emissMeanBase += emiss;
 
-		float emissOut = emiss * brightVis;
+		float emissOut = emiss;
 		if (emissOut > 1.0f)
 			emissOut = 1.0f;
 		emissMean += emissOut;
@@ -1605,19 +1600,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	if (lightBright != 1.0f)
 	{
-		/* The float gain of the emitted light, outside the emission block: a
-		   material can light from light_color alone, with no emissive mask at
-		   all. Above 1 the gain is the only thing that can brighten (the
-		   emission channel saturates); below 1 a mask the area light really
-		   samples (rtemissivetex, the flag its consumer reads) already dims the
-		   light once, so the gain is skipped there. A brush face and an is_light
-		   alias model both light from that mask -- the model by DTAL -- so both
-		   take the rule; without it the mask and the colour would dim the same
-		   light twice. A sprite is not one of them: its light is the point light
-		   of light_color and samples no mask, so the gain stays its dimming. */
-		const qboolean mask_lit_model = glt->owner && glt->owner->type == mod_alias && mat->is_light;
-		const qboolean light_samples_mask = glt->rtemissivetex && (isBrush || mask_lit_model);
-		const float gain = (light_samples_mask && lightBright < 1.0f) ? 1.0f : lightBright;
+		const float gain = lightBright;
 
 		if (glt->rthaslightcolor)
 			VectorScale (glt->rtlightcolor, gain, glt->rtlightcolor);

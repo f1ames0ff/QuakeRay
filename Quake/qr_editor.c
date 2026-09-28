@@ -141,7 +141,7 @@ static const struct qre_param_s
 	[PARAM_BASEF]    = { "base_factor",      QRE_T_FLOAT, 0, 4, 0.01f,
 	                     "Multiplies the albedo: dims or lifts the whole texture." },
 	[PARAM_LBRIGHT]  = { "light_brightness", QRE_T_FLOAT, 0, 100, 0.01f,
-	                     "How bright the light the surface casts is. Below 1 the glow dims with it; above 1 only the light grows (the visible glow is already at its maximum)." },
+	                     "How bright the light the surface casts is; the visible glow is set by emissive_factor and does not change with this." },
 	[PARAM_LUPOFF]   = { "light_upoffset",   QRE_T_FLOAT, -64, 64, 0.5f,
 	                     "Lifts the cast light above the model's origin (alias models)." },
 	[PARAM_CEMIS]    = { "color_emissive",   QRE_T_BOOL,  0, 0, 0,
@@ -2270,7 +2270,7 @@ static void QRE_EmissiveEditor (int g)
 			if (QR_GUI_SliderFloat ("color_emissive_feather", &m->color_emissive[ci].feather, 0.0f, 16.0f,
 			                        "Softens this block's mask edge over this many pixels, on both sides of it, without comparing colours."))
 				QRE_MarkDirty (m);
-			if (QR_GUI_SliderFloat ("emissive_factor", &m->color_emissive[ci].factor, 0.0f, 4.0f,
+			if (QR_GUI_SliderFloat ("emissive_factor", &m->color_emissive[ci].factor, 0.0f, 5.0f,
 			                        "Scales this block's emission: below 1 it dims, above 1 it brightens."))
 				QRE_MarkDirty (m);
 			{
@@ -4409,7 +4409,7 @@ static const char *qre_yaml_header =
 	"#           - color: ff0000          # rrggbb\n"
 	"#             threshold: 0.02        # 0..1 colour-cube distance / sqrt(3)\n"
 	"#             feather: 2             # pixels of edge softening, both sides\n"
-	"#             emissive_factor: 1     # scales this block's glow (0..4)\n"
+	"#             emissive_factor: 1     # scales this block's glow (0..5)\n"
 	"#             blend: screen          # cvar | off | normal | screen |\n"
 	"#                                    # overlay | hard light | colour dodge\n"
 	"#     The synthesized mask is white where the pixel matches the colour\n"
