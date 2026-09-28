@@ -142,6 +142,7 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_denoiser 1` — ASVGF reconstruction of the lighting channels (`0` composites the raw ReSTIR output)
 * `rt_no_textures 0` — `1` swaps the diffuse albedo for a fixed value, i.e. "no textures"
 * `rt_emis_light_intensity 1.0` — how much light the emissive (luma-masked) surfaces emit
+* `emissive_focus` (material key in `materials.yaml`) — half-angle in degrees at which a DTAL of that material falls to half its brightness: `0` or no key keeps the default wide lobe (about `75` degrees), `10`–`30` makes a lamp, window or lantern shine as a beam. It reaches world faces, brush entities and alias models, from the material of the frame they show
 * `rt_dtal_minarea 0` / `rt_dtal_maxpolys 64` — the size floor (world units², `0` off) and the per-surface cap (`0` = no cuts) of the DTAL splits; `rt_dtal_rebuild` re-runs the collection
 * `rt_dtal_clearance 1` — a DTAL polygon facing solid geometry within this many units is not created (`0` off)
 * `rt_dtal_debug 0` — `1` draws the DTAL wireframes, `2` their normals as arrows
