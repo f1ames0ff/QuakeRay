@@ -769,28 +769,34 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
     {
         nvrhi::TextureDesc volumeDesc;
         volumeDesc.dimension = nvrhi::TextureDimension::Texture3D;
-        volumeDesc.format = nvrhi::Format::R16_FLOAT;
+        volumeDesc.format = nvrhi::Format::R32_FLOAT;
         volumeDesc.width = VOXEL_SMOKE_RESOLUTION;
         volumeDesc.height = VOXEL_SMOKE_RESOLUTION;
         volumeDesc.depth = VOXEL_SMOKE_RESOLUTION;
         volumeDesc.mipLevels = 1;
         volumeDesc.sampleCount = 1;
         volumeDesc.isUAV = true;
+        volumeDesc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
+        volumeDesc.keepInitialState = true;
 
         voxelSmokeVolume = rhi::createTexture(device, volumeDesc, "RhiRasterOverlay voxel smoke volume");
         voxelSmokeSampler = rhi::createEngineTextureSampler(device, "RhiRasterOverlay voxel smoke sampler");
 
-        nvrhi::BindingLayoutDesc injectLayoutDesc;
-        injectLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT));
-        injectLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_UAV(VOXEL_SMOKE_VOLUME_UAV_SLOT));
-        voxelSmokeInjectLayout = device->createBindingLayout(injectLayoutDesc);
+        const nvrhi::BindingLayoutItem injectLayoutItems[] =
+        {
+            nvrhi::BindingLayoutItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT),
+            nvrhi::BindingLayoutItem::Texture_UAV(VOXEL_SMOKE_VOLUME_UAV_SLOT),
+        };
+        voxelSmokeInjectLayout = rhi::createBindingLayout(device, injectLayoutItems, "RhiRasterOverlay voxel smoke inject");
 
-        nvrhi::BindingLayoutDesc marchLayoutDesc;
-        marchLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT));
-        marchLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT));
-        marchLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT));
-        marchLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT));
-        voxelSmokeMarchLayout = device->createBindingLayout(marchLayoutDesc);
+        const nvrhi::BindingLayoutItem marchLayoutItems[] =
+        {
+            nvrhi::BindingLayoutItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT),
+            nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT),
+            nvrhi::BindingLayoutItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT),
+            nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT),
+        };
+        voxelSmokeMarchLayout = rhi::createBindingLayout(device, marchLayoutItems, "RhiRasterOverlay voxel smoke march");
 
         bool ok = voxelSmokeVolume != nullptr && voxelSmokeSampler != nullptr &&
                   voxelSmokeInjectLayout != nullptr && voxelSmokeMarchLayout != nullptr;
@@ -807,7 +813,8 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
 
             nvrhi::BindingSetDesc setDesc;
             setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT, voxelSmokeParamsBuffers[i]));
-            setDesc.addItem(nvrhi::BindingSetItem::Texture_UAV(VOXEL_SMOKE_VOLUME_UAV_SLOT, voxelSmokeVolume));
+            setDesc.addItem(nvrhi::BindingSetItem::Texture_UAV(VOXEL_SMOKE_VOLUME_UAV_SLOT, voxelSmokeVolume,
+                                                               nvrhi::Format::R32_FLOAT));
             voxelSmokeInjectSets[i] = device->createBindingSet(setDesc, voxelSmokeInjectLayout);
 
             ok = voxelSmokeParamsBuffers[i] != nullptr && voxelSmokeInjectSets[i] != nullptr;
@@ -940,7 +947,8 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                                   uint32_t smokeDrawCount,
                                   nvrhi::rt::IAccelStruct *pSmokeTopLevel,
                                   nvrhi::IBindingSet *pSmokeLightSet,
-                const RgDrawFrameVoxelSmokeParams *pVoxelSmokeParams)
+                const RgDrawFrameVoxelSmokeParams *pVoxelSmokeParams,
+                float timeDelta)
 {
     if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT ||
         pFramebuffers == nullptr || width == 0 || height == 0)
@@ -1028,28 +1036,21 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
         LogMessage(print, "Warning: RHI: the raster overlay smoke half is not drawable (a shader, the light layout/set or the TLAS is missing), the smoke draws are skipped");
     }
 
-    if (pVoxelSmokeParams != nullptr && pVoxelSmokeParams->enabled &&
-        voxelSmokeInjectPipeline != nullptr && target.smokeDepthWorldTexture != nullptr &&
-        target.uniformSet != nullptr)
+    const bool voxelSmokeEnabled = pVoxelSmokeParams != nullptr && pVoxelSmokeParams->enabled;
+
+    if (voxelSmokeEnabled)
     {
-        if (voxelSmokeMarchPipeline == nullptr)
+        const bool injectReady =
+            voxelSmokeInjectPipeline != nullptr && voxelSmokeInjectSets[frameIndex] != nullptr;
+        const bool marchReady = target.smokeDepthWorldTexture != nullptr && target.uniformSet != nullptr;
+
+        if ((!injectReady || !marchReady) && !warnedMissingVoxelSmokeInputs)
         {
-            voxelSmokeMarchPipeline = GetVoxelSmokeMarchPipeline();
+            warnedMissingVoxelSmokeInputs = true;
+            LogMessage(print, "Warning: RHI: the voxel smoke is enabled but cannot draw (an injection or march object, the depth world texture or the uniform set is missing)");
         }
 
-        if (voxelSmokeMarchPipeline != nullptr && voxelSmokeMarchSets[frameIndex] == nullptr)
-        {
-            nvrhi::BindingSetDesc setDesc;
-            setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT,
-                                                                  voxelSmokeParamsBuffers[frameIndex]));
-            setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT, voxelSmokeVolume));
-            setDesc.addItem(nvrhi::BindingSetItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT, voxelSmokeSampler));
-            setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT,
-                                                               target.smokeDepthWorldTexture));
-            voxelSmokeMarchSets[frameIndex] = device->createBindingSet(setDesc, voxelSmokeMarchLayout);
-        }
-
-        if (voxelSmokeMarchSets[frameIndex] != nullptr)
+        if (injectReady)
         {
             VoxelSmokeParams params = {};
 
@@ -1065,7 +1066,7 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             params.emitterParams[0] = pVoxelSmokeParams->emitterRadius;
             params.emitterParams[1] = pVoxelSmokeParams->emitterDensity;
             params.emitterParams[2] = pVoxelSmokeParams->decayPerSecond;
-            params.emitterParams[3] = 1.0f / 60.0f;
+            params.emitterParams[3] = timeDelta;
             params.marchParams[0] = pVoxelSmokeParams->marchSteps;
             params.marchParams[1] = pVoxelSmokeParams->extinction;
             params.marchParams[2] = pVoxelSmokeParams->debugGrey;
@@ -1081,11 +1082,26 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             pCommandList->setComputeState(computeState);
             pCommandList->dispatch(VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8);
         }
-    }
-    else if (pVoxelSmokeParams != nullptr && pVoxelSmokeParams->enabled && !warnedMissingVoxelSmokeInputs)
-    {
-        warnedMissingVoxelSmokeInputs = true;
-        LogMessage(print, "Warning: RHI: the voxel smoke is enabled but cannot draw (an injection or march object, the depth world texture or the uniform set is missing)");
+
+        if (marchReady)
+        {
+            if (voxelSmokeMarchPipeline == nullptr)
+            {
+                voxelSmokeMarchPipeline = GetVoxelSmokeMarchPipeline();
+            }
+
+            if (voxelSmokeMarchPipeline != nullptr && voxelSmokeMarchSets[frameIndex] == nullptr)
+            {
+                nvrhi::BindingSetDesc setDesc;
+                setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(VOXEL_SMOKE_PARAMS_CB_SLOT,
+                                                                      voxelSmokeParamsBuffers[frameIndex]));
+                setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT, voxelSmokeVolume));
+                setDesc.addItem(nvrhi::BindingSetItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT, voxelSmokeSampler));
+                setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT,
+                                                                   target.smokeDepthWorldTexture));
+                voxelSmokeMarchSets[frameIndex] = device->createBindingSet(setDesc, voxelSmokeMarchLayout);
+            }
+        }
     }
 
     if (worldDrawable || smokeDrawable)
@@ -1116,31 +1132,30 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                              pDraws, drawCount, applyVertexColorGamma, smokeDrawable);
         }
 
-        if (voxelSmokeMarchSets[frameIndex] != nullptr && voxelSmokeMarchPipeline != nullptr &&
-            pVoxelSmokeParams != nullptr && pVoxelSmokeParams->enabled)
-        {
-            const VkViewport legacyViewport = { 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
-            const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(width), 0, static_cast<int>(height));
-
-            nvrhi::GraphicsState graphicsState;
-            graphicsState.pipeline = voxelSmokeMarchPipeline.Get();
-            graphicsState.framebuffer = target.framebuffer;
-            graphicsState.viewport.addViewport(ToLegacyViewport(legacyViewport));
-            graphicsState.viewport.addScissorRect(fullTarget);
-            graphicsState.addBindingSet(voxelSmokeMarchSets[frameIndex]);
-            graphicsState.addBindingSet(target.uniformSet);
-            pCommandList->setGraphicsState(graphicsState);
-
-            nvrhi::DrawArguments args;
-            args.setVertexCount(4);
-            pCommandList->draw(args);
-        }
-
         if (smokeDrawable)
         {
             RecordSmokeDraws(pCommandList, target, width, height, defaultViewProj,
                              pSmokeDraws, smokeDrawCount, pSmokeLightSet);
         }
+    }
+
+    if (voxelSmokeEnabled && voxelSmokeMarchPipeline != nullptr && voxelSmokeMarchSets[frameIndex] != nullptr)
+    {
+        const VkViewport legacyViewport = { 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
+        const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(width), 0, static_cast<int>(height));
+
+        nvrhi::GraphicsState graphicsState;
+        graphicsState.pipeline = voxelSmokeMarchPipeline.Get();
+        graphicsState.framebuffer = target.framebuffer;
+        graphicsState.viewport.addViewport(ToLegacyViewport(legacyViewport));
+        graphicsState.viewport.addScissorRect(fullTarget);
+        graphicsState.addBindingSet(voxelSmokeMarchSets[frameIndex]);
+        graphicsState.addBindingSet(target.uniformSet);
+        pCommandList->setGraphicsState(graphicsState);
+
+        nvrhi::DrawArguments args;
+        args.setVertexCount(4);
+        pCommandList->draw(args);
     }
 
     // The framebuffer use left FINAL and SCREEN_EMISSION in the render-target layout, and the
@@ -1912,6 +1927,14 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
         {
             frameContext->Retire(target.smokePingLfCocgTexture);
         }
+
+        for (nvrhi::BindingSetHandle &set : voxelSmokeMarchSets)
+        {
+            if (set != nullptr)
+            {
+                frameContext->Retire(set);
+            }
+        }
     }
 
     target.framebuffer = nullptr;
@@ -1933,6 +1956,12 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
     target.smokeTopLevel = nullptr;
     target.uniformBuffer = nullptr;
     target.tonemappingBuffer = nullptr;
+
+    for (nvrhi::BindingSetHandle &set : voxelSmokeMarchSets)
+    {
+        set = nullptr;
+    }
+
     target.finalImage = VK_NULL_HANDLE;
     target.screenEmissionImage = VK_NULL_HANDLE;
     target.depthNdcImage = VK_NULL_HANDLE;
@@ -1958,6 +1987,15 @@ void RhiRasterOverlayPass::ReleasePipelineCache()
     }
 
     worldPipelines.clear();
+
+    if (voxelSmokeMarchPipeline != nullptr)
+    {
+        if (frameContext != nullptr)
+        {
+            frameContext->Retire(voxelSmokeMarchPipeline);
+        }
+        voxelSmokeMarchPipeline = nullptr;
+    }
 }
 
 void RhiRasterOverlayPass::ReleaseSmokePipelineCache()
@@ -2203,6 +2241,11 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::GetVoxelSmokeMarchPipeline()
     if (voxelSmokePixelShader == nullptr || voxelSmokeMarchLayout == nullptr ||
         depthCopyVertexShader == nullptr || pipelineColor0Format == nvrhi::Format::UNKNOWN)
     {
+        if (!warnedMissingVoxelSmokePipeline)
+        {
+            warnedMissingVoxelSmokePipeline = true;
+            LogMessage(print, "Warning: RHI: cannot build the voxel smoke march pipeline (a shader, the march layout or the color format is missing)");
+        }
         return nullptr;
     }
 
@@ -2229,8 +2272,11 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::GetVoxelSmokeMarchPipeline()
     desc.renderState.depthStencilState.setDepthTestEnable(false);
     desc.renderState.depthStencilState.setDepthWriteEnable(false);
     desc.renderState.depthStencilState.setStencilEnable(false);
+    nvrhi::BlendState::RenderTarget emissionTarget;
+    emissionTarget.setBlendEnable(false).setColorWriteMask(nvrhi::ColorMask(0));
+
     desc.renderState.blendState.setRenderTarget(0, blendTarget);
-    desc.renderState.blendState.setRenderTarget(1, blendTarget);
+    desc.renderState.blendState.setRenderTarget(1, emissionTarget);
     desc.addBindingLayout(voxelSmokeMarchLayout);
     desc.addBindingLayout(worldUniformLayout);
 

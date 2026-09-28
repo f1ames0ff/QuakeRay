@@ -359,7 +359,8 @@ public:
                 uint32_t smokeDrawCount,
                 nvrhi::rt::IAccelStruct *pSmokeTopLevel,
                 nvrhi::IBindingSet *pSmokeLightSet,
-                const RgDrawFrameVoxelSmokeParams *pVoxelSmokeParams);
+                const RgDrawFrameVoxelSmokeParams *pVoxelSmokeParams,
+                float timeDelta);
 
     // Drops the per-slot wraps, the pass-owned depth images, the framebuffers and the sets. The
     // caller has to call it before the engine destroys its framebuffer images (the
@@ -599,6 +600,7 @@ private:
     bool warnedMissingSmokeInputs = false;
     bool warnedFailedSmokePipeline = false;
     bool warnedMissingVoxelSmokeInputs = false;
+    bool warnedMissingVoxelSmokePipeline = false;
 
     bool created = false;
 };
