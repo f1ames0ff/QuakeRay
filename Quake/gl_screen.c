@@ -1314,7 +1314,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	if (Tasks_IsWorker ())
 		return; // not safe
 
-	if (VID_IsMinimized ())
+	if (VID_IsMinimized () || qrIsSuspended (vulkan_globals.instance))
 		return;
 
 	in_update_screen = true;
