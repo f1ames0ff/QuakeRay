@@ -503,6 +503,8 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const vec3 surfP
     }
 
     const float angleOuter = max(acos(clamp(l.coneCosOuter, 0.001, 1.0)), 1e-3);
+    const float angleInner = max(acos(clamp(l.coneCosInner, 0.001, 1.0)), 1e-3);
+    const float maskLod = clamp((angleOuter - angleInner) / angleOuter, 0.0, 1.0) * 8.0;
     const float focal = maskRadius / tan(angleOuter);
     const float cosNLClamped = max(cosNL, 1e-3);
     const vec3 pos = center + axisU * (focal * dot(centerToSurf.dir, axisU) / cosNLClamped)
@@ -534,7 +536,7 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const vec3 surfP
 
     if (textureIndex != 0u)
     {
-        mask = getTextureSampleLod(textureIndex, uv, 0.0).b;
+        mask = getTextureSampleLod(textureIndex, uv, maskLod).b;
         emiss = 1.0;
     }
 
