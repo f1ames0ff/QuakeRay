@@ -75,8 +75,7 @@ extern RgVertex *rtallbrushvertices;
    so a face contributes as many lights as it has repetitions of the glow. This is not a
    fidelity limit but a hang guard: texture coordinates of a badly scaled surface can span
    hundreds of repetitions, and every one of them would cost a clip, a light and a cluster
-   registry slot. Faces above it keep the whole-surface light. It is also the ceiling
-   rt_dtal_maxpolys is clamped to: that cvar is the same limit, hand-set and ranked. */
+   registry slot. Faces above it keep the whole-surface light. */
 #define RT_MAX_EMISSIVE_POLYS_PER_FACE 64
 
 /* A masked light has to keep the surface's own polygons, so a face with more corners than a light
@@ -98,9 +97,7 @@ extern RgVertex *rtallbrushvertices;
    collection was made to save, and the entry count is a compromise: four covers the skins and
    animated skin groups the shipped models draw, and a model with more distinct frames than that
    rebuilds on the miss -- which costs the walk again, but never more than the walk alone. The
-   cache is ~14 KB per alias model (4 entries of 32 pieces), paid once at model load. Pieces
-   under rt_model_lights_minarea are refused at upload time, not here, so the cache never has
-   to be rebuilt when that cvar moves. */
+   cache is ~14 KB per alias model (4 entries of 32 pieces), paid once at model load. */
 #define RT_DTAL_MAX_PIECES    32
 #define RT_DTAL_CACHE_ENTRIES 4
 
@@ -135,8 +132,6 @@ typedef struct rt_emis_stats_s
 	int glow_lights;
 	int glow_faces;
 	int glow_fallback;
-	/* The manual DTAL limits: candidates dropped under rt_dtal_minarea, glow polygons that
-	   lost the ranking to rt_dtal_maxpolys, and model pieces under rt_model_lights_minarea. */
 	int too_small;
 	int poly_capped;
 	atomic_uint32_t model_lights;
@@ -1911,11 +1906,6 @@ static int RT_SplitUvPolygon (const RgFloat2D *uv, int n, rt_uv_piece_t *out, in
 	return num + 1;
 }
 
-/* Keeps the largest-area polygons a face is cut into, in descending order, so the slot of a
-   polygon is its rank. With rt_dtal_maxpolys under what the face would produce, the biggest
-   pieces are kept instead of the first ones the tile walk happens to reach; equal areas keep
-   the walk order, so a face of identical repetitions is cut exactly as before. Returns false
-   when the polygon does not make the cut. */
 static qboolean RT_EmissivePolyAdd (RgTexturedAreaLightUploadInfo *polys, int *count, int max,
                                     const RgTexturedAreaLightUploadInfo *poly)
 {
@@ -2018,8 +2008,6 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const RgFloa
 		}
 	}
 
-	/* The id names the slot the ranking gave the polygon, so it is assigned only now: baked in
-	   during the walk it would follow the tile order, not the rank the polygon ends up with. */
 	for (int i = 0; i < num; i++)
 		out[i].uniqueID = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, (uint64_t)(i + 1));
 
@@ -2292,9 +2280,6 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 {
 	int uploaded = 0;
 
-	/* Pieces under this world area are not uploaded: the next ranked piece takes the slot
-	   instead. Read here and not at collection, so the cached pieces stay valid when the
-	   cvar moves. */
 	const float min_area = CVAR_TO_FLOAT (rt_model_lights_minarea);
 
 	for (int i = 0; i < numpieces && uploaded < max_lights; i++)
@@ -2435,13 +2420,11 @@ down) does not go dark.
 
 Budget. Uploading every emissive triangle of every visible model would push the light array and
 the cluster lists with hundreds of tiny sources, so a model is capped at rt_model_lights_max
-pieces and the frame at rt_model_lights_budget lights in total, and a piece under
-rt_model_lights_minarea of world area is passed over for the next ranked one. The pieces are
-ranked by their uv area and each slot keeps its rank, so the identity the denoiser and the
-cluster lists follow stays put while the pose moves; the ranking itself is part of what the
-model caches per skin frame. The frame counter is atomic because the entity passes that call
-this run in parallel; RT_UploadAllWorldModelLights resets it once per frame after every draw
-has uploaded.
+pieces and the frame at rt_model_lights_budget lights in total. The pieces are ranked by their uv
+area and each slot keeps its rank, so the identity the denoiser and the cluster lists follow stays
+put while the pose moves; the ranking itself is part of what the model caches per skin frame. The
+frame counter is atomic because the entity passes that call this run in parallel;
+RT_UploadAllWorldModelLights resets it once per frame after every draw has uploaded.
 =================
 */
 int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_uniqueid, const RgVertex *pose1,
@@ -2610,10 +2593,6 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	   carries no mask), so it is asked of the canonical frame and not of the animation. */
 	const qboolean light_masked = (params.material != RG_NO_MATERIAL);
 
-	/* The manual limits of the cuts below: how small a polygon of this surface may be and
-	   still become a light of its own (world units squared), and how many lights one surface
-	   may be cut into at most. Read per surface, so a change shows on the next frame; 0 and
-	   RT_MAX_EMISSIVE_POLYS_PER_FACE are the old behaviour. */
 	const float min_area = CVAR_TO_FLOAT (rt_dtal_minarea);
 	int       max_polys  = (int) CVAR_TO_FLOAT (rt_dtal_maxpolys);
 
@@ -2892,10 +2871,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	   each with the uv of its own corners, and each becomes a light of its own. Cutting is
 	   preferred over the square below because the square would read the mask over a shape the
 	   surface does not have, and it is preferred over dropping the light because the surface
-	   does glow, only not evenly. The manual limits hold here as well: the surface is cut
-	   into no more pieces than rt_dtal_maxpolys allows (a surface that needs more falls to
-	   the square, as one past the split always did), and a piece under rt_dtal_minarea is not
-	   made a light -- a surface whose pieces all fall under it gets no light at all. */
+	   does glow, only not evenly. */
 	if (!poly_ok && fit_ok && uv_ok && light_masked)
 	{
 		rt_uv_piece_t pieces[RT_MAX_UV_SPLIT_PIECES];
@@ -2928,8 +2904,6 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				piece.numVerts = pieces[i].count;
 				piece.area     = area;
-				/* The id follows the piece of the face, not the upload order, so a piece
-				   refused by the size limit does not renumber the rest. */
 				piece.uniqueID = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, (uint64_t) (i + 1));
 				piece.fit      = 1;
 				VectorCopy (A, piece.A.data);
@@ -3022,8 +2996,6 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 				return;
 			}
 
-			/* Every repetition of the glow came out under rt_dtal_minarea: the face gets no
-			   light at all instead of the whole-surface fallback below. */
 			if (size_refused)
 				return;
 		}

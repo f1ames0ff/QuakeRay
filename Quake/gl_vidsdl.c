@@ -164,9 +164,6 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_model_lights, "1") \
 	CVAR_DEF_T (rt_model_lights_max, "8") \
 	CVAR_DEF_T (rt_model_lights_budget, "256") \
-	/* A model piece smaller than this (world units squared) is not uploaded: the next ranked \
-	   piece takes its turn instead, so the cap above is spent on the pieces that matter. \
-	   0 keeps every piece, however small. */ \
 	CVAR_DEF_T (rt_model_lights_minarea, "0") \
 	\
 	CVAR_DEF_T (rt_poi_distthresh, "2") \
@@ -226,14 +223,6 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   is dead until a pass reads it again; kept as the setter of the public \
 	   RgDrawFrameTexturesParams field and so old configs load. */ \
 	CVAR_DEF_T (rt_tal_selflit, "6") \
-	/* The manual limits of the DTAL cuts of a surface (RT_AddEmissiveLight): a polygon under \
-	   rt_dtal_minarea (world units squared) never becomes a light, and a face whose pieces \
-	   all fall under it gets no light at all -- no whole-surface or square fallback rescues \
-	   it -- while one surface is cut into at most rt_dtal_maxpolys lights, the largest pieces \
-	   kept rather than the first ones the tile walk reaches (0 cuts nothing: every masked \
-	   face keeps its single light; RT_MAX_EMISSIVE_POLYS_PER_FACE is the ceiling a larger \
-	   value is clamped to). Both are read per surface, so they apply on the next frame and \
-	   can be tuned live against rt_dtal_debug 1; the defaults reproduce the old behaviour. */ \
 	CVAR_DEF_T (rt_dtal_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
     \
