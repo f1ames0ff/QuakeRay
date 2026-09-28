@@ -560,6 +560,9 @@ typedef struct QrTexturedAreaLightUploadInfo
 
     QrMaterial      material;
     float           meanEmiss;
+    float           angleInner;
+    float           angleOuter;
+    float           projector;
 
     int             fit;
     int             isStatic;

@@ -108,6 +108,9 @@ enum
 	PARAM_BASEF,
 	PARAM_LBRIGHT,
 	PARAM_LUPOFF,
+	PARAM_EFOCUS,
+	PARAM_ESOFT,
+	PARAM_EPROJ,
 	PARAM_LCOLOR,
 	PARAM_ISLIGHT,
 	PARAM_LSTYLES,
@@ -146,6 +149,12 @@ static const struct qre_param_s
 	                     "How bright the light the surface casts is; the visible glow is set by emissive_factor and does not change with this." },
 	[PARAM_LUPOFF]   = { "light_upoffset",   QRE_T_FLOAT, -64, 64, 0.5f,
 	                     "Lifts the cast light above the model's origin (alias models)." },
+	[PARAM_EFOCUS]   = { "emissive_focus",   QRE_T_FLOAT, -1, 88.99f, 0.01f,
+	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond; -1 keeps the default wide lobe. The edge is softened inward from this angle by emissive_focus_soft." },
+	[PARAM_ESOFT]    = { "emissive_focus_soft", QRE_T_FLOAT, -1, 88.99f, 0.01f,
+	                     "How wide the beam's soft edge is, in absolute degrees: brightness holds to (emissive_focus - emissive_focus_soft) and then falls smoothly (smoothstep squared) to zero at the focus angle, so the edge always grows inward from it. -1 = a tenth of the focus (the renderer's default); 0 = a nearly hard edge. In a projector it blurs the projected pattern too." },
+	[PARAM_EPROJ]    = { "emissive_projector", QRE_T_BOOL, 0, 0, 0,
+	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (emissive_focus; no key = 60 degrees) and emissive_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
 	[PARAM_CEMIS]    = { "color_emissive",   QRE_T_BOOL,  0, 0, 0,
 	                     "Glow by colour: every block below matches its own colour and carries its own threshold, feather, emissive_factor and blend." },
 	[PARAM_ISLIGHT]  = { "is_light",         QRE_T_BOOL,  0, 0, 0,
@@ -395,6 +404,8 @@ static void QRE_InitDefault (rt_material_t *m, const char *name)
 	m->bump_scale = 1.0f;
 	m->emissive_factor = 1.0f;
 	m->emissive_blend = -1;
+	m->emissive_focus = -1.0f;
+	m->emissive_focus_soft = -1.0f;
 	m->base_factor = 1.0f;
 	m->light_brightness = 1.0f;
 	m->light_styles = false;
@@ -786,6 +797,8 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_BASEF:    return m->base_factor;
 	case PARAM_LBRIGHT:  return m->light_brightness;
 	case PARAM_LUPOFF:   return m->light_upoffset;
+	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : -1.0f;
+	case PARAM_ESOFT:    return m->emissive_focus_soft;
 	default:             return 0.0f;
 	}
 }
@@ -802,6 +815,7 @@ static qboolean QRE_GetBool (const rt_material_t *m, int param)
 	switch (param)
 	{
 	case PARAM_ISLIGHT:    return m->is_light;
+	case PARAM_EPROJ:      return m->emissive_projector;
 	case PARAM_CEMIS:      return m->has_color_emissive;
 	case PARAM_LSTYLES:    return m->light_styles;
 	case PARAM_METALALPHA: return m->metalness_from_normal_alpha;
@@ -836,10 +850,12 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
 	case PARAM_LUPOFF:   m->light_upoffset = value; break;
+	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
+	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
 	default:             break;
 	}
 
-	if (param == PARAM_LBRIGHT)
+	if (param == PARAM_LBRIGHT || param == PARAM_EFOCUS || param == PARAM_ESOFT)
 		QRE_MarkDirtyLight (m);
 	else
 		QRE_MarkDirty (m);
@@ -860,6 +876,7 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	switch (param)
 	{
 	case PARAM_ISLIGHT:    m->is_light = value; break;
+	case PARAM_EPROJ:      m->emissive_projector = value; break;
 	case PARAM_CEMIS:      m->has_color_emissive = value; break;
 	case PARAM_LSTYLES:    m->light_styles = value; break;
 	case PARAM_METALALPHA: m->metalness_from_normal_alpha = value; break;
@@ -873,7 +890,7 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	default:               break;
 	}
 
-	if (param == PARAM_ISLIGHT)
+	if (param == PARAM_ISLIGHT || param == PARAM_EPROJ)
 		QRE_MarkDirtyLight (m);
 	else
 		QRE_MarkDirty (m);
@@ -4726,7 +4743,24 @@ static const char *qre_yaml_header =
 	"# them bright and saturated.\n"
 	"#     e.g.  - name: textures/window01_1\n"
 	"#             mirror: true\n"
-	"#             emissive_blend: screen\n";
+	"#             emissive_blend: screen\n"
+	"#\n"
+	"# `emissive_focus` (degrees, 0..89) confines the light a material casts to a\n"
+	"# cone around its normal: full brightness up to the angle, nothing beyond.\n"
+	"# No key keeps the default wide lobe. `emissive_focus_soft` (degrees,\n"
+	"# absolute) is the width of the cone's soft edge: brightness holds to\n"
+	"# `emissive_focus - emissive_focus_soft` and then falls smoothly (smoothstep\n"
+	"# squared) to zero at the focus angle, so the edge always grows inward from\n"
+	"# it. No key uses a tenth of the focus angle; 0 is a nearly hard edge.\n"
+	"# `emissive_projector: true` routes the light into the material's emissive\n"
+	"# mask instead of dimming it -- a gobo: the mask is read along the direction\n"
+	"# of each point it lights, over the same cone (`emissive_focus`; no key = 60\n"
+	"# degrees), and `emissive_focus_soft` also blurs the projected pattern (the\n"
+	"# mask is read from a blurrier mip as the edge grows).\n"
+	"#     e.g.  - name: textures/window1_2\n"
+	"#             emissive_focus: 45\n"
+	"#             emissive_focus_soft: 8\n"
+	"#             emissive_projector: true\n";
 
 static void QRE_WriteColor (FILE *f, const char *key, const vec3_t rgb)
 {
@@ -4800,6 +4834,12 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    light_brightness: %.6g\n", m->light_brightness);
 	if (m->light_upoffset != 0.0f)
 		fprintf (f, "    light_upoffset: %.6g\n", m->light_upoffset);
+	if (m->emissive_focus > 0.0f)
+		fprintf (f, "    emissive_focus: %.6g\n", m->emissive_focus);
+	if (m->emissive_focus_soft >= 0.0f)
+		fprintf (f, "    emissive_focus_soft: %.6g\n", m->emissive_focus_soft);
+	if (m->emissive_projector)
+		fprintf (f, "    emissive_projector: true\n");
 	if (m->mirror)
 		fprintf (f, "    mirror: true\n");
 	if (m->exact_normals)

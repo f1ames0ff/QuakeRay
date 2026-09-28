@@ -298,6 +298,7 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->metalness_factor = 0.0f;
     mat->emissive_factor = 1.0f;
     mat->emissive_blend = -1;
+    mat->emissive_focus_soft = -1.0f;
     mat->base_factor = 1.0f;
     mat->light_brightness = 1.0f;
     mat->light_styles = false;
@@ -494,6 +495,28 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
             mat->emissive_blend = v;
         }
     }
+    else if (!q_strcasecmp(key, "emissive_focus"))
+    {
+        const float v = (float)atof(value);
+
+        if (v >= 0.0f && v < 89.0f)
+            mat->emissive_focus = v;
+        else
+            Con_DWarning("RT mat: material '%s': emissive_focus %.1f is not in 0..89 degrees; ignored\n",
+                         mat->name, v);
+    }
+    else if (!q_strcasecmp(key, "emissive_focus_soft"))
+    {
+        const float v = (float)atof(value);
+
+        if (v >= 0.0f && v < 89.0f)
+            mat->emissive_focus_soft = v;
+        else
+            Con_DWarning("RT mat: material '%s': emissive_focus_soft %.1f is not in 0..89 degrees; ignored\n",
+                         mat->name, v);
+    }
+    else if (!q_strcasecmp(key, "emissive_projector"))
+        mat->emissive_projector = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))
@@ -1234,7 +1257,8 @@ void RT_MAT_Cmd(void)
     }
 
     Con_Printf("material '%s': base=%s normals=%s emissive=%s gloss=%s "
-               "bump=%.2f rough=%.2f metal=%.2f emiss=%.2f base=%.2f emis_blend=%d\n",
+               "bump=%.2f rough=%.2f metal=%.2f emiss=%.2f base=%.2f emis_blend=%d "
+               "focus=%.1f soft=%.1f projector=%d\n",
                m->name,
                m->filename_base[0] ? m->filename_base : "-",
                m->filename_normals[0] ? m->filename_normals : "-",
@@ -1242,5 +1266,7 @@ void RT_MAT_Cmd(void)
                m->filename_gloss[0] ? m->filename_gloss : "-",
                m->bump_scale, m->roughness_override,
                m->metalness_factor, m->emissive_factor, m->base_factor,
-               m->emissive_blend);
+               m->emissive_blend,
+               m->emissive_focus, m->emissive_focus_soft,
+               m->emissive_projector ? 1 : 0);
 }

@@ -59,6 +59,23 @@
 #     e.g.  - name: textures/window01_1
 #             mirror: true
 #             emissive_blend: screen
+#
+# `emissive_focus` (degrees, 0..89) confines the light a material casts to a
+# cone around its normal: full brightness up to the angle, nothing beyond.
+# No key keeps the default wide lobe (0 does the same). `emissive_focus_soft`
+# (degrees, absolute) is the width of the cone's soft edge: brightness holds to
+# `emissive_focus - emissive_focus_soft` and then falls smoothly (smoothstep
+# squared) to zero at the focus angle, so the edge always grows inward from it.
+# No key uses a tenth of the focus angle; 0 is a nearly hard edge.
+# `emissive_projector: true` routes the light into the material's emissive
+# mask instead of dimming it -- a gobo: the mask is read along the direction
+# of each point it lights, over the same cone (`emissive_focus`; no key = 60
+# degrees), and `emissive_focus_soft` also blurs the projected pattern (the
+# mask is read from a blurrier mip as the edge grows).
+#     e.g.  - name: textures/window1_2
+#             emissive_focus: 45
+#             emissive_focus_soft: 8
+#             emissive_projector: true
 materials:
   - name: textures/#lava1
     texture_emissive: textures/_lava1_luma.png

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.19.0
+
+### Added
+- **A DTAL can shine as a spot** — a material may author `emissive_focus: <half-angle in degrees>`: the light of every surface of that material is confined to a cone around its normal — full inside it, nothing outside — so a lit window, a lantern or a lamp casts a beam instead of the default wide lobe. `emissive_focus_soft` (degrees, default a tenth of the angle) is the width of the soft edge the beam is cut with; `0` is a nearly hard one. World faces, brush entities and alias models read it from the material of the frame they show.
+- **A DTAL can shine through its mask** — `emissive_projector: true` makes a material's light read the emissive mask along the direction of the point it lights instead of at a random point of the surface, so the pattern of a stained window or a sign is painted across the beam instead of washing out. The beam stays the cone around the normal — `emissive_focus` is its half-angle there (degrees; no key = `60`), and `emissive_focus_soft` softens the beam's edge, and in the projector the pattern itself: the mask is read from a blurrier mip as the soft edge grows, `0` keeping it sharp — so the light keeps filling the room while the pattern rides on it.
+
 ## v0.18.0
 
 ### Added
