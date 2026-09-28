@@ -215,6 +215,7 @@ static struct
 {
 	qboolean active;
 	qboolean panel_open;
+	qboolean torch;
 
 	vec3_t cam_origin;
 	vec3_t player_viewangles;
@@ -2732,6 +2733,12 @@ static void QRE_ParamWidgets (int g)
 
 static void QRE_PanelActionRow (void (*on_exit)(void))
 {
+	int torch = qre.torch ? 1 : 0;
+
+	if (QR_GUI_Checkbox ("torch mode", &torch,
+	                     "A small light on the editor camera to see by until the map has light."))
+		qre.torch = torch ? true : false;
+
 	if (QR_GUI_Button ("Save"))
 		QRE_Apply ();
 	QR_GUI_SameLine ();
@@ -5471,6 +5478,7 @@ static void QRE_StopEditor (qboolean restore)
 	qre.active = false;
 	qre.choosing = false;
 	qre.panel_open = false;
+	qre.torch = false;
 	qre.exit_prompt = false;
 	qre.pick_model = NULL;
 	qre.pick_surf = NULL;
@@ -5650,6 +5658,21 @@ qboolean QR_Editor_Flying (void)
 	return qre.active && !qre.panel_open;
 }
 
+qboolean QR_Editor_TorchOn (void)
+{
+	return qre.active && qre.torch;
+}
+
+void QR_Editor_TorchOrigin (vec3_t out)
+{
+	vec3_t fwd, right, up;
+
+	AngleVectors (cl.viewangles, fwd, right, up);
+	VectorCopy (qre.cam_origin, out);
+	VectorMA (out, 24.0f, fwd, out);
+	VectorMA (out, 8.0f, up, out);
+}
+
 void QR_Editor_Pick (void)
 {
 	if (!QR_Editor_Flying ())
@@ -5724,6 +5747,7 @@ void QR_Editor_Shutdown (void)
 		QRE_FreeLightSnapshot ();
 		qre.active = false;
 		qre.panel_open = false;
+		qre.torch = false;
 	}
 
 	QR_GUI_Shutdown ();

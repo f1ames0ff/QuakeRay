@@ -609,6 +609,32 @@ static void RT_UploadAllDlights ()
 		QR_CHECK (r);
 	}
 
+	if (QR_Editor_TorchOn ())
+	{
+		vec3_t position, color;
+
+		QR_Editor_TorchOrigin (position);
+
+		color[0] = 1.0f;
+		color[1] = 0.84f;
+		color[2] = 0.62f;
+		VectorScale (color, CVAR_TO_FLOAT (rt_dlight_intensity), color);
+		RT_FIXUP_LIGHT_INTENSITY (color, true);
+
+		QrSphericalLightUploadInfo info = {
+			.uniqueID = (uint64_t)UINT32_MAX + 1 + RT_CUSTOM_LIGHTS_MAX,
+			.color = {color[0], color[1], color[2]},
+			.position = {position[0], position[1], position[2]},
+			.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
+		};
+
+		QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
+		QR_CHECK (r);
+
+		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
+			RT_ClusterLightAdd (info.uniqueID, position, RT_ClusterLightReach ());
+	}
+
 	RT_UploadSunLight ();
 }
 
