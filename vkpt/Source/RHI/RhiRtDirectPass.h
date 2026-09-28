@@ -70,7 +70,7 @@ class RhiTextureTable;
 //   set 2  global uniform      - the engine's wrapped ShGlobalUniform, raw binding 0;
 //   set 4  textures            - the shared bindless table (RhiTextureTable), its own two arrays;
 //   set 6  light sources       - the 5 engine buffers at raw bindings 0 (lightSources,
-//                                StructuredBuffer<ShLightEncoded>, stride 144), 4
+//                                StructuredBuffer<ShLightEncoded>, stride 160), 4
 //                                (q2LightListOffsets), 5 (q2LightListLights), 6 (q2LightStats, the
 //                                only UAV) and 8 (q2ClusterSkyVis);
 //   set 11 ray stats           - an RHI-owned RWStructuredBuffer<RtRayStats> stand-in, raw

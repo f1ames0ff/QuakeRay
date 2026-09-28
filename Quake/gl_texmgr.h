@@ -89,6 +89,7 @@ typedef struct gltexture_s
 	vec3_t               rtemissivecolor;
 	float                rtemissivemean;
 	float                rtemissivemeanbase;
+	float                rtemissivefocus;
 	qboolean             rtemissivetex;
 	/* Glow extents of the emissive mask, normalized to one texture repetition, plus the
 	   density that keeps the emitted power equal to the whole-surface average. See

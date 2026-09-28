@@ -374,6 +374,16 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
             mat->emissive_blend = v;
         }
     }
+    else if (!q_strcasecmp(key, "emissive_focus"))
+    {
+        const float v = (float)atof(value);
+
+        if (v >= 0.0f && v < 89.0f)
+            mat->emissive_focus = v;
+        else
+            Con_DWarning("RT mat: material '%s': emissive_focus %.1f is not in 0..89 degrees; ignored\n",
+                         mat->name, v);
+    }
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))

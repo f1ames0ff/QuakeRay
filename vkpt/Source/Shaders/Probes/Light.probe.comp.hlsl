@@ -87,7 +87,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const TexturedAreaLight areaLight = decodeAsTexturedAreaLight(encoded);
     v += areaLight.A.x + areaLight.B.y + areaLight.C.z +
          areaLight.normal.x + areaLight.area + areaLight.textureIndex + areaLight.meanEmiss +
-         (float)areaLight.numVerts + areaLight.color.y;
+         (float)areaLight.numVerts + areaLight.color.y + areaLight.focus;
 
     for (int i = 0; i < MAX_TEXTURED_AREA_LIGHT_VERTS; i++)
     {

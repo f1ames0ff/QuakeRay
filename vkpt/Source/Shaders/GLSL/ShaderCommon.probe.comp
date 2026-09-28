@@ -178,7 +178,8 @@ void main()
     // ShLightEncoded
     v += lights[0].color.x + float(lights[0].lightType) + lights[0].data_0.x + lights[0].data_1.x +
          lights[0].data_2.x + lights[0].data_3.x + lights[0].data_4.x + lights[0].data_5.x +
-         lights[0].data_6.x + lights[0].data_7.x;
+         lights[0].data_6.x + lights[0].data_7.x + lights[0].focus + float(lights[0].__pad0) +
+         float(lights[0].__pad1) + float(lights[0].__pad2);
 
     // ShIndirectDrawCommand
     v += float(drawCmds[0].indexCount) + float(drawCmds[0].instanceCount) + float(drawCmds[0].firstIndex) +
