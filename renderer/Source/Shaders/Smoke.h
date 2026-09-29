@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 #ifndef SMOKE_H_
 #define SMOKE_H_
