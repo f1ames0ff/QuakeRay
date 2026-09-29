@@ -3230,15 +3230,14 @@ enum
 	// VID_OPT_REFRESHRATE,
 	VID_OPT_APPLY,
 
+	VID_OPT_UPSCALER,
+	VID_OPT_UPSCALER_QUALITY,
+
 
 	VID_OPT_EXPOSURE_BIAS,
 	VID_OPT_CONTRAST,
 	VID_OPT_VSYNC,
 	VID_OPT_MAX_FPS,
-
-
-	VID_OPT_UPSCALER,
-	VID_OPT_UPSCALER_QUALITY,
 
 	VID_OPT_MATERIALS_ONLY,
 
@@ -3846,27 +3845,6 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			break;
 
 
-		case VID_OPT_EXPOSURE_BIAS:
-			M_Print (cbx, 16, y, "     Exposure bias");
-			M_Print (cbx, 184, y, va ("%+.1f EV", CVAR_TO_FLOAT (rt_exposure_bias)));
-			break;
-		case VID_OPT_CONTRAST:
-			M_Print (cbx, 16, y, "          Contrast");
-			M_Print (cbx, 184, y, va ("%d%%", (int)(CVAR_TO_FLOAT (rt_contrast) * 100.0f + 0.5f)));
-			break;
-		case VID_OPT_VSYNC:
-			M_Print (cbx, 16, y, "     Vertical sync");
-			M_Print (cbx, 184, y, VID_VsyncModeName ((int)vid_vsync.value));
-			break;
-		case VID_OPT_MAX_FPS:
-			M_Print (cbx, 16, y, "           Max FPS");
-			if (menu_settings.host_maxfps <= 0)
-				M_Print (cbx, 184, y, "no limit");
-			else
-				M_Print (cbx, 184, y, va ("%d", menu_settings.host_maxfps));
-			break;
-
-
 		case VID_OPT_UPSCALER:
 			y += 8; // separate
 
@@ -3898,6 +3876,27 @@ static void VID_MenuDraw (cb_context_t *cbx)
 					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
 				M_Print (cbx, 184, y, GetUpscalerOptionName (q, tech));
 			}
+			break;
+
+
+		case VID_OPT_EXPOSURE_BIAS:
+			M_Print (cbx, 16, y, "     Exposure bias");
+			M_Print (cbx, 184, y, va ("%+.1f EV", CVAR_TO_FLOAT (rt_exposure_bias)));
+			break;
+		case VID_OPT_CONTRAST:
+			M_Print (cbx, 16, y, "          Contrast");
+			M_Print (cbx, 184, y, va ("%d%%", (int)(CVAR_TO_FLOAT (rt_contrast) * 100.0f + 0.5f)));
+			break;
+		case VID_OPT_VSYNC:
+			M_Print (cbx, 16, y, "     Vertical sync");
+			M_Print (cbx, 184, y, VID_VsyncModeName ((int)vid_vsync.value));
+			break;
+		case VID_OPT_MAX_FPS:
+			M_Print (cbx, 16, y, "           Max FPS");
+			if (menu_settings.host_maxfps <= 0)
+				M_Print (cbx, 184, y, "no limit");
+			else
+				M_Print (cbx, 184, y, va ("%d", menu_settings.host_maxfps));
 			break;
 
 
