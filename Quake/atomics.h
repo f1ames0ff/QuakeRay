@@ -127,6 +127,23 @@ static inline uint64_t Atomic_IncrementUInt64 (volatile atomic_uint64_t *atomic)
 {
 	return InterlockedIncrement64 ((volatile LONG64 *)&atomic->value) - 1;
 }
+
+typedef struct
+{
+	void *volatile value;
+} atomic_ptr_t;
+
+static inline void *Atomic_LoadPtr (volatile atomic_ptr_t *atomic)
+{
+	_WriteBarrier ();
+	return atomic->value;
+}
+
+static inline void Atomic_StorePtr (volatile atomic_ptr_t *atomic, void *desired)
+{
+	atomic->value = desired;
+	_ReadBarrier ();
+}
 #else
 typedef _Atomic uint8_t atomic_uint8_t;
 
@@ -197,6 +214,18 @@ static inline qboolean Atomic_CompareExchangeUInt64 (atomic_uint64_t *atomic, ui
 static inline uint64_t Atomic_IncrementUInt64 (atomic_uint64_t *atomic)
 {
 	return atomic_fetch_add (atomic, 1);
+}
+
+typedef void *_Atomic atomic_ptr_t;
+
+static inline void *Atomic_LoadPtr (atomic_ptr_t *atomic)
+{
+	return atomic_load (atomic);
+}
+
+static inline void Atomic_StorePtr (atomic_ptr_t *atomic, void *desired)
+{
+	atomic_store (atomic, desired);
 }
 #endif
 

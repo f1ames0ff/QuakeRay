@@ -1,17 +1,21 @@
 # Changelog
 
+## v0.20.2
+
+### Fixed
+- **Dying with the fire button held no longer ends in `Host_Error: Received signon 1 when at 1`** — the server runs at a fixed 72 Hz while the renderer draws as fast as it can, so one drawn frame can carry several server frames, and a held fire button is seen again in each of them: the death think calls `respawn()` a second time before the level change of the first one has executed. The 2021 re-release game code restarts the level with `localcmd("changelevel ...")`, and the `changelevel_issued` guard of `PF_localcmd` only covered `restart` — the command the classic game code uses — so both level changes were queued and the server spawned the level twice before the client had consumed the first signon message. `SV_SendServerinfo` appends its serverinfo to a reliable message it could not flush, so the client parsed signon 1 twice and stopped on the second. `PF_localcmd` now guards `localcmd("changelevel ...")` the way it guards `restart`, and `SV_SendServerinfo` clears what is left of the message it could not flush instead of writing the new serverinfo behind it — and that flush now uses the client the message belongs to (`host_client` points at whichever client the server touched last), so a stale signon can never ride along with the new one.
+
 ## v0.20.0
 
 ### Added
-- **Lighting and Material Editor** — `qr_editor` opens a dialog titled with the engine version offering the Material Editor and the Light Editor (`qr_editor_stop` leaves either). Both fly a free camera over the frozen level, pick what the crosshair points at and edit it live; Save writes what the engine loads (the emitter overrides to `lights.yaml`, the authored lights and the map fog to the mod's `qray/lights.yaml`), the exit dialog offers Save all and Discard and keeps the previous file as a backup, and every property carries a reset button.
-- **Material editor** — the Materials tab edits the picked texture's material: every animation frame of a texture ring or a model is its own block, texture paths read `NONE` when unauthored, `color_emissive` is a list of blocks each with its own colour, threshold, feather, `emissive_factor` (0..5) and blend, and the preview of the synthesized texture takes a colour with the eyedropper. An emission edit updates the texture in place instead of rebuilding the scene — no light flash, no hitch — and `light_brightness` (0..100) drives the emitted light alone while the visible glow belongs to `emissive_factor`. The System tab holds the DTAL debug view (`off` / `wireframe` / `normals`), the DTAL limits and the water and acid settings, which are saved to the config.
-- **Projected and focused lights** — `emissive_focus` turns a DTAL into a beam around its normal, `emissive_focus_soft` softens that cone's edge by an absolute angle growing inward (full brightness to `A - S`, then a smoothstep-squared falloff to zero at `A`), and `emissive_projector` routes the light through the surface's own mask as a gobo, blurred by the same soft edge.
-- **Light editor** — the Entity tab edits the light an emitter casts (`group_edit` applies an edit to every light of the same model), the Custom tab authors lights a level does not have — points or spot cones, the direction turned by dragging the circular arrows at the light, the cone drawn yellow for the outer and white for the inner angle, duplicate, and a light style of its own — and the Global tab holds the light system: `rt_brightness`, the global light colour and its multiplier, the sky, the clouds, the sun, the god rays, the volumetric fog and the level's fog. A torch mode lights the way while a level has no light of its own.
+- **Material editor** — tunes the material of the surface you are looking at without leaving the game or editing files by hand: what the surface looks like (its textures, its glow, its gloss and metalness) and what light it casts. It is one console command, `qr_editor`: pick "Material Editor" in the dialog, fly with WASD and the mouse, put the crosshair on a surface and press the fire button, and Tab brings up the panel — a reset on every parameter, a preview of the texture that takes the glow's colours with an eyedropper, and Save, which writes the file the game loads (Discard leaves the file alone).
+- **Light editor** — the same for the light: `qr_editor`, then "Light Editor" in the dialog. It tunes the light an emitter casts, adds lights of your own to a level (a point or a cone, the cone aimed by dragging at the light), and gathers the level's own lighting — the sky, the clouds, the sun, the god rays and the fog — in one place.
+- **Projected and focused lights** — a surface can shine as a beam with a soft edge, or project its own texture as a pattern over the room.
 
 ### Fixed
-- A light edit no longer rebuilds the static scene or re-initialises the sun, and the editor's overlay and hints stay put across the cursor mode.
-- A recessed surface (a ceiling lamp, for one) can be picked again: the pick walks the faces the renderer draws, with the brush transform, instead of hull 0 alone.
-- Exiting the light editor asks to save whenever any of its halves changed, exactly as the material editor does.
+- Editing a light no longer rebuilds the scene, and the sun no longer blinks.
+- A surface set into a wall — a ceiling lamp, for one — can be picked again.
+- Leaving the light editor asks to save whenever anything was changed.
 
 ## v0.19.2
 

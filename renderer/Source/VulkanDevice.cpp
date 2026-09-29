@@ -172,7 +172,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->upscaledRenderHeight = static_cast< float >( renderResolution.UpscaledHeight() );
 
         QrFloat2D jitter = renderResolution.IsNvDlssEnabled() ? HaltonSequence::GetJitter_Halton23( frameId ) :
-                           (renderResolution.IsAmdFsr2Enabled() || renderResolution.IsAmdFsr3Enabled()) ? FidelityFX::FSR::GetJitter( renderResolution.GetResolutionState(), frameId ) :
+                           renderResolution.IsAmdFsr3Enabled() ? FidelityFX::FSR::GetJitter( renderResolution.GetResolutionState(), frameId ) :
                            QrFloat2D{ 0, 0 };
 
         gu->jitterX = jitter.data[ 0 ];
@@ -687,6 +687,14 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
     }
 }
 
+void VulkanDevice::RequestScreenshot(const char *pFilePath)
+{
+    if (pFilePath != nullptr && pFilePath[0] != '\0')
+    {
+        pendingScreenshotPath = pFilePath;
+    }
+}
+
 bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 {
     if (nvrhiFrameSkeleton == nullptr || nvrhiFrameSkeleton->IsUnavailable())
@@ -928,6 +936,12 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 
     assert(semaphoreToWait != VK_NULL_HANDLE);
 
+    if (!pendingScreenshotPath.empty())
+    {
+        nvrhiFrameSkeleton->RequestScreenshot(pendingScreenshotPath);
+        pendingScreenshotPath.clear();
+    }
+
     if (!nvrhiFrameSkeleton->Render(swapchain.get(), frameIndex, sky, semaphoreToWait, renderFinishedSemaphores[frameIndex]))
     {
         currentFrameState.SetSemaphore(semaphoreToWait, semaphoreWaitStage);
@@ -1080,7 +1094,6 @@ bool VulkanDevice::IsRenderUpscaleTechniqueAvailable(QrRenderUpscaleTechnique te
         case QR_RENDER_UPSCALE_TECHNIQUE_NEAREST:
         case QR_RENDER_UPSCALE_TECHNIQUE_LINEAR:
             return true;
-        case QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2:
         case QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3:
             return FidelityFX::FSR::IsUpscaleVersionAvailable(technique);
         case QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS:

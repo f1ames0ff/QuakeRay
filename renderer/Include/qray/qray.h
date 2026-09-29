@@ -1215,7 +1215,6 @@ typedef enum QrRenderUpscaleTechnique
 {
     QR_RENDER_UPSCALE_TECHNIQUE_LINEAR,
     QR_RENDER_UPSCALE_TECHNIQUE_NEAREST,
-    QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2,
     QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3,
     QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS,
 } QrRenderUpscaleTechnique;
@@ -1335,6 +1334,10 @@ typedef struct QrFrameStats
 QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
+
+QRAPI QrResult QRCONV qrRequestScreenshot(
+    QrInstance                          qrInstance,
+    const char                         *pFilePath);
 
 QRAPI QrResult QRCONV qrGetFrameStats(
     QrInstance                          qrInstance,

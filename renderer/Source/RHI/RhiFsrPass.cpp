@@ -220,7 +220,6 @@ bool RhiFsrPass::Render(nvrhi::ICommandList *pCommandList,
         };
 
         const bool providerAvailable =
-            FidelityFX::FSR::IsUpscaleVersionAvailable(QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2) ||
             FidelityFX::FSR::IsUpscaleVersionAvailable(QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3);
 
         if (providerAvailable)

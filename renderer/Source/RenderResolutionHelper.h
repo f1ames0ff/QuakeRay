@@ -69,8 +69,7 @@ public:
         ValidateSharpenTechnique( sharpenTechnique );
         ValidateResolutionMode( resolutionMode );
 
-        if (upscaleTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2 ||
-            upscaleTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3)
+        if (upscaleTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3)
         {
             SetupAmdFsr( pParams, windowWidth, windowHeight );
         }
@@ -102,22 +101,20 @@ public:
     uint32_t UpscaledWidth()    const { return upscaledWidth; }
     uint32_t UpscaledHeight()   const { return upscaledHeight; }
 
-    bool IsAmdFsr2Enabled()     const { return upscaleTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2; }
     bool IsAmdFsr3Enabled()     const { return upscaleTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3; }
     bool IsNvDlssEnabled()      const { return upscaleTechnique == QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS; }
-    bool IsUpscaleEnabled()     const { return IsAmdFsr2Enabled() || IsAmdFsr3Enabled() || IsNvDlssEnabled(); }
+    bool IsUpscaleEnabled()     const { return IsAmdFsr3Enabled() || IsNvDlssEnabled(); }
 
     QrRenderUpscaleTechnique GetUpscaleTechnique() const { return upscaleTechnique; }
 
     float GetAmdFsrSharpness()  const { return 1.0f; }
     float GetNvDlssSharpness()  const { return dlssSharpness; }
 
-    bool IsCASInsideFSR2()      const { return upscaleTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2 && sharpenTechnique == QR_RENDER_SHARPEN_TECHNIQUE_AMD_CAS; }
     bool IsCASInsideFSR3()      const { return upscaleTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3 && sharpenTechnique == QR_RENDER_SHARPEN_TECHNIQUE_AMD_CAS; }
 
     bool IsDedicatedSharpeningEnabled() const
     {
-        return !IsCASInsideFSR2() && !IsCASInsideFSR3() &&
+        return !IsCASInsideFSR3() &&
                sharpenTechnique != QR_RENDER_SHARPEN_TECHNIQUE_NONE;
     }
 
@@ -139,7 +136,6 @@ private:
         {
             case QR_RENDER_UPSCALE_TECHNIQUE_NEAREST:
             case QR_RENDER_UPSCALE_TECHNIQUE_LINEAR:
-            case QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2:
             case QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3:
             case QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS:
                 return;

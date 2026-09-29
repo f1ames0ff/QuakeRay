@@ -221,6 +221,29 @@ char *q_strcasestr (const char *haystack, const char *needle)
 	return NULL; // didn't find it
 }
 
+/*
+================
+COM_TintSubstring
+================
+*/
+char *COM_TintSubstring (const char *in, const char *substr, char *out, size_t outsize)
+{
+	int	  l;
+	char *m = out;
+	q_strlcpy (out, in, outsize);
+	if (*substr)
+	{
+		while ((m = q_strcasestr (m, substr)))
+		{
+			for (l = 0; substr[l]; l++)
+				if (m[l] > ' ')
+					m[l] |= 0x80;
+			m += l;
+		}
+	}
+	return out;
+}
+
 char *q_strlwr (char *str)
 {
 	char *c;
@@ -243,6 +266,103 @@ char *q_strupr (char *str)
 		c++;
 	}
 	return str;
+}
+
+char *q_strtrim (char *str)
+{
+	char *end;
+
+	while (q_isspace ((unsigned char)*str))
+		str++;
+
+	end = str + strlen (str);
+	while (end > str && q_isspace ((unsigned char)end[-1]))
+		end--;
+	*end = '\0';
+
+	return str;
+}
+
+static qboolean is_in_char_set (char single_char, const char *char_set)
+{
+	const size_t char_set_size = strlen (char_set);
+
+	for (size_t char_index = 0; char_index < char_set_size; char_index++)
+	{
+		if (char_set[char_index] == single_char)
+			return true;
+	}
+
+	return false;
+}
+
+char **q_strsplit (char *str, const char *sep_set, size_t *nb_substr)
+{
+	size_t nb_sub_strings_max_size = 8;
+	// if the nb_substr is NULL, we are just interested in splitting str-on place by '\0' ,
+	// and not in returning the token starts at all.
+	char **sub_strings = (nb_substr ? Mem_Alloc (nb_sub_strings_max_size * sizeof (char *)) : NULL);
+	int	   nb_sub_strings = 0;
+
+	size_t start_str_index = 0;
+
+	// special case, gobble the leading sep characters:
+	while (is_in_char_set (str[start_str_index], sep_set))
+	{
+		str[start_str_index] = 0;
+		start_str_index++;
+	}
+	// the real start of the string is here
+	char *str_start = &str[start_str_index];
+
+	// always return a valid memory although  nb_sub_strings = 0
+	// so that the caller is not burdened with NULL checks.
+	//  TODO: or more explicit if it would ?
+	assert (nb_sub_strings == 0);
+	if (!str_start)
+		return sub_strings;
+
+	const size_t initial_str_size = strlen (str_start);
+
+	for (size_t char_index = 0; char_index < initial_str_size; char_index++)
+	{
+		// find the next sep
+		if (is_in_char_set (str_start[char_index], sep_set))
+		{
+			// goble consecutive seps, if any
+			while (is_in_char_set (str_start[char_index], sep_set))
+			{
+				// split the original string
+				str_start[char_index] = '\0';
+				char_index++;
+			}
+			//
+			if (sub_strings && char_index <= initial_str_size)
+			{
+				// make room
+				if (nb_sub_strings >= nb_sub_strings_max_size)
+				{
+					nb_sub_strings_max_size = nb_sub_strings_max_size * 2;
+					sub_strings = Mem_Realloc (sub_strings, nb_sub_strings_max_size * sizeof (char *));
+				}
+				// we found the first split, meaning the string before this split is indeed the first sub-string
+				if (nb_sub_strings == 0)
+					sub_strings[nb_sub_strings++] = &str_start[0];
+
+				if (char_index < initial_str_size)
+					sub_strings[nb_sub_strings++] = &str_start[char_index];
+			}
+		}
+	}
+
+	// no split, return the original string stripped from its leadings seps
+	if (sub_strings && nb_sub_strings == 0)
+		sub_strings[nb_sub_strings++] = &str_start[0];
+
+	if (nb_substr)
+		*nb_substr = nb_sub_strings;
+
+	return sub_strings;
 }
 
 char *q_strdup (const char *str)
@@ -1163,12 +1283,16 @@ void COM_AddExtension (char *path, const char *extension, size_t len)
 
 /*
 ==============
-COM_Parse
+COM_ParseEx
 
 Parse a token out of a string
+
+The mode argument controls how overflow is handled:
+- CPE_NOTRUNC:		return NULL (abort parsing)
+- CPE_ALLOWTRUNC:	truncate com_token (ignore the extra characters in this token)
 ==============
 */
-const char *COM_Parse (const char *data)
+const char *COM_ParseEx (const char *data, cpe_mode mode)
 {
 	int c;
 	int len;
@@ -1220,16 +1344,20 @@ skipwhite:
 				com_token[len] = 0;
 				return data;
 			}
-			com_token[len] = c;
-			len++;
+			if (len < countof (com_token) - 1)
+				com_token[len++] = c;
+			else if (mode == CPE_NOTRUNC)
+				return NULL;
 		}
 	}
 
 	// parse single characters
 	if (c == '{' || c == '}' || c == '(' || c == ')' || c == '\'' || c == ':')
 	{
-		com_token[len] = c;
-		len++;
+		if (len < countof (com_token) - 1)
+			com_token[len++] = c;
+		else if (mode == CPE_NOTRUNC)
+			return NULL;
 		com_token[len] = 0;
 		return data + 1;
 	}
@@ -1237,9 +1365,11 @@ skipwhite:
 	// parse a regular word
 	do
 	{
-		com_token[len] = c;
+		if (len < countof (com_token) - 1)
+			com_token[len++] = c;
+		else if (mode == CPE_NOTRUNC)
+			return NULL;
 		data++;
-		len++;
 		c = *data;
 		/* commented out the check for ':' so that ip:port works */
 		if (c == '{' || c == '}' || c == '(' || c == ')' || c == '\'' /* || c == ':' */)
@@ -1248,6 +1378,66 @@ skipwhite:
 
 	com_token[len] = 0;
 	return data;
+}
+
+/*
+==============
+COM_Parse
+
+Parse a token out of a string
+
+Return NULL in case of overflow
+==============
+*/
+const char *COM_Parse (const char *data)
+{
+	return COM_ParseEx (data, CPE_NOTRUNC);
+}
+
+/*
+================
+COM_ParseLine
+================
+*/
+qboolean COM_ParseLine (const char **str, stringview_t *line)
+{
+	const char *p;
+
+	if (!str || !*str)
+		return false;
+
+	p = *str;
+	if (line)
+		line->data = p;
+	while (*p && *p != '\n')
+		p++;
+	if (line)
+		line->len = p - line->data;
+
+	*str = (*p == '\n') ? p + 1 : NULL;
+	return true;
+}
+
+/*
+================
+COM_ParseMutableLine
+================
+*/
+qboolean COM_ParseMutableLine (char **str, char **line)
+{
+	stringview_t view;
+
+	if (!COM_ParseLine ((const char **)str, &view))
+		return false;
+
+	if (line)
+	{
+		char *result = (char *)view.data;
+		result[view.len] = '\0';
+		*line = result;
+	}
+
+	return true;
 }
 
 /*
@@ -2217,6 +2407,9 @@ static void COM_Game_f (void)
 		// Write config file
 		Host_WriteConfiguration ();
 
+		// stop parsing map files before changing file system search paths
+		ExtraMaps_Clear ();
+
 		COM_ResetGameDirectories (paths);
 
 		// clear out and reload appropriate data
@@ -2232,6 +2425,7 @@ static void COM_Game_f (void)
 		ExtraMaps_NewGame ();
 		DemoList_Rebuild ();
 		SaveList_Rebuild ();
+		M_CheckMods ();
 		S_ClearAll ();
 
 		Con_Printf ("\"game\" changed to \"%s\"\n", COM_GetGameNames (true));
@@ -2839,6 +3033,24 @@ unsigned COM_HashString (const char *str)
 	return hash;
 }
 
+/*
+================
+COM_HashBlock
+Computes the FNV-1a hash of a memory block
+================
+*/
+unsigned COM_HashBlock (const void *data, size_t size)
+{
+	const byte *ptr = (const byte *)data;
+	unsigned	hash = 0x811c9dc5u;
+	while (size--)
+	{
+		hash ^= *ptr++;
+		hash *= 0x01000193u;
+	}
+	return hash;
+}
+
 static size_t mz_zip_file_read_func (void *opaque, mz_uint64 ofs, void *buf, size_t n)
 {
 	if (SDL_RWseek ((SDL_RWops *)opaque, (Sint64)ofs, RW_SEEK_SET) < 0)
@@ -3279,4 +3491,105 @@ size_t LOC_Format (const char *format, const char *(*getarg_fn) (int idx, void *
 	out[written] = 0;
 
 	return written;
+}
+
+/*
+================
+Initial state picked randomly, can't be 0.
+================
+*/
+static uint32_t xorshiro_state[2] = {0xcdb38550, 0x720a8392};
+
+/*
+=================
+COM_SeedRand
+=================
+*/
+void COM_SeedRand (uint64_t seed)
+{
+	// SplitMix64
+	uint64_t z = (seed + 0x9e3779b97f4a7c15);
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+	z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+	uint64_t state = z ^ (z >> 31);
+	xorshiro_state[0] = (uint32_t)state;
+	xorshiro_state[1] = (uint32_t)(state >> 32);
+}
+
+/*
+=================
+COM_Rand
+=================
+*/
+static inline uint32_t rotl (const uint32_t x, int k)
+{
+	return (x << k) | (x >> (32 - k));
+}
+
+int32_t COM_Rand ()
+{
+	// Xorshiro64**
+	const uint32_t s0 = xorshiro_state[0];
+	uint32_t	   s1 = xorshiro_state[1];
+	const uint32_t result = rotl (s0 * 0x9E3779BB, 5) * 5;
+	s1 ^= s0;
+	xorshiro_state[0] = rotl (s0, 26) ^ s1 ^ (s1 << 9);
+	xorshiro_state[1] = rotl (s1, 13);
+
+	return (int32_t)(result & COM_RAND_MAX);
+}
+
+void Vec_Grow (void **pvec, size_t element_size, size_t count)
+{
+	vec_header_t header;
+	if (*pvec)
+		header = VEC_HEADER (*pvec);
+	else
+		header.size = header.capacity = 0;
+
+	if (header.size + count > header.capacity)
+	{
+		void  *new_buffer;
+		size_t total_size;
+
+		header.capacity = header.size + count;
+		header.capacity += header.capacity >> 1;
+		if (header.capacity < 16)
+			header.capacity = 16;
+		total_size = sizeof (vec_header_t) + header.capacity * element_size;
+
+		if (*pvec)
+			new_buffer = Mem_Realloc (((vec_header_t *)*pvec) - 1, total_size);
+		else
+			new_buffer = Mem_Alloc (total_size);
+		if (!new_buffer)
+			Sys_Error ("Vec_Grow: failed to allocate %lu bytes\n", (unsigned long)total_size);
+
+		*pvec = 1 + (vec_header_t *)new_buffer;
+		VEC_HEADER (*pvec) = header;
+	}
+}
+
+void Vec_Append (void **pvec, size_t element_size, const void *data, size_t count)
+{
+	if (!count)
+		return;
+	Vec_Grow (pvec, element_size, count);
+	memcpy ((byte *)*pvec + VEC_HEADER (*pvec).size * element_size, data, count * element_size);
+	VEC_HEADER (*pvec).size += count;
+}
+
+void Vec_Clear (void **pvec)
+{
+	if (*pvec)
+		VEC_HEADER (*pvec).size = 0;
+}
+
+void Vec_Free (void **pvec)
+{
+	if (*pvec)
+	{
+		Mem_Free (&VEC_HEADER (*pvec));
+		*pvec = NULL;
+	}
 }
