@@ -63,6 +63,7 @@ class RhiProceduralSkyPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
 class RhiRtComposePass;
+class RhiCausticsPass;
 class RhiRtDirectPass;
 class RhiRtGodRaysPass;
 class RhiRtIndirectPass;
@@ -229,6 +230,7 @@ private:
     std::shared_ptr<RhiRtComposePass>       rhiRtComposePass;
     std::shared_ptr<RhiShadowMapPass>       rhiShadowMapPass;
     std::shared_ptr<RhiRtGodRaysPass>       rhiRtGodRaysPass;
+    std::shared_ptr<RhiCausticsPass>        rhiCausticsPass;
 
     std::shared_ptr<RhiRtReflRefrPass>      rhiRtReflRefrPass;
 

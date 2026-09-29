@@ -245,6 +245,10 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_water_normsharp, "5") \
 	CVAR_DEF_T (rt_water_scale, "1") \
 	CVAR_DEF_T (rt_turb_warp, "1") \
+	CVAR_DEF_T (rt_caustics, "0") \
+	CVAR_DEF_T (rt_caustics_intensity, "1") \
+	CVAR_DEF_T (rt_caustics_res, "256") \
+	CVAR_DEF_T (rt_caustics_extent, "2048") \
 	\
 	CVAR_DEF_T (rt_portal_twirl, "1") \
 	CVAR_DEF_T (rt_teleport_portals, "0") \
@@ -2175,6 +2179,16 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	refl_refr_params.acidColor.data[1] = powf (refl_refr_params.acidColor.data[1], 1.0f / METRIC_TO_QUAKEUNIT (1.0f));
 	refl_refr_params.acidColor.data[2] = powf (refl_refr_params.acidColor.data[2], 1.0f / METRIC_TO_QUAKEUNIT (1.0f));
 
+	int caustics_res = CLAMP (32, CVAR_TO_INT32 (rt_caustics_res), 512);
+	caustics_res = (caustics_res / 8) * 8;
+
+	QrDrawFrameCausticsParams caustics_params = {
+		.enabled = CVAR_TO_BOOL (rt_caustics),
+		.intensity = CVAR_TO_FLOAT (rt_caustics_intensity),
+		.resolution = (uint32_t) caustics_res,
+		.extent = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_caustics_extent)),
+	};
+
 
 	float skyMult = 1.0f / CLAMP (0.02f, RT_Luminance (skyflatcolor), 1.0f);
 	skyMult *= CVAR_TO_FLOAT (rt_sky);
@@ -2452,6 +2466,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.pBloomParams = &bloom_params,
 		.pTonemappingParams = &tonemap_params,
 		.pReflectRefractParams = &refl_refr_params,
+	.pCausticsParams = &caustics_params,
 		.pSkyParams = &sky_params,
 		.pTexturesParams = &texture_params,
 		.pLensFlareParams = &lens_flare_params,

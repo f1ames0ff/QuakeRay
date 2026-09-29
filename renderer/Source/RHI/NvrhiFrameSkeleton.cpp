@@ -35,6 +35,7 @@
 #include "RhiPipeline.h"
 #include "RhiProceduralSkyPass.h"
 #include "RhiRasterOverlayPass.h"
+#include "RhiCausticsPass.h"
 #include "RhiRasterSkyPass.h"
 #include "RhiResources.h"
 #include "RhiSkyPass.h"
@@ -946,6 +947,39 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                   worldUniformBuffer.Get(),
                                   [&](nvrhi::ICommandList *pOverlayList)
                                   {
+                                      if (causticsPass != nullptr && causticsPass->IsCreated() &&
+                                          sky.caustics.enabled && sky.caustics.resolution > 0 &&
+                                          uniform != nullptr && accelStructs != nullptr)
+                                      {
+                                          RhiCausticsPass::Params causticsParams = {};
+                                          for (int k = 0; k < 3; k++)
+                                          {
+                                              causticsParams.sunDirection[k] = sky.caustics.sunDirection[k];
+                                              causticsParams.sunColor[k] = sky.caustics.sunColor[k];
+                                          }
+                                          causticsParams.sunDirection[3] = sky.caustics.intensity;
+
+                                          const float texelSize =
+                                              sky.caustics.extent / float(sky.caustics.resolution);
+                                          const float *camera = uniform->cameraPosition;
+
+                                          causticsParams.gridMinAndTexel[0] =
+                                              std::floor(camera[0] / texelSize) * texelSize -
+                                              sky.caustics.extent * 0.5f;
+                                          causticsParams.gridMinAndTexel[1] =
+                                              std::floor(camera[2] / texelSize) * texelSize -
+                                              sky.caustics.extent * 0.5f;
+                                          causticsParams.gridMinAndTexel[2] = texelSize;
+                                          causticsParams.gridMinAndTexel[3] = camera[1] + 4096.0f;
+                                          causticsParams.gridSize[0] = sky.caustics.resolution;
+
+                                          causticsPass->Render(pOverlayList, frameIndex, sky.framebuffers,
+                                                               sky.width, sky.height,
+                                                               worldUniformBuffer.Get(),
+                                                               accelStructs->GetTopLevel(frameIndex),
+                                                               passVertexData, causticsParams);
+                                      }
+
                                       if (rasterOverlayPass != nullptr &&
                                           rasterOverlayPass->IsCreated() && uniform != nullptr)
                                       {
@@ -1636,6 +1670,11 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
     if (godRaysPass != nullptr)
     {
         godRaysPass->ReleaseTargets();
+    }
+
+    if (causticsPass != nullptr)
+    {
+        causticsPass->ReleaseTargets();
     }
 
     // The UI pass keeps per-slot framebuffers over the compose's upscaled wraps, so it drops them

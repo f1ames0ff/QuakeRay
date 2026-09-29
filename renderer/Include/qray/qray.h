@@ -1206,8 +1206,15 @@ typedef struct QrDrawFrameReflectRefractParams
     QrBool32    portalNormalTwirl;
 } QrDrawFrameReflectRefractParams;
 
-typedef enum QrRenderUpscaleTechnique
+typedef struct QrDrawFrameCausticsParams
 {
+    QrBool32    enabled;
+    float       intensity;
+    uint32_t    resolution;
+    float       extent;
+} QrDrawFrameCausticsParams;
+
+typedef enum QrRenderUpscaleTechnique{
     QR_RENDER_UPSCALE_TECHNIQUE_LINEAR,
     QR_RENDER_UPSCALE_TECHNIQUE_NEAREST,
     QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2,
@@ -1287,6 +1294,7 @@ typedef struct QrDrawFrameInfo
     const QrDrawFrameTonemappingParams          *pTonemappingParams;
     const QrDrawFrameBloomParams                *pBloomParams;
     const QrDrawFrameReflectRefractParams       *pReflectRefractParams;
+    const QrDrawFrameCausticsParams             *pCausticsParams;
     const QrDrawFrameSkyParams                  *pSkyParams;
     const QrDrawFrameTexturesParams             *pTexturesParams;
     const QrDrawFrameLensFlareParams            *pLensFlareParams;

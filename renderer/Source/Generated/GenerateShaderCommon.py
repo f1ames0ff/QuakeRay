@@ -988,6 +988,10 @@ if Q2_CORE_ENABLED:
         "Q2Cluster"                     : (UINT32,    CHANNELS_R,    0),
     })
 
+FRAMEBUFFERS.update({
+    "Caustics"                          : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_IS_ATTACHMENT),
+})
+
 
 def emit_constants(constants):
     lines = ["#define %s (%s)" % (name, value) for name, value in constants.items()]

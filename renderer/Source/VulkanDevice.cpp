@@ -827,6 +827,23 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             sky.godRays.staticCollector = scene->GetASManager()->GetStaticCollector().get();
             sky.godRays.dynamicCollector = scene->GetASManager()->GetDynamicCollector(frameIndex).get();
         }
+
+        const QrDrawFrameCausticsParams *caustics = drawInfo.pCausticsParams;
+
+        sky.caustics.enabled = (caustics != nullptr) && (caustics->enabled != 0) &&
+                               (caustics->intensity > 0.0f) && (caustics->resolution > 0) && sunExists;
+        sky.caustics.intensity = (caustics != nullptr) ? std::max(caustics->intensity, 0.0f) : 0.0f;
+        sky.caustics.resolution = (caustics != nullptr) ? caustics->resolution : 0;
+        sky.caustics.extent = (caustics != nullptr) ? caustics->extent : 0.0f;
+
+        if (sky.caustics.enabled)
+        {
+            for (int k = 0; k < 3; k++)
+            {
+                sky.caustics.sunDirection[k] = -sunDir[k];
+                sky.caustics.sunColor[k] = sunColor[k];
+            }
+        }
     }
 
     sky.portalStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(portalList->GetStagingBuffer(frameIndex)));

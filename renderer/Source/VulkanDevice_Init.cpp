@@ -38,6 +38,7 @@
 #include "RHI/RhiRtComposePass.h"
 #include "RHI/RhiRtDirectPass.h"
 #include "RHI/RhiRtGodRaysPass.h"
+#include "RHI/RhiCausticsPass.h"
 #include "RHI/RhiRtIndirectPass.h"
 #include "RHI/RhiRtPrimaryPass.h"
 #include "RHI/RhiRtReflRefrPass.h"
@@ -297,6 +298,15 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                     Print("Warning: RHI: the primary ray-tracing pass is unavailable, the frame skeleton will be unavailable");
                 }
 
+                rhiCausticsPass = std::make_shared<RhiCausticsPass>();
+                if (!rhiCausticsPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                             rhiTextureTable.get(), info->pShaderFolderPath,
+                                             [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiCausticsPass.reset();
+                    Print("Warning: RHI: the caustics pass is unavailable, the frame is drawn without caustics");
+                }
+
                 if (rhiRtPrimaryPass != nullptr)
                 {
                     rhiRtDirectPass = std::make_shared<RhiRtDirectPass>();
@@ -457,6 +467,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                 [this](const char *pMessage) { Print(pMessage); });
 
             swapchain->Subscribe(nvrhiFrameSkeleton);
+            nvrhiFrameSkeleton->SetCausticsPass(rhiCausticsPass.get());
 
             if (RhiSkyPass *skyPass = nvrhiFrameSkeleton->GetSkyPass())
             {
@@ -513,6 +524,7 @@ VulkanDevice::~VulkanDevice()
 
     rhiRtComposePass.reset();
     rhiRtGodRaysPass.reset();
+    rhiCausticsPass.reset();
     rhiShadowMapPass.reset();
     rhiUiPass.reset();
     rhiRtIndirectPass.reset();

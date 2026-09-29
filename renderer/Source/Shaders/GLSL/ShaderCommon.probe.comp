@@ -944,5 +944,11 @@ void main()
     v += float(texelFetch(framebufQ2Cluster_Sampled, pix, 0).x);
     v += float(texture(usampler2D(framebufQ2Cluster_Sampled, framebufQ2Cluster_Sampler), uv).x);
 
+    // framebufCaustics  rgba16f
+    imageStore(framebufCaustics, pix, vec4(1.0));
+    v += float(imageLoad(framebufCaustics, pix).x);
+    v += float(texelFetch(framebufCaustics_Sampled, pix, 0).x);
+    v += float(texture(sampler2D(framebufCaustics_Sampled, framebufCaustics_Sampler), uv).x);
+
     probeOutput[0] = v;
 }

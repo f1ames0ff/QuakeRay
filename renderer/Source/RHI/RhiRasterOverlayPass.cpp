@@ -83,7 +83,7 @@ constexpr nvrhi::Format DEPTH_FORMAT = nvrhi::Format::D32;
 // 136) as an NVRHI Texture_SRV. The engine's sampled-view binding is 124 + image index
 // (ShFramebuffers_Sampled_Bindings), so the slot is the image index and the layout carries the
 // shader-resource offset 124 - the arithmetic RhiSkyPass's world framebuffers layout documents.
-constexpr uint32_t DEPTH_NDC_SRV_OFFSET = 124;
+constexpr uint32_t DEPTH_NDC_SRV_OFFSET = 125;
 constexpr uint32_t DEPTH_NDC_SRV_SLOT = static_cast<uint32_t>(FB_IMAGE_INDEX_DEPTH_NDC);
 
 // The world shader's set 4 binding 25: FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR, the Rgba32ui storage
@@ -91,9 +91,9 @@ constexpr uint32_t DEPTH_NDC_SRV_SLOT = static_cast<uint32_t>(FB_IMAGE_INDEX_DEP
 // binding is the image index, so the slot is 25; the three offsets repeat the engine layout's
 // triple exactly as RhiSkyPass's world framebuffers layout does (recon 5).
 constexpr uint32_t WORLD_STORAGE_SLOT = static_cast<uint32_t>(FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR);
-constexpr uint32_t WORLD_FRAMEBUFFERS_SRV_OFFSET = 124;
+constexpr uint32_t WORLD_FRAMEBUFFERS_SRV_OFFSET = 125;
 constexpr uint32_t WORLD_FRAMEBUFFERS_UAV_OFFSET = 0;
-constexpr uint32_t WORLD_FRAMEBUFFERS_SAMPLER_OFFSET = 248;
+constexpr uint32_t WORLD_FRAMEBUFFERS_SAMPLER_OFFSET = 250;
 
 // The smoke fragment's set 4: the six items RsSmoke.frag statically uses, measured with spirv-dis
 // over renderer/Build/RsSmoke.frag.spv - `framebufDepthWorld_Sampled` at raw 133 (the depth fade,

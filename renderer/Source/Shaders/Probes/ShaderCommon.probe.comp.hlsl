@@ -901,5 +901,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += float(framebufQ2Cluster_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufQ2Cluster_Sampler, uv, 0.0).x;
 
+    // framebufCaustics  rgba16f
+    framebufCaustics[pix] = float4(1.0, 1.0, 1.0, 1.0);
+    v += float(framebufCaustics[pix].x);
+    v += float(framebufCaustics_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufCaustics_Sampler, uv, 0.0).x;
+
     probeOutput[0] = v;
 }

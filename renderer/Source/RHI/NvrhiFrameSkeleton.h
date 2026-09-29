@@ -37,6 +37,7 @@ class GlobalUniform;
 class RenderResolutionHelper;
 class RhiDecalPass;
 class RhiFsrPass;
+class RhiCausticsPass;
 class RhiPostEffectPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
@@ -182,6 +183,16 @@ public:
             const VertexCollector *staticCollector = nullptr;
             const VertexCollector *dynamicCollector = nullptr;
         } godRays;
+
+        struct Caustics
+        {
+            bool enabled = false;
+            float intensity = 0.0f;
+            uint32_t resolution = 0;
+            float extent = 0.0f;
+            float sunDirection[3] = {};
+            float sunColor[3] = {};
+        } caustics;
 
         // -- the portals (A5.3) --
         // The engine PortalList buffers for this slot: the staging the game's teleport uploads go to
@@ -413,6 +424,8 @@ public:
     // could not be created (the skeleton is unavailable then).
     RhiSkyPass *GetSkyPass() const { return skyPass.get(); }
 
+    void SetCausticsPass(RhiCausticsPass *pPass) { causticsPass = pPass; }
+
 private:
     static nvrhi::Format ConvertSurfaceFormat(VkFormat format);
 
@@ -560,6 +573,7 @@ private:
     // is drawn without shafts.
     RhiShadowMapPass *shadowMapPass = nullptr;
     RhiRtGodRaysPass *godRaysPass = nullptr;
+    RhiCausticsPass *causticsPass = nullptr;
 
     // The 2D-UI pass (RhiUiPass, RHI/RhiUiPass.h), driven in the traced chain once the compose ran:
     // it draws the frame's SWAPCHAIN overlay into the compose's upscaled image. Not owned; null
