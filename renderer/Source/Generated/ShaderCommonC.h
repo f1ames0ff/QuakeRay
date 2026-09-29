@@ -278,7 +278,6 @@ struct ShGlobalUniform
     float time;
     float waterWaveSpeed;
     float waterWaveStrength;
-    uint32_t causticsSunShadow;
     float waterColorAndDensity[4];
     float acidColorAndDensity[4];
     float cameraRayConeSpreadAngle;
