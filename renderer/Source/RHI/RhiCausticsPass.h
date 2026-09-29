@@ -110,7 +110,8 @@ private:
 
     nvrhi::BufferHandle paramsBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle paramsSets[MAX_FRAMES_IN_FLIGHT];
-    nvrhi::BufferHandle photonBuffers[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BufferHandle cellBuffers[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BufferHandle depthBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle compositeSets[MAX_FRAMES_IN_FLIGHT];
 
     Target targets[MAX_FRAMES_IN_FLIGHT];

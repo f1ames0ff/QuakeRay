@@ -18,7 +18,8 @@ namespace
 {
 constexpr uint32_t CAUSTICS_GROUP_SIZE = 8;
 constexpr uint32_t CAUSTICS_MAX_RESOLUTION = 512;
-constexpr uint32_t CAUSTICS_PHOTON_STRIDE = 48;
+constexpr uint32_t CAUSTICS_CELL_STRIDE = 16;
+constexpr uint32_t CAUSTICS_DEPTH_STRIDE = 4;
 constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 64;
 constexpr uint32_t CAUSTICS_FRAMEBUFFER_SRV_OFFSET = 124;
 constexpr uint32_t CAUSTICS_IMAGE_COUNT = 3;
@@ -103,7 +104,8 @@ RhiCausticsPass::~RhiCausticsPass()
         paramsSets[i] = nullptr;
         compositeSets[i] = nullptr;
         paramsBuffers[i] = nullptr;
-        photonBuffers[i] = nullptr;
+        cellBuffers[i] = nullptr;
+        depthBuffers[i] = nullptr;
     }
 
     traceShader = nullptr;
@@ -193,6 +195,7 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
                                    .setUnorderedAccessViewOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(1));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2));
 
         traceParamsLayout = device->createBindingLayout(desc);
     }
@@ -202,6 +205,7 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
         desc.setBindingOffsets(nvrhi::VulkanBindingOffsets().setShaderResourceOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2));
 
         compositeParamsLayout = device->createBindingLayout(desc);
     }
@@ -265,16 +269,26 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
         }
         {
             nvrhi::BufferDesc desc;
-            desc.byteSize = uint64_t(CAUSTICS_MAX_RESOLUTION) * CAUSTICS_MAX_RESOLUTION * CAUSTICS_PHOTON_STRIDE;
-            desc.structStride = CAUSTICS_PHOTON_STRIDE;
+            desc.byteSize = uint64_t(CAUSTICS_MAX_RESOLUTION) * CAUSTICS_MAX_RESOLUTION * CAUSTICS_CELL_STRIDE;
+            desc.structStride = CAUSTICS_CELL_STRIDE;
             desc.canHaveUAVs = true;
             desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
             desc.keepInitialState = true;
 
-            photonBuffers[i] = rhi::createBuffer(device, desc, "RhiCausticsPass photons " + std::to_string(i));
+            cellBuffers[i] = rhi::createBuffer(device, desc, "RhiCausticsPass cells " + std::to_string(i));
+        }
+        {
+            nvrhi::BufferDesc desc;
+            desc.byteSize = uint64_t(CAUSTICS_MAX_RESOLUTION) * CAUSTICS_MAX_RESOLUTION * CAUSTICS_DEPTH_STRIDE;
+            desc.structStride = CAUSTICS_DEPTH_STRIDE;
+            desc.canHaveUAVs = true;
+            desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+            desc.keepInitialState = true;
+
+            depthBuffers[i] = rhi::createBuffer(device, desc, "RhiCausticsPass depths " + std::to_string(i));
         }
 
-        if (paramsBuffers[i] == nullptr || photonBuffers[i] == nullptr)
+        if (paramsBuffers[i] == nullptr || cellBuffers[i] == nullptr || depthBuffers[i] == nullptr)
         {
             LogMessage(print, "Warning: RHI: failed to create a caustics pass buffer");
             return false;
@@ -283,14 +297,16 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
         {
             nvrhi::BindingSetDesc setDesc;
             setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, paramsBuffers[i]));
-            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(1, photonBuffers[i]));
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(1, cellBuffers[i]));
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, depthBuffers[i]));
 
             paramsSets[i] = device->createBindingSet(setDesc, traceParamsLayout);
         }
         {
             nvrhi::BindingSetDesc setDesc;
             setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, paramsBuffers[i]));
-            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, photonBuffers[i]));
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, cellBuffers[i]));
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, depthBuffers[i]));
 
             compositeSets[i] = device->createBindingSet(setDesc, compositeParamsLayout);
         }
@@ -641,7 +657,8 @@ void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
                                                nvrhi::ResourceStates::UnorderedAccess);
     }
 
-    pCommandList->clearBufferUInt(photonBuffers[frameIndex], 0);
+    pCommandList->clearBufferUInt(cellBuffers[frameIndex], 0);
+    pCommandList->clearBufferUInt(depthBuffers[frameIndex], 0);
 
     {
         nvrhi::ComputeState state;

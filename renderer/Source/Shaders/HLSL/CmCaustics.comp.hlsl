@@ -20,21 +20,18 @@ struct CausticsParams_BT
     uint4  gridSize;
 };
 
-struct ShPhoton
-{
-    float4 position;
-    float4 normal;
-    float4 flux;
-};
-
 [[vk::binding(0, DESC_SET_CAUSTICS)]] StructuredBuffer<CausticsParams_BT> causticsParams;
-[[vk::binding(1, DESC_SET_CAUSTICS)]] RWStructuredBuffer<ShPhoton> causticsPhotons;
+[[vk::binding(1, DESC_SET_CAUSTICS)]] RWStructuredBuffer<uint4> causticsCells;
+[[vk::binding(2, DESC_SET_CAUSTICS)]] RWStructuredBuffer<uint> causticsCellDepth;
 [[vk::binding(BINDING_ACCELERATION_STRUCTURE_MAIN, DESC_SET_TLAS)]] RaytracingAccelerationStructure topLevelAS;
 
 #define CAUSTICS_RAY_MAX_LENGTH 100000.0
 #define CAUSTICS_RAY_EPS 0.1
 #define CAUSTICS_SECONDARY_RAY_EPS 0.1
 #define CAUSTICS_SKY_SKIP_COUNT 4
+#define CAUSTICS_FLUX_SCALE 256.0
+#define CAUSTICS_DEPTH_SCALE 16.0
+#define CAUSTICS_DEPTH_BIAS 32768.0
 
 struct CausticsHit
 {
@@ -100,9 +97,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const uint launchIndex = cell.y * resolution + cell.x;
-    const bool debugMarkers = params.gridSize.y != 0;
-
     const float texelSize = params.gridMinAndTexel.z;
     const float2 worldXY  = params.gridMinAndTexel.xy + (float2(cell) + (float2)0.5) * texelSize;
 
@@ -110,11 +104,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float3 rayDirection = -sunDirection;
 
     const float3 rayOrigin = float3(worldXY.x, worldXY.y, params.gridMinAndTexel.w);
-
-    ShPhoton marker;
-    marker.position = (float4)0.0;
-    marker.normal   = (float4)0.0;
-    marker.flux     = (float4)0.0;
 
     CausticsHit waterHit;
     bool waterHitFound = false;
@@ -144,69 +133,63 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    if ((waterHit.shTriangle.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_WATER) != 0)
+    if ((waterHit.shTriangle.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_WATER) == 0)
     {
-        float3 waterNormal = waterHit.normal;
-        if (dot(waterNormal, rayDirection) > 0.0)
-        {
-            waterNormal = -waterNormal;
-        }
-
-        RayCone rayCone;
-        rayCone.width       = texelSize;
-        rayCone.spreadAngle = 0.0;
-
-        const float3 waveNormal = getWaterNormal(rayCone, rayDirection, waterNormal, waterHit.position, false);
-
-        const float3 refractedDirection =
-            refract(rayDirection, waveNormal, 1.0 / getIndexOfRefraction(MEDIA_TYPE_WATER));
-
-        if (dot(refractedDirection, refractedDirection) > 0.0)
-        {
-            CausticsHit receiverHit;
-            if (causticsTrace(waterHit.position + refractedDirection * CAUSTICS_SECONDARY_RAY_EPS,
-                              refractedDirection, globalUniform.rayCullMaskWorld, 0.0, receiverHit) &&
-                (receiverHit.instanceCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_SKY) == 0)
-            {
-                const float3 receiverNormal = receiverHit.normal;
-
-                const float fresnel = 0.1 + 0.9 * pow(1.0 - abs(dot(rayDirection, waveNormal)), 5.0);
-
-                ShPhoton photon;
-                photon.position = float4(receiverHit.position, 0.0);
-                photon.normal   = float4(receiverNormal, 0.0);
-                photon.flux     = float4(params.sunColor.rgb * params.sunDirection.w * (1.0 - fresnel), 4.0);
-
-                const int2 receiverCell = (int2)floor((receiverHit.position.xy - params.gridMinAndTexel.xy) / texelSize);
-
-                if (receiverCell.x >= 0 && receiverCell.y >= 0 &&
-                    receiverCell.x < (int)resolution && receiverCell.y < (int)resolution)
-                {
-                    causticsPhotons[receiverCell.y * resolution + receiverCell.x] = photon;
-                }
-
-                return;
-            }
-
-            marker.flux.w = 3.0;
-            if (debugMarkers)
-            {
-                causticsPhotons[launchIndex] = marker;
-            }
-            return;
-        }
-
-        marker.flux.w = 2.0;
-        if (debugMarkers)
-        {
-            causticsPhotons[launchIndex] = marker;
-        }
         return;
     }
 
-    marker.flux.w = 1.0;
-    if (debugMarkers)
+    float3 waterNormal = waterHit.normal;
+    if (dot(waterNormal, rayDirection) > 0.0)
     {
-        causticsPhotons[launchIndex] = marker;
+        waterNormal = -waterNormal;
     }
+
+    RayCone rayCone;
+    rayCone.width       = texelSize;
+    rayCone.spreadAngle = 0.0;
+
+    const float3 waveNormal = getWaterNormal(rayCone, rayDirection, waterNormal, waterHit.position, false);
+
+    const float3 refractedDirection =
+        refract(rayDirection, waveNormal, 1.0 / getIndexOfRefraction(MEDIA_TYPE_WATER));
+
+    if (dot(refractedDirection, refractedDirection) <= 0.0)
+    {
+        return;
+    }
+
+    CausticsHit receiverHit;
+    if (!causticsTrace(waterHit.position + refractedDirection * CAUSTICS_SECONDARY_RAY_EPS,
+                       refractedDirection, globalUniform.rayCullMaskWorld, 0.0, receiverHit))
+    {
+        return;
+    }
+
+    if ((receiverHit.instanceCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_SKY) != 0)
+    {
+        return;
+    }
+
+    const int2 receiverCell =
+        (int2)floor((receiverHit.position.xy - params.gridMinAndTexel.xy) / texelSize);
+
+    if (receiverCell.x < 0 || receiverCell.y < 0 ||
+        receiverCell.x >= (int)resolution || receiverCell.y >= (int)resolution)
+    {
+        return;
+    }
+
+    const float fresnel = 0.1 + 0.9 * pow(1.0 - abs(dot(rayDirection, waveNormal)), 5.0);
+    const float3 power  = params.sunColor.rgb * params.sunDirection.w * (1.0 - fresnel);
+
+    const uint cellIndex = (uint)receiverCell.y * resolution + (uint)receiverCell.x;
+
+    InterlockedAdd(causticsCells[cellIndex].x, (uint)(power.r * CAUSTICS_FLUX_SCALE));
+    InterlockedAdd(causticsCells[cellIndex].y, (uint)(power.g * CAUSTICS_FLUX_SCALE));
+    InterlockedAdd(causticsCells[cellIndex].z, (uint)(power.b * CAUSTICS_FLUX_SCALE));
+    InterlockedAdd(causticsCells[cellIndex].w, 1u);
+
+    const uint depthEncoded =
+        (uint)(int)((receiverHit.position.z + CAUSTICS_DEPTH_BIAS) * CAUSTICS_DEPTH_SCALE);
+    InterlockedAdd(causticsCellDepth[cellIndex], depthEncoded);
 }
