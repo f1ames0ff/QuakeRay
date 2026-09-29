@@ -985,7 +985,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
             if (fsrPass != nullptr && fsrPass->IsCreated() && sky.renderResolution != nullptr &&
                 uniform != nullptr &&
-                (sky.renderResolution->IsAmdFsr2Enabled() || sky.renderResolution->IsAmdFsr3Enabled()))
+                sky.renderResolution->IsAmdFsr3Enabled())
             {
                 // The legacy's camera-cut reset (teleport / respawn / level change): the uniform
                 // carries both positions, the same heuristic CL_LerpEntity uses

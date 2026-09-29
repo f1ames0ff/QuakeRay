@@ -60,13 +60,12 @@ namespace qray
         private:
             void RecreateContext();
             void DestroyContext();
-            static uint64_t FindVersionId(bool preferFsr3);
+            static uint64_t FindVersionId();
             VkDevice m_device;
             VkPhysicalDevice m_physDevice;
             UserPrint* m_pUserPrint;
             ffxContext m_context;
             QrRenderUpscaleTechnique m_requestedTechnique;
-            QrRenderUpscaleTechnique m_technique;
             uint32_t m_renderWidth;
             uint32_t m_renderHeight;
             uint32_t m_displayWidth;
