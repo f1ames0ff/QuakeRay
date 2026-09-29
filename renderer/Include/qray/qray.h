@@ -828,6 +828,11 @@ QRAPI QrResult QRCONV qrUpdateMaterialContents(
     QrInstance                          qrInstance,
     const QrMaterialUpdateInfo          *pUpdateInfo);
 
+QRAPI QrResult QRCONV qrCanUpdateMaterialContents(
+    QrInstance                          qrInstance,
+    QrMaterial                          material,
+    QrExtent2D                          size);
+
 QRAPI QrResult QRCONV qrDestroyMaterial(
     QrInstance                          qrInstance,
     QrMaterial                          material);

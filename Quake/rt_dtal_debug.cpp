@@ -19,8 +19,7 @@ extern "C" void RT_DtalDebugDrawGui (int mode, unsigned int frame_id, float dt, 
 	if (mode != 2 || !QR_GUI_Ready ())
 		return;
 
-	if (!QR_GUI_BeginFrame (frame_id, dt, fb_x, fb_y, fb_w, fb_h, drawable_h))
-		return;
+	const bool own_frame = QR_GUI_BeginFrame (frame_id, dt, fb_x, fb_y, fb_w, fb_h, drawable_h) != 0;
 
 	ImDrawList *dl = ImGui::GetBackgroundDrawList ();
 
@@ -48,5 +47,6 @@ extern "C" void RT_DtalDebugDrawGui (int mode, unsigned int frame_id, float dt, 
 		dl->AddLine (ImVec2 (x1, y1), ImVec2 (x1 - head * std::cos (ang + spread), y1 - head * std::sin (ang + spread)), col, 2.0f);
 	}
 
-	QR_GUI_EndFrame ();
+	if (own_frame)
+		QR_GUI_EndFrame ();
 }

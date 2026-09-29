@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // screen.c -- master for refresh, status bar, console, chat, notify, etc
 
 #include "quakedef.h"
+#include "qr_editor.h"
 
 #include "cfgfile.h"
 #include "rt_dtal_debug.h"
@@ -1255,21 +1256,32 @@ static void SCR_DrawGUI (void *unused)
 	}
 	else
 	{
-		SCR_DrawCrosshair (cbx); // johnfitz
-		SCR_DrawNet (cbx);
-		SCR_DrawTurtle (cbx);
-		SCR_DrawPause (cbx);
-		SCR_CheckDrawCenterString (cbx);
-		Sbar_Draw (cbx);
-		SCR_DrawDevStats (cbx); // johnfitz
-		SCR_DrawFPS (cbx);      // johnfitz
-		const int stats_y = SCR_DrawRTStats (cbx);
-		SCR_DrawRTProf (cbx, 8, stats_y);
-		SCR_DrawClock (cbx);    // johnfitz
-		SCR_DrawConsole (cbx);
-		M_Draw (cbx);
-		RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), (unsigned int) host_framecount, (float) host_frametime,
-		                     glx, gly, glwidth, glheight, vid.height);
+		// qr light editor: while it is active the whole interface belongs to it
+		// (ImGui draws the panel, the hints and the crosshair); only the console
+		// stays, being the way the editor is driven as well.
+		if (QR_Editor_Active ())
+		{
+			SCR_DrawConsole (cbx);
+			QR_Editor_DrawPanel (cbx);
+		}
+		else
+		{
+			SCR_DrawCrosshair (cbx); // johnfitz
+			SCR_DrawNet (cbx);
+			SCR_DrawTurtle (cbx);
+			SCR_DrawPause (cbx);
+			SCR_CheckDrawCenterString (cbx);
+			Sbar_Draw (cbx);
+			SCR_DrawDevStats (cbx); // johnfitz
+			SCR_DrawFPS (cbx);      // johnfitz
+			const int stats_y = SCR_DrawRTStats (cbx);
+			SCR_DrawRTProf (cbx, 8, stats_y);
+			SCR_DrawClock (cbx);    // johnfitz
+			SCR_DrawConsole (cbx);
+			M_Draw (cbx);
+			RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), (unsigned int) host_framecount, (float) host_frametime,
+			                     glx, gly, glwidth, glheight, vid.height);
+		}
 	}
 	R_EndDebugUtilsLabel (cbx);
 }
@@ -1368,6 +1380,10 @@ void SCR_UpdateScreen (qboolean use_tasks)
 
 		Task_AddDependency (begin_rendering_task, draw_gui_task);
 		Task_AddDependency (setup_frame_task, draw_gui_task);
+		// while tasks are on, the GUI must not read the frame's uploaded lights
+		// (the editor's panel and its wireframes) before the draw that uploads them
+		if (rt_editor_draw_done_task != INVALID_TASK_HANDLE)
+			Task_AddDependency (rt_editor_draw_done_task, draw_gui_task);
 		Task_AddDependency (draw_gui_task, draw_done_task);
 		Task_AddDependency (draw_done_task, end_rendering_task);
 

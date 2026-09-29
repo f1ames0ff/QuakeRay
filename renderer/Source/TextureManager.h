@@ -69,6 +69,7 @@ public:
     uint32_t CreateAnimatedMaterial(VkCommandBuffer cmd, uint32_t frameIndex, const QrAnimatedMaterialCreateInfo &createInfo);
     bool ChangeAnimatedMaterialFrame(uint32_t animMaterial, uint32_t materialFrame);
     bool UpdateMaterial(VkCommandBuffer cmd, uint32_t frameIndex, const QrMaterialUpdateInfo &updateInfo);
+    bool CanUpdateMaterialContents(uint32_t materialIndex, QrExtent2D size) const;
     void DestroyMaterial(uint32_t currentFrameIndex, uint32_t materialIndex);
 
     void CheckForHotReload(VkCommandBuffer cmd, uint32_t frameIndex);

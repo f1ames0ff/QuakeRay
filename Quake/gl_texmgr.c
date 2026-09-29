@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "gl_heap.h"
 #include "rt_material.h"
+#include "sys.h"
 
 #if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
 #include <SDL2/SDL.h>
@@ -79,6 +80,10 @@ unsigned int d_8to24table_pants[256];
 SDL_mutex *texmgr_mutex;
 
 
+static qboolean texmgr_live_reload = false;
+static qboolean texmgr_live_recreate = false;
+qboolean texmgr_live_material_replaced = false;
+
 static QrMaterialCreateFlags TexMgr_GetRtFlags (gltexture_t *glt)
 {
 	QrMaterialCreateFlags fs = 0;
@@ -95,6 +100,18 @@ static QrMaterialCreateFlags TexMgr_GetRtFlags (gltexture_t *glt)
 	}
 
 	if (glt->source_format == SRC_LIGHTMAP)
+	{
+		fs |= QR_MATERIAL_CREATE_UPDATEABLE_BIT;
+	}
+
+	return fs;
+}
+
+static QrMaterialCreateFlags TexMgr_GetRtCreateFlags (gltexture_t *glt)
+{
+	QrMaterialCreateFlags fs = TexMgr_GetRtFlags (glt);
+
+	if (texmgr_live_reload)
 	{
 		fs |= QR_MATERIAL_CREATE_UPDATEABLE_BIT;
 	}
@@ -277,15 +294,6 @@ void HSVtoRGB (const vec3_t hsv, vec3_t out_rgb)
 	out_rgb[1] = max (0.0f, G);
 	out_rgb[2] = max (0.0f, B);
 }
-static void ModifyColorValue (vec3_t inout_color, float target_value)
-{
-	vec3_t hsv;
-	RGBtoHSV (inout_color, hsv);
-
-	hsv[2] *= target_value;
-
-	HSVtoRGB (hsv, inout_color);
-}
 
 static void FullbrightToRME (unsigned width, unsigned height, byte *fullbright)
 {
@@ -317,14 +325,27 @@ static void FullbrightToRME (unsigned width, unsigned height, byte *fullbright)
 
 static void TexMgr_RT_SpecialFullbright (unsigned width, unsigned height, uint32_t *fullbright)
 {
+	uint32_t *resized = NULL;
+
 	assert (rtspecial_target != NULL && rtspecial_info_albedoAlpha != NULL);
 	assert (rtspecial_info.size.width > 0 && rtspecial_info.size.height > 0);
 
 	if (rtspecial_info.size.width != width || rtspecial_info.size.height != height)
 	{
-		Con_DWarning ("Ignoring fullbright of \"%s\", as it has different size with albedo", rtspecial_info_pRelativePath);
-		assert (0);
-		return;
+		/* A hand-authored mask may be of another resolution than its base. The
+		   base's albedo decides the size, so the mask is resampled to it instead
+		   of being dropped (which used to abort a Debug build as well). */
+		Con_DWarning ("Resizing fullbright of \"%s\": %ux%u against albedo %ux%u\n",
+		              rtspecial_info_pRelativePath, width, height,
+		              rtspecial_info.size.width, rtspecial_info.size.height);
+
+		resized = (uint32_t *)Mem_Alloc ((size_t)rtspecial_info.size.width * rtspecial_info.size.height * 4);
+		stbir_resize_uint8 ((byte *)fullbright, (int)width, (int)height, 0,
+		                    (byte *)resized, (int)rtspecial_info.size.width, (int)rtspecial_info.size.height, 0, 4);
+
+		fullbright = resized;
+		width = rtspecial_info.size.width;
+		height = rtspecial_info.size.height;
 	}
 
 	rtspecial_foundfullbright = true;
@@ -334,7 +355,11 @@ static void TexMgr_RT_SpecialFullbright (unsigned width, unsigned height, uint32
 	if (rtspecial_target->rtmaterial != QR_NULL_HANDLE)
 	{
 		if (TexMgr_ApplyMaterialFromMat (rtspecial_target, (unsigned *)rtspecial_info_albedoAlpha, (byte *)fullbright))
+		{
+			if (resized)
+				Mem_Free (resized);
 			return;
+		}
 	}
 
 	{
@@ -370,6 +395,9 @@ static void TexMgr_RT_SpecialFullbright (unsigned width, unsigned height, uint32
 	QrResult r = qrCreateMaterial (vulkan_globals.instance, &rtspecial_info, &rtspecial_target->rtmaterial);
 	QR_CHECK (r);
 	SDL_UnlockMutex (rtspecial_mutex);
+
+	if (resized)
+		Mem_Free (resized);
 }
 
 void TexMgr_RT_SpecialEnd ()
@@ -465,9 +493,11 @@ static void TexMgr_RTMatDump_f (void)
 			Con_Printf ("RT dump:   authored: brightness=%.3f is_light=%d light_styles=%d has_light_color=%d light_color=(%.4f,%.4f,%.4f) emissive_blend=%d\n",
 			            mat->light_brightness, mat->is_light, mat->light_styles, mat->has_light_color,
 			            mat->light_color[0], mat->light_color[1], mat->light_color[2], mat->emissive_blend);
-			Con_Printf ("RT dump:   authored: color_emissive=%d (%.4f,%.4f,%.4f) color_emissive_threshold=%.4f emissive_factor=%.3f\n",
-			            mat->has_color_emissive, mat->color_emissive[0], mat->color_emissive[1], mat->color_emissive[2],
-			            mat->color_emissive_threshold, mat->emissive_factor);
+			Con_Printf ("RT dump:   authored: color_emissive=%d blocks=%d first=(%.4f,%.4f,%.4f) threshold=%.4f feather=%.2f blend=%s emissive_factor=%.3f\n",
+			            mat->has_color_emissive, mat->color_emissive_count,
+			            mat->color_emissive[0].color[0], mat->color_emissive[0].color[1], mat->color_emissive[0].color[2],
+			            mat->color_emissive[0].threshold, mat->color_emissive[0].feather,
+			            RT_MAT_EmissiveBlendName (mat->color_emissive[0].blend), mat->emissive_factor);
 		}
 		else
 		{
@@ -1046,7 +1076,7 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 
 
 	QrMaterialCreateInfo info = {
-		.flags = TexMgr_GetRtFlags (glt),
+		.flags = TexMgr_GetRtCreateFlags (glt),
 		.size = {glt->width, glt->height},
 		.textures =
 			{
@@ -1062,10 +1092,13 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 
 	if (!rtspecial_started)
 	{
-		SDL_LockMutex (rtspecial_mutex);
-	    QrResult r = qrCreateMaterial (vulkan_globals.instance, &info, &glt->rtmaterial);
-	    QR_CHECK (r);
-		SDL_UnlockMutex (rtspecial_mutex);
+		if (!texmgr_live_reload || glt->rtmaterial == QR_NULL_HANDLE)
+		{
+			SDL_LockMutex (rtspecial_mutex);
+			QrResult r = qrCreateMaterial (vulkan_globals.instance, &info, &glt->rtmaterial);
+			QR_CHECK (r);
+			SDL_UnlockMutex (rtspecial_mutex);
+		}
 	}
 	else
 	{
@@ -1087,9 +1120,160 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 /* A texel is part of the glow extents above this emission; below it the mask is noise. The
    extents are computed once per texture, at load, so this cannot be a live cvar. */
 #define RT_EMIS_GLOW_THRESHOLD 0.02f
+
+#define QRE_DUMPED_MAX 128
+static char     texmgr_dumped[QRE_DUMPED_MAX][MAX_QPATH];
+static int      texmgr_dumped_count = 0;
+static qboolean texmgr_dump_dir_checked = false;
+// Set only while the editor re-synthesizes a material: the dump is for a live
+// reload, not for the map load (which applies every material anyway).
+static qboolean texmgr_dumping_reload = false;
+
+// Verbose reload diagnostics and the TGA dump of the synthesized textures
+// (registered by the qr light editor; off by default).
+extern cvar_t qr_material_editor_debug;
+
+static qboolean TexMgr_AlreadyDumped (const char *name)
+{
+	int i;
+
+	for (i = 0; i < texmgr_dumped_count; i++)
+	{
+		if (!strcmp (texmgr_dumped[i], name))
+			return true;
+	}
+	return false;
+}
+
+static void TexMgr_DumpReloadTGA (const char *suffix, const char *name, int w, int h, const byte *rgba)
+{
+	char  path[MAX_OSPATH];
+	char  safe[MAX_QPATH];
+	int   i;
+	FILE *f;
+
+	for (i = 0; name[i] && i < (int)sizeof (safe) - 1; i++)
+	{
+		const char c = name[i];
+		safe[i] = (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') ? '_' : c;
+	}
+	safe[i] = '\0';
+
+	q_snprintf (path, sizeof (path), "%s/qre_dump/%s%s.tga", com_gamedir, safe, suffix);
+
+	if (texmgr_dump_dir_checked == false)
+	{
+		char dir[MAX_OSPATH];
+
+		q_snprintf (dir, sizeof (dir), "%s/qre_dump", com_gamedir);
+		Sys_mkdir (dir);
+		texmgr_dump_dir_checked = true;
+	}
+
+	f = fopen (path, "wb");
+	if (!f)
+		return;
+
+	{
+		byte header[18] = {0};
+
+		header[2] = 2; // uncompressed true-color
+		header[12] = (byte)(w & 0xff);
+		header[13] = (byte)((w >> 8) & 0xff);
+		header[14] = (byte)(h & 0xff);
+		header[15] = (byte)((h >> 8) & 0xff);
+		header[16] = 32;
+		header[17] = 0x28; // top-left origin, 8 alpha bits
+		fwrite (header, 1, sizeof (header), f);
+	}
+
+	for (i = 0; i < w * h; i++)
+	{
+		byte bgra[4] = { rgba[i * 4 + 2], rgba[i * 4 + 1], rgba[i * 4 + 0], rgba[i * 4 + 3] };
+
+		fwrite (bgra, 1, sizeof (bgra), f);
+	}
+
+	fclose (f);
+}
+
 /* Below this area fraction the extents are a proper part of the texture and the light is built
    as polygons over them; at or above it the whole surface glows and stays a single light. */
 #define RT_EMIS_GLOW_FULL 0.999f
+
+/*
+================
+TexMgr_FeatherEmissive
+
+Softens an emission map: a box blur of the given radius over the map, so the
+mask's edge fades on both sides of the threshold's selection (inwards as well as
+outwards), without looking at the colours themselves. Two separable passes, each
+a running sum, so the cost does not depend on the radius.
+================
+*/
+static void TexMgr_FeatherEmissive (float *emiss, int w, int h, int radius)
+{
+	float *tmp;
+	int    x, y, i;
+	const int window = radius * 2 + 1;
+
+	if (radius <= 0 || w <= 0 || h <= 0)
+		return;
+
+	tmp = (float *)Mem_Alloc ((size_t)w * (size_t)h * sizeof (float));
+
+	// horizontal
+	for (y = 0; y < h; y++)
+	{
+		const float *row = emiss + (size_t)y * w;
+		float       *out = tmp + (size_t)y * w;
+		float        sum = 0.0f;
+
+		for (i = -radius; i <= radius; i++)
+		{
+			int sx = i < 0 ? 0 : (i >= w ? w - 1 : i);
+
+			sum += row[sx];
+		}
+		for (x = 0; x < w; x++)
+		{
+			out[x] = sum / (float)window;
+			{
+				int add = x + radius + 1;
+				int sub = x - radius;
+
+				sum += row[add >= w ? w - 1 : add];
+				sum -= row[sub < 0 ? 0 : sub];
+			}
+		}
+	}
+
+	// vertical
+	for (x = 0; x < w; x++)
+	{
+		float sum = 0.0f;
+
+		for (i = -radius; i <= radius; i++)
+		{
+			int sy = i < 0 ? 0 : (i >= h ? h - 1 : i);
+
+			sum += tmp[(size_t)sy * w + x];
+		}
+		for (y = 0; y < h; y++)
+		{
+			emiss[(size_t)y * w + x] = sum / (float)window;
+			{
+				int add = y + radius + 1;
+				int sub = y - radius;
+
+				sum += tmp[(size_t)(add >= h ? h - 1 : add) * w + x];
+				sum -= tmp[(size_t)(sub < 0 ? 0 : sub) * w + x];
+			}
+		}
+	}
+
+	Mem_Free (tmp);
+}
 
 static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, float *angleOuter)
 {
@@ -1124,7 +1308,32 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
 	if (!mat)
+	{
+		// A material the editor dropped (Cancel/Exit of a texture that had none
+		// in yaml) must stop being one at once: the reload is what notices it is
+		// gone, and every field below is only ever set here. The same block a
+		// texture gets when it is loaded with no material.
+		glt->rtlightcolor[0] = glt->rtlightcolor[1] = glt->rtlightcolor[2] = 0.0f;
+		glt->rthaslightcolor = false;
+		glt->rtupoffset = 0.0f;
+		glt->rtmirror = false;
+		glt->rtexactnormals = false;
+		glt->rtforcerasterize = false;
+		glt->rtemissive = false;
+		glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
+		glt->rtemissivemean = 0.0f;
+		glt->rtemissivemeanbase = 0.0f;
+		glt->rtemisuvmin[0] = glt->rtemisuvmin[1] = 0.0f;
+		glt->rtemisuvmax[0] = glt->rtemisuvmax[1] = 1.0f;
+		glt->rtemissiveglow = 0.0f;
+		glt->rtemisglowfrac = 1.0f;
+		glt->rtemissiveglowtex = false;
+		glt->rtemissivetex = false;
+		glt->rtislight = false;
+		glt->rtlightstyles = true;
+		glt->rthasmaterial = false;
 		return false;
+	}
 
 	glt->rthasmaterial = true;
 
@@ -1135,8 +1344,13 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	{
 		VectorCopy (mat->light_color, glt->rtlightcolor);
 		glt->rthaslightcolor = true;
-		if (mat->light_brightness != 1.0f)
-			ModifyColorValue (glt->rtlightcolor, mat->light_brightness);
+	}
+	else
+	{
+		// a light_color removed in the editor stops lighting now, not at the
+		// next map load
+		glt->rthaslightcolor = false;
+		glt->rtlightcolor[0] = glt->rtlightcolor[1] = glt->rtlightcolor[2] = 0.0f;
 	}
 	glt->rtupoffset = mat->light_upoffset;
 	TexMgr_EmissiveCone (mat, &glt->rtemisangleinner, &glt->rtemisangleouter);
@@ -1212,12 +1426,11 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	const qboolean engineAlpha = (glt->flags & TEXPREF_ALPHA) != 0 || mat->alpha_test;
 
 	const qboolean has_luma_key = (mat->filename_emissive[0] != '\0');
-	const qboolean use_color_emissive = mat->has_color_emissive && !has_luma_key;
+	const qboolean use_color_emissive = mat->has_color_emissive && mat->color_emissive_count > 0 && !has_luma_key;
 	if (has_luma_key && !emisBuf)
 		Con_Printf ("RT: material '%s': texture_emissive '%s' could not be loaded; using no emissive mask\n",
 		            mat->name, mat->filename_emissive);
-	const float lightBright = CLAMP (0.0f, mat->light_brightness, 5.0f);
-	const float brightVis   = (lightBright < 1.0f) ? lightBright : 1.0f;
+	const float lightBright = CLAMP (0.0f, mat->light_brightness, 100.0f);
 	/* Per-material rt_emis_blend override, packed into the alpha of the
 	   roughness-metallic-emission texture: 0 = not authored, so the global
 	   cvar applies; otherwise the authored mode plus one. */
@@ -1242,6 +1455,62 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	double emissMeanBase = 0.0;
 	int    glowminx = tw, glowminy = th, glowmaxx = -1, glowmaxy = -1;
 
+	/* The colour blocks: each one builds its own mask (its threshold picks the
+	   pixels whose colour matches it) and feathers it on its own — both sides of
+	   the mask edge, without comparing colours — then the strongest block wins
+	   per pixel and its blend mode travels with it in the alpha of the rme
+	   texture. */
+	float *colorEmis  = NULL;
+	byte  *colorBlend = NULL;
+	if (use_color_emissive && !emisBuf && !fullbrightOverride)
+	{
+		colorEmis  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+		colorBlend = (byte *)Mem_Alloc ((size_t)npix);
+		memset (colorBlend, (byte)emisBlendCode, (size_t)npix);
+
+		for (int c = 0; c < mat->color_emissive_count; c++)
+		{
+			const rt_emissive_t *block = &mat->color_emissive[c];
+			const float          thr = block->threshold;
+			const int            feather = (block->feather >= 1.0f) ? (int)(block->feather + 0.5f) : 0;
+			const byte           blockCode = (byte)((block->blend >= 0) ? (block->blend + 1) : 0);
+			float               *mask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+
+			for (int i = 0; i < npix; i++)
+			{
+				const byte *src = baseBuf ? baseBuf + i * 4 : (byte *)albedoFallback + i * 4;
+				const float dr = src[0] / 255.0f - block->color[0];
+				const float dg = src[1] / 255.0f - block->color[1];
+				const float db = src[2] / 255.0f - block->color[2];
+				const float d2 = dr * dr + dg * dg + db * db;
+
+				mask[i] = 0.0f;
+				if (d2 <= 3.0f * thr * thr)
+				{
+					const float dnorm = (thr > 0.0f) ? sqrtf (d2 / 3.0f) / thr : 0.0f;
+					const float k = RT_COLOR_EMISSIVE_FALLOFF;
+					const float tail = expf (-k);
+
+					mask[i] = (expf (-k * dnorm) - tail) / (1.0f - tail) * block->factor;
+				}
+			}
+
+			if (feather > 0)
+				TexMgr_FeatherEmissive (mask, tw, th, feather);
+
+			for (int i = 0; i < npix; i++)
+			{
+				if (mask[i] > colorEmis[i])
+				{
+					colorEmis[i] = mask[i];
+					colorBlend[i] = blockCode;
+				}
+			}
+
+			Mem_Free (mask);
+		}
+	}
+
 	for (int i = 0; i < npix; i++)
 	{
 		const byte *src = baseBuf ? baseBuf + i * 4 : (byte *)albedoFallback + i * 4;
@@ -1257,12 +1526,12 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			albedo[i * 4 + 3] = 255;
 
 		float rough;
-		if (roughOverride > 0.0f)
+		if (glt->rtmirror)
+			rough = 0.0f; // mirror has the last word; the panel locks the override
+		else if (roughOverride > 0.0f)
 			rough = roughOverride;
 		else if (glossBuf)
 			rough = 1.0f - glossBuf[i * 4] / 255.0f;
-		else if (glt->rtmirror)
-			rough = 0.0f;
 		else if (baseHasAlpha && !engineAlpha)
 			rough = baseBuf[i * 4 + 3] / 255.0f;
 		else
@@ -1290,21 +1559,9 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			if (fb > emiss)
 				emiss = fb;
 		}
-		else if (!emisBuf && use_color_emissive)
+		else if (colorEmis)
 		{
-			const float dr = src[0] / 255.0f - mat->color_emissive[0];
-			const float dg = src[1] / 255.0f - mat->color_emissive[1];
-			const float db = src[2] / 255.0f - mat->color_emissive[2];
-			const float thr = mat->color_emissive_threshold;
-			const float d2 = dr * dr + dg * dg + db * db;
-			if (d2 <= 3.0f * thr * thr)
-			{
-				const float dnorm = (thr > 0.0f) ? sqrtf (d2 / 3.0f) / thr : 0.0f;
-				const float k = RT_COLOR_EMISSIVE_FALLOFF;
-				const float tail = expf (-k);
-				emiss = (expf (-k * dnorm) - tail) / (1.0f - tail);
-				emiss *= mat->emissive_factor;
-			}
+			emiss = colorEmis[i];
 		}
 
 		if (emiss > 0.0f)
@@ -1316,11 +1573,13 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 		emissMeanBase += emiss;
 
-		float emissOut = emiss * brightVis;
+		float emissOut = emiss;
 		if (emissOut > 1.0f)
 			emissOut = 1.0f;
 		emissMean += emissOut;
 
+		/* The glow extents are the shape of the mask: brightness dims what it
+		   emits, it does not move the light. */
 		if (emiss > RT_EMIS_GLOW_THRESHOLD)
 		{
 			const int px = i % tw;
@@ -1335,7 +1594,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		rme[i * 4 + 0] = CLAMP (0, (int)(rough * 255), 255);
 		rme[i * 4 + 1] = CLAMP (0, (int)(metal * 255), 255);
 		rme[i * 4 + 2] = CLAMP (0, (int)(emissOut * 255), 255);
-		rme[i * 4 + 3] = (byte)emisBlendCode;
+		rme[i * 4 + 3] = colorBlend ? colorBlend[i] : (byte)emisBlendCode;
 
 		if (normBuf)
 		{
@@ -1353,6 +1612,9 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		}
 		normal[i * 4 + 3] = 255;
 	}
+
+	if (colorEmis)  Mem_Free (colorEmis);
+	if (colorBlend) Mem_Free (colorBlend);
 
 	if (baseBuf) Mem_Free (baseBuf);
 	if (normBuf) Mem_Free (normBuf);
@@ -1388,9 +1650,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	if (lightBright != 1.0f)
 	{
-		const qboolean mask_lit_model = glt->owner && glt->owner->type == mod_alias && mat->is_light;
-		const qboolean light_samples_mask = glt->rtemissivetex && (isBrush || mask_lit_model);
-		const float gain = (light_samples_mask && lightBright < 1.0f) ? 1.0f : lightBright;
+		const float gain = lightBright;
 
 		if (glt->rthaslightcolor)
 			VectorScale (glt->rtlightcolor, gain, glt->rtlightcolor);
@@ -1441,8 +1701,62 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		            glt->rtemissiveglowtex ? 1 : 0);
 	}
 
+	if (texmgr_dumping_reload && !TexMgr_AlreadyDumped (mat->name) && CVAR_TO_BOOL (qr_material_editor_debug))
+	{
+		Con_Printf ("qr editor dump: material '%s' tex '%s' %dx%d base='%s' emis='%s' gloss='%s' norm='%s' light=%d\n",
+		            mat->name, glt->name, tw, th,
+		            mat->filename_base[0] ? mat->filename_base : "-",
+		            mat->filename_emissive[0] ? mat->filename_emissive : "-",
+		            mat->filename_gloss[0] ? mat->filename_gloss : "-",
+		            mat->filename_normals[0] ? mat->filename_normals : "-",
+		            mat->is_light ? 1 : 0);
+		Con_Printf ("qr editor dump:   loaded base=%d emis=%d gloss=%d norm=%d mean=%.4f\n",
+		            baseBuf ? 1 : 0, emisBuf ? 1 : 0, glossBuf ? 1 : 0, normBuf ? 1 : 0, glt->rtemissivemean);
+
+		TexMgr_DumpReloadTGA ("_albedo", glt->name, tw, th, albedo);
+		TexMgr_DumpReloadTGA ("_rme", glt->name, tw, th, rme);
+		TexMgr_DumpReloadTGA ("_normal", glt->name, tw, th, normal);
+
+		if (texmgr_dumped_count < QRE_DUMPED_MAX)
+			q_strlcpy (texmgr_dumped[texmgr_dumped_count++], mat->name, MAX_QPATH);
+	}
+
+	QrMaterial oldMaterial = glt->rtmaterial;
+	QrMaterial newMaterial = QR_NULL_HANDLE;
+
+	if (texmgr_live_reload && !texmgr_live_recreate && oldMaterial != QR_NULL_HANDLE)
+	{
+		const QrExtent2D updateSize = {(uint32_t)tw, (uint32_t)th};
+
+		if (qrCanUpdateMaterialContents (vulkan_globals.instance, oldMaterial, updateSize) == QR_SUCCESS)
+		{
+			QrMaterialUpdateInfo update = {
+				.target = oldMaterial,
+				.textures =
+					{
+						.pDataAlbedoAlpha = albedo,
+						.pDataRoughnessMetallicEmission = rme,
+						.pDataNormal = normal,
+					},
+			};
+
+			SDL_LockMutex (rtspecial_mutex);
+			QrResult ur = qrUpdateMaterialContents (vulkan_globals.instance, &update);
+			SDL_UnlockMutex (rtspecial_mutex);
+
+			if (ur == QR_SUCCESS)
+			{
+				Mem_Free (albedo);
+				Mem_Free (rme);
+				Mem_Free (normal);
+
+				return true;
+			}
+		}
+	}
+
 	QrMaterialCreateInfo info = {
-		.flags = TexMgr_GetRtFlags (glt),
+		.flags = TexMgr_GetRtCreateFlags (glt),
 		.size = {tw, th},
 		.textures =
 			{
@@ -1456,16 +1770,17 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		.addressModeV = QR_SAMPLER_ADDRESS_MODE_REPEAT,
 	};
 
-	QrMaterial oldMaterial = glt->rtmaterial;
-	QrMaterial newMaterial = QR_NULL_HANDLE;
 	SDL_LockMutex (rtspecial_mutex);
 	QrResult r = qrCreateMaterial (vulkan_globals.instance, &info, &newMaterial);
+	if (oldMaterial)
+		qrDestroyMaterial (vulkan_globals.instance, oldMaterial);
 	SDL_UnlockMutex (rtspecial_mutex);
 	QR_CHECK (r);
 
-	if (oldMaterial)
-		qrDestroyMaterial (vulkan_globals.instance, oldMaterial);
 	glt->rtmaterial = newMaterial;
+
+	if (texmgr_live_reload && oldMaterial != QR_NULL_HANDLE && newMaterial != oldMaterial)
+		texmgr_live_material_replaced = true;
 
 	Mem_Free (albedo);
 	Mem_Free (rme);
@@ -1699,11 +2014,21 @@ void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants)
 	if (glt->source_file[0] && glt->source_offset)
 	{
 		// lump inside file
-		FILE *f;
+		FILE *f = NULL;
 		COM_FOpenFile (glt->source_file, &f, NULL);
-		if (!f)
+		if (!f || glt->source_offset > (src_offset_t)0x7fffffff)
+		{
+			if (f)
+				fclose (f);
 			goto invalid;
-		fseek (f, glt->source_offset, SEEK_CUR);
+		}
+		if (fseek (f, (long)glt->source_offset, SEEK_CUR) != 0)
+		{
+			Con_DWarning ("TexMgr_ReloadImage: seek to %llu failed in %s\n",
+			              (unsigned long long)glt->source_offset, glt->source_file);
+			fclose (f);
+			goto invalid;
+		}
 		size = glt->source_width * glt->source_height;
 		/* should be SRC_INDEXED, but no harm being paranoid:  */
 		if (glt->source_format == SRC_RGBA)
@@ -1714,9 +2039,23 @@ void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants)
 		{
 			size *= LIGHTMAP_BYTES;
 		}
+		/* A texture whose recorded offset lies outside the file cannot be read
+		   back; say so instead of turning unrelated file bytes into a texture. */
+		if (glt->source_offset + (src_offset_t)size > (src_offset_t)com_filesize)
+		{
+			Con_DWarning ("TexMgr_ReloadImage: %s + %llu (%d bytes) is outside %s (%d bytes)\n",
+			              glt->name, (unsigned long long)glt->source_offset, size, glt->source_file, com_filesize);
+			fclose (f);
+			goto invalid;
+		}
 		allocated = data = (byte *)Mem_Alloc (size);
 		if (fread (data, 1, size, f) != size)
+		{
+			fclose (f);
+			Mem_Free (allocated);
+			allocated = NULL;
 			goto invalid;
+		}
 		fclose (f);
 	}
 	else if (glt->source_file[0] && !glt->source_offset)
@@ -1810,6 +2149,178 @@ void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants)
 
 	Mem_Free (translated);
 	Mem_Free (allocated);
+}
+
+/*
+================
+TexMgr_CollectGroupNames
+
+The animation-frame ring of a texture name as the engine actually has it: every
+active texture whose normalized name shares the ring base ("textures/+Nname",
+"textures/name", "progs/model.mdl:frameN") is listed once. The editor turns the
+names no material exists for into editable defaults, so a face never opens a
+block named after the base only -- a name no texture resolves to.
+================
+*/
+static void TexMgr_GroupName (const char *name, char *out, size_t outsize)
+{
+	char *dot;
+
+	RT_MAT_NormalizeName (name, out, outsize);
+	dot = strrchr (out, '.');
+	if (dot && !strchr (dot, ':'))
+		*dot = '\0';
+}
+
+int TexMgr_CollectGroupNames (const char *texname, char (*names)[MAX_QPATH], int max)
+{
+	char         group[MAX_QPATH];
+	char         name[MAX_QPATH];
+	gltexture_t *glt;
+	int          count = 0;
+
+	if (!texname || !texname[0] || max <= 0)
+		return 0;
+
+	TexMgr_GroupName (texname, name, sizeof (name));
+	RT_MAT_GroupBaseOf (name, group, sizeof (group));
+
+	for (glt = active_gltextures; glt; glt = glt->next)
+	{
+		char n[MAX_QPATH];
+		char g[MAX_QPATH];
+		int  i, dup = 0;
+
+		if (!glt->name[0])
+			continue;
+
+		TexMgr_GroupName (glt->name, n, sizeof (n));
+		RT_MAT_GroupBaseOf (n, g, sizeof (g));
+		if (strcmp (g, group))
+			continue;
+
+		for (i = 0; i < count; i++)
+		{
+			if (!strcmp (names[i], n))
+				dup = 1;
+		}
+		if (dup)
+			continue;
+
+		if (count >= max)
+			break;
+		q_strlcpy (names[count++], n, MAX_QPATH);
+	}
+
+	return count;
+}
+
+/*
+================
+TexMgr_LoadRgbaForPreview
+
+The RGBA8 pixels of a texture's own source, for the editor's texture preview
+and its colour picker. The source is resolved the way TexMgr_ReloadImage
+resolves it (a lump in a file, an image file, or a buffer the loader kept).
+The caller frees the returned buffer.
+================
+*/
+byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight)
+{
+	byte *src = NULL, *allocated = NULL, *out;
+	int   npix, i;
+
+	if (!glt)
+		return NULL;
+
+	if (glt->source_file[0] && glt->source_offset)
+	{
+		FILE *f = NULL;
+		int   size;
+
+		COM_FOpenFile (glt->source_file, &f, NULL);
+		if (!f || glt->source_offset > (src_offset_t)0x7fffffff)
+		{
+			if (f)
+				fclose (f);
+			return NULL;
+		}
+		if (fseek (f, (long)glt->source_offset, SEEK_CUR) != 0)
+		{
+			fclose (f);
+			return NULL;
+		}
+		size = glt->source_width * glt->source_height;
+		if (glt->source_format == SRC_RGBA)
+			size *= 4;
+		else if (glt->source_format == SRC_LIGHTMAP)
+			size *= LIGHTMAP_BYTES;
+		if (size <= 0 || glt->source_offset + (src_offset_t)size > (src_offset_t)com_filesize)
+		{
+			fclose (f);
+			return NULL;
+		}
+		allocated = src = (byte *)Mem_Alloc (size);
+		if (fread (src, 1, size, f) != (size_t)size)
+		{
+			fclose (f);
+			Mem_Free (allocated);
+			return NULL;
+		}
+		fclose (f);
+	}
+	else if (glt->source_file[0] && !glt->source_offset)
+	{
+		allocated = src = Image_LoadImage (glt->source_file, (int *)&glt->source_width, (int *)&glt->source_height);
+	}
+	else if (!glt->source_file[0] && glt->source_offset)
+	{
+		src = (byte *)glt->source_offset;
+	}
+
+	if (!src || glt->source_width <= 0 || glt->source_height <= 0)
+	{
+		if (allocated)
+			Mem_Free (allocated);
+		return NULL;
+	}
+
+	npix = glt->source_width * glt->source_height;
+	out = (byte *)Mem_Alloc (npix * 4);
+
+	switch (glt->source_format)
+	{
+	case SRC_INDEXED:
+		TexMgr_8to32 (src, (unsigned *)out, npix, d_8to24table);
+		break;
+	case SRC_LIGHTMAP:
+		for (i = 0; i < npix; i++)
+		{
+			out[i * 4 + 0] = out[i * 4 + 1] = out[i * 4 + 2] = src[i * LIGHTMAP_BYTES];
+			out[i * 4 + 3] = 255;
+		}
+		break;
+	case SRC_RGBA:
+	case SRC_SURF_INDICES:
+		memcpy (out, src, (size_t)npix * 4);
+		break;
+	default:
+		Mem_Free (out);
+		out = NULL;
+		break;
+	}
+
+	if (allocated)
+		Mem_Free (allocated);
+
+	if (out)
+	{
+		if (outWidth)
+			*outWidth = glt->source_width;
+		if (outHeight)
+			*outHeight = glt->source_height;
+	}
+	return out;
 }
 
 /*
@@ -1909,6 +2420,154 @@ void TexMgr_ReloadAllImages (void)
 }
 
 /*
+================
+TexMgr_ReloadOne
+
+Reloads one texture together with its glow/luma sidecar, in the same two-pass
+sequence a full reload uses: the base pass stores the albedo, the fullbright
+pass turns the sidecar into the emission mask of that albedo (see
+TexMgr_RT_SpecialFullbright). Both are needed, or the reload would drop the mask
+and the surfaces using it would lose their emission.
+================
+*/
+static void TexMgr_ReloadOne (gltexture_t *glt)
+{
+	gltexture_t *fullbright = TexMgr_FindFullbrightTexture (glt);
+
+	if (!fullbright)
+	{
+		TexMgr_ReloadImage (glt, -1, -1);
+		return;
+	}
+
+	TexMgr_RT_SpecialStart (CVAR_TO_FLOAT (rt_brush_rough), CVAR_TO_FLOAT (rt_brush_metal));
+	TexMgr_ReloadImage (glt, -1, -1);
+	if (rtspecial_target != NULL)
+		TexMgr_ReloadImage (fullbright, -1, -1);
+	TexMgr_RT_SpecialEnd ();
+}
+
+// A texture whose pixels can be read back: lightmaps, surface indices and the
+// sidecars are skipped, as are textures that have no durable source.
+static qboolean TexMgr_ReloadableSource (const gltexture_t *glt)
+{
+	if (glt->flags & TEXPREF_RT_IS_EMISSIVE)
+		return false;
+	if (glt->source_format != SRC_INDEXED && glt->source_format != SRC_RGBA)
+		return false;
+	if (!glt->source_file[0] && !glt->source_offset)
+		return false;
+	return true;
+}
+
+static void TexMgr_LogReloaded (const gltexture_t *glt)
+{
+	if (!CVAR_TO_BOOL (qr_material_editor_debug))
+		return;
+
+	Con_Printf ("qr editor:   tex '%s' %ux%u fmt=%d off=%llu src='%s' flags=0x%x\n",
+	            glt->name, glt->width, glt->height, (int)glt->source_format,
+	            (unsigned long long)glt->source_offset, glt->source_file, glt->flags);
+}
+
+/*
+================
+TexMgr_ReloadImagesForMaterial
+
+Like TexMgr_ReloadAllImages, but only for the textures whose material is the named
+one. Used by the live material editor to re-synthesize the affected textures after
+a parameter change; the two-pass glow/luma sidecar of each base texture is reloaded
+together with it, exactly as a full reload would.
+================
+*/
+int TexMgr_ReloadImagesForMaterial (const char *materialName, qboolean recreate)
+{
+	gltexture_t *glt;
+	int          count = 0;
+
+	if (!materialName || !materialName[0])
+		return 0;
+
+	if (CVAR_TO_BOOL (qr_material_editor_debug))
+		Con_Printf ("qr editor: reload material '%s'\n", materialName);
+	texmgr_dumping_reload = true;
+
+	const qboolean prev_live = texmgr_live_reload;
+	const qboolean prev_recreate = texmgr_live_recreate;
+	texmgr_live_reload = true;
+	texmgr_live_recreate = recreate;
+
+	for (glt = active_gltextures; glt; glt = glt->next)
+	{
+		rt_material_t *mat;
+
+		if (!TexMgr_ReloadableSource (glt))
+			continue;
+
+		mat = RT_MAT_Find (glt->name);
+		if (!mat || strcmp (mat->name, materialName))
+			continue;
+
+		TexMgr_LogReloaded (glt);
+		TexMgr_ReloadOne (glt);
+		count++;
+	}
+
+	texmgr_live_reload = prev_live;
+	texmgr_live_recreate = prev_recreate;
+	texmgr_dumping_reload = false;
+
+	return count;
+}
+
+/*
+================
+TexMgr_ReloadImagesForTextureName
+
+Reloads the textures that carry the given normalized texture name even when no
+material resolves to them any more: Cancel/Exit drop a material the editor had
+created for a texture, and that texture still has to be re-synthesized (without
+the material this time).
+================
+*/
+int TexMgr_ReloadImagesForTextureName (const char *texname)
+{
+	gltexture_t *glt;
+	int          count = 0;
+
+	if (!texname || !texname[0])
+		return 0;
+
+	if (CVAR_TO_BOOL (qr_material_editor_debug))
+		Con_Printf ("qr editor: reload texture '%s'\n", texname);
+	texmgr_dumping_reload = true;
+
+	for (glt = active_gltextures; glt; glt = glt->next)
+	{
+		char  n[MAX_QPATH];
+		char *dot;
+
+		if (!TexMgr_ReloadableSource (glt))
+			continue;
+
+		RT_MAT_NormalizeName (glt->name, n, sizeof (n));
+		dot = strrchr (n, '.');
+		if (dot && !strchr (dot, ':'))
+			*dot = '\0';
+		if (q_strcasecmp (n, texname))
+			continue;
+
+		TexMgr_LogReloaded (glt);
+		TexMgr_ReloadOne (glt);
+		count++;
+	}
+
+	texmgr_dumping_reload = false;
+
+	return count;
+}
+
+/*
 ================================================================================
 
     TEXTURE BINDING / TEXTURE UNIT SWITCHING
@@ -1925,9 +2584,11 @@ static void GL_DeleteTexture (gltexture_t *texture)
 {
 	SDL_LockMutex (texmgr_mutex);
 
-	if (texture->rtmaterial != QR_NO_MATERIAL)
+	if (texture->rtmaterial != QR_NO_MATERIAL && !texmgr_live_reload)
 	{
+		SDL_LockMutex (rtspecial_mutex);
 		QrResult r = qrDestroyMaterial (vulkan_globals.instance, texture->rtmaterial);
+		SDL_UnlockMutex (rtspecial_mutex);
 		QR_CHECK (r);
 
 		texture->rtmaterial = QR_NO_MATERIAL;

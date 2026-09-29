@@ -41,7 +41,13 @@ VkDeviceAddress ScratchBuffer::GetScratchAddress(VkDeviceSize scratchSize)
     {
         const VkDeviceSize remaining = chunk.buffer.GetSize() - chunk.currentOffset;
 
-        if (alignedSize < remaining)
+        // Not strict: a chunk created for exactly this size has to be usable
+        // again after Reset. A strict comparison made every chunk that was
+        // allocated for a request larger than SCRATCH_CHUNK_BUFFER_SIZE
+        // permanently unusable, and Reset only rewinds the offsets, so each
+        // world rebuild (every material edit) added another chunk of that size
+        // and the device ran out of memory after a handful of edits.
+        if (alignedSize <= remaining)
         {
             VkDeviceAddress address = chunk.buffer.GetAddress() + chunk.currentOffset;
 
@@ -50,9 +56,22 @@ VkDeviceAddress ScratchBuffer::GetScratchAddress(VkDeviceSize scratchSize)
         }
     }
 
+    const size_t chunkCount = chunks.size();
+
     AddChunk(std::max(SCRATCH_CHUNK_BUFFER_SIZE, alignedSize));
 
-    return chunks.back().buffer.GetAddress();
+    if (chunks.size() != chunkCount)
+    {
+        // Reserve the fresh chunk for this request: it starts at offset 0, so
+        // returning its address without advancing the offset would hand the
+        // same address to the next request of the same size while this build
+        // is still using it.
+        chunks.back().currentOffset = alignedSize;
+        return chunks.back().buffer.GetAddress();
+    }
+
+    // no allocator to add a chunk with: the build that asked will fail anyway
+    return 0;
 }
 
 void ScratchBuffer::Reset()

@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_alias.c -- alias model rendering
 
 #include "quakedef.h"
+#include "rt_lights.h"
 
 extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; // johnfitz
 extern cvar_t scr_fov;
@@ -194,8 +195,9 @@ static void GL_DrawAliasFrame(
     qboolean rasterize = entity_alpha < 1.0f;
     qboolean isfirstperson = (e == &cl.viewent);
     qboolean isviewer = (e == &cl.entities[cl.viewentity]) && !CVAR_TO_BOOL(chase_active);
+    rt_light_t *light_ov = tx ? RT_LIGHT_FindInstance (tx->name, RT_GetAliasModelUniqueId (entuniqueid)) : NULL;
 
-    if (tx && tx->rtforcerasterize)
+    if (tx && (tx->rtforcerasterize || (light_ov && light_ov->force_rasterize)))
         rasterize = true;
 
     int cluster = RT_ResolvePointCluster (lerpdata.origin);
@@ -224,23 +226,44 @@ static void GL_DrawAliasFrame(
 
     if (dtal_lights <= 0 && tx && tx->rthaslightcolor && RT_AllowFakeLights ())
     {
-        vec3_t color = {tx->rtlightcolor[0], tx->rtlightcolor[1], tx->rtlightcolor[2]};
-        VectorScale(color, CVAR_TO_FLOAT(rt_dlight_intensity), color);
+        vec3_t      color = {tx->rtlightcolor[0], tx->rtlightcolor[1], tx->rtlightcolor[2]};
+        vec3_t      lightorigin;
+        float       intensity = (light_ov && light_ov->has_intensity) ? light_ov->intensity : CVAR_TO_FLOAT (rt_dlight_intensity);
+        float       radius = (light_ov && light_ov->has_radius) ? light_ov->radius : CVAR_TO_FLOAT (rt_dlight_radius);
+
+        if (light_ov && light_ov->has_color)
+        {
+            VectorCopy (light_ov->color, color);
+        }
+
+        VectorScale(color, intensity, color);
         RT_FIXUP_LIGHT_INTENSITY(color, true);
+
+        VectorCopy(lerpdata.origin, lightorigin);
+        if (light_ov && light_ov->has_offset)
+        {
+            lightorigin[0] += light_ov->offset[0];
+            lightorigin[1] += light_ov->offset[1];
+            lightorigin[2] += light_ov->offset[2];
+        }
+        else
+        {
+            lightorigin[2] += tx->rtupoffset;
+        }
 
         QrSphericalLightUploadInfo light_info = {
             .uniqueID = RT_GetAliasModelUniqueId(entuniqueid),
             .color = {color[0], color[1], color[2]},
-            .position = {lerpdata.origin[0], lerpdata.origin[1], lerpdata.origin[2] + tx->rtupoffset},
-            .radius = METRIC_TO_QUAKEUNIT(CVAR_TO_FLOAT (rt_dlight_radius)),
+            .position = {lightorigin[0], lightorigin[1], lightorigin[2]},
+            .radius = METRIC_TO_QUAKEUNIT(radius),
         };
 
         QrResult r = qrUploadSphericalLight(vulkan_globals.instance, &light_info);
         QR_CHECK(r);
 
-        vec3_t lightorigin;
-        VectorCopy(lerpdata.origin, lightorigin);
-        lightorigin[2] += tx->rtupoffset;
+        RT_TRACK_Light (light_info.position.data, light_info.radius, light_info.color.data,
+                        light_info.uniqueID, RT_LIGHT_KIND_MATERIAL, tx->name);
+
         if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
             RT_ClusterLightAdd(light_info.uniqueID, lightorigin, RT_ClusterLightReach ());
     }
