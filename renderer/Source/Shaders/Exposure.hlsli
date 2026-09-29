@@ -1,50 +1,21 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 
-// HLSL counterpart of Exposure.h. Like the GLSL one it includes nothing itself: the shader has to
-// pull in ShaderCommonHLSLFunc.hlsli first, which declares tonemapping under
-// #ifdef DESC_SET_TONEMAPPING and -- through ShaderCommonHLSL.hlsli -- Utils.hlsli, where square
-// comes from. CmPrepareFinal.comp and RsWorld.frag, the consumers of the GLSL one, do the same:
-// they include ShaderCommonGLSLFunc.h before Exposure.h.
-//
-// Spellings that had to change:
-//   * tonemapping.avgLuminance -> tonemapping[0].avgLuminance: ShaderCommonHLSLFunc.hlsli declares
-//     the same bytes as a one element StructuredBuffer, so the single instance that the GLSL block
-//     has an implicit name for is its element 0. This is the only resource access of the header, it
-//     reads no other field of the block and it writes nothing
-//   * the #ifndef EXPOSURE_H_ / #define EXPOSURE_H_ guard -> #pragma once, as in BRDF.hlsli
-//
-// What did not change: the five functions with their names, their parameter lists and the order of
-// the operands of every product, the implicit conversions of the golden (the int 100 that
-// getManualEV100 passes to a float parameter, the int 100 that initializes S, and the int 100 and
-// 1.0 / 16.0 / 1.0 / 125.0 of getCurrentEV100) are converted by dxc the way glslc converts them, and
-// the ternary of getCurrentEV100 stays a ternary over the local false of the golden, log2, exp2,
-// max and square being the same intrinsics on both sides. The file holds no matrix and no vector
-// expression at all -- the golden has no mat, no index, no swizzle and no product of a matrix -- so
-// none of the matrix rules of ShaderCommonHLSL.hlsli applies to it.
-//
-// The #ifndef DESC_SET_TONEMAPPING guard of the golden is copied verbatim, its message included.
-//
-// Exposure.h declares no descriptor of its own, so this file is pinned by the probe pair
-// GLSL/Exposure.probe.comp <-> Probes/Exposure.probe.comp.hlsl.
 
 #ifndef EXPOSURE_HLSLI_
 #define EXPOSURE_HLSLI_
@@ -82,4 +53,4 @@ float ev100ToLuminance( float ev100 )
     return exp2( ev100 - 3 );
 }
 
-#endif // EXPOSURE_HLSLI_
+#endif

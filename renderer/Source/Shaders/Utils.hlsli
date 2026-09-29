@@ -1,34 +1,20 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
-// HLSL port of Utils.h. It is a line by line port on purpose: this file is all integer bit
-// twiddling and float rounding, and a helper that is one ulp off is a helper that decodes to
-// another value, which no interface check can see. Keep the arithmetic identical to Utils.h
-// when changing either of the two.
+// Copyright (c) 2026 QuakeRay contributors
 //
-// Spellings that had to change:
-//   * vecN(x) splat of one scalar        -> (floatN)x, HLSL has no one argument constructor
-//   * uint(...) / float(...) constructor -> C style cast, same truncation and rounding
-//   * atan(y, x)                         -> atan2(y, x)
-//   * uint N = 1 << 16                   -> 1u << 16, dxc calls a bare literal shift ambiguous
-//   * saturate() is not defined here, HLSL provides it as a builtin with the same definition
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
+
 
 
 
@@ -116,7 +102,6 @@ uint encodeNormal(float3 n)
     const uint N_theta = ENCODE_NORMAL_N_THETA;
 
     float phi = acos(n.z);
-    // atan -> [-pi, pi], need [0, 2pi]
     float theta = atan2(n.y, n.x);
     theta = theta < 0 ? theta + 2 * M_PI : theta;
 
@@ -152,7 +137,6 @@ float3 safeNormalize(const float3 v)
 
 
 
-// https://www.khronos.org/registry/OpenGL/extensions/EXT/EXT_texture_shared_exponent.txt
 
 #define ENCODE_E5B9G9R9_EXPONENT_BITS 5
 #define ENCODE_E5B9G9R9_MANTISSA_BITS 9
@@ -161,7 +145,6 @@ float3 safeNormalize(const float3 v)
 
 #define ENCODE_E5B9G9R9_MANTISSA_VALUES (1u << 9)
 #define ENCODE_E5B9G9R9_MANTISSA_MASK (ENCODE_E5B9G9R9_MANTISSA_VALUES - 1)
-// Equals to (((float)(MANTISSA_VALUES - 1))/MANTISSA_VALUES * (1<<(MAX_VALID_BIASED_EXP-EXP_BIAS)))
 #define ENCODE_E5B9G9R9_SHAREDEXP_MAX 65408
 
 uint encodeE5B9G9R9(float3 unpacked)
@@ -173,7 +156,6 @@ uint encodeE5B9G9R9(float3 unpacked)
     unpacked = clamp(unpacked, (float3)0.0, (float3)ENCODE_E5B9G9R9_SHAREDEXP_MAX);
     float max_c = max(unpacked.r, max(unpacked.g, unpacked.b));
 
-    // for log2
     if (max_c == 0.0)
     {
         return 0;
@@ -216,15 +198,10 @@ float3 decodeE5B9G9R9(const uint _packed)
 #define TANGENT_HANDEDNESS_ENCODING_CONST 19
 #define TANGENT_HANDEDNESS_ENCODING_THRESHOLD 3
 
-// Encode normalized tangent vector with handedness (-1 or 1) to float3
 float3 encodeTangent4(const float3 tangent, float handedness)
 {
-    // handedness must be -1 or 1,
-    //          then h is  1 or 0
     const float h = (-handedness + 1.0) * 0.5;
 
-    // if handedness is  1, then tangent is a unit vector
-    // if handedness is -1, then the length is (1.0 + TANGENT_HANDEDNESS_ENCODING_CONST)
     return tangent.xyz * (1.0 + h * TANGENT_HANDEDNESS_ENCODING_CONST);
 }
 
@@ -238,4 +215,4 @@ float4 decodeTangent4(const float3 _packed)
     return float4(_packed / (1.0 + h * TANGENT_HANDEDNESS_ENCODING_CONST), handedness);
 }
 
-#endif // UTILS_HLSLI_
+#endif
