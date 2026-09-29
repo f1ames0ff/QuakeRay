@@ -24,10 +24,16 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "tasks.h"
 #include "atomics.h"
+#include "rt_lights.h"
+
+// The editor's GUI depends on this task when tasks are on (see gl_screen.c).
+task_handle_t rt_editor_draw_done_task = INVALID_TASK_HANDLE;
+#include "qr_editor.h"
 
 int r_visframecount; // bumped when going to a new PVS
 int r_framecount;    // used for dlight push checking
 atomic_uint32_t rt_require_static_submit;
+atomic_uint32_t rt_require_world_light_recollect;
 
 mplane_t frustum[4];
 
@@ -363,99 +369,11 @@ static void R_SetupContext (cb_context_t *cbx)
 		cbx, glx + r_refdef.vrect.x, gly + glheight - r_refdef.vrect.y - r_refdef.vrect.height, r_refdef.vrect.width, r_refdef.vrect.height, 0.0f, 1.0f);
 }
 
-static void RT_UploadAllDlights ()
+static void RT_UploadSunLight (void)
 {
 	if (CVAR_TO_BOOL (rt_materials_only))
 	{
 		return;
-	}
-
-	if (RT_AllowFakeLights ())
-	{
-	for (int i = 0; i < MAX_DLIGHTS; i++)
-	{
-		const dlight_t *l = &cl_dlights[i];
-
-		if (l->die < cl.time || !l->radius)
-		{
-			continue;
-		}
-
-		if (l->key > 0 && l->key < cl.num_entities)
-		{
-			entity_t *src = &cl.entities[l->key];
-			if (src->model && (src->model->flags & MF_RT_LUMA))
-			{
-				continue;
-			}
-		}
-
-		vec3_t color = {l->color[0], l->color[1], l->color[2]};
-		VectorScale (color, CVAR_TO_FLOAT (rt_dlight_intensity), color);
-		RT_FIXUP_LIGHT_INTENSITY (color, true);
-
-		const uint64_t uniqueID = (uint64_t) i;
-
-		/* A spot is one whose editor property gave it a beam; anything else keeps the
-		   spherical path, a spot whose beam is still empty included. */
-		if (l->type == DLIGHT_TYPE_SPOT && l->angleOuter > 0.0f && DotProduct (l->dir, l->dir) > 0.0f)
-		{
-			QrSpotLightUploadInfo info = {
-				.uniqueID = uniqueID,
-				.color = {color[0], color[1], color[2]},
-				.position = {l->origin[0], l->origin[1], l->origin[2]},
-				.direction = {l->dir[0], l->dir[1], l->dir[2]},
-				.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
-				.angleOuter = l->angleOuter,
-				.angleInner = l->angleInner,
-			};
-
-			QrResult r = qrUploadSpotLight (vulkan_globals.instance, &info);
-			QR_CHECK (r);
-		}
-		else
-		{
-			QrSphericalLightUploadInfo info = {
-				.uniqueID = uniqueID,
-				.color = {color[0], color[1], color[2]},
-				.position = {l->origin[0], l->origin[1], l->origin[2]},
-				.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
-			};
-
-			QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
-			QR_CHECK (r);
-		}
-
-		/* rt_cluster_dlights 0 keeps dlights out of the cluster lists (A/B experiment). */
-		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (uniqueID, l->origin, RT_ClusterLightReach ());
-	}
-	}
-
-	if (CVAR_TO_FLOAT (rt_flashlight) > 0.1f)
-	{
-		vec3_t pos;
-		VectorCopy (r_origin, pos);
-		VectorMA (pos, METRIC_TO_QUAKEUNIT (-0.3f), vup, pos);
-		VectorMA (pos, METRIC_TO_QUAKEUNIT (-0.4f), vright, pos);
-
-		vec3_t color;
-		RT_INIT_DEFAULT_LIGHT_COLOR (color);
-		VectorScale (color, CVAR_TO_FLOAT (rt_flashlight), color);
-		RT_FIXUP_LIGHT_INTENSITY (color, true);
-
-		QrSpotLightUploadInfo info = {
-			.uniqueID = (uint64_t)UINT32_MAX + 0,
-			.color = {color[0], color[1], color[2]},
-			.position = {pos[0], pos[1], pos[2]},
-			.direction = {vpn[0], vpn[1], vpn[2]},
-			.radius = METRIC_TO_QUAKEUNIT (0.1f),
-			.angleOuter = DEG2RAD (30),
-			.angleInner = 0,
-		};
-
-		QrResult r = qrUploadSpotLight (vulkan_globals.instance, &info);
-		QR_CHECK (r);
 	}
 
 	if (CVAR_TO_FLOAT (rt_sun) > 0.001f)
@@ -489,6 +407,235 @@ static void RT_UploadAllDlights ()
 		QrResult r = qrUploadDirectionalLight (vulkan_globals.instance, &info);
 		QR_CHECK (r);
 	}
+}
+
+static void RT_UploadAllDlights ()
+{
+	if (CVAR_TO_BOOL (rt_materials_only))
+	{
+		return;
+	}
+
+	if (RT_AllowFakeLights ())
+	{
+	for (int i = 0; i < MAX_DLIGHTS; i++)
+	{
+		const dlight_t *l = &cl_dlights[i];
+
+		if (l->die < cl.time || !l->radius)
+		{
+			continue;
+		}
+
+		if (l->key > 0 && l->key < cl.num_entities)
+		{
+			entity_t *src = &cl.entities[l->key];
+			if (src->model && (src->model->flags & MF_RT_LUMA))
+			{
+				continue;
+			}
+		}
+
+		/* A legacy dlight belongs to the entity that asked for it (a lava ball, a
+		   monster): its model names the emitter a lights.yaml entry may override. */
+		const char *light_name = NULL;
+		rt_light_t *ov = NULL;
+		float       intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
+		float       radius = CVAR_TO_FLOAT (rt_dlight_radius);
+		vec3_t      position = {l->origin[0], l->origin[1], l->origin[2]};
+		vec3_t      color = {l->color[0], l->color[1], l->color[2]};
+
+		if (l->key > 0 && l->key < cl.num_entities && cl.entities[l->key].model)
+			light_name = cl.entities[l->key].model->name;
+		if (light_name)
+			ov = RT_LIGHT_FindInstance (light_name, (uint64_t)i);
+		if (ov)
+		{
+			if (ov->has_intensity)
+				intensity = ov->intensity;
+			if (ov->has_radius)
+				radius = ov->radius;
+			if (ov->has_offset)
+			{
+				position[0] += ov->offset[0];
+				position[1] += ov->offset[1];
+				position[2] += ov->offset[2];
+			}
+			if (ov->has_color)
+			{
+				VectorCopy (ov->color, color);
+			}
+		}
+
+		VectorScale (color, intensity, color);
+		RT_FIXUP_LIGHT_INTENSITY (color, true);
+
+		const uint64_t uniqueID = (uint64_t) i;
+
+		/* A spot is one whose editor property gave it a beam; anything else keeps the
+		   spherical path, a spot whose beam is still empty included. */
+		if (l->type == DLIGHT_TYPE_SPOT && l->angleOuter > 0.0f && DotProduct (l->dir, l->dir) > 0.0f)
+		{
+			QrSpotLightUploadInfo info = {
+				.uniqueID = uniqueID,
+				.color = {color[0], color[1], color[2]},
+				.position = {position[0], position[1], position[2]},
+				.direction = {l->dir[0], l->dir[1], l->dir[2]},
+				.radius = METRIC_TO_QUAKEUNIT (radius),
+				.angleOuter = l->angleOuter,
+				.angleInner = l->angleInner,
+			};
+
+			QrResult r = qrUploadSpotLight (vulkan_globals.instance, &info);
+			QR_CHECK (r);
+		}
+		else
+		{
+			QrSphericalLightUploadInfo info = {
+				.uniqueID = uniqueID,
+				.color = {color[0], color[1], color[2]},
+				.position = {position[0], position[1], position[2]},
+				.radius = METRIC_TO_QUAKEUNIT (radius),
+			};
+
+			QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
+			QR_CHECK (r);
+		}
+
+		RT_TRACK_Light (position, METRIC_TO_QUAKEUNIT (radius), color,
+		                uniqueID, RT_LIGHT_KIND_DLIGHT, light_name ? light_name : "");
+
+		/* rt_cluster_dlights 0 keeps dlights out of the cluster lists (A/B experiment). */
+		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
+			RT_ClusterLightAdd (uniqueID, position, RT_ClusterLightReach ());
+	}
+	}
+
+	// The lights the light editor authored (its Custom tab). Their file is read
+	// once at world load and they do not move on their own, so the renderer keeps
+	// their slots: its light lists change only when the editor moves or edits one.
+	{
+		int                custom_count = 0;
+		rt_custom_light_t *custom = RT_CustomLights (&custom_count);
+
+		for (int i = 0; i < custom_count; i++)
+		{
+			const rt_custom_light_t *l = &custom[i];
+			float                    intensity = (l->intensity > 0.0f) ? l->intensity : 1.0f;
+			vec3_t                   position, color;
+			uint64_t                 uid = (uint64_t)UINT32_MAX + 1 + (uint64_t)i;
+
+			VectorCopy (l->origin, position);
+			if (l->has_offset)
+			{
+				position[0] += l->offset[0];
+				position[1] += l->offset[1];
+				position[2] += l->offset[2];
+			}
+
+			VectorCopy (l->color, color);
+			if (l->style > 0 && l->style < RT_CUSTOM_STYLE_COUNT)
+				intensity *= CLAMP (0.0f, (float)d_lightstylevalue[l->style] / 256.0f, 1.0f);
+			VectorScale (color, intensity, color);
+			RT_FIXUP_LIGHT_INTENSITY (color, true);
+
+			QrSphericalLightUploadInfo info = {
+				.uniqueID = uid,
+				.color = {color[0], color[1], color[2]},
+				.position = {position[0], position[1], position[2]},
+				.radius = METRIC_TO_QUAKEUNIT (l->radius),
+			};
+
+			if (l->spot && (l->dir[0] != 0.0f || l->dir[1] != 0.0f || l->dir[2] != 0.0f))
+			{
+				vec3_t direction;
+				float  angleInner, angleOuter;
+
+				VectorCopy (l->dir, direction);
+				VectorNormalize (direction);
+				angleInner = DEG2RAD (q_min (l->angle_inner, l->angle_outer));
+				angleOuter = DEG2RAD (q_max (l->angle_inner, l->angle_outer));
+
+				QrSpotLightUploadInfo spot = {
+					.uniqueID = info.uniqueID,
+					.color = {info.color.data[0], info.color.data[1], info.color.data[2]},
+					.position = {info.position.data[0], info.position.data[1], info.position.data[2]},
+					.direction = {direction[0], direction[1], direction[2]},
+					.radius = info.radius,
+					.angleOuter = angleOuter,
+					.angleInner = angleInner,
+				};
+
+				QrResult r = qrUploadSpotLight (vulkan_globals.instance, &spot);
+				QR_CHECK (r);
+			}
+			else
+			{
+				QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
+				QR_CHECK (r);
+			}
+
+			RT_TRACK_Light (info.position.data, info.radius, info.color.data,
+			                uid, RT_LIGHT_KIND_CUSTOM, "");
+
+			if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
+				RT_ClusterLightAdd (uid, position, RT_ClusterLightReach ());
+		}
+	}
+
+	if (CVAR_TO_FLOAT (rt_flashlight) > 0.1f)
+	{
+		vec3_t pos;
+		VectorCopy (r_origin, pos);
+		VectorMA (pos, METRIC_TO_QUAKEUNIT (-0.3f), vup, pos);
+		VectorMA (pos, METRIC_TO_QUAKEUNIT (-0.4f), vright, pos);
+
+		vec3_t color;
+		RT_INIT_DEFAULT_LIGHT_COLOR (color);
+		VectorScale (color, CVAR_TO_FLOAT (rt_flashlight), color);
+		RT_FIXUP_LIGHT_INTENSITY (color, true);
+
+		QrSpotLightUploadInfo info = {
+			.uniqueID = (uint64_t)UINT32_MAX + 0,
+			.color = {color[0], color[1], color[2]},
+			.position = {pos[0], pos[1], pos[2]},
+			.direction = {vpn[0], vpn[1], vpn[2]},
+			.radius = METRIC_TO_QUAKEUNIT (0.1f),
+			.angleOuter = DEG2RAD (30),
+			.angleInner = 0,
+		};
+
+		QrResult r = qrUploadSpotLight (vulkan_globals.instance, &info);
+		QR_CHECK (r);
+	}
+
+	if (QR_Editor_TorchOn ())
+	{
+		vec3_t position, color;
+
+		QR_Editor_TorchOrigin (position);
+
+		color[0] = 1.0f;
+		color[1] = 0.84f;
+		color[2] = 0.62f;
+		VectorScale (color, CVAR_TO_FLOAT (rt_dlight_intensity), color);
+		RT_FIXUP_LIGHT_INTENSITY (color, true);
+
+		QrSphericalLightUploadInfo info = {
+			.uniqueID = (uint64_t)UINT32_MAX + 1 + RT_CUSTOM_LIGHTS_MAX,
+			.color = {color[0], color[1], color[2]},
+			.position = {position[0], position[1], position[2]},
+			.radius = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_dlight_radius)),
+		};
+
+		QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
+		QR_CHECK (r);
+
+		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
+			RT_ClusterLightAdd (info.uniqueID, position, RT_ClusterLightReach ());
+	}
+
+	RT_UploadSunLight ();
 }
 
 /*
@@ -708,7 +855,7 @@ R_DrawViewModel -- johnfitz -- gutted
 */
 void R_DrawViewModel (cb_context_t *cbx)
 {
-	if (!r_drawviewmodel.value || !r_drawentities.value || chase_active.value)
+	if (!r_drawviewmodel.value || !r_drawentities.value || chase_active.value || QR_Editor_Active ())
 		return;
 	
 	if (cl.stats[STAT_HEALTH] <= 0)
@@ -942,8 +1089,20 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
-	if (!Atomic_LoadUInt32 (&rt_require_static_submit))
+	const qboolean static_submit = Atomic_LoadUInt32 (&rt_require_static_submit) != 0;
+	const qboolean light_recollect = Atomic_LoadUInt32 (&rt_require_world_light_recollect) != 0;
+
+	if (!static_submit && !light_recollect)
 	{
+		RT_Prof_End (RT_PROF_WORLD, prof_start);
+		return;
+	}
+
+	if (!static_submit)
+	{
+		Atomic_StoreUInt32 (&rt_require_world_light_recollect, false);
+		RT_RecollectWorldEmissiveLights ();
+
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -952,6 +1111,8 @@ void R_DrawWorldTask (void *unused)
 	
 	r = qrBeginStaticGeometries (vulkan_globals.instance);
 	QR_CHECK (r);
+
+	RT_UploadSunLight ();
 
 	cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[CBX_WORLD_0];
 	R_SetupContext (cbx);
@@ -962,6 +1123,7 @@ void R_DrawWorldTask (void *unused)
 	QR_CHECK (r);
 
 	Atomic_StoreUInt32 (&rt_require_static_submit, false);
+	Atomic_StoreUInt32 (&rt_require_world_light_recollect, false);
 
 	RT_Prof_End (RT_PROF_WORLD, prof_start);
 }
@@ -1054,6 +1216,12 @@ static void R_DrawViewModelTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);
 
+	prof_start = RT_Prof_Begin ();
+	// The editor draws the lights of the frame as wireframes, so their upload
+	// (the map light entities) has to happen before the selection draw.
+	RT_UploadAllElights (); // RT
+	RT_Prof_End (RT_PROF_ELIGHTS, prof_start);
+
 	// Only the draw itself, so that the model upload cost can be told apart from
 	// the light and cluster list uploads that share this task.
 	prof_start = RT_Prof_Begin ();
@@ -1061,10 +1229,6 @@ static void R_DrawViewModelTask (void *unused)
 	R_ShowTris (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);          // johnfitz
 	R_ShowBoundingBoxes (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]); // johnfitz
 	RT_Prof_End (RT_PROF_VIEWMODEL_DRAW, prof_start);
-
-	prof_start = RT_Prof_Begin ();
-	RT_UploadAllElights (); // RT
-	RT_Prof_End (RT_PROF_ELIGHTS, prof_start);
 
 	prof_start = RT_Prof_Begin ();
 	RT_UploadAllWorldModelLights (); // RT
@@ -1092,6 +1256,12 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 
 	if (!cl.worldmodel)
 		Sys_Error ("R_RenderView: NULL worldmodel");
+
+	rt_editor_draw_done_task = INVALID_TASK_HANDLE;
+
+	// The light editor's list of the frame's lights starts empty every frame; the
+	// four upload sites fill it as they go.
+	RT_TRACK_BeginFrame ();
 
 	time1 = 0; /* avoid compiler warning */
 	if (r_speeds.value)
@@ -1135,6 +1305,10 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (before_mark, draw_view_model_task);
 		Task_AddDependency (begin_rendering_task, draw_view_model_task);
 		Task_AddDependency (draw_view_model_task, draw_done_task);
+
+		// The editor's GUI reads what the draw tasks uploaded (the tracked lights
+		// of the frame), so it has to wait for the task that carries them.
+		rt_editor_draw_done_task = draw_view_model_task;
 
 		task_handle_t draw_entities_task = Task_AllocateAndAssignIndexedFunc (R_DrawEntitiesTask, NUM_ENTITIES_CBX, NULL, 0);
 		Task_AddDependency (store_efrags, draw_entities_task);

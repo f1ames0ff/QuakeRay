@@ -273,7 +273,7 @@ else()
 endif()
 
 # ============================================================================
-# Dear ImGui - vendored immediate-mode GUI (MIT)
+# Dear ImGui — vendored immediate-mode GUI (MIT)
 # ============================================================================
 # Core + the SDL2 input backend. The render backend is our own
 # (Quake/qr_gui.cpp): ImGui draw lists are uploaded through the renderer's
@@ -352,10 +352,12 @@ set(CORE_SOURCES
     Quake/r_smoke.c
     Quake/r_sprite.c
     Quake/r_world.c
-    Quake/qr_gui.cpp
     Quake/rt_dtal_debug.cpp
     Quake/rt_material.c
+    Quake/rt_lights.c
     Quake/rt_pkz.c
+    Quake/qr_editor.c
+    Quake/qr_gui.cpp
     Quake/sbar.c
     Quake/snd_codec.c
     Quake/snd_dma.c
@@ -523,6 +525,18 @@ if(QUAKERAY_PLATFORM_WINDOWS)
 else()
     target_link_libraries(quakeray PRIVATE SDL2::SDL2)
 endif()
+
+# ============================================================================
+# Runtime assets
+# ============================================================================
+# The qr light editor loads the GUI font from next to the executable.
+add_custom_command(TARGET quakeray POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/fonts/Roboto-Regular.ttf"
+        "$<TARGET_FILE_DIR:quakeray>/fonts/Roboto-Regular.ttf"
+    COMMENT "Copying the GUI font"
+)
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE ws2_32 winmm)

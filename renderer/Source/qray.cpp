@@ -275,6 +275,17 @@ QrResult qrUpdateMaterialContents(QrInstance qrInstance, const QrMaterialUpdateI
     return Call(qrInstance, &VulkanDevice::UpdateMaterial, pUpdateInfo);
 }
 
+QrResult qrCanUpdateMaterialContents(QrInstance qrInstance, QrMaterial material, QrExtent2D size)
+{
+    if (material == QR_NO_MATERIAL)
+    {
+        return QR_WRONG_ARGUMENT;
+    }
+
+    return Call(qrInstance, &VulkanDevice::CanUpdateMaterialContents, material, size) ? QR_SUCCESS
+                                                                                     : QR_CANT_UPDATE_MATERIAL;
+}
+
 QrResult qrDestroyMaterial(QrInstance qrInstance, QrMaterial material)
 {
     return Call(qrInstance, &VulkanDevice::DestroyMaterial, material);

@@ -92,6 +92,7 @@ void QR_GUI_PushDisabled (int disabled);
 void QR_GUI_PopDisabled (void);
 // Returns nonzero while the section is open.
 int  QR_GUI_Section (const char *label, int default_open);
+int  QR_GUI_SectionSelected (const char *label, int selected);
 
 // ID scope for the widgets of one material (animation frames share the same
 // parameter names, so their widgets would collide without it).
@@ -101,6 +102,7 @@ void QR_GUI_PopID (void);
 // A small centred yes/no dialog drawn on top of the editor. Returns 1 for the
 // first button, 2 for the second and 0 while it is up.
 int  QR_GUI_Dialog (const char *title, const char *text, const char *yes, const char *no);
+int  QR_GUI_DialogCentered (const char *title, const char *text, const char *yes, const char *no);
 
 // A texture preview drawn at the current cursor position (texture is an
 // QrMaterial handle). While the left mouse button is held over it, returns 1
@@ -121,6 +123,9 @@ void QR_GUI_DrawHint (const char *const *lines, int count);
 void QR_GUI_LabelBottomRight (const char *text);
 // The cursor position ImGui last saw (the editor's own hit tests).
 void QR_GUI_GetMousePos (float *x, float *y);
+
+void QR_GUI_DrawPolyline (const float *xy, int count, uint32_t argb, float thickness);
+void QR_GUI_DrawCircle (float cx, float cy, float radius, uint32_t argb, float thickness);
 
 #ifdef __cplusplus
 }

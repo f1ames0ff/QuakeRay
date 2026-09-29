@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "qr_editor.h"
 
 static qboolean textmode;
 
@@ -99,6 +100,25 @@ void IN_Activate (void)
 	if (SDL_SetRelativeMouseMode (SDL_TRUE) != 0)
 	{
 		Con_Printf ("WARNING: SDL_SetRelativeMouseMode(SDL_TRUE) failed.\n");
+	}
+
+	IN_EndIgnoringMouseEvents ();
+
+	total_dx = 0;
+	total_dy = 0;
+}
+
+// qr light editor: the ImGui panel needs the cursor free AND the motion events
+// (its backend takes the mouse position from SDL_MOUSEMOTION), so the
+// "ignore mouse events" filter of IN_Deactivate must not be armed.
+void IN_FreeCursorForGui (void)
+{
+	if (no_mouse)
+		return;
+
+	if (SDL_SetRelativeMouseMode (SDL_FALSE) != 0)
+	{
+		Con_Printf ("WARNING: SDL_SetRelativeMouseMode(SDL_FALSE) failed.\n");
 	}
 
 	IN_EndIgnoringMouseEvents ();
@@ -596,6 +616,19 @@ void IN_MouseMove (usercmd_t *cmd)
 	total_dx = 0;
 	total_dy = 0;
 
+	// qr light editor: the free camera always looks with the mouse and the
+	// look never becomes player movement (no +mlook required)
+	if (QR_Editor_Flying ())
+	{
+		cl.viewangles[YAW] -= m_yaw.value * dmx;
+		cl.viewangles[PITCH] += m_pitch.value * dmy;
+		if (cl.viewangles[PITCH] > cl_maxpitch.value)
+			cl.viewangles[PITCH] = cl_maxpitch.value;
+		if (cl.viewangles[PITCH] < cl_minpitch.value)
+			cl.viewangles[PITCH] = cl_minpitch.value;
+		return;
+	}
+
 	if ((in_strafe.state & 1) || (lookstrafe.value && (in_mlook.state & 1)))
 		cmd->sidemove += m_side.value * dmx;
 	else
@@ -904,6 +937,10 @@ void IN_SendKeyEvents (void)
 
 	while (SDL_PollEvent (&event))
 	{
+		// qr light editor: the ImGui material panel owns the mouse and keyboard
+		if (QR_Editor_GuiProcessEvent (&event))
+			continue;
+
 		switch (event.type)
 		{
 		case SDL_WINDOWEVENT:
@@ -969,6 +1006,22 @@ void IN_SendKeyEvents (void)
 			    key_dest == key_game && CVAR_TO_BOOL (rt_sun_edit))
 			{
 				Cvar_Set ("rt_sun_edit", "0");
+				break;
+			}
+			// qr light editor: in the Custom tab's placement mode the fire button
+			// drops the new light at the crosshair and is swallowed
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_PlacePending ())
+			{
+				QR_Editor_PlaceAtCrosshair ();
+				break;
+			}
+			// qr light editor: while flying, the fire button selects the face under
+			// the crosshair and is swallowed so the weapon never fires
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_Flying ())
+			{
+				QR_Editor_Pick ();
 				break;
 			}
 			Key_Event (buttonremap[event.button.button - 1], event.button.state == SDL_PRESSED);
