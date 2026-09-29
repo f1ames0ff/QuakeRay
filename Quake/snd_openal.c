@@ -409,10 +409,13 @@ static void SNDAL_ConfigureSource (channel_t *ch, int slot)
 	p_alSourcei (source, AL_SAMPLE_OFFSET, ch->pos);
 	SNDAL_SetupSource (ch, slot);
 
-	sndal_sources[slot].started = true;
+	sndal_sources[slot].started = false;
 	sndal_sources[slot].looping = SNDAL_IsLooping (sc);
 	if (!sndal_blocked)
+	{
 		p_alSourcePlay (source);
+		sndal_sources[slot].started = true;
+	}
 }
 
 void SNDAL_StartChannel (channel_t *ch)
@@ -506,11 +509,27 @@ static void SNDAL_SyncSource (int slot)
 	audible = SNDAL_ChannelAudible (ch);
 
 	p_alGetSourcei (source, AL_SOURCE_STATE, &state);
-	if (sndal_sources[slot].started && !sndal_sources[slot].looping && (state == AL_STOPPED || (!audible && ch->end <= paintedtime)))
+	if (!sndal_sources[slot].looping)
 	{
-		ch->sfx = NULL;
-		SNDAL_ReleaseSlot (slot);
-		return;
+		ALint remaining = ch->end - paintedtime;
+
+		if (sndal_sources[slot].started && state == AL_STOPPED)
+		{
+			ch->sfx = NULL;
+			SNDAL_ReleaseSlot (slot);
+			return;
+		}
+		if (state != AL_PLAYING && remaining <= 0)
+		{
+			ch->sfx = NULL;
+			SNDAL_ReleaseSlot (slot);
+			return;
+		}
+		if (state != AL_PLAYING && sc->length - ch->pos > remaining)
+		{
+			ch->pos = sc->length - remaining;
+			p_alSourcei (source, AL_SAMPLE_OFFSET, ch->pos);
+		}
 	}
 
 	SNDAL_SetupSource (ch, slot);
@@ -524,6 +543,7 @@ static void SNDAL_SyncSource (int slot)
 	if (!sndal_blocked && state != AL_PLAYING)
 	{
 		p_alSourcePlay (source);
+		sndal_sources[slot].started = true;
 		state = AL_PLAYING;
 	}
 
@@ -606,6 +626,11 @@ static void SNDAL_UpdateMusic (void)
 		buffer = sndal_music_free[--sndal_music_numfree];
 		p_alGetError ();
 		p_alBufferData (buffer, AL_FORMAT_STEREO16, sndal_music_pcm, (ALsizei)(n * 4), shm->speed);
+		if (p_alGetError () != AL_NO_ERROR)
+		{
+			sndal_music_free[sndal_music_numfree++] = buffer;
+			break;
+		}
 		p_alSourceQueueBuffers (sndal_music_source, 1, &buffer);
 		if (p_alGetError () != AL_NO_ERROR)
 		{
@@ -615,6 +640,12 @@ static void SNDAL_UpdateMusic (void)
 		sndal_music_queued++;
 		sndal_rawpos += n;
 		available -= n;
+	}
+
+	if (sndal_rawpos > 0x40000000)
+	{
+		sndal_rawpos -= 0x40000000;
+		s_rawend -= 0x40000000;
 	}
 
 	if (sndal_music_queued > 0 && !sndal_blocked)
@@ -699,13 +730,13 @@ void SNDAL_Update (void)
 			continue;
 		if (!ch->sfx->cache && !S_LoadSound (ch->sfx))
 			continue;
+		if (sndal_binding[i] >= 0)
+			continue;
 		if (!SNDAL_IsLooping (ch->sfx->cache) && ch->end <= paintedtime)
 		{
 			ch->sfx = NULL;
 			continue;
 		}
-		if (sndal_binding[i] >= 0)
-			continue;
 		slot = SNDAL_AllocSource ();
 		if (slot < 0)
 			continue;

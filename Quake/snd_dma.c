@@ -69,6 +69,7 @@ static int    num_sfx;
 static sfx_t *ambient_sfx[NUM_AMBIENTS];
 
 static qboolean sound_started = false;
+static qboolean sound_ready = false;
 
 static void S_BackendStart (void);
 static void S_BackendShutdown (void);
@@ -166,6 +167,11 @@ static void S_RestartBackend (void)
 
 	if (!snd_initialized)
 		return;
+	if (!sound_ready)
+	{
+		Con_Printf ("Sound was never initialized; restart the game to change the backend\n");
+		return;
+	}
 
 	oldspeed = shm ? shm->speed : 0;
 	Con_Printf ("Restarting sound backend\n");
@@ -299,6 +305,8 @@ void S_Init (void)
 	S_CodecInit ();
 
 	S_StopAllSounds (true);
+
+	sound_ready = true;
 }
 
 // =======================================================================
