@@ -85,7 +85,7 @@ Steps:
 1. Clone the repository:
 
    ```
-   git clone --recursive https://github.com/sdas234f23f/QuakeRay.git
+   git clone --recursive https://github.com/sdas234f23f/QuakeRay_new.git
    ```
 
 2. (Re)build the SPIR-V shaders - optional: `build_win.ps1` already builds and deploys them (see step 3), so you only need this when iterating on `renderer/Source/Shaders` on their own:
