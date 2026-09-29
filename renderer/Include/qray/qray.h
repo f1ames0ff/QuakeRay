@@ -1218,6 +1218,7 @@ typedef struct QrDrawFrameCausticsParams
     uint32_t    resolution;
     float       extent;
     uint32_t    debugMode;
+    QrBool32    sunShadow;
 } QrDrawFrameCausticsParams;
 
 typedef enum QrRenderUpscaleTechnique{

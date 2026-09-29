@@ -72,20 +72,20 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          float(globalUniform.forceNoWaterRefraction) + float(globalUniform.waterNormalTextureIndex) +
          float(globalUniform.noBackfaceReflForNoMediaChange) + globalUniform.time +
          globalUniform.waterWaveSpeed + globalUniform.waterWaveStrength +
-         globalUniform.waterColorAndDensity.x + globalUniform.acidColorAndDensity.x +
-         globalUniform.cameraRayConeSpreadAngle + globalUniform.waterTextureAreaScale +
-         float(globalUniform.squareInputRoughness) + globalUniform.upscaledRenderWidth +
-         globalUniform.worldUpVector.x + globalUniform.upscaledRenderHeight + globalUniform.jitterX +
-         globalUniform.jitterY + globalUniform.primaryRayMinDist +
-         float(globalUniform.rayCullMaskWorld_Shadow) + float(globalUniform.lensFlareCullingInputCount) +
-         float(globalUniform.applyViewProjToLensFlares) + float(globalUniform.twirlPortalNormal) +
-         float(globalUniform.lightIndexIgnoreFPVShadows) + globalUniform.gradientMultDiffuse +
-         globalUniform.gradientMultIndirect + globalUniform.gradientMultSpecular +
-         globalUniform.minRoughness + globalUniform.volumeCameraNear + globalUniform.volumeCameraFar +
-         float(globalUniform.antiFireflyEnabled) + globalUniform.volumeAmbient.x +
-         globalUniform.volumeSourceColor.x + globalUniform.volumeDirToSource.x +
-         globalUniform.volumeSourceAsymmetry + float(globalUniform.coreQ2RTX) +
-         float(globalUniform.q2DepthGradMode) + globalUniform.skyNee +
+         float(globalUniform.causticsSunShadow) + globalUniform.waterColorAndDensity.x +
+         globalUniform.acidColorAndDensity.x + globalUniform.cameraRayConeSpreadAngle +
+         globalUniform.waterTextureAreaScale + float(globalUniform.squareInputRoughness) +
+         globalUniform.upscaledRenderWidth + globalUniform.worldUpVector.x +
+         globalUniform.upscaledRenderHeight + globalUniform.jitterX + globalUniform.jitterY +
+         globalUniform.primaryRayMinDist + float(globalUniform.rayCullMaskWorld_Shadow) +
+         float(globalUniform.lensFlareCullingInputCount) + float(globalUniform.applyViewProjToLensFlares) +
+         float(globalUniform.twirlPortalNormal) + float(globalUniform.lightIndexIgnoreFPVShadows) +
+         globalUniform.gradientMultDiffuse + globalUniform.gradientMultIndirect +
+         globalUniform.gradientMultSpecular + globalUniform.minRoughness + globalUniform.volumeCameraNear +
+         globalUniform.volumeCameraFar + float(globalUniform.antiFireflyEnabled) +
+         globalUniform.volumeAmbient.x + globalUniform.volumeSourceColor.x +
+         globalUniform.volumeDirToSource.x + globalUniform.volumeSourceAsymmetry +
+         float(globalUniform.coreQ2RTX) + float(globalUniform.q2DepthGradMode) + globalUniform.skyNee +
          float(globalUniform.q2LightStatsMode) + float(globalUniform.reflRefrEarlyOut) +
          float(globalUniform.neeLightSamples) + globalUniform.turbWarpStrength +
          float(globalUniform.instanceGeomInfoOffset[0].x) +

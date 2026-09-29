@@ -619,6 +619,7 @@ GLOBAL_UNIFORM_MEMBERS = [
     (FLOAT32, 1, "time",                          1),
     (FLOAT32, 1, "waterWaveSpeed",                1),
     (FLOAT32, 1, "waterWaveStrength",             1),
+    (UINT32, 1, "causticsSunShadow",              1),
 
     (FLOAT32, 4, "waterColorAndDensity",          1),
     (FLOAT32, 4, "acidColorAndDensity",           1),

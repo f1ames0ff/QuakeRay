@@ -535,6 +535,9 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
 
     gu->waterNormalTextureIndex = textureManager->GetWaterNormalTextureIndex();
 
+    gu->causticsSunShadow =
+        (drawInfo.pCausticsParams != nullptr && drawInfo.pCausticsParams->sunShadow != 0) ? 1u : 0u;
+
     gu->cameraRayConeSpreadAngle = atanf( ( 2.0f * tanf( drawInfo.fovYRadians * 0.5f ) ) / ( float )renderResolution.Height() );
 
     if( Utils::IsAlmostZero( drawInfo.worldUpVector ) )

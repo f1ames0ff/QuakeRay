@@ -352,12 +352,12 @@ float evalSkyNeePdf(const float3 n, const float3 direction)
 #define SHADOW_RAY_EPS       0.01
 #define RAY_ORIGIN_LEAK_BIAS 0.01
 
-bool traceShadowRay(uint surfInstCustomIndex, float3 start, float3 end, bool ignoreFirstPersonViewer  )
+bool traceShadowRay(uint surfInstCustomIndex, float3 start, float3 end, bool ignoreFirstPersonViewer, uint extraMask)
 {
     ShPayloadShadow g_payloadShadow;
     g_payloadShadow.isShadowed = 1;
 
-    uint cullMask = getShadowCullMask(surfInstCustomIndex);
+    uint cullMask = getShadowCullMask(surfInstCustomIndex) | extraMask;
 
     if (ignoreFirstPersonViewer)
     {
@@ -393,7 +393,7 @@ float traceVisibility(const Surface surf, const float3 lightPosition, uint light
 
     const bool ignoreFirstPersonViewer = (globalUniform.lightIndexIgnoreFPVShadows == lightIndex);
 
-    const bool isShadowed = traceShadowRay(surf.instCustomIndex, start, end, ignoreFirstPersonViewer);
+    const bool isShadowed = traceShadowRay(surf.instCustomIndex, start, end, ignoreFirstPersonViewer, 0u);
     return float(!isShadowed);
 }
 
@@ -437,7 +437,8 @@ float traceSkyVisibility(const Surface surf, const float3 skyDirection)
     const float3 start = surf.position + surf.normalGeom * 0.01;
     const float3 end   = start + skyDirection * globalUniform.rayLength;
 
-    const bool isShadowed = traceShadowRay(surf.instCustomIndex, start, end, false);
+    const bool isShadowed = traceShadowRay(surf.instCustomIndex, start, end, false,
+                                          globalUniform.causticsSunShadow != 0u ? INSTANCE_MASK_REFRACT : 0u);
     return float(!isShadowed);
 }
 #endif
