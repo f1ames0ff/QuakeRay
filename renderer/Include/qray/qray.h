@@ -1335,6 +1335,10 @@ QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
 
+QRAPI QrResult QRCONV qrRequestScreenshot(
+    QrInstance                          qrInstance,
+    const char                         *pFilePath);
+
 QRAPI QrResult QRCONV qrGetFrameStats(
     QrInstance                          qrInstance,
     uint32_t                           *pRays,

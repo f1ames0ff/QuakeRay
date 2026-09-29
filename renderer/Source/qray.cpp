@@ -355,6 +355,11 @@ QrResult qrGetFrameStatsEx(QrInstance qrInstance, QrFrameStats *pStats)
     return r;
 }
 
+QrResult qrRequestScreenshot(QrInstance qrInstance, const char *pFilePath)
+{
+    return Call(qrInstance, &VulkanDevice::RequestScreenshot, pFilePath);
+}
+
 const char *qrGetGpuPassName(uint32_t passIndex)
 {
     static const char *const passNames[QR_GPU_PASS_COUNT] =
