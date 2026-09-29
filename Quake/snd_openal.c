@@ -488,6 +488,7 @@ static void SNDAL_SyncSource (int slot)
 	sfxcache_t *sc;
 	ALint       state = 0;
 	ALint       offset = 0;
+	qboolean    audible;
 
 	if (!ch)
 		return;
@@ -502,9 +503,10 @@ static void SNDAL_SyncSource (int slot)
 		return;
 	}
 	sc = ch->sfx->cache;
+	audible = SNDAL_ChannelAudible (ch);
 
 	p_alGetSourcei (source, AL_SOURCE_STATE, &state);
-	if (sndal_sources[slot].started && !sndal_sources[slot].looping && (state == AL_STOPPED || ch->end <= paintedtime))
+	if (sndal_sources[slot].started && !sndal_sources[slot].looping && (state == AL_STOPPED || (!audible && ch->end <= paintedtime)))
 	{
 		ch->sfx = NULL;
 		SNDAL_ReleaseSlot (slot);
@@ -513,7 +515,7 @@ static void SNDAL_SyncSource (int slot)
 
 	SNDAL_SetupSource (ch, slot);
 
-	if (!SNDAL_ChannelAudible (ch))
+	if (!audible)
 	{
 		if (state == AL_PLAYING)
 			p_alSourcePause (source);
@@ -697,6 +699,11 @@ void SNDAL_Update (void)
 			continue;
 		if (!ch->sfx->cache && !S_LoadSound (ch->sfx))
 			continue;
+		if (!SNDAL_IsLooping (ch->sfx->cache) && ch->end <= paintedtime)
+		{
+			ch->sfx = NULL;
+			continue;
+		}
 		if (sndal_binding[i] >= 0)
 			continue;
 		slot = SNDAL_AllocSource ();
