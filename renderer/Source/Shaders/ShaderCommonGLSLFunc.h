@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_samplerless_texture_functions : require
@@ -25,20 +22,6 @@
 #include "ShaderCommonGLSL.h"
 #include "Structs.h"
 
-// Functions to access RTGL data.
-// Available defines:
-// * DESC_SET_GLOBAL_UNIFORM    -- to access global uniform buffer
-// * DESC_SET_VERTEX_DATA       -- to access geometry data;
-//                                 DESC_SET_GLOBAL_UNIFORM must be defined; 
-//                                 Define VERTEX_BUFFER_WRITEABLE for writing
-// * DESC_SET_TEXTURES          -- to access textures by index
-// * DESC_SET_FRAMEBUFFERS      -- to access framebuffers (defined in ShaderCommonGLSL.h)
-// * DESC_SET_RANDOM            -- to access blue noise (uniform distribution) and sampling points on surfaces
-// * DESC_SET_TONEMAPPING       -- to access histogram and average luminance;
-//                                 define TONEMAPPING_BUFFER_WRITEABLE for writing
-// * DESC_SET_LENS_FLARES
-// * DESC_SET_DECALS
-// * DESC_SET_VOLUMETRIC
 
 
 
@@ -58,15 +41,11 @@ layout(
 {
     ShGlobalUniform globalUniform;
 };
-#endif // DESC_SET_GLOBAL_UNIFORM
+#endif
 
 
 
 #ifdef DESC_SET_TEXTURES
-// The bindless table is split: the sampled view and the sampler state live in
-// separate bindings, because a single descriptor can not be both a sampled
-// image and a sampler in Vulkan (or in D3D12). Both arrays are indexed by the
-// same texture index.
 layout(
     set = DESC_SET_TEXTURES,
     binding = BINDING_TEXTURES)
@@ -94,12 +73,10 @@ vec4 getTextureSampleGrad(uint textureIndex, const vec2 texCoord, const vec2 dPd
 {
     return textureGrad(sampler2D(getTexture(textureIndex), getTextureSampler(textureIndex)), texCoord, dPdx, dPdy);
 }
-#endif // DESC_SET_TEXTURES
+#endif
 
 
 
-// instanceID is assumed to be < 256 (i.e. 8 bits ) and 
-// instanceCustomIndexEXT is 24 bits by Vulkan spec
 uint packInstanceIdAndCustomIndex(int instanceID, int instanceCustomIndexEXT)
 {
     return (instanceID << 24) | instanceCustomIndexEXT;
@@ -162,7 +139,7 @@ void unpackGeometryAndPrimitiveIndex(uint geomAndPrimIndex, out int geometryInde
 
 
 #ifdef DESC_SET_TONEMAPPING
-layout(set = DESC_SET_TONEMAPPING, binding = BINDING_LUM_HISTOGRAM) 
+layout(set = DESC_SET_TONEMAPPING, binding = BINDING_LUM_HISTOGRAM)
 #ifndef TONEMAPPING_BUFFER_WRITEABLE
     readonly
 #endif
@@ -170,7 +147,7 @@ layout(set = DESC_SET_TONEMAPPING, binding = BINDING_LUM_HISTOGRAM)
 {
     ShTonemapping tonemapping;
 };
-#endif // DESC_SET_TONEMAPPING
+#endif
 
 
 
@@ -224,28 +201,28 @@ layout(set = DESC_SET_LIGHT_SOURCES, binding = BINDING_LIGHT_SOURCES_Q2_CLUSTER_
 
 
 #ifdef DESC_SET_VOLUMETRIC
-layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_STORAGE, rgba16f) 
+layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_STORAGE, rgba16f)
 uniform image3D g_volumetric;
 
-layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_SAMPLED) 
+layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_SAMPLED)
 uniform texture3D g_volumetric_Sampled;
 
-layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_SAMPLER) 
+layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_SAMPLER)
 uniform sampler g_volumetric_Sampler;
 
-layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_SAMPLED_PREV) 
+layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_SAMPLED_PREV)
 uniform texture3D g_volumetric_Sampled_Prev;
 
-layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_SAMPLER_PREV) 
+layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_SAMPLER_PREV)
 uniform sampler g_volumetric_Sampler_Prev;
 
-layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_ILLUMINATION, r11f_g11f_b10f) 
+layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_ILLUMINATION, r11f_g11f_b10f)
 uniform image3D g_illuminationVolume;
 
-layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_ILLUMINATION_SAMPLED) 
+layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_ILLUMINATION_SAMPLED)
 uniform texture3D g_illuminationVolume_Sampled;
 
-layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_ILLUMINATION_SAMPLER) 
+layout(set = DESC_SET_VOLUMETRIC, binding = BINDING_VOLUMETRIC_ILLUMINATION_SAMPLER)
 uniform sampler g_illuminationVolume_Sampler;
 #endif
 
@@ -262,7 +239,7 @@ layout(set = DESC_SET_LENS_FLARES, binding = BINDING_LENS_FLARES_DRAW_CMDS) buff
     ShIndirectDrawCommand lensFlareDrawCmds[LENS_FLARES_MAX_DRAW_CMD_COUNT];
     uint lensFlareDrawCmdsCount;
 };
-#endif // DESC_SET_LENS_FLARES
+#endif
 
 
 
@@ -271,7 +248,7 @@ layout(set = DESC_SET_DECALS, binding = BINDING_DECAL_INSTANCES) buffer DecalIns
 {
     ShDecalInstance decalInstances[];
 };
-#endif // DESC_SET_DECALS
+#endif
 
 
 
@@ -283,7 +260,7 @@ vec2 getPrevScreenPos(const vec2 motionCurToPrev, const ivec2 pix)
 {
     const vec2 screenSize = vec2(globalUniform.renderWidth / float(CHECKERBOARD_SEPARATOR_DIVISOR), globalUniform.renderHeight);
     const vec2 invScreenSize = vec2(1.0 / screenSize.x, 1.0 / screenSize.y);
-   
+
     return ((vec2(pix) + vec2(0.5)) * invScreenSize + motionCurToPrev) * screenSize;
 }
 
@@ -292,25 +269,16 @@ vec2 getPrevScreenPos(texture2D motionTexture, const ivec2 pix)
     return getPrevScreenPos(texelFetch(motionTexture, pix, 0).rg, pix);
 }
 
-/*
-vec2 getCurScreenPos(sampler2D motionSampler, const ivec2 prevPix)
-{
-    const vec2 motionCurToPrev = texelFetch(motionSampler, prevPix, 0).rg;
 
-    const vec2 screenSize = vec2(globalUniform.renderWidth, globalUniform.renderHeight);
-    const vec2 invScreenSize = vec2(1.0 / float(globalUniform.renderWidth), 1.0 / float(globalUniform.renderHeight));
-    
-    return ((vec2(prevPix) + vec2(0.5)) * invScreenSize - motionCurToPrev) * screenSize;
-}
-*/
-#endif // DESC_SET_FRAMEBUFFERS
-#endif // DESC_SET_GLOBAL_UNIFORM
+
+#endif
+#endif
 
 
 #ifdef DESC_SET_GLOBAL_UNIFORM
     #define CHECKERBOARD_FULL_WIDTH globalUniform.renderWidth
     #define CHECKERBOARD_FULL_HEIGHT globalUniform.renderHeight
-#endif // DESC_SET_GLOBAL_UNIFORM
+#endif
 
 #ifdef CHECKERBOARD_FULL_WIDTH
 #ifdef CHECKERBOARD_FULL_HEIGHT
@@ -348,30 +316,27 @@ ivec2 getRegularPixFromCheckerboardPix(const ivec2 checkerboardPix)
 
     return ivec2(
         x * 2 + (isOdd + checkerboardPix.y) % 2,
-        checkerboardPix.y 
+        checkerboardPix.y
     );
 }
 
-// Render area for pixel, considering the checkerboard separator
 ivec3 getCheckerboardedRenderArea(const ivec2 checkerboardPix)
 {
     const int sep = getCheckerboardSeparatorX();
     const int isOdd = isCheckerboardPixOdd(checkerboardPix);
 
     return ivec3(
-        // left bound
         (isOdd + 0) * sep,
-        // right bound
         (isOdd + 1) * sep,
         CHECKERBOARD_FULL_HEIGHT
     );
 }
-#endif // CHECKERBOARD_FULL_HEIGHT
-#endif // CHECKERBOARD_FULL_WIDTH
+#endif
+#endif
 
 bool testPixInRenderArea(const ivec2 pix, const ivec3 renderArea)
 {
-    return 
+    return
         pix.y >= 0              && pix.y < renderArea[2] &&
         pix.x >= renderArea[0]  && pix.x < renderArea[1];
 }
@@ -393,7 +358,7 @@ bool testReprojectedNormalEnc(const vec3 n, const uint encodedNPrev)
 
 float getAntilagAlpha(const float gradSample, const float normFactor)
 {
-    const float lambda = normFactor > 0.0001 ? 
+    const float lambda = normFactor > 0.0001 ?
         clamp(abs(gradSample) / normFactor, 0.0, 1.0) :
         0.0;
 
@@ -405,7 +370,7 @@ float getAntilagAlpha(const float gradSample, const float normFactor)
 #ifdef DESC_SET_FRAMEBUFFERS
 #include "SphericalHarmonics.h"
 
-#define SH_COMPRESSION_MULTIPLIER 1000 
+#define SH_COMPRESSION_MULTIPLIER 1000
 
 SH texelFetchSH(texture2D textureIndirR, texture2D textureIndirG, texture2D textureIndirB, ivec2 pix)
 {
@@ -430,8 +395,8 @@ SH texelFetchIndirAccumSH(ivec2 pix)
 {
     return texelFetchSH(
         framebufIndirAccumSH_R_Sampled,
-        framebufIndirAccumSH_G_Sampled, 
-        framebufIndirAccumSH_B_Sampled, 
+        framebufIndirAccumSH_G_Sampled,
+        framebufIndirAccumSH_B_Sampled,
         pix);
 }
 
@@ -485,7 +450,7 @@ void imageStoreIndirPongSH(ivec2 pix, const SH sh)
 vec3 texelFetchNormal(const ivec2 pix)
 {
     return decodeNormal(texelFetch(framebufNormal_Sampled, pix, 0).r);
-} 
+}
 
 vec3 texelFetchNormal_Prev(const ivec2 pix)
 {
@@ -504,19 +469,16 @@ vec3 texelFetchNormalGeometry_Prev(const ivec2 pix)
 
 uvec4 textureGatherEncNormalGeometry_Prev(const vec2 uv)
 {
-    // get R components of 4 texels 
     return textureGather(usampler2D(framebufNormalGeometry_Prev_Sampled, framebufNormalGeometry_Prev_Sampler), uv, 0);
 }
 
 uint texelFetchEncNormal(const ivec2 pix)
 {
-    // fetch encoded normal
     return texelFetch(framebufNormal_Sampled, pix, 0).r;
 }
 
 uint texelFetchEncNormalGeometry(const ivec2 pix)
 {
-    // fetch encoded geometry normal
     return texelFetch(framebufNormalGeometry_Sampled, pix, 0).r;
 }
 
@@ -535,19 +497,16 @@ bool isSkyPix(const ivec2 pix)
     return texelFetch(framebufIsSky_Sampled, pix, 0).r != 0;
 }
 
-// t == 0
 bool wasOnlyPrimary( float t )
 {
     return abs( t ) < 0.5;
 }
 
-// t == -1: was refl/refr without a split, e.g. portal/mirror
 bool wasWithoutSplit( float t )
 {
     return t < 0.5;
 }
 
-// t == 1: was refl/refr with a split, e.g. water/glass
 bool wasSplit( float t )
 {
     return t > 0.5;
@@ -558,7 +517,7 @@ bool needResolveCheckerboard( const ivec2 checkerboardPix )
     float t = texelFetch( framebufThroughput_Sampled, checkerboardPix, 0 ).a;
     return wasSplit( t );
 }
-#endif // DESC_SET_FRAMEBUFFERS
+#endif
 
 
 
@@ -601,4 +560,4 @@ vec3 getRayDirAY( vec2 inUV )
     const float AY = 1.0 / globalUniform.renderHeight;
     return getRayDir( inUV + vec2( 0, AY ) );
 }
-#endif // DESC_SET_GLOBAL_UNIFORM
+#endif

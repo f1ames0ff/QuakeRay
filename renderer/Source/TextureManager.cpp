@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -546,6 +546,59 @@ uint32_t TextureManager::CreateMaterial( VkCommandBuffer             cmd,
     }
 
     return materialIndex;
+}
+
+bool TextureManager::CanUpdateMaterialContents(uint32_t materialIndex, QrExtent2D size) const
+{
+    const auto it = materials.find(materialIndex);
+
+    if (it == materials.end() || !it->second.isUpdateable)
+    {
+        return false;
+    }
+
+    if (size.width == 0 || size.height == 0)
+    {
+        return false;
+    }
+
+    bool anyTexture = false;
+
+    for (uint32_t i = 0; i < TEXTURES_PER_MATERIAL_COUNT; i++)
+    {
+        const uint32_t textureIndex = it->second.textures.indices[i];
+
+        if (textureIndex == EMPTY_TEXTURE_INDEX)
+        {
+            continue;
+        }
+
+        const Texture &texture = textures[textureIndex];
+
+        if (texture.image == VK_NULL_HANDLE)
+        {
+            continue;
+        }
+
+        if (texture.format != VK_FORMAT_R8G8B8A8_UNORM && texture.format != VK_FORMAT_R8G8B8A8_SRGB)
+        {
+            return false;
+        }
+
+        if (texture.baseSize.width != size.width || texture.baseSize.height != size.height)
+        {
+            return false;
+        }
+
+        if (!textureUploader->CanUpdateImageFromHostData(texture.image))
+        {
+            return false;
+        }
+
+        anyTexture = true;
+    }
+
+    return anyTexture;
 }
 
 bool TextureManager::UpdateMaterial(VkCommandBuffer cmd, uint32_t frameIndex, const QrMaterialUpdateInfo &updateInfo)

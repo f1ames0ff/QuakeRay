@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -66,10 +66,11 @@ Swapchain::Swapchain(
     , cmdManager(std::move(_cmdManager))
     , surfaceFormat{}
     , presentModeVsync(VK_PRESENT_MODE_FIFO_KHR)
-    , presentModeImmediate(VK_PRESENT_MODE_FIFO_KHR)
-    , requestedVsync(true)
+    , presentModeAdaptive(VK_PRESENT_MODE_FIFO_KHR)
+    , presentModeMailbox(VK_PRESENT_MODE_FIFO_KHR)
+    , requestedPresentMode(QR_PRESENT_MODE_MAILBOX)
     , surfaceExtent{ UINT32_MAX, UINT32_MAX }
-    , isVsync(true)
+    , isPresentMode(QR_PRESENT_MODE_MAILBOX)
     , swapchain(VK_NULL_HANDLE)
     , swapchainImages{}
     , swapchainViews{}
@@ -102,11 +103,11 @@ Swapchain::Swapchain(
     {
         if (mode == VK_PRESENT_MODE_MAILBOX_KHR)
         {
-            presentModeImmediate = mode;
+            presentModeMailbox = mode;
         }
         else if (mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR)
         {
-            presentModeVsync = mode;
+            presentModeAdaptive = mode;
         }
     }
 }
@@ -129,6 +130,12 @@ bool Swapchain::IsExtentOptimal() const
     VK_CHECKERROR(r);
 
     return cachedIsExtentOptimal;
+}
+
+bool Swapchain::HasValidExtent() const
+{
+    ResetSurfaceCapabilitiesCache();
+    return IsExtentOptimal();
 }
 
 VkResult Swapchain::GetSurfaceCapabilities(VkSurfaceCapabilitiesKHR *outCaps) const
@@ -173,10 +180,30 @@ VkExtent2D Swapchain::GetOptimalExtent() const
     return surfCapabilities.currentExtent;
 }
 
-bool Swapchain::RequestVsync(bool enable)
+bool Swapchain::RequestPresentMode(QrPresentMode mode)
 {
-    requestedVsync = enable;
-    return requestedVsync != isVsync;
+    requestedPresentMode = mode;
+    return requestedPresentMode != isPresentMode;
+}
+
+const char *Swapchain::GetPresentModeName() const
+{
+    switch (isPresentMode)
+    {
+    case QR_PRESENT_MODE_VSYNC:     return "fifo";
+    case QR_PRESENT_MODE_ADAPTIVE:  return "fifo_relaxed";
+    default:                        return "mailbox";
+    }
+}
+
+VkPresentModeKHR Swapchain::GetVkPresentMode(QrPresentMode mode) const
+{
+    switch (mode)
+    {
+    case QR_PRESENT_MODE_VSYNC:     return presentModeVsync;
+    case QR_PRESENT_MODE_ADAPTIVE:  return presentModeAdaptive;
+    default:                        return presentModeMailbox;
+    }
 }
 
 void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
@@ -185,9 +212,9 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 
     const VkExtent2D requestedExtent = GetOptimalExtent();
 
-    if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedVsync != isVsync)
+    if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode)
     {
-        TryRecreate(requestedExtent, requestedVsync);
+        TryRecreate(requestedExtent, requestedPresentMode);
     }
 
     while (true)
@@ -204,7 +231,7 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
         {
-            TryRecreate(requestedExtent, requestedVsync);
+            TryRecreate(requestedExtent, requestedPresentMode);
             continue;
         }
 
@@ -227,13 +254,13 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
     {
         ResetSurfaceCapabilitiesCache();
-        TryRecreate(GetOptimalExtent(), requestedVsync);
+        TryRecreate(GetOptimalExtent(), requestedPresentMode);
     }
 }
 
-bool Swapchain::TryRecreate(const VkExtent2D &newExtent, bool vsync)
+bool Swapchain::TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode)
 {
-    if (AreExtentsEqual(surfaceExtent, newExtent) && isVsync == vsync)
+    if (AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode)
     {
         return false;
     }
@@ -241,14 +268,14 @@ bool Swapchain::TryRecreate(const VkExtent2D &newExtent, bool vsync)
     cmdManager->WaitDeviceIdle();
 
     const VkSwapchainKHR oldSwapchain = DestroyWithoutSwapchain();
-    Create(newExtent.width, newExtent.height, vsync, oldSwapchain);
+    Create(newExtent.width, newExtent.height, mode, oldSwapchain);
 
     return true;
 }
 
-void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwapchainKHR oldSwapchain)
+void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode, VkSwapchainKHR oldSwapchain)
 {
-    isVsync = vsync;
+    isPresentMode = mode;
     surfaceExtent = { newWidth, newHeight };
 
     ResetSurfaceCapabilitiesCache();
@@ -292,7 +319,7 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, bool vsync, VkSwap
     swapchainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchainInfo.preTransform = surfCapabilities.currentTransform;
     swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    swapchainInfo.presentMode = vsync ? presentModeVsync : presentModeImmediate;
+    swapchainInfo.presentMode = GetVkPresentMode(mode);
     swapchainInfo.clipped = VK_FALSE;
     swapchainInfo.oldSwapchain = oldSwapchain;
 

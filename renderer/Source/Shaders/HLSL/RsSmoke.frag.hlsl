@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 // HLSL counterpart of GLSL/RsSmoke.frag, the smoke billboard fragment stage. The body is a
 // statement by statement port into the already ported headers -- ShaderCommonHLSLFunc.hlsli

@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #ifndef RAYGEN_COMMON_H_
 #define RAYGEN_COMMON_H_
@@ -111,10 +108,8 @@ uint getReflectionRefractionCullMask(uint surfInstCustomIndex, uint geometryInst
 
     if( ( geometryInstanceFlags & GEOM_INST_FLAG_IGNORE_REFRACT_AFTER ) != 0 )
     {
-        // ignore refract geometry if requested
         world = world & ( ~INSTANCE_MASK_REFRACT );
 
-        // if it's also a first-person geometry, then ignore everything first-person
         if ((surfInstCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON) != 0)
         {
             return world;
@@ -123,14 +118,11 @@ uint getReflectionRefractionCullMask(uint surfInstCustomIndex, uint geometryInst
 
     if ((surfInstCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON) != 0)
     {
-        // ignore first-person viewer -- on first-person
         return world | INSTANCE_MASK_FIRST_PERSON;
     }
-    
-    return isRefraction ? 
-        // no first-person viewer in refractions
+
+    return isRefraction ?
         world | INSTANCE_MASK_FIRST_PERSON :
-        // no first-person in reflections
         world | INSTANCE_MASK_FIRST_PERSON_VIEWER;
 }
 
@@ -140,17 +132,14 @@ uint getShadowCullMask(uint surfInstCustomIndex)
 
     if ((surfInstCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON) != 0)
     {
-        // no first-person viewer shadows -- on first-person
         return world | INSTANCE_MASK_FIRST_PERSON;
     }
     else if ((surfInstCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON_VIEWER) != 0)
     {
-        // no first-person shadows -- on first-person viewer
         return world | INSTANCE_MASK_FIRST_PERSON_VIEWER;
     }
     else
     {
-        // no first-person shadows -- on world
         return world | INSTANCE_MASK_FIRST_PERSON_VIEWER;
     }
 }
@@ -158,20 +147,17 @@ uint getShadowCullMask(uint surfInstCustomIndex)
 uint getIndirectIlluminationCullMask(uint surfInstCustomIndex)
 {
     const uint world = globalUniform.rayCullMaskWorld;
-    
+
     if ((surfInstCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON) != 0)
     {
-        // no first-person viewer indirect illumination -- on first-person
         return world | INSTANCE_MASK_FIRST_PERSON;
     }
     else if ((surfInstCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON_VIEWER) != 0)
     {
-        // no first-person indirect illumination -- on first-person viewer
         return world | INSTANCE_MASK_FIRST_PERSON_VIEWER;
     }
     else
     {
-        // no first-person indirect illumination -- on first-person viewer
         return world | INSTANCE_MASK_FIRST_PERSON_VIEWER;
     }
 }
@@ -218,14 +204,14 @@ ShPayload tracePrimaryRay(vec3 origin, vec3 direction)
 
     traceRayEXT(
         topLevelAS,
-        getAdditionalRayFlags(), 
-        cullMask, 
-        0, 0,     // sbtRecordOffset, sbtRecordStride
-        SBT_INDEX_MISS_DEFAULT, 
-        origin, globalUniform.primaryRayMinDist, direction, globalUniform.rayLength, 
+        getAdditionalRayFlags(),
+        cullMask,
+        0, 0,
+        SBT_INDEX_MISS_DEFAULT,
+        origin, globalUniform.primaryRayMinDist, direction, globalUniform.rayLength,
         PAYLOAD_INDEX_DEFAULT);
 
-    return g_payload; 
+    return g_payload;
 }
 
 ShPayload traceReflectionRefractionRay(vec3 origin, vec3 direction, uint surfInstCustomIndex, uint geometryInstanceFlags, bool isRefraction)
@@ -236,14 +222,14 @@ ShPayload traceReflectionRefractionRay(vec3 origin, vec3 direction, uint surfIns
 
     traceRayEXT(
         topLevelAS,
-        getAdditionalRayFlags(), 
-        cullMask, 
-        0, 0,     // sbtRecordOffset, sbtRecordStride
-        SBT_INDEX_MISS_DEFAULT, 
-        origin, 0.001, direction, globalUniform.rayLength, 
+        getAdditionalRayFlags(),
+        cullMask,
+        0, 0,
+        SBT_INDEX_MISS_DEFAULT,
+        origin, 0.001, direction, globalUniform.rayLength,
         PAYLOAD_INDEX_DEFAULT);
 
-    return g_payload; 
+    return g_payload;
 }
 
 ShPayload traceIndirectRay(uint surfInstCustomIndex, vec3 surfPosition, vec3 bounceDirection)
@@ -254,12 +240,12 @@ ShPayload traceIndirectRay(uint surfInstCustomIndex, vec3 surfPosition, vec3 bou
 
     traceRayEXT(
         topLevelAS,
-        getAdditionalRayFlags(), 
-        cullMask, 
-        0, 0,     // sbtRecordOffset, sbtRecordStride
-        SBT_INDEX_MISS_DEFAULT, 
-        surfPosition, 0.001, bounceDirection, globalUniform.rayLength, 
-        PAYLOAD_INDEX_DEFAULT); 
+        getAdditionalRayFlags(),
+        cullMask,
+        0, 0,
+        SBT_INDEX_MISS_DEFAULT,
+        surfPosition, 0.001, bounceDirection, globalUniform.rayLength,
+        PAYLOAD_INDEX_DEFAULT);
 
     return g_payload;
 }
@@ -267,7 +253,6 @@ ShPayload traceIndirectRay(uint surfInstCustomIndex, vec3 surfPosition, vec3 bou
 
 
 #ifdef DESC_SET_CUBEMAPS
-// Get sky color for primary visibility, i.e. without skyColorMultiplier
 vec3 getSkyPrimary(vec3 direction)
 {
     uint skyType = globalUniform.skyType;
@@ -282,7 +267,7 @@ vec3 getSkyPrimary(vec3 direction)
     if (skyType == SKY_TYPE_CUBEMAP)
     {
         direction = mat3(globalUniform.skyCubemapRotationTransform) * direction;
-        
+
         return texture(samplerCube(globalCubemaps[nonuniformEXT(globalUniform.skyCubemapIndex)], globalCubemaps_Sampler[nonuniformEXT(globalUniform.skyCubemapIndex)]), direction).rgb;
     }
 
@@ -327,9 +312,6 @@ vec3 getSkyFilteredMultiplied(vec3 direction, float lod)
 {
     vec3 col = getSkyFiltered(direction, lod);
 #ifdef DESC_SET_RENDER_CUBEMAP
-    // The procedural sky bakes the multiplier into the cubemaps it fills -- the
-    // reflection path above reads them without one -- so scaling it again here
-    // would apply the sky brightness to the ambient light twice.
     if (globalUniform.skyType == SKY_TYPE_PROCEDURAL)
     {
         return col;
@@ -354,12 +336,11 @@ float evalSkyNeePdf(const vec3 n, const vec3 direction)
 #if LIGHT_SAMPLE_METHOD != LIGHT_SAMPLE_METHOD_NONE
 
 #define SHADOW_RAY_EPS       0.01
-#define RAY_ORIGIN_LEAK_BIAS 0.01    // offset a bit towards a viewer to prevent light leaks from the other side of polygons
+#define RAY_ORIGIN_LEAK_BIAS 0.01
 
-bool traceShadowRay(uint surfInstCustomIndex, vec3 start, vec3 end, bool ignoreFirstPersonViewer /* = false */)
+bool traceShadowRay(uint surfInstCustomIndex, vec3 start, vec3 end, bool ignoreFirstPersonViewer  )
 {
-    // prepare shadow payload
-    g_payloadShadow.isShadowed = 1;  
+    g_payloadShadow.isShadowed = 1;
 
     uint cullMask = getShadowCullMask(surfInstCustomIndex);
 
@@ -373,12 +354,12 @@ bool traceShadowRay(uint surfInstCustomIndex, vec3 start, vec3 end, bool ignoreF
     l /= maxDistance;
 
     traceRayEXT(
-        topLevelAS, 
-        gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsTerminateOnFirstHitEXT | getAdditionalRayFlags(), 
-        cullMask, 
-        0, 0, 	// sbtRecordOffset, sbtRecordStride
-        SBT_INDEX_MISS_SHADOW, 		// shadow missIndex
-        start, 0.001, l, maxDistance - SHADOW_RAY_EPS, 
+        topLevelAS,
+        gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsTerminateOnFirstHitEXT | getAdditionalRayFlags(),
+        cullMask,
+        0, 0,
+        SBT_INDEX_MISS_SHADOW,
+        start, 0.001, l, maxDistance - SHADOW_RAY_EPS,
         PAYLOAD_INDEX_SHADOW);
 
     return g_payloadShadow.isShadowed == 1;
@@ -418,11 +399,7 @@ float traceSunVisibility(const Surface surf, const LightSample sunLight, out boo
         return 0.0;
     }
 
-    /* The host proved for each cluster whether any sun ray can still leave it through the
-       sky (Q2RTX's sky_visibility gate); where it cannot, the shadow ray always misses
-       the sky, so the cluster keeps its darkness without paying for the ray. Clusters the
-       host never classified keep tracing. This is the bit test of q2ClusterSeesSky from
-       Q2LightLists.h, inlined because this header is compiled before that one. */
+
     const uint sunCluster = surf.cluster;
     if (sunCluster < uint(Q2_MAX_CLUSTERS) &&
         (q2ClusterSkyVis[sunCluster >> 5] & (1u << (sunCluster & 31u))) == 0u)
@@ -442,7 +419,7 @@ float traceSkyVisibility(const Surface surf, const vec3 skyDirection)
     const bool isShadowed = traceShadowRay(surf.instCustomIndex, start, end, false);
     return float(!isShadowed);
 }
-#endif // LIGHT_SAMPLE_METHOD != LIGHT_SAMPLE_METHOD_NONE
+#endif
 
 
 
@@ -480,8 +457,6 @@ void shade(const Surface surf, const LightSample light, float oneOverPdf, out ve
     specular *= oneOverPdf;
 }
 
-// Diffuse-only variant of shade() for bounce paths that discard the specular output.
-// Produces exactly the same `diffuse` value as shade(), minus the GGX evaluation.
 void shadeDiffuse(const Surface surf, const LightSample light, float oneOverPdf, out vec3 diffuse)
 {
     vec3 l = safeNormalize(light.position - surf.position);
@@ -504,8 +479,6 @@ void shadeDiffuse(const Surface surf, const LightSample light, float oneOverPdf,
 #define RAY_STATS_CATEGORY_PRIMARY            0
 #define RAY_STATS_CATEGORY_REFLECTION_REFRACTION 1
 #define RAY_STATS_CATEGORY_INDIRECT           2
-// NEE visibility rays are counted per casting pass, because the two passes that
-// trace them are timed separately (GPU_PASS_DIRECT and GPU_PASS_INDIRECT).
 #define RAY_STATS_CATEGORY_SHADOW_DIRECT      3
 #define RAY_STATS_CATEGORY_SHADOW_INDIRECT    4
 
@@ -522,4 +495,4 @@ void rayStatsAdd(const uint category, const uint count)
     }
 }
 
-#endif // RAYGEN_COMMON_H_
+#endif

@@ -1,22 +1,19 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #version 460
 
@@ -51,19 +48,19 @@ void main()
     float rnd = effect_getRandomSample(ivec2(0, 0), push.startFrameId);
 
     float x = strip / float(count) + rnd * 10;
-  
+
     const float maxDiff = 0.1f;
     float wave = maxDiff * sin(20 * x) * sin(10 * x) * sin(100 * x) + maxDiff;
-    
-    float progress = 
-        max(globalUniform.time - push.beginTime, 0.0) / 
+
+    float progress =
+        max(globalUniform.time - push.beginTime, 0.0) /
         max(push.endTime       - push.beginTime, 0.001);
 
     progress = clamp(progress - wave, 0.0, 1.0);
     progress *= progress;
     progress *= 2;
 
-    
+
     int pix_offset = int(progress * sz.y);
     vec3 c;
 
@@ -75,6 +72,6 @@ void main()
     {
         c = imageLoad(framebufWipeEffectSource, ivec2(pix.x, pix.y - pix_offset)).rgb;
     }
-    
+
     effect_storeToTarget(c, pix);
 }

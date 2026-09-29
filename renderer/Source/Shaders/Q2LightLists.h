@@ -1,6 +1,6 @@
 // Copyright (C) 2018 Tobias Zirr
 // Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This file is a port of shader/light_lists.h from Quake 2 RTX (https://github.com/NVIDIA/Q2RTX),
 // which is distributed under the terms of the GNU General Public License
@@ -166,7 +166,13 @@ float q2LightSelectionMass(const ShLightEncoded encoded, const vec3 p, const vec
         const TexturedAreaLight l = decodeAsTexturedAreaLight(encoded);
         const vec3 center = getTexturedAreaLightCenter(l);
         const DirectionAndLength centerToSurf = calcDirectionAndLength(center, p);
-        return safeSolidAngle(l.area * getGeometryFactorClamped(l.normal, centerToSurf.dir, centerToSurf.len));
+        const float cosNL = max(dot(l.normal, centerToSurf.dir), 0.0);
+        float mass = safeSolidAngle(l.area * getGeometryFactorClamped(l.normal, centerToSurf.dir, centerToSurf.len));
+
+        if (l.coneCosOuter > 0.0)
+            mass *= getSpotFactor(cosNL, l.coneCosInner, l.coneCosOuter);
+
+        return mass;
     }
     else
     {

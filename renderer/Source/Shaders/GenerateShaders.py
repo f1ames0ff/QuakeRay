@@ -1,23 +1,19 @@
-# Copyright (c) 2021 Sultim Tsyrendashiev
-# 
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-# 
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-# 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
+# Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
 
 import sys
 import os
@@ -26,78 +22,43 @@ import subprocess
 import pathlib
 
 
-CACHE_FOLDER_PATH           = "Build/"
-OUTPUT_FOLDER_PATH          = "../../Build/"
-CACHE_FILE_NAME             = "GenerateShadersCache.txt"
-EXTENSIONS                  = [ ".comp", ".vert", "frag", ".rgen", ".rahit", ".rchit", ".rmiss" ]
-DEPENDENCY_EXTENSIONS       = [ ".h", ".inl", ".glsl", ".hlsl", ".hlsli" ]
-DEPENDENCY_FOLDERS          = { "", "../Generated/" }
-# HLSL_FOLDER_PATH holds stage *sources*, not dependencies: keeping it off this list is what lets
-# the build loop see a changed source (its mtime is compared against the cache), because the
-# dependency scan would otherwise seed the cache with the source's own mtime first and the source
-# would look up to date forever. GLSL/ holds the goldens, which nothing includes.
-HLSL_FOLDER_PATH            = "HLSL/"
-SOURCE_FOLDERS              = [ "", HLSL_FOLDER_PATH ]
-DEPENDENCY_FOLDERS_IGNORE   = [ CACHE_FOLDER_PATH, ".vscode/", "GLSL/", HLSL_FOLDER_PATH ]
-DEPENDENCY_IGNORE           = [ "BlueNoiseFileNames.h", "ShaderCommonC.h", "ShaderCommonCFramebuf.h" ]
+CACHE_FOLDER_PATH = "Build/"
+OUTPUT_FOLDER_PATH = "../../Build/"
+CACHE_FILE_NAME = "GenerateShadersCache.txt"
+EXTENSIONS = [".comp", ".vert", "frag", ".rgen", ".rahit", ".rchit", ".rmiss"]
+DEPENDENCY_EXTENSIONS = [".h", ".inl", ".glsl", ".hlsl", ".hlsli"]
+DEPENDENCY_FOLDERS = {"", "../Generated/"}
+HLSL_FOLDER_PATH = "HLSL/"
+SOURCE_FOLDERS = ["", HLSL_FOLDER_PATH]
+DEPENDENCY_FOLDERS_IGNORE = [CACHE_FOLDER_PATH, ".vscode/", "GLSL/", HLSL_FOLDER_PATH]
+DEPENDENCY_IGNORE = ["BlueNoiseFileNames.h", "ShaderCommonC.h", "ShaderCommonCFramebuf.h"]
 
-# HLSL sources are named <name><stage>.hlsl (e.g. CmBloomUpsample.comp.hlsl), so the produced
-# blob keeps the name the host already looks up (CmBloomUpsample.comp.spv). Plain .hlsl and
-# .hlsli files are headers and are never compiled on their own.
-# The ported stage sources live in HLSL/ beside their GLSL originals in GLSL/; the root holds the
-# shared headers (.hlsli and the goldens). Both folders below are scanned for stage sources, the
-# root first.
-# Ported shaders move their GLSL original to GLSL/ so that CheckShaderProperties.py can keep
-# comparing them against the HLSL replacement.
-HLSL_SUFFIX                 = ".hlsl"
-HLSL_PROFILES               = {
-    ".comp":    "cs_6_2",
-    ".vert":    "vs_6_2",
-    "frag":     "ps_6_2",
-    ".rgen":    "lib_6_3",
-    ".rahit":   "lib_6_3",
-    ".rchit":   "lib_6_3",
-    ".rmiss":   "lib_6_3",
+HLSL_SUFFIX = ".hlsl"
+HLSL_PROFILES = {
+    ".comp": "cs_6_2",
+    ".vert": "vs_6_2",
+    "frag": "ps_6_2",
+    ".rgen": "lib_6_3",
+    ".rahit": "lib_6_3",
+    ".rchit": "lib_6_3",
+    ".rmiss": "lib_6_3",
 }
 
-# dxc adds one of the two acceleration-structure providers to every module at module level, even
-# one that does not trace, and picks SPV_KHR_ray_query by default. Its own capability trim pass
-# was expected to remove the pair again, but the SPIR-V grammar lists RayQueryKHR among the
-# capabilities of OpTypeAccelerationStructureKHR, so every RT module (which has that type) reads
-# as a user of ray query and keeps the capability along with the extension, although no
-# OpRayQuery* instruction exists. The validation layer then rejects the blob on a device that does
-# not enable the ray query feature (VUID-VkShaderModuleCreateInfo-pCode-08740).
-# An explicit extension list replaces dxc's default choice; without SPV_KHR_ray_query dxc declares
-# SPV_KHR_ray_tracing instead, the extension these shaders really use (OpTraceRayKHR and
-# OpTypeAccelerationStructureKHR come from it). The list names every extension the sources need on
-# vulkan1.2: dxc fails the build with an explicit error if one of them starts needing an extension
-# that is missing here, so this is the only place the permitted set is maintained.
-# SPV_KHR_compute_shader_derivatives is on it for a compute shader that samples with an implicit
-# lod: dxc keeps the sample implicit and adds the derivative group execution mode, which requires
-# the capability the extension provides. No production compute shader samples that way today, but
-# the two probes CheckShaderProperties.py compiles do, and both tools pass the same list.
-SPIRV_EXTENSIONS            = [
+SPIRV_EXTENSIONS = [
     "SPV_KHR_ray_tracing",
     "SPV_EXT_descriptor_indexing",
     "SPV_KHR_compute_shader_derivatives",
 ]
 
-# SPV_KHR_ray_query can not join the list above. That list is an allow-list of the compiler, and
-# with the ray query extension permitted dxc declares RayQueryKHR and SPV_KHR_ray_query for every
-# module that carries OpTypeAccelerationStructureKHR, TraceRay-only ones included (measured:
-# RtRaygenDirect.rgen gets the extension beside SPV_KHR_ray_tracing once it is allowed).
-# CheckShaderProperties.py compares the capabilities and extensions of the two halves, and the
-# glslc goldens of the TraceRay modules declare only SPV_KHR_ray_tracing, so a global allowance
-# would turn every RT pair red. The extension is therefore allowed per translation unit: a source
-# whose comment-stripped text, or the text of anything it includes, uses the RayQuery type gets it
-# (RsSmoke.vert.hlsl through SmokeLight.hlsli), everything else keeps the shared list.
-SPIRV_RAY_QUERY_EXTENSION   = "SPV_KHR_ray_query"
+SPIRV_RAY_QUERY_EXTENSION = "SPV_KHR_ray_query"
 
 
 CACHE_FILE_DEPENDENCY_MAP_SEPARATOR_LINE = "DEPENDENCY\n"
 
 
 MARKED_FILES = []
+
+
 def wereDependentModified(dependencyMap, modifiedDependent, cache, baseFile, firstTime=True):
     global MARKED_FILES
     if firstTime:
@@ -124,8 +85,6 @@ def printInPowerShell(msg, color):
 
 
 def getDependentFoldersProcArg():
-    # The root ("") is part of DEPENDENCY_FOLDERS and reaches the compiler as `-I .`: a stage source
-    # in HLSL/ includes the shared headers by their bare names, and its own folder is not the root.
     return [a for p in DEPENDENCY_FOLDERS for a in ("-I", p if p != "" else ".")]
 
 
@@ -153,16 +112,13 @@ def getOutputFilename(filename):
     return OUTPUT_FOLDER_PATH + base + ".spv"
 
 
-# Returns the command line that compiles the shader to the SPIR-V blob the host loads.
-# GLSL goes through glslc, HLSL goes through dxc, which emits SPIR-V for Vulkan and can also
-# emit DXIL for D3D12 from the very same source.
 def getCompileCommand(filename, outputFilename):
     stage = getHLSLStage(filename)
 
     if stage is None:
         return [
             "glslc", "--target-env=vulkan1.2"
-            ] + getDependentFoldersProcArg() + [
+        ] + getDependentFoldersProcArg() + [
             filename,
             "-o", outputFilename]
 
@@ -175,17 +131,11 @@ def getCompileCommand(filename, outputFilename):
         "-spirv",
         "-T", HLSL_PROFILES[stage],
         "-fspv-target-env=vulkan1.2"
-        ] + ["-fspv-extension=" + ext for ext in extensions] + getDependentFoldersProcArg() + [
+    ] + ["-fspv-extension=" + ext for ext in extensions] + getDependentFoldersProcArg() + [
         filename,
         "-Fo", outputFilename]
 
 
-# True when the translation unit of filename uses the HLSL RayQuery type, which is what decides
-# whether SPV_KHR_ray_query is allowed for its compile (see above). The search runs over the
-# comment-stripped text and follows the #include lines through DEPENDENCY_FOLDERS, so a header
-# such as SmokeLight.hlsli is enough to make the stage that includes it a ray query user. The same
-# question is answered the same way in CheckShaderProperties.py, because the host build and the
-# checker have to compile the HLSL half identically.
 def sourceUsesRayQuery(filename, visited=None):
     visited = visited if visited is not None else set()
 
@@ -218,12 +168,12 @@ def sourceUsesRayQuery(filename, visited=None):
 
 
 def abspath(filename):
-    return os.path.abspath(filename).replace('\\','/')
+    return os.path.abspath(filename).replace('\\', '/')
 
 
 def getAllSubfolders(folder):
     folder = folder if folder != "" else "."
-    return {os.path.relpath(root).replace('\\','/') + '/' for root, _, _ in os.walk(folder) if abspath(root) != abspath(folder)}
+    return {os.path.relpath(root).replace('\\', '/') + '/' for root, _, _ in os.walk(folder) if abspath(root) != abspath(folder)}
 
 
 def fillDependencyFolders():
@@ -260,9 +210,6 @@ def main():
         subprocess.run(["python", "../Generated/GenerateShaderCommon.py", "--path", "../Generated/"])
     if "-psout" in sys.argv or "--psout" in sys.argv or "-ps" in sys.argv or "--ps" in sys.argv:
         powerShellOutput = True
-    #elif len(sys.argv) > 1:
-    #    print("> Couldn't parse arguments")
-    #    return
 
     fillDependencyFolders()
 
@@ -299,12 +246,10 @@ def main():
                     else:
                         words = line.split()
                         if not parsingDpdncy and len(words) >= 2:
-                            # filename + st_mtime
                             cache[words[0]] = int(words[1])
 
                         if parsingDpdncy:
                             if len(words) >= 2:
-                                # filename + (list of files it dependent on)
                                 checkedDpds = set()
                                 dpds = set(words[1:])
                                 for dpd in dpds:
@@ -316,7 +261,7 @@ def main():
             except:
                 cache = {}
                 dependencyMap = {}
-    
+
     modifiedDependent = set()
 
     msgWasAnyShaderRebuilt = False
@@ -361,10 +306,6 @@ def main():
                                 dpd = abspath(dpdFolder + dpdFile)
                                 if os.path.exists(dpd) and dpd != filename:
                                     dependencyMap[filename].add(dpd)
-
-    #if wereDependentModified and not forceRebuild:
-    #    print("> Dependency files were modified. Rebuilding all...")
-    # print()
 
     for filenameRelative in [folder + entry for folder in SOURCE_FOLDERS for entry in os.listdir(folder or ".")]:
         filename = abspath(filenameRelative)
@@ -415,16 +356,12 @@ def main():
 
                 msgErrorCount += 1
 
-                # Do not leave the previously built blob behind: a failed build must not be
-                # masked by deploying the stale one.
                 if os.path.exists(outputFilename):
                     os.remove(outputFilename)
 
                 if filename in cache:
                     del cache[filename]
             else:
-                # dxc prints warnings that do not fail the build, e.g. about attributes that
-                # only apply to one of the two backends.
                 if len(compilerOutput) > 0:
                     if powerShellOutput:
                         printInPowerShell(compilerOutput, "Yellow")
@@ -442,9 +379,6 @@ def main():
         for name, arr in dependencyMap.items():
             arrStr = " ".join(arr)
             cacheFile.write(name + " " + arrStr + "\n")
-
-    #if wereDependentModified:
-    #    print()
 
     msg = ""
     color = ""
@@ -468,6 +402,5 @@ def main():
         sys.exit(1)
 
 
-# main
 if __name__ == "__main__":
     main()

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -165,7 +165,7 @@ class RhiFrameContext;
 // What the legacy chain has around this sequence and the module deliberately does not record:
 //  - `CmQ2Fog` (`ApplyFog`): there is no caller anywhere in the tree (Q2Denoiser.cpp:659-690 is
 //    dead API; the only live fog is the per-segment `Q2_FOG_ACCUM` blend inside `CmQ2Atrous`);
-//  - FSR2/FSR3/DLSS and the `BlitForEffects` tail: the TAAU writes UPSCALED_PING directly and the
+//  - FSR3/DLSS and the `BlitForEffects` tail: the TAAU writes UPSCALED_PING directly and the
 //    present samples it, without the effect/sharpen chain (`rt_bloom` 0, `rt_sharpen` 0 and the
 //    `rt_upscale_*` 0 default configuration make that equivalent, VulkanDevice.cpp:1100-1136);
 //  - the raster world/emissive overlay (`Rasterizer::DrawToFinalImage`, VulkanDevice.cpp:1071):

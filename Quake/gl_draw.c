@@ -293,6 +293,9 @@ qpic_t *Draw_TryCachePic (const char *path, unsigned int texflags)
 	int         i;
 	qpic_t     *dat;
 	glpic_t     gl;
+	byte       *image_data = NULL;
+	char        image_path[MAX_QPATH] = "";
+	int         image_width = 0, image_height = 0;
 
 	for (pic = menu_cachepics, i = 0; i < menu_numcachepics; pic++, i++)
 	{
@@ -305,33 +308,60 @@ qpic_t *Draw_TryCachePic (const char *path, unsigned int texflags)
 	//
 	// load the pic from disk
 	//
-	dat = (qpic_t *)COM_LoadFile (path, NULL);
-	if (!dat)
-		return NULL;
-	SwapPic (dat);
+	if (q_strcasecmp (COM_FileGetExtension (path), "lmp"))
+	{
+		COM_StripExtension (path, image_path, sizeof (image_path));
+		image_data = Image_LoadImage (image_path, &image_width, &image_height);
+	}
 
-	menu_numcachepics++;
-	strcpy (pic->name, path);
+	if (image_data)
+	{
+		menu_numcachepics++;
+		strcpy (pic->name, path);
 
-	// HACK HACK HACK --- we need to keep the bytes for
-	// the translatable player picture just for the menu
-	// configuration dialog
-	if (!strcmp (path, "gfx/menuplyr.lmp"))
-		memcpy (menuplyr_pixels, dat->data, dat->width * dat->height);
+		pic->pic.width = image_width;
+		pic->pic.height = image_height;
 
-	pic->pic.width = dat->width;
-	pic->pic.height = dat->height;
+		gl.gltexture = TexMgr_LoadImage (path, NULL, path, image_width, image_height, SRC_RGBA, image_data, image_path, 0, texflags | TEXPREF_NOPICMIP);
+		gl.sl = 0;
+		gl.sh = 1;
+		gl.tl = 0;
+		gl.th = 1;
 
-	gl.gltexture = TexMgr_LoadImage (
-		path, NULL, path, dat->width, dat->height, SRC_INDEXED, dat->data, path, sizeof (int) * 2, texflags | TEXPREF_NOPICMIP); // johnfitz -- TexMgr
-	gl.sl = 0;
-	gl.sh = 1;
-	gl.tl = 0;
-	gl.th = 1;
+		memcpy (pic->pic.data, &gl, sizeof (glpic_t));
 
-	memcpy (pic->pic.data, &gl, sizeof (glpic_t));
+		Mem_Free (image_data);
+	}
+	else
+	{
+		dat = (qpic_t *)COM_LoadFile (path, NULL);
+		if (!dat)
+			return NULL;
+		SwapPic (dat);
 
-	Mem_Free (dat);
+		menu_numcachepics++;
+		strcpy (pic->name, path);
+
+		// HACK HACK HACK --- we need to keep the bytes for
+		// the translatable player picture just for the menu
+		// configuration dialog
+		if (!strcmp (path, "gfx/menuplyr.lmp"))
+			memcpy (menuplyr_pixels, dat->data, dat->width * dat->height);
+
+		pic->pic.width = dat->width;
+		pic->pic.height = dat->height;
+
+		gl.gltexture = TexMgr_LoadImage (
+			path, NULL, path, dat->width, dat->height, SRC_INDEXED, dat->data, path, sizeof (int) * 2, texflags | TEXPREF_NOPICMIP); // johnfitz -- TexMgr
+		gl.sl = 0;
+		gl.sh = 1;
+		gl.tl = 0;
+		gl.th = 1;
+
+		memcpy (pic->pic.data, &gl, sizeof (glpic_t));
+
+		Mem_Free (dat);
+	}
 
 	return &pic->pic;
 }
@@ -525,8 +555,26 @@ static void Draw_FillCharacterQuad (int x, int y, char num, QrVertex *output, in
 Draw_Character
 ================
 */
+static float canvas_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+static float draw_opacity = 1.0f;
+
+void Draw_SetOpacity (float opacity)
+{
+	draw_opacity = CLAMP (0.0f, opacity, 1.0f);
+}
+
+void GL_SetCanvasColor (float r, float g, float b, float a)
+{
+	canvas_color[0] = r;
+	canvas_color[1] = g;
+	canvas_color[2] = b;
+	canvas_color[3] = a;
+}
+
 void Draw_Character (cb_context_t *cbx, int x, int y, int num)
 {
+	const qboolean alpha_blend = canvas_color[3] * draw_opacity < 1.0f;
+
 	if (y <= -8)
 		return; // totally off screen
 
@@ -546,11 +594,11 @@ void Draw_Character (cb_context_t *cbx, int x, int y, int num)
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
-		.color = RT_COLOR_WHITE,
+		.color = {canvas_color[0], canvas_color[1], canvas_color[2], canvas_color[3] * draw_opacity},
 		.material = char_texture ? char_texture->rtmaterial : QR_NO_MATERIAL,
-		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
-		.blendFuncSrc = 0,
-		.blendFuncDst = 0,
+		.pipelineState = alpha_blend ? QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
+		.blendFuncSrc = alpha_blend ? QR_BLEND_FACTOR_SRC_ALPHA : 0,
+		.blendFuncDst = alpha_blend ? QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : 0,
 	};
 
 	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
@@ -594,6 +642,13 @@ void Draw_StringScaled (cb_context_t *cbx, int x, int y, const char *str, float 
 		use_color.data[3] = 1.0f;
 	}
 
+	use_color.data[0] *= canvas_color[0];
+	use_color.data[1] *= canvas_color[1];
+	use_color.data[2] *= canvas_color[2];
+	use_color.data[3] *= canvas_color[3] * draw_opacity;
+
+	const qboolean alpha_blend = use_color.data[3] < 1.0f;
+
 	QrRasterizedGeometryUploadInfo info = {
 		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN,
 		.vertexCount = num_verts,
@@ -603,9 +658,9 @@ void Draw_StringScaled (cb_context_t *cbx, int x, int y, const char *str, float 
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = use_color,
 		.material = char_texture ? char_texture->rtmaterial : QR_NO_MATERIAL,
-		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
-		.blendFuncSrc = 0,
-		.blendFuncDst = 0,
+		.pipelineState = alpha_blend ? QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
+		.blendFuncSrc = alpha_blend ? QR_BLEND_FACTOR_SRC_ALPHA : 0,
+		.blendFuncDst = alpha_blend ? QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : 0,
 	};
 
 	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
@@ -630,6 +685,8 @@ Draw_Pic -- johnfitz -- modified
 void Draw_Pic (cb_context_t *cbx, int x, int y, qpic_t *pic, float alpha, qboolean alpha_blend)
 {
 	glpic_t gl;
+
+	alpha_blend = alpha_blend || alpha * draw_opacity < 1.0f;
 
 	if (scrap_dirty)
 		Scrap_Upload ();
@@ -682,7 +739,7 @@ void Draw_Pic (cb_context_t *cbx, int x, int y, qpic_t *pic, float alpha, qboole
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
-		.color = {1.0f, 1.0f, 1.0f, alpha},
+		.color = {1.0f, 1.0f, 1.0f, alpha * draw_opacity},
 		.material = gl.gltexture ? gl.gltexture->rtmaterial : QR_NO_MATERIAL,
 		.pipelineState = alpha_blend ? QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
 		.blendFuncSrc = alpha_blend ? QR_BLEND_FACTOR_SRC_ALPHA : 0,
@@ -696,7 +753,7 @@ void Draw_Pic (cb_context_t *cbx, int x, int y, qpic_t *pic, float alpha, qboole
 void Draw_SubPic (cb_context_t *cbx, float x, float y, float w, float h, qpic_t *pic, float s1, float t1, float s2, float t2, float *rgb, float alpha)
 {
 	glpic_t  gl;
-	qboolean alpha_blend = alpha < 1.0f;
+	qboolean alpha_blend = alpha * draw_opacity < 1.0f;
 	if (alpha <= 0.0f)
 		return;
 
@@ -756,7 +813,7 @@ void Draw_SubPic (cb_context_t *cbx, float x, float y, float w, float h, qpic_t 
 		.indexCount = 0,
 		.pIndices = NULL,
 		.transform = RT_TRANSFORM_IDENTITY,
-		.color = {rgb[0], rgb[1], rgb[2], alpha},
+		.color = {rgb[0], rgb[1], rgb[2], alpha * draw_opacity},
 		.material = gl.gltexture ? gl.gltexture->rtmaterial : QR_NO_MATERIAL,
 		.pipelineState = alpha_blend ? QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE : QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST,
 		.blendFuncSrc = alpha_blend ? QR_BLEND_FACTOR_SRC_ALPHA : 0,
@@ -765,6 +822,11 @@ void Draw_SubPic (cb_context_t *cbx, float x, float y, float w, float h, qpic_t 
 
 	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, cbx->cur_viewprojection, &cbx->cur_viewport);
 	QR_CHECK (r);
+}
+
+void Draw_SubPicLinearBlend (cb_context_t *cbx, float x, float y, float w, float h, qpic_t *pic, float s1, float t1, float s2, float t2, float *rgb, float alpha)
+{
+	Draw_SubPic (cbx, x, y, w, h, pic, s1, t1, s2, t2, rgb, alpha);
 }
 
 /*
@@ -938,7 +1000,7 @@ void Draw_Fill (cb_context_t *cbx, int x, int y, int w, int h, int c, float alph
 				pal[c * 4 + 0] / 255.0f,
 				pal[c * 4 + 1] / 255.0f,
 				pal[c * 4 + 2] / 255.0f,
-				alpha,
+				alpha * draw_opacity,
 			},
 		.material = QR_NO_MATERIAL,
 		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE,

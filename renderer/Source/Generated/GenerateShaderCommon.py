@@ -1,4 +1,4 @@
-# Copyright (c) 2026 QuakeRay contributors
+# Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -734,6 +734,9 @@ LIGHT_ENCODED_MEMBERS = [
     (FLOAT32, 4, "data_5",               1),
     (FLOAT32, 4, "data_6",               1),
     (FLOAT32, 4, "data_7",               1),
+    (FLOAT32, 1, "coneCosInner",         1),
+    (FLOAT32, 1, "coneCosOuter",         1),
+    (FLOAT32, 1, "projector",            1),
 ]
 
 TONEMAPPING_MEMBERS = [

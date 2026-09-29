@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -74,6 +74,8 @@ public:
     void UpdateImage(VkCommandBuffer cmd, VkImage targetImage, const void *data);
     void DestroyImage(VkImage image, VkImageView view);
 
+    bool CanUpdateImageFromHostData(VkImage image) const;
+
 protected:
     enum class ImagePrepareType
     {
@@ -113,6 +115,7 @@ private:
         QrExtent2D  imageSize;
         bool        generateMipmaps;
         VkFormat    format;
+        bool        pregenerated;
     };
 
 protected:

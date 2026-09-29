@@ -130,32 +130,32 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float3 rng = float3(0.25, 0.5, 0.75);
 
     // One light per branch of q2LightSelectionMass, encoded with constants so that the branch the
-    // slot belongs to is the one that folds. ShLightEncoded has ten members -- color, lightType and
-    // data_0..data_7, eight float4 -- so every initializer below passes exactly eight; a branch
-    // reads only the fields it names, and every other field is left at zero. HLSL has no struct
-    // constructor (see the header comment), so the ten values are written as a brace initializer in
-    // the declaration order of the generated struct. The mass of the triangle branch reads
-    // data_0..data_2 as its three positions and their w components as the unnormalized normal of
-    // the triangle, the textured area branch reads its polygon out of data_0..data_4 and its plane
-    // out of data_7, and the spot branch reads data_0 as center and radius, data_1 as direction and
-    // data_2.xy as the two cosines
+    // slot belongs to is the one that folds. ShLightEncoded has fourteen members -- color, lightType,
+    // data_0..data_7, the three cone/projector scalars and one pad -- so every initializer below
+    // passes every one of them; a branch reads only the fields it names, and every other field is
+    // left at zero. HLSL has no struct constructor (see the header comment), so the values are
+    // written as a brace initializer in the declaration order of the generated struct. The mass of
+    // the triangle branch reads data_0..data_2 as its three positions and their w components as the
+    // unnormalized normal of the triangle, the textured area branch reads its polygon out of
+    // data_0..data_4 and its plane out of data_7, and the spot branch reads data_0 as center and
+    // radius, data_1 as direction and data_2.xy as the two cosines
     const ShLightEncoded sphereEnc = {
         float3(0.5, 0.25, 0.125), uint(LIGHT_TYPE_SPHERE),
         float4(3.0, 0.0, 4.0, 1.5), float4(0.6, 0.8, 0.0, 0.0), (float4)0.0, (float4)0.0, (float4)0.0,
-        (float4)0.0, (float4)0.0, (float4)0.0 };
+        (float4)0.0, (float4)0.0, (float4)0.0, 0.0f, 0.0f, 0.0f, 0u };
     const ShLightEncoded spotEnc = {
         float3(0.25, 0.5, 0.75), uint(LIGHT_TYPE_SPOT),
         float4(3.0, 0.0, 4.0, 1.5), float4(0.0, -1.0, 0.0, 0.0), float4(0.9, 0.5, 0.0, 0.0),
-        (float4)0.0, (float4)0.0, (float4)0.0, (float4)0.0, (float4)0.0 };
+        (float4)0.0, (float4)0.0, (float4)0.0, (float4)0.0, (float4)0.0, 0.0f, 0.0f, 0.0f, 0u };
     const ShLightEncoded areaEnc = {
         float3(1.0, 1.0, 1.0), uint(LIGHT_TYPE_TEXTURED_AREA),
         float4(1.0, 0.0, 0.0, 2.0), float4(0.0, 2.0, 0.0, 5.0), float4(0.0, 0.0, 3.0, 3.0),
         float4(0.0, 0.0, 1.0, 0.0), float4(0.0, 1.0, 0.0, 0.0), (float4)0.0, (float4)0.0,
-        float4(0.0, 0.0, 1.0, 6.0) };
+        float4(0.0, 0.0, 1.0, 6.0), 0.0f, 0.0f, 0.0f, 0u };
     const ShLightEncoded triEnc = {
         float3(0.5, 0.5, 0.5), uint(LIGHT_TYPE_TRIANGLE),
         float4(2.0, 0.0, 1.0, 0.0), float4(0.0, 2.0, 1.0, 0.0), float4(-2.0, 1.0, 3.0, 6.0),
-        (float4)0.0, (float4)0.0, (float4)0.0, (float4)0.0, (float4)0.0 };
+        (float4)0.0, (float4)0.0, (float4)0.0, (float4)0.0, (float4)0.0, 0.0f, 0.0f, 0.0f, 0u };
 
     float v = 0.0;
 

@@ -1,28 +1,23 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 
-// HLSL counterpart of EfCommon.inl.
 
-
-#if !defined(EFFECT_SOURCE_IS_PING) && !defined(EFFECT_SOURCE_IS_PONG) 
+#if !defined(EFFECT_SOURCE_IS_PING) && !defined(EFFECT_SOURCE_IS_PONG)
     #error Define EFFECT_SOURCE_IS_PING or EFFECT_SOURCE_IS_PONG to boolean value
 #endif
 
@@ -30,7 +25,7 @@
 int2 effect_getFramebufSize()
 {
     uint w, h;
-    framebufUpscaledPing.GetDimensions(w, h); // framebufUpscaledPong has the same size
+    framebufUpscaledPing.GetDimensions(w, h);
     return int2(w, h);
 }
 
@@ -54,21 +49,18 @@ bool effect_isPixValid(int2 pix)
 }
 
 
-// get UV coords in [0..1] range
 float2 effect_getFramebufUV(int2 pix)
 {
     return (float2(pix) + 0.5) * effect_getInverseFramebufSize();
 }
 
 
-// to [-1..1]
 float2 effect_getCenteredFromPix(int2 pix)
 {
     return effect_getFramebufUV(pix) * 2.0 - 1.0;
 }
 
 
-// from [-1..1]
 int2 effect_getPixFromCentered(float2 centered)
 {
     return int2((centered * 0.5 + 0.5) * float2(effect_getFramebufSize()));
@@ -117,9 +109,6 @@ float3 effect_loadFromSource_Centered(float2 centered)
 }
 
 
-// Like the GLSL one, this block pulls Random.hlsli in itself, so the shader has to have included
-// the generated header and Utils.hlsli first. The helpers are pinned by the Random probe; the
-// block itself declares no descriptor.
 #ifdef DESC_SET_RANDOM
 #include "Random.hlsli"
 float effect_getRandomSample(int2 pix, uint frameIndex)
@@ -128,8 +117,6 @@ float effect_getRandomSample(int2 pix, uint frameIndex)
 }
 #endif
 
-// Need these functions as R10G11B10 doesn't allow negative values,
-// and I/Q components can be <0
 #define I_LIMIT 0.6
 #define Q_LIMIT 0.55
 float3 encodeYiqForStorage(float3 yiq)

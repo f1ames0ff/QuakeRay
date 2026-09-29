@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -275,6 +275,17 @@ QrResult qrUpdateMaterialContents(QrInstance qrInstance, const QrMaterialUpdateI
     return Call(qrInstance, &VulkanDevice::UpdateMaterial, pUpdateInfo);
 }
 
+QrResult qrCanUpdateMaterialContents(QrInstance qrInstance, QrMaterial material, QrExtent2D size)
+{
+    if (material == QR_NO_MATERIAL)
+    {
+        return QR_WRONG_ARGUMENT;
+    }
+
+    return Call(qrInstance, &VulkanDevice::CanUpdateMaterialContents, material, size) ? QR_SUCCESS
+                                                                                     : QR_CANT_UPDATE_MATERIAL;
+}
+
 QrResult qrDestroyMaterial(QrInstance qrInstance, QrMaterial material)
 {
     return Call(qrInstance, &VulkanDevice::DestroyMaterial, material);
@@ -313,6 +324,20 @@ QrBool32 qrIsRenderUpscaleTechniqueAvailable(QrInstance qrInstance, QrRenderUpsc
     return Call(qrInstance, &VulkanDevice::IsRenderUpscaleTechniqueAvailable, technique);
 }
 
+QrBool32 qrIsSuspended(QrInstance qrInstance)
+{
+    try
+    {
+        return GetDevice(qrInstance).IsSurfaceUnavailable() ? QR_TRUE : QR_FALSE;
+    }
+    catch (QrException &e)
+    {
+        TryPrintError(qrInstance, e.what());
+    }
+
+    return QR_TRUE;
+}
+
 QrResult qrGetFrameStats(QrInstance qrInstance, uint32_t *pRays, uint32_t *pFpsX10)
 {
     return Call(qrInstance, &VulkanDevice::GetFrameStats, pRays, pFpsX10);
@@ -328,6 +353,11 @@ QrResult qrGetFrameStatsEx(QrInstance qrInstance, QrFrameStats *pStats)
     }
 
     return r;
+}
+
+QrResult qrRequestScreenshot(QrInstance qrInstance, const char *pFilePath)
+{
+    return Call(qrInstance, &VulkanDevice::RequestScreenshot, pFilePath);
 }
 
 const char *qrGetGpuPassName(uint32_t passIndex)

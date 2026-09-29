@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -454,6 +454,7 @@ TextureUploader::UploadResult TextureUploader::UploadImage(const UploadInfo &inf
             .imageSize = size,
             .generateMipmaps = info.useMipmaps,
             .format = info.format,
+            .pregenerated = AreMipmapsPregenerated(info),
         };
     }
     else
@@ -493,6 +494,13 @@ void TextureUploader::UpdateImage(VkCommandBuffer cmd, VkImage targetImage, cons
     info.format = updateInfo.format;
 
     PrepareImage(targetImage, &updateInfo.stagingBuffer, info, ImagePrepareType::UPDATE);
+}
+
+bool TextureUploader::CanUpdateImageFromHostData(VkImage image) const
+{
+    auto it = updateableImageInfos.find(image);
+
+    return it != updateableImageInfos.end() && !it->second.pregenerated;
 }
 
 void TextureUploader::DestroyImage(VkImage image, VkImageView view)

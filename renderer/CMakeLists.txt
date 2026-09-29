@@ -121,7 +121,7 @@ add_compile_definitions(
     # KTX-Software
     KHRONOS_STATIC
     LIBKTX
-    # FSR 2 / FSR 3.1 via prebuilt AMD-signed FidelityFX API DLL
+    # FSR 3.1 via prebuilt AMD-signed FidelityFX API DLL
     QR_USE_FSR3
 )
 
@@ -177,7 +177,7 @@ target_link_libraries(renderer PUBLIC Vulkan::Vulkan)
 # Vulkan backend, nvrhi holds the shared interface and the validation layer).
 target_link_libraries(renderer PRIVATE nvrhi_vk nvrhi)
 
-# FSR 2 / FSR 3.1 — prebuilt AMD-signed FidelityFX API DLL
+# FSR 3.1 — prebuilt AMD-signed FidelityFX API DLL
 if(WIN32)
     set(renderer_FFX_API_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Source/FidelityFX_SDK_1.1.4/src")
     target_sources(renderer PRIVATE "Source/FSR.cpp")

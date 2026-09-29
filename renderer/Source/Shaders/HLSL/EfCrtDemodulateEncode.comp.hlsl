@@ -1,32 +1,25 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
-
-// from https://github.com/libretro/glsl-shaders
 
 
 
 #include "EfSimple.hlsli"
 
-// The argument list is the golden's transposed: HLSL fills rows where GLSL fills columns, and the
-// two objects hold the same element at the same (row, column).
 static const float3x3 yiq_mat = float3x3(
       0.2989, 0.5959, 0.2115,
       0.5870, -0.2744, -0.5229,
@@ -45,15 +38,12 @@ float3 rgb2yiq(float3 col)
 #define ARTIFACTING 0.0
 #define FRINGING 0.0
 
-// Transposed argument list again, for the reason above.
 static const float3x3 mix_mat = float3x3(
 	BRIGHTNESS, ARTIFACTING, ARTIFACTING,
 	FRINGING, 2.0 * SATURATION, 0.0,
 	FRINGING, 0.0, 2.0 * SATURATION
 );
 
-// GLSL mod(x, y) is floor based; HLSL fmod truncates towards zero instead, so the golden's mod()
-// is spelled out as in RaygenPrimary.hlsli.
 float crtDemodulateMod(float x, float y)
 {
     return x - y * floor(x / y);
@@ -70,10 +60,10 @@ float3 demodulateAndEncode(int2 pix)
 	float i_mod = cos(mod_phase);
 	float q_mod = sin(mod_phase);
 
-	yiq.yz *= float2(i_mod, q_mod); // Modulate.
-	yiq = mul(yiq, mix_mat); // Cross-talk.
-	yiq.yz *= float2(i_mod, q_mod); // Demodulate.
-    
+	yiq.yz *= float2(i_mod, q_mod);
+	yiq = mul(yiq, mix_mat);
+	yiq.yz *= float2(i_mod, q_mod);
+
     return yiq;
 }
 
@@ -81,7 +71,7 @@ float3 demodulateAndEncode(int2 pix)
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     const int2 pix = int2(dispatchThreadID.x, dispatchThreadID.y);
-    
+
     if (!effect_isPixValid(pix))
     {
         return;

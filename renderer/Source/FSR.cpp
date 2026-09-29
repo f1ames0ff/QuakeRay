@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -151,7 +151,6 @@ qray::FidelityFX::FSR::FSR(VkDevice _device, VkPhysicalDevice _physDevice, UserP
     , m_pUserPrint(pUserPrint)
     , m_context(nullptr)
     , m_requestedTechnique(QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3)
-    , m_technique(QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3)
     , m_renderWidth(0)
     , m_renderHeight(0)
     , m_displayWidth(0)
@@ -167,14 +166,11 @@ qray::FidelityFX::FSR::~FSR()
 
 void qray::FidelityFX::FSR::SetUpscaleVersion(QrRenderUpscaleTechnique technique)
 {
-    const bool isFsrRequested =
-        technique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2 ||
-        technique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
+    const bool isFsrRequested = technique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
 
     if (!isFsrRequested)
     {
         m_requestedTechnique = technique;
-        m_technique = technique;
 
         if (m_context)
         {
@@ -204,8 +200,7 @@ void qray::FidelityFX::FSR::OnFramebuffersSizeChange(const ResolutionState& reso
     m_displayHeight = resolutionState.upscaledHeight;
     m_hasSize = true;
 
-    if (m_requestedTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2 ||
-        m_requestedTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3)
+    if (m_requestedTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3)
     {
         RecreateContext();
     }
@@ -215,7 +210,7 @@ void qray::FidelityFX::FSR::OnFramebuffersSizeChange(const ResolutionState& reso
     }
 }
 
-uint64_t qray::FidelityFX::FSR::FindVersionId(bool preferFsr3)
+uint64_t qray::FidelityFX::FSR::FindVersionId()
 {
     ffxQueryDescGetVersions q = {};
     q.header.type       = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
@@ -243,7 +238,7 @@ uint64_t qray::FidelityFX::FSR::FindVersionId(bool preferFsr3)
     {
         const char* name = names[i] ? names[i] : "";
 
-        if ((preferFsr3 && name[0] == '3') || (!preferFsr3 && name[0] == '2'))
+        if (name[0] == '3')
         {
             return ids[i];
         }
@@ -256,10 +251,8 @@ bool qray::FidelityFX::FSR::IsUpscaleVersionAvailable(QrRenderUpscaleTechnique t
 {
     switch (technique)
     {
-        case QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2:
-            return FindVersionId(false) != 0;
         case QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3:
-            return FindVersionId(true) != 0;
+            return FindVersionId() != 0;
         default:
             return false;
     }
@@ -274,40 +267,17 @@ void qray::FidelityFX::FSR::RecreateContext()
         return;
     }
 
-    const bool preferFsr3 = (m_requestedTechnique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3);
-    uint64_t versionId = FindVersionId(preferFsr3);
+    uint64_t versionId = FindVersionId();
 
     if (versionId == 0)
     {
-        const char* requested = preferFsr3 ? "FSR 3.1" : "FSR 2";
-        const char* fallback  = preferFsr3 ? "FSR 2" : "FSR 3.1";
-
-        char buf[256];
-        snprintf(buf, sizeof(buf), "FSR: %s is not available, falling back to %s", requested, fallback);
-        OutputDebugStringA(buf);
+        const char* msg = "FSR: no FSR provider found in the FidelityFX DLL";
+        OutputDebugStringA(msg);
         if (m_pUserPrint)
         {
-            m_pUserPrint->Print(buf);
+            m_pUserPrint->Print(msg);
         }
-
-        versionId = FindVersionId(!preferFsr3);
-        if (versionId == 0)
-        {
-            const char* msg = "FSR: no FSR provider found in the FidelityFX DLL";
-            OutputDebugStringA(msg);
-            if (m_pUserPrint)
-            {
-                m_pUserPrint->Print(msg);
-            }
-            return;
-        }
-
-        m_technique = preferFsr3 ? QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2
-                                 : QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
-    }
-    else
-    {
-        m_technique = m_requestedTechnique;
+        return;
     }
 
     ffxOverrideVersion overrideDesc = {};
@@ -342,11 +312,9 @@ void qray::FidelityFX::FSR::RecreateContext()
     pv.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
     ffxQuery(&m_context, &pv.header);
 
-    const char* requestedName = m_technique == QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2 ? "FSR 2" : "FSR 3.1";
-
     char buf[256];
-    snprintf(buf, sizeof(buf), "FSR: requested %s, provider \"%s\" (id=0x%llx)",
-        requestedName, pv.versionName ? pv.versionName : "unknown",
+    snprintf(buf, sizeof(buf), "FSR: requested FSR 3.1, provider \"%s\" (id=0x%llx)",
+        pv.versionName ? pv.versionName : "unknown",
         (unsigned long long)pv.versionId);
     OutputDebugStringA(buf);
     if (m_pUserPrint)

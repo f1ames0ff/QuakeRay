@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -259,7 +259,12 @@ VkDeviceMemory MemoryAllocator::AllocDedicated(const VkMemoryRequirements &memRe
     }
 
     VkDeviceMemory memory = VK_NULL_HANDLE;
-    VK_CHECKERROR(vkAllocateMemory(device, &allocInfo, nullptr, &memory));
+    VkResult r = vkAllocateMemory(device, &allocInfo, nullptr, &memory);
+    if (r == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+    {
+        VK_CHECKERROR_ReportAlloc(memReqs.size, pDebugName);
+    }
+    VK_CHECKERROR(r);
 
     SET_DEBUG_NAME(device, memory, VK_OBJECT_TYPE_DEVICE_MEMORY, pDebugName);
 

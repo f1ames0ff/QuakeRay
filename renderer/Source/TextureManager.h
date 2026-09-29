@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -69,6 +69,7 @@ public:
     uint32_t CreateAnimatedMaterial(VkCommandBuffer cmd, uint32_t frameIndex, const QrAnimatedMaterialCreateInfo &createInfo);
     bool ChangeAnimatedMaterialFrame(uint32_t animMaterial, uint32_t materialFrame);
     bool UpdateMaterial(VkCommandBuffer cmd, uint32_t frameIndex, const QrMaterialUpdateInfo &updateInfo);
+    bool CanUpdateMaterialContents(uint32_t materialIndex, QrExtent2D size) const;
     void DestroyMaterial(uint32_t currentFrameIndex, uint32_t materialIndex);
 
     void CheckForHotReload(VkCommandBuffer cmd, uint32_t frameIndex);

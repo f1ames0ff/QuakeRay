@@ -1,34 +1,27 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #include "EfSimple.hlsli"
 
-// GLSL mod(x, y) is floor based; HLSL fmod truncates towards zero instead, so the golden's mod()
-// is spelled out as in RaygenPrimary.hlsli.
 float hueShiftMod(float x, float y)
 {
     return x - y * floor(x / y);
 }
 
-// http://lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl
 float3 hsv2rgb(float3 c)
 {
     float4 K = float4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
@@ -40,15 +33,14 @@ float3 hsv2rgb(float3 c)
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     const int2 pix = int2(dispatchThreadID.x, dispatchThreadID.y);
-    
+
     if (!effect_isPixValid(pix))
     {
         return;
     }
-    
+
     float3 color = effect_loadFromSource(pix);
 
-    // sample albedo, so dark places will be visible too
     const int2 rendPix = int2(effect_getFramebufUV(pix) * float2(globalUniform.renderWidth, globalUniform.renderHeight));
     const float3 albedo = framebufAlbedo_Sampled.Load(int3(rendPix, 0)).rgb;
 

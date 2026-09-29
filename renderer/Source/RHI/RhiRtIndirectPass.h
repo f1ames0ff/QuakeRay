@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -94,7 +94,7 @@ class RhiRtDirectPass;
 //                                128x128 RGBA8_UNORM with 128 array layers (BlueNoise.cpp:51-55,
 //                                66-74; ShaderCommonC.h:120-122) and rests read-only;
 //   set 6  light sources       - the 5 engine buffers at raw bindings 0 (lightSources,
-//                                StructuredBuffer<ShLightEncoded>, 144 B stride), 4
+//                                StructuredBuffer<ShLightEncoded>, 160 B stride), 4
 //                                (q2LightListOffsets), 5 (q2LightListLights), 6 (q2LightStats, the
 //                                only UAV) and 8 (q2ClusterSkyVis) - exactly the direct pass's five
 //                                (a43_recon.md §1.1). This module binds the direct pass's own layout

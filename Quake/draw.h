@@ -23,6 +23,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef _QUAKE_DRAW_H
 #define _QUAKE_DRAW_H
 
+#define CHARACTER_SIZE 8
+
 // draw.h -- these are the only functions outside the refresh allowed
 // to touch the vid buffer
 
@@ -32,6 +34,8 @@ void    Draw_Init (void);
 void    Draw_Character (cb_context_t *cbx, int x, int y, int num);
 void    Draw_Pic (cb_context_t *cbx, int x, int y, qpic_t *pic, float alpha, qboolean alpha_blend);
 void    Draw_SubPic (cb_context_t *cbx, float x, float y, float w, float h, qpic_t *pic, float s1, float t1, float s2, float t2, float *rgb, float alpha);
+void    Draw_SubPicLinearBlend (cb_context_t *cbx, float x, float y, float w, float h, qpic_t *pic, float s1, float t1, float s2, float t2, float *rgb, float alpha);
+void    Draw_SetOpacity (float opacity);
 void    Draw_TransPicTranslate (cb_context_t *cbx, int x, int y, qpic_t *pic, int top, int bottom); // johnfitz -- more parameters
 void    Draw_ConsoleBackground (cb_context_t *cbx);                                                 // johnfitz -- removed parameter int lines
 void    Draw_TileClear (cb_context_t *cbx, int x, int y, int w, int h);
@@ -47,5 +51,6 @@ void    Draw_NewGame (void);
 
 void GL_Viewport (cb_context_t *cbx, float x, float y, float width, float height, float min_depth, float max_depth);
 void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas); // johnfitz
+void GL_SetCanvasColor (float r, float g, float b, float a);
 
 #endif /* _QUAKE_DRAW_H */

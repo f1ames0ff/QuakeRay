@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -48,13 +48,13 @@ class RhiFrameContext;
 
 // The A5.7 interop module of the FSR 3.1 upscaler: it records the engine's already-created
 // `FidelityFX::FSR` upscale dispatch on the RHI command list, replacing the A4.5 TAAU
-// (`RhiRtComposePass::RenderTaaU`) as the present's source while the frame's technique is FSR2 or
-// FSR3 - the RHI counterpart of the legacy branch `VulkanDevice.cpp:1109-1131`.
+// (`RhiRtComposePass::RenderTaaU`) as the present's source while the frame's technique is
+// FSR 3.1 - the RHI counterpart of the legacy branch `VulkanDevice.cpp:1109-1131`.
 //
 // What it is, and why the engine object. `FidelityFX::FSR` is the open FidelityFX API
 // (`ffx_api/ffx_api.h`, `ffx_upscale.h`, `vk/ffx_api_vk.h`, FSR.cpp:23-25) over a prebuilt signed
-// Vulkan backend; FSR 2 and FSR 3.1 live in that one DLL and the version is selected by the
-// provider query and `ffxOverrideVersion` (FSR.cpp:204-249, :312-314). Under `rhiframe` the engine
+// Vulkan backend; the FSR 3.1 provider lives in that one DLL and is selected by the
+// provider query and `ffxOverrideVersion` (FSR.cpp:213-248, :283-285). Under `rhiframe` the engine
 // object is created (VulkanDevice_Init.cpp:296-299) and subscribed to the framebuffers' size change
 // (:367), so its FFX context, its render/upscale sizes and its jitter phase query already exist in
 // the RHI frame. This module deliberately owns no context: `FSR::Apply` (FSR.h:48-58) is the exact
@@ -149,7 +149,7 @@ class RhiFrameContext;
 //    upscaled output was produced, and the host records the A4.5 `RhiRtComposePass::RenderTaaU`
 //    path for that frame instead (the legacy `else` branch, VulkanDevice.cpp:1132-1136). The
 //    technique selection itself is the host's, exactly the legacy shape
-//    (`renderResolution.IsAmdFsr2Enabled() || IsAmdFsr3Enabled()`); this module reads no cvars;
+//    (`renderResolution.IsAmdFsr3Enabled()`); this module reads no cvars;
 //  - the legacy `BlitForEffects` copy that followed the upscale (VulkanDevice.cpp:1144) has no RHI
 //    counterpart in this cut (no bloom/sharpen chain), and the engine's image shapes allow either
 //    of two wirings:

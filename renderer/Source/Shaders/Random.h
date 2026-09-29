@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #ifndef RANDOM_H_
 #define RANDOM_H_
@@ -31,48 +28,35 @@
 #define RANDOM_SALT_LIGHT_CHOOSE_INDIRECT_BASE 96
 #define RANDOM_SALT_RESAMPLE_INDIRECT_BASE 132
 
-// Sample disk uniformly
-// u1, u2 -- uniform random numbers
 vec2 sampleDisk(float radius, float u1, float u2)
 {
-    // from [0,1] to [0,1)
     u1 *= 0.99;
     u2 *= 0.99;
 
-    // polar mapping
     const float r = radius * sqrt(u1);
     const float phi = 2 * M_PI * u2;
-    
+
     return vec2(
-        r * cos(phi), 
+        r * cos(phi),
         r * sin(phi)
     );
 
-    // pdf = M_PI * radius * radius;
 }
 
-// Sample triangle uniformly
-// u1, u2 -- uniform random numbers
-// "Ray Tracing Gems", Chapter 16: Sampling Transformations Zoo,
-// 16.5.2.1 Warping
 vec3 sampleTriangle(const vec3 p0, const vec3 p1, const vec3 p2, float u1, float u2)
 {
-    // from [0,1] to [0,1)
     u1 *= 0.99;
     u2 *= 0.99;
 
     float beta = 1 - sqrt(u1);
     float gamma = (1 - beta) * u2;
     float alpha = 1 - beta - gamma;
-    
+
     return alpha * p0 + beta * p1 + gamma * p2;
 }
 
-// Sample direction from cosine-weighted unit hemisphere oriented to Z axis
-// u1, u2 -- uniform random numbers
 vec3 sampleHemisphere(float u1, float u2, out float oneOverPdf)
 {
-    // from [0,1] to [0,1)
     u1 *= 0.99;
     u2 *= 0.99;
 
@@ -81,23 +65,17 @@ vec3 sampleHemisphere(float u1, float u2, out float oneOverPdf)
 
     const float z = sqrt(1 - u1);
 
-    // clamp z, so max oneOverPdf is finite (currenty, 10pi)
     oneOverPdf = M_PI / max(z, 0.1);
 
-    return vec3( 
+    return vec3(
         r * cos(phi),
         r * sin(phi),
         z
     );
 }
 
-// Sample a surface point on a unit sphere with given radius
-// u1, u2 -- uniform random numbers
-// "Ray Tracing Gems", Chapter 16: Sampling Transformations Zoo,
-// Octathedral concentric uniform map
 vec3 sampleSphere(float u1, float u2)
 {
-    // from [0,1] to [0,1)
     u1 *= 0.99;
     u2 *= 0.99;
 
@@ -115,10 +93,8 @@ vec3 sampleSphere(float u1, float u2)
         f * sign(u2) * sin(phi),
         sign(d) * (1 - r * r));
 
-    // pdf = 1 / (4 * M_PI)
 }
 
-// "Building an Orthonormal Basis, Revisited"
 void revisedONB(const vec3 n, out vec3 b1, out vec3 b2)
 {
     if(n.z < 0.0)
@@ -139,14 +115,13 @@ void revisedONB(const vec3 n, out vec3 b1, out vec3 b2)
     }
 }
 
-// "Building an Orthonormal Basis from a 3D Unit Vector Without Normalization", Frisvad
 void frisvadONB(const vec3 n, out vec3 b1, out vec3 b2)
 {
     if(n.z < -0.9999999)
     {
         b1 = vec3( 0.0, -1.0, 0.0);
         b2 = vec3( -1.0, 0.0, 0.0);
-        
+
         return;
     }
 
@@ -163,26 +138,18 @@ mat3 getONB(const vec3 n)
     basis[2] = n;
 
     revisedONB(n, basis[0], basis[1]);
-    //frisvadONB(n, basis[0], basis[1]); // Note: buggy for VNDF 
 
     return basis;
 }
 
-// Sample direction in a hemisphere oriented to a normal n
 vec3 sampleOrientedHemisphere(const vec3 n, float u1, float u2, out float oneOverPdf)
 {
-    /*vec3 a = sampleHemisphere(u1, u2, oneOverPdf);
 
-    mat3 basis = getONB(n);
-    return normalize(basis * a);*/
 
-    // Ray Tracing Gems, Chapter 16 "Sampling Transformations Zoo"
     float a = 1 - 2 * u1;
     float b = sqrt(1 - a * a);
     float phi = 2 * M_PI * u2;
 
-    // avoid grazing angles (perpendicular to normal), 
-    // so r won't be close to zero
     a *= 0.98;
     b *= 0.98;
 
@@ -201,9 +168,9 @@ vec3 sampleOrientedHemisphere(const vec3 n, float u1, float u2, out float oneOve
 
 uint packRandomSeed(uint textureIndex, uvec2 offset)
 {
-    return 
-        (textureIndex << (BLUE_NOISE_TEXTURE_SIZE_POW * 2)) | 
-        (offset.y     << (BLUE_NOISE_TEXTURE_SIZE_POW    )) | 
+    return
+        (textureIndex << (BLUE_NOISE_TEXTURE_SIZE_POW * 2)) |
+        (offset.y     << (BLUE_NOISE_TEXTURE_SIZE_POW    )) |
         offset.x;
 }
 
@@ -225,7 +192,6 @@ layout(
     #error BLUE_NOISE_TEXTURE_SIZE_POW must be lower, around 6-8
 #endif
 
-// Blue noise random in [0..1] with 1/255 precision
 vec4 rndBlueNoise8(uint seed, uint salt)
 {
     uint texIndex;
@@ -236,10 +202,9 @@ vec4 rndBlueNoise8(uint seed, uint salt)
 
     return texelFetch(blueNoiseTextures, ivec3(offset.x, offset.y, texIndex), 0);
 }
-#endif // DESC_SET_RANDOM
+#endif
 
 
-// https://nullprogram.com/blog/2018/07/31/
 uint wellonsLowBias32(uint x)
 {
     x ^= x >> 16;
@@ -250,11 +215,10 @@ uint wellonsLowBias32(uint x)
     return x;
 }
 
-// Random in [0..1] with 1/65535 precision
 float rnd16(uint seed, uint salt)
 {
     uint rnd = wellonsLowBias32(seed + salt);
-    return 
+    return
         float((rnd & 0x0000FFFF)      ) / float(UINT16_MAX);
 }
 
@@ -276,7 +240,6 @@ vec4 rnd8_4(uint seed, uint salt)
         float((rnd & 0xFF000000) >> 24) / float(UINT8_MAX));
 }
 
-// https://gist.github.com/mpottinger/54d99732d4831d8137d178b4a6007d1a
 uvec3 murmurHash33(uvec3 src) {
     const uint M = 0x5bd1e995u;
     uvec3 h = uvec3(1190494759u, 2147483647u, 3559788179u);
@@ -299,4 +262,4 @@ uint getRandomSeed(const ivec2 pix, uint frameIndex)
     return packRandomSeed(texIndex, offset);
 }
 
-#endif // RANDOM_H_
+#endif

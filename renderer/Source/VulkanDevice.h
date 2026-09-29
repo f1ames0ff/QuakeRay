@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -124,6 +124,7 @@ public:
     void CreateAnimatedMaterial(const QrAnimatedMaterialCreateInfo *pCreateInfo, QrMaterial *pResult);
     void ChangeAnimatedMaterialFrame(QrMaterial animatedMaterial, uint32_t frameIndex);
     void UpdateMaterial(const QrMaterialUpdateInfo *pUpdateInfo);
+    bool CanUpdateMaterialContents(QrMaterial material, QrExtent2D size) const;
     void DestroyMaterial(QrMaterial material);
 
     void CreateSkyboxCubemap(const QrCubemapCreateInfo *pCreateInfo, QrCubemap *pResult);
@@ -133,11 +134,14 @@ public:
     void DrawFrame(const QrDrawFrameInfo *pFrameInfo);
 
     bool IsSuspended() const;
+    bool IsSurfaceUnavailable() const;
     bool IsRenderUpscaleTechniqueAvailable(QrRenderUpscaleTechnique technique) const;
 
     void GetFrameStats(uint32_t *pRays, uint32_t *pFpsX10) const;
 
     void GetFrameStatsEx(QrFrameStats *pStats) const;
+
+    void RequestScreenshot(const char *pFilePath);
 
     void Print(const char *pMessage) const;
 
@@ -179,6 +183,8 @@ private:
     std::shared_ptr<PhysicalDevice>         physDevice;
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
+    std::string                             printedPresentModeName;
+    std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;
 

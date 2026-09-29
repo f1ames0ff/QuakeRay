@@ -24,6 +24,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_misc.c
 
 #include "quakedef.h"
+#include "qr_editor.h"
+#include "rt_lights.h"
 #include <float.h>
 
 // johnfitz -- new cvars
@@ -387,6 +389,10 @@ void R_NewMap (void)
 {
 	int      i;
 
+	// The editor's picked surfaces and its material snapshot belong to the map
+	// that is being replaced; close it before any of that is freed.
+	QR_Editor_OnNewMap ();
+
 	for (i = 0; i < 256; i++)
 		d_lightstylevalue[i] = 264; // normal light value
 
@@ -419,6 +425,7 @@ void R_NewMap (void)
 
 	Sky_NewMap ();        // johnfitz -- skybox in worldspawn
 	Fog_NewMap ();        // johnfitz -- global fog in worldspawn
+	RT_CustomLights_ApplyFog (); // qray -- an authored level's fog wins over the worldspawn key
 	R_ParseWorldspawn (); // ericw -- wateralpha, lavaalpha, telealpha, slimealpha in worldspawn
 	RT_ParseElights ();
 	RT_ParseTeleports();

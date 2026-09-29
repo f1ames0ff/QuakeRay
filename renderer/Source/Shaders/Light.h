@@ -1,22 +1,19 @@
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #ifndef LIGHT_H_
 #define LIGHT_H_
@@ -55,6 +52,9 @@ struct TexturedAreaLight
     float area;
     float textureIndex;
     float meanEmiss;
+    float coneCosInner;
+    float coneCosOuter;
+    float projector;
     int numVerts;
     vec2 uvVerts[MAX_TEXTURED_AREA_LIGHT_VERTS];
     vec3 color;
@@ -100,11 +100,10 @@ TriangleLight decodeAsTriangleLight(const ShLightEncoded encoded)
     l.color = encoded.color;
 
     l.normal = vec3(
-        encoded.data_0.w, 
-        encoded.data_1.w, 
+        encoded.data_0.w,
+        encoded.data_1.w,
         encoded.data_2.w
     );
-    // len is guaranteed to be > 0.0
     float len = length(l.normal);
     l.normal /= len;
     l.area = len * 0.5;
@@ -132,6 +131,9 @@ TexturedAreaLight decodeAsTexturedAreaLight(const ShLightEncoded encoded)
     l.normal = encoded.data_7.xyz;
     l.area = encoded.data_7.w;
     l.color = encoded.color;
+    l.coneCosInner = encoded.coneCosInner;
+    l.coneCosOuter = encoded.coneCosOuter;
+    l.projector = encoded.projector;
 
     return l;
 }
@@ -145,7 +147,7 @@ SpotLight decodeAsSpotLight(const ShLightEncoded encoded)
     l.color = encoded.color;
     l.cosAngleInner = encoded.data_2.x;
     l.cosAngleOuter = encoded.data_2.y;
-    
+
     return l;
 }
 
@@ -167,9 +169,6 @@ float isSphereInFront(const vec3 planeNormal, const vec3 planePos, const vec3 sp
 
 
 
-// Veach, E. Robust Monte Carlo Methods for Light Transport Simulation
-// The change of variables from solid angle measure to area integration measure
-// Note: but without |dot(surfNormal, surfaceToLight)|
 float getGeometryFactor(const vec3 lightNormal, const vec3 lightToSurface, float surfaceToLightDistance)
 {
     return abs(dot(lightNormal, lightToSurface)) / square(surfaceToLightDistance);
@@ -186,7 +185,6 @@ float safeSolidAngle(float a)
 
 float calcSolidAngleForSphere(float sphereRadius, float distanceToSphereCenter)
 {
-    // solid angle here is the spherical cap area on a unit sphere
     float sinTheta = sphereRadius / max(sphereRadius, distanceToSphereCenter);
     float cosTheta = sqrt(1.0 - sinTheta * sinTheta);
     return safeSolidAngle(2 * M_PI * (1.0 - cosTheta));
@@ -195,7 +193,6 @@ float calcSolidAngleForSphere(float sphereRadius, float distanceToSphereCenter)
 float calcSolidAngleForArea(float area, const vec3 areaPosition, const vec3 areaNormal, const vec3 surfPosition)
 {
     const DirectionAndLength areaLightToSurf = calcDirectionAndLength(areaPosition, surfPosition);
-    // from area measure to solid angle measure
     return safeSolidAngle(area * getGeometryFactor(areaNormal, areaLightToSurf.dir, areaLightToSurf.len));
 }
 
@@ -208,31 +205,31 @@ float getLightColorWeight(const vec3 color)
 
 float getDirectionalLightWeight(const SphereLight l, const vec3 cellCenter, float cellRadius)
 {
-    return 
+    return
         getLightColorWeight(l.color);
 }
 
 float getSphereLightWeight(const SphereLight l, const vec3 cellCenter, float cellRadius)
 {
-    return 
-        getLightColorWeight(l.color) * 
+    return
+        getLightColorWeight(l.color) *
         calcSolidAngleForSphere(l.radius, max(length(l.center - cellCenter), cellRadius));
 }
 
 float getTriangleLightWeight(const TriangleLight l, const vec3 cellCenter, float cellRadius)
 {
-    const vec3 triCenter = 
+    const vec3 triCenter =
         l.position[0] / 3.0 +
         l.position[1] / 3.0 +
         l.position[2] / 3.0;
 
-    const float aprxTriRadius = 
+    const float aprxTriRadius =
         length(l.position[0] - triCenter) / 3.0 +
         length(l.position[1] - triCenter) / 3.0 +
         length(l.position[2] - triCenter) / 3.0;
 
-    return 
-        getLightColorWeight(l.color) * 
+    return
+        getLightColorWeight(l.color) *
         calcSolidAngleForSphere(aprxTriRadius, max(length(triCenter - cellCenter), cellRadius)) *
         isSphereInFront(l.normal, triCenter, cellCenter, cellRadius);
 }
@@ -304,7 +301,7 @@ float getTexturedAreaLightWeight(const TexturedAreaLight l, const vec3 cellCente
         aprxRadius = max(aprxRadius, length(texturedAreaLightWorldPos(l, l.uvVerts[i]) - center));
     }
 
-    return 
+    return
         getLightColorWeight(l.color) * l.meanEmiss *
         calcSolidAngleForSphere(aprxRadius, max(length(center - cellCenter), cellRadius)) *
         isSphereInFront(l.normal, center, cellCenter, cellRadius);
@@ -312,8 +309,8 @@ float getTexturedAreaLightWeight(const TexturedAreaLight l, const vec3 cellCente
 
 float getSpotLightWeight(const SpotLight l, const vec3 cellCenter, float cellRadius)
 {
-    return 
-        getLightColorWeight(l.color) * 
+    return
+        getLightColorWeight(l.color) *
         calcSolidAngleForSphere(l.radius, max(length(l.center - cellCenter), cellRadius)) *
         isSphereInFront(l.direction, l.center, cellCenter, cellRadius);
 }
@@ -352,7 +349,7 @@ LightSample sampleDirectionalLight(const DirectionalLight l, const vec3 surfPosi
     r.position = surfPosition - lightNormal * MAX_RAY_LENGTH;
     r.color = l.color;
     r.dw = 1.0;
-    
+
     return r;
 }
 
@@ -360,7 +357,6 @@ LightSample sampleSphereLight(const SphereLight l, const vec3 surfPosition, cons
 {
     const DirectionAndLength toLightCenter = calcDirectionAndLength(surfPosition, l.center);
 
-    // sample hemisphere visible to the surface point
     float ltHsOneOverPdf;
     const vec3 lightNormal = sampleOrientedHemisphere(-toLightCenter.dir, pointRnd.x, pointRnd.y, ltHsOneOverPdf);
 
@@ -453,18 +449,109 @@ void getTalUvTiles(const TexturedAreaLight l, out vec2 tileMin, out vec2 tileMax
     tileMax = max(ceil(uvMax) - 1.0, tileMin);
 }
 
+LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const vec3 surfPosition, const vec2 pointRnd)
+{
+    LightSample r;
+    r.position = surfPosition;
+    r.color = vec3(0.0);
+    r.dw = 0.0;
+
+    const vec3 center = getTexturedAreaLightCenter(l);
+    const DirectionAndLength centerToSurf = calcDirectionAndLength(center, surfPosition);
+    const float cosNL = dot(l.normal, centerToSurf.dir);
+    const float spotlight = getSpotFactor(max(cosNL, 0.0), l.coneCosInner, l.coneCosOuter);
+
+    if (!(spotlight > 0.0))
+    {
+        return r;
+    }
+
+    vec3 axisU = l.A - l.normal * dot(l.A, l.normal);
+    vec3 axisV = l.B - l.normal * dot(l.B, l.normal);
+    const float lenU = length(axisU);
+    const float lenV = length(axisV);
+
+    if (!(lenU > 1e-6) || !(lenV > 1e-6))
+    {
+        return r;
+    }
+
+    axisU /= lenU;
+    axisV /= lenV;
+
+    const int verts = clamp(l.numVerts, 1, MAX_TEXTURED_AREA_LIGHT_VERTS);
+    float maskRadius = 0.0;
+
+    for (int i = 0; i < verts; i++)
+    {
+        maskRadius = max(maskRadius, length(texturedAreaLightWorldPos(l, l.uvVerts[i]) - center));
+    }
+
+    if (!(maskRadius > 1e-4))
+    {
+        return r;
+    }
+
+    const float angleOuter = max(acos(clamp(l.coneCosOuter, 0.001, 1.0)), 1e-3);
+    const float angleInner = max(acos(clamp(l.coneCosInner, 0.001, 1.0)), 1e-3);
+    const float maskLod = clamp((angleOuter - angleInner) / angleOuter, 0.0, 1.0) * 8.0;
+    const float focal = maskRadius / tan(angleOuter);
+    const float cosNLClamped = max(cosNL, 1e-3);
+    const vec3 pos = center + axisU * (focal * dot(centerToSurf.dir, axisU) / cosNLClamped)
+                            + axisV * (focal * dot(centerToSurf.dir, axisV) / cosNLClamped);
+    const vec3 rel = pos - l.C;
+
+    const float a11 = dot(l.A, l.A);
+    const float a12 = dot(l.A, l.B);
+    const float a22 = dot(l.B, l.B);
+    const float b1 = dot(l.A, rel);
+    const float b2 = dot(l.B, rel);
+    const float det = a11 * a22 - a12 * a12;
+
+    if (!(abs(det) > 1e-12))
+    {
+        return r;
+    }
+
+    const vec2 uv = vec2(b1 * a22 - b2 * a12, b2 * a11 - b1 * a12) / det;
+
+    if (!isUvInsideConvexPolygon(l.uvVerts, l.numVerts, uv))
+    {
+        return r;
+    }
+
+    const uint textureIndex = floatBitsToUint(l.textureIndex);
+    float mask = 1.0;
+    float emiss = l.meanEmiss;
+
+    if (textureIndex != 0u)
+    {
+        mask = getTextureSampleLod(textureIndex, uv, maskLod).b;
+        emiss = 1.0;
+    }
+
+    const DirectionAndLength lightToSurf = calcDirectionAndLength(pos, surfPosition);
+
+    r.position = pos;
+    r.color = l.color * mask * spotlight;
+    r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
+
+    return r;
+}
+
 LightSample sampleTexturedAreaLight(const TexturedAreaLight l, const vec3 surfPosition, const vec2 pointRnd)
 {
+    if (l.projector > 0.5)
+    {
+        return sampleProjectedAreaLight(l, surfPosition, pointRnd);
+    }
+
     LightSample r;
 
     const uint textureIndex = floatBitsToUint(l.textureIndex);
 
     vec2 uv = sampleConvexPolygon(l.uvVerts, l.numVerts, pointRnd.x, pointRnd.y);
 
-    // The point is drawn uniformly over the light's polygon, so the emission is taken as it is
-    // there: reading the mask and also scaling by the mean emission would count the mask twice,
-    // and drawing the point from the CDF LUT would need that density divided out here to stay
-    // unbiased. A mask that reads black is a valid zero sample, not a miss.
     float mask = 1.0;
     float emiss = l.meanEmiss;
 
@@ -478,9 +565,8 @@ LightSample sampleTexturedAreaLight(const TexturedAreaLight l, const vec3 surfPo
 
     const DirectionAndLength lightToSurf = calcDirectionAndLength(r.position, surfPosition);
 
-    // Match Q2RTX sample_polygonal_lights: sample on the polygon (no normal offset),
-    // soft edge attenuation via sqrt spot factor instead of a hard coplanar cull.
-    const float spotlight = sqrt(max(0.0, dot(l.normal, lightToSurf.dir)));
+    const float cosNL = max(dot(l.normal, lightToSurf.dir), 0.0);
+    const float spotlight = (l.coneCosOuter > 0.0) ? getSpotFactor(cosNL, l.coneCosInner, l.coneCosOuter) : sqrt(cosNL);
 
     r.color = l.color * mask * spotlight;
     r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
@@ -500,7 +586,7 @@ LightSample sampleSpotLight(const SpotLight l, const vec3 surfPosition, const ve
 
     const DirectionAndLength toLightCenter = calcDirectionAndLength(surfPosition, l.center);
     const float cosA = max(dot(l.direction, -toLightCenter.dir), 0.0);
-    
+
     r.color = l.color * getSpotFactor(cosA, l.cosAngleInner, l.cosAngleOuter);
     r.dw = calcSolidAngleForSphere(l.radius, toLightCenter.len);
 
@@ -535,4 +621,4 @@ LightSample sampleLight(const ShLightEncoded encoded, const vec3 surfPosition, c
     }
 }
 
-#endif // LIGHT_H_
+#endif

@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #ifdef DESC_SET_VERTEX_DATA
 #ifdef DESC_SET_GLOBAL_UNIFORM
@@ -30,7 +27,7 @@ vec3 processAlbedoRayConeDeriv(uint geometryInstanceFlags, const vec2 texCoords[
 vec3 processAlbedo(uint geometryInstanceFlags, const vec2 texCoords[3], const uvec3 materials[3], const vec4 materialColors[3], float lod)
 #endif
 {
-    const uint blendsFlags[] = 
+    const uint blendsFlags[] =
     {
         (geometryInstanceFlags & MATERIAL_BLENDING_MASK_FIRST_LAYER)  >> (MATERIAL_BLENDING_FLAG_BIT_COUNT * 0),
         (geometryInstanceFlags & MATERIAL_BLENDING_MASK_SECOND_LAYER) >> (MATERIAL_BLENDING_FLAG_BIT_COUNT * 1),
@@ -58,22 +55,18 @@ vec3 processAlbedo(uint geometryInstanceFlags, const vec2 texCoords[3], const uv
             bool add = (blendsFlags[i] & MATERIAL_BLENDING_FLAG_ADD)    != 0;
             bool shd = (blendsFlags[i] & MATERIAL_BLENDING_FLAG_SHADE)  != 0;
 
-            // simple fix for materials that have alpha-tested blending for the first layer
-            // (just makes "opq" instead of "alp" for that partuicular case);
-            // without this fix, alpha-tested geometry will have white color around borders 
             opq = opq || (alp && i == 0);
             alp = alp && !opq;
 
             dst = float(opq) * (src.rgb) +
-                  float(alp) * (src.rgb * src.a + dst * (1 - src.a)) + 
+                  float(alp) * (src.rgb * src.a + dst * (1 - src.a)) +
                   float(add) * (src.rgb + dst) +
                   float(shd) * (src.rgb * dst * 2);
 
-            hasAnyAlbedoTexture = true; 
+            hasAnyAlbedoTexture = true;
         }
     }
 
-    // if no albedo textures, use primary color 
     dst = mix(materialColors[0].rgb, dst, float(hasAnyAlbedoTexture));
 
     return clamp(dst, vec3(0), vec3(1));
@@ -81,7 +74,7 @@ vec3 processAlbedo(uint geometryInstanceFlags, const vec2 texCoords[3], const uv
 
 
 #if defined(HITINFO_INL_INDIR)
-vec3 getHitInfoAlbedoOnly(ShPayload pl) 
+vec3 getHitInfoAlbedoOnly(ShPayload pl)
 {
     int instanceId, instCustomIndex;
     int geomIndex, primIndex;
@@ -94,22 +87,21 @@ vec3 getHitInfoAlbedoOnly(ShPayload pl)
     const vec2 inBaryCoords = pl.baryCoords;
     const vec3 baryCoords = vec3(1.0f - inBaryCoords.x - inBaryCoords.y, inBaryCoords.x, inBaryCoords.y);
 
-    const vec2 texCoords[] = 
+    const vec2 texCoords[] =
     {
         getSurfaceTexCoord(tr.geometryInstanceFlags, tr.layerTexCoord[0] * baryCoords),
         tr.layerTexCoord[1] * baryCoords,
         tr.layerTexCoord[2] * baryCoords
     };
-    
+
     return processAlbedo(tr.geometryInstanceFlags, texCoords, tr.materials, tr.materialColors, 0);
 }
-#endif // HITINFO_INL_INDIR
+#endif
 
 
 #if defined(HITINFO_INL_PRIM)
-// "Ray Traced Reflections in 'Wolfenstein: Youngblood'", Jiho Choi, Jim Kjellin, Patrik Willbo, Dmitry Zhdan
 float getBounceLOD(float roughness, float viewDist, float hitDist, float screenWidth, float bounceMipBias)
-{    
+{
     const float range = 300.0 * pow((1.0 - roughness) * 0.9 + 0.1, 4.0);
 
     vec2 f = vec2(viewDist, hitDist);
@@ -123,11 +115,10 @@ float getBounceLOD(float roughness, float viewDist, float hitDist, float screenW
 
     return mip + bounceMipBias;
 }
-#endif // HITINFO_INL_PRIM
+#endif
 
 
 #if defined(HITINFO_INL_PRIM)
-// Fast, Minimum Storage Ray-Triangle Intersection, Moller, Trumbore
 vec3 intersectRayTriangle(const mat3 positions, const vec3 orig, const vec3 dir)
 {
     const vec3 edge1 = positions[1] - positions[0];
@@ -146,15 +137,15 @@ vec3 intersectRayTriangle(const mat3 positions, const vec3 orig, const vec3 dir)
 
     return vec3(1 - u - v, u, v);
 }
-#endif // HITINFO_INL_PRIM
+#endif
 
 
 #if defined(HITINFO_INL_PRIM)
 
 ShHitInfo getHitInfoPrimaryRay(
-    const ShPayload pl, 
-    const vec3 rayOrigin, const vec3 rayDirAX, const vec3 rayDirAY, 
-    out vec2 motion, out float motionDepthLinear, 
+    const ShPayload pl,
+    const vec3 rayOrigin, const vec3 rayDirAX, const vec3 rayDirAY,
+    out vec2 motion, out float motionDepthLinear,
     out vec3 gradDepth, out float depthNDC, out float depthLinear,
     out float screenEmission,
     out uint emissionBlendCode)
@@ -189,14 +180,14 @@ ShHitInfo getHitInfoBounce(
 
     const vec2 inBaryCoords = pl.baryCoords;
     const vec3 baryCoords = vec3(1.0f - inBaryCoords.x - inBaryCoords.y, inBaryCoords.x, inBaryCoords.y);
-    
-    const vec2 texCoords[] = 
+
+    const vec2 texCoords[] =
     {
         getSurfaceTexCoord(tr.geometryInstanceFlags, tr.layerTexCoord[0] * baryCoords),
         tr.layerTexCoord[1] * baryCoords,
         tr.layerTexCoord[2] * baryCoords
     };
-    
+
     h.hitPosition = tr.positions * baryCoords;
 
     if( ( tr.geometryInstanceFlags & GEOM_INST_FLAG_EXACT_NORMALS ) == 0 )
@@ -208,7 +199,6 @@ ShHitInfo getHitInfoBounce(
         h.normalGeom = safeNormalize(
             cross( tr.positions[ 1 ] - tr.positions[ 0 ], tr.positions[ 2 ] - tr.positions[ 0 ] ) );
 
-        // always face ray origin
         if( dot( h.normalGeom, h.hitPosition - rayOrigin ) > 0 )
         {
             h.normalGeom *= -1;
@@ -217,8 +207,6 @@ ShHitInfo getHitInfoBounce(
 
 
 #if defined(HITINFO_INL_PRIM)
-    // Tracing Ray Differentials, Igehy
-    // instead of casting new rays, check intersections on the same triangle
     const vec3 baryCoordsAX = intersectRayTriangle(tr.positions, rayOrigin, rayDirAX);
     const vec3 baryCoordsAY = intersectRayTriangle(tr.positions, rayOrigin, rayDirAY);
 
@@ -239,12 +227,12 @@ ShHitInfo getHitInfoBounce(
 
     const vec2 screenSpaceCur    = ndcCur.xy  * 0.5 + 0.5;
     const vec2 screenSpacePrev   = ndcPrev.xy * 0.5 + 0.5;
-#endif // HITINFO_INL_PRIM
+#endif
 
 
-#if defined(HITINFO_INL_RFL) 
+#if defined(HITINFO_INL_RFL)
     rayLen = length(h.hitPosition - rayOrigin);
-#endif 
+#endif
 
 
 #if defined(HITINFO_INL_RFL)
@@ -260,7 +248,7 @@ ShHitInfo getHitInfoBounce(
     const vec2 screenSpacePrev   = ndcPrev.xy * 0.5 + 0.5;
 
     const float clipSpaceDepth   = clipSpacePosCur[2];
-#endif // HITINFO_INL_RFL
+#endif
 
 
 #if defined(HITINFO_INL_PRIM)
@@ -270,7 +258,6 @@ ShHitInfo getHitInfoBounce(
 
 
 #if defined(HITINFO_INL_PRIM) || defined(HITINFO_INL_RFL)
-    // difference in screen-space
     motion = (screenSpacePrev - screenSpaceCur);
 #endif
 
@@ -279,35 +266,27 @@ ShHitInfo getHitInfoBounce(
     motionDepthLinear = length(viewSpacePosPrev.xyz) - depthLinear;
 #elif defined(HITINFO_INL_RFL)
     motionDepthLinear = length(viewSpacePosPrev.xyz) - length(viewSpacePosCur.xyz);
-#endif 
+#endif
 
 
-#if defined(HITINFO_INL_PRIM) 
-    // xy: gradient of clip-space depth with respect to clip-space coordinates
-    // z: change of depthLinear per pixel step in x and y, i.e. the depth change of
-    // the pixel footprint in world units. Q2RTX computes the same value from the
-    // ray cone (path_tracer_rgen.h); the clip-space gradient cannot be used for it,
-    // because it is affine in the view depth, so the product with a depth
-    // difference would grow with the view distance.
+#if defined(HITINFO_INL_PRIM)
     gradDepth = vec3(
         clipSpaceDepthAX - clipSpaceDepth,
         clipSpaceDepthAY - clipSpaceDepth,
         abs(length(viewSpacePosAX.xyz) - depthLinear) + abs(length(viewSpacePosAY.xyz) - depthLinear));
 #elif defined(HITINFO_INL_RFL)
-    // don't touch gradDepth for reflections / refractions
 #endif
 
 
 #if defined(HITINFO_INL_PRIM)
-    // pixel's footprint in texture space
-    const vec2 dTdx[] = 
+    const vec2 dTdx[] =
     {
         (getSurfaceTexCoord(tr.geometryInstanceFlags, tr.layerTexCoord[0] * baryCoordsAX) - texCoords[0]),
         (tr.layerTexCoord[1] * baryCoordsAX - texCoords[1]),
         (tr.layerTexCoord[2] * baryCoordsAX - texCoords[2])
     };
 
-    const vec2 dTdy[] = 
+    const vec2 dTdy[] =
     {
         (getSurfaceTexCoord(tr.geometryInstanceFlags, tr.layerTexCoord[0] * baryCoordsAY) - texCoords[0]),
         (tr.layerTexCoord[1] * baryCoordsAY - texCoords[1]),
@@ -316,19 +295,19 @@ ShHitInfo getHitInfoBounce(
 
     h.albedo = processAlbedoGrad(
         tr.geometryInstanceFlags, texCoords,
-            tr.materials, tr.materialColors, 
+            tr.materials, tr.materialColors,
             dTdx, dTdy);
-#endif // HITINFO_INL_PRIM 
+#endif
 
 
 #if defined(HITINFO_INL_RFL)
     DerivativeSet derivSet = getTriangleUVDerivativesFromRayCone(tr, h.normalGeom, rayCone, rayDir);
 
     h.albedo = processAlbedoRayConeDeriv(
-        tr.geometryInstanceFlags, texCoords, 
-        tr.materials, tr.materialColors, 
+        tr.geometryInstanceFlags, texCoords,
+        tr.materials, tr.materialColors,
         derivSet);
-#endif // HITINFO_INL_RFL
+#endif
 
 
 #if defined(HITINFO_INL_INDIR)
@@ -338,12 +317,12 @@ ShHitInfo getHitInfoBounce(
     const float lod = getBounceLOD(originRoughness, viewDist, hitDistance, globalUniform.renderWidth, bounceMipBias);
 
     h.albedo = processAlbedo(tr.geometryInstanceFlags, texCoords, tr.materials, tr.materialColors, lod);
-#endif // HITINFO_INL_INDIR
+#endif
 
 
     if (tr.materials[0][MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX] != MATERIAL_NO_TEXTURE)
     {
-        vec4 rme = 
+        vec4 rme =
     #if defined(HITINFO_INL_PRIM)
             getTextureSampleGrad(tr.materials[0][MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX], texCoords[0], dTdx[0], dTdy[0]);
     #elif defined(HITINFO_INL_RFL)
@@ -379,9 +358,6 @@ ShHitInfo getHitInfoBounce(
         h.emission  = rme[ 2 ];
 
     #if defined(HITINFO_INL_PRIM) || defined(HITINFO_INL_RFL)
-        // Per-material rt_emis_blend override authored in materials.yaml; 0 means
-        // "not authored" and the global cvar applies (the alpha of an authored
-        // _rme file is 255, which decodes to the same "not authored" state).
         emissionBlendCode = uint( rme.a * 255.0 + 0.5 );
     #endif
 
@@ -396,7 +372,7 @@ ShHitInfo getHitInfoBounce(
         emissionBlendCode = 0u;
     #endif
     }
-    
+
     h.roughness = globalUniform.squareInputRoughness == 0 ? h.roughness : square( h.roughness );
     h.roughness = max( h.roughness, MIN_GGX_ROUGHNESS );
 
@@ -422,10 +398,9 @@ ShHitInfo getHitInfoBounce(
 #if !defined(HITINFO_INL_INDIR)
     if (tr.materials[0][MATERIAL_NORMAL_INDEX] != MATERIAL_NO_TEXTURE)
     {
-        // less details in normal maps for better denoising
         const float suppressDetails = 5.0;
 
-        vec2 nrm = 
+        vec2 nrm =
     #if defined(HITINFO_INL_PRIM)
             getTextureSampleGrad(tr.materials[0][MATERIAL_NORMAL_INDEX], texCoords[0], dTdx[0] * suppressDetails, dTdy[0] * suppressDetails)
     #elif defined(HITINFO_INL_RFL)
@@ -440,7 +415,7 @@ ShHitInfo getHitInfoBounce(
         h.normal = safeNormalize(mix(h.normalGeom, h.normal, globalUniform.normalMapStrength));
     }
     else
-#endif // HITINFO_INL_INDIR
+#endif
     {
         h.normal = h.normalGeom;
     }
@@ -454,6 +429,6 @@ ShHitInfo getHitInfoBounce(
     return h;
 }
 
-#endif // DESC_SET_TEXTURES
-#endif // DESC_SET_GLOBAL_UNIFORM
-#endif // DESC_SET_VERTEX_DATA
+#endif
+#endif
+#endif

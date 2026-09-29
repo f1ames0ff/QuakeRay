@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "arch_def.h"
+#include "qr_editor.h"
 
 /* key up events are sent even if in console mode */
 
@@ -970,6 +971,8 @@ void Key_Event (int key, qboolean down)
 		return;
 	}
 
+	qboolean repeat = keydown[key];
+
 	// handle autorepeats and stray key up events
 	if (down)
 	{
@@ -985,6 +988,11 @@ void Key_Event (int key, qboolean down)
 		return; // ignore stray key up events
 
 	keydown[key] = down;
+
+	// qr light editor: while flying, ESC exits the editor instead of opening
+	// the menu (the open panel consumes its events at the SDL level)
+	if (QR_Editor_KeyEvent (key, down))
+		return;
 
 	if (key_inputgrab.active)
 	{
@@ -1011,7 +1019,7 @@ void Key_Event (int key, qboolean down)
 			Key_Message (key);
 			break;
 		case key_menu:
-			M_Keydown (key);
+			M_Keydown (key, repeat);
 			break;
 		case key_game:
 		case key_console:
@@ -1048,7 +1056,7 @@ void Key_Event (int key, qboolean down)
 	}
 
 	// if not a consolekey, send to the interpreter no matter what mode is
-	if ((key_dest == key_menu && menubound[key]) || (key_dest == key_console && !consolekeys[key]) ||
+	if ((key_dest == key_menu && menubound[key] && !M_WaitingForKeyBinding ()) || (key_dest == key_console && !consolekeys[key]) ||
 	    (key_dest == key_game && (!con_forcedup || !consolekeys[key])))
 	{
 		kb = keybindings[key];
@@ -1077,7 +1085,7 @@ void Key_Event (int key, qboolean down)
 		Key_Message (key);
 		break;
 	case key_menu:
-		M_Keydown (key);
+		M_Keydown (key, repeat);
 		break;
 
 	case key_game:
@@ -1141,8 +1149,16 @@ Key_TextEntry
 */
 qboolean Key_TextEntry (void)
 {
+	if (QR_Editor_TextEntryActive ())
+		return true;
+
 	if (key_inputgrab.active)
 		return true;
+
+	// key_dest == key_console for a moment while quitting. Don't let that
+	// cause SDL_StartTextInput.
+	if (m_is_quitting)
+		return false;
 
 	switch (key_dest)
 	{

@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #ifndef UTILS_H_
 #define UTILS_H_
@@ -109,7 +106,6 @@ uint encodeNormal(vec3 n)
     const uint N_theta = ENCODE_NORMAL_N_THETA;
 
     float phi = acos(n.z);
-    // atan -> [-pi, pi], need [0, 2pi]
 	float theta = atan(n.y, n.x);
     theta = theta < 0 ? theta + 2 * M_PI : theta;
 
@@ -145,7 +141,6 @@ vec3 safeNormalize(const vec3 v)
 
 
 
-// https://www.khronos.org/registry/OpenGL/extensions/EXT/EXT_texture_shared_exponent.txt
 
 #define ENCODE_E5B9G9R9_EXPONENT_BITS 5
 #define ENCODE_E5B9G9R9_MANTISSA_BITS 9
@@ -154,7 +149,6 @@ vec3 safeNormalize(const vec3 v)
 
 #define ENCODE_E5B9G9R9_MANTISSA_VALUES (1 << 9)
 #define ENCODE_E5B9G9R9_MANTISSA_MASK (ENCODE_E5B9G9R9_MANTISSA_VALUES - 1)
-// Equals to (((float)(MANTISSA_VALUES - 1))/MANTISSA_VALUES * (1<<(MAX_VALID_BIASED_EXP-EXP_BIAS)))
 #define ENCODE_E5B9G9R9_SHAREDEXP_MAX 65408
 
 uint encodeE5B9G9R9(vec3 unpacked)
@@ -166,7 +160,6 @@ uint encodeE5B9G9R9(vec3 unpacked)
     unpacked = clamp(unpacked, vec3(0.0), vec3(ENCODE_E5B9G9R9_SHAREDEXP_MAX));
     float max_c = max(unpacked.r, max(unpacked.g, unpacked.b));
 
-    // for log2
     if (max_c == 0.0)
     {
         return 0;
@@ -175,14 +168,14 @@ uint encodeE5B9G9R9(vec3 unpacked)
     int exp_shared_p = max(-B-1, int(floor(log2(max_c)))) + 1 + B;
     int max_s = int(round(max_c * exp2(-(exp_shared_p - B - N))));
 
-    int exp_shared = max_s != Np2 ? 
-        exp_shared_p : 
+    int exp_shared = max_s != Np2 ?
+        exp_shared_p :
         exp_shared_p + 1;
 
     float s = exp2(-(exp_shared - B - N));
     uvec3 rgb_s = uvec3(round(unpacked * s));
 
-    return 
+    return
         (exp_shared << (3 * ENCODE_E5B9G9R9_MANTISSA_BITS)) |
         (rgb_s.b    << (2 * ENCODE_E5B9G9R9_MANTISSA_BITS)) |
         (rgb_s.g    << (1 * ENCODE_E5B9G9R9_MANTISSA_BITS)) |
@@ -198,7 +191,7 @@ vec3 decodeE5B9G9R9(const uint _packed)
     float s = exp2(exp_shared - B - N);
 
     return s * vec3(
-        (_packed                                       ) & ENCODE_E5B9G9R9_MANTISSA_MASK, 
+        (_packed                                       ) & ENCODE_E5B9G9R9_MANTISSA_MASK,
         (_packed >> (1 * ENCODE_E5B9G9R9_MANTISSA_BITS)) & ENCODE_E5B9G9R9_MANTISSA_MASK,
         (_packed >> (2 * ENCODE_E5B9G9R9_MANTISSA_BITS)) & ENCODE_E5B9G9R9_MANTISSA_MASK
     );
@@ -209,15 +202,10 @@ vec3 decodeE5B9G9R9(const uint _packed)
 #define TANGENT_HANDEDNESS_ENCODING_CONST 19
 #define TANGENT_HANDEDNESS_ENCODING_THRESHOLD 3
 
-// Encode normalized tangent vector with handedness (-1 or 1) to vec3
 vec3 encodeTangent4(const vec3 tangent, float handedness)
 {
-    // handedness must be -1 or 1,
-    //          then h is  1 or 0
     const float h = (-handedness + 1.0) * 0.5;
 
-    // if handedness is  1, then tangent is a unit vector
-    // if handedness is -1, then the length is (1.0 + TANGENT_HANDEDNESS_ENCODING_CONST)
     return tangent.xyz * (1.0 + h * TANGENT_HANDEDNESS_ENCODING_CONST);
 }
 
@@ -231,4 +219,4 @@ vec4 decodeTangent4(const vec3 _packed)
     return vec4(_packed / (1.0 + h * TANGENT_HANDEDNESS_ENCODING_CONST), handedness);
 }
 
-#endif // UTILS_H_
+#endif

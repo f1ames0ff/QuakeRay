@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -60,13 +60,12 @@ namespace qray
         private:
             void RecreateContext();
             void DestroyContext();
-            static uint64_t FindVersionId(bool preferFsr3);
+            static uint64_t FindVersionId();
             VkDevice m_device;
             VkPhysicalDevice m_physDevice;
             UserPrint* m_pUserPrint;
             ffxContext m_context;
             QrRenderUpscaleTechnique m_requestedTechnique;
-            QrRenderUpscaleTechnique m_technique;
             uint32_t m_renderWidth;
             uint32_t m_renderHeight;
             uint32_t m_displayWidth;
