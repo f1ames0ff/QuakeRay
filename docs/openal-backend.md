@@ -1,11 +1,14 @@
 # OpenAL Soft sound system
 
 The engine's sound effects are rendered by OpenAL Soft as positioned sources, with its built-in
-HRTF turning the mix binaural on headphones. There is no second backend: the SDL audio device and
+HRTF turning the mix binaural on headphones. The dataset of the pinned OpenAL Soft 1.25.2 is
+**MIT KEMAR** (`MIT_KEMAR.def` in the source: 19 elevations, 828 HRIRs at 1.4 m, mono/mirrored);
+upstream only changed its default to SADIE II after this release, so the pin keeps KEMAR until the
+submodule is deliberately moved. There is no second backend: the SDL audio device and
 the software mixer are removed, `snd_dma.c` drives OpenAL directly, and OpenAL Soft is vendored as
 the `third_party/openal-soft` submodule (tag `1.25.2`) and built with the game, so the engine, the
-import library and the shipped DLL always agree. Step 2 (HRTF datasets, EFX reverb, occlusion) is
-not implemented yet and is listed at the end.
+import library and the shipped DLL always agree. Step 2 (additional HRTF datasets, EFX reverb,
+occlusion) is not implemented yet and is listed at the end.
 
 ## Recon: the engine surface and its OpenAL mapping
 
@@ -100,5 +103,7 @@ so the long GPU waits the renderer feeds it do not drain the stream.
 
 - Custom HRTF datasets: `ALC_NUM_HRTF_SPECIFIERS_SOFT` / `ALC_HRTF_SPECIFIER_SOFT` plus
   `ALC_HRTF_ID_SOFT` for the built-in and configured datasets, a `s_openal_hrtf_dataset` cvar and a
-  picker; SOFA files reach OpenAL Soft through its configuration (`hrtf = <file.sofa>`).
+  picker; SOFA files reach OpenAL Soft through its configuration (`hrtf = <file.sofa>`). The chosen
+  direction is to stay with MIT KEMAR and not add SADIE II; only a deliberate OpenAL Soft update
+  would have to re-pin that choice.
 - EFX reverb keyed to `ambient_level` / rooms, occlusion and per-material filtering.
