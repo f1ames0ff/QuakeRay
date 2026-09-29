@@ -280,15 +280,15 @@ private:
     // same handle-change rule.
     struct Target
     {
-        // Set 1: the 12 engine images (the .cpp's FRAMEBUFFER_BINDINGS table) the slot currently
+        // Set 1: the 13 engine images (the .cpp's FRAMEBUFFER_BINDINGS table) the slot currently
         // wraps and the set over them. The handles are kept in the form Render received them, not
         // as VkImages, because they are what the change detection compares; a change in any of them
         // or in the size means the engine re-created the framebuffers and the wraps and the set
         // have to follow.
-        uint64_t imageHandles[12] = {};
+        uint64_t imageHandles[13] = {};
         uint32_t width = 0;
         uint32_t height = 0;
-        nvrhi::TextureHandle framebufferTextures[12];
+        nvrhi::TextureHandle framebufferTextures[13];
         nvrhi::BindingSetHandle framebufferSet;
 
         // Set 0: the pointer is only the cache key that tells whether the set still addresses the

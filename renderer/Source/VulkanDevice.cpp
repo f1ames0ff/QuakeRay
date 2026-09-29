@@ -439,6 +439,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->acidColorAndDensity[ 3 ] = rr.acidDensity;
 
         gu->forceNoWaterRefraction            = !!rr.forceNoWaterRefraction;
+        gu->waterLightPath                    = rr.waterLightPath ? 1u : 0u;
         gu->waterWaveSpeed                    = rr.waterWaveSpeed;
         gu->waterWaveStrength                 = rr.waterWaveNormalStrength;
         gu->turbWarpStrength                  = std::max( 0.0f, rr.turbWarpStrength );

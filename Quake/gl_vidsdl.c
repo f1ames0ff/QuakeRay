@@ -249,6 +249,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_water_color, "171 193 210") \
 	CVAR_DEF_T (rt_water_acidcolor, "0 169 145") \
 	CVAR_DEF_T (rt_turb_warp, "1") \
+	CVAR_DEF_T (rt_water_lightpath, "0") \
 	CVAR_DEF_T (rt_caustics, "0") \
 	CVAR_DEF_T (rt_caustics_intensity, "1") \
 	CVAR_DEF_T (rt_caustics_res, "256") \
@@ -2127,6 +2128,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.waterWaveTextureDerivativesMultiplier = CVAR_TO_FLOAT (rt_water_normsharp),
 		.waterTextureAreaScale = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_scale)),
 		.portalNormalTwirl = CVAR_TO_BOOL (rt_portal_twirl),
+		.waterLightPath = CVAR_TO_BOOL (rt_water_lightpath),
 	};
 	// because 1 quake unit is not 1 meter
 	refl_refr_params.waterColor.data[0] = powf (refl_refr_params.waterColor.data[0], 1.0f / METRIC_TO_QUAKEUNIT (1.0f));

@@ -1209,6 +1209,8 @@ typedef struct QrDrawFrameReflectRefractParams
     QrBool32    disableBackfaceReflectionsForNoMediaChange;
 
     QrBool32    portalNormalTwirl;
+
+    QrBool32    waterLightPath;
 } QrDrawFrameReflectRefractParams;
 
 typedef struct QrDrawFrameCausticsParams

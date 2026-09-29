@@ -139,7 +139,8 @@ void main()
          globalUniform.fogColor[0].x + globalUniform.fogDensity[0].x + globalUniform.lightStyleScales[0].x +
          globalUniform.giBounceRays.x + globalUniform.fltEnable.x + globalUniform.fixedAlbedo.x +
          globalUniform.sunBounce.x + globalUniform.levelFogColorDensity.x +
-         globalUniform.levelFogSkyBlend.x + float(globalUniform.restirParams.x);
+         globalUniform.levelFogSkyBlend.x + float(globalUniform.restirParams.x) +
+         float(globalUniform.waterLightPath);
 
     // ShVertPreprocessing
     v += float(push.tlasInstanceCount) + float(push.tlasInstanceIsDynamicBits[0]);

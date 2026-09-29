@@ -145,10 +145,17 @@ void main()
             rayStatsAdd(RAY_STATS_CATEGORY_SHADOW_DIRECT, 1);
         }
 
+        float3 sunFactor = (float3)1.0;
+        if (globalUniform.waterLightPath != 0u && globalUniform.coreQ2RTX != 0)
+        {
+            const uint receiverMedia = (uint)framebufQ2BounceThroughput_Sampled.Load(int3(pix, 0)).x;
+            sunFactor = traceSunWaterFactor(surf, sunLight.position, receiverMedia);
+        }
+
         float3 d, s;
         shade(surf, sunLight, 1.0, d, s);
-        directDiffuse += d * sunVis;
-        directSpecular += s * sunVis;
+        directDiffuse += d * sunVis * sunFactor;
+        directSpecular += s * sunVis * sunFactor;
     }
 
     imageStoreUnfilteredDirect(pix, directDiffuse);

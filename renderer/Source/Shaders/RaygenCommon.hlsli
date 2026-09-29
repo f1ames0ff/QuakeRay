@@ -386,6 +386,75 @@ bool traceShadowRay(uint surfInstCustomIndex, float3 start, float3 end, bool ign
     return g_payloadShadow.isShadowed == 1;
 }
 
+float3 traceSunWaterFactor(const Surface surf, const float3 lightPosition, const uint receiverMedia)
+{
+    if (receiverMedia != MEDIA_TYPE_WATER && receiverMedia != MEDIA_TYPE_ACID)
+    {
+        return (float3)1.0;
+    }
+
+    const float3 toLight = lightPosition - surf.position;
+    const float distance = length(toLight);
+
+    if (distance <= 0.0)
+    {
+        return (float3)1.0;
+    }
+
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
+
+    RayDesc rayDesc;
+    rayDesc.Origin    = surf.position + surf.toViewerDir * RAY_ORIGIN_LEAK_BIAS;
+    rayDesc.Direction = toLight / distance;
+    rayDesc.TMin      = SHADOW_RAY_EPS;
+    rayDesc.TMax      = distance;
+
+    query.TraceRayInline(topLevelAS, RAY_FLAG_NONE, INSTANCE_MASK_REFRACT, rayDesc);
+
+    while (query.Proceed())
+    {
+    }
+
+    if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
+    {
+        return (float3)1.0;
+    }
+
+    const ShTriangle hitTriangle = getTriangle((int)query.CommittedInstanceIndex(),
+                                               (int)query.CommittedInstanceID(),
+                                               (int)query.CommittedGeometryIndex(),
+                                               (int)query.CommittedPrimitiveIndex());
+
+    const uint hitMedia = getMediaTypeFromFlags(hitTriangle.geometryInstanceFlags);
+
+    if (hitMedia != MEDIA_TYPE_WATER && hitMedia != MEDIA_TYPE_ACID)
+    {
+        return (float3)1.0;
+    }
+
+    const float2 bary = query.CommittedTriangleBarycentrics();
+    const float3 baryWeights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
+
+    float3 normal = normalize(mul(hitTriangle.normals, baryWeights));
+    if (dot(normal, rayDesc.Direction) > 0.0)
+    {
+        normal = -normal;
+    }
+
+    const float indexOfRefraction = getIndexOfRefraction(receiverMedia);
+    const float3 refracted = refract(rayDesc.Direction, normal, indexOfRefraction);
+
+    if (dot(refracted, refracted) <= 0.0)
+    {
+        return (float3)0.0;
+    }
+
+    const float fresnel = getFresnelSchlick(indexOfRefraction, 1.0, rayDesc.Direction, normal);
+    const float3 transmittance = getMediaTransmittance(receiverMedia, query.CommittedRayT());
+
+    return transmittance * (1.0 - fresnel);
+}
+
 float traceVisibility(const Surface surf, const float3 lightPosition, uint lightIndex)
 {
     const float3 start = surf.position + surf.toViewerDir * RAY_ORIGIN_LEAK_BIAS;

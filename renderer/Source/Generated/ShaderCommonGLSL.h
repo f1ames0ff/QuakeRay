@@ -325,6 +325,7 @@ struct ShGlobalUniform
     vec4 levelFogColorDensity;
     vec4 levelFogSkyBlend;
     uvec4 restirParams;
+    uint waterLightPath;
 };
 
 struct ShGeometryInstance

@@ -330,6 +330,7 @@ struct ShGlobalUniform
     float levelFogColorDensity[4];
     float levelFogSkyBlend[4];
     uint32_t restirParams[4];
+    uint32_t waterLightPath;
 };
 
 struct ShGeometryInstance

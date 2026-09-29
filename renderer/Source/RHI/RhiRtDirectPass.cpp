@@ -71,9 +71,9 @@ static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 
               PIPELINE_SET_COUNT == 12,
               "the RT set order is frozen by the engine's RT shaders");
 
-// The 12 images `RtRaygenDirect.rgen` references, measured 2026-09-25 with `spirv-dis` over the
+// The 13 images `RtRaygenDirect.rgen` references, measured 2026-09-25 with `spirv-dis` over the
 // blob the current sources build to (the command of GenerateShaders.py:157-164, dxc from Vulkan
-// SDK 1.4.321.1). The three UAVs first (the blob's set-1 storage images), then the nine SRVs (its
+// SDK 1.4.321.1). The three UAVs first (the blob's set-1 storage images), then the ten SRVs (its
 // sampled images); the entry-point interface and the descriptor decorations name exactly these and
 // no other set-1 binding. The array order is not a requirement of NVRHI - a binding set's items are
 // keyed by slot - it only groups the writes and the reads the way the raygen uses them.
@@ -84,18 +84,18 @@ static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 
 // item from the generated arrays; a hand-written binding number could drift from the shader build,
 // the generated ones cannot.
 //
-// The A4.2a shader-side fix is what makes this list 12 items and not 13: the sampled view of the
-// view direction (raw binding 147, the same image as the UAV at 23) is gone from the blob, so no
-// image is bound as both an SRV and a UAV and the set has no layout conflict (a42_recon.md §0.1.1,
-// §7.1). The sampled screen emission (185) is not on the list either - DXC dead-strips that load,
-// because the raygen never reads `surf.emission` (a42_recon.md §1).
+// The A4.2a shader-side fix is what keeps the sampled view of the view direction out of the blob
+// (raw binding 147, the same image as the UAV at 23), so no image is bound as both an SRV and a
+// UAV and the set has no layout conflict (a42_recon.md §0.1.1, §7.1). The sampled screen emission
+// (185) is not on the list either - DXC dead-strips that load, because the raygen never reads
+// `surf.emission` (a42_recon.md §1).
 struct FramebufferBinding
 {
     FramebufferImageIndex image;
     bool isUAV;
 };
 
-constexpr uint32_t FRAMEBUFFER_BINDING_COUNT = 12;
+constexpr uint32_t FRAMEBUFFER_BINDING_COUNT = 13;
 constexpr FramebufferBinding FRAMEBUFFER_BINDINGS[FRAMEBUFFER_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_UNFILTERED_DIRECT,      true  }, //  14  framebufUnfilteredDirect
@@ -107,6 +107,7 @@ constexpr FramebufferBinding FRAMEBUFFER_BINDINGS[FRAMEBUFFER_BINDING_COUNT] =
     { FB_IMAGE_INDEX_NORMAL_GEOMETRY,        false }, // 129  framebufNormalGeometry_Sampled
     { FB_IMAGE_INDEX_METALLIC_ROUGHNESS,     false }, // 131  framebufMetallicRoughness_Sampled
     { FB_IMAGE_INDEX_SURFACE_POSITION,       false }, // 143  framebufSurfacePosition_Sampled
+    { FB_IMAGE_INDEX_Q2_BOUNCE_THROUGHPUT,   false }, // 211  framebufQ2BounceThroughput_Sampled
     { FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS,       false }, // 239  framebufQ2GradSmplPos_Sampled
     { FB_IMAGE_INDEX_Q2_RNG_SEED,            false }, // 245  framebufQ2RngSeed_Sampled
     { FB_IMAGE_INDEX_Q2_CLUSTER,             false }, // 247  framebufQ2Cluster_Sampled
@@ -815,7 +816,7 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
 
     // The sampled images end the list in the read-only layout (vulkan-resource-bindings.cpp:
     // 398-435), but the engine's framebuffer images rest in GENERAL and the next frame's primary
-    // pass writes 8 of these 9 as storage images. Move every image that is bound as an SRV and by
+    // pass writes 9 of these 10 as storage images. Move every image that is bound as an SRV and by
     // no UAV back to UnorderedAccess; the three UAV images are already there.
     for (uint32_t i = 0; i < FRAMEBUFFER_BINDING_COUNT; i++)
     {
