@@ -1,6 +1,7 @@
 Misc/vq_pak/vkquake.pak
 build/
 build-cmake/
+dist/
 .idea
 .vscode
 .settings
