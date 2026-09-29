@@ -38,7 +38,7 @@ Remotes live in the shared git configuration, so every worktree of this reposito
 - **Never force-push `master`** of the new repository - it is the mainline (`ac01b482`).
 - Push only the branch you own; `--force-with-lease`, never a bare `--force`, when the branch exists remotely.
 - **Commit identity**: GitHub's privacy protection may reject a push that exposes a private email address. Commit as
-  `f1ames0ff <278203953+sdas234f23f@users.noreply.github.com>` (or the address the owner has made public).
+  `f1ames0ff <f1am3sdev.github@protonmail.com>` - the address the owner uses for the project.
 - Update repository links in the documents you touch (clone URLs in `readme.md` and the like); historical links in
   `changelog.md` may stay as they are.
 - Verify the new remote with `git ls-remote https://github.com/sdas234f23f/QuakeRay_new.git` - it must show the
