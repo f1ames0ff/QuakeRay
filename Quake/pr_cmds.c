@@ -896,7 +896,7 @@ static void PF_localcmd (void)
 
 	for (str2 = str; *str2 && *str2 <= ' '; str2++)
 		;
-	if (!strncmp (str2, "restart", strlen ("restart")))
+	if (!strncmp (str2, "restart", strlen ("restart")) || !strncmp (str2, "changelevel", strlen ("changelevel")))
 	{
 		if (svs.changelevel_issued)
 			return;
