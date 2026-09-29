@@ -180,6 +180,7 @@ extern cvar_t scr_fov;
 extern cvar_t scr_showfps;
 extern cvar_t r_rtshadows;
 extern cvar_t r_particles;
+extern cvar_t r_smoke;
 extern cvar_t r_softparticles;
 extern cvar_t r_oit;
 extern cvar_t r_enhancedmodels;
@@ -187,6 +188,9 @@ extern cvar_t r_lerpmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_lerpturn;
 extern cvar_t vid_filter;
+extern cvar_t rt_bloom;
+extern cvar_t rt_godrays;
+extern cvar_t rt_volume_type;
 extern cvar_t scr_guifilter;
 extern cvar_t vid_palettize;
 extern cvar_t vid_anisotropic;
@@ -2091,6 +2095,143 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 
 
 //=============================================================================
+/* GRAPHICS OPTIONS MENU */
+
+enum
+{
+	GRAPHICS_OPT_BLOOM,
+	GRAPHICS_OPT_FILTER,
+	GRAPHICS_OPT_PARTICLES,
+	GRAPHICS_OPT_VOLUMETRICS,
+	GRAPHICS_OPT_GODRAYS,
+	GRAPHICS_OPT_SMOKE,
+	GRAPHICS_OPTIONS_ITEMS
+};
+
+static int graphics_options_cursor = 0;
+
+static void M_Menu_GraphicsOptions_f (void)
+{
+	M_MenuChanged ();
+	IN_DeactivateForMenu ();
+	key_dest = key_menu;
+	m_state = m_graphics;
+}
+
+static void M_GraphicsOptions_Adjust (int dir)
+{
+	int value;
+
+	if (dir)
+		S_LocalSound ("misc/menu3.wav");
+
+	switch (graphics_options_cursor)
+	{
+	case GRAPHICS_OPT_BLOOM:
+		Cvar_SetValueQuick (&rt_bloom, !CVAR_TO_BOOL (rt_bloom));
+		break;
+	case GRAPHICS_OPT_FILTER:
+		Cvar_SetValue ("vid_filter", (Cvar_VariableValue ("vid_filter") == 0.0) ? 1.0f : 0.0f);
+		break;
+	case GRAPHICS_OPT_PARTICLES:
+		value = (int)r_particles.value;
+		if (dir > 0)
+			value = (value == 0) ? 2 : ((value == 2) ? 1 : 0);
+		else
+			value = (value == 0) ? 1 : ((value == 2) ? 0 : 2);
+		Cvar_SetValueQuick (&r_particles, (float)value);
+		break;
+	case GRAPHICS_OPT_VOLUMETRICS:
+		Cvar_SetValueQuick (&rt_volume_type, (float)((((int)rt_volume_type.value) + (dir > 0 ? 1 : 2)) % 3));
+		break;
+	case GRAPHICS_OPT_GODRAYS:
+		Cvar_SetValueQuick (&rt_godrays, !CVAR_TO_BOOL (rt_godrays));
+		break;
+	case GRAPHICS_OPT_SMOKE:
+		Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
+		break;
+	}
+}
+
+static void M_GraphicsOptions_Key (int k)
+{
+	switch (k)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_Menu_Options_f ();
+		break;
+
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		m_entersound = true;
+		M_GraphicsOptions_Adjust (1);
+		return;
+
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		graphics_options_cursor--;
+		if (graphics_options_cursor < 0)
+			graphics_options_cursor = GRAPHICS_OPTIONS_ITEMS - 1;
+		break;
+
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		graphics_options_cursor++;
+		if (graphics_options_cursor >= GRAPHICS_OPTIONS_ITEMS)
+			graphics_options_cursor = 0;
+		break;
+
+	case K_LEFTARROW:
+		M_GraphicsOptions_Adjust (-1);
+		break;
+
+	case K_RIGHTARROW:
+		M_GraphicsOptions_Adjust (1);
+		break;
+	}
+}
+
+static void M_GraphicsOptions_Draw (cb_context_t *cbx)
+{
+	qpic_t	 *p;
+	const int top = MENU_TOP;
+
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	p = Draw_CachePic ("gfx/p_option.lmp");
+	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_BLOOM, "Bloom");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_BLOOM, CVAR_TO_BOOL (rt_bloom));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "Texture filtering");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (Cvar_VariableValue ("vid_filter") == 0.0) ? "smooth" : "classic");
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES, "Particles");
+	M_Print (
+		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES,
+		((int)r_particles.value == 0) ? "none" : (((int)r_particles.value == 2) ? "classic" : "circle"));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_VOLUMETRICS, "Volumetrics");
+	M_Print (
+		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_VOLUMETRICS,
+		((int)rt_volume_type.value == 0) ? "off" : (((int)rt_volume_type.value == 1) ? "simple" : "sky"));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GODRAYS, "God rays");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GODRAYS, CVAR_TO_BOOL (rt_godrays));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SMOKE, "Smoke type");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SMOKE, CVAR_TO_BOOL (r_smoke) ? "shader" : "classic");
+
+	M_Mouse_UpdateListCursor (&graphics_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, GRAPHICS_OPTIONS_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + graphics_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+}
+
+
+//=============================================================================
 /* OPTIONS MENU */
 
 
@@ -2099,6 +2240,7 @@ enum
 	OPT_GAME = 0,
 	OPT_CONTROLS,
 	OPT_VIDEO,
+	OPT_GRAPHICS,
 	OPT_SOUND,
 	OPT_BENCHMARK,
 	OPT_PADDING,
@@ -2129,6 +2271,7 @@ static void M_Options_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GAME, "Game");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_CONTROLS, "Key Bindings");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_VIDEO, "Video");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GRAPHICS, "Graphics");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_SOUND, "Sound");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_BENCHMARK, "Benchmark");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_DEFAULTS, "Reset config");
@@ -2177,6 +2320,9 @@ void M_Options_Key (int k)
 			break;
 		case OPT_VIDEO:
 			M_Menu_Video_f ();
+			break;
+		case OPT_GRAPHICS:
+			M_Menu_GraphicsOptions_f ();
 			break;
 		case OPT_BENCHMARK:
 		M_Menu_Benchmark_f ();
@@ -4764,6 +4910,7 @@ void M_Benchmark_Draw (cb_context_t *cbx)
 		++demo_index;
 	}
 
+	M_Mouse_UpdateListCursor (&demo_cursor, 90, 320, 32, 8, q_min (num_demos - first_demo, MAX_DEMOS_ON_SCREEN), first_demo);
 	M_DrawCharacter (cbx, 90, 32 + (demo_cursor - first_demo) * 8, 12 + ((int)(realtime * 4) & 1));
 	if (num_demos > MAX_DEMOS_ON_SCREEN)
 		M_DrawScrollbar (cbx, 220, 32 + 8, (float)(first_demo) / (float)(num_demos - MAX_DEMOS_ON_SCREEN), MAX_DEMOS_ON_SCREEN - 2);
@@ -4778,11 +4925,13 @@ void M_Benchmark_Key (int key)
 
 	switch (key)
 	{
+	case K_MOUSE2:
 	case K_ESCAPE:
 	case K_BBUTTON:
 		M_Menu_Options_f ();
 		return;
 
+	case K_MOUSE1:
 	case K_ENTER:
 	case K_KP_ENTER:
 	case K_ABUTTON:
@@ -4859,6 +5008,8 @@ void M_Benchmark_Key (int key)
 //=============================================================================
 /* BENCHMARK RESULTS */
 
+static int benchmark_results_cursor = 0;
+
 void M_Menu_BenchmarkResults_f (void)
 {
 	IN_Deactivate (modestate == MS_WINDOWED);
@@ -4893,6 +5044,7 @@ void M_BenchmarkResults_Draw (cb_context_t *cbx)
 	q_snprintf (line, sizeof (line), "min %5.2f   max %5.2f   avg %5.2f", r->frameMinMs, r->frameMaxMs, r->frameAvgMs);
 	M_Print (cbx, 72, 112, line);
 
+	M_Mouse_UpdateCursor (&benchmark_results_cursor, 88, 320, 140, CHARACTER_SIZE, 0);
 	M_PrintWhite (cbx, 88, 140, "Press ENTER to continue");
 }
 
@@ -4900,6 +5052,8 @@ void M_BenchmarkResults_Key (int key)
 {
 	switch (key)
 	{
+	case K_MOUSE1:
+	case K_MOUSE2:
 	case K_ESCAPE:
 	case K_BBUTTON:
 	case K_ENTER:
@@ -5038,6 +5192,10 @@ void M_Draw (cb_context_t *cbx)
 
 	case m_video:
 		M_Video_Draw (cbx);
+		break;
+
+	case m_graphics:
+		M_GraphicsOptions_Draw (cbx);
 		break;
 
 
@@ -5228,6 +5386,10 @@ void M_Keydown (int key, qboolean repeat)
 
 	case m_video:
 		M_Video_Key (key);
+		return;
+
+	case m_graphics:
+		M_GraphicsOptions_Key (key);
 		return;
 
 	case m_sound:
