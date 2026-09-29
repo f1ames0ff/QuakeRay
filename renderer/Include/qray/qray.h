@@ -828,6 +828,11 @@ QRAPI QrResult QRCONV qrUpdateMaterialContents(
     QrInstance                          qrInstance,
     const QrMaterialUpdateInfo          *pUpdateInfo);
 
+QRAPI QrResult QRCONV qrCanUpdateMaterialContents(
+    QrInstance                          qrInstance,
+    QrMaterial                          material,
+    QrExtent2D                          size);
+
 QRAPI QrResult QRCONV qrDestroyMaterial(
     QrInstance                          qrInstance,
     QrMaterial                          material);
@@ -1210,7 +1215,6 @@ typedef enum QrRenderUpscaleTechnique
 {
     QR_RENDER_UPSCALE_TECHNIQUE_LINEAR,
     QR_RENDER_UPSCALE_TECHNIQUE_NEAREST,
-    QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2,
     QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3,
     QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS,
 } QrRenderUpscaleTechnique;

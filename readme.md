@@ -4,23 +4,43 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 
 ## Features
 
-* NVRHI renderer (Vulkan)
-* Path-traced lighting, ReSTIR-DI
-* DTAL: dynamic textured area lights
-* Alpha-transparent textures are traced through, not only cut out
-* Spot lights: a dynamic light can shine in a cone (`dlightspot` until the editor places them)
-* ASVGF denoiser
-* Ray-traced GI, NEE
-* FSR 3.1 upscaling
-* Dynamic HDR tone mapping
-* Procedural sky, god rays
-* Materials, ray-traced water
-* Shader smoke (rockets, fire)
-* OpenAL Soft HRTF positional sound, with no SDL audio device
-* Per-cluster light lists (legacy)
-* Animated light styles
-* Post-processing: chromatic, LUT
-* Adaptive vsync/VRR/FreeSync support (off, vsync, adaptive, FreeSync modes)
+### Path traced renderer
+
+* Ray tracing with ReSTIR direct light sampling
+* FSR 3.1 support
+* DTAL (Dynamic Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
+* True Light Mode (opt-in): All light sources are DTAL, which means all emissive textures are actual light sources.
+* Q2RTX-style path traced lighting.
+* ASVGF denoiser.
+* RT Global Illumination
+* NEE (Next Event Estimation) for the sun, emissives and dynamic lights.
+* Alpha-transparent textures are traced through, not only cut out: a material marked `alpha_test` hands its alpha to the sampler, and a ray that crosses such a texel keeps the strength of its transparency.
+* Spot lights: a dynamic light can shine in a cone, with adjustable angles and strength (`dlightspot` at the console until the editor places them).
+* per-BSP-cluster light lists (legacy).
+* Animated light entities (`rt_light_styles`) make their own fixture flicker, in accordance with the original light style, to preserve the original Quake 1 lighting design.
+* Full material system with per-brush and per-model metalness/roughness, normal map strength and texture-driven gloss maps, plus ray-traced water with animated wave normals and refraction.
+
+### Lighting and Material Editor
+
+The game is edited from inside it: `qr_editor` opens a dialog that offers the material editor or the light editor, and `qr_editor_stop` leaves either. Both fly over the frozen level; the crosshair picks what is edited, the fire button selects it, and Tab brings up the panel.
+
+* **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or of an animated texture is a block of its own, a preview of the texture takes the glow's colours with an eyedropper, and Save writes the file the game loads (Discard leaves it alone).
+* **Light editor**: the light an emitter casts, lights added to a level (points or cones, aimed by dragging at the light), and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. A torch lights the way while a level has no light yet.
+
+### Sound
+
+* OpenAL Soft HRTF positional sound with its own mix; the engine opens no SDL audio device.
+
+## Graphics
+
+* Dynamic HDR Tone mapping: overall brightness, exposure bias in EV, contrast as a mix of the fixed and the auto-exposure adapted curve
+* Procedural sky with a physical sky model
+* God rays — volumetric sun shafts
+* Volumetric fog
+* Bloom
+* Post-processing: chromatic aberration, and a configurable LUT for colour grading
+* Shader smoke — the trails of rockets, lava balls and grenades are drawn as soft, lit puffs the room's light falls on, in place of the classic flat sprites
+* Adaptive vsync, VRR and FreeSync: `vid_vsync` picks the presentation mode (off, vsync, adaptive, FreeSync), adaptive by default
 
 ## Roadmap
 

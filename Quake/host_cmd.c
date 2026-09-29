@@ -34,6 +34,8 @@ int current_skill;
 
 void Mod_Print (void);
 
+#define MIN_BSP_MAP_SIZE (32 * 1024)
+
 /*
 ==================
 Host_Quit_f
@@ -58,21 +60,24 @@ void Host_Quit_f (void)
 
 /*
 ==================
-FileList_Add
+FileList_AddEx
+
+Like FileList_Add, but allocates extrabytes of zeroed payload behind the
+item and returns it (also when the name was already in the list)
 ==================
 */
-static void FileList_Add (const char *name, filelist_item_t **list)
+static filelist_item_t *FileList_AddEx (const char *name, size_t extrabytes, filelist_item_t **list)
 {
 	filelist_item_t *item, *cursor, *prev;
 
-	// ignore duplicate
+	// return existing entry for duplicates
 	for (item = *list; item; item = item->next)
 	{
 		if (!strcmp (name, item->name))
-			return;
+			return item;
 	}
 
-	item = (filelist_item_t *)Mem_Alloc (sizeof (filelist_item_t));
+	item = (filelist_item_t *)Mem_Alloc (sizeof (filelist_item_t) + extrabytes);
 	q_strlcpy (item->name, name, sizeof (item->name));
 
 	// insert each entry in alphabetical order
@@ -93,6 +98,18 @@ static void FileList_Add (const char *name, filelist_item_t **list)
 		item->next = prev->next;
 		prev->next = item;
 	}
+
+	return item;
+}
+
+/*
+==================
+FileList_Add
+==================
+*/
+static void FileList_Add (const char *name, filelist_item_t **list)
+{
+	FileList_AddEx (name, 0, list);
 }
 
 static void FileList_Clear (filelist_item_t **list)
@@ -179,14 +196,399 @@ void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 	}
 }
 
-static void ExtraMaps_Clear (void)
+/*
+==================
+RightPad
+==================
+*/
+static const char *RightPad (const char *str, size_t minlen, char c)
 {
+	static char buf[1024];
+	size_t		len = strlen (str);
+
+	minlen = q_min (minlen, sizeof (buf) - 1);
+	if (len >= minlen)
+		return str;
+
+	memcpy (buf, str, len);
+	for (; len < minlen; len++)
+		buf[len] = c;
+	buf[len] = '\0';
+
+	return buf;
+}
+
+static filelist_item_t **extralevels_sorted;
+static size_t			 maxlevelnamelen;
+
+static SDL_Thread	  *extralevels_parsing_thread;
+static atomic_uint32_t extralevels_cancel_parsing;
+
+/*
+==================
+ExtraMaps_Categorize
+==================
+*/
+static maptype_t ExtraMaps_Categorize (const char *name, const searchpath_t *source)
+{
+	size_t	  len = strlen (name);
+	maptype_t base;
+	qboolean  is_start, is_end, is_dm;
+
+	if (!source)
+	{
+		switch (name[0])
+		{
+		case 'd':
+			if (name[1] == 'm')
+				return MAPTYPE_ID_DM;
+			break;
+		case 's':
+			if (!strcmp (name + 1, "tart"))
+				return MAPTYPE_ID_START;
+			break;
+		case 'e':
+			if (name[1] >= '1' && name[1] <= '4')
+				return MAPTYPE_ID_EP1_LEVEL + (name[1] - '1');
+			if (!strcmp (name + 1, "nd"))
+				return MAPTYPE_ID_END;
+			break;
+		default:
+			break;
+		}
+		return MAPTYPE_ID_LEVEL;
+	}
+
+	is_start = (len >= 5 && (!memcmp (name + len - 5, "start", 5) || !memcmp (name, "start", 5) || !memcmp (name + len - 5, "intro", 5)));
+	is_end = (len >= 3 && !memcmp (name + len - 3, "end", 3));
+	while (len > 0 && (unsigned int)(name[len - 1] - '0') <= 9)
+		len--;
+	is_dm = (len >= 2 && !memcmp (name + len - 2, "dm", 2));
+
+	if (source->path_id != com_searchpaths->path_id)
+	{
+		if (is_start)
+			return MAPTYPE_CUSTOM_ID_START;
+		if (is_end)
+			return MAPTYPE_CUSTOM_ID_END;
+		if (is_dm)
+			return MAPTYPE_CUSTOM_ID_DM;
+		return MAPTYPE_CUSTOM_ID_LEVEL;
+	}
+
+	base = *source->filename ? MAPTYPE_CUSTOM_MOD_START : MAPTYPE_MOD_START;
+	if (is_start)
+		return base + MAPTYPE_CUSTOM_MOD_START;
+	if (is_end)
+		return base + MAPTYPE_CUSTOM_MOD_END;
+	if (is_dm)
+		return base + MAPTYPE_CUSTOM_MOD_DM;
+	return base + MAPTYPE_CUSTOM_MOD_LEVEL;
+}
+
+typedef struct levelinfo_s
+{
+	atomic_uint32_t type;
+	atomic_ptr_t	message;
+} levelinfo_t;
+
+/*
+==================
+ExtraMaps_GetInfo
+==================
+*/
+static const levelinfo_t *ExtraMaps_GetInfo (const filelist_item_t *item)
+{
+	return (const levelinfo_t *)(item + 1);
+}
+
+/*
+==================
+ExtraMaps_GetType
+==================
+*/
+maptype_t ExtraMaps_GetType (const filelist_item_t *item)
+{
+	const levelinfo_t *info = ExtraMaps_GetInfo (item);
+	return Atomic_LoadUInt32 ((atomic_uint32_t *)&info->type);
+}
+
+/*
+==================
+ExtraMaps_GetMessage
+==================
+*/
+const char *ExtraMaps_GetMessage (const filelist_item_t *item)
+{
+	const levelinfo_t *info = ExtraMaps_GetInfo (item);
+	return (const char *)Atomic_LoadPtr ((atomic_ptr_t *)&info->message);
+}
+
+/*
+==================
+ExtraMaps_IsStart
+==================
+*/
+qboolean ExtraMaps_IsStart (maptype_t type)
+{
+	return type == MAPTYPE_CUSTOM_MOD_START || type == MAPTYPE_MOD_START || type == MAPTYPE_CUSTOM_ID_START || type == MAPTYPE_ID_START;
+}
+
+/*
+==================
+ExtraMaps_NextLevel
+
+Iterates the playable levels in display order; start with *index = 0.
+==================
+*/
+filelist_item_t *ExtraMaps_NextLevel (int *index)
+{
+	filelist_item_t *item;
+
+	if (!extralevels_sorted)
+		return NULL;
+
+	// the description parser can turn entries into MAPTYPE_BMODEL after sorting
+	while ((item = extralevels_sorted[*index]) != NULL)
+	{
+		++*index;
+		if (ExtraMaps_GetType (item) < MAPTYPE_BMODEL)
+			return item;
+	}
+
+	return NULL;
+}
+
+/*
+==================
+ExtraMaps_Match
+==================
+*/
+qboolean ExtraMaps_Match (const filelist_item_t *item, const char *substr)
+{
+	const char *message;
+
+	if (!substr || !*substr || q_strcasestr (item->name, substr))
+		return true;
+
+	message = ExtraMaps_GetMessage (item);
+	return message && q_strcasestr (message, substr);
+}
+
+/*
+==================
+ExtraMaps_Sort
+==================
+*/
+static void ExtraMaps_Sort (void)
+{
+	int				 counts[MAPTYPE_COUNT];
+	int				 i, sum;
+	filelist_item_t *item;
+
+	memset (counts, 0, sizeof (counts));
+	for (item = extralevels; item; item = item->next)
+		counts[ExtraMaps_GetType (item)]++;
+
+	for (i = sum = 0; i < MAPTYPE_COUNT; i++)
+	{
+		int tmp = counts[i];
+		counts[i] = sum;
+		sum += tmp;
+	}
+	sum++; // NULL terminator
+
+	extralevels_sorted = (filelist_item_t **)Mem_Realloc (extralevels_sorted, sizeof (*extralevels_sorted) * sum);
+
+	for (item = extralevels; item; item = item->next)
+		extralevels_sorted[counts[ExtraMaps_GetType (item)]++] = item;
+	extralevels_sorted[sum - 1] = NULL;
+}
+
+/*
+==================
+ExtraMaps_Add
+==================
+*/
+static void ExtraMaps_Add (const char *name, const searchpath_t *source)
+{
+	filelist_item_t *item;
+	levelinfo_t		*info;
+
+	// ignore duplicates so the first (highest priority) searchpath determines the type
+	for (item = extralevels; item; item = item->next)
+		if (!strcmp (name, item->name))
+			return;
+
+	item = FileList_AddEx (name, sizeof (levelinfo_t), &extralevels);
+	info = (levelinfo_t *)(item + 1);
+	Atomic_StoreUInt32 (&info->type, ExtraMaps_Categorize (name, source));
+	maxlevelnamelen = q_max (maxlevelnamelen, strlen (name));
+}
+
+/*
+==================
+ExtraMaps_ParseDescriptions
+==================
+*/
+static int ExtraMaps_ParseDescriptions (void *unused)
+{
+	char buf[1024];
+	int	 i;
+
+	for (i = 0; extralevels_sorted[i]; i++)
+	{
+		filelist_item_t *item = extralevels_sorted[i];
+		levelinfo_t		*info = (levelinfo_t *)(item + 1);
+		char			*message = NULL;
+
+		if (Atomic_LoadUInt32 (&extralevels_cancel_parsing))
+			return 1;
+
+		if (!Mod_LoadMapDescription (buf, sizeof (buf), item->name))
+			Atomic_StoreUInt32 (&info->type, MAPTYPE_BMODEL);
+		if (buf[0])
+		{
+			message = (char *)Mem_Alloc (strlen (buf) + 1);
+			strcpy (message, buf);
+		}
+		Atomic_StorePtr (&info->message, message ? message : (char *)"");
+	}
+
+	return 0;
+}
+
+/*
+==================
+ExtraMaps_WaitForParsingThread
+==================
+*/
+static void ExtraMaps_WaitForParsingThread (void)
+{
+	if (extralevels_parsing_thread)
+	{
+		SDL_WaitThread (extralevels_parsing_thread, NULL);
+		extralevels_parsing_thread = NULL;
+		Atomic_StoreUInt32 (&extralevels_cancel_parsing, 0);
+	}
+}
+
+/*
+==================
+ExtraMaps_Init
+==================
+*/
+void ExtraMaps_Init (void)
+{
+	char		  mapname[32];
+	char		  ignorepakdir[32];
+	searchpath_t *search;
+	pack_t		 *pak;
+	int			  i;
+
+	// we don't want the maps in the id1 pakfiles to be
+	// categorized as custom levels
+	q_snprintf (ignorepakdir, sizeof (ignorepakdir), "/%s/", GAMENAME);
+
+	for (search = com_searchpaths; search; search = search->next)
+	{
+		if (*search->filename) // directory
+		{
+			char dir[MAX_OSPATH];
+
+			q_snprintf (dir, sizeof (dir), "%s/maps", search->filename);
+#ifdef _WIN32
+			{
+				WIN32_FIND_DATA fdat;
+				HANDLE			fhnd;
+
+				q_snprintf (dir, sizeof (dir), "%s/maps/*.bsp", search->filename);
+				fhnd = FindFirstFile (dir, &fdat);
+				if (fhnd == INVALID_HANDLE_VALUE)
+					continue;
+				do
+				{
+					if (fdat.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+						continue;
+					COM_StripExtension (fdat.cFileName, mapname, sizeof (mapname));
+					ExtraMaps_Add (mapname, search);
+				} while (FindNextFile (fhnd, &fdat));
+				FindClose (fhnd);
+			}
+#else
+			{
+				DIR			  *dir_p;
+				struct dirent *dir_t;
+
+				dir_p = opendir (dir);
+				if (dir_p == NULL)
+					continue;
+				while ((dir_t = readdir (dir_p)) != NULL)
+				{
+					if (q_strcasecmp (COM_FileGetExtension (dir_t->d_name), "bsp") != 0)
+						continue;
+					COM_StripExtension (dir_t->d_name, mapname, sizeof (mapname));
+					ExtraMaps_Add (mapname, search);
+				}
+				closedir (dir_p);
+			}
+#endif
+		}
+		else // pakfile
+		{
+			qboolean isbase = (strstr (search->pack->filename, ignorepakdir) != NULL);
+			for (i = 0, pak = search->pack; i < pak->numfiles; i++)
+			{
+				if (pak->files[i].filelen > MIN_BSP_MAP_SIZE &&	 // don't list files under 32k (ammo boxes etc)
+					!strncmp (pak->files[i].name, "maps/", 5) && // don't list files outside of maps/
+					!strchr (pak->files[i].name + 5, '/') &&	 // don't list files in subdirectories
+					!strcmp (COM_FileGetExtension (pak->files[i].name), "bsp"))
+				{
+					COM_StripExtension (pak->files[i].name + 5, mapname, sizeof (mapname));
+					ExtraMaps_Add (mapname, isbase ? NULL : search);
+				}
+			}
+		}
+	}
+
+	ExtraMaps_Sort ();
+
+	Atomic_StoreUInt32 (&extralevels_cancel_parsing, 0);
+	extralevels_parsing_thread = SDL_CreateThread (ExtraMaps_ParseDescriptions, "Map parser", NULL);
+}
+
+/*
+==================
+ExtraMaps_Clear
+==================
+*/
+void ExtraMaps_Clear (void)
+{
+	filelist_item_t *item;
+
+	Atomic_StoreUInt32 (&extralevels_cancel_parsing, 1);
+	ExtraMaps_WaitForParsingThread ();
+
+	maxlevelnamelen = 0;
+	for (item = extralevels; item; item = item->next)
+	{
+		levelinfo_t *info = (levelinfo_t *)(item + 1);
+		char		*message = (char *)Atomic_LoadPtr (&info->message);
+		if (message && *message)
+			Mem_Free (message);
+	}
+
 	FileList_Clear (&extralevels);
 }
 
-void ExtraMaps_Init (void)
+/*
+==================
+ExtraMaps_ShutDown
+==================
+*/
+void ExtraMaps_ShutDown (void)
 {
-	FileList_Init ("maps/", "bsp", 32 * 1024, &extralevels);
+	ExtraMaps_Clear ();
 }
 
 void ExtraMaps_NewGame (void)
@@ -202,16 +604,54 @@ Host_Maps_f
 */
 static void Host_Maps_f (void)
 {
-	int              i;
-	filelist_item_t *level;
+	int				 i, j;
+	filelist_item_t *item;
+	const char		*desc;
+	const char		*substr = Cmd_Argc () >= 2 ? Cmd_Argv (1) : NULL;
+	char			 buf[256], buf2[256];
+	char			 padchar = '.' - 0x80; // same bits as ('.' | 0x80) without truncating a constant
+	size_t			 ofsdesc = maxlevelnamelen + 2;
 
-	for (level = extralevels, i = 0; level; level = level->next, i++)
-		Con_SafePrintf ("   %s\n", level->name);
+	for (j = 0, i = 0; (item = ExtraMaps_NextLevel (&j)) != NULL;)
+	{
+		if (!ExtraMaps_Match (item, substr))
+			continue;
+		desc = ExtraMaps_GetMessage (item);
+		if (!desc)
+			desc = "";
+		if (substr && *substr)
+		{
+			const char *tinted_name = COM_TintSubstring (item->name, substr, buf, sizeof (buf));
+			const char *tinted_desc = COM_TintSubstring (desc, substr, buf2, sizeof (buf2));
+			if (*desc)
+				Con_SafePrintf ("   %s%c%s\n", RightPad (tinted_name, ofsdesc, padchar), padchar, tinted_desc);
+			else
+				Con_SafePrintf ("   %s\n", tinted_name);
+		}
+		else
+		{
+			if (*desc)
+				Con_SafePrintf ("   %s%c%s\n", RightPad (item->name, ofsdesc, padchar), padchar, desc);
+			else
+				Con_SafePrintf ("   %s\n", item->name);
+		}
+		i++;
+	}
 
-	if (i)
-		Con_SafePrintf ("%i map(s)\n", i);
+	if (substr && *substr)
+	{
+		if (i)
+			Con_SafePrintf ("%i map%s containing \"%s\"\n", i, i == 1 ? "" : "s", substr);
+		else
+			Con_SafePrintf ("no maps found containing \"%s\"\n", substr);
+	}
 	else
-		Con_SafePrintf ("no maps found\n");
+	{
+		if (i)
+			Con_SafePrintf ("%i map%s\n", i, i == 1 ? "" : "s");
+		else
+			Con_SafePrintf ("no maps found\n");
+	}
 }
 
 //==============================================================================
@@ -830,7 +1270,7 @@ static void Host_Randmap_f (void)
 	if (cmd_source != src_command)
 		return;
 
-	for (level = extralevels, numlevels = 0; level; level = level->next)
+	for (i = 0, numlevels = 0; ExtraMaps_NextLevel (&i);)
 		numlevels++;
 
 	if (numlevels == 0)
@@ -841,9 +1281,9 @@ static void Host_Randmap_f (void)
 
 	randlevel = (rand () % numlevels);
 
-	for (level = extralevels, i = 0; level; level = level->next, i++)
+	for (i = 0; (level = ExtraMaps_NextLevel (&i)) != NULL;)
 	{
-		if (i == randlevel)
+		if (--randlevel < 0)
 		{
 			Con_Printf ("Starting map %s...\n", level->name);
 			Cbuf_AddText (va ("map %s\n", level->name));

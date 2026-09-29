@@ -51,6 +51,11 @@ float ClampF (float v, float mn, float mx)
 	return v < mn ? mn : (v > mx ? mx : v);
 }
 
+ImU32 PackedColorToU32 (uint32_t argb)
+{
+	return IM_COL32 ((argb >> 0) & 0xFF, (argb >> 8) & 0xFF, (argb >> 16) & 0xFF, (argb >> 24) & 0xFF);
+}
+
 // A tooltip for the item just drawn (SetItemTooltip applies the panel's hover
 // delay, see ApplyStyle).
 void ItemTooltip (const char *text)
@@ -794,6 +799,31 @@ int QR_GUI_Section (const char *label, int default_open)
 	return ImGui::CollapsingHeader (label, flags) ? 1 : 0;
 }
 
+int QR_GUI_SectionSelected (const char *label, int selected)
+{
+	ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Framed;
+	int                clicked;
+
+	ImGui::SetNextItemOpen (selected != 0, ImGuiCond_Always);
+
+	if (selected)
+	{
+		const ImVec4 active = ImGui::GetStyleColorVec4 (ImGuiCol_HeaderActive);
+
+		ImGui::PushStyleColor (ImGuiCol_Header, active);
+		ImGui::PushStyleColor (ImGuiCol_HeaderHovered, active);
+		ImGui::PushStyleColor (ImGuiCol_HeaderActive, active);
+	}
+
+	(void)ImGui::CollapsingHeader (label, flags);
+	clicked = ImGui::IsItemClicked () ? 1 : 0;
+
+	if (selected)
+		ImGui::PopStyleColor (3);
+
+	return clicked;
+}
+
 void QR_GUI_PushID (const char *id)
 {
 	ImGui::PushID (id);
@@ -919,6 +949,57 @@ void QR_GUI_Notify (const char *text)
 	g_notify_time = ImGui::GetTime ();
 }
 
+int QR_GUI_DialogCentered (const char *title, const char *text, const char *yes, const char *no)
+{
+	const ImVec2 center (ImGui::GetIO ().DisplaySize.x * 0.5f, ImGui::GetIO ().DisplaySize.y * 0.5f);
+	int          result = 0;
+
+	ImGui::SetNextWindowPos (center, ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
+	ImGui::SetNextWindowSize (ImVec2 (760.0f, 0.0f), ImGuiCond_Always);
+
+	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+	                               ImGuiWindowFlags_AlwaysAutoResize;
+
+	if (ImGui::Begin (title, nullptr, flags))
+	{
+		ImGui::SetWindowFontScale (1.5f);
+
+		const ImGuiStyle &style = ImGui::GetStyle ();
+		const float       avail = ImGui::GetContentRegionAvail ().x;
+		const float       line = ImGui::CalcTextSize (text).x;
+		const float       bw = 220.0f;
+		const float       buttons = bw * 2.0f + style.ItemSpacing.x;
+
+		if (line < avail)
+		{
+			ImGui::SetCursorPosX ((avail - line) * 0.5f);
+			ImGui::TextUnformatted (text);
+		}
+		else
+		{
+			ImGui::TextWrapped ("%s", text);
+		}
+
+		ImGui::Spacing ();
+		ImGui::Spacing ();
+
+		if (buttons < ImGui::GetContentRegionAvail ().x)
+			ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail ().x - buttons) * 0.5f);
+
+		if (ImGui::Button (yes, ImVec2 (bw, 0.0f)))
+			result = 1;
+		ImGui::SameLine ();
+		if (ImGui::Button (no, ImVec2 (bw, 0.0f)))
+			result = 2;
+
+		ImGui::SetWindowFontScale (1.0f);
+	}
+	ImGui::End ();
+
+	return result;
+}
+
 void QR_GUI_DrawCrosshair (void)
 {
 	ImDrawList  *dl = ImGui::GetForegroundDrawList ();
@@ -991,4 +1072,31 @@ void QR_GUI_GetMousePos (float *x, float *y)
 		*x = pos.x;
 	if (y)
 		*y = pos.y;
+}
+
+void QR_GUI_DrawPolyline (const float *xy, int count, uint32_t argb, float thickness)
+{
+	if (!xy || count < 2)
+		return;
+
+	ImDrawList *dl = ImGui::GetForegroundDrawList ();
+	const ImU32 col = PackedColorToU32 (argb);
+	const float th = thickness > 0.0f ? thickness : 1.0f;
+
+	for (int i = 0; i + 1 < count; i++)
+	{
+		const ImVec2 a (xy[i * 2], xy[i * 2 + 1]);
+		const ImVec2 b (xy[(i + 1) * 2], xy[(i + 1) * 2 + 1]);
+
+		dl->AddLine (a, b, col, th);
+	}
+}
+
+void QR_GUI_DrawCircle (float cx, float cy, float radius, uint32_t argb, float thickness)
+{
+	if (radius <= 0.0f)
+		return;
+
+	ImGui::GetForegroundDrawList ()->AddCircle (ImVec2 (cx, cy), radius, PackedColorToU32 (argb), 0,
+	                                            thickness > 0.0f ? thickness : 1.0f);
 }

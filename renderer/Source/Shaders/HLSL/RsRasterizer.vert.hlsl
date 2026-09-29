@@ -1,32 +1,21 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
-
-// HLSL counterpart of RsRasterizer.vert.
+// Copyright (c) 2026 QuakeRay contributors
 //
-// `gl_Position` is the `SV_Position` output parameter. A `layout (location = N)` varying has no
-// counterpart in the HLSL language, so every one of them is pinned with `[[vk::location(N)]]` and
-// carries a semantic for the DXIL path: the semantic index is NOT the location (measured: a lone
-// `TEXCOORD1` output lands on location 0, the declaration order, while `[[vk::location(1)]]` on
-// the same parameter lands on 1). The push constant block keeps the golden's name, and the
-// specialization constant keeps the golden's `layout (constant_id = 0)`.
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
+
+
 
 struct RasterizerVert_BT
 {
@@ -35,7 +24,6 @@ struct RasterizerVert_BT
 
 [[vk::push_constant]] ConstantBuffer<RasterizerVert_BT> rasterizerVertInfo;
 
-// A specialization constant, same as the GLSL `layout (constant_id = 0)`.
 [[vk::constant_id(0)]] const uint applyVertexColorGamma = 0;
 
 void main(

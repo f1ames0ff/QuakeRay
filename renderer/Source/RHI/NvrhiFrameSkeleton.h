@@ -524,7 +524,7 @@ private:
     RhiDecalPass *decalPass = nullptr;
 
     // The host's FSR upscaler module (RhiFsrPass, RHI/RhiFsrPass.h), driven after the compose's
-    // Render when the engine's resolution helper selects FSR 2/3: it upscales FINAL into image 30,
+    // Render when the engine's resolution helper selects FSR 3.1: it upscales FINAL into image 30,
     // which the skeleton copies into the TAAU target (29) so the UI and the present keep their
     // image; otherwise the TAAU records as before. Not owned; null when the host's creation failed.
     RhiFsrPass *fsrPass = nullptr;

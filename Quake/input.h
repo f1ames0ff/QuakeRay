@@ -34,6 +34,9 @@ void IN_Commands (void);
 // mouse moved by dx and dy pixels
 void IN_MouseMotion (int dx, int dy);
 
+// delivering mouse motion events (the ImGui panel reads them for its cursor).
+void IN_FreeCursorForGui (void);
+
 void IN_SendKeyEvents (void);
 // used as a callback for Sys_SendKeyEvents() by some drivers
 
@@ -51,5 +54,14 @@ void IN_Activate ();
 
 // called when the app becomes inactive
 void IN_Deactivate (qboolean free_cursor);
+
+// called when a menu is opened; keeps the fullscreen cursor hidden when ui_mouse is 0
+void IN_DeactivateForMenu (void);
+
+// returns the current mouse position in display pixels (vid.width/vid.height space)
+void IN_GetMousePos (int *outx, int *outy);
+
+// converts window coordinates to display pixels (vid.width/vid.height space)
+void IN_ScaleMouseCoords (float x, float y, int *outx, int *outy);
 
 #endif /* _QUAKE_INPUT_H */

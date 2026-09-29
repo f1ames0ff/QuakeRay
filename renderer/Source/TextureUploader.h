@@ -74,6 +74,8 @@ public:
     void UpdateImage(VkCommandBuffer cmd, VkImage targetImage, const void *data);
     void DestroyImage(VkImage image, VkImageView view);
 
+    bool CanUpdateImageFromHostData(VkImage image) const;
+
 protected:
     enum class ImagePrepareType
     {
@@ -113,6 +115,7 @@ private:
         QrExtent2D  imageSize;
         bool        generateMipmaps;
         VkFormat    format;
+        bool        pregenerated;
     };
 
 protected:

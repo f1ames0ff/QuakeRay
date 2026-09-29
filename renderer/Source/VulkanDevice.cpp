@@ -172,7 +172,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->upscaledRenderHeight = static_cast< float >( renderResolution.UpscaledHeight() );
 
         QrFloat2D jitter = renderResolution.IsNvDlssEnabled() ? HaltonSequence::GetJitter_Halton23( frameId ) :
-                           (renderResolution.IsAmdFsr2Enabled() || renderResolution.IsAmdFsr3Enabled()) ? FidelityFX::FSR::GetJitter( renderResolution.GetResolutionState(), frameId ) :
+                           renderResolution.IsAmdFsr3Enabled() ? FidelityFX::FSR::GetJitter( renderResolution.GetResolutionState(), frameId ) :
                            QrFloat2D{ 0, 0 };
 
         gu->jitterX = jitter.data[ 0 ];
@@ -1080,7 +1080,6 @@ bool VulkanDevice::IsRenderUpscaleTechniqueAvailable(QrRenderUpscaleTechnique te
         case QR_RENDER_UPSCALE_TECHNIQUE_NEAREST:
         case QR_RENDER_UPSCALE_TECHNIQUE_LINEAR:
             return true;
-        case QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2:
         case QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3:
             return FidelityFX::FSR::IsUpscaleVersionAvailable(technique);
         case QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS:
@@ -1499,17 +1498,21 @@ void VulkanDevice::ChangeAnimatedMaterialFrame(QrMaterial animatedMaterial, uint
 
 void VulkanDevice::UpdateMaterial(const QrMaterialUpdateInfo *updateInfo)
 {
-    if (!currentFrameState.WasFrameStarted())
-    {
-        throw QrException(QR_FRAME_WASNT_STARTED);
-    }
-
     if (updateInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
     }
 
-    bool wasUpdated = textureManager->UpdateMaterial(currentFrameState.GetCmdBuffer(), currentFrameState.GetFrameIndex(), *updateInfo);
+    // Out-of-frame calls (the live material editor restoring a snapshot from a
+    // console command, before qrStartFrame) use the pre-frame command buffer,
+    // exactly like CreateMaterial does.
+    bool wasUpdated = textureManager->UpdateMaterial(
+        currentFrameState.GetCmdBufferForMaterials(cmdManager), currentFrameState.GetFrameIndex(), *updateInfo);
+}
+
+bool VulkanDevice::CanUpdateMaterialContents(QrMaterial material, QrExtent2D size) const
+{
+    return textureManager->CanUpdateMaterialContents(material, size);
 }
 
 void VulkanDevice::DestroyMaterial(QrMaterial material)

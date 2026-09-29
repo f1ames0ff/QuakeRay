@@ -1,22 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #version 460
 
@@ -35,7 +32,7 @@ layout (location = 1) out vec3 outScreenEmission;
 #include "Exposure.h"
 #include "Volumetric.h"
 
-layout(push_constant) uniform RasterizerFrag_BT 
+layout(push_constant) uniform RasterizerFrag_BT
 {
     layout(offset = 64) vec4 color;
     layout(offset = 80) uint textureIndex;
@@ -78,8 +75,6 @@ void main()
                                                   vertTexCoord );
         emis          = emisSample[ EMISSION_CHANNEL ];
 
-        // Per-material rt_emis_blend override: the CPU packs it into the alpha of the
-        // RME texture as ( mode + 1 ), while 0 means "not authored".
         emisBlendCode = uint( emisSample.a * 255.0 + 0.5 );
     }
     outScreenEmission = rmeEmissionToScreenEmission( emis ) * albedoAlpha.rgb;
@@ -92,14 +87,8 @@ void main()
         }
     }
 
-    // The compose pass reads the per-pixel mode from the alpha of
-    // framebufPrimaryToReflRefr, where the traced path stores it for the surfaces
-    // that it covers. Rasterized emissive surfaces must contribute the same value.
     if( emisBlendCode != 0u )
     {
-        // The traced pass addresses this framebuffer in checkerboard space, so the
-        // rasterized pixel has to be mapped the same way for the compose pass to
-        // find the mode at the pixel it resolves.
         const ivec2 pix  = getCheckerboardPix( ivec2( gl_FragCoord.xy ) );
         const uvec4 prev = imageLoad( framebufPrimaryToReflRefr, pix );
         imageStore( framebufPrimaryToReflRefr, pix, uvec4( prev.rgb, emisBlendCode ) );
