@@ -29,6 +29,8 @@ void     SNDAL_Shutdown (void);
 qboolean SNDAL_IsActive (void);
 
 void SNDAL_Update (void);
+void SNDAL_ExtraUpdate (void);
+int  SNDAL_RawPosition (void);
 void SNDAL_StartChannel (channel_t *ch);
 void SNDAL_StopChannel (channel_t *ch);
 void SNDAL_StopAll (void);

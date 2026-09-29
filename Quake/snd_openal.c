@@ -41,7 +41,7 @@ extern cvar_t s_openal_max_sources;
 #endif
 
 #define SNDAL_MAX_BUFFERS   1024
-#define SNDAL_MUSIC_BUFFERS 4
+#define SNDAL_MUSIC_BUFFERS 8
 #define SNDAL_MUSIC_SAMPLES 1024
 
 #ifndef ALC_HRTF_SOFT
@@ -78,10 +78,12 @@ static ALCcontext        *sndal_context;
 static qboolean           sndal_context_current;
 static qboolean           sndal_active;
 static qboolean           sndal_blocked;
-static qboolean           sndal_has_loop_points;
 static qboolean           sndal_has_direct_channels;
 static qboolean           sndal_has_pause_device;
 static int                sndal_hrtf_status = -1;
+static int                sndal_rawpos;
+static double             sndal_clockfrac;
+static double             sndal_lasttime;
 
 static sndal_source_t     sndal_sources[MAX_CHANNELS];
 static int                sndal_numsources;
@@ -228,30 +230,29 @@ fail:
 	return false;
 }
 
+static float SNDAL_ChannelDistance (channel_t *ch)
+{
+	int    index = (int)(ch - snd_channels);
+	vec3_t direction;
+
+	if (ch->entnum == cl.viewentity || index < NUM_AMBIENTS)
+		return 0.0f;
+	VectorSubtract (ch->origin, listener_origin, direction);
+	return VectorLength (direction) * ch->dist_mult;
+}
+
+static qboolean SNDAL_ChannelAudible (channel_t *ch)
+{
+	return (SNDAL_ChannelDistance (ch) < 1.0f) ? true : false;
+}
+
 static float SNDAL_ChannelGain (channel_t *ch)
 {
-	float gain;
-	int   index;
+	float gain = SNDAL_ChannelDistance (ch);
 
-	index = (int)(ch - snd_channels);
-	if (ch->entnum == cl.viewentity || index < NUM_AMBIENTS)
-	{
-		gain = ch->master_vol / 255.0f;
-	}
-	else
-	{
-		vec3_t direction;
-		float  dist;
-
-		VectorSubtract (ch->origin, listener_origin, direction);
-		dist = VectorLength (direction) * ch->dist_mult;
-		if (dist >= 1.0f)
-			gain = 0.0f;
-		else
-			gain = (1.0f - dist) * (ch->master_vol / 255.0f);
-	}
-
-	gain *= sfxvolume.value;
+	if (gain >= 1.0f)
+		return 0.0f;
+	gain = (1.0f - gain) * (ch->master_vol / 510.0f) * sfxvolume.value;
 	if (gain < 0.0f)
 		gain = 0.0f;
 	else if (gain > 1.0f)
@@ -276,11 +277,19 @@ static void SNDAL_SetupSource (channel_t *ch, int slot)
 static int SNDAL_AllocSource (void)
 {
 	int i;
+	int candidate = -1;
 
 	for (i = 0; i < sndal_numsources; i++)
 	{
 		if (!sndal_sources[i].channel)
 			return i;
+		if (sndal_sources[i].index >= MAX_DYNAMIC_CHANNELS + NUM_AMBIENTS && !SNDAL_ChannelAudible (sndal_sources[i].channel))
+			candidate = i;
+	}
+	if (candidate >= 0)
+	{
+		SNDAL_ReleaseSlot (candidate);
+		return candidate;
 	}
 	return -1;
 }
@@ -309,7 +318,6 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 	ALuint      buffer;
 	ALenum      error;
 	int         i;
-	qboolean    looping;
 
 	if (!sc)
 		return 0;
@@ -322,11 +330,10 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 	if (sndal_numbuffers >= SNDAL_MAX_BUFFERS)
 		return 0;
 
+	p_alGetError ();
 	p_alGenBuffers (1, &buffer);
 	if (!buffer)
 		return 0;
-
-	looping = (SNDAL_IsLooping (sc) && !sndal_has_loop_points) ? true : false;
 
 	if (sc->width == 1)
 	{
@@ -339,22 +346,15 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 		}
 		for (i = 0; i < sc->length; i++)
 			pcm[i] = (short)(((signed char *)sc->data)[i] << 8);
-		if (looping)
-			p_alBufferData (buffer, AL_FORMAT_MONO16, pcm + sc->loopstart, (ALsizei)((sc->length - sc->loopstart) * (int)sizeof (short)), sc->speed);
-		else
-			p_alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * (int)sizeof (short)), sc->speed);
+		p_alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * (int)sizeof (short)), sc->speed);
 		Mem_Free (pcm);
 	}
 	else
 	{
-		if (looping)
-			p_alBufferData (
-				buffer, AL_FORMAT_MONO16, (byte *)sc->data + sc->loopstart * 2, (ALsizei)((sc->length - sc->loopstart) * 2), sc->speed);
-		else
-			p_alBufferData (buffer, AL_FORMAT_MONO16, sc->data, (ALsizei)(sc->length * 2), sc->speed);
+		p_alBufferData (buffer, AL_FORMAT_MONO16, sc->data, (ALsizei)(sc->length * 2), sc->speed);
 	}
 
-	if (SNDAL_IsLooping (sc) && sndal_has_loop_points)
+	if (SNDAL_IsLooping (sc))
 	{
 		ALint points[2];
 
@@ -394,7 +394,6 @@ static void SNDAL_ConfigureSource (channel_t *ch, int slot)
 	ALuint      source;
 	sfxcache_t *sc = ch->sfx->cache;
 	ALuint      buffer;
-	int         offset;
 
 	buffer = SNDAL_GetBuffer (ch);
 	if (!buffer)
@@ -404,18 +403,10 @@ static void SNDAL_ConfigureSource (channel_t *ch, int slot)
 	}
 
 	source = sndal_sources[slot].source;
-	offset = ch->pos;
-	if (SNDAL_IsLooping (sc) && !sndal_has_loop_points)
-	{
-		offset -= sc->loopstart;
-		if (offset < 0)
-			offset = 0;
-	}
-
 	p_alSourceStop (source);
 	p_alSourcei (source, AL_BUFFER, (ALint)buffer);
 	p_alSourcei (source, AL_LOOPING, SNDAL_IsLooping (sc) ? AL_TRUE : AL_FALSE);
-	p_alSourcei (source, AL_SAMPLE_OFFSET, offset);
+	p_alSourcei (source, AL_SAMPLE_OFFSET, ch->pos);
 	SNDAL_SetupSource (ch, slot);
 
 	sndal_sources[slot].started = true;
@@ -492,10 +483,11 @@ void SNDAL_ClearAll (void)
 
 static void SNDAL_SyncSource (int slot)
 {
-	channel_t *ch = sndal_sources[slot].channel;
-	ALuint     source = sndal_sources[slot].source;
-	ALint      state = 0;
-	float      gain;
+	channel_t  *ch = sndal_sources[slot].channel;
+	ALuint      source = sndal_sources[slot].source;
+	sfxcache_t *sc;
+	ALint       state = 0;
+	ALint       offset = 0;
 
 	if (!ch)
 		return;
@@ -509,25 +501,38 @@ static void SNDAL_SyncSource (int slot)
 		SNDAL_ReleaseSlot (slot);
 		return;
 	}
+	sc = ch->sfx->cache;
 
-	SNDAL_SetupSource (ch, slot);
-	gain = SNDAL_ChannelGain (ch);
 	p_alGetSourcei (source, AL_SOURCE_STATE, &state);
-
-	if (gain <= 0.0f)
-	{
-		if (state == AL_PLAYING)
-			p_alSourcePause (source);
-		return;
-	}
-	if (sndal_sources[slot].started && !sndal_sources[slot].looping && state == AL_STOPPED)
+	if (sndal_sources[slot].started && !sndal_sources[slot].looping && (state == AL_STOPPED || ch->end <= paintedtime))
 	{
 		ch->sfx = NULL;
 		SNDAL_ReleaseSlot (slot);
 		return;
 	}
+
+	SNDAL_SetupSource (ch, slot);
+
+	if (!SNDAL_ChannelAudible (ch))
+	{
+		if (state == AL_PLAYING)
+			p_alSourcePause (source);
+		return;
+	}
 	if (!sndal_blocked && state != AL_PLAYING)
+	{
 		p_alSourcePlay (source);
+		state = AL_PLAYING;
+	}
+
+	if (state == AL_PLAYING)
+	{
+		p_alGetSourcei (source, AL_SAMPLE_OFFSET, &offset);
+		if (offset >= 0 && offset <= sc->length)
+			ch->pos = (int)offset;
+	}
+	if (sndal_sources[slot].looping)
+		ch->end = paintedtime + (sc->length - ch->pos);
 }
 
 static void SNDAL_UpdateListener (void)
@@ -575,13 +580,13 @@ static void SNDAL_UpdateMusic (void)
 	if (sndal_music_queued < 0)
 		sndal_music_queued = 0;
 
-	available = s_rawend - paintedtime;
+	available = s_rawend - sndal_rawpos;
 	while (sndal_music_numfree > 0 && available > 0)
 	{
 		n = (available > SNDAL_MUSIC_SAMPLES) ? SNDAL_MUSIC_SAMPLES : available;
 		for (i = 0; i < n; i++)
 		{
-			sample = (paintedtime + i) & (MAX_RAW_SAMPLES - 1);
+			sample = (sndal_rawpos + i) & (MAX_RAW_SAMPLES - 1);
 			left = s_rawsamples[sample].left / 512;
 			right = s_rawsamples[sample].right / 512;
 			if (left < -32768)
@@ -597,21 +602,17 @@ static void SNDAL_UpdateMusic (void)
 		}
 
 		buffer = sndal_music_free[--sndal_music_numfree];
+		p_alGetError ();
 		p_alBufferData (buffer, AL_FORMAT_STEREO16, sndal_music_pcm, (ALsizei)(n * 4), shm->speed);
 		p_alSourceQueueBuffers (sndal_music_source, 1, &buffer);
+		if (p_alGetError () != AL_NO_ERROR)
+		{
+			sndal_music_free[sndal_music_numfree++] = buffer;
+			break;
+		}
 		sndal_music_queued++;
-		paintedtime += n;
+		sndal_rawpos += n;
 		available -= n;
-	}
-
-	if (paintedtime > 0x40000000)
-	{
-		int delta = 0x40000000;
-
-		paintedtime -= delta;
-		s_rawend -= delta;
-		for (i = 0; i < total_channels; i++)
-			snd_channels[i].end -= delta;
 	}
 
 	if (sndal_music_queued > 0 && !sndal_blocked)
@@ -635,6 +636,46 @@ static void SNDAL_FlushMusic (void)
 		sndal_music_free[i] = sndal_music_buffers[i];
 	sndal_music_numfree = SNDAL_MUSIC_BUFFERS;
 	sndal_music_queued = 0;
+	sndal_rawpos = 0;
+}
+
+static void SNDAL_AdvanceClock (void)
+{
+	double now, delta;
+	int    elapsed;
+
+	if (!shm || shm->speed <= 0)
+		return;
+
+	now = Sys_DoubleTime ();
+	if (sndal_lasttime <= 0.0)
+	{
+		sndal_lasttime = now;
+		return;
+	}
+	delta = now - sndal_lasttime;
+	sndal_lasttime = now;
+	if (delta < 0.0)
+		delta = 0.0;
+	else if (delta > 1.0)
+		delta = 1.0;
+
+	sndal_clockfrac += delta * shm->speed;
+	elapsed = (int)sndal_clockfrac;
+	if (elapsed <= 0)
+		return;
+	sndal_clockfrac -= elapsed;
+	paintedtime += elapsed;
+
+	if (paintedtime > 0x40000000)
+	{
+		int wrap = 0x40000000;
+		int i;
+
+		paintedtime -= wrap;
+		for (i = 0; i < total_channels; i++)
+			snd_channels[i].end -= wrap;
+	}
 }
 
 void SNDAL_Update (void)
@@ -644,6 +685,7 @@ void SNDAL_Update (void)
 	if (!sndal_active)
 		return;
 
+	SNDAL_AdvanceClock ();
 	SNDAL_UpdateListener ();
 	SNDAL_UpdateMusic ();
 
@@ -671,6 +713,18 @@ void SNDAL_Update (void)
 		if (sndal_sources[i].channel)
 			SNDAL_SyncSource (i);
 	}
+}
+
+void SNDAL_ExtraUpdate (void)
+{
+	if (!sndal_active)
+		return;
+	SNDAL_UpdateMusic ();
+}
+
+int SNDAL_RawPosition (void)
+{
+	return sndal_rawpos;
 }
 
 void SNDAL_BlockSound (void)
@@ -766,7 +820,11 @@ qboolean SNDAL_Init (dma_t *dma)
 	p_alGetError ();
 
 	p_alDopplerFactor (0.0f);
-	sndal_has_loop_points = (p_alIsExtensionPresent ("AL_SOFT_loop_points") == AL_TRUE) ? true : false;
+	if (p_alIsExtensionPresent ("AL_SOFT_loop_points") != AL_TRUE)
+	{
+		Con_Printf ("OpenAL: AL_SOFT_loop_points is required\n");
+		goto fail;
+	}
 	sndal_has_direct_channels = (p_alIsExtensionPresent ("AL_SOFT_direct_channels") == AL_TRUE) ? true : false;
 
 	memset (dma, 0, sizeof (*dma));
@@ -794,9 +852,16 @@ qboolean SNDAL_Init (dma_t *dma)
 
 	p_alGenBuffers (SNDAL_MUSIC_BUFFERS, sndal_music_buffers);
 	for (i = 0; i < SNDAL_MUSIC_BUFFERS; i++)
+	{
+		if (!sndal_music_buffers[i])
+			goto fail;
 		sndal_music_free[i] = sndal_music_buffers[i];
+	}
 	sndal_music_numfree = SNDAL_MUSIC_BUFFERS;
 	sndal_music_queued = 0;
+	sndal_rawpos = 0;
+	sndal_clockfrac = 0.0;
+	sndal_lasttime = Sys_DoubleTime ();
 
 	want = (int)s_openal_max_sources.value;
 	if (want < 1)
@@ -913,8 +978,10 @@ void SNDAL_Shutdown (void)
 	memset (sndal_music_free, 0, sizeof (sndal_music_free));
 	sndal_active = false;
 	sndal_blocked = false;
-	sndal_has_loop_points = false;
 	sndal_has_direct_channels = false;
 	sndal_has_pause_device = false;
 	sndal_hrtf_status = -1;
+	sndal_rawpos = 0;
+	sndal_clockfrac = 0.0;
+	sndal_lasttime = 0.0;
 }

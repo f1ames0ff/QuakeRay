@@ -130,7 +130,7 @@ $licenseDir = Join-Path $stage "licenses"
 New-Item -ItemType Directory -Path $licenseDir -Force | Out-Null
 
 $openalNotices = @{
-    "COPYING"       = "OpenAL-Soft-LGPL-2.1.txt"
+    "COPYING"       = "OpenAL-Soft-LGPL.txt"
     "LICENSE-pffft" = "OpenAL-Soft-pffft.txt"
 }
 foreach ($notice in $openalNotices.GetEnumerator()) {

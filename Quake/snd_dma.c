@@ -146,6 +146,8 @@ static void S_BackendStart (void)
 		if (s_openal.value)
 			Con_Printf ("OpenAL Soft unavailable, using SDL audio\n");
 		sound_started = SNDDMA_Init (&sn);
+		if (!sound_started)
+			shm = NULL;
 	}
 }
 
@@ -160,11 +162,15 @@ static void S_BackendShutdown (void)
 
 static void S_RestartBackend (void)
 {
-	if (!snd_initialized || !sound_started)
+	int oldspeed;
+
+	if (!snd_initialized)
 		return;
 
+	oldspeed = shm ? shm->speed : 0;
 	Con_Printf ("Restarting sound backend\n");
-	S_StopAllSounds (true);
+	if (sound_started)
+		S_StopAllSounds (true);
 
 	SDL_LockMutex (snd_mutex);
 	S_BackendShutdown ();
@@ -173,9 +179,16 @@ static void S_RestartBackend (void)
 	s_rawend = 0;
 	S_BackendStart ();
 	if (sound_started)
+	{
 		Con_Printf ("Audio: %d bit, %s, %d Hz\n", shm->samplebits, (shm->channels == 2) ? "stereo" : "mono", shm->speed);
+		if (shm->speed != oldspeed)
+			S_ClearAll ();
+	}
 	else
+	{
 		Con_Printf ("Failed initializing sound\n");
+		BGM_Stop ();
+	}
 	SDL_UnlockMutex (snd_mutex);
 }
 
@@ -764,6 +777,13 @@ Expects data in signed 16 bit, or unsigned
 8 bit format.
 ===================
 */
+int S_RawSamplesCursor (void)
+{
+	if (SNDAL_IsActive ())
+		return SNDAL_RawPosition ();
+	return paintedtime;
+}
+
 void S_RawSamples (int samples, int rate, int width, int channels, byte *data, float volume)
 {
 	int   i;
@@ -771,8 +791,11 @@ void S_RawSamples (int samples, int rate, int width, int channels, byte *data, f
 	float scale;
 	int   intVolume;
 
-	if (s_rawend < paintedtime)
-		s_rawend = paintedtime;
+	if (!shm)
+		return;
+
+	if (s_rawend < S_RawSamplesCursor ())
+		s_rawend = S_RawSamplesCursor ();
 
 	scale = (float)rate / shm->speed;
 	intVolume = (int)(256 * volume);
@@ -979,7 +1002,12 @@ static void GetSoundtime (void)
 void S_ExtraUpdate (void)
 {
 	if (SNDAL_IsActive ())
+	{
+		SDL_LockMutex (snd_mutex);
+		SNDAL_ExtraUpdate ();
+		SDL_UnlockMutex (snd_mutex);
 		return;
+	}
 	if (snd_noextraupdate.value)
 		return; // don't pollute timings
 	S_Update_ ();

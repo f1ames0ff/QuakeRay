@@ -102,7 +102,7 @@ Steps:
    .\bundle_release.ps1
    ```
 
-   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `mdl_skins`, `progs`, `shaders`, `textures` and the blue noise / water normal KTX2 tables), `readme.md`, `changelog.md`, `LICENSE.txt` and the third-party notices under `licenses/` (OpenAL Soft's LGPL-2.1 text and the pffft licence). The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
+   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `mdl_skins`, `progs`, `shaders`, `textures` and the blue noise / water normal KTX2 tables), `readme.md`, `changelog.md`, `LICENSE.txt` and the third-party notices under `licenses/` (OpenAL Soft's LGPL text and the pffft licence). The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
 
 ## Ray tracing settings
 

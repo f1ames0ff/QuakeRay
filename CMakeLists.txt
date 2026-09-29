@@ -180,7 +180,12 @@ if(QUAKERAY_PLATFORM_WINDOWS)
         set(OPENAL_DLL_DIR "${OPENAL_ROOT}/x86")
     endif()
 else()
-    find_path(OPENAL_INCLUDE_DIR AL/al.h REQUIRED)
+    find_path(OPENAL_INCLUDE_DIR AL/alext.h)
+    if(NOT OPENAL_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "OpenAL Soft headers not found (AL/alext.h). Install the development files, "
+            "for example `apt install libopenal-dev` or `brew install openal-soft`.")
+    endif()
 endif()
 
 # ============================================================================

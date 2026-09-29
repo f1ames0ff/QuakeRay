@@ -239,6 +239,11 @@ void BGM_Play (const char *filename)
 
 	if (music_handlers == NULL)
 		return;
+	if (!shm)
+	{
+		Con_Printf ("sound system not started\n");
+		return;
+	}
 
 	if (!filename || !*filename)
 	{
@@ -303,6 +308,8 @@ void BGM_PlayCDtrack (byte track, qboolean looping)
 		return; /* success */
 
 	if (music_handlers == NULL)
+		return;
+	if (!shm)
 		return;
 
 	if (no_extmusic || !bgm_extmusic.value)
@@ -379,6 +386,9 @@ static void BGM_UpdateStream (void)
 	int      fileBytes;
 	byte     raw[16384];
 
+	if (!shm)
+		return;
+
 	if (bgmstream->status != STREAM_PLAY)
 		return;
 
@@ -387,12 +397,12 @@ static void BGM_UpdateStream (void)
 		return;
 
 	/* see how many samples should be copied into the raw buffer */
-	if (s_rawend < paintedtime)
-		s_rawend = paintedtime;
+	if (s_rawend < S_RawSamplesCursor ())
+		s_rawend = S_RawSamplesCursor ();
 
-	while (s_rawend < paintedtime + MAX_RAW_SAMPLES)
+	while (s_rawend < S_RawSamplesCursor () + MAX_RAW_SAMPLES)
 	{
-		bufferSamples = MAX_RAW_SAMPLES - (s_rawend - paintedtime);
+		bufferSamples = MAX_RAW_SAMPLES - (s_rawend - S_RawSamplesCursor ());
 
 		/* decide how much data needs to be read from the file */
 		fileSamples = bufferSamples * bgmstream->info.rate / shm->speed;

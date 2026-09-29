@@ -122,6 +122,9 @@ void SND_Spatialize (channel_t *ch);
 void S_RawSamples (int samples, int rate, int width, int channels, byte *data, float volume);
 /* Expects data in signed 16 bit, or unsigned 8 bit format. */
 
+/* position of the raw sample ring the backend has consumed */
+int S_RawSamplesCursor (void);
+
 /* initializes cycling through a DMA buffer and returns information on it */
 qboolean SNDDMA_Init (dma_t *dma);
 
