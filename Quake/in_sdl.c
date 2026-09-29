@@ -27,6 +27,8 @@ static qboolean textmode;
 
 static cvar_t in_debugkeys = {"in_debugkeys", "0", CVAR_NONE};
 
+extern cvar_t ui_mouse;
+
 // SDL2 Game Controller cvars
 cvar_t joy_deadzone = {"joy_deadzone", "0.175", CVAR_ARCHIVE};
 cvar_t joy_deadzone_trigger = {"joy_deadzone_trigger", "0.2", CVAR_ARCHIVE};
@@ -117,6 +119,34 @@ void IN_Deactivate (qboolean free_cursor)
 
 	/* discard all mouse events when input is deactivated */
 	IN_BeginIgnoringMouseEvents ();
+}
+
+void IN_DeactivateForMenu (void)
+{
+	IN_Deactivate (modestate == MS_WINDOWED || ui_mouse.value);
+}
+
+void IN_ScaleMouseCoords (float x, float y, int *outx, int *outy)
+{
+	SDL_Window *window = (SDL_Window *)VID_GetWindow ();
+	int         w = 0, h = 0;
+
+	SDL_GetWindowSize (window, &w, &h);
+	if (w > 0 && h > 0)
+	{
+		x = x * vid.width / w;
+		y = y * vid.height / h;
+	}
+	*outx = (int)x;
+	*outy = (int)y;
+}
+
+void IN_GetMousePos (int *outx, int *outy)
+{
+	int x, y;
+
+	SDL_GetMouseState (&x, &y);
+	IN_ScaleMouseCoords ((float)x, (float)y, outx, outy);
 }
 
 void IN_StartupJoystick (void)

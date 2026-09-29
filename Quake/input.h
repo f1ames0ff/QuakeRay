@@ -52,4 +52,13 @@ void IN_Activate ();
 // called when the app becomes inactive
 void IN_Deactivate (qboolean free_cursor);
 
+// called when a menu is opened; keeps the fullscreen cursor hidden when ui_mouse is 0
+void IN_DeactivateForMenu (void);
+
+// returns the current mouse position in display pixels (vid.width/vid.height space)
+void IN_GetMousePos (int *outx, int *outy);
+
+// converts window coordinates to display pixels (vid.width/vid.height space)
+void IN_ScaleMouseCoords (float x, float y, int *outx, int *outy);
+
 #endif /* _QUAKE_INPUT_H */

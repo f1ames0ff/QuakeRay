@@ -85,6 +85,29 @@ GENERIC_TYPES (IMPL_GENERIC_FUNCS, NO_COMMA)
 
 #define countof(x) (sizeof (x) / sizeof ((x)[0]))
 
+typedef struct vec_header_t
+{
+	size_t capacity;
+	size_t size;
+} vec_header_t;
+
+#define VEC_HEADER(v) (((vec_header_t *)(v))[-1])
+
+#define VEC_PUSH(v, n)                                \
+	do                                                \
+	{                                                 \
+		Vec_Grow ((void **)&(v), sizeof ((v)[0]), 1); \
+		(v)[VEC_HEADER (v).size++] = (n);             \
+	} while (0)
+#define VEC_SIZE(v)	 ((v) ? VEC_HEADER (v).size : 0)
+#define VEC_FREE(v)	 Vec_Free ((void **)&(v))
+#define VEC_CLEAR(v) Vec_Clear ((void **)&(v))
+
+void Vec_Grow (void **pvec, size_t element_size, size_t count);
+void Vec_Append (void **pvec, size_t element_size, const void *data, size_t count);
+void Vec_Clear (void **pvec);
+void Vec_Free (void **pvec);
+
 typedef struct sizebuf_s
 {
 	qboolean allowoverflow; // if false, do a Sys_Error
@@ -183,9 +206,24 @@ int q_strncasecmp (const char *s1, const char *s2, size_t n);
 /* locale-insensitive case-insensitive alternative to strstr */
 char *q_strcasestr (const char *haystack, const char *needle);
 
+/* copies in to out, highlighting all occurrences of substr using the colored charset */
+char *COM_TintSubstring (const char *in, const char *substr, char *out, size_t outsize);
+
 /* locale-insensitive strlwr/upr replacement functions: */
 char *q_strlwr (char *str);
 char *q_strupr (char *str);
+
+/* Trim whitespace on both ends, modifying str on-place: Returns the new start of str after trim */
+char *q_strtrim (char *str);
+
+/* Split str around any of the characters of sep_set, gobbling any number of consecutive found separators, modifying str in-place.
+In addition, if nb_substr != NULL:
+  The returned char** subs is the array of the nb_substr splitted sub-strings of str: subs[k] for k in [0 .. nb_substr [.
+else if nb_substr == NULL:
+   q_strsplit returns NULL.
+The returned char** subs array is allocated by Mem_Alloc.
+*/
+char **q_strsplit (char *str, const char *sep_set, size_t *nb_substr);
 
 // strdup that calls Mem_Alloc
 char *q_strdup (const char *str);
@@ -199,7 +237,23 @@ int q_vsnprintf (char *str, size_t size, const char *format, va_list args) FUNC_
 extern char     com_token[1024];
 extern qboolean com_eof;
 
+typedef enum
+{
+	CPE_NOTRUNC,	// return parse error in case of overflow
+	CPE_ALLOWTRUNC, // truncate com_token in case of overflow
+} cpe_mode;
+
 const char *COM_Parse (const char *data);
+const char *COM_ParseEx (const char *data, cpe_mode mode);
+
+typedef struct
+{
+	const char *data;
+	size_t		len;
+} stringview_t;
+
+qboolean COM_ParseLine (const char **str, stringview_t *line);
+qboolean COM_ParseMutableLine (char **str, char **line);
 
 extern int    com_argc;
 extern char **com_argv;
@@ -232,6 +286,13 @@ char *va (const char *format, ...) FUNC_PRINTF (1, 2);
 // does a varargs printf into a temp buffer
 
 unsigned COM_HashString (const char *str);
+unsigned COM_HashBlock (const void *data, size_t size);
+
+void	COM_SeedRand (uint64_t seed);
+int32_t COM_Rand (void);
+
+// Limit to 24 bits so values fit in float mantissa & don't get negative when casting to ints
+#define COM_RAND_MAX 0xFFFFFF
 
 // localization support for 2021 rerelease version:
 void        LOC_Init (void);

@@ -88,6 +88,7 @@ cvar_t scr_sbaralpha = {"scr_sbaralpha", "0.75", CVAR_ARCHIVE};
 cvar_t scr_conwidth = {"scr_conwidth", "0", CVAR_ARCHIVE};
 cvar_t scr_conscale = {"scr_conscale", "1", CVAR_ARCHIVE};
 cvar_t scr_crosshairscale = {"scr_crosshairscale", "1", CVAR_ARCHIVE};
+cvar_t scr_centerprintbg = {"scr_centerprintbg", "2", CVAR_ARCHIVE}; // 0=off, 1=text box, 2=menu box, 3=menu strip
 cvar_t scr_showfps = {"scr_showfps", "0", CVAR_NONE};
 cvar_t scr_clock = {"scr_clock", "0", CVAR_NONE};
 // johnfitz
@@ -110,6 +111,8 @@ cvar_t scr_relcrosshairscale = {"scr_relcrosshairscale", "1", CVAR_ARCHIVE};
 cvar_t scr_relconscale = {"scr_relconscale", "1", CVAR_ARCHIVE};
 
 extern cvar_t crosshair;
+extern cvar_t crosshair_def;
+extern cvar_t crosshair_size;
 extern cvar_t r_tasks;
 extern cvar_t r_gpulightmapupdate;
 extern cvar_t r_showtris;
@@ -175,13 +178,61 @@ void SCR_CenterPrint (const char *str) // update centerprint data
 	}
 }
 
-void SCR_DrawCenterString (cb_context_t *cbx) // actually do the drawing
+// From Ironwail: ignore empty padding lines when sizing the background.
+static void SCR_DrawCenterBackground (cb_context_t *cbx, const char *text, int y)
 {
-	char *start;
-	int   l;
-	int   j;
-	int   x, y;
-	int   remaining;
+	int			lines = 1, cols = 0, width = 0;
+	const char *end;
+	if (cl.intermission || !scr_centerprintbg.value)
+		return;
+	while (*text == '\n')
+	{
+		++text;
+		y += CHARACTER_SIZE;
+	}
+	end = text + strlen (text);
+	while (end > text && end[-1] == '\n')
+		--end;
+	if (end == text)
+		return;
+	for (const char *p = text; p < end; ++p)
+	{
+		if (*p == '\n')
+		{
+			width = q_max (width, cols);
+			cols = 0;
+			++lines;
+		}
+		else
+			++cols;
+	}
+	width = q_max (width, cols);
+	switch ((int)scr_centerprintbg.value)
+	{
+	case 1:
+		width = (width + 3) & ~1;
+		M_DrawTextBoxAlpha (cbx, (320 - width * 8) / 2 - 8, y - 12, width, lines + 1, 0.5f);
+		break;
+	case 2:
+		Draw_Fill (cbx, (320 - (width + 2) * 8) / 2, y - 4, (width + 2) * 8, lines * 8 + 8, 0, 0.5f);
+		break;
+	case 3:
+	{
+		float scale = CLAMP (1.0f, M_GetScale (), q_min (glwidth / 320.0f, glheight / 200.0f));
+		float extent = glwidth / scale;
+		Draw_Fill (cbx, (320 - extent) / 2, y - 4, extent, lines * 8 + 8, 0, 0.5f);
+		break;
+	}
+	}
+}
+
+static void SCR_DrawCenterText (cb_context_t *cbx, const char *text, int lines) // actually do the drawing
+{
+	const char *start;
+	int			l;
+	int			j;
+	int			x, y;
+	int			remaining;
 
 	GL_SetCanvas (cbx, CANVAS_MENU); // johnfitz
 
@@ -192,14 +243,16 @@ void SCR_DrawCenterString (cb_context_t *cbx) // actually do the drawing
 		remaining = 9999;
 
 	scr_erase_center = 0;
-	start = scr_centerstring;
+	start = text;
 
-	if (scr_center_lines <= 4)
+	if (lines <= 4)
 		y = 200 * 0.35; // johnfitz -- 320x200 coordinate system
 	else
 		y = 48;
 	if (crosshair.value)
-		y -= 8;
+		y -= CHARACTER_SIZE;
+
+	SCR_DrawCenterBackground (cbx, start, y);
 
 	do
 	{
@@ -207,15 +260,15 @@ void SCR_DrawCenterString (cb_context_t *cbx) // actually do the drawing
 		for (l = 0; l < 40; l++)
 			if (start[l] == '\n' || !start[l])
 				break;
-		x = (320 - l * 8) / 2; // johnfitz -- 320x200 coordinate system
-		for (j = 0; j < l; j++, x += 8)
+		x = (320 - l * CHARACTER_SIZE) / 2; // johnfitz -- 320x200 coordinate system
+		for (j = 0; j < l; j++, x += CHARACTER_SIZE)
 		{
 			Draw_Character (cbx, x, y, start[j]); // johnfitz -- stretch overlays
 			if (!remaining--)
 				return;
 		}
 
-		y += 8;
+		y += CHARACTER_SIZE;
 
 		while (*start && *start != '\n')
 			start++;
@@ -226,7 +279,27 @@ void SCR_DrawCenterString (cb_context_t *cbx) // actually do the drawing
 	} while (1);
 }
 
-void SCR_CheckDrawCenterString (cb_context_t *cbx)
+static void SCR_DrawCenterString (cb_context_t *cbx)
+{
+	SCR_DrawCenterText (cbx, scr_centerstring, scr_center_lines);
+}
+
+void SCR_DrawCenterPrintPreview (cb_context_t *cbx, float alpha)
+{
+	if (cl.intermission)
+		return;
+	Draw_SetOpacity (alpha);
+	SCR_DrawCenterText (
+		cbx,
+		"Certain messages appear inconveniently\n"
+		"in the middle of your view. These are\n"
+		"always important, and you do not want\n"
+		"to ignore them!",
+		4);
+	Draw_SetOpacity (1.0f);
+}
+
+static void SCR_CheckDrawCenterString (cb_context_t *cbx)
 {
 	if (scr_center_lines > scr_erase_lines)
 		scr_erase_lines = scr_center_lines;
@@ -484,6 +557,7 @@ void SCR_Init (void)
 	Cvar_RegisterVariable (&scr_conwidth);
 	Cvar_RegisterVariable (&scr_conscale);
 	Cvar_RegisterVariable (&scr_crosshairscale);
+	Cvar_RegisterVariable (&scr_centerprintbg);
 	Cvar_RegisterVariable (&scr_showfps);
 	Cvar_RegisterVariable (&scr_clock);
 	// johnfitz
@@ -964,20 +1038,15 @@ void SCR_DrawLoading (cb_context_t *cbx)
 SCR_DrawCrosshair -- johnfitz
 ==============
 */
-void SCR_DrawCrosshair (cb_context_t *cbx)
+static void SCR_DrawCrosshair (cb_context_t *cbx)
 {
-	if (!crosshair.value)
+	if (!crosshair.value || scr_viewsize.value >= 130)
 		return;
 
 	GL_SetCanvas (cbx, CANVAS_CROSSHAIR);
-	if (crosshair.value >= 2.0f)
-	{
-		Draw_Character (cbx, -4, -4, '.'); // 0,0 is center of viewport
-	}
-	else
-	{
-		Draw_Character (cbx, -4, -4, '+'); // 0,0 is center of viewport
-	}
+
+	if (crosshair.value)
+		M_DrawCrosshair (cbx, 0.0f, 0.0f, CLAMP (6.0f, crosshair_size.value, 64.0f));
 }
 
 //=============================================================================

@@ -115,8 +115,6 @@ void QR_GUI_Notify (const char *text);
 
 // ----- the flying-mode overlay -----
 
-// A small modern crosshair in the centre of the display.
-void QR_GUI_DrawCrosshair (void);
 // Hint lines in the bottom-left corner, drawn with a soft shadow.
 void QR_GUI_DrawHint (const char *const *lines, int count);
 // One line in the bottom-right corner (the light editor's placement prompts).

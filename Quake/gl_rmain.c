@@ -578,11 +578,13 @@ void R_SetupViewBeforeMark (void *unused)
 	r_fovy = r_refdef.fov_y;
 
 	{
-		int contents = Mod_PointInLeaf (r_origin, cl.worldmodel)->contents;
+		int		 contents = Mod_PointInLeaf (r_origin, cl.worldmodel)->contents;
+		qboolean forced = M_ForcedUnderwater ();
+		double	 warp_time = forced ? realtime : cl.time;
 
 		rt_lavaeffects = false;
 
-		if (contents == CONTENTS_WATER)
+		if (contents == CONTENTS_WATER || forced)
 		{
 			rt_cameramedia = QR_MEDIA_TYPE_WATER;
 		}
@@ -604,8 +606,8 @@ void R_SetupViewBeforeMark (void *unused)
 		{
 			// variance is a percentage of width, where width = 2 * tan(fov / 2) otherwise the effect is too dramatic at high FOV and too subtle at low FOV.
 			// what a mess!
-			r_fovx = atan (tan (DEG2RAD (r_refdef.fov_x) / 2) * (0.97 + sin (cl.time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
-			r_fovy = atan (tan (DEG2RAD (r_refdef.fov_y) / 2) * (1.03 - sin (cl.time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
+			r_fovx = atan (tan (DEG2RAD (r_refdef.fov_x) / 2) * (0.97 + sin (warp_time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
+			r_fovy = atan (tan (DEG2RAD (r_refdef.fov_y) / 2) * (1.03 - sin (warp_time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
 		}
 	}
 	// johnfitz

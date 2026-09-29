@@ -970,6 +970,8 @@ void Key_Event (int key, qboolean down)
 		return;
 	}
 
+	qboolean repeat = keydown[key];
+
 	// handle autorepeats and stray key up events
 	if (down)
 	{
@@ -1011,7 +1013,7 @@ void Key_Event (int key, qboolean down)
 			Key_Message (key);
 			break;
 		case key_menu:
-			M_Keydown (key);
+			M_Keydown (key, repeat);
 			break;
 		case key_game:
 		case key_console:
@@ -1048,7 +1050,7 @@ void Key_Event (int key, qboolean down)
 	}
 
 	// if not a consolekey, send to the interpreter no matter what mode is
-	if ((key_dest == key_menu && menubound[key]) || (key_dest == key_console && !consolekeys[key]) ||
+	if ((key_dest == key_menu && menubound[key] && !M_WaitingForKeyBinding ()) || (key_dest == key_console && !consolekeys[key]) ||
 	    (key_dest == key_game && (!con_forcedup || !consolekeys[key])))
 	{
 		kb = keybindings[key];
@@ -1077,7 +1079,7 @@ void Key_Event (int key, qboolean down)
 		Key_Message (key);
 		break;
 	case key_menu:
-		M_Keydown (key);
+		M_Keydown (key, repeat);
 		break;
 
 	case key_game:
@@ -1143,6 +1145,11 @@ qboolean Key_TextEntry (void)
 {
 	if (key_inputgrab.active)
 		return true;
+
+	// key_dest == key_console for a moment while quitting. Don't let that
+	// cause SDL_StartTextInput.
+	if (m_is_quitting)
+		return false;
 
 	switch (key_dest)
 	{
