@@ -3,15 +3,16 @@
 ## v0.20.0
 
 ### Added
-- **Lighting and Material Editor** — `qr_editor` opens a dialog titled with the engine version offering the Material Editor and the Light Editor (`qr_editor_stop` leaves either). Both fly a free camera over the frozen level, pick what the crosshair points at and edit it live; Save writes what the engine loads (the emitter overrides to `lights.yaml`, the authored lights and the map fog to the mod's `qray/lights.yaml`), the exit dialog offers Save all and Discard and keeps the previous file as a backup, and every property carries a reset button.
-- **Material editor** — the Materials tab edits the picked texture's material: every animation frame of a texture ring or a model is its own block, texture paths read `NONE` when unauthored, `color_emissive` is a list of blocks each with its own colour, threshold, feather, `emissive_factor` (0..5) and blend, and the preview of the synthesized texture takes a colour with the eyedropper. An emission edit updates the texture in place instead of rebuilding the scene — no light flash, no hitch — and `light_brightness` (0..100) drives the emitted light alone while the visible glow belongs to `emissive_factor`. The System tab holds the DTAL debug view (`off` / `wireframe` / `normals`), the DTAL limits and the water and acid settings, which are saved to the config.
-- **Projected and focused lights** — `emissive_focus` turns a DTAL into a beam around its normal, `emissive_focus_soft` softens that cone's edge by an absolute angle growing inward (full brightness to `A - S`, then a smoothstep-squared falloff to zero at `A`), and `emissive_projector` routes the light through the surface's own mask as a gobo, blurred by the same soft edge.
-- **Light editor** — the Entity tab edits the light an emitter casts (`group_edit` applies an edit to every light of the same model), the Custom tab authors lights a level does not have — points or spot cones, the direction turned by dragging the circular arrows at the light, the cone drawn yellow for the outer and white for the inner angle, duplicate, and a light style of its own — and the Global tab holds the light system: `rt_brightness`, the global light colour and its multiplier, the sky, the clouds, the sun, the god rays, the volumetric fog and the level's fog. A torch mode lights the way while a level has no light of its own.
+- **Lighting and Material Editor** — the game is edited from inside it now: `qr_editor` opens a small dialog that offers the material editor or the light editor, and both let you fly over the frozen level, point at a surface or a light and change it while you look at it, the change appearing as a control moves.
+  - The material editor tunes the material of the surface under the crosshair — its textures, its glow, its gloss and metalness, and the light it casts. The animation frames of a model or of an animated texture are separate blocks, so the frames of one object are tuned together; the glow is picked by colour, with a preview of the texture and an eyedropper.
+  - The light editor tunes the light an emitter casts, can add lights of its own to a level — a point or a cone (spot), the cone visible and aimed by dragging at the light — and gathers the level's own lighting in one place: the sky, the clouds, the sun, the god rays and the fog.
+  - Nothing is written until Save, the previous file is kept next to it as a backup, and leaving asks whether to save or to discard. A torch mode lights the way while a level has no light of its own.
+- **Projected and focused lights** — a surface can shine as a beam with a soft edge, or project its own texture as a pattern over the room, softened by the same edge.
 
 ### Fixed
-- A light edit no longer rebuilds the static scene or re-initialises the sun, and the editor's overlay and hints stay put across the cursor mode.
-- A recessed surface (a ceiling lamp, for one) can be picked again: the pick walks the faces the renderer draws, with the brush transform, instead of hull 0 alone.
-- Exiting the light editor asks to save whenever any of its halves changed, exactly as the material editor does.
+- Editing a light no longer rebuilds the scene, and the sun no longer blinks.
+- A surface set into a wall — a ceiling lamp, for one — can be picked again.
+- Leaving the light editor asks to save whenever anything was changed.
 
 ## v0.19.2
 
