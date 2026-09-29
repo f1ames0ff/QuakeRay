@@ -27,15 +27,16 @@
 qboolean SNDAL_Init (void);
 void     SNDAL_Shutdown (void);
 
-void SNDAL_Update (void);
-void SNDAL_ExtraUpdate (void);
-int  SNDAL_RawPosition (void);
-void SNDAL_StartChannel (channel_t *ch);
-void SNDAL_StopChannel (channel_t *ch);
-void SNDAL_StopAll (void);
-void SNDAL_ClearBuffer (void);
-void SNDAL_ClearAll (void);
-void SNDAL_BlockSound (void);
-void SNDAL_UnblockSound (void);
+void     SNDAL_Update (void);
+void     SNDAL_ExtraUpdate (void);
+qboolean SNDAL_HrtfEnabled (void);
+int      SNDAL_RawPosition (void);
+void     SNDAL_StartChannel (channel_t *ch);
+void     SNDAL_StopChannel (channel_t *ch);
+void     SNDAL_StopAll (void);
+void     SNDAL_ClearBuffer (void);
+void     SNDAL_ClearAll (void);
+void     SNDAL_BlockSound (void);
+void     SNDAL_UnblockSound (void);
 
 #endif /* __SND_OPENAL__ */

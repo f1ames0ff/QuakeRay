@@ -170,6 +170,7 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 OpenAL Soft is the sound system: every engine channel is positioned against the listener and attenuated by the engine's own distance law, OpenAL Soft's built-in HRTF turns the mix binaural on headphones, and streamed music keeps its stereo image. The old SDL audio device and the software mixer are gone - the game no longer opens an SDL audio device at all, so an audio glitch from that path cannot survive a session or an exit. `snd_mixspeed` (`44100`) is the output rate the device is asked for.
 
 * `s_openal_hrtf` is `0` off, `1` on or `2` auto (default - the device decides, so a speaker setup is not surprised). Changing it restarts the audio backend.
+* Sound Options carries a **Spatial sound** switch that reads the mode OpenAL Soft actually granted (so `auto` shows what you hear) and writes `s_openal_hrtf` as `1` or `0`.
 * `s_openal_max_sources` (`256`) is the source pool size; OpenAL Soft's own source limit caps it.
 * `nosound 1` (or `-nosound`) starts the game without sound, like before.
 * The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`).

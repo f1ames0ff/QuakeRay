@@ -26,7 +26,6 @@
 #include <AL/alc.h>
 #include <AL/alext.h>
 
-extern cvar_t s_openal_hrtf;
 extern cvar_t s_openal_max_sources;
 
 snd_output_t snd_output;
@@ -658,6 +657,11 @@ void SNDAL_ExtraUpdate (void)
 int SNDAL_RawPosition (void)
 {
 	return sndal_rawpos;
+}
+
+qboolean SNDAL_HrtfEnabled (void)
+{
+	return (sndal_hrtf_status == ALC_HRTF_ENABLED_SOFT || sndal_hrtf_status == ALC_HRTF_HEADPHONES_DETECTED_SOFT) ? true : false;
 }
 
 void SNDAL_BlockSound (void)

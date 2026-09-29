@@ -149,6 +149,7 @@ extern vec3_t listener_up;
 extern cvar_t snd_mixspeed;
 extern cvar_t sfxvolume;
 extern cvar_t loadas8bit;
+extern cvar_t s_openal_hrtf;
 
 #define MAX_RAW_SAMPLES 8192
 extern portable_samplepair_t s_rawsamples[MAX_RAW_SAMPLES];

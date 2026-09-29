@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "bgmusic.h"
+#include "snd_openal.h"
 #include <stdbool.h>
 
 void (*vid_menucmdfn) (void); // johnfitz
@@ -2011,6 +2012,7 @@ enum
 	SOUND_OPT_SNDVOL,
 	SOUND_OPT_MUSICVOL,
 	SOUND_OPT_MUSICEXT,
+	SOUND_OPT_SPATIAL,
 	SOUND_OPTIONS_ITEMS
 };
 
@@ -2049,6 +2051,12 @@ static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 		break;
 	case SOUND_OPT_MUSICEXT:
 		Cvar_SetValueQuick (&bgm_extmusic, (float)(((int)bgm_extmusic.value + 2 + dir) % 2));
+		break;
+	case SOUND_OPT_SPATIAL:
+		if ((int)s_openal_hrtf.value == 2)
+			Cvar_SetValueQuick (&s_openal_hrtf, SNDAL_HrtfEnabled () ? 0.0f : 1.0f);
+		else
+			Cvar_SetValueQuick (&s_openal_hrtf, s_openal_hrtf.value ? 0.0f : 1.0f);
 		break;
 	}
 }
@@ -2116,6 +2124,9 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_MUSICEXT, "External Music");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_MUSICEXT, bgm_extmusic.value);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_SPATIAL, "Spatial sound");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_SPATIAL, SNDAL_HrtfEnabled () ? "on" : "off");
 
 
 	// cursor
