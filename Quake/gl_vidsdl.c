@@ -255,7 +255,6 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
     \
 	CVAR_DEF_T (rt_sharpen, "0") \
 	CVAR_DEF_T (rt_renderscale, "0") \
-	CVAR_DEF_T (rt_upscale_fsr2, "0") \
 	CVAR_DEF_T (rt_upscale_fsr31, "2") \
 	CVAR_DEF_T (rt_upscale_dlss, "0") \
 	\
@@ -663,7 +662,6 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_restir");
 	RT_Bench_Setting (f, "rt_restir_candidates");
 	RT_Bench_Setting (f, "rt_renderscale");
-	RT_Bench_Setting (f, "rt_upscale_fsr2");
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
 	RT_Bench_Setting (f, "rt_upscale_dlss");
 	RT_Bench_Setting (f, "rt_stats_panels");
@@ -1890,7 +1888,6 @@ static QrRenderSharpenTechnique GetSharpenTechniqueFromCvar ()
 static void UpscaleCvarsToQray (QrDrawFrameRenderResolutionParams *pDst)
 {
 	int nvDlss = CVAR_TO_INT32 (rt_upscale_dlss);
-	int amdFsr = CVAR_TO_INT32 (rt_upscale_fsr2);
 	int amdFsr31 = CVAR_TO_INT32 (rt_upscale_fsr31);
 
 	switch (nvDlss)
@@ -1924,36 +1921,6 @@ static void UpscaleCvarsToQray (QrDrawFrameRenderResolutionParams *pDst)
 		break;
 	}
 
-	switch (amdFsr)
-	{
-	case 1:
-		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_QUALITY;
-		break;
-	case 2:
-		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_BALANCED;
-		break;
-	case 3:
-		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_PERFORMANCE;
-		break;
-	case 4:
-		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_ULTRA_PERFORMANCE;
-		break;
-
-	case 5:
-		// use FSR2 with rt_renderscale
-		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2;
-		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_CUSTOM;
-		break;
-
-	default:
-		amdFsr = 0;
-		break;
-	}
-
 	switch (amdFsr31)
 	{
 	case 1:
@@ -1977,26 +1944,24 @@ static void UpscaleCvarsToQray (QrDrawFrameRenderResolutionParams *pDst)
 		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_ULTRA_PERFORMANCE;
 		break;
 
+	case 6:
+		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3;
+		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_CUSTOM;
+		break;
+
 	default:
 		amdFsr31 = 0;
 		break;
 	}
 
 	// both disabled
-	if (nvDlss == 0 && amdFsr == 0 && amdFsr31 == 0)
+	if (nvDlss == 0 && amdFsr31 == 0)
 	{
 		pDst->upscaleTechnique = QR_RENDER_UPSCALE_TECHNIQUE_NEAREST;
 		pDst->resolutionMode = QR_RENDER_RESOLUTION_MODE_CUSTOM;
 	}
 
-	if (amdFsr)
-	{
-		pDst->sharpenTechnique = QR_RENDER_SHARPEN_TECHNIQUE_AMD_CAS;
-	}
-	else
-	{
-		pDst->sharpenTechnique = GetSharpenTechniqueFromCvar ();
-	}
+	pDst->sharpenTechnique = GetSharpenTechniqueFromCvar ();
 }
 
 static const char *GetUpscalerOptionName (int i, QrRenderUpscaleTechnique technique)
@@ -3159,9 +3124,8 @@ void VID_Toggle (void)
 }
 
 #define UPSCALER_OFF  0
-#define UPSCALER_FSR2 1
-#define UPSCALER_FSR31 2
-#define UPSCALER_DLSS 3
+#define UPSCALER_FSR31 1
+#define UPSCALER_DLSS 2
 
 static int GetUpscalerDefaultQuality (int type)
 {
@@ -3205,11 +3169,9 @@ void VID_SyncCvars (void)
 	menu_settings.host_maxfps = CLAMP (0, host_maxfps.value, 1000);
 	menu_settings.r_particles = CLAMP (0, (int)r_particles.value, 2);
 	{
-		int fsr2 = CVAR_TO_INT32 (rt_upscale_fsr2);
 		int fsr31 = CVAR_TO_INT32 (rt_upscale_fsr31);
 		int dlss = CVAR_TO_INT32 (rt_upscale_dlss);
-		if (fsr31 > 0)      { menu_settings.upscaler_type = UPSCALER_FSR31; menu_settings.upscaler_quality = CLAMP (0, fsr31, 5); }
-		else if (fsr2 > 0)  { menu_settings.upscaler_type = UPSCALER_FSR2;  menu_settings.upscaler_quality = CLAMP (0, fsr2, 4); }
+		if (fsr31 > 0)      { menu_settings.upscaler_type = UPSCALER_FSR31; menu_settings.upscaler_quality = CLAMP (0, fsr31, 6); }
 		else if (dlss > 0)  { menu_settings.upscaler_type = UPSCALER_DLSS;  menu_settings.upscaler_quality = CLAMP (0, dlss, 4); }
 		else                { menu_settings.upscaler_type = UPSCALER_OFF;   menu_settings.upscaler_quality = 0; }
 	}
@@ -3490,13 +3452,11 @@ static void VID_Menu_ChooseNextRate (int dir)
 
 static void VID_Menu_ChooseNextAA (int vidopt, int dir)
 {
-	QrBool32 fsr2_ok = qrIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2);
 	QrBool32 fsr31_ok = qrIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3);
 	QrBool32 dlss_ok = qrIsRenderUpscaleTechniqueAvailable (vulkan_globals.instance, QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS);
 
 	const int prev_type = menu_settings.upscaler_type;
-	const int maxq_fsr2 = fsr2_ok ? 4 : 0;
-	const int maxq_fsr31 = fsr31_ok ? 5 : 0;
+	const int maxq_fsr31 = fsr31_ok ? 6 : 0;
 	const int maxq_dlss = dlss_ok ? 4 : 0;
 
 	if (vidopt == VID_OPT_UPSCALER)
@@ -3506,7 +3466,6 @@ static void VID_Menu_ChooseNextAA (int vidopt, int dir)
 			if (menu_settings.upscaler_type < 0) menu_settings.upscaler_type = UPSCALER_DLSS;
 			if (menu_settings.upscaler_type > UPSCALER_DLSS) menu_settings.upscaler_type = UPSCALER_OFF;
 		} while (
-			(menu_settings.upscaler_type == UPSCALER_FSR2  && !fsr2_ok) ||
 			(menu_settings.upscaler_type == UPSCALER_FSR31 && !fsr31_ok) ||
 			(menu_settings.upscaler_type == UPSCALER_DLSS  && !dlss_ok));
 
@@ -3520,7 +3479,6 @@ static void VID_Menu_ChooseNextAA (int vidopt, int dir)
 		int maxq;
 		switch (menu_settings.upscaler_type)
 		{
-		case UPSCALER_FSR2:  maxq = maxq_fsr2; break;
 		case UPSCALER_FSR31: maxq = maxq_fsr31; break;
 		case UPSCALER_DLSS:  maxq = maxq_dlss; break;
 		default:             maxq = 0; break;
@@ -3738,7 +3696,6 @@ static void VID_MenuKey (int key)
 				int q = menu_settings.upscaler_quality;
 				if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
 					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
-				Cvar_SetValueQuick (&rt_upscale_fsr2, (menu_settings.upscaler_type == UPSCALER_FSR2) ? q : 0);
 				Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
 				Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
 			}
@@ -3830,7 +3787,6 @@ static void VID_MenuKey (int key)
 				int q = menu_settings.upscaler_quality;
 				if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
 					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
-				Cvar_SetValueQuick (&rt_upscale_fsr2, (menu_settings.upscaler_type == UPSCALER_FSR2) ? q : 0);
 				Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
 				Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
 			}
@@ -4027,7 +3983,6 @@ static void VID_MenuDraw (cb_context_t *cbx)
 				const char *name = "Off";
 				switch (menu_settings.upscaler_type)
 				{
-				case UPSCALER_FSR2:  name = "AMD FSR 2.0"; break;
 				case UPSCALER_FSR31: name = "AMD FSR 3.1"; break;
 				case UPSCALER_DLSS:  name = "Nvidia DLSS"; break;
 				}
@@ -4041,7 +3996,6 @@ static void VID_MenuDraw (cb_context_t *cbx)
 				int q = menu_settings.upscaler_quality;
 				switch (menu_settings.upscaler_type)
 				{
-				case UPSCALER_FSR2:  tech = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2; break;
 				case UPSCALER_FSR31: tech = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3; break;
 				case UPSCALER_DLSS:  tech = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS; break;
 				default:             tech = QR_RENDER_UPSCALE_TECHNIQUE_NEAREST; q = 0; break;

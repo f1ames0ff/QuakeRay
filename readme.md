@@ -7,7 +7,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 ### Path traced renderer
 
 * Ray tracing with ReSTIR direct light sampling
-* FSR 2.0 and 3.1 support
+* FSR 3.1 support
 * DTAL (Dynamic Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
 * True Light Mode (opt-in): All light sources are DTAL, which means all emissive textures are actual light sources.
 * Q2RTX-style path traced lighting.
