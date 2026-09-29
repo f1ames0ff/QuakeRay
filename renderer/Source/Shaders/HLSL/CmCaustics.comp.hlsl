@@ -101,6 +101,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 
     const uint launchIndex = cell.y * resolution + cell.x;
+    const bool debugMarkers = params.gridSize.y != 0;
 
     const float texelSize = params.gridMinAndTexel.z;
     const float2 worldXY  = params.gridMinAndTexel.xy + (float2(cell) + (float2)0.5) * texelSize;
@@ -188,15 +189,24 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             }
 
             marker.flux.w = 3.0;
-            causticsPhotons[launchIndex] = marker;
+            if (debugMarkers)
+            {
+                causticsPhotons[launchIndex] = marker;
+            }
             return;
         }
 
         marker.flux.w = 2.0;
-        causticsPhotons[launchIndex] = marker;
+        if (debugMarkers)
+        {
+            causticsPhotons[launchIndex] = marker;
+        }
         return;
     }
 
     marker.flux.w = 1.0;
-    causticsPhotons[launchIndex] = marker;
+    if (debugMarkers)
+    {
+        causticsPhotons[launchIndex] = marker;
+    }
 }

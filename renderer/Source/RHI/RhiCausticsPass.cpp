@@ -674,6 +674,11 @@ void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
         pCommandList->setTextureState(target.engineTextures[i], nvrhi::AllSubresources,
                                       nvrhi::ResourceStates::UnorderedAccess);
     }
+
+    pCommandList->setTextureState(target.engineTextures[0], nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::NonPixelShaderResource);
+    pCommandList->setTextureState(target.engineTextures[0], nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::UnorderedAccess);
 }
 
 void RhiCausticsPass::ReleaseTargets()

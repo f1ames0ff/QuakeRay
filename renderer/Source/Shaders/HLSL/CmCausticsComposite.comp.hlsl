@@ -23,6 +23,7 @@ struct ShPhoton
 [[vk::binding(1, DESC_SET_CAUSTICS)]] StructuredBuffer<ShPhoton> causticsPhotons;
 
 #define CAUSTICS_DEBUG_MARKER 0.5
+#define CAUSTICS_PHOTON_STAGE 4.0
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
@@ -42,7 +43,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const float4 surfacePosition = framebufSurfacePosition_Sampled.Load(int3(getCheckerboardPix(pix), 0));
+    const int sep = getCheckerboardSeparatorX();
+    const int2 cbPix = getCheckerboardPix(pix);
+    const int2 refrPix = (cbPix.x >= sep) ? cbPix : int2(cbPix.x + sep, cbPix.y);
+
+    const float4 surfacePosition = framebufSurfacePosition_Sampled.Load(int3(refrPix, 0));
     const float3 surfacePositionWorld = surfacePosition.xyz;
     const float2 gridCoords =
         (surfacePositionWorld.xy - params.gridMinAndTexel.xy) / params.gridMinAndTexel.z;
@@ -54,12 +59,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (debugMode == 2)
     {
         framebufFinal[pix] += float4(inGrid ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0, 0.0, 0.0);
-        if (!inGrid)
-        {
-            return;
-        }
     }
-    else if (!inGrid)
+
+    if (!inGrid)
     {
         return;
     }
@@ -74,11 +76,15 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float4 weights = float4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y),
                                   (1.0 - f.x) * f.y, f.x * f.y);
 
-    const float3 flux = p00.flux.rgb * weights.x + p10.flux.rgb * weights.y +
-                        p01.flux.rgb * weights.z + p11.flux.rgb * weights.w;
+    const float4 valid = float4(p00.flux.w >= CAUSTICS_PHOTON_STAGE ? 1.0 : 0.0,
+                                p10.flux.w >= CAUSTICS_PHOTON_STAGE ? 1.0 : 0.0,
+                                p01.flux.w >= CAUSTICS_PHOTON_STAGE ? 1.0 : 0.0,
+                                p11.flux.w >= CAUSTICS_PHOTON_STAGE ? 1.0 : 0.0);
 
-    const float stageMax = max(max(p00.flux.w, p10.flux.w), max(p01.flux.w, p11.flux.w));
-    const bool hasFlux = dot(flux, flux) > 0.0;
+    const float4 w = weights * valid;
+    const float weightSum = w.x + w.y + w.z + w.w;
+
+    const uint stageMax = (uint)max(max(p00.flux.w, p10.flux.w), max(p01.flux.w, p11.flux.w));
 
     if (debugMode == 3)
     {
@@ -88,15 +94,48 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     if (debugMode == 2)
     {
-        framebufFinal[pix] += float4(0.0, stageMax >= 4.0 ? CAUSTICS_DEBUG_MARKER : 0.0,
-                                     stageMax >= 2.0 ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0);
-        if (stageMax < 4.0)
-        {
-            return;
-        }
+        framebufFinal[pix] += float4(0.0, weightSum > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0,
+                                     stageMax >= 2u ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0);
+        return;
     }
-    else if (!hasFlux)
+
+    if (weightSum <= 0.0)
     {
+        if (debugMode == 5)
+        {
+            framebufFinal[pix] += float4(0.0, 0.0, CAUSTICS_DEBUG_MARKER, 0.0);
+        }
+        return;
+    }
+
+    const float3 flux =
+        (p00.flux.rgb * w.x + p10.flux.rgb * w.y + p01.flux.rgb * w.z + p11.flux.rgb * w.w) / weightSum;
+
+    const float3 receiverPosition =
+        (p00.position.xyz * w.x + p10.position.xyz * w.y +
+         p01.position.xyz * w.z + p11.position.xyz * w.w) / weightSum;
+
+    const float cellArea = params.gridMinAndTexel.z * params.gridMinAndTexel.z;
+
+    float footprintArea = cellArea;
+    float footprintRadius = params.gridMinAndTexel.z;
+
+    if (valid.x > 0.0 && valid.y > 0.0 && valid.z > 0.0)
+    {
+        const float3 edgeX = p10.position.xyz - p00.position.xyz;
+        const float3 edgeY = p01.position.xyz - p00.position.xyz;
+        footprintArea = max(length(cross(edgeX, edgeY)), cellArea * 0.01);
+        footprintRadius = max(max(length(edgeX), length(edgeY)), params.gridMinAndTexel.z);
+    }
+
+    const float coverage =
+        saturate(1.0 - length(receiverPosition - surfacePositionWorld) / (footprintRadius * 6.0));
+
+    if (debugMode == 5)
+    {
+        framebufFinal[pix] += float4(CAUSTICS_DEBUG_MARKER,
+                                     coverage > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0,
+                                     CAUSTICS_DEBUG_MARKER, 0.0);
         return;
     }
 
@@ -106,26 +145,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const float3 receiverPosition = p00.position.xyz * weights.x + p10.position.xyz * weights.y +
-                                    p01.position.xyz * weights.z + p11.position.xyz * weights.w;
-
-    const float3 edgeX = p10.position.xyz - p00.position.xyz;
-    const float3 edgeY = p01.position.xyz - p00.position.xyz;
-    const float footprintArea = max(length(cross(edgeX, edgeY)), 0.01);
-
-    const float footprintRadius =
-        max(max(length(edgeX), length(edgeY)), params.gridMinAndTexel.z);
-    const float coverage =
-        saturate(1.0 - length(receiverPosition - surfacePositionWorld) / footprintRadius * 2.0);
-
     if (coverage <= 0.0)
     {
         return;
     }
 
-    const float3 albedo = framebufAlbedo_Sampled.Load(int3(pix, 0)).rgb;
+    const float3 albedo = framebufAlbedo_Sampled.Load(int3(getRegularPixFromCheckerboardPix(refrPix), 0)).rgb;
 
-    const float3 caustics = flux / footprintArea * coverage * albedo;
+    const float3 caustics = flux * (cellArea / footprintArea) * coverage * albedo;
 
     framebufFinal[pix] += float4(caustics, 0.0);
 }
