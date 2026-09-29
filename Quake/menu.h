@@ -34,15 +34,20 @@ enum m_state_e
 	m_setup,
 	m_net,
 	m_options,
+	m_game,
+	m_sound,
 	m_video,
+	m_graphics,
 	m_keys,
 	m_help,
 	m_quit,
 	m_lanconfig,
-	m_gameoptions,
+	m_mpgameoptions,
 	m_search,
 	m_slist,
 	m_mods,
+	m_maps,
+	m_skill,
 	m_benchmark,
 	m_bench_results,
 };
@@ -52,15 +57,21 @@ extern enum m_state_e m_return_state;
 
 extern qboolean m_entersound;
 
+extern qboolean m_is_quitting;
+
 //
 // menus
 //
-void     M_Init (void);
-void     M_NewGame (void);
-void     M_Keydown (int key);
-void     M_Charinput (int key);
+void	 M_Init (void);
+void	 M_NewGame (void);
+void	 M_Keydown (int key, qboolean repeat);
+void	 M_Charinput (int key);
 qboolean M_TextEntry (void);
-void     M_ToggleMenu_f (void);
+qboolean M_WaitingForKeyBinding (void);
+void	 M_ToggleMenu_f (void);
+float	 M_GetScale ();
+void	 M_UpdateMouse ();
+void	 M_MenuChanged ();
 
 void M_Menu_Main_f (void);
 void M_Menu_Options_f (void);
@@ -69,14 +80,59 @@ void M_Menu_Benchmark_f (void);
 void M_Menu_BenchmarkResults_f (void);
 
 void M_Print (cb_context_t *cbx, int cx, int cy, const char *str);
-void M_PrintWhite (cb_context_t *cbx, int cx, int cy, const char *str);
-void M_DrawSlider (cb_context_t *cbx, int x, int y, float range);
 
 void M_Draw (cb_context_t *cbx);
-void M_DrawCharacter (cb_context_t *cbx, int cx, int line, int num);
 
 void M_DrawPic (cb_context_t *cbx, int x, int y, qpic_t *pic);
 void M_DrawTransPic (cb_context_t *cbx, int x, int y, qpic_t *pic);
+
+void M_PrintWhite (cb_context_t *cbx, int cx, int cy, const char *str);
 void M_DrawCheckbox (cb_context_t *cbx, int x, int y, int on);
+void M_DrawCharacter (cb_context_t *cbx, int cx, int line, int num);
+
+void M_Mouse_UpdateCursor (int *cursor, int left, int right, int top, int item_height, int index);
+
+void	 M_Menu_Video_f (void);
+void	 M_Video_Draw (cb_context_t *cbx);
+void	 M_Video_Key (int key);
+qboolean M_HandleScrollBarKeys (const int key, int *cursor, int *first_drawn, const int num_total, const int max_on_screen);
+
+#define MENU_TOP		   40
+#define MENU_CURSOR_X	   60
+#define MENU_LABEL_X	   70
+#define MENU_VALUE_X	   (28 * CHARACTER_SIZE)
+#define MENU_SLIDER_X	   (MENU_VALUE_X + 6)
+#define MENU_SLIDER_SIZE   12
+#define MENU_SLIDER_EXTENT ((MENU_SLIDER_SIZE - 1) * 8)
+#define MENU_SLIDER_START  (MENU_SLIDER_X + 4)
+#define MENU_SLIDER_END	   (MENU_SLIDER_START + MENU_SLIDER_EXTENT)
+#define MENU_SCROLLBAR_X   (47 * CHARACTER_SIZE)
+#define MAX_MENU_LINES	   14
+
+// Max FPS menu entry is a slider [10 .. 1000; no limit] by steps of 2 fps so we can set 72 fps
+#define MIN_FPS_MENU_VALUE	10.0f
+#define FPS_MENU_VALUE_STEP 2.0f
+#define MAX_FPS_MENU_VALUE	1000.0f
+
+typedef struct crosshair_s
+{
+	const char *name;
+	char		crosshair_char;
+	float		viewport_x_offset;
+	float		viewport_y_offset;
+	int			menu_x_offset;
+	int			menu_y_offset;
+	const char *pic_path; // NULL for the legacy character crosshairs
+} crosshair_t;
+
+crosshair_t M_GetCrosshairDef (float crosshair_def_value);
+const char *M_GetCrosshairColorName (float crosshair_color_value);
+void		M_GetCrosshairColor (float crosshair_color_value, float *rgb);
+void		M_DrawCrosshair (cb_context_t *cbx, float x, float y, float size);
+
+void M_DrawTextBoxAlpha (cb_context_t *cbx, int x, int y, int width, int lines, float alpha);
+
+float	 M_MenuPreviewFraction (void);
+qboolean M_ForcedUnderwater (void);
 
 #endif /* _QUAKE_MENU_H */

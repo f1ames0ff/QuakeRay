@@ -44,6 +44,7 @@ quakeparms_t *host_parms;
 qboolean host_initialized; // true if into command execution
 
 double host_frametime;
+double host_rawframetime; // unscaled and unbounded
 double realtime;    // without any filtering or bounding
 double oldrealtime; // last frame run
 
@@ -742,7 +743,7 @@ qboolean Host_FilterTime (float time)
 			              // johnfitz
 	}
 
-	host_frametime = delta_since_last_frame;
+	host_frametime = host_rawframetime = delta_since_last_frame;
 	oldrealtime = realtime;
 
 	// johnfitz -- host_timescale is more intuitive than host_framerate
@@ -916,7 +917,7 @@ void _Host_Frame (double time)
 		return; // something bad happened, or the server disconnected
 
 	// keep the random time dependent
-	rand ();
+	COM_Rand ();
 
 	// decide the simulation time
 	accumtime += host_netinterval ? CLAMP (0, time, 0.2) : 0; // for renderer/server isolation
@@ -953,6 +954,7 @@ void _Host_Frame (double time)
 	}
 
 	CL_AccumulateCmd ();
+	M_UpdateMouse ();
 
 	// Run the server+networking (client->server->client), at a different rate from everyt
 	while ((host_netinterval == 0) || (accumtime >= host_netinterval))
@@ -1112,6 +1114,7 @@ void Host_Init (void)
 		Chase_Init ();
 		M_Init ();
 		ExtraMaps_Init (); // johnfitz
+		M_CheckMods ();
 		Modlist_Init ();   // johnfitz
 		DemoList_Init ();  // ericw
 		SaveList_Init ();
@@ -1187,6 +1190,7 @@ void Host_Shutdown (void)
 	{
 		if (con_initialized)
 			History_Shutdown ();
+		ExtraMaps_ShutDown ();
 		BGM_Shutdown ();
 		CDAudio_Shutdown ();
 		S_Shutdown ();
