@@ -1,4 +1,9 @@
 INPUT := gfx/conback.lmp \
+	gfx/crosshair-000.png \
+	gfx/crosshair-001.png \
+	gfx/crosshair-020.png \
+	gfx/crosshair-021.png \
+	gfx/crosshair-148.png \
 	gfx/mainmenu2.lmp \
 	gfx/p_mods.lmp \
 	maps/e1m1@c49d.ent \

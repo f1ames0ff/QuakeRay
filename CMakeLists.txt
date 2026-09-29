@@ -659,7 +659,7 @@ if(QUAKERAY_PLATFORM_WINDOWS)
         COMMENT "Copying SDL2.dll..."
     )
 
-    # amd_fidelityfx_vk.dll (AMD-signed, FSR 2/3.1) — from the vendored qray
+    # amd_fidelityfx_vk.dll (AMD-signed, FSR 3.1) — from the vendored qray
     add_custom_command(TARGET quakeray POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"
