@@ -963,14 +963,26 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               sky.caustics.extent / float(sky.caustics.resolution);
                                           const float *camera = uniform->cameraPosition;
 
+                                          const float rayStartZ = sky.godRays.hasAabb
+                                              ? (sky.godRays.aabbMax[2] + 64.0f)
+                                              : (camera[2] + 1024.0f);
+
+                                          const float sunZ =
+                                              std::max(causticsParams.sunDirection[2], 0.1f);
+                                          const float driftScale = (rayStartZ - camera[2]) / sunZ;
+                                          const float anchorX =
+                                              camera[0] + causticsParams.sunDirection[0] * driftScale;
+                                          const float anchorY =
+                                              camera[1] + causticsParams.sunDirection[1] * driftScale;
+
                                           causticsParams.gridMinAndTexel[0] =
-                                              std::floor(camera[0] / texelSize) * texelSize -
+                                              std::floor(anchorX / texelSize) * texelSize -
                                               sky.caustics.extent * 0.5f;
                                           causticsParams.gridMinAndTexel[1] =
-                                              std::floor(camera[1] / texelSize) * texelSize -
+                                              std::floor(anchorY / texelSize) * texelSize -
                                               sky.caustics.extent * 0.5f;
                                           causticsParams.gridMinAndTexel[2] = texelSize;
-                                          causticsParams.gridMinAndTexel[3] = camera[2] + 4096.0f;
+                                          causticsParams.gridMinAndTexel[3] = rayStartZ;
                                           causticsParams.gridSize[0] = sky.caustics.resolution;
                                           causticsParams.gridSize[1] = sky.caustics.debugMode;
 
@@ -983,7 +995,9 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                                     ", texel " + std::to_string(texelSize) +
                                                     ", gridMin " + std::to_string(causticsParams.gridMinAndTexel[0]) + " " +
                                                     std::to_string(causticsParams.gridMinAndTexel[1]) +
-                                                    ", rayStartY " + std::to_string(causticsParams.gridMinAndTexel[3]) +
+                                                    ", rayStartZ " + std::to_string(causticsParams.gridMinAndTexel[3]) +
+                                                    ", anchor " + std::to_string(anchorX) + " " +
+                                                    std::to_string(anchorY) +
                                                     ", sun " + std::to_string(causticsParams.sunDirection[0]) + " " +
                                                     std::to_string(causticsParams.sunDirection[1]) + " " +
                                                     std::to_string(causticsParams.sunDirection[2]) +

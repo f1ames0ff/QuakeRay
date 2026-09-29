@@ -80,8 +80,8 @@ static_assert(COMPUTE_SVGF_ATROUS_ITERATION_COUNT == 4,
 // NVRHI slot: raw = offset + slot (RhiPipeline.h). The numbers are still derived from the generated
 // arrays at run time (GetComposeSlot), so a generator change cannot drift from them.
 constexpr uint32_t FRAMEBUFFER_UAV_OFFSET = 0;
-constexpr uint32_t FRAMEBUFFER_SRV_OFFSET = 125;
-constexpr uint32_t FRAMEBUFFER_SAMPLER_OFFSET = 250;
+constexpr uint32_t FRAMEBUFFER_SRV_OFFSET = 124;
+constexpr uint32_t FRAMEBUFFER_SAMPLER_OFFSET = 248;
 
 // The size class of one union image: the engine's `GetFramebufSize` maps the generated flags onto
 // the render size, the `(render + 1) / 2` half (FB_IMAGE_FLAGS_FRAMEBUF_FLAGS_FORCE_SIZE_1_2: the

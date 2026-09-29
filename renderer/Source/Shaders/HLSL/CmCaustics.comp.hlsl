@@ -36,8 +36,6 @@ struct ShPhoton
 #define CAUSTICS_SECONDARY_RAY_EPS 0.1
 #define CAUSTICS_SKY_SKIP_COUNT 4
 
-static const uint CAUSTICS_INVALID_INDEX = 0xFFFFFFFFu;
-
 struct CausticsHit
 {
     ShTriangle shTriangle;
@@ -102,12 +100,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const uint photonIndex = cell.y * resolution + cell.x;
-
-    ShPhoton photon;
-    photon.position = (float4)0.0;
-    photon.normal   = (float4)0.0;
-    photon.flux     = (float4)0.0;
+    const uint launchIndex = cell.y * resolution + cell.x;
 
     const float texelSize = params.gridMinAndTexel.z;
     const float2 worldXY  = params.gridMinAndTexel.xy + (float2(cell) + (float2)0.5) * texelSize;
@@ -116,6 +109,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float3 rayDirection = -sunDirection;
 
     const float3 rayOrigin = float3(worldXY.x, worldXY.y, params.gridMinAndTexel.w);
+
+    ShPhoton marker;
+    marker.position = (float4)0.0;
+    marker.normal   = (float4)0.0;
+    marker.flux     = (float4)0.0;
 
     CausticsHit waterHit;
     bool waterHitFound = false;
@@ -140,47 +138,65 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         break;
     }
 
-    if (waterHitFound)
+    if (!waterHitFound)
     {
-        if ((waterHit.shTriangle.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_WATER) != 0)
-        {
-            float3 waterNormal = waterHit.normal;
-            if (dot(waterNormal, rayDirection) > 0.0)
-            {
-                waterNormal = -waterNormal;
-            }
-
-            RayCone rayCone;
-            rayCone.width       = texelSize;
-            rayCone.spreadAngle = 0.0;
-
-            const float3 waveNormal = getWaterNormal(rayCone, rayDirection, waterNormal, waterHit.position, false);
-
-            const float3 refractedDirection =
-                refract(rayDirection, waveNormal, 1.0 / getIndexOfRefraction(MEDIA_TYPE_WATER));
-
-            if (dot(refractedDirection, refractedDirection) > 0.0)
-            {
-                CausticsHit receiverHit;
-                if (causticsTrace(waterHit.position + refractedDirection * CAUSTICS_SECONDARY_RAY_EPS,
-                                  refractedDirection, globalUniform.rayCullMaskWorld, 0.0, receiverHit) &&
-                    (receiverHit.instanceCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_SKY) == 0)
-                {
-                    float3 receiverNormal = receiverHit.normal;
-                    if (dot(receiverNormal, refractedDirection) > 0.0)
-                    {
-                        receiverNormal = -receiverNormal;
-                    }
-
-                    const float fresnel = 0.1 + 0.9 * pow(1.0 - abs(dot(rayDirection, waveNormal)), 5.0);
-
-                    photon.position = float4(receiverHit.position, 0.0);
-                    photon.normal   = float4(receiverNormal, 0.0);
-                    photon.flux     = float4(params.sunColor.rgb * params.sunDirection.w * (1.0 - fresnel), 0.0);
-                }
-            }
-        }
+        return;
     }
 
-    causticsPhotons[photonIndex] = photon;
+    if ((waterHit.shTriangle.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_WATER) != 0)
+    {
+        float3 waterNormal = waterHit.normal;
+        if (dot(waterNormal, rayDirection) > 0.0)
+        {
+            waterNormal = -waterNormal;
+        }
+
+        RayCone rayCone;
+        rayCone.width       = texelSize;
+        rayCone.spreadAngle = 0.0;
+
+        const float3 waveNormal = getWaterNormal(rayCone, rayDirection, waterNormal, waterHit.position, false);
+
+        const float3 refractedDirection =
+            refract(rayDirection, waveNormal, 1.0 / getIndexOfRefraction(MEDIA_TYPE_WATER));
+
+        if (dot(refractedDirection, refractedDirection) > 0.0)
+        {
+            CausticsHit receiverHit;
+            if (causticsTrace(waterHit.position + refractedDirection * CAUSTICS_SECONDARY_RAY_EPS,
+                              refractedDirection, globalUniform.rayCullMaskWorld, 0.0, receiverHit) &&
+                (receiverHit.instanceCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_SKY) == 0)
+            {
+                const float3 receiverNormal = receiverHit.normal;
+
+                const float fresnel = 0.1 + 0.9 * pow(1.0 - abs(dot(rayDirection, waveNormal)), 5.0);
+
+                ShPhoton photon;
+                photon.position = float4(receiverHit.position, 0.0);
+                photon.normal   = float4(receiverNormal, 0.0);
+                photon.flux     = float4(params.sunColor.rgb * params.sunDirection.w * (1.0 - fresnel), 4.0);
+
+                const int2 receiverCell = (int2)floor((receiverHit.position.xy - params.gridMinAndTexel.xy) / texelSize);
+
+                if (receiverCell.x >= 0 && receiverCell.y >= 0 &&
+                    receiverCell.x < (int)resolution && receiverCell.y < (int)resolution)
+                {
+                    causticsPhotons[receiverCell.y * resolution + receiverCell.x] = photon;
+                }
+
+                return;
+            }
+
+            marker.flux.w = 3.0;
+            causticsPhotons[launchIndex] = marker;
+            return;
+        }
+
+        marker.flux.w = 2.0;
+        causticsPhotons[launchIndex] = marker;
+        return;
+    }
+
+    marker.flux.w = 1.0;
+    causticsPhotons[launchIndex] = marker;
 }

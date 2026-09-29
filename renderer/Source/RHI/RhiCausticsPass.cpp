@@ -20,7 +20,7 @@ constexpr uint32_t CAUSTICS_GROUP_SIZE = 8;
 constexpr uint32_t CAUSTICS_MAX_RESOLUTION = 512;
 constexpr uint32_t CAUSTICS_PHOTON_STRIDE = 48;
 constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 64;
-constexpr uint32_t CAUSTICS_FRAMEBUFFER_SRV_OFFSET = 125;
+constexpr uint32_t CAUSTICS_FRAMEBUFFER_SRV_OFFSET = 124;
 constexpr uint32_t CAUSTICS_IMAGE_COUNT = 3;
 constexpr uint32_t CAUSTICS_VERTEX_DATA_BINDING_COUNT = 7;
 
@@ -161,7 +161,7 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
 
     {
         nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.visibility = nvrhi::ShaderType::All;
         desc.addItem(nvrhi::BindingLayoutItem::RayTracingAccelStruct(BINDING_ACCELERATION_STRUCTURE_MAIN));
 
         tlasLayout = device->createBindingLayout(desc);
@@ -640,6 +640,8 @@ void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
         pCommandList->beginTrackingTextureState(target.engineTextures[i], nvrhi::AllSubresources,
                                                nvrhi::ResourceStates::UnorderedAccess);
     }
+
+    pCommandList->clearBufferUInt(photonBuffers[frameIndex], 0);
 
     {
         nvrhi::ComputeState state;

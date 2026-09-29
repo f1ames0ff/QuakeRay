@@ -77,12 +77,20 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float3 flux = p00.flux.rgb * weights.x + p10.flux.rgb * weights.y +
                         p01.flux.rgb * weights.z + p11.flux.rgb * weights.w;
 
+    const float stageMax = max(max(p00.flux.w, p10.flux.w), max(p01.flux.w, p11.flux.w));
     const bool hasFlux = dot(flux, flux) > 0.0;
+
+    if (debugMode == 3)
+    {
+        framebufFinal[pix] += float4(stageMax * 0.2, stageMax * 0.2, stageMax * 0.2, 0.0);
+        return;
+    }
 
     if (debugMode == 2)
     {
-        framebufFinal[pix] += float4(0.0, hasFlux ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0, 0.0);
-        if (!hasFlux)
+        framebufFinal[pix] += float4(0.0, stageMax >= 4.0 ? CAUSTICS_DEBUG_MARKER : 0.0,
+                                     stageMax >= 2.0 ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0);
+        if (stageMax < 4.0)
         {
             return;
         }
@@ -109,12 +117,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         max(max(length(edgeX), length(edgeY)), params.gridMinAndTexel.z);
     const float coverage =
         saturate(1.0 - length(receiverPosition - surfacePositionWorld) / footprintRadius * 2.0);
-
-    if (debugMode == 2)
-    {
-        framebufFinal[pix] += float4(0.0, 0.0, coverage > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0);
-        return;
-    }
 
     if (coverage <= 0.0)
     {

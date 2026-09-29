@@ -67,9 +67,9 @@ constexpr uint32_t WORLD_UNIFORM_OFFSET = 0;
 // shaderResource 124, unorderedAccess 0, sampler 248 - and set 4's storage images sit at
 // unorderedAccess + index; a one-item layout only consults the UAV offset, the other two are
 // repeated to document which set this is (recon 5).
-constexpr uint32_t WORLD_FRAMEBUFFERS_SRV_OFFSET = 125;
+constexpr uint32_t WORLD_FRAMEBUFFERS_SRV_OFFSET = 124;
 constexpr uint32_t WORLD_FRAMEBUFFERS_UAV_OFFSET = 0;
-constexpr uint32_t WORLD_FRAMEBUFFERS_SAMPLER_OFFSET = 250;
+constexpr uint32_t WORLD_FRAMEBUFFERS_SAMPLER_OFFSET = 248;
 
 // FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR is VK_FORMAT_R32G32B32A32_UINT (ShaderCommonCFramebuf.cpp:34),
 // which the pinned NVRHI maps to this format (vulkan-constants.cpp:87). Both the real wrap and the
