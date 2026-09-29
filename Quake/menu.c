@@ -180,6 +180,7 @@ extern cvar_t scr_fov;
 extern cvar_t scr_showfps;
 extern cvar_t r_rtshadows;
 extern cvar_t r_particles;
+extern cvar_t rt_hud_minimal;
 extern cvar_t r_smoke;
 extern cvar_t r_softparticles;
 extern cvar_t r_oit;
@@ -1774,13 +1775,40 @@ static void M_GameOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValue ("crosshair_alpha", f);
 		break;
 	case GAME_OPT_HUD_DETAIL: // interface detail
-		// cycles through 120 (none), 110 (standard), 100 (full)
-		if (scr_viewsize.value <= 100.0f)
-			Cvar_SetValue ("viewsize", dir < 0 ? 110.0f : 120.0f);
-		else if (scr_viewsize.value <= 110.0f)
-			Cvar_SetValue ("viewsize", dir < 0 ? 120.0f : 100.0f);
-		else
-			Cvar_SetValue ("viewsize", dir < 0 ? 100.0f : 110.0f);
+		// cycles through 100 (classic full), 110 (classic), 110 + minimal, 120 (none)
+		if (scr_viewsize.value < 110.0f)
+		{
+			if (dir > 0)
+			{
+				Cvar_SetValue ("viewsize", 110.0f);
+				Cvar_SetValue ("rt_hud_minimal", 0.0f);
+			}
+		}
+		else if (scr_viewsize.value < 120.0f && !CVAR_TO_BOOL (rt_hud_minimal))
+		{
+			if (dir < 0)
+			{
+				Cvar_SetValue ("viewsize", 100.0f);
+				Cvar_SetValue ("rt_hud_minimal", 0.0f);
+			}
+			else
+				Cvar_SetValue ("rt_hud_minimal", 1.0f);
+		}
+		else if (scr_viewsize.value < 120.0f && CVAR_TO_BOOL (rt_hud_minimal))
+		{
+			if (dir < 0)
+				Cvar_SetValue ("rt_hud_minimal", 0.0f);
+			else
+			{
+				Cvar_SetValue ("viewsize", 120.0f);
+				Cvar_SetValue ("rt_hud_minimal", 0.0f);
+			}
+		}
+		else if (dir > 0)
+		{
+			Cvar_SetValue ("viewsize", 110.0f);
+			Cvar_SetValue ("rt_hud_minimal", 1.0f);
+		}
 		break;
 	case GAME_OPT_STARTUP_DEMOS:
 		Cvar_SetValue ("cl_startdemos", ((int)cl_startdemos.value + 2 + dir) % 2);
@@ -1905,11 +1933,13 @@ static void M_GameOptions_Draw (cb_context_t *cbx)
 		case GAME_OPT_HUD_DETAIL:
 			M_Print (cbx, MENU_LABEL_X, y, "HUD Detail");
 			if (scr_viewsize.value >= 120.0f)
-				M_Print (cbx, MENU_VALUE_X, y, "None");
+				M_Print (cbx, MENU_VALUE_X, y, "none");
+			else if (CVAR_TO_BOOL (rt_hud_minimal))
+				M_Print (cbx, MENU_VALUE_X, y, "minimal");
 			else if (scr_viewsize.value >= 110.0f)
-				M_Print (cbx, MENU_VALUE_X, y, "Minimal");
+				M_Print (cbx, MENU_VALUE_X, y, "classic");
 			else
-				M_Print (cbx, MENU_VALUE_X, y, "Full");
+				M_Print (cbx, MENU_VALUE_X, y, "classic full");
 			break;
 
 

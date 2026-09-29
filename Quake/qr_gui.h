@@ -114,6 +114,7 @@ int  QR_GUI_AnyItemActive (void);
 // A short message shown in the corner of the editor interface (Apply/Cancel
 // confirmations, errors). Fades out on its own.
 void QR_GUI_Notify (const char *text);
+void QR_GUI_DrawCrosshair (void);
 
 // ----- the flying-mode overlay -----
 
