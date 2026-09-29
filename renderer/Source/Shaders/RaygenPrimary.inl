@@ -1,32 +1,19 @@
-// Copyright (c) 2021-2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
-
-
-// This file was originally a raygen shader. But G-buffer decals are drawn
-// on primary surfaces, but not in perfect reflections/refractions. Because
-// 
-
-// Must be defined:
-// - either RAYGEN_PRIMARY_SHADER or RAYGEN_REFL_REFR_SHADER or Q2_REFL_REFR_SHADER
-// - MATERIAL_MAX_ALBEDO_LAYERS
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #if defined(RAYGEN_PRIMARY_SHADER) && defined(RAYGEN_REFL_REFR_SHADER)
     #error Only one of RAYGEN_PRIMARY_SHADER and RAYGEN_REFL_REFR_SHADER must be defined
@@ -36,7 +23,7 @@
 #endif
 #ifndef MATERIAL_MAX_ALBEDO_LAYERS
     #error MATERIAL_MAX_ALBEDO_LAYERS is not defined
-#endif 
+#endif
 
 
 
@@ -64,7 +51,6 @@ vec2 getMotionVectorForUpscaler(const vec2 motionCurToPrev)
 
 vec2 getMotionForInfinitePoint(const ivec2 pix)
 {
-    // treat as a point with .w=0, i.e. at infinite distance
     vec3 rayDir = getRayDir(getPixelUVWithJitter(pix));
 
     vec3 viewSpacePosCur   = mat3(globalUniform.view)     * rayDir;
@@ -73,7 +59,6 @@ vec2 getMotionForInfinitePoint(const ivec2 pix)
     vec3 clipSpacePosCur   = mat3(globalUniform.projection)     * viewSpacePosCur;
     vec3 clipSpacePosPrev  = mat3(globalUniform.projectionPrev) * viewSpacePosPrev;
 
-    // don't divide by .w
     vec3 ndcCur            = clipSpacePosCur.xyz;
     vec3 ndcPrev           = clipSpacePosPrev.xyz;
 
@@ -83,11 +68,6 @@ vec2 getMotionForInfinitePoint(const ivec2 pix)
     return screenSpacePrev - screenSpaceCur;
 }
 
-// Q2RTX-style path tracer G-buffer, written on the new Q2 core path only.
-// These feed the Q2 ASVGF gradient pipeline (phase 4.4.2) and the Q2RTX
-// reflections (phase 4.4.3). Q2ViewDepth is the ray distance and is NEGATIVE
-// for reflection/refraction surfaces (Q2RTX reflect_refract convention) so
-// the ASVGF filters don't bleed across reflection boundaries.
 void storeQ2GBuffer(
     const ivec2 pix,
     const vec3 baseColor, float specularFactor,
@@ -127,20 +107,18 @@ void storeSky(
 
     {
         vec3 albedo;
-        
+
         if (calculateSkyAndStoreToAlbedo)
         {
             albedo = getSkyPrimary(rayDir);
         }
         else
         {
-            // was already in G-buffer after rasterization pass
             albedo = imageLoad(framebufAlbedo, getRegularPixFromCheckerboardPix(pix)).rgb;
         }
-            
+
         imageStore(framebufAlbedo, getRegularPixFromCheckerboardPix(pix), vec4(albedo, 0.0));
 
-        // Q2RTX-style G-buffer (sky = empty surface, env color in transparent)
         storeQ2GBuffer(pix, albedo, 0.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
     }
 
@@ -169,7 +147,6 @@ void storeSky(
 
 uint getNewRayMedia(int i, uint prevMedia, uint geometryInstanceFlags)
 {
-    // if camera is not in vacuum, assume that new media is vacuum
     if (i == 0 && globalUniform.cameraMediaType != MEDIA_TYPE_VACUUM)
     {
        return MEDIA_TYPE_VACUUM;
@@ -199,7 +176,7 @@ vec3 getPortalNormal(const vec3 baseNormal, const vec3 inWorldOffset)
     float tm = mod(timeScale * globalUniform.time, M_PI * 2);
 
     const mat3 inLookAt_Plain = lookAt(-baseNormal, globalUniform.worldUpVector.xyz);
-    const vec2 localOffset_Plain = vec2(dot(inWorldOffset, inLookAt_Plain[0]), 
+    const vec2 localOffset_Plain = vec2(dot(inWorldOffset, inLookAt_Plain[0]),
                                         dot(inWorldOffset, inLookAt_Plain[1]));
 
     float distance = length(localOffset_Plain);
@@ -207,8 +184,7 @@ vec3 getPortalNormal(const vec3 baseNormal, const vec3 inWorldOffset)
 
     float phase = sin(phaseScale * sqrt(distance) + angle + tm) + 1.0;
     phase *= waveScale;
-    // less weight around center
-    phase *= clamp(distance / 20, 0, 1); 
+    phase *= clamp(distance / 20, 0, 1);
 
     vec3 localN = { phase, phase, 1.0 };
 
@@ -247,7 +223,7 @@ vec3 getNormal(const vec3 position, const vec3 normalFromMap, const vec3 normalG
 }
 
 #ifdef RAYGEN_PRIMARY_SHADER
-void main() 
+void main()
 {
     const ivec2 regularPix = ivec2(gl_LaunchIDEXT.xy);
     const ivec2 pix = getCheckerboardPix(regularPix);
@@ -259,8 +235,8 @@ void main()
     const vec3 cameraRayDirAY = getRayDirAY(inUV);
 
     const uint randomSeed = getRandomSeed(pix, globalUniform.frameId);
-    
-    
+
+
     const ShPayload primaryPayload = tracePrimaryRay(cameraOrigin, cameraRayDir);
     rayStatsAdd(RAY_STATS_CATEGORY_PRIMARY, 1);
 
@@ -268,13 +244,10 @@ void main()
     const uint currentRayMedia = globalUniform.cameraMediaType;
 
 
-    // was no hit
     if (!doesPayloadContainHitInfo(primaryPayload))
     {
         vec3 throughput = vec3(1.0);
-        // throughput *= getMediaTransmittance(currentRayMedia, pow(abs(dot(cameraRayDir, globalUniform.worldUpVector.xyz)), -3));
 
-        // Q2RTX-style fog over the primary segment, extended to the end of the volumes
         vec4 q2FogAccum = vec4(0);
         if (globalUniform.coreQ2RTX != 0)
         {
@@ -283,7 +256,6 @@ void main()
             q2FogAccum = q2SegmentFog(q2SkyFog1, q2SkyFog2, 1e6);
         }
 
-        // if sky is a rasterized geometry, it was already rendered to albedo framebuf 
         storeSky(pix, cameraRayDir, globalUniform.skyType != SKY_TYPE_RASTERIZED_GEOMETRY, throughput, MAX_RAY_LENGTH * 2.0, q2FogAccum);
         return;
     }
@@ -311,13 +283,9 @@ void main()
     imageStoreNormalGeometry(               pix, h.normalGeom);
     imageStore(framebufMetallicRoughness,   pix, vec4(h.metallic, h.roughness, 0, 0));
     imageStore(framebufDepthWorld,          pix, vec4(firstHitDepthLinear));
-    // depth gradients is not 2d, to remove vertical/horizontal artifacts
     float depthGrad = length(gradDepth.xy);
     if (globalUniform.q2DepthGradMode != 0u)
     {
-        // Q2RTX stores the reciprocal of the per-pixel depth change in IMG_PT_MOTION.w
-        // (fwidth_depth), so that dist_z = |depth difference| * fwidth_depth is a
-        // distance in pixels and does not grow with the view distance.
         depthGrad = 1.0 / max(Q2_DEPTH_GRAD_MIN_STEP, gradDepth.z);
     }
     imageStore(framebufDepthGrad,           pix, vec4(depthGrad));
@@ -327,16 +295,11 @@ void main()
     imageStore(framebufViewDirection,       pix, vec4(cameraRayDir, 0.0));
     imageStore(framebufThroughput,          pix, vec4(throughput, 0.0));
 
-    // save some info for refl/refr shader
     imageStore(framebufPrimaryToReflRefr,   pix, uvec4(h.geometryInstanceFlags, primaryPayload.instIdAndIndex, h.portalIndex, emissionBlendCode));
 
-    // save info for rasterization and upscalers (FSR/DLSS), but only about primary surface,
-    // as reflections/refraction only may be losely represented via rasterization
     imageStore(framebufDepthNdc,            getRegularPixFromCheckerboardPix(pix), vec4(clamp(firstHitDepthNDC, 0.0, 1.0)));
     imageStore(framebufMotionDlss,          getRegularPixFromCheckerboardPix(pix), vec4(getMotionVectorForUpscaler(motionCurToPrev), 0.0, 0.0));
 
-    // Q2RTX-style G-buffer. specular factor = dielectric F0 (0.04) to metal albedo.
-    // Accumulate the fog over the primary segment (Q2RTX approach).
     uvec4 q2Fog1, q2Fog2;
     q2FindFogVolumes(cameraOrigin, cameraRayDir, 0.0, firstHitDepthLinear, q2Fog1, q2Fog2);
     const vec4 q2FogAccum = q2SegmentFog(q2Fog1, q2Fog2, firstHitDepthLinear);
@@ -348,7 +311,7 @@ void main()
 
 
 #ifdef RAYGEN_REFL_REFR_SHADER
-void main() 
+void main()
 {
     if (globalUniform.reflectRefractMaxDepth == 0)
     {
@@ -361,7 +324,7 @@ void main()
     const vec2 inUV = getPixelUVWithJitter(regularPix);
 
     const vec3 cameraRayDir = getRayDir(inUV);
-    
+
     if (isSkyPix(pix))
     {
         return;
@@ -369,7 +332,6 @@ void main()
 
 
 
-    // restore state from primary shader
     const uvec3 primaryToReflRefrBuf        = texelFetch(framebufPrimaryToReflRefr_Sampled, pix, 0).rgb;
     ShHitInfo h;
     h.albedo                                = texelFetch(framebufAlbedo_Sampled, getRegularPixFromCheckerboardPix(pix), 0).rgb;
@@ -389,8 +351,6 @@ void main()
     ShPayload currentPayload;
     currentPayload.instIdAndIndex           = primaryToReflRefrBuf.g;
 
-    // Q2RTX-style accumulated fog from the primary pass; the reflection
-    // segments are blended on top of it below (nearest fog in front).
     vec4 q2FogAccum = texelFetch(framebufQ2FogAccum_Sampled, pix, 0);
 
 
@@ -400,8 +360,6 @@ void main()
     rayCone.spreadAngle = globalUniform.cameraRayConeSpreadAngle;
 
     float fullPathLength = firstHitDepthLinear;
-    // length of the last reflected/refracted segment (used by the god rays
-    // reflection pass to march only along the reflected segment, Q2RTX-style)
     float q2LastSegmentLen = 0.0;
     vec3 prevHitPosition = h.hitPosition;
     bool wasSplit = false;
@@ -409,7 +367,6 @@ void main()
     vec3 virtualPos = h.hitPosition;
     vec3 rayDir = cameraRayDir;
     uint currentRayMedia = globalUniform.cameraMediaType;
-    // if there was no hitinfo from refl/refr, preserve primary hitinfo
     bool hitInfoWasOverwritten = false;
 
 
@@ -454,18 +411,16 @@ void main()
 
 
         bool delaySplitOnNextTime = false;
-            
+
         if ((h.geometryInstanceFlags & GEOM_INST_FLAG_NO_MEDIA_CHANGE) != 0)
         {
-            // apply small new media transmittance, and ignore the media (but not the refraction indices)
             throughput *= getMediaTransmittance(newRayMedia, 1.0);
             newRayMedia = currentRayMedia;
-            
-            // if reflections are disabled if viewing from inside of NO_MEDIA_CHANGE geometry
+
             delaySplitOnNextTime = (globalUniform.noBackfaceReflForNoMediaChange != 0) && isBackface(h.normalGeom, rayDir);
         }
 
-           
+
 
         vec3 rayOrigin = h.hitPosition;
         bool doSplit = !wasSplit;
@@ -476,11 +431,10 @@ void main()
         if (delaySplitOnNextTime)
         {
             doSplit = false;
-            // force refraction for all pixels
             toRefract = true;
             isPixOdd = true;
         }
-        
+
         if (toRefract && calcRefractionDirection(curIndexOfRefraction, newIndexOfRefraction, rayDir, normal, refractionDir))
         {
             doRefraction = isPixOdd;
@@ -488,18 +442,16 @@ void main()
         }
         else
         {
-            // total internal reflection
             doRefraction = false;
             doSplit = false;
             F = 1.0;
         }
-        
+
         if (doRefraction)
         {
             rayDir = refractionDir;
             throughput *= (1 - F);
 
-            // change media
             currentRayMedia = newRayMedia;
         }
         else if (isPortal)
@@ -512,13 +464,12 @@ void main()
             mat3 inLookAt = lookAt(getPortalNormal(normal, inWorldOffset), globalUniform.worldUpVector.xyz);
 
             const vec3 outCenter = portal.outPosition.xyz;
-            const mat3 outLookAt = lookAt(portal.outDirection.xyz, 
+            const mat3 outLookAt = lookAt(portal.outDirection.xyz,
                                           portal.outUp.xyz);
 
-            // to local space; then to world space but at portal output
             rayDir = outLookAt * (transpose(inLookAt) * rayDir);
 
-            const vec2 localOffset = vec2(dot(inWorldOffset, inLookAt[0]), 
+            const vec2 localOffset = vec2(dot(inWorldOffset, inLookAt[0]),
                                           dot(inWorldOffset, inLookAt[1]));
 
             rayOrigin = outCenter + localOffset.x * outLookAt[0] + localOffset.y * outLookAt[1];
@@ -551,18 +502,17 @@ void main()
         currentPayload = traceReflectionRefractionRay(rayOrigin, rayDir, instIndex, h.geometryInstanceFlags, doRefraction);
         rayStatsAdd(RAY_STATS_CATEGORY_REFLECTION_REFRACTION, 1);
 
-        
+
         if (!doesPayloadContainHitInfo(currentPayload))
         {
             throughput *= getMediaTransmittance(currentRayMedia, pow(abs(dot(rayDir, globalUniform.worldUpVector.xyz)), -3));
 
-            // add the fog over this (missed, sky) segment to the accumulated fog
             uvec4 q2SegFog1, q2SegFog2;
             q2FindFogVolumes(rayOrigin, rayDir, 0.0, 1e6, q2SegFog1, q2SegFog2);
             q2FogAccum = q2AlphaBlendPremultiplied(q2FogAccum, q2SegmentFog(q2SegFog1, q2SegFog2, 1e6));
 
             storeSky(pix, rayDir, true, throughput, wasSplit, q2FogAccum);
-            return;  
+            return;
         }
 
         float rayLen;
@@ -570,16 +520,15 @@ void main()
         uint emisBlendCode;
 
         h = getHitInfoWithRayCone_ReflectionRefraction(
-            currentPayload, rayCone, 
-            rayOrigin, rayDir, cameraRayDir, 
-            virtualPos, 
-            rayLen, 
+            currentPayload, rayCone,
+            rayOrigin, rayDir, cameraRayDir,
+            virtualPos,
+            rayLen,
             motionCurToPrev, motionDepthLinearCurToPrev,
             emis,
             emisBlendCode
         );
 
-        // Accumulate the fog along this reflection/refraction segment
         uvec4 q2SegFog1, q2SegFog2;
         q2FindFogVolumes(rayOrigin, rayDir, 0.0, rayLen, q2SegFog1, q2SegFog2);
         q2FogAccum = q2AlphaBlendPremultiplied(q2FogAccum, q2SegmentFog(q2SegFog1, q2SegFog2, rayLen));
@@ -615,9 +564,6 @@ void main()
     imageStore(framebufViewDirection,       pix, vec4(rayDir, 0.0));
     imageStore(framebufThroughput,          pix, vec4(throughput, wasSplit ? 1.0 : -1.0));
 
-    // Q2RTX-style G-buffer. Negative depth so the ASVGF filters don't bleed
-    // across reflection/refraction boundaries; the half-cone angle for the
-    // accumulated-cone LOD is taken from the primary pass (Q2RTX convention).
     const float q2HalfConeAngle = texelFetch(framebufQ2BounceThroughput_Sampled, pix, 0).w;
     storeQ2GBuffer(pix, h.albedo, mix(0.04, 1.0, h.metallic), h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
@@ -627,16 +573,6 @@ void main()
 
 
 #ifdef Q2_REFL_REFR_SHADER
-// Q2RTX-style reflection/refraction pass (separate raygen, used on the Q2 core
-// path). Ported from Q2RTX reflect_refract.rgen and adapted to the qray
-// framework:
-//   - material kinds come from the qray geometry instance flags for now (they
-//     will switch to the Q2RTX .mat kinds together with the material system
-//     port); screens/security cameras do not exist in Quake 1 and are skipped,
-//   - the ray is traced with the qray payload/trace helper and the hit surface
-//     is evaluated with the qray material code,
-//   - the result is written to BOTH the qray G-buffer and the Q2RTX-style
-//     G-buffer (negative view depth for reflections/refractions).
 void main()
 {
     if (globalUniform.reflectRefractMaxDepth == 0)
@@ -649,27 +585,14 @@ void main()
     const vec2 inUV = getPixelUVWithJitter(regularPix);
     const vec3 cameraRayDir = getRayDir(inUV);
 
-    // Read is-sky through the storage image, not the sampled view: this raygen also writes
-    // framebufIsSky, and binding both views of one image in one set makes the SRV and the UAV
-    // disagree about the image layout (A5.3). This is the read isSkyPix() performs.
     if (imageLoad(framebufIsSky, pix).r != 0)
     {
         return;
     }
 
-    // restore state from primary shader
     const uvec3 primaryToReflRefrBuf = texelFetch(framebufPrimaryToReflRefr_Sampled, pix, 0).rgb;
 
-    // The G-buffer reads below go through the storage images, not the sampled views: this
-    // raygen also writes every image it reads, and binding both views of one image in one set
-    // makes the SRV and the UAV disagree about the image layout (A5.3).
-    // framebufPrimaryToReflRefr is read-only here, so it keeps its sampled view.
 
-    // The loop below can only write anything if the primary surface is one of the
-    // five kinds it handles, and at i == 0 that is decided by exactly the two
-    // values above plus the roughness channel - the same ones the loop reads, so
-    // the test below is the loop's first break condition. Pixels that fail it
-    // leave before loading the whole G-buffer for nothing.
     if (globalUniform.reflRefrEarlyOut != 0u)
     {
         const uint primaryFlags = primaryToReflRefrBuf.r;
@@ -692,8 +615,6 @@ void main()
     h.hitPosition                       = imageLoad(framebufSurfacePosition, pix).xyz;
     h.geometryInstanceFlags             = primaryToReflRefrBuf.r;
     h.portalIndex                       = primaryToReflRefrBuf.b;
-    // spelled out instead of texelFetchNormalGeometry/texelFetchNormal, whose bodies read
-    // the sampled views (A5.3)
     h.normalGeom                        = decodeNormal(imageLoad(framebufNormalGeometry, pix).r);
     h.normal                            = decodeNormal(imageLoad(framebufNormal, pix).r);
     h.metallic                          = imageLoad(framebufMetallicRoughness, pix).r;
@@ -708,7 +629,6 @@ void main()
     ShPayload currentPayload;
     currentPayload.instIdAndIndex       = primaryToReflRefrBuf.g;
 
-    // Q2RTX-style G-buffer from the primary pass
     const vec4 q2BaseColor              = imageLoad(framebufQ2BaseColor, pix);
     const float q2HalfConeAngle         = imageLoad(framebufQ2BounceThroughput, pix).w;
     vec4 q2Transparent                  = imageLoad(framebufQ2Transparent, pix);
@@ -759,7 +679,7 @@ void main()
         vec3 rayOrigin = h.hitPosition;
         bool doSplit = !wasSplit;
         bool doRefraction = false;
-        int correctMotionVector = 0; // 1 = reflection, 2 = refraction
+        int correctMotionVector = 0;
 
         if (isPortal)
         {
@@ -774,7 +694,6 @@ void main()
             const mat3 outLookAt = lookAt(portal.outDirection.xyz,
                                           portal.outUp.xyz);
 
-            // to local space; then to world space but at portal output
             rayDir = outLookAt * (transpose(inLookAt) * rayDir);
 
             const vec2 localOffset = vec2(dot(inWorldOffset, inLookAt[0]),
@@ -787,19 +706,16 @@ void main()
         }
         else if (primaryIsWater || primaryIsSlime)
         {
-            // Q2RTX water/slime: IOR 1.34, Fresnel, checkerboard split.
             const float ior = getIndexOfRefraction(primaryIsWater ? MEDIA_TYPE_WATER : MEDIA_TYPE_ACID);
             const vec3 reflected = reflect(rayDir, normal);
             const float nDotV = abs(dot(rayDir, normal));
 
             if (currentRayMedia == MEDIA_TYPE_WATER || currentRayMedia == MEDIA_TYPE_ACID)
             {
-                // Looking up from under water/slime: adjusted N.V, TIR.
                 const vec3 refracted = refract(rayDir, normal, ior);
                 float ndv = 1.0 - (1.0 - nDotV) * 3.0;
                 if (ndv <= 0.0 || dot(refracted, refracted) == 0.0)
                 {
-                    // Total internal reflection - single ray
                     rayDir = reflected;
                     correctMotionVector = 1;
                 }
@@ -828,7 +744,6 @@ void main()
             }
             else
             {
-                // Looking down on the water/slime surface
                 const vec3 refracted = refract(rayDir, normal, 1.0 / ior);
                 const float F = 0.1 + 0.9 * pow(1.0 - nDotV, 5.0);
                 doSplit = (i == 0);
@@ -837,7 +752,7 @@ void main()
                 {
                     rayDir = refracted;
                     throughput *= (1.0 - F);
-                    currentRayMedia = newRayMedia; // enter water/slime
+                    currentRayMedia = newRayMedia;
                     correctMotionVector = 2;
                 }
                 else
@@ -854,7 +769,6 @@ void main()
         }
         else if (primaryIsGlass)
         {
-            // Q2RTX glass: IOR 1.52, thin glass (dual refraction), split.
             const float ior = getIndexOfRefraction(MEDIA_TYPE_GLASS);
             vec3 glassGeomN = h.normalGeom;
             vec3 glassN = normal;
@@ -879,7 +793,6 @@ void main()
             doRefraction = isPixOdd;
             if (doRefraction)
             {
-                // infinitely thin glass: dual refraction (in via normal, out via flat geo normal)
                 const vec3 refr1 = refract(rayDir, glassN, 1.0 / ior);
                 const vec3 refr2 = refract(refr1, glassGeomN, ior);
                 if (length(refr2) > 0.0)
@@ -888,7 +801,7 @@ void main()
                 }
                 throughput *= (1.0 - F);
                 throughput *= q2BaseColor.rgb;
-                currentRayMedia = MEDIA_TYPE_VACUUM; // Q2RTX thin glass: no media change
+                currentRayMedia = MEDIA_TYPE_VACUUM;
                 correctMotionVector = 2;
             }
             else
@@ -910,7 +823,6 @@ void main()
         }
         else
         {
-            // chrome / smooth surface: reflection
             throughput *= h.albedo;
             rayDir = reflect(rayDir, normal);
             correctMotionVector = 1;
@@ -926,8 +838,6 @@ void main()
 
         if (!doesPayloadContainHitInfo(currentPayload))
         {
-            // Reflection/refraction ray hit the sky: store an empty surface,
-            // blend the environment into the accumulated transparency and use
             const vec3 env = getSkyFiltered(rayDir, h.roughness * (SKY_MIP_COUNT - 1.0));
             q2Transparent = q2AlphaBlendPremultiplied(vec4(env * throughput, 1.0), q2Transparent);
 
@@ -944,8 +854,6 @@ void main()
             }
 
             storeSky(pix, rayDir, true, throughput, wasSplit, q2FogAccum);
-            // override the Q2RTX-style G-buffer: empty surface, negative depth,
-            // environment blended into transparent (Q2RTX reflect_refract sky).
             storeQ2GBuffer(pix, vec3(0.0), 0.0, 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
                            q2Transparent.rgb, q2Transparent.a, q2FogAccum, ~0u);
             return;
@@ -965,7 +873,6 @@ void main()
             emisBlendCode
         );
 
-        // Accumulate the fog along this reflection/refraction segment
         uvec4 q2SegFog1, q2SegFog2;
         q2FindFogVolumes(rayOrigin, rayDir, 0.0, rayLen, q2SegFog1, q2SegFog2);
         q2FogAccum = q2AlphaBlendPremultiplied(q2SegmentFog(q2SegFog1, q2SegFog2, rayLen), q2FogAccum);
@@ -1014,8 +921,6 @@ void main()
     imageStore(framebufViewDirection,       pix, vec4(rayDir, 0.0));
     imageStore(framebufThroughput,          pix, vec4(throughput, wasSplit ? 1.0 : -1.0));
 
-    // Q2RTX-style G-buffer. Negative depth so the ASVGF filters don't bleed
-    // across reflection/refraction boundaries.
     storeQ2GBuffer(pix, h.albedo, mix(0.04, 1.0, h.metallic), h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    q2Transparent.rgb, q2Transparent.a, q2FogAccum, h.cluster);

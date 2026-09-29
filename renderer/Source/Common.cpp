@@ -21,6 +21,100 @@
 #include "Common.h"
 
 #include <algorithm>
+#include <cstdio>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+
+// Prints where the failing Vulkan call was made (file and line, which the assert
+// dialog cannot show) and what it returned, then lets the assert stop the run.
+void qray::VK_CHECKERROR_ReportAlloc(const VkDeviceSize size, const char *pDebugName)
+{
+    std::fprintf(stderr, "qray: out of device memory: %llu bytes for '%s'\n",
+                 (unsigned long long)size, pDebugName ? pDebugName : "<no name>");
+    std::fflush(stderr);
+
+    std::FILE *log = std::fopen("vk_last_error.txt", "a");
+    if (log)
+    {
+        std::fprintf(log, "qray: out of device memory: %llu bytes for '%s'\n",
+                     (unsigned long long)size, pDebugName ? pDebugName : "<no name>");
+        std::fclose(log);
+    }
+}
+
+void qray::VK_CHECKERROR_Report(const VkResult r, const char *file, int line)
+{
+    const char *name = "VK_ERROR_*";
+
+    switch (r)
+    {
+    case VK_ERROR_OUT_OF_HOST_MEMORY:
+        name = "VK_ERROR_OUT_OF_HOST_MEMORY";
+        break;
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+        name = "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+        break;
+    case VK_ERROR_INITIALIZATION_FAILED:
+        name = "VK_ERROR_INITIALIZATION_FAILED";
+        break;
+    case VK_ERROR_DEVICE_LOST:
+        name = "VK_ERROR_DEVICE_LOST";
+        break;
+    case VK_ERROR_MEMORY_MAP_FAILED:
+        name = "VK_ERROR_MEMORY_MAP_FAILED";
+        break;
+    case VK_ERROR_LAYER_NOT_PRESENT:
+        name = "VK_ERROR_LAYER_NOT_PRESENT";
+        break;
+    case VK_ERROR_EXTENSION_NOT_PRESENT:
+        name = "VK_ERROR_EXTENSION_NOT_PRESENT";
+        break;
+    case VK_ERROR_FEATURE_NOT_PRESENT:
+        name = "VK_ERROR_FEATURE_NOT_PRESENT";
+        break;
+    case VK_ERROR_INCOMPATIBLE_DRIVER:
+        name = "VK_ERROR_INCOMPATIBLE_DRIVER";
+        break;
+    case VK_ERROR_TOO_MANY_OBJECTS:
+        name = "VK_ERROR_TOO_MANY_OBJECTS";
+        break;
+    case VK_ERROR_FORMAT_NOT_SUPPORTED:
+        name = "VK_ERROR_FORMAT_NOT_SUPPORTED";
+        break;
+    case VK_ERROR_SURFACE_LOST_KHR:
+        name = "VK_ERROR_SURFACE_LOST_KHR";
+        break;
+    default:
+        break;
+    }
+
+    std::fprintf(stderr, "qray: Vulkan call failed: %s (%d) at %s:%d\n", name, (int)r, file, line);
+    std::fflush(stderr);
+
+    std::FILE *log = std::fopen("vk_last_error.txt", "a");
+    if (log)
+    {
+        std::fprintf(log, "qray: Vulkan call failed: %s (%d) at %s:%d\n", name, (int)r, file, line);
+        std::fclose(log);
+    }
+
+#ifdef _WIN32
+    // The assert dialog names this file and not the call, so say it here as well:
+    // the message box is what the user copies.
+    char message[1024];
+
+    std::snprintf(message, sizeof(message),
+                  "A Vulkan call failed.\n\n%s (%d)\n\nat %s:%d\n\n"
+                  "(the same line is appended to vk_last_error.txt)",
+                  name, (int)r, file, line);
+    MessageBoxA(nullptr, message, "qray: Vulkan error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+#endif
+
+    assert(r == VK_SUCCESS);
+}
 
 
 namespace qray

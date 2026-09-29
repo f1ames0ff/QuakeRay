@@ -4,14 +4,12 @@
 vec3 getWaterNormal(const RayCone rayCone, const vec3 rayDir, const vec3 normalGeom, const vec3 position, bool wasPortal)
 {
     const mat3 basis = getONB(normalGeom);
-    const vec2 baseUV = vec2(dot(position, basis[0]), dot(position, basis[1])); 
+    const vec2 baseUV = vec2(dot(position, basis[0]), dot(position, basis[1]));
 
 
-    // how much vertical flow to apply
     float verticality = 1.0 - abs(dot(normalGeom, globalUniform.worldUpVector.xyz));
 
-    // project basis[0] and basis[1] on up vector
-    vec2 flowSpeedVertical = 10 * vec2(dot(basis[0], globalUniform.worldUpVector.xyz), 
+    vec2 flowSpeedVertical = 10 * vec2(dot(basis[0], globalUniform.worldUpVector.xyz),
                                        dot(basis[1], globalUniform.worldUpVector.xyz));
 
     vec2 flowSpeedHorizontal = vec2(1.0);
@@ -22,10 +20,8 @@ vec3 getWaterNormal(const RayCone rayCone, const vec3 rayDir, const vec3 normalG
     vec2 speed1 = -0.9 * speed0 * mix(1.0, -0.1, verticality);
 
 
-    // for texture sampling
     float derivU = globalUniform.waterTextureDerivativesMultiplier * 0.5 * uvScale * getWaterDerivU(rayCone, rayDir, normalGeom);
 
-    // make water sharper if visible through the portal
     if (wasPortal)
     {
         derivU *= 0.1;
@@ -50,7 +46,8 @@ vec3 getWaterNormal(const RayCone rayCone, const vec3 rayDir, const vec3 normalG
     const float strength = globalUniform.waterWaveStrength;
 
     const vec3 n = normalize(vec3(0, 0, 1) + strength * (0.25 * n0 + 0.2 * n1 + 0.1 * n2));
-    return basis * n;   
+    return basis * n;
 }
+
 
 #endif

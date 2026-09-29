@@ -1,27 +1,23 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #version 460
 #extension GL_EXT_ray_tracing : require
 
-// don't need "processAlbedo" function
 #define MATERIAL_MAX_ALBEDO_LAYERS 0
 
 #define DESC_SET_GLOBAL_UNIFORM 2
@@ -29,7 +25,6 @@
 #define DESC_SET_TEXTURES 4
 #include "ShaderCommonGLSLFunc.h"
 
-// the alpha test must sample the same texel as the closest hit shader
 #include "TurbWarp.h"
 
 hitAttributeEXT vec2 inBaryCoords;
@@ -44,8 +39,7 @@ void main()
 
 	const vec3 baryCoords = vec3(1.0f - inBaryCoords.x - inBaryCoords.y, inBaryCoords.x, inBaryCoords.y);
     const vec2 texCoord = getSurfaceTexCoord(tr.geometryInstanceFlags, tr.layerTexCoord[0] * baryCoords);
- 
-	// check only first material's albedo
+
  	const vec4 color = getTextureSample(tr.materials[0][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord) * tr.materialColors[0];
 
 	if ((tr.geometryInstanceFlags & GEOM_INST_FLAG_ALPHA_TRANSMISSION) != 0)
@@ -60,13 +54,9 @@ void main()
 			ignoreIntersectionEXT;
 		}
 	}
-	// if must be discarded
 	else if ((color.r + color.g + color.b) / 3 * color.a + color.a < ALPHA_THRESHOLD)
 	{
-		// then ignore this intersection, so it won't be the closest hit
 		ignoreIntersectionEXT;
 	}
 
-	// otherwise, do nothing, as this intersection 
-	// can or can't be the closest hit
 }

@@ -1,100 +1,19 @@
-// Copyright (c) 2021 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
-
-// HLSL counterpart of CmPrepareFinal.comp. The compose pass of the renderer and the largest leaf of
-// the base: it resolves the emissive layer through the tone curve, adds the volumetrics, the acid
-// fog and the classic level fog, dithers the quantisation and writes framebufFinal and
-// framebufBloomInput.
+// Copyright (c) 2026 QuakeRay contributors
 //
-// Spellings that had to change:
-//   * layout(local_size_x = COMPUTE_COMPOSE_GROUP_SIZE_X, local_size_y = COMPUTE_COMPOSE_GROUP_SIZE_Y,
-//     local_size_z = 1) in -> [numthreads(COMPUTE_COMPOSE_GROUP_SIZE_X, COMPUTE_COMPOSE_GROUP_SIZE_Y, 1)]
-//     on main, and gl_GlobalInvocationID.x/y -> the SV_DispatchThreadID parameter of main, which HLSL
-//     only hands to the entry point; the ivec2 pix of the golden is the same int2 either way
-//   * pix.x >= uint(globalUniform.renderWidth) keeps the golden's UNSIGNED comparison, so the port
-//     converts the pixel as well: (uint)pix.x >= (uint)globalUniform.renderWidth, the same spelling
-//     CmCheckerboard.comp.hlsl uses, instead of letting HLSL pick a signed comparison
-//   * #define A_GLSL 1 -> #define A_HLSL 1 for the AMD portability header, exactly as
-//     CmCas.comp.hlsl does it. The golden includes that header by the bare name "ffx_a.h"; the tree
-//     vendors two copies of it (CAS/ and LPM/) and the host build resolves the bare name only because
-//     GenerateShaders.py adds every subfolder as an include folder -- to whichever copy the folder
-//     set happens to reach first. This shader consumes the LPM filter control block, so the port
-//     names the LPM copy explicitly: "LPM/ffx_a.h". Both copies define the same AU1/AU4 types and a
-//     probe of the golden compiled against either one produces the same module, but naming the copy
-//     makes the choice deterministic and is the only spelling the checker's fixed include list
-//     ("-I . -I ../Generated/") can resolve
-//   * layout(set = DESC_SET_LPM_PARAMS, binding = BINDING_LPM_PARAMS) readonly uniform LpmParams_BT
-//     { AU4 g_lpmParams[24]; } -- an instance-less block the golden reads as g_lpmParams[i] -- becomes
-//     the struct LpmParams_BT with the same single member and a named ConstantBuffer, read as
-//     lpmParams.g_lpmParams[i]: HLSL has no instance-less block and a ConstantBuffer is what the host
-//     binds for it (VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, ImageComposition.cpp:232). The member stays on
-//     offset 0 with an array stride of 16 on both halves. The block is DEAD on both halves -- nothing
-//     calls the LpmFilterCtl that reads it, so neither compiled module references the descriptor and
-//     set 3 binding 0 appears in neither property set; a scratch pair that makes the read live was
-//     used to verify the layout. The dxc run also reports the two -Wambig-lit-shift warnings of the
-//     vendored AMD header itself (LPM/ffx_a.h:1111 and :1113); the header is not touched here
-//   * texelFetch(t, p, 0) -> t.Load(int3(p, 0)), imageStore(img, p, v) -> img[p] = v (the generated
-//     header declares the storage views as RWTexture2D), and
-//     textureLod(sampler3D(view, sampler), sp, 0.0) -> view.SampleLevel(sampler, sp, 0.0): the
-//     descriptors are split into a sampled view and a sampler
-//   * mix(...) -> lerp(...), greaterThan(l, x) -> l > x, vecN(scalar) -> (floatN)scalar, and the
-//     float(...) / uint(...) constructors -> (float)(...) / (uint)(...)
-//   * fract(...) -> frac(...): the same truncation of x to its fractional part, HLSL just spells
-//     the intrinsic without the t
-//   * the parameter `linear` of outputCodeStepLinear is a modifier keyword in HLSL, so it becomes
-//     `linearColor`; the body is the golden's and reads the same value
-//   * tonemapping.<field> -> tonemapping[0].<field>: ShaderCommonHLSLFunc.hlsli declares the same
-//     bytes as a one element StructuredBuffer, so the single instance the GLSL block has an implicit
-//     name for is its element 0, the same spelling Exposure.hlsli uses
-//   * vec2(pix) -> (float2)pix, float(channel) -> (float)channel and
-//     uvec3(pix.x, pix.y, channel) -> uint3((uint)pix.x, (uint)pix.y, channel), the spelling
-//     Random.hlsli already uses for the same murmurHash33 call
-//   * globalUniform.invProjection * vec4(...) -> mul(globalUniform.invProjection, float4(...)): the
-//     order of the operands is the golden's, as the matrix rule of ShaderCommonHLSL.hlsli requires
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
 //
-// What did not change: the whole chain of main in the golden's order (the emissive mode fetch, the
-// god rays composite with its coreQ2RTX and q2SplitFlag branches, finalizeColor, getBloomInput,
-// applyVolumetrics, the acid fog, applyLevelFog, processDebug, the dither and the two stores), every
-// function with its name and parameter list, the emission blend modes 0/2/3/4/5 of
-// blendEmissionLayer with the same two lerp weights, the histogram interpolation of finalizeColor
-// (HISTOGRAM_BINS = COMPUTE_LUM_HISTOGRAM_BIN_COUNT, the same binning as
-// CmLuminanceHistogram.comp), the auto-exposure Reinhard blend and the knee, the
-// ev100ToLuminance products of getBloomInput, the checkerboard remaps, the level fog falloff
-// exp(-(density * depth * getViewAxisFactor(pix))^2) with the sky taking 1 - skyBlend, the
-// interleaved gradient noise, the triangular-PDF dither (structured + white - 1.0) and the
-// amplitude of outputCodeStepLinear (1/255 divided by the slope of the sRGB encoding), and the two
-// #define values (OUTPUT_DITHER_CODES 1.0, DEBUG_LPM 0).
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// Dead on both halves and transcribed as the golden wrote it: the DEBUG_LPM branch (DEBUG_LPM 0;
-// its inAU4 is the AMD header's in-qualifier macro, which its HLSL branch defines too, so the branch
-// is text that would compile if the switch flipped), the DEBUG_VOLUME_ILLUMINATION branch
-// (undefined), the GRADIENT_ESTIMATION_ENABLED branch (GRADIENT_ESTIMATION_ENABLED 0 -- it names
-// framebufDISPingGradient_Sampled, which neither generated header declares any more, so it has to
-// stay dead), and the DEBUG_SHOW_SH branch (undefined).
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 //
-// The five golden headers are included here in the same order as there: ShaderCommonGLSLFunc.h ->
-// ShaderCommonHLSLFunc.hlsli, Volumetric.h -> Volumetric.hlsli, Random.h -> Random.hlsli,
-// Exposure.h -> Exposure.hlsli, TonemappingUtils.glsl -> TonemappingUtils.hlsli. Like the GLSL ones
-// they declare nothing themselves and expect the DESC_SET_* macros to be defined first, which is why
-// the same five defines are repeated here.
 
 #define DESC_SET_FRAMEBUFFERS 0
 #define DESC_SET_GLOBAL_UNIFORM 1
@@ -107,8 +26,6 @@
 #include "Exposure.hlsli"
 #include "TonemappingUtils.hlsli"
 
-// The GLSL original declares the workgroup size here; in HLSL it is an attribute of the entry
-// point instead, so the shader itself carries [numthreads(...)] on main.
 
 #define DEBUG_LPM 0
 
@@ -191,10 +108,6 @@ float3 blendEmissionLayer( const float3 hdr, const float3 layer, const uint mode
 }
 
 
-// Resolves the per-pixel emission blend mode. The primary ray pass stores the
-// material's authored mode (+1) in the alpha of framebufPrimaryToReflRefr;
-// 0 means "not authored" and any other out-of-range value (e.g. the 255 alpha of
-// an authored *_rme texture) falls back to the global rt_emis_blend cvar.
 uint decodeEmissionBlendMode( const uint code )
 {
     if( code < 1u || code > 6u )
@@ -205,8 +118,6 @@ uint decodeEmissionBlendMode( const uint code )
 }
 
 
-// Q2RTX-style tone curve application (tone_mapping_apply.comp, SDR path).
-// Applies the noise-aware tone curve + auto-exposure + knee to the HDR image.
 float3 finalizeColor( const float3 hdr, const float3 screenEmis, const uint emisBlendMode )
 {
     const float strength = clamp( globalUniform.emissionBlendStrength, 0.0, 1.0 );
@@ -216,7 +127,6 @@ float3 finalizeColor( const float3 hdr, const float3 screenEmis, const uint emis
 
     const float lum = max( getLuminance( input_color ), exp2( min_log_luminance ) );
 
-    // Interpolate the tone curve; binning must match CmLuminanceHistogram.comp.
     const float biased_log_luminance = log2( lum ) * log_luminance_scale + log_luminance_bias;
     const float histogram_bin = clamp( biased_log_luminance * HISTOGRAM_BINS, 0.0, (float)( HISTOGRAM_BINS - 1 ) );
     const uint  left_bin       = (uint)histogram_bin;
@@ -230,13 +140,11 @@ float3 finalizeColor( const float3 hdr, const float3 screenEmis, const uint emis
 
     float3 mapped_color = input_color * out_luminance / lum;
 
-    // Knee: bring values that are still above 1 back into range.
     const float3 step_value = step( tonemapping[0].tmKneeStart, mapped_color );
     mapped_color = lerp( mapped_color,
                          ( tonemapping[0].kneeW * mapped_color + tonemapping[0].kneeA ) / max( (float3)1e-6, mapped_color + tonemapping[0].kneeB ),
                          step_value );
 
-    // Auto-exposure Reinhard blend.
     const float adapted_luminance    = tonemapping[0].adaptedLuminance;
     const float scaled_luminance     = exp2( tonemapping[0].tmExposureBias - 2.0 ) * lum / adapted_luminance;
     const float white_point          = tonemapping[0].tmWhitePoint;
@@ -271,9 +179,6 @@ float3 applyVolumetrics( const int2 pix, const float3 color )
         return color;
     }
 
-    // On the new Q2RTX core path the level volumetric is provided by the traced
-    // fog volumes (per-ray, works through portals and in reflections), so the
-    // legacy screen-space volumetric composite is disabled there.
     if( globalUniform.coreQ2RTX != 0 )
     {
         return color;
@@ -304,7 +209,6 @@ float3 applyVolumetrics( const int2 pix, const float3 color )
     }
     else
     {
-        // simple depth-based fog; factor tuned to be clearly visible
         float density = globalUniform.volumeScattering * 0.001;
 
         if( !isSky )
@@ -320,11 +224,6 @@ float3 applyVolumetrics( const int2 pix, const float3 color )
 }
 
 
-// Ratio of the view-space depth (the distance the classic renderer fogged with,
-// gl_Position.w) to the ray length that framebufDepthWorld holds. A ray that is
-// off the view axis is longer by 1/cos(angle), and fogging by the ray length
-// would thicken the fog towards the screen edges, where the classic renderer
-// showed none of that.
 float getViewAxisFactor( const int2 pix )
 {
     const float2 inUV = getPixelUVWithJitter( pix ) * 2.0 - 1.0;
@@ -336,21 +235,11 @@ float getViewAxisFactor( const int2 pix )
 }
 
 
-// Classic Quake level fog: the worldspawn "fog" key and the `fog` console
-// command, which is also how Arcane Dimensions drives its dynamic fog. Quake
-// fogged every fragment, so this runs on the composited image, after the
-// tonemapped color and after the rasterized geometry (sprites, viewmodel) has
-// been drawn into framebufFinal. The color is display-referred, and is used as
-// it is: the classic renderer mixed it into the framebuffer the same way, and
-// the sky below takes it from the same place, so a solid-colored sky stays
-// identical to the fog.
 float3 applyLevelFog( const int2 pix, const float3 color )
 {
     const float density  = globalUniform.levelFogColorDensity.w;
     const float skyBlend = globalUniform.levelFogSkyBlend.x;
 
-    // The classic renderer skipped the fog entirely when the level had none,
-    // and so does the sky blend below, which only makes sense with fog present.
     if( density <= 0.0 )
     {
         return color;
@@ -361,13 +250,10 @@ float3 applyLevelFog( const int2 pix, const float3 color )
     float fog;
     if( depth > MAX_RAY_LENGTH )
     {
-        // Sky: there is no distance to fall off over, so the level's `skyfog`
-        // is the blend weight itself.
         fog = 1.0 - skyBlend;
     }
     else
     {
-        // Same falloff as the classic renderer: exp(-(density * distance)^2).
         const float d = density * max( depth, 0.0 ) * getViewAxisFactor( pix );
         fog = exp( -d * d );
     }
@@ -379,18 +265,12 @@ float3 applyLevelFog( const int2 pix, const float3 color )
 float3 processDebug( const int2 pix, const float3 fallback );
 
 
-// Dither of the output quantisation, in units of one 8-bit display code.
 #define OUTPUT_DITHER_CODES 1.0
 
-// One step of the 8-bit sRGB encoding, expressed in the linear domain. This
-// shader writes linear color into framebufFinal and the sRGB encode happens
-// later, in the present blit, which could not dither itself: the amplitude of
-// the dither has to be the derivative of that encoding at the current value.
 float3 outputCodeStepLinear( const float3 linearColor )
 {
     float3 l = clamp( linearColor, (float3)1e-5, (float3)1.0 );
 
-    // slope of the sRGB encoding: linear below the 0.0031308 knee, power above
     float3 slope = lerp( (float3)12.92,
                          ( 1.055 / 2.4 ) * pow( l, (float3)( 1.0 / 2.4 - 1.0 ) ),
                          l > (float3)0.0031308 );
@@ -398,16 +278,12 @@ float3 outputCodeStepLinear( const float3 linearColor )
     return (float3)( 1.0 / 255.0 ) / slope;
 }
 
-// Interleaved gradient noise (Jimenez): cheap spatially-structured noise, so
-// that the dither pattern reads as grain instead of white-noise speckle.
 float interleavedGradientNoise( const float2 p )
 {
     const float3 magic = float3( 0.06711056, 0.00583715, 52.9829189 );
     return frac( magic.z * frac( dot( p, magic.xy ) ) );
 }
 
-// Triangular-PDF dither in [-1, 1]: the sum of the structured sample above and
-// a white sample. The channel is hashed in so that R, G and B are decorrelated.
 float outputDither( const int2 pix, const uint channel )
 {
     const float structured = interleavedGradientNoise( (float2)pix + 0.5 + (float)channel * 31.7 );
@@ -426,26 +302,11 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         return;
     }
 
-    // Read FINAL through the storage image, not the sampled view: this shader also writes
-    // framebufFinal, and binding both views of one image in one set makes the SRV and the UAV
-    // disagree about the image layout (A4.4).
     float3 hdr        = framebufFinal.Load( pix ).rgb;
     const float3 screenEmis = framebufScreenEmission_Sampled.Load(int3( pix, 0 )).rgb;
-    // per-material rt_emis_blend override, stored by the primary ray pass.
-    // That framebuffer is addressed in checkerboard space (like the throughput
-    // buffer below), so the regular pixel must be mapped first.
     const uint emisBlendMode = decodeEmissionBlendMode(
         framebufPrimaryToReflRefr_Sampled.Load(int3( getCheckerboardPix( pix ), 0 )).a );
 
-    // volumetric sunlight (god rays) - additive, before tonemapping. The god
-    // rays pass runs at half resolution (CmGodRays) and is bilaterally
-    // upscaled to full resolution (CmGodRaysFilter), so the filtered buffer is
-    // composited here. Q2RTX-style (coreQ2RTX): the primary pass fills the
-    // whole image, then the reflection pass accumulates the reflected-segment
-    // god rays on top, so the result is composited unconditionally. On the
-    // legacy path there is no god rays reflection pass, so reflection/refraction
-    // pixels are skipped (their march follows the primary camera ray and would
-    // be wrong on reflections).
     if (globalUniform.coreQ2RTX != 0)
     {
         hdr += framebufGodRaysFiltered_Sampled.Load(int3( pix, 0 )).rgb;
@@ -475,9 +336,6 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         color = processDebug( pix, color );
     }
 
-    // The 8-bit sRGB present quantises this image one code at a time, which
-    // turns the smooth falloff of dark areas into contour bands. Dither one code
-    // step, weighted by the encoding slope, so the steps turn back into noise.
     const float3 dither = float3(
         outputDither( pix, 0u ),
         outputDither( pix, 1u ),
@@ -494,7 +352,6 @@ float3 processDebug(const int2 pix, const float3 fallback)
 {
     if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_GOD_RAYS) != 0)
     {
-        // filtered (bilateral-upscaled) volumetric sunlight buffer
         return framebufGodRaysFiltered_Sampled.Load(int3(pix, 0)).rgb * 4.0;
     }
     else if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_MOTION_VECTORS) != 0)
@@ -518,10 +375,6 @@ float3 processDebug(const int2 pix, const float3 fallback)
     }
     else if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_ALBEDO_WHITE) != 0)
     {
-        // The albedo of the primary hit, at regular pixels like the LUMA view
-        // below. Upstream forced the albedo to white inside the denoiser's
-        // composite; the Q2RTX core bakes it into the resolved signal before
-        // this shader, so the view shows the albedo itself.
         return framebufAlbedo_Sampled.Load(int3(pix, 0)).rgb;
     }
 #if GRADIENT_ESTIMATION_ENABLED
@@ -543,8 +396,7 @@ float3 processDebug(const int2 pix, const float3 fallback)
 
         int2 centerPix = int2(globalUniform.renderWidth * 0.5, globalUniform.renderHeight * 0.5);
         SH indirSH = texelFetchSH(
-            //framebufUnfilteredIndirectSH_R_Sampled, framebufUnfilteredIndirectSH_G_Sampled, framebufUnfilteredIndirectSH_B_Sampled,
-            framebufIndirPongSH_R_Sampled, framebufIndirPongSH_G_Sampled, framebufIndirPongSH_B_Sampled, 
+            framebufIndirPongSH_R_Sampled, framebufIndirPongSH_G_Sampled, framebufIndirPongSH_B_Sampled,
             getCheckerboardPix(centerPix));
 
         return SHToIrradiance(indirSH, normal);

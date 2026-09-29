@@ -125,6 +125,7 @@ public:
     void CreateAnimatedMaterial(const QrAnimatedMaterialCreateInfo *pCreateInfo, QrMaterial *pResult);
     void ChangeAnimatedMaterialFrame(QrMaterial animatedMaterial, uint32_t frameIndex);
     void UpdateMaterial(const QrMaterialUpdateInfo *pUpdateInfo);
+    bool CanUpdateMaterialContents(QrMaterial material, QrExtent2D size) const;
     void DestroyMaterial(QrMaterial material);
 
     void CreateSkyboxCubemap(const QrCubemapCreateInfo *pCreateInfo, QrCubemap *pResult);

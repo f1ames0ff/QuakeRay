@@ -3,18 +3,13 @@
 
 float3 getWaterNormal(const RayCone rayCone, const float3 rayDir, const float3 normalGeom, const float3 position, bool wasPortal)
 {
-    // MATRIX SITE :182, :183, :190, :191, :229 -- the third consumer of getONB after Light.h. The
-    // basis is the same logical matrix on both sides, so its columns are read with getColumn and
-    // the product keeps the golden's operand order.
     const float3x3 basis = getONB(normalGeom);
-    const float2 baseUV = float2(dot(position, getColumn(basis, 0)), dot(position, getColumn(basis, 1))); 
+    const float2 baseUV = float2(dot(position, getColumn(basis, 0)), dot(position, getColumn(basis, 1)));
 
 
-    // how much vertical flow to apply
     float verticality = 1.0 - abs(dot(normalGeom, globalUniform.worldUpVector.xyz));
 
-    // project basis[0] and basis[1] on up vector
-    float2 flowSpeedVertical = 10 * float2(dot(getColumn(basis, 0), globalUniform.worldUpVector.xyz), 
+    float2 flowSpeedVertical = 10 * float2(dot(getColumn(basis, 0), globalUniform.worldUpVector.xyz),
                                            dot(getColumn(basis, 1), globalUniform.worldUpVector.xyz));
 
     float2 flowSpeedHorizontal = (float2)1.0;
@@ -25,10 +20,8 @@ float3 getWaterNormal(const RayCone rayCone, const float3 rayDir, const float3 n
     float2 speed1 = -0.9 * speed0 * lerp(1.0, -0.1, verticality);
 
 
-    // for texture sampling
     float derivU = globalUniform.waterTextureDerivativesMultiplier * 0.5 * uvScale * getWaterDerivU(rayCone, rayDir, normalGeom);
 
-    // make water sharper if visible through the portal
     if (wasPortal)
     {
         derivU *= 0.1;
@@ -53,7 +46,8 @@ float3 getWaterNormal(const RayCone rayCone, const float3 rayDir, const float3 n
     const float strength = globalUniform.waterWaveStrength;
 
     const float3 n = normalize(float3(0, 0, 1) + strength * (0.25 * n0 + 0.2 * n1 + 0.1 * n2));
-    return mul(basis, n);   
+    return mul(basis, n);
 }
+
 
 #endif
