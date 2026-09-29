@@ -16,6 +16,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * Procedural sky, god rays
 * Materials, ray-traced water
 * Shader smoke (rockets, fire)
+* OpenAL Soft HRTF positional sound (SDL audio fallback)
 * Per-cluster light lists (legacy)
 * Animated light styles
 * Post-processing: chromatic, LUT
@@ -93,7 +94,7 @@ Steps:
    build\Debug\quakeray.exe
    ```
 
-   `SDL2.dll` and all codec DLLs are copied next to `quakeray.exe` automatically during the build. The renderer is compiled into the executable - no external renderer DLL is needed. The `.spv` shaders and the blue noise texture are loaded from the game data (`id1/shaders/`, `id1/BlueNoise_LDR_RGBA_128.ktx2`).
+   `SDL2.dll`, `OpenAL32.dll` and all codec DLLs are copied next to `quakeray.exe` automatically during the build. The renderer is compiled into the executable - no external renderer DLL is needed. The `.spv` shaders and the blue noise texture are loaded from the game data (`id1/shaders/`, `id1/BlueNoise_LDR_RGBA_128.ktx2`).
 
 5. (Optional) Package a release - needs a Release build (`.\build_win.ps1 Release`):
 
@@ -101,7 +102,7 @@ Steps:
    .\bundle_release.ps1
    ```
 
-   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `mdl_skins`, `progs`, `shaders`, `textures` and the blue noise / water normal KTX2 tables) and `readme.md`, `changelog.md` and `LICENSE.txt`. The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
+   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `mdl_skins`, `progs`, `shaders`, `textures` and the blue noise / water normal KTX2 tables), `readme.md`, `changelog.md`, `LICENSE.txt` and the third-party notices under `licenses/` (OpenAL Soft's LGPL-2.1 text and the pffft licence). The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
 
 ## Ray tracing settings
 
@@ -143,6 +144,17 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_bench <demoname> [quit]` - plays a demo at its own speed with the frame profiler summed over it and appends the result to `benchmark.log`; `quit` closes the game after the run
 * `rt_debugflags 0` - diagnostic views (raw direct/indirect/specular, gradients, ...)
 * `rt_viewm_scale 0.32` - the weapon is drawn `0.32` times smaller and closer to the eye by the same factor, unchanged on screen but out of the walls; `1` restores the classic weapon
+
+## Sound
+
+Sound effects are OpenAL Soft sources: every engine channel is positioned against the listener and attenuated by the engine's own distance law, and OpenAL Soft's built-in HRTF turns the mix binaural on headphones. The SDL mixer (and its `snd_filterquality` / `sndspeed` lowpass) remains the fallback and the A/B reference for `s_openal 0`.
+
+* `s_openal 1` (default) uses OpenAL Soft when `OpenAL32.dll` (Windows) or `libopenal.so` (Linux) can be loaded, and silently falls back to SDL otherwise; `0` pins the SDL backend. Changing it restarts the audio backend.
+* `s_openal_hrtf` is `0` off, `1` on or `2` auto (default - the device decides, so a speaker setup is not surprised). Changing it restarts the backend too.
+* `s_openal_max_sources` (`256`) is the source pool size; OpenAL Soft's own source limit caps it.
+* The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`); streamed music keeps its stereo image, so HRTF never folds it to mono.
+
+See [docs/openal-backend.md](docs/openal-backend.md) for the engine-to-OpenAL mapping and the deferred step-2 items (HRTF datasets, EFX reverb, occlusion).
 
 ## Game data
 

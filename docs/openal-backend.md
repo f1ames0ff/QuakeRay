@@ -22,7 +22,7 @@ be loaded and silently falls back to SDL otherwise.
 | `SND_Spatialize` | the SDL pan law (`leftvol`/`rightvol` from `listener_right`) | not used for gain; direction comes from `AL_POSITION` relative to the listener |
 | `listener_origin` / `listener_forward` / `listener_right` / `listener_up` | listener basis, refreshed by `S_Update` | `AL_POSITION` + `AL_ORIENTATION = {forward, up}`; Quake's `right = forward x up` matches OpenAL's convention, so no axis swap is needed |
 | `entnum == cl.viewentity`, ambient channels `0..NUM_AMBIENTS-1` | always full volume, "inside the head" | `AL_SOURCE_RELATIVE` at `(0, 0, 0)` |
-| `MAX_CHANNELS` / `MAX_DYNAMIC_CHANNELS` / `NUM_AMBIENTS` | `1024` / `128` / `4` (statics up to `MAX_CHANNELS`) | source pool, `s_openal_max_sources` (default `256`, clamped to `MAX_CHANNELS`); a channel without a free source stays silent, the engine's own channel stealing still decides who plays |
+| `MAX_CHANNELS` / `MAX_DYNAMIC_CHANNELS` / `NUM_AMBIENTS` | `1024` / `128` / `4` (statics up to `MAX_CHANNELS`) | source pool, `s_openal_max_sources` (default `256`, clamped to `MAX_CHANNELS`; the music source is reserved first and OpenAL Soft's own limit caps the count); a channel without a free source stays silent, the engine's own channel stealing still decides who plays |
 | `shm->speed` / `snd_mixspeed` | mixer rate, default `44100` | `ALC_FREQUENCY` on the context; caches and music are resampled to the device rate `ALC_FREQUENCY` reports |
 | `shm->channels` | `2` | stereo output; HRTF convolution happens inside OpenAL Soft |
 | `S_RawSamples` / `s_rawsamples` / `s_rawend` / `paintedtime` (`MAX_RAW_SAMPLES` = `8192`) | streamed stereo music and ambience, already scaled by `bgmvolume` | a separate `AL_SOURCE_RELATIVE` stereo streaming source (`AL_SOFT_direct_channels` when available) fed from the same ring by `SNDAL_Update`; `paintedtime` advances by the samples queued to it, so `BGM_UpdateStream`'s flow control keeps working unchanged |
@@ -61,10 +61,12 @@ much to stream next; nothing in `bgmusic.c` or in the codec layer changes.
 
 - `S_Startup` tries `SNDAL_Init` when `s_openal` is set, then `SNDDMA_Init` if that fails; the SDL
   path prints the reason for the fallback.
-- `S_StartSound` marks the channel and the backend arms a pool source at the same moment, so the
-  first sample is not delayed to the next `S_Update`.
-- `S_Update` updates the listener and every bound source; `S_ExtraUpdate` is a no-op on this path
-  because OpenAL mixes on its own thread.
+- `S_StartSound` arms a pool source at the same moment, so the first sample is not delayed to the
+  next `S_Update`; channels that are assigned outside `S_StartSound` - the four ambient beds through
+  `S_UpdateAmbientSounds` and the statics through `S_StaticSound` - are bound by `SNDAL_Update` on
+  their first audible frame.
+- `S_Update` updates the listener, the music queue and every bound source; `S_ExtraUpdate` is a
+  no-op on this path because OpenAL mixes on its own thread.
 - `S_StopSound` / `S_StopAllSounds` / `S_ClearBuffer` / `S_ClearAll` release the matching sources
   and AL buffers; focus loss pauses the device (`ALC_SOFT_pause_device`).
 
