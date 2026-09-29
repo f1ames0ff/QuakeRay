@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.20.2
+
+### Fixed
+- **Dying with the fire button held no longer ends in `Host_Error: Received signon 1 when at 1`** — the server runs at a fixed 72 Hz while the renderer draws as fast as it can, so one drawn frame can carry several server frames, and a held fire button is seen again in each of them: the death think calls `respawn()` a second time before the level change of the first one has executed. The 2021 re-release game code restarts the level with `localcmd("changelevel ...")`, and the `changelevel_issued` guard of `PF_localcmd` only covered `restart` — the command the classic game code uses — so both level changes were queued and the server spawned the level twice before the client had consumed the first signon message. `SV_SendServerinfo` appends its serverinfo to a reliable message it could not flush, so the client parsed signon 1 twice and stopped on the second. `PF_localcmd` now guards `localcmd("changelevel ...")` the way it guards `restart`, and `SV_SendServerinfo` clears what is left of the message it could not flush instead of writing the new serverinfo behind it — and that flush now uses the client the message belongs to (`host_client` points at whichever client the server touched last), so a stale signon can never ride along with the new one.
+
 ## v0.20.0
 
 ### Added
