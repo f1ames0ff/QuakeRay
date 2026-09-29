@@ -1,5 +1,5 @@
 // Copyright (C) 2021, NVIDIA CORPORATION. All rights reserved.
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This file is a port of fog.h from Quake 2 RTX (https://github.com/NVIDIA/Q2RTX),
 // which is distributed under the terms of the GNU General Public License
