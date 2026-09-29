@@ -3,11 +3,9 @@
 ## v0.20.0
 
 ### Added
-- **Lighting and Material Editor** — the game is edited from inside it now: `qr_editor` opens a small dialog that offers the material editor or the light editor, and both let you fly over the frozen level, point at a surface or a light and change it while you look at it, the change appearing as a control moves.
-  - The material editor tunes the material of the surface under the crosshair — its textures, its glow, its gloss and metalness, and the light it casts. The animation frames of a model or of an animated texture are separate blocks, so the frames of one object are tuned together; the glow is picked by colour, with a preview of the texture and an eyedropper.
-  - The light editor tunes the light an emitter casts, can add lights of its own to a level — a point or a cone (spot), the cone visible and aimed by dragging at the light — and gathers the level's own lighting in one place: the sky, the clouds, the sun, the god rays and the fog.
-  - Nothing is written until Save, the previous file is kept next to it as a backup, and leaving asks whether to save or to discard. A torch mode lights the way while a level has no light of its own.
-- **Projected and focused lights** — a surface can shine as a beam with a soft edge, or project its own texture as a pattern over the room, softened by the same edge.
+- **Material editor** — tunes the material of the surface you are looking at without leaving the game or editing files by hand: what the surface looks like (its textures, its glow, its gloss and metalness) and what light it casts. It is one console command, `qr_editor`: pick "Material Editor" in the dialog, fly with WASD and the mouse, put the crosshair on a surface and press the fire button, and Tab brings up the panel — a reset on every parameter, a preview of the texture that takes the glow's colours with an eyedropper, and Save, which writes the file the game loads (Discard leaves the file alone).
+- **Light editor** — the same for the light: `qr_editor`, then "Light Editor" in the dialog. It tunes the light an emitter casts, adds lights of your own to a level (a point or a cone, the cone aimed by dragging at the light), and gathers the level's own lighting — the sky, the clouds, the sun, the god rays and the fog — in one place.
+- **Projected and focused lights** — a surface can shine as a beam with a soft edge, or project its own texture as a pattern over the room.
 
 ### Fixed
 - Editing a light no longer rebuilds the scene, and the sun no longer blinks.

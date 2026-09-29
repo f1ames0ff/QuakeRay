@@ -22,9 +22,9 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 
 ### Lighting and Material Editor
 
-`qr_editor` opens the editor: a dialog offers the material editor or the light editor, and `qr_editor_stop` (or the Exit button) leaves either. Both fly over the frozen level and edit what the crosshair points at, the change appearing as a control moves; Save writes the result, Discard leaves the files alone, and the previous file is kept as a backup.
+The game is edited from inside it: `qr_editor` opens a dialog that offers the material editor or the light editor, and `qr_editor_stop` leaves either. Both fly over the frozen level; the crosshair picks what is edited, the fire button selects it, and Tab brings up the panel.
 
-* **Material editor**: the material of the picked surface — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or of an animated texture is a block of its own, the glow is picked by colour with a preview of the texture and an eyedropper, and an emission edit shows up at once without rebuilding the scene. A System tab holds the DTAL debug view, the DTAL limits and the water and acid settings.
+* **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or of an animated texture is a block of its own, a preview of the texture takes the glow's colours with an eyedropper, and Save writes the file the game loads (Discard leaves it alone).
 * **Light editor**: the light an emitter casts, lights added to a level (points or cones, aimed by dragging at the light), and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. A torch lights the way while a level has no light yet.
 
 ## Graphics
