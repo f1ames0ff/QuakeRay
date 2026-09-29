@@ -3936,6 +3936,21 @@ static void VID_MenuKey (int key)
 	}
 }
 
+void M_Menu_Video_f (void)
+{
+	VID_Menu_f ();
+}
+
+void M_Video_Draw (cb_context_t *cbx)
+{
+	VID_MenuDraw (cbx);
+}
+
+void M_Video_Key (int key)
+{
+	VID_MenuKey (key);
+}
+
 /*
 ================
 VID_MenuDraw
