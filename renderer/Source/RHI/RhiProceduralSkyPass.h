@@ -225,7 +225,7 @@ public:
         // (VulkanDevice.cpp:827-837); a value outside (0, 1) is how the host turns clouds off.
         float cloudParams[4];
 
-        // Offset 368. xyz = the sun disc colour (rt_sun_color); w unused. Legacy:
+        // Offset 368. xyz = the sun disc colour (rt_sky_sun_color); w unused. Legacy:
         // `drawInfo.pSkyParams->sunDiscColor`, defaulting to white when the host sends no sky params
         // (VulkanDevice.cpp:772-778). Appended after every other field, like the legacy struct
         // (RenderCubemap.h:46-49), so a stale compiled shader still reads all older fields at the

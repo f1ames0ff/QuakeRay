@@ -154,7 +154,7 @@ class RhiFrameContext;
 //                        its depth scale, returned by `ShadowMap::Render` (:1000-1001); the shipped
 //                        blob carries `shadowMapDepthScale` but never reads it (measured: no
 //                        access to member 5 in the SPIR-V);
-//      * godRaysIntensity - `8.0f * rt_godrays_intensity` (clamped at 0, :918-931);
+//      * godRaysIntensity - `8.0f * rt_sky_godrays_intensity` (clamped at 0, :918-931);
 //      * godRaysEccentricity - `0.75f` (:932);
 //      * godRaysEnabled - the FINAL switch `godRaysEnabled && (sunExists || useSkyBrightest)`
 //                        (:920-943), NOT the raw cvar: when it is 0 the shader clears image 63.
@@ -263,7 +263,7 @@ public:
         float shadowMapVP[16];
         // Offset 128. The shadow map depth scale the legacy carries; the shipped blob never reads it.
         float shadowMapDepthScale;
-        // Offset 132. 8.0f * rt_godrays_intensity.
+        // Offset 132. 8.0f * rt_sky_godrays_intensity.
         float godRaysIntensity;
         // Offset 136. 0.75f.
         float godRaysEccentricity;

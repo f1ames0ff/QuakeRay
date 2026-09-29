@@ -1,23 +1,19 @@
-
-// Copyright (c) 2022 Sultim Tsyrendashiev
-// 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Copyright (c) 2026 QuakeRay contributors
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
 
 #ifndef SURFACE_INL_
 #define SURFACE_INL_
@@ -54,10 +50,9 @@ Surface fetchGbufferSurface(const ivec2 pix)
     {
         return s;
     }
-    
-    // framebufAlbedo ALWAYS uses regular layout because of the sky rasterization pass  
+
     s.albedo = texelFetch(framebufAlbedo_Sampled, getRegularPixFromCheckerboardPix(pix), 0).rgb;
-    s.emission = getLuminance(texelFetch(framebufScreenEmisRT_Sampled, getRegularPixFromCheckerboardPix(pix), 0).rgb);   
+    s.emission = getLuminance(texelFetch(framebufScreenEmisRT_Sampled, getRegularPixFromCheckerboardPix(pix), 0).rgb);
     {
         vec4 posEnc             = texelFetch(framebufSurfacePosition_Sampled, pix, 0);
         s.position              = posEnc.xyz;
@@ -70,9 +65,6 @@ Surface fetchGbufferSurface(const ivec2 pix)
     }
     s.normalGeom                = texelFetchNormalGeometry(pix);
     s.normal                    = texelFetchNormal(pix);
-    // Read the view direction through the storage image, not the sampled view: the direct raygen
-    // also writes framebufViewDirection, and binding both views of one image in one set makes the
-    // SRV and the UAV disagree about the image layout (A4.2a).
     s.toViewerDir               = -imageLoad(framebufViewDirection, pix).xyz;
     s.cluster                   = texelFetch(framebufQ2Cluster_Sampled, pix, 0).r;
     return s;
@@ -99,10 +91,10 @@ Surface fetchGbufferSurface_NoAlbedoViewDir_Prev(const ivec2 pix)
     s.toViewerDir               = vec3(0.0);
     return s;
 }
-#endif // CHECKERBOARD_FULL_WIDTH && CHECKERBOARD_FULL_HEIGHT
-#endif // !FRAMEBUF_IGNORE_ATTACHMENTS
-#endif // DESC_SET_FRAMEBUFFERS
-       
+#endif
+#endif
+#endif
+
 
 Surface hitInfoToSurface_Indirect(const ShHitInfo h, const vec3 rayDirection)
 {
@@ -111,7 +103,7 @@ Surface hitInfoToSurface_Indirect(const ShHitInfo h, const vec3 rayDirection)
     s.instCustomIndex = h.instCustomIndex;
     s.normalGeom = h.normalGeom;
     s.roughness = h.roughness;
-    s.normal = h.normalGeom; // ignore precise normals for indirect
+    s.normal = h.normalGeom;
     s.albedo = h.albedo;
     s.isSky = false;
     s.specularColor = getSpecularColor(h.albedo, h.metallic);
@@ -120,5 +112,5 @@ Surface hitInfoToSurface_Indirect(const ShHitInfo h, const vec3 rayDirection)
     s.cluster = h.cluster;
     return s;
 }
-       
-#endif // SURFACE_INL_
+
+#endif

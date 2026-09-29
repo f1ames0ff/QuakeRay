@@ -287,6 +287,175 @@ bool NvrhiFrameSkeleton::IsUnavailable() const
     return unavailable;
 }
 
+void NvrhiFrameSkeleton::RequestScreenshot(const std::string &path)
+{
+    if (!path.empty())
+    {
+        screenshotPath = path;
+    }
+}
+
+static uint32_t PngCrc32(const uint8_t *data, size_t size)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+
+    for (size_t i = 0; i < size; i++)
+    {
+        crc ^= data[i];
+
+        for (int bit = 0; bit < 8; bit++)
+        {
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+        }
+    }
+
+    return crc ^ 0xFFFFFFFFu;
+}
+
+static uint32_t PngAdler32(const uint8_t *data, size_t size)
+{
+    uint32_t a = 1;
+    uint32_t b = 0;
+
+    for (size_t i = 0; i < size; i++)
+    {
+        a = (a + data[i]) % 65521u;
+        b = (b + a) % 65521u;
+    }
+
+    return (b << 16) | a;
+}
+
+static void PngAppendU32(std::vector<uint8_t> &out, uint32_t value)
+{
+    out.push_back(uint8_t(value >> 24));
+    out.push_back(uint8_t(value >> 16));
+    out.push_back(uint8_t(value >> 8));
+    out.push_back(uint8_t(value));
+}
+
+static void PngAppendChunk(std::vector<uint8_t> &out, const char *type, const std::vector<uint8_t> &data)
+{
+    PngAppendU32(out, uint32_t(data.size()));
+
+    std::vector<uint8_t> crcInput;
+    crcInput.reserve(4 + data.size());
+    crcInput.insert(crcInput.end(), type, type + 4);
+    crcInput.insert(crcInput.end(), data.begin(), data.end());
+
+    out.insert(out.end(), type, type + 4);
+    out.insert(out.end(), data.begin(), data.end());
+
+    PngAppendU32(out, PngCrc32(crcInput.data(), crcInput.size()));
+}
+
+static bool WriteScreenshotPng(const std::string &path, const nvrhi::TextureDesc &desc,
+                               const void *data, size_t rowPitch)
+{
+    if (data == nullptr || desc.width == 0 || desc.height == 0)
+    {
+        return false;
+    }
+
+    const bool swapRedBlue =
+        desc.format == nvrhi::Format::SBGRA8_UNORM ||
+        desc.format == nvrhi::Format::BGRA8_UNORM;
+    const bool isRgba =
+        desc.format == nvrhi::Format::SRGBA8_UNORM ||
+        desc.format == nvrhi::Format::RGBA8_UNORM;
+
+    if (!swapRedBlue && !isRgba)
+    {
+        return false;
+    }
+
+    std::vector<uint8_t> rgba(size_t(desc.width) * desc.height * 4);
+
+    for (uint32_t y = 0; y < desc.height; y++)
+    {
+        const uint8_t *src = static_cast<const uint8_t *>(data) + size_t(y) * rowPitch;
+        uint8_t *dst = rgba.data() + size_t(y) * desc.width * 4;
+
+        for (uint32_t x = 0; x < desc.width; x++)
+        {
+            dst[0] = swapRedBlue ? src[2] : src[0];
+            dst[1] = src[1];
+            dst[2] = swapRedBlue ? src[0] : src[2];
+            dst[3] = src[3];
+
+            src += 4;
+            dst += 4;
+        }
+    }
+
+    std::vector<uint8_t> raw;
+    raw.reserve(size_t(desc.height) * (1 + size_t(desc.width) * 4));
+
+    for (uint32_t y = 0; y < desc.height; y++)
+    {
+        raw.push_back(0);
+        const uint8_t *row = rgba.data() + size_t(y) * desc.width * 4;
+        raw.insert(raw.end(), row, row + size_t(desc.width) * 4);
+    }
+
+    std::vector<uint8_t> idat;
+    idat.reserve(raw.size() + (raw.size() / 65535 + 1) * 5 + 8);
+    idat.push_back(0x78);
+    idat.push_back(0x01);
+
+    size_t offset = 0;
+    while (offset < raw.size())
+    {
+        size_t block = raw.size() - offset;
+        if (block > 65535)
+        {
+            block = 65535;
+        }
+
+        const uint16_t length = uint16_t(block);
+        const uint16_t inverse = uint16_t(~length);
+
+        idat.push_back(offset + block >= raw.size() ? 1 : 0);
+        idat.push_back(uint8_t(length & 0xFF));
+        idat.push_back(uint8_t((length >> 8) & 0xFF));
+        idat.push_back(uint8_t(inverse & 0xFF));
+        idat.push_back(uint8_t((inverse >> 8) & 0xFF));
+        idat.insert(idat.end(), raw.begin() + offset, raw.begin() + offset + block);
+
+        offset += block;
+    }
+
+    PngAppendU32(idat, PngAdler32(raw.data(), raw.size()));
+
+    std::vector<uint8_t> png;
+    png.reserve(8 + 25 + idat.size() + 12 + 12);
+
+    const uint8_t signature[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+    png.insert(png.end(), signature, signature + 8);
+
+    std::vector<uint8_t> ihdr;
+    PngAppendU32(ihdr, desc.width);
+    PngAppendU32(ihdr, desc.height);
+    ihdr.push_back(8);
+    ihdr.push_back(6);
+    ihdr.push_back(0);
+    ihdr.push_back(0);
+    ihdr.push_back(0);
+
+    PngAppendChunk(png, "IHDR", ihdr);
+    PngAppendChunk(png, "IDAT", idat);
+    PngAppendChunk(png, "IEND", std::vector<uint8_t>());
+
+    std::ofstream file(path, std::ios::binary);
+    if (!file)
+    {
+        return false;
+    }
+
+    file.write(reinterpret_cast<const char *>(png.data()), std::streamsize(png.size()));
+    return file.good();
+}
+
 bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex, const SkyFrameInputs &sky,
                                 VkSemaphore semaphoreToWait, VkSemaphore semaphoreToSignal)
 {
@@ -992,7 +1161,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
             if (fsrPass != nullptr && fsrPass->IsCreated() && sky.renderResolution != nullptr &&
                 uniform != nullptr &&
-                (sky.renderResolution->IsAmdFsr2Enabled() || sky.renderResolution->IsAmdFsr3Enabled()))
+                sky.renderResolution->IsAmdFsr3Enabled())
             {
                 // The legacy's camera-cut reset (teleport / respawn / level change): the uniform
                 // carries both positions, the same heuristic CL_LerpEntity uses
@@ -1215,6 +1384,35 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         args.vertexCount = 3;
         commandList->draw(args);
 
+        if (!screenshotPath.empty())
+        {
+            const nvrhi::TextureDesc &backBufferDesc = backBuffer->getDesc();
+
+            if (screenshotStaging == nullptr ||
+                screenshotStaging->getDesc().width != backBufferDesc.width ||
+                screenshotStaging->getDesc().height != backBufferDesc.height ||
+                screenshotStaging->getDesc().format != backBufferDesc.format)
+            {
+                nvrhi::TextureDesc stagingDesc = backBufferDesc;
+                stagingDesc.debugName = "Screenshot staging";
+                stagingDesc.isRenderTarget = false;
+                stagingDesc.isUAV = false;
+                screenshotStaging = device->createStagingTexture(stagingDesc, nvrhi::CpuAccessMode::Read);
+            }
+
+            if (screenshotStaging != nullptr)
+            {
+                commandList->copyTexture(screenshotStaging, nvrhi::TextureSlice(),
+                                         backBuffer, nvrhi::TextureSlice());
+                screenshotPending = true;
+            }
+            else
+            {
+                print("Warning: RHI: failed to create the screenshot staging texture");
+                screenshotPath.clear();
+            }
+        }
+
         // Sampling moved the ALBEDO wrap to the shader-resource state, and the engine's framebuffer
         // images rest in GENERAL - the layout its own framebuffer descriptors declare
         // (Framebuffers.cpp:786, :794) and the state the sky pass announces at the start of every
@@ -1229,6 +1427,36 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // done, so EndSlot waits on 'semaphoreToWait' and signals 'semaphoreToSignal' where the manual
     // queue state and the execute used to be.
     frameContext->EndSlot(frameIndex, semaphoreToWait, semaphoreToSignal);
+
+    if (screenshotPending)
+    {
+        screenshotPending = false;
+
+        if (device->waitForIdle())
+        {
+            size_t rowPitch = 0;
+            void *data = device->mapStagingTexture(screenshotStaging, nvrhi::TextureSlice(),
+                                                   nvrhi::CpuAccessMode::Read, &rowPitch);
+
+            if (data != nullptr)
+            {
+                const bool written = WriteScreenshotPng(screenshotPath, screenshotStaging->getDesc(),
+                                                        data, rowPitch);
+                device->unmapStagingTexture(screenshotStaging);
+
+                const std::string message = written
+                    ? ("RHI: screenshot saved: " + screenshotPath)
+                    : ("Warning: RHI: failed to write the screenshot " + screenshotPath);
+                print(message.c_str());
+            }
+            else
+            {
+                print("Warning: RHI: failed to map the screenshot staging texture");
+            }
+        }
+
+        screenshotPath.clear();
+    }
 
     // The fidelity gap (unwrappable formats or swizzles fall back to the white texture) is reported
     // once, after the engine has had a few frames to fill the table; the counter then stops.

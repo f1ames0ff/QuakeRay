@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "tasks.h"
+#include "qr_editor.h"
 #include <setjmp.h>
 
 /*
@@ -43,6 +44,7 @@ quakeparms_t *host_parms;
 qboolean host_initialized; // true if into command execution
 
 double host_frametime;
+double host_rawframetime; // unscaled and unbounded
 double realtime;    // without any filtering or bounding
 double oldrealtime; // last frame run
 
@@ -60,6 +62,8 @@ float  host_netinterval = 1.0 / 72;
 cvar_t host_framerate = {"host_framerate", "0", CVAR_NONE}; // set for slow motion
 cvar_t host_speeds = {"host_speeds", "0", CVAR_NONE};       // set for running times
 cvar_t host_maxfps = {"host_maxfps", "200", CVAR_ARCHIVE};  // johnfitz
+
+extern cvar_t vid_vsync;
 cvar_t host_timescale = {"host_timescale", "0", CVAR_NONE}; // johnfitz
 cvar_t max_edicts = {"max_edicts", "8192", CVAR_NONE};      // johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};           // spike -- blocks the loading of any csqc modules
@@ -705,7 +709,7 @@ Returns false if the time is too short to run a frame
 */
 qboolean Host_FilterTime (float time)
 {
-	float maxfps; // johnfitz
+	float maxfps = 0.0f; // johnfitz
 	float min_frame_time;
 	float delta_since_last_frame;
 
@@ -716,7 +720,18 @@ qboolean Host_FilterTime (float time)
 	{
 		// johnfitz -- max fps cvar
 		maxfps = CLAMP (10.0, host_maxfps.value, 1000.0);
+	}
 
+	if ((int)vid_vsync.value == VID_VSYNC_FREESYNC && vid_display_refresh > 10)
+	{
+		const float cap = (float)(vid_display_refresh - 3);
+
+		if (maxfps <= 0.0f || cap < maxfps)
+			maxfps = cap;
+	}
+
+	if (maxfps > 0.0f)
+	{
 		// Check if we still have more than 2ms till next frame and if so wait for "1ms"
 		// E.g. Windows is not a real time OS and the sleeps can vary in length even with timeBeginPeriod(1)
 		min_frame_time = 1.0f / maxfps;
@@ -728,7 +743,7 @@ qboolean Host_FilterTime (float time)
 			              // johnfitz
 	}
 
-	host_frametime = delta_since_last_frame;
+	host_frametime = host_rawframetime = delta_since_last_frame;
 	oldrealtime = realtime;
 
 	// johnfitz -- host_timescale is more intuitive than host_framerate
@@ -737,7 +752,7 @@ qboolean Host_FilterTime (float time)
 	// johnfitz
 	else if (host_framerate.value > 0)
 		host_frametime = host_framerate.value;
-	else if (host_maxfps.value)                               // don't allow really long or short frames
+	else if (maxfps > 0.0f)                                   // don't allow really long or short frames
 		host_frametime = CLAMP (0.0001, host_frametime, 0.1); // johnfitz -- use CLAMP
 
 	return true;
@@ -902,7 +917,7 @@ void _Host_Frame (double time)
 		return; // something bad happened, or the server disconnected
 
 	// keep the random time dependent
-	rand ();
+	COM_Rand ();
 
 	// decide the simulation time
 	accumtime += host_netinterval ? CLAMP (0, time, 0.2) : 0; // for renderer/server isolation
@@ -939,6 +954,7 @@ void _Host_Frame (double time)
 	}
 
 	CL_AccumulateCmd ();
+	M_UpdateMouse ();
 
 	// Run the server+networking (client->server->client), at a different rate from everyt
 	while ((host_netinterval == 0) || (accumtime >= host_netinterval))
@@ -1098,6 +1114,7 @@ void Host_Init (void)
 		Chase_Init ();
 		M_Init ();
 		ExtraMaps_Init (); // johnfitz
+		M_CheckMods ();
 		Modlist_Init ();   // johnfitz
 		DemoList_Init ();  // ericw
 		SaveList_Init ();
@@ -1163,6 +1180,8 @@ void Host_Shutdown (void)
 	// keep Con_Printf from trying to update the screen
 	scr_disabled_for_loading = true;
 
+	QR_Editor_Shutdown (); // releases the ImGui context and the font material
+
 	Host_WriteConfiguration ();
 
 	NET_Shutdown ();
@@ -1171,6 +1190,7 @@ void Host_Shutdown (void)
 	{
 		if (con_initialized)
 			History_Shutdown ();
+		ExtraMaps_ShutDown ();
 		BGM_Shutdown ();
 		CDAudio_Shutdown ();
 		S_Shutdown ();

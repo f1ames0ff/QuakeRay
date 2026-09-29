@@ -66,19 +66,21 @@ void InitDeviceExtensionFunctions_DebugUtils(VkDevice device);
 #pragma endregion
 
 
-// A Vulkan call whose result cannot be ignored runs through this: a failure names
-// the call site and the result in the log, and then the check itself trips -- a
-// call that fails is a bug in the renderer, and which call it was is what the
-// assert alone cannot say.
-#define VK_CHECKERROR(r) \
-    do \
-    { \
-        const VkResult vkCheckErrorResult = (r); \
-        if (vkCheckErrorResult != VK_SUCCESS) \
-        { \
-            fprintf(stderr, "qray: Vulkan call at %s:%d failed: %d\n", __FILE__, __LINE__, (int)vkCheckErrorResult); \
-        } \
-        assert(vkCheckErrorResult == VK_SUCCESS); \
+// The failing call's file, line and result go to stderr and to vk_last_error.txt
+// before the assert fires: the dialog on its own names this header, not the call.
+void VK_CHECKERROR_Report(const VkResult r, const char *file, int line);
+
+// A failed dedicated allocation: names the size and the debug name the caller
+// asked for (the plain report above can only point at the allocator).
+void VK_CHECKERROR_ReportAlloc(VkDeviceSize size, const char *pDebugName);
+
+#define VK_CHECKERROR(r)                                   \
+    do                                                     \
+    {                                                      \
+        if ((r) != VK_SUCCESS)                             \
+        {                                                  \
+            VK_CHECKERROR_Report((r), __FILE__, __LINE__); \
+        }                                                  \
     } while (0)
 
 

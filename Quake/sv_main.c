@@ -1480,14 +1480,14 @@ void SV_SendServerinfo (client_t *client)
 
 	if (client->message.cursize)
 	{ // try and flush the reliable NOW, in case the qc is evil
-		if (NET_CanSendMessage (host_client->netconnection))
+		if (NET_CanSendMessage (client->netconnection))
 		{
-			if (NET_SendMessage (host_client->netconnection, &host_client->message) != -1)
+			if (NET_SendMessage (client->netconnection, &client->message) != -1)
 			{
-				SZ_Clear (&host_client->message);
-				host_client->last_message = realtime;
+				client->last_message = realtime;
 			}
 		}
+		SZ_Clear (&client->message);
 	}
 
 	cantruncate = client->message.cursize == 0;

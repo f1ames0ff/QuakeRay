@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // view.c -- player eye positioning
 
 #include "quakedef.h"
+#include "qr_editor.h"
 
 /*
 
@@ -57,7 +58,11 @@ cvar_t v_ipitch_level = {"v_ipitch_level", "0.3", CVAR_NONE};
 
 cvar_t v_idlescale = {"v_idlescale", "0", CVAR_NONE};
 
-cvar_t crosshair = {"crosshair", "0", CVAR_ARCHIVE};
+cvar_t crosshair = {"crosshair", "1", CVAR_ARCHIVE};
+cvar_t crosshair_def = {"crosshair_def", "0", CVAR_ARCHIVE};
+cvar_t crosshair_size = {"crosshair_size", "20", CVAR_ARCHIVE};
+cvar_t crosshair_color = {"crosshair_color", "0", CVAR_ARCHIVE};
+cvar_t crosshair_alpha = {"crosshair_alpha", "1", CVAR_ARCHIVE};
 
 cvar_t gl_cshiftpercent = {"gl_cshiftpercent", "100", CVAR_NONE};
 cvar_t gl_cshiftpercent_contents = {"gl_cshiftpercent_contents", "100", CVAR_NONE}; // QuakeSpasm
@@ -813,6 +818,10 @@ void V_CalcRefdef (void)
 
 	if (chase_active.value)
 		Chase_UpdateForDrawing (); // johnfitz
+
+	// qr light editor: the free camera takes the view over
+	if (QR_Editor_Active ())
+		QR_Editor_UpdateView ();
 }
 
 /*
@@ -841,7 +850,7 @@ void V_SetupFrame (void)
 	{
 		if (cl.intermission)
 			V_CalcIntermissionRefdef ();
-		else if (!cl.paused /* && (cl.maxclients > 1 || key_dest == key_game) */)
+		else if (!cl.paused || QR_Editor_Active ())
 			V_CalcRefdef ();
 	}
 }
@@ -905,6 +914,10 @@ void V_Init (void)
 
 	Cvar_RegisterVariable (&v_idlescale);
 	Cvar_RegisterVariable (&crosshair);
+	Cvar_RegisterVariable (&crosshair_def);
+	Cvar_RegisterVariable (&crosshair_size);
+	Cvar_RegisterVariable (&crosshair_color);
+	Cvar_RegisterVariable (&crosshair_alpha);
 	Cvar_RegisterVariable (&gl_cshiftpercent);
 	Cvar_RegisterVariable (&gl_cshiftpercent_contents); // QuakeSpasm
 	Cvar_RegisterVariable (&gl_cshiftpercent_damage);   // QuakeSpasm

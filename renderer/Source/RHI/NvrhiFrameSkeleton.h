@@ -171,7 +171,7 @@ public:
         {
             bool enabled = false;                   // godRaysOn: the final switch, not the cvar
             bool hasAabb = false;                   // scene->HasAABB()
-            float intensity = 0.0f;                 // 8.0f * rt_godrays_intensity (clamped >= 0)
+            float intensity = 0.0f;                 // 8.0f * rt_sky_godrays_intensity (clamped >= 0)
             float eccentricity = 0.75f;
             float aabbMin[3] = {};
             float aabbMax[3] = {};
@@ -425,6 +425,8 @@ public:
     // could not be created (the skeleton is unavailable then).
     RhiSkyPass *GetSkyPass() const { return skyPass.get(); }
 
+    void RequestScreenshot(const std::string &path);
+
 private:
     static nvrhi::Format ConvertSurfaceFormat(VkFormat format);
 
@@ -466,6 +468,9 @@ private:
     nvrhi::vulkan::IDevice *device;
     PrintFunction print;
     std::string shaderFolderPath;
+    std::string screenshotPath;
+    nvrhi::StagingTextureHandle screenshotStaging;
+    bool screenshotPending = false;
 
     nvrhi::ShaderHandle vertexShader;
     nvrhi::ShaderHandle pixelShader;
@@ -543,7 +548,7 @@ private:
     RhiDecalPass *decalPass = nullptr;
 
     // The host's FSR upscaler module (RhiFsrPass, RHI/RhiFsrPass.h), driven after the compose's
-    // Render when the engine's resolution helper selects FSR 2/3: it upscales FINAL into image 30,
+    // Render when the engine's resolution helper selects FSR 3.1: it upscales FINAL into image 30,
     // which the skeleton copies into the TAAU target (29) so the UI and the present keep their
     // image; otherwise the TAAU records as before. Not owned; null when the host's creation failed.
     RhiFsrPass *fsrPass = nullptr;

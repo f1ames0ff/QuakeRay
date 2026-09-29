@@ -89,6 +89,9 @@ typedef struct gltexture_s
 	vec3_t               rtemissivecolor;
 	float                rtemissivemean;
 	float                rtemissivemeanbase;
+	float                rtemisangleinner;
+	float                rtemisangleouter;
+	qboolean             rtemisprojector;
 	qboolean             rtemissivetex;
 	/* Glow extents of the emissive mask, normalized to one texture repetition, plus the
 	   density that keeps the emitted power equal to the whole-surface average. See
@@ -111,6 +114,8 @@ extern gltexture_t *greytexture;
 /* Incremented by every material synthesis, after the texture fields are written; the DTAL piece
    cache of an alias model is rebuilt when the revision moved (see RT_AddAliasEmissiveLights). */
 extern atomic_uint32_t rt_material_revision;
+
+extern qboolean texmgr_live_material_replaced;
 
 extern unsigned int d_8to24table[256];
 extern unsigned int d_8to24table_fbright[256];
@@ -139,6 +144,18 @@ gltexture_t *TexMgr_LoadImage (
 	qmodel_t *owner, const char *name, int width, int height, enum srcformat format, byte *data, const char *source_file, src_offset_t source_offset,
 	unsigned flags);
 void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants);
+
+// The caller frees the buffer.
+byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight);
+// The engine's own animation-frame names of a texture ("textures/+Nname",
+// "progs/model.mdl:frameN"), for the editor's group of blocks. Returns the count.
+int TexMgr_CollectGroupNames (const char *texname, char (*names)[MAX_QPATH], int max);
+// Re-synthesizes the textures a material resolves to, so the editor's changes
+// become visible without a map reload. Returns the number of reloaded textures.
+int TexMgr_ReloadImagesForMaterial (const char *materialName, qboolean recreate);
+// The same by texture name: for the names a material resolves to when no material
+// does any more (Cancel/Exit drop a material the editor had created).
+int TexMgr_ReloadImagesForTextureName (const char *texname);
 void TexMgr_ReloadNobrightImages (void);
 void TexMgr_ReloadAllImages (void);
 

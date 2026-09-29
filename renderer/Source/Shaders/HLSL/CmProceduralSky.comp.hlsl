@@ -69,10 +69,10 @@ struct Params_BT
     float4 faceBasis[18]; // 6 faces * (right, up, forward)
     float4 sunDirection;  // xyz = normalized direction TOWARD the sun, w = how much sun the sky shows (0 = no sun, so no disc either)
     float4 skyColor;      // xyz = the colour of the sky itself (rt_sky_color), w = 1 at the flat level of rt_sky_clouds_quality (the volumetric composite reads no layer then)
-    float4 skyParams;     // x = multiplier over the whole sky (rt_sky, rt_sky_brightness, rt_brightness), y = cloud opacity (rt_sky_cloud_alpha), z = sun disc intensity, w = sun disc display radius (radians)
+    float4 skyParams;     // x = multiplier over the whole sky (rt_sky, rt_sky_brightness, rt_brightness), y = cloud opacity (rt_sky_clouds_alpha), z = sun disc intensity, w = sun disc display radius (radians)
     float4 cloudColor;    // xyz = cloud colour (rt_sky_clouds_color), w = cloud time (seconds)
-    float4 cloudParams;   // x = cloud coverage, y = cloud contour sharpness (rt_sky_cloud_density), z = drift speed, w = clouds enabled
-    float4 sunDiscColor;  // xyz = color of the sun disc (rt_sun_color), w unused
+    float4 cloudParams;   // x = cloud coverage, y = cloud contour sharpness (rt_sky_clouds_density), z = drift speed, w = clouds enabled
+    float4 sunDiscColor;  // xyz = color of the sun disc (rt_sky_sun_color), w unused
 };
 
 [[vk::binding(1, 0)]] ConstantBuffer<Params_BT> params;
@@ -158,7 +158,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     float3 sunDir       = normalize(params.sunDirection.xyz);
     float3 skyColor     = max(params.skyColor.xyz, (float3)0.0);
-    float sunAmount    = params.sunDirection.w;      // 0 when the host has no sun (rt_sun 0)
+    float sunAmount    = params.sunDirection.w;      // 0 when the host has no sun (rt_sky_sun 0)
     float sunAngRad    = max(params.skyParams.w, 0.0); // display sun disc radius
     float multiplier   = params.skyParams.x;
     float cloudOpacity = clamp(params.skyParams.y, 0.0, 1.0);

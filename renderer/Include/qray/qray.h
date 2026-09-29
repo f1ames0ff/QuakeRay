@@ -562,6 +562,9 @@ typedef struct QrTexturedAreaLightUploadInfo
 
     QrMaterial      material;
     float           meanEmiss;
+    float           angleInner;
+    float           angleOuter;
+    float           projector;
 
     int             fit;
     int             isStatic;
@@ -827,6 +830,11 @@ QRAPI QrResult QRCONV qrUpdateMaterialContents(
     QrInstance                          qrInstance,
     const QrMaterialUpdateInfo          *pUpdateInfo);
 
+QRAPI QrResult QRCONV qrCanUpdateMaterialContents(
+    QrInstance                          qrInstance,
+    QrMaterial                          material,
+    QrExtent2D                          size);
+
 QRAPI QrResult QRCONV qrDestroyMaterial(
     QrInstance                          qrInstance,
     QrMaterial                          material);
@@ -879,9 +887,16 @@ QRAPI QrResult QRCONV qrDestroyCubemap(
     QrInstance                          qrInstance,
     QrCubemap                           cubemap);
 
+typedef enum QrPresentMode
+{
+    QR_PRESENT_MODE_MAILBOX = 0,
+    QR_PRESENT_MODE_VSYNC,
+    QR_PRESENT_MODE_ADAPTIVE,
+} QrPresentMode;
+
 typedef struct QrStartFrameInfo
 {
-    QrBool32        requestVSync;
+    QrPresentMode   presentMode;
     QrBool32        requestShaderReload;
 } QrStartFrameInfo;
 
@@ -1205,7 +1220,6 @@ typedef enum QrRenderUpscaleTechnique
 {
     QR_RENDER_UPSCALE_TECHNIQUE_LINEAR,
     QR_RENDER_UPSCALE_TECHNIQUE_NEAREST,
-    QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR2,
     QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3,
     QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS,
 } QrRenderUpscaleTechnique;
@@ -1303,6 +1317,9 @@ QRAPI QrBool32 QRCONV qrIsRenderUpscaleTechniqueAvailable(
     QrInstance                          qrInstance,
     QrRenderUpscaleTechnique            technique);
 
+QRAPI QrBool32 QRCONV qrIsSuspended(
+    QrInstance                          qrInstance);
+
 #define QR_GPU_PASS_COUNT 18
 
 #define QR_RAY_STATS_CATEGORY_COUNT 5
@@ -1322,6 +1339,10 @@ typedef struct QrFrameStats
 QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
+
+QRAPI QrResult QRCONV qrRequestScreenshot(
+    QrInstance                          qrInstance,
+    const char                         *pFilePath);
 
 QRAPI QrResult QRCONV qrGetFrameStats(
     QrInstance                          qrInstance,
