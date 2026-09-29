@@ -555,6 +555,8 @@ private:
     nvrhi::BindingSetHandle voxelSmokeMarchSets[MAX_FRAMES_IN_FLIGHT];
     nvrhi::ComputePipelineHandle voxelSmokeInjectPipeline;
     nvrhi::GraphicsPipelineHandle voxelSmokeMarchPipeline;
+    bool voxelSmokeVolumeCleared = false;
+    bool voxelSmokeParamsLogged = false;
 
     // The host's table and frame model; not owned, both outlive this object. The table provides the
     // bindless set and the first-use tracking of the engine textures it wrapped; the frame context

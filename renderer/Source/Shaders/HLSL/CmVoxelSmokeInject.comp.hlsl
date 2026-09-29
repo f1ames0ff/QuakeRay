@@ -13,8 +13,8 @@ void main( uint3 dtid : SV_DispatchThreadID )
         return;
     }
 
-    const float previous = volume[dtid];
-    float density = previous > 0.0 ? previous * saturate( 1.0 - params.emitterParams.z * params.emitterParams.w ) : 0.0;
+    const float previous = params.resolution.w != 0.0 ? 0.0 : volume[dtid];
+    float density = previous > 0.0 ? min( previous, 1.0 ) * saturate( 1.0 - params.emitterParams.z * params.emitterParams.w ) : 0.0;
 
     const float3 world = voxelSmokeVolumeToWorld( params, ( (float3)dtid + 0.5 ) / (float3)res );
     const float  d     = distance( world, params.emitterCenter.xyz );

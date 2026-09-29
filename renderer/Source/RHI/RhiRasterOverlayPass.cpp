@@ -1076,6 +1076,22 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             params.resolution[0] = float(VOXEL_SMOKE_RESOLUTION);
             params.resolution[1] = float(VOXEL_SMOKE_RESOLUTION);
             params.resolution[2] = float(VOXEL_SMOKE_RESOLUTION);
+            params.resolution[3] = voxelSmokeVolumeCleared ? 0.0f : 1.0f;
+
+            if (!voxelSmokeParamsLogged)
+            {
+                voxelSmokeParamsLogged = true;
+
+                char message[512];
+                snprintf(message, sizeof(message) / sizeof(message[0]),
+                         "RHI: voxel smoke: box (%.0f %.0f %.0f)-(%.0f %.0f %.0f), emitter (%.0f %.0f %.0f), radius %.1f, density %.2f, decay %.2f, steps %.0f, dt %.4f",
+                         params.worldMin[0], params.worldMin[1], params.worldMin[2],
+                         params.worldMax[0], params.worldMax[1], params.worldMax[2],
+                         params.emitterCenter[0], params.emitterCenter[1], params.emitterCenter[2],
+                         params.emitterParams[0], params.emitterParams[1], params.emitterParams[2],
+                         params.marchParams[0], params.emitterParams[3]);
+                LogMessage(print, message);
+            }
 
             rhi::writeBuffer(pCommandList, voxelSmokeParamsBuffers[frameIndex], &params, sizeof(params));
 
@@ -1084,6 +1100,8 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             computeState.addBindingSet(voxelSmokeInjectSets[frameIndex]);
             pCommandList->setComputeState(computeState);
             pCommandList->dispatch(VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8, VOXEL_SMOKE_RESOLUTION / 8);
+
+            voxelSmokeVolumeCleared = true;
         }
 
         if (marchReady)
