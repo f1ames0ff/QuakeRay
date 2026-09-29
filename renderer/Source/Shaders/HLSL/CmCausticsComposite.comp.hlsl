@@ -43,6 +43,29 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const int2 cbPix = getCheckerboardPix(pix);
     const int2 refrPix = (cbPix.x >= sep) ? cbPix : int2(cbPix.x + sep, cbPix.y);
 
+    if (debugMode == 4 || debugMode == 5)
+    {
+        const int2 mediaPix = (debugMode == 4) ? refrPix : cbPix;
+        const float media = framebufQ2BounceThroughput_Sampled.Load(int3(mediaPix, 0)).x;
+        float3 mediaColor = float3(0.05, 0.05, 0.05);
+
+        if (media > 0.5 && media < 1.5)
+        {
+            mediaColor = float3(0.0, 0.0, 1.0);
+        }
+        else if (media > 1.5 && media < 2.5)
+        {
+            mediaColor = float3(0.0, 1.0, 0.0);
+        }
+        else if (media > 2.5)
+        {
+            mediaColor = float3(1.0, 0.0, 1.0);
+        }
+
+        framebufFinal[pix] += float4(mediaColor * CAUSTICS_DEBUG_MARKER, 0.0);
+        return;
+    }
+
     const float4 surfacePosition = framebufSurfacePosition_Sampled.Load(int3(refrPix, 0));
     const float3 surfacePositionWorld = surfacePosition.xyz;
     const float2 gridCoords =

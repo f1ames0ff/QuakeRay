@@ -22,7 +22,7 @@ constexpr uint32_t CAUSTICS_CELL_STRIDE = 16;
 constexpr uint32_t CAUSTICS_DEPTH_STRIDE = 4;
 constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 64;
 constexpr uint32_t CAUSTICS_FRAMEBUFFER_SRV_OFFSET = 124;
-constexpr uint32_t CAUSTICS_IMAGE_COUNT = 3;
+constexpr uint32_t CAUSTICS_IMAGE_COUNT = 4;
 constexpr uint32_t CAUSTICS_VERTEX_DATA_BINDING_COUNT = 7;
 
 const uint32_t CAUSTICS_VERTEX_DATA_BINDINGS[CAUSTICS_VERTEX_DATA_BINDING_COUNT] =
@@ -41,6 +41,7 @@ const FramebufferImageIndex CAUSTICS_IMAGES[CAUSTICS_IMAGE_COUNT] =
     FB_IMAGE_INDEX_FINAL,
     FB_IMAGE_INDEX_ALBEDO,
     FB_IMAGE_INDEX_SURFACE_POSITION,
+    FB_IMAGE_INDEX_Q2_BOUNCE_THROUGHPUT,
 };
 
 void LogMessage(const qray::RhiCausticsPass::PrintFunction &print, const std::string &message)
@@ -218,6 +219,7 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
         desc.addItem(nvrhi::BindingLayoutItem::Texture_UAV(FB_IMAGE_INDEX_FINAL));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FB_IMAGE_INDEX_ALBEDO));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FB_IMAGE_INDEX_SURFACE_POSITION));
+        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FB_IMAGE_INDEX_Q2_BOUNCE_THROUGHPUT));
 
         framebufferLayout = device->createBindingLayout(desc);
     }
@@ -462,6 +464,8 @@ bool RhiCausticsPass::PrepareFramebufferSets(Target &target)
                                                        target.engineTextures[1].Get()));
     setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FB_IMAGE_INDEX_SURFACE_POSITION,
                                                        target.engineTextures[2].Get()));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FB_IMAGE_INDEX_Q2_BOUNCE_THROUGHPUT,
+                                                       target.engineTextures[3].Get()));
 
     target.framebufferSet = device->createBindingSet(setDesc, framebufferLayout);
 

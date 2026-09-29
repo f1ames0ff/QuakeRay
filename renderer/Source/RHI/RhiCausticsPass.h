@@ -65,10 +65,10 @@ public:
 private:
     struct Target
     {
-        uint64_t imageHandles[3] = {};
+        uint64_t imageHandles[4] = {};
         uint32_t width = 0;
         uint32_t height = 0;
-        nvrhi::TextureHandle engineTextures[3];
+        nvrhi::TextureHandle engineTextures[4];
         nvrhi::BindingSetHandle framebufferSet;
         nvrhi::BindingSetHandle uniformSet;
         nvrhi::IBuffer *uniformBuffer = nullptr;

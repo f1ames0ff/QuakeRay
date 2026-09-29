@@ -483,7 +483,7 @@ void main()
         0.125, 3.0,
         float3(0.25, 0.5, 0.75), 0.5,
         float4(0.0, 0.0, 0.0, 1.0),
-        7u);
+        7u, 1u);
 
     storeSky(int2(1, 1), PROBE_DIRECTION, false, float3(0.5, 0.25, 1.0), 3.0, float4(0.0, 0.0, 0.0, 1.0));
 
