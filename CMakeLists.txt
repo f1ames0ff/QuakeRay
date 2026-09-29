@@ -165,6 +165,25 @@ else()
 endif()
 
 # ============================================================================
+# OpenAL Soft — bundled on Windows, system headers elsewhere
+# ============================================================================
+# The backend loads OpenAL32.dll at runtime (SDL_LoadObject), so no import
+# library is linked; only the headers and the DLL to ship are needed. On
+# Windows the DLL is the official OpenAL Soft build renamed to OpenAL32.dll.
+if(QUAKERAY_PLATFORM_WINDOWS)
+    set(OPENAL_ROOT "${CMAKE_SOURCE_DIR}/Windows/openal")
+    set(OPENAL_INCLUDE_DIR "${OPENAL_ROOT}/include")
+
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(OPENAL_DLL_DIR "${OPENAL_ROOT}/x64")
+    else()
+        set(OPENAL_DLL_DIR "${OPENAL_ROOT}/x86")
+    endif()
+else()
+    find_path(OPENAL_INCLUDE_DIR AL/al.h REQUIRED)
+endif()
+
+# ============================================================================
 # Windows bundled codec libraries
 # ============================================================================
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -480,6 +499,7 @@ add_executable(quakeray ${ALL_SOURCES})
 # ============================================================================
 target_include_directories(quakeray PRIVATE
     ${CMAKE_SOURCE_DIR}/Quake
+    ${OPENAL_INCLUDE_DIR}
 )
 
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -643,6 +663,14 @@ if(QUAKERAY_PLATFORM_WINDOWS)
             "${DLL_SDL_DIR}/SDL2.dll"
             "$<TARGET_FILE_DIR:quakeray>"
         COMMENT "Copying SDL2.dll..."
+    )
+
+    # OpenAL Soft DLL
+    add_custom_command(TARGET quakeray POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${OPENAL_DLL_DIR}/OpenAL32.dll"
+            "$<TARGET_FILE_DIR:quakeray>"
+        COMMENT "Copying OpenAL32.dll..."
     )
 
     # amd_fidelityfx_vk.dll (AMD-signed, FSR 2/3.1) — from the vendored qray
