@@ -118,6 +118,7 @@ private:
     bool created = false;
     bool warnedMissingInputs = false;
     bool warnedBadTable = false;
+    bool warnedSkip = false;
 };
 
 }

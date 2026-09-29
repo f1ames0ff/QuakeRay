@@ -253,6 +253,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_caustics_intensity, "1") \
 	CVAR_DEF_T (rt_caustics_res, "256") \
 	CVAR_DEF_T (rt_caustics_extent, "2048") \
+	CVAR_DEF_T (rt_caustics_debug, "0") \
 	\
 	CVAR_DEF_T (rt_portal_twirl, "1") \
 	CVAR_DEF_T (rt_teleport_portals, "0") \
@@ -2177,7 +2178,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.enabled = CVAR_TO_BOOL (rt_caustics),
 		.intensity = CVAR_TO_FLOAT (rt_caustics_intensity),
 		.resolution = (uint32_t) caustics_res,
-		.extent = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_caustics_extent)),
+		.extent = CVAR_TO_FLOAT (rt_caustics_extent),
+		.debugMode = CVAR_TO_UINT32 (rt_caustics_debug),
 	};
 
 

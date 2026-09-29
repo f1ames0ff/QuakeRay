@@ -594,8 +594,17 @@ void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
         return;
     }
 
-    if (width == 0 || height == 0 || pTopLevel == nullptr || params.gridSize[0] == 0)
+    if (width == 0 || height == 0 || pTopLevel == nullptr || params.gridSize[0] == 0 ||
+        params.gridSize[0] > CAUSTICS_MAX_RESOLUTION)
     {
+        if (!warnedSkip)
+        {
+            warnedSkip = true;
+            LogMessage(print, std::string("RHI: caustics: skipped, width ") + std::to_string(width) +
+                                   ", height " + std::to_string(height) +
+                                   ", resolution " + std::to_string(params.gridSize[0]) +
+                                   ", tlas " + (pTopLevel != nullptr ? "yes" : "no"));
+        }
         return;
     }
 
@@ -607,8 +616,18 @@ void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
 
     Target &target = *pTarget;
 
-    if (!PrepareTlasSet(target, pTopLevel) || !PrepareVertexDataSet(target, vertexData))
+    if (!PrepareTlasSet(target, pTopLevel))
     {
+        return;
+    }
+
+    if (!PrepareVertexDataSet(target, vertexData))
+    {
+        if (!warnedSkip)
+        {
+            warnedSkip = true;
+            LogMessage(print, "RHI: caustics: skipped, the vertex-data buffers are incomplete");
+        }
         return;
     }
 

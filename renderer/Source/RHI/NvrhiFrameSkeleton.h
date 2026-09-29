@@ -190,6 +190,7 @@ public:
             float intensity = 0.0f;
             uint32_t resolution = 0;
             float extent = 0.0f;
+            uint32_t debugMode = 0;
             float sunDirection[3] = {};
             float sunColor[3] = {};
         } caustics;
@@ -574,6 +575,7 @@ private:
     RhiShadowMapPass *shadowMapPass = nullptr;
     RhiRtGodRaysPass *godRaysPass = nullptr;
     RhiCausticsPass *causticsPass = nullptr;
+    bool warnedCausticsParams = false;
 
     // The 2D-UI pass (RhiUiPass, RHI/RhiUiPass.h), driven in the traced chain once the compose ran:
     // it draws the frame's SWAPCHAIN overlay into the compose's upscaled image. Not owned; null

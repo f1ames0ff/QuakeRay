@@ -110,12 +110,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     photon.flux     = (float4)0.0;
 
     const float texelSize = params.gridMinAndTexel.z;
-    const float2 worldXZ  = params.gridMinAndTexel.xy + (float2(cell) + (float2)0.5) * texelSize;
+    const float2 worldXY  = params.gridMinAndTexel.xy + (float2(cell) + (float2)0.5) * texelSize;
 
     const float3 sunDirection = params.sunDirection.xyz;
     const float3 rayDirection = -sunDirection;
 
-    const float3 rayOrigin = float3(worldXZ.x, params.gridMinAndTexel.w, worldXZ.y);
+    const float3 rayOrigin = float3(worldXY.x, worldXY.y, params.gridMinAndTexel.w);
 
     CausticsHit waterHit;
     bool waterHitFound = false;

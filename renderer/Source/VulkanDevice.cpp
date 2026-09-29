@@ -835,6 +835,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         sky.caustics.intensity = (caustics != nullptr) ? std::max(caustics->intensity, 0.0f) : 0.0f;
         sky.caustics.resolution = (caustics != nullptr) ? caustics->resolution : 0;
         sky.caustics.extent = (caustics != nullptr) ? caustics->extent : 0.0f;
+        sky.caustics.debugMode = (caustics != nullptr) ? caustics->debugMode : 0;
 
         if (sky.caustics.enabled)
         {

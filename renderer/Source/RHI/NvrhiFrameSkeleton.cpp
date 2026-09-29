@@ -967,11 +967,28 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               std::floor(camera[0] / texelSize) * texelSize -
                                               sky.caustics.extent * 0.5f;
                                           causticsParams.gridMinAndTexel[1] =
-                                              std::floor(camera[2] / texelSize) * texelSize -
+                                              std::floor(camera[1] / texelSize) * texelSize -
                                               sky.caustics.extent * 0.5f;
                                           causticsParams.gridMinAndTexel[2] = texelSize;
-                                          causticsParams.gridMinAndTexel[3] = camera[1] + 4096.0f;
+                                          causticsParams.gridMinAndTexel[3] = camera[2] + 4096.0f;
                                           causticsParams.gridSize[0] = sky.caustics.resolution;
+                                          causticsParams.gridSize[1] = sky.caustics.debugMode;
+
+                                          if (!warnedCausticsParams && print != nullptr)
+                                          {
+                                              warnedCausticsParams = true;
+                                              print(std::string("RHI: caustics: res " +
+                                                    std::to_string(sky.caustics.resolution) +
+                                                    ", extent " + std::to_string(sky.caustics.extent) +
+                                                    ", texel " + std::to_string(texelSize) +
+                                                    ", gridMin " + std::to_string(causticsParams.gridMinAndTexel[0]) + " " +
+                                                    std::to_string(causticsParams.gridMinAndTexel[1]) +
+                                                    ", rayStartY " + std::to_string(causticsParams.gridMinAndTexel[3]) +
+                                                    ", sun " + std::to_string(causticsParams.sunDirection[0]) + " " +
+                                                    std::to_string(causticsParams.sunDirection[1]) + " " +
+                                                    std::to_string(causticsParams.sunDirection[2]) +
+                                                    ", intensity " + std::to_string(causticsParams.sunDirection[3])).c_str());
+                                          }
 
                                           causticsPass->Render(pOverlayList, frameIndex, sky.framebuffers,
                                                                sky.width, sky.height,

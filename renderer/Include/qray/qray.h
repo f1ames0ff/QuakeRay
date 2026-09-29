@@ -1217,6 +1217,7 @@ typedef struct QrDrawFrameCausticsParams
     float       intensity;
     uint32_t    resolution;
     float       extent;
+    uint32_t    debugMode;
 } QrDrawFrameCausticsParams;
 
 typedef enum QrRenderUpscaleTechnique{

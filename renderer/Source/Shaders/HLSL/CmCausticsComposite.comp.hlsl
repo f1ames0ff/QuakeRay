@@ -22,6 +22,8 @@ struct ShPhoton
 [[vk::binding(0, DESC_SET_CAUSTICS)]] StructuredBuffer<CausticsParams_BT> causticsParams;
 [[vk::binding(1, DESC_SET_CAUSTICS)]] StructuredBuffer<ShPhoton> causticsPhotons;
 
+#define CAUSTICS_DEBUG_MARKER 0.5
+
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -34,23 +36,30 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     const CausticsParams_BT params = causticsParams[0];
     const uint resolution = params.gridSize.x;
+    const uint debugMode = params.gridSize.y;
     if (resolution == 0)
     {
         return;
     }
 
     const float4 surfacePosition = framebufSurfacePosition_Sampled.Load(int3(getCheckerboardPix(pix), 0));
-    if (surfacePosition.w < 0.0)
-    {
-        return;
-    }
-
     const float3 surfacePositionWorld = surfacePosition.xyz;
     const float2 gridCoords =
-        (surfacePositionWorld.xz - params.gridMinAndTexel.xy) / params.gridMinAndTexel.z;
+        (surfacePositionWorld.xy - params.gridMinAndTexel.xy) / params.gridMinAndTexel.z;
 
     const int2 cell = (int2)floor(gridCoords);
-    if (cell.x < 0 || cell.y < 0 || cell.x + 2 > (int)resolution || cell.y + 2 > (int)resolution)
+    const bool inGrid =
+        cell.x >= 0 && cell.y >= 0 && cell.x + 2 <= (int)resolution && cell.y + 2 <= (int)resolution;
+
+    if (debugMode == 2)
+    {
+        framebufFinal[pix] += float4(inGrid ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0, 0.0, 0.0);
+        if (!inGrid)
+        {
+            return;
+        }
+    }
+    else if (!inGrid)
     {
         return;
     }
@@ -68,8 +77,24 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float3 flux = p00.flux.rgb * weights.x + p10.flux.rgb * weights.y +
                         p01.flux.rgb * weights.z + p11.flux.rgb * weights.w;
 
-    if (dot(flux, flux) <= 0.0)
+    const bool hasFlux = dot(flux, flux) > 0.0;
+
+    if (debugMode == 2)
     {
+        framebufFinal[pix] += float4(0.0, hasFlux ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0, 0.0);
+        if (!hasFlux)
+        {
+            return;
+        }
+    }
+    else if (!hasFlux)
+    {
+        return;
+    }
+
+    if (debugMode == 1)
+    {
+        framebufFinal[pix] += float4(CAUSTICS_DEBUG_MARKER, CAUSTICS_DEBUG_MARKER, CAUSTICS_DEBUG_MARKER, 0.0);
         return;
     }
 
@@ -84,6 +109,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         max(max(length(edgeX), length(edgeY)), params.gridMinAndTexel.z);
     const float coverage =
         saturate(1.0 - length(receiverPosition - surfacePositionWorld) / footprintRadius * 2.0);
+
+    if (debugMode == 2)
+    {
+        framebufFinal[pix] += float4(0.0, 0.0, coverage > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0);
+        return;
+    }
 
     if (coverage <= 0.0)
     {
