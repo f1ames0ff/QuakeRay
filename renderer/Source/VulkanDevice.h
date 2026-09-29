@@ -142,6 +142,8 @@ public:
 
     void GetFrameStatsEx(QrFrameStats *pStats) const;
 
+    void RequestScreenshot(const char *pFilePath);
+
     void Print(const char *pMessage) const;
 
 private:
@@ -183,6 +185,7 @@ private:
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
     std::string                             printedPresentModeName;
+    std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;
 

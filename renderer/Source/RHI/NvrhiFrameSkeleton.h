@@ -427,6 +427,8 @@ public:
 
     void SetCausticsPass(RhiCausticsPass *pPass) { causticsPass = pPass; }
 
+    void RequestScreenshot(const std::string &path);
+
 private:
     static nvrhi::Format ConvertSurfaceFormat(VkFormat format);
 
@@ -468,6 +470,9 @@ private:
     nvrhi::vulkan::IDevice *device;
     PrintFunction print;
     std::string shaderFolderPath;
+    std::string screenshotPath;
+    nvrhi::StagingTextureHandle screenshotStaging;
+    bool screenshotPending = false;
 
     nvrhi::ShaderHandle vertexShader;
     nvrhi::ShaderHandle pixelShader;

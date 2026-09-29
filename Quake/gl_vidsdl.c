@@ -4190,12 +4190,49 @@ SCREEN SHOTS
 
 /*
 ==================
-SCR_ScreenShot_f -- not implemented, the game takes no screen grabs
+SCR_ScreenShot_f -- asks the renderer for a PNG of the next frame in com_gamedir
 ==================
 */
 void SCR_ScreenShot_f (void)
 {
-	Con_Printf ("SCR_ScreenShot_f: Not implemented\n");
+	static int	screenshotNumber;
+	char		name[MAX_OSPATH];
+	char		pathname[MAX_OSPATH];
+	int			i;
+	QrResult	result;
+
+	if (vulkan_globals.instance == NULL)
+	{
+		Con_Printf ("screenshot: the renderer is not initialized\n");
+		return;
+	}
+
+	Sys_mkdir (com_gamedir);
+
+	for (i = screenshotNumber; i < screenshotNumber + 10000; i++)
+	{
+		q_snprintf (name, sizeof (name), "screenshot%04d.png", i);
+
+		if (!COM_FileExists (name, NULL))
+		{
+			break;
+		}
+	}
+
+	screenshotNumber = i + 1;
+
+	q_snprintf (pathname, sizeof (pathname), "%s/%s", com_gamedir, name);
+
+	result = qrRequestScreenshot (vulkan_globals.instance, pathname);
+
+	if (result == QR_SUCCESS)
+	{
+		Con_Printf ("screenshot: %s\n", pathname);
+	}
+	else
+	{
+		Con_Printf ("screenshot: failed (%s)\n", qrGetResultDescription (result));
+	}
 }
 
 void VID_FocusGained (void)
