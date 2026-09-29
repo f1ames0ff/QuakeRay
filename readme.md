@@ -84,7 +84,7 @@ Steps:
 
    Debug builds go to `build\Debug` (the default build dir for the given configuration). Pass an explicit directory as a second argument only if you know you want a different one.
 
-   (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build).
+   (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build). If a fully parallel first build runs the compiler out of heap (`fatal error C1060`), cap the job count: `.\build_win.ps1 Release -Parallel 4`.
 
    The build then deploys the ray-traced game data into `build\<Config>\id1`: the material definitions (`renderer/Source/materials.yaml` → `id1/materials/materials.yaml`), `renderer/Source/textures`, `renderer/Source/progs` and `renderer/Source/mdl_skins`, the blue noise table and the water normal map, and the SPIR-V shaders into `id1/shaders`.
 
@@ -154,7 +154,7 @@ OpenAL Soft is the sound system: every engine channel is positioned against the 
 * `nosound 1` (or `-nosound`) starts the game without sound, like before.
 * The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`).
 
-`OpenAL32.dll` (Windows) or `libopenal.so` (Linux) is required; without it the game runs silently and says so on the console. The DLL is shipped next to `quakeray.exe` by the build and the release bundle.
+OpenAL Soft is vendored as the `third_party/openal-soft` submodule (tag `1.25.2`) and built together with the game, so the engine, the import library and the DLL are always the same build; the build copies `OpenAL32.dll` next to `quakeray.exe` and the release bundle ships it.
 
 See [docs/openal-backend.md](docs/openal-backend.md) for the engine-to-OpenAL mapping and the deferred step-2 items (HRTF datasets, EFX reverb, occlusion).
 

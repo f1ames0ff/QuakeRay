@@ -2,9 +2,10 @@
 
 The engine's sound effects are rendered by OpenAL Soft as positioned sources, with its built-in
 HRTF turning the mix binaural on headphones. There is no second backend: the SDL audio device and
-the software mixer are removed, `snd_dma.c` drives OpenAL directly, and a missing OpenAL library
-makes the game start silently with a console message instead of falling back to another device.
-Step 2 (HRTF datasets, EFX reverb, occlusion) is not implemented yet and is listed at the end.
+the software mixer are removed, `snd_dma.c` drives OpenAL directly, and OpenAL Soft is vendored as
+the `third_party/openal-soft` submodule (tag `1.25.2`) and built with the game, so the engine, the
+import library and the shipped DLL always agree. Step 2 (HRTF datasets, EFX reverb, occlusion) is
+not implemented yet and is listed at the end.
 
 ## Recon: the engine surface and its OpenAL mapping
 
@@ -85,16 +86,15 @@ so the long GPU waits the renderer feeds it do not drain the stream.
 
 ## Build and shipping
 
-- Headers, 32/64-bit `OpenAL32.dll` (the official `soft_oal.dll` renamed so the bundled
-  implementation is the one that loads), the LGPL text (`COPYING`, the Library GPL v2 text the
-  upstream release ships) and the pffft licence live in `Windows/openal/`. Version: OpenAL Soft
-  1.25.2.
-- CMake adds the include directory on every platform (non-Windows builds configure with
-  `find_path(AL/alext.h)` and get a message naming the OpenAL Soft dev package) and copies the
-  matching DLL next to `quakeray.exe`; `bundle_release.ps1` ships the DLL and the licence texts
-  under `licenses/`.
-- The library is loaded at runtime with `SDL_LoadObject`; a missing or broken OpenAL starts the game
-  without sound instead of failing it.
+- OpenAL Soft 1.25.2 is a submodule at `third_party/openal-soft`, built by its own CMake project
+  through `add_subdirectory`; utilities, examples, tests and install rules are off, and the default
+  HRTF data stays embedded (`ALSOFT_EMBED_HRTF_DATA`). `quakeray` links `OpenAL::OpenAL` directly,
+  so the engine, the import library and the DLL are always the same build.
+- On Windows the build produces `OpenAL32.dll` and copies it next to `quakeray.exe`; on other
+  platforms CMake links the built shared library with the right rpath. `bundle_release.ps1` ships
+  the DLL and the licence texts (`COPYING`, `LICENSE-pffft`) under `licenses/`.
+- If the system has libmysofa development files, OpenAL Soft's own `find_package(MySOFA)` picks them
+  up and SOFA support is compiled in, ready for the step-2 dataset picker.
 
 ## Deferred to step 2
 

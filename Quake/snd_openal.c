@@ -31,17 +31,6 @@ extern cvar_t s_openal_max_sources;
 
 snd_output_t snd_output;
 
-#ifdef _WIN32
-#define SNDAL_LIB_PRIMARY  "OpenAL32.dll"
-#define SNDAL_LIB_FALLBACK "soft_oal.dll"
-#elif defined(__APPLE__)
-#define SNDAL_LIB_PRIMARY  "libopenal.1.dylib"
-#define SNDAL_LIB_FALLBACK "libopenal.dylib"
-#else
-#define SNDAL_LIB_PRIMARY  "libopenal.so.1"
-#define SNDAL_LIB_FALLBACK "libopenal.so"
-#endif
-
 #define SNDAL_MAX_BUFFERS   1024
 #define SNDAL_MUSIC_BUFFERS 8
 #define SNDAL_MUSIC_SAMPLES 1024
@@ -74,7 +63,6 @@ typedef struct
 	qboolean   looping;
 } sndal_source_t;
 
-static void              *sndal_library;
 static ALCdevice         *sndal_device;
 static ALCcontext        *sndal_context;
 static qboolean           sndal_context_current;
@@ -101,39 +89,8 @@ static int                sndal_music_numfree;
 static int                sndal_music_queued;
 static short              sndal_music_pcm[SNDAL_MUSIC_SAMPLES * 2];
 
-static LPALGETERROR              p_alGetError;
-static LPALGETSTRING             p_alGetString;
-static LPALISEXTENSIONPRESENT    p_alIsExtensionPresent;
-static LPALDOPPLERFACTOR         p_alDopplerFactor;
-static LPALLISTENERFV            p_alListenerfv;
-static LPALGENSOURCES            p_alGenSources;
-static LPALDELETESOURCES         p_alDeleteSources;
-static LPALSOURCEI               p_alSourcei;
-static LPALSOURCEF               p_alSourcef;
-static LPALSOURCE3F              p_alSource3f;
-static LPALSOURCEPLAY            p_alSourcePlay;
-static LPALSOURCEPAUSE           p_alSourcePause;
-static LPALSOURCESTOP            p_alSourceStop;
-static LPALGETSOURCEI            p_alGetSourcei;
-static LPALSOURCEQUEUEBUFFERS    p_alSourceQueueBuffers;
-static LPALSOURCEUNQUEUEBUFFERS  p_alSourceUnqueueBuffers;
-static LPALGENBUFFERS            p_alGenBuffers;
-static LPALDELETEBUFFERS         p_alDeleteBuffers;
-static LPALBUFFERDATA            p_alBufferData;
-static LPALBUFFERIV              p_alBufferiv;
-
-static LPALCOPENDEVICE           p_alcOpenDevice;
-static LPALCCLOSEDEVICE          p_alcCloseDevice;
-static LPALCCREATECONTEXT        p_alcCreateContext;
-static LPALCDESTROYCONTEXT       p_alcDestroyContext;
-static LPALCMAKECONTEXTCURRENT   p_alcMakeContextCurrent;
-static LPALCGETINTEGERV          p_alcGetIntegerv;
-static LPALCGETSTRING            p_alcGetString;
-static LPALCISEXTENSIONPRESENT   p_alcIsExtensionPresent;
-#ifdef ALC_SOFT_pause_device
-static LPALCDEVICEPAUSESOFT      p_alcDevicePauseSOFT;
-static LPALCDEVICERESUMESOFT     p_alcDeviceResumeSOFT;
-#endif
+static LPALCDEVICEPAUSESOFT  sndal_pause_device;
+static LPALCDEVICERESUMESOFT sndal_resume_device;
 
 static int SNDAL_AllocSource (void);
 static void SNDAL_ReleaseSlot (int slot);
@@ -166,70 +123,6 @@ static const char *SNDAL_HrtfStatusName (int status)
 static qboolean SNDAL_IsLooping (sfxcache_t *sc)
 {
 	return (sc->loopstart >= 0 && sc->loopstart < sc->length) ? true : false;
-}
-
-static qboolean SNDAL_LoadLibrary (void)
-{
-	static const char *names[] = { SNDAL_LIB_PRIMARY, SNDAL_LIB_FALLBACK, NULL };
-	int                i;
-
-	for (i = 0; names[i]; i++)
-	{
-		sndal_library = SDL_LoadObject (names[i]);
-		if (sndal_library)
-			break;
-	}
-	if (!sndal_library)
-		return false;
-
-#define SNDAL_LOAD(type, name) \
-	do { \
-		p_##name = (type)SDL_LoadFunction (sndal_library, #name); \
-		if (!p_##name) goto fail; \
-	} while (0)
-
-	SNDAL_LOAD (LPALGETERROR, alGetError);
-	SNDAL_LOAD (LPALGETSTRING, alGetString);
-	SNDAL_LOAD (LPALISEXTENSIONPRESENT, alIsExtensionPresent);
-	SNDAL_LOAD (LPALDOPPLERFACTOR, alDopplerFactor);
-	SNDAL_LOAD (LPALLISTENERFV, alListenerfv);
-	SNDAL_LOAD (LPALGENSOURCES, alGenSources);
-	SNDAL_LOAD (LPALDELETESOURCES, alDeleteSources);
-	SNDAL_LOAD (LPALSOURCEI, alSourcei);
-	SNDAL_LOAD (LPALSOURCEF, alSourcef);
-	SNDAL_LOAD (LPALSOURCE3F, alSource3f);
-	SNDAL_LOAD (LPALSOURCEPLAY, alSourcePlay);
-	SNDAL_LOAD (LPALSOURCEPAUSE, alSourcePause);
-	SNDAL_LOAD (LPALSOURCESTOP, alSourceStop);
-	SNDAL_LOAD (LPALGETSOURCEI, alGetSourcei);
-	SNDAL_LOAD (LPALSOURCEQUEUEBUFFERS, alSourceQueueBuffers);
-	SNDAL_LOAD (LPALSOURCEUNQUEUEBUFFERS, alSourceUnqueueBuffers);
-	SNDAL_LOAD (LPALGENBUFFERS, alGenBuffers);
-	SNDAL_LOAD (LPALDELETEBUFFERS, alDeleteBuffers);
-	SNDAL_LOAD (LPALBUFFERDATA, alBufferData);
-	SNDAL_LOAD (LPALBUFFERIV, alBufferiv);
-
-	SNDAL_LOAD (LPALCOPENDEVICE, alcOpenDevice);
-	SNDAL_LOAD (LPALCCLOSEDEVICE, alcCloseDevice);
-	SNDAL_LOAD (LPALCCREATECONTEXT, alcCreateContext);
-	SNDAL_LOAD (LPALCDESTROYCONTEXT, alcDestroyContext);
-	SNDAL_LOAD (LPALCMAKECONTEXTCURRENT, alcMakeContextCurrent);
-	SNDAL_LOAD (LPALCGETINTEGERV, alcGetIntegerv);
-	SNDAL_LOAD (LPALCGETSTRING, alcGetString);
-	SNDAL_LOAD (LPALCISEXTENSIONPRESENT, alcIsExtensionPresent);
-
-#undef SNDAL_LOAD
-
-#ifdef ALC_SOFT_pause_device
-	p_alcDevicePauseSOFT = (LPALCDEVICEPAUSESOFT)SDL_LoadFunction (sndal_library, "alcDevicePauseSOFT");
-	p_alcDeviceResumeSOFT = (LPALCDEVICERESUMESOFT)SDL_LoadFunction (sndal_library, "alcDeviceResumeSOFT");
-#endif
-	return true;
-
-fail:
-	SDL_UnloadObject (sndal_library);
-	sndal_library = NULL;
-	return false;
 }
 
 static float SNDAL_ChannelDistance (channel_t *ch)
@@ -268,12 +161,12 @@ static void SNDAL_SetupSource (channel_t *ch, int slot)
 	int       index = (int)(ch - snd_channels);
 	qboolean  relative = (index < NUM_AMBIENTS || ch->entnum == cl.viewentity) ? true : false;
 
-	p_alSourcei (source, AL_SOURCE_RELATIVE, relative ? AL_TRUE : AL_FALSE);
+	alSourcei (source, AL_SOURCE_RELATIVE, relative ? AL_TRUE : AL_FALSE);
 	if (relative)
-		p_alSource3f (source, AL_POSITION, 0.0f, 0.0f, 0.0f);
+		alSource3f (source, AL_POSITION, 0.0f, 0.0f, 0.0f);
 	else
-		p_alSource3f (source, AL_POSITION, ch->origin[0], ch->origin[1], ch->origin[2]);
-	p_alSourcef (source, AL_GAIN, SNDAL_ChannelGain (ch));
+		alSource3f (source, AL_POSITION, ch->origin[0], ch->origin[1], ch->origin[2]);
+	alSourcef (source, AL_GAIN, SNDAL_ChannelGain (ch));
 }
 
 static int SNDAL_AllocSource (void)
@@ -303,9 +196,9 @@ static void SNDAL_ReleaseSlot (int slot)
 	if (!sndal_sources[slot].channel)
 		return;
 
-	p_alSourceStop (sndal_sources[slot].source);
-	p_alSourcei (sndal_sources[slot].source, AL_BUFFER, 0);
-	p_alSourcei (sndal_sources[slot].source, AL_LOOPING, AL_FALSE);
+	alSourceStop (sndal_sources[slot].source);
+	alSourcei (sndal_sources[slot].source, AL_BUFFER, 0);
+	alSourcei (sndal_sources[slot].source, AL_LOOPING, AL_FALSE);
 	sndal_binding[sndal_sources[slot].index] = -1;
 	sndal_sources[slot].channel = NULL;
 	sndal_sources[slot].index = -1;
@@ -332,8 +225,8 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 	if (sndal_numbuffers >= SNDAL_MAX_BUFFERS)
 		return 0;
 
-	p_alGetError ();
-	p_alGenBuffers (1, &buffer);
+	alGetError ();
+	alGenBuffers (1, &buffer);
 	if (!buffer)
 		return 0;
 
@@ -343,17 +236,17 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 
 		if (!pcm)
 		{
-			p_alDeleteBuffers (1, &buffer);
+			alDeleteBuffers (1, &buffer);
 			return 0;
 		}
 		for (i = 0; i < sc->length; i++)
 			pcm[i] = (short)(((signed char *)sc->data)[i] << 8);
-		p_alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * (int)sizeof (short)), sc->speed);
+		alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * (int)sizeof (short)), sc->speed);
 		Mem_Free (pcm);
 	}
 	else
 	{
-		p_alBufferData (buffer, AL_FORMAT_MONO16, sc->data, (ALsizei)(sc->length * 2), sc->speed);
+		alBufferData (buffer, AL_FORMAT_MONO16, sc->data, (ALsizei)(sc->length * 2), sc->speed);
 	}
 
 	if (SNDAL_IsLooping (sc))
@@ -362,13 +255,13 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 
 		points[0] = sc->loopstart;
 		points[1] = sc->length;
-		p_alBufferiv (buffer, AL_LOOP_POINTS_SOFT, points);
+		alBufferiv (buffer, AL_LOOP_POINTS_SOFT, points);
 	}
 
-	error = p_alGetError ();
+	error = alGetError ();
 	if (error != AL_NO_ERROR)
 	{
-		p_alDeleteBuffers (1, &buffer);
+		alDeleteBuffers (1, &buffer);
 		return 0;
 	}
 
@@ -386,7 +279,7 @@ static void SNDAL_DeleteBuffers (void)
 	for (i = 0; i < sndal_numbuffers; i++)
 	{
 		if (sndal_buffers[i].buffer)
-			p_alDeleteBuffers (1, &sndal_buffers[i].buffer);
+			alDeleteBuffers (1, &sndal_buffers[i].buffer);
 	}
 	sndal_numbuffers = 0;
 }
@@ -405,17 +298,17 @@ static void SNDAL_ConfigureSource (channel_t *ch, int slot)
 	}
 
 	source = sndal_sources[slot].source;
-	p_alSourceStop (source);
-	p_alSourcei (source, AL_BUFFER, (ALint)buffer);
-	p_alSourcei (source, AL_LOOPING, SNDAL_IsLooping (sc) ? AL_TRUE : AL_FALSE);
-	p_alSourcei (source, AL_SAMPLE_OFFSET, ch->pos);
+	alSourceStop (source);
+	alSourcei (source, AL_BUFFER, (ALint)buffer);
+	alSourcei (source, AL_LOOPING, SNDAL_IsLooping (sc) ? AL_TRUE : AL_FALSE);
+	alSourcei (source, AL_SAMPLE_OFFSET, ch->pos);
 	SNDAL_SetupSource (ch, slot);
 
 	sndal_sources[slot].started = false;
 	sndal_sources[slot].looping = SNDAL_IsLooping (sc);
 	if (!sndal_blocked)
 	{
-		p_alSourcePlay (source);
+		alSourcePlay (source);
 		sndal_sources[slot].started = true;
 	}
 }
@@ -510,7 +403,7 @@ static void SNDAL_SyncSource (int slot)
 	sc = ch->sfx->cache;
 	audible = SNDAL_ChannelAudible (ch);
 
-	p_alGetSourcei (source, AL_SOURCE_STATE, &state);
+	alGetSourcei (source, AL_SOURCE_STATE, &state);
 	if (!sndal_sources[slot].looping)
 	{
 		ALint remaining = ch->end - paintedtime;
@@ -530,7 +423,7 @@ static void SNDAL_SyncSource (int slot)
 		if (state != AL_PLAYING && sc->length - ch->pos > remaining)
 		{
 			ch->pos = sc->length - remaining;
-			p_alSourcei (source, AL_SAMPLE_OFFSET, ch->pos);
+			alSourcei (source, AL_SAMPLE_OFFSET, ch->pos);
 		}
 	}
 
@@ -539,19 +432,19 @@ static void SNDAL_SyncSource (int slot)
 	if (!audible)
 	{
 		if (state == AL_PLAYING)
-			p_alSourcePause (source);
+			alSourcePause (source);
 		return;
 	}
 	if (!sndal_blocked && state != AL_PLAYING)
 	{
-		p_alSourcePlay (source);
+		alSourcePlay (source);
 		sndal_sources[slot].started = true;
 		state = AL_PLAYING;
 	}
 
 	if (state == AL_PLAYING)
 	{
-		p_alGetSourcei (source, AL_SAMPLE_OFFSET, &offset);
+		alGetSourcei (source, AL_SAMPLE_OFFSET, &offset);
 		if (offset >= 0 && offset <= sc->length)
 			ch->pos = (int)offset;
 	}
@@ -564,7 +457,7 @@ static void SNDAL_UpdateListener (void)
 	ALfloat orientation[6];
 	ALfloat length;
 
-	p_alListenerfv (AL_POSITION, listener_origin);
+	alListenerfv (AL_POSITION, listener_origin);
 
 	length = listener_forward[0] * listener_forward[0] + listener_forward[1] * listener_forward[1] + listener_forward[2] * listener_forward[2];
 	length += listener_up[0] * listener_up[0] + listener_up[1] * listener_up[1] + listener_up[2] * listener_up[2];
@@ -576,7 +469,7 @@ static void SNDAL_UpdateListener (void)
 		orientation[3] = listener_up[0];
 		orientation[4] = listener_up[1];
 		orientation[5] = listener_up[2];
-		p_alListenerfv (AL_ORIENTATION, orientation);
+		alListenerfv (AL_ORIENTATION, orientation);
 	}
 }
 
@@ -590,11 +483,11 @@ static void SNDAL_UpdateMusic (void)
 	if (!sndal_music_source)
 		return;
 
-	p_alGetSourcei (sndal_music_source, AL_BUFFERS_PROCESSED, &processed);
+	alGetSourcei (sndal_music_source, AL_BUFFERS_PROCESSED, &processed);
 	while (processed-- > 0)
 	{
 		buffer = 0;
-		p_alSourceUnqueueBuffers (sndal_music_source, 1, &buffer);
+		alSourceUnqueueBuffers (sndal_music_source, 1, &buffer);
 		if (!buffer)
 			break;
 		if (sndal_music_numfree < SNDAL_MUSIC_BUFFERS)
@@ -626,15 +519,15 @@ static void SNDAL_UpdateMusic (void)
 		}
 
 		buffer = sndal_music_free[--sndal_music_numfree];
-		p_alGetError ();
-		p_alBufferData (buffer, AL_FORMAT_STEREO16, sndal_music_pcm, (ALsizei)(n * 4), snd_output.speed);
-		if (p_alGetError () != AL_NO_ERROR)
+		alGetError ();
+		alBufferData (buffer, AL_FORMAT_STEREO16, sndal_music_pcm, (ALsizei)(n * 4), snd_output.speed);
+		if (alGetError () != AL_NO_ERROR)
 		{
 			sndal_music_free[sndal_music_numfree++] = buffer;
 			break;
 		}
-		p_alSourceQueueBuffers (sndal_music_source, 1, &buffer);
-		if (p_alGetError () != AL_NO_ERROR)
+		alSourceQueueBuffers (sndal_music_source, 1, &buffer);
+		if (alGetError () != AL_NO_ERROR)
 		{
 			sndal_music_free[sndal_music_numfree++] = buffer;
 			break;
@@ -652,9 +545,9 @@ static void SNDAL_UpdateMusic (void)
 
 	if (sndal_music_queued > 0 && !sndal_blocked)
 	{
-		p_alGetSourcei (sndal_music_source, AL_SOURCE_STATE, &state);
+		alGetSourcei (sndal_music_source, AL_SOURCE_STATE, &state);
 		if (state != AL_PLAYING)
-			p_alSourcePlay (sndal_music_source);
+			alSourcePlay (sndal_music_source);
 	}
 }
 
@@ -665,8 +558,8 @@ static void SNDAL_FlushMusic (void)
 	if (!sndal_music_source)
 		return;
 
-	p_alSourceStop (sndal_music_source);
-	p_alSourcei (sndal_music_source, AL_BUFFER, 0);
+	alSourceStop (sndal_music_source);
+	alSourcei (sndal_music_source, AL_BUFFER, 0);
 	for (i = 0; i < SNDAL_MUSIC_BUFFERS; i++)
 		sndal_music_free[i] = sndal_music_buffers[i];
 	sndal_music_numfree = SNDAL_MUSIC_BUFFERS;
@@ -774,22 +667,20 @@ void SNDAL_BlockSound (void)
 	if (!sndal_active)
 		return;
 
-#ifdef ALC_SOFT_pause_device
 	if (sndal_has_pause_device)
 	{
-		p_alcDevicePauseSOFT (sndal_device);
+		sndal_pause_device (sndal_device);
 		return;
 	}
-#endif
 
 	sndal_blocked = true;
 	for (i = 0; i < sndal_numsources; i++)
 	{
 		if (sndal_sources[i].channel)
-			p_alSourcePause (sndal_sources[i].source);
+			alSourcePause (sndal_sources[i].source);
 	}
 	if (sndal_music_source && sndal_music_queued > 0)
-		p_alSourcePause (sndal_music_source);
+		alSourcePause (sndal_music_source);
 }
 
 void SNDAL_UnblockSound (void)
@@ -797,13 +688,11 @@ void SNDAL_UnblockSound (void)
 	if (!sndal_active)
 		return;
 
-#ifdef ALC_SOFT_pause_device
 	if (sndal_has_pause_device)
 	{
-		p_alcDeviceResumeSOFT (sndal_device);
+		sndal_resume_device (sndal_device);
 		return;
 	}
-#endif
 
 	sndal_blocked = false;
 }
@@ -820,17 +709,12 @@ qboolean SNDAL_Init (void)
 
 	if (sndal_active)
 		return true;
-	if (!SNDAL_LoadLibrary ())
-	{
-		Con_Printf ("OpenAL: library not found\n");
-		return false;
-	}
 
-	sndal_device = p_alcOpenDevice (NULL);
+	sndal_device = alcOpenDevice (NULL);
 	if (!sndal_device)
 		goto fail;
 
-	has_hrtf = p_alcIsExtensionPresent (sndal_device, "ALC_SOFT_HRTF");
+	has_hrtf = alcIsExtensionPresent (sndal_device, "ALC_SOFT_HRTF");
 	if (has_hrtf == AL_TRUE)
 	{
 		int mode = (int)s_openal_hrtf.value;
@@ -842,30 +726,30 @@ qboolean SNDAL_Init (void)
 	attributes[nattributes++] = (ALCint)snd_mixspeed.value;
 	attributes[nattributes] = 0;
 
-	sndal_context = p_alcCreateContext (sndal_device, attributes);
+	sndal_context = alcCreateContext (sndal_device, attributes);
 	if (!sndal_context)
-		sndal_context = p_alcCreateContext (sndal_device, NULL);
+		sndal_context = alcCreateContext (sndal_device, NULL);
 	if (!sndal_context)
 		goto fail;
-	if (p_alcMakeContextCurrent (sndal_context) != ALC_TRUE)
+	if (alcMakeContextCurrent (sndal_context) != ALC_TRUE)
 	{
-		p_alcDestroyContext (sndal_context);
+		alcDestroyContext (sndal_context);
 		sndal_context = NULL;
 		goto fail;
 	}
 	sndal_context_current = true;
 
-	p_alGetError ();
+	alGetError ();
 
-	p_alDopplerFactor (0.0f);
-	if (p_alIsExtensionPresent ("AL_SOFT_loop_points") != AL_TRUE)
+	alDopplerFactor (0.0f);
+	if (alIsExtensionPresent ("AL_SOFT_loop_points") != AL_TRUE)
 	{
 		Con_Printf ("OpenAL: AL_SOFT_loop_points is required\n");
 		goto fail;
 	}
-	sndal_has_direct_channels = (p_alIsExtensionPresent ("AL_SOFT_direct_channels") == AL_TRUE) ? true : false;
+	sndal_has_direct_channels = (alIsExtensionPresent ("AL_SOFT_direct_channels") == AL_TRUE) ? true : false;
 
-	p_alcGetIntegerv (sndal_device, ALC_FREQUENCY, 1, &frequency);
+	alcGetIntegerv (sndal_device, ALC_FREQUENCY, 1, &frequency);
 	snd_output.speed = (frequency > 0) ? (int)frequency : (int)snd_mixspeed.value;
 	snd_output.channels = 2;
 	snd_output.samplebits = 16;
@@ -874,17 +758,17 @@ qboolean SNDAL_Init (void)
 	for (i = 0; i < MAX_CHANNELS; i++)
 		sndal_binding[i] = -1;
 
-	p_alGenSources (1, &sndal_music_source);
+	alGenSources (1, &sndal_music_source);
 	if (!sndal_music_source)
 		goto fail;
-	p_alSourcei (sndal_music_source, AL_SOURCE_RELATIVE, AL_TRUE);
-	p_alSource3f (sndal_music_source, AL_POSITION, 0.0f, 0.0f, 0.0f);
-	p_alSourcef (sndal_music_source, AL_ROLLOFF_FACTOR, 0.0f);
-	p_alSourcef (sndal_music_source, AL_GAIN, 1.0f);
+	alSourcei (sndal_music_source, AL_SOURCE_RELATIVE, AL_TRUE);
+	alSource3f (sndal_music_source, AL_POSITION, 0.0f, 0.0f, 0.0f);
+	alSourcef (sndal_music_source, AL_ROLLOFF_FACTOR, 0.0f);
+	alSourcef (sndal_music_source, AL_GAIN, 1.0f);
 	if (sndal_has_direct_channels)
-		p_alSourcei (sndal_music_source, AL_DIRECT_CHANNELS_SOFT, AL_TRUE);
+		alSourcei (sndal_music_source, AL_DIRECT_CHANNELS_SOFT, AL_TRUE);
 
-	p_alGenBuffers (SNDAL_MUSIC_BUFFERS, sndal_music_buffers);
+	alGenBuffers (SNDAL_MUSIC_BUFFERS, sndal_music_buffers);
 	for (i = 0; i < SNDAL_MUSIC_BUFFERS; i++)
 	{
 		if (!sndal_music_buffers[i])
@@ -908,10 +792,10 @@ qboolean SNDAL_Init (void)
 	{
 		ALuint source = 0;
 
-		p_alGenSources (1, &source);
-		if (p_alGetError () != AL_NO_ERROR || !source)
+		alGenSources (1, &source);
+		if (alGetError () != AL_NO_ERROR || !source)
 			break;
-		p_alSourcef (source, AL_ROLLOFF_FACTOR, 0.0f);
+		alSourcef (source, AL_ROLLOFF_FACTOR, 0.0f);
 		sndal_sources[sndal_numsources].source = source;
 		sndal_sources[sndal_numsources].channel = NULL;
 		sndal_sources[sndal_numsources].index = -1;
@@ -920,24 +804,26 @@ qboolean SNDAL_Init (void)
 	if (!sndal_numsources)
 		goto fail;
 
-#ifdef ALC_SOFT_pause_device
-	sndal_has_pause_device = (p_alcDevicePauseSOFT && p_alcDeviceResumeSOFT && p_alcIsExtensionPresent (sndal_device, "ALC_SOFT_pause_device") == ALC_TRUE) ? true : false;
-#else
 	sndal_has_pause_device = false;
-#endif
+	if (alcIsExtensionPresent (sndal_device, "ALC_SOFT_pause_device") == ALC_TRUE)
+	{
+		sndal_pause_device = (LPALCDEVICEPAUSESOFT)alcGetProcAddress (sndal_device, "alcDevicePauseSOFT");
+		sndal_resume_device = (LPALCDEVICERESUMESOFT)alcGetProcAddress (sndal_device, "alcDeviceResumeSOFT");
+		sndal_has_pause_device = (sndal_pause_device && sndal_resume_device) ? true : false;
+	}
 
 	sndal_hrtf_status = -1;
 	if (has_hrtf == AL_TRUE)
 	{
 		status = -1;
-		p_alcGetIntegerv (sndal_device, ALC_HRTF_STATUS_SOFT, 1, &status);
+		alcGetIntegerv (sndal_device, ALC_HRTF_STATUS_SOFT, 1, &status);
 		sndal_hrtf_status = (int)status;
 	}
 
 	sndal_active = true;
 
-	version = (const char *)p_alGetString (AL_VERSION);
-	device = (const char *)p_alcGetString (sndal_device, ALC_DEVICE_SPECIFIER);
+	version = (const char *)alGetString (AL_VERSION);
+	device = (const char *)alcGetString (sndal_device, ALC_DEVICE_SPECIFIER);
 	Con_Printf ("OpenAL: %s, %s, %d sources\n", version ? version : "unknown", device ? device : "default device", sndal_numsources);
 	Con_Printf ("OpenAL HRTF: %s\n", SNDAL_HrtfStatusName (sndal_hrtf_status));
 	return true;
@@ -952,14 +838,14 @@ static void SNDAL_MusicShutdown (void)
 {
 	if (sndal_music_source)
 	{
-		p_alSourceStop (sndal_music_source);
-		p_alSourcei (sndal_music_source, AL_BUFFER, 0);
-		p_alDeleteSources (1, &sndal_music_source);
+		alSourceStop (sndal_music_source);
+		alSourcei (sndal_music_source, AL_BUFFER, 0);
+		alDeleteSources (1, &sndal_music_source);
 		sndal_music_source = 0;
 	}
 	if (sndal_music_buffers[0])
 	{
-		p_alDeleteBuffers (SNDAL_MUSIC_BUFFERS, sndal_music_buffers);
+		alDeleteBuffers (SNDAL_MUSIC_BUFFERS, sndal_music_buffers);
 		memset (sndal_music_buffers, 0, sizeof (sndal_music_buffers));
 	}
 	sndal_music_numfree = 0;
@@ -976,23 +862,18 @@ void SNDAL_Shutdown (void)
 		SNDAL_DeleteBuffers ();
 		SNDAL_MusicShutdown ();
 		sndal_context_current = false;
-		p_alcMakeContextCurrent (NULL);
+		alcMakeContextCurrent (NULL);
 	}
 
 	if (sndal_context)
 	{
-		p_alcDestroyContext (sndal_context);
+		alcDestroyContext (sndal_context);
 		sndal_context = NULL;
 	}
 	if (sndal_device)
 	{
-		p_alcCloseDevice (sndal_device);
+		alcCloseDevice (sndal_device);
 		sndal_device = NULL;
-	}
-	if (sndal_library)
-	{
-		SDL_UnloadObject (sndal_library);
-		sndal_library = NULL;
 	}
 
 	for (i = 0; i < sndal_numsources; i++)
@@ -1012,6 +893,8 @@ void SNDAL_Shutdown (void)
 	memset (sndal_music_free, 0, sizeof (sndal_music_free));
 	snd_output.ready = false;
 	snd_output.speed = 0;
+	sndal_pause_device = NULL;
+	sndal_resume_device = NULL;
 	sndal_active = false;
 	sndal_blocked = false;
 	sndal_has_direct_channels = false;

@@ -165,28 +165,20 @@ else()
 endif()
 
 # ============================================================================
-# OpenAL Soft — bundled on Windows, system headers elsewhere
+# OpenAL Soft — vendored source (third_party/openal-soft)
 # ============================================================================
-# The backend loads OpenAL32.dll at runtime (SDL_LoadObject), so no import
-# library is linked; only the headers and the DLL to ship are needed. On
-# Windows the DLL is the official OpenAL Soft build renamed to OpenAL32.dll.
-if(QUAKERAY_PLATFORM_WINDOWS)
-    set(OPENAL_ROOT "${CMAKE_SOURCE_DIR}/Windows/openal")
-    set(OPENAL_INCLUDE_DIR "${OPENAL_ROOT}/include")
+set(ALSOFT_UTILS          OFF CACHE BOOL "" FORCE)
+set(ALSOFT_EXAMPLES       OFF CACHE BOOL "" FORCE)
+set(ALSOFT_TESTS          OFF CACHE BOOL "" FORCE)
+set(ALSOFT_INSTALL        OFF CACHE BOOL "" FORCE)
+set(ALSOFT_WERROR         OFF CACHE BOOL "" FORCE)
+set(ALSOFT_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
 
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(OPENAL_DLL_DIR "${OPENAL_ROOT}/x64")
-    else()
-        set(OPENAL_DLL_DIR "${OPENAL_ROOT}/x86")
-    endif()
-else()
-    find_path(OPENAL_INCLUDE_DIR AL/alext.h)
-    if(NOT OPENAL_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "OpenAL Soft headers not found (AL/alext.h). Install the development files, "
-            "for example `apt install libopenal-dev` or `brew install openal-soft`.")
-    endif()
-endif()
+get_directory_property(QUAKERAY_COMPILE_OPTIONS COMPILE_OPTIONS)
+set_directory_properties(PROPERTIES COMPILE_OPTIONS "")
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+add_subdirectory(third_party/openal-soft)
+set_directory_properties(PROPERTIES COMPILE_OPTIONS "${QUAKERAY_COMPILE_OPTIONS}")
 
 # ============================================================================
 # Windows bundled codec libraries
@@ -503,7 +495,6 @@ add_executable(quakeray ${ALL_SOURCES})
 # ============================================================================
 target_include_directories(quakeray PRIVATE
     ${CMAKE_SOURCE_DIR}/Quake
-    ${OPENAL_INCLUDE_DIR}
 )
 
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -541,6 +532,7 @@ target_link_libraries(quakeray PRIVATE Vulkan::Vulkan)
 target_link_libraries(quakeray PRIVATE renderer)
 target_link_libraries(quakeray PRIVATE libyaml)
 target_link_libraries(quakeray PRIVATE imgui)
+target_link_libraries(quakeray PRIVATE OpenAL::OpenAL)
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE SDL2::SDL2 SDL2::SDL2main)
@@ -672,7 +664,7 @@ if(QUAKERAY_PLATFORM_WINDOWS)
     # OpenAL Soft DLL
     add_custom_command(TARGET quakeray POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${OPENAL_DLL_DIR}/OpenAL32.dll"
+            "$<TARGET_FILE:OpenAL>"
             "$<TARGET_FILE_DIR:quakeray>"
         COMMENT "Copying OpenAL32.dll..."
     )

@@ -134,13 +134,13 @@ $openalNotices = @{
     "LICENSE-pffft" = "OpenAL-Soft-pffft.txt"
 }
 foreach ($notice in $openalNotices.GetEnumerator()) {
-    $src = Join-Path $repoRoot "Windows\openal\$($notice.Key)"
+    $src = Join-Path $repoRoot "third_party\openal-soft\$($notice.Key)"
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $licenseDir $notice.Value) -Force
         Write-Host "Added licenses\$($notice.Value)"
     }
     else {
-        Write-Warning "Skipped licenses\$($notice.Value) (not found in Windows\openal)"
+        Write-Warning "Skipped licenses\$($notice.Value) (not found in third_party\openal-soft)"
     }
 }
 
