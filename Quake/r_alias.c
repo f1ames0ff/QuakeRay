@@ -32,7 +32,6 @@ extern cvar_t scr_fov;
 extern cvar_t rt_model_rough, rt_model_metal, rt_enable_pvs;
 extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale;
 extern cvar_t rt_dlight_intensity, rt_dlight_radius;
-extern cvar_t rt_cluster_dlights;
 
 // up to 16 color translated skins
 gltexture_t* playertextures[MAX_SCOREBOARD]; // johnfitz -- changed to an array of pointers
@@ -264,8 +263,7 @@ static void GL_DrawAliasFrame(
         RT_TRACK_Light (light_info.position.data, light_info.radius, light_info.color.data,
                         light_info.uniqueID, RT_LIGHT_KIND_MATERIAL, tx->name);
 
-        if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-            RT_ClusterLightAdd(light_info.uniqueID, lightorigin, RT_ClusterLightReach ());
+        RT_ClusterLightAdd(light_info.uniqueID, lightorigin, RT_ClusterLightReach ());
     }
 
 assert(

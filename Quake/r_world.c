@@ -41,7 +41,6 @@ extern cvar_t rt_enable_pvs;
 extern cvar_t rt_reflrefr_depth;
 extern cvar_t rt_teleport_portals;
 extern cvar_t rt_emis_light_intensity;
-extern cvar_t rt_cluster_dlights;
 extern cvar_t rt_light_styles;
 extern cvar_t rt_light_styles_reach;
 extern cvar_t rt_wmodel_lights_batch;
@@ -1636,8 +1635,7 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 
 		/* The geometry moved to get here, so the light is only promised the reach of a light of
 		   a moving entity. */
-		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (li.uniqueID, center, RT_ClusterLightReach ());
+		RT_ClusterLightAdd (li.uniqueID, center, RT_ClusterLightReach ());
 
 		if (CVAR_TO_FLOAT (rt_dtal_debug) == 1.0f)
 		{

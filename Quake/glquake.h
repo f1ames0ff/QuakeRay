@@ -413,6 +413,7 @@ extern int rt_cluster_miss_other;
 extern int rt_cluster_last_grants;
 extern int rt_cluster_last_denied;
 extern int rt_cluster_last_gated;
+extern int rt_cluster_last_evictions;
 
 // Lights accepted into the registry of the last frame that uploaded lists, how many additions
 // were attempted by the registrars, and how many were refused by RT_CLUSTER_MAX_LIGHTS.
@@ -704,6 +705,7 @@ typedef struct
 	int      clusterGrants;      // slots granted by the last rebuild
 	int      clusterDenied;      // slots refused by the last rebuild
 	int      clusterGated;       // candidate slots refused for standing beyond the light's reach
+	int      clusterEvictions;   // slots the last rebuild took from a light that held them
 	int      clusterLights;      // lights accepted into the registry
 	int      clusterAttempts;    // additions attempted by the registrars
 	int      clusterDropped;     // additions refused because the registry was full

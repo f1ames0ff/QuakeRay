@@ -1016,6 +1016,7 @@ int rt_cluster_miss_other;    /* compositions with neither of those: a new map, 
 int rt_cluster_last_grants;   /* (light, cluster) pairs the last composition granted */
 int rt_cluster_last_denied;   /* pairs it refused because the cluster had filled its slots */
 int rt_cluster_last_gated;    /* pairs it left out because the cluster stood beyond the light's reach */
+int rt_cluster_last_evictions;
 int rt_cluster_reg_attempts;  /* RT_ClusterLightAdd calls of the frame */
 int rt_cluster_reg_dropped;   /* additions refused by RT_CLUSTER_MAX_LIGHTS */
 int rt_cluster_last_lights;   /* lights in the registry of the last frame that uploaded */
@@ -1270,6 +1271,7 @@ void RT_ClusterLightListsUpload (void)
 		rt_cluster_last_grants = (int)st.grants;
 		rt_cluster_last_denied = (int)st.denied;
 		rt_cluster_last_gated = (int)st.reachGated;
+		rt_cluster_last_evictions = (int)st.evictions;
 		rt_light_diag_granted = (int)st.grants;
 		rt_light_diag_denied = (int)st.denied;
 

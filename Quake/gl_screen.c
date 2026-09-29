@@ -827,7 +827,7 @@ void SCR_DrawRTProf (cb_context_t *cbx, int x, int y)
 
 	const rt_prof_report_t *rep = &rt_prof_report;
 	int  i;
-	char st[64];
+	char st[128];
 
 	GL_SetCanvas (cbx, CANVAS_DEFAULT);
 
@@ -869,8 +869,8 @@ void SCR_DrawRTProf (cb_context_t *cbx, int x, int y)
 		SCR_DrawRTStatsString (cbx, x + rt_stats_col, row, st, rt_stats_scale, &color_detail, &color_shadow);
 		row += rt_stats_step;
 
-		sprintf (st, "clust rebuild grants %i denied %i gated %i",
-			rep->clusterGrants, rep->clusterDenied, rep->clusterGated);
+		sprintf (st, "clust rebuild grants %i denied %i gated %i evict %i",
+			rep->clusterGrants, rep->clusterDenied, rep->clusterGated, rep->clusterEvictions);
 		SCR_DrawRTStatsString (cbx, x + rt_stats_col, row, st, rt_stats_scale, &color_detail, &color_shadow);
 		row += rt_stats_step;
 

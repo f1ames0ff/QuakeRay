@@ -142,7 +142,6 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   the map. The lights of the map itself state no reach and keep the one their leaf gives
 	   them. */ \
 	CVAR_DEF_T (rt_light_reach_max, "10") \
-	CVAR_DEF_T (rt_cluster_dlights, "1") \
 	/* 1 takes back only the slots of the lights that moved and hands them out again from where \
 	   those lights stand now: every other list of the scene keeps what the composition left, so \
 	   a moving lamp costs the lists by the rooms it covers rather than by the map. 0 keeps the \
@@ -524,6 +523,7 @@ void RT_Prof_Update (void)
 	rt_prof_report.clusterGrants = rt_cluster_last_grants;
 	rt_prof_report.clusterDenied = rt_cluster_last_denied;
 	rt_prof_report.clusterGated = rt_cluster_last_gated;
+	rt_prof_report.clusterEvictions = rt_cluster_last_evictions;
 	rt_prof_report.clusterLights = rt_cluster_last_lights;
 	rt_prof_report.clusterAttempts = rt_cluster_last_attempts;
 	rt_prof_report.clusterDropped = rt_cluster_last_dropped;
@@ -639,7 +639,6 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");
-	RT_Bench_Setting (f, "rt_cluster_dlights");
 	RT_Bench_Setting (f, "rt_light_styles");
 	RT_Bench_Setting (f, "rt_model_lights");
 	RT_Bench_Setting (f, "rt_model_lights_max");
@@ -930,6 +929,7 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "grants", snap->profile.clusterGrants);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "denied", snap->profile.clusterDenied);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "gated", snap->profile.clusterGated);
+		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "evicted", snap->profile.clusterEvictions);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights", snap->profile.clusterLights);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights add", snap->profile.clusterAttempts);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights drop", snap->profile.clusterDropped);
