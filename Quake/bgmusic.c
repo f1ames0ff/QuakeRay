@@ -239,7 +239,7 @@ void BGM_Play (const char *filename)
 
 	if (music_handlers == NULL)
 		return;
-	if (!shm)
+	if (!snd_output.ready)
 	{
 		Con_Printf ("sound system not started\n");
 		return;
@@ -309,7 +309,7 @@ void BGM_PlayCDtrack (byte track, qboolean looping)
 
 	if (music_handlers == NULL)
 		return;
-	if (!shm)
+	if (!snd_output.ready)
 		return;
 
 	if (no_extmusic || !bgm_extmusic.value)
@@ -386,7 +386,7 @@ static void BGM_UpdateStream (void)
 	int      fileBytes;
 	byte     raw[16384];
 
-	if (!shm)
+	if (!snd_output.ready)
 		return;
 
 	if (bgmstream->status != STREAM_PLAY)
@@ -405,7 +405,7 @@ static void BGM_UpdateStream (void)
 		bufferSamples = MAX_RAW_SAMPLES - (s_rawend - S_RawSamplesCursor ());
 
 		/* decide how much data needs to be read from the file */
-		fileSamples = bufferSamples * bgmstream->info.rate / shm->speed;
+		fileSamples = bufferSamples * bgmstream->info.rate / snd_output.speed;
 		if (!fileSamples)
 			return;
 

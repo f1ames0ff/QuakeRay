@@ -51,15 +51,11 @@ typedef struct sfx_s
 
 typedef struct
 {
-	int            channels;
-	int            samples;          /* mono samples in buffer			*/
-	int            submission_chunk; /* don't mix less than this #			*/
-	int            samplepos;        /* in mono samples				*/
-	int            samplebits;
-	int            signed8; /* device opened for S8 format? (e.g. Amiga AHI) */
-	int            speed;
-	unsigned char *buffer;
-} dma_t;
+	int      speed;
+	int      channels;
+	int      samplebits;
+	qboolean ready;
+} snd_output_t;
 
 /* !!! if this is changed, it must be changed in asm_i386.h too !!! */
 typedef struct
@@ -109,8 +105,6 @@ void   S_TouchSound (const char *sample);
 void   S_ClearPrecache (void);
 void   S_BeginPrecaching (void);
 void   S_EndPrecaching (void);
-void   S_PaintChannels (int endtime);
-void   S_InitPaintChannels (void);
 
 /* picks a channel based on priorities, empty slots, number of channels */
 channel_t *SND_PickChannel (int entnum, int entchannel);
@@ -125,26 +119,7 @@ void S_RawSamples (int samples, int rate, int width, int channels, byte *data, f
 /* position of the raw sample ring the backend has consumed */
 int S_RawSamplesCursor (void);
 
-/* initializes cycling through a DMA buffer and returns information on it */
-qboolean SNDDMA_Init (dma_t *dma);
 
-/* gets the current DMA position */
-int SNDDMA_GetDMAPos (void);
-
-/* shutdown the DMA xfer. */
-void SNDDMA_Shutdown (void);
-
-/* validates & locks the dma buffer */
-void SNDDMA_LockBuffer (void);
-
-/* unlocks the dma buffer / sends sound to the device */
-void SNDDMA_Submit (void);
-
-/* blocks sound output upon window focus loss */
-void SNDDMA_BlockSound (void);
-
-/* unblocks the output upon window focus gain */
-void SNDDMA_UnblockSound (void);
 
 /* ====================================================================
  * User-setable variables
@@ -160,10 +135,9 @@ extern channel_t snd_channels[MAX_CHANNELS];
  * MAX_DYNAMIC_CHANNELS + NUM_AMBIENTS to total_channels = static sounds
  */
 
-extern volatile dma_t *shm;
+extern snd_output_t snd_output;
 
 extern int total_channels;
-extern int soundtime;
 extern int paintedtime;
 extern int s_rawend;
 
@@ -172,9 +146,7 @@ extern vec3_t listener_forward;
 extern vec3_t listener_right;
 extern vec3_t listener_up;
 
-extern cvar_t sndspeed;
 extern cvar_t snd_mixspeed;
-extern cvar_t snd_filterquality;
 extern cvar_t sfxvolume;
 extern cvar_t loadas8bit;
 
@@ -187,7 +159,5 @@ void        S_LocalSound (const char *name);
 sfxcache_t *S_LoadSound (sfx_t *s);
 
 wavinfo_t GetWavinfo (const char *name, byte *wav, int wavlength);
-
-void SND_InitScaletable (void);
 
 #endif /* __QUAKE_SOUND__ */

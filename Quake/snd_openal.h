@@ -24,9 +24,8 @@
 
 #include "q_sound.h"
 
-qboolean SNDAL_Init (dma_t *dma);
+qboolean SNDAL_Init (void);
 void     SNDAL_Shutdown (void);
-qboolean SNDAL_IsActive (void);
 
 void SNDAL_Update (void);
 void SNDAL_ExtraUpdate (void);

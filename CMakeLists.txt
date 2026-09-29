@@ -384,7 +384,6 @@ set(CORE_SOURCES
     Quake/snd_codec.c
     Quake/snd_dma.c
     Quake/snd_mem.c
-    Quake/snd_mix.c
     Quake/snd_openal.c
     Quake/snd_wave.c
     Quake/strlcat.c
@@ -405,7 +404,6 @@ set(SDL_SOURCES
     Quake/gl_vidsdl.c
     Quake/in_sdl.c
     Quake/main_sdl.c
-    Quake/snd_sdl.c
 )
 
 # --- Networking (all platforms) ---

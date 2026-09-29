@@ -16,7 +16,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * Procedural sky, god rays
 * Materials, ray-traced water
 * Shader smoke (rockets, fire)
-* OpenAL Soft HRTF positional sound (SDL audio fallback)
+* OpenAL Soft HRTF positional sound, with no SDL audio device
 * Per-cluster light lists (legacy)
 * Animated light styles
 * Post-processing: chromatic, LUT
@@ -147,12 +147,14 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 
 ## Sound
 
-Sound effects are OpenAL Soft sources: every engine channel is positioned against the listener and attenuated by the engine's own distance law, and OpenAL Soft's built-in HRTF turns the mix binaural on headphones. The SDL mixer (and its `snd_filterquality` / `sndspeed` lowpass) remains the fallback and the A/B reference for `s_openal 0`.
+OpenAL Soft is the sound system: every engine channel is positioned against the listener and attenuated by the engine's own distance law, OpenAL Soft's built-in HRTF turns the mix binaural on headphones, and streamed music keeps its stereo image. The old SDL audio device and the software mixer are gone - the game no longer opens an SDL audio device at all, so an audio glitch from that path cannot survive a session or an exit. `snd_mixspeed` (`44100`) is the output rate the device is asked for.
 
-* `s_openal 1` (default) uses OpenAL Soft when `OpenAL32.dll` (Windows) or `libopenal.so` (Linux) can be loaded, and silently falls back to SDL otherwise; `0` pins the SDL backend. Changing it restarts the audio backend.
-* `s_openal_hrtf` is `0` off, `1` on or `2` auto (default - the device decides, so a speaker setup is not surprised). Changing it restarts the backend too.
+* `s_openal_hrtf` is `0` off, `1` on or `2` auto (default - the device decides, so a speaker setup is not surprised). Changing it restarts the audio backend.
 * `s_openal_max_sources` (`256`) is the source pool size; OpenAL Soft's own source limit caps it.
-* The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`); streamed music keeps its stereo image, so HRTF never folds it to mono.
+* `nosound 1` (or `-nosound`) starts the game without sound, like before.
+* The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`).
+
+`OpenAL32.dll` (Windows) or `libopenal.so` (Linux) is required; without it the game runs silently and says so on the console. The DLL is shipped next to `quakeray.exe` by the build and the release bundle.
 
 See [docs/openal-backend.md](docs/openal-backend.md) for the engine-to-OpenAL mapping and the deferred step-2 items (HRTF datasets, EFX reverb, occlusion).
 

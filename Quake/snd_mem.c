@@ -38,14 +38,14 @@ static void ResampleSfx (sfx_t *sfx, int inrate, int inwidth, byte *data)
 	int         sample, samplefrac, fracstep;
 	sfxcache_t *sc = sfx->cache;
 
-	stepscale = (float)inrate / shm->speed; // this is usually 0.5, 1, or 2
+	stepscale = (float)inrate / snd_output.speed; // this is usually 0.5, 1, or 2
 
 	outcount = sc->length / stepscale;
 	sc->length = outcount;
 	if (sc->loopstart != -1)
 		sc->loopstart = sc->loopstart / stepscale;
 
-	sc->speed = shm->speed;
+	sc->speed = snd_output.speed;
 	if (loadas8bit.value)
 		sc->width = 1;
 	else
@@ -135,7 +135,10 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 		goto unlock_mutex;
 	}
 
-	stepscale = (float)info.rate / shm->speed;
+	if (snd_output.speed <= 0)
+		goto unlock_mutex;
+
+	stepscale = (float)info.rate / snd_output.speed;
 	len = info.samples / stepscale;
 
 	len = len * info.width * info.channels;

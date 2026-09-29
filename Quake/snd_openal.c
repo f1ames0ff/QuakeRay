@@ -29,6 +29,8 @@
 extern cvar_t s_openal_hrtf;
 extern cvar_t s_openal_max_sources;
 
+snd_output_t snd_output;
+
 #ifdef _WIN32
 #define SNDAL_LIB_PRIMARY  "OpenAL32.dll"
 #define SNDAL_LIB_FALLBACK "soft_oal.dll"
@@ -625,7 +627,7 @@ static void SNDAL_UpdateMusic (void)
 
 		buffer = sndal_music_free[--sndal_music_numfree];
 		p_alGetError ();
-		p_alBufferData (buffer, AL_FORMAT_STEREO16, sndal_music_pcm, (ALsizei)(n * 4), shm->speed);
+		p_alBufferData (buffer, AL_FORMAT_STEREO16, sndal_music_pcm, (ALsizei)(n * 4), snd_output.speed);
 		if (p_alGetError () != AL_NO_ERROR)
 		{
 			sndal_music_free[sndal_music_numfree++] = buffer;
@@ -677,7 +679,7 @@ static void SNDAL_AdvanceClock (void)
 	double now, delta;
 	int    elapsed;
 
-	if (!shm || shm->speed <= 0)
+	if (!snd_output.ready || snd_output.speed <= 0)
 		return;
 
 	now = Sys_DoubleTime ();
@@ -693,7 +695,7 @@ static void SNDAL_AdvanceClock (void)
 	else if (delta > 1.0)
 		delta = 1.0;
 
-	sndal_clockfrac += delta * shm->speed;
+	sndal_clockfrac += delta * snd_output.speed;
 	elapsed = (int)sndal_clockfrac;
 	if (elapsed <= 0)
 		return;
@@ -806,12 +808,7 @@ void SNDAL_UnblockSound (void)
 	sndal_blocked = false;
 }
 
-qboolean SNDAL_IsActive (void)
-{
-	return sndal_active;
-}
-
-qboolean SNDAL_Init (dma_t *dma)
+qboolean SNDAL_Init (void)
 {
 	ALCint        attributes[8];
 	int           nattributes = 0;
@@ -824,7 +821,10 @@ qboolean SNDAL_Init (dma_t *dma)
 	if (sndal_active)
 		return true;
 	if (!SNDAL_LoadLibrary ())
+	{
+		Con_Printf ("OpenAL: library not found\n");
 		return false;
+	}
 
 	sndal_device = p_alcOpenDevice (NULL);
 	if (!sndal_device)
@@ -865,15 +865,11 @@ qboolean SNDAL_Init (dma_t *dma)
 	}
 	sndal_has_direct_channels = (p_alIsExtensionPresent ("AL_SOFT_direct_channels") == AL_TRUE) ? true : false;
 
-	memset (dma, 0, sizeof (*dma));
 	p_alcGetIntegerv (sndal_device, ALC_FREQUENCY, 1, &frequency);
-	dma->speed = (frequency > 0) ? (int)frequency : (int)snd_mixspeed.value;
-	dma->channels = 2;
-	dma->samplebits = 16;
-	dma->samples = MAX_RAW_SAMPLES;
-	dma->submission_chunk = 1;
-	dma->buffer = NULL;
-	shm = dma;
+	snd_output.speed = (frequency > 0) ? (int)frequency : (int)snd_mixspeed.value;
+	snd_output.channels = 2;
+	snd_output.samplebits = 16;
+	snd_output.ready = true;
 
 	for (i = 0; i < MAX_CHANNELS; i++)
 		sndal_binding[i] = -1;
@@ -1014,6 +1010,8 @@ void SNDAL_Shutdown (void)
 	sndal_music_source = 0;
 	memset (sndal_music_buffers, 0, sizeof (sndal_music_buffers));
 	memset (sndal_music_free, 0, sizeof (sndal_music_free));
+	snd_output.ready = false;
+	snd_output.speed = 0;
 	sndal_active = false;
 	sndal_blocked = false;
 	sndal_has_direct_channels = false;
