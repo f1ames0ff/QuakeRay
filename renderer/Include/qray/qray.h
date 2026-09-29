@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1334,6 +1334,10 @@ typedef struct QrFrameStats
 QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
+
+QRAPI QrResult QRCONV qrRequestScreenshot(
+    QrInstance                          qrInstance,
+    const char                         *pFilePath);
 
 QRAPI QrResult QRCONV qrGetFrameStats(
     QrInstance                          qrInstance,

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -141,6 +141,8 @@ public:
 
     void GetFrameStatsEx(QrFrameStats *pStats) const;
 
+    void RequestScreenshot(const char *pFilePath);
+
     void Print(const char *pMessage) const;
 
 private:
@@ -182,6 +184,7 @@ private:
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
     std::string                             printedPresentModeName;
+    std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;
 

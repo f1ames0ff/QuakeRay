@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -687,6 +687,14 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
     }
 }
 
+void VulkanDevice::RequestScreenshot(const char *pFilePath)
+{
+    if (pFilePath != nullptr && pFilePath[0] != '\0')
+    {
+        pendingScreenshotPath = pFilePath;
+    }
+}
+
 bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 {
     if (nvrhiFrameSkeleton == nullptr || nvrhiFrameSkeleton->IsUnavailable())
@@ -927,6 +935,12 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     const VkSemaphore semaphoreToWait = currentFrameState.GetSemaphoreForWaitAndRemove(&semaphoreWaitStage);
 
     assert(semaphoreToWait != VK_NULL_HANDLE);
+
+    if (!pendingScreenshotPath.empty())
+    {
+        nvrhiFrameSkeleton->RequestScreenshot(pendingScreenshotPath);
+        pendingScreenshotPath.clear();
+    }
 
     if (!nvrhiFrameSkeleton->Render(swapchain.get(), frameIndex, sky, semaphoreToWait, renderFinishedSemaphores[frameIndex]))
     {
