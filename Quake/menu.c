@@ -3803,46 +3803,34 @@ void M_Menu_Quit_f (void)
 	}
 }
 
-static void M_Quit_Key (int key)
+static void M_Quit_Cancel (void)
 {
-	if (key == K_ESCAPE)
+	if (was_in_menus)
 	{
-		if (was_in_menus)
-		{
-			m_state = m_quit_prevstate;
-			m_entersound = true;
-		}
-		else
-		{
-			IN_Activate ();
-			key_dest = key_game;
-			m_state = m_none;
-		}
+		m_state = m_quit_prevstate;
+		m_entersound = true;
+	}
+	else
+	{
+		IN_Activate ();
+		key_dest = key_game;
+		m_state = m_none;
 	}
 }
 
-static void M_Quit_Char (int key)
+static void M_Quit_Key (int key)
 {
 	switch (key)
 	{
 	case 'n':
 	case 'N':
-		if (was_in_menus)
-		{
-			m_state = m_quit_prevstate;
-			m_entersound = true;
-		}
-		else
-		{
-			IN_Activate ();
-			key_dest = key_game;
-			m_state = m_none;
-		}
+	case K_ESCAPE:
+		M_Quit_Cancel ();
 		break;
 
 	case 'y':
 	case 'Y':
-	case ' ':
+	case K_SPACE:
 		m_is_quitting = true;
 		IN_DeactivateForMenu ();
 		key_dest = key_console;
@@ -3852,11 +3840,6 @@ static void M_Quit_Char (int key)
 	default:
 		break;
 	}
-}
-
-static qboolean M_Quit_TextEntry (void)
-{
-	return true;
 }
 
 static void M_Quit_Draw (cb_context_t *cbx) // johnfitz -- modified for new quit message
@@ -5503,9 +5486,6 @@ void M_Charinput (int key)
 	case m_maps:
 		M_Maps_Char (key);
 		return;
-	case m_quit:
-		M_Quit_Char (key);
-		return;
 	case m_lanconfig:
 		M_LanConfig_Char (key);
 		return;
@@ -5522,8 +5502,6 @@ qboolean M_TextEntry (void)
 		return M_Setup_TextEntry ();
 	case m_maps:
 		return M_Maps_TextEntry ();
-	case m_quit:
-		return M_Quit_TextEntry ();
 	case m_lanconfig:
 		return M_LanConfig_TextEntry ();
 	default:
