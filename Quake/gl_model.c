@@ -4103,6 +4103,7 @@ error:
 static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 {
 	const char   *fname = mod->name;
+	char          pendingtoken[1024];
 	md5joint_t   *joints = NULL;
 	float        *bindabs = NULL;
 	float        *poses = NULL;
@@ -4160,6 +4161,8 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 	}
 	MD5EXPECT ("}");
 
+	q_strlcpy (pendingtoken, com_token, sizeof (pendingtoken));
+
 	bindabs = Mem_Alloc (numjoints * 12 * sizeof (*bindabs));
 	for (j = 0; j < numjoints; j++)
 	{
@@ -4173,6 +4176,8 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 		poses_owned = true;
 	else
 		poses = bindabs;
+
+	q_strlcpy (com_token, pendingtoken, sizeof (com_token));
 
 	if (numposes > MAXALIASFRAMES)
 	{
