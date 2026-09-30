@@ -2131,6 +2131,7 @@ enum
 {
 	GRAPHICS_OPT_BLOOM,
 	GRAPHICS_OPT_FILTER,
+	GRAPHICS_OPT_MODEL_INTERPOLATION,
 	GRAPHICS_OPT_PARTICLES,
 	GRAPHICS_OPT_VOLUMETRICS,
 	GRAPHICS_OPT_GODRAYS,
@@ -2162,6 +2163,10 @@ static void M_GraphicsOptions_Adjust (int dir)
 		break;
 	case GRAPHICS_OPT_FILTER:
 		Cvar_SetValue ("vid_filter", (Cvar_VariableValue ("vid_filter") == 0.0) ? 1.0f : 0.0f);
+		break;
+	case GRAPHICS_OPT_MODEL_INTERPOLATION:
+		Cvar_SetValueQuick (&r_lerpmodels, (float)(((int)r_lerpmodels.value + 2 + dir) % 2));
+		Cvar_SetValueQuick (&r_lerpmove, r_lerpmodels.value);
 		break;
 	case GRAPHICS_OPT_PARTICLES:
 		value = (int)r_particles.value;
@@ -2239,6 +2244,9 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "Texture filtering");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (Cvar_VariableValue ("vid_filter") == 0.0) ? "smooth" : "classic");
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODEL_INTERPOLATION, "Animations");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODEL_INTERPOLATION, (r_lerpmodels.value == 0) ? "classic" : "smooth");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES, "Particles");
 	M_Print (
