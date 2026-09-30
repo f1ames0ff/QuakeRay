@@ -119,6 +119,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_sun_bounce_scale, "1.0") \
 	CVAR_DEF_T (rt_godrays, "1") \
 	CVAR_DEF_T (rt_godrays_intensity, "1") /* Q2RTX's gr_intensity: strength of the sun shafts */ \
+	CVAR_DEF_T (rt_godrays_sky_threshold, "0.75") \
 	CVAR_DEF_T (rt_denoiser, "1") \
 	CVAR_DEF_T (rt_no_textures, "0") \
 	/* No pass reads forceAntiFirefly: CmQ2Adapter's anti-firefly is not gated by
@@ -652,6 +653,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_godrays");
 	RT_Bench_Setting (f, "rt_godrays_intensity");
+	RT_Bench_Setting (f, "rt_godrays_sky_threshold");
 	RT_Bench_Setting (f, "rt_physical_sky");
 	RT_Bench_Setting (f, "rt_sky_clouds");
 	RT_Bench_Setting (f, "rt_sky_cloud_coverage");
@@ -2225,6 +2227,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			RT_APPLY_SUN_COLOR (brightest_color);
 			RT_FIXUP_LIGHT_INTENSITY (brightest_color, true);
 			VectorScale (brightest_color, RT_SUN_LIGHT_INTENSITY_SCALE, brightest_color);
+			VectorScale (brightest_color, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_brightness), 10.0f), brightest_color);
 
 			sky_params.godRaysFromSkyTexture = 1;
 			RT_VEC3_SET (sky_params.godRaysSkyDirection.data, brightest_dir[0], brightest_dir[1], brightest_dir[2]);

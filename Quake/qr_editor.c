@@ -3318,6 +3318,8 @@ static const qre_global_t qre_globals[] = {
 	  "Draw the sun shafts." },
 	{ NULL,  "rt_godrays_intensity",    QRE_G_FLOAT, 0, 4,
 	  "Strength of the sun shafts." },
+	{ NULL,  "rt_godrays_sky_threshold", QRE_G_FLOAT, 0, 1,
+	  "How bright a sky area must be to pull the god rays to itself; the rays come from the centre of everything above it, and from the brightest point when nothing is (0 leaves the brightest point alone)." },
 
 	{ "Volumetric fog", "rt_volume_type",    QRE_G_INT,   0, 2,
 	  "0 off, 1 a simple depth-based fog (the density and the colour below), 2 the volumetric pass the sky light feeds." },
