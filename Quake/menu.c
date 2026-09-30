@@ -3103,9 +3103,9 @@ static int M_Mods_Compare (const void *a, const void *b)
 {
 	const filelist_item_t *left = *(filelist_item_t *const *)a;
 	const filelist_item_t *right = *(filelist_item_t *const *)b;
-	const char			  *left_name = left->name;
-	const char			  *right_name = right->name;
-	int					   result = q_strcasecmp (left_name, right_name);
+	const char			  *left_name = Modlist_GetFullName (left);
+	const char			  *right_name = Modlist_GetFullName (right);
+	int					   result = q_strcasecmp (left_name ? left_name : left->name, right_name ? right_name : right->name);
 
 	return result ? result : q_strcasecmp (left->name, right->name);
 }
@@ -3159,7 +3159,7 @@ static void M_Mods_Draw (cb_context_t *cbx)
 			break;
 		if (mod_index >= 0)
 		{
-			const char *fullname = item->name;
+			const char *fullname = Modlist_GetFullName (item);
 
 			const qboolean selected = (mods_cursor - first_mod == mod_index);
 

@@ -372,6 +372,20 @@ void Sys_mkdir (const char *path)
 	}
 }
 
+int Sys_FileType (const char *path)
+{
+	struct stat st;
+
+	if (stat (path, &st) != 0)
+		return FS_ENT_NONE;
+	if (S_ISDIR (st.st_mode))
+		return FS_ENT_DIRECTORY;
+	if (S_ISREG (st.st_mode))
+		return FS_ENT_FILE;
+
+	return FS_ENT_NONE;
+}
+
 static const char errortxt1[] = "\nERROR-OUT BEGIN\n\n";
 static const char errortxt2[] = "\nQUAKE ERROR: ";
 

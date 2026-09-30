@@ -418,6 +418,7 @@ void               Host_CfgExec_f (void);
 
 void ExtraMaps_Init (void);
 void Modlist_Init (void);
+const char *Modlist_GetFullName (const filelist_item_t *item);
 void DemoList_Init (void);
 void SaveList_Init (void);
 

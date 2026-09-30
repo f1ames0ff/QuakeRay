@@ -2244,6 +2244,11 @@ qboolean COM_GameDirMatches (const char *tdirs)
 	return false;
 }
 
+qboolean COM_ModForbiddenChars (const char *p)
+{
+	return !*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":") || strstr (p, "\"") || strstr (p, ";");
+}
+
 /*
 =================
 COM_AddSearchPaths

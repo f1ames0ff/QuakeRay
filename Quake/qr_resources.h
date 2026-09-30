@@ -27,6 +27,6 @@ void     QR_Resources_Init (void);
 qboolean QR_Resources_SteamDir (char *out, size_t outsize);
 qboolean QR_Resources_Resolve (const char *dir, char *out, size_t outsize);
 qboolean QR_Resources_HasGameData (void);
-int      QR_Resources_EnumMods (void (*cb) (const char *name, void *ctx), void *ctx);
+int      QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void *ctx), void *ctx);
 
 #endif /* QR_RESOURCES_H */

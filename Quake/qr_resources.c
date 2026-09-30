@@ -266,7 +266,7 @@ static qboolean QR_DirHasContent (const char *dir)
 	return false;
 }
 
-static int QR_EnumModsIn (const char *root, void (*cb) (const char *name, void *ctx), void *ctx)
+static int QR_EnumModsIn (const char *root, void (*cb) (const char *base, const char *name, void *ctx), void *ctx)
 {
 	char pattern[MAX_OSPATH];
 	WIN32_FIND_DATAA fd;
@@ -295,7 +295,7 @@ static int QR_EnumModsIn (const char *root, void (*cb) (const char *name, void *
 			q_snprintf (dir, sizeof (dir), "%s/%s", root, fd.cFileName);
 			if (QR_DirHasContent (dir))
 			{
-				cb (fd.cFileName, ctx);
+				cb (root, fd.cFileName, ctx);
 				count++;
 			}
 		}
@@ -305,7 +305,7 @@ static int QR_EnumModsIn (const char *root, void (*cb) (const char *name, void *
 	return count;
 }
 
-int QR_Resources_EnumMods (void (*cb) (const char *name, void *ctx), void *ctx)
+int QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void *ctx), void *ctx)
 {
 	char rerelease[MAX_OSPATH];
 	int  count;
@@ -353,7 +353,7 @@ qboolean QR_Resources_HasGameData (void)
 	return Sys_FileTime (path) != -1;
 }
 
-int QR_Resources_EnumMods (void (*cb) (const char *name, void *ctx), void *ctx)
+int QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void *ctx), void *ctx)
 {
 	(void)cb;
 	(void)ctx;
