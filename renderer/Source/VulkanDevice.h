@@ -141,6 +141,8 @@ public:
 
     void GetFrameStatsEx(QrFrameStats *pStats) const;
 
+    void GetAdapterInfo(QrAdapterInfo *pInfo) const;
+
     void RequestScreenshot(const char *pFilePath);
 
     void Print(const char *pMessage) const;

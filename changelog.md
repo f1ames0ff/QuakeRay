@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.21.0
+
+### Added
+- **A log says what machine wrote it** — every session now opens with a `System information` block, so a `qconsole.log` attached to a report carries the hardware the artefacts were seen on without a round of questions: the OS and its version with the architecture, the CPU brand with the core count and RAM, the GPU with its vendor and device id, the video driver's name, info and numeric version together with the Vulkan API version, and the audio driver with its device. The GPU part is read from the Vulkan device itself — the physical device keeps its `VkPhysicalDeviceProperties` and `VkPhysicalDeviceDriverProperties` (queried once when the adapter is chosen) and a new `qrGetAdapterInfo()` hands them to the engine, so nothing is parsed out of the renderer's own log lines and the driver version is decoded the way its vendor writes it (NVIDIA's four fields, the standard Vulkan three for the rest). The rest comes from SDL (core count, RAM, SDL version, the audio driver and its device) and the platform: Windows takes its real version through `ntdll!RtlGetVersion` — which needs no manifest — and the CPU brand through `cpuid`, while Linux and macOS use `uname`, `/proc/cpuinfo` and `sysctl`. The readme has a new "Crash and bug reports" section that says to run with `-condebug` and attach the log to an issue.
+
 ## v0.20.3
 
 ### Added

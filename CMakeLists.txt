@@ -383,6 +383,7 @@ set(SDL_SOURCES
     Quake/in_sdl.c
     Quake/main_sdl.c
     Quake/snd_sdl.c
+    Quake/sys_info.c
 )
 
 # --- Networking (all platforms) ---
