@@ -567,6 +567,19 @@ void QR_GUI_LabelDim (const char *text)
 	ImGui::TextDisabled ("%s", text);
 }
 
+void QR_GUI_LabelRight (const char *text)
+{
+	const char *label = text ? text : "";
+	float       avail, width;
+
+	ImGui::SameLine ();
+	avail = ImGui::GetContentRegionAvail ().x;
+	width = ImGui::CalcTextSize (label).x;
+	if (width < avail)
+		ImGui::SetCursorPosX (ImGui::GetCursorPosX () + avail - width);
+	ImGui::TextDisabled ("%s", label);
+}
+
 void QR_GUI_Separator (void)
 {
 	ImGui::Separator ();
@@ -580,6 +593,26 @@ void QR_GUI_Spacing (void)
 void QR_GUI_SameLine (void)
 {
 	ImGui::SameLine ();
+}
+
+void QR_GUI_PushWindowPadding (float x, float y)
+{
+	ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (x, y));
+}
+
+void QR_GUI_PopWindowPadding (void)
+{
+	ImGui::PopStyleVar ();
+}
+
+float QR_GUI_TextWidth (const char *text)
+{
+	return ImGui::CalcTextSize (text ? text : "").x;
+}
+
+int QR_GUI_CtrlDown (void)
+{
+	return ImGui::GetIO ().KeyCtrl ? 1 : 0;
 }
 
 void QR_GUI_Tooltip (const char *text)

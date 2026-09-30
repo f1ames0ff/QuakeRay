@@ -37,7 +37,6 @@ occlusion) is not implemented yet and is listed at the end.
 | Cvar | Default | Meaning |
 |---|---|---|
 | `s_openal_hrtf` | `2` | HRTF mode: `0` off, `1` on, `2` auto (the device decides, headphones suggested); requires a context restart, so changing it restarts the backend |
-| `s_openal_hrtf_bass` | `9` | low-shelf compensation of the KEMAR dataset's weak low end, in dB (`0..12`); applied to the samples only while the HRTF is on, and changing it restarts the backend |
 | `s_openal_max_sources` | `256` | size of the source pool, clamped to `1..MAX_CHANNELS`; takes effect on the next backend restart |
 | `snd_mixspeed` | `48000` | output rate the OpenAL device is asked for (`-mixspeed` sets it at startup); `48000` matches the built-in HRTF dataset |
 

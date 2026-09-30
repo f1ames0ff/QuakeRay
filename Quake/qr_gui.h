@@ -65,10 +65,18 @@ void QR_GUI_EndScroll (void);
 
 void QR_GUI_Label (const char *text);
 void QR_GUI_LabelDim (const char *text);
+void QR_GUI_LabelRight (const char *text);
 void QR_GUI_Separator (void);
 void QR_GUI_Spacing (void);
 void QR_GUI_SameLine (void);
 void QR_GUI_Tooltip (const char *text);
+// Widens the padding of the dialog opened between these two calls.
+void QR_GUI_PushWindowPadding (float x, float y);
+void QR_GUI_PopWindowPadding (void);
+// Width of a string in the current font.
+float QR_GUI_TextWidth (const char *text);
+// 1 while the left or right Ctrl key is held (the canvas' modifier clicks).
+int  QR_GUI_CtrlDown (void);
 
 // Every widget carries its parameter's tooltip (shown after the panel's hover
 // delay); pass NULL for widgets that have none.

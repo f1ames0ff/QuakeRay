@@ -2014,14 +2014,12 @@ enum
 	SOUND_OPT_MUSICVOL,
 	SOUND_OPT_MUSICEXT,
 	SOUND_OPT_SPATIAL,
-	SOUND_OPT_BASS,
 	SOUND_OPT_FREQUENCY,
 	SOUND_OPT_EQUALIZER,
 	SOUND_OPTIONS_ITEMS
 };
 
 static const int sound_frequencies[] = {11025, 22050, 44100, 48000, 96000, 192000};
-static const int hrtf_bass_steps[] = {0, 3, 6, 9, 12};
 
 static int sound_options_cursor = 0;
 
@@ -2065,22 +2063,6 @@ static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 		else
 			Cvar_SetValueQuick (&s_openal_hrtf, s_openal_hrtf.value ? 0.0f : 1.0f);
 		break;
-	case SOUND_OPT_BASS:
-	{
-		int i, index = 0;
-
-		for (i = 0; i < (int)countof (hrtf_bass_steps); i++)
-		{
-			if (hrtf_bass_steps[i] == (int)s_openal_hrtf_bass.value)
-			{
-				index = i;
-				break;
-			}
-		}
-		index = (index + (dir >= 0 ? 1 : (int)countof (hrtf_bass_steps) - 1)) % (int)countof (hrtf_bass_steps);
-		Cvar_SetValueQuick (&s_openal_hrtf_bass, (float)hrtf_bass_steps[index]);
-		break;
-	}
 	case SOUND_OPT_FREQUENCY:
 	{
 		int i, index = 0;
@@ -2169,12 +2151,6 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_SPATIAL, "Spatial sound");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_SPATIAL, SNDAL_HrtfEnabled () ? "on" : "off");
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_BASS, "Spatial bass");
-	if (s_openal_hrtf_bass.value > 0.0f)
-		M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_BASS, va ("+%d dB", (int)s_openal_hrtf_bass.value));
-	else
-		M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_BASS, "off");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, "Sound frequency");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, va ("%.1f kHz", snd_mixspeed.value / 1000.0));

@@ -171,9 +171,8 @@ OpenAL Soft is the sound system: every engine channel is positioned against the 
 
 * `s_openal_hrtf` is `0` off, `1` on or `2` auto (default - the device decides, so a speaker setup is not surprised). Changing it restarts the audio backend.
 * Sound Options carries a **Spatial sound** switch that reads the mode OpenAL Soft actually granted (so `auto` shows what you hear) and writes `s_openal_hrtf` as `1` or `0`.
-* **Spatial bass** (`s_openal_hrtf_bass`, dB, default `9`) compensates the low-frequency roll-off of the KEMAR HRTF: a low shelf below ~200 Hz, applied to the samples only while the HRTF is on. The menu cycles `off`, `+3`, `+6`, `+9` and `+12 dB`; `0` keeps the raw dataset.
 * Sound Options also carries **Sound frequency** (`snd_mixspeed`, archived): the output rate OpenAL Soft is asked for, `11.0` to `192.0 kHz`. Changing it restarts the backend and reloads the samples at the new rate; the console cvar and `-mixspeed` do the same.
-* The **Equalizer** entry (or the `equalizer` command) opens a graphical five-band EQ over a 20 Hz to 20 kHz axis, with a computed response curve and draggable handles (`s_eq_60`, `s_eq_230`, `s_eq_910`, `s_eq_3600`, `s_eq_14000`, all archived, -12 to +12 dB).
+* The **Equalizer** entry (or the `equalizer` command) opens a graphical five-band EQ over a 20 Hz to 20 kHz axis, with a computed response curve and draggable handles (`s_eq_60`, `s_eq_230`, `s_eq_910`, `s_eq_3600`, `s_eq_14000`, all archived, -12 to +12 dB; Ctrl+click resets a band, Reset flattens them all). The 60 Hz band is where the measured low-end roll-off of the KEMAR dataset can be compensated.
 * `s_openal_max_sources` (`256`) is the source pool size; OpenAL Soft's own source limit caps it.
 * `nosound 1` (or `-nosound`) starts the game without sound, like before.
 * The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`).

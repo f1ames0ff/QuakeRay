@@ -71,7 +71,6 @@ static void S_BackendStart (void);
 static void S_BackendShutdown (void);
 static void S_OpenALChanged (cvar_t *var);
 static void S_MixSpeedChanged (cvar_t *var);
-static void S_HrtfBassChanged (cvar_t *var);
 
 SDL_mutex *snd_mutex;
 
@@ -89,7 +88,6 @@ static cvar_t ambient_fade = {"ambient_fade", "100", CVAR_NONE};
 static cvar_t snd_show = {"snd_show", "0", CVAR_NONE};
 
 cvar_t s_openal_hrtf = {"s_openal_hrtf", "2", CVAR_ARCHIVE};
-cvar_t s_openal_hrtf_bass = {"s_openal_hrtf_bass", "9", CVAR_ARCHIVE};
 cvar_t s_openal_max_sources = {"s_openal_max_sources", "256", CVAR_ARCHIVE};
 
 static void S_SoundInfo_f (void)
@@ -166,17 +164,6 @@ static void S_MixSpeedChanged (cvar_t *var)
 	S_RestartBackend ();
 }
 
-static void S_HrtfBassChanged (cvar_t *var)
-{
-	if (var->value < 0 || var->value > 12)
-	{
-		Con_Printf ("s_openal_hrtf_bass must be between 0 and 12 dB\n");
-		Cvar_SetQuick (&s_openal_hrtf_bass, "9");
-		return;
-	}
-	S_RestartBackend ();
-}
-
 /*
 ================
 S_Startup
@@ -221,7 +208,6 @@ void S_Init (void)
 	Cvar_RegisterVariable (&ambient_fade);
 	Cvar_RegisterVariable (&snd_show);
 	Cvar_RegisterVariable (&s_openal_hrtf);
-	Cvar_RegisterVariable (&s_openal_hrtf_bass);
 	Cvar_RegisterVariable (&s_openal_max_sources);
 	Cvar_RegisterVariable (&snd_mixspeed);
 
@@ -245,7 +231,6 @@ void S_Init (void)
 	}
 
 	Cvar_SetCallback (&s_openal_hrtf, S_OpenALChanged);
-	Cvar_SetCallback (&s_openal_hrtf_bass, S_HrtfBassChanged);
 	Cvar_SetCallback (&s_openal_max_sources, S_OpenALChanged);
 	Cvar_SetCallback (&snd_mixspeed, S_MixSpeedChanged);
 

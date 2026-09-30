@@ -74,8 +74,8 @@ void SNDEQ_CloseDialog (void)
 	SNDEQ_SetDialogOpen (false);
 }
 
-#define EQ_GRAPH_W 680.0f
-#define EQ_GRAPH_H 280.0f
+#define EQ_GRAPH_W 816.0f
+#define EQ_GRAPH_H 336.0f
 #define EQ_DB_MAX  18.0f
 #define EQ_DB_MIN  (-18.0f)
 #define EQ_F_MIN   20.0f
@@ -126,6 +126,7 @@ static void SNDEQ_DrawGrid (void)
 	{
 		float f = sndeq_grid_freqs[i];
 		float x = SNDEQ_FreqToX (f);
+		float w, tx;
 		char  label[16];
 
 		QR_GUI_CanvasLine (x, 0.0f, x, EQ_GRAPH_H, SNDEQ_Color (255, 255, 255, 28), 1.0f);
@@ -134,7 +135,12 @@ static void SNDEQ_DrawGrid (void)
 			q_snprintf (label, sizeof (label), "%gk", f / 1000.0f);
 		else
 			q_snprintf (label, sizeof (label), "%d", (int)f);
-		QR_GUI_CanvasText (x + 3.0f, EQ_GRAPH_H - 17.0f, SNDEQ_Color (170, 180, 200, 200), label);
+
+		w = QR_GUI_TextWidth (label);
+		tx = x + 3.0f;
+		if (tx + w > EQ_GRAPH_W)
+			tx = x - w - 3.0f;
+		QR_GUI_CanvasText (tx, EQ_GRAPH_H - 17.0f, SNDEQ_Color (170, 180, 200, 200), label);
 	}
 
 	for (i = 0; i < (int)countof (sndeq_grid_dbs); i++)
@@ -159,9 +165,11 @@ void SNDEQ_DrawDialog (void)
 		return;
 
 	QR_GUI_Backdrop (0.7f);
-	if (QR_GUI_BeginDialog ("Equalizer", EQ_GRAPH_W + 32.0f) == 0)
+	QR_GUI_PushWindowPadding (24.0f, 16.0f);
+	if (QR_GUI_BeginDialog ("Equalizer", EQ_GRAPH_W + 48.0f) == 0)
 	{
 		QR_GUI_EndDialog ();
+		QR_GUI_PopWindowPadding ();
 		return;
 	}
 
@@ -181,13 +189,21 @@ void SNDEQ_DrawDialog (void)
 
 	if (canvas & 2)
 	{
-		if (eq_drag_band < 0)
+		if (eq_drag_band == -1)
 		{
 			for (i = 0; i < SNDEQ_BandCount (); i++)
 			{
 				if (fabsf (mouse_x - hx[i]) < 14.0f && fabsf (mouse_y - hy[i]) < 14.0f)
 				{
-					eq_drag_band = i;
+					if (QR_GUI_CtrlDown ())
+					{
+						Cvar_SetValueQuick (SNDEQ_BandCvar (i), 0.0f);
+						SNDEQ_RequestRebuild ();
+						hy[i] = SNDEQ_DbToY (0.0f);
+						eq_drag_band = -2;
+					}
+					else
+						eq_drag_band = i;
 					break;
 				}
 			}
@@ -257,8 +273,10 @@ void SNDEQ_DrawDialog (void)
 		SNDEQ_SetDialogOpen (false);
 	QR_GUI_SameLine ();
 	QR_GUI_LabelDim (SNDEQ_Active () ? "EQ active" : "flat");
+	QR_GUI_LabelRight ("Drag: gain | Ctrl+Click: reset band | Esc: close");
 
 	QR_GUI_EndDialog ();
+	QR_GUI_PopWindowPadding ();
 }
 
 qboolean SNDEQ_GuiProcessEvent (const void *sdl_event)
