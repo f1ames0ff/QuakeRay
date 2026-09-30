@@ -367,6 +367,7 @@ void GL_BuildBModelVertexBuffer (void);
 void GL_PrepareSIMDData (void);
 void GLMesh_LoadVertexBuffers (void);
 void GLMesh_DeleteVertexBuffers (void);
+void GLMesh_DeleteVertexBuffer (qmodel_t *m);
 
 int R_LightPoint (vec3_t p, lightcache_t *cache, vec3_t *lightcolor);
 void RT_ParseElights (void);

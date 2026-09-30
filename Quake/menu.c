@@ -186,6 +186,7 @@ extern cvar_t r_softparticles;
 extern cvar_t r_oit;
 extern cvar_t r_enhancedmodels;
 extern cvar_t r_lerpmodels;
+extern cvar_t r_enhancedmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_lerpturn;
 extern cvar_t vid_filter;
@@ -2131,6 +2132,7 @@ enum
 {
 	GRAPHICS_OPT_BLOOM,
 	GRAPHICS_OPT_FILTER,
+	GRAPHICS_OPT_MODELS,
 	GRAPHICS_OPT_PARTICLES,
 	GRAPHICS_OPT_VOLUMETRICS,
 	GRAPHICS_OPT_GODRAYS,
@@ -2162,6 +2164,9 @@ static void M_GraphicsOptions_Adjust (int dir)
 		break;
 	case GRAPHICS_OPT_FILTER:
 		Cvar_SetValue ("vid_filter", (Cvar_VariableValue ("vid_filter") == 0.0) ? 1.0f : 0.0f);
+		break;
+	case GRAPHICS_OPT_MODELS:
+		Cvar_SetValueQuick (&r_enhancedmodels, (float)(((int)r_enhancedmodels.value + 2 + dir) % 2));
 		break;
 	case GRAPHICS_OPT_PARTICLES:
 		value = (int)r_particles.value;
@@ -2239,6 +2244,9 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "Texture filtering");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (Cvar_VariableValue ("vid_filter") == 0.0) ? "smooth" : "classic");
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODELS, "Models");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODELS, (r_enhancedmodels.value == 0) ? "classic" : "enhanced");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES, "Particles");
 	M_Print (

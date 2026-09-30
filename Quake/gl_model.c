@@ -31,10 +31,13 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 static void      Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void      Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer);
 static void      Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
+static void      Mod_LoadMD3Model (qmodel_t *mod, const void *buffer);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
+static void      Mod_EnhancedModels_f (cvar_t *var);
 
 cvar_t external_ents = {"external_ents", "1", CVAR_ARCHIVE};
 cvar_t external_vis = {"external_vis", "1", CVAR_ARCHIVE};
+cvar_t r_enhancedmodels = {"r_enhancedmodels", "1", CVAR_ARCHIVE};
 
 static byte *mod_novis;
 static int   mod_novis_capacity;
@@ -102,6 +105,9 @@ void Mod_Init (void)
 {
 	Cvar_RegisterVariable (&external_vis);
 	Cvar_RegisterVariable (&external_ents);
+
+	Cvar_RegisterVariable (&r_enhancedmodels);
+	Cvar_SetCallback (&r_enhancedmodels, Mod_EnhancedModels_f);
 
 	// johnfitz -- create notexture miptex
 	r_notexture_mip = (texture_t *)Mem_Alloc (sizeof (texture_t));
@@ -339,6 +345,27 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 		TexMgr_FreeTexturesForOwner (mod);
 }
 
+static void Mod_EnhancedModels_f (cvar_t *var)
+{
+	int       i;
+	qmodel_t *mod;
+
+	for (i = 0, mod = mod_known; i < mod_numknown; i++, mod++)
+	{
+		if (mod->type != mod_alias)
+			continue;
+		GLMesh_DeleteVertexBuffer (mod);
+		Mod_FreeModelMemory (mod);
+		mod->needload = true;
+	}
+
+	for (i = 0, mod = mod_known; i < mod_numknown; i++, mod++)
+		if (mod->type == mod_alias)
+			Mod_LoadModel (mod, false);
+
+	InvalidateTraceLineCache ();
+}
+
 /*
 ===================
 Mod_ClearAll
@@ -480,10 +507,36 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	mod->needload = false;
 
 	mod_type = (buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24));
+
+	if (CVAR_TO_BOOL (r_enhancedmodels) && mod_type == IDPOLYHEADER)
+	{
+		char         md3_name[MAX_QPATH];
+		unsigned int md3_path_id = 0;
+
+		COM_StripExtension (mod->name, md3_name, sizeof (md3_name));
+		COM_AddExtension (md3_name, ".md3", sizeof (md3_name));
+		if (COM_FileExists (md3_name, &md3_path_id) && md3_path_id >= mod->path_id)
+		{
+			byte *md3_buf = COM_LoadFile (md3_name, &md3_path_id);
+			if (md3_buf)
+			{
+				mod->path_id = md3_path_id;
+				Mod_LoadMD3Model (mod, md3_buf);
+				Mem_Free (md3_buf);
+				Mem_Free (buf);
+				return mod;
+			}
+		}
+	}
+
 	switch (mod_type)
 	{
 	case IDPOLYHEADER:
 		Mod_LoadAliasModel (mod, buf);
+		break;
+
+	case IDMD3HEADER:
+		Mod_LoadMD3Model (mod, buf);
 		break;
 
 	case IDSPRITEHEADER:
@@ -3398,6 +3451,242 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	// move the complete, relocatable alias model to the cache
 	//
 	mod->extradata = (byte *)pheader;
+}
+
+/*
+=================
+Mod_LoadMD3Texture
+=================
+*/
+static gltexture_t *Mod_LoadMD3Texture (qmodel_t *mod, const char *shadername)
+{
+	static const char *exts[] = {".tga", ".pcx", ".jpg", ".png"};
+	char               name[MAX_QPATH];
+	char               path[MAX_QPATH];
+	char               rtname[MAX_QPATH];
+	byte              *data;
+	int                width, height;
+	size_t             i;
+	FILE              *f;
+	gltexture_t       *tx;
+
+	if (!shadername[0])
+		return NULL;
+
+	q_strlcpy (name, shadername, sizeof (name));
+	COM_StripExtension (name, name, sizeof (name));
+
+	for (i = 0; i < countof (exts); i++)
+	{
+		q_snprintf (path, sizeof (path), "%s%s", name, exts[i]);
+		f = NULL;
+		COM_FOpenFile (path, &f, NULL);
+		if (f)
+		{
+			fclose (f);
+			break;
+		}
+	}
+	if (i == countof (exts))
+		return NULL;
+
+	data = Image_LoadImage (name, &width, &height);
+	if (!data)
+		return NULL;
+
+	q_snprintf (rtname, sizeof (rtname), "md3/%s", path);
+	tx = TexMgr_LoadImage (rtname, mod, path, width, height, SRC_RGBA, data, path, 0, TEXPREF_MIPMAP);
+	Mem_Free (data);
+	return tx;
+}
+
+/*
+=================
+Mod_LoadMD3Model
+=================
+*/
+static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
+{
+	const md3Header_t *pinheader = (const md3Header_t *)buffer;
+	const md3Frame_t  *pinframes;
+	md3Surface_t      *pinsurface;
+	aliashdr_t        *surfaces;
+	size_t             hdrsize;
+	int                numsurfs, numframes, totalverts, totalindices;
+	int                vertbase, indexbase;
+	vec3_t             mins, maxs;
+	float              yawradius, radius;
+	int                m, f, v;
+
+	if (ReadLongUnaligned ((byte *)&pinheader->ident) != IDMD3HEADER)
+		Sys_Error ("MD3: %s has wrong ident", mod->name);
+	if (ReadLongUnaligned ((byte *)&pinheader->version) != MD3_VERSION)
+		Sys_Error ("MD3: %s has wrong version number (%d should be %d)", mod->name, ReadLongUnaligned ((byte *)&pinheader->version), MD3_VERSION);
+
+	numsurfs = ReadLongUnaligned ((byte *)&pinheader->numSurfaces);
+	numframes = ReadLongUnaligned ((byte *)&pinheader->numFrames);
+
+	if (numframes < 1 || numframes > MAXALIASFRAMES)
+		Sys_Error ("MD3: %s has bad frame count (%i)", mod->name, numframes);
+	if (numsurfs < 1 || numsurfs > MAX_SURFACES)
+		Sys_Error ("MD3: %s has bad surface count (%i)", mod->name, numsurfs);
+
+	totalverts = 0;
+	totalindices = 0;
+	pinsurface = (md3Surface_t *)((byte *)buffer + ReadLongUnaligned ((byte *)&pinheader->ofsSurfaces));
+	for (m = 0; m < numsurfs; m++)
+	{
+		if (ReadLongUnaligned ((byte *)&pinsurface->ident) != IDMD3HEADER)
+			Sys_Error ("MD3: %s corrupt surface ident", mod->name);
+		if (ReadLongUnaligned ((byte *)&pinsurface->numFrames) != numframes)
+			Sys_Error ("MD3: %s mismatched framecounts", mod->name);
+		totalverts += ReadLongUnaligned ((byte *)&pinsurface->numVerts);
+		totalindices += ReadLongUnaligned ((byte *)&pinsurface->numTriangles) * 3;
+		pinsurface = (md3Surface_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsEnd));
+	}
+
+	hdrsize = sizeof (aliashdr_t) + (size_t)(numframes - 1) * sizeof (((aliashdr_t *)0)->frames[0]);
+	surfaces = (aliashdr_t *)Mem_Alloc (hdrsize * numsurfs);
+
+	GLMesh_DeleteVertexBuffer (mod);
+	mod->rtvertices = (QrVertex *)Mem_Alloc ((size_t)numframes * totalverts * sizeof (QrVertex));
+	mod->rtindices = (uint32_t *)Mem_Alloc ((size_t)totalindices * sizeof (uint32_t));
+
+	pinframes = (const md3Frame_t *)((byte *)buffer + ReadLongUnaligned ((byte *)&pinheader->ofsFrames));
+
+	mins[0] = mins[1] = mins[2] = FLT_MAX;
+	maxs[0] = maxs[1] = maxs[2] = -FLT_MAX;
+	yawradius = radius = 0;
+
+	vertbase = 0;
+	indexbase = 0;
+	pinsurface = (md3Surface_t *)((byte *)buffer + ReadLongUnaligned ((byte *)&pinheader->ofsSurfaces));
+	for (m = 0; m < numsurfs; m++)
+	{
+		aliashdr_t           *surf = (aliashdr_t *)((byte *)surfaces + (size_t)m * hdrsize);
+		int                   numverts = ReadLongUnaligned ((byte *)&pinsurface->numVerts);
+		int                   numtris = ReadLongUnaligned ((byte *)&pinsurface->numTriangles);
+		int                   numshaders = ReadLongUnaligned ((byte *)&pinsurface->numShaders);
+		const md3XyzNormal_t *pinvertexes;
+		const md3St_t        *pinst;
+		const md3Triangle_t  *pintriangle;
+		gltexture_t          *tx = NULL;
+
+		surf->nextsurface = (m + 1 < numsurfs) ? (aliashdr_t *)((byte *)surfaces + (size_t)(m + 1) * hdrsize) : NULL;
+		surf->poseverttype = PV_QUAKE3;
+		surf->numverts = numverts;
+		surf->numtris = numtris;
+		surf->numindexes = numtris * 3;
+		surf->firstindex = indexbase;
+		surf->numindices = numtris * 3;
+		surf->numframes = numframes;
+		surf->numposes = 1;
+		surf->skinwidth = 0;
+		surf->skinheight = 0;
+		for (int k = 0; k < 3; k++)
+		{
+			surf->scale[k] = 1.0f;
+			surf->scale_origin[k] = 0.0f;
+		}
+
+		for (f = 0; f < numframes; f++)
+		{
+			surf->frames[f].firstpose = f;
+			surf->frames[f].numposes = 1;
+			surf->frames[f].interval = 0.1f;
+			q_strlcpy (surf->frames[f].name, pinframes[f].name, sizeof (surf->frames[f].name));
+		}
+
+		if (numshaders > 0)
+		{
+			const md3Shader_t *pinshader = (const md3Shader_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsShaders));
+			tx = Mod_LoadMD3Texture (mod, pinshader[0].name);
+		}
+		if (!tx)
+			tx = notexture;
+
+		surf->numskins = 1;
+		for (int s = 0; s < MAX_SKINS; s++)
+			for (int k = 0; k < 4; k++)
+			{
+				surf->gltextures[s][k] = tx;
+				surf->fbtextures[s][k] = NULL;
+			}
+
+		pinvertexes = (const md3XyzNormal_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsXyzNormals));
+		pinst = (const md3St_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsSt));
+
+		for (f = 0; f < numframes; f++)
+		{
+			for (v = 0; v < numverts; v++)
+			{
+				const md3XyzNormal_t *src = pinvertexes + (size_t)f * numverts + v;
+				QrVertex             *dst = &mod->rtvertices[((size_t)f * totalverts) + vertbase + v];
+				short                 packed = (short)ReadShortUnaligned ((byte *)&src->normal);
+				float                 lat = (float)(packed & 0xff) * (2.0f * (float)M_PI / 255.0f);
+				float                 lng = (float)((packed >> 8) & 0xff) * (2.0f * (float)M_PI / 255.0f);
+
+				dst->position[0] = (short)ReadShortUnaligned ((byte *)&src->xyz[0]) * MD3_XYZ_SCALE;
+				dst->position[1] = (short)ReadShortUnaligned ((byte *)&src->xyz[1]) * MD3_XYZ_SCALE;
+				dst->position[2] = (short)ReadShortUnaligned ((byte *)&src->xyz[2]) * MD3_XYZ_SCALE;
+				dst->normal[0] = cosf (lng) * sinf (lat);
+				dst->normal[1] = sinf (lng) * sinf (lat);
+				dst->normal[2] = cosf (lat);
+				dst->texCoord[0] = ReadFloatUnaligned ((byte *)&pinst[v].s);
+				dst->texCoord[1] = ReadFloatUnaligned ((byte *)&pinst[v].t);
+				dst->packedColor = RT_PACKED_COLOR_WHITE;
+				dst->cluster = 0;
+				dst->lightStyles = 0;
+
+				for (int k = 0; k < 3; k++)
+				{
+					mins[k] = q_min (mins[k], dst->position[k]);
+					maxs[k] = q_max (maxs[k], dst->position[k]);
+				}
+				float dist = dst->position[0] * dst->position[0] + dst->position[1] * dst->position[1];
+				yawradius = q_max (yawradius, dist);
+				radius = q_max (radius, dist + dst->position[2] * dst->position[2]);
+			}
+		}
+
+		pintriangle = (const md3Triangle_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsTriangles));
+		for (int t = 0; t < numtris; t++)
+			for (int k = 0; k < 3; k++)
+				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)(ReadLongUnaligned ((byte *)&pintriangle[t].indexes[k]) + vertbase);
+
+		vertbase += numverts;
+		indexbase += numtris * 3;
+		pinsurface = (md3Surface_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsEnd));
+	}
+
+	surfaces->numverts_vbo = totalverts;
+	surfaces->numposes = numframes;
+	surfaces->poseverts = totalverts;
+	surfaces->boundingradius = sqrtf (radius);
+
+	mod->flags = ReadLongUnaligned ((byte *)&pinheader->flags);
+	mod->type = mod_alias;
+	mod->numframes = numframes;
+	mod->extradata = (byte *)surfaces;
+
+	for (int k = 0; k < 3; k++)
+	{
+		mod->mins[k] = mod->ymins[k] = mod->rmins[k] = FLT_MAX;
+		mod->maxs[k] = mod->ymaxs[k] = mod->rmaxs[k] = -FLT_MAX;
+	}
+	radius = sqrtf (radius);
+	yawradius = sqrtf (yawradius);
+	for (int k = 0; k < 3; k++)
+	{
+		mod->mins[k] = mins[k];
+		mod->maxs[k] = maxs[k];
+		mod->rmins[k] = -radius;
+		mod->rmaxs[k] = radius;
+	}
+	mod->ymins[0] = mod->ymins[1] = -yawradius;
+	mod->ymaxs[0] = mod->ymaxs[1] = yawradius;
+	mod->ymins[2] = mins[2];
+	mod->ymaxs[2] = maxs[2];
 }
 
 //=============================================================================
