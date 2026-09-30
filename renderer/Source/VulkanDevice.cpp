@@ -1139,6 +1139,32 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
     pStats->fpsX10 = statsFpsX10;
 }
 
+void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
+{
+    if (pInfo == nullptr)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
+    }
+
+    memset(pInfo, 0, sizeof(QrAdapterInfo));
+
+    if (physDevice == nullptr)
+    {
+        return;
+    }
+
+    const VkPhysicalDeviceProperties &properties = physDevice->GetProperties();
+    const VkPhysicalDeviceDriverProperties &driverProperties = physDevice->GetDriverProperties();
+
+    std::snprintf(pInfo->name, sizeof(pInfo->name), "%s", properties.deviceName);
+    std::snprintf(pInfo->driverName, sizeof(pInfo->driverName), "%s", driverProperties.driverName);
+    std::snprintf(pInfo->driverInfo, sizeof(pInfo->driverInfo), "%s", driverProperties.driverInfo);
+    pInfo->vendorId = properties.vendorID;
+    pInfo->deviceId = properties.deviceID;
+    pInfo->driverVersion = properties.driverVersion;
+    pInfo->apiVersion = properties.apiVersion;
+}
+
 void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)
 {
     using namespace std::string_literals;

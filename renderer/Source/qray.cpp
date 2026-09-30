@@ -355,6 +355,11 @@ QrResult qrGetFrameStatsEx(QrInstance qrInstance, QrFrameStats *pStats)
     return r;
 }
 
+QrResult qrGetAdapterInfo(QrInstance qrInstance, QrAdapterInfo *pInfo)
+{
+    return Call(qrInstance, &VulkanDevice::GetAdapterInfo, pInfo);
+}
+
 QrResult qrRequestScreenshot(QrInstance qrInstance, const char *pFilePath)
 {
     return Call(qrInstance, &VulkanDevice::RequestScreenshot, pFilePath);

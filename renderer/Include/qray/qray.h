@@ -1335,6 +1335,21 @@ QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
 
+typedef struct QrAdapterInfo
+{
+    char        name[256];
+    char        driverName[256];
+    char        driverInfo[256];
+    uint32_t    vendorId;
+    uint32_t    deviceId;
+    uint32_t    driverVersion;
+    uint32_t    apiVersion;
+} QrAdapterInfo;
+
+QRAPI QrResult QRCONV qrGetAdapterInfo(
+    QrInstance                          qrInstance,
+    QrAdapterInfo                      *pInfo);
+
 QRAPI QrResult QRCONV qrRequestScreenshot(
     QrInstance                          qrInstance,
     const char                         *pFilePath);
