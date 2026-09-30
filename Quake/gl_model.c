@@ -32,6 +32,7 @@ static void      Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void      Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer);
 static void      Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
 static void      Mod_LoadMD3Model (qmodel_t *mod, const void *buffer);
+static qboolean  Mod_LoadMD5Model (qmodel_t *mod, const void *buffer);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void      Mod_EnhancedModels_f (cvar_t *var);
 
@@ -510,12 +511,25 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 
 	if (CVAR_TO_BOOL (r_enhancedmodels) && mod_type == IDPOLYHEADER)
 	{
-		char         md3_name[MAX_QPATH];
-		unsigned int md3_path_id = 0;
+		char         md3_name[MAX_QPATH], md5_name[MAX_QPATH];
+		unsigned int md3_path_id = 0, md5_path_id = 0;
 
 		COM_StripExtension (mod->name, md3_name, sizeof (md3_name));
 		COM_AddExtension (md3_name, ".md3", sizeof (md3_name));
-		if (COM_FileExists (md3_name, &md3_path_id) && md3_path_id >= mod->path_id)
+		if (!COM_FileExists (md3_name, &md3_path_id) || md3_path_id < mod->path_id)
+			md3_path_id = 0;
+
+		COM_StripExtension (mod->name, md5_name, sizeof (md5_name));
+		COM_AddExtension (md5_name, ".md5mesh", sizeof (md5_name));
+		if (!COM_FileExists (md5_name, &md5_path_id) || md5_path_id < mod->path_id)
+			md5_path_id = 0;
+
+		if (md3_path_id && md5_path_id && md5_path_id > md3_path_id)
+			md3_path_id = 0;
+		else if (md3_path_id && md5_path_id)
+			md5_path_id = 0;
+
+		if (md3_path_id)
 		{
 			byte *md3_buf = COM_LoadFile (md3_name, &md3_path_id);
 			if (md3_buf)
@@ -525,6 +539,21 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 				Mem_Free (md3_buf);
 				Mem_Free (buf);
 				return mod;
+			}
+		}
+		else if (md5_path_id)
+		{
+			byte *md5_buf = COM_LoadFile (md5_name, &md5_path_id);
+			if (md5_buf)
+			{
+				mod->path_id = md5_path_id;
+				if (Mod_LoadMD5Model (mod, md5_buf))
+				{
+					Mem_Free (md5_buf);
+					Mem_Free (buf);
+					return mod;
+				}
+				Mem_Free (md5_buf);
 			}
 		}
 	}
@@ -537,6 +566,11 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 
 	case IDMD3HEADER:
 		Mod_LoadMD3Model (mod, buf);
+		break;
+
+	case IDMD5HEADER:
+		if (!Mod_LoadMD5Model (mod, buf))
+			Sys_Error ("Mod_LoadModel: failed to load %s", mod->name);
 		break;
 
 	case IDSPRITEHEADER:
@@ -3458,7 +3492,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 Mod_LoadMD3Texture
 =================
 */
-static gltexture_t *Mod_LoadMD3Texture (qmodel_t *mod, const char *shadername)
+static gltexture_t *Mod_LoadEnhancedTexture (qmodel_t *mod, const char *shadername)
 {
 	static const char *exts[] = {".tga", ".pcx", ".jpg", ".png"};
 	char               name[MAX_QPATH];
@@ -3600,7 +3634,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		if (numshaders > 0)
 		{
 			const md3Shader_t *pinshader = (const md3Shader_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsShaders));
-			tx = Mod_LoadMD3Texture (mod, pinshader[0].name);
+			tx = Mod_LoadEnhancedTexture (mod, pinshader[0].name);
 		}
 		if (!tx)
 			tx = notexture;
@@ -3687,6 +3721,699 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 	mod->ymaxs[0] = mod->ymaxs[1] = yawradius;
 	mod->ymins[2] = mins[2];
 	mod->ymaxs[2] = maxs[2];
+}
+
+typedef struct md5joint_s
+{
+	ssize_t parent;
+	char    name[32];
+	float   loc[12];
+} md5joint_t;
+
+typedef struct md5weight_s
+{
+	unsigned int joint;
+	float        bias;
+	vec3_t       pos;
+} md5weight_t;
+
+typedef struct md5vertinfo_s
+{
+	float        st[2];
+	unsigned int firstweight;
+	unsigned int numweights;
+} md5vertinfo_t;
+
+typedef struct md5meshtmp_s
+{
+	char            shader[MAX_QPATH];
+	size_t          numverts;
+	size_t          numtris;
+	size_t          numweights;
+	md5vertinfo_t  *verts;
+	md5weight_t    *weights;
+	unsigned short *indices;
+} md5meshtmp_t;
+
+static qboolean MD5_ParseCheck (const char *s, const void **buffer)
+{
+	if (strcmp (com_token, s))
+		return false;
+	*buffer = COM_Parse (*buffer);
+	return true;
+}
+
+static size_t MD5_ParseUInt (const void **buffer)
+{
+	size_t i = strtoull (com_token, NULL, 0);
+	*buffer = COM_Parse (*buffer);
+	return i;
+}
+
+static long MD5_ParseSInt (const void **buffer)
+{
+	long i = strtol (com_token, NULL, 0);
+	*buffer = COM_Parse (*buffer);
+	return i;
+}
+
+static double MD5_ParseFloat (const void **buffer)
+{
+	double i = strtod (com_token, NULL);
+	*buffer = COM_Parse (*buffer);
+	return i;
+}
+
+static size_t MD5_CountAnimatedComponents (unsigned int flags)
+{
+	size_t count = 0;
+
+	for (unsigned int bit = 1; bit <= 32; bit <<= 1)
+		if (flags & bit)
+			count++;
+	return count;
+}
+
+#define MD5ERROR(...)              \
+	do                             \
+	{                              \
+		Con_Warning (__VA_ARGS__); \
+		goto error;                \
+	} while (0)
+#define MD5EXPECT(s)                                                                                 \
+	do                                                                                               \
+	{                                                                                                \
+		if (strcmp (com_token, s))                                                                   \
+			MD5ERROR ("Mod_LoadMD5Model(%s): expected \"%s\", found \"%s\"\n", fname, s, com_token); \
+		buffer = COM_Parse (buffer);                                                                 \
+	} while (0)
+#define MD5UINT()   MD5_ParseUInt (&buffer)
+#define MD5SINT()   MD5_ParseSInt (&buffer)
+#define MD5FLOAT()  MD5_ParseFloat (&buffer)
+#define MD5CHECK(s) MD5_ParseCheck (s, &buffer)
+#define MD5IGNORE() buffer = COM_Parse (buffer)
+
+static void GenMatrixPosQuat4Scale (const vec3_t pos, const vec4_t quat, const vec3_t scale, float result[12])
+{
+	const float x2 = quat[0] + quat[0];
+	const float y2 = quat[1] + quat[1];
+	const float z2 = quat[2] + quat[2];
+
+	const float xx = quat[0] * x2;
+	const float xy = quat[0] * y2;
+	const float xz = quat[0] * z2;
+	const float yy = quat[1] * y2;
+	const float yz = quat[1] * z2;
+	const float zz = quat[2] * z2;
+	const float xw = quat[3] * x2;
+	const float yw = quat[3] * y2;
+	const float zw = quat[3] * z2;
+
+	result[0 * 4 + 0] = scale[0] * (1.0f - (yy + zz));
+	result[1 * 4 + 0] = scale[0] * (xy + zw);
+	result[2 * 4 + 0] = scale[0] * (xz - yw);
+
+	result[0 * 4 + 1] = scale[1] * (xy - zw);
+	result[1 * 4 + 1] = scale[1] * (1.0f - (xx + zz));
+	result[2 * 4 + 1] = scale[1] * (yz + xw);
+
+	result[0 * 4 + 2] = scale[2] * (xz + yw);
+	result[1 * 4 + 2] = scale[2] * (yz - xw);
+	result[2 * 4 + 2] = scale[2] * (1.0f - (xx + yy));
+
+	result[0 * 4 + 3] = pos[0];
+	result[1 * 4 + 3] = pos[1];
+	result[2 * 4 + 3] = pos[2];
+}
+
+static void MD5_QuatFromXYZW (vec4_t quat)
+{
+	quat[3] = 1 - DotProduct (quat, quat);
+	if (quat[3] < 0)
+		quat[3] = 0;
+	quat[3] = -sqrtf (quat[3]);
+}
+
+static qboolean Mod_LoadMD5Anim (const char *modelname, const md5joint_t *joints, size_t numjoints, const float *bindabs, size_t *out_numposes, float **out_poses)
+{
+	char        fname[MAX_QPATH];
+	void       *file = NULL;
+	const void *buffer;
+	const char *fname_ = fname;
+	size_t      numframes, numanimjoints, rawcount, m;
+	char       (*animnames)[32] = NULL;
+	ssize_t    *animparents = NULL;
+	unsigned int *animflags = NULL;
+	size_t     *animoffsets = NULL;
+	ssize_t    *mesh_to_anim = NULL;
+	vec3_t     *basepos = NULL;
+	vec4_t     *basequat = NULL;
+	float      *raw = NULL;
+	float      *out = NULL;
+	float       local[12];
+	size_t      j;
+
+	q_strlcpy (fname, modelname, sizeof (fname));
+	COM_StripExtension (fname, fname, sizeof (fname));
+	COM_AddExtension (fname, ".md5anim", sizeof (fname));
+
+	file = COM_LoadFile (fname, NULL);
+	if (!file)
+		return false;
+
+	buffer = COM_Parse (file);
+
+	MD5EXPECT ("MD5Version");
+	MD5EXPECT ("10");
+	if (MD5CHECK ("commandline"))
+		MD5IGNORE ();
+	MD5EXPECT ("numFrames");
+	numframes = MD5UINT ();
+	MD5EXPECT ("numJoints");
+	numanimjoints = MD5UINT ();
+	MD5EXPECT ("frameRate");
+	MD5IGNORE ();
+	MD5EXPECT ("numAnimatedComponents");
+	rawcount = MD5UINT ();
+
+	if (numframes < 1 || numframes > 100000)
+		MD5ERROR ("%s has a bad frame count\n", fname_);
+	if (numanimjoints < 1 || numanimjoints > 4096)
+		MD5ERROR ("%s has a bad joint count\n", fname_);
+	if ((double)numframes * (double)numanimjoints > 4.0e6 || rawcount > 1.0e6)
+		MD5ERROR ("%s is too large\n", fname_);
+
+	animnames = Mem_Alloc (numanimjoints * sizeof (*animnames));
+	animparents = Mem_Alloc (numanimjoints * sizeof (*animparents));
+	animflags = Mem_Alloc (numanimjoints * sizeof (*animflags));
+	animoffsets = Mem_Alloc (numanimjoints * sizeof (*animoffsets));
+	mesh_to_anim = Mem_Alloc (numjoints * sizeof (*mesh_to_anim));
+	basepos = Mem_Alloc (numanimjoints * sizeof (*basepos));
+	basequat = Mem_Alloc (numanimjoints * sizeof (*basequat));
+	raw = Mem_Alloc ((rawcount + 6) * sizeof (*raw));
+	out = Mem_Alloc (numframes * numjoints * 12 * sizeof (*out));
+
+	MD5EXPECT ("hierarchy");
+	MD5EXPECT ("{");
+	for (m = 0; m < numanimjoints; m++)
+	{
+		q_strlcpy (animnames[m], com_token, sizeof (animnames[m]));
+		buffer = COM_Parse (buffer);
+		animparents[m] = MD5SINT ();
+		if (animparents[m] < -1 || animparents[m] >= (ssize_t)m)
+			MD5ERROR ("%s: joint has bad parent order\n", fname_);
+		animflags[m] = (unsigned int)MD5UINT ();
+		if (animflags[m] & ~63u)
+			MD5ERROR ("%s: joint has unsupported flags\n", fname_);
+		animoffsets[m] = MD5UINT ();
+		if (animoffsets[m] + MD5_CountAnimatedComponents (animflags[m]) > rawcount)
+			MD5ERROR ("%s: joint has bad offset\n", fname_);
+	}
+	MD5EXPECT ("}");
+
+	for (j = 0; j < numjoints; j++)
+	{
+		mesh_to_anim[j] = -1;
+		for (m = 0; m < numanimjoints; m++)
+			if (!strcmp (joints[j].name, animnames[m]))
+			{
+				mesh_to_anim[j] = (ssize_t)m;
+				break;
+			}
+	}
+
+	MD5EXPECT ("bounds");
+	MD5EXPECT ("{");
+	while (MD5CHECK ("("))
+	{
+		MD5IGNORE ();
+		MD5IGNORE ();
+		MD5IGNORE ();
+		MD5EXPECT (")");
+		MD5EXPECT ("(");
+		MD5IGNORE ();
+		MD5IGNORE ();
+		MD5IGNORE ();
+		MD5EXPECT (")");
+	}
+	MD5EXPECT ("}");
+
+	MD5EXPECT ("baseframe");
+	MD5EXPECT ("{");
+	for (m = 0; m < numanimjoints; m++)
+	{
+		MD5EXPECT ("(");
+		basepos[m][0] = MD5FLOAT ();
+		basepos[m][1] = MD5FLOAT ();
+		basepos[m][2] = MD5FLOAT ();
+		MD5EXPECT (")");
+		MD5EXPECT ("(");
+		basequat[m][0] = MD5FLOAT ();
+		basequat[m][1] = MD5FLOAT ();
+		basequat[m][2] = MD5FLOAT ();
+		MD5_QuatFromXYZW (basequat[m]);
+		MD5EXPECT (")");
+	}
+	MD5EXPECT ("}");
+
+	while (MD5CHECK ("frame"))
+	{
+		size_t idx = MD5UINT ();
+		float *r;
+
+		if (idx >= numframes)
+			MD5ERROR ("%s: invalid frame index\n", fname_);
+		MD5EXPECT ("{");
+		for (m = 0; m < rawcount; m++)
+			raw[m] = MD5FLOAT ();
+		MD5EXPECT ("}");
+
+		for (j = 0; j < numjoints; j++)
+		{
+			vec3_t pos;
+			vec4_t quat;
+			ssize_t aj = mesh_to_anim[j];
+			float  *dst = out + (idx * numjoints + j) * 12;
+
+			if (aj < 0)
+			{
+				memcpy (local, joints[j].loc, sizeof (local));
+			}
+			else
+			{
+				static vec3_t scale = {1, 1, 1};
+
+				VectorCopy (basepos[aj], pos);
+				Vector4Copy (basequat[aj], quat);
+				r = raw + animoffsets[aj];
+				if (animflags[aj] & 1)
+					pos[0] = *r++;
+				if (animflags[aj] & 2)
+					pos[1] = *r++;
+				if (animflags[aj] & 4)
+					pos[2] = *r++;
+				if (animflags[aj] & 8)
+					quat[0] = *r++;
+				if (animflags[aj] & 16)
+					quat[1] = *r++;
+				if (animflags[aj] & 32)
+					quat[2] = *r++;
+				MD5_QuatFromXYZW (quat);
+				GenMatrixPosQuat4Scale (pos, quat, scale, local);
+			}
+
+			if (joints[j].parent < 0)
+				memcpy (dst, local, sizeof (local));
+			else
+				R_ConcatTransforms ((float (*)[4])(out + (idx * numjoints + joints[j].parent) * 12), (float (*)[4])local, (float (*)[4])dst);
+		}
+	}
+
+	Mem_Free (animnames);
+	Mem_Free (animparents);
+	Mem_Free (animflags);
+	Mem_Free (animoffsets);
+	Mem_Free (mesh_to_anim);
+	Mem_Free (basepos);
+	Mem_Free (basequat);
+	Mem_Free (raw);
+	Mem_Free (file);
+
+	*out_numposes = numframes;
+	*out_poses = out;
+	return true;
+
+error:
+	Mem_Free (animnames);
+	Mem_Free (animparents);
+	Mem_Free (animflags);
+	Mem_Free (animoffsets);
+	Mem_Free (mesh_to_anim);
+	Mem_Free (basepos);
+	Mem_Free (basequat);
+	Mem_Free (raw);
+	Mem_Free (out);
+	Mem_Free (file);
+	return false;
+}
+
+static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
+{
+	const char   *fname = mod->name;
+	md5joint_t   *joints = NULL;
+	float        *bindabs = NULL;
+	float        *poses = NULL;
+	size_t        numposes = 1;
+	qboolean      poses_owned = false;
+	md5meshtmp_t *meshes = NULL;
+	aliashdr_t   *surfaces = NULL;
+	size_t        numjoints = 0, nummeshes = 0, m, j, p;
+	size_t        totalverts = 0, totalindices = 0, vertbase = 0, indexbase = 0;
+	size_t        hdrsize;
+	vec3_t        mins, maxs;
+	float         yawradius = 0, radius = 0;
+
+	buffer = COM_Parse (buffer);
+
+	MD5EXPECT ("MD5Version");
+	MD5EXPECT ("10");
+	if (MD5CHECK ("commandline"))
+		MD5IGNORE ();
+	MD5EXPECT ("numJoints");
+	numjoints = MD5UINT ();
+	MD5EXPECT ("numMeshes");
+	nummeshes = MD5UINT ();
+
+	if (numjoints < 1 || numjoints > 4096)
+		MD5ERROR ("%s has a bad joint count\n", fname);
+	if (nummeshes < 1 || nummeshes > 256)
+		MD5ERROR ("%s has a bad mesh count\n", fname);
+
+	MD5EXPECT ("joints");
+	MD5EXPECT ("{");
+	joints = Mem_Alloc (numjoints * sizeof (*joints));
+	for (j = 0; j < numjoints; j++)
+	{
+		vec3_t pos, scale = {1, 1, 1};
+		vec4_t quat;
+
+		q_strlcpy (joints[j].name, com_token, sizeof (joints[j].name));
+		buffer = COM_Parse (buffer);
+		joints[j].parent = MD5SINT ();
+		if (joints[j].parent < -1 || joints[j].parent >= (ssize_t)j)
+			MD5ERROR ("%s: joint has bad parent order\n", fname);
+		MD5EXPECT ("(");
+		pos[0] = MD5FLOAT ();
+		pos[1] = MD5FLOAT ();
+		pos[2] = MD5FLOAT ();
+		MD5EXPECT (")");
+		MD5EXPECT ("(");
+		quat[0] = MD5FLOAT ();
+		quat[1] = MD5FLOAT ();
+		quat[2] = MD5FLOAT ();
+		MD5_QuatFromXYZW (quat);
+		MD5EXPECT (")");
+		GenMatrixPosQuat4Scale (pos, quat, scale, joints[j].loc);
+	}
+	MD5EXPECT ("}");
+
+	bindabs = Mem_Alloc (numjoints * 12 * sizeof (*bindabs));
+	for (j = 0; j < numjoints; j++)
+	{
+		if (joints[j].parent < 0)
+			memcpy (bindabs + j * 12, joints[j].loc, 12 * sizeof (*bindabs));
+		else
+			R_ConcatTransforms ((float (*)[4])(bindabs + joints[j].parent * 12), (float (*)[4])joints[j].loc, (float (*)[4])(bindabs + j * 12));
+	}
+
+	if (Mod_LoadMD5Anim (fname, joints, numjoints, bindabs, &numposes, &poses))
+		poses_owned = true;
+	else
+		poses = bindabs;
+
+	if (numposes > MAXALIASFRAMES)
+	{
+		Con_Warning ("%s has %i animation frames, only the first %i are used\n", fname, (int)numposes, MAXALIASFRAMES);
+		numposes = MAXALIASFRAMES;
+	}
+
+	meshes = Mem_Alloc (nummeshes * sizeof (*meshes));
+	for (m = 0; m < nummeshes; m++)
+	{
+		md5meshtmp_t *mesh = &meshes[m];
+
+		MD5EXPECT ("mesh");
+		MD5EXPECT ("{");
+		MD5EXPECT ("shader");
+		q_strlcpy (mesh->shader, com_token, sizeof (mesh->shader));
+		buffer = COM_Parse (buffer);
+
+		MD5EXPECT ("numverts");
+		mesh->numverts = MD5UINT ();
+		if (mesh->numverts < 1 || mesh->numverts > 100000)
+			MD5ERROR ("%s: bad vertex count\n", fname);
+		mesh->verts = Mem_Alloc (mesh->numverts * sizeof (*mesh->verts));
+		while (MD5CHECK ("vert"))
+		{
+			size_t idx = MD5UINT ();
+
+			if (idx >= mesh->numverts)
+				MD5ERROR ("%s: vertex index out of bounds\n", fname);
+			MD5EXPECT ("(");
+			mesh->verts[idx].st[0] = MD5FLOAT ();
+			mesh->verts[idx].st[1] = MD5FLOAT ();
+			MD5EXPECT (")");
+			mesh->verts[idx].firstweight = (unsigned int)MD5UINT ();
+			mesh->verts[idx].numweights = (unsigned int)MD5UINT ();
+		}
+
+		MD5EXPECT ("numtris");
+		mesh->numtris = MD5UINT ();
+		if (mesh->numtris > 100000)
+			MD5ERROR ("%s: bad triangle count\n", fname);
+		mesh->indices = Mem_Alloc (mesh->numtris * 3 * sizeof (*mesh->indices));
+		while (MD5CHECK ("tri"))
+		{
+			size_t idx = MD5UINT ();
+
+			if (idx >= mesh->numtris)
+				MD5ERROR ("%s: triangle index out of bounds\n", fname);
+			for (int k = 0; k < 3; k++)
+			{
+				size_t v = MD5UINT ();
+
+				if (v >= mesh->numverts)
+					MD5ERROR ("%s: vertex index out of bounds\n", fname);
+				mesh->indices[idx * 3 + k] = (unsigned short)v;
+			}
+		}
+
+		MD5EXPECT ("numweights");
+		mesh->numweights = MD5UINT ();
+		if (mesh->numweights > 1000000)
+			MD5ERROR ("%s: bad weight count\n", fname);
+		mesh->weights = Mem_Alloc (mesh->numweights * sizeof (*mesh->weights));
+		while (MD5CHECK ("weight"))
+		{
+			size_t idx = MD5UINT ();
+
+			if (idx >= mesh->numweights)
+				MD5ERROR ("%s: weight index out of bounds\n", fname);
+			mesh->weights[idx].joint = (unsigned int)MD5UINT ();
+			if (mesh->weights[idx].joint >= numjoints)
+				MD5ERROR ("%s: joint index out of bounds\n", fname);
+			mesh->weights[idx].bias = (float)MD5FLOAT ();
+			MD5EXPECT ("(");
+			mesh->weights[idx].pos[0] = (float)MD5FLOAT ();
+			mesh->weights[idx].pos[1] = (float)MD5FLOAT ();
+			mesh->weights[idx].pos[2] = (float)MD5FLOAT ();
+			MD5EXPECT (")");
+		}
+
+		MD5EXPECT ("}");
+
+		if (mesh->numverts > 0xFFFF)
+			MD5ERROR ("%s: too many vertices in a mesh\n", fname);
+
+		totalverts += mesh->numverts;
+		totalindices += mesh->numtris * 3;
+	}
+
+	hdrsize = sizeof (aliashdr_t) + (numposes - 1) * sizeof (((aliashdr_t *)0)->frames[0]);
+	surfaces = (aliashdr_t *)Mem_Alloc (hdrsize * nummeshes);
+
+	GLMesh_DeleteVertexBuffer (mod);
+	mod->rtvertices = (QrVertex *)Mem_Alloc ((size_t)numposes * totalverts * sizeof (QrVertex));
+	mod->rtindices = (uint32_t *)Mem_Alloc (totalindices * sizeof (uint32_t));
+
+	mins[0] = mins[1] = mins[2] = FLT_MAX;
+	maxs[0] = maxs[1] = maxs[2] = -FLT_MAX;
+
+	for (m = 0; m < nummeshes; m++)
+	{
+		md5meshtmp_t *mesh = &meshes[m];
+		aliashdr_t   *surf = (aliashdr_t *)((byte *)surfaces + m * hdrsize);
+		gltexture_t  *tx;
+
+		surf->nextsurface = (m + 1 < nummeshes) ? (aliashdr_t *)((byte *)surfaces + (m + 1) * hdrsize) : NULL;
+		surf->poseverttype = PV_MD5;
+		surf->numverts = (int)mesh->numverts;
+		surf->numtris = (int)mesh->numtris;
+		surf->numindexes = (int)(mesh->numtris * 3);
+		surf->firstindex = (int)indexbase;
+		surf->numindices = (int)(mesh->numtris * 3);
+		surf->numframes = (int)numposes;
+		surf->numposes = 1;
+		for (int k = 0; k < 3; k++)
+		{
+			surf->scale[k] = 1.0f;
+			surf->scale_origin[k] = 0.0f;
+		}
+		for (p = 0; p < numposes; p++)
+		{
+			surf->frames[p].firstpose = (int)p;
+			surf->frames[p].numposes = 1;
+			surf->frames[p].interval = 0.1f;
+			q_snprintf (surf->frames[p].name, sizeof (surf->frames[p].name), "frame%i", (int)p);
+		}
+
+		tx = Mod_LoadEnhancedTexture (mod, mesh->shader);
+		if (!tx)
+			tx = notexture;
+		surf->numskins = 1;
+		for (int s = 0; s < MAX_SKINS; s++)
+			for (int k = 0; k < 4; k++)
+			{
+				surf->gltextures[s][k] = tx;
+				surf->fbtextures[s][k] = NULL;
+			}
+
+		for (size_t i = 0; i < mesh->numtris * 3; i++)
+			mod->rtindices[indexbase + i] = (uint32_t)mesh->indices[i] + (uint32_t)vertbase;
+
+		for (p = 0; p < numposes; p++)
+		{
+			const float *pose = poses + (size_t)p * numjoints * 12;
+			QrVertex    *out = mod->rtvertices + (size_t)p * totalverts + vertbase;
+			vec3_t       v;
+
+			for (size_t vi = 0; vi < mesh->numverts; vi++)
+			{
+				const md5vertinfo_t *info = &mesh->verts[vi];
+				float                acc[3] = {0, 0, 0};
+
+				if (info->firstweight + info->numweights > mesh->numweights)
+					MD5ERROR ("%s: weight index out of bounds\n", fname);
+
+				for (unsigned int w = 0; w < info->numweights; w++)
+				{
+					const md5weight_t *weight = &mesh->weights[info->firstweight + w];
+					const float       *mat = pose + (size_t)weight->joint * 12;
+
+					acc[0] += weight->bias * (mat[0] * weight->pos[0] + mat[4] * weight->pos[1] + mat[8] * weight->pos[2] + mat[3]);
+					acc[1] += weight->bias * (mat[1] * weight->pos[0] + mat[5] * weight->pos[1] + mat[9] * weight->pos[2] + mat[7]);
+					acc[2] += weight->bias * (mat[2] * weight->pos[0] + mat[6] * weight->pos[1] + mat[10] * weight->pos[2] + mat[11]);
+				}
+
+				out[vi].position[0] = acc[0];
+				out[vi].position[1] = acc[1];
+				out[vi].position[2] = acc[2];
+				out[vi].normal[0] = 0;
+				out[vi].normal[1] = 0;
+				out[vi].normal[2] = 0;
+				out[vi].texCoord[0] = info->st[0];
+				out[vi].texCoord[1] = info->st[1];
+				out[vi].packedColor = RT_PACKED_COLOR_WHITE;
+				out[vi].cluster = 0;
+				out[vi].lightStyles = 0;
+
+				for (int k = 0; k < 3; k++)
+				{
+					mins[k] = q_min (mins[k], out[vi].position[k]);
+					maxs[k] = q_max (maxs[k], out[vi].position[k]);
+				}
+			}
+
+			for (size_t t = 0; t < mesh->numtris; t++)
+			{
+				const unsigned short *tri = &mesh->indices[t * 3];
+				vec3_t                e1, e2, n;
+
+				VectorSubtract (out[tri[1]].position, out[tri[0]].position, e1);
+				VectorSubtract (out[tri[2]].position, out[tri[0]].position, e2);
+				CrossProduct (e1, e2, n);
+				for (int k = 0; k < 3; k++)
+				{
+					VectorAdd (out[tri[k]].normal, n, out[tri[k]].normal);
+				}
+			}
+
+			for (size_t vi = 0; vi < mesh->numverts; vi++)
+			{
+				float len2 = DotProduct (out[vi].normal, out[vi].normal);
+
+				if (len2 > 0.0f)
+				{
+					float inv = 1.0f / sqrtf (len2);
+
+					out[vi].normal[0] *= inv;
+					out[vi].normal[1] *= inv;
+					out[vi].normal[2] *= inv;
+				}
+				else
+				{
+					out[vi].normal[0] = 0;
+					out[vi].normal[1] = 0;
+					out[vi].normal[2] = 1;
+				}
+
+				v[0] = out[vi].position[0];
+				v[1] = out[vi].position[1];
+				v[2] = out[vi].position[2];
+				float dist = v[0] * v[0] + v[1] * v[1];
+				yawradius = q_max (yawradius, dist);
+				radius = q_max (radius, dist + v[2] * v[2]);
+			}
+		}
+
+		vertbase += mesh->numverts;
+		indexbase += mesh->numtris * 3;
+	}
+
+	surfaces->numverts_vbo = (int)totalverts;
+	surfaces->numposes = (int)numposes;
+	surfaces->poseverts = (int)totalverts;
+	surfaces->boundingradius = sqrtf (radius);
+
+	mod->flags = 0;
+	mod->type = mod_alias;
+	mod->numframes = (int)numposes;
+	mod->extradata = (byte *)surfaces;
+
+	for (int k = 0; k < 3; k++)
+	{
+		mod->mins[k] = mins[k];
+		mod->maxs[k] = maxs[k];
+		mod->rmins[k] = -sqrtf (radius);
+		mod->rmaxs[k] = sqrtf (radius);
+	}
+	mod->ymins[0] = mod->ymins[1] = -sqrtf (yawradius);
+	mod->ymaxs[0] = mod->ymaxs[1] = sqrtf (yawradius);
+	mod->ymins[2] = mins[2];
+	mod->ymaxs[2] = maxs[2];
+
+	for (m = 0; m < nummeshes; m++)
+	{
+		Mem_Free (meshes[m].verts);
+		Mem_Free (meshes[m].weights);
+		Mem_Free (meshes[m].indices);
+	}
+	Mem_Free (meshes);
+	Mem_Free (joints);
+	Mem_Free (bindabs);
+	if (poses_owned)
+		Mem_Free (poses);
+
+	return true;
+
+error:
+	if (meshes)
+	{
+		for (m = 0; m < nummeshes; m++)
+		{
+			Mem_Free (meshes[m].verts);
+			Mem_Free (meshes[m].weights);
+			Mem_Free (meshes[m].indices);
+		}
+		Mem_Free (meshes);
+	}
+	Mem_Free (joints);
+	Mem_Free (bindabs);
+	if (poses_owned)
+		Mem_Free (poses);
+	Mem_Free (surfaces);
+	GLMesh_DeleteVertexBuffer (mod);
+	return false;
 }
 
 //=============================================================================

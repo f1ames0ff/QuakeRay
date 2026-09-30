@@ -333,6 +333,7 @@ enum
 {
 	PV_QUAKE1 = 0,
 	PV_QUAKE3,
+	PV_MD5,
 	PV_SIZE
 };
 
@@ -341,6 +342,8 @@ enum
 #define MD3_VERSION  15
 #define IDMD3HEADER  (('I' << 0) | ('D' << 8) | ('P' << 16) | ('3' << 24))
 #define MD3_XYZ_SCALE (1.0f / 64.0f)
+
+#define IDMD5HEADER (('M' << 0) + ('D' << 8) + ('5' << 16) + ('V' << 24))
 
 typedef struct md3XyzNormal_s
 {

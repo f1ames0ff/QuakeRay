@@ -349,7 +349,7 @@ else
 Atomic_AddUInt32(&rs_aliaspasses, paliashdr->numtris);
 }
 
-static void R_DrawMD3Model (entity_t *e, aliashdr_t *paliashdr, int entuniqueid)
+static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniqueid)
 {
 	lerpdata_t      lerpdata;
 	float           blend, entalpha;
@@ -632,9 +632,9 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
     //
     paliashdr = (aliashdr_t*)Mod_Extradata(e->model);
 
-    if (paliashdr->poseverttype == PV_QUAKE3)
+    if (paliashdr->poseverttype != PV_QUAKE1)
     {
-        R_DrawMD3Model (e, paliashdr, entuniqueid);
+        R_DrawEnhancedModel (e, paliashdr, entuniqueid);
         return;
     }
 
