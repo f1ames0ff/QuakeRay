@@ -45,7 +45,14 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
     }
 
     swapchain->RequestPresentMode(startInfo.presentMode);
+    swapchain->SetMaxFrameLatency(startInfo.maxFrameLatency);
     swapchain->AcquireImage(imageAvailableSemaphores[frameIndex]);
+
+    if (swapchain->IsPresentWaitActive() && !printedPresentWaitActive)
+    {
+        printedPresentWaitActive = true;
+        Print("RHI: present wait is active, the swapchain caps the frames queued for display");
+    }
 
     {
         const std::string presentModeName = swapchain->GetPresentModeName();

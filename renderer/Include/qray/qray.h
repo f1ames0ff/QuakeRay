@@ -895,6 +895,7 @@ typedef enum QrPresentMode
 typedef struct QrStartFrameInfo
 {
     QrPresentMode   presentMode;
+    uint32_t        maxFrameLatency;
     QrBool32        requestShaderReload;
 } QrStartFrameInfo;
 

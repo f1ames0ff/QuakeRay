@@ -185,7 +185,9 @@ private:
     std::shared_ptr<PhysicalDevice>         physDevice;
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
+    bool                                    presentWait2Enabled = false;
     std::string                             printedPresentModeName;
+    bool                                    printedPresentWaitActive = false;
     std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;
