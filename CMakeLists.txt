@@ -357,6 +357,7 @@ set(CORE_SOURCES
     Quake/host.c
     Quake/host_cmd.c
     Quake/image.c
+    Quake/json.c
     Quake/keys.c
     Quake/mathlib.c
     Quake/mdfour.c

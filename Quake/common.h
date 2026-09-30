@@ -215,6 +215,7 @@ char *q_strupr (char *str);
 
 /* Trim whitespace on both ends, modifying str on-place: Returns the new start of str after trim */
 char *q_strtrim (char *str);
+size_t UTF8_WriteCodePoint (char *dst, size_t maxbytes, uint32_t codepoint);
 
 /* Split str around any of the characters of sep_set, gobbling any number of consecutive found separators, modifying str in-place.
 In addition, if nb_substr != NULL:
