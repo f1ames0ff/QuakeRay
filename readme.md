@@ -167,10 +167,11 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 
 ## Sound
 
-OpenAL Soft is the sound system: every engine channel is positioned against the listener and attenuated by the engine's own distance law, OpenAL Soft's built-in HRTF (the MIT KEMAR dataset) turns the mix binaural on headphones, and streamed music keeps its stereo image. The old SDL audio device and the software mixer are gone - the game no longer opens an SDL audio device at all, so an audio glitch from that path cannot survive a session or an exit. `snd_mixspeed` (`44100`) is the output rate the device is asked for.
+OpenAL Soft is the sound system: every engine channel is positioned against the listener and attenuated by the engine's own distance law, OpenAL Soft's built-in HRTF (the MIT KEMAR dataset) turns the mix binaural on headphones, and streamed music keeps its stereo image. The old SDL audio device and the software mixer are gone - the game no longer opens an SDL audio device at all, so an audio glitch from that path cannot survive a session or an exit. `snd_mixspeed` (`48000`) is the output rate the device is asked for; the built-in HRTF dataset is a 48 kHz one, so the default rate plays it without resampling the HRIRs.
 
 * `s_openal_hrtf` is `0` off, `1` on or `2` auto (default - the device decides, so a speaker setup is not surprised). Changing it restarts the audio backend.
 * Sound Options carries a **Spatial sound** switch that reads the mode OpenAL Soft actually granted (so `auto` shows what you hear) and writes `s_openal_hrtf` as `1` or `0`.
+* **Spatial bass** (`s_openal_hrtf_bass`, dB, default `9`) compensates the low-frequency roll-off of the KEMAR HRTF: a low shelf below ~200 Hz, applied to the samples only while the HRTF is on. The menu cycles `off`, `+3`, `+6`, `+9` and `+12 dB`; `0` keeps the raw dataset.
 * Sound Options also carries **Sound frequency** (`snd_mixspeed`, archived): the output rate OpenAL Soft is asked for, `11.0` to `192.0 kHz`. Changing it restarts the backend and reloads the samples at the new rate; the console cvar and `-mixspeed` do the same.
 * `s_openal_max_sources` (`256`) is the source pool size; OpenAL Soft's own source limit caps it.
 * `nosound 1` (or `-nosound`) starts the game without sound, like before.

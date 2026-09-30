@@ -70,6 +70,7 @@ static void S_BackendStart (void);
 static void S_BackendShutdown (void);
 static void S_OpenALChanged (cvar_t *var);
 static void S_MixSpeedChanged (cvar_t *var);
+static void S_HrtfBassChanged (cvar_t *var);
 
 SDL_mutex *snd_mutex;
 
@@ -79,7 +80,7 @@ cvar_t sfxvolume = {"volume", "0.7", CVAR_ARCHIVE};
 cvar_t precache = {"precache", "1", CVAR_NONE};
 cvar_t loadas8bit = {"loadas8bit", "0", CVAR_NONE};
 
-cvar_t snd_mixspeed = {"snd_mixspeed", "44100", CVAR_ARCHIVE};
+cvar_t snd_mixspeed = {"snd_mixspeed", "48000", CVAR_ARCHIVE};
 
 static cvar_t nosound = {"nosound", "0", CVAR_NONE};
 static cvar_t ambient_level = {"ambient_level", "0.3", CVAR_NONE};
@@ -87,6 +88,7 @@ static cvar_t ambient_fade = {"ambient_fade", "100", CVAR_NONE};
 static cvar_t snd_show = {"snd_show", "0", CVAR_NONE};
 
 cvar_t s_openal_hrtf = {"s_openal_hrtf", "2", CVAR_ARCHIVE};
+cvar_t s_openal_hrtf_bass = {"s_openal_hrtf_bass", "9", CVAR_ARCHIVE};
 cvar_t s_openal_max_sources = {"s_openal_max_sources", "256", CVAR_ARCHIVE};
 
 static void S_SoundInfo_f (void)
@@ -157,7 +159,18 @@ static void S_MixSpeedChanged (cvar_t *var)
 	if (var->value < 8000 || var->value > 192000)
 	{
 		Con_Printf ("snd_mixspeed must be between 8000 and 192000\n");
-		Cvar_SetQuick (&snd_mixspeed, "44100");
+		Cvar_SetQuick (&snd_mixspeed, "48000");
+		return;
+	}
+	S_RestartBackend ();
+}
+
+static void S_HrtfBassChanged (cvar_t *var)
+{
+	if (var->value < 0 || var->value > 12)
+	{
+		Con_Printf ("s_openal_hrtf_bass must be between 0 and 12 dB\n");
+		Cvar_SetQuick (&s_openal_hrtf_bass, "9");
 		return;
 	}
 	S_RestartBackend ();
@@ -207,6 +220,7 @@ void S_Init (void)
 	Cvar_RegisterVariable (&ambient_fade);
 	Cvar_RegisterVariable (&snd_show);
 	Cvar_RegisterVariable (&s_openal_hrtf);
+	Cvar_RegisterVariable (&s_openal_hrtf_bass);
 	Cvar_RegisterVariable (&s_openal_max_sources);
 	Cvar_RegisterVariable (&snd_mixspeed);
 
@@ -228,6 +242,7 @@ void S_Init (void)
 	}
 
 	Cvar_SetCallback (&s_openal_hrtf, S_OpenALChanged);
+	Cvar_SetCallback (&s_openal_hrtf_bass, S_HrtfBassChanged);
 	Cvar_SetCallback (&s_openal_max_sources, S_OpenALChanged);
 	Cvar_SetCallback (&snd_mixspeed, S_MixSpeedChanged);
 

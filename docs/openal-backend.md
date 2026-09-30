@@ -25,7 +25,7 @@ occlusion) is not implemented yet and is listed at the end.
 | `listener_origin` / `listener_forward` / `listener_right` / `listener_up` | listener basis, refreshed by `S_Update` | `AL_POSITION` + `AL_ORIENTATION = {forward, up}`; Quake's `right = forward x up` matches OpenAL's convention, so no axis swap is needed |
 | `entnum == cl.viewentity`, ambient channels `0..NUM_AMBIENTS-1` | always full volume, "inside the head" | `AL_SOURCE_RELATIVE` at `(0, 0, 0)` |
 | `MAX_CHANNELS` / `MAX_DYNAMIC_CHANNELS` / `NUM_AMBIENTS` | `1024` / `128` / `4` (statics up to `MAX_CHANNELS`) | source pool, `s_openal_max_sources` (default `256`, clamped to `MAX_CHANNELS`; the music source is reserved first and OpenAL Soft's own limit caps the count); an inaudible static's slot is reused when the pool is exhausted, the engine's own channel stealing still decides who plays |
-| `snd_output.speed` / `snd_mixspeed` | output rate, default `44100` | `ALC_FREQUENCY` on the context; caches and music are resampled to the device rate `ALC_FREQUENCY` reports |
+| `snd_output.speed` / `snd_mixspeed` | output rate, default `48000` (the built-in HRTF dataset's own rate, so the HRIRs are not resampled) | `ALC_FREQUENCY` on the context; caches and music are resampled to the device rate `ALC_FREQUENCY` reports |
 | `snd_output.channels` | `2` | stereo output; HRTF convolution happens inside OpenAL Soft |
 | `S_RawSamples` / `s_rawsamples` / `s_rawend` (`MAX_RAW_SAMPLES` = `8192`) | streamed stereo music and ambience, already scaled by `bgmvolume` | a separate `AL_SOURCE_RELATIVE` stereo streaming source (`AL_SOFT_direct_channels` when available) fed from the same ring by `SNDAL_Update`; the ring has its own read cursor (`SNDAL_RawPosition`, exposed to `bgmusic.c` through `S_RawSamplesCursor`) |
 | `paintedtime` | playback clock in sample pairs, used by `SND_PickChannel` for "closest to finishing" and by start/end bookkeeping | a wall-clock sample counter advanced by `SNDAL_AdvanceClock` from `Sys_DoubleTime`, independent of the music ring |
@@ -37,8 +37,9 @@ occlusion) is not implemented yet and is listed at the end.
 | Cvar | Default | Meaning |
 |---|---|---|
 | `s_openal_hrtf` | `2` | HRTF mode: `0` off, `1` on, `2` auto (the device decides, headphones suggested); requires a context restart, so changing it restarts the backend |
+| `s_openal_hrtf_bass` | `9` | low-shelf compensation of the KEMAR dataset's weak low end, in dB (`0..12`); applied to the samples only while the HRTF is on, and changing it restarts the backend |
 | `s_openal_max_sources` | `256` | size of the source pool, clamped to `1..MAX_CHANNELS`; takes effect on the next backend restart |
-| `snd_mixspeed` | `44100` | output rate the OpenAL device is asked for (`-mixspeed` sets it at startup) |
+| `snd_mixspeed` | `48000` | output rate the OpenAL device is asked for (`-mixspeed` sets it at startup); `48000` matches the built-in HRTF dataset |
 
 The startup line reports the device, its rate, the source count and the HRTF status OpenAL Soft
 granted (`enabled`, `disabled`, `denied`, `headphones detected`, `unsupported format`).

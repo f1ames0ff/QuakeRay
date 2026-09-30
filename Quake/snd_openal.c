@@ -205,6 +205,30 @@ static void SNDAL_ReleaseSlot (int slot)
 	sndal_sources[slot].looping = false;
 }
 
+static void SNDAL_ApplyBassShelf (short *pcm, int count, int rate)
+{
+	float gain = powf (10.0f, (float)s_openal_hrtf_bass.value / 20.0f) - 1.0f;
+	float alpha = 1.0f - expf (-2.0f * (float)M_PI * 200.0f / (float)rate);
+	float lp = 0.0f;
+	int i;
+
+	if (rate <= 0)
+		return;
+	for (i = 0; i < count; i++)
+	{
+		float x = pcm[i];
+		int val;
+
+		lp += (x - lp) * alpha;
+		val = (int)(x + gain * lp);
+		if (val > 32767)
+			val = 32767;
+		else if (val < -32768)
+			val = -32768;
+		pcm[i] = (short)val;
+	}
+}
+
 static ALuint SNDAL_GetBuffer (channel_t *ch)
 {
 	sfx_t      *sfx = ch->sfx;
@@ -240,7 +264,23 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 		}
 		for (i = 0; i < sc->length; i++)
 			pcm[i] = (short)(((signed char *)sc->data)[i] << 8);
+		if (SNDAL_HrtfEnabled () && s_openal_hrtf_bass.value > 0.0f)
+			SNDAL_ApplyBassShelf (pcm, sc->length, sc->speed);
 		alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * (int)sizeof (short)), sc->speed);
+		Mem_Free (pcm);
+	}
+	else if (SNDAL_HrtfEnabled () && s_openal_hrtf_bass.value > 0.0f)
+	{
+		short *pcm = (short *)Mem_Alloc ((size_t)sc->length * sizeof (short));
+
+		if (!pcm)
+		{
+			alDeleteBuffers (1, &buffer);
+			return 0;
+		}
+		memcpy (pcm, sc->data, (size_t)sc->length * sizeof (short));
+		SNDAL_ApplyBassShelf (pcm, sc->length, sc->speed);
+		alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * 2), sc->speed);
 		Mem_Free (pcm);
 	}
 	else
