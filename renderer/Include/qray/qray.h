@@ -646,7 +646,6 @@ typedef struct QrClusterLightStats
     uint32_t listEntries;
     uint32_t grants;
     uint32_t denied;
-    uint32_t evictions;
 
     uint32_t topUpGrants;
 

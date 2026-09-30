@@ -110,15 +110,12 @@ public:
     FrameCopies GetFrameCopies(uint32_t frame) const;
     void ConsumeFrameCopies(uint32_t frame);
 
-    float GetRegisteredLightPower(uint32_t frameIndex, uint64_t uniqueID) const;
-
 private:
     struct RegistryEntry
     {
         uint32_t generation;
         uint32_t arrayIndex;
         uint64_t uniqueID;
-        float    power;
     };
 
     static constexpr uint32_t LIGHT_REGISTRY_SIZE = 2 * LIGHT_ARRAY_ENTRY_COUNT;
@@ -130,7 +127,7 @@ private:
 
     LightArrayIndex GetIndex(const ShLightEncoded &encodedLight) const;
     void IncrementCount(const ShLightEncoded &encodedLight);
-    void AddLight(uint32_t frameIndex, uint64_t uniqueId, const ShLightEncoded &encodedLight, float power);
+    void AddLight(uint32_t frameIndex, uint64_t uniqueId, const ShLightEncoded &encodedLight);
 
     void FillMatchPrev(uint32_t curFrameIndex, LightArrayIndex lightIndexInCurFrame, UniqueLightID uniqueID, uint32_t ordinal);
 

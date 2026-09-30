@@ -94,7 +94,6 @@ private:
         // is clamped to the top-up reach when the sources are taken: the two passes have to
         // agree on where a light stops mattering.
         float    reach;
-        float    power;
         /* Set on a place a light left behind, which is kept as a place that holds no light and
            that no pass reads, so that the lights that stayed keep the places their slots name
            them by. It is the place the next light that appears is given, and no slot is made of

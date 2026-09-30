@@ -122,6 +122,7 @@ extern cvar_t rt_sun;
 extern cvar_t rt_sun_pitch;
 extern cvar_t rt_sun_yaw;
 extern cvar_t rt_materials_only;
+extern cvar_t rt_cluster_dlights;
 extern cvar_t rt_viewm_scale;
 
 /*
@@ -504,7 +505,9 @@ static void RT_UploadAllDlights ()
 		RT_TRACK_Light (position, METRIC_TO_QUAKEUNIT (radius), color,
 		                uniqueID, RT_LIGHT_KIND_DLIGHT, light_name ? light_name : "");
 
-		RT_ClusterLightAdd (uniqueID, position, RT_ClusterLightReach ());
+		/* rt_cluster_dlights 0 keeps dlights out of the cluster lists (A/B experiment). */
+		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
+			RT_ClusterLightAdd (uniqueID, position, RT_ClusterLightReach ());
 	}
 	}
 
@@ -575,7 +578,8 @@ static void RT_UploadAllDlights ()
 			RT_TRACK_Light (info.position.data, info.radius, info.color.data,
 			                uid, RT_LIGHT_KIND_CUSTOM, "");
 
-			RT_ClusterLightAdd (uid, position, RT_ClusterLightReach ());
+			if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
+				RT_ClusterLightAdd (uid, position, RT_ClusterLightReach ());
 		}
 	}
 
@@ -627,7 +631,8 @@ static void RT_UploadAllDlights ()
 		QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
 		QR_CHECK (r);
 
-		RT_ClusterLightAdd (info.uniqueID, position, RT_ClusterLightReach ());
+		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
+			RT_ClusterLightAdd (info.uniqueID, position, RT_ClusterLightReach ());
 	}
 
 	RT_UploadSunLight ();

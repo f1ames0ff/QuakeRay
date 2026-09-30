@@ -70,11 +70,6 @@ namespace
         return sum < kMinColorSum;
     }
 
-    float LightLuminance(const float color[3])
-    {
-        return 0.2125f * color[0] + 0.7154f * color[1] + 0.0721f * color[2];
-    }
-
     ShLightEncoded EncodeAsDirectionalLight(const QrDirectionalLightUploadInfo &info)
     {
         float direction[3] = { info.direction.data[0], info.direction.data[1], info.direction.data[2] };
@@ -440,19 +435,6 @@ bool qray::LightManager::FindRegisteredLight(uint32_t frameIndex, uint64_t uniqu
     return found;
 }
 
-float qray::LightManager::GetRegisteredLightPower(uint32_t frameIndex, uint64_t uniqueID) const
-{
-    bool found = false;
-    const uint32_t slot = GetRegistrySlot(registry[frameIndex], registryGeneration[frameIndex], uniqueID, found);
-
-    if (!found)
-    {
-        return 0.0f;
-    }
-
-    return registry[frameIndex][slot].power;
-}
-
 bool qray::LightManager::DeviceHoldsPublishedList(uint32_t frameIndex) const
 {
     return deviceListValid &&
@@ -474,10 +456,8 @@ void qray::LightManager::RecordDeviceListPublication(uint32_t frameIndex)
 }
 
 void qray::LightManager::AddLight(uint32_t frameIndex, uint64_t uniqueId,
-                                  const ShLightEncoded &encodedLight, float power)
+                                  const ShLightEncoded &encodedLight)
 {
-    power = std::isfinite(power) ? std::abs(power) : 0.0f;
-
     bool found = false;
     const uint32_t registrySlot = GetRegistrySlot(registry[frameIndex], registryGeneration[frameIndex],
                                                   uniqueId, found);
@@ -509,7 +489,6 @@ void qray::LightManager::AddLight(uint32_t frameIndex, uint64_t uniqueId,
     entry.generation = registryGeneration[frameIndex];
     entry.arrayIndex = index.GetArrayIndex();
     entry.uniqueID = uniqueId;
-    entry.power = power;
 
     registeredLightOrder[frameIndex].push_back(uniqueId);
     registeredLightIndex[frameIndex].push_back(index.GetArrayIndex());
@@ -522,10 +501,7 @@ void qray::LightManager::AddSphericalLight(uint32_t frameIndex, const QrSpherica
         return;
     }
 
-    const float radius = std::max(kMinSphereRadius, info.radius);
-
-    AddLight(frameIndex, info.uniqueID, EncodeAsSphereLight(info),
-             LightLuminance(info.color.data) * static_cast<float>(kPi) * radius * radius);
+    AddLight(frameIndex, info.uniqueID, EncodeAsSphereLight(info));
 }
 
 void qray::LightManager::AddPolygonalLight(uint32_t frameIndex, const QrPolygonalLightUploadInfo &info)
@@ -542,10 +518,7 @@ void qray::LightManager::AddPolygonalLight(uint32_t frameIndex, const QrPolygona
         return;
     }
 
-    const float area = 0.5f * Utils::Length(unnormalizedNormal.data);
-
-    AddLight(frameIndex, info.uniqueID, EncodeAsTriangleLight(info, unnormalizedNormal),
-             LightLuminance(info.color.data) * area);
+    AddLight(frameIndex, info.uniqueID, EncodeAsTriangleLight(info, unnormalizedNormal));
 }
 
 void qray::LightManager::AddTexturedAreaLight(uint32_t frameIndex, const QrTexturedAreaLightUploadInfo &info,
@@ -556,8 +529,7 @@ void qray::LightManager::AddTexturedAreaLight(uint32_t frameIndex, const QrTextu
         return;
     }
 
-    AddLight(frameIndex, info.uniqueID, EncodeAsTexturedAreaLight(info, textureIndex),
-             LightLuminance(info.color.data) * info.area * std::max(info.meanEmiss, 0.0f));
+    AddLight(frameIndex, info.uniqueID, EncodeAsTexturedAreaLight(info, textureIndex));
 }
 
 void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUploadInfo &info)
@@ -568,10 +540,7 @@ void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUplo
         return;
     }
 
-    const float radius = std::max(kMinSphereRadius, info.radius);
-
-    AddLight(frameIndex, info.uniqueID, EncodeAsSpotLight(info),
-             LightLuminance(info.color.data) * static_cast<float>(kPi) * radius * radius);
+    AddLight(frameIndex, info.uniqueID, EncodeAsSpotLight(info));
 }
 
 void qray::LightManager::AddDirectionalLight(uint32_t frameIndex, const QrDirectionalLightUploadInfo &info)
@@ -599,7 +568,7 @@ void qray::LightManager::AddDirectionalLight(uint32_t frameIndex, const QrDirect
 
     lastDirLightAngularRadius = GetAngularRadius(info.angularDiameterDegrees);
 
-    AddLight(frameIndex, info.uniqueID, EncodeAsDirectionalLight(info), 0.0f);
+    AddLight(frameIndex, info.uniqueID, EncodeAsDirectionalLight(info));
 }
 
 bool qray::LightManager::GetLastDirectionalLight(float outColor[3], float outDirection[3],

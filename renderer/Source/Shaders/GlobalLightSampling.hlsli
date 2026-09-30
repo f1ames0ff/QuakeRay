@@ -88,7 +88,7 @@ float globalLightTarget(const ShLightEncoded encoded, const float3 p, const floa
     const float scale = (encoded.lightType == LIGHT_TYPE_TEXTURED_AREA)
         ? max(decodeAsTexturedAreaLight(encoded).meanEmiss, 0.0) : 1.0;
 
-    return max(mass, proxy * kGlobalLightTargetFloor * scale) * max(getLuminance(encoded.color), 0.0);
+    return max(mass, proxy * kGlobalLightTargetFloor) * max(getLuminance(encoded.color), 0.0) * scale;
 }
 
 void q2SampleGlobalLightsRIS(const uint seed, const uint sampleIndex,

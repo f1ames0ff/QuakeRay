@@ -59,11 +59,6 @@ constexpr float kSourceMargin = 32.0f;        // Quake units
 
 static_assert(kSourceMargin >= kSourceQuantum * 1.7320508f, "the source margin must cover a whole quantum");
 
-constexpr float kRankFloorDist2 = kSourceMargin * kSourceMargin;
-constexpr float kRankHysteresis = 0.25f;
-
-constexpr uint32_t kNearReserve = kMaxPerList / 8;
-
 /* Places of lights that left the scene that a frame may keep instead of composing. Keeping them
    is what lets the lights that stay keep the places their slots name them by until a light
    appears to take them, and it costs a bit of the membership set and a word of the grid that a
@@ -78,12 +73,6 @@ constexpr uint32_t kMaxTombstones = 16;
    every pixel that reads the cluster and hand the moved light the counters of the one that
    left. The slot is filled again by the next light the cluster takes in. */
 constexpr uint32_t kInvalidSource = std::numeric_limits<uint32_t>::max();
-
-float SourceRank(float power, float dist2)
-{
-    const float d2 = (dist2 > kRankFloorDist2) ? dist2 : kRankFloorDist2;
-    return power / d2;
-}
 
 constexpr uint8_t kVisUnknown = 0;
 constexpr uint8_t kVisDecoded = 1;
@@ -259,13 +248,7 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
         }
 
         incoming[i].reach = reach;
-        incoming[i].power = 0.0f;
         incoming[i].tombstone = false;
-
-        if (pLightManager != nullptr)
-        {
-            incoming[i].power = pLightManager->GetRegisteredLightPower(frameIndex, incoming[i].uid);
-        }
     }
 
     CountSourceChanges();
@@ -430,7 +413,6 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
     stats.listEntries = 0;
     stats.grants = 0;
     stats.denied = 0;
-    stats.evictions = 0;
     stats.topUpGrants = 0;
     stats.reachGated = 0;
     stats.walkedSources = 0;
@@ -597,44 +579,37 @@ void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t
     uint64_t        *pBits = &slotBits[size_t(cluster) * bitsWords];
 
     uint32_t best[kTopUpSources];
-    float    bestRank[kTopUpSources];
     float    bestDist2[kTopUpSources];
     uint32_t bestCount = 0;
 
-    // Adds a candidate to the strongest few, keeping the list sorted.
+    // Adds a candidate to the closest few, keeping the list sorted.
     auto consider = [&](uint32_t li, float dist2)
     {
-        const float rank = SourceRank(sources[li].power, dist2);
-
         if (bestCount < kTopUpSources)
         {
             uint32_t p = bestCount++;
 
-            while (p > 0 && bestRank[p - 1] < rank)
+            while (p > 0 && bestDist2[p - 1] > dist2)
             {
-                bestRank[p] = bestRank[p - 1];
                 bestDist2[p] = bestDist2[p - 1];
                 best[p] = best[p - 1];
                 p--;
             }
 
-            bestRank[p] = rank;
             bestDist2[p] = dist2;
             best[p] = li;
         }
-        else if (rank > bestRank[kTopUpSources - 1])
+        else if (dist2 < bestDist2[kTopUpSources - 1])
         {
             uint32_t p = kTopUpSources - 1;
 
-            while (p > 0 && bestRank[p - 1] < rank)
+            while (p > 0 && bestDist2[p - 1] > dist2)
             {
-                bestRank[p] = bestRank[p - 1];
                 bestDist2[p] = bestDist2[p - 1];
                 best[p] = best[p - 1];
                 p--;
             }
 
-            bestRank[p] = rank;
             bestDist2[p] = dist2;
             best[p] = li;
         }
@@ -922,6 +897,13 @@ bool ClusterLightLists::UpdateSourceRecords()
         return false;
     }
 
+    // Nothing was granted on this frame, so there is no record to move forward and the lists
+    // stand on the records the composition left.
+    if (movedIndices.empty())
+    {
+        return true;
+    }
+
     const uint32_t noSource = std::numeric_limits<uint32_t>::max();
 
     sourceToFrame.assign(sources.size(), noSource);
@@ -936,14 +918,6 @@ bool ClusterLightLists::UpdateSourceRecords()
         }
 
         sourceToFrame[i] = j;
-        sources[i].power = incoming[j].power;
-    }
-
-    // Nothing was granted on this frame, so there is no record to move forward and the lists
-    // stand on the records the composition left.
-    if (movedIndices.empty())
-    {
-        return true;
     }
 
     for (uint32_t m = 0; m < uint32_t(movedIndices.size()); m++)
@@ -1051,7 +1025,6 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
     stats.walkedSources = 0;
     stats.cachedSources = 0;
     stats.topUpGrants = 0;
-    stats.evictions = 0;
     stats.reachGated = 0;
 
     std::fill(clusterDirty.begin(), clusterDirty.end(), 0);
@@ -1304,118 +1277,26 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
         return true;
     }
 
-    const float rank = SourceRank(sources[sourceIndex].power, dist2);
+    uint32_t farthest = 0;
+    float    farthestDist2 = pDist2[0];
 
-    float    nearDist[kNearReserve];
-    uint32_t nearCount = 0;
-
-    uint32_t weakest = kMaxPerList;
-    float    weakestRank = 0.0f;
-
-    for (uint32_t s = 0; s < kMaxPerList; s++)
+    for (uint32_t s = 1; s < kMaxPerList; s++)
     {
-        const uint32_t li = pSource[s];
-
-        if (li == kInvalidSource)
+        if (pDist2[s] > farthestDist2)
         {
-            continue;
-        }
-
-        const float d = pDist2[s];
-
-        if (nearCount < kNearReserve)
-        {
-            uint32_t p = nearCount++;
-
-            while (p > 0 && nearDist[p - 1] > d)
-            {
-                nearDist[p] = nearDist[p - 1];
-                p--;
-            }
-
-            nearDist[p] = d;
-        }
-        else if (d < nearDist[kNearReserve - 1])
-        {
-            uint32_t p = kNearReserve - 1;
-
-            while (p > 0 && nearDist[p - 1] > d)
-            {
-                nearDist[p] = nearDist[p - 1];
-                p--;
-            }
-
-            nearDist[p] = d;
-        }
-
-        const float slotRank = SourceRank(sources[li].power, d);
-
-        if (weakest == kMaxPerList || slotRank < weakestRank)
-        {
-            weakestRank = slotRank;
-            weakest = s;
+            farthestDist2 = pDist2[s];
+            farthest = s;
         }
     }
 
-    const float nearThreshold = (nearCount < kNearReserve) ? 0.0f : nearDist[kNearReserve - 1];
-    const bool  inNearSet = nearCount >= kNearReserve && dist2 <= nearThreshold;
-
-    uint32_t weakestFar = kMaxPerList;
-    float    weakestFarRank = 0.0f;
-
-    for (uint32_t s = 0; s < kMaxPerList; s++)
+    if (dist2 >= farthestDist2)
     {
-        const uint32_t li = pSource[s];
-
-        if (li == kInvalidSource || pDist2[s] <= nearThreshold)
-        {
-            continue;
-        }
-
-        const float slotRank = SourceRank(sources[li].power, pDist2[s]);
-
-        if (weakestFar == kMaxPerList || slotRank < weakestFarRank)
-        {
-            weakestFarRank = slotRank;
-            weakestFar = s;
-        }
+        return false; // the cluster already holds kMaxPerList closer lights
     }
-
-    uint32_t target = kMaxPerList;
-
-    if (inNearSet)
-    {
-        // The nearest lights take the weakest place outside their reserved set; when every place
-        // is one of them, the newcomer ranks with them.
-        if (weakestFar != kMaxPerList)
-        {
-            target = weakestFar;
-        }
-        else if (weakest != kMaxPerList)
-        {
-            target = weakest;
-        }
-        else
-        {
-            return false;
-        }
-    }
-    else
-    {
-        // A light that does not belong among the nearest may not take one of their places.
-        if (weakestFar == kMaxPerList || !(rank > weakestFarRank * (1.0f + kRankHysteresis)))
-        {
-            return false;
-        }
-
-        target = weakestFar;
-    }
-
-    stats.evictions++;
 
     // The evicted light is no longer sampled by this cluster, so its bit must stop claiming the
     // opposite: otherwise the top-up pass would skip it as one that pass 1 had already placed.
-    const uint32_t evicted = pSource[target];
+    const uint32_t evicted = pSource[farthest];
 
     if (evicted != kInvalidSource && granted[evicted] > 0)
     {
@@ -1425,10 +1306,10 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     pBits[evicted >> 6] &= ~(1ull << (evicted & 63));
     pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
 
-    pUids[target] = sources[sourceIndex].uid;
-    pDist2[target] = dist2;
-    pSource[target] = sourceIndex;
-    pTopUp[target] = fromTopUp ? 1 : 0;
+    pUids[farthest] = sources[sourceIndex].uid;
+    pDist2[farthest] = dist2;
+    pSource[farthest] = sourceIndex;
+    pTopUp[farthest] = fromTopUp ? 1 : 0;
 
     return true;
 }

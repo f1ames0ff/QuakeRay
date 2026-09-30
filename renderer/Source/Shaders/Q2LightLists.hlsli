@@ -245,7 +245,7 @@ float q2LightSelectionMass(const ShLightEncoded encoded, const float3 p, const f
         if (l.coneCosOuter > 0.0)
             mass *= getSpotFactor(cosNL, l.coneCosInner, l.coneCosOuter);
 
-        return mass * max(l.meanEmiss, 0.0);
+        return mass;
     }
     else
     {

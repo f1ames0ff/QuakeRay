@@ -935,13 +935,11 @@ materials:
     light_color: FFDF9F
     light_upoffset: 4.0
     light_brightness: 0.1
-    is_light: true
   - name: progs/flame2.mdl:frame0
     texture_emissive: mdl_skins/flame2_skin0_luma.png
     light_color: FFB273
     light_brightness: 0.2
     light_upoffset: 16.0
-    is_light: true
   - name: progs/bolt1.mdl:frame0
     texture_emissive: mdl_skins/bolt_skin0.png
     light_color: ccccff
