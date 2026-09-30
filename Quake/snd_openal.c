@@ -21,6 +21,7 @@
 
 #include "quakedef.h"
 #include "snd_openal.h"
+#include "snd_eq.h"
 
 #include <AL/al.h>
 #include <AL/alc.h>
@@ -87,6 +88,7 @@ static ALuint             sndal_music_free[SNDAL_MUSIC_BUFFERS];
 static int                sndal_music_numfree;
 static int                sndal_music_queued;
 static short              sndal_music_pcm[SNDAL_MUSIC_SAMPLES * 2];
+static sndeq_state_t      sndal_music_eq;
 
 static LPALCDEVICEPAUSESOFT  sndal_pause_device;
 static LPALCDEVICERESUMESOFT sndal_resume_device;
@@ -236,9 +238,13 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 	ALuint      buffer;
 	ALenum      error;
 	int         i;
+	qboolean    shelf, eq;
 
 	if (!sc)
 		return 0;
+
+	shelf = (SNDAL_HrtfEnabled () && s_openal_hrtf_bass.value > 0.0f) ? true : false;
+	eq = SNDEQ_Active ();
 
 	for (i = 0; i < sndal_numbuffers; i++)
 	{
@@ -264,12 +270,14 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 		}
 		for (i = 0; i < sc->length; i++)
 			pcm[i] = (short)(((signed char *)sc->data)[i] << 8);
-		if (SNDAL_HrtfEnabled () && s_openal_hrtf_bass.value > 0.0f)
+		if (shelf)
 			SNDAL_ApplyBassShelf (pcm, sc->length, sc->speed);
+		if (eq)
+			SNDEQ_FilterBuffer (pcm, sc->length, sc->speed);
 		alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * (int)sizeof (short)), sc->speed);
 		Mem_Free (pcm);
 	}
-	else if (SNDAL_HrtfEnabled () && s_openal_hrtf_bass.value > 0.0f)
+	else if (shelf || eq)
 	{
 		short *pcm = (short *)Mem_Alloc ((size_t)sc->length * sizeof (short));
 
@@ -279,7 +287,10 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 			return 0;
 		}
 		memcpy (pcm, sc->data, (size_t)sc->length * sizeof (short));
-		SNDAL_ApplyBassShelf (pcm, sc->length, sc->speed);
+		if (shelf)
+			SNDAL_ApplyBassShelf (pcm, sc->length, sc->speed);
+		if (eq)
+			SNDEQ_FilterBuffer (pcm, sc->length, sc->speed);
 		alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * 2), sc->speed);
 		Mem_Free (pcm);
 	}
@@ -416,6 +427,7 @@ void SNDAL_ClearAll (void)
 		return;
 	SNDAL_StopAll ();
 	SNDAL_DeleteBuffers ();
+	memset (&sndal_music_eq, 0, sizeof (sndal_music_eq));
 }
 
 static void SNDAL_SyncSource (int slot)
@@ -557,6 +569,8 @@ static void SNDAL_UpdateMusic (void)
 			sndal_music_pcm[i * 2 + 1] = (short)right;
 		}
 
+		SNDEQ_Process (&sndal_music_eq, sndal_music_pcm, n, 2, snd_output.speed);
+
 		buffer = sndal_music_free[--sndal_music_numfree];
 		alGetError ();
 		alBufferData (buffer, AL_FORMAT_STEREO16, sndal_music_pcm, (ALsizei)(n * 4), snd_output.speed);
@@ -604,6 +618,7 @@ static void SNDAL_FlushMusic (void)
 	sndal_music_numfree = SNDAL_MUSIC_BUFFERS;
 	sndal_music_queued = 0;
 	sndal_rawpos = 0;
+	memset (&sndal_music_eq, 0, sizeof (sndal_music_eq));
 }
 
 static void SNDAL_AdvanceClock (void)

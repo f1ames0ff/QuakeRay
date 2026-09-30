@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "snd_openal.h"
+#include "snd_eq.h"
 #include <stdbool.h>
 
 void (*vid_menucmdfn) (void); // johnfitz
@@ -2015,6 +2016,7 @@ enum
 	SOUND_OPT_SPATIAL,
 	SOUND_OPT_BASS,
 	SOUND_OPT_FREQUENCY,
+	SOUND_OPT_EQUALIZER,
 	SOUND_OPTIONS_ITEMS
 };
 
@@ -2095,6 +2097,9 @@ static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&snd_mixspeed, (float)sound_frequencies[index]);
 		break;
 	}
+	case SOUND_OPT_EQUALIZER:
+		SNDEQ_OpenDialog ();
+		break;
 	}
 }
 
@@ -2173,6 +2178,9 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, "Sound frequency");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, va ("%.1f kHz", snd_mixspeed.value / 1000.0));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_EQUALIZER, "Equalizer");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_EQUALIZER, SNDEQ_Active () ? "on" : "off");
 
 
 	// cursor

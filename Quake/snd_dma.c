@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "snd_codec.h"
 #include "bgmusic.h"
 #include "snd_openal.h"
+#include "snd_eq.h"
 
 static void S_Play (void);
 static void S_PlayVol (void);
@@ -223,6 +224,8 @@ void S_Init (void)
 	Cvar_RegisterVariable (&s_openal_hrtf_bass);
 	Cvar_RegisterVariable (&s_openal_max_sources);
 	Cvar_RegisterVariable (&snd_mixspeed);
+
+	SNDEQ_Init ();
 
 	if (safemode || COM_CheckParm ("-nosound"))
 		return;
@@ -844,6 +847,7 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 	//	BGM_Update();	// moved to the main loop just before S_Update ()
 
 	// mix some sound
+	SNDEQ_Update ();
 	SNDAL_Update ();
 
 unlock_mutex:

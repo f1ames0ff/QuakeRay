@@ -377,6 +377,8 @@ set(CORE_SOURCES
     Quake/sbar.c
     Quake/snd_codec.c
     Quake/snd_dma.c
+    Quake/snd_eq.c
+    Quake/snd_eq_gui.c
     Quake/snd_mem.c
     Quake/snd_openal.c
     Quake/snd_wave.c
