@@ -168,3 +168,15 @@ Quake 1 game files (`id1/`) are required (registered or shareware). HD texture p
 ## Credits
 
 QuakeRay is created and maintained by **f1ames0ff** - see [AUTHORS.md](AUTHORS.md). The renderer and the engine are distributed under the GNU GPL, version 2 or later (`LICENSE.txt`); the Quake engine keeps the notices of id Software, and portions of the renderer keep the notices of their respective authors.
+
+## Crash and bug reports
+
+The log a report needs is written when the game is started with `-condebug`:
+
+```
+quakeray.exe -condebug
+```
+
+On Windows the easiest way is a shortcut: add `-condebug` to its target (a command prompt in the game folder works as well). Everything the game prints then goes to `qconsole.log` next to the executable (`build\Debug\qconsole.log` in a development build), starting with the **System information** block: the OS, the CPU, the GPU with its vendor and device id, the video driver and Vulkan versions, and the audio driver. The file is rewritten on every launch, so reproduce the problem in one run and close the game - the log holds that session, and a crash keeps everything printed up to it. On Windows a crash also leaves `crash.log` beside the executable.
+
+Attach `qconsole.log` (and `crash.log`, if the game crashed) to the report in the [issue tracker](https://github.com/sdas234f23f/QuakeRay/issues).
