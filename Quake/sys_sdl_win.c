@@ -335,6 +335,11 @@ void Sys_mkdir (const char *path)
 		Sys_Error ("Unable to create directory %s", path);
 }
 
+int Sys_remove (const char *path)
+{
+	return remove (path);
+}
+
 static const char errortxt1[] = "\nERROR-OUT BEGIN\n\n";
 static const char errortxt2[] = "\nQUAKE ERROR: ";
 

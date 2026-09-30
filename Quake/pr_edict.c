@@ -462,6 +462,79 @@ void ED_Print (edict_t *ed)
 	}
 }
 
+static const char *PR_GetSaveString (savedata_t *save, int num)
+{
+	if (num >= 0 && num < save->vm->stringssize)
+		return save->vm->strings + num;
+	if (num < 0 && num >= -save->numknownstrings)
+	{
+		if (!save->knownstrings[-1 - num])
+		{
+			save->error = true;
+			return "";
+		}
+		return save->knownstrings[-1 - num];
+	}
+	return save->vm->strings;
+}
+
+static const char *PR_UglySaveValueString (savedata_t *save, int type, eval_t *val, char *line, size_t size)
+{
+	ddef_t      *def;
+	dfunction_t *f;
+	int          i;
+
+	type &= ~DEF_SAVEGLOBAL;
+
+	switch (type)
+	{
+	case ev_string:
+		q_snprintf (line, size, "%s", PR_GetSaveString (save, val->string));
+		break;
+	case ev_entity:
+		i = val->edict / save->vm->edict_size;
+		if (i < 0 || i >= save->num_edicts)
+		{
+			save->error = true;
+			i = 0;
+		}
+		q_snprintf (line, size, "%i", i);
+		break;
+	case ev_function:
+		f = save->vm->functions + val->function;
+		q_snprintf (line, size, "%s", PR_GetSaveString (save, f->s_name));
+		break;
+	case ev_field:
+		for (i = 1, def = NULL; i < save->vm->progs->numfielddefs; i++)
+		{
+			if (save->vm->fielddefs[i].ofs == val->_int)
+			{
+				def = &save->vm->fielddefs[i];
+				break;
+			}
+		}
+		q_snprintf (line, size, "%s", def ? PR_GetSaveString (save, def->s_name) : "");
+		break;
+	case ev_void:
+		q_snprintf (line, size, "void");
+		break;
+	case ev_float:
+		q_snprintf (line, size, "%f", val->_float);
+		break;
+	case ev_ext_integer:
+		q_snprintf (line, size, "%i", val->_int);
+		break;
+	case ev_vector:
+		q_snprintf (line, size, "%f %f %f", val->vector[0], val->vector[1], val->vector[2]);
+		break;
+	default:
+		q_snprintf (line, size, "bad type %i", type);
+		break;
+	}
+
+	return line;
+}
+
 /*
 =============
 ED_Write
@@ -469,26 +542,28 @@ ED_Write
 For savegames
 =============
 */
-void ED_Write (FILE *f, edict_t *ed)
+void ED_Write (savedata_t *save, edict_t *ed)
 {
+	qcvm_t     *vm = save->vm;
 	ddef_t     *d;
-	int		*v;
+	int        *v;
 	int         i, j;
 	const char *name;
 	int         type;
-
-	fprintf (f, "{\n");
+	char        line[1024];
 
 	if (ed->free)
 	{
-		fprintf (f, "}\n");
+		fprintf (save->file, "{\n}\n");
 		return;
 	}
 
-	for (i = 1; i < qcvm->progs->numfielddefs; i++)
+	fprintf (save->file, "{\n");
+
+	for (i = 1; i < vm->progs->numfielddefs; i++)
 	{
-		d = &qcvm->fielddefs[i];
-		name = PR_GetString (d->s_name);
+		d = &vm->fielddefs[i];
+		name = PR_GetSaveString (save, d->s_name);
 		j = strlen (name);
 		if (j > 1 && name[j - 2] == '_')
 			continue; // skip _x, _y, _z vars
@@ -505,16 +580,16 @@ void ED_Write (FILE *f, edict_t *ed)
 		if (j == type_size[type])
 			continue;
 
-		fprintf (f, "\"%s\" ", name);
-		fprintf (f, "\"%s\"\n", PR_UglyValueString (d->type, (eval_t *)v));
+		fprintf (save->file, "\"%s\" ", name);
+		fprintf (save->file, "\"%s\"\n", PR_UglySaveValueString (save, d->type, (eval_t *)v, line, sizeof (line)));
 	}
 
 	// johnfitz -- save entity alpha manually when progs.dat doesn't know about alpha
-	if (qcvm->extfields.alpha < 0 && ed->alpha != ENTALPHA_DEFAULT)
-		fprintf (f, "\"alpha\" \"%f\"\n", ENTALPHA_TOSAVE (ed->alpha));
+	if (vm->extfields.alpha < 0 && ed->alpha != ENTALPHA_DEFAULT)
+		fprintf (save->file, "\"alpha\" \"%f\"\n", ENTALPHA_TOSAVE (ed->alpha));
 	// johnfitz
 
-	fprintf (f, "}\n");
+	fprintf (save->file, "}\n");
 }
 
 void ED_PrintNum (int ent)
@@ -634,17 +709,19 @@ FIXME: need to tag constants, doesn't really work
 ED_WriteGlobals
 =============
 */
-void ED_WriteGlobals (FILE *f)
+void ED_WriteGlobals (savedata_t *save)
 {
+	qcvm_t     *vm = save->vm;
 	ddef_t     *def;
 	int         i;
 	const char *name;
 	int         type;
+	char        line[1024];
 
-	fprintf (f, "{\n");
-	for (i = 0; i < qcvm->progs->numglobaldefs; i++)
+	fprintf (save->file, "{\n");
+	for (i = 0; i < vm->progs->numglobaldefs; i++)
 	{
-		def = &qcvm->globaldefs[i];
+		def = &vm->globaldefs[i];
 		type = def->type;
 		if (!(def->type & DEF_SAVEGLOBAL))
 			continue;
@@ -653,11 +730,11 @@ void ED_WriteGlobals (FILE *f)
 		if (type != ev_string && type != ev_float && type != ev_ext_integer && type != ev_entity)
 			continue;
 
-		name = PR_GetString (def->s_name);
-		fprintf (f, "\"%s\" ", name);
-		fprintf (f, "\"%s\"\n", PR_UglyValueString (type, (eval_t *)&qcvm->globals[def->ofs]));
+		name = PR_GetSaveString (save, def->s_name);
+		fprintf (save->file, "\"%s\" ", name);
+		fprintf (save->file, "\"%s\"\n", PR_UglySaveValueString (save, type, (eval_t *)&save->globals[def->ofs], line, sizeof (line)));
 	}
-	fprintf (f, "}\n");
+	fprintf (save->file, "}\n");
 }
 
 /*
@@ -1581,4 +1658,69 @@ int PR_AllocString (int size, char **ptr)
 	if (ptr)
 		*ptr = (char *)qcvm->knownstrings[i];
 	return -1 - i;
+}
+
+//===========================================================================
+
+void SaveData_Fill (savedata_t *save)
+{
+	size_t size, ofs, len;
+	int    i;
+
+	save->vm = qcvm;
+	save->error = false;
+
+	size = sizeof (*save->knownstrings) * qcvm->numknownstrings;
+	size = (size + 15) & ~(size_t)15;
+	size += (size_t)qcvm->edict_size * qcvm->num_edicts;
+	size += sizeof (*save->globals) * qcvm->progs->numglobals;
+	for (i = 0; i < qcvm->numknownstrings; i++)
+		if (qcvm->knownstrings[i])
+			size += strlen (qcvm->knownstrings[i]) + 1;
+
+	if (size > save->buffersize)
+	{
+		save->buffersize = size + size / 2;
+		Mem_Free (save->buffer);
+		save->buffer = (byte *)Mem_Alloc (save->buffersize);
+	}
+
+	ofs = 0;
+
+	save->knownstrings = (const char **)(save->buffer + ofs);
+	save->numknownstrings = qcvm->numknownstrings;
+	ofs += sizeof (*save->knownstrings) * qcvm->numknownstrings;
+	ofs = (ofs + 15) & ~(size_t)15;
+
+	save->edicts = (edict_t *)(save->buffer + ofs);
+	save->num_edicts = qcvm->num_edicts;
+	memcpy (save->edicts, qcvm->edicts, (size_t)qcvm->edict_size * qcvm->num_edicts);
+	ofs += (size_t)qcvm->edict_size * qcvm->num_edicts;
+
+	save->globals = (float *)(save->buffer + ofs);
+	memcpy (save->globals, qcvm->globals, sizeof (*save->globals) * qcvm->progs->numglobals);
+	ofs += sizeof (*save->globals) * qcvm->progs->numglobals;
+
+	for (i = 0; i < qcvm->numknownstrings; i++)
+	{
+		if (!qcvm->knownstrings[i])
+		{
+			save->knownstrings[i] = NULL;
+			continue;
+		}
+		len = strlen (qcvm->knownstrings[i]) + 1;
+		memcpy (save->buffer + ofs, qcvm->knownstrings[i], len);
+		save->knownstrings[i] = (const char *)(save->buffer + ofs);
+		ofs += len;
+	}
+}
+
+void SaveData_Clear (savedata_t *save)
+{
+	if (save->file)
+		fclose (save->file);
+	Mem_Free (save->buffer);
+	VEC_FREE (save->header);
+	VEC_FREE (save->trailer);
+	memset (save, 0, sizeof (*save));
 }

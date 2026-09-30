@@ -413,6 +413,10 @@ void               Host_Quit_f (void);
 void               Host_ClientCommands (const char *fmt, ...) FUNC_PRINTF (1, 2);
 void               Host_ShutdownServer (qboolean crash);
 void               Host_WriteConfiguration (void);
+void               Host_WaitForSaveThread (void);
+void               Host_ShutdownSave (void);
+qboolean           Host_IsSaving (void);
+void               Host_CheckSaveResult (void);
 void               Host_CfgWrite_f (void);
 void               Host_CfgExec_f (void);
 

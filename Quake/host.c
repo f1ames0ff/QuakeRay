@@ -82,6 +82,9 @@ cvar_t coop = {"coop", "0", CVAR_NONE};             // 0 or 1
 
 cvar_t pausable = {"pausable", "1", CVAR_NONE};
 
+cvar_t sv_autosave = {"sv_autosave", "1", CVAR_ARCHIVE};
+cvar_t sv_autosave_interval = {"sv_autosave_interval", "30", CVAR_ARCHIVE};
+
 cvar_t developer = {"developer", "0", CVAR_NONE};
 
 static cvar_t pr_engine = {"pr_engine", ENGINE_NAME_AND_VER, CVAR_NONE};
@@ -319,6 +322,9 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&horde);
 
 	Cvar_RegisterVariable (&pausable);
+
+	Cvar_RegisterVariable (&sv_autosave);
+	Cvar_RegisterVariable (&sv_autosave_interval);
 
 	Cvar_RegisterVariable (&temp1);
 
@@ -685,6 +691,7 @@ void Host_ClearMemory (void)
 	if (!isDedicated)
 		S_ClearAll ();
 	cls.signon = 0;
+	Host_WaitForSaveThread ();
 	PR_ClearProgs (&sv.qcvm);
 	Mem_Free (sv.static_entities); // spike -- this is dynamic too, now
 	for (int i = 1; i < MAX_PARTICLETYPES; ++i)
@@ -781,6 +788,73 @@ void Host_GetConsoleCommands (void)
 	}
 }
 
+static void Host_CheckAutosave (void)
+{
+	float health_change, speed, elapsed, score;
+
+	if (!sv_autosave.value || sv_autosave_interval.value <= 0.f || svs.maxclients != 1 || sv_player->v.health <= 0.f || cl.intermission || Host_IsSaving ())
+		return;
+
+	if (cls.signon == SIGNONS)
+	{
+		if (pr_global_struct->found_secrets != sv.autosave.prev_secrets)
+		{
+			sv.autosave.prev_secrets = pr_global_struct->found_secrets;
+			sv.autosave.secret_boost = 1.f;
+		}
+		else
+			sv.autosave.secret_boost = q_max (0.f, sv.autosave.secret_boost - host_frametime / 1.5f);
+	}
+
+	if (!sv.autosave.prev_health)
+		sv.autosave.prev_health = sv_player->v.health;
+	health_change = sv_player->v.health - sv.autosave.prev_health;
+	if (health_change < 0.f)
+		if (health_change < -3.f || sv_player->v.health < 100.f || sv_player->v.watertype == CONTENTS_SLIME || sv_player->v.watertype == CONTENTS_LAVA)
+			sv.autosave.hurt_time = qcvm->time;
+	sv.autosave.prev_health = sv_player->v.health;
+
+	if (sv_player->v.button0)
+		sv.autosave.shoot_time = qcvm->time;
+
+	if (sv_player->v.movetype == MOVETYPE_NOCLIP || (int)sv_player->v.flags & (FL_GODMODE | FL_NOTARGET))
+	{
+		sv.autosave.cheat += host_frametime;
+		return;
+	}
+
+	if (qcvm->time - sv.autosave.hurt_time < 3.f)
+		return;
+
+	if (qcvm->time - sv.autosave.shoot_time < 3.f)
+		return;
+
+	speed = VectorLength (sv_player->v.velocity);
+	if (speed > 100.f)
+		return;
+
+	if ((int)sv_player->v.movetype == MOVETYPE_NONE)
+		return;
+
+	elapsed = qcvm->time - sv.autosave.time - sv.autosave.cheat;
+	if (elapsed < 3.f)
+		return;
+
+	score = elapsed / sv_autosave_interval.value;
+	score *= q_min (100.f, (sv_player->v.health + sv_player->v.armortype * sv_player->v.armorvalue)) / 100.f;
+	score += q_max (0.f, health_change) / 100.f;
+	score -= (speed / 100.f) * 0.25f;
+	score += sv.autosave.secret_boost * 0.25f;
+	score += CLAMP (0.f, 1.f - (qcvm->time - sv_player->v.teleport_time) / 1.5f, 1.f) * 0.5f;
+
+	if (score < 1.f)
+		return;
+
+	sv.autosave.time = qcvm->time;
+	sv.autosave.cheat = 0;
+	Cbuf_AddText ("save autosave 0\n");
+}
+
 /*
 ==================
 Host_ServerFrame
@@ -826,6 +900,8 @@ void Host_ServerFrame (void)
 
 	// send all messages to the clients
 	SV_SendClientMessages ();
+
+	Host_CheckAutosave ();
 }
 
 static void CL_LoadCSProgs (void)
@@ -977,6 +1053,7 @@ void _Host_Frame (double time)
 			Host_ServerFrame ();
 			PR_SwitchQCVM (NULL);
 		}
+		Host_CheckSaveResult ();
 		host_frametime = realframetime;
 		Cbuf_Waited ();
 
@@ -1182,6 +1259,7 @@ void Host_Shutdown (void)
 
 	QR_Editor_Shutdown (); // releases the ImGui context and the font material
 
+	Host_ShutdownSave ();
 	Host_WriteConfiguration ();
 
 	NET_Shutdown ();

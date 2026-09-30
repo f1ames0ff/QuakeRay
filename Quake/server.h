@@ -52,6 +52,17 @@ typedef struct
 	int    lastcheck; // used by PF_checkclient
 	double lastchecktime;
 
+	struct
+	{
+		float  secret_boost;
+		float  prev_health;
+		int	   prev_secrets;
+		double time;	   // last autosave time
+		double hurt_time;  // last time the player was hurt
+		double shoot_time; // last time the player attacked
+		double cheat;	   // time spent with cheats active since last autosave
+	} autosave;
+
 	qcvm_t qcvm; // Spike: entire qcvm state
 
 	char             name[64];                   // map name

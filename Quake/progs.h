@@ -98,10 +98,30 @@ edict_t *ED_Alloc (void);
 void     ED_Free (edict_t *ed);
 
 void        ED_Print (edict_t *ed);
-void        ED_Write (FILE *f, edict_t *ed);
 const char *ED_ParseEdict (const char *data, edict_t *ent);
 
-void        ED_WriteGlobals (FILE *f);
+typedef struct savedata_s
+{
+	qcvm_t		*vm;
+	FILE		*file;
+	qboolean	 error;
+	char		 path[MAX_OSPATH];
+	char		*header;
+	char		*trailer;
+	int			 numknownstrings;
+	const char **knownstrings;
+	int			 num_edicts;
+	edict_t		*edicts;
+	float		*globals;
+	byte		*buffer;
+	size_t		 buffersize;
+} savedata_t;
+
+void SaveData_Fill (savedata_t *save);
+void SaveData_Clear (savedata_t *save);
+
+void        ED_Write (savedata_t *save, edict_t *ed);
+void        ED_WriteGlobals (savedata_t *save);
 const char *ED_ParseGlobals (const char *data);
 
 void ED_LoadFromFile (const char *data);
