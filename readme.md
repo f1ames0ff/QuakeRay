@@ -171,6 +171,7 @@ OpenAL Soft is the sound system: every engine channel is positioned against the 
 
 * `s_openal_hrtf` is `0` off, `1` on or `2` auto (default - the device decides, so a speaker setup is not surprised). Changing it restarts the audio backend.
 * Sound Options carries a **Spatial sound** switch that reads the mode OpenAL Soft actually granted (so `auto` shows what you hear) and writes `s_openal_hrtf` as `1` or `0`.
+* Sound Options also carries **Sound frequency** (`snd_mixspeed`, archived): the output rate OpenAL Soft is asked for, `11.0` to `192.0 kHz`. Changing it restarts the backend and reloads the samples at the new rate; the console cvar and `-mixspeed` do the same.
 * `s_openal_max_sources` (`256`) is the source pool size; OpenAL Soft's own source limit caps it.
 * `nosound 1` (or `-nosound`) starts the game without sound, like before.
 * The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`).

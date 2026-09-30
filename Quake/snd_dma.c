@@ -69,6 +69,7 @@ static qboolean sound_ready = false;
 static void S_BackendStart (void);
 static void S_BackendShutdown (void);
 static void S_OpenALChanged (cvar_t *var);
+static void S_MixSpeedChanged (cvar_t *var);
 
 SDL_mutex *snd_mutex;
 
@@ -78,7 +79,7 @@ cvar_t sfxvolume = {"volume", "0.7", CVAR_ARCHIVE};
 cvar_t precache = {"precache", "1", CVAR_NONE};
 cvar_t loadas8bit = {"loadas8bit", "0", CVAR_NONE};
 
-cvar_t snd_mixspeed = {"snd_mixspeed", "44100", CVAR_NONE};
+cvar_t snd_mixspeed = {"snd_mixspeed", "44100", CVAR_ARCHIVE};
 
 static cvar_t nosound = {"nosound", "0", CVAR_NONE};
 static cvar_t ambient_level = {"ambient_level", "0.3", CVAR_NONE};
@@ -151,6 +152,17 @@ static void S_OpenALChanged (cvar_t *var)
 	S_RestartBackend ();
 }
 
+static void S_MixSpeedChanged (cvar_t *var)
+{
+	if (var->value < 8000 || var->value > 192000)
+	{
+		Con_Printf ("snd_mixspeed must be between 8000 and 192000\n");
+		Cvar_SetQuick (&snd_mixspeed, "44100");
+		return;
+	}
+	S_RestartBackend ();
+}
+
 /*
 ================
 S_Startup
@@ -217,6 +229,7 @@ void S_Init (void)
 
 	Cvar_SetCallback (&s_openal_hrtf, S_OpenALChanged);
 	Cvar_SetCallback (&s_openal_max_sources, S_OpenALChanged);
+	Cvar_SetCallback (&snd_mixspeed, S_MixSpeedChanged);
 
 	known_sfx = (sfx_t *)Mem_Alloc (MAX_SFX * sizeof (sfx_t));
 	num_sfx = 0;
