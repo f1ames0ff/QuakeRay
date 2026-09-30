@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.20.3
+
+### Added
+- **The frames queued for display are capped** — `vid_maxframelatency` bounds how far the CPU may run ahead of scan out under the vsync modes: `0` leaves the swapchain exactly as it was (no present ids, no waits), and `1` (the default) keeps a single frame in flight by waiting, before the next image is acquired, until the last presented frame has been shown. The cap rides on `VK_KHR_present_id2`/`VK_KHR_present_wait2`, and the swapchain is created with the matching flags only while it is active — without the extensions, or in a real mailbox mode, nothing changes at all. Values above `1` are not accepted: the wait for an older frame completes as soon as that frame has been replaced without presentation, so it cannot pace the loop at all (a value an old configuration carries is brought down to `1` with a console note). Switching the cvar recreates the swapchain once, like a present-mode change.
+- **Frame delivery is even** — under `FIFO` the frame fences only track GPU execution, so with the three or more images a DXGI-layered swapchain builds, the CPU can queue several vblanks ahead of scan out and the compositor starts replacing frames it never showed. One frame in flight keeps presenting in step with the display: the input lag no longer grows with the queue, and the temporal denoiser sees the even stream its history and reprojection rely on.
+
 ## v0.20.2
 
 ### Fixed
