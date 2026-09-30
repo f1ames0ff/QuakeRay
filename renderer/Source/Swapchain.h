@@ -104,7 +104,8 @@ private:
     std::vector<VkImageView> swapchainViews;
 
     bool presentWait2Supported;
-    bool swapchainPresentWait2;
+    bool surfacePresentWait2Supported;
+    bool usePresentWait2;
     uint64_t currentPresentId;
     uint64_t maxFrameLatency;
 

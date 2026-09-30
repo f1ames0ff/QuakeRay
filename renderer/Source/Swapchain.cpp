@@ -76,7 +76,8 @@ Swapchain::Swapchain(
     , swapchainImages{}
     , swapchainViews{}
     , presentWait2Supported(_presentWait2Supported)
-    , swapchainPresentWait2(false)
+    , surfacePresentWait2Supported(false)
+    , usePresentWait2(false)
     , currentPresentId(0)
     , maxFrameLatency(0)
     , currentSwapchainIndex(UINT32_MAX)
@@ -198,7 +199,7 @@ void Swapchain::SetMaxFrameLatency(uint64_t frames)
 
 bool Swapchain::IsPresentWaitActive() const
 {
-    return swapchainPresentWait2;
+    return usePresentWait2;
 }
 
 const char *Swapchain::GetPresentModeName() const
@@ -227,12 +228,13 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 
     const VkExtent2D requestedExtent = GetOptimalExtent();
 
-    if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode)
+    const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0;
+    if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode || usePresentWait2 != wantPresentWait2)
     {
         TryRecreate(requestedExtent, requestedPresentMode);
     }
 
-    if (swapchainPresentWait2 && sVkWaitForPresent2KHR != nullptr && maxFrameLatency > 0 &&
+    if (usePresentWait2 && sVkWaitForPresent2KHR != nullptr && maxFrameLatency > 0 &&
         isPresentMode != QR_PRESENT_MODE_MAILBOX && currentPresentId + 1 > maxFrameLatency)
     {
         VkPresentWait2InfoKHR waitInfo = {};
@@ -276,7 +278,7 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
 
     const uint64_t nextPresentId = currentPresentId + 1;
     VkPresentId2KHR presentIdInfo{};
-    if (swapchainPresentWait2)
+    if (usePresentWait2)
     {
         presentIdInfo.sType = VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR;
         presentIdInfo.swapchainCount = 1;
@@ -286,7 +288,7 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
 
     const VkResult r = vkQueuePresentKHR(queues->GetGraphics(), &presentInfo);
 
-    if (swapchainPresentWait2)
+    if (usePresentWait2)
     {
         currentPresentId = nextPresentId;
     }
@@ -300,7 +302,9 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
 
 bool Swapchain::TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode)
 {
-    if (AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode)
+    const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0;
+
+    if (AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode && usePresentWait2 == wantPresentWait2)
     {
         return false;
     }
@@ -345,7 +349,7 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
         imageCount = std::min(imageCount, surfCapabilities.maxImageCount);
     }
 
-    swapchainPresentWait2 = false;
+    surfacePresentWait2Supported = false;
     if (presentWait2Supported && sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr)
     {
         VkSurfaceCapabilitiesPresentId2KHR presentId2Capabilities = {};
@@ -365,9 +369,11 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
 
         if (sVkGetPhysicalDeviceSurfaceCapabilities2KHR(physDevice, &surfaceInfo, &surfaceCapabilities2) == VK_SUCCESS)
         {
-            swapchainPresentWait2 = presentId2Capabilities.presentId2Supported && presentWait2Capabilities.presentWait2Supported;
+            surfacePresentWait2Supported = presentId2Capabilities.presentId2Supported && presentWait2Capabilities.presentWait2Supported;
         }
     }
+
+    usePresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0;
 
     VkSwapchainCreateInfoKHR swapchainInfo{};
     swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -385,7 +391,7 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
     swapchainInfo.preTransform = surfCapabilities.currentTransform;
     swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapchainInfo.presentMode = GetVkPresentMode(mode);
-    if (swapchainPresentWait2)
+    if (usePresentWait2)
     {
         swapchainInfo.flags |= VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR | VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR;
     }
