@@ -124,6 +124,9 @@ namespace qray
     VK_DEVICE_FUNCTION_LIST
     VK_DEVICE_DEBUG_UTILS_FUNCTION_LIST
 #undef VK_EXTENSION_FUNCTION
+
+    PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR sVkGetPhysicalDeviceSurfaceCapabilities2KHR = nullptr;
+    PFN_vkWaitForPresent2KHR sVkWaitForPresent2KHR = nullptr;
 }
 
 void qray::InitInstanceExtensionFunctions_DebugUtils(VkInstance instance)
@@ -136,6 +139,13 @@ void qray::InitInstanceExtensionFunctions_DebugUtils(VkInstance instance)
 #undef VK_EXTENSION_FUNCTION
 }
 
+bool qray::InitInstanceExtensionFunctions_SurfaceCapabilities2(VkInstance instance)
+{
+    sVkGetPhysicalDeviceSurfaceCapabilities2KHR =
+        reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
+    return sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
+}
+
 void qray::InitDeviceExtensionFunctions(VkDevice device)
 {
 #define VK_EXTENSION_FUNCTION(fname) \
@@ -144,6 +154,12 @@ void qray::InitDeviceExtensionFunctions(VkDevice device)
 
     VK_DEVICE_FUNCTION_LIST
 #undef VK_EXTENSION_FUNCTION
+}
+
+bool qray::InitDeviceExtensionFunctions_PresentWait2(VkDevice device)
+{
+    sVkWaitForPresent2KHR = reinterpret_cast<PFN_vkWaitForPresent2KHR>(vkGetDeviceProcAddr(device, "vkWaitForPresent2KHR"));
+    return sVkWaitForPresent2KHR != nullptr;
 }
 
 void qray::InitDeviceExtensionFunctions_DebugUtils(VkDevice device)
