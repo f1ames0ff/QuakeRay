@@ -74,6 +74,7 @@ private:
     VkResult GetSurfaceCapabilities(VkSurfaceCapabilitiesKHR *outCaps) const;
     void ResetSurfaceCapabilitiesCache() const;
     VkPresentModeKHR GetVkPresentMode(QrPresentMode mode) const;
+    bool IsWaitablePresentMode(QrPresentMode mode) const;
 
     bool TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode);
 
@@ -107,6 +108,7 @@ private:
     bool surfacePresentWait2Supported;
     bool usePresentWait2;
     uint64_t currentPresentId;
+    uint64_t waitablePresentId;
     uint64_t maxFrameLatency;
 
     uint32_t currentSwapchainIndex;

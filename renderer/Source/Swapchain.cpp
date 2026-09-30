@@ -79,6 +79,7 @@ Swapchain::Swapchain(
     , surfacePresentWait2Supported(false)
     , usePresentWait2(false)
     , currentPresentId(0)
+    , waitablePresentId(0)
     , maxFrameLatency(0)
     , currentSwapchainIndex(UINT32_MAX)
     , subscribers{}
@@ -222,26 +223,43 @@ VkPresentModeKHR Swapchain::GetVkPresentMode(QrPresentMode mode) const
     }
 }
 
+bool Swapchain::IsWaitablePresentMode(QrPresentMode mode) const
+{
+    const VkPresentModeKHR vkMode = GetVkPresentMode(mode);
+    return vkMode == VK_PRESENT_MODE_FIFO_KHR || vkMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+}
+
 void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 {
     ResetSurfaceCapabilitiesCache();
 
     const VkExtent2D requestedExtent = GetOptimalExtent();
 
-    const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0;
+    const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(requestedPresentMode);
     if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode || usePresentWait2 != wantPresentWait2)
     {
         TryRecreate(requestedExtent, requestedPresentMode);
     }
 
-    if (usePresentWait2 && sVkWaitForPresent2KHR != nullptr && maxFrameLatency > 0 &&
-        isPresentMode != QR_PRESENT_MODE_MAILBOX && currentPresentId + 1 > maxFrameLatency)
+    if (usePresentWait2 && sVkWaitForPresent2KHR != nullptr && currentPresentId + 1 > maxFrameLatency)
     {
-        VkPresentWait2InfoKHR waitInfo = {};
-        waitInfo.sType = VK_STRUCTURE_TYPE_PRESENT_WAIT_2_INFO_KHR;
-        waitInfo.presentId = currentPresentId + 1 - maxFrameLatency;
-        waitInfo.timeout = 50ull * 1000ull * 1000ull;
-        sVkWaitForPresent2KHR(device, swapchain, &waitInfo);
+        const uint64_t targetPresentId = currentPresentId + 1 - maxFrameLatency;
+
+        if (targetPresentId <= waitablePresentId)
+        {
+            VkPresentWait2InfoKHR waitInfo = {};
+            waitInfo.sType = VK_STRUCTURE_TYPE_PRESENT_WAIT_2_INFO_KHR;
+            waitInfo.presentId = targetPresentId;
+            waitInfo.timeout = 50ull * 1000ull * 1000ull;
+
+            const VkResult waitResult = sVkWaitForPresent2KHR(device, swapchain, &waitInfo);
+
+            if (waitResult == VK_ERROR_OUT_OF_DATE_KHR)
+            {
+                ResetSurfaceCapabilitiesCache();
+                TryRecreate(GetOptimalExtent(), requestedPresentMode);
+            }
+        }
     }
 
     while (true)
@@ -291,6 +309,11 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     if (usePresentWait2)
     {
         currentPresentId = nextPresentId;
+
+        if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR)
+        {
+            waitablePresentId = nextPresentId;
+        }
     }
 
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
@@ -302,7 +325,7 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
 
 bool Swapchain::TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode)
 {
-    const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0;
+    const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(mode);
 
     if (AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode && usePresentWait2 == wantPresentWait2)
     {
@@ -322,6 +345,7 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
     isPresentMode = mode;
     surfaceExtent = { newWidth, newHeight };
     currentPresentId = 0;
+    waitablePresentId = 0;
 
     ResetSurfaceCapabilitiesCache();
 
@@ -373,7 +397,7 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
         }
     }
 
-    usePresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0;
+    usePresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(mode);
 
     VkSwapchainCreateInfoKHR swapchainInfo{};
     swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;

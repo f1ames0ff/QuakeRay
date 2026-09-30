@@ -905,7 +905,8 @@ void VulkanDevice::CreateDevice()
         presentWaitFeatures2.pNext = &presentWait2Features;
         vkGetPhysicalDeviceFeatures2(physDevice->Get(), &presentWaitFeatures2);
 
-        presentWait2Supported = presentId2Features.presentId2 && presentWait2Features.presentWait2;
+        presentWait2Supported = presentId2Features.presentId2 && presentWait2Features.presentWait2 &&
+                                sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
     }
 
     VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
