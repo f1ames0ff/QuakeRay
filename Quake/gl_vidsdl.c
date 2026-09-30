@@ -1222,6 +1222,17 @@ static void VID_Vsync_f (cvar_t *var)
 	Con_Printf ("Video: vsync mode is %s\n", VID_VsyncModeName ((int)var->value));
 }
 
+static void VID_MaxFrameLatency_f (cvar_t *var)
+{
+	const int value = CLAMP (0, (int)var->value, 1);
+
+	if (value != (int)var->value)
+	{
+		Cvar_SetValueQuick (var, (float)value);
+		Con_Printf ("Video: vid_maxframelatency is out of range, using %d\n", value);
+	}
+}
+
 /*
 ================
 VID_SDL2_GetDisplayMode
@@ -1807,7 +1818,7 @@ void GL_BeginRenderingTask (void *unused)
 {
 	QrStartFrameInfo info = {
 		.presentMode = VID_PresentMode (),
-		.maxFrameLatency = (uint32_t)CLAMP (0, (int)vid_maxframelatency.value, 8),
+		.maxFrameLatency = (uint32_t)CLAMP (0, (int)vid_maxframelatency.value, 1),
 		.requestShaderReload = request_shaders_reload,
 	};
 
@@ -2830,6 +2841,8 @@ void VID_Init (void)
 	Cvar_RegisterVariable (&vid_vsync);       // johnfitz
 	Cvar_SetCallback (&vid_vsync, VID_Vsync_f);
 	Cvar_RegisterVariable (&vid_maxframelatency);
+	Cvar_SetCallback (&vid_maxframelatency, VID_MaxFrameLatency_f);
+	VID_MaxFrameLatency_f (&vid_maxframelatency);
 	Cvar_RegisterVariable (&vid_filter);
 	Cvar_RegisterVariable (&vid_desktopfullscreen); // QuakeSpasm
 	Cvar_RegisterVariable (&vid_borderless);        // QuakeSpasm
