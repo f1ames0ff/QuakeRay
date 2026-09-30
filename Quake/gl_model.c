@@ -3489,49 +3489,92 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 
 /*
 =================
-Mod_LoadMD3Texture
+Mod_LoadLMPTexture
+=================
+*/
+static gltexture_t *Mod_LoadLMPTexture (qmodel_t *mod, const char *name)
+{
+	char         path[MAX_QPATH];
+	char         rtname[MAX_QPATH];
+	byte        *buf;
+	byte        *pixels;
+	int          width, height;
+	gltexture_t *tx;
+
+	q_snprintf (path, sizeof (path), "%s.lmp", name);
+	buf = COM_LoadFile (path, NULL);
+	if (!buf)
+		return NULL;
+	if (com_filesize < 8)
+	{
+		Mem_Free (buf);
+		return NULL;
+	}
+
+	width = buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24);
+	height = buf[4] | (buf[5] << 8) | (buf[6] << 16) | (buf[7] << 24);
+	if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || 8 + (size_t)width * height > (size_t)com_filesize)
+	{
+		Mem_Free (buf);
+		return NULL;
+	}
+
+	pixels = buf + 8;
+	q_snprintf (rtname, sizeof (rtname), "mdx/%s", path);
+	tx = TexMgr_LoadImage (rtname, mod, path, width, height, SRC_INDEXED, pixels, path, 8, TEXPREF_ALPHA | TEXPREF_NOBRIGHT | TEXPREF_MIPMAP);
+	Mem_Free (buf);
+	return tx;
+}
+
+/*
+=================
+Mod_LoadEnhancedTexture
 =================
 */
 static gltexture_t *Mod_LoadEnhancedTexture (qmodel_t *mod, const char *shadername)
 {
-	static const char *exts[] = {".tga", ".pcx", ".jpg", ".png"};
+	static const char *prefixes[] = {"", "progs/", "textures/"};
+	char               base[MAX_QPATH];
+	char               pattern[MAX_QPATH];
 	char               name[MAX_QPATH];
-	char               path[MAX_QPATH];
 	char               rtname[MAX_QPATH];
 	byte              *data;
 	int                width, height;
-	size_t             i;
-	FILE              *f;
 	gltexture_t       *tx;
+	int                v;
+	size_t             p;
 
 	if (!shadername[0])
 		return NULL;
 
-	q_strlcpy (name, shadername, sizeof (name));
-	COM_StripExtension (name, name, sizeof (name));
+	q_strlcpy (base, shadername, sizeof (base));
+	COM_StripExtension (base, base, sizeof (base));
+	q_snprintf (pattern, sizeof (pattern), "%s_00_00", base);
 
-	for (i = 0; i < countof (exts); i++)
+	for (v = 1; v >= 0; v--)
 	{
-		q_snprintf (path, sizeof (path), "%s%s", name, exts[i]);
-		f = NULL;
-		COM_FOpenFile (path, &f, NULL);
-		if (f)
+		const char *stem = v ? pattern : base;
+
+		for (p = 0; p < countof (prefixes); p++)
 		{
-			fclose (f);
-			break;
+			q_snprintf (name, sizeof (name), "%s%s", prefixes[p], stem);
+
+			data = Image_LoadImage (name, &width, &height);
+			if (data)
+			{
+				q_snprintf (rtname, sizeof (rtname), "mdx/%s", name);
+				tx = TexMgr_LoadImage (rtname, mod, name, width, height, SRC_RGBA, data, name, 0, TEXPREF_ALPHA | TEXPREF_MIPMAP);
+				Mem_Free (data);
+				return tx;
+			}
+
+			tx = Mod_LoadLMPTexture (mod, name);
+			if (tx)
+				return tx;
 		}
 	}
-	if (i == countof (exts))
-		return NULL;
 
-	data = Image_LoadImage (name, &width, &height);
-	if (!data)
-		return NULL;
-
-	q_snprintf (rtname, sizeof (rtname), "md3/%s", path);
-	tx = TexMgr_LoadImage (rtname, mod, path, width, height, SRC_RGBA, data, path, 0, TEXPREF_MIPMAP);
-	Mem_Free (data);
-	return tx;
+	return NULL;
 }
 
 /*
