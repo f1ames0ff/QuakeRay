@@ -30,6 +30,8 @@ typedef struct rt_light_s
     qboolean has_color;
     vec3_t   color;            // an explicit colour, replacing the emitter's own
     qboolean force_rasterize;  // draw the emitter in the rasterized path
+    qboolean has_style;
+    int      style;            // an override of the emitter's light style
     /* A light that follows its group: the editor writes an edit to every light
        of the same group (the emitter's model, e.g. flame.mdl) that carries the
        flag. With the flag off the light keeps its own values; turning it back on
@@ -113,6 +115,53 @@ void RT_TRACK_Light (const vec3_t position, float radius, const vec3_t color,
                      uint64_t uniqueID, int kind, const char *name);
 const rt_tracked_light_t *RT_TRACK_Lights (int *outCount);
 
+// ----- the one class every light an emitter generates belongs to -----
+//
+// A material light (a flame, a lava ball), the legacy dlight an entity asks
+// for, a light entity of the map: the same class resolves the emitter's
+// lights.yaml entry, applies the same field semantics (light_radius replaces,
+// light_intensity scales, light_offset replaces the emitter's own up offset,
+// light_color replaces, light_style forces a style and scales the light by its
+// current value), uploads the sphere or the spot and records the light for the
+// editor. One setting therefore means one thing whatever produced the light.
+typedef struct rt_emitter_light_s
+{
+    const char *name;        // the emitter the entry is keyed by, "" when none
+    uint64_t    uniqueID;    // the id the renderer and the editor track it by
+    int         kind;        // RT_LIGHT_KIND_*
+    vec3_t      position;    // where the light's own geometry puts it
+    vec3_t      color;       // the light's own color
+    float       intensity;   // the light's own brightness
+    float       radius;      // the light's own size (rt_dlight_radius units)
+    vec3_t      offset;      // the light's own offset from its pivot
+    int         style;       // the light's own style, -1 when it has none
+    qboolean    spot;
+    vec3_t      direction;
+    float       angleInner;
+    float       angleOuter;
+} rt_emitter_light_t;
+
+typedef struct rt_emitter_resolved_s
+{
+    vec3_t color;            // the effective color, intensity and style applied
+    vec3_t offset;           // the effective offset from the light's own place
+    float  radius;           // the effective size (rt_dlight_radius units)
+} rt_emitter_resolved_t;
+
+// The entry of an emitter: its own name first, then the model drop of a skin
+// frame ("progs/flame.mdl:frame0" reads "progs/flame" too), so the light a
+// material generates and the dlight its entity asks for share one entry.
+rt_light_t *RT_LIGHT_FindEmitter (const char *name, uint64_t uniqueID);
+
+// Fills the effective color, offset and radius of one emitter light; the caller
+// that draws it itself (the textured area lights of a model) uses this, the
+// rest go through RT_LIGHT_Emit.
+void RT_LIGHT_ResolveEmitter (const rt_emitter_light_t *emitter, rt_emitter_resolved_t *out);
+
+// Resolves, uploads and tracks one generated light. The emitter's fields are
+// the light's own; anything its entry authors wins.
+void RT_LIGHT_Emit (const rt_emitter_light_t *emitter);
+
 // ----- custom dlights authored in the light editor -----
 
 // Freely placed lights a level does not have. They are loaded per map from
@@ -166,6 +215,7 @@ void               RT_CustomLights_SetCount (int count);
 // Appends a light with the defaults; NULL when the list is full.
 rt_custom_light_t *RT_CustomLights_Ensure (void);
 void               RT_CustomLights_Remove (int index);
+void               RT_CustomLightValidate (rt_custom_light_t *light);
 
 // The fog the current level's section carries. The loader fills it through
 // RT_CustomFogSet (NULL clears it); the editor's session reads it.

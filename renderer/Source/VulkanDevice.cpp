@@ -223,6 +223,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
             gu->skyColorMultiplier = sp.skyColorMultiplier;
             gu->skyColorSaturation = std::max( sp.skyColorSaturation, 0.0f );
             gu->skyAmbientLod      = std::clamp( sp.skyAmbientLod, 0.0f, 10.0f );
+            gu->skyLightMultiplier = std::max( sp.skyLightMultiplier, 0.0f );
             gu->skyNee             = sp.skyNee != 0 ? 1.0f : 0.0f;
 
             gu->skyType = sp.skyType == QR_SKY_TYPE_CUBEMAP ? SKY_TYPE_CUBEMAP :
@@ -243,6 +244,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
             gu->skyColorMultiplier                                                                                    = 1.0f;
             gu->skyColorSaturation                                                                                    = 1.0f;
             gu->skyAmbientLod                                                                                         = 10.0f;
+            gu->skyLightMultiplier                                                                                    = 1.0f;
             gu->skyNee                                                                                                = 0.0f;
             gu->skyType                                                                                               = SKY_TYPE_COLOR;
             gu->skyCubemapIndex                                                                                       = QR_EMPTY_CUBEMAP;
@@ -802,7 +804,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         const bool godRaysOn = godRaysEnabled && (sunExists || useSkyBrightest);
 
         sky.godRays.enabled = godRaysOn;
-        sky.godRays.intensity = 0.08f * godRaysIntensity;
+        sky.godRays.intensity = 0.05f * godRaysIntensity;
         sky.godRays.eccentricity = 0.75f;
 
         if (godRaysOn)
@@ -898,7 +900,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         p.skyTint[3] = sunAngularRadius;
         p.skyParams[0] = globalUniform->skyColorMultiplier;
         p.skyParams[1] = globalUniform->skyColorSaturation;
-        p.skyParams[2] = 6.0f;
+        p.skyParams[2] = 30.0f;
         p.skyParams[3] = 0.025f;
 
         p.cloudColor[3] = globalUniform->time;
