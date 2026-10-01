@@ -596,9 +596,13 @@ GLOBAL_UNIFORM_MEMBERS = [
     (FLOAT32, 1, "emissionBlendStrength",         1),
 
     (FLOAT32, 1, "skyAmbientLod",                 1),
+    (FLOAT32, 1, "skyLightMultiplier",            1),
     (FLOAT32, 1, "rayLength",                     1),
     (UINT32, 1, "rayCullBackFaces",               1),
     (UINT32, 1, "rayCullMaskWorld",               1),
+    (UINT32, 1, "__pad2",                         1),
+    (UINT32, 1, "__pad3",                         1),
+    (UINT32, 1, "__pad4",                         1),
 
     (FLOAT32, 1, "bloomIntensity",                1),
     (FLOAT32, 1, "bloomThreshold",                1),

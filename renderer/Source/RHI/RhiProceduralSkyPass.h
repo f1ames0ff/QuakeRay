@@ -96,7 +96,7 @@ class RhiFrameContext;
 // refuses to resize (nvrhi.h:3343-3349) - and this stage may not add a shader, so the module
 // re-runs the same compute once per mip level, binding each image's UAV at `baseMipLevel = m`
 // with one level for that dispatch. Mip 0 is byte-for-byte the legacy result; mip m is the analytic
-// sky at mip m's texel centres rather than the legacy's linear box average of level m-1. That is a
+// sky at mip m's texel centers rather than the legacy's linear box average of level m-1. That is a
 // resampling difference confined to the mips (the visible cube is sampled at lod 0 under
 // PROCEDURAL), not a structural one, and it costs about a third of the mip-0 dispatch on the frames
 // that dispatch at all. What it does cost is state-tracker entries: each per-mip binding requires
@@ -133,7 +133,7 @@ class RhiFrameContext;
 //    (there is no second wrap of the image), so the tracker sees one texture and no state can
 //    conflict. Between submissions both images rest read-only.
 //  - A consumer that samples the images on a list where this module did not run (Render skipped by
-//    the early-out, or a colour sky) reads the previous content; on the very first list of the
+//    the early-out, or a color sky) reads the previous content; on the very first list of the
 //    module's life the read-only state is still uninitialized there and the transition discards the
 //    never-written contents. The coordinator's contract is therefore: record one Render before the
 //    consumers whenever the uniform's `skyType` is SKY_TYPE_PROCEDURAL - the legacy order
@@ -204,13 +204,13 @@ public:
         // the legacy layout.
         float skyTint[4];
 
-        // Offset 320. x = the sky colour multiplier (the uniform's `skyColorMultiplier`);
+        // Offset 320. x = the sky color multiplier (the uniform's `skyColorMultiplier`);
         // y = the tint strength (the uniform's `skyColorSaturation`); z = the sun disc intensity
-        // (6.0f); w = the display sun disc angular radius in radians (0.025f). Legacy:
+        // (30.0f); w = the display sun disc angular radius in radians (0.025f). Legacy:
         // VulkanDevice.cpp:808-821, including the comment on the disc intensity.
         float skyParams[4];
 
-        // Offset 336. xyz = the cloud colour; w = the cloud animation time in seconds, which the
+        // Offset 336. xyz = the cloud color; w = the cloud animation time in seconds, which the
         // early-out freezes to 0 when clouds are off. Legacy: xyz from
         // `drawInfo.pSkyParams->skyCubemapRotationTransform.matrix[0][0..2]`, w from the uniform's
         // `time` (VulkanDevice.cpp:826-836; the cloud fields are packed into the otherwise-unused
@@ -222,7 +222,7 @@ public:
         // (VulkanDevice.cpp:827-837); a value outside (0, 1) is how the host turns clouds off.
         float cloudParams[4];
 
-        // Offset 368. xyz = the sun disc colour (rt_sun_color); w unused. Legacy:
+        // Offset 368. xyz = the sun disc color (rt_sun_color); w unused. Legacy:
         // `drawInfo.pSkyParams->sunDiscColor`, defaulting to white when the host sends no sky params
         // (VulkanDevice.cpp:772-778). Appended after every other field, like the legacy struct
         // (RenderCubemap.h:46-49), so a stale compiled shader still reads all older fields at the
@@ -253,6 +253,8 @@ public:
                 PrintFunction pfnPrint);
 
     bool IsCreated() const { return created; }
+
+    void Invalidate();
 
     // The three set-8 items the traced sky binds (Generated/ShaderCommonC.h:33-36):
     //  - GetCubemapTexture()     raw binding 0, `renderCubemap` in the shaders (the disc-carrying

@@ -14,6 +14,8 @@
 
 #define RT_LIGHT_CAP RT_LIGHT_NAMES_MAX
 
+extern cvar_t rt_cluster_dlights;
+
 static rt_light_t rt_lights[RT_LIGHT_CAP];
 static int        rt_light_count = 0;
 static qboolean   rt_light_initialized = false;
@@ -90,6 +92,8 @@ static const char *rt_light_header =
     "#   light_intensity -- the brightness of the light (a multiplier of its colour)\n"
     "#   light_offset    -- \"x y z\", the offset from the emitter's pivot point\n"
     "#   light_color     -- \"rrggbb\", an explicit colour for the light\n"
+    "#   light_style     -- force a light style on the emitter, overriding its own\n"
+    "#                      (\"none\" keeps the emitter's own style)\n"
     "#   force_rasterize -- draw the emitter in the rasterized path (material lights)\n"
     "#   group_edit      -- true (the default) when an edit of one light of the\n"
     "#                      group (the emitter's model) is written to all of them\n"
@@ -266,7 +270,130 @@ void RT_LIGHT_Remove(const char *name)
 qboolean RT_LIGHT_HasFields(const rt_light_t *l)
 {
     return l && (l->has_radius || l->has_intensity || l->has_offset || l->has_color ||
-                 l->force_rasterize || !l->group_edit);
+                 l->force_rasterize || l->has_style || !l->group_edit);
+}
+
+rt_light_t *RT_LIGHT_FindEmitter(const char *name, uint64_t uniqueID)
+{
+    char        base[MAX_QPATH];
+    const char *colon;
+    size_t      len;
+    rt_light_t *light;
+
+    light = RT_LIGHT_FindInstance(name, uniqueID);
+    if (light || !name || !name[0])
+    {
+        return light;
+    }
+
+    colon = strchr(name, ':');
+    if (!colon)
+    {
+        return NULL;
+    }
+
+    len = (size_t)(colon - name);
+    if (len >= sizeof(base))
+    {
+        return NULL;
+    }
+
+    memcpy(base, name, len);
+    base[len] = '\0';
+    return RT_LIGHT_Find(base);
+}
+
+void RT_LIGHT_ResolveEmitter(const rt_emitter_light_t *emitter, rt_emitter_resolved_t *out)
+{
+    rt_light_t *ov = (emitter->name && emitter->name[0])
+                         ? RT_LIGHT_FindEmitter(emitter->name, emitter->uniqueID)
+                         : NULL;
+    float       intensity = emitter->intensity;
+    int         style = emitter->style;
+
+    out->radius = emitter->radius;
+    VectorCopy(emitter->color, out->color);
+    VectorCopy(emitter->offset, out->offset);
+
+    if (ov)
+    {
+        if (ov->has_radius)
+        {
+            out->radius = ov->radius;
+        }
+        if (ov->has_intensity)
+        {
+            intensity *= ov->intensity;
+        }
+        if (ov->has_offset)
+        {
+            VectorCopy(ov->offset, out->offset);
+        }
+        if (ov->has_color)
+        {
+            VectorCopy(ov->color, out->color);
+        }
+        if (ov->has_style)
+        {
+            style = ov->style;
+        }
+    }
+
+    if (style >= 0)
+    {
+        const float style_scale = CLAMP(0.0f, (float)d_lightstylevalue[CLAMP(0, style, 255)] * (1.0f / 256.0f), 1.0f);
+
+        intensity *= style_scale;
+    }
+
+    VectorScale(out->color, intensity, out->color);
+}
+
+void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
+{
+    rt_emitter_resolved_t resolved;
+    vec3_t                position;
+
+    RT_LIGHT_ResolveEmitter(emitter, &resolved);
+
+    VectorAdd(emitter->position, resolved.offset, position);
+    RT_FIXUP_LIGHT_INTENSITY(resolved.color, true);
+
+    if (emitter->spot && DotProduct(emitter->direction, emitter->direction) > 0.0f)
+    {
+        QrSpotLightUploadInfo info = {
+            .uniqueID = emitter->uniqueID,
+            .color = {resolved.color[0], resolved.color[1], resolved.color[2]},
+            .position = {position[0], position[1], position[2]},
+            .direction = {emitter->direction[0], emitter->direction[1], emitter->direction[2]},
+            .radius = METRIC_TO_QUAKEUNIT(resolved.radius),
+            .angleOuter = emitter->angleOuter,
+            .angleInner = emitter->angleInner,
+        };
+
+        QrResult r = qrUploadSpotLight(vulkan_globals.instance, &info);
+        QR_CHECK(r);
+    }
+    else
+    {
+        QrSphericalLightUploadInfo info = {
+            .uniqueID = emitter->uniqueID,
+            .color = {resolved.color[0], resolved.color[1], resolved.color[2]},
+            .position = {position[0], position[1], position[2]},
+            .radius = METRIC_TO_QUAKEUNIT(resolved.radius),
+        };
+
+        QrResult r = qrUploadSphericalLight(vulkan_globals.instance, &info);
+        QR_CHECK(r);
+    }
+
+    RT_TRACK_Light(position, METRIC_TO_QUAKEUNIT(resolved.radius), resolved.color,
+                   emitter->uniqueID, emitter->kind, emitter->name ? emitter->name : "");
+
+    if (emitter->kind == RT_LIGHT_KIND_MAP || CVAR_TO_FLOAT(rt_cluster_dlights) != 0)
+    {
+        RT_ClusterLightAdd(emitter->uniqueID, position, RT_ClusterLightReach());
+    }
 }
 
 const char *RT_LIGHT_Header(void)
@@ -299,6 +426,10 @@ void RT_LIGHT_WriteEntry(FILE *f, const rt_light_t *l)
     if (l->force_rasterize)
     {
         fprintf(f, "    force_rasterize: true\n");
+    }
+    if (l->has_style)
+    {
+        fprintf(f, "    light_style: %s\n", rt_custom_style_names[CLAMP(0, l->style, RT_CUSTOM_STYLE_COUNT - 1)]);
     }
     fprintf(f, "    group_edit: %s\n", l->group_edit ? "true" : "false");
 }
@@ -382,6 +513,8 @@ static qboolean rt_light_parse_bool(const char *value)
     }
     return atoi(value) != 0;
 }
+
+static int RT_CustomStyleFromString(const char *s);
 
 static int rt_light_load_file(const char *path)
 {
@@ -491,6 +624,19 @@ static int rt_light_load_file(const char *path)
             else if (!q_strcasecmp(key, "force_rasterize"))
             {
                 cur->force_rasterize = rt_light_parse_bool(value);
+            }
+            else if (!q_strcasecmp(key, "light_style"))
+            {
+                if (!q_strcasecmp(value, "none") || !q_strcasecmp(value, "off") || !q_strcasecmp(value, "default"))
+                {
+                    cur->style = 0;
+                    cur->has_style = false;
+                }
+                else
+                {
+                    cur->style = RT_CustomStyleFromString(value);
+                    cur->has_style = true;
+                }
             }
             else if (!q_strcasecmp(key, "group_edit"))
             {
@@ -740,6 +886,17 @@ void RT_CustomLights_SetCount(int count)
     rt_custom_light_count = CLAMP(0, count, RT_CUSTOM_LIGHTS_MAX);
 }
 
+void RT_CustomLightValidate(rt_custom_light_t *light)
+{
+    if (light->spot && DotProduct(light->dir, light->dir) <= 0.0f)
+    {
+        light->dir[0] = 1.0f;
+        light->dir[1] = light->dir[2] = 0.0f;
+    }
+    light->angle_outer = CLAMP(0.0f, light->angle_outer, 90.0f);
+    light->angle_inner = CLAMP(0.0f, light->angle_inner, light->angle_outer);
+}
+
 rt_custom_light_t *RT_CustomLights_Ensure(void)
 {
     rt_custom_light_t *l;
@@ -752,6 +909,7 @@ rt_custom_light_t *RT_CustomLights_Ensure(void)
     l->radius = RT_CUSTOM_RADIUS_DEFAULT;
     l->intensity = RT_CUSTOM_INTENSITY_DEFAULT;
     l->color[0] = l->color[1] = l->color[2] = 1.0f;
+    l->dir[0] = 1.0f;
     l->angle_outer = 30.0f;
     return l;
 }
@@ -889,6 +1047,7 @@ static qboolean RT_CustomParseLight(yaml_document_t *document, yaml_node_t *node
             l->angle_outer = (float)atof(fvb);
     }
 
+    RT_CustomLightValidate(l);
     return true;
 }
 

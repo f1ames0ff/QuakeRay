@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "atomics.h"
 #include "rt_dtal_debug.h"
+#include "rt_lights.h"
 
 extern cvar_t gl_fullbrights;
 extern cvar_t r_drawflat;
@@ -46,9 +47,9 @@ extern cvar_t rt_light_styles;
 extern cvar_t rt_light_styles_reach;
 extern cvar_t rt_wmodel_lights_batch;
 extern cvar_t rt_model_lights;
-extern cvar_t rt_model_lights_max;
-extern cvar_t rt_model_lights_budget;
-extern cvar_t rt_model_lights_minarea;
+extern cvar_t rt_dtal_model_maxpolys;
+extern cvar_t rt_dtal_model_budget;
+extern cvar_t rt_dtal_model_minarea;
 extern cvar_t rt_dtal_minarea;
 extern cvar_t rt_dtal_maxpolys;
 extern cvar_t rt_dtal_clearance;
@@ -93,7 +94,7 @@ extern QrVertex *rtallbrushvertices;
 /* DTAL: the textured area lights an alias model builds from the triangles of its pose. The uv of
    a model and the glow extents of a skin frame do not move with the pose, so the pieces of a
    frame are collected once and cached per model (RT_AddAliasEmissiveLights): RT_DTAL_MAX_PIECES
-   is how many ranked pieces one frame holds, and also the ceiling of rt_model_lights_max, while
+   is how many ranked pieces one frame holds, and also the ceiling of rt_dtal_model_maxpolys, while
    RT_DTAL_CACHE_ENTRIES is how many skin frames a model keeps. The piece count is what the
    collection was made to save, and the entry count is a compromise: four covers the skins and
    animated skin groups the shipped models draw, and a model with more distinct frames than that
@@ -2437,11 +2438,11 @@ more pieces than that can lower the count.
 static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int numpieces, const rt_emissive_params_t *params,
                                          gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
                                          const QrVertex *pose2, float blend, const QrTransform *transform,
-                                         int max_lights, int budget)
+                                         const vec3_t offset, int max_lights, int budget)
 {
 	int uploaded = 0;
 
-	const float min_area = CVAR_TO_FLOAT (rt_model_lights_minarea);
+	const float min_area = CVAR_TO_FLOAT (rt_dtal_model_minarea);
 
 	for (int i = 0; i < numpieces && uploaded < max_lights; i++)
 	{
@@ -2490,7 +2491,7 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		{
 			A[k] = (e1[k] * piece->dv2 - e2[k] * piece->dv1) * inv_det;
 			B[k] = (e2[k] * piece->du1 - e1[k] * piece->du2) * inv_det;
-			C[k] = p0.data[k] - A[k] * piece->u0 - B[k] * piece->v0;
+			C[k] = p0.data[k] - A[k] * piece->u0 - B[k] * piece->v0 + offset[k];
 		}
 
 		vec3_t ab;
@@ -2583,8 +2584,8 @@ its geometry (no light material, no emissive mask, the feature off, a frame the 
 down) does not go dark.
 
 Budget. Uploading every emissive triangle of every visible model would push the light array and
-the cluster lists with hundreds of tiny sources, so a model is capped at rt_model_lights_max
-pieces and the frame at rt_model_lights_budget lights in total. The pieces are ranked by their uv
+the cluster lists with hundreds of tiny sources, so a model is capped at rt_dtal_model_maxpolys
+pieces and the frame at rt_dtal_model_budget lights in total. The pieces are ranked by their uv
 area and each slot keeps its rank, so the identity the denoiser and the cluster lists follow stays
 put while the pose moves; the ranking itself is part of what the model caches per skin frame. The
 frame counter is atomic because the entity passes that call this run in parallel;
@@ -2619,13 +2620,33 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	if (params.material == QR_NO_MATERIAL)
 		return 0;
 
-	int max_lights = (int) CVAR_TO_FLOAT (rt_model_lights_max);
+	rt_emitter_light_t    emitter;
+	rt_emitter_resolved_t resolved;
+	vec3_t                light_offset;
+
+	memset (&emitter, 0, sizeof (emitter));
+	emitter.name = tex->name;
+	emitter.uniqueID = base_uniqueid;
+	emitter.kind = RT_LIGHT_KIND_MATERIAL;
+	emitter.intensity = 1.0f;
+	emitter.style = -1;
+	VectorCopy (params.color, emitter.color);
+
+	RT_LIGHT_ResolveEmitter (&emitter, &resolved);
+
+	if (resolved.color[0] <= 0.0f && resolved.color[1] <= 0.0f && resolved.color[2] <= 0.0f)
+		return 0;
+
+	VectorCopy (resolved.color, params.color);
+	VectorCopy (resolved.offset, light_offset);
+
+	int max_lights = (int) CVAR_TO_FLOAT (rt_dtal_model_maxpolys);
 	if (max_lights > RT_DTAL_MAX_PIECES)
 		max_lights = RT_DTAL_MAX_PIECES;
 	if (max_lights <= 0)
 		return 0;
 
-	int budget = (int) CVAR_TO_FLOAT (rt_model_lights_budget);
+	int budget = (int) CVAR_TO_FLOAT (rt_dtal_model_budget);
 	if (budget < 0)
 		budget = 0;
 
@@ -2712,7 +2733,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	}
 
 	return RT_UploadAliasEmissivePieces (local, numpieces, &params, tex, base_uniqueid, pose1, pose2, blend, transform,
-	                                     max_lights, budget);
+	                                     light_offset, max_lights, budget);
 }
 
 static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
@@ -2867,12 +2888,17 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		return;
 	}
 
-	if (light_tex->rtlightstyles && CVAR_TO_BOOL (rt_light_styles))
+	rt_light_t *style_ov = RT_LIGHT_Find (light_tex->name);
+	const qboolean style_override = (style_ov && style_ov->has_style) ? true : false;
+
+	if ((style_override || light_tex->rtlightstyles) && CVAR_TO_BOOL (rt_light_styles))
 	{
 		vec3_t center;
 		VectorScale (accum_center, 1.0f / total_area, center);
 
-		const float style_scale = RT_SurfaceLightStyleScale (s->surf, center);
+		const float style_scale =
+		    style_override ? CLAMP (0.0f, (float)d_lightstylevalue[CLAMP (0, style_ov->style, 255)] * (1.0f / 256.0f), 1.0f)
+		                   : RT_SurfaceLightStyleScale (s->surf, center);
 
 		if (watch)
 		{
@@ -5310,7 +5336,7 @@ void RT_PrintEmissiveStats (void)
 			rt_emis_stats.glow_faces, rt_emis_stats.glow_lights, rt_emis_stats.glow_fallback);
 
 	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || Atomic_LoadUInt32 (&rt_emis_stats.buried) || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
-		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_model_lights_minarea, %i polygons buried under rt_dtal_clearance\n",
+		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_dtal_model_minarea, %i polygons buried under rt_dtal_clearance\n",
 			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.buried));
 
 	if (Atomic_LoadUInt32 (&rt_buried_traces) || Atomic_LoadUInt32 (&rt_buried_hits) ||
