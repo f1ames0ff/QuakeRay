@@ -775,6 +775,8 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         }
     }
 
+    pipelineColor0Format = nvrhi::Format::R11G11B10_FLOAT;
+    pipelineColor1Format = nvrhi::Format::R11G11B10_FLOAT;
     created = true;
     return true;
 }
@@ -832,7 +834,7 @@ bool RhiRasterOverlayPass::SetSmokeLightLayout(nvrhi::BindingLayoutHandle pLight
         smokeLightLayout = pLightLayout;
     }
 
-    return true;
+    return PrewarmSmokePipeline();
 }
 
 void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
@@ -1336,6 +1338,7 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
         ReleasePipelineCache();
         pipelineColor0Format = color0Format;
         pipelineColor1Format = color1Format;
+        PrewarmSmokePipeline();
     }
 
     target.finalImage = std::get<0>(finalImage);
@@ -1921,6 +1924,24 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateWorldPipeline(uint32_t
     }
 
     return pipeline;
+}
+
+bool RhiRasterOverlayPass::PrewarmSmokePipeline()
+{
+    if (smokeVertexShader == nullptr || smokePixelShader == nullptr || smokeInputLayout == nullptr ||
+        smokePushConstantLayout == nullptr || smokeFramebuffersLayout == nullptr ||
+        smokeTlasLayout == nullptr || smokeLightLayout == nullptr)
+    {
+        return true;
+    }
+
+    const uint32_t stateFlags = ConvertToStateFlags(
+        QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE |
+        QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+        QR_RASTERIZED_GEOMETRY_STATE_SMOKE,
+        QR_BLEND_FACTOR_ONE, QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+
+    return GetSmokePipeline(stateFlags) != nullptr;
 }
 
 nvrhi::IGraphicsPipeline *RhiRasterOverlayPass::GetSmokePipeline(uint32_t stateFlags)

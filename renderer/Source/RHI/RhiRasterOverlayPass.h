@@ -469,6 +469,7 @@ private:
 
     nvrhi::IGraphicsPipeline *GetSmokePipeline(uint32_t stateFlags);
     nvrhi::GraphicsPipelineHandle CreateSmokePipeline(uint32_t stateFlags);
+    bool PrewarmSmokePipeline();
 
     nvrhi::IDevice *device = nullptr;
     PrintFunction print;
