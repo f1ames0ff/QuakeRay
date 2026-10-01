@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.23.1
+
+### Fixed
+- **Emissive projector skew** — skewed texture mappings no longer introduce extra distortion into the projected light pattern; projection uses the surface normal before converting to texture coordinates.
+
 ## v0.23.0
 
 ### Added
