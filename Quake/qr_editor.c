@@ -73,7 +73,7 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea;
-extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale, rt_water_aciddensity;
+extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale;
 
 // The level's own fog (gl_fog.c): read through the getters and written through
 // the `fog` command, the same path a map's key and the console use. Whether the
@@ -2764,7 +2764,6 @@ static const struct
 	{ "rt_water_normstren",   0.0f,   4.0f, "How strongly the water's normal map bends the surface." },
 	{ "rt_water_normsharp",   0.0f,  16.0f, "Sharpness of the water's normal map: higher tightens the ripple pattern." },
 	{ "rt_water_scale",       0.0f,   4.0f, "Scale of the wave pattern over the water: larger stretches the waves." },
-	{ "rt_water_aciddensity", 0.0f, 100.0f, "How dense the acid is: higher makes its surface look thicker." },
 };
 
 static char     qre_water_snapshot[countof (qre_water)][QRE_SNAPSHOT_MAX];
@@ -5822,6 +5821,14 @@ qboolean QR_Editor_PanelOpen (void)
 qboolean QR_Editor_Flying (void)
 {
 	return qre.active && !qre.panel_open;
+}
+
+void QR_Editor_SunPlacement (qboolean on)
+{
+	if (!qre.active)
+		return;
+
+	QRE_CursorMode (!on);
 }
 
 qboolean QR_Editor_TorchOn (void)
