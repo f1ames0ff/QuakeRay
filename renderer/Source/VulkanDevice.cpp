@@ -901,12 +901,11 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         p.skyParams[3] = 0.025f;
 
         const uint32_t cloudsQuality = drawInfo.pSkyParams != nullptr
-            ? (drawInfo.pSkyParams->skyCloudsQuality > 4 ? 4 : drawInfo.pSkyParams->skyCloudsQuality)
+            ? std::min(drawInfo.pSkyParams->skyCloudsQuality, uint32_t(QR_SKY_CLOUDS_MAX_QUALITY))
             : 2;
         const bool flatClouds = cloudsQuality == 0;
 
-        constexpr float CLOUDS_VIEW_STEPS[5] = { 32.0f, 40.0f, 48.0f, 56.0f, 64.0f };
-        constexpr float CLOUD_REFERENCE_ALTITUDE = 1400.0f;
+        constexpr float CLOUDS_VIEW_STEPS[QR_SKY_CLOUDS_MAX_QUALITY + 1] = { 32.0f, 40.0f, 48.0f, 56.0f };
 
         float cloudAltitude = 140000.0f;
         float cloudThickness = 90000.0f;
@@ -934,7 +933,8 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         }
 
         p.skyTint[3] = flatClouds ? 1.0f : 0.0f;
-        p.cloudParams[2] *= cloudAltitude / CLOUD_REFERENCE_ALTITUDE;
+        const auto wind = RhiCloudsPass::GetWindSpeeds(p.cloudParams[2], cloudAltitude, cloudThickness);
+        p.cloudParams[2] = flatClouds ? wind.flat : wind.volume;
 
         constexpr float PI = 3.14159265358979323846f;
         const float faceAngles[6][2] = {
@@ -961,6 +961,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         static_assert(offsetof(RhiCloudsPass::LayerParams, cloudLayer) == sizeof(RhiProceduralSkyPass::Params),
                       "the layer params must start with the procedural sky params");
         memcpy(&clouds, &p, sizeof(p));
+        clouds.cloudParams[2] = wind.volume;
 
         clouds.cloudLayer[0] = cloudAltitude;
         clouds.cloudLayer[1] = cloudThickness;
@@ -984,7 +985,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         cloudsShadow.cloudLayer[2] = p.cloudParams[1];
         cloudsShadow.cloudLayer[3] = clouds.cloudMarch[2];
         cloudsShadow.cloudMarch[0] = p.cloudColor[3];
-        cloudsShadow.cloudMarch[1] = p.cloudParams[2];
+        cloudsShadow.cloudMarch[1] = wind.volume;
         sky.cloudsShadowParams = cloudsShadow;
 
         sky.cloudsLayer = !flatClouds && p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;

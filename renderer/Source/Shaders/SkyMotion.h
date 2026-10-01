@@ -19,7 +19,7 @@ vec2 getMotionForCloudLayer(const vec3 rayDir, const vec2 motionInfinite)
     vec3 dirPrev;
     if (layer.y <= 0.0)
     {
-        dirPrev = normalize(rayDir + globalUniform.timeDelta * layer.x / 3.0 * vec3(1.0, 0.4, 0.0));
+        dirPrev = normalize(rayDir + globalUniform.timeDelta * layer.x * abs(rayDir.z) * vec3(1.0, 0.4, 0.0));
     }
     else
     {

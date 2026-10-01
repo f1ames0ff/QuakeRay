@@ -19,7 +19,7 @@ float2 getMotionForCloudLayer(const float3 rayDir, const float2 motionInfinite)
     float3 dirPrev;
     if (layer.y <= 0.0)
     {
-        dirPrev = normalize(rayDir + globalUniform.timeDelta * layer.x / 3.0 * float3(1.0, 0.4, 0.0));
+        dirPrev = normalize(rayDir + globalUniform.timeDelta * layer.x * abs(rayDir.z) * float3(1.0, 0.4, 0.0));
     }
     else
     {

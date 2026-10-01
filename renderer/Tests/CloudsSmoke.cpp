@@ -96,6 +96,22 @@ void CheckLayer(const std::vector<float> &values)
         Require(values[i] == 1.0f, "lower cloud face was not written transparent");
 }
 
+float SampleTopFace(const std::vector<float> &image, float x, float y)
+{
+    constexpr uint32_t side = qray::RhiProceduralSkyPass::CUBEMAP_SIZE;
+    const uint32_t x0 = uint32_t(std::floor(x));
+    const uint32_t y0 = uint32_t(std::floor(y));
+    const float fx = x - x0;
+    const float fy = y - y0;
+    auto at = [&](uint32_t px, uint32_t py)
+    {
+        return image[(size_t(4) * side * side + size_t(py) * side + px) * 4];
+    };
+    const float top = std::lerp(at(x0, y0), at(x0 + 1, y0), fx);
+    const float bottom = std::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx);
+    return std::lerp(top, bottom, fy);
+}
+
 std::array<float, 3> PickShadowColumn(nvrhi::IDevice *device, nvrhi::ITexture *texture, const float *placement)
 {
     auto desc = texture->getDesc();
@@ -319,19 +335,22 @@ int main(int argc, char **argv)
             Require(render(2, 1), "camera translation must update a stationary layer");
             std::cout << "Stationary cache, clock freeze and camera translation passed\n";
 
-            const uint32_t qualities[] = {1, 3, 4, 2};
-            const uint32_t sizes[] = {512, 2048, 4096, 1024};
-            for (uint32_t i = 0; i < 4; ++i)
+            const uint32_t qualities[] = {1, 3, 4, 99, 2};
+            const uint32_t sizes[] = {512, 2048, 2048, 2048, 1024};
+            for (uint32_t i = 0; i < 5; ++i)
             {
-                Require(render(qualities[i], i % 2), "quality change must render");
+                const bool changed = render(qualities[i], i % 2);
+                Require(changed || qualities[i] > QR_SKY_CLOUDS_MAX_QUALITY, "quality change must render");
                 Require(clouds.GetLayerTexture()->getDesc().width == sizes[i], "quality did not change layer resolution");
                 Require(clouds.GetShadowTexture()->getDesc().width == (qualities[i] >= 3 ? 2048u : 1024u), "quality did not change shadow resolution");
                 CheckLayer(ReadCube(device, clouds.GetLayerTexture(), 0, 16));
-                std::cout << "Quality " << qualities[i] << ": " << sizes[i] << " pixels, fresh sky binding passed\n";
+                std::cout << "Quality " << std::min(qualities[i], uint32_t(QR_SKY_CLOUDS_MAX_QUALITY))
+                          << " (requested " << qualities[i] << "): " << sizes[i] << " pixels, fresh sky binding passed\n";
             }
 
             qray::ShGlobalUniform uniform{};
             uniform.skyType = SKY_TYPE_PROCEDURAL;
+            uniform.worldUpVector[2] = 1;
             const auto placement = qray::RhiCloudsPass::MakeShadowPlacement(layer);
             std::memcpy(uniform.cloudShadowPlacement, placement.data(), 16);
             std::memcpy(uniform.cameraPosition, layer.cloudAnchor, 12);
@@ -390,12 +409,36 @@ int main(int argc, char **argv)
             uniform.cloudShadowPlacement[0] = 0;
             uniform.cloudLayerMotion[0] = 0.3f;
             result = probe();
-            Require(std::abs(result[2] - uniform.timeDelta * 0.3f / 6) < 1e-6, "flat-cloud motion disagrees with dome drift");
+            Require(std::abs(result[2] - uniform.timeDelta * 0.3f / 2) < 1e-6, "flat-cloud motion disagrees with planar drift");
             uniform.cloudLayerMotion[3] = 0;
             result = probe();
             Require(std::abs(result[2]) < 1e-6 && std::abs(result[3]) < 1e-6 && result[4] == 1 && result[5] == 1,
                     "disabled clouds retain motion or shadow");
             std::cout << "Wind, parallax, flat clouds, disabled shadow and god-rays push constants passed\n";
+
+            std::memcpy(uniform.cameraPositionPrev, uniform.cameraPosition, 12);
+            uniform.cloudLayerMotion[3] = 1;
+            const float windCases[][3] = {{0.3f, 140000, 90000}, {4, 10000, 5000}, {-0.7f, 1400, 900}};
+            const float directions[][3] = {{0, 0, 1}, {0.6f, 0.2f, 1}, {1, 0.5f, 0.2f}};
+            for (const auto &setting : windCases)
+            {
+                const auto wind = qray::RhiCloudsPass::GetWindSpeeds(setting[0], setting[1], setting[2]);
+                for (const auto &direction : directions)
+                {
+                    std::memcpy(uniform.worldUpVector, direction, 12);
+                    uniform.cloudLayerMotion[0] = wind.volume;
+                    uniform.cloudLayerMotion[1] = setting[1];
+                    uniform.cloudLayerMotion[2] = setting[2];
+                    const auto volumeMotion = probe();
+                    uniform.cloudLayerMotion[0] = wind.flat;
+                    uniform.cloudLayerMotion[1] = uniform.cloudLayerMotion[2] = 0;
+                    const auto flatMotion = probe();
+                    Require(std::abs(volumeMotion[2] - flatMotion[2]) < 1e-6 &&
+                            std::abs(volumeMotion[3] - flatMotion[3]) < 1e-6,
+                            "flat and volumetric wind speeds disagree under perspective projection");
+                }
+            }
+            std::cout << "Flat/volume wind agreement passed at zenith and grazing angles for three layer scales\n";
 
             p.skyTint[3] = 1;
             p.cloudParams[3] = 1;
@@ -405,6 +448,46 @@ int main(int argc, char **argv)
             for (size_t i = 0; i < flatSky.size(); ++i)
                 Require(std::isfinite(flatSky[i]) && flatSky[i] >= (i % 4 == 3 ? 0.99f : p.skyTint[i % 4] - 0.001f),
                         "flat sky contains an unrendered face");
+
+            auto flatParams = p;
+            flatParams.sunDirection[3] = 0;
+            flatParams.skyTint[0] = flatParams.skyTint[1] = flatParams.skyTint[2] = 0;
+            flatParams.cloudParams[0] = 0.35f;
+            flatParams.cloudParams[1] = 0.8f;
+            const auto visibleWind = qray::RhiCloudsPass::GetWindSpeeds(4, 140000, 90000);
+            flatParams.cloudParams[2] = visibleWind.flat;
+            flatParams.cloudColor[3] = 0;
+            frames.BeginSlot(1);
+            sky.Render(frames.GetCommandList(1), 1, flatParams);
+            frames.EndSlot(1);
+            const auto first = ReadCube(device, sky.GetCubemapTexture());
+            flatParams.cloudColor[3] = 1;
+            frames.BeginSlot(0);
+            sky.Render(frames.GetCommandList(0), 0, flatParams);
+            frames.EndSlot(0);
+            const auto second = ReadCube(device, sky.GetCubemapTexture());
+            const float centreHeight = 140000 + 0.3f * 90000;
+            const float dx = visibleWind.volume * 30 / centreHeight * qray::RhiProceduralSkyPass::CUBEMAP_SIZE / 2;
+            const float dy = visibleWind.volume * 12 / centreHeight * qray::RhiProceduralSkyPass::CUBEMAP_SIZE / 2;
+            double totalError = 0;
+            float maxError = 0;
+            size_t samples = 0;
+            constexpr uint32_t side = qray::RhiProceduralSkyPass::CUBEMAP_SIZE;
+            for (uint32_t y = 128; y < 896; y += 32)
+            {
+                for (uint32_t x = 128; x < 896; x += 32)
+                {
+                    const float expected = SampleTopFace(first, float(x) + dx, float(y) - dy);
+                    const float actual = second[(size_t(4) * side * side + size_t(y) * side + x) * 4];
+                    const float error = std::abs(actual - expected);
+                    maxError = std::max(maxError, error);
+                    totalError += error;
+                    ++samples;
+                }
+            }
+            Require(totalError / samples < 0.01 && maxError < 0.05f,
+                    "visible flat-cloud animation does not follow the volumetric wind displacement");
+            std::cout << "Flat-mask GPU advection: mean error=" << totalError / samples << "; max=" << maxError << '\n';
             p.skyParams[1] = layer.skyParams[1] = 0;
             Require(!render(2, 1), "zero opacity recorded a volume march");
             CheckClear(ReadCube(device, sky.GetEnvironmentTexture(), 0, 16), p.skyTint);

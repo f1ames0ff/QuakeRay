@@ -129,8 +129,8 @@ float fbm3(float3 p)
 
 float cloudMask(float3 dir, float time, float speed)
 {
-    // sample the noise on the sky dome; drift slowly with time
-    float3 p = dir * 3.0 + float3(time * speed, time * speed * 0.4, 0.0);
+    float2 plane = dir.xy / max(abs(dir.z), 1.0e-3);
+    float3 p = float3((plane + time * speed * float2(1.0, 0.4)) * 3.0, 3.0);
     float n = fbm3(p);
     return n;
 }

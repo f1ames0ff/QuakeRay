@@ -61,6 +61,14 @@ public:
         float mapProjection[4];
     };
 
+    struct WindSpeeds
+    {
+        float volume;
+        float flat;
+    };
+
+    static WindSpeeds GetWindSpeeds(float setting, float altitude, float thickness);
+
     RhiCloudsPass();
     ~RhiCloudsPass();
 

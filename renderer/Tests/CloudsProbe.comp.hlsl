@@ -23,7 +23,7 @@ struct ProbePush
 void main()
 {
     const float3 sunDir = normalize(float3(0.3, 0.4, sqrt(0.75)));
-    const float3 rayDir = float3(0.0, 0.0, 1.0);
+    const float3 rayDir = normalize(globalUniform.worldUpVector.xyz);
     float2 infinite = getMotionForInfinitePoint(rayDir);
     probeOutput[0] = float4(infinite, getMotionForCloudLayer(rayDir, infinite));
 

@@ -925,6 +925,8 @@ typedef struct QrDrawFrameTonemappingParams
     float       contrast;
 } QrDrawFrameTonemappingParams;
 
+#define QR_SKY_CLOUDS_MAX_QUALITY 3
+
 typedef struct QrDrawFrameSkyParams
 {
     QrSkyType   skyType;

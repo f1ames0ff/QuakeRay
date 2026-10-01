@@ -210,14 +210,6 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_brightness, "1.0") \
 	CVAR_DEF_T (rt_light_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_clouds, "1") \
-	/* Quality of the volumetric clouds: 0 low, 1 medium, 2 high, 3 ultra, 4 extreme (anything \
-	   above is read as extreme). Level 0 draws the flat clouds the sky had before the layer \
-	   was a volume -- a noise mask painted into the sky's colour, which casts no shadow -- \
-	   and every level above it draws the volume. The level is the resolution the layer is \
-	   drawn at, the resolution of the map of its shadow and how often that map is filled \
-	   again, each level doubling the resolutions -- what decides how fine the clouds are, and \
-	   what they cost. Nothing about the look of the clouds themselves is scaled by it, only \
-	   how finely they are resolved. */ \
 	CVAR_DEF_T (rt_sky_clouds_quality, "2") \
 	CVAR_DEF_T (rt_sky_clouds_color, "0 0 0") \
 	CVAR_DEF_T (rt_sky_clouds_alpha, "1.0") \
@@ -1245,6 +1237,15 @@ static void VID_Vsync_f (cvar_t *var)
 	Con_Printf ("Video: vsync mode is %s\n", VID_VsyncModeName ((int)var->value));
 }
 
+static void VID_CloudsQuality_f (cvar_t *var)
+{
+	const int quality = (int)CLAMP (0.0f, var->value, (float)QR_SKY_CLOUDS_MAX_QUALITY);
+	if (var->value != (float)quality)
+	{
+		Cvar_SetValueQuick (var, (float)quality);
+	}
+}
+
 static void VID_MaxFrameLatency_f (cvar_t *var)
 {
 	const int value = CLAMP (0, (int)var->value, 1);
@@ -2240,7 +2241,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	if (usePhysicalSky)
 	{
-		sky_params.skyCloudsQuality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_clouds_quality), 4.0f);
+		sky_params.skyCloudsQuality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_clouds_quality), (float)QR_SKY_CLOUDS_MAX_QUALITY);
 
 		float *c = &sky_params.skyCubemapRotationTransform.matrix[0][0];
 		// the cloud settings ride in the otherwise unused rotation matrix of this
@@ -2947,6 +2948,8 @@ void VID_Init (void)
 	}
 
 	Cvar_SetCallback (&rt_sky_sun_preset, RT_SunPreset_f);
+	Cvar_SetCallback (&rt_sky_clouds_quality, VID_CloudsQuality_f);
+	VID_CloudsQuality_f (&rt_sky_clouds_quality);
 	Cvar_SetCallback (&rt_sky_sun_edit, RT_SunEditChanged_f);
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
@@ -3596,7 +3599,8 @@ rt_sky_clouds_quality are on, as a word
 */
 static const char *VID_Menu_GetQualityName (const cvar_t *var)
 {
-	switch (CLAMP (0, (int)var->value, 4))
+	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
+	switch (CLAMP (0, (int)var->value, maximum))
 	{
 	case 0:  return "low";
 	case 1:  return "medium";
@@ -3613,7 +3617,8 @@ VID_Menu_StepQuality -- cycle one of the quality ladder cvars
 */
 static void VID_Menu_StepQuality (cvar_t *var, int dir)
 {
-	Cvar_SetValueQuick (var, (float)CLAMP (0, (int)var->value + dir, 4));
+	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
+	Cvar_SetValueQuick (var, (float)CLAMP (0, (int)var->value + dir, maximum));
 }
 
 /*

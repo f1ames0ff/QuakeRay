@@ -284,14 +284,14 @@ bool RhiCloudsPass::Create(nvrhi::IDevice *pDevice,
 
 bool RhiCloudsPass::SetQuality(uint32_t requestedQuality)
 {
-    requestedQuality = std::clamp(requestedQuality, 1u, 4u);
+    requestedQuality = std::clamp(requestedQuality, 1u, uint32_t(QR_SKY_CLOUDS_MAX_QUALITY));
     if (quality == requestedQuality)
     {
         return true;
     }
 
-    constexpr uint32_t layerSizes[5] = { 256, 512, 1024, 2048, 4096 };
-    constexpr uint32_t shadowSizes[5] = { 512, 1024, 1024, 2048, 2048 };
+    constexpr uint32_t layerSizes[QR_SKY_CLOUDS_MAX_QUALITY + 1] = { 256, 512, 1024, 2048 };
+    constexpr uint32_t shadowSizes[QR_SKY_CLOUDS_MAX_QUALITY + 1] = { 512, 1024, 1024, 2048 };
     auto nextLayer = CreateLayerTexture(device, "RhiCloudsPass layer cubemap", layerSizes[requestedQuality]);
     auto nextShadow = CreateShadowTexture(device, "RhiCloudsPass shadow volume", shadowSizes[requestedQuality]);
     if (nextLayer == nullptr || nextShadow == nullptr)
@@ -328,6 +328,13 @@ bool RhiCloudsPass::SetQuality(uint32_t requestedQuality)
     layerValid = false;
     shadowValid = false;
     return true;
+}
+
+RhiCloudsPass::WindSpeeds RhiCloudsPass::GetWindSpeeds(float setting, float altitude, float thickness)
+{
+    const float volume = setting * altitude / 1400.0f;
+    const float centre = std::max(altitude + 0.3f * thickness, 1.0f);
+    return { volume, volume * 30.0f / centre };
 }
 
 std::array<float, 4> RhiCloudsPass::MakeShadowPlacement(const LayerParams &params)
