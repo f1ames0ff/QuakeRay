@@ -80,7 +80,8 @@ nvrhi::BindingSetHandle CreateLayerSet(nvrhi::IDevice *device,
     nvrhi::BindingSetDesc setDesc;
     setDesc.addItem(nvrhi::BindingSetItem::Texture_UAV(
         RhiCloudsPass::LAYER_UAV_SLOT, pLayer, nvrhi::Format::RGBA16_FLOAT,
-        nvrhi::TextureSubresourceSet(), nvrhi::TextureDimension::Texture2DArray));
+        nvrhi::TextureSubresourceSet(0, 1, 0, RhiCloudsPass::LAYER_CUBEMAP_FACE_COUNT),
+        nvrhi::TextureDimension::Texture2DArray));
     setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(
         RhiCloudsPass::LAYER_PARAMS_CB_SLOT, pParamsBuffer));
     setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(
