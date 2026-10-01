@@ -200,7 +200,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_sky_nee, "1") \
 	CVAR_DEF_T (rt_physical_sky, "1") \
 	CVAR_DEF_T (rt_physical_sun, "0") \
-	CVAR_DEF_T (rt_sky_color, "32 0 64") \
+	CVAR_DEF_T (rt_sky_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_brightness, "1.0") \
 	CVAR_DEF_T (rt_brightness, "1.0") \
 	CVAR_DEF_T (rt_light_color, "255 255 255") \
@@ -244,13 +244,12 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_volume_lassymetry, "0.0") \
 	CVAR_DEF_T (rt_level_fog, "1") \
     \
-	CVAR_DEF_T (rt_water_aciddensity, "25") \
 	CVAR_DEF_T (rt_water_speed, "0.4") \
 	CVAR_DEF_T (rt_water_normstren, "1") \
 	CVAR_DEF_T (rt_water_normsharp, "5") \
 	CVAR_DEF_T (rt_water_scale, "1") \
 	CVAR_DEF_T (rt_water_color, "171 193 210") \
-	CVAR_DEF_T (rt_water_acidcolor, "0 169 145") \
+	CVAR_DEF_T (rt_water_acidcolor, "122 143 21") \
 	CVAR_DEF_T (rt_turb_warp, "1") \
 	\
 	CVAR_DEF_T (rt_portal_twirl, "1") \
@@ -1507,7 +1506,7 @@ static rt_color_t rt_colors[RT_COLOR_COUNT] = {
 	[RT_COLOR_LIGHT]       = {.cvar = &rt_light_color,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_GLOBALLIGHT] = {.cvar = &rt_globallight,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_WATER]       = {.cvar = &rt_water_color,      .fallback = {171 / 255.0f, 193 / 255.0f, 210 / 255.0f}, .dirty = true},
-	[RT_COLOR_ACID]        = {.cvar = &rt_water_acidcolor,  .fallback = {0.0f, 169 / 255.0f, 145 / 255.0f}, .dirty = true},
+	[RT_COLOR_ACID]        = {.cvar = &rt_water_acidcolor,  .fallback = {122 / 255.0f, 143 / 255.0f, 21 / 255.0f}, .dirty = true},
 };
 
 static qboolean RT_ColorParse (const char *s, float *out)
@@ -2135,7 +2134,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.turbWarpStrength = CVAR_TO_FLOAT (rt_turb_warp),
 		.waterColor = RT_VEC3 (water_color),
 		.acidColor = RT_VEC3 (acid_color),
-		.acidDensity = CVAR_TO_FLOAT(rt_water_aciddensity),
 		.waterWaveTextureDerivativesMultiplier = CVAR_TO_FLOAT (rt_water_normsharp),
 		.waterTextureAreaScale = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_scale)),
 		.portalNormalTwirl = CVAR_TO_BOOL (rt_portal_twirl),
@@ -2629,6 +2627,8 @@ static void RT_SunEditChanged_f (cvar_t *var)
 	{
 		Con_Printf ("Sun placed: rt_sun_pitch %s, rt_sun_yaw %s\n", rt_sun_pitch.string, rt_sun_yaw.string);
 	}
+
+	QR_Editor_SunPlacement (CVAR_TO_BOOL (rt_sun_edit));
 }
 
 static void RT_SunPreset_f (cvar_t *var)
