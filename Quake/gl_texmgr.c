@@ -1052,22 +1052,11 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 
 	if ((int)glt->width != mipwidth || (int)glt->height != mipheight)
 	{
-		if (glt->width <= 0 || glt->height <= 0)
-		{
-			Con_Warning ("TexMgr_LoadImage32: %s has an invalid size %ix%i\n", glt->name, glt->width, glt->height);
-			glt->width = q_max (glt->width, 1);
-			glt->height = q_max (glt->height, 1);
-		}
-		else
-		{
-			if (mipwidth >= (int)glt->width || mipheight >= (int)glt->height)
-				Con_Warning ("TexMgr_LoadImage32: %s is %ix%i, rescaled to %ix%i\n", glt->name, glt->width, glt->height, mipwidth, mipheight);
-			TexMgr_Downsample (data, glt->width, glt->height, mipwidth, mipheight);
-			glt->width = mipwidth;
-			glt->height = mipheight;
-			if (glt->flags & TEXPREF_ALPHA)
-				TexMgr_AlphaEdgeFix ((byte *)data, glt->width, glt->height);
-		}
+		TexMgr_Downsample (data, glt->width, glt->height, mipwidth, mipheight);
+		glt->width = mipwidth;
+		glt->height = mipheight;
+		if (glt->flags & TEXPREF_ALPHA)
+			TexMgr_AlphaEdgeFix ((byte *)data, glt->width, glt->height);
 	}
 	int num_mips = (glt->flags & TEXPREF_MIPMAP) ? TexMgr_DeriveNumMips (glt->width, glt->height) : 1;
 

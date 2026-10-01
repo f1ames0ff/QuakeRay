@@ -351,6 +351,10 @@ static void Mod_EnhancedModels_f (cvar_t *var)
 	int       i;
 	qmodel_t *mod;
 
+	extern gltexture_t *playertextures[MAX_SCOREBOARD];
+	for (i = 0; i < MAX_SCOREBOARD; i++)
+		playertextures[i] = NULL;
+
 	for (i = 0, mod = mod_known; i < mod_numknown; i++, mod++)
 	{
 		if (mod->type != mod_alias)
@@ -363,6 +367,15 @@ static void Mod_EnhancedModels_f (cvar_t *var)
 	for (i = 0, mod = mod_known; i < mod_numknown; i++, mod++)
 		if (mod->type == mod_alias)
 			Mod_LoadModel (mod, false);
+
+	if (cl.entities)
+	{
+		for (i = 0; i < cl.max_edicts; i++)
+			cl.entities[i].lerpflags |= LERP_RESETANIM | LERP_RESETANIM2;
+		for (i = 0; i < cl.maxclients; i++)
+			R_TranslateNewPlayerSkin (i);
+	}
+	cl.viewent.lerpflags |= LERP_RESETANIM | LERP_RESETANIM2;
 
 	InvalidateTraceLineCache ();
 }
@@ -4165,12 +4178,7 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 
 	bindabs = Mem_Alloc (numjoints * 12 * sizeof (*bindabs));
 	for (j = 0; j < numjoints; j++)
-	{
-		if (joints[j].parent < 0)
-			memcpy (bindabs + j * 12, joints[j].loc, 12 * sizeof (*bindabs));
-		else
-			R_ConcatTransforms ((float (*)[4])(bindabs + joints[j].parent * 12), (float (*)[4])joints[j].loc, (float (*)[4])(bindabs + j * 12));
-	}
+		memcpy (bindabs + j * 12, joints[j].loc, 12 * sizeof (*bindabs));
 
 	if (Mod_LoadMD5Anim (fname, joints, numjoints, bindabs, &numposes, &poses))
 		poses_owned = true;
@@ -4338,9 +4346,9 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 					const md5weight_t *weight = &mesh->weights[info->firstweight + w];
 					const float       *mat = pose + (size_t)weight->joint * 12;
 
-					acc[0] += weight->bias * (mat[0] * weight->pos[0] + mat[4] * weight->pos[1] + mat[8] * weight->pos[2] + mat[3]);
-					acc[1] += weight->bias * (mat[1] * weight->pos[0] + mat[5] * weight->pos[1] + mat[9] * weight->pos[2] + mat[7]);
-					acc[2] += weight->bias * (mat[2] * weight->pos[0] + mat[6] * weight->pos[1] + mat[10] * weight->pos[2] + mat[11]);
+					acc[0] += weight->bias * (mat[0] * weight->pos[0] + mat[1] * weight->pos[1] + mat[2] * weight->pos[2] + mat[3]);
+					acc[1] += weight->bias * (mat[4] * weight->pos[0] + mat[5] * weight->pos[1] + mat[6] * weight->pos[2] + mat[7]);
+					acc[2] += weight->bias * (mat[8] * weight->pos[0] + mat[9] * weight->pos[1] + mat[10] * weight->pos[2] + mat[11]);
 				}
 
 				out[vi].position[0] = acc[0];
