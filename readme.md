@@ -1,3 +1,5 @@
+![QR logo](qr-temp-logo.png)
+
 # QuakeRay engine
 
 QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path tracing, built on NVRHI and running on Vulkan.
