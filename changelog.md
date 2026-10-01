@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.21.1
+
+### Added
+- **The sun placement uses the free camera** — "Set sun position" in the light editor hands the panel over to the flying mode: the sun follows the crosshair while you fly, and the fire press that leaves it where it points brings the panel back. The mode follows the cvar, so the button and the console behave the same.
+
+### Changed
+- **New defaults** — the acid colour is `#7A8F15` and the procedural sky's `rt_sky_color` is white; `rt_globallight` was already white.
+
+### Removed
+- **`rt_water_aciddensity`** — the cvar, the water tab's row and the engine's assignment are gone; the acid density is no longer driven from the engine, and the water density rework arrives with the caustics work. A value an old config still carries is ignored.
+
 ## v0.21.0
 
 ### Added
