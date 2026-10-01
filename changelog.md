@@ -43,6 +43,23 @@
 - **A shader that fails to compile stops the shader build** — the generator reports a failed shader and still ends with a zero exit code, so a run that lost a shader looked exactly like a successful one with fewer files; worse, the step that deploys them then found no `.spv` for the failed shader and *removed* the one in the game's folder, leaving the game without it — which is how one commit of this release was pushed unbuilt. The report is part of the run now (`build_shaders.ps1`), and a failure stops it before anything is deployed or removed.
 - **The sun's shafts no longer go out with the volumetric clouds** — the flag that said which of the two cloud looks is drawn was written one float past the end of the nine the cloud settings ride in, and the float that follows them in `RgDrawFrameSkyParams` is `godRaysEnabled`: at any quality level above the flat one the write put a zero over it, so `rt_sky_godrays 1` drew no shafts over the world, and at the flat level it put a one there instead, where the switch did not matter either. The flag is gone — the renderer tells the motion vectors which look they are looking at instead — and the shafts read the setting they were given again.
 
+## v0.22.0
+
+### Added
+- **The god rays take their sun from the bright areas of the sky** — with the classic sky (`rt_physical_sky 0`) the rays aimed at the single brightest texel of the skybox, so one specular pixel or a lone bright star could pull them, and a sky with several bright patches only ever pulled them to its maximum. The sky scans now build a 16x16 luminance grid over the six skybox faces and over the solid layer of the scrolling sky; `rt_godrays_sky_threshold` (default `0.75`) selects the cells whose mean luminance is above it, and the rays aim at the luminance-weighted centre of everything selected and take its average colour. Nothing above the threshold falls back to the brightest point, and `0` keeps the old single-point behaviour. The source colour follows `rt_sky_brightness` too, so the sky brightness moves the shafts with the sky.
+- **A physical sun switch, `rt_physical_sun`** — under the classic sky, `0` (the default) takes the god rays from the sky texture as above and `1` takes them from the sun: the rays, and the shadow they are marched through, follow `rt_sun_pitch` / `rt_sun_yaw` and `rt_sun_color`. The light editor's Sun section hangs on the switch and sits right after the sky's own rows, so the sun controls stay out of the way of a mod that lights itself from its skybox.
+
+## v0.21.1
+
+### Added
+- **The sun placement uses the free camera** — "Set sun position" in the light editor hands the panel over to the flying mode: the sun follows the crosshair while you fly, and the fire press that leaves it where it points brings the panel back. The mode follows the cvar, so the button and the console behave the same.
+
+### Changed
+- **New defaults** — the acid colour is `#7A8F15` and the procedural sky's `rt_sky_color` is white; `rt_globallight` was already white.
+
+### Removed
+- **`rt_water_aciddensity`** — the cvar, the water tab's row and the engine's assignment are gone; the acid density is no longer driven from the engine, and the water density rework arrives with the caustics work. A value an old config still carries is ignored.
+
 ## v0.21.0
 
 ### Added

@@ -22,6 +22,7 @@ void QR_Editor_Init (void);
 qboolean QR_Editor_Active (void);   // the editor owns the view (flying or panel)
 qboolean QR_Editor_PanelOpen (void); // the material panel is on screen
 qboolean QR_Editor_Flying (void);   // active, no panel: free camera + crosshair aim
+void     QR_Editor_SunPlacement (qboolean on);
 
 qboolean QR_Editor_TorchOn (void);
 void     QR_Editor_TorchOrigin (vec3_t out);

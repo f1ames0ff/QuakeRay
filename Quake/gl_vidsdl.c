@@ -124,6 +124,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   level is the resolution that map is drawn at: it is what decides how crisp the edges of the \
 	   shafts are, and what they cost. */ \
 	CVAR_DEF_T (rt_sky_godrays_quality, "2") \
+	CVAR_DEF_T (rt_sky_godrays_sky_threshold, "0.75") \
 	CVAR_DEF_T (rt_denoiser, "1") \
 	CVAR_DEF_T (rt_no_textures, "0") \
 	/* No pass reads forceAntiFirefly: CmQ2Adapter's anti-firefly is not gated by
@@ -203,7 +204,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_sky_ambient_lod, "4") \
 	CVAR_DEF_T (rt_sky_nee, "1") \
 	CVAR_DEF_T (rt_physical_sky, "1") \
-	CVAR_DEF_T (rt_sky_color, "32 0 64") \
+	CVAR_DEF_T (rt_physical_sun, "0") \
+	CVAR_DEF_T (rt_sky_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_brightness, "1.0") \
 	CVAR_DEF_T (rt_brightness, "1.0") \
 	CVAR_DEF_T (rt_light_color, "255 255 255") \
@@ -258,13 +260,12 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_volume_lassymetry, "0.0") \
 	CVAR_DEF_T (rt_level_fog, "1") \
     \
-	CVAR_DEF_T (rt_water_aciddensity, "25") \
 	CVAR_DEF_T (rt_water_speed, "0.4") \
 	CVAR_DEF_T (rt_water_normstren, "1") \
 	CVAR_DEF_T (rt_water_normsharp, "5") \
 	CVAR_DEF_T (rt_water_scale, "1") \
 	CVAR_DEF_T (rt_water_color, "171 193 210") \
-	CVAR_DEF_T (rt_water_acidcolor, "0 169 145") \
+	CVAR_DEF_T (rt_water_acidcolor, "122 143 21") \
 	CVAR_DEF_T (rt_turb_warp, "1") \
 	\
 	CVAR_DEF_T (rt_portal_twirl, "1") \
@@ -669,7 +670,9 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_sky_godrays");
 	RT_Bench_Setting (f, "rt_sky_godrays_intensity");
 	RT_Bench_Setting (f, "rt_sky_godrays_quality");
+	RT_Bench_Setting (f, "rt_sky_godrays_sky_threshold");
 	RT_Bench_Setting (f, "rt_physical_sky");
+	RT_Bench_Setting (f, "rt_physical_sun");
 	RT_Bench_Setting (f, "rt_sky_clouds");
 	RT_Bench_Setting (f, "rt_sky_clouds_coverage");
 	RT_Bench_Setting (f, "rt_sky_clouds_density");
@@ -1523,7 +1526,7 @@ static rt_color_t rt_colors[RT_COLOR_COUNT] = {
 	[RT_COLOR_LIGHT]       = {.cvar = &rt_light_color,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_GLOBALLIGHT] = {.cvar = &rt_globallight,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_WATER]       = {.cvar = &rt_water_color,      .fallback = {171 / 255.0f, 193 / 255.0f, 210 / 255.0f}, .dirty = true},
-	[RT_COLOR_ACID]        = {.cvar = &rt_water_acidcolor,  .fallback = {0.0f, 169 / 255.0f, 145 / 255.0f}, .dirty = true},
+	[RT_COLOR_ACID]        = {.cvar = &rt_water_acidcolor,  .fallback = {122 / 255.0f, 143 / 255.0f, 21 / 255.0f}, .dirty = true},
 };
 
 static qboolean RT_ColorParse (const char *s, float *out)
@@ -2159,7 +2162,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.turbWarpStrength = CVAR_TO_FLOAT (rt_turb_warp),
 		.waterColor = RT_VEC3 (water_color),
 		.acidColor = RT_VEC3 (acid_color),
-		.acidDensity = CVAR_TO_FLOAT(rt_water_aciddensity),
 		.waterWaveTextureDerivativesMultiplier = CVAR_TO_FLOAT (rt_water_normsharp),
 		.waterTextureAreaScale = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_scale)),
 		.portalNormalTwirl = CVAR_TO_BOOL (rt_portal_twirl),
@@ -2228,7 +2230,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		// The shafts are the light of the procedural sky scattered through the air:
 		// with the classic sky (rt_physical_sky 0) there is no sun to scatter and
 		// no shafts, whatever rt_sky_godrays says.
-		.godRaysEnabled = usePhysicalSky && CVAR_TO_BOOL (rt_sky_godrays),
+		.godRaysEnabled = CVAR_TO_BOOL (rt_sky_godrays),
 		.godRaysIntensity = CVAR_TO_FLOAT (rt_sky_godrays_intensity),
 		.godRaysQuality = CVAR_TO_UINT32 (rt_sky_godrays_quality),
 		.godRaysFromSkyTexture = 0,
@@ -2258,7 +2260,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		// vectors of the sky are told which of the two is drawn by the renderer,
 		// which reads the quality off skyCloudsQuality itself (VulkanDevice.cpp).
 	}
-	else if (!CVAR_TO_BOOL (r_fastsky))
+	else if (!CVAR_TO_BOOL (r_fastsky) && !CVAR_TO_BOOL (rt_physical_sun))
 	{
 		vec3_t brightest_dir, brightest_color;
 
@@ -2276,6 +2278,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			RT_APPLY_SUN_COLOR (brightest_color);
 			RT_FIXUP_LIGHT_INTENSITY (brightest_color, true);
 			VectorScale (brightest_color, RT_SUN_LIGHT_INTENSITY_SCALE, brightest_color);
+			VectorScale (brightest_color, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_brightness), 10.0f), brightest_color);
 
 			sky_params.godRaysFromSkyTexture = 1;
 			RT_VEC3_SET (sky_params.godRaysSkyDirection.data, brightest_dir[0], brightest_dir[1], brightest_dir[2]);
@@ -2679,6 +2682,8 @@ static void RT_SunEditChanged_f (cvar_t *var)
 	{
 		Con_Printf ("Sun placed: rt_sky_sun_pitch %s, rt_sky_sun_yaw %s\n", rt_sky_sun_pitch.string, rt_sky_sun_yaw.string);
 	}
+
+	QR_Editor_SunPlacement (CVAR_TO_BOOL (rt_sky_sun_edit));
 }
 
 static void RT_SunPreset_f (cvar_t *var)

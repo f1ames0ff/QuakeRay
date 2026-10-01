@@ -1,3 +1,5 @@
+![QR logo](qr-temp-logo.png)
+
 # QuakeRay engine
 
 QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path tracing, built on NVRHI and running on Vulkan.
@@ -31,7 +33,7 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 
 * Dynamic HDR Tone mapping: overall brightness, exposure bias in EV, contrast as a mix of the fixed and the auto-exposure adapted curve
 * Procedural sky with a physical sky model
-* God rays — volumetric sun shafts
+* God rays — volumetric sun shafts, aimed at the sun or at the bright areas of the sky texture
 * Volumetric fog
 * Bloom
 * Post-processing: chromatic aberration, and a configurable LUT for colour grading
@@ -131,7 +133,9 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_sky_sun_color 255 255 255` - colour of the sun and its disc, independent of the sky, as `<r> <g> <b>` in `0-255`; commas and a bare query work, and it is archived
 * `rt_sky_sun_edit 0` - mode: while it is `1` the sun follows the crosshair and writes `rt_sky_sun_pitch` / `rt_sky_sun_yaw`; the fire button leaves it without shooting, and it never survives a restart
 * `rt_sky_godrays_intensity 1` with `rt_sky_godrays 1` - strength of the volumetric sun shafts and their on/off switch: `2` doubles them, `0` removes them and the shadow map they are marched through
+* `rt_sky_godrays_sky_threshold 0.75` - luminance a sky area needs for the god rays to pull to it, as a mean over 16x16 cells of the skybox or of the scrolling sky; the rays aim at the centre of everything above it, and `0` keeps the brightest point alone
 * `rt_sky 1`, `rt_sky_brightness 1.0`, `rt_physical_sky 1` - sky intensity and sky model
+* `rt_physical_sun 0` - god rays under the classic sky: `0` takes them from the bright areas of the sky texture, `1` from the sun (`rt_sky_sun_pitch` / `rt_sky_sun_yaw`), which also opens the editor's Sun section
 * `rt_sky_color 32 0 64` - colour of the sky, tinting it and the ambient light it casts, as `<r> <g> <b>` in `0-255`; commas, quotes and a bare query work, and it is archived
 * `rt_sky_clouds_color 0 0 0` - colour the clouds are composited over the sky with, as `<r> <g> <b>` in `0-255`; commas and a bare query work
 * `rt_sky_clouds_quality 2` with `rt_sky_clouds_height 140000` and `rt_sky_clouds_thickness 90000` - the volumetric clouds: the level of the layer's march and of the map of its shadow (`0` draws the flat mask the sky had before the layer was a volume, `4` is `extreme`), the layer's height over the eye and its depth; `rt_sky_clouds` switches them, and `rt_sky_clouds_alpha`, `_coverage`, `_density` and `_speed` shape them

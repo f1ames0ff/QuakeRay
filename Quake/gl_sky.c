@@ -53,6 +53,27 @@ static qboolean sky_brightest_skybox_valid;
 static float    sky_brightest_skybox_direction[3];
 static float    sky_brightest_skybox_color[3];
 
+#define SKY_BRIGHT_CELLS 16
+
+typedef struct
+{
+	float luminance;
+	float direction[3];
+	float color[3];
+	float count;
+} sky_bright_cell_t;
+
+typedef struct
+{
+	float luminance;
+	float uv[2];
+	float color[3];
+	float count;
+} sky_bright_layer_cell_t;
+
+static sky_bright_cell_t       sky_bright_skybox_cells[6][SKY_BRIGHT_CELLS][SKY_BRIGHT_CELLS];
+static sky_bright_layer_cell_t sky_bright_2layer_cells[SKY_BRIGHT_CELLS][SKY_BRIGHT_CELLS];
+
 char skybox_name[1024]; // name of current skybox, or "" if no skybox
 
 gltexture_t *skybox_textures[6];
@@ -128,6 +149,8 @@ static void Sky_FindBrightestIndexed (const byte *src, int width, int height)
 	float bestlum = -1.0f;
 	float bestcolor[3] = {1.0f, 1.0f, 1.0f};
 
+	memset (sky_bright_2layer_cells, 0, sizeof (sky_bright_2layer_cells));
+
 	for (int y = 0; y < height; y++)
 	{
 		for (int x = 0; x < width; x++)
@@ -137,6 +160,18 @@ static void Sky_FindBrightestIndexed (const byte *src, int width, int height)
 			const float g = rgba[1] / 255.0f;
 			const float b = rgba[2] / 255.0f;
 			const float lum = Sky_Luminance (r, g, b);
+
+			const int cx = x * SKY_BRIGHT_CELLS / width;
+			const int cy = y * SKY_BRIGHT_CELLS / height;
+			sky_bright_layer_cell_t *cell = &sky_bright_2layer_cells[cy][cx];
+
+			cell->luminance += lum;
+			cell->uv[0] += x * lum;
+			cell->uv[1] += y * lum;
+			cell->color[0] += r * lum;
+			cell->color[1] += g * lum;
+			cell->color[2] += b * lum;
+			cell->count += 1.0f;
 
 			if (lum > bestlum)
 			{
@@ -167,9 +202,6 @@ static void Sky_ScanSkyBoxFace (const byte *data, int width, int height, int axi
 			const float b = px[2] / 255.0f;
 			const float lum = Sky_Luminance (r, g, b);
 
-			if (*found && lum <= *bestlum)
-				continue;
-
 			// Invert Sky_EmitSkyBoxVertex's texcoord mapping (bilerp seam ignored).
 			const float s = 2.0f * (x + 0.5f) / width - 1.0f;
 			const float t = 1.0f - 2.0f * (y + 0.5f) / height;
@@ -185,6 +217,22 @@ static void Sky_ScanSkyBoxFace (const byte *data, int width, int height, int axi
 			const float len = sqrtf (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
 			if (len > 0.0f)
 				VectorScale (dir, 1.0f / len, dir);
+
+			const int cx = x * SKY_BRIGHT_CELLS / width;
+			const int cy = y * SKY_BRIGHT_CELLS / height;
+			sky_bright_cell_t *cell = &sky_bright_skybox_cells[axis][cy][cx];
+
+			cell->luminance += lum;
+			cell->direction[0] += dir[0] * lum;
+			cell->direction[1] += dir[1] * lum;
+			cell->direction[2] += dir[2] * lum;
+			cell->color[0] += r * lum;
+			cell->color[1] += g * lum;
+			cell->color[2] += b * lum;
+			cell->count += 1.0f;
+
+			if (*found && lum <= *bestlum)
+				continue;
 
 			*found = true;
 			*bestlum = lum;
@@ -206,10 +254,120 @@ sky scrolls, so its direction is recomputed for the current time by inverting
 Sky_GetTexCoord's mapping.
 ==============
 */
+static float Sky_BrightThreshold (void)
+{
+	extern cvar_t rt_sky_godrays_sky_threshold;
+
+	return CVAR_TO_FLOAT (rt_sky_godrays_sky_threshold);
+}
+
+static qboolean Sky_QueryBrightSkyBox (vec3_t dir, vec3_t color)
+{
+	const float threshold = Sky_BrightThreshold ();
+
+	if (threshold <= 0.0f)
+		return false;
+
+	float totalLum = 0.0f;
+	float sumDir[3] = {0.0f, 0.0f, 0.0f};
+	float sumColor[3] = {0.0f, 0.0f, 0.0f};
+
+	for (int face = 0; face < 6; face++)
+	{
+		for (int cy = 0; cy < SKY_BRIGHT_CELLS; cy++)
+		{
+			for (int cx = 0; cx < SKY_BRIGHT_CELLS; cx++)
+			{
+				const sky_bright_cell_t *cell = &sky_bright_skybox_cells[face][cy][cx];
+
+				if (cell->count <= 0.0f || cell->luminance / cell->count < threshold)
+					continue;
+
+				totalLum += cell->luminance;
+				sumDir[0] += cell->direction[0];
+				sumDir[1] += cell->direction[1];
+				sumDir[2] += cell->direction[2];
+				sumColor[0] += cell->color[0];
+				sumColor[1] += cell->color[1];
+				sumColor[2] += cell->color[2];
+			}
+		}
+	}
+
+	if (totalLum <= 0.0f)
+		return false;
+
+	VectorCopy (sumDir, dir);
+	VectorNormalize (dir);
+	VectorScale (sumColor, 1.0f / totalLum, color);
+
+	return true;
+}
+
+static qboolean Sky_QueryBright2Layer (float time, vec3_t dir, vec3_t color)
+{
+	const float threshold = Sky_BrightThreshold ();
+
+	if (threshold <= 0.0f)
+		return false;
+
+	float totalLum = 0.0f;
+	float sumDir[3] = {0.0f, 0.0f, 0.0f};
+	float sumColor[3] = {0.0f, 0.0f, 0.0f};
+
+	float scroll = time * 8.0f;
+	scroll -= (int)scroll & ~127;
+
+	for (int cy = 0; cy < SKY_BRIGHT_CELLS; cy++)
+	{
+		for (int cx = 0; cx < SKY_BRIGHT_CELLS; cx++)
+		{
+			const sky_bright_layer_cell_t *cell = &sky_bright_2layer_cells[cy][cx];
+
+			if (cell->count <= 0.0f || cell->luminance / cell->count < threshold)
+				continue;
+
+			const float u = (cell->uv[0] / cell->luminance) * (128.0f / sky_brightest_width) - scroll;
+			const float v = (cell->uv[1] / cell->luminance) * (128.0f / sky_brightest_height) - scroll;
+
+			const float A = 6.0f * 63.0f;
+			const float r2 = u * u + v * v;
+			const float denom = sqrtf (A * A + 8.0f * r2);
+			float       cellDir[3];
+
+			cellDir[0] = u * (3.0f / denom);
+			cellDir[1] = v * (3.0f / denom);
+			cellDir[2] = (A * A - r2 > 0.0f) ? sqrtf (A * A - r2) / denom : 0.0f;
+
+			VectorNormalize (cellDir);
+
+			totalLum += cell->luminance;
+			sumDir[0] += cellDir[0] * cell->luminance;
+			sumDir[1] += cellDir[1] * cell->luminance;
+			sumDir[2] += cellDir[2] * cell->luminance;
+			sumColor[0] += cell->color[0];
+			sumColor[1] += cell->color[1];
+			sumColor[2] += cell->color[2];
+		}
+	}
+
+	if (totalLum <= 0.0f)
+		return false;
+
+	VectorCopy (sumDir, dir);
+	VectorNormalize (dir);
+	VectorScale (sumColor, 1.0f / totalLum, color);
+
+	return true;
+}
+
 qboolean Sky_GetBrightestPoint (float time, vec3_t dir, vec3_t color)
 {
 	if (skybox_name[0] && sky_brightest_skybox_valid)
 	{
+		if (Sky_QueryBrightSkyBox (dir, color))
+			return true;
+
 		VectorCopy (sky_brightest_skybox_direction, dir);
 		VectorCopy (sky_brightest_skybox_color, color);
 		return true;
@@ -217,6 +375,9 @@ qboolean Sky_GetBrightestPoint (float time, vec3_t dir, vec3_t color)
 
 	if (!sky_brightest_2layer_valid)
 		return false;
+
+	if (Sky_QueryBright2Layer (time, dir, color))
+		return true;
 
 	VectorCopy (sky_brightest_2layer_color, color);
 
@@ -433,6 +594,8 @@ void        Sky_LoadSkyBox (const char *name)
 			TexMgr_FreeTexture (skybox_textures[i]);
 		skybox_textures[i] = NULL;
 	}
+
+	memset (sky_bright_skybox_cells, 0, sizeof (sky_bright_skybox_cells));
 
 	// turn off skybox if sky is set to ""
 	if (name[0] == 0)
