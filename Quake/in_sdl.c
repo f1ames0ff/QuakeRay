@@ -1012,6 +1012,13 @@ void IN_SendKeyEvents (void)
 				Cvar_Set ("rt_sun_edit", "0");
 				break;
 			}
+			// qr light editor: in the flying mode LMB near a gizmo arrow drags
+			// the selected custom light along that axis
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_GizmoPress ())
+			{
+				break;
+			}
 			// qr light editor: in the Custom tab's placement mode the fire button
 			// drops the new light at the crosshair and is swallowed
 			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
@@ -1020,12 +1027,32 @@ void IN_SendKeyEvents (void)
 				QR_Editor_PlaceAtCrosshair ();
 				break;
 			}
+			// qr light editor: Alt+LMB in the flying mode grabs the light under
+			// the crosshair; the next LMB drops it and Esc returns it
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_Flying () && (SDL_GetModState () & KMOD_ALT))
+			{
+				QR_Editor_LightGrab ();
+				break;
+			}
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_LightDragActive ())
+			{
+				QR_Editor_LightDrop ();
+				break;
+			}
 			// qr light editor: while flying, the fire button selects the face under
 			// the crosshair and is swallowed so the weapon never fires
 			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
 			    key_dest == key_game && QR_Editor_Flying ())
 			{
 				QR_Editor_Pick ();
+				break;
+			}
+			if (event.button.state == SDL_RELEASED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_GizmoDragActive ())
+			{
+				QR_Editor_GizmoRelease ();
 				break;
 			}
 			Key_Event (buttonremap[event.button.button - 1], event.button.state == SDL_PRESSED);
@@ -1045,7 +1072,10 @@ void IN_SendKeyEvents (void)
 			break;
 
 		case SDL_MOUSEMOTION:
-			IN_MouseMotion (event.motion.xrel, event.motion.yrel);
+			if (QR_Editor_GizmoDragActive ())
+				QR_Editor_GizmoMotion (event.motion.xrel, event.motion.yrel);
+			else
+				IN_MouseMotion (event.motion.xrel, event.motion.yrel);
 			break;
 
 		case SDL_CONTROLLERDEVICEADDED:

@@ -343,7 +343,7 @@ static qboolean rt_mat_parse_hex_color(const char *value, vec3_t out)
 }
 
 /* Appends an empty block and returns it (NULL when the list is full): the
-   mapping form of a colour entry fills the fields itself. */
+   mapping form of a color entry fills the fields itself. */
 static rt_emissive_t *rt_mat_append_emissive_block(rt_material_t *mat)
 {
     rt_emissive_t *block;
@@ -365,10 +365,10 @@ static rt_emissive_t *rt_mat_append_emissive_block(rt_material_t *mat)
     return block;
 }
 
-// Appends one colour to the material's colour_emissive list ("ff0000", "#ff0000"
+// Appends one color to the material's color_emissive list ("ff0000", "#ff0000"
 // and " ff0000 " all read the same). The list is what a texture atlas with
-// several differently coloured emissive regions is authored with. Returns the
-// new block or NULL when the list is full or the colour does not parse.
+// several differently colored emissive regions is authored with. Returns the
+// new block or NULL when the list is full or the color does not parse.
 static rt_emissive_t *rt_mat_add_emissive_color(rt_material_t *mat, const char *value)
 {
     vec3_t c;
@@ -421,7 +421,7 @@ static rt_emissive_t *rt_mat_add_emissive_color(rt_material_t *mat, const char *
 // The blend modes by name, so the file reads like what the shader does:
 // "normal" is the coverage blend, "screen" adds the emission on top, "overlay"
 // and "hard light" are the two halves of the overlay formula (the base and the
-// emission as the driver), "colour dodge" divides by the inverse.
+// emission as the driver), "color dodge" divides by the inverse.
 const char *RT_MAT_EmissiveBlendName(int blend)
 {
     switch (blend)
@@ -432,7 +432,7 @@ const char *RT_MAT_EmissiveBlendName(int blend)
     case 2:  return "screen";
     case 3:  return "overlay";
     case 4:  return "hard light";
-    case 5:  return "colour dodge";
+    case 5:  return "color dodge";
     default: return "cvar";
     }
 }
@@ -450,8 +450,8 @@ static int rt_mat_parse_emissive_blend(const char *value)
     if (!q_strcasecmp(value, "overlay"))                                   return 3;
     if (!q_strcasecmp(value, "hard light") || !q_strcasecmp(value, "hard_light") ||
         !q_strcasecmp(value, "hardlight"))                                 return 4;
-    if (!q_strcasecmp(value, "colour dodge") || !q_strcasecmp(value, "color dodge") ||
-        !q_strcasecmp(value, "colour_dodge") || !q_strcasecmp(value, "color_dodge") ||
+    if (!q_strcasecmp(value, "color dodge") || !q_strcasecmp(value, "color dodge") ||
+        !q_strcasecmp(value, "color_dodge") || !q_strcasecmp(value, "color_dodge") ||
         !q_strcasecmp(value, "dodge") || !q_strcasecmp(value, "divide"))   return 5;
 
     v = atoi(value);
@@ -499,20 +499,20 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
     {
         const float v = (float)atof(value);
 
-        if (v >= 0.0f && v < 89.0f)
+        if (v >= 0.0f && v <= 90.0f)
             mat->emissive_focus = v;
         else
-            Con_DWarning("RT mat: material '%s': emissive_focus %.1f is not in 0..89 degrees; ignored\n",
+            Con_DWarning("RT mat: material '%s': emissive_focus %.1f is not in 0..90 degrees; ignored\n",
                          mat->name, v);
     }
     else if (!q_strcasecmp(key, "emissive_focus_soft"))
     {
         const float v = (float)atof(value);
 
-        if (v >= 0.0f && v < 89.0f)
+        if (v >= 0.0f && v <= 90.0f)
             mat->emissive_focus_soft = v;
         else
-            Con_DWarning("RT mat: material '%s': emissive_focus_soft %.1f is not in 0..89 degrees; ignored\n",
+            Con_DWarning("RT mat: material '%s': emissive_focus_soft %.1f is not in 0..90 degrees; ignored\n",
                          mat->name, v);
     }
     else if (!q_strcasecmp(key, "emissive_projector"))
@@ -523,7 +523,7 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->light_styles = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "color_emissive"))
     {
-        // one or more colours, comma separated: "ff0000,00ff00"
+        // one or more colors, comma separated: "ff0000,00ff00"
         char  buf[1024];
         char *p, *next;
 
@@ -667,9 +667,9 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
 
                         if (mv->type == YAML_SEQUENCE_NODE)
                         {
-                            // a list value: only colour_emissive takes one, so
+                            // a list value: only color_emissive takes one, so
                             // both "color_emissive: ff0000,00ff00" and a YAML
-                            // list of colours author the same thing
+                            // list of colors author the same thing
                             if (!q_strcasecmp(keybuf, "color_emissive"))
                             {
                                 for (yaml_node_item_t *sit = mv->data.sequence.items.start;
@@ -696,7 +696,7 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
                                         {
                                             yaml_node_t *bk = yaml_document_get_node(&document, bp->key);
                                             yaml_node_t *bv = yaml_document_get_node(&document, bp->value);
-                                            char kb[64], vb[128];
+                                            char kb[64], vb[512];
 
                                             if (!bk || !bv || bk->type != YAML_SCALAR_NODE ||
                                                 bv->type != YAML_SCALAR_NODE)
@@ -704,13 +704,42 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
                                             rt_mat_yaml_scalar(bk, kb, sizeof(kb));
                                             rt_mat_yaml_scalar(bv, vb, sizeof(vb));
 
-                                            if (!q_strcasecmp(kb, "color") || !q_strcasecmp(kb, "colour"))
+                                            if (!q_strcasecmp(kb, "color"))
                                             {
                                                 const char *hex = (vb[0] == '#') ? vb + 1 : vb;
 
                                                 if (!rt_mat_parse_hex_color(hex, block->color))
-                                                    Con_DWarning("RT mat: material '%s': colour '%s' is not rrggbb; white is used\n",
+                                                    Con_DWarning("RT mat: material '%s': color '%s' is not rrggbb; white is used\n",
                                                                  dest->name, vb);
+                                            }
+                                            else if (!q_strcasecmp(kb, "polygon"))
+                                            {
+                                                const char *s = vb;
+
+                                                block->poly_count = 0;
+                                                while (*s && block->poly_count < RT_MAT_EMIS_POLY_MAX)
+                                                {
+                                                    char *end;
+                                                    float u, v;
+
+                                                    u = (float)strtod(s, &end);
+                                                    if (end == s)
+                                                        break;
+                                                    s = end;
+                                                    while (*s == ' ' || *s == '\t' || *s == ',')
+                                                        s++;
+                                                    v = (float)strtod(s, &end);
+                                                    if (end == s)
+                                                        break;
+                                                    s = end;
+                                                    block->poly_uv[block->poly_count][0] = CLAMP(0.0f, u, 1.0f);
+                                                    block->poly_uv[block->poly_count][1] = CLAMP(0.0f, v, 1.0f);
+                                                    block->poly_count++;
+                                                    while (*s == ' ' || *s == '\t')
+                                                        s++;
+                                                }
+                                                if (block->poly_count < 3)
+                                                    block->poly_count = 0;
                                             }
                                             else if (!q_strcasecmp(kb, "threshold"))
                                             {
@@ -770,7 +799,7 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
                     }
 
                     // A block that carries no tone controls of its own inherits
-                    // the material-level ones (the old single-colour keys), so
+                    // the material-level ones (the old single-color keys), so
                     // after loading every block is complete on its own.
                     for (int c = 0; c < dest->color_emissive_count; c++)
                     {

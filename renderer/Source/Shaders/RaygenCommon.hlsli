@@ -336,7 +336,7 @@ float3 getSkyFilteredMultiplied(float3 direction, float lod)
 
 float3 getSkyAmbientMultiplied(float3 direction, float lod)
 {
-    return getSkyFilteredMultiplied(direction, min(lod, max(globalUniform.skyAmbientLod, 0.0)));
+    return getSkyFilteredMultiplied(direction, min(lod, max(globalUniform.skyAmbientLod, 0.0))) * max(globalUniform.skyLightMultiplier, 0.0);
 }
 
 float evalSkyNeePdf(const float3 n, const float3 direction)

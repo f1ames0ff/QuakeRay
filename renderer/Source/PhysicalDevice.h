@@ -34,6 +34,8 @@ public:
     PhysicalDevice &operator=(PhysicalDevice &&other) noexcept = delete;
 
     VkPhysicalDevice Get() const;
+    const VkPhysicalDeviceProperties &GetProperties() const;
+    const VkPhysicalDeviceDriverProperties &GetDriverProperties() const;
     const VkPhysicalDeviceMemoryProperties &GetMemoryProperties() const;
     const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &GetRTPipelineProperties() const;
     const VkPhysicalDeviceAccelerationStructurePropertiesKHR &GetASProperties() const;
@@ -42,6 +44,8 @@ public:
 
 private:
     VkPhysicalDevice physDevice;
+    VkPhysicalDeviceProperties properties;
+    VkPhysicalDeviceDriverProperties driverProperties;
     VkPhysicalDeviceMemoryProperties memoryProperties;
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtPipelineProperties;
     VkPhysicalDeviceAccelerationStructurePropertiesKHR asProperties;

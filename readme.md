@@ -1,3 +1,5 @@
+![QR logo](qr-temp-logo.png)
+
 # QuakeRay engine
 
 QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path tracing, built on NVRHI and running on Vulkan.
@@ -9,7 +11,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * Ray tracing with ReSTIR direct light sampling
 * FSR 3.1 support
 * DTAL (Dynamic Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
-* True Light Mode (opt-in): All light sources are DTAL, which means all emissive textures are actual light sources.
+* True Light Mode is enabled by default (`rt_truelight 1`): materials marked `is_light` cast light from their emission, with model DTAL limits independent of the BSP limits.
 * Q2RTX-style path traced lighting.
 * ASVGF denoiser.
 * RT Global Illumination
@@ -24,8 +26,9 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 
 The game is edited from inside it: `qr_editor` opens a dialog that offers the material editor or the light editor, and `qr_editor_stop` leaves either. Both fly over the frozen level; the crosshair picks what is edited, the fire button selects it, and Tab brings up the panel.
 
-* **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or of an animated texture is a block of its own, a preview of the texture takes the glow's colours with an eyedropper, and Save writes the file the game loads (Discard leaves it alone).
-* **Light editor**: the light an emitter casts, lights added to a level (points or cones, aimed by dragging at the light), and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. A torch lights the way while a level has no light yet.
+* **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or an animated texture is a block of its own. Select emissive colors with an eyedropper or draw polygon masks over the preview; focused and projected emission share the Emissive section. Save writes the session, and the exit question saves it permanently or discards it.
+* **Light editor**: a selectable list of generated emitter lights, custom points or spotlights that can be added and cloned, and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. Emitter styles can be overridden, and spotlight gizmos provide continuous Y/Z rotation and direction-aligned horizontal movement. A torch lights the way while a level has no light yet.
+* **Editor reset**: the trash button beside the tabs clears the active mod's saved material or light work after confirmation and restores defaults, including the corresponding editor settings.
 
 ### Sound
 
@@ -35,7 +38,7 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 
 * Dynamic HDR Tone mapping: overall brightness, exposure bias in EV, contrast as a mix of the fixed and the auto-exposure adapted curve
 * Procedural sky with a physical sky model
-* God rays — volumetric sun shafts
+* God rays — volumetric sun shafts, aimed at the sun or at the bright areas of the sky texture
 * Volumetric fog
 * Bloom
 * Post-processing: chromatic aberration, and a configurable LUT for colour grading
@@ -50,7 +53,6 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * UE5-style post effects
 * Full path tracing
 * Hybrid rasterization/RT
-* Light and material editor
 * Arcane Dimensions support
 * Quake Remastered support
 * More shader effects
@@ -135,7 +137,9 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_sun_color 255 255 255` - colour of the sun and its disc, independent of the sky, as `<r> <g> <b>` in `0-255`; commas and a bare query work, and it is archived
 * `rt_sun_edit 0` - mode: while it is `1` the sun follows the crosshair and writes `rt_sun_pitch` / `rt_sun_yaw`; the fire button leaves it without shooting, and it never survives a restart
 * `rt_godrays_intensity 1` with `rt_godrays 1` - strength of the volumetric sun shafts and their on/off switch: `2` doubles them, `0` removes them and the shadow map they are marched through
+* `rt_godrays_sky_threshold 0.75` - luminance a sky area needs for the god rays to pull to it, as a mean over 16x16 cells of the skybox or of the scrolling sky; the rays aim at the centre of everything above it, and `0` keeps the brightest point alone
 * `rt_sky 1`, `rt_sky_brightness 1.0`, `rt_physical_sky 1` - sky intensity and sky model
+* `rt_physical_sun 0` - god rays under the classic sky: `0` takes them from the bright areas of the sky texture, `1` from the sun (`rt_sun_pitch` / `rt_sun_yaw`), which also opens the editor's Sun section
 * `rt_sky_color 32 0 64` - colour of the sky, tinting it and the ambient light it casts, as `<r> <g> <b>` in `0-255`; commas, quotes and a bare query work, and it is archived
 * `rt_sky_clouds_color 0 0 0` - colour the clouds are composited over the sky with, as `<r> <g> <b>` in `0-255`; commas and a bare query work
 * `rt_sky_ambient_lod 4` - mip level the ambient sky light is read from; lower is more directional, `10` is a flat wash
@@ -188,3 +192,15 @@ Quake 1 game files (`id1/`) are required (registered or shareware). HD texture p
 ## Credits
 
 QuakeRay is created and maintained by **f1ames0ff** - see [AUTHORS.md](AUTHORS.md). The renderer and the engine are distributed under the GNU GPL, version 2 or later (`LICENSE.txt`); the Quake engine keeps the notices of id Software, and portions of the renderer keep the notices of their respective authors.
+
+## Crash and bug reports
+
+The log a report needs is written when the game is started with `-condebug`:
+
+```
+quakeray.exe -condebug
+```
+
+On Windows the easiest way is a shortcut: add `-condebug` to its target (a command prompt in the game folder works as well). Everything the game prints then goes to `qconsole.log` next to the executable (`build\Debug\qconsole.log` in a development build), starting with the **System information** block: the OS, the CPU, the GPU with its vendor and device id, the video driver and Vulkan versions, and the audio driver. The file is rewritten on every launch, so reproduce the problem in one run and close the game - the log holds that session, and a crash keeps everything printed up to it. On Windows a crash also leaves `crash.log` beside the executable.
+
+Attach `qconsole.log` (and `crash.log`, if the game crashed) to the report in the [issue tracker](https://github.com/sdas234f23f/QuakeRay/issues).

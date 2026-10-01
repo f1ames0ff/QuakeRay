@@ -14,6 +14,67 @@
 ### Changed
 - **OpenAL Soft is the only sound system now** — the SDL audio device and the software mixer are removed: `snd_sdl.c` and `snd_mix.c` are gone, `snd_dma.c` drives the OpenAL backend directly, and the `dma_t`/`SNDDMA_*` plumbing is replaced by a small `snd_output` descriptor. The game never opens an SDL audio device, so the glitch that broke audio output on exit cannot come from that path any more. `s_openal` is gone with the fallback it selected, as are the mixer-only knobs `_snd_mixahead`, `snd_noextraupdate`, `snd_filterquality` and `sndspeed` (`-sndspeed` with them); `snd_mixspeed` (`44100`) stays as the output rate the device is asked for. OpenAL Soft 1.25.2 is vendored as the `third_party/openal-soft` submodule and built by its own CMake project, so the engine, its headers and the shipped `OpenAL32.dll` are always the same build, and `nosound 1` / `-nosound` still disable sound deliberately.
 
+## v0.23.1
+
+### Fixed
+- **Emissive projector skew** — skewed texture mappings no longer introduce extra distortion into the projected light pattern; projection uses the surface normal before converting to texture coordinates.
+
+## v0.23.0
+
+### Added
+- **Polygon emissive masks** — the material editor can draw a mask directly over its texture preview instead of selecting a color or supplying an image. Each `color_emissive` block can carry a `polygon` with up to sixteen UV points; handles move individual points, dragging moves the mask or its edges, and Ctrl+click adds a point. The generated emission follows the polygon and is saved in `materials.yaml`.
+- **A list of generated lights** — the light editor's Entity tab lists tracked material lights, legacy dynamic lights and map lights, sorted by emitter name and with duplicate uploads removed. Selecting a row aims the camera at the light and opens its fields, like the Custom tab; a selected light's fields remain accessible when it leaves the current frame's list.
+- **Cloning custom lights** — a custom light can be copied and placed at the crosshair with the fire button, preserving its settings. The placement hint distinguishes cloning from adding a new light.
+- **Reset an entire editor** — a square trash button beside System in the material editor and Global in the light editor asks for Yes/No confirmation before removing saved overrides and session files. Material reset removes the active game directory's `materials.yaml` and reloads the shipped definitions; light reset removes its `lights.yaml` and `qray/lights.yaml`, including custom lights. The editor's settings return to their defaults, the scene updates immediately, and fresh snapshots prevent Cancel or Save from resurrecting the discarded work.
+- **Per-emitter light styles** — the Entity tab offers `light_style` with NONE and the twelve standard styles. An authored style overrides the emitter's own animation, is saved in `lights.yaml`, and participates in group editing; NONE keeps the original behavior. Model DTAL pieces, material point lights, legacy dynamic lights and map lights use the override, as do dynamically uploaded BSP emitters.
+- **Independent sky illumination** — `rt_sky_light_mult` scales the light cast by the sky without changing the drawn sky's brightness, allowing ambient and sampled sky illumination to be tuned separately.
+
+### Changed
+- **One emitter-light settings path** — model and sprite material lights, legacy dynamic lights and map-entity lights share override resolution, point/spot upload and editor tracking. Model DTAL pieces use the same resolver for color, intensity, offset and style; their size remains their geometry. A skin-frame emitter can fall back to an entry for its model, so the same settings can serve both material and legacy sources.
+- **Separate BSP and model DTAL controls** — the material editor's System tab groups the limits as DTAL (BSP) and DTAL (models). Model controls are now `rt_dtal_model_minarea`, `rt_dtal_model_maxpolys` and `rt_dtal_model_budget`; configurations using `rt_model_lights_minarea`, `rt_model_lights_max` or `rt_model_lights_budget` must use the new names. BSP area limits do not remove model lights.
+- **Editor layout and conditional sections** — tabs stay above the scrolling content, the editor chooser uses vertically arranged choices, and save questions use horizontal Yes/No buttons. Material properties are grouped into Textures, Surface, Model, Light and Emissive; `emissive_focus`, `emissive_focus_soft` and `emissive_projector` are together. `is_light` reveals the Light settings, while the light editor's physical-sun, god-rays and level-fog switches reveal their blocks directly underneath, without an intervening divider. Clouds remain conditional on the procedural sky.
+- **Spotlight gizmos** — translation X points along the horizontal projection of the spotlight direction, Y is perpendicular to it, and Z stays vertical. Rotation uses the same axes; X rotation is unavailable, Y follows vertical mouse motion, and Z follows horizontal motion. Holding a rotation handle allows continuous turns in either direction. Thicker arrows are easier to see, and flying-mode translation keeps the grabbed axis point under the crosshair as the light moves.
+- **Lighting defaults and ranges** — `rt_dlight_intensity` defaults to `1`, `rt_globallight_mult` is fixed read-only at `10` and remains there through resets, and `rt_truelight` remains enabled by default. The material editor allows `light_brightness` from `0.001` to `1000`, with the synthesis clamp matching it; the sky-brightness slider reaches `10`. Focus sliders cover `1` through `90` degrees and display `45` when unset; the material parser and renderer accept cones through ninety degrees.
+- **Sun and god-ray balance** — the directional sun's base intensity is reduced, the god-ray host multiplier is `0.05`, and the procedural sun-disc intensity is raised to `30`. `rt_physical_sun 0` now disables the directional sunlight, its contribution to volumetric fog and the procedural sun disc, rather than only changing the source of the god rays.
+
+### Fixed
+- **Spotlight rotation crash** — the continuous-rotation handler passed null output vectors to `AngleVectors`, which writes all three vectors. Valid outputs now prevent the access violation when rotation begins on either Y or Z.
+- **Valid spotlight directions and cone angles** — new custom lights start with direction `{1, 0, 0}`; an enabled spotlight cannot retain `{0, 0, 0}`, including after file loading or field resets. The inner cone cannot exceed the outer cone, and both angles are clamped to the supported range.
+- **Material System settings participate in the session** — DTAL edits now trigger the save question, are written to the configuration by Save, and revert with Cancel. Clearing a session removes its touched state so discarded edits do not prompt again.
+- **Group editing preserves mixed values** — tracked group members contribute to the mixed-state display, and activating a field without changing it no longer counts as an edit. Changing one offset component writes only that component instead of overwriting the other axes with a selected member's values.
+- **Emissive feathering and overlapping blocks** — feathering grows outward without weakening the pixels the original mask selected. Overlapping color blocks resolve ownership by the nearest matching color instead of whichever mask happens to be strongest, keeping the intended blend and glow attached to the selected color.
+- **Material point lights honor `is_light`** — model and sprite `light_color` sources only cast light when the material is enabled as a light. The shipped flame materials explicitly enable it, and the material editor reveals the cast-light controls only while it is enabled.
+- **Editor visibility and effect suppression** — light wireframes and gizmos draw behind panels and dialogs; axis-label backgrounds fill the input row's height. Water warp, color tint and radial blur are suppressed while editing, and DTAL debug is turned off when leaving the material editor.
+- **Procedural-sky cache and uniform layout** — writing a raster sky invalidates the cached procedural cube before it can be reused. Explicit uniform padding preserves the shader's expected layout after adding the sky-light multiplier.
+
+## v0.22.0
+
+### Added
+- **The god rays take their sun from the bright areas of the sky** — with the classic sky (`rt_physical_sky 0`) the rays aimed at the single brightest texel of the skybox, so one specular pixel or a lone bright star could pull them, and a sky with several bright patches only ever pulled them to its maximum. The sky scans now build a 16x16 luminance grid over the six skybox faces and over the solid layer of the scrolling sky; `rt_godrays_sky_threshold` (default `0.75`) selects the cells whose mean luminance is above it, and the rays aim at the luminance-weighted centre of everything selected and take its average colour. Nothing above the threshold falls back to the brightest point, and `0` keeps the old single-point behaviour. The source colour follows `rt_sky_brightness` too, so the sky brightness moves the shafts with the sky.
+- **A physical sun switch, `rt_physical_sun`** — under the classic sky, `0` (the default) takes the god rays from the sky texture as above and `1` takes them from the sun: the rays, and the shadow they are marched through, follow `rt_sun_pitch` / `rt_sun_yaw` and `rt_sun_color`. The light editor's Sun section hangs on the switch and sits right after the sky's own rows, so the sun controls stay out of the way of a mod that lights itself from its skybox.
+
+## v0.21.1
+
+### Added
+- **The sun placement uses the free camera** — "Set sun position" in the light editor hands the panel over to the flying mode: the sun follows the crosshair while you fly, and the fire press that leaves it where it points brings the panel back. The mode follows the cvar, so the button and the console behave the same.
+
+### Changed
+- **New defaults** — the acid colour is `#7A8F15` and the procedural sky's `rt_sky_color` is white; `rt_globallight` was already white.
+
+### Removed
+- **`rt_water_aciddensity`** — the cvar, the water tab's row and the engine's assignment are gone; the acid density is no longer driven from the engine, and the water density rework arrives with the caustics work. A value an old config still carries is ignored.
+
+## v0.21.0
+
+### Added
+- **A log says what machine wrote it** — every session now opens with a `System information` block, so a `qconsole.log` attached to a report carries the hardware the artefacts were seen on without a round of questions: the OS and its version with the architecture, the CPU brand with the core count and RAM, the GPU with its vendor and device id, the video driver's name, info and numeric version together with the Vulkan API version, and the audio driver with its device. The GPU part is read from the Vulkan device itself — the physical device keeps its `VkPhysicalDeviceProperties` and `VkPhysicalDeviceDriverProperties` (queried once when the adapter is chosen) and a new `qrGetAdapterInfo()` hands them to the engine, so nothing is parsed out of the renderer's own log lines and the driver version is decoded the way its vendor writes it (NVIDIA's four fields, the standard Vulkan three for the rest). The rest comes from SDL (core count, RAM, SDL version, the audio driver and its device) and the platform: Windows takes its real version through `ntdll!RtlGetVersion` — which needs no manifest — and the CPU brand through `cpuid`, while Linux and macOS use `uname`, `/proc/cpuinfo` and `sysctl`. The readme has a new "Crash and bug reports" section that says to run with `-condebug` and attach the log to an issue.
+
+## v0.20.3
+
+### Added
+- **The frames queued for display are capped** — `vid_maxframelatency` bounds how far the CPU may run ahead of scan out under the vsync modes: `0` leaves the swapchain exactly as it was (no present ids, no waits), and `1` (the default) keeps a single frame in flight by waiting, before the next image is acquired, until the last presented frame has been shown. The cap rides on `VK_KHR_present_id2`/`VK_KHR_present_wait2`, and the swapchain is created with the matching flags only while it is active — without the extensions, or in a real mailbox mode, nothing changes at all. Values above `1` are not accepted: the wait for an older frame completes as soon as that frame has been replaced without presentation, so it cannot pace the loop at all (a value an old configuration carries is brought down to `1` with a console note). Switching the cvar recreates the swapchain once, like a present-mode change.
+- **Frame delivery is even** — under `FIFO` the frame fences only track GPU execution, so with the three or more images a DXGI-layered swapchain builds, the CPU can queue several vblanks ahead of scan out and the compositor starts replacing frames it never showed. One frame in flight keeps presenting in step with the display: the input lag no longer grows with the queue, and the temporal denoiser sees the even stream its history and reprojection rely on.
+
 ## v0.20.2
 
 ### Fixed

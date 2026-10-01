@@ -37,7 +37,8 @@ public:
         VkDevice device,
         VkSurfaceKHR surface,
         VkPhysicalDevice physDevice,
-        std::shared_ptr<CommandBufferManager> cmdManager);
+        std::shared_ptr<CommandBufferManager> cmdManager,
+        bool presentWait2Supported);
     ~Swapchain();
 
     Swapchain(const Swapchain &other) = delete;
@@ -46,6 +47,8 @@ public:
     Swapchain &operator=(Swapchain &&other) noexcept = delete;
 
     bool RequestPresentMode(QrPresentMode mode);
+    void SetMaxFrameLatency(uint64_t frames);
+    bool IsPresentWaitActive() const;
 
     void AcquireImage(VkSemaphore imageAvailableSemaphore);
     void Present(const std::shared_ptr<Queues> &queues, VkSemaphore renderFinishedSemaphore);
@@ -71,6 +74,7 @@ private:
     VkResult GetSurfaceCapabilities(VkSurfaceCapabilitiesKHR *outCaps) const;
     void ResetSurfaceCapabilitiesCache() const;
     VkPresentModeKHR GetVkPresentMode(QrPresentMode mode) const;
+    bool IsWaitablePresentMode(QrPresentMode mode) const;
 
     bool TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode);
 
@@ -99,6 +103,13 @@ private:
     VkSwapchainKHR swapchain;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainViews;
+
+    bool presentWait2Supported;
+    bool surfacePresentWait2Supported;
+    bool usePresentWait2;
+    uint64_t currentPresentId;
+    uint64_t waitablePresentId;
+    uint64_t maxFrameLatency;
 
     uint32_t currentSwapchainIndex;
 

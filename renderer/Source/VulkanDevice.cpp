@@ -45,7 +45,14 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
     }
 
     swapchain->RequestPresentMode(startInfo.presentMode);
+    swapchain->SetMaxFrameLatency(startInfo.maxFrameLatency);
     swapchain->AcquireImage(imageAvailableSemaphores[frameIndex]);
+
+    if (swapchain->IsPresentWaitActive() && !printedPresentWaitActive)
+    {
+        printedPresentWaitActive = true;
+        Print("RHI: present wait is active, the swapchain caps the frames queued for display");
+    }
 
     {
         const std::string presentModeName = swapchain->GetPresentModeName();
@@ -216,6 +223,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
             gu->skyColorMultiplier = sp.skyColorMultiplier;
             gu->skyColorSaturation = std::max( sp.skyColorSaturation, 0.0f );
             gu->skyAmbientLod      = std::clamp( sp.skyAmbientLod, 0.0f, 10.0f );
+            gu->skyLightMultiplier = std::max( sp.skyLightMultiplier, 0.0f );
             gu->skyNee             = sp.skyNee != 0 ? 1.0f : 0.0f;
 
             gu->skyType = sp.skyType == QR_SKY_TYPE_CUBEMAP ? SKY_TYPE_CUBEMAP :
@@ -236,6 +244,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
             gu->skyColorMultiplier                                                                                    = 1.0f;
             gu->skyColorSaturation                                                                                    = 1.0f;
             gu->skyAmbientLod                                                                                         = 10.0f;
+            gu->skyLightMultiplier                                                                                    = 1.0f;
             gu->skyNee                                                                                                = 0.0f;
             gu->skyType                                                                                               = SKY_TYPE_COLOR;
             gu->skyCubemapIndex                                                                                       = QR_EMPTY_CUBEMAP;
@@ -795,7 +804,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         const bool godRaysOn = godRaysEnabled && (sunExists || useSkyBrightest);
 
         sky.godRays.enabled = godRaysOn;
-        sky.godRays.intensity = 8.0f * godRaysIntensity;
+        sky.godRays.intensity = 0.05f * godRaysIntensity;
         sky.godRays.eccentricity = 0.75f;
 
         if (godRaysOn)
@@ -891,7 +900,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         p.skyTint[3] = sunAngularRadius;
         p.skyParams[0] = globalUniform->skyColorMultiplier;
         p.skyParams[1] = globalUniform->skyColorSaturation;
-        p.skyParams[2] = 6.0f;
+        p.skyParams[2] = 30.0f;
         p.skyParams[3] = 0.025f;
 
         p.cloudColor[3] = globalUniform->time;
@@ -1137,6 +1146,32 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
         pStats->raysPerCategory[i] = statsRaysPerCategory[i];
     }
     pStats->fpsX10 = statsFpsX10;
+}
+
+void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
+{
+    if (pInfo == nullptr)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
+    }
+
+    memset(pInfo, 0, sizeof(QrAdapterInfo));
+
+    if (physDevice == nullptr)
+    {
+        return;
+    }
+
+    const VkPhysicalDeviceProperties &properties = physDevice->GetProperties();
+    const VkPhysicalDeviceDriverProperties &driverProperties = physDevice->GetDriverProperties();
+
+    std::snprintf(pInfo->name, sizeof(pInfo->name), "%s", properties.deviceName);
+    std::snprintf(pInfo->driverName, sizeof(pInfo->driverName), "%s", driverProperties.driverName);
+    std::snprintf(pInfo->driverInfo, sizeof(pInfo->driverInfo), "%s", driverProperties.driverInfo);
+    pInfo->vendorId = properties.vendorID;
+    pInfo->deviceId = properties.deviceID;
+    pInfo->driverVersion = properties.driverVersion;
+    pInfo->apiVersion = properties.apiVersion;
 }
 
 void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)

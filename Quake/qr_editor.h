@@ -22,6 +22,7 @@ void QR_Editor_Init (void);
 qboolean QR_Editor_Active (void);   // the editor owns the view (flying or panel)
 qboolean QR_Editor_PanelOpen (void); // the material panel is on screen
 qboolean QR_Editor_Flying (void);   // active, no panel: free camera + crosshair aim
+void     QR_Editor_SunPlacement (qboolean on);
 
 qboolean QR_Editor_TorchOn (void);
 void     QR_Editor_TorchOrigin (vec3_t out);
@@ -39,6 +40,19 @@ qboolean QR_Editor_KeyEvent (int key, qboolean down);      // true = the key was
 // button, and the press itself drops the light at the crosshair.
 qboolean QR_Editor_PlacePending (void);
 void     QR_Editor_PlaceAtCrosshair (void);
+
+// The flying-mode light drag: Alt+LMB grabs the light under the crosshair,
+// LMB drops it, Esc returns it.
+qboolean QR_Editor_LightDragActive (void);
+void     QR_Editor_LightGrab (void);
+void     QR_Editor_LightDrop (void);
+
+// The selected custom light's axis gizmo: in the flying mode the crosshair
+// grabs an arrow and the mouse drags the light along that axis.
+qboolean QR_Editor_GizmoDragActive (void);
+qboolean QR_Editor_GizmoPress (void);
+void     QR_Editor_GizmoMotion (int dx, int dy);
+void     QR_Editor_GizmoRelease (void);
 qboolean QR_Editor_GuiProcessEvent (const void *sdl_event); // ImGui panel event routing
 qboolean QR_Editor_TextEntryActive (void);                 // SDL text input wanted
 
