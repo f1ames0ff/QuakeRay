@@ -3500,6 +3500,24 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	mod->extradata = (byte *)pheader;
 }
 
+static void Mod_ApplyEnhancedFlags (qmodel_t *mod)
+{
+	char mdlname[MAX_QPATH];
+	byte *buffer;
+
+	COM_StripExtension (mod->name, mdlname, sizeof (mdlname));
+	COM_AddExtension (mdlname, ".mdl", sizeof (mdlname));
+	buffer = COM_LoadFile (mdlname, NULL);
+	if (buffer)
+	{
+		if (com_filesize >= (int)sizeof (mdl_t) && ReadLongUnaligned (buffer + offsetof (mdl_t, ident)) == IDPOLYHEADER &&
+			ReadLongUnaligned (buffer + offsetof (mdl_t, version)) == ALIAS_VERSION)
+			mod->flags = ReadLongUnaligned (buffer + offsetof (mdl_t, flags));
+		Mem_Free (buffer);
+	}
+	Mod_SetExtraFlags (mod);
+}
+
 /*
 =================
 Mod_LoadLMPTexture
@@ -3758,6 +3776,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 	mod->type = mod_alias;
 	mod->numframes = numframes;
 	mod->extradata = (byte *)surfaces;
+	Mod_ApplyEnhancedFlags (mod);
 
 	for (int k = 0; k < 3; k++)
 	{
@@ -4426,6 +4445,7 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 	mod->type = mod_alias;
 	mod->numframes = (int)numposes;
 	mod->extradata = (byte *)surfaces;
+	Mod_ApplyEnhancedFlags (mod);
 
 	for (int k = 0; k < 3; k++)
 	{
