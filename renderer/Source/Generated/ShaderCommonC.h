@@ -259,9 +259,13 @@ struct ShGlobalUniform
     uint32_t emissionBlendMode;
     float emissionBlendStrength;
     float skyAmbientLod;
+    float skyLightMultiplier;
     float rayLength;
     uint32_t rayCullBackFaces;
     uint32_t rayCullMaskWorld;
+    uint32_t __pad2;
+    uint32_t __pad3;
+    uint32_t __pad4;
     float bloomIntensity;
     float bloomThreshold;
     float bloomEmissionMultiplier;

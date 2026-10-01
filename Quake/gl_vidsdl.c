@@ -127,7 +127,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_antifirefly, "1") \
 	CVAR_DEF_T (rt_roughmin, "0.02") \
     \
-	CVAR_DEF_T (rt_dlight_intensity, "3.0") \
+	CVAR_DEF_T (rt_dlight_intensity, "1.0") \
 	CVAR_DEF_T (rt_dlight_radius, "0.1") \
 	\
 	CVAR_DEF_T (rt_emis_light_intensity, "1.0") \
@@ -168,9 +168,9 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   is a light and carries an emissive mask; 0 keeps the fake dlight for it. The per-model cap
 	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
 	CVAR_DEF_T (rt_model_lights, "1") \
-	CVAR_DEF_T (rt_model_lights_max, "8") \
-	CVAR_DEF_T (rt_model_lights_budget, "256") \
-	CVAR_DEF_T (rt_model_lights_minarea, "0") \
+	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
+	CVAR_DEF_T (rt_dtal_model_budget, "256") \
+	CVAR_DEF_T (rt_dtal_model_minarea, "0") \
 	\
 	CVAR_DEF_T (rt_poi_distthresh, "2") \
 	CVAR_DEF_T (rt_poi_distthresh_super, "3") \
@@ -202,6 +202,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_physical_sun, "0") \
 	CVAR_DEF_T (rt_sky_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_brightness, "1.0") \
+	CVAR_DEF_T (rt_sky_light_mult, "1.0") \
 	CVAR_DEF_T (rt_brightness, "1.0") \
 	CVAR_DEF_T (rt_light_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_clouds, "1") \
@@ -267,7 +268,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_sensit_indir, "0.06") \
 	CVAR_DEF_T (rt_sensit_spec, "0.03") \
 	\
-	CVAR_DEF_T (rt_globallight_mult, "5") \
+	CVAR_DEF_T (rt_globallight_mult, "10") \
 	CVAR_DEF_T (rt_globallight, "255 255 255") \
 	\
 	CVAR_DEF_T (rt_bloom_intensity, "1") \
@@ -644,9 +645,9 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_cluster_dlights");
 	RT_Bench_Setting (f, "rt_light_styles");
 	RT_Bench_Setting (f, "rt_model_lights");
-	RT_Bench_Setting (f, "rt_model_lights_max");
-	RT_Bench_Setting (f, "rt_model_lights_budget");
-	RT_Bench_Setting (f, "rt_model_lights_minarea");
+	RT_Bench_Setting (f, "rt_dtal_model_maxpolys");
+	RT_Bench_Setting (f, "rt_dtal_model_budget");
+	RT_Bench_Setting (f, "rt_dtal_model_minarea");
 	RT_Bench_Setting (f, "rt_dtal_minarea");
 	RT_Bench_Setting (f, "rt_dtal_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_clearance");
@@ -1473,8 +1474,8 @@ static void RT_ReloadShaders (void)
 	request_shaders_reload = true;
 }
 
-// A colour setting is a console command plus an archived cvar of the same name,
-// so one setting describes a colour completely. It cannot be a plain cvar:
+// A color setting is a console command plus an archived cvar of the same name,
+// so one setting describes a color completely. It cannot be a plain cvar:
 // Cvar_Command takes a single token, so "rt_sky_color 32 0 64" would never reach
 // three channels. The command writes the cvar, so the value is archived with the
 // rest of the config.
@@ -1699,7 +1700,7 @@ static void RT_Color (void)
 	RT_ColorPrint (c);
 }
 
-// Colour settings are commands backed by archivable cvars: the command parses the
+// Color settings are commands backed by archivable cvars: the command parses the
 // "r g b" form, the cvar stores the value and writes it to config.cfg. The two
 // registrations get in each other's way -- Cmd_AddCommand2 rejects a name that is
 // already a registered var, and Cvar_RegisterVariable rejects a name that is already
@@ -2052,6 +2053,7 @@ GL_EndRenderingTask
 static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 {
 	const QrExtent2D winsize = {.width = parms->vid_width, .height = parms->vid_height};
+	const qboolean editor_active = QR_Editor_Active ();
 
 	QrDrawFrameRenderResolutionParams resolution_params = {0};
 	ResolutionToQray (&resolution_params, winsize);
@@ -2131,7 +2133,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.indexOfRefractionWater = CVAR_TO_FLOAT (rt_refr_water),
 		.waterWaveSpeed = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_speed)),
 		.waterWaveNormalStrength = CVAR_TO_FLOAT (rt_water_normstren),
-		.turbWarpStrength = CVAR_TO_FLOAT (rt_turb_warp),
+		.turbWarpStrength = editor_active ? 0.0f : CVAR_TO_FLOAT (rt_turb_warp),
 		.waterColor = RT_VEC3 (water_color),
 		.acidColor = RT_VEC3 (acid_color),
 		.waterWaveTextureDerivativesMultiplier = CVAR_TO_FLOAT (rt_water_normsharp),
@@ -2160,15 +2162,15 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	if (usePhysicalSky)
 	{
-		// The procedural sky is a flat colour and nothing else, so it is given
-		// exactly the colour it is set to; skyBrightness reaches it once, as the
+		// The procedural sky is a flat color and nothing else, so it is given
+		// exactly the color it is set to; skyBrightness reaches it once, as the
 		// multiplier the shader paints the whole sky with.
 		RT_GetSkyColor (sky_base_color);
 	}
 	else
 	{
 		// The classic sky is a texture, so rt_sky_color is the tint over it;
-		// the procedural sky above is painted in that colour instead.
+		// the procedural sky above is painted in that color instead.
 		VectorCopy (skyflatcolor, sky_base_color);
 		VectorScale (sky_base_color, skyBrightness, sky_base_color);
 		RT_APPLY_SKY_COLOR (sky_base_color);
@@ -2189,11 +2191,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.skyColorDefault = RT_VEC3 (sky_base_color),
 		.sunDiscColor = RT_VEC3 (sun_disc_color),
 		.skyColorMultiplier = materials_only ? 0.0f : (usePhysicalSky ? skyBrightness : skyMult * skyBrightness),
-		// The procedural sky has no tint strength any more -- its colour is its
+		// The procedural sky has no tint strength any more -- its color is its
 		// own -- so the slot carries the opacity the clouds are composited with
 		// instead (rt_sky_cloud_alpha); see QrDrawFrameSkyParams.
 		.skyColorSaturation = CVAR_TO_FLOAT (rt_sky_cloud_alpha),
 		.skyAmbientLod = CVAR_TO_FLOAT (rt_sky_ambient_lod),
+		.skyLightMultiplier = CVAR_TO_FLOAT (rt_sky_light_mult),
 		.skyNee = CVAR_TO_FLOAT (rt_sky_nee) > 0.0f,
 		.skyViewerPosition = RT_VEC3 (r_origin),
 		.godRaysEnabled = CVAR_TO_BOOL (rt_godrays),
@@ -2222,7 +2225,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		if (Sky_GetBrightestPoint (cl.time, brightest_dir, brightest_color))
 		{
 			// The brightest point of a rasterized sky stands in for the sun, so
-			// it takes the sun's colour like the directional light does -- and
+			// it takes the sun's color like the directional light does -- and
 			// the same fraction of the light fixup.
 			RT_APPLY_SUN_COLOR (brightest_color);
 			RT_FIXUP_LIGHT_INTENSITY (brightest_color, true);
@@ -2240,7 +2243,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	RT_VEC3_SET (volume_light_angles, CVAR_TO_FLOAT (rt_sun_pitch), CVAR_TO_FLOAT (rt_sun_yaw), 0);
 
-	if (CVAR_TO_BOOL (rt_sun))
+	if (CVAR_TO_BOOL (rt_physical_sun) && CVAR_TO_BOOL (rt_sun))
 		RT_GetSunColor (volume_light_color);
 	else
 		volume_light_color[0] = volume_light_color[1] = volume_light_color[2] = 0.0f;
@@ -2409,7 +2412,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// The light editor's world is frozen: the traced water warp and the cloud
 	// drift follow this clock, so it takes the held client time while the
 	// editor runs instead of the wall clock.
-	const double frame_time = QR_Editor_Active () ? (double)cl.time : (double)SDL_GetTicks () / 1000.0;
+	const double frame_time = editor_active ? (double)cl.time : (double)SDL_GetTicks () / 1000.0;
 
 	QrDrawFrameInfo info = {
 		.worldUpVector = {0, 0, 1},
@@ -2436,10 +2439,10 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.postEffectParams =
 			{
 				.pChromaticAberration = &chromatic_aberration_effect,
-				.pWaves = CVAR_TO_INT32(r_waterwarp) == 1 ? &waves_effect : NULL,
-				.pColorTint = cl.intermission ? NULL : &tint_effect ,
+				.pWaves = (!editor_active && CVAR_TO_INT32(r_waterwarp) == 1) ? &waves_effect : NULL,
+				.pColorTint = (cl.intermission || editor_active) ? NULL : &tint_effect,
 				.pCRT = &crt_effect,
-				.pRadialBlur = cl.intermission ? NULL : &radial_effect,
+				.pRadialBlur = (cl.intermission || editor_active) ? NULL : &radial_effect,
 			},
 		.pDebugParams = &debug_params,
 	};
@@ -2874,6 +2877,8 @@ void VID_Init (void)
 		   the only way to select it. A saved 0 in a configuration is ignored. */
 		rt_cluster_incremental.flags |= CVAR_ROM;
 
+		Cvar_SetROM ("rt_globallight_mult", "10");
+
 		Cvar_RegisterVariable (&rt_light_report_filter);
 		Cvar_RegisterVariable (&rt_sun_edit);
 
@@ -2882,7 +2887,7 @@ void VID_Init (void)
 		// folded into the panels of the level it asks for as it is set.
 		Cvar_SetCallback (&rt_stats_panels, RT_StatsPanelsFixup);
 
-		// The colour settings are read per light, so they watch their cvar instead of
+		// The color settings are read per light, so they watch their cvar instead of
 		// comparing its string on every read. Registered after the cvars, which is
 		// where VID_Init has them.
 		for (size_t i = 0; i < countof (rt_colors); i++)

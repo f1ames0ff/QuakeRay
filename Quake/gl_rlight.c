@@ -906,60 +906,25 @@ void RT_UploadAllElights ()
 
 		if (accept)
 		{
-			rt_light_t *ov = RT_LIGHT_FindInstance (src->classname, (uint64_t)UINT16_MAX + i);
-			float       radius = CVAR_TO_FLOAT (rt_elight_radius);
-			vec3_t      position = {src->origin[0], src->origin[1], src->origin[2]};
-			float       intens = quake_intensity / CVAR_TO_FLOAT (rt_elight_normaliz);
+			rt_emitter_light_t light;
 
-			if (ov)
-			{
-				if (ov->has_radius)
-					radius = ov->radius;
-				if (ov->has_intensity)
-					intens *= ov->intensity;
-				if (ov->has_offset)
-				{
-					position[0] += ov->offset[0];
-					position[1] += ov->offset[1];
-					position[2] += ov->offset[2];
-				}
-			}
-
-			if (src->state & STRUCT_STATE_FOUND_LIGHTSTYLE)
-			{
-				float ls = (float)d_lightstylevalue[src->lightstyle] / 256.0f;
-				intens *= CLAMP (0.0f, ls, 1.0f);
-			}
-
-			vec3_t color;
-			RT_INIT_DEFAULT_LIGHT_COLOR (color);
-			if (ov && ov->has_color)
-			{
-				VectorCopy (ov->color, color);
-			}
-			VectorScale (color, intens, color);
-			RT_FIXUP_LIGHT_INTENSITY (color, true);
-
-			QrSphericalLightUploadInfo info = {
-				.uniqueID = (uint64_t)UINT16_MAX + i,
-				.color = {color[0], color[1], color[2]},
-				.position = {position[0], position[1], position[2]},
-				.radius = METRIC_TO_QUAKEUNIT (radius),
-			};
+			memset (&light, 0, sizeof (light));
+			light.name = src->classname;
+			light.uniqueID = (uint64_t)UINT16_MAX + i;
+			light.kind = RT_LIGHT_KIND_MAP;
+			VectorCopy (src->origin, light.position);
+			RT_INIT_DEFAULT_LIGHT_COLOR (light.color);
+			light.intensity = quake_intensity / CVAR_TO_FLOAT (rt_elight_normaliz);
+			light.radius = CVAR_TO_FLOAT (rt_elight_radius);
+			light.style = (src->state & STRUCT_STATE_FOUND_LIGHTSTYLE) ? src->lightstyle : -1;
 
 			// offset up a bit, so light is not inside the model itself
 			if (src->state & STRUCT_STATE_FOUND_APPLY_OFFSET)
 			{
-				info.position.data[2] += METRIC_TO_QUAKEUNIT (0.75f);
+				light.position[2] += METRIC_TO_QUAKEUNIT (0.75f);
 			}
 
-			QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
-			QR_CHECK (r);
-
-			RT_TRACK_Light (info.position.data, info.radius, info.color.data,
-			                info.uniqueID, RT_LIGHT_KIND_MAP, src->classname);
-
-			RT_ClusterLightAdd (info.uniqueID, info.position.data, RT_ClusterLightReach ());
+			RT_LIGHT_Emit (&light);
 		}
 	}
 }
