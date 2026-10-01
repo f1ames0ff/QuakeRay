@@ -59,7 +59,8 @@ Swapchain::Swapchain(
     VkDevice _device,
     VkSurfaceKHR _surface,
     VkPhysicalDevice _physDevice,
-    std::shared_ptr<CommandBufferManager> _cmdManager)
+    std::shared_ptr<CommandBufferManager> _cmdManager,
+    bool _presentWait2Supported)
     : device(_device)
     , surface(_surface)
     , physDevice(_physDevice)
@@ -74,6 +75,12 @@ Swapchain::Swapchain(
     , swapchain(VK_NULL_HANDLE)
     , swapchainImages{}
     , swapchainViews{}
+    , presentWait2Supported(_presentWait2Supported)
+    , surfacePresentWait2Supported(false)
+    , usePresentWait2(false)
+    , currentPresentId(0)
+    , waitablePresentId(0)
+    , maxFrameLatency(0)
     , currentSwapchainIndex(UINT32_MAX)
     , subscribers{}
     , cachedSurfaceCaps{}
@@ -186,6 +193,16 @@ bool Swapchain::RequestPresentMode(QrPresentMode mode)
     return requestedPresentMode != isPresentMode;
 }
 
+void Swapchain::SetMaxFrameLatency(uint64_t frames)
+{
+    maxFrameLatency = frames > 8 ? 8 : frames;
+}
+
+bool Swapchain::IsPresentWaitActive() const
+{
+    return usePresentWait2;
+}
+
 const char *Swapchain::GetPresentModeName() const
 {
     switch (isPresentMode)
@@ -206,15 +223,43 @@ VkPresentModeKHR Swapchain::GetVkPresentMode(QrPresentMode mode) const
     }
 }
 
+bool Swapchain::IsWaitablePresentMode(QrPresentMode mode) const
+{
+    const VkPresentModeKHR vkMode = GetVkPresentMode(mode);
+    return vkMode == VK_PRESENT_MODE_FIFO_KHR || vkMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+}
+
 void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 {
     ResetSurfaceCapabilitiesCache();
 
     const VkExtent2D requestedExtent = GetOptimalExtent();
 
-    if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode)
+    const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(requestedPresentMode);
+    if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode || usePresentWait2 != wantPresentWait2)
     {
         TryRecreate(requestedExtent, requestedPresentMode);
+    }
+
+    if (usePresentWait2 && sVkWaitForPresent2KHR != nullptr && currentPresentId + 1 > maxFrameLatency)
+    {
+        const uint64_t targetPresentId = currentPresentId + 1 - maxFrameLatency;
+
+        if (targetPresentId <= waitablePresentId)
+        {
+            VkPresentWait2InfoKHR waitInfo = {};
+            waitInfo.sType = VK_STRUCTURE_TYPE_PRESENT_WAIT_2_INFO_KHR;
+            waitInfo.presentId = targetPresentId;
+            waitInfo.timeout = 50ull * 1000ull * 1000ull;
+
+            const VkResult waitResult = sVkWaitForPresent2KHR(device, swapchain, &waitInfo);
+
+            if (waitResult == VK_ERROR_OUT_OF_DATE_KHR)
+            {
+                ResetSurfaceCapabilitiesCache();
+                TryRecreate(GetOptimalExtent(), requestedPresentMode);
+            }
+        }
     }
 
     while (true)
@@ -249,7 +294,27 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     presentInfo.pSwapchains = &swapchain;
     presentInfo.pImageIndices = &currentSwapchainIndex;
 
+    const uint64_t nextPresentId = currentPresentId + 1;
+    VkPresentId2KHR presentIdInfo{};
+    if (usePresentWait2)
+    {
+        presentIdInfo.sType = VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR;
+        presentIdInfo.swapchainCount = 1;
+        presentIdInfo.pPresentIds = &nextPresentId;
+        presentInfo.pNext = &presentIdInfo;
+    }
+
     const VkResult r = vkQueuePresentKHR(queues->GetGraphics(), &presentInfo);
+
+    if (usePresentWait2)
+    {
+        currentPresentId = nextPresentId;
+
+        if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR)
+        {
+            waitablePresentId = nextPresentId;
+        }
+    }
 
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
     {
@@ -260,7 +325,9 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
 
 bool Swapchain::TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode)
 {
-    if (AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode)
+    const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(mode);
+
+    if (AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode && usePresentWait2 == wantPresentWait2)
     {
         return false;
     }
@@ -277,6 +344,8 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
 {
     isPresentMode = mode;
     surfaceExtent = { newWidth, newHeight };
+    currentPresentId = 0;
+    waitablePresentId = 0;
 
     ResetSurfaceCapabilitiesCache();
 
@@ -304,6 +373,32 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
         imageCount = std::min(imageCount, surfCapabilities.maxImageCount);
     }
 
+    surfacePresentWait2Supported = false;
+    if (presentWait2Supported && sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr)
+    {
+        VkSurfaceCapabilitiesPresentId2KHR presentId2Capabilities = {};
+        presentId2Capabilities.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_PRESENT_ID_2_KHR;
+
+        VkSurfaceCapabilitiesPresentWait2KHR presentWait2Capabilities = {};
+        presentWait2Capabilities.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_PRESENT_WAIT_2_KHR;
+        presentWait2Capabilities.pNext = &presentId2Capabilities;
+
+        VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo = {};
+        surfaceInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR;
+        surfaceInfo.surface = surface;
+
+        VkSurfaceCapabilities2KHR surfaceCapabilities2 = {};
+        surfaceCapabilities2.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR;
+        surfaceCapabilities2.pNext = &presentWait2Capabilities;
+
+        if (sVkGetPhysicalDeviceSurfaceCapabilities2KHR(physDevice, &surfaceInfo, &surfaceCapabilities2) == VK_SUCCESS)
+        {
+            surfacePresentWait2Supported = presentId2Capabilities.presentId2Supported && presentWait2Capabilities.presentWait2Supported;
+        }
+    }
+
+    usePresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(mode);
+
     VkSwapchainCreateInfoKHR swapchainInfo{};
     swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     swapchainInfo.surface = surface;
@@ -320,6 +415,10 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
     swapchainInfo.preTransform = surfCapabilities.currentTransform;
     swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapchainInfo.presentMode = GetVkPresentMode(mode);
+    if (usePresentWait2)
+    {
+        swapchainInfo.flags |= VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR | VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR;
+    }
     swapchainInfo.clipped = VK_FALSE;
     swapchainInfo.oldSwapchain = oldSwapchain;
 

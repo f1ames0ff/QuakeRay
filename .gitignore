@@ -21,3 +21,5 @@ crash.log
 *.pdb
 *.diff.txt
 __pycache__/
+
+plan*.md
