@@ -28,8 +28,8 @@
 
 typedef struct
 {
-	float b0, b1, b2, a1, a2;
-	float z1[2], z2[2];
+	double b0, b1, b2, a1, a2;
+	double z1[2], z2[2];
 } sndeq_band_t;
 
 typedef struct

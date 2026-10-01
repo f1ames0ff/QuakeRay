@@ -10,6 +10,10 @@ the `third_party/openal-soft` submodule (tag `1.25.2`) and built with the game, 
 import library and the shipped DLL always agree. Step 2 (additional HRTF datasets, EFX reverb,
 occlusion) is not implemented yet and is listed at the end.
 
+The backend explicitly requests the `Built-In HRTF` entry through `ALC_HRTF_ID_SOFT` and verifies
+the selected dataset after context creation. External HRTF files do not replace MIT KEMAR.
+If context creation needs a 48 kHz retry, the HRTF mode and dataset request are retained.
+
 ## Recon: the engine surface and its OpenAL mapping
 
 | Engine | Value / meaning | OpenAL counterpart |
@@ -37,11 +41,16 @@ occlusion) is not implemented yet and is listed at the end.
 | Cvar | Default | Meaning |
 |---|---|---|
 | `s_openal_hrtf` | `2` | HRTF mode: `0` off, `1` on, `2` auto (the device decides, headphones suggested); requires a context restart, so changing it restarts the backend |
-| `s_openal_max_sources` | `256` | size of the source pool, clamped to `1..MAX_CHANNELS`; takes effect on the next backend restart |
+| `s_openal_max_sources` | `256` | size of the source pool, clamped to `1..MAX_CHANNELS`; changing it restarts the backend |
 | `snd_mixspeed` | `48000` | output rate the OpenAL device is asked for (`-mixspeed` sets it at startup); `48000` matches the built-in HRTF dataset |
+| `s_eq_60`, `s_eq_230`, `s_eq_910`, `s_eq_3600`, `s_eq_14000` | `0` | archived EQ gains in dB (`-12..12`); bands at or above the actual output Nyquist frequency are bypassed |
 
 The startup line reports the device, its rate, the source count and the HRTF status OpenAL Soft
 granted (`enabled`, `disabled`, `denied`, `headphones detected`, `unsupported format`).
+
+Sound Options' **Equalizer** entry is an action: Enter, a left click or controller confirmation
+opens the graphical dialog. Drag a handle to change gain, Ctrl+left click resets that band, and
+Reset flattens all five bands. Closing a console-opened dialog restores console input.
 
 ## Loops
 
@@ -69,6 +78,10 @@ fold the stereo image to mono, and is fed by `SNDAL_Update` after the SFX source
 `S_RawSamplesCursor()` how far the ring has been consumed; `S_ExtraUpdate` pumps the music queue too,
 so the long GPU waits the renderer feeds it do not drain the stream.
 
+`music_pause` pauses the queued OpenAL source and `music_resume` continues it. `music_stop` and
+track replacement flush the queue and reset the ring cursor. Reaching the end of a non-looping
+track closes the decoder without discarding its final queued samples.
+
 ## Life cycle
 
 - `S_Startup` calls `SNDAL_Init`; a failure leaves `snd_output.ready` false and the game silent, with
@@ -79,7 +92,8 @@ so the long GPU waits the renderer feeds it do not drain the stream.
   their first audible frame.
 - `S_Update` advances the clock, updates the listener, the music queue and every bound source.
 - `S_StopSound` / `S_StopAllSounds` / `S_ClearBuffer` / `S_ClearAll` release the matching sources
-  and AL buffers; focus loss pauses the device (`ALC_SOFT_pause_device`). Changing `s_openal_hrtf`
+  and AL buffers; focus loss pauses the device (`ALC_SOFT_pause_device`) and freezes the playback
+  clock. Resuming resets the wall-clock baseline so paused time does not expire sounds. Changing `s_openal_hrtf`
   or `s_openal_max_sources` restarts the backend; a failed restart stops the music stream and leaves
   the backend retryable once the sound system was fully up at least once.
 - A channel is paused only while it is out of the engine's earshot (distance attenuation reaches
@@ -98,6 +112,19 @@ so the long GPU waits the renderer feeds it do not drain the stream.
   the DLL and the licence texts (`COPYING`, `LICENSE-pffft`) under `licenses/`.
 - If the system has libmysofa development files, OpenAL Soft's own `find_package(MySOFA)` picks them
   up and SOFA support is compiled in, ready for the step-2 dataset picker.
+
+## Regression tests
+
+Configure with `-DBUILD_AUDIO_TESTS=ON`, build, then run
+`ctest --test-dir build/Release --output-on-failure` (use the corresponding directory for Debug).
+The `audio_regression` executable includes the actual EQ, SFX loader and OpenAL backend sources,
+with a minimal engine fixture and the built OpenAL Soft library. CTest selects the null output
+driver so these checks do not play sound or depend on the machine's audio hardware.
+
+Checks cover filter stability and measured gain from 8 to 192 kHz, Nyquist bypass, stereo
+isolation, streaming continuity, exact SFX resampling, truncated WAV headers, built-in KEMAR
+selection, HRTF on/off, playback-clock pauses, delayed starts, loop points, listener orientation,
+music pause/resume/flush and backend restart.
 
 ## Deferred to step 2
 

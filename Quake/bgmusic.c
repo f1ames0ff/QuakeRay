@@ -348,15 +348,20 @@ void BGM_PlayCDtrack (byte track, qboolean looping)
 	}
 }
 
-void BGM_Stop (void)
+static void BGM_CloseStream (void)
 {
 	if (bgmstream)
 	{
 		bgmstream->status = STREAM_NONE;
 		S_CodecCloseStream (bgmstream);
 		bgmstream = NULL;
-		s_rawend = 0;
 	}
+}
+
+void BGM_Stop (void)
+{
+	BGM_CloseStream ();
+	S_ClearMusicBuffer ();
 }
 
 void BGM_Pause (void)
@@ -364,7 +369,10 @@ void BGM_Pause (void)
 	if (bgmstream)
 	{
 		if (bgmstream->status == STREAM_PLAY)
+		{
 			bgmstream->status = STREAM_PAUSE;
+			S_PauseMusic (true);
+		}
 	}
 }
 
@@ -373,7 +381,10 @@ void BGM_Resume (void)
 	if (bgmstream)
 	{
 		if (bgmstream->status == STREAM_PAUSE)
+		{
 			bgmstream->status = STREAM_PLAY;
+			S_PauseMusic (false);
+		}
 	}
 }
 
@@ -386,8 +397,15 @@ static void BGM_UpdateStream (void)
 	int      fileBytes;
 	byte     raw[16384];
 
-	if (!snd_output.ready)
+	if (!snd_output.ready || snd_output.speed <= 0)
 		return;
+
+	if (bgmstream->info.rate <= 0 || (bgmstream->info.width != 1 && bgmstream->info.width != 2) ||
+	    (bgmstream->info.channels != 1 && bgmstream->info.channels != 2))
+	{
+		BGM_Stop ();
+		return;
+	}
 
 	if (bgmstream->status != STREAM_PLAY)
 		return;
@@ -405,7 +423,8 @@ static void BGM_UpdateStream (void)
 		bufferSamples = MAX_RAW_SAMPLES - (s_rawend - S_RawSamplesCursor ());
 
 		/* decide how much data needs to be read from the file */
-		fileSamples = bufferSamples * bgmstream->info.rate / snd_output.speed;
+		fileSamples = (int)q_min ((int64_t)bufferSamples * bgmstream->info.rate / snd_output.speed,
+		                         (int64_t)sizeof (raw) / (bgmstream->info.width * bgmstream->info.channels));
 		if (!fileSamples)
 			return;
 
@@ -452,7 +471,7 @@ static void BGM_UpdateStream (void)
 			}
 			else
 			{
-				BGM_Stop ();
+				BGM_CloseStream ();
 				return;
 			}
 		}
@@ -469,7 +488,7 @@ void BGM_Update (void)
 {
 	if (old_volume != bgmvolume.value)
 	{
-		if (bgmvolume.value < 0)
+		if (!isfinite (bgmvolume.value) || bgmvolume.value < 0)
 			Cvar_SetQuick (&bgmvolume, "0");
 		else if (bgmvolume.value > 1)
 			Cvar_SetQuick (&bgmvolume, "1");

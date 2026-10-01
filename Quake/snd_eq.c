@@ -34,13 +34,22 @@ static const int     sndeq_freqs[SNDEQ_BANDS] = {60, 230, 910, 3600, 14000};
 static qboolean      sndeq_dirty;
 static double        sndeq_lastbuild;
 
-static void SNDEQ_ConfigureBand (sndeq_band_t *band, float freq, float gain, int rate)
+static void SNDEQ_ConfigureBand (sndeq_band_t *band, double freq, double gain, int rate)
 {
-	float a = powf (10.0f, gain / 40.0f);
-	float w = 2.0f * (float)M_PI * freq / (float)rate;
-	float cosw = cosf (w);
-	float alpha = sinf (w) / (2.0f * 0.9f);
-	float a0 = 1.0f + alpha / a;
+	double a, w, cosw, alpha, a0;
+
+	if (rate <= 0 || freq >= rate * 0.5 || fabs (gain) <= 0.001 || !isfinite (gain))
+	{
+		memset (band, 0, sizeof (*band));
+		band->b0 = 1.0;
+		return;
+	}
+
+	a = pow (10.0, gain / 40.0);
+	w = 2.0 * M_PI * freq / rate;
+	cosw = cos (w);
+	alpha = sin (w) / (2.0 * 0.9);
+	a0 = 1.0 + alpha / a;
 
 	band->b0 = (1.0f + alpha * a) / a0;
 	band->b1 = (-2.0f * cosw) / a0;
@@ -51,7 +60,9 @@ static void SNDEQ_ConfigureBand (sndeq_band_t *band, float freq, float gain, int
 
 static void SNDEQ_Changed (cvar_t *var)
 {
-	if (var->value < -12.0f)
+	if (!isfinite (var->value))
+		Cvar_SetQuick (var, "0");
+	else if (var->value < -12.0f)
 		Cvar_SetQuick (var, "-12");
 	else if (var->value > 12.0f)
 		Cvar_SetQuick (var, "12");
@@ -107,10 +118,13 @@ void SNDEQ_Process (sndeq_state_t *state, short *pcm, int frames, int channels, 
 {
 	int i, b, c;
 
-	if (!SNDEQ_Active () || rate <= 0 || channels <= 0)
+	if (!SNDEQ_Active ())
+	{
+		memset (state, 0, sizeof (*state));
 		return;
-	if (channels > 2)
-		channels = 2;
+	}
+	if (rate <= 0 || channels <= 0 || channels > 2)
+		return;
 
 	for (b = 0; b < SNDEQ_BANDS; b++)
 		SNDEQ_ConfigureBand (&state->band[b], (float)sndeq_freqs[b], sndeq_cvars[b]->value, rate);
@@ -119,12 +133,12 @@ void SNDEQ_Process (sndeq_state_t *state, short *pcm, int frames, int channels, 
 	{
 		for (c = 0; c < channels; c++)
 		{
-			float x = (float)pcm[i * channels + c];
+			double x = pcm[i * channels + c];
 
 			for (b = 0; b < SNDEQ_BANDS; b++)
 			{
 				sndeq_band_t *f = &state->band[b];
-				float         y = f->b0 * x + f->z1[c];
+				double        y = f->b0 * x + f->z1[c];
 
 				f->z1[c] = f->b1 * x - f->a1 * y + f->z2[c];
 				f->z2[c] = f->b2 * x - f->a2 * y;
@@ -150,26 +164,26 @@ void SNDEQ_FilterBuffer (short *pcm, int frames, int rate)
 
 float SNDEQ_ResponseDb (float freq, int rate)
 {
-	float db = 0.0f;
+	double db = 0.0;
 	int   b;
 
-	if (rate <= 0 || freq <= 0.0f)
+	if (rate <= 0 || freq <= 0.0f || freq >= rate * 0.5f)
 		return 0.0f;
 
 	for (b = 0; b < SNDEQ_BANDS; b++)
 	{
 		sndeq_band_t f;
-		float        w, cw, sw, c2w, s2w;
-		float        nr, ni, dr, di, power;
+		double       w, cw, sw, c2w, s2w;
+		double       nr, ni, dr, di, power;
 
 		memset (&f, 0, sizeof (f));
 		SNDEQ_ConfigureBand (&f, (float)sndeq_freqs[b], sndeq_cvars[b]->value, rate);
 
-		w = 2.0f * (float)M_PI * freq / (float)rate;
-		cw = cosf (w);
-		sw = sinf (w);
-		c2w = cosf (2.0f * w);
-		s2w = sinf (2.0f * w);
+		w = 2.0 * M_PI * freq / rate;
+		cw = cos (w);
+		sw = sin (w);
+		c2w = cos (2.0 * w);
+		s2w = sin (2.0 * w);
 
 		nr = f.b0 + f.b1 * cw + f.b2 * c2w;
 		ni = -(f.b1 * sw + f.b2 * s2w);
@@ -178,10 +192,10 @@ float SNDEQ_ResponseDb (float freq, int rate)
 
 		power = (nr * nr + ni * ni) / (dr * dr + di * di);
 		if (power > 1.0e-12f)
-			db += 10.0f * log10f (power);
+			db += 10.0 * log10 (power);
 	}
 
-	return db;
+	return (float)db;
 }
 
 int SNDEQ_BandCount (void)

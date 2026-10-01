@@ -87,6 +87,7 @@ static ALuint             sndal_music_buffers[SNDAL_MUSIC_BUFFERS];
 static ALuint             sndal_music_free[SNDAL_MUSIC_BUFFERS];
 static int                sndal_music_numfree;
 static int                sndal_music_queued;
+static qboolean           sndal_music_paused;
 static short              sndal_music_pcm[SNDAL_MUSIC_SAMPLES * 2];
 static sndeq_state_t      sndal_music_eq;
 
@@ -149,7 +150,7 @@ static float SNDAL_ChannelGain (channel_t *ch)
 	if (gain >= 1.0f)
 		return 0.0f;
 	gain = (1.0f - gain) * (ch->master_vol / 510.0f) * sfxvolume.value;
-	if (gain < 0.0f)
+	if (!isfinite (gain) || gain < 0.0f)
 		gain = 0.0f;
 	else if (gain > 1.0f)
 		gain = 1.0f;
@@ -244,7 +245,7 @@ static ALuint SNDAL_GetBuffer (channel_t *ch)
 			return 0;
 		}
 		for (i = 0; i < sc->length; i++)
-			pcm[i] = (short)(((signed char *)sc->data)[i] << 8);
+			pcm[i] = (short)(((signed char *)sc->data)[i] * 256);
 		if (eq)
 			SNDEQ_FilterBuffer (pcm, sc->length, sc->speed);
 		alBufferData (buffer, AL_FORMAT_MONO16, pcm, (ALsizei)(sc->length * (int)sizeof (short)), sc->speed);
@@ -319,6 +320,18 @@ static void SNDAL_ConfigureSource (channel_t *ch, int slot)
 	}
 
 	source = sndal_sources[slot].source;
+	if (!SNDAL_IsLooping (sc))
+	{
+		int remaining = ch->end - paintedtime;
+
+		if (remaining <= 0)
+		{
+			ch->sfx = NULL;
+			SNDAL_ReleaseSlot (slot);
+			return;
+		}
+		ch->pos = q_max (ch->pos, sc->length - remaining);
+	}
 	alSourceStop (source);
 	alSourcei (source, AL_BUFFER, (ALint)buffer);
 	alSourcei (source, AL_LOOPING, SNDAL_IsLooping (sc) ? AL_TRUE : AL_FALSE);
@@ -567,7 +580,7 @@ static void SNDAL_UpdateMusic (void)
 		s_rawend -= 0x40000000;
 	}
 
-	if (sndal_music_queued > 0 && !sndal_blocked)
+	if (sndal_music_queued > 0 && !sndal_blocked && !sndal_music_paused)
 	{
 		alGetSourcei (sndal_music_source, AL_SOURCE_STATE, &state);
 		if (state != AL_PLAYING)
@@ -592,6 +605,21 @@ static void SNDAL_FlushMusic (void)
 	memset (&sndal_music_eq, 0, sizeof (sndal_music_eq));
 }
 
+void SNDAL_ClearMusic (void)
+{
+	if (!sndal_active)
+		return;
+	SNDAL_FlushMusic ();
+	sndal_music_paused = false;
+}
+
+void SNDAL_PauseMusic (qboolean paused)
+{
+	sndal_music_paused = paused;
+	if (sndal_active && sndal_music_source && paused)
+		alSourcePause (sndal_music_source);
+}
+
 static void SNDAL_AdvanceClock (void)
 {
 	double now, delta;
@@ -601,6 +629,11 @@ static void SNDAL_AdvanceClock (void)
 		return;
 
 	now = Sys_DoubleTime ();
+	if (sndal_blocked)
+	{
+		sndal_lasttime = now;
+		return;
+	}
 	if (sndal_lasttime <= 0.0)
 	{
 		sndal_lasttime = now;
@@ -627,7 +660,10 @@ static void SNDAL_AdvanceClock (void)
 
 		paintedtime -= wrap;
 		for (i = 0; i < total_channels; i++)
-			snd_channels[i].end -= wrap;
+		{
+			if (snd_channels[i].sfx)
+				snd_channels[i].end -= wrap;
+		}
 	}
 }
 
@@ -687,7 +723,17 @@ int SNDAL_RawPosition (void)
 
 qboolean SNDAL_HrtfEnabled (void)
 {
-	return (sndal_hrtf_status == ALC_HRTF_ENABLED_SOFT || sndal_hrtf_status == ALC_HRTF_HEADPHONES_DETECTED_SOFT) ? true : false;
+	return (sndal_hrtf_status == ALC_HRTF_ENABLED_SOFT || sndal_hrtf_status == ALC_HRTF_HEADPHONES_DETECTED_SOFT ||
+	        sndal_hrtf_status == ALC_HRTF_REQUIRED_SOFT) ? true : false;
+}
+
+const char *SNDAL_DeviceName (void)
+{
+	if (!sndal_device)
+		return NULL;
+	if (alcIsExtensionPresent (NULL, "ALC_ENUMERATE_ALL_EXT") == ALC_TRUE)
+		return alcGetString (sndal_device, ALC_ALL_DEVICES_SPECIFIER);
+	return alcGetString (sndal_device, ALC_DEVICE_SPECIFIER);
 }
 
 void SNDAL_BlockSound (void)
@@ -697,13 +743,13 @@ void SNDAL_BlockSound (void)
 	if (!sndal_active)
 		return;
 
+	sndal_blocked = true;
 	if (sndal_has_pause_device)
 	{
 		sndal_pause_device (sndal_device);
 		return;
 	}
 
-	sndal_blocked = true;
 	for (i = 0; i < sndal_numsources; i++)
 	{
 		if (sndal_sources[i].channel)
@@ -718,13 +764,13 @@ void SNDAL_UnblockSound (void)
 	if (!sndal_active)
 		return;
 
+	sndal_lasttime = Sys_DoubleTime ();
+	sndal_blocked = false;
 	if (sndal_has_pause_device)
 	{
 		sndal_resume_device (sndal_device);
 		return;
 	}
-
-	sndal_blocked = false;
 }
 
 qboolean SNDAL_Init (void)
@@ -734,7 +780,7 @@ qboolean SNDAL_Init (void)
 	ALCint        frequency = 0;
 	ALCint        status = -1;
 	int           want, i;
-	const char   *version, *device;
+	const char   *version, *device, *hrtf_name;
 	ALboolean     has_hrtf;
 
 	if (sndal_active)
@@ -748,9 +794,34 @@ qboolean SNDAL_Init (void)
 	if (has_hrtf == AL_TRUE)
 	{
 		int mode = (int)s_openal_hrtf.value;
+		ALCint count = 0;
+		int hrtf_id = -1;
+		LPALCGETSTRINGISOFT get_string = (LPALCGETSTRINGISOFT)alcGetProcAddress (sndal_device, "alcGetStringiSOFT");
+
+		alcGetIntegerv (sndal_device, ALC_NUM_HRTF_SPECIFIERS_SOFT, 1, &count);
+		for (i = 0; get_string && i < count; i++)
+		{
+			const char *name = get_string (sndal_device, ALC_HRTF_SPECIFIER_SOFT, i);
+
+			if (name && !strcmp (name, "Built-In HRTF"))
+			{
+				hrtf_id = i;
+				break;
+			}
+		}
+		if (mode != 0 && hrtf_id < 0)
+		{
+			Con_Printf ("OpenAL: the built-in MIT KEMAR HRTF is unavailable\n");
+			goto fail;
+		}
 
 		attributes[nattributes++] = ALC_HRTF_SOFT;
 		attributes[nattributes++] = (mode <= 0) ? ALC_FALSE : ((mode == 1) ? ALC_TRUE : ALC_DONT_CARE_SOFT);
+		if (hrtf_id >= 0)
+		{
+			attributes[nattributes++] = ALC_HRTF_ID_SOFT;
+			attributes[nattributes++] = hrtf_id;
+		}
 	}
 	attributes[nattributes++] = ALC_FREQUENCY;
 	attributes[nattributes++] = (ALCint)snd_mixspeed.value;
@@ -758,7 +829,10 @@ qboolean SNDAL_Init (void)
 
 	sndal_context = alcCreateContext (sndal_device, attributes);
 	if (!sndal_context)
-		sndal_context = alcCreateContext (sndal_device, NULL);
+	{
+		attributes[nattributes - 1] = 48000;
+		sndal_context = alcCreateContext (sndal_device, attributes);
+	}
 	if (!sndal_context)
 		goto fail;
 	if (alcMakeContextCurrent (sndal_context) != ALC_TRUE)
@@ -810,6 +884,7 @@ qboolean SNDAL_Init (void)
 	sndal_rawpos = 0;
 	sndal_clockfrac = 0.0;
 	sndal_lasttime = Sys_DoubleTime ();
+	memset (&sndal_music_eq, 0, sizeof (sndal_music_eq));
 
 	want = (int)s_openal_max_sources.value;
 	if (want < 1)
@@ -848,14 +923,25 @@ qboolean SNDAL_Init (void)
 		status = -1;
 		alcGetIntegerv (sndal_device, ALC_HRTF_STATUS_SOFT, 1, &status);
 		sndal_hrtf_status = (int)status;
+		if (SNDAL_HrtfEnabled ())
+		{
+			hrtf_name = alcGetString (sndal_device, ALC_HRTF_SPECIFIER_SOFT);
+			if (!hrtf_name || strcmp (hrtf_name, "Built-In HRTF"))
+			{
+				Con_Printf ("OpenAL: the active HRTF is not the built-in MIT KEMAR dataset\n");
+				goto fail;
+			}
+		}
 	}
 
 	sndal_active = true;
 
 	version = (const char *)alGetString (AL_VERSION);
-	device = (const char *)alcGetString (sndal_device, ALC_DEVICE_SPECIFIER);
+	device = SNDAL_DeviceName ();
 	Con_Printf ("OpenAL: %s, %s, %d sources\n", version ? version : "unknown", device ? device : "default device", sndal_numsources);
 	Con_Printf ("OpenAL HRTF: %s\n", SNDAL_HrtfStatusName (sndal_hrtf_status));
+	if (SNDAL_HrtfEnabled ())
+		Con_Printf ("OpenAL HRTF dataset: MIT KEMAR (Built-In HRTF)\n");
 	return true;
 
 fail:
@@ -919,6 +1005,7 @@ void SNDAL_Shutdown (void)
 		sndal_binding[i] = -1;
 	sndal_numbuffers = 0;
 	sndal_music_source = 0;
+	sndal_music_paused = false;
 	memset (sndal_music_buffers, 0, sizeof (sndal_music_buffers));
 	memset (sndal_music_free, 0, sizeof (sndal_music_free));
 	snd_output.ready = false;

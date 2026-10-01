@@ -136,6 +136,8 @@ static void S_RestartBackend (void)
 	S_BackendStart ();
 	if (sound_started)
 	{
+		if (snd_blocked)
+			SNDAL_BlockSound ();
 		Con_Printf ("Audio: %d bit, %s, %d Hz\n", snd_output.samplebits, (snd_output.channels == 2) ? "stereo" : "mono", snd_output.speed);
 		if (snd_output.speed != oldspeed)
 			S_ClearAll ();
@@ -150,15 +152,35 @@ static void S_RestartBackend (void)
 
 static void S_OpenALChanged (cvar_t *var)
 {
+	int maximum = (var == &s_openal_hrtf) ? 2 : MAX_CHANNELS;
+	int minimum = (var == &s_openal_hrtf) ? 0 : 1;
+
+	if (!isfinite (var->value))
+	{
+		Cvar_SetValueQuick (var, (var == &s_openal_hrtf) ? 2.0f : 256.0f);
+		return;
+	}
+	if (var->value < minimum || var->value > maximum || var->value != (int)var->value)
+	{
+		float value = CLAMP ((float)minimum, var->value, (float)maximum);
+
+		Cvar_SetValueQuick (var, (float)(int)value);
+		return;
+	}
 	S_RestartBackend ();
 }
 
 static void S_MixSpeedChanged (cvar_t *var)
 {
-	if (var->value < 8000 || var->value > 192000)
+	if (!isfinite (var->value) || var->value < 8000 || var->value > 192000)
 	{
 		Con_Printf ("snd_mixspeed must be between 8000 and 192000\n");
 		Cvar_SetQuick (&snd_mixspeed, "48000");
+		return;
+	}
+	if (var->value != (int)var->value)
+	{
+		Cvar_SetValueQuick (var, (float)(int)var->value);
 		return;
 	}
 	S_RestartBackend ();
@@ -233,6 +255,9 @@ void S_Init (void)
 	Cvar_SetCallback (&s_openal_hrtf, S_OpenALChanged);
 	Cvar_SetCallback (&s_openal_max_sources, S_OpenALChanged);
 	Cvar_SetCallback (&snd_mixspeed, S_MixSpeedChanged);
+	S_OpenALChanged (&s_openal_hrtf);
+	S_OpenALChanged (&s_openal_max_sources);
+	S_MixSpeedChanged (&snd_mixspeed);
 
 	known_sfx = (sfx_t *)Mem_Alloc (MAX_SFX * sizeof (sfx_t));
 	num_sfx = 0;
@@ -511,7 +536,7 @@ void S_StopSound (int entnum, int entchannel)
 
 	SDL_LockMutex (snd_mutex);
 
-	for (i = 0; i < MAX_DYNAMIC_CHANNELS; i++)
+	for (i = NUM_AMBIENTS; i < NUM_AMBIENTS + MAX_DYNAMIC_CHANNELS; i++)
 	{
 		if (snd_channels[i].entnum == entnum && snd_channels[i].entchannel == entchannel)
 		{
@@ -572,6 +597,21 @@ void S_ClearBuffer (void)
 	SNDAL_ClearBuffer ();
 
 unlock_mutex:
+	SDL_UnlockMutex (snd_mutex);
+}
+
+void S_ClearMusicBuffer (void)
+{
+	SDL_LockMutex (snd_mutex);
+	s_rawend = 0;
+	SNDAL_ClearMusic ();
+	SDL_UnlockMutex (snd_mutex);
+}
+
+void S_PauseMusic (qboolean paused)
+{
+	SDL_LockMutex (snd_mutex);
+	SNDAL_PauseMusic (paused);
 	SDL_UnlockMutex (snd_mutex);
 }
 
@@ -704,13 +744,15 @@ void S_RawSamples (int samples, int rate, int width, int channels, byte *data, f
 	float scale;
 	int   intVolume;
 
-	if (!snd_output.ready)
+	if (!snd_output.ready || snd_output.speed <= 0 || samples <= 0 || rate <= 0 || !data || !isfinite (volume) ||
+	    (channels != 1 && channels != 2) || (width != 1 && width != 2))
 		return;
 
 	if (s_rawend < S_RawSamplesCursor ())
 		s_rawend = S_RawSamplesCursor ();
 
 	scale = (float)rate / snd_output.speed;
+	volume = CLAMP (0.0f, volume, 1.0f);
 	intVolume = (int)(256 * volume);
 
 	if (channels == 2 && width == 2)

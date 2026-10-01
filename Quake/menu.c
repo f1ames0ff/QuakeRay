@@ -2079,9 +2079,6 @@ static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&snd_mixspeed, (float)sound_frequencies[index]);
 		break;
 	}
-	case SOUND_OPT_EQUALIZER:
-		SNDEQ_OpenDialog ();
-		break;
 	}
 }
 
@@ -2100,7 +2097,10 @@ static void M_SoundOptions_Key (int k)
 	case K_KP_ENTER:
 	case K_ABUTTON:
 		m_entersound = true;
-		M_SoundOptions_AdjustSliders (1, k == K_MOUSE1);
+		if (sound_options_cursor == SOUND_OPT_EQUALIZER)
+			SNDEQ_OpenDialog ();
+		else
+			M_SoundOptions_AdjustSliders (1, k == K_MOUSE1);
 		return;
 
 	case K_UPARROW:
@@ -2156,7 +2156,6 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, va ("%.1f kHz", snd_mixspeed.value / 1000.0));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_EQUALIZER, "Equalizer");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_EQUALIZER, SNDEQ_Active () ? "on" : "off");
 
 
 	// cursor

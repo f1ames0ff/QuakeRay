@@ -29,6 +29,7 @@
 #endif
 
 #include "quakedef.h"
+#include "snd_openal.h"
 
 static const char *Sys_ArchString (void)
 {
@@ -188,7 +189,6 @@ void Sys_PrintSystemInfo (void)
 	char          driverVersion[64];
 	char          apiVersion[32];
 	SDL_version   sdlVersion;
-	const char   *audioDriver;
 	const char   *audioDevice;
 
 	Sys_OSVersionString (os, sizeof (os));
@@ -209,10 +209,9 @@ void Sys_PrintSystemInfo (void)
 	else
 		Con_Printf ("GPU     : unavailable\n");
 
-	audioDriver = SDL_GetCurrentAudioDriver ();
-	audioDevice = SDL_GetAudioDeviceName (0, SDL_FALSE);
+	audioDevice = SNDAL_DeviceName ();
 	Con_Printf ("Audio   : %s%s%s\n",
-	            audioDriver != NULL ? audioDriver : "(none)",
+	            snd_output.ready ? "OpenAL Soft" : "(none)",
 	            audioDevice != NULL ? " - " : "",
 	            audioDevice != NULL ? audioDevice : "");
 }

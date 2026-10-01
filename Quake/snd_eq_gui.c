@@ -25,10 +25,12 @@
 
 static qboolean eq_dialog_open;
 static int      eq_drag_band = -1;
+static keydest_t eq_previous_dest;
+
+extern SDL_mutex *snd_mutex;
 
 static void SNDEQ_Command_f (void)
 {
-	key_dest = key_menu;
 	SNDEQ_OpenDialog ();
 }
 
@@ -46,16 +48,24 @@ static void SNDEQ_SetDialogOpen (qboolean open)
 
 	if (open)
 	{
+		eq_previous_dest = key_dest;
+		key_dest = key_menu;
+		Key_ClearStates ();
 		IN_FreeCursorForGui ();
 		SDL_ShowCursor (SDL_DISABLE);
 		QR_GUI_SetMouseCursor (1);
 	}
 	else
 	{
+		key_dest = eq_previous_dest;
+		Key_ClearStates ();
 		SDL_ShowCursor (SDL_ENABLE);
 		QR_GUI_SetMouseCursor (0);
 		eq_drag_band = -1;
-		IN_DeactivateForMenu ();
+		if (key_dest == key_game)
+			IN_Activate ();
+		else
+			IN_DeactivateForMenu ();
 	}
 }
 
@@ -164,12 +174,14 @@ void SNDEQ_DrawDialog (void)
 	if (!eq_dialog_open || !QR_GUI_Ready ())
 		return;
 
+	SDL_LockMutex (snd_mutex);
 	QR_GUI_Backdrop (0.7f);
 	QR_GUI_PushWindowPadding (24.0f, 16.0f);
 	if (QR_GUI_BeginDialog ("Equalizer", EQ_GRAPH_W + 48.0f) == 0)
 	{
 		QR_GUI_EndDialog ();
 		QR_GUI_PopWindowPadding ();
+		SDL_UnlockMutex (snd_mutex);
 		return;
 	}
 
@@ -277,6 +289,7 @@ void SNDEQ_DrawDialog (void)
 
 	QR_GUI_EndDialog ();
 	QR_GUI_PopWindowPadding ();
+	SDL_UnlockMutex (snd_mutex);
 }
 
 qboolean SNDEQ_GuiProcessEvent (const void *sdl_event)
