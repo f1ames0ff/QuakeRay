@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.22.0
+
+### Added
+- **The god rays take their sun from the bright areas of the sky** — with the classic sky (`rt_physical_sky 0`) the rays aimed at the single brightest texel of the skybox, so one specular pixel or a lone bright star could pull them, and a sky with several bright patches only ever pulled them to its maximum. The sky scans now build a 16x16 luminance grid over the six skybox faces and over the solid layer of the scrolling sky; `rt_godrays_sky_threshold` (default `0.75`) selects the cells whose mean luminance is above it, and the rays aim at the luminance-weighted centre of everything selected and take its average colour. Nothing above the threshold falls back to the brightest point, and `0` keeps the old single-point behaviour. The source colour follows `rt_sky_brightness` too, so the sky brightness moves the shafts with the sky.
+- **A physical sun switch, `rt_physical_sun`** — under the classic sky, `0` (the default) takes the god rays from the sky texture as above and `1` takes them from the sun: the rays, and the shadow they are marched through, follow `rt_sun_pitch` / `rt_sun_yaw` and `rt_sun_color`. The light editor's Sun section hangs on the switch and sits right after the sky's own rows, so the sun controls stay out of the way of a mod that lights itself from its skybox.
+
 ## v0.21.0
 
 ### Added
