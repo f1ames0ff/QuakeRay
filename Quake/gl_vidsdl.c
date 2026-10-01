@@ -199,6 +199,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_sky_ambient_lod, "4") \
 	CVAR_DEF_T (rt_sky_nee, "1") \
 	CVAR_DEF_T (rt_physical_sky, "1") \
+	CVAR_DEF_T (rt_physical_sun, "0") \
 	CVAR_DEF_T (rt_sky_color, "32 0 64") \
 	CVAR_DEF_T (rt_sky_brightness, "1.0") \
 	CVAR_DEF_T (rt_brightness, "1.0") \
@@ -655,6 +656,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_godrays_intensity");
 	RT_Bench_Setting (f, "rt_godrays_sky_threshold");
 	RT_Bench_Setting (f, "rt_physical_sky");
+	RT_Bench_Setting (f, "rt_physical_sun");
 	RT_Bench_Setting (f, "rt_sky_clouds");
 	RT_Bench_Setting (f, "rt_sky_cloud_coverage");
 	RT_Bench_Setting (f, "rt_sky_cloud_density");
@@ -2215,7 +2217,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		c[6] = CVAR_TO_BOOL (rt_sky_clouds) ? 1.0f : 0.0f;
 		c[7] = c[8] = 0.0f;
 	}
-	else if (!CVAR_TO_BOOL (r_fastsky))
+	else if (!CVAR_TO_BOOL (r_fastsky) && !CVAR_TO_BOOL (rt_physical_sun))
 	{
 		vec3_t brightest_dir, brightest_color;
 
