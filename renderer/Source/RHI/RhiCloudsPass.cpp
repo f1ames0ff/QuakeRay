@@ -27,13 +27,14 @@ void LogMessage(const RhiCloudsPass::PrintFunction &print, const char *pMessage)
     }
 }
 
-nvrhi::TextureHandle CreateLayerTexture(nvrhi::IDevice *device, const char *pDebugName)
+nvrhi::TextureHandle CreateLayerTexture(nvrhi::IDevice *device, const char *pDebugName,
+                                       uint32_t size = RhiCloudsPass::LAYER_CUBEMAP_SIZE)
 {
     nvrhi::TextureDesc desc;
     desc.dimension = nvrhi::TextureDimension::TextureCube;
     desc.format = nvrhi::Format::RGBA16_FLOAT;
-    desc.width = RhiCloudsPass::LAYER_CUBEMAP_SIZE;
-    desc.height = RhiCloudsPass::LAYER_CUBEMAP_SIZE;
+    desc.width = size;
+    desc.height = size;
     desc.arraySize = RhiCloudsPass::LAYER_CUBEMAP_FACE_COUNT;
     desc.mipLevels = 1;
     desc.isUAV = true;
@@ -43,13 +44,14 @@ nvrhi::TextureHandle CreateLayerTexture(nvrhi::IDevice *device, const char *pDeb
     return rhi::createTexture(device, desc, pDebugName);
 }
 
-nvrhi::TextureHandle CreateShadowTexture(nvrhi::IDevice *device, const char *pDebugName)
+nvrhi::TextureHandle CreateShadowTexture(nvrhi::IDevice *device, const char *pDebugName,
+                                        uint32_t size = RhiCloudsPass::SHADOW_VOLUME_SIZE)
 {
     nvrhi::TextureDesc desc;
     desc.dimension = nvrhi::TextureDimension::Texture3D;
     desc.format = nvrhi::Format::R16_FLOAT;
-    desc.width = RhiCloudsPass::SHADOW_VOLUME_SIZE;
-    desc.height = RhiCloudsPass::SHADOW_VOLUME_SIZE;
+    desc.width = size;
+    desc.height = size;
     desc.depth = RhiCloudsPass::SHADOW_VOLUME_SLICES;
     desc.mipLevels = 1;
     desc.isUAV = true;
@@ -280,47 +282,124 @@ bool RhiCloudsPass::Create(nvrhi::IDevice *pDevice,
     return true;
 }
 
-void RhiCloudsPass::Render(nvrhi::ICommandList *pCommandList,
+bool RhiCloudsPass::SetQuality(uint32_t requestedQuality)
+{
+    requestedQuality = std::clamp(requestedQuality, 1u, 4u);
+    if (quality == requestedQuality)
+    {
+        return true;
+    }
+
+    constexpr uint32_t layerSizes[5] = { 256, 512, 1024, 2048, 4096 };
+    constexpr uint32_t shadowSizes[5] = { 512, 1024, 1024, 2048, 2048 };
+    auto nextLayer = CreateLayerTexture(device, "RhiCloudsPass layer cubemap", layerSizes[requestedQuality]);
+    auto nextShadow = CreateShadowTexture(device, "RhiCloudsPass shadow volume", shadowSizes[requestedQuality]);
+    if (nextLayer == nullptr || nextShadow == nullptr)
+    {
+        return false;
+    }
+
+    nvrhi::BindingSetHandle nextLayerSets[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BindingSetHandle nextShadowSets[MAX_FRAMES_IN_FLIGHT];
+    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
+    {
+        nextLayerSets[frame] = CreateLayerSet(device, layerLayout, nextLayer,
+                                              layerParamsBuffers[frame], nextShadow, shadowSampler);
+        nextShadowSets[frame] = CreateShadowSet(device, shadowLayout, nextShadow,
+                                                shadowParamsBuffers[frame]);
+        if (nextLayerSets[frame] == nullptr || nextShadowSets[frame] == nullptr)
+        {
+            return false;
+        }
+    }
+
+    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
+    {
+        frameContext->Retire(layerSets[frame]);
+        frameContext->Retire(shadowSets[frame]);
+        layerSets[frame] = std::move(nextLayerSets[frame]);
+        shadowSets[frame] = std::move(nextShadowSets[frame]);
+    }
+    frameContext->Retire(layerTexture);
+    frameContext->Retire(shadowTexture);
+    layerTexture = std::move(nextLayer);
+    shadowTexture = std::move(nextShadow);
+    quality = requestedQuality;
+    layerValid = false;
+    shadowValid = false;
+    return true;
+}
+
+std::array<float, 4> RhiCloudsPass::MakeShadowPlacement(const LayerParams &params)
+{
+    const float extent = std::max(params.cloudLayer[0] * SHADOW_VOLUME_EXTENT_PER_ALTITUDE, 1.0f);
+    const bool enabled = params.sunDirection[3] > 0.5f && params.sunDirection[2] > 0.05f;
+    return { enabled ? 1.0f : 0.0f, params.cloudAnchor[0] - extent * 0.5f,
+             params.cloudAnchor[1] - extent * 0.5f, extent };
+}
+
+bool RhiCloudsPass::Render(nvrhi::ICommandList *pCommandList,
                            uint32_t frameIndex,
                            const LayerParams &params,
-                           const ShadowParams &shadowParams)
+                           const ShadowParams &shadowParams,
+                           uint32_t requestedQuality)
 {
     if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT)
     {
-        return;
+        return false;
     }
 
-    const float extent = std::max(params.cloudLayer[0] * SHADOW_VOLUME_EXTENT_PER_ALTITUDE, 1.0f);
+    if (requestedQuality == 0 || params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f)
+    {
+        shadowPlacement[0] = 0.0f;
+        return false;
+    }
+    SetQuality(requestedQuality);
 
-    shadowPlacement[0] = 1.0f;
-    shadowPlacement[1] = params.cloudAnchor[0] - extent * 0.5f;
-    shadowPlacement[2] = params.cloudAnchor[1] - extent * 0.5f;
-    shadowPlacement[3] = extent;
+    const auto placement = MakeShadowPlacement(params);
+    std::memcpy(shadowPlacement, placement.data(), sizeof(shadowPlacement));
 
     ShadowParams shadow = shadowParams;
     shadow.mapProjection[0] = shadowPlacement[1];
     shadow.mapProjection[1] = shadowPlacement[2];
-    shadow.mapProjection[2] = extent;
-    shadow.mapProjection[3] = (float)SHADOW_VOLUME_SIZE;
+    shadow.mapProjection[2] = shadowPlacement[3];
+    shadow.mapProjection[3] = float(shadowTexture->getDesc().width);
     shadow.cloudMarch[3] = params.cloudAnchor[2] + params.cloudLayer[0];
 
-    rhi::writeBuffer(pCommandList, shadowParamsBuffers[frameIndex], &shadow, sizeof(shadow));
-
+    LayerParams layer = params;
+    std::memcpy(layer.cloudShadowPlacement, shadowPlacement, sizeof(shadowPlacement));
+    if (layer.cloudParams[2] == 0.0f)
     {
+        layer.cloudColor[3] = 0.0f;
+        shadow.cloudMarch[0] = 0.0f;
+    }
+    if (shadowPlacement[0] <= 0.5f)
+    {
+        layer.sunDirection[3] = 0.0f;
+        shadowValid = false;
+    }
+    if (layerValid && std::memcmp(&layer, &lastLayerParams, sizeof(layer)) == 0 &&
+        std::memcmp(&shadow, &lastShadowParams, sizeof(shadow)) == 0)
+    {
+        return false;
+    }
+
+    if (shadowPlacement[0] > 0.5f && (!shadowValid ||
+        std::memcmp(&shadow, &lastShadowParams, sizeof(shadow)) != 0))
+    {
+        rhi::writeBuffer(pCommandList, shadowParamsBuffers[frameIndex], &shadow, sizeof(shadow));
         nvrhi::ComputeState state;
         state.pipeline = shadowPipeline;
         state.addBindingSet(shadowSets[frameIndex]);
         pCommandList->setComputeState(state);
 
-        const uint32_t groups = Utils::GetWorkGroupCount(SHADOW_VOLUME_SIZE, THREAD_GROUP_SIZE);
+        const uint32_t groups = Utils::GetWorkGroupCount(shadowTexture->getDesc().width, THREAD_GROUP_SIZE);
         pCommandList->dispatch(groups, groups, 1);
+        shadowValid = true;
     }
 
     pCommandList->setTextureState(shadowTexture, nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::NonPixelShaderResource);
-
-    LayerParams layer = params;
-    std::memcpy(layer.cloudShadowPlacement, shadowPlacement, sizeof(shadowPlacement));
 
     rhi::writeBuffer(pCommandList, layerParamsBuffers[frameIndex], &layer, sizeof(layer));
 
@@ -330,12 +409,16 @@ void RhiCloudsPass::Render(nvrhi::ICommandList *pCommandList,
         state.addBindingSet(layerSets[frameIndex]);
         pCommandList->setComputeState(state);
 
-        const uint32_t groups = Utils::GetWorkGroupCount(LAYER_CUBEMAP_SIZE, THREAD_GROUP_SIZE);
+        const uint32_t groups = Utils::GetWorkGroupCount(layerTexture->getDesc().width, THREAD_GROUP_SIZE);
         pCommandList->dispatch(groups, groups, LAYER_CUBEMAP_FACE_COUNT);
     }
 
     pCommandList->setTextureState(layerTexture, nvrhi::AllSubresources,
-                                  nvrhi::ResourceStates::NonPixelShaderResource);
+                                   nvrhi::ResourceStates::NonPixelShaderResource);
+    lastLayerParams = layer;
+    lastShadowParams = shadow;
+    layerValid = true;
+    return true;
 }
 
 }

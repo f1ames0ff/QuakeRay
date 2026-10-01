@@ -23,6 +23,7 @@
 
 
 #include "ShaderCommonGLSLFunc.h"
+#include "CloudShadowWorld.h"
 
 
 
@@ -408,7 +409,14 @@ float traceSunVisibility(const Surface surf, const LightSample sunLight, out boo
         return 0.0;
     }
 
-    return traceVisibility(surf, sunLight.position, LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET);
+    float visibility = traceVisibility(surf, sunLight.position, LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET);
+#ifdef DESC_SET_CLOUD_SHADOW
+    if (visibility > 0.0)
+    {
+        visibility *= getCloudSunTransmittance(surf.position, l, false);
+    }
+#endif
+    return visibility;
 }
 
 float traceSkyVisibility(const Surface surf, const vec3 skyDirection)

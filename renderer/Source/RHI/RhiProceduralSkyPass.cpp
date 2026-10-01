@@ -364,9 +364,47 @@ bool RhiProceduralSkyPass::Create(nvrhi::IDevice *pDevice,
     return true;
 }
 
+bool RhiProceduralSkyPass::SetCloudLayer(nvrhi::ITexture *pTexture, nvrhi::ISampler *pSampler)
+{
+    if (!created || pTexture == nullptr || pSampler == nullptr)
+    {
+        return false;
+    }
+    if (cloudLayerReal && cloudLayerTexture == pTexture && cloudLayerSampler == pSampler)
+    {
+        return true;
+    }
+    nvrhi::BindingSetHandle nextSets[MAX_FRAMES_IN_FLIGHT][CUBEMAP_MIP_LEVELS];
+    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
+    {
+        for (uint32_t mip = 0; mip < CUBEMAP_MIP_LEVELS; mip++)
+        {
+            nextSets[frame][mip] = CreateSkySet(device, skyLayout, cubemapTexture, environmentTexture,
+                                                paramsBuffers[frame], pTexture, pSampler, mip);
+            if (nextSets[frame][mip] == nullptr)
+            {
+                return false;
+            }
+        }
+    }
+    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++)
+    {
+        for (uint32_t mip = 0; mip < CUBEMAP_MIP_LEVELS; mip++)
+        {
+            frameContext->Retire(skySets[frame][mip]);
+            skySets[frame][mip] = std::move(nextSets[frame][mip]);
+        }
+    }
+    cloudLayerTexture = pTexture;
+    cloudLayerSampler = pSampler;
+    cloudLayerReal = true;
+    return true;
+}
+
 void RhiProceduralSkyPass::Render(nvrhi::ICommandList *pCommandList,
-                                  uint32_t frameIndex,
-                                  const Params &inParams)
+                                   uint32_t frameIndex,
+                                   const Params &inParams,
+                                   bool cloudsUpdated)
 {
     if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT)
     {
@@ -383,7 +421,7 @@ void RhiProceduralSkyPass::Render(nvrhi::ICommandList *pCommandList,
     // Clouds off: freeze the animation time so the cached sky is not re-rendered every frame (only
     // when the sun/sky params change). Clouds on: keep the raw time, so the sky re-renders every
     // frame (RenderCubemap.cpp:896-902).
-    if (params.cloudParams[3] <= 0.5f)
+    if (params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f || params.cloudParams[2] == 0.0f)
     {
         params.cloudColor[3] = 0.0f;
     }
@@ -391,7 +429,7 @@ void RhiProceduralSkyPass::Render(nvrhi::ICommandList *pCommandList,
     // No changes since the last dispatch: keep the cached cubemap, exactly like the legacy's memcmp
     // against the mapped params buffer (RenderCubemap.cpp:904-913). lastParams starts zeroed, the
     // state the legacy's buffer is initialized in (RenderCubemap.cpp:746-750).
-    if (std::memcmp(&lastParams, &params, sizeof(Params)) == 0)
+    if (!cloudsUpdated && std::memcmp(&lastParams, &params, sizeof(Params)) == 0)
     {
         return;
     }

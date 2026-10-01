@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -75,10 +76,13 @@ public:
 
     bool IsCreated() const { return created; }
 
-    void Render(nvrhi::ICommandList *pCommandList,
+    bool Render(nvrhi::ICommandList *pCommandList,
                 uint32_t frameIndex,
                 const LayerParams &params,
-                const ShadowParams &shadowParams);
+                const ShadowParams &shadowParams,
+                uint32_t quality = 2);
+
+    static std::array<float, 4> MakeShadowPlacement(const LayerParams &params);
 
     nvrhi::ITexture *GetLayerTexture() const { return layerTexture.Get(); }
     nvrhi::ISampler *GetLayerSampler() const { return layerSampler.Get(); }
@@ -87,6 +91,8 @@ public:
     const float *GetShadowPlacement() const { return shadowPlacement; }
 
 private:
+    bool SetQuality(uint32_t quality);
+
     nvrhi::IDevice *device = nullptr;
     PrintFunction print;
     std::string shaderFolderPath;
@@ -116,6 +122,9 @@ private:
     float shadowPlacement[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
     bool created = false;
+    bool layerValid = false;
+    bool shadowValid = false;
+    uint32_t quality = 2;
 };
 
 static_assert(sizeof(RhiCloudsPass::LayerParams) == 448,

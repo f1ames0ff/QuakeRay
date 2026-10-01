@@ -67,7 +67,9 @@
 #define DESC_SET_FRAMEBUFFERS 2
 #define DESC_SET_GLOBAL_UNIFORM 3
 #define DESC_SET_RANDOM 4
+#define DESC_SET_CLOUD_SHADOW 5
 #include "ShaderCommonHLSLFunc.hlsli"
+#include "CloudShadowWorld.hlsli"
 #include "Random.hlsli"
 
 // The GLSL original declares the workgroup size here; in HLSL it is an attribute of the
@@ -340,7 +342,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         // before the surface is not sampled (Q2RTX breaks here), which keeps
         // the surface-facing samples from being pushed behind the geometry.
         const float3 shadowBias = -godRaysParams[0].sunDirection.xyz * 20.0;
-        const float shadow = GetShadow(currentPos + shadowBias);
+        const float shadow = GetShadow(currentPos + shadowBias) *
+            getCloudSunTransmittance(currentPos, godRaysParams[0].sunDirection.xyz, true);
 
         const float3 differentialInscatter = (shadow * phase * stepLength * density) * through;
         inscatter += differentialInscatter;

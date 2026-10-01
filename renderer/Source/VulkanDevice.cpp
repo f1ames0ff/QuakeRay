@@ -988,6 +988,24 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         sky.cloudsShadowParams = cloudsShadow;
 
         sky.cloudsLayer = !flatClouds && p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;
+        sky.cloudsQuality = cloudsQuality;
+
+        auto *cloudUniform = uniform->GetData();
+        const bool cloudsEnabled = globalUniform->skyType == SKY_TYPE_PROCEDURAL &&
+                                   p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;
+        const bool volumeEnabled = cloudsEnabled && !flatClouds &&
+                                   rhiCloudsPass != nullptr && rhiCloudsPass->IsCreated() &&
+                                   rhiProceduralSkyPass != nullptr && rhiProceduralSkyPass->IsCreated();
+        cloudUniform->cloudLayerMotion[0] = cloudsEnabled ? p.cloudParams[2] : 0.0f;
+        cloudUniform->cloudLayerMotion[1] = volumeEnabled ? cloudAltitude : 0.0f;
+        cloudUniform->cloudLayerMotion[2] = volumeEnabled ? cloudThickness : 0.0f;
+        cloudUniform->cloudLayerMotion[3] = cloudsEnabled ? std::clamp(p.skyParams[1], 0.0f, 1.0f) : 0.0f;
+        const auto placement = RhiCloudsPass::MakeShadowPlacement(clouds);
+        memcpy(cloudUniform->cloudShadowPlacement, placement.data(), sizeof(cloudUniform->cloudShadowPlacement));
+        if (!volumeEnabled)
+        {
+            cloudUniform->cloudShadowPlacement[0] = 0.0f;
+        }
 
         sky.proceduralSkyParams = p;
     }

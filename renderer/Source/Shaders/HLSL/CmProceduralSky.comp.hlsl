@@ -82,7 +82,6 @@ struct Params_BT
 [[vk::binding(3, 0)]] TextureCube<float4> cloudCubemap;
 [[vk::binding(4, 0)]] SamplerState cloudCubemap_Sampler;
 
-static const float CLOUD_LAYER_TEXEL = 1.0 / 1024.0;
 static const float CLOUD_READ_SPREAD = 1.0;
 static const float SUN_DISC_CLOUD_HIDE = 4.0;
 
@@ -170,7 +169,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float4 cloud = float4(0.0, 0.0, 0.0, 1.0);
     if (cloudsOn && flatClouds <= 0.5)
     {
-        float2 texel = float2(CLOUD_LAYER_TEXEL, CLOUD_LAYER_TEXEL);
+        uint layerWidth, layerHeight, layerMipLevels;
+        cloudCubemap.GetDimensions(0, layerWidth, layerHeight, layerMipLevels);
+        float2 texel = 1.0 / float2(layerWidth, layerHeight);
         float2 spread = texel * CLOUD_READ_SPREAD;
         float4 centre = cloudCubemap.SampleLevel(cloudCubemap_Sampler, dir, 0.0);
         float4 edges = cloudCubemap.SampleLevel(cloudCubemap_Sampler, dir - right * spread.x, 0.0) +

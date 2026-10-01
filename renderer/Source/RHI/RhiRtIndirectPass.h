@@ -26,6 +26,7 @@
 #include "../Common.h"
 
 #include "RhiRtPrimaryPass.h"
+#include "RhiCloudShadowBinding.h"
 
 namespace qray
 {
@@ -227,6 +228,11 @@ public:
 
     bool IsCreated() const { return created; }
 
+    void SetCloudShadow(nvrhi::ITexture *texture, nvrhi::ISampler *sampler)
+    {
+        cloudShadowBinding.SetTexture(texture, sampler);
+    }
+
     // Set 5's one texture: the coordinator's wrap of the engine's BlueNoise image, mirroring
     // RhiSkyPass::SetGeometryBuffers. The handle has to satisfy the shader's contract
     // (`Texture2DArray<float4>`, `blueNoiseTextures.Load(int4(x, y, layer, 0))` with
@@ -325,6 +331,7 @@ public:
     void ReleaseTargets();
 
 private:
+    rhi::RhiCloudShadowBinding cloudShadowBinding;
     // One entry per engine frame slot: every framebuffer image is a per-slot (swapped) image and the
     // vertex-data buffers are the slot's RHI copies, so neither the sets over them can be shared
     // across slots. Set 6 is not stored: its set belongs to the direct pass and is fetched per

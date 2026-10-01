@@ -262,6 +262,8 @@ public:
 
     bool IsCreated() const { return created; }
 
+    bool SetCloudLayer(nvrhi::ITexture *pTexture, nvrhi::ISampler *pSampler);
+
     // The three set-8 items the traced sky binds (Generated/ShaderCommonC.h:33-36):
     //  - GetCubemapTexture()     raw binding 0, `renderCubemap` in the shaders (the disc-carrying
     //                            visible cube, sampled at lod 0 by `getSkyPrimary`);
@@ -291,7 +293,8 @@ public:
     // not created or the frame index is out of range.
     void Render(nvrhi::ICommandList *pCommandList,
                 uint32_t frameIndex,
-                const Params &params);
+                const Params &params,
+                bool cloudsUpdated = false);
 
 private:
     nvrhi::IDevice *device = nullptr;

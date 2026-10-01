@@ -25,6 +25,7 @@
 #include <nvrhi/vulkan.h>
 
 #include "../Common.h"
+#include "RhiCloudShadowBinding.h"
 
 namespace qray
 {
@@ -320,6 +321,11 @@ public:
 
     bool IsCreated() const { return created; }
 
+    void SetCloudShadow(nvrhi::ITexture *texture, nvrhi::ISampler *sampler)
+    {
+        cloudShadowBinding.SetTexture(texture, sampler);
+    }
+
     // Set 0's texture and sampler, owned by RhiShadowMapPass. The coordinator passes
     // `RhiShadowMapPass::GetTexture()`/`GetSampler()` - the exact NVRHI objects, so the shared
     // tracker state drives the image's transition (see the class comment for the expected objects).
@@ -400,6 +406,7 @@ public:
     void ReleaseTargets();
 
 private:
+    rhi::RhiCloudShadowBinding cloudShadowBinding;
     // One entry per engine frame slot: the engine images are per-slot (or shared) framebuffer
     // images and the sets reference their wraps, so neither the wraps nor the sets can be shared
     // across slots. The uniform set follows the buffer pointer the way the other passes' uniform

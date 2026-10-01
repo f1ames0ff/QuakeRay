@@ -209,6 +209,7 @@ public:
         // itself. The skeleton records the pass before the sky, so the composite samples a layer
         // the same list wrote.
         bool cloudsLayer = false;
+        uint32_t cloudsQuality = 2;
         RhiCloudsPass::LayerParams cloudsParams = {};
         RhiCloudsPass::ShadowParams cloudsShadowParams = {};
 

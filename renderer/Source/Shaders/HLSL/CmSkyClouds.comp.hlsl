@@ -149,17 +149,20 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             {
                 float sigma = cloudOpticalDepth(layer, density);
 
-                float blend;
-                float mapTau = cloudSunTauFromMap(layer, p, sunDir, blend);
-                float marchTau = -1.0;
-
-                if (blend < 1.0)
+                float sunTau = 0.0;
+                float sunVisibility = 1.0;
+                if (sunLight > 0.5)
                 {
-                    marchTau = cloudOpticalDepth(layer, cloudSunDepth(layer, p, sunDir, CLOUD_SHADOW_STEPS, sunSlices));
+                    float blend;
+                    float mapTau = cloudSunTauFromMap(layer, p, sunDir, blend);
+                    float marchTau = -1.0;
+                    if (blend < 1.0)
+                    {
+                        marchTau = cloudOpticalDepth(layer, cloudSunDepth(layer, p, sunDir, CLOUD_SHADOW_STEPS, sunSlices));
+                    }
+                    sunTau = (marchTau >= 0.0) ? lerp(marchTau, max(mapTau, 0.0), blend) : mapTau;
+                    sunVisibility = exp(-sunTau);
                 }
-
-                float sunTau = (marchTau >= 0.0) ? lerp(marchTau, max(mapTau, 0.0), blend) : mapTau;
-                float sunVisibility = exp(-sunTau);
 
                 float powder = 1.0 - exp(-density * CLOUD_POWDER);
                 float rim = lerp(1.0, powder, clamp(-mu, 0.0, 1.0));

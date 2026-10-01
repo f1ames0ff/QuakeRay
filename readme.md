@@ -32,7 +32,7 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 ## Graphics
 
 * Dynamic HDR Tone mapping: overall brightness, exposure bias in EV, contrast as a mix of the fixed and the auto-exposure adapted curve
-* Procedural sky with a physical sky model
+* Procedural sky with volumetric clouds, configurable sky and sun colours, and cloud-shadowed sunlight
 * God rays — volumetric sun shafts, aimed at the sun or at the bright areas of the sky texture
 * Volumetric fog
 * Bloom
@@ -122,6 +122,16 @@ Steps:
 
    Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `mdl_skins`, `progs`, `shaders`, `textures` and the blue noise / water normal KTX2 tables) and `readme.md`, `changelog.md` and `LICENSE.txt`. The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
 
+### Cloud renderer regression test
+
+The optional GPU test runs without opening a game window or loading Quake data. It checks the six cubemap faces and mip chains, live cloud-quality changes, stationary-frame caching, wind and camera motion, cloud shadows at different heights, and the god-rays descriptor/push-constant interface. It requires a Vulkan 1.3 GPU; Vulkan validation is enabled when the SDK's validation layer is available.
+
+```
+cmake -S . -B build/Debug -DQR_BUILD_TESTS=ON
+.\build_win.ps1 -Config Debug
+ctest --test-dir build/Debug -R qray_clouds_gpu --output-on-failure
+```
+
 ## Ray tracing settings
 
 Everything is exposed as console variables; run `cvarlist rt_` in the console for the full list. The ones that change the look most are:
@@ -136,9 +146,9 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_sky_godrays_sky_threshold 0.75` - luminance a sky area needs for the god rays to pull to it, as a mean over 16x16 cells of the skybox or of the scrolling sky; the rays aim at the centre of everything above it, and `0` keeps the brightest point alone
 * `rt_sky 1`, `rt_sky_brightness 1.0`, `rt_physical_sky 1` - sky intensity and sky model
 * `rt_physical_sun 0` - god rays under the classic sky: `0` takes them from the bright areas of the sky texture, `1` from the sun (`rt_sky_sun_pitch` / `rt_sky_sun_yaw`), which also opens the editor's Sun section
-* `rt_sky_color 32 0 64` - colour of the sky, tinting it and the ambient light it casts, as `<r> <g> <b>` in `0-255`; commas, quotes and a bare query work, and it is archived
+* `rt_sky_color 255 255 255` - colour of the sky and the ambient light it casts, as `<r> <g> <b>` in `0-255`; commas, quotes and a bare query work, and it is archived
 * `rt_sky_clouds_color 0 0 0` - colour the clouds are composited over the sky with, as `<r> <g> <b>` in `0-255`; commas and a bare query work
-* `rt_sky_clouds_quality 2` with `rt_sky_clouds_height 140000` and `rt_sky_clouds_thickness 90000` - the volumetric clouds: the level of the layer's march and of the map of its shadow (`0` draws the flat mask the sky had before the layer was a volume, `4` is `extreme`), the layer's height over the eye and its depth; `rt_sky_clouds` switches them, and `rt_sky_clouds_alpha`, `_coverage`, `_density` and `_speed` shape them
+* `rt_sky_clouds_quality 2` with `rt_sky_clouds_height 140000` and `rt_sky_clouds_thickness 90000` - the cloud layer: `0` draws a flat mask; `1`-`4` use 512-4096-pixel layer faces and 40-64 march steps. Height and thickness are world units above the camera. `rt_sky_clouds` switches the layer, and `rt_sky_clouds_alpha`, `_coverage`, `_density` and `_speed` control opacity, coverage, optical density and wind. Changes apply live
 * `rt_sky_godrays_quality 2` - resolution of the shadow map the shafts are traced through, on the same `0`-`4` levels
 * `rt_sky_ambient_lod 4` - mip level the ambient sky light is read from; lower is more directional, `10` is a flat wash
 * `rt_sky_nee 1` - sample the sky as an explicit light; `0` restores the pre-NEE result

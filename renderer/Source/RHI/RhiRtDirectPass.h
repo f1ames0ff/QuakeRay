@@ -26,6 +26,7 @@
 #include "../Common.h"
 
 #include "RhiRtPrimaryPass.h"
+#include "RhiCloudShadowBinding.h"
 
 namespace qray
 {
@@ -194,6 +195,11 @@ public:
 
     bool IsCreated() const { return created; }
 
+    void SetCloudShadow(nvrhi::ITexture *texture, nvrhi::ISampler *sampler)
+    {
+        cloudShadowBinding.SetTexture(texture, sampler);
+    }
+
     // The module's set-6 layout and one slot's light set, handed over read-only to the
     // indirect-lighting sibling (RhiRtIndirectPass, A4.3): that pass declares the same layout handle
     // at its own position 6 and binds the set below instead of wrapping the engine's light buffers a
@@ -273,6 +279,7 @@ public:
     void ReleaseTargets();
 
 private:
+    rhi::RhiCloudShadowBinding cloudShadowBinding;
     // One entry per engine frame slot: every framebuffer image is a per-slot (swapped) image and the
     // vertex-data buffers are the slot's RHI copies, so neither the sets over them nor the light
     // staging wraps can be shared across slots. The five device-local light buffers are shared by

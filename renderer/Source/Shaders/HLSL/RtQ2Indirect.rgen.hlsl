@@ -83,6 +83,7 @@
 #define DESC_SET_CUBEMAPS 7
 #define DESC_SET_RENDER_CUBEMAP 8
 #define DESC_SET_RAY_STATS 11
+#define DESC_SET_CLOUD_SHADOW 12
 #define LIGHT_SAMPLE_METHOD (LIGHT_SAMPLE_METHOD_INDIR)
 #include "RaygenCommon.hlsli"
 #include "Q2Asvgf.hlsli"

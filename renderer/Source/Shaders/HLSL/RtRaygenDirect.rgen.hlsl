@@ -25,6 +25,7 @@
 #define DESC_SET_RANDOM 5
 #define DESC_SET_LIGHT_SOURCES 6
 #define DESC_SET_RAY_STATS 11
+#define DESC_SET_CLOUD_SHADOW 12
 #define LIGHT_SAMPLE_METHOD (LIGHT_SAMPLE_METHOD_DIRECT)
 #include "RaygenCommon.hlsli"
 #include "Q2Asvgf.hlsli"

@@ -695,6 +695,8 @@ GLOBAL_UNIFORM_MEMBERS = [
     # .x = 1 samples the direct lights from the global light array instead of
     # the per-cluster lists, .y = candidates drawn per NEE light sample.
     (UINT32,  4, "restirParams",             1),
+    (FLOAT32, 4, "cloudShadowPlacement",     1),
+    (FLOAT32, 4, "cloudLayerMotion",         1),
 ]
 
 GEOM_INSTANCE_MEMBERS = [

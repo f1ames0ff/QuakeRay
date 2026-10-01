@@ -326,6 +326,8 @@ struct ShGlobalUniform
     vec4 levelFogColorDensity;
     vec4 levelFogSkyBlend;
     uvec4 restirParams;
+    vec4 cloudShadowPlacement;
+    vec4 cloudLayerMotion;
 };
 
 struct ShGeometryInstance

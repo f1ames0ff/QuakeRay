@@ -328,6 +328,8 @@ struct ShGlobalUniform
     float4 levelFogColorDensity;
     float4 levelFogSkyBlend;
     uint4 restirParams;
+    float4 cloudShadowPlacement;
+    float4 cloudLayerMotion;
 };
 
 struct ShGeometryInstance

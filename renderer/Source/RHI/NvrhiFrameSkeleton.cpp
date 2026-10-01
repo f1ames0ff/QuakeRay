@@ -673,12 +673,27 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (proceduralSkyPass != nullptr && proceduralSkyPass->IsCreated() && uniform != nullptr &&
             uniform->skyType == SKY_TYPE_PROCEDURAL)
         {
+            bool cloudsUpdated = false;
             if (cloudsPass != nullptr && cloudsPass->IsCreated() && sky.cloudsLayer)
             {
-                cloudsPass->Render(commandList, frameIndex, sky.cloudsParams, sky.cloudsShadowParams);
+                cloudsUpdated = cloudsPass->Render(commandList, frameIndex, sky.cloudsParams,
+                                                    sky.cloudsShadowParams, sky.cloudsQuality);
+                proceduralSkyPass->SetCloudLayer(cloudsPass->GetLayerTexture(), cloudsPass->GetLayerSampler());
+                if (rtDirectPass != nullptr)
+                {
+                    rtDirectPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+                if (rtIndirectPass != nullptr)
+                {
+                    rtIndirectPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+                if (godRaysPass != nullptr)
+                {
+                    godRaysPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
             }
 
-            proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams);
+            proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams, cloudsUpdated);
         }
 
         // The raster sky (RHI/RhiRasterSkyPass.h): the legacy frame's `DrawSkyToCubemap` ->

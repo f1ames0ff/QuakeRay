@@ -2240,7 +2240,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	if (usePhysicalSky)
 	{
-		sky_params.skyCloudsQuality = CVAR_TO_UINT32 (rt_sky_clouds_quality);
+		sky_params.skyCloudsQuality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_clouds_quality), 4.0f);
 
 		float *c = &sky_params.skyCubemapRotationTransform.matrix[0][0];
 		// the cloud settings ride in the otherwise unused rotation matrix of this
