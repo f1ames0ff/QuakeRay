@@ -3265,6 +3265,7 @@ typedef struct
 	float       min, max;
 	const char *tip;
 	const char *action;
+	const char *show_when;
 } qre_global_t;
 
 static const qre_global_t qre_globals[] = {
@@ -3287,6 +3288,21 @@ static const qre_global_t qre_globals[] = {
 	  "Mip level the ambient sky light is read from: lower is more directional, 10 a flat wash." },
 	{ NULL,  "rt_sky_nee",          QRE_G_BOOL,  0, 0,
 	  "Sample the sky as an explicit light source." },
+	{ NULL,  "rt_physical_sun",     QRE_G_BOOL,  0, 0,
+	  "1 makes the sun the source of the god rays: the rays, and the shadow they are traced through, follow rt_sun_pitch and rt_sun_yaw; 0 aims them at the bright areas of the sky texture instead." },
+
+	{ "Sun", "rt_sun",              QRE_G_FLOAT, 0, 10,
+	  "Strength of the sun: 1 is a usable daylight, 0 turns it off.",
+	  NULL, "rt_physical_sun" },
+	{ NULL,  "rt_sun_color",        QRE_G_COLOR, 0, 0,
+	  "The colour of the sun: its light, the disc in the procedural sky and everything that reads it (the indirect sun, the god rays, the fog's shafts)." },
+	{ NULL,  "rt_sun_pitch",        QRE_G_FLOAT, -180, 180,
+	  "The pitch the sun stands at." },
+	{ NULL,  "rt_sun_yaw",          QRE_G_FLOAT, -180, 180,
+	  "The yaw the sun stands at." },
+	{ NULL,  "Set sun position",    QRE_G_BUTTON, 0, 0,
+	  "Place the sun by aiming: it follows the crosshair, and the fire button leaves it where it points (that press is swallowed).",
+	  "rt_sun_edit" },
 
 	{ "Clouds", "rt_sky_clouds",        QRE_G_BOOL,  0, 0,
 	  "Draw the volumetric clouds." },
@@ -3301,22 +3317,12 @@ static const qre_global_t qre_globals[] = {
 	{ NULL,  "rt_sky_cloud_speed",      QRE_G_FLOAT, 0, 4,
 	  "How fast the cloud layer drifts." },
 
-	{ "Sun", "rt_sun",              QRE_G_FLOAT, 0, 10,
-	  "Strength of the sun: 1 is a usable daylight, 0 turns it off." },
-	{ NULL,  "rt_sun_color",        QRE_G_COLOR, 0, 0,
-	  "The colour of the sun: its light, the disc in the procedural sky and everything that reads it (the indirect sun, the god rays, the fog's shafts)." },
-	{ NULL,  "rt_sun_pitch",        QRE_G_FLOAT, -180, 180,
-	  "The pitch the sun stands at." },
-	{ NULL,  "rt_sun_yaw",          QRE_G_FLOAT, -180, 180,
-	  "The yaw the sun stands at." },
-	{ NULL,  "Set sun position",    QRE_G_BUTTON, 0, 0,
-	  "Place the sun by aiming: it follows the crosshair, and the fire button leaves it where it points (that press is swallowed).",
-	  "rt_sun_edit" },
-
 	{ "God rays", "rt_godrays",         QRE_G_BOOL,  0, 0,
 	  "Draw the sun shafts." },
 	{ NULL,  "rt_godrays_intensity",    QRE_G_FLOAT, 0, 4,
 	  "Strength of the sun shafts." },
+	{ NULL,  "rt_godrays_sky_threshold", QRE_G_FLOAT, 0, 1,
+	  "How bright a sky area must be to pull the god rays to itself; the rays come from the centre of everything above it, and from the brightest point when nothing is (0 leaves the brightest point alone)." },
 
 	{ "Volumetric fog", "rt_volume_type",    QRE_G_INT,   0, 2,
 	  "0 off, 1 a simple depth-based fog (the density and the colour below), 2 the volumetric pass the sky light feeds." },
@@ -3410,9 +3416,38 @@ static void QRE_GlobalColorSet (const char *name, const float rgb[3])
 	                    (int)(CLAMP (0.0f, rgb[2], 1.0f) * 255.0f + 0.5f)));
 }
 
+static qboolean QRE_GlobalSectionVisible (const char *condition)
+{
+	if (!condition)
+		return true;
+
+	const char *p = condition;
+
+	while (*p)
+	{
+		char name[64];
+		int  n = 0;
+
+		while (*p && *p != '|' && n < (int)sizeof (name) - 1)
+			name[n++] = *p++;
+		name[n] = '\0';
+
+		if (*p == '|')
+			p++;
+
+		cvar_t *var = Cvar_FindVar (name);
+
+		if (var && CVAR_TO_BOOL (*var))
+			return true;
+	}
+
+	return false;
+}
+
 static void QRE_LightGlobalTab (void)
 {
 	const char *section = NULL;
+	qboolean    section_hidden = false;
 	int         i;
 
 	QR_GUI_LabelDim ("the light system itself: the sky, its clouds and the sun");
@@ -3426,9 +3461,17 @@ static void QRE_LightGlobalTab (void)
 		if (g->section && (!section || strcmp (section, g->section)))
 		{
 			section = g->section;
-			QR_GUI_Separator ();
-			QR_GUI_Label (section);
+			section_hidden = !QRE_GlobalSectionVisible (g->show_when);
+
+			if (!section_hidden)
+			{
+				QR_GUI_Separator ();
+				QR_GUI_Label (section);
+			}
 		}
+
+		if (section_hidden)
+			continue;
 
 		if (g->type == QRE_G_BUTTON)
 		{
