@@ -802,7 +802,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         const bool godRaysOn = godRaysEnabled && (sunExists || useSkyBrightest);
 
         sky.godRays.enabled = godRaysOn;
-        sky.godRays.intensity = 8.0f * godRaysIntensity;
+        sky.godRays.intensity = 0.08f * godRaysIntensity;
         sky.godRays.eccentricity = 0.75f;
 
         if (godRaysOn)
