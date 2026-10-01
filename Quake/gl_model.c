@@ -3742,7 +3742,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		pintriangle = (const md3Triangle_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsTriangles));
 		for (int t = 0; t < numtris; t++)
 			for (int k = 0; k < 3; k++)
-				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)(ReadLongUnaligned ((byte *)&pintriangle[t].indexes[k]) + vertbase);
+				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)(ReadLongUnaligned ((byte *)&pintriangle[t].indexes[2 - k]) + vertbase);
 
 		vertbase += numverts;
 		indexbase += numtris * 3;
@@ -4324,8 +4324,9 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 				surf->fbtextures[s][k] = NULL;
 			}
 
-		for (size_t i = 0; i < mesh->numtris * 3; i++)
-			mod->rtindices[indexbase + i] = (uint32_t)mesh->indices[i] + (uint32_t)vertbase;
+		for (size_t t = 0; t < mesh->numtris; t++)
+			for (int k = 0; k < 3; k++)
+				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)mesh->indices[t * 3 + 2 - k] + (uint32_t)vertbase;
 
 		for (p = 0; p < numposes; p++)
 		{
@@ -4375,8 +4376,8 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 				const unsigned short *tri = &mesh->indices[t * 3];
 				vec3_t                e1, e2, n;
 
-				VectorSubtract (out[tri[1]].position, out[tri[0]].position, e1);
-				VectorSubtract (out[tri[2]].position, out[tri[0]].position, e2);
+				VectorSubtract (out[tri[2]].position, out[tri[0]].position, e1);
+				VectorSubtract (out[tri[1]].position, out[tri[0]].position, e2);
 				CrossProduct (e1, e2, n);
 				for (int k = 0; k < 3; k++)
 				{
