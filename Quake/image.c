@@ -121,6 +121,19 @@ byte *Image_LoadImage (const char *name, int *width, int *height)
 	return NULL;
 }
 
+byte *Image_LoadImageOSPath (const char *path, int *width, int *height)
+{
+	FILE *f = fopen (path, "rb");
+	byte *data;
+
+	if (f == NULL)
+		return NULL;
+
+	data = stbi_load_from_file (f, width, height, NULL, 4);
+	fclose (f);
+	return data;
+}
+
 //==============================================================================
 //
 //  TGA

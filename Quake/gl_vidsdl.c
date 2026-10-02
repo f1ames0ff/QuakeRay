@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "palette.h"
 #include "qr_gui.h"
+#include "cursor.h"
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "qr_editor.h"
@@ -2585,6 +2586,8 @@ void VID_Shutdown (void)
 {
 	if (vid_initialized)
 	{
+		Cursor_Shutdown ();
+
 		if (vulkan_globals.instance != QR_NULL_HANDLE)
 		{
 		    QR_GUI_Shutdown ();
@@ -3116,6 +3119,7 @@ void VID_Init (void)
 
 	Con_Printf ("\nRay tracing Initialization\n");
 	GL_InitInstance ();
+	Cursor_Init ();
 
 	// johnfitz -- removed code creating "glquake" subdirectory
 
@@ -3180,6 +3184,8 @@ static void VID_Restart (qboolean set_mode)
 	//
 	VID_SyncCvars ();
 
+	Cursor_Init ();
+
 	Con_Printf ("Video: %dx%d at %d Hz, vsync %s\n", vid.width, vid.height, vid_display_refresh,
 	            VID_VsyncModeName ((int)vid_vsync.value));
 
@@ -3235,6 +3241,8 @@ void VID_Toggle (void)
 		modestate = VID_GetFullscreen () ? MS_FULLSCREEN : MS_WINDOWED;
 
 		VID_SyncCvars ();
+
+		Cursor_Init ();
 
 		// update mouse grab
 		if (key_dest == key_console || key_dest == key_menu)
