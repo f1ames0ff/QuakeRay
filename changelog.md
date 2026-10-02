@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.24.0
 
 ### Added
 - **Binaural sound: the effects are OpenAL Soft sources** — every active `channel_t` becomes a positioned source: `AL_POSITION` from the emitter, `AL_GAIN` from the engine's own volume and attenuation law including the mixer's 6 dB headroom (so distance and level are unchanged, and `AL_ROLLOFF_FACTOR 0` keeps OpenAL's own distance model out of it), the listener basis drives `AL_POSITION`/`AL_ORIENTATION`, looped samples play with `AL_SOFT_loop_points` so the attack before the loop start still plays, and a one-shot source is retired exactly when OpenAL reports it finished or when the playback clock passes its end. Streamed music is a relative stereo source (`AL_SOFT_direct_channels`) fed from the existing `s_rawsamples` ring, so it keeps its stereo image instead of being folded to mono by HRTF, and `S_ExtraUpdate` keeps refilling it through the renderer's long waits. OpenAL Soft's built-in HRTF (the MIT KEMAR dataset in the pinned 1.25.2) gives headphones front/back, left/right and elevation; `s_openal_hrtf` is `off`/`on`/`auto` (the default `auto` lets the device decide, so a speaker setup is not surprised), and `s_openal_max_sources` (`256`) sizes the source pool.

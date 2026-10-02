@@ -32,7 +32,7 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 
 ### Sound
 
-* OpenAL Soft HRTF positional sound with its own mix; the engine opens no SDL audio device.
+* OpenAL Soft positional sound with the built-in MIT KEMAR HRTF and a graphical five-band equalizer; the engine opens no SDL audio device.
 
 ## Graphics
 
