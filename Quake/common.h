@@ -337,13 +337,18 @@ extern searchpath_t *com_base_searchpaths;
 extern THREAD_LOCAL int com_filesize;
 struct cache_user_s;
 
+#define MAX_BASEDIRS 6
+
 extern char             com_basedir[MAX_OSPATH];
+extern char             com_basedirs[MAX_BASEDIRS][MAX_OSPATH];
+extern int              com_numbasedirs;
 extern char             com_gamedir[MAX_OSPATH];
 extern THREAD_LOCAL int file_from_pak; // global indicating that file came from a pak
 
 const char *COM_GetGameNames (qboolean full);
 qboolean    COM_GameDirMatches (const char *tdirs);
 qboolean    COM_ModForbiddenChars (const char *p);
+void        COM_AddBaseDir (const char *dir);
 
 #define FS_ENT_NONE      (0)
 #define FS_ENT_FILE      (1 << 0)
@@ -402,7 +407,7 @@ char  *FS_fgets (char *s, int size, fshandle_t *fh);
 long   FS_filelength (fshandle_t *fh);
 
 extern struct cvar_s registered;
-extern qboolean      standard_quake, rogue, hipnotic;
+extern qboolean      standard_quake, rogue, hipnotic, mg3;
 extern qboolean      fitzmode;
 /* if true, run in fitzquake mode disabling custom quakespasm hacks */
 

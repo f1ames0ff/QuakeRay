@@ -4,7 +4,7 @@
 #include "sys.h"
 #include "miniz.h"
 
-#define RT_PKZ_MAX_ARCHIVES 8
+#define RT_PKZ_MAX_ARCHIVES 16
 #define RT_PKZ_MAX_STREAMS  64
 #define RT_PKZ_HANDLE_BASE  100000
 #define RT_PKZ_MAX_TEMP     64
@@ -150,9 +150,13 @@ void RT_PKZ_Init(void)
         char dir[MAX_OSPATH];
         const char *p;
         const char *names = COM_GetGameNames(false);
+        int i;
 
-        q_snprintf(dir, sizeof(dir), "%s/%s", com_basedir, GAMENAME);
-        rt_pkz_mount_directory(dir);
+        for (i = 0; i < com_numbasedirs; i++)
+        {
+            q_snprintf(dir, sizeof(dir), "%s/%s", com_basedirs[i], GAMENAME);
+            rt_pkz_mount_directory(dir);
+        }
 
         for (p = names; p && *p;)
         {
@@ -169,12 +173,9 @@ void RT_PKZ_Init(void)
 
             if (q_strcasecmp(name, GAMENAME))
             {
-                q_snprintf(dir, sizeof(dir), "%s/%s", com_basedir, name);
-                rt_pkz_mount_directory(dir);
-
-                if (host_parms->userdir != host_parms->basedir)
+                for (i = 0; i < com_numbasedirs; i++)
                 {
-                    q_snprintf(dir, sizeof(dir), "%s/%s", host_parms->userdir, name);
+                    q_snprintf(dir, sizeof(dir), "%s/%s", com_basedirs[i], name);
                     rt_pkz_mount_directory(dir);
                 }
             }

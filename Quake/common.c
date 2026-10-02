@@ -30,6 +30,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_pkz.h"
 #include "qr_resources.h"
 
+extern cvar_t scr_usekfont;
+
 static char *largv[MAX_NUM_ARGVS + 1];
 static char  argvdummy[] = " ";
 
@@ -60,7 +62,7 @@ char **com_argv;
 #define CMDLINE_LENGTH 256 /* johnfitz -- mirrored in cmd.c */
 char com_cmdline[CMDLINE_LENGTH];
 
-qboolean standard_quake = true, rogue, hipnotic;
+qboolean standard_quake = true, rogue, hipnotic, mg3;
 
 // this graphic needs to be in the pak file to use registered features
 static unsigned short pop[] = {0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x6600, 0x0000, 0x0000, 0x0000, 0x6600, 0x0000,
@@ -1732,6 +1734,8 @@ typedef struct
 char             com_gamenames[1024]; // eg: "hipnotic;quoth;warp" ... no id1
 char             com_gamedir[MAX_OSPATH];
 char             com_basedir[MAX_OSPATH];
+char             com_basedirs[MAX_BASEDIRS][MAX_OSPATH];
+int              com_numbasedirs;
 THREAD_LOCAL int file_from_pak; // ZOID: global indicating that file came from a pak
 
 searchpath_t *com_searchpaths;
@@ -2251,6 +2255,36 @@ qboolean COM_ModForbiddenChars (const char *p)
 
 /*
 =================
+COM_AddBaseDir
+
+Registers a content root; game directories are looked up in all roots,
+with later-added roots taking precedence over earlier ones
+=================
+*/
+void COM_AddBaseDir (const char *dir)
+{
+	int i;
+
+	if (!dir || !dir[0])
+		return;
+
+	for (i = 0; i < com_numbasedirs; i++)
+	{
+		if (!q_strcasecmp (com_basedirs[i], dir))
+			return;
+	}
+
+	if (com_numbasedirs >= MAX_BASEDIRS)
+	{
+		Con_Printf ("COM_AddBaseDir: too many content roots; '%s' ignored\n", dir);
+		return;
+	}
+
+	q_strlcpy (com_basedirs[com_numbasedirs++], dir, sizeof (com_basedirs[0]));
+}
+
+/*
+=================
 COM_AddSearchPaths
 
 Adds one directory and, optionally, the pak files it carries. The directory
@@ -2290,18 +2324,53 @@ static void COM_AddSearchPaths (const char *dirpath, unsigned int path_id, qbool
 
 /*
 =================
+COM_AddGameDirectoryRoot
+
+Mounts one game directory of one content root: the directory and the paks it
+carries, plus the engine pak of the main root.
+=================
+*/
+static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigned int path_id, qboolean add_embedded)
+{
+	char          pakfile[MAX_OSPATH];
+	pack_t       *qspak;
+	searchpath_t *search;
+
+	q_strlcpy (com_gamedir, va ("%s/%s", base, dir), sizeof (com_gamedir));
+
+	COM_AddSearchPaths (com_gamedir, path_id, true);
+
+	if (!add_embedded)
+		return;
+
+	{
+		qboolean old = com_modified;
+
+		q_snprintf (pakfile, sizeof (pakfile), "%s/vkquake.pak", base);
+		qspak = COM_LoadPackFile (pakfile);
+		com_modified = old;
+	}
+
+	if (qspak)
+	{
+		search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
+		search->path_id = path_id;
+		search->pack = qspak;
+		search->next = com_searchpaths;
+		com_searchpaths = search;
+	}
+}
+
+/*
+=================
 COM_AddGameDirectory -- johnfitz -- modified based on topaz's tutorial
 =================
 */
 static void COM_AddGameDirectory (const char *dir)
 {
-	const char   *base = com_basedir;
-	int           i;
-	unsigned int  path_id;
-	searchpath_t *search;
-	pack_t       *pak, *qspak;
-	char          pakfile[MAX_OSPATH];
-	qboolean      been_here = false;
+	int          i;
+	unsigned int path_id;
+	char         path[MAX_OSPATH];
 
 	if (*com_gamenames)
 		q_strlcat (com_gamenames, ";", sizeof (com_gamenames));
@@ -2319,82 +2388,50 @@ static void COM_AddGameDirectory (const char *dir)
 		hipnotic = true;
 		standard_quake = false;
 	}
+	if (!q_strcasecmp (dir, "mg3"))
+	{
+		mg3 = true;
+	}
 
-	q_strlcpy (com_gamedir, va ("%s/%s", base, dir), sizeof (com_gamedir));
-
-	// assign a path_id to this game directory
+	// assign a path_id to this game directory; all roots share it
 	if (com_searchpaths)
 		path_id = com_searchpaths->path_id << 1;
 	else
 		path_id = 1U;
 
-	// the Steam install is a fallback below the local directory: the local pass
-	// prepends above these, so a local file always shadows the Steam one
-	if (!been_here)
+	// a Steam rerelease's music is mounted even when the classic flavor plays
+	if (!q_strcasecmp (dir, GAMENAME))
+	{
+		char music[MAX_OSPATH];
+
+		if (QR_Resources_Resolve ("rerelease/id1", music, sizeof (music)))
+			COM_AddSearchPaths (music, path_id, false);
+	}
+	else
 	{
 		char remote[MAX_OSPATH];
-
-		if (!q_strcasecmp (dir, GAMENAME))
-		{
-			if (QR_Resources_Resolve ("rerelease/id1", remote, sizeof (remote)))
-				COM_AddSearchPaths (remote, path_id, false);
-		}
 
 		if (QR_Resources_Resolve (dir, remote, sizeof (remote)))
 			COM_AddSearchPaths (remote, path_id, true);
 	}
 
-_add_path:
-	// add the directory to the search path
-	search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
-	search->path_id = path_id;
-	q_strlcpy (search->filename, com_gamedir, sizeof (search->filename));
-	search->next = com_searchpaths;
-	com_searchpaths = search;
-
-	// add any pak files in the format pak0.pak pak1.pak, ...
-	for (i = 0;; i++)
+	// mount all roots in order: later roots take precedence, and the user root
+	// (the write target) sits on top
+	for (i = 0; i < com_numbasedirs; i++)
 	{
-		q_snprintf (pakfile, sizeof (pakfile), "%s/pak%i.pak", com_gamedir, i);
-		pak = COM_LoadPackFile (pakfile);
-		if (i != 0 || path_id != 1 || fitzmode)
-			qspak = NULL;
-		else
-		{
-			qboolean old = com_modified;
-			if (been_here)
-				base = host_parms->userdir;
-			q_snprintf (pakfile, sizeof (pakfile), "%s/vkquake.pak", base);
-			qspak = COM_LoadPackFile (pakfile);
-			com_modified = old;
-		}
-		if (pak)
-		{
-			search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
-			search->path_id = path_id;
-			search->pack = pak;
-			search->next = com_searchpaths;
-			com_searchpaths = search;
-		}
-		if (qspak)
-		{
-			search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
-			search->path_id = path_id;
-			search->pack = qspak;
-			search->next = com_searchpaths;
-			com_searchpaths = search;
-		}
-		if (!pak)
-			break;
+		qboolean is_main = !q_strcasecmp (com_basedirs[i], com_basedir);
+		qboolean is_user = (host_parms->userdir != host_parms->basedir) && !q_strcasecmp (com_basedirs[i], host_parms->userdir);
+
+		q_snprintf (path, sizeof (path), "%s/%s", com_basedirs[i], dir);
+		if (is_user)
+			Sys_mkdir (path);
+		else if (!is_main && Sys_FileType (path) != FS_ENT_DIRECTORY)
+			continue;
+
+		COM_AddGameDirectoryRoot (com_basedirs[i], dir, path_id, is_main && path_id == 1U && !fitzmode);
 	}
 
-	if (!been_here && host_parms->userdir != host_parms->basedir)
-	{
-		been_here = true;
-		q_strlcpy (com_gamedir, va ("%s/%s", host_parms->userdir, dir), sizeof (com_gamedir));
-		Sys_mkdir (com_gamedir);
-		goto _add_path;
-	}
+	q_strlcpy (com_gamedir, va ("%s/%s", com_basedirs[com_numbasedirs - 1], dir), sizeof (com_gamedir));
 }
 
 void COM_ResetGameDirectories (const char *newdirs)
@@ -2420,11 +2457,12 @@ void COM_ResetGameDirectories (const char *newdirs)
 	}
 	hipnotic = false;
 	rogue = false;
+	mg3 = false;
 	standard_quake = true;
 	// wipe the list of mod gamedirs
 	*com_gamenames = 0;
-	// reset this too
-	q_strlcpy (com_gamedir, va ("%s/%s", (host_parms->userdir != host_parms->basedir) ? host_parms->userdir : com_basedir, GAMENAME), sizeof (com_gamedir));
+	// reset this too: the last root is the write target
+	q_strlcpy (com_gamedir, va ("%s/%s", com_basedirs[com_numbasedirs - 1], GAMENAME), sizeof (com_gamedir));
 
 	for (newpath = newgamedirs; newpath && *newpath;)
 	{
@@ -2538,6 +2576,9 @@ static void COM_Game_f (void)
 		M_CheckMods ();
 		S_ClearAll ();
 
+		// 2026 update compat: enable scr_usekfont (for word wrapping) in case mg3 is used with original id1 data.
+		Cvar_SetValueQuick (&scr_usekfont, mg3 ? 1.0f : 0.0f);
+
 		Con_Printf ("\"game\" changed to \"%s\"\n", COM_GetGameNames (true));
 
 		VID_Lock ();
@@ -2551,6 +2592,90 @@ static void COM_Game_f (void)
 
 /*
 =================
+COM_SetupBaseDirs
+
+Chooses the Quake content root (a local folder or a store install, original or
+remastered) and registers every content root the game directories are mounted
+from.
+=================
+*/
+static void COM_SetupBaseDirs (qboolean explicit_basedir)
+{
+	char     classic[MAX_OSPATH] = "";
+	char     remastered[MAX_OSPATH] = "";
+	char     nightdive[MAX_OSPATH] = "";
+	qboolean forced = COM_CheckParm ("-steam") || COM_CheckParm ("-gog") || COM_CheckParm ("-egs") || COM_CheckParm ("-epic");
+	int      requested = -1;
+	int      flavor = -1;
+
+	if (COM_CheckParm ("-remastered") || COM_CheckParm ("-remaster") || COM_CheckParm ("-prefremaster"))
+		requested = QR_FLAVOR_REMASTERED;
+	else if (COM_CheckParm ("-original") || COM_CheckParm ("-preforiginal"))
+		requested = QR_FLAVOR_ORIGINAL;
+
+	if (explicit_basedir)
+	{
+		if (q_strcasecmp (host_parms->basedir, com_basedir))
+			COM_AddBaseDir (host_parms->basedir);
+		COM_AddBaseDir (com_basedir);
+		if (host_parms->userdir != host_parms->basedir)
+			COM_AddBaseDir (host_parms->userdir);
+		return;
+	}
+
+	if (!COM_CheckParm ("-nosteam"))
+	{
+		char steamroot[MAX_OSPATH];
+
+		if (QR_Resources_SteamDir (steamroot, sizeof (steamroot)))
+		{
+			if (QR_Resources_FlavorDir (steamroot, QR_FLAVOR_ORIGINAL))
+				q_strlcpy (classic, steamroot, sizeof (classic));
+			QR_Resources_RemasteredDir (remastered, sizeof (remastered));
+			QR_Resources_NightdiveDir (nightdive, sizeof (nightdive));
+		}
+	}
+
+	if (forced || !QR_Resources_FlavorDir (com_basedir, requested))
+	{
+		if (requested == QR_FLAVOR_REMASTERED && remastered[0])
+			flavor = QR_FLAVOR_REMASTERED;
+		else if (requested == QR_FLAVOR_ORIGINAL && classic[0])
+			flavor = QR_FLAVOR_ORIGINAL;
+		else if (classic[0] && remastered[0])
+			flavor = isDedicated ? QR_FLAVOR_REMASTERED : QR_Resources_ChooseFlavor ();
+		else if (remastered[0])
+			flavor = QR_FLAVOR_REMASTERED;
+		else if (classic[0])
+			flavor = QR_FLAVOR_ORIGINAL;
+
+		if (flavor == QR_FLAVOR_REMASTERED)
+			q_strlcpy (com_basedir, remastered, sizeof (com_basedir));
+		else if (flavor == QR_FLAVOR_ORIGINAL && classic[0])
+			q_strlcpy (com_basedir, classic, sizeof (com_basedir));
+	}
+
+	// the Nightdive add-ons are content roots of the remastered flavor
+	if (flavor == QR_FLAVOR_REMASTERED)
+		COM_AddBaseDir (nightdive);
+
+	// a Steam classic install stays a fallback below the selected game data
+	if (classic[0] && q_strcasecmp (classic, com_basedir))
+		COM_AddBaseDir (classic);
+
+	COM_AddBaseDir (com_basedir);
+
+	// the local directory is the write target and the top of the search order
+	COM_AddBaseDir (host_parms->basedir);
+
+	if (host_parms->userdir != host_parms->basedir)
+		COM_AddBaseDir (host_parms->userdir);
+
+	Con_Printf ("Quake data root: %s\n", com_basedir);
+}
+
+/*
+=================
 COM_InitFilesystem
 =================
 */
@@ -2558,6 +2683,7 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 {
 	int         i, j;
 	const char *p;
+	qboolean    explicit_basedir = false;
 
 	Cvar_RegisterVariable (&registered);
 	Cvar_RegisterVariable (&cmdline);
@@ -2566,7 +2692,10 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 
 	i = COM_CheckParm ("-basedir");
 	if (i && i < com_argc - 1)
+	{
 		q_strlcpy (com_basedir, com_argv[i + 1], sizeof (com_basedir));
+		explicit_basedir = true;
+	}
 	else
 		q_strlcpy (com_basedir, host_parms->basedir, sizeof (com_basedir));
 
@@ -2575,6 +2704,8 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 		Sys_Error ("Bad argument to -basedir");
 	if ((com_basedir[j - 1] == '\\') || (com_basedir[j - 1] == '/'))
 		com_basedir[j - 1] = 0;
+
+	COM_SetupBaseDirs (explicit_basedir);
 
 	i = COM_CheckParmNext (i, "-basegame");
 	if (i)

@@ -989,6 +989,22 @@ static int rt_mat_load_cb(const char *name, void *vctx)
     return 0;
 }
 
+static void rt_mat_load_base_dirs(rt_mat_load_ctx_t *ctx)
+{
+    int i;
+
+    for (i = 0; i < com_numbasedirs; i++)
+    {
+        char base[MAX_OSPATH];
+
+        q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
+        if (q_strcasecmp(base, com_gamedir))
+        {
+            rt_mat_load_dir(base, rt_mat_load_cb, ctx);
+        }
+    }
+}
+
 void RT_MAT_Init(void)
 {
     if (rt_initialized)
@@ -1006,14 +1022,7 @@ void RT_MAT_Init(void)
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
 
     RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
-    {
-        char base[MAX_OSPATH];
-        q_snprintf(base, sizeof(base), "%s/id1", com_basedir);
-        if (q_strcasecmp(base, com_gamedir))
-        {
-            rt_mat_load_dir(base, rt_mat_load_cb, &ctx);
-        }
-    }
+    rt_mat_load_base_dirs(&ctx);
     rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
 
     rt_mat_cmd = Cmd_AddCommand2("rt_mat", RT_MAT_Cmd, src_command);
@@ -1081,14 +1090,7 @@ void RT_MAT_Reload(void)
 
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
     RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
-    {
-        char base[MAX_OSPATH];
-        q_snprintf(base, sizeof(base), "%s/id1", com_basedir);
-        if (q_strcasecmp(base, com_gamedir))
-        {
-            rt_mat_load_dir(base, rt_mat_load_cb, &ctx);
-        }
-    }
+    rt_mat_load_base_dirs(&ctx);
     rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
 
     if (rt_current_map[0])

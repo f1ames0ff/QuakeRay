@@ -897,8 +897,15 @@ void Modlist_Init (void)
 	char            *mapdb;
 	char             steamroot[MAX_OSPATH];
 
-	Modlist_AddRoot (com_basedir);
-	Modlist_LoadAddonsJSON (com_basedir);
+	{
+		int i;
+
+		for (i = 0; i < com_numbasedirs; i++)
+		{
+			Modlist_AddRoot (com_basedirs[i]);
+			Modlist_LoadAddonsJSON (com_basedirs[i]);
+		}
+	}
 
 	QR_Resources_Init ();
 	if (QR_Resources_SteamDir (steamroot, sizeof (steamroot)))

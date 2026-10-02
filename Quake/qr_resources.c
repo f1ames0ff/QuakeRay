@@ -21,6 +21,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "qr_resources.h"
 
+#include <SDL.h>
+
 #ifdef _WIN32
 #include <windows.h>
 
@@ -324,6 +326,53 @@ int QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void 
 	return count;
 }
 
+qboolean QR_Resources_RemasteredDir (char *out, size_t outsize)
+{
+	char path[MAX_OSPATH];
+
+	QR_Resources_Init ();
+
+	if (qr_steam_root[0] == '\0')
+	{
+		return false;
+	}
+
+	q_snprintf (path, sizeof (path), "%s/rerelease", qr_steam_root);
+	if (!QR_DirExists (path) || !QR_Resources_FlavorDir (path, QR_FLAVOR_REMASTERED))
+	{
+		return false;
+	}
+
+	if (out && outsize > 0)
+	{
+		q_strlcpy (out, path, outsize);
+	}
+	return true;
+}
+
+qboolean QR_Resources_NightdiveDir (char *out, size_t outsize)
+{
+	char        path[MAX_OSPATH];
+	const char *profile = getenv ("USERPROFILE");
+
+	if (!profile || !profile[0])
+	{
+		return false;
+	}
+
+	q_snprintf (path, sizeof (path), "%s/Saved Games/Nightdive Studios/Quake", profile);
+	if (!QR_DirExists (path))
+	{
+		return false;
+	}
+
+	if (out && outsize > 0)
+	{
+		q_strlcpy (out, path, outsize);
+	}
+	return true;
+}
+
 #else /* !_WIN32 */
 
 void QR_Resources_Init (void)
@@ -360,4 +409,73 @@ int QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void 
 	return 0;
 }
 
+qboolean QR_Resources_RemasteredDir (char *out, size_t outsize)
+{
+	(void)out;
+	(void)outsize;
+	return false;
+}
+
+qboolean QR_Resources_NightdiveDir (char *out, size_t outsize)
+{
+	(void)out;
+	(void)outsize;
+	return false;
+}
+
 #endif /* _WIN32 */
+
+qboolean QR_Resources_FlavorDir (const char *dir, int flavor)
+{
+	char path[MAX_OSPATH];
+
+	if (!dir || !dir[0])
+	{
+		return false;
+	}
+
+	if (flavor != QR_FLAVOR_REMASTERED)
+	{
+		q_snprintf (path, sizeof (path), "%s/id1/pak0.pak", dir);
+		if (Sys_FileTime (path) != -1)
+		{
+			return true;
+		}
+	}
+
+	if (flavor != QR_FLAVOR_ORIGINAL)
+	{
+		q_snprintf (path, sizeof (path), "%s/QuakeEX.kpf", dir);
+		if (Sys_FileTime (path) != -1)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+int QR_Resources_ChooseFlavor (void)
+{
+	static const SDL_MessageBoxButtonData buttons[] = {
+		{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, QR_FLAVOR_REMASTERED, "Remastered"},
+		{0, QR_FLAVOR_ORIGINAL, "Original"},
+	};
+	SDL_MessageBoxData box;
+	int                 choice = -1;
+
+	memset (&box, 0, sizeof (box));
+	box.buttons = buttons;
+	box.numbuttons = countof (buttons);
+	box.flags = SDL_MESSAGEBOX_BUTTONS_LEFT_TO_RIGHT;
+	box.title = "QuakeRay";
+	box.message = "Which Quake version would you like to play?";
+
+	if (SDL_ShowMessageBox (&box, &choice) < 0 || choice < 0)
+	{
+		SDL_Quit ();
+		exit (0);
+	}
+
+	return choice;
+}

@@ -712,7 +712,7 @@ static void rt_light_load_directory(const char *dir)
 
 void RT_LIGHT_Reload(void)
 {
-    char base[MAX_OSPATH];
+    int i;
 
     if (!rt_light_initialized)
     {
@@ -721,10 +721,15 @@ void RT_LIGHT_Reload(void)
 
     rt_light_count = 0;
 
-    q_snprintf(base, sizeof(base), "%s/id1", com_basedir);
-    if (q_strcasecmp(base, com_gamedir))
+    for (i = 0; i < com_numbasedirs; i++)
     {
-        rt_light_load_directory(base);
+        char base[MAX_OSPATH];
+
+        q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
+        if (q_strcasecmp(base, com_gamedir))
+        {
+            rt_light_load_directory(base);
+        }
     }
     rt_light_load_directory(com_gamedir);
 }
