@@ -37,6 +37,7 @@ const char *const FLARE_SHADER_FILE_NAME = "CmLensFlare.comp.spv";
 
 constexpr uint32_t FLARE_SRV_SLOT = 0;
 constexpr uint32_t FLARE_SAMPLER_SLOT = 1;
+constexpr uint32_t FLARE_DEPTH_SLOT = 2;
 constexpr uint32_t FLARE_DESTINATION_SLOT = 0;
 
 constexpr uint32_t FLARE_PASS_BRIGHT = 0;
@@ -68,6 +69,7 @@ nvrhi::BindingLayoutHandle CreateSourceLayout(nvrhi::IDevice *device)
                                .setSamplerOffset(0));
     desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FLARE_SRV_SLOT));
     desc.addItem(nvrhi::BindingLayoutItem::Sampler(FLARE_SAMPLER_SLOT));
+    desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FLARE_DEPTH_SLOT));
 
     return device->createBindingLayout(desc);
 }
@@ -314,9 +316,9 @@ bool RhiLensFlarePass::PrepareTonemappingSet(uint32_t frameIndex)
     return true;
 }
 
-bool RhiLensFlarePass::PrepareSourceSet(Target &target, nvrhi::ITexture *pSource)
+bool RhiLensFlarePass::PrepareSourceSet(Target &target, nvrhi::ITexture *pSource, nvrhi::ITexture *pDepth)
 {
-    if (target.sourceSet != nullptr && target.sourceTexture == pSource)
+    if (target.sourceSet != nullptr && target.sourceTexture == pSource && target.depthTexture == pDepth)
     {
         return true;
     }
@@ -326,11 +328,13 @@ bool RhiLensFlarePass::PrepareSourceSet(Target &target, nvrhi::ITexture *pSource
         frameContext->Retire(target.sourceSet);
         target.sourceSet = nullptr;
         target.sourceTexture = nullptr;
+        target.depthTexture = nullptr;
     }
 
     nvrhi::BindingSetDesc setDesc;
     setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FLARE_SRV_SLOT, pSource));
     setDesc.addItem(nvrhi::BindingSetItem::Sampler(FLARE_SAMPLER_SLOT, sampler));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FLARE_DEPTH_SLOT, pDepth));
 
     target.sourceSet = device->createBindingSet(setDesc, sourceLayout);
     if (target.sourceSet == nullptr)
@@ -340,12 +344,14 @@ bool RhiLensFlarePass::PrepareSourceSet(Target &target, nvrhi::ITexture *pSource
     }
 
     target.sourceTexture = pSource;
+    target.depthTexture = pDepth;
     return true;
 }
 
 void RhiLensFlarePass::Render(nvrhi::ICommandList *pCommandList,
                               uint32_t frameIndex,
                               nvrhi::ITexture *pHdrSource,
+                              nvrhi::ITexture *pDepthSource,
                               uint32_t width,
                               uint32_t height,
                               const Settings &settings)
@@ -392,7 +398,7 @@ void RhiLensFlarePass::Render(nvrhi::ICommandList *pCommandList,
         }
     }
 
-    if (!PrepareTonemappingSet(frameIndex) || !PrepareSourceSet(target, pHdrSource))
+    if (!PrepareTonemappingSet(frameIndex) || !PrepareSourceSet(target, pHdrSource, pDepthSource))
     {
         return;
     }

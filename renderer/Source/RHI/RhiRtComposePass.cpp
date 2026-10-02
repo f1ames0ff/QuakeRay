@@ -2004,6 +2004,7 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
 
         lensFlarePass->Render(pCommandList, frameIndex,
                               target.engineTextures[BLOOM_INPUT_IMAGE_SLOT].Get(),
+                              target.engineTextures[FindComposeImage(FB_IMAGE_INDEX_DEPTH_WORLD)].Get(),
                               width, height, settings);
 
         pFlareResult = lensFlarePass->GetResultTexture(frameIndex);

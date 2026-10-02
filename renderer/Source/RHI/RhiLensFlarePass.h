@@ -69,6 +69,7 @@ public:
     void Render(nvrhi::ICommandList *pCommandList,
                 uint32_t frameIndex,
                 nvrhi::ITexture *pHdrSource,
+                nvrhi::ITexture *pDepthSource,
                 uint32_t width,
                 uint32_t height,
                 const Settings &settings);
@@ -93,11 +94,12 @@ private:
         Texture flare;
         Texture result;
         nvrhi::ITexture *sourceTexture = nullptr;
+        nvrhi::ITexture *depthTexture = nullptr;
         nvrhi::BindingSetHandle sourceSet;
     };
 
     bool PrepareTonemappingSet(uint32_t frameIndex);
-    bool PrepareSourceSet(Target &target, nvrhi::ITexture *pSource);
+    bool PrepareSourceSet(Target &target, nvrhi::ITexture *pSource, nvrhi::ITexture *pDepth);
 
     bool CreateTarget(Target &target, uint32_t width, uint32_t height);
     bool CreateTexture(Texture &texture, uint32_t width, uint32_t height, const std::string &name);

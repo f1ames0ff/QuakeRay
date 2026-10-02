@@ -20,6 +20,7 @@
 
 [[vk::binding(0, 0)]] Texture2D<float4> flareSource;
 [[vk::binding(1, 0)]] SamplerState flareSource_Sampler;
+[[vk::binding(2, 0)]] Texture2D<float4> flareDepth;
 [[vk::binding(0, 3)]] RWTexture2D<float4> flareDest;
 
 struct LensFlarePush_BT
@@ -57,6 +58,9 @@ static const float FLARE_HALO_CHROMA = 0.03;
 static const float FLARE_HALO_INTENSITY = 1.0;
 static const float FLARE_CLAMP_MAX = 300.0;
 static const float FLARE_GAIN = 0.1;
+static const float FLARE_DIST_REF = 512.0;
+static const float FLARE_DIST_MAX = 4096.0;
+static const float FLARE_SKY_DEPTH = 10000.0;
 
 static const uint FLARE_BOKEH_TAPS = 40;
 static const float FLARE_GOLDEN_ANGLE = 2.399963229728653;
@@ -103,6 +107,13 @@ float3 flareDownsampleBright(float2 uv, float2 sourceTexelSize, float exposure)
 
     const float luminance = getLuminance(result);
     result *= max(luminance - push.threshold, 0.0) / max(luminance, POST_EFFECTS_EPSILON);
+
+    const float depth = flareDepth.SampleLevel(flareSource_Sampler, uv, 0).r;
+    if (depth < FLARE_SKY_DEPTH)
+    {
+        const float square = FLARE_DIST_REF * FLARE_DIST_REF;
+        result *= (square / (depth * depth + square)) * saturate(1.0 - depth / FLARE_DIST_MAX);
+    }
 
     return postEffectsSanitize(result / exposure);
 }
