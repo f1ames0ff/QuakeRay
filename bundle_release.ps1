@@ -3,11 +3,11 @@
     Bundles a Release build of QuakeRay into a distributable ZIP archive.
 
 .DESCRIPTION
-    Packages quakeray.exe, the runtime DLLs, and the id1 runtime assets
-    (materials, shaders, textures -- which carry the material textures and the
-    model skins, luma and gloss maps among them -- and the BlueNoise /
-    WaterNormal KTX2 files) plus documentation into a single ZIP ready for
-    distribution.
+    Packages quakeray.exe, the runtime DLLs, the runtime assets next to the
+    executable (gfx) and the id1 runtime assets (materials, shaders,
+    textures -- which carry the material textures and the model skins, luma
+    and gloss maps among them -- and the BlueNoise / WaterNormal KTX2 files)
+    plus documentation into a single ZIP ready for distribution.
 
     The engine binary is taken from the Release configuration, which is built
     without debug information. Debug artifacts (.pdb/.ilk/.map) are never
@@ -90,6 +90,17 @@ foreach ($dll in $dlls) {
     Copy-Item $dll.FullName (Join-Path $stage $dll.Name) -Force
 }
 Write-Host "Added $($dlls.Count) DLL(s)"
+
+foreach ($d in @("gfx")) {
+    $src = Join-Path $BuildDir $d
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $stage $d) -Recurse -Force
+        Write-Host "Added $d"
+    }
+    else {
+        Write-Warning "Skipped $d (not found in $BuildDir)"
+    }
+}
 
 # 3) id1 runtime assets.
 $stageId1 = Join-Path $stage "id1"

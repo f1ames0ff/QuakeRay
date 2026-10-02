@@ -184,6 +184,7 @@ extern cvar_t r_rtshadows;
 extern cvar_t r_particles;
 extern cvar_t rt_hud_minimal;
 extern cvar_t r_smoke;
+extern cvar_t ui_cursor;
 extern cvar_t r_softparticles;
 extern cvar_t r_oit;
 extern cvar_t r_enhancedmodels;
@@ -2282,6 +2283,7 @@ enum
 	GRAPHICS_OPT_CLOUDS_QUALITY,
 	GRAPHICS_OPT_REFLECT,
 	GRAPHICS_OPT_SMOKE,
+	GRAPHICS_OPT_CURSOR,
 	GRAPHICS_OPTIONS_ITEMS
 };
 
@@ -2332,6 +2334,9 @@ static void M_GraphicsOptions_Adjust (int dir)
 		break;
 	case GRAPHICS_OPT_SMOKE:
 		Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
+		break;
+	case GRAPHICS_OPT_CURSOR:
+		Cvar_SetValueQuick (&ui_cursor, !CVAR_TO_BOOL (ui_cursor));
 		break;
 	}
 }
@@ -2413,6 +2418,9 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SMOKE, "Smoke type");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SMOKE, CVAR_TO_BOOL (r_smoke) ? "shader" : "classic");
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CURSOR, "Mouse cursor");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CURSOR, CVAR_TO_BOOL (ui_cursor) ? "default" : "axe");
 
 	M_Mouse_UpdateListCursor (&graphics_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, GRAPHICS_OPTIONS_ITEMS, 0);
 	Draw_Character (cbx, MENU_CURSOR_X, top + graphics_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));

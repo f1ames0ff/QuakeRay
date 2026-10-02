@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.26.1
+
+### Added
+- **The mouse pointer is the Quake axe** — the system cursor and the ImGui software cursor of the editor and the EQ panel draw the same artwork: `gfx/quake_axe_<size>.png` next to the executable becomes an SDL color cursor for the menus and a renderer material the GUI draws at the mouse position in place of ImGui's built-in arrow. The size follows the monitor — `16x16` under Full HD, `32x32` at Full HD, `64x64` from 4K — and the hotspot is the blade tip, read from the alpha of the image. Graphics → "Mouse cursor" switches between `axe` (the default, `ui_cursor 0`, archived) and the usual Windows pointer (`default`, `ui_cursor 1`) on the spot: the SDL cursor is replaced or released and the GUI falls back to ImGui's arrow without a restart. The runtime assets next to the executable are one `gfx` folder now — the build copies `renderer/gfx` and the GUI font into it, the editor loads the font from `gfx/Roboto-Regular.ttf`, and `bundle_release.ps1` ships the folder.
+
+### Fixed
+- **The menu dims the background like the original engine** — `Draw_FadeScreen` still blends `0.5`, but the 2D pass draws into the display-referred linear image the sRGB swapchain converts, where that blend only read as a ~`0.73` multiply; the alpha became the linear equivalent of the original's stored-value halving (`1 - 0.5^2.2`), so the main menu, the quit prompt and the new-game dialog darken what is under them again. Mid-tones halve exactly as before the renderer change; the darkest values, where the sRGB curve is steeper than the 2.2 approximation, come out a touch darker.
+
 ## v0.26.0
 
 ### Added

@@ -1019,7 +1019,7 @@ Draw_FadeScreen
 */
 void Draw_FadeScreen (cb_context_t *cbx)
 {
-	const float alpha = 0.5f;
+	const float alpha = 1.0f - powf (0.5f, 2.2f);
 
 	GL_SetCanvas (cbx, CANVAS_DEFAULT);
 

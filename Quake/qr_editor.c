@@ -6639,7 +6639,7 @@ void QR_Editor_Init (void)
 	Cmd_AddCommand ("qr_editor_stop", QR_Editor_Stop_f);
 
 	// the font is deployed next to the executable by the build
-	q_snprintf (font_path, sizeof (font_path), "%s/fonts/Roboto-Regular.ttf", host_parms->basedir);
+	q_snprintf (font_path, sizeof (font_path), "%s/gfx/Roboto-Regular.ttf", host_parms->basedir);
 	QR_GUI_Init (VID_GetWindow (), vulkan_globals.instance, font_path);
 }
 
