@@ -193,6 +193,18 @@ extern cvar_t r_lerpmove;
 extern cvar_t r_lerpturn;
 extern cvar_t vid_filter;
 extern cvar_t rt_bloom;
+extern cvar_t rt_bloom_intensity;
+extern cvar_t rt_bloom_quality;
+extern cvar_t rt_lensflare;
+extern cvar_t rt_lensflare_intensity;
+extern cvar_t rt_ef_damage;
+extern cvar_t rt_ef_damage_strength;
+extern cvar_t rt_ef_liquid;
+extern cvar_t rt_ef_liquid_strength;
+extern cvar_t rt_ef_pickup;
+extern cvar_t rt_ef_pickup_strength;
+extern cvar_t rt_sharpen;
+extern cvar_t rt_sharpen_strength;
 extern cvar_t rt_sky_godrays;
 extern cvar_t rt_sky_godrays_quality;
 extern cvar_t rt_sky_sun_size;
@@ -2274,7 +2286,6 @@ static void M_StepReflDepth (int dir)
 
 enum
 {
-	GRAPHICS_OPT_BLOOM,
 	GRAPHICS_OPT_FILTER,
 	GRAPHICS_OPT_MODELS,
 	GRAPHICS_OPT_PARTICLES,
@@ -2304,9 +2315,6 @@ static void M_GraphicsOptions_Adjust (int dir)
 
 	switch (graphics_options_cursor)
 	{
-	case GRAPHICS_OPT_BLOOM:
-		Cvar_SetValueQuick (&rt_bloom, !CVAR_TO_BOOL (rt_bloom));
-		break;
 	case GRAPHICS_OPT_FILTER:
 		Cvar_SetValue ("vid_filter", (Cvar_VariableValue ("vid_filter") == 0.0) ? 1.0f : 0.0f);
 		break;
@@ -2386,9 +2394,6 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_BLOOM, "Bloom");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_BLOOM, CVAR_TO_BOOL (rt_bloom));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "Texture filtering");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (Cvar_VariableValue ("vid_filter") == 0.0) ? "smooth" : "classic");
@@ -2543,6 +2548,205 @@ static void M_LightingOptions_Draw (cb_context_t *cbx)
 
 
 //=============================================================================
+/* EFFECTS OPTIONS MENU */
+
+enum
+{
+	EFFECTS_OPT_BLOOM,
+	EFFECTS_OPT_BLOOM_STRENGTH,
+	EFFECTS_OPT_BLOOM_QUALITY,
+	EFFECTS_OPT_LENSFLARE,
+	EFFECTS_OPT_LENSFLARE_STRENGTH,
+	EFFECTS_OPT_DAMAGE,
+	EFFECTS_OPT_DAMAGE_STRENGTH,
+	EFFECTS_OPT_LIQUID,
+	EFFECTS_OPT_LIQUID_STRENGTH,
+	EFFECTS_OPT_PICKUP,
+	EFFECTS_OPT_PICKUP_STRENGTH,
+	EFFECTS_OPT_SHARPEN,
+	EFFECTS_OPT_SHARPEN_STRENGTH,
+	EFFECTS_OPT_RESET,
+	EFFECTS_OPTIONS_ITEMS
+};
+
+static int effects_options_cursor = 0;
+
+static void M_Menu_EffectsOptions_f (void)
+{
+	M_MenuChanged ();
+	IN_DeactivateForMenu ();
+	key_dest = key_menu;
+	m_state = m_effects;
+}
+
+static void M_EffectsOptions_Adjust (int dir)
+{
+	if (dir)
+		S_LocalSound ("misc/menu3.wav");
+
+	switch (effects_options_cursor)
+	{
+	case EFFECTS_OPT_BLOOM:
+		Cvar_SetValueQuick (&rt_bloom, !CVAR_TO_BOOL (rt_bloom));
+		break;
+	case EFFECTS_OPT_BLOOM_STRENGTH:
+		Cvar_SetValueQuick (&rt_bloom_intensity, CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity) + dir * 0.01f, 0.5f));
+		break;
+	case EFFECTS_OPT_BLOOM_QUALITY:
+		Cvar_SetValueQuick (&rt_bloom_quality, (float)(((int)rt_bloom_quality.value + 3 + dir) % 3));
+		break;
+	case EFFECTS_OPT_LENSFLARE:
+		Cvar_SetValueQuick (&rt_lensflare, !CVAR_TO_BOOL (rt_lensflare));
+		break;
+	case EFFECTS_OPT_LENSFLARE_STRENGTH:
+		Cvar_SetValueQuick (&rt_lensflare_intensity, CLAMP (0.0f, CVAR_TO_FLOAT (rt_lensflare_intensity) + dir * 0.01f, 0.2f));
+		break;
+	case EFFECTS_OPT_DAMAGE:
+		Cvar_SetValueQuick (&rt_ef_damage, !CVAR_TO_BOOL (rt_ef_damage));
+		break;
+	case EFFECTS_OPT_DAMAGE_STRENGTH:
+		Cvar_SetValueQuick (&rt_ef_damage_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_damage_strength) + dir * 0.05f, 1.0f));
+		break;
+	case EFFECTS_OPT_LIQUID:
+		Cvar_SetValueQuick (&rt_ef_liquid, !CVAR_TO_BOOL (rt_ef_liquid));
+		break;
+	case EFFECTS_OPT_LIQUID_STRENGTH:
+		Cvar_SetValueQuick (&rt_ef_liquid_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_liquid_strength) + dir * 0.05f, 1.0f));
+		break;
+	case EFFECTS_OPT_PICKUP:
+		Cvar_SetValueQuick (&rt_ef_pickup, !CVAR_TO_BOOL (rt_ef_pickup));
+		break;
+	case EFFECTS_OPT_PICKUP_STRENGTH:
+		Cvar_SetValueQuick (&rt_ef_pickup_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_pickup_strength) + dir * 0.05f, 0.25f));
+		break;
+	case EFFECTS_OPT_SHARPEN:
+		Cvar_SetValueQuick (&rt_sharpen, CVAR_TO_BOOL (rt_sharpen) ? 0.0f : 2.0f);
+		break;
+	case EFFECTS_OPT_SHARPEN_STRENGTH:
+		Cvar_SetValueQuick (&rt_sharpen_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength) + dir * 0.05f, 1.0f));
+		break;
+	case EFFECTS_OPT_RESET:
+		Cvar_SetValueQuick (&rt_bloom, 1.0f);
+		Cvar_SetValueQuick (&rt_bloom_intensity, 0.08f);
+		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
+		Cvar_SetValueQuick (&rt_lensflare, 1.0f);
+		Cvar_SetValueQuick (&rt_lensflare_intensity, 0.03f);
+		Cvar_SetValueQuick (&rt_ef_damage, 1.0f);
+		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
+		Cvar_SetValueQuick (&rt_ef_liquid, 1.0f);
+		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.25f);
+		Cvar_SetValueQuick (&rt_ef_pickup, 1.0f);
+		Cvar_SetValueQuick (&rt_ef_pickup_strength, 0.10f);
+		Cvar_SetValueQuick (&rt_sharpen, 2.0f);
+		Cvar_SetValueQuick (&rt_sharpen_strength, 0.20f);
+		break;
+	}
+}
+
+static void M_EffectsOptions_Key (int k)
+{
+	switch (k)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_Menu_Options_f ();
+		break;
+
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		m_entersound = true;
+		M_EffectsOptions_Adjust (1);
+		return;
+
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		effects_options_cursor--;
+		if (effects_options_cursor < 0)
+			effects_options_cursor = EFFECTS_OPTIONS_ITEMS - 1;
+		break;
+
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		effects_options_cursor++;
+		if (effects_options_cursor >= EFFECTS_OPTIONS_ITEMS)
+			effects_options_cursor = 0;
+		break;
+
+	case K_LEFTARROW:
+		M_EffectsOptions_Adjust (-1);
+		break;
+
+	case K_RIGHTARROW:
+		M_EffectsOptions_Adjust (1);
+		break;
+	}
+}
+
+static void M_EffectsOptions_Draw (cb_context_t *cbx)
+{
+	qpic_t	 *p;
+	const int top = MENU_TOP;
+
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	p = Draw_CachePic ("gfx/p_option.lmp");
+	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM, "Bloom");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM, CVAR_TO_BOOL (rt_bloom));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_STRENGTH, "Bloom strength");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_STRENGTH,
+		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_bloom_intensity) * 100.0f + 0.5f)));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_QUALITY, "Bloom quality");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_QUALITY, M_GetQualityName (&rt_bloom_quality));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE, "Lens flare");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE, CVAR_TO_BOOL (rt_lensflare));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE_STRENGTH, "Lens flare strength");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE_STRENGTH,
+		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_lensflare_intensity) * 100.0f + 0.5f)));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE, "Damage aberration");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE, CVAR_TO_BOOL (rt_ef_damage));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE_STRENGTH, "Damage strength");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE_STRENGTH,
+		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_ef_damage_strength) * 100.0f + 0.5f)));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID, "Liquid aberration");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID, CVAR_TO_BOOL (rt_ef_liquid));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID_STRENGTH, "Liquid strength");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID_STRENGTH,
+		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_ef_liquid_strength) * 100.0f + 0.5f)));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP, "Pickup feedback");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP, CVAR_TO_BOOL (rt_ef_pickup));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP_STRENGTH, "Pickup strength");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP_STRENGTH,
+		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_ef_pickup_strength) * 100.0f + 0.5f)));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN, "Sharpen");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN, rt_sharpen.value != 0);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN_STRENGTH, "Sharpen strength");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN_STRENGTH,
+		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_sharpen_strength) * 100.0f + 0.5f)));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_RESET, "Reset effects defaults");
+
+	M_Mouse_UpdateListCursor (&effects_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, EFFECTS_OPTIONS_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + effects_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+}
+
+
+//=============================================================================
 /* OPTIONS MENU */
 
 
@@ -2552,6 +2756,7 @@ enum
 	OPT_CONTROLS,
 	OPT_VIDEO,
 	OPT_GRAPHICS,
+	OPT_EFFECTS,
 	OPT_LIGHTING,
 	OPT_SOUND,
 	OPT_BENCHMARK,
@@ -2584,6 +2789,7 @@ static void M_Options_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_CONTROLS, "Key Bindings");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_VIDEO, "Video");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GRAPHICS, "Graphics");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_EFFECTS, "Effects");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_LIGHTING, "Lighting");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_SOUND, "Sound");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_BENCHMARK, "Benchmark");
@@ -2636,6 +2842,9 @@ void M_Options_Key (int k)
 			break;
 		case OPT_GRAPHICS:
 			M_Menu_GraphicsOptions_f ();
+			break;
+		case OPT_EFFECTS:
+			M_Menu_EffectsOptions_f ();
 			break;
 		case OPT_LIGHTING:
 			M_Menu_LightingOptions_f ();
@@ -5497,6 +5706,10 @@ void M_Draw (cb_context_t *cbx)
 		M_GraphicsOptions_Draw (cbx);
 		break;
 
+	case m_effects:
+		M_EffectsOptions_Draw (cbx);
+		break;
+
 	case m_lighting:
 		M_LightingOptions_Draw (cbx);
 		break;
@@ -5693,6 +5906,10 @@ void M_Keydown (int key, qboolean repeat)
 
 	case m_graphics:
 		M_GraphicsOptions_Key (key);
+		return;
+
+	case m_effects:
+		M_EffectsOptions_Key (key);
 		return;
 
 	case m_lighting:

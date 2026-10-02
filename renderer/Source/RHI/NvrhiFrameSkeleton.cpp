@@ -18,8 +18,10 @@
 #include "NvrhiFrameSkeleton.h"
 
 #include "RhiAccelStructs.h"
+#include "RhiBloomPass.h"
 #include "RhiDecalPass.h"
 #include "RhiFsrPass.h"
+#include "RhiLensFlarePass.h"
 #include "RhiPostEffectPass.h"
 #include "RhiRtComposePass.h"
 #include "RhiRtDirectPass.h"
@@ -103,6 +105,8 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiDecalPass *pDecalPass,
                                        RhiFsrPass *pFsrPass,
                                        RhiPostEffectPass *pPostEffectPass,
+                                       RhiBloomPass *pBloomPass,
+                                       RhiLensFlarePass *pLensFlarePass,
                                        RhiShadowMapPass *pShadowMapPass,
                                        RhiRtGodRaysPass *pGodRaysPass,
                                        RhiUiPass *pUiPass,
@@ -124,6 +128,8 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , decalPass(pDecalPass)
     , fsrPass(pFsrPass)
     , postEffectPass(pPostEffectPass)
+    , bloomPass(pBloomPass)
+    , lensFlarePass(pLensFlarePass)
     , shadowMapPass(pShadowMapPass)
     , godRaysPass(pGodRaysPass)
     , uiPass(pUiPass)
@@ -1140,6 +1146,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             rtComposePass->Render(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
                                   sky.upscaledWidth, sky.upscaledHeight, filterEnabled,
                                   worldUniformBuffer.Get(),
+                                  sky.postEffectParams,
                                   [&](nvrhi::ICommandList *pOverlayList)
                                   {
                                       if (rasterOverlayPass != nullptr &&
@@ -1883,6 +1890,16 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
     if (rtComposePass != nullptr)
     {
         rtComposePass->ReleaseTargets();
+    }
+
+    if (bloomPass != nullptr)
+    {
+        bloomPass->ReleaseTargets();
+    }
+
+    if (lensFlarePass != nullptr)
+    {
+        lensFlarePass->ReleaseTargets();
     }
 
     // The god-rays pass wraps the eight engine images it reads and writes (63/64 among them) and

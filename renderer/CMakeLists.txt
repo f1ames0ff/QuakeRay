@@ -67,12 +67,14 @@ set(renderer_SOURCES
     Source/RHI/NvrhiFrameSkeleton.cpp
     Source/RHI/NvrhiRequirements.cpp
     Source/RHI/RhiAccelStructs.cpp
+    Source/RHI/RhiBloomPass.cpp
     Source/RHI/RhiCloudsPass.cpp
     Source/RHI/RhiCloudShadowBinding.cpp
     Source/RHI/RhiDecalPass.cpp
     Source/RHI/RhiDescriptors.cpp
     Source/RHI/RhiFrameContext.cpp
     Source/RHI/RhiFsrPass.cpp
+    Source/RHI/RhiLensFlarePass.cpp
     Source/RHI/RhiPipeline.cpp
     Source/RHI/RhiPostEffectPass.cpp
     Source/RHI/RhiProceduralSkyPass.cpp

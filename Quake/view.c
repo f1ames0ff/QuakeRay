@@ -75,6 +75,9 @@ cvar_t r_viewmodel_quake = {"r_viewmodel_quake", "1", CVAR_ARCHIVE};
 float v_dmg_time, v_dmg_roll, v_dmg_pitch;
 float rt_dmg_value;
 qboolean rt_dmg_inthisframe;
+float rt_ef_damage_pulse;
+float rt_ef_liquid_pulse;
+float rt_ef_pickup_pulse;
 
 extern int in_forward, in_forward2, in_back;
 
@@ -281,6 +284,10 @@ void V_ParseDamage (void)
 	if (count < 10)
 		count = 10;
 
+	const float damage_amount = CLAMP (0.0f, count / 40.0f, 1.0f);
+	if (damage_amount > rt_ef_damage_pulse)
+		rt_ef_damage_pulse = damage_amount;
+
 	cl.faceanimtime = cl.time + 0.2; // but sbar face into pain frame
 
 	cl.cshifts[CSHIFT_DAMAGE].percent += 3 * count;
@@ -356,6 +363,7 @@ void V_BonusFlash_f (void)
 	cl.cshifts[CSHIFT_BONUS].destcolor[1] = 186;
 	cl.cshifts[CSHIFT_BONUS].destcolor[2] = 69;
 	cl.cshifts[CSHIFT_BONUS].percent = 50;
+	rt_ef_pickup_pulse = 1.0f;
 }
 
 /*
@@ -502,6 +510,14 @@ static void V_UpdateBlend (void)
 	cl.cshifts[CSHIFT_BONUS].percent -= host_frametime * 100;
 	if (cl.cshifts[CSHIFT_BONUS].percent <= 0)
 		cl.cshifts[CSHIFT_BONUS].percent = 0;
+
+	rt_ef_damage_pulse -= host_frametime * 2.2f;
+	if (rt_ef_damage_pulse <= 0)
+		rt_ef_damage_pulse = 0;
+
+	rt_ef_pickup_pulse -= host_frametime * 3.4f;
+	if (rt_ef_pickup_pulse <= 0)
+		rt_ef_pickup_pulse = 0;
 
 	if (blend_changed)
 		V_CalcBlend ();

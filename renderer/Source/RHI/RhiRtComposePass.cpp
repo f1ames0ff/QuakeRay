@@ -1,6 +1,8 @@
 #include "RhiRtComposePass.h"
 
+#include "RhiBloomPass.h"
 #include "RhiFrameContext.h"
+#include "RhiLensFlarePass.h"
 #include "RhiPipeline.h"
 #include "RhiResources.h"
 #include "RhiTextureSource.h"
@@ -43,6 +45,7 @@ const char *const INTERLEAVE_SHADER_FILE_NAME = "CmQ2Interleave.comp.spv";
 const char *const HISTOGRAM_SHADER_FILE_NAME = "CmLuminanceHistogram.comp.spv";
 const char *const AVERAGE_SHADER_FILE_NAME = "CmLuminanceAvg.comp.spv";
 const char *const CHECKERBOARD_SHADER_FILE_NAME = "CmCheckerboard.comp.spv";
+const char *const PREPARE_HDR_SHADER_FILE_NAME = "CmPrepareHdr.comp.spv";
 const char *const PREPARE_FINAL_SHADER_FILE_NAME = "CmPrepareFinal.comp.spv";
 const char *const TAAU_SHADER_FILE_NAME = "CmQ2TAAU.comp.spv";
 
@@ -65,6 +68,12 @@ constexpr uint32_t COMPOSE_STRATA_SIZE = 3;
 // the legacy writes exactly that (Q2Denoiser.cpp:472, :518)).
 constexpr uint32_t COMPOSE_ITERATION_PUSH_SIZE = 4;
 
+constexpr uint32_t COMPOSE_OPTICAL_CONTROL_PUSH_SIZE = 16;
+
+constexpr uint32_t COMPOSE_BLOOM_RESULT_BINDING = 400;
+constexpr uint32_t COMPOSE_FLARE_RESULT_BINDING = 401;
+constexpr uint32_t COMPOSE_OPTICAL_SAMPLER_BINDING = 402;
+
 // The iteration counts: 7 for the gradient filter (LF in all, HF/SPEC in the first 3, normalized in
 // the last one, Q2Denoiser.h:88-91) and the engine's 4 for both LF and HF/SPEC a-trous
 // (`COMPUTE_SVGF_ATROUS_ITERATION_COUNT`, Generated/ShaderCommonC.h:148).
@@ -82,6 +91,10 @@ static_assert(COMPUTE_SVGF_ATROUS_ITERATION_COUNT == 4,
 constexpr uint32_t FRAMEBUFFER_UAV_OFFSET = 0;
 constexpr uint32_t FRAMEBUFFER_SRV_OFFSET = 124;
 constexpr uint32_t FRAMEBUFFER_SAMPLER_OFFSET = 248;
+
+constexpr uint32_t COMPOSE_BLOOM_RESULT_SLOT = COMPOSE_BLOOM_RESULT_BINDING - FRAMEBUFFER_SRV_OFFSET;
+constexpr uint32_t COMPOSE_FLARE_RESULT_SLOT = COMPOSE_FLARE_RESULT_BINDING - FRAMEBUFFER_SRV_OFFSET;
+constexpr uint32_t COMPOSE_OPTICAL_SAMPLER_SLOT = COMPOSE_OPTICAL_SAMPLER_BINDING - FRAMEBUFFER_SAMPLER_OFFSET;
 
 // The size class of one union image: the engine's `GetFramebufSize` maps the generated flags onto
 // the render size, the `(render + 1) / 2` half (FB_IMAGE_FLAGS_FRAMEBUF_FLAGS_FORCE_SIZE_1_2: the
@@ -417,6 +430,17 @@ constexpr ComposeBinding CHECKERBOARD_BINDINGS[CHECKERBOARD_BINDING_COUNT] =
     { FB_IMAGE_INDEX_SCREEN_EMIS_R_T,  false, false }, // 185  framebufScreenEmisRT_Sampled
 };
 
+constexpr uint32_t PREPARE_HDR_BINDING_COUNT = 6;
+constexpr ComposeBinding PREPARE_HDR_BINDINGS[PREPARE_HDR_BINDING_COUNT] =
+{
+    { FB_IMAGE_INDEX_FINAL,                 true, false },
+    { FB_IMAGE_INDEX_BLOOM_INPUT,           true, false },
+    { FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR,  false, false },
+    { FB_IMAGE_INDEX_THROUGHPUT,            false, false },
+    { FB_IMAGE_INDEX_SCREEN_EMISSION,       false, false },
+    { FB_IMAGE_INDEX_GOD_RAYS_FILTERED,     false, false },
+};
+
 // CmPrepareFinal: 5 storage images and 11 sampled images (measured: 17 set-0 items in the shipped
 // blob, of which the FINAL sampled view at raw 152 is the pair the A4.4 S1 shader fix removes; see
 // the class comment). Unlike the other four tables the UAVs come last: if a future edit ever binds
@@ -442,7 +466,7 @@ constexpr ComposeBinding PREPARE_FINAL_BINDINGS[PREPARE_FINAL_BINDING_COUNT] =
     { FB_IMAGE_INDEX_UNFILTERED_INDIRECT_S_H_G, true, false }, //  17  framebufUnfilteredIndirectSH_G
     { FB_IMAGE_INDEX_UNFILTERED_INDIRECT_S_H_B, true, false }, //  18  framebufUnfilteredIndirectSH_B
     { FB_IMAGE_INDEX_FINAL,                true, false }, //  28  framebufFinal
-    { FB_IMAGE_INDEX_BLOOM_INPUT,          true, false }, //  65  framebufBloomInput
+    { FB_IMAGE_INDEX_BLOOM_INPUT,          false, false }, //  65  framebufBloomInput
 };
 
 // CmQ2TAAU: 2 storage images, 3 sampled images and the game's sampler for the history (image 120,
@@ -543,6 +567,7 @@ constexpr bool ComposeTablesAreConsistent()
         INTERLEAVE_BINDINGS,
         HISTOGRAM_BINDINGS,
         CHECKERBOARD_BINDINGS,
+        PREPARE_HDR_BINDINGS,
         PREPARE_FINAL_BINDINGS,
         TAAU_BINDINGS,
     };
@@ -558,11 +583,12 @@ constexpr bool ComposeTablesAreConsistent()
         INTERLEAVE_BINDING_COUNT,
         HISTOGRAM_BINDING_COUNT,
         CHECKERBOARD_BINDING_COUNT,
+        PREPARE_HDR_BINDING_COUNT,
         PREPARE_FINAL_BINDING_COUNT,
         TAAU_BINDING_COUNT,
     };
 
-    for (uint32_t table = 0; table < 12; table++)
+    for (uint32_t table = 0; table < 13; table++)
     {
         for (uint32_t i = 0; i < counts[table]; i++)
         {
@@ -610,7 +636,7 @@ constexpr bool AreComposeImagesDistinct()
 // it is the image this module really moves to read-only and has to move back; 63/89 are bound by no
 // compose set, and their requirement is a same-state UnorderedAccess barrier that names the
 // god-rays module's hand-off (the class comment's contract), not a transition.
-constexpr uint32_t COMPOSE_RESTORE_COUNT = 21;
+constexpr uint32_t COMPOSE_RESTORE_COUNT = 22;
 constexpr FramebufferImageIndex COMPOSE_RESTORE_IMAGES[COMPOSE_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_ALBEDO,
@@ -630,13 +656,14 @@ constexpr FramebufferImageIndex COMPOSE_RESTORE_IMAGES[COMPOSE_RESTORE_COUNT] =
     FB_IMAGE_INDEX_SCREEN_EMISSION,
     FB_IMAGE_INDEX_GOD_RAYS,
     FB_IMAGE_INDEX_GOD_RAYS_FILTERED,
+    FB_IMAGE_INDEX_BLOOM_INPUT,
     FB_IMAGE_INDEX_Q2_TRANSPARENT,
     FB_IMAGE_INDEX_Q2_GOD_RAYS_THROUGHPUT_DIST,
     FB_IMAGE_INDEX_Q2_FOG_ACCUM,
     FB_IMAGE_INDEX_Q2_COLOR,
 };
 
-constexpr uint32_t CHAIN_RESTORE_COUNT = 54;
+constexpr uint32_t CHAIN_RESTORE_COUNT = 55;
 constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_ALBEDO,
@@ -664,6 +691,7 @@ constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
     FB_IMAGE_INDEX_SCREEN_EMISSION,
     FB_IMAGE_INDEX_GOD_RAYS,
     FB_IMAGE_INDEX_GOD_RAYS_FILTERED,
+    FB_IMAGE_INDEX_BLOOM_INPUT,
     FB_IMAGE_INDEX_Q2_COLOR_L_F_S_H,
     FB_IMAGE_INDEX_Q2_COLOR_L_F_C_O_C_G,
     FB_IMAGE_INDEX_Q2_COLOR_H_F,
@@ -807,6 +835,10 @@ constexpr uint32_t UPSCALED_IMAGE_SLOT = FindComposeImage(FB_IMAGE_INDEX_UPSCALE
 static_assert(UPSCALED_IMAGE_SLOT != COMPOSE_IMAGE_NONE,
               "UPSCALED_PING has to be part of the compose image union");
 
+constexpr uint32_t BLOOM_INPUT_IMAGE_SLOT = FindComposeImage(FB_IMAGE_INDEX_BLOOM_INPUT);
+static_assert(BLOOM_INPUT_IMAGE_SLOT != COMPOSE_IMAGE_NONE,
+              "BLOOM_INPUT has to be part of the compose image union");
+
 // The exact set-0 layout of one pass: Compute visibility (the RT passes' AllRayTracing layouts have
 // no Compute bit and the pinned backend would skip them for a compute pipeline,
 // validation-device.cpp:1002-1003), one item per declared raw binding, the block's offsets.
@@ -834,6 +866,41 @@ nvrhi::BindingLayoutHandle CreateFramebufferLayout(nvrhi::IDevice *device,
                              : nvrhi::BindingLayoutItem::Texture_SRV(GetComposeSlot(pBindings[i])));
         }
     }
+
+    return device->createBindingLayout(desc);
+}
+
+nvrhi::BindingLayoutHandle CreatePrepareFinalLayout(nvrhi::IDevice *device)
+{
+    if (device == nullptr)
+    {
+        return nullptr;
+    }
+
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
+                               .setShaderResourceOffset(FRAMEBUFFER_SRV_OFFSET)
+                               .setUnorderedAccessViewOffset(FRAMEBUFFER_UAV_OFFSET)
+                               .setSamplerOffset(FRAMEBUFFER_SAMPLER_OFFSET));
+
+    for (uint32_t i = 0; i < PREPARE_FINAL_BINDING_COUNT; i++)
+    {
+        if (PREPARE_FINAL_BINDINGS[i].isSampler)
+        {
+            desc.addItem(nvrhi::BindingLayoutItem::Sampler(GetComposeSlot(PREPARE_FINAL_BINDINGS[i])));
+        }
+        else
+        {
+            desc.addItem(PREPARE_FINAL_BINDINGS[i].isUAV
+                             ? nvrhi::BindingLayoutItem::Texture_UAV(GetComposeSlot(PREPARE_FINAL_BINDINGS[i]))
+                             : nvrhi::BindingLayoutItem::Texture_SRV(GetComposeSlot(PREPARE_FINAL_BINDINGS[i])));
+        }
+    }
+
+    desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(COMPOSE_BLOOM_RESULT_SLOT));
+    desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(COMPOSE_FLARE_RESULT_SLOT));
+    desc.addItem(nvrhi::BindingLayoutItem::Sampler(COMPOSE_OPTICAL_SAMPLER_SLOT));
 
     return device->createBindingLayout(desc);
 }
@@ -917,6 +984,50 @@ nvrhi::BindingSetHandle CreateFramebufferSet(nvrhi::IDevice *device,
     return device->createBindingSet(setDesc, pLayout);
 }
 
+nvrhi::BindingSetHandle CreatePrepareFinalSet(nvrhi::IDevice *device,
+                                             const nvrhi::TextureHandle *pEngineTextures,
+                                             nvrhi::ITexture *pBloomTexture,
+                                             nvrhi::ITexture *pFlareTexture,
+                                             nvrhi::ISampler *pSampler,
+                                             nvrhi::IBindingLayout *pLayout)
+{
+    if (device == nullptr || pLayout == nullptr || pBloomTexture == nullptr ||
+        pFlareTexture == nullptr || pSampler == nullptr)
+    {
+        return nullptr;
+    }
+
+    nvrhi::BindingSetDesc setDesc;
+
+    for (uint32_t i = 0; i < PREPARE_FINAL_BINDING_COUNT; i++)
+    {
+        if (PREPARE_FINAL_BINDINGS[i].isSampler)
+        {
+            setDesc.addItem(nvrhi::BindingSetItem::Sampler(GetComposeSlot(PREPARE_FINAL_BINDINGS[i]), pSampler));
+            continue;
+        }
+
+        const uint32_t imageSlot = FindComposeImage(PREPARE_FINAL_BINDINGS[i].image);
+        nvrhi::ITexture *texture =
+            imageSlot != COMPOSE_IMAGE_NONE ? pEngineTextures[imageSlot].Get() : nullptr;
+
+        if (texture == nullptr)
+        {
+            return nullptr;
+        }
+
+        setDesc.addItem(PREPARE_FINAL_BINDINGS[i].isUAV
+                            ? nvrhi::BindingSetItem::Texture_UAV(GetComposeSlot(PREPARE_FINAL_BINDINGS[i]), texture)
+                            : nvrhi::BindingSetItem::Texture_SRV(GetComposeSlot(PREPARE_FINAL_BINDINGS[i]), texture));
+    }
+
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(COMPOSE_BLOOM_RESULT_SLOT, pBloomTexture));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(COMPOSE_FLARE_RESULT_SLOT, pFlareTexture));
+    setDesc.addItem(nvrhi::BindingSetItem::Sampler(COMPOSE_OPTICAL_SAMPLER_SLOT, pSampler));
+
+    return device->createBindingSet(setDesc, pLayout);
+}
+
 void LogMessage(const RhiRtComposePass::PrintFunction &print, const std::string &message)
 {
     if (print != nullptr)
@@ -928,6 +1039,12 @@ void LogMessage(const RhiRtComposePass::PrintFunction &print, const std::string 
 }
 
 RhiRtComposePass::RhiRtComposePass() = default;
+
+void RhiRtComposePass::SetOpticalPasses(RhiBloomPass *pBloom, RhiLensFlarePass *pFlare)
+{
+    bloomPass = pBloom;
+    lensFlarePass = pFlare;
+}
 
 RhiRtComposePass::~RhiRtComposePass()
 {
@@ -951,8 +1068,11 @@ RhiRtComposePass::~RhiRtComposePass()
         target.interleaveSet = nullptr;
         target.histogramSet = nullptr;
         target.checkerboardSet = nullptr;
+        target.prepareHdrSet = nullptr;
         target.prepareFinalSet = nullptr;
         target.taauSet = nullptr;
+        target.prepareFinalBloomTexture = nullptr;
+        target.prepareFinalFlareTexture = nullptr;
 
         for (nvrhi::TextureHandle &texture : target.engineTextures)
         {
@@ -983,12 +1103,16 @@ RhiRtComposePass::~RhiRtComposePass()
     volumetricDummyTexture = nullptr;
     taauHistorySampler = nullptr;
 
+    opticalDummySampler = nullptr;
+    opticalDummyTexture = nullptr;
+
     for (nvrhi::ComputePipelineHandle &pipeline : atrousPipelines)
     {
         pipeline = nullptr;
     }
 
     taauPipeline = nullptr;
+    prepareHdrPipeline = nullptr;
     prepareFinalPipeline = nullptr;
     checkerboardPipeline = nullptr;
     averagePipeline = nullptr;
@@ -1006,9 +1130,11 @@ RhiRtComposePass::~RhiRtComposePass()
     tonemappingSrvLayout = nullptr;
     tonemappingUavLayout = nullptr;
     pushConstantLayout = nullptr;
+    prepareFinalControlLayout = nullptr;
     uniformLayout = nullptr;
     taauFramebufferLayout = nullptr;
     prepareFinalFramebufferLayout = nullptr;
+    prepareHdrFramebufferLayout = nullptr;
     checkerboardFramebufferLayout = nullptr;
     histogramFramebufferLayout = nullptr;
     interleaveFramebufferLayout = nullptr;
@@ -1026,6 +1152,7 @@ RhiRtComposePass::~RhiRtComposePass()
     }
 
     taauShader = nullptr;
+    prepareHdrShader = nullptr;
     prepareFinalShader = nullptr;
     checkerboardShader = nullptr;
     averageShader = nullptr;
@@ -1093,6 +1220,7 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         !LoadShader(HISTOGRAM_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, histogramShader) ||
         !LoadShader(AVERAGE_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, averageShader) ||
         !LoadShader(CHECKERBOARD_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, checkerboardShader) ||
+        !LoadShader(PREPARE_HDR_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, prepareHdrShader) ||
         !LoadShader(PREPARE_FINAL_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, prepareFinalShader) ||
         !LoadShader(TAAU_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, taauShader))
     {
@@ -1124,8 +1252,9 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         CreateFramebufferLayout(device, HISTOGRAM_BINDINGS, HISTOGRAM_BINDING_COUNT);
     checkerboardFramebufferLayout =
         CreateFramebufferLayout(device, CHECKERBOARD_BINDINGS, CHECKERBOARD_BINDING_COUNT);
-    prepareFinalFramebufferLayout =
-        CreateFramebufferLayout(device, PREPARE_FINAL_BINDINGS, PREPARE_FINAL_BINDING_COUNT);
+    prepareHdrFramebufferLayout =
+        CreateFramebufferLayout(device, PREPARE_HDR_BINDINGS, PREPARE_HDR_BINDING_COUNT);
+    prepareFinalFramebufferLayout = CreatePrepareFinalLayout(device);
     taauFramebufferLayout =
         CreateFramebufferLayout(device, TAAU_BINDINGS, TAAU_BINDING_COUNT);
 
@@ -1151,6 +1280,14 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, COMPOSE_ITERATION_PUSH_SIZE));
 
         pushConstantLayout = device->createBindingLayout(desc);
+    }
+
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, COMPOSE_OPTICAL_CONTROL_PUSH_SIZE));
+
+        prepareFinalControlLayout = device->createBindingLayout(desc);
     }
 
     // Set 2 of the histogram and the average: the engine's tonemapping buffer as
@@ -1212,8 +1349,10 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         temporalFramebufferLayout == nullptr || atrousLfFramebufferLayout == nullptr ||
         atrousFramebufferLayout == nullptr || interleaveFramebufferLayout == nullptr ||
         histogramFramebufferLayout == nullptr || checkerboardFramebufferLayout == nullptr ||
+        prepareHdrFramebufferLayout == nullptr ||
         prepareFinalFramebufferLayout == nullptr || taauFramebufferLayout == nullptr ||
         uniformLayout == nullptr || pushConstantLayout == nullptr ||
+        prepareFinalControlLayout == nullptr ||
         tonemappingUavLayout == nullptr || tonemappingSrvLayout == nullptr ||
         emptyLayout == nullptr || volumetricLayout == nullptr)
     {
@@ -1292,10 +1431,12 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
                                             { emptyLayout, uniformLayout, tonemappingUavLayout });
     checkerboardPipeline = CreateComposePipeline(device, checkerboardShader,
                                                  { checkerboardFramebufferLayout, uniformLayout });
+    prepareHdrPipeline = CreateComposePipeline(device, prepareHdrShader,
+                                               { prepareHdrFramebufferLayout, uniformLayout });
     prepareFinalPipeline = CreateComposePipeline(device, prepareFinalShader,
                                                  { prepareFinalFramebufferLayout, uniformLayout,
                                                    tonemappingSrvLayout, emptyLayout,
-                                                   volumetricLayout });
+                                                   volumetricLayout, prepareFinalControlLayout });
     taauPipeline = CreateComposePipeline(device, taauShader,
                                          { taauFramebufferLayout, uniformLayout });
 
@@ -1304,6 +1445,7 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         temporalPipeline == nullptr || atrousLfPipeline == nullptr ||
         interleavePipeline == nullptr || histogramPipeline == nullptr ||
         averagePipeline == nullptr || checkerboardPipeline == nullptr ||
+        prepareHdrPipeline == nullptr ||
         prepareFinalPipeline == nullptr || taauPipeline == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a compose pass compute pipeline");
@@ -1438,6 +1580,39 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         if (volumetricSet == nullptr)
         {
             LogMessage(print, "Warning: RHI: failed to create the compose pass volumetric binding set");
+            return false;
+        }
+    }
+
+    {
+        nvrhi::TextureDesc desc;
+        desc.dimension = nvrhi::TextureDimension::Texture2D;
+        desc.width = 1;
+        desc.height = 1;
+        desc.depth = 1;
+        desc.mipLevels = 1;
+        desc.arraySize = 1;
+        desc.format = nvrhi::Format::RGBA16_FLOAT;
+        desc.isShaderResource = true;
+        desc.isUAV = true;
+        desc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
+        desc.keepInitialState = true;
+        desc.debugName = "RhiRtComposePass optical dummy (1x1)";
+
+        opticalDummyTexture = rhi::createTexture(device, desc, desc.debugName);
+
+        nvrhi::SamplerDesc samplerDesc;
+        samplerDesc.setMinFilter(true);
+        samplerDesc.setMagFilter(true);
+        samplerDesc.setMipFilter(false);
+        samplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
+
+        opticalDummySampler = rhi::createSampler(device, samplerDesc,
+                                                 "RhiRtComposePass optical result sampler");
+
+        if (opticalDummyTexture == nullptr || opticalDummySampler == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the compose pass optical dummy");
             return false;
         }
     }
@@ -1626,6 +1801,7 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
                               uint32_t upscaledHeight,
                               bool filterEnabled,
                               nvrhi::IBuffer *pUniformBuffer,
+                              const QrDrawFramePostEffectsParams &postEffectParams,
                               const std::function<void(nvrhi::ICommandList *)> &pfnRasterOverlay)
 {
     Target *pTarget = PrepareFrame(pCommandList, frameIndex, pFramebuffers,
@@ -1650,6 +1826,15 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
         pCommandList->setTextureState(volumetricDummyTexture, nvrhi::AllSubresources,
                                       nvrhi::ResourceStates::NonPixelShaderResource);
         volumetricDummyCleared = true;
+    }
+
+    if (!opticalDummyCleared)
+    {
+        pCommandList->clearTextureFloat(opticalDummyTexture, nvrhi::AllSubresources,
+                                        nvrhi::Color(0.f, 0.f, 0.f, 0.f));
+        pCommandList->setTextureState(opticalDummyTexture, nvrhi::AllSubresources,
+                                      nvrhi::ResourceStates::NonPixelShaderResource);
+        opticalDummyCleared = true;
     }
 
     // The legacy dispatch arithmetic (Q2Denoiser.cpp:344-345, :400-408, :472, :519, :593,
@@ -1777,12 +1962,95 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
         pfnRasterOverlay(pCommandList);
     }
 
+    RecordDispatch(pCommandList, prepareHdrPipeline, { target.prepareHdrSet, target.uniformSet },
+                   groupsX, groupsY, 1);
+
+    float bloomStrength = 0.0f;
+    float flareStrength = 0.0f;
+    nvrhi::ITexture *pBloomResult = nullptr;
+    nvrhi::ITexture *pFlareResult = nullptr;
+
+    if (bloomPass != nullptr && bloomPass->IsCreated() &&
+        postEffectParams.pBloom != nullptr && postEffectParams.pBloom->isActive &&
+        postEffectParams.pBloom->intensity > 0.0f)
+    {
+        RhiBloomPass::Settings settings;
+        settings.intensity = postEffectParams.pBloom->intensity;
+        settings.threshold = postEffectParams.pBloom->threshold;
+        settings.knee = postEffectParams.pBloom->knee;
+        settings.scatter = postEffectParams.pBloom->scatter;
+        settings.radius = postEffectParams.pBloom->radius;
+        settings.quality = postEffectParams.pBloom->quality;
+
+        bloomPass->Render(pCommandList, frameIndex,
+                          target.engineTextures[BLOOM_INPUT_IMAGE_SLOT].Get(),
+                          width, height, settings);
+
+        pBloomResult = bloomPass->GetResultTexture(frameIndex);
+
+        if (pBloomResult != nullptr)
+        {
+            bloomStrength = postEffectParams.pBloom->intensity;
+        }
+    }
+
+    if (lensFlarePass != nullptr && lensFlarePass->IsCreated() &&
+        postEffectParams.pLensFlare != nullptr && postEffectParams.pLensFlare->isActive &&
+        postEffectParams.pLensFlare->intensity > 0.0f)
+    {
+        RhiLensFlarePass::Settings settings;
+        settings.intensity = postEffectParams.pLensFlare->intensity;
+        settings.threshold = postEffectParams.pLensFlare->threshold;
+
+        lensFlarePass->Render(pCommandList, frameIndex,
+                              target.engineTextures[BLOOM_INPUT_IMAGE_SLOT].Get(),
+                              width, height, settings);
+
+        pFlareResult = lensFlarePass->GetResultTexture(frameIndex);
+
+        if (pFlareResult != nullptr)
+        {
+            flareStrength = postEffectParams.pLensFlare->intensity;
+        }
+    }
+
+    nvrhi::ITexture *const pBloomTexture =
+        pBloomResult != nullptr ? pBloomResult : opticalDummyTexture.Get();
+    nvrhi::ITexture *const pFlareTexture =
+        pFlareResult != nullptr ? pFlareResult : opticalDummyTexture.Get();
+
+    const bool hasOpticalResult = pBloomResult != nullptr || pFlareResult != nullptr;
+    const float opticalControl[4] =
+    {
+        bloomStrength,
+        flareStrength,
+        hasOpticalResult ? 1.0f : 0.0f,
+        0.0f,
+    };
+
     // The final composition: set 3 is the dead LPM hole, set 4 the volumetric dummy, and the
     // tonemapping buffer is bound read-only, after the exposure pair wrote it in this list.
-    RecordDispatch(pCommandList, prepareFinalPipeline,
-                   { target.prepareFinalSet, target.uniformSet, tonemappingSrvSets[frameIndex],
-                     emptySet, volumetricSet },
-                   groupsX, groupsY, 1);
+    if (PreparePrepareFinalSet(target, pBloomTexture, pFlareTexture))
+    {
+        RecordDispatch(pCommandList, prepareFinalPipeline,
+                       { target.prepareFinalSet, target.uniformSet, tonemappingSrvSets[frameIndex],
+                         emptySet, volumetricSet },
+                       groupsX, groupsY, 1,
+                       reinterpret_cast<const uint32_t *>(opticalControl),
+                       COMPOSE_OPTICAL_CONTROL_PUSH_SIZE);
+    }
+
+    if (pBloomResult != nullptr)
+    {
+        pCommandList->setTextureState(pBloomResult, nvrhi::AllSubresources,
+                                      nvrhi::ResourceStates::UnorderedAccess);
+    }
+
+    if (pFlareResult != nullptr)
+    {
+        pCommandList->setTextureState(pFlareResult, nvrhi::AllSubresources,
+                                      nvrhi::ResourceStates::UnorderedAccess);
+    }
 
     // The images whose last use was a sampled read rest in the read-only layout now; move them back
     // to UnorderedAccess, the engine's GENERAL, so the next frame's passes start from the state
@@ -1959,6 +2227,10 @@ void RhiRtComposePass::ReleaseFramebufferSets(Target &target)
         {
             frameContext->Retire(target.checkerboardSet);
         }
+        if (target.prepareHdrSet != nullptr)
+        {
+            frameContext->Retire(target.prepareHdrSet);
+        }
         if (target.prepareFinalSet != nullptr)
         {
             frameContext->Retire(target.prepareFinalSet);
@@ -1979,8 +2251,11 @@ void RhiRtComposePass::ReleaseFramebufferSets(Target &target)
     target.interleaveSet = nullptr;
     target.histogramSet = nullptr;
     target.checkerboardSet = nullptr;
+    target.prepareHdrSet = nullptr;
     target.prepareFinalSet = nullptr;
     target.taauSet = nullptr;
+    target.prepareFinalBloomTexture = nullptr;
+    target.prepareFinalFlareTexture = nullptr;
 }
 
 void RhiRtComposePass::ReleaseFramebufferTarget(Target &target)
@@ -2197,18 +2472,18 @@ bool RhiRtComposePass::PrepareFramebufferSets(Target &target)
         }
     }
 
-    if (target.prepareFinalSet == nullptr)
+    if (target.prepareHdrSet == nullptr)
     {
-        target.prepareFinalSet = CreateFramebufferSet(device, PREPARE_FINAL_BINDINGS, PREPARE_FINAL_BINDING_COUNT,
-                                                      target.engineTextures, nullptr,
-                                                      prepareFinalFramebufferLayout);
+        target.prepareHdrSet = CreateFramebufferSet(device, PREPARE_HDR_BINDINGS, PREPARE_HDR_BINDING_COUNT,
+                                                    target.engineTextures, nullptr,
+                                                    prepareHdrFramebufferLayout);
 
-        if (target.prepareFinalSet == nullptr)
+        if (target.prepareHdrSet == nullptr)
         {
             if (!warnedBadTable)
             {
                 warnedBadTable = true;
-                LogMessage(print, "Warning: RHI: failed to create the compose pass prepare-final binding set");
+                LogMessage(print, "Warning: RHI: failed to create the compose pass prepare-HDR binding set");
             }
             return false;
         }
@@ -2229,6 +2504,42 @@ bool RhiRtComposePass::PrepareFramebufferSets(Target &target)
             }
             return false;
         }
+    }
+
+    return true;
+}
+
+bool RhiRtComposePass::PreparePrepareFinalSet(Target &target,
+                                              nvrhi::ITexture *pBloomTexture,
+                                              nvrhi::ITexture *pFlareTexture)
+{
+    if (target.prepareFinalSet != nullptr &&
+        target.prepareFinalBloomTexture == pBloomTexture &&
+        target.prepareFinalFlareTexture == pFlareTexture)
+    {
+        return true;
+    }
+
+    if (target.prepareFinalSet != nullptr && frameContext != nullptr)
+    {
+        frameContext->Retire(target.prepareFinalSet);
+    }
+
+    target.prepareFinalSet = CreatePrepareFinalSet(device, target.engineTextures,
+                                                   pBloomTexture, pFlareTexture,
+                                                   opticalDummySampler.Get(),
+                                                   prepareFinalFramebufferLayout);
+    target.prepareFinalBloomTexture = pBloomTexture;
+    target.prepareFinalFlareTexture = pFlareTexture;
+
+    if (target.prepareFinalSet == nullptr)
+    {
+        if (!warnedBadTable)
+        {
+            warnedBadTable = true;
+            LogMessage(print, "Warning: RHI: failed to create the compose pass prepare-final binding set");
+        }
+        return false;
     }
 
     return true;
@@ -2282,7 +2593,8 @@ void RhiRtComposePass::RecordDispatch(nvrhi::ICommandList *pCommandList,
                                       uint32_t groupsX,
                                       uint32_t groupsY,
                                       uint32_t groupsZ,
-                                      const uint32_t *pPushConstant)
+                                      const uint32_t *pPushConstant,
+                                      uint32_t pushConstantSize)
 {
     nvrhi::ComputeState state;
     state.setPipeline(pPipeline);
@@ -2299,7 +2611,7 @@ void RhiRtComposePass::RecordDispatch(nvrhi::ICommandList *pCommandList,
     // next state set (vulkan-compute.cpp:142-145), so the dispatch below sees the same layout.
     if (pPushConstant != nullptr)
     {
-        pCommandList->setPushConstants(pPushConstant, sizeof(uint32_t));
+        pCommandList->setPushConstants(pPushConstant, pushConstantSize);
     }
 
     pCommandList->dispatch(groupsX, groupsY, groupsZ);

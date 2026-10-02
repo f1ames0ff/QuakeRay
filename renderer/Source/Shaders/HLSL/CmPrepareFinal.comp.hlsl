@@ -27,6 +27,18 @@
 #include "TonemappingUtils.hlsli"
 
 
+struct BloomFlareControl_BT
+{
+    float4 bloomFlareStrength;
+};
+
+[[vk::push_constant]] ConstantBuffer<BloomFlareControl_BT> bloomFlareControl;
+
+[[vk::binding(400, DESC_SET_FRAMEBUFFERS)]] Texture2D<float4> bloomResultTexture;
+[[vk::binding(401, DESC_SET_FRAMEBUFFERS)]] Texture2D<float4> lensFlareResultTexture;
+[[vk::binding(402, DESC_SET_FRAMEBUFFERS)]] SamplerState opticalResultSampler;
+
+
 #define DEBUG_LPM 0
 
 #define A_GPU 1
@@ -75,56 +87,8 @@ float3 reinhard(const float3 c)
 }
 
 
-float3 blendEmissionLayer( const float3 hdr, const float3 layer, const uint mode )
+float3 finalizeColor( const float3 input_color )
 {
-    if( mode == 0u )
-    {
-        return hdr;
-    }
-    if( mode == 2u )
-    {
-        return hdr + layer;
-    }
-
-    const float3 base     = clamp( hdr, (float3)0.0, (float3)1.0 );
-    const float3 emiss    = clamp( layer, (float3)0.0, (float3)1.0 );
-    const float  coverage = clamp( max( max( layer.x, layer.y ), layer.z ), 0.0, 1.0 );
-
-    float3 blended = emiss;
-    if( mode == 3u )
-    {
-        blended = lerp( 2.0 * base * emiss, 1.0 - 2.0 * ( 1.0 - base ) * ( 1.0 - emiss ), step( (float3)0.5, base ) );
-    }
-    else if( mode == 4u )
-    {
-        blended = lerp( 2.0 * base * emiss, 1.0 - 2.0 * ( 1.0 - base ) * ( 1.0 - emiss ), step( (float3)0.5, emiss ) );
-    }
-    else if( mode == 5u )
-    {
-        blended = clamp( base / max( (float3)1.0 - emiss, (float3)1e-3 ), (float3)0.0, (float3)1.0 );
-    }
-
-    return hdr + ( blended - base ) * coverage + max( layer - 1.0, 0.0 );
-}
-
-
-uint decodeEmissionBlendMode( const uint code )
-{
-    if( code < 1u || code > 6u )
-    {
-        return globalUniform.emissionBlendMode;
-    }
-    return min( code - 1u, 5u );
-}
-
-
-float3 finalizeColor( const float3 hdr, const float3 screenEmis, const uint emisBlendMode )
-{
-    const float strength = clamp( globalUniform.emissionBlendStrength, 0.0, 1.0 );
-    const float3 layer   = screenEmis * globalUniform.emissionMaxScreenColor * strength;
-
-    float3 input_color = blendEmissionLayer( hdr, layer, emisBlendMode );
-
     const float lum = max( getLuminance( input_color ), exp2( min_log_luminance ) );
 
     const float biased_log_luminance = log2( lum ) * log_luminance_scale + log_luminance_bias;
@@ -155,20 +119,6 @@ float3 finalizeColor( const float3 hdr, const float3 screenEmis, const uint emis
     mapped_color = lerp( mapped_color, ae_mapped_color, tonemapping[0].tmReinhard );
 
     return clamp( mapped_color, (float3)0, (float3)1 );
-}
-
-
-float3 getBloomInput( const float3 hdr, const float3 screenEmis, const int2 pix )
-{
-    const float power = getLuminance( screenEmis );
-
-    const float albedoLum = getLuminance( framebufAlbedo_Sampled.Load(int3( pix, 0 )).rgb );
-    const float3 emis     = power > 0.001 ? screenEmis / max( albedoLum, power ) : (float3)0;
-
-    float ec = power * globalUniform.bloomEmissionMultiplier;
-
-    return hdr * ev100ToLuminance( getCurrentEV100() ) +
-           emis * ev100ToLuminance( getCurrentEV100() + ec );
 }
 
 
@@ -262,6 +212,28 @@ float3 applyLevelFog( const int2 pix, const float3 color )
 }
 
 
+float getLevelFogTransmittance( const int2 pix )
+{
+    const float density  = globalUniform.levelFogColorDensity.w;
+    const float skyBlend = globalUniform.levelFogSkyBlend.x;
+
+    if( density <= 0.0 )
+    {
+        return 1.0;
+    }
+
+    const float depth = framebufDepthWorld_Sampled.Load(int3( getCheckerboardPix( pix ), 0 )).r;
+
+    if( depth > MAX_RAY_LENGTH )
+    {
+        return 1.0 - skyBlend;
+    }
+
+    const float d = density * max( depth, 0.0 ) * getViewAxisFactor( pix );
+    return exp( -d * d );
+}
+
+
 float3 processDebug( const int2 pix, const float3 fallback );
 
 
@@ -302,26 +274,21 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         return;
     }
 
-    float3 hdr        = framebufFinal.Load( pix ).rgb;
-    const float3 screenEmis = framebufScreenEmission_Sampled.Load(int3( pix, 0 )).rgb;
-    const uint emisBlendMode = decodeEmissionBlendMode(
-        framebufPrimaryToReflRefr_Sampled.Load(int3( getCheckerboardPix( pix ), 0 )).a );
+    float3 hdr = framebufBloomInput_Sampled.Load(int3( pix, 0 )).rgb;
 
-    if (globalUniform.coreQ2RTX != 0)
+    if( bloomFlareControl.bloomFlareStrength.z != 0.0 )
     {
-        hdr += framebufGodRaysFiltered_Sampled.Load(int3( pix, 0 )).rgb;
-    }
-    else
-    {
-        const float q2SplitFlag = framebufThroughput_Sampled.Load(int3( getCheckerboardPix(pix), 0 )).a;
-        if (q2SplitFlag == 0.0)
-        {
-            hdr += framebufGodRaysFiltered_Sampled.Load(int3( pix, 0 )).rgb;
-        }
+        const float2 opticalUV = (float2( pix ) + 0.5) /
+                                 float2( globalUniform.renderWidth, globalUniform.renderHeight );
+
+        const float3 optical =
+            bloomResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb * bloomFlareControl.bloomFlareStrength.x +
+            lensFlareResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb * bloomFlareControl.bloomFlareStrength.y;
+
+        hdr += optical * getLevelFogTransmittance( pix );
     }
 
-    float3 color = finalizeColor( hdr, screenEmis, emisBlendMode );
-    float3 bloom = getBloomInput( hdr, screenEmis, pix );
+    float3 color = finalizeColor( hdr );
 
     color = applyVolumetrics( pix, color );
 #if SHIPPING_HACK
@@ -344,7 +311,6 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
     color = clamp( color + dither * OUTPUT_DITHER_CODES * outputCodeStepLinear( color ), (float3)0.0, (float3)1.0 );
 
     framebufFinal[pix] = float4( color, 0 );
-    framebufBloomInput[pix] = float4( bloom, 0.0 );
 }
 
 

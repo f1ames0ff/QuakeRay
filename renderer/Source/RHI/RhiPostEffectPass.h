@@ -255,6 +255,8 @@ private:
         EFFECT_WIPE,
         EFFECT_CRT_DEMODULATE_ENCODE,
         EFFECT_CRT_DECODE,
+        EFFECT_SHARPEN,
+        EFFECT_GAMEPLAY_FEEDBACK,
         EFFECT_COUNT,
     };
 
@@ -402,6 +404,7 @@ private:
     nvrhi::BindingLayoutHandle pushConstant16Layout;
     nvrhi::BindingLayoutHandle pushConstant24Layout;
     nvrhi::BindingLayoutHandle pushConstant28Layout;
+    nvrhi::BindingLayoutHandle pushConstant44Layout;
 
     // The wipe's persistent push state, exactly the legacy `EffectWipe::push` member: begin/end
     // and the start frame survive across frames until a new `beginNow` overwrites them. The layout

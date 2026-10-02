@@ -40,8 +40,11 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * Procedural sky with volumetric clouds, configurable sky and sun colours, and cloud-shadowed sunlight
 * God rays — volumetric sun shafts, aimed at the sun or at the bright areas of the sky texture
 * Volumetric fog
-* Bloom
-* Post-processing: chromatic aberration, and a configurable LUT for colour grading
+* UE5-style HDR bloom: a normalized pyramid with 13-tap downsampling, firefly suppression in the first reduction, a soft-knee threshold in exposed linear units and a screen-relative radius, with three quality levels
+* Lens flare from the visible sun and exceptionally bright visible sources, with its own high-threshold bright pass and restrained ghosts and halo
+* Post-processing: damage and liquid edge chromatic aberration with a protected central region, a bottom-screen pickup pulse, and a configurable LUT for colour grading
+* Contrast-adaptive sharpening (FidelityFX CAS) after the upscaler, with an adjustable strength
+* The `Effects` page in Options collects the bloom, lens-flare, gameplay-feedback and sharpening settings with a page-local reset
 * Shader smoke — the trails of rockets, lava balls and grenades are drawn as soft, lit puffs the room's light falls on, in place of the classic flat sprites
 * Enhanced models — a model that ships a `.md3` or `.md5mesh` beside its `.mdl` is drawn from it, with MD5 skinned from its `.md5anim` and skins resolved from the shader name; the Graphics menu's `Models` row picks enhanced or classic
 * Adaptive vsync, VRR and FreeSync: `vid_vsync` picks the presentation mode (off, vsync, adaptive, FreeSync), adaptive by default
@@ -51,12 +54,13 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * DirectX 12
 * FSR 4, radiance cache
 * DLSS
-* UE5-style post effects
 * Full path tracing
 * Hybrid rasterization/RT
 * Arcane Dimensions support
 * Quake Remastered support
 * More shader effects
+
+The [Modern Post Effects implementation specification](docs/modern-post-effects-spec.md) defines the planned bloom, gameplay feedback, lens flare, sharpening, and Effects menu work.
 
 ## Definitions
 
@@ -182,6 +186,11 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_bench <demoname> [quit]` - plays a demo at its own speed with the frame profiler summed over it and appends the result to `benchmark.log`; `quit` closes the game after the run
 * `rt_debugflags 0` - diagnostic views (raw direct/indirect/specular, gradients, ...)
 * `rt_viewm_scale 0.32` - the weapon is drawn `0.32` times smaller and closer to the eye by the same factor, unchanged on screen but out of the walls; `1` restores the classic weapon
+* `rt_bloom 1` with `rt_bloom_intensity 0.08`, `rt_bloom_quality 2`, `rt_bloom_threshold 1.0`, `rt_bloom_knee 0.5`, `rt_bloom_scatter 0.7` and `rt_bloom_radius 0.04` - the HDR bloom: its switch and strength, the quality level (`0` low, `1` medium, `2` high), the exposure-normalized threshold and its soft knee, the reconstruction scatter and the radius as a fraction of the displayed image height
+* `rt_lensflare 1` with `rt_lensflare_intensity 0.03` and `rt_lensflare_threshold 4.0` - the lens flare's switch, strength and its own bright-pass threshold, calibrated separately from bloom
+* `rt_ef_damage 1` with `rt_ef_damage_strength 0.5`, `rt_ef_liquid 1` with `rt_ef_liquid_strength 0.25`, and `rt_ef_chraber 0.3` - the damage and liquid edge chromatic aberration with their switches and strengths, and the master scale over both; a protected central region stays untouched
+* `rt_ef_pickup 1` with `rt_ef_pickup_strength 0.10` and `rt_ef_pickup_height 0.28` - the bottom-screen pickup pulse, its peak blend opacity and the fraction of the displayed height it covers
+* `rt_sharpen 2` with `rt_sharpen_strength 0.20` - FidelityFX CAS after the upscaler: `0` off, `1` and `2` on, strength `0`-`1`; FSR's internal sharpening stays off
 
 ## Sound
 

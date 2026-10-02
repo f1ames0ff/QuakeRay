@@ -265,7 +265,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_portal_twirl, "1") \
 	CVAR_DEF_T (rt_teleport_portals, "0") \
     \
-	CVAR_DEF_T (rt_sharpen, "0") \
+	CVAR_DEF_T (rt_sharpen, "2") \
+	CVAR_DEF_T (rt_sharpen_strength, "0.20") \
 	CVAR_DEF_T (rt_renderscale, "0") \
 	CVAR_DEF_T (rt_upscale_fsr31, "2") \
 	CVAR_DEF_T (rt_upscale_dlss, "0") \
@@ -280,9 +281,18 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_globallight_mult, "10") \
 	CVAR_DEF_T (rt_globallight, "255 255 255") \
 	\
-	CVAR_DEF_T (rt_bloom_intensity, "1") \
+	CVAR_DEF_T (rt_bloom_intensity, "0.08") \
+	CVAR_DEF_T (rt_bloom_quality, "2") \
+	CVAR_DEF_T (rt_bloom_threshold, "1.0") \
+	CVAR_DEF_T (rt_bloom_knee, "0.5") \
+	CVAR_DEF_T (rt_bloom_scatter, "0.7") \
+	CVAR_DEF_T (rt_bloom_radius, "0.04") \
 	CVAR_DEF_T (rt_bloom_emis_mult, "50") \
-	CVAR_DEF_T (rt_bloom, "0") \
+	CVAR_DEF_T (rt_bloom, "1") \
+	\
+	CVAR_DEF_T (rt_lensflare, "1") \
+	CVAR_DEF_T (rt_lensflare_intensity, "0.03") \
+	CVAR_DEF_T (rt_lensflare_threshold, "4.0") \
 	\
 	CVAR_DEF_T (rt_exposure_bias, "0") \
 	CVAR_DEF_T (rt_contrast, "0.6") \
@@ -290,6 +300,13 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_ef_crt, "0") \
 	CVAR_DEF_T (rt_ef_chraber, "0.3") \
 	CVAR_DEF_T (rt_ef_waves_stren, "1") \
+	CVAR_DEF_T (rt_ef_damage, "1") \
+	CVAR_DEF_T (rt_ef_damage_strength, "0.5") \
+	CVAR_DEF_T (rt_ef_liquid, "1") \
+	CVAR_DEF_T (rt_ef_liquid_strength, "0.25") \
+	CVAR_DEF_T (rt_ef_pickup, "1") \
+	CVAR_DEF_T (rt_ef_pickup_strength, "0.10") \
+	CVAR_DEF_T (rt_ef_pickup_height, "0.28") \
 	\
 	CVAR_DEF_T (rt_viewm_fovscale, "1.2") \
 	CVAR_DEF_T (rt_viewm_wide, "1.05") \
@@ -2054,6 +2071,9 @@ extern float    rt_dmg_value;
 extern qboolean rt_dmg_inthisframe;
 extern QrMediaType rt_cameramedia;
 extern qboolean rt_lavaeffects;
+extern float rt_ef_damage_pulse;
+extern float rt_ef_liquid_pulse;
+extern float rt_ef_pickup_pulse;
 
 static void ResolutionToQray (QrDrawFrameRenderResolutionParams *dst, const QrExtent2D winsize)
 {
@@ -2133,7 +2153,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	};
 
 	QrDrawFrameBloomParams bloom_params = {
-		.bloomIntensity = !CVAR_TO_BOOL (rt_bloom) ? 0 : CVAR_TO_FLOAT (rt_bloom_intensity),
+		.bloomIntensity = 0.0f,
 		.inputThreshold = 0.0f,
 		.bloomEmissionMultiplier = CVAR_TO_FLOAT (rt_bloom_emis_mult),
 	};
@@ -2354,13 +2374,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.isActive = CVAR_TO_BOOL (rt_ef_crt),
 	};
 
-	QrPostEffectChromaticAberration chromatic_aberration_effect = {
-		.isActive = CVAR_TO_FLOAT (rt_ef_chraber) > 0.0f,
-		.transitionDurationIn = 0,
-		.transitionDurationOut = 0,
-		.intensity = CVAR_TO_FLOAT (rt_ef_chraber),
-	};
-
 	QrPostEffectColorTint tint_quad = {
 		.isActive = true,
 		.transitionDurationIn = 1.0f,
@@ -2389,20 +2402,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.intensity = 1.0f,
 		.color = {0.2f, 1.0f, 0.4f},
 	};
-	QrPostEffectColorTint tint_bonus = {
-		.isActive = true,
-		.transitionDurationIn = 0.0f,
-		.transitionDurationOut = 0.7f,
-		.intensity = 0.5f,
-		.color = {0.85f, 0.72f, 0.27f},
-	};
-	QrPostEffectColorTint tint_damage = {
-		.isActive = true,
-		.transitionDurationIn = 0.0f,
-		.transitionDurationOut = 0.2f + rt_dmg_value * 0.8f,
-		.intensity = 1.0f,
-		.color = FROMCOLOR255 (cl.cshifts[CSHIFT_DAMAGE].destcolor),
-	};
 
 	static QrPostEffectColorTint tint_effect = {0}; // static, so prev state's transition durations are preserved
 	tint_effect.isActive = false;
@@ -2412,10 +2411,34 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	    else if (cl.items & IT_INVULNERABILITY) tint_effect = tint_invuln;
 	    else if (rt_lavaeffects) tint_effect = tint_lava;
 	    else if (cl.items & IT_SUIT) tint_effect = tint_radsuit;
-	    else if (rt_dmg_inthisframe) tint_effect = tint_damage;
-	    else if (cl.cshifts[CSHIFT_BONUS].percent > 0) tint_effect = tint_bonus;
 	}
 	rt_dmg_inthisframe = false;
+
+	static QrPostEffectsBloomParams bloom_effect = {0};
+	bloom_effect.isActive = CVAR_TO_BOOL (rt_bloom);
+	bloom_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity), 0.5f);
+	bloom_effect.threshold = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_threshold), 10.0f);
+	bloom_effect.knee = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_knee), 1.0f);
+	bloom_effect.scatter = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_scatter), 1.0f);
+	bloom_effect.radius = CLAMP (0.005f, CVAR_TO_FLOAT (rt_bloom_radius), 0.15f);
+	bloom_effect.quality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_quality), 2.0f);
+
+	static QrPostEffectsLensFlareParams lensflare_effect = {0};
+	lensflare_effect.isActive = CVAR_TO_BOOL (rt_lensflare);
+	lensflare_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_lensflare_intensity), 0.2f);
+	lensflare_effect.threshold = CLAMP (1.0f, CVAR_TO_FLOAT (rt_lensflare_threshold), 32.0f);
+
+	static QrPostEffectsSharpenParams sharpen_effect = {0};
+	sharpen_effect.isActive = CVAR_TO_BOOL (rt_sharpen);
+	sharpen_effect.strength = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength), 1.0f);
+
+	static QrPostEffectsGameplayFeedback feedback_effect = {0};
+	feedback_effect.damage = CVAR_TO_BOOL (rt_ef_damage) ? rt_ef_damage_pulse * CVAR_TO_FLOAT (rt_ef_damage_strength) : 0.0f;
+	feedback_effect.liquid = CVAR_TO_BOOL (rt_ef_liquid) ? rt_ef_liquid_pulse * CVAR_TO_FLOAT (rt_ef_liquid_strength) : 0.0f;
+	feedback_effect.pickup = CVAR_TO_BOOL (rt_ef_pickup) ? rt_ef_pickup_pulse * CVAR_TO_FLOAT (rt_ef_pickup_strength) : 0.0f;
+	feedback_effect.pickupHeight = CLAMP (0.15f, CVAR_TO_FLOAT (rt_ef_pickup_height), 0.35f);
+	feedback_effect.pickupColor = (QrFloat3D){{1.0f, 0.78f, 0.35f}};
+	feedback_effect.aberration = CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_chraber), 1.0f);
 
     QrPostEffectRadialBlur radial_effect = {
 		.isActive = (cl.items & (IT_QUAD | IT_INVULNERABILITY)) && cl.stats[STAT_HEALTH] > 0,
@@ -2477,11 +2500,15 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.pLevelFogParams = &level_fog_params,
 		.postEffectParams =
 			{
-				.pChromaticAberration = &chromatic_aberration_effect,
+				.pChromaticAberration = NULL,
 				.pWaves = (!editor_active && CVAR_TO_INT32(r_waterwarp) == 1) ? &waves_effect : NULL,
 				.pColorTint = (cl.intermission || editor_active) ? NULL : &tint_effect,
 				.pCRT = &crt_effect,
 				.pRadialBlur = (cl.intermission || editor_active) ? NULL : &radial_effect,
+				.pBloom = &bloom_effect,
+				.pLensFlare = &lensflare_effect,
+				.pSharpen = &sharpen_effect,
+				.pGameplayFeedback = (cl.intermission || editor_active) ? NULL : &feedback_effect,
 			},
 		.pDebugParams = &debug_params,
 	};

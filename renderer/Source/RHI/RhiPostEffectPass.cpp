@@ -49,6 +49,8 @@ const char *const RADIAL_BLUR_SHADER_FILE_NAME = "EfRadialBlur.comp.spv";
 const char *const WIPE_SHADER_FILE_NAME = "EfWipe.comp.spv";
 const char *const CRT_DEMODULATE_ENCODE_SHADER_FILE_NAME = "EfCrtDemodulateEncode.comp.spv";
 const char *const CRT_DECODE_SHADER_FILE_NAME = "EfCrtDecode.comp.spv";
+const char *const SHARPEN_SHADER_FILE_NAME = "EfSharpen.comp.spv";
+const char *const GAMEPLAY_FEEDBACK_SHADER_FILE_NAME = "EfGameplayFeedback.comp.spv";
 
 // `[numthreads(COMPUTE_EFFECT_GROUP_SIZE_X, COMPUTE_EFFECT_GROUP_SIZE_Y, 1)]` in every blob (the
 // header of EfSimple.inl:25); the legacy host dispatches with `Utils::GetWorkGroupCount(size, 16)`
@@ -136,6 +138,36 @@ struct EffectChromaticAberrationPush
 };
 static_assert(sizeof(EffectChromaticAberrationPush) == 16);
 static_assert(offsetof(EffectChromaticAberrationPush, intensity) == 12);
+
+struct EffectSharpenPush
+{
+    EffectTransitionPush transition;
+    float strength;
+};
+static_assert(sizeof(EffectSharpenPush) == 16);
+static_assert(offsetof(EffectSharpenPush, strength) == 12);
+
+struct EffectGameplayFeedbackPush
+{
+    EffectTransitionPush transition;
+    float damage;
+    float liquid;
+    float pickup;
+    float pickupHeight;
+    float aberration;
+    float pickupColorR;
+    float pickupColorG;
+    float pickupColorB;
+};
+static_assert(sizeof(EffectGameplayFeedbackPush) == 44);
+static_assert(offsetof(EffectGameplayFeedbackPush, damage) == 12);
+static_assert(offsetof(EffectGameplayFeedbackPush, liquid) == 16);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickup) == 20);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickupHeight) == 24);
+static_assert(offsetof(EffectGameplayFeedbackPush, aberration) == 28);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickupColorR) == 32);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickupColorG) == 36);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickupColorB) == 40);
 
 // The wipe's own push block is the header's `RhiPostEffectPass::WipePush` (the legacy
 // `EffectWipe::PushConst`, EffectWipe.h:31-37, with no transition member), asserted there.
@@ -238,6 +270,7 @@ RhiPostEffectPass::~RhiPostEffectPass()
     pushConstant16Layout = nullptr;
     pushConstant24Layout = nullptr;
     pushConstant28Layout = nullptr;
+    pushConstant44Layout = nullptr;
 }
 
 bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
@@ -355,11 +388,18 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectColorTintPush)));
         pushConstant28Layout = device->createBindingLayout(desc);
     }
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectGameplayFeedbackPush)));
+        pushConstant44Layout = device->createBindingLayout(desc);
+    }
 
     if (simpleFramebufferLayout == nullptr || albedoFramebufferLayout == nullptr ||
         wipeFramebufferLayout == nullptr || uniformLayout == nullptr ||
         pushConstant16Layout == nullptr ||
-        pushConstant24Layout == nullptr || pushConstant28Layout == nullptr)
+        pushConstant24Layout == nullptr || pushConstant28Layout == nullptr ||
+        pushConstant44Layout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a post-effect pass binding layout");
         return false;
@@ -430,6 +470,8 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         // list stops after set 0 and the push-constant layout; the module mirrors the legacy host's
         // unread push anyway (the layout is still added, the bytes are still pushed).
         { EFFECT_CRT_DECODE, "CRT decode", CRT_DECODE_SHADER_FILE_NAME, FB_SIMPLE, 16, false },
+        { EFFECT_SHARPEN, "sharpen", SHARPEN_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
+        { EFFECT_GAMEPLAY_FEEDBACK, "gameplay feedback", GAMEPLAY_FEEDBACK_SHADER_FILE_NAME, FB_SIMPLE, 44, true },
     };
 
     static_assert(std::size(descs) == EFFECT_COUNT - 1,
@@ -448,6 +490,7 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
             desc.framebufferKind == FB_ALBEDO ? albedoFramebufferLayout.Get() : simpleFramebufferLayout.Get();
 
         nvrhi::IBindingLayout *pushConstantLayout =
+            desc.pushConstantSize == 44 ? pushConstant44Layout.Get() :
             desc.pushConstantSize == 28 ? pushConstant28Layout.Get() :
             desc.pushConstantSize == 24 ? pushConstant24Layout.Get() : pushConstant16Layout.Get();
 
@@ -626,30 +669,7 @@ void RhiPostEffectPass::Render(nvrhi::ICommandList *pCommandList,
         SetupNull(EFFECT_HUE_SHIFT);
     }
 
-    // 4. The chromatic aberration (`effectChromaticAberration`, :1178-1181): a null pointer or a
-    // non-positive intensity turns it off without a fade (EffectSimple_Instances.h:59-68).
-    if (params.pChromaticAberration == nullptr || params.pChromaticAberration->intensity <= 0.0f)
-    {
-        SetupNull(EFFECT_CHROMATIC_ABERRATION);
-    }
-    else if (SetupSimple(EFFECT_CHROMATIC_ABERRATION, currentTime, params.pChromaticAberration->isActive,
-                         params.pChromaticAberration->transitionDurationIn,
-                         params.pChromaticAberration->transitionDurationOut))
-    {
-        EffectChromaticAberrationPush push{};
-        push.transition = EffectTransitionPush{
-            effects[EFFECT_CHROMATIC_ABERRATION].transition.transitionType,
-            effects[EFFECT_CHROMATIC_ABERRATION].transition.transitionBeginTime,
-            effects[EFFECT_CHROMATIC_ABERRATION].transition.transitionDuration,
-        };
-        push.intensity = params.pChromaticAberration->intensity;
-
-        if (DispatchEffect(pCommandList, target, EFFECT_CHROMATIC_ABERRATION, sourceIsPing,
-                           &push, sizeof(push), groupsX, groupsY))
-        {
-            sourceIsPing = !sourceIsPing;
-        }
-    }
+    SetupNull(EFFECT_CHROMATIC_ABERRATION);
 
     // 5. The distorted sides (`effectDistortedSides`, :1182-1185).
     if (params.pDistortedSides != nullptr)
@@ -729,6 +749,44 @@ void RhiPostEffectPass::Render(nvrhi::ICommandList *pCommandList,
     else
     {
         SetupNull(EFFECT_RADIAL_BLUR);
+    }
+
+    if (params.pSharpen != nullptr && params.pSharpen->isActive && params.pSharpen->strength > 0.0f)
+    {
+        EffectSharpenPush push{};
+        push.strength = std::clamp(params.pSharpen->strength, 0.0f, 1.0f);
+
+        if (DispatchEffect(pCommandList, target, EFFECT_SHARPEN, sourceIsPing,
+                           &push, sizeof(push), groupsX, groupsY))
+        {
+            sourceIsPing = !sourceIsPing;
+        }
+    }
+
+    if (params.pGameplayFeedback != nullptr)
+    {
+        const float damage = std::clamp(params.pGameplayFeedback->damage, 0.0f, 1.0f);
+        const float liquid = std::clamp(params.pGameplayFeedback->liquid, 0.0f, 1.0f);
+        const float pickup = std::clamp(params.pGameplayFeedback->pickup, 0.0f, 1.0f);
+
+        if (damage > 0.0f || liquid > 0.0f || pickup > 0.0f)
+        {
+            EffectGameplayFeedbackPush push{};
+            push.damage = damage;
+            push.liquid = liquid;
+            push.pickup = pickup;
+            push.pickupHeight = std::clamp(params.pGameplayFeedback->pickupHeight, 0.0f, 1.0f);
+            push.aberration = std::clamp(params.pGameplayFeedback->aberration, 0.0f, 1.0f);
+            push.pickupColorR = std::clamp(params.pGameplayFeedback->pickupColor.data[0], 0.0f, 1.0f);
+            push.pickupColorG = std::clamp(params.pGameplayFeedback->pickupColor.data[1], 0.0f, 1.0f);
+            push.pickupColorB = std::clamp(params.pGameplayFeedback->pickupColor.data[2], 0.0f, 1.0f);
+
+            if (DispatchEffect(pCommandList, target, EFFECT_GAMEPLAY_FEEDBACK, sourceIsPing,
+                               &push, sizeof(push), groupsX, groupsY))
+            {
+                sourceIsPing = !sourceIsPing;
+            }
+        }
     }
 
     // The two ALBEDO-sampling effects left the image in the read-only state their SRV requires.

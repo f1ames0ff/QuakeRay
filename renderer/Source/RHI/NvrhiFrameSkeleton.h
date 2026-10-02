@@ -36,8 +36,10 @@ namespace qray
 class Framebuffers;
 class GlobalUniform;
 class RenderResolutionHelper;
+class RhiBloomPass;
 class RhiDecalPass;
 class RhiFsrPass;
+class RhiLensFlarePass;
 class RhiPostEffectPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
@@ -371,6 +373,8 @@ public:
                                 RhiDecalPass *pDecalPass,
                                 RhiFsrPass *pFsrPass,
                                 RhiPostEffectPass *pPostEffectPass,
+                                RhiBloomPass *pBloomPass,
+                                RhiLensFlarePass *pLensFlarePass,
                                 RhiShadowMapPass *pShadowMapPass,
                                 RhiRtGodRaysPass *pGodRaysPass,
                                 RhiUiPass *pUiPass,
@@ -553,6 +557,9 @@ private:
     // owned; null when the host's creation failed, in which case the frame is drawn without the
     // post-upscale effects.
     RhiPostEffectPass *postEffectPass = nullptr;
+
+    RhiBloomPass *bloomPass = nullptr;
+    RhiLensFlarePass *lensFlarePass = nullptr;
 
     // The wraps of the engine DecalManager buffers (A5.6): the per-slot staging as a copy source and
     // the device-local instance array once as the pass's set 3 buffer (stride

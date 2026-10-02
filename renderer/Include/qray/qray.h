@@ -1171,6 +1171,40 @@ typedef struct QrPostEffectCRT
     QrBool32    isActive;
 } QrPostEffectCRT;
 
+typedef struct QrPostEffectsBloomParams
+{
+    QrBool32    isActive;
+    float       intensity;
+    float       threshold;
+    float       knee;
+    float       scatter;
+    float       radius;
+    uint32_t    quality;
+} QrPostEffectsBloomParams;
+
+typedef struct QrPostEffectsLensFlareParams
+{
+    QrBool32    isActive;
+    float       intensity;
+    float       threshold;
+} QrPostEffectsLensFlareParams;
+
+typedef struct QrPostEffectsSharpenParams
+{
+    QrBool32    isActive;
+    float       strength;
+} QrPostEffectsSharpenParams;
+
+typedef struct QrPostEffectsGameplayFeedback
+{
+    float       damage;
+    float       liquid;
+    float       pickup;
+    float       pickupHeight;
+    float       aberration;
+    QrFloat3D   pickupColor;
+} QrPostEffectsGameplayFeedback;
+
 typedef struct QrDrawFramePostEffectsParams
 {
     const QrPostEffectWipe                  *pWipe;
@@ -1182,6 +1216,10 @@ typedef struct QrDrawFramePostEffectsParams
     const QrPostEffectWaves                 *pWaves;
     const QrPostEffectColorTint             *pColorTint;
     const QrPostEffectCRT                   *pCRT;
+    const QrPostEffectsBloomParams          *pBloom;
+    const QrPostEffectsLensFlareParams      *pLensFlare;
+    const QrPostEffectsSharpenParams        *pSharpen;
+    const QrPostEffectsGameplayFeedback     *pGameplayFeedback;
 } QrDrawFramePostEffectsParams;
 
 typedef enum QrMediaType
