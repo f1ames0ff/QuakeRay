@@ -404,10 +404,9 @@ void q2SampleClusterLights(
 
     if (useTail)
     {
-        const int   column = min((int)(rng.z * (float)tailCount), tailCount - 1);
-        const float fraction = rng.z * (float)tailCount - (float)column;
+        const int           column = aliasColumn(rng.z, tailCount);
         const ShQ2LightTail entry = q2LightListTail[tailStart + (uint)column];
-        const uint  chosen = (fraction < entry.prob) ? (uint)column : entry.aliasIndex;
+        const uint          chosen = aliasChoice(rng.z, tailCount, column, entry.prob, entry.aliasIndex);
 
         if (chosen >= (uint)tailCount)
         {

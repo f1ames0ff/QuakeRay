@@ -17,6 +17,7 @@
 
 #ifndef LIGHT_HLSLI_
 #define LIGHT_HLSLI_
+#include "AliasTable.hlsli"
 #include "Random.hlsli"
 
 struct DirectionalLight
@@ -658,22 +659,10 @@ LightSample sampleDtalGroup(const ShLightEncoded encoded, const float3 surfPosit
         return emptyLightSample();
     }
 
-    const float count = (float)g.memberCount;
-    const float scaled = min(memberRnd.x, 0.9999999) * count;
-    const int   column = min((int)scaled, (int)g.memberCount - 1);
-    const float fraction = scaled - (float)column;
+    const int          column = aliasColumn(memberRnd.x, (int)g.memberCount);
     const ShDtalMember columnMember = dtalMembers[g.memberBase + (uint)column];
-
-    uint chosen;
-
-    if (fraction < columnMember.prob)
-    {
-        chosen = (uint)column;
-    }
-    else
-    {
-        chosen = columnMember.aliasIndex;
-    }
+    const uint         chosen = aliasChoice(memberRnd.x, (int)g.memberCount, column, columnMember.prob,
+                                            columnMember.aliasIndex);
 
     if (chosen >= g.memberCount)
     {
