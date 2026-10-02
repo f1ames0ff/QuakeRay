@@ -5,13 +5,13 @@
 | Item | Value |
 |---|---|
 | Branch | `feature/cluster-lighting-overflow` |
-| Base commit | `205ffaf0` (final commit of `feature/dtal-grid-groups`, including the world-draw fix) |
-| Selector commit | `dbc751ef` (capacity, candidate partition, alias/marginal tables, tests) |
-| GPU commit | `bdb2b628` (tail buffers, publication, shader branch, RHI) |
-| Diagnostics commit | `68f03f94` (overflow counters, parallel registration) |
-| Mapped-cluster commit | `7689fda8` (the light report queries the folded cluster) |
-| Report commit | `c4649521` (this document, rebased) |
-| Overflow warning commit | `c6811fdf` (the full fast list is reported as overflow, not as unsampled lights) |
+| Base commit | `b1d9bb4f` (final commit of `feature/dtal-grid-groups`, including the world-draw and light-type fixes) |
+| Selector commit | `b5915c40` (capacity, candidate partition, alias/marginal tables, tests) |
+| GPU commit | `baf0e498` (tail buffers, publication, shader branch, RHI) |
+| Diagnostics commit | `11bac83e` (overflow counters, parallel registration) |
+| Mapped-cluster commit | `2478edc6` (the light report queries the folded cluster) |
+| Report commit | `c0358e59` (this document, rebased) |
+| Overflow warning commit | `7d0d3a4d` (the full fast list is reported as overflow, not as unsampled lights) |
 
 All commits are on `feature/cluster-lighting-overflow`; nothing was merged, force-pushed or
 published.
