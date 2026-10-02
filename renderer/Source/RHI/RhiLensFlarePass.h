@@ -42,7 +42,6 @@ public:
     using PrintFunction = std::function<void(const char *)>;
 
     static constexpr uint32_t GROUP_SIZE = 16;
-    static constexpr uint32_t WIDE_DIVISOR = 4;
     static constexpr uint32_t PUSH_SIZE = 16;
 
     struct Settings
@@ -91,7 +90,7 @@ private:
         uint32_t width = 0;
         uint32_t height = 0;
         Texture bright;
-        Texture wide;
+        Texture bokeh;
         Texture result;
         nvrhi::ITexture *sourceTexture = nullptr;
         nvrhi::BindingSetHandle sourceSet;
@@ -105,9 +104,7 @@ private:
 
     void DispatchPass(nvrhi::ICommandList *pCommandList,
                       uint32_t frameIndex,
-                      nvrhi::IComputePipeline *pPipeline,
                       nvrhi::IBindingSet *pSourceSet,
-                      nvrhi::IBindingSet *pSecondSet,
                       nvrhi::IBindingSet *pDestinationSet,
                       uint32_t destinationWidth,
                       uint32_t destinationHeight,
@@ -137,7 +134,7 @@ private:
     nvrhi::ShaderHandle flareShader;
 
     nvrhi::BindingLayoutHandle sourceLayout;
-    nvrhi::BindingLayoutHandle secondSourceLayout;
+    nvrhi::BindingLayoutHandle emptyLayout;
     nvrhi::BindingLayoutHandle tonemappingLayout;
     nvrhi::BindingLayoutHandle destinationLayout;
     nvrhi::BindingLayoutHandle pushConstantLayout;
@@ -145,6 +142,8 @@ private:
     nvrhi::ComputePipelineHandle pipeline;
 
     nvrhi::SamplerHandle sampler;
+
+    nvrhi::BindingSetHandle emptySet;
 
     nvrhi::BufferHandle tonemappingBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle tonemappingSets[MAX_FRAMES_IN_FLIGHT];

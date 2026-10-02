@@ -39,8 +39,8 @@ constexpr uint32_t FLARE_SRV_SLOT = 0;
 constexpr uint32_t FLARE_SAMPLER_SLOT = 1;
 constexpr uint32_t FLARE_DESTINATION_SLOT = 0;
 
-constexpr uint32_t FLARE_PASS_EXTRACT = 0;
-constexpr uint32_t FLARE_PASS_WIDE = 1;
+constexpr uint32_t FLARE_PASS_BRIGHT = 0;
+constexpr uint32_t FLARE_PASS_BOKEH = 1;
 constexpr uint32_t FLARE_PASS_COMPOSITE = 2;
 
 constexpr float FLARE_KNEE = 0.5f;
@@ -102,9 +102,10 @@ RhiLensFlarePass::~RhiLensFlarePass()
     pushConstantLayout = nullptr;
     destinationLayout = nullptr;
     tonemappingLayout = nullptr;
-    secondSourceLayout = nullptr;
+    emptyLayout = nullptr;
     sourceLayout = nullptr;
     flareShader = nullptr;
+    emptySet = nullptr;
 }
 
 bool RhiLensFlarePass::Create(nvrhi::IDevice *pDevice,
@@ -152,7 +153,13 @@ bool RhiLensFlarePass::Create(nvrhi::IDevice *pDevice,
     }
 
     sourceLayout = CreateSourceLayout(device);
-    secondSourceLayout = CreateSourceLayout(device);
+
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+
+        emptyLayout = device->createBindingLayout(desc);
+    }
 
     {
         nvrhi::BindingLayoutDesc desc;
@@ -180,7 +187,7 @@ bool RhiLensFlarePass::Create(nvrhi::IDevice *pDevice,
         pushConstantLayout = device->createBindingLayout(desc);
     }
 
-    if (sourceLayout == nullptr || secondSourceLayout == nullptr || destinationLayout == nullptr ||
+    if (sourceLayout == nullptr || emptyLayout == nullptr || destinationLayout == nullptr ||
         tonemappingLayout == nullptr || pushConstantLayout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a lens flare pass binding layout");
@@ -191,7 +198,7 @@ bool RhiLensFlarePass::Create(nvrhi::IDevice *pDevice,
         nvrhi::ComputePipelineDesc desc;
         desc.setComputeShader(flareShader);
         desc.addBindingLayout(sourceLayout);
-        desc.addBindingLayout(secondSourceLayout);
+        desc.addBindingLayout(emptyLayout);
         desc.addBindingLayout(tonemappingLayout);
         desc.addBindingLayout(destinationLayout);
         desc.addBindingLayout(pushConstantLayout);
@@ -219,6 +226,13 @@ bool RhiLensFlarePass::Create(nvrhi::IDevice *pDevice,
             LogMessage(print, "Warning: RHI: failed to create the lens flare pass sampler");
             return false;
         }
+    }
+
+    emptySet = device->createBindingSet(nvrhi::BindingSetDesc(), emptyLayout);
+    if (emptySet == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create the lens flare pass empty binding set");
+        return false;
     }
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -388,15 +402,15 @@ void RhiLensFlarePass::Render(nvrhi::ICommandList *pCommandList,
     pCommandList->beginTrackingTextureState(pHdrSource, nvrhi::AllSubresources,
                                             nvrhi::ResourceStates::UnorderedAccess);
 
-    DispatchPass(pCommandList, frameIndex, pipeline, target.sourceSet, target.wide.srvSet, target.bright.uavSet,
+    DispatchPass(pCommandList, frameIndex, target.sourceSet, target.bright.uavSet,
                  target.bright.handle->getDesc().width, target.bright.handle->getDesc().height,
-                 FLARE_PASS_EXTRACT, settings.threshold, FLARE_KNEE);
+                 FLARE_PASS_BRIGHT, settings.threshold, FLARE_KNEE);
 
-    DispatchPass(pCommandList, frameIndex, pipeline, target.bright.srvSet, target.result.srvSet, target.wide.uavSet,
-                 target.wide.handle->getDesc().width, target.wide.handle->getDesc().height,
-                 FLARE_PASS_WIDE, settings.threshold, FLARE_KNEE);
+    DispatchPass(pCommandList, frameIndex, target.bright.srvSet, target.bokeh.uavSet,
+                 target.bokeh.handle->getDesc().width, target.bokeh.handle->getDesc().height,
+                 FLARE_PASS_BOKEH, settings.threshold, FLARE_KNEE);
 
-    DispatchPass(pCommandList, frameIndex, pipeline, target.bright.srvSet, target.wide.srvSet, target.result.uavSet,
+    DispatchPass(pCommandList, frameIndex, target.bokeh.srvSet, target.result.uavSet,
                  target.result.handle->getDesc().width, target.result.handle->getDesc().height,
                  FLARE_PASS_COMPOSITE, settings.threshold, FLARE_KNEE);
 
@@ -410,15 +424,13 @@ bool RhiLensFlarePass::CreateTarget(Target &target, uint32_t width, uint32_t hei
     const uint32_t halfHeight = std::max(1u, (height + 1) / 2);
     const uint32_t quarterWidth = std::max(1u, (halfWidth + 1) / 2);
     const uint32_t quarterHeight = std::max(1u, (halfHeight + 1) / 2);
-    const uint32_t wideWidth = std::max(1u, (quarterWidth + WIDE_DIVISOR - 1) / WIDE_DIVISOR);
-    const uint32_t wideHeight = std::max(1u, (quarterHeight + WIDE_DIVISOR - 1) / WIDE_DIVISOR);
 
-    if (!CreateTexture(target.bright, quarterWidth, quarterHeight, "RhiLensFlarePass bright"))
+    if (!CreateTexture(target.bright, halfWidth, halfHeight, "RhiLensFlarePass bright"))
     {
         return false;
     }
 
-    if (!CreateTexture(target.wide, wideWidth, wideHeight, "RhiLensFlarePass wide"))
+    if (!CreateTexture(target.bokeh, halfWidth, halfHeight, "RhiLensFlarePass bokeh"))
     {
         return false;
     }
@@ -477,9 +489,7 @@ bool RhiLensFlarePass::CreateTexture(Texture &texture, uint32_t width, uint32_t 
 
 void RhiLensFlarePass::DispatchPass(nvrhi::ICommandList *pCommandList,
                                     uint32_t frameIndex,
-                                    nvrhi::IComputePipeline *pPipeline,
                                     nvrhi::IBindingSet *pSourceSet,
-                                    nvrhi::IBindingSet *pSecondSet,
                                     nvrhi::IBindingSet *pDestinationSet,
                                     uint32_t destinationWidth,
                                     uint32_t destinationHeight,
@@ -489,8 +499,8 @@ void RhiLensFlarePass::DispatchPass(nvrhi::ICommandList *pCommandList,
 {
     const LensFlarePush push = { passMode, threshold, knee, 0.0f };
 
-    RecordDispatch(pCommandList, pPipeline,
-                   { pSourceSet, pSecondSet, tonemappingSets[frameIndex], pDestinationSet },
+    RecordDispatch(pCommandList, pipeline,
+                   { pSourceSet, emptySet, tonemappingSets[frameIndex], pDestinationSet },
                    destinationWidth, destinationHeight, &push, sizeof(push));
 }
 
@@ -573,7 +583,7 @@ void RhiLensFlarePass::ReleaseTarget(Target &target)
     target.sourceTexture = nullptr;
 
     ReleaseTexture(target.bright);
-    ReleaseTexture(target.wide);
+    ReleaseTexture(target.bokeh);
     ReleaseTexture(target.result);
 
     target.width = 0;
@@ -593,7 +603,7 @@ void RhiLensFlarePass::ClearTarget(Target &target)
     target.sourceTexture = nullptr;
 
     ClearTexture(target.bright);
-    ClearTexture(target.wide);
+    ClearTexture(target.bokeh);
     ClearTexture(target.result);
 
     target.width = 0;

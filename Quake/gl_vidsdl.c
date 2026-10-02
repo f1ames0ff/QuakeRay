@@ -283,7 +283,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	\
 	CVAR_DEF_T (rt_bloom_intensity, "0.08") \
 	CVAR_DEF_T (rt_bloom_quality, "2") \
-	CVAR_DEF_T (rt_bloom_threshold, "1.0") \
+	CVAR_DEF_T (rt_bloom_threshold, "3.0") \
 	CVAR_DEF_T (rt_bloom_knee, "0.5") \
 	CVAR_DEF_T (rt_bloom_scatter, "0.7") \
 	CVAR_DEF_T (rt_bloom_radius, "0.04") \
@@ -2415,29 +2415,29 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	rt_dmg_inthisframe = false;
 
 	static QrPostEffectsBloomParams bloom_effect = {0};
-	bloom_effect.isActive = CVAR_TO_BOOL (rt_bloom);
 	bloom_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity), 0.5f);
-	bloom_effect.threshold = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_threshold), 10.0f);
+	bloom_effect.isActive = bloom_effect.intensity > 0.0f;
+	bloom_effect.threshold = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_threshold), 20.0f);
 	bloom_effect.knee = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_knee), 1.0f);
 	bloom_effect.scatter = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_scatter), 1.0f);
 	bloom_effect.radius = CLAMP (0.005f, CVAR_TO_FLOAT (rt_bloom_radius), 0.15f);
 	bloom_effect.quality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_quality), 2.0f);
 
 	static QrPostEffectsLensFlareParams lensflare_effect = {0};
-	lensflare_effect.isActive = CVAR_TO_BOOL (rt_lensflare);
 	lensflare_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_lensflare_intensity), 0.2f);
+	lensflare_effect.isActive = lensflare_effect.intensity > 0.0f;
 	lensflare_effect.threshold = CLAMP (1.0f, CVAR_TO_FLOAT (rt_lensflare_threshold), 32.0f);
 
 	static QrPostEffectsSharpenParams sharpen_effect = {0};
-	sharpen_effect.isActive = CVAR_TO_BOOL (rt_sharpen);
 	sharpen_effect.strength = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength), 1.0f);
+	sharpen_effect.isActive = sharpen_effect.strength > 0.0f;
 
 	static QrPostEffectsGameplayFeedback feedback_effect = {0};
-	feedback_effect.damage = CVAR_TO_BOOL (rt_ef_damage) ? rt_ef_damage_pulse * CVAR_TO_FLOAT (rt_ef_damage_strength) : 0.0f;
-	feedback_effect.liquid = CVAR_TO_BOOL (rt_ef_liquid) ? rt_ef_liquid_pulse * CVAR_TO_FLOAT (rt_ef_liquid_strength) : 0.0f;
-	feedback_effect.pickup = CVAR_TO_BOOL (rt_ef_pickup) ? rt_ef_pickup_pulse * CVAR_TO_FLOAT (rt_ef_pickup_strength) : 0.0f;
+	feedback_effect.damage = rt_ef_damage_pulse * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_damage_strength), 1.0f);
+	feedback_effect.liquid = rt_ef_liquid_pulse * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_liquid_strength), 1.0f);
+	feedback_effect.pickup = rt_ef_pickup_pulse * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_pickup_strength), 0.25f);
 	feedback_effect.pickupHeight = CLAMP (0.15f, CVAR_TO_FLOAT (rt_ef_pickup_height), 0.35f);
-	feedback_effect.pickupColor = (QrFloat3D){{1.0f, 0.78f, 0.35f}};
+	feedback_effect.pickupColor = (QrFloat3D){{1.0f, 0.831373f, 0.482353f}};
 	feedback_effect.aberration = CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_chraber), 1.0f);
 
     QrPostEffectRadialBlur radial_effect = {

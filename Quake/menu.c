@@ -192,18 +192,12 @@ extern cvar_t r_enhancedmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_lerpturn;
 extern cvar_t vid_filter;
-extern cvar_t rt_bloom;
 extern cvar_t rt_bloom_intensity;
 extern cvar_t rt_bloom_quality;
-extern cvar_t rt_lensflare;
 extern cvar_t rt_lensflare_intensity;
-extern cvar_t rt_ef_damage;
 extern cvar_t rt_ef_damage_strength;
-extern cvar_t rt_ef_liquid;
 extern cvar_t rt_ef_liquid_strength;
-extern cvar_t rt_ef_pickup;
 extern cvar_t rt_ef_pickup_strength;
-extern cvar_t rt_sharpen;
 extern cvar_t rt_sharpen_strength;
 extern cvar_t rt_sky_godrays;
 extern cvar_t rt_sky_godrays_quality;
@@ -2553,23 +2547,25 @@ static void M_LightingOptions_Draw (cb_context_t *cbx)
 enum
 {
 	EFFECTS_OPT_BLOOM,
-	EFFECTS_OPT_BLOOM_STRENGTH,
 	EFFECTS_OPT_BLOOM_QUALITY,
 	EFFECTS_OPT_LENSFLARE,
-	EFFECTS_OPT_LENSFLARE_STRENGTH,
 	EFFECTS_OPT_DAMAGE,
-	EFFECTS_OPT_DAMAGE_STRENGTH,
 	EFFECTS_OPT_LIQUID,
-	EFFECTS_OPT_LIQUID_STRENGTH,
 	EFFECTS_OPT_PICKUP,
-	EFFECTS_OPT_PICKUP_STRENGTH,
 	EFFECTS_OPT_SHARPEN,
-	EFFECTS_OPT_SHARPEN_STRENGTH,
 	EFFECTS_OPT_RESET,
 	EFFECTS_OPTIONS_ITEMS
 };
 
 static int effects_options_cursor = 0;
+
+static const char *M_GetEffectStrengthName (const cvar_t *var)
+{
+	if (CVAR_TO_FLOAT (*var) <= 0.0f)
+		return "off";
+
+	return va ("%d%%", (int)(CVAR_TO_FLOAT (*var) * 100.0f + 0.5f));
+}
 
 static void M_Menu_EffectsOptions_f (void)
 {
@@ -2587,57 +2583,33 @@ static void M_EffectsOptions_Adjust (int dir)
 	switch (effects_options_cursor)
 	{
 	case EFFECTS_OPT_BLOOM:
-		Cvar_SetValueQuick (&rt_bloom, !CVAR_TO_BOOL (rt_bloom));
-		break;
-	case EFFECTS_OPT_BLOOM_STRENGTH:
 		Cvar_SetValueQuick (&rt_bloom_intensity, CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity) + dir * 0.01f, 0.5f));
 		break;
 	case EFFECTS_OPT_BLOOM_QUALITY:
 		Cvar_SetValueQuick (&rt_bloom_quality, (float)(((int)rt_bloom_quality.value + 3 + dir) % 3));
 		break;
 	case EFFECTS_OPT_LENSFLARE:
-		Cvar_SetValueQuick (&rt_lensflare, !CVAR_TO_BOOL (rt_lensflare));
-		break;
-	case EFFECTS_OPT_LENSFLARE_STRENGTH:
 		Cvar_SetValueQuick (&rt_lensflare_intensity, CLAMP (0.0f, CVAR_TO_FLOAT (rt_lensflare_intensity) + dir * 0.01f, 0.2f));
 		break;
 	case EFFECTS_OPT_DAMAGE:
-		Cvar_SetValueQuick (&rt_ef_damage, !CVAR_TO_BOOL (rt_ef_damage));
-		break;
-	case EFFECTS_OPT_DAMAGE_STRENGTH:
 		Cvar_SetValueQuick (&rt_ef_damage_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_damage_strength) + dir * 0.05f, 1.0f));
 		break;
 	case EFFECTS_OPT_LIQUID:
-		Cvar_SetValueQuick (&rt_ef_liquid, !CVAR_TO_BOOL (rt_ef_liquid));
-		break;
-	case EFFECTS_OPT_LIQUID_STRENGTH:
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_liquid_strength) + dir * 0.05f, 1.0f));
 		break;
 	case EFFECTS_OPT_PICKUP:
-		Cvar_SetValueQuick (&rt_ef_pickup, !CVAR_TO_BOOL (rt_ef_pickup));
-		break;
-	case EFFECTS_OPT_PICKUP_STRENGTH:
 		Cvar_SetValueQuick (&rt_ef_pickup_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_pickup_strength) + dir * 0.05f, 0.25f));
 		break;
 	case EFFECTS_OPT_SHARPEN:
-		Cvar_SetValueQuick (&rt_sharpen, CVAR_TO_BOOL (rt_sharpen) ? 0.0f : 2.0f);
-		break;
-	case EFFECTS_OPT_SHARPEN_STRENGTH:
 		Cvar_SetValueQuick (&rt_sharpen_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength) + dir * 0.05f, 1.0f));
 		break;
 	case EFFECTS_OPT_RESET:
-		Cvar_SetValueQuick (&rt_bloom, 1.0f);
 		Cvar_SetValueQuick (&rt_bloom_intensity, 0.08f);
 		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
-		Cvar_SetValueQuick (&rt_lensflare, 1.0f);
 		Cvar_SetValueQuick (&rt_lensflare_intensity, 0.03f);
-		Cvar_SetValueQuick (&rt_ef_damage, 1.0f);
 		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
-		Cvar_SetValueQuick (&rt_ef_liquid, 1.0f);
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.25f);
-		Cvar_SetValueQuick (&rt_ef_pickup, 1.0f);
 		Cvar_SetValueQuick (&rt_ef_pickup_strength, 0.10f);
-		Cvar_SetValueQuick (&rt_sharpen, 2.0f);
 		Cvar_SetValueQuick (&rt_sharpen_strength, 0.20f);
 		break;
 	}
@@ -2695,49 +2667,31 @@ static void M_EffectsOptions_Draw (cb_context_t *cbx)
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM, "Bloom");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM, CVAR_TO_BOOL (rt_bloom));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_STRENGTH, "Bloom strength");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_STRENGTH,
-		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_bloom_intensity) * 100.0f + 0.5f)));
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM,
+		M_GetEffectStrengthName (&rt_bloom_intensity));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_QUALITY, "Bloom quality");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_QUALITY, M_GetQualityName (&rt_bloom_quality));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE, "Lens flare");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE, CVAR_TO_BOOL (rt_lensflare));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE_STRENGTH, "Lens flare strength");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE_STRENGTH,
-		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_lensflare_intensity) * 100.0f + 0.5f)));
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE,
+		M_GetEffectStrengthName (&rt_lensflare_intensity));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE, "Damage aberration");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE, CVAR_TO_BOOL (rt_ef_damage));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE_STRENGTH, "Damage strength");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE_STRENGTH,
-		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_ef_damage_strength) * 100.0f + 0.5f)));
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE,
+		M_GetEffectStrengthName (&rt_ef_damage_strength));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID, "Liquid aberration");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID, CVAR_TO_BOOL (rt_ef_liquid));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID_STRENGTH, "Liquid strength");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID_STRENGTH,
-		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_ef_liquid_strength) * 100.0f + 0.5f)));
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID,
+		M_GetEffectStrengthName (&rt_ef_liquid_strength));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP, "Pickup feedback");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP, CVAR_TO_BOOL (rt_ef_pickup));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP_STRENGTH, "Pickup strength");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP_STRENGTH,
-		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_ef_pickup_strength) * 100.0f + 0.5f)));
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_PICKUP,
+		M_GetEffectStrengthName (&rt_ef_pickup_strength));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN, "Sharpen");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN, rt_sharpen.value != 0);
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN_STRENGTH, "Sharpen strength");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN_STRENGTH,
-		va ("%d%%", (int)(CVAR_TO_FLOAT (rt_sharpen_strength) * 100.0f + 0.5f)));
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN,
+		M_GetEffectStrengthName (&rt_sharpen_strength));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_RESET, "Reset effects defaults");
 

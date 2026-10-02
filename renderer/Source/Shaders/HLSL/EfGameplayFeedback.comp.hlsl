@@ -56,8 +56,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float heightScale = float(size.y) / 1080.0;
     const float master = push.custom.aberration / 0.3;
 
-    float splitPixels = (2.0 * push.custom.damage + 0.75 * push.custom.liquid) * master * heightScale;
-    splitPixels = min(splitPixels, 2.75 * heightScale);
+    float splitPixels = (6.0 * push.custom.damage + 2.0 * push.custom.liquid) * master * heightScale;
+    splitPixels = min(splitPixels, 6.5 * heightScale);
 
     const float2 offset = direction * (splitPixels * edgeMask);
     const int2 redPix = int2(round(float2(pix) + offset));
@@ -68,13 +68,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     color.g = effect_loadFromSource(greenPix).g;
     color.b = effect_loadFromSource(pix).b;
 
-    color += float3(0.12, 0.0, 0.0) * (push.custom.damage * edgeMask);
+    color += float3(0.18, 0.0, 0.0) * (push.custom.damage * edgeMask);
 
     const float pickupMask = smoothstep(1.0 - push.custom.pickupHeight, 1.0, uv.y);
-    const float3 pickupColor = float3(push.custom.pickupColorR,
-                                      push.custom.pickupColorG,
-                                      push.custom.pickupColorB);
-    color = lerp(color, pickupColor, saturate(push.custom.pickup * pickupMask));
+    const float amount = saturate(push.custom.pickup * pickupMask);
+    const float3 pickup = float3(push.custom.pickupColorR,
+                                 push.custom.pickupColorG,
+                                 push.custom.pickupColorB) * amount;
+    color = 1.0 - (1.0 - saturate(color)) * (1.0 - saturate(pickup));
 
     effect_storeToTarget(saturate(color), pix);
 }
