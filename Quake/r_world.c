@@ -2350,7 +2350,7 @@ static void RT_DtalGroups_FillUpload (void)
 			}
 
 			dst->prob = build->memberProb[index];
-			dst->aliasProb = build->memberAliasProb[index];
+			dst->marginalProb = build->memberMarginal[index];
 			dst->aliasIndex = build->memberAlias[index];
 		}
 	}

@@ -662,18 +662,15 @@ LightSample sampleDtalGroup(const ShLightEncoded encoded, const vec3 surfPositio
     const float fraction = scaled - float(column);
     const ShDtalMember columnMember = dtalMembers[g.memberBase + uint(column)];
 
-    uint  chosen;
-    float branchProbability;
+    uint chosen;
 
     if (fraction < columnMember.prob)
     {
         chosen = uint(column);
-        branchProbability = columnMember.prob;
     }
     else
     {
         chosen = columnMember.aliasIndex;
-        branchProbability = columnMember.aliasProb;
     }
 
     if (chosen >= g.memberCount)
@@ -681,7 +678,9 @@ LightSample sampleDtalGroup(const ShLightEncoded encoded, const vec3 surfPositio
         return emptyLightSample();
     }
 
-    outMemberPdf = max(branchProbability, 0.0) / count;
+    const ShDtalMember chosenMember = dtalMembers[g.memberBase + chosen];
+
+    outMemberPdf = max(chosenMember.marginalProb, 0.0);
 
     const LightSample memberSample = sampleDtalGroupMember(g, chosen, surfPosition, pointRnd);
 

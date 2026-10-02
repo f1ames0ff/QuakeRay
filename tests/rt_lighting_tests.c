@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "rt_alias.h"
+#include "rt_cluster_select.h"
 #include "rt_dtal_groups.h"
 
 static int g_failures = 0;
@@ -341,8 +342,8 @@ static void TestGroupWeightedAlias(void)
 
         const double expected0 = 1.0 / (1.0 + RT_ALIAS_UNIFORM_PRIOR);
         const double expected1 = RT_ALIAS_UNIFORM_PRIOR / (1.0 + RT_ALIAS_UNIFORM_PRIOR);
-        const double actual0 = AliasPmf(0, build->memberProb, build->memberAliasProb, build->memberAlias, 2);
-        const double actual1 = AliasPmf(1, build->memberProb, build->memberAliasProb, build->memberAlias, 2);
+        const double actual0 = (double)build->memberMarginal[0];
+        const double actual1 = (double)build->memberMarginal[1];
 
         CHECK(fabs(actual0 - expected0) <= 1e-4, "weighted alias 0: %.6f vs %.6f", actual0, expected0);
         CHECK(fabs(actual1 - expected1) <= 1e-4, "weighted alias 1: %.6f vs %.6f", actual1, expected1);
@@ -633,6 +634,217 @@ static void TestEstimatorSamplingDomain(void)
           "full triangle domain is unbiased: %.6f vs %.6f", fullMeanEstimate, fullMean);
 }
 
+static int CompareUint32(const void *a, const void *b)
+{
+    const uint32_t va = *(const uint32_t *)a;
+    const uint32_t vb = *(const uint32_t *)b;
+
+    return va < vb ? -1 : (va > vb ? 1 : 0);
+}
+
+static void TestClusterSelectionCounts(void)
+{
+    const int counts[] = { 0, 1, 128, 129, 512, 2048 };
+    const int samples = 2000000;
+
+    for (int ci = 0; ci < (int)(sizeof(counts) / sizeof(counts[0])); ci++)
+    {
+        const int count = counts[ci];
+
+        rt_cluster_candidate_t *candidates = (rt_cluster_candidate_t *)calloc((size_t)(count > 0 ? count : 1),
+                                                                               sizeof(rt_cluster_candidate_t));
+        double *masses = (double *)calloc((size_t)(count > 0 ? count : 1), sizeof(double));
+
+        CHECK(candidates != NULL && masses != NULL, "cluster selection allocation %d", count);
+
+        for (int i = 0; i < count; i++)
+        {
+            candidates[i].uid = (uint64_t)(i + 1);
+            candidates[i].power = (i % 7 == 0) ? 10.0f : ((i % 23 == 0) ? 0.0f : 1.0f);
+            candidates[i].distanceSquared = 1.0f + (float)((i * 37) % 500);
+            candidates[i].scaleSquared = 1.0f;
+            masses[i] = (i % 17 == 0) ? 0.0 : 0.5 + 0.5 * (double)((i * 13) % 11);
+        }
+
+        rt_cluster_select_t select;
+        CHECK(RT_ClusterSelect_Build(&select, candidates, count, 1), "cluster selection build %d", count);
+
+        CHECK(select.fastCount <= RT_CLUSTER_MAX_FAST, "fast count bound %d", count);
+        CHECK(select.fastCount + select.tailCount == count, "partition covers %d: %d + %d",
+              count, select.fastCount, select.tailCount);
+        CHECK(select.beta >= 0.0f && select.beta <= 1.0f, "beta range %d: %.6f", count, (double)select.beta);
+
+        if (count > 0)
+        {
+            for (int i = 0; i < select.tailCount; i++)
+            {
+                CHECK(select.tailProb[i] > 0.0f, "tail support %d index %d: %.9f", count, i, (double)select.tailProb[i]);
+                CHECK(select.tailAlias[i] < (uint32_t)select.tailCount, "tail alias range %d", count);
+            }
+        }
+
+        if (count > 0)
+        {
+            double sum = 0.0;
+            double squareSum = 0.0;
+            double pAccum = 0.0;
+            int    selectedCount = 0;
+            int    tailDraws = 0;
+            int    fastDraws = 0;
+
+            for (int s = 0; s < samples; s++)
+            {
+                const float u0 = (float)NextUnit();
+                const float uBranch = (float)NextUnit();
+                const float uTail = (float)NextUnit();
+
+                uint32_t chosen = 0;
+                float    probability = 0.0f;
+
+                int useTail = 0;
+
+                if (select.tailCount <= 0)
+                    useTail = 0;
+                else if (select.fastCount <= 0)
+                    useTail = 1;
+                else
+                    useTail = (uBranch < select.beta) ? 1 : 0;
+
+                if (useTail)
+                {
+                    int column = (int)(uTail * (float)select.tailCount);
+
+                    if (column < 0)
+                        column = 0;
+                    if (column >= select.tailCount)
+                        column = select.tailCount - 1;
+
+                    const float fraction = uTail * (float)select.tailCount - (float)column;
+                    const int   tailed = (fraction < select.tailProb[column]) ? column : (int)select.tailAlias[column];
+                    const float memberProbability = select.tailMarginal[tailed];
+
+                    probability = select.beta * memberProbability;
+                    chosen = select.tailIndex[tailed];
+                }
+                else
+                {
+                    uint32_t slot = 0;
+                    float    fastProbability = 0.0f;
+
+                    if (RT_ClusterSelect_FastSelect(&select, masses, u0, &slot, &fastProbability))
+                    {
+                        probability = (1.0f - select.beta) * fastProbability;
+                        chosen = select.fastIndex[slot];
+                    }
+                }
+
+                pAccum += probability;
+                tailDraws += useTail;
+                fastDraws += useTail ? 0 : 1;
+
+                if (probability > 0.0f && chosen < (uint32_t)count)
+                {
+                    const double estimator = 1.0 / (double)probability;
+
+                    sum += estimator;
+                    squareSum += estimator * estimator;
+                    selectedCount++;
+                }
+            }
+
+            (void)pAccum;
+            (void)tailDraws;
+            (void)fastDraws;
+
+            const double mean = sum / (double)samples;
+            const double expected = (double)count;
+            const double variance = squareSum / (double)samples - mean * mean;
+            const double standardError = sqrt(fmax(variance, 0.0) / (double)samples);
+
+            CHECK(selectedCount > 0, "cluster selection draws %d", count);
+            CHECK(4.0 * standardError <= expected * 0.05, "cluster selection decides %d: se %.6f", count, standardError);
+            CHECK(fabs(mean - expected) <= 4.0 * standardError + expected * 1e-4,
+                  "cluster selection mean %d: %.6f vs %.6f (se %.6f)", count, mean, expected, standardError);
+        }
+
+        RT_ClusterSelect_Free(&select);
+        free(candidates);
+        free(masses);
+    }
+}
+
+static void TestClusterSelectionOrderIdentity(void)
+{
+    const int count = 512;
+
+    rt_cluster_candidate_t *candidates = (rt_cluster_candidate_t *)calloc((size_t)count, sizeof(rt_cluster_candidate_t));
+    rt_cluster_candidate_t *shuffled = (rt_cluster_candidate_t *)calloc((size_t)count, sizeof(rt_cluster_candidate_t));
+
+    CHECK(candidates != NULL && shuffled != NULL, "order identity allocation");
+
+    for (int i = 0; i < count; i++)
+    {
+        candidates[i].uid = (uint64_t)(i + 1);
+        candidates[i].power = (i % 7 == 0) ? 10.0f : 1.0f;
+        candidates[i].distanceSquared = 1.0f + (float)((i * 37) % 500);
+        candidates[i].scaleSquared = 1.0f;
+        shuffled[i] = candidates[i];
+    }
+
+    for (int i = count - 1; i > 0; i--)
+    {
+        const int j = (int)(NextUnit() * (double)(i + 1));
+        const rt_cluster_candidate_t tmp = shuffled[i];
+
+        shuffled[i] = shuffled[j];
+        shuffled[j] = tmp;
+    }
+
+    rt_cluster_select_t first;
+    rt_cluster_select_t second;
+
+    CHECK(RT_ClusterSelect_Build(&first, candidates, count, 1), "order identity first");
+    CHECK(RT_ClusterSelect_Build(&second, shuffled, count, 1), "order identity second");
+
+    CHECK(first.fastCount == second.fastCount, "order identity fast count: %d vs %d", first.fastCount, second.fastCount);
+    CHECK(first.tailCount == second.tailCount, "order identity tail count: %d vs %d", first.tailCount, second.tailCount);
+
+    uint32_t firstFast[RT_CLUSTER_MAX_FAST];
+    uint32_t secondFast[RT_CLUSTER_MAX_FAST];
+    uint32_t firstTail[1024];
+    uint32_t secondTail[1024];
+
+    CHECK(first.tailCount <= (int)(sizeof(firstTail) / sizeof(firstTail[0])), "order identity tail capacity");
+
+    for (int i = 0; i < first.fastCount; i++)
+    {
+        firstFast[i] = (uint32_t)candidates[first.fastIndex[i]].uid;
+        secondFast[i] = (uint32_t)shuffled[second.fastIndex[i]].uid;
+    }
+
+    for (int i = 0; i < first.tailCount && i < (int)(sizeof(firstTail) / sizeof(firstTail[0])); i++)
+    {
+        firstTail[i] = (uint32_t)candidates[first.tailIndex[i]].uid;
+        secondTail[i] = (uint32_t)shuffled[second.tailIndex[i]].uid;
+    }
+
+    qsort(firstFast, (size_t)first.fastCount, sizeof(uint32_t), CompareUint32);
+    qsort(secondFast, (size_t)second.fastCount, sizeof(uint32_t), CompareUint32);
+    qsort(firstTail, (size_t)first.tailCount, sizeof(uint32_t), CompareUint32);
+    qsort(secondTail, (size_t)second.tailCount, sizeof(uint32_t), CompareUint32);
+
+    for (int i = 0; i < first.fastCount; i++)
+        CHECK(firstFast[i] == secondFast[i], "order identity fast member %d", i);
+
+    for (int i = 0; i < first.tailCount; i++)
+        CHECK(firstTail[i] == secondTail[i], "order identity tail member %d", i);
+
+    RT_ClusterSelect_Free(&first);
+    RT_ClusterSelect_Free(&second);
+    free(candidates);
+    free(shuffled);
+}
+
 static void TestBuilderBudgetFailure(void)
 {
     rt_dtal_builder_t *builder = RT_Dtal_BuilderCreate();
@@ -660,6 +872,8 @@ int main(void)
     TestGroupBoundaryOwnership();
     TestEstimatorSubdivision();
     TestEstimatorSamplingDomain();
+    TestClusterSelectionCounts();
+    TestClusterSelectionOrderIdentity();
     TestBuilderBudgetFailure();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);

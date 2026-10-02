@@ -739,7 +739,7 @@ DTAL_MEMBER_MEMBERS = [
     (FLOAT32, 1, "prob",                 1),
 
     (FLOAT32, 3, "normal",               1),
-    (FLOAT32, 1, "aliasProb",            1),
+    (FLOAT32, 1, "marginalProb",         1),
 
     (FLOAT32, 2, "uv",                   8),
 

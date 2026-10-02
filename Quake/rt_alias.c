@@ -8,11 +8,15 @@ int RT_Alias_Build(const double *weights, int count, float *outPrimary, float *o
     if (weights == NULL || outPrimary == NULL || outSecondary == NULL || outAlias == NULL || count <= 0)
         return 0;
 
+    for (int i = 0; i < count; i++)
+    {
+        outPrimary[i] = 1.0f;
+        outSecondary[i] = 0.0f;
+        outAlias[i] = (uint32_t)i;
+    }
+
     if (count == 1)
     {
-        outPrimary[0] = 1.0f;
-        outSecondary[0] = 0.0f;
-        outAlias[0] = 0u;
         return 1;
     }
 
@@ -25,16 +29,7 @@ int RT_Alias_Build(const double *weights, int count, float *outPrimary, float *o
     }
 
     if (!(total > 0.0))
-    {
-        for (int i = 0; i < count; i++)
-        {
-            outPrimary[i] = 1.0f;
-            outSecondary[i] = 0.0f;
-            outAlias[i] = 0u;
-        }
-
         return 1;
-    }
 
     double *scaled = (double *)malloc(sizeof(double) * (size_t)count);
     int *small = (int *)malloc(sizeof(int) * (size_t)count);
@@ -109,4 +104,37 @@ int RT_Alias_Build(const double *weights, int count, float *outPrimary, float *o
     free(large);
 
     return 1;
+}
+
+void RT_Alias_Marginals(const float *primary, const uint32_t *alias, int count, float *outMarginal)
+{
+    if (primary == NULL || alias == NULL || outMarginal == NULL || count <= 0)
+        return;
+
+    for (int i = 0; i < count; i++)
+        outMarginal[i] = primary[i];
+
+    for (int i = 0; i < count; i++)
+    {
+        const uint32_t chosen = alias[i];
+
+        if (chosen < (uint32_t)count)
+        {
+            const float secondary = (primary[i] <= 1.0f) ? (1.0f - primary[i]) : 0.0f;
+
+            outMarginal[chosen] += secondary;
+        }
+    }
+
+    const float inverse = 1.0f / (float)count;
+
+    for (int i = 0; i < count; i++)
+    {
+        float value = outMarginal[i] * inverse;
+
+        if (!(value >= 0.0f))
+            value = 0.0f;
+
+        outMarginal[i] = value;
+    }
 }

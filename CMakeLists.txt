@@ -373,6 +373,7 @@ set(CORE_SOURCES
     Quake/r_world.c
     Quake/rt_dtal_debug.cpp
     Quake/rt_alias.c
+    Quake/rt_cluster_select.c
     Quake/rt_dtal_groups.c
     Quake/rt_material.c
     Quake/rt_lights.c
@@ -574,6 +575,7 @@ if(BUILD_TESTING)
     add_executable(rt_lighting_tests
         tests/rt_lighting_tests.c
         Quake/rt_alias.c
+        Quake/rt_cluster_select.c
         Quake/rt_dtal_groups.c
     )
     target_include_directories(rt_lighting_tests PRIVATE ${CMAKE_SOURCE_DIR}/Quake)

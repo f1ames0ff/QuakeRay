@@ -624,7 +624,7 @@ typedef struct QrDtalMemberUpload
     float           prob;
 
     QrFloat3D       normal;
-    float           aliasProb;
+    float           marginalProb;
 
     QrFloat2D       uv[MAX_TEXTURED_AREA_LIGHT_VERTS];
 
@@ -669,6 +669,8 @@ QRAPI QrResult QRCONV qrUploadDtalGroups(
     const QrDtalGroupUploadBatch        *pUploadInfo);
 
 #define QR_CLUSTER_LIGHT_NO_CLUSTER    (~0u)
+
+#define QR_CLUSTER_MAX_REGISTERED_LIGHTS 4095
 
 #define QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS 16
 

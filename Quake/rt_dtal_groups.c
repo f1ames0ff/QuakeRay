@@ -62,7 +62,7 @@ static int RT_Dtal_EnsureMembers(rt_dtal_builder_t *builder, int needed)
     rt_dtal_member_t *members = (rt_dtal_member_t *)realloc(builder->result.members,
                                                              (size_t)newCapacity * sizeof(rt_dtal_member_t));
     float *prob = (float *)realloc(builder->result.memberProb, (size_t)newCapacity * sizeof(float));
-    float *aliasProb = (float *)realloc(builder->result.memberAliasProb, (size_t)newCapacity * sizeof(float));
+    float *aliasProb = (float *)realloc(builder->result.memberMarginal, (size_t)newCapacity * sizeof(float));
     uint32_t *alias = (uint32_t *)realloc(builder->result.memberAlias, (size_t)newCapacity * sizeof(uint32_t));
     double *weights = (double *)realloc(builder->weightScratch, (size_t)newCapacity * sizeof(double));
 
@@ -73,7 +73,7 @@ static int RT_Dtal_EnsureMembers(rt_dtal_builder_t *builder, int needed)
         if (prob != NULL)
             builder->result.memberProb = prob;
         if (aliasProb != NULL)
-            builder->result.memberAliasProb = aliasProb;
+            builder->result.memberMarginal = aliasProb;
         if (alias != NULL)
             builder->result.memberAlias = alias;
         if (weights != NULL)
@@ -92,7 +92,7 @@ static int RT_Dtal_EnsureMembers(rt_dtal_builder_t *builder, int needed)
 
     builder->result.members = members;
     builder->result.memberProb = prob;
-    builder->result.memberAliasProb = aliasProb;
+    builder->result.memberMarginal = aliasProb;
     builder->result.memberAlias = alias;
     builder->weightScratch = weights;
     builder->memberCapacity = newCapacity;
@@ -699,13 +699,13 @@ static int RT_Dtal_CompactMembers(rt_dtal_builder_t *builder)
 
     free(builder->result.members);
     free(builder->result.memberProb);
-    free(builder->result.memberAliasProb);
+    free(builder->result.memberMarginal);
     free(builder->result.memberAlias);
     free(next);
 
     builder->result.members = members;
     builder->result.memberProb = prob;
-    builder->result.memberAliasProb = aliasProb;
+    builder->result.memberMarginal = aliasProb;
     builder->result.memberAlias = alias;
     builder->memberCapacity = total;
 
@@ -814,15 +814,18 @@ static void RT_Dtal_BuildAliases(rt_dtal_builder_t *builder)
         if (count > 0)
         {
             if (!RT_Alias_Build(builder->weightScratch, count, &builder->result.memberProb[first],
-                                &builder->result.memberAliasProb[first], &builder->result.memberAlias[first]))
+                                &builder->result.memberMarginal[first], &builder->result.memberAlias[first]))
             {
                 for (int i = 0; i < count; i++)
                 {
                     builder->result.memberProb[first + i] = 1.0f;
-                    builder->result.memberAliasProb[first + i] = 0.0f;
-                    builder->result.memberAlias[first + i] = 0u;
+                    builder->result.memberMarginal[first + i] = 0.0f;
+                    builder->result.memberAlias[first + i] = (uint32_t)i;
                 }
             }
+
+            RT_Alias_Marginals(&builder->result.memberProb[first], &builder->result.memberAlias[first], count,
+                               &builder->result.memberMarginal[first]);
         }
     }
 }
@@ -872,7 +875,7 @@ void RT_Dtal_BuilderDestroy(rt_dtal_builder_t *builder)
     free(builder->result.groups);
     free(builder->result.members);
     free(builder->result.memberProb);
-    free(builder->result.memberAliasProb);
+    free(builder->result.memberMarginal);
     free(builder->result.memberAlias);
     free(builder->keyTable);
     free(builder->uidSet);

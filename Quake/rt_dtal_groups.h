@@ -90,7 +90,7 @@ typedef struct rt_dtal_build_s
     rt_dtal_member_t *members;
     int               memberCount;
     float            *memberProb;
-    float            *memberAliasProb;
+    float            *memberMarginal;
     uint32_t         *memberAlias;
     rt_dtal_diag_t    diag;
 } rt_dtal_build_t;

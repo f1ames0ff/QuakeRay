@@ -415,7 +415,7 @@ struct ShDtalMember
     vec3 C;
     float prob;
     vec3 normal;
-    float aliasProb;
+    float marginalProb;
     vec2 uv[8];
     uint aliasIndex;
     uint reserved[3];

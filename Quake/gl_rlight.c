@@ -929,7 +929,7 @@ void RT_UploadAllElights ()
 	}
 }
 
-#define RT_CLUSTER_MAX_LIGHTS    1024
+#define RT_CLUSTER_MAX_LIGHTS    QR_CLUSTER_MAX_REGISTERED_LIGHTS
 
 typedef struct rt_cluster_light_s
 {
