@@ -378,6 +378,10 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
     // so the list order is also the shader's set numbering (the backend places the regular layouts
     // into descriptor sets in list order, vulkan-resource-bindings.cpp:1090-1099).
     {
+        if (!cloudShadowBinding.Create(device, frameContext, nvrhi::ShaderType::Compute, GOD_RAYS_PUSH_SIZE))
+        {
+            return false;
+        }
         nvrhi::ComputePipelineDesc desc;
         desc.setComputeShader(traceShader);
         desc.addBindingLayout(shadowLayout);
@@ -385,7 +389,7 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
         desc.addBindingLayout(traceFramebufferLayout);
         desc.addBindingLayout(uniformLayout);
         desc.addBindingLayout(blueNoiseLayout);
-        desc.addBindingLayout(pushConstantLayout);
+        desc.addBindingLayout(cloudShadowBinding.GetLayout());
 
         tracePipeline = rhi::createComputePipeline(device, desc, "RhiRtGodRaysPass trace");
     }
@@ -963,7 +967,7 @@ bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
     const uint32_t passIndexPrimary = 0;
     RecordDispatch(pCommandList, tracePipeline,
                    { shadowSet, paramsSets[frameIndex], target.traceFramebufferSet,
-                     target.uniformSet, blueNoiseSet },
+                     target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet() },
                    traceGroupsX, traceGroupsY, 1, &passIndexPrimary);
 
     // The reflected-segment accumulation (passIndex 1) belongs after the host's reflect/refract
@@ -1075,7 +1079,7 @@ void RhiRtGodRaysPass::RenderReflections(nvrhi::ICommandList *pCommandList,
         const uint32_t passIndexReflections = 1;
         RecordDispatch(pCommandList, tracePipeline,
                        { shadowSet, paramsSets[frameIndex], target.traceFramebufferSet,
-                         target.uniformSet, blueNoiseSet },
+                        target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet() },
                        traceGroupsX, traceGroupsY, 1, &passIndexReflections);
     }
 

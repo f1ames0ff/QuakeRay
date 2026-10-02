@@ -3,10 +3,11 @@
     Bundles a Release build of QuakeRay into a distributable ZIP archive.
 
 .DESCRIPTION
-    Packages quakeray.exe, the runtime DLLs, and the id1 runtime assets
-    (materials, mdl_skins, progs, shaders, textures, and the BlueNoise /
-    WaterNormal KTX2 files) plus documentation into a single ZIP ready for
-    distribution.
+    Packages quakeray.exe, the runtime DLLs, the runtime assets next to the
+    executable (gfx) and the id1 runtime assets (materials, shaders,
+    textures -- which carry the material textures and the model skins, luma
+    and gloss maps among them -- and the BlueNoise / WaterNormal KTX2 files)
+    plus documentation into a single ZIP ready for distribution.
 
     The engine binary is taken from the Release configuration, which is built
     without debug information. Debug artifacts (.pdb/.ilk/.map) are never
@@ -90,11 +91,22 @@ foreach ($dll in $dlls) {
 }
 Write-Host "Added $($dlls.Count) DLL(s)"
 
+foreach ($d in @("gfx")) {
+    $src = Join-Path $BuildDir $d
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $stage $d) -Recurse -Force
+        Write-Host "Added $d"
+    }
+    else {
+        Write-Warning "Skipped $d (not found in $BuildDir)"
+    }
+}
+
 # 3) id1 runtime assets.
 $stageId1 = Join-Path $stage "id1"
 New-Item -ItemType Directory -Path $stageId1 -Force | Out-Null
 
-foreach ($sub in @("materials", "mdl_skins", "progs", "shaders", "textures")) {
+foreach ($sub in @("materials", "shaders", "textures")) {
     $src = Join-Path $gameDir $sub
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stageId1 $sub) -Recurse -Force
@@ -122,6 +134,25 @@ foreach ($d in @("readme.md", "changelog.md", "LICENSE.txt")) {
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stage $d) -Force
         Write-Host "Added $d"
+    }
+}
+
+# 4b) Licence notices for the bundled runtime DLLs.
+$licenseDir = Join-Path $stage "licenses"
+New-Item -ItemType Directory -Path $licenseDir -Force | Out-Null
+
+$openalNotices = @{
+    "COPYING"       = "OpenAL-Soft-LGPL.txt"
+    "LICENSE-pffft" = "OpenAL-Soft-pffft.txt"
+}
+foreach ($notice in $openalNotices.GetEnumerator()) {
+    $src = Join-Path $repoRoot "third_party\openal-soft\$($notice.Key)"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $licenseDir $notice.Value) -Force
+        Write-Host "Added licenses\$($notice.Value)"
+    }
+    else {
+        Write-Warning "Skipped licenses\$($notice.Value) (not found in third_party\openal-soft)"
     }
 }
 

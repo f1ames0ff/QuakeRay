@@ -99,7 +99,7 @@ void PScript_DrawParticles_ShowTris (cb_context_t *cbx);
 struct trailstate_s;
 int  PScript_ParticleTrail (vec3_t startpos, vec3_t end, int type, float timeinterval, int dlkey, vec3_t axis[3], struct trailstate_s **tsk);
 int  PScript_RunParticleEffectState (vec3_t org, vec3_t dir, float count, int typenum, struct trailstate_s **tsk);
-void PScript_RunParticleWeather (vec3_t minb, vec3_t maxb, vec3_t dir, float count, int colour, const char *efname);
+void PScript_RunParticleWeather (vec3_t minb, vec3_t maxb, vec3_t dir, float count, int color, const char *efname);
 void PScript_EmitSkyEffectTris (qmodel_t *mod, msurface_t *fa, int ptype);
 int  PScript_FindParticleType (const char *fullname);
 int  PScript_RunParticleEffectTypeString (vec3_t org, vec3_t dir, float count, const char *name);
@@ -367,6 +367,7 @@ void GL_BuildBModelVertexBuffer (void);
 void GL_PrepareSIMDData (void);
 void GLMesh_LoadVertexBuffers (void);
 void GLMesh_DeleteVertexBuffers (void);
+void GLMesh_DeleteVertexBuffer (qmodel_t *m);
 
 int R_LightPoint (vec3_t p, lightcache_t *cache, vec3_t *lightcolor);
 void RT_ParseElights (void);
@@ -530,13 +531,7 @@ static inline uint32_t RT_PackColorToUint32_FromFloat01(float r, float g, float 
 
 // because of units are not in meters
 #define RT_QUAKE_LIGHT_AREA_INTENSITY_FIX (1.0f / (QUAKEUNIT_IN_METERS * QUAKEUNIT_IN_METERS))
-// The fixup above pays for the area a lamp emits from. A sun emits from none and
-// lights the whole sky, so it takes the same conversion at a fraction of it: at
-// full strength rt_sun 1 overdrives the scene. The fraction is a hundredth, ten
-// times below the first calibration, which read as a sun too bright for the lamps
-// it shares the scene with. The god rays read this colour too, so they follow it.
-// rt_sun stays the multiplier in front of it: raise it to bring daylight back.
-#define RT_SUN_LIGHT_INTENSITY_SCALE 0.01f
+#define RT_SUN_LIGHT_INTENSITY_SCALE 0.001f
 #define RT_FIXUP_LIGHT_INTENSITY(color, witharea)                                   \
 	do                                                                              \
 	{                                                                               \
@@ -563,27 +558,21 @@ static inline uint32_t RT_PackColorToUint32_FromFloat01(float r, float g, float 
 		(color)[2] *= rt_light_color_[2];  \
 	} while (0)
 
-// The colour of the sky itself (rt_sky_color) and the colour of the light the
-// sky casts, as one setting.
 void RT_GetSkyColor (float color[3]);
-// The colour of the sun (rt_sun_color), independent of the sky: it colours the
 // directional light, and with it the indirect sun, the god rays and the fog's
 // sunlit shafts. The sky is not painted with it.
 void RT_GetSunColor (float color[3]);
 void RT_GetWaterColor (float color[3]);
 void RT_GetAcidColor (float color[3]);
-// The sun editor (rt_sun_edit): while it is on, the sun is placed where the
+// The sun editor (rt_sky_sun_edit): while it is on, the sun is placed where the
 // crosshair points, and there it stays.
 void RT_UpdateSunEditor (void);
-// The colour the procedural clouds are composited over the sky with.
+// The color the procedural clouds are composited over the sky with.
 void RT_GetSkyCloudsColor (float color[3]);
 // The tint every light source is multiplied by (see RT_FIXUP_LIGHT_INTENSITY).
 void RT_GetLightColor (float color[3]);
-// The colour a light starts from before its own colour and the tint are applied.
+// The color a light starts from before its own color and the tint are applied.
 void RT_GetGlobalLightColor (float color[3]);
-// The tint of a sky *texture* (rt_sky_color) as a colour filter over it. The
-// procedural sky does not need it: that one is painted in rt_sky_color itself,
-// and tinting it here would apply the colour to it a second time.
 #define RT_APPLY_SKY_COLOR(color)        \
 	do                                   \
 	{                                    \
@@ -596,11 +585,11 @@ void RT_GetGlobalLightColor (float color[3]);
 #define RT_APPLY_SUN_COLOR(color)        \
 	do                                   \
 	{                                    \
-		float rt_sun_color_[3];          \
-		RT_GetSunColor (rt_sun_color_);  \
-		(color)[0] *= rt_sun_color_[0];  \
-		(color)[1] *= rt_sun_color_[1];  \
-		(color)[2] *= rt_sun_color_[2];  \
+		float rt_sky_sun_color_[3];          \
+		RT_GetSunColor (rt_sky_sun_color_);  \
+		(color)[0] *= rt_sky_sun_color_[0];  \
+		(color)[1] *= rt_sky_sun_color_[1];  \
+		(color)[2] *= rt_sky_sun_color_[2];  \
 	} while (0)
 #define RT_INIT_DEFAULT_LIGHT_COLOR(color)        \
 	do                                            \

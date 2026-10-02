@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
+
+option(QR_BUILD_TESTS "Build headless renderer GPU regression tests" OFF)
+if(QR_BUILD_TESTS)
+    enable_testing()
+endif()
 project(quakeray LANGUAGES C CXX)
 
 # ============================================================================
@@ -165,6 +170,23 @@ else()
 endif()
 
 # ============================================================================
+# OpenAL Soft — vendored source (third_party/openal-soft)
+# ============================================================================
+set(ALSOFT_UTILS          OFF CACHE BOOL "" FORCE)
+set(ALSOFT_EXAMPLES       OFF CACHE BOOL "" FORCE)
+set(ALSOFT_TESTS          OFF CACHE BOOL "" FORCE)
+set(ALSOFT_INSTALL        OFF CACHE BOOL "" FORCE)
+set(ALSOFT_WERROR         OFF CACHE BOOL "" FORCE)
+set(ALSOFT_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
+set(ALSOFT_EMBED_HRTF_DATA ON CACHE BOOL "" FORCE)
+
+get_directory_property(QUAKERAY_COMPILE_OPTIONS COMPILE_OPTIONS)
+set_directory_properties(PROPERTIES COMPILE_OPTIONS "")
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+add_subdirectory(third_party/openal-soft)
+set_directory_properties(PROPERTIES COMPILE_OPTIONS "${QUAKERAY_COMPILE_OPTIONS}")
+
+# ============================================================================
 # Windows bundled codec libraries
 # ============================================================================
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -317,6 +339,7 @@ set(CORE_SOURCES
     Quake/common.c
     Quake/console.c
     Quake/crc.c
+    Quake/cursor.c
     Quake/cvar.c
     Quake/gl_draw.c
     Quake/gl_fog.c
@@ -361,8 +384,10 @@ set(CORE_SOURCES
     Quake/sbar.c
     Quake/snd_codec.c
     Quake/snd_dma.c
+    Quake/snd_eq.c
+    Quake/snd_eq_gui.c
     Quake/snd_mem.c
-    Quake/snd_mix.c
+    Quake/snd_openal.c
     Quake/snd_wave.c
     Quake/strlcat.c
     Quake/strlcpy.c
@@ -382,7 +407,7 @@ set(SDL_SOURCES
     Quake/gl_vidsdl.c
     Quake/in_sdl.c
     Quake/main_sdl.c
-    Quake/snd_sdl.c
+    Quake/sys_info.c
 )
 
 # --- Networking (all platforms) ---
@@ -519,6 +544,24 @@ target_link_libraries(quakeray PRIVATE Vulkan::Vulkan)
 target_link_libraries(quakeray PRIVATE renderer)
 target_link_libraries(quakeray PRIVATE libyaml)
 target_link_libraries(quakeray PRIVATE imgui)
+target_link_libraries(quakeray PRIVATE OpenAL::OpenAL)
+
+option(BUILD_AUDIO_TESTS "Build sound regression tests" OFF)
+if(BUILD_AUDIO_TESTS)
+    enable_testing()
+    add_executable(audio_regression Misc/audio_regression.c)
+    target_link_libraries(audio_regression PRIVATE OpenAL::OpenAL)
+    if(NOT WIN32)
+        target_link_libraries(audio_regression PRIVATE m)
+    endif()
+    add_test(NAME audio_regression COMMAND audio_regression)
+    set_tests_properties(audio_regression PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null")
+    if(WIN32)
+        add_custom_command(TARGET audio_regression POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:OpenAL>" "$<TARGET_FILE_DIR:audio_regression>"
+        )
+    endif()
+endif()
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE SDL2::SDL2 SDL2::SDL2main)
@@ -529,13 +572,15 @@ endif()
 # ============================================================================
 # Runtime assets
 # ============================================================================
-# The qr light editor loads the GUI font from next to the executable.
 add_custom_command(TARGET quakeray POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>/fonts"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>/gfx"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/third_party/imgui/fonts/Roboto-Regular.ttf"
-        "$<TARGET_FILE_DIR:quakeray>/fonts/Roboto-Regular.ttf"
-    COMMENT "Copying the GUI font"
+        "$<TARGET_FILE_DIR:quakeray>/gfx/Roboto-Regular.ttf"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/renderer/gfx"
+        "$<TARGET_FILE_DIR:quakeray>/gfx"
+    COMMENT "Copying the runtime assets"
 )
 
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -657,6 +702,14 @@ if(QUAKERAY_PLATFORM_WINDOWS)
             "${DLL_SDL_DIR}/SDL2.dll"
             "$<TARGET_FILE_DIR:quakeray>"
         COMMENT "Copying SDL2.dll..."
+    )
+
+    # OpenAL Soft DLL
+    add_custom_command(TARGET quakeray POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:OpenAL>"
+            "$<TARGET_FILE_DIR:quakeray>"
+        COMMENT "Copying OpenAL32.dll..."
     )
 
     # amd_fidelityfx_vk.dll (AMD-signed, FSR 3.1) — from the vendored qray

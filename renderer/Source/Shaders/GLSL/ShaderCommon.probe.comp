@@ -106,9 +106,10 @@ void main()
          globalUniform.emissionMaxScreenColor + globalUniform.normalMapStrength +
          globalUniform.skyColorSaturation + globalUniform.emissionSharpMask +
          globalUniform.talSelfLitOffset + float(globalUniform.emissionBlendMode) +
-         globalUniform.emissionBlendStrength + globalUniform.skyAmbientLod + globalUniform.rayLength +
-         float(globalUniform.rayCullBackFaces) + float(globalUniform.rayCullMaskWorld) +
-         globalUniform.bloomIntensity + globalUniform.bloomThreshold +
+         globalUniform.emissionBlendStrength + globalUniform.skyAmbientLod +
+         globalUniform.skyLightMultiplier + globalUniform.rayLength + float(globalUniform.rayCullBackFaces) +
+         float(globalUniform.rayCullMaskWorld) + float(globalUniform.__pad2) + float(globalUniform.__pad3) +
+         float(globalUniform.__pad4) + globalUniform.bloomIntensity + globalUniform.bloomThreshold +
          globalUniform.bloomEmissionMultiplier + float(globalUniform.reflectRefractMaxDepth) +
          float(globalUniform.cameraMediaType) + globalUniform.indexOfRefractionWater +
          globalUniform.indexOfRefractionGlass + globalUniform.waterTextureDerivativesMultiplier +
@@ -140,7 +141,8 @@ void main()
          globalUniform.giBounceRays.x + globalUniform.fltEnable.x + globalUniform.fixedAlbedo.x +
          globalUniform.sunBounce.x + globalUniform.levelFogColorDensity.x +
          globalUniform.levelFogSkyBlend.x + float(globalUniform.restirParams.x) +
-         float(globalUniform.waterLightPath);
+         float(globalUniform.waterLightPath) + globalUniform.cloudShadowPlacement.x +
+         globalUniform.cloudLayerMotion.x;
 
     // ShVertPreprocessing
     v += float(push.tlasInstanceCount) + float(push.tlasInstanceIsDynamicBits[0]);

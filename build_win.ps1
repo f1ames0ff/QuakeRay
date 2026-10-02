@@ -1,7 +1,8 @@
 
 param(
     [string]$Config = "Release",
-    [string]$BuildDir = ""
+    [string]$BuildDir = "",
+    [int]$Parallel = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,7 +93,14 @@ if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
 
 if ($exitCode -eq 0)
 {
-    cmake --build $BuildDir
+    if ($Parallel -gt 0)
+    {
+        cmake --build $BuildDir --parallel $Parallel
+    }
+    else
+    {
+        cmake --build $BuildDir
+    }
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
 }
 
@@ -135,7 +143,12 @@ foreach ($f in @("BlueNoise_LDR_RGBA_128.ktx2", "WaterNormal_n.ktx2")) {
     }
 }
 
-& (Join-Path $PSScriptRoot "build_shaders.ps1") -DestDir (Join-Path $gameDir "shaders")
+# All of the shaders, every time: the generator decides what to build by what it
+# remembers changing, and it has let a change in a header the shaders include go by
+# without rebuilding them -- stale .spv files in the game folder with a build that
+# reported success, more than once. A minute of shader work per build is what that
+# costs, and it is worth it.
+& (Join-Path $PSScriptRoot "build_shaders.ps1") -Rebuild -DestDir (Join-Path $gameDir "shaders")
 if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
 
 if ($nvrhiPatchedHere)

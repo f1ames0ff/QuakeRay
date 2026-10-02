@@ -1,6 +1,7 @@
 Misc/vq_pak/vkquake.pak
 build/
 build-cmake/
+dist/
 .idea
 .vscode
 .settings
@@ -21,3 +22,5 @@ crash.log
 *.pdb
 *.diff.txt
 __pycache__/
+
+plan*.md

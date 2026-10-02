@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -466,19 +466,6 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const vec3 surfP
         return r;
     }
 
-    vec3 axisU = l.A - l.normal * dot(l.A, l.normal);
-    vec3 axisV = l.B - l.normal * dot(l.B, l.normal);
-    const float lenU = length(axisU);
-    const float lenV = length(axisV);
-
-    if (!(lenU > 1e-6) || !(lenV > 1e-6))
-    {
-        return r;
-    }
-
-    axisU /= lenU;
-    axisV /= lenV;
-
     const int verts = clamp(l.numVerts, 1, MAX_TEXTURED_AREA_LIGHT_VERTS);
     float maskRadius = 0.0;
 
@@ -497,8 +484,8 @@ LightSample sampleProjectedAreaLight(const TexturedAreaLight l, const vec3 surfP
     const float maskLod = clamp((angleOuter - angleInner) / angleOuter, 0.0, 1.0) * 8.0;
     const float focal = maskRadius / tan(angleOuter);
     const float cosNLClamped = max(cosNL, 1e-3);
-    const vec3 pos = center + axisU * (focal * dot(centerToSurf.dir, axisU) / cosNLClamped)
-                            + axisV * (focal * dot(centerToSurf.dir, axisV) / cosNLClamped);
+    const vec3 tangentDirection = centerToSurf.dir - l.normal * cosNL;
+    const vec3 pos = center + tangentDirection * (focal / cosNLClamped);
     const vec3 rel = pos - l.C;
 
     const float a11 = dot(l.A, l.A);

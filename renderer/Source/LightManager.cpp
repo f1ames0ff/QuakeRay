@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -160,7 +160,7 @@ namespace
 
         const bool projector = std::isfinite(info.projector) && info.projector > 0.5f;
         const bool angleValid = std::isfinite(info.angleOuter) && info.angleOuter > 0.0f &&
-                                info.angleOuter < static_cast<float>(kPi / 2.0);
+                                info.angleOuter <= static_cast<float>(kPi / 2.0);
         const float angleOuter = angleValid ? info.angleOuter
                                             : (projector ? static_cast<float>(kPi / 3.0) : 0.0f);
         const float angleInner = (std::isfinite(info.angleInner) && info.angleInner >= 0.0f) ? info.angleInner : 0.0f;

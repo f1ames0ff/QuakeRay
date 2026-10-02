@@ -26,6 +26,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 void Sys_Init (void);
 
+void Sys_PrintSystemInfo (void);
+
 //
 // file IO
 //
@@ -41,6 +43,7 @@ int  Sys_FileRead (int handle, void *dest, int count);
 int  Sys_FileWrite (int handle, const void *data, int count);
 int  Sys_FileTime (const char *path);
 void Sys_mkdir (const char *path);
+qboolean Sys_TryMkdir (const char *path);
 
 //
 // system IO

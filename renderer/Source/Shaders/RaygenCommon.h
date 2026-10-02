@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 
 
 #include "ShaderCommonGLSLFunc.h"
+#include "CloudShadowWorld.h"
 
 
 
@@ -322,7 +323,7 @@ vec3 getSkyFilteredMultiplied(vec3 direction, float lod)
 
 vec3 getSkyAmbientMultiplied(vec3 direction, float lod)
 {
-    return getSkyFilteredMultiplied(direction, min(lod, max(globalUniform.skyAmbientLod, 0.0)));
+    return getSkyFilteredMultiplied(direction, min(lod, max(globalUniform.skyAmbientLod, 0.0))) * max(globalUniform.skyLightMultiplier, 0.0);
 }
 
 float evalSkyNeePdf(const vec3 n, const vec3 direction)
@@ -408,7 +409,14 @@ float traceSunVisibility(const Surface surf, const LightSample sunLight, out boo
         return 0.0;
     }
 
-    return traceVisibility(surf, sunLight.position, LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET);
+    float visibility = traceVisibility(surf, sunLight.position, LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET);
+#ifdef DESC_SET_CLOUD_SHADOW
+    if (visibility > 0.0)
+    {
+        visibility *= getCloudSunTransmittance(surf.position, l, false);
+    }
+#endif
+    return visibility;
 }
 
 float traceSkyVisibility(const Surface surf, const vec3 skyDirection)

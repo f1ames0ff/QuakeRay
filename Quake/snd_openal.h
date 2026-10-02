@@ -1,0 +1,45 @@
+/*
+ * snd_openal.h -- OpenAL Soft output backend
+ *
+ * Copyright (C) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
+#ifndef __SND_OPENAL__
+#define __SND_OPENAL__
+
+#include "q_sound.h"
+
+qboolean SNDAL_Init (void);
+void     SNDAL_Shutdown (void);
+
+void     SNDAL_Update (void);
+void     SNDAL_ExtraUpdate (void);
+qboolean SNDAL_HrtfEnabled (void);
+const char *SNDAL_DeviceName (void);
+int      SNDAL_RawPosition (void);
+void     SNDAL_StartChannel (channel_t *ch);
+void     SNDAL_StopChannel (channel_t *ch);
+void     SNDAL_StopAll (void);
+void     SNDAL_ClearBuffer (void);
+void     SNDAL_ClearMusic (void);
+void     SNDAL_PauseMusic (qboolean paused);
+void     SNDAL_ClearAll (void);
+void     SNDAL_BlockSound (void);
+void     SNDAL_UnblockSound (void);
+
+#endif /* __SND_OPENAL__ */

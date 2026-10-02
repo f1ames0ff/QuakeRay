@@ -1127,6 +1127,7 @@ void Host_Init (void)
 		S_Init ();
 		CDAudio_Init ();
 		BGM_Init ();
+		Sys_PrintSystemInfo ();
 		Sbar_Init ();
 		CL_Init ();
 	}

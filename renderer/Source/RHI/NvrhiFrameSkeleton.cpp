@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -98,6 +98,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiRtComposePass *pRtComposePass,
                                        RhiRtReflRefrPass *pReflRefrPass,
                                        RhiProceduralSkyPass *pProceduralSkyPass,
+                                       RhiCloudsPass *pCloudsPass,
                                        RhiRasterSkyPass *pRasterSkyPass,
                                        RhiRasterOverlayPass *pRasterOverlayPass,
                                        RhiDecalPass *pDecalPass,
@@ -118,6 +119,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , rtComposePass(pRtComposePass)
     , reflRefrPass(pReflRefrPass)
     , proceduralSkyPass(pProceduralSkyPass)
+    , cloudsPass(pCloudsPass)
     , rasterSkyPass(pRasterSkyPass)
     , rasterOverlayPass(pRasterOverlayPass)
     , decalPass(pDecalPass)
@@ -672,12 +674,32 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (proceduralSkyPass != nullptr && proceduralSkyPass->IsCreated() && uniform != nullptr &&
             uniform->skyType == SKY_TYPE_PROCEDURAL)
         {
-            proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams);
+            bool cloudsUpdated = false;
+            if (cloudsPass != nullptr && cloudsPass->IsCreated() && sky.cloudsLayer)
+            {
+                cloudsUpdated = cloudsPass->Render(commandList, frameIndex, sky.cloudsParams,
+                                                    sky.cloudsShadowParams, sky.cloudsQuality);
+                proceduralSkyPass->SetCloudLayer(cloudsPass->GetLayerTexture(), cloudsPass->GetLayerSampler());
+                if (rtDirectPass != nullptr)
+                {
+                    rtDirectPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+                if (rtIndirectPass != nullptr)
+                {
+                    rtIndirectPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+                if (godRaysPass != nullptr)
+                {
+                    godRaysPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+            }
+
+            proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams, cloudsUpdated);
         }
 
         // The raster sky (RHI/RhiRasterSkyPass.h): the legacy frame's `DrawSkyToCubemap` ->
         // `DrawSkyToAlbedo` pair (VulkanDevice.cpp:748-753), recorded on this list before the
-        // primary because under this sky type the primary takes its sky colour from the raster
+        // primary because under this sky type the primary takes its sky color from the raster
         // ALBEDO it reads back (RaygenPrimary.hlsli:213-264, storeSky with
         // calculateSkyAndStoreToAlbedo false), and the indirect and reflect/refract passes sample
         // `renderCubemap` for the ambient and the reflections (RaygenCommon.hlsli:393-417) - the
@@ -701,6 +723,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             {
                 rasterSkyPass->Render(commandList, sky.draws, sky.drawCount, sky.skyFaceViewProj,
                                       sky.applyVertexColorGamma);
+
+                if (proceduralSkyPass != nullptr && proceduralSkyPass->IsCreated())
+                {
+                    proceduralSkyPass->Invalidate ();
+                }
             }
 
             // The ALBEDO half, with the legacy viewport: the raygen reads this image back as the
@@ -1552,7 +1579,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     }
 
     // The context closes the slot's list and submits it: the image is not available until the
-    // acquire semaphore is signalled, and the presentation engine cannot start before the pass is
+    // acquire semaphore is signaled, and the presentation engine cannot start before the pass is
     // done, so EndSlot waits on 'semaphoreToWait' and signals 'semaphoreToSignal' where the manual
     // queue state and the execute used to be.
     frameContext->EndSlot(frameIndex, semaphoreToWait, semaphoreToSignal);

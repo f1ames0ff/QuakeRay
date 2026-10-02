@@ -14,6 +14,7 @@
    hold several differently coloured emissive regions (window panes, lamps),
    each with its own tone controls. */
 #define RT_MAT_MAX_EMISSIVE_COLORS 10
+#define RT_MAT_EMIS_POLY_MAX 16
 
 /* One colour_emissive block: a colour and the tone controls that work for it
    alone (they were material-level before). */
@@ -24,6 +25,8 @@ typedef struct rt_emissive_s
     float    feather;        // pixels of edge softening (0 = a hard mask)
     float    factor;         // scales this block's emission (emissive_factor)
     int      blend;          // how the glow is composited; -1 = the material's / cvar
+    int      poly_count;
+    float    poly_uv[RT_MAT_EMIS_POLY_MAX][2];
     /* Set while a file is read: a block that does not carry its own value
        inherits the material-level one (the old single-colour keys). */
     qboolean has_threshold;

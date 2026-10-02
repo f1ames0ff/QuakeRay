@@ -220,49 +220,26 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 
 	qboolean is_decal = psprite->type == SPR_ORIENTED;
 	qboolean is_rasterized = is_decal;
-	rt_light_t *light_ov = tx ? RT_LIGHT_FindInstance (tx->name, RT_GetSpriteModelUniqueId (entuniqueid)) : NULL;
+	rt_light_t *light_ov = tx ? RT_LIGHT_FindEmitter (tx->name, RT_GetSpriteModelUniqueId (entuniqueid)) : NULL;
 
 	if (tx && (tx->rtforcerasterize || (light_ov && light_ov->force_rasterize)))
 		is_rasterized = true;
 
-	if (tx && tx->rthaslightcolor && RT_AllowFakeLights ())
+	if (tx && tx->rthaslightcolor && tx->rtislight && RT_AllowFakeLights ())
 	{
-		vec3_t      color = {tx->rtlightcolor[0], tx->rtlightcolor[1], tx->rtlightcolor[2]};
-		vec3_t      lightorigin;
-		float       intensity = (light_ov && light_ov->has_intensity) ? light_ov->intensity : CVAR_TO_FLOAT (rt_dlight_intensity);
-		float       radius = (light_ov && light_ov->has_radius) ? light_ov->radius : CVAR_TO_FLOAT (rt_dlight_radius);
+		rt_emitter_light_t light;
 
-		if (light_ov && light_ov->has_color)
-		{
-			VectorCopy (light_ov->color, color);
-		}
+		memset (&light, 0, sizeof (light));
+		light.name = tx->name;
+		light.uniqueID = RT_GetSpriteModelUniqueId (entuniqueid);
+		light.kind = RT_LIGHT_KIND_MATERIAL;
+		VectorCopy (e->origin, light.position);
+		VectorCopy (tx->rtlightcolor, light.color);
+		light.intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
+		light.radius = CVAR_TO_FLOAT (rt_dlight_radius);
+		light.style = -1;
 
-		VectorScale (color, intensity, color);
-		RT_FIXUP_LIGHT_INTENSITY (color, true);
-
-		VectorCopy (e->origin, lightorigin);
-		if (light_ov && light_ov->has_offset)
-		{
-			lightorigin[0] += light_ov->offset[0];
-			lightorigin[1] += light_ov->offset[1];
-			lightorigin[2] += light_ov->offset[2];
-		}
-
-		QrSphericalLightUploadInfo light_info = {
-			.uniqueID = RT_GetSpriteModelUniqueId (entuniqueid),
-			.color = {color[0], color[1], color[2]},
-			.position = {lightorigin[0], lightorigin[1], lightorigin[2]},
-			.radius = METRIC_TO_QUAKEUNIT (radius),
-		};
-
-		QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &light_info);
-		QR_CHECK (r);
-
-		RT_TRACK_Light (light_info.position.data, light_info.radius, light_info.color.data,
-		                light_info.uniqueID, RT_LIGHT_KIND_MATERIAL, tx->name);
-
-		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (light_info.uniqueID, lightorigin, RT_ClusterLightReach ());
+		RT_LIGHT_Emit (&light);
 	}
 
 	if (is_rasterized)

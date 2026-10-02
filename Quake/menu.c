@@ -22,6 +22,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "bgmusic.h"
+#include "snd_openal.h"
+#include "snd_eq.h"
 #include <stdbool.h>
 
 void (*vid_menucmdfn) (void); // johnfitz
@@ -182,16 +184,24 @@ extern cvar_t r_rtshadows;
 extern cvar_t r_particles;
 extern cvar_t rt_hud_minimal;
 extern cvar_t r_smoke;
+extern cvar_t ui_cursor;
 extern cvar_t r_softparticles;
 extern cvar_t r_oit;
 extern cvar_t r_enhancedmodels;
 extern cvar_t r_lerpmodels;
+extern cvar_t r_enhancedmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_lerpturn;
 extern cvar_t vid_filter;
 extern cvar_t rt_bloom;
-extern cvar_t rt_godrays;
-extern cvar_t rt_volume_type;
+extern cvar_t rt_sky_godrays;
+extern cvar_t rt_sky_godrays_quality;
+extern cvar_t rt_sky_sun_size;
+extern cvar_t rt_sky_clouds;
+extern cvar_t rt_sky_clouds_quality;
+extern cvar_t rt_gi_level;
+extern cvar_t rt_truelight;
+extern cvar_t rt_reflrefr_depth;
 extern cvar_t scr_guifilter;
 extern cvar_t vid_palettize;
 extern cvar_t vid_anisotropic;
@@ -2011,8 +2021,13 @@ enum
 	SOUND_OPT_SNDVOL,
 	SOUND_OPT_MUSICVOL,
 	SOUND_OPT_MUSICEXT,
+	SOUND_OPT_SPATIAL,
+	SOUND_OPT_FREQUENCY,
+	SOUND_OPT_EQUALIZER,
 	SOUND_OPTIONS_ITEMS
 };
+
+static const int sound_frequencies[] = {11025, 22050, 44100, 48000, 96000, 192000};
 
 static int sound_options_cursor = 0;
 
@@ -2050,6 +2065,28 @@ static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 	case SOUND_OPT_MUSICEXT:
 		Cvar_SetValueQuick (&bgm_extmusic, (float)(((int)bgm_extmusic.value + 2 + dir) % 2));
 		break;
+	case SOUND_OPT_SPATIAL:
+		if ((int)s_openal_hrtf.value == 2)
+			Cvar_SetValueQuick (&s_openal_hrtf, SNDAL_HrtfEnabled () ? 0.0f : 1.0f);
+		else
+			Cvar_SetValueQuick (&s_openal_hrtf, s_openal_hrtf.value ? 0.0f : 1.0f);
+		break;
+	case SOUND_OPT_FREQUENCY:
+	{
+		int i, index = 0;
+
+		for (i = 0; i < (int)countof (sound_frequencies); i++)
+		{
+			if (sound_frequencies[i] == (int)snd_mixspeed.value)
+			{
+				index = i;
+				break;
+			}
+		}
+		index = (index + (dir >= 0 ? 1 : (int)countof (sound_frequencies) - 1)) % (int)countof (sound_frequencies);
+		Cvar_SetValueQuick (&snd_mixspeed, (float)sound_frequencies[index]);
+		break;
+	}
 	}
 }
 
@@ -2068,7 +2105,10 @@ static void M_SoundOptions_Key (int k)
 	case K_KP_ENTER:
 	case K_ABUTTON:
 		m_entersound = true;
-		M_SoundOptions_AdjustSliders (1, k == K_MOUSE1);
+		if (sound_options_cursor == SOUND_OPT_EQUALIZER)
+			SNDEQ_OpenDialog ();
+		else
+			M_SoundOptions_AdjustSliders (1, k == K_MOUSE1);
 		return;
 
 	case K_UPARROW:
@@ -2117,6 +2157,14 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_MUSICEXT, "External Music");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_MUSICEXT, bgm_extmusic.value);
 
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_SPATIAL, "Spatial sound");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_SPATIAL, SNDAL_HrtfEnabled () ? "on" : "off");
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, "Sound frequency");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, va ("%.1f kHz", snd_mixspeed.value / 1000.0));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_EQUALIZER, "Equalizer");
+
 
 	// cursor
 	M_Mouse_UpdateListCursor (&sound_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, SOUND_OPTIONS_ITEMS, 0);
@@ -2125,16 +2173,117 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 
 
 //=============================================================================
+/* QUALITY LADDERS */
+
+static const char *M_GetQualityName (const cvar_t *var)
+{
+	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
+	switch (CLAMP (0, (int)var->value, maximum))
+	{
+	case 0:  return "low";
+	case 1:  return "medium";
+	case 3:  return "ultra";
+	case 4:  return "extreme";
+	default: return "high";
+	}
+}
+
+static void M_StepQuality (cvar_t *var, int dir)
+{
+	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
+	Cvar_SetValueQuick (var, (float)CLAMP (0, (int)var->value + dir, maximum));
+}
+
+static const char *M_GetGiLevelName (void)
+{
+	const float v = CVAR_TO_FLOAT (rt_gi_level);
+
+	if (v < 0.25f)
+		return "off";
+	if (v < 0.75f)
+		return "low";
+	if (v < 1.5f)
+		return "medium";
+
+	return "high";
+}
+
+static void M_StepGiLevel (int dir)
+{
+	static const float levels[] = { 0.0f, 0.5f, 1.0f, 2.0f };
+	const int numlevels = (int)(sizeof (levels) / sizeof (levels[0]));
+	const float cur = CVAR_TO_FLOAT (rt_gi_level);
+
+	int   idx = 2; // medium
+	float best = 1e9f;
+
+	for (int i = 0; i < numlevels; i++)
+	{
+		const float d = fabsf (levels[i] - cur);
+
+		if (d < best)
+		{
+			best = d;
+			idx = i;
+		}
+	}
+
+	idx = CLAMP (0, idx + (dir > 0 ? 1 : -1), numlevels - 1);
+
+	Cvar_SetValueQuick (&rt_gi_level, levels[idx]);
+}
+
+static const char *M_GetReflDepthName (void)
+{
+	const int depth = (int)(CVAR_TO_FLOAT (rt_reflrefr_depth) + 0.5f);
+
+	if (depth <= 0)
+		return "off";
+	if (depth == 1)
+		return "1 bounce";
+
+	return va ("%d bounces", depth);
+}
+
+static void M_StepReflDepth (int dir)
+{
+	static const float depths[] = { 0.0f, 1.0f, 2.0f, 4.0f, 8.0f };
+	const int numdepths = (int)(sizeof (depths) / sizeof (depths[0]));
+	const float cur = CVAR_TO_FLOAT (rt_reflrefr_depth);
+
+	int   idx = 2; // 2 bounces
+	float best = 1e9f;
+
+	for (int i = 0; i < numdepths; i++)
+	{
+		const float d = fabsf (depths[i] - cur);
+
+		if (d < best)
+		{
+			best = d;
+			idx = i;
+		}
+	}
+
+	idx = CLAMP (0, idx + (dir > 0 ? 1 : -1), numdepths - 1);
+
+	Cvar_SetValueQuick (&rt_reflrefr_depth, depths[idx]);
+}
+
+//=============================================================================
 /* GRAPHICS OPTIONS MENU */
 
 enum
 {
 	GRAPHICS_OPT_BLOOM,
 	GRAPHICS_OPT_FILTER,
+	GRAPHICS_OPT_MODELS,
 	GRAPHICS_OPT_PARTICLES,
-	GRAPHICS_OPT_VOLUMETRICS,
-	GRAPHICS_OPT_GODRAYS,
+	GRAPHICS_OPT_CLOUDS,
+	GRAPHICS_OPT_CLOUDS_QUALITY,
+	GRAPHICS_OPT_REFLECT,
 	GRAPHICS_OPT_SMOKE,
+	GRAPHICS_OPT_CURSOR,
 	GRAPHICS_OPTIONS_ITEMS
 };
 
@@ -2163,6 +2312,9 @@ static void M_GraphicsOptions_Adjust (int dir)
 	case GRAPHICS_OPT_FILTER:
 		Cvar_SetValue ("vid_filter", (Cvar_VariableValue ("vid_filter") == 0.0) ? 1.0f : 0.0f);
 		break;
+	case GRAPHICS_OPT_MODELS:
+		Cvar_SetValueQuick (&r_enhancedmodels, (float)(((int)r_enhancedmodels.value + 2 + dir) % 2));
+		break;
 	case GRAPHICS_OPT_PARTICLES:
 		value = (int)r_particles.value;
 		if (dir > 0)
@@ -2171,14 +2323,20 @@ static void M_GraphicsOptions_Adjust (int dir)
 			value = (value == 0) ? 1 : ((value == 2) ? 0 : 2);
 		Cvar_SetValueQuick (&r_particles, (float)value);
 		break;
-	case GRAPHICS_OPT_VOLUMETRICS:
-		Cvar_SetValueQuick (&rt_volume_type, (float)((((int)rt_volume_type.value) + (dir > 0 ? 1 : 2)) % 3));
+	case GRAPHICS_OPT_CLOUDS:
+		Cvar_SetValueQuick (&rt_sky_clouds, !CVAR_TO_BOOL (rt_sky_clouds));
 		break;
-	case GRAPHICS_OPT_GODRAYS:
-		Cvar_SetValueQuick (&rt_godrays, !CVAR_TO_BOOL (rt_godrays));
+	case GRAPHICS_OPT_CLOUDS_QUALITY:
+		M_StepQuality (&rt_sky_clouds_quality, dir);
+		break;
+	case GRAPHICS_OPT_REFLECT:
+		M_StepReflDepth (dir);
 		break;
 	case GRAPHICS_OPT_SMOKE:
 		Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
+		break;
+	case GRAPHICS_OPT_CURSOR:
+		Cvar_SetValueQuick (&ui_cursor, !CVAR_TO_BOOL (ui_cursor));
 		break;
 	}
 }
@@ -2240,24 +2398,155 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "Texture filtering");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (Cvar_VariableValue ("vid_filter") == 0.0) ? "smooth" : "classic");
 
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODELS, "Models");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODELS, (r_enhancedmodels.value == 0) ? "classic" : "enhanced");
+
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES, "Particles");
 	M_Print (
 		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES,
 		((int)r_particles.value == 0) ? "none" : (((int)r_particles.value == 2) ? "classic" : "circle"));
 
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_VOLUMETRICS, "Volumetrics");
-	M_Print (
-		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_VOLUMETRICS,
-		((int)rt_volume_type.value == 0) ? "off" : (((int)rt_volume_type.value == 1) ? "simple" : "sky"));
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CLOUDS, "Volumetric clouds");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CLOUDS, CVAR_TO_BOOL (rt_sky_clouds));
 
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GODRAYS, "God rays");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GODRAYS, CVAR_TO_BOOL (rt_godrays));
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CLOUDS_QUALITY, "Clouds quality");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CLOUDS_QUALITY,
+		M_GetQualityName (&rt_sky_clouds_quality));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_REFLECT, "Reflections");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_REFLECT, M_GetReflDepthName ());
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SMOKE, "Smoke type");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SMOKE, CVAR_TO_BOOL (r_smoke) ? "shader" : "classic");
 
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CURSOR, "Mouse cursor");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CURSOR, CVAR_TO_BOOL (ui_cursor) ? "default" : "axe");
+
 	M_Mouse_UpdateListCursor (&graphics_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, GRAPHICS_OPTIONS_ITEMS, 0);
 	Draw_Character (cbx, MENU_CURSOR_X, top + graphics_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+}
+
+
+//=============================================================================
+/* LIGHTING OPTIONS MENU */
+
+enum
+{
+	LIGHTING_OPT_SYSTEM,
+	LIGHTING_OPT_GI,
+	LIGHTING_OPT_SUN_SIZE,
+	LIGHTING_OPT_GODRAYS,
+	LIGHTING_OPT_GODRAYS_QUALITY,
+	LIGHTING_OPTIONS_ITEMS
+};
+
+static int lighting_options_cursor = 0;
+
+static void M_Menu_LightingOptions_f (void)
+{
+	M_MenuChanged ();
+	IN_DeactivateForMenu ();
+	key_dest = key_menu;
+	m_state = m_lighting;
+}
+
+static void M_LightingOptions_Adjust (int dir)
+{
+	if (dir)
+		S_LocalSound ("misc/menu3.wav");
+
+	switch (lighting_options_cursor)
+	{
+	case LIGHTING_OPT_SYSTEM:
+		// the light system is a choice, not a checkbox: new (1) or old (0)
+		Cvar_SetValueQuick (&rt_truelight, CVAR_TO_FLOAT (rt_truelight) > 0.0f ? 0.0f : 1.0f);
+		break;
+	case LIGHTING_OPT_GI:
+		M_StepGiLevel (dir);
+		break;
+	case LIGHTING_OPT_SUN_SIZE:
+		Cvar_SetValueQuick (&rt_sky_sun_size, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_sun_size) + dir * 0.1f, 10.0f));
+		break;
+	case LIGHTING_OPT_GODRAYS:
+		Cvar_SetValueQuick (&rt_sky_godrays, !CVAR_TO_BOOL (rt_sky_godrays));
+		break;
+	case LIGHTING_OPT_GODRAYS_QUALITY:
+		M_StepQuality (&rt_sky_godrays_quality, dir);
+		break;
+	}
+}
+
+static void M_LightingOptions_Key (int k)
+{
+	switch (k)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_Menu_Options_f ();
+		break;
+
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		m_entersound = true;
+		M_LightingOptions_Adjust (1);
+		return;
+
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		lighting_options_cursor--;
+		if (lighting_options_cursor < 0)
+			lighting_options_cursor = LIGHTING_OPTIONS_ITEMS - 1;
+		break;
+
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		lighting_options_cursor++;
+		if (lighting_options_cursor >= LIGHTING_OPTIONS_ITEMS)
+			lighting_options_cursor = 0;
+		break;
+
+	case K_LEFTARROW:
+		M_LightingOptions_Adjust (-1);
+		break;
+
+	case K_RIGHTARROW:
+		M_LightingOptions_Adjust (1);
+		break;
+	}
+}
+
+static void M_LightingOptions_Draw (cb_context_t *cbx)
+{
+	qpic_t	 *p;
+	const int top = MENU_TOP;
+
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	p = Draw_CachePic ("gfx/p_option.lmp");
+	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * LIGHTING_OPT_SYSTEM, "Light system");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * LIGHTING_OPT_SYSTEM,
+		CVAR_TO_FLOAT (rt_truelight) > 0.0f ? "new" : "old");
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * LIGHTING_OPT_GI, "Indirect lighting");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * LIGHTING_OPT_GI, M_GetGiLevelName ());
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * LIGHTING_OPT_SUN_SIZE, "Sun disc size");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * LIGHTING_OPT_SUN_SIZE,
+		va ("%.1fx", CVAR_TO_FLOAT (rt_sky_sun_size)));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * LIGHTING_OPT_GODRAYS, "God rays");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * LIGHTING_OPT_GODRAYS, CVAR_TO_BOOL (rt_sky_godrays));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * LIGHTING_OPT_GODRAYS_QUALITY, "God rays quality");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * LIGHTING_OPT_GODRAYS_QUALITY,
+		M_GetQualityName (&rt_sky_godrays_quality));
+
+	M_Mouse_UpdateListCursor (&lighting_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, LIGHTING_OPTIONS_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + lighting_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
 }
 
 
@@ -2271,6 +2560,7 @@ enum
 	OPT_CONTROLS,
 	OPT_VIDEO,
 	OPT_GRAPHICS,
+	OPT_LIGHTING,
 	OPT_SOUND,
 	OPT_BENCHMARK,
 	OPT_PADDING,
@@ -2302,6 +2592,7 @@ static void M_Options_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_CONTROLS, "Key Bindings");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_VIDEO, "Video");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GRAPHICS, "Graphics");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_LIGHTING, "Lighting");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_SOUND, "Sound");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_BENCHMARK, "Benchmark");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_DEFAULTS, "Reset config");
@@ -2353,6 +2644,9 @@ void M_Options_Key (int k)
 			break;
 		case OPT_GRAPHICS:
 			M_Menu_GraphicsOptions_f ();
+			break;
+		case OPT_LIGHTING:
+			M_Menu_LightingOptions_f ();
 			break;
 		case OPT_BENCHMARK:
 		M_Menu_Benchmark_f ();
@@ -3762,46 +4056,34 @@ void M_Menu_Quit_f (void)
 	}
 }
 
-static void M_Quit_Key (int key)
+static void M_Quit_Cancel (void)
 {
-	if (key == K_ESCAPE)
+	if (was_in_menus)
 	{
-		if (was_in_menus)
-		{
-			m_state = m_quit_prevstate;
-			m_entersound = true;
-		}
-		else
-		{
-			IN_Activate ();
-			key_dest = key_game;
-			m_state = m_none;
-		}
+		m_state = m_quit_prevstate;
+		m_entersound = true;
+	}
+	else
+	{
+		IN_Activate ();
+		key_dest = key_game;
+		m_state = m_none;
 	}
 }
 
-static void M_Quit_Char (int key)
+static void M_Quit_Key (int key)
 {
 	switch (key)
 	{
 	case 'n':
 	case 'N':
-		if (was_in_menus)
-		{
-			m_state = m_quit_prevstate;
-			m_entersound = true;
-		}
-		else
-		{
-			IN_Activate ();
-			key_dest = key_game;
-			m_state = m_none;
-		}
+	case K_ESCAPE:
+		M_Quit_Cancel ();
 		break;
 
 	case 'y':
 	case 'Y':
-	case ' ':
+	case K_SPACE:
 		m_is_quitting = true;
 		IN_DeactivateForMenu ();
 		key_dest = key_console;
@@ -3813,16 +4095,11 @@ static void M_Quit_Char (int key)
 	}
 }
 
-static qboolean M_Quit_TextEntry (void)
-{
-	return true;
-}
-
 static void M_Quit_Draw (cb_context_t *cbx) // johnfitz -- modified for new quit message
 {
 	char msg1[40];
-	char msg2[] = "by Axel Gneiting and devs"; /* msg2/msg3 are mostly [40] */
-	char msg3[] = "Press y/space to quit";
+	char msg2[] = "by Artem \"f1ames0ff\""; /* msg2/msg3 are mostly [40] */
+	char msg3[] = "Press space or Y to exit";
 	int	 boxlen;
 
 	if (was_in_menus)
@@ -3841,12 +4118,12 @@ static void M_Quit_Draw (cb_context_t *cbx) // johnfitz -- modified for new quit
 	boxlen = q_max (strlen (msg1), q_max ((sizeof (msg2) - 1), (sizeof (msg3) - 1))) + 1;
 	if (boxlen & 1)
 		boxlen++;
-	M_DrawTextBox (cbx, 160 - 4 * (boxlen + 2), 76, boxlen, 4);
+	M_DrawTextBox (cbx, 160 - 4 * (boxlen + 2), 76, boxlen, 5);
 
 	// now do the text
 	M_Print (cbx, 160 - 4 * strlen (msg1), 88, msg1);
 	M_Print (cbx, 160 - 4 * (sizeof (msg2) - 1), 96, msg2);
-	M_PrintWhite (cbx, 160 - 4 * (sizeof (msg3) - 1), 104, msg3);
+	M_PrintWhite (cbx, 160 - 4 * (sizeof (msg3) - 1), 112, msg3);
 }
 
 //=============================================================================
@@ -5228,6 +5505,10 @@ void M_Draw (cb_context_t *cbx)
 		M_GraphicsOptions_Draw (cbx);
 		break;
 
+	case m_lighting:
+		M_LightingOptions_Draw (cbx);
+		break;
+
 
 	case m_sound:
 		M_SoundOptions_Draw (cbx);
@@ -5422,6 +5703,10 @@ void M_Keydown (int key, qboolean repeat)
 		M_GraphicsOptions_Key (key);
 		return;
 
+	case m_lighting:
+		M_LightingOptions_Key (key);
+		return;
+
 	case m_sound:
 		M_SoundOptions_Key (key);
 		return;
@@ -5462,9 +5747,6 @@ void M_Charinput (int key)
 	case m_maps:
 		M_Maps_Char (key);
 		return;
-	case m_quit:
-		M_Quit_Char (key);
-		return;
 	case m_lanconfig:
 		M_LanConfig_Char (key);
 		return;
@@ -5481,8 +5763,6 @@ qboolean M_TextEntry (void)
 		return M_Setup_TextEntry ();
 	case m_maps:
 		return M_Maps_TextEntry ();
-	case m_quit:
-		return M_Quit_TextEntry ();
 	case m_lanconfig:
 		return M_LanConfig_TextEntry ();
 	default:

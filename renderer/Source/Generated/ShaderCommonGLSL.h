@@ -27,6 +27,7 @@
 #define BINDING_RENDER_CUBEMAP_SAMPLER (2)
 #define BINDING_RENDER_CUBEMAP_ENV (1)
 #define BINDING_RENDER_CUBEMAP_ENV_SAMPLER (3)
+#define BINDING_RENDER_CUBEMAP_CLOUD_SHADOW (4)
 #define BINDING_BLUE_NOISE (0)
 #define BINDING_LUM_HISTOGRAM (0)
 #define BINDING_LIGHT_SOURCES (0)
@@ -254,9 +255,13 @@ struct ShGlobalUniform
     uint emissionBlendMode;
     float emissionBlendStrength;
     float skyAmbientLod;
+    float skyLightMultiplier;
     float rayLength;
     uint rayCullBackFaces;
     uint rayCullMaskWorld;
+    uint __pad2;
+    uint __pad3;
+    uint __pad4;
     float bloomIntensity;
     float bloomThreshold;
     float bloomEmissionMultiplier;
@@ -326,6 +331,8 @@ struct ShGlobalUniform
     vec4 levelFogSkyBlend;
     uvec4 restirParams;
     uint waterLightPath;
+    vec4 cloudShadowPlacement;
+    vec4 cloudLayerMotion;
 };
 
 struct ShGeometryInstance

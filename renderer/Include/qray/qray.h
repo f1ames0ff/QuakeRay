@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -230,6 +230,8 @@ typedef struct QrInstanceCreateInfo
     QrTextureSwizzling          pbrTextureSwizzling;
 
     QrBool32                    effectWipeIsUsed;
+
+    uint32_t                    godRaysQuality;
 } QrInstanceCreateInfo;
 
 QRAPI QrResult QRCONV qrCreateInstance(
@@ -895,6 +897,7 @@ typedef enum QrPresentMode
 typedef struct QrStartFrameInfo
 {
     QrPresentMode   presentMode;
+    uint32_t        maxFrameLatency;
     QrBool32        requestShaderReload;
 } QrStartFrameInfo;
 
@@ -922,6 +925,8 @@ typedef struct QrDrawFrameTonemappingParams
     float       contrast;
 } QrDrawFrameTonemappingParams;
 
+#define QR_SKY_CLOUDS_MAX_QUALITY 3
+
 typedef struct QrDrawFrameSkyParams
 {
     QrSkyType   skyType;
@@ -934,6 +939,7 @@ typedef struct QrDrawFrameSkyParams
 
     float       skyColorSaturation;
     float       skyAmbientLod;
+    float       skyLightMultiplier;
     QrBool32    skyNee;
 
     QrFloat3D   skyViewerPosition;
@@ -949,6 +955,10 @@ typedef struct QrDrawFrameSkyParams
     QrBool32    godRaysFromSkyTexture;
     QrFloat3D   godRaysSkyDirection;
     QrFloat3D   godRaysSkyColor;
+
+    uint32_t    skyCloudsQuality;
+    uint32_t    godRaysQuality;
+    float       sunDiscSize;
 } QrDrawFrameSkyParams;
 
 #define QR_LIGHT_STYLE_COUNT 64
@@ -1345,6 +1355,21 @@ typedef struct QrFrameStats
 QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
+
+typedef struct QrAdapterInfo
+{
+    char        name[256];
+    char        driverName[256];
+    char        driverInfo[256];
+    uint32_t    vendorId;
+    uint32_t    deviceId;
+    uint32_t    driverVersion;
+    uint32_t    apiVersion;
+} QrAdapterInfo;
+
+QRAPI QrResult QRCONV qrGetAdapterInfo(
+    QrInstance                          qrInstance,
+    QrAdapterInfo                      *pInfo);
 
 QRAPI QrResult QRCONV qrRequestScreenshot(
     QrInstance                          qrInstance,

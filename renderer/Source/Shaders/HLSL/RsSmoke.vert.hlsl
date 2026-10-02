@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 // HLSL counterpart of GLSL/RsSmoke.vert, the smoke billboard vertex stage. It is a plain vertex
 // shader with an entry point named main; the body is a statement by statement port into the

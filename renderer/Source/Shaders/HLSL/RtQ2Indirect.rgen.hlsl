@@ -1,6 +1,6 @@
 // Copyright (C) 2018 Christoph Schied
 // Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This file is a port of shader/indirect_lighting.rgen from Quake 2 RTX (https://github.com/NVIDIA/Q2RTX),
 // which is distributed under the terms of the GNU General Public License
@@ -83,6 +83,7 @@
 #define DESC_SET_CUBEMAPS 7
 #define DESC_SET_RENDER_CUBEMAP 8
 #define DESC_SET_RAY_STATS 11
+#define DESC_SET_CLOUD_SHADOW 12
 #define LIGHT_SAMPLE_METHOD (LIGHT_SAMPLE_METHOD_INDIR)
 #include "RaygenCommon.hlsli"
 #include "Q2Asvgf.hlsli"
@@ -104,7 +105,7 @@
 // Q2RTX pt_sun_bounce_range / sun_bounce: the sun contribution of a bounce fades out with
 // the distance the bounce ray travelled, and what is left is scaled by a straight
 // multiplier. Both come from the host through ShGlobalUniform.sunBounce (cvars
-// rt_sun_bounce_range, 2000 in game units, and rt_sun_bounce_scale, 1.0). Without the range
+// rt_sky_sun_bounce_range, 2000 in game units, and rt_sky_sun_bounce_scale, 1.0). Without the range
 // every bounce hit anywhere in the map adds full sun energy and pays for its own sun shadow
 // ray, which is where the salt-like noise in dark areas came from.
 

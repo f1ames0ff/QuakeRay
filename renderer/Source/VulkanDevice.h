@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -60,6 +60,7 @@ class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
 class RhiProceduralSkyPass;
+class RhiCloudsPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
 class RhiRtComposePass;
@@ -142,6 +143,8 @@ public:
 
     void GetFrameStatsEx(QrFrameStats *pStats) const;
 
+    void GetAdapterInfo(QrAdapterInfo *pInfo) const;
+
     void RequestScreenshot(const char *pFilePath);
 
     void Print(const char *pMessage) const;
@@ -184,7 +187,9 @@ private:
     std::shared_ptr<PhysicalDevice>         physDevice;
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
+    bool                                    presentWait2Enabled = false;
     std::string                             printedPresentModeName;
+    bool                                    printedPresentWaitActive = false;
     std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;
@@ -239,6 +244,7 @@ private:
     std::shared_ptr<RhiRtReflRefrPass>      rhiRtReflRefrPass;
 
     std::shared_ptr<RhiProceduralSkyPass>   rhiProceduralSkyPass;
+    std::shared_ptr<RhiCloudsPass>          rhiCloudsPass;
 
     std::shared_ptr<RhiRasterSkyPass>       rhiRasterSkyPass;
 

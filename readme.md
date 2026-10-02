@@ -1,3 +1,5 @@
+![QR logo](qr-temp-logo.png)
+
 # QuakeRay engine
 
 QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path tracing, built on NVRHI and running on Vulkan.
@@ -9,7 +11,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * Ray tracing with ReSTIR direct light sampling
 * FSR 3.1 support
 * DTAL (Dynamic Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
-* True Light Mode (opt-in): All light sources are DTAL, which means all emissive textures are actual light sources.
+* True Light Mode is enabled by default (`rt_truelight 1`): materials marked `is_light` cast light from their emission, with model DTAL limits independent of the BSP limits.
 * Q2RTX-style path traced lighting.
 * ASVGF denoiser.
 * RT Global Illumination
@@ -24,18 +26,24 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 
 The game is edited from inside it: `qr_editor` opens a dialog that offers the material editor or the light editor, and `qr_editor_stop` leaves either. Both fly over the frozen level; the crosshair picks what is edited, the fire button selects it, and Tab brings up the panel.
 
-* **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or of an animated texture is a block of its own, a preview of the texture takes the glow's colours with an eyedropper, and Save writes the file the game loads (Discard leaves it alone).
-* **Light editor**: the light an emitter casts, lights added to a level (points or cones, aimed by dragging at the light), and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. A torch lights the way while a level has no light yet.
+* **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or an animated texture is a block of its own. Select emissive colors with an eyedropper or draw polygon masks over the preview; focused and projected emission share the Emissive section. Save writes the session, and the exit question saves it permanently or discards it.
+* **Light editor**: a selectable list of generated emitter lights, custom points or spotlights that can be added and cloned, and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. Emitter styles can be overridden, and spotlight gizmos provide continuous Y/Z rotation and direction-aligned horizontal movement. A torch lights the way while a level has no light yet.
+* **Editor reset**: the trash button beside the tabs clears the active mod's saved material or light work after confirmation and restores defaults, including the corresponding editor settings.
+
+### Sound
+
+* OpenAL Soft positional sound with the built-in MIT KEMAR HRTF and a graphical five-band equalizer; the engine opens no SDL audio device.
 
 ## Graphics
 
 * Dynamic HDR Tone mapping: overall brightness, exposure bias in EV, contrast as a mix of the fixed and the auto-exposure adapted curve
-* Procedural sky with a physical sky model
-* God rays — volumetric sun shafts
+* Procedural sky with volumetric clouds, configurable sky and sun colours, and cloud-shadowed sunlight
+* God rays — volumetric sun shafts, aimed at the sun or at the bright areas of the sky texture
 * Volumetric fog
 * Bloom
 * Post-processing: chromatic aberration, and a configurable LUT for colour grading
 * Shader smoke — the trails of rockets, lava balls and grenades are drawn as soft, lit puffs the room's light falls on, in place of the classic flat sprites
+* Enhanced models — a model that ships a `.md3` or `.md5mesh` beside its `.mdl` is drawn from it, with MD5 skinned from its `.md5anim` and skins resolved from the shader name; the Graphics menu's `Models` row picks enhanced or classic
 * Adaptive vsync, VRR and FreeSync: `vid_vsync` picks the presentation mode (off, vsync, adaptive, FreeSync), adaptive by default
 
 ## Roadmap
@@ -46,7 +54,6 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * UE5-style post effects
 * Full path tracing
 * Hybrid rasterization/RT
-* Light and material editor
 * Arcane Dimensions support
 * Quake Remastered support
 * More shader effects
@@ -100,7 +107,7 @@ Steps:
 
    Debug builds go to `build\Debug` (the default build dir for the given configuration). Pass an explicit directory as a second argument only if you know you want a different one.
 
-   (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build).
+   (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build). If a fully parallel first build runs the compiler out of heap (`fatal error C1060`), cap the job count: `.\build_win.ps1 Release -Parallel 4`.
 
    The build then deploys the ray-traced game data into `build\<Config>\id1`: the material definitions (`renderer/Source/materials.yaml` → `id1/materials/materials.yaml`), `renderer/Source/textures`, `renderer/Source/progs` and `renderer/Source/mdl_skins`, the blue noise table and the water normal map, and the SPIR-V shaders into `id1/shaders`.
 
@@ -110,7 +117,7 @@ Steps:
    build\Debug\quakeray.exe
    ```
 
-   `SDL2.dll` and all codec DLLs are copied next to `quakeray.exe` automatically during the build. The renderer is compiled into the executable - no external renderer DLL is needed. The `.spv` shaders and the blue noise texture are loaded from the game data (`id1/shaders/`, `id1/BlueNoise_LDR_RGBA_128.ktx2`).
+   `SDL2.dll`, `OpenAL32.dll` and all codec DLLs are copied next to `quakeray.exe` automatically during the build. The renderer is compiled into the executable - no external renderer DLL is needed. The `.spv` shaders and the blue noise texture are loaded from the game data (`id1/shaders/`, `id1/BlueNoise_LDR_RGBA_128.ktx2`).
 
 5. (Optional) Package a release - needs a Release build (`.\build_win.ps1 Release`):
 
@@ -118,27 +125,42 @@ Steps:
    .\bundle_release.ps1
    ```
 
-   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `mdl_skins`, `progs`, `shaders`, `textures` and the blue noise / water normal KTX2 tables) and `readme.md`, `changelog.md` and `LICENSE.txt`. The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
+   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` runtime assets (`materials`, `mdl_skins`, `progs`, `shaders`, `textures` and the blue noise / water normal KTX2 tables), `readme.md`, `changelog.md`, `LICENSE.txt` and the third-party notices under `licenses/` (OpenAL Soft's LGPL text and the pffft licence). The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
+
+### Cloud renderer regression test
+
+The optional GPU test runs without opening a game window or loading Quake data. It checks the six cubemap faces and mip chains, live cloud-quality changes, stationary-frame caching, wind and camera motion, cloud shadows at different heights, and the god-rays descriptor/push-constant interface. It also compares low with medium at three layer scales, reports GPU pass timings, checks sun-disc motion under fast clouds, and verifies disc-size scaling. It requires a Vulkan 1.3 GPU; Vulkan validation is enabled when the SDK's validation layer is available.
+
+```
+cmake -S . -B build/Debug -DQR_BUILD_TESTS=ON
+.\build_win.ps1 -Config Debug
+ctest --test-dir build/Debug -R qray_clouds_gpu --output-on-failure
+```
 
 ## Ray tracing settings
 
 Everything is exposed as console variables; run `cvarlist rt_` in the console for the full list. The ones that change the look most are:
 
 * `rt_brightness 1.0` - overall brightness of the ray-traced image
-* `rt_exposure_bias -2.8` - exposure in EV, a power-of-two factor applied inside the tone curve
+* `rt_exposure_bias 0` - exposure in EV from -3 to +3, a power-of-two factor applied inside the tone curve
 * `rt_contrast 0.6` - mixes the fixed tone curve with the auto-exposure adapted one (`0` keeps the fixed curve, `1` is the adapted curve alone)
-* `rt_sun 1` with `rt_sun_pitch 140` / `rt_sun_yaw 120` - the sun's intensity and direction: `0` turns it off, and the indirect sun and god rays scale with it
-* `rt_sun_color 255 255 255` - colour of the sun and its disc, independent of the sky, as `<r> <g> <b>` in `0-255`; commas and a bare query work, and it is archived
-* `rt_sun_edit 0` - mode: while it is `1` the sun follows the crosshair and writes `rt_sun_pitch` / `rt_sun_yaw`; the fire button leaves it without shooting, and it never survives a restart
-* `rt_godrays_intensity 1` with `rt_godrays 1` - strength of the volumetric sun shafts and their on/off switch: `2` doubles them, `0` removes them and the shadow map they are marched through
+* `rt_sky_sun 1` with `rt_sky_sun_pitch 140` / `rt_sky_sun_yaw 120` - the sun's intensity and direction: `0` turns it off, and the indirect sun and god rays scale with it
+* `rt_sky_sun_color 255 255 255` - colour of the sun and its disc, independent of the sky, as `<r> <g> <b>` in `0-255`; commas and a bare query work, and it is archived
+* `rt_sky_sun_size 1.0` - apparent sun-disc size multiplier, available in Lighting and the editor's Sun section: `0.5` halves its diameter, `2` doubles it, and `0` hides the disc while retaining sunlight. Range `0`-`10`; the default preserves the previous size
+* `rt_sky_sun_edit 0` - mode: while it is `1` the sun follows the crosshair and writes `rt_sky_sun_pitch` / `rt_sky_sun_yaw`; the fire button leaves it without shooting, and it never survives a restart
+* `rt_sky_godrays_intensity 1` with `rt_sky_godrays 1` - strength of the volumetric sun shafts and their on/off switch: `2` doubles them, `0` removes them and the shadow map they are marched through
+* `rt_sky_godrays_sky_threshold 0.75` - luminance a sky area needs for the god rays to pull to it, as a mean over 16x16 cells of the skybox or of the scrolling sky; the rays aim at the centre of everything above it, and `0` keeps the brightest point alone
 * `rt_sky 1`, `rt_sky_brightness 1.0`, `rt_physical_sky 1` - sky intensity and sky model
-* `rt_sky_color 32 0 64` - colour of the sky, tinting it and the ambient light it casts, as `<r> <g> <b>` in `0-255`; commas, quotes and a bare query work, and it is archived
+* `rt_physical_sun 0` - sunlight switch: `1` enables the sun and opens the editor's Sun section; `0` disables sunlight and lets the classic sky's bright areas drive god rays. Sun direction is controlled by `rt_sky_sun_pitch` / `rt_sky_sun_yaw`
+* `rt_sky_color 255 255 255` - colour of the sky and the ambient light it casts, as `<r> <g> <b>` in `0-255`; commas, quotes and a bare query work, and it is archived
 * `rt_sky_clouds_color 0 0 0` - colour the clouds are composited over the sky with, as `<r> <g> <b>` in `0-255`; commas and a bare query work
+* `rt_sky_clouds_quality 2` with `rt_sky_clouds_height 140000` and `rt_sky_clouds_thickness 90000` - all four levels use volumetric clouds: `0` low (384-pixel faces, 32 march steps), `1` medium (512/40), `2` high (1024/48), `3` ultra (2048/56). Low keeps the same cloud shape, detail, scattering and sun occlusion, with a 512x512x8 shadow volume; medium/high use 1024x1024x8 and ultra uses 2048x2048x8. Height and thickness are world units above the camera. `rt_sky_clouds` switches the layer, and `rt_sky_clouds_alpha`, `_coverage`, `_density` and `_speed` control opacity, coverage, optical density and wind. Changes apply live; old quality `4` values are clamped to `3`
+* `rt_sky_godrays_quality 2` - resolution of the shadow map the shafts are traced through, on its separate `0`-`4` ladder
 * `rt_sky_ambient_lod 4` - mip level the ambient sky light is read from; lower is more directional, `10` is a flat wash
 * `rt_sky_nee 1` - sample the sky as an explicit light; `0` restores the pre-NEE result
 * `rt_gi_level 1` - indirect lighting: `0` off, `0.5` half-resolution, `1` one indirect bounce, `2` adds the diffuse second bounce; the menu cycles the same levels
-* `rt_sun_bounce_range 2000` - how far the sun reaches into an indirect bounce, in Quake units; `0` turns indirect sunlight off, and smaller is cheaper and dimmer
-* `rt_sun_bounce_scale 1.0` - multiplier on the sun's contribution to an indirect bounce; `1.0` is the physical value
+* `rt_sky_sun_bounce_range 2000` - how far the sun reaches into an indirect bounce, in Quake units; `0` turns indirect sunlight off, and smaller is cheaper and dimmer
+* `rt_sky_sun_bounce_scale 1.0` - multiplier on the sun's contribution to an indirect bounce; `1.0` is the physical value
 * `rt_nee_samples 1` - next-event light samples per pixel in the direct pass: `1` or `2`, where `2` trades more shadow rays for a quieter image
 * `rt_indir2bounces 0` - legacy switch for the second diffuse bounce, kept for old configs; `rt_gi_level` now selects it
 * `rt_denoiser 1` - ASVGF reconstruction of the lighting channels (`0` composites the raw ReSTIR output)
@@ -161,7 +183,38 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_debugflags 0` - diagnostic views (raw direct/indirect/specular, gradients, ...)
 * `rt_viewm_scale 0.32` - the weapon is drawn `0.32` times smaller and closer to the eye by the same factor, unchanged on screen but out of the walls; `1` restores the classic weapon
 
+## Sound
+
+OpenAL Soft is the sound system: every engine channel is positioned against the listener and attenuated by the engine's own distance law, the explicitly selected built-in MIT KEMAR HRTF turns the mix binaural on headphones, and streamed music keeps its stereo image. The old SDL audio device and the software mixer are gone. `snd_mixspeed` (`48000`) is the output rate the device is asked for; the built-in HRTF dataset is a 48 kHz one, so this rate plays it without resampling the HRIRs. The startup log reports the actual output rate and device.
+
+* `s_openal_hrtf` is `0` off, `1` on or `2` auto (default - the device decides, so a speaker setup is not surprised). Changing it restarts the audio backend.
+* Sound Options carries a **Spatial sound** switch that reads the mode OpenAL Soft actually granted (so `auto` shows what you hear) and writes `s_openal_hrtf` as `1` or `0`.
+* Sound Options also carries **Sound frequency** (`snd_mixspeed`, archived): the output rate OpenAL Soft is asked for, `11.0` to `192.0 kHz`. Changing it restarts the backend and reloads the samples at the new rate; the console cvar and `-mixspeed` do the same.
+* **Equalizer** is a menu action: Enter, a left click or controller confirmation opens the dialog; the console command is `equalizer`. Its five bands span a 20 Hz to 20 kHz axis, with a computed response curve and draggable handles (`s_eq_60`, `s_eq_230`, `s_eq_910`, `s_eq_3600`, `s_eq_14000`, all archived, -12 to +12 dB; Ctrl+click resets a band, Reset flattens them all). Bands at or above half the actual output rate are bypassed. The 60 Hz band can compensate the KEMAR dataset's low-end roll-off.
+* `s_openal_max_sources` (`256`) is the source pool size; OpenAL Soft's own source limit caps it.
+* `nosound 1` (or `-nosound`) starts the game without sound, like before.
+* The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`).
+
+OpenAL Soft is vendored as the `third_party/openal-soft` submodule (tag `1.25.2`) and built together with the game, so the engine, the import library and the DLL are always the same build; the build copies `OpenAL32.dll` next to `quakeray.exe` and the release bundle ships it.
+
+See [docs/openal-backend.md](docs/openal-backend.md) for the engine-to-OpenAL mapping and the deferred step-2 items (HRTF datasets, EFX reverb, occlusion).
+
 ## Game data
 
 Quake 1 game files (`id1/`) are required (registered or shareware). HD texture packs can be used through `.pkz` archives or `.mat` material definitions, and the ray-traced material overrides are deployed into the build's game dir by `build_win.ps1` (`id1/materials/materials.yaml` plus the `id1/textures`, `id1/progs` and `id1/mdl_skins` folders) - nothing has to be packed by hand.
 
+## Credits
+
+QuakeRay is created and maintained by **f1ames0ff** - see [AUTHORS.md](AUTHORS.md). The renderer and the engine are distributed under the GNU GPL, version 2 or later (`LICENSE.txt`); the Quake engine keeps the notices of id Software, and portions of the renderer keep the notices of their respective authors.
+
+## Crash and bug reports
+
+The log a report needs is written when the game is started with `-condebug`:
+
+```
+quakeray.exe -condebug
+```
+
+On Windows the easiest way is a shortcut: add `-condebug` to its target (a command prompt in the game folder works as well). Everything the game prints then goes to `qconsole.log` next to the executable (`build\Debug\qconsole.log` in a development build), starting with the **System information** block: the OS, the CPU, the GPU with its vendor and device id, the video driver and Vulkan versions, and the audio driver. The file is rewritten on every launch, so reproduce the problem in one run and close the game - the log holds that session, and a crash keeps everything printed up to it. On Windows a crash also leaves `crash.log` beside the executable.
+
+Attach `qconsole.log` (and `crash.log`, if the game crashed) to the report in the [issue tracker](https://github.com/sdas234f23f/QuakeRay/issues).

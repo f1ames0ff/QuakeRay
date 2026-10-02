@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -49,24 +49,7 @@ vec2 getMotionVectorForUpscaler(const vec2 motionCurToPrev)
     return motionCurToPrev;
 }
 
-vec2 getMotionForInfinitePoint(const ivec2 pix)
-{
-    vec3 rayDir = getRayDir(getPixelUVWithJitter(pix));
-
-    vec3 viewSpacePosCur   = mat3(globalUniform.view)     * rayDir;
-    vec3 viewSpacePosPrev  = mat3(globalUniform.viewPrev) * rayDir;
-
-    vec3 clipSpacePosCur   = mat3(globalUniform.projection)     * viewSpacePosCur;
-    vec3 clipSpacePosPrev  = mat3(globalUniform.projectionPrev) * viewSpacePosPrev;
-
-    vec3 ndcCur            = clipSpacePosCur.xyz;
-    vec3 ndcPrev           = clipSpacePosPrev.xyz;
-
-    vec2 screenSpaceCur    = ndcCur.xy  * 0.5 + 0.5;
-    vec2 screenSpacePrev   = ndcPrev.xy * 0.5 + 0.5;
-
-    return screenSpacePrev - screenSpaceCur;
-}
+#include "SkyMotion.h"
 
 void storeQ2GBuffer(
     const ivec2 pix,
@@ -123,7 +106,12 @@ void storeSky(
         storeQ2GBuffer(pix, albedo, 0.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u, 0u);
     }
 
-    vec2 m = getMotionForInfinitePoint(pix);
+    vec2 m = getMotionForInfinitePoint(rayDir);
+    if (globalUniform.skyType == SKY_TYPE_PROCEDURAL && globalUniform.cloudLayerMotion.w > 0.0)
+    {
+        float share = textureLod(samplerCube(renderCubemap, renderCubemap_Sampler), rayDir, 0.0).a;
+        m = mix(m, getMotionForCloudLayer(rayDir, m), share);
+    }
 
     imageStoreNormal(                       pix, vec3(0.0));
     imageStoreNormalGeometry(               pix, vec3(0.0));

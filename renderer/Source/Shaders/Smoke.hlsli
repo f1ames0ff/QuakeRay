@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 // HLSL counterpart of Smoke.h. The whole header is pure arithmetic: it declares no descriptor, no
 // texture and no matrix, and it includes nothing itself.

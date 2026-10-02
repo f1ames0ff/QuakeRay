@@ -1,4 +1,4 @@
-# Copyright (c) 2026 QuakeRay contributors
+# Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -301,6 +301,7 @@ CONST = {
     "BINDING_RENDER_CUBEMAP_SAMPLER"            : 2,
     "BINDING_RENDER_CUBEMAP_ENV"                : 1,
     "BINDING_RENDER_CUBEMAP_ENV_SAMPLER"        : 3,
+    "BINDING_RENDER_CUBEMAP_CLOUD_SHADOW"       : 4,
     "BINDING_BLUE_NOISE"                        : 0,
     "BINDING_LUM_HISTOGRAM"                     : 0,
     "BINDING_LIGHT_SOURCES"                     : 0,
@@ -596,9 +597,13 @@ GLOBAL_UNIFORM_MEMBERS = [
     (FLOAT32, 1, "emissionBlendStrength",         1),
 
     (FLOAT32, 1, "skyAmbientLod",                 1),
+    (FLOAT32, 1, "skyLightMultiplier",            1),
     (FLOAT32, 1, "rayLength",                     1),
     (UINT32, 1, "rayCullBackFaces",               1),
     (UINT32, 1, "rayCullMaskWorld",               1),
+    (UINT32, 1, "__pad2",                         1),
+    (UINT32, 1, "__pad3",                         1),
+    (UINT32, 1, "__pad4",                         1),
 
     (FLOAT32, 1, "bloomIntensity",                1),
     (FLOAT32, 1, "bloomThreshold",                1),
@@ -694,8 +699,9 @@ GLOBAL_UNIFORM_MEMBERS = [
     # .x = 1 samples the direct lights from the global light array instead of
     # the per-cluster lists, .y = candidates drawn per NEE light sample.
     (UINT32,  4, "restirParams",             1),
-
     (UINT32,  1, "waterLightPath",           1),
+    (FLOAT32, 4, "cloudShadowPlacement",     1),
+    (FLOAT32, 4, "cloudLayerMotion",         1),
 ]
 
 GEOM_INSTANCE_MEMBERS = [

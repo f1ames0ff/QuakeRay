@@ -58,6 +58,9 @@ typedef struct
 
 // johnfitz
 
+void R_SetupAliasFrame (entity_t *e, aliashdr_t *paliashdr, int frame, lerpdata_t *lerpdata);
+void R_SetupEntityTransform (entity_t *e, lerpdata_t *lerpdata);
+
 typedef struct
 {
     float model_matrix[16];
@@ -195,7 +198,7 @@ static void GL_DrawAliasFrame(
     qboolean rasterize = entity_alpha < 1.0f;
     qboolean isfirstperson = (e == &cl.viewent);
     qboolean isviewer = (e == &cl.entities[cl.viewentity]) && !CVAR_TO_BOOL(chase_active);
-    rt_light_t *light_ov = tx ? RT_LIGHT_FindInstance (tx->name, RT_GetAliasModelUniqueId (entuniqueid)) : NULL;
+    rt_light_t *light_ov = tx ? RT_LIGHT_FindEmitter (tx->name, RT_GetAliasModelUniqueId (entuniqueid)) : NULL;
 
     if (tx && (tx->rtforcerasterize || (light_ov && light_ov->force_rasterize)))
         rasterize = true;
@@ -224,48 +227,22 @@ static void GL_DrawAliasFrame(
                                                    paliashdr->numverts_vbo, e->model->rtindices, paliashdr->numindexes,
                                                    &transform);
 
-    if (dtal_lights <= 0 && tx && tx->rthaslightcolor && RT_AllowFakeLights ())
+    if (dtal_lights <= 0 && tx && tx->rthaslightcolor && tx->rtislight && RT_AllowFakeLights ())
     {
-        vec3_t      color = {tx->rtlightcolor[0], tx->rtlightcolor[1], tx->rtlightcolor[2]};
-        vec3_t      lightorigin;
-        float       intensity = (light_ov && light_ov->has_intensity) ? light_ov->intensity : CVAR_TO_FLOAT (rt_dlight_intensity);
-        float       radius = (light_ov && light_ov->has_radius) ? light_ov->radius : CVAR_TO_FLOAT (rt_dlight_radius);
+        rt_emitter_light_t light;
 
-        if (light_ov && light_ov->has_color)
-        {
-            VectorCopy (light_ov->color, color);
-        }
+        memset (&light, 0, sizeof (light));
+        light.name = tx->name;
+        light.uniqueID = RT_GetAliasModelUniqueId (entuniqueid);
+        light.kind = RT_LIGHT_KIND_MATERIAL;
+        VectorCopy (lerpdata.origin, light.position);
+        VectorCopy (tx->rtlightcolor, light.color);
+        light.intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
+        light.radius = CVAR_TO_FLOAT (rt_dlight_radius);
+        light.offset[2] = tx->rtupoffset;
+        light.style = -1;
 
-        VectorScale(color, intensity, color);
-        RT_FIXUP_LIGHT_INTENSITY(color, true);
-
-        VectorCopy(lerpdata.origin, lightorigin);
-        if (light_ov && light_ov->has_offset)
-        {
-            lightorigin[0] += light_ov->offset[0];
-            lightorigin[1] += light_ov->offset[1];
-            lightorigin[2] += light_ov->offset[2];
-        }
-        else
-        {
-            lightorigin[2] += tx->rtupoffset;
-        }
-
-        QrSphericalLightUploadInfo light_info = {
-            .uniqueID = RT_GetAliasModelUniqueId(entuniqueid),
-            .color = {color[0], color[1], color[2]},
-            .position = {lightorigin[0], lightorigin[1], lightorigin[2]},
-            .radius = METRIC_TO_QUAKEUNIT(radius),
-        };
-
-        QrResult r = qrUploadSphericalLight(vulkan_globals.instance, &light_info);
-        QR_CHECK(r);
-
-        RT_TRACK_Light (light_info.position.data, light_info.radius, light_info.color.data,
-                        light_info.uniqueID, RT_LIGHT_KIND_MATERIAL, tx->name);
-
-        if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-            RT_ClusterLightAdd(light_info.uniqueID, lightorigin, RT_ClusterLightReach ());
+        RT_LIGHT_Emit (&light);
     }
 
 assert(
@@ -344,6 +321,123 @@ else
 	}
 
 Atomic_AddUInt32(&rs_aliaspasses, paliashdr->numtris);
+}
+
+static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniqueid)
+{
+	lerpdata_t      lerpdata;
+	float           blend, entalpha;
+	uint64_t        baseid;
+	uint32_t        surface_index = 0;
+	qboolean        isfirstperson = (e == &cl.viewent);
+	qboolean        isviewer = (e == &cl.entities[cl.viewentity]) && !CVAR_TO_BOOL (chase_active);
+	const QrVertex *vertices;
+	QrTransform     transform;
+
+	R_SetupAliasFrame (e, paliashdr, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+
+	if (CVAR_TO_BOOL (rt_enable_pvs) && R_CullModelForEntity (e))
+		return;
+
+	if (r_lightmap_cheatsafe)
+		entalpha = 1;
+	else
+		entalpha = ENTALPHA_DECODE (e->alpha);
+	if (entalpha == 0)
+		return;
+
+	Atomic_AddUInt32 (&rs_aliaspolys, paliashdr->numtris);
+
+	blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0;
+	int cluster = RT_ResolvePointCluster (lerpdata.origin);
+	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster);
+	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson);
+	baseid = RT_GetAliasModelUniqueId (entuniqueid);
+
+	for (aliashdr_t *surf = paliashdr; surf; surf = surf->nextsurface, ++surface_index)
+	{
+		int          skinnum = e->skinnum;
+		gltexture_t *tx;
+		qboolean     rasterize = entalpha < 1.0f;
+		qboolean     alphatest = !!(e->model->flags & MF_HOLEY);
+
+		if (skinnum < 0 || skinnum >= surf->numskins)
+			skinnum = 0;
+		tx = surf->gltextures[skinnum][0];
+		if (!tx)
+			tx = notexture;
+		if (r_lightmap_cheatsafe)
+			tx = whitetexture;
+		if (tx && tx->rtalphatest)
+			alphatest = true;
+		if (tx && tx->rtforcerasterize)
+			rasterize = true;
+
+		if (rasterize)
+		{
+			if (isviewer)
+				continue;
+
+			QrRasterizedGeometryUploadInfo info = {
+				.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+				.vertexCount = paliashdr->numverts_vbo,
+				.pVertices = vertices,
+				.indexCount = surf->numindices,
+				.pIndices = e->model->rtindices + surf->firstindex,
+				.transform = transform,
+				.color = RT_COLOR_WHITE,
+				.material = tx ? tx->rtmaterial : QR_NO_MATERIAL,
+				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
+				.blendFuncSrc = 0,
+				.blendFuncDst = 0,
+			};
+
+			if (alphatest)
+				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
+
+			QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+			QR_CHECK (r);
+		}
+		else
+		{
+			qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
+			qboolean exact_normals = tx ? tx->rtexactnormals : 0;
+
+			QrGeometryUploadInfo info = {
+				.uniqueID = baseid | ((uint64_t)surface_index << 32),
+				.flags =
+				    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
+				    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+				    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT),
+				.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
+				.passThroughType =
+				    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+				    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
+				                QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
+				.visibilityType =
+				    isfirstperson ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON :
+				    isviewer ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON_VIEWER :
+				               QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
+				.vertexCount = paliashdr->numverts_vbo,
+				.pVertices = vertices,
+				.indexCount = surf->numindices,
+				.pIndices = e->model->rtindices + surf->firstindex,
+				.layerColors = {RT_COLOR_WHITE},
+				.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
+				.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
+				.defaultRoughness = CVAR_TO_FLOAT (rt_model_rough),
+				.defaultMetallicity = CVAR_TO_FLOAT (rt_model_metal),
+				.defaultEmission = 0,
+				.transform = transform,
+			};
+
+			QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+			QR_CHECK (r);
+		}
+	}
+
+	Atomic_AddUInt32 (&rs_aliaspasses, paliashdr->numtris);
 }
 
 /*
@@ -511,6 +605,13 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
     // setup pose/lerp data -- do it first so we don't miss updates due to culling
     //
     paliashdr = (aliashdr_t*)Mod_Extradata(e->model);
+
+    if (paliashdr->poseverttype != PV_QUAKE1)
+    {
+        R_DrawEnhancedModel (e, paliashdr, entuniqueid);
+        return;
+    }
+
     R_SetupAliasFrame(e, paliashdr, e->frame, &lerpdata);
     R_SetupEntityTransform(e, &lerpdata);
 
@@ -537,7 +638,7 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
     Atomic_AddUInt32(&rs_aliaspolys, paliashdr->numtris);
 
     // The per-entity light trace is gone: nothing in the RT renderer reads the shade vector or the
-    // light colour it produced, and the cheatsafe modes only overrode that light colour.
+    // light color it produced, and the cheatsafe modes only overrode that light color.
 
     //
     // set up textures

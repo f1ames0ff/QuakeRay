@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "qr_editor.h"
+#include "snd_eq.h"
 
 static qboolean textmode;
 
@@ -51,7 +52,7 @@ static int buttonremap[] = {
 	K_MOUSE2,           /* middle button	*/
 	K_MOUSE4, K_MOUSE5};
 
-extern cvar_t rt_sun_edit;
+extern cvar_t rt_sky_sun_edit;
 
 /* total accumulated mouse movement since last frame */
 static int total_dx, total_dy = 0;
@@ -937,6 +938,9 @@ void IN_SendKeyEvents (void)
 
 	while (SDL_PollEvent (&event))
 	{
+		if (SNDEQ_GuiProcessEvent (&event))
+			continue;
+
 		// qr light editor: the ImGui material panel owns the mouse and keyboard
 		if (QR_Editor_GuiProcessEvent (&event))
 			continue;
@@ -1003,9 +1007,16 @@ void IN_SendKeyEvents (void)
 			// The sun editor is left by a press of the fire button, which is
 			// swallowed: the press that ends the mode does not shoot.
 			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
-			    key_dest == key_game && CVAR_TO_BOOL (rt_sun_edit))
+			    key_dest == key_game && CVAR_TO_BOOL (rt_sky_sun_edit))
 			{
-				Cvar_Set ("rt_sun_edit", "0");
+				Cvar_Set ("rt_sky_sun_edit", "0");
+				break;
+			}
+			// qr light editor: in the flying mode LMB near a gizmo arrow drags
+			// the selected custom light along that axis
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_GizmoPress ())
+			{
 				break;
 			}
 			// qr light editor: in the Custom tab's placement mode the fire button
@@ -1016,12 +1027,32 @@ void IN_SendKeyEvents (void)
 				QR_Editor_PlaceAtCrosshair ();
 				break;
 			}
+			// qr light editor: Alt+LMB in the flying mode grabs the light under
+			// the crosshair; the next LMB drops it and Esc returns it
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_Flying () && (SDL_GetModState () & KMOD_ALT))
+			{
+				QR_Editor_LightGrab ();
+				break;
+			}
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_LightDragActive ())
+			{
+				QR_Editor_LightDrop ();
+				break;
+			}
 			// qr light editor: while flying, the fire button selects the face under
 			// the crosshair and is swallowed so the weapon never fires
 			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
 			    key_dest == key_game && QR_Editor_Flying ())
 			{
 				QR_Editor_Pick ();
+				break;
+			}
+			if (event.button.state == SDL_RELEASED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_GizmoDragActive ())
+			{
+				QR_Editor_GizmoRelease ();
 				break;
 			}
 			Key_Event (buttonremap[event.button.button - 1], event.button.state == SDL_PRESSED);
@@ -1041,7 +1072,10 @@ void IN_SendKeyEvents (void)
 			break;
 
 		case SDL_MOUSEMOTION:
-			IN_MouseMotion (event.motion.xrel, event.motion.yrel);
+			if (QR_Editor_GizmoDragActive ())
+				QR_Editor_GizmoMotion (event.motion.xrel, event.motion.yrel);
+			else
+				IN_MouseMotion (event.motion.xrel, event.motion.yrel);
 			break;
 
 		case SDL_CONTROLLERDEVICEADDED:

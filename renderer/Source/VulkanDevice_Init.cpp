@@ -1,4 +1,4 @@
-// Copyright (c) 2026 QuakeRay contributors
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -33,6 +33,7 @@
 #include "RHI/RhiFsrPass.h"
 #include "RHI/RhiPostEffectPass.h"
 #include "RHI/RhiProceduralSkyPass.h"
+#include "RHI/RhiCloudsPass.h"
 #include "RHI/RhiRasterOverlayPass.h"
 #include "RHI/RhiRasterSkyPass.h"
 #include "RHI/RhiRtComposePass.h"
@@ -115,7 +116,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
 
     uniform             = std::make_shared<GlobalUniform>(device, memAllocator);
 
-    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager);
+    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager, presentWait2Enabled);
 
     worldSamplerManager     = std::make_shared<SamplerManager>(device, 8, info->textureSamplerForceMinificationFilterLinear,
                                                                rhiTextureTable.get());
@@ -231,9 +232,20 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
             }
 
             {
+                rhiCloudsPass = std::make_shared<RhiCloudsPass>();
+                if (!rhiCloudsPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                           info->pShaderFolderPath,
+                                           [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiCloudsPass.reset();
+                    Print("Warning: RHI: the cloud layer pass is unavailable");
+                }
+
                 rhiProceduralSkyPass = std::make_shared<RhiProceduralSkyPass>();
                 if (!rhiProceduralSkyPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
                                                   info->pShaderFolderPath,
+                                                  rhiCloudsPass != nullptr ? rhiCloudsPass->GetLayerTexture() : nullptr,
+                                                  rhiCloudsPass != nullptr ? rhiCloudsPass->GetLayerSampler() : nullptr,
                                                   [this](const char *pMessage) { Print(pMessage); }))
                 {
                     rhiProceduralSkyPass.reset();
@@ -455,6 +467,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                 rhiRtComposePass.get(),
                 rhiRtReflRefrPass.get(),
                 rhiProceduralSkyPass.get(),
+                rhiCloudsPass.get(),
                 rhiRasterSkyPass.get(),
                 rhiRasterOverlayPass.get(),
                 rhiDecalPass.get(),
@@ -537,6 +550,7 @@ VulkanDevice::~VulkanDevice()
     rhiPostEffectPass.reset();
     rhiRasterSkyPass.reset();
     rhiProceduralSkyPass.reset();
+    rhiCloudsPass.reset();
     rhiAccelStructs.reset();
 
     rhiTextureTable.reset();
@@ -647,6 +661,12 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
         vkEnumerateInstanceExtensionProperties(nullptr, &supportedExtensionsCount, supportedInstanceExtensions.data());
     }
 
+    const bool surfaceCapabilities2Supported = std::any_of(supportedInstanceExtensions.cbegin(), supportedInstanceExtensions.cend(),
+        [](const VkExtensionProperties& ext)
+        {
+            return !std::strcmp(ext.extensionName, VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+        });
+
     std::vector<const char *> extensions =
     {
         VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
@@ -672,6 +692,11 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
         VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
     #endif
     };
+
+    if (surfaceCapabilities2Supported)
+    {
+        extensions.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+    }
 
     if (libconfig.vulkanValidation)
     {
@@ -716,6 +741,11 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
 
     VkResult r = vkCreateInstance(&instanceInfo, nullptr, &instance);
     VK_CHECKERROR(r);
+
+    if (surfaceCapabilities2Supported)
+    {
+        InitInstanceExtensionFunctions_SurfaceCapabilities2(instance);
+    }
 
     if (libconfig.vulkanValidation)
     {
@@ -874,6 +904,37 @@ void VulkanDevice::CreateDevice()
             return !std::strcmp(ext.extensionName, VK_KHR_RAY_QUERY_EXTENSION_NAME);
         });
 
+    const bool presentId2ExtensionSupported = std::any_of(supportedDeviceExtensions.cbegin(), supportedDeviceExtensions.cend(),
+        [](const VkExtensionProperties& ext)
+        {
+            return !std::strcmp(ext.extensionName, VK_KHR_PRESENT_ID_2_EXTENSION_NAME);
+        });
+
+    const bool presentWait2ExtensionSupported = std::any_of(supportedDeviceExtensions.cbegin(), supportedDeviceExtensions.cend(),
+        [](const VkExtensionProperties& ext)
+        {
+            return !std::strcmp(ext.extensionName, VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME);
+        });
+
+    VkPhysicalDevicePresentId2FeaturesKHR presentId2Features = {};
+    presentId2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR;
+
+    VkPhysicalDevicePresentWait2FeaturesKHR presentWait2Features = {};
+    presentWait2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR;
+    presentWait2Features.pNext = &presentId2Features;
+
+    bool presentWait2Supported = false;
+    if (presentId2ExtensionSupported && presentWait2ExtensionSupported)
+    {
+        VkPhysicalDeviceFeatures2 presentWaitFeatures2 = {};
+        presentWaitFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        presentWaitFeatures2.pNext = &presentWait2Features;
+        vkGetPhysicalDeviceFeatures2(physDevice->Get(), &presentWaitFeatures2);
+
+        presentWait2Supported = presentId2Features.presentId2 && presentWait2Features.presentWait2 &&
+                                sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
+    }
+
     VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
     rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
     rayQueryFeatures.pNext = &sync2Features;
@@ -893,6 +954,13 @@ void VulkanDevice::CreateDevice()
     physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     physicalDeviceFeatures2.pNext = &asFeatures;
     physicalDeviceFeatures2.features = features;
+
+    if (presentWait2Supported)
+    {
+        presentId2Features.pNext = physicalDeviceFeatures2.pNext;
+        presentWait2Features.pNext = &presentId2Features;
+        physicalDeviceFeatures2.pNext = &presentWait2Features;
+    }
 
     std::vector<const char *> deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -929,6 +997,12 @@ void VulkanDevice::CreateDevice()
         deviceExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
     }
 
+    if (presentWait2Supported)
+    {
+        deviceExtensions.push_back(VK_KHR_PRESENT_ID_2_EXTENSION_NAME);
+        deviceExtensions.push_back(VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME);
+    }
+
     enabledDeviceExtensions.clear();
     for (const char *n : deviceExtensions)
     {
@@ -951,6 +1025,8 @@ void VulkanDevice::CreateDevice()
     VK_CHECKERROR(r);
 
     InitDeviceExtensionFunctions(device);
+
+    presentWait2Enabled = presentWait2Supported && InitDeviceExtensionFunctions_PresentWait2(device);
 
     if (libconfig.vulkanValidation)
     {
