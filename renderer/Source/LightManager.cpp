@@ -431,6 +431,7 @@ qray::LightArrayIndex qray::LightManager::GetIndex(const ShLightEncoded &encoded
     case LIGHT_TYPE_TRIANGLE:
     case LIGHT_TYPE_SPOT:
     case LIGHT_TYPE_TEXTURED_AREA:
+    case LIGHT_TYPE_DTAL_GROUP:
         return LightArrayIndex{ LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET + regLightCount };
 
     default:
@@ -451,6 +452,7 @@ void qray::LightManager::IncrementCount(const ShLightEncoded &encodedLight)
     case LIGHT_TYPE_TRIANGLE:
     case LIGHT_TYPE_SPOT:
     case LIGHT_TYPE_TEXTURED_AREA:
+    case LIGHT_TYPE_DTAL_GROUP:
         regLightCount++;
         break;
 

@@ -12,6 +12,7 @@
 | Renderer integration commit | `e9684a0c` (group light type, member buffer, API, RHI, shaders, host adapter) |
 | Cluster coverage commit | `0e916862` (union coverage, editor controls, estimator reference tests) |
 | Diagnostics commit | `b038291a` (group rebuild counter) |
+| World-draw fix | `b9183825` and this commit: groups build on the world draw path, unchanged collections are reused, and `LIGHT_TYPE_DTAL_GROUP` is accepted by the light-array index/count switches |
 
 All commits are on `feature/dtal-grid-groups`; nothing was merged, force-pushed or published.
 
@@ -89,6 +90,13 @@ Current result: `1408687 checks, 0 failures`.
   ordinary frames. A frame whose animation changes the mask/projector classification is evaluated
   with the last compatible classification and requests a world recollect instead of silently using
   the new interpretation.
+- The engine's world draw path (`R_DrawWorld`) collects the static emissive set directly, not
+  through `RT_RecollectWorldEmissiveLights`. Both paths now run the same wrapper, which begins the
+  builder input, collects, and rebuilds; the rebuild compares a hash of the collected inputs plus
+  the grid policy with the installed generation, so the per-static-submit collection does not
+  rebuild topology when nothing changed (the reuse counter is reported). This was a follow-up fix:
+  the first delivered integration only wrapped `RT_RecollectWorldEmissiveLights` and therefore
+  never activated the builder on the normal map-load path.
 - `LightManager::AddDtalGroups` bypasses the brightness-based deletion threshold, so a dark/off
   group keeps its identity and evaluates to zero emission.
 - Static-world admission still applies the existing `RT_FaceOwnedBySubmodel`, material, style and
@@ -133,15 +141,19 @@ above is CPU-only and structural/analytic; no runtime check was marked passed wi
 ### 3.1 Manual visual test (performed)
 
 The build was run interactively on `e1m1`, `e1m7` and `e4m1` (registered Quake data, AMD RX 9070 XT,
-Vulkan 1.4.349, Debug build). `rt_dtal_groups` was toggled between `0`, `1` and `2` from the console
-and through the Light Editor:
+Vulkan 1.4.349, Debug build). The first run found no visual regression when toggling
+`rt_dtal_groups`, but it could not have: the reported group counters stayed at
+`0 admitted pieces -> 0 parents ... 0 builds; inactive` while 269 static world lights were baked,
+because `R_DrawWorld` collected the world directly and never entered the group wrapper. That run was
+therefore a legacy-path test only, and it is not evidence for the grouped path. The integration fix
+is commit `b9183825`; the grouped-path counters and the grouped/singleton/legacy comparison on the
+same camera are the remaining visual acceptance step and are not claimed here.
+The on-screen checks to perform are listed in the Project B test protocol; the counters to read are
+`dtal groups ... -> ... builds, ... reused collections; active`.
 
-- no visual regression was observed between the modes: the scene mean, small torches and masked
-  emitting textures stayed in place; no popping or grid-aligned seams were reported;
-- `rt_dtal_debug` toggling and map loading worked with grouping enabled;
-- on `e4m1` the existing fast-list limit fired as expected:
-  `RT: 1 clusters reached the 128 light limit, farther lights are not sampled there` — this is the
-  cluster limitation Project A explicitly does not repair and Project B owns.
+On `e4m1` the existing fast-list limit fired as expected (`RT: 22 clusters reached the 128 light
+limit`) with the legacy selector — this is the cluster limitation Project A explicitly does not
+repair and Project B owns.
 
 Scripted screenshot capture (a config with `map`, frame `wait`s and `screenshot`) proved unreliable in
 this environment: before the map finishes loading the frame rate is high, so a fixed `wait` count
