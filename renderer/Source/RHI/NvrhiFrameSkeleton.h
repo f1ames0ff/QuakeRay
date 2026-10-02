@@ -202,12 +202,6 @@ public:
         // early-outs by these bytes, so an unchanged frame (clouds off) costs one memcmp.
         RhiProceduralSkyPass::Params proceduralSkyParams = {};
 
-        // -- the volumetric clouds of that sky (RHI/RhiCloudsPass.h) --
-        // The cloud layer's own inputs: 'cloudsLayer' is the host's gate (clouds on and not the
-        // flat level of rt_sky_clouds_quality), 'cloudsParams' the layer march and
-        // 'cloudsShadowParams' the seed of its shadow volume; the pass fills the placement of both
-        // itself. The skeleton records the pass before the sky, so the composite samples a layer
-        // the same list wrote.
         bool cloudsLayer = false;
         uint32_t cloudsQuality = 2;
         RhiCloudsPass::LayerParams cloudsParams = {};

@@ -96,22 +96,6 @@ void CheckLayer(const std::vector<float> &values)
         Require(values[i] == 1.0f, "lower cloud face was not written transparent");
 }
 
-float SampleTopFace(const std::vector<float> &image, float x, float y)
-{
-    constexpr uint32_t side = qray::RhiProceduralSkyPass::CUBEMAP_SIZE;
-    const uint32_t x0 = uint32_t(std::floor(x));
-    const uint32_t y0 = uint32_t(std::floor(y));
-    const float fx = x - x0;
-    const float fy = y - y0;
-    auto at = [&](uint32_t px, uint32_t py)
-    {
-        return image[(size_t(4) * side * side + size_t(py) * side + px) * 4];
-    };
-    const float top = std::lerp(at(x0, y0), at(x0 + 1, y0), fx);
-    const float bottom = std::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx);
-    return std::lerp(top, bottom, fy);
-}
-
 std::array<float, 3> PickShadowColumn(nvrhi::IDevice *device, nvrhi::ITexture *texture, const float *placement)
 {
     auto desc = texture->getDesc();
@@ -256,6 +240,15 @@ int main(int argc, char **argv)
             Require(clouds.Create(device, &frames, shaders.c_str(), print), "create cloud passes");
             qray::RhiProceduralSkyPass sky;
             Require(sky.Create(device, &frames, shaders.c_str(), clouds.GetLayerTexture(), clouds.GetLayerSampler(), print), "create sky pass");
+            auto captureSky = [&](const std::string &name)
+            {
+                if (argc <= 3) return;
+                std::filesystem::create_directories(argv[3]);
+                const auto image = ReadCube(device, sky.GetCubemapTexture());
+                std::ofstream out(std::string(argv[3]) + "/" + name, std::ios::binary);
+                out.write(reinterpret_cast<const char *>(image.data()), image.size() * sizeof(float));
+                Require(bool(out), "write sky capture");
+            };
             qray::RhiProceduralSkyPass::Params p{};
             FillBasis(p);
             p.skyTint[0] = 0.125f;
@@ -305,6 +298,7 @@ int main(int argc, char **argv)
             shadow.cloudMarch[1] = layer.cloudParams[2];
             auto render = [&](uint32_t quality, uint32_t slot)
             {
+                layer.cloudMarch[0] = float(qray::RhiCloudsPass::GetViewSteps(quality));
                 frames.BeginSlot(slot);
                 bool changed = clouds.Render(frames.GetCommandList(slot), slot, layer, shadow, quality);
                 Require(sky.SetCloudLayer(clouds.GetLayerTexture(), clouds.GetLayerSampler()), "rebind resized layer");
@@ -319,13 +313,7 @@ int main(int argc, char **argv)
             for (size_t i = 3; i < values.size(); i += 4) if (values[i] < 0.95f) ++covered;
             Require(covered > 1000 && covered < 3 * 1024 * 1024, "clouds are empty or extend below the horizon");
             std::cout << "Clouds: " << covered << " covered texels; lower face transparent\n";
-            if (argc > 3)
-            {
-                std::filesystem::create_directories(argv[3]);
-                auto image = ReadCube(device, sky.GetCubemapTexture());
-                std::ofstream out(std::string(argv[3]) + "/sky.bin", std::ios::binary);
-                out.write(reinterpret_cast<const char *>(image.data()), image.size() * sizeof(float));
-            }
+            captureSky("sky.bin");
             Require(!render(2, 0), "identical cloud parameters must reuse the result");
             layer.cloudParams[2] = shadow.cloudMarch[1] = p.cloudParams[2] = 0;
             Require(render(2, 1), "stopping the wind must update the layer");
@@ -335,14 +323,15 @@ int main(int argc, char **argv)
             Require(render(2, 1), "camera translation must update a stationary layer");
             std::cout << "Stationary cache, clock freeze and camera translation passed\n";
 
-            const uint32_t qualities[] = {1, 3, 4, 99, 2};
-            const uint32_t sizes[] = {512, 2048, 2048, 2048, 1024};
-            for (uint32_t i = 0; i < 5; ++i)
+            const uint32_t qualities[] = {0, 1, 3, 4, 99, 0, 2};
+            const uint32_t sizes[] = {384, 512, 2048, 2048, 2048, 384, 1024};
+            const uint32_t shadowSizes[] = {512, 1024, 2048, 2048, 2048, 512, 1024};
+            for (uint32_t i = 0; i < std::size(qualities); ++i)
             {
                 const bool changed = render(qualities[i], i % 2);
                 Require(changed || qualities[i] > QR_SKY_CLOUDS_MAX_QUALITY, "quality change must render");
                 Require(clouds.GetLayerTexture()->getDesc().width == sizes[i], "quality did not change layer resolution");
-                Require(clouds.GetShadowTexture()->getDesc().width == (qualities[i] >= 3 ? 2048u : 1024u), "quality did not change shadow resolution");
+                Require(clouds.GetShadowTexture()->getDesc().width == shadowSizes[i], "quality did not change shadow resolution");
                 CheckLayer(ReadCube(device, clouds.GetLayerTexture(), 0, 16));
                 std::cout << "Quality " << std::min(qualities[i], uint32_t(QR_SKY_CLOUDS_MAX_QUALITY))
                           << " (requested " << qualities[i] << "): " << sizes[i] << " pixels, fresh sky binding passed\n";
@@ -411,12 +400,13 @@ int main(int argc, char **argv)
             uniform.cloudShadowPlacement[0] = 0;
             uniform.cloudLayerMotion[0] = 0.3f;
             result = probe();
-            Require(std::abs(result[2] - uniform.timeDelta * 0.3f / 2) < 1e-6, "flat-cloud motion disagrees with planar drift");
+            Require(std::abs(result[2]) < 1e-6 && std::abs(result[3]) < 1e-6,
+                    "a missing cloud layer must not apply wind motion");
             uniform.cloudLayerMotion[3] = 0;
             result = probe();
             Require(std::abs(result[2]) < 1e-6 && std::abs(result[3]) < 1e-6 && result[4] == 1 && result[5] == 1,
                     "disabled clouds retain motion or shadow");
-            std::cout << "Wind, parallax, flat clouds, disabled shadow and god-rays push constants passed\n";
+            std::cout << "Wind, parallax, disabled layer and god-rays push constants passed\n";
 
             std::memcpy(uniform.cameraPositionPrev, uniform.cameraPosition, 12);
             uniform.cloudLayerMotion[3] = 1;
@@ -424,140 +414,77 @@ int main(int argc, char **argv)
             const float directions[][3] = {{0, 0, 1}, {0.6f, 0.2f, 1}, {1, 0.5f, 0.2f}};
             for (const auto &setting : windCases)
             {
-                const auto wind = qray::RhiCloudsPass::GetWindSpeeds(setting[0], setting[1], setting[2]);
+                const float wind = qray::RhiCloudsPass::GetWindSpeed(setting[0], setting[1]);
                 for (const auto &direction : directions)
                 {
                     std::memcpy(uniform.worldUpVector, direction, 12);
-                    uniform.cloudLayerMotion[0] = wind.volume;
+                    uniform.cloudLayerMotion[0] = wind;
                     uniform.cloudLayerMotion[1] = setting[1];
                     uniform.cloudLayerMotion[2] = setting[2];
                     const auto volumeMotion = probe();
-                    uniform.cloudLayerMotion[0] = wind.flat;
-                    uniform.cloudLayerMotion[1] = uniform.cloudLayerMotion[2] = 0;
-                    const auto flatMotion = probe();
-                    Require(std::abs(volumeMotion[2] - flatMotion[2]) < 1e-6 &&
-                            std::abs(volumeMotion[3] - flatMotion[3]) < 1e-6,
-                            "flat and volumetric wind speeds disagree under perspective projection");
+                    const float centreHeight = setting[1] + 0.3f * setting[2];
+                    Require(std::abs(volumeMotion[2] - 0.5f * uniform.timeDelta * wind * 30 / centreHeight) < 1e-6 &&
+                            std::abs(volumeMotion[3] - 0.5f * uniform.timeDelta * wind * 12 / centreHeight) < 1e-6,
+                            "volumetric wind motion disagrees with the projected layer displacement");
                 }
             }
-            std::cout << "Flat/volume wind agreement passed at zenith and grazing angles for three layer scales\n";
+            std::cout << "Volume wind passed at zenith and grazing angles for three layer scales\n";
 
-            p.skyTint[3] = 1;
-            p.cloudParams[3] = 1;
-            layer.cloudParams[3] = 1;
-            Require(!render(0, 0), "flat quality recorded a volume march");
-            const auto flatSky = ReadCube(device, sky.GetEnvironmentTexture(), 0, 16);
-            for (size_t i = 0; i < flatSky.size(); ++i)
-                Require(std::isfinite(flatSky[i]) && flatSky[i] >= (i % 4 == 3 ? 0.99f : p.skyTint[i % 4] - 0.001f),
-                        "flat sky contains an unrendered face");
-
-            auto flatParams = p;
-            flatParams.sunDirection[3] = 0;
-            flatParams.skyTint[0] = flatParams.skyTint[1] = flatParams.skyTint[2] = 0;
-            flatParams.cloudParams[0] = 0.35f;
-            flatParams.cloudParams[1] = 0.8f;
-            const auto visibleWind = qray::RhiCloudsPass::GetWindSpeeds(4, 140000, 90000);
-            flatParams.cloudParams[2] = visibleWind.flat;
-            flatParams.cloudColor[3] = 0;
-            frames.BeginSlot(1);
-            sky.Render(frames.GetCommandList(1), 1, flatParams);
-            frames.EndSlot(1);
-            const auto first = ReadCube(device, sky.GetCubemapTexture());
-            flatParams.cloudColor[3] = 1;
-            frames.BeginSlot(0);
-            sky.Render(frames.GetCommandList(0), 0, flatParams);
-            frames.EndSlot(0);
-            const auto second = ReadCube(device, sky.GetCubemapTexture());
-            const float centreHeight = 140000 + 0.3f * 90000;
-            const float dx = visibleWind.volume * 30 / centreHeight * qray::RhiProceduralSkyPass::CUBEMAP_SIZE / 2;
-            const float dy = visibleWind.volume * 12 / centreHeight * qray::RhiProceduralSkyPass::CUBEMAP_SIZE / 2;
-            double totalError = 0;
-            float maxError = 0;
-            size_t samples = 0;
-            constexpr uint32_t side = qray::RhiProceduralSkyPass::CUBEMAP_SIZE;
-            for (uint32_t y = 128; y < 896; y += 32)
+            p.cloudParams[1] = layer.cloudParams[1] = shadow.cloudLayer[2] = 0.8f;
+            const float scales[][2] = {{140000, 90000}, {10000, 5000}, {1400, 900}};
+            for (const auto &scale : scales)
             {
-                for (uint32_t x = 128; x < 896; x += 32)
-                {
-                    const float expected = SampleTopFace(first, float(x) + dx, float(y) - dy);
-                    const float actual = second[(size_t(4) * side * side + size_t(y) * side + x) * 4];
-                    const float error = std::abs(actual - expected);
-                    maxError = std::max(maxError, error);
-                    totalError += error;
-                    ++samples;
-                }
-            }
-            Require(totalError / samples < 0.01 && maxError < 0.05f,
-                    "visible flat-cloud animation does not follow the volumetric wind displacement");
-            std::cout << "Flat-mask GPU advection: mean error=" << totalError / samples << "; max=" << maxError << '\n';
-
-            // The flat mask leaves the fraction of sky its coverage names: it is cut
-            // from the same shaped noise the volume's shape is (cloudMask), so the
-            // default coverage has clear black sky for a disc to stand on instead of
-            // the overcast the raw fBm drew.
-            auto maskParams = flatParams;
-            maskParams.skyTint[0] = maskParams.skyTint[1] = maskParams.skyTint[2] = 0;
-            maskParams.cloudColor[0] = maskParams.cloudColor[1] = maskParams.cloudColor[2] = 1.0f;
-            maskParams.cloudColor[3] = 0;
-            maskParams.cloudParams[0] = 0.2f;
-            maskParams.cloudParams[1] = 1.0f;
-            maskParams.cloudParams[2] = 0;
-            maskParams.sunDirection[3] = 0;
-            maskParams.skyParams[1] = 1.0f;
-            frames.BeginSlot(0);
-            sky.Render(frames.GetCommandList(0), 0, maskParams);
-            frames.EndSlot(0);
-            const auto masked = ReadCube(device, sky.GetCubemapTexture());
-            size_t clearTexels = 0;
-            for (size_t i = 0; i < masked.size(); i += 4)
-                if (masked[i] < 0.5f)
-                    ++clearTexels;
-            const double clearShare = double(clearTexels) / (masked.size() / 4);
-            Require(clearShare > 0.1 && clearShare < 0.45,
-                    "flat coverage does not leave the fraction of clear sky it names");
-            std::cout << "Flat-mask coverage: " << clearShare * 100.0 << "% below half at coverage 0.2\n";
-
-            // The flat mask must hide the sun's disc it covers, not only the sky
-            // behind it. With the sky and the cloud black the disc is all that
-            // lights the map, so the energy of the pair (sun on, sun off) is what
-            // the mask lets through of it.
-            auto sunParams = flatParams;
-            sunParams.skyTint[0] = sunParams.skyTint[1] = sunParams.skyTint[2] = 0;
-            sunParams.cloudColor[0] = sunParams.cloudColor[1] = sunParams.cloudColor[2] = 0;
-            sunParams.cloudColor[3] = 0;
-            sunParams.cloudParams[0] = 0.0f;
-            sunParams.cloudParams[1] = 1.0f;
-            sunParams.cloudParams[2] = 0;
-            auto discEnergy = [&](bool cloudsOn)
-            {
-                sunParams.cloudParams[3] = cloudsOn ? 1 : 0;
-                sunParams.sunDirection[3] = 1;
-                frames.BeginSlot(0);
-                sky.Render(frames.GetCommandList(0), 0, sunParams);
-                frames.EndSlot(0);
-                const auto lit = ReadCube(device, sky.GetCubemapTexture());
-                sunParams.sunDirection[3] = 0;
-                frames.BeginSlot(1);
-                sky.Render(frames.GetCommandList(1), 1, sunParams);
-                frames.EndSlot(1);
-                const auto dark = ReadCube(device, sky.GetCubemapTexture());
+                layer.cloudLayer[0] = shadow.sunDirection[3] = scale[0];
+                layer.cloudLayer[1] = shadow.cloudLayer[0] = scale[1];
+                Require(render(1, 0), "medium comparison frame must render");
+                captureSky("medium-" + std::to_string(int(scale[0])) + ".bin");
+                const auto medium = ReadCube(device, sky.GetEnvironmentTexture(), 2);
+                Require(render(0, 1), "low must render a volumetric layer");
+                const auto low = ReadCube(device, sky.GetEnvironmentTexture(), 2);
+                CheckLayer(ReadCube(device, clouds.GetLayerTexture()));
+                double error = 0;
                 double energy = 0;
-                for (size_t i = 0; i < lit.size(); i += 4)
-                    energy += std::abs(lit[i] - dark[i]) + std::abs(lit[i + 1] - dark[i + 1]) +
-                              std::abs(lit[i + 2] - dark[i + 2]);
-                return energy;
-            };
-            const double sunOnly = discEnergy(false);
-            sunParams.skyParams[1] = 0.5f;
-            const double sunThroughHalf = discEnergy(true);
-            sunParams.skyParams[1] = 1.0f;
-            const double sunUnderFlat = discEnergy(true);
-            Require(sunOnly > 1.0 && sunUnderFlat < sunOnly * 0.02,
-                    "flat clouds do not hide the sun's disc they cover");
-            Require(sunThroughHalf > sunOnly * 0.3,
-                    "a half-transparent flat cloud must leave the sun's disc a glow");
-            std::cout << "Flat-mask sun hiding: " << sunUnderFlat << " of " << sunOnly
-                      << ", half-opacity " << sunThroughHalf << '\n';
+                for (size_t i = 0; i < low.size(); ++i)
+                {
+                    if (i % 4 == 3) continue;
+                    const double delta = low[i] - medium[i];
+                    error += delta * delta;
+                    energy += double(medium[i]) * medium[i];
+                }
+                const double relativeError = std::sqrt(error / std::max(energy, 1e-12));
+                std::cout << "Low/medium RMS at " << scale[0] << '/' << scale[1] << ": " << relativeError << '\n';
+                Require(relativeError < 0.08, "low clouds lost the shape or lighting of medium");
+                const auto lowPlacement = qray::RhiCloudsPass::MakeShadowPlacement(layer);
+                const auto lowColumn = PickShadowColumn(device, clouds.GetShadowTexture(), lowPlacement.data());
+                Require(lowColumn[2] > 0.01f, "low clouds lost their sunlight shadow");
+                Require(!render(0, 0), "stationary low clouds must reuse their result");
+                captureSky("low-" + std::to_string(int(scale[0])) + ".bin");
+            }
+
+            for (uint32_t quality : {0u, 1u})
+            {
+                std::array<float, 12> timings;
+                for (uint32_t sample = 0; sample < timings.size() + 4; ++sample)
+                {
+                    layer.cloudColor[3] = shadow.cloudMarch[0] = float(sample + 1);
+                    layer.cloudParams[2] = shadow.cloudMarch[1] = 1;
+                    layer.cloudMarch[0] = float(qray::RhiCloudsPass::GetViewSteps(quality));
+                    auto timer = device->createTimerQuery();
+                    const uint32_t slot = sample % 2;
+                    frames.BeginSlot(slot);
+                    auto cmd = frames.GetCommandList(slot);
+                    cmd->beginTimerQuery(timer);
+                    Require(clouds.Render(cmd, slot, layer, shadow, quality), "animated timing frame must render");
+                    cmd->endTimerQuery(timer);
+                    frames.EndSlot(slot);
+                    device->waitForIdle();
+                    const float milliseconds = device->getTimerQueryTime(timer) * 1000;
+                    if (sample >= 4) timings[sample - 4] = milliseconds;
+                }
+                std::sort(timings.begin(), timings.end());
+                std::cout << "Cloud GPU median, quality " << quality << ": " << timings[timings.size() / 2]
+                          << " ms (" << timings.front() << '-' << timings.back() << ")\n";
+            }
 
             p.skyParams[1] = layer.skyParams[1] = 0;
             Require(!render(2, 1), "zero opacity recorded a volume march");

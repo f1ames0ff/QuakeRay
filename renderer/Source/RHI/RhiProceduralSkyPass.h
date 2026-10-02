@@ -200,11 +200,6 @@ public:
         // (0.3, 0.5, 0.8) fallback and w = 0.
         float sunDirection[4];
 
-        // Offset 304. xyz = the atmosphere tint; w = the flat-clouds flag (1 when the host draws
-        // the flat level of rt_sky_clouds_quality, so the composite reads no volume). Legacy: xyz
-        // is the uniform's `skyColorDefault` (rt_sky_color, VulkanDevice.cpp:763-765, :807); w
-        // used to carry the light's angular radius, which is the slot the flat flag took (the
-        // display disc uses `skyParams.w`).
         float skyTint[4];
 
         // Offset 320. x = the sky color multiplier (the uniform's `skyColorMultiplier`);
@@ -240,18 +235,6 @@ public:
     RhiProceduralSkyPass &operator=(const RhiProceduralSkyPass &other) = delete;
     RhiProceduralSkyPass &operator=(RhiProceduralSkyPass &&other) noexcept = delete;
 
-    // 'pDevice' is the RHI device; 'pFrameContext' is the host's frame model
-    // (RHI/RhiFrameContext.h), which every sibling pass is created with and whose open list Render
-    // records on; 'pShaderFolderPath' is the folder the engine blobs load from, with the trailing
-    // separator ('CmProceduralSky.comp.spv' - the file ShaderManager.cpp:56 maps "CProceduralSky"
-    // to - is read from it). None is owned; all have to outlive this object, and a null or unusable
-    // one makes Create fail. The pass logs through 'pfnPrint'. Creates the two cube images, the
-    // LINEAR/REPEAT sampler, the binding layout, the compute pipeline and the per-slot params
-    // buffers with their per-mip binding sets. 'pCloudLayer' and 'pCloudLayerSampler' are the
-    // clouds pass's layer (RhiCloudsPass::GetLayerTexture/GetLayerSampler), not owned; when the
-    // layer is null the module binds its own 1x1 placeholder and Render keeps the composite off
-    // (the sky falls back to the flat clouds). Returns false and leaves the pass unusable if a
-    // resource cannot be created; the host logs that through 'pfnPrint'.
     bool Create(nvrhi::IDevice *pDevice,
                 rhi::RhiFrameContext *pFrameContext,
                 const char *pShaderFolderPath,
@@ -282,10 +265,6 @@ public:
     // One call per traced frame, on the frame context's open command list of 'frameIndex'
     // (RhiFrameContext::GetCommandList), when the uniform's `skyType` is SKY_TYPE_PROCEDURAL and
     // before the passes that sample the cubes (the skeleton's primary/indirect/reflrefr order).
-    // Works on a copy of 'params', applies the legacy cloud freeze, compares it with the params of
-    // the last recorded dispatch and returns without recording anything when they are equal
-    // (RenderCubemap.cpp:890-913); when the pass has no real cloud layer, the copy also raises the
-    // flat-clouds flag, so the blob composites the mask instead of reading the placeholder.
     // Otherwise writes the slot's params buffer and records one
     // `CmProceduralSky` dispatch per mip level - the legacy dispatch at mip 0 (`(65, 65, 6)`) and
     // the module's per-mip equivalent above for mips 1..10 - then requires NonPixelShaderResource

@@ -68,10 +68,10 @@ struct Params_BT
 {
     float4 faceBasis[18]; // 6 faces * (right, up, forward)
     float4 sunDirection;  // xyz = normalized direction TOWARD the sun, w = how much sun the sky shows (0 = no sun, so no disc either)
-    float4 skyColor;      // xyz = the colour of the sky itself (rt_sky_color), w = 1 at the flat level of rt_sky_clouds_quality (the volumetric composite reads no layer then)
+    float4 skyColor;
     float4 skyParams;     // x = multiplier over the whole sky (rt_sky, rt_sky_brightness, rt_brightness), y = cloud opacity (rt_sky_clouds_alpha), z = sun disc intensity, w = sun disc display radius (radians)
     float4 cloudColor;    // xyz = cloud colour (rt_sky_clouds_color), w = cloud time (seconds)
-    float4 cloudParams;   // x = cloud coverage, y = cloud contour sharpness (rt_sky_clouds_density), z = drift speed, w = clouds enabled
+    float4 cloudParams;
     float4 sunDiscColor;  // xyz = color of the sun disc (rt_sky_sun_color), w unused
 };
 
@@ -84,57 +84,6 @@ struct Params_BT
 
 static const float CLOUD_READ_SPREAD = 1.0;
 static const float SUN_DISC_CLOUD_HIDE = 4.0;
-
-// --- procedural clouds (textureless value noise fBm) ---
-float hash13(float3 p)
-{
-    p = frac(p * 0.1031);
-    p += dot(p, p.zyx + 31.32);
-    return frac((p.x + p.y) * p.z);
-}
-
-float valueNoise3(float3 p)
-{
-    float3 i = floor(p);
-    float3 f = frac(p);
-    f = f * f * (3.0 - 2.0 * f);
-
-    float n000 = hash13(i);
-    float n100 = hash13(i + float3(1, 0, 0));
-    float n010 = hash13(i + float3(0, 1, 0));
-    float n110 = hash13(i + float3(1, 1, 0));
-    float n001 = hash13(i + float3(0, 0, 1));
-    float n101 = hash13(i + float3(1, 0, 1));
-    float n011 = hash13(i + float3(0, 1, 1));
-    float n111 = hash13(i + float3(1, 1, 1));
-
-    return lerp(
-        lerp(lerp(n000, n100, f.x), lerp(n010, n110, f.x), f.y),
-        lerp(lerp(n001, n101, f.x), lerp(n011, n111, f.x), f.y),
-        f.z);
-}
-
-float fbm3(float3 p)
-{
-    float v = 0.0;
-    float amp = 0.5;
-    for (int i = 0; i < 4; i++)
-    {
-        v += amp * valueNoise3(p);
-        p = p * 2.03;
-        amp *= 0.5;
-    }
-    return v;
-}
-
-float cloudMask(float3 dir, float time, float speed)
-{
-    float2 plane = dir.xy / max(abs(dir.z), 1.0e-3);
-    float3 p = float3((plane + time * speed * float2(1.0, 0.4)) * 3.0, 3.0);
-    float n = fbm3(p);
-    float z = (n - 0.47) / 0.12;
-    return clamp(0.5 + 0.5 * z / sqrt(1.0 + z * z), 0.0, 1.0);
-}
 
 [numthreads(16, 16, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
@@ -164,12 +113,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float cloudOpacity = clamp(params.skyParams.y, 0.0, 1.0);
     float sunIntensity = params.skyParams.z;
 
-    float flatClouds = params.skyColor.w;
     bool cloudsOn = params.cloudParams.w > 0.5 && cloudOpacity > 0.0;
 
     float4 cloud = float4(0.0, 0.0, 0.0, 1.0);
-    float flatTransmittance = 1.0;
-    if (cloudsOn && flatClouds <= 0.5)
+    if (cloudsOn)
     {
         uint layerWidth, layerHeight, layerMipLevels;
         cloudCubemap.GetDimensions(0, layerWidth, layerHeight, layerMipLevels);
@@ -187,31 +134,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         cloud = (centre * 4.0 + edges * 2.0 + corners) / 16.0;
     }
 
-    if (cloudsOn && flatClouds > 0.5)
-    {
-        float n = cloudMask(dir, params.cloudColor.w, params.cloudParams.z);
-        float edge = lerp(0.7, 0.05, clamp(params.cloudParams.y, 0.0, 1.0));
-        float mask = smoothstep(params.cloudParams.x, params.cloudParams.x + edge, n);
-        float amount = clamp(mask * cloudOpacity, 0.0, 1.0);
-        skyColor = lerp(skyColor, params.cloudColor.xyz, amount);
-        flatTransmittance = 1.0 - amount;
-    }
-
     float cosAng = cos(sunAngRad);
     float disc = smoothstep(cosAng, 1.0, dot(dir, sunDir)) * sunAmount;
 
-    float discTransmittance;
-    if (flatClouds > 0.5)
-    {
-        discTransmittance = flatTransmittance;
-    }
-    else
-    {
-        float layerTransmittance = cloudOpacity > 0.0
-            ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
-            : 1.0;
-        discTransmittance = lerp(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
-    }
+    float layerTransmittance = cloudOpacity > 0.0
+        ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
+        : 1.0;
+    float discTransmittance = lerp(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
 
     float discVisible = clamp(disc * discTransmittance, 0.0, 1.0);
     float cloudShare = 1.0 - smoothstep(0.02, 0.3, discVisible);

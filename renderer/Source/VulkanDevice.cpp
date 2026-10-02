@@ -905,10 +905,6 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         const uint32_t cloudsQuality = drawInfo.pSkyParams != nullptr
             ? std::min(drawInfo.pSkyParams->skyCloudsQuality, uint32_t(QR_SKY_CLOUDS_MAX_QUALITY))
             : 2;
-        const bool flatClouds = cloudsQuality == 0;
-
-        constexpr float CLOUDS_VIEW_STEPS[QR_SKY_CLOUDS_MAX_QUALITY + 1] = { 32.0f, 40.0f, 48.0f, 56.0f };
-
         float cloudAltitude = 140000.0f;
         float cloudThickness = 90000.0f;
 
@@ -934,9 +930,9 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             }
         }
 
-        p.skyTint[3] = flatClouds ? 1.0f : 0.0f;
-        const auto wind = RhiCloudsPass::GetWindSpeeds(p.cloudParams[2], cloudAltitude, cloudThickness);
-        p.cloudParams[2] = flatClouds ? wind.flat : wind.volume;
+        p.skyTint[3] = 0.0f;
+        const float wind = RhiCloudsPass::GetWindSpeed(p.cloudParams[2], cloudAltitude);
+        p.cloudParams[2] = wind;
 
         constexpr float PI = 3.14159265358979323846f;
         const float faceAngles[6][2] = {
@@ -963,13 +959,13 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         static_assert(offsetof(RhiCloudsPass::LayerParams, cloudLayer) == sizeof(RhiProceduralSkyPass::Params),
                       "the layer params must start with the procedural sky params");
         memcpy(&clouds, &p, sizeof(p));
-        clouds.cloudParams[2] = wind.volume;
+        clouds.cloudParams[2] = wind;
 
         clouds.cloudLayer[0] = cloudAltitude;
         clouds.cloudLayer[1] = cloudThickness;
         clouds.cloudLayer[2] = 1.0f;
         clouds.cloudLayer[3] = 1.0f;
-        clouds.cloudMarch[0] = CLOUDS_VIEW_STEPS[cloudsQuality];
+        clouds.cloudMarch[0] = float(RhiCloudsPass::GetViewSteps(cloudsQuality));
         clouds.cloudMarch[2] = 0.35f;
         clouds.cloudMarch[3] = 0.75f;
         clouds.cloudAnchor[0] = globalUniform->cameraPosition[0];
@@ -987,16 +983,16 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         cloudsShadow.cloudLayer[2] = p.cloudParams[1];
         cloudsShadow.cloudLayer[3] = clouds.cloudMarch[2];
         cloudsShadow.cloudMarch[0] = p.cloudColor[3];
-        cloudsShadow.cloudMarch[1] = wind.volume;
+        cloudsShadow.cloudMarch[1] = wind;
         sky.cloudsShadowParams = cloudsShadow;
 
-        sky.cloudsLayer = !flatClouds && p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;
+        sky.cloudsLayer = p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;
         sky.cloudsQuality = cloudsQuality;
 
         auto *cloudUniform = uniform->GetData();
         const bool cloudsEnabled = globalUniform->skyType == SKY_TYPE_PROCEDURAL &&
                                    p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;
-        const bool volumeEnabled = cloudsEnabled && !flatClouds &&
+        const bool volumeEnabled = cloudsEnabled &&
                                    rhiCloudsPass != nullptr && rhiCloudsPass->IsCreated() &&
                                    rhiProceduralSkyPass != nullptr && rhiProceduralSkyPass->IsCreated();
         cloudUniform->cloudLayerMotion[0] = cloudsEnabled ? p.cloudParams[2] : 0.0f;

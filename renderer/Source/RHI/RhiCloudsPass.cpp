@@ -284,13 +284,13 @@ bool RhiCloudsPass::Create(nvrhi::IDevice *pDevice,
 
 bool RhiCloudsPass::SetQuality(uint32_t requestedQuality)
 {
-    requestedQuality = std::clamp(requestedQuality, 1u, uint32_t(QR_SKY_CLOUDS_MAX_QUALITY));
+    requestedQuality = std::min(requestedQuality, uint32_t(QR_SKY_CLOUDS_MAX_QUALITY));
     if (quality == requestedQuality)
     {
         return true;
     }
 
-    constexpr uint32_t layerSizes[QR_SKY_CLOUDS_MAX_QUALITY + 1] = { 256, 512, 1024, 2048 };
+    constexpr uint32_t layerSizes[QR_SKY_CLOUDS_MAX_QUALITY + 1] = { 384, 512, 1024, 2048 };
     constexpr uint32_t shadowSizes[QR_SKY_CLOUDS_MAX_QUALITY + 1] = { 512, 1024, 1024, 2048 };
     auto nextLayer = CreateLayerTexture(device, "RhiCloudsPass layer cubemap", layerSizes[requestedQuality]);
     auto nextShadow = CreateShadowTexture(device, "RhiCloudsPass shadow volume", shadowSizes[requestedQuality]);
@@ -330,11 +330,15 @@ bool RhiCloudsPass::SetQuality(uint32_t requestedQuality)
     return true;
 }
 
-RhiCloudsPass::WindSpeeds RhiCloudsPass::GetWindSpeeds(float setting, float altitude, float thickness)
+uint32_t RhiCloudsPass::GetViewSteps(uint32_t quality)
 {
-    const float volume = setting * altitude / 1400.0f;
-    const float centre = std::max(altitude + 0.3f * thickness, 1.0f);
-    return { volume, volume * 30.0f / centre };
+    constexpr uint32_t steps[QR_SKY_CLOUDS_MAX_QUALITY + 1] = { 32, 40, 48, 56 };
+    return steps[std::min(quality, uint32_t(QR_SKY_CLOUDS_MAX_QUALITY))];
+}
+
+float RhiCloudsPass::GetWindSpeed(float setting, float altitude)
+{
+    return setting * altitude / 1400.0f;
 }
 
 std::array<float, 4> RhiCloudsPass::MakeShadowPlacement(const LayerParams &params)
@@ -356,12 +360,15 @@ bool RhiCloudsPass::Render(nvrhi::ICommandList *pCommandList,
         return false;
     }
 
-    if (requestedQuality == 0 || params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f)
+    if (params.cloudParams[3] <= 0.5f || params.skyParams[1] <= 0.0f)
     {
         shadowPlacement[0] = 0.0f;
         return false;
     }
-    SetQuality(requestedQuality);
+    if (!SetQuality(requestedQuality))
+    {
+        return false;
+    }
 
     const auto placement = MakeShadowPlacement(params);
     std::memcpy(shadowPlacement, placement.data(), sizeof(shadowPlacement));

@@ -61,13 +61,8 @@ public:
         float mapProjection[4];
     };
 
-    struct WindSpeeds
-    {
-        float volume;
-        float flat;
-    };
-
-    static WindSpeeds GetWindSpeeds(float setting, float altitude, float thickness);
+    static uint32_t GetViewSteps(uint32_t quality);
+    static float GetWindSpeed(float setting, float altitude);
 
     RhiCloudsPass();
     ~RhiCloudsPass();

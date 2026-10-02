@@ -420,7 +420,7 @@ void RhiProceduralSkyPass::Render(nvrhi::ICommandList *pCommandList,
 
     if (!cloudLayerReal)
     {
-        params.skyTint[3] = 1.0f;
+        params.cloudParams[3] = 0.0f;
     }
 
     // Clouds off: freeze the animation time so the cached sky is not re-rendered every frame (only

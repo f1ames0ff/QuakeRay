@@ -2178,7 +2178,7 @@ static const char *M_GetQualityName (const cvar_t *var)
 	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
 	switch (CLAMP (0, (int)var->value, maximum))
 	{
-	case 0:  return var == &rt_sky_clouds_quality ? "flat" : "low";
+	case 0:  return "low";
 	case 1:  return "medium";
 	case 3:  return "ultra";
 	case 4:  return "extreme";

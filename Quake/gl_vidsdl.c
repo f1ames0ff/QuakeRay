@@ -2247,13 +2247,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		c[6] = CVAR_TO_BOOL (rt_sky_clouds) ? 1.0f : 0.0f;
 		c[7] = CVAR_TO_FLOAT (rt_sky_clouds_height);
 		c[8] = CVAR_TO_FLOAT (rt_sky_clouds_thickness);
-		// Nine floats is all this matrix holds, and a write past them lands on
-		// godRaysEnabled, the next member of QrDrawFrameSkyParams -- which is how the
-		// sun shafts used to go out whenever the volumetric clouds were on. The flat
-		// clouds of the lowest quality level are a different look (their mask drifts
-		// in the dome of directions rather than in the world's plane), and the motion
-		// vectors of the sky are told which of the two is drawn by the renderer,
-		// which reads the quality off skyCloudsQuality itself (VulkanDevice.cpp).
 	}
 	else if (!CVAR_TO_BOOL (r_fastsky) && !CVAR_TO_BOOL (rt_physical_sun))
 	{
