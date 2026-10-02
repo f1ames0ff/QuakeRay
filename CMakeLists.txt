@@ -334,6 +334,7 @@ set(CORE_SOURCES
     Quake/common.c
     Quake/console.c
     Quake/crc.c
+    Quake/cursor.c
     Quake/cvar.c
     Quake/gl_draw.c
     Quake/gl_fog.c
@@ -566,13 +567,15 @@ endif()
 # ============================================================================
 # Runtime assets
 # ============================================================================
-# The qr light editor loads the GUI font from next to the executable.
 add_custom_command(TARGET quakeray POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>/fonts"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>/gfx"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/third_party/imgui/fonts/Roboto-Regular.ttf"
-        "$<TARGET_FILE_DIR:quakeray>/fonts/Roboto-Regular.ttf"
-    COMMENT "Copying the GUI font"
+        "$<TARGET_FILE_DIR:quakeray>/gfx/Roboto-Regular.ttf"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/renderer/gfx"
+        "$<TARGET_FILE_DIR:quakeray>/gfx"
+    COMMENT "Copying the runtime assets"
 )
 
 if(QUAKERAY_PLATFORM_WINDOWS)

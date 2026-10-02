@@ -6,6 +6,7 @@
 // draws. No ImGui Vulkan backend, pipelines or descriptor pools are involved.
 
 #include "qr_gui.h"
+#include "cursor.h"
 
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
@@ -28,6 +29,7 @@ QrInstance   g_instance      = 0;
 QrMaterial   g_font_material = QR_NO_MATERIAL;
 bool         g_ready         = false;
 bool         g_frame_open    = false;
+bool         g_custom_cursor = false;
 unsigned int g_last_frame_id = 0xFFFFFFFFu;
 
 int          g_fb_x = 0, g_fb_y = 0, g_fb_w = 0, g_fb_h = 0, g_drawable_h = 0;
@@ -296,6 +298,27 @@ void DrawNotification (void)
 	dl->AddText (pos, IM_COL32 (255, 226, 138, (int)(235.0f * alpha)), g_notify);
 }
 
+void DrawMouseCursor (void)
+{
+	if (!g_custom_cursor)
+		return;
+
+	ImGuiIO &io = ImGui::GetIO ();
+	int64_t  texture = QR_NO_MATERIAL;
+	int      size = 0, hotX = 0, hotY = 0;
+
+	if (!Cursor_GetGuiCursor (&texture, &size, &hotX, &hotY))
+	{
+		io.MouseDrawCursor = true;
+		return;
+	}
+
+	io.MouseDrawCursor = false;
+
+	const ImVec2 pos (io.MousePos.x - (float)hotX, io.MousePos.y - (float)hotY);
+	ImGui::GetForegroundDrawList ()->AddImage ((ImTextureID)(uintptr_t)texture, pos, ImVec2 (pos.x + (float)size, pos.y + (float)size));
+}
+
 } // namespace
 
 void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path)
@@ -413,6 +436,7 @@ void QR_GUI_EndFrame (void)
 		return;
 
 	DrawNotification ();
+	DrawMouseCursor ();
 
 	ImGui::Render ();
 	g_frame_open = false;
@@ -463,7 +487,8 @@ void QR_GUI_SetMouseCursor (int enable)
 {
 	if (!g_ready)
 		return;
-	ImGui::GetIO ().MouseDrawCursor = enable != 0;
+	g_custom_cursor = enable != 0;
+	ImGui::GetIO ().MouseDrawCursor = false;
 }
 
 void QR_GUI_BeginPanel (const char *id, int x, int y, int width, int height)
