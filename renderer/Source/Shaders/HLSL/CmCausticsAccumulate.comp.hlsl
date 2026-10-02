@@ -1,7 +1,5 @@
-#define DESC_SET_GLOBAL_UNIFORM 1
-#define DESC_SET_CAUSTICS 2
+#define DESC_SET_CAUSTICS 0
 
-#include "ShaderCommonHLSLFunc.hlsli"
 #include "Caustics.hlsli"
 
 [[vk::binding(0, DESC_SET_CAUSTICS)]] StructuredBuffer<CausticsParams_BT> causticsParams;
