@@ -686,6 +686,8 @@ typedef struct QrClusterLightSource
     float           radius;
     uint32_t        clusterCount;
     const uint32_t *pClusters;
+
+    float           power;
 } QrClusterLightSource;
 
 typedef struct QrClusterLightSourcesUploadInfo
@@ -696,6 +698,8 @@ typedef struct QrClusterLightSourcesUploadInfo
     float                       topUpReach;
 
     int32_t                     allowIncremental;
+
+    int32_t                     allowOverflow;
 } QrClusterLightSourcesUploadInfo;
 
 QRAPI QrResult QRCONV qrUploadClusterLightSources(
@@ -728,6 +732,13 @@ typedef struct QrClusterLightStats
     uint32_t reusedFrames;
 
     uint32_t fullClusters;
+
+    uint32_t tailEntries;
+    uint32_t clustersWithTail;
+    uint32_t tailBudgetExceeded;
+    uint32_t candidateMax;
+    uint32_t candidateMedian;
+    uint32_t candidateP95;
 
     float    visMs;
     float    topUpMs;

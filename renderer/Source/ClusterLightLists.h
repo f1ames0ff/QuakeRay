@@ -95,6 +95,7 @@ private:
         float    radius = 0.0f;
         uint32_t clusterCount = 0;
         uint32_t clusters[kMaxSourceClusters] = {};
+        float    power = 0.0f;
         // Distance up to which the light belongs in a list, zero for no limit of its own. It
         // is clamped to the top-up reach when the sources are taken: the two passes have to
         // agree on where a light stops mattering.
@@ -133,6 +134,8 @@ private:
     // the lights the lists hold.
     bool UpdateSourceRecords();
     bool AppendSlot(uint32_t cluster, uint32_t sourceIndex, float dist2, bool fromTopUp);
+    void RecordCandidate(uint32_t cluster, uint32_t sourceIndex, float dist2);
+    void BuildOverflow();
     bool BuildGrid(const WorldLights &worldLights, float reach);
     int  GridAxis(uint32_t axis, float value) const;
     int  GridCell(int x, int y, int z) const;
@@ -183,6 +186,28 @@ private:
     // that the top-up pass does not hand the same light to the same cluster twice.
     std::vector<uint64_t> slotBits;
     uint32_t              bitsWords = 0;
+    // Every accepted (cluster, source) pair of the composition, recorded when the pair is
+    // granted or topped up, independent of whether it ended in a fast slot. The overflow
+    // distribution is built from these sets as C \ H.
+    struct Candidate
+    {
+        uint32_t source;
+        float    dist2;
+    };
+
+    std::vector<std::vector<Candidate>> candidates; // one per cluster
+    std::vector<uint64_t> candidateBits;
+
+    std::vector<uint32_t> tailOffsets;
+    std::vector<uint64_t> tailUids;
+    std::vector<float>    tailProb;
+    std::vector<float>    tailMarginal;
+    std::vector<uint32_t> tailAlias;
+    std::vector<float>    tailBeta;
+    std::vector<uint32_t> overflowOrder;
+    std::vector<double>   overflowWeights;
+    uint32_t              tailEntryCount = 0;
+    bool                  overflowEnabled = false;
     // Clusters whose top-up set has to be looked at again on this frame, and the lights that
     // changed on it. All of them are left over between frames only as capacity.
     std::vector<uint8_t>  clusterDirty;   // one per cluster

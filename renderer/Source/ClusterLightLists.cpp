@@ -17,6 +17,8 @@
 
 #include "ClusterLightLists.h"
 
+#include "rt_alias.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -191,6 +193,18 @@ void ClusterLightLists::Reset()
     prevUidIndex.clear();
     curUidIndex.clear();
 
+    candidates.clear();
+    candidateBits.clear();
+    tailOffsets.clear();
+    tailUids.clear();
+    tailProb.clear();
+    tailMarginal.clear();
+    tailAlias.clear();
+    tailBeta.clear();
+    overflowOrder.clear();
+    overflowWeights.clear();
+    tailEntryCount = 0;
+
     stats = QrClusterLightStats{};
     warnedAboutFullList = false;
 }
@@ -252,6 +266,9 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
         incoming[i].radius = (uploadInfo.pLights[i].radius > 0.0f && std::isfinite(uploadInfo.pLights[i].radius))
                                  ? uploadInfo.pLights[i].radius
                                  : 0.0f;
+        incoming[i].power = (std::isfinite(uploadInfo.pLights[i].power) && uploadInfo.pLights[i].power > 0.0f)
+                                ? uploadInfo.pLights[i].power
+                                : 0.0f;
 
         const uint32_t clusterCount = std::min(uploadInfo.pLights[i].clusterCount, kMaxSourceClusters);
 
@@ -278,6 +295,15 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
        the lights that left and are longer than the frame for it. */
     const bool sameSet = stats.addedSources == 0 && stats.removedSources == 0;
     const bool sameReach = std::abs(topUpReach - uploadInfo.topUpReach) < 0.001f;
+    const bool allowOverflow = uploadInfo.allowOverflow != 0;
+
+    if (allowOverflow != overflowEnabled)
+    {
+        overflowEnabled = allowOverflow;
+        listsValid = false; // the overflow policy is part of what the lists are made of
+        listGeneration++;
+    }
+
     const bool composeable = listsValid && sameReach && numClusters > 0;
 
     // The reach is part of what the composition is made of, so it is compared before it is taken.
@@ -309,7 +335,7 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
            records, and the next frame is compared against them so that a light that walks is
            granted its slots again once it has walked out of its quantum. */
     }
-    else if (composeable && compositionOrder && uploadInfo.allowIncremental != 0 &&
+    else if (composeable && compositionOrder && uploadInfo.allowIncremental != 0 && !overflowEnabled &&
              UpdateSourceSet(worldLightsRef, pUserPrint))
     {
         /* The light set the lists were built for is the frame's but for the lights that changed
@@ -333,8 +359,21 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
 
     if (numClusters > 0 && pLightManager != nullptr)
     {
+        LightManager::ClusterLightTailRange tails;
+
+        if (overflowEnabled && tailEntryCount > 0)
+        {
+            tails.pOffsets = tailOffsets.data();
+            tails.pUniqueIds = tailUids.data();
+            tails.pProb = tailProb.data();
+            tails.pMarginal = tailMarginal.data();
+            tails.pAlias = tailAlias.data();
+            tails.pBeta = tailBeta.data();
+            tails.tailCount = tailEntryCount;
+        }
+
         pLightManager->SetClusterLightLists(frameIndex, numClusters, offsets.data(), list.data(), listEntries,
-                                            listGeneration);
+                                            listGeneration, tails);
     }
 
     stats.publishMs = float(NowMs() - tPublish);
@@ -450,6 +489,31 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
     bitsWords = std::max(1u, (numSources + 63) / 64);
     slotBits.assign(size_t(numClusters) * bitsWords, 0);
 
+    if (overflowEnabled)
+    {
+        if (candidates.size() != numClusters)
+            candidates.assign(numClusters, {});
+
+        for (auto &candidateList : candidates)
+            candidateList.clear();
+
+        candidateBits.assign(size_t(numClusters) * bitsWords, 0);
+    }
+
+    tailOffsets.assign(size_t(numClusters) + 1, 0);
+    tailUids.clear();
+    tailProb.clear();
+    tailMarginal.clear();
+    tailAlias.clear();
+    tailBeta.assign(numClusters, 0.0f);
+    tailEntryCount = 0;
+    stats.tailEntries = 0;
+    stats.clustersWithTail = 0;
+    stats.tailBudgetExceeded = 0;
+    stats.candidateMax = 0;
+    stats.candidateMedian = 0;
+    stats.candidateP95 = 0;
+
     const double tVis = NowMs();
 
     // Pass 1: every light gives itself to every cluster its leaf sees, minus the clusters beyond
@@ -483,6 +547,7 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
     const double tFill = NowMs();
 
     FillLists(pUserPrint);
+    BuildOverflow();
 
     listsValid = true;
     compositionOrder = true;
@@ -1287,6 +1352,9 @@ void ClusterLightLists::ResizeSlotBits(uint32_t newWords)
    had. */
 bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float dist2, bool fromTopUp)
 {
+    if (overflowEnabled)
+        RecordCandidate(cluster, sourceIndex, dist2);
+
     const uint32_t  base = cluster * kMaxPerList;
     uint64_t       *pUids = &slotUids[base];
     float          *pDist2 = &slotDist2[base];
@@ -1362,6 +1430,145 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     pTopUp[farthest] = fromTopUp ? 1 : 0;
 
     return true;
+}
+
+void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex, float dist2)
+{
+    if (cluster >= candidates.size() || bitsWords == 0 || (sourceIndex >> 6) >= bitsWords)
+        return;
+
+    uint64_t      &word = candidateBits[size_t(cluster) * bitsWords + (sourceIndex >> 6)];
+    const uint64_t mask = 1ull << (sourceIndex & 63);
+
+    if (word & mask)
+        return;
+
+    word |= mask;
+    candidates[cluster].push_back({ sourceIndex, dist2 });
+}
+
+void ClusterLightLists::BuildOverflow()
+{
+    tailEntryCount = 0;
+
+    if (!overflowEnabled || numClusters == 0)
+        return;
+
+    std::vector<uint32_t> candidateCounts;
+    candidateCounts.reserve(numClusters);
+
+    uint32_t entry = 0;
+
+    for (uint32_t c = 0; c < numClusters; c++)
+    {
+        tailOffsets[c] = entry;
+
+        const std::vector<Candidate> &candidateList = candidates[c];
+
+        if (candidateList.empty())
+            continue;
+
+        candidateCounts.push_back((uint32_t)candidateList.size());
+
+        overflowOrder.clear();
+
+        double fastPower = 0.0;
+        double tailPower = 0.0;
+
+        for (const Candidate &candidate : candidateList)
+        {
+            const uint64_t mask = 1ull << (candidate.source & 63);
+
+            if (slotBits[size_t(c) * bitsWords + (candidate.source >> 6)] & mask)
+                fastPower += sources[candidate.source].power;
+            else
+            {
+                overflowOrder.push_back(candidate.source);
+                tailPower += sources[candidate.source].power;
+            }
+        }
+
+        if (overflowOrder.empty())
+            continue;
+
+        std::sort(overflowOrder.begin(), overflowOrder.end(), [this](uint32_t a, uint32_t b)
+        {
+            const float pa = sources[a].power;
+            const float pb = sources[b].power;
+
+            if (pa != pb)
+                return pa > pb;
+
+            return sources[a].uid < sources[b].uid;
+        });
+
+        if (entry + overflowOrder.size() > uint32_t(Q2_LIGHT_LIST_TAIL_CAPACITY))
+        {
+            stats.tailBudgetExceeded++;
+            continue;
+        }
+
+        float beta;
+
+        if (slotFill[c] == 0)
+            beta = 1.0f;
+        else if (fastPower > 0.0 || tailPower > 0.0)
+        {
+            const double ratio = tailPower / (fastPower + tailPower);
+
+            beta = (float)(ratio < 0.1 ? 0.1 : (ratio > 0.9 ? 0.9 : ratio));
+        }
+        else
+            beta = 0.5f;
+
+        tailBeta[c] = beta;
+
+        const double floorWeight = 0.001 * (fastPower + tailPower + 1.0);
+
+        overflowWeights.resize(overflowOrder.size());
+
+        for (size_t i = 0; i < overflowOrder.size(); i++)
+            overflowWeights[i] = sources[overflowOrder[i]].power + floorWeight;
+
+        const size_t base = tailUids.size();
+
+        tailUids.resize(base + overflowOrder.size());
+        tailProb.resize(base + overflowOrder.size());
+        tailMarginal.resize(base + overflowOrder.size());
+        tailAlias.resize(base + overflowOrder.size());
+
+        if (!RT_Alias_Build(overflowWeights.data(), (int)overflowOrder.size(), tailProb.data() + base,
+                            tailMarginal.data() + base, tailAlias.data() + base))
+        {
+            tailUids.resize(base);
+            tailProb.resize(base);
+            tailMarginal.resize(base);
+            tailAlias.resize(base);
+            continue;
+        }
+
+        RT_Alias_Marginals(tailProb.data() + base, tailAlias.data() + base, (int)overflowOrder.size(),
+                           tailMarginal.data() + base);
+
+        for (size_t i = 0; i < overflowOrder.size(); i++)
+            tailUids[base + i] = sources[overflowOrder[i]].uid;
+
+        entry += (uint32_t)overflowOrder.size();
+        stats.clustersWithTail++;
+    }
+
+    tailOffsets[numClusters] = entry;
+    tailEntryCount = entry;
+    stats.tailEntries = entry;
+
+    if (!candidateCounts.empty())
+    {
+        std::sort(candidateCounts.begin(), candidateCounts.end());
+
+        stats.candidateMax = candidateCounts.back();
+        stats.candidateMedian = candidateCounts[candidateCounts.size() / 2];
+        stats.candidateP95 = candidateCounts[(size_t)((double)(candidateCounts.size() - 1) * 0.95)];
+    }
 }
 
 /* Buckets the origins of the resolved lights into a uniform grid over the map, freed of the

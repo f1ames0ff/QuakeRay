@@ -41,6 +41,8 @@
 #define BINDING_LIGHT_SOURCES_TAL_CDF (7)
 #define BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS (8)
 #define BINDING_LIGHT_SOURCES_DTAL_MEMBERS (9)
+#define BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS (10)
+#define BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL (11)
 #define BINDING_LENS_FLARES_CULLING_INPUT (0)
 #define BINDING_LENS_FLARES_DRAW_CMDS (1)
 #define BINDING_DRAW_LENS_FLARES_INSTANCES (0)
@@ -176,6 +178,7 @@
 #define LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET (0)
 #define LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET (1)
 #define LIGHT_INDEX_NONE (32767)
+#define Q2_LIGHT_LIST_TAIL_CAPACITY (1048576)
 #define TAL_CDF_LUT_ENTRIES (256)
 #define TAL_CDF_EMPTY_ENTRY (0xFFFFFFFFu)
 #define TAL_CDF_GRID_MAX_SIZE (256)
@@ -421,6 +424,14 @@ struct ShDtalMember
     float2 uv[8];
     uint aliasIndex;
     uint reserved[3];
+};
+
+struct ShQ2LightTail
+{
+    uint lightIndex;
+    uint aliasIndex;
+    float prob;
+    float marginalProb;
 };
 
 struct ShVertPreprocessing

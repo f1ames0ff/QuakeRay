@@ -313,6 +313,8 @@ CONST = {
     "BINDING_LIGHT_SOURCES_TAL_CDF"               : 7,
     "BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS"    : 8,
     "BINDING_LIGHT_SOURCES_DTAL_MEMBERS"          : 9,
+    "BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS" : 10,
+    "BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL"         : 11,
     "BINDING_LENS_FLARES_CULLING_INPUT"         : 0,
     "BINDING_LENS_FLARES_DRAW_CMDS"             : 1,
     "BINDING_DRAW_LENS_FLARES_INSTANCES"        : 0,
@@ -473,6 +475,8 @@ CONST = {
     "LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET"     : 1,
 
     "LIGHT_INDEX_NONE"                      : ((1 << 15) - 1),
+
+    "Q2_LIGHT_LIST_TAIL_CAPACITY"           : (1 << 20),
 
     "TAL_CDF_LUT_ENTRIES"                   : 256,
     "TAL_CDF_EMPTY_ENTRY"                   : "0xFFFFFFFFu",
@@ -747,6 +751,13 @@ DTAL_MEMBER_MEMBERS = [
     (UINT32,  1, "reserved",             3),
 ]
 
+Q2_LIGHT_TAIL_MEMBERS = [
+    (UINT32, 1, "lightIndex",    1),
+    (UINT32, 1, "aliasIndex",    1),
+    (FLOAT32, 1, "prob",         1),
+    (FLOAT32, 1, "marginalProb", 1),
+]
+
 LIGHT_ENCODED_MEMBERS = [
     (FLOAT32, 3, "color",                1),
     (UINT32, 1, "lightType",            1),
@@ -840,6 +851,7 @@ STRUCTS = {
     "ShTonemapping":            (TONEMAPPING_MEMBERS,         False, ALIGN_NONE,   BREAK_NONE),
     "ShLightEncoded":           (LIGHT_ENCODED_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
     "ShDtalMember":             (DTAL_MEMBER_MEMBERS,         False, ALIGN_STD430, BREAK_NONE),
+    "ShQ2LightTail":            (Q2_LIGHT_TAIL_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
     "ShVertPreprocessing":      (VERT_PREPROC_PUSH_MEMBERS,   False, ALIGN_NONE,   BREAK_NONE),
     "ShIndirectDrawCommand":    (INDIRECT_DRAW_CMD_MEMBERS,   False, ALIGN_STD430, BREAK_NONE),
     "ShLensFlareInstance":      (LENS_FLARES_INSTANCE_MEMBERS, False, ALIGN_NONE,  BREAK_NONE),

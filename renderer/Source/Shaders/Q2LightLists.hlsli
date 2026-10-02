@@ -177,6 +177,11 @@ void q2AccumulateLightStats(const uint cluster, const uint slot, const float3 n,
         return;
     }
 
+    if (slot >= (uint)Q2_LIGHT_LIST_MAX_PER_CELL)
+    {
+        return;
+    }
+
     const uint frameSlot = globalUniform.frameId % uint(Q2_LIGHT_LIST_STATS_BUFFERS);
     const uint statsFrameBase = frameSlot
         * uint(Q2_MAX_CLUSTERS) * uint(Q2_LIGHT_LIST_MAX_PER_CELL)
@@ -275,6 +280,18 @@ float q2LightSelectionMass(const ShLightEncoded encoded, const float3 p, const f
     }
 }
 
+#define Q2_LIGHT_LIST_INVALID_SLOT 0xFFFFFFFFu
+
+float q2FastMass(float m, float stratumMax)
+{
+    if (!(stratumMax > 0.0))
+    {
+        return 1.0;
+    }
+
+    return max(m, 0.001 * stratumMax);
+}
+
 void q2SampleClusterLights(
     const uint cluster, const float3 p, const float3 n, const float3 V,
     const float phongExp, const float phongScale, const float phongWeight,
@@ -293,19 +310,23 @@ void q2SampleClusterLights(
         return;
     }
 
-    const int lightCount = int(q2GetClusterLightCount(cluster));
-    if (lightCount <= 0)
+    const int   lightCount = (int)q2GetClusterLightCount(cluster);
+    const uint  tailStart = q2LightListTailOffsets[cluster];
+    const uint  tailEnd = q2LightListTailOffsets[cluster + 1u];
+    const int   tailCount = (tailEnd > tailStart) ? (int)(tailEnd - tailStart) : 0;
+
+    if (lightCount <= 0 && tailCount <= 0)
     {
         return;
     }
 
-    const int listBase = int(q2LightListOffsets[cluster]);
+    const int listBase = (int)q2LightListOffsets[cluster];
 
-    const float partitions = ceil(float(lightCount) / float(Q2_MAX_BRUTEFORCE_SAMPLING));
+    const float partitions = (lightCount > 0) ? ceil((float)lightCount / (float)Q2_MAX_BRUTEFORCE_SAMPLING) : 1.0;
     float r0 = rng.x * partitions;
-    const int fpart = int(min(floor(r0), partitions - 1.0));
-    r0 -= float(fpart);
-    const int stride = int(partitions);
+    const int fpart = (int)min(floor(r0), partitions - 1.0);
+    r0 -= (float)fpart;
+    const int stride = (int)partitions;
     const int listStart = listBase + fpart;
 
     const uint frameSlot = globalUniform.frameId % uint(Q2_LIGHT_LIST_STATS_BUFFERS);
@@ -319,14 +340,15 @@ void q2SampleClusterLights(
     const uint statsMode = globalUniform.q2LightStatsMode;
 
     float masses[Q2_MAX_BRUTEFORCE_SAMPLING];
-    float massSum = 0.0;
+    float stratumMax = 0.0;
 
     for (int i = 0; i < Q2_MAX_BRUTEFORCE_SAMPLING; i++)
     {
         const int nIdx = listStart + i * stride;
-        if (nIdx >= listBase + lightCount)
+        if (lightCount <= 0 || nIdx >= listBase + lightCount)
         {
-            break;
+            masses[i] = 0.0;
+            continue;
         }
 
         const int slot = nIdx - listBase;
@@ -357,11 +379,55 @@ void q2SampleClusterLights(
             }
         }
 
-        massSum += m;
         masses[i] = m;
+        stratumMax = max(stratumMax, m);
     }
 
-    if (massSum <= 0.0)
+    float massSum = 0.0;
+
+    for (int i = 0; i < Q2_MAX_BRUTEFORCE_SAMPLING; i++)
+    {
+        const int nIdx = listStart + i * stride;
+        if (lightCount <= 0 || nIdx >= listBase + lightCount)
+        {
+            break;
+        }
+
+        massSum += q2FastMass(masses[i], stratumMax);
+    }
+
+    const float beta = asfloat(q2LightListTailOffsets[uint(Q2_MAX_CLUSTERS) + 1u + cluster]);
+
+    const bool hasFast = massSum > 0.0;
+    const bool hasTail = tailCount > 0;
+    const bool useTail = hasTail && (rng.y < beta || !hasFast);
+
+    if (useTail)
+    {
+        const int   column = min((int)(rng.z * (float)tailCount), tailCount - 1);
+        const float fraction = rng.z * (float)tailCount - (float)column;
+        const ShQ2LightTail entry = q2LightListTail[tailStart + (uint)column];
+        const uint  chosen = (fraction < entry.prob) ? (uint)column : entry.aliasIndex;
+
+        if (chosen >= (uint)tailCount)
+        {
+            return;
+        }
+
+        const ShQ2LightTail chosenEntry = q2LightListTail[tailStart + chosen];
+
+        if (chosenEntry.lightIndex == (uint)LIGHT_INDEX_NONE)
+        {
+            return;
+        }
+
+        outLightIndex = chosenEntry.lightIndex;
+        outSlot = Q2_LIGHT_LIST_INVALID_SLOT;
+        outPdf = beta * chosenEntry.marginalProb;
+        return;
+    }
+
+    if (!hasFast)
     {
         return;
     }
@@ -379,7 +445,7 @@ void q2SampleClusterLights(
             break;
         }
 
-        pdf = masses[i];
+        pdf = q2FastMass(masses[i], stratumMax);
         r -= pdf;
         if (r <= 0.0)
         {
@@ -394,8 +460,8 @@ void q2SampleClusterLights(
     }
 
     outLightIndex = q2GetClusterLight(cluster, uint(selectedSlot));
-    outSlot = uint(selectedSlot);
-    outPdf = pdf / totalMassScaled;
+    outSlot = (uint)selectedSlot;
+    outPdf = (1.0 - beta) * pdf / totalMassScaled;
 }
 
 #endif

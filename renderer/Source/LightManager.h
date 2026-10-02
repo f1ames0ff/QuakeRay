@@ -70,9 +70,21 @@ public:
     void AddSpotlight(uint32_t frameIndex, const QrSpotLightUploadInfo &info);
     bool AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUploadBatch &batch, const uint32_t *pTextureIndices);
 
+    struct ClusterLightTailRange
+    {
+        const uint32_t *pOffsets = nullptr;
+        const uint64_t *pUniqueIds = nullptr;
+        const float    *pProb = nullptr;
+        const float    *pMarginal = nullptr;
+        const uint32_t *pAlias = nullptr;
+        const float    *pBeta = nullptr;
+        uint32_t        tailCount = 0;
+    };
+
     void SetClusterLightLists(uint32_t frameIndex, uint32_t numClusters,
                               const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
-                              uint32_t totalLightCount, uint64_t listGeneration);
+                              uint32_t totalLightCount, uint64_t listGeneration,
+                              const ClusterLightTailRange &tails);
 
     void SetClusterSkyVisibility(const uint8_t *pBits, uint32_t numClusters);
 
@@ -93,6 +105,8 @@ public:
         VkBuffer lightStats;
         VkBuffer clusterSkyVis;
         VkBuffer dtalMembers;
+        VkBuffer tailOffsets;
+        VkBuffer tailEntries;
     };
 
     struct Copy
@@ -108,6 +122,8 @@ public:
         Copy listLights;
         Copy clusterSkyVis;
         Copy dtalMembers;
+        Copy tailOffsets;
+        Copy tailEntries;
     };
 
     Buffers GetBuffers() const;
@@ -150,6 +166,8 @@ private:
 
     std::shared_ptr<AutoBuffer> lightListOffsets;
     std::shared_ptr<AutoBuffer> lightListLights;
+    std::shared_ptr<AutoBuffer> lightListTailOffsets;
+    std::shared_ptr<AutoBuffer> lightListTailEntries;
 
     std::shared_ptr<AutoBuffer> clusterSkyVis;
     bool                        clusterSkyVisCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
@@ -163,6 +181,8 @@ private:
     uint64_t publishedListGeneration[MAX_FRAMES_IN_FLIGHT] = {};
     uint32_t publishedListClusters[MAX_FRAMES_IN_FLIGHT] = {};
     uint32_t publishedListWords[MAX_FRAMES_IN_FLIGHT] = {};
+    uint32_t publishedTailWords[MAX_FRAMES_IN_FLIGHT] = {};
+    uint32_t publishedTailClusters[MAX_FRAMES_IN_FLIGHT] = {};
     std::vector<uint64_t> publishedLightOrder[MAX_FRAMES_IN_FLIGHT];
     std::vector<uint32_t> publishedLightIndex[MAX_FRAMES_IN_FLIGHT];
 
@@ -170,6 +190,8 @@ private:
     uint64_t deviceListGeneration = 0;
     uint32_t deviceListClusters = 0;
     uint32_t deviceListWords = 0;
+    uint32_t deviceTailWords = 0;
+    uint32_t deviceTailClusters = 0;
     std::vector<uint64_t> deviceLightOrder;
     std::vector<uint32_t> deviceLightIndex;
 

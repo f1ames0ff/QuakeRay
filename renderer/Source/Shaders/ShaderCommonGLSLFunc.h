@@ -201,6 +201,16 @@ layout(set = DESC_SET_LIGHT_SOURCES, binding = BINDING_LIGHT_SOURCES_DTAL_MEMBER
 {
     ShDtalMember dtalMembers[];
 };
+
+layout(set = DESC_SET_LIGHT_SOURCES, binding = BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS) readonly buffer Q2LightListTailOffsets_BT
+{
+    uint q2LightListTailOffsets[];
+};
+
+layout(set = DESC_SET_LIGHT_SOURCES, binding = BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL) readonly buffer Q2LightListTail_BT
+{
+    ShQ2LightTail q2LightListTail[];
+};
 #endif
 
 

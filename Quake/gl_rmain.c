@@ -538,7 +538,13 @@ static void RT_UploadAllDlights ()
 			                uid, RT_LIGHT_KIND_CUSTOM, "");
 
 			if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-				RT_ClusterLightAdd (uid, position, RT_ClusterLightReach ());
+			{
+				const float power = (info.color.data[0] * 0.2125f + info.color.data[1] * 0.7154f +
+				                     info.color.data[2] * 0.0721f) *
+				                    info.radius * info.radius;
+
+				RT_ClusterLightAddPower (uid, position, RT_ClusterLightReach (), power);
+			}
 		}
 	}
 
@@ -591,7 +597,13 @@ static void RT_UploadAllDlights ()
 		QR_CHECK (r);
 
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (info.uniqueID, position, RT_ClusterLightReach ());
+		{
+			const float power = (info.color.data[0] * 0.2125f + info.color.data[1] * 0.7154f +
+			                     info.color.data[2] * 0.0721f) *
+			                    info.radius * info.radius;
+
+			RT_ClusterLightAddPower (info.uniqueID, position, RT_ClusterLightReach (), power);
+		}
 	}
 
 	RT_UploadSunLight ();

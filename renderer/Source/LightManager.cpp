@@ -38,6 +38,7 @@ constexpr float kMinSphereRadius = 0.005f;
 constexpr uint32_t kLightArrayMaxSize = LightManager::LIGHT_ARRAY_ENTRY_COUNT;
 
 static_assert(sizeof(QrDtalMemberUpload) == sizeof(ShDtalMember), "the DTAL member upload record has to match the shader layout");
+static_assert(sizeof(ShQ2LightTail) == 16, "the overflow tail entry is one 16-byte record");
 static_assert(LightManager::DTAL_MEMBER_CAPACITY <= QR_DTAL_MAX_UPLOAD_MEMBERS, "renderer member capacity is part of the public budget");
 
 static_assert(LightManager::LIGHT_STATS_CLUSTER_COUNT == Q2_MAX_CLUSTERS, "cluster count of the light statistics buffer");
@@ -310,6 +311,18 @@ qray::LightManager::LightManager(
                                 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                             "Q2 light list lights");
 
+    lightListTailOffsets = std::make_shared<AutoBuffer>(device, _allocator);
+    lightListTailOffsets->Create(sizeof(uint32_t) * (Q2_MAX_CLUSTERS + 1 + Q2_MAX_CLUSTERS),
+                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                                 "Q2 light list tail offsets");
+
+    lightListTailEntries = std::make_shared<AutoBuffer>(device, _allocator);
+    lightListTailEntries->Create(sizeof(ShQ2LightTail) * Q2_LIGHT_LIST_TAIL_CAPACITY,
+                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                                 "Q2 light list tail entries");
+
     lightStats.Init(_allocator, GetLightStatsSlotSize() * LIGHT_STATS_SLOT_COUNT,
                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -401,6 +414,8 @@ void qray::LightManager::Reset()
         publishedListValid[i] = false;
         publishedLightOrder[i].clear();
         publishedLightIndex[i].clear();
+        publishedTailWords[i] = 0;
+        publishedTailClusters[i] = 0;
         lightListCopyPending[i] = false;
 
         memset(clusterSkyVis->GetMapped(i), 0xFF, sizeof(uint32_t) * CLUSTER_SKY_VIS_WORD_COUNT);
@@ -508,6 +523,8 @@ bool qray::LightManager::DeviceHoldsPublishedList(uint32_t frameIndex) const
            deviceListGeneration == publishedListGeneration[frameIndex] &&
            deviceListClusters == publishedListClusters[frameIndex] &&
            deviceListWords == publishedListWords[frameIndex] &&
+           deviceTailWords == publishedTailWords[frameIndex] &&
+           deviceTailClusters == publishedTailClusters[frameIndex] &&
            deviceLightOrder == publishedLightOrder[frameIndex] &&
            deviceLightIndex == publishedLightIndex[frameIndex];
 }
@@ -518,6 +535,8 @@ void qray::LightManager::RecordDeviceListPublication(uint32_t frameIndex)
     deviceListGeneration = publishedListGeneration[frameIndex];
     deviceListClusters = publishedListClusters[frameIndex];
     deviceListWords = publishedListWords[frameIndex];
+    deviceTailWords = publishedTailWords[frameIndex];
+    deviceTailClusters = publishedTailClusters[frameIndex];
     deviceLightOrder = publishedLightOrder[frameIndex];
     deviceLightIndex = publishedLightIndex[frameIndex];
 }
@@ -717,6 +736,8 @@ qray::LightManager::Buffers qray::LightManager::GetBuffers() const
         lightStats.GetBuffer(),
         clusterSkyVis->GetDeviceLocal(),
         dtalMembersBuffer->GetDeviceLocal(),
+        lightListTailOffsets->GetDeviceLocal(),
+        lightListTailEntries->GetDeviceLocal(),
     };
 }
 
@@ -743,6 +764,16 @@ qray::LightManager::FrameCopies qray::LightManager::GetFrameCopies(uint32_t fram
         {
             lightListLights->GetStaging(frame),
             sizeof(uint32_t) * publishedListWords[frame],
+        };
+        copies.tailOffsets =
+        {
+            lightListTailOffsets->GetStaging(frame),
+            sizeof(uint32_t) * (publishedTailClusters[frame] + 1 + publishedTailClusters[frame]),
+        };
+        copies.tailEntries =
+        {
+            lightListTailEntries->GetStaging(frame),
+            sizeof(ShQ2LightTail) * publishedTailWords[frame],
         };
     }
 
@@ -793,13 +824,20 @@ VkDeviceSize qray::LightManager::GetLightStatsClusterSize() const
 
 void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numClusters,
                                               const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
-                                              uint32_t totalLightCount, uint64_t listGeneration)
+                                              uint32_t totalLightCount, uint64_t listGeneration,
+                                              const ClusterLightTailRange &tails)
 {
     numClusters = std::min(numClusters, uint32_t(Q2_MAX_CLUSTERS));
     statsClusterTarget = numClusters;
 
     const uint32_t lightWordCapacity = Q2_MAX_CLUSTERS * Q2_LIGHT_LIST_MAX_PER_CELL;
     const uint32_t listWordCount = std::min(totalLightCount, lightWordCapacity);
+
+    const bool tailsProvided = tails.tailCount > 0 && tails.pOffsets != nullptr && tails.pUniqueIds != nullptr &&
+                               tails.pProb != nullptr && tails.pMarginal != nullptr && tails.pAlias != nullptr &&
+                               tails.pBeta != nullptr;
+    const uint32_t tailWordCount =
+        tailsProvided ? std::min(tails.tailCount, uint32_t(Q2_LIGHT_LIST_TAIL_CAPACITY)) : 0;
 
     const uint32_t registeredCount = uint32_t(registeredLightOrder[frameIndex].size());
     const bool samePlaces =
@@ -811,6 +849,7 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
     const bool sameAsPublished =
         publishedListValid[frameIndex] && publishedListGeneration[frameIndex] == listGeneration &&
         publishedListClusters[frameIndex] == numClusters && publishedListWords[frameIndex] == listWordCount &&
+        publishedTailWords[frameIndex] == tailWordCount &&
         samePlaces && publishedLightOrder[frameIndex] == registeredLightOrder[frameIndex];
 
     if (sameAsPublished)
@@ -898,10 +937,87 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
         pDstLights[i] = index;
     }
 
+    uint32_t *pTailOffsets = static_cast<uint32_t *>(lightListTailOffsets->GetMapped(frameIndex));
+    ShQ2LightTail *pTailEntries = static_cast<ShQ2LightTail *>(lightListTailEntries->GetMapped(frameIndex));
+
+    for (uint32_t i = 0; i <= 2 * Q2_MAX_CLUSTERS + 1; i++)
+    {
+        pTailOffsets[i] = 0;
+    }
+
+    if (tailWordCount > 0)
+    {
+        for (uint32_t i = 0; i <= numClusters; i++)
+        {
+            pTailOffsets[i] = tails.pOffsets[i];
+        }
+
+        float *pTailBeta = reinterpret_cast<float *>(pTailOffsets + Q2_MAX_CLUSTERS + 1);
+
+        for (uint32_t c = 0; c < numClusters; c++)
+        {
+            const float beta = tails.pBeta[c];
+
+            pTailBeta[c] = (std::isfinite(beta) && beta > 0.0f) ? (beta > 1.0f ? 1.0f : beta) : 0.0f;
+        }
+
+        for (uint32_t i = 0; i < tailWordCount; i++)
+        {
+            const uint64_t uid = tails.pUniqueIds[i];
+            uint32_t       index = uint32_t(LIGHT_INDEX_NONE);
+
+            if (uid != kLightUidHole)
+            {
+                const uint64_t hash = uid * 0x9E3779B97F4A7C15ull;
+                uint32_t       slot = static_cast<uint32_t>(hash >> 32) & (kCacheSize - 1);
+
+                bool found = false;
+
+                for (uint32_t probe = 0; probe < kCacheSize; probe++)
+                {
+                    const CachedIndex &entry = cache[slot];
+
+                    if (entry.index == kNotCached)
+                    {
+                        break;
+                    }
+
+                    if (entry.uid == uid)
+                    {
+                        index = entry.index;
+                        found = true;
+                        break;
+                    }
+
+                    slot = (slot + 1) & (kCacheSize - 1);
+                }
+
+                if (!found)
+                {
+                    uint32_t resolved = 0;
+                    index = FindRegisteredLight(frameIndex, uid, resolved) ? resolved : uint32_t(LIGHT_INDEX_NONE);
+
+                    if (cache[slot].index == kNotCached)
+                    {
+                        cache[slot].uid = uid;
+                        cache[slot].index = index;
+                    }
+                }
+            }
+
+            pTailEntries[i].lightIndex = index;
+            pTailEntries[i].aliasIndex = (index != uint32_t(LIGHT_INDEX_NONE)) ? tails.pAlias[i] : i;
+            pTailEntries[i].prob = tails.pProb[i];
+            pTailEntries[i].marginalProb = (index != uint32_t(LIGHT_INDEX_NONE)) ? tails.pMarginal[i] : 0.0f;
+        }
+    }
+
     publishedListValid[frameIndex] = true;
     publishedListGeneration[frameIndex] = listGeneration;
     publishedListClusters[frameIndex] = numClusters;
     publishedListWords[frameIndex] = listWordCount;
+    publishedTailWords[frameIndex] = tailWordCount;
+    publishedTailClusters[frameIndex] = numClusters;
     publishedLightOrder[frameIndex] = registeredLightOrder[frameIndex];
     publishedLightIndex[frameIndex].assign(registeredLightIndex[frameIndex].begin(),
                                            registeredLightIndex[frameIndex].end());
@@ -1034,6 +1150,8 @@ constexpr uint32_t BINDINGS[] =
     BINDING_LIGHT_SOURCES_TAL_CDF,
     BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS,
     BINDING_LIGHT_SOURCES_DTAL_MEMBERS,
+    BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS,
+    BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL,
 };
 
 void qray::LightManager::CreateDescriptors()
@@ -1111,6 +1229,8 @@ void qray::LightManager::UpdateDescriptors(uint32_t frameIndex)
         talCdf,
         clusterSkyVis->GetDeviceLocal(),
         dtalMembersBuffer->GetDeviceLocal(),
+        lightListTailOffsets->GetDeviceLocal(),
+        lightListTailEntries->GetDeviceLocal(),
     };
     static_assert(std::size(BINDINGS) == std::size(buffers));
 

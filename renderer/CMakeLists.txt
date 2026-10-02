@@ -170,6 +170,10 @@ target_include_directories(renderer PRIVATE
 # Public include dir (qray/qray.h) — needed by the host and by qray sources
 target_include_directories(renderer PUBLIC "Include")
 
+# The shared alias-table utility is compiled into the host executable; the renderer
+# links the function at the final link, so only its header directory is needed here.
+target_include_directories(renderer PRIVATE "${CMAKE_SOURCE_DIR}/shared")
+
 # Vulkan (found in the parent scope)
 target_link_libraries(renderer PUBLIC Vulkan::Vulkan)
 

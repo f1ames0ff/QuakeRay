@@ -1644,7 +1644,12 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 		/* The geometry moved to get here, so the light is only promised the reach of a light of
 		   a moving entity. */
 		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (li.uniqueID, center, RT_ClusterLightReach ());
+		{
+			const float power = li.area * li.meanEmiss *
+			                    (li.color.data[0] * 0.2125f + li.color.data[1] * 0.7154f + li.color.data[2] * 0.0721f);
+
+			RT_ClusterLightAddPower (li.uniqueID, center, RT_ClusterLightReach (), power);
+		}
 
 		if (CVAR_TO_FLOAT (rt_dtal_debug) == 1.0f)
 		{
@@ -2524,11 +2529,11 @@ static void RT_DtalGroups_Register (void)
 		if (coverage->count > 0)
 		{
 			RT_ClusterLightAddMulti (group->uid, group->center, source->reach, group->boundsRadius,
-			                         coverage->clusters, coverage->count);
+			                         coverage->clusters, coverage->count, group->refPower);
 		}
 		else
 		{
-			RT_ClusterLightAdd (group->uid, group->center, source->reach);
+			RT_ClusterLightAddPower (group->uid, group->center, source->reach, group->refPower);
 		}
 	}
 }
@@ -4447,7 +4452,10 @@ static void RT_RegisterWorldModelLight (const QrTexturedAreaLightUploadInfo *lt,
 		center[2] + nudge * lt->normal.data[2],
 	};
 
-	RT_ClusterLightAdd (lt->uniqueID, origin, RT_ClusterLightReachStatic ());
+	const float power = lt->area * lt->meanEmiss *
+	                    (lt->color.data[0] * 0.2125f + lt->color.data[1] * 0.7154f + lt->color.data[2] * 0.0721f);
+
+	RT_ClusterLightAddPower (lt->uniqueID, origin, RT_ClusterLightReachStatic (), power);
 
 	if (CVAR_TO_FLOAT (rt_dtal_debug) == 1.0f)
 	{

@@ -151,6 +151,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   lists all or nothing, a light that moves takes every list of the scene with it, which is \
 	   what a lava ball was measured to cost. */ \
 	CVAR_DEF_T (rt_cluster_incremental, "1") \
+	CVAR_DEF_T (rt_cluster_sampling, "0") \
 	CVAR_DEF_T (rt_truelight, "1") \
 	CVAR_DEF_T (rt_materials_only, "0") \
 	CVAR_DEF_T (rt_light_styles, "1") \
@@ -644,6 +645,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");
+	RT_Bench_Setting (f, "rt_cluster_sampling");
 	RT_Bench_Setting (f, "rt_cluster_dlights");
 	RT_Bench_Setting (f, "rt_light_styles");
 	RT_Bench_Setting (f, "rt_model_lights");

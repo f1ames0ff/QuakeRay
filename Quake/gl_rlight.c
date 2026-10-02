@@ -364,6 +364,7 @@ extern cvar_t rt_poi_distthresh, rt_poi_distthresh_super;
 extern cvar_t rt_light_reach;
 extern cvar_t rt_light_reach_max;
 extern cvar_t rt_cluster_incremental;
+extern cvar_t rt_cluster_sampling;
 extern cvar_t rt_light_report_filter;
 
 
@@ -937,6 +938,7 @@ typedef struct rt_cluster_light_s
 	vec3_t   origin;
 	float    reach;   /* Quake units, zero when the light states no reach of its own */
 	float    radius;  /* Source bounds radius, zero for point-like sources */
+	float    power;   /* Estimated radiance power, used to rank the fast and overflow sets */
 	uint32_t cluster_count;
 	uint32_t clusters[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
 } rt_cluster_light_t;
@@ -1026,7 +1028,7 @@ float RT_ClusterLightReachStatic (void)
 }
 
 void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reach, float radius,
-                              const uint32_t *clusters, uint32_t clusterCount)
+                              const uint32_t *clusters, uint32_t clusterCount, float power)
 {
 	rt_cluster_reg_attempts++;
 
@@ -1090,6 +1092,7 @@ void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reac
 	VectorCopy (origin, rt_cluster_lights[index].origin);
 	rt_cluster_lights[index].reach = reach;
 	rt_cluster_lights[index].radius = radius;
+	rt_cluster_lights[index].power = (isfinite (power) && power > 0.0f) ? power : 0.0f;
 	rt_cluster_lights[index].cluster_count = clusterCount;
 
 	for (uint32_t k = 0; k < clusterCount; k++)
@@ -1100,7 +1103,12 @@ void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reac
 
 void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach)
 {
-	RT_ClusterLightAddMulti (uniqueID, origin, reach, 0.0f, NULL, 0);
+	RT_ClusterLightAddMulti (uniqueID, origin, reach, 0.0f, NULL, 0, 0.0f);
+}
+
+void RT_ClusterLightAddPower (uint64_t uniqueID, const vec3_t origin, float reach, float power)
+{
+	RT_ClusterLightAddMulti (uniqueID, origin, reach, 0.0f, NULL, 0, power);
 }
 
 static mleaf_t *RT_ResolveLightLeaf (const vec3_t origin, qmodel_t *wm)
@@ -1228,6 +1236,7 @@ void RT_ClusterLightListsUpload (void)
 		rt_cluster_sources[li].radius = rt_cluster_lights[li].radius;
 		rt_cluster_sources[li].clusterCount = clusterCount;
 		rt_cluster_sources[li].pClusters = (clusterCount > 0) ? rt_cluster_lights[li].clusters : NULL;
+		rt_cluster_sources[li].power = rt_cluster_lights[li].power;
 
 		if (clusterCount > 0 && rt_cluster_sources[li].cluster == (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER)
 			rt_cluster_sources[li].cluster = rt_cluster_lights[li].clusters[0];
@@ -1248,6 +1257,7 @@ void RT_ClusterLightListsUpload (void)
 		/* 1 in every run: the cvar is read-only (CVAR_ROM), and 0 - the legacy full
 		   recomposition - is engine-selectable only (Cvar_SetROM). */
 		.allowIncremental = CVAR_TO_BOOL (rt_cluster_incremental) ? 1 : 0,
+		.allowOverflow = CVAR_TO_BOOL (rt_cluster_sampling) ? 1 : 0,
 	};
 
 	QrResult r = qrUploadClusterLightSources (vulkan_globals.instance, &info);
