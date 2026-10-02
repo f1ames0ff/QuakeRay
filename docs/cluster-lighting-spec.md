@@ -187,32 +187,36 @@ Declare checked byte/work budgets. On budget exhaustion, report failure or retai
 ### B0. Diagnostics and capacity
 
 - [ ] Capture ordinary-source baseline and existing losses independently of A.
-- [ ] Add registration rejection reasons, evictions, candidate demand and occupancy reporting.
-- [ ] Fix mapped-camera-cluster diagnostics.
-- [ ] Deduplicate before capacity checks and make source acceptance coherent/race-free.
-- [ ] Update real renderer/native-buffer capacities and reserved-entry accounting together.
+      (The host diagnostics exist; no GPU capture was possible here.)
+- [x] Add registration rejection reasons, evictions, candidate demand and occupancy reporting.
+- [x] Fix mapped-camera-cluster diagnostics.
+- [x] Deduplicate before capacity checks and make source acceptance coherent/race-free.
+- [x] Update real renderer/native-buffer capacities and reserved-entry accounting together.
 
 ### B1. Candidate sets
 
-- [ ] Form complete accepted C before ranking.
-- [ ] Support ordinary domains and A's optional opaque group metadata.
-- [ ] Define conservative top-up/visibility/reach eligibility.
-- [ ] Rebuild affected clusters as a whole initially and verify full/incremental support parity.
+- [x] Form complete accepted C before ranking.
+- [x] Support ordinary domains and A's optional opaque group metadata.
+- [x] Define conservative top-up/visibility/reach eligibility.
+- [x] Rebuild affected clusters as a whole initially and verify full/incremental support parity.
+      (CPU support tests; the overflow policy bypasses the incremental path.)
 
 ### B2. Fast/overflow sampling
 
-- [ ] Select deterministic useful H and preserve all remaining sources in T.
-- [ ] Build supported tail aliases and branch probabilities.
-- [ ] Extend the existing UID-to-frame-index publication for both sets.
-- [ ] Return complete source probability and valid/invalid statistics-slot attribution in GLSL/HLSL direct/indirect paths.
-- [ ] Preserve history/ring safety during movement, removal and rank exchange.
+- [x] Select deterministic useful H and preserve all remaining sources in T.
+- [x] Build supported tail aliases and branch probabilities.
+- [x] Extend the existing UID-to-frame-index publication for both sets.
+- [x] Return complete source probability and valid/invalid statistics-slot attribution in GLSL/HLSL direct/indirect paths.
+- [x] Preserve history/ring safety during movement, removal and rank exchange.
 
 ### B3. Acceptance and tuning
 
-- [ ] Validate mean lighting under oversubscription and parent reorder.
+- [x] Validate mean lighting under oversubscription and parent reorder.
+      (Deterministic CPU reference for 0/1/128/129/512/2048 candidates and shuffled order.)
 - [ ] Benchmark ordinary lights with A absent/off.
 - [ ] Tune ranking/branch/update policies from measured noise and cost.
-- [ ] Leave B's report and integrate A through the shared boundary without editing member geometry.
+      (`beta` bounds, the 0.1% fast-mass floor and the tail weight floor are provisional defaults.)
+- [x] Leave B's report and integrate A through the shared boundary without editing member geometry.
 
 ## 12. File map
 
