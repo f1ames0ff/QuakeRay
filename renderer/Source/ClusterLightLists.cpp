@@ -885,10 +885,22 @@ void ClusterLightLists::FillLists(UserPrint *pUserPrint)
     if (stats.fullClusters > 0 && !warnedAboutFullList && pUserPrint != nullptr)
     {
         char buffer[256];
-        snprintf(buffer, sizeof(buffer),
-                 "RT: %u clusters reached the %u light limit, farther lights are not sampled "
-                 "there (Q2_LIGHT_LIST_MAX_PER_CELL)\n",
-                 stats.fullClusters, kMaxPerList);
+
+        if (overflowEnabled)
+        {
+            snprintf(buffer, sizeof(buffer),
+                     "RT: %u clusters filled their %u fast slots; the remaining accepted sources "
+                     "are sampled through the overflow tail\n",
+                     stats.fullClusters, kMaxPerList);
+        }
+        else
+        {
+            snprintf(buffer, sizeof(buffer),
+                     "RT: %u clusters reached the %u light limit, farther lights are not sampled "
+                     "there (Q2_LIGHT_LIST_MAX_PER_CELL)\n",
+                     stats.fullClusters, kMaxPerList);
+        }
+
         pUserPrint->Print(buffer);
         warnedAboutFullList = true;
     }
