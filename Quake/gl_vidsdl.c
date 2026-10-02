@@ -275,7 +275,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_bloom_emis_mult, "50") \
 	CVAR_DEF_T (rt_bloom, "0") \
 	\
-	CVAR_DEF_T (rt_exposure_bias, "-2.8") \
+	CVAR_DEF_T (rt_exposure_bias, "0") \
 	CVAR_DEF_T (rt_contrast, "0.6") \
 	\
 	CVAR_DEF_T (rt_ef_crt, "0") \
@@ -2116,7 +2116,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.minLogLuminance = -3.9f,
 		.maxLogLuminance = -2.8f,
 		.luminanceWhitePoint = 10.0f,
-		.exposureBias = CLAMP (-5.0f, CVAR_TO_FLOAT (rt_exposure_bias), 0.0f),
+		.exposureBias = CLAMP (-3.0f, CVAR_TO_FLOAT (rt_exposure_bias), 3.0f),
 		.contrast = CLAMP (0.0f, CVAR_TO_FLOAT (rt_contrast), 1.0f),
 	};
 
@@ -3613,7 +3613,7 @@ static void VID_MenuKey (int key)
 			Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
 			break;
 		case VID_OPT_EXPOSURE_BIAS:
-			VID_Menu_StepFloatCvar (&rt_exposure_bias, -0.1f, -5.0f, 0.0f);
+			VID_Menu_StepFloatCvar (&rt_exposure_bias, -0.1f, -3.0f, 3.0f);
 			break;
 		case VID_OPT_CONTRAST:
 			VID_Menu_StepFloatCvar (&rt_contrast, -0.1f, 0.0f, 1.0f);
@@ -3677,7 +3677,7 @@ static void VID_MenuKey (int key)
 			Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
 			break;
 		case VID_OPT_EXPOSURE_BIAS:
-			VID_Menu_StepFloatCvar (&rt_exposure_bias, 0.1f, -5.0f, 0.0f);
+			VID_Menu_StepFloatCvar (&rt_exposure_bias, 0.1f, -3.0f, 3.0f);
 			break;
 		case VID_OPT_CONTRAST:
 			VID_Menu_StepFloatCvar (&rt_contrast, 0.1f, 0.0f, 1.0f);
