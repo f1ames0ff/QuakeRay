@@ -430,6 +430,37 @@ int main(int argc, char **argv)
             }
             std::cout << "Volume wind passed at zenith and grazing angles for three layer scales\n";
 
+            layer.cloudLayer[0] = shadow.sunDirection[3] = 10000;
+            layer.cloudLayer[1] = shadow.cloudLayer[0] = 5000;
+            p.cloudParams[0] = layer.cloudParams[0] = shadow.cloudLayer[1] = 0;
+            p.cloudParams[1] = layer.cloudParams[1] = shadow.cloudLayer[2] = 8;
+            uniform.cloudLayerMotion[1] = 10000;
+            uniform.cloudLayerMotion[2] = 5000;
+            std::memcpy(uniform.cameraPositionPrev, uniform.cameraPosition, 12);
+            for (uint32_t quality : {0u, 2u})
+            {
+                for (float speed : {2.0f, 4.0f})
+                {
+                    const float wind = qray::RhiCloudsPass::GetWindSpeed(speed, 10000);
+                    p.cloudParams[2] = layer.cloudParams[2] = shadow.cloudMarch[1] = wind;
+                    uniform.cloudLayerMotion[0] = wind;
+                    for (uint32_t frame = 0; frame < 3; ++frame)
+                    {
+                        p.cloudColor[3] = layer.cloudColor[3] = shadow.cloudMarch[0] = 0.1f * frame;
+                        Require(render(quality, frame % 2), "fast-wind sun test must render");
+                        std::memcpy(uniform.worldUpVector, p.sunDirection, 12);
+                        const auto discProbe = probe();
+                        Require(discProbe[11] < 1e-6f && std::abs(discProbe[2]) > 1e-5f,
+                                "the sun's reprojection inherits cloud wind when occluded");
+                        uniform.worldUpVector[0] += 0.1f;
+                        Require(probe()[11] > 0.999f, "clouds outside the sun lost their wind reprojection");
+                    }
+                }
+            }
+            std::cout << "Sun motion remains anchored under cloud occlusion at wind speeds 2 and 4\n";
+
+            p.cloudParams[0] = layer.cloudParams[0] = shadow.cloudLayer[1] = 0.4f;
+            p.cloudParams[2] = layer.cloudParams[2] = shadow.cloudMarch[1] = 0;
             p.cloudParams[1] = layer.cloudParams[1] = shadow.cloudLayer[2] = 0.8f;
             const float scales[][2] = {{140000, 90000}, {10000, 5000}, {1400, 900}};
             for (const auto &scale : scales)

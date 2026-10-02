@@ -142,8 +142,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         : 1.0;
     float discTransmittance = lerp(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
 
-    float discVisible = clamp(disc * discTransmittance, 0.0, 1.0);
-    float cloudShare = 1.0 - smoothstep(0.02, 0.3, discVisible);
+    float cloudShare = 1.0;
+    if (sunAmount > 0.0 && sunIntensity > 0.0 && sunAngRad > 0.0)
+    {
+        float motionCosAng = cos(sunAngRad + 4.0 / float(max(size.x, size.y)));
+        cloudShare = 1.0 - smoothstep(motionCosAng, cosAng, dot(dir, sunDir));
+    }
 
     float3 sky = skyColor;
     float3 visible = sky * cloud.a + params.sunDiscColor.xyz * sunIntensity * disc * discTransmittance + cloud.rgb;

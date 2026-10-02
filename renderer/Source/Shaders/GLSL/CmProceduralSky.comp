@@ -135,23 +135,12 @@ void main()
         : 1.0;
     float discTransmittance = mix(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
 
-    // The share of the layer's own motion a direction carries, which is the alpha of
-    // the cubemap this pass writes and what the frame's motion vectors read
-    // (RaygenPrimary.inl). The layer drifts and the sky it hangs in does not, and of
-    // everything the sky shows only the sun's disc has an edge that stands still at the
-    // world's distances -- a drift carried to the disc drags it along the layer's
-    // history, which is what the eye finds it by, while the sky itself is a smooth
-    // field and an error of a pixel over a smooth field is no error at all. So the
-    // share is everything except what the disc stands for: `disc * discTransmittance`
-    // is how much of the disc shows (a cloud hides it by the fourth power of what it
-    // lets through, SUN_DISC_CLOUD_HIDE), and it is only where that is a real part of
-    // the pixel -- where the disc's edge is the thing the pixel is rather than a glow a
-    // cloud leaves through -- that the layer's motion is given up for the sky's.
-    // Deliberately not the layer's own opacity: a cloud the eye can see through still
-    // moves its haze across the frame, and a vector taken by how much light the layer
-    // holds back is a vector taken away from the clouds the eye watches.
-    float discVisible = clamp(disc * discTransmittance, 0.0, 1.0);
-    float cloudShare = 1.0 - smoothstep(0.02, 0.3, discVisible);
+    float cloudShare = 1.0;
+    if (sunAmount > 0.0 && sunIntensity > 0.0 && sunAngRad > 0.0)
+    {
+        float motionCosAng = cos(sunAngRad + 4.0 / float(max(size.x, size.y)));
+        cloudShare = 1.0 - smoothstep(motionCosAng, cosAng, dot(dir, sunDir));
+    }
 
     // Every path that reads this cubemap -- the frame itself, the ambient light
     // and the reflections -- carries the colour the sky is set to, with the sun's
