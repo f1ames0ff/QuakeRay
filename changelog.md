@@ -12,6 +12,7 @@
 ### Fixed
 - **Enhanced models** — triangle winding and baked MD5 normals were flipped, so the models shaded black whatever their skins were; the original `.mdl` flags are inherited, which brings back the rocket and grenade trails (classic and shader smoke) and the other per-model effects; and the player skin recoloring no longer runs on an enhanced model without indexed skin pixels, which is what crashed the startup.
 - **The first smoke plume no longer freezes the game** — the raster overlay's smoke pipeline is compiled and cached when the renderer initializes and rewarmed if the attachment formats invalidate the cache, instead of being created lazily on the first rocket or grenade.
+- **A texture with an invalid size no longer crashes the loader** — the 4096-cap rescale path could hand the downsampler an output dimension equal to its input (a one-pixel axis, or a zero from a bad caller) and tripped the assertion at startup; the loader now warns with the texture's name and dimensions, clamps a zero size to one, and still loads it.
 
 ## v0.24.0
 
