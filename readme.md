@@ -41,7 +41,7 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * God rays — volumetric sun shafts, aimed at the sun or at the bright areas of the sky texture
 * Volumetric fog
 * HDR bloom with a strict bright-pass threshold (`rt_bloom_threshold 3.0`, measured against the auto exposure) and a normalized pyramid (13-tap downsampling, firefly suppression in the first reduction, a screen-relative radius, three quality levels); setting the threshold to `0` switches to the thresholdless energy-conserving glare mix `scene + (blurred - scene) * mix`
-* Lens flare from the visible sun and exceptionally bright visible sources: a Chapman-style image-space flare with eight chromatic ghosts scaled through the screen centre, a halo ring, a radial lens distortion and a Gaussian bokeh blur of the half-resolution flare buffer
+* Lens flare from the visible sun and exceptionally bright visible sources: a Chapman-style image-space flare with eight chromatic ghosts scaled through the screen centre, a halo ring, a radial lens distortion in aspect-corrected space (circular ghosts and ring on any screen ratio) and a Gaussian bokeh blur of the half-resolution flare buffer
 * Post-processing: spectral damage and liquid chromatic aberration in the linear HDR stage before exposure and tone mapping, with a protected central region; a damage red tint and a bottom-screen pickup pulse after the upscaler; and a configurable LUT for colour grading
 * Contrast-adaptive sharpening (FidelityFX CAS) after the upscaler, with an adjustable strength
 * The `Effects` page in Options collects the bloom, lens-flare, gameplay-feedback and sharpening settings with a page-local reset

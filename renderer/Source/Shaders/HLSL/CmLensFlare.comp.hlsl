@@ -117,43 +117,52 @@ float3 flareSampleBorder(float2 uv)
     return postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, uv, 0).rgb);
 }
 
-float2 flareDistort(float2 uv)
+float2 flareDistort(float2 uv, float aspect)
 {
-    const float2 centered = uv - 0.5;
-    return 0.5 + centered * (1.0 + FLARE_DISTORTION * dot(centered, centered));
+    float2 centered = uv - 0.5;
+    centered.x *= aspect;
+    centered *= 1.0 + FLARE_DISTORTION * dot(centered, centered);
+    return 0.5 + float2(centered.x / aspect, centered.y);
 }
 
-float flareSourceMask(float2 sourceUV, float power)
+float2 flareToUV(float2 offset, float aspect)
 {
-    const float radius = length(sourceUV - 0.5) * 1.41421356;
+    return 0.5 + float2(offset.x / aspect, offset.y);
+}
+
+float flareSourceMask(float2 offset, float power)
+{
+    const float radius = length(offset) * 1.41421356;
     return pow(saturate(1.0 - radius), power);
 }
 
-float3 flareGhostLayer(float2 uv, float scale, float chroma)
+float3 flareGhostLayer(float2 uv, float aspect, float scale, float chroma)
 {
-    const float2 position = flareDistort(uv) - 0.5;
-    const float2 samplePosition = position / scale;
+    const float2 position = flareDistort(uv, aspect) - 0.5;
+    const float2 aspectPosition = float2(position.x * aspect, position.y);
+    const float2 samplePosition = aspectPosition / scale;
 
     float3 color;
-    color.r = flareSampleBorder(0.5 + samplePosition * (1.0 - chroma)).r;
-    color.g = flareSampleBorder(0.5 + samplePosition).g;
-    color.b = flareSampleBorder(0.5 + samplePosition * (1.0 + chroma)).b;
+    color.r = flareSampleBorder(flareToUV(samplePosition * (1.0 - chroma), aspect)).r;
+    color.g = flareSampleBorder(flareToUV(samplePosition, aspect)).g;
+    color.b = flareSampleBorder(flareToUV(samplePosition * (1.0 + chroma), aspect)).b;
 
-    const float mask = flareSourceMask(0.5 + samplePosition, 3.0);
+    const float mask = flareSourceMask(samplePosition, 3.0);
     return color * mask / max(scale * scale, 0.05);
 }
 
-float3 flareHaloLayer(float2 uv)
+float3 flareHaloLayer(float2 uv, float aspect)
 {
-    const float2 position = flareDistort(uv) - 0.5;
-    const float2 direction = -position * rsqrt(max(dot(position, position), 1e-8));
+    const float2 position = flareDistort(uv, aspect) - 0.5;
+    const float2 aspectPosition = float2(position.x * aspect, position.y);
+    const float2 direction = -aspectPosition * rsqrt(max(dot(aspectPosition, aspectPosition), 1e-8));
 
     float3 color;
-    color.r = flareSampleBorder(0.5 + position + direction * FLARE_HALO_RADIUS * (1.0 - FLARE_HALO_CHROMA)).r;
-    color.g = flareSampleBorder(0.5 + position + direction * FLARE_HALO_RADIUS).g;
-    color.b = flareSampleBorder(0.5 + position + direction * FLARE_HALO_RADIUS * (1.0 + FLARE_HALO_CHROMA)).b;
+    color.r = flareSampleBorder(flareToUV(aspectPosition + direction * FLARE_HALO_RADIUS * (1.0 - FLARE_HALO_CHROMA), aspect)).r;
+    color.g = flareSampleBorder(flareToUV(aspectPosition + direction * FLARE_HALO_RADIUS, aspect)).g;
+    color.b = flareSampleBorder(flareToUV(aspectPosition + direction * FLARE_HALO_RADIUS * (1.0 + FLARE_HALO_CHROMA), aspect)).b;
 
-    return color * flareSourceMask(0.5 + position + direction * FLARE_HALO_RADIUS, 5.0) * FLARE_HALO_INTENSITY;
+    return color * flareSourceMask(aspectPosition + direction * FLARE_HALO_RADIUS, 5.0) * FLARE_HALO_INTENSITY;
 }
 
 float3 flareBokehBlur(float2 uv, float2 sourceTexelSize)
@@ -205,15 +214,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     if (push.passMode == FLARE_PASS_FLARE)
     {
+        const float aspect = (float)width / (float)height;
+
         float3 sum = (float3)0.0;
 
         [unroll]
         for (uint ghost = 0; ghost < FLARE_GHOST_COUNT; ghost++)
         {
-            sum += flareGhostLayer(uv, FLARE_GHOST_SCALES[ghost], FLARE_GHOST_CHROMAS[ghost]) * FLARE_GHOST_TINTS[ghost];
+            sum += flareGhostLayer(uv, aspect, FLARE_GHOST_SCALES[ghost], FLARE_GHOST_CHROMAS[ghost]) * FLARE_GHOST_TINTS[ghost];
         }
 
-        sum += flareHaloLayer(uv);
+        sum += flareHaloLayer(uv, aspect);
         flareDest[pixel] = float4(postEffectsSanitize(sum * FLARE_GAIN), 1.0);
         return;
     }
