@@ -96,9 +96,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 
     const float texelSize = params.gridMinAndTexel.z;
+    const uint cellIndexSeed = params.gridSize.w * 747796405u + cell.x * 2891336453u + cell.y * 277803737u;
     const float2 cellJitter = float2(
-        rnd16(params.gridSize.w, 0x51u),
-        rnd16(params.gridSize.w, 0x52u)) - (float2)0.5;
+        rnd16(cellIndexSeed, 0x51u),
+        rnd16(cellIndexSeed, 0x52u)) - (float2)0.5;
     const float2 worldXY  = params.gridMinAndTexel.xy + (float2(cell) + (float2)0.5 + cellJitter) * texelSize;
 
     const float3 sunDirection = params.sunDirection.xyz;

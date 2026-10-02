@@ -52,9 +52,11 @@ uint loadReceiverMedia(const int2 pix)
 // weights redistributed over the remaining taps. Returns false when no tap is inside, which is the
 // documented analytic fallback. The result is the receiver irradiance: no extra NdotL, albedo or
 // camera throughput, because those belong to the composition chain.
-bool gatherCausticsIrradiance(const Surface surf, const CausticsParams_BT params, out float3 irradiance)
+bool gatherCausticsIrradiance(const Surface surf, const CausticsParams_BT params, out float3 irradiance,
+                              out float coverage)
 {
     irradiance = (float3)0.0;
+    coverage = 0.0;
 
     const uint resolution = params.gridSize.x;
     if (resolution == 0u || !(params.gridMinAndTexel.z > 0.0))
@@ -79,6 +81,7 @@ bool gatherCausticsIrradiance(const Surface surf, const CausticsParams_BT params
     };
 
     float3 sum = (float3)0.0;
+    float countSum = 0.0;
     float weightSum = 0.0;
 
     for (int i = 0; i < 4; i++)
@@ -89,7 +92,9 @@ bool gatherCausticsIrradiance(const Surface surf, const CausticsParams_BT params
             continue;
         }
 
-        sum += (float3)causticsCells[(uint)cell.y * resolution + (uint)cell.x].xyz * tapWeights[i];
+        const uint4 tap = causticsCells[(uint)cell.y * resolution + (uint)cell.x];
+        sum += (float3)tap.xyz * tapWeights[i];
+        countSum += (float)tap.w * tapWeights[i];
         weightSum += tapWeights[i];
     }
 
@@ -99,6 +104,7 @@ bool gatherCausticsIrradiance(const Surface surf, const CausticsParams_BT params
     }
 
     irradiance = sum / (weightSum * CAUSTICS_FLUX_SCALE);
+    coverage = saturate(countSum / weightSum);
     return true;
 }
 
@@ -231,13 +237,19 @@ void main()
             const bool traceValid = (caustics.gridSize.z & CAUSTICS_FLAG_TRACE_VALID) != 0u;
 
             float3 causticIrradiance = (float3)0.0;
-            if (traceValid && gatherCausticsIrradiance(surf, caustics, causticIrradiance))
+            float causticCoverage = 0.0;
+            if (traceValid && gatherCausticsIrradiance(surf, caustics, causticIrradiance, causticCoverage))
             {
-                // The photon estimate replaces the underwater diffuse sun: a valid trace with zero
-                // photons is a legitimately dark band and never re-adds the analytic term. The
-                // straight sun visibility and the cluster gate do not apply to it; the photon
-                // paths already decided visibility. The intensity is applied exactly here.
-                directDiffuse += boostChroma(causticIrradiance) * (1.0 / M_PI) * caustics.sunDirection.w;
+                // The photon estimate blends with the analytic transmitted sun by the accumulated
+                // photon coverage: a cell that received photons keeps the network, a cell that
+                // received none falls back to the analytic term instead of turning black. The
+                // analytic term carries the straight sun visibility, so the player's shadow stays
+                // pixel-precise where the photon field is empty. The intensity scales the photon
+                // side exactly once.
+                const float3 analyticDiffuse = d * sunVis * waterFactor;
+                const float3 photonDiffuse =
+                    boostChroma(causticIrradiance) * (1.0 / M_PI) * caustics.sunDirection.w;
+                directDiffuse += lerp(analyticDiffuse, photonDiffuse, causticCoverage);
             }
             else
             {
