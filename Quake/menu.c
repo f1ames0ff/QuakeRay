@@ -2551,9 +2551,6 @@ static void M_LightingOptions_Draw (cb_context_t *cbx)
 }
 
 
-//=============================================================================
-/* EFFECTS OPTIONS MENU */
-
 enum
 {
 	EFFECTS_OPT_BLOOM,
