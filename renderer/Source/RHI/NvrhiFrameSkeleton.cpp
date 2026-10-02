@@ -1044,7 +1044,6 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // so the accumulated field never has to be shifted or read across grids.
             causticsParams.accumParams[0] = causticsAccumReset ? 1.0f : 0.125f;
             causticsParams.accumParams[1] = causticsAccumReset ? 1.0f : 0.0f;
-            causticsAccumReset = false;
 
             if (!warnedCausticsParams && print != nullptr)
             {
@@ -1069,6 +1068,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                       accelStructs->GetTopLevel(frameIndex),
                                       passVertexData, causticsParams);
             causticsTraceRequested = true;
+
+            if (causticsPass->HasTraceResult(frameIndex))
+            {
+                causticsAccumReset = false;
+            }
         }
 
         // The direct-lighting pass reads what the primary just wrote (the G-buffer, the Q2 cluster
