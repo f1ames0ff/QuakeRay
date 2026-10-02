@@ -475,6 +475,19 @@ int main(int argc, char **argv)
                 sky.Render(frames.GetCommandList(slot), slot, discParams);
                 frames.EndSlot(slot);
                 const auto discPixels = ReadCube(device, sky.GetCubemapTexture(), 0, 128);
+                if (sizeIndex == 2)
+                {
+                    auto discAt = [&](uint32_t x, uint32_t y)
+                    {
+                        return discPixels[(size_t(4) * 128 * 128 + size_t(y) * 128 + x) * 4];
+                    };
+                    Require(discAt(74, 64) > 0.95f, "sun disc fades across its body instead of at the rim");
+                    Require(discAt(76, 64) > 0.05f && discAt(76, 64) < 0.95f,
+                            "sun-disc rim lost its antialiasing transition");
+                    Require(discAt(80, 64) == 0.0f, "sun disc leaks beyond its angular outline");
+                    std::cout << "Sun-disc contrast: interior=" << discAt(74, 64)
+                              << ", rim=" << discAt(76, 64) << ", outside=" << discAt(80, 64) << '\n';
+                }
                 for (size_t i = 0; i < discPixels.size(); i += 4)
                 {
                     Require(std::isfinite(discPixels[i]), "sun-disc size produced non-finite light");

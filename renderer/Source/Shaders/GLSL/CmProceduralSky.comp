@@ -126,8 +126,15 @@ void main()
         cloud = (centre * 4.0 + edges * 2.0 + corners) / 16.0;
     }
 
-    float cosAng = cos(sunAngRad);
-    float disc = sunAngRad > 0.0 ? smoothstep(cosAng, 1.0, dot(dir, sunDir)) * sunAmount : 0.0;
+    float edgeWidth = min(sunAngRad * 0.1, 1.0 / float(max(size.x, size.y)));
+    float innerRadius = 2.0 * sin(max(sunAngRad - edgeWidth, 0.0) * 0.5);
+    float outerRadius = 2.0 * sin((sunAngRad + edgeWidth) * 0.5);
+    vec3 discOffset = dir - sunDir;
+    float disc = sunAngRad > 0.0
+        ? (1.0 - smoothstep(innerRadius * innerRadius, outerRadius * outerRadius,
+                           dot(discOffset, discOffset))) * sunAmount
+        : 0.0;
+    float cosAng = cos(sunAngRad + edgeWidth);
 
     float layerTransmittance = cloudOpacity > 0.0
         ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
