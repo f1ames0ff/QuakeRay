@@ -11,6 +11,7 @@
 | Builder commit | `3811992b` (builder, alias utility, tests, CMake test target) |
 | Renderer integration commit | `e9684a0c` (group light type, member buffer, API, RHI, shaders, host adapter) |
 | Cluster coverage commit | `0e916862` (union coverage, editor controls, estimator reference tests) |
+| Diagnostics commit | `b038291a` (group rebuild counter) |
 
 All commits are on `feature/dtal-grid-groups`; nothing was merged, force-pushed or published.
 
@@ -125,10 +126,31 @@ source bounds radius. Group bounds are used for reach eligibility, not just the 
 | Numerical tests | `.\build\Debug\rt_lighting_tests.exe` | `1408687 checks, 0 failures` |
 | Whitespace | `git diff --check` | clean |
 
-Unavailable in this environment: a GPU runtime with a Quake map, so in-game screenshots, raw noise,
-denoised stability, frame timings, GPU memory and FPS measurements are **not** claimed. The numeric
-acceptance above is CPU-only and structural/analytic; no runtime check was marked passed without
-running it.
+Unavailable in this environment: scripted GPU captures, so image artifacts, raw noise, denoised
+stability, frame timings, GPU memory and FPS measurements are **not** claimed. The numeric acceptance
+above is CPU-only and structural/analytic; no runtime check was marked passed without running it.
+
+### 3.1 Manual visual test (performed)
+
+The build was run interactively on `e1m1`, `e1m7` and `e4m1` (registered Quake data, AMD RX 9070 XT,
+Vulkan 1.4.349, Debug build). `rt_dtal_groups` was toggled between `0`, `1` and `2` from the console
+and through the Light Editor:
+
+- no visual regression was observed between the modes: the scene mean, small torches and masked
+  emitting textures stayed in place; no popping or grid-aligned seams were reported;
+- `rt_dtal_debug` toggling and map loading worked with grouping enabled;
+- on `e4m1` the existing fast-list limit fired as expected:
+  `RT: 1 clusters reached the 128 light limit, farther lights are not sampled there` — this is the
+  cluster limitation Project A explicitly does not repair and Project B owns.
+
+Scripted screenshot capture (a config with `map`, frame `wait`s and `screenshot`) proved unreliable in
+this environment: before the map finishes loading the frame rate is high, so a fixed `wait` count
+elapses before the map is ready, and the map-loaded frame prints only after the capture sequence.
+No automated image pair was obtained, and none is claimed. During that investigation an unrelated
+pre-existing crash was found and is **not** a regression of this work: `viewpos` dereferences
+`cl.entities[cl.viewentity]` (`Quake/cl_main.c:1243`) and faults with `0xC0000005` when called before
+the client has a valid view entity; the report records it because the diagnostic was part of the
+failed capture script.
 
 ## 4. Measurements that were obtained
 
