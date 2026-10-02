@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "qr_editor.h"
+#include "snd_eq.h"
 
 static qboolean textmode;
 
@@ -937,6 +938,9 @@ void IN_SendKeyEvents (void)
 
 	while (SDL_PollEvent (&event))
 	{
+		if (SNDEQ_GuiProcessEvent (&event))
+			continue;
+
 		// qr light editor: the ImGui material panel owns the mouse and keyboard
 		if (QR_Editor_GuiProcessEvent (&event))
 			continue;

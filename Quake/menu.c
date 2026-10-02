@@ -22,6 +22,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "bgmusic.h"
+#include "snd_openal.h"
+#include "snd_eq.h"
 #include <stdbool.h>
 
 void (*vid_menucmdfn) (void); // johnfitz
@@ -2011,8 +2013,13 @@ enum
 	SOUND_OPT_SNDVOL,
 	SOUND_OPT_MUSICVOL,
 	SOUND_OPT_MUSICEXT,
+	SOUND_OPT_SPATIAL,
+	SOUND_OPT_FREQUENCY,
+	SOUND_OPT_EQUALIZER,
 	SOUND_OPTIONS_ITEMS
 };
+
+static const int sound_frequencies[] = {11025, 22050, 44100, 48000, 96000, 192000};
 
 static int sound_options_cursor = 0;
 
@@ -2050,6 +2057,28 @@ static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 	case SOUND_OPT_MUSICEXT:
 		Cvar_SetValueQuick (&bgm_extmusic, (float)(((int)bgm_extmusic.value + 2 + dir) % 2));
 		break;
+	case SOUND_OPT_SPATIAL:
+		if ((int)s_openal_hrtf.value == 2)
+			Cvar_SetValueQuick (&s_openal_hrtf, SNDAL_HrtfEnabled () ? 0.0f : 1.0f);
+		else
+			Cvar_SetValueQuick (&s_openal_hrtf, s_openal_hrtf.value ? 0.0f : 1.0f);
+		break;
+	case SOUND_OPT_FREQUENCY:
+	{
+		int i, index = 0;
+
+		for (i = 0; i < (int)countof (sound_frequencies); i++)
+		{
+			if (sound_frequencies[i] == (int)snd_mixspeed.value)
+			{
+				index = i;
+				break;
+			}
+		}
+		index = (index + (dir >= 0 ? 1 : (int)countof (sound_frequencies) - 1)) % (int)countof (sound_frequencies);
+		Cvar_SetValueQuick (&snd_mixspeed, (float)sound_frequencies[index]);
+		break;
+	}
 	}
 }
 
@@ -2068,7 +2097,10 @@ static void M_SoundOptions_Key (int k)
 	case K_KP_ENTER:
 	case K_ABUTTON:
 		m_entersound = true;
-		M_SoundOptions_AdjustSliders (1, k == K_MOUSE1);
+		if (sound_options_cursor == SOUND_OPT_EQUALIZER)
+			SNDEQ_OpenDialog ();
+		else
+			M_SoundOptions_AdjustSliders (1, k == K_MOUSE1);
 		return;
 
 	case K_UPARROW:
@@ -2116,6 +2148,14 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_MUSICEXT, "External Music");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_MUSICEXT, bgm_extmusic.value);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_SPATIAL, "Spatial sound");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_SPATIAL, SNDAL_HrtfEnabled () ? "on" : "off");
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, "Sound frequency");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_FREQUENCY, va ("%.1f kHz", snd_mixspeed.value / 1000.0));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_EQUALIZER, "Equalizer");
 
 
 	// cursor
@@ -3762,46 +3802,34 @@ void M_Menu_Quit_f (void)
 	}
 }
 
-static void M_Quit_Key (int key)
+static void M_Quit_Cancel (void)
 {
-	if (key == K_ESCAPE)
+	if (was_in_menus)
 	{
-		if (was_in_menus)
-		{
-			m_state = m_quit_prevstate;
-			m_entersound = true;
-		}
-		else
-		{
-			IN_Activate ();
-			key_dest = key_game;
-			m_state = m_none;
-		}
+		m_state = m_quit_prevstate;
+		m_entersound = true;
+	}
+	else
+	{
+		IN_Activate ();
+		key_dest = key_game;
+		m_state = m_none;
 	}
 }
 
-static void M_Quit_Char (int key)
+static void M_Quit_Key (int key)
 {
 	switch (key)
 	{
 	case 'n':
 	case 'N':
-		if (was_in_menus)
-		{
-			m_state = m_quit_prevstate;
-			m_entersound = true;
-		}
-		else
-		{
-			IN_Activate ();
-			key_dest = key_game;
-			m_state = m_none;
-		}
+	case K_ESCAPE:
+		M_Quit_Cancel ();
 		break;
 
 	case 'y':
 	case 'Y':
-	case ' ':
+	case K_SPACE:
 		m_is_quitting = true;
 		IN_DeactivateForMenu ();
 		key_dest = key_console;
@@ -3811,11 +3839,6 @@ static void M_Quit_Char (int key)
 	default:
 		break;
 	}
-}
-
-static qboolean M_Quit_TextEntry (void)
-{
-	return true;
 }
 
 static void M_Quit_Draw (cb_context_t *cbx) // johnfitz -- modified for new quit message
@@ -5462,9 +5485,6 @@ void M_Charinput (int key)
 	case m_maps:
 		M_Maps_Char (key);
 		return;
-	case m_quit:
-		M_Quit_Char (key);
-		return;
 	case m_lanconfig:
 		M_LanConfig_Char (key);
 		return;
@@ -5481,8 +5501,6 @@ qboolean M_TextEntry (void)
 		return M_Setup_TextEntry ();
 	case m_maps:
 		return M_Maps_TextEntry ();
-	case m_quit:
-		return M_Quit_TextEntry ();
 	case m_lanconfig:
 		return M_LanConfig_TextEntry ();
 	default:

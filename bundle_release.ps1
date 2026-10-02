@@ -125,6 +125,25 @@ foreach ($d in @("readme.md", "changelog.md", "LICENSE.txt")) {
     }
 }
 
+# 4b) Licence notices for the bundled runtime DLLs.
+$licenseDir = Join-Path $stage "licenses"
+New-Item -ItemType Directory -Path $licenseDir -Force | Out-Null
+
+$openalNotices = @{
+    "COPYING"       = "OpenAL-Soft-LGPL.txt"
+    "LICENSE-pffft" = "OpenAL-Soft-pffft.txt"
+}
+foreach ($notice in $openalNotices.GetEnumerator()) {
+    $src = Join-Path $repoRoot "third_party\openal-soft\$($notice.Key)"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $licenseDir $notice.Value) -Force
+        Write-Host "Added licenses\$($notice.Value)"
+    }
+    else {
+        Write-Warning "Skipped licenses\$($notice.Value) (not found in third_party\openal-soft)"
+    }
+}
+
 # 5) Create the ZIP with a top-level QuakeRay-<version>-win64 folder.
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 

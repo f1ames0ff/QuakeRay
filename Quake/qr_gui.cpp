@@ -483,6 +483,91 @@ void QR_GUI_EndPanel (void)
 	ImGui::End ();
 }
 
+void QR_GUI_Backdrop (float alpha)
+{
+	if (!g_ready)
+		return;
+
+	if (alpha < 0.0f)
+		alpha = 0.0f;
+	else if (alpha > 1.0f)
+		alpha = 1.0f;
+
+	ImGuiIO &io = ImGui::GetIO ();
+
+	ImGui::GetBackgroundDrawList ()->AddRectFilled (ImVec2 (0.0f, 0.0f), io.DisplaySize, IM_COL32 (0, 0, 0, (int)(alpha * 255.0f)));
+}
+
+int QR_GUI_BeginDialog (const char *title, float width)
+{
+	const ImVec2 center (ImGui::GetIO ().DisplaySize.x * 0.5f, ImGui::GetIO ().DisplaySize.y * 0.5f);
+
+	ImGui::SetNextWindowPos (center, ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
+	ImGui::SetNextWindowSize (ImVec2 (width, 0.0f), ImGuiCond_Always);
+
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+	                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+
+	return ImGui::Begin (title, nullptr, flags) ? 1 : 0;
+}
+
+void QR_GUI_EndDialog (void)
+{
+	ImGui::End ();
+}
+
+static float g_canvas_x;
+static float g_canvas_y;
+
+int QR_GUI_Canvas (const char *id, float width, float height, float *out_x, float *out_y)
+{
+	const ImVec2 origin = ImGui::GetCursorScreenPos ();
+	int          result = 0;
+
+	ImGui::InvisibleButton (id, ImVec2 (width, height));
+	if (ImGui::IsItemActive ())
+		result |= 2;
+	if (ImGui::IsItemHovered ())
+		result |= 4;
+
+	g_canvas_x = origin.x;
+	g_canvas_y = origin.y;
+
+	if (out_x)
+		*out_x = origin.x;
+	if (out_y)
+		*out_y = origin.y;
+
+	return result;
+}
+
+void QR_GUI_CanvasLine (float x0, float y0, float x1, float y1, uint32_t argb, float thickness)
+{
+	ImGui::GetWindowDrawList ()->AddLine (ImVec2 (g_canvas_x + x0, g_canvas_y + y0), ImVec2 (g_canvas_x + x1, g_canvas_y + y1), PackedColorToU32 (argb),
+	                                      thickness > 0.0f ? thickness : 1.0f);
+}
+
+void QR_GUI_CanvasRect (float x0, float y0, float x1, float y1, uint32_t argb)
+{
+	ImGui::GetWindowDrawList ()->AddRectFilled (ImVec2 (g_canvas_x + x0, g_canvas_y + y0), ImVec2 (g_canvas_x + x1, g_canvas_y + y1), PackedColorToU32 (argb));
+}
+
+void QR_GUI_CanvasCircle (float cx, float cy, float radius, uint32_t argb, float thickness, int filled)
+{
+	ImDrawList *dl = ImGui::GetWindowDrawList ();
+	const ImVec2 c (g_canvas_x + cx, g_canvas_y + cy);
+
+	if (filled)
+		dl->AddCircleFilled (c, radius, PackedColorToU32 (argb));
+	else
+		dl->AddCircle (c, radius, PackedColorToU32 (argb), 0, thickness > 0.0f ? thickness : 1.0f);
+}
+
+void QR_GUI_CanvasText (float x, float y, uint32_t argb, const char *text)
+{
+	ImGui::GetWindowDrawList ()->AddText (ImVec2 (g_canvas_x + x, g_canvas_y + y), PackedColorToU32 (argb), text ? text : "");
+}
+
 void QR_GUI_BeginScroll (void)
 {
 	ImGui::BeginChild ("##qr_scroll", ImVec2 (0.0f, 0.0f), ImGuiChildFlags_None,
@@ -502,6 +587,19 @@ void QR_GUI_Label (const char *text)
 void QR_GUI_LabelDim (const char *text)
 {
 	ImGui::TextDisabled ("%s", text);
+}
+
+void QR_GUI_LabelRight (const char *text)
+{
+	const char *label = text ? text : "";
+	float       avail, width;
+
+	ImGui::SameLine ();
+	avail = ImGui::GetContentRegionAvail ().x;
+	width = ImGui::CalcTextSize (label).x;
+	if (width < avail)
+		ImGui::SetCursorPosX (ImGui::GetCursorPosX () + avail - width);
+	ImGui::TextDisabled ("%s", label);
 }
 
 void QR_GUI_Separator (void)
@@ -541,6 +639,26 @@ void QR_GUI_Spacing (void)
 void QR_GUI_SameLine (void)
 {
 	ImGui::SameLine ();
+}
+
+void QR_GUI_PushWindowPadding (float x, float y)
+{
+	ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (x, y));
+}
+
+void QR_GUI_PopWindowPadding (void)
+{
+	ImGui::PopStyleVar ();
+}
+
+float QR_GUI_TextWidth (const char *text)
+{
+	return ImGui::CalcTextSize (text ? text : "").x;
+}
+
+int QR_GUI_CtrlDown (void)
+{
+	return ImGui::GetIO ().KeyCtrl ? 1 : 0;
 }
 
 void QR_GUI_Tooltip (const char *text)

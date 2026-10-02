@@ -27,11 +27,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "snd_codec.h"
 #include "bgmusic.h"
+#include "snd_openal.h"
+#include "snd_eq.h"
 
 static void S_Play (void);
 static void S_PlayVol (void);
 static void S_SoundList (void);
-static void S_Update_ (void);
 void        S_StopAllSounds (qboolean clear);
 static void S_StopAllSoundsC (void);
 
@@ -45,9 +46,6 @@ int       total_channels;
 static int      snd_blocked = 0;
 static qboolean snd_initialized = false;
 
-static dma_t    sn;
-volatile dma_t *shm = NULL;
-
 vec3_t listener_origin;
 vec3_t listener_forward;
 vec3_t listener_right;
@@ -55,7 +53,6 @@ vec3_t listener_up;
 
 #define sound_nominal_clip_dist 1000.0
 
-int soundtime;   // sample PAIRS
 int paintedtime; // sample PAIRS
 
 int                   s_rawend;
@@ -68,6 +65,12 @@ static int    num_sfx;
 static sfx_t *ambient_sfx[NUM_AMBIENTS];
 
 static qboolean sound_started = false;
+static qboolean sound_ready = false;
+
+static void S_BackendStart (void);
+static void S_BackendShutdown (void);
+static void S_OpenALChanged (cvar_t *var);
+static void S_MixSpeedChanged (cvar_t *var);
 
 SDL_mutex *snd_mutex;
 
@@ -77,52 +80,110 @@ cvar_t sfxvolume = {"volume", "0.7", CVAR_ARCHIVE};
 cvar_t precache = {"precache", "1", CVAR_NONE};
 cvar_t loadas8bit = {"loadas8bit", "0", CVAR_NONE};
 
-cvar_t sndspeed = {"sndspeed", "11025", CVAR_NONE};
-cvar_t snd_mixspeed = {"snd_mixspeed", "44100", CVAR_NONE};
-
-#if defined(_WIN32)
-#define SND_FILTERQUALITY_DEFAULT "5"
-#else
-#define SND_FILTERQUALITY_DEFAULT "1"
-#endif
-
-cvar_t snd_filterquality = {"snd_filterquality", SND_FILTERQUALITY_DEFAULT, CVAR_NONE};
+cvar_t snd_mixspeed = {"snd_mixspeed", "48000", CVAR_ARCHIVE};
 
 static cvar_t nosound = {"nosound", "0", CVAR_NONE};
 static cvar_t ambient_level = {"ambient_level", "0.3", CVAR_NONE};
 static cvar_t ambient_fade = {"ambient_fade", "100", CVAR_NONE};
-static cvar_t snd_noextraupdate = {"snd_noextraupdate", "0", CVAR_NONE};
 static cvar_t snd_show = {"snd_show", "0", CVAR_NONE};
-static cvar_t _snd_mixahead = {"_snd_mixahead", "0.1", CVAR_ARCHIVE};
+
+cvar_t s_openal_hrtf = {"s_openal_hrtf", "2", CVAR_ARCHIVE};
+cvar_t s_openal_max_sources = {"s_openal_max_sources", "256", CVAR_ARCHIVE};
 
 static void S_SoundInfo_f (void)
 {
-	if (!sound_started || !shm)
+	if (!sound_started || !snd_output.ready)
 	{
 		Con_Printf ("sound system not started\n");
 		return;
 	}
 
-	Con_Printf ("%d bit, %s, %d Hz\n", shm->samplebits, (shm->channels == 2) ? "stereo" : "mono", shm->speed);
-	Con_Printf ("%5d samples\n", shm->samples);
-	Con_Printf ("%5d samplepos\n", shm->samplepos);
-	Con_Printf ("%5d submission_chunk\n", shm->submission_chunk);
+	Con_Printf ("OpenAL Soft: %d bit, %s, %d Hz\n", snd_output.samplebits, (snd_output.channels == 2) ? "stereo" : "mono", snd_output.speed);
 	Con_Printf ("%5d total_channels\n", total_channels);
-	Con_Printf ("%p dma buffer\n", shm->buffer);
 }
 
-static void SND_Callback_sfxvolume (cvar_t *var)
+static void S_BackendStart (void)
 {
-	SND_InitScaletable ();
+	sound_started = SNDAL_Init ();
 }
 
-static void SND_Callback_snd_filterquality (cvar_t *var)
+static void S_BackendShutdown (void)
 {
-	if (snd_filterquality.value < 1 || snd_filterquality.value > 5)
+	SNDAL_Shutdown ();
+}
+
+static void S_RestartBackend (void)
+{
+	int oldspeed;
+
+	if (!snd_initialized)
+		return;
+	if (!sound_ready)
 	{
-		Con_Printf ("snd_filterquality must be between 1 and 5\n");
-		Cvar_SetQuick (&snd_filterquality, SND_FILTERQUALITY_DEFAULT);
+		Con_Printf ("Sound was never initialized; restart the game to change the audio settings\n");
+		return;
 	}
+
+	oldspeed = snd_output.speed;
+	Con_Printf ("Restarting sound backend\n");
+	if (sound_started)
+		S_StopAllSounds (true);
+
+	SDL_LockMutex (snd_mutex);
+	S_BackendShutdown ();
+	paintedtime = 0;
+	s_rawend = 0;
+	S_BackendStart ();
+	if (sound_started)
+	{
+		if (snd_blocked)
+			SNDAL_BlockSound ();
+		Con_Printf ("Audio: %d bit, %s, %d Hz\n", snd_output.samplebits, (snd_output.channels == 2) ? "stereo" : "mono", snd_output.speed);
+		if (snd_output.speed != oldspeed)
+			S_ClearAll ();
+	}
+	else
+	{
+		Con_Printf ("Failed initializing sound\n");
+		BGM_Stop ();
+	}
+	SDL_UnlockMutex (snd_mutex);
+}
+
+static void S_OpenALChanged (cvar_t *var)
+{
+	int maximum = (var == &s_openal_hrtf) ? 2 : MAX_CHANNELS;
+	int minimum = (var == &s_openal_hrtf) ? 0 : 1;
+
+	if (!isfinite (var->value))
+	{
+		Cvar_SetValueQuick (var, (var == &s_openal_hrtf) ? 2.0f : 256.0f);
+		return;
+	}
+	if (var->value < minimum || var->value > maximum || var->value != (int)var->value)
+	{
+		float value = CLAMP ((float)minimum, var->value, (float)maximum);
+
+		Cvar_SetValueQuick (var, (float)(int)value);
+		return;
+	}
+	S_RestartBackend ();
+}
+
+static void S_MixSpeedChanged (cvar_t *var)
+{
+	if (!isfinite (var->value) || var->value < 8000 || var->value > 192000)
+	{
+		Con_Printf ("snd_mixspeed must be between 8000 and 192000\n");
+		Cvar_SetQuick (&snd_mixspeed, "48000");
+		return;
+	}
+	if (var->value != (int)var->value)
+	{
+		Cvar_SetValueQuick (var, (float)(int)var->value);
+		return;
+	}
+	S_RestartBackend ();
 }
 
 /*
@@ -135,16 +196,12 @@ void S_Startup (void)
 	if (!snd_initialized)
 		return;
 
-	sound_started = SNDDMA_Init (&sn);
+	S_BackendStart ();
 
 	if (!sound_started)
-	{
 		Con_Printf ("Failed initializing sound\n");
-	}
 	else
-	{
-		Con_Printf ("Audio: %d bit, %s, %d Hz\n", shm->samplebits, (shm->channels == 2) ? "stereo" : "mono", shm->speed);
-	}
+		Con_Printf ("Audio: %d bit, %s, %d Hz\n", snd_output.samplebits, (snd_output.channels == 2) ? "stereo" : "mono", snd_output.speed);
 }
 
 /*
@@ -171,12 +228,12 @@ void S_Init (void)
 	Cvar_RegisterVariable (&bgmvolume);
 	Cvar_RegisterVariable (&ambient_level);
 	Cvar_RegisterVariable (&ambient_fade);
-	Cvar_RegisterVariable (&snd_noextraupdate);
 	Cvar_RegisterVariable (&snd_show);
-	Cvar_RegisterVariable (&_snd_mixahead);
-	Cvar_RegisterVariable (&sndspeed);
+	Cvar_RegisterVariable (&s_openal_hrtf);
+	Cvar_RegisterVariable (&s_openal_max_sources);
 	Cvar_RegisterVariable (&snd_mixspeed);
-	Cvar_RegisterVariable (&snd_filterquality);
+
+	SNDEQ_Init ();
 
 	if (safemode || COM_CheckParm ("-nosound"))
 		return;
@@ -189,22 +246,18 @@ void S_Init (void)
 	Cmd_AddCommand ("soundlist", S_SoundList);
 	Cmd_AddCommand ("soundinfo", S_SoundInfo_f);
 
-	i = COM_CheckParm ("-sndspeed");
-	if (i && i < com_argc - 1)
-	{
-		Cvar_SetQuick (&sndspeed, com_argv[i + 1]);
-	}
-
 	i = COM_CheckParm ("-mixspeed");
 	if (i && i < com_argc - 1)
 	{
 		Cvar_SetQuick (&snd_mixspeed, com_argv[i + 1]);
 	}
 
-	Cvar_SetCallback (&sfxvolume, SND_Callback_sfxvolume);
-	Cvar_SetCallback (&snd_filterquality, &SND_Callback_snd_filterquality);
-
-	SND_InitScaletable ();
+	Cvar_SetCallback (&s_openal_hrtf, S_OpenALChanged);
+	Cvar_SetCallback (&s_openal_max_sources, S_OpenALChanged);
+	Cvar_SetCallback (&snd_mixspeed, S_MixSpeedChanged);
+	S_OpenALChanged (&s_openal_hrtf);
+	S_OpenALChanged (&s_openal_max_sources);
+	S_MixSpeedChanged (&snd_mixspeed);
 
 	known_sfx = (sfx_t *)Mem_Alloc (MAX_SFX * sizeof (sfx_t));
 	num_sfx = 0;
@@ -215,16 +268,14 @@ void S_Init (void)
 	if (sound_started == 0)
 		return;
 
-	// provides a tick sound until washed clean
-	//	if (shm->buffer)
-	//		shm->buffer[4] = shm->buffer[5] = 0x7f;	// force a pop for debugging
-
 	ambient_sfx[AMBIENT_WATER] = S_PrecacheSound ("ambience/water1.wav");
 	ambient_sfx[AMBIENT_SKY] = S_PrecacheSound ("ambience/wind2.wav");
 
 	S_CodecInit ();
 
 	S_StopAllSounds (true);
+
+	sound_ready = true;
 }
 
 // =======================================================================
@@ -240,8 +291,7 @@ void S_Shutdown (void)
 
 	S_CodecShutdown ();
 
-	SNDDMA_Shutdown ();
-	shm = NULL;
+	S_BackendShutdown ();
 }
 
 // =======================================================================
@@ -394,16 +444,8 @@ void SND_Spatialize (channel_t *ch)
 	dist = VectorNormalize (source_vec) * ch->dist_mult;
 	dot = DotProduct (listener_right, source_vec);
 
-	if (shm->channels == 1)
-	{
-		rscale = 1.0;
-		lscale = 1.0;
-	}
-	else
-	{
-		rscale = 1.0 + dot;
-		lscale = 1.0 - dot;
-	}
+	rscale = 1.0 + dot;
+	lscale = 1.0 - dot;
 
 	// add in distance effect
 	scale = (1.0 - dist) * rscale;
@@ -470,13 +512,8 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 			continue;
 		if (check->sfx == sfx && !check->pos)
 		{
-			/*
-			skip = rand () % (int)(0.1 * shm->speed);
-			if (skip >= target_chan->end)
-			    skip = target_chan->end - 1;
-			*/
 			/* LordHavoc: fixed skip calculations */
-			skip = 0.1 * shm->speed; /* 0.1 * sc->speed */
+			skip = 0.1 * snd_output.speed;
 			if (skip > sc->length)
 				skip = sc->length;
 			if (skip > 0)
@@ -486,6 +523,8 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 			break;
 		}
 	}
+
+	SNDAL_StartChannel (target_chan);
 
 unlock_mutex:
 	SDL_UnlockMutex (snd_mutex);
@@ -497,12 +536,13 @@ void S_StopSound (int entnum, int entchannel)
 
 	SDL_LockMutex (snd_mutex);
 
-	for (i = 0; i < MAX_DYNAMIC_CHANNELS; i++)
+	for (i = NUM_AMBIENTS; i < NUM_AMBIENTS + MAX_DYNAMIC_CHANNELS; i++)
 	{
 		if (snd_channels[i].entnum == entnum && snd_channels[i].entchannel == entchannel)
 		{
 			snd_channels[i].end = 0;
 			snd_channels[i].sfx = NULL;
+			SNDAL_StopChannel (&snd_channels[i]);
 			goto unlock_mutex;
 		}
 	}
@@ -532,6 +572,8 @@ void S_StopAllSounds (qboolean clear)
 
 	memset (snd_channels, 0, MAX_CHANNELS * sizeof (channel_t));
 
+	SNDAL_StopAll ();
+
 	if (clear)
 		S_ClearBuffer ();
 
@@ -546,29 +588,30 @@ static void S_StopAllSoundsC (void)
 
 void S_ClearBuffer (void)
 {
-	int clear;
-
 	SDL_LockMutex (snd_mutex);
 
-	if (!sound_started || !shm)
-		goto unlock_mutex;
-
-	SNDDMA_LockBuffer ();
-	if (!shm->buffer)
+	if (!sound_started || !snd_output.ready)
 		goto unlock_mutex;
 
 	s_rawend = 0;
-
-	if (shm->samplebits == 8 && !shm->signed8)
-		clear = 0x80;
-	else
-		clear = 0;
-
-	memset (shm->buffer, clear, shm->samples * shm->samplebits / 8);
-
-	SNDDMA_Submit ();
+	SNDAL_ClearBuffer ();
 
 unlock_mutex:
+	SDL_UnlockMutex (snd_mutex);
+}
+
+void S_ClearMusicBuffer (void)
+{
+	SDL_LockMutex (snd_mutex);
+	s_rawend = 0;
+	SNDAL_ClearMusic ();
+	SDL_UnlockMutex (snd_mutex);
+}
+
+void S_PauseMusic (qboolean paused)
+{
+	SDL_LockMutex (snd_mutex);
+	SNDAL_PauseMusic (paused);
 	SDL_UnlockMutex (snd_mutex);
 }
 
@@ -689,6 +732,11 @@ Expects data in signed 16 bit, or unsigned
 8 bit format.
 ===================
 */
+int S_RawSamplesCursor (void)
+{
+	return SNDAL_RawPosition ();
+}
+
 void S_RawSamples (int samples, int rate, int width, int channels, byte *data, float volume)
 {
 	int   i;
@@ -696,10 +744,15 @@ void S_RawSamples (int samples, int rate, int width, int channels, byte *data, f
 	float scale;
 	int   intVolume;
 
-	if (s_rawend < paintedtime)
-		s_rawend = paintedtime;
+	if (!snd_output.ready || snd_output.speed <= 0 || samples <= 0 || rate <= 0 || !data || !isfinite (volume) ||
+	    (channels != 1 && channels != 2) || (width != 1 && width != 2))
+		return;
 
-	scale = (float)rate / shm->speed;
+	if (s_rawend < S_RawSamplesCursor ())
+		s_rawend = S_RawSamplesCursor ();
+
+	scale = (float)rate / snd_output.speed;
+	volume = CLAMP (0.0f, volume, 1.0f);
 	intVolume = (int)(256 * volume);
 
 	if (channels == 2 && width == 2)
@@ -773,10 +826,9 @@ Called once each time through the main loop
 */
 void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 {
-	int        i, j;
+	int        i;
 	int        total;
 	channel_t *ch;
-	channel_t *combine;
 
 	SDL_LockMutex (snd_mutex);
 	if (!sound_started || (snd_blocked > 0))
@@ -790,8 +842,6 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 	// update general area ambient sound sources
 	S_UpdateAmbientSounds ();
 
-	combine = NULL;
-
 	// update spatialization for static and dynamic sounds
 	ch = snd_channels + NUM_AMBIENTS;
 	for (i = NUM_AMBIENTS; i < total_channels; i++, ch++)
@@ -799,45 +849,6 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 		if (!ch->sfx)
 			continue;
 		SND_Spatialize (ch); // respatialize channel
-		if (!ch->leftvol && !ch->rightvol)
-			continue;
-
-		// try to combine static sounds with a previous channel of the same
-		// sound effect so we don't mix five torches every frame
-
-		if (i >= MAX_DYNAMIC_CHANNELS + NUM_AMBIENTS)
-		{
-			// see if it can just use the last one
-			if (combine && combine->sfx == ch->sfx)
-			{
-				combine->leftvol += ch->leftvol;
-				combine->rightvol += ch->rightvol;
-				ch->leftvol = ch->rightvol = 0;
-				continue;
-			}
-			// search for one
-			combine = snd_channels + MAX_DYNAMIC_CHANNELS + NUM_AMBIENTS;
-			for (j = MAX_DYNAMIC_CHANNELS + NUM_AMBIENTS; j < i; j++, combine++)
-			{
-				if (combine->sfx == ch->sfx)
-					break;
-			}
-
-			if (j == total_channels)
-			{
-				combine = NULL;
-			}
-			else
-			{
-				if (combine != ch)
-				{
-					combine->leftvol += ch->leftvol;
-					combine->rightvol += ch->rightvol;
-					ch->leftvol = ch->rightvol = 0;
-				}
-				continue;
-			}
-		}
 	}
 
 	//
@@ -863,85 +874,20 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 	//	BGM_Update();	// moved to the main loop just before S_Update ()
 
 	// mix some sound
-	S_Update_ ();
+	SNDEQ_Update ();
+	SNDAL_Update ();
 
 unlock_mutex:
 	SDL_UnlockMutex (snd_mutex);
 }
 
-static void GetSoundtime (void)
-{
-	int        samplepos;
-	static int buffers;
-	static int oldsamplepos;
-	int        fullsamples;
-
-	fullsamples = shm->samples / shm->channels;
-
-	// it is possible to miscount buffers if it has wrapped twice between
-	// calls to S_Update.  Oh well.
-	samplepos = SNDDMA_GetDMAPos ();
-
-	if (samplepos < oldsamplepos)
-	{
-		buffers++; // buffer wrapped
-
-		if (paintedtime > 0x40000000)
-		{ // time to chop things off to avoid 32 bit limits
-			buffers = 0;
-			paintedtime = fullsamples;
-			S_StopAllSounds (true);
-		}
-	}
-	oldsamplepos = samplepos;
-
-	soundtime = buffers * fullsamples + samplepos / shm->channels;
-}
-
 void S_ExtraUpdate (void)
 {
-	if (snd_noextraupdate.value)
-		return; // don't pollute timings
-	S_Update_ ();
-}
-
-static void S_Update_ (void)
-{
-	unsigned int endtime;
-	int          samps;
-
 	if (!snd_initialized)
 		return;
 
 	SDL_LockMutex (snd_mutex);
-
-	if (!sound_started || (snd_blocked > 0))
-		goto unlock_mutex;
-
-	SNDDMA_LockBuffer ();
-	if (!shm->buffer)
-		goto unlock_mutex;
-
-	// Updates DMA time
-	GetSoundtime ();
-
-	// check to make sure that we haven't overshot
-	if (paintedtime < soundtime)
-	{
-		//	Con_Printf ("S_Update_ : overflow\n");
-		paintedtime = soundtime;
-	}
-
-	// mix ahead of current position
-	endtime = soundtime + (unsigned int)(_snd_mixahead.value * shm->speed);
-	samps = shm->samples >> (shm->channels - 1);
-	endtime = q_min (endtime, (unsigned int)(soundtime + samps));
-
-	S_PaintChannels (endtime);
-
-	SNDDMA_Submit ();
-
-unlock_mutex:
+	SNDAL_ExtraUpdate ();
 	SDL_UnlockMutex (snd_mutex);
 }
 
@@ -954,9 +900,7 @@ void S_BlockSound (void)
 	if (sound_started && snd_blocked == 0) /* ++snd_blocked == 1 */
 	{
 		snd_blocked = 1;
-		S_ClearBuffer ();
-		if (shm)
-			SNDDMA_BlockSound ();
+		SNDAL_BlockSound ();
 	}
 	SDL_UnlockMutex (snd_mutex);
 }
@@ -970,8 +914,7 @@ void S_UnblockSound (void)
 	if (snd_blocked == 1) /* --snd_blocked == 0 */
 	{
 		snd_blocked = 0;
-		SNDDMA_UnblockSound ();
-		S_ClearBuffer ();
+		SNDAL_UnblockSound ();
 	}
 
 unlock_mutex:
@@ -986,6 +929,8 @@ S_ClearAll
 void S_ClearAll (void)
 {
 	SDL_LockMutex (snd_mutex);
+
+	SNDAL_ClearAll ();
 
 	for (int i = 0; i < num_sfx; ++i)
 	{
