@@ -6,6 +6,7 @@
 - **Enhanced models** — the Graphics menu's `Models` row chooses `enhanced` (the default) or `classic`. With `r_enhancedmodels` on, a model that ships a `.md3` or `.md5mesh` beside its `.mdl` is loaded from that file instead: an MD3 surface becomes rigid frames, an MD5 mesh is skinned on the CPU from its `.md5anim`, and both draw through the renderer's own geometry path. The skin is resolved from the shader name — the Ironwail-style `<shader>_00_00` pattern first, then the bare name, each under the model's own directory, `progs/` and `textures/`, with `.lmp` qpic lumps read through the engine palette.
 
 ### Changed
+- **The quit screen signs the fork** — below the engine name and version the by-line is now `by Artem "f1ames0ff"`, and the hint sits on its own line as `Press space or Y to exit`.
 - **Exposure bias defaults to `0 EV` and spans `−3…+3`** — the video menu's row could only darken the image down to −5 EV before; it now moves both ways from `0` (the new default) and is clamped to ±3 EV in the menu and in the value the renderer submits. A config that carries the old default needs a `reset rt_exposure_bias`.
 
 ### Fixed

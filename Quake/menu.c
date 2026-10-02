@@ -3852,8 +3852,8 @@ static void M_Quit_Key (int key)
 static void M_Quit_Draw (cb_context_t *cbx) // johnfitz -- modified for new quit message
 {
 	char msg1[40];
-	char msg2[] = "by Axel Gneiting and devs"; /* msg2/msg3 are mostly [40] */
-	char msg3[] = "Press y/space to quit";
+	char msg2[] = "by Artem \"f1ames0ff\""; /* msg2/msg3 are mostly [40] */
+	char msg3[] = "Press space or Y to exit";
 	int	 boxlen;
 
 	if (was_in_menus)
@@ -3872,12 +3872,12 @@ static void M_Quit_Draw (cb_context_t *cbx) // johnfitz -- modified for new quit
 	boxlen = q_max (strlen (msg1), q_max ((sizeof (msg2) - 1), (sizeof (msg3) - 1))) + 1;
 	if (boxlen & 1)
 		boxlen++;
-	M_DrawTextBox (cbx, 160 - 4 * (boxlen + 2), 76, boxlen, 4);
+	M_DrawTextBox (cbx, 160 - 4 * (boxlen + 2), 76, boxlen, 5);
 
 	// now do the text
 	M_Print (cbx, 160 - 4 * strlen (msg1), 88, msg1);
 	M_Print (cbx, 160 - 4 * (sizeof (msg2) - 1), 96, msg2);
-	M_PrintWhite (cbx, 160 - 4 * (sizeof (msg3) - 1), 104, msg3);
+	M_PrintWhite (cbx, 160 - 4 * (sizeof (msg3) - 1), 112, msg3);
 }
 
 //=============================================================================
