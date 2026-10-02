@@ -2364,6 +2364,8 @@ static void RT_DtalGroups_Rebuild (void)
 		rt_dtal_groups_active = false;
 		rt_dtal_groups_failed = false;
 		rt_dtal_groups_rebuild_pending = false;
+		rt_dtal_build_signature = rt_dtal_input_signature;
+		rt_dtal_build_mode = mode;
 		return;
 	}
 
