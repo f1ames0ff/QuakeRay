@@ -2598,7 +2598,7 @@ static void M_EffectsOptions_Adjust (int dir)
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_liquid_strength) + dir * 0.05f, 1.0f));
 		break;
 	case EFFECTS_OPT_PICKUP:
-		Cvar_SetValueQuick (&rt_ef_pickup_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_pickup_strength) + dir * 0.05f, 0.25f));
+		Cvar_SetValueQuick (&rt_ef_pickup_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_pickup_strength) + dir * 0.05f, 0.5f));
 		break;
 	case EFFECTS_OPT_SHARPEN:
 		Cvar_SetValueQuick (&rt_sharpen_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength) + dir * 0.05f, 1.0f));
@@ -2609,7 +2609,7 @@ static void M_EffectsOptions_Adjust (int dir)
 		Cvar_SetValueQuick (&rt_lensflare_intensity, 0.03f);
 		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.25f);
-		Cvar_SetValueQuick (&rt_ef_pickup_strength, 0.10f);
+		Cvar_SetValueQuick (&rt_ef_pickup_strength, 0.25f);
 		Cvar_SetValueQuick (&rt_sharpen_strength, 0.20f);
 		break;
 	}

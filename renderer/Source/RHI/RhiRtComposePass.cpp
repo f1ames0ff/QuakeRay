@@ -2032,12 +2032,15 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
         aberration = postEffectParams.pGameplayFeedback->aberration;
     }
 
+    const float bloomThreshold =
+        postEffectParams.pBloom != nullptr ? postEffectParams.pBloom->threshold : 0.0f;
+
     const float opticalControl[8] =
     {
         bloomStrength,
         flareStrength,
         hasOpticalResult ? 1.0f : 0.0f,
-        0.0f,
+        bloomThreshold,
         damage,
         liquid,
         aberration,

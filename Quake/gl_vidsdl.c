@@ -291,7 +291,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_bloom, "1") \
 	\
 	CVAR_DEF_T (rt_lensflare, "1") \
-	CVAR_DEF_T (rt_lensflare_intensity, "0.03") \
+	CVAR_DEF_T (rt_lensflare_intensity, "0.05") \
 	CVAR_DEF_T (rt_lensflare_threshold, "4.0") \
 	\
 	CVAR_DEF_T (rt_exposure_bias, "0") \
@@ -305,7 +305,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_ef_liquid, "1") \
 	CVAR_DEF_T (rt_ef_liquid_strength, "0.25") \
 	CVAR_DEF_T (rt_ef_pickup, "1") \
-	CVAR_DEF_T (rt_ef_pickup_strength, "0.10") \
+	CVAR_DEF_T (rt_ef_pickup_strength, "0.25") \
 	CVAR_DEF_T (rt_ef_pickup_height, "0.28") \
 	\
 	CVAR_DEF_T (rt_viewm_fovscale, "1.2") \
@@ -2435,7 +2435,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	static QrPostEffectsGameplayFeedback feedback_effect = {0};
 	feedback_effect.damage = rt_ef_damage_pulse * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_damage_strength), 1.0f);
 	feedback_effect.liquid = rt_ef_liquid_pulse * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_liquid_strength), 1.0f);
-	feedback_effect.pickup = rt_ef_pickup_pulse * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_pickup_strength), 0.25f);
+	feedback_effect.pickup = rt_ef_pickup_pulse * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_pickup_strength), 0.5f);
 	feedback_effect.pickupHeight = CLAMP (0.15f, CVAR_TO_FLOAT (rt_ef_pickup_height), 0.35f);
 	feedback_effect.pickupColor = (QrFloat3D){{1.0f, 0.831373f, 0.482353f}};
 	feedback_effect.aberration = CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_chraber), 1.0f);

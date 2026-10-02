@@ -116,7 +116,9 @@ private:
                             nvrhi::IBindingSet *pDestinationSet,
                             uint32_t destinationWidth,
                             uint32_t destinationHeight,
-                            bool extract);
+                            bool extract,
+                            float threshold,
+                            float knee);
 
     void DispatchUpsample(nvrhi::ICommandList *pCommandList,
                           uint32_t frameIndex,

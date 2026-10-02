@@ -40,7 +40,7 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * Procedural sky with volumetric clouds, configurable sky and sun colours, and cloud-shadowed sunlight
 * God rays — volumetric sun shafts, aimed at the sun or at the bright areas of the sky texture
 * Volumetric fog
-* Energy-conserving HDR bloom: the full HDR scene runs through a normalized pyramid (13-tap downsampling, firefly suppression in the first reduction, a screen-relative radius, three quality levels) and is mixed back as `scene + (blurred - scene) * mix`, with no bright-pass threshold
+* HDR bloom with a strict bright-pass threshold (`rt_bloom_threshold 3.0`, measured against the auto exposure) and a normalized pyramid (13-tap downsampling, firefly suppression in the first reduction, a screen-relative radius, three quality levels); setting the threshold to `0` switches to the thresholdless energy-conserving glare mix `scene + (blurred - scene) * mix`
 * Lens flare from the visible sun and exceptionally bright visible sources, with its own high-threshold bright pass and restrained ghosts and halo
 * Post-processing: spectral damage and liquid chromatic aberration in the linear HDR stage before exposure and tone mapping, with a protected central region; a damage red tint and a bottom-screen pickup pulse after the upscaler; and a configurable LUT for colour grading
 * Contrast-adaptive sharpening (FidelityFX CAS) after the upscaler, with an adjustable strength
@@ -186,10 +186,10 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_bench <demoname> [quit]` - plays a demo at its own speed with the frame profiler summed over it and appends the result to `benchmark.log`; `quit` closes the game after the run
 * `rt_debugflags 0` - diagnostic views (raw direct/indirect/specular, gradients, ...)
 * `rt_viewm_scale 0.32` - the weapon is drawn `0.32` times smaller and closer to the eye by the same factor, unchanged on screen but out of the walls; `1` restores the classic weapon
-* `rt_bloom 1` with `rt_bloom_intensity 0.06`, `rt_bloom_quality 2`, `rt_bloom_scatter 0.7` and `rt_bloom_radius 0.04` - the physically-based HDR bloom: the switch, the mix fraction of the energy-conserving full-scene glare (`0`-`0.2`, `scene + (blurred - scene) * mix`, no bright-pass threshold), the quality level (`0` low, `1` medium, `2` high), the reconstruction scatter and the radius as a fraction of the displayed image height; `rt_bloom_threshold` and `rt_bloom_knee` are deprecated no-ops kept for old configurations
-* `rt_lensflare 1` with `rt_lensflare_intensity 0.03` and `rt_lensflare_threshold 4.0` - the lens flare's switch, strength and its own bright-pass threshold, calibrated separately from bloom
+* `rt_bloom_intensity 0.06` with `rt_bloom_threshold 3.0`, `rt_bloom_knee 0.5`, `rt_bloom_quality 2`, `rt_bloom_scatter 0.7` and `rt_bloom_radius 0.04` - the HDR bloom: the mix fraction (`0`-`0.2`, and `0` turns the effect off), the strict bright-pass threshold and its soft knee (both measured against the auto exposure), the quality level (`0` low, `1` medium, `2` high), the reconstruction scatter and the radius as a fraction of the displayed image height; `rt_bloom_threshold 0` switches to the thresholdless physical glare mix
+* `rt_lensflare 1` with `rt_lensflare_intensity 0.05` and `rt_lensflare_threshold 4.0` - the lens flare's switch, strength and its own bright-pass threshold, calibrated separately from bloom
 * `rt_ef_damage 1` with `rt_ef_damage_strength 0.5`, `rt_ef_liquid 1` with `rt_ef_liquid_strength 0.25`, and `rt_ef_chraber 0.3` - the damage and liquid chromatic aberration with their switches and strengths, and the master scale over both: a spectral 6-8 tap split applied to the linear HDR image before exposure and tone mapping, with a protected central region; the post-upscale shader keeps only the damage red tint and the bottom pickup pulse
-* `rt_ef_pickup 1` with `rt_ef_pickup_strength 0.10` and `rt_ef_pickup_height 0.28` - the bottom-screen pickup pulse, its peak blend opacity and the fraction of the displayed height it covers
+* `rt_ef_pickup 1` with `rt_ef_pickup_strength 0.25` (range `0`-`0.5`) and `rt_ef_pickup_height 0.28` - the bottom-screen pickup pulse, its peak screen-blend opacity and the fraction of the displayed height it covers
 * `rt_sharpen 2` with `rt_sharpen_strength 0.20` - FidelityFX CAS after the upscaler: `0` off, `1` and `2` on, strength `0`-`1`; FSR's internal sharpening stays off
 
 ## Sound

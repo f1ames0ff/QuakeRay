@@ -464,23 +464,23 @@ void RhiBloomPass::Render(nvrhi::ICommandList *pCommandList,
     {
         DispatchDownsample(pCommandList, frameIndex, target.sourceSet, target.scratch.uavSet,
                            target.scratch.texture->getDesc().width, target.scratch.texture->getDesc().height,
-                           true);
+                           true, settings.threshold, settings.knee);
         DispatchDownsample(pCommandList, frameIndex, target.scratch.srvSet, target.down[0].uavSet,
                            target.down[0].texture->getDesc().width, target.down[0].texture->getDesc().height,
-                           false);
+                           false, settings.threshold, settings.knee);
     }
     else
     {
         DispatchDownsample(pCommandList, frameIndex, target.sourceSet, target.down[0].uavSet,
                            target.down[0].texture->getDesc().width, target.down[0].texture->getDesc().height,
-                           true);
+                           true, settings.threshold, settings.knee);
     }
 
     for (uint32_t i = 1; i < levelCount; i++)
     {
         DispatchDownsample(pCommandList, frameIndex, target.down[i - 1].srvSet, target.down[i].uavSet,
                            target.down[i].texture->getDesc().width, target.down[i].texture->getDesc().height,
-                           false);
+                           false, settings.threshold, settings.knee);
     }
 
     if (levelCount == 1)
@@ -657,9 +657,11 @@ void RhiBloomPass::DispatchDownsample(nvrhi::ICommandList *pCommandList,
                                       nvrhi::IBindingSet *pDestinationSet,
                                       uint32_t destinationWidth,
                                       uint32_t destinationHeight,
-                                      bool extract)
+                                      bool extract,
+                                      float threshold,
+                                      float knee)
 {
-    const BloomDownsamplePush push = { extract ? 1u : 0u, 0.0f, 0.0f, 0.0f };
+    const BloomDownsamplePush push = { extract ? 1u : 0u, threshold, knee, 0.0f };
 
     RecordDispatch(pCommandList, downsamplePipeline,
                    { pSourceSet, emptySet, tonemappingSets[frameIndex], pDestinationSet },

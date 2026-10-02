@@ -265,7 +265,7 @@ float3 applyChromaticAberration( const int2 pix )
     }
 
     const float heightScale = displayHeight / 1080.0;
-    const float splitPixels = min( ( 6.0 * damage + 2.0 * liquid ) * ( aberration / 0.3 ), 6.5 ) * heightScale;
+    const float splitPixels = min( ( 9.0 * damage + 6.0 * liquid ) * ( aberration / 0.3 ), 10.0 ) * heightScale;
     const float2 offset = direction * ( splitPixels / displayHeight * edgeMask );
 
     const int tapCount = 7;
@@ -339,7 +339,15 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         const float3 flare = lensFlareResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb;
         const float transmittance = getLevelFogTransmittance( pix );
 
-        hdr = scene + ( bloom - scene ) * ( bloomFlareControl.opticalControl.x * transmittance );
+        if( bloomFlareControl.opticalControl.w > 0.0 )
+        {
+            hdr = scene + bloom * ( bloomFlareControl.opticalControl.x * transmittance );
+        }
+        else
+        {
+            hdr = scene + ( bloom - scene ) * ( bloomFlareControl.opticalControl.x * transmittance );
+        }
+
         hdr += flare * bloomFlareControl.opticalControl.y * transmittance;
     }
 
