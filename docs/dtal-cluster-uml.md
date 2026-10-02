@@ -109,7 +109,23 @@ Review: source eviction from H moves it to T, not out of C; removal can refill f
 | Safe slot history | B / D04-D07 | Rank exchange while previous frames still write history |
 | No steady topology rebuild | A / D03-D05 | Animation-only/camera-only generation/upload counters |
 
-## 3. Local validation and rendering
+## 3. Implementation notes
+
+The delivered implementation follows the three owners of these views and adds no fourth:
+
+- the static-world builder/cache is `Quake/rt_dtal_groups.{h,c}` with the shared alias utility in
+  `shared/rt_alias.{h,c}` and the pure overflow selector in `Quake/rt_cluster_select.{h,c}`;
+- `LightManager` owns the parent records, the DTAL member storage and the fast and overflow list
+  buffers, with the existing frame staging, pending copies and RHI retirement;
+- `ClusterLightLists` owns the per-cluster candidate sets, the fast slots, the overflow alias
+  tables and the branch probabilities.
+
+Kept simplifications, matching the reports: one UID registry (no second handle table), index
+publication through the existing `SetClusterLightLists` (no GPU `FrameSourceMap`), synchronous
+rebuild at the existing world boundary (no background queue), one shared alias builder for members
+and overflow, and whole-cluster/frame recomposition instead of per-entry incremental repair.
+
+## 4. Local validation and rendering
 
 Use local Java and PlantUML paths, from the repository root:
 

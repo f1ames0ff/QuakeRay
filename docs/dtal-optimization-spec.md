@@ -1,5 +1,9 @@
 # Project A: Static-World DTAL Grid Groups
 
+Status: implemented on `feature/dtal-grid-groups`; see
+[the Project A implementation report](dtal-implementation-report.md) for the delivered scope,
+checks, measurements and remaining limitations.
+
 ## 1. Purpose and delivery boundary
 
 Implement spatially local DTAL groups that retain every accepted real emitting patch. Reduce independent parent-source count on highly fragmented emissive BSP geometry without moving emission, discarding luma patterns, or collapsing small lamps to representative points.

@@ -1,5 +1,9 @@
 # Project B: Cluster Source Selection and Overflow
 
+Status: implemented on `feature/cluster-lighting-overflow`; see
+[the Project B implementation report](cluster-implementation-report.md) for the delivered scope,
+checks, measurements and remaining limitations.
+
 ## 1. Purpose and independence
 
 Repair cluster-source acceptance and source selection when local candidate counts exceed the fast-list capacity. Improve the usefulness of the fast list while keeping every accepted candidate sampleable through an overflow distribution.

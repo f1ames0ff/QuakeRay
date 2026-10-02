@@ -2,8 +2,12 @@
 
 ## 1. Status and authoritative documents
 
-- Status: implementation specifications; runtime optimizations are not implemented yet.
-- Code baseline inspected: `dac6cdc4`.
+- Status: both projects are implemented on their branches; the delivered scope, checks, measured
+  results and remaining limitations are in [the Project A report](dtal-implementation-report.md)
+  and [the Project B report](cluster-implementation-report.md), and the final simplifications are
+  in [the refactoring report](lighting-refactoring-report.md).
+- Code baseline inspected: `dac6cdc4`; implementation started from `d365d033` (the then-current
+  `origin/master`).
 - Primary reproduction: fragmented static-world emissive geometry, especially lava floors and glowing walls.
 - Repository documentation and artifacts must be written in English.
 
