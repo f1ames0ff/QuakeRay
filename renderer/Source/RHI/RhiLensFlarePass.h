@@ -90,11 +90,7 @@ private:
         uint32_t width = 0;
         uint32_t height = 0;
         Texture bright;
-        Texture veil1;
-        Texture veil2;
-        Texture veil3;
-        Texture bokeh;
-        Texture smooth;
+        Texture flare;
         Texture result;
         nvrhi::ITexture *sourceTexture = nullptr;
         nvrhi::BindingSetHandle sourceSet;
@@ -113,8 +109,7 @@ private:
                       uint32_t destinationWidth,
                       uint32_t destinationHeight,
                       uint32_t passMode,
-                      float threshold,
-                      float knee);
+                      float threshold);
 
     void RecordDispatch(nvrhi::ICommandList *pCommandList,
                         nvrhi::IComputePipeline *pPipeline,

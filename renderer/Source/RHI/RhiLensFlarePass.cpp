@@ -40,12 +40,8 @@ constexpr uint32_t FLARE_SAMPLER_SLOT = 1;
 constexpr uint32_t FLARE_DESTINATION_SLOT = 0;
 
 constexpr uint32_t FLARE_PASS_BRIGHT = 0;
-constexpr uint32_t FLARE_PASS_DOWNSAMPLE = 1;
+constexpr uint32_t FLARE_PASS_FLARE = 1;
 constexpr uint32_t FLARE_PASS_BOKEH = 2;
-constexpr uint32_t FLARE_PASS_SMOOTH = 3;
-constexpr uint32_t FLARE_PASS_COMPOSITE = 4;
-
-constexpr float FLARE_KNEE = 0.5f;
 
 struct LensFlarePush
 {
@@ -404,33 +400,17 @@ void RhiLensFlarePass::Render(nvrhi::ICommandList *pCommandList,
     pCommandList->beginTrackingTextureState(pHdrSource, nvrhi::AllSubresources,
                                             nvrhi::ResourceStates::UnorderedAccess);
 
+    const uint32_t quarterWidth = target.bright.handle->getDesc().width;
+    const uint32_t quarterHeight = target.bright.handle->getDesc().height;
+
     DispatchPass(pCommandList, frameIndex, target.sourceSet, target.bright.uavSet,
-                 target.bright.handle->getDesc().width, target.bright.handle->getDesc().height,
-                 FLARE_PASS_BRIGHT, settings.threshold, FLARE_KNEE);
+                 quarterWidth, quarterHeight, FLARE_PASS_BRIGHT, settings.threshold);
 
-    DispatchPass(pCommandList, frameIndex, target.bright.srvSet, target.veil1.uavSet,
-                 target.veil1.handle->getDesc().width, target.veil1.handle->getDesc().height,
-                 FLARE_PASS_DOWNSAMPLE, 0.0f, 0.0f);
+    DispatchPass(pCommandList, frameIndex, target.bright.srvSet, target.flare.uavSet,
+                 quarterWidth, quarterHeight, FLARE_PASS_FLARE, 0.0f);
 
-    DispatchPass(pCommandList, frameIndex, target.veil1.srvSet, target.veil2.uavSet,
-                 target.veil2.handle->getDesc().width, target.veil2.handle->getDesc().height,
-                 FLARE_PASS_DOWNSAMPLE, 0.0f, 0.0f);
-
-    DispatchPass(pCommandList, frameIndex, target.veil2.srvSet, target.veil3.uavSet,
-                 target.veil3.handle->getDesc().width, target.veil3.handle->getDesc().height,
-                 FLARE_PASS_DOWNSAMPLE, 0.0f, 0.0f);
-
-    DispatchPass(pCommandList, frameIndex, target.veil3.srvSet, target.bokeh.uavSet,
-                 target.bokeh.handle->getDesc().width, target.bokeh.handle->getDesc().height,
-                 FLARE_PASS_BOKEH, 0.0f, 0.0f);
-
-    DispatchPass(pCommandList, frameIndex, target.bokeh.srvSet, target.smooth.uavSet,
-                 target.smooth.handle->getDesc().width, target.smooth.handle->getDesc().height,
-                 FLARE_PASS_SMOOTH, 0.0f, 0.0f);
-
-    DispatchPass(pCommandList, frameIndex, target.smooth.srvSet, target.result.uavSet,
-                 target.result.handle->getDesc().width, target.result.handle->getDesc().height,
-                 FLARE_PASS_COMPOSITE, 0.0f, 0.0f);
+    DispatchPass(pCommandList, frameIndex, target.flare.srvSet, target.result.uavSet,
+                 quarterWidth, quarterHeight, FLARE_PASS_BOKEH, 0.0f);
 
     pCommandList->setTextureState(pHdrSource, nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::UnorderedAccess);
@@ -440,44 +420,18 @@ bool RhiLensFlarePass::CreateTarget(Target &target, uint32_t width, uint32_t hei
 {
     const uint32_t halfWidth = std::max(1u, (width + 1) / 2);
     const uint32_t halfHeight = std::max(1u, (height + 1) / 2);
-    const uint32_t quarterWidth = std::max(1u, (halfWidth + 1) / 2);
-    const uint32_t quarterHeight = std::max(1u, (halfHeight + 1) / 2);
-    const uint32_t eighthWidth = std::max(1u, (quarterWidth + 1) / 2);
-    const uint32_t eighthHeight = std::max(1u, (quarterHeight + 1) / 2);
-    const uint32_t sixteenthWidth = std::max(1u, (eighthWidth + 1) / 2);
-    const uint32_t sixteenthHeight = std::max(1u, (eighthHeight + 1) / 2);
 
     if (!CreateTexture(target.bright, halfWidth, halfHeight, "RhiLensFlarePass bright"))
     {
         return false;
     }
 
-    if (!CreateTexture(target.veil1, quarterWidth, quarterHeight, "RhiLensFlarePass veil1"))
+    if (!CreateTexture(target.flare, halfWidth, halfHeight, "RhiLensFlarePass flare"))
     {
         return false;
     }
 
-    if (!CreateTexture(target.veil2, eighthWidth, eighthHeight, "RhiLensFlarePass veil2"))
-    {
-        return false;
-    }
-
-    if (!CreateTexture(target.veil3, sixteenthWidth, sixteenthHeight, "RhiLensFlarePass veil3"))
-    {
-        return false;
-    }
-
-    if (!CreateTexture(target.bokeh, quarterWidth, quarterHeight, "RhiLensFlarePass bokeh"))
-    {
-        return false;
-    }
-
-    if (!CreateTexture(target.smooth, quarterWidth, quarterHeight, "RhiLensFlarePass smooth"))
-    {
-        return false;
-    }
-
-    if (!CreateTexture(target.result, quarterWidth, quarterHeight, "RhiLensFlarePass result"))
+    if (!CreateTexture(target.result, halfWidth, halfHeight, "RhiLensFlarePass result"))
     {
         return false;
     }
@@ -536,10 +490,9 @@ void RhiLensFlarePass::DispatchPass(nvrhi::ICommandList *pCommandList,
                                     uint32_t destinationWidth,
                                     uint32_t destinationHeight,
                                     uint32_t passMode,
-                                    float threshold,
-                                    float knee)
+                                    float threshold)
 {
-    const LensFlarePush push = { passMode, threshold, knee, 0.0f };
+    const LensFlarePush push = { passMode, threshold, 0.0f, 0.0f };
 
     RecordDispatch(pCommandList, pipeline,
                    { pSourceSet, emptySet, tonemappingSets[frameIndex], pDestinationSet },
@@ -625,11 +578,7 @@ void RhiLensFlarePass::ReleaseTarget(Target &target)
     target.sourceTexture = nullptr;
 
     ReleaseTexture(target.bright);
-    ReleaseTexture(target.veil1);
-    ReleaseTexture(target.veil2);
-    ReleaseTexture(target.veil3);
-    ReleaseTexture(target.bokeh);
-    ReleaseTexture(target.smooth);
+    ReleaseTexture(target.flare);
     ReleaseTexture(target.result);
 
     target.width = 0;
@@ -649,11 +598,7 @@ void RhiLensFlarePass::ClearTarget(Target &target)
     target.sourceTexture = nullptr;
 
     ClearTexture(target.bright);
-    ClearTexture(target.veil1);
-    ClearTexture(target.veil2);
-    ClearTexture(target.veil3);
-    ClearTexture(target.bokeh);
-    ClearTexture(target.smooth);
+    ClearTexture(target.flare);
     ClearTexture(target.result);
 
     target.width = 0;

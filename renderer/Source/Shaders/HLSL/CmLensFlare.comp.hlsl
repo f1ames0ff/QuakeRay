@@ -32,129 +32,148 @@ struct LensFlarePush_BT
 
 [[vk::push_constant]] ConstantBuffer<LensFlarePush_BT> push;
 
-static const float FLARE_PI = 3.14159265358979323846;
-static const float FLARE_GOLDEN_ANGLE = 2.399963229728653;
-
 static const uint FLARE_PASS_BRIGHT = 0;
-static const uint FLARE_PASS_DOWNSAMPLE = 1;
+static const uint FLARE_PASS_FLARE = 1;
 static const uint FLARE_PASS_BOKEH = 2;
-static const uint FLARE_PASS_SMOOTH = 3;
-static const uint FLARE_PASS_COMPOSITE = 4;
 
-static const uint FLARE_BOKEH_TAPS = 32;
-static const float FLARE_APERTURE_BLADES = 8.0;
-static const float FLARE_APERTURE_SOFTNESS = 0.4;
-static const float FLARE_DISC_DIAMETER = 0.03;
-
-static const float FLARE_GHOST_SCALES[3] = { 0.25, 0.5, 0.85 };
-static const float FLARE_GHOST_OPACITIES[3] = { 0.10, 0.06, 0.035 };
-
-static const float FLARE_EDGE_FADE = 0.08;
-static const float FLARE_HALO_INVERSION = 0.12;
-static const float FLARE_HALO_OPACITY = 0.02;
-
-float flareEdgeFade(float2 uv)
+static const uint FLARE_GHOST_COUNT = 8;
+static const float FLARE_GHOST_SCALES[8] = { -0.8, -1.5, 0.6, 1.3, -2.2, 0.35, 2.0, -0.45 };
+static const float FLARE_GHOST_CHROMAS[8] = { 0.012, 0.022, 0.010, 0.030, 0.038, 0.016, 0.034, 0.026 };
+static const float3 FLARE_GHOST_TINTS[8] =
 {
-    const float2 clamped = saturate(uv);
-    const float2 low = smoothstep((float2)0.0, (float2)FLARE_EDGE_FADE, clamped);
-    const float2 high = smoothstep((float2)0.0, (float2)FLARE_EDGE_FADE, 1.0 - clamped);
-    return low.x * low.y * high.x * high.y;
+    float3(0.45, 0.55, 1.00),
+    float3(1.00, 0.60, 0.28),
+    float3(0.95, 0.35, 0.85),
+    float3(0.55, 0.70, 1.00),
+    float3(1.00, 0.70, 0.35),
+    float3(0.90, 0.40, 0.95),
+    float3(0.40, 0.65, 1.00),
+    float3(1.00, 0.55, 0.30),
+};
+
+static const float FLARE_DISTORTION = 0.2;
+static const float FLARE_HALO_RADIUS = 0.4;
+static const float FLARE_HALO_CHROMA = 0.03;
+static const float FLARE_HALO_INTENSITY = 1.0;
+static const float FLARE_CLAMP_MAX = 300.0;
+static const float FLARE_GAIN = 0.1;
+
+static const uint FLARE_BOKEH_TAPS = 40;
+static const float FLARE_GOLDEN_ANGLE = 2.399963229728653;
+static const float FLARE_BOKEH_RADIUS_TEXELS = 7.0;
+static const float FLARE_BOKEH_GAUSS = 3.0;
+
+float3 flareFetchClamped(float2 uv, float exposure)
+{
+    float3 color = postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, uv, 0).rgb) * exposure;
+
+    const float maximum = max(max(color.r, color.g), color.b);
+    return color * min(1.0, FLARE_CLAMP_MAX / max(maximum, 1e-6));
 }
 
-float2 flareToAspect(float2 uv, float aspect)
+float3 flareDownsampleBright(float2 uv, float2 sourceTexelSize, float exposure)
 {
-    return (uv - 0.5) * float2(aspect, 1.0);
+    const float3 tl = flareFetchClamped(uv + sourceTexelSize * float2(-2.0, -2.0), exposure);
+    const float3 tc = flareFetchClamped(uv + sourceTexelSize * float2(0.0, -2.0), exposure);
+    const float3 tr = flareFetchClamped(uv + sourceTexelSize * float2(2.0, -2.0), exposure);
+    const float3 ml = flareFetchClamped(uv + sourceTexelSize * float2(-2.0, 0.0), exposure);
+    const float3 mc = flareFetchClamped(uv, exposure);
+    const float3 mr = flareFetchClamped(uv + sourceTexelSize * float2(2.0, 0.0), exposure);
+    const float3 bl = flareFetchClamped(uv + sourceTexelSize * float2(-2.0, 2.0), exposure);
+    const float3 bc = flareFetchClamped(uv + sourceTexelSize * float2(0.0, 2.0), exposure);
+    const float3 br = flareFetchClamped(uv + sourceTexelSize * float2(2.0, 2.0), exposure);
+    const float3 q0 = flareFetchClamped(uv + sourceTexelSize * float2(-1.0, -1.0), exposure);
+    const float3 q1 = flareFetchClamped(uv + sourceTexelSize * float2(1.0, -1.0), exposure);
+    const float3 q2 = flareFetchClamped(uv + sourceTexelSize * float2(-1.0, 1.0), exposure);
+    const float3 q3 = flareFetchClamped(uv + sourceTexelSize * float2(1.0, 1.0), exposure);
+
+    const float3 g0 = (tl + tc + ml + mc) * 0.25;
+    const float3 g1 = (tc + tr + mc + mr) * 0.25;
+    const float3 g2 = (ml + mc + bl + bc) * 0.25;
+    const float3 g3 = (mc + mr + bc + br) * 0.25;
+    const float3 g4 = (q0 + q1 + q2 + q3) * 0.25;
+
+    const float w0 = 0.125 / (1.0 + getLuminance(g0));
+    const float w1 = 0.125 / (1.0 + getLuminance(g1));
+    const float w2 = 0.125 / (1.0 + getLuminance(g2));
+    const float w3 = 0.125 / (1.0 + getLuminance(g3));
+    const float w4 = 0.5 / (1.0 + getLuminance(g4));
+
+    float3 result = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / (w0 + w1 + w2 + w3 + w4);
+
+    const float luminance = getLuminance(result);
+    result *= max(luminance - push.threshold, 0.0) / max(luminance, POST_EFFECTS_EPSILON);
+
+    return postEffectsSanitize(result / exposure);
 }
 
-float2 flareFromAspect(float2 position, float aspect)
+float3 flareSampleBorder(float2 uv)
 {
-    return position / float2(aspect, 1.0) + 0.5;
-}
-
-float3 flareSampleFaded(float2 uv)
-{
-    const float fade = flareEdgeFade(uv);
-    if (fade <= 0.0)
+    if (any(uv < 0.0) || any(uv > 1.0))
     {
         return (float3)0.0;
     }
 
-    return postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, uv, 0).rgb) * fade;
+    return postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, uv, 0).rgb);
 }
 
-uint flareHash(uint value)
+float2 flareDistort(float2 uv)
 {
-    value ^= value >> 16;
-    value *= 0x7feb352du;
-    value ^= value >> 15;
-    value *= 0x846ca68bu;
-    value ^= value >> 16;
-
-    return value;
+    const float2 centered = uv - 0.5;
+    return 0.5 + centered * (1.0 + FLARE_DISTORTION * dot(centered, centered));
 }
 
-float flareApertureWeight(float2 offset)
+float flareSourceMask(float2 sourceUV, float power)
 {
-    const float radius = length(offset);
-    if (radius >= 1.0)
-    {
-        return 0.0;
-    }
-
-    const float bladeAngle = 2.0 * FLARE_PI / FLARE_APERTURE_BLADES;
-    const float angle = atan2(offset.y, offset.x);
-    const float blade = frac(angle / bladeAngle + 0.5) * bladeAngle;
-    const float edge = cos(bladeAngle * 0.5) / max(cos(blade - bladeAngle * 0.5), POST_EFFECTS_EPSILON);
-
-    return 1.0 - smoothstep(1.0 - FLARE_APERTURE_SOFTNESS, 1.0, radius / edge);
+    const float radius = length(sourceUV - 0.5) * 1.41421356;
+    return pow(saturate(1.0 - radius), power);
 }
 
-float3 flareBokehGather(float2 uv, float2 sourceTexelSize, float apertureRadiusTexels, float rotation)
+float3 flareGhostLayer(float2 uv, float scale, float chroma)
+{
+    const float2 position = flareDistort(uv) - 0.5;
+    const float2 samplePosition = position / scale;
+
+    float3 color;
+    color.r = flareSampleBorder(0.5 + samplePosition * (1.0 - chroma)).r;
+    color.g = flareSampleBorder(0.5 + samplePosition).g;
+    color.b = flareSampleBorder(0.5 + samplePosition * (1.0 + chroma)).b;
+
+    const float mask = flareSourceMask(0.5 + samplePosition, 3.0);
+    return color * mask / max(scale * scale, 0.05);
+}
+
+float3 flareHaloLayer(float2 uv)
+{
+    const float2 position = flareDistort(uv) - 0.5;
+    const float2 direction = -position * rsqrt(max(dot(position, position), 1e-8));
+
+    float3 color;
+    color.r = flareSampleBorder(0.5 + position + direction * FLARE_HALO_RADIUS * (1.0 - FLARE_HALO_CHROMA)).r;
+    color.g = flareSampleBorder(0.5 + position + direction * FLARE_HALO_RADIUS).g;
+    color.b = flareSampleBorder(0.5 + position + direction * FLARE_HALO_RADIUS * (1.0 + FLARE_HALO_CHROMA)).b;
+
+    return color * flareSourceMask(0.5 + position + direction * FLARE_HALO_RADIUS, 5.0) * FLARE_HALO_INTENSITY;
+}
+
+float3 flareBokehBlur(float2 uv, float2 sourceTexelSize)
 {
     float3 sum = (float3)0.0;
+
     float weightSum = 0.0;
 
-    for (uint i = 0; i < FLARE_BOKEH_TAPS; i++)
+    [unroll]
+    for (uint tap = 0; tap < FLARE_BOKEH_TAPS; tap++)
     {
-        const float tapRadius = sqrt(((float)i + 0.5) / (float)FLARE_BOKEH_TAPS);
-        const float tapAngle = (float)i * FLARE_GOLDEN_ANGLE + rotation;
-        const float2 offset = float2(cos(tapAngle), sin(tapAngle)) * tapRadius;
-        const float weight = flareApertureWeight(offset);
-
-        if (weight <= 0.0)
-        {
-            continue;
-        }
-
-        const float2 tapUV = uv + offset * (apertureRadiusTexels * sourceTexelSize);
-        sum += postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, tapUV, 0).rgb) *
-               flareEdgeFade(tapUV) * weight;
+        const float radius = sqrt(((float)tap + 0.5) / (float)FLARE_BOKEH_TAPS);
+        const float angle = (float)tap * FLARE_GOLDEN_ANGLE;
+        const float2 offset = radius * float2(cos(angle), sin(angle)) * FLARE_BOKEH_RADIUS_TEXELS * sourceTexelSize;
+        const float weight = exp(-FLARE_BOKEH_GAUSS * radius * radius);
+        sum += flareSource.SampleLevel(flareSource_Sampler, uv + offset, 0).rgb * weight;
         weightSum += weight;
     }
 
-    return weightSum > 0.0 ? sum / weightSum : (float3)0.0;
-}
-
-float3 flareComposite(float2 uv, float aspect)
-{
-    const float2 position = flareToAspect(uv, aspect);
-
-    float3 result = (float3)0.0;
-    for (uint i = 0; i < 3; i++)
-    {
-        const float2 ghostPosition = flareFromAspect(-position / FLARE_GHOST_SCALES[i], aspect);
-        result += flareSampleFaded(ghostPosition) * FLARE_GHOST_OPACITIES[i];
-    }
-
-    const float distance = length(position);
-    if (distance > POST_EFFECTS_EPSILON)
-    {
-        const float sourceRadius = FLARE_HALO_INVERSION / max(distance, 1e-3);
-        const float2 haloPosition = flareFromAspect(position / distance * sourceRadius, aspect);
-        result += flareSampleFaded(haloPosition) * FLARE_HALO_OPACITY;
-    }
-
-    return postEffectsSanitize(result);
+    return postEffectsSanitize(sum / max(weightSum, 1e-4));
 }
 
 [numthreads(16, 16, 1)]
@@ -172,51 +191,32 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     const float2 uv = ((float2)pixel + 0.5) / float2(width, height);
 
+    uint sourceWidth;
+    uint sourceHeight;
+    flareSource.GetDimensions(sourceWidth, sourceHeight);
+
+    const float2 sourceTexelSize = 1.0 / float2(sourceWidth, sourceHeight);
+
     if (push.passMode == FLARE_PASS_BRIGHT)
     {
-        const float2 destinationTexelSize = 1.0 / float2(width, height);
-        const float3 sample = postEffectsDownsampleBox4(flareSource, flareSource_Sampler, uv, destinationTexelSize);
-        flareDest[pixel] = float4(postEffectsExtractWithExposure(sample, push.threshold, push.knee), 1.0);
+        flareDest[pixel] = float4(flareDownsampleBright(uv, sourceTexelSize, postEffectsExtractExposure()), 1.0);
         return;
     }
 
-    if (push.passMode == FLARE_PASS_DOWNSAMPLE)
+    if (push.passMode == FLARE_PASS_FLARE)
     {
-        uint sourceWidth;
-        uint sourceHeight;
-        flareSource.GetDimensions(sourceWidth, sourceHeight);
+        float3 sum = (float3)0.0;
 
-        flareDest[pixel] = float4(postEffectsDownsample13(flareSource, flareSource_Sampler, uv,
-                                                          1.0 / float2(sourceWidth, sourceHeight)), 1.0);
+        [unroll]
+        for (uint ghost = 0; ghost < FLARE_GHOST_COUNT; ghost++)
+        {
+            sum += flareGhostLayer(uv, FLARE_GHOST_SCALES[ghost], FLARE_GHOST_CHROMAS[ghost]) * FLARE_GHOST_TINTS[ghost];
+        }
+
+        sum += flareHaloLayer(uv);
+        flareDest[pixel] = float4(postEffectsSanitize(sum * FLARE_GAIN), 1.0);
         return;
     }
 
-    if (push.passMode == FLARE_PASS_BOKEH)
-    {
-        uint sourceWidth;
-        uint sourceHeight;
-        flareSource.GetDimensions(sourceWidth, sourceHeight);
-
-        const float apertureRadiusTexels = max(FLARE_DISC_DIAMETER * 0.5 * (float)sourceHeight, 0.5);
-        const uint hash = flareHash((uint)pixel.x * 1973u + (uint)pixel.y * 9277u + 26699u);
-        const float rotation = (float)hash * (2.0 * FLARE_PI / 4294967296.0);
-
-        flareDest[pixel] = float4(flareBokehGather(uv, 1.0 / float2(sourceWidth, sourceHeight),
-                                                   apertureRadiusTexels, rotation), 1.0);
-        return;
-    }
-
-    if (push.passMode == FLARE_PASS_SMOOTH)
-    {
-        uint sourceWidth;
-        uint sourceHeight;
-        flareSource.GetDimensions(sourceWidth, sourceHeight);
-
-        flareDest[pixel] = float4(postEffectsTent9(flareSource, flareSource_Sampler, uv,
-                                                   1.0 / float2(sourceWidth, sourceHeight)), 1.0);
-        return;
-    }
-
-    const float aspect = (float)width / (float)height;
-    flareDest[pixel] = float4(flareComposite(uv, aspect), 1.0);
+    flareDest[pixel] = float4(flareBokehBlur(uv, sourceTexelSize), 1.0);
 }

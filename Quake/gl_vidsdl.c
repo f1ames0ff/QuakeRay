@@ -291,8 +291,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_bloom, "1") \
 	\
 	CVAR_DEF_T (rt_lensflare, "1") \
-	CVAR_DEF_T (rt_lensflare_intensity, "0.05") \
-	CVAR_DEF_T (rt_lensflare_threshold, "4.0") \
+	CVAR_DEF_T (rt_lensflare_intensity, "0.01") \
+	CVAR_DEF_T (rt_lensflare_threshold, "12.0") \
 	\
 	CVAR_DEF_T (rt_exposure_bias, "0") \
 	CVAR_DEF_T (rt_contrast, "0.6") \
@@ -2424,7 +2424,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	bloom_effect.quality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_quality), 2.0f);
 
 	static QrPostEffectsLensFlareParams lensflare_effect = {0};
-	lensflare_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_lensflare_intensity), 0.2f);
+	// The cvar is the user-facing strength in per cent: 0.01 is 1 %, 1.0 is 100 %.
+	// The internal optical strength is 10x weaker than the previous scale at 1 %.
+	lensflare_effect.intensity = CLAMP (0.01f, CVAR_TO_FLOAT (rt_lensflare_intensity), 1.0f) * 0.05f;
 	lensflare_effect.isActive = lensflare_effect.intensity > 0.0f;
 	lensflare_effect.threshold = CLAMP (1.0f, CVAR_TO_FLOAT (rt_lensflare_threshold), 32.0f);
 
