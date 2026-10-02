@@ -15,6 +15,7 @@
 ### Fixed
 - **Sky motion vectors carry the cloud wind and the eye's own shift** — the drift of the layer and the camera's movement since the frame before are projected in full perspective, and the sun disc keeps its own motion through the cubemap's alpha channel, so the upscaler and the denoiser reproject a moving layer with a vector of its own; a stationary layer reuses its result, while camera movement and settings changes refresh the composite.
 - **Cloud parameter buffers keep their initial state** — the per-frame NVRHI unknown-state warnings are gone, the shadow volume is rebuilt when sunlight returns after a density edit, and the sky march skips its sunlight sampling when the sun is absent.
+- **The dither of the layer's march is drawn per texel** — the seed that turns the step sequence of the march was read from the world at a scale of `CLOUD_SEED_SCALE` (`256` units at the reference altitude, more for a higher layer), and the texels around a column therefore sampled the march nearly the same way: the error a step leaves behind — where the cloud crossed the step between two of its samples — stood over the sky as one smooth field, which is what a dark cloud showed as the contour bands of its steps (the "layers"). The seed is drawn from the texel of the layer's map itself now (`cloudMarchSeed`), so neighbours disagree, and the Gaussian the composite reads the map through averages the grain back out — which it could not do to a field its nine taps saw as nearly constant.
 
 ### Legacy cloud renderer development history
 

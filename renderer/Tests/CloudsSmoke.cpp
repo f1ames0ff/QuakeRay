@@ -151,7 +151,7 @@ std::array<float, 3> PickShadowColumn(nvrhi::IDevice *device, nvrhi::ITexture *t
     throw std::runtime_error("shadow volume has no cloud optical depth");
 }
 
-std::array<float, 16> Probe(nvrhi::IDevice *device, qray::rhi::RhiFrameContext &frames,
+std::array<float, 24> Probe(nvrhi::IDevice *device, qray::rhi::RhiFrameContext &frames,
     qray::RhiCloudsPass &clouds, qray::RhiProceduralSkyPass &sky,
     const qray::ShGlobalUniform &uniform, const std::string &shaderPath, bool withPush)
 {
@@ -167,7 +167,7 @@ std::array<float, 16> Probe(nvrhi::IDevice *device, qray::rhi::RhiFrameContext &
     desc.keepInitialState = true;
     auto params = device->createBuffer(desc);
     desc = {};
-    desc.byteSize = 64;
+    desc.byteSize = 96;
     desc.structStride = 16;
     desc.canHaveUAVs = true;
     desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
@@ -226,14 +226,14 @@ std::array<float, 16> Probe(nvrhi::IDevice *device, qray::rhi::RhiFrameContext &
     const uint32_t index = 2;
     if (withPush) cmd->setPushConstants(&index, sizeof(index));
     cmd->dispatch(1, 1, 1);
-    cmd->copyBuffer(readback, 0, output, 0, 64);
+    cmd->copyBuffer(readback, 0, output, 0, 96);
     cmd->close();
     device->executeCommandList(cmd);
     device->waitForIdle();
     auto data = device->mapBuffer(readback, nvrhi::CpuAccessMode::Read);
     Require(data != nullptr, "map probe result");
-    std::array<float, 16> result;
-    std::memcpy(result.data(), data, 64);
+    std::array<float, 24> result;
+    std::memcpy(result.data(), data, 96);
     device->unmapBuffer(readback);
     for (float v : result) Require(std::isfinite(v), "non-finite motion or shadow lookup");
     return result;
@@ -373,6 +373,8 @@ int main(int argc, char **argv)
                 return Probe(device, frames, clouds, sky, uniform, probes + (push ? "CloudsPush.comp.spv" : "CloudsProbe.comp.spv"), push);
             };
             auto result = probe();
+            Require(result[16] > 0.2f && result[17] > 0.2f && result[18] == 1024.0f,
+                    "the march seed must differ from its neighbours, not be a field they share");
             const float centre = layer.cloudLayer[0] + 0.3f * layer.cloudLayer[1];
             Require(std::abs(result[0]) < 1e-6 && std::abs(result[1]) < 1e-6, "stationary camera has infinite-sky motion");
             Require(std::abs(result[2] - 0.5f * uniform.timeDelta * 1000 * 30 / centre) < 1e-6 &&

@@ -114,8 +114,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     bool lit = sunColor.r + sunColor.g + sunColor.b > 0.0 || skyLight.r + skyLight.g + skyLight.b > 0.0;
 
-    const float baseSpan = layer.altitude / max(dir.z, 1.0e-3);
-
     if (dir.z > 0.0 && lit && opacity > 0.0 && params.cloudParams.w > 0.5 &&
         layer.coverage < 1.0 && layer.density > 0.0)
     {
@@ -126,9 +124,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         float span = (pow(CLOUD_STEP_GROWTH, (float)viewSteps) - 1.0) / (CLOUD_STEP_GROWTH - 1.0);
         float dt = (tOut - tIn) / span;
 
-        float2 seedPos = params.cloudAnchor.xy + dir.xy * baseSpan;
-        const float seedScale = CLOUD_SEED_SCALE * (layer.altitude / CLOUD_REFERENCE_ALTITUDE);
-        float jitter = valueNoise3(float3(seedPos, 0.0) / seedScale);
+        float jitter = cloudMarchSeed(ipos.xy, face);
         float t = tIn;
         float step = dt;
 

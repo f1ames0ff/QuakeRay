@@ -12,8 +12,6 @@ static const float CLOUD_LIGHT_CONE = 0.15;
 static const int   CLOUD_SUN_STEPS_MAX = 64;
 static const int   CLOUD_SHADOW_STEPS = 32;
 static const float CLOUD_SEQUENCE_STEP = 0.6180339887;
-static const float CLOUD_SEED_SCALE = 256.0;
-static const float CLOUD_REFERENCE_ALTITUDE = 1400.0;
 
 struct CloudLayer
 {
@@ -43,6 +41,11 @@ float hash13(float3 p)
     p = frac(p * 0.1031);
     p += dot(p, p.zyx + 31.32);
     return frac((p.x + p.y) * p.z);
+}
+
+float cloudMarchSeed(int2 texel, int face)
+{
+    return hash13(float3(float2(texel), float(face)));
 }
 
 float valueNoise3(float3 p)

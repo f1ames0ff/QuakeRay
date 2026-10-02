@@ -5,6 +5,7 @@
 
 #include "ShaderCommonHLSL.hlsli"
 #include "CloudShadowWorld.hlsli"
+#include "CloudLayer.hlsli"
 #include "SkyMotion.hlsli"
 
 [[vk::binding(0, 0)]] RWStructuredBuffer<float4> probeOutput;
@@ -40,4 +41,19 @@ void main()
 #ifdef WITH_PUSH_CONSTANTS
     probeOutput[3].w = float(push.index);
 #endif
+
+    float seedDiffX = 0.0;
+    float seedDiffY = 0.0;
+    int seedPairs = 0;
+    for (int y = 4; y < 36; ++y)
+    {
+        for (int x = 4; x < 36; ++x)
+        {
+            const float seed = cloudMarchSeed(int2(x, y), 0);
+            seedDiffX += abs(seed - cloudMarchSeed(int2(x + 1, y), 0));
+            seedDiffY += abs(seed - cloudMarchSeed(int2(x, y + 1), 0));
+            ++seedPairs;
+        }
+    }
+    probeOutput[4] = float4(seedDiffX / seedPairs, seedDiffY / seedPairs, float(seedPairs), 0.0);
 }

@@ -215,9 +215,7 @@ void main()
     // Where the column of cloud this texel is about stands: the point the ray through
     // it crosses the base of the layer at. That point is the world's and not the
     // eye's -- the layer is anchored in the world's horizontal plane, which is what
-    // the volume of its shadow is laid out by as well (CloudShadowMap.h) -- and the
-    // seed of the march below is drawn from it.
-    const float baseSpan = layer.altitude / max(dir.z, 1.0e-3);
+    // the volume of its shadow is laid out by as well (CloudShadowMap.h).
 
     if (dir.z > 0.0 && lit && opacity > 0.0 && params.cloudParams.w > 0.5 &&
         layer.coverage < 1.0 && layer.density > 0.0)
@@ -234,20 +232,12 @@ void main()
         float dt = (tOut - tIn) / span;
 
         // The seed of the march: where inside their stretches its samples stand, the
-        // places come from a low-discrepancy sequence (CLOUD_SEQUENCE_STEP), and this
-        // is what turns the sequence as a whole, ray by ray.
-        //
-        // It is drawn from the world, and changes only over a distance far larger
-        // than a texel of the map: the texels around a column then sample the march
-        // nearly the same way, so the error the march leaves behind is a smooth field
-        // of the sky rather than the grain of the map, and a ray that keeps to its
-        // column keeps its samples where they were from frame to frame.
-        vec2 seedPos = params.cloudAnchor.xy + dir.xy * baseSpan;
-        // The scale the seed is read at travels with the altitude of the layer
-        // (CLOUD_REFERENCE_ALTITUDE, CloudLayer.h): what it has to stay far larger than
-        // is a texel of the map, and a texel of the map grows with the height too.
-        const float seedScale = CLOUD_SEED_SCALE * (layer.altitude / CLOUD_REFERENCE_ALTITUDE);
-        float jitter = valueNoise3(vec3(seedPos, 0.0) / seedScale);
+        // places come from a low-discrepancy sequence (CLOUD_SEQUENCE_STEP), and the
+        // texel's own seed (CloudLayer.h) turns that sequence where it stands, so that
+        // the error a step leaves behind is the texel's rather than a field shared
+        // with the texels around it -- a shared one is the contour bands. The grain
+        // is what the composite's Gaussian is there to average.
+        float jitter = cloudMarchSeed(ipos.xy, face);
         float t = tIn;
         float step = dt;
 

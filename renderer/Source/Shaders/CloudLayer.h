@@ -115,23 +115,6 @@ const int CLOUD_SHADOW_STEPS = 32;
 // which leaves a smaller and a finer error behind.
 const float CLOUD_SEQUENCE_STEP = 0.6180339887; // along the march
 
-// How coarsely the world is divided by the seed that turns the sequence of a march
-// (CmSkyClouds.comp): a distance far larger than a texel of the sky's map, so that
-// the texels around one column draw nearly the same seed and the error the sequence
-// leaves behind is a smooth field of the sky rather than a grain of the map. A
-// grain is what the copying of the map's quarters cannot carry (it reads bilinearly
-// and so averages the grain of the neighbours), and it is what shivers.
-const float CLOUD_SEED_SCALE = 256.0;
-
-// The altitude the seed's own scale below is written for. The layer's height is a lever
-// of the whole sky and the lengths of it are a matter of proportion: the seed has to stay
-// far larger than a texel of the layer's map, and a texel of the map grows with the
-// altitude. The drift is scaled by the same ratio, but where the speed is handed to the
-// passes rather than here (VulkanDevice.cpp, which must keep this value): the shift the
-// host builds for the history of the map is built from that one number, and a factor
-// living in two places is a factor that drifts apart -- this one did.
-const float CLOUD_REFERENCE_ALTITUDE = 1400.0;
-
 // Where a march to the sun samples the layer: the place it has walked to, offset
 // inside the cone the sunlight of a cloud comes from -- what a cloud sees of the
 // sun is the sky around the sun rather than the sun alone, and the cone is what
@@ -158,6 +141,18 @@ float hash13(vec3 p)
     p = fract(p * 0.1031);
     p += dot(p, p.zyx + 31.32);
     return fract((p.x + p.y) * p.z);
+}
+
+// The seed that turns the sequence of a march (CmSkyClouds.comp), drawn per texel of
+// the layer's map. The error a step of the march leaves behind stands where the cloud
+// crossed the step between two samples; a seed read from the world at a scale coarser
+// than a texel handed the texels around a column nearly the same error, which is what
+// stood over a dark cloud as smooth contour bands. Neighbours have to disagree, and
+// the Gaussian the composite reads the map through (CmProceduralSky.comp) is what
+// averages the grain that disagreement leaves.
+float cloudMarchSeed(ivec2 texel, int face)
+{
+    return hash13(vec3(vec2(texel), float(face)));
 }
 
 float valueNoise3(vec3 p)

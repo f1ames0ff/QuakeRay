@@ -154,6 +154,7 @@ if(QR_BUILD_TESTS)
     set(QR_PROBE_DEPENDENCIES
         Tests/CloudsProbe.comp.hlsl
         Source/Shaders/SkyMotion.hlsli
+        Source/Shaders/CloudLayer.hlsli
         Source/Shaders/CloudShadowWorld.hlsli
         Source/Shaders/CloudShadowMap.hlsli
         Source/Generated/ShaderCommonHLSL.hlsli)
