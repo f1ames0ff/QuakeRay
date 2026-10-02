@@ -256,7 +256,7 @@ public:
         // copies them (VulkanDevice.cpp:1051-1059): the bias is authoritative (the game clamps it),
         // the contrast is clamped in the engine. They feed the traced mode's host-only
         // exposure-parameter write; the raster mode's neutral stand-in does not use them.
-        float exposureBias = -2.8f;
+        float exposureBias = 0.0f;
         float contrast = 0.6f;
 
         // -- the acceleration-structure stream --

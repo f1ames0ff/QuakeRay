@@ -1,7 +1,8 @@
 
 param(
     [string]$Config = "Release",
-    [string]$BuildDir = ""
+    [string]$BuildDir = "",
+    [int]$Parallel = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,7 +93,14 @@ if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
 
 if ($exitCode -eq 0)
 {
-    cmake --build $BuildDir
+    if ($Parallel -gt 0)
+    {
+        cmake --build $BuildDir --parallel $Parallel
+    }
+    else
+    {
+        cmake --build $BuildDir
+    }
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
 }
 

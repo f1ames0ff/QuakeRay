@@ -97,15 +97,15 @@ static qboolean S_XMP_CodecOpenStream (snd_stream_t *stream)
 #endif
 
 	stream->priv = c;
-	if (shm->speed > XMP_MAX_SRATE)
+	if (snd_output.speed > XMP_MAX_SRATE)
 		stream->info.rate = 44100;
-	else if (shm->speed < XMP_MIN_SRATE)
+	else if (snd_output.speed < XMP_MIN_SRATE)
 		stream->info.rate = 11025;
 	else
-		stream->info.rate = shm->speed;
-	stream->info.bits = shm->samplebits;
+		stream->info.rate = snd_output.speed;
+	stream->info.bits = snd_output.samplebits;
 	stream->info.width = stream->info.bits / 8;
-	stream->info.channels = shm->channels;
+	stream->info.channels = snd_output.channels;
 
 	fmt = 0;
 	if (stream->info.channels == 1)

@@ -441,7 +441,7 @@ extern float r_avertexnormals[NUMVERTEXNORMALS][3];
 GLMesh_DeleteVertexBuffer
 ================
 */
-static void GLMesh_DeleteVertexBuffer (qmodel_t *m)
+void GLMesh_DeleteVertexBuffer (qmodel_t *m)
 {
 	RT_ModelLightsCacheFree (m);
 
@@ -565,6 +565,9 @@ void GLMesh_LoadVertexBuffers (void)
 			continue;
 
 		hdr = (const aliashdr_t *)Mod_Extradata (m);
+
+		if (hdr->poseverttype != PV_QUAKE1)
+			continue;
 
 		GLMesh_LoadVertexBuffer (m, hdr);
 	}

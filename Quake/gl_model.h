@@ -327,6 +327,95 @@ typedef struct
 	maliasgroupframedesc_t frames[1];
 } maliasgroup_t;
 
+//=============================================================================
+
+enum
+{
+	PV_QUAKE1 = 0,
+	PV_QUAKE3,
+	PV_MD5,
+	PV_SIZE
+};
+
+#define MAX_SURFACES 32
+
+#define MD3_VERSION  15
+#define IDMD3HEADER  (('I' << 0) | ('D' << 8) | ('P' << 16) | ('3' << 24))
+#define MD3_XYZ_SCALE (1.0f / 64.0f)
+
+#define IDMD5HEADER (('M' << 0) + ('D' << 8) + ('5' << 16) + ('V' << 24))
+
+typedef struct md3XyzNormal_s
+{
+	short xyz[3];
+	short normal;
+} md3XyzNormal_t;
+
+typedef struct md3Header_s
+{
+	int  ident;
+	int  version;
+	char name[64];
+	int  flags;
+	int  numFrames;
+	int  numTags;
+	int  numSurfaces;
+	int  numSkins;
+	int  ofsFrames;
+	int  ofsTags;
+	int  ofsSurfaces;
+	int  ofsEnd;
+} md3Header_t;
+
+typedef struct md3Frame_s
+{
+	float mins[3];
+	float maxs[3];
+	float localOrigin[3];
+	float radius;
+	char  name[16];
+} md3Frame_t;
+
+typedef struct md3Tag_s
+{
+	char  name[64];
+	float origin[3];
+	float axis[3][3];
+} md3Tag_t;
+
+typedef struct md3Surface_s
+{
+	int  ident;
+	char name[64];
+	int  flags;
+	int  numFrames;
+	int  numShaders;
+	int  numVerts;
+	int  numTriangles;
+	int  ofsTriangles;
+	int  ofsShaders;
+	int  ofsSt;
+	int  ofsXyzNormals;
+	int  ofsEnd;
+} md3Surface_t;
+
+typedef struct md3Triangle_s
+{
+	int indexes[3];
+} md3Triangle_t;
+
+typedef struct md3St_s
+{
+	float s;
+	float t;
+} md3St_t;
+
+typedef struct md3Shader_s
+{
+	char name[64];
+	int  shaderIndex;
+} md3Shader_t;
+
 // !!! if this is changed, it must be changed in asm_draw.h too !!!
 typedef struct mtriangle_s
 {
@@ -335,7 +424,7 @@ typedef struct mtriangle_s
 } mtriangle_t;
 
 #define MAX_SKINS 32
-typedef struct
+typedef struct aliashdr_s
 {
 	int        ident;
 	int        version;
@@ -368,6 +457,12 @@ typedef struct
 	struct gltexture_s *gltextures[MAX_SKINS][4]; // johnfitz
 	struct gltexture_s *fbtextures[MAX_SKINS][4]; // johnfitz; RT - not used
 	byte			   *texels[MAX_SKINS];        // only for player skins
+
+	struct aliashdr_s  *nextsurface; // MD3: the next surface of the same model
+	int                 poseverttype; // PV_QUAKE1 or PV_QUAKE3
+	int                 firstindex;   // MD3: range into the model index buffer
+	int                 numindices;
+
 	maliasframedesc_t   frames[1];                // variable sized
 } aliashdr_t;
 

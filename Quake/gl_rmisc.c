@@ -284,6 +284,11 @@ void R_TranslateNewPlayerSkin (int playernum)
 		return;
 
 	paliashdr = (aliashdr_t *)Mod_Extradata (currententity->model);
+	if (paliashdr->poseverttype != PV_QUAKE1 || paliashdr->skinwidth <= 0 || paliashdr->skinheight <= 0)
+	{
+		playertextures[playernum] = NULL;
+		return;
+	}
 
 	skinnum = currententity->skinnum;
 
@@ -295,6 +300,11 @@ void R_TranslateNewPlayerSkin (int playernum)
 	}
 
 	pixels = (byte *)paliashdr->texels[skinnum];
+	if (!pixels)
+	{
+		playertextures[playernum] = NULL;
+		return;
+	}
 
 	// upload new image
 	q_snprintf (name, sizeof (name), "player_%i", playernum);

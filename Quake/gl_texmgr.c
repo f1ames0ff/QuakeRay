@@ -837,8 +837,8 @@ static unsigned *TexMgr_Downsample (unsigned *data, int in_width, int in_height,
 {
 	const int out_size_bytes = out_width * out_height * 4;
 
-	assert ((out_width >= 1) && (out_width < in_width));
-	assert ((out_height >= 1) && (out_height < in_height));
+	assert ((out_width >= 1) && (out_width <= in_width));
+	assert ((out_height >= 1) && (out_height <= in_height));
 
 	byte *image_resize_buffer;
 	TEMP_ALLOC (byte, image_resize_buffer, out_size_bytes);
