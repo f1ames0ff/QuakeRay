@@ -74,6 +74,25 @@ namespace
         return sum < kMinColorSum;
     }
 
+    void EncodeCone(ShLightEncoded &light, float angleInner, float angleOuter, bool projector)
+    {
+        const bool angleValid = std::isfinite(angleOuter) && angleOuter > 0.0f &&
+                                angleOuter <= static_cast<float>(kPi / 2.0);
+        const float outer = angleValid ? angleOuter : (projector ? static_cast<float>(kPi / 3.0) : 0.0f);
+        const float inner = (std::isfinite(angleInner) && angleInner >= 0.0f) ? angleInner : 0.0f;
+
+        if (outer > 0.0f)
+        {
+            light.coneCosInner = std::cos(std::min(inner, outer * 0.999f));
+            light.coneCosOuter = std::cos(outer);
+        }
+        else
+        {
+            light.coneCosInner = 0.0f;
+            light.coneCosOuter = 0.0f;
+        }
+    }
+
     ShLightEncoded EncodeAsDirectionalLight(const QrDirectionalLightUploadInfo &info)
     {
         float direction[3] = { info.direction.data[0], info.direction.data[1], info.direction.data[2] };
@@ -163,45 +182,11 @@ namespace
         light.data_7[3] = info.area;
 
         const bool projector = std::isfinite(info.projector) && info.projector > 0.5f;
-        const bool angleValid = std::isfinite(info.angleOuter) && info.angleOuter > 0.0f &&
-                                info.angleOuter <= static_cast<float>(kPi / 2.0);
-        const float angleOuter = angleValid ? info.angleOuter
-                                            : (projector ? static_cast<float>(kPi / 3.0) : 0.0f);
-        const float angleInner = (std::isfinite(info.angleInner) && info.angleInner >= 0.0f) ? info.angleInner : 0.0f;
 
-        if (angleOuter > 0.0f)
-        {
-            light.coneCosInner = std::cos(std::min(angleInner, angleOuter * 0.999f));
-            light.coneCosOuter = std::cos(angleOuter);
-        }
-        else
-        {
-            light.coneCosInner = 0.0f;
-            light.coneCosOuter = 0.0f;
-        }
-
+        EncodeCone(light, info.angleInner, info.angleOuter, projector);
         light.projector = projector ? 1.0f : 0.0f;
 
         return light;
-    }
-
-    void EncodeCone(ShLightEncoded &light, float angleInner, float angleOuter, bool projector)
-    {
-        const bool angleValid = std::isfinite(angleOuter) && angleOuter > 0.0f &&
-                                angleOuter <= static_cast<float>(kPi / 2.0);
-        const float outer = angleValid ? angleOuter : (projector ? static_cast<float>(kPi / 3.0) : 0.0f);
-        const float inner = (std::isfinite(angleInner) && angleInner >= 0.0f) ? angleInner : 0.0f;
-
-        if (outer > 0.0f)
-        {
-            light.coneCosInner = std::cos(std::min(inner, outer * 0.999f));
-            light.coneCosOuter = std::cos(outer);
-        }
-        else
-        {
-            light.coneCosInner = 0.0f;
-            light.coneCosOuter = 0.0f;
-        }
     }
 
     ShLightEncoded EncodeAsDtalGroup(const QrDtalGroupUploadInfo &info, uint32_t textureIndex)
@@ -889,21 +874,15 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
     CachedIndex cache[kCacheSize];
     memset(cache, 0xFF, sizeof(cache));
 
-    for (uint32_t i = 0; i < listWordCount; i++)
+    const auto resolveUid = [&](uint64_t uid) -> uint32_t
     {
-        const uint64_t uid = pLightUniqueIds[i];
-
         if (uid == kLightUidHole)
         {
-            pDstLights[i] = uint32_t(LIGHT_INDEX_NONE);
-            continue;
+            return uint32_t(LIGHT_INDEX_NONE);
         }
 
         const uint64_t hash = uid * 0x9E3779B97F4A7C15ull;
         uint32_t       slot = static_cast<uint32_t>(hash >> 32) & (kCacheSize - 1);
-
-        uint32_t index = uint32_t(LIGHT_INDEX_NONE);
-        bool     found = false;
 
         for (uint32_t probe = 0; probe < kCacheSize; probe++)
         {
@@ -916,27 +895,27 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
 
             if (entry.uid == uid)
             {
-                index = entry.index;
-                found = true;
-                break;
+                return entry.index;
             }
 
             slot = (slot + 1) & (kCacheSize - 1);
         }
 
-        if (!found)
-        {
-            uint32_t resolved = 0;
-            index = FindRegisteredLight(frameIndex, uid, resolved) ? resolved : uint32_t(LIGHT_INDEX_NONE);
+        uint32_t       resolved = 0;
+        const uint32_t index = FindRegisteredLight(frameIndex, uid, resolved) ? resolved : uint32_t(LIGHT_INDEX_NONE);
 
-            if (cache[slot].index == kNotCached)
-            {
-                cache[slot].uid = uid;
-                cache[slot].index = index;
-            }
+        if (cache[slot].index == kNotCached)
+        {
+            cache[slot].uid = uid;
+            cache[slot].index = index;
         }
 
-        pDstLights[i] = index;
+        return index;
+    };
+
+    for (uint32_t i = 0; i < listWordCount; i++)
+    {
+        pDstLights[i] = resolveUid(pLightUniqueIds[i]);
     }
 
     uint32_t *pTailOffsets = static_cast<uint32_t *>(lightListTailOffsets->GetMapped(frameIndex));
@@ -967,54 +946,15 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
 
         for (uint32_t i = 0; i < tailWordCount; i++)
         {
-            const uint64_t uid = tails.pUniqueIds[i];
-            uint32_t       index = uint32_t(LIGHT_INDEX_NONE);
-
-            if (uid != kLightUidHole)
-            {
-                const uint64_t hash = uid * 0x9E3779B97F4A7C15ull;
-                uint32_t       slot = static_cast<uint32_t>(hash >> 32) & (kCacheSize - 1);
-
-                bool found = false;
-
-                for (uint32_t probe = 0; probe < kCacheSize; probe++)
-                {
-                    const CachedIndex &entry = cache[slot];
-
-                    if (entry.index == kNotCached)
-                    {
-                        break;
-                    }
-
-                    if (entry.uid == uid)
-                    {
-                        index = entry.index;
-                        found = true;
-                        break;
-                    }
-
-                    slot = (slot + 1) & (kCacheSize - 1);
-                }
-
-                if (!found)
-                {
-                    uint32_t resolved = 0;
-                    index = FindRegisteredLight(frameIndex, uid, resolved) ? resolved : uint32_t(LIGHT_INDEX_NONE);
-
-                    if (cache[slot].index == kNotCached)
-                    {
-                        cache[slot].uid = uid;
-                        cache[slot].index = index;
-                    }
-                }
-            }
+            const uint32_t index = resolveUid(tails.pUniqueIds[i]);
+            const bool     resolved = index != uint32_t(LIGHT_INDEX_NONE);
 
             pTailEntries[i].lightIndex = index;
-            pTailEntries[i].aliasIndex = (index != uint32_t(LIGHT_INDEX_NONE)) ? tails.pAlias[i] : i;
+            pTailEntries[i].aliasIndex = resolved ? tails.pAlias[i] : i;
             pTailEntries[i].prob = tails.pProb[i];
-            pTailEntries[i].marginalProb = (index != uint32_t(LIGHT_INDEX_NONE)) ? tails.pMarginal[i] : 0.0f;
+            pTailEntries[i].marginalProb = resolved ? tails.pMarginal[i] : 0.0f;
 
-            if (index == uint32_t(LIGHT_INDEX_NONE))
+            if (!resolved)
             {
                 unresolved++;
             }
