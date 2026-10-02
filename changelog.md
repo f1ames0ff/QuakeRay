@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.26.0
 
 ### Added
 - **The clouds of the procedural sky are a layer the NVRHI renderer marches** — the layer, the shadow volume of that layer and the sky's composite are NVRHI compute passes recorded on every traced frame, and the marched cubemap is complete: its writable view covers all six array slices, where a view of one slice left five faces unwritten and made the layer read as a sheet surrounded by black.
