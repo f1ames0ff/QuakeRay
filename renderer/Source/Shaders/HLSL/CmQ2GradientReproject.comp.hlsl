@@ -110,11 +110,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
             // Surface matching: depth and geometric normal similarity.
             float depth_curr = framebufQ2ViewDepth_Sampled.Load(int3(p, 0)).r;
+            if (abs(depth_curr) < 1e-4)
+            {
+                continue;
+            }
             float depth_prev = framebufQ2ViewDepth_Prev_Sampled.Load(int3(pp, 0)).r;
             float3 geo_normal_curr = texelFetchNormalGeometry(p);
             float3 geo_normal_prev = texelFetchNormalGeometry_Prev(pp);
 
-            float dist_depth = abs(depth_curr - depth_prev + motion.z) / abs(depth_curr);
+            const float motion_z = (depth_curr < 0.0) ? -motion.z : motion.z;
+            float dist_depth = abs(depth_curr - depth_prev + motion_z) / abs(depth_curr);
             float dot_geo_normals = dot(geo_normal_curr, geo_normal_prev);
 
             if (dist_depth < 0.1 && dot_geo_normals > 0.9)

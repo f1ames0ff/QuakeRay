@@ -243,13 +243,13 @@ void main()
     v += float(texelFetch(framebufNormalGeometry_Prev_Sampled, pix, 0).x);
     v += float(texture(usampler2D(framebufNormalGeometry_Prev_Sampled, framebufNormalGeometry_Prev_Sampler), uv).x);
 
-    // framebufMetallicRoughness  rg8
+    // framebufMetallicRoughness  rgba8
     imageStore(framebufMetallicRoughness, pix, vec4(1.0));
     v += float(imageLoad(framebufMetallicRoughness, pix).x);
     v += float(texelFetch(framebufMetallicRoughness_Sampled, pix, 0).x);
     v += float(texture(sampler2D(framebufMetallicRoughness_Sampled, framebufMetallicRoughness_Sampler), uv).x);
 
-    // framebufMetallicRoughness_Prev  rg8
+    // framebufMetallicRoughness_Prev  rgba8
     imageStore(framebufMetallicRoughness_Prev, pix, vec4(1.0));
     v += float(imageLoad(framebufMetallicRoughness_Prev, pix).x);
     v += float(texelFetch(framebufMetallicRoughness_Prev_Sampled, pix, 0).x);

@@ -300,7 +300,7 @@ void main()
     framebufAcidFogRT[getRegularPixFromCheckerboardPix(pix)] = float4(getGlowingMediaFog(currentRayMedia, firstHitDepthLinear), 0);
     imageStoreNormal(                       pix, h.normal);
     imageStoreNormalGeometry(               pix, h.normalGeom);
-    framebufMetallicRoughness[pix]          = float4(h.metallic, h.roughness, 0, 0);
+    framebufMetallicRoughness[pix]          = float4(h.metallic, h.roughness, (float)globalUniform.cameraMediaType / 3.0, 0.0);
     framebufDepthWorld[pix]                 = (float4)firstHitDepthLinear;
     float depthGrad = length(gradDepth.xy);
     if (globalUniform.q2DepthGradMode != 0u)
@@ -388,6 +388,7 @@ void main()
     float3 rayDir = cameraRayDir;
     uint currentRayMedia = globalUniform.cameraMediaType;
     bool hitInfoWasOverwritten = false;
+    bool refractionReached = false;
 
 
     propagateRayCone(rayCone, firstHitDepthLinear);
@@ -473,6 +474,7 @@ void main()
             throughput *= (1 - F);
 
             currentRayMedia = newRayMedia;
+            refractionReached = true;
         }
         else if (isPortal)
         {
@@ -576,7 +578,7 @@ void main()
     framebufAcidFogRT[getRegularPixFromCheckerboardPix(pix)] = float4(acidFog, 0);
     imageStoreNormal(                       pix, h.normal);
     imageStoreNormalGeometry(               pix, h.normalGeom);
-    framebufMetallicRoughness[pix]          = float4(h.metallic, h.roughness, 0, 0);
+    framebufMetallicRoughness[pix]          = float4(h.metallic, h.roughness, (float)currentRayMedia / 3.0, refractionReached ? 1.0 : 0.0);
     framebufDepthWorld[pix]                 = (float4)fullPathLength;
     framebufMotion[pix]                     = float4(motionCurToPrev, motionDepthLinearCurToPrev, 0.0);
     framebufSurfacePosition[pix]            = float4(h.hitPosition, asfloat(h.instCustomIndex));
@@ -925,7 +927,7 @@ void main()
     framebufAcidFogRT[getRegularPixFromCheckerboardPix(pix)] = float4(acidFog, 0);
     imageStoreNormal(                       pix, h.normal);
     imageStoreNormalGeometry(               pix, h.normalGeom);
-    framebufMetallicRoughness[pix]          = float4(h.metallic, h.roughness, 0, 0);
+    framebufMetallicRoughness[pix]          = float4(h.metallic, h.roughness, (float)currentRayMedia / 3.0, pathReachedRefraction ? 1.0 : 0.0);
     framebufDepthWorld[pix]                 = (float4)fullPathLength;
     if (pathReachedRefraction)
     {

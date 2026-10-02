@@ -73,6 +73,18 @@ float getFresnelSchlick(float n1, float n2, const float3 V, const float3 N)
     return lerp(R0, 1.0, pow(1.0 - abs(dot(N, V)), 5.0));
 }
 
+// I points into the surface (dot(N, I) < 0), N is oriented against I, n1 is the medium the ray comes from and n2 the medium it enters.
+float getInterfaceTransmission(float n1, float n2, const float3 I, const float3 N)
+{
+    const float3 T = refract(I, N, n1 / n2);
+    if (dot(T, T) <= 0.0)
+    {
+        return 0.0;
+    }
+
+    return clamp(1.0 - getFresnelSchlick(n1, n2, I, N), 0.0, 1.0);
+}
+
 float D_GGX( float nm, float alpha )
 {
 #if SHIPPING_HACK

@@ -25,8 +25,10 @@
 #define DESC_SET_RANDOM 5
 #define DESC_SET_LIGHT_SOURCES 6
 #define DESC_SET_RAY_STATS 11
+#define DESC_SET_CAUSTICS 12
 #define LIGHT_SAMPLE_METHOD (LIGHT_SAMPLE_METHOD_DIRECT)
 #include "RaygenCommon.hlsli"
+#include "Caustics.hlsli"
 #include "Q2Asvgf.hlsli"
 #include "Q2LightLists.hlsli"
 #include "GlobalLightSampling.hlsli"
@@ -34,6 +36,71 @@
 #define Q2_RNG_CELL_SELECT 200
 #define Q2_RNG_LIGHT_POINT 208
 #define Q2_RNG_SUN_DISK 212
+
+[[vk::binding(0, DESC_SET_CAUSTICS)]] StructuredBuffer<CausticsParams_BT> causticsParams;
+[[vk::binding(1, DESC_SET_CAUSTICS)]] StructuredBuffer<uint4> causticsCells;
+
+// The receiver medium of the packed pixel, decoded from the normalized byte the primary G-buffer
+// stores in MetallicRoughness.z (media / 3.0, contract of the RGBA8 metadata route).
+uint loadReceiverMedia(const int2 pix)
+{
+    return (uint)round(framebufMetallicRoughness_Sampled.Load(int3(pix, 0)).z * 3.0);
+}
+
+// Bilinear reconstruction of the photon cell buffer at the receiver's world XY. The cell-centered
+// sample coordinate is `gridCoords - 0.5`; taps outside the loaded domain are dropped and their
+// weights redistributed over the remaining taps. Returns false when no tap is inside, which is the
+// documented analytic fallback. The result is the receiver irradiance: no extra NdotL, albedo or
+// camera throughput, because those belong to the composition chain.
+bool gatherCausticsIrradiance(const Surface surf, const CausticsParams_BT params, out float3 irradiance)
+{
+    irradiance = (float3)0.0;
+
+    const uint resolution = params.gridSize.x;
+    if (resolution == 0u || !(params.gridMinAndTexel.z > 0.0))
+    {
+        return false;
+    }
+
+    const float2 gridCoords =
+        (surf.position.xy - params.gridMinAndTexel.xy) / params.gridMinAndTexel.z - 0.5;
+
+    const float2 base = floor(gridCoords);
+    const float2 cellFrac = gridCoords - base;
+    const int2 baseCell = (int2)base;
+
+    const int2 offsets[4] = { int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1) };
+    const float tapWeights[4] =
+    {
+        (1.0 - cellFrac.x) * (1.0 - cellFrac.y),
+        cellFrac.x * (1.0 - cellFrac.y),
+        (1.0 - cellFrac.x) * cellFrac.y,
+        cellFrac.x * cellFrac.y
+    };
+
+    float3 sum = (float3)0.0;
+    float weightSum = 0.0;
+
+    for (int i = 0; i < 4; i++)
+    {
+        const int2 cell = baseCell + offsets[i];
+        if (cell.x < 0 || cell.y < 0 || cell.x >= (int)resolution || cell.y >= (int)resolution)
+        {
+            continue;
+        }
+
+        sum += (float3)causticsCells[(uint)cell.y * resolution + (uint)cell.x].xyz * tapWeights[i];
+        weightSum += tapWeights[i];
+    }
+
+    if (weightSum <= 0.0)
+    {
+        return false;
+    }
+
+    irradiance = sum / (weightSum * CAUSTICS_FLUX_SCALE);
+    return true;
+}
 
 #define Q2_DIRECT_MAX_SPHERE_SOLID_ANGLE (2.0 * M_PI)
 
@@ -145,17 +212,43 @@ void main()
             rayStatsAdd(RAY_STATS_CATEGORY_SHADOW_DIRECT, 1);
         }
 
-        float3 sunFactor = (float3)1.0;
-        if (globalUniform.waterLightPath != 0u && globalUniform.coreQ2RTX != 0)
-        {
-            const uint receiverMedia = (uint)framebufQ2BounceThroughput_Sampled.Load(int3(pix, 0)).x;
-            sunFactor = traceSunWaterFactor(surf, sunLight.position, receiverMedia);
-        }
-
         float3 d, s;
         shade(surf, sunLight, 1.0, d, s);
-        directDiffuse += d * sunVis * sunFactor;
-        directSpecular += s * sunVis * sunFactor;
+
+        const uint receiverMedia =
+            globalUniform.waterLightPath != 0u ? loadReceiverMedia(pix) : (uint)MEDIA_TYPE_VACUUM;
+        const bool underwaterReceiver =
+            receiverMedia == MEDIA_TYPE_WATER || receiverMedia == MEDIA_TYPE_ACID;
+
+        if (underwaterReceiver)
+        {
+            // The corrected analytic fallback describes the transmitted sun for the specular term
+            // and for receivers outside the photon domain. It is computed once and reused.
+            const float3 waterFactor = traceSunWaterFactor(surf, sunLight.position, receiverMedia);
+            directSpecular += s * sunVis * waterFactor;
+
+            const CausticsParams_BT caustics = causticsParams[0];
+            const bool traceValid = (caustics.gridSize.z & CAUSTICS_FLAG_TRACE_VALID) != 0u;
+
+            float3 causticIrradiance = (float3)0.0;
+            if (traceValid && gatherCausticsIrradiance(surf, caustics, causticIrradiance))
+            {
+                // The photon estimate replaces the underwater diffuse sun: a valid trace with zero
+                // photons is a legitimately dark band and never re-adds the analytic term. The
+                // straight sun visibility and the cluster gate do not apply to it; the photon
+                // paths already decided visibility. The intensity is applied exactly here.
+                directDiffuse += boostChroma(causticIrradiance) * (1.0 / M_PI) * caustics.sunDirection.w;
+            }
+            else
+            {
+                directDiffuse += d * sunVis * waterFactor;
+            }
+        }
+        else
+        {
+            directDiffuse += d * sunVis;
+            directSpecular += s * sunVis;
+        }
     }
 
     imageStoreUnfilteredDirect(pix, directDiffuse);

@@ -50,25 +50,37 @@ public:
 
     bool IsCreated() const { return created; }
 
-    void Render(nvrhi::ICommandList *pCommandList,
-                uint32_t frameIndex,
-                const Framebuffers *pFramebuffers,
-                uint32_t width,
-                uint32_t height,
-                nvrhi::IBuffer *pUniformBuffer,
-                nvrhi::rt::IAccelStruct *pTopLevel,
-                const RhiRtPrimaryPass::VertexData &vertexData,
-                const Params &params);
+    void RenderTrace(nvrhi::ICommandList *pCommandList,
+                     uint32_t frameIndex,
+                     uint32_t width,
+                     uint32_t height,
+                     nvrhi::IBuffer *pUniformBuffer,
+                     nvrhi::rt::IAccelStruct *pTopLevel,
+                     const RhiRtPrimaryPass::VertexData &vertexData,
+                     const Params &params);
+
+    void RenderDiagnostics(nvrhi::ICommandList *pCommandList,
+                           uint32_t frameIndex,
+                           const Framebuffers *pFramebuffers,
+                           uint32_t width,
+                           uint32_t height,
+                           nvrhi::IBuffer *pUniformBuffer);
+
+    nvrhi::IBuffer *GetCellBuffer(uint32_t frameIndex) const;
+    nvrhi::IBuffer *GetParamsBuffer(uint32_t frameIndex) const;
+    bool HasTraceResult(uint32_t frameIndex) const;
 
     void ReleaseTargets();
 
 private:
+    static constexpr uint32_t CAUSTICS_IMAGE_COUNT = 3;
+
     struct Target
     {
-        uint64_t imageHandles[4] = {};
+        uint64_t imageHandles[CAUSTICS_IMAGE_COUNT] = {};
         uint32_t width = 0;
         uint32_t height = 0;
-        nvrhi::TextureHandle engineTextures[4];
+        nvrhi::TextureHandle engineTextures[CAUSTICS_IMAGE_COUNT];
         nvrhi::BindingSetHandle framebufferSet;
         nvrhi::BindingSetHandle uniformSet;
         nvrhi::IBuffer *uniformBuffer = nullptr;
@@ -111,10 +123,11 @@ private:
     nvrhi::BufferHandle paramsBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle paramsSets[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BufferHandle cellBuffers[MAX_FRAMES_IN_FLIGHT];
-    nvrhi::BufferHandle depthBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle compositeSets[MAX_FRAMES_IN_FLIGHT];
 
     Target targets[MAX_FRAMES_IN_FLIGHT];
+
+    bool traceValid[MAX_FRAMES_IN_FLIGHT] = {};
 
     bool created = false;
     bool warnedMissingInputs = false;

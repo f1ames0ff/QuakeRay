@@ -583,8 +583,8 @@ struct ShPortalInstance
 [[vk::binding(4, DESC_SET_FRAMEBUFFERS), vk::image_format("r32ui")]] RWTexture2D<uint4> framebufNormal_Prev;
 [[vk::binding(5, DESC_SET_FRAMEBUFFERS), vk::image_format("r32ui")]] RWTexture2D<uint4> framebufNormalGeometry;
 [[vk::binding(6, DESC_SET_FRAMEBUFFERS), vk::image_format("r32ui")]] RWTexture2D<uint4> framebufNormalGeometry_Prev;
-[[vk::binding(7, DESC_SET_FRAMEBUFFERS), vk::image_format("rg8")]] RWTexture2D<float4> framebufMetallicRoughness;
-[[vk::binding(8, DESC_SET_FRAMEBUFFERS), vk::image_format("rg8")]] RWTexture2D<float4> framebufMetallicRoughness_Prev;
+[[vk::binding(7, DESC_SET_FRAMEBUFFERS), vk::image_format("rgba8")]] RWTexture2D<float4> framebufMetallicRoughness;
+[[vk::binding(8, DESC_SET_FRAMEBUFFERS), vk::image_format("rgba8")]] RWTexture2D<float4> framebufMetallicRoughness_Prev;
 [[vk::binding(9, DESC_SET_FRAMEBUFFERS), vk::image_format("r16f")]] RWTexture2D<float4> framebufDepthWorld;
 [[vk::binding(10, DESC_SET_FRAMEBUFFERS), vk::image_format("r16f")]] RWTexture2D<float4> framebufDepthWorld_Prev;
 [[vk::binding(11, DESC_SET_FRAMEBUFFERS), vk::image_format("r16f")]] RWTexture2D<float4> framebufDepthGrad;

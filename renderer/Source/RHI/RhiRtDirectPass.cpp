@@ -2,6 +2,7 @@
 
 #include "RhiFrameContext.h"
 #include "RhiPipeline.h"
+#include "RhiResources.h"
 #include "RhiTextureSource.h"
 #include "RhiTextureTable.h"
 
@@ -62,18 +63,19 @@ constexpr uint32_t SET_RENDER_CUBEMAP = 8;
 constexpr uint32_t SET_PORTALS = 9;
 constexpr uint32_t SET_VOLUMETRIC = 10;
 constexpr uint32_t SET_RAY_STATS = 11;
-constexpr uint32_t PIPELINE_SET_COUNT = 12;
+constexpr uint32_t SET_CAUSTICS = 12;
+constexpr uint32_t PIPELINE_SET_COUNT = 13;
 
 static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 &&
               SET_VERTEX_DATA == 3 && SET_TEXTURES == 4 && SET_RANDOM == 5 &&
               SET_LIGHT_SOURCES == 6 && SET_CUBEMAPS == 7 && SET_RENDER_CUBEMAP == 8 &&
               SET_PORTALS == 9 && SET_VOLUMETRIC == 10 && SET_RAY_STATS == 11 &&
-              PIPELINE_SET_COUNT == 12,
+              SET_CAUSTICS == 12 && PIPELINE_SET_COUNT == 13,
               "the RT set order is frozen by the engine's RT shaders");
 
-// The 13 images `RtRaygenDirect.rgen` references, measured 2026-09-25 with `spirv-dis` over the
+// The 12 images `RtRaygenDirect.rgen` references, measured 2026-09-25 with `spirv-dis` over the
 // blob the current sources build to (the command of GenerateShaders.py:157-164, dxc from Vulkan
-// SDK 1.4.321.1). The three UAVs first (the blob's set-1 storage images), then the ten SRVs (its
+// SDK 1.4.321.1). The three UAVs first (the blob's set-1 storage images), then the nine SRVs (its
 // sampled images); the entry-point interface and the descriptor decorations name exactly these and
 // no other set-1 binding. The array order is not a requirement of NVRHI - a binding set's items are
 // keyed by slot - it only groups the writes and the reads the way the raygen uses them.
@@ -82,7 +84,8 @@ static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 
 // `124 + index` for the sampled views (`ShFramebuffers_Sampled_Bindings[index]`), so the table
 // carries the image index and the kind and the module derives both the layout item and the set
 // item from the generated arrays; a hand-written binding number could drift from the shader build,
-// the generated ones cannot.
+// the generated ones cannot. The medium comes from framebufMetallicRoughness_Sampled.z now, so the
+// Q2 bounce-throughput image is no longer on the list.
 //
 // The A4.2a shader-side fix is what keeps the sampled view of the view direction out of the blob
 // (raw binding 147, the same image as the UAV at 23), so no image is bound as both an SRV and a
@@ -95,7 +98,7 @@ struct FramebufferBinding
     bool isUAV;
 };
 
-constexpr uint32_t FRAMEBUFFER_BINDING_COUNT = 13;
+constexpr uint32_t FRAMEBUFFER_BINDING_COUNT = 12;
 constexpr FramebufferBinding FRAMEBUFFER_BINDINGS[FRAMEBUFFER_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_UNFILTERED_DIRECT,      true  }, //  14  framebufUnfilteredDirect
@@ -107,7 +110,6 @@ constexpr FramebufferBinding FRAMEBUFFER_BINDINGS[FRAMEBUFFER_BINDING_COUNT] =
     { FB_IMAGE_INDEX_NORMAL_GEOMETRY,        false }, // 129  framebufNormalGeometry_Sampled
     { FB_IMAGE_INDEX_METALLIC_ROUGHNESS,     false }, // 131  framebufMetallicRoughness_Sampled
     { FB_IMAGE_INDEX_SURFACE_POSITION,       false }, // 143  framebufSurfacePosition_Sampled
-    { FB_IMAGE_INDEX_Q2_BOUNCE_THROUGHPUT,   false }, // 211  framebufQ2BounceThroughput_Sampled
     { FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS,       false }, // 239  framebufQ2GradSmplPos_Sampled
     { FB_IMAGE_INDEX_Q2_RNG_SEED,            false }, // 245  framebufQ2RngSeed_Sampled
     { FB_IMAGE_INDEX_Q2_CLUSTER,             false }, // 247  framebufQ2Cluster_Sampled
@@ -120,6 +122,15 @@ uint32_t GetFramebufferRawBinding(const FramebufferBinding &binding)
     return binding.isUAV ? ShFramebuffers_Bindings[binding.image]
                          : ShFramebuffers_Sampled_Bindings[binding.image];
 }
+
+// Set 12's bindings: the two caustics structured SRVs, in the order the caustics module's own
+// buffers declare them (parameters first, cells second). The strides are the shader's element
+// strides; CausticsParams_BT is 64 B and the photon cell is one uint4. The validation device
+// refuses a structured-buffer binding without a stride, so `PrepareCausticsSet` checks them.
+constexpr uint32_t CAUSTICS_PARAMS_BINDING = 0;
+constexpr uint32_t CAUSTICS_CELL_BINDING = 1;
+constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 64;
+constexpr uint32_t CAUSTICS_CELL_STRIDE = 16;
 
 // Set 3's bindings: vertex data, indices and the geometry-instance buffer the alpha-tested any-hit
 // (`RtAlphaTest.rahit`) fetches triangles through when a shadow ray enters its group. Binding 5
@@ -340,6 +351,9 @@ RhiRtDirectPass::~RhiRtDirectPass()
         {
             wrap = nullptr;
         }
+        target.causticsSet = nullptr;
+        target.causticsCellBuffer = nullptr;
+        target.causticsParamsBuffer = nullptr;
         std::memset(target.imageHandles, 0, sizeof(target.imageHandles));
         std::memset(target.lightHandles, 0, sizeof(target.lightHandles));
         std::memset(target.lightStagingHandles, 0, sizeof(target.lightStagingHandles));
@@ -349,6 +363,10 @@ RhiRtDirectPass::~RhiRtDirectPass()
 
     lightLayout = nullptr;
     framebufferLayout = nullptr;
+    causticsLayout = nullptr;
+    causticsFallbackSet = nullptr;
+    causticsFallbackCell = nullptr;
+    causticsFallbackParams = nullptr;
     anyHitShader = nullptr;
     closestHitShader = nullptr;
     shadowMissShader = nullptr;
@@ -417,7 +435,7 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
         return false;
     }
 
-    // The pipeline declares twelve binding layouts, so the pinned NVRHI's cap has to be the raised
+    // The pipeline declares thirteen binding layouts, so the pinned NVRHI's cap has to be the raised
     // one: the module is written against `c_MaxBindingLayouts == 16` (the patch build_win.ps1
     // applies for the duration of a build, third_party/nvrhi-max-binding-layouts.patch), exactly as
     // RhiRtPrimaryPass is. 'if constexpr' keeps the check out of the compiled path of a patched
@@ -439,7 +457,7 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
         return false;
     }
 
-    // The two layouts this module owns. Both carry the ray-tracing visibility, for the reason
+    // The three layouts this module owns. All carry the ray-tracing visibility, for the reason
     // RhiDebugTracePass documents: the acceleration-structure-read barrier names the compute stage
     // too (vulkan-constants.cpp:282-285) and this device has no rayQuery feature to make that
     // legal (the A3.1 fix). The set-6 light layout additionally spans the vertex and compute
@@ -492,21 +510,81 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
 
         lightLayout = device->createBindingLayout(desc);
     }
+    {
+        // Set 12: the two caustics structured SRVs at their bindings, the same zero offsets. The
+        // parameters element is 64 B and a photon cell is one uint4; the set is filled per frame
+        // from the caustics pass's same-frame buffers.
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::AllRayTracing;
+        desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
+                                   .setShaderResourceOffset(0)
+                                   .setUnorderedAccessViewOffset(0));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(CAUSTICS_PARAMS_BINDING));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(CAUSTICS_CELL_BINDING));
 
-    if (framebufferLayout == nullptr || lightLayout == nullptr)
+        causticsLayout = device->createBindingLayout(desc);
+    }
+
+    if (framebufferLayout == nullptr || lightLayout == nullptr || causticsLayout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a direct RT pass binding layout");
         return false;
     }
 
+    // The fallback set of set 12: one zeroed parameters block and one zeroed cell, so the raygen
+    // always has defined descriptors when the frame carries no caustics inputs. The buffers are
+    // cleared once on the first list that binds them (Render), and their resting state is the SRV
+    // state the layout declares, so the claim survives the lists.
+    {
+        nvrhi::BufferDesc cellDesc;
+        cellDesc.byteSize = CAUSTICS_CELL_STRIDE;
+        cellDesc.structStride = CAUSTICS_CELL_STRIDE;
+        cellDesc.canHaveUAVs = true;
+        cellDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+        cellDesc.keepInitialState = true;
+        cellDesc.debugName = "RhiRtDirectPass caustics cell fallback";
+
+        causticsFallbackCell = rhi::createBuffer(device, cellDesc, cellDesc.debugName);
+
+        nvrhi::BufferDesc paramsDesc;
+        paramsDesc.byteSize = CAUSTICS_PARAMS_STRIDE;
+        paramsDesc.structStride = CAUSTICS_PARAMS_STRIDE;
+        paramsDesc.canHaveUAVs = true;
+        paramsDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+        paramsDesc.keepInitialState = true;
+        paramsDesc.debugName = "RhiRtDirectPass caustics params fallback";
+
+        causticsFallbackParams = rhi::createBuffer(device, paramsDesc, paramsDesc.debugName);
+
+        if (causticsFallbackCell == nullptr || causticsFallbackParams == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the direct RT pass caustics fallback buffers");
+            return false;
+        }
+
+        nvrhi::BindingSetDesc setDesc;
+        setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(CAUSTICS_PARAMS_BINDING,
+                                                                    causticsFallbackParams));
+        setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(CAUSTICS_CELL_BINDING,
+                                                                    causticsFallbackCell));
+
+        causticsFallbackSet = device->createBindingSet(setDesc, causticsLayout);
+
+        if (causticsFallbackSet == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the direct RT pass caustics fallback set");
+            return false;
+        }
+    }
+
     // The pipeline: one raygen (RGenDirect, no specialization), the engine's two miss shaders as
     // two GENERAL groups, and the engine's two hit groups in the order the instance records address
-    // (fully opaque first, alpha tested second). The twelve layouts are added in set order; the
-    // shared positions (0, 2, 3, 5, 7, 8, 9, 10, 11) are the primary pass's own handles, and set 4
-    // is the table's layout, so a set of the host's or the primary's makes it through
-    // validation-commandlist.cpp:509-520. Per-shader and per-hit-group binding layouts stay null -
-    // the Vulkan backend rejects them with NotSupported (vulkan-raytracing.cpp:1531-1535,
-    // :1543-1547).
+    // (fully opaque first, alpha tested second). The thirteen layouts are added in set order; the
+    // shared positions (0, 2, 3, 5, 7, 8, 9, 10, 11) are the primary pass's own handles, set 4 is
+    // the table's layout, and set 12 is this module's caustics layout, so a set of the host's or the
+    // primary's makes it through validation-commandlist.cpp:509-520. Per-shader and per-hit-group
+    // binding layouts stay null - the Vulkan backend rejects them with NotSupported
+    // (vulkan-raytracing.cpp:1531-1535, :1543-1547).
     {
         nvrhi::rt::PipelineDesc desc;
 
@@ -539,6 +617,7 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
         desc.addBindingLayout(primaryPass->GetHoleLayout());           // 9
         desc.addBindingLayout(primaryPass->GetHoleLayout());           // 10
         desc.addBindingLayout(primaryPass->GetRayStatsLayout());       // 11
+        desc.addBindingLayout(causticsLayout);                         // 12
 
         desc.setMaxPayloadSize(MAX_PAYLOAD_SIZE);
         desc.setMaxAttributeSize(MAX_ATTRIBUTE_SIZE);
@@ -582,6 +661,15 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
 
     created = true;
     return true;
+}
+
+void RhiRtDirectPass::SetCausticsInputs(nvrhi::IBuffer *pCellBuffer,
+                                       nvrhi::IBuffer *pParamsBuffer,
+                                       bool traceValid)
+{
+    causticsCellBuffer = pCellBuffer;
+    causticsParamsBuffer = pParamsBuffer;
+    causticsTraceValid = traceValid;
 }
 
 void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
@@ -763,6 +851,27 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
         return;
     }
 
+    // Set 12 and the caustics fallback. The real set is built over this frame's caustics buffers
+    // only when the skeleton supplied both and the same-frame trace succeeded; otherwise the zeroed
+    // fallback set is bound, which carries no trace-valid flag and sends the raygen down the
+    // analytic water path. The fallback buffers are cleared once per pass lifetime.
+    nvrhi::BindingSetHandle causticsSet = causticsFallbackSet;
+
+    if (causticsCellBuffer != nullptr && causticsParamsBuffer != nullptr && causticsTraceValid &&
+        PrepareCausticsSet(target, causticsCellBuffer, causticsParamsBuffer))
+    {
+        causticsSet = target.causticsSet;
+    }
+
+    if (!causticsFallbackCleared)
+    {
+        pCommandList->clearBufferUInt(causticsFallbackCell, 0);
+        pCommandList->clearBufferUInt(causticsFallbackParams, 0);
+        pCommandList->setBufferState(causticsFallbackCell, nvrhi::ResourceStates::ShaderResource);
+        pCommandList->setBufferState(causticsFallbackParams, nvrhi::ResourceStates::ShaderResource);
+        causticsFallbackCleared = true;
+    }
+
     // The image state contract, spelled out on Render in the header: the engine leaves every
     // framebuffer image in VK_IMAGE_LAYOUT_GENERAL - NVRHI's UnorderedAccess - and this native
     // wrap keeps no state between command lists (RhiTextureSource.h), so every list announces that
@@ -781,11 +890,10 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
     // repeated call is a no-op.
     textureTable->TrackPendingTextures(pCommandList);
 
-    // The twelve sets, in the layout order the pipeline was built with; the pinned backend's legacy
-    // binding mode binds the list positionally (vulkan-resource-bindings.cpp:940-958). Sets 5, 7, 8,
-    // 9 and 10 are the primary's empty set: neither the raygen nor any hit/miss stage of this
-    // pipeline declares those sets, but the automatic-barrier pass dereferences every entry, so a
-    // real set has to fill each position.
+    // The thirteen sets, in the layout order the pipeline was built with; the pinned backend's
+    // legacy binding mode binds the list positionally (vulkan-resource-bindings.cpp:940-958). Sets
+    // 5, 7, 8, 9 and 10 are the primary's empty set: of them the raygen declares none, but the
+    // automatic-barrier pass dereferences every entry, so a real set has to fill each position.
     nvrhi::rt::State state;
     state.setShaderTable(shaderTable);
     state.addBindingSet(target.tlasSet);                  // 0
@@ -800,6 +908,7 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
     state.addBindingSet(primaryPass->GetHoleSet());       // 9
     state.addBindingSet(primaryPass->GetHoleSet());       // 10
     state.addBindingSet(primaryPass->GetRayStatsSet(frameIndex)); // 11
+    state.addBindingSet(causticsSet);                     // 12
 
     pCommandList->setRayTracingState(state);
 
@@ -816,8 +925,8 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
 
     // The sampled images end the list in the read-only layout (vulkan-resource-bindings.cpp:
     // 398-435), but the engine's framebuffer images rest in GENERAL and the next frame's primary
-    // pass writes 9 of these 10 as storage images. Move every image that is bound as an SRV and by
-    // no UAV back to UnorderedAccess; the three UAV images are already there.
+    // pass writes the 9 SRV images as storage images. Move every image that is bound as an SRV
+    // and by no UAV back to UnorderedAccess; the three UAV images are already there.
     for (uint32_t i = 0; i < FRAMEBUFFER_BINDING_COUNT; i++)
     {
         if (!FRAMEBUFFER_BINDINGS[i].isUAV)
@@ -888,6 +997,10 @@ void RhiRtDirectPass::ReleaseTarget(Target &target)
         {
             frameContext->Retire(target.vertexDataSet);
         }
+        if (target.causticsSet != nullptr)
+        {
+            frameContext->Retire(target.causticsSet);
+        }
     }
 
     target.tlasSet = nullptr;
@@ -895,6 +1008,9 @@ void RhiRtDirectPass::ReleaseTarget(Target &target)
     target.uniformSet = nullptr;
     target.uniformBuffer = nullptr;
     target.vertexDataSet = nullptr;
+    target.causticsSet = nullptr;
+    target.causticsCellBuffer = nullptr;
+    target.causticsParamsBuffer = nullptr;
 
     for (nvrhi::IBuffer *&buffer : target.vertexBuffers)
     {
@@ -1086,6 +1202,56 @@ bool RhiRtDirectPass::PrepareVertexDataSet(Target &target, const RhiRtPrimaryPas
         target.vertexBuffers[i] = buffers[i];
     }
 
+    return true;
+}
+
+bool RhiRtDirectPass::PrepareCausticsSet(Target &target,
+                                         nvrhi::IBuffer *pCellBuffer,
+                                         nvrhi::IBuffer *pParamsBuffer)
+{
+    if (target.causticsSet != nullptr &&
+        target.causticsCellBuffer == pCellBuffer &&
+        target.causticsParamsBuffer == pParamsBuffer)
+    {
+        return true;
+    }
+
+    // The backend asserts a non-zero structStride when a structured-buffer binding is written
+    // (vulkan-resource-bindings.cpp:535-536) and the validation device refuses it too
+    // (validation-device.cpp:1693-1699); a wrong stride is a host-side setup error, and the safe
+    // answer is the fallback set, not a failed dispatch.
+    if (pCellBuffer->getDesc().structStride != CAUSTICS_CELL_STRIDE ||
+        pParamsBuffer->getDesc().structStride != CAUSTICS_PARAMS_STRIDE)
+    {
+        if (!warnedBadCaustics)
+        {
+            warnedBadCaustics = true;
+            LogMessage(print, "Warning: RHI: the direct RT pass needs the caustics buffers with "
+                              "16-byte cell and 64-byte params strides");
+        }
+        return false;
+    }
+
+    if (target.causticsSet != nullptr)
+    {
+        frameContext->Retire(target.causticsSet);
+    }
+    target.causticsSet = nullptr;
+
+    nvrhi::BindingSetDesc setDesc;
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(CAUSTICS_PARAMS_BINDING, pParamsBuffer));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(CAUSTICS_CELL_BINDING, pCellBuffer));
+
+    target.causticsSet = device->createBindingSet(setDesc, causticsLayout);
+
+    if (target.causticsSet == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create the direct RT pass caustics binding set");
+        return false;
+    }
+
+    target.causticsCellBuffer = pCellBuffer;
+    target.causticsParamsBuffer = pParamsBuffer;
     return true;
 }
 

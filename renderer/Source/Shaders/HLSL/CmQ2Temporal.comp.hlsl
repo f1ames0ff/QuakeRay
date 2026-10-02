@@ -267,6 +267,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV
             float3  normal_prev = texelFetchNormal_Prev(p);
             float3  geo_normal_prev = texelFetchNormalGeometry_Prev(p);
 
+            if (abs(depth_curr) < 1e-4)
+            {
+                continue;
+            }
+
             // Q2ViewDepth is negative for reflection/refraction surfaces, and the
             // stored motion depth delta (motion.z) is in the positive primary
             // space - flip its sign so the motion-compensated match stays exact.

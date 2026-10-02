@@ -959,15 +959,99 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 sky.upscaledWidth, sky.upscaledHeight, worldUniformBuffer.Get());
         }
 
+        // The caustics photon trace and the direct-lighting pass. The trace records first because
+        // it needs only the TLAS, the per-slot vertex data and the uniform, not the screen
+        // G-buffer, and the direct raygen then reads the same frame's cell buffer in its sun
+        // gather; the three inputs are handed to the direct pass right before its Render. The
+        // camera-anchored receiver-domain computation is unchanged. The trace-valid flag written
+        // into the parameters tells the raygen whether this frame's trace produced a result; a
+        // skipped trace leaves the analytic water path.
+        RhiCausticsPass::Params causticsParams = {};
+        bool causticsTraceRequested = false;
+
+        if (causticsPass != nullptr && causticsPass->IsCreated() &&
+            sky.caustics.enabled && sky.caustics.resolution > 0 &&
+            uniform != nullptr && accelStructs != nullptr)
+        {
+            for (int k = 0; k < 3; k++)
+            {
+                causticsParams.sunDirection[k] = sky.caustics.sunDirection[k];
+                causticsParams.sunColor[k] = sky.caustics.sunColor[k];
+            }
+            causticsParams.sunDirection[3] = sky.caustics.intensity;
+
+            const float texelSize = sky.caustics.extent / float(sky.caustics.resolution);
+            const float *camera = uniform->cameraPosition;
+
+            const float rayStartZ = sky.godRays.hasAabb
+                ? (sky.godRays.aabbMax[2] + 64.0f)
+                : (camera[2] + 1024.0f);
+
+            const float sunZ =
+                std::max(causticsParams.sunDirection[2], 0.1f);
+            const float driftScale = (rayStartZ - camera[2]) / sunZ;
+            const float anchorX =
+                camera[0] + causticsParams.sunDirection[0] * driftScale;
+            const float anchorY =
+                camera[1] + causticsParams.sunDirection[1] * driftScale;
+
+            causticsParams.gridMinAndTexel[0] =
+                std::floor(anchorX / texelSize) * texelSize -
+                sky.caustics.extent * 0.5f;
+            causticsParams.gridMinAndTexel[1] =
+                std::floor(anchorY / texelSize) * texelSize -
+                sky.caustics.extent * 0.5f;
+            causticsParams.gridMinAndTexel[2] = texelSize;
+            causticsParams.gridMinAndTexel[3] = rayStartZ;
+            causticsParams.gridSize[0] = sky.caustics.resolution;
+            causticsParams.gridSize[1] = sky.caustics.debugMode;
+
+            // The shader's CAUSTICS_FLAG_TRACE_VALID (Shaders/Caustics.hlsli): RenderTrace writes
+            // the parameters after it validated the dispatch, and HasTraceResult gates the direct
+            // pass binding below, so a skipped trace never lets a stale flag reach the raygen.
+            constexpr uint32_t CAUSTICS_FLAG_TRACE_VALID = 1u;
+            causticsParams.gridSize[2] = CAUSTICS_FLAG_TRACE_VALID;
+
+            if (!warnedCausticsParams && print != nullptr)
+            {
+                warnedCausticsParams = true;
+                print(std::string("RHI: caustics: res " +
+                      std::to_string(sky.caustics.resolution) +
+                      ", extent " + std::to_string(sky.caustics.extent) +
+                      ", texel " + std::to_string(texelSize) +
+                      ", gridMin " + std::to_string(causticsParams.gridMinAndTexel[0]) + " " +
+                      std::to_string(causticsParams.gridMinAndTexel[1]) +
+                      ", rayStartZ " + std::to_string(causticsParams.gridMinAndTexel[3]) +
+                      ", anchor " + std::to_string(anchorX) + " " +
+                      std::to_string(anchorY) +
+                      ", sun " + std::to_string(causticsParams.sunDirection[0]) + " " +
+                      std::to_string(causticsParams.sunDirection[1]) + " " +
+                      std::to_string(causticsParams.sunDirection[2]) +
+                      ", intensity " + std::to_string(causticsParams.sunDirection[3])).c_str());
+            }
+
+            causticsPass->RenderTrace(commandList, frameIndex, sky.width, sky.height,
+                                      worldUniformBuffer.Get(),
+                                      accelStructs->GetTopLevel(frameIndex),
+                                      passVertexData, causticsParams);
+            causticsTraceRequested = true;
+        }
+
         // The direct-lighting pass reads what the primary just wrote (the G-buffer, the Q2 cluster
         // and the seed) and the frame's light buffers; it records on the same list right after the
         // primary, the order the legacy frame uses (VulkanDevice.cpp:901 then :1039) and the order
         // its state announcements and the present's direct read assume. The light-statistics
         // bookkeeping follows the uniform bytes the raygen reads, not the frame slot: the statistics
         // buffer has three rotating slots and the raygen addresses frameId % 3 (RhiRtDirectPass.h
-        // documents the contract).
+        // documents the contract). The caustics inputs are installed first: the same frame's cell
+        // and parameters buffers while the trace succeeded, the pass's zeroed fallback otherwise.
         if (rtDirectPass != nullptr && uniform != nullptr)
         {
+            rtDirectPass->SetCausticsInputs(
+                causticsTraceRequested ? causticsPass->GetCellBuffer(frameIndex) : nullptr,
+                causticsTraceRequested ? causticsPass->GetParamsBuffer(frameIndex) : nullptr,
+                causticsTraceRequested && causticsPass->HasTraceResult(frameIndex));
+
             rtDirectPass->Render(
                 commandList, frameIndex,
                 uniform->frameId, uniform->q2LightStatsMode,
@@ -1116,68 +1200,17 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                   worldUniformBuffer.Get(),
                                   [&](nvrhi::ICommandList *pOverlayList)
                                   {
+                                      // The caustics diagnostic overlay: the production pass runs
+                                      // before the direct pass now, so the callback only displays
+                                      // the frame's photon data into the diagnostic view.
                                       if (causticsPass != nullptr && causticsPass->IsCreated() &&
                                           sky.caustics.enabled && sky.caustics.resolution > 0 &&
                                           uniform != nullptr && accelStructs != nullptr)
                                       {
-                                          RhiCausticsPass::Params causticsParams = {};
-                                          for (int k = 0; k < 3; k++)
-                                          {
-                                              causticsParams.sunDirection[k] = sky.caustics.sunDirection[k];
-                                              causticsParams.sunColor[k] = sky.caustics.sunColor[k];
-                                          }
-                                          causticsParams.sunDirection[3] = sky.caustics.intensity;
-
-                                          const float texelSize =
-                                              sky.caustics.extent / float(sky.caustics.resolution);
-                                          const float *camera = uniform->cameraPosition;
-
-                                          const float rayStartZ = sky.godRays.hasAabb
-                                              ? (sky.godRays.aabbMax[2] + 64.0f)
-                                              : (camera[2] + 1024.0f);
-
-                                          const float sunZ =
-                                              std::max(causticsParams.sunDirection[2], 0.1f);
-                                          const float driftScale = (rayStartZ - camera[2]) / sunZ;
-                                          const float anchorX =
-                                              camera[0] + causticsParams.sunDirection[0] * driftScale;
-                                          const float anchorY =
-                                              camera[1] + causticsParams.sunDirection[1] * driftScale;
-
-                                          causticsParams.gridMinAndTexel[0] =
-                                              std::floor(anchorX / texelSize) * texelSize -
-                                              sky.caustics.extent * 0.5f;
-                                          causticsParams.gridMinAndTexel[1] =
-                                              std::floor(anchorY / texelSize) * texelSize -
-                                              sky.caustics.extent * 0.5f;
-                                          causticsParams.gridMinAndTexel[2] = texelSize;
-                                          causticsParams.gridMinAndTexel[3] = rayStartZ;
-                                          causticsParams.gridSize[0] = sky.caustics.resolution;
-                                          causticsParams.gridSize[1] = sky.caustics.debugMode;
-
-                                          if (!warnedCausticsParams && print != nullptr)
-                                          {
-                                              warnedCausticsParams = true;
-                                              print(std::string("RHI: caustics: res " +
-                                                    std::to_string(sky.caustics.resolution) +
-                                                    ", extent " + std::to_string(sky.caustics.extent) +
-                                                    ", texel " + std::to_string(texelSize) +
-                                                    ", gridMin " + std::to_string(causticsParams.gridMinAndTexel[0]) + " " +
-                                                    std::to_string(causticsParams.gridMinAndTexel[1]) +
-                                                    ", rayStartZ " + std::to_string(causticsParams.gridMinAndTexel[3]) +
-                                                    ", anchor " + std::to_string(anchorX) + " " +
-                                                    std::to_string(anchorY) +
-                                                    ", sun " + std::to_string(causticsParams.sunDirection[0]) + " " +
-                                                    std::to_string(causticsParams.sunDirection[1]) + " " +
-                                                    std::to_string(causticsParams.sunDirection[2]) +
-                                                    ", intensity " + std::to_string(causticsParams.sunDirection[3])).c_str());
-                                          }
-
-                                          causticsPass->Render(pOverlayList, frameIndex, sky.framebuffers,
-                                                               sky.width, sky.height,
-                                                               worldUniformBuffer.Get(),
-                                                               accelStructs->GetTopLevel(frameIndex),
-                                                               passVertexData, causticsParams);
+                                          causticsPass->RenderDiagnostics(pOverlayList, frameIndex,
+                                                                          sky.framebuffers,
+                                                                          sky.width, sky.height,
+                                                                          worldUniformBuffer.Get());
                                       }
 
                                       if (rasterOverlayPass != nullptr &&

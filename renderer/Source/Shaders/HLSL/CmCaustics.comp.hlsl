@@ -6,32 +6,23 @@
 #define MATERIAL_MAX_ALBEDO_LAYERS 1
 
 #include "ShaderCommonHLSLFunc.hlsli"
+#include "BRDF.hlsli"
 #include "Random.hlsli"
 #include "VertexData.hlsli"
 #include "RayCone.hlsli"
 #include "Media.hlsli"
 #include "Water.hlsli"
-
-struct CausticsParams_BT
-{
-    float4 sunDirection;
-    float4 sunColor;
-    float4 gridMinAndTexel;
-    uint4  gridSize;
-};
+#include "Caustics.hlsli"
 
 [[vk::binding(0, DESC_SET_CAUSTICS)]] StructuredBuffer<CausticsParams_BT> causticsParams;
 [[vk::binding(1, DESC_SET_CAUSTICS)]] RWStructuredBuffer<uint4> causticsCells;
-[[vk::binding(2, DESC_SET_CAUSTICS)]] RWStructuredBuffer<uint> causticsCellDepth;
 [[vk::binding(BINDING_ACCELERATION_STRUCTURE_MAIN, DESC_SET_TLAS)]] RaytracingAccelerationStructure topLevelAS;
 
 #define CAUSTICS_RAY_MAX_LENGTH 100000.0
 #define CAUSTICS_RAY_EPS 0.1
 #define CAUSTICS_SECONDARY_RAY_EPS 0.1
 #define CAUSTICS_SKY_SKIP_COUNT 4
-#define CAUSTICS_FLUX_SCALE 256.0
-#define CAUSTICS_DEPTH_SCALE 16.0
-#define CAUSTICS_DEPTH_BIAS 32768.0
+#define CAUSTICS_CELL_ADDEND_MAX 4294901760.0
 
 struct CausticsHit
 {
@@ -48,7 +39,7 @@ struct CausticsHit
 bool causticsTrace(const float3 origin, const float3 direction, const uint cullMask, const float tMin,
                    out CausticsHit hit)
 {
-    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
 
     RayDesc rayDesc;
     rayDesc.Origin    = origin;
@@ -83,6 +74,12 @@ bool causticsTrace(const float3 origin, const float3 direction, const uint cullM
     hit.normal   = normalize(mul(hit.shTriangle.normals, bary));
 
     return true;
+}
+
+uint causticsSaturatingAdd(const float irradiance, const uint current)
+{
+    const uint addend = (uint)min(max(irradiance, 0.0) * CAUSTICS_FLUX_SCALE, CAUSTICS_CELL_ADDEND_MAX);
+    return min(addend, 0xFFFFFFFFu - current);
 }
 
 [numthreads(8, 8, 1)]
@@ -179,17 +176,23 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const float fresnel = 0.1 + 0.9 * pow(1.0 - abs(dot(rayDirection, waveNormal)), 5.0);
-    const float3 power  = params.sunColor.rgb * params.sunDirection.w * (1.0 - fresnel);
+    const float cellArea = texelSize * texelSize;
+    const float fresnel = getFresnelSchlick(1.0, getIndexOfRefraction(MEDIA_TYPE_WATER),
+                                            rayDirection, waveNormal);
+    const float cosTheta = max(0.0, -rayDirection.z);
+    const float pathLength = length(receiverHit.position - waterHit.position);
+
+    const float3 power = params.sunColor.rgb * cosTheta * cellArea *
+                         (1.0 - fresnel) * getMediaTransmittance(MEDIA_TYPE_WATER, pathLength);
 
     const uint cellIndex = (uint)receiverCell.y * resolution + (uint)receiverCell.x;
+    const float3 irradiance = power / cellArea;
 
-    InterlockedAdd(causticsCells[cellIndex].x, (uint)(power.r * CAUSTICS_FLUX_SCALE));
-    InterlockedAdd(causticsCells[cellIndex].y, (uint)(power.g * CAUSTICS_FLUX_SCALE));
-    InterlockedAdd(causticsCells[cellIndex].z, (uint)(power.b * CAUSTICS_FLUX_SCALE));
+    InterlockedAdd(causticsCells[cellIndex].x,
+                   causticsSaturatingAdd(irradiance.r, causticsCells[cellIndex].x));
+    InterlockedAdd(causticsCells[cellIndex].y,
+                   causticsSaturatingAdd(irradiance.g, causticsCells[cellIndex].y));
+    InterlockedAdd(causticsCells[cellIndex].z,
+                   causticsSaturatingAdd(irradiance.b, causticsCells[cellIndex].z));
     InterlockedAdd(causticsCells[cellIndex].w, 1u);
-
-    const uint depthEncoded =
-        (uint)(int)((receiverHit.position.z + CAUSTICS_DEPTH_BIAS) * CAUSTICS_DEPTH_SCALE);
-    InterlockedAdd(causticsCellDepth[cellIndex], depthEncoded);
 }

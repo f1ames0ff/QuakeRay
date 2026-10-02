@@ -56,6 +56,11 @@ float3 getMediaTransmittance( uint media, float distance )
     return exp( -distance * extinction );
 }
 
+bool isUnderwaterMedia( uint media )
+{
+    return media == MEDIA_TYPE_WATER || media == MEDIA_TYPE_ACID;
+}
+
 #if SHIPPING_HACK
 float3 getGlowingMediaFog( uint media, float distance )
 {

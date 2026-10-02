@@ -401,11 +401,16 @@ float3 traceSunWaterFactor(const Surface surf, const float3 lightPosition, const
         return (float3)1.0;
     }
 
-    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
+    const float3 I = toLight / distance;
+
+    // The closest water/acid interface between the receiver and the light. The query keeps the
+    // closest-hit semantics: traversal order is not distance order, and the flat-interface
+    // correction needs the nearest boundary, not an arbitrary committed one.
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
 
     RayDesc rayDesc;
     rayDesc.Origin    = surf.position + surf.toViewerDir * RAY_ORIGIN_LEAK_BIAS;
-    rayDesc.Direction = toLight / distance;
+    rayDesc.Direction = I;
     rayDesc.TMin      = SHADOW_RAY_EPS;
     rayDesc.TMax      = distance;
 
@@ -415,6 +420,8 @@ float3 traceSunWaterFactor(const Surface surf, const float3 lightPosition, const
     {
     }
 
+    // A glass surface or no boundary at all leaves the analytic path unresolved; the conservative
+    // fallback is full transmission rather than an invented absorption or Fresnel term.
     if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
     {
         return (float3)1.0;
@@ -435,22 +442,43 @@ float3 traceSunWaterFactor(const Surface surf, const float3 lightPosition, const
     const float2 bary = query.CommittedTriangleBarycentrics();
     const float3 baryWeights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
 
+    const float3 hitPosition = mul(hitTriangle.positions, baryWeights);
+
     float3 normal = normalize(mul(hitTriangle.normals, baryWeights));
-    if (dot(normal, rayDesc.Direction) > 0.0)
+    if (dot(normal, I) > 0.0)
     {
         normal = -normal;
     }
 
-    const float indexOfRefraction = getIndexOfRefraction(receiverMedia);
-    const float3 refracted = refract(rayDesc.Direction, normal, indexOfRefraction);
+    // Air-to-water Snell refraction of the receiver-to-light direction. The refracted vector is
+    // the reverse of the measured in-water travel direction: it points from the interface back
+    // toward the receiver, so the receiver-to-interface segment runs along +Iw.
+    const float hitIor = getIndexOfRefraction(hitMedia);
+    const float3 Iw = refract(I, normal, 1.0 / hitIor);
 
-    if (dot(refracted, refracted) <= 0.0)
+    if (dot(Iw, Iw) <= 0.0)
     {
-        return (float3)0.0;
+        return (float3)1.0;
     }
 
-    const float fresnel = getFresnelSchlick(indexOfRefraction, 1.0, rayDesc.Direction, normal);
-    const float3 transmittance = getMediaTransmittance(receiverMedia, query.CommittedRayT());
+    const float denominator = dot(Iw, normal);
+    if (denominator == 0.0)
+    {
+        return (float3)1.0;
+    }
+
+    const float dWater = dot(hitPosition - surf.position, normal) / denominator;
+
+    if (!(dWater > 0.0) || isinf(dWater) || isnan(dWater))
+    {
+        return (float3)1.0;
+    }
+
+    // The air->water Fresnel pair plus the receiver medium's extinction over the in-water
+    // segment. dot(Iw, Iw) > 0 already proved the refraction is not a total internal reflection,
+    // so the transmitted fraction is a physical one.
+    const float fresnel = getFresnelSchlick(1.0, hitIor, I, normal);
+    const float3 transmittance = getMediaTransmittance(receiverMedia, dWater);
 
     return transmittance * (1.0 - fresnel);
 }

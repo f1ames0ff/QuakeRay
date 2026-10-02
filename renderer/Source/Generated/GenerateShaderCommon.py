@@ -866,7 +866,7 @@ FRAMEBUFFERS = {
     "IsSky"                             : (UINT8,     CHANNELS_R,    0),
     "Normal"                            : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
     "NormalGeometry"                    : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
-    "MetallicRoughness"                 : (UNORM8,    CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
+    "MetallicRoughness"                 : (UNORM8,    CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
     "DepthWorld"                        : (FLOAT16,   CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
     "DepthGrad"                         : (FLOAT16,   CHANNELS_R,    0),
     "DepthNdc"                          : (FLOAT32,   CHANNELS_R,    0),

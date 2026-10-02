@@ -3,23 +3,12 @@
 #define DESC_SET_CAUSTICS 2
 
 #include "ShaderCommonHLSLFunc.hlsli"
-
-struct CausticsParams_BT
-{
-    float4 sunDirection;
-    float4 sunColor;
-    float4 gridMinAndTexel;
-    uint4  gridSize;
-};
+#include "Caustics.hlsli"
 
 [[vk::binding(0, DESC_SET_CAUSTICS)]] StructuredBuffer<CausticsParams_BT> causticsParams;
 [[vk::binding(1, DESC_SET_CAUSTICS)]] StructuredBuffer<uint4> causticsCells;
-[[vk::binding(2, DESC_SET_CAUSTICS)]] StructuredBuffer<uint> causticsCellDepth;
 
 #define CAUSTICS_DEBUG_MARKER 0.5
-#define CAUSTICS_FLUX_SCALE 256.0
-#define CAUSTICS_DEPTH_SCALE 16.0
-#define CAUSTICS_DEPTH_BIAS 32768.0
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
@@ -34,7 +23,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const CausticsParams_BT params = causticsParams[0];
     const uint resolution = params.gridSize.x;
     const uint debugMode = params.gridSize.y;
-    if (resolution == 0)
+    if (resolution == 0 || debugMode == CAUSTICS_DEBUG_OFF)
     {
         return;
     }
@@ -43,26 +32,27 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const int2 cbPix = getCheckerboardPix(pix);
     const int2 refrPix = (cbPix.x >= sep) ? cbPix : int2(cbPix.x + sep, cbPix.y);
 
-    if (debugMode == 4 || debugMode == 5)
+    if (debugMode == CAUSTICS_DEBUG_MEDIA_REFR || debugMode == CAUSTICS_DEBUG_MEDIA_OWN)
     {
-        const int2 mediaPix = (debugMode == 4) ? refrPix : cbPix;
-        const float media = framebufQ2BounceThroughput_Sampled.Load(int3(mediaPix, 0)).x;
-        float3 mediaColor = float3(0.05, 0.05, 0.05);
+        const int2 mediaPix = (debugMode == CAUSTICS_DEBUG_MEDIA_REFR) ? refrPix : cbPix;
+        const float encodedMedia = framebufMetallicRoughness_Sampled.Load(int3(mediaPix, 0)).z;
+        const uint media = (uint)round(encodedMedia * 3.0);
 
-        if (media > 0.5 && media < 1.5)
+        float3 mediaColor = float3(0.05, 0.05, 0.05);
+        if (media == MEDIA_TYPE_WATER)
         {
             mediaColor = float3(0.0, 0.0, 1.0);
         }
-        else if (media > 1.5 && media < 2.5)
+        else if (media == MEDIA_TYPE_GLASS)
         {
             mediaColor = float3(0.0, 1.0, 0.0);
         }
-        else if (media > 2.5)
+        else if (media == MEDIA_TYPE_ACID)
         {
             mediaColor = float3(1.0, 0.0, 1.0);
         }
 
-        framebufFinal[pix] += float4(mediaColor * CAUSTICS_DEBUG_MARKER, 0.0);
+        framebufFinal[pix] = float4(mediaColor, 1.0);
         return;
     }
 
@@ -71,89 +61,63 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float2 gridCoords =
         (surfacePositionWorld.xy - params.gridMinAndTexel.xy) / params.gridMinAndTexel.z;
 
-    const int2 cell = (int2)floor(gridCoords);
-    const bool inGrid =
-        cell.x >= 0 && cell.y >= 0 && cell.x + 1 < (int)resolution && cell.y + 1 < (int)resolution;
+    const bool inDomain = gridCoords.x >= 0.0 && gridCoords.y >= 0.0 &&
+                          gridCoords.x < (float)resolution && gridCoords.y < (float)resolution;
 
-    if (debugMode == 2)
+    const int lastCell = max((int)resolution - 2, 0);
+    const int lastCenter = max((int)resolution - 1, 0);
+    const float2 cellCenterCoords = clamp(gridCoords - 0.5, 0.0, (float)lastCenter);
+    const int2 baseCell = clamp((int2)floor(cellCenterCoords), int2(0, 0), int2(lastCell, lastCell));
+    const float2 f = saturate(cellCenterCoords - (float2)baseCell);
+
+    uint4 c00;
+    uint4 c10;
+    uint4 c01;
+    uint4 c11;
+
+    if (resolution == 1)
     {
-        framebufFinal[pix] += float4(inGrid ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0, 0.0, 0.0);
+        c00 = causticsCells[0];
+        c10 = c00;
+        c01 = c00;
+        c11 = c00;
+    }
+    else
+    {
+        const uint baseIndex = (uint)baseCell.y * resolution + (uint)baseCell.x;
+        c00 = causticsCells[baseIndex];
+        c10 = causticsCells[baseIndex + 1];
+        c01 = causticsCells[baseIndex + resolution];
+        c11 = causticsCells[baseIndex + resolution + 1];
     }
 
-    if (!inGrid)
-    {
-        return;
-    }
-
-    const uint cell00 = (uint)cell.y * resolution + (uint)cell.x;
-    const uint4 c00 = causticsCells[cell00];
-    const uint4 c10 = causticsCells[cell00 + 1];
-    const uint4 c01 = causticsCells[cell00 + resolution];
-    const uint4 c11 = causticsCells[cell00 + resolution + 1];
-
-    const uint d00 = causticsCellDepth[cell00];
-    const uint d10 = causticsCellDepth[cell00 + 1];
-    const uint d01 = causticsCellDepth[cell00 + resolution];
-    const uint d11 = causticsCellDepth[cell00 + resolution + 1];
-
-    const float2 f = frac(gridCoords);
     const float4 w = float4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y),
-                           (1.0 - f.x) * f.y, f.x * f.y);
+                            (1.0 - f.x) * f.y, f.x * f.y);
 
-    const float4 counts = float4(c00.w, c10.w, c01.w, c11.w);
-    const float4 validW = w * step(0.5, counts);
+    const float3 cellFlux = ((float3)c00.xyz * w.x + (float3)c10.xyz * w.y +
+                             (float3)c01.xyz * w.z + (float3)c11.xyz * w.w) / CAUSTICS_FLUX_SCALE;
+    const float count = (float)c00.w * w.x + (float)c10.w * w.y +
+                        (float)c01.w * w.z + (float)c11.w * w.w;
 
-    const float3 flux =
-        ((float3)c00.xyz * validW.x + (float3)c10.xyz * validW.y +
-         (float3)c01.xyz * validW.z + (float3)c11.xyz * validW.w) / CAUSTICS_FLUX_SCALE;
-
-    const float count = counts.x * validW.x + counts.y * validW.y +
-                        counts.z * validW.z + counts.w * validW.w;
-
-    if (debugMode == 3)
+    if (debugMode == CAUSTICS_DEBUG_PREVIEW)
     {
-        const float3 preview = flux * 0.25;
-        framebufFinal[pix] += float4(preview, 0.0);
+        framebufFinal[pix] = float4(saturate(cellFlux), 1.0);
         return;
     }
 
-    if (debugMode == 1)
+    if (debugMode == CAUSTICS_DEBUG_PHOTONS)
     {
-        framebufFinal[pix] += float4(count > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0,
-                                     count > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0,
-                                     count > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0);
+        const float present = count > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0;
+        framebufFinal[pix] = float4(present, present, present, 1.0);
         return;
     }
 
-    if (count <= 0.0)
+    if (debugMode == CAUSTICS_DEBUG_GRID)
     {
-        if (debugMode == 2)
-        {
-            framebufFinal[pix] += float4(0.0, 0.0, 0.0, 0.0);
-        }
+        const float3 gridColor = inDomain
+            ? float3(CAUSTICS_DEBUG_MARKER, count > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0)
+            : float3(0.0, 0.0, 0.0);
+        framebufFinal[pix] = float4(gridColor, 1.0);
         return;
     }
-
-    const float zSum = (float)d00 * validW.x + (float)d10 * validW.y +
-                       (float)d01 * validW.z + (float)d11 * validW.w;
-    const float cellMeanZ = (zSum / count) / CAUSTICS_DEPTH_SCALE - CAUSTICS_DEPTH_BIAS;
-
-    const float zTolerance = max(params.gridMinAndTexel.z * 4.0, 16.0);
-    const float coverage = saturate(1.0 - abs(cellMeanZ - surfacePositionWorld.z) / zTolerance);
-
-    if (debugMode == 2)
-    {
-        framebufFinal[pix] += float4(0.0, CAUSTICS_DEBUG_MARKER,
-                                     coverage > 0.0 ? CAUSTICS_DEBUG_MARKER : 0.0, 0.0);
-        return;
-    }
-
-    if (coverage <= 0.0)
-    {
-        return;
-    }
-
-    const float3 albedo = framebufAlbedo_Sampled.Load(int3(getRegularPixFromCheckerboardPix(refrPix), 0)).rgb;
-
-    framebufFinal[pix] += float4(flux * coverage * albedo, 0.0);
 }

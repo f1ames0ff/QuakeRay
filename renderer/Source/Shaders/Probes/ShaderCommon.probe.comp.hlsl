@@ -200,13 +200,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += float(framebufNormalGeometry_Prev_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufNormalGeometry_Prev_Sampler, uv, 0.0).x;
 
-    // framebufMetallicRoughness  rg8
+    // framebufMetallicRoughness  rgba8
     framebufMetallicRoughness[pix] = float4(1.0, 1.0, 1.0, 1.0);
     v += float(framebufMetallicRoughness[pix].x);
     v += float(framebufMetallicRoughness_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufMetallicRoughness_Sampler, uv, 0.0).x;
 
-    // framebufMetallicRoughness_Prev  rg8
+    // framebufMetallicRoughness_Prev  rgba8
     framebufMetallicRoughness_Prev[pix] = float4(1.0, 1.0, 1.0, 1.0);
     v += float(framebufMetallicRoughness_Prev[pix].x);
     v += float(framebufMetallicRoughness_Prev_Sampled.Load(int3(pix, 0)).x);

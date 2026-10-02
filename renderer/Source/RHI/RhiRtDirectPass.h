@@ -69,7 +69,10 @@ class RhiTextureTable;
 //                                (q2LightListOffsets), 5 (q2LightListLights), 6 (q2LightStats, the
 //                                only UAV) and 8 (q2ClusterSkyVis);
 //   set 11 ray stats           - an RHI-owned RWStructuredBuffer<RtRayStats> stand-in, raw
-//                                binding 0.
+//                                binding 0;
+//   set 12 caustics            - the module's own two caustics structured SRVs at raw bindings 0
+//                                (CausticsParams_BT, stride 64) and 1 (the uint4 photon cell,
+//                                stride 16), the same-frame output of RhiCausticsPass::RenderTrace.
 // The raygen has no specialization constants (measured: no `OpSpecConstant` in the blob), so no
 // createShaderSpecialization is needed; it declares only `ShPayloadShadow` = 4 B in its own
 // interface, but the pipeline also carries the two misses and the two hit groups, whose payload is
@@ -86,11 +89,12 @@ class RhiTextureTable;
 // `set->getLayout() != expectedLayout` when it applies a state (validation-commandlist.cpp:
 // 509-520). This module therefore builds its own sets 0/2/3 over `primaryPass`'s layout handles,
 // uses the primary's empty layout at 5/7/8/9/10 and the primary's ray-stats layout and set at 11,
-// and owns only two layouts: the exact set-1 layout above and the exact set-6 layout below. The
-// direct raygen declares neither set 7 nor set 8, so no cubemap placeholders are needed - the
-// positions are the same empty hole the primary binds at 5/6/9/10 (a42_recon.md §4).
+// and owns only three layouts: the exact set-1 layout above, the exact set-6 layout below and the
+// 2-item caustics set at 12. The direct raygen declares neither set 7 nor set 8, so no cubemap
+// placeholders are needed - the positions are the same empty hole the primary binds at 5/6/9/10
+// (a42_recon.md §4).
 //
-// The twelve sets, in the engine's RT set order (RayTracingPipeline.cpp:62-86):
+// The thirteen sets, in the engine's RT set order (RayTracingPipeline.cpp:62-86):
 //   set 0  TLAS                - own per-slot set over the primary's tlasLayout;
 //   set 1  framebuffers        - own per-slot set over the module's exact 12-item layout;
 //   set 2  global uniform      - own per-slot set over the primary's uniformLayout;
@@ -106,7 +110,12 @@ class RhiTextureTable;
 //   set 8  render cubemap      - the primary's empty set (`RGenDirect` declares no set 8);
 //   set 9  (portals)           - the primary's empty set;
 //   set 10 (volumetric)        - the primary's empty set;
-//   set 11 ray stats           - the primary's ray-stats set.
+//   set 11 ray stats           - the primary's ray-stats set;
+//   set 12 caustics            - own per-slot set over the module's exact 2-item layout, the caustics
+//                                parameters SRV (binding 0) and the photon cell SRV (binding 1).
+//                                This set is the module's own extension beyond the engine's RT
+//                                order; the raygen reads it under the trace-valid flag and the
+//                                pass binds a zeroed fallback set while no same-frame trace exists.
 //
 // Light data (a42_recon.md §2, §5): the engine runs its host-side light composition every frame but
 // under `rhiframe` skips the device copies that used to publish it (`LightManager::CopyFromStaging`
@@ -231,14 +240,16 @@ public:
     //
     // What is recorded: the wraps of the 12 set-1 images (created on first use, re-created when the
     // engine re-created an image or the size changed; the replaced wraps and the sets over them go
-    // through the frame context's retire queue), the per-slot sets 0-3 and 6, the four light copies
-    // and the light-statistics fill of the slots the frame needs while the mode is not disabled
-    // (both before the state, so the automatic barriers order them before the dispatch), then one
-    // `dispatchRays(width, height, 1)`. The full-size dispatch is what the raygen wants: its
-    // `DispatchRaysIndex` is the checkerboard-packed texel itself (the shader hands it straight to
-    // `fetchGbufferSurface` and to the two image stores, RtRaygenDirect.rgen.hlsl:82,186-188), and
-    // the packed images are created at the render size, so one invocation covers one packed texel
-    // - nothing is halved and no dispatch index is unused.
+    // through the frame context's retire queue), the per-slot sets 0-3, 6 and 12 (the caustics set
+    // from the handles SetCausticsInputs installed, the fallback set while none are installed), the
+    // four light copies and the light-statistics fill of the slots the frame needs while the mode is
+    // not disabled (both before the state, so the automatic barriers order them before the
+    // dispatch), then one `dispatchRays(width, height, 1)`. The full-size dispatch is what the
+    // raygen wants: its `DispatchRaysIndex` is the checkerboard-packed texel itself (the shader
+    // hands it straight to `fetchGbufferSurface` and to the two image stores,
+    // RtRaygenDirect.rgen.hlsl:82,186-188), and the packed images are created at the render size,
+    // so one invocation covers one packed texel - nothing is halved and no dispatch index is
+    // unused.
     //
     // The image-state contract: the engine leaves every framebuffer image in VK_IMAGE_LAYOUT_GENERAL
     // (= NVRHI's UnorderedAccess), and a native wrap keeps no state between command lists, so the
@@ -264,9 +275,18 @@ public:
                 uint32_t width,
                 uint32_t height);
 
-    // Drops every slot's image wraps and the sets over them, the per-slot TLAS/uniform/vertex sets
-    // and the set-6 wraps and set, and retires them through the frame context's queue. The caller
-    // has to call it before the engine destroys its framebuffer images (the
+    // The caustics inputs of this frame (set 12): the caustics pass's photon cell buffer and
+    // parameters buffer plus whether the same frame's trace produced a result. The skeleton calls
+    // it after RhiCausticsPass::RenderTrace and before Render of the same frame index; the handles
+    // are the per-slot buffers that trace wrote, so each slot's set follows a handle change. A null
+    // buffer or `traceValid == false` makes Render bind the module's zeroed fallback set instead of
+    // the frame's buffers, so the raygen always has defined descriptors and sees no trace-valid
+    // flag; the analytic water factor then owns the underwater sun.
+    void SetCausticsInputs(nvrhi::IBuffer *pCellBuffer, nvrhi::IBuffer *pParamsBuffer, bool traceValid);
+
+    // Drops every slot's image wraps and the sets over them, the per-slot TLAS/uniform/vertex/
+    // caustics sets and the set-6 wraps and set, and retires them through the frame context's
+    // queue. The caller has to call it before the engine destroys its framebuffer images (the
     // Framebuffers::PrepareForSize path) - otherwise the wraps reference destroyed VkImages. The
     // next Render re-reads the handles and re-wraps both the images and the engine's light buffers,
     // so the pass survives a resize without a second Create.
@@ -280,15 +300,15 @@ private:
     // same handle-change rule.
     struct Target
     {
-        // Set 1: the 13 engine images (the .cpp's FRAMEBUFFER_BINDINGS table) the slot currently
+        // Set 1: the 12 engine images (the .cpp's FRAMEBUFFER_BINDINGS table) the slot currently
         // wraps and the set over them. The handles are kept in the form Render received them, not
         // as VkImages, because they are what the change detection compares; a change in any of them
         // or in the size means the engine re-created the framebuffers and the wraps and the set
         // have to follow.
-        uint64_t imageHandles[13] = {};
+        uint64_t imageHandles[12] = {};
         uint32_t width = 0;
         uint32_t height = 0;
-        nvrhi::TextureHandle framebufferTextures[13];
+        nvrhi::TextureHandle framebufferTextures[12];
         nvrhi::BindingSetHandle framebufferSet;
 
         // Set 0: the pointer is only the cache key that tells whether the set still addresses the
@@ -314,6 +334,13 @@ private:
         nvrhi::BindingSetHandle lightSet;
         VkBuffer lightStagingHandles[4] = {};
         nvrhi::BufferHandle lightStagingWraps[4];
+
+        // Set 12: the caustics inputs the skeleton passed for this slot (the pointers are the key)
+        // and the set over them. The set is rebuilt on a handle change and falls back to the
+        // module-owned zeroed set when the inputs are missing or have no trace result.
+        nvrhi::IBuffer *causticsCellBuffer = nullptr;
+        nvrhi::IBuffer *causticsParamsBuffer = nullptr;
+        nvrhi::BindingSetHandle causticsSet;
     };
 
     bool LoadShader(const char *pFileName, nvrhi::ShaderType type, nvrhi::ShaderHandle &result);
@@ -348,6 +375,12 @@ private:
     void RecordLightStatsFill(nvrhi::ICommandList *pCommandList, const Target &target,
                               VkBuffer statsBuffer, uint32_t frameId, uint32_t lightStatsMode);
 
+    // Set 12 and the fallback: builds the slot's set over the caustics layout when both handles are
+    // present and one of them changed since the slot's last set, and returns false when the buffers
+    // are unusable (a missing structured stride) so Render binds the fallback set. Never fails the
+    // dispatch: the fallback set is always available.
+    bool PrepareCausticsSet(Target &target, nvrhi::IBuffer *pCellBuffer, nvrhi::IBuffer *pParamsBuffer);
+
     nvrhi::IDevice *device = nullptr;
     PrintFunction print;
     std::string shaderFolderPath;
@@ -368,10 +401,27 @@ private:
     nvrhi::ShaderHandle closestHitShader;
     nvrhi::ShaderHandle anyHitShader;
 
-    // The two layouts this module owns: set 1 (the exact 12 items above) and set 6 (the exact 5
-    // items). Every other layout is the primary's.
+    // The three layouts this module owns: set 1 (the exact 12 items above), set 6 (the exact 5
+    // items) and set 12 (the two caustics structured SRVs). Every other layout is the primary's.
     nvrhi::BindingLayoutHandle framebufferLayout;
     nvrhi::BindingLayoutHandle lightLayout;
+    nvrhi::BindingLayoutHandle causticsLayout;
+
+    // The caustics inputs the current frame installed with SetCausticsInputs. The per-slot sets in
+    // the targets are keyed by the two pointers; the bool decides whether the real handles or the
+    // fallback set are bound.
+    nvrhi::IBuffer *causticsCellBuffer = nullptr;
+    nvrhi::IBuffer *causticsParamsBuffer = nullptr;
+    bool causticsTraceValid = false;
+
+    // The module-owned fallback of set 12: one 16-byte cell and one 64-byte parameters buffer,
+    // zeroed once on the first Render that can bind the set. The zeroed parameters carry no
+    // trace-valid flag, so the raygen takes the analytic water path whenever the frame has no
+    // trace result.
+    nvrhi::BufferHandle causticsFallbackCell;
+    nvrhi::BufferHandle causticsFallbackParams;
+    nvrhi::BindingSetHandle causticsFallbackSet;
+    bool causticsFallbackCleared = false;
 
     // The pipeline and its table: one raygen (RGenDirect), the engine's two misses, the two engine
     // hit groups. Both are created once; the table is uncached, so the backend bakes it per list.
@@ -402,6 +452,7 @@ private:
     bool warnedBadVertexData = false;
     bool warnedMissingLights = false;
     bool warnedMissingLightStaging = false;
+    bool warnedBadCaustics = false;
 
     bool created = false;
 };

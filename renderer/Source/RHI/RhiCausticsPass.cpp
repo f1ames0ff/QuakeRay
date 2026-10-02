@@ -1,5 +1,6 @@
 #include "RhiCausticsPass.h"
 
+#include <cmath>
 #include <cstring>
 
 #include "../Framebuffers.h"
@@ -19,10 +20,8 @@ namespace
 constexpr uint32_t CAUSTICS_GROUP_SIZE = 8;
 constexpr uint32_t CAUSTICS_MAX_RESOLUTION = 512;
 constexpr uint32_t CAUSTICS_CELL_STRIDE = 16;
-constexpr uint32_t CAUSTICS_DEPTH_STRIDE = 4;
 constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 64;
 constexpr uint32_t CAUSTICS_FRAMEBUFFER_SRV_OFFSET = 124;
-constexpr uint32_t CAUSTICS_IMAGE_COUNT = 4;
 constexpr uint32_t CAUSTICS_VERTEX_DATA_BINDING_COUNT = 7;
 
 const uint32_t CAUSTICS_VERTEX_DATA_BINDINGS[CAUSTICS_VERTEX_DATA_BINDING_COUNT] =
@@ -34,14 +33,6 @@ const uint32_t CAUSTICS_VERTEX_DATA_BINDINGS[CAUSTICS_VERTEX_DATA_BINDING_COUNT]
     BINDING_GEOMETRY_INSTANCES,
     BINDING_PREV_POSITIONS_BUFFER_DYNAMIC,
     BINDING_PREV_INDEX_BUFFER_DYNAMIC,
-};
-
-const FramebufferImageIndex CAUSTICS_IMAGES[CAUSTICS_IMAGE_COUNT] =
-{
-    FB_IMAGE_INDEX_FINAL,
-    FB_IMAGE_INDEX_ALBEDO,
-    FB_IMAGE_INDEX_SURFACE_POSITION,
-    FB_IMAGE_INDEX_Q2_BOUNCE_THROUGHPUT,
 };
 
 void LogMessage(const qray::RhiCausticsPass::PrintFunction &print, const std::string &message)
@@ -106,7 +97,6 @@ RhiCausticsPass::~RhiCausticsPass()
         compositeSets[i] = nullptr;
         paramsBuffers[i] = nullptr;
         cellBuffers[i] = nullptr;
-        depthBuffers[i] = nullptr;
     }
 
     traceShader = nullptr;
@@ -196,7 +186,6 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
                                    .setUnorderedAccessViewOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(1));
-        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2));
 
         traceParamsLayout = device->createBindingLayout(desc);
     }
@@ -206,7 +195,6 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
         desc.setBindingOffsets(nvrhi::VulkanBindingOffsets().setShaderResourceOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1));
-        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2));
 
         compositeParamsLayout = device->createBindingLayout(desc);
     }
@@ -217,9 +205,8 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
                                    .setShaderResourceOffset(CAUSTICS_FRAMEBUFFER_SRV_OFFSET)
                                    .setUnorderedAccessViewOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_UAV(FB_IMAGE_INDEX_FINAL));
-        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FB_IMAGE_INDEX_ALBEDO));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FB_IMAGE_INDEX_SURFACE_POSITION));
-        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FB_IMAGE_INDEX_Q2_BOUNCE_THROUGHPUT));
+        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FB_IMAGE_INDEX_METALLIC_ROUGHNESS));
 
         framebufferLayout = device->createBindingLayout(desc);
     }
@@ -279,18 +266,8 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
 
             cellBuffers[i] = rhi::createBuffer(device, desc, "RhiCausticsPass cells " + std::to_string(i));
         }
-        {
-            nvrhi::BufferDesc desc;
-            desc.byteSize = uint64_t(CAUSTICS_MAX_RESOLUTION) * CAUSTICS_MAX_RESOLUTION * CAUSTICS_DEPTH_STRIDE;
-            desc.structStride = CAUSTICS_DEPTH_STRIDE;
-            desc.canHaveUAVs = true;
-            desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
-            desc.keepInitialState = true;
 
-            depthBuffers[i] = rhi::createBuffer(device, desc, "RhiCausticsPass depths " + std::to_string(i));
-        }
-
-        if (paramsBuffers[i] == nullptr || cellBuffers[i] == nullptr || depthBuffers[i] == nullptr)
+        if (paramsBuffers[i] == nullptr || cellBuffers[i] == nullptr)
         {
             LogMessage(print, "Warning: RHI: failed to create a caustics pass buffer");
             return false;
@@ -300,7 +277,6 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
             nvrhi::BindingSetDesc setDesc;
             setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, paramsBuffers[i]));
             setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(1, cellBuffers[i]));
-            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, depthBuffers[i]));
 
             paramsSets[i] = device->createBindingSet(setDesc, traceParamsLayout);
         }
@@ -308,7 +284,6 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
             nvrhi::BindingSetDesc setDesc;
             setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, paramsBuffers[i]));
             setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, cellBuffers[i]));
-            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, depthBuffers[i]));
 
             compositeSets[i] = device->createBindingSet(setDesc, compositeParamsLayout);
         }
@@ -385,6 +360,13 @@ RhiCausticsPass::Target *RhiCausticsPass::PrepareFrame(uint32_t frameIndex,
 
     Target &target = targets[frameIndex];
 
+    static const FramebufferImageIndex CAUSTICS_IMAGES[CAUSTICS_IMAGE_COUNT] =
+    {
+        FB_IMAGE_INDEX_FINAL,
+        FB_IMAGE_INDEX_SURFACE_POSITION,
+        FB_IMAGE_INDEX_METALLIC_ROUGHNESS,
+    };
+
     const ResolutionState resolutionState = { width, height, 0, 0 };
 
     uint64_t imageHandles[CAUSTICS_IMAGE_COUNT] = {};
@@ -460,12 +442,10 @@ bool RhiCausticsPass::PrepareFramebufferSets(Target &target)
     nvrhi::BindingSetDesc setDesc;
     setDesc.addItem(nvrhi::BindingSetItem::Texture_UAV(FB_IMAGE_INDEX_FINAL,
                                                        target.engineTextures[0].Get()));
-    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FB_IMAGE_INDEX_ALBEDO,
-                                                       target.engineTextures[1].Get()));
     setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FB_IMAGE_INDEX_SURFACE_POSITION,
+                                                       target.engineTextures[1].Get()));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FB_IMAGE_INDEX_METALLIC_ROUGHNESS,
                                                        target.engineTextures[2].Get()));
-    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FB_IMAGE_INDEX_Q2_BOUNCE_THROUGHPUT,
-                                                       target.engineTextures[3].Get()));
 
     target.framebufferSet = device->createBindingSet(setDesc, framebufferLayout);
 
@@ -599,42 +579,58 @@ bool RhiCausticsPass::PrepareTlasSet(Target &target, nvrhi::rt::IAccelStruct *pT
     return true;
 }
 
-void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
-                             uint32_t frameIndex,
-                             const Framebuffers *pFramebuffers,
-                             uint32_t width,
-                             uint32_t height,
-                             nvrhi::IBuffer *pUniformBuffer,
-                             nvrhi::rt::IAccelStruct *pTopLevel,
-                             const RhiRtPrimaryPass::VertexData &vertexData,
-                             const Params &params)
+void RhiCausticsPass::RenderTrace(nvrhi::ICommandList *pCommandList,
+                                  uint32_t frameIndex,
+                                  uint32_t width,
+                                  uint32_t height,
+                                  nvrhi::IBuffer *pUniformBuffer,
+                                  nvrhi::rt::IAccelStruct *pTopLevel,
+                                  const RhiRtPrimaryPass::VertexData &vertexData,
+                                  const Params &params)
 {
-    if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT)
+    if (frameIndex >= MAX_FRAMES_IN_FLIGHT)
     {
         return;
     }
 
-    if (width == 0 || height == 0 || pTopLevel == nullptr || params.gridSize[0] == 0 ||
-        params.gridSize[0] > CAUSTICS_MAX_RESOLUTION)
+    traceValid[frameIndex] = false;
+
+    if (!created || pCommandList == nullptr)
+    {
+        return;
+    }
+
+    const uint32_t resolution = params.gridSize[0];
+    const float texelSize = params.gridMinAndTexel[2];
+    const float extent = texelSize * (float)resolution;
+    const bool resolutionValid = resolution > 0 && resolution <= CAUSTICS_MAX_RESOLUTION;
+    const bool texelValid = std::isfinite(texelSize) && texelSize > 0.0f;
+    const bool extentValid = std::isfinite(extent) && extent > 0.0f;
+    const bool sunValid = std::isfinite(params.sunDirection[2]) && params.sunDirection[2] > 0.05f;
+
+    if (width == 0 || height == 0 || pTopLevel == nullptr || pUniformBuffer == nullptr ||
+        !resolutionValid || !texelValid || !extentValid || !sunValid)
     {
         if (!warnedSkip)
         {
             warnedSkip = true;
             LogMessage(print, std::string("RHI: caustics: skipped, width ") + std::to_string(width) +
                                    ", height " + std::to_string(height) +
-                                   ", resolution " + std::to_string(params.gridSize[0]) +
+                                   ", resolution " + std::to_string(resolution) +
+                                   ", texel " + std::to_string(texelSize) +
+                                   ", extent " + std::to_string(extent) +
+                                   ", sunZ " + std::to_string(params.sunDirection[2]) +
                                    ", tlas " + (pTopLevel != nullptr ? "yes" : "no"));
         }
         return;
     }
 
-    Target *pTarget = PrepareFrame(frameIndex, pFramebuffers, width, height, pUniformBuffer);
-    if (pTarget == nullptr)
+    Target &target = targets[frameIndex];
+
+    if (!PrepareUniformSet(target, pUniformBuffer))
     {
         return;
     }
-
-    Target &target = *pTarget;
 
     if (!PrepareTlasSet(target, pTopLevel))
     {
@@ -655,14 +651,7 @@ void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
     std::memcpy(paramsBytes, &params, sizeof(params));
     rhi::writeBuffer(pCommandList, paramsBuffers[frameIndex], paramsBytes, sizeof(paramsBytes));
 
-    for (uint32_t i = 0; i < CAUSTICS_IMAGE_COUNT; i++)
-    {
-        pCommandList->beginTrackingTextureState(target.engineTextures[i], nvrhi::AllSubresources,
-                                               nvrhi::ResourceStates::UnorderedAccess);
-    }
-
     pCommandList->clearBufferUInt(cellBuffers[frameIndex], 0);
-    pCommandList->clearBufferUInt(depthBuffers[frameIndex], 0);
 
     {
         nvrhi::ComputeState state;
@@ -674,8 +663,38 @@ void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
         state.addBindingSet(paramsSets[frameIndex]);
         pCommandList->setComputeState(state);
 
-        const uint32_t groups = Utils::GetWorkGroupCount(params.gridSize[0], CAUSTICS_GROUP_SIZE);
+        const uint32_t groups = Utils::GetWorkGroupCount(resolution, CAUSTICS_GROUP_SIZE);
         pCommandList->dispatch(groups, groups, 1);
+    }
+
+    traceValid[frameIndex] = true;
+}
+
+void RhiCausticsPass::RenderDiagnostics(nvrhi::ICommandList *pCommandList,
+                                        uint32_t frameIndex,
+                                        const Framebuffers *pFramebuffers,
+                                        uint32_t width,
+                                        uint32_t height,
+                                        nvrhi::IBuffer *pUniformBuffer)
+{
+    if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT ||
+        width == 0 || height == 0)
+    {
+        return;
+    }
+
+    Target *pTarget = PrepareFrame(frameIndex, pFramebuffers, width, height, pUniformBuffer);
+    if (pTarget == nullptr)
+    {
+        return;
+    }
+
+    Target &target = *pTarget;
+
+    for (uint32_t i = 0; i < CAUSTICS_IMAGE_COUNT; i++)
+    {
+        pCommandList->beginTrackingTextureState(target.engineTextures[i], nvrhi::AllSubresources,
+                                               nvrhi::ResourceStates::UnorderedAccess);
     }
 
     {
@@ -700,6 +719,31 @@ void RhiCausticsPass::Render(nvrhi::ICommandList *pCommandList,
                                   nvrhi::ResourceStates::NonPixelShaderResource);
     pCommandList->setTextureState(target.engineTextures[0], nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::UnorderedAccess);
+}
+
+nvrhi::IBuffer *RhiCausticsPass::GetCellBuffer(uint32_t frameIndex) const
+{
+    if (frameIndex >= MAX_FRAMES_IN_FLIGHT)
+    {
+        return nullptr;
+    }
+
+    return cellBuffers[frameIndex].Get();
+}
+
+nvrhi::IBuffer *RhiCausticsPass::GetParamsBuffer(uint32_t frameIndex) const
+{
+    if (frameIndex >= MAX_FRAMES_IN_FLIGHT)
+    {
+        return nullptr;
+    }
+
+    return paramsBuffers[frameIndex].Get();
+}
+
+bool RhiCausticsPass::HasTraceResult(uint32_t frameIndex) const
+{
+    return frameIndex < MAX_FRAMES_IN_FLIGHT && traceValid[frameIndex];
 }
 
 void RhiCausticsPass::ReleaseTargets()

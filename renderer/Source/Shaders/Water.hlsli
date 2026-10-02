@@ -49,5 +49,14 @@ float3 getWaterNormal(const RayCone rayCone, const float3 rayDir, const float3 n
     return mul(basis, n);
 }
 
+// worldFootprintValue is a world-space optical footprint: not the camera pixel footprint and not the photon-cell size.
+float3 getWaterNormalForFootprint(const float3 rayDir, const float3 normalGeom, const float3 position, float worldFootprintValue)
+{
+    RayCone rayCone;
+    rayCone.width = max(worldFootprintValue, 1e-4);
+    rayCone.spreadAngle = 0.0;
+    return getWaterNormal(rayCone, rayDir, normalGeom, position, false);
+}
+
 
 #endif

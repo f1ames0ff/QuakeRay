@@ -581,8 +581,8 @@ layout(set = DESC_SET_FRAMEBUFFERS, binding = 3, r32ui) uniform uimage2D framebu
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 4, r32ui) uniform uimage2D framebufNormal_Prev;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 5, r32ui) uniform uimage2D framebufNormalGeometry;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 6, r32ui) uniform uimage2D framebufNormalGeometry_Prev;
-layout(set = DESC_SET_FRAMEBUFFERS, binding = 7, rg8) uniform image2D framebufMetallicRoughness;
-layout(set = DESC_SET_FRAMEBUFFERS, binding = 8, rg8) uniform image2D framebufMetallicRoughness_Prev;
+layout(set = DESC_SET_FRAMEBUFFERS, binding = 7, rgba8) uniform image2D framebufMetallicRoughness;
+layout(set = DESC_SET_FRAMEBUFFERS, binding = 8, rgba8) uniform image2D framebufMetallicRoughness_Prev;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 9, r16f) uniform image2D framebufDepthWorld;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 10, r16f) uniform image2D framebufDepthWorld_Prev;
 layout(set = DESC_SET_FRAMEBUFFERS, binding = 11, r16f) uniform image2D framebufDepthGrad;
