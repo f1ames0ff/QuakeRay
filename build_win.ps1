@@ -167,6 +167,39 @@ New-Item -ItemType Directory -Path $stageGfx -Force | Out-Null
 Copy-Item -Path (Join-Path $PSScriptRoot "renderer\gfx\*") -Destination $stageGfx -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "third_party\imgui\fonts\Roboto-Regular.ttf") (Join-Path $stageGfx "Roboto-Regular.ttf") -Force
 
+# The engine's own UI pack: its menu artwork reaches the game through qray.pkz.
+function Expand-QuakePak([string]$PakPath, [string]$DestDir) {
+    if (-not (Test-Path $PakPath)) { return }
+    $stream = [System.IO.File]::OpenRead($PakPath)
+    try {
+        $reader = New-Object System.IO.BinaryReader($stream)
+        $ident = [System.Text.Encoding]::ASCII.GetString($reader.ReadBytes(4))
+        if ($ident -ne "PACK") { throw "$PakPath is not a pak file" }
+        $dirofs = $reader.ReadInt32()
+        $dirlen = $reader.ReadInt32()
+        $count = [int]($dirlen / 64)
+        $stream.Position = $dirofs
+        for ($i = 0; $i -lt $count; $i++) {
+            $name = [System.Text.Encoding]::ASCII.GetString($reader.ReadBytes(56)).Split([char]0)[0]
+            $pos = $reader.ReadInt32()
+            $len = $reader.ReadInt32()
+            $out = Join-Path $DestDir $name
+            $parent = Split-Path $out -Parent
+            if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+            $save = $stream.Position
+            $stream.Position = $pos
+            [System.IO.File]::WriteAllBytes($out, $reader.ReadBytes($len))
+            $stream.Position = $save
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+Expand-QuakePak (Join-Path $PSScriptRoot "Quake\vkquake.pak") $stage
+Write-Host "Unpacked the engine UI pack into the pkz stage"
+
 $pkzPath = Join-Path $gameDir "qray.pkz"
 if (Test-Path $pkzPath) { Remove-Item $pkzPath -Force }
 

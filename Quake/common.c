@@ -2417,18 +2417,34 @@ static void COM_AddGameDirectory (const char *dir)
 
 	// mount all roots in order: later roots take precedence, and the user root
 	// (the write target) sits on top
-	for (i = 0; i < com_numbasedirs; i++)
 	{
-		qboolean is_main = !q_strcasecmp (com_basedirs[i], com_basedir);
-		qboolean is_user = (host_parms->userdir != host_parms->basedir) && !q_strcasecmp (com_basedirs[i], host_parms->userdir);
+		qboolean embedded_loaded = false;
 
-		q_snprintf (path, sizeof (path), "%s/%s", com_basedirs[i], dir);
-		if (is_user)
-			Sys_mkdir (path);
-		else if (!is_main && Sys_FileType (path) != FS_ENT_DIRECTORY)
-			continue;
+		for (i = 0; i < com_numbasedirs; i++)
+		{
+			qboolean is_main = !q_strcasecmp (com_basedirs[i], com_basedir);
+			qboolean is_local = !q_strcasecmp (com_basedirs[i], host_parms->basedir);
+			qboolean is_user = (host_parms->userdir != host_parms->basedir) && !q_strcasecmp (com_basedirs[i], host_parms->userdir);
+			qboolean add_embedded = false;
 
-		COM_AddGameDirectoryRoot (com_basedirs[i], dir, path_id, is_main && path_id == 1U && !fitzmode);
+			q_snprintf (path, sizeof (path), "%s/%s", com_basedirs[i], dir);
+			if (is_user)
+				Sys_mkdir (path);
+			else if (!is_main && Sys_FileType (path) != FS_ENT_DIRECTORY)
+				continue;
+
+			if (!embedded_loaded && (is_main || is_local) && path_id == 1U && !fitzmode)
+			{
+				q_snprintf (path, sizeof (path), "%s/vkquake.pak", com_basedirs[i]);
+				if (Sys_FileType (path) == FS_ENT_FILE)
+				{
+					add_embedded = true;
+					embedded_loaded = true;
+				}
+			}
+
+			COM_AddGameDirectoryRoot (com_basedirs[i], dir, path_id, add_embedded);
+		}
 	}
 
 	q_strlcpy (com_gamedir, va ("%s/%s", com_basedirs[com_numbasedirs - 1], dir), sizeof (com_gamedir));
