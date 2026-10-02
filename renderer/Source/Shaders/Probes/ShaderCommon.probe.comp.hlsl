@@ -62,9 +62,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          globalUniform.emissionMaxScreenColor + globalUniform.normalMapStrength +
          globalUniform.skyColorSaturation + globalUniform.emissionSharpMask +
          globalUniform.talSelfLitOffset + float(globalUniform.emissionBlendMode) +
-         globalUniform.emissionBlendStrength + globalUniform.skyAmbientLod + globalUniform.rayLength +
-         float(globalUniform.rayCullBackFaces) + float(globalUniform.rayCullMaskWorld) +
-         globalUniform.bloomIntensity + globalUniform.bloomThreshold +
+         globalUniform.emissionBlendStrength + globalUniform.skyAmbientLod +
+         globalUniform.skyLightMultiplier + globalUniform.rayLength + float(globalUniform.rayCullBackFaces) +
+         float(globalUniform.rayCullMaskWorld) + float(globalUniform.__pad2) + float(globalUniform.__pad3) +
+         float(globalUniform.__pad4) + globalUniform.bloomIntensity + globalUniform.bloomThreshold +
          globalUniform.bloomEmissionMultiplier + float(globalUniform.reflectRefractMaxDepth) +
          float(globalUniform.cameraMediaType) + globalUniform.indexOfRefractionWater +
          globalUniform.indexOfRefractionGlass + globalUniform.waterTextureDerivativesMultiplier +
