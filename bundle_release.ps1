@@ -103,7 +103,7 @@ foreach ($f in @("qray.pkz", "qray.materials.yaml")) {
         Write-Host "Added id1\$f"
     }
     else {
-        Write-Warning "Skipped id1\$f (not found in $gameDir)"
+        throw "id1\$f not found in $gameDir. Build the Release configuration first: .\build_win.ps1 Release"
     }
 }
 

@@ -64,6 +64,7 @@ cvar_t host_speeds = {"host_speeds", "0", CVAR_NONE};       // set for running t
 cvar_t host_maxfps = {"host_maxfps", "200", CVAR_ARCHIVE};  // johnfitz
 
 extern cvar_t vid_vsync;
+extern cvar_t scr_usekfont;
 cvar_t host_timescale = {"host_timescale", "0", CVAR_NONE}; // johnfitz
 cvar_t max_edicts = {"max_edicts", "8192", CVAR_NONE};      // johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};           // spike -- blocks the loading of any csqc modules
@@ -1123,6 +1124,7 @@ void Host_Init (void)
 		TexMgr_Init (); // johnfitz
 		Draw_Init ();
 		SCR_Init ();
+		Cvar_SetValueQuick (&scr_usekfont, mg3 ? 1.0f : 0.0f);
 		R_Init ();
 		S_Init ();
 		CDAudio_Init ();

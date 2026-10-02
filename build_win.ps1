@@ -131,6 +131,8 @@ foreach ($stale in @("materials", "textures", "progs", "mdl_skins", "shaders", "
 
 $staleGfx = Join-Path $BuildDir "gfx"
 if (Test-Path $staleGfx) { Remove-Item $staleGfx -Recurse -Force }
+$stalePak = Join-Path $BuildDir "vkquake.pak"
+if (Test-Path $stalePak) { Remove-Item $stalePak -Force }
 
 # The material definitions are the one engine file the editor rewrites, so they
 # stay loose as the gamedir's qray.materials.yaml.
@@ -148,10 +150,22 @@ $stage = (New-Item -ItemType Directory -Path $stage -Force).FullName
 & (Join-Path $PSScriptRoot "build_shaders.ps1") -Rebuild -DestDir (Join-Path $stage "shaders")
 if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
 
+if ($exitCode -eq 0)
+{
 foreach ($sub in @("textures", "progs", "mdl_skins")) {
     $src = Join-Path $srcRoot $sub
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stage $sub) -Recurse -Force
+    }
+}
+
+# the material definitions name model masks as progs/... and mdl_skins/...:
+# stage those two folders at the archive root as well, next to their
+# textures/ copies, so every reference resolves
+foreach ($legacy in @("progs", "mdl_skins")) {
+    $src = Join-Path $srcRoot "textures\$legacy"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $stage $legacy) -Recurse -Force
     }
 }
 
@@ -175,14 +189,25 @@ function Expand-QuakePak([string]$PakPath, [string]$DestDir) {
         $reader = New-Object System.IO.BinaryReader($stream)
         $ident = [System.Text.Encoding]::ASCII.GetString($reader.ReadBytes(4))
         if ($ident -ne "PACK") { throw "$PakPath is not a pak file" }
+        $fileLen = $stream.Length
         $dirofs = $reader.ReadInt32()
         $dirlen = $reader.ReadInt32()
         $count = [int]($dirlen / 64)
         $stream.Position = $dirofs
+        $seen = @{}
         for ($i = 0; $i -lt $count; $i++) {
             $name = [System.Text.Encoding]::ASCII.GetString($reader.ReadBytes(56)).Split([char]0)[0]
             $pos = $reader.ReadInt32()
             $len = $reader.ReadInt32()
+            if (-not $name -or $name.EndsWith("/")) { continue }
+            if ($pos -lt 0 -or $len -lt 0 -or ($pos + $len) -gt $fileLen) {
+                throw "$PakPath entry '$name' is outside the file"
+            }
+            if ($seen.ContainsKey($name)) {
+                Write-Warning "Duplicate pak entry '$name' in $PakPath; keeping the first"
+                continue
+            }
+            $seen[$name] = $true
             $out = Join-Path $DestDir $name
             $parent = Split-Path $out -Parent
             if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
@@ -224,6 +249,7 @@ finally {
 
 Remove-Item $stage -Recurse -Force
 Write-Host "Packed the engine assets into $pkzPath"
+}
 
 if ($nvrhiPatchedHere)
 {

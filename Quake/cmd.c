@@ -288,12 +288,15 @@ void Cmd_Exec_f (void)
 #if RT_RENDERER
 	// always use own default.cfg
 	if (strcmp (Cmd_Argv (1), "default.cfg") == 0)
-#else
-	if (!f && !strcmp (Cmd_Argv (1), "default.cfg"))
-#endif
 	{
+		if (f)
+			Mem_Free (f);
 		f = default_cfg; /* see above.. */
 	}
+#else
+	if (!f && !strcmp (Cmd_Argv (1), "default.cfg"))
+		f = default_cfg; /* see above.. */
+#endif
 	if (!f)
 	{
 		if (cmd_warncmd.value)

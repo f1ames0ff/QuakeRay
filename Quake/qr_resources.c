@@ -293,18 +293,11 @@ qboolean QR_Resources_Resolve (const char *dir, char *out, size_t outsize)
 qboolean QR_Resources_HasGameData (void)
 {
 	char path[MAX_OSPATH];
+	int  i;
 
-	QR_Resources_Init ();
-
-	q_snprintf (path, sizeof (path), "%s/id1/pak0.pak", com_basedir);
-	if (QR_FileExists (path))
+	for (i = 0; i < com_numbasedirs; i++)
 	{
-		return true;
-	}
-
-	if (qr_steam_root[0] != '\0')
-	{
-		q_snprintf (path, sizeof (path), "%s/id1/pak0.pak", qr_steam_root);
+		q_snprintf (path, sizeof (path), "%s/id1/pak0.pak", com_basedirs[i]);
 		if (QR_FileExists (path))
 		{
 			return true;
@@ -495,9 +488,18 @@ qboolean QR_Resources_Resolve (const char *dir, char *out, size_t outsize)
 qboolean QR_Resources_HasGameData (void)
 {
 	char path[MAX_OSPATH];
+	int  i;
 
-	q_snprintf (path, sizeof (path), "%s/id1/pak0.pak", com_basedir);
-	return Sys_FileTime (path) != -1;
+	for (i = 0; i < com_numbasedirs; i++)
+	{
+		q_snprintf (path, sizeof (path), "%s/id1/pak0.pak", com_basedirs[i]);
+		if (Sys_FileTime (path) != -1)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 int QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void *ctx), void *ctx)

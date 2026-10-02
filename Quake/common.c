@@ -2253,7 +2253,7 @@ qboolean COM_ModForbiddenChars (const char *p)
 	return !*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":") || strstr (p, "\"") || strstr (p, ";");
 }
 
-static qboolean COM_PathMatches (const char *a, const char *b)
+qboolean COM_PathMatches (const char *a, const char *b)
 {
 	size_t i;
 
@@ -2456,9 +2456,9 @@ static void COM_AddGameDirectory (const char *dir)
 
 		for (i = 0; i < com_numbasedirs; i++)
 		{
-			qboolean is_main = !q_strcasecmp (com_basedirs[i], com_basedir);
-			qboolean is_local = !q_strcasecmp (com_basedirs[i], host_parms->basedir);
-			qboolean is_user = (host_parms->userdir != host_parms->basedir) && !q_strcasecmp (com_basedirs[i], host_parms->userdir);
+			qboolean is_main = COM_PathMatches (com_basedirs[i], com_basedir);
+			qboolean is_local = COM_PathMatches (com_basedirs[i], host_parms->basedir);
+			qboolean is_user = (host_parms->userdir != host_parms->basedir) && COM_PathMatches (com_basedirs[i], host_parms->userdir);
 			qboolean add_embedded = false;
 
 			q_snprintf (path, sizeof (path), "%s/%s", com_basedirs[i], dir);
@@ -2667,6 +2667,21 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 
 	if (explicit_basedir)
 	{
+		if (requested >= 0 && !QR_Resources_FlavorDir (com_basedir, requested))
+		{
+			int have = -1;
+
+			if (QR_Resources_FlavorDir (com_basedir, QR_FLAVOR_REMASTERED))
+				have = QR_FLAVOR_REMASTERED;
+			else if (QR_Resources_FlavorDir (com_basedir, QR_FLAVOR_ORIGINAL))
+				have = QR_FLAVOR_ORIGINAL;
+
+			if (have >= 0)
+				Con_Printf ("QR: requested %s Quake data was not found; using %s\n",
+				            requested == QR_FLAVOR_REMASTERED ? "remastered" : "classic",
+				            have == QR_FLAVOR_REMASTERED ? "remastered" : "classic");
+		}
+
 		if (q_strcasecmp (host_parms->basedir, com_basedir))
 			COM_AddBaseDir (host_parms->basedir);
 		COM_AddBaseDir (com_basedir);
@@ -2711,6 +2726,9 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 	{
 		int active_flavor = flavor;
 
+		if (active_flavor < 0 && requested >= 0 && QR_Resources_FlavorDir (com_basedir, requested))
+			active_flavor = requested;
+
 		if (active_flavor < 0)
 		{
 			if (QR_Resources_FlavorDir (com_basedir, QR_FLAVOR_REMASTERED))
@@ -2722,6 +2740,11 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 			else
 				active_flavor = remastered[0] ? QR_FLAVOR_REMASTERED : QR_FLAVOR_ORIGINAL;
 		}
+
+		if (requested >= 0 && active_flavor != requested)
+			Con_Printf ("QR: requested %s Quake data was not found; using %s\n",
+			            requested == QR_FLAVOR_REMASTERED ? "remastered" : "classic",
+			            active_flavor == QR_FLAVOR_REMASTERED ? "remastered" : "classic");
 
 		// the Nightdive add-ons are content roots of the remastered flavor
 		if (active_flavor == QR_FLAVOR_REMASTERED)
@@ -2774,6 +2797,17 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 	if ((com_basedir[j - 1] == '\\') || (com_basedir[j - 1] == '/'))
 		com_basedir[j - 1] = 0;
 
+	{
+		char full[MAX_OSPATH];
+
+#ifdef _WIN32
+		if (_fullpath (full, com_basedir, sizeof (full)))
+#else
+		if (realpath (com_basedir, full))
+#endif
+			q_strlcpy (com_basedir, full, sizeof (com_basedir));
+	}
+
 	COM_SetupBaseDirs (explicit_basedir);
 
 	i = COM_CheckParmNext (i, "-basegame");
@@ -2781,6 +2815,21 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 	{ //-basegame:
 		// a) replaces all hardcoded dirs (read: alternative to id1)
 		// b) isn't flushed on normal gamedir switches (like id1).
+		int k, m, basegame_has_id1 = 0;
+
+		m = COM_CheckParm ("-basedir");
+		m = (m && m < com_argc - 1) ? m + 1 : 1;
+
+		for (k = m; k < com_argc - 1; k++)
+		{
+			if (!com_argv[k] || !com_argv[k + 1])
+				continue;
+			if (!q_strcasecmp (com_argv[k], "-basegame") && !q_strcasecmp (com_argv[k + 1], GAMENAME))
+				basegame_has_id1 = 1;
+			if (!q_strcasecmp (com_argv[k], "-game") && !q_strcasecmp (com_argv[k + 1], GAMENAME))
+				basegame_has_id1 = 1;
+		}
+
 		com_modified = true; // shouldn't be relevant when not using id content... but we don't really know.
 		for (;; i = COM_CheckParmNext (i, "-basegame"))
 		{
@@ -2792,6 +2841,25 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 				Sys_Error ("gamedir should be a single directory name, not a path\n");
 			if (p != NULL)
 				COM_AddGameDirectory (p);
+		}
+
+		// the engine assets live in id1/qray.pkz; mount them on top of the
+		// basegame content, which is what -basegame replaced id1 with. the
+		// regular mount already covers a basegame or game dir of id1
+		if (!basegame_has_id1)
+		{
+			for (k = 0; k < com_numbasedirs; k++)
+			{
+				char enginepkz[MAX_OSPATH];
+
+				q_snprintf (enginepkz, sizeof (enginepkz), "%s/%s/qray.pkz", com_basedirs[k], GAMENAME);
+				if (Sys_FileTime (enginepkz) == -1)
+					continue;
+
+				q_snprintf (enginepkz, sizeof (enginepkz), "%s/%s", com_basedirs[k], GAMENAME);
+				RT_PKZ_MountDir (enginepkz, 1U);
+				break;
+			}
 		}
 	}
 	else

@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "json.h"
 #include "q_ctype.h"
 #include "qr_resources.h"
+#include "rt_pkz.h"
 #ifndef _WIN32
 #include <dirent.h>
 #else
@@ -115,6 +116,25 @@ static void FileList_Add (const char *name, filelist_item_t **list)
 	FileList_AddEx (name, 0, list);
 }
 
+typedef struct
+{
+	const char       *path;
+	filelist_item_t **list;
+} rt_pkz_filelist_ctx_t;
+
+static int rt_pkz_filelist_cb (const char *name, void *vctx)
+{
+	rt_pkz_filelist_ctx_t *ctx = (rt_pkz_filelist_ctx_t *)vctx;
+	char                   filename[32];
+
+	if (strchr (name + strlen (ctx->path), '/'))
+		return 0;
+
+	COM_StripExtension (name + strlen (ctx->path), filename, sizeof (filename));
+	FileList_Add (filename, ctx->list);
+	return 0;
+}
+
 static void FileList_Clear (filelist_item_t **list)
 {
 	filelist_item_t *blah;
@@ -151,7 +171,7 @@ void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 
 	for (search = com_searchpaths; search; search = search->next)
 	{
-		if (*search->filename) // directory
+		if (*search->filename && !search->rt_pkz) // directory
 		{
 #ifdef _WIN32
 			q_snprintf (filestring, sizeof (filestring), "%s/%s*.%s", search->filename, path, ext);
@@ -178,6 +198,14 @@ void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 			}
 			closedir (dir_p);
 #endif
+		}
+		else if (search->rt_pkz)
+		{
+			rt_pkz_filelist_ctx_t ctx = { path, list };
+			char                  extdot[16];
+
+			q_snprintf (extdot, sizeof (extdot), ".%s", ext);
+			RT_PKZ_ListFiles (path, extdot, rt_pkz_filelist_cb, &ctx);
 		}
 		else // pakfile
 		{
@@ -476,6 +504,28 @@ static void ExtraMaps_WaitForParsingThread (void)
 	}
 }
 
+typedef struct
+{
+	const searchpath_t *source;
+	qboolean            isbase;
+} rt_pkz_maps_ctx_t;
+
+static int rt_pkz_maps_cb (const char *name, void *vctx)
+{
+	rt_pkz_maps_ctx_t *ctx = (rt_pkz_maps_ctx_t *)vctx;
+	char               mapname[32];
+
+	if (strchr (name + 5, '/'))
+		return 0;
+
+	if (RT_PKZ_FindFile (ctx->source->rt_pkz, name, NULL) <= MIN_BSP_MAP_SIZE)
+		return 0;
+
+	COM_StripExtension (name + 5, mapname, sizeof (mapname));
+	ExtraMaps_Add (mapname, ctx->isbase ? NULL : ctx->source);
+	return 0;
+}
+
 /*
 ==================
 ExtraMaps_Init
@@ -495,7 +545,7 @@ void ExtraMaps_Init (void)
 
 	for (search = com_searchpaths; search; search = search->next)
 	{
-		if (*search->filename) // directory
+		if (*search->filename && !search->rt_pkz) // directory
 		{
 			char dir[MAX_OSPATH];
 
@@ -536,6 +586,14 @@ void ExtraMaps_Init (void)
 				closedir (dir_p);
 			}
 #endif
+		}
+		else if (search->rt_pkz)
+		{
+			rt_pkz_maps_ctx_t ctx;
+
+			ctx.source = search;
+			ctx.isbase = (strstr (search->filename, ignorepakdir) != NULL);
+			RT_PKZ_ListFiles ("maps/", ".bsp", rt_pkz_maps_cb, &ctx);
 		}
 		else // pakfile
 		{

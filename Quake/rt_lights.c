@@ -84,7 +84,7 @@ static const char *rt_light_header =
     "# Light definitions for the qray ray-traced renderer, one file per gamedir\n"
     "# (a mod's file overrides the id1 one). Two parts live here:\n"
     "#\n"
-    "# * `lights:` -- the per-emitter dynamic-light overrides. A light belongs to\n"
+    "# * `qray_lights:` -- the per-emitter dynamic-light overrides. A light belongs to\n"
     "#   an emitter: the texture a model or a sprite draws (the same name\n"
     "#   qray.materials.yaml uses for it), the model of the entity that asked for\n"
     "#   a legacy dlight, or the classname of a map light entity -- classname\n"
@@ -541,20 +541,27 @@ static qboolean rt_light_parse_bool(const char *value)
 
 static int RT_CustomStyleFromString(const char *s);
 
-static int rt_light_load_file(const char *path)
+static int rt_light_parse_text(const char *text, int length)
 {
-    FILE       *f = fopen(path, "r");
+    const char *cursor = text;
+    const char *end = text + length;
     char        line[1024];
     rt_light_t *cur = NULL;
     int         loaded = 0;
 
-    if (!f)
+    while (cursor < end)
     {
-        return 0;
-    }
+        const char *nl = memchr(cursor, '\n', (size_t)(end - cursor));
+        size_t      n = nl ? (size_t)(nl - cursor) : (size_t)(end - cursor);
 
-    while (fgets(line, sizeof(line), f))
-    {
+        if (n >= sizeof(line))
+        {
+            n = sizeof(line) - 1;
+        }
+        memcpy(line, cursor, n);
+        line[n] = '\0';
+        cursor = nl ? nl + 1 : end;
+
         char *p = line;
         char *colon;
 
@@ -682,7 +689,53 @@ static int rt_light_load_file(const char *path)
         }
     }
 
+    return loaded;
+}
+
+static int rt_light_load_file(const char *path)
+{
+    FILE   *f = fopen(path, "rb");
+    long    size;
+    size_t  got;
+    char   *text;
+    int     loaded;
+
+    if (!f)
+    {
+        return 0;
+    }
+
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0 || size > 8 * 1024 * 1024)
+    {
+        fclose(f);
+        return 0;
+    }
+
+    text = (char *)Mem_Alloc((size_t)size);
+    got = fread(text, 1, (size_t)size, f);
     fclose(f);
+    loaded = rt_light_parse_text(text, (int)got);
+    Mem_Free(text);
+    return loaded;
+}
+
+static int rt_light_load_vfs(const char *name)
+{
+    int   length = 0;
+    byte *buf = COM_LoadFile(name, NULL);
+    int   loaded;
+
+    if (!buf)
+    {
+        return 0;
+    }
+
+    length = com_filesize;
+    loaded = rt_light_parse_text((const char *)buf, length);
+    Mem_Free(buf);
     return loaded;
 }
 
@@ -726,11 +779,15 @@ void RT_LIGHT_Reload(void)
         char base[MAX_OSPATH];
 
         q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
-        if (q_strcasecmp(base, com_gamedir))
+        if (!COM_PathMatches(base, com_gamedir))
         {
             rt_light_load_directory(base);
         }
     }
+    rt_light_load_directory(com_gamedir);
+
+    rt_light_load_vfs("lights.yaml");
+    rt_light_load_vfs("qray.lights.yaml");
     rt_light_load_directory(com_gamedir);
 }
 
@@ -771,7 +828,7 @@ int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
         {
             p++;
         }
-        if (*p == '#' || !strncmp(p, "lights:", 7))
+        if (*p == '#' || !strncmp(p, "qray_lights:", 12) || !strncmp(p, "lights:", 7))
         {
             continue;
         }
@@ -824,7 +881,7 @@ qboolean RT_LIGHT_Write(const char *path, char (*names)[MAX_QPATH], int count)
     }
 
     fprintf(f, "%s", rt_light_header);
-    fprintf(f, "lights:\n");
+    fprintf(f, "qray_lights:\n");
 
     for (i = 0; i < count; i++)
     {
@@ -1245,14 +1302,13 @@ static void RT_CustomLightsParse(const char *filebuf, int len, const char *level
     yaml_parser_delete(&parser);
 }
 
-static qboolean rt_custom_load_file(const char *path, const char *level)
+static qboolean rt_custom_load_stream(FILE *f, const char *level)
 {
-    FILE  *f;
-    long   size;
-    char  *text;
-    size_t got;
+    long     size;
+    char    *text;
+    size_t   got;
+    qboolean found;
 
-    f = fopen(path, "rb");
     if (!f)
         return false;
 
@@ -1261,20 +1317,47 @@ static qboolean rt_custom_load_file(const char *path, const char *level)
     fseek(f, 0, SEEK_SET);
 
     if (size <= 0 || size > 8 * 1024 * 1024)
-    {
-        fclose(f);
         return false;
-    }
 
     text = (char *)Mem_Alloc((size_t)size + 1);
     got = fread(text, 1, (size_t)size, f);
-    fclose(f);
     text[got] = 0;
 
     RT_CustomLightsParse(text, (int)got, level);
     Mem_Free(text);
 
-    return (rt_custom_light_count > 0 || rt_custom_fog.has_fog) ? true : false;
+    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog) ? true : false;
+    return found;
+}
+
+static qboolean rt_custom_load_file(const char *path, const char *level)
+{
+    FILE     *f = fopen(path, "rb");
+    qboolean  found;
+
+    if (!f)
+        return false;
+
+    found = rt_custom_load_stream(f, level);
+    fclose(f);
+    return found;
+}
+
+static qboolean rt_custom_load_vfs(const char *name, const char *level)
+{
+    int       length = 0;
+    byte     *buf = COM_LoadFile(name, NULL);
+    qboolean  found;
+
+    if (!buf)
+        return false;
+
+    length = com_filesize;
+    RT_CustomLightsParse((const char *)buf, length, level);
+    Mem_Free(buf);
+
+    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog) ? true : false;
+    return found;
 }
 
 void RT_CustomLights_ChangeMap(const char *mapname)
@@ -1297,7 +1380,12 @@ void RT_CustomLights_ChangeMap(const char *mapname)
     if (!rt_custom_load_file(path, level))
     {
         q_snprintf(path, sizeof(path), "%s/qray/lights.yaml", com_gamedir);
-        rt_custom_load_file(path, level);
+        if (!rt_custom_load_file(path, level))
+        {
+            // a store-mounted mod's own file, found through the search path
+            if (!rt_custom_load_vfs("qray.lights.yaml", level))
+                rt_custom_load_vfs("qray/lights.yaml", level);
+        }
     }
 
     if (rt_custom_light_count > 0 || rt_custom_fog.has_fog)

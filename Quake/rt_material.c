@@ -630,7 +630,8 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
                 yaml_node_t *rk = yaml_document_get_node(&document, rp->key);
                 if (!rk || rk->type != YAML_SCALAR_NODE || !rk->data.scalar.value)
                     continue;
-                if (rk->data.scalar.length != 9 || memcmp(rk->data.scalar.value, "materials", 9) != 0)
+                if (!((rk->data.scalar.length == 14 && !memcmp(rk->data.scalar.value, "qray_materials", 14)) ||
+                      (rk->data.scalar.length == 9 && !memcmp(rk->data.scalar.value, "materials", 9))))
                     continue;
 
                 yaml_node_t *seq = yaml_document_get_node(&document, rp->value);
@@ -992,7 +993,7 @@ static void rt_mat_load_base_dirs(rt_mat_load_ctx_t *ctx)
         char base[MAX_OSPATH];
 
         q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
-        if (q_strcasecmp(base, com_gamedir))
+        if (!COM_PathMatches(base, com_gamedir))
         {
             rt_mat_load_dir(base, rt_mat_load_cb, ctx);
         }
@@ -1017,6 +1018,10 @@ void RT_MAT_Init(void)
 
     RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
     rt_mat_load_base_dirs(&ctx);
+    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
+
+    rt_mat_load_cb("materials.yaml", &ctx);
+    rt_mat_load_cb("qray.materials.yaml", &ctx);
     rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
 
     rt_mat_cmd = Cmd_AddCommand2("rt_mat", RT_MAT_Cmd, src_command);
@@ -1085,6 +1090,9 @@ void RT_MAT_Reload(void)
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
     RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
     rt_mat_load_base_dirs(&ctx);
+    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
+    rt_mat_load_cb("materials.yaml", &ctx);
+    rt_mat_load_cb("qray.materials.yaml", &ctx);
     rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
 
     if (rt_current_map[0])

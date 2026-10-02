@@ -3,10 +3,11 @@
 #include "rt_pkz.h"
 #include "sys.h"
 #include "miniz.h"
+#include <io.h>
+#include <fcntl.h>
 
 #define RT_PKZ_MAX_STREAMS  64
 #define RT_PKZ_HANDLE_BASE  100000
-#define RT_PKZ_MAX_TEMP     64
 
 typedef struct rt_pkz_archive_s
 {
@@ -32,8 +33,6 @@ static rt_pkz_archive_t *rt_pkz_first = NULL;
 static rt_pkz_archive_t *rt_pkz_last = NULL;
 static int               rt_pkz_count = 0;
 static rt_pkz_stream_t   rt_pkz_streams[RT_PKZ_MAX_STREAMS];
-static char              rt_pkz_temp_files[RT_PKZ_MAX_TEMP][MAX_OSPATH];
-static int               rt_pkz_temp_count = 0;
 
 static void *pkz_alloc(void *opaque, size_t items, size_t size)
 {
@@ -269,11 +268,6 @@ void RT_PKZ_Shutdown(void)
         }
     }
 
-    for (i = 0; i < rt_pkz_temp_count; i++)
-    {
-        remove(rt_pkz_temp_files[i]);
-    }
-    rt_pkz_temp_count = 0;
 }
 
 int RT_PKZ_ListFiles(const char *dir, const char *ext,
@@ -478,52 +472,69 @@ FILE *RT_PKZ_OpenFileAsFILE(const void *varchive, const char *name)
 {
     rt_pkz_archive_t *a = (rt_pkz_archive_t *)varchive;
     int fi = rt_pkz_find_index(a, name, NULL);
+    char  tmppath[MAX_OSPATH];
+    char  tmpfile[MAX_OSPATH] = "";
+    HANDLE h;
+    int    fd;
+    FILE  *f;
+    size_t len = 0;
+    size_t got;
+    void  *buf;
+
     if (fi < 0)
     {
         return NULL;
     }
 
-    size_t len = 0;
-    void *buf = mz_zip_reader_extract_to_heap(&a->zip, (mz_uint)fi, &len, 0);
+    buf = mz_zip_reader_extract_to_heap(&a->zip, (mz_uint)fi, &len, 0);
     if (!buf)
     {
         return NULL;
     }
 
-    if (rt_pkz_temp_count >= RT_PKZ_MAX_TEMP)
+    if (!GetTempPathA(sizeof(tmppath), tmppath) ||
+        !GetTempFileNameA(tmppath, "rtp", 0, tmpfile))
     {
         Mem_Free(buf);
         return NULL;
     }
 
-    char tmppath[MAX_OSPATH];
-    char tmpfile[MAX_OSPATH] = "";
-    if (!GetTempPathA(sizeof(tmppath), tmppath))
+    h = CreateFileA(tmpfile, GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, TRUNCATE_EXISTING,
+                    FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (h == INVALID_HANDLE_VALUE)
     {
-        Mem_Free(buf);
-        return NULL;
-    }
-    if (GetTempFileNameA(tmppath, "rtp", 0, tmpfile) == 0)
-    {
+        DeleteFileA(tmpfile);
         Mem_Free(buf);
         return NULL;
     }
 
-    FILE *f = fopen(tmpfile, "wb");
+    fd = _open_osfhandle((intptr_t)h, _O_RDWR | _O_BINARY);
+    if (fd == -1)
+    {
+        CloseHandle(h);
+        Mem_Free(buf);
+        return NULL;
+    }
+
+    f = _fdopen(fd, "r+b");
     if (!f)
     {
+        _close(fd);
         Mem_Free(buf);
         return NULL;
     }
-    if (len > 0)
-    {
-        fwrite(buf, 1, len, f);
-    }
-    fclose(f);
+
+    got = (len > 0) ? fwrite(buf, 1, len, f) : 0;
     Mem_Free(buf);
 
-    q_strlcpy(rt_pkz_temp_files[rt_pkz_temp_count], tmpfile, sizeof(rt_pkz_temp_files[0]));
-    rt_pkz_temp_count++;
+    if (got != len || fflush(f) != 0)
+    {
+        fclose(f);
+        return NULL;
+    }
 
-    return fopen(tmpfile, "rb");
+    rewind(f);
+    return f;
 }

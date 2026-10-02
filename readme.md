@@ -111,7 +111,7 @@ Steps:
 
    Debug builds go to `build\Debug` (the default build dir for the given configuration). Pass an explicit directory as a second argument only if you know you want a different one.
 
-   (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build). If a fully parallel first build runs the compiler out of heap (`fatal error C1060`), cap the job count: `.\build_win.ps1 Release -Parallel 4`.
+   (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build - note that plain CMake only compiles the engine, while `build_win.ps1` is what stages the runtime assets: `qray.pkz`, `qray.materials.yaml` and the SPIR-V shaders. An engine built with plain CMake alone cannot start and fails with a missing blue-noise/shader error). If a fully parallel first build runs the compiler out of heap (`fatal error C1060`), cap the job count: `.\build_win.ps1 Release -Parallel 4`.
 
    The build then deploys the engine assets into `build\<Config>\id1`: `qray.pkz` carries the `renderer/Source/textures` (the QR material textures, model skins, luma and gloss maps), the SPIR-V shaders, the blue noise and water normal tables, the axe cursor artwork and the GUI font, while the material definitions (`renderer/Source/materials.yaml`) stay loose as `id1/qray.materials.yaml` because the editor rewrites that file.
 

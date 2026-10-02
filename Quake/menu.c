@@ -2827,7 +2827,7 @@ static void M_Keys_Populate (void)
 		const menukeybind_t *item = &default_keybinds[i];
 
 		// Filter-out items not applicable for the current game:
-		if (standard_quake && strcmp (item->command, "impulse 225") == 0)
+		if (!hipnotic && !mg3 && strcmp (item->command, "impulse 225") == 0)
 			continue;
 		if (!hipnotic && strcmp (item->command, "impulse 226") == 0)
 			continue;

@@ -5666,6 +5666,8 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    exact_normals: true\n");
 	if (m->force_rasterize)
 		fprintf (f, "    force_rasterize: true\n");
+	if (m->alpha_test)
+		fprintf (f, "    alpha_test: true\n");
 }
 
 static qboolean QRE_FileExists (const char *path)
@@ -5814,7 +5816,7 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 		const qboolean light = (qre.mode == QRE_MODE_LIGHT);
 
 		fprintf (out, "%s", light ? RT_LIGHT_Header () : qre_yaml_header);
-		fprintf (out, "%s\n", light ? "lights:" : "materials:");
+		fprintf (out, "%s\n", light ? "qray_lights:" : "qray_materials:");
 	}
 	else
 	{
@@ -5866,6 +5868,20 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 			else
 			{
 				skipping = false;
+			}
+
+			if (line[0] != ' ' && line[0] != '\t')
+			{
+				if (!strncmp (line, "materials:", 10))
+				{
+					fputs ("qray_materials:\n", out); // migrate the old root key
+					continue;
+				}
+				if (!strncmp (line, "lights:", 7))
+				{
+					fputs ("qray_lights:\n", out); // migrate the old root key
+					continue;
+				}
 			}
 
 			fputs (line, out);
@@ -5947,20 +5963,65 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 	}
 }
 
+// Whether the lines indented under a just-read key form an emitter list. The
+// key name alone cannot tell the root list from a level named like it, so the
+// body decides. The file position is the same after the call as before it.
+static qboolean QRE_NextIsEmitterBody (FILE *f)
+{
+	char     probe[2048];
+	qboolean emitter = false;
+	long     pos = ftell (f);
+
+	if (pos < 0)
+		return false;
+
+	while (fgets (probe, sizeof (probe), f))
+	{
+		char *p = probe;
+
+		if (probe[0] == '#')
+			continue;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+
+		if (!strncmp (p, "- name:", 7))
+		{
+			emitter = true;
+			break;
+		}
+
+		if (probe[0] != ' ' && probe[0] != '\t' && probe[0] != '\r' && probe[0] != '\n')
+			break; // the next root line; the body was not an emitter list
+	}
+
+	fseek (f, pos, SEEK_SET);
+	return emitter;
+}
+
 // Copies the level sections of a lights file into the session, leaving out the
 // current level's section (when the Custom tab was touched) and, of a merged
-// file, the emitter list under the root "lights:" key.
+// file, the emitter list under the root "qray_lights:" key.
 static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *skip_level)
 {
 	FILE    *in = fopen (source, "r");
 	char     line[2048];
 	qboolean skipping = false;
+	qboolean started = false;
 
 	if (!in)
 		return;
 
 	while (fgets (line, sizeof (line), in))
 	{
+		if (!started)
+		{
+			if (line[0] == '#' || line[0] == ' ' || line[0] == '\t' ||
+			    line[0] == '\r' || line[0] == '\n')
+				continue;
+			started = true;
+		}
+
 		if (skipping)
 		{
 			if (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n')
@@ -5994,7 +6055,17 @@ static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *ski
 				key[n] = '\0';
 				q_strlwr (key);
 
-				if (!strcmp (key, "lights") || (skip_level && !strcmp (key, skip_level)))
+				if (!strcmp (key, "qray_lights"))
+				{
+					skipping = true;
+					continue;
+				}
+				if (!strcmp (key, "lights") && QRE_NextIsEmitterBody (in))
+				{
+					skipping = true;
+					continue;
+				}
+				if (skip_level && !strcmp (key, skip_level))
 				{
 					skipping = true;
 					continue;
@@ -6008,10 +6079,100 @@ static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *ski
 	fclose (in);
 }
 
+#define QRE_LIGHTS_ROOT_NONE   0
+#define QRE_LIGHTS_ROOT_LEGACY 1 // the old root key, "lights:"
+#define QRE_LIGHTS_ROOT_QRAY   2 // the namespaced root key, "qray_lights:"
+
+// Which root emitter key the target carries, if any. "qray_lights:" is the
+// namespaced root; a bare "lights:" is the root only when its body is an
+// emitter list, so a section named "lights" belongs to that level.
+static int QRE_FileLightsRootKind (const char *path)
+{
+	FILE *f = fopen (path, "r");
+	char  line[2048];
+	int   kind = QRE_LIGHTS_ROOT_NONE;
+
+	if (!f)
+		return QRE_LIGHTS_ROOT_NONE;
+
+	while (fgets (line, sizeof (line), f))
+	{
+		if (!strncmp (line, "qray_lights:", 12))
+		{
+			kind = QRE_LIGHTS_ROOT_QRAY;
+			break;
+		}
+		if (kind == QRE_LIGHTS_ROOT_NONE && !strncmp (line, "lights:", 7) &&
+		    QRE_NextIsEmitterBody (f))
+			kind = QRE_LIGHTS_ROOT_LEGACY;
+	}
+
+	fclose (f);
+	return kind;
+}
+
+static int QRE_LightTouchedIndex (const char *name)
+{
+	int i;
+
+	for (i = 0; i < qre.light_touched_count && i < QRE_TOUCHED_MAX; i++)
+	{
+		if (!q_strcasecmp (qre.light_touched[i], name))
+			return i;
+	}
+	return -1;
+}
+
+// Writes one touched emitter entry when it still resolves; false when the
+// writer has nothing to say about it.
+static qboolean QRE_LightWriteTouched (FILE *out, qboolean *written, int index)
+{
+	rt_light_t *l;
+
+	if (index < 0 || index >= qre.light_touched_count || written[index])
+		return false;
+
+	l = RT_LIGHT_Find (qre.light_touched[index]);
+	if (!l || !RT_LIGHT_HasFields (l))
+		return false;
+
+	RT_LIGHT_WriteEntry (out, l);
+	written[index] = true;
+	return true;
+}
+
+// True when the entry is a touched one that resolves but no longer carries any
+// field: the block in the target is stale and has to leave with the save.
+static qboolean QRE_LightDropTouched (qboolean *written, int index)
+{
+	if (index < 0 || index >= qre.light_touched_count || written[index])
+		return false;
+
+	if (!RT_LIGHT_Find (qre.light_touched[index]))
+		return false;
+
+	written[index] = true;
+	return true;
+}
+
+static int QRE_LightWriteMissing (FILE *out, qboolean *written)
+{
+	int i, count = 0;
+
+	for (i = 0; i < qre.light_touched_count && i < QRE_TOUCHED_MAX; i++)
+	{
+		if (QRE_LightWriteTouched (out, written, i))
+			count++;
+	}
+
+	return count;
+}
+
 // Writes qray.lights.editor.yaml: one file with the emitter overrides under the
-// root "lights:" key and one section per level for the custom lights and the
-// fog. The touched emitter blocks get the live values, the current level's
-// section the live custom lights and fog, and everything else passes through.
+// root "qray_lights:" key and one section per level for the custom lights and the
+// fog. A merged target keeps its own text: only the touched emitter blocks and
+// the current level's section are replaced, so comments and keys the loader
+// does not understand survive a save.
 static qboolean QRE_WriteLightSession (void)
 {
 	char        names[QRE_SESSION_NAMES_MAX][MAX_QPATH];
@@ -6020,8 +6181,10 @@ static qboolean QRE_WriteLightSession (void)
 	char        legacy_emitter[MAX_OSPATH];
 	char        legacy_custom[MAX_OSPATH];
 	const char *emitter_source;
-	const char *level_source;
 	qboolean    custom_touched = QRE_CustomTouched ();
+	qboolean    target_exists = QRE_FileExists (qre.target_file) ? true : false;
+	int         root_kind = target_exists ? QRE_FileLightsRootKind (qre.target_file) : QRE_LIGHTS_ROOT_NONE;
+	qboolean    merged_target = (root_kind != QRE_LIGHTS_ROOT_NONE);
 	FILE       *out;
 	qboolean    wrote = false;
 	int         i, n;
@@ -6038,8 +6201,7 @@ static qboolean QRE_WriteLightSession (void)
 	q_snprintf (legacy_emitter, sizeof (legacy_emitter), "%s/lights.yaml", com_gamedir);
 	q_snprintf (legacy_custom, sizeof (legacy_custom), "%s/qray/lights.yaml", com_gamedir);
 
-	emitter_source = QRE_FileExists (qre.target_file) ? qre.target_file : legacy_emitter;
-	level_source = QRE_FileExists (qre.target_file) ? qre.target_file : legacy_custom;
+	emitter_source = target_exists ? qre.target_file : legacy_emitter;
 
 	if (QRE_FileExists (emitter_source))
 		name_count = RT_LIGHT_ReadNames (emitter_source, names, QRE_SESSION_NAMES_MAX);
@@ -6048,7 +6210,7 @@ static qboolean QRE_WriteLightSession (void)
 	{
 		for (n = 0; n < name_count; n++)
 		{
-			if (!strcmp (names[n], qre.light_touched[i]))
+			if (!q_strcasecmp (names[n], qre.light_touched[i]))
 				break;
 		}
 		if (n == name_count)
@@ -6064,28 +6226,186 @@ static qboolean QRE_WriteLightSession (void)
 		return false;
 	}
 
-	fprintf (out, "%s", RT_LIGHT_Header ());
-	fprintf (out, "lights:\n");
-	for (i = 0; i < name_count; i++)
+	if (!merged_target)
 	{
-		rt_light_t *l = RT_LIGHT_Find (names[i]);
+		// no merged target yet: write the canonical file and copy the level
+		// sections the old files carry
+		const char *level_source = target_exists ? qre.target_file : legacy_custom;
 
-		if (l && RT_LIGHT_HasFields (l))
+		fprintf (out, "%s", RT_LIGHT_Header ());
+		fprintf (out, "qray_lights:\n");
+		for (i = 0; i < name_count; i++)
 		{
-			RT_LIGHT_WriteEntry (out, l);
+			rt_light_t *l = RT_LIGHT_Find (names[i]);
+
+			if (l && RT_LIGHT_HasFields (l))
+			{
+				RT_LIGHT_WriteEntry (out, l);
+				wrote = true;
+			}
+		}
+
+		if (QRE_FileExists (level_source))
+			QRE_WriteLevelBlocks (out, level_source, custom_touched ? level : NULL);
+
+		if (custom_touched)
+		{
+			if (QRE_FileExists (level_source) && !wrote)
+				fprintf (out, "\n");
+			QRE_CustomWriteLevel (out, level);
 			wrote = true;
 		}
 	}
-
-	if (QRE_FileExists (level_source))
-		QRE_WriteLevelBlocks (out, level_source, custom_touched ? level : NULL);
-
-	if (custom_touched)
+	else
 	{
-		if (QRE_FileExists (level_source) && !wrote)
+		FILE    *in = fopen (qre.target_file, "r");
+		char     line[2048];
+		qboolean written[QRE_TOUCHED_MAX];
+		qboolean skipping = false;
+		qboolean in_lights = false;
+		qboolean lights_closed = false;
+		qboolean level_written = false;
+
+		if (!in)
+		{
+			fclose (out);
+			remove (qre.editor_file);
+			return false;
+		}
+
+		memset (written, 0, sizeof (written));
+
+		while (fgets (line, sizeof (line), in))
+		{
+			char *p = line;
+
+			if (skipping)
+			{
+				char *q = line;
+
+				while (*q == ' ' || *q == '\t')
+					q++;
+
+				if (!strncmp (q, "- name:", 7) || !strncmp (q, "name:", 5))
+				{
+					skipping = false; // the next block already starts
+				}
+				else if (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n')
+				{
+					continue; // the body of the block that was replaced
+				}
+				else
+				{
+					skipping = false;
+				}
+			}
+
+			while (*p == ' ' || *p == '\t')
+				p++;
+
+			if (!strncmp (p, "- name:", 7) || !strncmp (p, "name:", 5))
+			{
+				char  name[MAX_QPATH];
+				char *e;
+				int   len;
+				int   touched;
+
+				p = strchr (p, ':') + 1;
+				while (*p == ' ' || *p == '\t')
+					p++;
+				e = p;
+				while (*e && *e != '\r' && *e != '\n' && *e != ' ' && *e != '\t')
+					e++;
+				len = (int)(e - p);
+				if (len >= MAX_QPATH)
+					len = MAX_QPATH - 1;
+				memcpy (name, p, (size_t)len);
+				name[len] = '\0';
+				q_strlwr (name);
+
+				touched = QRE_LightTouchedIndex (name);
+				if (touched >= 0)
+				{
+					if (written[touched] ||
+					    QRE_LightWriteTouched (out, written, touched) ||
+					    QRE_LightDropTouched (written, touched))
+					{
+						wrote = true;
+						skipping = true;
+						continue;
+					}
+				}
+			}
+
+			if (line[0] != ' ' && line[0] != '\t' && line[0] != '\r' && line[0] != '\n')
+			{
+				char *colon = strchr (line, ':');
+
+				if (line[0] != '#' && colon)
+				{
+					char  key[64];
+					char *e = colon;
+					int   len;
+
+					while (e > line && (e[-1] == ' ' || e[-1] == '\t'))
+						e--;
+					len = (int)(e - line);
+					if (len >= (int)sizeof (key))
+						len = (int)sizeof (key) - 1;
+					memcpy (key, line, (size_t)len);
+					key[len] = '\0';
+					q_strlwr (key);
+
+					if (!strcmp (key, "qray_lights"))
+					{
+						in_lights = true;
+						fputs (line, out);
+						continue;
+					}
+					if (!strcmp (key, "lights") && QRE_NextIsEmitterBody (in))
+					{
+						in_lights = true;
+						fputs ("qray_lights:\n", out); // migrate the old root key
+						continue;
+					}
+
+					if (in_lights && !lights_closed)
+					{
+						lights_closed = true;
+						if (QRE_LightWriteMissing (out, written) > 0)
+							wrote = true;
+					}
+
+					if (custom_touched && !level_written && !strcmp (key, level))
+					{
+						QRE_CustomWriteLevel (out, level);
+						level_written = true;
+						wrote = true;
+						skipping = true;
+						continue;
+					}
+				}
+			}
+
+			fputs (line, out);
+		}
+
+		if (!lights_closed)
+		{
+			fputc ('\n', out); // the file may not have ended on a newline
+			if (QRE_LightWriteMissing (out, written) > 0)
+				wrote = true;
+		}
+
+		if (custom_touched && !level_written)
+		{
 			fprintf (out, "\n");
-		QRE_CustomWriteLevel (out, level);
-		wrote = true;
+			QRE_CustomWriteLevel (out, level);
+			wrote = true;
+		}
+
+		if (in)
+			fclose (in);
 	}
 
 	if (!wrote)
@@ -6200,6 +6520,44 @@ static qboolean QRE_ResetRemoveFile (const char *path)
 	return false;
 }
 
+static void QRE_ResetRemoveOptional (const char *path)
+{
+	if (path && path[0])
+		remove (path);
+}
+
+#ifdef _WIN32
+static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
+{
+	char            pattern[MAX_OSPATH];
+	WIN32_FIND_DATAA fd;
+	HANDLE           h;
+
+	q_snprintf (pattern, sizeof (pattern), "%s/materials/*.yaml", gamedir);
+	h = FindFirstFileA (pattern, &fd);
+	if (h == INVALID_HANDLE_VALUE)
+		return;
+
+	do
+	{
+		char path[MAX_OSPATH];
+
+		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			continue;
+
+		q_snprintf (path, sizeof (path), "%s/materials/%s", gamedir, fd.cFileName);
+		remove (path);
+	} while (FindNextFileA (h, &fd));
+
+	FindClose (h);
+}
+#else
+static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
+{
+	(void)gamedir;
+}
+#endif
+
 static void QRE_ResetAll (void)
 {
 	const int mode = qre.mode;
@@ -6218,12 +6576,27 @@ static void QRE_ResetAll (void)
 		q_snprintf (legacy, sizeof (legacy), "%s/qray/lights.yaml", com_gamedir);
 		if (!QRE_ResetRemoveFile (legacy))
 			return;
+
+		q_snprintf (legacy, sizeof (legacy), "%s/lights.editor.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		q_snprintf (legacy, sizeof (legacy), "%s/backup_lights.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		q_snprintf (legacy, sizeof (legacy), "%s/qray/lights.editor.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		q_snprintf (legacy, sizeof (legacy), "%s/qray/backup_lights.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
 	}
 	else
 	{
 		q_snprintf (legacy, sizeof (legacy), "%s/materials.yaml", com_gamedir);
 		if (!QRE_ResetRemoveFile (legacy))
 			return;
+
+		q_snprintf (legacy, sizeof (legacy), "%s/materials.editor.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		q_snprintf (legacy, sizeof (legacy), "%s/backup_materials.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		QRE_ResetRemoveLegacyMaterials (com_gamedir);
 	}
 
 	QRE_BackToChooser ();
@@ -6262,10 +6635,10 @@ static void QRE_SessionSave (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
 	const qboolean globals = light ? QRE_GlobalsTouched () : QRE_WaterTouched ();
-	const qboolean touched = light ? QRE_LightSessionTouched () : (qre.touched_count > 0 || QRE_WaterTouched ());
+	const qboolean entries = light ? (qre.light_touched_count > 0 || QRE_CustomTouched ()) : (qre.touched_count > 0);
 	const qboolean had_target = QRE_FileExists (qre.target_file);
 
-	if (touched && !QRE_WriteSession () && !globals)
+	if (entries && !QRE_WriteSession ())
 	{
 		QRE_Notify ("the session could not be written");
 		return;
@@ -6365,7 +6738,7 @@ static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 	OPENFILENAMEA ofn;
 	size_t        glen, i;
 
-	q_snprintf (initdir, sizeof (initdir), "%s/textures", com_gamedir);
+	q_snprintf (initdir, sizeof (initdir), "%s", com_gamedir);
 
 	memset (&ofn, 0, sizeof (ofn));
 	result[0] = '\0';
