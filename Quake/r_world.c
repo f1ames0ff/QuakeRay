@@ -1988,6 +1988,27 @@ static int rt_dtal_group_oversized;
 static int rt_dtal_group_budget_refused;
 static int rt_dtal_group_coverage_refused;
 static int rt_dtal_group_builds;
+static int rt_dtal_group_reuses;
+
+static uint64_t rt_dtal_input_signature;
+static uint64_t rt_dtal_build_signature;
+static float    rt_dtal_build_spacing;
+static float    rt_dtal_build_mode;
+
+#define RT_DTAL_SIGNATURE_SEED 1469598103934665603ull
+
+static uint64_t RT_DtalHashInput (uint64_t hash, const rt_dtal_input_t *input)
+{
+	const unsigned char *bytes = (const unsigned char *) input;
+
+	for (size_t i = 0; i < sizeof (*input); i++)
+	{
+		hash ^= (uint64_t) bytes[i];
+		hash *= 1099511628211ull;
+	}
+
+	return hash;
+}
 
 static int RT_DtalReserve (void **array, int *capacity, int needed, int elementSize)
 {
@@ -2119,6 +2140,7 @@ static void RT_DtalGroups_BeginCollect (void)
 	rt_dtal_group_budget_refused = 0;
 	rt_dtal_group_coverage_refused = 0;
 	rt_dtal_source_count = 0;
+	rt_dtal_input_signature = RT_DTAL_SIGNATURE_SEED;
 
 	if (rt_dtal_builder == NULL)
 		rt_dtal_builder = RT_Dtal_BuilderCreate ();
@@ -2199,6 +2221,7 @@ static void RT_DtalGroups_Feed (const QrTexturedAreaLightUploadInfo *light_info,
 		return;
 	}
 
+	rt_dtal_input_signature = RT_DtalHashInput (rt_dtal_input_signature, &input);
 	rt_dtal_source_count++;
 	rt_dtal_group_inputs++;
 }
@@ -2334,23 +2357,51 @@ static void RT_DtalGroups_FillUpload (void)
 
 static void RT_DtalGroups_Rebuild (void)
 {
-	rt_dtal_groups_active = false;
-	rt_dtal_groups_failed = false;
-	rt_dtal_groups_rebuild_pending = false;
-
 	const float mode = CVAR_TO_FLOAT (rt_dtal_groups);
 
 	if (mode <= 0.0f || rt_dtal_builder == NULL)
+	{
+		rt_dtal_groups_active = false;
+		rt_dtal_groups_failed = false;
+		rt_dtal_groups_rebuild_pending = false;
 		return;
+	}
 
 	const float spacing = CVAR_TO_FLOAT (rt_dtal_spacing);
 
 	if (!isfinite (spacing) || spacing <= 0.0f)
 	{
-		rt_dtal_groups_failed = true;
-		Con_DWarning ("RT: rt_dtal_spacing %g is invalid; the DTAL groups are left off\n", spacing);
+		rt_dtal_groups_active = false;
+
+		if (!(rt_dtal_groups_failed && rt_dtal_build_signature == rt_dtal_input_signature &&
+		      rt_dtal_build_spacing == spacing && rt_dtal_build_mode == mode))
+		{
+			rt_dtal_groups_failed = true;
+			Con_DWarning ("RT: rt_dtal_spacing %g is invalid; the DTAL groups are left off\n", spacing);
+		}
+
+		rt_dtal_build_signature = rt_dtal_input_signature;
+		rt_dtal_build_spacing = spacing;
+		rt_dtal_build_mode = mode;
 		return;
 	}
+
+	/* The world draw path collects the static emissive set on every static-submit frame; the
+	   geometry tables only have to be built when the collected inputs or the grid policy
+	   actually differ from the installed generation. */
+	if (!rt_dtal_groups_rebuild_pending && rt_dtal_build_signature == rt_dtal_input_signature &&
+	    rt_dtal_build_spacing == spacing && rt_dtal_build_mode == mode)
+	{
+		rt_dtal_group_reuses++;
+		return;
+	}
+
+	rt_dtal_groups_active = false;
+	rt_dtal_groups_failed = false;
+	rt_dtal_groups_rebuild_pending = false;
+	rt_dtal_build_signature = rt_dtal_input_signature;
+	rt_dtal_build_spacing = spacing;
+	rt_dtal_build_mode = mode;
 
 	if (!RT_Dtal_BuilderBuild (rt_dtal_builder, spacing, mode >= 2.0f))
 	{
@@ -3847,7 +3898,7 @@ static void RT_CollectWorldEmissiveLights (void)
 	}
 }
 
-void RT_RecollectWorldEmissiveLights (void)
+static void RT_CollectWorldEmissiveLightsAndBuild (void)
 {
 	rt_wldlights_emissive_count = 0;
 	rt_wldlights_style_accepted_dirty = true;
@@ -3859,6 +3910,11 @@ void RT_RecollectWorldEmissiveLights (void)
 	RT_DtalGroups_BeginCollect ();
 	RT_CollectWorldEmissiveLights ();
 	RT_DtalGroups_Rebuild ();
+}
+
+void RT_RecollectWorldEmissiveLights (void)
+{
+	RT_CollectWorldEmissiveLightsAndBuild ();
 }
 
 #define RT_BRUSHCLUSTER_CACHE_SIZE 256
@@ -4301,16 +4357,7 @@ R_DrawWorld -- ericw -- moved from R_DrawTextureChains, which is no longer speci
 */
 void R_DrawWorld (cb_context_t *cbx)
 {
-	rt_wldlights_emissive_count = 0;
-	/* The list is about to be collected again, so the cached reach answers for the old
-	   entries are void. */
-	rt_wldlights_style_accepted_dirty = true;
-
-	memset (&rt_emis_stats, 0, sizeof (rt_emis_stats));
-	rt_emis_skip_num = 0;
-	RT_EmisWatchFrameEnd ();
-
-	RT_CollectWorldEmissiveLights ();
+	RT_CollectWorldEmissiveLightsAndBuild ();
 
 	if (!r_drawworld_cheatsafe)
 		return;
@@ -5916,9 +5963,10 @@ void RT_PrintEmissiveStats (void)
 		const int groups = rt_dtal_groups_active ? rt_dtal_build->groupCount : 0;
 		const int members = rt_dtal_groups_active ? rt_dtal_build->memberCount : 0;
 
-		RT_LightReportPrint ("dtal groups (rt_dtal_groups %g, spacing %g): %i admitted pieces -> %i parents, %i member patches, %i oversized pieces, %i refused, %i coverage refusals, %i builds; %s\n",
+		RT_LightReportPrint ("dtal groups (rt_dtal_groups %g, spacing %g): %i admitted pieces -> %i parents, %i member patches, %i oversized pieces, %i refused, %i coverage refusals, %i builds, %i reused collections; %s\n",
 			CVAR_TO_FLOAT (rt_dtal_groups), CVAR_TO_FLOAT (rt_dtal_spacing), rt_dtal_group_inputs, groups, members,
 			rt_dtal_group_oversized, rt_dtal_group_budget_refused, rt_dtal_group_coverage_refused, rt_dtal_group_builds,
+			rt_dtal_group_reuses,
 			rt_dtal_groups_active ? "active" : (rt_dtal_groups_failed ? "failed, per-piece lights stay" : "inactive"));
 	}
 
