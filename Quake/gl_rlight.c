@@ -1438,7 +1438,7 @@ void RT_ClusterLightReport_f (void)
 
 		if (viewleaf && viewleaf != cl.worldmodel->leafs)
 		{
-			viewCluster = (int)(viewleaf - cl.worldmodel->leafs);
+			viewCluster = RT_MapWorldCluster ((int)(viewleaf - cl.worldmodel->leafs));
 
 			if (qrGetClusterLightList (vulkan_globals.instance, (uint32_t)viewCluster,
 					viewUids, (uint32_t)countof (viewUids), &viewCount) != QR_SUCCESS)
