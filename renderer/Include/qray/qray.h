@@ -958,6 +958,7 @@ typedef struct QrDrawFrameSkyParams
 
     uint32_t    skyCloudsQuality;
     uint32_t    godRaysQuality;
+    float       sunDiscSize;
 } QrDrawFrameSkyParams;
 
 #define QR_LIGHT_STYLE_COUNT 64

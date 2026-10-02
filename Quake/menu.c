@@ -195,6 +195,7 @@ extern cvar_t vid_filter;
 extern cvar_t rt_bloom;
 extern cvar_t rt_sky_godrays;
 extern cvar_t rt_sky_godrays_quality;
+extern cvar_t rt_sky_sun_size;
 extern cvar_t rt_sky_clouds;
 extern cvar_t rt_sky_clouds_quality;
 extern cvar_t rt_gi_level;
@@ -2425,6 +2426,7 @@ enum
 {
 	LIGHTING_OPT_SYSTEM,
 	LIGHTING_OPT_GI,
+	LIGHTING_OPT_SUN_SIZE,
 	LIGHTING_OPT_GODRAYS,
 	LIGHTING_OPT_GODRAYS_QUALITY,
 	LIGHTING_OPTIONS_ITEMS
@@ -2453,6 +2455,9 @@ static void M_LightingOptions_Adjust (int dir)
 		break;
 	case LIGHTING_OPT_GI:
 		M_StepGiLevel (dir);
+		break;
+	case LIGHTING_OPT_SUN_SIZE:
+		Cvar_SetValueQuick (&rt_sky_sun_size, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_sun_size) + dir * 0.1f, 10.0f));
 		break;
 	case LIGHTING_OPT_GODRAYS:
 		Cvar_SetValueQuick (&rt_sky_godrays, !CVAR_TO_BOOL (rt_sky_godrays));
@@ -2520,6 +2525,10 @@ static void M_LightingOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * LIGHTING_OPT_GI, "Indirect lighting");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * LIGHTING_OPT_GI, M_GetGiLevelName ());
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * LIGHTING_OPT_SUN_SIZE, "Sun disc size");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * LIGHTING_OPT_SUN_SIZE,
+		va ("%.1fx", CVAR_TO_FLOAT (rt_sky_sun_size)));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * LIGHTING_OPT_GODRAYS, "God rays");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * LIGHTING_OPT_GODRAYS, CVAR_TO_BOOL (rt_sky_godrays));

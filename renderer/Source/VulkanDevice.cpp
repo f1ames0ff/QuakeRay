@@ -900,7 +900,9 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         p.skyParams[0] = globalUniform->skyColorMultiplier;
         p.skyParams[1] = globalUniform->skyColorSaturation;
         p.skyParams[2] = 30.0f;
-        p.skyParams[3] = 0.025f;
+        float sunDiscSize = drawInfo.pSkyParams != nullptr ? drawInfo.pSkyParams->sunDiscSize : 1.0f;
+        sunDiscSize = std::isfinite(sunDiscSize) ? std::clamp(sunDiscSize, 0.0f, 10.0f) : 1.0f;
+        p.skyParams[3] = 0.025f * sunDiscSize;
 
         const uint32_t cloudsQuality = drawInfo.pSkyParams != nullptr
             ? std::min(drawInfo.pSkyParams->skyCloudsQuality, uint32_t(QR_SKY_CLOUDS_MAX_QUALITY))

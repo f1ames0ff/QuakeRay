@@ -3,6 +3,7 @@
 ## v0.26.0
 
 ### Added
+- **Adjustable sun-disc size** — `rt_sky_sun_size` is available in Lighting and the Sun editor, with a `0`-`10` size multiplier. The default `1` preserves the previous disc; `0` hides it without disabling directional sunlight, cloud lighting or god rays.
 - **The clouds of the procedural sky are a layer the NVRHI renderer marches** — the layer, the shadow volume of that layer and the sky's composite are NVRHI compute passes recorded on every traced frame, and the marched cubemap is complete: its writable view covers all six array slices, where a view of one slice left five faces unwritten and made the layer read as a sheet surrounded by black.
 - **The cloud shadow of the layer attenuates the sunlight** — the eight-slice volume gates the direct sun, the indirect sun and the god rays; a lookup accounts for the height of the sample inside the layer, respects the cloud opacity and returns full sunlight above it, and switching the clouds off or selecting the flat level disables the volume entirely.
 - **The quality of the clouds takes effect live** — `0` selects the flat mask; `1` through `3` use 512, 1024 and 2048-pixel layer faces with 40, 48 and 56 view steps, and the shadow volume is 1024 pixels wide at medium and high and 2048 at ultra. The former `4`/extreme level is removed, an old or out-of-range value selects ultra, and the sky's Gaussian filter reads the layer's actual resolution.

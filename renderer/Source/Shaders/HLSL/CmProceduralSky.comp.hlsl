@@ -135,7 +135,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 
     float cosAng = cos(sunAngRad);
-    float disc = smoothstep(cosAng, 1.0, dot(dir, sunDir)) * sunAmount;
+    float disc = sunAngRad > 0.0 ? smoothstep(cosAng, 1.0, dot(dir, sunDir)) * sunAmount : 0.0;
 
     float layerTransmittance = cloudOpacity > 0.0
         ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)

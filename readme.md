@@ -129,7 +129,7 @@ Steps:
 
 ### Cloud renderer regression test
 
-The optional GPU test runs without opening a game window or loading Quake data. It checks the six cubemap faces and mip chains, live cloud-quality changes, stationary-frame caching, wind and camera motion, cloud shadows at different heights, and the god-rays descriptor/push-constant interface. It requires a Vulkan 1.3 GPU; Vulkan validation is enabled when the SDK's validation layer is available.
+The optional GPU test runs without opening a game window or loading Quake data. It checks the six cubemap faces and mip chains, live cloud-quality changes, stationary-frame caching, wind and camera motion, cloud shadows at different heights, and the god-rays descriptor/push-constant interface. It also compares low with medium at three layer scales, reports GPU pass timings, checks sun-disc motion under fast clouds, and verifies disc-size scaling. It requires a Vulkan 1.3 GPU; Vulkan validation is enabled when the SDK's validation layer is available.
 
 ```
 cmake -S . -B build/Debug -DQR_BUILD_TESTS=ON
@@ -146,6 +146,7 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_contrast 0.6` - mixes the fixed tone curve with the auto-exposure adapted one (`0` keeps the fixed curve, `1` is the adapted curve alone)
 * `rt_sky_sun 1` with `rt_sky_sun_pitch 140` / `rt_sky_sun_yaw 120` - the sun's intensity and direction: `0` turns it off, and the indirect sun and god rays scale with it
 * `rt_sky_sun_color 255 255 255` - colour of the sun and its disc, independent of the sky, as `<r> <g> <b>` in `0-255`; commas and a bare query work, and it is archived
+* `rt_sky_sun_size 1.0` - apparent sun-disc size multiplier, available in Lighting and the editor's Sun section: `0.5` halves its diameter, `2` doubles it, and `0` hides the disc while retaining sunlight. Range `0`-`10`; the default preserves the previous size
 * `rt_sky_sun_edit 0` - mode: while it is `1` the sun follows the crosshair and writes `rt_sky_sun_pitch` / `rt_sky_sun_yaw`; the fire button leaves it without shooting, and it never survives a restart
 * `rt_sky_godrays_intensity 1` with `rt_sky_godrays 1` - strength of the volumetric sun shafts and their on/off switch: `2` doubles them, `0` removes them and the shadow map they are marched through
 * `rt_sky_godrays_sky_threshold 0.75` - luminance a sky area needs for the god rays to pull to it, as a mean over 16x16 cells of the skybox or of the scrolling sky; the rays aim at the centre of everything above it, and `0` keeps the brightest point alone

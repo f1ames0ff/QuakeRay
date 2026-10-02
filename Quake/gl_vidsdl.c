@@ -190,6 +190,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	\
 	CVAR_DEF_T (rt_sky_sun, "1") \
 	CVAR_DEF_T (rt_sky_sun_color, "255 255 255") \
+	CVAR_DEF_T (rt_sky_sun_size, "1.0") \
 	CVAR_DEF_T (rt_sky_sun_pitch, "140") \
 	CVAR_DEF_T (rt_sky_sun_yaw, "120") \
 	CVAR_DEF_T (rt_sky_sun_preset, "0") \
@@ -666,6 +667,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_sky_godrays_sky_threshold");
 	RT_Bench_Setting (f, "rt_physical_sky");
 	RT_Bench_Setting (f, "rt_physical_sun");
+	RT_Bench_Setting (f, "rt_sky_sun_size");
 	RT_Bench_Setting (f, "rt_sky_clouds");
 	RT_Bench_Setting (f, "rt_sky_clouds_coverage");
 	RT_Bench_Setting (f, "rt_sky_clouds_density");
@@ -2213,6 +2215,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		         : QR_SKY_TYPE_RASTERIZED_GEOMETRY,
 		.skyColorDefault = RT_VEC3 (sky_base_color),
 		.sunDiscColor = RT_VEC3 (sun_disc_color),
+		.sunDiscSize = CVAR_TO_FLOAT (rt_sky_sun_size),
 		.skyColorMultiplier = materials_only ? 0.0f : (usePhysicalSky ? skyBrightness : skyMult * skyBrightness),
 		// The procedural sky has no tint strength any more -- its color is its
 		// own -- so the slot carries the opacity the clouds are composited with

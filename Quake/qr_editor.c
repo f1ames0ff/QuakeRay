@@ -3647,6 +3647,8 @@ static const qre_global_t qre_globals[] = {
 	{ NULL,  "rt_sky_sun_color",        QRE_G_COLOR, 0, 0,
 	  "The color of the sun: its light, the disc in the procedural sky and everything that reads it (the indirect sun, the god rays, the fog's shafts).",
 	  NULL },
+	{ NULL,  "rt_sky_sun_size",         QRE_G_FLOAT, 0, 10,
+	  "Sun disc size multiplier: 1 keeps the original size, 0 hides the disc without disabling sunlight." },
 	{ NULL,  "rt_sky_sun_pitch",        QRE_G_FLOAT, -180, 180,
 	  "The pitch the sun stands at." },
 	{ NULL,  "rt_sky_sun_yaw",          QRE_G_FLOAT, -180, 180,

@@ -459,6 +459,37 @@ int main(int argc, char **argv)
             }
             std::cout << "Sun motion remains anchored under cloud occlusion at wind speeds 2 and 4\n";
 
+            auto discParams = p;
+            discParams.skyTint[0] = discParams.skyTint[1] = discParams.skyTint[2] = 0;
+            discParams.cloudParams[3] = 0;
+            discParams.sunDirection[0] = discParams.sunDirection[1] = 0;
+            discParams.sunDirection[2] = discParams.sunDirection[3] = 1;
+            discParams.skyParams[0] = discParams.skyParams[2] = 1;
+            std::array<double, 4> discEnergies{};
+            const float discSizes[] = {0, 0.5f, 1, 2};
+            for (uint32_t sizeIndex = 0; sizeIndex < std::size(discSizes); ++sizeIndex)
+            {
+                discParams.skyParams[3] = 0.025f * discSizes[sizeIndex];
+                const uint32_t slot = sizeIndex % 2;
+                frames.BeginSlot(slot);
+                sky.Render(frames.GetCommandList(slot), slot, discParams);
+                frames.EndSlot(slot);
+                const auto discPixels = ReadCube(device, sky.GetCubemapTexture(), 0, 128);
+                for (size_t i = 0; i < discPixels.size(); i += 4)
+                {
+                    Require(std::isfinite(discPixels[i]), "sun-disc size produced non-finite light");
+                    discEnergies[sizeIndex] += discPixels[i];
+                    if (sizeIndex == 0)
+                        Require(discPixels[i] == 0 && discPixels[i + 3] == 1,
+                                "zero sun-disc size retains the disc or its stationary motion region");
+                }
+            }
+            Require(discEnergies[2] > 10 && std::abs(discEnergies[1] / discEnergies[2] - 0.25) < 0.02 &&
+                    std::abs(discEnergies[3] / discEnergies[2] - 4.0) < 0.08,
+                    "sun-disc area does not scale with its configured diameter");
+            std::cout << "Sun-disc energy at size 0/0.5/1/2: " << discEnergies[0] << '/' << discEnergies[1]
+                      << '/' << discEnergies[2] << '/' << discEnergies[3] << '\n';
+
             p.cloudParams[0] = layer.cloudParams[0] = shadow.cloudLayer[1] = 0.4f;
             p.cloudParams[2] = layer.cloudParams[2] = shadow.cloudMarch[1] = 0;
             p.cloudParams[1] = layer.cloudParams[1] = shadow.cloudLayer[2] = 0.8f;
