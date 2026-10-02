@@ -5,11 +5,11 @@
 | Item | Value |
 |---|---|
 | Branch | `refactor/dtal-cluster-dedup` |
-| Base commit | `8bfd0bdd` (final commit of `feature/cluster-lighting-overflow`) |
-| Commit 1 | `975a0c62` — one UID resolution path and one cone encoder |
-| Commit 2 | `b7bb2900` — single alias-table API, removed unused selector entry points |
-| Commit 3 | `02e507f0` — shared alias draw helper for GLSL and HLSL |
-| Report commit | `bd6c335a` (this document), hashes refreshed in this commit |
+| Base commit | `6c7c6c62` (final commit of `feature/cluster-lighting-overflow`) |
+| Commit 1 | `a9fe59ce` — one UID resolution path and one cone encoder |
+| Commit 2 | `b1680fc0` — single alias-table API, removed unused selector entry points |
+| Commit 3 | `41c7b08e` — shared alias draw helper for GLSL and HLSL |
+| Report commit | `e9e99706` (this document), hashes refreshed in this commit |
 | Combined diff | 15 files, 103 insertions, 196 deletions |
 
 The branch inherits both accepted projects and changes no behaviour that either report
