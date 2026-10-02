@@ -36,6 +36,7 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * Bloom
 * Post-processing: chromatic aberration, and a configurable LUT for colour grading
 * Shader smoke — the trails of rockets, lava balls and grenades are drawn as soft, lit puffs the room's light falls on, in place of the classic flat sprites
+* Enhanced models — a model that ships a `.md3` or `.md5mesh` beside its `.mdl` is drawn from it, with MD5 skinned from its `.md5anim` and skins resolved from the shader name; the Graphics menu's `Models` row picks enhanced or classic
 * Adaptive vsync, VRR and FreeSync: `vid_vsync` picks the presentation mode (off, vsync, adaptive, FreeSync), adaptive by default
 
 ## Roadmap

@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.21.0
+
+### Added
+- **Enhanced models** — the Graphics menu's `Models` row chooses `enhanced` (the default) or `classic`. With `r_enhancedmodels` on, a model that ships a `.md3` or `.md5mesh` beside its `.mdl` is loaded from that file instead: an MD3 surface becomes rigid frames, an MD5 mesh is skinned on the CPU from its `.md5anim`, and both draw through the renderer's own geometry path. The skin is resolved from the shader name — the Ironwail-style `<shader>_00_00` pattern first, then the bare name, each under the model's own directory, `progs/` and `textures/`, with `.lmp` qpic lumps read through the engine palette.
+
+### Changed
+- **Exposure bias defaults to `0 EV` and spans `−3…+3`** — the video menu's row could only darken the image down to −5 EV before; it now moves both ways from `0` (the new default) and is clamped to ±3 EV in the menu and in the value the renderer submits. A config that carries the old default needs a `reset rt_exposure_bias`.
+
+### Fixed
+- **Enhanced models** — triangle winding and baked MD5 normals were flipped, so the models shaded black whatever their skins were; the original `.mdl` flags are inherited, which brings back the rocket and grenade trails (classic and shader smoke) and the other per-model effects; and the player skin recoloring no longer runs on an enhanced model without indexed skin pixels, which is what crashed the startup.
+- **The first smoke plume no longer freezes the game** — the raster overlay's smoke pipeline is compiled and cached when the renderer initializes and rewarmed if the attachment formats invalidate the cache, instead of being created lazily on the first rocket or grenade.
+
 ## v0.20.3
 
 ### Added
