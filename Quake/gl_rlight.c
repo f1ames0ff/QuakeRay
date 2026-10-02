@@ -992,8 +992,20 @@ int rt_cluster_last_lights;   /* lights in the registry of the last frame that u
 int rt_cluster_last_attempts; /* additions that frame attempted */
 int rt_cluster_last_dropped;  /* additions that frame lost to the cap */
 
+int rt_cluster_demand_max;        /* most accepted candidates a cluster held before ranking */
+int rt_cluster_demand_median;     /* median of the per-cluster candidate counts */
+int rt_cluster_demand_p95;        /* 95th percentile of the per-cluster candidate counts */
+int rt_cluster_tail_entries;      /* overflow entries published */
+int rt_cluster_tail_clusters;     /* clusters with a non-empty overflow tail */
+int rt_cluster_tail_budget;       /* clusters whose tail did not fit the published budget */
+
+static SDL_mutex *rt_cluster_reg_mutex;
+
 void RT_ClusterLightListsReset (void)
 {
+	if (rt_cluster_reg_mutex == NULL)
+		rt_cluster_reg_mutex = SDL_CreateMutex ();
+
 	rt_cluster_light_count = 0;
 	rt_light_diag_count = 0;
 	rt_light_diag_unresolved = 0;
@@ -1030,6 +1042,9 @@ float RT_ClusterLightReachStatic (void)
 void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reach, float radius,
                               const uint32_t *clusters, uint32_t clusterCount, float power)
 {
+	if (rt_cluster_reg_mutex != NULL)
+		SDL_LockMutex (rt_cluster_reg_mutex);
+
 	rt_cluster_reg_attempts++;
 
 	if (rt_cluster_light_count >= RT_CLUSTER_MAX_LIGHTS)
@@ -1043,6 +1058,9 @@ void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reac
 				RT_CLUSTER_MAX_LIGHTS);
 			rt_cluster_dropped_warned = true;
 		}
+
+		if (rt_cluster_reg_mutex != NULL)
+			SDL_UnlockMutex (rt_cluster_reg_mutex);
 		return;
 	}
 
@@ -1099,6 +1117,9 @@ void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reac
 		rt_cluster_lights[index].clusters[k] = clusters[k];
 
 	VectorCopy (origin, rt_light_diag[index].origin);
+
+	if (rt_cluster_reg_mutex != NULL)
+		SDL_UnlockMutex (rt_cluster_reg_mutex);
 }
 
 void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach)
@@ -1273,6 +1294,12 @@ void RT_ClusterLightListsUpload (void)
 		rt_cluster_last_gated = (int)st.reachGated;
 		rt_light_diag_granted = (int)st.grants;
 		rt_light_diag_denied = (int)st.denied;
+		rt_cluster_demand_max = (int)st.candidateMax;
+		rt_cluster_demand_median = (int)st.candidateMedian;
+		rt_cluster_demand_p95 = (int)st.candidateP95;
+		rt_cluster_tail_entries = (int)st.tailEntries;
+		rt_cluster_tail_clusters = (int)st.clustersWithTail;
+		rt_cluster_tail_budget = (int)st.tailBudgetExceeded;
 
 		if (st.reusedFrames)
 			rt_cluster_cache_hits++;
@@ -1396,6 +1423,9 @@ void RT_ClusterLightReport_f (void)
 
 	RT_LightReportPrint ("RT lights: %i registered, %i dropped (no open leaf), %i cluster slots granted, %i denied\n",
 		rt_cluster_light_count, rt_light_diag_unresolved, rt_light_diag_granted, rt_light_diag_denied);
+	RT_LightReportPrint ("cluster demand: max %i, median %i, p95 %i; overflow tail: %i entries in %i clusters, %i clusters over budget\n",
+		rt_cluster_demand_max, rt_cluster_demand_median, rt_cluster_demand_p95,
+		rt_cluster_tail_entries, rt_cluster_tail_clusters, rt_cluster_tail_budget);
 
 	int      viewCluster = -1;
 	int      viewFill = 0;
