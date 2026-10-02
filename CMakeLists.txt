@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
+
+option(QR_BUILD_TESTS "Build headless renderer GPU regression tests" OFF)
+if(QR_BUILD_TESTS)
+    enable_testing()
+endif()
 project(quakeray LANGUAGES C CXX)
 
 # ============================================================================

@@ -29,6 +29,7 @@
 #define BINDING_RENDER_CUBEMAP_SAMPLER (2)
 #define BINDING_RENDER_CUBEMAP_ENV (1)
 #define BINDING_RENDER_CUBEMAP_ENV_SAMPLER (3)
+#define BINDING_RENDER_CUBEMAP_CLOUD_SHADOW (4)
 #define BINDING_BLUE_NOISE (0)
 #define BINDING_LUM_HISTOGRAM (0)
 #define BINDING_LIGHT_SOURCES (0)
@@ -331,6 +332,8 @@ struct ShGlobalUniform
     float4 levelFogColorDensity;
     float4 levelFogSkyBlend;
     uint4 restirParams;
+    float4 cloudShadowPlacement;
+    float4 cloudLayerMotion;
 };
 
 struct ShGeometryInstance

@@ -3625,35 +3625,43 @@ static const qre_global_t qre_globals[] = {
 	  "Draw the volumetric clouds.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
 	{ NULL,  "rt_sky_clouds_color",     QRE_G_COLOR, 0, 0,
 	  "The color the clouds are drawn in; they may be darker than the sky.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
-	{ NULL,  "rt_sky_cloud_alpha",      QRE_G_FLOAT, 0, 1,
+	{ NULL,  "rt_sky_clouds_alpha",      QRE_G_FLOAT, 0, 1,
 	  "Opacity the clouds are composited over the sky with; 0 takes them out.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
-	{ NULL,  "rt_sky_cloud_coverage",   QRE_G_FLOAT, 0, 1,
+	{ NULL,  "rt_sky_clouds_coverage",   QRE_G_FLOAT, 0, 1,
 	  "How much of the sky the clouds cover.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
-	{ NULL,  "rt_sky_cloud_density",    QRE_G_FLOAT, 0, 1,
-	  "Sharpness of the cloud contour: 1 a hard edge, 0 a soft one.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
-	{ NULL,  "rt_sky_cloud_speed",      QRE_G_FLOAT, 0, 4,
+	{ NULL,  "rt_sky_clouds_density",    QRE_G_FLOAT, 0, 10,
+	  "Optical density of the volumetric cloud layer at every quality level.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_speed",      QRE_G_FLOAT, 0, 4,
 	  "How fast the cloud layer drifts.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_quality",    QRE_G_INT, 0, QR_SKY_CLOUDS_MAX_QUALITY,
+	  "0 low, 1 medium, 2 high, 3 ultra; all levels use volumetric clouds.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_height",     QRE_G_FLOAT, 1, 300000,
+	  "Height of the cloud layer over the camera, in world units.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_thickness",  QRE_G_FLOAT, 1, 300000,
+	  "Depth of the cloud layer, in world units.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
 
 	{ "", "rt_physical_sun",        QRE_G_BOOL,  0, 0,
-	  "1 enables sunlight and makes the sun the source of the god rays, following rt_sun_pitch and rt_sun_yaw; 0 disables sunlight and uses the bright areas of the classic sky texture for the god rays instead." },
-	{ "Sun", "rt_sun",              QRE_G_FLOAT, 0, 10,
+	  "1 enables sunlight and makes the sun the source of the god rays, following rt_sky_sun_pitch and rt_sky_sun_yaw; 0 disables sunlight and uses the bright areas of the classic sky texture for the god rays instead." },
+	{ "Sun", "rt_sky_sun",              QRE_G_FLOAT, 0, 10,
 	  "Strength of the sun: 1 is a usable daylight, 0 turns it off.", NULL, "rt_physical_sun" },
-	{ NULL,  "rt_sun_color",        QRE_G_COLOR, 0, 0,
+	{ NULL,  "rt_sky_sun_color",        QRE_G_COLOR, 0, 0,
 	  "The color of the sun: its light, the disc in the procedural sky and everything that reads it (the indirect sun, the god rays, the fog's shafts).",
 	  NULL },
-	{ NULL,  "rt_sun_pitch",        QRE_G_FLOAT, -180, 180,
+	{ NULL,  "rt_sky_sun_size",         QRE_G_FLOAT, 0, 10,
+	  "Sun disc size multiplier: 1 keeps the original size, 0 hides the disc without disabling sunlight." },
+	{ NULL,  "rt_sky_sun_pitch",        QRE_G_FLOAT, -180, 180,
 	  "The pitch the sun stands at." },
-	{ NULL,  "rt_sun_yaw",          QRE_G_FLOAT, -180, 180,
+	{ NULL,  "rt_sky_sun_yaw",          QRE_G_FLOAT, -180, 180,
 	  "The yaw the sun stands at." },
 	{ NULL,  "Set sun position",    QRE_G_BUTTON, 0, 0,
 	  "Place the sun by aiming: it follows the crosshair, and the fire button leaves it where it points (that press is swallowed).",
-	  "rt_sun_edit" },
+	  "rt_sky_sun_edit" },
 
-	{ "", "rt_godrays",                QRE_G_BOOL,  0, 0,
+	{ "", "rt_sky_godrays",                QRE_G_BOOL,  0, 0,
 	  "Draw the sun shafts." },
-	{ "God rays", "rt_godrays_intensity", QRE_G_FLOAT, 0, 4,
-	  "Strength of the sun shafts.", NULL, "rt_godrays" },
-	{ NULL,  "rt_godrays_sky_threshold", QRE_G_FLOAT, 0, 1,
+	{ "God rays", "rt_sky_godrays_intensity", QRE_G_FLOAT, 0, 4,
+	  "Strength of the sun shafts.", NULL, "rt_sky_godrays" },
+	{ NULL,  "rt_sky_godrays_sky_threshold", QRE_G_FLOAT, 0, 1,
 	  "How bright a sky area must be to pull the god rays to itself; the rays come from the centre of everything above it, and from the brightest point when nothing is (0 leaves the brightest point alone)." },
 
 	{ "Volumetric fog", "rt_volume_type",    QRE_G_INT,   0, 2,
@@ -3747,7 +3755,7 @@ static void QRE_GlobalColorGet (const char *name, float rgb[3])
 {
 	if (!strcmp (name, "rt_sky_color"))
 		RT_GetSkyColor (rgb);
-	else if (!strcmp (name, "rt_sun_color"))
+	else if (!strcmp (name, "rt_sky_sun_color"))
 		RT_GetSunColor (rgb);
 	else if (!strcmp (name, "rt_globallight"))
 		RT_GetGlobalLightColor (rgb);
@@ -5400,11 +5408,12 @@ static void QRE_ClosePanel (void)
 static void QRE_Apply (void)
 {
 	const qboolean globals = (qre.mode == QRE_MODE_LIGHT) ? QRE_GlobalsTouched () : QRE_WaterTouched ();
+	const qboolean touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0);
 	const qboolean session = QRE_WriteSession ();
 
 	if (!session && !globals)
 	{
-		QRE_Notify ("nothing to save yet");
+		QRE_Notify (touched ? "the session could not be written" : "nothing to save yet");
 		return;
 	}
 
@@ -5753,6 +5762,32 @@ static void QRE_SessionWriteEntry (FILE *f, const char *name)
 	}
 }
 
+// Creates every missing component of a directory path, without ending the game
+// when one of them cannot be made: a save that cannot reach its directory reports
+// the path and keeps the session. Sys_mkdir stays fatal for the directories the
+// game cannot run without; a mod's own folder an editor save writes into is not
+// one of them.
+static qboolean QRE_CreateDir (const char *path)
+{
+	char  buf[MAX_OSPATH];
+	char *ofs;
+
+	q_strlcpy (buf, path, sizeof (buf));
+
+	for (ofs = buf + 1; *ofs; ofs++)
+	{
+		if (*ofs == '/' || *ofs == '\\')
+		{
+			*ofs = '\0';
+			if (!Sys_TryMkdir (buf))
+				return false;
+			*ofs = '/';
+		}
+	}
+
+	return Sys_TryMkdir (buf);
+}
+
 // Writes materials.editor.yaml / lights.editor.yaml: the target file's own text
 // with the blocks of the touched entries replaced, so comments, formatting and
 // keys the loader does not understand survive a save. Entries the target does not
@@ -5772,6 +5807,12 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 		return false;
 
 	memset (written, 0, sizeof (written));
+
+	if (!QRE_CreateDir (com_gamedir))
+	{
+		QRE_Notify ("cannot create %s", com_gamedir);
+		return false;
+	}
 
 	in = fopen (qre.target_file, "r");
 	out = fopen (qre.editor_file, "w");
@@ -5943,7 +5984,11 @@ static qboolean QRE_WriteCustomSession (void)
 		char dir[MAX_OSPATH];
 
 		q_snprintf (dir, sizeof (dir), "%s/qray", com_gamedir);
-		Sys_mkdir (dir);
+		if (!QRE_CreateDir (dir))
+		{
+			QRE_Notify ("cannot create %s", dir);
+			return false;
+		}
 	}
 
 	in = fopen (qre.custom_target_file, "r");
@@ -6181,7 +6226,7 @@ static void QRE_ResetAll (void)
 	{
 		for (i = 0; i < (int)countof (qre_globals); i++)
 			QRE_ResetCvar (QRE_GlobalCvarName (&qre_globals[i]));
-		QRE_ResetCvar ("rt_sun_edit");
+		QRE_ResetCvar ("rt_sky_sun_edit");
 		RT_LIGHT_Reload ();
 		RT_CustomLights_ChangeMap (cl.mapname);
 		Fog_NewMap ();
@@ -6217,7 +6262,7 @@ static void QRE_SessionSave (void)
 
 	if (touched && !QRE_WriteSession () && !globals)
 	{
-		QRE_Notify ("nothing to save");
+		QRE_Notify ("the session could not be written");
 		return;
 	}
 

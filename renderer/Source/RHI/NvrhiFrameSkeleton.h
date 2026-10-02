@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@
 #include "../Common.h"
 #include "../ISwapchainDependency.h"
 #include "../RasterizedDataCollector.h"
+#include "RhiCloudsPass.h"
 #include "RhiProceduralSkyPass.h"
 
 namespace qray
@@ -170,7 +171,7 @@ public:
         {
             bool enabled = false;                   // godRaysOn: the final switch, not the cvar
             bool hasAabb = false;                   // scene->HasAABB()
-            float intensity = 0.0f;                 // 0.05f * rt_godrays_intensity (clamped >= 0)
+            float intensity = 0.0f;
             float eccentricity = 0.75f;
             float aabbMin[3] = {};
             float aabbMax[3] = {};
@@ -200,6 +201,11 @@ public:
         // compute before the trace only when the uniform selects SKY_TYPE_PROCEDURAL; the module
         // early-outs by these bytes, so an unchanged frame (clouds off) costs one memcmp.
         RhiProceduralSkyPass::Params proceduralSkyParams = {};
+
+        bool cloudsLayer = false;
+        uint32_t cloudsQuality = 2;
+        RhiCloudsPass::LayerParams cloudsParams = {};
+        RhiCloudsPass::ShadowParams cloudsShadowParams = {};
 
         // -- the decals (A5.6) --
         // The engine DecalManager buffers for this slot: the staging the game's uploads go to and
@@ -359,6 +365,7 @@ public:
                                 RhiRtComposePass *pRtComposePass,
                                 RhiRtReflRefrPass *pReflRefrPass,
                                 RhiProceduralSkyPass *pProceduralSkyPass,
+                                RhiCloudsPass *pCloudsPass,
                                 RhiRasterSkyPass *pRasterSkyPass,
                                 RhiRasterOverlayPass *pRasterOverlayPass,
                                 RhiDecalPass *pDecalPass,
@@ -508,6 +515,13 @@ private:
     // writes the cube the RT passes' set 8 samples. Not owned; null when the host's creation failed,
     // in which case the passes sample their placeholders.
     RhiProceduralSkyPass *proceduralSkyPass = nullptr;
+
+    // The host's cloud layer pass (RhiCloudsPass, RHI/RhiCloudsPass.h), driven in the traced chain
+    // right before the procedural sky when the frame asks for the layer: it writes the layer the
+    // sky's composite samples and the shadow volume of that layer. Not owned; null when the host's
+    // creation failed or the frame's `cloudsLayer` is off, in which case the sky keeps its flat
+    // clouds.
+    RhiCloudsPass *cloudsPass = nullptr;
 
     // The host's raster sky pass (RhiRasterSkyPass, RHI/RhiRasterSkyPass.h), driven in the traced
     // chain right after the procedural-sky block and before the primary whenever the uniform

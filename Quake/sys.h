@@ -43,6 +43,7 @@ int  Sys_FileRead (int handle, void *dest, int count);
 int  Sys_FileWrite (int handle, const void *data, int count);
 int  Sys_FileTime (const char *path);
 void Sys_mkdir (const char *path);
+qboolean Sys_TryMkdir (const char *path);
 
 //
 // system IO

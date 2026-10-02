@@ -1,0 +1,94 @@
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program; if not, write to the Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
+
+static const float CLOUD_SHADOW_FADE = 0.04;
+
+bool cloudShadowUV(float3 worldPos, float3 sunDir, float4 mapPlacement, out float2 uv, out float blend)
+{
+    uv = float2(0.0, 0.0);
+    blend = 0.0;
+
+    if (mapPlacement.x <= 0.5 || sunDir.z <= 1.0e-3)
+    {
+        return false;
+    }
+
+    float2 flatPos = worldPos.xy - sunDir.xy * (worldPos.z / sunDir.z);
+    float2 mapped = (flatPos - mapPlacement.yz) / max(mapPlacement.w, 1.0);
+
+    float2 fade = smoothstep(float2(0.0, 0.0), float2(CLOUD_SHADOW_FADE, CLOUD_SHADOW_FADE), mapped) *
+                  (float2(1.0, 1.0) - smoothstep(float2(1.0 - CLOUD_SHADOW_FADE, 1.0 - CLOUD_SHADOW_FADE), float2(1.0, 1.0), mapped));
+    blend = fade.x * fade.y;
+    if (blend <= 0.0)
+    {
+        return false;
+    }
+
+    uv = clamp(mapped, float2(0.0, 0.0), float2(1.0, 1.0));
+    return true;
+}
+
+float cloudShadowTauFromUV(Texture3D<float> shadowVolume, SamplerState shadowVolume_Sampler, float2 uv, float height)
+{
+    uint width, heightTexels, depth;
+    shadowVolume.GetDimensions(width, heightTexels, depth);
+
+    float slices = (float)depth;
+    float z = clamp(height, 0.0, 1.0) * (slices - 1.0) / slices + 0.5 / slices;
+
+    return shadowVolume.SampleLevel(shadowVolume_Sampler, float3(uv, z), 0.0).r;
+}
+
+float cloudShadowTau(Texture3D<float> shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height, out float blend)
+{
+    float2 uv;
+
+    if (!cloudShadowUV(worldPos, sunDir, mapPlacement, uv, blend))
+    {
+        blend = 0.0;
+
+        return -1.0;
+    }
+
+    return cloudShadowTauFromUV(shadowVolume, shadowVolume_Sampler, uv, height);
+}
+
+float cloudShadowTauNear(Texture3D<float> shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height)
+{
+    if (mapPlacement.x <= 0.5 || sunDir.z <= 1.0e-3)
+    {
+        return 0.0;
+    }
+
+    float2 flatPos = worldPos.xy - sunDir.xy * (worldPos.z / sunDir.z);
+    float2 mapped = (flatPos - mapPlacement.yz) / max(mapPlacement.w, 1.0);
+
+    return cloudShadowTauFromUV(shadowVolume, shadowVolume_Sampler, clamp(mapped, float2(0.0, 0.0), float2(1.0, 1.0)), height);
+}
+
+float cloudShadowTransmittance(Texture3D<float> shadowVolume, SamplerState shadowVolume_Sampler, float3 worldPos, float3 sunDir, float4 mapPlacement, float height)
+{
+    float2 uv;
+    float blend;
+
+    if (!cloudShadowUV(worldPos, sunDir, mapPlacement, uv, blend))
+    {
+        return 1.0;
+    }
+
+    return lerp(1.0, exp(-cloudShadowTauFromUV(shadowVolume, shadowVolume_Sampler, uv, height)), blend);
+}

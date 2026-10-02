@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 #include <nvrhi/vulkan.h>
 
 #include "../Common.h"
+#include "RhiCloudShadowBinding.h"
 
 namespace qray
 {
@@ -154,7 +155,7 @@ class RhiFrameContext;
 //                        its depth scale, returned by `ShadowMap::Render` (:1000-1001); the shipped
 //                        blob carries `shadowMapDepthScale` but never reads it (measured: no
 //                        access to member 5 in the SPIR-V);
-//      * godRaysIntensity - `0.05f * rt_godrays_intensity` (clamped at 0, :782-783);
+//      * godRaysIntensity - `0.05f * rt_sky_godrays_intensity` (clamped at 0, :782-783);
 //      * godRaysEccentricity - `0.75f` (:801);
 //      * godRaysEnabled - the FINAL switch `godRaysEnabled && (sunExists || useSkyBrightest)`
 //                        (:784-797), NOT the raw cvar: when it is 0 the shader clears image 63.
@@ -263,7 +264,7 @@ public:
         float shadowMapVP[16];
         // Offset 128. The shadow map depth scale the legacy carries; the shipped blob never reads it.
         float shadowMapDepthScale;
-        // Offset 132. 0.05f * rt_godrays_intensity.
+        // Offset 132. 0.05f * rt_sky_godrays_intensity.
         float godRaysIntensity;
         // Offset 136. 0.75f.
         float godRaysEccentricity;
@@ -319,6 +320,11 @@ public:
                 PrintFunction pfnPrint);
 
     bool IsCreated() const { return created; }
+
+    void SetCloudShadow(nvrhi::ITexture *texture, nvrhi::ISampler *sampler)
+    {
+        cloudShadowBinding.SetTexture(texture, sampler);
+    }
 
     // Set 0's texture and sampler, owned by RhiShadowMapPass. The coordinator passes
     // `RhiShadowMapPass::GetTexture()`/`GetSampler()` - the exact NVRHI objects, so the shared
@@ -400,6 +406,7 @@ public:
     void ReleaseTargets();
 
 private:
+    rhi::RhiCloudShadowBinding cloudShadowBinding;
     // One entry per engine frame slot: the engine images are per-slot (or shared) framebuffer
     // images and the sets reference their wraps, so neither the wraps nor the sets can be shared
     // across slots. The uniform set follows the buffer pointer the way the other passes' uniform

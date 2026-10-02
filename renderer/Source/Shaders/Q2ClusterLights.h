@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 #ifndef Q2_CLUSTER_LIGHTS_H_
 #define Q2_CLUSTER_LIGHTS_H_

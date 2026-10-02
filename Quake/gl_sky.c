@@ -256,9 +256,9 @@ Sky_GetTexCoord's mapping.
 */
 static float Sky_BrightThreshold (void)
 {
-	extern cvar_t rt_godrays_sky_threshold;
+	extern cvar_t rt_sky_godrays_sky_threshold;
 
-	return CVAR_TO_FLOAT (rt_godrays_sky_threshold);
+	return CVAR_TO_FLOAT (rt_sky_godrays_sky_threshold);
 }
 
 static qboolean Sky_QueryBrightSkyBox (vec3_t dir, vec3_t color)
@@ -969,8 +969,8 @@ void Sky_ClipPoly (int nump, vec3_t vecs, int stage)
 
 static void RT_GetSkyTintColor (float color[3])
 {
-	extern cvar_t rt_sky_brightness, rt_brightness;
-	extern cvar_t rt_materials_only;
+    extern cvar_t rt_sky_brightness, rt_brightness;
+    extern cvar_t rt_materials_only;
 
 	if (CVAR_TO_BOOL (rt_materials_only))
 	{

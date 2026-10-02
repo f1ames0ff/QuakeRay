@@ -1,6 +1,6 @@
 // Copyright (C) 2018 Christoph Schied
 // Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This file is a port of shader/asvgf_lf.comp from Quake 2 RTX (https://github.com/NVIDIA/Q2RTX),
 // which is distributed under the terms of the GNU General Public License
@@ -167,7 +167,7 @@ filter_image(
 //   3. the fetches below are bounded to this pixel's checkerboard field and the mean is
 //      taken over the neighbours that passed validation, so there is no division by zero.
 // The fireflies this pass was re-enabled for turned out to come from the sun's contribution
-// to an indirect bounce (rt_sun_bounce_scale / rt_sun_bounce_range), not from the LF channel.
+// to an indirect bounce (rt_sky_sun_bounce_scale / rt_sky_sun_bounce_range), not from the LF channel.
 void deflicker_image(
     bool read_ping,
     out Q2SH filtered_lf)

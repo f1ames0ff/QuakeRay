@@ -349,7 +349,7 @@ void Sys_Init (void)
 	counter_freq = (double)SDL_GetPerformanceFrequency ();
 }
 
-void Sys_mkdir (const char *path)
+qboolean Sys_TryMkdir (const char *path)
 {
 	int rc = mkdir (path, 0777);
 	if (rc != 0 && errno == EEXIST)
@@ -357,10 +357,17 @@ void Sys_mkdir (const char *path)
 		struct stat st;
 		if (stat (path, &st) == 0 && S_ISDIR (st.st_mode))
 			rc = 0;
+		else
+			errno = EEXIST;
 	}
-	if (rc != 0)
+	return rc == 0;
+}
+
+void Sys_mkdir (const char *path)
+{
+	if (!Sys_TryMkdir (path))
 	{
-		rc = errno;
+		int rc = errno;
 		Sys_Error ("Unable to create directory %s: %s", path, strerror (rc));
 	}
 }
