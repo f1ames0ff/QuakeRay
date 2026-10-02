@@ -430,9 +430,9 @@ void main()
 
             if ( lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0 )
             {
-                const float2 pointRnd = rnd16_2( seed, Q2_RNG_INDIR_LIGHT_POINT ) * 0.99;
+                const float2 pointRnd = rnd16_2( seed, Q2_RNG_INDIR_LIGHT_POINT );
                 LightSample light =
-                    sampleLight( lightSources[ lightIndex ], hitSurf.position, pointRnd );
+                    sampleLightFullDomain( lightSources[ lightIndex ], hitSurf.position, pointRnd );
 
                 if ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_SPHERE ||
                      lightSources[ lightIndex ].lightType == LIGHT_TYPE_SPOT )

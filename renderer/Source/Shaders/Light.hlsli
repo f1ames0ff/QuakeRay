@@ -197,6 +197,17 @@ float calcSolidAngleForArea(float area, const float3 areaPosition, const float3 
     return safeSolidAngle(area * getGeometryFactor(areaNormal, areaLightToSurf.dir, areaLightToSurf.len));
 }
 
+#define DTAL_MIN_DISTANCE 1.0
+
+float getTexturedAreaLightDw(float area, const float3 lightNormal, const float3 lightToSurf, float distance)
+{
+    const float cosNL = max(dot(lightNormal, lightToSurf), 0.0);
+    const float dist = max(distance, DTAL_MIN_DISTANCE);
+    const float dw = area * cosNL * safePositiveRcp(square(dist));
+
+    return (isnan(dw) || isinf(dw) || dw < 0.0) ? 0.0 : dw;
+}
+
 
 
 float getLightColorWeight(const float3 color)
@@ -557,7 +568,7 @@ LightSample sampleTexturedAreaLight(const TexturedAreaLight l, const float3 surf
     const float spotlight = (l.coneCosOuter > 0.0) ? getSpotFactor(cosNL, l.coneCosInner, l.coneCosOuter) : sqrt(cosNL);
 
     r.color = l.color * mask * spotlight;
-    r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
+    r.dw = emiss * getTexturedAreaLightDw(l.area, l.normal, lightToSurf.dir, lightToSurf.len);
 
     return r;
 }
@@ -607,6 +618,16 @@ LightSample sampleLight(const ShLightEncoded encoded, const float3 surfPosition,
         case LIGHT_TYPE_TEXTURED_AREA:     return sampleTexturedAreaLight      (decodeAsTexturedAreaLight    (encoded), surfPosition, pointRnd);
         default:                           return emptyLightSample();
     }
+}
+
+LightSample sampleLightFullDomain(const ShLightEncoded encoded, const float3 surfPosition, const float2 pointRnd)
+{
+    if (encoded.lightType == LIGHT_TYPE_TEXTURED_AREA)
+    {
+        return sampleLight(encoded, surfPosition, pointRnd);
+    }
+
+    return sampleLight(encoded, surfPosition, pointRnd * 0.99);
 }
 
 #endif
