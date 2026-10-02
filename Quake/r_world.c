@@ -1970,6 +1970,15 @@ static int                    rt_dtal_member_capacity;
 static int32_t               *rt_dtal_parent_source;
 static int                    rt_dtal_parent_source_capacity;
 
+typedef struct rt_dtal_group_cluster_s
+{
+	uint32_t count;
+	uint32_t clusters[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
+} rt_dtal_group_cluster_t;
+
+static rt_dtal_group_cluster_t *rt_dtal_group_clusters;
+static int                      rt_dtal_group_cluster_capacity;
+
 static qboolean rt_dtal_groups_active;
 static qboolean rt_dtal_groups_failed;
 static qboolean rt_dtal_groups_rebuild_pending;
@@ -1977,6 +1986,7 @@ static qboolean rt_dtal_groups_rebuild_pending;
 static int rt_dtal_group_inputs;
 static int rt_dtal_group_oversized;
 static int rt_dtal_group_budget_refused;
+static int rt_dtal_group_coverage_refused;
 
 static int RT_DtalReserve (void **array, int *capacity, int needed, int elementSize)
 {
@@ -2106,6 +2116,7 @@ static void RT_DtalGroups_BeginCollect (void)
 	rt_dtal_group_inputs = 0;
 	rt_dtal_group_oversized = 0;
 	rt_dtal_group_budget_refused = 0;
+	rt_dtal_group_coverage_refused = 0;
 	rt_dtal_source_count = 0;
 
 	if (rt_dtal_builder == NULL)
@@ -2203,7 +2214,9 @@ static void RT_DtalGroups_FillUpload (void)
 	    !RT_DtalReserve ((void **)&rt_dtal_members, &rt_dtal_member_capacity, memberCount,
 	                     (int)sizeof (QrDtalMemberUpload)) ||
 	    !RT_DtalReserve ((void **)&rt_dtal_parent_source, &rt_dtal_parent_source_capacity, groupCount,
-	                     (int)sizeof (int32_t)))
+	                     (int)sizeof (int32_t)) ||
+	    !RT_DtalReserve ((void **)&rt_dtal_group_clusters, &rt_dtal_group_cluster_capacity, groupCount,
+	                     (int)sizeof (rt_dtal_group_cluster_t)))
 	{
 		rt_dtal_groups_failed = true;
 		return;
@@ -2244,6 +2257,47 @@ static void RT_DtalGroups_FillUpload (void)
 		parent->memberCount = (uint32_t) group->memberCount;
 
 		rt_dtal_parent_source[gi] = sourceIndex;
+
+		rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
+		coverage->count = 0;
+
+		const int stride = group->memberCount > 64 ? group->memberCount / 64 : 1;
+
+		for (int mi = 0; mi < group->memberCount; mi += stride)
+		{
+			const rt_dtal_member_t *member = &build->members[group->firstMember + mi];
+			vec3_t                  member_center;
+
+			VectorCopy (member->center, member_center);
+
+			const int cluster = RT_ResolvePointCluster (member_center);
+
+			if (cluster <= 0)
+				continue;
+
+			qboolean seen = false;
+
+			for (uint32_t k = 0; k < coverage->count; k++)
+			{
+				if (coverage->clusters[k] == (uint32_t) cluster)
+				{
+					seen = true;
+					break;
+				}
+			}
+
+			if (seen)
+				continue;
+
+			if (coverage->count >= QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
+			{
+				rt_dtal_group_coverage_refused++;
+				rt_dtal_groups_failed = true;
+				return;
+			}
+
+			coverage->clusters[coverage->count++] = (uint32_t) cluster;
+		}
 
 		for (int mi = 0; mi < group->memberCount; mi++)
 		{
@@ -2392,10 +2446,19 @@ static void RT_DtalGroups_Register (void)
 
 	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
 	{
-		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
-		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+		const rt_dtal_group_t         *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t        *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+		const rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
 
-		RT_ClusterLightAdd (group->uid, group->center, source->reach);
+		if (coverage->count > 0)
+		{
+			RT_ClusterLightAddMulti (group->uid, group->center, source->reach, group->boundsRadius,
+			                         coverage->clusters, coverage->count);
+		}
+		else
+		{
+			RT_ClusterLightAdd (group->uid, group->center, source->reach);
+		}
 	}
 }
 
@@ -5851,9 +5914,9 @@ void RT_PrintEmissiveStats (void)
 		const int groups = rt_dtal_groups_active ? rt_dtal_build->groupCount : 0;
 		const int members = rt_dtal_groups_active ? rt_dtal_build->memberCount : 0;
 
-		RT_LightReportPrint ("dtal groups (rt_dtal_groups %g, spacing %g): %i admitted pieces -> %i parents, %i member patches, %i oversized pieces, %i refused; %s\n",
+		RT_LightReportPrint ("dtal groups (rt_dtal_groups %g, spacing %g): %i admitted pieces -> %i parents, %i member patches, %i oversized pieces, %i refused, %i coverage refusals; %s\n",
 			CVAR_TO_FLOAT (rt_dtal_groups), CVAR_TO_FLOAT (rt_dtal_spacing), rt_dtal_group_inputs, groups, members,
-			rt_dtal_group_oversized, rt_dtal_group_budget_refused,
+			rt_dtal_group_oversized, rt_dtal_group_budget_refused, rt_dtal_group_coverage_refused,
 			rt_dtal_groups_active ? "active" : (rt_dtal_groups_failed ? "failed, per-piece lights stay" : "inactive"));
 	}
 

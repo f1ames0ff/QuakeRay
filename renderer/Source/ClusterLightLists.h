@@ -85,11 +85,16 @@ private:
     // One registered light: what it is, where it stands, how far it reaches, and the leaf that
     // resolved it. They are kept together so that a frame can be compared against the
     // composition without touching the map again.
+    static constexpr uint32_t kMaxSourceClusters = QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS;
+
     struct Source
     {
         uint64_t uid;
         float    origin[3];
         uint32_t cluster;
+        float    radius = 0.0f;
+        uint32_t clusterCount = 0;
+        uint32_t clusters[kMaxSourceClusters] = {};
         // Distance up to which the light belongs in a list, zero for no limit of its own. It
         // is clamped to the top-up reach when the sources are taken: the two passes have to
         // agree on where a light stops mattering.

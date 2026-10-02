@@ -462,6 +462,177 @@ static void TestGroupBoundaryOwnership(void)
     RT_Dtal_BuilderDestroy(builder2);
 }
 
+#define DTAL_TEST_CAP (4.0 * 3.14159265358979323846)
+
+static double PatchGeometryFactor(double h, double x, double y)
+{
+    const double dist2 = x * x + y * y + h * h;
+    const double dist = sqrt(dist2);
+
+    return h / (dist * dist * dist);
+}
+
+static double QuadratureIntegral(double size, double h, int fine)
+{
+    const double cell = size / (double)fine;
+    double       sum = 0.0;
+
+    for (int iy = 0; iy < fine; iy++)
+    {
+        for (int ix = 0; ix < fine; ix++)
+        {
+            const double x = -0.5 * size + (ix + 0.5) * cell;
+            const double y = -0.5 * size + (iy + 0.5) * cell;
+
+            sum += cell * cell * PatchGeometryFactor(h, x, y);
+        }
+    }
+
+    return sum;
+}
+
+static double CappedExpectation(double size, double h, int fine, int subdivisions)
+{
+    const double patchSize = size / (double)subdivisions;
+    const double patchArea = patchSize * patchSize;
+    const double cell = patchSize / (double)fine;
+    double       total = 0.0;
+
+    for (int py = 0; py < subdivisions; py++)
+    {
+        for (int px = 0; px < subdivisions; px++)
+        {
+            const double patchX = -0.5 * size + (px + 0.5) * patchSize;
+            const double patchY = -0.5 * size + (py + 0.5) * patchSize;
+            double       patchSum = 0.0;
+
+            for (int iy = 0; iy < fine; iy++)
+            {
+                for (int ix = 0; ix < fine; ix++)
+                {
+                    const double x = patchX - 0.5 * patchSize + (ix + 0.5) * cell;
+                    const double y = patchY - 0.5 * patchSize + (iy + 0.5) * cell;
+                    double       dw = patchArea * PatchGeometryFactor(h, x, y);
+
+                    if (dw > DTAL_TEST_CAP)
+                        dw = DTAL_TEST_CAP;
+
+                    patchSum += cell * cell * dw / patchArea;
+                }
+            }
+
+            total += patchSum;
+        }
+    }
+
+    return total;
+}
+
+static double UncappedExpectation(double size, double h, int fine, int subdivisions)
+{
+    const double patchSize = size / (double)subdivisions;
+    const double cell = patchSize / (double)fine;
+    double       total = 0.0;
+
+    for (int py = 0; py < subdivisions; py++)
+    {
+        for (int px = 0; px < subdivisions; px++)
+        {
+            const double patchX = -0.5 * size + (px + 0.5) * patchSize;
+            const double patchY = -0.5 * size + (py + 0.5) * patchSize;
+            double       patchSum = 0.0;
+
+            for (int iy = 0; iy < fine; iy++)
+            {
+                for (int ix = 0; ix < fine; ix++)
+                {
+                    const double x = patchX - 0.5 * patchSize + (ix + 0.5) * cell;
+                    const double y = patchY - 0.5 * patchSize + (iy + 0.5) * cell;
+
+                    patchSum += cell * cell * PatchGeometryFactor(h, x, y);
+                }
+            }
+
+            total += patchSum;
+        }
+    }
+
+    return total;
+}
+
+static void TestEstimatorSubdivision(void)
+{
+    const double size = 64.0;
+    const double nearHeight = 8.0;
+    const double farHeight = 512.0;
+    const int    wholeFine = 64;
+    const int    splitParts = 4;
+    const int    splitFine = 16;
+
+    const double integralNear = QuadratureIntegral(size, nearHeight, wholeFine);
+    const double cappedWholeNear = CappedExpectation(size, nearHeight, wholeFine, 1);
+    const double cappedSplitNear = CappedExpectation(size, nearHeight, splitFine, splitParts);
+    const double uncappedWholeNear = UncappedExpectation(size, nearHeight, wholeFine, 1);
+    const double uncappedSplitNear = UncappedExpectation(size, nearHeight, splitFine, splitParts);
+
+    CHECK(fabs(cappedWholeNear - integralNear) > integralNear * 0.1,
+          "old estimator near field is capped: capped %.6f integral %.6f", cappedWholeNear, integralNear);
+    CHECK(fabs(cappedSplitNear - integralNear) < fabs(cappedWholeNear - integralNear) * 0.5,
+          "old estimator near field depends on the subdivision: whole %.6f split %.6f integral %.6f",
+          cappedWholeNear, cappedSplitNear, integralNear);
+    CHECK(fabs(uncappedWholeNear - uncappedSplitNear) <= integralNear * 1e-9,
+          "new estimator is subdivision invariant: whole %.9f split %.9f", uncappedWholeNear, uncappedSplitNear);
+
+    const double integralFar = QuadratureIntegral(size, farHeight, wholeFine);
+    const double cappedWholeFar = CappedExpectation(size, farHeight, wholeFine, 1);
+    const double cappedSplitFar = CappedExpectation(size, farHeight, splitFine, splitParts);
+
+    CHECK(fabs(cappedWholeFar - integralFar) <= integralFar * 1e-9,
+          "old estimator far field is unbiased: capped %.9f integral %.9f", cappedWholeFar, integralFar);
+    CHECK(fabs(cappedSplitFar - integralFar) <= integralFar * 1e-9,
+          "old estimator far field split is unbiased: capped %.9f integral %.9f", cappedSplitFar, integralFar);
+}
+
+static double SampleTriangleHeight(double u1, double u2, int truncated)
+{
+    if (truncated)
+    {
+        u1 *= 0.99;
+        u2 *= 0.99;
+    }
+
+    const double beta = 1.0 - sqrt(u1);
+    const double gamma = (1.0 - beta) * u2;
+
+    return 1.0 - beta - gamma;
+}
+
+static void TestEstimatorSamplingDomain(void)
+{
+    const int    samples = 2000000;
+    const double fullMean = 1.0 / 3.0;
+
+    double truncatedSum = 0.0;
+    double fullSum = 0.0;
+
+    for (int i = 0; i < samples; i++)
+    {
+        const double u1 = NextUnit();
+        const double u2 = NextUnit();
+
+        truncatedSum += SampleTriangleHeight(u1, u2, 1);
+        fullSum += SampleTriangleHeight(u1, u2, 0);
+    }
+
+    const double truncatedMean = truncatedSum / (double)samples;
+    const double fullMeanEstimate = fullSum / (double)samples;
+
+    CHECK(fabs(truncatedMean - fullMean) > 1e-4,
+          "truncated triangle domain shows a bias: %.6f vs %.6f", truncatedMean, fullMean);
+    CHECK(fabs(fullMeanEstimate - fullMean) <= 0.002,
+          "full triangle domain is unbiased: %.6f vs %.6f", fullMeanEstimate, fullMean);
+}
+
 static void TestBuilderBudgetFailure(void)
 {
     rt_dtal_builder_t *builder = RT_Dtal_BuilderCreate();
@@ -487,6 +658,8 @@ int main(void)
     TestGroupDeterminismAndSingleton();
     TestGroupNegativeCells();
     TestGroupBoundaryOwnership();
+    TestEstimatorSubdivision();
+    TestEstimatorSamplingDomain();
     TestBuilderBudgetFailure();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);

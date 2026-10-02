@@ -670,6 +670,8 @@ QRAPI QrResult QRCONV qrUploadDtalGroups(
 
 #define QR_CLUSTER_LIGHT_NO_CLUSTER    (~0u)
 
+#define QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS 16
+
 typedef struct QrClusterLightSource
 {
     uint64_t  uniqueID;
@@ -678,6 +680,10 @@ typedef struct QrClusterLightSource
     uint32_t  cluster;
 
     float     reach;
+
+    float           radius;
+    uint32_t        clusterCount;
+    const uint32_t *pClusters;
 } QrClusterLightSource;
 
 typedef struct QrClusterLightSourcesUploadInfo

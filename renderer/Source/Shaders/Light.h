@@ -683,14 +683,14 @@ LightSample sampleDtalGroup(const ShLightEncoded encoded, const vec3 surfPositio
 
     outMemberPdf = max(branchProbability, 0.0) / count;
 
-    const LightSample sample = sampleDtalGroupMember(g, chosen, surfPosition, pointRnd);
+    const LightSample memberSample = sampleDtalGroupMember(g, chosen, surfPosition, pointRnd);
 
-    if (!(g.reach > 0.0) || length(surfPosition - sample.position) > g.reach)
+    if (!(g.reach > 0.0) || length(surfPosition - memberSample.position) > g.reach)
     {
         return emptyLightSample();
     }
 
-    return sample;
+    return memberSample;
 }
 
 LightSample sampleSpotLight(const SpotLight l, const vec3 surfPosition, const vec2 pointRnd)

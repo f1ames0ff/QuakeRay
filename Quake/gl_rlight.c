@@ -936,6 +936,9 @@ typedef struct rt_cluster_light_s
 	uint64_t uniqueID;
 	vec3_t   origin;
 	float    reach;   /* Quake units, zero when the light states no reach of its own */
+	float    radius;  /* Source bounds radius, zero for point-like sources */
+	uint32_t cluster_count;
+	uint32_t clusters[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
 } rt_cluster_light_t;
 
 static rt_cluster_light_t rt_cluster_lights[RT_CLUSTER_MAX_LIGHTS];
@@ -1022,7 +1025,8 @@ float RT_ClusterLightReachStatic (void)
 	return METRIC_TO_QUAKEUNIT ((reach > 0.0f) ? reach : CVAR_TO_FLOAT (rt_light_reach_max));
 }
 
-void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach)
+void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reach, float radius,
+                              const uint32_t *clusters, uint32_t clusterCount)
 {
 	rt_cluster_reg_attempts++;
 
@@ -1040,49 +1044,63 @@ void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach)
 		return;
 	}
 
+	if (clusters != NULL && clusterCount > QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
+		clusterCount = QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS;
+
 	/* A light that registers twice in one frame keeps its slot, but not the position or the
 	   reach it was first seen at: a flame that is drawn by two passes, or a light that the
 	   frame registers again after it moved, must be handed to the lists where it stands now. */
 	/* The slot only says where to look; the comparison below says whether to trust it. */
 	const uint32_t hint = RT_ClusterUidHint (uniqueID);
 
+	int index = -1;
+
 	if (rt_cluster_uid_hint[hint] < rt_cluster_light_count &&
 	    rt_cluster_lights[rt_cluster_uid_hint[hint]].uniqueID == uniqueID)
 	{
-		const int i = rt_cluster_uid_hint[hint];
-
-		VectorCopy (origin, rt_cluster_lights[i].origin);
-		rt_cluster_lights[i].reach = reach;
-		VectorCopy (origin, rt_light_diag[i].origin);
-		return;
+		index = rt_cluster_uid_hint[hint];
 	}
-
-	for (int i = 0; i < rt_cluster_light_count; i++)
+	else
 	{
-		if (rt_cluster_lights[i].uniqueID == uniqueID)
+		for (int i = 0; i < rt_cluster_light_count; i++)
 		{
-			VectorCopy (origin, rt_cluster_lights[i].origin);
-			rt_cluster_lights[i].reach = reach;
-			VectorCopy (origin, rt_light_diag[i].origin);
-			rt_cluster_uid_hint[hint] = (uint16_t) i;
-			return;
+			if (rt_cluster_lights[i].uniqueID == uniqueID)
+			{
+				index = i;
+				rt_cluster_uid_hint[hint] = (uint16_t) i;
+				break;
+			}
 		}
 	}
 
-	rt_cluster_uid_hint[hint] = (uint16_t) rt_cluster_light_count;
+	if (index < 0)
+	{
+		rt_cluster_uid_hint[hint] = (uint16_t) rt_cluster_light_count;
+		index = rt_cluster_light_count;
+		rt_cluster_light_count++;
 
-	rt_cluster_lights[rt_cluster_light_count].uniqueID = uniqueID;
-	VectorCopy (origin, rt_cluster_lights[rt_cluster_light_count].origin);
-	rt_cluster_lights[rt_cluster_light_count].reach = reach;
+		rt_light_diag[index].uniqueID = uniqueID;
+		rt_light_diag[index].resolved = false;
+		rt_light_diag[index].granted = 0;
+		rt_light_diag[index].denied = 0;
+		rt_light_diag_count = rt_cluster_light_count;
+	}
 
-	rt_light_diag[rt_cluster_light_count].uniqueID = uniqueID;
-	VectorCopy (origin, rt_light_diag[rt_cluster_light_count].origin);
-	rt_light_diag[rt_cluster_light_count].resolved = false;
-	rt_light_diag[rt_cluster_light_count].granted = 0;
-	rt_light_diag[rt_cluster_light_count].denied = 0;
-	rt_light_diag_count = rt_cluster_light_count + 1;
+	rt_cluster_lights[index].uniqueID = uniqueID;
+	VectorCopy (origin, rt_cluster_lights[index].origin);
+	rt_cluster_lights[index].reach = reach;
+	rt_cluster_lights[index].radius = radius;
+	rt_cluster_lights[index].cluster_count = clusterCount;
 
-	rt_cluster_light_count++;
+	for (uint32_t k = 0; k < clusterCount; k++)
+		rt_cluster_lights[index].clusters[k] = clusters[k];
+
+	VectorCopy (origin, rt_light_diag[index].origin);
+}
+
+void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach)
+{
+	RT_ClusterLightAddMulti (uniqueID, origin, reach, 0.0f, NULL, 0);
 }
 
 static mleaf_t *RT_ResolveLightLeaf (const vec3_t origin, qmodel_t *wm)
@@ -1199,16 +1217,24 @@ void RT_ClusterLightListsUpload (void)
 			cached->leafIndex = leafIndex;
 		}
 
+		const uint32_t clusterCount = rt_cluster_lights[li].cluster_count;
+
 		rt_cluster_sources[li].uniqueID = rt_cluster_lights[li].uniqueID;
 		VectorCopy (rt_cluster_lights[li].origin, rt_cluster_sources[li].origin.data);
 		rt_cluster_sources[li].cluster = (leafIndex >= 0)
 			? (uint32_t)RT_MapWorldCluster (leafIndex)
 			: (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER;
 		rt_cluster_sources[li].reach = rt_cluster_lights[li].reach;
+		rt_cluster_sources[li].radius = rt_cluster_lights[li].radius;
+		rt_cluster_sources[li].clusterCount = clusterCount;
+		rt_cluster_sources[li].pClusters = (clusterCount > 0) ? rt_cluster_lights[li].clusters : NULL;
 
-		rt_light_diag[li].resolved = (leafIndex >= 0);
+		if (clusterCount > 0 && rt_cluster_sources[li].cluster == (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER)
+			rt_cluster_sources[li].cluster = rt_cluster_lights[li].clusters[0];
 
-		if (leafIndex < 0)
+		rt_light_diag[li].resolved = (leafIndex >= 0) || (clusterCount > 0);
+
+		if (leafIndex < 0 && clusterCount == 0)
 			rt_light_diag_unresolved++;
 	}
 

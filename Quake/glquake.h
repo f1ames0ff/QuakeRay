@@ -383,6 +383,8 @@ void RT_ClusterLightListsReset (void);
 // that. A light that is registered twice in one frame with the same uniqueID keeps the last
 // origin and reach it was given.
 void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach);
+void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reach, float radius,
+                              const uint32_t *clusters, uint32_t clusterCount);
 // Reach of a light of a moving entity, from rt_light_reach_max: the distance the host promises
 // such a light does not reach past. The lights of the map itself pass the reach of
 // RT_ClusterLightReachStatic instead.

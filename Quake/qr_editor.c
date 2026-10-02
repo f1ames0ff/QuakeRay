@@ -73,7 +73,7 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 // of materials); the old system has neither, so it refuses to start on it.
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
-extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea;
+extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea, rt_dtal_groups, rt_dtal_spacing;
 extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minarea;
 extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale;
 
@@ -2907,6 +2907,8 @@ static const char *const qre_mat_cvars[] = {
 	"rt_dtal_clearance",
 	"rt_dtal_maxpolys",
 	"rt_dtal_minarea",
+	"rt_dtal_groups",
+	"rt_dtal_spacing",
 	"rt_dtal_model_minarea",
 	"rt_dtal_model_maxpolys",
 	"rt_dtal_model_budget",
@@ -3115,6 +3117,19 @@ static void QRE_MatSystemTab (void)
 	if (QR_GUI_SliderFloat ("rt_dtal_minarea", &value, 0.0f, 1024.0f,
 	                        "Drops a DTAL polygon under this area, in world units squared (0 off)."))
 		Cvar_Set ("rt_dtal_minarea", va ("%.4g", value));
+
+	{
+		int groupMode = CVAR_TO_INT32 (rt_dtal_groups);
+
+		if (QR_GUI_SliderInt ("rt_dtal_groups", &groupMode, 0, 2,
+		                      "0 keeps one light per admitted DTAL piece; 1 merges compatible pieces per grid cell; 2 builds the same patches with one member per parent, for comparisons."))
+			Cvar_Set ("rt_dtal_groups", va ("%d", groupMode));
+	}
+
+	value = CVAR_TO_FLOAT (rt_dtal_spacing);
+	if (QR_GUI_SliderFloat ("rt_dtal_spacing", &value, 8.0f, 1024.0f,
+	                        "Edge of the world-aligned grid cell a DTAL group lives in, in world units."))
+		Cvar_Set ("rt_dtal_spacing", va ("%.4g", value));
 
 	QR_GUI_SectionHeader ("DTAL (models)");
 

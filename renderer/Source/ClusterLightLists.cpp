@@ -249,6 +249,25 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
 
         incoming[i].reach = reach;
         incoming[i].tombstone = false;
+        incoming[i].radius = (uploadInfo.pLights[i].radius > 0.0f && std::isfinite(uploadInfo.pLights[i].radius))
+                                 ? uploadInfo.pLights[i].radius
+                                 : 0.0f;
+
+        const uint32_t clusterCount = std::min(uploadInfo.pLights[i].clusterCount, kMaxSourceClusters);
+
+        if (uploadInfo.pLights[i].pClusters != nullptr)
+        {
+            incoming[i].clusterCount = clusterCount;
+
+            for (uint32_t k = 0; k < clusterCount; k++)
+            {
+                incoming[i].clusters[k] = uploadInfo.pLights[i].pClusters[k];
+            }
+        }
+        else
+        {
+            incoming[i].clusterCount = 0;
+        }
     }
 
     CountSourceChanges();
@@ -477,75 +496,99 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
    frame as on the one the lists were composed on. */
 void ClusterLightLists::GrantSource(uint32_t sourceIndex)
 {
-    const uint32_t cluster = sources[sourceIndex].cluster;
-
-    if (cluster == QR_CLUSTER_LIGHT_NO_CLUSTER || cluster >= numClusters)
-    {
-        stats.unresolved++;
-        return; // a light that resolved into no leaf hands out nothing
-    }
+    const Source &source = sources[sourceIndex];
+    const uint32_t clusterCount = source.clusterCount > 0 ? source.clusterCount : 1;
 
     stats.walkedSources++;
-    stats.cachedSources += (visState[cluster] == kVisDecoded) ? 1 : 0;
 
-    const uint8_t *pVis = GetClusterVis(cluster);
-
-    if (pVis == nullptr)
-    {
-        return; // the leaf has no row of its own: pass 1 has nothing to hand out
-    }
-
-    /* What the walk hands out is the leaf's own PVS, and the reach of the light is the one
-       thing that narrows it: a light that states a reach covers a few rooms, not whatever
-       the leaf happens to see through a doorway. That reach is granted with the margin
-       added, so the cluster stays in the list of a light that then drifts inside one source
-       quantum of the origin the list was built from. A light that states no reach of its own
-       is held to none, and the PVS row is the whole of the rule for it, as it was. */
-    const float lightReach = sources[sourceIndex].reach;
-    const bool  reachGated = lightReach > 0.0f;
-    const float lightGate = lightReach + kSourceMargin;
+    /* What the walk hands out is the PVS row of every cluster the source resolved into -- one row
+       for an ordinary light, the union A publishes for a group -- and the reach of the light is
+       the one thing that narrows it: a light that states a reach covers a few rooms, not whatever
+       the leaf happens to see through a doorway. That reach is granted with the margin added, so
+       the cluster stays in the list of a light that then drifts inside one source quantum of the
+       origin the list was built from; a radius the source states for itself (the bounds of a
+       group) widens the gate by it. A light that states no reach of its own is held to none, and
+       the PVS row is the whole of the rule for it, as it was. */
+    const float lightReach = source.reach;
+    const float lightRadius = source.radius > 0.0f ? source.radius : 0.0f;
+    const bool  reachGated = lightReach > 0.0f || lightRadius > 0.0f;
+    const float lightGate = lightReach + lightRadius + kSourceMargin;
     const float lightGateSquared = lightGate * lightGate;
 
-    for (uint32_t j = 0; j < rowBytes; j++)
-    {
-        const uint8_t bits = pVis[j];
+    uint32_t resolved = 0;
 
-        if (bits == 0)
+    for (uint32_t ci = 0; ci < clusterCount; ci++)
+    {
+        const uint32_t cluster = source.clusterCount > 0 ? source.clusters[ci] : source.cluster;
+
+        if (cluster == QR_CLUSTER_LIGHT_NO_CLUSTER || cluster >= numClusters)
         {
             continue;
         }
 
-        for (uint32_t k = 0; k < 8; k++)
+        resolved++;
+        stats.cachedSources += (visState[cluster] == kVisDecoded) ? 1 : 0;
+
+        const uint8_t *pVis = GetClusterVis(cluster);
+
+        if (pVis == nullptr)
         {
-            if ((bits & (1u << k)) == 0)
+            continue; // the leaf has no row of its own: pass 1 has nothing to hand out
+        }
+
+        for (uint32_t j = 0; j < rowBytes; j++)
+        {
+            const uint8_t bits = pVis[j];
+
+            if (bits == 0)
             {
                 continue;
             }
 
-            // The row has one bit per leaf, and bit zero belongs to the leaf the row came
-            // from, which is not a cluster a light can be added to.
-            const uint32_t c = (j << 3) + k + 1;
+            for (uint32_t k = 0; k < 8; k++)
+            {
+                if ((bits & (1u << k)) == 0)
+                {
+                    continue;
+                }
 
-            if (c >= numClusters)
-            {
-                continue;
-            }
+                // The row has one bit per leaf, and bit zero belongs to the leaf the row came
+                // from, which is not a cluster a light can be added to.
+                const uint32_t c = (j << 3) + k + 1;
 
-            if (reachGated && !WithinReach(sources[sourceIndex].origin, c, lightGateSquared))
-            {
-                stats.reachGated++;
-                continue;
-            }
+                if (c >= numClusters)
+                {
+                    continue;
+                }
 
-            if (AppendSlot(c, sourceIndex, Dist2ToBounds(sources[sourceIndex].origin, c), false))
-            {
-                granted[sourceIndex]++;
-            }
-            else
-            {
-                denied[sourceIndex]++;
+                // The rows of the clusters a source covers overlap: a slot it already holds is
+                // not handed to it twice.
+                if (slotBits[size_t(c) * bitsWords + (sourceIndex >> 6)] & (1ull << (sourceIndex & 63)))
+                {
+                    continue;
+                }
+
+                if (reachGated && !WithinReach(source.origin, c, lightGateSquared))
+                {
+                    stats.reachGated++;
+                    continue;
+                }
+
+                if (AppendSlot(c, sourceIndex, Dist2ToBounds(source.origin, c), false))
+                {
+                    granted[sourceIndex]++;
+                }
+                else
+                {
+                    denied[sourceIndex]++;
+                }
             }
         }
+    }
+
+    if (resolved == 0)
+    {
+        stats.unresolved++;
     }
 }
 
@@ -936,6 +979,13 @@ bool ClusterLightLists::UpdateSourceRecords()
         sources[i].origin[2] = grantedSource.origin[2];
         sources[i].cluster = grantedSource.cluster;
         sources[i].reach = grantedSource.reach;
+        sources[i].radius = grantedSource.radius;
+        sources[i].clusterCount = grantedSource.clusterCount;
+
+        for (uint32_t k = 0; k < grantedSource.clusterCount; k++)
+        {
+            sources[i].clusters[k] = grantedSource.clusters[k];
+        }
     }
 
     return true;
