@@ -491,6 +491,32 @@ int main(int argc, char **argv)
                     "visible flat-cloud animation does not follow the volumetric wind displacement");
             std::cout << "Flat-mask GPU advection: mean error=" << totalError / samples << "; max=" << maxError << '\n';
 
+            // The flat mask leaves the fraction of sky its coverage names: it is cut
+            // from the same shaped noise the volume's shape is (cloudMask), so the
+            // default coverage has clear black sky for a disc to stand on instead of
+            // the overcast the raw fBm drew.
+            auto maskParams = flatParams;
+            maskParams.skyTint[0] = maskParams.skyTint[1] = maskParams.skyTint[2] = 0;
+            maskParams.cloudColor[0] = maskParams.cloudColor[1] = maskParams.cloudColor[2] = 1.0f;
+            maskParams.cloudColor[3] = 0;
+            maskParams.cloudParams[0] = 0.2f;
+            maskParams.cloudParams[1] = 1.0f;
+            maskParams.cloudParams[2] = 0;
+            maskParams.sunDirection[3] = 0;
+            maskParams.skyParams[1] = 1.0f;
+            frames.BeginSlot(0);
+            sky.Render(frames.GetCommandList(0), 0, maskParams);
+            frames.EndSlot(0);
+            const auto masked = ReadCube(device, sky.GetCubemapTexture());
+            size_t clearTexels = 0;
+            for (size_t i = 0; i < masked.size(); i += 4)
+                if (masked[i] < 0.5f)
+                    ++clearTexels;
+            const double clearShare = double(clearTexels) / (masked.size() / 4);
+            Require(clearShare > 0.1 && clearShare < 0.45,
+                    "flat coverage does not leave the fraction of clear sky it names");
+            std::cout << "Flat-mask coverage: " << clearShare * 100.0 << "% below half at coverage 0.2\n";
+
             // The flat mask must hide the sun's disc it covers, not only the sky
             // behind it. With the sky and the cloud black the disc is all that
             // lights the map, so the energy of the pair (sun on, sun off) is what

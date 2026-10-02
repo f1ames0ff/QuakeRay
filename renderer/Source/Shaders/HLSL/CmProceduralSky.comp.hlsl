@@ -132,7 +132,8 @@ float cloudMask(float3 dir, float time, float speed)
     float2 plane = dir.xy / max(abs(dir.z), 1.0e-3);
     float3 p = float3((plane + time * speed * float2(1.0, 0.4)) * 3.0, 3.0);
     float n = fbm3(p);
-    return n;
+    float z = (n - 0.47) / 0.12;
+    return clamp(0.5 + 0.5 * z / sqrt(1.0 + z * z), 0.0, 1.0);
 }
 
 [numthreads(16, 16, 1)]

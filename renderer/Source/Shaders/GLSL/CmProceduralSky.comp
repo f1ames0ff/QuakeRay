@@ -131,12 +131,22 @@ float fbm3(vec3 p)
     return v;
 }
 
+// The mask the flat clouds are cut from, in [0,1]. The fBm is pushed through the
+// normal CDF the volume's shape is read through (CloudLayer.h's cloudShape): raw,
+// it leaves as little clear sky as its mean stands above the coverage threshold --
+// at the default coverage, none at all, so a disc drawn on the sky was ever only a
+// glow through cloud. Shaped, a coverage of N leaves about N of the sky clear here
+// as it does there.
 float cloudMask(vec3 dir, float time, float speed)
 {
+    const float CLOUD_MASK_MEAN = 0.47;
+    const float CLOUD_MASK_SIGMA = 0.12;
+
     vec2 plane = dir.xy / max(abs(dir.z), 1.0e-3);
     vec3 p = vec3((plane + time * speed * vec2(1.0, 0.4)) * 3.0, 3.0);
     float n = fbm3(p);
-    return n;
+    float z = (n - CLOUD_MASK_MEAN) / CLOUD_MASK_SIGMA;
+    return clamp(0.5 + 0.5 * z / sqrt(1.0 + z * z), 0.0, 1.0);
 }
 
 void main()
@@ -207,10 +217,10 @@ void main()
     }
 
     // The flat clouds of the lowest level: the mask the sky was drawn with before
-    // the layer became a volume, mixed into its colour exactly as it was then. The
-    // density setting sharpens the contour of a cloud rather than thinning it, as
-    // it did then: a cloud of full opacity keeps the colour it is set to, and only
-    // the band its noise crosses in changes -- a hard edge at 1, a soft one at 0.
+    // the layer became a volume, mixed into its colour as it was then. The density
+    // setting sharpens the contour of a cloud rather than thinning it, as it did
+    // then: a cloud of full opacity keeps the colour it is set to, and only the
+    // band its noise crosses in changes -- a hard edge at 1, a soft one at 0.
     // What the mask covers of the sky it covers of the sun as well: the amount it
     // is mixed by is what it hides, and that transmittance goes to the disc below.
     if (cloudsOn && flatClouds > 0.5)
