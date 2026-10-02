@@ -67,6 +67,8 @@ set(renderer_SOURCES
     Source/RHI/NvrhiFrameSkeleton.cpp
     Source/RHI/NvrhiRequirements.cpp
     Source/RHI/RhiAccelStructs.cpp
+    Source/RHI/RhiCloudsPass.cpp
+    Source/RHI/RhiCloudShadowBinding.cpp
     Source/RHI/RhiDecalPass.cpp
     Source/RHI/RhiDescriptors.cpp
     Source/RHI/RhiFrameContext.cpp
@@ -142,6 +144,41 @@ if(WIN32)
             message(FATAL_ERROR "QR_WITH_NVIDIA_DLSS is ON but DLSS_SDK_PATH is not set")
         endif()
     endif()
+endif()
+
+option(QR_BUILD_TESTS "Build headless renderer GPU regression tests" OFF)
+if(QR_BUILD_TESTS)
+    get_filename_component(QR_VULKAN_BIN "${Vulkan_GLSLC_EXECUTABLE}" DIRECTORY)
+    find_program(QR_DXC NAMES dxc HINTS "${QR_VULKAN_BIN}" REQUIRED)
+    set(QR_PROBE_DIR "${CMAKE_CURRENT_BINARY_DIR}/Tests")
+    set(QR_PROBE_DEPENDENCIES
+        Tests/CloudsProbe.comp.hlsl
+        Source/Shaders/SkyMotion.hlsli
+        Source/Shaders/CloudLayer.hlsli
+        Source/Shaders/CloudShadowWorld.hlsli
+        Source/Shaders/CloudShadowMap.hlsli
+        Source/Generated/ShaderCommonHLSL.hlsli)
+    add_custom_command(OUTPUT "${QR_PROBE_DIR}/CloudsProbe.comp.spv" "${QR_PROBE_DIR}/CloudsPush.comp.spv"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${QR_PROBE_DIR}"
+        COMMAND "${QR_DXC}" -spirv -fspv-target-env=vulkan1.3 -fvk-use-gl-layout -T cs_6_6 -E main
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/Source/Shaders" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/CloudsProbe.comp.hlsl"
+            -Fo "${QR_PROBE_DIR}/CloudsProbe.comp.spv"
+        COMMAND "${QR_DXC}" -spirv -fspv-target-env=vulkan1.3 -fvk-use-gl-layout -T cs_6_6 -E main
+            -DDESC_SET_CLOUD_SHADOW=5 -DWITH_PUSH_CONSTANTS=1
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/Source/Shaders" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/CloudsProbe.comp.hlsl"
+            -Fo "${QR_PROBE_DIR}/CloudsPush.comp.spv"
+        DEPENDS ${QR_PROBE_DEPENDENCIES}
+        VERBATIM)
+    add_executable(qray_clouds_smoke Tests/CloudsSmoke.cpp
+        "${QR_PROBE_DIR}/CloudsProbe.comp.spv" "${QR_PROBE_DIR}/CloudsPush.comp.spv")
+    target_compile_features(qray_clouds_smoke PRIVATE cxx_std_20)
+    target_include_directories(qray_clouds_smoke PRIVATE Source)
+    target_link_libraries(qray_clouds_smoke PRIVATE renderer nvrhi nvrhi_vk)
+    if(WIN32)
+        target_link_libraries(qray_clouds_smoke PRIVATE user32)
+    endif()
+    add_test(NAME qray_clouds_gpu COMMAND qray_clouds_smoke "${CMAKE_CURRENT_SOURCE_DIR}/Build" "${QR_PROBE_DIR}")
+    set_tests_properties(qray_clouds_gpu PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 endif()
 
 add_library(renderer STATIC

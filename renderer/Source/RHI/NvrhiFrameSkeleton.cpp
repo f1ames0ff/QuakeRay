@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -97,6 +97,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiRtComposePass *pRtComposePass,
                                        RhiRtReflRefrPass *pReflRefrPass,
                                        RhiProceduralSkyPass *pProceduralSkyPass,
+                                       RhiCloudsPass *pCloudsPass,
                                        RhiRasterSkyPass *pRasterSkyPass,
                                        RhiRasterOverlayPass *pRasterOverlayPass,
                                        RhiDecalPass *pDecalPass,
@@ -117,6 +118,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , rtComposePass(pRtComposePass)
     , reflRefrPass(pReflRefrPass)
     , proceduralSkyPass(pProceduralSkyPass)
+    , cloudsPass(pCloudsPass)
     , rasterSkyPass(pRasterSkyPass)
     , rasterOverlayPass(pRasterOverlayPass)
     , decalPass(pDecalPass)
@@ -671,7 +673,27 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (proceduralSkyPass != nullptr && proceduralSkyPass->IsCreated() && uniform != nullptr &&
             uniform->skyType == SKY_TYPE_PROCEDURAL)
         {
-            proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams);
+            bool cloudsUpdated = false;
+            if (cloudsPass != nullptr && cloudsPass->IsCreated() && sky.cloudsLayer)
+            {
+                cloudsUpdated = cloudsPass->Render(commandList, frameIndex, sky.cloudsParams,
+                                                    sky.cloudsShadowParams, sky.cloudsQuality);
+                proceduralSkyPass->SetCloudLayer(cloudsPass->GetLayerTexture(), cloudsPass->GetLayerSampler());
+                if (rtDirectPass != nullptr)
+                {
+                    rtDirectPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+                if (rtIndirectPass != nullptr)
+                {
+                    rtIndirectPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+                if (godRaysPass != nullptr)
+                {
+                    godRaysPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+            }
+
+            proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams, cloudsUpdated);
         }
 
         // The raster sky (RHI/RhiRasterSkyPass.h): the legacy frame's `DrawSkyToCubemap` ->

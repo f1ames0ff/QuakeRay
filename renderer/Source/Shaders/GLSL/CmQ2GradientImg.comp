@@ -1,6 +1,6 @@
 // Copyright (C) 2018 Christoph Schied
 // Copyright (C) 2019, NVIDIA CORPORATION. All rights reserved.
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This file is a port of shader/asvgf_gradient_img.comp from Quake 2 RTX (https://github.com/NVIDIA/Q2RTX),
 // which is distributed under the terms of the GNU General Public License

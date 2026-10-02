@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 // HLSL counterpart of Q2ClusterLights.h, the three cluster accessors that master split out of
 // Q2LightLists.h into a header of their own. Like the golden it includes nothing and declares no

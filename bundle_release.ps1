@@ -4,9 +4,10 @@
 
 .DESCRIPTION
     Packages quakeray.exe, the runtime DLLs, the runtime assets next to the
-    executable (gfx) and the id1 assets (materials, mdl_skins, progs,
-    shaders, textures, and the BlueNoise / WaterNormal KTX2 files) plus
-    documentation into a single ZIP ready for distribution.
+    executable (gfx) and the id1 runtime assets (materials, shaders,
+    textures -- which carry the material textures and the model skins, luma
+    and gloss maps among them -- and the BlueNoise / WaterNormal KTX2 files)
+    plus documentation into a single ZIP ready for distribution.
 
     The engine binary is taken from the Release configuration, which is built
     without debug information. Debug artifacts (.pdb/.ilk/.map) are never
@@ -105,7 +106,7 @@ foreach ($d in @("gfx")) {
 $stageId1 = Join-Path $stage "id1"
 New-Item -ItemType Directory -Path $stageId1 -Force | Out-Null
 
-foreach ($sub in @("materials", "mdl_skins", "progs", "shaders", "textures")) {
+foreach ($sub in @("materials", "shaders", "textures")) {
     $src = Join-Path $gameDir $sub
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stageId1 $sub) -Recurse -Force
