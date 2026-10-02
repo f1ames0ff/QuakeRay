@@ -1371,7 +1371,7 @@ void ClusterLightLists::ResizeSlotBits(uint32_t newWords)
 bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float dist2, bool fromTopUp)
 {
     if (overflowEnabled)
-        RecordCandidate(cluster, sourceIndex, dist2);
+        RecordCandidate(cluster, sourceIndex);
 
     const uint32_t  base = cluster * kMaxPerList;
     uint64_t       *pUids = &slotUids[base];
@@ -1450,7 +1450,7 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     return true;
 }
 
-void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex, float dist2)
+void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex)
 {
     if (cluster >= candidates.size() || bitsWords == 0 || (sourceIndex >> 6) >= bitsWords)
         return;
@@ -1462,7 +1462,7 @@ void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex, 
         return;
 
     word |= mask;
-    candidates[cluster].push_back({ sourceIndex, dist2 });
+    candidates[cluster].push_back({ sourceIndex });
 }
 
 void ClusterLightLists::BuildOverflow()
@@ -1558,7 +1558,7 @@ void ClusterLightLists::BuildOverflow()
         tailAlias.resize(base + overflowOrder.size());
 
         if (!RT_Alias_Build(overflowWeights.data(), (int)overflowOrder.size(), tailProb.data() + base,
-                            tailMarginal.data() + base, tailAlias.data() + base))
+                            tailAlias.data() + base))
         {
             tailUids.resize(base);
             tailProb.resize(base);

@@ -814,7 +814,7 @@ static void RT_Dtal_BuildAliases(rt_dtal_builder_t *builder)
         if (count > 0)
         {
             if (!RT_Alias_Build(builder->weightScratch, count, &builder->result.memberProb[first],
-                                &builder->result.memberMarginal[first], &builder->result.memberAlias[first]))
+                                &builder->result.memberAlias[first]))
             {
                 for (int i = 0; i < count; i++)
                 {

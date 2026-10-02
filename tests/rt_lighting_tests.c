@@ -41,14 +41,14 @@ static double NextUnit(void)
     return (double)(XorShift32() >> 8) * (1.0 / 16777216.0);
 }
 
-static double AliasPmf(int index, const float *primary, const float *secondary, const uint32_t *alias, int count)
+static double AliasPmf(int index, const float *primary, const uint32_t *alias, int count)
 {
     double probability = (double)primary[index];
 
     for (int i = 0; i < count; i++)
     {
         if ((int)alias[i] == index)
-            probability += (double)secondary[i];
+            probability += 1.0 - (double)primary[i];
     }
 
     return probability / (double)count;
@@ -57,20 +57,18 @@ static double AliasPmf(int index, const float *primary, const float *secondary, 
 static void TestAliasDistribution(const char *name, const double *weights, int count, double tolerance)
 {
     float    *primary = (float *)malloc((size_t)count * sizeof(float));
-    float    *secondary = (float *)malloc((size_t)count * sizeof(float));
     uint32_t *alias = (uint32_t *)malloc((size_t)count * sizeof(uint32_t));
 
-    CHECK(primary != NULL && secondary != NULL && alias != NULL, "alias allocation (%s)", name);
+    CHECK(primary != NULL && alias != NULL, "alias allocation (%s)", name);
 
-    if (primary == NULL || secondary == NULL || alias == NULL)
+    if (primary == NULL || alias == NULL)
     {
         free(primary);
-        free(secondary);
         free(alias);
         return;
     }
 
-    CHECK(RT_Alias_Build(weights, count, primary, secondary, alias), "alias build (%s)", name);
+    CHECK(RT_Alias_Build(weights, count, primary, alias), "alias build (%s)", name);
 
     double positiveTotal = 0.0;
 
@@ -91,7 +89,7 @@ static void TestAliasDistribution(const char *name, const double *weights, int c
         const double w = weights[i];
         const double expected = uniform ? 1.0 / (double)count
                                         : ((isfinite(w) && w > 0.0) ? w : 0.0) / positiveTotal;
-        const double actual = AliasPmf(i, primary, secondary, alias, count);
+        const double actual = AliasPmf(i, primary, alias, count);
 
         sum += actual;
 
@@ -132,7 +130,7 @@ static void TestAliasDistribution(const char *name, const double *weights, int c
 
         for (int i = 0; i < count; i++)
         {
-            const double expected = AliasPmf(i, primary, secondary, alias, count);
+            const double expected = AliasPmf(i, primary, alias, count);
             const double frequency = (double)hits[i] / (double)samples;
             const double sigma = sqrt(fmax(expected * (1.0 - expected), 1e-12) / (double)samples);
 
@@ -144,7 +142,6 @@ static void TestAliasDistribution(const char *name, const double *weights, int c
     }
 
     free(primary);
-    free(secondary);
     free(alias);
 }
 

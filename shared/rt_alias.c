@@ -3,15 +3,14 @@
 #include <math.h>
 #include <stdlib.h>
 
-int RT_Alias_Build(const double *weights, int count, float *outPrimary, float *outSecondary, uint32_t *outAlias)
+int RT_Alias_Build(const double *weights, int count, float *outPrimary, uint32_t *outAlias)
 {
-    if (weights == NULL || outPrimary == NULL || outSecondary == NULL || outAlias == NULL || count <= 0)
+    if (weights == NULL || outPrimary == NULL || outAlias == NULL || count <= 0)
         return 0;
 
     for (int i = 0; i < count; i++)
     {
         outPrimary[i] = 1.0f;
-        outSecondary[i] = 0.0f;
         outAlias[i] = (uint32_t)i;
     }
 
@@ -94,9 +93,7 @@ int RT_Alias_Build(const double *weights, int count, float *outPrimary, float *o
         if (p > 1.0)
             p = 1.0;
 
-        const float primary = (float)p;
-        outPrimary[i] = primary;
-        outSecondary[i] = 1.0f - primary;
+        outPrimary[i] = (float)p;
     }
 
     free(scaled);

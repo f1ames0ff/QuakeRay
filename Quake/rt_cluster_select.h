@@ -38,9 +38,6 @@ int  RT_ClusterSelect_Build(rt_cluster_select_t *select, const rt_cluster_candid
                             int repairedRanking);
 void RT_ClusterSelect_Free(rt_cluster_select_t *select);
 
-float RT_ClusterSelect_FastProbability(const rt_cluster_select_t *select, const double *fastMasses,
-                                       uint32_t fastSlot, float branchFraction, int stratum, int partitions);
-
 int RT_ClusterSelect_FastSelect(const rt_cluster_select_t *select, const double *fastMasses, float u0,
                                 uint32_t *outSlot, float *outProbability);
 

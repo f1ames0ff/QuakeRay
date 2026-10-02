@@ -77,39 +77,6 @@ static float RT_ClusterSelect_MassWithFloor(double mass, double stratumMax)
     return (float)value;
 }
 
-float RT_ClusterSelect_FastProbability(const rt_cluster_select_t *select, const double *fastMasses,
-                                       uint32_t fastSlot, float branchFraction, int stratum, int partitions)
-{
-    if (select == NULL || fastMasses == NULL || fastSlot >= (uint32_t)select->fastCount)
-        return 0.0f;
-
-    if (partitions <= 0 || stratum < 0 || stratum >= partitions)
-        return 0.0f;
-
-    double stratumMax = 0.0;
-
-    for (int i = stratum; i < select->fastCount; i += partitions)
-    {
-        if (fastMasses[i] > stratumMax)
-            stratumMax = fastMasses[i];
-    }
-
-    double massSum = 0.0;
-
-    for (int i = stratum; i < select->fastCount; i += partitions)
-    {
-        massSum += RT_ClusterSelect_MassWithFloor(fastMasses[i], stratumMax);
-    }
-
-    if (!(massSum > 0.0))
-        return 0.0f;
-
-    const float selectedMass = RT_ClusterSelect_MassWithFloor(fastMasses[fastSlot], stratumMax);
-    const float probability = (float)((double)selectedMass / (massSum * (double)partitions));
-
-    return (isfinite(probability) && probability > 0.0f) ? probability : 0.0f;
-}
-
 int RT_ClusterSelect_FastSelect(const rt_cluster_select_t *select, const double *fastMasses, float u0,
                                 uint32_t *outSlot, float *outProbability)
 {
@@ -347,7 +314,7 @@ int RT_ClusterSelect_Build(rt_cluster_select_t *select, const rt_cluster_candida
             select->tailIndex[i] = tail[i];
         }
 
-        if (!RT_Alias_Build(weights, tailCount, select->tailProb, select->tailMarginal, select->tailAlias))
+        if (!RT_Alias_Build(weights, tailCount, select->tailProb, select->tailAlias))
         {
             free(weights);
             free(order);
