@@ -452,7 +452,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                     Print("Warning: RHI: the lens flare pass is unavailable, the frame is drawn without lens flares");
                 }
 
-                if (rhiRtComposePass != nullptr && rhiBloomPass != nullptr && rhiLensFlarePass != nullptr)
+                if (rhiRtComposePass != nullptr)
                 {
                     rhiRtComposePass->SetOpticalPasses(rhiBloomPass.get(), rhiLensFlarePass.get());
                 }

@@ -20,7 +20,7 @@
 
 [[vk::binding(0, 0)]] Texture2D<float4> flareSource;
 [[vk::binding(1, 0)]] SamplerState flareSource_Sampler;
-[[vk::binding(2, 0)]] Texture2D<float4> flareDepth;
+[[vk::binding(0, 1)]] Texture2D<float4> flareDepth;
 [[vk::binding(0, 3)]] RWTexture2D<float4> flareDest;
 
 struct LensFlarePush_BT
@@ -112,7 +112,17 @@ float3 flareDownsampleBright(float2 uv, float2 sourceTexelSize, float exposure)
     result *= above / max(luminance, POST_EFFECTS_EPSILON);
     result *= clamp(above / max(push.threshold, POST_EFFECTS_EPSILON), 0.0, FLARE_BRIGHTNESS_MAX);
 
-    const float depth = flareDepth.SampleLevel(flareSource_Sampler, uv, 0).r;
+    uint depthWidth;
+    uint depthHeight;
+    flareDepth.GetDimensions(depthWidth, depthHeight);
+
+    const int2 regularPix = clamp(int2(uv * float2(depthWidth, depthHeight)),
+                                  int2(0, 0), int2(depthWidth - 1, depthHeight - 1));
+    const int separator = int(depthWidth) / 2;
+    const int odd = (regularPix.x + regularPix.y % 2) % 2;
+    const int2 checkerboardPix = int2(odd * separator + regularPix.x / 2, regularPix.y);
+
+    const float depth = flareDepth.Load(int3(checkerboardPix, 0)).r;
     if (depth < FLARE_SKY_DEPTH)
     {
         const float square = FLARE_DIST_REF * FLARE_DIST_REF;

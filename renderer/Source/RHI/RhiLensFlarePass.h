@@ -96,10 +96,13 @@ private:
         nvrhi::ITexture *sourceTexture = nullptr;
         nvrhi::ITexture *depthTexture = nullptr;
         nvrhi::BindingSetHandle sourceSet;
+        nvrhi::BindingSetHandle depthSet;
+        bool resultValid = false;
     };
 
     bool PrepareTonemappingSet(uint32_t frameIndex);
-    bool PrepareSourceSet(Target &target, nvrhi::ITexture *pSource, nvrhi::ITexture *pDepth);
+    bool PrepareSourceSet(Target &target, nvrhi::ITexture *pSource);
+    bool PrepareDepthSet(Target &target, nvrhi::ITexture *pDepth);
 
     bool CreateTarget(Target &target, uint32_t width, uint32_t height);
     bool CreateTexture(Texture &texture, uint32_t width, uint32_t height, const std::string &name);
@@ -107,6 +110,7 @@ private:
     void DispatchPass(nvrhi::ICommandList *pCommandList,
                       uint32_t frameIndex,
                       nvrhi::IBindingSet *pSourceSet,
+                      nvrhi::IBindingSet *pDepthSet,
                       nvrhi::IBindingSet *pDestinationSet,
                       uint32_t destinationWidth,
                       uint32_t destinationHeight,
@@ -135,7 +139,7 @@ private:
     nvrhi::ShaderHandle flareShader;
 
     nvrhi::BindingLayoutHandle sourceLayout;
-    nvrhi::BindingLayoutHandle emptyLayout;
+    nvrhi::BindingLayoutHandle depthLayout;
     nvrhi::BindingLayoutHandle tonemappingLayout;
     nvrhi::BindingLayoutHandle destinationLayout;
     nvrhi::BindingLayoutHandle pushConstantLayout;
@@ -143,8 +147,6 @@ private:
     nvrhi::ComputePipelineHandle pipeline;
 
     nvrhi::SamplerHandle sampler;
-
-    nvrhi::BindingSetHandle emptySet;
 
     nvrhi::BufferHandle tonemappingBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle tonemappingSets[MAX_FRAMES_IN_FLIGHT];
@@ -154,6 +156,7 @@ private:
 
     bool warnedBadSource = false;
     bool warnedBadTonemapping = false;
+    bool warnedNoDepth = false;
 
     bool created = false;
 };

@@ -2589,7 +2589,7 @@ static void M_EffectsOptions_Adjust (int dir)
 		Cvar_SetValueQuick (&rt_bloom_quality, (float)(((int)rt_bloom_quality.value + 3 + dir) % 3));
 		break;
 	case EFFECTS_OPT_LENSFLARE:
-		Cvar_SetValueQuick (&rt_lensflare_intensity, CLAMP (0.01f, CVAR_TO_FLOAT (rt_lensflare_intensity) + dir * 0.01f, 1.0f));
+		Cvar_SetValueQuick (&rt_lensflare_intensity, CLAMP (0.0f, CVAR_TO_FLOAT (rt_lensflare_intensity) + dir * 0.01f, 1.0f));
 		break;
 	case EFFECTS_OPT_DAMAGE:
 		Cvar_SetValueQuick (&rt_ef_damage_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_damage_strength) + dir * 0.05f, 1.0f));
