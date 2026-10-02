@@ -12,7 +12,7 @@
 | Renderer integration commit | `e9684a0c` (group light type, member buffer, API, RHI, shaders, host adapter) |
 | Cluster coverage commit | `0e916862` (union coverage, editor controls, estimator reference tests) |
 | Diagnostics commit | `b038291a` (group rebuild counter) |
-| World-draw fix | `b9183825` and this commit: groups build on the world draw path, unchanged collections are reused, and `LIGHT_TYPE_DTAL_GROUP` is accepted by the light-array index/count switches |
+| Integration fixes | the fix commits on this branch (`git log feature/dtal-grid-groups`): groups build on the world draw path, unchanged collections are reused, `LIGHT_TYPE_DTAL_GROUP` is accepted by the light-array switches, and switching the group mode off and on rebuilds instead of leaving the groups inactive |
 
 All commits are on `feature/dtal-grid-groups`; nothing was merged, force-pushed or published.
 
