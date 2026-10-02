@@ -1,15 +1,20 @@
 # Changelog
 
-## Unreleased
+## v0.24.0
 
-### NVRHI cloud renderer
-- Volumetric clouds are rendered across all six cubemap faces and composited into the visible sky and its ambient-light mip chain. The writable layer view now covers six array slices; the previous one-slice view left five faces unwritten and made the sky appear as a sheet surrounded by black.
-- The eight-slice cloud shadow volume attenuates direct sunlight, indirect sunlight and god rays. Shadow lookups account for the sample's height inside the layer, respect cloud opacity, and return full sunlight above it. Disabling clouds or choosing flat quality disables the volume shadow.
-- Cloud quality changes take effect live: `0` selects the flat mask; levels `1` through `3` use 512, 1024 and 2048-pixel layer faces with 40, 48 and 56 view steps. The shadow volume is 1024 pixels wide at medium/high and 2048 at ultra. The former `4`/extreme cloud level is removed; old or out-of-range values select ultra. The sky's Gaussian filter uses the actual layer resolution.
-- Flat clouds use the same projected-layer wind as the volumetric march. Their noise coordinates and motion vectors move at the matching angular rate for the configured altitude and thickness, including grazing views, so changing between flat and volumetric quality preserves apparent speed.
-- Sky motion vectors include cloud wind and camera parallax, using full perspective projection of the traced ray. The sun disc retains its own motion through the cubemap's alpha channel. A stationary layer reuses its result, while camera movement and settings changes refresh the composite.
-- Cloud parameter buffers keep their initial state, removing the per-frame NVRHI unknown-state warnings. The shadow volume is rebuilt when sunlight returns after a density edit, and the sky march skips sunlight sampling when the sun is absent.
-- The light editor exposes cloud density, quality, altitude and thickness. Headless GPU regression tests exercise the real compute passes, all faces and mip levels, live quality changes, motion vectors, shadow-height interpolation, sun toggles, and the god-rays push-constant binding.
+### Added
+- **The clouds of the procedural sky are a layer the NVRHI renderer marches** — the layer, the shadow volume of that layer and the sky's composite are NVRHI compute passes recorded on every traced frame, and the marched cubemap is complete: its writable view covers all six array slices, where a view of one slice left five faces unwritten and made the layer read as a sheet surrounded by black.
+- **The cloud shadow of the layer attenuates the sunlight** — the eight-slice volume gates the direct sun, the indirect sun and the god rays; a lookup accounts for the height of the sample inside the layer, respects the cloud opacity and returns full sunlight above it, and switching the clouds off or selecting the flat level disables the volume entirely.
+- **The quality of the clouds takes effect live** — `0` selects the flat mask; `1` through `3` use 512, 1024 and 2048-pixel layer faces with 40, 48 and 56 view steps, and the shadow volume is 1024 pixels wide at medium and high and 2048 at ultra. The former `4`/extreme level is removed, an old or out-of-range value selects ultra, and the sky's Gaussian filter reads the layer's actual resolution.
+- **The light editor exposes the cloud settings** — density, quality, altitude and thickness, with the layer and the map of its shadow resized on the next frame.
+- **A headless GPU regression test guards the clouds** — it opens the renderer without a window or game data and runs the real compute passes: all six faces and eleven mip levels, live quality changes, the cache of a stationary layer, wind and camera motion, shadow lookups below, inside and above the layer, sun toggles and the god-rays push-constant binding.
+
+### Changed
+- **Flat clouds move at the same apparent speed as the volumetric layer** — both take the same projected-layer wind over the configured altitude and thickness, so switching between the flat and the volumetric quality preserves the speed the eye sees at the zenith and at grazing views alike.
+
+### Fixed
+- **Sky motion vectors carry the cloud wind and the eye's own shift** — the drift of the layer and the camera's movement since the frame before are projected in full perspective, and the sun disc keeps its own motion through the cubemap's alpha channel, so the upscaler and the denoiser reproject a moving layer with a vector of its own; a stationary layer reuses its result, while camera movement and settings changes refresh the composite.
+- **Cloud parameter buffers keep their initial state** — the per-frame NVRHI unknown-state warnings are gone, the shadow volume is rebuilt when sunlight returns after a density edit, and the sky march skips its sunlight sampling when the sun is absent.
 
 ### Legacy cloud renderer development history
 
