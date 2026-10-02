@@ -1987,6 +1987,7 @@ static int rt_dtal_group_inputs;
 static int rt_dtal_group_oversized;
 static int rt_dtal_group_budget_refused;
 static int rt_dtal_group_coverage_refused;
+static int rt_dtal_group_builds;
 
 static int RT_DtalReserve (void **array, int *capacity, int needed, int elementSize)
 {
@@ -2382,6 +2383,7 @@ static void RT_DtalGroups_Rebuild (void)
 
 	rt_dtal_groups_active = true;
 	rt_dtal_group_oversized = (int) rt_dtal_build->diag.oversizedPieces;
+	rt_dtal_group_builds++;
 }
 
 static void RT_DtalGroups_UpdateFrame (void)
@@ -5914,9 +5916,9 @@ void RT_PrintEmissiveStats (void)
 		const int groups = rt_dtal_groups_active ? rt_dtal_build->groupCount : 0;
 		const int members = rt_dtal_groups_active ? rt_dtal_build->memberCount : 0;
 
-		RT_LightReportPrint ("dtal groups (rt_dtal_groups %g, spacing %g): %i admitted pieces -> %i parents, %i member patches, %i oversized pieces, %i refused, %i coverage refusals; %s\n",
+		RT_LightReportPrint ("dtal groups (rt_dtal_groups %g, spacing %g): %i admitted pieces -> %i parents, %i member patches, %i oversized pieces, %i refused, %i coverage refusals, %i builds; %s\n",
 			CVAR_TO_FLOAT (rt_dtal_groups), CVAR_TO_FLOAT (rt_dtal_spacing), rt_dtal_group_inputs, groups, members,
-			rt_dtal_group_oversized, rt_dtal_group_budget_refused, rt_dtal_group_coverage_refused,
+			rt_dtal_group_oversized, rt_dtal_group_budget_refused, rt_dtal_group_coverage_refused, rt_dtal_group_builds,
 			rt_dtal_groups_active ? "active" : (rt_dtal_groups_failed ? "failed, per-piece lights stay" : "inactive"));
 	}
 
