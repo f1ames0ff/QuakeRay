@@ -22,6 +22,7 @@
 #define CAUSTICS_RAY_EPS 0.1
 #define CAUSTICS_SECONDARY_RAY_EPS 0.1
 #define CAUSTICS_SKY_SKIP_COUNT 4
+#define CAUSTICS_WAVE_FOOTPRINT 0.5
 #define CAUSTICS_CELL_ADDEND_MAX 4294901760.0
 
 struct CausticsHit
@@ -141,11 +142,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         waterNormal = -waterNormal;
     }
 
-    RayCone rayCone;
-    rayCone.width       = texelSize;
-    rayCone.spreadAngle = 0.0;
-
-    const float3 waveNormal = getWaterNormal(rayCone, rayDirection, waterNormal, waterHit.position, false);
+    const float3 waveNormal = getWaterNormalForFootprint(rayDirection, waterNormal, waterHit.position,
+                                                         CAUSTICS_WAVE_FOOTPRINT);
 
     const float3 refractedDirection =
         refract(rayDirection, waveNormal, 1.0 / getIndexOfRefraction(MEDIA_TYPE_WATER));

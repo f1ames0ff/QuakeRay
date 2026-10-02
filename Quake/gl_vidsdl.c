@@ -2138,7 +2138,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	refl_refr_params.acidColor.data[1] = powf (refl_refr_params.acidColor.data[1], 1.0f / METRIC_TO_QUAKEUNIT (1.0f));
 	refl_refr_params.acidColor.data[2] = powf (refl_refr_params.acidColor.data[2], 1.0f / METRIC_TO_QUAKEUNIT (1.0f));
 
-	int caustics_res = CLAMP (32, CVAR_TO_INT32 (rt_caustics_res), 512);
+	int caustics_res = CLAMP (32, CVAR_TO_INT32 (rt_caustics_res), 1024);
 	caustics_res = (caustics_res / 8) * 8;
 
 	QrDrawFrameCausticsParams caustics_params = {

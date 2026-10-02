@@ -18,7 +18,7 @@ using namespace qray;
 namespace
 {
 constexpr uint32_t CAUSTICS_GROUP_SIZE = 8;
-constexpr uint32_t CAUSTICS_MAX_RESOLUTION = 512;
+constexpr uint32_t CAUSTICS_MAX_RESOLUTION = 1024;
 constexpr uint32_t CAUSTICS_CELL_STRIDE = 16;
 constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 64;
 constexpr uint32_t CAUSTICS_FRAMEBUFFER_SRV_OFFSET = 124;
