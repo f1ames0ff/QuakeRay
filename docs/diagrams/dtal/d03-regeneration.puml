@@ -1,0 +1,46 @@
+@startuml
+title D03 - Project A regeneration at the existing safe boundary
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+
+start
+:UI / material / map event marks pending request;
+:Coalesce slider changes;
+:Enter existing safe world preparation boundary;
+:Capture synchronized inputs and request revision;
+:Collect accepted static source domains;
+:Clip ordinary geometry into grid-local patches;
+:Keep projector cycles as passthrough;
+:Build groups, member aliases, bounds and coverage;
+
+if (Geometry, PMFs and resource budgets valid?) then (yes)
+else (no)
+  :Discard temporary data and report failure;
+  if (Installed data is still semantically compatible?) then (yes)
+    :Keep installed data;
+  else (no)
+    :Report / defer preparation explicitly;
+  endif
+  stop
+endif
+
+if (Relevant captured inputs are still current?) then (yes)
+else (no)
+  :Discard obsolete temporary data;
+  :Keep later request pending;
+  stop
+endif
+
+:Stage replacement through existing LightManager / RHI;
+if (Complete replacement ready for this boundary?) then (yes)
+  :Install one complete group generation;
+  :Acknowledge only processed request;
+  :Retire old storage through existing lifetime mechanism;
+else (no)
+  :Report replacement failure without partial publication;
+  stop
+endif
+
+:Ordinary frames update emission parameters only;
+stop
+@enduml

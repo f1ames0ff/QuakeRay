@@ -1,0 +1,43 @@
+@startuml
+title D04 - Integration through existing frame and UID publication
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam maxMessageSize 60
+autonumber
+
+participant "Existing world task" as World
+participant "A: DTAL builder/cache" as Builder
+participant "Source producer tasks" as Producers
+participant "Existing view/frame task" as Frame
+participant "Existing LightManager" as Manager
+participant "Existing ClusterLightLists" as Clusters
+participant "Existing RHI / GPU" as GPU
+
+opt DTAL regeneration requested
+  World -> Builder : capture safe inputs; build temporary data
+  Builder -> Builder : validate geometry, PDFs, budgets and revision
+  Builder -> Manager : install complete group generation
+  Manager -> GPU : replacement copies / descriptors / safe retirement
+end
+
+Producers -> Frame : completed source producer results
+World -> Frame : world data ready
+Frame -> Manager : current accepted parents and group emission
+Frame -> Clusters : generic UID / bounds / reach / coverage / power
+alt Project B enabled
+  Clusters -> Clusters : update affected candidates and fast / tail tables
+else Existing policy
+  Clusters -> Clusters : compose existing capped source lists
+end
+Clusters -> Manager : publish CPU source UID tables
+Manager -> Manager : resolve UIDs to current frame indices
+Manager -> GPU : publish matching indices / probabilities and barriers
+Frame -> GPU : dispatch direct and indirect consumers
+GPU -> GPU : select parent then sample real member / point
+
+note over Manager,GPU
+  Existing frame slots keep compatible resource data.
+  Array-order changes refresh index publication.
+  Retirement waits for actual GPU use, not only CPU tasks.
+end note
+@enduml

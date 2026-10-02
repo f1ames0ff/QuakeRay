@@ -1,0 +1,49 @@
+@startuml
+title D06 - Source-selection boundary and Project A member sampling
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+
+start
+:Source selector returns current index, p_source and slot;
+note right
+  Existing policy or independent Project B supplies this result.
+  B includes its branch probability in p_source.
+end note
+
+if (Valid null / empty selection?) then (yes)
+  :Return zero without retry;
+  stop
+endif
+
+if (Published source index matches accepted UID?) then (yes)
+else (no)
+  :Report publication/coherence defect;
+  stop
+endif
+
+if (DTAL group / singleton parent?) then (yes)
+  :Select real patch using member alias table;
+  :Return p_member (singleton: 1);
+  :Sample full-domain point and actual UV / mask;
+  :Compute actual p_area (uniform triangle: 1/area);
+  if (Outside standard-world point reach?) then (yes)
+    :Return zero without retry;
+    stop
+  endif
+  :dw = emitter geometry factor / p_area;
+else (ordinary source)
+  :Use existing source-type point estimator;
+  :p_member = 1;
+endif
+
+:Trace actual visibility when sample can contribute;
+:Accumulate history only for valid matching fast slot;
+:Shade with 1 / (p_source * p_member);
+:Include zero outcomes in the estimator;
+note right
+  No representative energy transfer.
+  Area density is compensated exactly once in dw.
+  No retry until the mask becomes nonzero.
+end note
+stop
+@enduml
