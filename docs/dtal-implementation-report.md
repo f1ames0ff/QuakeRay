@@ -145,9 +145,31 @@ Vulkan 1.4.349, Debug build). The first run found no visual regression when togg
 `rt_dtal_groups`, but it could not have: the reported group counters stayed at
 `0 admitted pieces -> 0 parents ... 0 builds; inactive` while 269 static world lights were baked,
 because `R_DrawWorld` collected the world directly and never entered the group wrapper. That run was
-therefore a legacy-path test only, and it is not evidence for the grouped path. The integration fix
-is commit `b9183825`; the grouped-path counters and the grouped/singleton/legacy comparison on the
-same camera are the remaining visual acceptance step and are not claimed here.
+therefore a legacy-path test only, and it is not evidence for the grouped path.
+
+After the integration fixes the grouped path was exercised on the stock maps:
+
+| Scene | Grid | Admitted pieces | Parents | Member patches | Builds |
+|---|---|---|---|---|---|
+| `e1m7`, stable | 256 | 66 | 52 first build, 121 after material settle | 668 → 4674 | 3 → 9, then constant |
+| `e1m7`, stable | 128 | 66 | 109 | 960 | 3, constant |
+| `e4m1` | 256 | 269 | 358 (329 in an earlier state) | 5641 | 10, constant |
+
+- The report line shows `active`, the group UIDs (type 4) are registered in the cluster lists and
+  receive slots, and no assertion or drop was observed.
+- After the initial material/animation settling the build counter stops growing and the reuse
+  counter grows, so ordinary frames do not rebuild topology.
+- Switching the mode off and on again (`rt_dtal_groups 0` then `1`) returns to `active`; the fix for
+  that case is on this branch.
+
+**Measured limitation:** on these two stock maps the parent count *increases* (66 → 109/121,
+269 → 358). Grid clipping splits medium and large emitters across cells faster than compatible
+pieces merge inside a cell. The reduction target is met only where many compatible pieces share
+cells (heavily fragmented emissive meshes); it is not demonstrated on `e1m7`/`e4m1`, and
+`rt_dtal_groups` therefore stays off by default. Screenshot pairs were taken with the denoiser off
+and without a guaranteed identical camera, so they are a smoke check only (bright pair means 28.09
+vs 27.04, dark pair 4.59 vs 3.99); they are not the required numerical reference and the grouped
+mean-preservation reference remains the CPU test.
 The on-screen checks to perform are listed in the Project B test protocol; the counters to read are
 `dtal groups ... -> ... builds, ... reused collections; active`.
 
