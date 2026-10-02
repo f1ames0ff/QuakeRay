@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(quakeray LANGUAGES C CXX)
 
+include(CTest)
+
 # ============================================================================
 # C / C++ Standard
 # ============================================================================
@@ -370,6 +372,8 @@ set(CORE_SOURCES
     Quake/r_sprite.c
     Quake/r_world.c
     Quake/rt_dtal_debug.cpp
+    Quake/rt_alias.c
+    Quake/rt_dtal_groups.c
     Quake/rt_material.c
     Quake/rt_lights.c
     Quake/rt_pkz.c
@@ -561,6 +565,26 @@ if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE SDL2::SDL2 SDL2::SDL2main)
 else()
     target_link_libraries(quakeray PRIVATE SDL2::SDL2)
+endif()
+
+# ============================================================================
+# Tests
+# ============================================================================
+if(BUILD_TESTING)
+    add_executable(rt_lighting_tests
+        tests/rt_lighting_tests.c
+        Quake/rt_alias.c
+        Quake/rt_dtal_groups.c
+    )
+    target_include_directories(rt_lighting_tests PRIVATE ${CMAKE_SOURCE_DIR}/Quake)
+
+    if(MSVC)
+        target_compile_options(rt_lighting_tests PRIVATE /W4)
+    else()
+        target_compile_options(rt_lighting_tests PRIVATE -Wall -Wextra)
+    endif()
+
+    add_test(NAME rt_lighting_tests COMMAND rt_lighting_tests)
 endif()
 
 # ============================================================================
