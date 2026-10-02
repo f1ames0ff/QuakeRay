@@ -20,11 +20,19 @@
 
 #include <SDL.h>
 
+cvar_t ui_cursor = {"ui_cursor", "0", CVAR_ARCHIVE};
+
 static SDL_Cursor *cursor_sdl;
 static QrMaterial  cursor_material = QR_NO_MATERIAL;
 static int         cursor_size;
 static int         cursor_hot_x;
 static int         cursor_hot_y;
+static qboolean    cursor_cvars_registered;
+
+static void Cursor_Changed_f (cvar_t *var)
+{
+	Cursor_Init ();
+}
 
 static void Cursor_DisplaySize (int *width, int *height)
 {
@@ -119,25 +127,50 @@ void Cursor_Init (void)
 	byte        *pixels;
 	SDL_Surface *surface;
 
+	if (!cursor_cvars_registered)
+	{
+		cursor_cvars_registered = true;
+		Cvar_RegisterVariable (&ui_cursor);
+		Cvar_SetCallback (&ui_cursor, Cursor_Changed_f);
+	}
+
 	Cursor_DisplaySize (&displayWidth, &displayHeight);
 	size = Cursor_ChooseSize (displayWidth, displayHeight);
 
-	if (size == cursor_size && cursor_sdl != NULL && cursor_material != QR_NO_MATERIAL)
+	if (CVAR_TO_BOOL (ui_cursor))
 	{
-		SDL_SetCursor (cursor_sdl);
+		if (cursor_sdl != NULL)
+		{
+			SDL_SetCursor (NULL);
+			SDL_FreeCursor (cursor_sdl);
+			cursor_sdl = NULL;
+		}
+
 		return;
 	}
 
-	if (cursor_sdl != NULL)
+	if (size != cursor_size)
 	{
-		SDL_FreeCursor (cursor_sdl);
-		cursor_sdl = NULL;
+		if (cursor_sdl != NULL)
+		{
+			SDL_SetCursor (NULL);
+			SDL_FreeCursor (cursor_sdl);
+			cursor_sdl = NULL;
+		}
+
+		if (cursor_material != QR_NO_MATERIAL && vulkan_globals.instance != QR_NULL_HANDLE)
+		{
+			qrDestroyMaterial (vulkan_globals.instance, cursor_material);
+			cursor_material = QR_NO_MATERIAL;
+		}
+
+		cursor_size = 0;
 	}
 
-	if (cursor_material != QR_NO_MATERIAL && vulkan_globals.instance != QR_NULL_HANDLE)
+	if (cursor_sdl != NULL && cursor_material != QR_NO_MATERIAL)
 	{
-		qrDestroyMaterial (vulkan_globals.instance, cursor_material);
-		cursor_material = QR_NO_MATERIAL;
+		SDL_SetCursor (cursor_sdl);
+		return;
 	}
 
 	q_snprintf (path, sizeof (path), "%s/gfx/quake_axe_%ix%i.png", host_parms->basedir, size, size);
@@ -151,19 +184,23 @@ void Cursor_Init (void)
 
 	Cursor_FindHotspot (pixels, width, height, &cursor_hot_x, &cursor_hot_y);
 
-	surface = SDL_CreateRGBSurfaceWithFormatFrom (pixels, width, height, 32, width * 4, SDL_PIXELFORMAT_RGBA32);
-	if (surface != NULL)
+	if (cursor_sdl == NULL)
 	{
-		cursor_sdl = SDL_CreateColorCursor (surface, cursor_hot_x, cursor_hot_y);
-		SDL_FreeSurface (surface);
+		surface = SDL_CreateRGBSurfaceWithFormatFrom (pixels, width, height, 32, width * 4, SDL_PIXELFORMAT_RGBA32);
+		if (surface != NULL)
+		{
+			cursor_sdl = SDL_CreateColorCursor (surface, cursor_hot_x, cursor_hot_y);
+			SDL_FreeSurface (surface);
+		}
 	}
+
+	if (cursor_material == QR_NO_MATERIAL)
+		Cursor_CreateMaterial (pixels, width, height);
+
+	Mem_Free (pixels);
 
 	if (cursor_sdl != NULL)
 		SDL_SetCursor (cursor_sdl);
-
-	Cursor_CreateMaterial (pixels, width, height);
-
-	Mem_Free (pixels);
 
 	cursor_size = size;
 }
@@ -187,7 +224,7 @@ void Cursor_Shutdown (void)
 
 int Cursor_GetGuiCursor (int64_t *texture, int *size, int *hotX, int *hotY)
 {
-	if (cursor_material == QR_NO_MATERIAL)
+	if (CVAR_TO_BOOL (ui_cursor) || cursor_material == QR_NO_MATERIAL)
 		return 0;
 
 	*texture = (int64_t)cursor_material;
