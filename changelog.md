@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.25.0
 
 ### Added
 - **Enhanced models** — the Graphics menu's `Models` row chooses `enhanced` (the default) or `classic`. With `r_enhancedmodels` on, a model that ships a `.md3` or `.md5mesh` beside its `.mdl` is loaded from that file instead: an MD3 surface becomes rigid frames, an MD5 mesh is skinned on the CPU from its `.md5anim`, and both draw through the renderer's own geometry path. The skin is resolved from the shader name — the Ironwail-style `<shader>_00_00` pattern first, then the bare name, each under the model's own directory, `progs/` and `textures/`, with `.lmp` qpic lumps read through the engine palette.

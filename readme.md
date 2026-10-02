@@ -132,7 +132,7 @@ Steps:
 Everything is exposed as console variables; run `cvarlist rt_` in the console for the full list. The ones that change the look most are:
 
 * `rt_brightness 1.0` - overall brightness of the ray-traced image
-* `rt_exposure_bias -2.8` - exposure in EV, a power-of-two factor applied inside the tone curve
+* `rt_exposure_bias 0` - exposure in EV from -3 to +3, a power-of-two factor applied inside the tone curve
 * `rt_contrast 0.6` - mixes the fixed tone curve with the auto-exposure adapted one (`0` keeps the fixed curve, `1` is the adapted curve alone)
 * `rt_sun 1` with `rt_sun_pitch 140` / `rt_sun_yaw 120` - the sun's intensity and direction: `0` turns it off, and the indirect sun and god rays scale with it
 * `rt_sun_color 255 255 255` - colour of the sun and its disc, independent of the sky, as `<r> <g> <b>` in `0-255`; commas and a bare query work, and it is archived
