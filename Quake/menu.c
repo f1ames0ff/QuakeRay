@@ -199,6 +199,8 @@ extern cvar_t rt_ef_damage_strength;
 extern cvar_t rt_ef_liquid_strength;
 extern cvar_t rt_ef_pickup_strength;
 extern cvar_t rt_sharpen_strength;
+extern cvar_t rt_vignette;
+extern cvar_t rt_local_exposure;
 extern cvar_t rt_sky_godrays;
 extern cvar_t rt_sky_godrays_quality;
 extern cvar_t rt_sky_sun_size;
@@ -2553,6 +2555,8 @@ enum
 	EFFECTS_OPT_LIQUID,
 	EFFECTS_OPT_PICKUP,
 	EFFECTS_OPT_SHARPEN,
+	EFFECTS_OPT_VIGNETTE,
+	EFFECTS_OPT_LOCAL_EXPOSURE,
 	EFFECTS_OPT_RESET,
 	EFFECTS_OPTIONS_ITEMS
 };
@@ -2603,6 +2607,12 @@ static void M_EffectsOptions_Adjust (int dir)
 	case EFFECTS_OPT_SHARPEN:
 		Cvar_SetValueQuick (&rt_sharpen_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength) + dir * 0.05f, 1.0f));
 		break;
+	case EFFECTS_OPT_VIGNETTE:
+		Cvar_SetValueQuick (&rt_vignette, CLAMP (0.0f, CVAR_TO_FLOAT (rt_vignette) + dir * 0.05f, 1.0f));
+		break;
+	case EFFECTS_OPT_LOCAL_EXPOSURE:
+		Cvar_SetValueQuick (&rt_local_exposure, CLAMP (0.0f, CVAR_TO_FLOAT (rt_local_exposure) + dir * 0.05f, 1.0f));
+		break;
 	case EFFECTS_OPT_RESET:
 		Cvar_SetValueQuick (&rt_bloom_intensity, 0.06f);
 		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
@@ -2611,6 +2621,8 @@ static void M_EffectsOptions_Adjust (int dir)
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.25f);
 		Cvar_SetValueQuick (&rt_ef_pickup_strength, 0.25f);
 		Cvar_SetValueQuick (&rt_sharpen_strength, 0.20f);
+		Cvar_SetValueQuick (&rt_vignette, 0.15f);
+		Cvar_SetValueQuick (&rt_local_exposure, 0.0f);
 		break;
 	}
 }
@@ -2694,6 +2706,12 @@ static void M_EffectsOptions_Draw (cb_context_t *cbx)
 		M_GetEffectStrengthName (&rt_sharpen_strength));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_RESET, "Reset effects defaults");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_VIGNETTE, "Vignette");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_VIGNETTE,
+		M_GetEffectStrengthName (&rt_vignette));
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LOCAL_EXPOSURE, "Local exposure");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_LOCAL_EXPOSURE,
+		M_GetEffectStrengthName (&rt_local_exposure));
 
 	M_Mouse_UpdateListCursor (&effects_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, EFFECTS_OPTIONS_ITEMS, 0);
 	Draw_Character (cbx, MENU_CURSOR_X, top + effects_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));

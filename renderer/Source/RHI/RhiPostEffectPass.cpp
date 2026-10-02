@@ -27,6 +27,7 @@
 #include "../Utils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <initializer_list>
 #include <string>
@@ -146,6 +147,17 @@ struct EffectSharpenPush
 };
 static_assert(sizeof(EffectSharpenPush) == 16);
 static_assert(offsetof(EffectSharpenPush, strength) == 12);
+
+struct EffectVignettePush
+{
+    EffectTransitionPush transition;
+    float intensity;
+    float start;
+    float end;
+    float roundness;
+};
+static_assert(sizeof(EffectVignettePush) == 28);
+static_assert(offsetof(EffectVignettePush, intensity) == 12);
 
 struct EffectGameplayFeedbackPush
 {
@@ -472,6 +484,7 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         { EFFECT_CRT_DECODE, "CRT decode", CRT_DECODE_SHADER_FILE_NAME, FB_SIMPLE, 16, false },
         { EFFECT_SHARPEN, "sharpen", SHARPEN_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
         { EFFECT_GAMEPLAY_FEEDBACK, "gameplay feedback", GAMEPLAY_FEEDBACK_SHADER_FILE_NAME, FB_SIMPLE, 44, true },
+        { EFFECT_VIGNETTE, "vignette", "EfVignette.comp.spv", FB_SIMPLE, 28, true },
     };
 
     static_assert(std::size(descs) == EFFECT_COUNT - 1,
@@ -757,6 +770,25 @@ void RhiPostEffectPass::Render(nvrhi::ICommandList *pCommandList,
         push.strength = std::clamp(params.pSharpen->strength, 0.0f, 1.0f);
 
         if (DispatchEffect(pCommandList, target, EFFECT_SHARPEN, sourceIsPing,
+                           &push, sizeof(push), groupsX, groupsY))
+        {
+            sourceIsPing = !sourceIsPing;
+        }
+    }
+
+    if (params.pVignette != nullptr && std::isfinite(params.pVignette->intensity) &&
+        params.pVignette->intensity > 0.0f)
+    {
+        EffectVignettePush push{};
+        push.intensity = std::clamp(params.pVignette->intensity, 0.0f, 1.0f);
+        push.start = std::isfinite(params.pVignette->start)
+            ? std::clamp(params.pVignette->start, 0.0f, 0.99f) : 0.45f;
+        push.end = std::isfinite(params.pVignette->end)
+            ? std::clamp(params.pVignette->end, push.start + 0.01f, 2.0f) : 1.0f;
+        push.roundness = std::isfinite(params.pVignette->roundness)
+            ? std::clamp(params.pVignette->roundness, 0.0f, 1.0f) : 0.35f;
+
+        if (DispatchEffect(pCommandList, target, EFFECT_VIGNETTE, sourceIsPing,
                            &push, sizeof(push), groupsX, groupsY))
         {
             sourceIsPing = !sourceIsPing;

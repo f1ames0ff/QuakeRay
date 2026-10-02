@@ -38,12 +38,14 @@ const char *const FLARE_SHADER_FILE_NAME = "CmLensFlare.comp.spv";
 constexpr uint32_t FLARE_SRV_SLOT = 0;
 constexpr uint32_t FLARE_SAMPLER_SLOT = 1;
 constexpr uint32_t FLARE_DEPTH_BINDING = 0;
+constexpr uint32_t FLARE_HIGHLIGHTS_BINDING = 1;
 constexpr uint32_t FLARE_DESTINATION_SLOT = 0;
 
 constexpr uint32_t FLARE_PASS_BRIGHT = 0;
 constexpr uint32_t FLARE_PASS_BOKEH = 1;
 constexpr uint32_t FLARE_PASS_FLARE = 2;
 constexpr uint32_t FLARE_PASS_SMOOTH = 3;
+constexpr uint32_t FLARE_PASS_STREAK = 4;
 
 struct LensFlarePush
 {
@@ -158,6 +160,7 @@ bool RhiLensFlarePass::Create(nvrhi::IDevice *pDevice,
         desc.visibility = nvrhi::ShaderType::Compute;
         desc.setBindingOffsets(nvrhi::VulkanBindingOffsets().setShaderResourceOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FLARE_DEPTH_BINDING));
+        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(FLARE_HIGHLIGHTS_BINDING));
 
         depthLayout = device->createBindingLayout(desc);
     }
@@ -341,7 +344,8 @@ bool RhiLensFlarePass::PrepareSourceSet(Target &target, nvrhi::ITexture *pSource
 
 bool RhiLensFlarePass::PrepareDepthSet(Target &target, nvrhi::ITexture *pDepth)
 {
-    if (target.depthSet != nullptr && target.depthTexture == pDepth)
+    if (target.depthSet != nullptr && target.streakSet != nullptr && target.depthTexture == pDepth &&
+        target.depthSetSourceTexture == target.sourceTexture)
     {
         return true;
     }
@@ -353,8 +357,15 @@ bool RhiLensFlarePass::PrepareDepthSet(Target &target, nvrhi::ITexture *pDepth)
         target.depthTexture = nullptr;
     }
 
+    if (target.streakSet != nullptr)
+    {
+        frameContext->Retire(target.streakSet);
+        target.streakSet = nullptr;
+    }
+
     nvrhi::BindingSetDesc setDesc;
     setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FLARE_DEPTH_BINDING, pDepth));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FLARE_HIGHLIGHTS_BINDING, target.sourceTexture));
 
     target.depthSet = device->createBindingSet(setDesc, depthLayout);
     if (target.depthSet == nullptr)
@@ -363,7 +374,19 @@ bool RhiLensFlarePass::PrepareDepthSet(Target &target, nvrhi::ITexture *pDepth)
         return false;
     }
 
+    setDesc.bindings.clear();
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FLARE_DEPTH_BINDING, pDepth));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(FLARE_HIGHLIGHTS_BINDING, target.bright.handle));
+    target.streakSet = device->createBindingSet(setDesc, depthLayout);
+    if (target.streakSet == nullptr)
+    {
+        frameContext->Retire(target.depthSet);
+        target.depthSet = nullptr;
+        return false;
+    }
+
     target.depthTexture = pDepth;
+    target.depthSetSourceTexture = target.sourceTexture;
     return true;
 }
 
@@ -450,7 +473,10 @@ void RhiLensFlarePass::Render(nvrhi::ICommandList *pCommandList,
     DispatchPass(pCommandList, frameIndex, target.bokeh.srvSet, target.depthSet, target.flare.uavSet,
                  quarterWidth, quarterHeight, FLARE_PASS_FLARE, 0.0f);
 
-    DispatchPass(pCommandList, frameIndex, target.flare.srvSet, target.depthSet, target.result.uavSet,
+    DispatchPass(pCommandList, frameIndex, target.flare.srvSet, target.streakSet, target.streak.uavSet,
+                 quarterWidth, quarterHeight, FLARE_PASS_STREAK, 0.0f);
+
+    DispatchPass(pCommandList, frameIndex, target.streak.srvSet, target.depthSet, target.result.uavSet,
                  quarterWidth, quarterHeight, FLARE_PASS_SMOOTH, 0.0f);
 
     target.resultValid = true;
@@ -480,6 +506,11 @@ bool RhiLensFlarePass::CreateTarget(Target &target, uint32_t width, uint32_t hei
     }
 
     if (!CreateTexture(target.result, halfWidth, halfHeight, "RhiLensFlarePass result"))
+    {
+        return false;
+    }
+
+    if (!CreateTexture(target.streak, halfWidth, halfHeight, "RhiLensFlarePass streak"))
     {
         return false;
     }
@@ -629,17 +660,24 @@ void RhiLensFlarePass::ReleaseTarget(Target &target)
         {
             frameContext->Retire(target.depthSet);
         }
+        if (target.streakSet != nullptr)
+        {
+            frameContext->Retire(target.streakSet);
+        }
     }
 
     target.sourceSet = nullptr;
     target.sourceTexture = nullptr;
     target.depthSet = nullptr;
     target.depthTexture = nullptr;
+    target.streakSet = nullptr;
+    target.depthSetSourceTexture = nullptr;
     target.resultValid = false;
 
     ReleaseTexture(target.bright);
     ReleaseTexture(target.bokeh);
     ReleaseTexture(target.flare);
+    ReleaseTexture(target.streak);
     ReleaseTexture(target.result);
 
     target.width = 0;
@@ -659,11 +697,14 @@ void RhiLensFlarePass::ClearTarget(Target &target)
     target.sourceTexture = nullptr;
     target.depthSet = nullptr;
     target.depthTexture = nullptr;
+    target.streakSet = nullptr;
+    target.depthSetSourceTexture = nullptr;
     target.resultValid = false;
 
     ClearTexture(target.bright);
     ClearTexture(target.bokeh);
     ClearTexture(target.flare);
+    ClearTexture(target.streak);
     ClearTexture(target.result);
 
     target.width = 0;

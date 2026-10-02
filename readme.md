@@ -36,7 +36,8 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 
 ## Graphics
 
-* Dynamic HDR Tone mapping: overall brightness, exposure bias in EV, contrast as a mix of the fixed and the auto-exposure adapted curve
+* Histogram-based HDR exposure with percentile metering and continuous temporal adaptation in EV, configurable bright/dark adaptation speeds, exposure limits and bias
+* Optional edge-aware Local Exposure before tone mapping, with a bounded one-stop correction for local contrast
 * Procedural sky with volumetric clouds, configurable sky and sun colours, and cloud-shadowed sunlight
 * God rays — volumetric sun shafts, aimed at the sun or at the bright areas of the sky texture
 * Volumetric fog
@@ -44,7 +45,9 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * Lens flare from the visible sun and exceptionally bright visible sources: a Chapman-style image-space flare with eight chromatic ghosts scaled through the screen centre, a halo ring taken from the rim of a large mirrored reflection (it travels and spreads with the source), a flare strength that climbs with the source brightness above the threshold, a radial lens distortion in aspect-corrected space (circular ghosts and ring on any screen ratio), a distance fade driven by the world depth of the source (inverse-square around a 512-unit reference, zero at 4096; the sky keeps its flare) and a hexagonal-aperture bokeh pass (blade-shaped discs) at half render resolution
 * Post-processing: spectral damage and liquid chromatic aberration in the linear HDR stage before exposure and tone mapping, with a protected central region; a damage red tint and a bottom-screen pickup pulse after the upscaler; and a configurable LUT for colour grading
 * Contrast-adaptive sharpening (FidelityFX CAS) after the upscaler, with an adjustable strength
-* The `Effects` page in Options collects the bloom, lens-flare, gameplay-feedback and sharpening settings with a page-local reset
+* Soft aspect-aware elliptical vignette, applied to the scene before the HUD
+* A restrained horizontal streak from the flare's filtered bright sources, combined with the chromatic ghosts and hexagonal bokeh
+* The `Effects` page in Options collects the bloom, lens-flare, gameplay-feedback, sharpening, vignette and Local Exposure settings with a page-local reset
 * Shader smoke — the trails of rockets, lava balls and grenades are drawn as soft, lit puffs the room's light falls on, in place of the classic flat sprites
 * Enhanced models — a model that ships a `.md3` or `.md5mesh` beside its `.mdl` is drawn from it, with MD5 skinned from its `.md5anim` and skins resolved from the shader name; the Graphics menu's `Models` row picks enhanced or classic
 * Adaptive vsync, VRR and FreeSync: `vid_vsync` picks the presentation mode (off, vsync, adaptive, FreeSync), adaptive by default
@@ -191,6 +194,21 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_ef_damage 1` with `rt_ef_damage_strength 0.5`, `rt_ef_liquid 1` with `rt_ef_liquid_strength 0.25`, and `rt_ef_chraber 0.3` - the damage and liquid chromatic aberration with their switches and strengths, and the master scale over both: a spectral 6-8 tap split applied to the linear HDR image before exposure and tone mapping, with a protected central region; the post-upscale shader keeps only the damage red tint and the bottom pickup pulse
 * `rt_ef_pickup 1` with `rt_ef_pickup_strength 0.25` (range `0`-`0.5`) and `rt_ef_pickup_height 0.28` - the bottom-screen pickup pulse, its peak screen-blend opacity and the fraction of the displayed height it covers
 * `rt_sharpen 2` with `rt_sharpen_strength 0.20` - FidelityFX CAS after the upscaler: `0` off, `1` and `2` on, strength `0`-`1`; FSR's internal sharpening stays off
+* `rt_vignette 0.15` - vignette strength (`0` off, `1` maximum), also exposed as a single Effects slider; `rt_vignette_start 0.45`, `rt_vignette_end 1.0` and `rt_vignette_roundness 0.35` tune the smooth elliptical falloff and its aspect correction
+* `rt_local_exposure 0` - optional edge-aware local exposure (`0` off, `1` maximum), also in Effects; a bilateral log-luminance filter applies at most one stop of local exposure correction before the existing tone curve, preserving RGB ratios
+* `rt_exposure_speed_up 3.0` and `rt_exposure_speed_down 1.0` - adaptation rates per second in log luminance: the first handles a brighter scene, the second a darker one; exposure follows the preceding rendered frame across frame slots and resets on camera cuts
+* `rt_exposure_low_percentile 70` and `rt_exposure_high_percentile 90` - the histogram percentile interval used for metering, with fractional boundary-bin weights; only scene radiance is metered, before bloom, flare, vignette and UI
+* `rt_exposure_min_luminance 0.02` and `rt_exposure_max_luminance 1.0` - limits on the adapted scene luminance, independent of the histogram's full HDR range; existing `rt_exposure_bias` remains the EV compensation control
+
+### Post-effects GPU regression
+
+With `QR_BUILD_TESTS=ON`, the optional headless `qray_posteffects_gpu` test runs the production histogram, exposure-average, vignette and flare-streak shaders, plus the production Local Exposure filter through a probe. It checks tiny/odd resolutions, black and non-finite inputs, percentile rejection, continuous adaptation across three frame slots, 30/60 FPS equivalence, camera-cut resets, vignette identity/center/corner behavior, streak direction, and local contrast boundaries. It requires a Vulkan GPU; game data is not required.
+
+```powershell
+cmake -S . -B build/Debug -DQR_BUILD_TESTS=ON
+.\build_win.ps1 Debug
+ctest --test-dir build/Debug -R qray_posteffects_gpu --output-on-failure
+```
 
 ## Sound
 

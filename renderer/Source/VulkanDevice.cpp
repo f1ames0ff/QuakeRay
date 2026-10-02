@@ -780,6 +780,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     {
         sky.exposureBias = drawInfo.pTonemappingParams->exposureBias;
         sky.contrast = std::clamp(drawInfo.pTonemappingParams->contrast, 0.0f, 1.0f);
+        sky.exposureParams = *drawInfo.pTonemappingParams;
     }
     sky.rayCullMaskWorld = uniform->GetData()->rayCullMaskWorld;
     sky.allowGeometryWithSkyFlag = allowGeometryWithSkyFlag;

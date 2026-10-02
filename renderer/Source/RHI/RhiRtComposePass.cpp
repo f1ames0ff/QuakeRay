@@ -3,6 +3,7 @@
 #include "RhiBloomPass.h"
 #include "RhiFrameContext.h"
 #include "RhiLensFlarePass.h"
+#include "RhiExposureHistory.h"
 #include "RhiPipeline.h"
 #include "RhiResources.h"
 #include "RhiTextureSource.h"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cstring>
 #include <initializer_list>
+#include <cmath>
 #include <string>
 #include <tuple>
 
@@ -1936,12 +1938,25 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
     // The exposure pair on the fresh PRE_FINAL and the slot's tonemapping buffer: the histogram
     // over the render resolution, then the average over exactly the 128 bins in one workgroup
     // (Tonemapping.cpp:171-208).
+    if (previousExposureSlot < MAX_FRAMES_IN_FLIGHT && previousExposureSlot != frameIndex)
+    {
+        rhi::transferExposureHistory(pCommandList, tonemappingBuffers[previousExposureSlot],
+                                     tonemappingBuffers[frameIndex]);
+    }
+    else if (previousExposureSlot >= MAX_FRAMES_IN_FLIGHT)
+    {
+        const uint32_t reset = 1;
+        pCommandList->writeBuffer(tonemappingBuffers[frameIndex], &reset, sizeof(reset), offsetof(ShTonemapping, resetCurve));
+    }
+
     RecordDispatch(pCommandList, histogramPipeline,
                    { target.histogramSet, target.uniformSet, tonemappingUavSets[frameIndex] },
                    groupsX, groupsY, 1);
     RecordDispatch(pCommandList, averagePipeline,
                    { emptySet, target.uniformSet, tonemappingUavSets[frameIndex] },
-                   1, 1, 1);
+                    1, 1, 1);
+
+    previousExposureSlot = frameIndex;
 
     RecordDispatch(pCommandList, checkerboardPipeline, { target.checkerboardSet, target.uniformSet },
                    groupsX, groupsY, 1);
@@ -2045,7 +2060,7 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
         damage,
         liquid,
         aberration,
-        0.0f,
+        std::isfinite(postEffectParams.localExposure) ? std::clamp(postEffectParams.localExposure, 0.0f, 1.0f) : 0.0f,
     };
 
     // The final composition: set 3 is the dead LPM hole, set 4 the volumetric dummy, and the
@@ -2194,6 +2209,7 @@ nvrhi::ITexture *RhiRtComposePass::GetUpscaledTexture(uint32_t frameIndex) const
 
 void RhiRtComposePass::ReleaseTargets()
 {
+    previousExposureSlot = MAX_FRAMES_IN_FLIGHT;
     for (Target &target : targets)
     {
         ReleaseTarget(target);

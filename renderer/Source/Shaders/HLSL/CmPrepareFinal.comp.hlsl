@@ -25,6 +25,7 @@
 #include "Random.hlsli"
 #include "Exposure.hlsli"
 #include "TonemappingUtils.hlsli"
+#include "LocalExposure.hlsli"
 
 
 struct BloomFlareControl_BT
@@ -349,6 +350,15 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         }
 
         hdr += flare * bloomFlareControl.opticalControl.y * transmittance;
+    }
+
+    if (bloomFlareControl.gameplayFeedback.w > 0.0)
+    {
+        const float2 inverseSize = 1.0 / float2(globalUniform.renderWidth, globalUniform.renderHeight);
+        const float2 uv = (float2(pix) + 0.5) * inverseSize;
+        const float correction = localExposureCorrection(framebufBloomInput_Sampled, opticalResultSampler,
+                                                           uv, inverseSize, tonemapping[0].adaptedLuminance);
+        hdr *= exp2(correction * bloomFlareControl.gameplayFeedback.w);
     }
 
     float3 color = finalizeColor( hdr );

@@ -295,9 +295,20 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_lensflare_threshold, "12.0") \
 	\
 	CVAR_DEF_T (rt_exposure_bias, "0") \
+	CVAR_DEF_T (rt_exposure_speed_up, "3.0") \
+	CVAR_DEF_T (rt_exposure_speed_down, "1.0") \
+	CVAR_DEF_T (rt_exposure_low_percentile, "70") \
+	CVAR_DEF_T (rt_exposure_high_percentile, "90") \
+	CVAR_DEF_T (rt_exposure_min_luminance, "0.02") \
+	CVAR_DEF_T (rt_exposure_max_luminance, "1.0") \
+	CVAR_DEF_T (rt_local_exposure, "0") \
 	CVAR_DEF_T (rt_contrast, "0.6") \
 	\
 	CVAR_DEF_T (rt_ef_crt, "0") \
+	CVAR_DEF_T (rt_vignette, "0.15") \
+	CVAR_DEF_T (rt_vignette_start, "0.45") \
+	CVAR_DEF_T (rt_vignette_end, "1.0") \
+	CVAR_DEF_T (rt_vignette_roundness, "0.35") \
 	CVAR_DEF_T (rt_ef_chraber, "0.3") \
 	CVAR_DEF_T (rt_ef_waves_stren, "1") \
 	CVAR_DEF_T (rt_ef_damage, "1") \
@@ -2166,6 +2177,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.luminanceWhitePoint = 10.0f,
 		.exposureBias = CLAMP (-3.0f, CVAR_TO_FLOAT (rt_exposure_bias), 3.0f),
 		.contrast = CLAMP (0.0f, CVAR_TO_FLOAT (rt_contrast), 1.0f),
+		.exposureSpeedUp = CVAR_TO_FLOAT (rt_exposure_speed_up),
+		.exposureSpeedDown = CVAR_TO_FLOAT (rt_exposure_speed_down),
+		.exposureLowPercentile = CVAR_TO_FLOAT (rt_exposure_low_percentile),
+		.exposureHighPercentile = CVAR_TO_FLOAT (rt_exposure_high_percentile),
+		.minAdaptedLuminance = CVAR_TO_FLOAT (rt_exposure_min_luminance),
+		.maxAdaptedLuminance = CVAR_TO_FLOAT (rt_exposure_max_luminance),
 	};
 
 	vec3_t water_color;
@@ -2440,6 +2457,13 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	feedback_effect.pickupColor = (QrFloat3D){{1.0f, 0.831373f, 0.482353f}};
 	feedback_effect.aberration = CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_chraber), 1.0f);
 
+	QrPostEffectsVignetteParams vignette_effect = {
+		.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_vignette), 1.0f),
+		.start = CLAMP (0.0f, CVAR_TO_FLOAT (rt_vignette_start), 0.99f),
+		.end = CLAMP (0.01f, CVAR_TO_FLOAT (rt_vignette_end), 2.0f),
+		.roundness = CLAMP (0.0f, CVAR_TO_FLOAT (rt_vignette_roundness), 1.0f),
+	};
+
     QrPostEffectRadialBlur radial_effect = {
 		.isActive = (cl.items & (IT_QUAD | IT_INVULNERABILITY)) && cl.stats[STAT_HEALTH] > 0,
 		.transitionDurationIn = 1.0f,
@@ -2508,6 +2532,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 				.pBloom = &bloom_effect,
 				.pLensFlare = &lensflare_effect,
 				.pSharpen = &sharpen_effect,
+				.pVignette = &vignette_effect,
+				.localExposure = CLAMP (0.0f, CVAR_TO_FLOAT (rt_local_exposure), 1.0f),
 				.pGameplayFeedback = (cl.intermission || editor_active) ? NULL : &feedback_effect,
 			},
 		.pDebugParams = &debug_params,

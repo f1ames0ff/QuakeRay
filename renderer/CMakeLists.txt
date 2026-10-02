@@ -181,6 +181,24 @@ if(QR_BUILD_TESTS)
     endif()
     add_test(NAME qray_clouds_gpu COMMAND qray_clouds_smoke "${CMAKE_CURRENT_SOURCE_DIR}/Build" "${QR_PROBE_DIR}")
     set_tests_properties(qray_clouds_gpu PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
+
+    add_custom_command(OUTPUT "${QR_PROBE_DIR}/LocalExposureProbe.comp.spv"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${QR_PROBE_DIR}"
+        COMMAND "${QR_DXC}" -spirv -fspv-target-env=vulkan1.2 -T cs_6_2 -E main
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/Source/Shaders"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/LocalExposureProbe.comp.hlsl"
+            -Fo "${QR_PROBE_DIR}/LocalExposureProbe.comp.spv"
+        DEPENDS Tests/LocalExposureProbe.comp.hlsl Source/Shaders/LocalExposure.hlsli
+        VERBATIM)
+    add_executable(qray_posteffects_smoke Tests/PostEffectsSmoke.cpp "${QR_PROBE_DIR}/LocalExposureProbe.comp.spv")
+    target_compile_features(qray_posteffects_smoke PRIVATE cxx_std_20)
+    target_include_directories(qray_posteffects_smoke PRIVATE Source)
+    target_link_libraries(qray_posteffects_smoke PRIVATE renderer nvrhi nvrhi_vk)
+    if(WIN32)
+        target_link_libraries(qray_posteffects_smoke PRIVATE user32)
+    endif()
+    add_test(NAME qray_posteffects_gpu COMMAND qray_posteffects_smoke "${CMAKE_CURRENT_SOURCE_DIR}/Build" "${QR_PROBE_DIR}")
+    set_tests_properties(qray_posteffects_gpu PROPERTIES TIMEOUT 120 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 endif()
 
 add_library(renderer STATIC

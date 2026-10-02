@@ -21,6 +21,7 @@
 [[vk::binding(0, 0)]] Texture2D<float4> flareSource;
 [[vk::binding(1, 0)]] SamplerState flareSource_Sampler;
 [[vk::binding(0, 1)]] Texture2D<float4> flareDepth;
+[[vk::binding(1, 1)]] Texture2D<float4> flareHighlights;
 [[vk::binding(0, 3)]] RWTexture2D<float4> flareDest;
 
 struct LensFlarePush_BT
@@ -37,6 +38,8 @@ static const uint FLARE_PASS_BRIGHT = 0;
 static const uint FLARE_PASS_BOKEH = 1;
 static const uint FLARE_PASS_FLARE = 2;
 static const uint FLARE_PASS_SMOOTH = 3;
+static const uint FLARE_PASS_STREAK = 4;
+static const float FLARE_STREAK_INTENSITY = 0.04;
 
 static const uint FLARE_GHOST_COUNT = 8;
 static const float FLARE_GHOST_SCALES[8] = { -0.8, -1.5, 0.6, 1.3, -2.2, 0.35, 2.0, -0.45 };
@@ -283,6 +286,26 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
         sum += flareHaloLayer(uv, aspect);
         flareDest[pixel] = float4(postEffectsSanitize(sum * FLARE_GAIN), 1.0);
+        return;
+    }
+
+    if (push.passMode == FLARE_PASS_STREAK)
+    {
+        const float spacing = max(2.0, (float)height * 0.008);
+        float3 streak = (float3)0.0;
+
+        [unroll]
+        for (int tap = -2; tap <= 2; tap++)
+        {
+            const float2 sampleUV = uv + float2((float)tap * spacing * sourceTexelSize.x, 0.0);
+            if (all(sampleUV >= 0.0) && all(sampleUV <= 1.0))
+            {
+                streak += postEffectsSanitize(flareHighlights.SampleLevel(flareSource_Sampler, sampleUV, 0.0).rgb) * 0.2;
+            }
+        }
+
+        const float3 ghosts = postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, uv, 0.0).rgb);
+        flareDest[pixel] = float4(postEffectsSanitize(ghosts + streak * FLARE_GAIN * FLARE_STREAK_INTENSITY), 1.0);
         return;
     }
 

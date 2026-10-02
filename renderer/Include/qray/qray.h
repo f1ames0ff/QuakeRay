@@ -923,6 +923,12 @@ typedef struct QrDrawFrameTonemappingParams
     float       exposureBias;
 
     float       contrast;
+    float       exposureSpeedUp;
+    float       exposureSpeedDown;
+    float       exposureLowPercentile;
+    float       exposureHighPercentile;
+    float       minAdaptedLuminance;
+    float       maxAdaptedLuminance;
 } QrDrawFrameTonemappingParams;
 
 #define QR_SKY_CLOUDS_MAX_QUALITY 3
@@ -1205,6 +1211,14 @@ typedef struct QrPostEffectsGameplayFeedback
     QrFloat3D   pickupColor;
 } QrPostEffectsGameplayFeedback;
 
+typedef struct QrPostEffectsVignetteParams
+{
+    float       intensity;
+    float       start;
+    float       end;
+    float       roundness;
+} QrPostEffectsVignetteParams;
+
 typedef struct QrDrawFramePostEffectsParams
 {
     const QrPostEffectWipe                  *pWipe;
@@ -1220,6 +1234,8 @@ typedef struct QrDrawFramePostEffectsParams
     const QrPostEffectsLensFlareParams      *pLensFlare;
     const QrPostEffectsSharpenParams        *pSharpen;
     const QrPostEffectsGameplayFeedback     *pGameplayFeedback;
+    const QrPostEffectsVignetteParams        *pVignette;
+    float                                  localExposure;
 } QrDrawFramePostEffectsParams;
 
 typedef enum QrMediaType

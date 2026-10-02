@@ -257,6 +257,7 @@ private:
         EFFECT_CRT_DECODE,
         EFFECT_SHARPEN,
         EFFECT_GAMEPLAY_FEEDBACK,
+        EFFECT_VIGNETTE,
         EFFECT_COUNT,
     };
 

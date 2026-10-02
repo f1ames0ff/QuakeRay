@@ -557,6 +557,7 @@ private:
     nvrhi::BufferHandle tonemappingBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle tonemappingUavSets[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle tonemappingSrvSets[MAX_FRAMES_IN_FLIGHT];
+    uint32_t previousExposureSlot = MAX_FRAMES_IN_FLIGHT;
 
     // The module-owned stand-ins: the real empty set, the 1x1x1 RGBA16F volumetric dummy with its
     // sampler and set, and the nearest-filter sampler the TAAU binds for the history (the engine

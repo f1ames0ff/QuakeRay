@@ -18,6 +18,8 @@
 #include "Tonemapping.h"
 
 #include <cstring>
+#include <algorithm>
+#include <cmath>
 
 #include "Generated/ShaderCommonC.h"
 
@@ -41,7 +43,6 @@ Tonemapping::Tonemapping(
             memset(mappedTmBuffer[i], 0, sizeof(ShTonemapping));
         }
 
-        resetRequired[i] = true;
     }
 }
 
@@ -59,7 +60,8 @@ Tonemapping::~Tonemapping()
 }
 
 void Tonemapping::PrepareExposureParams(uint32_t frameIndex, const std::shared_ptr<const GlobalUniform> &uniform,
-                                        float exposureBias, float contrast)
+                                        float exposureBias, float contrast,
+                                        const QrDrawFrameTonemappingParams &params)
 {
     assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
 
@@ -70,22 +72,45 @@ void Tonemapping::PrepareExposureParams(uint32_t frameIndex, const std::shared_p
         return;
     }
 
-    tm->tmExposureBias      = exposureBias;
-    tm->tmExposureSpeedDown = 1.0f;
-    tm->tmExposureSpeedUp   = 1.0f;
-    tm->tmLowPercentile     = 70.0f;
-    tm->tmHighPercentile    = 90.0f;
-    tm->tmMinLuminance      = 0.02f;
-    tm->tmMaxLuminance      = 1.0f;
+    const auto bounded = [](float value, float minimum, float maximum, float fallback)
+    {
+        return std::clamp(std::isfinite(value) ? value : fallback, minimum, maximum);
+    };
+
+    tm->tmExposureBias = bounded(exposureBias, -16.0f, 16.0f, 0.0f);
+    tm->tmExposureSpeedDown = params.exposureSpeedDown > 0.0f
+        ? bounded(params.exposureSpeedDown, 0.01f, 20.0f, 1.0f) : 1.0f;
+    tm->tmExposureSpeedUp = params.exposureSpeedUp > 0.0f
+        ? bounded(params.exposureSpeedUp, 0.01f, 20.0f, 3.0f) : 3.0f;
+    tm->tmLowPercentile = bounded(params.exposureLowPercentile, 0.0f, 99.0f, 70.0f);
+    tm->tmHighPercentile = bounded(params.exposureHighPercentile, tm->tmLowPercentile + 1.0f, 100.0f, 90.0f);
+    if (params.exposureHighPercentile <= 0.0f)
+    {
+        tm->tmLowPercentile = 70.0f;
+        tm->tmHighPercentile = 90.0f;
+    }
+    tm->tmMinLuminance = params.minAdaptedLuminance > 0.0f
+        ? bounded(params.minAdaptedLuminance, 1e-4f, 60000.0f, 0.02f) : 0.02f;
+    tm->tmMaxLuminance = params.maxAdaptedLuminance > 0.0f
+        ? bounded(params.maxAdaptedLuminance, tm->tmMinLuminance, 60000.0f, 1.0f)
+        : std::max(tm->tmMinLuminance, 1.0f);
     tm->tmNoiseBlend        = 0.5f;
     tm->tmNoiseStops        = -12.0f;
     tm->tmDynRangeStops     = 7.0f;
-    tm->tmReinhard          = contrast;
+    tm->tmReinhard          = bounded(contrast, 0.0f, 1.0f, 0.6f);
     tm->tmKneeStart         = 0.6f;
     tm->tmWhitePoint        = 10.0f;
     tm->tmSlopeBlurSigma    = 12.0f;
-    tm->frameTime           = uniform->GetData()->timeDelta;
-    tm->resetCurve          = resetRequired[frameIndex] ? 1u : 0u;
+    const auto *frame = uniform->GetData();
+    tm->frameTime = bounded(frame->timeDelta, 0.0f, 0.25f, 0.0f);
+    float cameraDeltaSquared = 0.0f;
+    for (uint32_t axis = 0; axis < 3; axis++)
+    {
+        const float delta = frame->cameraPosition[axis] - frame->cameraPositionPrev[axis];
+        cameraDeltaSquared += delta * delta;
+    }
+    tm->resetCurve = !exposureReady || frame->time < previousTime ||
+                     frame->timeDelta > 1.0f || cameraDeltaSquared > 10000.0f ? 1u : 0u;
 
     const float kneeStart      = tm->tmKneeStart;
     const float kneeWhitePoint = tm->tmWhitePoint;
@@ -95,7 +120,8 @@ void Tonemapping::PrepareExposureParams(uint32_t frameIndex, const std::shared_p
     tm->kneeA = -kneeStart * kneeStart;
     tm->kneeB = kneeW - 2.0f * kneeStart;
 
-    resetRequired[frameIndex] = false;
+    exposureReady = true;
+    previousTime = frame->time;
 }
 
 VkBuffer Tonemapping::GetBuffer(uint32_t frameIndex) const
@@ -130,7 +156,8 @@ void Tonemapping::CreateTonemappingBuffer(const std::shared_ptr<MemoryAllocator>
         tmBuffer[i].Init(
             allocator,
             sizeof(ShTonemapping),
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             "Tonemapping buffer");
     }
