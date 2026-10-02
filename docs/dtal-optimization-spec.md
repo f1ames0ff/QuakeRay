@@ -227,32 +227,37 @@ Keep UID-to-current-index resolution in existing publication. A does not add ano
 ### A0. Reference and inventory
 
 - [ ] Record baseline assets, settings, cameras, hardware and available source/list diagnostics.
-- [ ] Inventory affected light switches, shader consumers and resources.
-- [ ] Register numerical geometry/sampling tests explicitly; the inspected project has no configured general CTest suite.
-- [ ] Check and repair confirmed standard-DTAL subdivision/domain bias with grouping off.
+      (Settings, defaults and diagnostics are recorded in
+      `dtal-implementation-report.md`; no GPU runtime capture was possible here.)
+- [x] Inventory affected light switches, shader consumers and resources.
+- [x] Register numerical geometry/sampling tests explicitly; the inspected project has no configured general CTest suite.
+- [x] Check and repair confirmed standard-DTAL subdivision/domain bias with grouping off.
 
 ### A1. CPU grouping
 
-- [ ] Implement static source admission, projector-cycle handling and conservative support.
-- [ ] Implement grid-local exact patches and deterministic compatible groups.
-- [ ] Build aliases, bounds, UIDs and coverage; enforce checked work/memory budgets.
-- [ ] Validate area conservation, PMFs, cache invalidation and failure behavior.
+- [x] Implement static source admission, projector-cycle handling and conservative support.
+- [x] Implement grid-local exact patches and deterministic compatible groups.
+- [x] Build aliases, bounds, UIDs and coverage; enforce checked work/memory budgets.
+- [x] Validate area conservation, PMFs, cache invalidation and failure behavior.
+      (CPU tests; the runtime invalidation path is implemented but not exercised on a GPU.)
 
 ### A2. Renderer integration
 
-- [ ] Add group parent and buffers through existing owners/API.
-- [ ] Implement conditional member/point sampling in direct/indirect GLSL/HLSL.
-- [ ] Add the minimal group-domain adapter and supported group importance proxy.
-- [ ] Preserve exact dark emission and current animation parameters without geometry rebuild.
+- [x] Add group parent and buffers through existing owners/API.
+- [x] Implement conditional member/point sampling in direct/indirect GLSL/HLSL.
+- [x] Add the minimal group-domain adapter and supported group importance proxy.
+- [x] Preserve exact dark emission and current animation parameters without geometry rebuild.
 - [ ] Verify resource replacement with frames in flight.
 
 ### A3. Controls, measurement and acceptance
 
-- [ ] Add global Light Editor controls and light-only coalesced rebuild requests.
+- [x] Add global Light Editor controls and light-only coalesced rebuild requests.
 - [ ] Add group/member debug views and counts/time/memory/upload diagnostics.
+      (Parent/member/budget/coverage counts and the member memory budget are reported;
+      no per-group/member debug view was added and no GPU timing was measured.)
 - [ ] Compare corrected singleton/grouped modes and measure sparse masks.
 - [ ] Test A with the old cluster policy within its declared limits.
-- [ ] Report completed scope, settings/defaults, unavailable checks and remaining cluster limitations.
+- [x] Report completed scope, settings/defaults, unavailable checks and remaining cluster limitations.
 
 ## 11. File map
 
