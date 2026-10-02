@@ -3283,11 +3283,6 @@ enum
 	VID_OPT_SHOWFPS,
 
 
-	VID_OPT_LIGHT_SYSTEM,
-	VID_OPT_GI_LEVEL,
-	VID_OPT_GODRAYS,
-	VID_OPT_GODRAYS_QUALITY,
-	VID_OPT_REFLECT,
 	VID_OPT_DENOISER,
 	VID_OPT_TEXTURES,
 
@@ -3537,115 +3532,6 @@ static void VID_Menu_StepFloatCvar (cvar_t *var, float step, float minval, float
 
 /*
 ================
-VID_Menu_GetGiLevelName -- Q2RTX pt_num_bounce_rays as a word
-================
-*/
-static const char *VID_Menu_GetGiLevelName (void)
-{
-	const float v = CVAR_TO_FLOAT (rt_gi_level);
-
-	if (v < 0.25f)
-		return "off";
-	if (v < 0.75f)
-		return "low";
-	if (v < 1.5f)
-		return "medium";
-
-	return "high";
-}
-
-/*
-================
-VID_Menu_StepGiLevel -- cycle through the Q2RTX gi levels
-================
-*/
-static void VID_Menu_StepGiLevel (float dir)
-{
-	static const float levels[] = { 0.0f, 0.5f, 1.0f, 2.0f };
-	const int numlevels = (int)(sizeof (levels) / sizeof (levels[0]));
-	const float cur = CVAR_TO_FLOAT (rt_gi_level);
-
-	int   idx = 2; // medium
-	float best = 1e9f;
-
-	for (int i = 0; i < numlevels; i++)
-	{
-		const float d = fabsf (levels[i] - cur);
-
-		if (d < best)
-		{
-			best = d;
-			idx = i;
-		}
-	}
-
-	idx = CLAMP (0, idx + ((dir > 0.0f) ? 1 : -1), numlevels - 1);
-
-	Cvar_SetValueQuick (&rt_gi_level, levels[idx]);
-}
-
-/*
-================
-VID_Menu_GetQualityName -- the levels rt_sky_godrays_quality and
-rt_sky_clouds_quality are on, as a word
-================
-*/
-const char *VID_Menu_GetQualityName (const cvar_t *var)
-{
-	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
-	switch (CLAMP (0, (int)var->value, maximum))
-	{
-	case 0:  return "low";
-	case 1:  return "medium";
-	case 3:  return "ultra";
-	case 4:  return "extreme";
-	default: return "high";
-	}
-}
-
-/*
-================
-VID_Menu_StepQuality -- cycle one of the quality ladder cvars
-================
-*/
-void VID_Menu_StepQuality (cvar_t *var, int dir)
-{
-	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
-	Cvar_SetValueQuick (var, (float)CLAMP (0, (int)var->value + dir, maximum));
-}
-
-/*
-================
-VID_Menu_StepReflDepth -- cycle through the Q2RTX reflection depths
-================
-*/
-static void VID_Menu_StepReflDepth (float dir)
-{
-	static const float depths[] = { 0.0f, 1.0f, 2.0f, 4.0f, 8.0f };
-	const int numdepths = (int)(sizeof (depths) / sizeof (depths[0]));
-	const float cur = CVAR_TO_FLOAT (rt_reflrefr_depth);
-
-	int   idx = 2; // 2 bounces
-	float best = 1e9f;
-
-	for (int i = 0; i < numdepths; i++)
-	{
-		const float d = fabsf (depths[i] - cur);
-
-		if (d < best)
-		{
-			best = d;
-			idx = i;
-		}
-	}
-
-	idx = CLAMP (0, idx + ((dir > 0.0f) ? 1 : -1), numdepths - 1);
-
-	Cvar_SetValueQuick (&rt_reflrefr_depth, depths[idx]);
-}
-
-/*
-================
 VID_MenuKey
 ================
 */
@@ -3719,22 +3605,6 @@ static void VID_MenuKey (int key)
 		case VID_OPT_SHOWFPS:
 			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
 			break;
-		case VID_OPT_LIGHT_SYSTEM:
-			// the light system is a choice, not a checkbox: new (1) or old (0)
-			Cvar_SetValueQuick (&rt_truelight, CVAR_TO_FLOAT (rt_truelight) > 0.0f ? 0.0f : 1.0f);
-			break;
-		case VID_OPT_GI_LEVEL:
-			VID_Menu_StepGiLevel (-1.0f);
-			break;
-		case VID_OPT_GODRAYS:
-			Cvar_SetValueQuick (&rt_sky_godrays, !CVAR_TO_BOOL (rt_sky_godrays));
-			break;
-		case VID_OPT_GODRAYS_QUALITY:
-			VID_Menu_StepQuality (&rt_sky_godrays_quality, -1);
-			break;
-		case VID_OPT_REFLECT:
-			VID_Menu_StepReflDepth (-1.0f);
-			break;
 		case VID_OPT_DENOISER:
 			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
 			break;
@@ -3788,18 +3658,6 @@ static void VID_MenuKey (int key)
 			break;
 		case VID_OPT_SHOWFPS:
 			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
-			break;
-		case VID_OPT_LIGHT_SYSTEM:
-			Cvar_SetValueQuick (&rt_truelight, CVAR_TO_FLOAT (rt_truelight) > 0.0f ? 0.0f : 1.0f);
-			break;
-		case VID_OPT_GI_LEVEL:
-			VID_Menu_StepGiLevel (1.0f);
-			break;
-		case VID_OPT_GODRAYS:
-			Cvar_SetValueQuick (&rt_sky_godrays, !CVAR_TO_BOOL (rt_sky_godrays));
-			break;
-		case VID_OPT_GODRAYS_QUALITY:
-			VID_Menu_StepQuality (&rt_sky_godrays_quality, 1);
 			break;
 		case VID_OPT_DENOISER:
 			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
@@ -3947,40 +3805,6 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			break;
 
 
-		case VID_OPT_LIGHT_SYSTEM:
-			y += 8; // separate
-
-			M_Print (cbx, 16, y, "      Light system");
-			M_Print (cbx, 184, y, CVAR_TO_FLOAT (rt_truelight) > 0.0f ? "new" : "old");
-			break;
-		case VID_OPT_GI_LEVEL:
-			M_Print (cbx, 16, y, " Indirect lighting");
-			M_Print (cbx, 184, y, VID_Menu_GetGiLevelName ());
-			break;
-		case VID_OPT_GODRAYS:
-			M_Print (cbx, 16, y, "          God rays");
-			M_DrawCheckbox (cbx, 184, y, CVAR_TO_BOOL (rt_sky_godrays));
-			break;
-		case VID_OPT_GODRAYS_QUALITY:
-			M_Print (cbx, 16, y, "  God rays quality");
-			M_Print (cbx, 184, y, VID_Menu_GetQualityName (&rt_sky_godrays_quality));
-			break;
-		case VID_OPT_REFLECT:
-			{
-				const int depth = (int)(CVAR_TO_FLOAT (rt_reflrefr_depth) + 0.5f);
-				char      label[32];
-
-				if (depth <= 0)
-					q_strlcpy (label, "off", sizeof (label));
-				else if (depth == 1)
-					q_strlcpy (label, "1 bounce", sizeof (label));
-				else
-					q_snprintf (label, sizeof (label), "%d bounces", depth);
-
-				M_Print (cbx, 16, y, "       Reflections");
-				M_Print (cbx, 184, y, label);
-			}
-			break;
 		case VID_OPT_DENOISER:
 			M_Print (cbx, 16, y, "          Denoiser");
 			M_DrawCheckbox (cbx, 184, y, CVAR_TO_BOOL (rt_denoiser));
