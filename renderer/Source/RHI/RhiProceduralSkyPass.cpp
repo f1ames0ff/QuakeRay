@@ -401,6 +401,11 @@ bool RhiProceduralSkyPass::SetCloudLayer(nvrhi::ITexture *pTexture, nvrhi::ISamp
     return true;
 }
 
+void RhiProceduralSkyPass::Invalidate()
+{
+    lastParams = {};
+}
+
 void RhiProceduralSkyPass::Render(nvrhi::ICommandList *pCommandList,
                                    uint32_t frameIndex,
                                    const Params &inParams,

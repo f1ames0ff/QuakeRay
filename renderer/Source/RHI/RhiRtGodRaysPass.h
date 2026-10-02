@@ -57,7 +57,7 @@ class RhiFrameContext;
 //     `spirv-dis` over the runtime blob). One invocation per HALF-resolution pixel; the shader's own
 //     `screenSize` bound is `((renderWidth + 1) / 2, (renderHeight + 1) / 2)`. `passIndex = 0` is
 //     the primary march (there the shader also clears image 63 when `godRaysEnabled == 0` or the
-//     sun colour is zero); `passIndex = 1` is the reflected-segment accumulation, which early-outs
+//     sun color is zero); `passIndex = 1` is the reflected-segment accumulation, which early-outs
 //     on `Q2ViewDepth >= 0` and adds its inscatter on top of the primary result. The passIndex is a
 //     4-byte push constant written between `setComputeState` and `dispatch` (the A4.5 pattern,
 //     RhiRtComposePass.cpp:2375-2381). The blob's sets, exactly:
@@ -148,17 +148,17 @@ class RhiFrameContext;
 //      * sunDirection  - toward the sun: the sun path stores `-sunDir` of
 //                        `LightManager::GetLastDirectionalLight` (:985-987), the sky-brightest path
 //                        the game's `godRaysSkyDirection` unchanged (:976-978);
-//      * sunColor      - the light-fixed-up colour (:988-990) or `godRaysSkyColor` (:979-981);
-//      * worldCenter/worldHalfSizeInv - `scene->GetAABB`: centre and `1 / max(halfSize, 1)` per
+//      * sunColor      - the light-fixed-up color (:988-990) or `godRaysSkyColor` (:979-981);
+//      * worldCenter/worldHalfSizeInv - `scene->GetAABB`: center and `1 / max(halfSize, 1)` per
 //                        axis (:953-998);
 //      * shadowMapVP/shadowMapDepthScale - the view-projection the shadow map was rendered with and
 //                        its depth scale, returned by `ShadowMap::Render` (:1000-1001); the shipped
 //                        blob carries `shadowMapDepthScale` but never reads it (measured: no
 //                        access to member 5 in the SPIR-V);
-//      * godRaysIntensity - `8.0f * rt_sky_godrays_intensity` (clamped at 0, :918-931);
-//      * godRaysEccentricity - `0.75f` (:932);
+//      * godRaysIntensity - `0.05f * rt_sky_godrays_intensity` (clamped at 0, :782-783);
+//      * godRaysEccentricity - `0.75f` (:801);
 //      * godRaysEnabled - the FINAL switch `godRaysEnabled && (sunExists || useSkyBrightest)`
-//                        (:920-943), NOT the raw cvar: when it is 0 the shader clears image 63.
+//                        (:784-797), NOT the raw cvar: when it is 0 the shader clears image 63.
 //    `sunAngularRadius` is NOT a param: the legacy fetches it from
 //    `LightManager::GetLastDirectionalLight` (:934-935) but neither `GodRays::Params` nor the
 //    shader's `GodRaysParams_BT` carries it, so the coordinator does not pass it.
@@ -198,7 +198,7 @@ class RhiFrameContext;
 //    image is 4096x4096, ShadowMap.cpp:172), created as a shader resource; the module does not
 //    create it (RhiShadowMapPass does);
 //  - a `nvrhi::ISampler` with min/mag linear, mip nearest, `SamplerReductionType::Minimum`,
-//    clamp-to-border on all axes and a white border colour - exactly the legacy sampler
+//    clamp-to-border on all axes and a white border color - exactly the legacy sampler
 //    (ShadowMap.cpp:210-223); a sampler that deviates silently changes the shafts, so the module
 //    logs a one-shot warning (it keeps using it).
 //  The module deliberately does not announce a state for the shadow map: it binds the very NVRHI
@@ -250,9 +250,9 @@ public:
     {
         // Offset 0. The direction TOWARD the sun (the shader's `dot(direction, sunDirection)`).
         float sunDirection[4];
-        // Offset 16. The sun colour (xyz; w is not read).
+        // Offset 16. The sun color (xyz; w is not read).
         float sunColor[4];
-        // Offset 32. The scene AABB centre (xyz).
+        // Offset 32. The scene AABB center (xyz).
         float worldCenter[4];
         // Offset 48. 1 / max(halfSize, 1) per axis (xyz).
         float worldHalfSizeInv[4];
@@ -264,7 +264,7 @@ public:
         float shadowMapVP[16];
         // Offset 128. The shadow map depth scale the legacy carries; the shipped blob never reads it.
         float shadowMapDepthScale;
-        // Offset 132. 8.0f * rt_sky_godrays_intensity.
+        // Offset 132. 0.05f * rt_sky_godrays_intensity.
         float godRaysIntensity;
         // Offset 136. 0.75f.
         float godRaysEccentricity;

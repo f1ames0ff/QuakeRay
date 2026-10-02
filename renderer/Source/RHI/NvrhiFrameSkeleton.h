@@ -171,13 +171,13 @@ public:
         {
             bool enabled = false;                   // godRaysOn: the final switch, not the cvar
             bool hasAabb = false;                   // scene->HasAABB()
-            float intensity = 0.0f;                 // 8.0f * rt_sky_godrays_intensity (clamped >= 0)
+            float intensity = 0.0f;
             float eccentricity = 0.75f;
             float aabbMin[3] = {};
             float aabbMax[3] = {};
             float shadowLightDirection[3] = {};     // the shadow map's from-sun light direction
             float sunDirection[4] = {};             // toward the sun, for the params (xyz)
-            float sunColor[4] = {};                 // the fixed-up colour (xyz)
+            float sunColor[4] = {};                 // the fixed-up color (xyz)
             float worldCenter[3] = {};
             float worldHalfSizeInv[3] = {};         // 1 / max(halfSize, 1) per axis
             const VertexCollector *staticCollector = nullptr;
@@ -345,7 +345,7 @@ public:
     // TAAU. Optional: a null one keeps the TAAU always.
     // 'pPostEffectPass' is the host's post-upscale effect chain (RhiPostEffectPass,
     // RHI/RhiPostEffectPass.h): after the upscaler and before the UI, Render records the legacy
-    // `postEffectParams` consumers 1-7 (the colour tint and its variants, the inverse-BW and
+    // `postEffectParams` consumers 1-7 (the color tint and its variants, the inverse-BW and
     // hue-shift effects, the chromatic aberration, the distorted sides, the waves, the radial
     // blur), and after the UI block Render records the wipe and the CRT half - the legacy order
     // (VulkanDevice.cpp:1166-1223). Optional: a null one draws the frame without the post effects

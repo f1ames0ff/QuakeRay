@@ -939,6 +939,7 @@ typedef struct QrDrawFrameSkyParams
 
     float       skyColorSaturation;
     float       skyAmbientLod;
+    float       skyLightMultiplier;
     QrBool32    skyNee;
 
     QrFloat3D   skyViewerPosition;

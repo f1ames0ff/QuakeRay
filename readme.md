@@ -11,7 +11,7 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 * Ray tracing with ReSTIR direct light sampling
 * FSR 3.1 support
 * DTAL (Dynamic Texture Area Lights) system: all emissive surfaces are sampled as textured area lights with a per-surface light, with its own intensity, blend mode, screen-color ceiling, sharp mask and mip boost knobs. A light reads the same emission mask the visible surface does, in the point it samples, so a face bright in its centre and dark around it lights the scene from its lit part alone — through the light styles and the animated frames as well.
-* True Light Mode (opt-in): All light sources are DTAL, which means all emissive textures are actual light sources.
+* True Light Mode is enabled by default (`rt_truelight 1`): materials marked `is_light` cast light from their emission, with model DTAL limits independent of the BSP limits.
 * Q2RTX-style path traced lighting.
 * ASVGF denoiser.
 * RT Global Illumination
@@ -26,8 +26,9 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 
 The game is edited from inside it: `qr_editor` opens a dialog that offers the material editor or the light editor, and `qr_editor_stop` leaves either. Both fly over the frozen level; the crosshair picks what is edited, the fire button selects it, and Tab brings up the panel.
 
-* **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or of an animated texture is a block of its own, a preview of the texture takes the glow's colours with an eyedropper, and Save writes the file the game loads (Discard leaves it alone).
-* **Light editor**: the light an emitter casts, lights added to a level (points or cones, aimed by dragging at the light), and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. A torch lights the way while a level has no light yet.
+* **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or an animated texture is a block of its own. Select emissive colors with an eyedropper or draw polygon masks over the preview; focused and projected emission share the Emissive section. Save writes the session, and the exit question saves it permanently or discards it.
+* **Light editor**: a selectable list of generated emitter lights, custom points or spotlights that can be added and cloned, and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. Emitter styles can be overridden, and spotlight gizmos provide continuous Y/Z rotation and direction-aligned horizontal movement. A torch lights the way while a level has no light yet.
+* **Editor reset**: the trash button beside the tabs clears the active mod's saved material or light work after confirmation and restores defaults, including the corresponding editor settings.
 
 ## Graphics
 
@@ -48,7 +49,6 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 * UE5-style post effects
 * Full path tracing
 * Hybrid rasterization/RT
-* Light and material editor
 * Arcane Dimensions support
 * Quake Remastered support
 * More shader effects
@@ -145,7 +145,7 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_sky_godrays_intensity 1` with `rt_sky_godrays 1` - strength of the volumetric sun shafts and their on/off switch: `2` doubles them, `0` removes them and the shadow map they are marched through
 * `rt_sky_godrays_sky_threshold 0.75` - luminance a sky area needs for the god rays to pull to it, as a mean over 16x16 cells of the skybox or of the scrolling sky; the rays aim at the centre of everything above it, and `0` keeps the brightest point alone
 * `rt_sky 1`, `rt_sky_brightness 1.0`, `rt_physical_sky 1` - sky intensity and sky model
-* `rt_physical_sun 0` - god rays under the classic sky: `0` takes them from the bright areas of the sky texture, `1` from the sun (`rt_sky_sun_pitch` / `rt_sky_sun_yaw`), which also opens the editor's Sun section
+* `rt_physical_sun 0` - sunlight switch: `1` enables the sun and opens the editor's Sun section; `0` disables sunlight and lets the classic sky's bright areas drive god rays. Sun direction is controlled by `rt_sky_sun_pitch` / `rt_sky_sun_yaw`
 * `rt_sky_color 255 255 255` - colour of the sky and the ambient light it casts, as `<r> <g> <b>` in `0-255`; commas, quotes and a bare query work, and it is archived
 * `rt_sky_clouds_color 0 0 0` - colour the clouds are composited over the sky with, as `<r> <g> <b>` in `0-255`; commas and a bare query work
 * `rt_sky_clouds_quality 2` with `rt_sky_clouds_height 140000` and `rt_sky_clouds_thickness 90000` - the cloud layer: `0` draws a flat mask; `1`-`3` use 512-2048-pixel layer faces and 40-56 march steps (`medium`, `high`, `ultra`). Height and thickness are world units above the camera. `rt_sky_clouds` switches the layer, and `rt_sky_clouds_alpha`, `_coverage`, `_density` and `_speed` control opacity, coverage, optical density and wind. Wind has matching apparent speed in flat and volumetric modes. Changes apply live; old quality `4` values are clamped to `3`

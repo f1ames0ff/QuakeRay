@@ -121,7 +121,7 @@ extern cvar_t rt_dlightspot_intensity;
 extern cvar_t rt_sky_sun;
 extern cvar_t rt_sky_sun_pitch;
 extern cvar_t rt_sky_sun_yaw;
-extern cvar_t rt_physical_sky;
+extern cvar_t rt_physical_sun;
 extern cvar_t rt_materials_only;
 extern cvar_t rt_cluster_dlights;
 extern cvar_t rt_viewm_scale;
@@ -372,15 +372,12 @@ static void R_SetupContext (cb_context_t *cbx)
 
 static void RT_UploadSunLight (void)
 {
-	if (CVAR_TO_BOOL (rt_materials_only))
+	if (CVAR_TO_BOOL (rt_materials_only) || !CVAR_TO_BOOL (rt_physical_sun))
 	{
 		return;
 	}
 
-	// The sun is the light of the procedural sky, and with the classic sky
-	// (rt_physical_sky 0) there is no sun at all: no directional light, and with it
-	// no indirect sun, no god rays and no sunlit fog.
-	if (CVAR_TO_BOOL (rt_physical_sky) && CVAR_TO_FLOAT (rt_sky_sun) > 0.001f)
+	if (CVAR_TO_FLOAT (rt_sky_sun) > 0.001f)
 	{
 		vec3_t angles = {CVAR_TO_FLOAT (rt_sky_sun_pitch), CVAR_TO_FLOAT (rt_sky_sun_yaw), 0};
 
@@ -443,75 +440,33 @@ static void RT_UploadAllDlights ()
 		/* A legacy dlight belongs to the entity that asked for it (a lava ball, a
 		   monster): its model names the emitter a lights.yaml entry may override. */
 		const char *light_name = NULL;
-		rt_light_t *ov = NULL;
-		float       intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
-		float       radius = CVAR_TO_FLOAT (rt_dlight_radius);
-		vec3_t      position = {l->origin[0], l->origin[1], l->origin[2]};
-		vec3_t      color = {l->color[0], l->color[1], l->color[2]};
 
 		if (l->key > 0 && l->key < cl.num_entities && cl.entities[l->key].model)
 			light_name = cl.entities[l->key].model->name;
-		if (light_name)
-			ov = RT_LIGHT_FindInstance (light_name, (uint64_t)i);
-		if (ov)
-		{
-			if (ov->has_intensity)
-				intensity = ov->intensity;
-			if (ov->has_radius)
-				radius = ov->radius;
-			if (ov->has_offset)
-			{
-				position[0] += ov->offset[0];
-				position[1] += ov->offset[1];
-				position[2] += ov->offset[2];
-			}
-			if (ov->has_color)
-			{
-				VectorCopy (ov->color, color);
-			}
-		}
 
-		VectorScale (color, intensity, color);
-		RT_FIXUP_LIGHT_INTENSITY (color, true);
+		rt_emitter_light_t light;
 
-		const uint64_t uniqueID = (uint64_t) i;
+		memset (&light, 0, sizeof (light));
+		light.name = light_name ? light_name : "";
+		light.uniqueID = (uint64_t)i;
+		light.kind = RT_LIGHT_KIND_DLIGHT;
+		VectorCopy (l->origin, light.position);
+		VectorCopy (l->color, light.color);
+		light.intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
+		light.radius = CVAR_TO_FLOAT (rt_dlight_radius);
+		light.style = -1;
 
 		/* A spot is one whose editor property gave it a beam; anything else keeps the
 		   spherical path, a spot whose beam is still empty included. */
 		if (l->type == DLIGHT_TYPE_SPOT && l->angleOuter > 0.0f && DotProduct (l->dir, l->dir) > 0.0f)
 		{
-			QrSpotLightUploadInfo info = {
-				.uniqueID = uniqueID,
-				.color = {color[0], color[1], color[2]},
-				.position = {position[0], position[1], position[2]},
-				.direction = {l->dir[0], l->dir[1], l->dir[2]},
-				.radius = METRIC_TO_QUAKEUNIT (radius),
-				.angleOuter = l->angleOuter,
-				.angleInner = l->angleInner,
-			};
-
-			QrResult r = qrUploadSpotLight (vulkan_globals.instance, &info);
-			QR_CHECK (r);
-		}
-		else
-		{
-			QrSphericalLightUploadInfo info = {
-				.uniqueID = uniqueID,
-				.color = {color[0], color[1], color[2]},
-				.position = {position[0], position[1], position[2]},
-				.radius = METRIC_TO_QUAKEUNIT (radius),
-			};
-
-			QrResult r = qrUploadSphericalLight (vulkan_globals.instance, &info);
-			QR_CHECK (r);
+			light.spot = true;
+			VectorCopy (l->dir, light.direction);
+			light.angleInner = l->angleInner;
+			light.angleOuter = l->angleOuter;
 		}
 
-		RT_TRACK_Light (position, METRIC_TO_QUAKEUNIT (radius), color,
-		                uniqueID, RT_LIGHT_KIND_DLIGHT, light_name ? light_name : "");
-
-		/* rt_cluster_dlights 0 keeps dlights out of the cluster lists (A/B experiment). */
-		if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-			RT_ClusterLightAdd (uniqueID, position, RT_ClusterLightReach ());
+		RT_LIGHT_Emit (&light);
 	}
 	}
 
@@ -751,6 +706,12 @@ void R_SetupViewBeforeMark (void *unused)
 		else
 		{
 			rt_cameramedia = QR_MEDIA_TYPE_VACUUM;
+		}
+
+		if (QR_Editor_Active ())
+		{
+			rt_cameramedia = QR_MEDIA_TYPE_VACUUM;
+			rt_lavaeffects = false;
 		}
 
 		if (rt_cameramedia != QR_MEDIA_TYPE_VACUUM && CVAR_TO_INT32 (r_waterwarp) == 2)

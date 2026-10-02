@@ -698,7 +698,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
         // The raster sky (RHI/RhiRasterSkyPass.h): the legacy frame's `DrawSkyToCubemap` ->
         // `DrawSkyToAlbedo` pair (VulkanDevice.cpp:748-753), recorded on this list before the
-        // primary because under this sky type the primary takes its sky colour from the raster
+        // primary because under this sky type the primary takes its sky color from the raster
         // ALBEDO it reads back (RaygenPrimary.hlsli:213-264, storeSky with
         // calculateSkyAndStoreToAlbedo false), and the indirect and reflect/refract passes sample
         // `renderCubemap` for the ambient and the reflections (RaygenCommon.hlsli:393-417) - the
@@ -722,6 +722,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             {
                 rasterSkyPass->Render(commandList, sky.draws, sky.drawCount, sky.skyFaceViewProj,
                                       sky.applyVertexColorGamma);
+
+                if (proceduralSkyPass != nullptr && proceduralSkyPass->IsCreated())
+                {
+                    proceduralSkyPass->Invalidate ();
+                }
             }
 
             // The ALBEDO half, with the legacy viewport: the raygen reads this image back as the
@@ -1438,7 +1443,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     }
 
     // The context closes the slot's list and submits it: the image is not available until the
-    // acquire semaphore is signalled, and the presentation engine cannot start before the pass is
+    // acquire semaphore is signaled, and the presentation engine cannot start before the pass is
     // done, so EndSlot waits on 'semaphoreToWait' and signals 'semaphoreToSignal' where the manual
     // queue state and the execute used to be.
     frameContext->EndSlot(frameIndex, semaphoreToWait, semaphoreToSignal);
