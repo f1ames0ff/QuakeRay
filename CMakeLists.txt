@@ -572,7 +572,7 @@ else()
 endif()
 
 if(QUAKERAY_PLATFORM_WINDOWS)
-    target_link_libraries(quakeray PRIVATE ws2_32 winmm)
+    target_link_libraries(quakeray PRIVATE ws2_32 winmm shell32 ole32)
 elseif(QUAKERAY_PLATFORM_LINUX)
     target_link_libraries(quakeray PRIVATE m dl pthread)
 elseif(QUAKERAY_PLATFORM_MACOS)

@@ -48,12 +48,6 @@ cvar_t rt_mat_debug = { "rt_mat_debug", "0", 0 };
 
 static byte *rt_load_file(const char *name, int *outLen)
 {
-    byte *b = RT_PKZ_LoadFile(name, outLen);
-    if (b)
-    {
-        return b;
-    }
-
     unsigned int path_id;
     byte *fs = COM_LoadFile(name, &path_id);
     if (fs)

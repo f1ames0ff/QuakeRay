@@ -2135,7 +2135,7 @@ static pack_t *COM_LoadPackFile (const char *packfile)
 	int            numpackfiles;
 	pack_t        *pack;
 	int            packhandle;
-	dpackfile_t    info[MAX_FILES_IN_PACK];
+	static dpackfile_t info[MAX_FILES_IN_PACK];
 	unsigned short crc;
 
 	if (Sys_FileOpenRead (packfile, &packhandle) == -1)
@@ -2253,6 +2253,22 @@ qboolean COM_ModForbiddenChars (const char *p)
 	return !*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":") || strstr (p, "\"") || strstr (p, ";");
 }
 
+static qboolean COM_PathMatches (const char *a, const char *b)
+{
+	size_t i;
+
+	for (i = 0;; i++)
+	{
+		char ca = (a[i] == '\\') ? '/' : a[i];
+		char cb = (b[i] == '\\') ? '/' : b[i];
+
+		if (q_tolower (ca) != q_tolower (cb))
+			return false;
+		if (ca == '\0')
+			return true;
+	}
+}
+
 /*
 =================
 COM_AddBaseDir
@@ -2270,7 +2286,7 @@ void COM_AddBaseDir (const char *dir)
 
 	for (i = 0; i < com_numbasedirs; i++)
 	{
-		if (!q_strcasecmp (com_basedirs[i], dir))
+		if (COM_PathMatches (com_basedirs[i], dir))
 			return;
 	}
 
@@ -2281,6 +2297,20 @@ void COM_AddBaseDir (const char *dir)
 	}
 
 	q_strlcpy (com_basedirs[com_numbasedirs++], dir, sizeof (com_basedirs[0]));
+}
+
+static qboolean COM_BaseDirsProvide (const char *subdir, const char *path)
+{
+	char candidate[MAX_OSPATH];
+	int  i;
+
+	for (i = 0; i < com_numbasedirs; i++)
+	{
+		q_snprintf (candidate, sizeof (candidate), "%s/%s", com_basedirs[i], subdir);
+		if (COM_PathMatches (candidate, path))
+			return true;
+	}
+	return false;
 }
 
 /*
@@ -2304,22 +2334,24 @@ static void COM_AddSearchPaths (const char *dirpath, unsigned int path_id, qbool
 	search->next = com_searchpaths;
 	com_searchpaths = search;
 
-	if (!with_paks)
-		return;
-
-	for (i = 0;; i++)
+	if (with_paks)
 	{
-		q_snprintf (pakfile, sizeof (pakfile), "%s/pak%i.pak", dirpath, i);
-		pak = COM_LoadPackFile (pakfile);
-		if (!pak)
-			break;
+		for (i = 0;; i++)
+		{
+			q_snprintf (pakfile, sizeof (pakfile), "%s/pak%i.pak", dirpath, i);
+			pak = COM_LoadPackFile (pakfile);
+			if (!pak)
+				break;
 
-		search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
-		search->path_id = path_id;
-		search->pack = pak;
-		search->next = com_searchpaths;
-		com_searchpaths = search;
+			search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
+			search->path_id = path_id;
+			search->pack = pak;
+			search->next = com_searchpaths;
+			com_searchpaths = search;
+		}
 	}
+
+	RT_PKZ_MountDir (dirpath, path_id);
 }
 
 /*
@@ -2404,14 +2436,16 @@ static void COM_AddGameDirectory (const char *dir)
 	{
 		char music[MAX_OSPATH];
 
-		if (QR_Resources_Resolve ("rerelease/id1", music, sizeof (music)))
+		if (QR_Resources_Resolve ("rerelease/id1", music, sizeof (music)) &&
+		    !COM_BaseDirsProvide ("id1", music))
 			COM_AddSearchPaths (music, path_id, false);
 	}
 	else
 	{
 		char remote[MAX_OSPATH];
 
-		if (QR_Resources_Resolve (dir, remote, sizeof (remote)))
+		if (QR_Resources_Resolve (dir, remote, sizeof (remote)) &&
+		    !COM_BaseDirsProvide (dir, remote))
 			COM_AddSearchPaths (remote, path_id, true);
 	}
 
@@ -2448,6 +2482,7 @@ static void COM_AddGameDirectory (const char *dir)
 	}
 
 	q_strlcpy (com_gamedir, va ("%s/%s", com_basedirs[com_numbasedirs - 1], dir), sizeof (com_gamedir));
+	Sys_TryMkdir (com_gamedir);
 }
 
 void COM_ResetGameDirectories (const char *newdirs)
@@ -2455,8 +2490,6 @@ void COM_ResetGameDirectories (const char *newdirs)
 	char		 *newgamedirs = q_strdup (newdirs);
 	char		 *newpath, *path;
 	searchpath_t *search;
-
-	RT_PKZ_Shutdown ();
 
 	// Kill the extra game if it is loaded
 	while (com_searchpaths != com_base_searchpaths)
@@ -2467,6 +2500,8 @@ void COM_ResetGameDirectories (const char *newdirs)
 			Mem_Free (com_searchpaths->pack->files);
 			Mem_Free (com_searchpaths->pack);
 		}
+		if (com_searchpaths->rt_pkz)
+			RT_PKZ_Unmount (com_searchpaths->rt_pkz);
 		search = com_searchpaths->next;
 		Mem_Free (com_searchpaths);
 		com_searchpaths = search;
@@ -2502,8 +2537,6 @@ void COM_ResetGameDirectories (const char *newdirs)
 		newpath = e;
 	}
 	Mem_Free (newgamedirs);
-
-	RT_PKZ_Init ();
 }
 
 //==============================================================================
@@ -2540,7 +2573,7 @@ static void COM_Game_f (void)
 				else if (*p == '-')
 					continue;
 
-				if (!*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":"))
+				if (COM_ModForbiddenChars (p))
 				{
 					Con_Printf ("gamedir should be a single directory name, not a path\n");
 					return;
@@ -2624,6 +2657,9 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 	int      requested = -1;
 	int      flavor = -1;
 
+	if (COM_CheckParm ("-gog") || COM_CheckParm ("-egs") || COM_CheckParm ("-epic"))
+		Con_Printf ("QR: GOG/Epic store discovery is not available; use -basedir or a Steam install\n");
+
 	if (COM_CheckParm ("-remastered") || COM_CheckParm ("-remaster") || COM_CheckParm ("-prefremaster"))
 		requested = QR_FLAVOR_REMASTERED;
 	else if (COM_CheckParm ("-original") || COM_CheckParm ("-preforiginal"))
@@ -2648,9 +2684,10 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 			if (QR_Resources_FlavorDir (steamroot, QR_FLAVOR_ORIGINAL))
 				q_strlcpy (classic, steamroot, sizeof (classic));
 			QR_Resources_RemasteredDir (remastered, sizeof (remastered));
-			QR_Resources_NightdiveDir (nightdive, sizeof (nightdive));
 		}
 	}
+
+	QR_Resources_NightdiveDir (nightdive, sizeof (nightdive));
 
 	if (forced || !QR_Resources_FlavorDir (com_basedir, requested))
 	{
@@ -2671,9 +2708,25 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 			q_strlcpy (com_basedir, classic, sizeof (com_basedir));
 	}
 
-	// the Nightdive add-ons are content roots of the remastered flavor
-	if (flavor == QR_FLAVOR_REMASTERED)
-		COM_AddBaseDir (nightdive);
+	{
+		int active_flavor = flavor;
+
+		if (active_flavor < 0)
+		{
+			if (QR_Resources_FlavorDir (com_basedir, QR_FLAVOR_REMASTERED))
+				active_flavor = QR_FLAVOR_REMASTERED;
+			else if (QR_Resources_FlavorDir (com_basedir, QR_FLAVOR_ORIGINAL))
+				active_flavor = QR_FLAVOR_ORIGINAL;
+			else if (requested >= 0)
+				active_flavor = requested;
+			else
+				active_flavor = remastered[0] ? QR_FLAVOR_REMASTERED : QR_FLAVOR_ORIGINAL;
+		}
+
+		// the Nightdive add-ons are content roots of the remastered flavor
+		if (active_flavor == QR_FLAVOR_REMASTERED)
+			COM_AddBaseDir (nightdive);
+	}
 
 	// a Steam classic install stays a fallback below the selected game data
 	if (classic[0] && q_strcasecmp (classic, com_basedir))
@@ -2735,7 +2788,7 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 				break;
 
 			p = com_argv[i + 1];
-			if (!*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":"))
+			if (COM_ModForbiddenChars (p))
 				Sys_Error ("gamedir should be a single directory name, not a path\n");
 			if (p != NULL)
 				COM_AddGameDirectory (p);
@@ -2783,14 +2836,12 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 			break;
 
 		p = com_argv[i + 1];
-		if (!*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":"))
+		if (COM_ModForbiddenChars (p))
 			Sys_Error ("gamedir should be a single directory name, not a path\n");
 		com_modified = true;
 		if (p != NULL)
 			COM_AddGameDirectory (p);
 	}
-
-	RT_PKZ_Init ();
 
 	if (COM_CheckParm ("-validation"))
 		vulkan_globals.validation = true;

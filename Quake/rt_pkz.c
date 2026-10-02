@@ -4,35 +4,36 @@
 #include "sys.h"
 #include "miniz.h"
 
-#define RT_PKZ_MAX_ARCHIVES 16
 #define RT_PKZ_MAX_STREAMS  64
 #define RT_PKZ_HANDLE_BASE  100000
 #define RT_PKZ_MAX_TEMP     64
 
-typedef struct {
-    char path[MAX_OSPATH];
-    byte *data;
-    size_t dataSize;
+typedef struct rt_pkz_archive_s
+{
+    struct rt_pkz_archive_s *prev;
+    struct rt_pkz_archive_s *next;
+    char           path[MAX_OSPATH];
+    byte          *data;
+    size_t         dataSize;
     mz_zip_archive zip;
-    qboolean valid;
+    qboolean       opened;
 } rt_pkz_archive_t;
 
 typedef struct {
     qboolean inUse;
-    int archive;
+    rt_pkz_archive_t *archive;
     int fileIndex;
     byte *buf;
     size_t size;
     size_t pos;
 } rt_pkz_stream_t;
 
-static rt_pkz_archive_t rt_pkz_archives[RT_PKZ_MAX_ARCHIVES];
-static int rt_pkz_count = 0;
-static rt_pkz_stream_t rt_pkz_streams[RT_PKZ_MAX_STREAMS];
-static char rt_pkz_temp_files[RT_PKZ_MAX_TEMP][MAX_OSPATH];
-static int rt_pkz_temp_count = 0;
-static searchpath_t *rt_pkz_searchpaths[RT_PKZ_MAX_ARCHIVES];
-static int rt_pkz_searchpath_count = 0;
+static rt_pkz_archive_t *rt_pkz_first = NULL;
+static rt_pkz_archive_t *rt_pkz_last = NULL;
+static int               rt_pkz_count = 0;
+static rt_pkz_stream_t   rt_pkz_streams[RT_PKZ_MAX_STREAMS];
+static char              rt_pkz_temp_files[RT_PKZ_MAX_TEMP][MAX_OSPATH];
+static int               rt_pkz_temp_count = 0;
 
 static void *pkz_alloc(void *opaque, size_t items, size_t size)
 {
@@ -63,13 +64,25 @@ static size_t pkz_read(void *opaque, mz_uint64 file_ofs, void *pBuf, size_t n)
     return n;
 }
 
-static void rt_pkz_mount_directory(const char *dir)
+static void rt_pkz_add_searchpath(rt_pkz_archive_t *a, unsigned int path_id)
+{
+    searchpath_t *s = (searchpath_t *)Mem_Alloc(sizeof(searchpath_t));
+    memset(s, 0, sizeof(*s));
+    s->path_id = path_id;
+    q_strlcpy(s->filename, a->path, sizeof(s->filename));
+    s->rt_pkz = a;
+    s->next = com_searchpaths;
+    com_searchpaths = s;
+}
+
+void RT_PKZ_MountDir(const char *dir, unsigned int path_id)
 {
     char pattern[MAX_OSPATH];
-    q_snprintf(pattern, sizeof(pattern), "%s/*.pkz", dir);
-
     WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(pattern, &fd);
+    HANDLE h;
+
+    q_snprintf(pattern, sizeof(pattern), "%s/*.pkz", dir);
+    h = FindFirstFileA(pattern, &fd);
     if (h == INVALID_HANDLE_VALUE)
     {
         return;
@@ -77,44 +90,49 @@ static void rt_pkz_mount_directory(const char *dir)
 
     do
     {
-        if (rt_pkz_count >= RT_PKZ_MAX_ARCHIVES)
-        {
-            break;
-        }
+        char path[MAX_OSPATH];
+        int handle = -1;
+        int size;
+        int rd;
+        rt_pkz_archive_t *a;
+
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         {
             continue;
         }
 
-        char path[MAX_OSPATH];
         q_snprintf(path, sizeof(path), "%s/%s", dir, fd.cFileName);
-
-        rt_pkz_archive_t *a = &rt_pkz_archives[rt_pkz_count];
-
-        int handle;
-        int size = Sys_FileOpenRead(path, &handle);
+        size = Sys_FileOpenRead(path, &handle);
         if (size <= 0)
         {
+            if (handle != -1)
+            {
+                Sys_FileClose(handle);
+            }
             continue;
         }
+
+        a = (rt_pkz_archive_t *)Mem_Alloc(sizeof(*a));
+        memset(a, 0, sizeof(*a));
 
         a->data = (byte *)Mem_Alloc(size);
         if (!a->data)
         {
             Sys_FileClose(handle);
+            Mem_Free(a);
             continue;
         }
 
-        int rd = Sys_FileRead(handle, a->data, size);
+        rd = Sys_FileRead(handle, a->data, size);
         Sys_FileClose(handle);
         if (rd != size)
         {
             Mem_Free(a->data);
+            Mem_Free(a);
             continue;
         }
 
         a->dataSize = (size_t)size;
-        memset(&a->zip, 0, sizeof(a->zip));
         a->zip.m_pAlloc = pkz_alloc;
         a->zip.m_pFree = pkz_free;
         a->zip.m_pRealloc = pkz_realloc;
@@ -122,128 +140,126 @@ static void rt_pkz_mount_directory(const char *dir)
         a->zip.m_pRead = pkz_read;
         a->zip.m_pIO_opaque = a;
         a->zip.m_pNeeds_keepalive = NULL;
+
         if (mz_zip_reader_init(&a->zip, a->dataSize, 0))
         {
+            a->opened = true;
             q_strlcpy(a->path, path, sizeof(a->path));
-            a->valid = true;
+            a->prev = rt_pkz_last;
+            if (rt_pkz_last)
+            {
+                rt_pkz_last->next = a;
+            }
+            else
+            {
+                rt_pkz_first = a;
+            }
+            rt_pkz_last = a;
             rt_pkz_count++;
+            rt_pkz_add_searchpath(a, path_id);
             Con_Printf("RT: mounted pkz %s (%u files)\n", path, (unsigned)a->zip.m_total_files);
         }
         else
         {
             Mem_Free(a->data);
-            a->data = NULL;
+            Mem_Free(a);
         }
     } while (FindNextFileA(h, &fd));
 
     FindClose(h);
 }
 
-void RT_PKZ_Init(void)
+void RT_PKZ_Unmount(void *varchive)
 {
-    RT_PKZ_Shutdown();
+    rt_pkz_archive_t *a = (rt_pkz_archive_t *)varchive;
+    int i;
 
-    memset(rt_pkz_archives, 0, sizeof(rt_pkz_archives));
-    rt_pkz_count = 0;
-
+    if (!a)
     {
-        char dir[MAX_OSPATH];
-        const char *p;
-        const char *names = COM_GetGameNames(false);
-        int i;
+        return;
+    }
 
-        for (i = 0; i < com_numbasedirs; i++)
+    for (i = 0; i < RT_PKZ_MAX_STREAMS; i++)
+    {
+        if (rt_pkz_streams[i].inUse && rt_pkz_streams[i].archive == a)
         {
-            q_snprintf(dir, sizeof(dir), "%s/%s", com_basedirs[i], GAMENAME);
-            rt_pkz_mount_directory(dir);
-        }
-
-        for (p = names; p && *p;)
-        {
-            char name[64];
-            const char *e = strchr(p, ';');
-            size_t len = e ? (size_t)(e - p) : strlen(p);
-
-            if (len >= sizeof(name))
-            {
-                len = sizeof(name) - 1;
-            }
-            memcpy(name, p, len);
-            name[len] = 0;
-
-            if (q_strcasecmp(name, GAMENAME))
-            {
-                for (i = 0; i < com_numbasedirs; i++)
-                {
-                    q_snprintf(dir, sizeof(dir), "%s/%s", com_basedirs[i], name);
-                    rt_pkz_mount_directory(dir);
-                }
-            }
-
-            p = e ? e + 1 : NULL;
+            RT_PKZ_Close(RT_PKZ_HANDLE_BASE + i);
         }
     }
 
-    for (int i = 0; i < rt_pkz_count && rt_pkz_searchpath_count < RT_PKZ_MAX_ARCHIVES; i++)
+    if (a->prev)
     {
-        rt_pkz_archive_t *a = &rt_pkz_archives[i];
-        if (!a->valid)
-        {
-            continue;
-        }
+        a->prev->next = a->next;
+    }
+    else
+    {
+        rt_pkz_first = a->next;
+    }
+    if (a->next)
+    {
+        a->next->prev = a->prev;
+    }
+    else
+    {
+        rt_pkz_last = a->prev;
+    }
 
-        searchpath_t *s = (searchpath_t *)Mem_Alloc(sizeof(searchpath_t));
-        memset(s, 0, sizeof(*s));
-        if (com_searchpaths)
-        {
-            s->path_id = com_searchpaths->path_id << 1;
-        }
-        else
-        {
-            s->path_id = 1U;
-        }
-        q_strlcpy(s->filename, a->path, sizeof(s->filename));
-        s->rt_pkz = a;
-        s->next = com_searchpaths;
-        com_searchpaths = s;
-
-        rt_pkz_searchpaths[rt_pkz_searchpath_count++] = s;
+    if (a->opened)
+    {
+        mz_zip_reader_end(&a->zip);
+    }
+    if (a->data)
+    {
+        Mem_Free(a->data);
+    }
+    Mem_Free(a);
+    if (rt_pkz_count > 0)
+    {
+        rt_pkz_count--;
     }
 }
 
 void RT_PKZ_Shutdown(void)
 {
-    for (int i = 0; i < rt_pkz_searchpath_count; i++)
+    searchpath_t *s;
+    int i;
+
+    for (i = 0; i < RT_PKZ_MAX_STREAMS; i++)
     {
-        searchpath_t *target = rt_pkz_searchpaths[i];
-        searchpath_t **link;
-        for (link = &com_searchpaths; *link; link = &(*link)->next)
+        if (rt_pkz_streams[i].inUse)
         {
-            if (*link == target)
+            RT_PKZ_Close(RT_PKZ_HANDLE_BASE + i);
+        }
+    }
+
+    s = com_searchpaths;
+    while (s)
+    {
+        searchpath_t *next = s->next;
+
+        if (s->rt_pkz)
+        {
+            searchpath_t **link;
+
+            for (link = &com_searchpaths; *link; link = &(*link)->next)
             {
-                *link = target->next;
-                break;
+                if (*link == s)
+                {
+                    *link = s->next;
+                    break;
+                }
             }
+            Mem_Free(s);
         }
-        Mem_Free(target);
+        s = next;
     }
-    rt_pkz_searchpath_count = 0;
 
-    for (int i = 0; i < rt_pkz_count; i++)
+    while (rt_pkz_first)
     {
-        rt_pkz_archive_t *a = &rt_pkz_archives[i];
-        if (a->valid)
-        {
-            mz_zip_reader_end(&a->zip);
-        }
-        if (a->data)
-        {
-            Mem_Free(a->data);
-        }
+        RT_PKZ_Unmount(rt_pkz_first);
     }
-    rt_pkz_count = 0;
 
-    for (int i = 0; i < RT_PKZ_MAX_STREAMS; i++)
+    for (i = 0; i < RT_PKZ_MAX_STREAMS; i++)
     {
         rt_pkz_streams[i].inUse = false;
         if (rt_pkz_streams[i].buf)
@@ -253,40 +269,11 @@ void RT_PKZ_Shutdown(void)
         }
     }
 
-    for (int i = 0; i < rt_pkz_temp_count; i++)
+    for (i = 0; i < rt_pkz_temp_count; i++)
     {
         remove(rt_pkz_temp_files[i]);
     }
     rt_pkz_temp_count = 0;
-}
-
-byte *RT_PKZ_LoadFile(const char *name, int *outLen)
-{
-    for (int i = 0; i < rt_pkz_count; i++)
-    {
-        rt_pkz_archive_t *a = &rt_pkz_archives[i];
-        if (!a->valid)
-        {
-            continue;
-        }
-
-        size_t len = 0;
-        void *buf = mz_zip_reader_extract_file_to_heap(&a->zip, name, &len, 0);
-        if (buf)
-        {
-            if (outLen)
-            {
-                *outLen = (int)len;
-            }
-            return (byte *)buf;
-        }
-    }
-
-    if (outLen)
-    {
-        *outLen = 0;
-    }
-    return NULL;
 }
 
 int RT_PKZ_ListFiles(const char *dir, const char *ext,
@@ -295,15 +282,10 @@ int RT_PKZ_ListFiles(const char *dir, const char *ext,
     int count = 0;
     size_t dirLen = strlen(dir);
     size_t extLen = strlen(ext);
+    rt_pkz_archive_t *a;
 
-    for (int i = 0; i < rt_pkz_count; i++)
+    for (a = rt_pkz_first; a; a = a->next)
     {
-        rt_pkz_archive_t *a = &rt_pkz_archives[i];
-        if (!a->valid)
-        {
-            continue;
-        }
-
         mz_uint num = (mz_uint)a->zip.m_total_files;
         for (mz_uint f = 0; f < num; f++)
         {
@@ -341,7 +323,7 @@ int RT_PKZ_ListFiles(const char *dir, const char *ext,
 
 static int rt_pkz_find_index(rt_pkz_archive_t *a, const char *name, int *outSize)
 {
-    if (!a || !a->valid || !name || !name[0])
+    if (!a || !name || !name[0])
     {
         return -1;
     }
@@ -399,7 +381,7 @@ int RT_PKZ_OpenFile(const void *varchive, const char *name, int *outSize)
         }
 
         s->inUse = true;
-        s->archive = (int)(a - rt_pkz_archives);
+        s->archive = a;
         s->fileIndex = fi;
         s->buf = NULL;
         s->size = (size_t)size;
@@ -438,7 +420,7 @@ int RT_PKZ_Read(int handle, void *dest, int count)
 
     if (!s->buf)
     {
-        rt_pkz_archive_t *a = &rt_pkz_archives[s->archive];
+        rt_pkz_archive_t *a = s->archive;
         size_t len = 0;
         s->buf = (byte *)mz_zip_reader_extract_to_heap(&a->zip, (mz_uint)s->fileIndex, &len, 0);
         if (!s->buf)
@@ -515,13 +497,17 @@ FILE *RT_PKZ_OpenFileAsFILE(const void *varchive, const char *name)
     }
 
     char tmppath[MAX_OSPATH];
-    char tmpfile[MAX_OSPATH];
+    char tmpfile[MAX_OSPATH] = "";
     if (!GetTempPathA(sizeof(tmppath), tmppath))
     {
         Mem_Free(buf);
         return NULL;
     }
-    GetTempFileNameA(tmppath, "rtp", 0, tmpfile);
+    if (GetTempFileNameA(tmppath, "rtp", 0, tmpfile) == 0)
+    {
+        Mem_Free(buf);
+        return NULL;
+    }
 
     FILE *f = fopen(tmpfile, "wb");
     if (!f)

@@ -898,25 +898,31 @@ void Modlist_Init (void)
 	char             steamroot[MAX_OSPATH];
 
 	{
-		int i;
+		char rerelease[MAX_OSPATH] = "";
+		int  i;
 
 		for (i = 0; i < com_numbasedirs; i++)
 		{
 			Modlist_AddRoot (com_basedirs[i]);
+		}
+
+		QR_Resources_Init ();
+		if (QR_Resources_SteamDir (steamroot, sizeof (steamroot)))
+		{
+			q_snprintf (rerelease, sizeof (rerelease), "%s/rerelease", steamroot);
+		}
+		QR_Resources_EnumMods (Modlist_AddSteam, NULL);
+
+		for (i = 0; i < com_numbasedirs; i++)
+		{
 			Modlist_LoadAddonsJSON (com_basedirs[i]);
 		}
+		if (rerelease[0])
+		{
+			Modlist_LoadAddonsJSON (steamroot);
+			Modlist_LoadAddonsJSON (rerelease);
+		}
 	}
-
-	QR_Resources_Init ();
-	if (QR_Resources_SteamDir (steamroot, sizeof (steamroot)))
-	{
-		char rerelease[MAX_OSPATH];
-
-		Modlist_LoadAddonsJSON (steamroot);
-		q_snprintf (rerelease, sizeof (rerelease), "%s/rerelease", steamroot);
-		Modlist_LoadAddonsJSON (rerelease);
-	}
-	QR_Resources_EnumMods (Modlist_AddSteam, NULL);
 
 	mapdb = (char *)COM_LoadFile ("mapdb.json", &path_id);
 	if (mapdb)
