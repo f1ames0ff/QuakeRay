@@ -90,7 +90,11 @@ private:
         uint32_t width = 0;
         uint32_t height = 0;
         Texture bright;
+        Texture veil1;
+        Texture veil2;
+        Texture veil3;
         Texture bokeh;
+        Texture smooth;
         Texture result;
         nvrhi::ITexture *sourceTexture = nullptr;
         nvrhi::BindingSetHandle sourceSet;

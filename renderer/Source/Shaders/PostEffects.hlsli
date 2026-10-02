@@ -82,10 +82,10 @@ float3 postEffectsDownsample13(Texture2D<float4> source, SamplerState sourceSamp
 {
     const float4 offset = sourceTexelSize.xyxy * float4(-1.0, -1.0, 1.0, 1.0);
 
-    float3 sum = source.SampleLevel(sourceSampler, uv + offset.xy, 0).rgb * 0.125;
-    sum += source.SampleLevel(sourceSampler, uv + offset.zy, 0).rgb * 0.125;
-    sum += source.SampleLevel(sourceSampler, uv + offset.xw, 0).rgb * 0.125;
-    sum += source.SampleLevel(sourceSampler, uv + offset.zw, 0).rgb * 0.125;
+    float3 sum = source.SampleLevel(sourceSampler, uv + offset.xy, 0).rgb * 0.0625;
+    sum += source.SampleLevel(sourceSampler, uv + offset.zy, 0).rgb * 0.0625;
+    sum += source.SampleLevel(sourceSampler, uv + offset.xw, 0).rgb * 0.0625;
+    sum += source.SampleLevel(sourceSampler, uv + offset.zw, 0).rgb * 0.0625;
     sum += source.SampleLevel(sourceSampler, uv + float2(offset.x, 0.0), 0).rgb * 0.125;
     sum += source.SampleLevel(sourceSampler, uv + float2(offset.z, 0.0), 0).rgb * 0.125;
     sum += source.SampleLevel(sourceSampler, uv + float2(0.0, offset.y), 0).rgb * 0.125;

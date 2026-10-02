@@ -485,3 +485,13 @@ Not yet verified in this environment:
 
 - The manual visual matrix of section 13.2 and the post-effects GPU regression target of section 13.1 were not run: there is no Quake game data (`id1/pak0.pak`) in the environment, so the game cannot reach a rendered world. The GPU is present (AMD Radeon RX 9070 XT).
 - The GPU timing budget of section 13.3 is therefore unmeasured, and the exact visual defaults of section 10.2 are first-run engineering values pending in-game calibration.
+
+## 16. Physical revision (2026-10-02)
+
+After the first in-game review the optical stack was aligned with the standard post-processing practice of a path-traced renderer:
+
+- **Bloom is thresholdless.** The radiances of a path tracer are physical, so the bright-pass threshold is unnecessary: the pyramid now low-passes the whole denoised HDR image with normalized kernels and the host mixes it back as `scene + (blurred - scene) * mix`, attenuated by the level-fog transmittance. `rt_bloom_intensity` is the mix fraction (0-0.2, default 0.06); `rt_bloom_threshold` and `rt_bloom_knee` are accepted for config compatibility and ignored. The normalized reconstruction keeps total energy (a constant image stays constant regardless of the level count), and the Karis weighting of the first reduction still suppresses isolated fireflies.
+- **Chromatic aberration moved into the linear HDR stage.** The damage and liquid edge aberration is a spectral split (6-8 taps, smooth edge mask, protected central region) applied in `CmPrepareFinal` before exposure and tone mapping; the post-upscale `EfGameplayFeedback` shader keeps only the red damage tint and the bottom `#FFD47B` pickup screen pulse. AMD's guidance to run aberration after the upscaler is not adopted here: this engine tone-maps before FSR/TAAU, and pre-tonemap fringing on clipped highlights was the priority.
+- **The shared downsample-13 helper is normalized** (weights sum to one), so pyramid levels no longer gain 1.25x each.
+- **The flare base is the mip-chain low-pass** (bright at half resolution, veil at 1/4, 1/8 and 1/16, a 32-tap aperture bokeh with per-pixel rotation, one tent smoothing), so a point source becomes one smooth disc instead of discrete taps; the ghosts are mirrored copies of the smoothed bokeh and the halo is a radial inversion ring (source radius `k / output radius`).
+- The essential order matches the practice: trace -> ASVGF/denoise -> linear-HDR optics (bloom, flare, CA) -> exposure and tone mapping -> FSR/TAAU -> CAS -> aesthetic overlays (damage tint, pickup pulse) -> UI, with the dither at the end of the prepare-final stage, after the denoiser.

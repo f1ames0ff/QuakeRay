@@ -29,7 +29,8 @@
 
 struct BloomFlareControl_BT
 {
-    float4 bloomFlareStrength;
+    float4 opticalControl;
+    float4 gameplayFeedback;
 };
 
 [[vk::push_constant]] ConstantBuffer<BloomFlareControl_BT> bloomFlareControl;
@@ -234,6 +235,58 @@ float getLevelFogTransmittance( const int2 pix )
 }
 
 
+float3 applyChromaticAberration( const int2 pix )
+{
+    const float3 scene = framebufBloomInput_Sampled.Load(int3( pix, 0 )).rgb;
+
+    const float damage     = bloomFlareControl.gameplayFeedback.x;
+    const float liquid     = bloomFlareControl.gameplayFeedback.y;
+    const float aberration = bloomFlareControl.gameplayFeedback.z;
+
+    if( damage <= 0.0 && liquid <= 0.0 )
+    {
+        return scene;
+    }
+
+    const float2 uv = ( float2( pix ) + 0.5 ) /
+                      float2( globalUniform.renderWidth, globalUniform.renderHeight );
+
+    const float2 outside = saturate( ( abs( uv - 0.5 ) - 0.25 ) / 0.25 );
+    const float edgeMask = smoothstep( 0.0, 1.0, length( outside ) );
+
+    const float aspect = globalUniform.renderWidth / globalUniform.renderHeight;
+    const float2 centered = float2( ( uv.x - 0.5 ) * aspect, uv.y - 0.5 );
+    const float2 direction = normalize( centered + float2( 1e-5, 1e-5 ) );
+
+    float displayHeight = globalUniform.upscaledRenderHeight;
+    if( displayHeight <= 0.0 )
+    {
+        displayHeight = globalUniform.renderHeight;
+    }
+
+    const float heightScale = displayHeight / 1080.0;
+    const float splitPixels = min( ( 6.0 * damage + 2.0 * liquid ) * ( aberration / 0.3 ), 6.5 ) * heightScale;
+    const float2 offset = direction * ( splitPixels / displayHeight * edgeMask );
+
+    const int tapCount = 7;
+
+    float3 color  = (float3)0.0;
+    float3 weight = (float3)0.0;
+
+    for( int i = 0; i < tapCount; i++ )
+    {
+        const float t = ( i + 0.5 ) / (float)tapCount;
+        const float3 w = float3( t, 1.0 - abs( 2.0 * t - 1.0 ), 1.0 - t );
+        const float2 sampleUV = clamp( uv + offset * ( t - 0.5 ), (float2)0.0, (float2)1.0 );
+
+        color  += framebufBloomInput_Sampled.SampleLevel( opticalResultSampler, sampleUV, 0.0 ).rgb * w;
+        weight += w;
+    }
+
+    return color / weight;
+}
+
+
 float3 processDebug( const int2 pix, const float3 fallback );
 
 
@@ -274,18 +327,20 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         return;
     }
 
-    float3 hdr = framebufBloomInput_Sampled.Load(int3( pix, 0 )).rgb;
+    const float3 scene = applyChromaticAberration( pix );
+    float3 hdr = scene;
 
-    if( bloomFlareControl.bloomFlareStrength.z != 0.0 )
+    if( bloomFlareControl.opticalControl.z != 0.0 )
     {
         const float2 opticalUV = (float2( pix ) + 0.5) /
                                  float2( globalUniform.renderWidth, globalUniform.renderHeight );
 
-        const float3 optical =
-            bloomResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb * bloomFlareControl.bloomFlareStrength.x +
-            lensFlareResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb * bloomFlareControl.bloomFlareStrength.y;
+        const float3 bloom = bloomResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb;
+        const float3 flare = lensFlareResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb;
+        const float transmittance = getLevelFogTransmittance( pix );
 
-        hdr += optical * getLevelFogTransmittance( pix );
+        hdr = scene + ( bloom - scene ) * ( bloomFlareControl.opticalControl.x * transmittance );
+        hdr += flare * bloomFlareControl.opticalControl.y * transmittance;
     }
 
     float3 color = finalizeColor( hdr );

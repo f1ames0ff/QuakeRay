@@ -2583,7 +2583,7 @@ static void M_EffectsOptions_Adjust (int dir)
 	switch (effects_options_cursor)
 	{
 	case EFFECTS_OPT_BLOOM:
-		Cvar_SetValueQuick (&rt_bloom_intensity, CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity) + dir * 0.01f, 0.5f));
+		Cvar_SetValueQuick (&rt_bloom_intensity, CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity) + dir * 0.01f, 0.2f));
 		break;
 	case EFFECTS_OPT_BLOOM_QUALITY:
 		Cvar_SetValueQuick (&rt_bloom_quality, (float)(((int)rt_bloom_quality.value + 3 + dir) % 3));
@@ -2604,7 +2604,7 @@ static void M_EffectsOptions_Adjust (int dir)
 		Cvar_SetValueQuick (&rt_sharpen_strength, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength) + dir * 0.05f, 1.0f));
 		break;
 	case EFFECTS_OPT_RESET:
-		Cvar_SetValueQuick (&rt_bloom_intensity, 0.08f);
+		Cvar_SetValueQuick (&rt_bloom_intensity, 0.06f);
 		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
 		Cvar_SetValueQuick (&rt_lensflare_intensity, 0.03f);
 		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);

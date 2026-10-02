@@ -281,7 +281,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_globallight_mult, "10") \
 	CVAR_DEF_T (rt_globallight, "255 255 255") \
 	\
-	CVAR_DEF_T (rt_bloom_intensity, "0.08") \
+	CVAR_DEF_T (rt_bloom_intensity, "0.06") \
 	CVAR_DEF_T (rt_bloom_quality, "2") \
 	CVAR_DEF_T (rt_bloom_threshold, "3.0") \
 	CVAR_DEF_T (rt_bloom_knee, "0.5") \
@@ -2415,7 +2415,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	rt_dmg_inthisframe = false;
 
 	static QrPostEffectsBloomParams bloom_effect = {0};
-	bloom_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity), 0.5f);
+	bloom_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity), 0.2f);
 	bloom_effect.isActive = bloom_effect.intensity > 0.0f;
 	bloom_effect.threshold = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_threshold), 20.0f);
 	bloom_effect.knee = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_knee), 1.0f);

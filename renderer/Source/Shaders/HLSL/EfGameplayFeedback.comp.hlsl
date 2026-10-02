@@ -46,27 +46,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const int2 size = effect_getFramebufSize();
     const float2 uv = effect_getFramebufUV(pix);
-    const float aspect = float(size.x) / float(size.y);
-    const float2 centered = float2((uv.x - 0.5) * aspect, uv.y - 0.5);
-    const float2 direction = normalize(centered + float2(1e-5, 1e-5));
-
     const float edgeMask = gameplayFeedbackEdgeMask(uv);
-    const float heightScale = float(size.y) / 1080.0;
-    const float master = push.custom.aberration / 0.3;
 
-    float splitPixels = (6.0 * push.custom.damage + 2.0 * push.custom.liquid) * master * heightScale;
-    splitPixels = min(splitPixels, 6.5 * heightScale);
-
-    const float2 offset = direction * (splitPixels * edgeMask);
-    const int2 redPix = int2(round(float2(pix) + offset));
-    const int2 greenPix = int2(round(float2(pix) + offset * 0.5));
-
-    float3 color;
-    color.r = effect_loadFromSource(redPix).r;
-    color.g = effect_loadFromSource(greenPix).g;
-    color.b = effect_loadFromSource(pix).b;
+    float3 color = effect_loadFromSource(pix);
 
     color += float3(0.18, 0.0, 0.0) * (push.custom.damage * edgeMask);
 

@@ -55,9 +55,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float3 result;
     if (push.extract != 0)
     {
-        result = postEffectsExtractWithExposure(
-            postEffectsDownsample13Karis(bloomSource, bloomSource_Sampler, uv, sourceTexelSize),
-            push.threshold, push.knee);
+        result = postEffectsDownsample13Karis(bloomSource, bloomSource_Sampler, uv, sourceTexelSize);
     }
     else
     {

@@ -68,7 +68,7 @@ constexpr uint32_t COMPOSE_STRATA_SIZE = 3;
 // the legacy writes exactly that (Q2Denoiser.cpp:472, :518)).
 constexpr uint32_t COMPOSE_ITERATION_PUSH_SIZE = 4;
 
-constexpr uint32_t COMPOSE_OPTICAL_CONTROL_PUSH_SIZE = 16;
+constexpr uint32_t COMPOSE_OPTICAL_CONTROL_PUSH_SIZE = 32;
 
 constexpr uint32_t COMPOSE_BLOOM_RESULT_BINDING = 400;
 constexpr uint32_t COMPOSE_FLARE_RESULT_BINDING = 401;
@@ -2020,11 +2020,27 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
         pFlareResult != nullptr ? pFlareResult : opticalDummyTexture.Get();
 
     const bool hasOpticalResult = pBloomResult != nullptr || pFlareResult != nullptr;
-    const float opticalControl[4] =
+
+    float damage = 0.0f;
+    float liquid = 0.0f;
+    float aberration = 0.0f;
+
+    if (postEffectParams.pGameplayFeedback != nullptr)
+    {
+        damage = postEffectParams.pGameplayFeedback->damage;
+        liquid = postEffectParams.pGameplayFeedback->liquid;
+        aberration = postEffectParams.pGameplayFeedback->aberration;
+    }
+
+    const float opticalControl[8] =
     {
         bloomStrength,
         flareStrength,
         hasOpticalResult ? 1.0f : 0.0f,
+        0.0f,
+        damage,
+        liquid,
+        aberration,
         0.0f,
     };
 
