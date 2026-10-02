@@ -129,7 +129,7 @@ uint32_t GetFramebufferRawBinding(const FramebufferBinding &binding)
 // refuses a structured-buffer binding without a stride, so `PrepareCausticsSet` checks them.
 constexpr uint32_t CAUSTICS_PARAMS_BINDING = 0;
 constexpr uint32_t CAUSTICS_CELL_BINDING = 1;
-constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 64;
+constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 80;
 constexpr uint32_t CAUSTICS_CELL_STRIDE = 16;
 
 // Set 3's bindings: vertex data, indices and the geometry-instance buffer the alpha-tested any-hit

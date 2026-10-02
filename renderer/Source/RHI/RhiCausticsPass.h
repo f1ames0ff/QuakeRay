@@ -32,6 +32,7 @@ public:
         float sunColor[4] = {};
         float gridMinAndTexel[4] = {};
         uint32_t gridSize[4] = {};
+        float accumParams[4] = {};
     };
 
     RhiCausticsPass();
@@ -109,21 +110,26 @@ private:
 
     nvrhi::ShaderHandle traceShader;
     nvrhi::ShaderHandle compositeShader;
+    nvrhi::ShaderHandle accumulateShader;
 
     nvrhi::BindingLayoutHandle tlasLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle vertexDataLayout;
     nvrhi::BindingLayoutHandle traceParamsLayout;
     nvrhi::BindingLayoutHandle compositeParamsLayout;
+    nvrhi::BindingLayoutHandle accumulateLayout;
     nvrhi::BindingLayoutHandle framebufferLayout;
 
     nvrhi::ComputePipelineHandle tracePipeline;
     nvrhi::ComputePipelineHandle compositePipeline;
+    nvrhi::ComputePipelineHandle accumulatePipeline;
 
     nvrhi::BufferHandle paramsBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle paramsSets[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BufferHandle cellBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle compositeSets[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BindingSetHandle accumulateSets[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BufferHandle historyBuffer;
 
     Target targets[MAX_FRAMES_IN_FLIGHT];
 

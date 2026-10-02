@@ -580,6 +580,13 @@ private:
     RhiShadowMapPass *shadowMapPass = nullptr;
     RhiRtGodRaysPass *godRaysPass = nullptr;
     RhiCausticsPass *causticsPass = nullptr;
+
+    bool causticsAnchorValid = false;
+    bool causticsAccumReset = true;
+    float causticsAnchorCenter[2] = {};
+    float causticsLastExtent = 0.0f;
+    uint32_t causticsLastResolution = 0;
+    float causticsLastSunDirection[3] = {};
     bool warnedCausticsParams = false;
 
     // The 2D-UI pass (RhiUiPass, RHI/RhiUiPass.h), driven in the traced chain once the compose ran:

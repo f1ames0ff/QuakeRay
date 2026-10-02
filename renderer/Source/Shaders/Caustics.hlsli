@@ -13,6 +13,7 @@ struct CausticsParams_BT
     float4 sunDirection;     // xyz: unit direction toward the sun (travel = -xyz); w: intensity, applied once by the direct pass
     float4 sunColor;         // rgb: raw directional light color
     float4 gridMinAndTexel;  // xy: receiver domain min (Quake units); z: receiver texel size; w: ray start Z
-    uint4  gridSize;         // x: resolution; y: debug mode; z: flags bit0 = trace valid; w: unused
+    uint4  gridSize;         // x: resolution; y: debug mode; z: flags bit0 = trace valid; w: frame id (launch jitter)
+    float4 accumParams;      // x: history blend weight; y: non-zero resets the history; z/w unused
 };
 #endif

@@ -20,7 +20,7 @@ namespace
 constexpr uint32_t CAUSTICS_GROUP_SIZE = 8;
 constexpr uint32_t CAUSTICS_MAX_RESOLUTION = 1024;
 constexpr uint32_t CAUSTICS_CELL_STRIDE = 16;
-constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 64;
+constexpr uint32_t CAUSTICS_PARAMS_STRIDE = 80;
 constexpr uint32_t CAUSTICS_FRAMEBUFFER_SRV_OFFSET = 124;
 constexpr uint32_t CAUSTICS_VERTEX_DATA_BINDING_COUNT = 7;
 
@@ -147,7 +147,8 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
     }
 
     if (!LoadShader(device, shaderFolderPath, "CmCaustics.comp.spv", traceShader, print) ||
-        !LoadShader(device, shaderFolderPath, "CmCausticsComposite.comp.spv", compositeShader, print))
+        !LoadShader(device, shaderFolderPath, "CmCausticsComposite.comp.spv", compositeShader, print) ||
+        !LoadShader(device, shaderFolderPath, "CmCausticsAccumulate.comp.spv", accumulateShader, print))
     {
         return false;
     }
@@ -201,6 +202,17 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
     {
         nvrhi::BindingLayoutDesc desc;
         desc.visibility = nvrhi::ShaderType::Compute;
+        desc.setBindingOffsets(nvrhi::VulkanBindingOffsets().setShaderResourceOffset(0)
+                                   .setUnorderedAccessViewOffset(0));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2));
+
+        accumulateLayout = device->createBindingLayout(desc);
+    }
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
         desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
                                    .setShaderResourceOffset(CAUSTICS_FRAMEBUFFER_SRV_OFFSET)
                                    .setUnorderedAccessViewOffset(0));
@@ -212,7 +224,8 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
     }
 
     if (tlasLayout == nullptr || uniformLayout == nullptr || vertexDataLayout == nullptr ||
-        traceParamsLayout == nullptr || compositeParamsLayout == nullptr || framebufferLayout == nullptr)
+        traceParamsLayout == nullptr || compositeParamsLayout == nullptr ||
+        accumulateLayout == nullptr || framebufferLayout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a caustics pass binding layout");
         return false;
@@ -238,10 +251,34 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
 
         compositePipeline = rhi::createComputePipeline(device, desc, "RhiCausticsPass composite");
     }
+    {
+        nvrhi::ComputePipelineDesc desc;
+        desc.setComputeShader(accumulateShader);
+        desc.addBindingLayout(accumulateLayout);
 
-    if (tracePipeline == nullptr || compositePipeline == nullptr)
+        accumulatePipeline = rhi::createComputePipeline(device, desc, "RhiCausticsPass accumulate");
+    }
+
+    if (tracePipeline == nullptr || compositePipeline == nullptr || accumulatePipeline == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a caustics pass compute pipeline");
+        return false;
+    }
+
+    {
+        nvrhi::BufferDesc desc;
+        desc.byteSize = uint64_t(CAUSTICS_MAX_RESOLUTION) * CAUSTICS_MAX_RESOLUTION * CAUSTICS_CELL_STRIDE;
+        desc.structStride = CAUSTICS_CELL_STRIDE;
+        desc.canHaveUAVs = true;
+        desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+        desc.keepInitialState = true;
+
+        historyBuffer = rhi::createBuffer(device, desc, "RhiCausticsPass history");
+    }
+
+    if (historyBuffer == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create the caustics history buffer");
         return false;
     }
 
@@ -287,8 +324,16 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
 
             compositeSets[i] = device->createBindingSet(setDesc, compositeParamsLayout);
         }
+        {
+            nvrhi::BindingSetDesc setDesc;
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, paramsBuffers[i]));
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, cellBuffers[i]));
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, historyBuffer));
 
-        if (paramsSets[i] == nullptr || compositeSets[i] == nullptr)
+            accumulateSets[i] = device->createBindingSet(setDesc, accumulateLayout);
+        }
+
+        if (paramsSets[i] == nullptr || compositeSets[i] == nullptr || accumulateSets[i] == nullptr)
         {
             LogMessage(print, "Warning: RHI: failed to create a caustics pass binding set");
             return false;
@@ -667,6 +712,16 @@ void RhiCausticsPass::RenderTrace(nvrhi::ICommandList *pCommandList,
         pCommandList->dispatch(groups, groups, 1);
     }
 
+    {
+        nvrhi::ComputeState state;
+        state.setPipeline(accumulatePipeline);
+        state.addBindingSet(accumulateSets[frameIndex]);
+        pCommandList->setComputeState(state);
+
+        const uint32_t groups = Utils::GetWorkGroupCount(resolution, CAUSTICS_GROUP_SIZE);
+        pCommandList->dispatch(groups, groups, 1);
+    }
+
     traceValid[frameIndex] = true;
 }
 
@@ -728,7 +783,7 @@ nvrhi::IBuffer *RhiCausticsPass::GetCellBuffer(uint32_t frameIndex) const
         return nullptr;
     }
 
-    return cellBuffers[frameIndex].Get();
+    return historyBuffer.Get();
 }
 
 nvrhi::IBuffer *RhiCausticsPass::GetParamsBuffer(uint32_t frameIndex) const

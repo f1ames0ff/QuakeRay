@@ -995,11 +995,36 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             const float anchorY =
                 camera[1] + causticsParams.sunDirection[1] * driftScale;
 
+            const float anchorMargin = sky.caustics.extent * 0.25f;
+            const bool settingsChanged =
+                !causticsAnchorValid ||
+                causticsLastExtent != sky.caustics.extent ||
+                causticsLastResolution != sky.caustics.resolution ||
+                causticsLastSunDirection[0] != causticsParams.sunDirection[0] ||
+                causticsLastSunDirection[1] != causticsParams.sunDirection[1] ||
+                causticsLastSunDirection[2] != causticsParams.sunDirection[2];
+            const bool anchorMoved =
+                std::abs(anchorX - causticsAnchorCenter[0]) > anchorMargin ||
+                std::abs(anchorY - causticsAnchorCenter[1]) > anchorMargin;
+
+            if (settingsChanged || anchorMoved)
+            {
+                causticsAnchorCenter[0] = anchorX;
+                causticsAnchorCenter[1] = anchorY;
+                causticsAnchorValid = true;
+                causticsLastExtent = sky.caustics.extent;
+                causticsLastResolution = sky.caustics.resolution;
+                causticsLastSunDirection[0] = causticsParams.sunDirection[0];
+                causticsLastSunDirection[1] = causticsParams.sunDirection[1];
+                causticsLastSunDirection[2] = causticsParams.sunDirection[2];
+                causticsAccumReset = true;
+            }
+
             causticsParams.gridMinAndTexel[0] =
-                std::floor(anchorX / texelSize) * texelSize -
+                std::floor(causticsAnchorCenter[0] / texelSize) * texelSize -
                 sky.caustics.extent * 0.5f;
             causticsParams.gridMinAndTexel[1] =
-                std::floor(anchorY / texelSize) * texelSize -
+                std::floor(causticsAnchorCenter[1] / texelSize) * texelSize -
                 sky.caustics.extent * 0.5f;
             causticsParams.gridMinAndTexel[2] = texelSize;
             causticsParams.gridMinAndTexel[3] = rayStartZ;
@@ -1011,6 +1036,15 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // pass binding below, so a skipped trace never lets a stale flag reach the raygen.
             constexpr uint32_t CAUSTICS_FLAG_TRACE_VALID = 1u;
             causticsParams.gridSize[2] = CAUSTICS_FLAG_TRACE_VALID;
+            causticsParams.gridSize[3] = uniform->frameId;
+
+            // The receiver domain stays put while the camera moves inside its central half; the
+            // history keeps the previous frames' photons there. Leaving that margin (or changing
+            // the extent, the resolution or the sun) re-anchors the grid and restarts the history,
+            // so the accumulated field never has to be shifted or read across grids.
+            causticsParams.accumParams[0] = causticsAccumReset ? 1.0f : 0.125f;
+            causticsParams.accumParams[1] = causticsAccumReset ? 1.0f : 0.0f;
+            causticsAccumReset = false;
 
             if (!warnedCausticsParams && print != nullptr)
             {
