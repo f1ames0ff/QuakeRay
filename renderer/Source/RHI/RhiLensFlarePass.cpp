@@ -41,8 +41,9 @@ constexpr uint32_t FLARE_DEPTH_BINDING = 0;
 constexpr uint32_t FLARE_DESTINATION_SLOT = 0;
 
 constexpr uint32_t FLARE_PASS_BRIGHT = 0;
-constexpr uint32_t FLARE_PASS_FLARE = 1;
-constexpr uint32_t FLARE_PASS_BOKEH = 2;
+constexpr uint32_t FLARE_PASS_BOKEH = 1;
+constexpr uint32_t FLARE_PASS_FLARE = 2;
+constexpr uint32_t FLARE_PASS_SMOOTH = 3;
 
 struct LensFlarePush
 {
@@ -443,11 +444,14 @@ void RhiLensFlarePass::Render(nvrhi::ICommandList *pCommandList,
     DispatchPass(pCommandList, frameIndex, target.sourceSet, target.depthSet, target.bright.uavSet,
                  quarterWidth, quarterHeight, FLARE_PASS_BRIGHT, settings.threshold);
 
-    DispatchPass(pCommandList, frameIndex, target.bright.srvSet, target.depthSet, target.flare.uavSet,
+    DispatchPass(pCommandList, frameIndex, target.bright.srvSet, target.depthSet, target.bokeh.uavSet,
+                 quarterWidth, quarterHeight, FLARE_PASS_BOKEH, 0.0f);
+
+    DispatchPass(pCommandList, frameIndex, target.bokeh.srvSet, target.depthSet, target.flare.uavSet,
                  quarterWidth, quarterHeight, FLARE_PASS_FLARE, 0.0f);
 
     DispatchPass(pCommandList, frameIndex, target.flare.srvSet, target.depthSet, target.result.uavSet,
-                 quarterWidth, quarterHeight, FLARE_PASS_BOKEH, 0.0f);
+                 quarterWidth, quarterHeight, FLARE_PASS_SMOOTH, 0.0f);
 
     target.resultValid = true;
 
@@ -461,6 +465,11 @@ bool RhiLensFlarePass::CreateTarget(Target &target, uint32_t width, uint32_t hei
     const uint32_t halfHeight = std::max(1u, (height + 1) / 2);
 
     if (!CreateTexture(target.bright, halfWidth, halfHeight, "RhiLensFlarePass bright"))
+    {
+        return false;
+    }
+
+    if (!CreateTexture(target.bokeh, halfWidth, halfHeight, "RhiLensFlarePass bokeh"))
     {
         return false;
     }
@@ -629,6 +638,7 @@ void RhiLensFlarePass::ReleaseTarget(Target &target)
     target.resultValid = false;
 
     ReleaseTexture(target.bright);
+    ReleaseTexture(target.bokeh);
     ReleaseTexture(target.flare);
     ReleaseTexture(target.result);
 
@@ -652,6 +662,7 @@ void RhiLensFlarePass::ClearTarget(Target &target)
     target.resultValid = false;
 
     ClearTexture(target.bright);
+    ClearTexture(target.bokeh);
     ClearTexture(target.flare);
     ClearTexture(target.result);
 

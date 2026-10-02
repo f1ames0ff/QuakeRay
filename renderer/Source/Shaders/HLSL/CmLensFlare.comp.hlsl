@@ -34,8 +34,9 @@ struct LensFlarePush_BT
 [[vk::push_constant]] ConstantBuffer<LensFlarePush_BT> push;
 
 static const uint FLARE_PASS_BRIGHT = 0;
-static const uint FLARE_PASS_FLARE = 1;
-static const uint FLARE_PASS_BOKEH = 2;
+static const uint FLARE_PASS_BOKEH = 1;
+static const uint FLARE_PASS_FLARE = 2;
+static const uint FLARE_PASS_SMOOTH = 3;
 
 static const uint FLARE_GHOST_COUNT = 8;
 static const float FLARE_GHOST_SCALES[8] = { -0.8, -1.5, 0.6, 1.3, -2.2, 0.35, 2.0, -0.45 };
@@ -64,10 +65,11 @@ static const float FLARE_DIST_REF = 512.0;
 static const float FLARE_DIST_MAX = 4096.0;
 static const float FLARE_SKY_DEPTH = 10000.0;
 
-static const uint FLARE_BOKEH_TAPS = 40;
+static const uint FLARE_BOKEH_TAPS = 64;
 static const float FLARE_GOLDEN_ANGLE = 2.399963229728653;
-static const float FLARE_BOKEH_RADIUS_TEXELS = 7.0;
-static const float FLARE_BOKEH_GAUSS = 3.0;
+static const float FLARE_HEX_RADIUS_TEXELS = 6.5;
+static const float FLARE_HEX_SOFTNESS = 0.25;
+static const float FLARE_BOKEH_GAUSS = 1.5;
 
 float3 flareFetchClamped(float2 uv, float exposure)
 {
@@ -184,19 +186,49 @@ float3 flareHaloLayer(float2 uv, float aspect)
     return max((float3)0.0, inner - outer) * FLARE_HALO_INTENSITY;
 }
 
+float flareJitter(float2 uv)
+{
+    uint hash = (uint)(uv.x * 16384.0) * 1973u + (uint)(uv.y * 16384.0) * 9277u + 26699u;
+    hash ^= hash >> 16;
+    hash *= 0x7feb352du;
+    hash ^= hash >> 15;
+    hash *= 0x846ca68bu;
+    hash ^= hash >> 16;
+
+    return (float)hash * (6.28318530718 / 4294967296.0);
+}
+
 float3 flareBokehBlur(float2 uv, float2 sourceTexelSize)
 {
     float3 sum = (float3)0.0;
 
     float weightSum = 0.0;
 
+    const float circumradius = FLARE_HEX_RADIUS_TEXELS / 0.86602540378;
+    const float jitter = flareJitter(uv);
+
     [unroll]
     for (uint tap = 0; tap < FLARE_BOKEH_TAPS; tap++)
     {
         const float radius = sqrt(((float)tap + 0.5) / (float)FLARE_BOKEH_TAPS);
-        const float angle = (float)tap * FLARE_GOLDEN_ANGLE;
-        const float2 offset = radius * float2(cos(angle), sin(angle)) * FLARE_BOKEH_RADIUS_TEXELS * sourceTexelSize;
-        const float weight = exp(-FLARE_BOKEH_GAUSS * radius * radius);
+        const float angle = (float)tap * FLARE_GOLDEN_ANGLE + jitter;
+        const float2 direction = float2(cos(angle), sin(angle));
+        const float2 offset = direction * (radius * circumradius * sourceTexelSize);
+
+        const float c30 = 0.86602540378;
+        const float projection = max(abs(direction.x),
+                                     max(abs(direction.x * 0.5 + direction.y * c30),
+                                         abs(direction.x * 0.5 - direction.y * c30)));
+        const float boundary = FLARE_HEX_RADIUS_TEXELS / max(projection, 1e-4);
+        const float aperture = 1.0 - smoothstep(1.0 - FLARE_HEX_SOFTNESS, 1.0, (radius * circumradius) / max(boundary, 1e-4));
+
+        const float weight = aperture * exp(-FLARE_BOKEH_GAUSS * radius * radius);
+
+        if (weight <= 0.0)
+        {
+            continue;
+        }
+
         sum += flareSource.SampleLevel(flareSource_Sampler, uv + offset, 0).rgb * weight;
         weightSum += weight;
     }
@@ -231,6 +263,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
+    if (push.passMode == FLARE_PASS_BOKEH)
+    {
+        flareDest[pixel] = float4(flareBokehBlur(uv, sourceTexelSize), 1.0);
+        return;
+    }
+
     if (push.passMode == FLARE_PASS_FLARE)
     {
         const float aspect = (float)width / (float)height;
@@ -248,5 +286,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    flareDest[pixel] = float4(flareBokehBlur(uv, sourceTexelSize), 1.0);
+    flareDest[pixel] = float4(postEffectsTent9(flareSource, flareSource_Sampler, uv, sourceTexelSize), 1.0);
 }

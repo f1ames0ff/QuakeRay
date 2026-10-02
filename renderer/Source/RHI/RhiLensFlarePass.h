@@ -91,6 +91,7 @@ private:
         uint32_t width = 0;
         uint32_t height = 0;
         Texture bright;
+        Texture bokeh;
         Texture flare;
         Texture result;
         nvrhi::ITexture *sourceTexture = nullptr;
