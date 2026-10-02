@@ -196,6 +196,11 @@ layout(set = DESC_SET_LIGHT_SOURCES, binding = BINDING_LIGHT_SOURCES_Q2_CLUSTER_
 {
     uint q2ClusterSkyVis[];
 };
+
+layout(set = DESC_SET_LIGHT_SOURCES, binding = BINDING_LIGHT_SOURCES_DTAL_MEMBERS) readonly buffer DtalMembers_BT
+{
+    ShDtalMember dtalMembers[];
+};
 #endif
 
 

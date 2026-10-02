@@ -110,6 +110,8 @@ public:
 
     void UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo *pLightInfos, uint32_t count);
 
+    void UploadDtalGroups(const QrDtalGroupUploadBatch *pUploadInfo);
+
     void UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo);
 
     void GetClusterLightStats(QrClusterLightStats *pStats);

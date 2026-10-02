@@ -37,6 +37,9 @@ constexpr float kMinSphereRadius = 0.005f;
 
 constexpr uint32_t kLightArrayMaxSize = LightManager::LIGHT_ARRAY_ENTRY_COUNT;
 
+static_assert(sizeof(QrDtalMemberUpload) == sizeof(ShDtalMember), "the DTAL member upload record has to match the shader layout");
+static_assert(LightManager::DTAL_MEMBER_CAPACITY <= QR_DTAL_MAX_UPLOAD_MEMBERS, "renderer member capacity is part of the public budget");
+
 static_assert(LightManager::LIGHT_STATS_CLUSTER_COUNT == Q2_MAX_CLUSTERS, "cluster count of the light statistics buffer");
 static_assert(LightManager::LIGHT_STATS_SLOT_COUNT == Q2_LIGHT_LIST_STATS_BUFFERS, "slots of the light statistics buffer");
 
@@ -181,6 +184,58 @@ namespace
         return light;
     }
 
+    void EncodeCone(ShLightEncoded &light, float angleInner, float angleOuter, bool projector)
+    {
+        const bool angleValid = std::isfinite(angleOuter) && angleOuter > 0.0f &&
+                                angleOuter <= static_cast<float>(kPi / 2.0);
+        const float outer = angleValid ? angleOuter : (projector ? static_cast<float>(kPi / 3.0) : 0.0f);
+        const float inner = (std::isfinite(angleInner) && angleInner >= 0.0f) ? angleInner : 0.0f;
+
+        if (outer > 0.0f)
+        {
+            light.coneCosInner = std::cos(std::min(inner, outer * 0.999f));
+            light.coneCosOuter = std::cos(outer);
+        }
+        else
+        {
+            light.coneCosInner = 0.0f;
+            light.coneCosOuter = 0.0f;
+        }
+    }
+
+    ShLightEncoded EncodeAsDtalGroup(const QrDtalGroupUploadInfo &info, uint32_t textureIndex)
+    {
+        ShLightEncoded light = {};
+        light.lightType = LIGHT_TYPE_DTAL_GROUP;
+
+        for (int i = 0; i < 3; i++)
+        {
+            light.color[i] = info.color.data[i];
+            light.data_2[i] = info.center.data[i];
+            light.data_7[i] = info.normal.data[i];
+        }
+
+        const uint32_t memberBase = info.memberBase;
+        const uint32_t memberCount = info.memberCount;
+
+        memcpy(&light.data_0[0], &memberBase, sizeof(uint32_t));
+        memcpy(&light.data_0[1], &memberCount, sizeof(uint32_t));
+        memcpy(&light.data_0[3], &textureIndex, sizeof(uint32_t));
+
+        light.data_0[2] = (std::isfinite(info.reach) && info.reach > 0.0f) ? info.reach : 0.0f;
+        light.data_1[0] = (std::isfinite(info.meanEmiss) && info.meanEmiss > 0.0f) ? info.meanEmiss : 0.0f;
+        light.data_1[1] = (std::isfinite(info.area) && info.area > 0.0f) ? info.area : 0.0f;
+        light.data_1[2] = (std::isfinite(info.estimatedPower) && info.estimatedPower > 0.0f) ? info.estimatedPower : 0.0f;
+        light.data_1[3] = (std::isfinite(info.boundsRadius) && info.boundsRadius > 0.0f) ? info.boundsRadius : 0.0f;
+
+        const bool projector = std::isfinite(info.projector) && info.projector > 0.5f;
+        light.data_2[3] = projector ? 1.0f : 0.0f;
+        light.data_7[3] = 0.0f;
+        EncodeCone(light, info.angleInner, info.angleOuter, projector);
+
+        return light;
+    }
+
     ShLightEncoded EncodeAsSpotLight(const QrSpotLightUploadInfo &info)
     {
         float direction[3] = { info.direction.data[0], info.direction.data[1], info.direction.data[2] };
@@ -272,6 +327,12 @@ qray::LightManager::LightManager(
         clusterSkyVisCopyPending[i] = true;
     }
 
+    dtalMembersBuffer = std::make_shared<AutoBuffer>(device, _allocator);
+    dtalMembersBuffer->Create(sizeof(ShDtalMember) * DTAL_MEMBER_CAPACITY,
+                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                              "DTAL group members");
+
     prevToCurIndex = std::make_shared<AutoBuffer>(device, _allocator);
     prevToCurIndex->Create(sizeof(uint32_t) * kLightArrayMaxSize,
                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "Lights buffer - prev to cur");
@@ -344,7 +405,11 @@ void qray::LightManager::Reset()
 
         memset(clusterSkyVis->GetMapped(i), 0xFF, sizeof(uint32_t) * CLUSTER_SKY_VIS_WORD_COUNT);
         clusterSkyVisCopyPending[i] = true;
+
+        dtalMembersCopyPending[i] = false;
     }
+
+    dtalMemberCount = 0;
 
     deviceListValid = false;
 
@@ -532,6 +597,56 @@ void qray::LightManager::AddTexturedAreaLight(uint32_t frameIndex, const QrTextu
     AddLight(frameIndex, info.uniqueID, EncodeAsTexturedAreaLight(info, textureIndex));
 }
 
+bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUploadBatch &batch,
+                                       const uint32_t *pTextureIndices)
+{
+    if (batch.pGroups == nullptr || pTextureIndices == nullptr || batch.groupCount == 0)
+    {
+        return false;
+    }
+
+    if (batch.memberCount > DTAL_MEMBER_CAPACITY)
+    {
+        fprintf(stderr, "qray: DTAL member budget exceeded (%u > %u) - groups not published\n",
+                batch.memberCount, DTAL_MEMBER_CAPACITY);
+        return false;
+    }
+
+    uint32_t published = 0;
+
+    for (uint32_t i = 0; i < batch.groupCount; i++)
+    {
+        const QrDtalGroupUploadInfo &info = batch.pGroups[i];
+
+        if (info.memberCount == 0 || info.memberBase > batch.memberCount ||
+            info.memberCount > batch.memberCount - info.memberBase)
+        {
+            fprintf(stderr, "qray: DTAL group %u has an invalid member range - skipped\n", i);
+            continue;
+        }
+
+        const ShLightEncoded encoded = EncodeAsDtalGroup(info, pTextureIndices[i]);
+        AddLight(frameIndex, info.uniqueID, encoded);
+        published++;
+    }
+
+    if (published == 0)
+    {
+        return false;
+    }
+
+    for (uint32_t f = 0; f < MAX_FRAMES_IN_FLIGHT; f++)
+    {
+        auto *pDst = static_cast<ShDtalMember *>(dtalMembersBuffer->GetMapped(f));
+        memcpy(pDst, batch.pMembers, sizeof(ShDtalMember) * batch.memberCount);
+        dtalMembersCopyPending[f] = true;
+    }
+
+    dtalMemberCount = batch.memberCount;
+
+    return true;
+}
+
 void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUploadInfo &info)
 {
     /* `!(x > 0)` rather than `x <= 0`: the latter takes a nan angle for a valid one. */
@@ -599,6 +714,7 @@ qray::LightManager::Buffers qray::LightManager::GetBuffers() const
         lightListLights->GetDeviceLocal(),
         lightStats.GetBuffer(),
         clusterSkyVis->GetDeviceLocal(),
+        dtalMembersBuffer->GetDeviceLocal(),
     };
 }
 
@@ -637,6 +753,15 @@ qray::LightManager::FrameCopies qray::LightManager::GetFrameCopies(uint32_t fram
         };
     }
 
+    if (dtalMembersCopyPending[frame] && dtalMemberCount > 0)
+    {
+        copies.dtalMembers =
+        {
+            dtalMembersBuffer->GetStaging(frame),
+            sizeof(ShDtalMember) * dtalMemberCount,
+        };
+    }
+
     return copies;
 }
 
@@ -651,6 +776,7 @@ void qray::LightManager::ConsumeFrameCopies(uint32_t frame)
     }
 
     clusterSkyVisCopyPending[frame] = false;
+    dtalMembersCopyPending[frame] = false;
 }
 
 uint32_t qray::LightManager::GetLightStatsClusterTarget() const
@@ -905,6 +1031,7 @@ constexpr uint32_t BINDINGS[] =
     BINDING_LIGHT_SOURCES_Q2_LIGHT_STATS,
     BINDING_LIGHT_SOURCES_TAL_CDF,
     BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS,
+    BINDING_LIGHT_SOURCES_DTAL_MEMBERS,
 };
 
 void qray::LightManager::CreateDescriptors()
@@ -981,6 +1108,7 @@ void qray::LightManager::UpdateDescriptors(uint32_t frameIndex)
         lightStats.GetBuffer(),
         talCdf,
         clusterSkyVis->GetDeviceLocal(),
+        dtalMembersBuffer->GetDeviceLocal(),
     };
     static_assert(std::size(BINDINGS) == std::size(buffers));
 

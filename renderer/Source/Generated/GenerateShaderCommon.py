@@ -312,6 +312,7 @@ CONST = {
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_STATS"        : 6,
     "BINDING_LIGHT_SOURCES_TAL_CDF"               : 7,
     "BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS"    : 8,
+    "BINDING_LIGHT_SOURCES_DTAL_MEMBERS"          : 9,
     "BINDING_LENS_FLARES_CULLING_INPUT"         : 0,
     "BINDING_LENS_FLARES_DRAW_CMDS"             : 1,
     "BINDING_DRAW_LENS_FLARES_INSTANCES"        : 0,
@@ -466,6 +467,7 @@ CONST = {
     "LIGHT_TYPE_TRIANGLE"                   : 3,
     "LIGHT_TYPE_SPOT"                       : 4,
     "LIGHT_TYPE_TEXTURED_AREA"              : 5,
+    "LIGHT_TYPE_DTAL_GROUP"                 : 6,
 
     "LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET"  : 0,
     "LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET"     : 1,
@@ -726,6 +728,25 @@ GEOM_INSTANCE_MEMBERS = [
     (UINT32, 1, "_unused1",   1),
 ]
 
+DTAL_MEMBER_MEMBERS = [
+    (FLOAT32, 3, "A",                    1),
+    (FLOAT32, 1, "area",                 1),
+
+    (FLOAT32, 3, "B",                    1),
+    (FLOAT32, 1, "numVerts",             1),
+
+    (FLOAT32, 3, "C",                    1),
+    (FLOAT32, 1, "prob",                 1),
+
+    (FLOAT32, 3, "normal",               1),
+    (FLOAT32, 1, "aliasProb",            1),
+
+    (FLOAT32, 2, "uv",                   8),
+
+    (UINT32,  1, "aliasIndex",           1),
+    (UINT32,  1, "reserved",             3),
+]
+
 LIGHT_ENCODED_MEMBERS = [
     (FLOAT32, 3, "color",                1),
     (UINT32, 1, "lightType",            1),
@@ -818,6 +839,7 @@ STRUCTS = {
     "ShGeometryInstance":       (GEOM_INSTANCE_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
     "ShTonemapping":            (TONEMAPPING_MEMBERS,         False, ALIGN_NONE,   BREAK_NONE),
     "ShLightEncoded":           (LIGHT_ENCODED_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
+    "ShDtalMember":             (DTAL_MEMBER_MEMBERS,         False, ALIGN_STD430, BREAK_NONE),
     "ShVertPreprocessing":      (VERT_PREPROC_PUSH_MEMBERS,   False, ALIGN_NONE,   BREAK_NONE),
     "ShIndirectDrawCommand":    (INDIRECT_DRAW_CMD_MEMBERS,   False, ALIGN_STD430, BREAK_NONE),
     "ShLensFlareInstance":      (LENS_FLARES_INSTANCE_MEMBERS, False, ALIGN_NONE,  BREAK_NONE),

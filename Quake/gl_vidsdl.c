@@ -228,6 +228,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_dtal_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
 	CVAR_DEF_T (rt_dtal_clearance, "1") \
+	CVAR_DEF_T (rt_dtal_groups, "0") \
+	CVAR_DEF_T (rt_dtal_spacing, "128") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
@@ -651,6 +653,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_dtal_minarea");
 	RT_Bench_Setting (f, "rt_dtal_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_clearance");
+	RT_Bench_Setting (f, "rt_dtal_groups");
+	RT_Bench_Setting (f, "rt_dtal_spacing");
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_godrays");
 	RT_Bench_Setting (f, "rt_godrays_intensity");
@@ -2903,6 +2907,8 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_dtal_minarea, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_maxpolys, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_clearance, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_groups, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_spacing, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_worldcensus, RT_WorldCensusChanged_f);
 	Cvar_SetCallback (&rt_worldlights_stats, RT_WorldLightsStatsChanged_f);
 

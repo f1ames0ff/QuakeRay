@@ -45,6 +45,7 @@ namespace qray
 #define BINDING_LIGHT_SOURCES_Q2_LIGHT_STATS (6)
 #define BINDING_LIGHT_SOURCES_TAL_CDF (7)
 #define BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS (8)
+#define BINDING_LIGHT_SOURCES_DTAL_MEMBERS (9)
 #define BINDING_LENS_FLARES_CULLING_INPUT (0)
 #define BINDING_LENS_FLARES_DRAW_CMDS (1)
 #define BINDING_DRAW_LENS_FLARES_INSTANCES (0)
@@ -176,6 +177,7 @@ namespace qray
 #define LIGHT_TYPE_TRIANGLE (3)
 #define LIGHT_TYPE_SPOT (4)
 #define LIGHT_TYPE_TEXTURED_AREA (5)
+#define LIGHT_TYPE_DTAL_GROUP (6)
 #define LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET (0)
 #define LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET (1)
 #define LIGHT_INDEX_NONE (32767)
@@ -407,6 +409,21 @@ struct ShLightEncoded
     float coneCosOuter;
     float projector;
     uint32_t __pad0;
+};
+
+struct ShDtalMember
+{
+    float A[3];
+    float area;
+    float B[3];
+    float numVerts;
+    float C[3];
+    float prob;
+    float normal[3];
+    float aliasProb;
+    float uv[8][2];
+    uint32_t aliasIndex;
+    uint32_t reserved[3];
 };
 
 struct ShVertPreprocessing

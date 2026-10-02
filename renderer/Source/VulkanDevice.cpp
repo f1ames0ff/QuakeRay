@@ -1436,6 +1436,51 @@ void VulkanDevice::UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo 
     }
 }
 
+void VulkanDevice::UploadDtalGroups(const QrDtalGroupUploadBatch *pUploadInfo)
+{
+    if (pUploadInfo == nullptr)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
+    }
+
+    if (pUploadInfo->groupCount == 0 || pUploadInfo->pGroups == nullptr || pUploadInfo->pMembers == nullptr)
+    {
+        return;
+    }
+
+    std::vector<uint32_t> textureIndices(pUploadInfo->groupCount);
+
+    const uint32_t materialCacheSize = 512;
+    uint32_t cachedMaterial[materialCacheSize];
+    uint32_t cachedTextureIndex[materialCacheSize];
+    bool     cachedValid[materialCacheSize] = {};
+
+    for (uint32_t i = 0; i < pUploadInfo->groupCount; i++)
+    {
+        const QrDtalGroupUploadInfo *pGroup = pUploadInfo->pGroups + i;
+        const uint32_t slot = pGroup->material & (materialCacheSize - 1);
+
+        if (cachedValid[slot] && cachedMaterial[slot] == pGroup->material)
+        {
+            textureIndices[i] = cachedTextureIndex[slot];
+        }
+        else
+        {
+            const MaterialTextures textures = textureManager->GetMaterialTextures(pGroup->material);
+            textureIndices[i] = textures.indices[MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX];
+
+            cachedMaterial[slot] = pGroup->material;
+            cachedTextureIndex[slot] = textureIndices[i];
+            cachedValid[slot] = true;
+        }
+    }
+
+    if (!scene->UploadDtalGroups(currentFrameState.GetFrameIndex(), *pUploadInfo, textureIndices.data()))
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "DTAL group batch did not fit the renderer light storage");
+    }
+}
+
 void VulkanDevice::UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo)
 {
     if (pInfo == nullptr)

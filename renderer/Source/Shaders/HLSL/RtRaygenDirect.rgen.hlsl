@@ -33,6 +33,7 @@
 
 #define Q2_RNG_CELL_SELECT 200
 #define Q2_RNG_LIGHT_POINT 208
+#define Q2_RNG_LIGHT_MEMBER 216
 #define Q2_RNG_SUN_DISK 212
 
 #define Q2_DIRECT_MAX_SPHERE_SOLID_ANGLE (2.0 * M_PI)
@@ -96,7 +97,9 @@ void main()
         if (lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0)
         {
             const float2 pointRnd = rnd16_2(seed, (uint)Q2_RNG_LIGHT_POINT + (uint)s * 2u);
-            LightSample light = sampleLightFullDomain(lightSources[lightIndex], surf.position, pointRnd);
+            const float2 memberRnd = rnd16_2(seed, (uint)Q2_RNG_LIGHT_MEMBER + (uint)s * 2u);
+            float memberPdf = 1.0;
+            LightSample light = sampleLightNee(lightSources[lightIndex], surf.position, pointRnd, memberRnd, memberPdf);
 
             if (lightSources[lightIndex].lightType == LIGHT_TYPE_SPHERE ||
                 lightSources[lightIndex].lightType == LIGHT_TYPE_SPOT)
@@ -116,13 +119,14 @@ void main()
 
                 if (!useGlobalRestir &&
                     (lightSources[lightIndex].lightType == LIGHT_TYPE_TRIANGLE ||
-                     lightSources[lightIndex].lightType == LIGHT_TYPE_TEXTURED_AREA))
+                     lightSources[lightIndex].lightType == LIGHT_TYPE_TEXTURED_AREA ||
+                     lightSources[lightIndex].lightType == LIGHT_TYPE_DTAL_GROUP))
                 {
                     q2AccumulateLightStats(cluster, lightSlot, surf.normal, vis, (uint)s);
                 }
 
                 float3 d, s;
-                shade(surf, light, 1.0 / lightPdf, d, s);
+                shade(surf, light, 1.0 / max(lightPdf * memberPdf, 1e-9), d, s);
                 directDiffuse += d * vis;
                 directSpecular += s * vis;
             }

@@ -37,6 +37,7 @@ class LightManager
 {
 public:
     static constexpr uint32_t LIGHT_ARRAY_ENTRY_COUNT = 4096;
+    static constexpr uint32_t DTAL_MEMBER_CAPACITY = QR_DTAL_MAX_UPLOAD_MEMBERS;
 
     static constexpr uint32_t LIGHT_STATS_CLUSTER_COUNT = 8192;
     static constexpr uint32_t LIGHT_STATS_SLOT_COUNT = 3;
@@ -67,6 +68,7 @@ public:
     void AddTexturedAreaLight(uint32_t frameIndex, const QrTexturedAreaLightUploadInfo &info, uint32_t textureIndex);
     void AddDirectionalLight(uint32_t frameIndex, const QrDirectionalLightUploadInfo &info);
     void AddSpotlight(uint32_t frameIndex, const QrSpotLightUploadInfo &info);
+    bool AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUploadBatch &batch, const uint32_t *pTextureIndices);
 
     void SetClusterLightLists(uint32_t frameIndex, uint32_t numClusters,
                               const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
@@ -90,6 +92,7 @@ public:
         VkBuffer listLights;
         VkBuffer lightStats;
         VkBuffer clusterSkyVis;
+        VkBuffer dtalMembers;
     };
 
     struct Copy
@@ -104,6 +107,7 @@ public:
         Copy listOffsets;
         Copy listLights;
         Copy clusterSkyVis;
+        Copy dtalMembers;
     };
 
     Buffers GetBuffers() const;
@@ -149,6 +153,10 @@ private:
 
     std::shared_ptr<AutoBuffer> clusterSkyVis;
     bool                        clusterSkyVisCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
+
+    std::shared_ptr<AutoBuffer> dtalMembersBuffer;
+    uint32_t                    dtalMemberCount = 0;
+    bool                        dtalMembersCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
 
     bool     lightListCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
     bool     publishedListValid[MAX_FRAMES_IN_FLIGHT] = {};

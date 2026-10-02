@@ -90,6 +90,7 @@
 
 #define Q2_RNG_INDIR_CELL_SELECT 220
 #define Q2_RNG_INDIR_LIGHT_POINT 223
+#define Q2_RNG_INDIR_LIGHT_MEMBER 226
 #define Q2_RNG_INDIR_SUN_DISK    225
 // The first-bounce salts are used by the first-bounce light NEE. The 230/233 pair is
 // reserved for a second-bounce light NEE, which Q2RTX does not have and which this pass
@@ -431,8 +432,10 @@ void main()
             if ( lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0 )
             {
                 const float2 pointRnd = rnd16_2( seed, Q2_RNG_INDIR_LIGHT_POINT );
+                const float2 memberRnd = rnd16_2( seed, Q2_RNG_INDIR_LIGHT_MEMBER );
+                float memberPdf = 1.0;
                 LightSample light =
-                    sampleLightFullDomain( lightSources[ lightIndex ], hitSurf.position, pointRnd );
+                    sampleLightNee( lightSources[ lightIndex ], hitSurf.position, pointRnd, memberRnd, memberPdf );
 
                 if ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_SPHERE ||
                      lightSources[ lightIndex ].lightType == LIGHT_TYPE_SPOT )
@@ -452,13 +455,14 @@ void main()
                     }
 
                     if ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_TRIANGLE ||
-                         lightSources[ lightIndex ].lightType == LIGHT_TYPE_TEXTURED_AREA )
+                         lightSources[ lightIndex ].lightType == LIGHT_TYPE_TEXTURED_AREA ||
+                         lightSources[ lightIndex ].lightType == LIGHT_TYPE_DTAL_GROUP )
                     {
                         q2AccumulateLightStats( cluster, lightSlot, hitSurf.normal, vis, 0u );
                     }
 
                     float3 d;
-                    shadeDiffuse( hitSurf, light, 1.0 / lightPdf, d );
+                    shadeDiffuse( hitSurf, light, 1.0 / max( lightPdf * memberPdf, 1e-9 ), d );
                     directDiffuse += d * vis;
                 }
             }

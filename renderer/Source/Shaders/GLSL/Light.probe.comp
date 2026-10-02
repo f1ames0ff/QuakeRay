@@ -63,6 +63,7 @@ void main()
     v += float(lightSources_Index_PrevToCur[0]) + float(lightSources_Index_CurToPrev[0]) +
          float(q2LightListOffsets[0]) + float(q2LightListLights[0]) +
          float(talCdf[0]) + float(q2ClusterSkyVis[0]);
+    v += dtalMembers[0].A.x + dtalMembers[0].area + dtalMembers[0].aliasIndex + dtalMembers[0].uv[0].x;
     q2LightStats[0] = 1u;
 
     // A single encoded light drives every decoder: data_0.w is a texture index and data_2.w is a

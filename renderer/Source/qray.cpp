@@ -226,6 +226,11 @@ QrResult qrUploadTexturedAreaLights(QrInstance qrInstance, const QrTexturedAreaL
     return Call(qrInstance, &VulkanDevice::UploadTexturedAreaLights, pUploadInfos, count);
 }
 
+QrResult qrUploadDtalGroups(QrInstance qrInstance, const QrDtalGroupUploadBatch *pUploadInfo)
+{
+    return Call(qrInstance, &VulkanDevice::UploadDtalGroups, pUploadInfo);
+}
+
 QrResult qrUploadClusterLightSources(QrInstance qrInstance, const QrClusterLightSourcesUploadInfo *pUploadInfo)
 {
     return Call(qrInstance, &VulkanDevice::UploadClusterLightSources, pUploadInfo);

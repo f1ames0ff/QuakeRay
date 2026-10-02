@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "atomics.h"
 #include "rt_dtal_debug.h"
+#include "rt_dtal_groups.h"
 #include "rt_lights.h"
 
 extern cvar_t gl_fullbrights;
@@ -53,6 +54,8 @@ extern cvar_t rt_dtal_model_minarea;
 extern cvar_t rt_dtal_minarea;
 extern cvar_t rt_dtal_maxpolys;
 extern cvar_t rt_dtal_clearance;
+extern cvar_t rt_dtal_groups;
+extern cvar_t rt_dtal_spacing;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
@@ -1585,6 +1588,9 @@ static qboolean RT_LightBuried (vec3_t center, const float *normal, float cleara
 	return buried;
 }
 
+static void RT_DtalGroups_Feed (const QrTexturedAreaLightUploadInfo *light_info, gltexture_t *light_tex,
+                                const msurface_t *surf);
+
 static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_info, qboolean is_static_geom,
                                     const msurface_t *surf, gltexture_t *light_tex)
 {
@@ -1649,7 +1655,7 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 			RT_DtalDebugAdd (center, li.normal.data, li.area, li.projector > 0.5f);
 		}
 	}
-	else if (rt_wldlights_emissive_count < MAX_WORLDLIGHTS_COUNT)
+	else
 	{
 		const float clearance = CVAR_TO_FLOAT (rt_dtal_clearance);
 
@@ -1671,27 +1677,32 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 				Atomic_AddUInt32 (&rt_buried_hits, 1);
 		}
 
-		const int index = rt_wldlights_emissive_count++;
-		rt_wldlights_emissive[index]      = *light_info;
-		rt_wldlights_emissive_surf[index] = surf;
-		rt_wldlights_emissive_tex[index]  = light_tex;
-		/* The stored light does not move, so the center it is placed by is derived here and
-		   not once per frame. */
-		RT_TexturedAreaLightCenter (&rt_wldlights_emissive[index], rt_wldlights_emissive_center[index]);
-		rt_emis_stats.static_queued++;
-		if (light_info->projector > 0.5f)
-			rt_emis_stats.projector++;
-	}
-	else
-	{
-		rt_emis_stats.static_dropped++;
+		RT_DtalGroups_Feed (light_info, light_tex, surf);
 
-		static qboolean warned = false;
-		if (!warned)
+		if (rt_wldlights_emissive_count < MAX_WORLDLIGHTS_COUNT)
 		{
-			warned = true;
-			Con_DWarning ("RT: emissive world lights exceeded MAX_WORLDLIGHTS_COUNT (%i)\n",
-			              MAX_WORLDLIGHTS_COUNT);
+			const int index = rt_wldlights_emissive_count++;
+			rt_wldlights_emissive[index]      = *light_info;
+			rt_wldlights_emissive_surf[index] = surf;
+			rt_wldlights_emissive_tex[index]  = light_tex;
+			/* The stored light does not move, so the center it is placed by is derived here and
+			   not once per frame. */
+			RT_TexturedAreaLightCenter (&rt_wldlights_emissive[index], rt_wldlights_emissive_center[index]);
+			rt_emis_stats.static_queued++;
+			if (light_info->projector > 0.5f)
+				rt_emis_stats.projector++;
+		}
+		else
+		{
+			rt_emis_stats.static_dropped++;
+
+			static qboolean warned = false;
+			if (!warned)
+			{
+				warned = true;
+				Con_DWarning ("RT: emissive world lights exceeded MAX_WORLDLIGHTS_COUNT (%i)\n",
+				              MAX_WORLDLIGHTS_COUNT);
+			}
 		}
 	}
 }
@@ -1929,6 +1940,463 @@ static gltexture_t *RT_AnimatedLightTex (texture_t *base)
 	gltexture_t *frame = R_TextureAnimation (base, 0)->gltexture;
 
 	return (frame && frame->rthasmaterial) ? frame : base->gltexture;
+}
+
+#define RT_DTAL_MAX_GROUP_SOURCES 65536
+
+typedef struct rt_dtal_source_s
+{
+	texture_t         *base_tex;
+	gltexture_t       *canonical_tex;
+	const msurface_t  *surf;
+	rt_emissive_params_t params;
+	float              reach;
+	float              normal[3];
+	uint8_t            styles[MAXLIGHTMAPS];
+	uint8_t            accepted[MAXLIGHTMAPS];
+	int                style_count;
+} rt_dtal_source_t;
+
+static rt_dtal_builder_t     *rt_dtal_builder;
+static const rt_dtal_build_t *rt_dtal_build;
+static rt_dtal_source_t      *rt_dtal_sources;
+static int                    rt_dtal_source_count;
+static int                    rt_dtal_source_capacity;
+
+static QrDtalGroupUploadInfo *rt_dtal_parents;
+static int                    rt_dtal_parent_capacity;
+static QrDtalMemberUpload    *rt_dtal_members;
+static int                    rt_dtal_member_capacity;
+static int32_t               *rt_dtal_parent_source;
+static int                    rt_dtal_parent_source_capacity;
+
+static qboolean rt_dtal_groups_active;
+static qboolean rt_dtal_groups_failed;
+static qboolean rt_dtal_groups_rebuild_pending;
+
+static int rt_dtal_group_inputs;
+static int rt_dtal_group_oversized;
+static int rt_dtal_group_budget_refused;
+
+static int RT_DtalReserve (void **array, int *capacity, int needed, int elementSize)
+{
+	if (needed <= *capacity)
+		return 1;
+
+	int newCapacity = *capacity > 0 ? *capacity : 1024;
+
+	while (newCapacity < needed)
+	{
+		if (newCapacity > (1 << 28))
+			return 0;
+		newCapacity *= 2;
+	}
+
+	void *grown = realloc (*array, (size_t)newCapacity * (size_t)elementSize);
+
+	if (grown == NULL)
+		return 0;
+
+	memset ((unsigned char *)grown + (size_t)(*capacity) * (size_t)elementSize, 0,
+	        (size_t)(newCapacity - *capacity) * (size_t)elementSize);
+
+	*array = grown;
+	*capacity = newCapacity;
+
+	return 1;
+}
+
+static uint64_t RT_DtalMix (uint64_t hash, uint64_t value)
+{
+	hash ^= value + 0x9E3779B97F4A7C15ull + (hash << 6) + (hash >> 2);
+	return hash;
+}
+
+static uint64_t RT_DtalEmissionKey (const QrTexturedAreaLightUploadInfo *li, gltexture_t *light_tex,
+                                    texture_t *base_tex)
+{
+	uint64_t hash = 0xCBF29CE484222325ull;
+
+	hash = RT_DtalMix (hash, (uint64_t)(uintptr_t) base_tex);
+	hash = RT_DtalMix (hash, (uint64_t)(uintptr_t) light_tex);
+	hash = RT_DtalMix (hash, (uint64_t) li->material);
+	hash = RT_DtalMix (hash, li->projector > 0.5f ? 1u : 0u);
+	hash = RT_DtalMix (hash, (uint64_t)(int64_t)(li->angleInner * 1000.0f));
+	hash = RT_DtalMix (hash, (uint64_t)(int64_t)(li->angleOuter * 1000.0f));
+
+	if (li->projector > 0.5f)
+		hash = RT_DtalMix (hash, li->uniqueID);
+
+	return hash;
+}
+
+static uint32_t RT_DtalStyleKey (gltexture_t *light_tex, const msurface_t *surf, const vec3_t center,
+                                 rt_dtal_source_t *source)
+{
+	source->style_count = 0;
+
+	if (!CVAR_TO_BOOL (rt_light_styles) || surf == NULL)
+		return 0;
+
+	rt_light_t *ov = RT_LIGHT_Find (light_tex->name);
+
+	if (ov && ov->has_style)
+	{
+		source->style_count = 1;
+		source->styles[0] = (uint8_t) CLAMP (0, ov->style, 255);
+		source->accepted[0] = 1;
+		return (uint32_t) (0x10000u | source->styles[0]);
+	}
+
+	if (!light_tex->rtlightstyles)
+		return 0;
+
+	const float reach = CVAR_TO_FLOAT (rt_light_styles_reach);
+	uint32_t    key = 0x20000u;
+
+	for (int i = 0; i < MAXLIGHTMAPS && surf->styles[i] != 255; i++)
+	{
+		const int style = surf->styles[i];
+		int       accepted = 1;
+
+		if (reach >= 0.0f)
+		{
+			const float dist = RT_NearestStyledLightDistance (style, center);
+			accepted = (dist >= 0.0f && dist <= reach);
+		}
+
+		source->styles[i] = (uint8_t) style;
+		source->accepted[i] = (uint8_t) accepted;
+		source->style_count = i + 1;
+		key = (uint32_t) RT_DtalMix (key, (uint64_t) style | ((uint64_t) accepted << 8));
+	}
+
+	return key;
+}
+
+static float RT_DtalSourceStyleScale (const rt_dtal_source_t *source)
+{
+	if (!CVAR_TO_BOOL (rt_light_styles) || source->style_count == 0)
+		return 1.0f;
+
+	float    scale = 1.0f;
+	qboolean dims = false;
+
+	for (int i = 0; i < source->style_count; i++)
+	{
+		const float value = (float)d_lightstylevalue[source->styles[i]] * (1.0f / 256.0f);
+
+		if (value >= 255.5f * (1.0f / 256.0f))
+			continue;
+		if (!source->accepted[i])
+			continue;
+
+		if (!dims || value < scale)
+			scale = value;
+		dims = true;
+	}
+
+	return dims ? scale : 1.0f;
+}
+
+static void RT_DtalGroups_BeginCollect (void)
+{
+	rt_dtal_groups_active = false;
+	rt_dtal_groups_failed = false;
+	rt_dtal_group_inputs = 0;
+	rt_dtal_group_oversized = 0;
+	rt_dtal_group_budget_refused = 0;
+	rt_dtal_source_count = 0;
+
+	if (rt_dtal_builder == NULL)
+		rt_dtal_builder = RT_Dtal_BuilderCreate ();
+}
+
+static void RT_DtalGroups_Feed (const QrTexturedAreaLightUploadInfo *light_info, gltexture_t *light_tex,
+                                const msurface_t *surf)
+{
+	if (rt_dtal_builder == NULL || CVAR_TO_FLOAT (rt_dtal_groups) <= 0.0f)
+		return;
+
+	if (light_info->numVerts < 3 || light_info->numVerts > MAX_TEXTURED_AREA_LIGHT_VERTS)
+		return;
+
+	if (!(light_info->area > 0.0f) || !isfinite (light_info->area))
+		return;
+
+	if (rt_dtal_source_count >= RT_DTAL_MAX_GROUP_SOURCES)
+	{
+		rt_dtal_group_budget_refused++;
+		return;
+	}
+
+	if (!RT_DtalReserve ((void **)&rt_dtal_sources, &rt_dtal_source_capacity, rt_dtal_source_count + 1,
+	                     (int)sizeof (rt_dtal_source_t)))
+	{
+		rt_dtal_group_budget_refused++;
+		return;
+	}
+
+	rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_source_count];
+	memset (source, 0, sizeof (*source));
+
+	source->base_tex = (surf != NULL && surf->texinfo != NULL) ? surf->texinfo->texture : NULL;
+	source->canonical_tex = light_tex;
+	source->surf = surf;
+	source->params.material = light_info->material;
+	source->params.meanEmiss = light_info->meanEmiss;
+	source->params.angleInner = light_info->angleInner;
+	source->params.angleOuter = light_info->angleOuter;
+	source->params.projector = light_info->projector > 0.5f;
+	VectorCopy (light_info->color.data, source->params.color);
+	VectorCopy (light_info->normal.data, source->normal);
+	source->reach = RT_ClusterLightReachStatic ();
+
+	vec3_t center;
+	RT_TexturedAreaLightCenter (light_info, center);
+
+	const uint32_t styleKey = RT_DtalStyleKey (light_tex, surf, center, source);
+
+	rt_dtal_input_t input;
+	memset (&input, 0, sizeof (input));
+
+	input.uid = light_info->uniqueID;
+	input.emissionKey = RT_DtalEmissionKey (light_info, light_tex, source->base_tex);
+	input.styleKey = styleKey;
+	input.sourceIndex = (uint64_t) rt_dtal_source_count;
+	VectorCopy (light_info->C.data, input.origin);
+	VectorCopy (light_info->A.data, input.axisU);
+	VectorCopy (light_info->B.data, input.axisV);
+	VectorCopy (light_info->normal.data, input.normal);
+	input.numVerts = light_info->numVerts;
+
+	for (int i = 0; i < light_info->numVerts; i++)
+	{
+		input.uv[i][0] = light_info->uvVerts[i].data[0];
+		input.uv[i][1] = light_info->uvVerts[i].data[1];
+	}
+
+	input.area = light_info->area;
+	input.referenceWeight = light_info->meanEmiss;
+	input.radiantPower = light_info->color.data[0] * 0.2125f + light_info->color.data[1] * 0.7154f +
+	                     light_info->color.data[2] * 0.0721f;
+
+	if (!RT_Dtal_BuilderAddInput (rt_dtal_builder, &input))
+	{
+		rt_dtal_group_budget_refused++;
+		return;
+	}
+
+	rt_dtal_source_count++;
+	rt_dtal_group_inputs++;
+}
+
+static void RT_DtalGroups_FillUpload (void)
+{
+	const rt_dtal_build_t *build = rt_dtal_build;
+
+	const int groupCount = build->groupCount;
+	const int memberCount = build->memberCount;
+
+	if (!RT_DtalReserve ((void **)&rt_dtal_parents, &rt_dtal_parent_capacity, groupCount,
+	                     (int)sizeof (QrDtalGroupUploadInfo)) ||
+	    !RT_DtalReserve ((void **)&rt_dtal_members, &rt_dtal_member_capacity, memberCount,
+	                     (int)sizeof (QrDtalMemberUpload)) ||
+	    !RT_DtalReserve ((void **)&rt_dtal_parent_source, &rt_dtal_parent_source_capacity, groupCount,
+	                     (int)sizeof (int32_t)))
+	{
+		rt_dtal_groups_failed = true;
+		return;
+	}
+
+	for (int gi = 0; gi < groupCount; gi++)
+	{
+		const rt_dtal_group_t *group = &build->groups[gi];
+		QrDtalGroupUploadInfo *parent = &rt_dtal_parents[gi];
+		const int              sourceIndex = (int) group->sourceIndex;
+
+		if (sourceIndex < 0 || sourceIndex >= rt_dtal_source_count)
+		{
+			rt_dtal_groups_failed = true;
+			return;
+		}
+
+		const rt_dtal_source_t *source = &rt_dtal_sources[sourceIndex];
+
+		memset (parent, 0, sizeof (*parent));
+
+		parent->uniqueID = group->uid;
+		VectorCopy (source->params.color, parent->color.data);
+		VectorCopy (group->center, parent->center.data);
+		VectorCopy (source->normal, parent->normal.data);
+		VectorCopy (group->mins, parent->boundsMin.data);
+		VectorCopy (group->maxs, parent->boundsMax.data);
+		parent->material = source->params.material;
+		parent->area = group->area;
+		parent->meanEmiss = source->params.meanEmiss;
+		parent->angleInner = source->params.angleInner;
+		parent->angleOuter = source->params.angleOuter;
+		parent->projector = source->params.projector ? 1.0f : 0.0f;
+		parent->reach = source->reach;
+		parent->estimatedPower = group->refPower;
+		parent->boundsRadius = group->boundsRadius;
+		parent->memberBase = (uint32_t) group->firstMember;
+		parent->memberCount = (uint32_t) group->memberCount;
+
+		rt_dtal_parent_source[gi] = sourceIndex;
+
+		for (int mi = 0; mi < group->memberCount; mi++)
+		{
+			const int               index = group->firstMember + mi;
+			const rt_dtal_member_t *member = &build->members[index];
+			QrDtalMemberUpload     *dst = &rt_dtal_members[index];
+
+			memset (dst, 0, sizeof (*dst));
+
+			for (int k = 0; k < 3; k++)
+			{
+				dst->A.data[k] = member->A[k];
+				dst->B.data[k] = member->B[k];
+				dst->C.data[k] = member->C[k];
+				dst->normal.data[k] = member->normal[k];
+			}
+
+			dst->area = member->area;
+			dst->numVerts = (float) member->numVerts;
+
+			for (int k = 0; k < MAX_TEXTURED_AREA_LIGHT_VERTS; k++)
+			{
+				dst->uv[k].data[0] = member->uv[k][0];
+				dst->uv[k].data[1] = member->uv[k][1];
+			}
+
+			dst->prob = build->memberProb[index];
+			dst->aliasProb = build->memberAliasProb[index];
+			dst->aliasIndex = build->memberAlias[index];
+		}
+	}
+}
+
+static void RT_DtalGroups_Rebuild (void)
+{
+	rt_dtal_groups_active = false;
+	rt_dtal_groups_failed = false;
+	rt_dtal_groups_rebuild_pending = false;
+
+	const float mode = CVAR_TO_FLOAT (rt_dtal_groups);
+
+	if (mode <= 0.0f || rt_dtal_builder == NULL)
+		return;
+
+	const float spacing = CVAR_TO_FLOAT (rt_dtal_spacing);
+
+	if (!isfinite (spacing) || spacing <= 0.0f)
+	{
+		rt_dtal_groups_failed = true;
+		Con_DWarning ("RT: rt_dtal_spacing %g is invalid; the DTAL groups are left off\n", spacing);
+		return;
+	}
+
+	if (!RT_Dtal_BuilderBuild (rt_dtal_builder, spacing, mode >= 2.0f))
+	{
+		rt_dtal_groups_failed = true;
+		Con_DWarning ("RT: DTAL grid grouping refused this map (inputs %i); the per-piece lights stay\n",
+		              rt_dtal_group_inputs);
+		return;
+	}
+
+	rt_dtal_build = RT_Dtal_BuilderResult (rt_dtal_builder);
+
+	if (rt_dtal_build == NULL || rt_dtal_build->memberCount > QR_DTAL_MAX_UPLOAD_MEMBERS)
+	{
+		const int members = rt_dtal_build != NULL ? rt_dtal_build->memberCount : 0;
+
+		rt_dtal_groups_failed = true;
+		rt_dtal_build = NULL;
+		Con_DWarning ("RT: DTAL groups exceed the renderer member budget (%i); the per-piece lights stay\n",
+		              members);
+		return;
+	}
+
+	RT_DtalGroups_FillUpload ();
+
+	if (rt_dtal_groups_failed)
+	{
+		rt_dtal_build = NULL;
+		return;
+	}
+
+	rt_dtal_groups_active = true;
+	rt_dtal_group_oversized = (int) rt_dtal_build->diag.oversizedPieces;
+}
+
+static void RT_DtalGroups_UpdateFrame (void)
+{
+	if (!rt_dtal_groups_active || rt_dtal_build == NULL)
+		return;
+
+	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		QrDtalGroupUploadInfo  *parent = &rt_dtal_parents[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+		rt_emissive_params_t params = source->params;
+		gltexture_t         *cur_tex = source->base_tex ? RT_AnimatedLightTex (source->base_tex) : NULL;
+
+		if (cur_tex != NULL && cur_tex != source->canonical_tex)
+		{
+			rt_emissive_params_t frame_params;
+
+			if (RT_EmissiveLightParamsForTex (cur_tex, &frame_params))
+			{
+				if ((frame_params.projector != params.projector) ||
+				    ((frame_params.material != QR_NO_MATERIAL) != (params.material != QR_NO_MATERIAL)))
+				{
+					rt_dtal_groups_rebuild_pending = true;
+				}
+				else
+				{
+					params.material = frame_params.material;
+					params.meanEmiss = frame_params.meanEmiss;
+					params.angleInner = frame_params.angleInner;
+					params.angleOuter = frame_params.angleOuter;
+					VectorCopy (frame_params.color, params.color);
+				}
+			}
+			else
+			{
+				VectorCopy (vec3_origin, params.color);
+			}
+		}
+
+		vec3_t color;
+		VectorCopy (params.color, color);
+		VectorScale (color, RT_DtalSourceStyleScale (source), color);
+		RT_ScaleEmissiveLightColor (color);
+
+		VectorCopy (color, parent->color.data);
+		parent->material = params.material;
+		parent->meanEmiss = params.meanEmiss;
+		parent->angleInner = params.angleInner;
+		parent->angleOuter = params.angleOuter;
+		parent->projector = params.projector ? 1.0f : 0.0f;
+		parent->estimatedPower = group->refPower;
+	}
+}
+
+static void RT_DtalGroups_Register (void)
+{
+	if (!rt_dtal_groups_active || rt_dtal_build == NULL)
+		return;
+
+	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+		RT_ClusterLightAdd (group->uid, group->center, source->reach);
+	}
 }
 
 static float RT_UvPolyArea (const QrFloat2D *p, int n)
@@ -3323,7 +3791,9 @@ void RT_RecollectWorldEmissiveLights (void)
 	rt_emis_skip_num = 0;
 	RT_EmisWatchFrameEnd ();
 
+	RT_DtalGroups_BeginCollect ();
 	RT_CollectWorldEmissiveLights ();
+	RT_DtalGroups_Rebuild ();
 }
 
 #define RT_BRUSHCLUSTER_CACHE_SIZE 256
@@ -3893,6 +4363,33 @@ void RT_UploadAllWorldModelLights (void)
 	    rt_wldlights_style_accepted_reach != CVAR_TO_FLOAT (rt_light_styles_reach))
 	{
 		RT_BuildWorldLightStyleAcceptance ();
+	}
+
+	if (rt_dtal_groups_active && rt_dtal_build != NULL)
+	{
+		RT_DtalGroups_UpdateFrame ();
+
+		if (rt_dtal_groups_rebuild_pending)
+		{
+			Atomic_StoreUInt32 (&rt_require_static_submit, true);
+		}
+
+		const QrDtalGroupUploadBatch batch = {
+			.groupCount = (uint32_t) rt_dtal_build->groupCount,
+			.pGroups = rt_dtal_parents,
+			.memberCount = (uint32_t) rt_dtal_build->memberCount,
+			.pMembers = rt_dtal_members,
+		};
+
+		if (batch.groupCount > 0 && batch.memberCount > 0)
+		{
+			QrResult r = qrUploadDtalGroups (vulkan_globals.instance, &batch);
+			QR_CHECK (r);
+		}
+
+		RT_DtalGroups_Register ();
+
+		return;
 	}
 
 	for (int i = 0; i < rt_wldlights_emissive_count; i++)
@@ -5348,6 +5845,17 @@ void RT_PrintEmissiveStats (void)
 	if (Atomic_LoadUInt32 (&rt_emis_stats.model_lights) || Atomic_LoadUInt32 (&rt_emis_stats.model_capped))
 		RT_LightReportPrint ("alias models: %i textured-area lights built from model geometry, %i models turned down by the frame budget\n",
 			(int) Atomic_LoadUInt32 (&rt_emis_stats.model_lights), (int) Atomic_LoadUInt32 (&rt_emis_stats.model_capped));
+
+	if (CVAR_TO_FLOAT (rt_dtal_groups) > 0.0f)
+	{
+		const int groups = rt_dtal_groups_active ? rt_dtal_build->groupCount : 0;
+		const int members = rt_dtal_groups_active ? rt_dtal_build->memberCount : 0;
+
+		RT_LightReportPrint ("dtal groups (rt_dtal_groups %g, spacing %g): %i admitted pieces -> %i parents, %i member patches, %i oversized pieces, %i refused; %s\n",
+			CVAR_TO_FLOAT (rt_dtal_groups), CVAR_TO_FLOAT (rt_dtal_spacing), rt_dtal_group_inputs, groups, members,
+			rt_dtal_group_oversized, rt_dtal_group_budget_refused,
+			rt_dtal_groups_active ? "active" : (rt_dtal_groups_failed ? "failed, per-piece lights stay" : "inactive"));
+	}
 
 	if (rt_emis_stats.static_dropped || rt_wldlights_emissive_count >= MAX_WORLDLIGHTS_COUNT)
 		RT_LightReportPrint ("WARNING: the static world-light list is full (%i/%i), %i dropped - "

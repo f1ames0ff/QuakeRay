@@ -610,6 +610,64 @@ QRAPI QrResult QRCONV qrUploadTexturedAreaLights(
     const QrTexturedAreaLightUploadInfo *pUploadInfos,
     uint32_t                            count);
 
+#define QR_DTAL_MAX_UPLOAD_MEMBERS 131072
+
+typedef struct QrDtalMemberUpload
+{
+    QrFloat3D       A;
+    float           area;
+
+    QrFloat3D       B;
+    float           numVerts;
+
+    QrFloat3D       C;
+    float           prob;
+
+    QrFloat3D       normal;
+    float           aliasProb;
+
+    QrFloat2D       uv[MAX_TEXTURED_AREA_LIGHT_VERTS];
+
+    uint32_t        aliasIndex;
+    uint32_t        reserved[3];
+} QrDtalMemberUpload;
+
+typedef struct QrDtalGroupUploadInfo
+{
+    uint64_t        uniqueID;
+    QrFloat3D       color;
+    QrFloat3D       center;
+    QrFloat3D       normal;
+    QrFloat3D       boundsMin;
+    QrFloat3D       boundsMax;
+
+    QrMaterial      material;
+
+    float           area;
+    float           meanEmiss;
+    float           angleInner;
+    float           angleOuter;
+    float           projector;
+    float           reach;
+    float           estimatedPower;
+    float           boundsRadius;
+
+    uint32_t        memberBase;
+    uint32_t        memberCount;
+} QrDtalGroupUploadInfo;
+
+typedef struct QrDtalGroupUploadBatch
+{
+    uint32_t                     groupCount;
+    const QrDtalGroupUploadInfo *pGroups;
+    uint32_t                     memberCount;
+    const QrDtalMemberUpload    *pMembers;
+} QrDtalGroupUploadBatch;
+
+QRAPI QrResult QRCONV qrUploadDtalGroups(
+    QrInstance                          qrInstance,
+    const QrDtalGroupUploadBatch        *pUploadInfo);
+
 #define QR_CLUSTER_LIGHT_NO_CLUSTER    (~0u)
 
 typedef struct QrClusterLightSource
