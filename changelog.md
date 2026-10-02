@@ -11,6 +11,7 @@
 
 ### Changed
 - **Flat clouds move at the same apparent speed as the volumetric layer** — both take the same projected-layer wind over the configured altitude and thickness, so switching between the flat and the volumetric quality preserves the speed the eye sees at the zenith and at grazing views alike.
+- **The cloud settings are on the Graphics page, and the Video page keeps only its own** — `Volumetric clouds` and `Clouds quality` stood on the Video page next to the god rays, and `Smoke type` stood on both pages. The two cloud rows are on the Graphics page now, where the `Volumetrics` row used to be; that row is gone, and `rt_volume_type` is set from the console or the light editor alone. The Video menu's own quality name and stepping (`VID_Menu_GetQualityName`, `VID_Menu_StepQuality`) are shared with the Graphics page, so both pages step the same ladders and spell the same words, and the Video page shows no cloud or smoke rows.
 
 ### Fixed
 - **Sky motion vectors carry the cloud wind and the eye's own shift** — the drift of the layer and the camera's movement since the frame before are projected in full perspective, and the sun disc keeps its own motion through the cubemap's alpha channel, so the upscaler and the denoiser reproject a moving layer with a vector of its own; a stationary layer reuses its result, while camera movement and settings changes refresh the composite.

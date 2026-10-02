@@ -95,6 +95,8 @@ void M_Mouse_UpdateCursor (int *cursor, int left, int right, int top, int item_h
 void	 M_Menu_Video_f (void);
 void	 M_Video_Draw (cb_context_t *cbx);
 void	 M_Video_Key (int key);
+const char *VID_Menu_GetQualityName (const cvar_t *var);
+void	 VID_Menu_StepQuality (cvar_t *var, int dir);
 qboolean M_HandleScrollBarKeys (const int key, int *cursor, int *first_drawn, const int num_total, const int max_on_screen);
 
 #define MENU_TOP		   40

@@ -194,7 +194,8 @@ extern cvar_t r_lerpturn;
 extern cvar_t vid_filter;
 extern cvar_t rt_bloom;
 extern cvar_t rt_sky_godrays;
-extern cvar_t rt_volume_type;
+extern cvar_t rt_sky_clouds;
+extern cvar_t rt_sky_clouds_quality;
 extern cvar_t scr_guifilter;
 extern cvar_t vid_palettize;
 extern cvar_t vid_anisotropic;
@@ -2174,7 +2175,8 @@ enum
 	GRAPHICS_OPT_FILTER,
 	GRAPHICS_OPT_MODELS,
 	GRAPHICS_OPT_PARTICLES,
-	GRAPHICS_OPT_VOLUMETRICS,
+	GRAPHICS_OPT_CLOUDS,
+	GRAPHICS_OPT_CLOUDS_QUALITY,
 	GRAPHICS_OPT_GODRAYS,
 	GRAPHICS_OPT_SMOKE,
 	GRAPHICS_OPTIONS_ITEMS
@@ -2216,8 +2218,11 @@ static void M_GraphicsOptions_Adjust (int dir)
 			value = (value == 0) ? 1 : ((value == 2) ? 0 : 2);
 		Cvar_SetValueQuick (&r_particles, (float)value);
 		break;
-	case GRAPHICS_OPT_VOLUMETRICS:
-		Cvar_SetValueQuick (&rt_volume_type, (float)((((int)rt_volume_type.value) + (dir > 0 ? 1 : 2)) % 3));
+	case GRAPHICS_OPT_CLOUDS:
+		Cvar_SetValueQuick (&rt_sky_clouds, !CVAR_TO_BOOL (rt_sky_clouds));
+		break;
+	case GRAPHICS_OPT_CLOUDS_QUALITY:
+		VID_Menu_StepQuality (&rt_sky_clouds_quality, dir);
 		break;
 	case GRAPHICS_OPT_GODRAYS:
 		Cvar_SetValueQuick (&rt_sky_godrays, !CVAR_TO_BOOL (rt_sky_godrays));
@@ -2293,10 +2298,12 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES,
 		((int)r_particles.value == 0) ? "none" : (((int)r_particles.value == 2) ? "classic" : "circle"));
 
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_VOLUMETRICS, "Volumetrics");
-	M_Print (
-		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_VOLUMETRICS,
-		((int)rt_volume_type.value == 0) ? "off" : (((int)rt_volume_type.value == 1) ? "simple" : "sky"));
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CLOUDS, "Volumetric clouds");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CLOUDS, CVAR_TO_BOOL (rt_sky_clouds));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CLOUDS_QUALITY, "Clouds quality");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CLOUDS_QUALITY,
+		VID_Menu_GetQualityName (&rt_sky_clouds_quality));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GODRAYS, "God rays");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GODRAYS, CVAR_TO_BOOL (rt_sky_godrays));

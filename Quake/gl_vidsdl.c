@@ -80,7 +80,7 @@ static void ClearAllStates (void);
 viddef_t        vid; // global video state
 modestate_t     modestate = MS_UNINIT;
 extern qboolean scr_initialized;
-extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate, r_smoke;
+extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate;
 extern cvar_t   scr_showfps, scr_fov;
 
 //====================================
@@ -3287,9 +3287,6 @@ enum
 	VID_OPT_GI_LEVEL,
 	VID_OPT_GODRAYS,
 	VID_OPT_GODRAYS_QUALITY,
-	VID_OPT_CLOUDS,
-	VID_OPT_CLOUDS_QUALITY,
-	VID_OPT_SMOKE_TYPE,
 	VID_OPT_REFLECT,
 	VID_OPT_DENOISER,
 	VID_OPT_TEXTURES,
@@ -3593,7 +3590,7 @@ VID_Menu_GetQualityName -- the levels rt_sky_godrays_quality and
 rt_sky_clouds_quality are on, as a word
 ================
 */
-static const char *VID_Menu_GetQualityName (const cvar_t *var)
+const char *VID_Menu_GetQualityName (const cvar_t *var)
 {
 	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
 	switch (CLAMP (0, (int)var->value, maximum))
@@ -3611,7 +3608,7 @@ static const char *VID_Menu_GetQualityName (const cvar_t *var)
 VID_Menu_StepQuality -- cycle one of the quality ladder cvars
 ================
 */
-static void VID_Menu_StepQuality (cvar_t *var, int dir)
+void VID_Menu_StepQuality (cvar_t *var, int dir)
 {
 	const int maximum = var == &rt_sky_clouds_quality ? QR_SKY_CLOUDS_MAX_QUALITY : 4;
 	Cvar_SetValueQuick (var, (float)CLAMP (0, (int)var->value + dir, maximum));
@@ -3735,15 +3732,6 @@ static void VID_MenuKey (int key)
 		case VID_OPT_GODRAYS_QUALITY:
 			VID_Menu_StepQuality (&rt_sky_godrays_quality, -1);
 			break;
-		case VID_OPT_CLOUDS:
-			Cvar_SetValueQuick (&rt_sky_clouds, !CVAR_TO_BOOL (rt_sky_clouds));
-			break;
-		case VID_OPT_CLOUDS_QUALITY:
-			VID_Menu_StepQuality (&rt_sky_clouds_quality, -1);
-			break;
-		case VID_OPT_SMOKE_TYPE:
-			Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
-			break;
 		case VID_OPT_REFLECT:
 			VID_Menu_StepReflDepth (-1.0f);
 			break;
@@ -3812,16 +3800,6 @@ static void VID_MenuKey (int key)
 			break;
 		case VID_OPT_GODRAYS_QUALITY:
 			VID_Menu_StepQuality (&rt_sky_godrays_quality, 1);
-			break;
-		case VID_OPT_CLOUDS:
-			Cvar_SetValueQuick (&rt_sky_clouds, !CVAR_TO_BOOL (rt_sky_clouds));
-			break;
-		case VID_OPT_CLOUDS_QUALITY:
-			VID_Menu_StepQuality (&rt_sky_clouds_quality, 1);
-			break;
-		case VID_OPT_SMOKE_TYPE:
-			Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
-			break;
 			break;
 		case VID_OPT_DENOISER:
 			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
@@ -3986,18 +3964,6 @@ static void VID_MenuDraw (cb_context_t *cbx)
 		case VID_OPT_GODRAYS_QUALITY:
 			M_Print (cbx, 16, y, "  God rays quality");
 			M_Print (cbx, 184, y, VID_Menu_GetQualityName (&rt_sky_godrays_quality));
-			break;
-		case VID_OPT_CLOUDS:
-			M_Print (cbx, 16, y, " Volumetric clouds");
-			M_DrawCheckbox (cbx, 184, y, CVAR_TO_BOOL (rt_sky_clouds));
-			break;
-		case VID_OPT_CLOUDS_QUALITY:
-			M_Print (cbx, 16, y, "  Clouds quality");
-			M_Print (cbx, 184, y, VID_Menu_GetQualityName (&rt_sky_clouds_quality));
-			break;
-		case VID_OPT_SMOKE_TYPE:
-			M_Print (cbx, 16, y, "      Smoke type");
-			M_Print (cbx, 184, y, CVAR_TO_BOOL (r_smoke) ? "shader" : "classic");
 			break;
 		case VID_OPT_REFLECT:
 			{
