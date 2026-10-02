@@ -9,7 +9,7 @@
 | Selector commit | `b0692b42` (capacity, candidate partition, alias/marginal tables, tests) |
 | GPU commit | `1d8c53e3` (tail buffers, publication, shader branch, RHI) |
 | Diagnostics commit | `34f4d3c4` (overflow counters, parallel registration) |
-| Report commit | to be added with this document |
+| Report commit | `7208687f` (this document) |
 
 All commits are on `feature/cluster-lighting-overflow`; nothing was merged, force-pushed or
 published.
