@@ -199,10 +199,18 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float cosAng = cos(sunAngRad);
     float disc = smoothstep(cosAng, 1.0, dot(dir, sunDir)) * sunAmount;
 
-    float layerTransmittance = (flatClouds > 0.5)
-        ? flatTransmittance
-        : (cloudOpacity > 0.0 ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0) : 1.0);
-    float discTransmittance = lerp(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
+    float discTransmittance;
+    if (flatClouds > 0.5)
+    {
+        discTransmittance = flatTransmittance;
+    }
+    else
+    {
+        float layerTransmittance = cloudOpacity > 0.0
+            ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
+            : 1.0;
+        discTransmittance = lerp(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
+    }
 
     float discVisible = clamp(disc * discTransmittance, 0.0, 1.0);
     float cloudShare = 1.0 - smoothstep(0.02, 0.3, discVisible);

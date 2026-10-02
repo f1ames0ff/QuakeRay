@@ -522,10 +522,16 @@ int main(int argc, char **argv)
                 return energy;
             };
             const double sunOnly = discEnergy(false);
+            sunParams.skyParams[1] = 0.5f;
+            const double sunThroughHalf = discEnergy(true);
+            sunParams.skyParams[1] = 1.0f;
             const double sunUnderFlat = discEnergy(true);
             Require(sunOnly > 1.0 && sunUnderFlat < sunOnly * 0.02,
                     "flat clouds do not hide the sun's disc they cover");
-            std::cout << "Flat-mask sun hiding: " << sunUnderFlat << " of " << sunOnly << '\n';
+            Require(sunThroughHalf > sunOnly * 0.3,
+                    "a half-transparent flat cloud must leave the sun's disc a glow");
+            std::cout << "Flat-mask sun hiding: " << sunUnderFlat << " of " << sunOnly
+                      << ", half-opacity " << sunThroughHalf << '\n';
 
             p.skyParams[1] = layer.skyParams[1] = 0;
             Require(!render(2, 1), "zero opacity recorded a volume march");

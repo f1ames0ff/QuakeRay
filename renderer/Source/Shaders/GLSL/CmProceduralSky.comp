@@ -227,15 +227,26 @@ void main()
     // smoothstep() is evaluated for the whole cubemap before the amount scales it
     float disc = smoothstep(cosAng, 1.0, dot(dir, sunDir)) * sunAmount;
 
-    // The transmittance the disc is hidden by: the flat mask's own where the lowest
-    // level draws, or the layer's, taken back out of the mix the cloud pass left in
-    // cloud.a (the layer's transmittance mixed with the host's opacity), so that
-    // the disc can be given it raised to a power.
-    float layerTransmittance = (flatClouds > 0.5)
-        ? flatTransmittance
-        : (cloudOpacity > 0.0 ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
-                              : 1.0);
-    float discTransmittance = mix(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
+    // The transmittance the disc is hidden by. The flat mask gives its own: a cloud
+    // that is only a colour mixed into the sky has no volume to scatter the disc's
+    // light back as a glow, so the disc is what stands there for that glow and is
+    // hidden no harder than the sky is -- a mask that lets nothing through hides it,
+    // a thin one leaves it shining through. The layer's transmittance is taken back
+    // out of the mix the cloud pass left in cloud.a (the layer's transmittance mixed
+    // with the host's opacity) and raised to a power, because there the cloud's own
+    // scattered light is the glow the eye finds the disc by.
+    float discTransmittance;
+    if (flatClouds > 0.5)
+    {
+        discTransmittance = flatTransmittance;
+    }
+    else
+    {
+        float layerTransmittance = cloudOpacity > 0.0
+            ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
+            : 1.0;
+        discTransmittance = mix(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
+    }
 
     // The share of the layer's own motion a direction carries, which is the alpha of
     // the cubemap this pass writes and what the frame's motion vectors read
