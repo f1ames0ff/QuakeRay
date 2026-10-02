@@ -53,9 +53,11 @@ static const float3 FLARE_GHOST_TINTS[8] =
 };
 
 static const float FLARE_DISTORTION = 0.2;
-static const float FLARE_HALO_RADIUS = 0.4;
+static const float FLARE_HALO_SCALE = -1.4;
+static const float FLARE_HALO_SPREAD = 1.15;
 static const float FLARE_HALO_CHROMA = 0.03;
-static const float FLARE_HALO_INTENSITY = 1.0;
+static const float FLARE_HALO_INTENSITY = 2.0;
+static const float FLARE_BRIGHTNESS_MAX = 4.0;
 static const float FLARE_CLAMP_MAX = 300.0;
 static const float FLARE_GAIN = 0.1;
 static const float FLARE_DIST_REF = 512.0;
@@ -106,7 +108,9 @@ float3 flareDownsampleBright(float2 uv, float2 sourceTexelSize, float exposure)
     float3 result = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / (w0 + w1 + w2 + w3 + w4);
 
     const float luminance = getLuminance(result);
-    result *= max(luminance - push.threshold, 0.0) / max(luminance, POST_EFFECTS_EPSILON);
+    const float above = max(luminance - push.threshold, 0.0);
+    result *= above / max(luminance, POST_EFFECTS_EPSILON);
+    result *= clamp(above / max(push.threshold, POST_EFFECTS_EPSILON), 0.0, FLARE_BRIGHTNESS_MAX);
 
     const float depth = flareDepth.SampleLevel(flareSource_Sampler, uv, 0).r;
     if (depth < FLARE_SKY_DEPTH)
@@ -164,16 +168,10 @@ float3 flareGhostLayer(float2 uv, float aspect, float scale, float chroma)
 
 float3 flareHaloLayer(float2 uv, float aspect)
 {
-    const float2 position = flareDistort(uv, aspect) - 0.5;
-    const float2 aspectPosition = float2(position.x * aspect, position.y);
-    const float2 direction = -aspectPosition * rsqrt(max(dot(aspectPosition, aspectPosition), 1e-8));
+    const float3 inner = flareGhostLayer(uv, aspect, FLARE_HALO_SCALE, FLARE_HALO_CHROMA);
+    const float3 outer = flareGhostLayer(uv, aspect, FLARE_HALO_SCALE * FLARE_HALO_SPREAD, FLARE_HALO_CHROMA);
 
-    float3 color;
-    color.r = flareSampleBorder(flareToUV(aspectPosition + direction * FLARE_HALO_RADIUS * (1.0 - FLARE_HALO_CHROMA), aspect)).r;
-    color.g = flareSampleBorder(flareToUV(aspectPosition + direction * FLARE_HALO_RADIUS, aspect)).g;
-    color.b = flareSampleBorder(flareToUV(aspectPosition + direction * FLARE_HALO_RADIUS * (1.0 + FLARE_HALO_CHROMA), aspect)).b;
-
-    return color * flareSourceMask(aspectPosition + direction * FLARE_HALO_RADIUS, 5.0) * FLARE_HALO_INTENSITY;
+    return max((float3)0.0, inner - outer) * FLARE_HALO_INTENSITY;
 }
 
 float3 flareBokehBlur(float2 uv, float2 sourceTexelSize)
