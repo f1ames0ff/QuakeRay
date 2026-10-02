@@ -87,7 +87,6 @@
 #include "RaygenCommon.hlsli"
 #include "Q2Asvgf.hlsli"
 #include "Q2LightLists.hlsli"
-#include "Water.hlsli"
 
 #define Q2_RNG_INDIR_CELL_SELECT 220
 #define Q2_RNG_INDIR_LIGHT_POINT 223
@@ -185,11 +184,9 @@ float q2SunBounceAttenuation(float hitDistance, float sunBounceRange)
 #define SECOND_BOUNCE_MIP_BIAS 32.0
 
 Surface traceBounce(const float3 originPosition, float originRoughness, uint originInstCustomIndex,
-                    const float3 bounceDir, float bounceMipBias, uint extraMask, out uint instanceFlags)
+                    const float3 bounceDir, float bounceMipBias)
 {
-    instanceFlags = 0u;
-
-    const ShPayload p = traceIndirectRay( originInstCustomIndex, originPosition, bounceDir, extraMask );
+    const ShPayload p = traceIndirectRay( originInstCustomIndex, originPosition, bounceDir );
     rayStatsAdd( RAY_STATS_CATEGORY_INDIRECT, 1 );
 
     if ( !doesPayloadContainHitInfo( p ) )
@@ -199,20 +196,17 @@ Surface traceBounce(const float3 originPosition, float originRoughness, uint ori
         return s;
     }
 
-    const ShHitInfo h = getHitInfoBounce( p, originPosition, originRoughness, bounceMipBias );
-    instanceFlags = h.geometryInstanceFlags;
-
-    return hitInfoToSurface_Indirect( h, bounceDir );
+    return hitInfoToSurface_Indirect(
+        getHitInfoBounce( p, originPosition, originRoughness, bounceMipBias ),
+        bounceDir );
 }
 
 float3 processSecondDiffuseBounce(const uint seed, const Surface surf, const float3 bounceDir,
                                   float oneOverPdf)
 {
-    uint secondBounceFlags;
     const Surface hitSurf = traceBounce(
         surf.position + surf.normalGeom * 0.01,
-        surf.roughness, surf.instCustomIndex, bounceDir, SECOND_BOUNCE_MIP_BIAS, 0u,
-        secondBounceFlags );
+        surf.roughness, surf.instCustomIndex, bounceDir, SECOND_BOUNCE_MIP_BIAS );
 
     if ( hitSurf.isSky )
     {
@@ -389,31 +383,14 @@ void main()
         return;
     }
 
-    const uint receiverMedia = (uint)round(framebufMetallicRoughness_Sampled.Load(int3(pix, 0)).z * 3.0);
-    const bool underwaterReceiver = receiverMedia == MEDIA_TYPE_WATER || receiverMedia == MEDIA_TYPE_ACID;
-    const uint waterBounceMask = underwaterReceiver ? 0u : INSTANCE_MASK_REFRACT;
-
     float oneOverSourcePdf;
     const float3 bounceDir = getSpecularBounce(
         seed, 1, surf.normal, surf.roughness, surf.specularColor, surf.toViewerDir,
         oneOverSourcePdf );
 
-    uint firstBounceFlags;
-    Surface hitSurf = traceBounce(
+    const Surface hitSurf = traceBounce(
         surf.position + surf.normalGeom * 0.01,
-        surf.roughness, surf.instCustomIndex, bounceDir, FIRST_BOUNCE_MIP_BIAS, waterBounceMask,
-        firstBounceFlags );
-
-    if ( !hitSurf.isSky && ( firstBounceFlags & GEOM_INST_FLAG_MEDIA_TYPE_WATER ) != 0 )
-    {
-        float3 waterNormal = hitSurf.normalGeom;
-        if ( dot( waterNormal, bounceDir ) > 0.0 )
-        {
-            waterNormal = -waterNormal;
-        }
-
-        hitSurf.normal = getWaterNormalForFootprint( bounceDir, waterNormal, hitSurf.position, 1.0 );
-    }
+        surf.roughness, surf.instCustomIndex, bounceDir, FIRST_BOUNCE_MIP_BIAS );
 
     float3 hitPos;
     float3 hitRadiance;

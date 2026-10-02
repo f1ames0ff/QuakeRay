@@ -137,9 +137,9 @@ uint getShadowCullMask(uint surfInstCustomIndex)
     }
 }
 
-uint getIndirectIlluminationCullMask(uint surfInstCustomIndex, uint extraMask)
+uint getIndirectIlluminationCullMask(uint surfInstCustomIndex)
 {
-    const uint world = globalUniform.rayCullMaskWorld | extraMask;
+    const uint world = globalUniform.rayCullMaskWorld;
 
     if ((surfInstCustomIndex & INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON) != 0)
     {
@@ -239,12 +239,12 @@ ShPayload traceReflectionRefractionRay(float3 origin, float3 direction, uint sur
     return g_payload;
 }
 
-ShPayload traceIndirectRay(uint surfInstCustomIndex, float3 surfPosition, float3 bounceDirection, uint extraMask)
+ShPayload traceIndirectRay(uint surfInstCustomIndex, float3 surfPosition, float3 bounceDirection)
 {
     ShPayload g_payload;
     resetPayload(g_payload);
 
-    uint cullMask = getIndirectIlluminationCullMask(surfInstCustomIndex, extraMask);
+    uint cullMask = getIndirectIlluminationCullMask(surfInstCustomIndex);
 
     RayDesc rayDesc;
     rayDesc.Origin = surfPosition;
