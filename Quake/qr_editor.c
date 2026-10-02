@@ -5406,11 +5406,12 @@ static void QRE_ClosePanel (void)
 static void QRE_Apply (void)
 {
 	const qboolean globals = (qre.mode == QRE_MODE_LIGHT) ? QRE_GlobalsTouched () : QRE_WaterTouched ();
+	const qboolean touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0);
 	const qboolean session = QRE_WriteSession ();
 
 	if (!session && !globals)
 	{
-		QRE_Notify ("nothing to save yet");
+		QRE_Notify (touched ? "the session could not be written" : "nothing to save yet");
 		return;
 	}
 
@@ -5759,6 +5760,32 @@ static void QRE_SessionWriteEntry (FILE *f, const char *name)
 	}
 }
 
+// Creates every missing component of a directory path, without ending the game
+// when one of them cannot be made: a save that cannot reach its directory reports
+// the path and keeps the session. Sys_mkdir stays fatal for the directories the
+// game cannot run without; a mod's own folder an editor save writes into is not
+// one of them.
+static qboolean QRE_CreateDir (const char *path)
+{
+	char  buf[MAX_OSPATH];
+	char *ofs;
+
+	q_strlcpy (buf, path, sizeof (buf));
+
+	for (ofs = buf + 1; *ofs; ofs++)
+	{
+		if (*ofs == '/' || *ofs == '\\')
+		{
+			*ofs = '\0';
+			if (!Sys_TryMkdir (buf))
+				return false;
+			*ofs = '/';
+		}
+	}
+
+	return Sys_TryMkdir (buf);
+}
+
 // Writes materials.editor.yaml / lights.editor.yaml: the target file's own text
 // with the blocks of the touched entries replaced, so comments, formatting and
 // keys the loader does not understand survive a save. Entries the target does not
@@ -5778,6 +5805,12 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 		return false;
 
 	memset (written, 0, sizeof (written));
+
+	if (!QRE_CreateDir (com_gamedir))
+	{
+		QRE_Notify ("cannot create %s", com_gamedir);
+		return false;
+	}
 
 	in = fopen (qre.target_file, "r");
 	out = fopen (qre.editor_file, "w");
@@ -5949,7 +5982,11 @@ static qboolean QRE_WriteCustomSession (void)
 		char dir[MAX_OSPATH];
 
 		q_snprintf (dir, sizeof (dir), "%s/qray", com_gamedir);
-		Sys_mkdir (dir);
+		if (!QRE_CreateDir (dir))
+		{
+			QRE_Notify ("cannot create %s", dir);
+			return false;
+		}
 	}
 
 	in = fopen (qre.custom_target_file, "r");
@@ -6223,7 +6260,7 @@ static void QRE_SessionSave (void)
 
 	if (touched && !QRE_WriteSession () && !globals)
 	{
-		QRE_Notify ("nothing to save");
+		QRE_Notify ("the session could not be written");
 		return;
 	}
 
