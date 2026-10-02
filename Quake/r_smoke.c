@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License

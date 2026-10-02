@@ -1,7 +1,7 @@
 /*
  * snd_openal.h -- OpenAL Soft output backend
  *
- * Copyright (C) 2026 QuakeRay contributors
+ * Copyright (C) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
