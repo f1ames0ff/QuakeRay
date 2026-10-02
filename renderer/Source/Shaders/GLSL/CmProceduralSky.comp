@@ -175,8 +175,11 @@ void main()
 
     // Transmittance of the clouds (a) and the light that scattered in them (rgb).
     // The cloud cubemap is only written while the clouds are on, and both the used
-    // cloud colour and the host's opacity are applied inside the cloud pass.
+    // cloud colour and the host's opacity are applied inside the cloud pass. The
+    // flat mask leaves no such pair behind -- it is mixed into the sky colour --
+    // so what it lets through is kept next to it, for the sun's disc below.
     vec4 cloud = vec4(0.0, 0.0, 0.0, 1.0);
+    float flatTransmittance = 1.0;
     if (cloudsOn && flatClouds <= 0.5)
     {
         // The layer is read through a small Gaussian. A texel of the map holds the march
@@ -208,24 +211,30 @@ void main()
     // density setting sharpens the contour of a cloud rather than thinning it, as
     // it did then: a cloud of full opacity keeps the colour it is set to, and only
     // the band its noise crosses in changes -- a hard edge at 1, a soft one at 0.
+    // What the mask covers of the sky it covers of the sun as well: the amount it
+    // is mixed by is what it hides, and that transmittance goes to the disc below.
     if (cloudsOn && flatClouds > 0.5)
     {
         float n = cloudMask(dir, params.cloudColor.w, params.cloudParams.z);
         float edge = mix(0.7, 0.05, clamp(params.cloudParams.y, 0.0, 1.0));
         float mask = smoothstep(params.cloudParams.x, params.cloudParams.x + edge, n);
-        skyColor = mix(skyColor, params.cloudColor.xyz, clamp(mask * cloudOpacity, 0.0, 1.0));
+        float amount = clamp(mask * cloudOpacity, 0.0, 1.0);
+        skyColor = mix(skyColor, params.cloudColor.xyz, amount);
+        flatTransmittance = 1.0 - amount;
     }
 
     float cosAng = cos(sunAngRad);
     // smoothstep() is evaluated for the whole cubemap before the amount scales it
     float disc = smoothstep(cosAng, 1.0, dot(dir, sunDir)) * sunAmount;
 
-    // The transmittance of the layer itself, taken back out of the mix the cloud
-    // pass left in cloud.a (the layer's transmittance mixed with the host's
-    // opacity), so that the disc can be given it raised to a power.
-    float layerTransmittance = cloudOpacity > 0.0
-        ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
-        : 1.0;
+    // The transmittance the disc is hidden by: the flat mask's own where the lowest
+    // level draws, or the layer's, taken back out of the mix the cloud pass left in
+    // cloud.a (the layer's transmittance mixed with the host's opacity), so that
+    // the disc can be given it raised to a power.
+    float layerTransmittance = (flatClouds > 0.5)
+        ? flatTransmittance
+        : (cloudOpacity > 0.0 ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
+                              : 1.0);
     float discTransmittance = mix(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
 
     // The share of the layer's own motion a direction carries, which is the alpha of

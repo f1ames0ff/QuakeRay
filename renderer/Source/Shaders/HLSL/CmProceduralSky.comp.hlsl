@@ -167,6 +167,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     bool cloudsOn = params.cloudParams.w > 0.5 && cloudOpacity > 0.0;
 
     float4 cloud = float4(0.0, 0.0, 0.0, 1.0);
+    float flatTransmittance = 1.0;
     if (cloudsOn && flatClouds <= 0.5)
     {
         uint layerWidth, layerHeight, layerMipLevels;
@@ -190,13 +191,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         float n = cloudMask(dir, params.cloudColor.w, params.cloudParams.z);
         float edge = lerp(0.7, 0.05, clamp(params.cloudParams.y, 0.0, 1.0));
         float mask = smoothstep(params.cloudParams.x, params.cloudParams.x + edge, n);
-        skyColor = lerp(skyColor, params.cloudColor.xyz, clamp(mask * cloudOpacity, 0.0, 1.0));
+        float amount = clamp(mask * cloudOpacity, 0.0, 1.0);
+        skyColor = lerp(skyColor, params.cloudColor.xyz, amount);
+        flatTransmittance = 1.0 - amount;
     }
 
     float cosAng = cos(sunAngRad);
     float disc = smoothstep(cosAng, 1.0, dot(dir, sunDir)) * sunAmount;
 
-    float layerTransmittance = cloudOpacity > 0.0 ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0) : 1.0;
+    float layerTransmittance = (flatClouds > 0.5)
+        ? flatTransmittance
+        : (cloudOpacity > 0.0 ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0) : 1.0);
     float discTransmittance = lerp(1.0, pow(layerTransmittance, SUN_DISC_CLOUD_HIDE), cloudOpacity);
 
     float discVisible = clamp(disc * discTransmittance, 0.0, 1.0);

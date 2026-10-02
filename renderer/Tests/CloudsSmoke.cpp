@@ -490,6 +490,43 @@ int main(int argc, char **argv)
             Require(totalError / samples < 0.01 && maxError < 0.05f,
                     "visible flat-cloud animation does not follow the volumetric wind displacement");
             std::cout << "Flat-mask GPU advection: mean error=" << totalError / samples << "; max=" << maxError << '\n';
+
+            // The flat mask must hide the sun's disc it covers, not only the sky
+            // behind it. With the sky and the cloud black the disc is all that
+            // lights the map, so the energy of the pair (sun on, sun off) is what
+            // the mask lets through of it.
+            auto sunParams = flatParams;
+            sunParams.skyTint[0] = sunParams.skyTint[1] = sunParams.skyTint[2] = 0;
+            sunParams.cloudColor[0] = sunParams.cloudColor[1] = sunParams.cloudColor[2] = 0;
+            sunParams.cloudColor[3] = 0;
+            sunParams.cloudParams[0] = 0.0f;
+            sunParams.cloudParams[1] = 1.0f;
+            sunParams.cloudParams[2] = 0;
+            auto discEnergy = [&](bool cloudsOn)
+            {
+                sunParams.cloudParams[3] = cloudsOn ? 1 : 0;
+                sunParams.sunDirection[3] = 1;
+                frames.BeginSlot(0);
+                sky.Render(frames.GetCommandList(0), 0, sunParams);
+                frames.EndSlot(0);
+                const auto lit = ReadCube(device, sky.GetCubemapTexture());
+                sunParams.sunDirection[3] = 0;
+                frames.BeginSlot(1);
+                sky.Render(frames.GetCommandList(1), 1, sunParams);
+                frames.EndSlot(1);
+                const auto dark = ReadCube(device, sky.GetCubemapTexture());
+                double energy = 0;
+                for (size_t i = 0; i < lit.size(); i += 4)
+                    energy += std::abs(lit[i] - dark[i]) + std::abs(lit[i + 1] - dark[i + 1]) +
+                              std::abs(lit[i + 2] - dark[i + 2]);
+                return energy;
+            };
+            const double sunOnly = discEnergy(false);
+            const double sunUnderFlat = discEnergy(true);
+            Require(sunOnly > 1.0 && sunUnderFlat < sunOnly * 0.02,
+                    "flat clouds do not hide the sun's disc they cover");
+            std::cout << "Flat-mask sun hiding: " << sunUnderFlat << " of " << sunOnly << '\n';
+
             p.skyParams[1] = layer.skyParams[1] = 0;
             Require(!render(2, 1), "zero opacity recorded a volume march");
             CheckClear(ReadCube(device, sky.GetEnvironmentTexture(), 0, 16), p.skyTint);
