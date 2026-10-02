@@ -272,7 +272,7 @@ add_subdirectory(renderer)
 message(STATUS "qray renderer: vendored (static, built from renderer/)")
 
 # ============================================================================
-# libyaml — vendored YAML parser (used by rt_material.c for materials.yaml)
+# libyaml — vendored YAML parser (used by rt_material.c for qray.materials.yaml)
 # ============================================================================
 # Parser-only subset (dumper/emitter/writer are emit-only and excluded).
 # Built as a separate static lib so the strict /W4 /WX C flags don't apply to
@@ -380,6 +380,7 @@ set(CORE_SOURCES
     Quake/rt_lights.c
     Quake/rt_pkz.c
     Quake/qr_editor.c
+    Quake/qr_resources.c
     Quake/qr_gui.cpp
     Quake/sbar.c
     Quake/snd_codec.c
@@ -568,20 +569,6 @@ if(QUAKERAY_PLATFORM_WINDOWS)
 else()
     target_link_libraries(quakeray PRIVATE SDL2::SDL2)
 endif()
-
-# ============================================================================
-# Runtime assets
-# ============================================================================
-add_custom_command(TARGET quakeray POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>/gfx"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/third_party/imgui/fonts/Roboto-Regular.ttf"
-        "$<TARGET_FILE_DIR:quakeray>/gfx/Roboto-Regular.ttf"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/renderer/gfx"
-        "$<TARGET_FILE_DIR:quakeray>/gfx"
-    COMMENT "Copying the runtime assets"
-)
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE ws2_32 winmm)

@@ -1,8 +1,9 @@
 // Q2RTX-style material definitions (phase 4.5).
 // Ported from Q2RTX material.c and adapted to the vkquake host: materials are
-// loaded from materials/*.yaml files (global + <map>.yaml) found either on disk
-// or inside a mounted .pkz archive, and are used to synthesize the qray
-// RGBA8 material textures (albedo-alpha, roughness-metallic-emissive, normal).
+// loaded from a gamedir's qray.materials.yaml (or the older materials.yaml and
+// the materials/*.yaml files, global + <map>.yaml) found either on disk or
+// inside a mounted .pkz archive, and are used to synthesize the qray RGBA8
+// material textures (albedo-alpha, roughness-metallic-emissive, normal).
 
 #ifndef RT_MATERIAL_H
 #define RT_MATERIAL_H
@@ -44,7 +45,7 @@ enum {
 
 typedef struct rt_material_s {
     char name[MAX_QPATH];
-    /* The materials/*.yaml file this material was loaded from ("materials/materials.yaml",
+    /* The yaml file this material was loaded from ("qray.materials.yaml",
        "materials/<map>.yaml", ...). Empty for materials created by the editor at runtime. */
     char source_file[MAX_QPATH];
     char filename_base[MAX_QPATH];
@@ -96,7 +97,7 @@ rt_material_t *RT_MAT_Find(const char *name);
 /* Editor support: the live material lists and their provenance. */
 
 enum {
-    RT_MAT_LIST_GLOBAL = 0, /* every materials/*.yaml file (dir scan + pkz) */
+    RT_MAT_LIST_GLOBAL = 0, /* every materials yaml of the gamedirs (scan + pkz) */
     RT_MAT_LIST_MAP    = 1, /* materials/<map>.yaml for the current map only */
 };
 

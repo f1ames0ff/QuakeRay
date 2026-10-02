@@ -120,36 +120,77 @@ $srcRoot = Join-Path $PSScriptRoot "renderer\Source"
 $gameDir = Join-Path $BuildDir "id1"
 if (-not (Test-Path $gameDir)) { New-Item -ItemType Directory -Path $gameDir -Force | Out-Null }
 
-$matYaml = Join-Path $srcRoot "materials.yaml"
-if (Test-Path $matYaml) {
-    $matDir = Join-Path $gameDir "materials"
-    if (-not (Test-Path $matDir)) { New-Item -ItemType Directory -Path $matDir -Force | Out-Null }
-    Copy-Item $matYaml (Join-Path $matDir "materials.yaml") -Force
+# The engine assets live in one qray.pkz; loose copies left by earlier builds
+# would shadow it and are removed first.
+foreach ($stale in @("materials", "textures", "progs", "mdl_skins", "shaders", "gfx",
+                     "BlueNoise_LDR_RGBA_128.ktx2", "WaterNormal_n.ktx2",
+                     "BlueNoise_LDR_RGBA_128.png", "WaterNormal_n.png")) {
+    $stalePath = Join-Path $gameDir $stale
+    if (Test-Path $stalePath) { Remove-Item $stalePath -Recurse -Force }
 }
 
-foreach ($sub in @("textures", "progs", "mdl_skins")) {
-    $src = Join-Path $srcRoot $sub
-    if (Test-Path $src) {
-        $dst = Join-Path $gameDir $sub
-        if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
-        Copy-Item -Path (Join-Path $src "*") -Destination $dst -Recurse -Force
-    }
-}
+$staleGfx = Join-Path $BuildDir "gfx"
+if (Test-Path $staleGfx) { Remove-Item $staleGfx -Recurse -Force }
 
-foreach ($f in @("BlueNoise_LDR_RGBA_128.ktx2", "WaterNormal_n.ktx2")) {
-    $src = Join-Path $srcRoot $f
-    if (Test-Path $src) {
-        Copy-Item $src (Join-Path $gameDir $f) -Force
-    }
-}
+# The material definitions are the one engine file the editor rewrites, so they
+# stay loose as the gamedir's qray.materials.yaml.
+Copy-Item (Join-Path $srcRoot "materials.yaml") (Join-Path $gameDir "qray.materials.yaml") -Force
+
+$stage = Join-Path $BuildDir "qray_stage"
+if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+$stage = (New-Item -ItemType Directory -Path $stage -Force).FullName
 
 # All of the shaders, every time: the generator decides what to build by what it
 # remembers changing, and it has let a change in a header the shaders include go by
 # without rebuilding them -- stale .spv files in the game folder with a build that
 # reported success, more than once. A minute of shader work per build is what that
 # costs, and it is worth it.
-& (Join-Path $PSScriptRoot "build_shaders.ps1") -Rebuild -DestDir (Join-Path $gameDir "shaders")
+& (Join-Path $PSScriptRoot "build_shaders.ps1") -Rebuild -DestDir (Join-Path $stage "shaders")
 if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
+
+foreach ($sub in @("textures", "progs", "mdl_skins")) {
+    $src = Join-Path $srcRoot $sub
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $stage $sub) -Recurse -Force
+    }
+}
+
+foreach ($f in @("BlueNoise_LDR_RGBA_128.png", "WaterNormal_n.png")) {
+    $src = Join-Path $srcRoot $f
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $stage $f) -Force
+    }
+}
+
+$stageGfx = Join-Path $stage "gfx"
+New-Item -ItemType Directory -Path $stageGfx -Force | Out-Null
+Copy-Item -Path (Join-Path $PSScriptRoot "renderer\gfx\*") -Destination $stageGfx -Recurse -Force
+Copy-Item (Join-Path $PSScriptRoot "third_party\imgui\fonts\Roboto-Regular.ttf") (Join-Path $stageGfx "Roboto-Regular.ttf") -Force
+
+$pkzPath = Join-Path $gameDir "qray.pkz"
+if (Test-Path $pkzPath) { Remove-Item $pkzPath -Force }
+
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$zipFs = [System.IO.Compression.ZipFile]::Open($pkzPath, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+    foreach ($file in (Get-ChildItem $stage -Recurse -File)) {
+        $rel = $file.FullName.Substring($stage.Length + 1).Replace('\', '/')
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zipFs,
+            $file.FullName,
+            $rel,
+            [System.IO.Compression.CompressionLevel]::Optimal
+        ) | Out-Null
+    }
+}
+finally {
+    $zipFs.Dispose()
+}
+
+Remove-Item $stage -Recurse -Force
+Write-Host "Packed the engine assets into $pkzPath"
 
 if ($nvrhiPatchedHere)
 {

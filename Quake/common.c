@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "miniz.h"
 #include "rt_pkz.h"
+#include "qr_resources.h"
 
 static char *largv[MAX_NUM_ARGVS + 1];
 static char  argvdummy[] = " ";
@@ -2201,6 +2202,45 @@ qboolean COM_GameDirMatches (const char *tdirs)
 
 /*
 =================
+COM_AddSearchPaths
+
+Adds one directory and, optionally, the pak files it carries. The directory
+goes below its paks, so a pak wins a file both carry.
+=================
+*/
+static void COM_AddSearchPaths (const char *dirpath, unsigned int path_id, qboolean with_paks)
+{
+	searchpath_t *search;
+	pack_t       *pak;
+	char          pakfile[MAX_OSPATH];
+	int           i;
+
+	search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
+	search->path_id = path_id;
+	q_strlcpy (search->filename, dirpath, sizeof (search->filename));
+	search->next = com_searchpaths;
+	com_searchpaths = search;
+
+	if (!with_paks)
+		return;
+
+	for (i = 0;; i++)
+	{
+		q_snprintf (pakfile, sizeof (pakfile), "%s/pak%i.pak", dirpath, i);
+		pak = COM_LoadPackFile (pakfile);
+		if (!pak)
+			break;
+
+		search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
+		search->path_id = path_id;
+		search->pack = pak;
+		search->next = com_searchpaths;
+		com_searchpaths = search;
+	}
+}
+
+/*
+=================
 COM_AddGameDirectory -- johnfitz -- modified based on topaz's tutorial
 =================
 */
@@ -2238,6 +2278,22 @@ static void COM_AddGameDirectory (const char *dir)
 		path_id = com_searchpaths->path_id << 1;
 	else
 		path_id = 1U;
+
+	// the Steam install is a fallback below the local directory: the local pass
+	// prepends above these, so a local file always shadows the Steam one
+	if (!been_here)
+	{
+		char remote[MAX_OSPATH];
+
+		if (!q_strcasecmp (dir, GAMENAME))
+		{
+			if (QR_Resources_Resolve ("rerelease/id1", remote, sizeof (remote)))
+				COM_AddSearchPaths (remote, path_id, false);
+		}
+
+		if (QR_Resources_Resolve (dir, remote, sizeof (remote)))
+			COM_AddSearchPaths (remote, path_id, true);
+	}
 
 _add_path:
 	// add the directory to the search path
@@ -2297,6 +2353,9 @@ void COM_ResetGameDirectories (const char *newdirs)
 	char		 *newgamedirs = q_strdup (newdirs);
 	char		 *newpath, *path;
 	searchpath_t *search;
+
+	RT_PKZ_Shutdown ();
+
 	// Kill the extra game if it is loaded
 	while (com_searchpaths != com_base_searchpaths)
 	{
@@ -2340,6 +2399,8 @@ void COM_ResetGameDirectories (const char *newdirs)
 		newpath = e;
 	}
 	Mem_Free (newgamedirs);
+
+	RT_PKZ_Init ();
 }
 
 //==============================================================================
@@ -2438,236 +2499,6 @@ static void COM_Game_f (void)
 		Con_Printf ("\"game\" is \"%s\"\n", COM_GetGameNames (true));
 }
 
-#if defined(_WIN32)
-static wchar_t CharToWChar (char c)
-{
-	char    cpt[] = {c, '\0'};
-	wchar_t wpt[4] = L"";
-	size_t  n = mbstowcs (wpt, cpt, 4);
-	if (n == 1 && wpt[1] == '\0')
-	{
-	    return wpt[0];
-	}
-	return ' ';
-}
-
-static const wchar_t *rt_folderstocreate[] = {
-    L"\\id1",
-    L"\\id1\\music",
-};
-static const wchar_t *rt_originalfiles[] = {
-	L"\\id1\\PAK0.PAK",
-	L"\\id1\\PAK1.PAK",
-	L"\\rerelease\\id1\\music\\track02.ogg",
-	L"\\rerelease\\id1\\music\\track03.ogg",
-	L"\\rerelease\\id1\\music\\track04.ogg",
-	L"\\rerelease\\id1\\music\\track05.ogg",
-	L"\\rerelease\\id1\\music\\track06.ogg",
-	L"\\rerelease\\id1\\music\\track07.ogg",
-	L"\\rerelease\\id1\\music\\track08.ogg",
-	L"\\rerelease\\id1\\music\\track09.ogg",
-	L"\\rerelease\\id1\\music\\track10.ogg",
-	L"\\rerelease\\id1\\music\\track11.ogg",
-};
-static const wchar_t *rt_dstfiles[] = {
-	L"\\id1\\PAK0.PAK",
-	L"\\id1\\PAK1.PAK",
-	L"\\id1\\music\\track02.ogg",
-	L"\\id1\\music\\track03.ogg",
-	L"\\id1\\music\\track04.ogg",
-	L"\\id1\\music\\track05.ogg",
-	L"\\id1\\music\\track06.ogg",
-	L"\\id1\\music\\track07.ogg",
-	L"\\id1\\music\\track08.ogg",
-	L"\\id1\\music\\track09.ogg",
-	L"\\id1\\music\\track10.ogg",
-	L"\\id1\\music\\track11.ogg",
-};
-
-static qboolean RT_NeedToCopyFromSteam (const char *gamename)
-{
-	// only "id1" folder
-	if (strcmp (gamename, "id1") != 0)
-	{
-		return false;
-	}
-
-	assert (countof (rt_dstfiles) == countof (rt_originalfiles));
-
-	wchar_t cur_directory[1024] = L"";
-	if (GetCurrentDirectoryW (countof (cur_directory), cur_directory) == 0)
-	{
-		return false;
-	}
-
-	qboolean filesmissing = false;
-	for (int i = 0; i < (int)countof (rt_dstfiles); i++)
-	{
-		wchar_t dst_path[1024] = L"";
-		wcscat (dst_path, cur_directory);
-		wcscat (dst_path, rt_dstfiles[i]);
-		
-		qboolean exists = GetFileAttributesW (dst_path) != INVALID_FILE_ATTRIBUTES;
-		if (!exists)
-		{
-			filesmissing = true;
-			break;
-		}
-	}
-
-	if (!filesmissing)
-	{
-		return false;
-	}
-
-	int msgbox_id = MessageBoxA (
-		NULL, 
-		"Some files in a local \"id1\" folder are missing.\nCopy them from a Steam folder?", 
-		"Missing files", 
-		MB_ICONQUESTION | MB_YESNO);
-
-	if (msgbox_id != IDYES)
-	{
-		return false;
-	}
-
-	return true;
-}
-
-static void RT_CopyFromSteamFolder ()
-{
-	wchar_t steampath[1024] = L"";
-	DWORD   steampath_len = sizeof (steampath);
-
-	const wchar_t *regpath = L"SOFTWARE\\WOW6432Node\\Valve\\Steam";
-	LSTATUS r = RegGetValueW (
-		HKEY_LOCAL_MACHINE, regpath, 
-		L"InstallPath", RRF_RT_REG_SZ, 
-		NULL, steampath, &steampath_len);
-
-    if (r != ERROR_SUCCESS)
-    {
-		return;
-    }
-
-	wchar_t vdf[1024] = L"";
-	wcscat (vdf, steampath);
-	wcscat (vdf, L"\\steamapps\\libraryfolders.vdf");
-
-	FILE *f = _wfopen (vdf, L"r");
-	if (f == NULL)
-	{
-		return;
-	}
-
-	wchar_t cur_directory[1024] = L"";
-	if (GetCurrentDirectoryW (countof (cur_directory), cur_directory) == 0)
-	{
-		fclose (f);
-		return;
-	}
-
-	const char path_token[] = "\"path\"";
-	char       line[1024] = "";
-	qboolean   found_steam_folder = false;
-
-	while (fgets (line, sizeof (line), f))
-	{
-		char *start = strstr (line, path_token);
-		if (start)
-		{
-			// skip path token
-			start += sizeof (path_token) - 1;
-
-			start = strstr (start, "\"");
-			if (start)
-			{
-				// e.g. C:\\Program Files (x86)\\Steam"
-				char *pt = start + 1;
-
-				wchar_t pathbuffer[1024] = L"";
-				int     iter = 0;
-
-				while (pt && *pt != '\"' && iter < (int)countof (pathbuffer))
-				{
-					// replace '\\' with one
-					if (*pt == '\\')
-					{
-						if (pt + 1)
-						{
-							if (*(pt + 1) == '\\')
-							{
-								pt++;
-								*pt = '\\';
-							}
-						}
-					}
-					pathbuffer[iter++] = CharToWChar (*pt);
-					pt++;
-				}
-				wcscat (pathbuffer, L"\\steamapps\\common\\Quake");
-				const wchar_t *const quakepath = pathbuffer;
-				
-				{
-					DWORD    attrib = GetFileAttributesW (quakepath);
-					qboolean dir_exists = (attrib != INVALID_FILE_ATTRIBUTES) && (attrib & FILE_ATTRIBUTE_DIRECTORY);
-
-					if (!dir_exists)
-					{
-						continue;
-					}
-				}
-
-				for (int i = 0; i < (int)countof (rt_folderstocreate); i++)
-				{
-					wchar_t dst_path[1024] = L"";
-					wcscat (dst_path, cur_directory);
-					wcscat (dst_path, rt_folderstocreate[i]);
-
-					if (!CreateDirectoryW (dst_path, NULL))
-					{
-						DWORD err = GetLastError ();
-						if (err != ERROR_ALREADY_EXISTS)
-						{
-							Con_Printf ("CreateDirectoryW failed for rt_folderstocreate[ %d ]. Error: %lu", i, err);
-						}
-					}
-				}
-
-				for (int i = 0; i < (int)countof (rt_originalfiles); i++)
-				{
-					wchar_t src_path[1024] = L"";
-					wcscat (src_path, quakepath);
-					wcscat (src_path, rt_originalfiles[i]);
-
-					wchar_t dst_path[1024] = L"";
-					wcscat (dst_path, cur_directory);
-					wcscat (dst_path, rt_dstfiles[i]);
-
-					if (!CopyFileW (src_path, dst_path, FALSE))
-					{
-						Con_Printf ("CopyFileW failed for rt_originalfiles[ %d ] from the Steam folder. Error: %lu", i, GetLastError ());
-					}
-				}
-
-				found_steam_folder = true;
-				break;
-			}
-		}
-	}
-
-	if (!found_steam_folder)
-	{
-		MessageBoxA (
-			NULL,
-			"Couldn't find Quake in the Steam folder", 
-			"Copy fail", 
-			MB_OK);
-	}
-
-    fclose(f);
-}
-#endif // defined(_WIN32)
 
 /*
 =================
@@ -2716,17 +2547,22 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 	}
 	else
 	{
+		// start up with GAMENAME by default (id1)
+		COM_AddGameDirectory (GAMENAME);
+
 #if defined(_WIN32)
 #if RT_RENDERER
-		if (RT_NeedToCopyFromSteam (GAMENAME))
+		if (!QR_Resources_HasGameData ())
 		{
-		    RT_CopyFromSteamFolder ();
+			MessageBoxA (NULL,
+			             "Quake game data was not found.\n\n"
+			             "Install Quake through Steam, or copy the game's id1 folder next to quakeray.exe.",
+			             "Quake data missing",
+			             MB_ICONERROR | MB_OK);
+			exit (1);
 		}
 #endif
 #endif
-
-		// start up with GAMENAME by default (id1)
-		COM_AddGameDirectory (GAMENAME);
 	}
 
 	/* this is the end of our base searchpath:
@@ -2757,6 +2593,8 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 		if (p != NULL)
 			COM_AddGameDirectory (p);
 	}
+
+	RT_PKZ_Init ();
 
 	if (COM_CheckParm ("-validation"))
 		vulkan_globals.validation = true;

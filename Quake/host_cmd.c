@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "qr_resources.h"
 #ifndef _WIN32
 #include <dirent.h>
 #else
@@ -662,7 +663,20 @@ filelist_item_t *modlist;
 
 static void Modlist_Add (const char *name)
 {
+	filelist_item_t *item;
+
+	for (item = modlist; item; item = item->next)
+	{
+		if (!q_strcasecmp (item->name, name))
+			return;
+	}
 	FileList_Add (name, &modlist);
+}
+
+static void Modlist_AddSteam (const char *name, void *ctx)
+{
+	(void)ctx;
+	Modlist_Add (name);
 }
 
 #ifdef _WIN32
@@ -692,6 +706,9 @@ void Modlist_Init (void)
 	} while (FindNextFile (fhnd, &fdat));
 
 	FindClose (fhnd);
+
+	QR_Resources_Init ();
+	QR_Resources_EnumMods (Modlist_AddSteam, NULL);
 }
 #else
 void Modlist_Init (void)
@@ -721,6 +738,9 @@ void Modlist_Init (void)
 	}
 
 	closedir (dir_p);
+
+	QR_Resources_Init ();
+	QR_Resources_EnumMods (Modlist_AddSteam, NULL);
 }
 #endif
 

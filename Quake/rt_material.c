@@ -910,7 +910,9 @@ static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *c
             // the editor's own files: the session file is not a materials file
             // until it is saved, and the backup never is
             if (!q_strcasecmp(fd.cFileName, "materials.editor.yaml") ||
-                !q_strcasecmp(fd.cFileName, "backup_materials.yaml"))
+                !q_strcasecmp(fd.cFileName, "backup_materials.yaml") ||
+                !q_strcasecmp(fd.cFileName, "qray.materials.editor.yaml") ||
+                !q_strcasecmp(fd.cFileName, "qray.backup_materials.yaml"))
             {
                 continue;
             }
@@ -924,6 +926,12 @@ static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *c
     }
 
     q_snprintf(pattern, sizeof(pattern), "%s/materials.yaml", dir);
+    if (Sys_FileTime(pattern) != -1)
+    {
+        cb(pattern, ctx);
+    }
+
+    q_snprintf(pattern, sizeof(pattern), "%s/qray.materials.yaml", dir);
     if (Sys_FileTime(pattern) != -1)
     {
         cb(pattern, ctx);
@@ -995,8 +1003,6 @@ void RT_MAT_Init(void)
     rt_global_count = 0;
     rt_map_count = 0;
 
-    RT_PKZ_Init();
-
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
 
     RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
@@ -1051,6 +1057,11 @@ void RT_MAT_ChangeMap(const char *mapname)
     {
         char own[MAX_OSPATH];
         q_snprintf(own, sizeof(own), "%s/materials.yaml", com_gamedir);
+        if (Sys_FileTime(own) != -1)
+        {
+            rt_mat_load_cb(own, &ctx);
+        }
+        q_snprintf(own, sizeof(own), "%s/qray.materials.yaml", com_gamedir);
         if (Sys_FileTime(own) != -1)
         {
             rt_mat_load_cb(own, &ctx);

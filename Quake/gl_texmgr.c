@@ -501,7 +501,7 @@ static void TexMgr_RTMatDump_f (void)
 		}
 		else
 		{
-			Con_Printf ("RT dump:   authored: <no materials.yaml entry>\n");
+			Con_Printf ("RT dump:   authored: <no qray.materials.yaml entry>\n");
 		}
 		Con_Printf ("RT dump:   applied: is_light=%d lightstyles=%d emissivetex=%d emissive=%d haslightcolor=%d\n",
 		            glt->rtislight, glt->rtlightstyles, glt->rtemissivetex, glt->rtemissive, glt->rthaslightcolor);
@@ -2418,7 +2418,7 @@ TexMgr_ReloadAllImages
 
 Reloads every reloadable image texture so that material properties baked in
 at load time (emissive color, light brightness, ...) are re-applied from a
-fresh materials.yaml. Called by vid_restart.
+fresh qray.materials.yaml. Called by vid_restart.
 
 Skips lightmaps / surface-indices (they never carry a material) and reloads the
 auxiliary fullbright texture of the two-pass load together with its base

@@ -63,18 +63,10 @@ static size_t pkz_read(void *opaque, mz_uint64 file_ofs, void *pBuf, size_t n)
     return n;
 }
 
-void RT_PKZ_Init(void)
+static void rt_pkz_mount_directory(const char *dir)
 {
-    if (rt_pkz_count > 0)
-    {
-        return;
-    }
-
-    memset(rt_pkz_archives, 0, sizeof(rt_pkz_archives));
-    rt_pkz_count = 0;
-
     char pattern[MAX_OSPATH];
-    q_snprintf(pattern, sizeof(pattern), "%s/*.pkz", com_gamedir);
+    q_snprintf(pattern, sizeof(pattern), "%s/*.pkz", dir);
 
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(pattern, &fd);
@@ -95,7 +87,7 @@ void RT_PKZ_Init(void)
         }
 
         char path[MAX_OSPATH];
-        q_snprintf(path, sizeof(path), "%s/%s", com_gamedir, fd.cFileName);
+        q_snprintf(path, sizeof(path), "%s/%s", dir, fd.cFileName);
 
         rt_pkz_archive_t *a = &rt_pkz_archives[rt_pkz_count];
 
@@ -145,6 +137,51 @@ void RT_PKZ_Init(void)
     } while (FindNextFileA(h, &fd));
 
     FindClose(h);
+}
+
+void RT_PKZ_Init(void)
+{
+    RT_PKZ_Shutdown();
+
+    memset(rt_pkz_archives, 0, sizeof(rt_pkz_archives));
+    rt_pkz_count = 0;
+
+    {
+        char dir[MAX_OSPATH];
+        const char *p;
+        const char *names = COM_GetGameNames(false);
+
+        q_snprintf(dir, sizeof(dir), "%s/%s", com_basedir, GAMENAME);
+        rt_pkz_mount_directory(dir);
+
+        for (p = names; p && *p;)
+        {
+            char name[64];
+            const char *e = strchr(p, ';');
+            size_t len = e ? (size_t)(e - p) : strlen(p);
+
+            if (len >= sizeof(name))
+            {
+                len = sizeof(name) - 1;
+            }
+            memcpy(name, p, len);
+            name[len] = 0;
+
+            if (q_strcasecmp(name, GAMENAME))
+            {
+                q_snprintf(dir, sizeof(dir), "%s/%s", com_basedir, name);
+                rt_pkz_mount_directory(dir);
+
+                if (host_parms->userdir != host_parms->basedir)
+                {
+                    q_snprintf(dir, sizeof(dir), "%s/%s", host_parms->userdir, name);
+                    rt_pkz_mount_directory(dir);
+                }
+            }
+
+            p = e ? e + 1 : NULL;
+        }
+    }
 
     for (int i = 0; i < rt_pkz_count && rt_pkz_searchpath_count < RT_PKZ_MAX_ARCHIVES; i++)
     {

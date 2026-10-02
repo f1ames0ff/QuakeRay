@@ -3,12 +3,20 @@
 #include <nvrhi/nvrhi.h>
 
 #include <cstddef>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 
+namespace qray
+{
+class UserFileLoad;
+}
+
 namespace qray::rhi
 {
+
+void setShaderFileLoader(std::shared_ptr<UserFileLoad> loader);
 
 // Shader, binding layout and pipeline creation for the RHI layer.
 //

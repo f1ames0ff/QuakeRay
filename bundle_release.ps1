@@ -3,11 +3,12 @@
     Bundles a Release build of QuakeRay into a distributable ZIP archive.
 
 .DESCRIPTION
-    Packages quakeray.exe, the runtime DLLs, the runtime assets next to the
-    executable (gfx) and the id1 runtime assets (materials, shaders,
-    textures -- which carry the material textures and the model skins, luma
-    and gloss maps among them -- and the BlueNoise / WaterNormal KTX2 files)
-    plus documentation into a single ZIP ready for distribution.
+    Packages quakeray.exe, the runtime DLLs, the id1 engine assets
+    (qray.pkz -- the shaders, textures with the material textures and the model
+    skins, luma and gloss maps among them, the axe cursor artwork, the GUI font
+    and the BlueNoise / WaterNormal tables -- and the loose qray.materials.yaml
+    the editor rewrites) plus documentation into a single ZIP ready for
+    distribution.
 
     The engine binary is taken from the Release configuration, which is built
     without debug information. Debug artifacts (.pdb/.ilk/.map) are never
@@ -91,33 +92,11 @@ foreach ($dll in $dlls) {
 }
 Write-Host "Added $($dlls.Count) DLL(s)"
 
-foreach ($d in @("gfx")) {
-    $src = Join-Path $BuildDir $d
-    if (Test-Path $src) {
-        Copy-Item $src (Join-Path $stage $d) -Recurse -Force
-        Write-Host "Added $d"
-    }
-    else {
-        Write-Warning "Skipped $d (not found in $BuildDir)"
-    }
-}
-
 # 3) id1 runtime assets.
 $stageId1 = Join-Path $stage "id1"
 New-Item -ItemType Directory -Path $stageId1 -Force | Out-Null
 
-foreach ($sub in @("materials", "shaders", "textures")) {
-    $src = Join-Path $gameDir $sub
-    if (Test-Path $src) {
-        Copy-Item $src (Join-Path $stageId1 $sub) -Recurse -Force
-        Write-Host "Added id1\$sub"
-    }
-    else {
-        Write-Warning "Skipped id1\$sub (not found in $gameDir)"
-    }
-}
-
-foreach ($f in @("BlueNoise_LDR_RGBA_128.ktx2", "WaterNormal_n.ktx2")) {
+foreach ($f in @("qray.pkz", "qray.materials.yaml")) {
     $src = Join-Path $gameDir $f
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stageId1 $f) -Force

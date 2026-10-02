@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.27.0
+
+### Added
+- **Quake data is read from the Steam install instead of copied** — the startup dialog asking to copy `id1` from a Steam folder is gone. The engine finds the Quake folder by the Steam registry key and `libraryfolders.vdf` (the WOW6432Node and the 64-bit key alike) and mounts the Steam `id1` and its PAKs below the local search paths: a local file always wins, and only what the local folder lacks comes from Steam. The `rerelease/id1/music` tracks are mounted from the Steam folder the same way when the local `id1` has no music, so a typical install no longer duplicates some 50 MB of game PAKs and 79 MB of music on every first run. When neither the local `id1` nor Steam carries `pak0.pak`, a message box asks to install Quake through Steam or copy the game data in by hand, and the engine exits instead of failing later.
+- **Mods installed through Steam are mods in QuakeRay** — every folder of the Steam Quake install (and of its `rerelease/` subfolder) that carries a `.pak` file or a `progs.dat` joins the mods menu, so `mg1`, `mg3`, `dopa`, `ad`, `ctf`, `hipnotic`, `rogue` and their like load without a local copy. Selecting one mounts its Steam folder below the local paths, so a local mod's own files still take precedence per file, and a mod that exists both locally and in Steam is one menu entry.
+- **The engine assets are one `id1/qray.pkz`** — the build packs the QR material textures with the model skins and the luma and gloss maps, the SPIR-V shaders, the blue noise and water normal tables, the axe cursor artwork and the GUI font into a single pkz archive; `id1` keeps only that archive and the loose `qray.materials.yaml`. The renderer reads its shaders and images through the engine's file system (the `pfnOpenFile` callback), the cursor falls back to the archive when no loose `gfx` file sits next to the executable, and the editor's font comes from the game data; nothing has to be unpacked by hand.
+- **A mod's own `.pkz` mounts on a game switch and stays mounted like the base one** — the archives of `id1` and of every active gamedir are part of the directory's search path now, mounted before the renderer instance is created and re-mounted on every `game` change, where the old mount covered the initial gamedir alone and a game switch dropped it.
+
+### Changed
+- **The editor's files are namespaced and live in the active gamedir** — `materials.yaml` is `qray.materials.yaml` and `lights.yaml` is `qray.lights.yaml`; the light editor's emitter overrides and its per-level custom lights and fog share the one `qray.lights.yaml` (the emitter entries under the root `lights:` key with one section per level beside them). The session files are `qray.materials.editor.yaml` and `qray.lights.editor.yaml`, the backups `qray.backup_materials.yaml` and `qray.backup_lights.yaml`, all in the active game or mod folder as before — in a mod they are the mod's own files, which load after id1's and override them. The older `materials.yaml`, `materials/*.yaml`, `lights.yaml` and `qray/lights.yaml` still load, so existing setups keep working; a reset removes the legacy copies together with the new ones.
+- **The blue noise and the water normal are ordinary PNGs** — the KTX2 tables became `BlueNoise_LDR_RGBA_128.png` (a 128-layer vertical strip) and `WaterNormal_n.png` (the decoded BC5 normal map), the renderer grew an stb_image path next to its KTX loader, and the material override lookup prefers `.png` over `.ktx2`. No KTX2 file is shipped or deployed any more; the KTX loader stays for packs that still carry one.
+
+### Fixed
+- **The build deploys the files the new loader reads and removes the stale loose copies** — `renderer/Source/materials.yaml` lands as `id1/qray.materials.yaml`, the previous loose `materials/`, `textures/`, `shaders/`, `ktx2` and `gfx` outputs are deleted before the archive is written so an old file cannot shadow the pkz, and the release bundle ships `id1/qray.pkz` with the loose material file instead of the per-folder assets.
+
 ## v0.26.1
 
 ### Added
