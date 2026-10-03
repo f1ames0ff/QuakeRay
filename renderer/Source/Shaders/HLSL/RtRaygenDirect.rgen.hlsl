@@ -39,7 +39,7 @@
 #define Q2_RNG_SUN_DISK 212
 
 [[vk::binding(0, DESC_SET_CAUSTICS)]] StructuredBuffer<CausticsParams_BT> causticsParams;
-[[vk::binding(1, DESC_SET_CAUSTICS)]] StructuredBuffer<uint4> causticsCells;
+[[vk::binding(1, DESC_SET_CAUSTICS)]] StructuredBuffer<float4> causticsCells;
 
 // The receiver medium of the packed pixel, decoded from the normalized byte the primary G-buffer
 // stores in MetallicRoughness.z (media / 3.0, contract of the RGBA8 metadata route).
@@ -93,9 +93,9 @@ bool gatherCausticsIrradiance(const Surface surf, const CausticsParams_BT params
             continue;
         }
 
-        const uint4 tap = causticsCells[(uint)cell.y * resolution + (uint)cell.x];
-        sum += (float3)tap.xyz * tapWeights[i];
-        countSum += (float)tap.w * tapWeights[i];
+        const float4 tap = causticsCells[(uint)cell.y * resolution + (uint)cell.x];
+        sum += tap.xyz * tapWeights[i];
+        countSum += tap.w * tapWeights[i];
         weightSum += tapWeights[i];
     }
 
@@ -104,7 +104,7 @@ bool gatherCausticsIrradiance(const Surface surf, const CausticsParams_BT params
         return false;
     }
 
-    irradiance = sum / (weightSum * CAUSTICS_FLUX_SCALE);
+    irradiance = sum / weightSum;
     coverage = saturate(countSum / weightSum);
     return true;
 }

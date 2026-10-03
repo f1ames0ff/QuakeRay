@@ -129,7 +129,7 @@ private:
     nvrhi::BufferHandle cellBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle compositeSets[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle accumulateSets[MAX_FRAMES_IN_FLIGHT];
-    nvrhi::BufferHandle historyBuffer;
+    nvrhi::BufferHandle historyBuffers[MAX_FRAMES_IN_FLIGHT];
 
     Target targets[MAX_FRAMES_IN_FLIGHT];
 

@@ -268,6 +268,7 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
         return false;
     }
 
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         nvrhi::BufferDesc desc;
         desc.byteSize = uint64_t(CAUSTICS_MAX_RESOLUTION) * CAUSTICS_MAX_RESOLUTION * CAUSTICS_CELL_STRIDE;
@@ -276,13 +277,13 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
         desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
         desc.keepInitialState = true;
 
-        historyBuffer = rhi::createBuffer(device, desc, "RhiCausticsPass history");
-    }
+        historyBuffers[i] = rhi::createBuffer(device, desc, "RhiCausticsPass history " + std::to_string(i));
 
-    if (historyBuffer == nullptr)
-    {
-        LogMessage(print, "Warning: RHI: failed to create the caustics history buffer");
-        return false;
+        if (historyBuffers[i] == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the caustics history buffer");
+            return false;
+        }
     }
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -331,7 +332,7 @@ bool RhiCausticsPass::Create(nvrhi::IDevice *pDevice,
             nvrhi::BindingSetDesc setDesc;
             setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, paramsBuffers[i]));
             setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, cellBuffers[i]));
-            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, historyBuffer));
+            setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, historyBuffers[i]));
 
             accumulateSets[i] = device->createBindingSet(setDesc, accumulateLayout);
         }
@@ -786,7 +787,7 @@ nvrhi::IBuffer *RhiCausticsPass::GetCellBuffer(uint32_t frameIndex) const
         return nullptr;
     }
 
-    return historyBuffer.Get();
+    return historyBuffers[frameIndex].Get();
 }
 
 nvrhi::IBuffer *RhiCausticsPass::GetParamsBuffer(uint32_t frameIndex) const
