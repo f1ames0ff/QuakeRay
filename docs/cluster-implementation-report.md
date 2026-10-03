@@ -61,11 +61,14 @@ published.
 - `LightManager` owns two new buffers (`tailOffsets`, `tailEntries`) with the same staging,
   pending-copy and descriptor plumbing as the existing list buffers; bindings
   `BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS = 10` and `..._TAIL = 11` are added to the
-  generated common layout and to the RHI direct pass (8 light buffers, 7 copy items).
+  generated common layout and to the RHI direct pass (8 light buffers, 7 copy items; all seven are
+  scheduled, and the offsets copy spans the full `(2 * Q2_MAX_CLUSTERS + 1)` word layout so the
+  packed beta region is published with the offsets).
 - `SetClusterLightLists` extends its existing UID-to-current-index publication to the tail entries:
-  each tail UID is resolved with `FindRegisteredLight` and the resolved index is published. An
-  unresolved UID gets `LIGHT_INDEX_NONE` and marginal zero, so it can only produce a null sample,
-  never another light.
+  each tail UID is resolved with `FindRegisteredLight` and the resolved index is published. If any
+  tail UID has no renderer record, the whole tail set is withheld for that frame (offsets and beta
+  zeroed) with a diagnostic, so the frame stays on a consistent fast-only distribution instead of
+  one with holes.
 - `q2SampleClusterLights` (GLSL and HLSL) now:
   - computes the fast stratum masses with a positive floor (`q2FastMass`, 0.1% of the stratum
     maximum, uniform when the stratum has no positive mass);
@@ -90,13 +93,38 @@ published.
 - `rt_light_report` now prints per-frame candidate demand (`max`, `median`, `p95`), overflow entry
   and cluster counts, and the number of clusters whose tail did not fit the declared budget.
 
+### 2.6 Post-review repairs
+
+An independent review of the published state found defects that the CPU tests could not reach; the
+branch history now carries the repairs:
+
+- **All seven GPU copies are initialized.** The direct pass copied four of the eight light buffers;
+  `dtalMembers`, `tailOffsets` and `tailEntries` were never scheduled. The copy list now matches the
+  binding list, the offsets copy spans the full fixed layout so the packed beta values reach the
+  GPU, and the pre-publication clear loop no longer writes one word past the buffer.
+- **Tail publication is all-or-nothing per frame.** An unresolved tail UID, a budget refusal or an
+  alias-build failure now discards the whole tail set (offsets and beta zeroed) and keeps the frame
+  on the fast list with a diagnostic, instead of publishing a distribution with holes.
+- **Updates are resolved before the entry budget.** `RT_ClusterLightAddMulti` looks the UID up
+  before the capacity check, so a full registry still refreshes a light it already holds.
+- **Renderer insertion is serialized.** `LightManager::AddLight` holds a registry mutex, so
+  concurrent producers cannot interleave the find/insert/update sequence.
+- **Discrete draws are 24-bit half-open.** `rnd24` replaces the 16-bit inclusive draws for the
+  member column, the tail column and the fast-list branch variate in GLSL and HLSL. A 16-bit draw
+  cannot address more than 65536 categories, so rare members and tail columns above that index had
+  no positive support; the half-open domain also removes the `u = 1` endpoint. The CPU reference
+  model already used 24-bit half-open draws.
+- **Top-up candidates are recorded before retention.** Every source accepted by the supplemental
+  reach is added to the candidate bitset before the nearest-eight retention selects the fast list,
+  so the overflow set is built from the full accepted candidate set.
+
 ## 3. Verification
 
 | Check | Command | Result |
 |---|---|---|
 | Debug build | `.\build_win.ps1 -Config Debug -BuildDir build\Debug` | pass |
 | Release build | `.\build_win.ps1 -Config Release -BuildDir build\Release` | pass |
-| Numerical tests | `.\build\Debug\rt_lighting_tests.exe` | `1413860 checks, 0 failures` |
+| Numerical tests | `.\build\Debug\rt_lighting_tests.exe` | `1413875 checks, 0 failures` |
 | Shader properties | `python CheckShaderProperties.py --rebuild` | pass |
 | Matrix reads | `python CheckMatrixReads.py` | pass |
 | Whitespace | `git diff --check` | clean |
@@ -122,8 +150,9 @@ oversubscription benchmark, noise measurement or frame-timing comparison is clai
   plus the staging copies.
 - Tail offsets and beta: `(2 * 8192 + 1) * 4 B` = 64 KiB.
 - The dense per-slot statistics buffer is unchanged: overflow has no per-source copy of it.
-- Tail clusters whose cumulative entries would exceed the budget are skipped with a diagnostic
-  (`tailBudgetExceeded`); the rest of the clusters keep their complete overflow support.
+- A tail that would exceed the budget, or an alias table that fails to build, discards the whole
+  tail set for that frame with a diagnostic (`tailBudgetExceeded`); the frame then samples the fast
+  list only. No frame is published with partial overflow support.
 
 ## 5. Deviations, limitations and unresolved items
 
@@ -135,8 +164,10 @@ oversubscription benchmark, noise measurement or frame-timing comparison is clai
    lists; the incremental path still serves the legacy policy. The spec allows this as the initial
    simple update and asks for profiling before finer repair.
 3. **Fast-list retention is unchanged.** A cluster still keeps at most 128 sources in H and evicts
-   by distance; the overflow set is what makes every accepted candidate sampleable. Global
-   `TopUpCluster` still keeps its old nearest-eight retention policy.
+   by distance; the overflow set is what makes every accepted candidate sampleable. The supplemental
+   top-up pass still retains its nearest eight sources in the fast list, but every reach-accepted
+   source is recorded as an overflow candidate before that retention, so the overflow set covers the
+   full accepted domain rather than the retention survivors.
 4. **No runtime oversubscription evidence.** The 128-slot limit warning observed on `e4m1` during
    the Project A manual test is the exact situation this policy repairs, but the repaired selector
    has not been captured on a GPU here.

@@ -186,6 +186,34 @@ pre-existing crash was found and is **not** a regression of this work: `viewpos`
 the client has a valid view entity; the report records it because the diagnostic was part of the
 failed capture script.
 
+### 3.2 Post-review repairs
+
+An independent correctness review of this branch found defects that the numeric tests alone could
+not see. The branch history now carries the repairs:
+
+- **The collected batch no longer accumulates across collections.** `RT_Dtal_BuilderResetInputs`
+  clears the builder input list at the start of every collection, so a rebuilt batch contains
+  exactly the pieces the current collection fed.
+- **Cached groups stay `active`.** The collection entry no longer clears the active flag; the flag
+  is recomputed by the rebuild step, so a collection that reuses an identical batch keeps serving
+  the installed generation. `rt_dtal_rebuild` explicitly requests a fresh build.
+- **An incomplete collection is refused as a whole.** Budget or coverage refusals during feeding
+  discard the batch instead of publishing a partial generation; the counters stay visible and the
+  legacy per-piece path is used.
+- **Group bounds are conservative over vertices.** `boundsRadius` is the AABB half-diagonal of the
+  admitted vertices rather than the farthest member center, so coverage cannot under-report a
+  member that lies inside the group's box.
+
+The final branch's test set pins both repaired behaviours (`TestBuilderInputReset` builds the same
+rectangle twice through one builder and asserts the member count stays 32; `TestGroupConservativeBounds`
+asserts that every member vertex lies within its group's radius).
+
+Known defect in this branch's snapshot: member selection still multiplies the alias draw by the
+path probability (`aliasProb` divided by the member count). This is corrected on
+`feature/cluster-lighting-overflow` (marginal probabilities) and inherited by
+`refactor/dtal-cluster-dedup`; the standalone Project A branch should not be used as a numerical
+reference for member sampling.
+
 ## 4. Measurements that were obtained
 
 - Debug and Release builds succeed from a clean CMake configure; the shader pipeline builds both

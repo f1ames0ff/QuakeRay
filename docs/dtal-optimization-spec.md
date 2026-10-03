@@ -263,6 +263,14 @@ Keep UID-to-current-index resolution in existing publication. A does not add ano
 - [ ] Test A with the old cluster policy within its declared limits.
 - [x] Report completed scope, settings/defaults, unavailable checks and remaining cluster limitations.
 
+Post-review state: an independent review found that the collected batch accumulated across
+collections, cached groups lost their `active` state, group bounds could under-report member
+vertices and an incomplete collection could publish a partial generation. The branch history now
+carries the repairs (documented in `dtal-implementation-report.md` §3.2), including the new numeric
+tests that pin the batch reset and the conservative bounds. The member-sampling alias bias that this
+branch still carries is corrected on `feature/cluster-lighting-overflow`; the standalone Project A
+branch is not a numerical reference for member sampling.
+
 ## 11. File map
 
 | Files | A's work |

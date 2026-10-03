@@ -81,7 +81,7 @@ No resource, binding or interface changed.
 |---|---|---|
 | Debug build | `.\build_win.ps1 -Config Debug -BuildDir build\Debug` | pass |
 | Release build | `.\build_win.ps1 -Config Release -BuildDir build\Release` | pass |
-| Numerical tests | `.\build\Debug\rt_lighting_tests.exe` | `1413860 checks, 0 failures` |
+| Numerical tests | `.\build\Debug\rt_lighting_tests.exe` | `1413875 checks, 0 failures` |
 | Shader build | `.\build_shaders.ps1 -Rebuild -DestDir build\Debug\id1\shaders` | 49 shaders deployed |
 | Shader properties | `python CheckShaderProperties.py --rebuild` | pass |
 | Matrix reads | `python CheckMatrixReads.py` | pass |
@@ -89,6 +89,12 @@ No resource, binding or interface changed.
 
 Every commit in this branch was built and tested before the next one started, so a failure can be
 attributed to a single commit.
+
+The alias-draw helper is behaviour-neutral against the repaired sampler it replaces: the discrete
+draws now come from the 24-bit half-open `rnd24`, so the `u = 1` endpoint that the pre-refactoring
+member path clamped can no longer occur, and `aliasColumn`/`aliasChoice` compute exactly the same
+selection as the inline code for every value the random streams can produce. This branch was also
+rebuilt after the inherited cluster repairs, so it carries them unchanged.
 
 ## 6. Performance and memory
 

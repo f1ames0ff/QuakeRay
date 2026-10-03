@@ -222,6 +222,14 @@ Declare checked byte/work budgets. On budget exhaustion, report failure or retai
       (`beta` bounds, the 0.1% fast-mass floor and the tail weight floor are provisional defaults.)
 - [x] Leave B's report and integrate A through the shared boundary without editing member geometry.
 
+Post-review state: an independent review of the branch found that several B0/B1/B2 items were not
+actually satisfied by the published code. The branch history now carries the repairs (all seven GPU
+copies scheduled, full offsets/beta copy span, all-or-nothing tail publication, updates resolved
+before the capacity check, serialized renderer insertion, 24-bit half-open discrete draws, top-up
+candidates recorded before retention); the details are in `cluster-implementation-report.md` §2.6.
+The GPU runtime acceptance (oversubscription capture, noise and timing comparison) still has no
+evidence in this environment, so `rt_cluster_sampling` stays off by default.
+
 ## 12. File map
 
 | Files | B's work |
