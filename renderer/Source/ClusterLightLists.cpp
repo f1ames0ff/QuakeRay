@@ -774,7 +774,7 @@ void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t
            nearest-few retention selects the fast list: the overflow set is built from C, not
            from the survivors of that retention. */
         if (overflowEnabled)
-            RecordCandidate(cluster, uint32_t(li), dist2);
+            RecordCandidate(cluster, uint32_t(li));
 
         // A small sorted list of the closest candidates: the pass rejects most of them,
         // and only the ones that survive are handed to the cluster.
