@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.28.0
+
+### Fixed
+- **The resource-management review pass** — the light editor now keeps the comments, the untouched emitter entries and the other level sections of an already merged `qray.lights.yaml`; the engine archive reaches `-basegame` with the embedded `vkquake.pak` fallback intact; a store-mounted mod's own material and light YAMLs load through the search path with the local game dir as the final word; the pkz temp files delete themselves and the build refuses to pack a partial archive.
+- **The YAML roots are namespaced** — the merged lights and materials files carry their reserved roots as `qray_lights:` and `qray_materials:` instead of `lights:` and `materials:`, so a map named `lights` cannot collide with them; the old spellings still load and a save rewrites the root once.
+
 ## v0.27.0
 
 ### Added
