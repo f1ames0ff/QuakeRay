@@ -99,6 +99,7 @@ typedef struct rt_dtal_builder_s rt_dtal_builder_t;
 
 rt_dtal_builder_t *RT_Dtal_BuilderCreate(void);
 void RT_Dtal_BuilderDestroy(rt_dtal_builder_t *builder);
+void RT_Dtal_BuilderResetInputs(rt_dtal_builder_t *builder);
 int  RT_Dtal_BuilderAddInput(rt_dtal_builder_t *builder, const rt_dtal_input_t *input);
 int  RT_Dtal_BuilderBuild(rt_dtal_builder_t *builder, double spacing, int singleton);
 const rt_dtal_build_t *RT_Dtal_BuilderResult(const rt_dtal_builder_t *builder);

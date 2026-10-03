@@ -2133,7 +2133,6 @@ static float RT_DtalSourceStyleScale (const rt_dtal_source_t *source)
 
 static void RT_DtalGroups_BeginCollect (void)
 {
-	rt_dtal_groups_active = false;
 	rt_dtal_groups_failed = false;
 	rt_dtal_group_inputs = 0;
 	rt_dtal_group_oversized = 0;
@@ -2144,6 +2143,8 @@ static void RT_DtalGroups_BeginCollect (void)
 
 	if (rt_dtal_builder == NULL)
 		rt_dtal_builder = RT_Dtal_BuilderCreate ();
+	else
+		RT_Dtal_BuilderResetInputs (rt_dtal_builder);
 }
 
 static void RT_DtalGroups_Feed (const QrTexturedAreaLightUploadInfo *light_info, gltexture_t *light_tex,
@@ -2395,6 +2396,21 @@ static void RT_DtalGroups_Rebuild (void)
 	    rt_dtal_build_spacing == spacing && rt_dtal_build_mode == mode)
 	{
 		rt_dtal_group_reuses++;
+		return;
+	}
+
+	if (rt_dtal_group_budget_refused > 0 || rt_dtal_group_coverage_refused > 0)
+	{
+		rt_dtal_groups_active = false;
+		rt_dtal_groups_failed = true;
+		rt_dtal_groups_rebuild_pending = false;
+		rt_dtal_build = NULL;
+		rt_dtal_build_signature = rt_dtal_input_signature;
+		rt_dtal_build_spacing = spacing;
+		rt_dtal_build_mode = mode;
+		Con_DWarning ("RT: the DTAL group collection was incomplete (%i refused, %i coverage refusals); "
+		              "the per-piece lights stay\n",
+		              rt_dtal_group_budget_refused, rt_dtal_group_coverage_refused);
 		return;
 	}
 
@@ -2824,6 +2840,7 @@ void RT_DtalRebuild_f (void)
 	extern int      mod_numknown;
 
 	GL_SynchronizeEndRenderingTask ();
+	rt_dtal_groups_rebuild_pending = true;
 	Atomic_StoreUInt32 (&rt_require_static_submit, true);
 
 	int models = 0;

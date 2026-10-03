@@ -839,19 +839,14 @@ static void RT_Dtal_FinishBounds(rt_dtal_builder_t *builder)
 
         float radius = 0.0f;
 
-        for (int i = 0; i < group->memberCount; i++)
+        for (int k = 0; k < 3; k++)
         {
-            const rt_dtal_member_t *member = &builder->result.members[group->firstMember + i];
-            const float             dx = member->center[0] - group->center[0];
-            const float             dy = member->center[1] - group->center[1];
-            const float             dz = member->center[2] - group->center[2];
-            const float             dist = sqrtf(dx * dx + dy * dy + dz * dz);
+            const float half = 0.5f * (group->maxs[k] - group->mins[k]);
 
-            if (dist > radius)
-                radius = dist;
+            radius += half * half;
         }
 
-        group->boundsRadius = radius;
+        group->boundsRadius = sqrtf(radius);
     }
 }
 
@@ -860,6 +855,12 @@ rt_dtal_builder_t *RT_Dtal_BuilderCreate(void)
     rt_dtal_builder_t *builder = (rt_dtal_builder_t *)calloc(1, sizeof(rt_dtal_builder_t));
 
     return builder;
+}
+
+void RT_Dtal_BuilderResetInputs(rt_dtal_builder_t *builder)
+{
+    if (builder != NULL)
+        builder->inputCount = 0;
 }
 
 void RT_Dtal_BuilderDestroy(rt_dtal_builder_t *builder)
