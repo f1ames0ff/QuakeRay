@@ -858,6 +858,76 @@ static void TestBuilderBudgetFailure(void)
     }
 }
 
+static void TestBuilderInputReset(void)
+{
+    rt_dtal_input_t input;
+
+    MakeRectangleInput(&input, 0.0, 0.0, 0.0, 256.0, 256.0, 11u, 1.0f);
+
+    rt_dtal_builder_t *builder = RT_Dtal_BuilderCreate();
+
+    CHECK(builder != NULL, "reset builder");
+
+    if (builder != NULL)
+    {
+        CHECK(RT_Dtal_BuilderAddInput(builder, &input), "reset input");
+        CHECK(RT_Dtal_BuilderBuild(builder, 64.0, 0), "reset build");
+        CHECK(RT_Dtal_BuilderResult(builder)->memberCount == 32, "reset first members: %d",
+              RT_Dtal_BuilderResult(builder)->memberCount);
+
+        RT_Dtal_BuilderResetInputs(builder);
+
+        CHECK(RT_Dtal_BuilderAddInput(builder, &input), "reset second input");
+        CHECK(RT_Dtal_BuilderBuild(builder, 64.0, 0), "reset second build");
+        CHECK(RT_Dtal_BuilderResult(builder)->memberCount == 32, "reset second members: %d",
+              RT_Dtal_BuilderResult(builder)->memberCount);
+
+        RT_Dtal_BuilderDestroy(builder);
+    }
+}
+
+static void TestGroupConservativeBounds(void)
+{
+    rt_dtal_input_t input;
+
+    MakeTriangleInput(&input, 0.0, 0.0, 0.0, 100.0, 2.0, 13u, 1.0f);
+
+    rt_dtal_builder_t *builder = BuildFromInputs(&input, 1, 128.0, 0);
+
+    CHECK(builder != NULL, "bounds builder");
+
+    if (builder != NULL)
+    {
+        const rt_dtal_build_t *build = RT_Dtal_BuilderResult(builder);
+
+        CHECK(build->groupCount >= 1, "bounds groups: %d", build->groupCount);
+
+        for (int g = 0; g < build->groupCount; g++)
+        {
+            const rt_dtal_group_t *group = &build->groups[g];
+
+            for (int m = 0; m < group->memberCount; m++)
+            {
+                const rt_dtal_member_t *member = &build->members[group->firstMember + m];
+                const float *verts[3] = { member->A, member->B, member->C };
+
+                for (int v = 0; v < 3; v++)
+                {
+                    const double dx = (double)verts[v][0] - (double)group->center[0];
+                    const double dy = (double)verts[v][1] - (double)group->center[1];
+                    const double dz = (double)verts[v][2] - (double)group->center[2];
+                    const double dist = sqrt(dx * dx + dy * dy + dz * dz);
+
+                    CHECK(dist <= (double)group->boundsRadius + 1e-3, "group %d member %d vertex %d: %.4f > %.4f",
+                          g, m, v, dist, (double)group->boundsRadius);
+                }
+            }
+        }
+
+        RT_Dtal_BuilderDestroy(builder);
+    }
+}
+
 int main(void)
 {
     TestAliasEdgeCases();
@@ -867,6 +937,8 @@ int main(void)
     TestGroupDeterminismAndSingleton();
     TestGroupNegativeCells();
     TestGroupBoundaryOwnership();
+    TestBuilderInputReset();
+    TestGroupConservativeBounds();
     TestEstimatorSubdivision();
     TestEstimatorSamplingDomain();
     TestClusterSelectionCounts();
