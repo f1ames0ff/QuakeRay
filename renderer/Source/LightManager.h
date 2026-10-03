@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 #include "qray/qray.h"
@@ -160,6 +161,8 @@ private:
 private:
     VkDevice device;
     VkBuffer talCdf;
+
+    std::mutex registryMutex;
 
     std::shared_ptr<AutoBuffer> lightsBuffer;
     Buffer lightsBuffer_Prev;

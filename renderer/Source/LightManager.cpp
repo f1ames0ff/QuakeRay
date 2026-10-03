@@ -544,6 +544,8 @@ void qray::LightManager::RecordDeviceListPublication(uint32_t frameIndex)
 void qray::LightManager::AddLight(uint32_t frameIndex, uint64_t uniqueId,
                                   const ShLightEncoded &encodedLight)
 {
+    std::lock_guard<std::mutex> registryLock(registryMutex);
+
     bool found = false;
     const uint32_t registrySlot = GetRegistrySlot(registry[frameIndex], registryGeneration[frameIndex],
                                                   uniqueId, found);
@@ -768,7 +770,7 @@ qray::LightManager::FrameCopies qray::LightManager::GetFrameCopies(uint32_t fram
         copies.tailOffsets =
         {
             lightListTailOffsets->GetStaging(frame),
-            sizeof(uint32_t) * (publishedTailClusters[frame] + 1 + publishedTailClusters[frame]),
+            sizeof(uint32_t) * (2 * Q2_MAX_CLUSTERS + 1),
         };
         copies.tailEntries =
         {
@@ -836,7 +838,7 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
     const bool tailsProvided = tails.tailCount > 0 && tails.pOffsets != nullptr && tails.pUniqueIds != nullptr &&
                                tails.pProb != nullptr && tails.pMarginal != nullptr && tails.pAlias != nullptr &&
                                tails.pBeta != nullptr;
-    const uint32_t tailWordCount =
+    uint32_t tailWordCount =
         tailsProvided ? std::min(tails.tailCount, uint32_t(Q2_LIGHT_LIST_TAIL_CAPACITY)) : 0;
 
     const uint32_t registeredCount = uint32_t(registeredLightOrder[frameIndex].size());
@@ -940,7 +942,7 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
     uint32_t *pTailOffsets = static_cast<uint32_t *>(lightListTailOffsets->GetMapped(frameIndex));
     ShQ2LightTail *pTailEntries = static_cast<ShQ2LightTail *>(lightListTailEntries->GetMapped(frameIndex));
 
-    for (uint32_t i = 0; i <= 2 * Q2_MAX_CLUSTERS + 1; i++)
+    for (uint32_t i = 0; i < 2 * Q2_MAX_CLUSTERS + 1; i++)
     {
         pTailOffsets[i] = 0;
     }
@@ -960,6 +962,8 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
 
             pTailBeta[c] = (std::isfinite(beta) && beta > 0.0f) ? (beta > 1.0f ? 1.0f : beta) : 0.0f;
         }
+
+        uint32_t unresolved = 0;
 
         for (uint32_t i = 0; i < tailWordCount; i++)
         {
@@ -1009,6 +1013,26 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
             pTailEntries[i].aliasIndex = (index != uint32_t(LIGHT_INDEX_NONE)) ? tails.pAlias[i] : i;
             pTailEntries[i].prob = tails.pProb[i];
             pTailEntries[i].marginalProb = (index != uint32_t(LIGHT_INDEX_NONE)) ? tails.pMarginal[i] : 0.0f;
+
+            if (index == uint32_t(LIGHT_INDEX_NONE))
+            {
+                unresolved++;
+            }
+        }
+
+        if (unresolved > 0)
+        {
+            /* An accepted overflow source without a renderer record is a coherence failure:
+               publish a consistent fast-only frame instead of a distribution with holes. */
+            fprintf(stderr, "qray: %u overflow tail sources have no renderer record - the tail is left empty\n",
+                    unresolved);
+
+            tailWordCount = 0;
+
+            for (uint32_t i = 0; i < 2 * Q2_MAX_CLUSTERS + 1; i++)
+            {
+                pTailOffsets[i] = 0;
+            }
         }
     }
 

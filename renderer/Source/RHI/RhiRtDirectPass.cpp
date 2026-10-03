@@ -1224,6 +1224,9 @@ bool RhiRtDirectPass::PrepareLightSet(nvrhi::ICommandList *pCommandList, Target 
         copies.listOffsets,
         copies.listLights,
         copies.clusterSkyVis,
+        copies.dtalMembers,
+        copies.tailOffsets,
+        copies.tailEntries,
     };
 
     for (uint32_t i = 0; i < LIGHT_COPY_COUNT; i++)

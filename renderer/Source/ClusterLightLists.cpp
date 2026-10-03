@@ -770,6 +770,12 @@ void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t
 
         const float dist2 = Dist2ToBounds(sources[li].origin, cluster);
 
+        /* Every source the supplemental reach policy accepts is a candidate before the
+           nearest-few retention selects the fast list: the overflow set is built from C, not
+           from the survivors of that retention. */
+        if (overflowEnabled)
+            RecordCandidate(cluster, uint32_t(li), dist2);
+
         // A small sorted list of the closest candidates: the pass rejects most of them,
         // and only the ones that survive are handed to the cluster.
         consider(uint32_t(li), dist2);
@@ -1470,6 +1476,7 @@ void ClusterLightLists::BuildOverflow()
     candidateCounts.reserve(numClusters);
 
     uint32_t entry = 0;
+    bool     overflowFailed = false;
 
     for (uint32_t c = 0; c < numClusters; c++)
     {
@@ -1517,7 +1524,8 @@ void ClusterLightLists::BuildOverflow()
         if (entry + overflowOrder.size() > uint32_t(Q2_LIGHT_LIST_TAIL_CAPACITY))
         {
             stats.tailBudgetExceeded++;
-            continue;
+            overflowFailed = true;
+            break;
         }
 
         float beta;
@@ -1556,7 +1564,8 @@ void ClusterLightLists::BuildOverflow()
             tailProb.resize(base);
             tailMarginal.resize(base);
             tailAlias.resize(base);
-            continue;
+            overflowFailed = true;
+            break;
         }
 
         RT_Alias_Marginals(tailProb.data() + base, tailAlias.data() + base, (int)overflowOrder.size(),
@@ -1567,6 +1576,26 @@ void ClusterLightLists::BuildOverflow()
 
         entry += (uint32_t)overflowOrder.size();
         stats.clustersWithTail++;
+    }
+
+    if (overflowFailed)
+    {
+        /* A budget or alias failure would leave some accepted clusters without their tail.
+           Publish one complete fast-only frame instead of an incomplete distribution; the
+           failure stays visible in the diagnostics. */
+        tailUids.clear();
+        tailProb.clear();
+        tailMarginal.clear();
+        tailAlias.clear();
+        entry = 0;
+
+        for (uint32_t c = 0; c <= numClusters && c < tailOffsets.size(); c++)
+            tailOffsets[c] = 0;
+
+        for (size_t c = 0; c < tailBeta.size(); c++)
+            tailBeta[c] = 0.0f;
+
+        stats.clustersWithTail = 0;
     }
 
     tailOffsets[numClusters] = entry;

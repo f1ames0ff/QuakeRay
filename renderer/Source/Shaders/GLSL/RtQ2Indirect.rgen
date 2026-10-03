@@ -365,9 +365,9 @@ void main()
         vec3 directDiffuse = vec3( 0.0 );
         {
             const vec3 rng = vec3(
-                rnd16( seed, Q2_RNG_INDIR_CELL_SELECT ),
-                rnd16( seed, Q2_RNG_INDIR_CELL_SELECT + 1u ),
-                rnd16( seed, Q2_RNG_INDIR_CELL_SELECT + 2u ) );
+                rnd24( seed, Q2_RNG_INDIR_CELL_SELECT ),
+                rnd24( seed, Q2_RNG_INDIR_CELL_SELECT + 1u ),
+                rnd24( seed, Q2_RNG_INDIR_CELL_SELECT + 2u ) );
 
             uint  lightIndex = LIGHT_INDEX_NONE;
             uint  lightSlot  = 0u;
@@ -379,7 +379,9 @@ void main()
             if ( lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0 )
             {
                 const vec2 pointRnd = rnd16_2( seed, Q2_RNG_INDIR_LIGHT_POINT );
-                const vec2 memberRnd = rnd16_2( seed, Q2_RNG_INDIR_LIGHT_MEMBER );
+                const vec2 memberRnd = vec2(
+                    rnd24( seed, Q2_RNG_INDIR_LIGHT_MEMBER ),
+                    rnd24( seed, Q2_RNG_INDIR_LIGHT_MEMBER + 1u ) );
                 float memberPdf = 1.0;
                 LightSample light =
                     sampleLightNee( lightSources[ lightIndex ], hitSurf.position, pointRnd, memberRnd, memberPdf );

@@ -1047,30 +1047,15 @@ void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reac
 
 	rt_cluster_reg_attempts++;
 
-	if (rt_cluster_light_count >= RT_CLUSTER_MAX_LIGHTS)
-	{
-		rt_cluster_reg_dropped++;
-
-		if (!rt_cluster_dropped_warned)
-		{
-			Con_DWarning ("RT: light count exceeded RT_CLUSTER_MAX_LIGHTS (%i), "
-				"some lights will not be sampled by the RT renderer.\n",
-				RT_CLUSTER_MAX_LIGHTS);
-			rt_cluster_dropped_warned = true;
-		}
-
-		if (rt_cluster_reg_mutex != NULL)
-			SDL_UnlockMutex (rt_cluster_reg_mutex);
-		return;
-	}
-
 	if (clusters != NULL && clusterCount > QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
 		clusterCount = QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS;
 
 	/* A light that registers twice in one frame keeps its slot, but not the position or the
 	   reach it was first seen at: a flame that is drawn by two passes, or a light that the
 	   frame registers again after it moved, must be handed to the lists where it stands now. */
-	/* The slot only says where to look; the comparison below says whether to trust it. */
+	/* The slot only says where to look; the comparison below says whether to trust it. An
+	   update of a light the frame already holds is resolved before the entry budget is
+	   consumed, so a full registry still refreshes the lights it knows. */
 	const uint32_t hint = RT_ClusterUidHint (uniqueID);
 
 	int index = -1;
@@ -1095,6 +1080,23 @@ void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reac
 
 	if (index < 0)
 	{
+		if (rt_cluster_light_count >= RT_CLUSTER_MAX_LIGHTS)
+		{
+			rt_cluster_reg_dropped++;
+
+			if (!rt_cluster_dropped_warned)
+			{
+				Con_DWarning ("RT: light count exceeded RT_CLUSTER_MAX_LIGHTS (%i), "
+					"some lights will not be sampled by the RT renderer.\n",
+					RT_CLUSTER_MAX_LIGHTS);
+				rt_cluster_dropped_warned = true;
+			}
+
+			if (rt_cluster_reg_mutex != NULL)
+				SDL_UnlockMutex (rt_cluster_reg_mutex);
+			return;
+		}
+
 		rt_cluster_uid_hint[hint] = (uint16_t) rt_cluster_light_count;
 		index = rt_cluster_light_count;
 		rt_cluster_light_count++;
