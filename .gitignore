@@ -4,10 +4,6 @@ build-cmake/
 dist/
 .idea
 .vscode
-.settings
-.project
-.cproject
-.DS_Store
 history.txt
 qray.txt
 

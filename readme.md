@@ -201,8 +201,6 @@ OpenAL Soft is the sound system: every engine channel is positioned against the 
 
 OpenAL Soft is vendored as the `third_party/openal-soft` submodule (tag `1.25.2`) and built together with the game, so the engine, the import library and the DLL are always the same build; the build copies `OpenAL32.dll` next to `quakeray.exe` and the release bundle ships it.
 
-See [docs/openal-backend.md](docs/openal-backend.md) for the engine-to-OpenAL mapping and the deferred step-2 items (HRTF datasets, EFX reverb, occlusion).
-
 ## Game data
 
 Quake 1 game files (`id1/`) are required (registered or shareware). When the local `id1` next to `quakeray.exe` has no game data, the engine reads it directly from the Quake installation in the Steam library instead of copying it, and mod folders with `.pak` files that live in the Steam install of the chosen mode are picked up by the mods menu as well; the classic and the remastered modes are separate (the rerelease PAKs, its add-ons and the Nightdive downloads are remastered-only, while the `rerelease/id1/music` stays available to the classic mode), and a local file always wins over its Steam counterpart. The quakeray engine assets are deployed into the build's game dir by `build_win.ps1` as `id1/qray.pkz` plus the loose `id1/qray.materials.yaml` - nothing has to be packed by hand. HD texture packs can be used through `.pkz` archives or `.mat` material definitions. The material overrides the editor writes go to the active gamedir (`id1/qray.materials.yaml`, a mod's own file overrides it) and the light overrides and custom lights to `id1/qray.lights.yaml`, with a `qray.backup_*` copy of the previous file beside it.
