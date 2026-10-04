@@ -3268,7 +3268,7 @@ void VID_SyncCvars (void)
 enum
 {
 	VID_OPT_MODE,
-	// VID_OPT_REFRESHRATE,
+	VID_OPT_REFRESHRATE,
 	VID_OPT_APPLY,
 
 	VID_OPT_UPSCALER,
@@ -3396,10 +3396,9 @@ vid_height cvars, then updates refreshrate lists
 */
 static void VID_Menu_ChooseNextMode (int dir)
 {
-	int i;
-
 	if (vid_menu_nummodes)
 	{
+		int i;
 		for (i = 0; i < vid_menu_nummodes; i++)
 		{
 			if (vid_menu_modes[i].width == vid_width.value && vid_menu_modes[i].height == vid_height.value)
@@ -3453,6 +3452,10 @@ chooses next refresh rate in order, then updates vid_refreshrate cvar
 static void VID_Menu_ChooseNextRate (int dir)
 {
 	int i;
+
+	// no fullscreen rates for the current size (custom windowed mode, etc.)
+	if (vid_menu_numrates <= 0)
+		return;
 
 	for (i = 0; i < vid_menu_numrates; i++)
 	{
@@ -3534,6 +3537,58 @@ static void VID_Menu_StepFloatCvar (cvar_t *var, float step, float minval, float
 	Cvar_SetValueQuick (var, v);
 }
 
+static void VID_Menu_Adjust (int dir)
+{
+	switch (video_options_cursor)
+	{
+	case VID_OPT_MODE:
+		VID_Menu_ChooseNextMode (-dir);
+		break;
+	case VID_OPT_REFRESHRATE:
+		VID_Menu_ChooseNextRate (-dir);
+		break;
+	case VID_OPT_VSYNC:
+		VID_Menu_ChooseNextVsync (dir);
+		break;
+	case VID_OPT_MAX_FPS:
+		VID_Menu_ChooseNextMaxFPS (dir);
+		Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
+		break;
+	case VID_OPT_EXPOSURE_BIAS:
+		VID_Menu_StepFloatCvar (&rt_exposure_bias, dir * 0.1f, -3.0f, 3.0f);
+		break;
+	case VID_OPT_CONTRAST:
+		VID_Menu_StepFloatCvar (&rt_contrast, dir * 0.1f, 0.0f, 1.0f);
+		break;
+	case VID_OPT_UPSCALER:
+	case VID_OPT_UPSCALER_QUALITY:
+		VID_Menu_ChooseNextAA (video_options_cursor, dir);
+		{
+			int q = menu_settings.upscaler_quality;
+			if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
+				q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
+			Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
+			Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
+		}
+		break;
+	case VID_OPT_MATERIALS_ONLY:
+		Cvar_SetValueQuick (&rt_materials_only, !CVAR_TO_BOOL (rt_materials_only));
+		break;
+	case VID_OPT_FOV:
+		VID_Menu_StepFloatCvar (&scr_fov, dir * 5.0f, 60.0f, 140.0f);
+		break;
+	case VID_OPT_SHOWFPS:
+		Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
+		break;
+	case VID_OPT_DENOISER:
+		Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
+		break;
+	case VID_OPT_TEXTURES:
+		Cvar_SetValueQuick (&rt_no_textures, !CVAR_TO_BOOL (rt_no_textures));
+		break;
+	}
+}
+
 /*
 ================
 VID_MenuKey
@@ -3566,110 +3621,28 @@ static void VID_MenuKey (int key)
 			video_options_cursor = 0;
 		break;
 
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_MOUSE1:
+		m_entersound = true;
+		if (video_options_cursor == VID_OPT_APPLY)
+		{
+			Cbuf_AddText ("vid_restart\n");
+		}
+		else
+		{
+			VID_Menu_Adjust (1);
+		}
+		break;
+
 	case K_LEFTARROW:
 		S_LocalSound ("misc/menu3.wav");
-		switch (video_options_cursor)
-		{
-		case VID_OPT_MODE:
-			VID_Menu_ChooseNextMode (1);
-			break;
-		//case VID_OPT_REFRESHRATE:
-		//	VID_Menu_ChooseNextRate (1);
-		//	break;
-		case VID_OPT_VSYNC:
-			VID_Menu_ChooseNextVsync (-1);
-			break;
-		case VID_OPT_MAX_FPS:
-			VID_Menu_ChooseNextMaxFPS (-1);
-			Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
-			break;
-		case VID_OPT_EXPOSURE_BIAS:
-			VID_Menu_StepFloatCvar (&rt_exposure_bias, -0.1f, -3.0f, 3.0f);
-			break;
-		case VID_OPT_CONTRAST:
-			VID_Menu_StepFloatCvar (&rt_contrast, -0.1f, 0.0f, 1.0f);
-			break;
-		case VID_OPT_UPSCALER:
-		case VID_OPT_UPSCALER_QUALITY:
-			VID_Menu_ChooseNextAA (video_options_cursor, -1);
-			{
-				int q = menu_settings.upscaler_quality;
-				if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
-					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
-				Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
-				Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
-			}
-			break;
-		case VID_OPT_MATERIALS_ONLY:
-			Cvar_SetValueQuick (&rt_materials_only, !CVAR_TO_BOOL (rt_materials_only));
-			break;
-		case VID_OPT_FOV:
-			VID_Menu_StepFloatCvar (&scr_fov, -5.0f, 60.0f, 140.0f);
-			break;
-		case VID_OPT_SHOWFPS:
-			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
-			break;
-		case VID_OPT_DENOISER:
-			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
-			break;
-		case VID_OPT_TEXTURES:
-			Cvar_SetValueQuick (&rt_no_textures, !CVAR_TO_BOOL (rt_no_textures));
-			break;
-		default:
-			break;
-		}
+		VID_Menu_Adjust (-1);
 		break;
 
 	case K_RIGHTARROW:
 		S_LocalSound ("misc/menu3.wav");
-		switch (video_options_cursor)
-		{
-		case VID_OPT_MODE:
-			VID_Menu_ChooseNextMode (-1);
-			break;
-		//case VID_OPT_REFRESHRATE:
-		//	VID_Menu_ChooseNextRate (-1);
-		//	break;
-		case VID_OPT_VSYNC:
-			VID_Menu_ChooseNextVsync (1);
-			break;
-		case VID_OPT_MAX_FPS:
-			VID_Menu_ChooseNextMaxFPS (1);
-			Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
-			break;
-		case VID_OPT_EXPOSURE_BIAS:
-			VID_Menu_StepFloatCvar (&rt_exposure_bias, 0.1f, -3.0f, 3.0f);
-			break;
-		case VID_OPT_CONTRAST:
-			VID_Menu_StepFloatCvar (&rt_contrast, 0.1f, 0.0f, 1.0f);
-			break;
-		case VID_OPT_UPSCALER:
-		case VID_OPT_UPSCALER_QUALITY:
-			VID_Menu_ChooseNextAA (video_options_cursor, 1);
-			{
-				int q = menu_settings.upscaler_quality;
-				if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
-					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
-				Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
-				Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
-			}
-			break;
-		case VID_OPT_MATERIALS_ONLY:
-			Cvar_SetValueQuick (&rt_materials_only, !CVAR_TO_BOOL (rt_materials_only));
-			break;
-		case VID_OPT_FOV:
-			VID_Menu_StepFloatCvar (&scr_fov, 5.0f, 60.0f, 140.0f);
-			break;
-		case VID_OPT_SHOWFPS:
-			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
-			break;
-		case VID_OPT_DENOISER:
-			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
-			break;
-		case VID_OPT_TEXTURES:
-			Cvar_SetValueQuick (&rt_no_textures, !CVAR_TO_BOOL (rt_no_textures));
-			break;
-		}
+		VID_Menu_Adjust (1);
 		break;
 
 	default:
@@ -3731,10 +3704,10 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			M_Print (cbx, 16, y, "        Video mode");
 			M_Print (cbx, 184, y, va ("%ix%i", (int)vid_width.value, (int)vid_height.value));
 			break;
-		//case VID_OPT_REFRESHRATE:
-		//	M_Print (cbx, 16, y, "      Refresh rate");
-		//	M_Print (cbx, 184, y, va ("%i", (int)vid_refreshrate.value));
-		//	break;
+		case VID_OPT_REFRESHRATE:
+			M_Print (cbx, 16, y, "      Refresh rate");
+			M_Print (cbx, 184, y, va ("%i", (int)vid_refreshrate.value));
+			break;
 		case VID_OPT_APPLY:
 			M_Print (cbx, 16, y, "             Apply");
 			break;
