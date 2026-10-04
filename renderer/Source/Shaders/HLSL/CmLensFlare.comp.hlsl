@@ -35,30 +35,19 @@ struct LensFlarePush_BT
 [[vk::push_constant]] ConstantBuffer<LensFlarePush_BT> push;
 
 static const uint FLARE_PASS_BRIGHT = 0;
-static const uint FLARE_PASS_CORE = 1;
-static const uint FLARE_PASS_MID = 2;
-static const uint FLARE_PASS_TAIL = 3;
 static const uint FLARE_PASS_COMPOSITE = 4;
 static const uint FLARE_PASS_APERTURE_SMALL = 5;
 static const uint FLARE_PASS_APERTURE_LARGE = 6;
 
-static const float FLARE_GAIN = 0.1;
-static const float FLARE_STREAK_GAIN = 50.0;
-static const float FLARE_STREAK_LIMIT = 256.0;
-static const float FLARE_CORE_WEIGHT = 0.25;
-static const float FLARE_TAIL_WEIGHT = 0.42;
-
-static const float FLARE_STREAK_LENGTH = 0.08;
-static const float FLARE_CORE_SCALE = 0.056;
-static const float FLARE_MID_SCALE = 0.184;
-static const float FLARE_VERTICAL_SCALE = 0.0035;
+static const float FLARE_GAIN = 50.1;
+static const float FLARE_LIMIT = 256.0;
 static const float FLARE_EDGE_TEXELS = 2.0;
 
 static const uint FLARE_APERTURE_TAPS = 96;
 static const float FLARE_APERTURE_GOLDEN_ANGLE = 2.39996323;
 static const float FLARE_APERTURE_SMALL_SCALE = 0.0095;
 static const float FLARE_APERTURE_LARGE_SCALE = 0.130;
-static const float FLARE_APERTURE_SOFTNESS = 0.25;
+static const float FLARE_APERTURE_SOFTNESS = 0.1;
 static const float3 FLARE_APERTURE_RADII = float3(0.955, 1.0, 1.045);
 
 static const uint FLARE_GHOST_COUNT = 5;
@@ -170,68 +159,6 @@ float3 flareHighlightBordered(float2 uv, float2 texelSize, float edgeTexels)
     return postEffectsSanitize(flareHighlights.SampleLevel(flareSource_Sampler, clamp(uv, (float2)0.0, (float2)1.0), 0).rgb) * fade;
 }
 
-float3 flareCore(float2 uv, float2 texelSize, float coreSigma)
-{
-    const float3 sigma = float3(0.88, 1.00, 1.20) * coreSigma;
-    const float edgeTexels = FLARE_EDGE_TEXELS * coreSigma;
-
-    float3 sum = (float3)0.0;
-    float3 weightSum = (float3)0.0;
-
-    [unroll]
-    for (int i = -8; i <= 8; i++)
-    {
-        const float square = (float)(i * i);
-        const float3 w = exp(-0.5 * square / (sigma * sigma));
-        weightSum += w;
-        sum += flareSampleBordered(uv + float2((float)i * texelSize.x, 0.0), texelSize, edgeTexels) * w;
-    }
-
-    return sum / max(weightSum, 1e-4);
-}
-
-float3 flareMid(float2 uv, float2 texelSize, float midSigma, float stepTexels)
-{
-    const float edgeTexels = FLARE_EDGE_TEXELS * midSigma;
-
-    float3 sum = (float3)0.0;
-    float3 weightSum = (float3)0.0;
-
-    [unroll]
-    for (int i = -8; i <= 8; i++)
-    {
-        const float offset = (float)i * stepTexels;
-        const float w = exp(-0.5 * offset * offset / (midSigma * midSigma));
-        weightSum += w;
-        sum += flareSampleBordered(uv + float2((float)i * stepTexels * texelSize.x, 0.0), texelSize, edgeTexels) * w;
-    }
-
-    return sum / max(weightSum, 1e-4);
-}
-
-float3 flareTail(float2 uv, float2 texelSize, float longSigma, float stepTexels)
-{
-    const float3 sigma = float3(0.62, 0.80, 1.00) * longSigma;
-    const float edgeTexels = FLARE_EDGE_TEXELS * sigma.x;
-
-    float3 sum = (float3)0.0;
-    float3 weightSum = (float3)0.0;
-
-    [unroll]
-    for (int i = -16; i <= 16; i++)
-    {
-        const float offset = (float)i * stepTexels;
-        const float3 w = exp(-0.5 * offset * offset / (sigma * sigma));
-        weightSum += w;
-        sum += flareSampleBordered(uv + float2((float)i * stepTexels * texelSize.x, 0.0), texelSize, edgeTexels) * w;
-    }
-
-    const float3 tail = sum / max(weightSum, 1e-4);
-    const float3 core = flareSample(uv);
-
-    return FLARE_CORE_WEIGHT * core + FLARE_TAIL_WEIGHT * tail;
-}
-
 float3 flareAperture(float2 uv, float2 texelSize, float apothem)
 {
     const float2 normal0 = float2(1.0, 0.0);
@@ -278,37 +205,12 @@ float3 flarePolygonGhosts(float2 uv, float2 texelSize, float aspect)
     return sum;
 }
 
-float3 flareComposite(float2 uv, float2 texelSize, float sigmaY, float bandDelta, float aspect)
+float3 flareComposite(float2 uv, float2 texelSize, float aspect)
 {
-    const float3 vertical = float3(0.90, 1.00, 1.15) * sigmaY;
-    const float edgeTexels = FLARE_EDGE_TEXELS * sigmaY;
+    float3 color = flarePolygonGhosts(uv, texelSize, aspect);
 
-    float3 sum = (float3)0.0;
-    float3 weightSum = (float3)0.0;
-
-    [unroll]
-    for (int j = -2; j <= 2; j++)
-    {
-        const float square = (float)(j * j);
-        const float3 w = exp(-0.5 * square / (vertical * vertical));
-        weightSum += w;
-        sum += flareSampleBordered(uv + float2(0.0, (float)j * texelSize.y), texelSize, edgeTexels) * w;
-    }
-
-    const float3 stripe = sum / max(weightSum, 1e-4);
-
-    const float3 nearBand = float3(flareSampleBordered(uv + float2(bandDelta, 0.0), texelSize, 1.0).r,
-                                  flareSampleBordered(uv, texelSize, 1.0).g,
-                                  flareSampleBordered(uv - float2(bandDelta, 0.0), texelSize, 1.0).b);
-    const float3 farBand = float3(flareSampleBordered(uv + float2(2.5 * bandDelta, 0.0), texelSize, 1.0).r,
-                                  0.0,
-                                  flareSampleBordered(uv - float2(2.5 * bandDelta, 0.0), texelSize, 1.0).b);
-
-    float3 color = stripe + 0.12 * nearBand + 0.05 * farBand;
-    color += flarePolygonGhosts(uv, texelSize, aspect);
-
-    color *= FLARE_GAIN * FLARE_STREAK_GAIN;
-    color = color * FLARE_STREAK_LIMIT / (color + FLARE_STREAK_LIMIT);
+    color *= FLARE_GAIN;
+    color = color * FLARE_LIMIT / (color + FLARE_LIMIT);
     return postEffectsSanitize(color);
 }
 
@@ -339,30 +241,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const float tailSigma = clamp(FLARE_STREAK_LENGTH * (float)width, 8.0, 400.0);
-    const float coreSigma = clamp(FLARE_CORE_SCALE * tailSigma, 2.0, 6.0);
-    const float midSigma = FLARE_MID_SCALE * tailSigma;
-    const float longSigma = sqrt(max(tailSigma * tailSigma - coreSigma * coreSigma - midSigma * midSigma, 1.0));
-
-    if (push.passMode == FLARE_PASS_CORE)
-    {
-        flareDest[pixel] = float4(flareCore(uv, sourceTexelSize, coreSigma), 1.0);
-        return;
-    }
-
-    if (push.passMode == FLARE_PASS_MID)
-    {
-        flareDest[pixel] = float4(flareMid(uv, sourceTexelSize, midSigma, coreSigma), 1.0);
-        return;
-    }
-
-    if (push.passMode == FLARE_PASS_TAIL)
-    {
-        const float stepTexels = sqrt(coreSigma * coreSigma + midSigma * midSigma);
-        flareDest[pixel] = float4(flareTail(uv, sourceTexelSize, longSigma, stepTexels), 1.0);
-        return;
-    }
-
     if (push.passMode == FLARE_PASS_APERTURE_SMALL)
     {
         const float apothem = clamp(FLARE_APERTURE_SMALL_SCALE * (float)height, 4.0, 10.0);
@@ -377,7 +255,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const float sigmaY = clamp(FLARE_VERTICAL_SCALE * (float)height, 0.6, 2.5);
-    const float bandDelta = 0.5 * tailSigma * sourceTexelSize.x;
-    flareDest[pixel] = float4(flareComposite(uv, sourceTexelSize, sigmaY, bandDelta, (float)width / (float)height), 1.0);
+    flareDest[pixel] = float4(flareComposite(uv, sourceTexelSize, (float)width / (float)height), 1.0);
 }

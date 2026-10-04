@@ -303,7 +303,7 @@ void CheckVignette(nvrhi::IDevice *device, const std::string &shaders)
     }
 }
 
-void CheckAnamorphicStreak(nvrhi::IDevice *device, const std::string &shaders)
+void CheckLensFlareAperture(nvrhi::IDevice *device, const std::string &shaders)
 {
     auto sourceLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(0),
         nvrhi::BindingLayoutItem::Sampler(1)});
@@ -329,10 +329,9 @@ void CheckAnamorphicStreak(nvrhi::IDevice *device, const std::string &shaders)
     targetDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
     auto features = device->createTexture(targetDesc);
     auto scratch = device->createTexture(targetDesc);
-    auto streak = device->createTexture(targetDesc);
     auto result = device->createTexture(targetDesc);
     Require(bright != nullptr && features != nullptr && scratch != nullptr &&
-        streak != nullptr && result != nullptr, "create anamorphic targets");
+        result != nullptr, "create flare targets");
 
     auto sampler = device->createSampler(nvrhi::SamplerDesc().setAllFilters(true)
         .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp));
@@ -346,12 +345,9 @@ void CheckAnamorphicStreak(nvrhi::IDevice *device, const std::string &shaders)
             nvrhi::BindingSetItem::Texture_UAV(0, texture)), destinationLayout);
     };
     auto brightSrv = sourceSetFor(bright);
-    auto featuresSrv = sourceSetFor(features);
     auto scratchSrv = sourceSetFor(scratch);
-    auto streakSrv = sourceSetFor(streak);
     auto featuresUav = targetSetFor(features);
     auto scratchUav = targetSetFor(scratch);
-    auto streakUav = targetSetFor(streak);
     auto resultUav = targetSetFor(result);
     auto highlights = device->createBindingSet(nvrhi::BindingSetDesc()
         .addItem(nvrhi::BindingSetItem::Texture_SRV(0, bright))
@@ -366,81 +362,17 @@ void CheckAnamorphicStreak(nvrhi::IDevice *device, const std::string &shaders)
     auto exposure = device->createBuffer(bufferDesc);
     auto exposureSet = device->createBindingSet(nvrhi::BindingSetDesc().addItem(
         nvrhi::BindingSetItem::StructuredBuffer_SRV(0, exposure)), exposureLayout);
-    Require(brightSrv != nullptr && featuresSrv != nullptr && scratchSrv != nullptr &&
-        streakSrv != nullptr && featuresUav != nullptr &&
-        scratchUav != nullptr && streakUav != nullptr && resultUav != nullptr &&
-        highlights != nullptr && aperture != nullptr && exposureSet != nullptr, "create anamorphic sets");
-
-    const auto runChain = [&](const std::vector<float> &pixels) {
-        auto cmd = device->createCommandList();
-        cmd->open();
-        cmd->writeTexture(bright, 0, 0, pixels.data(), size * sizeof(float) * 4);
-        ShTonemapping tm{};
-        cmd->writeBuffer(exposure, &tm, sizeof(tm));
-        const auto dispatch = [&](uint32_t mode, nvrhi::IBindingSet *source, nvrhi::IBindingSet *destination) {
-            nvrhi::ComputeState state;
-            state.pipeline = pipeline;
-            state.addBindingSet(source).addBindingSet(mode == 4 ? aperture : highlights)
-                .addBindingSet(exposureSet).addBindingSet(destination);
-            cmd->setComputeState(state);
-            const uint32_t push[4] = { mode, 0, 0, 0 };
-            cmd->setPushConstants(push, sizeof(push));
-            cmd->dispatch(size / 16, size / 16);
-        };
-        dispatch(1, brightSrv, featuresUav);
-        dispatch(2, featuresSrv, scratchUav);
-        dispatch(3, scratchSrv, streakUav);
-        cmd->clearTextureFloat(features, nvrhi::AllSubresources, nvrhi::Color(0.0f));
-        dispatch(4, streakSrv, resultUav);
-        cmd->close();
-        device->executeCommandList(cmd);
-    };
+    Require(brightSrv != nullptr && scratchSrv != nullptr && featuresUav != nullptr &&
+        scratchUav != nullptr && resultUav != nullptr &&
+        highlights != nullptr && aperture != nullptr && exposureSet != nullptr, "create flare sets");
 
     auto impulse = Image(size, size, 0.0f);
     for (size_t channel = 0; channel < 3; channel++)
         impulse[(32 * size + 32) * 4 + channel] = 100.0f;
-    runChain(impulse);
-    auto values = ReadTextureRGBA(device, result);
+
     const auto at = [&](const std::vector<float> &image, uint32_t x, uint32_t y, uint32_t c) {
         return image[(size_t(y) * size + x) * 4 + c];
     };
-    Require(at(values, 32, 32, 0) > 1.0f, "anamorphic streak core");
-    Require(at(values, 22, 32, 0) > 0.05f && at(values, 42, 32, 0) > 0.05f, "streak spreads horizontally");
-    Require(at(values, 42, 27, 0) == 0.0f && at(values, 42, 37, 1) == 0.0f, "streak stays one row tall away from the ghosts");
-    Require(at(values, 22, 32, 0) > at(values, 42, 32, 0), "chromatic spread on the red side");
-    Require(at(values, 42, 32, 2) > at(values, 22, 32, 2), "chromatic spread on the blue side");
-    const float tailRatio = at(values, 32, 32, 0) / std::max(at(values, 42, 32, 0), 1e-6f);
-    Require(tailRatio > 6.0f, "streak tail falls off " + std::to_string(tailRatio));
-    for (float v : values)
-        Require(std::isfinite(v) && v >= 0.0f && v <= 260.0f, "bounded streak");
-
-    auto edge = Image(size, size, 0.0f);
-    for (size_t channel = 0; channel < 3; channel++)
-        edge[(32 * size + 0) * 4 + channel] = 100.0f;
-    runChain(edge);
-    auto edgeValues = ReadTextureRGBA(device, result);
-    Require(at(edgeValues, 63, 32, 0) < 0.01f, "streak does not wrap");
-    Require(at(edgeValues, 5, 32, 0) > 0.01f, "edge source still flares");
-
-    auto coreCmd = device->createCommandList();
-    coreCmd->open();
-    coreCmd->writeTexture(bright, 0, 0, impulse.data(), size * sizeof(float) * 4);
-    {
-        nvrhi::ComputeState state;
-        state.pipeline = pipeline;
-        state.addBindingSet(brightSrv).addBindingSet(highlights).addBindingSet(exposureSet).addBindingSet(featuresUav);
-        coreCmd->setComputeState(state);
-        const uint32_t push[4] = { 1, 0, 0, 0 };
-        coreCmd->setPushConstants(push, sizeof(push));
-        coreCmd->dispatch(size / 16, size / 16);
-    }
-    coreCmd->close();
-    device->executeCommandList(coreCmd);
-    auto coreValues = ReadTextureRGBA(device, features);
-    float coreRowSum = 0.0f;
-    for (uint32_t x = 0; x < size; x++)
-        coreRowSum += at(coreValues, x, 32, 0);
-    Require(std::abs(coreRowSum - 100.0f) < 2.0f, "core preserves the row energy");
 
     auto apertureCmd = device->createCommandList();
     apertureCmd->open();
@@ -509,7 +441,6 @@ void CheckAnamorphicStreak(nvrhi::IDevice *device, const std::string &shaders)
 
     auto ghostCmd = device->createCommandList();
     ghostCmd->open();
-    ghostCmd->clearTextureFloat(streak, nvrhi::AllSubresources, nvrhi::Color(0.0f));
     auto spark = Image(size, size, 0.0f);
     for (size_t channel = 0; channel < 3; channel++)
         spark[(32 * size + 20) * 4 + channel] = 100.0f;
@@ -526,7 +457,7 @@ void CheckAnamorphicStreak(nvrhi::IDevice *device, const std::string &shaders)
     };
     runMode(5, brightSrv, scratchUav);
     runMode(6, scratchSrv, featuresUav);
-    runMode(4, streakSrv, resultUav);
+    runMode(4, brightSrv, resultUav);
     ghostCmd->close();
     device->executeCommandList(ghostCmd);
     auto ghostValues = ReadTextureRGBA(device, result);
@@ -748,13 +679,13 @@ int main(int argc, char **argv)
             auto tm = probe.Run(127, 7, pixels, true, 1.0f / 60, 10.0f, 80.0f);
             Require(std::abs(tm.avgLuminance - 0.25f) < 0.015f, "percentiles reject bright outliers");
             CheckVignette(device, argv[1]);
-            CheckAnamorphicStreak(device, argv[1]);
+            CheckLensFlareAperture(device, argv[1]);
             CheckFlareBrightPass(device, argv[1]);
             CheckLocalExposure(device, argv[2]);
         }
         Require(device->waitForIdle(), "finish GPU tests");
         Require(gpu.errors.load() == 0, "Vulkan validation errors");
-        std::cout << "PASS: histogram, adaptation, local exposure, vignette and anamorphic streak\n";
+        std::cout << "PASS: histogram, adaptation, local exposure, vignette and the lens flare aperture\n";
         return 0;
     }
     catch (const std::exception &e)

@@ -93,14 +93,13 @@ private:
         Texture bright;
         Texture features;
         Texture scratch;
-        Texture streak;
         Texture result;
         nvrhi::ITexture *sourceTexture = nullptr;
         nvrhi::ITexture *depthTexture = nullptr;
         nvrhi::ITexture *depthSetSourceTexture = nullptr;
         nvrhi::BindingSetHandle sourceSet;
         nvrhi::BindingSetHandle depthSet;
-        nvrhi::BindingSetHandle streakSet;
+        nvrhi::BindingSetHandle highlightSet;
         bool resultValid = false;
     };
 
