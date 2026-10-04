@@ -370,7 +370,7 @@ struct ShTonemapping
     float tmNoiseBlend;
     float tmNoiseStops;
     float tmDynRangeStops;
-    float tmReinhard;
+    float tonemapPower;
     float tmKneeStart;
     float tmWhitePoint;
     float tmSlopeBlurSigma;

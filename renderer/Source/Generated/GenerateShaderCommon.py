@@ -751,7 +751,7 @@ TONEMAPPING_MEMBERS = [
     (FLOAT32, 1, "tmNoiseBlend",             1),
     (FLOAT32, 1, "tmNoiseStops",             1),
     (FLOAT32, 1, "tmDynRangeStops",          1),
-    (FLOAT32, 1, "tmReinhard",               1),
+    (FLOAT32, 1, "tonemapPower",             1),
     (FLOAT32, 1, "tmKneeStart",              1),
     (FLOAT32, 1, "tmWhitePoint",             1),
     (FLOAT32, 1, "tmSlopeBlurSigma",         1),

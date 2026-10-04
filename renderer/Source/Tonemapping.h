@@ -46,7 +46,7 @@ public:
     void PrepareExposureParams(
         uint32_t frameIndex,
         const std::shared_ptr<const GlobalUniform> &uniform,
-        float exposureBias, float contrast, uint32_t tonemapType,
+        float exposureBias, float tonemapPower, uint32_t tonemapType,
         const QrDrawFrameTonemappingParams &params);
 
     VkBuffer GetBuffer(uint32_t frameIndex) const;

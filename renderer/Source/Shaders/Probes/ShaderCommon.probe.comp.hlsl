@@ -126,7 +126,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          tonemapping[0].tmExposureSpeedUp + tonemapping[0].tmLowPercentile +
          tonemapping[0].tmHighPercentile + tonemapping[0].tmMinLuminance + tonemapping[0].tmMaxLuminance +
          tonemapping[0].tmNoiseBlend + tonemapping[0].tmNoiseStops + tonemapping[0].tmDynRangeStops +
-         tonemapping[0].tmReinhard + tonemapping[0].tmKneeStart + tonemapping[0].tmWhitePoint +
+         tonemapping[0].tonemapPower + tonemapping[0].tmKneeStart + tonemapping[0].tmWhitePoint +
          tonemapping[0].tmSlopeBlurSigma + tonemapping[0].frameTime + float(tonemapping[0].resetCurve) +
          tonemapping[0].kneeW + tonemapping[0].kneeA + tonemapping[0].kneeB +
          float(tonemapping[0].histogram[0]) + tonemapping[0].curve[0] + tonemapping[0].normalized[0] +

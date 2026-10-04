@@ -1195,7 +1195,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // now delegates to the same method; Tonemapping.h documents the split).
         if (rtComposePass != nullptr && sky.tonemapping != nullptr && sky.uniform != nullptr)
         {
-            sky.tonemapping->PrepareExposureParams(frameIndex, sky.uniform, sky.exposureBias, sky.contrast,
+            sky.tonemapping->PrepareExposureParams(frameIndex, sky.uniform, sky.exposureBias, sky.tonemapPower,
                                                    sky.tonemapType, sky.exposureParams);
         }
 

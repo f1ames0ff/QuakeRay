@@ -179,43 +179,39 @@ float3 finalizeColor( const float3 input_color )
     const float exposure_scale       = exp2( tonemapping[0].tmExposureBias - 2.0 ) / tonemapping[0].adaptedLuminance;
     const float3 exposed_color       = input_color * exposure_scale;
 
-    float3 mapped_color;
+    float3 curve_color = input_color * out_luminance / lum;
+
+    curve_color = colorHighlightShoulder( curve_color, tonemapping[0].tmKneeStart,
+                                          tonemapping[0].kneeW, tonemapping[0].kneeA, tonemapping[0].kneeB );
+
+    float3 operator_color;
     const uint tonemap_type = tonemapping[0].tonemapType;
 
     if( tonemap_type == 0u )
     {
-        mapped_color = exposed_color;
+        operator_color = exposed_color;
     }
     else if( tonemap_type == 2u )
+    {
+        operator_color = exposed_color / ( 1.0 + exposed_color );
+    }
+    else if( tonemap_type == 3u )
+    {
+        operator_color = acesFilmic( exposed_color );
+    }
+    else if( tonemap_type == 4u )
+    {
+        operator_color = agxFilmic( exposed_color );
+    }
+    else
     {
         const float scaled_luminance = max( getLuminance( exposed_color ), 1e-6 );
         const float mapped_luminance = ( scaled_luminance * ( 1.0 + scaled_luminance / white_point_squared ) ) /
                                        ( 1.0 + scaled_luminance );
-        mapped_color = exposed_color * ( mapped_luminance / scaled_luminance );
+        operator_color = exposed_color * ( mapped_luminance / scaled_luminance );
     }
-    else if( tonemap_type == 3u )
-    {
-        mapped_color = acesFilmic( exposed_color );
-    }
-    else if( tonemap_type == 4u )
-    {
-        mapped_color = agxFilmic( exposed_color );
-    }
-    else
-    {
-        mapped_color = input_color * out_luminance / lum;
 
-        mapped_color = colorHighlightShoulder( mapped_color, tonemapping[0].tmKneeStart,
-                                               tonemapping[0].kneeW, tonemapping[0].kneeA, tonemapping[0].kneeB );
-
-        const float adapted_luminance    = tonemapping[0].adaptedLuminance;
-        const float scaled_luminance     = exp2( tonemapping[0].tmExposureBias - 2.0 ) * lum / adapted_luminance;
-        const float mapped_luminance     = ( scaled_luminance * ( 1.0 + scaled_luminance / white_point_squared ) ) /
-                                           ( 1.0 + scaled_luminance );
-        const float3 ae_mapped_color     = input_color * mapped_luminance / lum;
-
-        mapped_color = lerp( mapped_color, ae_mapped_color, tonemapping[0].tmReinhard );
-    }
+    const float3 mapped_color = lerp( curve_color, operator_color, saturate( tonemapping[0].tonemapPower ) );
 
     return colorLimitPreserveHue( mapped_color, 1.0 );
 }

@@ -304,6 +304,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_exposure_min_luminance, "0.02") \
 	CVAR_DEF_T (rt_exposure_max_luminance, "1.0") \
 	CVAR_DEF_T (rt_local_exposure, "0.1") \
+	CVAR_DEF_T (rt_tonemap_power, "0.9") \
 	CVAR_DEF_T (rt_contrast, "0.9") \
 	CVAR_DEF_T (rt_tonemap, "1") \
 	\
@@ -2551,7 +2552,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.maxLogLuminance = -2.8f,
 		.luminanceWhitePoint = 10.0f,
 		.exposureBias = CLAMP (-3.0f, CVAR_TO_FLOAT (rt_exposure_bias), 3.0f),
-		.contrast = CLAMP (0.0f, CVAR_TO_FLOAT (rt_contrast), 1.0f),
+		.tonemapPower = CLAMP (0.0f, CVAR_TO_FLOAT (rt_tonemap_power), 1.0f),
 		.exposureSpeedUp = CVAR_TO_FLOAT (rt_exposure_speed_up),
 		.exposureSpeedDown = CVAR_TO_FLOAT (rt_exposure_speed_down),
 		.exposureLowPercentile = CVAR_TO_FLOAT (rt_exposure_low_percentile),

@@ -779,7 +779,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     if (drawInfo.pTonemappingParams != nullptr)
     {
         sky.exposureBias = drawInfo.pTonemappingParams->exposureBias;
-        sky.contrast = std::clamp(drawInfo.pTonemappingParams->contrast, 0.0f, 1.0f);
+        sky.tonemapPower = std::clamp(drawInfo.pTonemappingParams->tonemapPower, 0.0f, 1.0f);
         sky.tonemapType = std::min(drawInfo.pTonemappingParams->tonemapType, 4u);
         sky.exposureParams = *drawInfo.pTonemappingParams;
     }

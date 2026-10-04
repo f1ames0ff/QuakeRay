@@ -60,7 +60,7 @@ Tonemapping::~Tonemapping()
 }
 
 void Tonemapping::PrepareExposureParams(uint32_t frameIndex, const std::shared_ptr<const GlobalUniform> &uniform,
-                                        float exposureBias, float contrast, uint32_t tonemapType,
+                                        float exposureBias, float tonemapPower, uint32_t tonemapType,
                                         const QrDrawFrameTonemappingParams &params)
 {
     assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
@@ -97,7 +97,7 @@ void Tonemapping::PrepareExposureParams(uint32_t frameIndex, const std::shared_p
     tm->tmNoiseBlend        = 0.5f;
     tm->tmNoiseStops        = -12.0f;
     tm->tmDynRangeStops     = 7.0f;
-    tm->tmReinhard          = bounded(contrast, 0.0f, 1.0f, 0.6f);
+    tm->tonemapPower        = bounded(tonemapPower, 0.0f, 1.0f, 0.9f);
     tm->tonemapType         = std::min(tonemapType, 4u);
     tm->tmKneeStart         = 0.6f;
     tm->tmWhitePoint        = 10.0f;
