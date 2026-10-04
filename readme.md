@@ -129,7 +129,7 @@ Steps:
    .\bundle_release.ps1
    ```
 
-   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` engine assets (`qray.pkz` and the loose `qray.materials.yaml`), `readme.md`, `changelog.md`, `LICENSE.txt` and the third-party notices under `licenses/` (OpenAL Soft's LGPL text and the pffft licence). The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
+   Writes `dist\QuakeRay-v<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` engine assets (`qray.pkz` and the loose `qray.materials.yaml`), `readme.md`, `changelog.md`, `LICENSE.txt` and the third-party notices under `licenses/` (OpenAL Soft's LGPL text and the pffft licence). The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
 
 ### Cloud renderer regression test
 

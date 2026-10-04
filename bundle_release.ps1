@@ -73,7 +73,7 @@ if (-not $Version) {
 }
 
 $distDir  = Join-Path $repoRoot $OutDir
-$rootName = "QuakeRay-$Version-win64"
+$rootName = "QuakeRay-v$Version-win64"
 $zipPath  = Join-Path $distDir "$rootName.zip"
 $stage    = Join-Path $distDir $rootName
 
