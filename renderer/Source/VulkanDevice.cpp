@@ -1132,6 +1132,23 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
 
         if (RenderThroughRhi(*drawInfo))
         {
+            if (nvrhiFrameSkeleton != nullptr)
+            {
+                float frameMs = 0.0f;
+                float passMs[QR_GPU_PASS_COUNT] = {};
+
+                if (nvrhiFrameSkeleton->GetGpuTimings(&frameMs, passMs))
+                {
+                    statsGpuTimingValid = true;
+                    statsGpuFrameMs = frameMs;
+
+                    for (uint32_t i = 0; i < QR_GPU_PASS_COUNT; i++)
+                    {
+                        statsGpuPassMs[i] = passMs[i];
+                    }
+                }
+            }
+
             currentFrameState.OnEndFrame();
             return;
         }
@@ -1217,6 +1234,13 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
         pStats->raysPerCategory[i] = statsRaysPerCategory[i];
     }
     pStats->fpsX10 = statsFpsX10;
+
+    pStats->gpuTimingValid = statsGpuTimingValid ? 1 : 0;
+    pStats->gpuFrameMs = statsGpuFrameMs;
+    for (uint32_t i = 0; i < QR_GPU_PASS_COUNT; i++)
+    {
+        pStats->gpuPassMs[i] = statsGpuPassMs[i];
+    }
 }
 
 void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
