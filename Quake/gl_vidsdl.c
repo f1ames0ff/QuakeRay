@@ -211,7 +211,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_physical_sky, "1") \
 	CVAR_DEF_T (rt_physical_sun, "0") \
 	CVAR_DEF_T (rt_sky_color, "255 255 255") \
-	CVAR_DEF_T (rt_sky_brightness, "0.1") \
+	CVAR_DEF_T (rt_sky_brightness, "1.0") \
 	CVAR_DEF_T (rt_sky_light_mult, "1.0") \
 	CVAR_DEF_T (rt_brightness, "1.0") \
 	CVAR_DEF_T (rt_light_color, "255 255 255") \
@@ -2594,7 +2594,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float skyMult = 1.0f / CLAMP (0.02f, RT_Luminance (skyflatcolor), 1.0f);
 	skyMult *= CVAR_TO_FLOAT (rt_sky);
 
-	const float skyBrightness = CVAR_TO_FLOAT (rt_sky_brightness) * CVAR_TO_FLOAT (rt_brightness);
+	const float skyBrightness = RT_SKY_RADIANCE_SCALE * CVAR_TO_FLOAT (rt_sky_brightness) * CVAR_TO_FLOAT (rt_brightness);
 
 	const qboolean materials_only = CVAR_TO_BOOL (rt_materials_only);
 
@@ -2683,7 +2683,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			RT_APPLY_SUN_COLOR (brightest_color);
 			RT_FIXUP_LIGHT_INTENSITY (brightest_color, true);
 			VectorScale (brightest_color, RT_SUN_LIGHT_INTENSITY_SCALE, brightest_color);
-			VectorScale (brightest_color, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_brightness), 10.0f), brightest_color);
+			VectorScale (brightest_color, RT_SKY_RADIANCE_SCALE * CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_brightness), 10.0f), brightest_color);
 
 			sky_params.godRaysFromSkyTexture = 1;
 			RT_VEC3_SET (sky_params.godRaysSkyDirection.data, brightest_dir[0], brightest_dir[1], brightest_dir[2]);

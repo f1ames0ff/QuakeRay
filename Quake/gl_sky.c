@@ -978,7 +978,7 @@ static void RT_GetSkyTintColor (float color[3])
 		return;
 	}
 
-	const float mult = CVAR_TO_FLOAT (rt_sky_brightness) * CVAR_TO_FLOAT (rt_brightness);
+	const float mult = RT_SKY_RADIANCE_SCALE * CVAR_TO_FLOAT (rt_sky_brightness) * CVAR_TO_FLOAT (rt_brightness);
 	RT_GetSkyColor (color);
 	VectorScale (color, mult, color);
 }
