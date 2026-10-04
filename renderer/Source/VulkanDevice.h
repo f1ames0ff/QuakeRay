@@ -280,5 +280,8 @@ private:
     uint32_t                                statsRaysPerCategory[RAY_STATS_CATEGORY_COUNT] = {};
     uint32_t                                statsFpsX10 = 0;
     float                                   statsSmoothedFps = 0.0f;
+    bool                                    statsGpuTimingValid = false;
+    float                                   statsGpuFrameMs = 0.0f;
+    float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
 };
 }
