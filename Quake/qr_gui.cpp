@@ -322,7 +322,7 @@ void DrawMouseCursor (void)
 
 } // namespace
 
-void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path)
+void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font_size)
 {
 	if (g_ready || sdl_window == NULL || qr_instance == NULL)
 		return;
@@ -344,18 +344,18 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path)
 	}
 
 	ImFont *font = nullptr;
-	if (font_path && font_path[0])
+	if (font_data && font_size > 0)
 	{
-		font         = io.Fonts->AddFontFromFileTTF (font_path, 19.0f);
-		g_stats_font = io.Fonts->AddFontFromFileTTF (font_path, 28.0f);
+		font         = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, 19.0f);
+		g_stats_font = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, 28.0f);
 	}
 	if (!font)
 	{
 		ImFontConfig cfg;
 		cfg.SizePixels = 19.0f;
 		font = io.Fonts->AddFontDefault (&cfg);
-		if (font_path && font_path[0])
-			fprintf (stderr, "qr gui: cannot load '%s', using the default font\n", font_path);
+		if (font_data && font_size > 0)
+			fprintf (stderr, "qr gui: cannot load the font, using the default font\n");
 	}
 
 	g_instance = (QrInstance)qr_instance;

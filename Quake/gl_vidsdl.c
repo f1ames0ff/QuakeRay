@@ -1495,6 +1495,55 @@ static void RT_PrintMessage (const char *pMessage, void *pUserData)
 	Con_Warning (pMessage);
 }
 
+static void RT_LoadFile (const char *pFilePath, void *pUserData, const void **ppOutData,
+                         uint32_t *pOutDataSize, void **ppOutFileUserHandle)
+{
+	char        name[MAX_OSPATH];
+	const char *p = pFilePath;
+	byte       *data;
+	int         i;
+
+	(void)pUserData;
+
+	if (ppOutData)
+		*ppOutData = NULL;
+	if (pOutDataSize)
+		*pOutDataSize = 0;
+	if (ppOutFileUserHandle)
+		*ppOutFileUserHandle = NULL;
+
+	if (!p || !p[0])
+		return;
+
+	if (!q_strncasecmp (p, RT_OVERRIDEN_FOLDER, sizeof (RT_OVERRIDEN_FOLDER) - 1))
+		p += sizeof (RT_OVERRIDEN_FOLDER) - 1;
+	while (*p == '/' || *p == '\\')
+		p++;
+
+	for (i = 0; p[i] && i < (int)sizeof (name) - 1; i++)
+		name[i] = (p[i] == '\\') ? '/' : p[i];
+	name[i] = 0;
+
+	data = COM_LoadFile (name, NULL);
+	if (!data)
+		return;
+
+	if (ppOutData)
+		*ppOutData = data;
+	if (pOutDataSize)
+		*pOutDataSize = (uint32_t)com_filesize;
+	if (ppOutFileUserHandle)
+		*ppOutFileUserHandle = data;
+}
+
+static void RT_FreeFile (void *pFileUserHandle, void *pUserData)
+{
+	(void)pUserData;
+
+	if (pFileUserHandle)
+		Mem_Free (pFileUserHandle);
+}
+
 static void RT_ReloadShaders (void)
 {
 	request_shaders_reload = true;
@@ -1751,30 +1800,25 @@ static void GL_InitInstance (void)
 	SDL_VERSION (&wmInfo.version);
 	SDL_GetWindowWMInfo (draw_context, &wmInfo);
 
-#ifdef QR_USE_SURFACE_WIN32
 	QrWin32SurfaceCreateInfo win32Info = {.hinstance = wmInfo.info.win.hinstance, .hwnd = wmInfo.info.win.window};
-#elif QR_USE_SURFACE_XLIB
-	QrXlibSurfaceCreateInfo x11Info = {.dpy = wmInfo.info.x11.display, .window = wmInfo.info.x11.window};
-#endif
 
 	const char pShaderPath[] = RT_OVERRIDEN_FOLDER "shaders/";
-	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "BlueNoise_LDR_RGBA_128.ktx2";
-	const char pWaterTexturePath[] = RT_OVERRIDEN_FOLDER "WaterNormal_n.ktx2";
+	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "BlueNoise_LDR_RGBA_128.png";
+	const char pWaterTexturePath[] = RT_OVERRIDEN_FOLDER "WaterNormal_n.png";
 
 	QrInstanceCreateInfo info = {
 		.pAppName = "QuakeRay",
 		.pAppGUID = "8d1f551a-b0e4-4365-985c-5e1182f3c54a",
 
-#ifdef QR_USE_SURFACE_WIN32
 		.pWin32SurfaceInfo = &win32Info,
-#elif QR_USE_SURFACE_XLIB
-		.pXlibSurfaceCreateInfo = &x11Info,
-#endif
 		
 		.pfnPrint = RT_PrintMessage,
 
 		.pShaderFolderPath = pShaderPath,
 		.pBlueNoiseFilePath = pBlueNoisePath,
+
+		.pfnOpenFile = RT_LoadFile,
+		.pfnCloseFile = RT_FreeFile,
 
 		.primaryRaysMaxAlbedoLayers = 2,
 		.indirectIlluminationMaxAlbedoLayers = 1,
@@ -1819,7 +1863,7 @@ static void GL_InitInstance (void)
 
 	QR_Editor_Init (); // qr light editor console commands
 
-	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL);
+	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL, 0);
 
 	Cmd_AddCommand ("rt_pfnreloadshaders", RT_ReloadShaders);
 	Cmd_AddCommand ("rt_light_report", RT_LightReport_f);
@@ -3270,7 +3314,7 @@ void VID_SyncCvars (void)
 enum
 {
 	VID_OPT_MODE,
-	// VID_OPT_REFRESHRATE,
+	VID_OPT_REFRESHRATE,
 	VID_OPT_APPLY,
 
 	VID_OPT_UPSCALER,
@@ -3398,10 +3442,9 @@ vid_height cvars, then updates refreshrate lists
 */
 static void VID_Menu_ChooseNextMode (int dir)
 {
-	int i;
-
 	if (vid_menu_nummodes)
 	{
+		int i;
 		for (i = 0; i < vid_menu_nummodes; i++)
 		{
 			if (vid_menu_modes[i].width == vid_width.value && vid_menu_modes[i].height == vid_height.value)
@@ -3455,6 +3498,10 @@ chooses next refresh rate in order, then updates vid_refreshrate cvar
 static void VID_Menu_ChooseNextRate (int dir)
 {
 	int i;
+
+	// no fullscreen rates for the current size (custom windowed mode, etc.)
+	if (vid_menu_numrates <= 0)
+		return;
 
 	for (i = 0; i < vid_menu_numrates; i++)
 	{
@@ -3536,6 +3583,58 @@ static void VID_Menu_StepFloatCvar (cvar_t *var, float step, float minval, float
 	Cvar_SetValueQuick (var, v);
 }
 
+static void VID_Menu_Adjust (int dir)
+{
+	switch (video_options_cursor)
+	{
+	case VID_OPT_MODE:
+		VID_Menu_ChooseNextMode (-dir);
+		break;
+	case VID_OPT_REFRESHRATE:
+		VID_Menu_ChooseNextRate (-dir);
+		break;
+	case VID_OPT_VSYNC:
+		VID_Menu_ChooseNextVsync (dir);
+		break;
+	case VID_OPT_MAX_FPS:
+		VID_Menu_ChooseNextMaxFPS (dir);
+		Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
+		break;
+	case VID_OPT_EXPOSURE_BIAS:
+		VID_Menu_StepFloatCvar (&rt_exposure_bias, dir * 0.1f, -3.0f, 3.0f);
+		break;
+	case VID_OPT_CONTRAST:
+		VID_Menu_StepFloatCvar (&rt_contrast, dir * 0.1f, 0.0f, 1.0f);
+		break;
+	case VID_OPT_UPSCALER:
+	case VID_OPT_UPSCALER_QUALITY:
+		VID_Menu_ChooseNextAA (video_options_cursor, dir);
+		{
+			int q = menu_settings.upscaler_quality;
+			if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
+				q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
+			Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
+			Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
+		}
+		break;
+	case VID_OPT_MATERIALS_ONLY:
+		Cvar_SetValueQuick (&rt_materials_only, !CVAR_TO_BOOL (rt_materials_only));
+		break;
+	case VID_OPT_FOV:
+		VID_Menu_StepFloatCvar (&scr_fov, dir * 5.0f, 60.0f, 140.0f);
+		break;
+	case VID_OPT_SHOWFPS:
+		Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
+		break;
+	case VID_OPT_DENOISER:
+		Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
+		break;
+	case VID_OPT_TEXTURES:
+		Cvar_SetValueQuick (&rt_no_textures, !CVAR_TO_BOOL (rt_no_textures));
+		break;
+	}
+}
+
 /*
 ================
 VID_MenuKey
@@ -3568,110 +3667,28 @@ static void VID_MenuKey (int key)
 			video_options_cursor = 0;
 		break;
 
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_MOUSE1:
+		m_entersound = true;
+		if (video_options_cursor == VID_OPT_APPLY)
+		{
+			Cbuf_AddText ("vid_restart\n");
+		}
+		else
+		{
+			VID_Menu_Adjust (1);
+		}
+		break;
+
 	case K_LEFTARROW:
 		S_LocalSound ("misc/menu3.wav");
-		switch (video_options_cursor)
-		{
-		case VID_OPT_MODE:
-			VID_Menu_ChooseNextMode (1);
-			break;
-		//case VID_OPT_REFRESHRATE:
-		//	VID_Menu_ChooseNextRate (1);
-		//	break;
-		case VID_OPT_VSYNC:
-			VID_Menu_ChooseNextVsync (-1);
-			break;
-		case VID_OPT_MAX_FPS:
-			VID_Menu_ChooseNextMaxFPS (-1);
-			Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
-			break;
-		case VID_OPT_EXPOSURE_BIAS:
-			VID_Menu_StepFloatCvar (&rt_exposure_bias, -0.1f, -3.0f, 3.0f);
-			break;
-		case VID_OPT_CONTRAST:
-			VID_Menu_StepFloatCvar (&rt_contrast, -0.1f, 0.0f, 1.0f);
-			break;
-		case VID_OPT_UPSCALER:
-		case VID_OPT_UPSCALER_QUALITY:
-			VID_Menu_ChooseNextAA (video_options_cursor, -1);
-			{
-				int q = menu_settings.upscaler_quality;
-				if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
-					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
-				Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
-				Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
-			}
-			break;
-		case VID_OPT_MATERIALS_ONLY:
-			Cvar_SetValueQuick (&rt_materials_only, !CVAR_TO_BOOL (rt_materials_only));
-			break;
-		case VID_OPT_FOV:
-			VID_Menu_StepFloatCvar (&scr_fov, -5.0f, 60.0f, 140.0f);
-			break;
-		case VID_OPT_SHOWFPS:
-			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
-			break;
-		case VID_OPT_DENOISER:
-			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
-			break;
-		case VID_OPT_TEXTURES:
-			Cvar_SetValueQuick (&rt_no_textures, !CVAR_TO_BOOL (rt_no_textures));
-			break;
-		default:
-			break;
-		}
+		VID_Menu_Adjust (-1);
 		break;
 
 	case K_RIGHTARROW:
 		S_LocalSound ("misc/menu3.wav");
-		switch (video_options_cursor)
-		{
-		case VID_OPT_MODE:
-			VID_Menu_ChooseNextMode (-1);
-			break;
-		//case VID_OPT_REFRESHRATE:
-		//	VID_Menu_ChooseNextRate (-1);
-		//	break;
-		case VID_OPT_VSYNC:
-			VID_Menu_ChooseNextVsync (1);
-			break;
-		case VID_OPT_MAX_FPS:
-			VID_Menu_ChooseNextMaxFPS (1);
-			Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
-			break;
-		case VID_OPT_EXPOSURE_BIAS:
-			VID_Menu_StepFloatCvar (&rt_exposure_bias, 0.1f, -3.0f, 3.0f);
-			break;
-		case VID_OPT_CONTRAST:
-			VID_Menu_StepFloatCvar (&rt_contrast, 0.1f, 0.0f, 1.0f);
-			break;
-		case VID_OPT_UPSCALER:
-		case VID_OPT_UPSCALER_QUALITY:
-			VID_Menu_ChooseNextAA (video_options_cursor, 1);
-			{
-				int q = menu_settings.upscaler_quality;
-				if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
-					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
-				Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
-				Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
-			}
-			break;
-		case VID_OPT_MATERIALS_ONLY:
-			Cvar_SetValueQuick (&rt_materials_only, !CVAR_TO_BOOL (rt_materials_only));
-			break;
-		case VID_OPT_FOV:
-			VID_Menu_StepFloatCvar (&scr_fov, 5.0f, 60.0f, 140.0f);
-			break;
-		case VID_OPT_SHOWFPS:
-			Cvar_SetValueQuick (&scr_showfps, !CVAR_TO_BOOL (scr_showfps));
-			break;
-		case VID_OPT_DENOISER:
-			Cvar_SetValueQuick (&rt_denoiser, !CVAR_TO_BOOL (rt_denoiser));
-			break;
-		case VID_OPT_TEXTURES:
-			Cvar_SetValueQuick (&rt_no_textures, !CVAR_TO_BOOL (rt_no_textures));
-			break;
-		}
+		VID_Menu_Adjust (1);
 		break;
 
 	default:
@@ -3733,10 +3750,10 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			M_Print (cbx, 16, y, "        Video mode");
 			M_Print (cbx, 184, y, va ("%ix%i", (int)vid_width.value, (int)vid_height.value));
 			break;
-		//case VID_OPT_REFRESHRATE:
-		//	M_Print (cbx, 16, y, "      Refresh rate");
-		//	M_Print (cbx, 184, y, va ("%i", (int)vid_refreshrate.value));
-		//	break;
+		case VID_OPT_REFRESHRATE:
+			M_Print (cbx, 16, y, "      Refresh rate");
+			M_Print (cbx, 184, y, va ("%i", (int)vid_refreshrate.value));
+			break;
 		case VID_OPT_APPLY:
 			M_Print (cbx, 16, y, "             Apply");
 			break;

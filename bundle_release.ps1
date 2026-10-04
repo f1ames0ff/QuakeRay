@@ -3,11 +3,12 @@
     Bundles a Release build of QuakeRay into a distributable ZIP archive.
 
 .DESCRIPTION
-    Packages quakeray.exe, the runtime DLLs, the runtime assets next to the
-    executable (gfx) and the id1 runtime assets (materials, shaders,
-    textures -- which carry the material textures and the model skins, luma
-    and gloss maps among them -- and the BlueNoise / WaterNormal KTX2 files)
-    plus documentation into a single ZIP ready for distribution.
+    Packages quakeray.exe, the runtime DLLs, the id1 engine assets
+    (qray.pkz -- the shaders, textures with the material textures and the model
+    skins, luma and gloss maps among them, the axe cursor artwork, the GUI font
+    and the BlueNoise / WaterNormal tables -- and the loose qray.materials.yaml
+    the editor rewrites) plus documentation into a single ZIP ready for
+    distribution.
 
     The engine binary is taken from the Release configuration, which is built
     without debug information. Debug artifacts (.pdb/.ilk/.map) are never
@@ -62,17 +63,21 @@ if (-not (Test-Path $gameDir)) {
 }
 
 # Resolve the version from the engine header when not supplied explicitly.
-if (-not $Version) {
-    $qdef  = Join-Path $repoRoot "Quake\quakedef.h"
-    $text  = Get-Content $qdef -Raw
-    $maj   = [regex]::Match($text, 'ENGINE_VERSION\s+([0-9]+(?:\.[0-9]+)?)').Groups[1].Value
-    $patch = [regex]::Match($text, 'ENGINE_VER_PATCH\s+([0-9]+)').Groups[1].Value
-    if (-not $maj) { throw "Could not read ENGINE_VERSION from $qdef" }
-    $Version = "$maj.$patch"
+$qdef  = Join-Path $repoRoot "Quake\quakedef.h"
+$text  = Get-Content $qdef -Raw
+$maj   = [regex]::Match($text, 'ENGINE_VERSION\s+([0-9]+(?:\.[0-9]+)?)').Groups[1].Value
+$patch = [regex]::Match($text, 'ENGINE_VER_PATCH\s+([0-9]+)').Groups[1].Value
+if (-not $maj) { throw "Could not read ENGINE_VERSION from $qdef" }
+$buildVersion = "$maj.$patch"
+if (-not $Version) { $Version = $buildVersion }
+
+$exeVersion = "$((Get-Item $exe).VersionInfo.FileVersion)".Trim()
+if ($exeVersion -ne $buildVersion) {
+    throw "quakeray.exe in $BuildDir reports version '$exeVersion' but Quake\quakedef.h says '$buildVersion'. Rebuild first: .\build_win.ps1 $Config"
 }
 
 $distDir  = Join-Path $repoRoot $OutDir
-$rootName = "QuakeRay-$Version-win64"
+$rootName = "QuakeRay-v$Version-win64"
 $zipPath  = Join-Path $distDir "$rootName.zip"
 $stage    = Join-Path $distDir $rootName
 
@@ -91,40 +96,18 @@ foreach ($dll in $dlls) {
 }
 Write-Host "Added $($dlls.Count) DLL(s)"
 
-foreach ($d in @("gfx")) {
-    $src = Join-Path $BuildDir $d
-    if (Test-Path $src) {
-        Copy-Item $src (Join-Path $stage $d) -Recurse -Force
-        Write-Host "Added $d"
-    }
-    else {
-        Write-Warning "Skipped $d (not found in $BuildDir)"
-    }
-}
-
 # 3) id1 runtime assets.
 $stageId1 = Join-Path $stage "id1"
 New-Item -ItemType Directory -Path $stageId1 -Force | Out-Null
 
-foreach ($sub in @("materials", "shaders", "textures")) {
-    $src = Join-Path $gameDir $sub
-    if (Test-Path $src) {
-        Copy-Item $src (Join-Path $stageId1 $sub) -Recurse -Force
-        Write-Host "Added id1\$sub"
-    }
-    else {
-        Write-Warning "Skipped id1\$sub (not found in $gameDir)"
-    }
-}
-
-foreach ($f in @("BlueNoise_LDR_RGBA_128.ktx2", "WaterNormal_n.ktx2")) {
+foreach ($f in @("qray.pkz", "qray.materials.yaml")) {
     $src = Join-Path $gameDir $f
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stageId1 $f) -Force
         Write-Host "Added id1\$f"
     }
     else {
-        Write-Warning "Skipped id1\$f (not found in $gameDir)"
+        throw "id1\$f not found in $gameDir. Build the Release configuration first: .\build_win.ps1 Release"
     }
 }
 
@@ -156,7 +139,7 @@ foreach ($notice in $openalNotices.GetEnumerator()) {
     }
 }
 
-# 5) Create the ZIP with a top-level QuakeRay-<version>-win64 folder.
+# 5) Create the ZIP with a top-level QuakeRay-v<version>-win64 folder.
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 
 Add-Type -AssemblyName System.IO.Compression

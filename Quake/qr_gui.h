@@ -20,7 +20,7 @@ extern "C" {
 // Creates the ImGui context, the SDL2 input backend and the font atlas.
 // qr_instance is the QrInstance the draw lists are uploaded to; font_path may
 // be NULL, the default ImGui font is used then.
-void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path);
+void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font_size);
 int  QR_GUI_Ready (void);
 void QR_GUI_Shutdown (void);
 

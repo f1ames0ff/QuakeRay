@@ -1,7 +1,7 @@
-// rt_lights.c -- the dynamic-light overrides of lights.yaml (see rt_lights.h).
+// rt_lights.c -- the dynamic lights of qray.lights.yaml (see rt_lights.h).
 //
 // The files are read once per map (the editor reloads them through its own
-// session flow): the base directory's lights.yaml first, then the running
+// session flow): the base directory's qray.lights.yaml first, then the running
 // gamedir's, with a later file replacing the entries of an earlier one -- the
 // same precedence the materials files have.
 
@@ -81,23 +81,48 @@ const rt_tracked_light_t *RT_TRACK_Lights(int *outCount)
 }
 
 static const char *rt_light_header =
-    "# Dynamic light overrides for the qray ray-traced renderer.\n"
-    "# A light belongs to an emitter: the texture a model or a sprite draws (the\n"
-    "# same name materials.yaml uses for it), the model of the entity that asked\n"
-    "# for a legacy dlight, or the classname of a map light entity -- classname\n"
-    "# entries apply where the legacy light system uploads those entities\n"
-    "# (rt_truelight 0); the editor itself runs on rt_truelight 1 and shows the\n"
-    "# lights that system builds.\n"
-    "#   light_radius    -- the size of the light (rt_dlight_radius units)\n"
-    "#   light_intensity -- the brightness of the light (a multiplier of its colour)\n"
-    "#   light_offset    -- \"x y z\", the offset from the emitter's pivot point\n"
-    "#   light_color     -- \"rrggbb\", an explicit colour for the light\n"
-    "#   light_style     -- force a light style on the emitter, overriding its own\n"
-    "#                      (\"none\" keeps the emitter's own style)\n"
-    "#   force_rasterize -- draw the emitter in the rasterized path (material lights)\n"
-    "#   group_edit      -- true (the default) when an edit of one light of the\n"
-    "#                      group (the emitter's model) is written to all of them\n"
-    "# An emitter without an entry uses the global rt_dlight_* settings.\n";
+    "# Light definitions for the qray ray-traced renderer, one file per gamedir\n"
+    "# (a mod's file overrides the id1 one). Two parts live here:\n"
+    "#\n"
+    "# * `qray_lights:` -- the per-emitter dynamic-light overrides. A light belongs to\n"
+    "#   an emitter: the texture a model or a sprite draws (the same name\n"
+    "#   qray.materials.yaml uses for it), the model of the entity that asked for\n"
+    "#   a legacy dlight, or the classname of a map light entity -- classname\n"
+    "#   entries apply where the legacy light system uploads those entities\n"
+    "#   (rt_truelight 0); the editor itself runs on rt_truelight 1 and shows the\n"
+    "#   lights that system builds.\n"
+    "#     light_radius    -- the size of the light (rt_dlight_radius units)\n"
+    "#     light_intensity -- the brightness of the light (a multiplier of its colour)\n"
+    "#     light_offset    -- \"x y z\", the offset from the emitter's pivot point\n"
+    "#     light_color     -- \"rrggbb\", an explicit colour for the light\n"
+    "#     light_style     -- force a light style on the emitter, overriding its own\n"
+    "#                        (\"none\" keeps the emitter's own style)\n"
+    "#     force_rasterize -- draw the emitter in the rasterized path (material lights)\n"
+    "#     group_edit      -- true (the default) when an edit of one light of the\n"
+    "#                        group (the emitter's model) is written to all of them\n"
+    "#   An emitter without an entry uses the global rt_dlight_* settings.\n"
+    "#\n"
+    "# * one section per level, named after the map (the file name without path or\n"
+    "#   extension), with the custom dlights the level does not have and its fog.\n"
+    "#   The fog block may state whether the level's fog is drawn at all\n"
+    "#   (rt_level_fog); without \"enabled\" the file leaves the cvar as the user\n"
+    "#   configured it:\n"
+    "# start:\n"
+    "#   fog:\n"
+    "#     enabled: true          # true/false (or 1/0), the level's fog switch\n"
+    "#     color: 8899aa          # rrggbb\n"
+    "#     density: 1.5           # 0 turns the fog off\n"
+    "#   lights:\n"
+    "#     - origin: 512 -256 64  # x y z, Quake units\n"
+    "#       radius: 0.4          # rt_dlight_radius units, 0..10\n"
+    "#       intensity: 1.0       # a multiplier of the colour\n"
+    "#       color: ff9900        # rrggbb\n"
+    "#       offset: 0 0 16       # optional shift from the origin\n"
+    "#       spot: true           # optional: a cone instead of a sphere\n"
+    "#       dir: 0 0 1           # the axis of the cone, X Y Z\n"
+    "#       angle_inner: 0       # degrees, the cone's full-intensity core\n"
+    "#       angle_outer: 30      # degrees, where the cone falls to nothing\n"
+    "#       style: candle        # optional, a light style of the engine\n";
 
 // The name the editor and the renderer agree on: the normalized texture name
 // with a file extension stripped (a model skin keeps its ":frameN"). An
@@ -516,20 +541,27 @@ static qboolean rt_light_parse_bool(const char *value)
 
 static int RT_CustomStyleFromString(const char *s);
 
-static int rt_light_load_file(const char *path)
+static int rt_light_parse_text(const char *text, int length)
 {
-    FILE       *f = fopen(path, "r");
+    const char *cursor = text;
+    const char *end = text + length;
     char        line[1024];
     rt_light_t *cur = NULL;
     int         loaded = 0;
 
-    if (!f)
+    while (cursor < end)
     {
-        return 0;
-    }
+        const char *nl = memchr(cursor, '\n', (size_t)(end - cursor));
+        size_t      n = nl ? (size_t)(nl - cursor) : (size_t)(end - cursor);
 
-    while (fgets(line, sizeof(line), f))
-    {
+        if (n >= sizeof(line))
+        {
+            n = sizeof(line) - 1;
+        }
+        memcpy(line, cursor, n);
+        line[n] = '\0';
+        cursor = nl ? nl + 1 : end;
+
         char *p = line;
         char *colon;
 
@@ -657,15 +689,58 @@ static int rt_light_load_file(const char *path)
         }
     }
 
-    fclose(f);
     return loaded;
 }
 
-static void rt_light_load_directory(const char *dir)
+static int rt_light_load_file(const char *path)
 {
-    char path[MAX_OSPATH];
+    FILE   *f = fopen(path, "rb");
+    long    size;
+    size_t  got;
+    char   *text;
+    int     loaded;
 
-    q_snprintf(path, sizeof(path), "%s/lights.yaml", dir);
+    if (!f)
+    {
+        return 0;
+    }
+
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0 || size > 8 * 1024 * 1024)
+    {
+        fclose(f);
+        return 0;
+    }
+
+    text = (char *)Mem_Alloc((size_t)size);
+    got = fread(text, 1, (size_t)size, f);
+    fclose(f);
+    loaded = rt_light_parse_text(text, (int)got);
+    Mem_Free(text);
+    return loaded;
+}
+
+static int rt_light_load_vfs(const char *name)
+{
+    int   length = 0;
+    byte *buf = COM_LoadFile(name, NULL);
+    int   loaded;
+
+    if (!buf)
+    {
+        return 0;
+    }
+
+    length = com_filesize;
+    loaded = rt_light_parse_text((const char *)buf, length);
+    Mem_Free(buf);
+    return loaded;
+}
+
+static void rt_light_load_file_if_present(const char *path)
+{
     if (Sys_FileTime(path) != -1)
     {
         int loaded = rt_light_load_file(path);
@@ -677,9 +752,20 @@ static void rt_light_load_directory(const char *dir)
     }
 }
 
+static void rt_light_load_directory(const char *dir)
+{
+    char path[MAX_OSPATH];
+
+    q_snprintf(path, sizeof(path), "%s/lights.yaml", dir);
+    rt_light_load_file_if_present(path);
+
+    q_snprintf(path, sizeof(path), "%s/qray.lights.yaml", dir);
+    rt_light_load_file_if_present(path);
+}
+
 void RT_LIGHT_Reload(void)
 {
-    char base[MAX_OSPATH];
+    int i;
 
     if (!rt_light_initialized)
     {
@@ -688,11 +774,20 @@ void RT_LIGHT_Reload(void)
 
     rt_light_count = 0;
 
-    q_snprintf(base, sizeof(base), "%s/id1", com_basedir);
-    if (q_strcasecmp(base, com_gamedir))
+    for (i = 0; i < com_numbasedirs; i++)
     {
-        rt_light_load_directory(base);
+        char base[MAX_OSPATH];
+
+        q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
+        if (!COM_PathMatches(base, com_gamedir))
+        {
+            rt_light_load_directory(base);
+        }
     }
+    rt_light_load_directory(com_gamedir);
+
+    rt_light_load_vfs("lights.yaml");
+    rt_light_load_vfs("qray.lights.yaml");
     rt_light_load_directory(com_gamedir);
 }
 
@@ -733,7 +828,7 @@ int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
         {
             p++;
         }
-        if (*p == '#' || !strncmp(p, "lights:", 7))
+        if (*p == '#' || !strncmp(p, "qray_lights:", 12) || !strncmp(p, "lights:", 7))
         {
             continue;
         }
@@ -786,7 +881,7 @@ qboolean RT_LIGHT_Write(const char *path, char (*names)[MAX_QPATH], int count)
     }
 
     fprintf(f, "%s", rt_light_header);
-    fprintf(f, "lights:\n");
+    fprintf(f, "qray_lights:\n");
 
     for (i = 0; i < count; i++)
     {
@@ -821,7 +916,7 @@ qboolean RT_LIGHT_Write(const char *path, char (*names)[MAX_QPATH], int count)
 
 // ---------------------------------------------------------------------------
 // Custom dlights: freely placed lights the editor authors, one section per level
-// in <gamedir>/qray/lights.yaml. Only the current level's section is loaded.
+// in <gamedir>/qray.lights.yaml. Only the current level's section is loaded.
 // ---------------------------------------------------------------------------
 
 const char *const rt_custom_style_names[RT_CUSTOM_STYLE_COUNT] = {
@@ -1207,14 +1302,68 @@ static void RT_CustomLightsParse(const char *filebuf, int len, const char *level
     yaml_parser_delete(&parser);
 }
 
+static qboolean rt_custom_load_stream(FILE *f, const char *level)
+{
+    long     size;
+    char    *text;
+    size_t   got;
+    qboolean found;
+
+    if (!f)
+        return false;
+
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (size <= 0 || size > 8 * 1024 * 1024)
+        return false;
+
+    text = (char *)Mem_Alloc((size_t)size + 1);
+    got = fread(text, 1, (size_t)size, f);
+    text[got] = 0;
+
+    RT_CustomLightsParse(text, (int)got, level);
+    Mem_Free(text);
+
+    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog) ? true : false;
+    return found;
+}
+
+static qboolean rt_custom_load_file(const char *path, const char *level)
+{
+    FILE     *f = fopen(path, "rb");
+    qboolean  found;
+
+    if (!f)
+        return false;
+
+    found = rt_custom_load_stream(f, level);
+    fclose(f);
+    return found;
+}
+
+static qboolean rt_custom_load_vfs(const char *name, const char *level)
+{
+    int       length = 0;
+    byte     *buf = COM_LoadFile(name, NULL);
+    qboolean  found;
+
+    if (!buf)
+        return false;
+
+    length = com_filesize;
+    RT_CustomLightsParse((const char *)buf, length, level);
+    Mem_Free(buf);
+
+    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog) ? true : false;
+    return found;
+}
+
 void RT_CustomLights_ChangeMap(const char *mapname)
 {
-    char  level[64];
-    char  path[MAX_OSPATH];
-    FILE *f;
-    long  size;
-    char *text;
-    size_t got;
+    char level[64];
+    char path[MAX_OSPATH];
 
     rt_custom_light_count = 0;
     RT_CustomFogSet(NULL);
@@ -1224,59 +1373,24 @@ void RT_CustomLights_ChangeMap(const char *mapname)
         return;
 
     RT_CustomLights_LevelKey(mapname, level, sizeof(level));
-    q_snprintf(path, sizeof(path), "%s/qray/lights.yaml", com_gamedir);
+    q_snprintf(path, sizeof(path), "%s/qray.lights.yaml", com_gamedir);
 
-    f = fopen(path, "rb");
-    if (!f)
-        return;
-
-    fseek(f, 0, SEEK_END);
-    size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    if (size <= 0 || size > 8 * 1024 * 1024)
+    // the merged file first; a level the migration has not reached yet still
+    // lives in the old qray/lights.yaml
+    if (!rt_custom_load_file(path, level))
     {
-        fclose(f);
-        return;
+        q_snprintf(path, sizeof(path), "%s/qray/lights.yaml", com_gamedir);
+        if (!rt_custom_load_file(path, level))
+        {
+            // a store-mounted mod's own file, found through the search path
+            if (!rt_custom_load_vfs("qray.lights.yaml", level))
+                rt_custom_load_vfs("qray/lights.yaml", level);
+        }
     }
-
-    text = (char *)Mem_Alloc((size_t)size + 1);
-    got = fread(text, 1, (size_t)size, f);
-    fclose(f);
-    text[got] = 0;
-
-    RT_CustomLightsParse(text, (int)got, level);
-    Mem_Free(text);
 
     if (rt_custom_light_count > 0 || rt_custom_fog.has_fog)
         Con_Printf("qr custom lights: %d light(s)%s on '%s'\n",
                    rt_custom_light_count, rt_custom_fog.has_fog ? " and a fog" : "", level);
-}
-
-const char *RT_CustomLights_Header(void)
-{
-    return
-        "# Custom dlights and fog authored with the light editor: one section per\n"
-        "# level, named after the map (the file name without path or extension).\n"
-        "# A section carries an optional fog and an optional list of lights. The fog\n"
-        "# block may state whether the level's fog is drawn at all (rt_level_fog);\n"
-        "# without \"enabled\" the file leaves the cvar as the user configured it:\n"
-        "# start:\n"
-        "#   fog:\n"
-        "#     enabled: true          # true/false (or 1/0), the level's fog switch\n"
-        "#     color: 8899aa          # rrggbb\n"
-        "#     density: 1.5           # 0 turns the fog off\n"
-        "#   lights:\n"
-        "#     - origin: 512 -256 64  # x y z, Quake units\n"
-        "#       radius: 0.4          # rt_dlight_radius units, 0..10\n"
-        "#       intensity: 1.0       # a multiplier of the colour\n"
-        "#       color: ff9900        # rrggbb\n"
-        "#       offset: 0 0 16       # optional shift from the origin\n"
-        "#       spot: true           # optional: a cone instead of a sphere\n"
-        "#       dir: 0 0 1           # the axis of the cone, X Y Z\n"
-        "#       angle_inner: 0       # degrees, the cone's full-intensity core\n"
-        "#       angle_outer: 30      # degrees, where the cone falls to nothing\n"
-        "#       style: candle        # optional, a light style of the engine\n";
 }
 
 void RT_CustomLights_WriteEntry(FILE *f, const rt_custom_light_t *l)

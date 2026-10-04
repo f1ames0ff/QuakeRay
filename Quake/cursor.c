@@ -178,6 +178,11 @@ void Cursor_Init (void)
 	pixels = Image_LoadImageOSPath (path, &width, &height);
 	if (pixels == NULL)
 	{
+		q_snprintf (path, sizeof (path), "gfx/quake_axe_%ix%i", size, size);
+		pixels = Image_LoadImage (path, &width, &height);
+	}
+	if (pixels == NULL)
+	{
 		Con_DPrintf ("cursor: couldn't load %s\n", path);
 		return;
 	}

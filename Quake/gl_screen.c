@@ -33,52 +33,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include <setjmp.h>
 
-/*
-
-background clear
-rendering
-turtle/net/ram icons
-sbar
-centerprint / slow centerprint
-notify lines
-intermission / finale overlay
-loading plaque
-console
-menu
-
-required background clears
-required update regions
-
-
-syncronous draw mode or async
-One off screen buffer, with updates either copied or xblited
-Need to double buffer?
-
-
-async draw will require the refresh area to be cleared, because it will be
-xblited, but sync draw can just ignore it.
-
-sync
-draw
-
-CenterPrint ()
-SlowPrint ()
-Screen_Update ();
-Con_Printf ();
-
-net
-turn off messages option
-
-the refresh is allways rendered, unless the console is full screen
-
-
-console is:
-    notify lines
-    half
-    full
-
-*/
-
 int glx, gly, glwidth, glheight;
 
 float scr_con_current;
@@ -1203,9 +1157,6 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		}
 	}
 
-	if (vid.recalc_refdef)
-		SCR_CalcRefdef ();
-
 	// decide on the height of the console
 	con_forcedup = !cl.worldmodel || cls.signon != SIGNONS;
 
@@ -1215,6 +1166,8 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		in_update_screen = false;
 		return;
 	}
+
+	if (vid.recalc_refdef) SCR_CalcRefdef ();
 
 	if (use_tasks)
 	{

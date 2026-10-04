@@ -2827,7 +2827,7 @@ static void M_Keys_Populate (void)
 		const menukeybind_t *item = &default_keybinds[i];
 
 		// Filter-out items not applicable for the current game:
-		if (standard_quake && strcmp (item->command, "impulse 225") == 0)
+		if (!hipnotic && !mg3 && strcmp (item->command, "impulse 225") == 0)
 			continue;
 		if (!hipnotic && strcmp (item->command, "impulse 226") == 0)
 			continue;
@@ -3103,9 +3103,9 @@ static int M_Mods_Compare (const void *a, const void *b)
 {
 	const filelist_item_t *left = *(filelist_item_t *const *)a;
 	const filelist_item_t *right = *(filelist_item_t *const *)b;
-	const char			  *left_name = left->name;
-	const char			  *right_name = right->name;
-	int					   result = q_strcasecmp (left_name, right_name);
+	const char			  *left_name = Modlist_GetFullName (left);
+	const char			  *right_name = Modlist_GetFullName (right);
+	int					   result = q_strcasecmp (left_name ? left_name : left->name, right_name ? right_name : right->name);
 
 	return result ? result : q_strcasecmp (left->name, right->name);
 }
@@ -3159,7 +3159,7 @@ static void M_Mods_Draw (cb_context_t *cbx)
 			break;
 		if (mod_index >= 0)
 		{
-			const char *fullname = item->name;
+			const char *fullname = Modlist_GetFullName (item);
 
 			const qboolean selected = (mods_cursor - first_mod == mod_index);
 
@@ -4360,11 +4360,7 @@ static void M_LanConfig_Key (int key)
 	case 'V':
 		// Ctrl + v : paste a hostname
 		if (lan_config_cursor == 3 &&
-#if defined(PLATFORM_OSX) || defined(PLATFORM_MAC)
-			(keydown[K_COMMAND])
-#else
 			(keydown[K_CTRL])
-#endif
 		)
 		{
 			const int current_joinname_size = strlen (lan_config_joinname);
