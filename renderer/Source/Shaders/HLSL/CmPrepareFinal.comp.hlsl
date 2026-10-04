@@ -32,6 +32,7 @@ struct BloomFlareControl_BT
 {
     float4 opticalControl;
     float4 gameplayFeedback;
+    float4 suitControl;
 };
 
 [[vk::push_constant]] ConstantBuffer<BloomFlareControl_BT> bloomFlareControl;
@@ -243,8 +244,9 @@ float3 applyChromaticAberration( const int2 pix )
     const float damage     = bloomFlareControl.gameplayFeedback.x;
     const float liquid     = bloomFlareControl.gameplayFeedback.y;
     const float aberration = bloomFlareControl.gameplayFeedback.z;
+    const float suit       = bloomFlareControl.suitControl.x;
 
-    if( damage <= 0.0 && liquid <= 0.0 )
+    if( damage <= 0.0 && liquid <= 0.0 && suit <= 0.0 )
     {
         return scene;
     }
@@ -252,8 +254,11 @@ float3 applyChromaticAberration( const int2 pix )
     const float2 uv = ( float2( pix ) + 0.5 ) /
                       float2( globalUniform.renderWidth, globalUniform.renderHeight );
 
-    const float2 outside = saturate( ( abs( uv - 0.5 ) - 0.25 ) / 0.25 );
+    const float2 outside = saturate( ( abs( uv - 0.5 ) - 0.15 ) / 0.35 );
     const float edgeMask = smoothstep( 0.0, 1.0, length( outside ) );
+
+    const float damageDistance = length( ( uv - 0.5 ) * 2.0 );
+    const float damageMask = smoothstep( 0.8, 1.0, damageDistance );
 
     const float aspect = globalUniform.renderWidth / globalUniform.renderHeight;
     const float2 centered = float2( ( uv.x - 0.5 ) * aspect, uv.y - 0.5 );
@@ -266,8 +271,10 @@ float3 applyChromaticAberration( const int2 pix )
     }
 
     const float heightScale = displayHeight / 1080.0;
-    const float splitPixels = min( ( 9.0 * damage + 6.0 * liquid ) * ( aberration / 0.3 ), 10.0 ) * heightScale;
-    const float2 offset = direction * ( splitPixels / displayHeight * edgeMask );
+    const float damageAmount = 270.0 * damage * damageMask;
+    const float liquidAmount = ( 180.0 * liquid + 4.0 * suit ) * edgeMask;
+    const float splitPixels = min( ( damageAmount + liquidAmount ) * ( aberration / 0.3 ), 200.0 ) * heightScale;
+    const float2 offset = direction * ( splitPixels / displayHeight );
 
     const int tapCount = 7;
 
@@ -284,7 +291,12 @@ float3 applyChromaticAberration( const int2 pix )
         weight += w;
     }
 
-    return color / weight;
+    color /= weight;
+
+    const float redness = saturate( damage * 2.0 ) * damageMask * 0.5;
+    color *= lerp( (float3)1.0, float3( 1.0, 0.15, 0.10 ), redness );
+
+    return color;
 }
 
 

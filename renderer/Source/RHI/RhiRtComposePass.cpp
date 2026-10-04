@@ -70,7 +70,7 @@ constexpr uint32_t COMPOSE_STRATA_SIZE = 3;
 // the legacy writes exactly that (Q2Denoiser.cpp:472, :518)).
 constexpr uint32_t COMPOSE_ITERATION_PUSH_SIZE = 4;
 
-constexpr uint32_t COMPOSE_OPTICAL_CONTROL_PUSH_SIZE = 32;
+constexpr uint32_t COMPOSE_OPTICAL_CONTROL_PUSH_SIZE = 48;
 
 constexpr uint32_t COMPOSE_BLOOM_RESULT_BINDING = 400;
 constexpr uint32_t COMPOSE_FLARE_RESULT_BINDING = 401;
@@ -2040,18 +2040,20 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
     float damage = 0.0f;
     float liquid = 0.0f;
     float aberration = 0.0f;
+    float suit = 0.0f;
 
     if (postEffectParams.pGameplayFeedback != nullptr)
     {
         damage = postEffectParams.pGameplayFeedback->damage;
         liquid = postEffectParams.pGameplayFeedback->liquid;
         aberration = postEffectParams.pGameplayFeedback->aberration;
+        suit = postEffectParams.pGameplayFeedback->suit;
     }
 
     const float bloomThreshold =
         postEffectParams.pBloom != nullptr ? postEffectParams.pBloom->threshold : 0.0f;
 
-    const float opticalControl[8] =
+    const float opticalControl[12] =
     {
         bloomStrength,
         flareStrength,
@@ -2061,6 +2063,10 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
         liquid,
         aberration,
         std::isfinite(postEffectParams.localExposure) ? std::clamp(postEffectParams.localExposure, 0.0f, 1.0f) : 0.0f,
+        suit,
+        0.0f,
+        0.0f,
+        0.0f,
     };
 
     // The final composition: set 3 is the dead LPM hole, set 4 the volumetric dummy, and the

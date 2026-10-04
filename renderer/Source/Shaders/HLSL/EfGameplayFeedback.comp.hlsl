@@ -32,8 +32,21 @@ struct EffectGameplayFeedback_PushConst
 
 float gameplayFeedbackEdgeMask(float2 uv)
 {
-    const float2 outside = saturate((abs(uv - 0.5) - 0.25) / 0.25);
-    return smoothstep(0.0, 1.0, length(outside));
+    const float distanceFromCenter = length((uv - 0.5) * 2.0);
+    const float inner = 0.85;
+    const float softness = 3.0;
+
+    const float t = saturate((distanceFromCenter - inner) / (1.0 - inner));
+    return pow(t, softness);
+}
+
+float gameplayFeedbackPulse()
+{
+    const float TWO_PI = 6.28318530718;
+    const float HZ = 1.0;
+    const float MIN_BRIGHTNESS = 0.5;
+
+    return lerp(MIN_BRIGHTNESS, 1.0, 0.5 + 0.5 * sin(globalUniform.time * TWO_PI * HZ));
 }
 
 [numthreads(COMPUTE_EFFECT_GROUP_SIZE_X, COMPUTE_EFFECT_GROUP_SIZE_Y, 1)]
@@ -51,7 +64,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     float3 color = effect_loadFromSource(pix);
 
-    color += float3(0.18, 0.0, 0.0) * (push.custom.damage * edgeMask);
+    color += float3(0.12, 0.0, 0.0) * (push.custom.damage * edgeMask * gameplayFeedbackPulse());
 
     const float pickupMask = smoothstep(1.0 - push.custom.pickupHeight, 1.0, uv.y);
     const float amount = saturate(push.custom.pickup * pickupMask);

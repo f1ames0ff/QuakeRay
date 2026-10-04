@@ -1209,6 +1209,7 @@ typedef struct QrPostEffectsGameplayFeedback
     float       pickupHeight;
     float       aberration;
     QrFloat3D   pickupColor;
+    float       suit;
 } QrPostEffectsGameplayFeedback;
 
 typedef struct QrPostEffectsVignetteParams

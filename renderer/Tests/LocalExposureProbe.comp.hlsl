@@ -2,7 +2,7 @@
 
 [[vk::binding(0, 0)]] Texture2D<float4> source;
 [[vk::binding(1, 0)]] SamplerState sourceSampler;
-[[vk::binding(2, 0)]] RWTexture2D<float4> output;
+[[vk::binding(2, 0), vk::image_format("rgba16f")]] RWTexture2D<float4> output;
 
 [numthreads(16, 16, 1)]
 void main(uint3 id : SV_DispatchThreadID)

@@ -22,7 +22,7 @@
 [[vk::binding(1, 0)]] SamplerState flareSource_Sampler;
 [[vk::binding(0, 1)]] Texture2D<float4> flareDepth;
 [[vk::binding(1, 1)]] Texture2D<float4> flareHighlights;
-[[vk::binding(0, 3)]] RWTexture2D<float4> flareDest;
+[[vk::binding(0, 3), vk::image_format("rgba16f")]] RWTexture2D<float4> flareDest;
 
 struct LensFlarePush_BT
 {
@@ -35,44 +35,42 @@ struct LensFlarePush_BT
 [[vk::push_constant]] ConstantBuffer<LensFlarePush_BT> push;
 
 static const uint FLARE_PASS_BRIGHT = 0;
-static const uint FLARE_PASS_BOKEH = 1;
-static const uint FLARE_PASS_FLARE = 2;
-static const uint FLARE_PASS_SMOOTH = 3;
-static const uint FLARE_PASS_STREAK = 4;
-static const float FLARE_STREAK_INTENSITY = 0.04;
+static const uint FLARE_PASS_CORE = 1;
+static const uint FLARE_PASS_MID = 2;
+static const uint FLARE_PASS_TAIL = 3;
+static const uint FLARE_PASS_COMPOSITE = 4;
+static const uint FLARE_PASS_APERTURE_SMALL = 5;
+static const uint FLARE_PASS_APERTURE_LARGE = 6;
 
-static const uint FLARE_GHOST_COUNT = 8;
-static const float FLARE_GHOST_SCALES[8] = { -0.8, -1.5, 0.6, 1.3, -2.2, 0.35, 2.0, -0.45 };
-static const float FLARE_GHOST_CHROMAS[8] = { 0.012, 0.022, 0.010, 0.030, 0.038, 0.016, 0.034, 0.026 };
-static const float3 FLARE_GHOST_TINTS[8] =
-{
-    float3(0.45, 0.55, 1.00),
-    float3(1.00, 0.60, 0.28),
-    float3(0.95, 0.35, 0.85),
-    float3(0.55, 0.70, 1.00),
-    float3(1.00, 0.70, 0.35),
-    float3(0.90, 0.40, 0.95),
-    float3(0.40, 0.65, 1.00),
-    float3(1.00, 0.55, 0.30),
-};
-
-static const float FLARE_DISTORTION = 0.2;
-static const float FLARE_HALO_SCALE = -1.4;
-static const float FLARE_HALO_SPREAD = 1.15;
-static const float FLARE_HALO_CHROMA = 0.03;
-static const float FLARE_HALO_INTENSITY = 2.0;
-static const float FLARE_BRIGHTNESS_MAX = 4.0;
-static const float FLARE_CLAMP_MAX = 300.0;
 static const float FLARE_GAIN = 0.1;
-static const float FLARE_DIST_REF = 512.0;
-static const float FLARE_DIST_MAX = 4096.0;
-static const float FLARE_SKY_DEPTH = 10000.0;
+static const float FLARE_STREAK_GAIN = 50.0;
+static const float FLARE_STREAK_LIMIT = 256.0;
+static const float FLARE_CORE_WEIGHT = 0.25;
+static const float FLARE_TAIL_WEIGHT = 0.42;
 
-static const uint FLARE_BOKEH_TAPS = 64;
-static const float FLARE_GOLDEN_ANGLE = 2.399963229728653;
-static const float FLARE_HEX_RADIUS_TEXELS = 6.5;
-static const float FLARE_HEX_SOFTNESS = 0.25;
-static const float FLARE_BOKEH_GAUSS = 1.5;
+static const float FLARE_STREAK_LENGTH = 0.08;
+static const float FLARE_CORE_SCALE = 0.056;
+static const float FLARE_MID_SCALE = 0.184;
+static const float FLARE_VERTICAL_SCALE = 0.0035;
+static const float FLARE_EDGE_TEXELS = 2.0;
+
+static const uint FLARE_APERTURE_TAPS = 96;
+static const float FLARE_APERTURE_GOLDEN_ANGLE = 2.39996323;
+static const float FLARE_APERTURE_SMALL_SCALE = 0.0095;
+static const float FLARE_APERTURE_LARGE_SCALE = 0.130;
+static const float FLARE_APERTURE_SOFTNESS = 0.25;
+static const float3 FLARE_APERTURE_RADII = float3(0.955, 1.0, 1.045);
+
+static const uint FLARE_GHOST_COUNT = 5;
+static const float FLARE_GHOST_SCALES[5] = { -0.40, 0.62, -0.95, 1.45, -2.10 };
+static const float FLARE_GHOST_GAINS[5] = { 0.030, 0.0225, 0.015, 0.0105, 0.006 };
+
+static const float FLARE_CLAMP_MAX = 300.0;
+static const float FLARE_DIST_REF = 256.0;
+static const float FLARE_SKY_DEPTH = MAX_RAY_LENGTH;
+static const float FLARE_RESPONSE_HALF = 32.0;
+static const float FLARE_VIEW_FLOOR = 0.25;
+static const float FLARE_VIEW_START = 0.55;
 
 float3 flareFetchClamped(float2 uv, float exposure)
 {
@@ -114,8 +112,14 @@ float3 flareDownsampleBright(float2 uv, float2 sourceTexelSize, float exposure)
 
     const float luminance = getLuminance(result);
     const float above = max(luminance - push.threshold, 0.0);
+    const float ratio = above / max(push.threshold, POST_EFFECTS_EPSILON);
+
     result *= above / max(luminance, POST_EFFECTS_EPSILON);
-    result *= clamp(above / max(push.threshold, POST_EFFECTS_EPSILON), 0.0, FLARE_BRIGHTNESS_MAX);
+    result *= ratio / (1.0 + ratio / FLARE_RESPONSE_HALF);
+
+    const float2 centered = abs(uv - 0.5) * 2.0;
+    const float edge = max(centered.x, centered.y);
+    result *= lerp(1.0, FLARE_VIEW_FLOOR, smoothstep(FLARE_VIEW_START, 1.0, edge));
 
     uint depthWidth;
     uint depthHeight;
@@ -128,115 +132,184 @@ float3 flareDownsampleBright(float2 uv, float2 sourceTexelSize, float exposure)
     const int2 checkerboardPix = int2(odd * separator + regularPix.x / 2, regularPix.y);
 
     const float depth = flareDepth.Load(int3(checkerboardPix, 0)).r;
-    if (depth < FLARE_SKY_DEPTH)
+    if (depth <= FLARE_SKY_DEPTH)
     {
         const float square = FLARE_DIST_REF * FLARE_DIST_REF;
-        result *= (square / (depth * depth + square)) * saturate(1.0 - depth / FLARE_DIST_MAX);
+        result *= square / (depth * depth + square);
     }
 
     return postEffectsSanitize(result / exposure);
 }
 
-float3 flareSampleBorder(float2 uv)
+float3 flareSample(float2 uv)
+{
+    return postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, clamp(uv, (float2)0.0, (float2)1.0), 0).rgb);
+}
+
+float3 flareSampleBordered(float2 uv, float2 texelSize, float edgeTexels)
 {
     if (any(uv < 0.0) || any(uv > 1.0))
     {
         return (float3)0.0;
     }
 
-    return postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, uv, 0).rgb);
+    const float border = min(uv.x, 1.0 - uv.x) / texelSize.x;
+    const float fade = smoothstep(0.0, max(edgeTexels, 1e-4), border);
+    return flareSample(uv) * fade;
 }
 
-float2 flareDistort(float2 uv, float aspect)
+float3 flareHighlightBordered(float2 uv, float2 texelSize, float edgeTexels)
 {
-    float2 centered = uv - 0.5;
-    centered.x *= aspect;
-    centered *= 1.0 + FLARE_DISTORTION * dot(centered, centered);
-    return 0.5 + float2(centered.x / aspect, centered.y);
-}
-
-float2 flareToUV(float2 offset, float aspect)
-{
-    return 0.5 + float2(offset.x / aspect, offset.y);
-}
-
-float flareSourceMask(float2 offset, float power)
-{
-    const float radius = length(offset) * 1.41421356;
-    return pow(saturate(1.0 - radius), power);
-}
-
-float3 flareGhostLayer(float2 uv, float aspect, float scale, float chroma)
-{
-    const float2 position = flareDistort(uv, aspect) - 0.5;
-    const float2 aspectPosition = float2(position.x * aspect, position.y);
-    const float2 samplePosition = aspectPosition / scale;
-
-    float3 color;
-    color.r = flareSampleBorder(flareToUV(samplePosition * (1.0 - chroma), aspect)).r;
-    color.g = flareSampleBorder(flareToUV(samplePosition, aspect)).g;
-    color.b = flareSampleBorder(flareToUV(samplePosition * (1.0 + chroma), aspect)).b;
-
-    const float mask = flareSourceMask(samplePosition, 3.0);
-    return color * mask / max(scale * scale, 0.05);
-}
-
-float3 flareHaloLayer(float2 uv, float aspect)
-{
-    const float3 inner = flareGhostLayer(uv, aspect, FLARE_HALO_SCALE, FLARE_HALO_CHROMA);
-    const float3 outer = flareGhostLayer(uv, aspect, FLARE_HALO_SCALE * FLARE_HALO_SPREAD, FLARE_HALO_CHROMA);
-
-    return max((float3)0.0, inner - outer) * FLARE_HALO_INTENSITY;
-}
-
-float flareJitter(float2 uv)
-{
-    uint hash = (uint)(uv.x * 16384.0) * 1973u + (uint)(uv.y * 16384.0) * 9277u + 26699u;
-    hash ^= hash >> 16;
-    hash *= 0x7feb352du;
-    hash ^= hash >> 15;
-    hash *= 0x846ca68bu;
-    hash ^= hash >> 16;
-
-    return (float)hash * (6.28318530718 / 4294967296.0);
-}
-
-float3 flareBokehBlur(float2 uv, float2 sourceTexelSize)
-{
-    float3 sum = (float3)0.0;
-
-    float weightSum = 0.0;
-
-    const float circumradius = FLARE_HEX_RADIUS_TEXELS / 0.86602540378;
-    const float jitter = flareJitter(uv);
-
-    [unroll]
-    for (uint tap = 0; tap < FLARE_BOKEH_TAPS; tap++)
+    if (any(uv < 0.0) || any(uv > 1.0))
     {
-        const float radius = sqrt(((float)tap + 0.5) / (float)FLARE_BOKEH_TAPS);
-        const float angle = (float)tap * FLARE_GOLDEN_ANGLE + jitter;
-        const float2 direction = float2(cos(angle), sin(angle));
-        const float2 offset = direction * (radius * circumradius * sourceTexelSize);
-
-        const float c30 = 0.86602540378;
-        const float projection = max(abs(direction.x),
-                                     max(abs(direction.x * 0.5 + direction.y * c30),
-                                         abs(direction.x * 0.5 - direction.y * c30)));
-        const float boundary = FLARE_HEX_RADIUS_TEXELS / max(projection, 1e-4);
-        const float aperture = 1.0 - smoothstep(1.0 - FLARE_HEX_SOFTNESS, 1.0, (radius * circumradius) / max(boundary, 1e-4));
-
-        const float weight = aperture * exp(-FLARE_BOKEH_GAUSS * radius * radius);
-
-        if (weight <= 0.0)
-        {
-            continue;
-        }
-
-        sum += flareSource.SampleLevel(flareSource_Sampler, uv + offset, 0).rgb * weight;
-        weightSum += weight;
+        return (float3)0.0;
     }
 
-    return postEffectsSanitize(sum / max(weightSum, 1e-4));
+    const float border = min(uv.x, 1.0 - uv.x) / texelSize.x;
+    const float fade = smoothstep(0.0, max(edgeTexels, 1e-4), border);
+    return postEffectsSanitize(flareHighlights.SampleLevel(flareSource_Sampler, clamp(uv, (float2)0.0, (float2)1.0), 0).rgb) * fade;
+}
+
+float3 flareCore(float2 uv, float2 texelSize, float coreSigma)
+{
+    const float3 sigma = float3(0.88, 1.00, 1.20) * coreSigma;
+    const float edgeTexels = FLARE_EDGE_TEXELS * coreSigma;
+
+    float3 sum = (float3)0.0;
+    float3 weightSum = (float3)0.0;
+
+    [unroll]
+    for (int i = -8; i <= 8; i++)
+    {
+        const float square = (float)(i * i);
+        const float3 w = exp(-0.5 * square / (sigma * sigma));
+        weightSum += w;
+        sum += flareSampleBordered(uv + float2((float)i * texelSize.x, 0.0), texelSize, edgeTexels) * w;
+    }
+
+    return sum / max(weightSum, 1e-4);
+}
+
+float3 flareMid(float2 uv, float2 texelSize, float midSigma, float stepTexels)
+{
+    const float edgeTexels = FLARE_EDGE_TEXELS * midSigma;
+
+    float3 sum = (float3)0.0;
+    float3 weightSum = (float3)0.0;
+
+    [unroll]
+    for (int i = -8; i <= 8; i++)
+    {
+        const float offset = (float)i * stepTexels;
+        const float w = exp(-0.5 * offset * offset / (midSigma * midSigma));
+        weightSum += w;
+        sum += flareSampleBordered(uv + float2((float)i * stepTexels * texelSize.x, 0.0), texelSize, edgeTexels) * w;
+    }
+
+    return sum / max(weightSum, 1e-4);
+}
+
+float3 flareTail(float2 uv, float2 texelSize, float longSigma, float stepTexels)
+{
+    const float3 sigma = float3(0.62, 0.80, 1.00) * longSigma;
+    const float edgeTexels = FLARE_EDGE_TEXELS * sigma.x;
+
+    float3 sum = (float3)0.0;
+    float3 weightSum = (float3)0.0;
+
+    [unroll]
+    for (int i = -16; i <= 16; i++)
+    {
+        const float offset = (float)i * stepTexels;
+        const float3 w = exp(-0.5 * offset * offset / (sigma * sigma));
+        weightSum += w;
+        sum += flareSampleBordered(uv + float2((float)i * stepTexels * texelSize.x, 0.0), texelSize, edgeTexels) * w;
+    }
+
+    const float3 tail = sum / max(weightSum, 1e-4);
+    const float3 core = flareSample(uv);
+
+    return FLARE_CORE_WEIGHT * core + FLARE_TAIL_WEIGHT * tail;
+}
+
+float3 flareAperture(float2 uv, float2 texelSize, float apothem)
+{
+    const float2 normal0 = float2(1.0, 0.0);
+    const float2 normal1 = float2(0.5, 0.86602540378);
+    const float2 normal2 = float2(0.5, -0.86602540378);
+    const float circumradius = apothem / 0.86602540378;
+    const float edgeTexels = FLARE_EDGE_TEXELS * apothem;
+
+    float3 sum = (float3)0.0;
+    float3 weightSum = (float3)0.0;
+
+    [unroll]
+    for (uint tap = 0; tap < FLARE_APERTURE_TAPS; tap++)
+    {
+        const float radius = sqrt(((float)tap + 0.5) / (float)FLARE_APERTURE_TAPS);
+        const float angle = (float)tap * FLARE_APERTURE_GOLDEN_ANGLE;
+        const float2 direction = float2(cos(angle), sin(angle));
+        const float2 q = direction * radius;
+
+        const float hexDistance = max(abs(dot(q, normal0)), max(abs(dot(q, normal1)), abs(dot(q, normal2))));
+        const float3 mask = (float3)1.0 - smoothstep(1.0 - FLARE_APERTURE_SOFTNESS, 1.0, hexDistance / (0.86602540378 * FLARE_APERTURE_RADII));
+
+        sum += flareSampleBordered(uv + direction * (radius * circumradius) * texelSize, texelSize, edgeTexels) * mask;
+        weightSum += mask;
+    }
+
+    return sum / max(weightSum, 1e-4);
+}
+
+float3 flarePolygonGhosts(float2 uv, float2 texelSize, float aspect)
+{
+    const float2 centered = float2((uv.x - 0.5) * aspect, uv.y - 0.5);
+
+    float3 sum = (float3)0.0;
+
+    [unroll]
+    for (uint ghost = 0; ghost < FLARE_GHOST_COUNT; ghost++)
+    {
+        const float2 offset = centered / FLARE_GHOST_SCALES[ghost];
+        const float2 source = 0.5 + float2(offset.x / aspect, offset.y);
+        sum += flareHighlightBordered(source, texelSize, 2.0) * FLARE_GHOST_GAINS[ghost];
+    }
+
+    return sum;
+}
+
+float3 flareComposite(float2 uv, float2 texelSize, float sigmaY, float bandDelta, float aspect)
+{
+    const float3 vertical = float3(0.90, 1.00, 1.15) * sigmaY;
+    const float edgeTexels = FLARE_EDGE_TEXELS * sigmaY;
+
+    float3 sum = (float3)0.0;
+    float3 weightSum = (float3)0.0;
+
+    [unroll]
+    for (int j = -2; j <= 2; j++)
+    {
+        const float square = (float)(j * j);
+        const float3 w = exp(-0.5 * square / (vertical * vertical));
+        weightSum += w;
+        sum += flareSampleBordered(uv + float2(0.0, (float)j * texelSize.y), texelSize, edgeTexels) * w;
+    }
+
+    const float3 stripe = sum / max(weightSum, 1e-4);
+
+    const float3 nearBand = float3(flareSampleBordered(uv + float2(bandDelta, 0.0), texelSize, 1.0).r,
+                                  flareSampleBordered(uv, texelSize, 1.0).g,
+                                  flareSampleBordered(uv - float2(bandDelta, 0.0), texelSize, 1.0).b);
+    const float3 farBand = float3(flareSampleBordered(uv + float2(2.5 * bandDelta, 0.0), texelSize, 1.0).r,
+                                  0.0,
+                                  flareSampleBordered(uv - float2(2.5 * bandDelta, 0.0), texelSize, 1.0).b);
+
+    float3 color = stripe + 0.12 * nearBand + 0.05 * farBand;
+    color += flarePolygonGhosts(uv, texelSize, aspect);
+
+    color *= FLARE_GAIN * FLARE_STREAK_GAIN;
+    color = color * FLARE_STREAK_LIMIT / (color + FLARE_STREAK_LIMIT);
+    return postEffectsSanitize(color);
 }
 
 [numthreads(16, 16, 1)]
@@ -266,48 +339,45 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    if (push.passMode == FLARE_PASS_BOKEH)
+    const float tailSigma = clamp(FLARE_STREAK_LENGTH * (float)width, 8.0, 400.0);
+    const float coreSigma = clamp(FLARE_CORE_SCALE * tailSigma, 2.0, 6.0);
+    const float midSigma = FLARE_MID_SCALE * tailSigma;
+    const float longSigma = sqrt(max(tailSigma * tailSigma - coreSigma * coreSigma - midSigma * midSigma, 1.0));
+
+    if (push.passMode == FLARE_PASS_CORE)
     {
-        flareDest[pixel] = float4(flareBokehBlur(uv, sourceTexelSize), 1.0);
+        flareDest[pixel] = float4(flareCore(uv, sourceTexelSize, coreSigma), 1.0);
         return;
     }
 
-    if (push.passMode == FLARE_PASS_FLARE)
+    if (push.passMode == FLARE_PASS_MID)
     {
-        const float aspect = (float)width / (float)height;
-
-        float3 sum = (float3)0.0;
-
-        [unroll]
-        for (uint ghost = 0; ghost < FLARE_GHOST_COUNT; ghost++)
-        {
-            sum += flareGhostLayer(uv, aspect, FLARE_GHOST_SCALES[ghost], FLARE_GHOST_CHROMAS[ghost]) * FLARE_GHOST_TINTS[ghost];
-        }
-
-        sum += flareHaloLayer(uv, aspect);
-        flareDest[pixel] = float4(postEffectsSanitize(sum * FLARE_GAIN), 1.0);
+        flareDest[pixel] = float4(flareMid(uv, sourceTexelSize, midSigma, coreSigma), 1.0);
         return;
     }
 
-    if (push.passMode == FLARE_PASS_STREAK)
+    if (push.passMode == FLARE_PASS_TAIL)
     {
-        const float spacing = max(2.0, (float)height * 0.008);
-        float3 streak = (float3)0.0;
-
-        [unroll]
-        for (int tap = -2; tap <= 2; tap++)
-        {
-            const float2 sampleUV = uv + float2((float)tap * spacing * sourceTexelSize.x, 0.0);
-            if (all(sampleUV >= 0.0) && all(sampleUV <= 1.0))
-            {
-                streak += postEffectsSanitize(flareHighlights.SampleLevel(flareSource_Sampler, sampleUV, 0.0).rgb) * 0.2;
-            }
-        }
-
-        const float3 ghosts = postEffectsSanitize(flareSource.SampleLevel(flareSource_Sampler, uv, 0.0).rgb);
-        flareDest[pixel] = float4(postEffectsSanitize(ghosts + streak * FLARE_GAIN * FLARE_STREAK_INTENSITY), 1.0);
+        const float stepTexels = sqrt(coreSigma * coreSigma + midSigma * midSigma);
+        flareDest[pixel] = float4(flareTail(uv, sourceTexelSize, longSigma, stepTexels), 1.0);
         return;
     }
 
-    flareDest[pixel] = float4(postEffectsTent9(flareSource, flareSource_Sampler, uv, sourceTexelSize), 1.0);
+    if (push.passMode == FLARE_PASS_APERTURE_SMALL)
+    {
+        const float apothem = clamp(FLARE_APERTURE_SMALL_SCALE * (float)height, 4.0, 10.0);
+        flareDest[pixel] = float4(flareAperture(uv, sourceTexelSize, apothem), 1.0);
+        return;
+    }
+
+    if (push.passMode == FLARE_PASS_APERTURE_LARGE)
+    {
+        const float apothem = clamp(FLARE_APERTURE_LARGE_SCALE * (float)height, 8.0, 48.0);
+        flareDest[pixel] = float4(flareAperture(uv, sourceTexelSize, apothem), 1.0);
+        return;
+    }
+
+    const float sigmaY = clamp(FLARE_VERTICAL_SCALE * (float)height, 0.6, 2.5);
+    const float bandDelta = 0.5 * tailSigma * sourceTexelSize.x;
+    flareDest[pixel] = float4(flareComposite(uv, sourceTexelSize, sigmaY, bandDelta, (float)width / (float)height), 1.0);
 }

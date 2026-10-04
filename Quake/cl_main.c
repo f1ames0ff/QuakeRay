@@ -134,8 +134,12 @@ void CL_ClearState (void)
 	memset (cl_beams, 0, sizeof (cl_beams));
 
 	rt_ef_damage_pulse = 0;
+	rt_ef_damage_peak = 0;
+	rt_ef_damage_elapsed = 0;
+	rt_ef_lowhealth_pulse = 0;
 	rt_ef_liquid_pulse = 0;
 	rt_ef_pickup_pulse = 0;
+	rt_ef_suit_pulse = 0;
 
 	// johnfitz -- cl_entities is now dynamically allocated
 	cl.max_edicts = CLAMP (MIN_EDICTS, (int)max_edicts.value, MAX_EDICTS);
@@ -198,8 +202,12 @@ void CL_Disconnect (void)
 	cl.sendprespawn = false;
 
 	rt_ef_damage_pulse = 0;
+	rt_ef_damage_peak = 0;
+	rt_ef_damage_elapsed = 0;
+	rt_ef_lowhealth_pulse = 0;
 	rt_ef_liquid_pulse = 0;
 	rt_ef_pickup_pulse = 0;
+	rt_ef_suit_pulse = 0;
 }
 
 void CL_Disconnect_f (void)
