@@ -272,17 +272,31 @@ static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpda
         {
             mins[axis] = paliashdr->frames[0].bboxmin.v[axis];
             maxs[axis] = paliashdr->frames[0].bboxmax.v[axis];
-            center[axis] = 0.5f * (mins[axis] + maxs[axis]);
         }
 
-        const float normalize = CLAMP(0.0f, CVAR_TO_FLOAT(rt_viewm_normalize), 1.0f);
-        if (normalize > 0.0f && maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2])
+        if (!(maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2]))
         {
-            const float manual = RT_ViewmodelNormalizeManual (model->name);
-            const float factor = manual > 0.0f ? manual
-                                               : RT_ViewmodelNormalizeScale(paliashdr, mins, maxs, fovscalex, fovscaley);
+            for (int axis = 0; axis < 3; axis++)
+            {
+                mins[axis] = model->mins[axis];
+                maxs[axis] = model->maxs[axis];
+            }
+        }
 
-            sizescale = 1.0f + normalize * (factor - 1.0f);
+        for (int axis = 0; axis < 3; axis++)
+            center[axis] = 0.5f * (mins[axis] + maxs[axis]);
+
+        if (maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2])
+        {
+            const float normalize = CLAMP(0.0f, CVAR_TO_FLOAT(rt_viewm_normalize), 1.0f);
+            if (normalize > 0.0f)
+            {
+                const float manual = RT_ViewmodelNormalizeManual (model->name);
+                const float factor = manual > 0.0f ? manual
+                                                   : RT_ViewmodelNormalizeScale(paliashdr, mins, maxs, fovscalex, fovscaley);
+
+                sizescale = 1.0f + normalize * (factor - 1.0f);
+            }
         }
     }
 
@@ -533,6 +547,39 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 	int cluster = RT_ResolvePointCluster (lerpdata.origin);
 	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster);
 	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model);
+
+	if (isfirstperson)
+	{
+		float minDepth = 1e30f;
+		float maxDepth = -1e30f;
+
+		for (int v = 0; v < paliashdr->numverts_vbo; v++)
+		{
+			const float *position = vertices[v].position;
+			const float  world[3] = {
+			    transform.matrix[0][0] * position[0] + transform.matrix[0][1] * position[1] +
+			        transform.matrix[0][2] * position[2] + transform.matrix[0][3],
+			    transform.matrix[1][0] * position[0] + transform.matrix[1][1] * position[1] +
+			        transform.matrix[1][2] * position[2] + transform.matrix[1][3],
+			    transform.matrix[2][0] * position[0] + transform.matrix[2][1] * position[1] +
+			        transform.matrix[2][2] * position[2] + transform.matrix[2][3],
+			};
+			const float depth = (world[0] - r_refdef.vieworg[0]) * vpn[0] + (world[1] - r_refdef.vieworg[1]) * vpn[1] +
+			                    (world[2] - r_refdef.vieworg[2]) * vpn[2];
+
+			if (depth < minDepth)
+				minDepth = depth;
+			if (depth > maxDepth)
+				maxDepth = depth;
+		}
+
+		if (maxDepth > minDepth)
+		{
+			rt_viewmodel_depth_near = minDepth;
+			rt_viewmodel_depth_far = maxDepth;
+		}
+	}
+
 	baseid = RT_GetAliasModelUniqueId (entuniqueid);
 
 	for (aliashdr_t *surf = paliashdr; surf; surf = surf->nextsurface, ++surface_index)
