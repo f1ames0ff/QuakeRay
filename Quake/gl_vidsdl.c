@@ -1049,6 +1049,343 @@ static void RT_StatsDump_f (void)
 }
 
 
+#define RT_STATS_RECORD_SECONDS     30.0
+#define RT_STATS_RECORD_MAX_SAMPLES 700
+
+typedef struct
+{
+	double              time;
+	rt_stats_snapshot_t snap;
+} rt_stats_record_sample_t;
+
+typedef struct
+{
+	char                      path[MAX_OSPATH];
+	char                      stamp[32];
+	unsigned                  panels;
+	double                    interval;
+	double                    duration;
+	int                       count;
+	rt_stats_record_sample_t *samples;
+} rt_stats_record_job_t;
+
+static rt_stats_record_sample_t *rt_stats_record_samples;
+static int                       rt_stats_record_capacity;
+static int                       rt_stats_record_count;
+static double                    rt_stats_record_start;
+static qboolean                  rt_stats_record_active;
+static SDL_mutex                *rt_stats_record_mutex;
+static qboolean                  rt_stats_record_writing;
+static rt_stats_record_job_t     rt_stats_record_job;
+
+qboolean RT_StatsRecording (void)
+{
+	return rt_stats_record_active;
+}
+
+static void RT_StatsRecordColName (char *out, size_t size, const char *name)
+{
+	size_t i;
+
+	for (i = 0; name[i] != 0 && i + 1 < size; i++)
+		out[i] = (name[i] == ' ' || name[i] == '/') ? '_' : name[i];
+	out[i] = 0;
+}
+
+static void RT_StatsRecordField (FILE *f, int *first)
+{
+	if (!*first)
+		fputc (',', f);
+	*first = 0;
+}
+
+static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
+{
+	char name[64];
+	int  i, j, first;
+
+	fprintf (f, "# rt_stats_dump_start %s panels %u interval %.3f samples %d duration %.2f\n",
+	         job->stamp, job->panels, job->interval, job->count, job->duration);
+
+	fputs ("t,fps,gpu.frame_ms", f);
+	for (i = 0; i < QR_GPU_PASS_COUNT; i++)
+		fprintf (f, ",gpu.%s_ms", qrGetGpuPassName (i));
+
+	fputs (",cpu.frame_ms,cpu.main_ms,cpu.wait_ms", f);
+	for (i = 0; i < RT_PROF_COUNT; i++)
+	{
+		if (i == RT_PROF_FRAME || i == RT_PROF_WAIT)
+			continue;
+
+		RT_StatsRecordColName (name, sizeof (name), RT_ProfSlotName (i));
+		fprintf (f, ",cpu.%s_ms", name);
+	}
+
+	fputs (",clust_cache_hits,clust_cache_misses,clust_miss_set,clust_miss_move,clust_miss_other,"
+	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped",
+	       f);
+	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls\n", f);
+
+	for (i = 0; i < job->count; i++)
+	{
+		const rt_stats_record_sample_t *sample = &job->samples[i];
+		const rt_stats_snapshot_t      *snap = &sample->snap;
+		const rt_prof_report_t         *rep = &snap->profile;
+
+		first = 1;
+
+		RT_StatsRecordField (f, &first);
+		fprintf (f, "%.3f", sample->time);
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu)
+			fprintf (f, "%.1f", snap->gpu.fpsX10 / 10.0f);
+		else if (snap->haveProfile)
+			fprintf (f, "%.1f", rep->fps);
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu && snap->gpu.gpuTimingValid)
+			fprintf (f, "%.2f", snap->gpu.gpuFrameMs);
+
+		for (j = 0; j < QR_GPU_PASS_COUNT; j++)
+		{
+			RT_StatsRecordField (f, &first);
+			if (snap->haveGpu && snap->gpu.gpuTimingValid)
+				fprintf (f, "%.2f", snap->gpu.gpuPassMs[j]);
+		}
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile)
+			fprintf (f, "%.2f", rep->frameMs);
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile)
+			fprintf (f, "%.2f", rep->frameMs - rep->waitMs);
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile)
+			fprintf (f, "%.2f", rep->waitMs);
+
+		for (j = 0; j < RT_PROF_COUNT; j++)
+		{
+			if (j == RT_PROF_FRAME || j == RT_PROF_WAIT)
+				continue;
+
+			RT_StatsRecordField (f, &first);
+			if (snap->haveProfile)
+				fprintf (f, "%.2f", rep->ms[j]);
+		}
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterCacheHits);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterCacheMisses);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterMissSet);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterMissMove);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterMissOther);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterGrants);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterDenied);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterGated);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterLights);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterAttempts);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterDropped);
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysTotal);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysPerCategory[0]);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysPerCategory[1]);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysPerCategory[2]);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysPerCategory[3]);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysPerCategory[4]);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCalls);
+
+		fputc ('\n', f);
+	}
+}
+
+static int RT_StatsRecordThread (void *unused)
+{
+	rt_stats_record_job_t job;
+	FILE                 *f;
+
+	SDL_LockMutex (rt_stats_record_mutex);
+	job = rt_stats_record_job;
+	SDL_UnlockMutex (rt_stats_record_mutex);
+
+	f = fopen (job.path, "w");
+
+	if (f)
+	{
+		RT_StatsRecordWrite (f, &job);
+		fclose (f);
+	}
+
+	SDL_LockMutex (rt_stats_record_mutex);
+	rt_stats_record_writing = false;
+	SDL_UnlockMutex (rt_stats_record_mutex);
+
+	return 0;
+}
+
+static void RT_StatsRecordFinish (qboolean auto_stop)
+{
+	SDL_Thread *thread;
+	char        filestamp[32];
+	time_t      now;
+	struct tm  *local;
+	double      interval;
+
+	if (!rt_stats_record_active)
+		return;
+
+	if (!rt_stats_record_mutex)
+		rt_stats_record_mutex = SDL_CreateMutex ();
+
+	if (!rt_stats_record_mutex)
+	{
+		Con_Printf ("rt_stats_dump_end: could not create the writer lock\n");
+		rt_stats_record_active = false;
+		return;
+	}
+
+	interval = CLAMP (0.05, CVAR_TO_FLOAT (rt_stats_interval), 0.2);
+	if (!(interval >= 0.05 && interval <= 0.2))
+		interval = 0.2;
+
+	now = time (NULL);
+	local = localtime (&now);
+
+	SDL_LockMutex (rt_stats_record_mutex);
+
+	if (local)
+	{
+		strftime (rt_stats_record_job.stamp, sizeof (rt_stats_record_job.stamp), "%Y-%m-%d %H:%M:%S", local);
+		strftime (filestamp, sizeof (filestamp), "%Y%m%d-%H%M%S", local);
+	}
+	else
+	{
+		rt_stats_record_job.stamp[0] = 0;
+		q_strlcpy (filestamp, "unknown", sizeof (filestamp));
+	}
+
+	q_snprintf (rt_stats_record_job.path, sizeof (rt_stats_record_job.path), "%s/stats-%s.dump", com_gamedir,
+	            filestamp);
+	rt_stats_record_job.panels = CVAR_TO_UINT32 (rt_stats_panels);
+	rt_stats_record_job.interval = interval;
+	rt_stats_record_job.count = rt_stats_record_count;
+	rt_stats_record_job.samples = rt_stats_record_samples;
+	rt_stats_record_job.duration = rt_stats_record_count > 0 ? rt_stats_record_samples[rt_stats_record_count - 1].time : 0.0;
+	rt_stats_record_writing = true;
+
+	SDL_UnlockMutex (rt_stats_record_mutex);
+
+	rt_stats_record_active = false;
+
+	thread = SDL_CreateThread (RT_StatsRecordThread, "rt_stats_record", NULL);
+
+	if (!thread)
+	{
+		SDL_LockMutex (rt_stats_record_mutex);
+		rt_stats_record_writing = false;
+		SDL_UnlockMutex (rt_stats_record_mutex);
+		Con_Printf ("rt_stats_dump_end: could not start the writer thread\n");
+		return;
+	}
+
+	SDL_DetachThread (thread);
+
+	Con_Printf ("rt_stats_dump_end%s: %d samples over %.1f s -> %s\n",
+	            auto_stop ? " (the 30 s are up)" : "", rt_stats_record_count, rt_stats_record_job.duration,
+	            rt_stats_record_job.path);
+}
+
+void RT_StatsRecordSample (const rt_stats_snapshot_t *snap)
+{
+	rt_stats_record_sample_t *sample;
+	double                    now, elapsed;
+
+	if (!rt_stats_record_active || rt_stats_record_samples == NULL)
+		return;
+
+	now = Sys_DoubleTime ();
+	elapsed = now - rt_stats_record_start;
+
+	if (rt_stats_record_count < rt_stats_record_capacity)
+	{
+		sample = &rt_stats_record_samples[rt_stats_record_count];
+		sample->time = elapsed;
+		sample->snap = *snap;
+		rt_stats_record_count++;
+	}
+
+	if (elapsed >= RT_STATS_RECORD_SECONDS)
+		RT_StatsRecordFinish (true);
+}
+
+static void RT_StatsDumpStart_f (void)
+{
+	if (rt_stats_record_active)
+	{
+		Con_Printf ("rt_stats_dump_start: already recording\n");
+		return;
+	}
+
+	if (rt_stats_record_mutex)
+	{
+		qboolean writing;
+
+		SDL_LockMutex (rt_stats_record_mutex);
+		writing = rt_stats_record_writing;
+		SDL_UnlockMutex (rt_stats_record_mutex);
+
+		if (writing)
+		{
+			Con_Printf ("rt_stats_dump_start: the previous recording is still being written\n");
+			return;
+		}
+	}
+
+	if (rt_stats_record_samples == NULL)
+	{
+		rt_stats_record_capacity = RT_STATS_RECORD_MAX_SAMPLES;
+		rt_stats_record_samples = Mem_Alloc (sizeof (rt_stats_record_sample_t) * rt_stats_record_capacity);
+	}
+
+	rt_stats_record_count = 0;
+	rt_stats_record_start = Sys_DoubleTime ();
+	rt_stats_record_active = true;
+
+	Con_Printf ("rt_stats_dump_start: recording the readout for up to %.0f s; rt_stats_dump_end writes stats-<datetime>.dump\n",
+	            RT_STATS_RECORD_SECONDS);
+}
+
+static void RT_StatsDumpEnd_f (void)
+{
+	if (!rt_stats_record_active)
+	{
+		Con_Printf ("rt_stats_dump_end: not recording\n");
+		return;
+	}
+
+	RT_StatsRecordFinish (false);
+}
+
+
 #define RT_LIGHT_REPORT_FILE "qlightreport.log"
 
 // Writes the same emissive stats + cluster report as rt_light_report to qlightreport.log
@@ -1873,6 +2210,8 @@ static void GL_InitInstance (void)
 	Cmd_AddCommand ("fog", RT_Fog_Cmd);
 	Cmd_AddCommand ("rt_stats", RT_Stats_f);
 	Cmd_AddCommand ("rt_stats_dump", RT_StatsDump_f);
+	Cmd_AddCommand ("rt_stats_dump_start", RT_StatsDumpStart_f);
+	Cmd_AddCommand ("rt_stats_dump_end", RT_StatsDumpEnd_f);
 
 
     vulkan_globals.primary_cb_context.batch_indices = Mem_Alloc (sizeof (uint32_t) * MAX_BATCH_INDICES);

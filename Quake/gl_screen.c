@@ -1076,8 +1076,9 @@ static void SCR_DrawGUI (void *unused)
 			const qboolean stats_on = RT_StatsPanel (RT_STATS_RAYS) || RT_StatsPanel (RT_STATS_PASSES) ||
 			                          RT_StatsPanel (RT_STATS_PROFILE);
 			const qboolean gui_on = SNDEQ_DialogActive () || (int) CVAR_TO_FLOAT (rt_dtal_debug) == 2;
+			const qboolean record_on = RT_StatsRecording ();
 
-			if ((stats_on || gui_on) &&
+			if ((stats_on || gui_on || record_on) &&
 			    QR_GUI_BeginFrame ((unsigned int) host_framecount, (float) host_frametime, glx, gly, glwidth, glheight, vid.height))
 			{
 				RT_StatsDrawGui ();

@@ -731,6 +731,9 @@ void RT_StatsCapture (rt_stats_snapshot_t *snap);
 void RT_StatsDrawGui (void);
 void RT_StatsGuiReset (void);
 
+qboolean RT_StatsRecording (void);
+void     RT_StatsRecordSample (const rt_stats_snapshot_t *snap);
+
 extern double           rt_prof_ms[RT_PROF_COUNT];
 extern rt_prof_report_t rt_prof_report;
 

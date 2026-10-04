@@ -87,6 +87,8 @@ static void RT_StatsOverlaySample (void)
 		for (i = 0; i < RT_PROF_COUNT; i++)
 			RT_StatsSeriesPush (&rt_stats_series_cpu_slot[i], rep->ms[i]);
 	}
+
+	RT_StatsRecordSample (snap);
 }
 
 static void RT_StatsOverlayMs (const char *label, float ms, const rt_stats_series_t *series, uint32_t color)
@@ -224,7 +226,7 @@ void RT_StatsDrawGui (void)
 		RT_StatsSeriesResetAll ();
 	}
 
-	if (!panels)
+	if (!panels && !RT_StatsRecording ())
 		return;
 
 	if (!rt_stats_overlay_sampled || now >= rt_stats_overlay_next)
@@ -232,6 +234,9 @@ void RT_StatsDrawGui (void)
 		RT_StatsOverlaySample ();
 		rt_stats_overlay_next = now + interval;
 	}
+
+	if (!panels)
+		return;
 
 	title[0] = 0;
 	if (snap->haveGpu)
