@@ -175,7 +175,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
 	CVAR_DEF_T (rt_model_lights, "1") \
 	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
-	CVAR_DEF_T (rt_dtal_model_budget, "256") \
+	CVAR_DEF_T (rt_dtal_model_budget, "512") \
 	CVAR_DEF_T (rt_dtal_model_minarea, "0") \
 	\
 	CVAR_DEF_T (rt_poi_distthresh, "2") \
