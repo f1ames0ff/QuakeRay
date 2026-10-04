@@ -215,6 +215,7 @@ char *q_strupr (char *str);
 
 /* Trim whitespace on both ends, modifying str on-place: Returns the new start of str after trim */
 char *q_strtrim (char *str);
+size_t UTF8_WriteCodePoint (char *dst, size_t maxbytes, uint32_t codepoint);
 
 /* Split str around any of the characters of sep_set, gobbling any number of consecutive found separators, modifying str in-place.
 In addition, if nb_substr != NULL:
@@ -336,12 +337,23 @@ extern searchpath_t *com_base_searchpaths;
 extern THREAD_LOCAL int com_filesize;
 struct cache_user_s;
 
+#define MAX_BASEDIRS 6
+
 extern char             com_basedir[MAX_OSPATH];
+extern char             com_basedirs[MAX_BASEDIRS][MAX_OSPATH];
+extern int              com_numbasedirs;
 extern char             com_gamedir[MAX_OSPATH];
 extern THREAD_LOCAL int file_from_pak; // global indicating that file came from a pak
 
 const char *COM_GetGameNames (qboolean full);
 qboolean    COM_GameDirMatches (const char *tdirs);
+qboolean    COM_ModForbiddenChars (const char *p);
+qboolean    COM_PathMatches (const char *a, const char *b);
+void        COM_AddBaseDir (const char *dir);
+
+#define FS_ENT_NONE      (0)
+#define FS_ENT_FILE      (1 << 0)
+#define FS_ENT_DIRECTORY (1 << 1)
 
 void     COM_WriteFile (const char *filename, const void *data, int len);
 int      COM_OpenFile (const char *filename, int *handle, unsigned int *path_id);
@@ -396,7 +408,7 @@ char  *FS_fgets (char *s, int size, fshandle_t *fh);
 long   FS_filelength (fshandle_t *fh);
 
 extern struct cvar_s registered;
-extern qboolean      standard_quake, rogue, hipnotic;
+extern qboolean      standard_quake, rogue, hipnotic, mg3;
 extern qboolean      fitzmode;
 /* if true, run in fitzquake mode disabling custom quakespasm hacks */
 

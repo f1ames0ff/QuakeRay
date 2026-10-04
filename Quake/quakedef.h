@@ -42,8 +42,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef QUAKESPASM_VER_SUFFIX
 #define QUAKESPASM_VER_SUFFIX // optional version suffix string literal like "-beta1"
 #endif
-#define ENGINE_VERSION   0.26
-#define ENGINE_VER_PATCH 2 // helper to print a string like 0.92.1
+#define ENGINE_VERSION   0.27
+#define ENGINE_VER_PATCH 0 // helper to print a string like 0.92.1
 #ifndef ENGINE_VER_SUFFIX
 #define ENGINE_VER_SUFFIX "" // optional version suffix like -beta1
 #endif
@@ -418,6 +418,7 @@ void               Host_CfgExec_f (void);
 
 void ExtraMaps_Init (void);
 void Modlist_Init (void);
+const char *Modlist_GetFullName (const filelist_item_t *item);
 void DemoList_Init (void);
 void SaveList_Init (void);
 

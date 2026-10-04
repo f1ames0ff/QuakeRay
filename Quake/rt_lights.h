@@ -1,8 +1,8 @@
-// rt_lights.h -- per-emitter overrides of the dynamic lights (lights.yaml).
+// rt_lights.h -- the dynamic lights of qray.lights.yaml.
 //
-// What a surface looks like -- and whether it glows -- is materials.yaml; how
-// big the light an emitter casts is, how bright it is and where it sits relative
-// to the emitter's pivot is lights.yaml. The two files are deliberately apart: a
+// What a surface looks like -- and whether it glows -- is qray.materials.yaml;
+// how big the light an emitter casts is, how bright it is and where it sits
+// relative to the emitter's pivot is qray.lights.yaml. The two files are apart: a
 // material may be shared by many emitters, while a light belongs to one of them,
 // and mixing the two would make every window in the map an emitter of its own.
 //
@@ -165,7 +165,7 @@ void RT_LIGHT_Emit (const rt_emitter_light_t *emitter);
 // ----- custom dlights authored in the light editor -----
 
 // Freely placed lights a level does not have. They are loaded per map from
-// <gamedir>/qray/lights.yaml, which holds one section per level (the map file
+// <gamedir>/qray.lights.yaml, which holds one section per level (the map file
 // without path or extension), and are uploaded like the classic dlights, with a
 // light style of their own.
 #define RT_CUSTOM_LIGHTS_MAX 64
@@ -222,7 +222,7 @@ void               RT_CustomLightValidate (rt_custom_light_t *light);
 void RT_CustomFog (rt_custom_fog_t *out);
 void RT_CustomFogSet (const rt_custom_fog_t *fog);
 
-// Loads the level's section of <gamedir>/qray/lights.yaml ("maps/x.bsp" and "x"
+// Loads the level's section of <gamedir>/qray.lights.yaml ("maps/x.bsp" and "x"
 // both name the level "x"), the fog included.
 void RT_CustomLights_ChangeMap (const char *mapname);
 
@@ -237,6 +237,5 @@ void RT_CustomLights_ApplyFog (void);
 // The section key of a map and the file's writer, for the editor's session.
 void RT_CustomLights_LevelKey (const char *mapname, char *out, size_t outsize);
 void RT_CustomLights_WriteEntry (FILE *f, const rt_custom_light_t *l);
-const char *RT_CustomLights_Header (void);
 
 #endif /* RT_LIGHTS_H */

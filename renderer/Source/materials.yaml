@@ -80,7 +80,7 @@
 #             emissive_focus: 45
 #             emissive_focus_soft: 8
 #             emissive_projector: true
-materials:
+qray_materials:
   - name: textures/#lava1
     texture_emissive: textures/_lava1_luma.png
     light_brightness: 0.1

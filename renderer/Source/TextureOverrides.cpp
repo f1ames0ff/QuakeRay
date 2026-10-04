@@ -120,7 +120,7 @@ namespace
                 return devExtensions;
             }
 
-            static const char *extensions[] = { ".ktx2" };
+            static const char *extensions[] = { ".png", ".ktx2" };
             return extensions;
         }
     }

@@ -1493,6 +1493,55 @@ static void RT_PrintMessage (const char *pMessage, void *pUserData)
 	Con_Warning (pMessage);
 }
 
+static void RT_LoadFile (const char *pFilePath, void *pUserData, const void **ppOutData,
+                         uint32_t *pOutDataSize, void **ppOutFileUserHandle)
+{
+	char        name[MAX_OSPATH];
+	const char *p = pFilePath;
+	byte       *data;
+	int         i;
+
+	(void)pUserData;
+
+	if (ppOutData)
+		*ppOutData = NULL;
+	if (pOutDataSize)
+		*pOutDataSize = 0;
+	if (ppOutFileUserHandle)
+		*ppOutFileUserHandle = NULL;
+
+	if (!p || !p[0])
+		return;
+
+	if (!q_strncasecmp (p, RT_OVERRIDEN_FOLDER, sizeof (RT_OVERRIDEN_FOLDER) - 1))
+		p += sizeof (RT_OVERRIDEN_FOLDER) - 1;
+	while (*p == '/' || *p == '\\')
+		p++;
+
+	for (i = 0; p[i] && i < (int)sizeof (name) - 1; i++)
+		name[i] = (p[i] == '\\') ? '/' : p[i];
+	name[i] = 0;
+
+	data = COM_LoadFile (name, NULL);
+	if (!data)
+		return;
+
+	if (ppOutData)
+		*ppOutData = data;
+	if (pOutDataSize)
+		*pOutDataSize = (uint32_t)com_filesize;
+	if (ppOutFileUserHandle)
+		*ppOutFileUserHandle = data;
+}
+
+static void RT_FreeFile (void *pFileUserHandle, void *pUserData)
+{
+	(void)pUserData;
+
+	if (pFileUserHandle)
+		Mem_Free (pFileUserHandle);
+}
+
 static void RT_ReloadShaders (void)
 {
 	request_shaders_reload = true;
@@ -1756,8 +1805,8 @@ static void GL_InitInstance (void)
 #endif
 
 	const char pShaderPath[] = RT_OVERRIDEN_FOLDER "shaders/";
-	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "BlueNoise_LDR_RGBA_128.ktx2";
-	const char pWaterTexturePath[] = RT_OVERRIDEN_FOLDER "WaterNormal_n.ktx2";
+	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "BlueNoise_LDR_RGBA_128.png";
+	const char pWaterTexturePath[] = RT_OVERRIDEN_FOLDER "WaterNormal_n.png";
 
 	QrInstanceCreateInfo info = {
 		.pAppName = "QuakeRay",
@@ -1773,6 +1822,9 @@ static void GL_InitInstance (void)
 
 		.pShaderFolderPath = pShaderPath,
 		.pBlueNoiseFilePath = pBlueNoisePath,
+
+		.pfnOpenFile = RT_LoadFile,
+		.pfnCloseFile = RT_FreeFile,
 
 		.primaryRaysMaxAlbedoLayers = 2,
 		.indirectIlluminationMaxAlbedoLayers = 1,
@@ -1817,7 +1869,7 @@ static void GL_InitInstance (void)
 
 	QR_Editor_Init (); // qr light editor console commands
 
-	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL);
+	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL, 0);
 
 	Cmd_AddCommand ("rt_pfnreloadshaders", RT_ReloadShaders);
 	Cmd_AddCommand ("rt_light_report", RT_LightReport_f);
