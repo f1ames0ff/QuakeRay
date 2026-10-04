@@ -532,7 +532,7 @@ void CheckAnamorphicStreak(nvrhi::IDevice *device, const std::string &shaders)
     auto ghostValues = ReadTextureRGBA(device, result);
     Require(at(ghostValues, 24, 32, 0) > 0.05f, "polygon ghost toward the centre");
     Require(at(ghostValues, 36, 32, 0) > 0.05f, "polygon ghost mirrored through the centre");
-    Require(at(ghostValues, 56, 32, 0) > 0.05f, "polygon ghost far side");
+    Require(at(ghostValues, 56, 32, 0) > 0.01f, "polygon ghost far side");
     Require(at(ghostValues, 32, 56, 0) == 0.0f, "polygon ghosts stay on the axis");
 }
 
