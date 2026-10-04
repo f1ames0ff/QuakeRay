@@ -53,8 +53,8 @@ struct BloomUpsamplePush
 {
     float scatter;
     uint32_t hasSource;
-    float padding0;
-    float padding1;
+    float normalization;
+    float padding;
 };
 
 void LogMessage(const RhiBloomPass::PrintFunction &print, const std::string &message)
@@ -456,6 +456,10 @@ void RhiBloomPass::Render(nvrhi::ICommandList *pCommandList,
     const uint32_t maxLevels = QualityToMaxLevels(settings.quality);
     const uint32_t requestedLevels = ComputeLevelCount(settings.radius, width, height, maxLevels);
     const uint32_t levelCount = std::min(std::max(requestedLevels, 1u), target.downCount);
+    const float decay = std::clamp(settings.scatter, 0.0f, 1.0f);
+    const float normalization = decay >= 1.0f
+        ? 1.0f / static_cast<float>(levelCount)
+        : (1.0f - decay) / (1.0f - std::pow(decay, static_cast<float>(levelCount)));
 
     pCommandList->beginTrackingTextureState(pHdrSource, nvrhi::AllSubresources,
                                             nvrhi::ResourceStates::UnorderedAccess);
@@ -487,7 +491,7 @@ void RhiBloomPass::Render(nvrhi::ICommandList *pCommandList,
     {
         DispatchUpsample(pCommandList, frameIndex, target.down[0].srvSet, target.down[0].srvSet,
                          target.result.uavSet, target.result.texture->getDesc().width,
-                         target.result.texture->getDesc().height, !quarterBase, 0.0f);
+                         target.result.texture->getDesc().height, !quarterBase, 0.0f, normalization);
     }
     else
     {
@@ -523,15 +527,17 @@ void RhiBloomPass::Render(nvrhi::ICommandList *pCommandList,
                 destinationHeight = target.up[i].texture->getDesc().height;
             }
 
+            const float stepNormalization = (i == 0 && !quarterBase) ? normalization : 1.0f;
+
             DispatchUpsample(pCommandList, frameIndex, target.down[i].srvSet, pCoarseSet, pDestinationSet,
-                             destinationWidth, destinationHeight, true, settings.scatter);
+                             destinationWidth, destinationHeight, true, decay, stepNormalization);
         }
 
         if (quarterBase)
         {
             DispatchUpsample(pCommandList, frameIndex, target.down[0].srvSet, target.up[0].srvSet,
                              target.result.uavSet, target.result.texture->getDesc().width,
-                             target.result.texture->getDesc().height, false, 0.0f);
+                             target.result.texture->getDesc().height, false, 0.0f, normalization);
         }
     }
 
@@ -676,9 +682,10 @@ void RhiBloomPass::DispatchUpsample(nvrhi::ICommandList *pCommandList,
                                     uint32_t destinationWidth,
                                     uint32_t destinationHeight,
                                     bool hasSource,
-                                    float scatter)
+                                    float scatter,
+                                    float normalization)
 {
-    const BloomUpsamplePush push = { scatter, hasSource ? 1u : 0u, 0.0f, 0.0f };
+    const BloomUpsamplePush push = { scatter, hasSource ? 1u : 0u, normalization, 0.0f };
 
     RecordDispatch(pCommandList, upsamplePipeline,
                    { pSourceSet, pCoarseSet, tonemappingSets[frameIndex], pDestinationSet },

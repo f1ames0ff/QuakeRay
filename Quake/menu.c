@@ -2645,17 +2645,17 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&rt_local_exposure, f);
 		break;
 	case EFFECTS_OPT_RESET:
-		Cvar_SetValueQuick (&rt_bloom_intensity, 0.02f);
+		Cvar_SetValueQuick (&rt_bloom_intensity, 0.2f);
 		Cvar_SetValueQuick (&rt_bloom_threshold, 6.0f);
 		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
-		Cvar_SetValueQuick (&rt_dof_near, 0.25f);
-		Cvar_SetValueQuick (&rt_contrast, 0.6f);
+		Cvar_SetValueQuick (&rt_dof_near, 1.0f);
+		Cvar_SetValueQuick (&rt_contrast, 0.5f);
 		Cvar_SetValueQuick (&rt_exposure_bias, 0.0f);
 		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
-		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.25f);
-		Cvar_SetValueQuick (&rt_sharpen_strength, 0.20f);
+		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.5f);
+		Cvar_SetValueQuick (&rt_sharpen_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_sharpen, 2.0f);
-		Cvar_SetValueQuick (&rt_vignette, 0.15f);
+		Cvar_SetValueQuick (&rt_vignette, 0.5f);
 		Cvar_SetValueQuick (&rt_local_exposure, 0.0f);
 		break;
 	}

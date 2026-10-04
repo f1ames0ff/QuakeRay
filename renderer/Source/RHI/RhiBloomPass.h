@@ -128,7 +128,8 @@ private:
                           uint32_t destinationWidth,
                           uint32_t destinationHeight,
                           bool hasSource,
-                          float scatter);
+                          float scatter,
+                          float normalization);
 
     void RecordDispatch(nvrhi::ICommandList *pCommandList,
                         nvrhi::IComputePipeline *pPipeline,

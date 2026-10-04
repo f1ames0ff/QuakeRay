@@ -28,7 +28,7 @@ struct BloomUpsamplePush_BT
 {
     float scatter;
     uint hasSource;
-    float padding0;
+    float normalization;
     float padding1;
 };
 
@@ -58,8 +58,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (push.hasSource != 0)
     {
         const float3 source = postEffectsSanitize(bloomSource.SampleLevel(bloomSource_Sampler, uv, 0).rgb);
-        result = lerp(source, result, saturate(push.scatter));
+        result = result * saturate(push.scatter) + source;
     }
+    result *= max(push.normalization, 0.0);
 
     bloomDest[pixel] = float4(postEffectsSanitize(result), 1.0);
 }

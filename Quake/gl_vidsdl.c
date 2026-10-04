@@ -267,7 +267,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_teleport_portals, "0") \
     \
 	CVAR_DEF_T (rt_sharpen, "2") \
-	CVAR_DEF_T (rt_sharpen_strength, "0.20") \
+	CVAR_DEF_T (rt_sharpen_strength, "0.5") \
 	CVAR_DEF_T (rt_renderscale, "0") \
 	CVAR_DEF_T (rt_upscale_fsr31, "2") \
 	CVAR_DEF_T (rt_upscale_dlss, "0") \
@@ -282,7 +282,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_globallight_mult, "10") \
 	CVAR_DEF_T (rt_globallight, "255 255 255") \
 	\
-	CVAR_DEF_T (rt_bloom_intensity, "0.02") \
+	CVAR_DEF_T (rt_bloom_intensity, "0.2") \
 	CVAR_DEF_T (rt_bloom_quality, "2") \
 	CVAR_DEF_T (rt_bloom_threshold, "6.0") \
 	CVAR_DEF_T (rt_bloom_knee, "0.5") \
@@ -291,7 +291,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_bloom_emis_mult, "50") \
 	CVAR_DEF_T (rt_bloom, "1") \
 	\
-	CVAR_DEF_T (rt_dof_near, "0.25") \
+	CVAR_DEF_T (rt_dof_near, "1") \
 	\
 	CVAR_DEF_T (rt_exposure_bias, "0") \
 	CVAR_DEF_T (rt_exposure_speed_up, "3.0") \
@@ -301,10 +301,10 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_exposure_min_luminance, "0.02") \
 	CVAR_DEF_T (rt_exposure_max_luminance, "1.0") \
 	CVAR_DEF_T (rt_local_exposure, "0") \
-	CVAR_DEF_T (rt_contrast, "0.6") \
+	CVAR_DEF_T (rt_contrast, "0.5") \
 	\
 	CVAR_DEF_T (rt_ef_crt, "0") \
-	CVAR_DEF_T (rt_vignette, "0.15") \
+	CVAR_DEF_T (rt_vignette, "0.5") \
 	CVAR_DEF_T (rt_vignette_start, "0.45") \
 	CVAR_DEF_T (rt_vignette_end, "1.0") \
 	CVAR_DEF_T (rt_vignette_roundness, "0.35") \
@@ -313,7 +313,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_ef_damage, "1") \
 	CVAR_DEF_T (rt_ef_damage_strength, "0.5") \
 	CVAR_DEF_T (rt_ef_liquid, "1") \
-	CVAR_DEF_T (rt_ef_liquid_strength, "0.25") \
+	CVAR_DEF_T (rt_ef_liquid_strength, "0.5") \
 	\
 	CVAR_DEF_T (rt_viewm_fovscale, "1.2") \
 	CVAR_DEF_T (rt_viewm_wide, "1.05") \
