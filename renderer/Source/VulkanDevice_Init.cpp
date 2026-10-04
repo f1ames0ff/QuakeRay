@@ -39,6 +39,7 @@
 #include "RHI/RhiRasterOverlayPass.h"
 #include "RHI/RhiRasterSkyPass.h"
 #include "RHI/RhiRtComposePass.h"
+#include "RHI/RhiPipeline.h"
 #include "RHI/RhiRtDirectPass.h"
 #include "RHI/RhiRtGodRaysPass.h"
 #include "RHI/RhiRtIndirectPass.h"
@@ -72,6 +73,8 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
     , currentFrameTime( 0 )
 {
     ValidateCreateInfo( info );
+
+    rhi::setShaderFileLoader( userFileLoad );
 
     CreateInstance( *info );
 
@@ -548,6 +551,8 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
 VulkanDevice::~VulkanDevice()
 {
     vkDeviceWaitIdle(device);
+
+    rhi::setShaderFileLoader( nullptr );
 
     nvrhiFrameSkeleton.reset();
 

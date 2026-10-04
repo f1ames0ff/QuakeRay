@@ -3,36 +3,36 @@
 #include "rt_pkz.h"
 #include "sys.h"
 #include "miniz.h"
+#include <io.h>
+#include <fcntl.h>
 
-#define RT_PKZ_MAX_ARCHIVES 8
 #define RT_PKZ_MAX_STREAMS  64
 #define RT_PKZ_HANDLE_BASE  100000
-#define RT_PKZ_MAX_TEMP     64
 
-typedef struct {
-    char path[MAX_OSPATH];
-    byte *data;
-    size_t dataSize;
+typedef struct rt_pkz_archive_s
+{
+    struct rt_pkz_archive_s *prev;
+    struct rt_pkz_archive_s *next;
+    char           path[MAX_OSPATH];
+    byte          *data;
+    size_t         dataSize;
     mz_zip_archive zip;
-    qboolean valid;
+    qboolean       opened;
 } rt_pkz_archive_t;
 
 typedef struct {
     qboolean inUse;
-    int archive;
+    rt_pkz_archive_t *archive;
     int fileIndex;
     byte *buf;
     size_t size;
     size_t pos;
 } rt_pkz_stream_t;
 
-static rt_pkz_archive_t rt_pkz_archives[RT_PKZ_MAX_ARCHIVES];
-static int rt_pkz_count = 0;
-static rt_pkz_stream_t rt_pkz_streams[RT_PKZ_MAX_STREAMS];
-static char rt_pkz_temp_files[RT_PKZ_MAX_TEMP][MAX_OSPATH];
-static int rt_pkz_temp_count = 0;
-static searchpath_t *rt_pkz_searchpaths[RT_PKZ_MAX_ARCHIVES];
-static int rt_pkz_searchpath_count = 0;
+static rt_pkz_archive_t *rt_pkz_first = NULL;
+static rt_pkz_archive_t *rt_pkz_last = NULL;
+static int               rt_pkz_count = 0;
+static rt_pkz_stream_t   rt_pkz_streams[RT_PKZ_MAX_STREAMS];
 
 static void *pkz_alloc(void *opaque, size_t items, size_t size)
 {
@@ -63,21 +63,25 @@ static size_t pkz_read(void *opaque, mz_uint64 file_ofs, void *pBuf, size_t n)
     return n;
 }
 
-void RT_PKZ_Init(void)
+static void rt_pkz_add_searchpath(rt_pkz_archive_t *a, unsigned int path_id)
 {
-    if (rt_pkz_count > 0)
-    {
-        return;
-    }
+    searchpath_t *s = (searchpath_t *)Mem_Alloc(sizeof(searchpath_t));
+    memset(s, 0, sizeof(*s));
+    s->path_id = path_id;
+    q_strlcpy(s->filename, a->path, sizeof(s->filename));
+    s->rt_pkz = a;
+    s->next = com_searchpaths;
+    com_searchpaths = s;
+}
 
-    memset(rt_pkz_archives, 0, sizeof(rt_pkz_archives));
-    rt_pkz_count = 0;
-
+void RT_PKZ_MountDir(const char *dir, unsigned int path_id)
+{
     char pattern[MAX_OSPATH];
-    q_snprintf(pattern, sizeof(pattern), "%s/*.pkz", com_gamedir);
-
     WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(pattern, &fd);
+    HANDLE h;
+
+    q_snprintf(pattern, sizeof(pattern), "%s/*.pkz", dir);
+    h = FindFirstFileA(pattern, &fd);
     if (h == INVALID_HANDLE_VALUE)
     {
         return;
@@ -85,44 +89,49 @@ void RT_PKZ_Init(void)
 
     do
     {
-        if (rt_pkz_count >= RT_PKZ_MAX_ARCHIVES)
-        {
-            break;
-        }
+        char path[MAX_OSPATH];
+        int handle = -1;
+        int size;
+        int rd;
+        rt_pkz_archive_t *a;
+
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         {
             continue;
         }
 
-        char path[MAX_OSPATH];
-        q_snprintf(path, sizeof(path), "%s/%s", com_gamedir, fd.cFileName);
-
-        rt_pkz_archive_t *a = &rt_pkz_archives[rt_pkz_count];
-
-        int handle;
-        int size = Sys_FileOpenRead(path, &handle);
+        q_snprintf(path, sizeof(path), "%s/%s", dir, fd.cFileName);
+        size = Sys_FileOpenRead(path, &handle);
         if (size <= 0)
         {
+            if (handle != -1)
+            {
+                Sys_FileClose(handle);
+            }
             continue;
         }
+
+        a = (rt_pkz_archive_t *)Mem_Alloc(sizeof(*a));
+        memset(a, 0, sizeof(*a));
 
         a->data = (byte *)Mem_Alloc(size);
         if (!a->data)
         {
             Sys_FileClose(handle);
+            Mem_Free(a);
             continue;
         }
 
-        int rd = Sys_FileRead(handle, a->data, size);
+        rd = Sys_FileRead(handle, a->data, size);
         Sys_FileClose(handle);
         if (rd != size)
         {
             Mem_Free(a->data);
+            Mem_Free(a);
             continue;
         }
 
         a->dataSize = (size_t)size;
-        memset(&a->zip, 0, sizeof(a->zip));
         a->zip.m_pAlloc = pkz_alloc;
         a->zip.m_pFree = pkz_free;
         a->zip.m_pRealloc = pkz_realloc;
@@ -130,82 +139,126 @@ void RT_PKZ_Init(void)
         a->zip.m_pRead = pkz_read;
         a->zip.m_pIO_opaque = a;
         a->zip.m_pNeeds_keepalive = NULL;
+
         if (mz_zip_reader_init(&a->zip, a->dataSize, 0))
         {
+            a->opened = true;
             q_strlcpy(a->path, path, sizeof(a->path));
-            a->valid = true;
+            a->prev = rt_pkz_last;
+            if (rt_pkz_last)
+            {
+                rt_pkz_last->next = a;
+            }
+            else
+            {
+                rt_pkz_first = a;
+            }
+            rt_pkz_last = a;
             rt_pkz_count++;
+            rt_pkz_add_searchpath(a, path_id);
             Con_Printf("RT: mounted pkz %s (%u files)\n", path, (unsigned)a->zip.m_total_files);
         }
         else
         {
             Mem_Free(a->data);
-            a->data = NULL;
+            Mem_Free(a);
         }
     } while (FindNextFileA(h, &fd));
 
     FindClose(h);
+}
 
-    for (int i = 0; i < rt_pkz_count && rt_pkz_searchpath_count < RT_PKZ_MAX_ARCHIVES; i++)
+void RT_PKZ_Unmount(void *varchive)
+{
+    rt_pkz_archive_t *a = (rt_pkz_archive_t *)varchive;
+    int i;
+
+    if (!a)
     {
-        rt_pkz_archive_t *a = &rt_pkz_archives[i];
-        if (!a->valid)
-        {
-            continue;
-        }
+        return;
+    }
 
-        searchpath_t *s = (searchpath_t *)Mem_Alloc(sizeof(searchpath_t));
-        memset(s, 0, sizeof(*s));
-        if (com_searchpaths)
+    for (i = 0; i < RT_PKZ_MAX_STREAMS; i++)
+    {
+        if (rt_pkz_streams[i].inUse && rt_pkz_streams[i].archive == a)
         {
-            s->path_id = com_searchpaths->path_id << 1;
+            RT_PKZ_Close(RT_PKZ_HANDLE_BASE + i);
         }
-        else
-        {
-            s->path_id = 1U;
-        }
-        q_strlcpy(s->filename, a->path, sizeof(s->filename));
-        s->rt_pkz = a;
-        s->next = com_searchpaths;
-        com_searchpaths = s;
+    }
 
-        rt_pkz_searchpaths[rt_pkz_searchpath_count++] = s;
+    if (a->prev)
+    {
+        a->prev->next = a->next;
+    }
+    else
+    {
+        rt_pkz_first = a->next;
+    }
+    if (a->next)
+    {
+        a->next->prev = a->prev;
+    }
+    else
+    {
+        rt_pkz_last = a->prev;
+    }
+
+    if (a->opened)
+    {
+        mz_zip_reader_end(&a->zip);
+    }
+    if (a->data)
+    {
+        Mem_Free(a->data);
+    }
+    Mem_Free(a);
+    if (rt_pkz_count > 0)
+    {
+        rt_pkz_count--;
     }
 }
 
 void RT_PKZ_Shutdown(void)
 {
-    for (int i = 0; i < rt_pkz_searchpath_count; i++)
+    searchpath_t *s;
+    int i;
+
+    for (i = 0; i < RT_PKZ_MAX_STREAMS; i++)
     {
-        searchpath_t *target = rt_pkz_searchpaths[i];
-        searchpath_t **link;
-        for (link = &com_searchpaths; *link; link = &(*link)->next)
+        if (rt_pkz_streams[i].inUse)
         {
-            if (*link == target)
+            RT_PKZ_Close(RT_PKZ_HANDLE_BASE + i);
+        }
+    }
+
+    s = com_searchpaths;
+    while (s)
+    {
+        searchpath_t *next = s->next;
+
+        if (s->rt_pkz)
+        {
+            searchpath_t **link;
+
+            for (link = &com_searchpaths; *link; link = &(*link)->next)
             {
-                *link = target->next;
-                break;
+                if (*link == s)
+                {
+                    *link = s->next;
+                    break;
+                }
             }
+            Mem_Free(s);
         }
-        Mem_Free(target);
+        s = next;
     }
-    rt_pkz_searchpath_count = 0;
 
-    for (int i = 0; i < rt_pkz_count; i++)
+    while (rt_pkz_first)
     {
-        rt_pkz_archive_t *a = &rt_pkz_archives[i];
-        if (a->valid)
-        {
-            mz_zip_reader_end(&a->zip);
-        }
-        if (a->data)
-        {
-            Mem_Free(a->data);
-        }
+        RT_PKZ_Unmount(rt_pkz_first);
     }
-    rt_pkz_count = 0;
 
-    for (int i = 0; i < RT_PKZ_MAX_STREAMS; i++)
+    for (i = 0; i < RT_PKZ_MAX_STREAMS; i++)
     {
         rt_pkz_streams[i].inUse = false;
         if (rt_pkz_streams[i].buf)
@@ -215,40 +268,6 @@ void RT_PKZ_Shutdown(void)
         }
     }
 
-    for (int i = 0; i < rt_pkz_temp_count; i++)
-    {
-        remove(rt_pkz_temp_files[i]);
-    }
-    rt_pkz_temp_count = 0;
-}
-
-byte *RT_PKZ_LoadFile(const char *name, int *outLen)
-{
-    for (int i = 0; i < rt_pkz_count; i++)
-    {
-        rt_pkz_archive_t *a = &rt_pkz_archives[i];
-        if (!a->valid)
-        {
-            continue;
-        }
-
-        size_t len = 0;
-        void *buf = mz_zip_reader_extract_file_to_heap(&a->zip, name, &len, 0);
-        if (buf)
-        {
-            if (outLen)
-            {
-                *outLen = (int)len;
-            }
-            return (byte *)buf;
-        }
-    }
-
-    if (outLen)
-    {
-        *outLen = 0;
-    }
-    return NULL;
 }
 
 int RT_PKZ_ListFiles(const char *dir, const char *ext,
@@ -257,15 +276,10 @@ int RT_PKZ_ListFiles(const char *dir, const char *ext,
     int count = 0;
     size_t dirLen = strlen(dir);
     size_t extLen = strlen(ext);
+    rt_pkz_archive_t *a;
 
-    for (int i = 0; i < rt_pkz_count; i++)
+    for (a = rt_pkz_first; a; a = a->next)
     {
-        rt_pkz_archive_t *a = &rt_pkz_archives[i];
-        if (!a->valid)
-        {
-            continue;
-        }
-
         mz_uint num = (mz_uint)a->zip.m_total_files;
         for (mz_uint f = 0; f < num; f++)
         {
@@ -303,7 +317,7 @@ int RT_PKZ_ListFiles(const char *dir, const char *ext,
 
 static int rt_pkz_find_index(rt_pkz_archive_t *a, const char *name, int *outSize)
 {
-    if (!a || !a->valid || !name || !name[0])
+    if (!a || !name || !name[0])
     {
         return -1;
     }
@@ -361,7 +375,7 @@ int RT_PKZ_OpenFile(const void *varchive, const char *name, int *outSize)
         }
 
         s->inUse = true;
-        s->archive = (int)(a - rt_pkz_archives);
+        s->archive = a;
         s->fileIndex = fi;
         s->buf = NULL;
         s->size = (size_t)size;
@@ -400,7 +414,7 @@ int RT_PKZ_Read(int handle, void *dest, int count)
 
     if (!s->buf)
     {
-        rt_pkz_archive_t *a = &rt_pkz_archives[s->archive];
+        rt_pkz_archive_t *a = s->archive;
         size_t len = 0;
         s->buf = (byte *)mz_zip_reader_extract_to_heap(&a->zip, (mz_uint)s->fileIndex, &len, 0);
         if (!s->buf)
@@ -458,48 +472,69 @@ FILE *RT_PKZ_OpenFileAsFILE(const void *varchive, const char *name)
 {
     rt_pkz_archive_t *a = (rt_pkz_archive_t *)varchive;
     int fi = rt_pkz_find_index(a, name, NULL);
+    char  tmppath[MAX_OSPATH];
+    char  tmpfile[MAX_OSPATH] = "";
+    HANDLE h;
+    int    fd;
+    FILE  *f;
+    size_t len = 0;
+    size_t got;
+    void  *buf;
+
     if (fi < 0)
     {
         return NULL;
     }
 
-    size_t len = 0;
-    void *buf = mz_zip_reader_extract_to_heap(&a->zip, (mz_uint)fi, &len, 0);
+    buf = mz_zip_reader_extract_to_heap(&a->zip, (mz_uint)fi, &len, 0);
     if (!buf)
     {
         return NULL;
     }
 
-    if (rt_pkz_temp_count >= RT_PKZ_MAX_TEMP)
+    if (!GetTempPathA(sizeof(tmppath), tmppath) ||
+        !GetTempFileNameA(tmppath, "rtp", 0, tmpfile))
     {
         Mem_Free(buf);
         return NULL;
     }
 
-    char tmppath[MAX_OSPATH];
-    char tmpfile[MAX_OSPATH];
-    if (!GetTempPathA(sizeof(tmppath), tmppath))
+    h = CreateFileA(tmpfile, GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, TRUNCATE_EXISTING,
+                    FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (h == INVALID_HANDLE_VALUE)
     {
+        DeleteFileA(tmpfile);
         Mem_Free(buf);
         return NULL;
     }
-    GetTempFileNameA(tmppath, "rtp", 0, tmpfile);
 
-    FILE *f = fopen(tmpfile, "wb");
+    fd = _open_osfhandle((intptr_t)h, _O_RDWR | _O_BINARY);
+    if (fd == -1)
+    {
+        CloseHandle(h);
+        Mem_Free(buf);
+        return NULL;
+    }
+
+    f = _fdopen(fd, "r+b");
     if (!f)
     {
+        _close(fd);
         Mem_Free(buf);
         return NULL;
     }
-    if (len > 0)
-    {
-        fwrite(buf, 1, len, f);
-    }
-    fclose(f);
+
+    got = (len > 0) ? fwrite(buf, 1, len, f) : 0;
     Mem_Free(buf);
 
-    q_strlcpy(rt_pkz_temp_files[rt_pkz_temp_count], tmpfile, sizeof(rt_pkz_temp_files[0]));
-    rt_pkz_temp_count++;
+    if (got != len || fflush(f) != 0)
+    {
+        fclose(f);
+        return NULL;
+    }
 
-    return fopen(tmpfile, "rb");
+    rewind(f);
+    return f;
 }

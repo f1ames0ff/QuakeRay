@@ -69,10 +69,12 @@ public:
 
 private:
     bool LoadTextureFile(const std::filesystem::path &path, ktxTexture **ppTexture);
+    bool ReadFile(const std::filesystem::path &path, std::vector<uint8_t> &out) const;
 
 private:
     std::shared_ptr<UserFileLoad> userFileLoad;
     std::vector<ktxTexture *> loadedImages;
+    std::vector<void *> loadedPngs;
 };
 
 }

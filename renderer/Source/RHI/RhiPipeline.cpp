@@ -1,10 +1,23 @@
 #include "RhiPipeline.h"
 
 #include <fstream>
+#include <utility>
 #include <vector>
+
+#include "../UserFunction.h"
 
 namespace qray::rhi
 {
+
+namespace
+{
+    std::shared_ptr<UserFileLoad> g_shaderFileLoader;
+}
+
+void setShaderFileLoader(std::shared_ptr<UserFileLoad> loader)
+{
+    g_shaderFileLoader = std::move(loader);
+}
 
 nvrhi::ShaderHandle createShaderFromBlob(nvrhi::IDevice *device,
                                          const void *data,
@@ -31,6 +44,18 @@ nvrhi::ShaderHandle loadShader(nvrhi::IDevice *device,
                                nvrhi::ShaderType type,
                                std::string_view debugName)
 {
+    if (g_shaderFileLoader && g_shaderFileLoader->Exists())
+    {
+        auto fileHandle = g_shaderFileLoader->Open(blobPath.c_str());
+
+        if (!fileHandle.Contains())
+        {
+            return nullptr;
+        }
+
+        return createShaderFromBlob(device, fileHandle.pData, fileHandle.dataSize, type, debugName);
+    }
+
     // Binary and positioned at the end, so that tellg gives the size: the same read as
     // NvrhiFrameSkeleton::LoadShader.
     std::ifstream file(blobPath, std::ios::binary | std::ios::ate);

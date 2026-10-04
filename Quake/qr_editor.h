@@ -5,8 +5,8 @@
 // editor. While it runs, the view is driven by a free camera (the
 // player stands still); aiming at a face and pressing fire opens the material
 // panel (Dear ImGui, Quake/qr_gui.cpp) on the right side of the screen, where
-// the materials.yaml parameters of every animation frame of the picked texture
-// can be edited live and saved back to materials.yaml (Apply), reverted
+// the qray.materials.yaml parameters of every animation frame of the picked
+// texture can be edited live and saved back to qray.materials.yaml (Apply), reverted
 // (Cancel), or the editor closed (Exit).
 
 #ifndef QR_EDITOR_H

@@ -4,10 +4,9 @@
 
 #include "quakedef.h"
 
-void RT_PKZ_Init(void);
+void RT_PKZ_MountDir(const char *dir, unsigned int path_id);
+void RT_PKZ_Unmount(void *archive);
 void RT_PKZ_Shutdown(void);
-
-byte *RT_PKZ_LoadFile(const char *name, int *outLen);
 
 int RT_PKZ_ListFiles(const char *dir, const char *ext,
                      int (*cb)(const char *name, void *ctx), void *ctx);
