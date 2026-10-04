@@ -187,11 +187,7 @@ float3 finalizeColor( const float3 input_color )
     float3 operator_color;
     const uint tonemap_type = tonemapping[0].tonemapType;
 
-    if( tonemap_type == 0u )
-    {
-        operator_color = exposed_color;
-    }
-    else if( tonemap_type == 2u )
+    if( tonemap_type == 2u )
     {
         operator_color = exposed_color / ( 1.0 + exposed_color );
     }
@@ -211,7 +207,9 @@ float3 finalizeColor( const float3 input_color )
         operator_color = exposed_color * ( mapped_luminance / scaled_luminance );
     }
 
-    const float3 mapped_color = lerp( curve_color, operator_color, saturate( tonemapping[0].tonemapPower ) );
+    const float3 mapped_color = tonemap_type == 0u ?
+        exposed_color :
+        lerp( curve_color, operator_color, saturate( tonemapping[0].tonemapPower ) );
 
     return colorLimitPreserveHue( mapped_color, 1.0 );
 }
