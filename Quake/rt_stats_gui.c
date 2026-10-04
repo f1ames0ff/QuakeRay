@@ -5,7 +5,7 @@
 #define RT_STATS_HISTORY 60
 
 #define RT_STATS_COLOR_TOTAL  0xFFFF4D0Du
-#define RT_STATS_COLOR_DETAIL 0xFFD0D3D8u
+#define RT_STATS_COLOR_DETAIL 0xFFD3D3D3u
 
 typedef struct
 {
@@ -241,13 +241,10 @@ void RT_StatsDrawGui (void)
 
 	QR_GUI_OverlayBegin ("##rt_stats", 8.0f, 8.0f, 0.62f, title[0] ? title : NULL);
 
-	if (rays)
+	if (profile)
 	{
-		QR_GUI_OverlaySection ("RAYS");
-		if (snap->haveGpu)
-			RT_StatsOverlayRays (snap);
-		else
-			QR_GUI_OverlayNote ("the renderer reports no frame stats");
+		QR_GUI_OverlaySection ("CPU");
+		RT_StatsOverlayCpu (snap);
 	}
 
 	if (passes)
@@ -256,10 +253,13 @@ void RT_StatsDrawGui (void)
 		RT_StatsOverlayGpu (snap);
 	}
 
-	if (profile)
+	if (rays)
 	{
-		QR_GUI_OverlaySection ("CPU");
-		RT_StatsOverlayCpu (snap);
+		QR_GUI_OverlaySection ("RAYS");
+		if (snap->haveGpu)
+			RT_StatsOverlayRays (snap);
+		else
+			QR_GUI_OverlayNote ("the renderer reports no frame stats");
 	}
 
 	QR_GUI_OverlayEnd ();

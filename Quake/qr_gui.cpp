@@ -1924,6 +1924,8 @@ void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const c
 
 	ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (16.0f, 12.0f));
 	ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, ImVec2 (12.0f, 4.0f));
+	ImGui::PushStyleColor (ImGuiCol_WindowBg, ImVec4 (0.09f, 0.09f, 0.095f, 1.0f));
+	ImGui::PushStyleColor (ImGuiCol_Border, ImVec4 (0.32f, 0.32f, 0.32f, 1.0f));
 	if (g_stats_font)
 		ImGui::PushFont (g_stats_font, 28.0f);
 	else
@@ -1958,7 +1960,7 @@ void QR_GUI_OverlaySection (const char *title)
 	if (title && title[0])
 	{
 		ImGui::Dummy (ImVec2 (0.0f, 4.0f));
-		ImGui::TextColored (ImVec4 (0.82f, 0.84f, 0.86f, 1.0f), "%s", title);
+		ImGui::TextColored (ImVec4 (0.85f, 0.85f, 0.85f, 1.0f), "%s", title);
 		ImGui::Dummy (ImVec2 (0.0f, 2.0f));
 	}
 }
@@ -1997,7 +1999,7 @@ void QR_GUI_OverlayNote (const char *text)
 	if (!g_ready)
 		return;
 
-	ImGui::TextDisabled ("%s", text ? text : "");
+	ImGui::TextColored (ImVec4 (0.62f, 0.62f, 0.62f, 1.0f), "%s", text ? text : "");
 }
 
 void QR_GUI_OverlayEnd (void)
@@ -2013,5 +2015,6 @@ void QR_GUI_OverlayEnd (void)
 
 	ImGui::End ();
 	ImGui::PopFont ();
+	ImGui::PopStyleColor (2);
 	ImGui::PopStyleVar (2);
 }

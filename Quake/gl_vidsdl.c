@@ -917,7 +917,7 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 			for (i = 0; i < QR_GPU_PASS_COUNT; i++)
 				fprintf (f, "%-11s %-17s %.2f\n", "gpu.pass", qrGetGpuPassName (i), snap->gpu.gpuPassMs[i]);
 		else
-			fprintf (f, "%-11s %-17s %s\n", "gpu.pass", "timings", "not collected, rt_stats 2 was off");
+			fprintf (f, "%-11s %-17s %s\n", "gpu.pass", "timings", "unavailable, the GPU timer queries did not run");
 
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "total", snap->gpu.raysTotal);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "primary", snap->gpu.raysPerCategory[0]);
@@ -1044,8 +1044,8 @@ static void RT_StatsDump_f (void)
 
 	Con_Printf ("rt_stats_dump: appending the frame to %s\n", rt_stats_dump_job.path);
 
-	if (!RT_StatsPanel (RT_STATS_RAYS) || !RT_StatsPanel (RT_STATS_PASSES))
-		Con_Printf ("rt_stats_dump: the ray counters and the GPU timings are written when rt_stats 2 or higher is on\n");
+	if (!RT_StatsPanel (RT_STATS_RAYS))
+		Con_Printf ("rt_stats_dump: the ray counters are counted when rt_stats 1 or higher is on\n");
 }
 
 
