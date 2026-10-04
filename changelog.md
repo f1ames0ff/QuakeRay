@@ -30,6 +30,15 @@
 - **A store-mounted mod is a full mod** — its own `qray.materials.yaml`/`qray.lights.yaml` and its per-level custom lights and fog are read through the search path, and its local write directory is part of the search path in the session that created it; `-nosteam` disables every Steam scan, the missing-data check follows the roots that were actually mounted, and a requested flavor that is not installed says so instead of silently switching.
 - **The material references the model masks by their old path resolve** — the build stages `progs/` and `mdl_skins/` at the archive root next to the `textures/` copies, so the 41 entries that name `progs/...`/`mdl_skins/...` find their luma and gloss masks again; saving a material keeps `alpha_test`, and `-game mg3` sets `scr_usekfont` and keeps the Laser Cannon bind like upstream.
 
+## v0.26.2
+
+### Added
+- **The Video options page selects the refresh rate again** — a `Refresh rate` row sits right under `Video mode`; the left and right arrows step it, and Enter or a click on it cycles forward like the right arrow. The list is rebuilt from the modes that match the current width and height every time the resolution changes, so the choice stays on a rate the mode actually offers; a size with no full screen rates of its own (a custom windowed resolution) leaves the row inert instead of reading past the end of the list.
+
+### Fixed
+- **The crosshair stays centred across a resolution change** — `SCR_UpdateScreen` recomputed the refdef before `GL_BeginRendering` published the frame's `glwidth`/`glheight`, so a mode change through `vid_restart` baked the previous video mode into `scr_vrect`, and the crosshair — the only canvas whose viewport comes from it — was drawn at the centre of the old mode's rectangle (a 1280x720 viewport in the corner of a 3840x2160 frame) and stayed there until some unrelated setting re-armed the recompute. The refdef is recomputed at the end of every frame now, against the size that frame published, so a rectangle built from the old mode cannot survive into the next frame.
+- **Apply works again on the Video options page** — the one-page video menu rewrite dropped the Enter, KP-Enter and mouse-click handling from `VID_MenuKey`, so the row was drawn but pressing it did nothing; a click or Enter on Apply issues `vid_restart` again, and Enter or a click on any other row now steps it like the right arrow. The per-row stepping of both arrows moved into one `VID_Menu_Adjust` helper, so left and right keep their exact previous behavior.
+
 ## v0.26.1
 
 ### Added
