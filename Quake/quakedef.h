@@ -33,8 +33,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define GLQUAKE_VERSION  1.00
 #define D3DQUAKE_VERSION 0.01
 #define WINQUAKE_VERSION 0.996
-#define LINUX_VERSION    1.30
-#define X11_VERSION      1.10
 
 #define FITZQUAKE_VERSION    0.85 // johnfitz
 #define QUAKESPASM_VERSION   0.94
@@ -43,7 +41,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define QUAKESPASM_VER_SUFFIX // optional version suffix string literal like "-beta1"
 #endif
 #define ENGINE_VERSION   0.27
-#define ENGINE_VER_PATCH 0 // helper to print a string like 0.92.1
+#define ENGINE_VER_PATCH 1 // helper to print a string like 0.92.1
 #ifndef ENGINE_VER_SUFFIX
 #define ENGINE_VER_SUFFIX "" // optional version suffix like -beta1
 #endif
@@ -228,7 +226,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 typedef struct
 {
 	const char *basedir;
-	const char *userdir; // user's directory on UNIX platforms.
+	const char *userdir;
 	                     // if user directories are enabled, basedir
 	                     // and userdir will point to different
 	                     // memory locations, otherwise to the same.
@@ -293,11 +291,7 @@ static inline int FindFirstBitNonZero (const uint32_t mask)
 
 #include "platform.h"
 
-#ifdef _WIN32
-    #define QR_USE_SURFACE_WIN32
-#else
-    #define QR_USE_SURFACE_XLIB
-#endif
+#define QR_USE_SURFACE_WIN32
 #include <qray/qray.h>
 #define RT_RENDERER 1
 

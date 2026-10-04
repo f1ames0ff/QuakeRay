@@ -23,9 +23,7 @@
 #include <algorithm>
 #include <cstdio>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 
 // Prints where the failing Vulkan call was made (file and line, which the assert
@@ -101,7 +99,6 @@ void qray::VK_CHECKERROR_Report(const VkResult r, const char *file, int line)
         std::fclose(log);
     }
 
-#ifdef _WIN32
     // The assert dialog names this file and not the call, so say it here as well:
     // the message box is what the user copies.
     char message[1024];
@@ -111,7 +108,6 @@ void qray::VK_CHECKERROR_Report(const VkResult r, const char *file, int line)
                   "(the same line is appended to vk_last_error.txt)",
                   name, (int)r, file, line);
     MessageBoxA(nullptr, message, "qray: Vulkan error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-#endif
 
     assert(r == VK_SUCCESS);
 }

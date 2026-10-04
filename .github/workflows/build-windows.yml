@@ -15,6 +15,12 @@ jobs:
         configuration: [Release, Debug]
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Apply the NVRHI patch
+      shell: pwsh
+      run: git -C third_party/nvrhi apply "$env:GITHUB_WORKSPACE/third_party/nvrhi-max-binding-layouts.patch"
 
     - name: Build QuakeRay
       run: |

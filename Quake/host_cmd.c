@@ -26,11 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "q_ctype.h"
 #include "qr_resources.h"
 #include "rt_pkz.h"
-#ifndef _WIN32
-#include <dirent.h>
-#else
 #include <windows.h>
-#endif
 
 extern cvar_t pausable;
 
@@ -151,13 +147,8 @@ filelist_item_t *extralevels;
 
 void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 {
-#ifdef _WIN32
 	WIN32_FIND_DATA fdat;
 	HANDLE          fhnd;
-#else
-	DIR           *dir_p;
-	struct dirent *dir_t;
-#endif
 	char          filestring[MAX_OSPATH];
 	char          filename[32];
 	char          ignorepakdir[32];
@@ -173,7 +164,6 @@ void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 	{
 		if (*search->filename && !search->rt_pkz) // directory
 		{
-#ifdef _WIN32
 			q_snprintf (filestring, sizeof (filestring), "%s/%s*.%s", search->filename, path, ext);
 			fhnd = FindFirstFile (filestring, &fdat);
 			if (fhnd == INVALID_HANDLE_VALUE)
@@ -184,20 +174,6 @@ void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 				FileList_Add (filename, list);
 			} while (FindNextFile (fhnd, &fdat));
 			FindClose (fhnd);
-#else
-			q_snprintf (filestring, sizeof (filestring), "%s/%s", search->filename, path);
-			dir_p = opendir (filestring);
-			if (dir_p == NULL)
-				continue;
-			while ((dir_t = readdir (dir_p)) != NULL)
-			{
-				if (q_strcasecmp (COM_FileGetExtension (dir_t->d_name), ext) != 0)
-					continue;
-				COM_StripExtension (dir_t->d_name, filename, sizeof (filename));
-				FileList_Add (filename, list);
-			}
-			closedir (dir_p);
-#endif
 		}
 		else if (search->rt_pkz)
 		{
@@ -550,7 +526,6 @@ void ExtraMaps_Init (void)
 			char dir[MAX_OSPATH];
 
 			q_snprintf (dir, sizeof (dir), "%s/maps", search->filename);
-#ifdef _WIN32
 			{
 				WIN32_FIND_DATA fdat;
 				HANDLE			fhnd;
@@ -568,24 +543,6 @@ void ExtraMaps_Init (void)
 				} while (FindNextFile (fhnd, &fdat));
 				FindClose (fhnd);
 			}
-#else
-			{
-				DIR			  *dir_p;
-				struct dirent *dir_t;
-
-				dir_p = opendir (dir);
-				if (dir_p == NULL)
-					continue;
-				while ((dir_t = readdir (dir_p)) != NULL)
-				{
-					if (q_strcasecmp (COM_FileGetExtension (dir_t->d_name), "bsp") != 0)
-						continue;
-					COM_StripExtension (dir_t->d_name, mapname, sizeof (mapname));
-					ExtraMaps_Add (mapname, search);
-				}
-				closedir (dir_p);
-			}
-#endif
 		}
 		else if (search->rt_pkz)
 		{
@@ -895,7 +852,6 @@ static void Modlist_LoadAddonsJSON (const char *base)
 
 static void Modlist_AddRoot (const char *base)
 {
-#ifdef _WIN32
 	WIN32_FIND_DATA fdat;
 	HANDLE          fhnd;
 	DWORD           attribs;
@@ -917,29 +873,6 @@ static void Modlist_AddRoot (const char *base)
 	} while (FindNextFile (fhnd, &fdat));
 
 	FindClose (fhnd);
-#else
-	DIR           *dir_p;
-	struct dirent *dir_t;
-	char           dir_string[MAX_OSPATH], mod_string[MAX_OSPATH];
-
-	q_snprintf (dir_string, sizeof (dir_string), "%s/", base);
-	dir_p = opendir (dir_string);
-	if (dir_p == NULL)
-		return;
-
-	while ((dir_t = readdir (dir_p)) != NULL)
-	{
-		if (!strcmp (dir_t->d_name, ".") || !strcmp (dir_t->d_name, ".."))
-			continue;
-		if (!q_strcasecmp (COM_FileGetExtension (dir_t->d_name), "app"))
-			continue;
-		q_snprintf (mod_string, sizeof (mod_string), "%s%s", dir_string, dir_t->d_name);
-		if (Sys_FileType (mod_string) == FS_ENT_DIRECTORY)
-			Modlist_Add (base, dir_t->d_name);
-	}
-
-	closedir (dir_p);
-#endif
 }
 
 void Modlist_Init (void)

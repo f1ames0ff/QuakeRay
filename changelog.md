@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.27.1
+
+### Changed
+- **The release archive carries the `v`** — `bundle_release.ps1` writes `dist\QuakeRay-v<version>-win64.zip` and names the archive's top-level folder the same; the version still comes from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) or the `-Version` argument, and the script refuses an executable whose `FileVersion` does not match the header, so a stale build cannot be packed.
+- **The application icon is the new QuakeRay logo** — `Windows/QuakeRay.ico` is rebuilt from `Misc/quakeray_icon_48x48.png` and `_96x96.png` with frames from 16 to 256 px, and the build lists the `.ico` as a dependency of `QuakeRay.rc`, so an icon change recompiles the resource instead of reusing the stale one in the executable.
+
+### Removed
+- **The engine is Windows-only** — the Linux and macOS platform layers are gone: `pl_linux.c`, `pl_osx.m`, `sys_sdl_unix.c`, `net_bsd.c`, `net_udp.c`/`net_udp.h`, `qs_bmp.h`, `filenames.h` and `Misc/systest.c`, the non-Windows branches of `arch_def.h`, `net_sys.h`, `net_defs.h`, `q_stdinc.h`, `common.c`/`common.h`, `console.c`, `mem.c`, `tasks.c`, `host_cmd.c`, `keys.c`, `menu.c`, `sys_info.c`, `cd_sdl.c`, `qr_editor.c`, `qr_resources.c`, `gl_vidsdl.c`, `gl_texmgr.c`, `pl_win.c` and `quakedef.h`, the `USE_HELGRIND` enable path, and the renderer's Metal/Wayland/Xcb/Xlib Vulkan surfaces (`qray.h`, `renderer/Source/Common.cpp`, `VulkanDevice_Init.cpp`, `DLSS.cpp`); CMake aborts with an error on a non-Windows host and no longer carries the GCC/Clang flag recipe, the SDL2/Vulkan/codec `find_package` fallbacks or the `m dl pthread` link libraries.
+
 ## v0.27.0
 
 ### Added

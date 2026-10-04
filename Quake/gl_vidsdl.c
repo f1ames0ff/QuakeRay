@@ -1798,11 +1798,7 @@ static void GL_InitInstance (void)
 	SDL_VERSION (&wmInfo.version);
 	SDL_GetWindowWMInfo (draw_context, &wmInfo);
 
-#ifdef QR_USE_SURFACE_WIN32
 	QrWin32SurfaceCreateInfo win32Info = {.hinstance = wmInfo.info.win.hinstance, .hwnd = wmInfo.info.win.window};
-#elif QR_USE_SURFACE_XLIB
-	QrXlibSurfaceCreateInfo x11Info = {.dpy = wmInfo.info.x11.display, .window = wmInfo.info.x11.window};
-#endif
 
 	const char pShaderPath[] = RT_OVERRIDEN_FOLDER "shaders/";
 	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "BlueNoise_LDR_RGBA_128.png";
@@ -1812,11 +1808,7 @@ static void GL_InitInstance (void)
 		.pAppName = "QuakeRay",
 		.pAppGUID = "8d1f551a-b0e4-4365-985c-5e1182f3c54a",
 
-#ifdef QR_USE_SURFACE_WIN32
 		.pWin32SurfaceInfo = &win32Info,
-#elif QR_USE_SURFACE_XLIB
-		.pXlibSurfaceCreateInfo = &x11Info,
-#endif
 		
 		.pfnPrint = RT_PrintMessage,
 
