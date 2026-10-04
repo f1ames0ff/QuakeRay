@@ -991,6 +991,8 @@ int rt_cluster_reg_dropped;   /* additions refused by RT_CLUSTER_MAX_LIGHTS */
 int rt_cluster_last_lights;   /* lights in the registry of the last frame that uploaded */
 int rt_cluster_last_attempts; /* additions that frame attempted */
 int rt_cluster_last_dropped;  /* additions that frame lost to the cap */
+int rt_cluster_last_dirty;
+int rt_cluster_last_move_footprint;
 
 int rt_cluster_demand_max;        /* most accepted candidates a cluster held before ranking */
 int rt_cluster_demand_median;     /* median of the per-cluster candidate counts */
@@ -1302,6 +1304,8 @@ void RT_ClusterLightListsUpload (void)
 		rt_cluster_tail_entries = (int)st.tailEntries;
 		rt_cluster_tail_clusters = (int)st.clustersWithTail;
 		rt_cluster_tail_budget = (int)st.tailBudgetExceeded;
+		rt_cluster_last_dirty = (int)st.incrementalDirty;
+		rt_cluster_last_move_footprint = (int)st.moveFootprint;
 
 		if (st.reusedFrames)
 			rt_cluster_cache_hits++;
@@ -1328,6 +1332,7 @@ void RT_ClusterLightListsUpload (void)
 		RT_Prof_Sample (RT_PROF_CLUSTERS_VIS, st.visMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_TOPUP, st.topUpMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_FILL, st.fillMs);
+		RT_Prof_Sample (RT_PROF_CLUSTERS_TAIL, st.tailMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_UPLOAD, st.publishMs);
 	}
 

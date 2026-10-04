@@ -537,6 +537,8 @@ void RT_Prof_Update (void)
 	rt_prof_report.clusterMissSet = rt_cluster_miss_set;
 	rt_prof_report.clusterMissMove = rt_cluster_miss_move;
 	rt_prof_report.clusterMissOther = rt_cluster_miss_other;
+	rt_prof_report.clusterDirty = rt_cluster_last_dirty;
+	rt_prof_report.clusterMoveFootprint = rt_cluster_last_move_footprint;
 	rt_prof_report.clusterGrants = rt_cluster_last_grants;
 	rt_prof_report.clusterDenied = rt_cluster_last_denied;
 	rt_prof_report.clusterGated = rt_cluster_last_gated;
@@ -786,6 +788,7 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_CLUSTERS_VIS, "clust vis" },
 		{ RT_PROF_CLUSTERS_TOPUP, "clust topup" },
 		{ RT_PROF_CLUSTERS_FILL, "clust fill" },
+		{ RT_PROF_CLUSTERS_TAIL, "clust tail" },
 		{ RT_PROF_CLUSTERS_UPLOAD, "clust upload" },
 		{ RT_PROF_DRAWFRAME, "qrDrawFrame" },
 		{ RT_PROF_WAIT, "wait" },
@@ -1128,7 +1131,8 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 	}
 
 	fputs (",clust_cache_hits,clust_cache_misses,clust_miss_set,clust_miss_move,clust_miss_other,"
-	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped",
+	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped,"
+	       "clust_dirty_max,clust_move_footprint",
 	       f);
 	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls\n", f);
 
@@ -1204,6 +1208,10 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 		if (snap->haveProfile) fprintf (f, "%i", rep->clusterAttempts);
 		RT_StatsRecordField (f, &first);
 		if (snap->haveProfile) fprintf (f, "%i", rep->clusterDropped);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterDirty);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterMoveFootprint);
 
 		RT_StatsRecordField (f, &first);
 		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysTotal);

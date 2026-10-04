@@ -222,6 +222,9 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
     stats.visMs = 0.0f;
     stats.topUpMs = 0.0f;
     stats.fillMs = 0.0f;
+    stats.tailMs = 0.0f;
+    stats.incrementalDirty = 0;
+    stats.moveFootprint = 0;
 
     const uint32_t clusterCount = worldLightsRef.GetClusterCount();
 
@@ -288,6 +291,31 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
     }
 
     CountSourceChanges();
+
+    if (overflowEnabled && stats.movedSources > 0 && stats.addedSources == 0 && stats.removedSources == 0 &&
+        bitsWords > 0 && candidateBits.size() >= size_t(numClusters) * bitsWords && !movedIndices.empty())
+    {
+        uint32_t footprint = 0;
+
+        for (uint32_t c = 0; c < numClusters; c++)
+        {
+            const uint64_t *pBits = &candidateBits[size_t(c) * bitsWords];
+
+            for (uint32_t m = 0; m < uint32_t(movedIndices.size()); m++)
+            {
+                const uint32_t li = movedIndices[m];
+
+                if (li < uint32_t(sources.size()) && (li >> 6) < bitsWords &&
+                    (pBits[li >> 6] & (1ull << (li & 63))) != 0)
+                {
+                    footprint++;
+                    break;
+                }
+            }
+        }
+
+        stats.moveFootprint = footprint;
+    }
 
     /* The set is the one the lists were built for when the frame brought no light they do not
        hold and left out none of the lights they hold: the two counts are a uid comparison, so
@@ -547,7 +575,12 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
     const double tFill = NowMs();
 
     FillLists(pUserPrint);
+
+    const double tTail = NowMs();
+
     BuildOverflow();
+
+    stats.tailMs = float(NowMs() - tTail);
 
     listsValid = true;
     compositionOrder = true;
@@ -1301,6 +1334,7 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
     }
 
     stats.topUpMs = float(NowMs() - tTopUp);
+    stats.incrementalDirty = uint32_t(dirtyClusters.size());
 
     stats.unresolved = 0;
     stats.grants = 0;

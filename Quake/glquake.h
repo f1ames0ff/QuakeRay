@@ -423,6 +423,8 @@ extern int rt_cluster_last_gated;
 extern int rt_cluster_last_lights;
 extern int rt_cluster_last_attempts;
 extern int rt_cluster_last_dropped;
+extern int rt_cluster_last_dirty;
+extern int rt_cluster_last_move_footprint;
 int RT_ResolvePointCluster (const vec3_t p);
 void RT_BrushClusterCacheReset (void);
 void RT_ClusterLightReport_f (void);
@@ -670,6 +672,7 @@ enum
 	RT_PROF_CLUSTERS_VIS,
 	RT_PROF_CLUSTERS_TOPUP,
 	RT_PROF_CLUSTERS_FILL,
+	RT_PROF_CLUSTERS_TAIL,
 	RT_PROF_CLUSTERS_UPLOAD,
 	RT_PROF_DRAWFRAME,
 	RT_PROF_WAIT,
@@ -693,6 +696,8 @@ typedef struct
 	                             // resolved into a different leaf
 	int      clusterMissOther;   // rebuilds with neither of those, i.e. a new map, a new top-up
 	                             // reach, or a frame the incremental path turned down
+	int      clusterDirty;
+	int      clusterMoveFootprint;
 	int      clusterGrants;      // slots granted by the last rebuild
 	int      clusterDenied;      // slots refused by the last rebuild
 	int      clusterGated;       // candidate slots refused for standing beyond the light's reach
