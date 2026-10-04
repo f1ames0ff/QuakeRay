@@ -2478,7 +2478,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	QrPostEffectsNearDofParams near_dof_effect = {
 		.strength = CLAMP (0.0f, CVAR_TO_FLOAT (rt_dof_near), 1.0f),
 		.focusDistance = 24.0f * viewmodel_scale,
-		.maxRadius = 12.0f,
+		.maxRadius = 48.0f,
 	};
 
 	static QrPostEffectsSharpenParams sharpen_effect = {0};

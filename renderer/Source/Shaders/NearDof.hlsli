@@ -45,11 +45,12 @@ float3 nearDofFilter(Texture2D<float4> source, Texture2D<float4> depthTexture,
         return center;
     }
 
+    const uint tapCount = (uint)clamp(radius * 2.0 + 8.0, 16.0, 48.0);
     float3 sum = center;
     float weightSum = 1.0;
-    for (uint tap = 0; tap < 16; tap++)
+    for (uint tap = 0; tap < tapCount; tap++)
     {
-        const float radial = sqrt((float(tap) + 0.5) / 16.0);
+        const float radial = sqrt(((float)tap + 0.5) / (float)tapCount);
         const float angle = float(tap) * 2.39996323;
         const float2 samplePosition = float2(pix) + float2(cos(angle), sin(angle)) * radial * radius;
         const int2 basePix = int2(floor(samplePosition));
