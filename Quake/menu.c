@@ -4360,11 +4360,7 @@ static void M_LanConfig_Key (int key)
 	case 'V':
 		// Ctrl + v : paste a hostname
 		if (lan_config_cursor == 3 &&
-#if defined(PLATFORM_OSX) || defined(PLATFORM_MAC)
-			(keydown[K_COMMAND])
-#else
 			(keydown[K_CTRL])
-#endif
 		)
 		{
 			const int current_joinname_size = strlen (lan_config_joinname);

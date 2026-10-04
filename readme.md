@@ -129,7 +129,7 @@ Steps:
    .\bundle_release.ps1
    ```
 
-   Writes `dist\QuakeRay-<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` engine assets (`qray.pkz` and the loose `qray.materials.yaml`), `readme.md`, `changelog.md`, `LICENSE.txt` and the third-party notices under `licenses/` (OpenAL Soft's LGPL text and the pffft licence). The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
+   Writes `dist\QuakeRay-v<version>-win64.zip`: the Release `quakeray.exe`, the runtime DLLs, the `id1` engine assets (`qray.pkz` and the loose `qray.materials.yaml`), `readme.md`, `changelog.md`, `LICENSE.txt` and the third-party notices under `licenses/` (OpenAL Soft's LGPL text and the pffft licence). The version in the archive name is read from `ENGINE_VERSION` / `ENGINE_VER_PATCH` (`Quake\quakedef.h`) unless `-Version` passes one in; debug artifacts are never included, and the original game data is not bundled.
 
 ### Cloud renderer regression test
 
@@ -181,8 +181,9 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_cluster_incremental 1` with `rt_cluster_dlights 1` - per-cluster light lists: `rt_cluster_incremental` is read-only (it rebuilds only the changed lights' slots), and `rt_cluster_dlights 0` keeps the moving emitters out of the lists while still traced and lit
 * `rt_turb_warp 1` - amplitude of the classic texture warp on lava and teleport surfaces (`0` freezes them; water and slime use the RT water waves instead)
 * `rt_teleport_portals 0` - off, so teleport surfaces render as ordinary surfaces; `1` re-enables the mirrored destination
-* `rt_stats <level>` - the on-screen readout: `1` ray counters, `2` adds GPU pass timings, `3` adds the CPU profile; `0` hides it, a bare `rt_stats` prints the panels, archived
+* `rt_stats <level>` - the ImGui readout: `1` ray counters, `2` adds GPU pass timings, `3` adds the CPU profile; `0` hides it, a bare `rt_stats` prints the panels; every millisecond value carries a graph of the last twelve seconds, refreshed five times a second by default (`rt_stats_interval`, clamped to `0.05`-`0.2`), and the overlay scales with the screen resolution; archived
 * `rt_stats_dump` - writes the current frame's readout to `qperfdump.log`, one `section name value` line per number; appended, on a separate thread
+* `rt_stats_dump_start` / `rt_stats_dump_end` - records every sample of the readout into `stats-<date>-<time>.dump` (CSV, one named column per number); the recording stops by itself after 30 seconds, and the file is written when either the timer or the command ends it
 * `rt_bench <demoname> [quit]` - plays a demo at its own speed with the frame profiler summed over it and appends the result to `benchmark.log`; `quit` closes the game after the run
 * `rt_debugflags 0` - diagnostic views (raw direct/indirect/specular, gradients, ...)
 * `rt_viewm_scale 0.32` - the weapon is drawn `0.32` times smaller and closer to the eye by the same factor, unchanged on screen but out of the walls; `1` restores the classic weapon
@@ -200,8 +201,6 @@ OpenAL Soft is the sound system: every engine channel is positioned against the 
 * The startup line reports the device, the rate, the pool size and the HRTF status OpenAL Soft granted (`enabled`, `disabled`, `denied`, `headphones detected`).
 
 OpenAL Soft is vendored as the `third_party/openal-soft` submodule (tag `1.25.2`) and built together with the game, so the engine, the import library and the DLL are always the same build; the build copies `OpenAL32.dll` next to `quakeray.exe` and the release bundle ships it.
-
-See [docs/openal-backend.md](docs/openal-backend.md) for the engine-to-OpenAL mapping and the deferred step-2 items (HRTF datasets, EFX reverb, occlusion).
 
 ## Game data
 

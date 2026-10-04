@@ -49,12 +49,10 @@
 
 #include "SDL.h"
 
-#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <commdlg.h>
-#endif
 
 #include "qr_editor.h"
 #include "qr_gui.h"
@@ -6503,7 +6501,6 @@ static void QRE_ResetRemoveOptional (const char *path)
 		remove (path);
 }
 
-#ifdef _WIN32
 static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
 {
 	char            pattern[MAX_OSPATH];
@@ -6528,12 +6525,6 @@ static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
 
 	FindClose (h);
 }
-#else
-static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
-{
-	(void)gamedir;
-}
-#endif
 
 static void QRE_ResetAll (void)
 {
@@ -6704,10 +6695,9 @@ static void QRE_RequestExit (void)
 }
 
 // ---------------------------------------------------------------------------
-// Texture browse (Win32 open dialog; typed entry elsewhere)
+// Texture browse (Win32 open dialog)
 // ---------------------------------------------------------------------------
 
-#ifdef _WIN32
 static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 {
 	char          initdir[MAX_OSPATH];
@@ -6751,14 +6741,6 @@ static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 
 	return true;
 }
-#else
-static qboolean QRE_BrowseTexture (char *out, size_t outsize)
-{
-	(void)out;
-	(void)outsize;
-	return false;
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // Commands

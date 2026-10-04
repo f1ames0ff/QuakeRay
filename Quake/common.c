@@ -421,13 +421,8 @@ char *q_strdup (const char *str)
 }
 
 /* platform dependant (v)snprintf function names: */
-#if defined(_WIN32)
 #define snprintf_func  _snprintf
 #define vsnprintf_func _vsnprintf
-#else
-#define snprintf_func  snprintf
-#define vsnprintf_func vsnprintf
-#endif
 
 int q_vsnprintf (char *str, size_t size, const char *format, va_list args)
 {
@@ -2067,8 +2062,6 @@ byte *COM_LoadMallocFile_TextMode_OSPath (const char *path, long *len_out)
 
 	// ericw -- this is used by Host_Loadgame_f. Translate CRLF to LF on load games,
 	// othewise multiline messages have a garbage character at the end of each line.
-	// TODO: could handle in a way that allows loading CRLF savegames on mac/linux
-	// without the junk characters appearing.
 	f = fopen (path, "rt");
 	if (f == NULL)
 		return NULL;
@@ -2797,11 +2790,7 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 	{
 		char full[MAX_OSPATH];
 
-#ifdef _WIN32
 		if (_fullpath (full, com_basedir, sizeof (full)))
-#else
-		if (realpath (com_basedir, full))
-#endif
 			q_strlcpy (com_basedir, full, sizeof (com_basedir));
 	}
 
@@ -2864,7 +2853,6 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 		// start up with GAMENAME by default (id1)
 		COM_AddGameDirectory (GAMENAME);
 
-#if defined(_WIN32)
 #if RT_RENDERER
 		if (!QR_Resources_HasGameData ())
 		{
@@ -2875,7 +2863,6 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 			             MB_ICONERROR | MB_OK);
 			exit (1);
 		}
-#endif
 #endif
 	}
 
@@ -3262,24 +3249,10 @@ void LOC_LoadFile (const char *file)
 	memset (&archive, 0, sizeof (archive));
 	q_snprintf (path, sizeof (path), "%s/%s", com_basedir, file);
 	rw = SDL_RWFromFile (path, "rb");
-#if defined(DO_USERDIRS)
-	if (!rw)
-	{
-		q_snprintf (path, sizeof (path), "%s/%s", host_parms->userdir, file);
-		rw = SDL_RWFromFile (path, "rb");
-	}
-#endif
 	if (!rw)
 	{
 		q_snprintf (path, sizeof (path), "%s/QuakeEX.kpf", com_basedir);
 		rw = SDL_RWFromFile (path, "rb");
-#if defined(DO_USERDIRS)
-		if (!rw)
-		{
-			q_snprintf (path, sizeof (path), "%s/QuakeEX.kpf", host_parms->userdir);
-			rw = SDL_RWFromFile (path, "rb");
-		}
-#endif
 		if (!rw)
 			goto fail;
 		sz = SDL_RWsize (rw);

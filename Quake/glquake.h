@@ -703,6 +703,7 @@ typedef struct
 // GPU pass timings and 3 is all of them. The command is the only writer, so the
 // value can be cached for a frame at a time.
 extern cvar_t rt_stats_panels;
+extern cvar_t rt_stats_interval;
 
 enum
 {
@@ -726,6 +727,12 @@ typedef struct
 } rt_stats_snapshot_t;
 
 void RT_StatsCapture (rt_stats_snapshot_t *snap);
+
+void RT_StatsDrawGui (void);
+void RT_StatsGuiReset (void);
+
+qboolean RT_StatsRecording (void);
+void     RT_StatsRecordSample (const rt_stats_snapshot_t *snap);
 
 extern double           rt_prof_ms[RT_PROF_COUNT];
 extern rt_prof_report_t rt_prof_report;

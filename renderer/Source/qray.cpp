@@ -370,23 +370,22 @@ const char *qrGetGpuPassName(uint32_t passIndex)
     static const char *const passNames[QR_GPU_PASS_COUNT] =
     {
         "setup",
-        "lights",
+        "clouds",
+        "sky",
         "primary",
+        "decals",
         "godrays",
         "reflrefr",
         "reflgodr",
         "gradient",
         "direct",
         "indirect",
-        "denoise",
-        "exposure",
-        "composite",
+        "compose",
         "upscale",
-        "upsblit",
-        "sharpen",
         "post",
+        "ui",
+        "postui",
         "present",
-        "swapblit",
     };
 
     if (passIndex >= QR_GPU_PASS_COUNT)

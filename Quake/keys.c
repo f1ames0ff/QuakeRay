@@ -431,13 +431,6 @@ void Key_Console (int key)
 
 	case 'v':
 	case 'V':
-#if defined(PLATFORM_OSX) || defined(PLATFORM_MAC)
-		if (keydown[K_COMMAND])
-		{ /* Cmd+v paste (Mac-only) */
-			PasteToConsole ();
-			return;
-		}
-#endif
 		if (keydown[K_CTRL])
 		{ /* Ctrl+v paste */
 			PasteToConsole ();
@@ -780,7 +773,6 @@ void History_Init (void)
 			} while (c != '\r' && c != '\n' && c != EOF && i < MAXCMDLINE);
 			key_lines[edit_line][i - 1] = 0;
 			edit_line = (edit_line + 1) & (CMDLINES - 1);
-			/* for people using a windows-generated history file on unix: */
 			if (c == '\r' || c == '\n')
 			{
 				do
@@ -876,9 +868,6 @@ void Key_Init (void)
 	consolekeys[K_KP_ENTER] = true;
 	consolekeys[K_KP_INS] = true;
 	consolekeys[K_KP_DEL] = true;
-#if defined(PLATFORM_OSX) || defined(PLATFORM_MAC)
-	consolekeys[K_COMMAND] = true;
-#endif
 	consolekeys[K_MWHEELUP] = true;
 	consolekeys[K_MWHEELDOWN] = true;
 
@@ -1109,10 +1098,6 @@ void Char_Event (int key)
 	if (key < 32 || key > 126)
 		return;
 
-#if defined(PLATFORM_OSX) || defined(PLATFORM_MAC)
-	if (keydown[K_COMMAND])
-		return;
-#endif
 	if (keydown[K_CTRL])
 		return;
 

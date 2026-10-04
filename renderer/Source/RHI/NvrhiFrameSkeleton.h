@@ -24,6 +24,8 @@
 
 #include <nvrhi/vulkan.h>
 
+#include <qray/qray.h>
+
 #include "../Common.h"
 #include "../ISwapchainDependency.h"
 #include "../RasterizedDataCollector.h"
@@ -422,6 +424,11 @@ public:
 
     void RequestScreenshot(const std::string &path);
 
+    // The GPU timings of the most recent frame the timer queries produced. 'pPassMs' receives
+    // QR_GPU_PASS_COUNT entries in the order of qrGetGpuPassName. Returns false until the first
+    // frame's timestamps could be read back (and forever when the timer queries are unavailable).
+    bool GetGpuTimings(float *pFrameMs, float *pPassMs) const;
+
 private:
     static nvrhi::Format ConvertSurfaceFormat(VkFormat format);
 
@@ -653,6 +660,51 @@ private:
 
     // Frames left until the one-time fallback-slot log; 0 after it has been printed.
     uint32_t framesUntilFallbackLog = 300;
+
+    // -- the GPU pass timings --
+
+    // The frame's sections the timer queries measure, in the order qrGetGpuPassName reports them.
+    enum GpuPassIndex
+    {
+        GPU_PASS_SETUP = 0,
+        GPU_PASS_CLOUDS,
+        GPU_PASS_SKY,
+        GPU_PASS_PRIMARY,
+        GPU_PASS_DECALS,
+        GPU_PASS_GODRAYS,
+        GPU_PASS_REFLREFR,
+        GPU_PASS_REFLGODR,
+        GPU_PASS_GRADIENT,
+        GPU_PASS_DIRECT,
+        GPU_PASS_INDIRECT,
+        GPU_PASS_COMPOSE,
+        GPU_PASS_UPSCALE,
+        GPU_PASS_POST,
+        GPU_PASS_UI,
+        GPU_PASS_POSTUI,
+        GPU_PASS_PRESENT,
+        GPU_PASS_COUNT
+    };
+
+    void CreateGpuTimers();
+    void ReadGpuTimings(uint32_t frameIndex);
+    void BeginGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass);
+    void EndGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass);
+
+    // One timer query pair per frame slot and measured section, plus one for the whole frame. The
+    // queries are per slot because a query cannot be reset and re-used while the submission that
+    // wrote it is still in flight; BeginSlot waits for the slot's previous submission, which is the
+    // point ReadGpuTimings reads the slot's timestamps at.
+    bool gpuTimersCreated = false;
+    bool gpuTimersReady = false;
+    nvrhi::TimerQueryHandle gpuFrameQueries[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::TimerQueryHandle gpuPassQueries[MAX_FRAMES_IN_FLIGHT][GPU_PASS_COUNT];
+
+    // The most recent timings read back, in milliseconds, with 0.0f for a section that has not run
+    // yet since the renderer started.
+    float gpuFrameMs = 0.0f;
+    float gpuPassMs[GPU_PASS_COUNT] = {};
+    bool gpuTimingValid = false;
 
     // Set after the one-time warning that there is no ALBEDO wrap to present.
     bool warnedMissingAlbedo = false;

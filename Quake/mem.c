@@ -22,9 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "mem.h"
 #include "quakedef.h"
 
-#if defined(USE_HELGRIND)
-#define USE_CRT_MALLOC
-#elif !defined(USE_MI_MALLOC) && !defined(USE_SDL_MALLOC) && !defined(USE_CRT_MALLOC)
+#if !defined(USE_MI_MALLOC) && !defined(USE_SDL_MALLOC) && !defined(USE_CRT_MALLOC)
 #define USE_MI_MALLOC
 #endif
 
@@ -38,11 +36,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <stdlib.h>
 #endif
 
-#ifndef _WIN32
-#include <pthread.h>
-#endif
-
-#define THREAD_STACK_RESERVATION (128ll * 1024ll)
 #define MAX_STACK_ALLOC_SIZE     (512ll * 1024ll)
 
 size_t THREAD_LOCAL thread_stack_alloc_size = 0;
@@ -55,18 +48,7 @@ Mem_Init
 */
 void Mem_Init ()
 {
-#ifdef _WIN32
 	max_thread_stack_alloc_size = MAX_STACK_ALLOC_SIZE;
-#else /* unix: */
-	pthread_attr_t attr;
-	size_t         stacksize;
-	if (pthread_attr_init (&attr) != 0)
-		return;
-	if (pthread_attr_getstacksize (&attr, &stacksize) != 0)
-		return;
-	max_thread_stack_alloc_size = (size_t)CLAMP (0ll, (int64_t)stacksize - THREAD_STACK_RESERVATION, MAX_STACK_ALLOC_SIZE);
-	pthread_attr_destroy (&attr);
-#endif
 }
 
 /*
