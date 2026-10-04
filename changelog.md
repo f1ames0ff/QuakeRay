@@ -1,14 +1,5 @@
 # Changelog
 
-## v0.28.0
-
-### Changed
-- **The old and the new modes are separate, like in vkQuake** — the Steam `rerelease` content (its PAKs, the `ad`/`ctf`/`dopa`/`mg1`/`mg3` add-ons and the Nightdive downloads) is mounted and listed only while the remastered mode is active, and the classic Steam install is no longer mounted below the remastered one, so `-original` no longer lists or starts remastered add-ons; a local mod folder still works in both modes and the `rerelease/id1` music stays available to the classic mode. The mods menu, `game <name>` and the file search now follow the chosen mode.
-
-### Fixed
-- **The resource-management review pass** — the light editor now keeps the comments, the untouched emitter entries and the other level sections of an already merged `qray.lights.yaml`; the engine archive reaches `-basegame` with the embedded `vkquake.pak` fallback intact; a store-mounted mod's own material and light YAMLs load through the search path with the local game dir as the final word; the pkz temp files delete themselves and the build refuses to pack a partial archive.
-- **The YAML roots are namespaced** — the merged lights and materials files carry their reserved roots as `qray_lights:` and `qray_materials:` instead of `lights:` and `materials:`, so a map named `lights` cannot collide with them; the old spellings still load and a save rewrites the root once.
-
 ## v0.27.0
 
 ### Added
@@ -20,6 +11,7 @@
 ### Changed
 - **The editor's files are namespaced and live in the active gamedir** — `materials.yaml` is `qray.materials.yaml` and `lights.yaml` is `qray.lights.yaml`; the light editor's emitter overrides and its per-level custom lights and fog share the one `qray.lights.yaml` (the emitter entries under the namespaced root `qray_lights:` key, the material list under `qray_materials:`, and one section per level beside them, so a map named like a key cannot collide with it). The session files are `qray.materials.editor.yaml` and `qray.lights.editor.yaml`, the backups `qray.backup_materials.yaml` and `qray.backup_lights.yaml`, all in the active game or mod folder as before — in a mod they are the mod's own files, which load after id1's and override them. The older `materials.yaml`, `materials/*.yaml`, `lights.yaml` and `qray/lights.yaml` still load, so existing setups keep working; a reset removes the legacy copies together with the new ones.
 - **The blue noise and the water normal are ordinary PNGs** — the KTX2 tables became `BlueNoise_LDR_RGBA_128.png` (a 128-layer vertical strip) and `WaterNormal_n.png` (the decoded BC5 normal map), the renderer grew an stb_image path next to its KTX loader, and the material override lookup prefers `.png` over `.ktx2`. No KTX2 file is shipped or deployed any more; the KTX loader stays for packs that still carry one.
+- **The old and the new modes are separate, like in vkQuake** — the Steam `rerelease` content (its PAKs, the `ad`/`ctf`/`dopa`/`mg1`/`mg3` add-ons and the Nightdive downloads) is mounted and listed only while the remastered mode is active, and the classic Steam install is no longer mounted below the remastered one, so `-original` no longer lists or starts remastered add-ons; a local mod folder still works in both modes and the `rerelease/id1` music stays available to the classic mode. The mods menu, `game <name>` and the file search now follow the chosen mode.
 
 ### Fixed
 - **The build deploys the files the new loader reads and removes the stale loose copies** — `renderer/Source/materials.yaml` lands as `id1/qray.materials.yaml`, the previous loose `materials/`, `textures/`, `shaders/`, `ktx2` and `gfx` outputs are deleted before the archive is written so an old file cannot shadow the pkz, and the release bundle ships `id1/qray.pkz` with the loose material file instead of the per-folder assets.
@@ -29,6 +21,8 @@
 - **A reset clears the old files as well** — the material reset also removes the legacy `materials/*.yaml` overrides and both editors remove the pre-rename session and backup files, so "reset to defaults" no longer leaves old overrides behind.
 - **A store-mounted mod is a full mod** — its own `qray.materials.yaml`/`qray.lights.yaml` and its per-level custom lights and fog are read through the search path, and its local write directory is part of the search path in the session that created it; `-nosteam` disables every Steam scan, the missing-data check follows the roots that were actually mounted, and a requested flavor that is not installed says so instead of silently switching.
 - **The material references the model masks by their old path resolve** — the build stages `progs/` and `mdl_skins/` at the archive root next to the `textures/` copies, so the 41 entries that name `progs/...`/`mdl_skins/...` find their luma and gloss masks again; saving a material keeps `alpha_test`, and `-game mg3` sets `scr_usekfont` and keeps the Laser Cannon bind like upstream.
+- **The resource-management review pass** — the light editor now keeps the comments, the untouched emitter entries and the other level sections of an already merged `qray.lights.yaml`; the engine archive reaches `-basegame` with the embedded `vkquake.pak` fallback intact; a store-mounted mod's own material and light YAMLs load through the search path with the local game dir as the final word; the pkz temp files delete themselves and the build refuses to pack a partial archive.
+- **The YAML roots are namespaced** — the merged lights and materials files carry their reserved roots as `qray_lights:` and `qray_materials:` instead of `lights:` and `materials:`, so a map named `lights` cannot collide with them; the old spellings still load and a save rewrites the root once.
 
 ## v0.26.2
 
