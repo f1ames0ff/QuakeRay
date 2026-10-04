@@ -961,6 +961,14 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         static_assert(offsetof(RhiCloudsPass::LayerParams, cloudLayer) == sizeof(RhiProceduralSkyPass::Params),
                       "the layer params must start with the procedural sky params");
         memcpy(&clouds, &p, sizeof(p));
+
+        if (hasSun)
+        {
+            clouds.sunDiscColor[0] = sunColor[0];
+            clouds.sunDiscColor[1] = sunColor[1];
+            clouds.sunDiscColor[2] = sunColor[2];
+        }
+
         clouds.cloudParams[2] = wind;
 
         clouds.cloudLayer[0] = cloudAltitude;
