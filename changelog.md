@@ -1,14 +1,20 @@
 # Changelog
 
-## v0.26.1
+## v0.26.2
 
 ### Added
 - **The Video options page selects the refresh rate again** — a `Refresh rate` row sits right under `Video mode`; the left and right arrows step it, and Enter or a click on it cycles forward like the right arrow. The list is rebuilt from the modes that match the current width and height every time the resolution changes, so the choice stays on a rate the mode actually offers; a size with no full screen rates of its own (a custom windowed resolution) leaves the row inert instead of reading past the end of the list.
+
+### Fixed
+- **The crosshair stays centred across a resolution change** — `SCR_UpdateScreen` recomputed the refdef before `GL_BeginRendering` published the frame's `glwidth`/`glheight`, so a mode change through `vid_restart` baked the previous video mode into `scr_vrect`, and the crosshair — the only canvas whose viewport comes from it — was drawn at the centre of the old mode's rectangle (a 1280x720 viewport in the corner of a 3840x2160 frame) and stayed there until some unrelated setting re-armed the recompute. The refdef is recomputed at the end of every frame now, against the size that frame published, so a rectangle built from the old mode cannot survive into the next frame.
+- **Apply works again on the Video options page** — the one-page video menu rewrite dropped the Enter, KP-Enter and mouse-click handling from `VID_MenuKey`, so the row was drawn but pressing it did nothing; a click or Enter on Apply issues `vid_restart` again, and Enter or a click on any other row now steps it like the right arrow. The per-row stepping of both arrows moved into one `VID_Menu_Adjust` helper, so left and right keep their exact previous behavior.
+
+## v0.26.1
+
+### Added
 - **The mouse pointer is the Quake axe** — the system cursor and the ImGui software cursor of the editor and the EQ panel draw the same artwork: `gfx/quake_axe_<size>.png` next to the executable becomes an SDL color cursor for the menus and a renderer material the GUI draws at the mouse position in place of ImGui's built-in arrow. The size follows the monitor — `16x16` under Full HD, `32x32` at Full HD, `64x64` from 4K — and the hotspot is the blade tip, read from the alpha of the image. Graphics → "Mouse cursor" switches between `axe` (the default, `ui_cursor 0`, archived) and the usual Windows pointer (`default`, `ui_cursor 1`) on the spot: the SDL cursor is replaced or released and the GUI falls back to ImGui's arrow without a restart. The runtime assets next to the executable are one `gfx` folder now — the build copies `renderer/gfx` and the GUI font into it, the editor loads the font from `gfx/Roboto-Regular.ttf`, and `bundle_release.ps1` ships the folder.
 
 ### Fixed
-- **The crosshair stays centred after a resolution change** — `SCR_UpdateScreen` recomputed the refdef before `GL_BeginRendering` published the frame's `glwidth`/`glheight`, so a mode change through `vid_restart` baked the previous video mode into `scr_vrect`, and the crosshair — the only canvas whose viewport comes from it — was drawn at the centre of the old mode's rectangle (a 1280x720 viewport at the corner of a 3840x2160 frame). The recompute now runs after the size publication, so an applied resolution is centred on the same frame and a window resize no longer needs the SDL resize event to heal it.
-- **Apply works again on the Video options page** — the one-page video menu rewrite dropped the Enter, KP-Enter and mouse-click handling from `VID_MenuKey`, so the row was drawn but pressing it did nothing; a click or Enter on Apply issues `vid_restart` again, and Enter or a click on any other row now steps it like the right arrow. The per-row stepping of both arrows moved into one `VID_Menu_Adjust` helper, so left and right keep their exact previous behavior.
 - **The menu dims the background like the original engine** — `Draw_FadeScreen` still blends `0.5`, but the 2D pass draws into the display-referred linear image the sRGB swapchain converts, where that blend only read as a ~`0.73` multiply; the alpha became the linear equivalent of the original's stored-value halving (`1 - 0.5^2.2`), so the main menu, the quit prompt and the new-game dialog darken what is under them again. Mid-tones halve exactly as before the renderer change; the darkest values, where the sRGB curve is steeper than the 2.2 approximation, come out a touch darker.
 
 ## v0.26.0
