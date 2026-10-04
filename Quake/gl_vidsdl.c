@@ -36,6 +36,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "SDL_syswm.h"
 #include <time.h> // for the timestamp of the frame rt_stats_dump appends
 
+extern float rt_viewmodel_depth_near;
+extern float rt_viewmodel_depth_far;
+
 #define MAX_MODE_LIST  600 // johnfitz -- was 30
 #define MAX_BPPS_LIST  5
 #define MAX_RATES_LIST 20
@@ -2475,10 +2478,21 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	bloom_effect.quality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_quality), 2.0f);
 
 	const float viewmodel_scale = CVAR_TO_FLOAT (rt_viewm_scale) > 0.0f ? CVAR_TO_FLOAT (rt_viewm_scale) : 1.0f;
+
+	float dof_focus = 24.0f * viewmodel_scale;
+	float dof_radius = 48.0f;
+	if (rt_viewmodel_depth_far > rt_viewmodel_depth_near)
+	{
+		dof_focus = rt_viewmodel_depth_far * 1.02f;
+
+		const float dof_near = CLAMP (0.0f, rt_viewmodel_depth_near, dof_focus * 0.95f);
+		dof_radius = 48.0f / q_max (1.0f - dof_near / dof_focus, 0.05f);
+	}
+
 	QrPostEffectsNearDofParams near_dof_effect = {
 		.strength = CLAMP (0.0f, CVAR_TO_FLOAT (rt_dof_near), 1.0f),
-		.focusDistance = 24.0f * viewmodel_scale,
-		.maxRadius = 48.0f,
+		.focusDistance = dof_focus,
+		.maxRadius = dof_radius,
 	};
 
 	static QrPostEffectsSharpenParams sharpen_effect = {0};

@@ -31,6 +31,9 @@ extern cvar_t scr_fov;
 
 extern cvar_t rt_model_rough, rt_model_metal, rt_enable_pvs;
 extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale;
+
+float rt_viewmodel_depth_near = 0.0f;
+float rt_viewmodel_depth_far = 0.0f;
 extern cvar_t rt_dlight_intensity, rt_dlight_radius;
 extern cvar_t rt_cluster_dlights;
 
@@ -171,6 +174,47 @@ static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpda
     ScaleMatrix(scale_matrix, paliashdr->scale[0] * viewmscale, paliashdr->scale[1] * fovscalex * viewmscale,
                 paliashdr->scale[2] * fovscaley * viewmscale);
     MatrixMultiply(model_matrix, scale_matrix);
+
+    if (isfirstperson)
+    {
+        float mins[3] = {0.0f, 0.0f, 0.0f};
+        float maxs[3] = {0.0f, 0.0f, 0.0f};
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            mins[axis] = paliashdr->frames[0].bboxmin.v[axis];
+            maxs[axis] = paliashdr->frames[0].bboxmax.v[axis];
+        }
+
+        float minDepth = 1e30f;
+        float maxDepth = -1e30f;
+
+        for (int corner = 0; corner < 8; corner++)
+        {
+            const float cx = (corner & 1) ? maxs[0] : mins[0];
+            const float cy = (corner & 2) ? maxs[1] : mins[1];
+            const float cz = (corner & 4) ? maxs[2] : mins[2];
+
+            const float world[3] = {
+                model_matrix[0] * cx + model_matrix[4] * cy + model_matrix[8] * cz + model_matrix[12],
+                model_matrix[1] * cx + model_matrix[5] * cy + model_matrix[9] * cz + model_matrix[13],
+                model_matrix[2] * cx + model_matrix[6] * cy + model_matrix[10] * cz + model_matrix[14],
+            };
+            const float depth = (world[0] - r_refdef.vieworg[0]) * vpn[0] + (world[1] - r_refdef.vieworg[1]) * vpn[1] +
+                                (world[2] - r_refdef.vieworg[2]) * vpn[2];
+
+            if (depth < minDepth)
+                minDepth = depth;
+            if (depth > maxDepth)
+                maxDepth = depth;
+        }
+
+        if (maxDepth > minDepth)
+        {
+            rt_viewmodel_depth_near = minDepth;
+            rt_viewmodel_depth_far = maxDepth;
+        }
+    }
 
     return RT_GetModelTransform(model_matrix);
 }

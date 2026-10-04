@@ -2024,7 +2024,7 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
     const auto *dof = postEffectParams.pNearDof;
     const float dofStrength = dof != nullptr && std::isfinite(dof->strength) ? std::clamp(dof->strength, 0.0f, 1.0f) : 0.0f;
     const float dofFocus = dof != nullptr && std::isfinite(dof->focusDistance) ? std::max(dof->focusDistance, 0.0f) : 0.0f;
-    const float dofRadius = dof != nullptr && std::isfinite(dof->maxRadius) ? std::clamp(dof->maxRadius, 0.0f, 64.0f) : 0.0f;
+    const float dofRadius = dof != nullptr && std::isfinite(dof->maxRadius) ? std::clamp(dof->maxRadius, 0.0f, 1024.0f) : 0.0f;
 
     const float opticalControl[12] =
     {
