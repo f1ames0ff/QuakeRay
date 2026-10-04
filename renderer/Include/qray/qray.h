@@ -870,6 +870,8 @@ typedef struct QrDrawFrameTonemappingParams
     float       exposureHighPercentile;
     float       minAdaptedLuminance;
     float       maxAdaptedLuminance;
+
+    uint32_t    tonemapType;
 } QrDrawFrameTonemappingParams;
 
 #define QR_SKY_CLOUDS_MAX_QUALITY 3

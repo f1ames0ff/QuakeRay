@@ -1196,7 +1196,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (rtComposePass != nullptr && sky.tonemapping != nullptr && sky.uniform != nullptr)
         {
             sky.tonemapping->PrepareExposureParams(frameIndex, sky.uniform, sky.exposureBias, sky.contrast,
-                                                   sky.exposureParams);
+                                                   sky.tonemapType, sky.exposureParams);
         }
 
         // The raster overlay (A5.5) draws the DEFAULT list inside the compose chain's window, from

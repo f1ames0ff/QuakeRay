@@ -198,6 +198,7 @@ extern cvar_t rt_bloom_quality;
 extern cvar_t rt_bloom_threshold;
 extern cvar_t rt_dof_near;
 extern cvar_t rt_contrast;
+extern cvar_t rt_tonemap;
 extern cvar_t rt_exposure_bias;
 extern cvar_t rt_ef_damage_strength;
 extern cvar_t rt_ef_liquid_strength;
@@ -2559,6 +2560,7 @@ enum
 	EFFECTS_OPT_BLOOM,
 	EFFECTS_OPT_BLOOM_QUALITY,
 	EFFECTS_OPT_NEAR_DOF,
+	EFFECTS_OPT_TONEMAP_TYPE,
 	EFFECTS_OPT_TONEMAPPING,
 	EFFECTS_OPT_EXPOSURE,
 	EFFECTS_OPT_DAMAGE,
@@ -2571,6 +2573,10 @@ enum
 };
 
 static int effects_options_cursor = 0;
+
+static const char *effects_tonemap_names[] = {"Off", "Q2RTX", "Reinhard", "ACES", "AgX"};
+
+#define EFFECTS_TONEMAP_TYPES ((int)(sizeof (effects_tonemap_names) / sizeof (effects_tonemap_names[0])))
 
 static void M_EffectsOptions_DrawSlider (cb_context_t *cbx, int row, const cvar_t *var, float maximum)
 {
@@ -2615,6 +2621,10 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_dof_near), false, mouse, clamped_mouse, dir, 0.01f, 0);
 		Cvar_SetValueQuick (&rt_dof_near, f);
 		break;
+	case EFFECTS_OPT_TONEMAP_TYPE:
+		Cvar_SetValueQuick (&rt_tonemap,
+			(float)(((int)rt_tonemap.value + EFFECTS_TONEMAP_TYPES + dir) % EFFECTS_TONEMAP_TYPES));
+		break;
 	case EFFECTS_OPT_TONEMAPPING:
 		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_contrast), false, mouse, clamped_mouse, dir, 0.01f, 0);
 		Cvar_SetValueQuick (&rt_contrast, f);
@@ -2645,18 +2655,19 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&rt_local_exposure, f);
 		break;
 	case EFFECTS_OPT_RESET:
-		Cvar_SetValueQuick (&rt_bloom_intensity, 0.2f);
+		Cvar_SetValueQuick (&rt_bloom_intensity, 0.1f);
 		Cvar_SetValueQuick (&rt_bloom_threshold, 6.0f);
 		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
-		Cvar_SetValueQuick (&rt_dof_near, 1.0f);
-		Cvar_SetValueQuick (&rt_contrast, 0.5f);
+		Cvar_SetValueQuick (&rt_dof_near, 0.8f);
+		Cvar_SetValueQuick (&rt_contrast, 0.9f);
+		Cvar_SetValueQuick (&rt_tonemap, 1.0f);
 		Cvar_SetValueQuick (&rt_exposure_bias, 0.0f);
 		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_sharpen_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_sharpen, 2.0f);
 		Cvar_SetValueQuick (&rt_vignette, 0.5f);
-		Cvar_SetValueQuick (&rt_local_exposure, 0.0f);
+		Cvar_SetValueQuick (&rt_local_exposure, 0.1f);
 		break;
 	}
 }
@@ -2721,6 +2732,10 @@ static void M_EffectsOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_NEAR_DOF, "Near DOF");
 	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_NEAR_DOF, &rt_dof_near, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_TONEMAP_TYPE, "Tonemap type");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_TONEMAP_TYPE,
+		effects_tonemap_names[CLAMP (0, (int)rt_tonemap.value, EFFECTS_TONEMAP_TYPES - 1)]);
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_TONEMAPPING, "Tonemap contrast");
 	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_TONEMAPPING, &rt_contrast, 1.0f);

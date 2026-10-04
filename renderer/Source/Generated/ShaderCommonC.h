@@ -387,6 +387,7 @@ struct ShTonemapping
     float normalized[128];
     float adaptedLuminance;
     float avgLuminance;
+    uint32_t tonemapType;
 };
 
 struct ShLightEncoded

@@ -765,6 +765,7 @@ TONEMAPPING_MEMBERS = [
     (FLOAT32, 1, "normalized",               CONST["COMPUTE_LUM_HISTOGRAM_BIN_COUNT"]),
     (FLOAT32, 1, "adaptedLuminance",         1),
     (FLOAT32, 1, "avgLuminance",             1),
+    (UINT32, 1, "tonemapType",               1),
 ]
 
 VERT_PREPROC_PUSH_MEMBERS = [

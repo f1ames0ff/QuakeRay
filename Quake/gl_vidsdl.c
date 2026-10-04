@@ -285,7 +285,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_globallight_mult, "10") \
 	CVAR_DEF_T (rt_globallight, "255 255 255") \
 	\
-	CVAR_DEF_T (rt_bloom_intensity, "0.2") \
+	CVAR_DEF_T (rt_bloom_intensity, "0.1") \
 	CVAR_DEF_T (rt_bloom_quality, "2") \
 	CVAR_DEF_T (rt_bloom_threshold, "6.0") \
 	CVAR_DEF_T (rt_bloom_knee, "0.5") \
@@ -294,7 +294,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_bloom_emis_mult, "50") \
 	CVAR_DEF_T (rt_bloom, "1") \
 	\
-	CVAR_DEF_T (rt_dof_near, "1") \
+	CVAR_DEF_T (rt_dof_near, "0.8") \
 	\
 	CVAR_DEF_T (rt_exposure_bias, "0") \
 	CVAR_DEF_T (rt_exposure_speed_up, "3.0") \
@@ -303,8 +303,9 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_exposure_high_percentile, "90") \
 	CVAR_DEF_T (rt_exposure_min_luminance, "0.02") \
 	CVAR_DEF_T (rt_exposure_max_luminance, "1.0") \
-	CVAR_DEF_T (rt_local_exposure, "0") \
-	CVAR_DEF_T (rt_contrast, "0.5") \
+	CVAR_DEF_T (rt_local_exposure, "0.1") \
+	CVAR_DEF_T (rt_contrast, "0.9") \
+	CVAR_DEF_T (rt_tonemap, "1") \
 	\
 	CVAR_DEF_T (rt_ef_crt, "0") \
 	CVAR_DEF_T (rt_vignette, "0.5") \
@@ -2557,6 +2558,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.exposureHighPercentile = CVAR_TO_FLOAT (rt_exposure_high_percentile),
 		.minAdaptedLuminance = CVAR_TO_FLOAT (rt_exposure_min_luminance),
 		.maxAdaptedLuminance = CVAR_TO_FLOAT (rt_exposure_max_luminance),
+		.tonemapType = (uint32_t)CLAMP (0, CVAR_TO_INT32 (rt_tonemap), 4),
 	};
 
 	vec3_t water_color;

@@ -255,6 +255,7 @@ public:
         // exposure-parameter write; the raster mode's neutral stand-in does not use them.
         float exposureBias = 0.0f;
         float contrast = 0.6f;
+        uint32_t tonemapType = 1;
         QrDrawFrameTonemappingParams exposureParams = {};
 
         // -- the acceleration-structure stream --

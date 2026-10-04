@@ -91,6 +91,74 @@ float3 reinhard(const float3 c)
 }
 
 
+float3 agxDefaultContrastApprox( const float3 x )
+{
+    const float3 x2 = x * x;
+    const float3 x4 = x2 * x2;
+
+    return + 15.5 * x4 * x2
+           - 40.14 * x4 * x
+           + 31.96 * x4
+           - 6.868 * x2 * x
+           + 0.4298 * x2
+           + 0.1191 * x
+           - 0.00232;
+}
+
+
+float3 acesFilmic( const float3 color )
+{
+    const float3x3 acesIn = float3x3(
+        0.59719, 0.35458, 0.04823,
+        0.07600, 0.90834, 0.01566,
+        0.02840, 0.13383, 0.83777);
+    const float3x3 acesOut = float3x3(
+         1.60475, -0.53108, -0.07367,
+        -0.10208,  1.10813, -0.00605,
+        -0.00327, -0.07276,  1.07602);
+
+    const float3 v = mul( acesIn, color / 0.6 );
+    const float3 a = v * ( v + 0.0245786 ) - 0.000090537;
+    const float3 b = v * ( 0.983729 * v + 0.4329510 ) + 0.238081;
+
+    return saturate( mul( acesOut, a / b ) );
+}
+
+
+float3 agxFilmic( const float3 color )
+{
+    const float3x3 agxIn = float3x3(
+        0.856627153315983,  0.0951212405381588, 0.0482516061458583,
+        0.137318972929847,  0.761241990602591,  0.101439036467562,
+        0.11189821299995,   0.0767994186031903, 0.811302368396859);
+    const float3x3 agxOut = float3x3(
+         1.1271005818144368,  -0.11060664309660323,  -0.016493938717834573,
+        -0.1413297634984383,   1.157823702216272,    -0.016493938717834257,
+        -0.14132976349843826, -0.11060664309660294,   1.2519364065950405);
+    const float3x3 rec2020FromSrgb = float3x3(
+        0.6274, 0.3293, 0.0433,
+        0.0691, 0.9195, 0.0113,
+        0.0164, 0.0880, 0.8956);
+    const float3x3 srgbFromRec2020 = float3x3(
+         1.6605, -0.5876, -0.0728,
+        -0.1246,  1.1329, -0.0083,
+        -0.0182, -0.1006,  1.1187);
+
+    float3 v = mul( rec2020FromSrgb, color );
+    v = mul( agxIn, v );
+    v = max( v, 1e-10 );
+    v = log2( v );
+    v = ( v + 12.47393 ) / 16.5;
+    v = clamp( v, 0.0, 1.0 );
+    v = agxDefaultContrastApprox( v );
+    v = mul( agxOut, v );
+    v = pow( max( v, 0.0 ), 2.2 );
+    v = mul( srgbFromRec2020, v );
+
+    return saturate( v );
+}
+
+
 float3 finalizeColor( const float3 input_color )
 {
     const float lum = max( getLuminance( input_color ), exp2( min_log_luminance ) );
@@ -106,19 +174,48 @@ float3 finalizeColor( const float3 input_color )
                                     right_weight_F * tonemapping[0].curve[right_bin];
     const float out_luminance = exp2( out_log_luminance + tonemapping[0].tmExposureBias );
 
-    float3 mapped_color = input_color * out_luminance / lum;
-
-    mapped_color = colorHighlightShoulder( mapped_color, tonemapping[0].tmKneeStart,
-                                           tonemapping[0].kneeW, tonemapping[0].kneeA, tonemapping[0].kneeB );
-
-    const float adapted_luminance    = tonemapping[0].adaptedLuminance;
-    const float scaled_luminance     = exp2( tonemapping[0].tmExposureBias - 2.0 ) * lum / adapted_luminance;
     const float white_point          = tonemapping[0].tmWhitePoint;
     const float white_point_squared  = white_point * white_point;
-    const float mapped_luminance     = ( scaled_luminance * ( 1.0 + scaled_luminance / white_point_squared ) ) / ( 1.0 + scaled_luminance );
-    const float3 ae_mapped_color     = input_color * mapped_luminance / lum;
+    const float exposure_scale       = exp2( tonemapping[0].tmExposureBias - 2.0 ) / tonemapping[0].adaptedLuminance;
+    const float3 exposed_color       = input_color * exposure_scale;
 
-    mapped_color = lerp( mapped_color, ae_mapped_color, tonemapping[0].tmReinhard );
+    float3 mapped_color;
+    const uint tonemap_type = tonemapping[0].tonemapType;
+
+    if( tonemap_type == 0u )
+    {
+        mapped_color = exposed_color;
+    }
+    else if( tonemap_type == 2u )
+    {
+        const float scaled_luminance = max( getLuminance( exposed_color ), 1e-6 );
+        const float mapped_luminance = ( scaled_luminance * ( 1.0 + scaled_luminance / white_point_squared ) ) /
+                                       ( 1.0 + scaled_luminance );
+        mapped_color = exposed_color * ( mapped_luminance / scaled_luminance );
+    }
+    else if( tonemap_type == 3u )
+    {
+        mapped_color = acesFilmic( exposed_color );
+    }
+    else if( tonemap_type == 4u )
+    {
+        mapped_color = agxFilmic( exposed_color );
+    }
+    else
+    {
+        mapped_color = input_color * out_luminance / lum;
+
+        mapped_color = colorHighlightShoulder( mapped_color, tonemapping[0].tmKneeStart,
+                                               tonemapping[0].kneeW, tonemapping[0].kneeA, tonemapping[0].kneeB );
+
+        const float adapted_luminance    = tonemapping[0].adaptedLuminance;
+        const float scaled_luminance     = exp2( tonemapping[0].tmExposureBias - 2.0 ) * lum / adapted_luminance;
+        const float mapped_luminance     = ( scaled_luminance * ( 1.0 + scaled_luminance / white_point_squared ) ) /
+                                           ( 1.0 + scaled_luminance );
+        const float3 ae_mapped_color     = input_color * mapped_luminance / lum;
+
+        mapped_color = lerp( mapped_color, ae_mapped_color, tonemapping[0].tmReinhard );
+    }
 
     return colorLimitPreserveHue( mapped_color, 1.0 );
 }
