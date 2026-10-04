@@ -241,7 +241,7 @@ static float RT_ViewmodelNormalizeScale (const aliashdr_t *hdr, const float mins
 }
 
 static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpdata_t* lerpdata, qboolean isfirstperson,
-                                             const char *modelname)
+                                             const qmodel_t *model)
 {
     float model_matrix[16];
     IdentityMatrix(model_matrix);
@@ -278,7 +278,7 @@ static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpda
         const float normalize = CLAMP(0.0f, CVAR_TO_FLOAT(rt_viewm_normalize), 1.0f);
         if (normalize > 0.0f && maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2])
         {
-            const float manual = RT_ViewmodelNormalizeManual (modelname);
+            const float manual = RT_ViewmodelNormalizeManual (model->name);
             const float factor = manual > 0.0f ? manual
                                                : RT_ViewmodelNormalizeScale(paliashdr, mins, maxs, fovscalex, fovscaley);
 
@@ -303,13 +303,22 @@ static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpda
 
     if (isfirstperson)
     {
-        float mins[3] = {0.0f, 0.0f, 0.0f};
-        float maxs[3] = {0.0f, 0.0f, 0.0f};
+        float mins[3];
+        float maxs[3];
 
         for (int axis = 0; axis < 3; axis++)
         {
             mins[axis] = paliashdr->frames[0].bboxmin.v[axis];
             maxs[axis] = paliashdr->frames[0].bboxmax.v[axis];
+        }
+
+        if (!(maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2]))
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                mins[axis] = model->mins[axis];
+                maxs[axis] = model->maxs[axis];
+            }
         }
 
         float minDepth = 1e30f;
@@ -381,7 +390,7 @@ static void GL_DrawAliasFrame(
        which those uploads read it would let the parallel entity passes overwrite each other's
        pose. */
     const QrTransform transform =
-        RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model->name);
+        RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model);
 
     /* DTAL: the model lights the scene from its own geometry when its material says it is a
        light and carries an emissive mask. The fake dlight stays as the fallback for everything
@@ -523,7 +532,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 	blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0;
 	int cluster = RT_ResolvePointCluster (lerpdata.origin);
 	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster);
-	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model->name);
+	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model);
 	baseid = RT_GetAliasModelUniqueId (entuniqueid);
 
 	for (aliashdr_t *surf = paliashdr; surf; surf = surf->nextsurface, ++surface_index)
