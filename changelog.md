@@ -2,6 +2,9 @@
 
 ## v0.28.0
 
+### Changed
+- **The old and the new modes are separate, like in vkQuake** — the Steam `rerelease` content (its PAKs, the `ad`/`ctf`/`dopa`/`mg1`/`mg3` add-ons and the Nightdive downloads) is mounted and listed only while the remastered mode is active, and the classic Steam install is no longer mounted below the remastered one, so `-original` no longer lists or starts remastered add-ons; a local mod folder still works in both modes and the `rerelease/id1` music stays available to the classic mode. The mods menu, `game <name>` and the file search now follow the chosen mode.
+
 ### Fixed
 - **The resource-management review pass** — the light editor now keeps the comments, the untouched emitter entries and the other level sections of an already merged `qray.lights.yaml`; the engine archive reaches `-basegame` with the embedded `vkquake.pak` fallback intact; a store-mounted mod's own material and light YAMLs load through the search path with the local game dir as the final word; the pkz temp files delete themselves and the build refuses to pack a partial archive.
 - **The YAML roots are namespaced** — the merged lights and materials files carry their reserved roots as `qray_lights:` and `qray_materials:` instead of `lights:` and `materials:`, so a map named `lights` cannot collide with them; the old spellings still load and a save rewrites the root once.

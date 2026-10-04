@@ -32,7 +32,7 @@ The game is edited from inside it: `qr_editor` opens a dialog that offers the ma
 
 ### Game data
 
-* Quake game files are read from the local `id1` when present and from the Quake installation in the Steam library otherwise, file by file — game PAKs, the re-release music and the mods the Steam copy carries included — without copying them next to the executable; a local file always wins, and the engine assets live in one `id1/qray.pkz`.
+* Quake game files are read from the local `id1` when present and from the Quake installation in the Steam library otherwise, file by file — game PAKs, the re-release music and the mods the Steam copy of the active mode carries included — without copying them next to the executable; the classic and the remastered modes are separate like in vkQuake, so the Steam `rerelease` PAKs, its add-ons and the Nightdive downloads belong to the remastered mode, a local file always wins, and the engine assets live in one `id1/qray.pkz`.
 
 ### Sound
 
@@ -205,7 +205,7 @@ See [docs/openal-backend.md](docs/openal-backend.md) for the engine-to-OpenAL ma
 
 ## Game data
 
-Quake 1 game files (`id1/`) are required (registered or shareware). When the local `id1` next to `quakeray.exe` has no game data, the engine reads it directly from the Quake installation in the Steam library instead of copying it, and mod folders with `.pak` files that live in the Steam install are picked up by the mods menu as well; a local file always wins over its Steam counterpart. The quakeray engine assets are deployed into the build's game dir by `build_win.ps1` as `id1/qray.pkz` plus the loose `id1/qray.materials.yaml` - nothing has to be packed by hand. HD texture packs can be used through `.pkz` archives or `.mat` material definitions. The material overrides the editor writes go to the active gamedir (`id1/qray.materials.yaml`, a mod's own file overrides it) and the light overrides and custom lights to `id1/qray.lights.yaml`, with a `qray.backup_*` copy of the previous file beside it.
+Quake 1 game files (`id1/`) are required (registered or shareware). When the local `id1` next to `quakeray.exe` has no game data, the engine reads it directly from the Quake installation in the Steam library instead of copying it, and mod folders with `.pak` files that live in the Steam install of the chosen mode are picked up by the mods menu as well; the classic and the remastered modes are separate (the rerelease PAKs, its add-ons and the Nightdive downloads are remastered-only, while the `rerelease/id1/music` stays available to the classic mode), and a local file always wins over its Steam counterpart. The quakeray engine assets are deployed into the build's game dir by `build_win.ps1` as `id1/qray.pkz` plus the loose `id1/qray.materials.yaml` - nothing has to be packed by hand. HD texture packs can be used through `.pkz` archives or `.mat` material definitions. The material overrides the editor writes go to the active gamedir (`id1/qray.materials.yaml`, a mod's own file overrides it) and the light overrides and custom lights to `id1/qray.lights.yaml`, with a `qray.backup_*` copy of the previous file beside it.
 
 ## Credits
 

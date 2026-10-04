@@ -851,12 +851,6 @@ static void Modlist_Add (const char *base, const char *name)
 	}
 }
 
-static void Modlist_AddSteam (const char *base, const char *name, void *ctx)
-{
-	(void)ctx;
-	Modlist_Add (base, name);
-}
-
 static void Modlist_LoadAddonsJSON (const char *base)
 {
 	char  path[MAX_OSPATH];
@@ -969,7 +963,6 @@ void Modlist_Init (void)
 		{
 			q_snprintf (rerelease, sizeof (rerelease), "%s/rerelease", steamroot);
 		}
-		QR_Resources_EnumMods (Modlist_AddSteam, NULL);
 
 		for (i = 0; i < com_numbasedirs; i++)
 		{

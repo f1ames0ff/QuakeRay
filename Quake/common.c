@@ -2434,19 +2434,16 @@ static void COM_AddGameDirectory (const char *dir)
 	// a Steam rerelease's music is mounted even when the classic flavor plays
 	if (!q_strcasecmp (dir, GAMENAME))
 	{
+		char stemreleasedir[MAX_OSPATH];
 		char music[MAX_OSPATH];
 
-		if (QR_Resources_Resolve ("rerelease/id1", music, sizeof (music)) &&
-		    !COM_BaseDirsProvide ("id1", music))
-			COM_AddSearchPaths (music, path_id, false);
-	}
-	else
-	{
-		char remote[MAX_OSPATH];
+		if (QR_Resources_RemasteredDir (stemreleasedir, sizeof (stemreleasedir)))
+		{
+			q_snprintf (music, sizeof (music), "%s/%s", stemreleasedir, GAMENAME);
 
-		if (QR_Resources_Resolve (dir, remote, sizeof (remote)) &&
-		    !COM_BaseDirsProvide (dir, remote))
-			COM_AddSearchPaths (remote, path_id, true);
+			if (!COM_BaseDirsProvide ("id1", music))
+				COM_AddSearchPaths (music, path_id, false);
+		}
 	}
 
 	// mount all roots in order: later roots take precedence, and the user root
@@ -2749,11 +2746,10 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 		// the Nightdive add-ons are content roots of the remastered flavor
 		if (active_flavor == QR_FLAVOR_REMASTERED)
 			COM_AddBaseDir (nightdive);
+		// a Steam classic install stays a fallback below the classic data only
+		else if (classic[0] && q_strcasecmp (classic, com_basedir))
+			COM_AddBaseDir (classic);
 	}
-
-	// a Steam classic install stays a fallback below the selected game data
-	if (classic[0] && q_strcasecmp (classic, com_basedir))
-		COM_AddBaseDir (classic);
 
 	COM_AddBaseDir (com_basedir);
 

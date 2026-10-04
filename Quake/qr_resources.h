@@ -28,9 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 void     QR_Resources_Init (void);
 qboolean QR_Resources_SteamDir (char *out, size_t outsize);
-qboolean QR_Resources_Resolve (const char *dir, char *out, size_t outsize);
 qboolean QR_Resources_HasGameData (void);
-int      QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void *ctx), void *ctx);
 
 qboolean QR_Resources_FlavorDir (const char *dir, int flavor);
 qboolean QR_Resources_RemasteredDir (char *out, size_t outsize);

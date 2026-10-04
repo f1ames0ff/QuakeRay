@@ -256,40 +256,6 @@ qboolean QR_Resources_SteamDir (char *out, size_t outsize)
 	return true;
 }
 
-qboolean QR_Resources_Resolve (const char *dir, char *out, size_t outsize)
-{
-	char path[MAX_OSPATH];
-
-	QR_Resources_Init ();
-
-	if (qr_steam_root[0] == '\0' || !dir || !dir[0])
-	{
-		return false;
-	}
-
-	q_snprintf (path, sizeof (path), "%s/%s", qr_steam_root, dir);
-	if (QR_DirExists (path))
-	{
-		if (out && outsize > 0)
-		{
-			q_strlcpy (out, path, outsize);
-		}
-		return true;
-	}
-
-	q_snprintf (path, sizeof (path), "%s/rerelease/%s", qr_steam_root, dir);
-	if (QR_DirExists (path))
-	{
-		if (out && outsize > 0)
-		{
-			q_strlcpy (out, path, outsize);
-		}
-		return true;
-	}
-
-	return false;
-}
-
 qboolean QR_Resources_HasGameData (void)
 {
 	char path[MAX_OSPATH];
@@ -305,87 +271,6 @@ qboolean QR_Resources_HasGameData (void)
 	}
 
 	return false;
-}
-
-static qboolean QR_DirHasContent (const char *dir)
-{
-	char pattern[MAX_OSPATH];
-	WIN32_FIND_DATAA fd;
-	HANDLE h;
-
-	q_snprintf (pattern, sizeof (pattern), "%s/*.pak", dir);
-	h = FindFirstFileA (pattern, &fd);
-	if (h != INVALID_HANDLE_VALUE)
-	{
-		FindClose (h);
-		return true;
-	}
-
-	q_snprintf (pattern, sizeof (pattern), "%s/progs.dat", dir);
-	if (QR_FileExists (pattern))
-	{
-		return true;
-	}
-
-	return false;
-}
-
-static int QR_EnumModsIn (const char *root, void (*cb) (const char *base, const char *name, void *ctx), void *ctx)
-{
-	char pattern[MAX_OSPATH];
-	WIN32_FIND_DATAA fd;
-	HANDLE h;
-	int count = 0;
-
-	q_snprintf (pattern, sizeof (pattern), "%s/*", root);
-	h = FindFirstFileA (pattern, &fd);
-	if (h == INVALID_HANDLE_VALUE)
-	{
-		return 0;
-	}
-
-	do
-	{
-		char dir[MAX_OSPATH];
-
-		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-		{
-			if (!strcmp (fd.cFileName, ".") || !strcmp (fd.cFileName, "..") ||
-			    !q_strcasecmp (fd.cFileName, "id1") || !q_strcasecmp (fd.cFileName, "rerelease"))
-			{
-				continue;
-			}
-
-			q_snprintf (dir, sizeof (dir), "%s/%s", root, fd.cFileName);
-			if (QR_DirHasContent (dir))
-			{
-				cb (root, fd.cFileName, ctx);
-				count++;
-			}
-		}
-	} while (FindNextFileA (h, &fd));
-
-	FindClose (h);
-	return count;
-}
-
-int QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void *ctx), void *ctx)
-{
-	char rerelease[MAX_OSPATH];
-	int  count;
-
-	QR_Resources_Init ();
-
-	if (!cb || qr_steam_root[0] == '\0')
-	{
-		return 0;
-	}
-
-	count = QR_EnumModsIn (qr_steam_root, cb, ctx);
-
-	q_snprintf (rerelease, sizeof (rerelease), "%s/rerelease", qr_steam_root);
-	count += QR_EnumModsIn (rerelease, cb, ctx);
-	return count;
 }
 
 qboolean QR_Resources_RemasteredDir (char *out, size_t outsize)
@@ -477,14 +362,6 @@ qboolean QR_Resources_SteamDir (char *out, size_t outsize)
 	return false;
 }
 
-qboolean QR_Resources_Resolve (const char *dir, char *out, size_t outsize)
-{
-	(void)dir;
-	(void)out;
-	(void)outsize;
-	return false;
-}
-
 qboolean QR_Resources_HasGameData (void)
 {
 	char path[MAX_OSPATH];
@@ -500,13 +377,6 @@ qboolean QR_Resources_HasGameData (void)
 	}
 
 	return false;
-}
-
-int QR_Resources_EnumMods (void (*cb) (const char *base, const char *name, void *ctx), void *ctx)
-{
-	(void)cb;
-	(void)ctx;
-	return 0;
 }
 
 qboolean QR_Resources_RemasteredDir (char *out, size_t outsize)
