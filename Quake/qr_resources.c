@@ -23,12 +23,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include <SDL.h>
 
-#if defined(_WIN32) && defined(_MSC_VER)
+#ifdef _MSC_VER
 #pragma comment(linker, \
 	"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #endif
 
-#ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
 #include <knownfolders.h>
@@ -348,52 +347,6 @@ qboolean QR_Resources_NightdiveDir (char *out, size_t outsize)
 	}
 	return true;
 }
-
-#else /* !_WIN32 */
-
-void QR_Resources_Init (void)
-{
-}
-
-qboolean QR_Resources_SteamDir (char *out, size_t outsize)
-{
-	(void)out;
-	(void)outsize;
-	return false;
-}
-
-qboolean QR_Resources_HasGameData (void)
-{
-	char path[MAX_OSPATH];
-	int  i;
-
-	for (i = 0; i < com_numbasedirs; i++)
-	{
-		q_snprintf (path, sizeof (path), "%s/id1/pak0.pak", com_basedirs[i]);
-		if (Sys_FileTime (path) != -1)
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
-qboolean QR_Resources_RemasteredDir (char *out, size_t outsize)
-{
-	(void)out;
-	(void)outsize;
-	return false;
-}
-
-qboolean QR_Resources_NightdiveDir (char *out, size_t outsize)
-{
-	(void)out;
-	(void)outsize;
-	return false;
-}
-
-#endif /* _WIN32 */
 
 qboolean QR_Resources_FlavorDir (const char *dir, int flavor)
 {

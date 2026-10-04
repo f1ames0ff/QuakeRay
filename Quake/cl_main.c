@@ -26,7 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "qr_editor.h"
 
 // we need to declare some mouse variables here, because the menu system
-// references them even when on a unix system.
+// references them.
 
 // these two are not intended to be set directly
 cvar_t cl_name = {"_cl_name", "player", CVAR_ARCHIVE};

@@ -63,17 +63,21 @@ if (-not (Test-Path $gameDir)) {
 }
 
 # Resolve the version from the engine header when not supplied explicitly.
-if (-not $Version) {
-    $qdef  = Join-Path $repoRoot "Quake\quakedef.h"
-    $text  = Get-Content $qdef -Raw
-    $maj   = [regex]::Match($text, 'ENGINE_VERSION\s+([0-9]+(?:\.[0-9]+)?)').Groups[1].Value
-    $patch = [regex]::Match($text, 'ENGINE_VER_PATCH\s+([0-9]+)').Groups[1].Value
-    if (-not $maj) { throw "Could not read ENGINE_VERSION from $qdef" }
-    $Version = "$maj.$patch"
+$qdef  = Join-Path $repoRoot "Quake\quakedef.h"
+$text  = Get-Content $qdef -Raw
+$maj   = [regex]::Match($text, 'ENGINE_VERSION\s+([0-9]+(?:\.[0-9]+)?)').Groups[1].Value
+$patch = [regex]::Match($text, 'ENGINE_VER_PATCH\s+([0-9]+)').Groups[1].Value
+if (-not $maj) { throw "Could not read ENGINE_VERSION from $qdef" }
+$buildVersion = "$maj.$patch"
+if (-not $Version) { $Version = $buildVersion }
+
+$exeVersion = "$((Get-Item $exe).VersionInfo.FileVersion)".Trim()
+if ($exeVersion -ne $buildVersion) {
+    throw "quakeray.exe in $BuildDir reports version '$exeVersion' but Quake\quakedef.h says '$buildVersion'. Rebuild first: .\build_win.ps1 $Config"
 }
 
 $distDir  = Join-Path $repoRoot $OutDir
-$rootName = "QuakeRay-$Version-win64"
+$rootName = "QuakeRay-v$Version-win64"
 $zipPath  = Join-Path $distDir "$rootName.zip"
 $stage    = Join-Path $distDir $rootName
 
@@ -135,7 +139,7 @@ foreach ($notice in $openalNotices.GetEnumerator()) {
     }
 }
 
-# 5) Create the ZIP with a top-level QuakeRay-<version>-win64 folder.
+# 5) Create the ZIP with a top-level QuakeRay-v<version>-win64 folder.
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 
 Add-Type -AssemblyName System.IO.Compression

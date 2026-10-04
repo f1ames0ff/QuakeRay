@@ -23,9 +23,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "atomics.h"
 #include "quakedef.h"
 
-#if defined(USE_HELGRIND)
-#include "valgrind/helgrind.h"
-#else
 #define ANNOTATE_HAPPENS_BEFORE(x) \
 	do                             \
 	{                              \
@@ -38,7 +35,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 	do                                        \
 	{                                         \
 	} while (false)
-#endif
 
 #define NUM_INDEX_BITS       8
 #define MAX_PENDING_TASKS    (1u << NUM_INDEX_BITS)
@@ -289,23 +285,6 @@ static int Task_Worker (void *data)
 			Task_ExecuteIndexed (worker_index, task, task_index);
 		}
 
-#if defined(USE_HELGRIND)
-		ANNOTATE_HAPPENS_BEFORE (task);
-		qboolean indexed_task = task->task_type == TASK_TYPE_INDEXED;
-		if (indexed_task)
-		{
-			// Helgrind needs to know about all threads
-			// that participated in an indexed execution
-			SDL_LockMutex (task->epoch_mutex);
-			for (int i = 0; i < task->num_dependents; ++i)
-			{
-				const int task_index = IndexFromTaskHandle (task->dependent_task_handles[i]);
-				task_t   *dep_task = &tasks[task_index];
-				ANNOTATE_HAPPENS_BEFORE (dep_task);
-			}
-		}
-#endif
-
 		if (Atomic_DecrementUInt32 (&task->remaining_workers) == 1)
 		{
 			SDL_LockMutex (task->epoch_mutex);
@@ -316,11 +295,6 @@ static int Task_Worker (void *data)
 			SDL_UnlockMutex (task->epoch_mutex);
 			TaskQueuePush (free_task_queue, task_index);
 		}
-
-#if defined(USE_HELGRIND)
-		if (indexed_task)
-			SDL_UnlockMutex (task->epoch_mutex);
-#endif
 	}
 	return 0;
 }
