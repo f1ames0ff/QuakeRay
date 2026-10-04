@@ -25,11 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <time.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#ifdef _WIN32
 #include <io.h>
-#else
-#include <unistd.h>
-#endif
 #include "quakedef.h"
 
 int con_linewidth;

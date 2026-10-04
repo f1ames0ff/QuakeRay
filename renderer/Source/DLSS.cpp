@@ -28,11 +28,6 @@
 #include <nvsdk_ngx_helpers_vk.h>
 #include <nvsdk_ngx_helpers.h>
 
-#if __linux__
-#include <unistd.h>
-#include <linux/limits.h>
-#endif
-
 static void PrintCallback(const char *message, NVSDK_NGX_Logging_Level loggingLevel, NVSDK_NGX_Feature sourceComponent)
 {
     printf("DLSS (sourceComponent = %d): %s \n", sourceComponent, message);
@@ -40,15 +35,8 @@ static void PrintCallback(const char *message, NVSDK_NGX_Logging_Level loggingLe
 
 static std::wstring GetFolderPath()
 {
-#if defined(_WIN32)
     wchar_t appPath[MAX_PATH];
     GetModuleFileNameW(NULL, appPath, MAX_PATH);
-#elif defined(__linux__)
-    wchar_t appPath[PATH_MAX];
-    char appPath_c[PATH_MAX];
-    ssize_t count = readlink("/proc/self/exe", appPath_c, PATH_MAX);
-    std::mbstowcs(appPath, appPath_c, PATH_MAX);
-#endif
 
     std::wstring curFolderPath = appPath;
     auto p = curFolderPath.find_last_of(L"\\/");
@@ -79,13 +67,7 @@ bool qray::DLSS::TryInit(VkInstance instance, VkDevice device, VkPhysicalDevice 
 {
     std::wstring dllPath = GetFolderPath() + (enableDebug ? L"/dev/" : L"/rel/");
 
-#ifdef NV_WINDOWS
     wchar_t *dllPath_c = (wchar_t *)dllPath.c_str();
-#else
-    char dllPath_c_buf[PATH_MAX];
-    char *dllPath_c = &dllPath_c_buf[0];
-    std::wcstombs(dllPath_c, dllPath.c_str(), PATH_MAX);
-#endif
 
     NVSDK_NGX_PathListInfo pathsInfo = {};
     pathsInfo.Path = &dllPath_c;

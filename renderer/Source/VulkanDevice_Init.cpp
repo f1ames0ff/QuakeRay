@@ -664,26 +664,7 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
     {
         VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
         VK_KHR_SURFACE_EXTENSION_NAME,
-
-    #ifdef QR_USE_SURFACE_WIN32
         VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-    #endif
-
-    #ifdef QR_USE_SURFACE_METAL
-        VK_EXT_METAL_SURFACE_EXTENSION_NAME,
-    #endif
-
-    #ifdef QR_USE_SURFACE_WAYLAND
-        VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
-    #endif
-
-    #ifdef QR_USE_SURFACE_XCB
-        VK_KHR_XCB_SURFACE_EXTENSION_NAME,
-    #endif
-
-    #ifdef QR_USE_SURFACE_XLIB
-        VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
-    #endif
     };
 
     if (surfaceCapabilities2Supported)
@@ -1118,7 +1099,6 @@ VkSurfaceKHR VulkanDevice::GetSurfaceFromUser(VkInstance instance, const QrInsta
     VkSurfaceKHR surface;
     VkResult r;
 
-#ifdef QR_USE_SURFACE_WIN32
     if (info.pWin32SurfaceInfo != nullptr)
     {
         VkWin32SurfaceCreateInfoKHR win32Info = {};
@@ -1131,91 +1111,6 @@ VkSurfaceKHR VulkanDevice::GetSurfaceFromUser(VkInstance instance, const QrInsta
 
         return surface;
     }
-#else
-    if (info.pWin32SurfaceInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pWin32SurfaceInfo is specified, but the library wasn't built with QR_USE_SURFACE_WIN32 option");
-    }
-#endif
-
-#ifdef QR_USE_SURFACE_METAL
-    if (info.pMetalSurfaceCreateInfo != nullptr)
-    {
-        VkMetalSurfaceCreateInfoEXT metalInfo = {};
-        metalInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
-        metalInfo.pLayer = info.pMetalSurfaceCreateInfo->pLayer;
-
-        r = vkCreateMetalSurfaceEXT(instance, &metalInfo, nullptr, &surface);
-        VK_CHECKERROR(r);
-
-        return surface;
-    }
-#else
-    if (info.pMetalSurfaceCreateInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pMetalSurfaceCreateInfo is specified, but the library wasn't built with QR_USE_SURFACE_METAL option");
-    }
-#endif
-
-#ifdef QR_USE_SURFACE_WAYLAND
-    if (info.pWaylandSurfaceCreateInfo != nullptr)
-    {
-        VkWaylandSurfaceCreateInfoKHR wlInfo = {};
-        wlInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-        wlInfo.display = info.pWaylandSurfaceCreateInfo->display;
-        wlInfo.surface = info.pWaylandSurfaceCreateInfo->surface;
-
-        r = (instance, &wlInfo, nullptr, &surface);
-        VK_CHECKERROR(r);
-
-        return surface;
-    }
-#else
-    if (info.pWaylandSurfaceCreateInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pWaylandSurfaceCreateInfo is specified, but the library wasn't built with QR_USE_SURFACE_WAYLAND option");
-    }
-#endif
-
-#ifdef QR_USE_SURFACE_XCB
-    if (info.pXcbSurfaceCreateInfo != nullptr)
-    {
-        VkXcbSurfaceCreateInfoKHR xcbInfo = {};
-        xcbInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-        xcbInfo.connection = info.pXcbSurfaceCreateInfo->connection;
-        xcbInfo.window = info.pXcbSurfaceCreateInfo->window;
-
-        r = vkCreateXcbSurfaceKHR(instance, &xcbInfo, nullptr, &surface);
-        VK_CHECKERROR(r);
-
-        return surface;
-    }
-#else
-    if (info.pXcbSurfaceCreateInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pXcbSurfaceCreateInfo is specified, but the library wasn't built with QR_USE_SURFACE_XCB option");
-    }
-#endif
-
-#ifdef QR_USE_SURFACE_XLIB
-    if (info.pXlibSurfaceCreateInfo != nullptr)
-    {
-        VkXlibSurfaceCreateInfoKHR xlibInfo = {};
-        xlibInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-        xlibInfo.dpy = info.pXlibSurfaceCreateInfo->dpy;
-        xlibInfo.window = info.pXlibSurfaceCreateInfo->window;
-
-        r = vkCreateXlibSurfaceKHR(instance, &xlibInfo, nullptr, &surface);
-        VK_CHECKERROR(r);
-
-        return surface;
-    }
-#else
-    if (info.pXlibSurfaceCreateInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pXlibSurfaceCreateInfo is specified, but the library wasn't built with QR_USE_SURFACE_XLIB option");
-    }
-#endif
 
     throw QrException(QR_WRONG_ARGUMENT, "Surface info wasn't specified");
 }
@@ -1258,12 +1153,7 @@ void VulkanDevice::ValidateCreateInfo(const QrInstanceCreateInfo *pInfo)
     }
 
     {
-        int count =
-            !!pInfo->pWin32SurfaceInfo +
-            !!pInfo->pMetalSurfaceCreateInfo +
-            !!pInfo->pWaylandSurfaceCreateInfo +
-            !!pInfo->pXcbSurfaceCreateInfo +
-            !!pInfo->pXlibSurfaceCreateInfo;
+        int count = !!pInfo->pWin32SurfaceInfo;
 
         if (count != 1)
         {
