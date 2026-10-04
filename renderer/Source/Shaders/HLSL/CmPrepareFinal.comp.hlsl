@@ -26,19 +26,20 @@
 #include "Exposure.hlsli"
 #include "TonemappingUtils.hlsli"
 #include "LocalExposure.hlsli"
+#include "ColorCompositing.hlsli"
+#include "NearDof.hlsli"
 
 
-struct BloomFlareControl_BT
+struct PostEffectsControl_BT
 {
     float4 opticalControl;
     float4 gameplayFeedback;
     float4 suitControl;
 };
 
-[[vk::push_constant]] ConstantBuffer<BloomFlareControl_BT> bloomFlareControl;
+[[vk::push_constant]] ConstantBuffer<PostEffectsControl_BT> postEffectsControl;
 
 [[vk::binding(400, DESC_SET_FRAMEBUFFERS)]] Texture2D<float4> bloomResultTexture;
-[[vk::binding(401, DESC_SET_FRAMEBUFFERS)]] Texture2D<float4> lensFlareResultTexture;
 [[vk::binding(402, DESC_SET_FRAMEBUFFERS)]] SamplerState opticalResultSampler;
 
 
@@ -107,10 +108,8 @@ float3 finalizeColor( const float3 input_color )
 
     float3 mapped_color = input_color * out_luminance / lum;
 
-    const float3 step_value = step( tonemapping[0].tmKneeStart, mapped_color );
-    mapped_color = lerp( mapped_color,
-                         ( tonemapping[0].kneeW * mapped_color + tonemapping[0].kneeA ) / max( (float3)1e-6, mapped_color + tonemapping[0].kneeB ),
-                         step_value );
+    mapped_color = colorHighlightShoulder( mapped_color, tonemapping[0].tmKneeStart,
+                                           tonemapping[0].kneeW, tonemapping[0].kneeA, tonemapping[0].kneeB );
 
     const float adapted_luminance    = tonemapping[0].adaptedLuminance;
     const float scaled_luminance     = exp2( tonemapping[0].tmExposureBias - 2.0 ) * lum / adapted_luminance;
@@ -121,7 +120,7 @@ float3 finalizeColor( const float3 input_color )
 
     mapped_color = lerp( mapped_color, ae_mapped_color, tonemapping[0].tmReinhard );
 
-    return clamp( mapped_color, (float3)0, (float3)1 );
+    return colorLimitPreserveHue( mapped_color, 1.0 );
 }
 
 
@@ -215,36 +214,44 @@ float3 applyLevelFog( const int2 pix, const float3 color )
 }
 
 
-float getLevelFogTransmittance( const int2 pix )
+float3 sampleScene( const int2 pix )
 {
-    const float density  = globalUniform.levelFogColorDensity.w;
-    const float skyBlend = globalUniform.levelFogSkyBlend.x;
-
-    if( density <= 0.0 )
+    if( postEffectsControl.suitControl.y <= 0.0 )
     {
-        return 1.0;
+        return framebufBloomInput_Sampled.Load( int3( pix, 0 ) ).rgb;
     }
-
-    const float depth = framebufDepthWorld_Sampled.Load(int3( getCheckerboardPix( pix ), 0 )).r;
-
-    if( depth > MAX_RAY_LENGTH )
-    {
-        return 1.0 - skyBlend;
-    }
-
-    const float d = density * max( depth, 0.0 ) * getViewAxisFactor( pix );
-    return exp( -d * d );
+    const float displayHeight = globalUniform.upscaledRenderHeight > 0.0 ?
+        globalUniform.upscaledRenderHeight : globalUniform.renderHeight;
+    const float radiusScale = globalUniform.renderHeight / max( displayHeight, 1.0 );
+    return nearDofFilter( framebufBloomInput_Sampled, framebufDepthWorld_Sampled,
+                          framebufSurfacePosition_Sampled, pix, getViewAxisFactor( pix ),
+                          postEffectsControl.suitControl.y, postEffectsControl.suitControl.z,
+                          postEffectsControl.suitControl.w * radiusScale );
 }
 
+float3 sampleSceneUV( const float2 uv )
+{
+    if( postEffectsControl.suitControl.y <= 0.0 )
+    {
+        return framebufBloomInput_Sampled.SampleLevel( opticalResultSampler, uv, 0.0 ).rgb;
+    }
+    const int2 pix = clamp( int2( uv * float2( globalUniform.renderWidth, globalUniform.renderHeight ) ),
+                            int2( 0, 0 ), int2( globalUniform.renderWidth - 1, globalUniform.renderHeight - 1 ) );
+    if( !nearDofIsWeapon( framebufSurfacePosition_Sampled, pix, int( globalUniform.renderWidth ) ) )
+    {
+        return framebufBloomInput_Sampled.SampleLevel( opticalResultSampler, uv, 0.0 ).rgb;
+    }
+    return sampleScene( pix );
+}
 
 float3 applyChromaticAberration( const int2 pix )
 {
-    const float3 scene = framebufBloomInput_Sampled.Load(int3( pix, 0 )).rgb;
+    const float3 scene = sampleScene( pix );
 
-    const float damage     = bloomFlareControl.gameplayFeedback.x;
-    const float liquid     = bloomFlareControl.gameplayFeedback.y;
-    const float aberration = bloomFlareControl.gameplayFeedback.z;
-    const float suit       = bloomFlareControl.suitControl.x;
+    const float damage     = postEffectsControl.gameplayFeedback.x;
+    const float liquid     = postEffectsControl.gameplayFeedback.y;
+    const float aberration = postEffectsControl.gameplayFeedback.z;
+    const float suit       = postEffectsControl.suitControl.x;
 
     if( damage <= 0.0 && liquid <= 0.0 && suit <= 0.0 )
     {
@@ -287,14 +294,14 @@ float3 applyChromaticAberration( const int2 pix )
         const float3 w = float3( t, 1.0 - abs( 2.0 * t - 1.0 ), 1.0 - t );
         const float2 sampleUV = clamp( uv + offset * ( t - 0.5 ), (float2)0.0, (float2)1.0 );
 
-        color  += framebufBloomInput_Sampled.SampleLevel( opticalResultSampler, sampleUV, 0.0 ).rgb * w;
+        color  += sampleSceneUV( sampleUV ) * w;
         weight += w;
     }
 
     color /= weight;
 
     const float redness = saturate( damage * 2.0 ) * damageMask * 0.5;
-    color *= lerp( (float3)1.0, float3( 1.0, 0.15, 0.10 ), redness );
+    color = colorApplyTint( color, float3( 1.0, 0.15, 0.10 ), redness );
 
     return color;
 }
@@ -343,34 +350,23 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
     const float3 scene = applyChromaticAberration( pix );
     float3 hdr = scene;
 
-    if( bloomFlareControl.opticalControl.z != 0.0 )
+    if( postEffectsControl.opticalControl.z != 0.0 )
     {
         const float2 opticalUV = (float2( pix ) + 0.5) /
                                  float2( globalUniform.renderWidth, globalUniform.renderHeight );
 
         const float3 bloom = bloomResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb;
-        const float3 flare = lensFlareResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb;
-        const float transmittance = getLevelFogTransmittance( pix );
-
-        if( bloomFlareControl.opticalControl.w > 0.0 )
-        {
-            hdr = scene + bloom * ( bloomFlareControl.opticalControl.x * transmittance );
-        }
-        else
-        {
-            hdr = scene + ( bloom - scene ) * ( bloomFlareControl.opticalControl.x * transmittance );
-        }
-
-        hdr += flare * bloomFlareControl.opticalControl.y * transmittance;
+        hdr = colorComposeBloom( scene, bloom, postEffectsControl.opticalControl.x,
+                                 postEffectsControl.opticalControl.w > 0.0 );
     }
 
-    if (bloomFlareControl.gameplayFeedback.w > 0.0)
+    if (postEffectsControl.gameplayFeedback.w > 0.0)
     {
         const float2 inverseSize = 1.0 / float2(globalUniform.renderWidth, globalUniform.renderHeight);
         const float2 uv = (float2(pix) + 0.5) * inverseSize;
         const float correction = localExposureCorrection(framebufBloomInput_Sampled, opticalResultSampler,
                                                            uv, inverseSize, tonemapping[0].adaptedLuminance);
-        hdr *= exp2(correction * bloomFlareControl.gameplayFeedback.w);
+        hdr *= exp2(correction * postEffectsControl.gameplayFeedback.w);
     }
 
     float3 color = finalizeColor( hdr );
@@ -393,6 +389,7 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         outputDither( pix, 1u ),
         outputDither( pix, 2u ) );
 
+    color = colorLimitPreserveHue( color, 1.0 );
     color = clamp( color + dither * OUTPUT_DITHER_CODES * outputCodeStepLinear( color ), (float3)0.0, (float3)1.0 );
 
     framebufFinal[pix] = float4( color, 0 );

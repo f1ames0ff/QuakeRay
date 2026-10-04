@@ -59,7 +59,6 @@ class NvrhiFrameSkeleton;
 class RhiBloomPass;
 class RhiDecalPass;
 class RhiFsrPass;
-class RhiLensFlarePass;
 class RhiPostEffectPass;
 class RhiProceduralSkyPass;
 class RhiCloudsPass;
@@ -239,7 +238,6 @@ private:
     std::shared_ptr<RhiRtIndirectPass>      rhiRtIndirectPass;
     std::shared_ptr<RhiRtComposePass>       rhiRtComposePass;
     std::shared_ptr<RhiBloomPass>           rhiBloomPass;
-    std::shared_ptr<RhiLensFlarePass>       rhiLensFlarePass;
     std::shared_ptr<RhiShadowMapPass>       rhiShadowMapPass;
     std::shared_ptr<RhiRtGodRaysPass>       rhiRtGodRaysPass;
 

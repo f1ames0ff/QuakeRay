@@ -2,6 +2,7 @@
 #include "RHI/RhiPipeline.h"
 #include "RHI/RhiExposureHistory.h"
 #include "Generated/ShaderCommonC.h"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -91,7 +92,8 @@ std::vector<float> ReadTexture(nvrhi::IDevice *device, nvrhi::ITexture *texture)
 std::vector<float> ReadTextureRGBA(nvrhi::IDevice *device, nvrhi::ITexture *texture)
 {
     auto desc = texture->getDesc();
-    Require(desc.format == nvrhi::Format::RGBA16_FLOAT, "rgba16 flare target");
+    Require(desc.format == nvrhi::Format::RGBA16_FLOAT || desc.format == nvrhi::Format::R11G11B10_FLOAT,
+        "supported color readback format");
     desc.isUAV = false;
     desc.keepInitialState = false;
     auto staging = device->createStagingTexture(desc, nvrhi::CpuAccessMode::Read);
@@ -109,9 +111,21 @@ std::vector<float> ReadTextureRGBA(nvrhi::IDevice *device, nvrhi::ITexture *text
     std::vector<float> values(size_t(desc.width) * desc.height * 4);
     for (uint32_t y = 0; y < desc.height; y++)
         for (uint32_t x = 0; x < desc.width; x++)
-            for (uint32_t c = 0; c < 4; c++)
-                values[(size_t(y) * desc.width + x) * 4 + c] =
-                    Half(reinterpret_cast<const uint16_t *>(data + y * pitch)[x * 4 + c]);
+        {
+            const size_t pixel = (size_t(y) * desc.width + x) * 4;
+            if (desc.format == nvrhi::Format::RGBA16_FLOAT)
+            {
+                for (uint32_t c = 0; c < 4; c++)
+                    values[pixel + c] = Half(reinterpret_cast<const uint16_t *>(data + y * pitch)[x * 4 + c]);
+            }
+            else
+            {
+                const uint32_t bits = reinterpret_cast<const uint32_t *>(data + y * pitch)[x];
+                values[pixel] = UnsignedFloat(bits & 0x7ffu, 6);
+                values[pixel + 1] = UnsignedFloat((bits >> 11) & 0x7ffu, 6);
+                values[pixel + 2] = UnsignedFloat(bits >> 22, 5);
+            }
+        }
     device->unmapStagingTexture(staging);
     return values;
 }
@@ -303,275 +317,294 @@ void CheckVignette(nvrhi::IDevice *device, const std::string &shaders)
     }
 }
 
-void CheckLensFlareAperture(nvrhi::IDevice *device, const std::string &shaders)
+void CheckColorCompositing(nvrhi::IDevice *device, const std::string &probes)
 {
-    auto sourceLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(0),
-        nvrhi::BindingLayoutItem::Sampler(1)});
-    auto highlightsLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(0),
-        nvrhi::BindingLayoutItem::Texture_SRV(1)});
-    auto exposureLayout = Layout(device, {nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0)});
-    auto destinationLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(0)});
+    auto layout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Texture_SRV(1), nvrhi::BindingLayoutItem::Texture_UAV(2)});
     auto pushLayout = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 16)});
-    auto pipeline = Pipeline(device, shaders + "/CmLensFlare.comp.spv",
-        {sourceLayout, highlightsLayout, exposureLayout, destinationLayout, pushLayout});
+    auto pipeline = Pipeline(device, probes + "/ColorCompositingProbe.comp.spv", {layout, pushLayout});
+    nvrhi::TextureDesc desc;
+    desc.width = 17;
+    desc.height = 9;
+    desc.format = nvrhi::Format::RGBA32_FLOAT;
+    desc.isUAV = true;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    auto scene = device->createTexture(desc);
+    auto bloom = device->createTexture(desc);
+    desc.format = nvrhi::Format::RGBA16_FLOAT;
+    desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    auto output = device->createTexture(desc);
+    auto set = device->createBindingSet(nvrhi::BindingSetDesc()
+        .addItem(nvrhi::BindingSetItem::Texture_SRV(0, scene))
+        .addItem(nvrhi::BindingSetItem::Texture_SRV(1, bloom))
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(2, output)), layout);
+    Require(scene != nullptr && bloom != nullptr && output != nullptr && set != nullptr,
+        "create color compositing probe");
 
-    const uint32_t size = 64;
-    nvrhi::TextureDesc sourceDesc;
-    sourceDesc.width = sourceDesc.height = size;
-    sourceDesc.format = nvrhi::Format::RGBA32_FLOAT;
-    sourceDesc.isShaderResource = true;
-    sourceDesc.initialState = nvrhi::ResourceStates::ShaderResource;
-    sourceDesc.keepInitialState = true;
-    auto bright = device->createTexture(sourceDesc);
-    nvrhi::TextureDesc targetDesc = sourceDesc;
-    targetDesc.format = nvrhi::Format::RGBA16_FLOAT;
-    targetDesc.isUAV = true;
-    targetDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
-    auto features = device->createTexture(targetDesc);
-    auto scratch = device->createTexture(targetDesc);
-    auto result = device->createTexture(targetDesc);
-    Require(bright != nullptr && features != nullptr && scratch != nullptr &&
-        result != nullptr, "create flare targets");
-
-    auto sampler = device->createSampler(nvrhi::SamplerDesc().setAllFilters(true)
-        .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp));
-    const auto sourceSetFor = [&](nvrhi::ITexture *texture) {
-        return device->createBindingSet(nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, texture))
-            .addItem(nvrhi::BindingSetItem::Sampler(1, sampler)), sourceLayout);
-    };
-    const auto targetSetFor = [&](nvrhi::ITexture *texture) {
-        return device->createBindingSet(nvrhi::BindingSetDesc().addItem(
-            nvrhi::BindingSetItem::Texture_UAV(0, texture)), destinationLayout);
-    };
-    auto brightSrv = sourceSetFor(bright);
-    auto scratchSrv = sourceSetFor(scratch);
-    auto featuresUav = targetSetFor(features);
-    auto scratchUav = targetSetFor(scratch);
-    auto resultUav = targetSetFor(result);
-    auto highlights = device->createBindingSet(nvrhi::BindingSetDesc()
-        .addItem(nvrhi::BindingSetItem::Texture_SRV(0, bright))
-        .addItem(nvrhi::BindingSetItem::Texture_SRV(1, bright)), highlightsLayout);
-    auto aperture = device->createBindingSet(nvrhi::BindingSetDesc()
-        .addItem(nvrhi::BindingSetItem::Texture_SRV(0, bright))
-        .addItem(nvrhi::BindingSetItem::Texture_SRV(1, features)), highlightsLayout);
-    nvrhi::BufferDesc bufferDesc;
-    bufferDesc.byteSize = bufferDesc.structStride = sizeof(ShTonemapping);
-    bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
-    bufferDesc.keepInitialState = true;
-    auto exposure = device->createBuffer(bufferDesc);
-    auto exposureSet = device->createBindingSet(nvrhi::BindingSetDesc().addItem(
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(0, exposure)), exposureLayout);
-    Require(brightSrv != nullptr && scratchSrv != nullptr && featuresUav != nullptr &&
-        scratchUav != nullptr && resultUav != nullptr &&
-        highlights != nullptr && aperture != nullptr && exposureSet != nullptr, "create flare sets");
-
-    auto impulse = Image(size, size, 0.0f);
-    for (size_t channel = 0; channel < 3; channel++)
-        impulse[(32 * size + 32) * 4 + channel] = 100.0f;
-
-    const auto at = [&](const std::vector<float> &image, uint32_t x, uint32_t y, uint32_t c) {
-        return image[(size_t(y) * size + x) * 4 + c];
-    };
-
-    auto apertureCmd = device->createCommandList();
-    apertureCmd->open();
-    apertureCmd->writeTexture(bright, 0, 0, impulse.data(), size * sizeof(float) * 4);
-    {
-        nvrhi::ComputeState state;
-        state.pipeline = pipeline;
-        state.addBindingSet(brightSrv).addBindingSet(highlights).addBindingSet(exposureSet).addBindingSet(scratchUav);
-        apertureCmd->setComputeState(state);
-        const uint32_t push[4] = { 5, 0, 0, 0 };
-        apertureCmd->setPushConstants(push, sizeof(push));
-        apertureCmd->dispatch(size / 16, size / 16);
-    }
-    {
-        nvrhi::ComputeState state;
-        state.pipeline = pipeline;
-        state.addBindingSet(scratchSrv).addBindingSet(highlights).addBindingSet(exposureSet).addBindingSet(featuresUav);
-        apertureCmd->setComputeState(state);
-        const uint32_t push[4] = { 6, 0, 0, 0 };
-        apertureCmd->setPushConstants(push, sizeof(push));
-        apertureCmd->dispatch(size / 16, size / 16);
-    }
-    apertureCmd->close();
-    device->executeCommandList(apertureCmd);
-    auto apertureValues = ReadTextureRGBA(device, features);
-    Require(at(apertureValues, 32, 32, 0) > 0.05f, "aperture centre");
-    Require(at(apertureValues, 35, 32, 0) > 0.0f, "aperture flat side");
-    Require(at(apertureValues, 46, 32, 0) == 0.0f, "aperture boundary");
-    Require(at(apertureValues, 32, 36, 1) > 0.0f && at(apertureValues, 32, 47, 1) == 0.0f, "aperture vertex side");
-    Require(at(apertureValues, 44, 32, 2) > at(apertureValues, 44, 32, 0), "aperture chromatic rim");
-
-    auto bars = Image(size, size, 0.0f);
-    for (uint32_t y = 22; y <= 41; y++)
-        for (uint32_t x = 28; x <= 29; x++)
-            for (size_t channel = 0; channel < 3; channel++)
-                bars[(size_t(y) * size + x) * 4 + channel] = 100.0f;
-    for (uint32_t y = 22; y <= 41; y++)
-        for (uint32_t x = 36; x <= 37; x++)
-            for (size_t channel = 0; channel < 3; channel++)
-                bars[(size_t(y) * size + x) * 4 + channel] = 100.0f;
-    auto barsCmd = device->createCommandList();
-    barsCmd->open();
-    barsCmd->writeTexture(bright, 0, 0, bars.data(), size * sizeof(float) * 4);
-    {
-        nvrhi::ComputeState state;
-        state.pipeline = pipeline;
-        state.addBindingSet(brightSrv).addBindingSet(highlights).addBindingSet(exposureSet).addBindingSet(scratchUav);
-        barsCmd->setComputeState(state);
-        const uint32_t push[4] = { 5, 0, 0, 0 };
-        barsCmd->setPushConstants(push, sizeof(push));
-        barsCmd->dispatch(size / 16, size / 16);
-    }
-    {
-        nvrhi::ComputeState state;
-        state.pipeline = pipeline;
-        state.addBindingSet(scratchSrv).addBindingSet(highlights).addBindingSet(exposureSet).addBindingSet(featuresUav);
-        barsCmd->setComputeState(state);
-        const uint32_t push[4] = { 6, 0, 0, 0 };
-        barsCmd->setPushConstants(push, sizeof(push));
-        barsCmd->dispatch(size / 16, size / 16);
-    }
-    barsCmd->close();
-    device->executeCommandList(barsCmd);
-    auto barValues = ReadTextureRGBA(device, features);
-    Require(at(barValues, 32, 32, 0) > 0.7f * at(barValues, 28, 32, 0), "aperture fills the gap between sources");
-
-    auto ghostCmd = device->createCommandList();
-    ghostCmd->open();
-    auto spark = Image(size, size, 0.0f);
-    for (size_t channel = 0; channel < 3; channel++)
-        spark[(32 * size + 20) * 4 + channel] = 100.0f;
-    ghostCmd->writeTexture(bright, 0, 0, spark.data(), size * sizeof(float) * 4);
-    const auto runMode = [&](uint32_t mode, nvrhi::IBindingSet *source, nvrhi::IBindingSet *destination) {
-        nvrhi::ComputeState state;
-        state.pipeline = pipeline;
-        state.addBindingSet(source).addBindingSet(mode == 4 ? aperture : highlights)
-            .addBindingSet(exposureSet).addBindingSet(destination);
-        ghostCmd->setComputeState(state);
-        const uint32_t push[4] = { mode, 0, 0, 0 };
-        ghostCmd->setPushConstants(push, sizeof(push));
-        ghostCmd->dispatch(size / 16, size / 16);
-    };
-    runMode(5, brightSrv, scratchUav);
-    runMode(6, scratchSrv, featuresUav);
-    runMode(4, brightSrv, resultUav);
-    ghostCmd->close();
-    device->executeCommandList(ghostCmd);
-    auto ghostValues = ReadTextureRGBA(device, result);
-    Require(at(ghostValues, 24, 32, 0) > 0.05f, "polygon ghost toward the centre");
-    Require(at(ghostValues, 36, 32, 0) > 0.05f, "polygon ghost mirrored through the centre");
-    Require(at(ghostValues, 56, 32, 0) > 0.01f, "polygon ghost far side");
-    Require(at(ghostValues, 32, 56, 0) == 0.0f, "polygon ghosts stay on the axis");
-}
-
-void CheckFlareBrightPass(nvrhi::IDevice *device, const std::string &shaders)
-{
-    auto sourceLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(0),
-        nvrhi::BindingLayoutItem::Sampler(1)});
-    auto highlightsLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(0),
-        nvrhi::BindingLayoutItem::Texture_SRV(1)});
-    auto exposureLayout = Layout(device, {nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0)});
-    auto destinationLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(0)});
-    auto pushLayout = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 16)});
-    auto pipeline = Pipeline(device, shaders + "/CmLensFlare.comp.spv",
-        {sourceLayout, highlightsLayout, exposureLayout, destinationLayout, pushLayout});
-
-    const uint32_t size = 32;
-    nvrhi::TextureDesc sourceDesc;
-    sourceDesc.width = sourceDesc.height = size;
-    sourceDesc.format = nvrhi::Format::RGBA32_FLOAT;
-    sourceDesc.isShaderResource = true;
-    sourceDesc.initialState = nvrhi::ResourceStates::ShaderResource;
-    sourceDesc.keepInitialState = true;
-    auto source = device->createTexture(sourceDesc);
-    auto depth = device->createTexture(sourceDesc);
-    nvrhi::TextureDesc targetDesc = sourceDesc;
-    targetDesc.format = nvrhi::Format::RGBA16_FLOAT;
-    targetDesc.isUAV = true;
-    targetDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
-    auto output = device->createTexture(targetDesc);
-    Require(source != nullptr && depth != nullptr && output != nullptr, "create bright pass targets");
-
-    auto sampler = device->createSampler(nvrhi::SamplerDesc().setAllFilters(true)
-        .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp));
-    auto sourceSet = device->createBindingSet(nvrhi::BindingSetDesc()
-        .addItem(nvrhi::BindingSetItem::Texture_SRV(0, source))
-        .addItem(nvrhi::BindingSetItem::Sampler(1, sampler)), sourceLayout);
-    auto depthSet = device->createBindingSet(nvrhi::BindingSetDesc()
-        .addItem(nvrhi::BindingSetItem::Texture_SRV(0, depth))
-        .addItem(nvrhi::BindingSetItem::Texture_SRV(1, source)), highlightsLayout);
-    auto outputSet = device->createBindingSet(nvrhi::BindingSetDesc().addItem(
-        nvrhi::BindingSetItem::Texture_UAV(0, output)), destinationLayout);
-    nvrhi::BufferDesc bufferDesc;
-    bufferDesc.byteSize = bufferDesc.structStride = sizeof(ShTonemapping);
-    bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
-    bufferDesc.keepInitialState = true;
-    auto exposure = device->createBuffer(bufferDesc);
-    auto exposureSet = device->createBindingSet(nvrhi::BindingSetDesc().addItem(
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(0, exposure)), exposureLayout);
-    Require(sourceSet != nullptr && depthSet != nullptr && outputSet != nullptr && exposureSet != nullptr,
-        "create bright pass sets");
-
-    const auto run = [&](const std::vector<float> &pixels, float depthValue) {
+    const auto run = [&](uint32_t mode, nvrhi::Color sceneColor, nvrhi::Color bloomColor = nvrhi::Color(0.0f),
+                         float bloomStrength = 0.0f, bool thresholded = true) {
         auto cmd = device->createCommandList();
         cmd->open();
-        cmd->writeTexture(source, 0, 0, pixels.data(), size * sizeof(float) * 4);
-        auto depthPixels = Image(size, size, depthValue);
-        cmd->writeTexture(depth, 0, 0, depthPixels.data(), size * sizeof(float) * 4);
-        ShTonemapping tm{};
-        tm.avgLuminance = 0.18f;
-        cmd->writeBuffer(exposure, &tm, sizeof(tm));
+        cmd->clearTextureFloat(scene, nvrhi::AllSubresources, sceneColor);
+        cmd->clearTextureFloat(bloom, nvrhi::AllSubresources, bloomColor);
         nvrhi::ComputeState state;
         state.pipeline = pipeline;
-        state.addBindingSet(sourceSet).addBindingSet(depthSet).addBindingSet(exposureSet).addBindingSet(outputSet);
+        state.addBindingSet(set);
         cmd->setComputeState(state);
-        const uint32_t push[4] = { 0, std::bit_cast<uint32_t>(12.0f), 0, 0 };
+        const uint32_t push[4] = {mode, thresholded ? 1u : 0u,
+            std::bit_cast<uint32_t>(bloomStrength), 0};
         cmd->setPushConstants(push, sizeof(push));
-        cmd->dispatch(size / 16, size / 16);
+        cmd->dispatch(2, 1);
         cmd->close();
         device->executeCommandList(cmd);
-    };
-    const auto at = [&](uint32_t x, uint32_t y) {
         auto values = ReadTextureRGBA(device, output);
-        return values[(size_t(y) * size + x) * 4 + 0];
+        for (size_t i = 0; i < values.size(); i++)
+            Require(std::isfinite(values[i]) && values[i] >= 0.0f, "finite color compositing output");
+        return std::array<float, 3>{values[0], values[1], values[2]};
+    };
+    const auto matches = [](const std::array<float, 3> &value, const std::array<float, 3> &expected,
+                            const std::string &name) {
+        for (size_t channel = 0; channel < 3; channel++)
+            Require(std::abs(value[channel] - expected[channel]) < 0.002f * std::max(1.0f, expected[channel]), name);
     };
 
-    run(Image(size, size, 8.0f), 128.0f);
-    Require(at(16, 16) == 0.0f, "flare brightness gate");
+    for (float peak : {0.25f, 0.5f, 4.0f, 4096.0f})
+    {
+        const nvrhi::Color input(peak, peak * 0.25f, peak * 0.0625f, 1.0f);
+        const float bounded = std::min(peak, 1.0f);
+        matches(run(0, input), {bounded, bounded * 0.25f, bounded * 0.0625f}, "display gamut preserves hue");
+        const float radiance = std::min(peak, 256.0f);
+        matches(run(1, input), {radiance, radiance * 0.25f, radiance * 0.0625f}, "radiance bound preserves hue");
+        const auto shoulder = run(2, input);
+        Require(shoulder[0] <= 1.0f && shoulder[0] > 0.0f, "bounded highlight shoulder");
+        matches(shoulder, {shoulder[0], shoulder[0] * 0.25f, shoulder[0] * 0.0625f},
+            "tone shoulder preserves hue");
+        if (peak <= 0.6f)
+            matches(shoulder, {peak, peak * 0.25f, peak * 0.0625f}, "tone shoulder leaves midtones unchanged");
+    }
+    matches(run(4, nvrhi::Color(120000.0f, 30000.0f, 7500.0f, 1.0f)),
+        {60000.0f, 15000.0f, 3750.0f}, "HDR storage bound preserves hue");
+    matches(run(0, nvrhi::Color(std::numeric_limits<float>::quiet_NaN(), 1.0f, 0.0f, 1.0f)),
+        {0.0f, 0.0f, 0.0f}, "invalid display color is black");
+    matches(run(1, nvrhi::Color(std::numeric_limits<float>::infinity(), 1.0f, 0.0f, 1.0f)),
+        {0.0f, 0.0f, 0.0f}, "invalid radiance input is black");
+    const nvrhi::Color base(0.3f, 0.2f, 0.1f, 1.0f);
+    const nvrhi::Color halo(2.0f, 0.5f, 0.25f, 1.0f);
+    matches(run(3, base, halo, 0.2f), {0.7f, 0.3f, 0.15f}, "bloom adds HDR energy without alpha");
+    matches(run(3, base, halo), {0.3f, 0.2f, 0.1f}, "disabled bloom leaves scene unchanged");
+    matches(run(3, base, base, 0.2f, false),
+        {0.3f, 0.2f, 0.1f}, "thresholdless bloom conserves uniform scene energy");
+    matches(run(3, base, nvrhi::Color(0.0f), 0.2f, false),
+        {0.24f, 0.16f, 0.08f}, "thresholdless bloom redistributes rather than adds scene energy");
+    matches(run(5, base, nvrhi::Color(1.0f, 0.15f, 0.1f, 1.0f), 0.5f),
+        {0.3f, 0.115f, 0.055f}, "tint filters scene instead of adding a pale layer");
+    matches(run(5, nvrhi::Color(0.0f), halo, 1.0f),
+        {0.0f, 0.0f, 0.0f}, "tint cannot lift black");
+    matches(run(5, base, nvrhi::Color(1.0f), 1.0f),
+        {0.3f, 0.2f, 0.1f}, "neutral filter is identity");
+}
 
-    run(Image(size, size, 50.0f), 128.0f);
-    const float dim = at(16, 16);
-    run(Image(size, size, 500.0f), 128.0f);
-    const float bright = at(16, 16);
-    Require(std::abs(dim - 87.6f) < 1.5f, "flare dim source response");
-    Require(std::abs(bright - 3159.8f) < 10.0f, "flare bright source response");
-    Require(bright > 20.0f * dim, "flare scales with source strength");
+void CheckGameplayColor(nvrhi::IDevice *device, const std::string &shaders)
+{
+    auto images = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(29),
+        nvrhi::BindingLayoutItem::Texture_UAV(30)});
+    auto uniforms = Layout(device, {nvrhi::BindingLayoutItem::ConstantBuffer(0)});
+    auto feedbackPush = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 44)});
+    auto tintPush = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 28)});
+    auto feedback = Pipeline(device, shaders + "/EfGameplayFeedback.comp.spv", {images, uniforms, feedbackPush});
+    auto tint = Pipeline(device, shaders + "/EfColorTint.comp.spv", {images, uniforms, tintPush});
+    const uint32_t width = 33;
+    const uint32_t height = 17;
+    nvrhi::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = nvrhi::Format::R11G11B10_FLOAT;
+    desc.isUAV = true;
+    desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    desc.keepInitialState = true;
+    auto ping = device->createTexture(desc);
+    auto pong = device->createTexture(desc);
+    auto imageSet = device->createBindingSet(nvrhi::BindingSetDesc()
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(29, ping))
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(30, pong)), images);
+    nvrhi::BufferDesc buffer;
+    buffer.byteSize = sizeof(ShGlobalUniform);
+    buffer.isConstantBuffer = true;
+    buffer.initialState = nvrhi::ResourceStates::ConstantBuffer;
+    buffer.keepInitialState = true;
+    auto uniform = device->createBuffer(buffer);
+    auto uniformSet = device->createBindingSet(nvrhi::BindingSetDesc()
+        .addItem(nvrhi::BindingSetItem::ConstantBuffer(0, uniform)), uniforms);
+    Require(ping != nullptr && pong != nullptr && imageSet != nullptr && uniform != nullptr && uniformSet != nullptr,
+        "create gameplay color targets");
+    const auto run = [&](bool legacyTint, float base, float damage, float pickup) {
+        auto cmd = device->createCommandList();
+        cmd->open();
+        cmd->clearTextureFloat(pong, nvrhi::AllSubresources, nvrhi::Color(base));
+        ShGlobalUniform frame{};
+        frame.time = 0.25f;
+        cmd->writeBuffer(uniform, &frame, sizeof(frame));
+        nvrhi::ComputeState state;
+        state.pipeline = legacyTint ? tint : feedback;
+        state.addBindingSet(imageSet).addBindingSet(uniformSet);
+        cmd->setComputeState(state);
+        const uint32_t push[11] = {0, 0, 0, std::bit_cast<uint32_t>(damage), 0,
+            std::bit_cast<uint32_t>(pickup), std::bit_cast<uint32_t>(0.14f), 0,
+            std::bit_cast<uint32_t>(1.0f), std::bit_cast<uint32_t>(0.831373f), std::bit_cast<uint32_t>(0.482353f)};
+        const uint32_t legacyPush[7] = {0, 0, 0, std::bit_cast<uint32_t>(damage),
+            std::bit_cast<uint32_t>(1.0f), std::bit_cast<uint32_t>(0.15f), std::bit_cast<uint32_t>(0.1f)};
+        cmd->setPushConstants(legacyTint ? legacyPush : push, legacyTint ? sizeof(legacyPush) : sizeof(push));
+        cmd->dispatch((width + 15) / 16, (height + 15) / 16);
+        cmd->close();
+        device->executeCommandList(cmd);
+        auto values = ReadTextureRGBA(device, ping);
+        for (size_t i = 0; i < values.size(); i++)
+            Require(std::isfinite(values[i]) && values[i] >= 0.0f && values[i] <= 1.0f, "bounded gameplay color");
+        return values;
+    };
+    const auto at = [&](const std::vector<float> &values, uint32_t x, uint32_t y, uint32_t channel) {
+        return values[(size_t(y) * width + x) * 4 + channel];
+    };
+    auto values = run(false, 0.5f, 0.0f, 0.0f);
+    Require(at(values, 0, 0, 0) == 0.5f && at(values, 0, 0, 1) == 0.5f && at(values, 0, 0, 2) == 0.5f,
+        "disabled gameplay feedback is identity");
+    values = run(false, 0.5f, 1.0f, 0.0f);
+    Require(at(values, 0, 0, 0) == 0.5f && std::abs(at(values, 0, 0, 1) - 0.449f) < 0.01f &&
+        std::abs(at(values, 0, 0, 2) - 0.446f) < 0.01f, "damage is a blood-red transmission filter");
+    Require(at(values, width / 2, height / 2, 1) == 0.5f, "damage protects the centre");
+    values = run(false, 0.5f, 0.0f, 1.0f);
+    Require(at(values, width / 2, height - 1, 0) == 0.5f &&
+        at(values, width / 2, height - 1, 1) < 0.46f && at(values, width / 2, height - 1, 2) < 0.32f,
+        "pickup warms the bottom without a white veil");
+    Require(at(values, width / 2, 0, 1) == 0.5f, "pickup protects the top");
+    values = run(false, 0.0f, 1.0f, 1.0f);
+    Require(at(values, 0, height - 1, 0) == 0.0f && at(values, 0, height - 1, 1) == 0.0f &&
+        at(values, 0, height - 1, 2) == 0.0f, "gameplay colors leave black black");
+    values = run(true, 0.5f, 1.0f, 0.0f);
+    Require(at(values, 0, 0, 0) == 0.5f && at(values, 0, 0, 1) < 0.35f && at(values, 0, 0, 2) < 0.35f,
+        "legacy color tint filters instead of replacing scene color");
+    values = run(true, 0.0f, 1.0f, 0.0f);
+    Require(at(values, 0, 0, 0) == 0.0f, "legacy tint cannot lift black");
+}
 
-    run(Image(size, size, 100.0f), 20000.0f);
-    const float center = at(16, 16);
-    const float edge = at(1, 1);
-    Require(center > 2.2f * edge && center < 3.6f * edge, "flare fades toward the frame edge");
-    Require(std::abs(edge - 175.4f) < 2.0f, "flare edge weight");
+void CheckNearDof(nvrhi::IDevice *device, const std::string &probes)
+{
+    auto layout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Texture_SRV(1), nvrhi::BindingLayoutItem::Texture_SRV(2),
+        nvrhi::BindingLayoutItem::Texture_UAV(3)});
+    auto pushLayout = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 16)});
+    auto pipeline = Pipeline(device, probes + "/NearDofProbe.comp.spv", {layout, pushLayout});
+    const auto run = [&](uint32_t width, uint32_t height, const std::vector<float> &pixels,
+                         const std::vector<float> &depths, const std::vector<float> &surfaces,
+                         float strength, float focus = 8.0f) {
+        nvrhi::TextureDesc desc;
+        desc.width = width;
+        desc.height = height;
+        desc.format = nvrhi::Format::RGBA32_FLOAT;
+        desc.initialState = nvrhi::ResourceStates::ShaderResource;
+        desc.keepInitialState = true;
+        auto source = device->createTexture(desc);
+        auto depth = device->createTexture(desc);
+        auto surface = device->createTexture(desc);
+        desc.format = nvrhi::Format::RGBA16_FLOAT;
+        desc.isUAV = true;
+        desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+        auto output = device->createTexture(desc);
+        auto set = device->createBindingSet(nvrhi::BindingSetDesc()
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, source))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(1, depth))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(2, surface))
+            .addItem(nvrhi::BindingSetItem::Texture_UAV(3, output)), layout);
+        Require(source != nullptr && depth != nullptr && surface != nullptr && output != nullptr && set != nullptr,
+            "create near DOF targets");
+        auto cmd = device->createCommandList();
+        cmd->open();
+        cmd->writeTexture(source, 0, 0, pixels.data(), width * sizeof(float) * 4);
+        cmd->writeTexture(depth, 0, 0, depths.data(), width * sizeof(float) * 4);
+        cmd->writeTexture(surface, 0, 0, surfaces.data(), width * sizeof(float) * 4);
+        nvrhi::ComputeState state;
+        state.pipeline = pipeline;
+        state.addBindingSet(set);
+        cmd->setComputeState(state);
+        const float push[4] = {strength, focus, 6.0f, 1.0f};
+        cmd->setPushConstants(push, sizeof(push));
+        cmd->dispatch((width + 15) / 16, (height + 15) / 16);
+        cmd->close();
+        device->executeCommandList(cmd);
+        auto values = ReadTextureRGBA(device, output);
+        for (float value : values)
+            Require(std::isfinite(value) && value >= 0.0f, "finite near DOF output");
+        return values;
+    };
+    const auto metadata = [](uint32_t width, uint32_t height, uint32_t flags) {
+        auto values = Image(width, height, 0.0f);
+        for (size_t i = 3; i < values.size(); i += 4)
+            values[i] = std::bit_cast<float>(flags);
+        return values;
+    };
+    for (const auto size : {std::array<uint32_t, 2>{1, 1}, {17, 9}, {32, 32}})
+    {
+        const auto values = run(size[0], size[1], Image(size[0], size[1], 0.5f),
+            Image(size[0], size[1], 2.0f), metadata(size[0], size[1], INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON), 1.0f);
+        for (size_t i = 0; i < values.size(); i += 4)
+            Require(std::abs(values[i] - 0.5f) < 0.001f, "near DOF conserves constant color at edges and tiny sizes");
+    }
+    const uint32_t size = 32;
+    const size_t center = (16 * size + 16) * 4;
+    auto pixels = Image(size, size, 0.0f);
+    pixels[center] = 1.0f;
+    pixels[center + 1] = 0.25f;
+    pixels[center + 2] = 0.125f;
+    auto depths = Image(size, size, 2.0f);
+    auto surfaces = metadata(size, size, INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON);
+    auto off = run(size, size, pixels, depths, surfaces, 0.0f);
+    Require(off[center] == 1.0f && off[center + 4] == 0.0f, "zero near DOF is identity");
+    auto subtle = run(size, size, pixels, depths, surfaces, 0.25f);
+    auto strong = run(size, size, pixels, depths, surfaces, 1.0f);
+    Require(subtle[center] < 0.95f && subtle[center] > strong[center] && strong[center + 4] > 0.0f,
+        "near weapon blur grows with strength");
+    Require(std::abs(strong[center + 1] / strong[center] - 0.25f) < 0.001f &&
+        std::abs(strong[center + 2] / strong[center] - 0.125f) < 0.001f, "near DOF preserves channel ratios");
+    auto scaled = run(size, size, pixels, Image(size, size, 1.0f), surfaces, 0.25f, 4.0f);
+    Require(std::abs(scaled[center] - subtle[center]) < 0.001f, "near DOF is invariant to weapon scale");
+    auto farther = run(size, size, pixels, Image(size, size, 5.0f), surfaces, 0.25f);
+    Require(farther[center] > subtle[center], "farther weapon parts are sharper");
+    auto focused = run(size, size, pixels, Image(size, size, 8.0f), surfaces, 1.0f);
+    Require(focused[center] == 1.0f && focused[center + 4] == 0.0f, "focus plane and farther parts stay sharp");
+    auto invalid = run(size, size, pixels, Image(size, size, std::numeric_limits<float>::quiet_NaN()), surfaces, 1.0f);
+    Require(invalid[center] == 1.0f, "invalid depth cannot trigger DOF");
+    auto world = run(size, size, pixels, depths, metadata(size, size, 0u), 1.0f);
+    Require(world[center] == 1.0f && world[center + 4] == 0.0f, "near world geometry is never blurred");
+    auto viewer = run(size, size, pixels, depths, metadata(size, size, INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON_VIEWER), 1.0f);
+    Require(viewer[center] == 1.0f, "player body is not a first-person weapon");
 
-    run(Image(size, size, 100.0f), 128.0f);
-    const float nearFlare = at(16, 16);
-    Require(std::abs(nearFlare - 420.0f) < 4.0f, "flare near reference");
-    run(Image(size, size, 100.0f), 256.0f);
-    Require(std::abs(at(16, 16) - 0.5f * center) < 2.0f, "flare half strength at the distance reference");
-    run(Image(size, size, 100.0f), 4096.0f);
-    const float farFlare = at(16, 16);
-    Require(nearFlare > 50.0f * farFlare, "flare fades with the source distance");
-    run(Image(size, size, 100.0f), 8192.0f);
-    Require(at(16, 16) > 0.4f, "distant source still flares faintly");
-    run(Image(size, size, 100.0f), 10000.0f);
-    Require(at(16, 16) < 1.0f, "surface at the ray-length boundary fades");
-    run(Image(size, size, 100.0f), 10001.0f);
-    Require(at(16, 16) > 400.0f, "sky beyond the ray-length boundary keeps its flare");
-    run(Image(size, size, 100.0f), 20000.0f);
-    Require(at(16, 16) > nearFlare, "sky keeps its flare");
+    pixels = Image(size, size, 0.25f);
+    surfaces = metadata(size, size, 0u);
+    for (uint32_t y = 0; y < size; y++)
+        for (uint32_t x = 0; x < size; x++)
+        {
+            const uint32_t cbx = ((x + y % 2) % 2) * (size / 2) + x / 2;
+            if (x < 16)
+                surfaces[(size_t(y) * size + cbx) * 4 + 3] = std::bit_cast<float>(uint32_t(INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON));
+            else
+                for (size_t channel = 0; channel < 3; channel++)
+                    pixels[(size_t(y) * size + x) * 4 + channel] = 100.0f;
+        }
+    auto edge = run(size, size, pixels, depths, surfaces, 1.0f);
+    Require(std::abs(edge[(16 * size + 15) * 4] - 0.25f) < 0.001f &&
+        edge[(16 * size + 16) * 4] == 100.0f, "DOF cannot mix world color across the weapon silhouette");
+    depths = Image(size, size, 2.0f);
+    surfaces = metadata(size, size, INSTANCE_CUSTOM_INDEX_FLAG_FIRST_PERSON);
+    for (uint32_t y = 0; y < size; y++)
+        for (uint32_t x = 16; x < size; x++)
+        {
+            const uint32_t cbx = ((x + y % 2) % 2) * (size / 2) + x / 2;
+            depths[(size_t(y) * size + cbx) * 4] = 10.0f;
+        }
+    auto focusEdge = run(size, size, pixels, depths, surfaces, 1.0f);
+    Require(std::abs(focusEdge[(16 * size + 15) * 4] - 0.25f) < 0.001f &&
+        focusEdge[(16 * size + 16) * 4] == 100.0f, "DOF cannot smear focused weapon parts into the near part");
 }
 
 void CheckLocalExposure(nvrhi::IDevice *device, const std::string &probes)
@@ -679,13 +712,14 @@ int main(int argc, char **argv)
             auto tm = probe.Run(127, 7, pixels, true, 1.0f / 60, 10.0f, 80.0f);
             Require(std::abs(tm.avgLuminance - 0.25f) < 0.015f, "percentiles reject bright outliers");
             CheckVignette(device, argv[1]);
-            CheckLensFlareAperture(device, argv[1]);
-            CheckFlareBrightPass(device, argv[1]);
+            CheckColorCompositing(device, argv[2]);
+            CheckGameplayColor(device, argv[1]);
+            CheckNearDof(device, argv[2]);
             CheckLocalExposure(device, argv[2]);
         }
         Require(device->waitForIdle(), "finish GPU tests");
         Require(gpu.errors.load() == 0, "Vulkan validation errors");
-        std::cout << "PASS: histogram, adaptation, local exposure, vignette and the lens flare aperture\n";
+        std::cout << "PASS: histogram, adaptation, local exposure, vignette, color compositing, gameplay tint and near weapon DOF\n";
         return 0;
     }
     catch (const std::exception &e)

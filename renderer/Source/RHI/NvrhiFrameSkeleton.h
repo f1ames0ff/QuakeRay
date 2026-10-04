@@ -39,7 +39,6 @@ class RenderResolutionHelper;
 class RhiBloomPass;
 class RhiDecalPass;
 class RhiFsrPass;
-class RhiLensFlarePass;
 class RhiPostEffectPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
@@ -375,7 +374,6 @@ public:
                                 RhiFsrPass *pFsrPass,
                                 RhiPostEffectPass *pPostEffectPass,
                                 RhiBloomPass *pBloomPass,
-                                RhiLensFlarePass *pLensFlarePass,
                                 RhiShadowMapPass *pShadowMapPass,
                                 RhiRtGodRaysPass *pGodRaysPass,
                                 RhiUiPass *pUiPass,
@@ -560,7 +558,6 @@ private:
     RhiPostEffectPass *postEffectPass = nullptr;
 
     RhiBloomPass *bloomPass = nullptr;
-    RhiLensFlarePass *lensFlarePass = nullptr;
 
     // The wraps of the engine DecalManager buffers (A5.6): the per-slot staging as a copy source and
     // the device-local instance array once as the pass's set 3 buffer (stride

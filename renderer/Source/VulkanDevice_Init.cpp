@@ -32,7 +32,6 @@
 #include "RHI/RhiBloomPass.h"
 #include "RHI/RhiDecalPass.h"
 #include "RHI/RhiFsrPass.h"
-#include "RHI/RhiLensFlarePass.h"
 #include "RHI/RhiPostEffectPass.h"
 #include "RHI/RhiProceduralSkyPass.h"
 #include "RHI/RhiCloudsPass.h"
@@ -446,18 +445,9 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                     Print("Warning: RHI: the bloom pass is unavailable, the frame is drawn without bloom");
                 }
 
-                rhiLensFlarePass = std::make_shared<RhiLensFlarePass>();
-                if (!rhiLensFlarePass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
-                                              tonemapping.get(), info->pShaderFolderPath,
-                                              [this](const char *pMessage) { Print(pMessage); }))
-                {
-                    rhiLensFlarePass.reset();
-                    Print("Warning: RHI: the lens flare pass is unavailable, the frame is drawn without lens flares");
-                }
-
                 if (rhiRtComposePass != nullptr)
                 {
-                    rhiRtComposePass->SetOpticalPasses(rhiBloomPass.get(), rhiLensFlarePass.get());
+                    rhiRtComposePass->SetBloomPass(rhiBloomPass.get());
                 }
 
                 rhiUiPass = std::make_shared<RhiUiPass>();
@@ -492,7 +482,6 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                 rhiFsrPass.get(),
                 rhiPostEffectPass.get(),
                 rhiBloomPass.get(),
-                rhiLensFlarePass.get(),
                 rhiShadowMapPass.get(),
                 rhiRtGodRaysPass.get(),
                 rhiUiPass.get(),
@@ -558,7 +547,6 @@ VulkanDevice::~VulkanDevice()
 
     rhiRtComposePass.reset();
     rhiBloomPass.reset();
-    rhiLensFlarePass.reset();
     rhiRtGodRaysPass.reset();
     rhiShadowMapPass.reset();
     rhiUiPass.reset();

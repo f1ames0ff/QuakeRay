@@ -33,7 +33,6 @@ namespace qray
 
 class Framebuffers;
 class RhiBloomPass;
-class RhiLensFlarePass;
 class Tonemapping;
 
 namespace rhi
@@ -111,9 +110,9 @@ class RhiFrameContext;
 //   CmLuminanceAvg        - no set 0; one 128x1x1 workgroup;
 //   CmCheckerboard        - 3 storage images (28 FINAL, 60 ACID_FOG, 62 SCREEN_EMISSION) and 4
 //                           sampled images (26, 27, 59, 61);
-//   CmPrepareFinal        - 5 storage images (16-18, 28, 65) and 11 sampled images (0, 3, 9, 13,
-//                           14, 15, 25, 26, 60, 62, 64) - 16 items after the A4.4 shader-side fix
-//                           of the 28/152 pair;
+//   CmPrepareFinal        - 4 storage images (16-18, 28) and 13 sampled images (0, 3, 9, 13, 14,
+//                           15, 19, 25, 26, 60, 62, 64, 65) - 17 items after the A4.4 shader-side
+//                           fix of the 28/152 pair;
 //   CmQ2TAAU              - 2 storage images (29 UPSCALED_PING, 119 Q2_TAA_HISTORY), 3 sampled
 //                           images (28 FINAL, 31 MOTION_DLSS, 120 Q2_TAA_HISTORY_PREV) and the
 //                           game's sampler for 120 (raw 368); dispatch over the upscaled size.
@@ -242,7 +241,7 @@ public:
 
     bool IsCreated() const { return created; }
 
-    void SetOpticalPasses(RhiBloomPass *pBloom, RhiLensFlarePass *pFlare);
+    void SetBloomPass(RhiBloomPass *pBloom);
 
     // The pre-direct step of a denoised frame: the host calls it between
     // RhiRtPrimaryPass::Render and RhiRtDirectPass::Render, only when
@@ -401,7 +400,6 @@ private:
         nvrhi::BindingSetHandle taauSet;
 
         nvrhi::ITexture *prepareFinalBloomTexture = nullptr;
-        nvrhi::ITexture *prepareFinalFlareTexture = nullptr;
 
         // Set 1: the engine's global uniform never changes, but it is an argument here, so the
         // set follows the pointer the way the other passes' uniform sets do.
@@ -448,8 +446,7 @@ private:
     bool PrepareFramebufferSets(Target &target);
 
     bool PreparePrepareFinalSet(Target &target,
-                                nvrhi::ITexture *pBloomTexture,
-                                nvrhi::ITexture *pFlareTexture);
+                                nvrhi::ITexture *pBloomTexture);
 
     // Set 1 over the module's compute uniform layout, rebuilt when the pointer changed. Returns
     // false when the buffer is not the static constant-buffer wrap the shader's
@@ -485,7 +482,6 @@ private:
     rhi::RhiFrameContext *frameContext = nullptr;
 
     RhiBloomPass *bloomPass = nullptr;
-    RhiLensFlarePass *lensFlarePass = nullptr;
 
     // The thirteen engine blobs. Only `CmQ2Atrous` declares a specialization constant
     // (`SpecId 0`); its four iterations are the derived `atrousIterationShaders` below.

@@ -291,9 +291,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_bloom_emis_mult, "50") \
 	CVAR_DEF_T (rt_bloom, "1") \
 	\
-	CVAR_DEF_T (rt_lensflare, "1") \
-	CVAR_DEF_T (rt_lensflare_intensity, "0.01") \
-	CVAR_DEF_T (rt_lensflare_threshold, "12.0") \
+	CVAR_DEF_T (rt_dof_near, "0.25") \
 	\
 	CVAR_DEF_T (rt_exposure_bias, "0") \
 	CVAR_DEF_T (rt_exposure_speed_up, "3.0") \
@@ -2413,11 +2411,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	for (int i = 0; i < MAX_LIGHTSTYLES; i++)
 		texture_params.lightStyleScales[i] = (float)d_lightstylevalue[i] * (1.0f / 256.0f);
 
-	QrDrawFrameLensFlareParams lens_flare_params = {
-		.lensFlareBlendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
-		.lensFlareBlendFuncDst = QR_BLEND_FACTOR_ONE,
-	};
-
 	// Classic level fog: the worldspawn "fog" key and the `fog` console
 	// command, which Arcane Dimensions also uses to drive its dynamic fog. The
 	// color is passed as it is, without an sRGB decoding, the same way the
@@ -2481,10 +2474,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	bloom_effect.radius = CLAMP (0.005f, CVAR_TO_FLOAT (rt_bloom_radius), 0.15f);
 	bloom_effect.quality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_quality), 2.0f);
 
-	static QrPostEffectsLensFlareParams lensflare_effect = {0};
-	lensflare_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_lensflare_intensity), 1.0f) * 0.005f;
-	lensflare_effect.isActive = CVAR_TO_BOOL (rt_lensflare) && lensflare_effect.intensity > 0.0f;
-	lensflare_effect.threshold = CLAMP (1.0f, CVAR_TO_FLOAT (rt_lensflare_threshold), 32.0f);
+	const float viewmodel_scale = CVAR_TO_FLOAT (rt_viewm_scale) > 0.0f ? CVAR_TO_FLOAT (rt_viewm_scale) : 1.0f;
+	QrPostEffectsNearDofParams near_dof_effect = {
+		.strength = CLAMP (0.0f, CVAR_TO_FLOAT (rt_dof_near), 1.0f),
+		.focusDistance = 24.0f * viewmodel_scale,
+		.maxRadius = 6.0f,
+	};
 
 	static QrPostEffectsSharpenParams sharpen_effect = {0};
 	sharpen_effect.strength = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength), 1.0f);
@@ -2564,7 +2559,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.pReflectRefractParams = &refl_refr_params,
 		.pSkyParams = &sky_params,
 		.pTexturesParams = &texture_params,
-		.pLensFlareParams = &lens_flare_params,
 		.pLevelFogParams = &level_fog_params,
 		.postEffectParams =
 			{
@@ -2574,7 +2568,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 				.pCRT = &crt_effect,
 				.pRadialBlur = (cl.intermission || editor_active) ? NULL : &radial_effect,
 				.pBloom = &bloom_effect,
-				.pLensFlare = &lensflare_effect,
+				.pNearDof = (cl.intermission || editor_active) ? NULL : &near_dof_effect,
 				.pSharpen = &sharpen_effect,
 				.pVignette = &vignette_effect,
 				.localExposure = CLAMP (0.0f, CVAR_TO_FLOAT (rt_local_exposure), 1.0f),
@@ -3371,8 +3365,6 @@ enum
 	VID_OPT_UPSCALER_QUALITY,
 
 
-	VID_OPT_EXPOSURE_BIAS,
-	VID_OPT_CONTRAST,
 	VID_OPT_VSYNC,
 	VID_OPT_MAX_FPS,
 
@@ -3650,12 +3642,6 @@ static void VID_Menu_Adjust (int dir)
 		VID_Menu_ChooseNextMaxFPS (dir);
 		Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
 		break;
-	case VID_OPT_EXPOSURE_BIAS:
-		VID_Menu_StepFloatCvar (&rt_exposure_bias, dir * 0.1f, -3.0f, 3.0f);
-		break;
-	case VID_OPT_CONTRAST:
-		VID_Menu_StepFloatCvar (&rt_contrast, dir * 0.1f, 0.0f, 1.0f);
-		break;
 	case VID_OPT_UPSCALER:
 	case VID_OPT_UPSCALER_QUALITY:
 		VID_Menu_ChooseNextAA (video_options_cursor, dir);
@@ -3841,14 +3827,6 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			break;
 
 
-		case VID_OPT_EXPOSURE_BIAS:
-			M_Print (cbx, 16, y, "     Exposure bias");
-			M_Print (cbx, 184, y, va ("%+.1f EV", CVAR_TO_FLOAT (rt_exposure_bias)));
-			break;
-		case VID_OPT_CONTRAST:
-			M_Print (cbx, 16, y, "          Contrast");
-			M_Print (cbx, 184, y, va ("%d%%", (int)(CVAR_TO_FLOAT (rt_contrast) * 100.0f + 0.5f)));
-			break;
 		case VID_OPT_VSYNC:
 			M_Print (cbx, 16, y, "     Vertical sync");
 			M_Print (cbx, 184, y, VID_VsyncModeName ((int)vid_vsync.value));

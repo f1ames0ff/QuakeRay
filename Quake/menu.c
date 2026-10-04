@@ -196,8 +196,9 @@ extern cvar_t vid_filter;
 extern cvar_t rt_bloom_intensity;
 extern cvar_t rt_bloom_quality;
 extern cvar_t rt_bloom_threshold;
-extern cvar_t rt_lensflare_intensity;
-extern cvar_t rt_lensflare;
+extern cvar_t rt_dof_near;
+extern cvar_t rt_contrast;
+extern cvar_t rt_exposure_bias;
 extern cvar_t rt_ef_damage_strength;
 extern cvar_t rt_ef_liquid_strength;
 extern cvar_t rt_sharpen_strength;
@@ -2557,7 +2558,9 @@ enum
 {
 	EFFECTS_OPT_BLOOM,
 	EFFECTS_OPT_BLOOM_QUALITY,
-	EFFECTS_OPT_LENSFLARE,
+	EFFECTS_OPT_NEAR_DOF,
+	EFFECTS_OPT_TONEMAPPING,
+	EFFECTS_OPT_EXPOSURE,
 	EFFECTS_OPT_DAMAGE,
 	EFFECTS_OPT_LIQUID,
 	EFFECTS_OPT_SHARPEN,
@@ -2608,10 +2611,17 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		f = M_GetSliderPos (0, 2, CVAR_TO_FLOAT (rt_bloom_quality), false, mouse, clamped_mouse, dir, 1.0f, 0);
 		Cvar_SetValueQuick (&rt_bloom_quality, f);
 		break;
-	case EFFECTS_OPT_LENSFLARE:
-		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_lensflare_intensity), false, mouse, clamped_mouse, dir, 0.01f, 0);
-		Cvar_SetValueQuick (&rt_lensflare_intensity, f);
-		Cvar_SetValueQuick (&rt_lensflare, f > 0.0f ? 1.0f : 0.0f);
+	case EFFECTS_OPT_NEAR_DOF:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_dof_near), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_dof_near, f);
+		break;
+	case EFFECTS_OPT_TONEMAPPING:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_contrast), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_contrast, f);
+		break;
+	case EFFECTS_OPT_EXPOSURE:
+		f = M_GetSliderPos (-3, 3, CVAR_TO_FLOAT (rt_exposure_bias), false, mouse, clamped_mouse, dir, 0.1f, 0);
+		Cvar_SetValueQuick (&rt_exposure_bias, floorf (f * 10.0f + 0.5f) / 10.0f);
 		break;
 	case EFFECTS_OPT_DAMAGE:
 		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_ef_damage_strength), false, mouse, clamped_mouse, dir, 0.01f, 0);
@@ -2638,8 +2648,9 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&rt_bloom_intensity, 0.02f);
 		Cvar_SetValueQuick (&rt_bloom_threshold, 6.0f);
 		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
-		Cvar_SetValueQuick (&rt_lensflare_intensity, 0.01f);
-		Cvar_SetValueQuick (&rt_lensflare, 1.0f);
+		Cvar_SetValueQuick (&rt_dof_near, 0.25f);
+		Cvar_SetValueQuick (&rt_contrast, 0.6f);
+		Cvar_SetValueQuick (&rt_exposure_bias, 0.0f);
 		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.25f);
 		Cvar_SetValueQuick (&rt_sharpen_strength, 0.20f);
@@ -2708,8 +2719,16 @@ static void M_EffectsOptions_Draw (cb_context_t *cbx)
 	M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_QUALITY,
 		CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_quality) / 2.0f, 1.0f), M_GetQualityName (&rt_bloom_quality));
 
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LENSFLARE, "Lens flare");
-	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_LENSFLARE, &rt_lensflare_intensity, 1.0f);
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_NEAR_DOF, "Near DOF");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_NEAR_DOF, &rt_dof_near, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_TONEMAPPING, "Tonemap contrast");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_TONEMAPPING, &rt_contrast, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_EXPOSURE, "Exposure bias");
+	M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * EFFECTS_OPT_EXPOSURE,
+		(CLAMP (-3.0f, CVAR_TO_FLOAT (rt_exposure_bias), 3.0f) + 3.0f) / 6.0f,
+		va ("%+.1f EV", CVAR_TO_FLOAT (rt_exposure_bias)));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE, "Damage aberration");
 	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_DAMAGE, &rt_ef_damage_strength, 1.0f);

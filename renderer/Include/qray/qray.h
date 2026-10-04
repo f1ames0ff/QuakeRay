@@ -223,10 +223,6 @@ typedef struct QrInstanceCreateInfo
 
     const char                  *pWaterNormalTexturePath;
 
-    QrBool32                    lensFlareVerticesInScreenSpace;
-
-    QrBool32                    lensFlarePointToCheckIsInScreenSpace;
-
     QrTextureSwizzling          pbrTextureSwizzling;
 
     QrBool32                    effectWipeIsUsed;
@@ -1188,12 +1184,12 @@ typedef struct QrPostEffectsBloomParams
     uint32_t    quality;
 } QrPostEffectsBloomParams;
 
-typedef struct QrPostEffectsLensFlareParams
+typedef struct QrPostEffectsNearDofParams
 {
-    QrBool32    isActive;
-    float       intensity;
-    float       threshold;
-} QrPostEffectsLensFlareParams;
+    float       strength;
+    float       focusDistance;
+    float       maxRadius;
+} QrPostEffectsNearDofParams;
 
 typedef struct QrPostEffectsSharpenParams
 {
@@ -1232,7 +1228,7 @@ typedef struct QrDrawFramePostEffectsParams
     const QrPostEffectColorTint             *pColorTint;
     const QrPostEffectCRT                   *pCRT;
     const QrPostEffectsBloomParams          *pBloom;
-    const QrPostEffectsLensFlareParams      *pLensFlare;
+    const QrPostEffectsNearDofParams        *pNearDof;
     const QrPostEffectsSharpenParams        *pSharpen;
     const QrPostEffectsGameplayFeedback     *pGameplayFeedback;
     const QrPostEffectsVignetteParams        *pVignette;
@@ -1313,12 +1309,6 @@ typedef struct QrDrawFrameRenderResolutionParams
     const QrExtent2D            *pPixelizedRenderSize;
 } QrDrawFrameRenderResolutionParams;
 
-typedef struct QrDrawFrameLensFlareParams
-{
-    QrBlendFactor               lensFlareBlendFuncSrc;
-    QrBlendFactor               lensFlareBlendFuncDst;
-} QrDrawFrameLensFlareParams;
-
 typedef enum QrDrawFrameRayCullFlagBits
 {
     QR_DRAW_FRAME_RAY_CULL_WORLD_0_BIT  = 1,
@@ -1358,7 +1348,6 @@ typedef struct QrDrawFrameInfo
     const QrDrawFrameReflectRefractParams       *pReflectRefractParams;
     const QrDrawFrameSkyParams                  *pSkyParams;
     const QrDrawFrameTexturesParams             *pTexturesParams;
-    const QrDrawFrameLensFlareParams            *pLensFlareParams;
     const QrDrawFrameLevelFogParams             *pLevelFogParams;
     const QrDrawFrameDebugParams                *pDebugParams;
     QrDrawFramePostEffectsParams                postEffectParams;

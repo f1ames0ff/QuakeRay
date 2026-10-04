@@ -20,6 +20,7 @@
 
 #include "ShaderCommonHLSLFunc.hlsli"
 #include "Exposure.hlsli"
+#include "ColorCompositing.hlsli"
 
 #define POST_EFFECTS_EPSILON 1e-4
 #define POST_EFFECTS_MAX_RADIANCE 60000.0
@@ -31,12 +32,7 @@ float postEffectsExtractExposure()
 
 float3 postEffectsSanitize(float3 color)
 {
-    if (any(isnan(color)) || any(isinf(color)))
-    {
-        return (float3)0.0;
-    }
-
-    return clamp(color, (float3)0.0, (float3)POST_EFFECTS_MAX_RADIANCE);
+    return colorLimitPreserveHue(color, POST_EFFECTS_MAX_RADIANCE);
 }
 
 float postEffectsSoftKneeWeight(float luminance, float threshold, float knee)

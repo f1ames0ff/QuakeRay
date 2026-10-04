@@ -29,6 +29,7 @@ struct EffectGameplayFeedback_PushConst
 
 #define EFFECT_PUSH_CONST_T EffectGameplayFeedback_PushConst
 #include "EfSimple.hlsli"
+#include "ColorCompositing.hlsli"
 
 float gameplayFeedbackEdgeMask(float2 uv)
 {
@@ -64,14 +65,15 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     float3 color = effect_loadFromSource(pix);
 
-    color += float3(0.12, 0.0, 0.0) * (push.custom.damage * edgeMask * gameplayFeedbackPulse());
+    color = colorApplyTint(color, float3(1.0, 0.15, 0.10),
+                           0.12 * push.custom.damage * edgeMask * gameplayFeedbackPulse());
 
     const float pickupMask = smoothstep(1.0 - push.custom.pickupHeight, 1.0, uv.y);
     const float amount = saturate(push.custom.pickup * pickupMask);
     const float3 pickup = float3(push.custom.pickupColorR,
                                  push.custom.pickupColorG,
-                                 push.custom.pickupColorB) * amount;
-    color = 1.0 - (1.0 - saturate(color)) * (1.0 - saturate(pickup));
+                                 push.custom.pickupColorB);
+    color = colorApplyTint(color, pickup, amount);
 
-    effect_storeToTarget(saturate(color), pix);
+    effect_storeToTarget(colorLimitPreserveHue(color, 1.0), pix);
 }

@@ -21,7 +21,6 @@
 #include "RhiBloomPass.h"
 #include "RhiDecalPass.h"
 #include "RhiFsrPass.h"
-#include "RhiLensFlarePass.h"
 #include "RhiPostEffectPass.h"
 #include "RhiRtComposePass.h"
 #include "RhiRtDirectPass.h"
@@ -106,7 +105,6 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiFsrPass *pFsrPass,
                                        RhiPostEffectPass *pPostEffectPass,
                                        RhiBloomPass *pBloomPass,
-                                       RhiLensFlarePass *pLensFlarePass,
                                        RhiShadowMapPass *pShadowMapPass,
                                        RhiRtGodRaysPass *pGodRaysPass,
                                        RhiUiPass *pUiPass,
@@ -129,7 +127,6 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , fsrPass(pFsrPass)
     , postEffectPass(pPostEffectPass)
     , bloomPass(pBloomPass)
-    , lensFlarePass(pLensFlarePass)
     , shadowMapPass(pShadowMapPass)
     , godRaysPass(pGodRaysPass)
     , uiPass(pUiPass)
@@ -1896,11 +1893,6 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
     if (bloomPass != nullptr)
     {
         bloomPass->ReleaseTargets();
-    }
-
-    if (lensFlarePass != nullptr)
-    {
-        lensFlarePass->ReleaseTargets();
     }
 
     // The god-rays pass wraps the eight engine images it reads and writes (63/64 among them) and

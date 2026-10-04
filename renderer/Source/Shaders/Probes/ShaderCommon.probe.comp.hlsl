@@ -30,8 +30,7 @@ struct ProbeShPortalInstance_BT
 [[vk::binding(2, PROBE_DESC_SET)]] StructuredBuffer<ShTonemapping>                      tonemapping;
 [[vk::binding(3, PROBE_DESC_SET)]] StructuredBuffer<ShLightEncoded>                     lights;
 [[vk::binding(4, PROBE_DESC_SET)]] StructuredBuffer<ShIndirectDrawCommand>              drawCmds;
-[[vk::binding(5, PROBE_DESC_SET)]] StructuredBuffer<ShLensFlareInstance>                lensFlares;
-[[vk::binding(6, PROBE_DESC_SET)]] StructuredBuffer<ShDecalInstance>                    decals;
+[[vk::binding(5, PROBE_DESC_SET)]] StructuredBuffer<ShDecalInstance>                    decals;
 [[vk::binding(7, PROBE_DESC_SET)]] ConstantBuffer<ProbeShPortalInstance_BT> portalBuffer;
 [[vk::binding(8, PROBE_DESC_SET)]] RWStructuredBuffer<float> probeOutput;
 
@@ -78,8 +77,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          float(globalUniform.squareInputRoughness) + globalUniform.upscaledRenderWidth +
          globalUniform.worldUpVector.x + globalUniform.upscaledRenderHeight + globalUniform.jitterX +
          globalUniform.jitterY + globalUniform.primaryRayMinDist +
-         float(globalUniform.rayCullMaskWorld_Shadow) + float(globalUniform.lensFlareCullingInputCount) +
-         float(globalUniform.applyViewProjToLensFlares) + float(globalUniform.twirlPortalNormal) +
+         float(globalUniform.rayCullMaskWorld_Shadow) + float(globalUniform.__pad5) +
+         float(globalUniform.__pad6) + float(globalUniform.twirlPortalNormal) +
          float(globalUniform.lightIndexIgnoreFPVShadows) + globalUniform.gradientMultDiffuse +
          globalUniform.gradientMultIndirect + globalUniform.gradientMultSpecular +
          globalUniform.minRoughness + globalUniform.volumeCameraNear + globalUniform.volumeCameraFar +
@@ -141,11 +140,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     // ShIndirectDrawCommand
     v += float(drawCmds[0].indexCount) + float(drawCmds[0].instanceCount) + float(drawCmds[0].firstIndex) +
-         float(drawCmds[0].vertexOffset) + float(drawCmds[0].firstInstance) + drawCmds[0].positionToCheck_X +
-         drawCmds[0].positionToCheck_Y + drawCmds[0].positionToCheck_Z;
-
-    // ShLensFlareInstance
-    v += float(lensFlares[0].textureIndex);
+         float(drawCmds[0].vertexOffset) + float(drawCmds[0].firstInstance) + float(drawCmds[0].__pad0) +
+         float(drawCmds[0].__pad1) + float(drawCmds[0].__pad2);
 
     // ShDecalInstance
     v += decals[0].transform[0][0] + float(decals[0].textureAlbedoAlpha) +

@@ -74,7 +74,6 @@ set(renderer_SOURCES
     Source/RHI/RhiDescriptors.cpp
     Source/RHI/RhiFrameContext.cpp
     Source/RHI/RhiFsrPass.cpp
-    Source/RHI/RhiLensFlarePass.cpp
     Source/RHI/RhiPipeline.cpp
     Source/RHI/RhiPostEffectPass.cpp
     Source/RHI/RhiProceduralSkyPass.cpp
@@ -190,7 +189,26 @@ if(QR_BUILD_TESTS)
             -Fo "${QR_PROBE_DIR}/LocalExposureProbe.comp.spv"
         DEPENDS Tests/LocalExposureProbe.comp.hlsl Source/Shaders/LocalExposure.hlsli
         VERBATIM)
-    add_executable(qray_posteffects_smoke Tests/PostEffectsSmoke.cpp "${QR_PROBE_DIR}/LocalExposureProbe.comp.spv")
+    add_custom_command(OUTPUT "${QR_PROBE_DIR}/ColorCompositingProbe.comp.spv"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${QR_PROBE_DIR}"
+        COMMAND "${QR_DXC}" -spirv -fspv-target-env=vulkan1.2 -T cs_6_2 -E main
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/Source/Shaders"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/ColorCompositingProbe.comp.hlsl"
+            -Fo "${QR_PROBE_DIR}/ColorCompositingProbe.comp.spv"
+        DEPENDS Tests/ColorCompositingProbe.comp.hlsl Source/Shaders/ColorCompositing.hlsli
+        VERBATIM)
+    add_custom_command(OUTPUT "${QR_PROBE_DIR}/NearDofProbe.comp.spv"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${QR_PROBE_DIR}"
+        COMMAND "${QR_DXC}" -spirv -fspv-target-env=vulkan1.2 -T cs_6_2 -E main
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/Source/Shaders"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/NearDofProbe.comp.hlsl"
+            -Fo "${QR_PROBE_DIR}/NearDofProbe.comp.spv"
+        DEPENDS Tests/NearDofProbe.comp.hlsl Source/Shaders/NearDof.hlsli
+            Source/Generated/ShaderCommonHLSL.hlsli
+        VERBATIM)
+    add_executable(qray_posteffects_smoke Tests/PostEffectsSmoke.cpp
+        "${QR_PROBE_DIR}/LocalExposureProbe.comp.spv" "${QR_PROBE_DIR}/ColorCompositingProbe.comp.spv"
+        "${QR_PROBE_DIR}/NearDofProbe.comp.spv")
     target_compile_features(qray_posteffects_smoke PRIVATE cxx_std_20)
     target_include_directories(qray_posteffects_smoke PRIVATE Source)
     target_link_libraries(qray_posteffects_smoke PRIVATE renderer nvrhi nvrhi_vk)
