@@ -348,10 +348,13 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font
 	ImFont *font = nullptr;
 	if (font_data && font_size > 0)
 	{
+		ImFontConfig stats_config;
+		stats_config.FontDataOwnedByAtlas = false;
+
 		font = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, 19.0f);
 
 		for (int i = 0; i < kOverlayFontSizeCount; i++)
-			g_stats_fonts[i] = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, kOverlayFontSizes[i]);
+			g_stats_fonts[i] = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, kOverlayFontSizes[i], &stats_config);
 	}
 	if (!font)
 	{
