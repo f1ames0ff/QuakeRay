@@ -28,6 +28,7 @@ static int         cursor_size;
 static int         cursor_hot_x;
 static int         cursor_hot_y;
 static qboolean    cursor_cvars_registered;
+static qboolean    cursor_standard;
 
 static void Cursor_Changed_f (cvar_t *var)
 {
@@ -210,6 +211,11 @@ void Cursor_Init (void)
 	cursor_size = size;
 }
 
+void Cursor_SetStandard (int standard)
+{
+	cursor_standard = standard ? true : false;
+}
+
 void Cursor_Shutdown (void)
 {
 	if (cursor_sdl != NULL)
@@ -229,7 +235,7 @@ void Cursor_Shutdown (void)
 
 int Cursor_GetGuiCursor (int64_t *texture, int *size, int *hotX, int *hotY)
 {
-	if (CVAR_TO_BOOL (ui_cursor) || cursor_material == QR_NO_MATERIAL)
+	if (cursor_standard || CVAR_TO_BOOL (ui_cursor) || cursor_material == QR_NO_MATERIAL)
 		return 0;
 
 	*texture = (int64_t)cursor_material;

@@ -43,6 +43,7 @@
 #include "console.h"
 #include "mathlib.h"
 #include "input.h"
+#include "cursor.h"
 #include "vid.h"
 #include "atomics.h"
 
@@ -6816,6 +6817,7 @@ static void QRE_StopEditor (qboolean restore)
 	IN_Activate ();
 	SDL_ShowCursor (SDL_ENABLE);
 	QR_GUI_SetMouseCursor (0);
+	Cursor_SetStandard (0);
 
 	QRE_Notify ("editor closed");
 }
@@ -6906,6 +6908,7 @@ static void QRE_StartEditor (void)
 	sv.paused = true;
 
 	QRE_CursorMode (true);
+	Cursor_SetStandard (1);
 
 	Con_Printf ("qr editor: choose the mode (Material Editor / Light Editor)\n");
 }
