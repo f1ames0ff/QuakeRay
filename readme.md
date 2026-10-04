@@ -26,7 +26,7 @@ QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, wi
 - **Volumetric clouds**, with moving skies, sunlight and cloud shadows.
 - **Sun shafts and volumetric fog** for more atmospheric levels.
 - **Enhanced models**, where replacement models are available, with an option to keep the classic ones.
-- **Brightness, exposure and contrast controls** with a tone-mapping curve choice, plus a full post-effects stack: bloom, near weapon depth of field, contrast-adaptive sharpening, a soft vignette and optional local exposure, all on their own **Effects** page.
+- **Brightness, exposure and contrast controls** with a tone-mapping curve choice, plus a full post-effects stack: bloom, near weapon depth of field, contrast-adaptive sharpening, a soft vignette, film grain and optional local exposure, all on their own **Effects** page.
 - **Weapon models normalized to one on-screen size**, so the axe, the shotguns and the launchers read alike in the hand.
 - **Soft, lit smoke trails** for rockets, grenades and lava balls, with a classic smoke option.
 - **Smooth or classic texture filtering**, and a choice of particle styles.

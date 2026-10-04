@@ -313,6 +313,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_vignette_start, "0.45") \
 	CVAR_DEF_T (rt_vignette_end, "1.0") \
 	CVAR_DEF_T (rt_vignette_roundness, "0.35") \
+	CVAR_DEF_T (rt_filmgrain, "0.5") \
+	CVAR_DEF_T (rt_filmgrain_size, "1.6") \
 	CVAR_DEF_T (rt_ef_chraber, "0.3") \
 	CVAR_DEF_T (rt_ef_waves_stren, "1") \
 	CVAR_DEF_T (rt_ef_damage, "1") \
@@ -2845,6 +2847,11 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.roundness = CLAMP (0.0f, CVAR_TO_FLOAT (rt_vignette_roundness), 1.0f),
 	};
 
+	QrPostEffectsFilmGrainParams filmgrain_effect = {
+		.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_filmgrain), 1.0f),
+		.size = CLAMP (0.25f, CVAR_TO_FLOAT (rt_filmgrain_size), 8.0f),
+	};
+
     QrPostEffectRadialBlur radial_effect = {
 		.isActive = (cl.items & (IT_QUAD | IT_INVULNERABILITY)) && cl.stats[STAT_HEALTH] > 0,
 		.transitionDurationIn = 1.0f,
@@ -2913,6 +2920,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 				.pNearDof = (cl.intermission || editor_active) ? NULL : &near_dof_effect,
 				.pSharpen = &sharpen_effect,
 				.pVignette = &vignette_effect,
+				.pFilmGrain = &filmgrain_effect,
 				.localExposure = CLAMP (0.0f, CVAR_TO_FLOAT (rt_local_exposure), 1.0f),
 				.pGameplayFeedback = (cl.intermission || editor_active) ? NULL : &feedback_effect,
 			},

@@ -205,6 +205,7 @@ extern cvar_t rt_ef_liquid_strength;
 extern cvar_t rt_sharpen_strength;
 extern cvar_t rt_sharpen;
 extern cvar_t rt_vignette;
+extern cvar_t rt_filmgrain;
 extern cvar_t rt_local_exposure;
 extern cvar_t rt_sky_godrays;
 extern cvar_t rt_sky_godrays_quality;
@@ -2567,6 +2568,7 @@ enum
 	EFFECTS_OPT_LIQUID,
 	EFFECTS_OPT_SHARPEN,
 	EFFECTS_OPT_VIGNETTE,
+	EFFECTS_OPT_FILM_GRAIN,
 	EFFECTS_OPT_LOCAL_EXPOSURE,
 	EFFECTS_OPT_RESET,
 	EFFECTS_OPTIONS_ITEMS
@@ -2650,6 +2652,10 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_vignette), false, mouse, clamped_mouse, dir, 0.01f, 0);
 		Cvar_SetValueQuick (&rt_vignette, f);
 		break;
+	case EFFECTS_OPT_FILM_GRAIN:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_filmgrain), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_filmgrain, f);
+		break;
 	case EFFECTS_OPT_LOCAL_EXPOSURE:
 		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_local_exposure), false, mouse, clamped_mouse, dir, 0.01f, 0);
 		Cvar_SetValueQuick (&rt_local_exposure, f);
@@ -2667,6 +2673,7 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&rt_sharpen_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_sharpen, 2.0f);
 		Cvar_SetValueQuick (&rt_vignette, 0.5f);
+		Cvar_SetValueQuick (&rt_filmgrain, 0.5f);
 		Cvar_SetValueQuick (&rt_local_exposure, 0.1f);
 		break;
 	}
@@ -2756,6 +2763,9 @@ static void M_EffectsOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_VIGNETTE, "Vignette");
 	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_VIGNETTE, &rt_vignette, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_FILM_GRAIN, "Film grain");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_FILM_GRAIN, &rt_filmgrain, 1.0f);
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LOCAL_EXPOSURE, "Local exposure");
 	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_LOCAL_EXPOSURE, &rt_local_exposure, 1.0f);

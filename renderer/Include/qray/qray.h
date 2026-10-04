@@ -1163,6 +1163,12 @@ typedef struct QrPostEffectsVignetteParams
     float       roundness;
 } QrPostEffectsVignetteParams;
 
+typedef struct QrPostEffectsFilmGrainParams
+{
+    float       intensity;
+    float       size;
+} QrPostEffectsFilmGrainParams;
+
 typedef struct QrDrawFramePostEffectsParams
 {
     const QrPostEffectWipe                  *pWipe;
@@ -1179,6 +1185,7 @@ typedef struct QrDrawFramePostEffectsParams
     const QrPostEffectsSharpenParams        *pSharpen;
     const QrPostEffectsGameplayFeedback     *pGameplayFeedback;
     const QrPostEffectsVignetteParams        *pVignette;
+    const QrPostEffectsFilmGrainParams       *pFilmGrain;
     float                                  localExposure;
 } QrDrawFramePostEffectsParams;
 

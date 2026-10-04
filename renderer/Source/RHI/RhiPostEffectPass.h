@@ -181,8 +181,9 @@ public:
     // 'pDevice' is the RHI device; 'pFrameContext' is the host's frame model
     // (RHI/RhiFrameContext.h) that owns the retire queue every replaced wrap and set goes through.
     // 'pShaderFolderPath' is the folder the engine blobs are loaded from, with the trailing
-    // separator; the nine `Ef*.comp.spv` effect files (and, when 'wipeIsUsed' is set, its tenth)
-    // are read from it. 'wipeIsUsed' is the engine instance's effectWipeIsUsed. None is owned.
+    // separator; the thirteen `Ef*.comp.spv` effect files (and, when 'wipeIsUsed' is set, the
+    // wipe's blobs) are read from it. 'wipeIsUsed' is the engine instance's effectWipeIsUsed. None
+    // is owned.
     // Returns false and leaves the pass unusable if a binding layout, a shader or a pipeline of the
     // nine non-wipe effects cannot be created; the wipe's own pieces are soft failures that log a
     // warning and leave the wipe unavailable.
@@ -258,6 +259,7 @@ private:
         EFFECT_SHARPEN,
         EFFECT_GAMEPLAY_FEEDBACK,
         EFFECT_VIGNETTE,
+        EFFECT_FILM_GRAIN,
         EFFECT_COUNT,
     };
 
@@ -391,18 +393,19 @@ private:
     bool wipeIsUsed = false;
     bool wipeAvailable = false;
 
-    // The ten effects; every one but the wipe is a hard requirement of Create.
+    // The fourteen effects; every one but the wipe is a hard requirement of Create.
     Effect effects[EFFECT_COUNT];
 
-    // The layouts of the module: the three set-0 shapes, the uniform set and the three
-    // push-constant layouts the effects' block sizes call for (16, 24 and 28 bytes). Every layout
-    // is Compute visibility and the pinned backend keeps the order the pipelines add them in, which
-    // is the shader's set numbering.
+    // The layouts of the module: the three set-0 shapes, the uniform set and the five
+    // push-constant layouts the effects' block sizes call for (16, 20, 24, 28 and 44 bytes). Every
+    // layout is Compute visibility and the pinned backend keeps the order the pipelines add them in,
+    // which is the shader's set numbering.
     nvrhi::BindingLayoutHandle simpleFramebufferLayout;
     nvrhi::BindingLayoutHandle albedoFramebufferLayout;
     nvrhi::BindingLayoutHandle wipeFramebufferLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle pushConstant16Layout;
+    nvrhi::BindingLayoutHandle pushConstant20Layout;
     nvrhi::BindingLayoutHandle pushConstant24Layout;
     nvrhi::BindingLayoutHandle pushConstant28Layout;
     nvrhi::BindingLayoutHandle pushConstant44Layout;

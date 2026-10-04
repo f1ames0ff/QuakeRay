@@ -37,7 +37,7 @@ using namespace qray;
 namespace
 {
 
-// The ten engine blobs, by the file names ShaderManager loads them under (ShaderManager.cpp:87-96).
+// The engine blobs, by the file names ShaderManager loads them under (ShaderManager.cpp:87-96).
 // Each is the same module the legacy effect objects read through ShaderManager, so the RHI and the
 // legacy renderer dispatch byte-identical shaders.
 const char *const COLOR_TINT_SHADER_FILE_NAME = "EfColorTint.comp.spv";
@@ -158,6 +158,16 @@ struct EffectVignettePush
 };
 static_assert(sizeof(EffectVignettePush) == 28);
 static_assert(offsetof(EffectVignettePush, intensity) == 12);
+
+struct EffectFilmGrainPush
+{
+    EffectTransitionPush transition;
+    float intensity;
+    float size;
+};
+static_assert(sizeof(EffectFilmGrainPush) == 20);
+static_assert(offsetof(EffectFilmGrainPush, intensity) == 12);
+static_assert(offsetof(EffectFilmGrainPush, size) == 16);
 
 struct EffectGameplayFeedbackPush
 {
@@ -379,14 +389,21 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         uniformLayout = device->createBindingLayout(desc);
     }
 
-    // The three push-constant layouts the measured block sizes call for: 16 bytes for the effects
+    // The push-constant layouts the measured block sizes call for: 16 bytes for the effects
     // without custom members and for the chromatic aberration (one float) and the wipe (its own
-    // four-member block), 24 for the waves, 28 for the colour tint. No set is bound for them.
+    // four-member block), 20 for the film grain, 24 for the waves, 28 for the colour tint. No set
+    // is bound for them.
     {
         nvrhi::BindingLayoutDesc desc;
         desc.visibility = nvrhi::ShaderType::Compute;
         desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectBasePush)));
         pushConstant16Layout = device->createBindingLayout(desc);
+    }
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectFilmGrainPush)));
+        pushConstant20Layout = device->createBindingLayout(desc);
     }
     {
         nvrhi::BindingLayoutDesc desc;
@@ -409,7 +426,7 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
 
     if (simpleFramebufferLayout == nullptr || albedoFramebufferLayout == nullptr ||
         wipeFramebufferLayout == nullptr || uniformLayout == nullptr ||
-        pushConstant16Layout == nullptr ||
+        pushConstant16Layout == nullptr || pushConstant20Layout == nullptr ||
         pushConstant24Layout == nullptr || pushConstant28Layout == nullptr ||
         pushConstant44Layout == nullptr)
     {
@@ -452,7 +469,7 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         }
     }
 
-    // The nine effects that are always available: the blob, its two specializations and the two
+    // The effects that are always available: the blob, its two specializations and the two
     // pipelines over the effect's measured set shape. Every one of them is a hard requirement -
     // a missing blob means the engine's shader folder is incomplete.
     struct EffectDesc
@@ -485,6 +502,7 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         { EFFECT_SHARPEN, "sharpen", SHARPEN_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
         { EFFECT_GAMEPLAY_FEEDBACK, "gameplay feedback", GAMEPLAY_FEEDBACK_SHADER_FILE_NAME, FB_SIMPLE, 44, true },
         { EFFECT_VIGNETTE, "vignette", "EfVignette.comp.spv", FB_SIMPLE, 28, true },
+        { EFFECT_FILM_GRAIN, "film grain", "EfFilmGrain.comp.spv", FB_SIMPLE, 20, true },
     };
 
     static_assert(std::size(descs) == EFFECT_COUNT - 1,
@@ -505,7 +523,8 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         nvrhi::IBindingLayout *pushConstantLayout =
             desc.pushConstantSize == 44 ? pushConstant44Layout.Get() :
             desc.pushConstantSize == 28 ? pushConstant28Layout.Get() :
-            desc.pushConstantSize == 24 ? pushConstant24Layout.Get() : pushConstant16Layout.Get();
+            desc.pushConstantSize == 24 ? pushConstant24Layout.Get() :
+            desc.pushConstantSize == 20 ? pushConstant20Layout.Get() : pushConstant16Layout.Get();
 
         for (uint32_t sourceIsPing = 0; sourceIsPing < 2; sourceIsPing++)
         {
@@ -818,6 +837,21 @@ void RhiPostEffectPass::Render(nvrhi::ICommandList *pCommandList,
             {
                 sourceIsPing = !sourceIsPing;
             }
+        }
+    }
+
+    if (params.pFilmGrain != nullptr && std::isfinite(params.pFilmGrain->intensity) &&
+        params.pFilmGrain->intensity > 0.0f)
+    {
+        EffectFilmGrainPush push{};
+        push.intensity = std::clamp(params.pFilmGrain->intensity, 0.0f, 1.0f);
+        push.size = std::isfinite(params.pFilmGrain->size)
+            ? std::clamp(params.pFilmGrain->size, 0.25f, 8.0f) : 1.6f;
+
+        if (DispatchEffect(pCommandList, target, EFFECT_FILM_GRAIN, sourceIsPing,
+                           &push, sizeof(push), groupsX, groupsY))
+        {
+            sourceIsPing = !sourceIsPing;
         }
     }
 

@@ -488,6 +488,86 @@ void CheckGameplayColor(nvrhi::IDevice *device, const std::string &shaders)
     Require(at(values, 0, 0, 0) == 0.0f, "legacy tint cannot lift black");
 }
 
+void CheckFilmGrain(nvrhi::IDevice *device, const std::string &shaders)
+{
+    auto images = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(29),
+        nvrhi::BindingLayoutItem::Texture_UAV(30)});
+    auto uniforms = Layout(device, {nvrhi::BindingLayoutItem::ConstantBuffer(0)});
+    auto pushLayout = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 20)});
+    auto pipeline = Pipeline(device, shaders + "/EfFilmGrain.comp.spv", {images, uniforms, pushLayout});
+    const uint32_t width = 64;
+    const uint32_t height = 48;
+    nvrhi::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = nvrhi::Format::R11G11B10_FLOAT;
+    desc.isUAV = true;
+    desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    desc.keepInitialState = true;
+    auto ping = device->createTexture(desc);
+    auto pong = device->createTexture(desc);
+    auto imageSet = device->createBindingSet(nvrhi::BindingSetDesc()
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(29, ping))
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(30, pong)), images);
+    nvrhi::BufferDesc buffer;
+    buffer.byteSize = sizeof(ShGlobalUniform);
+    buffer.isConstantBuffer = true;
+    buffer.initialState = nvrhi::ResourceStates::ConstantBuffer;
+    buffer.keepInitialState = true;
+    auto uniform = device->createBuffer(buffer);
+    auto uniformSet = device->createBindingSet(nvrhi::BindingSetDesc()
+        .addItem(nvrhi::BindingSetItem::ConstantBuffer(0, uniform)), uniforms);
+    Require(ping != nullptr && pong != nullptr && imageSet != nullptr && uniform != nullptr && uniformSet != nullptr,
+        "create film grain targets");
+    const auto run = [&](float base, float intensity, uint32_t frameId) {
+        auto cmd = device->createCommandList();
+        cmd->open();
+        cmd->clearTextureFloat(pong, nvrhi::AllSubresources, nvrhi::Color(base));
+        ShGlobalUniform frame{};
+        frame.frameId = frameId;
+        cmd->writeBuffer(uniform, &frame, sizeof(frame));
+        nvrhi::ComputeState state;
+        state.pipeline = pipeline;
+        state.addBindingSet(imageSet).addBindingSet(uniformSet);
+        cmd->setComputeState(state);
+        const uint32_t push[5] = {0, 0, 0, std::bit_cast<uint32_t>(intensity), std::bit_cast<uint32_t>(1.6f)};
+        cmd->setPushConstants(push, sizeof(push));
+        cmd->dispatch((width + 15) / 16, (height + 15) / 16);
+        cmd->close();
+        device->executeCommandList(cmd);
+        auto values = ReadTextureRGBA(device, ping);
+        for (float v : values) Require(std::isfinite(v) && v >= 0.0f && v <= 1.0f, "bounded film grain");
+        return values;
+    };
+    auto flat = run(0.5f, 0.0f, 1);
+    for (size_t i = 0; i < flat.size(); i += 4)
+        Require(flat[i] == 0.5f && flat[i + 1] == 0.5f && flat[i + 2] == 0.5f, "zero film grain is identity");
+    auto grained = run(0.5f, 0.6f, 1);
+    double sum = 0.0;
+    float maxDelta = 0.0f;
+    for (size_t i = 0; i < grained.size(); i += 4)
+    {
+        const float delta = grained[i] - 0.5f;
+        sum += delta;
+        maxDelta = std::max(maxDelta, std::abs(delta));
+        Require(std::abs(delta - (grained[i + 1] - 0.5f)) < 0.01f &&
+            std::abs(delta - (grained[i + 2] - 0.5f)) < 0.01f, "film grain is monochrome");
+    }
+    Require(maxDelta > 0.005f, "film grain is visible");
+    Require(std::abs(sum / double(grained.size() / 4)) < 0.01, "film grain preserves the mean colour");
+    auto other = run(0.5f, 0.6f, 2);
+    bool differs = false;
+    for (size_t i = 0; i < grained.size() && !differs; i++) differs = grained[i] != other[i];
+    Require(differs, "film grain is a new one every frame");
+    auto strong = run(0.5f, 1.0f, 1);
+    float strongDelta = 0.0f;
+    for (size_t i = 0; i < strong.size(); i += 4)
+        strongDelta = std::max(strongDelta, std::abs(strong[i] - 0.5f));
+    Require(strongDelta > maxDelta, "film grain scales with its strength");
+    auto black = run(0.0f, 1.0f, 1);
+    for (float v : black) Require(v == 0.0f, "film grain leaves black black");
+}
+
 void CheckNearDof(nvrhi::IDevice *device, const std::string &probes)
 {
     auto layout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(0),
@@ -712,6 +792,7 @@ int main(int argc, char **argv)
             auto tm = probe.Run(127, 7, pixels, true, 1.0f / 60, 10.0f, 80.0f);
             Require(std::abs(tm.avgLuminance - 0.25f) < 0.015f, "percentiles reject bright outliers");
             CheckVignette(device, argv[1]);
+            CheckFilmGrain(device, argv[1]);
             CheckColorCompositing(device, argv[2]);
             CheckGameplayColor(device, argv[1]);
             CheckNearDof(device, argv[2]);
@@ -719,7 +800,7 @@ int main(int argc, char **argv)
         }
         Require(device->waitForIdle(), "finish GPU tests");
         Require(gpu.errors.load() == 0, "Vulkan validation errors");
-        std::cout << "PASS: histogram, adaptation, local exposure, vignette, color compositing, gameplay tint and near weapon DOF\n";
+        std::cout << "PASS: histogram, adaptation, local exposure, vignette, film grain, color compositing, gameplay tint and near weapon DOF\n";
         return 0;
     }
     catch (const std::exception &e)
