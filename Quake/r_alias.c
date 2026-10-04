@@ -276,7 +276,7 @@ static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpda
         }
 
         const float normalize = CLAMP(0.0f, CVAR_TO_FLOAT(rt_viewm_normalize), 1.0f);
-        if (normalize > 0.0f)
+        if (normalize > 0.0f && maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2])
         {
             const float manual = RT_ViewmodelNormalizeManual (modelname);
             const float factor = manual > 0.0f ? manual
