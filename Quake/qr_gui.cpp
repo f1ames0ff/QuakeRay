@@ -347,7 +347,7 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path)
 	if (font_path && font_path[0])
 	{
 		font         = io.Fonts->AddFontFromFileTTF (font_path, 19.0f);
-		g_stats_font = io.Fonts->AddFontFromFileTTF (font_path, 14.0f);
+		g_stats_font = io.Fonts->AddFontFromFileTTF (font_path, 28.0f);
 	}
 	if (!font)
 	{
@@ -1864,11 +1864,11 @@ void QR_GUI_DrawCircle (float cx, float cy, float radius, uint32_t argb, float t
 namespace
 {
 
-constexpr float kOverlayLabelW = 108.0f;
-constexpr float kOverlayValueW = 72.0f;
-constexpr float kOverlayGraphW = 118.0f;
-constexpr float kOverlayGraphH = 13.0f;
-constexpr float kOverlayGapX   = 6.0f;
+constexpr float kOverlayLabelW = 216.0f;
+constexpr float kOverlayValueW = 144.0f;
+constexpr float kOverlayGraphW = 236.0f;
+constexpr float kOverlayGraphH = 26.0f;
+constexpr float kOverlayGapX   = 12.0f;
 constexpr float kOverlayRowW   = kOverlayLabelW + kOverlayValueW + kOverlayGapX + kOverlayGraphW;
 
 bool g_overlay_group = false;
@@ -1876,7 +1876,7 @@ bool g_overlay_first = true;
 
 void OverlaySparkline (ImDrawList *dl, const ImVec2 &p, float w, float h, const float *v, int n, ImU32 col)
 {
-	dl->AddRectFilled (p, ImVec2 (p.x + w, p.y + h), IM_COL32 (0, 0, 0, 110), 2.0f);
+	dl->AddRectFilled (p, ImVec2 (p.x + w, p.y + h), IM_COL32 (0, 0, 0, 110), 4.0f);
 
 	float vmax = 0.0f;
 	for (int i = 0; i < n; i++)
@@ -1887,8 +1887,8 @@ void OverlaySparkline (ImDrawList *dl, const ImVec2 &p, float w, float h, const 
 		vmax = 1e-4f;
 	vmax *= 1.15f;
 
-	const float x0 = p.x + 1.0f, x1 = p.x + w - 1.0f;
-	const float y0 = p.y + 1.0f, y1 = p.y + h - 1.0f;
+	const float x0 = p.x + 2.0f, x1 = p.x + w - 2.0f;
+	const float y0 = p.y + 2.0f, y1 = p.y + h - 2.0f;
 	const float dy = y1 - y0;
 
 	ImVec2 pts[128];
@@ -1905,7 +1905,7 @@ void OverlaySparkline (ImDrawList *dl, const ImVec2 &p, float w, float h, const 
 	for (int i = 1; i < n; i++)
 		dl->AddQuadFilled (ImVec2 (pts[i - 1].x, y1), pts[i - 1], pts[i], ImVec2 (pts[i].x, y1), fill);
 
-	dl->AddPolyline (pts, n, col, ImDrawFlags_None, 1.0f);
+	dl->AddPolyline (pts, n, col, ImDrawFlags_None, 2.0f);
 }
 
 }
@@ -1922,12 +1922,12 @@ void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const c
 	                               ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
 	                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
-	ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (8.0f, 6.0f));
-	ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, ImVec2 (6.0f, 2.0f));
+	ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (16.0f, 12.0f));
+	ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, ImVec2 (12.0f, 4.0f));
 	if (g_stats_font)
-		ImGui::PushFont (g_stats_font, 14.0f);
+		ImGui::PushFont (g_stats_font, 28.0f);
 	else
-		ImGui::PushFont (nullptr, 14.0f);
+		ImGui::PushFont (nullptr, 28.0f);
 
 	ImGui::Begin (id, nullptr, flags);
 
@@ -1957,9 +1957,9 @@ void QR_GUI_OverlaySection (const char *title)
 
 	if (title && title[0])
 	{
+		ImGui::Dummy (ImVec2 (0.0f, 4.0f));
+		ImGui::TextColored (ImVec4 (0.82f, 0.84f, 0.86f, 1.0f), "%s", title);
 		ImGui::Dummy (ImVec2 (0.0f, 2.0f));
-		ImGui::TextColored (ImVec4 (0.62f, 0.78f, 0.92f, 1.0f), "%s", title);
-		ImGui::Dummy (ImVec2 (0.0f, 1.0f));
 	}
 }
 
@@ -1970,7 +1970,7 @@ void QR_GUI_OverlayRow (const char *label, const char *value, const float *sampl
 
 	ImDrawList  *dl = ImGui::GetWindowDrawList ();
 	const float  line_h = ImGui::GetTextLineHeight ();
-	const float  row_h = line_h > kOverlayGraphH + 4.0f ? line_h : kOverlayGraphH + 4.0f;
+	const float  row_h = line_h > kOverlayGraphH + 8.0f ? line_h : kOverlayGraphH + 8.0f;
 	const ImVec2 pos = ImGui::GetCursorScreenPos ();
 	const ImU32  col = PackedColorToU32 (color);
 
