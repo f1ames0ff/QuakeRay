@@ -3,6 +3,7 @@
 ## v0.26.1
 
 ### Added
+- **The Video options page selects the refresh rate again** — a `Refresh rate` row sits right under `Video mode`; the left and right arrows step it, and Enter or a click on it cycles forward like the right arrow. The list is rebuilt from the modes that match the current width and height every time the resolution changes, so the choice stays on a rate the mode actually offers; a size with no full screen rates of its own (a custom windowed resolution) leaves the row inert instead of reading past the end of the list.
 - **The mouse pointer is the Quake axe** — the system cursor and the ImGui software cursor of the editor and the EQ panel draw the same artwork: `gfx/quake_axe_<size>.png` next to the executable becomes an SDL color cursor for the menus and a renderer material the GUI draws at the mouse position in place of ImGui's built-in arrow. The size follows the monitor — `16x16` under Full HD, `32x32` at Full HD, `64x64` from 4K — and the hotspot is the blade tip, read from the alpha of the image. Graphics → "Mouse cursor" switches between `axe` (the default, `ui_cursor 0`, archived) and the usual Windows pointer (`default`, `ui_cursor 1`) on the spot: the SDL cursor is replaced or released and the GUI falls back to ImGui's arrow without a restart. The runtime assets next to the executable are one `gfx` folder now — the build copies `renderer/gfx` and the GUI font into it, the editor loads the font from `gfx/Roboto-Regular.ttf`, and `bundle_release.ps1` ships the folder.
 
 ### Fixed

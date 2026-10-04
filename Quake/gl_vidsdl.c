@@ -3268,7 +3268,7 @@ void VID_SyncCvars (void)
 enum
 {
 	VID_OPT_MODE,
-	// VID_OPT_REFRESHRATE,
+	VID_OPT_REFRESHRATE,
 	VID_OPT_APPLY,
 
 	VID_OPT_UPSCALER,
@@ -3396,10 +3396,9 @@ vid_height cvars, then updates refreshrate lists
 */
 static void VID_Menu_ChooseNextMode (int dir)
 {
-	int i;
-
 	if (vid_menu_nummodes)
 	{
+		int i;
 		for (i = 0; i < vid_menu_nummodes; i++)
 		{
 			if (vid_menu_modes[i].width == vid_width.value && vid_menu_modes[i].height == vid_height.value)
@@ -3453,6 +3452,10 @@ chooses next refresh rate in order, then updates vid_refreshrate cvar
 static void VID_Menu_ChooseNextRate (int dir)
 {
 	int i;
+
+	// no fullscreen rates for the current size (custom windowed mode, etc.)
+	if (vid_menu_numrates <= 0)
+		return;
 
 	for (i = 0; i < vid_menu_numrates; i++)
 	{
@@ -3540,6 +3543,9 @@ static void VID_Menu_Adjust (int dir)
 	{
 	case VID_OPT_MODE:
 		VID_Menu_ChooseNextMode (-dir);
+		break;
+	case VID_OPT_REFRESHRATE:
+		VID_Menu_ChooseNextRate (-dir);
 		break;
 	case VID_OPT_VSYNC:
 		VID_Menu_ChooseNextVsync (dir);
@@ -3698,10 +3704,10 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			M_Print (cbx, 16, y, "        Video mode");
 			M_Print (cbx, 184, y, va ("%ix%i", (int)vid_width.value, (int)vid_height.value));
 			break;
-		//case VID_OPT_REFRESHRATE:
-		//	M_Print (cbx, 16, y, "      Refresh rate");
-		//	M_Print (cbx, 184, y, va ("%i", (int)vid_refreshrate.value));
-		//	break;
+		case VID_OPT_REFRESHRATE:
+			M_Print (cbx, 16, y, "      Refresh rate");
+			M_Print (cbx, 184, y, va ("%i", (int)vid_refreshrate.value));
+			break;
 		case VID_OPT_APPLY:
 			M_Print (cbx, 16, y, "             Apply");
 			break;
