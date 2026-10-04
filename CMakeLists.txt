@@ -379,6 +379,7 @@ set(CORE_SOURCES
     Quake/rt_material.c
     Quake/rt_lights.c
     Quake/rt_pkz.c
+    Quake/rt_stats_gui.c
     Quake/qr_editor.c
     Quake/qr_gui.cpp
     Quake/sbar.c

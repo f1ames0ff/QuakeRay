@@ -138,6 +138,14 @@ int  QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h, 
 // 1 while any ImGui item is being dragged or edited.
 int  QR_GUI_AnyItemActive (void);
 
+// ----- the rt_stats readout -----
+
+void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title);
+void QR_GUI_OverlaySection (const char *title);
+void QR_GUI_OverlayEnd (void);
+void QR_GUI_OverlayRow (const char *label, const char *value, const float *samples, int count, uint32_t color);
+void QR_GUI_OverlayNote (const char *text);
+
 // A short message shown in the corner of the editor interface (Apply/Cancel
 // confirmations, errors). Fades out on its own.
 void QR_GUI_Notify (const char *text);

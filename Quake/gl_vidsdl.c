@@ -308,7 +308,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_restir, "0") \
 	CVAR_DEF_T (rt_restir_candidates, "8") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
-	CVAR_DEF_T (rt_stats_interval, "0.25") \
+	CVAR_DEF_T (rt_stats_interval, "0.2") \
 	CVAR_DEF_T (rt_worldcensus, "0") \
 	CVAR_DEF_T (rt_worldlights_stats, "0") \
 	CVAR_DEF_T (rt_worldclusters_grid, "1")
@@ -333,9 +333,9 @@ RT frame profiler -- rt_stats 3
 Times the CPU side of the frame, which the GPU timestamps of panel 2 do not
 cover: the geometry marking chain, the per-pass scene submission and the main
 thread's wait for the task graph. The results are drawn on screen by
-SCR_DrawRTStats and SCR_DrawRTProf, and rt_prof_report, which the two of them
-read, is rebuilt every `rt_stats_interval` seconds (a quarter of a second by
-default, so the readout moves instead of standing still for a whole one) by
+RT_StatsDrawGui, and rt_prof_report, which it reads, is rebuilt every
+`rt_stats_interval` seconds (at most a fifth of a second, the rate the ImGui
+overlay refreshes at; the setting may only make the readout faster) by
 RT_Prof_Update; rt_stats_dump writes one snapshot to qperfdump.log.
 
 The slots are written from worker threads without synchronization, so taking the
@@ -506,10 +506,10 @@ void RT_Prof_Update (void)
 	/* A cvar can hold a value no comparison reaches --- a "nan" typed in the console or
 	   written into a config --- and the clamp would hand it straight back, making every
 	   frame look like the end of a window; such a value falls back to the default. */
-	double interval = CLAMP (0.05, CVAR_TO_FLOAT (rt_stats_interval), 3.0);
+	double interval = CLAMP (0.05, CVAR_TO_FLOAT (rt_stats_interval), 0.2);
 
-	if (!(interval >= 0.05 && interval <= 3.0))
-		interval = 0.25;
+	if (!(interval >= 0.05 && interval <= 0.2))
+		interval = 0.2;
 
 	const double elapsed = now - rt_prof_window_start;
 	if (elapsed < interval)
@@ -740,6 +740,8 @@ static void RT_StatsPanelsFixup (cvar_t *var)
 
 	if (mask != level)
 		Cvar_SetValueQuick (var, (float)level);
+
+	RT_StatsGuiReset ();
 }
 
 /*
