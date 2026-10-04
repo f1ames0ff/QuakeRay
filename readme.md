@@ -107,7 +107,7 @@ Steps:
    .\build_shaders.ps1
    ```
 
-   This compiles `renderer/Source/Shaders` (the HLSL twins with `dxc`, the remaining GLSL stages with `glslc`) and deploys the SPIR-V into `build\Debug\id1\shaders` (`-DestDir <dir>` to deploy somewhere else). Pass `-Rebuild` to ignore the shader cache and recompile everything, and `-GenCommon` when the generated shader-common headers changed.
+   This compiles `renderer/Source/Shaders` (the HLSL twins with `dxc`, the remaining GLSL stages with `glslc`) and writes the SPIR-V into `build\Debug\id1\qray.pkz` (`-Pkz <file>` targets another archive, `-DestDir <dir>` stages loose files into a directory instead). Restart the game to load them. Pass `-Rebuild` to ignore the shader cache and recompile everything, and `-GenCommon` when the generated shader-common headers changed.
 
 3. Configure and build:
 
@@ -117,9 +117,17 @@ Steps:
 
    Debug builds go to `build\Debug` (the default build dir for the given configuration). Pass an explicit directory as a second argument only if you know you want a different one.
 
-   (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build - note that plain CMake only compiles the engine, while `build_win.ps1` is what stages the runtime assets: `qray.pkz`, `qray.materials.yaml` and the SPIR-V shaders. An engine built with plain CMake alone cannot start and fails with a missing blue-noise/shader error). If a fully parallel first build runs the compiler out of heap (`fatal error C1060`), cap the job count: `.\build_win.ps1 Release -Parallel 4`.
+   (or with plain CMake: `cmake -B build\Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug` + `cmake --build build\Debug`; use `-DCMAKE_BUILD_TYPE=Release` and `build\Release` for a release build - note that plain CMake only compiles the engine, while `build_win.ps1` is what stages the runtime assets: `qray.pkz`, `qray.materials.yaml` and the SPIR-V shaders. An engine built with plain CMake alone cannot start and fails with a missing blue-noise/shader error until `.\build_win.ps1 <Config> -PkzOnly` deploys the assets). If a fully parallel first build runs the compiler out of heap (`fatal error C1060`), cap the job count: `.\build_win.ps1 Release -Parallel 4`.
 
    The build then deploys the engine assets into `build\<Config>\id1`: `qray.pkz` carries the `renderer/Source/textures` (the QR material textures, model skins, luma and gloss maps), the SPIR-V shaders, the blue noise and water normal tables, the axe cursor artwork and the GUI font, while the material definitions (`renderer/Source/materials.yaml`) stay loose as `id1/qray.materials.yaml` because the editor rewrites that file.
+
+   Change one engine asset (a shader, a texture, `renderer/gfx`, the UI pack or `materials.yaml`) and repack it without recompiling the engine:
+
+   ```
+   .\build_win.ps1 Debug -PkzOnly
+   ```
+
+   This skips cmake and the MSVC setup, checks the shader cache instead of rebuilding every `.spv`, and repacks `qray.pkz` together with the loose `qray.materials.yaml`.
 
 4. Run the game:
 
