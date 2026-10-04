@@ -92,7 +92,7 @@ static cvar_t                   vid_width = {"vid_width", "-1", CVAR_ARCHIVE};  
 static cvar_t                   vid_height = {"vid_height", "-1", CVAR_ARCHIVE};       //     desktop resolution at the first time
 static cvar_t                   vid_refreshrate = {"vid_refreshrate", "60", CVAR_ARCHIVE};
 cvar_t                          vid_vsync = {"vid_vsync", "2", CVAR_ARCHIVE};
-static cvar_t                   vid_maxframelatency = {"vid_maxframelatency", "0", CVAR_ARCHIVE};
+static cvar_t                   vid_maxframelatency = {"vid_maxframelatency", "0", CVAR_ROM};
 
 int                             vid_display_refresh = 0;
 static cvar_t                   vid_desktopfullscreen = {"vid_desktopfullscreen", "0", CVAR_ARCHIVE}; // QuakeSpasm
@@ -1586,17 +1586,6 @@ static void VID_CloudsQuality_f (cvar_t *var)
 	if (var->value != (float)quality)
 	{
 		Cvar_SetValueQuick (var, (float)quality);
-	}
-}
-
-static void VID_MaxFrameLatency_f (cvar_t *var)
-{
-	const int value = (int)var->value;
-
-	if (value != 0 && value != 1)
-	{
-		Cvar_SetValueQuick (var, 0.0f);
-		Con_Printf ("Video: vid_maxframelatency accepts only 0 or 1, using 0\n");
 	}
 }
 
@@ -3280,8 +3269,6 @@ void VID_Init (void)
 	Cvar_RegisterVariable (&vid_vsync);       // johnfitz
 	Cvar_SetCallback (&vid_vsync, VID_Vsync_f);
 	Cvar_RegisterVariable (&vid_maxframelatency);
-	Cvar_SetCallback (&vid_maxframelatency, VID_MaxFrameLatency_f);
-	VID_MaxFrameLatency_f (&vid_maxframelatency);
 	Cvar_RegisterVariable (&vid_filter);
 	Cvar_RegisterVariable (&vid_desktopfullscreen); // QuakeSpasm
 	Cvar_RegisterVariable (&vid_borderless);        // QuakeSpasm
