@@ -78,13 +78,11 @@ extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minare
 extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale;
 
 // The level's own fog (gl_fog.c): read through the getters and written through
-// the `fog` command, the same path a map's key and the console use. Whether the
-// fog is drawn at all is the rt_level_fog switch (gl_vidsdl.c), which the level's
-// section may carry too.
+// the `fog` command, the same path a map's key and the console use; a density of
+// 0 draws no fog.
 float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
-extern cvar_t rt_level_fog;                          // gl_vidsdl.c
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -260,15 +258,14 @@ static struct
 	char        light_touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int         light_touched_count;
 
-	// snapshot of the custom lights and the fog that was in effect (its color,
-	// its density and the rt_level_fog switch): the Custom tab and the Global
-	// tab edit the live state without marking anything, so this is what
-	// Cancel/Exit restore and what QRE_CustomTouched compares to
+	// snapshot of the custom lights and the fog that was in effect (its color
+	// and its density): the Custom tab and the Global tab edit the live state
+	// without marking anything, so this is what Cancel/Exit restore and what
+	// QRE_CustomTouched compares to
 	rt_custom_light_t snap_custom[RT_CUSTOM_LIGHTS_MAX];
 	int               snap_custom_count;
 	float             snap_fog_color[3];
 	float             snap_fog_density;
-	qboolean          snap_fog_enabled;
 
 	// the light editor: the light the crosshair is over, and the one selected
 	// (the panel edits the entry of the selected light's emitter)
@@ -503,7 +500,6 @@ static void QRE_TakeCustomSnapshot (void)
 	qre.snap_fog_color[1] = color[1];
 	qre.snap_fog_color[2] = color[2];
 	qre.snap_fog_density = Fog_GetDensity ();
-	qre.snap_fog_enabled = CVAR_TO_BOOL (rt_level_fog);
 }
 
 static void QRE_RestoreCustomSnapshot (void)
@@ -526,10 +522,6 @@ static void QRE_RestoreCustomSnapshot (void)
 		                  CLAMP (0.0f, qre.snap_fog_color[1], 1.0f),
 		                  CLAMP (0.0f, qre.snap_fog_color[2], 1.0f)));
 	}
-
-	// the fog switch is a plain cvar: it goes back straight away
-	if (CVAR_TO_BOOL (rt_level_fog) != qre.snap_fog_enabled)
-		Cvar_Set ("rt_level_fog", qre.snap_fog_enabled ? "1" : "0");
 }
 
 // Whether the live custom list or the fog differs from the snapshot: what the
@@ -548,11 +540,6 @@ static qboolean QRE_CustomTouched (void)
 	Fog_GetColor (color);
 	if (color[0] != qre.snap_fog_color[0] || color[1] != qre.snap_fog_color[1] ||
 	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
-		return true;
-
-	// a change of only the rt_level_fog checkbox counts too: the section
-	// carries the switch as "enabled"
-	if (CVAR_TO_BOOL (rt_level_fog) != qre.snap_fog_enabled)
 		return true;
 
 	return false;
@@ -3665,9 +3652,6 @@ static const qre_global_t qre_globals[] = {
 	  "Brightness of the simple fog's color, which is the sky's flat color (mode 1)." },
 	{ NULL,  "rt_volume_far",                QRE_G_FLOAT, 0, 4000,
 	  "How far from the camera the volumetric volume reaches (mode 2)." },
-
-	{ "", "rt_level_fog",          QRE_G_BOOL,  0, 0,
-	  "Draw the level's own fog (the worldspawn \"fog\" key or the console `fog` command)." },
 };
 
 static char     qre_globals_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];
@@ -3903,39 +3887,36 @@ static void QRE_LightGlobalTab (void)
 	// The level's fog itself: the color and the density are map data, not cvars,
 	// so they go through the `fog` command (the same path a map's key and the
 	// console use) while the getters keep the widgets in step with the map.
-	if (CVAR_TO_BOOL (rt_level_fog))
+	QR_GUI_Label ("Fog");
+
+	float    color[4];
+	float    density = Fog_GetDensity ();
+	int      en = 1;
+	qboolean changed = false;
+
+	Fog_GetColor (color);
+	color[3] = 1.0f;
+
+	if (QR_GUI_ColorHex ("fog_color", color, &en, "The color of the level's fog."))
+		changed = true;
+	if (QR_GUI_ResetButton ("fog_color", color[0] != qre.snap_fog_color[0] ||
+	                                        color[1] != qre.snap_fog_color[1] ||
+	                                        color[2] != qre.snap_fog_color[2]))
 	{
-		QR_GUI_Label ("Fog");
-
-		float    color[4];
-		float    density = Fog_GetDensity ();
-		int      en = 1;
-		qboolean changed = false;
-
-		Fog_GetColor (color);
-		color[3] = 1.0f;
-
-		if (QR_GUI_ColorHex ("fog_color", color, &en, "The color of the level's fog."))
-			changed = true;
-		if (QR_GUI_ResetButton ("fog_color", color[0] != qre.snap_fog_color[0] ||
-		                                        color[1] != qre.snap_fog_color[1] ||
-		                                        color[2] != qre.snap_fog_color[2]))
-		{
-			VectorCopy (qre.snap_fog_color, color);
-			changed = true;
-		}
-		if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
-			changed = true;
-		if (QR_GUI_ResetButton ("fog_density", density != qre.snap_fog_density))
-		{
-			density = qre.snap_fog_density;
-			changed = true;
-		}
-
-		if (changed)
-			Cbuf_AddText (va ("fog %f %f %f %f\n", density,
-			                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
+		VectorCopy (qre.snap_fog_color, color);
+		changed = true;
 	}
+	if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
+		changed = true;
+	if (QR_GUI_ResetButton ("fog_density", density != qre.snap_fog_density))
+	{
+		density = qre.snap_fog_density;
+		changed = true;
+	}
+
+	if (changed)
+		Cbuf_AddText (va ("fog %f %f %f %f\n", density,
+		                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
 
 	QR_GUI_Spacing ();
 	QR_GUI_LabelDim ("the values above are saved to the config by Save; Cancel puts them back");
@@ -5934,13 +5915,9 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 
 	// The fog block is always part of the section: the Global tab authors the
 	// level's fog, so the session has to carry it even when only a light
-	// changed. "enabled" is the live rt_level_fog switch, so the section always
-	// states whether the level's fog is drawn. (The color getter fills four
-	// floats, hence the local.)
+	// changed. (The color getter fills four floats, hence the local.)
 	memset (&fog, 0, sizeof (fog));
 	fog.has_fog = true;
-	fog.has_enabled = true;
-	fog.enabled = CVAR_TO_BOOL (rt_level_fog);
 	Fog_GetColor (color);
 	fog.color[0] = color[0];
 	fog.color[1] = color[1];
@@ -5948,7 +5925,6 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 	fog.density = Fog_GetDensity ();
 
 	fprintf (out, "  fog:\n");
-	fprintf (out, "    enabled: %s\n", fog.enabled ? "true" : "false");
 	fprintf (out, "    color: %02x%02x%02x\n",
 	         (int)(CLAMP (0.0f, fog.color[0], 1.0f) * 255.0f + 0.5f) & 0xff,
 	         (int)(CLAMP (0.0f, fog.color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
