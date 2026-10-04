@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,18 +15,11 @@
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 //
 
-#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 #include <intrin.h>
-#else
-#include <sys/utsname.h>
-#if defined(__APPLE__)
-#include <sys/sysctl.h>
-#endif
-#endif
 
 #include "quakedef.h"
 #include "snd_openal.h"
@@ -58,7 +51,6 @@ static void Sys_TrimString (char *str)
 		str[--end] = 0;
 }
 
-#ifdef _WIN32
 typedef LONG (WINAPI *Sys_RtlGetVersionFn) (OSVERSIONINFOW *);
 
 static void Sys_OSVersionString (char *out, size_t outSize)
@@ -114,54 +106,6 @@ static void Sys_CPUNameString (char *out, size_t outSize)
 	Sys_TrimString (brand);
 	q_snprintf (out, outSize, "%s", brand);
 }
-#else
-static void Sys_OSVersionString (char *out, size_t outSize)
-{
-	struct utsname name;
-
-	if (uname (&name) == 0)
-		q_snprintf (out, outSize, "%s %s %s", name.sysname, name.release, name.machine);
-	else
-		q_snprintf (out, outSize, "unknown");
-}
-
-static void Sys_CPUNameString (char *out, size_t outSize)
-{
-#if defined(__APPLE__)
-	size_t size = outSize;
-
-	if (sysctlbyname ("machdep.cpu.brand_string", out, &size, NULL, 0) == 0)
-		return;
-
-	q_snprintf (out, outSize, "unknown");
-#else
-	FILE *f = fopen ("/proc/cpuinfo", "r");
-	char  line[512];
-
-	if (f == NULL)
-	{
-		q_snprintf (out, outSize, "unknown");
-		return;
-	}
-
-	while (fgets (line, sizeof (line), f) != NULL)
-	{
-		if (!strncmp (line, "model name", 10))
-		{
-			const char *value = strchr (line, ':');
-
-			q_snprintf (out, outSize, "%s", value != NULL ? value + 1 : "unknown");
-			Sys_TrimString (out);
-			fclose (f);
-			return;
-		}
-	}
-
-	fclose (f);
-	q_snprintf (out, outSize, "unknown");
-#endif
-}
-#endif
 
 static void Sys_DriverVersionString (char *out, size_t outSize, uint32_t vendorId, uint32_t driverVersion)
 {

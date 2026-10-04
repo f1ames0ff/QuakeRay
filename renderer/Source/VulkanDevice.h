@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -60,6 +60,7 @@ class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
 class RhiProceduralSkyPass;
+class RhiCloudsPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
 class RhiRtComposePass;
@@ -243,6 +244,7 @@ private:
     std::shared_ptr<RhiRtReflRefrPass>      rhiRtReflRefrPass;
 
     std::shared_ptr<RhiProceduralSkyPass>   rhiProceduralSkyPass;
+    std::shared_ptr<RhiCloudsPass>          rhiCloudsPass;
 
     std::shared_ptr<RhiRasterSkyPass>       rhiRasterSkyPass;
 
@@ -280,5 +282,8 @@ private:
     uint32_t                                statsRaysPerCategory[RAY_STATS_CATEGORY_COUNT] = {};
     uint32_t                                statsFpsX10 = 0;
     float                                   statsSmoothedFps = 0.0f;
+    bool                                    statsGpuTimingValid = false;
+    float                                   statsGpuFrameMs = 0.0f;
+    float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
 };
 }

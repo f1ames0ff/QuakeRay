@@ -327,12 +327,33 @@ void Sys_Init (void)
 	counter_freq = (double)SDL_GetPerformanceFrequency ();
 }
 
+qboolean Sys_TryMkdir (const char *path)
+{
+	DWORD attributes;
+
+	if (CreateDirectory (path, NULL) != 0)
+		return true;
+
+	attributes = GetFileAttributes (path);
+	return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
 void Sys_mkdir (const char *path)
 {
-	if (CreateDirectory (path, NULL) != 0)
-		return;
-	if (GetLastError () != ERROR_ALREADY_EXISTS)
+	if (!Sys_TryMkdir (path))
 		Sys_Error ("Unable to create directory %s", path);
+}
+
+int Sys_FileType (const char *path)
+{
+	DWORD result = GetFileAttributes (path);
+
+	if (result == INVALID_FILE_ATTRIBUTES)
+		return FS_ENT_NONE;
+	if (result & FILE_ATTRIBUTE_DIRECTORY)
+		return FS_ENT_DIRECTORY;
+
+	return FS_ENT_FILE;
 }
 
 static const char errortxt1[] = "\nERROR-OUT BEGIN\n\n";

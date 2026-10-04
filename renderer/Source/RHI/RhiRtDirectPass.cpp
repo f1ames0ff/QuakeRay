@@ -62,13 +62,13 @@ constexpr uint32_t SET_RENDER_CUBEMAP = 8;
 constexpr uint32_t SET_PORTALS = 9;
 constexpr uint32_t SET_VOLUMETRIC = 10;
 constexpr uint32_t SET_RAY_STATS = 11;
-constexpr uint32_t PIPELINE_SET_COUNT = 12;
+constexpr uint32_t PIPELINE_SET_COUNT = 13;
 
 static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 &&
               SET_VERTEX_DATA == 3 && SET_TEXTURES == 4 && SET_RANDOM == 5 &&
               SET_LIGHT_SOURCES == 6 && SET_CUBEMAPS == 7 && SET_RENDER_CUBEMAP == 8 &&
               SET_PORTALS == 9 && SET_VOLUMETRIC == 10 && SET_RAY_STATS == 11 &&
-              PIPELINE_SET_COUNT == 12,
+    PIPELINE_SET_COUNT == 13,
               "the RT set order is frozen by the engine's RT shaders");
 
 // The 12 images `RtRaygenDirect.rgen` references, measured 2026-09-25 with `spirv-dis` over the
@@ -534,6 +534,10 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
     // the Vulkan backend rejects them with NotSupported (vulkan-raytracing.cpp:1531-1535,
     // :1543-1547).
     {
+        if (!cloudShadowBinding.Create(device, frameContext, nvrhi::ShaderType::AllRayTracing))
+        {
+            return false;
+        }
         nvrhi::rt::PipelineDesc desc;
 
         desc.addShader(nvrhi::rt::PipelineShaderDesc()
@@ -565,6 +569,7 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
         desc.addBindingLayout(primaryPass->GetHoleLayout());           // 9
         desc.addBindingLayout(primaryPass->GetHoleLayout());           // 10
         desc.addBindingLayout(primaryPass->GetRayStatsLayout());       // 11
+        desc.addBindingLayout(cloudShadowBinding.GetLayout());
 
         desc.setMaxPayloadSize(MAX_PAYLOAD_SIZE);
         desc.setMaxAttributeSize(MAX_ATTRIBUTE_SIZE);
@@ -826,6 +831,7 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
     state.addBindingSet(primaryPass->GetHoleSet());       // 9
     state.addBindingSet(primaryPass->GetHoleSet());       // 10
     state.addBindingSet(primaryPass->GetRayStatsSet(frameIndex)); // 11
+    state.addBindingSet(cloudShadowBinding.GetSet());
 
     pCommandList->setRayTracingState(state);
 

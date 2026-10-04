@@ -22,11 +22,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
-#ifndef _WIN32
-#include <dirent.h>
-#else
+#include "json.h"
+#include "q_ctype.h"
+#include "qr_resources.h"
+#include "rt_pkz.h"
 #include <windows.h>
-#endif
 
 extern cvar_t pausable;
 
@@ -112,6 +112,25 @@ static void FileList_Add (const char *name, filelist_item_t **list)
 	FileList_AddEx (name, 0, list);
 }
 
+typedef struct
+{
+	const char       *path;
+	filelist_item_t **list;
+} rt_pkz_filelist_ctx_t;
+
+static int rt_pkz_filelist_cb (const char *name, void *vctx)
+{
+	rt_pkz_filelist_ctx_t *ctx = (rt_pkz_filelist_ctx_t *)vctx;
+	char                   filename[32];
+
+	if (strchr (name + strlen (ctx->path), '/'))
+		return 0;
+
+	COM_StripExtension (name + strlen (ctx->path), filename, sizeof (filename));
+	FileList_Add (filename, ctx->list);
+	return 0;
+}
+
 static void FileList_Clear (filelist_item_t **list)
 {
 	filelist_item_t *blah;
@@ -128,13 +147,8 @@ filelist_item_t *extralevels;
 
 void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 {
-#ifdef _WIN32
 	WIN32_FIND_DATA fdat;
 	HANDLE          fhnd;
-#else
-	DIR           *dir_p;
-	struct dirent *dir_t;
-#endif
 	char          filestring[MAX_OSPATH];
 	char          filename[32];
 	char          ignorepakdir[32];
@@ -148,9 +162,8 @@ void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 
 	for (search = com_searchpaths; search; search = search->next)
 	{
-		if (*search->filename) // directory
+		if (*search->filename && !search->rt_pkz) // directory
 		{
-#ifdef _WIN32
 			q_snprintf (filestring, sizeof (filestring), "%s/%s*.%s", search->filename, path, ext);
 			fhnd = FindFirstFile (filestring, &fdat);
 			if (fhnd == INVALID_HANDLE_VALUE)
@@ -161,20 +174,14 @@ void FileList_Init (char *path, char *ext, int minsize, filelist_item_t **list)
 				FileList_Add (filename, list);
 			} while (FindNextFile (fhnd, &fdat));
 			FindClose (fhnd);
-#else
-			q_snprintf (filestring, sizeof (filestring), "%s/%s", search->filename, path);
-			dir_p = opendir (filestring);
-			if (dir_p == NULL)
-				continue;
-			while ((dir_t = readdir (dir_p)) != NULL)
-			{
-				if (q_strcasecmp (COM_FileGetExtension (dir_t->d_name), ext) != 0)
-					continue;
-				COM_StripExtension (dir_t->d_name, filename, sizeof (filename));
-				FileList_Add (filename, list);
-			}
-			closedir (dir_p);
-#endif
+		}
+		else if (search->rt_pkz)
+		{
+			rt_pkz_filelist_ctx_t ctx = { path, list };
+			char                  extdot[16];
+
+			q_snprintf (extdot, sizeof (extdot), ".%s", ext);
+			RT_PKZ_ListFiles (path, extdot, rt_pkz_filelist_cb, &ctx);
 		}
 		else // pakfile
 		{
@@ -473,6 +480,28 @@ static void ExtraMaps_WaitForParsingThread (void)
 	}
 }
 
+typedef struct
+{
+	const searchpath_t *source;
+	qboolean            isbase;
+} rt_pkz_maps_ctx_t;
+
+static int rt_pkz_maps_cb (const char *name, void *vctx)
+{
+	rt_pkz_maps_ctx_t *ctx = (rt_pkz_maps_ctx_t *)vctx;
+	char               mapname[32];
+
+	if (strchr (name + 5, '/'))
+		return 0;
+
+	if (RT_PKZ_FindFile (ctx->source->rt_pkz, name, NULL) <= MIN_BSP_MAP_SIZE)
+		return 0;
+
+	COM_StripExtension (name + 5, mapname, sizeof (mapname));
+	ExtraMaps_Add (mapname, ctx->isbase ? NULL : ctx->source);
+	return 0;
+}
+
 /*
 ==================
 ExtraMaps_Init
@@ -492,12 +521,11 @@ void ExtraMaps_Init (void)
 
 	for (search = com_searchpaths; search; search = search->next)
 	{
-		if (*search->filename) // directory
+		if (*search->filename && !search->rt_pkz) // directory
 		{
 			char dir[MAX_OSPATH];
 
 			q_snprintf (dir, sizeof (dir), "%s/maps", search->filename);
-#ifdef _WIN32
 			{
 				WIN32_FIND_DATA fdat;
 				HANDLE			fhnd;
@@ -515,24 +543,14 @@ void ExtraMaps_Init (void)
 				} while (FindNextFile (fhnd, &fdat));
 				FindClose (fhnd);
 			}
-#else
-			{
-				DIR			  *dir_p;
-				struct dirent *dir_t;
+		}
+		else if (search->rt_pkz)
+		{
+			rt_pkz_maps_ctx_t ctx;
 
-				dir_p = opendir (dir);
-				if (dir_p == NULL)
-					continue;
-				while ((dir_t = readdir (dir_p)) != NULL)
-				{
-					if (q_strcasecmp (COM_FileGetExtension (dir_t->d_name), "bsp") != 0)
-						continue;
-					COM_StripExtension (dir_t->d_name, mapname, sizeof (mapname));
-					ExtraMaps_Add (mapname, search);
-				}
-				closedir (dir_p);
-			}
-#endif
+			ctx.source = search;
+			ctx.isbase = (strstr (search->filename, ignorepakdir) != NULL);
+			RT_PKZ_ListFiles ("maps/", ".bsp", rt_pkz_maps_cb, &ctx);
 		}
 		else // pakfile
 		{
@@ -660,20 +678,186 @@ static void Host_Maps_f (void)
 
 filelist_item_t *modlist;
 
-static void Modlist_Add (const char *name)
+typedef struct modinfo_s
 {
-	FileList_Add (name, &modlist);
+	char full_name[64];
+} modinfo_t;
+
+static const char *const knownmods[][2] = {
+	{"id1", "Quake"},
+	{"hipnotic", "Scourge of Armagon"},
+	{"rogue", "Dissolution of Eternity"},
+	{"dopa", "Dimension of the Past"},
+	{"mg1", "Dimension of the Machine"},
+	{"mg3", "Dawn of the Machine"},
+	{"q64", "Quake (Nintendo 64)"},
+	{"ctf", "Capture The Flag"},
+	{"udob", "Underdark Overbright"},
+	{"ad", "Arcane Dimensions"},
+	{"alk", "Alkaline"},
+};
+
+const char *Modlist_GetFullName (const filelist_item_t *item)
+{
+	const modinfo_t *info = (const modinfo_t *)(item + 1);
+	size_t           i;
+
+	if (info->full_name[0])
+	{
+		if (info->full_name[0] == '$')
+		{
+			const char *value = LOC_GetRawString (info->full_name);
+			if (value)
+				return value;
+		}
+		else
+			return info->full_name;
+	}
+	for (i = 0; i < countof (knownmods); i++)
+		if (!q_strcasecmp (item->name, knownmods[i][0]))
+			return knownmods[i][1];
+	return NULL;
 }
 
-#ifdef _WIN32
-void Modlist_Init (void)
+static void Modlist_SetNameFromMapDB (modinfo_t *info, const char *mapdb, const char *name, qboolean is_base)
+{
+	json_t *json = JSON_Parse (mapdb);
+	if (!json)
+		return;
+
+	const jsonentry_t *episodes = JSON_Find (json->root, "episodes", JSON_ARRAY);
+	if (episodes)
+	{
+		const jsonentry_t *entry;
+		for (entry = episodes->firstchild; entry; entry = entry->next)
+		{
+			const char *mod_name = JSON_FindString (entry, "name");
+			const char *mod_dir = JSON_FindString (entry, "dir");
+			if (!mod_name || !mod_dir)
+				continue;
+			if ((is_base || !q_strcasecmp (mod_dir, "copper")) && q_strcasecmp (mod_dir, name) != 0)
+				continue;
+			q_strlcpy (info->full_name, mod_name, sizeof (info->full_name));
+			break;
+		}
+	}
+	JSON_Free (json);
+}
+
+static void Modlist_Add (const char *base, const char *name)
+{
+	filelist_item_t *existing;
+	char             path[MAX_OSPATH];
+
+	if (!q_strcasecmp (name, GAMENAME))
+		return;
+	if (COM_ModForbiddenChars (name))
+		return;
+
+	for (existing = modlist; existing; existing = existing->next)
+	{
+		if (!q_strcasecmp (existing->name, name))
+			return;
+	}
+
+	q_snprintf (path, sizeof (path), "%s/%s/pak0.pak", base, name);
+	if (Sys_FileType (path) != FS_ENT_FILE)
+	{
+		q_snprintf (path, sizeof (path), "%s/%s/progs.dat", base, name);
+		if (Sys_FileType (path) != FS_ENT_FILE)
+		{
+			q_snprintf (path, sizeof (path), "%s/%s/csprogs.dat", base, name);
+			if (Sys_FileType (path) != FS_ENT_FILE)
+			{
+				q_snprintf (path, sizeof (path), "%s/%s/maps", base, name);
+				if (Sys_FileType (path) != FS_ENT_DIRECTORY)
+					return;
+			}
+		}
+	}
+
+	filelist_item_t *item = FileList_AddEx (name, sizeof (modinfo_t), &modlist);
+	modinfo_t       *info = (modinfo_t *)(item + 1);
+
+	if (!info->full_name[0])
+	{
+		q_snprintf (path, sizeof (path), "%s/%s/descript.ion", base, name);
+		char *buf = (char *)COM_LoadMallocFile_TextMode_OSPath (path, NULL);
+		if (buf)
+		{
+			char *description = buf;
+			while (q_isspace (*description))
+				++description;
+			char *end = strchr (description, '\n');
+			if (end)
+				*end = '\0';
+			q_strlcpy (info->full_name, q_strtrim (description), sizeof (info->full_name));
+			Mem_Free (buf);
+		}
+	}
+
+	if (!info->full_name[0])
+	{
+		q_snprintf (path, sizeof (path), "%s/%s/mapdb.json", base, name);
+		char *mapdb = (char *)COM_LoadMallocFile_TextMode_OSPath (path, NULL);
+		if (mapdb)
+		{
+			Modlist_SetNameFromMapDB (info, mapdb, name, false);
+			Mem_Free (mapdb);
+		}
+	}
+}
+
+static void Modlist_LoadAddonsJSON (const char *base)
+{
+	char  path[MAX_OSPATH];
+	char *text;
+
+	if ((size_t)q_snprintf (path, sizeof (path), "%s/addons.json", base) >= sizeof (path))
+		return;
+	text = (char *)COM_LoadMallocFile_TextMode_OSPath (path, NULL);
+	if (!text)
+		return;
+
+	json_t *json = JSON_Parse (text);
+	Mem_Free (text);
+	if (!json)
+		return;
+
+	const jsonentry_t *addons = JSON_Find (json->root, "addons", JSON_ARRAY);
+	if (addons)
+	{
+		const jsonentry_t *entry;
+		for (entry = addons->firstchild; entry; entry = entry->next)
+		{
+			const char      *gamedir = JSON_FindString (entry, "gamedir");
+			const char      *name = JSON_FindString (entry, "name");
+			filelist_item_t *item;
+			if (!gamedir || !name)
+				continue;
+			for (item = modlist; item; item = item->next)
+			{
+				if (!q_strcasecmp (item->name, gamedir))
+				{
+					modinfo_t *info = (modinfo_t *)(item + 1);
+					if (!info->full_name[0])
+						q_strlcpy (info->full_name, name, sizeof (info->full_name));
+					break;
+				}
+			}
+		}
+	}
+	JSON_Free (json);
+}
+
+static void Modlist_AddRoot (const char *base)
 {
 	WIN32_FIND_DATA fdat;
 	HANDLE          fhnd;
 	DWORD           attribs;
 	char            dir_string[MAX_OSPATH], mod_string[MAX_OSPATH];
 
-	q_snprintf (dir_string, sizeof (dir_string), "%s/*", com_basedir);
+	q_snprintf (dir_string, sizeof (dir_string), "%s/*", base);
 	fhnd = FindFirstFile (dir_string, &fdat);
 	if (fhnd == INVALID_HANDLE_VALUE)
 		return;
@@ -682,47 +866,61 @@ void Modlist_Init (void)
 	{
 		if (!strcmp (fdat.cFileName, ".") || !strcmp (fdat.cFileName, ".."))
 			continue;
-		q_snprintf (mod_string, sizeof (mod_string), "%s/%s", com_basedir, fdat.cFileName);
+		q_snprintf (mod_string, sizeof (mod_string), "%s/%s", base, fdat.cFileName);
 		attribs = GetFileAttributes (mod_string);
 		if (attribs != INVALID_FILE_ATTRIBUTES && (attribs & FILE_ATTRIBUTE_DIRECTORY))
-		{
-			/* don't bother testing for pak files / progs.dat */
-			Modlist_Add (fdat.cFileName);
-		}
+			Modlist_Add (base, fdat.cFileName);
 	} while (FindNextFile (fhnd, &fdat));
 
 	FindClose (fhnd);
 }
-#else
+
 void Modlist_Init (void)
 {
-	DIR *dir_p, *mod_dir_p;
-	struct dirent *dir_t;
-	char dir_string[MAX_OSPATH], mod_string[MAX_OSPATH];
+	filelist_item_t *item;
+	unsigned int     path_id;
+	char            *mapdb;
+	char             steamroot[MAX_OSPATH];
 
-	q_snprintf (dir_string, sizeof (dir_string), "%s/", com_basedir);
-	dir_p = opendir (dir_string);
-	if (dir_p == NULL)
-		return;
-
-	while ((dir_t = readdir (dir_p)) != NULL)
 	{
-		if (!strcmp (dir_t->d_name, ".") || !strcmp (dir_t->d_name, ".."))
-			continue;
-		if (!q_strcasecmp (COM_FileGetExtension (dir_t->d_name), "app")) // skip .app bundles on macOS
-			continue;
-		q_snprintf (mod_string, sizeof (mod_string), "%s%s/", dir_string, dir_t->d_name);
-		mod_dir_p = opendir (mod_string);
-		if (mod_dir_p == NULL)
-			continue;
-		/* don't bother testing for pak files / progs.dat */
-		Modlist_Add (dir_t->d_name);
-		closedir (mod_dir_p);
+		char rerelease[MAX_OSPATH] = "";
+		int  i;
+
+		for (i = 0; i < com_numbasedirs; i++)
+		{
+			Modlist_AddRoot (com_basedirs[i]);
+		}
+
+		QR_Resources_Init ();
+		if (QR_Resources_SteamDir (steamroot, sizeof (steamroot)))
+		{
+			q_snprintf (rerelease, sizeof (rerelease), "%s/rerelease", steamroot);
+		}
+
+		for (i = 0; i < com_numbasedirs; i++)
+		{
+			Modlist_LoadAddonsJSON (com_basedirs[i]);
+		}
+		if (rerelease[0])
+		{
+			Modlist_LoadAddonsJSON (steamroot);
+			Modlist_LoadAddonsJSON (rerelease);
+		}
 	}
 
-	closedir (dir_p);
+	mapdb = (char *)COM_LoadFile ("mapdb.json", &path_id);
+	if (mapdb)
+	{
+		qboolean is_base = !com_base_searchpaths || path_id <= com_base_searchpaths->path_id;
+		for (item = modlist; item; item = item->next)
+		{
+			modinfo_t *info = (modinfo_t *)(item + 1);
+			if (!info->full_name[0])
+				Modlist_SetNameFromMapDB (info, mapdb, item->name, is_base);
+		}
+		Mem_Free (mapdb);
+	}
 }
-#endif
 
 //==============================================================================
 // ericw -- demo list management

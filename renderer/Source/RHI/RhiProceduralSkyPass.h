@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -78,9 +78,12 @@ class RhiFrameContext;
 //   set 0, binding 1: `params`          ConstantBuffer<Params_BT>, Block, members at
 //                                       0/288/304/320/336/352/368 (the CPU mirror below);
 //   set 0, binding 2: `envCubemapOut`   RWTexture2DArray<float4>, image format rgba16f;
-//   no push constants, no other set, no sampler. The module's one binding layout lays that set out
-//   with the UAV and constant-buffer register offsets at 0, so an item's slot equals its raw
-//   binding (`Texture_UAV(0)`, `ConstantBuffer(1)`, `Texture_UAV(2)`).
+//   set 0, binding 3: `cloudCubemap`    TextureCube<float4>, the volumetric cloud layer the
+//                                       composite reads (the host's RhiCloudsPass owns it);
+//   set 0, binding 4: `cloudCubemap_Sampler` SamplerState for binding 3.
+// The module's one binding layout lays that set out with every register offset at 0, so an
+// item's slot equals its raw binding (`Texture_UAV(0)`, `ConstantBuffer(1)`, `Texture_UAV(2)`,
+// `Texture_SRV(3)`, `Sampler(4)`).
 // The shader derives its own resolution from `GetDimensions` of the bound storage image
 // (CmProceduralSky.comp.hlsl:262-267), bounds-checks the invocation, builds the per-texel direction
 // from the params' per-face bases and writes both images at that invocation's (x, y, face).
@@ -197,11 +200,6 @@ public:
         // (0.3, 0.5, 0.8) fallback and w = 0.
         float sunDirection[4];
 
-        // Offset 304. xyz = the atmosphere tint; w = the physical sun angular radius (radians).
-        // Legacy: xyz is the uniform's `skyColorDefault` (rt_sky_color, VulkanDevice.cpp:763-765,
-        // :807) and w the light's angular radius (the 0.0047 default when there is no light). The
-        // shipped blob reads only .xyz (the display disc uses `skyParams.w`), so w is carried for
-        // the legacy layout.
         float skyTint[4];
 
         // Offset 320. x = the sky color multiplier (the uniform's `skyColorMultiplier`);
@@ -222,7 +220,6 @@ public:
         // (VulkanDevice.cpp:827-837); a value outside (0, 1) is how the host turns clouds off.
         float cloudParams[4];
 
-        // Offset 368. xyz = the sun disc color (rt_sun_color); w unused. Legacy:
         // `drawInfo.pSkyParams->sunDiscColor`, defaulting to white when the host sends no sky params
         // (VulkanDevice.cpp:772-778). Appended after every other field, like the legacy struct
         // (RenderCubemap.h:46-49), so a stale compiled shader still reads all older fields at the
@@ -238,22 +235,16 @@ public:
     RhiProceduralSkyPass &operator=(const RhiProceduralSkyPass &other) = delete;
     RhiProceduralSkyPass &operator=(RhiProceduralSkyPass &&other) noexcept = delete;
 
-    // 'pDevice' is the RHI device; 'pFrameContext' is the host's frame model
-    // (RHI/RhiFrameContext.h), which every sibling pass is created with and whose open list Render
-    // records on; 'pShaderFolderPath' is the folder the engine blobs load from, with the trailing
-    // separator ('CmProceduralSky.comp.spv' - the file ShaderManager.cpp:56 maps "CProceduralSky"
-    // to - is read from it). None is owned; all have to outlive this object, and a null or unusable
-    // one makes Create fail. The pass logs through 'pfnPrint'. Creates the two cube images, the
-    // LINEAR/REPEAT sampler, the binding layout, the compute pipeline and the per-slot params
-    // buffers with their per-mip binding sets. Returns false and leaves the pass unusable if a
-    // resource cannot be created; the host logs that through 'pfnPrint'.
     bool Create(nvrhi::IDevice *pDevice,
                 rhi::RhiFrameContext *pFrameContext,
                 const char *pShaderFolderPath,
+                nvrhi::ITexture *pCloudLayer,
+                nvrhi::ISampler *pCloudLayerSampler,
                 PrintFunction pfnPrint);
 
     bool IsCreated() const { return created; }
 
+    bool SetCloudLayer(nvrhi::ITexture *pTexture, nvrhi::ISampler *pSampler);
     void Invalidate();
 
     // The three set-8 items the traced sky binds (Generated/ShaderCommonC.h:33-36):
@@ -274,16 +265,15 @@ public:
     // One call per traced frame, on the frame context's open command list of 'frameIndex'
     // (RhiFrameContext::GetCommandList), when the uniform's `skyType` is SKY_TYPE_PROCEDURAL and
     // before the passes that sample the cubes (the skeleton's primary/indirect/reflrefr order).
-    // Works on a copy of 'params', applies the legacy cloud freeze, compares it with the params of
-    // the last recorded dispatch and returns without recording anything when they are equal
-    // (RenderCubemap.cpp:890-913). Otherwise writes the slot's params buffer and records one
+    // Otherwise writes the slot's params buffer and records one
     // `CmProceduralSky` dispatch per mip level - the legacy dispatch at mip 0 (`(65, 65, 6)`) and
     // the module's per-mip equivalent above for mips 1..10 - then requires NonPixelShaderResource
     // for both textures (see the state discipline in the class comment). A no-op when the pass is
     // not created or the frame index is out of range.
     void Render(nvrhi::ICommandList *pCommandList,
                 uint32_t frameIndex,
-                const Params &params);
+                const Params &params,
+                bool cloudsUpdated = false);
 
 private:
     nvrhi::IDevice *device = nullptr;
@@ -309,10 +299,20 @@ private:
     // The LINEAR/REPEAT sampler of set-8 bindings 2/3. Owned for the whole run.
     nvrhi::SamplerHandle skySampler;
 
+    // The cloud layer the composite samples (binding 3) and its sampler (binding 4): the host's
+    // clouds pass owns both, this module only binds them. When the host has no layer (the pass
+    // failed or was never created) the module binds its own 1x1 placeholder instead and Render
+    // turns the composite off, so the placeholder is never sampled.
+    nvrhi::ITexture *cloudLayerTexture = nullptr;
+    nvrhi::ISampler *cloudLayerSampler = nullptr;
+    nvrhi::TextureHandle placeholderCloudLayer;
+    bool cloudLayerReal = false;
+
     // The per-slot `Params_BT` constant buffer (one per engine frame slot, so a slot's write cannot
     // race the submission still reading it) and the binding sets over it. One set per (slot, mip):
-    // each set carries the two UAV items at that mip's single-level subresource range and the slot's
-    // params buffer, because the blob declares all three items in one descriptor set.
+    // each set carries the two UAV items at that mip's single-level subresource range, the slot's
+    // params buffer and the cloud layer with its sampler, because the blob declares all five items
+    // in one descriptor set.
     nvrhi::BufferHandle paramsBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle skySets[MAX_FRAMES_IN_FLIGHT][CUBEMAP_MIP_LEVELS];
 

@@ -34,6 +34,7 @@ namespace qray
 #define BINDING_RENDER_CUBEMAP_SAMPLER (2)
 #define BINDING_RENDER_CUBEMAP_ENV (1)
 #define BINDING_RENDER_CUBEMAP_ENV_SAMPLER (3)
+#define BINDING_RENDER_CUBEMAP_CLOUD_SHADOW (4)
 #define BINDING_BLUE_NOISE (0)
 #define BINDING_LUM_HISTOGRAM (0)
 #define BINDING_LIGHT_SOURCES (0)
@@ -339,6 +340,8 @@ struct ShGlobalUniform
     float levelFogColorDensity[4];
     float levelFogSkyBlend[4];
     uint32_t restirParams[4];
+    float cloudShadowPlacement[4];
+    float cloudLayerMotion[4];
 };
 
 struct ShGeometryInstance

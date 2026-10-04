@@ -48,12 +48,6 @@ cvar_t rt_mat_debug = { "rt_mat_debug", "0", 0 };
 
 static byte *rt_load_file(const char *name, int *outLen)
 {
-    byte *b = RT_PKZ_LoadFile(name, outLen);
-    if (b)
-    {
-        return b;
-    }
-
     unsigned int path_id;
     byte *fs = COM_LoadFile(name, &path_id);
     if (fs)
@@ -636,7 +630,8 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
                 yaml_node_t *rk = yaml_document_get_node(&document, rp->key);
                 if (!rk || rk->type != YAML_SCALAR_NODE || !rk->data.scalar.value)
                     continue;
-                if (rk->data.scalar.length != 9 || memcmp(rk->data.scalar.value, "materials", 9) != 0)
+                if (!((rk->data.scalar.length == 14 && !memcmp(rk->data.scalar.value, "qray_materials", 14)) ||
+                      (rk->data.scalar.length == 9 && !memcmp(rk->data.scalar.value, "materials", 9))))
                     continue;
 
                 yaml_node_t *seq = yaml_document_get_node(&document, rp->value);
@@ -910,7 +905,9 @@ static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *c
             // the editor's own files: the session file is not a materials file
             // until it is saved, and the backup never is
             if (!q_strcasecmp(fd.cFileName, "materials.editor.yaml") ||
-                !q_strcasecmp(fd.cFileName, "backup_materials.yaml"))
+                !q_strcasecmp(fd.cFileName, "backup_materials.yaml") ||
+                !q_strcasecmp(fd.cFileName, "qray.materials.editor.yaml") ||
+                !q_strcasecmp(fd.cFileName, "qray.backup_materials.yaml"))
             {
                 continue;
             }
@@ -924,6 +921,12 @@ static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *c
     }
 
     q_snprintf(pattern, sizeof(pattern), "%s/materials.yaml", dir);
+    if (Sys_FileTime(pattern) != -1)
+    {
+        cb(pattern, ctx);
+    }
+
+    q_snprintf(pattern, sizeof(pattern), "%s/qray.materials.yaml", dir);
     if (Sys_FileTime(pattern) != -1)
     {
         cb(pattern, ctx);
@@ -981,6 +984,22 @@ static int rt_mat_load_cb(const char *name, void *vctx)
     return 0;
 }
 
+static void rt_mat_load_base_dirs(rt_mat_load_ctx_t *ctx)
+{
+    int i;
+
+    for (i = 0; i < com_numbasedirs; i++)
+    {
+        char base[MAX_OSPATH];
+
+        q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
+        if (!COM_PathMatches(base, com_gamedir))
+        {
+            rt_mat_load_dir(base, rt_mat_load_cb, ctx);
+        }
+    }
+}
+
 void RT_MAT_Init(void)
 {
     if (rt_initialized)
@@ -995,19 +1014,14 @@ void RT_MAT_Init(void)
     rt_global_count = 0;
     rt_map_count = 0;
 
-    RT_PKZ_Init();
-
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
 
     RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
-    {
-        char base[MAX_OSPATH];
-        q_snprintf(base, sizeof(base), "%s/id1", com_basedir);
-        if (q_strcasecmp(base, com_gamedir))
-        {
-            rt_mat_load_dir(base, rt_mat_load_cb, &ctx);
-        }
-    }
+    rt_mat_load_base_dirs(&ctx);
+    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
+
+    rt_mat_load_cb("materials.yaml", &ctx);
+    rt_mat_load_cb("qray.materials.yaml", &ctx);
     rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
 
     rt_mat_cmd = Cmd_AddCommand2("rt_mat", RT_MAT_Cmd, src_command);
@@ -1055,6 +1069,11 @@ void RT_MAT_ChangeMap(const char *mapname)
         {
             rt_mat_load_cb(own, &ctx);
         }
+        q_snprintf(own, sizeof(own), "%s/qray.materials.yaml", com_gamedir);
+        if (Sys_FileTime(own) != -1)
+        {
+            rt_mat_load_cb(own, &ctx);
+        }
     }
 }
 
@@ -1070,14 +1089,10 @@ void RT_MAT_Reload(void)
 
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
     RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
-    {
-        char base[MAX_OSPATH];
-        q_snprintf(base, sizeof(base), "%s/id1", com_basedir);
-        if (q_strcasecmp(base, com_gamedir))
-        {
-            rt_mat_load_dir(base, rt_mat_load_cb, &ctx);
-        }
-    }
+    rt_mat_load_base_dirs(&ctx);
+    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
+    rt_mat_load_cb("materials.yaml", &ctx);
+    rt_mat_load_cb("qray.materials.yaml", &ctx);
     rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
 
     if (rt_current_map[0])

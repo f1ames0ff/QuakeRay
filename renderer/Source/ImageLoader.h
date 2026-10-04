@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -69,10 +69,12 @@ public:
 
 private:
     bool LoadTextureFile(const std::filesystem::path &path, ktxTexture **ppTexture);
+    bool ReadFile(const std::filesystem::path &path, std::vector<uint8_t> &out) const;
 
 private:
     std::shared_ptr<UserFileLoad> userFileLoad;
     std::vector<ktxTexture *> loadedImages;
+    std::vector<void *> loadedPngs;
 };
 
 }

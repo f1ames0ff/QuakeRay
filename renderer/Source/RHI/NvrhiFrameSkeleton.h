@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -24,9 +24,12 @@
 
 #include <nvrhi/vulkan.h>
 
+#include <qray/qray.h>
+
 #include "../Common.h"
 #include "../ISwapchainDependency.h"
 #include "../RasterizedDataCollector.h"
+#include "RhiCloudsPass.h"
 #include "RhiProceduralSkyPass.h"
 
 namespace qray
@@ -170,7 +173,7 @@ public:
         {
             bool enabled = false;                   // godRaysOn: the final switch, not the cvar
             bool hasAabb = false;                   // scene->HasAABB()
-            float intensity = 0.0f;                 // 0.05f * rt_godrays_intensity (clamped >= 0)
+            float intensity = 0.0f;
             float eccentricity = 0.75f;
             float aabbMin[3] = {};
             float aabbMax[3] = {};
@@ -200,6 +203,11 @@ public:
         // compute before the trace only when the uniform selects SKY_TYPE_PROCEDURAL; the module
         // early-outs by these bytes, so an unchanged frame (clouds off) costs one memcmp.
         RhiProceduralSkyPass::Params proceduralSkyParams = {};
+
+        bool cloudsLayer = false;
+        uint32_t cloudsQuality = 2;
+        RhiCloudsPass::LayerParams cloudsParams = {};
+        RhiCloudsPass::ShadowParams cloudsShadowParams = {};
 
         // -- the decals (A5.6) --
         // The engine DecalManager buffers for this slot: the staging the game's uploads go to and
@@ -359,6 +367,7 @@ public:
                                 RhiRtComposePass *pRtComposePass,
                                 RhiRtReflRefrPass *pReflRefrPass,
                                 RhiProceduralSkyPass *pProceduralSkyPass,
+                                RhiCloudsPass *pCloudsPass,
                                 RhiRasterSkyPass *pRasterSkyPass,
                                 RhiRasterOverlayPass *pRasterOverlayPass,
                                 RhiDecalPass *pDecalPass,
@@ -414,6 +423,11 @@ public:
     RhiSkyPass *GetSkyPass() const { return skyPass.get(); }
 
     void RequestScreenshot(const std::string &path);
+
+    // The GPU timings of the most recent frame the timer queries produced. 'pPassMs' receives
+    // QR_GPU_PASS_COUNT entries in the order of qrGetGpuPassName. Returns false until the first
+    // frame's timestamps could be read back (and forever when the timer queries are unavailable).
+    bool GetGpuTimings(float *pFrameMs, float *pPassMs) const;
 
 private:
     static nvrhi::Format ConvertSurfaceFormat(VkFormat format);
@@ -508,6 +522,13 @@ private:
     // writes the cube the RT passes' set 8 samples. Not owned; null when the host's creation failed,
     // in which case the passes sample their placeholders.
     RhiProceduralSkyPass *proceduralSkyPass = nullptr;
+
+    // The host's cloud layer pass (RhiCloudsPass, RHI/RhiCloudsPass.h), driven in the traced chain
+    // right before the procedural sky when the frame asks for the layer: it writes the layer the
+    // sky's composite samples and the shadow volume of that layer. Not owned; null when the host's
+    // creation failed or the frame's `cloudsLayer` is off, in which case the sky keeps its flat
+    // clouds.
+    RhiCloudsPass *cloudsPass = nullptr;
 
     // The host's raster sky pass (RhiRasterSkyPass, RHI/RhiRasterSkyPass.h), driven in the traced
     // chain right after the procedural-sky block and before the primary whenever the uniform
@@ -639,6 +660,51 @@ private:
 
     // Frames left until the one-time fallback-slot log; 0 after it has been printed.
     uint32_t framesUntilFallbackLog = 300;
+
+    // -- the GPU pass timings --
+
+    // The frame's sections the timer queries measure, in the order qrGetGpuPassName reports them.
+    enum GpuPassIndex
+    {
+        GPU_PASS_SETUP = 0,
+        GPU_PASS_CLOUDS,
+        GPU_PASS_SKY,
+        GPU_PASS_PRIMARY,
+        GPU_PASS_DECALS,
+        GPU_PASS_GODRAYS,
+        GPU_PASS_REFLREFR,
+        GPU_PASS_REFLGODR,
+        GPU_PASS_GRADIENT,
+        GPU_PASS_DIRECT,
+        GPU_PASS_INDIRECT,
+        GPU_PASS_COMPOSE,
+        GPU_PASS_UPSCALE,
+        GPU_PASS_POST,
+        GPU_PASS_UI,
+        GPU_PASS_POSTUI,
+        GPU_PASS_PRESENT,
+        GPU_PASS_COUNT
+    };
+
+    void CreateGpuTimers();
+    void ReadGpuTimings(uint32_t frameIndex);
+    void BeginGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass);
+    void EndGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass);
+
+    // One timer query pair per frame slot and measured section, plus one for the whole frame. The
+    // queries are per slot because a query cannot be reset and re-used while the submission that
+    // wrote it is still in flight; BeginSlot waits for the slot's previous submission, which is the
+    // point ReadGpuTimings reads the slot's timestamps at.
+    bool gpuTimersCreated = false;
+    bool gpuTimersReady = false;
+    nvrhi::TimerQueryHandle gpuFrameQueries[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::TimerQueryHandle gpuPassQueries[MAX_FRAMES_IN_FLIGHT][GPU_PASS_COUNT];
+
+    // The most recent timings read back, in milliseconds, with 0.0f for a section that has not run
+    // yet since the renderer started.
+    float gpuFrameMs = 0.0f;
+    float gpuPassMs[GPU_PASS_COUNT] = {};
+    bool gpuTimingValid = false;
 
     // Set after the one-time warning that there is no ALBEDO wrap to present.
     bool warnedMissingAlbedo = false;

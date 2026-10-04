@@ -96,7 +96,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          globalUniform.fogColor[0].x + globalUniform.fogDensity[0].x + globalUniform.lightStyleScales[0].x +
          globalUniform.giBounceRays.x + globalUniform.fltEnable.x + globalUniform.fixedAlbedo.x +
          globalUniform.sunBounce.x + globalUniform.levelFogColorDensity.x +
-         globalUniform.levelFogSkyBlend.x + float(globalUniform.restirParams.x);
+         globalUniform.levelFogSkyBlend.x + float(globalUniform.restirParams.x) +
+         globalUniform.cloudShadowPlacement.x + globalUniform.cloudLayerMotion.x;
 
     // ShVertPreprocessing
     v += float(pushConstant.push.tlasInstanceCount) + float(pushConstant.push.tlasInstanceIsDynamicBits[0]);

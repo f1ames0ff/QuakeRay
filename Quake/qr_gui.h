@@ -20,7 +20,7 @@ extern "C" {
 // Creates the ImGui context, the SDL2 input backend and the font atlas.
 // qr_instance is the QrInstance the draw lists are uploaded to; font_path may
 // be NULL, the default ImGui font is used then.
-void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path);
+void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font_size);
 int  QR_GUI_Ready (void);
 void QR_GUI_Shutdown (void);
 
@@ -137,6 +137,14 @@ int  QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, fl
 int  QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h, float (*uv)[2], int *count, int max_count);
 // 1 while any ImGui item is being dragged or edited.
 int  QR_GUI_AnyItemActive (void);
+
+// ----- the rt_stats readout -----
+
+void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title);
+void QR_GUI_OverlaySection (const char *title);
+void QR_GUI_OverlayEnd (void);
+void QR_GUI_OverlayRow (const char *label, const char *value, const float *samples, int count, uint32_t color);
+void QR_GUI_OverlayNote (const char *text);
 
 // A short message shown in the corner of the editor interface (Apply/Cancel
 // confirmations, errors). Fades out on its own.

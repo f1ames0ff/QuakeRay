@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 #include <stdint.h>
 
-#if defined(_WIN32) && !defined(QR_STATIC)
+#if !defined(QR_STATIC)
     #ifdef QR_LIBRARY_EXPORTS
         #define QRAPI __declspec(dllexport)
     #else
@@ -36,22 +36,6 @@
 
 #ifdef QR_USE_SURFACE_WIN32
     #include <windows.h>
-#endif
-#ifdef QR_USE_SURFACE_METAL
-    #ifdef __OBJC__
-    @class CAMetalLayer;
-    #else
-    typedef void CAMetalLayer;
-    #endif
-#endif
-#ifdef QR_USE_SURFACE_WAYLAND
-    #include <wayland-client.h>
-#endif
-#ifdef QR_USE_SURFACE_XCB
-    #include <xcb/xcb.h>
-#endif
-#ifdef QR_USE_SURFACE_XLIB
-    #include <X11/Xlib.h>
 #endif
 
 #ifdef __cplusplus
@@ -104,10 +88,6 @@ typedef void (*PFN_qrOpenFile)(const char *pFilePath, void *pUserData, const voi
 typedef void (*PFN_qrCloseFile)(void *pFileUserHandle, void *pUserData);
 
 typedef struct QrWin32SurfaceCreateInfo QrWin32SurfaceCreateInfo;
-typedef struct QrMetalSurfaceCreateInfo QrMetalSurfaceCreateInfo;
-typedef struct QrWaylandSurfaceCreateInfo QrWaylandSurfaceCreateInfo;
-typedef struct QrXcbSurfaceCreateInfo QrXcbSurfaceCreateInfo;
-typedef struct QrXlibSurfaceCreateInfo QrXlibSurfaceCreateInfo;
 
 #ifdef QR_USE_SURFACE_WIN32
 typedef struct QrWin32SurfaceCreateInfo
@@ -115,37 +95,6 @@ typedef struct QrWin32SurfaceCreateInfo
     HINSTANCE           hinstance;
     HWND                hwnd;
 } QrWin32SurfaceCreateInfo;
-#endif
-
-#ifdef QR_USE_SURFACE_METAL
-typedef struct QrMetalSurfaceCreateInfo
-{
-    const CAMetalLayer  *pLayer;
-} QrMetalSurfaceCreateInfo;
-#endif
-
-#ifdef QR_USE_SURFACE_WAYLAND
-typedef struct QrWaylandSurfaceCreateInfo
-{
-    struct wl_display   *display;
-    struct wl_surface   *surface;
-} QrWaylandSurfaceCreateInfo;
-#endif
-
-#ifdef QR_USE_SURFACE_XCB
-typedef struct QrXcbSurfaceCreateInfo
-{
-    xcb_connection_t    *connection;
-    xcb_window_t        window;
-} QrXcbSurfaceCreateInfo;
-#endif
-
-#ifdef QR_USE_SURFACE_XLIB
-typedef struct QrXlibSurfaceCreateInfo
-{
-    Display             *dpy;
-    Window              window;
-} QrXlibSurfaceCreateInfo;
 #endif
 
 typedef enum QrTextureSwizzling
@@ -164,10 +113,6 @@ typedef struct QrInstanceCreateInfo
     const char                  *pAppGUID;
 
     QrWin32SurfaceCreateInfo    *pWin32SurfaceInfo;
-    QrMetalSurfaceCreateInfo    *pMetalSurfaceCreateInfo;
-    QrWaylandSurfaceCreateInfo  *pWaylandSurfaceCreateInfo;
-    QrXcbSurfaceCreateInfo      *pXcbSurfaceCreateInfo;
-    QrXlibSurfaceCreateInfo     *pXlibSurfaceCreateInfo;
 
     const char                  *pConfigPath;
 
@@ -230,6 +175,8 @@ typedef struct QrInstanceCreateInfo
     QrTextureSwizzling          pbrTextureSwizzling;
 
     QrBool32                    effectWipeIsUsed;
+
+    uint32_t                    godRaysQuality;
 } QrInstanceCreateInfo;
 
 QRAPI QrResult QRCONV qrCreateInstance(
@@ -1000,6 +947,8 @@ typedef struct QrDrawFrameTonemappingParams
     float       contrast;
 } QrDrawFrameTonemappingParams;
 
+#define QR_SKY_CLOUDS_MAX_QUALITY 3
+
 typedef struct QrDrawFrameSkyParams
 {
     QrSkyType   skyType;
@@ -1028,6 +977,10 @@ typedef struct QrDrawFrameSkyParams
     QrBool32    godRaysFromSkyTexture;
     QrFloat3D   godRaysSkyDirection;
     QrFloat3D   godRaysSkyColor;
+
+    uint32_t    skyCloudsQuality;
+    uint32_t    godRaysQuality;
+    float       sunDiscSize;
 } QrDrawFrameSkyParams;
 
 #define QR_LIGHT_STYLE_COUNT 64
@@ -1394,7 +1347,7 @@ QRAPI QrBool32 QRCONV qrIsRenderUpscaleTechniqueAvailable(
 QRAPI QrBool32 QRCONV qrIsSuspended(
     QrInstance                          qrInstance);
 
-#define QR_GPU_PASS_COUNT 18
+#define QR_GPU_PASS_COUNT 17
 
 #define QR_RAY_STATS_CATEGORY_COUNT 5
 

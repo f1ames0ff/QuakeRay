@@ -52,7 +52,7 @@ static int buttonremap[] = {
 	K_MOUSE2,           /* middle button	*/
 	K_MOUSE4, K_MOUSE5};
 
-extern cvar_t rt_sun_edit;
+extern cvar_t rt_sky_sun_edit;
 
 /* total accumulated mouse movement since last frame */
 static int total_dx, total_dy = 0;
@@ -1007,9 +1007,9 @@ void IN_SendKeyEvents (void)
 			// The sun editor is left by a press of the fire button, which is
 			// swallowed: the press that ends the mode does not shoot.
 			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
-			    key_dest == key_game && CVAR_TO_BOOL (rt_sun_edit))
+			    key_dest == key_game && CVAR_TO_BOOL (rt_sky_sun_edit))
 			{
-				Cvar_Set ("rt_sun_edit", "0");
+				Cvar_Set ("rt_sky_sun_edit", "0");
 				break;
 			}
 			// qr light editor: in the flying mode LMB near a gizmo arrow drags

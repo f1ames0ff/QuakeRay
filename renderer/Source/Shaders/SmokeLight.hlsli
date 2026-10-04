@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 // HLSL counterpart of SmokeLight.h. Like the golden it includes nothing itself: the shader has to
 // pull in ShaderCommonHLSLFunc.hlsli first (globalUniform, lightSources and the INSTANCE_MASK_*

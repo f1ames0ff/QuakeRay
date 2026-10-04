@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 #define DESC_SET_RANDOM 5
 #define DESC_SET_LIGHT_SOURCES 6
 #define DESC_SET_RAY_STATS 11
+#define DESC_SET_CLOUD_SHADOW 12
 #define LIGHT_SAMPLE_METHOD (LIGHT_SAMPLE_METHOD_DIRECT)
 #include "RaygenCommon.hlsli"
 #include "Q2Asvgf.hlsli"

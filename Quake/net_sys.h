@@ -29,110 +29,7 @@
 #include <stddef.h>
 #include <limits.h>
 
-#if defined(PLATFORM_BSD) || defined(PLATFORM_OSX) || defined(PLATFORM_AMIGA) /* bsdsocket.library */ || defined(__GNU__) /* GNU/Hurd */ || defined(__riscos__)
-/* struct sockaddr has unsigned char sa_len as the first member in BSD
- * variants and the family member is also an unsigned char instead of an
- * unsigned short. This should matter only when PLATFORM_UNIX is defined,
- * however, checking for the offset of sa_family in every platform that
- * provide a struct sockaddr doesn't hurt either (see down below for the
- * compile time asserts.) */
-/* FIXME : GET RID OF THIS ABOMINATION !!! */
-#define HAVE_SA_LEN   1
-#define SA_FAM_OFFSET 1
-#else
-#undef HAVE_SA_LEN
 #define SA_FAM_OFFSET 0
-#endif /* BSD, sockaddr */
-
-/* unix includes and compatibility macros */
-#if defined(PLATFORM_UNIX) || defined(PLATFORM_RISCOS)
-
-#include <sys/param.h>
-#include <sys/ioctl.h>
-#if defined(__sun) || defined(sun)
-#include <sys/filio.h>
-#include <sys/sockio.h>
-#endif /* __sunos__ */
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-
-typedef int sys_socket_t;
-#define INVALID_SOCKET (-1)
-#define SOCKET_ERROR   (-1)
-
-#if defined(__APPLE__) && defined(SO_NKE) && !defined(SO_NOADDRERR)
-/* ancient Mac OS X SDKs 10.2 and older are missing socklen_t */
-typedef int socklen_t; /* defining as signed int to match the old api */
-#endif                 /* ancient OSX SDKs */
-
-#define SOCKETERRNO   errno
-#define ioctlsocket   ioctl
-#define closesocket   close
-#define selectsocket  select
-#define IOCTLARG_P(x) /* (char *) */ x
-
-#define NET_EWOULDBLOCK  EWOULDBLOCK
-#define NET_ECONNREFUSED ECONNREFUSED
-
-#define socketerror(x) strerror ((x))
-
-/* Verify that we defined HAVE_SA_LEN correctly: */
-COMPILE_TIME_ASSERT (sockaddr, offsetof (struct sockaddr, sa_family) == SA_FAM_OFFSET);
-
-#endif /* end of unix stuff */
-
-/* amiga includes and compatibility macros */
-#if defined(PLATFORM_AMIGA) /* Amiga bsdsocket.library */
-
-#include <sys/param.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-#include <proto/exec.h>
-#include <proto/socket.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-
-typedef int sys_socket_t;
-#define INVALID_SOCKET (-1)
-#define SOCKET_ERROR   (-1)
-
-#if !(defined(__AROS__) || defined(__amigaos4__))
-typedef LONG socklen_t; /* int32_t */
-#endif
-#if !defined(__amigaos4__)
-#if (LONG_MAX <= 2147483647L)
-typedef unsigned long in_addr_t; /* u_int32_t */
-#else
-typedef unsigned int in_addr_t; /* u_int32_t */
-#endif
-#endif
-
-#define SOCKETERRNO                      Errno ()
-#define ioctlsocket                      IoctlSocket
-#define closesocket                      CloseSocket
-#define selectsocket(_N, _R, _W, _E, _T) WaitSelect ((_N), (_R), (_W), (_E), (_T), NULL)
-#define IOCTLARG_P(x)                    (char *)x
-#if defined(__amigaos4__) || defined(PLATFORM_AMIGAOS3)
-#define inet_ntoa(x) Inet_NtoA (x.s_addr) /* Inet_NtoA(*(ULONG*)&x) */
-#define h_errno      Errno ()
-#endif
-
-#define NET_EWOULDBLOCK  EWOULDBLOCK
-#define NET_ECONNREFUSED ECONNREFUSED
-
-#define socketerror(x) strerror ((x))
-/* there is h_errno but no hstrerror() */
-#define hstrerror(x)   strerror ((x))
-
-/* Verify that we defined HAVE_SA_LEN correctly: */
-COMPILE_TIME_ASSERT (sockaddr, offsetof (struct sockaddr, sa_family) == SA_FAM_OFFSET);
-
-#endif /* end of amiga bsdsocket.library stuff */
 
 /* windows includes and compatibility macros */
 #if defined(PLATFORM_WINDOWS)
@@ -161,7 +58,6 @@ typedef SOCKET sys_socket_t;
 /* must #include "wsaerror.h" for this : */
 #define socketerror(x)   __WSAE_StrError ((x))
 
-/* Verify that we defined HAVE_SA_LEN correctly: */
 COMPILE_TIME_ASSERT (sockaddr, offsetof (struct sockaddr, sa_family) == SA_FAM_OFFSET);
 
 #endif /* end of windows stuff */

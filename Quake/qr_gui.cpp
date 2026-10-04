@@ -6,6 +6,7 @@
 // draws. No ImGui Vulkan backend, pipelines or descriptor pools are involved.
 
 #include "qr_gui.h"
+#include "cursor.h"
 
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
@@ -26,8 +27,12 @@ namespace
 
 QrInstance   g_instance      = 0;
 QrMaterial   g_font_material = QR_NO_MATERIAL;
+constexpr int   kOverlayFontSizeCount = 8;
+constexpr float kOverlayFontSizes[kOverlayFontSizeCount] = { 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f };
+ImFont      *g_stats_fonts[kOverlayFontSizeCount] = {};
 bool         g_ready         = false;
 bool         g_frame_open    = false;
+bool         g_custom_cursor = false;
 unsigned int g_last_frame_id = 0xFFFFFFFFu;
 
 int          g_fb_x = 0, g_fb_y = 0, g_fb_w = 0, g_fb_h = 0, g_drawable_h = 0;
@@ -296,9 +301,30 @@ void DrawNotification (void)
 	dl->AddText (pos, IM_COL32 (255, 226, 138, (int)(235.0f * alpha)), g_notify);
 }
 
+void DrawMouseCursor (void)
+{
+	if (!g_custom_cursor)
+		return;
+
+	ImGuiIO &io = ImGui::GetIO ();
+	int64_t  texture = QR_NO_MATERIAL;
+	int      size = 0, hotX = 0, hotY = 0;
+
+	if (!Cursor_GetGuiCursor (&texture, &size, &hotX, &hotY))
+	{
+		io.MouseDrawCursor = true;
+		return;
+	}
+
+	io.MouseDrawCursor = false;
+
+	const ImVec2 pos (io.MousePos.x - (float)hotX, io.MousePos.y - (float)hotY);
+	ImGui::GetForegroundDrawList ()->AddImage ((ImTextureID)(uintptr_t)texture, pos, ImVec2 (pos.x + (float)size, pos.y + (float)size));
+}
+
 } // namespace
 
-void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path)
+void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font_size)
 {
 	if (g_ready || sdl_window == NULL || qr_instance == NULL)
 		return;
@@ -320,15 +346,23 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, const char *font_path)
 	}
 
 	ImFont *font = nullptr;
-	if (font_path && font_path[0])
-		font = io.Fonts->AddFontFromFileTTF (font_path, 19.0f);
+	if (font_data && font_size > 0)
+	{
+		ImFontConfig stats_config;
+		stats_config.FontDataOwnedByAtlas = false;
+
+		font = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, 19.0f);
+
+		for (int i = 0; i < kOverlayFontSizeCount; i++)
+			g_stats_fonts[i] = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, kOverlayFontSizes[i], &stats_config);
+	}
 	if (!font)
 	{
 		ImFontConfig cfg;
 		cfg.SizePixels = 19.0f;
 		font = io.Fonts->AddFontDefault (&cfg);
-		if (font_path && font_path[0])
-			fprintf (stderr, "qr gui: cannot load '%s', using the default font\n", font_path);
+		if (font_data && font_size > 0)
+			fprintf (stderr, "qr gui: cannot load the font, using the default font\n");
 	}
 
 	g_instance = (QrInstance)qr_instance;
@@ -413,6 +447,7 @@ void QR_GUI_EndFrame (void)
 		return;
 
 	DrawNotification ();
+	DrawMouseCursor ();
 
 	ImGui::Render ();
 	g_frame_open = false;
@@ -463,7 +498,8 @@ void QR_GUI_SetMouseCursor (int enable)
 {
 	if (!g_ready)
 		return;
-	ImGui::GetIO ().MouseDrawCursor = enable != 0;
+	g_custom_cursor = enable != 0;
+	ImGui::GetIO ().MouseDrawCursor = false;
 }
 
 void QR_GUI_BeginPanel (const char *id, int x, int y, int width, int height)
@@ -1828,4 +1864,210 @@ void QR_GUI_DrawCircle (float cx, float cy, float radius, uint32_t argb, float t
 
 	ImGui::GetBackgroundDrawList ()->AddCircle (ImVec2 (cx, cy), radius, PackedColorToU32 (argb), 0,
 	                                            thickness > 0.0f ? thickness : 1.0f);
+}
+
+// ----- the rt_stats readout -----
+
+namespace
+{
+
+constexpr float kOverlayBaseFont = 28.0f;
+constexpr float kOverlayLabelW   = 216.0f;
+constexpr float kOverlayValueW   = 144.0f;
+constexpr float kOverlayGraphW   = 236.0f;
+constexpr float kOverlayGraphH   = 26.0f;
+constexpr float kOverlayGapX     = 12.0f;
+constexpr float kOverlayRowW     = kOverlayLabelW + kOverlayValueW + kOverlayGapX + kOverlayGraphW;
+
+float   g_overlay_scale = 1.0f;
+float   g_overlay_font_size = kOverlayBaseFont;
+ImFont *g_overlay_font = nullptr;
+
+bool g_overlay_group = false;
+bool g_overlay_first = true;
+
+void OverlaySparkline (ImDrawList *dl, const ImVec2 &p, float w, float h, const float *v, int n, ImU32 col)
+{
+	const float scale = g_overlay_scale;
+
+	dl->AddRectFilled (p, ImVec2 (p.x + w, p.y + h), IM_COL32 (0, 0, 0, 110), 4.0f * scale);
+
+	float vmax = 0.0f;
+	for (int i = 0; i < n; i++)
+		if (v[i] > vmax)
+			vmax = v[i];
+
+	if (vmax < 1e-4f)
+		vmax = 1e-4f;
+	vmax *= 1.15f;
+
+	const float pad = 2.0f * scale;
+	const float x0 = p.x + pad, x1 = p.x + w - pad;
+	const float y0 = p.y + pad, y1 = p.y + h - pad;
+	const float dy = y1 - y0;
+
+	ImVec2 pts[128];
+	if (n > (int)(sizeof (pts) / sizeof (pts[0])))
+		n = (int)(sizeof (pts) / sizeof (pts[0]));
+
+	for (int i = 0; i < n; i++)
+	{
+		const float t = (float)i / (float)(n - 1);
+		pts[i] = ImVec2 (x0 + t * (x1 - x0), y1 - (v[i] / vmax) * dy);
+	}
+
+	const ImU32 fill = (col & 0x00FFFFFFu) | 0x28000000u;
+	for (int i = 1; i < n; i++)
+		dl->AddQuadFilled (ImVec2 (pts[i - 1].x, y1), pts[i - 1], pts[i], ImVec2 (pts[i].x, y1), fill);
+
+	dl->AddPolyline (pts, n, col, ImDrawFlags_None, g_overlay_scale > 0.75f ? 2.0f : 1.0f);
+}
+
+}
+
+void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title)
+{
+	if (!g_ready)
+		return;
+
+	const ImGuiIO &io = ImGui::GetIO ();
+
+	float scale = 1.0f;
+	if (io.DisplaySize.x > 0.0f && io.DisplaySize.y > 0.0f)
+	{
+		const float scale_x = io.DisplaySize.x / 3840.0f;
+		const float scale_y = io.DisplaySize.y / 2160.0f;
+		scale = scale_x < scale_y ? scale_x : scale_y;
+	}
+	if (scale > 1.0f)
+		scale = 1.0f;
+	if (scale < 0.5f)
+		scale = 0.5f;
+
+	float   font_size = kOverlayBaseFont * scale;
+	float   best_diff = FLT_MAX;
+
+	g_overlay_font = nullptr;
+	g_overlay_font_size = font_size;
+
+	for (int i = 0; i < kOverlayFontSizeCount; i++)
+	{
+		if (g_stats_fonts[i] == nullptr)
+			continue;
+
+		const float diff = std::fabs (kOverlayFontSizes[i] - font_size);
+		if (diff < best_diff)
+		{
+			best_diff = diff;
+			g_overlay_font = g_stats_fonts[i];
+			g_overlay_font_size = kOverlayFontSizes[i];
+		}
+	}
+
+	g_overlay_scale = g_overlay_font_size / kOverlayBaseFont;
+
+	ImGui::SetNextWindowPos (ImVec2 (x * g_overlay_scale, y * g_overlay_scale), ImGuiCond_Always);
+	ImGui::SetNextWindowBgAlpha (alpha);
+
+	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+	                               ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+	                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+	ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (16.0f * g_overlay_scale, 12.0f * g_overlay_scale));
+	ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, ImVec2 (12.0f * g_overlay_scale, 4.0f * g_overlay_scale));
+	ImGui::PushStyleColor (ImGuiCol_WindowBg, ImVec4 (0.09f, 0.09f, 0.095f, 1.0f));
+	ImGui::PushStyleColor (ImGuiCol_Border, ImVec4 (0.32f, 0.32f, 0.32f, 1.0f));
+	ImGui::PushFont (g_overlay_font, g_overlay_font_size);
+
+	ImGui::Begin (id, nullptr, flags);
+
+	if (title && title[0])
+		ImGui::TextColored (ImVec4 (1.0f, 0.55f, 0.25f, 1.0f), "%s", title);
+
+	g_overlay_group = true;
+	g_overlay_first = true;
+	ImGui::BeginGroup ();
+}
+
+void QR_GUI_OverlaySection (const char *title)
+{
+	if (!g_ready)
+		return;
+
+	if (g_overlay_group)
+	{
+		if (!g_overlay_first)
+		{
+			ImGui::EndGroup ();
+			ImGui::SameLine ();
+			ImGui::BeginGroup ();
+		}
+		g_overlay_first = false;
+	}
+
+	if (title && title[0])
+	{
+		ImGui::Dummy (ImVec2 (0.0f, 4.0f * g_overlay_scale));
+		ImGui::TextColored (ImVec4 (0.85f, 0.85f, 0.85f, 1.0f), "%s", title);
+		ImGui::Dummy (ImVec2 (0.0f, 2.0f * g_overlay_scale));
+	}
+}
+
+void QR_GUI_OverlayRow (const char *label, const char *value, const float *samples, int count, uint32_t color)
+{
+	if (!g_ready)
+		return;
+
+	ImDrawList  *dl = ImGui::GetWindowDrawList ();
+	const float  label_w = kOverlayLabelW * g_overlay_scale;
+	const float  value_w = kOverlayValueW * g_overlay_scale;
+	const float  graph_w = kOverlayGraphW * g_overlay_scale;
+	const float  graph_h = kOverlayGraphH * g_overlay_scale;
+	const float  gap_x = kOverlayGapX * g_overlay_scale;
+	const float  row_w = kOverlayRowW * g_overlay_scale;
+	const float  line_h = ImGui::GetTextLineHeight ();
+	const float  row_h = line_h > graph_h + 8.0f * g_overlay_scale ? line_h : graph_h + 8.0f * g_overlay_scale;
+	const ImVec2 pos = ImGui::GetCursorScreenPos ();
+	const ImU32  col = PackedColorToU32 (color);
+
+	ImGui::Dummy (ImVec2 (row_w, row_h));
+
+	dl->AddText (pos, col, label ? label : "");
+
+	if (value && value[0])
+	{
+		const ImVec2 ts = ImGui::CalcTextSize (value);
+		dl->AddText (ImVec2 (pos.x + label_w + value_w - ts.x, pos.y), col, value);
+	}
+
+	if (samples && count >= 2)
+	{
+		const ImVec2 graph (pos.x + label_w + value_w + gap_x, pos.y + (row_h - graph_h) * 0.5f);
+		OverlaySparkline (dl, graph, graph_w, graph_h, samples, count, col);
+	}
+}
+
+void QR_GUI_OverlayNote (const char *text)
+{
+	if (!g_ready)
+		return;
+
+	ImGui::TextColored (ImVec4 (0.62f, 0.62f, 0.62f, 1.0f), "%s", text ? text : "");
+}
+
+void QR_GUI_OverlayEnd (void)
+{
+	if (!g_ready)
+		return;
+
+	if (g_overlay_group)
+	{
+		ImGui::EndGroup ();
+		g_overlay_group = false;
+	}
+
+	ImGui::End ();
+	ImGui::PopFont ();
+	ImGui::PopStyleColor (2);
+	ImGui::PopStyleVar (2);
 }

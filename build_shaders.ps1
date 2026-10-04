@@ -12,6 +12,31 @@ $shaderOut = Join-Path $PSScriptRoot "renderer\Build"
 if (-not $DestDir) { $DestDir = Join-Path $PSScriptRoot "build\Debug\id1\shaders" }
 $destDir   = $DestDir
 
+# The generator rebuilds a shader when a file it depends on is newer than the .spv
+# it produced, and the headers the shaders include (CloudLayer.h and the rest, which
+# sit next to the sources) have been outside that check: a change in one of them has
+# shipped stale .spv files more than once, with a build that reported success. When
+# any header in the source folder is newer than the oldest built shader, throw them
+# all away and let the generator build them again. The same is done for every build
+# that asks for a rebuild.
+$headers = @(Get-ChildItem -Path (Join-Path $shaderSrc "*.h") -ErrorAction SilentlyContinue)
+$built   = @(Get-ChildItem -Path (Join-Path $shaderOut "*.spv") -ErrorAction SilentlyContinue)
+if ($headers.Count -gt 0 -and $built.Count -gt 0)
+{
+    $newestHeader = ($headers | Sort-Object LastWriteTime -Descending)[0]
+    $oldestBuild  = ($built   | Sort-Object LastWriteTime)[0]
+
+    if ($newestHeader.LastWriteTime -gt $oldestBuild.LastWriteTime)
+    {
+        Write-Host "Shader header $($newestHeader.Name) is newer than the built shaders: rebuilding all of them." -ForegroundColor Yellow
+        Remove-Item (Join-Path $shaderOut "*.spv") -Force
+    }
+}
+if ($Rebuild -and $built.Count -gt 0)
+{
+    Remove-Item (Join-Path $shaderOut "*.spv") -Force
+}
+
 if ($env:VULKAN_SDK) {
     $sdkBin = Join-Path $env:VULKAN_SDK "Bin"
     if (Test-Path (Join-Path $sdkBin "glslc.exe")) {
@@ -48,8 +73,18 @@ $genArgs += "-psout"
 
 Push-Location $shaderSrc
 try {
-    python GenerateShaders.py @genArgs
+    $genOutput = python GenerateShaders.py @genArgs 2>&1
+    $genOutput | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "GenerateShaders.py failed (exit $LASTEXITCODE)." }
+    # A shader that fails to compile is reported by the generator, and the run still
+    # ends with a zero exit code: from here it looked exactly like a success with
+    # fewer files. Worse, the deploy below then found no .spv for the failed shader
+    # and removed the one in the game's folder -- a game left without a shader, and a
+    # build that said nothing was wrong. The report is part of the run now, and a
+    # failure stops it before anything is deployed or removed.
+    if ($genOutput -match 'shader builds failed') {
+        throw "GenerateShaders.py reported a failed shader build (see above)."
+    }
 }
 finally {
     Pop-Location
