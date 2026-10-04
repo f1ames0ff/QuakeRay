@@ -1119,6 +1119,10 @@ void Host_Init (void)
 		Modlist_Init ();   // johnfitz
 		DemoList_Init ();  // ericw
 		SaveList_Init ();
+#if RT_RENDERER
+		if (!COM_FileExists ("BlueNoise_LDR_RGBA_128.png", NULL))
+			Sys_Error ("the engine assets are missing");
+#endif
 		VID_Init ();
 		IN_Init ();
 		TexMgr_Init (); // johnfitz
