@@ -1393,7 +1393,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		return;
 	}
 
-	// if (vid.recalc_refdef)
+	if (vid.recalc_refdef) SCR_CalcRefdef ();
 
 	if (use_tasks)
 	{
@@ -1440,7 +1440,6 @@ void SCR_UpdateScreen (qboolean use_tasks)
 
 	in_update_screen = false;
 
-	SCR_CalcRefdef ();
 	RT_Prof_FrameEnd ();
 	RT_Prof_Update ();
 }
