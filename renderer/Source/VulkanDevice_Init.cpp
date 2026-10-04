@@ -1153,11 +1153,9 @@ void VulkanDevice::ValidateCreateInfo(const QrInstanceCreateInfo *pInfo)
     }
 
     {
-        int count = !!pInfo->pWin32SurfaceInfo;
-
-        if (count != 1)
+        if (pInfo->pWin32SurfaceInfo == nullptr)
         {
-            throw QrException(QR_WRONG_ARGUMENT, "Exactly one of the surface infos must be not null");
+            throw QrException(QR_WRONG_ARGUMENT, "The Win32 surface info must not be null");
         }
     }
 

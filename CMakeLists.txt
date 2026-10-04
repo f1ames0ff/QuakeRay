@@ -291,7 +291,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2)
 # Source files
 # ============================================================================
 
-# --- Core sources (all platforms) ---
+# --- Core sources ---
 set(CORE_SOURCES
     Quake/bgmusic.c
     Quake/cfgfile.c
@@ -369,7 +369,7 @@ set(CORE_SOURCES
     Quake/world.c
 )
 
-# --- SDL layer (all platforms) ---
+# --- SDL layer ---
 set(SDL_SOURCES
     Quake/cd_sdl.c
     Quake/gl_vidsdl.c
@@ -378,7 +378,7 @@ set(SDL_SOURCES
     Quake/sys_info.c
 )
 
-# --- Networking (all platforms) ---
+# --- Networking ---
 set(NET_COMMON_SOURCES
     Quake/net_dgrm.c
     Quake/net_loop.c

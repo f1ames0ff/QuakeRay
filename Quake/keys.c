@@ -773,7 +773,6 @@ void History_Init (void)
 			} while (c != '\r' && c != '\n' && c != EOF && i < MAXCMDLINE);
 			key_lines[edit_line][i - 1] = 0;
 			edit_line = (edit_line + 1) & (CMDLINES - 1);
-			/* for people using a windows-generated history file on unix: */
 			if (c == '\r' || c == '\n')
 			{
 				do

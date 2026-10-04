@@ -226,7 +226,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 typedef struct
 {
 	const char *basedir;
-	const char *userdir; // user's directory on UNIX platforms.
+	const char *userdir;
 	                     // if user directories are enabled, basedir
 	                     // and userdir will point to different
 	                     // memory locations, otherwise to the same.

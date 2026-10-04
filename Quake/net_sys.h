@@ -29,7 +29,6 @@
 #include <stddef.h>
 #include <limits.h>
 
-#undef HAVE_SA_LEN
 #define SA_FAM_OFFSET 0
 
 /* windows includes and compatibility macros */
@@ -59,7 +58,6 @@ typedef SOCKET sys_socket_t;
 /* must #include "wsaerror.h" for this : */
 #define socketerror(x)   __WSAE_StrError ((x))
 
-/* Verify that we defined HAVE_SA_LEN correctly: */
 COMPILE_TIME_ASSERT (sockaddr, offsetof (struct sockaddr, sa_family) == SA_FAM_OFFSET);
 
 #endif /* end of windows stuff */

@@ -27,18 +27,8 @@
 #ifndef ARCHDEFS_H
 #define ARCHDEFS_H
 
-#if defined(_WIN32) || defined(__WIN32__) || defined(_WIN64) || defined(__NT__) || defined(_Windows)
-
 #if !defined(PLATFORM_WINDOWS)
 #define PLATFORM_WINDOWS 1
 #endif
-
-#endif /* PLATFORM_xxx */
-
-#if defined(_WIN64)
-#define PLATFORM_STRING "Win64"
-#else
-#define PLATFORM_STRING "Windows"
-#endif /* PLATFORM_STRING */
 
 #endif /* ARCHDEFS_H */

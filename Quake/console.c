@@ -753,7 +753,6 @@ tablist is a doubly-linked loop, alphabetized by name
 */
 
 // bash_partial is the string that can be expanded,
-// aka Linux Bash shell. -- S.A.
 static char     bash_partial[80];
 static qboolean bash_singlematch;
 
