@@ -2483,7 +2483,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float dof_radius = 48.0f;
 	if (rt_viewmodel_depth_far > rt_viewmodel_depth_near)
 	{
-		dof_focus = rt_viewmodel_depth_far * 1.02f;
+		dof_focus = rt_viewmodel_depth_far * 0.8f;
+		if (dof_focus <= rt_viewmodel_depth_near)
+			dof_focus = rt_viewmodel_depth_far * 1.02f;
 
 		const float dof_near = CLAMP (0.0f, rt_viewmodel_depth_near, dof_focus * 0.95f);
 		dof_radius = 48.0f / q_max (1.0f - dof_near / dof_focus, 0.05f);
