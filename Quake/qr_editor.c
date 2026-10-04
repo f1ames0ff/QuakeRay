@@ -117,7 +117,6 @@ enum
 	PARAM_LSTYLES,
 	PARAM_LCOLOR,
 	PARAM_LBRIGHT,
-	PARAM_LUPOFF,
 	PARAM_EFOCUS,
 	PARAM_ESOFT,
 	PARAM_EPROJ,
@@ -165,8 +164,6 @@ static const struct qre_param_s
 	                     "The color of the light the surface casts; needs is_light." },
 	[PARAM_LBRIGHT]  = { NULL, "light_brightness", QRE_T_FLOAT, 0.001f, 1000, 0.0001f,
 	                     "How bright the light the surface casts is; the visible glow is set by emissive_factor and does not change with this." },
-	[PARAM_LUPOFF]   = { NULL, "light_upoffset",   QRE_T_FLOAT, -64, 64, 0.5f,
-	                     "Lifts the cast light above the model's origin (alias models)." },
 	[PARAM_EFOCUS]   = { "Emissive", "emissive_focus",   QRE_T_FLOAT, 1, 90, 0.01f,
 	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond. The edge is softened inward from this angle by emissive_focus_soft." },
 	[PARAM_ESOFT]    = { NULL, "emissive_focus_soft", QRE_T_FLOAT, 1, 90, 0.01f,
@@ -812,7 +809,6 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_METAL:    return m->metalness_factor;
 	case PARAM_BASEF:    return m->base_factor;
 	case PARAM_LBRIGHT:  return m->light_brightness;
-	case PARAM_LUPOFF:   return m->light_upoffset;
 	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : 45.0f;
 	case PARAM_ESOFT:    return m->emissive_focus_soft >= 0.0f ? m->emissive_focus_soft : 45.0f;
 	default:             return 0.0f;
@@ -865,7 +861,6 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_ROUGH:    m->roughness_override = value; break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
-	case PARAM_LUPOFF:   m->light_upoffset = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
 	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
 	default:             break;
@@ -2820,7 +2815,7 @@ static void QRE_ParamWidgets (int g)
 
 	for (p = 0; p < PARAM_COUNT; p++)
 	{
-		if (p >= PARAM_LSTYLES && p <= PARAM_LUPOFF && !qre.group[g]->is_light)
+		if (p >= PARAM_LSTYLES && p <= PARAM_LBRIGHT && !qre.group[g]->is_light)
 			continue;
 
 		if (qre_params[p].section && (!section || strcmp (section, qre_params[p].section)))
@@ -5641,8 +5636,6 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		QRE_WriteColor (f, "light_color", m->light_color);
 	if (m->light_brightness != 1.0f)
 		fprintf (f, "    light_brightness: %.6g\n", m->light_brightness);
-	if (m->light_upoffset != 0.0f)
-		fprintf (f, "    light_upoffset: %.6g\n", m->light_upoffset);
 	if (m->emissive_focus > 0.0f)
 		fprintf (f, "    emissive_focus: %.6g\n", m->emissive_focus);
 	if (m->emissive_focus_soft >= 0.0f)

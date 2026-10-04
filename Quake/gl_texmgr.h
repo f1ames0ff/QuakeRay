@@ -80,7 +80,6 @@ typedef struct gltexture_s
 	QrMaterial           rtmaterial;
 	vec3_t	             rtlightcolor;
 	qboolean             rthaslightcolor;
-	float                rtupoffset;
 	qboolean             rtmirror;
 	qboolean             rtexactnormals;
 	qboolean             rtforcerasterize;

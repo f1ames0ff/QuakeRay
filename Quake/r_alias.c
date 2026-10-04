@@ -239,7 +239,6 @@ static void GL_DrawAliasFrame(
         VectorCopy (tx->rtlightcolor, light.color);
         light.intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
         light.radius = CVAR_TO_FLOAT (rt_dlight_radius);
-        light.offset[2] = tx->rtupoffset;
         light.style = -1;
 
         RT_LIGHT_Emit (&light);
