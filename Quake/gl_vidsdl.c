@@ -211,7 +211,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_physical_sky, "1") \
 	CVAR_DEF_T (rt_physical_sun, "0") \
 	CVAR_DEF_T (rt_sky_color, "255 255 255") \
-	CVAR_DEF_T (rt_sky_brightness, "1.0") \
+	CVAR_DEF_T (rt_sky_brightness, "0.1") \
 	CVAR_DEF_T (rt_sky_light_mult, "1.0") \
 	CVAR_DEF_T (rt_brightness, "1.0") \
 	CVAR_DEF_T (rt_light_color, "255 255 255") \
