@@ -75,6 +75,7 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea;
+extern cvar_t rt_model_lights;
 extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minarea;
 extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale;
 
@@ -2885,6 +2886,7 @@ static float    qre_water_color_snapshot[3];
 static float    qre_acid_color_snapshot[3];
 
 static const char *const qre_mat_cvars[] = {
+	"rt_model_lights",
 	"rt_dtal_clearance",
 	"rt_dtal_maxpolys",
 	"rt_dtal_minarea",
@@ -3071,6 +3073,11 @@ static void QRE_MatSystemTab (void)
 	float                     value;
 	int                       dbg = CVAR_TO_INT32 (rt_dtal_debug);
 	int                       maxpolys;
+	int                       dtal_entities = CVAR_TO_BOOL (rt_model_lights) ? 1 : 0;
+
+	if (QR_GUI_Checkbox ("DTAL dynamic map entities", &dtal_entities,
+	                     "Light the moving map emitters (flames, lava balls and the like) from their emissive geometry (DTAL) instead of their generated dlight; the DTAL (models) limits below still bound what qualifies."))
+		Cvar_Set ("rt_model_lights", dtal_entities ? "1" : "0");
 
 	if (dbg < 0 || dbg > 2)
 		dbg = 0;
