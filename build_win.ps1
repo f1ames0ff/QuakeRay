@@ -3,7 +3,8 @@ param(
     [string]$Config = "Release",
     [string]$BuildDir = "",
     [int]$Parallel = 0,
-    [switch]$PkzOnly
+    [switch]$PkzOnly,
+    [switch]$Tests
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,6 +97,11 @@ $exitCode = 0
 if (-not $PkzOnly)
 {
     $cmakeArgs = @("-B", $BuildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Config", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
+
+    if ($Tests)
+    {
+        $cmakeArgs += "-DQR_BUILD_TESTS=ON"
+    }
 
     cmake @cmakeArgs
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }

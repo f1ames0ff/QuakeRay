@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Performance tests guard the frame cost** — a headless GPU microbenchmark drives the renderer's own textured-area-light sampling (`Light.hlsli`) through four growing workloads and compares each against a stored baseline with a relative tolerance, so a cost change in the light sampling fails like any other test; the in-game side compares an `rt_bench` run (`benchmark.log`) against a stored per-slot baseline the same way, which puts the whole frame under the same guard. The GPU tests need a Vulkan device and stay local; build them with `build_win.ps1 Debug -Tests` and run them with `ctest --test-dir build\Debug -R qray_dtal_perf`, and see `perf\README.md` for the benchmark comparison.
+
 ## v0.30.0
 
 ### Added
@@ -53,6 +58,7 @@
 
 ### Fixed
 - **The frame-latency cap is off by default again** — `vid_maxframelatency` ships as `0`, so the swapchain is built exactly as it was before the cap existed: no present-id2/present-wait2 flags, no present ids and no wait before the next image is acquired. The wait sat in front of the acquire, where it put the record of every frame behind the display completion of the frame before — record, render, display, record as one chain — and at 4K with FSR ultra performance, where record and render together take longer than a refresh interval, it cut the frame rate to 40–50 and left it unresponsive to resolution or FSR changes. `1` still enables the cap and the switch still recreates the swapchain, so the pacing it was written for stays available; any value other than `0` or `1` now falls back to `0` with the console note instead of `1`. A configuration that already archived `1` keeps the cap until `vid_maxframelatency 0` is issued once — the archive is exec'd after the defaults — and `reset` returns to the new default.
+
 
 ## v0.27.1
 
