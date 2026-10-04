@@ -92,7 +92,7 @@ static cvar_t                   vid_width = {"vid_width", "-1", CVAR_ARCHIVE};  
 static cvar_t                   vid_height = {"vid_height", "-1", CVAR_ARCHIVE};       //     desktop resolution at the first time
 static cvar_t                   vid_refreshrate = {"vid_refreshrate", "60", CVAR_ARCHIVE};
 cvar_t                          vid_vsync = {"vid_vsync", "2", CVAR_ARCHIVE};
-static cvar_t                   vid_maxframelatency = {"vid_maxframelatency", "1", CVAR_ARCHIVE};
+static cvar_t                   vid_maxframelatency = {"vid_maxframelatency", "0", CVAR_ARCHIVE};
 
 int                             vid_display_refresh = 0;
 static cvar_t                   vid_desktopfullscreen = {"vid_desktopfullscreen", "0", CVAR_ARCHIVE}; // QuakeSpasm
@@ -1252,12 +1252,12 @@ static void VID_CloudsQuality_f (cvar_t *var)
 
 static void VID_MaxFrameLatency_f (cvar_t *var)
 {
-	const int value = CLAMP (0, (int)var->value, 1);
+	const int value = (int)var->value;
 
-	if (value != (int)var->value)
+	if (value != 0 && value != 1)
 	{
-		Cvar_SetValueQuick (var, (float)value);
-		Con_Printf ("Video: vid_maxframelatency is out of range, using %d\n", value);
+		Cvar_SetValueQuick (var, 0.0f);
+		Con_Printf ("Video: vid_maxframelatency accepts only 0 or 1, using 0\n");
 	}
 }
 
