@@ -139,6 +139,54 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
     return tempstorage;
 }
 
+typedef struct
+{
+    const char *model;
+    float       factor;
+} rt_viewm_norm_manual_t;
+
+static const rt_viewm_norm_manual_t rt_viewm_norm_manual[] = {
+    {"v_axe", 0.90f},
+    {"v_shot", 1.15f},
+    {"v_shot2", 1.20f},
+    {"v_nail", 1.20f},
+    {"v_nail2", 1.29f},
+    {"v_rock", 1.1f},
+    {"v_rock2", 1.05f},
+    {"v_light", 0.95f},
+};
+
+static float RT_ViewmodelNormalizeManual (const char *modelname)
+{
+    float  factor = 0.0f;
+    size_t match = 0;
+
+    if (modelname == NULL)
+        return 0.0f;
+
+    for (size_t i = 0; i < sizeof (rt_viewm_norm_manual) / sizeof (rt_viewm_norm_manual[0]); i++)
+    {
+        const char *found = strstr (modelname, rt_viewm_norm_manual[i].model);
+
+        if (found == NULL || rt_viewm_norm_manual[i].factor <= 0.0f)
+            continue;
+
+        const size_t length = strlen (rt_viewm_norm_manual[i].model);
+        const char   boundary = found[length];
+
+        if (boundary != '\0' && boundary != '.' && boundary != '_')
+            continue;
+
+        if (length > match)
+        {
+            match = length;
+            factor = rt_viewm_norm_manual[i].factor;
+        }
+    }
+
+    return factor;
+}
+
 #define RT_VIEWM_NORMALIZE_SPAN 0.64f
 
 static float RT_ViewmodelProjectedSpan (const float mins[3], const float maxs[3], const float origin[3],
@@ -189,7 +237,8 @@ static float RT_ViewmodelNormalizeScale (const aliashdr_t *hdr, const float mins
     return CLAMP (0.2f, RT_VIEWM_NORMALIZE_SPAN / span, 5.0f);
 }
 
-static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpdata_t* lerpdata, qboolean isfirstperson)
+static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpdata_t* lerpdata, qboolean isfirstperson,
+                                             const char *modelname)
 {
     float model_matrix[16];
     IdentityMatrix(model_matrix);
@@ -226,7 +275,11 @@ static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpda
         const float normalize = CLAMP(0.0f, CVAR_TO_FLOAT(rt_viewm_normalize), 1.0f);
         if (normalize > 0.0f)
         {
-            sizescale = 1.0f + normalize * (RT_ViewmodelNormalizeScale(paliashdr, mins, maxs, fovscalex, fovscaley) - 1.0f);
+            const float manual = RT_ViewmodelNormalizeManual (modelname);
+            const float factor = manual > 0.0f ? manual
+                                               : RT_ViewmodelNormalizeScale(paliashdr, mins, maxs, fovscalex, fovscaley);
+
+            sizescale = 1.0f + normalize * (factor - 1.0f);
         }
     }
 
@@ -283,7 +336,8 @@ static void GL_DrawAliasFrame(
        the shared lerp scratch GetPoseVertices hands the geometry uploads: widening the window in
        which those uploads read it would let the parallel entity passes overwrite each other's
        pose. */
-    const QrTransform transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson);
+    const QrTransform transform =
+        RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model->name);
 
     /* DTAL: the model lights the scene from its own geometry when its material says it is a
        light and carries an emissive mask. The fake dlight stays as the fallback for everything
@@ -425,7 +479,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 	blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0;
 	int cluster = RT_ResolvePointCluster (lerpdata.origin);
 	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster);
-	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson);
+	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model->name);
 	baseid = RT_GetAliasModelUniqueId (entuniqueid);
 
 	for (aliashdr_t *surf = paliashdr; surf; surf = surf->nextsurface, ++surface_index)

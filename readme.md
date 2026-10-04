@@ -186,7 +186,7 @@ Everything is exposed as console variables; run `cvarlist rt_` in the console fo
 * `rt_bench <demoname> [quit]` - plays a demo at its own speed with the frame profiler summed over it and appends the result to `benchmark.log`; `quit` closes the game after the run
 * `rt_debugflags 0` - diagnostic views (raw direct/indirect/specular, gradients, ...)
 * `rt_viewm_scale 0.32` - the weapon is drawn `0.32` times smaller and closer to the eye by the same factor, unchanged on screen but out of the walls; `1` restores the classic weapon
-* `rt_viewm_normalize 1` - every first-person weapon model is rescaled by one per-model factor that brings its projected on-screen extent (measured from the model's first frame) onto a common size, so all weapons read as one size in the hand; the model scales about the middle of that bounding box and the result still multiplies with `rt_viewm_scale`; `0` keeps the model's own proportions
+* `rt_viewm_normalize 1` - every first-person weapon model is rescaled by one per-model factor that brings its projected on-screen extent (measured from the model's first frame) onto a common size, so all weapons read as one size in the hand; the id1 weapons carry their factors in the hand-editable `rt_viewm_norm_manual` table in `Quake/r_alias.c` (a model with no entry, or a zero factor, falls back to the computed extent). The model scales about the middle of that bounding box and the result still multiplies with `rt_viewm_scale`; `0` keeps the model's own proportions
 
 ## Sound
 
