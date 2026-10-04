@@ -30,7 +30,7 @@ extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; 
 extern cvar_t scr_fov;
 
 extern cvar_t rt_model_rough, rt_model_metal, rt_enable_pvs;
-extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale;
+extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale, rt_viewm_normalize;
 extern cvar_t rt_dlight_intensity, rt_dlight_radius;
 extern cvar_t rt_cluster_dlights;
 
@@ -139,6 +139,56 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
     return tempstorage;
 }
 
+#define RT_VIEWM_NORMALIZE_SPAN 0.64f
+
+static float RT_ViewmodelProjectedSpan (const float mins[3], const float maxs[3], const float origin[3],
+                                        const float scale[3], const float fov[2])
+{
+    float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
+
+    for (int corner = 0; corner < 8; corner++)
+    {
+        const float cx = (corner & 1) ? maxs[0] : mins[0];
+        const float cy = (corner & 2) ? maxs[1] : mins[1];
+        const float cz = (corner & 4) ? maxs[2] : mins[2];
+
+        const float depth = origin[0] + scale[0] * cx;
+        if (depth <= 0.5f)
+            continue;
+
+        const float u = (origin[1] + scale[1] * cy) * fov[0] / depth;
+        const float v = (origin[2] + scale[2] * cz) * fov[1] / depth;
+
+        if (u < umin) umin = u;
+        if (u > umax) umax = u;
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+    }
+
+    if (umin > umax)
+        return 0.0f;
+
+    const float du = umax - umin;
+    const float dv = vmax - vmin;
+
+    return sqrtf (du * du + dv * dv);
+}
+
+static float RT_ViewmodelNormalizeScale (const aliashdr_t *hdr, const float mins[3], const float maxs[3],
+                                         const float fovscalex, const float fovscaley)
+{
+    if (!(maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2]))
+        return 1.0f;
+
+    const float fov[2] = {fovscalex, fovscaley};
+    const float span = RT_ViewmodelProjectedSpan (mins, maxs, hdr->scale_origin, hdr->scale, fov);
+
+    if (!(span > 1e-4f))
+        return 1.0f;
+
+    return CLAMP (0.2f, RT_VIEWM_NORMALIZE_SPAN / span, 5.0f);
+}
+
 static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpdata_t* lerpdata, qboolean isfirstperson)
 {
     float model_matrix[16];
@@ -161,15 +211,38 @@ static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpda
         viewmscale = CVAR_TO_FLOAT(rt_viewm_scale);
     }
 
+    float sizescale = 1.0f;
+    float center[3] = {0.0f, 0.0f, 0.0f};
+    if (isfirstperson)
+    {
+        float mins[3], maxs[3];
+        for (int axis = 0; axis < 3; axis++)
+        {
+            mins[axis] = paliashdr->frames[0].bboxmin.v[axis];
+            maxs[axis] = paliashdr->frames[0].bboxmax.v[axis];
+            center[axis] = 0.5f * (mins[axis] + maxs[axis]);
+        }
+
+        const float normalize = CLAMP(0.0f, CVAR_TO_FLOAT(rt_viewm_normalize), 1.0f);
+        if (normalize > 0.0f)
+        {
+            sizescale = 1.0f + normalize * (RT_ViewmodelNormalizeScale(paliashdr, mins, maxs, fovscalex, fovscaley) - 1.0f);
+        }
+    }
+
+    const float centerPull = 1.0f - sizescale;
+
     float translation_matrix[16];
-    TranslationMatrix(translation_matrix, paliashdr->scale_origin[0] * viewmscale,
-                      paliashdr->scale_origin[1] * fovscalex * viewmscale,
-                      paliashdr->scale_origin[2] * fovscaley * viewmscale);
+    TranslationMatrix(translation_matrix,
+                      viewmscale * (paliashdr->scale_origin[0] + centerPull * paliashdr->scale[0] * center[0]),
+                      viewmscale * fovscalex * (paliashdr->scale_origin[1] + centerPull * paliashdr->scale[1] * center[1]),
+                      viewmscale * fovscaley * (paliashdr->scale_origin[2] + centerPull * paliashdr->scale[2] * center[2]));
     MatrixMultiply(model_matrix, translation_matrix);
 
     float scale_matrix[16];
-    ScaleMatrix(scale_matrix, paliashdr->scale[0] * viewmscale, paliashdr->scale[1] * fovscalex * viewmscale,
-                paliashdr->scale[2] * fovscaley * viewmscale);
+    ScaleMatrix(scale_matrix, paliashdr->scale[0] * viewmscale * sizescale,
+                paliashdr->scale[1] * fovscalex * viewmscale * sizescale,
+                paliashdr->scale[2] * fovscaley * viewmscale * sizescale);
     MatrixMultiply(model_matrix, scale_matrix);
 
     return RT_GetModelTransform(model_matrix);

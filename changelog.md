@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.28.0
+
+### Added
+- **The first-person weapons are one size in hand** — the view-model transform rescales each weapon model by one per-model factor that brings its projected on-screen extent, measured from the model's first frame, onto a common size; the axe, the shotguns and the launchers no longer read as different-sized objects. The model scales about the middle of its bounding box, the result still multiplies with `rt_viewm_scale`, and `rt_viewm_normalize` blends from `0` (the model's own proportions) to `1` (full normalization).
+
 ## v0.27.1
 
 ### Changed
