@@ -330,6 +330,7 @@ set(CORE_SOURCES
     Quake/mem.c
     Quake/menu.c
     Quake/miniz.c
+    Quake/observer.c
     Quake/palette.c
     Quake/photocam.c
     Quake/pr_cmds.c

@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "qr_editor.h"
 #include "photocam.h"
+#include "observer.h"
 
 // we need to declare some mouse variables here, because the menu system
 // references them.
@@ -494,9 +495,9 @@ float CL_LerpPoint (void)
 {
 	float f, frac;
 
-	// The light editor and photocam hold the clock: no lerp may pull cl.time
-	// forward while the world is meant to stand still.
-	if (QR_Editor_Active () || PhotoCam_Frozen ())
+	// The light editor, photocam and the camera observer hold the clock: no lerp
+	// may pull cl.time forward while the world is meant to stand still.
+	if (QR_Editor_Active () || PhotoCam_Frozen () || Observer_Frozen ())
 		return 1;
 
 	f = cl.mtime[0] - cl.mtime[1];
@@ -1061,10 +1062,10 @@ int CL_ReadFromServer (void)
 	int        i;                 // johnfitz
 
 	cl.oldtime = cl.time;
-	// The light editor and photocam freeze the client clock with the server: their
-	// cameras run on host frames, and a frozen cl.time holds every animation that
-	// reads it (textures, poses, particles) still.
-	if (!QR_Editor_Active () && !PhotoCam_Frozen ())
+	// The light editor, photocam and the camera observer freeze the client clock
+	// with the server: their cameras run on host frames, and a frozen cl.time
+	// holds every animation that reads it (textures, poses, particles) still.
+	if (!QR_Editor_Active () && !PhotoCam_Frozen () && !Observer_Frozen ())
 		cl.time += host_frametime;
 
 	needs_relink = true;
@@ -1160,10 +1161,10 @@ void CL_SendCmd (void)
 	if (cls.state != ca_connected)
 		return;
 
-	// qr light editor / photocam: while a free camera is flying, the player
-	// stands still -- no commands reach the server (the cameras read the
-	// movement keys and the mouse themselves)
-	if (QR_Editor_Active () || PhotoCam_Active ())
+	// qr light editor / photocam / camera observer: while a free camera is
+	// flying, the player stands still -- no commands reach the server (the
+	// cameras read the movement keys and the mouse themselves)
+	if (QR_Editor_Active () || PhotoCam_Active () || Observer_Active ())
 	{
 		memset (&cl.pendingcmd, 0, sizeof (cl.pendingcmd));
 		cl.pendingcmd.servertime = cl.time;
