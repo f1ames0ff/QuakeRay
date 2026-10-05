@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "arch_def.h"
 #include "qr_editor.h"
+#include "photocam.h"
 
 /* key up events are sent even if in console mode */
 
@@ -981,6 +982,9 @@ void Key_Event (int key, qboolean down)
 	// qr light editor: while flying, ESC exits the editor instead of opening
 	// the menu (the open panel consumes its events at the SDL level)
 	if (QR_Editor_KeyEvent (key, down))
+		return;
+
+	if (PhotoCam_KeyEvent (key, down))
 		return;
 
 	if (key_inputgrab.active)

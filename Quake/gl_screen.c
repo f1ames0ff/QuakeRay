@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "qr_editor.h"
 #include "qr_gui.h"
+#include "photocam.h"
 #include "snd_eq.h"
 
 #include "cfgfile.h"
@@ -1058,6 +1059,15 @@ static void SCR_DrawGUI (void *unused)
 		{
 			SCR_DrawConsole (cbx);
 			QR_Editor_DrawPanel (cbx);
+		}
+		else if (PhotoCam_Active ())
+		{
+			if (scr_con_current)
+			{
+				Con_DrawConsole (cbx, scr_con_current, true);
+				clearconsole = 0;
+			}
+			M_Draw (cbx);
 		}
 		else
 		{

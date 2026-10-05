@@ -32,6 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "qr_editor.h"
+#include "photocam.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
 #include <time.h> // for the timestamp of the frame rt_stats_dump appends
@@ -178,7 +179,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
 	CVAR_DEF_T (rt_model_lights, "1") \
 	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
-	CVAR_DEF_T (rt_dtal_model_budget, "256") \
+	CVAR_DEF_T (rt_dtal_model_budget, "512") \
 	CVAR_DEF_T (rt_dtal_model_minarea, "0") \
 	\
 	CVAR_DEF_T (rt_poi_distthresh, "2") \
@@ -256,7 +257,6 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_volume_ambient, "2.0") \
 	CVAR_DEF_T (rt_volume_lintensity, "250") \
 	CVAR_DEF_T (rt_volume_lassymetry, "0.0") \
-	CVAR_DEF_T (rt_level_fog, "1") \
     \
 	CVAR_DEF_T (rt_water_speed, "0.4") \
 	CVAR_DEF_T (rt_water_normstren, "1") \
@@ -2219,6 +2219,7 @@ static void GL_InitInstance (void)
 	RT_LIGHT_Init ();
 
 	QR_Editor_Init (); // qr light editor console commands
+	PhotoCam_Init ();
 
 	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL, 0);
 
@@ -2749,11 +2750,11 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// Sky_DrawSky above hands it to the sky. The density is divided by the 64
 	// the classic renderer scaled it with, so that a density of 0.05, a
 	// mid-range value for the shipped maps, fades the far plane into the fog
-	// instead of everything. rt_level_fog 0 ignores the level's fog.
+	// instead of everything. A density of 0 draws no level fog.
 	float level_fog_color[4];
 	Fog_GetColor (level_fog_color);
 
-	const qboolean level_fog_active = CVAR_TO_BOOL (rt_level_fog) && Fog_GetDensity () > 0;
+	const qboolean level_fog_active = Fog_GetDensity () > 0;
 
 	QrDrawFrameLevelFogParams level_fog_params = {
 		.color = RT_VEC3 (level_fog_color),

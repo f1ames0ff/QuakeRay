@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // The editor's GUI depends on this task when tasks are on (see gl_screen.c).
 task_handle_t rt_editor_draw_done_task = INVALID_TASK_HANDLE;
 #include "qr_editor.h"
+#include "photocam.h"
 
 int r_visframecount; // bumped when going to a new PVS
 int r_framecount;    // used for dlight push checking
@@ -827,10 +828,13 @@ R_DrawViewModel -- johnfitz -- gutted
 */
 void R_DrawViewModel (cb_context_t *cbx)
 {
-	if (!r_drawviewmodel.value || !r_drawentities.value || chase_active.value || QR_Editor_Active ())
+	const qboolean editor_preview = QR_Editor_ShowViewModel ();
+
+	if (!r_drawentities.value || chase_active.value || PhotoCam_Active () ||
+	    (QR_Editor_Active () && !editor_preview) || (!editor_preview && !r_drawviewmodel.value))
 		return;
 	
-	if (cl.stats[STAT_HEALTH] <= 0)
+	if (cl.stats[STAT_HEALTH] <= 0 && !editor_preview)
 		return;
 
 	entity_t *currententity = &cl.viewent;

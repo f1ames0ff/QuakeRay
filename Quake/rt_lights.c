@@ -104,12 +104,10 @@ static const char *rt_light_header =
     "#\n"
     "# * one section per level, named after the map (the file name without path or\n"
     "#   extension), with the custom dlights the level does not have and its fog.\n"
-    "#   The fog block may state whether the level's fog is drawn at all\n"
-    "#   (rt_level_fog); without \"enabled\" the file leaves the cvar as the user\n"
-    "#   configured it:\n"
+    "#   A density of 0 draws no fog; \"enabled: false\" of an older file loads the\n"
+    "#   section's fog with that density:\n"
     "# start:\n"
     "#   fog:\n"
-    "#     enabled: true          # true/false (or 1/0), the level's fog switch\n"
     "#     color: 8899aa          # rrggbb\n"
     "#     density: 1.5           # 0 turns the fog off\n"
     "#   lights:\n"
@@ -949,21 +947,19 @@ void RT_CustomFogSet(const rt_custom_fog_t *fog)
 
 void RT_CustomLights_ApplyFog(void)
 {
+    float density;
+
     if (!rt_custom_fog.has_fog || rt_custom_fog_applied)
         return;
 
     rt_custom_fog_applied = true;
 
-    /* A section that states "enabled" owns rt_level_fog, the runtime switch of
-       the fog drawing: the level remembers whether its fog is shown. A section
-       without the key leaves the cvar as the user configured it. */
-    if (rt_custom_fog.has_enabled)
-        Cvar_Set("rt_level_fog", rt_custom_fog.enabled ? "1" : "0");
+    density = (rt_custom_fog.has_enabled && !rt_custom_fog.enabled) ? 0.0f : rt_custom_fog.density;
 
     /* The `fog` command is the path the console and the editor's fog widget
        use; it runs on the next command-buffer pump, after the worldspawn keys
        have been parsed, so the file's fog wins over the map's own. */
-    Cbuf_AddText(va("fog %f %f %f %f\n", rt_custom_fog.density,
+    Cbuf_AddText(va("fog %f %f %f %f\n", density,
                     CLAMP(0.0f, rt_custom_fog.color[0], 1.0f),
                     CLAMP(0.0f, rt_custom_fog.color[1], 1.0f),
                     CLAMP(0.0f, rt_custom_fog.color[2], 1.0f)));

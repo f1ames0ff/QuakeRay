@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "qr_editor.h"
+#include "photocam.h"
 
 /*
 
@@ -862,9 +863,11 @@ void V_CalcRefdef (void)
 	if (chase_active.value)
 		Chase_UpdateForDrawing (); // johnfitz
 
-	// qr light editor: the free camera takes the view over
+	// qr light editor / photocam: the free camera takes the view over
 	if (QR_Editor_Active ())
 		QR_Editor_UpdateView ();
+	else if (PhotoCam_Active ())
+		PhotoCam_UpdateView ();
 }
 
 /*
@@ -893,7 +896,7 @@ void V_SetupFrame (void)
 	{
 		if (cl.intermission)
 			V_CalcIntermissionRefdef ();
-		else if (!cl.paused || QR_Editor_Active ())
+		else if (!cl.paused || QR_Editor_Active () || PhotoCam_Active ())
 			V_CalcRefdef ();
 	}
 }

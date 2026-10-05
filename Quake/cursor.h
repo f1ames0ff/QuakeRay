@@ -9,6 +9,7 @@ extern "C" {
 
 void Cursor_Init (void);
 void Cursor_Shutdown (void);
+void Cursor_SetStandard (int standard);
 
 int Cursor_GetGuiCursor (int64_t *texture, int *size, int *hotX, int *hotY);
 

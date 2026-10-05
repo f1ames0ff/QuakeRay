@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.30.0
+
+### Added
+- **The Entities tab edits the weapon view models** — a third tab in the material editor, right after Materials, lists the weapon models the level precaches plus the one in hand. Picking one draws it in first person from the editor camera and opens its skin material in the same panel with every existing tool, and an `animation` dropdown with a `frame` slider scrubs the weapon's sequences on the spot. The keys are the usual `progs/v_*.mdl:frameN`, so a save lands in the mod's `qray.materials.yaml` and applies to the whole mod.
+- **`photocam` is a free camera for screenshots** — the command freezes the world with the editor's own recipe (the server stops and `cl.time` is held, so poses, textures, particles, the water warp and the clouds stand still), detaches the view from the player and hides the interface except the console. WASD and the mouse fly, `Space`/`Ctrl` move up and down, `Shift` is a threefold speed, LMB takes a screenshot, holding RMB runs the world, and Esc or the command leaves and restores the player's view and the pause state.
+- **A `DTAL dynamic map entities` switch** — the material editor's System tab drives `rt_model_lights` from its own checkbox, so the model DTAL and its fake-dlight fallback can be compared without the console.
+
+### Changed
+- **The model DTAL floor is a share of the model** — `rt_dtal_model_minarea` is a percentage of the model's bounding-box face instead of an absolute world area, so the same flame at different sizes keeps the same share of its pieces; the slider spans 0-100 per cent and a stored absolute value (like `32`) has to come down to a few per cent.
+- **The clouds follow the sun's strength** — `rt_sky_sun` scales the cloud layer with the sun, and a standing sun keeps its motion in the sky.
+- **The level fog belongs to the `fog` command** — the `rt_level_fog` switch is gone; a map's `fog` key, the console command and the editor all write the one state.
+
+### Fixed
+- **The model DTAL keeps the pieces the area threshold leaves** — the floor filters the pieces before the rank cut, the pose-keyed cache is bypassed while a floor is set and the frame budget defaults to `512`, so a glowing model no longer loses the pieces the threshold kept.
+- **The generated light of a model sits at the model** — the hardcoded lift of the generated light is gone, so a light is not offset above its emitter.
+- **The language table loads through the filesystem** — `$MAP_*` and the other localization tokens resolve from the mounted PAKs and pkz archives, not only from loose files.
+- **The editor keeps the standard pointer** — the axe cursor stays a game cursor; the editor's panel and canvas use the usual pointer while they own the mouse.
+
 ## v0.29.0
 
 ### Added

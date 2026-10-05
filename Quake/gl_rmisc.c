@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "qr_editor.h"
+#include "photocam.h"
 #include "rt_lights.h"
 #include <float.h>
 
@@ -402,6 +403,7 @@ void R_NewMap (void)
 	// The editor's picked surfaces and its material snapshot belong to the map
 	// that is being replaced; close it before any of that is freed.
 	QR_Editor_OnNewMap ();
+	PhotoCam_OnNewMap ();
 
 	for (i = 0; i < 256; i++)
 		d_lightstylevalue[i] = 264; // normal light value

@@ -17,6 +17,8 @@ QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, wi
   - Add and adjust lights, including spotlights, and change the sky, sun, clouds and fog.
   - Fly around a frozen level, aim at a surface and press fire to select it. Use **Tab** to open the panel.
   - Save or discard your changes when leaving. The trash button restores defaults after confirmation and removes saved editor work for the active mod.
+  - Edit the **weapon view models** from the **Entities** tab as well: pick one, it is drawn in first person, its skins open with the same tools, and an animation dropdown with a frame slider scrubs its sequences. The material is keyed by the model's skin name, so a save applies to the whole mod.
+  - Take clean screenshots with **photocam**: the world freezes, the interface is hidden except the console, and the free camera flies with WASD and the mouse.
 - **ReSTIR direct light sampling, NEE (Next Event Estimation) and ASVGF denoising** for more stable lighting and a cleaner image.
 - **PBR materials**, with adjustable roughness, metalness, emission and normal maps.
 - **Ray-traced water**, with moving waves, reflections and refraction.

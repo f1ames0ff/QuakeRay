@@ -134,7 +134,7 @@ void main()
         ? (1.0 - smoothstep(innerRadius * innerRadius, outerRadius * outerRadius,
                            dot(discOffset, discOffset))) * sunAmount
         : 0.0;
-    float cosAng = cos(sunAngRad + edgeWidth);
+    float cosAng = cos(sunAngRad + 4.0 / float(max(size.x, size.y)));
 
     float layerTransmittance = cloudOpacity > 0.0
         ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
@@ -144,7 +144,7 @@ void main()
     float cloudShare = 1.0;
     if (sunAmount > 0.0 && sunIntensity > 0.0 && sunAngRad > 0.0)
     {
-        float motionCosAng = cos(sunAngRad + 4.0 / float(max(size.x, size.y)));
+        float motionCosAng = cos(sunAngRad + 8.0 / float(max(size.x, size.y)));
         cloudShare = 1.0 - smoothstep(motionCosAng, cosAng, dot(dir, sunDir));
     }
 
