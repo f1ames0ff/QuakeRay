@@ -29,6 +29,7 @@
 #include "RHI/NvrhiFrameSkeleton.h"
 #include "RHI/NvrhiRequirements.h"
 #include "RHI/RhiAccelStructs.h"
+#include "RHI/RhiBloomPass.h"
 #include "RHI/RhiDecalPass.h"
 #include "RHI/RhiFsrPass.h"
 #include "RHI/RhiPostEffectPass.h"
@@ -435,6 +436,20 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                     }
                 }
 
+                rhiBloomPass = std::make_shared<RhiBloomPass>();
+                if (!rhiBloomPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                          tonemapping.get(), info->pShaderFolderPath,
+                                          [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiBloomPass.reset();
+                    Print("Warning: RHI: the bloom pass is unavailable, the frame is drawn without bloom");
+                }
+
+                if (rhiRtComposePass != nullptr)
+                {
+                    rhiRtComposePass->SetBloomPass(rhiBloomPass.get());
+                }
+
                 rhiUiPass = std::make_shared<RhiUiPass>();
                 if (!rhiUiPass->Create(nvrhi->GetDevice(), rhiTextureTable.get(),
                                        rhiFrameContext.get(), info->pShaderFolderPath,
@@ -466,6 +481,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                 rhiDecalPass.get(),
                 rhiFsrPass.get(),
                 rhiPostEffectPass.get(),
+                rhiBloomPass.get(),
                 rhiShadowMapPass.get(),
                 rhiRtGodRaysPass.get(),
                 rhiUiPass.get(),
@@ -530,6 +546,7 @@ VulkanDevice::~VulkanDevice()
     nvrhiFrameSkeleton.reset();
 
     rhiRtComposePass.reset();
+    rhiBloomPass.reset();
     rhiRtGodRaysPass.reset();
     rhiShadowMapPass.reset();
     rhiUiPass.reset();

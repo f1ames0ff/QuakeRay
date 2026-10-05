@@ -143,12 +143,6 @@ class RhiTextureTable;
 // watched for a sync-validation READ-AFTER-WRITE on the pass-owned depth if sync validation is
 // enabled; nothing in the NVRHI API lets the pass insert that barrier itself.
 //
-// Deliberately out of scope (the A5.2 "must not pull in" list): the lens-flare cull and draw
-// (`Rasterizer::DrawToFinalImage` calls them at Rasterizer.cpp:257-258, :424-430; the game never
-// uploads one), the volumetric set (set 3 stays the empty hole), decals, bloom, the 2D UI, the
-// compose itself and any god-rays work. It also cannot be used for the raster mode's world: that is
-// `RhiSkyPass::RenderWorld` into ALBEDO, with the sky's own depth.
-//
 // The smoke half (master's shader smoke): the same Render also draws the frame's smoke draw list -
 // the DEFAULT entries whose pipeline state carries QR_RASTERIZED_GEOMETRY_STATE_SMOKE (r_smoke.c:
 // 358-376 uploads all puffs as one batch, and the collector keeps no separate smoke stream, so the

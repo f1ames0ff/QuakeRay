@@ -2614,6 +2614,7 @@ static void COM_Game_f (void)
 		SaveList_Rebuild ();
 		M_CheckMods ();
 		S_ClearAll ();
+		LOC_Init ();
 
 		// 2026 update compat: enable scr_usekfont (for word wrapping) in case mg3 is used with original id1 data.
 		Cvar_SetValueQuick (&scr_usekfont, mg3 ? 1.0f : 0.0f);
@@ -3224,6 +3225,27 @@ void LOC_LoadFile (const char *file)
 
 	Con_Printf ("\nLanguage initialization\n");
 
+	{
+		int handle = -1;
+		int filelen = COM_OpenFile (file, &handle, NULL);
+
+		if (handle != -1 && filelen > 0)
+		{
+			localization.text = (char *) Mem_Alloc (filelen + 1);
+
+			if (localization.text)
+			{
+				Sys_FileRead (handle, localization.text, filelen);
+				localization.text[filelen] = 0;
+			}
+
+			COM_CloseFile (handle);
+
+			if (localization.text)
+				goto parse;
+		}
+	}
+
 	memset (&archive, 0, sizeof (archive));
 	q_snprintf (path, sizeof (path), "%s/%s", com_basedir, file);
 	rw = SDL_RWFromFile (path, "rb");
@@ -3267,6 +3289,7 @@ void LOC_LoadFile (const char *file)
 		SDL_RWclose (rw);
 	}
 
+parse:
 	cursor = localization.text;
 
 	// skip BOM

@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.30.0
+
+### Added
+- **The Entities tab edits the weapon view models** — a third tab in the material editor, right after Materials, lists the weapon models the level precaches plus the one in hand. Picking one draws it in first person from the editor camera and opens its skin material in the same panel with every existing tool, and an `animation` dropdown with a `frame` slider scrubs the weapon's sequences on the spot. The keys are the usual `progs/v_*.mdl:frameN`, so a save lands in the mod's `qray.materials.yaml` and applies to the whole mod.
+- **`photocam` is a free camera for screenshots** — the command freezes the world with the editor's own recipe (the server stops and `cl.time` is held, so poses, textures, particles, the water warp and the clouds stand still), detaches the view from the player and hides the interface except the console. WASD and the mouse fly, `Space`/`Ctrl` move up and down, `Shift` is a threefold speed, LMB takes a screenshot, holding RMB runs the world, and Esc or the command leaves and restores the player's view and the pause state.
+- **A `DTAL dynamic map entities` switch** — the material editor's System tab drives `rt_model_lights` from its own checkbox, so the model DTAL and its fake-dlight fallback can be compared without the console.
+
+### Changed
+- **The model DTAL floor is a share of the model** — `rt_dtal_model_minarea` is a percentage of the model's bounding-box face instead of an absolute world area, so the same flame at different sizes keeps the same share of its pieces; the slider spans 0-100 per cent and a stored absolute value (like `32`) has to come down to a few per cent.
+- **The clouds follow the sun's strength** — `rt_sky_sun` scales the cloud layer with the sun, and a standing sun keeps its motion in the sky.
+- **The level fog belongs to the `fog` command** — the `rt_level_fog` switch is gone; a map's `fog` key, the console command and the editor all write the one state.
+
+### Fixed
+- **The model DTAL keeps the pieces the area threshold leaves** — the floor filters the pieces before the rank cut, the pose-keyed cache is bypassed while a floor is set and the frame budget defaults to `512`, so a glowing model no longer loses the pieces the threshold kept.
+- **The generated light of a model sits at the model** — the hardcoded lift of the generated light is gone, so a light is not offset above its emitter.
+- **The language table loads through the filesystem** — `$MAP_*` and the other localization tokens resolve from the mounted PAKs and pkz archives, not only from loose files.
+- **The editor keeps the standard pointer** — the axe cursor stays a game cursor; the editor's panel and canvas use the usual pointer while they own the mouse.
+
+## v0.29.0
+
+### Added
+- **A modern post-effects stack on its own `Effects` options page** — Bloom, Near DOF, Damage and Liquid aberration, Sharpen, Vignette, Film grain and Local exposure as 0-100% sliders with a page-local reset, a three-detent Bloom quality slider, and a `Tonemap type` switcher (`Off`, `Q2RTX`, `Reinhard`, `ACES`, `AgX`) with a `Tonemap power` mix and an `Exposure bias` slider; the shipped defaults follow the in-game calibration (Bloom 0.08, Near DOF 0.8, Reinhard, power 0.8, liquid 0.51, film grain 0.5, local exposure 0.2).
+- **Near weapon depth of field replaces the lens flare** — the normalized disk filter blurs only the first-person weapon's nearest parts and follows each weapon's own view-depth window; the world, crosshair and HUD stay sharp, and every lens-flare pass, texture, shader, cvar and API entry is gone.
+- **Film grain** — animated monochrome grain over the finished image, after the sharpening and before the UI (`rt_filmgrain 0.5`, advanced `rt_filmgrain_size 2.5`).
+- **Gameplay feedback that is off until something happens** — edge-located damage and liquid aberration, the radiation suit's fringing and deeper vignette, and the bottom pickup pulse replace the old shared tint chain.
+- **The first-person weapons are one size in hand** — one per-model factor brings every weapon's on-screen extent onto a common size, hand-editable through the `rt_viewm_norm_manual` table.
+- **Exposure controls and a focused GPU regression** — histogram percentiles and adaptation limits are configurable, and `qray_posteffects_gpu` covers exposure, vignette, gameplay tint, colour preservation, local exposure, near DOF and film grain.
+
+### Changed
+- **The sky's radiance ships ten times dimmer** — the engine scales it at the source (`RT_SKY_RADIANCE_SCALE`), so the procedural sky and the light it casts no longer overexpose the display; `rt_sky_brightness` and the other sky controls keep their values.
+- **The Effects page joins the options menu, and the old bloom input is gone** — the scene radiance reaches the optical passes through the new `CmPrepareHdr` pass, and `rt_bloom_emis_mult` is accepted as a deprecated no-op.
+- **Engine assets update without an engine build** — `build_shaders.ps1` writes the compiled SPIR-V straight into `id1/qray.pkz`, and `build_win.ps1 -PkzOnly` repacks the archive.
+
+### Fixed
+- **The bloom halo falls off instead of flattening into a card** — the pyramid octaves are weighted by a geometric `rt_bloom_scatter` decay and renormalized to unit energy.
+- **Post-effects retain their colour instead of washing into pale overlays** — damage, pickup and the shared tint multiply scene colour as transmission filters, and black stays black.
+- **Apply works again on the Video options page, and exposure follows consecutive frames** instead of independent per-slot histories.
+
 ## v0.28.0
 
 ### Added

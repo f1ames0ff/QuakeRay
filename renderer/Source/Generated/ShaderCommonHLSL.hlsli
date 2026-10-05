@@ -44,9 +44,6 @@
 #define BINDING_LIGHT_SOURCES_DTAL_MEMBERS (9)
 #define BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS (10)
 #define BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL (11)
-#define BINDING_LENS_FLARES_CULLING_INPUT (0)
-#define BINDING_LENS_FLARES_DRAW_CMDS (1)
-#define BINDING_DRAW_LENS_FLARES_INSTANCES (0)
 #define BINDING_DECAL_INSTANCES (0)
 #define BINDING_PORTAL_INSTANCES (0)
 #define BINDING_LPM_PARAMS (0)
@@ -147,8 +144,6 @@
 #define COMPUTE_SVGF_ATROUS_ITERATION_COUNT (4)
 #define COMPUTE_ASVGF_STRATA_SIZE (3)
 #define COMPUTE_ASVGF_GRADIENT_ATROUS_ITERATION_COUNT (4)
-#define COMPUTE_INDIRECT_DRAW_FLARES_GROUP_SIZE_X (256)
-#define LENS_FLARES_MAX_DRAW_CMD_COUNT (512)
 #define DEBUG_SHOW_FLAG_MOTION_VECTORS (1 << 0)
 #define DEBUG_SHOW_FLAG_GRADIENTS (1 << 1)
 #define DEBUG_SHOW_FLAG_UNFILTERED_DIFFUSE (1 << 2)
@@ -297,8 +292,8 @@ struct ShGlobalUniform
     float jitterY;
     float primaryRayMinDist;
     uint rayCullMaskWorld_Shadow;
-    uint lensFlareCullingInputCount;
-    uint applyViewProjToLensFlares;
+    uint __pad5;
+    uint __pad6;
     uint twirlPortalNormal;
     uint lightIndexIgnoreFPVShadows;
     float gradientMultDiffuse;
@@ -380,7 +375,7 @@ struct ShTonemapping
     float tmNoiseBlend;
     float tmNoiseStops;
     float tmDynRangeStops;
-    float tmReinhard;
+    float tonemapPower;
     float tmKneeStart;
     float tmWhitePoint;
     float tmSlopeBlurSigma;
@@ -394,6 +389,7 @@ struct ShTonemapping
     float normalized[128];
     float adaptedLuminance;
     float avgLuminance;
+    uint tonemapType;
 };
 
 struct ShLightEncoded
@@ -450,14 +446,9 @@ struct ShIndirectDrawCommand
     uint firstIndex;
     int vertexOffset;
     uint firstInstance;
-    float positionToCheck_X;
-    float positionToCheck_Y;
-    float positionToCheck_Z;
-};
-
-struct ShLensFlareInstance
-{
-    uint textureIndex;
+    uint __pad0;
+    uint __pad1;
+    uint __pad2;
 };
 
 struct ShDecalInstance

@@ -168,10 +168,6 @@ typedef struct QrInstanceCreateInfo
 
     const char                  *pWaterNormalTexturePath;
 
-    QrBool32                    lensFlareVerticesInScreenSpace;
-
-    QrBool32                    lensFlarePointToCheckIsInScreenSpace;
-
     QrTextureSwizzling          pbrTextureSwizzling;
 
     QrBool32                    effectWipeIsUsed;
@@ -948,7 +944,15 @@ typedef struct QrDrawFrameTonemappingParams
 
     float       exposureBias;
 
-    float       contrast;
+    float       tonemapPower;
+    float       exposureSpeedUp;
+    float       exposureSpeedDown;
+    float       exposureLowPercentile;
+    float       exposureHighPercentile;
+    float       minAdaptedLuminance;
+    float       maxAdaptedLuminance;
+
+    uint32_t    tonemapType;
 } QrDrawFrameTonemappingParams;
 
 #define QR_SKY_CLOUDS_MAX_QUALITY 3
@@ -1197,6 +1201,55 @@ typedef struct QrPostEffectCRT
     QrBool32    isActive;
 } QrPostEffectCRT;
 
+typedef struct QrPostEffectsBloomParams
+{
+    QrBool32    isActive;
+    float       intensity;
+    float       threshold;
+    float       knee;
+    float       scatter;
+    float       radius;
+    uint32_t    quality;
+} QrPostEffectsBloomParams;
+
+typedef struct QrPostEffectsNearDofParams
+{
+    float       strength;
+    float       focusDistance;
+    float       maxRadius;
+} QrPostEffectsNearDofParams;
+
+typedef struct QrPostEffectsSharpenParams
+{
+    QrBool32    isActive;
+    float       strength;
+} QrPostEffectsSharpenParams;
+
+typedef struct QrPostEffectsGameplayFeedback
+{
+    float       damage;
+    float       liquid;
+    float       pickup;
+    float       pickupHeight;
+    float       aberration;
+    QrFloat3D   pickupColor;
+    float       suit;
+} QrPostEffectsGameplayFeedback;
+
+typedef struct QrPostEffectsVignetteParams
+{
+    float       intensity;
+    float       start;
+    float       end;
+    float       roundness;
+} QrPostEffectsVignetteParams;
+
+typedef struct QrPostEffectsFilmGrainParams
+{
+    float       intensity;
+    float       size;
+} QrPostEffectsFilmGrainParams;
+
 typedef struct QrDrawFramePostEffectsParams
 {
     const QrPostEffectWipe                  *pWipe;
@@ -1208,6 +1261,13 @@ typedef struct QrDrawFramePostEffectsParams
     const QrPostEffectWaves                 *pWaves;
     const QrPostEffectColorTint             *pColorTint;
     const QrPostEffectCRT                   *pCRT;
+    const QrPostEffectsBloomParams          *pBloom;
+    const QrPostEffectsNearDofParams        *pNearDof;
+    const QrPostEffectsSharpenParams        *pSharpen;
+    const QrPostEffectsGameplayFeedback     *pGameplayFeedback;
+    const QrPostEffectsVignetteParams        *pVignette;
+    const QrPostEffectsFilmGrainParams       *pFilmGrain;
+    float                                  localExposure;
 } QrDrawFramePostEffectsParams;
 
 typedef enum QrMediaType
@@ -1284,12 +1344,6 @@ typedef struct QrDrawFrameRenderResolutionParams
     const QrExtent2D            *pPixelizedRenderSize;
 } QrDrawFrameRenderResolutionParams;
 
-typedef struct QrDrawFrameLensFlareParams
-{
-    QrBlendFactor               lensFlareBlendFuncSrc;
-    QrBlendFactor               lensFlareBlendFuncDst;
-} QrDrawFrameLensFlareParams;
-
 typedef enum QrDrawFrameRayCullFlagBits
 {
     QR_DRAW_FRAME_RAY_CULL_WORLD_0_BIT  = 1,
@@ -1329,7 +1383,6 @@ typedef struct QrDrawFrameInfo
     const QrDrawFrameReflectRefractParams       *pReflectRefractParams;
     const QrDrawFrameSkyParams                  *pSkyParams;
     const QrDrawFrameTexturesParams             *pTexturesParams;
-    const QrDrawFrameLensFlareParams            *pLensFlareParams;
     const QrDrawFrameLevelFogParams             *pLevelFogParams;
     const QrDrawFrameDebugParams                *pDebugParams;
     QrDrawFramePostEffectsParams                postEffectParams;

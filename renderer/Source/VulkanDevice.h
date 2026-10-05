@@ -56,6 +56,7 @@ namespace qray
 {
 class NvrhiContext;
 class NvrhiFrameSkeleton;
+class RhiBloomPass;
 class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
@@ -238,6 +239,7 @@ private:
     std::shared_ptr<RhiRtDirectPass>        rhiRtDirectPass;
     std::shared_ptr<RhiRtIndirectPass>      rhiRtIndirectPass;
     std::shared_ptr<RhiRtComposePass>       rhiRtComposePass;
+    std::shared_ptr<RhiBloomPass>           rhiBloomPass;
     std::shared_ptr<RhiShadowMapPass>       rhiShadowMapPass;
     std::shared_ptr<RhiRtGodRaysPass>       rhiRtGodRaysPass;
 

@@ -32,9 +32,13 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "qr_editor.h"
+#include "photocam.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
 #include <time.h> // for the timestamp of the frame rt_stats_dump appends
+
+extern float rt_viewmodel_depth_near;
+extern float rt_viewmodel_depth_far;
 
 #define MAX_MODE_LIST  600 // johnfitz -- was 30
 #define MAX_BPPS_LIST  5
@@ -176,7 +180,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
 	CVAR_DEF_T (rt_model_lights, "1") \
 	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
-	CVAR_DEF_T (rt_dtal_model_budget, "256") \
+	CVAR_DEF_T (rt_dtal_model_budget, "512") \
 	CVAR_DEF_T (rt_dtal_model_minarea, "0") \
 	\
 	CVAR_DEF_T (rt_poi_distthresh, "2") \
@@ -256,7 +260,6 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_volume_ambient, "2.0") \
 	CVAR_DEF_T (rt_volume_lintensity, "250") \
 	CVAR_DEF_T (rt_volume_lassymetry, "0.0") \
-	CVAR_DEF_T (rt_level_fog, "1") \
     \
 	CVAR_DEF_T (rt_water_speed, "0.4") \
 	CVAR_DEF_T (rt_water_normstren, "1") \
@@ -269,7 +272,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_portal_twirl, "1") \
 	CVAR_DEF_T (rt_teleport_portals, "0") \
     \
-	CVAR_DEF_T (rt_sharpen, "0") \
+	CVAR_DEF_T (rt_sharpen, "2") \
+	CVAR_DEF_T (rt_sharpen_strength, "0.5") \
 	CVAR_DEF_T (rt_renderscale, "0") \
 	CVAR_DEF_T (rt_upscale_fsr31, "2") \
 	CVAR_DEF_T (rt_upscale_dlss, "0") \
@@ -284,20 +288,47 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_globallight_mult, "10") \
 	CVAR_DEF_T (rt_globallight, "255 255 255") \
 	\
-	CVAR_DEF_T (rt_bloom_intensity, "1") \
+	CVAR_DEF_T (rt_bloom_intensity, "0.08") \
+	CVAR_DEF_T (rt_bloom_quality, "2") \
+	CVAR_DEF_T (rt_bloom_threshold, "6.0") \
+	CVAR_DEF_T (rt_bloom_knee, "0.5") \
+	CVAR_DEF_T (rt_bloom_scatter, "0.7") \
+	CVAR_DEF_T (rt_bloom_radius, "0.04") \
 	CVAR_DEF_T (rt_bloom_emis_mult, "50") \
-	CVAR_DEF_T (rt_bloom, "0") \
+	CVAR_DEF_T (rt_bloom, "1") \
+	\
+	CVAR_DEF_T (rt_dof_near, "0.8") \
 	\
 	CVAR_DEF_T (rt_exposure_bias, "0") \
-	CVAR_DEF_T (rt_contrast, "0.6") \
+	CVAR_DEF_T (rt_exposure_speed_up, "3.0") \
+	CVAR_DEF_T (rt_exposure_speed_down, "1.0") \
+	CVAR_DEF_T (rt_exposure_low_percentile, "70") \
+	CVAR_DEF_T (rt_exposure_high_percentile, "90") \
+	CVAR_DEF_T (rt_exposure_min_luminance, "0.02") \
+	CVAR_DEF_T (rt_exposure_max_luminance, "1.0") \
+	CVAR_DEF_T (rt_local_exposure, "0.2") \
+	CVAR_DEF_T (rt_tonemap_power, "0.8") \
+	CVAR_DEF_T (rt_contrast, "0.9") \
+	CVAR_DEF_T (rt_tonemap, "2") \
 	\
 	CVAR_DEF_T (rt_ef_crt, "0") \
+	CVAR_DEF_T (rt_vignette, "0.5") \
+	CVAR_DEF_T (rt_vignette_start, "0.45") \
+	CVAR_DEF_T (rt_vignette_end, "1.0") \
+	CVAR_DEF_T (rt_vignette_roundness, "0.35") \
+	CVAR_DEF_T (rt_filmgrain, "0.5") \
+	CVAR_DEF_T (rt_filmgrain_size, "2.5") \
 	CVAR_DEF_T (rt_ef_chraber, "0.3") \
 	CVAR_DEF_T (rt_ef_waves_stren, "1") \
+	CVAR_DEF_T (rt_ef_damage, "1") \
+	CVAR_DEF_T (rt_ef_damage_strength, "0.5") \
+	CVAR_DEF_T (rt_ef_liquid, "1") \
+	CVAR_DEF_T (rt_ef_liquid_strength, "0.51") \
 	\
 	CVAR_DEF_T (rt_viewm_fovscale, "1.2") \
 	CVAR_DEF_T (rt_viewm_wide, "1.05") \
 	CVAR_DEF_T (rt_viewm_scale, "0.32") \
+	CVAR_DEF_T (rt_viewm_normalize, "1") \
 	\
 	CVAR_DEF_T (rt_hud_minimal, "1") \
 	CVAR_DEF_T (rt_hud_padding, "8") \
@@ -2202,6 +2233,7 @@ static void GL_InitInstance (void)
 	RT_LIGHT_Init ();
 
 	QR_Editor_Init (); // qr light editor console commands
+	PhotoCam_Init ();
 
 	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL, 0);
 
@@ -2443,6 +2475,9 @@ extern float    rt_dmg_value;
 extern qboolean rt_dmg_inthisframe;
 extern QrMediaType rt_cameramedia;
 extern qboolean rt_lavaeffects;
+extern float rt_ef_damage_pulse;
+extern float rt_ef_liquid_pulse;
+extern float rt_ef_pickup_pulse;
 
 static void ResolutionToQray (QrDrawFrameRenderResolutionParams *dst, const QrExtent2D winsize)
 {
@@ -2522,7 +2557,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	};
 
 	QrDrawFrameBloomParams bloom_params = {
-		.bloomIntensity = !CVAR_TO_BOOL (rt_bloom) ? 0 : CVAR_TO_FLOAT (rt_bloom_intensity),
+		.bloomIntensity = 0.0f,
 		.inputThreshold = 0.0f,
 		.bloomEmissionMultiplier = CVAR_TO_FLOAT (rt_bloom_emis_mult),
 	};
@@ -2534,7 +2569,14 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.maxLogLuminance = -2.8f,
 		.luminanceWhitePoint = 10.0f,
 		.exposureBias = CLAMP (-3.0f, CVAR_TO_FLOAT (rt_exposure_bias), 3.0f),
-		.contrast = CLAMP (0.0f, CVAR_TO_FLOAT (rt_contrast), 1.0f),
+		.tonemapPower = CLAMP (0.0f, CVAR_TO_FLOAT (rt_tonemap_power), 1.0f),
+		.exposureSpeedUp = CVAR_TO_FLOAT (rt_exposure_speed_up),
+		.exposureSpeedDown = CVAR_TO_FLOAT (rt_exposure_speed_down),
+		.exposureLowPercentile = CVAR_TO_FLOAT (rt_exposure_low_percentile),
+		.exposureHighPercentile = CVAR_TO_FLOAT (rt_exposure_high_percentile),
+		.minAdaptedLuminance = CVAR_TO_FLOAT (rt_exposure_min_luminance),
+		.maxAdaptedLuminance = CVAR_TO_FLOAT (rt_exposure_max_luminance),
+		.tonemapType = (uint32_t)CLAMP (0, CVAR_TO_INT32 (rt_tonemap), 4),
 	};
 
 	vec3_t water_color;
@@ -2569,7 +2611,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float skyMult = 1.0f / CLAMP (0.02f, RT_Luminance (skyflatcolor), 1.0f);
 	skyMult *= CVAR_TO_FLOAT (rt_sky);
 
-	const float skyBrightness = CVAR_TO_FLOAT (rt_sky_brightness) * CVAR_TO_FLOAT (rt_brightness);
+	const float skyBrightness = RT_SKY_RADIANCE_SCALE * CVAR_TO_FLOAT (rt_sky_brightness) * CVAR_TO_FLOAT (rt_brightness);
 
 	const qboolean materials_only = CVAR_TO_BOOL (rt_materials_only);
 
@@ -2658,7 +2700,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			RT_APPLY_SUN_COLOR (brightest_color);
 			RT_FIXUP_LIGHT_INTENSITY (brightest_color, true);
 			VectorScale (brightest_color, RT_SUN_LIGHT_INTENSITY_SCALE, brightest_color);
-			VectorScale (brightest_color, CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_brightness), 10.0f), brightest_color);
+			VectorScale (brightest_color, RT_SKY_RADIANCE_SCALE * CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_brightness), 10.0f), brightest_color);
 
 			sky_params.godRaysFromSkyTexture = 1;
 			RT_VEC3_SET (sky_params.godRaysSkyDirection.data, brightest_dir[0], brightest_dir[1], brightest_dir[2]);
@@ -2715,11 +2757,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	for (int i = 0; i < MAX_LIGHTSTYLES; i++)
 		texture_params.lightStyleScales[i] = (float)d_lightstylevalue[i] * (1.0f / 256.0f);
 
-	QrDrawFrameLensFlareParams lens_flare_params = {
-		.lensFlareBlendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
-		.lensFlareBlendFuncDst = QR_BLEND_FACTOR_ONE,
-	};
-
 	// Classic level fog: the worldspawn "fog" key and the `fog` console
 	// command, which Arcane Dimensions also uses to drive its dynamic fog. The
 	// color is passed as it is, without an sRGB decoding, the same way the
@@ -2727,11 +2764,11 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// Sky_DrawSky above hands it to the sky. The density is divided by the 64
 	// the classic renderer scaled it with, so that a density of 0.05, a
 	// mid-range value for the shipped maps, fades the far plane into the fog
-	// instead of everything. rt_level_fog 0 ignores the level's fog.
+	// instead of everything. A density of 0 draws no level fog.
 	float level_fog_color[4];
 	Fog_GetColor (level_fog_color);
 
-	const qboolean level_fog_active = CVAR_TO_BOOL (rt_level_fog) && Fog_GetDensity () > 0;
+	const qboolean level_fog_active = Fog_GetDensity () > 0;
 
 	QrDrawFrameLevelFogParams level_fog_params = {
 		.color = RT_VEC3 (level_fog_color),
@@ -2741,13 +2778,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	QrPostEffectCRT crt_effect = {
 		.isActive = CVAR_TO_BOOL (rt_ef_crt),
-	};
-
-	QrPostEffectChromaticAberration chromatic_aberration_effect = {
-		.isActive = CVAR_TO_FLOAT (rt_ef_chraber) > 0.0f,
-		.transitionDurationIn = 0,
-		.transitionDurationOut = 0,
-		.intensity = CVAR_TO_FLOAT (rt_ef_chraber),
 	};
 
 	QrPostEffectColorTint tint_quad = {
@@ -2771,28 +2801,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.intensity = 10.0f,
 		.color = {1.0f, 0.1f, 0.0f},
 	};
-	QrPostEffectColorTint tint_radsuit = {
-		.isActive = true,
-		.transitionDurationIn = 1.0f,
-		.transitionDurationOut = 1.0f,
-		.intensity = 1.0f,
-		.color = {0.2f, 1.0f, 0.4f},
-	};
-	QrPostEffectColorTint tint_bonus = {
-		.isActive = true,
-		.transitionDurationIn = 0.0f,
-		.transitionDurationOut = 0.7f,
-		.intensity = 0.5f,
-		.color = {0.85f, 0.72f, 0.27f},
-	};
-	QrPostEffectColorTint tint_damage = {
-		.isActive = true,
-		.transitionDurationIn = 0.0f,
-		.transitionDurationOut = 0.2f + rt_dmg_value * 0.8f,
-		.intensity = 1.0f,
-		.color = FROMCOLOR255 (cl.cshifts[CSHIFT_DAMAGE].destcolor),
-	};
-
 	static QrPostEffectColorTint tint_effect = {0}; // static, so prev state's transition durations are preserved
 	tint_effect.isActive = false;
 	if (cl.stats[STAT_HEALTH] > 0)
@@ -2800,11 +2808,64 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	    if (cl.items & IT_QUAD) tint_effect = tint_quad;
 	    else if (cl.items & IT_INVULNERABILITY) tint_effect = tint_invuln;
 	    else if (rt_lavaeffects) tint_effect = tint_lava;
-	    else if (cl.items & IT_SUIT) tint_effect = tint_radsuit;
-	    else if (rt_dmg_inthisframe) tint_effect = tint_damage;
-	    else if (cl.cshifts[CSHIFT_BONUS].percent > 0) tint_effect = tint_bonus;
 	}
 	rt_dmg_inthisframe = false;
+
+	static QrPostEffectsBloomParams bloom_effect = {0};
+	bloom_effect.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_intensity), 0.2f);
+	bloom_effect.isActive = bloom_effect.intensity > 0.0f;
+	bloom_effect.threshold = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_threshold), 20.0f);
+	bloom_effect.knee = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_knee), 1.0f);
+	bloom_effect.scatter = CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_scatter), 1.0f);
+	bloom_effect.radius = CLAMP (0.005f, CVAR_TO_FLOAT (rt_bloom_radius), 0.15f);
+	bloom_effect.quality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_quality), 2.0f);
+
+	const float viewmodel_scale = CVAR_TO_FLOAT (rt_viewm_scale) > 0.0f ? CVAR_TO_FLOAT (rt_viewm_scale) : 1.0f;
+
+	float dof_focus = 24.0f * viewmodel_scale;
+	float dof_radius = 48.0f;
+	if (rt_viewmodel_depth_far > rt_viewmodel_depth_near)
+	{
+		dof_focus = rt_viewmodel_depth_far * 0.8f;
+		if (dof_focus <= rt_viewmodel_depth_near)
+			dof_focus = rt_viewmodel_depth_far * 1.02f;
+
+		const float dof_near = CLAMP (0.0f, rt_viewmodel_depth_near, dof_focus * 0.95f);
+		dof_radius = 48.0f / q_max (1.0f - dof_near / dof_focus, 0.05f);
+	}
+
+	QrPostEffectsNearDofParams near_dof_effect = {
+		.strength = CLAMP (0.0f, CVAR_TO_FLOAT (rt_dof_near), 1.0f),
+		.focusDistance = dof_focus,
+		.maxRadius = dof_radius,
+	};
+
+	static QrPostEffectsSharpenParams sharpen_effect = {0};
+	sharpen_effect.strength = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sharpen_strength), 1.0f);
+	sharpen_effect.isActive = sharpen_effect.strength > 0.0f;
+
+	const float suit_feedback = (cl.stats[STAT_HEALTH] > 0) ? rt_ef_suit_pulse : 0.0f;
+
+	static QrPostEffectsGameplayFeedback feedback_effect = {0};
+	feedback_effect.damage = q_max (rt_ef_damage_pulse, rt_ef_lowhealth_pulse) * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_damage_strength), 1.0f);
+	feedback_effect.liquid = rt_ef_liquid_pulse * CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_liquid_strength), 1.0f);
+	feedback_effect.pickup = rt_ef_pickup_pulse * 0.00083f;
+	feedback_effect.pickupHeight = 0.14f;
+	feedback_effect.pickupColor = (QrFloat3D){{1.0f, 0.831373f, 0.482353f}};
+	feedback_effect.aberration = CLAMP (0.0f, CVAR_TO_FLOAT (rt_ef_chraber), 1.0f);
+	feedback_effect.suit = suit_feedback;
+
+	QrPostEffectsVignetteParams vignette_effect = {
+		.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_vignette) + suit_feedback * 0.25f, 1.0f),
+		.start = CLAMP (0.0f, CVAR_TO_FLOAT (rt_vignette_start), 0.99f),
+		.end = CLAMP (0.01f, CVAR_TO_FLOAT (rt_vignette_end), 2.0f),
+		.roundness = CLAMP (0.0f, CVAR_TO_FLOAT (rt_vignette_roundness), 1.0f),
+	};
+
+	QrPostEffectsFilmGrainParams filmgrain_effect = {
+		.intensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_filmgrain), 1.0f),
+		.size = CLAMP (0.25f, CVAR_TO_FLOAT (rt_filmgrain_size), 8.0f),
+	};
 
     QrPostEffectRadialBlur radial_effect = {
 		.isActive = (cl.items & (IT_QUAD | IT_INVULNERABILITY)) && cl.stats[STAT_HEALTH] > 0,
@@ -2862,15 +2923,21 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.pReflectRefractParams = &refl_refr_params,
 		.pSkyParams = &sky_params,
 		.pTexturesParams = &texture_params,
-		.pLensFlareParams = &lens_flare_params,
 		.pLevelFogParams = &level_fog_params,
 		.postEffectParams =
 			{
-				.pChromaticAberration = &chromatic_aberration_effect,
+				.pChromaticAberration = NULL,
 				.pWaves = (!editor_active && CVAR_TO_INT32(r_waterwarp) == 1) ? &waves_effect : NULL,
 				.pColorTint = (cl.intermission || editor_active) ? NULL : &tint_effect,
 				.pCRT = &crt_effect,
 				.pRadialBlur = (cl.intermission || editor_active) ? NULL : &radial_effect,
+				.pBloom = &bloom_effect,
+				.pNearDof = (cl.intermission || editor_active) ? NULL : &near_dof_effect,
+				.pSharpen = &sharpen_effect,
+				.pVignette = &vignette_effect,
+				.pFilmGrain = &filmgrain_effect,
+				.localExposure = CLAMP (0.0f, CVAR_TO_FLOAT (rt_local_exposure), 1.0f),
+				.pGameplayFeedback = (cl.intermission || editor_active) ? NULL : &feedback_effect,
 			},
 		.pDebugParams = &debug_params,
 	};
@@ -3663,8 +3730,6 @@ enum
 	VID_OPT_UPSCALER_QUALITY,
 
 
-	VID_OPT_EXPOSURE_BIAS,
-	VID_OPT_CONTRAST,
 	VID_OPT_VSYNC,
 	VID_OPT_MAX_FPS,
 
@@ -3942,12 +4007,6 @@ static void VID_Menu_Adjust (int dir)
 		VID_Menu_ChooseNextMaxFPS (dir);
 		Cvar_SetValueQuick (&host_maxfps, menu_settings.host_maxfps);
 		break;
-	case VID_OPT_EXPOSURE_BIAS:
-		VID_Menu_StepFloatCvar (&rt_exposure_bias, dir * 0.1f, -3.0f, 3.0f);
-		break;
-	case VID_OPT_CONTRAST:
-		VID_Menu_StepFloatCvar (&rt_contrast, dir * 0.1f, 0.0f, 1.0f);
-		break;
 	case VID_OPT_UPSCALER:
 	case VID_OPT_UPSCALER_QUALITY:
 		VID_Menu_ChooseNextAA (video_options_cursor, dir);
@@ -4133,14 +4192,6 @@ static void VID_MenuDraw (cb_context_t *cbx)
 			break;
 
 
-		case VID_OPT_EXPOSURE_BIAS:
-			M_Print (cbx, 16, y, "     Exposure bias");
-			M_Print (cbx, 184, y, va ("%+.1f EV", CVAR_TO_FLOAT (rt_exposure_bias)));
-			break;
-		case VID_OPT_CONTRAST:
-			M_Print (cbx, 16, y, "          Contrast");
-			M_Print (cbx, 184, y, va ("%d%%", (int)(CVAR_TO_FLOAT (rt_contrast) * 100.0f + 0.5f)));
-			break;
 		case VID_OPT_VSYNC:
 			M_Print (cbx, 16, y, "     Vertical sync");
 			M_Print (cbx, 184, y, VID_VsyncModeName ((int)vid_vsync.value));

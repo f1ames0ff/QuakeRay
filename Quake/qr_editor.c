@@ -43,6 +43,7 @@
 #include "console.h"
 #include "mathlib.h"
 #include "input.h"
+#include "cursor.h"
 #include "vid.h"
 #include "atomics.h"
 
@@ -55,6 +56,7 @@
 
 #include "qr_editor.h"
 #include "qr_gui.h"
+#include "photocam.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -72,17 +74,16 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea, rt_dtal_groups, rt_dtal_spacing;
+extern cvar_t rt_model_lights;
 extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minarea;
 extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale;
 
 // The level's own fog (gl_fog.c): read through the getters and written through
-// the `fog` command, the same path a map's key and the console use. Whether the
-// fog is drawn at all is the rt_level_fog switch (gl_vidsdl.c), which the level's
-// section may carry too.
+// the `fog` command, the same path a map's key and the console use; a density of
+// 0 draws no fog.
 float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
-extern cvar_t rt_level_fog;                          // gl_vidsdl.c
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -115,7 +116,6 @@ enum
 	PARAM_LSTYLES,
 	PARAM_LCOLOR,
 	PARAM_LBRIGHT,
-	PARAM_LUPOFF,
 	PARAM_EFOCUS,
 	PARAM_ESOFT,
 	PARAM_EPROJ,
@@ -163,8 +163,6 @@ static const struct qre_param_s
 	                     "The color of the light the surface casts; needs is_light." },
 	[PARAM_LBRIGHT]  = { NULL, "light_brightness", QRE_T_FLOAT, 0.001f, 1000, 0.0001f,
 	                     "How bright the light the surface casts is; the visible glow is set by emissive_factor and does not change with this." },
-	[PARAM_LUPOFF]   = { NULL, "light_upoffset",   QRE_T_FLOAT, -64, 64, 0.5f,
-	                     "Lifts the cast light above the model's origin (alias models)." },
 	[PARAM_EFOCUS]   = { "Emissive", "emissive_focus",   QRE_T_FLOAT, 1, 90, 0.01f,
 	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond. The edge is softened inward from this angle by emissive_focus_soft." },
 	[PARAM_ESOFT]    = { NULL, "emissive_focus_soft", QRE_T_FLOAT, 1, 90, 0.01f,
@@ -186,7 +184,9 @@ static const char *const qre_emissive_blends[] = {
 // State
 // ---------------------------------------------------------------------------
 
-#define QRE_GROUP_MAX    12
+#define QRE_GROUP_MAX    32
+#define QRE_ENTITY_MAX   64
+#define QRE_ANIM_MAX     8
 #define QRE_DIRTY_MAX    64
 #define QRE_TOUCHED_MAX  512
 #define QRE_PREVIEW_SLOTS QRE_GROUP_MAX
@@ -195,6 +195,13 @@ static const char *const qre_emissive_blends[] = {
 // picker samples, cached under the key of what they were built from, one slot
 // per group entry so rebuilding one section never frees a material another
 // section's draw command already names.
+typedef struct
+{
+	const char *name;
+	int         first;
+	int         last;
+} qre_anim_t;
+
 typedef struct qre_preview_s
 {
 	char        key[MAX_QPATH * 2 + 32];
@@ -258,15 +265,14 @@ static struct
 	char        light_touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int         light_touched_count;
 
-	// snapshot of the custom lights and the fog that was in effect (its color,
-	// its density and the rt_level_fog switch): the Custom tab and the Global
-	// tab edit the live state without marking anything, so this is what
-	// Cancel/Exit restore and what QRE_CustomTouched compares to
+	// snapshot of the custom lights and the fog that was in effect (its color
+	// and its density): the Custom tab and the Global tab edit the live state
+	// without marking anything, so this is what Cancel/Exit restore and what
+	// QRE_CustomTouched compares to
 	rt_custom_light_t snap_custom[RT_CUSTOM_LIGHTS_MAX];
 	int               snap_custom_count;
 	float             snap_fog_color[3];
 	float             snap_fog_density;
-	qboolean          snap_fog_enabled;
 
 	// the light editor: the light the crosshair is over, and the one selected
 	// (the panel edits the entry of the selected light's emitter)
@@ -279,6 +285,16 @@ static struct
 	int light_tab;
 
 	int mat_tab;
+
+	qmodel_t  *entity_weapons[QRE_ENTITY_MAX];
+	int        entity_weapon_count;
+	qboolean   entity_list_built;
+	qmodel_t  *entity_sel_model;
+	qmodel_t  *entity_preview_model;
+	qre_anim_t entity_anims[QRE_ANIM_MAX];
+	int        entity_anim_count;
+	int        entity_anim;
+	int        entity_frame;
 
 	// the Custom tab's placement mode: "Add light" waits for the fire button and
 	// drops the new light where the crosshair hits
@@ -501,7 +517,6 @@ static void QRE_TakeCustomSnapshot (void)
 	qre.snap_fog_color[1] = color[1];
 	qre.snap_fog_color[2] = color[2];
 	qre.snap_fog_density = Fog_GetDensity ();
-	qre.snap_fog_enabled = CVAR_TO_BOOL (rt_level_fog);
 }
 
 static void QRE_RestoreCustomSnapshot (void)
@@ -524,10 +539,6 @@ static void QRE_RestoreCustomSnapshot (void)
 		                  CLAMP (0.0f, qre.snap_fog_color[1], 1.0f),
 		                  CLAMP (0.0f, qre.snap_fog_color[2], 1.0f)));
 	}
-
-	// the fog switch is a plain cvar: it goes back straight away
-	if (CVAR_TO_BOOL (rt_level_fog) != qre.snap_fog_enabled)
-		Cvar_Set ("rt_level_fog", qre.snap_fog_enabled ? "1" : "0");
 }
 
 // Whether the live custom list or the fog differs from the snapshot: what the
@@ -546,11 +557,6 @@ static qboolean QRE_CustomTouched (void)
 	Fog_GetColor (color);
 	if (color[0] != qre.snap_fog_color[0] || color[1] != qre.snap_fog_color[1] ||
 	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
-		return true;
-
-	// a change of only the rt_level_fog checkbox counts too: the section
-	// carries the switch as "enabled"
-	if (CVAR_TO_BOOL (rt_level_fog) != qre.snap_fog_enabled)
 		return true;
 
 	return false;
@@ -821,7 +827,6 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_METAL:    return m->metalness_factor;
 	case PARAM_BASEF:    return m->base_factor;
 	case PARAM_LBRIGHT:  return m->light_brightness;
-	case PARAM_LUPOFF:   return m->light_upoffset;
 	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : 45.0f;
 	case PARAM_ESOFT:    return m->emissive_focus_soft >= 0.0f ? m->emissive_focus_soft : 45.0f;
 	default:             return 0.0f;
@@ -874,7 +879,6 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_ROUGH:    m->roughness_override = value; break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
-	case PARAM_LUPOFF:   m->light_upoffset = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
 	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
 	default:             break;
@@ -1024,6 +1028,7 @@ static void QRE_ResolveGroup (const char *texname)
 			// its :frameN names resolve, so a stale base entry stays hidden
 			// (for a texture ring the base is a real material and is shown).
 			if (qre.pick_model && qre.pick_model->type != mod_brush &&
+			    q_strcasecmp (texname, groupbase) != 0 &&
 			    !q_strcasecmp (list[i].name, groupbase))
 				continue;
 			if (!QRE_NameInGroup (list[i].name, groupbase))
@@ -1947,6 +1952,56 @@ static void QRE_DrawLightWireframes (void)
 	QRE_DrawGizmoArrows ();
 }
 
+// Opens one texture's material group in the panel: the pick path and the
+// Entities tab both end here.
+static void QRE_OpenMaterial (qmodel_t *model, msurface_t *surf, entity_t *ent, gltexture_t *glt)
+{
+	char texname[MAX_QPATH];
+	char *dot;
+	int   i;
+
+	if (!glt)
+		return;
+	if (!QR_GUI_Ready ())
+	{
+		QRE_Notify ("the ImGui panel is not available");
+		return;
+	}
+
+	qre.pick_model = model;
+	qre.pick_surf = surf;
+	qre.pick_ent = ent;
+	qre.pick_glt = glt;
+	qre.hover_model = NULL;
+	qre.hover_surf = NULL;
+	qre.hover_ent = NULL;
+	qre.hover_glt = NULL;
+
+	RT_MAT_NormalizeName (glt->name, texname, sizeof (texname));
+	dot = strrchr (texname, '.');
+	if (dot && !strchr (dot, ':'))
+		*dot = '\0';
+
+	q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
+
+	if (qre.mode == QRE_MODE_LIGHT)
+	{
+		Con_Printf ("qr light editor: picked emitter '%s'\n", texname);
+	}
+	else
+	{
+		QRE_ResolveGroup (texname);
+
+		Con_Printf ("qr editor: picked '%s' (%d material(s) in the group)\n", texname, qre.group_count);
+		for (i = 0; i < qre.group_count; i++)
+			Con_Printf ("qr editor:   group material '%s'\n", qre.group[i]->name);
+	}
+
+	// the panel owns the mouse: free the cursor (keeping its motion events
+	// for ImGui), freeze the camera
+	QRE_CursorMode (true);
+}
+
 // Hover pick (crosshair, flying) or select pick (fire button).
 static void QRE_DoPick (qboolean select)
 {
@@ -1980,52 +2035,10 @@ static void QRE_DoPick (qboolean select)
 		return;
 	}
 
-	if (!glt)
-		return;
-	if (!QR_GUI_Ready ())
-	{
-		QRE_Notify ("the ImGui panel is not available");
-		return;
-	}
+	qre.entity_sel_model = NULL;
+	qre.entity_preview_model = NULL;
 
-	qre.pick_model = model;
-	qre.pick_surf = surf;
-	qre.pick_ent = ent;
-	qre.pick_glt = glt;
-	qre.hover_model = NULL;
-	qre.hover_surf = NULL;
-	qre.hover_ent = NULL;
-	qre.hover_glt = NULL;
-
-	{
-		char texname[MAX_QPATH];
-		char *dot;
-		int   i;
-
-		RT_MAT_NormalizeName (glt->name, texname, sizeof (texname));
-		dot = strrchr (texname, '.');
-		if (dot && !strchr (dot, ':'))
-			*dot = '\0';
-
-		q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
-
-		if (qre.mode == QRE_MODE_LIGHT)
-		{
-			Con_Printf ("qr light editor: picked emitter '%s'\n", texname);
-		}
-		else
-		{
-			QRE_ResolveGroup (texname);
-
-			Con_Printf ("qr editor: picked '%s' (%d material(s) in the group)\n", texname, qre.group_count);
-			for (i = 0; i < qre.group_count; i++)
-				Con_Printf ("qr editor:   group material '%s'\n", qre.group[i]->name);
-		}
-	}
-
-	// the panel owns the mouse: free the cursor (keeping its motion events
-	// for ImGui), freeze the camera
-	QRE_CursorMode (true);
+	QRE_OpenMaterial (model, surf, ent, glt);
 }
 
 // ---------------------------------------------------------------------------
@@ -2256,6 +2269,15 @@ void QR_Editor_UpdateView (void)
 
 	VectorCopy (qre.cam_origin, r_refdef.vieworg);
 	VectorCopy (cl.viewangles, r_refdef.viewangles);
+
+	if (QR_Editor_ShowViewModel ())
+	{
+		cl.viewent.model = qre.entity_preview_model;
+		cl.viewent.frame = qre.entity_frame;
+		cl.viewent.lerpflags |= LERP_RESETANIM;
+		VectorCopy (cl.viewangles, cl.viewent.angles);
+		VectorCopy (r_refdef.vieworg, cl.viewent.origin);
+	}
 
 	// Before the frame renders: a re-synthesis replaces the material handles,
 	// and the world's static upload (R_DrawWorldTask) runs later in this frame,
@@ -2829,7 +2851,7 @@ static void QRE_ParamWidgets (int g)
 
 	for (p = 0; p < PARAM_COUNT; p++)
 	{
-		if (p >= PARAM_LSTYLES && p <= PARAM_LUPOFF && !qre.group[g]->is_light)
+		if (p >= PARAM_LSTYLES && p <= PARAM_LBRIGHT && !qre.group[g]->is_light)
 			continue;
 
 		if (qre_params[p].section && (!section || strcmp (section, qre_params[p].section)))
@@ -2895,6 +2917,7 @@ static float    qre_water_color_snapshot[3];
 static float    qre_acid_color_snapshot[3];
 
 static const char *const qre_mat_cvars[] = {
+	"rt_model_lights",
 	"rt_dtal_clearance",
 	"rt_dtal_maxpolys",
 	"rt_dtal_minarea",
@@ -3083,6 +3106,11 @@ static void QRE_MatSystemTab (void)
 	float                     value;
 	int                       dbg = CVAR_TO_INT32 (rt_dtal_debug);
 	int                       maxpolys;
+	int                       dtal_entities = CVAR_TO_BOOL (rt_model_lights) ? 1 : 0;
+
+	if (QR_GUI_Checkbox ("DTAL dynamic map entities", &dtal_entities,
+	                     "Light the moving map emitters (flames, lava balls and the like) from their emissive geometry (DTAL) instead of their generated dlight; the DTAL (models) limits below still bound what qualifies."))
+		Cvar_Set ("rt_model_lights", dtal_entities ? "1" : "0");
 
 	if (dbg < 0 || dbg > 2)
 		dbg = 0;
@@ -3125,8 +3153,8 @@ static void QRE_MatSystemTab (void)
 	QR_GUI_SectionHeader ("DTAL (models)");
 
 	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
-	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 1024.0f,
-	                        "Drops a model's DTAL polygon under this area, in world units squared (0 off)."))
+	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
+	                        "Drops a model's DTAL polygon under this percentage of the model's bounding box face (0 off)."))
 		Cvar_Set ("rt_dtal_model_minarea", va ("%.4g", value));
 
 	maxpolys = CVAR_TO_INT32 (rt_dtal_model_maxpolys);
@@ -3140,6 +3168,206 @@ static void QRE_MatSystemTab (void)
 		Cvar_Set ("rt_dtal_model_budget", va ("%d", maxpolys));
 
 	QRE_MatWaterSection ();
+}
+
+static int QRE_CompareModelNames (const void *a, const void *b)
+{
+	const qmodel_t *ma = *(qmodel_t *const *) a;
+	const qmodel_t *mb = *(qmodel_t *const *) b;
+
+	return q_strcasecmp (ma->name, mb->name);
+}
+
+static void QRE_EntityListAdd (qmodel_t **list, int *count, qmodel_t *model)
+{
+	int i;
+
+	if (*count >= QRE_ENTITY_MAX)
+		return;
+
+	for (i = 0; i < *count; i++)
+		if (list[i] == model)
+			return;
+
+	list[(*count)++] = model;
+}
+
+static void QRE_BuildEntityLists (void)
+{
+	int i;
+
+	qre.entity_weapon_count = 0;
+
+	for (i = 1; i < MAX_MODELS; i++)
+	{
+		qmodel_t   *m = cl.model_precache[i];
+		const char *base;
+
+		if (!m || m->type != mod_alias)
+			continue;
+
+		base = COM_SkipPath (m->name);
+		if (!q_strncasecmp (base, "v_", 2))
+			QRE_EntityListAdd (qre.entity_weapons, &qre.entity_weapon_count, m);
+	}
+
+	if (cl.viewent.model && cl.viewent.model->type == mod_alias)
+		QRE_EntityListAdd (qre.entity_weapons, &qre.entity_weapon_count, cl.viewent.model);
+
+	qsort (qre.entity_weapons, (size_t) qre.entity_weapon_count, sizeof (qre.entity_weapons[0]),
+	       QRE_CompareModelNames);
+
+	qre.entity_list_built = true;
+}
+
+typedef struct
+{
+	const char *model;
+	const char *animation;
+	int         first;
+	int         last;
+} qre_weapon_anim_t;
+
+static const qre_weapon_anim_t qre_weapon_anims[] = {
+	{ "progs/v_axe.mdl",   "idle",     0, 0 },
+	{ "progs/v_axe.mdl",   "attack",   1, 4 },
+	{ "progs/v_axe.mdl",   "attack 2", 5, 8 },
+	{ "progs/v_shot.mdl",  "idle",     0, 0 },
+	{ "progs/v_shot.mdl",  "fire",     1, 6 },
+	{ "progs/v_shot2.mdl", "idle",     0, 0 },
+	{ "progs/v_shot2.mdl", "fire",     1, 6 },
+	{ "progs/v_nail.mdl",  "idle",     0, 0 },
+	{ "progs/v_nail.mdl",  "fire",     1, 8 },
+	{ "progs/v_nail2.mdl", "idle",     0, 0 },
+	{ "progs/v_nail2.mdl", "fire",     1, 8 },
+	{ "progs/v_rock.mdl",  "idle",     0, 0 },
+	{ "progs/v_rock.mdl",  "fire",     1, 6 },
+	{ "progs/v_rock2.mdl", "idle",     0, 0 },
+	{ "progs/v_rock2.mdl", "fire",     1, 6 },
+	{ "progs/v_light.mdl", "idle",     0, 0 },
+	{ "progs/v_light.mdl", "fire",     1, 4 },
+};
+
+static void QRE_BuildWeaponAnims (qmodel_t *model, aliashdr_t *hdr)
+{
+	int i;
+
+	qre.entity_anim_count = 0;
+
+	for (i = 0; i < (int) countof (qre_weapon_anims) && qre.entity_anim_count < QRE_ANIM_MAX; i++)
+	{
+		const qre_weapon_anim_t *a = &qre_weapon_anims[i];
+		qre_anim_t              *dst;
+
+		if (q_strcasecmp (a->model, model->name))
+			continue;
+
+		dst = &qre.entity_anims[qre.entity_anim_count++];
+		dst->name = a->animation;
+		dst->first = (a->first < hdr->numframes) ? a->first : 0;
+		dst->last = (a->last < hdr->numframes) ? a->last : hdr->numframes - 1;
+		if (dst->last < dst->first)
+			dst->last = dst->first;
+	}
+
+	if (qre.entity_anim_count == 0 && hdr->numframes > 0)
+	{
+		qre.entity_anims[0].name = "frames";
+		qre.entity_anims[0].first = 0;
+		qre.entity_anims[0].last = hdr->numframes - 1;
+		qre.entity_anim_count = 1;
+	}
+
+	qre.entity_anim = 0;
+	qre.entity_frame = (qre.entity_anim_count > 0) ? qre.entity_anims[0].first : 0;
+}
+
+static void QRE_SelectEntityModel (qmodel_t *model)
+{
+	aliashdr_t  *hdr;
+	gltexture_t *glt;
+
+	if (!model)
+		return;
+
+	hdr = (aliashdr_t *) Mod_Extradata (model);
+	glt = (hdr && hdr->numskins > 0) ? hdr->gltextures[0][0] : NULL;
+	if (!hdr || !glt || !glt->name[0])
+	{
+		QRE_Notify ("'%s' has no skin texture to edit", model->name);
+		return;
+	}
+
+	QRE_BuildWeaponAnims (model, hdr);
+
+	qre.entity_sel_model = model;
+	qre.entity_preview_model = model;
+
+	QRE_OpenMaterial (model, NULL, NULL, glt);
+}
+
+static void QRE_MatEntitiesTab (void)
+{
+	char label[MAX_QPATH + 24];
+	int  i;
+
+	if (!qre.entity_list_built)
+		QRE_BuildEntityLists ();
+
+	QR_GUI_LabelDim ("Entity materials are saved for the whole mod.");
+	QR_GUI_Spacing ();
+
+	QR_GUI_SectionHeader ("Weapons");
+	if (qre.entity_weapon_count == 0)
+		QR_GUI_LabelDim ("no weapon view model in this level");
+
+	for (i = 0; i < qre.entity_weapon_count; i++)
+	{
+		qmodel_t *m = qre.entity_weapons[i];
+		qboolean  selected = (qre.entity_sel_model == m);
+
+		if (m == cl.viewent.model)
+			q_snprintf (label, sizeof (label), "%s (held)", COM_SkipPath (m->name));
+		else
+			q_strlcpy (label, COM_SkipPath (m->name), sizeof (label));
+
+		QR_GUI_PushID (m->name);
+		if (QR_GUI_SectionSelected (label, selected))
+			QRE_SelectEntityModel (m);
+		QR_GUI_PopID ();
+	}
+
+	if (qre.entity_preview_model != NULL && qre.entity_anim_count > 0)
+	{
+		const char *names[QRE_ANIM_MAX];
+		int         anim, frame, span;
+
+		for (i = 0; i < qre.entity_anim_count; i++)
+			names[i] = qre.entity_anims[i].name;
+
+		QR_GUI_Spacing ();
+
+		anim = qre.entity_anim;
+		if (QR_GUI_Combo ("animation", &anim, (const char *const *) names, qre.entity_anim_count,
+		                  "The weapon animation the preview plays.") &&
+		    anim >= 0 && anim < qre.entity_anim_count)
+		{
+			qre.entity_anim = anim;
+			qre.entity_frame = qre.entity_anims[anim].first;
+		}
+
+		span = qre.entity_anims[qre.entity_anim].last - qre.entity_anims[qre.entity_anim].first;
+		frame = qre.entity_frame - qre.entity_anims[qre.entity_anim].first;
+		if (QR_GUI_SliderInt ("frame", &frame, 0, span, "The animation frame the preview shows."))
+		{
+			if (frame < 0)
+				frame = 0;
+			if (frame > span)
+				frame = span;
+
+			qre.entity_frame = qre.entity_anims[qre.entity_anim].first + frame;
+		}
+	}
 }
 
 static void QRE_BuildPanelGUI (void)
@@ -3167,7 +3395,7 @@ static void QRE_BuildPanelGUI (void)
 	QR_GUI_Spacing ();
 
 	{
-		static const char *const tabs[] = { "Materials", "System" };
+		static const char *const tabs[] = { "Materials", "Entities", "System" };
 		int reset = 0;
 
 		QR_GUI_Tabs ("material_tabs", tabs, (int)countof (tabs), &qre.mat_tab, &reset);
@@ -3178,13 +3406,16 @@ static void QRE_BuildPanelGUI (void)
 
 	QRE_PanelActionRow (QRE_RequestExit);
 
-	if (qre.mat_tab == 1)
+	if (qre.mat_tab == 2)
 	{
 		QRE_MatSystemTab ();
 		QR_GUI_EndScroll ();
 		QR_GUI_EndPanel ();
 		return;
 	}
+
+	if (qre.mat_tab == 1)
+		QRE_MatEntitiesTab ();
 
 	for (g = 0; g < qre.group_count; g++)
 	{
@@ -3678,9 +3909,6 @@ static const qre_global_t qre_globals[] = {
 	  "Brightness of the simple fog's color, which is the sky's flat color (mode 1)." },
 	{ NULL,  "rt_volume_far",                QRE_G_FLOAT, 0, 4000,
 	  "How far from the camera the volumetric volume reaches (mode 2)." },
-
-	{ "", "rt_level_fog",          QRE_G_BOOL,  0, 0,
-	  "Draw the level's own fog (the worldspawn \"fog\" key or the console `fog` command)." },
 };
 
 static char     qre_globals_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];
@@ -3916,39 +4144,36 @@ static void QRE_LightGlobalTab (void)
 	// The level's fog itself: the color and the density are map data, not cvars,
 	// so they go through the `fog` command (the same path a map's key and the
 	// console use) while the getters keep the widgets in step with the map.
-	if (CVAR_TO_BOOL (rt_level_fog))
+	QR_GUI_Label ("Fog");
+
+	float    color[4];
+	float    density = Fog_GetDensity ();
+	int      en = 1;
+	qboolean changed = false;
+
+	Fog_GetColor (color);
+	color[3] = 1.0f;
+
+	if (QR_GUI_ColorHex ("fog_color", color, &en, "The color of the level's fog."))
+		changed = true;
+	if (QR_GUI_ResetButton ("fog_color", color[0] != qre.snap_fog_color[0] ||
+	                                        color[1] != qre.snap_fog_color[1] ||
+	                                        color[2] != qre.snap_fog_color[2]))
 	{
-		QR_GUI_Label ("Fog");
-
-		float    color[4];
-		float    density = Fog_GetDensity ();
-		int      en = 1;
-		qboolean changed = false;
-
-		Fog_GetColor (color);
-		color[3] = 1.0f;
-
-		if (QR_GUI_ColorHex ("fog_color", color, &en, "The color of the level's fog."))
-			changed = true;
-		if (QR_GUI_ResetButton ("fog_color", color[0] != qre.snap_fog_color[0] ||
-		                                        color[1] != qre.snap_fog_color[1] ||
-		                                        color[2] != qre.snap_fog_color[2]))
-		{
-			VectorCopy (qre.snap_fog_color, color);
-			changed = true;
-		}
-		if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
-			changed = true;
-		if (QR_GUI_ResetButton ("fog_density", density != qre.snap_fog_density))
-		{
-			density = qre.snap_fog_density;
-			changed = true;
-		}
-
-		if (changed)
-			Cbuf_AddText (va ("fog %f %f %f %f\n", density,
-			                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
+		VectorCopy (qre.snap_fog_color, color);
+		changed = true;
 	}
+	if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
+		changed = true;
+	if (QR_GUI_ResetButton ("fog_density", density != qre.snap_fog_density))
+	{
+		density = qre.snap_fog_density;
+		changed = true;
+	}
+
+	if (changed)
+		Cbuf_AddText (va ("fog %f %f %f %f\n", density,
+		                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
 
 	QR_GUI_Spacing ();
 	QR_GUI_LabelDim ("the values above are saved to the config by Save; Cancel puts them back");
@@ -5665,8 +5890,6 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		QRE_WriteColor (f, "light_color", m->light_color);
 	if (m->light_brightness != 1.0f)
 		fprintf (f, "    light_brightness: %.6g\n", m->light_brightness);
-	if (m->light_upoffset != 0.0f)
-		fprintf (f, "    light_upoffset: %.6g\n", m->light_upoffset);
 	if (m->emissive_focus > 0.0f)
 		fprintf (f, "    emissive_focus: %.6g\n", m->emissive_focus);
 	if (m->emissive_focus_soft >= 0.0f)
@@ -5947,13 +6170,9 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 
 	// The fog block is always part of the section: the Global tab authors the
 	// level's fog, so the session has to carry it even when only a light
-	// changed. "enabled" is the live rt_level_fog switch, so the section always
-	// states whether the level's fog is drawn. (The color getter fills four
-	// floats, hence the local.)
+	// changed. (The color getter fills four floats, hence the local.)
 	memset (&fog, 0, sizeof (fog));
 	fog.has_fog = true;
-	fog.has_enabled = true;
-	fog.enabled = CVAR_TO_BOOL (rt_level_fog);
 	Fog_GetColor (color);
 	fog.color[0] = color[0];
 	fog.color[1] = color[1];
@@ -5961,7 +6180,6 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 	fog.density = Fog_GetDensity ();
 
 	fprintf (out, "  fog:\n");
-	fprintf (out, "    enabled: %s\n", fog.enabled ? "true" : "false");
 	fprintf (out, "    color: %02x%02x%02x\n",
 	         (int)(CLAMP (0.0f, fog.color[0], 1.0f) * 255.0f + 0.5f) & 0xff,
 	         (int)(CLAMP (0.0f, fog.color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
@@ -6510,6 +6728,8 @@ static void QRE_BackToChooser (void)
 	QRE_DtalDebugOff ();
 	qre.mat_tab = 0;
 	qre.light_tab = 0;
+	qre.entity_preview_model = NULL;
+	qre.entity_sel_model = NULL;
 
 	QRE_FreePreview ();
 
@@ -6803,10 +7023,16 @@ static void QRE_StopEditor (qboolean restore)
 	if (restore)
 		QRE_RestoreModeState ();
 
+	if (qre.entity_preview_model != NULL && cl.viewent.model == qre.entity_preview_model)
+		cl.viewent.model = NULL;
+
 	qre.active = false;
 	qre.choosing = false;
 	qre.panel_open = false;
 	qre.torch = false;
+	qre.entity_preview_model = NULL;
+	qre.entity_sel_model = NULL;
+	qre.entity_list_built = false;
 	qre.exit_prompt = false;
 	qre.reset_prompt = false;
 	qre.reset_pending = false;
@@ -6837,6 +7063,7 @@ static void QRE_StopEditor (qboolean restore)
 	IN_Activate ();
 	SDL_ShowCursor (SDL_ENABLE);
 	QR_GUI_SetMouseCursor (0);
+	Cursor_SetStandard (0);
 
 	QRE_Notify ("editor closed");
 }
@@ -6909,6 +7136,8 @@ static void QRE_StartEditor (void)
 		return;
 	}
 
+	PhotoCam_Stop ();
+
 	memset (&qre, 0, sizeof (qre));
 	qre.active = true;
 	qre.panel_open = false;
@@ -6927,6 +7156,7 @@ static void QRE_StartEditor (void)
 	sv.paused = true;
 
 	QRE_CursorMode (true);
+	Cursor_SetStandard (1);
 
 	Con_Printf ("qr editor: choose the mode (Material Editor / Light Editor)\n");
 }
@@ -6993,6 +7223,12 @@ qboolean QR_Editor_PanelOpen (void)
 qboolean QR_Editor_Flying (void)
 {
 	return qre.active && !qre.panel_open;
+}
+
+qboolean QR_Editor_ShowViewModel (void)
+{
+	return qre.active && qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 1 &&
+	       qre.entity_preview_model != NULL && !cl.intermission;
 }
 
 void QR_Editor_SunPlacement (qboolean on)

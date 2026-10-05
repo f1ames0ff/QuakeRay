@@ -142,7 +142,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         ? (1.0 - smoothstep(innerRadius * innerRadius, outerRadius * outerRadius,
                            dot(discOffset, discOffset))) * sunAmount
         : 0.0;
-    float cosAng = cos(sunAngRad + edgeWidth);
+    float cosAng = cos(sunAngRad + 4.0 / float(max(size.x, size.y)));
 
     float layerTransmittance = cloudOpacity > 0.0
         ? clamp(1.0 - (1.0 - cloud.a) / cloudOpacity, 0.0, 1.0)
@@ -152,14 +152,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float cloudShare = 1.0;
     if (sunAmount > 0.0 && sunIntensity > 0.0 && sunAngRad > 0.0)
     {
-        float motionCosAng = cos(sunAngRad + 4.0 / float(max(size.x, size.y)));
+        float motionCosAng = cos(sunAngRad + 8.0 / float(max(size.x, size.y)));
         cloudShare = 1.0 - smoothstep(motionCosAng, cosAng, dot(dir, sunDir));
     }
 
-    float3 sky = skyColor;
-    float3 visible = sky * cloud.a + params.sunDiscColor.xyz * sunIntensity * disc * discTransmittance + cloud.rgb;
+    float3 visible = skyColor * cloud.a + params.sunDiscColor.xyz * sunIntensity * disc * discTransmittance + cloud.rgb;
     cubemapOut[ipos] = float4(visible * multiplier, cloudShare);
 
-    float3 env = sky * cloud.a + cloud.rgb;
+    float3 env = skyColor * cloud.a + cloud.rgb;
     envCubemapOut[ipos] = float4(env * multiplier, 1.0);
 }

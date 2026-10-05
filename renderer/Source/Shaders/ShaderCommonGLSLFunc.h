@@ -243,19 +243,6 @@ uniform sampler g_illuminationVolume_Sampler;
 
 
 
-#ifdef DESC_SET_LENS_FLARES
-layout(set = DESC_SET_LENS_FLARES, binding = BINDING_LENS_FLARES_CULLING_INPUT) readonly buffer LensFlareCullingInput_BT
-{
-    ShIndirectDrawCommand lensFlareCullingInput[];
-};
-
-layout(set = DESC_SET_LENS_FLARES, binding = BINDING_LENS_FLARES_DRAW_CMDS) buffer LensFlareDrawCmds_BT
-{
-    ShIndirectDrawCommand lensFlareDrawCmds[LENS_FLARES_MAX_DRAW_CMD_COUNT];
-    uint lensFlareDrawCmdsCount;
-};
-#endif
-
 
 
 #ifdef DESC_SET_DECALS

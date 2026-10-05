@@ -21,7 +21,6 @@
 #define DESC_SET_TONEMAPPING    3
 #define DESC_SET_LIGHT_SOURCES  4
 #define DESC_SET_VOLUMETRIC     5
-#define DESC_SET_LENS_FLARES    6
 #define DESC_SET_DECALS         7
 
 #include "ShaderCommonHLSLFunc.hlsli"
@@ -106,11 +105,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += g_volumetric_Sampled.SampleLevel(g_volumetric_Sampler, volUVW, 0.0).x;
     v += g_volumetric_Sampled_Prev.SampleLevel(g_volumetric_Sampler_Prev, volUVW, 0.0).x;
     v += g_illuminationVolume_Sampled.SampleLevel(g_illuminationVolume_Sampler, volUVW, 0.0).x;
-
-    // DESC_SET_LENS_FLARES
-    v += lensFlareCullingInput[0].positionToCheck_X;
-    lensFlareDrawCmds[0].lensFlareDrawCmds[0] = lensFlareCullingInput[0];
-    lensFlareDrawCmds[0].lensFlareDrawCmdsCount = 1u;
 
     // DESC_SET_DECALS
     v += decalInstances[0].transform[0][0];

@@ -18,6 +18,7 @@
 #include "NvrhiFrameSkeleton.h"
 
 #include "RhiAccelStructs.h"
+#include "RhiBloomPass.h"
 #include "RhiDecalPass.h"
 #include "RhiFsrPass.h"
 #include "RhiPostEffectPass.h"
@@ -103,6 +104,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiDecalPass *pDecalPass,
                                        RhiFsrPass *pFsrPass,
                                        RhiPostEffectPass *pPostEffectPass,
+                                       RhiBloomPass *pBloomPass,
                                        RhiShadowMapPass *pShadowMapPass,
                                        RhiRtGodRaysPass *pGodRaysPass,
                                        RhiUiPass *pUiPass,
@@ -124,6 +126,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , decalPass(pDecalPass)
     , fsrPass(pFsrPass)
     , postEffectPass(pPostEffectPass)
+    , bloomPass(pBloomPass)
     , shadowMapPass(pShadowMapPass)
     , godRaysPass(pGodRaysPass)
     , uiPass(pUiPass)
@@ -1192,7 +1195,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // now delegates to the same method; Tonemapping.h documents the split).
         if (rtComposePass != nullptr && sky.tonemapping != nullptr && sky.uniform != nullptr)
         {
-            sky.tonemapping->PrepareExposureParams(frameIndex, sky.uniform, sky.exposureBias, sky.contrast);
+            sky.tonemapping->PrepareExposureParams(frameIndex, sky.uniform, sky.exposureBias, sky.tonemapPower,
+                                                   sky.tonemapType, sky.exposureParams);
         }
 
         // The raster overlay (A5.5) draws the DEFAULT list inside the compose chain's window, from
@@ -1308,6 +1312,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             rtComposePass->Render(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
                                   sky.upscaledWidth, sky.upscaledHeight, filterEnabled,
                                   worldUniformBuffer.Get(),
+                                  sky.postEffectParams,
                                   [&](nvrhi::ICommandList *pOverlayList)
                                   {
                                       if (rasterOverlayPass != nullptr &&
@@ -2071,6 +2076,11 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
     if (rtComposePass != nullptr)
     {
         rtComposePass->ReleaseTargets();
+    }
+
+    if (bloomPass != nullptr)
+    {
+        bloomPass->ReleaseTargets();
     }
 
     // The god-rays pass wraps the eight engine images it reads and writes (63/64 among them) and

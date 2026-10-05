@@ -333,6 +333,7 @@ set(CORE_SOURCES
     Quake/menu.c
     Quake/miniz.c
     Quake/palette.c
+    Quake/photocam.c
     Quake/pr_cmds.c
     Quake/pr_edict.c
     Quake/pr_exec.c

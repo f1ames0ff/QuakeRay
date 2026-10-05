@@ -1315,7 +1315,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		// texture gets when it is loaded with no material.
 		glt->rtlightcolor[0] = glt->rtlightcolor[1] = glt->rtlightcolor[2] = 0.0f;
 		glt->rthaslightcolor = false;
-		glt->rtupoffset = 0.0f;
 		glt->rtmirror = false;
 		glt->rtexactnormals = false;
 		glt->rtforcerasterize = false;
@@ -1352,7 +1351,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rthaslightcolor = false;
 		glt->rtlightcolor[0] = glt->rtlightcolor[1] = glt->rtlightcolor[2] = 0.0f;
 	}
-	glt->rtupoffset = mat->light_upoffset;
 	TexMgr_EmissiveCone (mat, &glt->rtemisangleinner, &glt->rtemisangleouter);
 	glt->rtemisprojector = mat->emissive_projector;
 	glt->rtmirror = mat->mirror;
@@ -1983,7 +1981,6 @@ gltexture_t *TexMgr_LoadImage (
 
 	glt->rtlightcolor[0] = glt->rtlightcolor[1] = glt->rtlightcolor[2] = 0.0f;
 	glt->rthaslightcolor = false;
-	glt->rtupoffset = 0.0f;
 	glt->rtmirror = false;
 	glt->rtexactnormals = false;
 	glt->rtforcerasterize = false;

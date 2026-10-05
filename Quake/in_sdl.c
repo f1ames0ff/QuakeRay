@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "qr_editor.h"
+#include "photocam.h"
 #include "snd_eq.h"
 
 static qboolean textmode;
@@ -630,6 +631,20 @@ void IN_MouseMove (usercmd_t *cmd)
 		return;
 	}
 
+	if (PhotoCam_Active ())
+	{
+		if (key_dest == key_game)
+		{
+			cl.viewangles[YAW] -= m_yaw.value * dmx;
+			cl.viewangles[PITCH] += m_pitch.value * dmy;
+			if (cl.viewangles[PITCH] > cl_maxpitch.value)
+				cl.viewangles[PITCH] = cl_maxpitch.value;
+			if (cl.viewangles[PITCH] < cl_minpitch.value)
+				cl.viewangles[PITCH] = cl_minpitch.value;
+		}
+		return;
+	}
+
 	if ((in_strafe.state & 1) || (lookstrafe.value && (in_mlook.state & 1)))
 		cmd->sidemove += m_side.value * dmx;
 	else
@@ -1053,6 +1068,27 @@ void IN_SendKeyEvents (void)
 			    key_dest == key_game && QR_Editor_GizmoDragActive ())
 			{
 				QR_Editor_GizmoRelease ();
+				break;
+			}
+			// photocam: RMB runs the world, and letting it go freezes it again
+			if (PhotoCam_Active () && buttonremap[event.button.button - 1] == K_MOUSE2)
+			{
+				if (event.button.state == SDL_PRESSED)
+				{
+					if (key_dest == key_game)
+						PhotoCam_SetLive (true);
+				}
+				else
+				{
+					PhotoCam_SetLive (false);
+				}
+				break;
+			}
+			// photocam: the fire button takes a screenshot and never shoots
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && PhotoCam_Active ())
+			{
+				PhotoCam_Screenshot ();
 				break;
 			}
 			Key_Event (buttonremap[event.button.button - 1], event.button.state == SDL_PRESSED);

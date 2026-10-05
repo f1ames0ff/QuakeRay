@@ -2,7 +2,8 @@
 param(
     [string]$Config = "Release",
     [string]$BuildDir = "",
-    [int]$Parallel = 0
+    [int]$Parallel = 0,
+    [switch]$PkzOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,32 +12,35 @@ if (-not $BuildDir) {
     $BuildDir = Join-Path "build" $Config
 }
 
-$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-if (-not (Test-Path $vswhere)) {
-    throw "vswhere.exe not found. Install Visual Studio Build Tools with the C++ workload."
-}
+if (-not $PkzOnly)
+{
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) {
+        throw "vswhere.exe not found. Install Visual Studio Build Tools with the C++ workload."
+    }
 
-$vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-if (-not $vsPath) {
-    throw "Visual Studio Build Tools with the C++ workload are not installed."
-}
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vsPath) {
+        throw "Visual Studio Build Tools with the C++ workload are not installed."
+    }
 
-$systemRoot = if ($env:SystemRoot) { $env:SystemRoot } else { "C:\Windows" }
-$system32 = Join-Path $systemRoot "System32"
-if ($env:PATH -notlike "*$system32*") {
-    $env:PATH = "$system32;$env:PATH"
-}
+    $systemRoot = if ($env:SystemRoot) { $env:SystemRoot } else { "C:\Windows" }
+    $system32 = Join-Path $systemRoot "System32"
+    if ($env:PATH -notlike "*$system32*") {
+        $env:PATH = "$system32;$env:PATH"
+    }
 
-$cmdExe = $env:ComSpec
-if (-not $cmdExe -or -not (Test-Path $cmdExe)) {
-    $cmdExe = Join-Path $system32 "cmd.exe"
-}
+    $cmdExe = $env:ComSpec
+    if (-not $cmdExe -or -not (Test-Path $cmdExe)) {
+        $cmdExe = Join-Path $system32 "cmd.exe"
+    }
 
-$devCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
-$envLines = & $cmdExe /c "`"$devCmd`" -arch=x64 -host_arch=x64 >nul 2>&1 && set"
-foreach ($line in $envLines) {
-    if ($line -match "^([^=]+)=(.*)$") {
-        [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+    $devCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
+    $envLines = & $cmdExe /c "`"$devCmd`" -arch=x64 -host_arch=x64 >nul 2>&1 && set"
+    foreach ($line in $envLines) {
+        if ($line -match "^([^=]+)=(.*)$") {
+            [Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+        }
     }
 }
 
@@ -67,41 +71,51 @@ $nvrhiDir = Join-Path $PSScriptRoot "third_party\nvrhi"
 $nvrhiPatch = Join-Path $PSScriptRoot "third_party\nvrhi-max-binding-layouts.patch"
 $nvrhiPatchedHere = $false
 
-if ((Test-Path $nvrhiPatch) -and (Test-Path (Join-Path $nvrhiDir "include\nvrhi\nvrhi.h")))
+if (-not $PkzOnly)
 {
-    if ((Invoke-GitQuietly @("-C", $nvrhiDir, "apply", "--check", "--reverse", $nvrhiPatch)) -eq 0)
+    if ((Test-Path $nvrhiPatch) -and (Test-Path (Join-Path $nvrhiDir "include\nvrhi\nvrhi.h")))
     {
-        Write-Host "NVRHI patch is already applied, leaving it in place" -ForegroundColor Yellow
-    }
-    else
-    {
-        if ((Invoke-GitQuietly @("-C", $nvrhiDir, "apply", $nvrhiPatch)) -ne 0)
+        if ((Invoke-GitQuietly @("-C", $nvrhiDir, "apply", "--check", "--reverse", $nvrhiPatch)) -eq 0)
         {
-            throw "Failed to apply $nvrhiPatch to third_party/nvrhi."
+            Write-Host "NVRHI patch is already applied, leaving it in place" -ForegroundColor Yellow
         }
-        $nvrhiPatchedHere = $true
-        Write-Host "Applied the NVRHI patch for this build" -ForegroundColor Yellow
+        else
+        {
+            if ((Invoke-GitQuietly @("-C", $nvrhiDir, "apply", $nvrhiPatch)) -ne 0)
+            {
+                throw "Failed to apply $nvrhiPatch to third_party/nvrhi."
+            }
+            $nvrhiPatchedHere = $true
+            Write-Host "Applied the NVRHI patch for this build" -ForegroundColor Yellow
+        }
     }
 }
 
 $exitCode = 0
 
-$cmakeArgs = @("-B", $BuildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Config", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
-
-cmake @cmakeArgs
-if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
-
-if ($exitCode -eq 0)
+if (-not $PkzOnly)
 {
-    if ($Parallel -gt 0)
-    {
-        cmake --build $BuildDir --parallel $Parallel
-    }
-    else
-    {
-        cmake --build $BuildDir
-    }
+    $cmakeArgs = @("-B", $BuildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Config", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
+
+    cmake @cmakeArgs
     if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
+
+    if ($exitCode -eq 0)
+    {
+        if ($Parallel -gt 0)
+        {
+            cmake --build $BuildDir --parallel $Parallel
+        }
+        else
+        {
+            cmake --build $BuildDir
+        }
+        if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
+    }
+}
+else
+{
+    Write-Host "Pack-only run: the engine is not rebuilt" -ForegroundColor Yellow
 }
 
 if ($exitCode -ne 0)
@@ -147,7 +161,12 @@ $stage = (New-Item -ItemType Directory -Path $stage -Force).FullName
 # without rebuilding them -- stale .spv files in the game folder with a build that
 # reported success, more than once. A minute of shader work per build is what that
 # costs, and it is worth it.
-& (Join-Path $PSScriptRoot "build_shaders.ps1") -Rebuild -DestDir (Join-Path $stage "shaders")
+if ($PkzOnly) {
+    & (Join-Path $PSScriptRoot "build_shaders.ps1") -DestDir (Join-Path $stage "shaders")
+}
+else {
+    & (Join-Path $PSScriptRoot "build_shaders.ps1") -Rebuild -DestDir (Join-Path $stage "shaders")
+}
 if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
 
 if ($exitCode -eq 0)

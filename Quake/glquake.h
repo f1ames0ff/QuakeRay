@@ -537,6 +537,7 @@ static inline uint32_t RT_PackColorToUint32_FromFloat01(float r, float g, float 
 // because of units are not in meters
 #define RT_QUAKE_LIGHT_AREA_INTENSITY_FIX (1.0f / (QUAKEUNIT_IN_METERS * QUAKEUNIT_IN_METERS))
 #define RT_SUN_LIGHT_INTENSITY_SCALE 0.001f
+#define RT_SKY_RADIANCE_SCALE        0.1f
 #define RT_FIXUP_LIGHT_INTENSITY(color, witharea)                                   \
 	do                                                                              \
 	{                                                                               \
