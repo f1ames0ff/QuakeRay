@@ -300,8 +300,5 @@ uint32_t qray::Utils::GetWorkGroupCount(uint32_t size, uint32_t groupSize)
 
     const uint32_t count = (size + (groupSize - 1)) / groupSize;
 
-    // A dispatch of zero groups is not a dispatch at all, and a pass with nothing
-    // to do (a frame with nothing to draw, say) is what passes a size of zero: it is
-    // given one group, which its own gid guard turns away.
     return count == 0 ? 1 : count;
 }

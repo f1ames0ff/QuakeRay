@@ -110,9 +110,6 @@ class RhiFrameContext;
 //   CmLuminanceAvg        - no set 0; one 128x1x1 workgroup;
 //   CmCheckerboard        - 3 storage images (28 FINAL, 60 ACID_FOG, 62 SCREEN_EMISSION) and 4
 //                           sampled images (26, 27, 59, 61);
-//   CmPrepareFinal        - 4 storage images (16-18, 28) and 13 sampled images (0, 3, 9, 13, 14,
-//                           15, 19, 25, 26, 60, 62, 64, 65) - 17 items after the A4.4 shader-side
-//                           fix of the 28/152 pair;
 //   CmQ2TAAU              - 2 storage images (29 UPSCALED_PING, 119 Q2_TAA_HISTORY), 3 sampled
 //                           images (28 FINAL, 31 MOTION_DLSS, 120 Q2_TAA_HISTORY_PREV) and the
 //                           game's sampler for 120 (raw 368); dispatch over the upscaled size.

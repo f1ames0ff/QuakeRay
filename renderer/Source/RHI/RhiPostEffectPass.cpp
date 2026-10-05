@@ -37,9 +37,6 @@ using namespace qray;
 namespace
 {
 
-// The engine blobs, by the file names ShaderManager loads them under (ShaderManager.cpp:87-96).
-// Each is the same module the legacy effect objects read through ShaderManager, so the RHI and the
-// legacy renderer dispatch byte-identical shaders.
 const char *const COLOR_TINT_SHADER_FILE_NAME = "EfColorTint.comp.spv";
 const char *const INVERSE_BW_SHADER_FILE_NAME = "EfInverseBW.comp.spv";
 const char *const HUE_SHIFT_SHADER_FILE_NAME = "EfHueShift.comp.spv";
@@ -389,10 +386,6 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         uniformLayout = device->createBindingLayout(desc);
     }
 
-    // The push-constant layouts the measured block sizes call for: 16 bytes for the effects
-    // without custom members and for the chromatic aberration (one float) and the wipe (its own
-    // four-member block), 20 for the film grain, 24 for the waves, 28 for the colour tint. No set
-    // is bound for them.
     {
         nvrhi::BindingLayoutDesc desc;
         desc.visibility = nvrhi::ShaderType::Compute;
@@ -469,9 +462,6 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         }
     }
 
-    // The effects that are always available: the blob, its two specializations and the two
-    // pipelines over the effect's measured set shape. Every one of them is a hard requirement -
-    // a missing blob means the engine's shader folder is incomplete.
     struct EffectDesc
     {
         EffectId id;

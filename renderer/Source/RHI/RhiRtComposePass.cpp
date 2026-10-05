@@ -440,13 +440,6 @@ constexpr ComposeBinding PREPARE_HDR_BINDINGS[PREPARE_HDR_BINDING_COUNT] =
     { FB_IMAGE_INDEX_GOD_RAYS_FILTERED,     false, false },
 };
 
-// CmPrepareFinal: 4 storage images and 13 sampled images (measured: 17 set-0 items in the shipped
-// blob, of which the FINAL sampled view at raw 152 is the pair the A4.4 S1 shader fix removes; see
-// the class comment). Unlike the other four tables the UAVs come last: if a future edit ever binds
-// one image both ways in this set, the last requirement applied would be the UAV's and the image
-// would end the chain in GENERAL, which the engine's convention and the next frame's writes need;
-// today no image is bound both ways here. The god-rays entry is the real union image 64, written by
-// the god-rays filter before this module records (raw 188, `framebufGodRaysFiltered_Sampled`).
 constexpr uint32_t PREPARE_FINAL_BINDING_COUNT = 17;
 constexpr ComposeBinding PREPARE_FINAL_BINDINGS[PREPARE_FINAL_BINDING_COUNT] =
 {
