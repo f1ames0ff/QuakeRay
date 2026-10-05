@@ -296,7 +296,7 @@ float3 getNormal(const float3 position, const float3 normalFromMap, const float3
 }
 
 #if defined(RAYGEN_PRIMARY_SHADER)
-float3 rtGlassSurfaceKey(float3 normal, uint instance, uint geometry)
+float2 rtGlassPaneNormalOct(float3 normal)
 {
     normal /= max(abs(normal.x) + abs(normal.y) + abs(normal.z), 0.001);
     float2 oct = normal.xy;
@@ -304,10 +304,7 @@ float3 rtGlassSurfaceKey(float3 normal, uint instance, uint geometry)
     {
         oct = (1.0 - abs(oct.yx)) * float2(oct.x >= 0.0 ? 1.0 : -1.0, oct.y >= 0.0 ? 1.0 : -1.0);
     }
-    uint key = instance * 73856093u ^ (geometry & (MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT - 1u)) * 19349663u;
-    key ^= key >> 13u;
-    key *= 1274126177u;
-    return float3(oct, f16tof32(key & 0x7bffu));
+    return oct;
 }
 
 RAYGEN_PRIMARY_ENTRY_ATTR
@@ -370,7 +367,7 @@ void main()
         (h.geometryInstanceFlags & GEOM_INST_FLAG_IGNORE_REFRACT_AFTER) == 0u)
     {
         const float field = isRegularPixOdd(regularPix) == 0 ? -1.0 : 1.0;
-        framebufQ2GlassFilter[pix] = float4(rtGlassSurfaceKey(h.normalGeom, primaryPayload.instIdAndIndex, primaryPayload.geomAndPrimIndex),
+        framebufQ2GlassFilter[pix] = float4(rtGlassPaneNormalOct(h.normalGeom), max(h.glassParams.y, 0.0),
                                           field * (4.0 + h.roughness));
         framebufQ2GlassReflection[regularPix] = float4(motionCurToPrev, firstHitDepthLinear, motionDepthLinearCurToPrev);
     }

@@ -1,5 +1,5 @@
 # Format: 1
-# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); dxil.dll: 1.6(101.6.2112.13); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
 === block pushconstant
 
 [0] offset 0 m4(v4(float32)) matrixstride 16
@@ -164,6 +164,8 @@ declared
 declared
 === capability ShaderNonUniform
 declared
+=== capability StorageImageExtendedFormats
+declared
 === descriptor set 0 binding 0
 image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 0: storage class
@@ -176,6 +178,14 @@ UniformConstant
 struct
 === descriptor set 1 binding 0: storage class
 Uniform
+=== descriptor set 4 binding 139
+image:2D:0:0:0:1:Unknown
+=== descriptor set 4 binding 139: storage class
+UniformConstant
+=== descriptor set 4 binding 254
+image:2D:0:0:0:1:Unknown
+=== descriptor set 4 binding 254: storage class
+UniformConstant
 === descriptor set 5 binding 0
 accelerationstructure
 === descriptor set 5 binding 0: storage class

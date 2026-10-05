@@ -420,6 +420,10 @@ private:
         nvrhi::TextureHandle smokePingLfShTexture;
         nvrhi::TextureHandle smokePingLfCocgTexture;
 
+        // The glass mask and the traced pane depth the particle vertex stage reads to
+        // shift lit particles like the traced background behind the same pane.
+        nvrhi::TextureHandle glassMaskTexture;
+
         // Set 4 of the smoke pipeline (the six sampled items over those three images) and set 5
         // (the slot's TLAS over the shared rt::IAccelStruct object; rebuilt when it changes).
         nvrhi::BindingSetHandle smokeFramebuffersSet;
@@ -450,6 +454,7 @@ private:
                              const std::tuple<VkImage, VkImageView, VkFormat> &smokeDepthWorld,
                              const std::tuple<VkImage, VkImageView, VkFormat> &smokePingLfSh,
                              const std::tuple<VkImage, VkImageView, VkFormat> &smokePingLfCocg,
+                             const std::tuple<VkImage, VkImageView, VkFormat> &glassMask,
                              uint32_t frameIndex, uint32_t width, uint32_t height);
     bool UpdateBufferSets(Target &target, uint32_t frameIndex, nvrhi::IBuffer *pUniformBuffer);
     bool PrepareSmokeTlasSet(Target &target, nvrhi::rt::IAccelStruct *pSmokeTopLevel);

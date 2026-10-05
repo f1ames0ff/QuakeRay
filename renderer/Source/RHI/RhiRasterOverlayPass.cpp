@@ -109,6 +109,11 @@ constexpr uint32_t SMOKE_FRAMEBUFFERS_DEPTH_WORLD_SLOT =
     static_cast<uint32_t>(FB_IMAGE_INDEX_DEPTH_WORLD);
 constexpr uint32_t SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT =
     static_cast<uint32_t>(FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_S_H);
+constexpr uint32_t GLASS_MASK_SRV_SLOT =
+    static_cast<uint32_t>(FB_IMAGE_INDEX_Q2_GLASS_FILTER);
+constexpr uint32_t PARTICLE_DEPTH_WORLD_SRV_SLOT =
+    static_cast<uint32_t>(FB_IMAGE_INDEX_DEPTH_WORLD);
+
 constexpr uint32_t SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT =
     static_cast<uint32_t>(FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_C_O_C_G);
 
@@ -402,6 +407,7 @@ RhiRasterOverlayPass::~RhiRasterOverlayPass()
         target.smokeDepthWorldTexture = nullptr;
         target.smokePingLfShTexture = nullptr;
         target.smokePingLfCocgTexture = nullptr;
+        target.glassMaskTexture = nullptr;
         target.uniformSet = nullptr;
         target.tonemappingSet = nullptr;
         target.depthCopySet = nullptr;
@@ -763,6 +769,8 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
     {
         const nvrhi::BindingLayoutItem layoutItems[] =
         {
+            nvrhi::BindingLayoutItem::Texture_SRV(GLASS_MASK_SRV_SLOT),
+            nvrhi::BindingLayoutItem::Texture_SRV(PARTICLE_DEPTH_WORLD_SRV_SLOT),
             nvrhi::BindingLayoutItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT),
             nvrhi::BindingLayoutItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT),
             nvrhi::BindingLayoutItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT),
@@ -1176,6 +1184,8 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
         framebuffers.GetImageHandles(FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_S_H, frameIndex);
     const std::tuple<VkImage, VkImageView, VkFormat> smokePingLfCocg =
         framebuffers.GetImageHandles(FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_C_O_C_G, frameIndex);
+    const std::tuple<VkImage, VkImageView, VkFormat> glassMask =
+        framebuffers.GetImageHandles(FB_IMAGE_INDEX_Q2_GLASS_FILTER, frameIndex);
 
     if (std::get<0>(finalImage) == VK_NULL_HANDLE || std::get<1>(finalImage) == VK_NULL_HANDLE ||
         std::get<2>(finalImage) == VK_FORMAT_UNDEFINED ||
@@ -1233,7 +1243,7 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
         ReleaseTarget(target);
 
         if (!CreateTargetObjects(target, finalImage, screenEmission, depthNdc, storageImage,
-                                 smokeDepthWorld, smokePingLfSh, smokePingLfCocg,
+                                 smokeDepthWorld, smokePingLfSh, smokePingLfCocg, glassMask,
                                  frameIndex, width, height))
         {
             ReleaseTarget(target);
@@ -1290,6 +1300,7 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
     const std::tuple<VkImage, VkImageView, VkFormat> &smokeDepthWorld,
     const std::tuple<VkImage, VkImageView, VkFormat> &smokePingLfSh,
     const std::tuple<VkImage, VkImageView, VkFormat> &smokePingLfCocg,
+    const std::tuple<VkImage, VkImageView, VkFormat> &glassMask,
     uint32_t frameIndex, uint32_t width, uint32_t height)
 {
     const std::string frameTag = std::to_string(frameIndex);
@@ -1352,6 +1363,8 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
         wrapSmokeImage(smokePingLfSh, "RhiRasterOverlay Q2_ATROUS_PING_LF_SH");
     target.smokePingLfCocgTexture =
         wrapSmokeImage(smokePingLfCocg, "RhiRasterOverlay Q2_ATROUS_PING_LF_COCG");
+    target.glassMaskTexture =
+        wrapSmokeImage(glassMask, "RhiRasterOverlay Q2_GLASS_FILTER");
 
     if ((std::get<0>(smokeDepthWorld) != VK_NULL_HANDLE && target.smokeDepthWorldTexture == nullptr) ||
         (std::get<0>(smokePingLfSh) != VK_NULL_HANDLE && target.smokePingLfShTexture == nullptr) ||
@@ -1468,6 +1481,7 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
 
     target.particleFramebuffersSet = nullptr;
     if (target.smokePingLfShTexture != nullptr && target.smokePingLfCocgTexture != nullptr &&
+        target.glassMaskTexture != nullptr && target.smokeDepthWorldTexture != nullptr &&
         smokeSampler != nullptr && particleFramebuffersLayout != nullptr)
     {
         nvrhi::BindingSetDesc desc;
@@ -1478,6 +1492,10 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
         desc.addItem(nvrhi::BindingSetItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT, smokeSampler));
         desc.addItem(nvrhi::BindingSetItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT, smokeSampler));
 
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(GLASS_MASK_SRV_SLOT,
+                                                        target.glassMaskTexture));
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(PARTICLE_DEPTH_WORLD_SRV_SLOT,
+                                                        target.smokeDepthWorldTexture));
         target.particleFramebuffersSet = device->createBindingSet(desc, particleFramebuffersLayout);
         if (target.particleFramebuffersSet == nullptr)
         {
@@ -1987,6 +2005,10 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
         {
             frameContext->Retire(target.smokeDepthWorldTexture);
         }
+        if (target.glassMaskTexture != nullptr)
+        {
+            frameContext->Retire(target.glassMaskTexture);
+        }
         if (target.smokePingLfShTexture != nullptr)
         {
             frameContext->Retire(target.smokePingLfShTexture);
@@ -2005,6 +2027,7 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
     target.depthNdcTexture = nullptr;
     target.storageTexture = nullptr;
     target.smokeDepthWorldTexture = nullptr;
+    target.glassMaskTexture = nullptr;
     target.smokePingLfShTexture = nullptr;
     target.smokePingLfCocgTexture = nullptr;
     target.uniformSet = nullptr;
