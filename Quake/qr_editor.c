@@ -111,6 +111,8 @@ enum
 	PARAM_BASEF,
 	PARAM_METALALPHA,
 	PARAM_MIRROR,
+	PARAM_GLASS,
+	PARAM_TRANSPARENCY,
 	PARAM_EXACTN,
 	PARAM_FRAST,
 	PARAM_ISLIGHT,
@@ -152,6 +154,10 @@ static const struct qre_param_s
 	                     "Read metalness from the normal map's alpha channel instead of a flat factor." },
 	[PARAM_MIRROR]   = { NULL, "mirror",           QRE_T_BOOL,  0, 0, 0,
 	                     "Mirror-smooth reflection; roughness is forced to 0." },
+	[PARAM_GLASS]    = { NULL, "material_glass",   QRE_T_BOOL,  0, 0, 0,
+	                     "Glass: the traced path bends the rays through the surface and tints them with the diffuse texture, while transparency absorbs what passes. Wins over mirror and alpha_test." },
+	[PARAM_TRANSPARENCY] = { NULL, "transparency", QRE_T_FLOAT, 0, 1, 0.01f,
+	                     "How much of the image behind the glass gets through: 0 holds it all back while the reflection stays, 1 passes it whole. Needs material_glass." },
 	[PARAM_EXACTN]   = { "Model", "exact_normals",    QRE_T_BOOL,  0, 0, 0,
 	                     "Use the model's own vertex normals instead of generated ones (models only)." },
 	[PARAM_FRAST]    = { NULL, "force_rasterize",  QRE_T_BOOL,  0, 0, 0,
@@ -449,6 +455,7 @@ static void QRE_InitDefault (rt_material_t *m, const char *name)
 	m->emissive_focus = -1.0f;
 	m->emissive_focus_soft = -1.0f;
 	m->base_factor = 1.0f;
+	m->transparency = 1.0f;
 	m->light_brightness = 1.0f;
 	m->light_styles = false;
 	m->color_emissive_threshold = 0.02f;
@@ -827,6 +834,7 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_ROUGH:    return m->roughness_override;
 	case PARAM_METAL:    return m->metalness_factor;
 	case PARAM_BASEF:    return m->base_factor;
+	case PARAM_TRANSPARENCY: return m->transparency;
 	case PARAM_LBRIGHT:  return m->light_brightness;
 	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : 45.0f;
 	case PARAM_ESOFT:    return m->emissive_focus_soft >= 0.0f ? m->emissive_focus_soft : 45.0f;
@@ -851,6 +859,7 @@ static qboolean QRE_GetBool (const rt_material_t *m, int param)
 	case PARAM_LSTYLES:    return m->light_styles;
 	case PARAM_METALALPHA: return m->metalness_from_normal_alpha;
 	case PARAM_MIRROR:     return m->mirror;
+	case PARAM_GLASS:      return m->material_glass;
 	case PARAM_EXACTN:     return m->exact_normals;
 	case PARAM_FRAST:      return m->force_rasterize;
 	default:               return false;
@@ -882,6 +891,11 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
 	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
+	case PARAM_TRANSPARENCY:
+		if (value != value)
+			value = 1.0f;
+		m->transparency = CLAMP (0.0f, value, 1.0f);
+		break;
 	default:             break;
 	}
 
@@ -917,6 +931,12 @@ static void QRE_SetBool (int g, int param, qboolean value)
 		break;
 	case PARAM_EXACTN:     m->exact_normals = value; break;
 	case PARAM_FRAST:      m->force_rasterize = value; break;
+	case PARAM_GLASS:
+		// the pass-through type is baked into the uploaded geometry, so this
+		// has to re-submit the static world, not just the texture
+		m->material_glass = value;
+		QRE_MarkDirtyFull (m);
+		return;
 	default:               break;
 	}
 
@@ -2739,8 +2759,10 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	// word): the override is meaningless there, and is locked at 0
 	const qboolean mirror_locks_rough = (p == PARAM_ROUGH && m->mirror);
 	const qboolean is_light_locks_color = (p == PARAM_LCOLOR && !m->is_light);
+	// transparency only means something once the material is glass
+	const qboolean glass_locks_slider = (p == PARAM_TRANSPARENCY && !m->material_glass);
 
-	if (mirror_locks_rough || is_light_locks_color)
+	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider)
 		QR_GUI_PushDisabled (1);
 
 	switch (qre_params[p].type)
@@ -2836,10 +2858,10 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	// Reset one parameter to the state it had when the editor started
 	// (or to the defaults, for a material the editor created itself).
 	m = qre.group[g];
-	if (QR_GUI_ResetButton (label, !mirror_locks_rough && !is_light_locks_color && QRE_ParamChanged (m, orig, p)))
+	if (QR_GUI_ResetButton (label, !mirror_locks_rough && !is_light_locks_color && !glass_locks_slider && QRE_ParamChanged (m, orig, p)))
 		QRE_ResetParam (g, p, orig);
 
-	if (mirror_locks_rough || is_light_locks_color)
+	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider)
 		QR_GUI_PopDisabled ();
 }
 
@@ -5791,7 +5813,20 @@ static const char *qre_yaml_header =
 	"#     e.g.  - name: textures/window1_2\n"
 	"#             emissive_focus: 45\n"
 	"#             emissive_focus_soft: 8\n"
-	"#             emissive_projector: true\n";
+	"#             emissive_projector: true\n"
+	"#\n"
+	"# `material_glass: true` turns the surface into a thin pane of glass: the\n"
+	"# traced path reflects it with a Fresnel term and bends the rays through it\n"
+	"# (the index of refraction is the global `rt_refr_glass`, 1.52), tinting\n"
+	"# what passes with the base texture. `transparency` (0..1, default 1)\n"
+	"# scales what gets through: 0 holds the whole transmitted image back while\n"
+	"# the reflection stays. The light the surface casts is not dimmed. Glass\n"
+	"# wins over `mirror` (a mirrored window can simply be ticked) and over\n"
+	"# `alpha_test`, whose cutout the traced path then drops; water, lava and\n"
+	"# portals keep their handling.\n"
+	"#     e.g.  - name: textures/window01_1\n"
+	"#             material_glass: true\n"
+	"#             transparency: 0.8\n";
 
 static void QRE_WriteColor (FILE *f, const char *key, const vec3_t rgb)
 {
@@ -5884,6 +5919,10 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    emissive_projector: true\n");
 	if (m->mirror)
 		fprintf (f, "    mirror: true\n");
+	if (m->material_glass)
+		fprintf (f, "    material_glass: true\n");
+	if (m->material_glass && m->transparency != 1.0f)
+		fprintf (f, "    transparency: %.6g\n", m->transparency);
 	if (m->exact_normals)
 		fprintf (f, "    exact_normals: true\n");
 	if (m->force_rasterize)

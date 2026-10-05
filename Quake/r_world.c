@@ -1232,8 +1232,11 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 	float alpha = CLAMP (0.0f, s->alpha, 1.0f);
 	uint8_t portalindex = 0;
 
-	qboolean is_mirror = diffuse_tex && diffuse_tex->rtmirror;
-	qboolean rasterize = (alpha < 1.0f) && !s->is_warp;
+	/* Glass outranks mirror -- the shipped window materials are mirrors -- and
+	   it keeps the traced path even where an entity alpha would blend it. */
+	qboolean is_glass = diffuse_tex && diffuse_tex->rtglass;
+	qboolean is_mirror = diffuse_tex && diffuse_tex->rtmirror && !is_glass;
+	qboolean rasterize = (alpha < 1.0f) && !s->is_warp && !is_glass;
 
 	if (rasterize)
 	{
@@ -1283,7 +1286,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    (is_teleport_portal ? QR_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_ADD_BIT : 0) |
 			    // water and slime already churn through the RT wave normals
 			    (s->is_warp && !s->is_water && !s->is_acid ? QR_GEOMETRY_UPLOAD_TURB_WARP_BIT : 0) |
-			    (s->alpha_transmission ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (s->alpha_transmission && !is_glass ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
                 QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
 			.geomType = is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType = 
@@ -1291,6 +1294,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    s->is_water ? QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT :
 			    s->is_acid ? QR_GEOMETRY_PASS_THROUGH_TYPE_ACID_REFLECT_REFRACT :
 			    is_teleport_portal ? QR_GEOMETRY_PASS_THROUGH_TYPE_PORTAL :
+			    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 			    // A fence texture keeps its alpha only in the traced path: the rasterized
 			    // one is reserved for translucent surfaces, which a fence is not.
 			    s->alpha_test ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :

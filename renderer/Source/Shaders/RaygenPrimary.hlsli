@@ -64,7 +64,7 @@ float2 getMotionVectorForUpscaler(const float2 motionCurToPrev)
 
 void storeQ2GBuffer(
     const int2 pix,
-    const float3 baseColor, float specularFactor,
+    const float3 baseColor, float transparency,
     float metallic, float roughness,
     float depth,
     float halfConeAngle, float distToLight,
@@ -78,7 +78,7 @@ void storeQ2GBuffer(
     }
 
     framebufQ2ViewDepth[pix]                = (float4)depth;
-    framebufQ2BaseColor[pix]                = float4(baseColor, specularFactor);
+    framebufQ2BaseColor[pix]                = float4(baseColor, transparency);
     framebufQ2Metallic[pix]                 = float4(metallic, roughness, 0.0, 0.0);
     framebufQ2BounceThroughput[pix]         = float4(1.0, 1.0, 1.0, halfConeAngle);
     framebufQ2Transparent[pix]              = float4(transparentColor, transparentAlpha);
@@ -113,7 +113,7 @@ void storeSky(
 
         framebufAlbedo[getRegularPixFromCheckerboardPix(pix)] = float4(albedo, 0.0);
 
-        storeQ2GBuffer(pix, albedo, 0.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
+        storeQ2GBuffer(pix, albedo, 1.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
     }
 
     float2 m = getMotionForInfinitePoint(rayDir);
@@ -356,7 +356,7 @@ void main()
     uint4 q2Fog1, q2Fog2;
     q2FindFogVolumes(cameraOrigin, cameraRayDir, 0.0, firstHitDepthLinear, q2Fog1, q2Fog2);
     const float4 q2FogAccum = q2SegmentFog(q2Fog1, q2Fog2, firstHitDepthLinear);
-    storeQ2GBuffer(pix, h.albedo, lerp(0.04, 1.0, h.metallic), h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, h.transparency, h.metallic, h.roughness,
                    firstHitDepthLinear, 0.5 * length(cameraRayDir - cameraRayDirAX), firstHitDepthLinear,
                    (float3)0.0, 0.0, q2FogAccum, h.cluster);
 }
@@ -619,7 +619,7 @@ void main()
     framebufThroughput[pix]                 = float4(throughput, wasSplit ? 1.0 : -1.0);
 
     const float q2HalfConeAngle = framebufQ2BounceThroughput_Sampled.Load(int3(pix, 0)).w;
-    storeQ2GBuffer(pix, h.albedo, lerp(0.04, 1.0, h.metallic), h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, 1.0, h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    (float3)0.0, 0.0, q2FogAccum, h.cluster);
 }
@@ -685,6 +685,9 @@ void main()
     currentPayload.instIdAndIndex       = primaryToReflRefrBuf.g;
 
     const float4 q2BaseColor              = framebufQ2BaseColor.Load(pix);
+    /* The channel carries the primary surface's glass transparency (written by
+       the primary pass), which the glass branch below absorbs the rays with. */
+    h.transparency = clamp(q2BaseColor.a, 0.0, 1.0);
     const float q2HalfConeAngle         = framebufQ2BounceThroughput.Load(pix).w;
     float4 q2Transparent                  = framebufQ2Transparent.Load(pix);
     float4 q2FogAccum                     = framebufQ2FogAccum.Load(pix);
@@ -855,8 +858,8 @@ void main()
                     rayDir = refr2;
                 }
                 throughput *= (1.0 - F);
-                throughput *= q2BaseColor.rgb;
-                currentRayMedia = MEDIA_TYPE_VACUUM;
+                throughput *= h.albedo;
+                throughput *= clamp(h.transparency, 0.0, 1.0);
                 correctMotionVector = 2;
             }
             else
@@ -909,7 +912,7 @@ void main()
             }
 
             storeSky(pix, rayDir, true, throughput, wasSplit, q2FogAccum);
-            storeQ2GBuffer(pix, (float3)0.0, 0.0, 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
+            storeQ2GBuffer(pix, (float3)0.0, 1.0, 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
                            q2Transparent.rgb, q2Transparent.a, q2FogAccum, ~0u);
             return;
         }
@@ -976,7 +979,7 @@ void main()
     framebufViewDirection[pix]              = float4(rayDir, 0.0);
     framebufThroughput[pix]                 = float4(throughput, wasSplit ? 1.0 : -1.0);
 
-    storeQ2GBuffer(pix, h.albedo, lerp(0.04, 1.0, h.metallic), h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, h.transparency, h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    q2Transparent.rgb, q2Transparent.a, q2FogAccum, h.cluster);
 }

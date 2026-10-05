@@ -294,6 +294,7 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->emissive_blend = -1;
     mat->emissive_focus_soft = -1.0f;
     mat->base_factor = 1.0f;
+    mat->transparency = 1.0f;
     mat->light_brightness = 1.0f;
     mat->light_styles = false;
     mat->color_emissive_threshold = 0.02f;
@@ -572,6 +573,25 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->force_rasterize = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "alpha_test"))
         mat->alpha_test = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "material_glass"))
+        mat->material_glass = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "transparency"))
+    {
+        const float raw = (float)atof(value);
+        float       v   = raw;
+
+        if (v != v)
+            v = 1.0f;
+        else if (v < 0.0f)
+            v = 0.0f;
+        else if (v > 1.0f)
+            v = 1.0f;
+
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': transparency '%s' is not in 0..1; using %.3g\n", mat->name, value, v);
+
+        mat->transparency = v;
+    }
     else if (!q_strcasecmp(key, "texture_base"))
         q_strlcpy(mat->filename_base, value, sizeof(mat->filename_base));
     else if (!q_strcasecmp(key, "texture_normals"))

@@ -1318,6 +1318,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtmirror = false;
 		glt->rtexactnormals = false;
 		glt->rtforcerasterize = false;
+		glt->rtalphatest = false;
+		glt->rtglass = false;
 		glt->rtemissive = false;
 		glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 		glt->rtemissivemean = 0.0f;
@@ -1357,6 +1359,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
 	glt->rtalphatest = mat->alpha_test;
+	glt->rtglass = mat->material_glass;
 
 	const int tw = glt->width;
 	const int th = glt->height;
@@ -1418,6 +1421,20 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	const float baseFactor = (mat->base_factor > 0.0f) ? mat->base_factor : 1.0f;
 	const float roughOverride = mat->roughness_override;
+
+	/* The transparency of a glass material rides the alpha of the synthesized
+	   normal texture, the one channel the traced path reads but nothing else
+	   uses; the glass branch multiplies the refracted light by it. */
+	float glassT = mat->material_glass ? mat->transparency : 1.0f;
+
+	if (glassT != glassT)
+		glassT = 1.0f;
+	if (glassT < 0.0f)
+		glassT = 0.0f;
+	else if (glassT > 1.0f)
+		glassT = 1.0f;
+
+	const byte glassAlpha = (byte)(glassT * 255.0f + 0.5f);
 
 	const qboolean isBrush = glt->owner && glt->owner->type == mod_brush;
 	const float defaultRough = isBrush ? CVAR_TO_FLOAT (rt_brush_rough) : CVAR_TO_FLOAT (rt_model_rough);
@@ -1641,7 +1658,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			normal[i * 4 + 1] = 128;
 			normal[i * 4 + 2] = 255;
 		}
-		normal[i * 4 + 3] = 255;
+		normal[i * 4 + 3] = glassAlpha;
 	}
 
 	if (colorEmis)  Mem_Free (colorEmis);
@@ -1985,6 +2002,7 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtexactnormals = false;
 	glt->rtforcerasterize = false;
 	glt->rtalphatest = false;
+	glt->rtglass = false;
 	glt->rtemissive = false;
 	glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 	glt->rtemissivemean = 0.0f;

@@ -62,6 +62,7 @@ struct ShHitInfo
     uint    geometryInstanceFlags;
     uint    portalIndex;
     uint    cluster;
+    float   transparency;
 };
 
 #endif

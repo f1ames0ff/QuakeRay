@@ -52,7 +52,7 @@ vec2 getMotionVectorForUpscaler(const vec2 motionCurToPrev)
 
 void storeQ2GBuffer(
     const ivec2 pix,
-    const vec3 baseColor, float specularFactor,
+    const vec3 baseColor, float transparency,
     float metallic, float roughness,
     float depth,
     float halfConeAngle, float distToLight,
@@ -66,7 +66,7 @@ void storeQ2GBuffer(
     }
 
     imageStore(framebufQ2ViewDepth,          pix, vec4(depth));
-    imageStore(framebufQ2BaseColor,          pix, vec4(baseColor, specularFactor));
+    imageStore(framebufQ2BaseColor,          pix, vec4(baseColor, transparency));
     imageStore(framebufQ2Metallic,           pix, vec4(metallic, roughness, 0.0, 0.0));
     imageStore(framebufQ2BounceThroughput,   pix, vec4(1.0, 1.0, 1.0, halfConeAngle));
     imageStore(framebufQ2Transparent,        pix, vec4(transparentColor, transparentAlpha));
@@ -101,7 +101,7 @@ void storeSky(
 
         imageStore(framebufAlbedo, getRegularPixFromCheckerboardPix(pix), vec4(albedo, 0.0));
 
-        storeQ2GBuffer(pix, albedo, 0.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
+        storeQ2GBuffer(pix, albedo, 1.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
     }
 
     vec2 m = getMotionForInfinitePoint(rayDir);
@@ -338,7 +338,7 @@ void main()
     uvec4 q2Fog1, q2Fog2;
     q2FindFogVolumes(cameraOrigin, cameraRayDir, 0.0, firstHitDepthLinear, q2Fog1, q2Fog2);
     const vec4 q2FogAccum = q2SegmentFog(q2Fog1, q2Fog2, firstHitDepthLinear);
-    storeQ2GBuffer(pix, h.albedo, mix(0.04, 1.0, h.metallic), h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, h.transparency, h.metallic, h.roughness,
                    firstHitDepthLinear, 0.5 * length(cameraRayDir - cameraRayDirAX), firstHitDepthLinear,
                    vec3(0.0), 0.0, q2FogAccum, h.cluster);
 }
@@ -600,7 +600,7 @@ void main()
     imageStore(framebufThroughput,          pix, vec4(throughput, wasSplit ? 1.0 : -1.0));
 
     const float q2HalfConeAngle = texelFetch(framebufQ2BounceThroughput_Sampled, pix, 0).w;
-    storeQ2GBuffer(pix, h.albedo, mix(0.04, 1.0, h.metallic), h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, 1.0, h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    vec3(0.0), 0.0, q2FogAccum, h.cluster);
 }
@@ -665,6 +665,9 @@ void main()
     currentPayload.instIdAndIndex       = primaryToReflRefrBuf.g;
 
     const vec4 q2BaseColor              = imageLoad(framebufQ2BaseColor, pix);
+    /* The channel carries the primary surface's glass transparency (written by
+       the primary pass), which the glass branch below absorbs the rays with. */
+    h.transparency = clamp(q2BaseColor.a, 0.0, 1.0);
     const float q2HalfConeAngle         = imageLoad(framebufQ2BounceThroughput, pix).w;
     vec4 q2Transparent                  = imageLoad(framebufQ2Transparent, pix);
     vec4 q2FogAccum                     = imageLoad(framebufQ2FogAccum, pix);
@@ -835,8 +838,8 @@ void main()
                     rayDir = refr2;
                 }
                 throughput *= (1.0 - F);
-                throughput *= q2BaseColor.rgb;
-                currentRayMedia = MEDIA_TYPE_VACUUM;
+                throughput *= h.albedo;
+                throughput *= clamp(h.transparency, 0.0, 1.0);
                 correctMotionVector = 2;
             }
             else
@@ -889,7 +892,7 @@ void main()
             }
 
             storeSky(pix, rayDir, true, throughput, wasSplit, q2FogAccum);
-            storeQ2GBuffer(pix, vec3(0.0), 0.0, 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
+            storeQ2GBuffer(pix, vec3(0.0), 1.0, 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
                            q2Transparent.rgb, q2Transparent.a, q2FogAccum, ~0u);
             return;
         }
@@ -956,7 +959,7 @@ void main()
     imageStore(framebufViewDirection,       pix, vec4(rayDir, 0.0));
     imageStore(framebufThroughput,          pix, vec4(throughput, wasSplit ? 1.0 : -1.0));
 
-    storeQ2GBuffer(pix, h.albedo, mix(0.04, 1.0, h.metallic), h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, h.transparency, h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    q2Transparent.rgb, q2Transparent.a, q2FogAccum, h.cluster);
 }

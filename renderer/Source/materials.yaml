@@ -80,6 +80,19 @@
 #             emissive_focus: 45
 #             emissive_focus_soft: 8
 #             emissive_projector: true
+#
+# `material_glass: true` turns the surface into a thin pane of glass: the
+# traced path reflects it with a Fresnel term and bends the rays through it
+# (the index of refraction is the global `rt_refr_glass`, 1.52), tinting
+# what passes with the base texture. `transparency` (0..1, default 1)
+# scales what gets through: 0 holds the whole transmitted image back while
+# the reflection stays. The light the surface casts is not dimmed. Glass
+# wins over `mirror` (a mirrored window can simply be ticked) and over
+# `alpha_test`, whose cutout the traced path then drops; water, lava and
+# portals keep their handling.
+#     e.g.  - name: textures/window01_1
+#             material_glass: true
+#             transparency: 0.8
 qray_materials:
   - name: textures/#lava1
     texture_emissive: textures/_lava1_luma.png

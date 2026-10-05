@@ -169,6 +169,7 @@ ShHitInfo getHitInfoBounce(
 #endif
 {
     ShHitInfo h;
+    h.transparency = 1.0f;
 
     int instanceId, instCustomIndex;
     int geomIndex, primIndex;
@@ -401,13 +402,17 @@ ShHitInfo getHitInfoBounce(
     {
         const float suppressDetails = 5.0;
 
-        float2 nrm =
+        const float4 nrmSample =
     #if defined(HITINFO_INL_PRIM)
             getTextureSampleGrad(tr.materials[0][MATERIAL_NORMAL_INDEX], texCoords[0], dTdx[0] * suppressDetails, dTdy[0] * suppressDetails)
     #elif defined(HITINFO_INL_RFL)
             getTextureSampleDerivSet(tr.materials[0][MATERIAL_NORMAL_INDEX], texCoords[0], derivSet, 0)
     #endif
-            .xy;
+            ;
+
+        float2 nrm = nrmSample.xy;
+        // the normal map's alpha carries the material's glass transparency
+        h.transparency = nrmSample.a;
         nrm.xy = nrm.xy * 2.0 - (float2)1.0;
 
         const float3 bitangent = cross(h.normalGeom, tr.tangent.xyz) * tr.tangent.w;

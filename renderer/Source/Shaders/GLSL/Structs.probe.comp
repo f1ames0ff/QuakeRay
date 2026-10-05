@@ -33,7 +33,7 @@ void main()
     v += h[0].normalGeom.x + h[0].emission;
     v += h[0].hitPosition.z;
     v += float(h[0].instCustomIndex) + float(h[0].geometryInstanceFlags);
-    v += float(h[0].portalIndex) + float(h[0].cluster);
+    v += float(h[0].portalIndex) + float(h[0].cluster) + h[0].transparency;
 
     v += p[0].baryCoords.x + float(p[0].instIdAndIndex) + float(p[0].geomAndPrimIndex);
     v += float(s[0].isShadowed);

@@ -53,6 +53,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     h.geometryInstanceFlags = 0u;
     h.portalIndex           = 0u;
     h.cluster               = 7u;
+    h.transparency          = 1.0;
 
     const Surface fromHitInfo = hitInfoToSurface_Indirect(h, float3(0.0, 0.0, 1.0));
 

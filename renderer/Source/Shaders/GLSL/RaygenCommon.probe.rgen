@@ -272,6 +272,7 @@ void main()
     h.geometryInstanceFlags = 0u;
     h.portalIndex           = 0u;
     h.cluster               = 0u;
+    h.transparency          = 1.0;
 
     Surface surf = hitInfoToSurface_Indirect(h, probeViewDir);
     surf.position      = probeSurfPosition;

@@ -2571,10 +2571,19 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	RT_GetWaterColor (water_color);
 	RT_GetAcidColor (acid_color);
 
+	// a zero or a hostile value here would poison the refraction of every glass
+	// surface with a division by zero, so the uniform gets a sane index
+	float refr_glass = CVAR_TO_FLOAT (rt_refr_glass);
+
+	if (!(refr_glass >= 1.0f))
+		refr_glass = 1.0f;
+	else if (refr_glass > 3.0f)
+		refr_glass = 3.0f;
+
 	QrDrawFrameReflectRefractParams refl_refr_params = {
 		.maxReflectRefractDepth = CVAR_TO_UINT32 (rt_reflrefr_depth),
 		.typeOfMediaAroundCamera = rt_cameramedia,
-		.indexOfRefractionGlass = CVAR_TO_FLOAT (rt_refr_glass),
+		.indexOfRefractionGlass = refr_glass,
 		.indexOfRefractionWater = CVAR_TO_FLOAT (rt_refr_water),
 		.waterWaveSpeed = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_speed)),
 		.waterWaveNormalStrength = CVAR_TO_FLOAT (rt_water_normstren),

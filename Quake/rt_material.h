@@ -82,6 +82,8 @@ typedef struct rt_material_s {
     qboolean exact_normals;
     qboolean force_rasterize;
     qboolean alpha_test;
+    qboolean material_glass;
+    float    transparency;
     qboolean valid;
 } rt_material_t;
 

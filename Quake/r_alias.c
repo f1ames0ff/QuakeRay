@@ -477,17 +477,19 @@ if
 else
 	{
 		qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
+		qboolean is_glass = tx && tx->rtglass;
 		qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
 		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetAliasModelUniqueId (entuniqueid),
 			.flags =
 			    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
-			    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    ((tx && tx->rtalphatest && !is_glass) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 			    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT ),
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType =
 			    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+			    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 			    // MF_HOLEY models (index 255 = transparent) must keep their alpha in the
 			    // traced path too, where the alpha test runs in the any-hit shader.
 			    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
@@ -628,17 +630,19 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 		else
 		{
 			qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
+			qboolean is_glass = tx && tx->rtglass;
 			qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
 			QrGeometryUploadInfo info = {
 				.uniqueID = baseid | ((uint64_t)surface_index << 32),
 				.flags =
 				    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
-				    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+				    ((tx && tx->rtalphatest && !is_glass) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 				    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT),
 				.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 				.passThroughType =
 				    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+				    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 				    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
 				                QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
 				.visibilityType =
