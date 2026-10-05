@@ -606,7 +606,12 @@ After the first in-game review the optical stack was aligned with the standard p
 
 ## 33. Film grain (2026-10-05)
 
-- `Film grain` joins the Effects page as a single 0-100% slider (`rt_filmgrain`, default `0.5`, `0` off) and participates in the page reset; the grain cell is an advanced `rt_filmgrain_size` (`1.6`, no menu row) in displayed pixels.
+- `Film grain` joins the Effects page as a single 0-100% slider (`rt_filmgrain`, default `0.5`, `0` off) and participates in the page reset; the grain cell is an advanced `rt_filmgrain_size` (`2.5`, no menu row) in displayed pixels.
 - The effect is a new member of the post-upscale chain (`EfFilmGrain.comp.spv`, the module's `EFFECT_FILM_GRAIN`), dispatched last - after the gameplay feedback, past the CAS sharpening that would otherwise amplify it, and before the UI. Its push block is the shared transition header plus `intensity` and `size` (20 bytes), and it reads the global uniform's `frameId` for its per-frame reseed, so it shares the module's three-set shape with the vignette.
 - The noise is monochrome (one field added to all three channels): two octaves of value noise over cells of `rt_filmgrain_size` pixels, the second at twice the frequency with weights `0.65`/`0.35`, hashed from the cell coordinates and mixed with `frameId`, so every frame carries a new grain. The amplitude is `intensity * 0.18` scaled by `luma^0.58` with a `0.35` highlight fade above `0.7`: the fluctuation stays roughly constant in perceptual terms, black stays black and highlights do not sparkle.
 - The `qray_posteffects_gpu` regression dispatches the production shader over constant-colour targets: zero intensity is an exact identity, the grain is monochrome, visible, mean-preserving, scales with its strength, differs every frame, and a black target stays black.
+
+## 34. Third in-game calibration (2026-10-05)
+
+- The shipped set follows the third in-game pass: `rt_bloom_intensity 0.08` (40% of the slider's 0.2 scale), `rt_tonemap 2` (Reinhard), `rt_tonemap_power 0.8`, `rt_ef_liquid_strength 0.51`, `rt_filmgrain 0.5` with `rt_filmgrain_size 2.5`, and `rt_local_exposure 0.2`, beside the unchanged `rt_dof_near 0.8`, `rt_bloom_quality 2`, `rt_exposure_bias 0`, `rt_ef_damage_strength 0.5`, `rt_sharpen_strength 0.5` and `rt_vignette 0.5`.
+- The Effects reset writes the same set; `rt_filmgrain_size` stays an advanced control outside it. The grain cell moved from `1.6` to `2.5` displayed pixels on the review that asked for a coarser grain.

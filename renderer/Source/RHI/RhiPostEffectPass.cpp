@@ -846,7 +846,7 @@ void RhiPostEffectPass::Render(nvrhi::ICommandList *pCommandList,
         EffectFilmGrainPush push{};
         push.intensity = std::clamp(params.pFilmGrain->intensity, 0.0f, 1.0f);
         push.size = std::isfinite(params.pFilmGrain->size)
-            ? std::clamp(params.pFilmGrain->size, 0.25f, 8.0f) : 1.6f;
+            ? std::clamp(params.pFilmGrain->size, 0.25f, 8.0f) : 2.5f;
 
         if (DispatchEffect(pCommandList, target, EFFECT_FILM_GRAIN, sourceIsPing,
                            &push, sizeof(push), groupsX, groupsY))
