@@ -1,5 +1,7 @@
 # GLSL deprecation and removal queue
 
+The hand-off for picking this work up is `docs/handoff-glsl-deprecation.md`.
+
 ## Status
 
 The GLSL shader sources under `renderer/Source/Shaders/GLSL/` are deprecated. The runtime loads
