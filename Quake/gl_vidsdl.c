@@ -32,6 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "qr_editor.h"
+#include "photocam.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
 #include <time.h> // for the timestamp of the frame rt_stats_dump appends
@@ -2187,6 +2188,7 @@ static void GL_InitInstance (void)
 	RT_LIGHT_Init ();
 
 	QR_Editor_Init (); // qr light editor console commands
+	PhotoCam_Init ();
 
 	QR_GUI_Init (VID_GetWindow (), (void *)(intptr_t) vulkan_globals.instance, NULL, 0);
 

@@ -2497,11 +2497,9 @@ more pieces than that can lower the count.
 static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int numpieces, const rt_emissive_params_t *params,
                                          gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
                                          const QrVertex *pose2, float blend, const QrTransform *transform,
-                                         const vec3_t offset, int max_lights, int budget)
+                                         const vec3_t offset, float min_area, int max_lights, int budget)
 {
 	int uploaded = 0;
-
-	const float min_area = CVAR_TO_FLOAT (rt_dtal_model_minarea);
 
 	for (int i = 0; i < numpieces && uploaded < max_lights; i++)
 	{
@@ -2699,7 +2697,18 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	VectorCopy (resolved.color, params.color);
 	VectorCopy (resolved.offset, light_offset);
 
-	const float min_area = CVAR_TO_FLOAT (rt_dtal_model_minarea);
+	float       min_area        = 0.0f;
+	const float minarea_percent = CVAR_TO_FLOAT (rt_dtal_model_minarea);
+
+	if (minarea_percent > 0.0f)
+	{
+		const float size_x = model->maxs[0] - model->mins[0];
+		const float size_y = model->maxs[1] - model->mins[1];
+		const float size_z = model->maxs[2] - model->mins[2];
+		const float face   = q_max (size_x * size_y, q_max (size_x * size_z, size_y * size_z));
+
+		min_area = minarea_percent * 0.01f * face;
+	}
 
 	int max_lights = (int) CVAR_TO_FLOAT (rt_dtal_model_maxpolys);
 	if (max_lights > RT_DTAL_MAX_PIECES)
@@ -2794,7 +2803,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	}
 
 	return RT_UploadAliasEmissivePieces (local, numpieces, &params, tex, base_uniqueid, pose1, pose2, blend, transform,
-	                                     light_offset, max_lights, budget);
+	                                     light_offset, min_area, max_lights, budget);
 }
 
 static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)

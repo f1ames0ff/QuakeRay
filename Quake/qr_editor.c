@@ -56,6 +56,7 @@
 
 #include "qr_editor.h"
 #include "qr_gui.h"
+#include "photocam.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -183,7 +184,9 @@ static const char *const qre_emissive_blends[] = {
 // State
 // ---------------------------------------------------------------------------
 
-#define QRE_GROUP_MAX    12
+#define QRE_GROUP_MAX    32
+#define QRE_ENTITY_MAX   64
+#define QRE_ANIM_MAX     8
 #define QRE_DIRTY_MAX    64
 #define QRE_TOUCHED_MAX  512
 #define QRE_PREVIEW_SLOTS QRE_GROUP_MAX
@@ -192,6 +195,13 @@ static const char *const qre_emissive_blends[] = {
 // picker samples, cached under the key of what they were built from, one slot
 // per group entry so rebuilding one section never frees a material another
 // section's draw command already names.
+typedef struct
+{
+	const char *name;
+	int         first;
+	int         last;
+} qre_anim_t;
+
 typedef struct qre_preview_s
 {
 	char        key[MAX_QPATH * 2 + 32];
@@ -275,6 +285,16 @@ static struct
 	int light_tab;
 
 	int mat_tab;
+
+	qmodel_t  *entity_weapons[QRE_ENTITY_MAX];
+	int        entity_weapon_count;
+	qboolean   entity_list_built;
+	qmodel_t  *entity_sel_model;
+	qmodel_t  *entity_preview_model;
+	qre_anim_t entity_anims[QRE_ANIM_MAX];
+	int        entity_anim_count;
+	int        entity_anim;
+	int        entity_frame;
 
 	// the Custom tab's placement mode: "Add light" waits for the fire button and
 	// drops the new light where the crosshair hits
@@ -1008,6 +1028,7 @@ static void QRE_ResolveGroup (const char *texname)
 			// its :frameN names resolve, so a stale base entry stays hidden
 			// (for a texture ring the base is a real material and is shown).
 			if (qre.pick_model && qre.pick_model->type != mod_brush &&
+			    q_strcasecmp (texname, groupbase) != 0 &&
 			    !q_strcasecmp (list[i].name, groupbase))
 				continue;
 			if (!QRE_NameInGroup (list[i].name, groupbase))
@@ -1931,6 +1952,56 @@ static void QRE_DrawLightWireframes (void)
 	QRE_DrawGizmoArrows ();
 }
 
+// Opens one texture's material group in the panel: the pick path and the
+// Entities tab both end here.
+static void QRE_OpenMaterial (qmodel_t *model, msurface_t *surf, entity_t *ent, gltexture_t *glt)
+{
+	char texname[MAX_QPATH];
+	char *dot;
+	int   i;
+
+	if (!glt)
+		return;
+	if (!QR_GUI_Ready ())
+	{
+		QRE_Notify ("the ImGui panel is not available");
+		return;
+	}
+
+	qre.pick_model = model;
+	qre.pick_surf = surf;
+	qre.pick_ent = ent;
+	qre.pick_glt = glt;
+	qre.hover_model = NULL;
+	qre.hover_surf = NULL;
+	qre.hover_ent = NULL;
+	qre.hover_glt = NULL;
+
+	RT_MAT_NormalizeName (glt->name, texname, sizeof (texname));
+	dot = strrchr (texname, '.');
+	if (dot && !strchr (dot, ':'))
+		*dot = '\0';
+
+	q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
+
+	if (qre.mode == QRE_MODE_LIGHT)
+	{
+		Con_Printf ("qr light editor: picked emitter '%s'\n", texname);
+	}
+	else
+	{
+		QRE_ResolveGroup (texname);
+
+		Con_Printf ("qr editor: picked '%s' (%d material(s) in the group)\n", texname, qre.group_count);
+		for (i = 0; i < qre.group_count; i++)
+			Con_Printf ("qr editor:   group material '%s'\n", qre.group[i]->name);
+	}
+
+	// the panel owns the mouse: free the cursor (keeping its motion events
+	// for ImGui), freeze the camera
+	QRE_CursorMode (true);
+}
+
 // Hover pick (crosshair, flying) or select pick (fire button).
 static void QRE_DoPick (qboolean select)
 {
@@ -1964,52 +2035,10 @@ static void QRE_DoPick (qboolean select)
 		return;
 	}
 
-	if (!glt)
-		return;
-	if (!QR_GUI_Ready ())
-	{
-		QRE_Notify ("the ImGui panel is not available");
-		return;
-	}
+	qre.entity_sel_model = NULL;
+	qre.entity_preview_model = NULL;
 
-	qre.pick_model = model;
-	qre.pick_surf = surf;
-	qre.pick_ent = ent;
-	qre.pick_glt = glt;
-	qre.hover_model = NULL;
-	qre.hover_surf = NULL;
-	qre.hover_ent = NULL;
-	qre.hover_glt = NULL;
-
-	{
-		char texname[MAX_QPATH];
-		char *dot;
-		int   i;
-
-		RT_MAT_NormalizeName (glt->name, texname, sizeof (texname));
-		dot = strrchr (texname, '.');
-		if (dot && !strchr (dot, ':'))
-			*dot = '\0';
-
-		q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
-
-		if (qre.mode == QRE_MODE_LIGHT)
-		{
-			Con_Printf ("qr light editor: picked emitter '%s'\n", texname);
-		}
-		else
-		{
-			QRE_ResolveGroup (texname);
-
-			Con_Printf ("qr editor: picked '%s' (%d material(s) in the group)\n", texname, qre.group_count);
-			for (i = 0; i < qre.group_count; i++)
-				Con_Printf ("qr editor:   group material '%s'\n", qre.group[i]->name);
-		}
-	}
-
-	// the panel owns the mouse: free the cursor (keeping its motion events
-	// for ImGui), freeze the camera
-	QRE_CursorMode (true);
+	QRE_OpenMaterial (model, surf, ent, glt);
 }
 
 // ---------------------------------------------------------------------------
@@ -2240,6 +2269,15 @@ void QR_Editor_UpdateView (void)
 
 	VectorCopy (qre.cam_origin, r_refdef.vieworg);
 	VectorCopy (cl.viewangles, r_refdef.viewangles);
+
+	if (QR_Editor_ShowViewModel ())
+	{
+		cl.viewent.model = qre.entity_preview_model;
+		cl.viewent.frame = qre.entity_frame;
+		cl.viewent.lerpflags |= LERP_RESETANIM;
+		VectorCopy (cl.viewangles, cl.viewent.angles);
+		VectorCopy (r_refdef.vieworg, cl.viewent.origin);
+	}
 
 	// Before the frame renders: a re-synthesis replaces the material handles,
 	// and the world's static upload (R_DrawWorldTask) runs later in this frame,
@@ -3100,8 +3138,8 @@ static void QRE_MatSystemTab (void)
 	QR_GUI_SectionHeader ("DTAL (models)");
 
 	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
-	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 1024.0f,
-	                        "Drops a model's DTAL polygon under this area, in world units squared (0 off)."))
+	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
+	                        "Drops a model's DTAL polygon under this percentage of the model's bounding box face (0 off)."))
 		Cvar_Set ("rt_dtal_model_minarea", va ("%.4g", value));
 
 	maxpolys = CVAR_TO_INT32 (rt_dtal_model_maxpolys);
@@ -3115,6 +3153,206 @@ static void QRE_MatSystemTab (void)
 		Cvar_Set ("rt_dtal_model_budget", va ("%d", maxpolys));
 
 	QRE_MatWaterSection ();
+}
+
+static int QRE_CompareModelNames (const void *a, const void *b)
+{
+	const qmodel_t *ma = *(qmodel_t *const *) a;
+	const qmodel_t *mb = *(qmodel_t *const *) b;
+
+	return q_strcasecmp (ma->name, mb->name);
+}
+
+static void QRE_EntityListAdd (qmodel_t **list, int *count, qmodel_t *model)
+{
+	int i;
+
+	if (*count >= QRE_ENTITY_MAX)
+		return;
+
+	for (i = 0; i < *count; i++)
+		if (list[i] == model)
+			return;
+
+	list[(*count)++] = model;
+}
+
+static void QRE_BuildEntityLists (void)
+{
+	int i;
+
+	qre.entity_weapon_count = 0;
+
+	for (i = 1; i < MAX_MODELS; i++)
+	{
+		qmodel_t   *m = cl.model_precache[i];
+		const char *base;
+
+		if (!m || m->type != mod_alias)
+			continue;
+
+		base = COM_SkipPath (m->name);
+		if (!q_strncasecmp (base, "v_", 2))
+			QRE_EntityListAdd (qre.entity_weapons, &qre.entity_weapon_count, m);
+	}
+
+	if (cl.viewent.model && cl.viewent.model->type == mod_alias)
+		QRE_EntityListAdd (qre.entity_weapons, &qre.entity_weapon_count, cl.viewent.model);
+
+	qsort (qre.entity_weapons, (size_t) qre.entity_weapon_count, sizeof (qre.entity_weapons[0]),
+	       QRE_CompareModelNames);
+
+	qre.entity_list_built = true;
+}
+
+typedef struct
+{
+	const char *model;
+	const char *animation;
+	int         first;
+	int         last;
+} qre_weapon_anim_t;
+
+static const qre_weapon_anim_t qre_weapon_anims[] = {
+	{ "progs/v_axe.mdl",   "idle",     0, 0 },
+	{ "progs/v_axe.mdl",   "attack",   1, 4 },
+	{ "progs/v_axe.mdl",   "attack 2", 5, 8 },
+	{ "progs/v_shot.mdl",  "idle",     0, 0 },
+	{ "progs/v_shot.mdl",  "fire",     1, 6 },
+	{ "progs/v_shot2.mdl", "idle",     0, 0 },
+	{ "progs/v_shot2.mdl", "fire",     1, 6 },
+	{ "progs/v_nail.mdl",  "idle",     0, 0 },
+	{ "progs/v_nail.mdl",  "fire",     1, 8 },
+	{ "progs/v_nail2.mdl", "idle",     0, 0 },
+	{ "progs/v_nail2.mdl", "fire",     1, 8 },
+	{ "progs/v_rock.mdl",  "idle",     0, 0 },
+	{ "progs/v_rock.mdl",  "fire",     1, 6 },
+	{ "progs/v_rock2.mdl", "idle",     0, 0 },
+	{ "progs/v_rock2.mdl", "fire",     1, 6 },
+	{ "progs/v_light.mdl", "idle",     0, 0 },
+	{ "progs/v_light.mdl", "fire",     1, 4 },
+};
+
+static void QRE_BuildWeaponAnims (qmodel_t *model, aliashdr_t *hdr)
+{
+	int i;
+
+	qre.entity_anim_count = 0;
+
+	for (i = 0; i < (int) countof (qre_weapon_anims) && qre.entity_anim_count < QRE_ANIM_MAX; i++)
+	{
+		const qre_weapon_anim_t *a = &qre_weapon_anims[i];
+		qre_anim_t              *dst;
+
+		if (q_strcasecmp (a->model, model->name))
+			continue;
+
+		dst = &qre.entity_anims[qre.entity_anim_count++];
+		dst->name = a->animation;
+		dst->first = (a->first < hdr->numframes) ? a->first : 0;
+		dst->last = (a->last < hdr->numframes) ? a->last : hdr->numframes - 1;
+		if (dst->last < dst->first)
+			dst->last = dst->first;
+	}
+
+	if (qre.entity_anim_count == 0 && hdr->numframes > 0)
+	{
+		qre.entity_anims[0].name = "frames";
+		qre.entity_anims[0].first = 0;
+		qre.entity_anims[0].last = hdr->numframes - 1;
+		qre.entity_anim_count = 1;
+	}
+
+	qre.entity_anim = 0;
+	qre.entity_frame = (qre.entity_anim_count > 0) ? qre.entity_anims[0].first : 0;
+}
+
+static void QRE_SelectEntityModel (qmodel_t *model)
+{
+	aliashdr_t  *hdr;
+	gltexture_t *glt;
+
+	if (!model)
+		return;
+
+	hdr = (aliashdr_t *) Mod_Extradata (model);
+	glt = (hdr && hdr->numskins > 0) ? hdr->gltextures[0][0] : NULL;
+	if (!hdr || !glt || !glt->name[0])
+	{
+		QRE_Notify ("'%s' has no skin texture to edit", model->name);
+		return;
+	}
+
+	QRE_BuildWeaponAnims (model, hdr);
+
+	qre.entity_sel_model = model;
+	qre.entity_preview_model = model;
+
+	QRE_OpenMaterial (model, NULL, NULL, glt);
+}
+
+static void QRE_MatEntitiesTab (void)
+{
+	char label[MAX_QPATH + 24];
+	int  i;
+
+	if (!qre.entity_list_built)
+		QRE_BuildEntityLists ();
+
+	QR_GUI_LabelDim ("Entity materials are saved for the whole mod.");
+	QR_GUI_Spacing ();
+
+	QR_GUI_SectionHeader ("Weapons");
+	if (qre.entity_weapon_count == 0)
+		QR_GUI_LabelDim ("no weapon view model in this level");
+
+	for (i = 0; i < qre.entity_weapon_count; i++)
+	{
+		qmodel_t *m = qre.entity_weapons[i];
+		qboolean  selected = (qre.entity_sel_model == m);
+
+		if (m == cl.viewent.model)
+			q_snprintf (label, sizeof (label), "%s (held)", COM_SkipPath (m->name));
+		else
+			q_strlcpy (label, COM_SkipPath (m->name), sizeof (label));
+
+		QR_GUI_PushID (m->name);
+		if (QR_GUI_SectionSelected (label, selected))
+			QRE_SelectEntityModel (m);
+		QR_GUI_PopID ();
+	}
+
+	if (qre.entity_preview_model != NULL && qre.entity_anim_count > 0)
+	{
+		const char *names[QRE_ANIM_MAX];
+		int         anim, frame, span;
+
+		for (i = 0; i < qre.entity_anim_count; i++)
+			names[i] = qre.entity_anims[i].name;
+
+		QR_GUI_Spacing ();
+
+		anim = qre.entity_anim;
+		if (QR_GUI_Combo ("animation", &anim, (const char *const *) names, qre.entity_anim_count,
+		                  "The weapon animation the preview plays.") &&
+		    anim >= 0 && anim < qre.entity_anim_count)
+		{
+			qre.entity_anim = anim;
+			qre.entity_frame = qre.entity_anims[anim].first;
+		}
+
+		span = qre.entity_anims[qre.entity_anim].last - qre.entity_anims[qre.entity_anim].first;
+		frame = qre.entity_frame - qre.entity_anims[qre.entity_anim].first;
+		if (QR_GUI_SliderInt ("frame", &frame, 0, span, "The animation frame the preview shows."))
+		{
+			if (frame < 0)
+				frame = 0;
+			if (frame > span)
+				frame = span;
+
+			qre.entity_frame = qre.entity_anims[qre.entity_anim].first + frame;
+		}
+	}
 }
 
 static void QRE_BuildPanelGUI (void)
@@ -3142,7 +3380,7 @@ static void QRE_BuildPanelGUI (void)
 	QR_GUI_Spacing ();
 
 	{
-		static const char *const tabs[] = { "Materials", "System" };
+		static const char *const tabs[] = { "Materials", "Entities", "System" };
 		int reset = 0;
 
 		QR_GUI_Tabs ("material_tabs", tabs, (int)countof (tabs), &qre.mat_tab, &reset);
@@ -3153,13 +3391,16 @@ static void QRE_BuildPanelGUI (void)
 
 	QRE_PanelActionRow (QRE_RequestExit);
 
-	if (qre.mat_tab == 1)
+	if (qre.mat_tab == 2)
 	{
 		QRE_MatSystemTab ();
 		QR_GUI_EndScroll ();
 		QR_GUI_EndPanel ();
 		return;
 	}
+
+	if (qre.mat_tab == 1)
+		QRE_MatEntitiesTab ();
 
 	for (g = 0; g < qre.group_count; g++)
 	{
@@ -6472,6 +6713,8 @@ static void QRE_BackToChooser (void)
 	QRE_DtalDebugOff ();
 	qre.mat_tab = 0;
 	qre.light_tab = 0;
+	qre.entity_preview_model = NULL;
+	qre.entity_sel_model = NULL;
 
 	QRE_FreePreview ();
 
@@ -6765,10 +7008,16 @@ static void QRE_StopEditor (qboolean restore)
 	if (restore)
 		QRE_RestoreModeState ();
 
+	if (qre.entity_preview_model != NULL && cl.viewent.model == qre.entity_preview_model)
+		cl.viewent.model = NULL;
+
 	qre.active = false;
 	qre.choosing = false;
 	qre.panel_open = false;
 	qre.torch = false;
+	qre.entity_preview_model = NULL;
+	qre.entity_sel_model = NULL;
+	qre.entity_list_built = false;
 	qre.exit_prompt = false;
 	qre.reset_prompt = false;
 	qre.reset_pending = false;
@@ -6872,6 +7121,8 @@ static void QRE_StartEditor (void)
 		return;
 	}
 
+	PhotoCam_Stop ();
+
 	memset (&qre, 0, sizeof (qre));
 	qre.active = true;
 	qre.panel_open = false;
@@ -6957,6 +7208,12 @@ qboolean QR_Editor_PanelOpen (void)
 qboolean QR_Editor_Flying (void)
 {
 	return qre.active && !qre.panel_open;
+}
+
+qboolean QR_Editor_ShowViewModel (void)
+{
+	return qre.active && qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 1 &&
+	       qre.entity_preview_model != NULL && !cl.intermission;
 }
 
 void QR_Editor_SunPlacement (qboolean on)
