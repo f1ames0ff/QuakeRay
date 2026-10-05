@@ -7162,6 +7162,56 @@ static void QR_Editor_Stop_f (void)
 // of the first reload of a material to <gamedir>/qre_dump.
 cvar_t qr_material_editor_debug = { "qr_material_editor_debug", "0", CVAR_NONE };
 
+cvar_t devmode = { "devmode", "0", CVAR_NONE };
+
+static cmd_function_t *qre_devmode_editor_cmd;
+static cmd_function_t *qre_devmode_stop_cmd;
+
+static void QRE_DevmodeCommands (qboolean on)
+{
+	if (on)
+	{
+		if (qre_devmode_editor_cmd == NULL)
+			qre_devmode_editor_cmd = Cmd_AddCommand2 ("qr_editor", QR_Editor_Start_f, src_command);
+		if (qre_devmode_stop_cmd == NULL)
+			qre_devmode_stop_cmd = Cmd_AddCommand2 ("qr_editor_stop", QR_Editor_Stop_f, src_command);
+
+		Con_Printf ("devmode: on (qr_editor and qr_editor_stop are available)\n");
+	}
+	else
+	{
+		if (qre_devmode_editor_cmd != NULL)
+		{
+			Cmd_RemoveCommand (qre_devmode_editor_cmd);
+			qre_devmode_editor_cmd = NULL;
+		}
+		if (qre_devmode_stop_cmd != NULL)
+		{
+			Cmd_RemoveCommand (qre_devmode_stop_cmd);
+			qre_devmode_stop_cmd = NULL;
+		}
+
+		Con_Printf ("devmode: off (the editor commands are gone)\n");
+	}
+}
+
+static void QRE_DevmodeChanged_f (cvar_t *var)
+{
+	if (CVAR_TO_BOOL (devmode))
+	{
+		QRE_DevmodeCommands (true);
+		return;
+	}
+
+	if (qre.active)
+	{
+		Con_Printf ("qr editor: closed, devmode is off\n");
+		QRE_StopEditor (false);
+	}
+
+	QRE_DevmodeCommands (false);
+}
+
 void QR_Editor_Init (void)
 {
 	static qboolean qr_editor_registered = false;
@@ -7174,9 +7224,11 @@ void QR_Editor_Init (void)
 	qr_editor_registered = true;
 
 	Cvar_RegisterVariable (&qr_material_editor_debug);
+	Cvar_RegisterVariable (&devmode);
+	Cvar_SetCallback (&devmode, QRE_DevmodeChanged_f);
 
-	Cmd_AddCommand ("qr_editor", QR_Editor_Start_f);
-	Cmd_AddCommand ("qr_editor_stop", QR_Editor_Stop_f);
+	if (CVAR_TO_BOOL (devmode))
+		QRE_DevmodeCommands (true);
 
 	// the font is part of the game data, next to the cursor artwork
 	font_size = COM_OpenFile ("gfx/Roboto-Regular.ttf", &font_handle, NULL);
