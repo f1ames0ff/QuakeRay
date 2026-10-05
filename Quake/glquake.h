@@ -323,6 +323,7 @@ void  Fog_ParseServerMessage (void);
 void  Fog_FogCommand_f (void);
 void  Fog_GetColor (float *c);
 float Fog_GetDensity (void);
+qboolean Fog_Enabled (void);
 void  Fog_EnableGFog (cb_context_t *cbx);
 void  Fog_DisableGFog (cb_context_t *cbx);
 void  Fog_SetupFrame (cb_context_t *cbx);

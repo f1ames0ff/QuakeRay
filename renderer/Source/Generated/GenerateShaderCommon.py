@@ -45,28 +45,6 @@ C_TYPES = {
     UINT32:  "uint32_t",
 }
 
-GLSL_TYPES = {
-    FLOAT32: "float",
-    INT32:   "int",
-    UINT32:  "uint",
-    (FLOAT32, 2): "vec2",
-    (FLOAT32, 3): "vec3",
-    (FLOAT32, 4): "vec4",
-    (INT32,   2): "ivec2",
-    (INT32,   3): "ivec3",
-    (INT32,   4): "ivec4",
-    (UINT32,  2): "uvec2",
-    (UINT32,  3): "uvec3",
-    (UINT32,  4): "uvec4",
-    (FLOAT32, 22): "mat2",
-    (FLOAT32, 23): "mat2x3",
-    (FLOAT32, 32): "mat3x2",
-    (FLOAT32, 33): "mat3",
-    (FLOAT32, 34): "mat3x4",
-    (FLOAT32, 43): "mat4x3",
-    (FLOAT32, 44): "mat4",
-}
-
 
 TYPE_BYTES = {
     FLOAT32: 4,
@@ -120,7 +98,7 @@ VULKAN_FORMATS = {
     (PACKED_E5, CHANNELS_RGB):    "VK_FORMAT_R32_UINT",
 }
 
-GLSL_FORMATS = {
+BASE_FORMATS = {
     (UNORM8,   CHANNELS_R):       "r8",
     (UNORM8,   CHANNELS_RG):      "rg8",
     (UNORM8,   CHANNELS_RGBA):    "rgba8",
@@ -149,33 +127,6 @@ GLSL_FORMATS = {
     (PACKED_E5, CHANNELS_RGB):    "r32ui",
 }
 
-GLSL_STORAGE_TYPES = {
-    FLOAT32:  "image2D",
-    INT32:    "iimage2D",
-    UINT32:   "uimage2D",
-    UNORM8:   "image2D",
-    UINT8:    "uimage2D",
-    UINT16:   "uimage2D",
-    FLOAT16:  "image2D",
-    PACKED_11: "image2D",
-    PACKED_E5: "uimage2D",
-}
-
-GLSL_SAMPLED_TYPES = {
-    FLOAT32:  "texture2D",
-    INT32:    "itexture2D",
-    UINT32:   "utexture2D",
-    UNORM8:   "texture2D",
-    UINT8:    "utexture2D",
-    UINT16:   "utexture2D",
-    FLOAT16:  "texture2D",
-    PACKED_11: "texture2D",
-    PACKED_E5: "utexture2D",
-}
-
-GLSL_SAMPLER_TYPE = "sampler"
-
-
 HLSL_TYPES = {
     FLOAT32: "float",
     INT32:   "int",
@@ -202,7 +153,7 @@ HLSL_FORMAT_OVERRIDES = {
     (PACKED_11, CHANNELS_RGB): "r11g11b10f",
 }
 
-HLSL_FORMATS = dict(GLSL_FORMATS)
+HLSL_FORMATS = dict(BASE_FORMATS)
 HLSL_FORMATS.update(HLSL_FORMAT_OVERRIDES)
 
 HLSL_STORAGE_TYPES = {
@@ -233,30 +184,16 @@ HLSL_SAMPLER_TYPE = "SamplerState"
 
 
 DESCRIPTOR_SYNTAX = {
-    "glsl": {
-        "format":      lambda base_format, channels: GLSL_FORMATS[(base_format, channels)],
-        "storageType": lambda base_format: GLSL_STORAGE_TYPES[base_format],
-        "sampledType": lambda base_format: GLSL_SAMPLED_TYPES[base_format],
-        "samplerType": lambda base_format: GLSL_SAMPLER_TYPE,
-        "storage":     lambda binding, image_format, type_name, name:
-            "layout(set = %s, binding = %d, %s) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, image_format, type_name, name),
-        "sampled":     lambda binding, image_format, type_name, name:
-            "layout(set = %s, binding = %d) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, type_name, name),
-        "sampler":     lambda binding, image_format, type_name, name:
-            "layout(set = %s, binding = %d) uniform %s %s;" % (FRAMEBUF_DESC_SET_NAME, binding, type_name, name),
-    },
-    "hlsl": {
-        "format":      lambda base_format, channels: HLSL_FORMATS[(base_format, channels)],
-        "storageType": lambda base_format: HLSL_STORAGE_TYPES[base_format],
-        "sampledType": lambda base_format: HLSL_SAMPLED_TYPES[base_format],
-        "samplerType": lambda base_format: HLSL_SAMPLER_TYPE,
-        "storage":     lambda binding, image_format, type_name, name:
-            "[[vk::binding(%d, %s), vk::image_format(\"%s\")]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, image_format, type_name, name),
-        "sampled":     lambda binding, image_format, type_name, name:
-            "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, type_name, name),
-        "sampler":     lambda binding, image_format, type_name, name:
-            "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, type_name, name),
-    },
+    "format":      lambda base_format, channels: HLSL_FORMATS[(base_format, channels)],
+    "storageType": lambda base_format: HLSL_STORAGE_TYPES[base_format],
+    "sampledType": lambda base_format: HLSL_SAMPLED_TYPES[base_format],
+    "samplerType": lambda base_format: HLSL_SAMPLER_TYPE,
+    "storage":     lambda binding, image_format, type_name, name:
+        "[[vk::binding(%d, %s), vk::image_format(\"%s\")]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, image_format, type_name, name),
+    "sampled":     lambda binding, image_format, type_name, name:
+        "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, type_name, name),
+    "sampler":     lambda binding, image_format, type_name, name:
+        "[[vk::binding(%d, %s)]] %s %s;" % (binding, FRAMEBUF_DESC_SET_NAME, type_name, name),
 }
 
 
@@ -500,7 +437,7 @@ CONST = {
     "VOLUME_ENABLE_VOLUMETRIC"              : 2,
 }
 
-CONST_GLSL_ONLY = {
+CONST_SHADER_ONLY = {
     "SURFACE_POSITION_INCORRECT"            : 10000000.0,
 }
 
@@ -836,17 +773,17 @@ BREAK_COMPLEX = 1
 BREAK_C_ONLY  = 2
 
 STRUCTS = {
-    "ShVertex":                 (VERTEX_MEMBERS,              False, ALIGN_STD430, BREAK_NONE),
-    "ShGlobalUniform":          (GLOBAL_UNIFORM_MEMBERS,      False, ALIGN_STD140, BREAK_C_ONLY),
-    "ShGeometryInstance":       (GEOM_INSTANCE_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
-    "ShTonemapping":            (TONEMAPPING_MEMBERS,         False, ALIGN_NONE,   BREAK_NONE),
-    "ShLightEncoded":           (LIGHT_ENCODED_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
-    "ShDtalMember":             (DTAL_MEMBER_MEMBERS,         False, ALIGN_STD430, BREAK_NONE),
-    "ShQ2LightTail":            (Q2_LIGHT_TAIL_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
-    "ShVertPreprocessing":      (VERT_PREPROC_PUSH_MEMBERS,   False, ALIGN_NONE,   BREAK_NONE),
-    "ShIndirectDrawCommand":    (INDIRECT_DRAW_CMD_MEMBERS,   False, ALIGN_STD430, BREAK_NONE),
-    "ShDecalInstance":          (DECAL_INSTANCE_MEMBERS,      False, ALIGN_STD430, BREAK_NONE),
-    "ShPortalInstance":         (PORTAL_INSTANCE_MEMBERS,     False, ALIGN_STD140, BREAK_NONE),
+    "ShVertex":                 (VERTEX_MEMBERS,              ALIGN_STD430, BREAK_NONE),
+    "ShGlobalUniform":          (GLOBAL_UNIFORM_MEMBERS,      ALIGN_STD140, BREAK_C_ONLY),
+    "ShGeometryInstance":       (GEOM_INSTANCE_MEMBERS,       ALIGN_STD430, BREAK_NONE),
+    "ShTonemapping":            (TONEMAPPING_MEMBERS,         ALIGN_NONE,   BREAK_NONE),
+    "ShLightEncoded":           (LIGHT_ENCODED_MEMBERS,       ALIGN_STD430, BREAK_NONE),
+    "ShDtalMember":             (DTAL_MEMBER_MEMBERS,         ALIGN_STD430, BREAK_NONE),
+    "ShQ2LightTail":            (Q2_LIGHT_TAIL_MEMBERS,       ALIGN_STD430, BREAK_NONE),
+    "ShVertPreprocessing":      (VERT_PREPROC_PUSH_MEMBERS,   ALIGN_NONE,   BREAK_NONE),
+    "ShIndirectDrawCommand":    (INDIRECT_DRAW_CMD_MEMBERS,   ALIGN_STD430, BREAK_NONE),
+    "ShDecalInstance":          (DECAL_INSTANCE_MEMBERS,      ALIGN_STD430, BREAK_NONE),
+    "ShPortalInstance":         (PORTAL_INSTANCE_MEMBERS,     ALIGN_STD140, BREAK_NONE),
 }
 
 
@@ -1083,23 +1020,8 @@ def emit_struct(struct_name, members, type_names, alignment, break_mode):
 def emit_structs(type_names):
     return "\n".join(
         emit_struct(name, members, type_names, alignment, break_mode)
-        for name, (members, only_for_glsl, alignment, break_mode) in STRUCTS.items()
-        if not (only_for_glsl and type_names is C_TYPES)
+        for name, (members, alignment, break_mode) in STRUCTS.items()
     ) + "\n"
-
-
-def emit_glsl_pack_unpack(name, with_prev):
-    image_store = ("void imageStore%s(const ivec2 pix, const vec3 unpacked) "
-                   "{ imageStore(%s, pix, uvec4(encodeE5B9G9R9(unpacked))); }")
-    texel_fetch = ("vec3 texelFetch%s(const ivec2 pix)"
-                   "{ return decodeE5B9G9R9(texelFetch(%s, pix, 0).r); }")
-
-    text = image_store % (name, FRAMEBUF_PREFIX + name) + "\n"
-    text += texel_fetch % (name, FRAMEBUF_PREFIX + name + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
-    if with_prev:
-        text += texel_fetch % (name + FRAMEBUF_STORE_PREV_POSTFIX,
-                               FRAMEBUF_PREFIX + name + FRAMEBUF_STORE_PREV_POSTFIX + FRAMEBUF_SAMPLED_POSTFIX) + "\n"
-    return text
 
 
 def emit_hlsl_pack_unpack(name, with_prev):
@@ -1196,12 +1118,8 @@ def emit_framebuffer_declarations(syntax, pack_unpack):
         + "\n\n#endif\n"
 
 
-def emit_glsl_framebuffer_declarations():
-    return emit_framebuffer_declarations(DESCRIPTOR_SYNTAX["glsl"], emit_glsl_pack_unpack)
-
-
 def emit_hlsl_framebuffer_declarations():
-    return emit_framebuffer_declarations(DESCRIPTOR_SYNTAX["hlsl"], emit_hlsl_pack_unpack)
+    return emit_framebuffer_declarations(DESCRIPTOR_SYNTAX, emit_hlsl_pack_unpack)
 
 
 def collapse_repeated(characters, character_to_remove="_"):
@@ -1357,19 +1275,11 @@ def write_c_files(common_header_file, framebuffer_header_file, framebuffer_sourc
     framebuffer_source_file.write(emit_vulkan_framebuffer_definitions())
 
 
-def write_glsl_header(file):
-    file.write(FILE_HEADER)
-    file.write(emit_constants(CONST))
-    file.write(emit_constants(CONST_GLSL_ONLY))
-    file.write(emit_structs(GLSL_TYPES))
-    file.write(emit_glsl_framebuffer_declarations())
-
-
 def write_hlsl_header(file):
     file.write(FILE_HEADER)
     file.write("#pragma once\n\n")
     file.write(emit_constants(CONST))
-    file.write(emit_constants(CONST_GLSL_ONLY))
+    file.write(emit_constants(CONST_SHADER_ONLY))
     file.write(emit_structs(HLSL_TYPES))
     file.write(emit_hlsl_framebuffer_declarations())
 
@@ -1411,9 +1321,6 @@ def main():
         with open(base_path + "ShaderCommonCFramebuf.h", "w") as framebuffer_header_file:
             with open(base_path + "ShaderCommonCFramebuf.cpp", "w") as framebuffer_source_file:
                 write_c_files(common_header_file, framebuffer_header_file, framebuffer_source_file)
-
-    with open(base_path + "ShaderCommonGLSL.h", "w") as glsl_header_file:
-        write_glsl_header(glsl_header_file)
 
     with open(base_path + "ShaderCommonHLSL.hlsli", "w") as hlsl_header_file:
         write_hlsl_header(hlsl_header_file)

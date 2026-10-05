@@ -57,6 +57,7 @@
 #include "qr_editor.h"
 #include "qr_gui.h"
 #include "photocam.h"
+#include "observer.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -83,6 +84,7 @@ extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_s
 // 0 draws no fog.
 float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
+qboolean Fog_Enabled (void);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
 
 // ---------------------------------------------------------------------------
@@ -6185,6 +6187,7 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 	         (int)(CLAMP (0.0f, fog.color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
 	         (int)(CLAMP (0.0f, fog.color[2], 1.0f) * 255.0f + 0.5f) & 0xff);
 	fprintf (out, "    density: %.6g\n", fog.density);
+	fprintf (out, "    enabled: %s\n", Fog_Enabled () ? "true" : "false");
 
 	if (count > 0)
 	{
@@ -7137,6 +7140,7 @@ static void QRE_StartEditor (void)
 	}
 
 	PhotoCam_Stop ();
+	Observer_Stop ();
 
 	memset (&qre, 0, sizeof (qre));
 	qre.active = true;
@@ -7177,6 +7181,60 @@ static void QR_Editor_Stop_f (void)
 // of the first reload of a material to <gamedir>/qre_dump.
 cvar_t qr_material_editor_debug = { "qr_material_editor_debug", "0", CVAR_NONE };
 
+cvar_t devmode = { "devmode", "0", CVAR_NONE };
+
+static cmd_function_t *qre_devmode_editor_cmd;
+static cmd_function_t *qre_devmode_stop_cmd;
+
+static void QRE_DevmodeCommands (qboolean on)
+{
+	if (on)
+	{
+		if (qre_devmode_editor_cmd == NULL)
+			qre_devmode_editor_cmd = Cmd_AddCommand2 ("qr_editor", QR_Editor_Start_f, src_command);
+		if (qre_devmode_stop_cmd == NULL)
+			qre_devmode_stop_cmd = Cmd_AddCommand2 ("qr_editor_stop", QR_Editor_Stop_f, src_command);
+
+		Observer_Register ();
+
+		Con_Printf ("devmode: on (qr_editor, qr_editor_stop and camera_observer are available)\n");
+	}
+	else
+	{
+		if (qre_devmode_editor_cmd != NULL)
+		{
+			Cmd_RemoveCommand (qre_devmode_editor_cmd);
+			qre_devmode_editor_cmd = NULL;
+		}
+		if (qre_devmode_stop_cmd != NULL)
+		{
+			Cmd_RemoveCommand (qre_devmode_stop_cmd);
+			qre_devmode_stop_cmd = NULL;
+		}
+
+		Observer_Unregister ();
+
+		Con_Printf ("devmode: off (the dev commands are gone)\n");
+	}
+}
+
+static void QRE_DevmodeChanged_f (cvar_t *var)
+{
+	if (CVAR_TO_BOOL (devmode))
+	{
+		QRE_DevmodeCommands (true);
+		return;
+	}
+
+	if (qre.active)
+	{
+		Con_Printf ("qr editor: closed, devmode is off\n");
+		QRE_StopEditor (false);
+	}
+
+	QRE_DevmodeCommands (false);
+}
+
 void QR_Editor_Init (void)
 {
 	static qboolean qr_editor_registered = false;
@@ -7189,9 +7247,11 @@ void QR_Editor_Init (void)
 	qr_editor_registered = true;
 
 	Cvar_RegisterVariable (&qr_material_editor_debug);
+	Cvar_RegisterVariable (&devmode);
+	Cvar_SetCallback (&devmode, QRE_DevmodeChanged_f);
 
-	Cmd_AddCommand ("qr_editor", QR_Editor_Start_f);
-	Cmd_AddCommand ("qr_editor_stop", QR_Editor_Stop_f);
+	if (CVAR_TO_BOOL (devmode))
+		QRE_DevmodeCommands (true);
 
 	// the font is part of the game data, next to the cursor artwork
 	font_size = COM_OpenFile ("gfx/Roboto-Regular.ttf", &font_handle, NULL);

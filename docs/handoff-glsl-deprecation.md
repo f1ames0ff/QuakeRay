@@ -7,6 +7,11 @@ This hands off the `CheckShaderProperties.py` failure state that the lighting br
 picked up separately from the DTAL/cluster work. The accompanying policy and removal queue live in
 `docs/glsl-deprecation.md`.
 
+> Completed: the removal queue in `docs/glsl-deprecation.md` was executed. The GLSL sources, the
+> generated `ShaderCommonGLSL.h`, the checker's `--glsl` mode and the allow list are gone, and the
+> recordings under `Reflection/` verify the HLSL side. This document is kept as the record of the
+> state the work started from.
+
 ## Summary
 
 `CheckShaderProperties.py` reports 6 property mismatches on any tree merged with current

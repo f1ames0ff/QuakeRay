@@ -12,26 +12,7 @@ $shaderSrc = Join-Path $PSScriptRoot "renderer\Source\Shaders"
 $shaderOut = Join-Path $PSScriptRoot "renderer\Build"
 $pkzPath   = if ($Pkz) { $Pkz } else { Join-Path $PSScriptRoot "build\Debug\id1\qray.pkz" }
 
-# The generator rebuilds a shader when a file it depends on is newer than the .spv
-# it produced, and the headers the shaders include (CloudLayer.h and the rest, which
-# sit next to the sources) have been outside that check: a change in one of them has
-# shipped stale .spv files more than once, with a build that reported success. When
-# any header in the source folder is newer than the oldest built shader, throw them
-# all away and let the generator build them again. The same is done for every build
-# that asks for a rebuild.
-$headers = @(Get-ChildItem -Path (Join-Path $shaderSrc "*.h") -ErrorAction SilentlyContinue)
-$built   = @(Get-ChildItem -Path (Join-Path $shaderOut "*.spv") -ErrorAction SilentlyContinue)
-if ($headers.Count -gt 0 -and $built.Count -gt 0)
-{
-    $newestHeader = ($headers | Sort-Object LastWriteTime -Descending)[0]
-    $oldestBuild  = ($built   | Sort-Object LastWriteTime)[0]
-
-    if ($newestHeader.LastWriteTime -gt $oldestBuild.LastWriteTime)
-    {
-        Write-Host "Shader header $($newestHeader.Name) is newer than the built shaders: rebuilding all of them." -ForegroundColor Yellow
-        Remove-Item (Join-Path $shaderOut "*.spv") -Force
-    }
-}
+$built = @(Get-ChildItem -Path (Join-Path $shaderOut "*.spv") -ErrorAction SilentlyContinue)
 if ($Rebuild -and $built.Count -gt 0)
 {
     Remove-Item (Join-Path $shaderOut "*.spv") -Force
@@ -39,20 +20,12 @@ if ($Rebuild -and $built.Count -gt 0)
 
 if ($env:VULKAN_SDK) {
     $sdkBin = Join-Path $env:VULKAN_SDK "Bin"
-    if (Test-Path (Join-Path $sdkBin "glslc.exe")) {
+    if (Test-Path (Join-Path $sdkBin "dxc.exe")) {
         $env:PATH = "$sdkBin;$env:PATH"
     }
 }
-if (-not (Get-Command glslc -ErrorAction SilentlyContinue)) {
-    throw "glslc not found. Install the Vulkan SDK or set VULKAN_SDK."
-}
-
-# dxc ships with the Vulkan SDK; the Windows SDK also has one. It is only required while HLSL
-# shaders exist, i.e. from the first ported file until the GLSL sources are gone.
-$hlslSources = @(Get-ChildItem -Path $shaderSrc -Filter "*.hlsl" -Recurse -ErrorAction SilentlyContinue)
-if ($hlslSources.Count -gt 0 -and -not (Get-Command dxc -ErrorAction SilentlyContinue)) {
-    throw ("dxc not found, but $($hlslSources.Count) HLSL shader file(s) are present. " +
-           "Install the Vulkan SDK or set VULKAN_SDK.")
+if (-not (Get-Command dxc -ErrorAction SilentlyContinue)) {
+    throw "dxc not found. Install the Vulkan SDK or set VULKAN_SDK."
 }
 
 if ($GenCommon) {

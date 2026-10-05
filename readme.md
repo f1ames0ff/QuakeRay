@@ -4,7 +4,7 @@
 
 QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, with improvements to materials, light sources, skies and visual effects. It runs on Vulkan using NVIDIA NVRHI.
 
-[Download](https://github.com/sdas234f23f/QuakeRay/releases) · [What's new](changelog.md) · [Report a problem](https://github.com/sdas234f23f/QuakeRay/issues)
+[Download](https://github.com/f1ames0ff/QuakeRay/releases) · [What's new](changelog.md) · [Report a problem](https://github.com/f1ames0ff/QuakeRay/issues)
 
 ## Features
 
@@ -72,7 +72,7 @@ You need:
 
 ## Installation
 
-1. Download a Windows archive from [Releases](https://github.com/sdas234f23f/QuakeRay/releases), when available.
+1. Download a Windows archive from [Releases](https://github.com/f1ames0ff/QuakeRay/releases), when available.
 2. Extract the whole archive into its own folder. Keep the DLL files and the `id1` folder with the executable.
 3. Run `quakeray.exe`.
 
@@ -117,7 +117,7 @@ Keep the resulting **`stats-<date>-<time>.dump`** file from the active game fold
 
 ### 3. Send your report
 
-[Open an issue](https://github.com/sdas234f23f/QuakeRay/issues) and attach the **log and performance dump**, plus `crash.log` if available. Include:
+[Open an issue](https://github.com/f1ames0ff/QuakeRay/issues) and attach the **log and performance dump**, plus `crash.log` if available. Include:
 
 - What happened and how to reproduce it.
 - Your graphics card, driver version and screen resolution.
@@ -128,12 +128,12 @@ Keep the resulting **`stats-<date>-<time>.dump`** file from the active game fold
 
 This section is for contributors. Players can skip it.
 
-Install [Git](https://git-scm.com/download/win), [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with **Desktop development with C++**, [CMake](https://cmake.org/download/) 3.20 or newer, [Ninja](https://ninja-build.org/) and a recent [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) with `glslc`, `dxc` and Vulkan C++ headers. Vulkan SDK 1.4.321.1 is used for local builds.
+Install [Git](https://git-scm.com/download/win), [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with **Desktop development with C++**, [CMake](https://cmake.org/download/) 3.20 or newer, [Ninja](https://ninja-build.org/) and a recent [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) with `dxc` and Vulkan C++ headers. Vulkan SDK 1.4.321.1 is used for local builds.
 
 In PowerShell:
 
 ```powershell
-git clone --recursive https://github.com/sdas234f23f/QuakeRay.git
+git clone --recursive https://github.com/f1ames0ff/QuakeRay.git
 cd QuakeRay
 .\build_win.ps1 Debug
 .\build\Debug\quakeray.exe

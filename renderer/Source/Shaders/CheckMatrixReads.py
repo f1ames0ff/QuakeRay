@@ -2,12 +2,13 @@
 #
 # Reads a matrix through a single index and compares it with the golden.
 #
-# The port keeps GLSL `matCxR` as HLSL `floatRxC`, so both languages show the shader the same
-# logical matrix: HLSL `m(r, c)` equals GLSL `m(r, c)`. What differs is what one index means. In
-# GLSL `m[i]` is column i, in HLSL it is row i, so the golden `m[i]` has to be read as
-# `getColumn(m, i)` or as `transpose(m)[i]` on the HLSL side. A transcribed `m[i]` reads a row
-# instead, and the two halves of a probe then compare different numbers while
-# CheckShaderProperties.py, which compares interfaces and not values, stays green.
+# The port keeps a `matCxR` type as the HLSL transpose `floatRxC`, so both spellings show the
+# shader the same logical matrix: `m(r, c)` is the same element. What differs is what one
+# index means. In the source the shader was ported from, `m[i]` is column i, in HLSL it is
+# row i, so a single-index read of the golden `m[i]` has to be spelled `getColumn(m, i)` (or
+# `transpose(m)[i]`) on the HLSL side. A transcribed `m[i]` reads a row instead, and the two
+# halves of a probe then compare different numbers while CheckShaderProperties.py, which
+# compares interfaces and not values, stays green.
 #
 # Most such reads are invisible by accident, and this script reports only the ones that are not:
 #

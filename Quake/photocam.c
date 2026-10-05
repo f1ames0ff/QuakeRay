@@ -1,6 +1,7 @@
 #include "quakedef.h"
 #include "glquake.h"
 #include "photocam.h"
+#include "observer.h"
 #include "qr_editor.h"
 #include "screen.h"
 
@@ -65,6 +66,11 @@ static void PhotoCam_Start (void)
 	if (QR_Editor_Active ())
 	{
 		Con_Printf ("photocam: the qr editor is active\n");
+		return;
+	}
+	if (Observer_Active ())
+	{
+		Con_Printf ("photocam: the camera observer is active\n");
 		return;
 	}
 	if (cls.state != ca_connected || !cl.worldmodel)

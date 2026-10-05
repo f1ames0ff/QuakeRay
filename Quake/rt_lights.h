@@ -196,9 +196,9 @@ typedef struct rt_custom_light_s
 
 // The fog a level's section carries: it replaces the map's own worldspawn "fog"
 // key when the section is loaded. The colour channels are 0..1, the density is
-// >= 0 (0 turns the fog off). The optional "enabled" is read from older files,
-// where false kept the level's fog hidden: it loads the section as a density of
-// 0.
+// >= 0 (0 turns the fog off). The optional "enabled" drives the fog_enabled cvar
+// for the loaded map: false renders no fog while the authored density and colour
+// are kept.
 typedef struct rt_custom_fog_s
 {
     qboolean has_fog;     // the level's section carries a fog block
@@ -226,8 +226,8 @@ void RT_CustomFogSet (const rt_custom_fog_t *fog);
 // both name the level "x"), the fog included.
 void RT_CustomLights_ChangeMap (const char *mapname);
 
-// Issues the level's authored fog through the `fog` command, once per map load.
-// A section that states "enabled: false" goes in with a density of 0. Called
+// Issues the level's authored fog through the `fog` command, once per map load,
+// and drives fog_enabled from the section's "enabled" when it states one. Called
 // after the worldspawn "fog" key has been parsed (R_NewMap), so the file's fog
 // wins over the map's own.
 void RT_CustomLights_ApplyFog (void);

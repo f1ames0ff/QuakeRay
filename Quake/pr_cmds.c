@@ -21,6 +21,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "sv_gibs.h"
 
 //#define	STRINGTEMP_BUFFERS		16
 //#define	STRINGTEMP_LENGTH		1024
@@ -1035,6 +1036,7 @@ static void PF_Spawn (void)
 	edict_t *ed;
 
 	ed = ED_Alloc ();
+	SV_Gibs_OnSpawn (ed);
 
 	RETURN_EDICT (ed);
 }

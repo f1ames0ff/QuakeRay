@@ -1,0 +1,9 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== capability RayTracingKHR
+declared
+=== entry point
+MissKHR main
+=== extension SPV_KHR_ray_tracing
+declared
+=== workgroup size

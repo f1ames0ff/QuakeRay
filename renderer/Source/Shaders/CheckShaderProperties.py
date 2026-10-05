@@ -1,56 +1,39 @@
 """
-Cross-checks that an HLSL shader produces the same shader interface and the same memory
-layout as the GLSL shader it replaces, by compiling both to SPIR-V and comparing the
-disassembly.
-
-Both compilers are given the same job: a SPIR-V module for Vulkan 1.2. glslc (through
-glslang) and dxc spell a few things differently, so those are normalized instead of being
-compared as text:
-
-  * matrices: an HLSL matrix is declared as the transpose of the GLSL one, GLSL matCxR
-    becomes floatRxC, and dxc emits RowMajor where glslang emits ColMajor. A transposed
-    declaration occupies the same bytes (same offsets, MatrixStride and ArrayStride, which
-    are compared and not normalized), so the GLSL side is described as its transpose and the
-    majorness is not compared. Describing the transpose is also what makes the checker pin
-    the transposed declaration the port is required to use.
-  * dxc wraps a structured buffer in a Block struct that holds the runtime array, and puts
-    NonWritable on that member instead of on the variable. A read-only storage buffer is
-    read-only in either spelling.
-  * a GLSL `readonly uniform` block is NonWritable, an HLSL ConstantBuffer cannot express
-    that flag. It has no effect on the descriptor, so it is ignored for uniform blocks.
-  * glslang wraps a uniform block in a one-member struct, dxc puts the members of the block
-    directly into the block. The wrapper is stepped over on both sides.
-  * dxc reports an image of unknown depth as depth 2 where glslang says 0 (not depth). A real
-    depth image is 1 on both sides, so an unknown depth is compared as not-depth.
-  * dxc declares SPV_EXT_descriptor_indexing for the descriptor-indexing instructions it emits,
-    while glslang leaves the extension out at vulkan1.2, where descriptor indexing is core and
-    the capabilities it gates are declared by both compilers. An extension the target
-    environment has promoted to core is therefore not compared; the capabilities are.
-  * a scalar followed by a vec2: GLSL uses std430 alignment, dxc uses HLSL packing. This is
-    a real difference and it is reported, not normalized. Fix it in HLSL with [[vk::offset]].
+Pins the shader interface and the memory layout of the HLSL shaders. Every pair is compiled to
+SPIR-V with dxc, disassembled and reflected into a property set, and that property set is
+stored in a recording under Reflection/<pair path>.txt and checked in. The default mode
+recompiles every pair and verifies it against its recording, so an interface or layout change
+shows up as a diff against the recording.
 
 Compared properties: entry point and execution model, workgroup size, specialization
 constants, descriptor set/binding assignment, resource kind and storage class (the kind of
 descriptor the host binds: a uniform buffer, a storage buffer, or a sampler/image/TLAS), the
 byte layout of every block (recursively, including nested structs and array strides),
 input/output locations, the builtins the entry point uses, and the capabilities and extensions
-the module declares. The capability comparison exists because the host loads the *HLSL* blob:
-a capability there that the GLSL blob does not need (RayQueryKHR was the first) is a capability
-the device is not required to enable, and the validation layer rejects the module with
+the module declares. The capability comparison exists because the host loads the module: a
+capability the device is not required to enable is rejected by the validation layer with
 VUID-VkShaderModuleCreateInfo-pCode-08740/08742. dxc has flags that change the capabilities it
 generates, which is why the comparison cannot be left to a source review.
 
 A header has no stage of its own and is therefore never compiled on its own, so a header is
 pinned by a probe: a shader that instantiates what the header declares and touches every
-member of it. The probe's HLSL lives in Probes/, out of the shader build, while its GLSL
-half lives in GLSL/ like the GLSL half of any other pair.
+member of it. The probe's HLSL lives in Probes/, out of the shader build, and is recorded and
+verified like any other pair.
 
 Usage:
-    python CheckShaderProperties.py [--rebuild] [shader ...]
+    python CheckShaderProperties.py [--record [--force]] [shader ...]
 
-With no arguments, every <name>.<stage>.hlsl next to this script and every
-Probes/<name>.<stage>.hlsl is checked against GLSL/<name>.<stage>. Exits with a non-zero
-status if a property does not match.
+With no arguments, every pair is verified against its recording: each <name>.<stage>.hlsl
+next to this script and every Probes/<name>.<stage>.hlsl is compiled, disassembled and
+reflected, and the result is compared with its recording under Reflection/ (HLSL/
+CmPrepareFinal.comp records to Reflection/HLSL/CmPrepareFinal.comp.txt). A missing recording,
+a malformed recording, a property mismatch and a recording that does not correspond to any
+current pair all fail the run. Exits with a non-zero status on any failure.
+
+--record writes the recordings of the named pairs, or of every pair when none are named. It
+writes nothing if any pair fails to compile or disassemble, and it does not overwrite a
+recording that changed unless --force is given: without it the diff is printed and the run
+fails so the maintainer decides.
 """
 
 import difflib
@@ -60,13 +43,14 @@ import subprocess
 import sys
 
 
-GLSL_FOLDER_PATH = "GLSL/"
 HLSL_FOLDER_PATH = "HLSL/"
 PROBES_FOLDER_PATH = "Probes/"
-GLSL_EXTENSIONS = [".comp", ".vert", ".frag", ".rgen", ".rahit", ".rchit", ".rmiss"]
+STAGE_EXTENSIONS = [".comp", ".vert", ".frag", ".rgen", ".rahit", ".rchit", ".rmiss"]
 HLSL_SUFFIX = ".hlsl"
 TEMP_FOLDER_PATH = "Build/"
-ALLOW_LIST_FILE_NAME = "ShaderPropertiesAllowList.txt"
+REFLECTION_FOLDER_PATH = "Reflection/"
+REFLECTION_SUFFIX = ".txt"
+REFLECTION_FORMAT = 1
 
 HLSL_PROFILES = {
     ".comp":    "cs_6_2",
@@ -88,7 +72,7 @@ SPIRV_EXTENSIONS = [
     "SPV_KHR_compute_shader_derivatives",
 ]
 
-# Extensions the target environment (vulkan1.2) has promoted to core. Both compilers are free to
+# Extensions the target environment (vulkan1.2) has promoted to core. The compiler is free to
 # declare or omit them, and the capabilities they gate are compared separately.
 SPIRV_CORE_EXTENSIONS = [
     "SPV_EXT_descriptor_indexing",
@@ -98,8 +82,8 @@ SPIRV_CORE_EXTENSIONS = [
 # the compiler, and with the ray query extension permitted dxc declares RayQueryKHR and
 # SPV_KHR_ray_query for every module that carries OpTypeAccelerationStructureKHR, TraceRay-only
 # ones included (measured: RtRaygenDirect.rgen gets the extension beside SPV_KHR_ray_tracing once
-# it is allowed), while the glslc goldens of the TraceRay modules declare only
-# SPV_KHR_ray_tracing. The extension is therefore allowed per translation unit: a source whose
+# it is allowed), which is exactly the kind of unused capability the comparison is there to
+# reject. The extension is therefore allowed per translation unit: a source whose
 # comment-stripped text, or the text of anything it includes, uses the RayQuery type gets it
 # (RsSmoke.vert.hlsl through SmokeLight.hlsli), everything else keeps the shared list. The scan
 # has to answer the same question as the one in GenerateShaders.py, or the checker and the host
@@ -129,30 +113,10 @@ def addVulkanSdkToPath():
 
 
 def getHLSLProfile(filename):
-    for ext in GLSL_EXTENSIONS:
+    for ext in STAGE_EXTENSIONS:
         if filename.endswith(ext + HLSL_SUFFIX):
             return ext
     return None
-
-
-def readAllowList():
-    allowList = []
-
-    if not os.path.isfile(ALLOW_LIST_FILE_NAME):
-        return allowList
-
-    with open(ALLOW_LIST_FILE_NAME, "r") as f:
-        for line in f:
-            line = line.strip()
-            if len(line) == 0 or line.startswith("#"):
-                continue
-            parts = line.split("=", 1)
-            if len(parts) != 2:
-                print("> Malformed line in " + ALLOW_LIST_FILE_NAME + ": " + line)
-                continue
-            allowList.append((parts[0].strip(), parts[1].strip()))
-
-    return allowList
 
 
 class Instruction:
@@ -163,8 +127,7 @@ class Instruction:
 
 
 class Module:
-    def __init__(self, text, transposeMatrices=False):
-        self.transposeMatrices = transposeMatrices
+    def __init__(self, text):
         self.instructions = []
         self.resultInstruction = {}
         # decorations[id][name] = [args]
@@ -262,14 +225,6 @@ class Module:
         if op == "OpTypeVector":
             return "v" + o[1] + "(" + self.describeType(o[0], depth) + ")"
         if op == "OpTypeMatrix":
-            if self.transposeMatrices:
-                # GLSL matCxR is C vectors of R components, HLSL floatRxC is R vectors of C
-                # components. Describing the GLSL matrix transposed makes it directly
-                # comparable with the HLSL spelling dxc emits for the ported declaration.
-                vectorOp, vectorOperands = self.typeOf(o[0])
-                if vectorOp == "OpTypeVector":
-                    return "m" + vectorOperands[1] + "(v" + o[1] + "(" + \
-                        self.describeType(vectorOperands[0], depth) + "))"
             return "m" + o[1] + "(" + self.describeType(o[0], depth) + ")"
         if op == "OpTypeArray":
             return "array[" + self.constantValue(o[1]) + "](" + self.describeType(o[0], depth) + ")"
@@ -280,9 +235,8 @@ class Module:
         if op == "OpTypePointer":
             return "ptr(" + self.describeType(o[1], depth) + ")"
         if op == "OpTypeImage":
-            # dxc reports "depth unknown" (2) for a color image where glslang reports
-            # "not depth" (0). A real depth image is reported as 1 by both compilers, so an
-            # unknown depth is treated as not-depth instead of as a difference.
+            # An unknown depth is reported as 2 and a real depth image as 1; an unknown depth
+            # is treated as not-depth instead of as a difference.
             dimension, depth, arrayed, ms, sampled, imageFormat = o[1:7]
             return "image:" + ":".join([dimension, "0" if depth == "2" else depth,
                                         arrayed, ms, sampled, imageFormat])
@@ -332,18 +286,14 @@ class Module:
         return blocks
 
     def unwrapBlock(self, typeId):
-        """Steps over the wrappers that spell one memory layout in two different shapes.
-
-        glslang emits a uniform block as a struct holding a single struct member at offset
-        0, dxc puts the members of the block directly into the block. Stepping over the
-        wrapper on both sides makes the two spellings comparable.
+        """Steps over the wrappers a block is wrapped in.
 
         A single-instance storage block (``buffer B { T x; }``) has no HLSL spelling: a struct
-        member of a block cannot be addressed in HLSL, so the port is ``StructuredBuffer<T>``
-        (read) or ``RWStructuredBuffer<T>`` (written), and dxc describes that as an array of
-        the struct. Stepping over that array compares the layout of the element, which is
-        what the host binds for both spellings; the offsets of every member and the stride
-        between elements stay under check.
+        member of a block cannot be addressed in HLSL, so the shader uses
+        ``StructuredBuffer<T>`` (read) or ``RWStructuredBuffer<T>`` (written), and dxc describes
+        that as an array of the struct. Stepping over that array compares the layout of the
+        element, which is what the host binds for the spelling; the offsets of every member and
+        the stride between elements stay under check.
         """
         while True:
             op, members = self.typeOf(typeId)
@@ -447,8 +397,8 @@ class Module:
             description = self.describeType(pointeeId)
             decor = self.decorations.get(instruction.resultId, {})
 
-            # GLSL `readonly uniform` gets NonWritable, an HLSL ConstantBuffer cannot
-            # express that flag, and for a uniform block it does not affect the descriptor.
+            # A read-only resource is NonWritable; for a uniform block the flag has no effect
+            # on the descriptor, so it is not part of its description.
             if storageClass != "Uniform" and self.isNonWritable(instruction.resultId, pointeeId):
                 description += " nonwritable"
 
@@ -457,12 +407,10 @@ class Module:
             # The storage class is the kind of descriptor the host binds: a Uniform block is
             # a VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, a StorageBuffer is a ..._STORAGE_BUFFER,
             # and a UniformConstant is a sampler, an image or a TLAS. It needs a property of
-            # its own, because the pointee kind above cannot separate an HLSL
-            # StructuredBuffer from the GLSL uniform block it replaces: dxc spells the
-            # former as a struct holding a runtime array and glslang wraps the latter in a
-            # struct too, so both sides describe as "struct". The storage class separates
-            # them, and reporting it separately names the resource and lets a deliberate
-            # difference be allow-listed on its own.
+            # its own, because the pointee kind above cannot separate a uniform buffer from a
+            # StructuredBuffer: dxc spells the latter as a struct holding a runtime array, so
+            # both describe as "struct". The storage class separates them, and reporting it
+            # separately names the resource in the recorded property list.
             descriptors[path + ": storage class"] = storageClass
 
         return descriptors
@@ -507,12 +455,10 @@ class Module:
                     continue
 
                 # A block whose members carry BuiltIn decorations is compared through those
-                # members: glslang puts the gl_PerVertex block's Position on a *member* of a
-                # block variable, dxc puts it on a plain output variable, and the property list
-                # has to see the same builtin on both sides. Only the members the module
-                # accesses are expanded -- the block type always carries PointSize,
-                # ClipDistance and CullDistance, which a shader writing only gl_Position
-                # neither reads nor writes.
+                # members, so the property list sees the same builtin whichever way the
+                # compiler spells it. Only the members the module accesses are expanded --
+                # the block type always carries PointSize, ClipDistance and CullDistance,
+                # which a shader writing only the position neither reads nor writes.
                 if self.typeOf(pointeeId)[0] == "OpTypeStruct":
                     expanded = self.expandBlockBuiltins(id, pointeeId)
                     if expanded:
@@ -534,11 +480,9 @@ class Module:
     def builtinType(self, pointeeId):
         """The builtin's type with the integer sign normalized away.
 
-        glslang spells the vertex/instance index builtins as signed and dxc as unsigned
-        (SV_VertexID/SV_InstanceID are uint in HLSL while gl_VertexIndex/gl_InstanceIndex are
-        int in GLSL); SPIR-V fixes the width but not the sign, the host cannot see either, and
-        the DXIL path rejects the signed spelling outright. The comparison therefore keeps the
-        width and drops the sign, so a genuinely different width still shows up.
+        The vertex/instance index builtins are uint in HLSL; SPIR-V fixes the width but not the
+        sign, and the host cannot see either. The comparison therefore keeps the width and drops
+        the sign, so a genuinely different width still shows up.
         """
         description = self.describeType(pointeeId)
         if description.startswith("uint"):
@@ -550,9 +494,9 @@ class Module:
     def expandBlockBuiltins(self, blockVariableId, blockTypeId):
         """{property name: type} for the builtin members of a block the module accesses.
 
-        The per-vertex block of a GLSL vertex shader declares Position, PointSize,
-        ClipDistance and CullDistance; only the members the shader touches are compared, so a
-        port that writes just the position is not asked to declare the rest.
+        The per-vertex block of a vertex shader declares Position, PointSize, ClipDistance and
+        CullDistance; only the members the shader touches are compared, so the property list
+        does not ask for the rest.
         """
         accessed = set()
         for instruction in self.instructions:
@@ -592,9 +536,8 @@ class Module:
             properties[key] = value
 
         # The capabilities and extensions the module declares. They are compared like any other
-        # property, so the allow-list and the [MISMATCH] report cover them too. A capability is
-        # named in the property path ("capability RayQueryKHR"), which is what a validator error
-        # or an allow-list line refers to.
+        # property, so the [MISMATCH] report names them. A capability appears in the property
+        # path ("capability RayQueryKHR"), which is what a validator error refers to.
         for capability in self.capabilities:
             properties["capability " + capability] = "declared"
         for extension in self.extensions:
@@ -605,32 +548,19 @@ class Module:
         return properties
 
 
-def compileShader(sourcePath, outputPath, isHLSL):
-    if isHLSL:
-        profile = getHLSLProfile(sourcePath)
+def compileShader(sourcePath, outputPath):
+    profile = getHLSLProfile(sourcePath)
 
-        if profile is None:
-            return False, sourcePath + " does not name a known shader stage"
+    if profile is None:
+        return False, sourcePath + " does not name a known shader stage"
 
-        extensions = list(SPIRV_EXTENSIONS)
-        if sourceUsesRayQuery(sourcePath):
-            extensions.append(SPIRV_RAY_QUERY_EXTENSION)
+    extensions = list(SPIRV_EXTENSIONS)
+    if sourceUsesRayQuery(sourcePath):
+        extensions.append(SPIRV_RAY_QUERY_EXTENSION)
 
-        command = ["dxc", "-spirv", "-T", HLSL_PROFILES[profile], "-fspv-target-env=vulkan1.2"] + \
-            ["-fspv-extension=" + ext for ext in extensions] + \
-            getIncludeFoldersProcArg() + [sourcePath, "-Fo", outputPath]
-    else:
-        # -O on the golden side, so that both compilers are compared at their own full
-        # optimization: dxc optimizes by default and drops the resources of dead code, while
-        # plain glslc keeps them, which used to surface as a descriptor difference where only
-        # liveness differed (the RFL/Q2 raygen configurations were the first to show it).
-        #
-        # The two header subfolders are on the include path as they are in the host build
-        # (GenerateShaders.py adds every subfolder): CmPrepareFinal.comp includes the AMD
-        # header as a bare "ffx_a.h", which lives in LPM/ and CAS/. LPM first, the copy its
-        # ported twin names.
-        command = ["glslc", "-O", "--target-env=vulkan1.2"] + getIncludeFoldersProcArg() + \
-            [sourcePath, "-o", outputPath]
+    command = ["dxc", "-spirv", "-T", HLSL_PROFILES[profile], "-fspv-target-env=vulkan1.2"] + \
+        ["-fspv-extension=" + ext for ext in extensions] + \
+        getIncludeFoldersProcArg() + [sourcePath, "-Fo", outputPath]
 
     try:
         r = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -697,92 +627,235 @@ def disassemble(spvPath, txtPath):
     return True, None
 
 
-def compareProperties(name, glslProperties, hlslProperties, allowList):
-    """Returns (messages, mismatchCount). Ignored differences are reported as such."""
+def compareProperties(name, expectedProperties, actualProperties):
+    """Returns (messages, mismatchCount) for a recording against a fresh reflection."""
     messages = []
     mismatches = 0
     keys = []
+    expectedLabel = "recorded"
+    actualLabel = "current"
 
-    for key in glslProperties:
+    for key in expectedProperties:
         if key not in keys:
             keys.append(key)
-    for key in hlslProperties:
+    for key in actualProperties:
         if key not in keys:
             keys.append(key)
 
     for key in keys:
-        glslValue = glslProperties.get(key, None)
-        hlslValue = hlslProperties.get(key, None)
+        expectedValue = expectedProperties.get(key, None)
+        actualValue = actualProperties.get(key, None)
 
-        if glslValue == hlslValue:
-            continue
-
-        path = name + " " + key
-        allowed = None
-        for fragment, reason in allowList:
-            if fragment in path:
-                allowed = reason
-                break
-
-        if allowed is not None:
-            messages.append(TAB + "[allowed] " + key + " -- " + allowed)
+        if expectedValue == actualValue:
             continue
 
         mismatches += 1
         messages.append(TAB + "[MISMATCH] " + key)
 
-        glslText = "" if glslValue is None else str(glslValue)
-        hlslText = "" if hlslValue is None else str(hlslValue)
+        expectedText = "" if expectedValue is None else str(expectedValue)
+        actualText = "" if actualValue is None else str(actualValue)
 
-        if "\n" in glslText or "\n" in hlslText:
+        if "\n" in expectedText or "\n" in actualText:
             # A block mismatch is easier to read as a diff than as two full dumps.
-            diff = difflib.unified_diff(glslText.split("\n"), hlslText.split("\n"),
-                "GLSL", "HLSL", n=1, lineterm="")
+            diff = difflib.unified_diff(expectedText.split("\n"), actualText.split("\n"),
+                expectedLabel, actualLabel, n=1, lineterm="")
             for line in diff:
                 messages.append(TAB + TAB + line)
         else:
-            messages.append(TAB + TAB + "GLSL: " + glslText)
-            messages.append(TAB + TAB + "HLSL: " + hlslText)
+            messages.append(TAB + TAB + expectedLabel + ": " + expectedText)
+            messages.append(TAB + TAB + actualLabel + ": " + actualText)
 
     return messages, mismatches
 
 
-def checkPair(name, allowList):
-    # A probe carries its folder in the name, its GLSL original does not.
-    baseName = os.path.basename(name)
-    glslPath = GLSL_FOLDER_PATH + baseName
-    hlslPath = name + HLSL_SUFFIX
+def getToolVersion(tool):
+    output, error = findTool(tool, ["--version"])
+    if output is None:
+        return "unknown"
+    lines = output.splitlines()
+    return lines[0].strip() if lines else "unknown"
 
-    if not os.path.isfile(glslPath):
-        return 0, [TAB + "skipped: " + glslPath + " does not exist"], True
 
-    glslSpvPath = TEMP_FOLDER_PATH + baseName + ".glsl.spv"
+def getToolchainVersion():
+    return "dxc " + getToolVersion("dxc") + "; spirv-dis " + getToolVersion("spirv-dis")
+
+
+def getReflectionPath(pair):
+    pair = pair.replace("\\", "/")
+    if pair.startswith("./"):
+        pair = pair[2:]
+    return REFLECTION_FOLDER_PATH + pair + REFLECTION_SUFFIX
+
+
+def serializeReflection(properties, toolchain):
+    lines = ["# Format: " + str(REFLECTION_FORMAT), "# Toolchain: " + toolchain]
+
+    for key in sorted(properties):
+        lines.append("=== " + key)
+        value = str(properties[key])
+        if len(value) > 0:
+            lines += value.split("\n")
+
+    return "\n".join(lines) + "\n"
+
+
+def parseReflection(text):
+    properties = {}
+    currentKey = None
+    currentLines = []
+    formatVersion = None
+
+    for line in text.splitlines():
+        if line.startswith("# "):
+            if currentKey is not None:
+                properties[currentKey] = "\n".join(currentLines)
+                currentKey = None
+                currentLines = []
+            match = re.match(r"# Format: (\d+)$", line)
+            if match:
+                formatVersion = int(match.group(1))
+            continue
+
+        if line.startswith("=== "):
+            if currentKey is not None:
+                properties[currentKey] = "\n".join(currentLines)
+            currentKey = line[4:]
+            currentLines = []
+            if len(currentKey) == 0 or currentKey in properties:
+                return None, "empty or duplicate key"
+            continue
+
+        if currentKey is None:
+            return None, "value line outside a key"
+
+        currentLines.append(line)
+
+    if currentKey is not None:
+        properties[currentKey] = "\n".join(currentLines)
+
+    if formatVersion is None:
+        return None, "the # Format header is missing"
+    if formatVersion != REFLECTION_FORMAT:
+        return None, "format " + str(formatVersion) + " is not supported"
+
+    return properties, None
+
+
+def reflectHLSL(pair):
+    baseName = os.path.basename(pair)
+    hlslPath = pair + HLSL_SUFFIX
     hlslSpvPath = TEMP_FOLDER_PATH + baseName + ".hlsl.spv"
 
-    success, compilerOutput = compileShader(glslPath, glslSpvPath, isHLSL=False)
+    success, compilerOutput = compileShader(hlslPath, hlslSpvPath)
     if not success:
-        return 1, [TAB + "glslc failed", compilerOutput], False
+        return None, [TAB + "dxc failed", compilerOutput]
 
-    success, compilerOutput = compileShader(hlslPath, hlslSpvPath, isHLSL=True)
-    if not success:
-        return 1, [TAB + "dxc failed", compilerOutput], False
-
-    glslTxtPath = TEMP_FOLDER_PATH + baseName + ".glsl.spv.txt"
     hlslTxtPath = TEMP_FOLDER_PATH + baseName + ".hlsl.spv.txt"
 
-    for spvPath, txtPath in [(glslSpvPath, glslTxtPath), (hlslSpvPath, hlslTxtPath)]:
-        if not disassemble(spvPath, txtPath)[0]:
-            return 1, [TAB + "spirv-dis failed"], False
+    if not disassemble(hlslSpvPath, hlslTxtPath)[0]:
+        return None, [TAB + "spirv-dis failed"]
 
-    with open(glslTxtPath, "r", encoding="utf-8") as f:
-        glslModule = Module(f.read(), transposeMatrices=True)
     with open(hlslTxtPath, "r", encoding="utf-8") as f:
         hlslModule = Module(f.read())
 
-    messages, mismatches = compareProperties(name, glslModule.getPropertySet(),
-        hlslModule.getPropertySet(), allowList)
+    return hlslModule.getPropertySet(), None
 
-    return mismatches, messages, False
+
+def checkRecording(pair):
+    reflectionPath = getReflectionPath(pair)
+
+    if not os.path.isfile(reflectionPath):
+        return 1, [TAB + "no recording: " + reflectionPath,
+                   TAB + "run CheckShaderProperties.py --record to create it"]
+
+    with open(reflectionPath, "r", encoding="utf-8-sig") as f:
+        recordedProperties, parseError = parseReflection(f.read())
+    if parseError is not None:
+        return 1, [TAB + "malformed recording " + reflectionPath + ": " + parseError]
+
+    hlslProperties, messages = reflectHLSL(pair)
+    if hlslProperties is None:
+        return 1, messages
+
+    messages, mismatches = compareProperties(pair, recordedProperties, hlslProperties)
+    return mismatches, messages
+
+
+def recordPairs(pairs, force):
+    propertiesByPair = {}
+    failed = 0
+
+    for pair in pairs:
+        print("=== " + pair)
+        hlslProperties, messages = reflectHLSL(pair)
+        if hlslProperties is None:
+            for message in messages:
+                print(message)
+            failed += 1
+            continue
+        propertiesByPair[pair] = hlslProperties
+
+    if failed > 0:
+        print("")
+        print("> " + str(failed) + " pair(s) failed to compile or disassemble; no recording")
+        print("> was written. Fix the HLSL first.")
+        return 1
+
+    toolchain = getToolchainVersion()
+    written = 0
+    unchanged = 0
+    skipped = 0
+
+    for pair in pairs:
+        hlslProperties = propertiesByPair[pair]
+        reflectionPath = getReflectionPath(pair)
+
+        if os.path.isfile(reflectionPath):
+            with open(reflectionPath, "r", encoding="utf-8-sig") as f:
+                recordedProperties, parseError = parseReflection(f.read())
+
+            if parseError is None and recordedProperties == hlslProperties:
+                unchanged += 1
+                continue
+
+            if not force:
+                skipped += 1
+                if parseError is not None:
+                    print(TAB + "malformed recording " + reflectionPath + ": " + parseError)
+                    print(TAB + "rerun with --force to replace it")
+                else:
+                    print(TAB + "recording differs: " + reflectionPath)
+                    messages, mismatches = compareProperties(pair, recordedProperties,
+                        hlslProperties)
+                    for message in messages:
+                        print(message)
+                    print(TAB + str(mismatches) +
+                        " recorded propertie(s) differ; rerun with --force to replace it")
+                continue
+
+        folder = os.path.dirname(reflectionPath)
+        if folder and not os.path.isdir(folder):
+            os.makedirs(folder)
+        with open(reflectionPath, "w", encoding="utf-8", newline="\n") as f:
+            f.write(serializeReflection(hlslProperties, toolchain))
+        written += 1
+        print(TAB + "recorded " + reflectionPath)
+
+    print("")
+    print("> " + str(written) + " recording(s) written, " + str(unchanged) + " unchanged, " +
+          str(skipped) + " skipped.")
+    return 1 if skipped > 0 else 0
+
+
+def findOrphanRecordings(pairs):
+    recordings = []
+    for folder, _, entries in os.walk(REFLECTION_FOLDER_PATH):
+        for entry in entries:
+            if entry.endswith(REFLECTION_SUFFIX):
+                recordings.append(os.path.join(folder, entry).replace("\\", "/"))
+
+    expected = set(getReflectionPath(pair) for pair in pairs)
+    return sorted(recording for recording in recordings if recording not in expected)
 
 
 def resolveProbeName(name):
@@ -819,40 +892,59 @@ def main():
     if not os.path.isdir(TEMP_FOLDER_PATH):
         os.makedirs(TEMP_FOLDER_PATH)
 
+    flags = [a for a in sys.argv[1:] if a.startswith("-")]
+    unknown = [a for a in flags if a not in ["--record", "--force"]]
+    if len(unknown) > 0:
+        print("> Unknown option(s): " + " ".join(unknown))
+        print("> Usage: python CheckShaderProperties.py [--record [--force]] [shader ...]")
+        return 1
+
+    record = "--record" in flags
+    force = "--force" in flags
+
+    if force and not record:
+        print("> --force is only valid together with --record.")
+        return 1
+
     arguments = [a for a in sys.argv[1:] if not a.startswith("-")]
     pairs = getPairs(arguments)
+
+    if record:
+        if len(pairs) == 0:
+            print("> No HLSL shaders to record. Nothing to do.")
+            return 0
+        return recordPairs(pairs, force)
 
     if len(pairs) == 0:
         print("> No HLSL shaders to check. Nothing to do.")
         return 0
 
-    allowList = readAllowList()
-    mismatches = 0
-    skipped = 0
+    orphans = findOrphanRecordings(getPairs([]))
+    if len(orphans) > 0:
+        print("> " + str(len(orphans)) + " recording(s) do not correspond to a current shader pair:")
+        for orphan in orphans:
+            print(TAB + orphan)
+        print("> Delete them, or add the pair they record to the tree.")
+        return 1
+
+    failures = 0
 
     for pair in pairs:
         print("=== " + pair)
-        pairMismatches, messages, pairSkipped = checkPair(pair, allowList)
-        mismatches += pairMismatches
+        pairFailures, messages = checkRecording(pair)
+        failures += pairFailures
 
         for message in messages:
             print(message)
 
-        if pairSkipped:
-            skipped += 1
-        elif pairMismatches == 0:
+        if pairFailures == 0:
             print(TAB + "all properties match")
 
-    if mismatches > 0:
+    if failures > 0:
         print("")
-        print("> " + str(mismatches) + " propertie(s) do not match. Fix them in HLSL, or add a")
-        print("> justified line to " + ALLOW_LIST_FILE_NAME + ".")
+        print("> " + str(failures) + " failure(s) against the recorded reflections.")
+        print("> Fix them in HLSL, or run --record --force if the change is deliberate.")
         return 1
-
-    if skipped > 0:
-        print("")
-        print("> " + str(skipped) + " pair(s) were skipped: nothing was checked for them. A pair")
-        print("> is named after its HLSL file, e.g. ShaderCommon.probe.comp or EfWaves.comp.")
 
     return 0
 
