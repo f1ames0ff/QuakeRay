@@ -1,0 +1,38 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== block pushconstant
+
+[0] offset 0 float32
+[1] offset 4 uint32
+[2] offset 8 float32
+[3] offset 12 float32
+=== builtin GlobalInvocationId
+v3(int32)
+=== capability ImageQuery
+declared
+=== capability Shader
+declared
+=== descriptor set 0 binding 0
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 0: storage class
+UniformConstant
+=== descriptor set 0 binding 1
+sampler
+=== descriptor set 0 binding 1: storage class
+UniformConstant
+=== descriptor set 1 binding 0
+image:2D:0:0:0:1:Unknown
+=== descriptor set 1 binding 0: storage class
+UniformConstant
+=== descriptor set 1 binding 1
+sampler
+=== descriptor set 1 binding 1: storage class
+UniformConstant
+=== descriptor set 3 binding 0
+image:2D:0:0:0:2:Rgba32f
+=== descriptor set 3 binding 0: storage class
+UniformConstant
+=== entry point
+GLCompute main
+=== workgroup size
+16 16 1

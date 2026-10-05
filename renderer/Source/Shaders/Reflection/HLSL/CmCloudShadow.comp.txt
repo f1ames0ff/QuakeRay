@@ -1,0 +1,28 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== block set 0 binding 1
+
+[0] offset 0 v4(float32)
+[1] offset 16 v4(float32)
+[2] offset 32 v4(float32)
+[3] offset 48 v4(float32)
+=== builtin GlobalInvocationId
+v3(int32)
+=== capability ImageQuery
+declared
+=== capability Shader
+declared
+=== capability StorageImageExtendedFormats
+declared
+=== descriptor set 0 binding 0
+image:3D:0:0:0:2:R16f
+=== descriptor set 0 binding 0: storage class
+UniformConstant
+=== descriptor set 0 binding 1
+struct
+=== descriptor set 0 binding 1: storage class
+Uniform
+=== entry point
+GLCompute main
+=== workgroup size
+16 16 1

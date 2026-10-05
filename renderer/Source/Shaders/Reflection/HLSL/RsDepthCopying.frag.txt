@@ -1,0 +1,17 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== builtin FragCoord
+v4(float32)
+=== builtin FragDepth
+float32
+=== capability Shader
+declared
+=== capability StorageImageExtendedFormats
+declared
+=== descriptor set 0 binding 136
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 136: storage class
+UniformConstant
+=== entry point
+Fragment main
+=== workgroup size

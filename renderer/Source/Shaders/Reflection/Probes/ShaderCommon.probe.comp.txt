@@ -1,0 +1,1766 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== block pushconstant
+
+[0] offset 0 uint32
+[1] offset 4 array[2](uint32) stride 4
+=== block set 1 binding 0
+
+[0] offset 0 m4(v4(float32)) matrixstride 16
+[1] offset 64 m4(v4(float32)) matrixstride 16
+[2] offset 128 m4(v4(float32)) matrixstride 16
+[3] offset 192 m4(v4(float32)) matrixstride 16
+[4] offset 256 m4(v4(float32)) matrixstride 16
+[5] offset 320 m4(v4(float32)) matrixstride 16
+[6] offset 384 m4(v4(float32)) matrixstride 16
+[7] offset 448 m4(v4(float32)) matrixstride 16
+[8] offset 512 m4(v4(float32)) matrixstride 16
+[9] offset 576 m4(v4(float32)) matrixstride 16
+[10] offset 640 float32
+[11] offset 644 float32
+[12] offset 648 uint32
+[13] offset 652 uint32
+[14] offset 656 float32
+[15] offset 660 uint32
+[16] offset 664 float32
+[17] offset 668 float32
+[18] offset 672 float32
+[19] offset 676 float32
+[20] offset 680 uint32
+[21] offset 684 uint32
+[22] offset 688 float32
+[23] offset 692 uint32
+[24] offset 696 float32
+[25] offset 700 uint32
+[26] offset 704 v4(float32)
+[27] offset 720 v4(float32)
+[28] offset 736 v4(float32)
+[29] offset 752 uint32
+[30] offset 756 uint32
+[31] offset 760 uint32
+[32] offset 764 uint32
+[33] offset 768 float32
+[34] offset 772 float32
+[35] offset 776 float32
+[36] offset 780 float32
+[37] offset 784 float32
+[38] offset 788 float32
+[39] offset 792 uint32
+[40] offset 796 float32
+[41] offset 800 float32
+[42] offset 804 float32
+[43] offset 808 float32
+[44] offset 812 uint32
+[45] offset 816 uint32
+[46] offset 820 uint32
+[47] offset 824 uint32
+[48] offset 828 uint32
+[49] offset 832 float32
+[50] offset 836 float32
+[51] offset 840 float32
+[52] offset 844 uint32
+[53] offset 848 uint32
+[54] offset 852 float32
+[55] offset 856 float32
+[56] offset 860 float32
+[57] offset 864 uint32
+[58] offset 868 float32
+[59] offset 872 uint32
+[60] offset 876 uint32
+[61] offset 880 uint32
+[62] offset 884 float32
+[63] offset 888 float32
+[64] offset 892 float32
+[65] offset 896 v4(float32)
+[66] offset 912 v4(float32)
+[67] offset 928 float32
+[68] offset 932 float32
+[69] offset 936 uint32
+[70] offset 940 float32
+[71] offset 944 v4(float32)
+[72] offset 960 float32
+[73] offset 964 float32
+[74] offset 968 float32
+[75] offset 972 float32
+[76] offset 976 uint32
+[77] offset 980 uint32
+[78] offset 984 uint32
+[79] offset 988 uint32
+[80] offset 992 uint32
+[81] offset 996 float32
+[82] offset 1000 float32
+[83] offset 1004 float32
+[84] offset 1008 float32
+[85] offset 1012 float32
+[86] offset 1016 float32
+[87] offset 1020 uint32
+[88] offset 1024 v4(float32)
+[89] offset 1040 v4(float32)
+[90] offset 1056 v4(float32)
+[91] offset 1072 float32
+[92] offset 1076 uint32
+[93] offset 1080 uint32
+[94] offset 1084 float32
+[95] offset 1088 uint32
+[96] offset 1092 uint32
+[97] offset 1096 uint32
+[98] offset 1100 float32
+[99] offset 1104 array[12](v4(int32)) stride 16
+[100] offset 1296 array[12](v4(int32)) stride 16
+[101] offset 1488 array[12](v4(int32)) stride 16
+[102] offset 1680 array[6](m4(v4(float32))) stride 64 matrixstride 16
+[103] offset 2064 m4(v4(float32)) matrixstride 16
+[104] offset 2128 array[8](v4(float32)) stride 16
+[105] offset 2256 array[8](uint32) stride 16
+[106] offset 2384 array[8](v4(float32)) stride 16
+[107] offset 2512 array[8](v4(float32)) stride 16
+[108] offset 2640 array[8](v4(float32)) stride 16
+[109] offset 2768 array[16](v4(float32)) stride 16
+[110] offset 3024 v4(float32)
+[111] offset 3040 v4(float32)
+[112] offset 3056 v4(float32)
+[113] offset 3072 v4(float32)
+[114] offset 3088 v4(float32)
+[115] offset 3104 v4(float32)
+[116] offset 3120 v4(uint32)
+[117] offset 3136 v4(float32)
+[118] offset 3152 v4(float32)
+=== block set 2 binding 0
+
+[0] offset 0 v4(float32)
+[1] offset 16 v4(float32)
+[2] offset 32 v2(float32)
+[3] offset 40 v2(float32)
+[4] offset 48 v2(float32)
+[5] offset 56 uint32
+[6] offset 60 uint32
+[7] offset 64 uint32
+[8] offset 68 uint32
+[9] offset 72 uint32
+[10] offset 76 uint32
+=== block set 2 binding 1
+
+[0] offset 0 m4(v4(float32)) matrixstride 16
+[1] offset 64 m4(v4(float32)) matrixstride 16
+[2] offset 128 array[3](v4(float32)) stride 16
+[3] offset 176 uint32
+[4] offset 180 uint32
+[5] offset 184 uint32
+[6] offset 188 uint32
+[7] offset 192 uint32
+[8] offset 196 uint32
+[9] offset 200 uint32
+[10] offset 204 uint32
+[11] offset 208 uint32
+[12] offset 212 uint32
+[13] offset 216 uint32
+[14] offset 220 uint32
+[15] offset 224 uint32
+[16] offset 228 uint32
+[17] offset 232 uint32
+[18] offset 236 uint32
+[19] offset 240 float32
+[20] offset 244 float32
+[21] offset 248 float32
+[22] offset 252 uint32
+=== block set 2 binding 2
+
+[0] offset 0 float32
+[1] offset 4 float32
+[2] offset 8 float32
+[3] offset 12 float32
+[4] offset 16 float32
+[5] offset 20 float32
+[6] offset 24 float32
+[7] offset 28 float32
+[8] offset 32 float32
+[9] offset 36 float32
+[10] offset 40 float32
+[11] offset 44 float32
+[12] offset 48 float32
+[13] offset 52 float32
+[14] offset 56 float32
+[15] offset 60 uint32
+[16] offset 64 float32
+[17] offset 68 float32
+[18] offset 72 float32
+[19] offset 76 array[128](uint32) stride 4
+[20] offset 588 array[128](float32) stride 4
+[21] offset 1100 array[128](float32) stride 4
+[22] offset 1612 float32
+[23] offset 1616 float32
+[24] offset 1620 uint32
+=== block set 2 binding 3
+
+[0] offset 0 v3(float32)
+[1] offset 12 uint32
+[2] offset 16 v4(float32)
+[3] offset 32 v4(float32)
+[4] offset 48 v4(float32)
+[5] offset 64 v4(float32)
+[6] offset 80 v4(float32)
+[7] offset 96 v4(float32)
+[8] offset 112 v4(float32)
+[9] offset 128 v4(float32)
+[10] offset 144 float32
+[11] offset 148 float32
+[12] offset 152 float32
+[13] offset 156 uint32
+=== block set 2 binding 4
+
+[0] offset 0 uint32
+[1] offset 4 uint32
+[2] offset 8 uint32
+[3] offset 12 int32
+[4] offset 16 uint32
+[5] offset 20 uint32
+[6] offset 24 uint32
+[7] offset 28 uint32
+=== block set 2 binding 5
+
+[0] offset 0 m4(v4(float32)) matrixstride 16
+[1] offset 64 uint32
+[2] offset 68 uint32
+[3] offset 72 uint32
+[4] offset 76 uint32
+=== block set 2 binding 7
+
+[0] offset 0 v4(float32)
+[1] offset 16 v4(float32)
+[2] offset 32 v4(float32)
+[3] offset 48 v4(float32)
+=== block set 2 binding 8
+
+[0] offset 0 array[](float32) stride 4
+=== capability Shader
+declared
+=== capability StorageImageExtendedFormats
+declared
+=== descriptor set 0 binding 0
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 0: storage class
+UniformConstant
+=== descriptor set 0 binding 1
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 10
+image:2D:0:0:0:2:R16f
+=== descriptor set 0 binding 100
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 100: storage class
+UniformConstant
+=== descriptor set 0 binding 101
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 101: storage class
+UniformConstant
+=== descriptor set 0 binding 102
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 102: storage class
+UniformConstant
+=== descriptor set 0 binding 103
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 103: storage class
+UniformConstant
+=== descriptor set 0 binding 104
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 104: storage class
+UniformConstant
+=== descriptor set 0 binding 105
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 105: storage class
+UniformConstant
+=== descriptor set 0 binding 106
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 106: storage class
+UniformConstant
+=== descriptor set 0 binding 107
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 107: storage class
+UniformConstant
+=== descriptor set 0 binding 108
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 108: storage class
+UniformConstant
+=== descriptor set 0 binding 109
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 109: storage class
+UniformConstant
+=== descriptor set 0 binding 10: storage class
+UniformConstant
+=== descriptor set 0 binding 11
+image:2D:0:0:0:2:R16f
+=== descriptor set 0 binding 110
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 110: storage class
+UniformConstant
+=== descriptor set 0 binding 111
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 111: storage class
+UniformConstant
+=== descriptor set 0 binding 112
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 112: storage class
+UniformConstant
+=== descriptor set 0 binding 113
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 113: storage class
+UniformConstant
+=== descriptor set 0 binding 114
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 114: storage class
+UniformConstant
+=== descriptor set 0 binding 115
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 115: storage class
+UniformConstant
+=== descriptor set 0 binding 116
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 116: storage class
+UniformConstant
+=== descriptor set 0 binding 117
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 117: storage class
+UniformConstant
+=== descriptor set 0 binding 118
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 118: storage class
+UniformConstant
+=== descriptor set 0 binding 119
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 119: storage class
+UniformConstant
+=== descriptor set 0 binding 11: storage class
+UniformConstant
+=== descriptor set 0 binding 12
+image:2D:0:0:0:2:R32f
+=== descriptor set 0 binding 120
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 120: storage class
+UniformConstant
+=== descriptor set 0 binding 121
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 121: storage class
+UniformConstant
+=== descriptor set 0 binding 122
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 122: storage class
+UniformConstant
+=== descriptor set 0 binding 123
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 123: storage class
+UniformConstant
+=== descriptor set 0 binding 124
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 124: storage class
+UniformConstant
+=== descriptor set 0 binding 125
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 125: storage class
+UniformConstant
+=== descriptor set 0 binding 126
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 126: storage class
+UniformConstant
+=== descriptor set 0 binding 127
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 127: storage class
+UniformConstant
+=== descriptor set 0 binding 128
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 128: storage class
+UniformConstant
+=== descriptor set 0 binding 129
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 129: storage class
+UniformConstant
+=== descriptor set 0 binding 12: storage class
+UniformConstant
+=== descriptor set 0 binding 13
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 130
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 130: storage class
+UniformConstant
+=== descriptor set 0 binding 131
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 131: storage class
+UniformConstant
+=== descriptor set 0 binding 132
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 132: storage class
+UniformConstant
+=== descriptor set 0 binding 133
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 133: storage class
+UniformConstant
+=== descriptor set 0 binding 134
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 134: storage class
+UniformConstant
+=== descriptor set 0 binding 135
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 135: storage class
+UniformConstant
+=== descriptor set 0 binding 136
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 136: storage class
+UniformConstant
+=== descriptor set 0 binding 137
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 137: storage class
+UniformConstant
+=== descriptor set 0 binding 138
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 138: storage class
+UniformConstant
+=== descriptor set 0 binding 139
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 139: storage class
+UniformConstant
+=== descriptor set 0 binding 13: storage class
+UniformConstant
+=== descriptor set 0 binding 14
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 140
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 140: storage class
+UniformConstant
+=== descriptor set 0 binding 141
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 141: storage class
+UniformConstant
+=== descriptor set 0 binding 142
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 142: storage class
+UniformConstant
+=== descriptor set 0 binding 143
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 143: storage class
+UniformConstant
+=== descriptor set 0 binding 144
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 144: storage class
+UniformConstant
+=== descriptor set 0 binding 145
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 145: storage class
+UniformConstant
+=== descriptor set 0 binding 146
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 146: storage class
+UniformConstant
+=== descriptor set 0 binding 147
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 147: storage class
+UniformConstant
+=== descriptor set 0 binding 148
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 148: storage class
+UniformConstant
+=== descriptor set 0 binding 149
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 149: storage class
+UniformConstant
+=== descriptor set 0 binding 14: storage class
+UniformConstant
+=== descriptor set 0 binding 15
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 150
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 150: storage class
+UniformConstant
+=== descriptor set 0 binding 151
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 151: storage class
+UniformConstant
+=== descriptor set 0 binding 152
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 152: storage class
+UniformConstant
+=== descriptor set 0 binding 153
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 153: storage class
+UniformConstant
+=== descriptor set 0 binding 154
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 154: storage class
+UniformConstant
+=== descriptor set 0 binding 155
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 155: storage class
+UniformConstant
+=== descriptor set 0 binding 156
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 156: storage class
+UniformConstant
+=== descriptor set 0 binding 157
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 157: storage class
+UniformConstant
+=== descriptor set 0 binding 158
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 158: storage class
+UniformConstant
+=== descriptor set 0 binding 159
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 159: storage class
+UniformConstant
+=== descriptor set 0 binding 15: storage class
+UniformConstant
+=== descriptor set 0 binding 16
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 160
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 160: storage class
+UniformConstant
+=== descriptor set 0 binding 161
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 161: storage class
+UniformConstant
+=== descriptor set 0 binding 162
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 162: storage class
+UniformConstant
+=== descriptor set 0 binding 163
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 163: storage class
+UniformConstant
+=== descriptor set 0 binding 164
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 164: storage class
+UniformConstant
+=== descriptor set 0 binding 165
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 165: storage class
+UniformConstant
+=== descriptor set 0 binding 166
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 166: storage class
+UniformConstant
+=== descriptor set 0 binding 167
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 167: storage class
+UniformConstant
+=== descriptor set 0 binding 168
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 168: storage class
+UniformConstant
+=== descriptor set 0 binding 169
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 169: storage class
+UniformConstant
+=== descriptor set 0 binding 16: storage class
+UniformConstant
+=== descriptor set 0 binding 17
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 170
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 170: storage class
+UniformConstant
+=== descriptor set 0 binding 171
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 171: storage class
+UniformConstant
+=== descriptor set 0 binding 172
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 172: storage class
+UniformConstant
+=== descriptor set 0 binding 173
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 173: storage class
+UniformConstant
+=== descriptor set 0 binding 174
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 174: storage class
+UniformConstant
+=== descriptor set 0 binding 175
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 175: storage class
+UniformConstant
+=== descriptor set 0 binding 176
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 176: storage class
+UniformConstant
+=== descriptor set 0 binding 177
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 177: storage class
+UniformConstant
+=== descriptor set 0 binding 178
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 178: storage class
+UniformConstant
+=== descriptor set 0 binding 179
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 179: storage class
+UniformConstant
+=== descriptor set 0 binding 17: storage class
+UniformConstant
+=== descriptor set 0 binding 18
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 180
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 180: storage class
+UniformConstant
+=== descriptor set 0 binding 181
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 181: storage class
+UniformConstant
+=== descriptor set 0 binding 182
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 182: storage class
+UniformConstant
+=== descriptor set 0 binding 183
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 183: storage class
+UniformConstant
+=== descriptor set 0 binding 184
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 184: storage class
+UniformConstant
+=== descriptor set 0 binding 185
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 185: storage class
+UniformConstant
+=== descriptor set 0 binding 186
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 186: storage class
+UniformConstant
+=== descriptor set 0 binding 187
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 187: storage class
+UniformConstant
+=== descriptor set 0 binding 188
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 188: storage class
+UniformConstant
+=== descriptor set 0 binding 189
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 189: storage class
+UniformConstant
+=== descriptor set 0 binding 18: storage class
+UniformConstant
+=== descriptor set 0 binding 19
+image:2D:0:0:0:2:Rgba32f
+=== descriptor set 0 binding 190
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 190: storage class
+UniformConstant
+=== descriptor set 0 binding 191
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 191: storage class
+UniformConstant
+=== descriptor set 0 binding 192
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 192: storage class
+UniformConstant
+=== descriptor set 0 binding 193
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 193: storage class
+UniformConstant
+=== descriptor set 0 binding 194
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 194: storage class
+UniformConstant
+=== descriptor set 0 binding 195
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 195: storage class
+UniformConstant
+=== descriptor set 0 binding 196
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 196: storage class
+UniformConstant
+=== descriptor set 0 binding 197
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 197: storage class
+UniformConstant
+=== descriptor set 0 binding 198
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 198: storage class
+UniformConstant
+=== descriptor set 0 binding 199
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 199: storage class
+UniformConstant
+=== descriptor set 0 binding 19: storage class
+UniformConstant
+=== descriptor set 0 binding 1: storage class
+UniformConstant
+=== descriptor set 0 binding 2
+image:2D:0:0:0:2:R8ui
+=== descriptor set 0 binding 20
+image:2D:0:0:0:2:Rgba32f
+=== descriptor set 0 binding 200
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 200: storage class
+UniformConstant
+=== descriptor set 0 binding 201
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 201: storage class
+UniformConstant
+=== descriptor set 0 binding 202
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 202: storage class
+UniformConstant
+=== descriptor set 0 binding 203
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 203: storage class
+UniformConstant
+=== descriptor set 0 binding 204
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 204: storage class
+UniformConstant
+=== descriptor set 0 binding 205
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 205: storage class
+UniformConstant
+=== descriptor set 0 binding 206
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 206: storage class
+UniformConstant
+=== descriptor set 0 binding 207
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 207: storage class
+UniformConstant
+=== descriptor set 0 binding 208
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 208: storage class
+UniformConstant
+=== descriptor set 0 binding 209
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 209: storage class
+UniformConstant
+=== descriptor set 0 binding 20: storage class
+UniformConstant
+=== descriptor set 0 binding 21
+image:2D:0:0:0:2:Rgba32f
+=== descriptor set 0 binding 210
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 210: storage class
+UniformConstant
+=== descriptor set 0 binding 211
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 211: storage class
+UniformConstant
+=== descriptor set 0 binding 212
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 212: storage class
+UniformConstant
+=== descriptor set 0 binding 213
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 213: storage class
+UniformConstant
+=== descriptor set 0 binding 214
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 214: storage class
+UniformConstant
+=== descriptor set 0 binding 215
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 215: storage class
+UniformConstant
+=== descriptor set 0 binding 216
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 216: storage class
+UniformConstant
+=== descriptor set 0 binding 217
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 217: storage class
+UniformConstant
+=== descriptor set 0 binding 218
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 218: storage class
+UniformConstant
+=== descriptor set 0 binding 219
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 219: storage class
+UniformConstant
+=== descriptor set 0 binding 21: storage class
+UniformConstant
+=== descriptor set 0 binding 22
+image:2D:0:0:0:2:Rgba32f
+=== descriptor set 0 binding 220
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 220: storage class
+UniformConstant
+=== descriptor set 0 binding 221
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 221: storage class
+UniformConstant
+=== descriptor set 0 binding 222
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 222: storage class
+UniformConstant
+=== descriptor set 0 binding 223
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 223: storage class
+UniformConstant
+=== descriptor set 0 binding 224
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 224: storage class
+UniformConstant
+=== descriptor set 0 binding 225
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 225: storage class
+UniformConstant
+=== descriptor set 0 binding 226
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 226: storage class
+UniformConstant
+=== descriptor set 0 binding 227
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 227: storage class
+UniformConstant
+=== descriptor set 0 binding 228
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 228: storage class
+UniformConstant
+=== descriptor set 0 binding 229
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 229: storage class
+UniformConstant
+=== descriptor set 0 binding 22: storage class
+UniformConstant
+=== descriptor set 0 binding 23
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 230
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 230: storage class
+UniformConstant
+=== descriptor set 0 binding 231
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 231: storage class
+UniformConstant
+=== descriptor set 0 binding 232
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 232: storage class
+UniformConstant
+=== descriptor set 0 binding 233
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 233: storage class
+UniformConstant
+=== descriptor set 0 binding 234
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 234: storage class
+UniformConstant
+=== descriptor set 0 binding 235
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 235: storage class
+UniformConstant
+=== descriptor set 0 binding 236
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 236: storage class
+UniformConstant
+=== descriptor set 0 binding 237
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 237: storage class
+UniformConstant
+=== descriptor set 0 binding 238
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 238: storage class
+UniformConstant
+=== descriptor set 0 binding 239
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 239: storage class
+UniformConstant
+=== descriptor set 0 binding 23: storage class
+UniformConstant
+=== descriptor set 0 binding 24
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 240
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 240: storage class
+UniformConstant
+=== descriptor set 0 binding 241
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 241: storage class
+UniformConstant
+=== descriptor set 0 binding 242
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 242: storage class
+UniformConstant
+=== descriptor set 0 binding 243
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 243: storage class
+UniformConstant
+=== descriptor set 0 binding 244
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 244: storage class
+UniformConstant
+=== descriptor set 0 binding 245
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 245: storage class
+UniformConstant
+=== descriptor set 0 binding 246
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 246: storage class
+UniformConstant
+=== descriptor set 0 binding 247
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 247: storage class
+UniformConstant
+=== descriptor set 0 binding 248
+sampler
+=== descriptor set 0 binding 248: storage class
+UniformConstant
+=== descriptor set 0 binding 249
+sampler
+=== descriptor set 0 binding 249: storage class
+UniformConstant
+=== descriptor set 0 binding 24: storage class
+UniformConstant
+=== descriptor set 0 binding 25
+image:2D:0:0:0:2:Rgba32ui
+=== descriptor set 0 binding 250
+sampler
+=== descriptor set 0 binding 250: storage class
+UniformConstant
+=== descriptor set 0 binding 251
+sampler
+=== descriptor set 0 binding 251: storage class
+UniformConstant
+=== descriptor set 0 binding 252
+sampler
+=== descriptor set 0 binding 252: storage class
+UniformConstant
+=== descriptor set 0 binding 253
+sampler
+=== descriptor set 0 binding 253: storage class
+UniformConstant
+=== descriptor set 0 binding 254
+sampler
+=== descriptor set 0 binding 254: storage class
+UniformConstant
+=== descriptor set 0 binding 255
+sampler
+=== descriptor set 0 binding 255: storage class
+UniformConstant
+=== descriptor set 0 binding 256
+sampler
+=== descriptor set 0 binding 256: storage class
+UniformConstant
+=== descriptor set 0 binding 257
+sampler
+=== descriptor set 0 binding 257: storage class
+UniformConstant
+=== descriptor set 0 binding 258
+sampler
+=== descriptor set 0 binding 258: storage class
+UniformConstant
+=== descriptor set 0 binding 259
+sampler
+=== descriptor set 0 binding 259: storage class
+UniformConstant
+=== descriptor set 0 binding 25: storage class
+UniformConstant
+=== descriptor set 0 binding 26
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 260
+sampler
+=== descriptor set 0 binding 260: storage class
+UniformConstant
+=== descriptor set 0 binding 261
+sampler
+=== descriptor set 0 binding 261: storage class
+UniformConstant
+=== descriptor set 0 binding 262
+sampler
+=== descriptor set 0 binding 262: storage class
+UniformConstant
+=== descriptor set 0 binding 263
+sampler
+=== descriptor set 0 binding 263: storage class
+UniformConstant
+=== descriptor set 0 binding 264
+sampler
+=== descriptor set 0 binding 264: storage class
+UniformConstant
+=== descriptor set 0 binding 265
+sampler
+=== descriptor set 0 binding 265: storage class
+UniformConstant
+=== descriptor set 0 binding 266
+sampler
+=== descriptor set 0 binding 266: storage class
+UniformConstant
+=== descriptor set 0 binding 267
+sampler
+=== descriptor set 0 binding 267: storage class
+UniformConstant
+=== descriptor set 0 binding 268
+sampler
+=== descriptor set 0 binding 268: storage class
+UniformConstant
+=== descriptor set 0 binding 269
+sampler
+=== descriptor set 0 binding 269: storage class
+UniformConstant
+=== descriptor set 0 binding 26: storage class
+UniformConstant
+=== descriptor set 0 binding 27
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 270
+sampler
+=== descriptor set 0 binding 270: storage class
+UniformConstant
+=== descriptor set 0 binding 271
+sampler
+=== descriptor set 0 binding 271: storage class
+UniformConstant
+=== descriptor set 0 binding 272
+sampler
+=== descriptor set 0 binding 272: storage class
+UniformConstant
+=== descriptor set 0 binding 273
+sampler
+=== descriptor set 0 binding 273: storage class
+UniformConstant
+=== descriptor set 0 binding 274
+sampler
+=== descriptor set 0 binding 274: storage class
+UniformConstant
+=== descriptor set 0 binding 275
+sampler
+=== descriptor set 0 binding 275: storage class
+UniformConstant
+=== descriptor set 0 binding 276
+sampler
+=== descriptor set 0 binding 276: storage class
+UniformConstant
+=== descriptor set 0 binding 277
+sampler
+=== descriptor set 0 binding 277: storage class
+UniformConstant
+=== descriptor set 0 binding 278
+sampler
+=== descriptor set 0 binding 278: storage class
+UniformConstant
+=== descriptor set 0 binding 279
+sampler
+=== descriptor set 0 binding 279: storage class
+UniformConstant
+=== descriptor set 0 binding 27: storage class
+UniformConstant
+=== descriptor set 0 binding 28
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 280
+sampler
+=== descriptor set 0 binding 280: storage class
+UniformConstant
+=== descriptor set 0 binding 281
+sampler
+=== descriptor set 0 binding 281: storage class
+UniformConstant
+=== descriptor set 0 binding 282
+sampler
+=== descriptor set 0 binding 282: storage class
+UniformConstant
+=== descriptor set 0 binding 283
+sampler
+=== descriptor set 0 binding 283: storage class
+UniformConstant
+=== descriptor set 0 binding 284
+sampler
+=== descriptor set 0 binding 284: storage class
+UniformConstant
+=== descriptor set 0 binding 285
+sampler
+=== descriptor set 0 binding 285: storage class
+UniformConstant
+=== descriptor set 0 binding 286
+sampler
+=== descriptor set 0 binding 286: storage class
+UniformConstant
+=== descriptor set 0 binding 287
+sampler
+=== descriptor set 0 binding 287: storage class
+UniformConstant
+=== descriptor set 0 binding 288
+sampler
+=== descriptor set 0 binding 288: storage class
+UniformConstant
+=== descriptor set 0 binding 289
+sampler
+=== descriptor set 0 binding 289: storage class
+UniformConstant
+=== descriptor set 0 binding 28: storage class
+UniformConstant
+=== descriptor set 0 binding 29
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 290
+sampler
+=== descriptor set 0 binding 290: storage class
+UniformConstant
+=== descriptor set 0 binding 291
+sampler
+=== descriptor set 0 binding 291: storage class
+UniformConstant
+=== descriptor set 0 binding 292
+sampler
+=== descriptor set 0 binding 292: storage class
+UniformConstant
+=== descriptor set 0 binding 293
+sampler
+=== descriptor set 0 binding 293: storage class
+UniformConstant
+=== descriptor set 0 binding 294
+sampler
+=== descriptor set 0 binding 294: storage class
+UniformConstant
+=== descriptor set 0 binding 295
+sampler
+=== descriptor set 0 binding 295: storage class
+UniformConstant
+=== descriptor set 0 binding 296
+sampler
+=== descriptor set 0 binding 296: storage class
+UniformConstant
+=== descriptor set 0 binding 297
+sampler
+=== descriptor set 0 binding 297: storage class
+UniformConstant
+=== descriptor set 0 binding 298
+sampler
+=== descriptor set 0 binding 298: storage class
+UniformConstant
+=== descriptor set 0 binding 299
+sampler
+=== descriptor set 0 binding 299: storage class
+UniformConstant
+=== descriptor set 0 binding 29: storage class
+UniformConstant
+=== descriptor set 0 binding 2: storage class
+UniformConstant
+=== descriptor set 0 binding 3
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 30
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 300
+sampler
+=== descriptor set 0 binding 300: storage class
+UniformConstant
+=== descriptor set 0 binding 301
+sampler
+=== descriptor set 0 binding 301: storage class
+UniformConstant
+=== descriptor set 0 binding 302
+sampler
+=== descriptor set 0 binding 302: storage class
+UniformConstant
+=== descriptor set 0 binding 303
+sampler
+=== descriptor set 0 binding 303: storage class
+UniformConstant
+=== descriptor set 0 binding 304
+sampler
+=== descriptor set 0 binding 304: storage class
+UniformConstant
+=== descriptor set 0 binding 305
+sampler
+=== descriptor set 0 binding 305: storage class
+UniformConstant
+=== descriptor set 0 binding 306
+sampler
+=== descriptor set 0 binding 306: storage class
+UniformConstant
+=== descriptor set 0 binding 307
+sampler
+=== descriptor set 0 binding 307: storage class
+UniformConstant
+=== descriptor set 0 binding 308
+sampler
+=== descriptor set 0 binding 308: storage class
+UniformConstant
+=== descriptor set 0 binding 309
+sampler
+=== descriptor set 0 binding 309: storage class
+UniformConstant
+=== descriptor set 0 binding 30: storage class
+UniformConstant
+=== descriptor set 0 binding 31
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 310
+sampler
+=== descriptor set 0 binding 310: storage class
+UniformConstant
+=== descriptor set 0 binding 311
+sampler
+=== descriptor set 0 binding 311: storage class
+UniformConstant
+=== descriptor set 0 binding 312
+sampler
+=== descriptor set 0 binding 312: storage class
+UniformConstant
+=== descriptor set 0 binding 313
+sampler
+=== descriptor set 0 binding 313: storage class
+UniformConstant
+=== descriptor set 0 binding 314
+sampler
+=== descriptor set 0 binding 314: storage class
+UniformConstant
+=== descriptor set 0 binding 315
+sampler
+=== descriptor set 0 binding 315: storage class
+UniformConstant
+=== descriptor set 0 binding 316
+sampler
+=== descriptor set 0 binding 316: storage class
+UniformConstant
+=== descriptor set 0 binding 317
+sampler
+=== descriptor set 0 binding 317: storage class
+UniformConstant
+=== descriptor set 0 binding 318
+sampler
+=== descriptor set 0 binding 318: storage class
+UniformConstant
+=== descriptor set 0 binding 319
+sampler
+=== descriptor set 0 binding 319: storage class
+UniformConstant
+=== descriptor set 0 binding 31: storage class
+UniformConstant
+=== descriptor set 0 binding 32
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 320
+sampler
+=== descriptor set 0 binding 320: storage class
+UniformConstant
+=== descriptor set 0 binding 321
+sampler
+=== descriptor set 0 binding 321: storage class
+UniformConstant
+=== descriptor set 0 binding 322
+sampler
+=== descriptor set 0 binding 322: storage class
+UniformConstant
+=== descriptor set 0 binding 323
+sampler
+=== descriptor set 0 binding 323: storage class
+UniformConstant
+=== descriptor set 0 binding 324
+sampler
+=== descriptor set 0 binding 324: storage class
+UniformConstant
+=== descriptor set 0 binding 325
+sampler
+=== descriptor set 0 binding 325: storage class
+UniformConstant
+=== descriptor set 0 binding 326
+sampler
+=== descriptor set 0 binding 326: storage class
+UniformConstant
+=== descriptor set 0 binding 327
+sampler
+=== descriptor set 0 binding 327: storage class
+UniformConstant
+=== descriptor set 0 binding 328
+sampler
+=== descriptor set 0 binding 328: storage class
+UniformConstant
+=== descriptor set 0 binding 329
+sampler
+=== descriptor set 0 binding 329: storage class
+UniformConstant
+=== descriptor set 0 binding 32: storage class
+UniformConstant
+=== descriptor set 0 binding 33
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 330
+sampler
+=== descriptor set 0 binding 330: storage class
+UniformConstant
+=== descriptor set 0 binding 331
+sampler
+=== descriptor set 0 binding 331: storage class
+UniformConstant
+=== descriptor set 0 binding 332
+sampler
+=== descriptor set 0 binding 332: storage class
+UniformConstant
+=== descriptor set 0 binding 333
+sampler
+=== descriptor set 0 binding 333: storage class
+UniformConstant
+=== descriptor set 0 binding 334
+sampler
+=== descriptor set 0 binding 334: storage class
+UniformConstant
+=== descriptor set 0 binding 335
+sampler
+=== descriptor set 0 binding 335: storage class
+UniformConstant
+=== descriptor set 0 binding 336
+sampler
+=== descriptor set 0 binding 336: storage class
+UniformConstant
+=== descriptor set 0 binding 337
+sampler
+=== descriptor set 0 binding 337: storage class
+UniformConstant
+=== descriptor set 0 binding 338
+sampler
+=== descriptor set 0 binding 338: storage class
+UniformConstant
+=== descriptor set 0 binding 339
+sampler
+=== descriptor set 0 binding 339: storage class
+UniformConstant
+=== descriptor set 0 binding 33: storage class
+UniformConstant
+=== descriptor set 0 binding 34
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 340
+sampler
+=== descriptor set 0 binding 340: storage class
+UniformConstant
+=== descriptor set 0 binding 341
+sampler
+=== descriptor set 0 binding 341: storage class
+UniformConstant
+=== descriptor set 0 binding 342
+sampler
+=== descriptor set 0 binding 342: storage class
+UniformConstant
+=== descriptor set 0 binding 343
+sampler
+=== descriptor set 0 binding 343: storage class
+UniformConstant
+=== descriptor set 0 binding 344
+sampler
+=== descriptor set 0 binding 344: storage class
+UniformConstant
+=== descriptor set 0 binding 345
+sampler
+=== descriptor set 0 binding 345: storage class
+UniformConstant
+=== descriptor set 0 binding 346
+sampler
+=== descriptor set 0 binding 346: storage class
+UniformConstant
+=== descriptor set 0 binding 347
+sampler
+=== descriptor set 0 binding 347: storage class
+UniformConstant
+=== descriptor set 0 binding 348
+sampler
+=== descriptor set 0 binding 348: storage class
+UniformConstant
+=== descriptor set 0 binding 349
+sampler
+=== descriptor set 0 binding 349: storage class
+UniformConstant
+=== descriptor set 0 binding 34: storage class
+UniformConstant
+=== descriptor set 0 binding 35
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 350
+sampler
+=== descriptor set 0 binding 350: storage class
+UniformConstant
+=== descriptor set 0 binding 351
+sampler
+=== descriptor set 0 binding 351: storage class
+UniformConstant
+=== descriptor set 0 binding 352
+sampler
+=== descriptor set 0 binding 352: storage class
+UniformConstant
+=== descriptor set 0 binding 353
+sampler
+=== descriptor set 0 binding 353: storage class
+UniformConstant
+=== descriptor set 0 binding 354
+sampler
+=== descriptor set 0 binding 354: storage class
+UniformConstant
+=== descriptor set 0 binding 355
+sampler
+=== descriptor set 0 binding 355: storage class
+UniformConstant
+=== descriptor set 0 binding 356
+sampler
+=== descriptor set 0 binding 356: storage class
+UniformConstant
+=== descriptor set 0 binding 357
+sampler
+=== descriptor set 0 binding 357: storage class
+UniformConstant
+=== descriptor set 0 binding 358
+sampler
+=== descriptor set 0 binding 358: storage class
+UniformConstant
+=== descriptor set 0 binding 359
+sampler
+=== descriptor set 0 binding 359: storage class
+UniformConstant
+=== descriptor set 0 binding 35: storage class
+UniformConstant
+=== descriptor set 0 binding 36
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 360
+sampler
+=== descriptor set 0 binding 360: storage class
+UniformConstant
+=== descriptor set 0 binding 361
+sampler
+=== descriptor set 0 binding 361: storage class
+UniformConstant
+=== descriptor set 0 binding 362
+sampler
+=== descriptor set 0 binding 362: storage class
+UniformConstant
+=== descriptor set 0 binding 363
+sampler
+=== descriptor set 0 binding 363: storage class
+UniformConstant
+=== descriptor set 0 binding 364
+sampler
+=== descriptor set 0 binding 364: storage class
+UniformConstant
+=== descriptor set 0 binding 365
+sampler
+=== descriptor set 0 binding 365: storage class
+UniformConstant
+=== descriptor set 0 binding 366
+sampler
+=== descriptor set 0 binding 366: storage class
+UniformConstant
+=== descriptor set 0 binding 367
+sampler
+=== descriptor set 0 binding 367: storage class
+UniformConstant
+=== descriptor set 0 binding 368
+sampler
+=== descriptor set 0 binding 368: storage class
+UniformConstant
+=== descriptor set 0 binding 369
+sampler
+=== descriptor set 0 binding 369: storage class
+UniformConstant
+=== descriptor set 0 binding 36: storage class
+UniformConstant
+=== descriptor set 0 binding 37
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 370
+sampler
+=== descriptor set 0 binding 370: storage class
+UniformConstant
+=== descriptor set 0 binding 371
+sampler
+=== descriptor set 0 binding 371: storage class
+UniformConstant
+=== descriptor set 0 binding 37: storage class
+UniformConstant
+=== descriptor set 0 binding 38
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 38: storage class
+UniformConstant
+=== descriptor set 0 binding 39
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 39: storage class
+UniformConstant
+=== descriptor set 0 binding 3: storage class
+UniformConstant
+=== descriptor set 0 binding 4
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 40
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 40: storage class
+UniformConstant
+=== descriptor set 0 binding 41
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 41: storage class
+UniformConstant
+=== descriptor set 0 binding 42
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 42: storage class
+UniformConstant
+=== descriptor set 0 binding 43
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 43: storage class
+UniformConstant
+=== descriptor set 0 binding 44
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 44: storage class
+UniformConstant
+=== descriptor set 0 binding 45
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 45: storage class
+UniformConstant
+=== descriptor set 0 binding 46
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 46: storage class
+UniformConstant
+=== descriptor set 0 binding 47
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 47: storage class
+UniformConstant
+=== descriptor set 0 binding 48
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 48: storage class
+UniformConstant
+=== descriptor set 0 binding 49
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 49: storage class
+UniformConstant
+=== descriptor set 0 binding 4: storage class
+UniformConstant
+=== descriptor set 0 binding 5
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 50
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 50: storage class
+UniformConstant
+=== descriptor set 0 binding 51
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 51: storage class
+UniformConstant
+=== descriptor set 0 binding 52
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 52: storage class
+UniformConstant
+=== descriptor set 0 binding 53
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 53: storage class
+UniformConstant
+=== descriptor set 0 binding 54
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 54: storage class
+UniformConstant
+=== descriptor set 0 binding 55
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 55: storage class
+UniformConstant
+=== descriptor set 0 binding 56
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 56: storage class
+UniformConstant
+=== descriptor set 0 binding 57
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 57: storage class
+UniformConstant
+=== descriptor set 0 binding 58
+image:2D:0:0:0:2:R16f
+=== descriptor set 0 binding 58: storage class
+UniformConstant
+=== descriptor set 0 binding 59
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 59: storage class
+UniformConstant
+=== descriptor set 0 binding 5: storage class
+UniformConstant
+=== descriptor set 0 binding 6
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 60
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 60: storage class
+UniformConstant
+=== descriptor set 0 binding 61
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 61: storage class
+UniformConstant
+=== descriptor set 0 binding 62
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 62: storage class
+UniformConstant
+=== descriptor set 0 binding 63
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 63: storage class
+UniformConstant
+=== descriptor set 0 binding 64
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 64: storage class
+UniformConstant
+=== descriptor set 0 binding 65
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 65: storage class
+UniformConstant
+=== descriptor set 0 binding 66
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 66: storage class
+UniformConstant
+=== descriptor set 0 binding 67
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 67: storage class
+UniformConstant
+=== descriptor set 0 binding 68
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 68: storage class
+UniformConstant
+=== descriptor set 0 binding 69
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 69: storage class
+UniformConstant
+=== descriptor set 0 binding 6: storage class
+UniformConstant
+=== descriptor set 0 binding 7
+image:2D:0:0:0:2:Rg8
+=== descriptor set 0 binding 70
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 70: storage class
+UniformConstant
+=== descriptor set 0 binding 71
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 71: storage class
+UniformConstant
+=== descriptor set 0 binding 72
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 72: storage class
+UniformConstant
+=== descriptor set 0 binding 73
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 73: storage class
+UniformConstant
+=== descriptor set 0 binding 74
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 74: storage class
+UniformConstant
+=== descriptor set 0 binding 75
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 75: storage class
+UniformConstant
+=== descriptor set 0 binding 76
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 76: storage class
+UniformConstant
+=== descriptor set 0 binding 77
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 77: storage class
+UniformConstant
+=== descriptor set 0 binding 78
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 78: storage class
+UniformConstant
+=== descriptor set 0 binding 79
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 79: storage class
+UniformConstant
+=== descriptor set 0 binding 7: storage class
+UniformConstant
+=== descriptor set 0 binding 8
+image:2D:0:0:0:2:Rg8
+=== descriptor set 0 binding 80
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 80: storage class
+UniformConstant
+=== descriptor set 0 binding 81
+image:2D:0:0:0:2:R32f
+=== descriptor set 0 binding 81: storage class
+UniformConstant
+=== descriptor set 0 binding 82
+image:2D:0:0:0:2:R32f
+=== descriptor set 0 binding 82: storage class
+UniformConstant
+=== descriptor set 0 binding 83
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 83: storage class
+UniformConstant
+=== descriptor set 0 binding 84
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 84: storage class
+UniformConstant
+=== descriptor set 0 binding 85
+image:2D:0:0:0:2:Rg8
+=== descriptor set 0 binding 85: storage class
+UniformConstant
+=== descriptor set 0 binding 86
+image:2D:0:0:0:2:Rg8
+=== descriptor set 0 binding 86: storage class
+UniformConstant
+=== descriptor set 0 binding 87
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 87: storage class
+UniformConstant
+=== descriptor set 0 binding 88
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 88: storage class
+UniformConstant
+=== descriptor set 0 binding 89
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 89: storage class
+UniformConstant
+=== descriptor set 0 binding 8: storage class
+UniformConstant
+=== descriptor set 0 binding 9
+image:2D:0:0:0:2:R16f
+=== descriptor set 0 binding 90
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 90: storage class
+UniformConstant
+=== descriptor set 0 binding 91
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 91: storage class
+UniformConstant
+=== descriptor set 0 binding 92
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 92: storage class
+UniformConstant
+=== descriptor set 0 binding 93
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 93: storage class
+UniformConstant
+=== descriptor set 0 binding 94
+image:2D:0:0:0:2:Rg16f
+=== descriptor set 0 binding 94: storage class
+UniformConstant
+=== descriptor set 0 binding 95
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 95: storage class
+UniformConstant
+=== descriptor set 0 binding 96
+image:2D:0:0:0:2:R32ui
+=== descriptor set 0 binding 96: storage class
+UniformConstant
+=== descriptor set 0 binding 97
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 97: storage class
+UniformConstant
+=== descriptor set 0 binding 98
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 98: storage class
+UniformConstant
+=== descriptor set 0 binding 99
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 99: storage class
+UniformConstant
+=== descriptor set 0 binding 9: storage class
+UniformConstant
+=== descriptor set 1 binding 0
+struct
+=== descriptor set 1 binding 0: storage class
+Uniform
+=== descriptor set 2 binding 0
+struct nonwritable
+=== descriptor set 2 binding 0: storage class
+StorageBuffer
+=== descriptor set 2 binding 1
+struct nonwritable
+=== descriptor set 2 binding 1: storage class
+StorageBuffer
+=== descriptor set 2 binding 2
+struct nonwritable
+=== descriptor set 2 binding 2: storage class
+StorageBuffer
+=== descriptor set 2 binding 3
+struct nonwritable
+=== descriptor set 2 binding 3: storage class
+StorageBuffer
+=== descriptor set 2 binding 4
+struct nonwritable
+=== descriptor set 2 binding 4: storage class
+StorageBuffer
+=== descriptor set 2 binding 5
+struct nonwritable
+=== descriptor set 2 binding 5: storage class
+StorageBuffer
+=== descriptor set 2 binding 7
+struct
+=== descriptor set 2 binding 7: storage class
+Uniform
+=== descriptor set 2 binding 8
+struct
+=== descriptor set 2 binding 8: storage class
+StorageBuffer
+=== entry point
+GLCompute main
+=== workgroup size
+1 1 1
