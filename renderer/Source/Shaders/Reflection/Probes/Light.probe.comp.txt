@@ -101,26 +101,28 @@
 [96] offset 1092 uint32
 [97] offset 1096 uint32
 [98] offset 1100 float32
-[99] offset 1104 array[12](v4(int32)) stride 16
-[100] offset 1296 array[12](v4(int32)) stride 16
-[101] offset 1488 array[12](v4(int32)) stride 16
-[102] offset 1680 array[6](m4(v4(float32))) stride 64 matrixstride 16
-[103] offset 2064 m4(v4(float32)) matrixstride 16
-[104] offset 2128 array[8](v4(float32)) stride 16
-[105] offset 2256 array[8](uint32) stride 16
-[106] offset 2384 array[8](v4(float32)) stride 16
-[107] offset 2512 array[8](v4(float32)) stride 16
-[108] offset 2640 array[8](v4(float32)) stride 16
-[109] offset 2768 array[16](v4(float32)) stride 16
-[110] offset 3024 v4(float32)
-[111] offset 3040 v4(float32)
-[112] offset 3056 v4(float32)
-[113] offset 3072 v4(float32)
-[114] offset 3088 v4(float32)
-[115] offset 3104 v4(float32)
-[116] offset 3120 v4(uint32)
-[117] offset 3136 v4(float32)
-[118] offset 3152 v4(float32)
+[99] offset 1104 array[15](v4(int32)) stride 16
+[100] offset 1344 array[15](v4(int32)) stride 16
+[101] offset 1584 array[15](v4(int32)) stride 16
+[102] offset 1824 array[6](m4(v4(float32))) stride 64 matrixstride 16
+[103] offset 2208 m4(v4(float32)) matrixstride 16
+[104] offset 2272 array[8](v4(float32)) stride 16
+[105] offset 2400 array[8](uint32) stride 16
+[106] offset 2528 array[8](v4(float32)) stride 16
+[107] offset 2656 array[8](v4(float32)) stride 16
+[108] offset 2784 array[8](v4(float32)) stride 16
+[109] offset 2912 array[16](v4(float32)) stride 16
+[110] offset 3168 v4(float32)
+[111] offset 3184 v4(float32)
+[112] offset 3200 v4(float32)
+[113] offset 3216 v4(float32)
+[114] offset 3232 v4(float32)
+[115] offset 3248 v4(float32)
+[116] offset 3264 v4(uint32)
+[117] offset 3280 v4(float32)
+[118] offset 3296 v4(float32)
+[119] offset 3312 uint32
+[120] offset 3316 uint32
 === block set 4 binding 0
 
 [0] offset 0 v3(float32)

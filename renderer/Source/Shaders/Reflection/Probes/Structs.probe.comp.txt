@@ -30,14 +30,25 @@
 [8] offset 64 uint32
 [9] offset 68 uint32
 [10] offset 72 uint32
+[11] offset 76 float32
+[12] offset 80 v2(float32)
 === block set 0 binding 2
 
 [0] offset 0 v2(float32)
 [1] offset 8 uint32
 [2] offset 12 uint32
+[3] offset 16 v3(float32)
+[4] offset 28 float32
+[5] offset 32 v4(float32)
 === block set 0 binding 3
 
-[0] offset 0 uint32
+[0] offset 0 v3(float32)
+[1] offset 12 uint32
+[2] offset 16 v3(float32)
+[3] offset 28 float32
+[4] offset 32 v4(float32)
+[5] offset 48 v3(float32)
+[6] offset 60 float32
 === block set 0 binding 4
 
 [0] offset 0 array[](float32) stride 4

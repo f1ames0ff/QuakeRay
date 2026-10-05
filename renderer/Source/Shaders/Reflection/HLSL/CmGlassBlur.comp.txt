@@ -3,8 +3,7 @@
 === block pushconstant
 
 [0] offset 0 uint32
-[1] offset 4 array[2](uint32) stride 4
-=== block set 0 binding 0
+=== block set 1 binding 0
 
 [0] offset 0 m4(v4(float32)) matrixstride 16
 [1] offset 64 m4(v4(float32)) matrixstride 16
@@ -127,96 +126,57 @@
 [118] offset 3296 v4(float32)
 [119] offset 3312 uint32
 [120] offset 3316 uint32
-=== block set 1 binding 0
-
-[0] offset 0 v4(float32)
-[1] offset 16 v4(float32)
-[2] offset 32 v2(float32)
-[3] offset 40 v2(float32)
-[4] offset 48 v2(float32)
-[5] offset 56 uint32
-[6] offset 60 uint32
-[7] offset 64 uint32
-[8] offset 68 uint32
-[9] offset 72 uint32
-[10] offset 76 uint32
-=== block set 1 binding 1
-
-[0] offset 0 v4(float32)
-[1] offset 16 v4(float32)
-[2] offset 32 v2(float32)
-[3] offset 40 v2(float32)
-[4] offset 48 v2(float32)
-[5] offset 56 uint32
-[6] offset 60 uint32
-[7] offset 64 uint32
-[8] offset 68 uint32
-[9] offset 72 uint32
-[10] offset 76 uint32
-=== block set 1 binding 2
-
-[0] offset 0 array[](uint32) stride 4
-=== block set 1 binding 3
-
-[0] offset 0 array[](uint32) stride 4
-=== block set 1 binding 4
-
-[0] offset 0 m4(v4(float32)) matrixstride 16
-[1] offset 64 m4(v4(float32)) matrixstride 16
-[2] offset 128 array[3](v4(float32)) stride 16
-[3] offset 176 uint32
-[4] offset 180 uint32
-[5] offset 184 uint32
-[6] offset 188 uint32
-[7] offset 192 uint32
-[8] offset 196 uint32
-[9] offset 200 uint32
-[10] offset 204 uint32
-[11] offset 208 uint32
-[12] offset 212 uint32
-[13] offset 216 uint32
-[14] offset 220 uint32
-[15] offset 224 uint32
-[16] offset 228 uint32
-[17] offset 232 uint32
-[18] offset 236 uint32
-[19] offset 240 float32
-[20] offset 244 float32
-[21] offset 248 float32
-[22] offset 252 uint32
-=== builtin LocalInvocationId
-v3(int32)
-=== builtin WorkgroupId
+=== builtin GlobalInvocationId
 v3(int32)
 === capability Shader
 declared
-=== constant_id 0
-uint32 = 0
-=== descriptor set 0 binding 0
-struct
-=== descriptor set 0 binding 0: storage class
-Uniform
+=== capability StorageImageExtendedFormats
+declared
+=== descriptor set 0 binding 128
+image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 128: storage class
+UniformConstant
+=== descriptor set 0 binding 135
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 135: storage class
+UniformConstant
+=== descriptor set 0 binding 211
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 211: storage class
+UniformConstant
+=== descriptor set 0 binding 254
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 254: storage class
+UniformConstant
+=== descriptor set 0 binding 255
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 255: storage class
+UniformConstant
+=== descriptor set 0 binding 256
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 256: storage class
+UniformConstant
+=== descriptor set 0 binding 257
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 257: storage class
+UniformConstant
+=== descriptor set 0 binding 259
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 259: storage class
+UniformConstant
+=== descriptor set 0 binding 27
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 27: storage class
+UniformConstant
+=== descriptor set 0 binding 65
+image:2D:0:0:0:2:R11fG11fB10f
+=== descriptor set 0 binding 65: storage class
+UniformConstant
 === descriptor set 1 binding 0
 struct
 === descriptor set 1 binding 0: storage class
-StorageBuffer
-=== descriptor set 1 binding 1
-struct
-=== descriptor set 1 binding 1: storage class
-StorageBuffer
-=== descriptor set 1 binding 2
-struct nonwritable
-=== descriptor set 1 binding 2: storage class
-StorageBuffer
-=== descriptor set 1 binding 3
-struct nonwritable
-=== descriptor set 1 binding 3: storage class
-StorageBuffer
-=== descriptor set 1 binding 4
-struct nonwritable
-=== descriptor set 1 binding 4: storage class
-StorageBuffer
+Uniform
 === entry point
 GLCompute main
 === workgroup size
-256 1 1
+16 16 1
