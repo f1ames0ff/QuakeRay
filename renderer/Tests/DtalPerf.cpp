@@ -333,6 +333,12 @@ int main(int argc, char **argv)
 
         for (const PerfCase &perfCase : kCases)
         {
+            float warmupChecksum = 0.0f;
+            RunCase(gpu, shader, perfCase, warmupChecksum);
+        }
+
+        for (const PerfCase &perfCase : kCases)
+        {
             float checksum = 0.0f;
             const double milliseconds = RunCase(gpu, shader, perfCase, checksum);
             Require(std::isfinite(checksum), "non-finite perf checksum");
