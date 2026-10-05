@@ -32,6 +32,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define DEFAULT_DENSITY 0.0
 #define DEFAULT_GRAY    0.3
 
+cvar_t fog_enabled = { "fog_enabled", "1", CVAR_ARCHIVE };
+
 float fog_density;
 float fog_red;
 float fog_green;
@@ -259,6 +261,11 @@ float Fog_GetDensity (void)
 		return fog_density;
 }
 
+qboolean Fog_Enabled (void)
+{
+	return fog_enabled.value > 0.5f;
+}
+
 /*
 =============
 Fog_SetupFrame
@@ -350,6 +357,8 @@ called when quake initializes
 void Fog_Init (void)
 {
 	// Cvar_RegisterVariable (&r_vfog);
+
+	Cvar_RegisterVariable (&fog_enabled);
 
 	// set up global fog
 	fog_density = DEFAULT_DENSITY;

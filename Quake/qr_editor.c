@@ -83,6 +83,7 @@ extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_s
 // 0 draws no fog.
 float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
+qboolean Fog_Enabled (void);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
 
 // ---------------------------------------------------------------------------
@@ -3894,6 +3895,9 @@ static const qre_global_t qre_globals[] = {
 	  "Brightness of the simple fog's color, which is the sky's flat color (mode 1)." },
 	{ NULL,  "rt_volume_far",                QRE_G_FLOAT, 0, 4000,
 	  "How far from the camera the volumetric volume reaches (mode 2)." },
+
+	{ "Fog", "fog_enabled",          QRE_G_BOOL,  0, 0,
+	  "Draw the level's fog; 0 keeps the density and the color below but renders no fog at all. The value is saved to the config and to the level's section of qray.lights.yaml." },
 };
 
 static char     qre_globals_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];
@@ -6170,6 +6174,7 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 	         (int)(CLAMP (0.0f, fog.color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
 	         (int)(CLAMP (0.0f, fog.color[2], 1.0f) * 255.0f + 0.5f) & 0xff);
 	fprintf (out, "    density: %.6g\n", fog.density);
+	fprintf (out, "    enabled: %s\n", Fog_Enabled () ? "true" : "false");
 
 	if (count > 0)
 	{

@@ -2754,7 +2754,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float level_fog_color[4];
 	Fog_GetColor (level_fog_color);
 
-	const qboolean level_fog_active = Fog_GetDensity () > 0;
+	const qboolean level_fog_active = Fog_Enabled () && Fog_GetDensity () > 0;
 
 	QrDrawFrameLevelFogParams level_fog_params = {
 		.color = RT_VEC3 (level_fog_color),
