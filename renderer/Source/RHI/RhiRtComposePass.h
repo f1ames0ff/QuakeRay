@@ -26,11 +26,13 @@
 
 #include "../Common.h"
 #include "../Generated/ShaderCommonCFramebuf.h"
+#include "../UserFunction.h"
 
 namespace qray
 {
 
 class Framebuffers;
+class RhiBloomPass;
 class Tonemapping;
 
 namespace rhi
@@ -108,9 +110,6 @@ class RhiFrameContext;
 //   CmLuminanceAvg        - no set 0; one 128x1x1 workgroup;
 //   CmCheckerboard        - 3 storage images (28 FINAL, 60 ACID_FOG, 62 SCREEN_EMISSION) and 4
 //                           sampled images (26, 27, 59, 61);
-//   CmPrepareFinal        - 5 storage images (16-18, 28, 65) and 11 sampled images (0, 3, 9, 13,
-//                           14, 15, 25, 26, 60, 62, 64) - 16 items after the A4.4 shader-side fix
-//                           of the 28/152 pair;
 //   CmQ2TAAU              - 2 storage images (29 UPSCALED_PING, 119 Q2_TAA_HISTORY), 3 sampled
 //                           images (28 FINAL, 31 MOTION_DLSS, 120 Q2_TAA_HISTORY_PREV) and the
 //                           game's sampler for 120 (raw 368); dispatch over the upscaled size.
@@ -239,6 +238,8 @@ public:
 
     bool IsCreated() const { return created; }
 
+    void SetBloomPass(RhiBloomPass *pBloom);
+
     // The pre-direct step of a denoised frame: the host calls it between
     // RhiRtPrimaryPass::Render and RhiRtDirectPass::Render, only when
     // `uniform->GetData()->fltEnable[0] >= 0.5f` (the legacy `Q2Denoiser::GradientReproject` gate,
@@ -311,6 +312,7 @@ public:
                 uint32_t upscaledHeight,
                 bool filterEnabled,
                 nvrhi::IBuffer *pUniformBuffer,
+                const QrDrawFramePostEffectsParams &postEffectParams,
                 const std::function<void(nvrhi::ICommandList *)> &pfnRasterOverlay = {});
 
     // The upscaler step: the host calls it after `Render` of the same frame slot and before the
@@ -390,8 +392,11 @@ private:
         nvrhi::BindingSetHandle interleaveSet;
         nvrhi::BindingSetHandle histogramSet;
         nvrhi::BindingSetHandle checkerboardSet;
+        nvrhi::BindingSetHandle prepareHdrSet;
         nvrhi::BindingSetHandle prepareFinalSet;
         nvrhi::BindingSetHandle taauSet;
+
+        nvrhi::ITexture *prepareFinalBloomTexture = nullptr;
 
         // Set 1: the engine's global uniform never changes, but it is an argument here, so the
         // set follows the pointer the way the other passes' uniform sets do.
@@ -437,6 +442,9 @@ private:
     // be filled - a table/image mismatch, which the module's static assertions make unreachable.
     bool PrepareFramebufferSets(Target &target);
 
+    bool PreparePrepareFinalSet(Target &target,
+                                nvrhi::ITexture *pBloomTexture);
+
     // Set 1 over the module's compute uniform layout, rebuilt when the pointer changed. Returns
     // false when the buffer is not the static constant-buffer wrap the shader's
     // `ConstantBuffer<ShGlobalUniform>` requires.
@@ -454,7 +462,8 @@ private:
                         uint32_t groupsX,
                         uint32_t groupsY,
                         uint32_t groupsZ,
-                        const uint32_t *pPushConstant = nullptr);
+                        const uint32_t *pPushConstant = nullptr,
+                        uint32_t pushConstantSize = sizeof(uint32_t));
 
     // Retires the slot's twelve framebuffer sets. Used by the framebuffer re-create path and by
     // ReleaseTargets.
@@ -468,6 +477,8 @@ private:
 
     // Not owned: the host's frame model, which outlives this object.
     rhi::RhiFrameContext *frameContext = nullptr;
+
+    RhiBloomPass *bloomPass = nullptr;
 
     // The thirteen engine blobs. Only `CmQ2Atrous` declares a specialization constant
     // (`SpecId 0`); its four iterations are the derived `atrousIterationShaders` below.
@@ -483,6 +494,7 @@ private:
     nvrhi::ShaderHandle histogramShader;
     nvrhi::ShaderHandle averageShader;
     nvrhi::ShaderHandle checkerboardShader;
+    nvrhi::ShaderHandle prepareHdrShader;
     nvrhi::ShaderHandle prepareFinalShader;
     nvrhi::ShaderHandle taauShader;
 
@@ -501,10 +513,12 @@ private:
     nvrhi::BindingLayoutHandle interleaveFramebufferLayout;
     nvrhi::BindingLayoutHandle histogramFramebufferLayout;
     nvrhi::BindingLayoutHandle checkerboardFramebufferLayout;
+    nvrhi::BindingLayoutHandle prepareHdrFramebufferLayout;
     nvrhi::BindingLayoutHandle prepareFinalFramebufferLayout;
     nvrhi::BindingLayoutHandle taauFramebufferLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle pushConstantLayout;
+    nvrhi::BindingLayoutHandle prepareFinalControlLayout;
     nvrhi::BindingLayoutHandle tonemappingUavLayout;
     nvrhi::BindingLayoutHandle tonemappingSrvLayout;
     nvrhi::BindingLayoutHandle emptyLayout;
@@ -525,6 +539,7 @@ private:
     nvrhi::ComputePipelineHandle histogramPipeline;
     nvrhi::ComputePipelineHandle averagePipeline;
     nvrhi::ComputePipelineHandle checkerboardPipeline;
+    nvrhi::ComputePipelineHandle prepareHdrPipeline;
     nvrhi::ComputePipelineHandle prepareFinalPipeline;
     nvrhi::ComputePipelineHandle taauPipeline;
 
@@ -535,6 +550,7 @@ private:
     nvrhi::BufferHandle tonemappingBuffers[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle tonemappingUavSets[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle tonemappingSrvSets[MAX_FRAMES_IN_FLIGHT];
+    uint32_t previousExposureSlot = MAX_FRAMES_IN_FLIGHT;
 
     // The module-owned stand-ins: the real empty set, the 1x1x1 RGBA16F volumetric dummy with its
     // sampler and set, and the nearest-filter sampler the TAAU binds for the history (the engine
@@ -546,6 +562,10 @@ private:
     nvrhi::BindingSetHandle emptySet;
     bool volumetricDummyCleared = false;
     nvrhi::SamplerHandle taauHistorySampler;
+
+    nvrhi::TextureHandle opticalDummyTexture;
+    nvrhi::SamplerHandle opticalDummySampler;
+    bool opticalDummyCleared = false;
 
     // One entry per engine frame slot (MAX_FRAMES_IN_FLIGHT, Common.h:31).
     Target targets[MAX_FRAMES_IN_FLIGHT];

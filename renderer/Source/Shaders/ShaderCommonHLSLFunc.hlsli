@@ -176,20 +176,6 @@ SamplerState g_illuminationVolume_Sampler;
 
 
 
-#ifdef DESC_SET_LENS_FLARES
-[[vk::binding(BINDING_LENS_FLARES_CULLING_INPUT, DESC_SET_LENS_FLARES)]]
-StructuredBuffer<ShIndirectDrawCommand> lensFlareCullingInput;
-
-struct LensFlareDrawCmds_BT
-{
-    ShIndirectDrawCommand lensFlareDrawCmds[LENS_FLARES_MAX_DRAW_CMD_COUNT];
-    uint lensFlareDrawCmdsCount;
-};
-
-[[vk::binding(BINDING_LENS_FLARES_DRAW_CMDS, DESC_SET_LENS_FLARES)]]
-RWStructuredBuffer<LensFlareDrawCmds_BT> lensFlareDrawCmds;
-#endif
-
 
 
 #ifdef DESC_SET_DECALS

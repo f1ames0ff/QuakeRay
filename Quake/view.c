@@ -75,6 +75,13 @@ cvar_t r_viewmodel_quake = {"r_viewmodel_quake", "1", CVAR_ARCHIVE};
 float v_dmg_time, v_dmg_roll, v_dmg_pitch;
 float rt_dmg_value;
 qboolean rt_dmg_inthisframe;
+float rt_ef_damage_pulse;
+float rt_ef_damage_peak;
+float rt_ef_damage_elapsed;
+float rt_ef_lowhealth_pulse;
+float rt_ef_liquid_pulse;
+float rt_ef_pickup_pulse;
+float rt_ef_suit_pulse;
 
 extern int in_forward, in_forward2, in_back;
 
@@ -281,6 +288,14 @@ void V_ParseDamage (void)
 	if (count < 10)
 		count = 10;
 
+	const float damage_amount = CLAMP (0.0f, count / 40.0f, 1.0f);
+	if (damage_amount > rt_ef_damage_pulse)
+	{
+		rt_ef_damage_pulse = damage_amount;
+		rt_ef_damage_peak = damage_amount;
+		rt_ef_damage_elapsed = 0.0f;
+	}
+
 	cl.faceanimtime = cl.time + 0.2; // but sbar face into pain frame
 
 	cl.cshifts[CSHIFT_DAMAGE].percent += 3 * count;
@@ -356,6 +371,7 @@ void V_BonusFlash_f (void)
 	cl.cshifts[CSHIFT_BONUS].destcolor[1] = 186;
 	cl.cshifts[CSHIFT_BONUS].destcolor[2] = 69;
 	cl.cshifts[CSHIFT_BONUS].percent = 50;
+	rt_ef_pickup_pulse = 1.0f;
 }
 
 /*
@@ -502,6 +518,33 @@ static void V_UpdateBlend (void)
 	cl.cshifts[CSHIFT_BONUS].percent -= host_frametime * 100;
 	if (cl.cshifts[CSHIFT_BONUS].percent <= 0)
 		cl.cshifts[CSHIFT_BONUS].percent = 0;
+
+	if (rt_ef_damage_peak > 0.0f)
+	{
+		const float t = CLAMP (0.0f, rt_ef_damage_elapsed / 0.25f, 1.0f);
+		rt_ef_damage_pulse = rt_ef_damage_peak * (1.0f - t) * (1.0f - t);
+
+		if (t >= 1.0f)
+		{
+			rt_ef_damage_pulse = 0.0f;
+			rt_ef_damage_peak = 0.0f;
+			rt_ef_damage_elapsed = 0.0f;
+		}
+
+		rt_ef_damage_elapsed += host_frametime;
+	}
+
+	const float lowhealth_target = (cl.stats[STAT_HEALTH] > 0 && cl.stats[STAT_HEALTH] < 25) ? 0.5f : 0.0f;
+	const float lowhealth_time = (lowhealth_target > rt_ef_lowhealth_pulse) ? 0.4f : 0.8f;
+	rt_ef_lowhealth_pulse += (lowhealth_target - rt_ef_lowhealth_pulse) * CLAMP (0.0f, host_frametime / lowhealth_time, 1.0f);
+
+	rt_ef_pickup_pulse -= host_frametime * 3.4f;
+	if (rt_ef_pickup_pulse <= 0)
+		rt_ef_pickup_pulse = 0;
+
+	const float suit_target = (cl.items & IT_SUIT) ? 1.0f : 0.0f;
+	const float suit_time = (suit_target > rt_ef_suit_pulse) ? 1.0f : 0.5f;
+	rt_ef_suit_pulse += (suit_target - rt_ef_suit_pulse) * CLAMP (0.0f, host_frametime / suit_time, 1.0f);
 
 	if (blend_changed)
 		V_CalcBlend ();

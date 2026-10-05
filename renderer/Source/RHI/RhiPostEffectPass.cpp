@@ -27,6 +27,7 @@
 #include "../Utils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <initializer_list>
 #include <string>
@@ -36,9 +37,6 @@ using namespace qray;
 namespace
 {
 
-// The ten engine blobs, by the file names ShaderManager loads them under (ShaderManager.cpp:87-96).
-// Each is the same module the legacy effect objects read through ShaderManager, so the RHI and the
-// legacy renderer dispatch byte-identical shaders.
 const char *const COLOR_TINT_SHADER_FILE_NAME = "EfColorTint.comp.spv";
 const char *const INVERSE_BW_SHADER_FILE_NAME = "EfInverseBW.comp.spv";
 const char *const HUE_SHIFT_SHADER_FILE_NAME = "EfHueShift.comp.spv";
@@ -49,6 +47,8 @@ const char *const RADIAL_BLUR_SHADER_FILE_NAME = "EfRadialBlur.comp.spv";
 const char *const WIPE_SHADER_FILE_NAME = "EfWipe.comp.spv";
 const char *const CRT_DEMODULATE_ENCODE_SHADER_FILE_NAME = "EfCrtDemodulateEncode.comp.spv";
 const char *const CRT_DECODE_SHADER_FILE_NAME = "EfCrtDecode.comp.spv";
+const char *const SHARPEN_SHADER_FILE_NAME = "EfSharpen.comp.spv";
+const char *const GAMEPLAY_FEEDBACK_SHADER_FILE_NAME = "EfGameplayFeedback.comp.spv";
 
 // `[numthreads(COMPUTE_EFFECT_GROUP_SIZE_X, COMPUTE_EFFECT_GROUP_SIZE_Y, 1)]` in every blob (the
 // header of EfSimple.inl:25); the legacy host dispatches with `Utils::GetWorkGroupCount(size, 16)`
@@ -136,6 +136,57 @@ struct EffectChromaticAberrationPush
 };
 static_assert(sizeof(EffectChromaticAberrationPush) == 16);
 static_assert(offsetof(EffectChromaticAberrationPush, intensity) == 12);
+
+struct EffectSharpenPush
+{
+    EffectTransitionPush transition;
+    float strength;
+};
+static_assert(sizeof(EffectSharpenPush) == 16);
+static_assert(offsetof(EffectSharpenPush, strength) == 12);
+
+struct EffectVignettePush
+{
+    EffectTransitionPush transition;
+    float intensity;
+    float start;
+    float end;
+    float roundness;
+};
+static_assert(sizeof(EffectVignettePush) == 28);
+static_assert(offsetof(EffectVignettePush, intensity) == 12);
+
+struct EffectFilmGrainPush
+{
+    EffectTransitionPush transition;
+    float intensity;
+    float size;
+};
+static_assert(sizeof(EffectFilmGrainPush) == 20);
+static_assert(offsetof(EffectFilmGrainPush, intensity) == 12);
+static_assert(offsetof(EffectFilmGrainPush, size) == 16);
+
+struct EffectGameplayFeedbackPush
+{
+    EffectTransitionPush transition;
+    float damage;
+    float liquid;
+    float pickup;
+    float pickupHeight;
+    float aberration;
+    float pickupColorR;
+    float pickupColorG;
+    float pickupColorB;
+};
+static_assert(sizeof(EffectGameplayFeedbackPush) == 44);
+static_assert(offsetof(EffectGameplayFeedbackPush, damage) == 12);
+static_assert(offsetof(EffectGameplayFeedbackPush, liquid) == 16);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickup) == 20);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickupHeight) == 24);
+static_assert(offsetof(EffectGameplayFeedbackPush, aberration) == 28);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickupColorR) == 32);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickupColorG) == 36);
+static_assert(offsetof(EffectGameplayFeedbackPush, pickupColorB) == 40);
 
 // The wipe's own push block is the header's `RhiPostEffectPass::WipePush` (the legacy
 // `EffectWipe::PushConst`, EffectWipe.h:31-37, with no transition member), asserted there.
@@ -238,6 +289,7 @@ RhiPostEffectPass::~RhiPostEffectPass()
     pushConstant16Layout = nullptr;
     pushConstant24Layout = nullptr;
     pushConstant28Layout = nullptr;
+    pushConstant44Layout = nullptr;
 }
 
 bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
@@ -334,14 +386,17 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         uniformLayout = device->createBindingLayout(desc);
     }
 
-    // The three push-constant layouts the measured block sizes call for: 16 bytes for the effects
-    // without custom members and for the chromatic aberration (one float) and the wipe (its own
-    // four-member block), 24 for the waves, 28 for the colour tint. No set is bound for them.
     {
         nvrhi::BindingLayoutDesc desc;
         desc.visibility = nvrhi::ShaderType::Compute;
         desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectBasePush)));
         pushConstant16Layout = device->createBindingLayout(desc);
+    }
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectFilmGrainPush)));
+        pushConstant20Layout = device->createBindingLayout(desc);
     }
     {
         nvrhi::BindingLayoutDesc desc;
@@ -355,11 +410,18 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectColorTintPush)));
         pushConstant28Layout = device->createBindingLayout(desc);
     }
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectGameplayFeedbackPush)));
+        pushConstant44Layout = device->createBindingLayout(desc);
+    }
 
     if (simpleFramebufferLayout == nullptr || albedoFramebufferLayout == nullptr ||
         wipeFramebufferLayout == nullptr || uniformLayout == nullptr ||
-        pushConstant16Layout == nullptr ||
-        pushConstant24Layout == nullptr || pushConstant28Layout == nullptr)
+        pushConstant16Layout == nullptr || pushConstant20Layout == nullptr ||
+        pushConstant24Layout == nullptr || pushConstant28Layout == nullptr ||
+        pushConstant44Layout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a post-effect pass binding layout");
         return false;
@@ -400,9 +462,6 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         }
     }
 
-    // The nine effects that are always available: the blob, its two specializations and the two
-    // pipelines over the effect's measured set shape. Every one of them is a hard requirement -
-    // a missing blob means the engine's shader folder is incomplete.
     struct EffectDesc
     {
         EffectId id;
@@ -430,6 +489,10 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         // list stops after set 0 and the push-constant layout; the module mirrors the legacy host's
         // unread push anyway (the layout is still added, the bytes are still pushed).
         { EFFECT_CRT_DECODE, "CRT decode", CRT_DECODE_SHADER_FILE_NAME, FB_SIMPLE, 16, false },
+        { EFFECT_SHARPEN, "sharpen", SHARPEN_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
+        { EFFECT_GAMEPLAY_FEEDBACK, "gameplay feedback", GAMEPLAY_FEEDBACK_SHADER_FILE_NAME, FB_SIMPLE, 44, true },
+        { EFFECT_VIGNETTE, "vignette", "EfVignette.comp.spv", FB_SIMPLE, 28, true },
+        { EFFECT_FILM_GRAIN, "film grain", "EfFilmGrain.comp.spv", FB_SIMPLE, 20, true },
     };
 
     static_assert(std::size(descs) == EFFECT_COUNT - 1,
@@ -448,8 +511,10 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
             desc.framebufferKind == FB_ALBEDO ? albedoFramebufferLayout.Get() : simpleFramebufferLayout.Get();
 
         nvrhi::IBindingLayout *pushConstantLayout =
+            desc.pushConstantSize == 44 ? pushConstant44Layout.Get() :
             desc.pushConstantSize == 28 ? pushConstant28Layout.Get() :
-            desc.pushConstantSize == 24 ? pushConstant24Layout.Get() : pushConstant16Layout.Get();
+            desc.pushConstantSize == 24 ? pushConstant24Layout.Get() :
+            desc.pushConstantSize == 20 ? pushConstant20Layout.Get() : pushConstant16Layout.Get();
 
         for (uint32_t sourceIsPing = 0; sourceIsPing < 2; sourceIsPing++)
         {
@@ -626,30 +691,7 @@ void RhiPostEffectPass::Render(nvrhi::ICommandList *pCommandList,
         SetupNull(EFFECT_HUE_SHIFT);
     }
 
-    // 4. The chromatic aberration (`effectChromaticAberration`, :1178-1181): a null pointer or a
-    // non-positive intensity turns it off without a fade (EffectSimple_Instances.h:59-68).
-    if (params.pChromaticAberration == nullptr || params.pChromaticAberration->intensity <= 0.0f)
-    {
-        SetupNull(EFFECT_CHROMATIC_ABERRATION);
-    }
-    else if (SetupSimple(EFFECT_CHROMATIC_ABERRATION, currentTime, params.pChromaticAberration->isActive,
-                         params.pChromaticAberration->transitionDurationIn,
-                         params.pChromaticAberration->transitionDurationOut))
-    {
-        EffectChromaticAberrationPush push{};
-        push.transition = EffectTransitionPush{
-            effects[EFFECT_CHROMATIC_ABERRATION].transition.transitionType,
-            effects[EFFECT_CHROMATIC_ABERRATION].transition.transitionBeginTime,
-            effects[EFFECT_CHROMATIC_ABERRATION].transition.transitionDuration,
-        };
-        push.intensity = params.pChromaticAberration->intensity;
-
-        if (DispatchEffect(pCommandList, target, EFFECT_CHROMATIC_ABERRATION, sourceIsPing,
-                           &push, sizeof(push), groupsX, groupsY))
-        {
-            sourceIsPing = !sourceIsPing;
-        }
-    }
+    SetupNull(EFFECT_CHROMATIC_ABERRATION);
 
     // 5. The distorted sides (`effectDistortedSides`, :1182-1185).
     if (params.pDistortedSides != nullptr)
@@ -729,6 +771,78 @@ void RhiPostEffectPass::Render(nvrhi::ICommandList *pCommandList,
     else
     {
         SetupNull(EFFECT_RADIAL_BLUR);
+    }
+
+    if (params.pSharpen != nullptr && params.pSharpen->isActive && params.pSharpen->strength > 0.0f)
+    {
+        EffectSharpenPush push{};
+        push.strength = std::clamp(params.pSharpen->strength, 0.0f, 1.0f);
+
+        if (DispatchEffect(pCommandList, target, EFFECT_SHARPEN, sourceIsPing,
+                           &push, sizeof(push), groupsX, groupsY))
+        {
+            sourceIsPing = !sourceIsPing;
+        }
+    }
+
+    if (params.pVignette != nullptr && std::isfinite(params.pVignette->intensity) &&
+        params.pVignette->intensity > 0.0f)
+    {
+        EffectVignettePush push{};
+        push.intensity = std::clamp(params.pVignette->intensity, 0.0f, 1.0f);
+        push.start = std::isfinite(params.pVignette->start)
+            ? std::clamp(params.pVignette->start, 0.0f, 0.99f) : 0.45f;
+        push.end = std::isfinite(params.pVignette->end)
+            ? std::clamp(params.pVignette->end, push.start + 0.01f, 2.0f) : 1.0f;
+        push.roundness = std::isfinite(params.pVignette->roundness)
+            ? std::clamp(params.pVignette->roundness, 0.0f, 1.0f) : 0.35f;
+
+        if (DispatchEffect(pCommandList, target, EFFECT_VIGNETTE, sourceIsPing,
+                           &push, sizeof(push), groupsX, groupsY))
+        {
+            sourceIsPing = !sourceIsPing;
+        }
+    }
+
+    if (params.pGameplayFeedback != nullptr)
+    {
+        const float damage = std::clamp(params.pGameplayFeedback->damage, 0.0f, 1.0f);
+        const float liquid = std::clamp(params.pGameplayFeedback->liquid, 0.0f, 1.0f);
+        const float pickup = std::clamp(params.pGameplayFeedback->pickup, 0.0f, 1.0f);
+
+        if (damage > 0.0f || liquid > 0.0f || pickup > 0.0f)
+        {
+            EffectGameplayFeedbackPush push{};
+            push.damage = damage;
+            push.liquid = liquid;
+            push.pickup = pickup;
+            push.pickupHeight = std::clamp(params.pGameplayFeedback->pickupHeight, 0.0f, 1.0f);
+            push.aberration = std::clamp(params.pGameplayFeedback->aberration, 0.0f, 1.0f);
+            push.pickupColorR = std::clamp(params.pGameplayFeedback->pickupColor.data[0], 0.0f, 1.0f);
+            push.pickupColorG = std::clamp(params.pGameplayFeedback->pickupColor.data[1], 0.0f, 1.0f);
+            push.pickupColorB = std::clamp(params.pGameplayFeedback->pickupColor.data[2], 0.0f, 1.0f);
+
+            if (DispatchEffect(pCommandList, target, EFFECT_GAMEPLAY_FEEDBACK, sourceIsPing,
+                               &push, sizeof(push), groupsX, groupsY))
+            {
+                sourceIsPing = !sourceIsPing;
+            }
+        }
+    }
+
+    if (params.pFilmGrain != nullptr && std::isfinite(params.pFilmGrain->intensity) &&
+        params.pFilmGrain->intensity > 0.0f)
+    {
+        EffectFilmGrainPush push{};
+        push.intensity = std::clamp(params.pFilmGrain->intensity, 0.0f, 1.0f);
+        push.size = std::isfinite(params.pFilmGrain->size)
+            ? std::clamp(params.pFilmGrain->size, 0.25f, 8.0f) : 2.5f;
+
+        if (DispatchEffect(pCommandList, target, EFFECT_FILM_GRAIN, sourceIsPing,
+                           &push, sizeof(push), groupsX, groupsY))
+        {
+            sourceIsPing = !sourceIsPing;
+        }
     }
 
     // The two ALBEDO-sampling effects left the image in the read-only state their SRV requires.

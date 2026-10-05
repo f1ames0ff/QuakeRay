@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.29.0
+
+### Added
+- **A modern post-effects stack on its own `Effects` options page** — Bloom, Near DOF, Damage and Liquid aberration, Sharpen, Vignette, Film grain and Local exposure as 0-100% sliders with a page-local reset, a three-detent Bloom quality slider, and a `Tonemap type` switcher (`Off`, `Q2RTX`, `Reinhard`, `ACES`, `AgX`) with a `Tonemap power` mix and an `Exposure bias` slider; the shipped defaults follow the in-game calibration (Bloom 0.08, Near DOF 0.8, Reinhard, power 0.8, liquid 0.51, film grain 0.5, local exposure 0.2).
+- **Near weapon depth of field replaces the lens flare** — the normalized disk filter blurs only the first-person weapon's nearest parts and follows each weapon's own view-depth window; the world, crosshair and HUD stay sharp, and every lens-flare pass, texture, shader, cvar and API entry is gone.
+- **Film grain** — animated monochrome grain over the finished image, after the sharpening and before the UI (`rt_filmgrain 0.5`, advanced `rt_filmgrain_size 2.5`).
+- **Gameplay feedback that is off until something happens** — edge-located damage and liquid aberration, the radiation suit's fringing and deeper vignette, and the bottom pickup pulse replace the old shared tint chain.
+- **The first-person weapons are one size in hand** — one per-model factor brings every weapon's on-screen extent onto a common size, hand-editable through the `rt_viewm_norm_manual` table.
+- **Exposure controls and a focused GPU regression** — histogram percentiles and adaptation limits are configurable, and `qray_posteffects_gpu` covers exposure, vignette, gameplay tint, colour preservation, local exposure, near DOF and film grain.
+
+### Changed
+- **The sky's radiance ships ten times dimmer** — the engine scales it at the source (`RT_SKY_RADIANCE_SCALE`), so the procedural sky and the light it casts no longer overexpose the display; `rt_sky_brightness` and the other sky controls keep their values.
+- **The Effects page joins the options menu, and the old bloom input is gone** — the scene radiance reaches the optical passes through the new `CmPrepareHdr` pass, and `rt_bloom_emis_mult` is accepted as a deprecated no-op.
+- **Engine assets update without an engine build** — `build_shaders.ps1` writes the compiled SPIR-V straight into `id1/qray.pkz`, and `build_win.ps1 -PkzOnly` repacks the archive.
+
+### Fixed
+- **The bloom halo falls off instead of flattening into a card** — the pyramid octaves are weighted by a geometric `rt_bloom_scatter` decay and renormalized to unit energy.
+- **Post-effects retain their colour instead of washing into pale overlays** — damage, pickup and the shared tint multiply scene colour as transmission filters, and black stays black.
+- **Apply works again on the Video options page, and exposure follows consecutive frames** instead of independent per-slot histories.
+
 ## v0.28.0
 
 ### Added

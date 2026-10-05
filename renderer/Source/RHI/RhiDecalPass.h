@@ -143,12 +143,6 @@ class RhiTextureTable;
 // warning. It is not thread-safe: Render uses the per-slot target of the frameIndex it is given,
 // which is the engine's single-threaded per-slot frame model (RhiFrameContext).
 //
-// Gate note: no code in this repository calls `qrUploadDecal` (the only occurrences of the name
-// are the API declaration and its forwarder, qray.h:610, qray.cpp:194-197), so on the shipped
-// game the count is zero every frame and this pass records nothing - the gate is structural
-// (creation clean, no new sets bound, no new VUID) unless a game-side uploader is added, exactly
-// like the never-uploaded lens flares (a5c_overlay_recon.md §1.2.4).
-//
 // A5.0 note: the module stays self-contained, as its siblings do - the legacy-viewport helper
 // and the wrap/announce/restore discipline are its own copy, not a refactor of the sky pass, and
 // no raster-draw state machinery is duplicated because this pipeline has no per-draw state at

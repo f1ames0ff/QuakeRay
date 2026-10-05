@@ -714,6 +714,13 @@ void R_SetupViewBeforeMark (void *unused)
 			rt_lavaeffects = false;
 		}
 
+		const float liquid_target = (!forced && !QR_Editor_Active () &&
+									 (contents == CONTENTS_WATER || contents == CONTENTS_LAVA || contents == CONTENTS_SLIME)) ?
+										1.0f :
+										0.0f;
+		const float liquid_rate = (liquid_target > rt_ef_liquid_pulse) ? 0.15f : 0.25f;
+		rt_ef_liquid_pulse += (liquid_target - rt_ef_liquid_pulse) * CLAMP (0.0f, host_frametime / liquid_rate, 1.0f);
+
 		if (rt_cameramedia != QR_MEDIA_TYPE_VACUUM && CVAR_TO_INT32 (r_waterwarp) == 2)
 		{
 			// variance is a percentage of width, where width = 2 * tan(fov / 2) otherwise the effect is too dramatic at high FOV and too subtle at low FOV.

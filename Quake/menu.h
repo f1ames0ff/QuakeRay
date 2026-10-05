@@ -38,6 +38,7 @@ enum m_state_e
 	m_sound,
 	m_video,
 	m_graphics,
+	m_effects,
 	m_lighting,
 	m_keys,
 	m_help,
