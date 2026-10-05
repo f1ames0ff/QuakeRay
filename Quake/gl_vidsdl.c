@@ -1160,7 +1160,7 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 	fputs (",clust_cache_hits,clust_cache_misses,clust_miss_set,clust_miss_move,clust_miss_other,"
 	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped",
 	       f);
-	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls\n", f);
+	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls,calls_geometry,calls_raster,calls_lights,calls_other\n", f);
 
 	for (i = 0; i < job->count; i++)
 	{
@@ -1249,6 +1249,15 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysPerCategory[4]);
 		RT_StatsRecordField (f, &first);
 		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCalls);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCallsGeometry);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCallsRasterized);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCallsLights);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u",
+			snap->gpu.apiCalls - snap->gpu.apiCallsGeometry - snap->gpu.apiCallsRasterized - snap->gpu.apiCallsLights);
 
 		fputc ('\n', f);
 	}
