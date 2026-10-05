@@ -5189,7 +5189,7 @@ int RT_MapWorldCluster (int leaf_index)
 	if (rt_worldclusters.model != cl.worldmodel || !rt_worldclusters.leaf_cluster)
 		RT_BuildWorldClusters ();
 
-	if (leaf_index <= 0 || leaf_index > rt_worldclusters.num_leafs)
+	if (leaf_index <= 0 || leaf_index >= rt_worldclusters.num_leafs)
 		return 0;
 
 	return rt_worldclusters.leaf_cluster[leaf_index];
@@ -5317,8 +5317,8 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 {
 	const int num_leafs = model->numleafs;
 	// Cluster i is leaf i, and cluster 0 is reserved for the solid leaf and geometry that has no
-	// leaf of its own, so the table holds one cluster per leaf plus the reserved cluster 0.
-	const int num_clusters = num_leafs + 1;
+	// leaf of its own, so the table holds one cluster per leaf.
+	const int num_clusters = num_leafs;
 	const int row_bytes = (num_leafs + 31) / 8;
 
 	rt_worldclusters.num_leafs = num_leafs;
@@ -5336,7 +5336,7 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 	rt_worldclusters.cluster_flags[0] = QR_WORLD_CLUSTER_SOLID_BIT;
 	rt_worldclusters.vis_offsets[0] = -1;
 
-	for (int i = 1; i <= num_leafs; i++)
+	for (int i = 1; i < num_leafs; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
 		int32_t        offset = -1;
@@ -5431,7 +5431,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 	rt_worldclusters.vis_offsets[0] = -1;
 
-	for (int i = 1; i <= num_leafs; i++)
+	for (int i = 1; i < num_leafs; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
 		float          center[3];
@@ -5469,7 +5469,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 	cell_start[num_cells] = running;
 
-	for (int i = 1; i <= num_leafs; i++)
+	for (int i = 1; i < num_leafs; i++)
 	{
 		int cell;
 
@@ -5579,8 +5579,8 @@ void RT_BuildWorldClusters (void)
 
 	/* The grid has to hold the leafs a light or a view can stand in, and the solid leafs reach
 	   all around the map, so the open ones are what its box is measured from. Leaf 0 is the solid
-	   leaf and is skipped; the real leafs are leafs[1..numleafs]. */
-	for (int i = 1; i <= model->numleafs; i++)
+	   leaf and is skipped; the real leafs are leafs[1..numleafs-1]. */
+	for (int i = 1; i < model->numleafs; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
 
@@ -5708,7 +5708,7 @@ static void RT_BuildClusterSkyVisibility (void)
 			everything = true;
 		}
 
-		for (int leaf = 1; !everything && leaf <= num_leafs; leaf++)
+		for (int leaf = 1; !everything && leaf < num_leafs; leaf++)
 		{
 			const int      c = rt_worldclusters.leaf_cluster[leaf];
 			const uint8_t *prow;
