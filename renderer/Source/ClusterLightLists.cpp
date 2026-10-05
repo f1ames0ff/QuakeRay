@@ -2060,4 +2060,56 @@ void ClusterLightLists::GetClusterList(uint32_t cluster, uint64_t *pUniqueIds, u
     }
 }
 
+void ClusterLightLists::GetClusterTail(uint32_t cluster, uint64_t *pUniqueIds, float *pProb, float *pMarginal,
+                                       uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount) const
+{
+    if (pCount != nullptr)
+    {
+        *pCount = 0;
+    }
+
+    if (pBeta != nullptr)
+    {
+        *pBeta = 0.0f;
+    }
+
+    if (cluster >= numClusters || size_t(cluster) + 1 >= tailOffsets.size())
+    {
+        return;
+    }
+
+    const uint32_t begin = tailOffsets[cluster];
+    const uint32_t end = uint32_t(std::min<size_t>(tailOffsets[cluster + 1], tailUids.size()));
+    uint32_t       count = (end > begin) ? (end - begin) : 0;
+
+    if (pBeta != nullptr && cluster < tailBeta.size())
+    {
+        *pBeta = tailBeta[cluster];
+    }
+
+    if (count > maxCount)
+    {
+        count = maxCount;
+    }
+
+    if (pCount != nullptr)
+    {
+        *pCount = count;
+    }
+
+    for (uint32_t i = 0; i < count; i++)
+    {
+        const size_t index = size_t(begin) + i;
+
+        if (pUniqueIds != nullptr)
+            pUniqueIds[i] = tailUids[index];
+        if (pProb != nullptr)
+            pProb[i] = tailProb[index];
+        if (pMarginal != nullptr)
+            pMarginal[i] = tailMarginal[index];
+        if (pAlias != nullptr)
+            pAlias[i] = tailAlias[index];
+    }
+}
+
 } // namespace qray

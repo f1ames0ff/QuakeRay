@@ -1619,6 +1619,13 @@ void VulkanDevice::GetClusterLightList(uint32_t cluster, uint64_t *pLightUniqueI
     clusterLightLists->GetClusterList(cluster, pLightUniqueIds, maxCount, pCount);
 }
 
+void VulkanDevice::GetClusterLightTail(uint32_t cluster, uint64_t *pLightUniqueIds, float *pProb,
+                                       float *pMarginal, uint32_t *pAlias, float *pBeta, uint32_t maxCount,
+                                       uint32_t *pCount)
+{
+    clusterLightLists->GetClusterTail(cluster, pLightUniqueIds, pProb, pMarginal, pAlias, pBeta, maxCount, pCount);
+}
+
 void VulkanDevice::UploadWorldLights(const QrWorldLightsUploadInfo *pInfo)
 {
     if (pInfo == nullptr)

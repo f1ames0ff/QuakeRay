@@ -253,6 +253,14 @@ QrResult qrGetClusterLightList(QrInstance qrInstance, uint32_t cluster, uint64_t
     return Call(qrInstance, &VulkanDevice::GetClusterLightList, cluster, pLightUniqueIds, maxCount, pCount);
 }
 
+QrResult qrGetClusterLightTail(QrInstance qrInstance, uint32_t cluster, uint64_t *pLightUniqueIds,
+                               float *pProb, float *pMarginal, uint32_t *pAlias, float *pBeta,
+                               uint32_t maxCount, uint32_t *pCount)
+{
+    return Call(qrInstance, &VulkanDevice::GetClusterLightTail, cluster, pLightUniqueIds, pProb, pMarginal,
+                pAlias, pBeta, maxCount, pCount);
+}
+
 QrResult qrUploadWorldLights(QrInstance qrInstance, const QrWorldLightsUploadInfo *pUploadInfo)
 {
     return Call(qrInstance, &VulkanDevice::UploadWorldLights, pUploadInfo);

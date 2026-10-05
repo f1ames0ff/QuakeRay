@@ -2241,6 +2241,7 @@ static void GL_InitInstance (void)
 	Cmd_AddCommand ("rt_pfnreloadshaders", RT_ReloadShaders);
 	Cmd_AddCommand ("rt_light_report", RT_LightReport_f);
 	Cmd_AddCommand ("rt_light_report_dump", RT_LightReportDump_f);
+	Cmd_AddCommand ("rt_cluster_lists", RT_ClusterLists_f);
 	Cmd_AddCommand ("rt_dtal_rebuild", RT_DtalRebuild_f);
 	Cmd_AddCommand ("dlightspot", RT_DlightSpot_f);
 	Cmd_AddCommand ("fog", RT_Fog_Cmd);

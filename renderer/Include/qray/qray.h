@@ -712,6 +712,17 @@ QRAPI QrResult QRCONV qrGetClusterLightList(
     uint32_t    maxCount,
     uint32_t   *pCount);
 
+QRAPI QrResult QRCONV qrGetClusterLightTail(
+    QrInstance  qrInstance,
+    uint32_t    cluster,
+    uint64_t   *pLightUniqueIds,
+    float      *pProb,
+    float      *pMarginal,
+    uint32_t   *pAlias,
+    float      *pBeta,
+    uint32_t    maxCount,
+    uint32_t   *pCount);
+
 typedef enum QrWorldLightFaceFlags
 {
     QR_WORLD_LIGHT_FACE_MASKED_BIT       = 1 << 0,

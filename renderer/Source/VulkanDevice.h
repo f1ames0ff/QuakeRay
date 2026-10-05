@@ -119,6 +119,8 @@ public:
     void GetClusterLightStats(QrClusterLightStats *pStats);
     void GetClusterLightGrants(uint32_t *pGranted, uint32_t *pDenied, uint32_t maxCount, uint32_t *pCount);
     void GetClusterLightList(uint32_t cluster, uint64_t *pLightUniqueIds, uint32_t maxCount, uint32_t *pCount);
+    void GetClusterLightTail(uint32_t cluster, uint64_t *pLightUniqueIds, float *pProb, float *pMarginal,
+                             uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount);
 
     void UploadWorldLights(const QrWorldLightsUploadInfo *pInfo);
 

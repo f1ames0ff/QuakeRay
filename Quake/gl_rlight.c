@@ -1440,6 +1440,105 @@ void RT_ClusterLightDumpHeader (FILE *f)
 		Cvar_VariableString ("rt_nee_samples"));
 }
 
+#define RT_CLUSTER_TAIL_REPORT_SLOTS 512
+
+static int RT_ClusterDiagIndexForUid (uint64_t uid)
+{
+	int i;
+
+	for (i = 0; i < rt_light_diag_count; i++)
+	{
+		if (rt_light_diag[i].uniqueID == uid)
+			return i;
+	}
+
+	return -1;
+}
+
+void RT_ClusterLists_f (void)
+{
+	uint64_t uids[RT_CLUSTER_REPORT_SLOTS];
+	uint64_t tailUids[RT_CLUSTER_TAIL_REPORT_SLOTS];
+	float    tailProb[RT_CLUSTER_TAIL_REPORT_SLOTS];
+	float    tailMarginal[RT_CLUSTER_TAIL_REPORT_SLOTS];
+	uint32_t tailAlias[RT_CLUSTER_TAIL_REPORT_SLOTS];
+	uint32_t fastCount = 0;
+	uint32_t tailCount = 0;
+	float    beta = 0.0f;
+	int      cluster = -1;
+	int      i;
+
+	if (Cmd_Argc () > 1)
+	{
+		cluster = atoi (Cmd_Argv (1));
+	}
+	else if (cl.worldmodel && cl.worldmodel->type == mod_brush)
+	{
+		mleaf_t *leaf = Mod_PointInLeaf (rt_cluster_vieworg, cl.worldmodel);
+
+		if (leaf && leaf != cl.worldmodel->leafs)
+			cluster = RT_MapWorldCluster ((int)(leaf - cl.worldmodel->leafs));
+	}
+
+	if (cluster < 0)
+	{
+		RT_LightReportPrint ("rt_cluster_lists: no cluster; pass one or stand where the world draw runs\n");
+		return;
+	}
+
+	if (qrGetClusterLightTail (vulkan_globals.instance, (uint32_t)cluster, tailUids, tailProb, tailMarginal,
+			tailAlias, &beta, (uint32_t)countof (tailUids), &tailCount) != QR_SUCCESS)
+	{
+		tailCount = 0;
+	}
+
+	if (qrGetClusterLightList (vulkan_globals.instance, (uint32_t)cluster, uids,
+			(uint32_t)countof (uids), &fastCount) != QR_SUCCESS)
+	{
+		fastCount = 0;
+	}
+
+	RT_LightReportPrint ("cluster %i: %u fast, %u tail, beta %.3f\n", cluster, fastCount, tailCount, beta);
+
+	for (i = 0; i < (int)fastCount; i++)
+	{
+		const int di = RT_ClusterDiagIndexForUid (uids[i]);
+		char      id[64];
+
+		RT_FormatLightId (id, sizeof (id), uids[i]);
+
+		if (di >= 0)
+			RT_LightReportPrint ("  fast %3i  %-34s granted %i denied %i\n", i, id,
+				rt_light_diag[di].granted, rt_light_diag[di].denied);
+		else
+			RT_LightReportPrint ("  fast %3i  %-34s not in the frame's registry table\n", i, id);
+	}
+
+	{
+		double probSum = 0.0;
+		double marginalSum = 0.0;
+
+		for (i = 0; i < (int)tailCount; i++)
+		{
+			probSum += (double)tailProb[i];
+			marginalSum += (double)tailMarginal[i];
+		}
+
+		RT_LightReportPrint ("  tail sums: prob %.5f, marginal %.5f%s\n", probSum, marginalSum,
+			(tailCount < RT_CLUSTER_TAIL_REPORT_SLOTS) ? "" : " (read stopped at the slot count)");
+	}
+
+	for (i = 0; i < (int)tailCount; i++)
+	{
+		const int di = RT_ClusterDiagIndexForUid (tailUids[i]);
+		char      id[64];
+
+		RT_FormatLightId (id, sizeof (id), tailUids[i]);
+		RT_LightReportPrint ("  tail %3i  prob %.5f marginal %.6f alias %u  %s%s\n", i, tailProb[i],
+			tailMarginal[i], tailAlias[i], id, (di >= 0) ? "" : "  (not in the frame's registry table)");
+	}
+}
+
 void RT_ClusterLightReport_f (void)
 {
 	const int maxLines = (rt_light_report_file != NULL) ? RT_CLUSTER_MAX_LIGHTS
