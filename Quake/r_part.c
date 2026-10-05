@@ -48,6 +48,11 @@ gltexture_t *particletexture1, *particletexture2, *particletexture3, *particlete
 
 cvar_t r_particles = {"r_particles", "2", CVAR_ARCHIVE};         // johnfitz
 // cvar_t r_quadparticles = {"r_quadparticles", "1", CVAR_ARCHIVE}; // johnfitz
+cvar_t r_particle_lighting = {"r_particle_lighting", "1", CVAR_ARCHIVE};
+cvar_t r_particle_light_gain = {"r_particle_light_gain", "10.0", CVAR_ARCHIVE};
+cvar_t r_particle_light_direct = {"r_particle_light_direct", "1", CVAR_ARCHIVE};
+cvar_t r_particle_light_floor = {"r_particle_light_floor", "0.001", CVAR_ARCHIVE};
+cvar_t r_particle_light_debug = {"r_particle_light_debug", "0", CVAR_NONE};
 
 #define QUAD_PARTICLES 0
 static uint32_t *quadindices = NULL;
@@ -201,6 +206,11 @@ void R_InitParticles (void)
 
 	Cvar_RegisterVariable (&r_particles); // johnfitz
 	// Cvar_RegisterVariable (&r_quadparticles); // johnfitz
+	Cvar_RegisterVariable (&r_particle_lighting);
+	Cvar_RegisterVariable (&r_particle_light_gain);
+	Cvar_RegisterVariable (&r_particle_light_direct);
+	Cvar_RegisterVariable (&r_particle_light_floor);
+	Cvar_RegisterVariable (&r_particle_light_debug);
 
 	R_InitParticleTextures (); // johnfitz
 	R_InitParticleIndexBuffer ();
@@ -910,6 +920,7 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 
 
 	int current_vertex = 0;
+	const qboolean lit_particles = CVAR_TO_BOOL (r_particle_lighting);
 	for (p = active_particles; p; p = p->next)
 	{
 		// hack a scale up to keep particles from disapearing
@@ -924,6 +935,8 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		byte *c = (byte *)&d_8to24table[(int)p->color];
 		// All vertices of one particle carry the same colour, so it is packed once per particle.
 		const uint32_t packed_color = RT_PackColorToUint32 (c[0], c[1], c[2], 255);
+		const uint32_t particle_cluster =
+			lit_particles ? (uint32_t)RT_ResolvePointCluster (p->org) : 0u;
 
 		vertices[current_vertex].position[0] = p->org[0];
 		vertices[current_vertex].position[1] = p->org[1];
@@ -960,6 +973,12 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		vertices[current_vertex].texCoord[1] = texcoord_scale;
 		vertices[current_vertex].packedColor = packed_color;
 		current_vertex++;
+
+		if (lit_particles)
+		{
+			for (int v = 0; v < (QUAD_PARTICLES ? 4 : 3); ++v)
+				vertices[current_vertex - 1 - v].cluster = particle_cluster;
+		}
 	}
 
 	// One add for the whole batch: nothing reads the counter while the particles are emitted.
@@ -974,9 +993,13 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
 		.material = texture ? texture->rtmaterial : QR_NO_MATERIAL,
-		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
+		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+		                 (lit_particles ? QR_RASTERIZED_GEOMETRY_STATE_PARTICLE : 0),
 		.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
 		.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+		.smokeLook = {{ CVAR_TO_BOOL (r_particle_light_debug) ? 1.0f : 0.0f,
+		                r_particle_light_direct.value,
+		                r_particle_light_gain.value, r_particle_light_floor.value }},
 	};
 
     QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);

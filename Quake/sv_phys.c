@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_phys.c
 
 #include "quakedef.h"
+#include "sv_gibs.h"
 
 /*
 
@@ -966,6 +967,7 @@ void SV_Physics_Client (edict_t *ent, int num)
 	case MOVETYPE_TOSS:
 	case MOVETYPE_BOUNCE:
 	case MOVETYPE_GIB:
+		SV_Gibs_Apply (ent);
 		SV_Physics_Toss (ent);
 		break;
 
@@ -1269,7 +1271,10 @@ void SV_Physics (void)
 		else if (
 			ent->v.movetype == MOVETYPE_TOSS || ent->v.movetype == MOVETYPE_GIB || ent->v.movetype == MOVETYPE_BOUNCE || ent->v.movetype == MOVETYPE_FLY ||
 			ent->v.movetype == MOVETYPE_FLYMISSILE)
+		{
+			SV_Gibs_Apply (ent);
 			SV_Physics_Toss (ent);
+		}
 		else
 			Host_EndGame ("SV_Physics: bad movetype %i", (int)ent->v.movetype);
 	}

@@ -1328,6 +1328,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               sky.worldDraws, sky.worldDrawCount,
                                               sky.view, sky.projection, sky.applyVertexColorGamma,
                                               sky.smokeDraws, sky.smokeDrawCount,
+                                              sky.particleDraws, sky.particleDrawCount,
                                               accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
                                               rtDirectPass != nullptr ? rtDirectPass->GetLightSet(frameIndex).Get() : nullptr);
                                       }

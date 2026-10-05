@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_main.c -- server main program
 
 #include "quakedef.h"
+#include "sv_gibs.h"
 
 server_t        sv;
 server_static_t svs;
@@ -1142,6 +1143,8 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&pr_checkextension);
 	Cvar_RegisterVariable (&sv_altnoclip); // johnfitz
 	Cvar_RegisterVariable (&sv_water_vis);
+
+	SV_Gibs_Init ();
 
 	Cmd_AddCommand ("pext", SV_Pext_f);
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); // johnfitz
@@ -3029,6 +3032,7 @@ void         SV_SpawnServer (const char *server)
 	sv.paused = false;
 
 	qcvm->time = 1.0;
+	SV_Gibs_OnNewMap ();
 
 	q_strlcpy (sv.name, server, sizeof (sv.name));
 	q_snprintf (sv.modelname, sizeof (sv.modelname), "maps/%s.bsp", server);

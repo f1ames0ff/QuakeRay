@@ -57,6 +57,7 @@
 #include "qr_editor.h"
 #include "qr_gui.h"
 #include "photocam.h"
+#include "observer.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -7226,6 +7227,7 @@ static void QRE_StartEditor (void)
 	}
 
 	PhotoCam_Stop ();
+	Observer_Stop ();
 
 	memset (&qre, 0, sizeof (qre));
 	qre.active = true;
@@ -7285,7 +7287,9 @@ static void QRE_DevmodeCommands (qboolean on)
 		if (qre_devmode_stop_cmd == NULL)
 			qre_devmode_stop_cmd = Cmd_AddCommand2 ("qr_editor_stop", QR_Editor_Stop_f, src_command);
 
-		Con_Printf ("qr_devmode: on (qr_editor and qr_editor_stop are available)\n");
+		Observer_Register ();
+
+		Con_Printf ("devmode: on (qr_editor, qr_editor_stop and camera_observer are available)\n");
 	}
 	else
 	{
@@ -7300,7 +7304,9 @@ static void QRE_DevmodeCommands (qboolean on)
 			qre_devmode_stop_cmd = NULL;
 		}
 
-		Con_Printf ("qr_devmode: off (the editor commands are gone)\n");
+		Observer_Unregister ();
+
+		Con_Printf ("devmode: off (the dev commands are gone)\n");
 	}
 }
 

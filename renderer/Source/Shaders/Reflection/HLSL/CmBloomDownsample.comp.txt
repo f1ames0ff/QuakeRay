@@ -1,0 +1,61 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== block pushconstant
+
+[0] offset 0 uint32
+[1] offset 4 float32
+[2] offset 8 float32
+[3] offset 12 float32
+=== block set 2 binding 0
+
+[0] offset 0 float32
+[1] offset 4 float32
+[2] offset 8 float32
+[3] offset 12 float32
+[4] offset 16 float32
+[5] offset 20 float32
+[6] offset 24 float32
+[7] offset 28 float32
+[8] offset 32 float32
+[9] offset 36 float32
+[10] offset 40 float32
+[11] offset 44 float32
+[12] offset 48 float32
+[13] offset 52 float32
+[14] offset 56 float32
+[15] offset 60 uint32
+[16] offset 64 float32
+[17] offset 68 float32
+[18] offset 72 float32
+[19] offset 76 array[128](uint32) stride 4
+[20] offset 588 array[128](float32) stride 4
+[21] offset 1100 array[128](float32) stride 4
+[22] offset 1612 float32
+[23] offset 1616 float32
+[24] offset 1620 uint32
+=== builtin GlobalInvocationId
+v3(int32)
+=== capability ImageQuery
+declared
+=== capability Shader
+declared
+=== descriptor set 0 binding 0
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 0: storage class
+UniformConstant
+=== descriptor set 0 binding 1
+sampler
+=== descriptor set 0 binding 1: storage class
+UniformConstant
+=== descriptor set 2 binding 0
+struct nonwritable
+=== descriptor set 2 binding 0: storage class
+StorageBuffer
+=== descriptor set 3 binding 0
+image:2D:0:0:0:2:Rgba32f
+=== descriptor set 3 binding 0: storage class
+UniformConstant
+=== entry point
+GLCompute main
+=== workgroup size
+16 16 1

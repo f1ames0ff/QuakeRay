@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.30.1
+
+### Added
+- **The classic particles take their light from the room** — the particles of the classic system (blood, tracers, explosions, the lava and teleport splashes, and the rocket and grenade trails that `r_smoke 0` leaves to them) and the batches of the scripted FTE particle system are drawn by a shader pair of their own now — `RsParticle.vert.hlsl`/`RsParticle.frag.hlsl`, selected by `QR_RASTERIZED_GEOMETRY_STATE_PARTICLE`: the vertex stage asks the frame's cluster light list for the light at the particle's position (the sun when the cluster sees the sky, and the strongest light of the list) and traces their shadow rays against the frame's acceleration structure, and the fragment stage adds the indirect light the denoiser carries for the surfaces around the particle. The palette colour of a particle is what the light falls on, so a blood puff in a dark corridor is as dark as its walls and an explosion takes the colour of its own dlight; the light is written in the physical units of the ray traced image, so the exposure, the tone curve and the fog reach a particle through the composite like everything else. The half is built like the smoke half of `RhiRasterOverlayPass` — its own four-attribute vertex layout, partial framebuffers set, push block and pipeline cache, over the smoke's acceleration structure and light sets — and a missing shader, light layout or TLAS drops the particles back to the flat colour the classic path had; `r_particle_lighting` (`1`) selects the lit path and `0` restores it. The pair is pinned by the reflection recordings the property check reads (`Reflection/HLSL/RsParticle.vert.txt` and `.frag.txt`).
+- **The light of a particle is a set of knobs** — `r_particle_light_direct` (`1`) is the fraction of the sampled direct light a particle takes, `r_particle_light_gain` (`10.0`) multiplies the resulting factor and `r_particle_light_floor` (`0.001`) is the factor's minimum, so a particle can go nearly black in an unlit room and open up in the light; `r_particle_light_debug` (`0`) draws the light in place of the particle — red the direct term, green the ambient, blue the factor — for tuning.
+
+### Changed
+- **The smoke keeps its own calibration and the particle light has its own** — `smokeLightAt` (`SmokeLight.hlsli`) gained a five-argument form that takes the direct light's strength and the sampled light's floor as arguments; the three-argument form keeps the smoke's `0.35` strength and `0.01` floor and the shader smoke is untouched, while the particle vertex stage calls the five-argument form with `r_particle_light_direct` (`1`, against the smoke's `0.35`) and a zero floor, so a particle is no longer held above the dark the smoke's floor kept.
+
 ## v0.30.0
 
 ### Added

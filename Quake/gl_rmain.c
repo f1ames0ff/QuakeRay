@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 task_handle_t rt_editor_draw_done_task = INVALID_TASK_HANDLE;
 #include "qr_editor.h"
 #include "photocam.h"
+#include "observer.h"
 
 int r_visframecount; // bumped when going to a new PVS
 int r_framecount;    // used for dlight push checking
@@ -830,7 +831,7 @@ void R_DrawViewModel (cb_context_t *cbx)
 {
 	const qboolean editor_preview = QR_Editor_ShowViewModel ();
 
-	if (!r_drawentities.value || chase_active.value || PhotoCam_Active () ||
+	if (!r_drawentities.value || chase_active.value || PhotoCam_Active () || Observer_Active () ||
 	    (QR_Editor_Active () && !editor_preview) || (!editor_preview && !r_drawviewmodel.value))
 		return;
 	
