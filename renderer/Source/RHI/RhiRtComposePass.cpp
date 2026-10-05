@@ -47,6 +47,7 @@ const char *const HISTOGRAM_SHADER_FILE_NAME = "CmLuminanceHistogram.comp.spv";
 const char *const AVERAGE_SHADER_FILE_NAME = "CmLuminanceAvg.comp.spv";
 const char *const CHECKERBOARD_SHADER_FILE_NAME = "CmCheckerboard.comp.spv";
 const char *const PREPARE_HDR_SHADER_FILE_NAME = "CmPrepareHdr.comp.spv";
+const char *const GLASS_BLUR_SHADER_FILE_NAME = "CmGlassBlur.comp.spv";
 const char *const PREPARE_FINAL_SHADER_FILE_NAME = "CmPrepareFinal.comp.spv";
 const char *const TAAU_SHADER_FILE_NAME = "CmQ2TAAU.comp.spv";
 
@@ -89,11 +90,11 @@ static_assert(COMPUTE_SVGF_ATROUS_ITERATION_COUNT == 4,
 // NVRHI slot: raw = offset + slot (RhiPipeline.h). The numbers are still derived from the generated
 // arrays at run time (GetComposeSlot), so a generator change cannot drift from them.
 constexpr uint32_t FRAMEBUFFER_UAV_OFFSET = 0;
-constexpr uint32_t FRAMEBUFFER_SRV_OFFSET = 124;
-constexpr uint32_t FRAMEBUFFER_SAMPLER_OFFSET = 248;
+const uint32_t FRAMEBUFFER_SRV_OFFSET = ShFramebuffers_Count;
+const uint32_t FRAMEBUFFER_SAMPLER_OFFSET = ShFramebuffers_Count * 2;
 
-constexpr uint32_t COMPOSE_BLOOM_RESULT_SLOT = COMPOSE_BLOOM_RESULT_BINDING - FRAMEBUFFER_SRV_OFFSET;
-constexpr uint32_t COMPOSE_OPTICAL_SAMPLER_SLOT = COMPOSE_OPTICAL_SAMPLER_BINDING - FRAMEBUFFER_SAMPLER_OFFSET;
+const uint32_t COMPOSE_BLOOM_RESULT_SLOT = COMPOSE_BLOOM_RESULT_BINDING - FRAMEBUFFER_SRV_OFFSET;
+const uint32_t COMPOSE_OPTICAL_SAMPLER_SLOT = COMPOSE_OPTICAL_SAMPLER_BINDING - FRAMEBUFFER_SAMPLER_OFFSET;
 
 // The size class of one union image: the engine's `GetFramebufSize` maps the generated flags onto
 // the render size, the `(render + 1) / 2` half (FB_IMAGE_FLAGS_FRAMEBUF_FLAGS_FORCE_SIZE_1_2: the
@@ -127,7 +128,7 @@ struct ComposeImage
 // the three are part of the union so the per-list announcement below names their resting state and
 // the restore lists return the ones this module moves to it. The god-rays module owns their
 // contents and has to leave them in GENERAL (see the class comment).
-constexpr uint32_t COMPOSE_IMAGE_COUNT = 80;
+constexpr uint32_t COMPOSE_IMAGE_COUNT = 87;
 constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
 {
     { FB_IMAGE_INDEX_ALBEDO,                ComposeImageSize::Render }, //   0  framebufAlbedo           (adapter/gradient-reproj/atrous/PF)
@@ -210,10 +211,17 @@ constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
     { FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV,   ComposeImageSize::Upscaled }, // 120 framebufQ2TaaHistory_Prev (TAAU SRV + sampler)
     { FB_IMAGE_INDEX_Q2_RNG_SEED,           ComposeImageSize::Render }, // 121  framebufQ2RngSeed        (reproj UAV, raygen read)
     { FB_IMAGE_INDEX_Q2_RNG_SEED_PREV,      ComposeImageSize::Render }, // 122  framebufQ2RngSeed_Prev   (reproj SRV)
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER,       ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION,   ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_DEPTH_NDC,            ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER_PREV, ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV, ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_HISTORY,     ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV, ComposeImageSize::Render },
 };
 
-static_assert(COMPOSE_IMAGE_COUNT == 80,
-              "the per-slot image arrays of RhiRtComposePass.h are sized 80 (COMPOSE_IMAGES)");
+static_assert(COMPOSE_IMAGE_COUNT == 87,
+              "the per-slot image arrays of RhiRtComposePass.h are sized 87 (COMPOSE_IMAGES)");
 
 // One item of a pass's set 0: the engine image, the binding kind and whether the item is a sampler
 // (only the TAAU history carries one). 'isUAV' selects both the layout item and the set item type;
@@ -400,12 +408,17 @@ constexpr ComposeBinding ATROUS_BINDINGS[ATROUS_BINDING_COUNT] =
 };
 
 // CmQ2Interleave: 1 storage image and 2 sampled images.
-constexpr uint32_t INTERLEAVE_BINDING_COUNT = 3;
+constexpr uint32_t INTERLEAVE_BINDING_COUNT = 8;
 constexpr ComposeBinding INTERLEAVE_BINDINGS[INTERLEAVE_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_PRE_FINAL, true, false }, //  27  framebufPreFinal
     { FB_IMAGE_INDEX_THROUGHPUT, false, false }, // 150  framebufThroughput_Sampled
     { FB_IMAGE_INDEX_Q2_COLOR,  false, false }, // 241  framebufQ2Color_Sampled
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION, true, false },
+    { FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR, false, false },
+    { FB_IMAGE_INDEX_SCREEN_EMIS_R_T, false, false },
+    { FB_IMAGE_INDEX_GOD_RAYS_FILTERED, false, false },
 };
 
 // CmLuminanceHistogram: 1 sampled image and no storage image - the exposure histogram only reads
@@ -417,7 +430,7 @@ constexpr ComposeBinding HISTOGRAM_BINDINGS[HISTOGRAM_BINDING_COUNT] =
 };
 
 // CmCheckerboard: 3 storage images and 4 sampled images.
-constexpr uint32_t CHECKERBOARD_BINDING_COUNT = 7;
+constexpr uint32_t CHECKERBOARD_BINDING_COUNT = 9;
 constexpr ComposeBinding CHECKERBOARD_BINDINGS[CHECKERBOARD_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_FINAL,            true, false }, //  28  framebufFinal
@@ -427,9 +440,11 @@ constexpr ComposeBinding CHECKERBOARD_BINDINGS[CHECKERBOARD_BINDING_COUNT] =
     { FB_IMAGE_INDEX_PRE_FINAL,        false, false }, // 151  framebufPreFinal_Sampled
     { FB_IMAGE_INDEX_ACID_FOG_R_T,     false, false }, // 183  framebufAcidFogRT_Sampled
     { FB_IMAGE_INDEX_SCREEN_EMIS_R_T,  false, false }, // 185  framebufScreenEmisRT_Sampled
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER, false, false },
+    { FB_IMAGE_INDEX_DEPTH_NDC, true, false },
 };
 
-constexpr uint32_t PREPARE_HDR_BINDING_COUNT = 6;
+constexpr uint32_t PREPARE_HDR_BINDING_COUNT = 7;
 constexpr ComposeBinding PREPARE_HDR_BINDINGS[PREPARE_HDR_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_FINAL,                 true, false },
@@ -438,6 +453,22 @@ constexpr ComposeBinding PREPARE_HDR_BINDINGS[PREPARE_HDR_BINDING_COUNT] =
     { FB_IMAGE_INDEX_THROUGHPUT,            false, false },
     { FB_IMAGE_INDEX_SCREEN_EMISSION,       false, false },
     { FB_IMAGE_INDEX_GOD_RAYS_FILTERED,     false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER,       false, false },
+};
+
+constexpr uint32_t GLASS_BLUR_BINDING_COUNT = 10;
+constexpr ComposeBinding GLASS_BLUR_BINDINGS[GLASS_BLUR_BINDING_COUNT] =
+{
+    { FB_IMAGE_INDEX_BLOOM_INPUT,     true, false },
+    { FB_IMAGE_INDEX_PRE_FINAL,       true, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER_PREV, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_HISTORY, true, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV, false, false },
+    { FB_IMAGE_INDEX_Q2_VIEW_DEPTH, false, false },
+    { FB_IMAGE_INDEX_NORMAL_GEOMETRY, false, false },
 };
 
 constexpr uint32_t PREPARE_FINAL_BINDING_COUNT = 17;
@@ -561,6 +592,7 @@ constexpr bool ComposeTablesAreConsistent()
         HISTOGRAM_BINDINGS,
         CHECKERBOARD_BINDINGS,
         PREPARE_HDR_BINDINGS,
+        GLASS_BLUR_BINDINGS,
         PREPARE_FINAL_BINDINGS,
         TAAU_BINDINGS,
     };
@@ -577,11 +609,13 @@ constexpr bool ComposeTablesAreConsistent()
         HISTOGRAM_BINDING_COUNT,
         CHECKERBOARD_BINDING_COUNT,
         PREPARE_HDR_BINDING_COUNT,
+        GLASS_BLUR_BINDING_COUNT,
         PREPARE_FINAL_BINDING_COUNT,
         TAAU_BINDING_COUNT,
     };
 
-    for (uint32_t table = 0; table < 13; table++)
+    static_assert(std::size(tables) == std::size(counts));
+    for (uint32_t table = 0; table < std::size(tables); table++)
     {
         for (uint32_t i = 0; i < counts[table]; i++)
         {
@@ -831,6 +865,9 @@ static_assert(UPSCALED_IMAGE_SLOT != COMPOSE_IMAGE_NONE,
               "UPSCALED_PING has to be part of the compose image union");
 
 constexpr uint32_t BLOOM_INPUT_IMAGE_SLOT = FindComposeImage(FB_IMAGE_INDEX_BLOOM_INPUT);
+
+
+
 static_assert(BLOOM_INPUT_IMAGE_SLOT != COMPOSE_IMAGE_NONE,
               "BLOOM_INPUT has to be part of the compose image union");
 
@@ -1059,6 +1096,7 @@ RhiRtComposePass::~RhiRtComposePass()
         target.histogramSet = nullptr;
         target.checkerboardSet = nullptr;
         target.prepareHdrSet = nullptr;
+        target.glassBlurSet = nullptr;
         target.prepareFinalSet = nullptr;
         target.taauSet = nullptr;
         target.prepareFinalBloomTexture = nullptr;
@@ -1102,6 +1140,7 @@ RhiRtComposePass::~RhiRtComposePass()
 
     taauPipeline = nullptr;
     prepareHdrPipeline = nullptr;
+    glassBlurPipeline = nullptr;
     prepareFinalPipeline = nullptr;
     checkerboardPipeline = nullptr;
     averagePipeline = nullptr;
@@ -1124,6 +1163,7 @@ RhiRtComposePass::~RhiRtComposePass()
     taauFramebufferLayout = nullptr;
     prepareFinalFramebufferLayout = nullptr;
     prepareHdrFramebufferLayout = nullptr;
+    glassBlurFramebufferLayout = nullptr;
     checkerboardFramebufferLayout = nullptr;
     histogramFramebufferLayout = nullptr;
     interleaveFramebufferLayout = nullptr;
@@ -1142,6 +1182,7 @@ RhiRtComposePass::~RhiRtComposePass()
 
     taauShader = nullptr;
     prepareHdrShader = nullptr;
+    glassBlurShader = nullptr;
     prepareFinalShader = nullptr;
     checkerboardShader = nullptr;
     averageShader = nullptr;
@@ -1210,6 +1251,7 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         !LoadShader(AVERAGE_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, averageShader) ||
         !LoadShader(CHECKERBOARD_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, checkerboardShader) ||
         !LoadShader(PREPARE_HDR_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, prepareHdrShader) ||
+        !LoadShader(GLASS_BLUR_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, glassBlurShader) ||
         !LoadShader(PREPARE_FINAL_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, prepareFinalShader) ||
         !LoadShader(TAAU_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, taauShader))
     {
@@ -1243,6 +1285,8 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         CreateFramebufferLayout(device, CHECKERBOARD_BINDINGS, CHECKERBOARD_BINDING_COUNT);
     prepareHdrFramebufferLayout =
         CreateFramebufferLayout(device, PREPARE_HDR_BINDINGS, PREPARE_HDR_BINDING_COUNT);
+    glassBlurFramebufferLayout =
+        CreateFramebufferLayout(device, GLASS_BLUR_BINDINGS, GLASS_BLUR_BINDING_COUNT);
     prepareFinalFramebufferLayout = CreatePrepareFinalLayout(device);
     taauFramebufferLayout =
         CreateFramebufferLayout(device, TAAU_BINDINGS, TAAU_BINDING_COUNT);
@@ -1338,7 +1382,7 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         temporalFramebufferLayout == nullptr || atrousLfFramebufferLayout == nullptr ||
         atrousFramebufferLayout == nullptr || interleaveFramebufferLayout == nullptr ||
         histogramFramebufferLayout == nullptr || checkerboardFramebufferLayout == nullptr ||
-        prepareHdrFramebufferLayout == nullptr ||
+        prepareHdrFramebufferLayout == nullptr || glassBlurFramebufferLayout == nullptr ||
         prepareFinalFramebufferLayout == nullptr || taauFramebufferLayout == nullptr ||
         uniformLayout == nullptr || pushConstantLayout == nullptr ||
         prepareFinalControlLayout == nullptr ||
@@ -1421,7 +1465,9 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
     checkerboardPipeline = CreateComposePipeline(device, checkerboardShader,
                                                  { checkerboardFramebufferLayout, uniformLayout });
     prepareHdrPipeline = CreateComposePipeline(device, prepareHdrShader,
-                                               { prepareHdrFramebufferLayout, uniformLayout });
+                                                { prepareHdrFramebufferLayout, uniformLayout });
+    glassBlurPipeline = CreateComposePipeline(device, glassBlurShader,
+                                               { glassBlurFramebufferLayout, uniformLayout, pushConstantLayout });
     prepareFinalPipeline = CreateComposePipeline(device, prepareFinalShader,
                                                  { prepareFinalFramebufferLayout, uniformLayout,
                                                    tonemappingSrvLayout, emptyLayout,
@@ -1434,7 +1480,7 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         temporalPipeline == nullptr || atrousLfPipeline == nullptr ||
         interleavePipeline == nullptr || histogramPipeline == nullptr ||
         averagePipeline == nullptr || checkerboardPipeline == nullptr ||
-        prepareHdrPipeline == nullptr ||
+        prepareHdrPipeline == nullptr || glassBlurPipeline == nullptr ||
         prepareFinalPipeline == nullptr || taauPipeline == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a compose pass compute pipeline");
@@ -1789,6 +1835,8 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
                               uint32_t upscaledWidth,
                               uint32_t upscaledHeight,
                               bool filterEnabled,
+                              bool glassBlurEnabled,
+
                               nvrhi::IBuffer *pUniformBuffer,
                               const QrDrawFramePostEffectsParams &postEffectParams,
                               const std::function<void(nvrhi::ICommandList *)> &pfnRasterOverlay)
@@ -1959,13 +2007,28 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
     // second public entry point is spelled out on `Render`: the overlay's only contract with this
     // chain is this window, and keeping the pre-TAAU chain one atomic host call avoids exposing
     // the module's intermediate wrap/set state.
+
     if (pfnRasterOverlay)
     {
         pfnRasterOverlay(pCommandList);
     }
 
     RecordDispatch(pCommandList, prepareHdrPipeline, { target.prepareHdrSet, target.uniformSet },
-                   groupsX, groupsY, 1);
+                    groupsX, groupsY, 1);
+
+    if (glassBlurEnabled)
+    {
+        for (uint32_t axis = 0; axis < 2; axis++)
+        {
+            pCommandList->setTextureState(target.engineTextures[BLOOM_INPUT_IMAGE_SLOT], nvrhi::AllSubresources,
+                                          nvrhi::ResourceStates::UnorderedAccess);
+            pCommandList->setTextureState(target.engineTextures[FindComposeImage(FB_IMAGE_INDEX_PRE_FINAL)], nvrhi::AllSubresources,
+                                          nvrhi::ResourceStates::UnorderedAccess);
+            pCommandList->commitBarriers();
+            RecordDispatch(pCommandList, glassBlurPipeline, { target.glassBlurSet, target.uniformSet },
+                            groupsX, groupsY, 1, &axis, sizeof(axis));
+        }
+    }
 
     float bloomStrength = 0.0f;
     nvrhi::ITexture *pBloomResult = nullptr;
@@ -2233,6 +2296,10 @@ void RhiRtComposePass::ReleaseFramebufferSets(Target &target)
         {
             frameContext->Retire(target.prepareHdrSet);
         }
+        if (target.glassBlurSet != nullptr)
+        {
+            frameContext->Retire(target.glassBlurSet);
+        }
         if (target.prepareFinalSet != nullptr)
         {
             frameContext->Retire(target.prepareFinalSet);
@@ -2254,6 +2321,7 @@ void RhiRtComposePass::ReleaseFramebufferSets(Target &target)
     target.histogramSet = nullptr;
     target.checkerboardSet = nullptr;
     target.prepareHdrSet = nullptr;
+    target.glassBlurSet = nullptr;
     target.prepareFinalSet = nullptr;
     target.taauSet = nullptr;
     target.prepareFinalBloomTexture = nullptr;
@@ -2485,6 +2553,21 @@ bool RhiRtComposePass::PrepareFramebufferSets(Target &target)
             {
                 warnedBadTable = true;
                 LogMessage(print, "Warning: RHI: failed to create the compose pass prepare-HDR binding set");
+            }
+            return false;
+        }
+    }
+
+    if (target.glassBlurSet == nullptr)
+    {
+        target.glassBlurSet = CreateFramebufferSet(device, GLASS_BLUR_BINDINGS, GLASS_BLUR_BINDING_COUNT,
+                                                   target.engineTextures, nullptr, glassBlurFramebufferLayout);
+        if (target.glassBlurSet == nullptr)
+        {
+            if (!warnedBadTable)
+            {
+                warnedBadTable = true;
+                LogMessage(print, "Warning: RHI: failed to create the glass blur binding set");
             }
             return false;
         }

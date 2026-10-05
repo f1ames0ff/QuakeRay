@@ -15,7 +15,7 @@ namespace qray
 #define MAX_GEOMETRY_PRIMITIVE_COUNT (1048576)
 #define MAX_GEOMETRY_PRIMITIVE_COUNT_POW (20)
 #define LOWER_BOTTOM_LEVEL_GEOMETRIES_COUNT (256)
-#define MAX_TOP_LEVEL_INSTANCE_COUNT (45)
+#define MAX_TOP_LEVEL_INSTANCE_COUNT (60)
 #define BINDING_VERTEX_BUFFER_STATIC (0)
 #define BINDING_VERTEX_BUFFER_DYNAMIC (1)
 #define BINDING_INDEX_BUFFER_STATIC (2)
@@ -64,7 +64,7 @@ namespace qray
 #define INSTANCE_MASK_WORLD_0 (1)
 #define INSTANCE_MASK_WORLD_1 (2)
 #define INSTANCE_MASK_WORLD_2 (4)
-#define INSTANCE_MASK_RESERVED_0 (8)
+#define INSTANCE_MASK_GLASS (8)
 #define INSTANCE_MASK_RESERVED_1 (16)
 #define INSTANCE_MASK_REFRACT (32)
 #define INSTANCE_MASK_FIRST_PERSON (64)
@@ -96,7 +96,7 @@ namespace qray
 #define GEOM_INST_FLAG_ALPHA_TRANSMISSION (1 << 14)
 #define GEOM_INST_FLAG_RESERVED_2 (1 << 15)
 #define GEOM_INST_FLAG_RESERVED_3 (1 << 16)
-#define GEOM_INST_FLAG_RESERVED_4 (1 << 17)
+#define GEOM_INST_FLAG_GLASS_CUTOUT (1 << 17)
 #define GEOM_INST_FLAG_MEDIA_TYPE_ACID (1 << 18)
 #define GEOM_INST_FLAG_EXACT_NORMALS (1 << 19)
 #define GEOM_INST_FLAG_IGNORE_REFRACT_AFTER (1 << 20)
@@ -312,9 +312,9 @@ struct ShGlobalUniform
     uint32_t reflRefrEarlyOut;
     uint32_t neeLightSamples;
     float turbWarpStrength;
-    int32_t instanceGeomInfoOffset[48];
-    int32_t instanceGeomInfoOffsetPrev[48];
-    int32_t instanceGeomCount[48];
+    int32_t instanceGeomInfoOffset[60];
+    int32_t instanceGeomInfoOffsetPrev[60];
+    int32_t instanceGeomCount[60];
     float viewProjCubemap[96];
     float skyCubemapRotationTransform[16];
     float fogMins[32];
@@ -332,6 +332,8 @@ struct ShGlobalUniform
     uint32_t restirParams[4];
     float cloudShadowPlacement[4];
     float cloudLayerMotion[4];
+    uint32_t glassBlur;
+    uint32_t glassDenoise;
 };
 
 struct ShGeometryInstance

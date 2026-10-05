@@ -60,23 +60,26 @@ uint decodeEmissionBlendMode( const uint code )
     return min( code - 1u, 5u );
 }
 
-[numthreads(COMPUTE_COMPOSE_GROUP_SIZE_X, COMPUTE_COMPOSE_GROUP_SIZE_Y, 1)]
-void main( uint3 dispatchThreadID : SV_DispatchThreadID )
+float4 sampleGlassLayer(int2 pix, bool reflection)
 {
-    const int2 pix = int2( dispatchThreadID.x, dispatchThreadID.y );
-    if( (uint)pix.x >= (uint)globalUniform.renderWidth || (uint)pix.y >= (uint)globalUniform.renderHeight )
-    {
-        return;
-    }
+    return framebufGodRaysFiltered_Sampled.Load(int3(pix, 0));
+}
 
+#include "GlassLayers.hlsli"
+
+float3 sampleGlassBackground( const int2 pix )
+{
     float3 hdr = framebufFinal.Load( pix ).rgb;
     const float3 screenEmis = framebufScreenEmission_Sampled.Load(int3( pix, 0 )).rgb;
+
     const uint emisBlendMode = decodeEmissionBlendMode(
         framebufPrimaryToReflRefr_Sampled.Load(int3( getCheckerboardPix( pix ), 0 )).a );
 
     if (globalUniform.coreQ2RTX != 0)
     {
-        hdr += framebufGodRaysFiltered_Sampled.Load(int3( pix, 0 )).rgb;
+        const float glass = framebufQ2GlassFilter_Sampled.Load(int3(getCheckerboardPix(pix), 0)).a;
+        hdr += globalUniform.glassBlur != 0u && abs(glass) >= 1.0 ?
+            reconstructGlassLayer(pix, false).rgb : framebufGodRaysFiltered_Sampled.Load(int3(pix, 0)).rgb;
     }
     else
     {
@@ -89,7 +92,17 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
 
     const float strength = clamp( globalUniform.emissionBlendStrength, 0.0, 1.0 );
     const float3 layer   = screenEmis * globalUniform.emissionMaxScreenColor * strength;
-    const float3 input   = blendEmissionLayer( hdr, layer, emisBlendMode );
+    return blendEmissionLayer( hdr, layer, emisBlendMode );
+}
 
-    framebufBloomInput[pix] = float4( input, 0.0 );
+[numthreads(COMPUTE_COMPOSE_GROUP_SIZE_X, COMPUTE_COMPOSE_GROUP_SIZE_Y, 1)]
+void main( uint3 dispatchThreadID : SV_DispatchThreadID )
+{
+    const int2 pix = int2( dispatchThreadID.xy );
+    if( (uint)pix.x >= (uint)globalUniform.renderWidth || (uint)pix.y >= (uint)globalUniform.renderHeight )
+    {
+        return;
+    }
+    const float3 color = sampleGlassBackground( pix );
+    framebufBloomInput[pix] = float4( color, 0.0 );
 }

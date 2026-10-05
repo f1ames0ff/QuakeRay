@@ -292,12 +292,12 @@ void main()
     vec3        specular;
     vec3        diffuseOnly;
 
-    v += traceVisibility(surf, light.position, 1u);
-    v += traceLightVisibility(surf, light, 2u, traced);
-    v += traceSunVisibility(surf, light, traced);
-    v += traceSkyVisibility(surf, probeSkyDir);
-    v += traceShadowRay(surf.instCustomIndex, surf.position, light.position, false) ? 1.0 : 0.0;
-    v += traceShadowRay(surf.instCustomIndex, surf.position, light.position, true) ? 1.0 : 0.0;
+    v += float(getLuminance(traceVisibility(surf, light.position, 1u)));
+    v += float(getLuminance(traceLightVisibility(surf, light, 2u, traced)));
+    v += float(getLuminance(traceSunVisibility(surf, light, traced)));
+    v += float(getLuminance(traceSkyVisibility(surf, probeSkyDir)));
+    v += float(getLuminance(traceShadowRay(surf.instCustomIndex, surf.position, light.position, false)));
+    v += float(getLuminance(traceShadowRay(surf.instCustomIndex, surf.position, light.position, true)));
 
     shade(surf, light, 1.0, diffuse, specular);
     shadeDiffuse(surf, light, 1.0, diffuseOnly);

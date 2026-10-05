@@ -69,7 +69,7 @@ namespace qray
         RasterizedDataCollector& operator=( const RasterizedDataCollector& other ) = delete;
 
         RasterizedDataCollector& operator=( RasterizedDataCollector&& other ) noexcept = delete;
-        void                     AddGeometry( uint32_t                              frameIndex,
+        bool                     AddGeometry( uint32_t                              frameIndex,
                                               const QrRasterizedGeometryUploadInfo& info,
                                               const float*                          viewProjection,
                                               const QrViewport*                     viewport );

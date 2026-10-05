@@ -96,7 +96,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          globalUniform.giBounceRays.x + globalUniform.fltEnable.x + globalUniform.fixedAlbedo.x +
          globalUniform.sunBounce.x + globalUniform.levelFogColorDensity.x +
          globalUniform.levelFogSkyBlend.x + float(globalUniform.restirParams.x) +
-         globalUniform.cloudShadowPlacement.x + globalUniform.cloudLayerMotion.x;
+         globalUniform.cloudShadowPlacement.x + globalUniform.cloudLayerMotion.x +
+         float(globalUniform.glassBlur) + float(globalUniform.glassDenoise);
 
     // ShVertPreprocessing
     v += float(pushConstant.push.tlasInstanceCount) + float(pushConstant.push.tlasInstanceIsDynamicBits[0]);
@@ -898,6 +899,42 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += float(framebufQ2Cluster[pix].x);
     v += float(framebufQ2Cluster_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufQ2Cluster_Sampler, uv, 0.0).x;
+
+    // framebufQ2GlassFilter  rgba16f
+    framebufQ2GlassFilter[pix] = float4(1.0, 1.0, 1.0, 1.0);
+    v += float(framebufQ2GlassFilter[pix].x);
+    v += float(framebufQ2GlassFilter_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2GlassFilter_Sampler, uv, 0.0).x;
+
+    // framebufQ2GlassFilter_Prev  rgba16f
+    framebufQ2GlassFilter_Prev[pix] = float4(1.0, 1.0, 1.0, 1.0);
+    v += float(framebufQ2GlassFilter_Prev[pix].x);
+    v += float(framebufQ2GlassFilter_Prev_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2GlassFilter_Prev_Sampler, uv, 0.0).x;
+
+    // framebufQ2GlassReflection  rgba16f
+    framebufQ2GlassReflection[pix] = float4(1.0, 1.0, 1.0, 1.0);
+    v += float(framebufQ2GlassReflection[pix].x);
+    v += float(framebufQ2GlassReflection_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2GlassReflection_Sampler, uv, 0.0).x;
+
+    // framebufQ2GlassReflection_Prev  rgba16f
+    framebufQ2GlassReflection_Prev[pix] = float4(1.0, 1.0, 1.0, 1.0);
+    v += float(framebufQ2GlassReflection_Prev[pix].x);
+    v += float(framebufQ2GlassReflection_Prev_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2GlassReflection_Prev_Sampler, uv, 0.0).x;
+
+    // framebufQ2GlassHistory  rgba16f
+    framebufQ2GlassHistory[pix] = float4(1.0, 1.0, 1.0, 1.0);
+    v += float(framebufQ2GlassHistory[pix].x);
+    v += float(framebufQ2GlassHistory_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2GlassHistory_Sampler, uv, 0.0).x;
+
+    // framebufQ2GlassHistory_Prev  rgba16f
+    framebufQ2GlassHistory_Prev[pix] = float4(1.0, 1.0, 1.0, 1.0);
+    v += float(framebufQ2GlassHistory_Prev[pix].x);
+    v += float(framebufQ2GlassHistory_Prev_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2GlassHistory_Prev_Sampler, uv, 0.0).x;
 
     probeOutput[0] = v;
 }

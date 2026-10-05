@@ -462,6 +462,8 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         }
 
         gu->noBackfaceReflForNoMediaChange = !!rr.disableBackfaceReflectionsForNoMediaChange;
+        gu->glassBlur                      = !!rr.glassBlur;
+        gu->glassDenoise                   = !!rr.glassDenoise;
 
         gu->twirlPortalNormal = !!rr.portalNormalTwirl;
     }
@@ -487,6 +489,8 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->waterTextureAreaScale             = 1.0f;
 
         gu->noBackfaceReflForNoMediaChange = false;
+        gu->glassBlur                      = false;
+        gu->glassDenoise                   = false;
 
         gu->twirlPortalNormal = false;
     }
@@ -534,11 +538,19 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
 
         if( allowGeometryWithSkyFlag )
         {
-            gu->rayCullMaskWorld_Shadow = gu->rayCullMaskWorld & ( ~INSTANCE_MASK_WORLD_2 );
+            gu->rayCullMaskWorld_Shadow = ( gu->rayCullMaskWorld & ( ~INSTANCE_MASK_WORLD_2 ) );
         }
         else
         {
             gu->rayCullMaskWorld_Shadow = gu->rayCullMaskWorld;
+        }
+
+        // A pane joins shadow rays through its own bit: the light that crosses it
+        // is tinted by it and, with depth, leaves its far face bent. Switched off,
+        // panes are not on the shadow rays at all and the light passes untinted.
+        if( ( drawInfo.pReflectRefractParams == nullptr ) || ( drawInfo.pReflectRefractParams->glassShadows != 0 ) )
+        {
+            gu->rayCullMaskWorld_Shadow |= INSTANCE_MASK_GLASS;
         }
     }
 
@@ -1417,7 +1429,28 @@ void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo
         throw QrException(QR_WRONG_ARGUMENT, "Index data / count must be both not null or null");
     }
 
-    rasterizedDataCollector->AddGeometry(currentFrameState.GetFrameIndex(), *pUploadInfo, pViewProjection, pViewport);
+    // An upload outside a started frame cannot be drawn -- the collector is
+    // reset when the next frame starts -- so it is dropped here instead of
+    // piling up while frames are skipped (a minimized window keeps the game,
+    // and with it any draw producing uploads, running).
+    if (!currentFrameState.WasFrameStarted())
+    {
+        if (!printedRasterUploadWithoutFrame)
+        {
+            printedRasterUploadWithoutFrame = true;
+            Print("RHI: rasterized geometry uploaded outside a frame was dropped; the renderer is not drawing (minimized?)");
+        }
+        return;
+    }
+
+    if (!rasterizedDataCollector->AddGeometry(currentFrameState.GetFrameIndex(), *pUploadInfo, pViewProjection, pViewport))
+    {
+        if (!printedRasterOverflow)
+        {
+            printedRasterOverflow = true;
+            Print("RHI: the rasterized geometry buffer is full; the rest of the frame's overlays are skipped (raise rasterizedMaxVertexCount)");
+        }
+    }
 }
 
 void VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)

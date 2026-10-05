@@ -110,7 +110,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float rayLen = 0.0;
 
     const ShHitInfo hRfl = getHitInfoWithRayCone_ReflectionRefraction(
-        pl, rayCone, dir, dir, dir, virtualPosForMotion, rayLen, motion, motionDepthLinear, screenEmission, emissionBlendCode);
+        pl, rayCone, dir, dir, dir, virtualPosForMotion, rayLen, motion, motionDepthLinear, screenEmission, emissionBlendCode, 0.0f);
 
     v += hRfl.albedo.y + hRfl.metallic + hRfl.normal.z + hRfl.roughness + hRfl.normalGeom.x +
          hRfl.emission + hRfl.hitPosition.y + float(hRfl.instCustomIndex) +

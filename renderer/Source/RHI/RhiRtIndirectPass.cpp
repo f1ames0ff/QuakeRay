@@ -148,15 +148,15 @@ constexpr uint32_t MAX_ALBEDO_LAYERS_SPEC_ID = 0;
 constexpr uint32_t INDIRECT_RAYS_MAX_ALBEDO_LAYERS = 1;
 
 // The engine's pipeline-wide RT limits (RayTracingPipeline.cpp:203 and the measured blob structs):
-// recursion depth 2; the payload is ShPayload = {float2 baryCoords; uint instIdAndIndex; uint
-// geomAndPrimIndex} = 16 B and the hit attribute HitAttributes = {float2 inBaryCoords} = 8 B
-// (Structs.hlsli:47-57). The indirect raygen's own interface names both payloads (measured: unlike
-// the direct raygen, which names only the shadow payload), but the pipeline's union stays the same
-// because it also carries the two misses and the two hit groups. NVRHI's two size fields are
-// D3D12-only at this pin, so on Vulkan they are documentation; they are kept exact for a future
-// backend switch.
+// recursion depth 2; the payloads are ShPayload = {float2 baryCoords; uint instIdAndIndex; uint
+// geomAndPrimIndex} = 16 B and ShPayloadShadow = {float3 transmittance; uint isShadowed; float3
+// glassNormal; float glassDistance; float4 glassParams} = 48 B, and the hit attribute
+// HitAttributes = {float2 inBaryCoords} = 8 B (Structs.hlsli:47-62). The indirect raygen's own
+// interface names both payloads, and the pipeline's union is 48 B because it also carries the two
+// misses and the two hit groups. NVRHI's two size fields are D3D12-only at this pin, so on Vulkan
+// they are documentation; they are kept exact for a future backend switch.
 constexpr uint32_t MAX_RECURSION_DEPTH = 2;
-constexpr uint32_t MAX_PAYLOAD_SIZE = 2 * sizeof(float) + 2 * sizeof(uint32_t);
+constexpr uint32_t MAX_PAYLOAD_SIZE = 16 * sizeof(float);
 constexpr uint32_t MAX_ATTRIBUTE_SIZE = 2 * sizeof(float);
 
 // The engine's cubemap capacity: CubemapManager.cpp:30 MAX_CUBEMAP_COUNT. The placeholder table of

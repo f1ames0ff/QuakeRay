@@ -284,7 +284,8 @@ public:
     // instance list (disabled, not built yet, or every instance culled), and the caller then leaves
     // the uniform's CPU copy alone.
     uint32_t GetInstanceGeometryInfo(int32_t *pInstanceGeomInfoOffset,
-                                     int32_t *pInstanceGeomInfoCount) const;
+                                      int32_t *pInstanceGeomInfoCount) const;
+    bool HasGlassInstances() const { return hasGlassInstances; }
 
 private:
     struct StaticBlas
@@ -570,6 +571,7 @@ private:
 
     // The instance count of the last BuildTopLevel, for the summary.
     uint32_t tlasInstanceCount = 0;
+    bool hasGlassInstances = false;
 
     // The one-time warning for a non-empty filter without an RHI BLAS.
     bool warnedUnresolvedInstance = false;

@@ -35,10 +35,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += h[0].normalGeom.x + h[0].emission;
     v += h[0].hitPosition.z;
     v += float(h[0].instCustomIndex) + float(h[0].geometryInstanceFlags);
-    v += float(h[0].portalIndex) + float(h[0].cluster) + h[0].transparency;
+    v += float(h[0].portalIndex) + float(h[0].cluster) + h[0].transparency + h[0].glassParams.x;
 
     v += p[0].baryCoords.x + float(p[0].instIdAndIndex) + float(p[0].geomAndPrimIndex);
-    v += float(s[0].isShadowed);
+    v += float(s[0].isShadowed) + s[0].transmittance.x;
+    v += s[0].glassNormal.y + s[0].glassDistance + s[0].glassParams.z;
 
     o[0] = v;
 }

@@ -159,7 +159,8 @@ ShHitInfo getHitInfoWithRayCone_ReflectionRefraction(
     out float rayLen,
     out float2 motion, out float motionDepthLinear,
     out float screenEmission,
-    out uint emissionBlendCode)
+    out uint emissionBlendCode,
+    float roughnessBlur)
 
 #elif defined(HITINFO_INL_INDIR)
 
@@ -170,6 +171,7 @@ ShHitInfo getHitInfoBounce(
 {
     ShHitInfo h;
     h.transparency = 1.0f;
+    h.glassParams = (float2)0.0f;
 
     int instanceId, instCustomIndex;
     int geomIndex, primIndex;
@@ -190,6 +192,7 @@ ShHitInfo getHitInfoBounce(
     };
 
     h.hitPosition = mul(tr.positions, baryCoords);
+    h.glassParams = tr.materialColors[2].xy;
 
     if( ( tr.geometryInstanceFlags & GEOM_INST_FLAG_EXACT_NORMALS ) == 0 )
     {
@@ -303,7 +306,12 @@ ShHitInfo getHitInfoBounce(
 
 
 #if defined(HITINFO_INL_RFL)
-    DerivativeSet derivSet = getTriangleUVDerivativesFromRayCone(tr, h.normalGeom, rayCone, rayDir);
+    /* The roughness of the surface the ray left widens the cone over the
+       segment: the hit is sampled at the mip a frosted pane would blur it to. */
+    RayCone blurredCone = rayCone;
+    blurredCone.width += roughnessBlur * rayLen;
+
+    DerivativeSet derivSet = getTriangleUVDerivativesFromRayCone(tr, h.normalGeom, blurredCone, rayDir);
 
     h.albedo = processAlbedoRayConeDeriv(
         tr.geometryInstanceFlags, texCoords,
@@ -400,7 +408,8 @@ ShHitInfo getHitInfoBounce(
 #if !defined(HITINFO_INL_INDIR)
     if (tr.materials[0][MATERIAL_NORMAL_INDEX] != MATERIAL_NO_TEXTURE)
     {
-        const float suppressDetails = 5.0;
+        const bool isGlassNormal = (tr.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_GLASS) != 0u;
+        const float suppressDetails = isGlassNormal ? 1.0 : 5.0;
 
         const float4 nrmSample =
     #if defined(HITINFO_INL_PRIM)
@@ -416,7 +425,16 @@ ShHitInfo getHitInfoBounce(
         nrm.xy = nrm.xy * 2.0 - (float2)1.0;
 
         const float3 bitangent = cross(h.normalGeom, tr.tangent.xyz) * tr.tangent.w;
-        h.normal = safeNormalize(tr.tangent.xyz * nrm.x + bitangent * nrm.y + h.normalGeom);
+        if (isGlassNormal)
+        {
+            float3 mappedNormal = (nrmSample.xyz * 255.0 - 128.0) / 127.0;
+            mappedNormal.z = max(mappedNormal.z, 0.01);
+            h.normal = safeNormalize(tr.tangent.xyz * mappedNormal.x + bitangent * mappedNormal.y + h.normalGeom * mappedNormal.z);
+        }
+        else
+        {
+            h.normal = safeNormalize(tr.tangent.xyz * nrm.x + bitangent * nrm.y + h.normalGeom);
+        }
 
         h.normal = safeNormalize(lerp(h.normalGeom, h.normal, globalUniform.normalMapStrength));
     }

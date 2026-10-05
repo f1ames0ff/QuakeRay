@@ -26,9 +26,11 @@
 //
 
 #version 460
+#extension GL_EXT_ray_query : require
 
 layout (constant_id = 0) const uint maxAlbedoLayerCount = 0;
 #define MATERIAL_MAX_ALBEDO_LAYERS maxAlbedoLayerCount
 
 #define Q2_REFL_REFR_SHADER
 #include "RaygenPrimary.inl"
+#include "RayClearance.h"

@@ -38,26 +38,163 @@ void main(inout ShPayloadShadow g_payloadShadow, in HitAttributes attribs)
 {
 	const ShTriangle tr = getTriangle((int)InstanceIndex(), (int)InstanceID(), (int)GeometryIndex(), (int)PrimitiveIndex());
 
+	const bool isGlass = (tr.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_GLASS) != 0;
+	const bool isShadowRay = (RayFlags() & RAY_FLAG_SKIP_CLOSEST_HIT_SHADER) != 0;
+	const bool glassCutout = (tr.geometryInstanceFlags & GEOM_INST_FLAG_GLASS_CUTOUT) != 0;
+	const bool shaderGlass = isGlass && !isShadowRay && globalUniform.glassBlur != 0u;
+	const bool shaderReflection = shaderGlass && g_payloadShadow.glassParams.y == 1.0 &&
+		globalUniform.reflectRefractMaxDepth > 0u && isRegularPixOdd(int2(DispatchRaysIndex().xy)) == 0;
+
+	/* Invisible entities share the glass pass-through; they never cut out or
+	   tint. A plain pane off the shadow rays accepts at once, without a fetch. */
+	if (isGlass)
+	{
+		if ((tr.geometryInstanceFlags & GEOM_INST_FLAG_IGNORE_REFRACT_AFTER) != 0)
+		{
+			return;
+		}
+		if (!glassCutout && !isShadowRay && !shaderGlass)
+		{
+			return;
+		}
+	}
+
 	const float3 baryCoords = float3(1.0f - attribs.inBaryCoords.x - attribs.inBaryCoords.y, attribs.inBaryCoords.x, attribs.inBaryCoords.y);
     const float2 texCoord = getSurfaceTexCoord(tr.geometryInstanceFlags, mul(tr.layerTexCoord[0], baryCoords));
 
- 	const float4 color = getTextureSampleLod(tr.materials[0][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord, 0.0) * tr.materialColors[0];
-
-	if ((tr.geometryInstanceFlags & GEOM_INST_FLAG_ALPHA_TRANSMISSION) != 0)
+	if (!isGlass || glassCutout)
 	{
-		uint h = (uint)InstanceID() * 73856093u ^ (uint)PrimitiveIndex() * 19349663u ^ globalUniform.frameId * 83492791u;
-		h ^= h >> 13;
-		h *= 1274126177u;
-		h ^= h >> 16;
+		const float4 color = getTextureSampleLod(tr.materials[0][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord, 0.0) * tr.materialColors[0];
 
-		if (float(h) * (1.0 / 4294967296.0) < 1.0 - color.a)
+		if ((tr.geometryInstanceFlags & GEOM_INST_FLAG_ALPHA_TRANSMISSION) != 0)
+		{
+			uint h = (uint)InstanceID() * 73856093u ^ (uint)PrimitiveIndex() * 19349663u ^ globalUniform.frameId * 83492791u;
+			h ^= h >> 13;
+			h *= 1274126177u;
+			h ^= h >> 16;
+
+			if (float(h) * (1.0 / 4294967296.0) < 1.0 - color.a)
+			{
+				IgnoreHit();
+				return;
+			}
+		}
+		else if ((color.r + color.g + color.b) / 3 * color.a + color.a < ALPHA_THRESHOLD)
+		{
+			IgnoreHit();
+			return;
+		}
+	}
+
+	if (shaderGlass)
+	{
+		if (g_payloadShadow.glassParams.y == 1.0 && RayTCurrent() < g_payloadShadow.glassDistance)
+		{
+			const float3 tint = getTextureSampleLod(tr.materials[0][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord, 0.0).rgb * tr.materialColors[0].rgb;
+			float transparency = 1.0;
+			if (tr.materials[0][MATERIAL_NORMAL_INDEX] != MATERIAL_NO_TEXTURE)
+			{
+				transparency = getTextureSampleLod(tr.materials[0][MATERIAL_NORMAL_INDEX], texCoord, 0.0).a;
+			}
+			float roughness = tr.geomRoughness;
+			if (tr.materials[0][MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX] != MATERIAL_NO_TEXTURE)
+			{
+				roughness = getTextureSampleLod(tr.materials[0][MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX], texCoord, 0.0).r;
+			}
+			g_payloadShadow.glassNormal = lerp(max(tint, (float3)0.0), (float3)1.0, saturate(transparency));
+			g_payloadShadow.glassDistance = RayTCurrent();
+			g_payloadShadow.glassParams.x = saturate(globalUniform.squareInputRoughness == 0u ? roughness : roughness * roughness);
+			g_payloadShadow.glassParams.z = 1.0;
+			const float3 glassNormal = safeNormalize(cross(getColumn(tr.positions, 1) - getColumn(tr.positions, 0),
+				getColumn(tr.positions, 2) - getColumn(tr.positions, 0)));
+			const float ior = tr.materialColors[2].x > 0.0 ? clamp(tr.materialColors[2].x, 1.0, 5.0) : max(globalUniform.indexOfRefractionGlass, 1.0);
+			const float f0 = square((ior - 1.0) / (ior + 1.0));
+			g_payloadShadow.glassParams.w = globalUniform.reflectRefractMaxDepth > 0u ?
+				f0 + (1.0 - f0) * pow(1.0 - abs(dot(WorldRayDirection(), glassNormal)), 5.0) : 0.0;
+		}
+		if (shaderReflection)
+		{
+			return;
+		}
+		IgnoreHit();
+		return;
+	}
+
+	if (isGlass && isShadowRay)
+	{
+		/* The light that crosses the pane is filtered by its diffuse colour,
+		   bleached by the transparency the normal-map alpha carries: at 1 the
+		   texture blocks nothing. The filter comes from the mip the hit
+		   distance earns, so a far pane averages its texture instead of
+		   aliasing it into the shadow. */
+		const float hitDistance = RayTCurrent();
+		const float tintLod = clamp(log2(max(hitDistance, 1.0) / 128.0), 0.0, 4.0);
+
+		const float3 tint = getTextureSampleLod(tr.materials[0][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord, tintLod).rgb * tr.materialColors[0].rgb;
+		const float transparency = getTextureSampleLod(tr.materials[0][MATERIAL_NORMAL_INDEX], texCoord, tintLod).a;
+
+		g_payloadShadow.transmittance *= lerp(max(tint, (float3)0.0), (float3)1.0, clamp(transparency, 0.0, 1.0)) * clamp(transparency, 0.0, 1.0);
+
+		const float thickness = max(tr.materialColors[2].y, 0.0);
+
+		if (thickness > 0.0)
+		{
+			/* A pane with depth stops the ray and leaves its plane behind: the
+			   caller starts the next segment past the far face it implies. */
+			g_payloadShadow.isShadowed |= 2;
+			const float3 geomNormal = safeNormalize(cross(
+				getColumn(tr.positions, 1) - getColumn(tr.positions, 0),
+				getColumn(tr.positions, 2) - getColumn(tr.positions, 0)));
+			g_payloadShadow.glassNormal = geomNormal;
+			g_payloadShadow.glassDistance = hitDistance;
+			g_payloadShadow.glassParams = float4(tr.materialColors[2].x, thickness, 0.0, 0.0);
+			const float3 inDir = WorldRayDirection();
+			float3 microN = geomNormal;
+
+			if (tr.materials[0][MATERIAL_NORMAL_INDEX] != MATERIAL_NO_TEXTURE)
+			{
+			
+	
+const float4 nrmSample = getTextureSampleLod(tr.materials[0][MATERIAL_NORMAL_INDEX], texCoord, 0.0);
+			
+	
+float3 mapped = (nrmSample.xyz * 255.0 - 128.0) / 127.0;
+			
+	
+mapped.z = max(mapped.z, 0.01);
+			
+	
+const float3 bitangent = cross(geomNormal, tr.tangent.xyz) * tr.tangent.w;
+			
+	
+microN = safeNormalize(tr.tangent.xyz * mapped.x + bitangent * mapped.y + geomNormal * mapped.z);
+			}
+
+			if (dot(microN, inDir) > 0.0)
+			{
+			
+	
+microN = -microN;
+			}
+
+			const float3 exitN = dot(geomNormal, inDir) > 0.0 ? -geomNormal : geomNormal;
+			const float ior = tr.materialColors[2].x > 0.0 ? clamp(tr.materialColors[2].x, 1.0, 5.0)
+			
+	
+                                               : max(globalUniform.indexOfRefractionGlass, 1.0);
+			const float3 refr1 = refract(inDir, microN, 1.0 / ior);
+			const float3 refr2 = refract(refr1, exitN, ior);
+
+			if (dot(refr1, refr1) > 0.0 && dot(refr2, refr2) > 0.0)
+			{
+			
+	
+g_payloadShadow.glassDirection = refr2;
+			}
+		}
+		else
 		{
 			IgnoreHit();
 		}
 	}
-	else if ((color.r + color.g + color.b) / 3 * color.a + color.a < ALPHA_THRESHOLD)
-	{
-		IgnoreHit();
-	}
-
 }

@@ -43,6 +43,27 @@
 #include "Q2Fog.h"
 #include "Q2Asvgf.h"
 
+#if defined(Q2_REFL_REFR_SHADER)
+
+/* Defined in RayClearance.h, which only the Q2 reflect/refract raygen
+   includes: its ray query must not reach the modules that do not use it. */
+float traceClearance(vec3 origin, vec3 direction, float maxDistance, uint cullMask);
+
+#define GLASS_ROUGHNESS_MAX_ANGLE 0.35
+
+/* One GGX micro-normal of a pane for the view direction v, in world space: */
+/* roughness is the microfacet distribution the ray leaves along. */
+vec3 sampleRoughNormal(vec3 n, vec3 v, float alpha, vec2 u)
+{
+    const mat3 basis = getONB(n);
+    float oneOverPdf;
+    const vec3 m = sampleGGXVNDF(transpose(basis) * v, alpha, u.x, u.y, oneOverPdf);
+
+    return normalize(basis * m);
+}
+
+#endif
+
 vec2 getMotionVectorForUpscaler(const vec2 motionCurToPrev)
 {
     return motionCurToPrev;
@@ -52,7 +73,7 @@ vec2 getMotionVectorForUpscaler(const vec2 motionCurToPrev)
 
 void storeQ2GBuffer(
     const ivec2 pix,
-    const vec3 baseColor, float transparency,
+    const vec3 baseColor, float transparency, const vec2 glassParams,
     float metallic, float roughness,
     float depth,
     float halfConeAngle, float distToLight,
@@ -68,7 +89,7 @@ void storeQ2GBuffer(
     imageStore(framebufQ2ViewDepth,          pix, vec4(depth));
     imageStore(framebufQ2BaseColor,          pix, vec4(baseColor, transparency));
     imageStore(framebufQ2Metallic,           pix, vec4(metallic, roughness, 0.0, 0.0));
-    imageStore(framebufQ2BounceThroughput,   pix, vec4(1.0, 1.0, 1.0, halfConeAngle));
+    imageStore(framebufQ2BounceThroughput,   pix, vec4(glassParams, 1.0, halfConeAngle));
     imageStore(framebufQ2Transparent,        pix, vec4(transparentColor, transparentAlpha));
     imageStore(framebufQ2GodRaysThroughputDist, pix, vec4(1.0, 1.0, 1.0, distToLight));
     imageStore(framebufQ2RngSeed,            pix, uvec4(getRandomSeed(pix, globalUniform.frameId)));
@@ -101,7 +122,7 @@ void storeSky(
 
         imageStore(framebufAlbedo, getRegularPixFromCheckerboardPix(pix), vec4(albedo, 0.0));
 
-        storeQ2GBuffer(pix, albedo, 1.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
+        storeQ2GBuffer(pix, albedo, 1.0, vec2(0.0), 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
     }
 
     vec2 m = getMotionForInfinitePoint(rayDir);
@@ -258,6 +279,20 @@ vec3 getNormal(const vec3 position, const vec3 normalFromMap, const vec3 normalG
 }
 
 #ifdef RAYGEN_PRIMARY_SHADER
+vec3 rtGlassSurfaceKey(vec3 normal, uint instance, uint geometry)
+{
+    normal /= max(abs(normal.x) + abs(normal.y) + abs(normal.z), 0.001);
+    vec2 oct = normal.xy;
+    if (normal.z < 0.0)
+    {
+        oct = (1.0 - abs(oct.yx)) * vec2(oct.x >= 0.0 ? 1.0 : -1.0, oct.y >= 0.0 ? 1.0 : -1.0);
+    }
+    uint key = instance * 73856093u ^ (geometry & (MAX_BOTTOM_LEVEL_GEOMETRIES_COUNT - 1u)) * 19349663u;
+    key ^= key >> 13u;
+    key *= 1274126177u;
+    return vec3(oct, unpackHalf2x16(key & 0x7bffu).x);
+}
+
 void main()
 {
     const ivec2 regularPix = ivec2(gl_LaunchIDEXT.xy);
@@ -274,6 +309,8 @@ void main()
 
     const ShPayload primaryPayload = tracePrimaryRay(cameraOrigin, cameraRayDir);
     rayStatsAdd(RAY_STATS_CATEGORY_PRIMARY, 1);
+    imageStore(framebufQ2GlassFilter, pix, vec4(0.0));
+    imageStore(framebufQ2GlassReflection, regularPix, vec4(0.0));
 
 
     const uint currentRayMedia = globalUniform.cameraMediaType;
@@ -292,6 +329,11 @@ void main()
         }
 
         storeSky(pix, cameraRayDir, globalUniform.skyType != SKY_TYPE_RASTERIZED_GEOMETRY, throughput, MAX_RAY_LENGTH * 2.0, q2FogAccum);
+        if (primaryPayload.glassFilter.z != 0.0)
+        {
+            imageStore(framebufQ2GlassFilter, pix, vec4(primaryPayload.glassTint, 1.0 + primaryPayload.glassFilter.x));
+            imageStore(framebufQ2GlassReflection, regularPix, vec4(0.0, 0.0, 0.0, primaryPayload.glassFilter.w));
+        }
         return;
     }
 
@@ -304,6 +346,23 @@ void main()
     float screenEmission;
     uint emissionBlendCode;
     const ShHitInfo h = getHitInfoPrimaryRay(primaryPayload, cameraOrigin, cameraRayDirAX, cameraRayDirAY, motionCurToPrev, motionDepthLinearCurToPrev, gradDepth, firstHitDepthNDC, firstHitDepthLinear, screenEmission, emissionBlendCode);
+    if (globalUniform.glassBlur == 0u && 
+        globalUniform.reflectRefractMaxDepth > 0u &&
+        (h.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_GLASS) != 0u &&
+        (h.geometryInstanceFlags & GEOM_INST_FLAG_IGNORE_REFRACT_AFTER) == 0u)
+    {
+        const float field = isRegularPixOdd(regularPix) == 0 ? -1.0 : 1.0;
+        imageStore(framebufQ2GlassFilter, pix, vec4(rtGlassSurfaceKey(h.normalGeom, primaryPayload.instIdAndIndex, primaryPayload.geomAndPrimIndex),
+                                                  field * (4.0 + h.roughness)));
+        imageStore(framebufQ2GlassReflection, regularPix, vec4(motionCurToPrev, firstHitDepthLinear, motionDepthLinearCurToPrev));
+    }
+    if (primaryPayload.glassFilter.z != 0.0 && (primaryPayload.glassDistance < length(h.hitPosition - cameraOrigin) ||
+        (h.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_GLASS) != 0u))
+    {
+        const float field = globalUniform.reflectRefractMaxDepth > 0u && isRegularPixOdd(regularPix) == 0 ? -1.0 : 1.0;
+        imageStore(framebufQ2GlassFilter, pix, vec4(primaryPayload.glassTint, field * (1.0 + primaryPayload.glassFilter.x)));
+        imageStore(framebufQ2GlassReflection, regularPix, vec4(0.0, 0.0, 0.0, primaryPayload.glassFilter.w));
+    }
 
 
     vec3 throughput = vec3(1.0);
@@ -338,7 +397,7 @@ void main()
     uvec4 q2Fog1, q2Fog2;
     q2FindFogVolumes(cameraOrigin, cameraRayDir, 0.0, firstHitDepthLinear, q2Fog1, q2Fog2);
     const vec4 q2FogAccum = q2SegmentFog(q2Fog1, q2Fog2, firstHitDepthLinear);
-    storeQ2GBuffer(pix, h.albedo, h.transparency, h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, h.transparency, h.glassParams, h.metallic, h.roughness,
                    firstHitDepthLinear, 0.5 * length(cameraRayDir - cameraRayDirAX), firstHitDepthLinear,
                    vec3(0.0), 0.0, q2FogAccum, h.cluster);
 }
@@ -561,7 +620,8 @@ void main()
             rayLen,
             motionCurToPrev, motionDepthLinearCurToPrev,
             emis,
-            emisBlendCode
+            emisBlendCode,
+            0.0
         );
 
         uvec4 q2SegFog1, q2SegFog2;
@@ -600,7 +660,7 @@ void main()
     imageStore(framebufThroughput,          pix, vec4(throughput, wasSplit ? 1.0 : -1.0));
 
     const float q2HalfConeAngle = texelFetch(framebufQ2BounceThroughput_Sampled, pix, 0).w;
-    storeQ2GBuffer(pix, h.albedo, 1.0, h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, 1.0, vec2(0.0), h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    vec3(0.0), 0.0, q2FogAccum, h.cluster);
 }
@@ -668,6 +728,7 @@ void main()
     /* The channel carries the primary surface's glass transparency (written by
        the primary pass), which the glass branch below absorbs the rays with. */
     h.transparency = clamp(q2BaseColor.a, 0.0, 1.0);
+    h.glassParams = imageLoad(framebufQ2BounceThroughput, pix).xy;
     const float q2HalfConeAngle         = imageLoad(framebufQ2BounceThroughput, pix).w;
     vec4 q2Transparent                  = imageLoad(framebufQ2Transparent, pix);
     vec4 q2FogAccum                     = imageLoad(framebufQ2FogAccum, pix);
@@ -686,6 +747,8 @@ void main()
     uint currentRayMedia = globalUniform.cameraMediaType;
     bool hitInfoWasOverwritten = false;
     bool pathReachedRefraction = false;
+    const bool shaderGlassReflection = globalUniform.glassBlur != 0u &&
+        (h.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_GLASS) != 0u;
     vec3 refrHitPosition = h.hitPosition;
 
     propagateRayCone(rayCone, firstHitDepthLinear);
@@ -701,6 +764,8 @@ void main()
         const bool primaryIsWater  = (h.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_WATER) != 0;
         const bool primaryIsSlime  = (h.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_ACID) != 0;
         const bool primaryIsGlass  = (h.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_GLASS) != 0;
+    /* the roughness of the surface this iteration leaves, for the next cone */
+    float traversalBlur = 0.0f;
         const bool primaryIsChrome = (h.geometryInstanceFlags & GEOM_INST_FLAG_REFLECT) != 0 &&
                                      h.roughness < globalUniform.minRoughness;
 
@@ -715,7 +780,7 @@ void main()
                                       wasPortal);
 
         vec3 rayOrigin = h.hitPosition;
-        bool doSplit = !wasSplit;
+        bool doSplit = !wasSplit && !shaderGlassReflection;
         bool doRefraction = false;
         int correctMotionVector = 0;
 
@@ -807,7 +872,11 @@ void main()
         }
         else if (primaryIsGlass)
         {
-            const float ior = getIndexOfRefraction(MEDIA_TYPE_GLASS);
+            // per-material refraction: a material may carry its own index, and a
+            // slab thickness that moves where the ray leaves the pane
+            const float ior = (h.glassParams.x > 0.0) ? clamp(h.glassParams.x, 1.0, 5.0)
+                                                      : getIndexOfRefraction(MEDIA_TYPE_GLASS);
+            const float thickness = max(h.glassParams.y, 0.0);
             vec3 glassGeomN = h.normalGeom;
             vec3 glassN = normal;
 
@@ -819,28 +888,68 @@ void main()
                 gnDotV = -gnDotV;
             }
 
-            const float nDotV = dot(rayDir, -glassN);
-            const vec3 reflected = reflect(rayDir, glassN);
-            float F = 0.05 + 0.95 * pow(1.0 - abs(nDotV), 5.0);
+            vec3 entryN = globalUniform.glassBlur != 0u ? glassGeomN : glassN;
+
+            vec3 reflected = reflect(rayDir, entryN);
+            if (globalUniform.glassBlur == 0u && !isPixOdd && !wasSplit && dot(reflected, glassGeomN) < 0.01)
+            {
+                entryN = glassGeomN;
+                reflected = reflect(rayDir, entryN);
+            }
+            const float nDotV = dot(rayDir, -entryN);
+            const float F0 = pow((1.0 - ior) / (1.0 + ior), 2.0);
+            float F = F0 + (1.0 - F0) * pow(1.0 - abs(nDotV), 5.0);
             if (dot(reflected, glassGeomN) < 0.01)
             {
                 F = 0.0;
             }
 
-            doSplit = (i == 0) && (F > 0.0);
-            doRefraction = isPixOdd;
+            doSplit = globalUniform.glassBlur == 0u && !wasSplit;
+            doRefraction = globalUniform.glassBlur == 0u && h.transparency > 0.0 && (doSplit ? isPixOdd : true);
             if (doRefraction)
             {
-                const vec3 refr1 = refract(rayDir, glassN, 1.0 / ior);
-                const vec3 refr2 = refract(refr1, glassGeomN, ior);
-                if (length(refr2) > 0.0)
+                const vec3 refr1 = refract(rayDir, entryN, 1.0 / ior);
+
+                if (dot(refr1, refr1) == 0.0)
                 {
-                    rayDir = refr2;
+                    /* the sampled facet passes nothing: the ray reflects off it */
+                    rayDir = reflected;
+                    throughput *= F;
+                    correctMotionVector = 1;
                 }
-                throughput *= (1.0 - F);
-                throughput *= h.albedo;
-                throughput *= clamp(h.transparency, 0.0, 1.0);
-                correctMotionVector = 2;
+                else
+                {
+                    const vec3 refr2 = refract(refr1, glassGeomN, ior);
+
+                    if (dot(refr2, refr2) > 0.0)
+                    {
+                        rayDir = refr2;
+                        if (thickness > 0.0)
+                        {
+                            /* the pane has depth: the ray leaves it at the virtual far
+                               face, pulled back in front of whatever the pane covers --
+                               a wall at the junction closer than the thickness would
+                               leave the next ray starting inside it, and the culled
+                               back face would read as a hole */
+                            const float cosT = max(-dot(refr1, entryN), 0.1);
+                            const uint clearanceMask = getReflectionRefractionCullMask(instIndex, h.geometryInstanceFlags, true);
+
+                            rayOrigin += refr1 * traceClearance(rayOrigin, refr1, thickness / cosT, clearanceMask);
+                        }
+                        /* transparency bleaches the diffuse filter: 1 lets the texture
+                           block nothing, 0 applies its colour whole */
+                        throughput *= (1.0 - F);
+                        throughput *= mix(h.albedo, vec3(1.0), clamp(h.transparency, 0.0, 1.0)) * clamp(h.transparency, 0.0, 1.0);
+                        correctMotionVector = 2;
+                    }
+                    else
+                    {
+                        /* total internal reflection at the far face */
+                        rayDir = reflect(rayDir, entryN);
+                        throughput *= F;
+                        correctMotionVector = 1;
+                    }
+                }
             }
             else
             {
@@ -849,10 +958,7 @@ void main()
                 correctMotionVector = 1;
             }
 
-            if (abs(dot(glassN, glassGeomN)) < 0.99999)
-            {
-                correctMotionVector = 0;
-            }
+            traversalBlur = 0.0;
 
             if (doSplit)
             {
@@ -876,14 +982,15 @@ void main()
 
         if (!doesPayloadContainHitInfo(currentPayload))
         {
-            const vec3 env = getSkyFiltered(rayDir, h.roughness * (SKY_MIP_COUNT - 1.0));
+            const float skyLod = primaryIsGlass && globalUniform.glassBlur == 0u ? 0.0 : h.roughness * (SKY_MIP_COUNT - 1.0);
+            const vec3 env = getSkyVisibleFiltered(rayDir, skyLod);
             q2Transparent = q2AlphaBlendPremultiplied(vec4(env * throughput, 1.0), q2Transparent);
 
             uvec4 q2SegFog1, q2SegFog2;
             q2FindFogVolumes(rayOrigin, rayDir, 0.0, 1e6, q2SegFog1, q2SegFog2);
             q2FogAccum = q2AlphaBlendPremultiplied(q2SegmentFog(q2SegFog1, q2SegFog2, 1e6), q2FogAccum);
 
-            if (correctMotionVector == 2)
+            if (correctMotionVector == 2 && isPixOdd)
             {
                 const ivec2 refrPix = getRegularPixFromCheckerboardPix(pix);
                 const ivec2 pairPix = ivec2(refrPix.x + (refrPix.x % 2 == 0 ? 1 : -1), refrPix.y);
@@ -892,8 +999,13 @@ void main()
             }
 
             storeSky(pix, rayDir, true, throughput, wasSplit, q2FogAccum);
-            storeQ2GBuffer(pix, vec3(0.0), 1.0, 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
+            storeQ2GBuffer(pix, vec3(0.0), 1.0, vec2(0.0), 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
                            q2Transparent.rgb, q2Transparent.a, q2FogAccum, ~0u);
+
+            /* The transport's spare RGB carries the segment's own origin to the
+               god-rays reflection pass, whose sky continuation would otherwise
+               march from the camera and count the primary segment twice. */
+            imageStore(framebufQ2GodRaysThroughputDist, pix, vec4(rayOrigin, MAX_RAY_LENGTH * 2.0));
             return;
         }
 
@@ -908,7 +1020,8 @@ void main()
             rayLen,
             motionCurToPrev, motionDepthLinearCurToPrev,
             emis,
-            emisBlendCode
+            emisBlendCode,
+            traversalBlur
         );
 
         uvec4 q2SegFog1, q2SegFog2;
@@ -916,7 +1029,7 @@ void main()
         q2FogAccum = q2AlphaBlendPremultiplied(q2SegmentFog(q2SegFog1, q2SegFog2, rayLen), q2FogAccum);
 
         hitInfoWasOverwritten = true;
-        if (correctMotionVector == 2)
+        if (correctMotionVector == 2 && isPixOdd)
         {
             pathReachedRefraction = true;
             refrHitPosition = h.hitPosition;
@@ -959,7 +1072,7 @@ void main()
     imageStore(framebufViewDirection,       pix, vec4(rayDir, 0.0));
     imageStore(framebufThroughput,          pix, vec4(throughput, wasSplit ? 1.0 : -1.0));
 
-    storeQ2GBuffer(pix, h.albedo, h.transparency, h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, h.transparency, h.glassParams, h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    q2Transparent.rgb, q2Transparent.a, q2FogAccum, h.cluster);
 }

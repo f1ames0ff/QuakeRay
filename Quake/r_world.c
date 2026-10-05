@@ -1286,7 +1286,8 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    (is_teleport_portal ? QR_GEOMETRY_UPLOAD_REFL_REFR_ALBEDO_ADD_BIT : 0) |
 			    // water and slime already churn through the RT wave normals
 			    (s->is_warp && !s->is_water && !s->is_acid ? QR_GEOMETRY_UPLOAD_TURB_WARP_BIT : 0) |
-			    (s->alpha_transmission && !is_glass ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (s->alpha_transmission ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (is_glass && s->alpha_test ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
                 QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
 			.geomType = is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType = 
@@ -1307,6 +1308,9 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			.layerColors =
 				{
 					RT_COLOR_WHITE,
+					{0.0f, 0.0f, 0.0f, 0.0f},
+					{is_glass && diffuse_tex ? diffuse_tex->rtglassior : 0.0f,
+					 is_glass && diffuse_tex ? diffuse_tex->rtglassthickness : 0.0f, 0.0f, 0.0f},
 				},
 			.layerBlendingTypes =
 				{

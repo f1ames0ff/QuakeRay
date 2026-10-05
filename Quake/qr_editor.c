@@ -113,6 +113,8 @@ enum
 	PARAM_MIRROR,
 	PARAM_GLASS,
 	PARAM_TRANSPARENCY,
+	PARAM_GLASS_IOR,
+	PARAM_GLASS_THICKNESS,
 	PARAM_EXACTN,
 	PARAM_FRAST,
 	PARAM_ISLIGHT,
@@ -143,9 +145,9 @@ static const struct qre_param_s
 	[PARAM_GLOSS]    = { NULL, "texture_gloss",    QRE_T_TEXT,  0, 0, 0,
 	                     "White means mirror-smooth, black means rough (roughness = 1 - gloss). Ignored while roughness_override is set." },
 	[PARAM_BUMP]     = { "Surface", "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
-	                     "How pronounced the normal map's bumps are. Needs texture_normals." },
+	                     "How pronounced the normal map's bumps are. Glass also generates fine normal detail, scaled by roughness." },
 	[PARAM_ROUGH]    = { NULL, "roughness_override", QRE_T_FLOAT, 0, 1, 0.01f,
-	                     "Ignore the gloss map and pin the roughness. 0 leaves it to the gloss; mirror forces 0." },
+	                     "Pin the roughness instead of the gloss map: 0 disables generated glass dispersion. Glass is smooth by default; authored normal maps keep their bumps. For other surfaces mirror forces 0." },
 	[PARAM_METAL]    = { NULL, "metalness_factor", QRE_T_FLOAT, 0, 1, 0.01f,
 	                     "How metal-like the surface is. With metalness_from_normal_alpha it scales that mask." },
 	[PARAM_BASEF]    = { NULL, "base_factor",      QRE_T_FLOAT, 0, 4, 0.01f,
@@ -153,11 +155,15 @@ static const struct qre_param_s
 	[PARAM_METALALPHA] = { NULL, "metalness_from_normal_alpha", QRE_T_BOOL, 0, 0, 0,
 	                     "Read metalness from the normal map's alpha channel instead of a flat factor." },
 	[PARAM_MIRROR]   = { NULL, "mirror",           QRE_T_BOOL,  0, 0, 0,
-	                     "Mirror-smooth reflection; roughness is forced to 0." },
+	                     "Mirror-smooth reflection; roughness is forced to 0 unless material_glass takes precedence." },
 	[PARAM_GLASS]    = { NULL, "material_glass",   QRE_T_BOOL,  0, 0, 0,
-	                     "Glass: the traced path bends the rays through the surface and tints them with the diffuse texture, while transparency absorbs what passes. Wins over mirror and alpha_test." },
+	                     "Glass: the traced path bends the rays through the surface and tints them with the diffuse texture, while transparency absorbs what passes. Wins over mirror; an alpha_test cutout keeps its holes." },
 	[PARAM_TRANSPARENCY] = { NULL, "transparency", QRE_T_FLOAT, 0, 1, 0.01f,
-	                     "How much of the image behind the glass gets through: 0 holds it all back while the reflection stays, 1 passes it whole. Needs material_glass." },
+	                     "How much of the transmission the glass lets through: 1 passes everything untinted, values in between absorb and tint it with the diffuse texture, and 0 blocks the transmission entirely so only the reflection remains. Needs material_glass." },
+	[PARAM_GLASS_IOR] = { NULL, "glass_ior",       QRE_T_FLOAT, 0, 5, 0.01f,
+	                     "The pane's index of refraction (1..5): what it bends, how strong the mirror reflection at grazing angles is. 0 uses the engine's rt_refr_glass. Needs material_glass." },
+	[PARAM_GLASS_THICKNESS] = { NULL, "glass_thickness", QRE_T_FLOAT, 0, 64, 0.1f,
+	                     "How thick the pane is, in world units: the view through it is shifted by where the ray leaves the far face, and the light through it lands shifted the same way. The shift shows at a slant; straight through the pane and against the sky it is zero. 0 is an infinitely thin pane that only tints and reflects. Needs material_glass." },
 	[PARAM_EXACTN]   = { "Model", "exact_normals",    QRE_T_BOOL,  0, 0, 0,
 	                     "Use the model's own vertex normals instead of generated ones (models only)." },
 	[PARAM_FRAST]    = { NULL, "force_rasterize",  QRE_T_BOOL,  0, 0, 0,
@@ -456,6 +462,8 @@ static void QRE_InitDefault (rt_material_t *m, const char *name)
 	m->emissive_focus_soft = -1.0f;
 	m->base_factor = 1.0f;
 	m->transparency = 1.0f;
+	m->glass_ior = 0.0f;
+	m->glass_thickness = 2.0f;
 	m->light_brightness = 1.0f;
 	m->light_styles = false;
 	m->color_emissive_threshold = 0.02f;
@@ -835,6 +843,8 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_METAL:    return m->metalness_factor;
 	case PARAM_BASEF:    return m->base_factor;
 	case PARAM_TRANSPARENCY: return m->transparency;
+	case PARAM_GLASS_IOR: return m->glass_ior;
+	case PARAM_GLASS_THICKNESS: return m->glass_thickness;
 	case PARAM_LBRIGHT:  return m->light_brightness;
 	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : 45.0f;
 	case PARAM_ESOFT:    return m->emissive_focus_soft >= 0.0f ? m->emissive_focus_soft : 45.0f;
@@ -886,7 +896,7 @@ static void QRE_SetFloat (int g, int param, float value)
 	switch (param)
 	{
 	case PARAM_BUMP:     m->bump_scale = value; break;
-	case PARAM_ROUGH:    m->roughness_override = value; break;
+	case PARAM_ROUGH:    m->roughness_override = value; m->has_roughness_override = true; break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
@@ -896,11 +906,23 @@ static void QRE_SetFloat (int g, int param, float value)
 			value = 1.0f;
 		m->transparency = CLAMP (0.0f, value, 1.0f);
 		break;
+	case PARAM_GLASS_IOR:
+		if (value != value || value < 0.0f)
+			value = 0.0f;
+		m->glass_ior = CLAMP (0.0f, value, 5.0f);
+		break;
+	case PARAM_GLASS_THICKNESS:
+		if (value != value || value < 0.0f)
+			value = 0.0f;
+		m->glass_thickness = CLAMP (0.0f, value, 64.0f);
+		break;
 	default:             break;
 	}
 
 	if (param == PARAM_LBRIGHT || param == PARAM_EFOCUS || param == PARAM_ESOFT)
 		QRE_MarkDirtyLight (m);
+	else if (param == PARAM_GLASS_IOR || param == PARAM_GLASS_THICKNESS)
+		QRE_MarkDirtyFull (m); // the values ride the uploaded geometry
 	else
 		QRE_MarkDirty (m);
 }
@@ -926,8 +948,11 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	case PARAM_METALALPHA: m->metalness_from_normal_alpha = value; break;
 	case PARAM_MIRROR:
 		m->mirror = value;
-		if (value)
-			m->roughness_override = 0.0f; // the panel locks the override while mirror is on
+		if (value && !m->material_glass)
+		{
+			m->roughness_override = 0.0f;
+			m->has_roughness_override = false;
+		}
 		break;
 	case PARAM_EXACTN:     m->exact_normals = value; break;
 	case PARAM_FRAST:      m->force_rasterize = value; break;
@@ -1089,8 +1114,11 @@ static void QRE_ResolveGroup (const char *texname)
 	// the renderer ignores taken out of the way
 	for (i = 0; i < qre.group_count; i++)
 	{
-		if (qre.group[i]->mirror && qre.group[i]->roughness_override != 0.0f)
+		if (qre.group[i]->mirror && !qre.group[i]->material_glass && qre.group[i]->has_roughness_override)
+		{
 			qre.group[i]->roughness_override = 0.0f;
+			qre.group[i]->has_roughness_override = false;
+		}
 	}
 }
 
@@ -2497,6 +2525,17 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		return;
 	}
 
+	if (p == PARAM_ROUGH && !orig->has_roughness_override)
+	{
+		// QRE_SetFloat would author the override; the original never had one
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->has_roughness_override = false;
+		m->roughness_override = orig->roughness_override;
+		QRE_MarkDirty (m);
+		return;
+	}
+
 	if (p == PARAM_MIRROR)
 	{
 		// mirror forces roughness_override to 0 while it is on; un-mirroring
@@ -2504,6 +2543,8 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		QRE_SetBool (g, p, QRE_GetBool (orig, p));
 		if (!QRE_GetBool (orig, p))
 			QRE_SetFloat (g, PARAM_ROUGH, QRE_GetFloat (orig, PARAM_ROUGH));
+			QRE_EnsureLive (g);
+			qre.group[g]->has_roughness_override = orig->has_roughness_override;
 		return;
 	}
 
@@ -2757,10 +2798,11 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	rt_material_t *m = qre.group[g];
 	// mirror drives roughness on its own (the synthesis gives it the last
 	// word): the override is meaningless there, and is locked at 0
-	const qboolean mirror_locks_rough = (p == PARAM_ROUGH && m->mirror);
+	const qboolean mirror_locks_rough = (p == PARAM_ROUGH && m->mirror && !m->material_glass);
 	const qboolean is_light_locks_color = (p == PARAM_LCOLOR && !m->is_light);
-	// transparency only means something once the material is glass
-	const qboolean glass_locks_slider = (p == PARAM_TRANSPARENCY && !m->material_glass);
+	// transparency and the per-material refraction only mean something once the
+	// material is glass
+	const qboolean glass_locks_slider = (p == PARAM_TRANSPARENCY || p == PARAM_GLASS_IOR || p == PARAM_GLASS_THICKNESS) && !m->material_glass;
 
 	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider)
 		QR_GUI_PushDisabled (1);
@@ -5815,18 +5857,35 @@ static const char *qre_yaml_header =
 	"#             emissive_focus_soft: 8\n"
 	"#             emissive_projector: true\n"
 	"#\n"
-	"# `material_glass: true` turns the surface into a thin pane of glass: the\n"
-	"# traced path reflects it with a Fresnel term and bends the rays through it\n"
-	"# (the index of refraction is the global `rt_refr_glass`, 1.52), tinting\n"
-	"# what passes with the base texture. `transparency` (0..1, default 1)\n"
-	"# scales what gets through: 0 holds the whole transmitted image back while\n"
-	"# the reflection stays. The light the surface casts is not dimmed. Glass\n"
-	"# wins over `mirror` (a mirrored window can simply be ticked) and over\n"
-	"# `alpha_test`, whose cutout the traced path then drops; water, lava and\n"
-	"# portals keep their handling.\n"
+	"# `material_glass: true` turns the surface into a pane of glass: the traced\n"
+	"# path reflects it with a Fresnel term and bends the rays through it, tinting\n"
+	"# what passes with the base texture. `glass_ior` (1..5; 0 keeps the global\n"
+	"# `rt_refr_glass`, 1.52) is how hard it bends and how bright the grazing\n"
+	"# reflection is, and `glass_thickness` (world units, default 2; 0 is an\n"
+	"# infinitely thin pane) is where the transmitted ray leaves the far face.\n"
+	"# A flat pane only shifts what is behind it: the shift grows with the angle\n"
+	"# to the pane and with the thickness, is zero straight through the pane and\n"
+	"# zero against the sky, and the default 2 is subtle -- 8..16 is where it\n"
+	"# reads. Where the pane meets a wall closer than its thickness, the shift\n"
+	"# stops at the wall instead of tearing a hole through it. The light path\n"
+	"# shifts the same way, so it moves the edges of a lit\n"
+	"# patch and of a shadow cast through the pane; `rt_glass_shadows 0` passes\n"
+	"# the light through untinted and straight instead. `transparency` (0..1,\n"
+	"# default 1) bleaches the diffuse filter of everything that passes: 1 lets\n"
+	"# the base texture block nothing, 0 applies its colour whole (a white\n"
+	"# texture stays clear at any value), and it applies per pixel at once, while\n"
+	"# `glass_ior`/`glass_thickness` ride the uploaded geometry and take effect\n"
+	"# on the next full static re-submit (the material editor asks for one).\n"
+	"# These are material keys, not console commands; `rt_reflrefr_depth 0`\n"
+	"# drops the view shift. Glass wins over `mirror` (a mirrored window can\n"
+	"# simply be ticked); an `alpha_test` cutout survives it -- the holes pass\n"
+	"# the rays and the solid texels still refract. Water, lava and portals keep\n"
+	"# their handling.\n"
 	"#     e.g.  - name: textures/window01_1\n"
 	"#             material_glass: true\n"
-	"#             transparency: 0.8\n";
+	"#             transparency: 0.8\n"
+	"#             glass_ior: 1.52\n"
+	"#             glass_thickness: 2\n";
 
 static void QRE_WriteColor (FILE *f, const char *key, const vec3_t rgb)
 {
@@ -5889,7 +5948,7 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    bump_scale: %.6g\n", m->bump_scale);
 	// mirror forces roughness_override to 0; the synthesis gives it the last
 	// word, so the dead override is not perpetuated by a save
-	if (!m->mirror && m->roughness_override != 0.0f)
+	if ((!m->mirror || m->material_glass) && m->has_roughness_override)
 		fprintf (f, "    roughness_override: %.6g\n", m->roughness_override);
 	if (m->has_metalness_factor)
 		fprintf (f, "    metalness_factor: %.6g\n", m->metalness_factor);
@@ -5923,6 +5982,10 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    material_glass: true\n");
 	if (m->material_glass && m->transparency != 1.0f)
 		fprintf (f, "    transparency: %.6g\n", m->transparency);
+	if (m->material_glass && m->glass_ior > 0.0f)
+		fprintf (f, "    glass_ior: %.6g\n", m->glass_ior);
+	if (m->material_glass && m->glass_thickness != 2.0f)
+		fprintf (f, "    glass_thickness: %.6g\n", m->glass_thickness);
 	if (m->exact_normals)
 		fprintf (f, "    exact_normals: true\n");
 	if (m->force_rasterize)
@@ -7203,7 +7266,12 @@ static void QR_Editor_Stop_f (void)
 // of the first reload of a material to <gamedir>/qre_dump.
 cvar_t qr_material_editor_debug = { "qr_material_editor_debug", "0", CVAR_NONE };
 
-cvar_t devmode = { "devmode", "0", CVAR_NONE };
+/* The one developer switch: it is kept in step with the historical `developer`
+   cvar (either name sets the other) and it gates the editor commands. */
+cvar_t qr_devmode = { "qr_devmode", "0", CVAR_NONE };
+
+static qboolean qre_devmode_syncing;
+static qboolean qre_devmode_on;
 
 static cmd_function_t *qre_devmode_editor_cmd;
 static cmd_function_t *qre_devmode_stop_cmd;
@@ -7217,7 +7285,7 @@ static void QRE_DevmodeCommands (qboolean on)
 		if (qre_devmode_stop_cmd == NULL)
 			qre_devmode_stop_cmd = Cmd_AddCommand2 ("qr_editor_stop", QR_Editor_Stop_f, src_command);
 
-		Con_Printf ("devmode: on (qr_editor and qr_editor_stop are available)\n");
+		Con_Printf ("qr_devmode: on (qr_editor and qr_editor_stop are available)\n");
 	}
 	else
 	{
@@ -7232,13 +7300,30 @@ static void QRE_DevmodeCommands (qboolean on)
 			qre_devmode_stop_cmd = NULL;
 		}
 
-		Con_Printf ("devmode: off (the editor commands are gone)\n");
+		Con_Printf ("qr_devmode: off (the editor commands are gone)\n");
 	}
 }
 
 static void QRE_DevmodeChanged_f (cvar_t *var)
 {
-	if (CVAR_TO_BOOL (devmode))
+	// one switch under two names: mirror the value onto the other cvar first
+	// (the mirrored set lands back here and stops at the guard)
+	if (qre_devmode_syncing)
+		return;
+
+	qre_devmode_syncing = true;
+	if (var == &qr_devmode)
+		Cvar_SetQuick (&developer, qr_devmode.string);
+	else
+		Cvar_SetQuick (&qr_devmode, developer.string);
+	qre_devmode_syncing = false;
+
+	if (CVAR_TO_BOOL (qr_devmode) == qre_devmode_on)
+		return;
+
+	qre_devmode_on = CVAR_TO_BOOL (qr_devmode);
+
+	if (qre_devmode_on)
 	{
 		QRE_DevmodeCommands (true);
 		return;
@@ -7246,7 +7331,7 @@ static void QRE_DevmodeChanged_f (cvar_t *var)
 
 	if (qre.active)
 	{
-		Con_Printf ("qr editor: closed, devmode is off\n");
+		Con_Printf ("qr editor: closed, qr_devmode is off\n");
 		QRE_StopEditor (false);
 	}
 
@@ -7265,11 +7350,14 @@ void QR_Editor_Init (void)
 	qr_editor_registered = true;
 
 	Cvar_RegisterVariable (&qr_material_editor_debug);
-	Cvar_RegisterVariable (&devmode);
-	Cvar_SetCallback (&devmode, QRE_DevmodeChanged_f);
+	Cvar_RegisterVariable (&qr_devmode);
+	Cvar_SetCallback (&qr_devmode, QRE_DevmodeChanged_f);
+	Cvar_SetCallback (&developer, QRE_DevmodeChanged_f);
 
-	if (CVAR_TO_BOOL (devmode))
-		QRE_DevmodeCommands (true);
+	// the merged switch starts in step with `developer`: a command line or a
+	// config may already carry a value (the mirror fires the callback above)
+	if (strcmp (developer.string, qr_devmode.string))
+		Cvar_SetQuick (&qr_devmode, developer.string);
 
 	// the font is part of the game data, next to the cursor artwork
 	font_size = COM_OpenFile ("gfx/Roboto-Regular.ttf", &font_handle, NULL);

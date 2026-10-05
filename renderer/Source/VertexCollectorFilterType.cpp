@@ -29,7 +29,7 @@ namespace
     typedef qray::VertexCollectorFilterTypeFlags FL;
 
     constexpr uint32_t MAX_FLAG_VALUE_CF = 4;
-    constexpr uint32_t MAX_FLAG_VALUE_PT = 4;
+    constexpr uint32_t MAX_FLAG_VALUE_PT = 8;
     constexpr uint32_t MAX_FLAG_VALUE_PV = 16;
 
     typedef uint8_t FlagToIndexType;
@@ -73,14 +73,19 @@ namespace
 
     const FLName FL_NAMES[] =
     {
+        /* the glass class first: it is an alpha-tested and a refract class at
+           once, and the lookup below returns the first subset match */
+        { FT::CF_STATIC_NON_MOVABLE | FT::PT_GLASS,         "BLAS static glass"         },
         { FT::CF_STATIC_NON_MOVABLE | FT::PT_OPAQUE,        "BLAS static opaque"        },
         { FT::CF_STATIC_NON_MOVABLE | FT::PT_ALPHA_TESTED,  "BLAS static alpha tested"  },
         { FT::CF_STATIC_NON_MOVABLE | FT::PT_REFRACT,       "BLAS static refract"       },
 
+        { FT::CF_STATIC_MOVABLE     | FT::PT_GLASS,         "BLAS movable glass"        },
         { FT::CF_STATIC_MOVABLE     | FT::PT_OPAQUE,        "BLAS movable opaque"       },
         { FT::CF_STATIC_MOVABLE     | FT::PT_ALPHA_TESTED,  "BLAS movable alpha tested" },
         { FT::CF_STATIC_MOVABLE     | FT::PT_REFRACT,       "BLAS movable refract"      },
 
+        { FT::CF_DYNAMIC            | FT::PT_GLASS,         "BLAS dynamic glass"        },
         { FT::CF_DYNAMIC            | FT::PT_OPAQUE,        "BLAS dynamic opaque"       },
         { FT::CF_DYNAMIC            | FT::PT_ALPHA_TESTED,  "BLAS dynamic alpha tested" },
         { FT::CF_DYNAMIC            | FT::PT_REFRACT,       "BLAS dynamic refract"      },
@@ -227,8 +232,11 @@ FL qray::VertexCollectorFilterTypeFlags_GetForGeometry(const QrGeometryUploadInf
             flags |= (FL)FT::PT_ALPHA_TESTED;
             break;
 
-        case QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT:
         case QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT:
+            flags |= (FL)FT::PT_GLASS;
+            break;
+
+        case QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT:
         case QR_GEOMETRY_PASS_THROUGH_TYPE_ACID_REFLECT_REFRACT:
             flags |= (FL)FT::PT_REFRACT;
             break;

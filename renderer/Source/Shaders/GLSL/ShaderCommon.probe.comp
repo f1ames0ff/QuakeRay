@@ -136,7 +136,8 @@ void main()
          globalUniform.giBounceRays.x + globalUniform.fltEnable.x + globalUniform.fixedAlbedo.x +
          globalUniform.sunBounce.x + globalUniform.levelFogColorDensity.x +
          globalUniform.levelFogSkyBlend.x + float(globalUniform.restirParams.x) +
-         globalUniform.cloudShadowPlacement.x + globalUniform.cloudLayerMotion.x;
+         globalUniform.cloudShadowPlacement.x + globalUniform.cloudLayerMotion.x +
+         float(globalUniform.glassBlur) + float(globalUniform.glassDenoise);
 
     // ShVertPreprocessing
     v += float(push.tlasInstanceCount) + float(push.tlasInstanceIsDynamicBits[0]);
@@ -937,6 +938,42 @@ void main()
     v += float(imageLoad(framebufQ2Cluster, pix).x);
     v += float(texelFetch(framebufQ2Cluster_Sampled, pix, 0).x);
     v += float(texture(usampler2D(framebufQ2Cluster_Sampled, framebufQ2Cluster_Sampler), uv).x);
+
+    // framebufQ2GlassFilter  rgba16f
+    imageStore(framebufQ2GlassFilter, pix, vec4(1.0));
+    v += float(imageLoad(framebufQ2GlassFilter, pix).x);
+    v += float(texelFetch(framebufQ2GlassFilter_Sampled, pix, 0).x);
+    v += float(texture(sampler2D(framebufQ2GlassFilter_Sampled, framebufQ2GlassFilter_Sampler), uv).x);
+
+    // framebufQ2GlassFilter_Prev  rgba16f
+    imageStore(framebufQ2GlassFilter_Prev, pix, vec4(1.0));
+    v += float(imageLoad(framebufQ2GlassFilter_Prev, pix).x);
+    v += float(texelFetch(framebufQ2GlassFilter_Prev_Sampled, pix, 0).x);
+    v += float(texture(sampler2D(framebufQ2GlassFilter_Prev_Sampled, framebufQ2GlassFilter_Prev_Sampler), uv).x);
+
+    // framebufQ2GlassReflection  rgba16f
+    imageStore(framebufQ2GlassReflection, pix, vec4(1.0));
+    v += float(imageLoad(framebufQ2GlassReflection, pix).x);
+    v += float(texelFetch(framebufQ2GlassReflection_Sampled, pix, 0).x);
+    v += float(texture(sampler2D(framebufQ2GlassReflection_Sampled, framebufQ2GlassReflection_Sampler), uv).x);
+
+    // framebufQ2GlassReflection_Prev  rgba16f
+    imageStore(framebufQ2GlassReflection_Prev, pix, vec4(1.0));
+    v += float(imageLoad(framebufQ2GlassReflection_Prev, pix).x);
+    v += float(texelFetch(framebufQ2GlassReflection_Prev_Sampled, pix, 0).x);
+    v += float(texture(sampler2D(framebufQ2GlassReflection_Prev_Sampled, framebufQ2GlassReflection_Prev_Sampler), uv).x);
+
+    // framebufQ2GlassHistory  rgba16f
+    imageStore(framebufQ2GlassHistory, pix, vec4(1.0));
+    v += float(imageLoad(framebufQ2GlassHistory, pix).x);
+    v += float(texelFetch(framebufQ2GlassHistory_Sampled, pix, 0).x);
+    v += float(texture(sampler2D(framebufQ2GlassHistory_Sampled, framebufQ2GlassHistory_Sampler), uv).x);
+
+    // framebufQ2GlassHistory_Prev  rgba16f
+    imageStore(framebufQ2GlassHistory_Prev, pix, vec4(1.0));
+    v += float(imageLoad(framebufQ2GlassHistory_Prev, pix).x);
+    v += float(texelFetch(framebufQ2GlassHistory_Prev_Sampled, pix, 0).x);
+    v += float(texture(sampler2D(framebufQ2GlassHistory_Prev_Sampled, framebufQ2GlassHistory_Prev_Sampler), uv).x);
 
     probeOutput[0] = v;
 }

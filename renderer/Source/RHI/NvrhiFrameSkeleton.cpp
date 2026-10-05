@@ -1311,6 +1311,9 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // (RhiRasterOverlayPass.h documents the contract).
             rtComposePass->Render(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
                                   sky.upscaledWidth, sky.upscaledHeight, filterEnabled,
+                                  uniform != nullptr && (uniform->glassBlur != 0u ||
+                                      (filterEnabled && uniform->glassDenoise != 0u && uniform->reflectRefractMaxDepth > 0u)) &&
+                                      accelStructs != nullptr && accelStructs->HasGlassInstances(),
                                   worldUniformBuffer.Get(),
                                   sky.postEffectParams,
                                   [&](nvrhi::ICommandList *pOverlayList)

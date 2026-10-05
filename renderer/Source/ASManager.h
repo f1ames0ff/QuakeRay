@@ -35,7 +35,8 @@ class ASManager
 public:
     struct TLASPrepareResult
     {
-        VkAccelerationStructureInstanceKHR instances[45];
+        /* must match MAX_TOP_LEVEL_INSTANCE_COUNT (the asserts in ASManager.cpp pin it) */
+        VkAccelerationStructureInstanceKHR instances[60];
         uint32_t instanceCount;
     };
 

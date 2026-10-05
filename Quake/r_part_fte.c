@@ -6820,7 +6820,7 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 
 	particletime += pframetime;
 
-	if (!cl_numstris)
+	if (!cl_numstris || !cl_maxstrisvert[current_buffer_index] || !cl_maxstrisidx[current_buffer_index])
 		return;
 
 	R_BeginDebugUtilsLabel (cbx, "FTE Particles");

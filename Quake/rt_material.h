@@ -66,6 +66,7 @@ typedef struct rt_material_s {
     qboolean is_light;
     qboolean light_styles;
     qboolean has_metalness_factor;
+    qboolean has_roughness_override;
     qboolean metalness_from_normal_alpha;
     rt_emissive_t color_emissive[RT_MAT_MAX_EMISSIVE_COLORS];
     int    color_emissive_count;
@@ -84,6 +85,8 @@ typedef struct rt_material_s {
     qboolean alpha_test;
     qboolean material_glass;
     float    transparency;
+    float    glass_ior;
+    float    glass_thickness;
     qboolean valid;
 } rt_material_t;
 

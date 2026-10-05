@@ -52,16 +52,8 @@ float4 safe_load(int2 pos)
     return framebufQ2Color_Sampled.Load(int3( pos, 0 ));
 }
 
-[numthreads(16, 16, 1)]
-void main(uint3 dispatchThreadID : SV_DispatchThreadID)
+float4 resolveQ2Color(int2 opos)
 {
-    const int2 opos = int2(dispatchThreadID.xy);
-
-    if (opos.x >= (int)(globalUniform.renderWidth) || opos.y >= (int)(globalUniform.renderHeight))
-    {
-        return;
-    }
-
     // position of this output pixel in the checkerboarded Q2Color
     const int2 ipos = getCheckerboardPix(opos);
 
@@ -92,6 +84,45 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         color.a = center.a;
     }
 
-    // Write into PreFinal (regular layout), consumed by the rest of the post chain
-    framebufPreFinal[opos] = float4(max((float3)0.0, color.rgb), 0);
+    return color;
+}
+
+float4 sampleGlassLayer(int2 pix, bool reflection)
+{
+    const int2 ipos = getCheckerboardPix(pix);
+    float3 color = framebufQ2Color_Sampled.Load(int3(ipos, 0)).rgb;
+    const uint flags = framebufPrimaryToReflRefr_Sampled.Load(int3(ipos, 0)).r;
+    if (wasSplit(framebufThroughput_Sampled.Load(int3(ipos, 0)).a) &&
+        (flags & (GEOM_INST_FLAG_MEDIA_TYPE_WATER | GEOM_INST_FLAG_MEDIA_TYPE_ACID)) != 0u)
+    {
+        color *= 0.5;
+    }
+    if (reflection)
+    {
+        color += framebufScreenEmisRT_Sampled.Load(int3(pix, 0)).rgb *
+            globalUniform.emissionMaxScreenColor * saturate(globalUniform.emissionBlendStrength);
+        color += framebufGodRaysFiltered_Sampled.Load(int3(pix, 0)).rgb;
+    }
+    return float4(color, 0.0);
+}
+
+#include "GlassLayers.hlsli"
+
+[numthreads(16, 16, 1)]
+void main(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    const int2 pix = int2(dispatchThreadID.xy);
+    if (pix.x >= (int)globalUniform.renderWidth || pix.y >= (int)globalUniform.renderHeight)
+    {
+        return;
+    }
+    float3 color = resolveQ2Color(pix).rgb;
+    const float glass = framebufQ2GlassFilter_Sampled.Load(int3(getCheckerboardPix(pix), 0)).a;
+    if (globalUniform.glassBlur != 0u && abs(glass) >= 1.0)
+    {
+        color = reconstructGlassLayer(pix, false).rgb;
+        const float fresnel = framebufQ2GlassReflection[pix].a;
+        framebufQ2GlassReflection[pix] = float4(reconstructGlassLayer(pix, true).rgb, fresnel);
+    }
+    framebufPreFinal[pix] = float4(max((float3)0.0, color), 0.0);
 }

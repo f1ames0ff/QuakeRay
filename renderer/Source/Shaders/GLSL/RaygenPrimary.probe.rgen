@@ -478,7 +478,7 @@ void main()
     v += float(getNewRayMedia(0, MEDIA_TYPE_VACUUM, 0u));
 
     storeQ2GBuffer(
-        ivec2(1, 1), vec3(0.5, 0.25, 1.0), 0.25,
+        ivec2(1, 1), vec3(0.5, 0.25, 1.0), 0.25, vec2(0.0, 0.0),
         0.5, 0.75,
         2.0,
         0.125, 3.0,

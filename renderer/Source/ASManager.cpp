@@ -554,6 +554,13 @@ bool ASManager::GetTLASInstanceForFilter(VertexCollectorFilterTypeFlags filter, 
         if (isWorld)
         {
             instance.mask = INSTANCE_MASK_REFRACT;
+
+            if ((filter & (uint32_t)FT::PT_GLASS) == (uint32_t)FT::PT_GLASS)
+            {
+                // glass joins shadow rays through its own bit: only glass, not
+                // water or acid, is tested by them
+                instance.mask |= INSTANCE_MASK_GLASS;
+            }
         }
     }
 

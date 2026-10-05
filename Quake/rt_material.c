@@ -295,6 +295,8 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->emissive_focus_soft = -1.0f;
     mat->base_factor = 1.0f;
     mat->transparency = 1.0f;
+    mat->glass_ior = 0.0f;
+    mat->glass_thickness = 2.0f;
     mat->light_brightness = 1.0f;
     mat->light_styles = false;
     mat->color_emissive_threshold = 0.02f;
@@ -462,7 +464,10 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
     if (!q_strcasecmp(key, "bump_scale"))
         mat->bump_scale = (float)atof(value);
     else if (!q_strcasecmp(key, "roughness_override"))
+    {
         mat->roughness_override = (float)atof(value);
+        mat->has_roughness_override = true;
+    }
     else if (!q_strcasecmp(key, "metalness_factor"))
     {
         mat->metalness_factor = (float)atof(value);
@@ -591,6 +596,38 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
             Con_DWarning("RT mat: material '%s': transparency '%s' is not in 0..1; using %.3g\n", mat->name, value, v);
 
         mat->transparency = v;
+    }
+    else if (!q_strcasecmp(key, "glass_ior") || !q_strcasecmp(key, "refractive_index"))
+    {
+        const float raw = (float)atof(value);
+        float       v   = raw;
+
+        if (v != v || v < 0.0f)
+            v = 0.0f;
+        else if (v > 0.0f && v < 1.0f)
+            v = 1.0f;
+        else if (v > 5.0f)
+            v = 5.0f;
+
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': glass_ior '%s' is not in 0..5; using %.3g\n", mat->name, value, v);
+
+        mat->glass_ior = v;
+    }
+    else if (!q_strcasecmp(key, "glass_thickness") || !q_strcasecmp(key, "thickness"))
+    {
+        const float raw = (float)atof(value);
+        float       v   = raw;
+
+        if (v != v || v < 0.0f)
+            v = 0.0f;
+        else if (v > 64.0f)
+            v = 64.0f;
+
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': glass_thickness '%s' is not in 0..64; using %.3g\n", mat->name, value, v);
+
+        mat->glass_thickness = v;
     }
     else if (!q_strcasecmp(key, "texture_base"))
         q_strlcpy(mat->filename_base, value, sizeof(mat->filename_base));

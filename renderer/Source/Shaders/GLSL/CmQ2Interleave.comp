@@ -40,15 +40,8 @@ vec4 safe_load(ivec2 pos)
     return texelFetch(framebufQ2Color_Sampled, pos, 0);
 }
 
-void main()
+vec4 resolveQ2Color(ivec2 opos)
 {
-    const ivec2 opos = ivec2(gl_GlobalInvocationID);
-
-    if (opos.x >= int(globalUniform.renderWidth) || opos.y >= int(globalUniform.renderHeight))
-    {
-        return;
-    }
-
     // position of this output pixel in the checkerboarded Q2Color
     const ivec2 ipos = getCheckerboardPix(opos);
 
@@ -79,6 +72,44 @@ void main()
         color.a = center.a;
     }
 
-    // Write into PreFinal (regular layout), consumed by the rest of the post chain
-    imageStore(framebufPreFinal, opos, vec4(max(vec3(0.0), color.rgb), 0));
+    return color;
+}
+
+vec4 sampleGlassLayer(ivec2 pix, bool reflection)
+{
+    const ivec2 ipos = getCheckerboardPix(pix);
+    vec3 color = texelFetch(framebufQ2Color_Sampled, ipos, 0).rgb;
+    const uint flags = texelFetch(framebufPrimaryToReflRefr_Sampled, ipos, 0).r;
+    if (wasSplit(texelFetch(framebufThroughput_Sampled, ipos, 0).a) &&
+        (flags & (GEOM_INST_FLAG_MEDIA_TYPE_WATER | GEOM_INST_FLAG_MEDIA_TYPE_ACID)) != 0u)
+    {
+        color *= 0.5;
+    }
+    if (reflection)
+    {
+        color += texelFetch(framebufScreenEmisRT_Sampled, pix, 0).rgb *
+            globalUniform.emissionMaxScreenColor * clamp(globalUniform.emissionBlendStrength, 0.0, 1.0);
+        color += texelFetch(framebufGodRaysFiltered_Sampled, pix, 0).rgb;
+    }
+    return vec4(color, 0.0);
+}
+
+#include "GlassLayers.inl"
+
+void main()
+{
+    const ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= int(globalUniform.renderWidth) || pix.y >= int(globalUniform.renderHeight))
+    {
+        return;
+    }
+    vec3 color = resolveQ2Color(pix).rgb;
+    const float glass = texelFetch(framebufQ2GlassFilter_Sampled, getCheckerboardPix(pix), 0).a;
+    if (globalUniform.glassBlur != 0u && abs(glass) >= 1.0)
+    {
+        color = reconstructGlassLayer(pix, false).rgb;
+        const float fresnel = imageLoad(framebufQ2GlassReflection, pix).a;
+        imageStore(framebufQ2GlassReflection, pix, vec4(reconstructGlassLayer(pix, true).rgb, fresnel));
+    }
+    imageStore(framebufPreFinal, pix, vec4(max(vec3(0.0), color), 0.0));
 }

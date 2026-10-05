@@ -174,7 +174,7 @@ RasterizedDataCollector::~RasterizedDataCollector()
 {
 }
 
-void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
+bool RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
                                           const QrRasterizedGeometryUploadInfo &info,
                                           const float *pViewProjection, const QrViewport *pViewport)
 {
@@ -186,13 +186,13 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
         if (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST)
         {
             assert(0);
-            return;
+            return false;
         }
 
         if (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE)
         {
             assert(0);
-            return;
+            return false;
         }
     }
 
@@ -206,14 +206,12 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
 
     if (curVertexCount + info.vertexCount >= vertexBuffer->GetSize() / sizeof(QrVertex))
     {
-        assert(0 && "Increase the size of \"rasterizedMaxVertexCount\". Vertex buffer size reached the limit.");
-        return;
+        return false;
     }
 
     if (curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof(uint32_t))
     {
-        assert(0 && "Increase the size of \"rasterizedMaxIndexCount\". Index buffer size reached the limit.");
-        return;
+        return false;
     }
 
     DrawInfo &drawInfo = PushInfo(info.renderType);
@@ -247,8 +245,7 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
     {
         if( curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof( uint32_t ) )
         {
-            assert( 0 );
-            return;
+            return false;
         }
 
         memcpy( &indicesBase[ curIndexCount ], info.pIndices, info.indexCount * sizeof( uint32_t ) );
@@ -258,6 +255,8 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
 
         curIndexCount += info.indexCount;
     }
+
+    return true;
 }
 
 RasterizedDataCollector::DrawInfo& RasterizedDataCollector::PushInfo(

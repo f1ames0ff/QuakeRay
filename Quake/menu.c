@@ -216,6 +216,7 @@ extern cvar_t rt_sky_clouds_quality;
 extern cvar_t rt_gi_level;
 extern cvar_t rt_truelight;
 extern cvar_t rt_reflrefr_depth;
+extern cvar_t rt_glass_blur;
 extern cvar_t scr_guifilter;
 extern cvar_t vid_palettize;
 extern cvar_t vid_anisotropic;
@@ -2247,6 +2248,17 @@ static void M_StepGiLevel (int dir)
 	Cvar_SetValueQuick (&rt_gi_level, levels[idx]);
 }
 
+static const char *M_GetGlassBlurName (void)
+{
+	return CVAR_TO_BOOL (rt_glass_blur) ? "shader" : "normal map";
+}
+
+static void M_StepGlassBlur (int dir)
+{
+	(void)dir;
+	Cvar_SetValueQuick (&rt_glass_blur, CVAR_TO_BOOL (rt_glass_blur) ? 0.0f : 1.0f);
+}
+
 static const char *M_GetReflDepthName (void)
 {
 	const int depth = (int)(CVAR_TO_FLOAT (rt_reflrefr_depth) + 0.5f);
@@ -2295,6 +2307,7 @@ enum
 	GRAPHICS_OPT_CLOUDS,
 	GRAPHICS_OPT_CLOUDS_QUALITY,
 	GRAPHICS_OPT_REFLECT,
+	GRAPHICS_OPT_GLASS_BLUR,
 	GRAPHICS_OPT_SMOKE,
 	GRAPHICS_OPT_CURSOR,
 	GRAPHICS_OPTIONS_ITEMS
@@ -2341,6 +2354,9 @@ static void M_GraphicsOptions_Adjust (int dir)
 		break;
 	case GRAPHICS_OPT_REFLECT:
 		M_StepReflDepth (dir);
+		break;
+	case GRAPHICS_OPT_GLASS_BLUR:
+		M_StepGlassBlur (dir);
 		break;
 	case GRAPHICS_OPT_SMOKE:
 		Cvar_SetValueQuick (&r_smoke, !CVAR_TO_BOOL (r_smoke));
@@ -2422,6 +2438,8 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_REFLECT, "Reflections");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_REFLECT, M_GetReflDepthName ());
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GLASS_BLUR, "Glass blur");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GLASS_BLUR, M_GetGlassBlurName ());
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SMOKE, "Smoke type");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SMOKE, CVAR_TO_BOOL (r_smoke) ? "shader" : "classic");

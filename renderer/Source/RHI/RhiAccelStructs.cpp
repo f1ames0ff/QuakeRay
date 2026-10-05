@@ -959,6 +959,7 @@ void RhiAccelStructs::AppendStaticInstances(uint32_t rayCullMaskWorld,
         }
 
         instances.push_back(MakeInstanceDesc(record, blas->handle.Get()));
+        hasGlassInstances |= (filter & uint32_t(VertexCollectorFilterTypeFlagBits::PT_GLASS)) == uint32_t(VertexCollectorFilterTypeFlagBits::PT_GLASS);
     }
 }
 
@@ -1318,6 +1319,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
             }
 
             instances.push_back(MakeInstanceDesc(record, blas->handle.Get()));
+            hasGlassInstances |= (filter & uint32_t(VertexCollectorFilterTypeFlagBits::PT_GLASS)) == uint32_t(VertexCollectorFilterTypeFlagBits::PT_GLASS);
         });
 }
 
@@ -1636,6 +1638,7 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
     dynamicCopyBytes = 0;
     vertexDataCopyBytes = 0;
     tlasInstanceCount = 0;
+    hasGlassInstances = false;
 
     // The vertex-preprocessing push describes this frame's instance list only; a frame that records
     // none (disabled or all culled) leaves a zero count, and RecordVertexPreprocessing then does

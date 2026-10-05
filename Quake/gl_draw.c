@@ -619,6 +619,9 @@ void Draw_StringScaled (cb_context_t *cbx, int x, int y, const char *str, float 
 		if (*tmp != 32)
 			num_verts += 6;
 
+	if (num_verts == 0)
+		return;
+
 	QrVertex *vertices = RT_AllocScratchMemoryNulled (num_verts * sizeof (QrVertex));
 
 	for (i = 0; *str != 0; ++str)

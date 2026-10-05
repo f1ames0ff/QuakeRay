@@ -44,6 +44,13 @@ float3 resolveCheckerboard( Texture2D<float4> src, const int2 regularPix, const 
     return lerp( center, crossColor, 0.5 );
 }
 
+float4 sampleGlassLayer(int2 pix, bool reflection)
+{
+    return float4(framebufScreenEmisRT_Sampled.Load(int3(pix, 0)).rgb, framebufDepthNdc.Load(pix).r);
+}
+
+#include "GlassLayers.hlsli"
+
 [numthreads(COMPUTE_COMPOSE_GROUP_SIZE_X, COMPUTE_COMPOSE_GROUP_SIZE_Y, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -59,7 +66,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float3 emis = framebufScreenEmisRT_Sampled.Load(int3( pix, 0 )).rgb;
     float3 fog  = framebufAcidFogRT_Sampled.Load(int3( pix, 0 )).rgb;
 
-    if( needResolveCheckerboard( checkerboardPix ) )
+    const float glass = framebufQ2GlassFilter_Sampled.Load(int3(checkerboardPix, 0)).a;
+    if (globalUniform.glassBlur != 0u && abs(glass) >= 1.0)
+    {
+        const float4 background = reconstructGlassLayer(pix, false);
+        emis = background.rgb;
+        if (glass <= -1.0)
+        {
+            framebufDepthNdc[pix] = (float4)(background.a > 0.0 ? background.a : 1.0);
+        }
+    }
+    else if( needResolveCheckerboard( checkerboardPix ) )
     {
         emis = resolveCheckerboard( framebufScreenEmisRT_Sampled, pix, checkerboardPix, emis );
         fog  = resolveCheckerboard( framebufAcidFogRT_Sampled, pix, checkerboardPix, fog );
