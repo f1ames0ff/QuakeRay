@@ -190,6 +190,9 @@ void DrawGLPoly (
 {
 	const int numverts = p->numverts;
 
+	if (numverts == 0)
+		return;
+
 	QrVertex *vertices = RT_AllocScratchMemoryNulled (numverts * sizeof (QrVertex));
 
     float* v = p->verts[0];

@@ -427,6 +427,7 @@ void R_NewMap (void)
 	GL_BuildBModelVertexBuffer ();
 	RT_WorldCensus ();
 	RT_UploadWorldLights ();
+	RT_StaticMovableClear ();
 	// RT: submit world geometry once
 	{
 		Atomic_StoreUInt32 (&rt_require_static_submit, true);

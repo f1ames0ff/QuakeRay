@@ -1066,6 +1066,8 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
+	RT_StaticMovableUpdate ();
+
 	const qboolean static_submit = Atomic_LoadUInt32 (&rt_require_static_submit) != 0;
 	const qboolean light_recollect = Atomic_LoadUInt32 (&rt_require_world_light_recollect) != 0;
 
@@ -1095,6 +1097,8 @@ void R_DrawWorldTask (void *unused)
 	R_SetupContext (cbx);
 	Fog_EnableGFog (cbx);
 	R_DrawWorld (cbx);
+
+	RT_StaticMovableUpload (cbx);
 
 	r = qrSubmitStaticGeometries (vulkan_globals.instance);
 	QR_CHECK (r);
@@ -1239,6 +1243,9 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 	// The light editor's list of the frame's lights starts empty every frame; the
 	// four upload sites fill it as they go.
 	RT_TRACK_BeginFrame ();
+
+	if (Atomic_LoadUInt32 (&rt_require_static_submit) != 0)
+		RT_StaticMovablePrepare ();
 
 	time1 = 0; /* avoid compiler warning */
 	if (r_speeds.value)
