@@ -1,0 +1,123 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== block set 1 binding 0
+
+[0] offset 0 v4(float32)
+[1] offset 16 v4(float32)
+[2] offset 32 v2(float32)
+[3] offset 40 v2(float32)
+[4] offset 48 v2(float32)
+[5] offset 56 uint32
+[6] offset 60 uint32
+[7] offset 64 uint32
+[8] offset 68 uint32
+[9] offset 72 uint32
+[10] offset 76 uint32
+=== block set 1 binding 1
+
+[0] offset 0 v4(float32)
+[1] offset 16 v4(float32)
+[2] offset 32 v2(float32)
+[3] offset 40 v2(float32)
+[4] offset 48 v2(float32)
+[5] offset 56 uint32
+[6] offset 60 uint32
+[7] offset 64 uint32
+[8] offset 68 uint32
+[9] offset 72 uint32
+[10] offset 76 uint32
+=== block set 1 binding 2
+
+[0] offset 0 array[](uint32) stride 4
+=== block set 1 binding 3
+
+[0] offset 0 array[](uint32) stride 4
+=== block set 1 binding 4
+
+[0] offset 0 m4(v4(float32)) matrixstride 16
+[1] offset 64 m4(v4(float32)) matrixstride 16
+[2] offset 128 array[3](v4(float32)) stride 16
+[3] offset 176 uint32
+[4] offset 180 uint32
+[5] offset 184 uint32
+[6] offset 188 uint32
+[7] offset 192 uint32
+[8] offset 196 uint32
+[9] offset 200 uint32
+[10] offset 204 uint32
+[11] offset 208 uint32
+[12] offset 212 uint32
+[13] offset 216 uint32
+[14] offset 220 uint32
+[15] offset 224 uint32
+[16] offset 228 uint32
+[17] offset 232 uint32
+[18] offset 236 uint32
+[19] offset 240 float32
+[20] offset 244 float32
+[21] offset 248 float32
+[22] offset 252 uint32
+=== block set 1 binding 5
+
+[0] offset 0 array[](int32) stride 4
+=== block set 1 binding 6
+
+[0] offset 0 v4(float32)
+[1] offset 16 v4(float32)
+[2] offset 32 v2(float32)
+[3] offset 40 v2(float32)
+[4] offset 48 v2(float32)
+[5] offset 56 uint32
+[6] offset 60 uint32
+[7] offset 64 uint32
+[8] offset 68 uint32
+[9] offset 72 uint32
+[10] offset 76 uint32
+=== block set 1 binding 7
+
+[0] offset 0 array[](uint32) stride 4
+=== block set 8 binding 0
+
+[0] offset 0 array[](float32) stride 4
+=== capability Shader
+declared
+=== descriptor set 1 binding 0
+struct
+=== descriptor set 1 binding 0: storage class
+StorageBuffer
+=== descriptor set 1 binding 1
+struct
+=== descriptor set 1 binding 1: storage class
+StorageBuffer
+=== descriptor set 1 binding 2
+struct nonwritable
+=== descriptor set 1 binding 2: storage class
+StorageBuffer
+=== descriptor set 1 binding 3
+struct nonwritable
+=== descriptor set 1 binding 3: storage class
+StorageBuffer
+=== descriptor set 1 binding 4
+struct nonwritable
+=== descriptor set 1 binding 4: storage class
+StorageBuffer
+=== descriptor set 1 binding 5
+struct nonwritable
+=== descriptor set 1 binding 5: storage class
+StorageBuffer
+=== descriptor set 1 binding 6
+struct
+=== descriptor set 1 binding 6: storage class
+StorageBuffer
+=== descriptor set 1 binding 7
+struct
+=== descriptor set 1 binding 7: storage class
+StorageBuffer
+=== descriptor set 8 binding 0
+struct
+=== descriptor set 8 binding 0: storage class
+StorageBuffer
+=== entry point
+GLCompute main
+=== workgroup size
+1 1 1

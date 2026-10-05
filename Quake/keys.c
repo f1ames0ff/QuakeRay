@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "arch_def.h"
 #include "qr_editor.h"
 #include "photocam.h"
+#include "observer.h"
 
 /* key up events are sent even if in console mode */
 
@@ -985,6 +986,9 @@ void Key_Event (int key, qboolean down)
 		return;
 
 	if (PhotoCam_KeyEvent (key, down))
+		return;
+
+	if (Observer_KeyEvent (key, down))
 		return;
 
 	if (key_inputgrab.active)

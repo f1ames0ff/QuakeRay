@@ -206,6 +206,8 @@ extern cvar_t rt_sharpen_strength;
 extern cvar_t rt_sharpen;
 extern cvar_t rt_vignette;
 extern cvar_t rt_filmgrain;
+extern cvar_t rt_filmgrain_size;
+extern cvar_t gibs_damage_vector;
 extern cvar_t rt_local_exposure;
 extern cvar_t rt_sky_godrays;
 extern cvar_t rt_sky_godrays_quality;
@@ -2186,6 +2188,88 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 
 
 //=============================================================================
+/* GAMEPLAY OPTIONS */
+
+enum
+{
+	GAMEPLAY_OPT_GIBS,
+	GAMEPLAY_OPTIONS_ITEMS
+};
+
+static int gameplay_options_cursor = 0;
+
+static void M_Menu_GameplayOptions_f (void)
+{
+	M_MenuChanged ();
+	IN_DeactivateForMenu ();
+	key_dest = key_menu;
+	m_state = m_gameplay;
+}
+
+static void M_GameplayOptions_Toggle (void)
+{
+	S_LocalSound ("misc/menu3.wav");
+
+	switch (gameplay_options_cursor)
+	{
+	case GAMEPLAY_OPT_GIBS:
+		Cvar_SetValueQuick (&gibs_damage_vector, CVAR_TO_BOOL (gibs_damage_vector) ? 0.0f : 1.0f);
+		break;
+	}
+}
+
+static void M_GameplayOptions_Key (int k)
+{
+	switch (k)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_Menu_Options_f ();
+		break;
+
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		m_entersound = true;
+		M_GameplayOptions_Toggle ();
+		return;
+
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		gameplay_options_cursor--;
+		if (gameplay_options_cursor < 0)
+			gameplay_options_cursor = GAMEPLAY_OPTIONS_ITEMS - 1;
+		break;
+
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		gameplay_options_cursor++;
+		if (gameplay_options_cursor >= GAMEPLAY_OPTIONS_ITEMS)
+			gameplay_options_cursor = 0;
+		break;
+	}
+}
+
+static void M_GameplayOptions_Draw (cb_context_t *cbx)
+{
+	qpic_t	 *p;
+	const int top = MENU_TOP;
+
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	p = Draw_CachePic ("gfx/p_option.lmp");
+	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GAMEPLAY_OPT_GIBS, "New gibs");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GAMEPLAY_OPT_GIBS, CVAR_TO_BOOL (gibs_damage_vector));
+
+	M_Mouse_UpdateListCursor (&gameplay_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, GAMEPLAY_OPTIONS_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + gameplay_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+}
+
+
+//=============================================================================
 /* QUALITY LADDERS */
 
 static const char *M_GetQualityName (const cvar_t *var)
@@ -2661,12 +2745,12 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&rt_local_exposure, f);
 		break;
 	case EFFECTS_OPT_RESET:
-		Cvar_SetValueQuick (&rt_bloom_intensity, 0.08f);
+		Cvar_SetValueQuick (&rt_bloom_intensity, 0.1f);
 		Cvar_SetValueQuick (&rt_bloom_threshold, 6.0f);
 		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
 		Cvar_SetValueQuick (&rt_dof_near, 0.8f);
-		Cvar_SetValueQuick (&rt_tonemap_power, 0.8f);
-		Cvar_SetValueQuick (&rt_tonemap, 2.0f);
+		Cvar_SetValueQuick (&rt_tonemap_power, 0.9f);
+		Cvar_SetValueQuick (&rt_tonemap, 1.0f);
 		Cvar_SetValueQuick (&rt_exposure_bias, 0.0f);
 		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.51f);
@@ -2674,7 +2758,8 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&rt_sharpen, 2.0f);
 		Cvar_SetValueQuick (&rt_vignette, 0.5f);
 		Cvar_SetValueQuick (&rt_filmgrain, 0.5f);
-		Cvar_SetValueQuick (&rt_local_exposure, 0.2f);
+		Cvar_SetValueQuick (&rt_filmgrain_size, 1.0f);
+		Cvar_SetValueQuick (&rt_local_exposure, 0.1f);
 		break;
 	}
 }
@@ -2788,6 +2873,7 @@ enum
 	OPT_VIDEO,
 	OPT_GRAPHICS,
 	OPT_EFFECTS,
+	OPT_GAMEPLAY,
 	OPT_LIGHTING,
 	OPT_SOUND,
 	OPT_BENCHMARK,
@@ -2821,6 +2907,7 @@ static void M_Options_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_VIDEO, "Video");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GRAPHICS, "Graphics");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_EFFECTS, "Effects");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GAMEPLAY, "Gameplay");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_LIGHTING, "Lighting");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_SOUND, "Sound");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_BENCHMARK, "Benchmark");
@@ -2876,6 +2963,9 @@ void M_Options_Key (int k)
 			break;
 		case OPT_EFFECTS:
 			M_Menu_EffectsOptions_f ();
+			break;
+		case OPT_GAMEPLAY:
+			M_Menu_GameplayOptions_f ();
 			break;
 		case OPT_LIGHTING:
 			M_Menu_LightingOptions_f ();
@@ -5739,6 +5829,10 @@ void M_Draw (cb_context_t *cbx)
 		M_EffectsOptions_Draw (cbx);
 		break;
 
+	case m_gameplay:
+		M_GameplayOptions_Draw (cbx);
+		break;
+
 	case m_lighting:
 		M_LightingOptions_Draw (cbx);
 		break;
@@ -5939,6 +6033,10 @@ void M_Keydown (int key, qboolean repeat)
 
 	case m_effects:
 		M_EffectsOptions_Key (key);
+		return;
+
+	case m_gameplay:
+		M_GameplayOptions_Key (key);
 		return;
 
 	case m_lighting:

@@ -285,7 +285,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_globallight_mult, "10") \
 	CVAR_DEF_T (rt_globallight, "255 255 255") \
 	\
-	CVAR_DEF_T (rt_bloom_intensity, "0.08") \
+	CVAR_DEF_T (rt_bloom_intensity, "0.1") \
 	CVAR_DEF_T (rt_bloom_quality, "2") \
 	CVAR_DEF_T (rt_bloom_threshold, "6.0") \
 	CVAR_DEF_T (rt_bloom_knee, "0.5") \
@@ -303,10 +303,10 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_exposure_high_percentile, "90") \
 	CVAR_DEF_T (rt_exposure_min_luminance, "0.02") \
 	CVAR_DEF_T (rt_exposure_max_luminance, "1.0") \
-	CVAR_DEF_T (rt_local_exposure, "0.2") \
-	CVAR_DEF_T (rt_tonemap_power, "0.8") \
+	CVAR_DEF_T (rt_local_exposure, "0.1") \
+	CVAR_DEF_T (rt_tonemap_power, "0.9") \
 	CVAR_DEF_T (rt_contrast, "0.9") \
-	CVAR_DEF_T (rt_tonemap, "2") \
+	CVAR_DEF_T (rt_tonemap, "1") \
 	\
 	CVAR_DEF_T (rt_ef_crt, "0") \
 	CVAR_DEF_T (rt_vignette, "0.5") \
@@ -314,7 +314,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_vignette_end, "1.0") \
 	CVAR_DEF_T (rt_vignette_roundness, "0.35") \
 	CVAR_DEF_T (rt_filmgrain, "0.5") \
-	CVAR_DEF_T (rt_filmgrain_size, "2.5") \
+	CVAR_DEF_T (rt_filmgrain_size, "1") \
 	CVAR_DEF_T (rt_ef_chraber, "0.3") \
 	CVAR_DEF_T (rt_ef_waves_stren, "1") \
 	CVAR_DEF_T (rt_ef_damage, "1") \
@@ -2754,7 +2754,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float level_fog_color[4];
 	Fog_GetColor (level_fog_color);
 
-	const qboolean level_fog_active = Fog_GetDensity () > 0;
+	const qboolean level_fog_active = Fog_Enabled () && Fog_GetDensity () > 0;
 
 	QrDrawFrameLevelFogParams level_fog_params = {
 		.color = RT_VEC3 (level_fog_color),

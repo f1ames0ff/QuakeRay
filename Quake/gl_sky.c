@@ -32,6 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
+qboolean Fog_Enabled (void);
 
 extern atomic_uint32_t rs_skypolys;  // for r_speeds readout
 extern atomic_uint32_t rs_skypasses; // for r_speeds readout
@@ -1492,7 +1493,7 @@ void Sky_DrawSky (cb_context_t *cbx)
 	Fog_DisableGFog (cbx);
 
 	float color[4];
-	if (Fog_GetDensity () > 0)
+	if (Fog_Enabled () && Fog_GetDensity () > 0)
 		Fog_GetColor (color);
 	else
 		memcpy (color, skyflatcolor, 3 * sizeof (float));

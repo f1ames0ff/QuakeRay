@@ -1,0 +1,24 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== block pushconstant
+
+[0] offset 0 m4(v4(float32)) matrixstride 16
+=== builtin Position
+v4(float32)
+=== capability Shader
+declared
+=== constant_id 0
+uint32 = 0
+=== entry point
+Vertex main
+=== input location 0
+v3(float32)
+=== input location 1
+v4(float32)
+=== input location 2
+v2(float32)
+=== output location 0
+v4(float32)
+=== output location 1
+v2(float32)
+=== workgroup size
