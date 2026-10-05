@@ -33,8 +33,6 @@ QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, wi
 - **FSR 3.1 upscaling** to improve performance, plus adjustable lighting, cloud and reflection quality.
 - **Vsync options**, including adaptive vsync and a FreeSync mode.
 
-The post-effects work — bloom, near weapon depth of field, tone mapping, gameplay feedback, sharpening and the Effects page — is recorded in the [Modern Post Effects specification](docs/modern-post-effects-spec.md), including superseded revisions.
-
 ### Game data and compatibility
 
 - **Quake Remastered support**, alongside the original game, with a choice of version when both are available.
