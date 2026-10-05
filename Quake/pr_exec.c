@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "sv_gibs.h"
 
 static const char *pr_opnames[] = {"DONE",
 
@@ -551,6 +552,7 @@ void PR_ExecuteProgram (func_t fnum)
 			if (!OPA->function)
 				PR_RunError ("NULL function");
 			newf = &qcvm->functions[OPA->function];
+			SV_Gibs_OnCall (newf, qcvm->xfunction);
 			if (newf->first_statement < 0)
 			{ // Built-in function
 				int i = -newf->first_statement;
