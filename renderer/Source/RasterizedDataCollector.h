@@ -93,6 +93,9 @@ namespace qray
         static void     GetSmokeVertexLayout( VkVertexInputAttributeDescription* outAttrs,
                                               uint32_t*                          outAttrsCount );
 
+        static void     GetParticleVertexLayout( VkVertexInputAttributeDescription* outAttrs,
+                                                 uint32_t*                          outAttrsCount );
+
         const std::vector< DrawInfo >& GetRasterDrawInfos() const;
         const std::vector< DrawInfo >& GetSwapchainDrawInfos() const;
         const std::vector< DrawInfo >& GetSkyDrawInfos() const;

@@ -46,6 +46,8 @@ const char *const DEPTH_COPY_VERTEX_SHADER_FILE_NAME = "RsFullscreenQuad.vert.sp
 const char *const DEPTH_COPY_PIXEL_SHADER_FILE_NAME  = "RsDepthCopying.frag.spv";
 const char *const SMOKE_VERTEX_SHADER_FILE_NAME      = "RsSmoke.vert.spv";
 const char *const SMOKE_PIXEL_SHADER_FILE_NAME       = "RsSmoke.frag.spv";
+const char *const PARTICLE_VERTEX_SHADER_FILE_NAME   = "RsParticle.vert.spv";
+const char *const PARTICLE_PIXEL_SHADER_FILE_NAME    = "RsParticle.frag.spv";
 
 // The blob declares an 88-byte fragment block: color at offset 64, textureIndex at 80 and
 // emissionTextureIndex at 84, with no member after them (no unused emissionMultiplier trailer;
@@ -61,6 +63,8 @@ constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
 // RsSmoke.frag reads (RsSmoke.frag:24-28). The smoke fragment's push block starts at offset 88, so
 // the pipeline layout has to declare the whole 120 bytes for both stages.
 constexpr uint32_t SMOKE_PUSH_CONSTANT_SIZE = 120;
+
+constexpr uint32_t PARTICLE_PUSH_CONSTANT_SIZE = SMOKE_PUSH_CONSTANT_SIZE;
 
 // The legacy DepthCopying pipeline layout declares exactly the two uints of DepthCopyingFrag_BT
 // (DepthCopying.cpp:205-208) and the process pushes { width, height } to the fragment stage
@@ -281,7 +285,7 @@ static_assert(sizeof(OverlayPushConstants) == 88);
 // stage declares only the matrix at offset 0 and the fragment stage only the two quartets at
 // 88/104 (RsSmoke.vert:31-34, RsSmoke.frag:24-28), so the 120-byte union is what the pipeline
 // layout declares and what every smoke draw pushes.
-struct SmokePushConstants
+struct RasterizedPushConstants
 {
     float    vp[16];
     float    c[4];
@@ -290,7 +294,7 @@ struct SmokePushConstants
     float    smokeNoise[4];
     float    smokeLook[4];
 
-    explicit SmokePushConstants(const RasterizedDataCollector::DrawInfo &info, const float *defaultViewProj)
+    explicit RasterizedPushConstants(const RasterizedDataCollector::DrawInfo &info, const float *defaultViewProj)
     {
         float model[16];
         Matrix::ToMat4Transposed(model, info.transform);
@@ -313,13 +317,13 @@ struct SmokePushConstants
     }
 };
 
-static_assert(offsetof(SmokePushConstants, vp) == 0);
-static_assert(offsetof(SmokePushConstants, c) == 64);
-static_assert(offsetof(SmokePushConstants, t) == 80);
-static_assert(offsetof(SmokePushConstants, e) == 84);
-static_assert(offsetof(SmokePushConstants, smokeNoise) == 88);
-static_assert(offsetof(SmokePushConstants, smokeLook) == 104);
-static_assert(sizeof(SmokePushConstants) == SMOKE_PUSH_CONSTANT_SIZE);
+static_assert(offsetof(RasterizedPushConstants, vp) == 0);
+static_assert(offsetof(RasterizedPushConstants, c) == 64);
+static_assert(offsetof(RasterizedPushConstants, t) == 80);
+static_assert(offsetof(RasterizedPushConstants, e) == 84);
+static_assert(offsetof(RasterizedPushConstants, smokeNoise) == 88);
+static_assert(offsetof(RasterizedPushConstants, smokeLook) == 104);
+static_assert(sizeof(RasterizedPushConstants) == SMOKE_PUSH_CONSTANT_SIZE);
 
 // The legacy viewport of a DrawInfo, as an NVRHI viewport that makes the Vulkan backend emit the
 // legacy's own VkViewport. The legacy `vkCmdSetViewport` takes (x, y, w, +h) (Rasterizer.cpp:
@@ -383,6 +387,7 @@ RhiRasterOverlayPass::~RhiRasterOverlayPass()
     // Pipelines reference their (specialized) shaders, so they go first.
     worldPipelines.clear();
     smokePipelines.clear();
+    particlePipelines.clear();
     depthCopyPipeline = nullptr;
 
     for (Target &target : targets)
@@ -403,6 +408,7 @@ RhiRasterOverlayPass::~RhiRasterOverlayPass()
         target.framebuffersSet = nullptr;
         target.smokeFramebuffersSet = nullptr;
         target.smokeTlasSet = nullptr;
+        target.particleFramebuffersSet = nullptr;
         target.valid = false;
     }
 
@@ -418,6 +424,9 @@ RhiRasterOverlayPass::~RhiRasterOverlayPass()
     smokeHoleSet = nullptr;
     smokeSampler = nullptr;
     smokeLightLayout = nullptr;
+    particleFramebuffersLayout = nullptr;
+    particlePushConstantLayout = nullptr;
+    particleHoleSet = nullptr;
 
     depthCopyPixelShader = nullptr;
     depthCopyVertexShader = nullptr;
@@ -425,6 +434,9 @@ RhiRasterOverlayPass::~RhiRasterOverlayPass()
     smokePixelShader = nullptr;
     smokeVertexShader = nullptr;
     smokeInputLayout = nullptr;
+    particlePixelShader = nullptr;
+    particleVertexShader = nullptr;
+    particleInputLayout = nullptr;
     inputLayout = nullptr;
     vertexShader = nullptr;
 }
@@ -482,6 +494,14 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         smokeVertexShader = nullptr;
         smokePixelShader = nullptr;
         LogMessage(print, "Warning: RHI: the raster overlay smoke shaders are unavailable, the smoke half is disabled");
+    }
+
+    if (!LoadShader(PARTICLE_VERTEX_SHADER_FILE_NAME, nvrhi::ShaderType::Vertex, particleVertexShader) ||
+        !LoadShader(PARTICLE_PIXEL_SHADER_FILE_NAME, nvrhi::ShaderType::Pixel, particlePixelShader))
+    {
+        particleVertexShader = nullptr;
+        particlePixelShader = nullptr;
+        LogMessage(print, "Warning: RHI: the raster overlay particle shaders are unavailable, the particle half is disabled");
     }
 
     // The QrVertex input layout the collector feeds: one binding at slot 0 with the collector's
@@ -576,6 +596,45 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
             LogMessage(print, "Warning: RHI: failed to create the raster overlay smoke input layout, the smoke half is disabled");
             smokeVertexShader = nullptr;
             smokePixelShader = nullptr;
+        }
+    }
+
+    if (particleVertexShader != nullptr)
+    {
+        const nvrhi::VertexAttributeDesc particleVertexAttributes[] =
+        {
+            nvrhi::VertexAttributeDesc()
+                .setName("POSITION")
+                .setFormat(nvrhi::Format::RGB32_FLOAT)
+                .setBufferIndex(0)
+                .setOffset(offsetof(QrVertex, position))
+                .setElementStride(vertexStride),
+            nvrhi::VertexAttributeDesc()
+                .setName("COLOR")
+                .setFormat(nvrhi::Format::RGBA8_UNORM)
+                .setBufferIndex(0)
+                .setOffset(offsetof(QrVertex, packedColor))
+                .setElementStride(vertexStride),
+            nvrhi::VertexAttributeDesc()
+                .setName("TEXCOORD")
+                .setFormat(nvrhi::Format::RG32_FLOAT)
+                .setBufferIndex(0)
+                .setOffset(offsetof(QrVertex, texCoord))
+                .setElementStride(vertexStride),
+            nvrhi::VertexAttributeDesc()
+                .setName("CLUSTER")
+                .setFormat(nvrhi::Format::R32_UINT)
+                .setBufferIndex(0)
+                .setOffset(offsetof(QrVertex, cluster))
+                .setElementStride(vertexStride),
+        };
+
+        particleInputLayout = device->createInputLayout(particleVertexAttributes, uint32_t(std::size(particleVertexAttributes)), particleVertexShader);
+        if (particleInputLayout == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay particle input layout, the particle half is disabled");
+            particleVertexShader = nullptr;
+            particlePixelShader = nullptr;
         }
     }
 
@@ -693,6 +752,30 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         smokeTlasLayout = rhi::createBindingLayout(device, layoutItems, "RhiRasterOverlay smoke set 5 (TLAS)");
     }
 
+    {
+        const nvrhi::BindingLayoutItem layoutItems[] =
+        {
+            nvrhi::BindingLayoutItem::PushConstants(0, PARTICLE_PUSH_CONSTANT_SIZE),
+        };
+
+        particlePushConstantLayout = rhi::createBindingLayout(device, layoutItems, "RhiRasterOverlay particle set 3 (push constants)");
+    }
+    {
+        const nvrhi::BindingLayoutItem layoutItems[] =
+        {
+            nvrhi::BindingLayoutItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT),
+            nvrhi::BindingLayoutItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT),
+            nvrhi::BindingLayoutItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT),
+            nvrhi::BindingLayoutItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT),
+        };
+        const nvrhi::VulkanBindingOffsets offsets = nvrhi::VulkanBindingOffsets()
+            .setShaderResourceOffset(WORLD_FRAMEBUFFERS_SRV_OFFSET)
+            .setUnorderedAccessViewOffset(WORLD_FRAMEBUFFERS_UAV_OFFSET)
+            .setSamplerOffset(WORLD_FRAMEBUFFERS_SAMPLER_OFFSET);
+
+        particleFramebuffersLayout = rhi::createBindingLayout(device, layoutItems, "RhiRasterOverlay particle framebuffers (LF ping)", &offsets);
+    }
+
     if (worldUniformLayout == nullptr || worldTonemappingLayout == nullptr ||
         worldPushConstantLayout == nullptr || worldFramebuffersLayout == nullptr ||
         depthCopyLayout == nullptr)
@@ -711,6 +794,15 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         smokePixelShader = nullptr;
     }
 
+    if (particleVertexShader != nullptr &&
+        (particlePushConstantLayout == nullptr || particleFramebuffersLayout == nullptr ||
+         smokeTlasLayout == nullptr))
+    {
+        LogMessage(print, "Warning: RHI: failed to create a raster overlay particle pipeline layout, the particle half is disabled");
+        particleVertexShader = nullptr;
+        particlePixelShader = nullptr;
+    }
+
     // The empty set that fills the set-3 hole. A null entry in GraphicsState::bindings is unsafe in
     // the pinned NVRHI: the automatic-barrier pass dereferences every entry before the bind pass
     // gets to treat a null as a hole (vulkan-state-tracking.cpp:105), while an empty BindingSet is a
@@ -723,21 +815,43 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         return false;
     }
 
-    // The smoke half's own empty set (the same argument as above, over the 120-byte layout) and
-    // the sampler its set 4 binds. The engine's own framebuffer samplers are VkSampler objects the
-    // RHI bridge cannot wrap, and the smoke fragment's texelFetch reads do not depend on the filter
-    // mode, so the bridge's linear/clamp engine-texture sampler serves the three sampled images
-    // (RhiTextureSource.h). A failure disables the smoke half.
+    // The smoke half's own empty set and the sampler the lit halves' set 4 bind. The engine's own
+    // framebuffer samplers are VkSampler objects the RHI bridge cannot wrap, and the fragments'
+    // Load reads do not depend on the filter mode, so the bridge's linear/clamp engine-texture
+    // sampler serves the sampled images (RhiTextureSource.h). A failure disables the half it
+    // belongs to; a sampler failure disables both.
     if (smokeVertexShader != nullptr)
     {
         smokeHoleSet = device->createBindingSet(nvrhi::BindingSetDesc(), smokePushConstantLayout);
-        smokeSampler = rhi::createEngineTextureSampler(device, "RhiRasterOverlay smoke framebuffer sampler");
-
-        if (smokeHoleSet == nullptr || smokeSampler == nullptr)
+        if (smokeHoleSet == nullptr)
         {
-            LogMessage(print, "Warning: RHI: failed to create the raster overlay smoke hole set or sampler, the smoke half is disabled");
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay smoke hole set, the smoke half is disabled");
             smokeVertexShader = nullptr;
             smokePixelShader = nullptr;
+        }
+    }
+
+    if (particleVertexShader != nullptr)
+    {
+        particleHoleSet = device->createBindingSet(nvrhi::BindingSetDesc(), particlePushConstantLayout);
+        if (particleHoleSet == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay particle hole set, the particle half is disabled");
+            particleVertexShader = nullptr;
+            particlePixelShader = nullptr;
+        }
+    }
+
+    if (smokeVertexShader != nullptr || particleVertexShader != nullptr)
+    {
+        smokeSampler = rhi::createEngineTextureSampler(device, "RhiRasterOverlay framebuffer sampler");
+        if (smokeSampler == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay framebuffer sampler, the lit raster halves are disabled");
+            smokeVertexShader = nullptr;
+            smokePixelShader = nullptr;
+            particleVertexShader = nullptr;
+            particlePixelShader = nullptr;
         }
     }
 
@@ -828,13 +942,16 @@ bool RhiRasterOverlayPass::SetSmokeLightLayout(nvrhi::BindingLayoutHandle pLight
 
     if (smokeLightLayout.Get() != pLightLayout.Get())
     {
-        // The cached smoke pipelines reference the previous layout; the host installs this once, so
-        // a change means a different direct pass and the cache has to follow.
+        // The cached smoke and particle pipelines reference the previous layout; the host installs
+        // this once, so a change means a different direct pass and both caches have to follow.
         ReleaseSmokePipelineCache();
+        ReleaseParticlePipelineCache();
         smokeLightLayout = pLightLayout;
     }
 
-    return PrewarmSmokePipeline();
+    const bool smokeReady = PrewarmSmokePipeline();
+    const bool particleReady = PrewarmParticlePipeline();
+    return smokeReady && particleReady;
 }
 
 void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
@@ -851,6 +968,8 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                                   bool applyVertexColorGamma,
                                   const RasterizedDataCollector::DrawInfo *pSmokeDraws,
                                   uint32_t smokeDrawCount,
+                                  const RasterizedDataCollector::DrawInfo *pParticleDraws,
+                                  uint32_t particleDrawCount,
                                   nvrhi::rt::IAccelStruct *pSmokeTopLevel,
                                   nvrhi::IBindingSet *pSmokeLightSet)
 {
@@ -940,11 +1059,25 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
         LogMessage(print, "Warning: RHI: the raster overlay smoke half is not drawable (a shader, the light layout/set or the TLAS is missing), the smoke draws are skipped");
     }
 
-    if (worldDrawable || smokeDrawable)
+    const bool particleDrawable =
+        particleVertexShader != nullptr && particlePixelShader != nullptr &&
+        particleInputLayout != nullptr && particleHoleSet != nullptr && smokeSampler != nullptr &&
+        smokeLightLayout != nullptr && pSmokeLightSet != nullptr && pSmokeTopLevel != nullptr &&
+        target.particleFramebuffersSet != nullptr && target.smokeTlasSet != nullptr &&
+        pParticleDraws != nullptr && particleDrawCount > 0;
+
+    if (pParticleDraws != nullptr && particleDrawCount > 0 && !particleDrawable &&
+        !warnedMissingParticleInputs)
+    {
+        warnedMissingParticleInputs = true;
+        LogMessage(print, "Warning: RHI: the raster overlay particle half is not drawable (a shader, the light layout/set or the TLAS is missing), the particle draws are skipped");
+    }
+
+    if (worldDrawable || smokeDrawable || particleDrawable)
     {
         // The engine textures the table wrapped since the last frame need their first-use state
-        // declared in the first list that binds the table (RhiTextureSource.h); both halves bind it
-        // as set 0, and either may be that list.
+        // declared in the first list that binds the table (RhiTextureSource.h); all three halves
+        // bind it as set 0, and any of them may be that list.
         textureTable->TrackPendingTextures(pCommandList);
 
         // The legacy's ApplyJitter and default view-projection (Rasterizer.cpp:176-184, :266-271):
@@ -961,11 +1094,17 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
 
         if (worldDrawable)
         {
-            // When the smoke half will draw the smoke entries, the world loop skips them so that no
-            // entry is recorded twice; without the smoke half the loop keeps them, which is what
-            // this pass did before the half existed.
+            // When a lit half will draw its entries, the world loop skips them so that no entry is
+            // recorded twice; without the half the loop keeps them, which is what this pass did
+            // before the half existed.
             RecordWorldDraws(pCommandList, target, width, height, defaultViewProj,
-                             pDraws, drawCount, applyVertexColorGamma, smokeDrawable);
+                             pDraws, drawCount, applyVertexColorGamma, smokeDrawable, particleDrawable);
+        }
+
+        if (particleDrawable)
+        {
+            RecordParticleDraws(pCommandList, target, width, height, defaultViewProj,
+                                pParticleDraws, particleDrawCount, pSmokeLightSet);
         }
 
         if (smokeDrawable)
@@ -1327,6 +1466,25 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
         }
     }
 
+    target.particleFramebuffersSet = nullptr;
+    if (target.smokePingLfShTexture != nullptr && target.smokePingLfCocgTexture != nullptr &&
+        smokeSampler != nullptr && particleFramebuffersLayout != nullptr)
+    {
+        nvrhi::BindingSetDesc desc;
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT,
+                                                        target.smokePingLfShTexture));
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT,
+                                                        target.smokePingLfCocgTexture));
+        desc.addItem(nvrhi::BindingSetItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_SH_SLOT, smokeSampler));
+        desc.addItem(nvrhi::BindingSetItem::Sampler(SMOKE_FRAMEBUFFERS_PING_LF_COCG_SLOT, smokeSampler));
+
+        target.particleFramebuffersSet = device->createBindingSet(desc, particleFramebuffersLayout);
+        if (target.particleFramebuffersSet == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the raster overlay particle framebuffers binding set (set 4)");
+        }
+    }
+
     // The world pipelines are built against the two colour formats; a change means every cached
     // pipeline belongs to the wrong framebuffer info. FINAL and SCREEN_EMISSION are both
     // VK_FORMAT_B10G11R11_UFLOAT_PACK32 (ShaderCommonCFramebuf.cpp:37, :71), but the wrap's own
@@ -1339,6 +1497,7 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
         pipelineColor0Format = color0Format;
         pipelineColor1Format = color1Format;
         PrewarmSmokePipeline();
+        PrewarmParticlePipeline();
     }
 
     target.finalImage = std::get<0>(finalImage);
@@ -1477,7 +1636,7 @@ void RhiRasterOverlayPass::RecordWorldDraws(nvrhi::ICommandList *pCommandList, c
                                             uint32_t width, uint32_t height, const float *defaultViewProj,
                                             const RasterizedDataCollector::DrawInfo *pDraws,
                                             uint32_t drawCount, bool applyVertexColorGamma,
-                                            bool skipSmokeEntries)
+                                            bool skipSmokeEntries, bool skipParticleEntries)
 {
     // The legacy loop keeps the scissor at the whole render area unless the draw carries one of
     // its own, and switches the viewport per draw (Rasterizer.cpp:356-357, :389-396, :414-419).
@@ -1506,6 +1665,11 @@ void RhiRasterOverlayPass::RecordWorldDraws(nvrhi::ICommandList *pCommandList, c
         // BindPipelineIfNew switches pipelines on (Rasterizer.cpp:472-476) and the host filters the
         // smoke list by (VulkanDevice.cpp).
         if (skipSmokeEntries && (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_SMOKE) != 0)
+        {
+            continue;
+        }
+
+        if (skipParticleEntries && (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_PARTICLE) != 0)
         {
             continue;
         }
@@ -1648,7 +1812,85 @@ void RhiRasterOverlayPass::RecordSmokeDraws(nvrhi::ICommandList *pCommandList, c
         // After the state: changing the state invalidates push constants (nvrhi.h:3430-3432), and
         // the block is the full 120-byte legacy RasterizedPushConst rebuilt per draw, exactly as
         // Rasterizer::Draw does for the smoke entries (Rasterizer.cpp:399-409).
-        const SmokePushConstants push(info, defaultViewProj);
+        const RasterizedPushConstants push(info, defaultViewProj);
+        pCommandList->setPushConstants(&push, sizeof(push));
+
+        nvrhi::DrawArguments args;
+        if (info.indexCount > 0)
+        {
+            args.vertexCount = info.indexCount;
+            args.startIndexLocation = info.firstIndex;
+            args.startVertexLocation = info.firstVertex;
+            pCommandList->drawIndexed(args);
+        }
+        else
+        {
+            args.vertexCount = info.vertexCount;
+            args.startVertexLocation = info.firstVertex;
+            pCommandList->draw(args);
+        }
+    }
+}
+
+void RhiRasterOverlayPass::RecordParticleDraws(nvrhi::ICommandList *pCommandList, const Target &target,
+                                               uint32_t width, uint32_t height, const float *defaultViewProj,
+                                               const RasterizedDataCollector::DrawInfo *pDraws,
+                                               uint32_t drawCount, nvrhi::IBindingSet *pLightSet)
+{
+    const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(width), 0, static_cast<int>(height));
+
+    const VkViewport legacyDefaultViewport = { 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
+    const nvrhi::Viewport defaultViewport = ToLegacyViewport(legacyDefaultViewport);
+
+    for (uint32_t i = 0; i < drawCount; i++)
+    {
+        const RasterizedDataCollector::DrawInfo &info = pDraws[i];
+
+        if (info.vertexCount == 0 && info.indexCount == 0)
+        {
+            continue;
+        }
+
+        const uint32_t stateFlags =
+            ConvertToStateFlags(info.pipelineState, info.blendFuncSrc, info.blendFuncDst);
+
+        nvrhi::IGraphicsPipeline *pipeline = GetParticlePipeline(stateFlags);
+        if (pipeline == nullptr)
+        {
+            if (!warnedFailedParticlePipeline)
+            {
+                warnedFailedParticlePipeline = true;
+                LogMessage(print, "Warning: RHI: failed to create a raster overlay particle pipeline, the particle draws are skipped");
+            }
+            return;
+        }
+
+        const nvrhi::Viewport viewport =
+            info.viewport ? ToLegacyViewport(*info.viewport) : defaultViewport;
+
+        const nvrhi::Rect scissor = info.scissor ? ToLegacyScissor(*info.scissor) : fullTarget;
+
+        nvrhi::GraphicsState state;
+        state.pipeline = pipeline;
+        state.framebuffer = target.framebuffer;
+        state.viewport.addViewport(viewport);
+        state.viewport.addScissorRect(scissor);
+        state.addBindingSet(textureTable->GetTable());
+        state.addBindingSet(target.uniformSet);
+        state.addBindingSet(target.tonemappingSet);
+        state.addBindingSet(particleHoleSet);
+        state.addBindingSet(target.particleFramebuffersSet);
+        state.addBindingSet(target.smokeTlasSet);
+        state.addBindingSet(pLightSet);
+        state.addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(vertexBuffer).setSlot(0).setOffset(0));
+        state.setIndexBuffer(nvrhi::IndexBufferBinding()
+                                 .setBuffer(indexBuffer)
+                                 .setFormat(nvrhi::Format::R32_UINT)
+                                 .setOffset(0));
+
+        pCommandList->setGraphicsState(state);
+
+        const RasterizedPushConstants push(info, defaultViewProj);
         pCommandList->setPushConstants(&push, sizeof(push));
 
         nvrhi::DrawArguments args;
@@ -1704,6 +1946,10 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
         if (target.smokeFramebuffersSet != nullptr)
         {
             frameContext->Retire(target.smokeFramebuffersSet);
+        }
+        if (target.particleFramebuffersSet != nullptr)
+        {
+            frameContext->Retire(target.particleFramebuffersSet);
         }
         if (target.smokeTlasSet != nullptr)
         {
@@ -1766,6 +2012,7 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
     target.depthCopySet = nullptr;
     target.framebuffersSet = nullptr;
     target.smokeFramebuffersSet = nullptr;
+    target.particleFramebuffersSet = nullptr;
     target.smokeTlasSet = nullptr;
     target.smokeTopLevel = nullptr;
     target.uniformBuffer = nullptr;
@@ -1785,6 +2032,7 @@ void RhiRasterOverlayPass::ReleaseTarget(Target &target)
 void RhiRasterOverlayPass::ReleasePipelineCache()
 {
     ReleaseSmokePipelineCache();
+    ReleaseParticlePipelineCache();
 
     if (frameContext != nullptr)
     {
@@ -1808,6 +2056,19 @@ void RhiRasterOverlayPass::ReleaseSmokePipelineCache()
     }
 
     smokePipelines.clear();
+}
+
+void RhiRasterOverlayPass::ReleaseParticlePipelineCache()
+{
+    if (frameContext != nullptr)
+    {
+        for (auto &entry : particlePipelines)
+        {
+            frameContext->Retire(entry.second);
+        }
+    }
+
+    particlePipelines.clear();
 }
 
 nvrhi::IGraphicsPipeline *RhiRasterOverlayPass::GetWorldPipeline(uint32_t stateFlags, bool applyVertexColorGamma)
@@ -2043,6 +2304,112 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateSmokePipeline(uint32_t
     if (pipeline == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a raster overlay smoke pipeline");
+    }
+
+    return pipeline;
+}
+
+bool RhiRasterOverlayPass::PrewarmParticlePipeline()
+{
+    if (particleVertexShader == nullptr || particlePixelShader == nullptr ||
+        particleInputLayout == nullptr || particlePushConstantLayout == nullptr ||
+        particleFramebuffersLayout == nullptr || smokeTlasLayout == nullptr ||
+        smokeLightLayout == nullptr)
+    {
+        return true;
+    }
+
+    const uint32_t stateFlags = ConvertToStateFlags(
+        QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE |
+        QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+        QR_RASTERIZED_GEOMETRY_STATE_PARTICLE,
+        QR_BLEND_FACTOR_SRC_ALPHA, QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+
+    return GetParticlePipeline(stateFlags) != nullptr;
+}
+
+nvrhi::IGraphicsPipeline *RhiRasterOverlayPass::GetParticlePipeline(uint32_t stateFlags)
+{
+    assert(pipelineColor0Format != nvrhi::Format::UNKNOWN);
+    assert(pipelineColor1Format != nvrhi::Format::UNKNOWN);
+
+    const auto found = particlePipelines.find(stateFlags);
+    if (found != particlePipelines.end())
+    {
+        return found->second;
+    }
+
+    nvrhi::GraphicsPipelineHandle pipeline = CreateParticlePipeline(stateFlags);
+    if (pipeline == nullptr)
+    {
+        return nullptr;
+    }
+
+    const auto inserted = particlePipelines.emplace(stateFlags, std::move(pipeline));
+    return inserted.first->second;
+}
+
+nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateParticlePipeline(uint32_t stateFlags)
+{
+    const bool blendEnable = (stateFlags & PIPELINE_STATE_MASK_BLEND_ENABLE) != 0;
+    const bool depthTest   = (stateFlags & PIPELINE_STATE_MASK_DEPTH_TEST_ENABLE) != 0;
+    const bool depthWrite  = (stateFlags & PIPELINE_STATE_MASK_DEPTH_WRITE_ENABLE) != 0;
+    const bool isLines     = (stateFlags & PIPELINE_STATE_MASK_IS_LINES) != 0;
+
+    if (particleVertexShader == nullptr || particlePixelShader == nullptr ||
+        particleInputLayout == nullptr || particlePushConstantLayout == nullptr ||
+        particleFramebuffersLayout == nullptr || smokeTlasLayout == nullptr ||
+        smokeLightLayout == nullptr)
+    {
+        return nullptr;
+    }
+
+    nvrhi::BlendState::RenderTarget blendTarget;
+    blendTarget.setBlendEnable(blendEnable)
+               .setSrcBlend(DecodeBlendFactor(stateFlags, PS_SRC_OFFSET))
+               .setDestBlend(DecodeBlendFactor(stateFlags, PS_DST_OFFSET))
+               .setBlendOp(nvrhi::BlendOp::Add)
+               .setSrcBlendAlpha(DecodeBlendFactor(stateFlags, PS_SRC_OFFSET))
+               .setDestBlendAlpha(DecodeBlendFactor(stateFlags, PS_DST_OFFSET))
+               .setBlendOpAlpha(nvrhi::BlendOp::Add)
+               .setColorWriteMask(nvrhi::ColorMask::All);
+
+    nvrhi::GraphicsPipelineDesc desc;
+    desc.setVertexShader(particleVertexShader);
+    desc.setPixelShader(particlePixelShader);
+    desc.inputLayout = particleInputLayout;
+    desc.primType = isLines ? nvrhi::PrimitiveType::LineList : nvrhi::PrimitiveType::TriangleList;
+    desc.renderState.rasterState.setFillSolid();
+    desc.renderState.rasterState.setCullMode(nvrhi::RasterCullMode::None);
+    desc.renderState.rasterState.setFrontCounterClockwise(true);
+    desc.renderState.rasterState.setDepthClipEnable(true);
+    desc.renderState.depthStencilState.setDepthFunc(nvrhi::ComparisonFunc::LessOrEqual);
+    desc.renderState.depthStencilState.setDepthTestEnable(depthTest || depthWrite);
+    desc.renderState.depthStencilState.setDepthWriteEnable(depthWrite);
+    desc.renderState.depthStencilState.setStencilEnable(false);
+    desc.renderState.blendState.setRenderTarget(0, blendTarget);
+    desc.renderState.blendState.setRenderTarget(1, blendTarget);
+
+    desc.addBindingLayout(textureTable->GetLayout());
+    desc.addBindingLayout(worldUniformLayout);
+    desc.addBindingLayout(worldTonemappingLayout);
+    desc.addBindingLayout(particlePushConstantLayout);
+    desc.addBindingLayout(particleFramebuffersLayout);
+    desc.addBindingLayout(smokeTlasLayout);
+    desc.addBindingLayout(smokeLightLayout);
+
+    nvrhi::FramebufferInfo framebufferInfo;
+    framebufferInfo.addColorFormat(pipelineColor0Format);
+    framebufferInfo.addColorFormat(pipelineColor1Format);
+    framebufferInfo.setDepthFormat(DEPTH_FORMAT);
+    framebufferInfo.setSampleCount(1);
+
+    nvrhi::GraphicsPipelineHandle pipeline =
+        rhi::createGraphicsPipeline(device, desc, framebufferInfo, "RhiRasterOverlay particle pipeline");
+
+    if (pipeline == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create a raster overlay particle pipeline");
     }
 
     return pipeline;
