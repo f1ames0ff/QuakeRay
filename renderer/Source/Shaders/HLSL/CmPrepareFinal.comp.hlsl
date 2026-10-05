@@ -25,6 +25,22 @@
 #include "Random.hlsli"
 #include "Exposure.hlsli"
 #include "TonemappingUtils.hlsli"
+#include "LocalExposure.hlsli"
+#include "ColorCompositing.hlsli"
+#include "NearDof.hlsli"
+
+
+struct PostEffectsControl_BT
+{
+    float4 opticalControl;
+    float4 gameplayFeedback;
+    float4 suitControl;
+};
+
+[[vk::push_constant]] ConstantBuffer<PostEffectsControl_BT> postEffectsControl;
+
+[[vk::binding(400, DESC_SET_FRAMEBUFFERS)]] Texture2D<float4> bloomResultTexture;
+[[vk::binding(402, DESC_SET_FRAMEBUFFERS)]] SamplerState opticalResultSampler;
 
 
 #define DEBUG_LPM 0
@@ -75,56 +91,76 @@ float3 reinhard(const float3 c)
 }
 
 
-float3 blendEmissionLayer( const float3 hdr, const float3 layer, const uint mode )
+float3 agxDefaultContrastApprox( const float3 x )
 {
-    if( mode == 0u )
-    {
-        return hdr;
-    }
-    if( mode == 2u )
-    {
-        return hdr + layer;
-    }
+    const float3 x2 = x * x;
+    const float3 x4 = x2 * x2;
 
-    const float3 base     = clamp( hdr, (float3)0.0, (float3)1.0 );
-    const float3 emiss    = clamp( layer, (float3)0.0, (float3)1.0 );
-    const float  coverage = clamp( max( max( layer.x, layer.y ), layer.z ), 0.0, 1.0 );
-
-    float3 blended = emiss;
-    if( mode == 3u )
-    {
-        blended = lerp( 2.0 * base * emiss, 1.0 - 2.0 * ( 1.0 - base ) * ( 1.0 - emiss ), step( (float3)0.5, base ) );
-    }
-    else if( mode == 4u )
-    {
-        blended = lerp( 2.0 * base * emiss, 1.0 - 2.0 * ( 1.0 - base ) * ( 1.0 - emiss ), step( (float3)0.5, emiss ) );
-    }
-    else if( mode == 5u )
-    {
-        blended = clamp( base / max( (float3)1.0 - emiss, (float3)1e-3 ), (float3)0.0, (float3)1.0 );
-    }
-
-    return hdr + ( blended - base ) * coverage + max( layer - 1.0, 0.0 );
+    return + 15.5 * x4 * x2
+           - 40.14 * x4 * x
+           + 31.96 * x4
+           - 6.868 * x2 * x
+           + 0.4298 * x2
+           + 0.1191 * x
+           - 0.00232;
 }
 
 
-uint decodeEmissionBlendMode( const uint code )
+float3 acesFilmic( const float3 color )
 {
-    if( code < 1u || code > 6u )
-    {
-        return globalUniform.emissionBlendMode;
-    }
-    return min( code - 1u, 5u );
+    const float3x3 acesIn = float3x3(
+        0.59719, 0.35458, 0.04823,
+        0.07600, 0.90834, 0.01566,
+        0.02840, 0.13383, 0.83777);
+    const float3x3 acesOut = float3x3(
+         1.60475, -0.53108, -0.07367,
+        -0.10208,  1.10813, -0.00605,
+        -0.00327, -0.07276,  1.07602);
+
+    const float3 v = mul( acesIn, color / 0.6 );
+    const float3 a = v * ( v + 0.0245786 ) - 0.000090537;
+    const float3 b = v * ( 0.983729 * v + 0.4329510 ) + 0.238081;
+
+    return saturate( mul( acesOut, a / b ) );
 }
 
 
-float3 finalizeColor( const float3 hdr, const float3 screenEmis, const uint emisBlendMode )
+float3 agxFilmic( const float3 color )
 {
-    const float strength = clamp( globalUniform.emissionBlendStrength, 0.0, 1.0 );
-    const float3 layer   = screenEmis * globalUniform.emissionMaxScreenColor * strength;
+    const float3x3 agxIn = float3x3(
+        0.856627153315983,  0.0951212405381588, 0.0482516061458583,
+        0.137318972929847,  0.761241990602591,  0.101439036467562,
+        0.11189821299995,   0.0767994186031903, 0.811302368396859);
+    const float3x3 agxOut = float3x3(
+         1.1271005818144368,  -0.11060664309660323,  -0.016493938717834573,
+        -0.1413297634984383,   1.157823702216272,    -0.016493938717834257,
+        -0.14132976349843826, -0.11060664309660294,   1.2519364065950405);
+    const float3x3 rec2020FromSrgb = float3x3(
+        0.6274, 0.3293, 0.0433,
+        0.0691, 0.9195, 0.0113,
+        0.0164, 0.0880, 0.8956);
+    const float3x3 srgbFromRec2020 = float3x3(
+         1.6605, -0.5876, -0.0728,
+        -0.1246,  1.1329, -0.0083,
+        -0.0182, -0.1006,  1.1187);
 
-    float3 input_color = blendEmissionLayer( hdr, layer, emisBlendMode );
+    float3 v = mul( rec2020FromSrgb, color );
+    v = mul( agxIn, v );
+    v = max( v, 1e-10 );
+    v = log2( v );
+    v = ( v + 12.47393 ) / 16.5;
+    v = clamp( v, 0.0, 1.0 );
+    v = agxDefaultContrastApprox( v );
+    v = mul( agxOut, v );
+    v = pow( max( v, 0.0 ), 2.2 );
+    v = mul( srgbFromRec2020, v );
 
+    return saturate( v );
+}
+
+
+float3 finalizeColor( const float3 input_color )
+{
     const float lum = max( getLuminance( input_color ), exp2( min_log_luminance ) );
 
     const float biased_log_luminance = log2( lum ) * log_luminance_scale + log_luminance_bias;
@@ -138,37 +174,44 @@ float3 finalizeColor( const float3 hdr, const float3 screenEmis, const uint emis
                                     right_weight_F * tonemapping[0].curve[right_bin];
     const float out_luminance = exp2( out_log_luminance + tonemapping[0].tmExposureBias );
 
-    float3 mapped_color = input_color * out_luminance / lum;
-
-    const float3 step_value = step( tonemapping[0].tmKneeStart, mapped_color );
-    mapped_color = lerp( mapped_color,
-                         ( tonemapping[0].kneeW * mapped_color + tonemapping[0].kneeA ) / max( (float3)1e-6, mapped_color + tonemapping[0].kneeB ),
-                         step_value );
-
-    const float adapted_luminance    = tonemapping[0].adaptedLuminance;
-    const float scaled_luminance     = exp2( tonemapping[0].tmExposureBias - 2.0 ) * lum / adapted_luminance;
     const float white_point          = tonemapping[0].tmWhitePoint;
     const float white_point_squared  = white_point * white_point;
-    const float mapped_luminance     = ( scaled_luminance * ( 1.0 + scaled_luminance / white_point_squared ) ) / ( 1.0 + scaled_luminance );
-    const float3 ae_mapped_color     = input_color * mapped_luminance / lum;
+    const float exposure_scale       = exp2( tonemapping[0].tmExposureBias - 2.0 ) / tonemapping[0].adaptedLuminance;
+    const float3 exposed_color       = input_color * exposure_scale;
 
-    mapped_color = lerp( mapped_color, ae_mapped_color, tonemapping[0].tmReinhard );
+    float3 curve_color = input_color * out_luminance / lum;
 
-    return clamp( mapped_color, (float3)0, (float3)1 );
-}
+    curve_color = colorHighlightShoulder( curve_color, tonemapping[0].tmKneeStart,
+                                          tonemapping[0].kneeW, tonemapping[0].kneeA, tonemapping[0].kneeB );
 
+    float3 operator_color;
+    const uint tonemap_type = tonemapping[0].tonemapType;
 
-float3 getBloomInput( const float3 hdr, const float3 screenEmis, const int2 pix )
-{
-    const float power = getLuminance( screenEmis );
+    if( tonemap_type == 2u )
+    {
+        operator_color = exposed_color / ( 1.0 + exposed_color );
+    }
+    else if( tonemap_type == 3u )
+    {
+        operator_color = acesFilmic( exposed_color );
+    }
+    else if( tonemap_type == 4u )
+    {
+        operator_color = agxFilmic( exposed_color );
+    }
+    else
+    {
+        const float scaled_luminance = max( getLuminance( exposed_color ), 1e-6 );
+        const float mapped_luminance = ( scaled_luminance * ( 1.0 + scaled_luminance / white_point_squared ) ) /
+                                       ( 1.0 + scaled_luminance );
+        operator_color = exposed_color * ( mapped_luminance / scaled_luminance );
+    }
 
-    const float albedoLum = getLuminance( framebufAlbedo_Sampled.Load(int3( pix, 0 )).rgb );
-    const float3 emis     = power > 0.001 ? screenEmis / max( albedoLum, power ) : (float3)0;
+    const float3 mapped_color = tonemap_type == 0u ?
+        exposed_color :
+        lerp( curve_color, operator_color, saturate( tonemapping[0].tonemapPower ) );
 
-    float ec = power * globalUniform.bloomEmissionMultiplier;
-
-    return hdr * ev100ToLuminance( getCurrentEV100() ) +
-           emis * ev100ToLuminance( getCurrentEV100() + ec );
+    return colorLimitPreserveHue( mapped_color, 1.0 );
 }
 
 
@@ -262,6 +305,99 @@ float3 applyLevelFog( const int2 pix, const float3 color )
 }
 
 
+float3 sampleScene( const int2 pix )
+{
+    if( postEffectsControl.suitControl.y <= 0.0 )
+    {
+        return framebufBloomInput_Sampled.Load( int3( pix, 0 ) ).rgb;
+    }
+    const float displayHeight = globalUniform.upscaledRenderHeight > 0.0 ?
+        globalUniform.upscaledRenderHeight : globalUniform.renderHeight;
+    const float radiusScale = globalUniform.renderHeight / max( displayHeight, 1.0 );
+    return nearDofFilter( framebufBloomInput_Sampled, framebufDepthWorld_Sampled,
+                          framebufSurfacePosition_Sampled, pix, getViewAxisFactor( pix ),
+                          postEffectsControl.suitControl.y, postEffectsControl.suitControl.z,
+                          postEffectsControl.suitControl.w * radiusScale );
+}
+
+float3 sampleSceneUV( const float2 uv )
+{
+    if( postEffectsControl.suitControl.y <= 0.0 )
+    {
+        return framebufBloomInput_Sampled.SampleLevel( opticalResultSampler, uv, 0.0 ).rgb;
+    }
+    const int2 pix = clamp( int2( uv * float2( globalUniform.renderWidth, globalUniform.renderHeight ) ),
+                            int2( 0, 0 ), int2( globalUniform.renderWidth - 1, globalUniform.renderHeight - 1 ) );
+    if( !nearDofIsWeapon( framebufSurfacePosition_Sampled, pix, int( globalUniform.renderWidth ) ) )
+    {
+        return framebufBloomInput_Sampled.SampleLevel( opticalResultSampler, uv, 0.0 ).rgb;
+    }
+    return sampleScene( pix );
+}
+
+float3 applyChromaticAberration( const int2 pix )
+{
+    const float3 scene = sampleScene( pix );
+
+    const float damage     = postEffectsControl.gameplayFeedback.x;
+    const float liquid     = postEffectsControl.gameplayFeedback.y;
+    const float aberration = postEffectsControl.gameplayFeedback.z;
+    const float suit       = postEffectsControl.suitControl.x;
+
+    if( damage <= 0.0 && liquid <= 0.0 && suit <= 0.0 )
+    {
+        return scene;
+    }
+
+    const float2 uv = ( float2( pix ) + 0.5 ) /
+                      float2( globalUniform.renderWidth, globalUniform.renderHeight );
+
+    const float2 outside = saturate( ( abs( uv - 0.5 ) - 0.15 ) / 0.35 );
+    const float edgeMask = smoothstep( 0.0, 1.0, length( outside ) );
+
+    const float damageDistance = length( ( uv - 0.5 ) * 2.0 );
+    const float damageMask = smoothstep( 0.8, 1.0, damageDistance );
+
+    const float aspect = globalUniform.renderWidth / globalUniform.renderHeight;
+    const float2 centered = float2( ( uv.x - 0.5 ) * aspect, uv.y - 0.5 );
+    const float2 direction = normalize( centered + float2( 1e-5, 1e-5 ) );
+
+    float displayHeight = globalUniform.upscaledRenderHeight;
+    if( displayHeight <= 0.0 )
+    {
+        displayHeight = globalUniform.renderHeight;
+    }
+
+    const float heightScale = displayHeight / 1080.0;
+    const float damageAmount = 270.0 * damage * damageMask;
+    const float liquidAmount = ( 180.0 * liquid + 4.0 * suit ) * edgeMask;
+    const float splitPixels = min( ( damageAmount + liquidAmount ) * ( aberration / 0.3 ), 200.0 ) * heightScale;
+    const float2 offset = direction * ( splitPixels / displayHeight );
+
+    const int tapCount = 7;
+
+    float3 color  = (float3)0.0;
+    float3 weight = (float3)0.0;
+
+    for( int i = 0; i < tapCount; i++ )
+    {
+        const float t = ( i + 0.5 ) / (float)tapCount;
+        const float3 w = float3( t, 1.0 - abs( 2.0 * t - 1.0 ), 1.0 - t );
+        const float2 sampleUV = clamp( uv + offset * ( t - 0.5 ), (float2)0.0, (float2)1.0 );
+
+        color  += sampleSceneUV( sampleUV ) * w;
+        weight += w;
+    }
+
+    color /= weight;
+
+    const float redness = saturate( damage * 2.0 ) * damageMask * 0.5;
+    color = colorApplyTint( color, float3( 1.0, 0.15, 0.10 ), redness );
+
+    return color;
+}
+
+
 float3 processDebug( const int2 pix, const float3 fallback );
 
 
@@ -302,26 +438,29 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         return;
     }
 
-    float3 hdr        = framebufFinal.Load( pix ).rgb;
-    const float3 screenEmis = framebufScreenEmission_Sampled.Load(int3( pix, 0 )).rgb;
-    const uint emisBlendMode = decodeEmissionBlendMode(
-        framebufPrimaryToReflRefr_Sampled.Load(int3( getCheckerboardPix( pix ), 0 )).a );
+    const float3 scene = applyChromaticAberration( pix );
+    float3 hdr = scene;
 
-    if (globalUniform.coreQ2RTX != 0)
+    if( postEffectsControl.opticalControl.z != 0.0 )
     {
-        hdr += framebufGodRaysFiltered_Sampled.Load(int3( pix, 0 )).rgb;
-    }
-    else
-    {
-        const float q2SplitFlag = framebufThroughput_Sampled.Load(int3( getCheckerboardPix(pix), 0 )).a;
-        if (q2SplitFlag == 0.0)
-        {
-            hdr += framebufGodRaysFiltered_Sampled.Load(int3( pix, 0 )).rgb;
-        }
+        const float2 opticalUV = (float2( pix ) + 0.5) /
+                                 float2( globalUniform.renderWidth, globalUniform.renderHeight );
+
+        const float3 bloom = bloomResultTexture.SampleLevel( opticalResultSampler, opticalUV, 0.0 ).rgb;
+        hdr = colorComposeBloom( scene, bloom, postEffectsControl.opticalControl.x,
+                                 postEffectsControl.opticalControl.w > 0.0 );
     }
 
-    float3 color = finalizeColor( hdr, screenEmis, emisBlendMode );
-    float3 bloom = getBloomInput( hdr, screenEmis, pix );
+    if (postEffectsControl.gameplayFeedback.w > 0.0)
+    {
+        const float2 inverseSize = 1.0 / float2(globalUniform.renderWidth, globalUniform.renderHeight);
+        const float2 uv = (float2(pix) + 0.5) * inverseSize;
+        const float correction = localExposureCorrection(framebufBloomInput_Sampled, opticalResultSampler,
+                                                           uv, inverseSize, tonemapping[0].adaptedLuminance);
+        hdr *= exp2(correction * postEffectsControl.gameplayFeedback.w);
+    }
+
+    float3 color = finalizeColor( hdr );
 
     color = applyVolumetrics( pix, color );
 #if SHIPPING_HACK
@@ -341,10 +480,10 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         outputDither( pix, 1u ),
         outputDither( pix, 2u ) );
 
+    color = colorLimitPreserveHue( color, 1.0 );
     color = clamp( color + dither * OUTPUT_DITHER_CODES * outputCodeStepLinear( color ), (float3)0.0, (float3)1.0 );
 
     framebufFinal[pix] = float4( color, 0 );
-    framebufBloomInput[pix] = float4( bloom, 0.0 );
 }
 
 

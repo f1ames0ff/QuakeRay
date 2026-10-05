@@ -38,6 +38,7 @@ namespace qray
 class Framebuffers;
 class GlobalUniform;
 class RenderResolutionHelper;
+class RhiBloomPass;
 class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
@@ -253,7 +254,9 @@ public:
         // the contrast is clamped in the engine. They feed the traced mode's host-only
         // exposure-parameter write; the raster mode's neutral stand-in does not use them.
         float exposureBias = 0.0f;
-        float contrast = 0.6f;
+        float tonemapPower = 0.6f;
+        uint32_t tonemapType = 1;
+        QrDrawFrameTonemappingParams exposureParams = {};
 
         // -- the acceleration-structure stream --
 
@@ -373,6 +376,7 @@ public:
                                 RhiDecalPass *pDecalPass,
                                 RhiFsrPass *pFsrPass,
                                 RhiPostEffectPass *pPostEffectPass,
+                                RhiBloomPass *pBloomPass,
                                 RhiShadowMapPass *pShadowMapPass,
                                 RhiRtGodRaysPass *pGodRaysPass,
                                 RhiUiPass *pUiPass,
@@ -560,6 +564,8 @@ private:
     // owned; null when the host's creation failed, in which case the frame is drawn without the
     // post-upscale effects.
     RhiPostEffectPass *postEffectPass = nullptr;
+
+    RhiBloomPass *bloomPass = nullptr;
 
     // The wraps of the engine DecalManager buffers (A5.6): the per-slot staging as a copy source and
     // the device-local instance array once as the pass's set 3 buffer (stride

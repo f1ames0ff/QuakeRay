@@ -193,7 +193,20 @@ extern cvar_t r_enhancedmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_lerpturn;
 extern cvar_t vid_filter;
-extern cvar_t rt_bloom;
+extern cvar_t rt_bloom_intensity;
+extern cvar_t rt_bloom_quality;
+extern cvar_t rt_bloom_threshold;
+extern cvar_t rt_dof_near;
+extern cvar_t rt_tonemap_power;
+extern cvar_t rt_tonemap;
+extern cvar_t rt_exposure_bias;
+extern cvar_t rt_ef_damage_strength;
+extern cvar_t rt_ef_liquid_strength;
+extern cvar_t rt_sharpen_strength;
+extern cvar_t rt_sharpen;
+extern cvar_t rt_vignette;
+extern cvar_t rt_filmgrain;
+extern cvar_t rt_local_exposure;
 extern cvar_t rt_sky_godrays;
 extern cvar_t rt_sky_godrays_quality;
 extern cvar_t rt_sky_sun_size;
@@ -2275,7 +2288,6 @@ static void M_StepReflDepth (int dir)
 
 enum
 {
-	GRAPHICS_OPT_BLOOM,
 	GRAPHICS_OPT_FILTER,
 	GRAPHICS_OPT_MODELS,
 	GRAPHICS_OPT_PARTICLES,
@@ -2306,9 +2318,6 @@ static void M_GraphicsOptions_Adjust (int dir)
 
 	switch (graphics_options_cursor)
 	{
-	case GRAPHICS_OPT_BLOOM:
-		Cvar_SetValueQuick (&rt_bloom, !CVAR_TO_BOOL (rt_bloom));
-		break;
 	case GRAPHICS_OPT_FILTER:
 		Cvar_SetValue ("vid_filter", (Cvar_VariableValue ("vid_filter") == 0.0) ? 1.0f : 0.0f);
 		break;
@@ -2391,9 +2400,6 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_BLOOM, "Bloom");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_BLOOM, CVAR_TO_BOOL (rt_bloom));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "Texture filtering");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (Cvar_VariableValue ("vid_filter") == 0.0) ? "smooth" : "classic");
@@ -2550,6 +2556,227 @@ static void M_LightingOptions_Draw (cb_context_t *cbx)
 }
 
 
+enum
+{
+	EFFECTS_OPT_BLOOM,
+	EFFECTS_OPT_BLOOM_QUALITY,
+	EFFECTS_OPT_NEAR_DOF,
+	EFFECTS_OPT_TONEMAP_TYPE,
+	EFFECTS_OPT_TONEMAPPING,
+	EFFECTS_OPT_EXPOSURE,
+	EFFECTS_OPT_DAMAGE,
+	EFFECTS_OPT_LIQUID,
+	EFFECTS_OPT_SHARPEN,
+	EFFECTS_OPT_VIGNETTE,
+	EFFECTS_OPT_FILM_GRAIN,
+	EFFECTS_OPT_LOCAL_EXPOSURE,
+	EFFECTS_OPT_RESET,
+	EFFECTS_OPTIONS_ITEMS
+};
+
+static int effects_options_cursor = 0;
+
+static const char *effects_tonemap_names[] = {"Off", "Q2RTX", "Reinhard", "ACES", "AgX"};
+
+#define EFFECTS_TONEMAP_TYPES ((int)(sizeof (effects_tonemap_names) / sizeof (effects_tonemap_names[0])))
+
+static void M_EffectsOptions_DrawSlider (cb_context_t *cbx, int row, const cvar_t *var, float maximum)
+{
+	const float value = CLAMP (0.0f, CVAR_TO_FLOAT (*var), maximum);
+	const float fraction = value / maximum;
+
+	M_DrawSlider (cbx, MENU_SLIDER_X, MENU_TOP + CHARACTER_SIZE * row, fraction, va ("%.0f%%", fraction * 100.0f));
+}
+
+static void M_Menu_EffectsOptions_f (void)
+{
+	M_MenuChanged ();
+	IN_DeactivateForMenu ();
+	key_dest = key_menu;
+	m_state = m_effects;
+}
+
+static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
+{
+	float f, clamped_mouse = CLAMP (MENU_SLIDER_START, (float)m_mouse_x, MENU_SLIDER_END);
+
+	if (fabsf (clamped_mouse - (float)m_mouse_x) > 12.0f)
+		mouse = false;
+
+	if (dir)
+		S_LocalSound ("misc/menu3.wav");
+
+	if (mouse)
+		slider_grab = true;
+
+	switch (effects_options_cursor)
+	{
+	case EFFECTS_OPT_BLOOM:
+		f = M_GetSliderPos (0, 0.2f, CVAR_TO_FLOAT (rt_bloom_intensity), false, mouse, clamped_mouse, dir, 0.002f, 0);
+		Cvar_SetValueQuick (&rt_bloom_intensity, f);
+		break;
+	case EFFECTS_OPT_BLOOM_QUALITY:
+		f = M_GetSliderPos (0, 2, CVAR_TO_FLOAT (rt_bloom_quality), false, mouse, clamped_mouse, dir, 1.0f, 0);
+		Cvar_SetValueQuick (&rt_bloom_quality, f);
+		break;
+	case EFFECTS_OPT_NEAR_DOF:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_dof_near), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_dof_near, f);
+		break;
+	case EFFECTS_OPT_TONEMAP_TYPE:
+		Cvar_SetValueQuick (&rt_tonemap,
+			(float)(((int)rt_tonemap.value + EFFECTS_TONEMAP_TYPES + dir) % EFFECTS_TONEMAP_TYPES));
+		break;
+	case EFFECTS_OPT_TONEMAPPING:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_tonemap_power), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_tonemap_power, f);
+		break;
+	case EFFECTS_OPT_EXPOSURE:
+		f = M_GetSliderPos (-3, 3, CVAR_TO_FLOAT (rt_exposure_bias), false, mouse, clamped_mouse, dir, 0.1f, 0);
+		Cvar_SetValueQuick (&rt_exposure_bias, floorf (f * 10.0f + 0.5f) / 10.0f);
+		break;
+	case EFFECTS_OPT_DAMAGE:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_ef_damage_strength), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_ef_damage_strength, f);
+		break;
+	case EFFECTS_OPT_LIQUID:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_ef_liquid_strength), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_ef_liquid_strength, f);
+		break;
+	case EFFECTS_OPT_SHARPEN:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_sharpen_strength), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_sharpen_strength, f);
+		Cvar_SetValueQuick (&rt_sharpen, f > 0.0f ? 2.0f : 0.0f);
+		break;
+	case EFFECTS_OPT_VIGNETTE:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_vignette), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_vignette, f);
+		break;
+	case EFFECTS_OPT_FILM_GRAIN:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_filmgrain), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_filmgrain, f);
+		break;
+	case EFFECTS_OPT_LOCAL_EXPOSURE:
+		f = M_GetSliderPos (0, 1, CVAR_TO_FLOAT (rt_local_exposure), false, mouse, clamped_mouse, dir, 0.01f, 0);
+		Cvar_SetValueQuick (&rt_local_exposure, f);
+		break;
+	case EFFECTS_OPT_RESET:
+		Cvar_SetValueQuick (&rt_bloom_intensity, 0.08f);
+		Cvar_SetValueQuick (&rt_bloom_threshold, 6.0f);
+		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
+		Cvar_SetValueQuick (&rt_dof_near, 0.8f);
+		Cvar_SetValueQuick (&rt_tonemap_power, 0.8f);
+		Cvar_SetValueQuick (&rt_tonemap, 2.0f);
+		Cvar_SetValueQuick (&rt_exposure_bias, 0.0f);
+		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
+		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.51f);
+		Cvar_SetValueQuick (&rt_sharpen_strength, 0.5f);
+		Cvar_SetValueQuick (&rt_sharpen, 2.0f);
+		Cvar_SetValueQuick (&rt_vignette, 0.5f);
+		Cvar_SetValueQuick (&rt_filmgrain, 0.5f);
+		Cvar_SetValueQuick (&rt_local_exposure, 0.2f);
+		break;
+	}
+}
+
+static void M_EffectsOptions_Key (int k)
+{
+	switch (k)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_Menu_Options_f ();
+		break;
+
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		m_entersound = true;
+		M_EffectsOptions_AdjustSliders (1, k == K_MOUSE1);
+		return;
+
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		effects_options_cursor--;
+		if (effects_options_cursor < 0)
+			effects_options_cursor = EFFECTS_OPTIONS_ITEMS - 1;
+		break;
+
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		effects_options_cursor++;
+		if (effects_options_cursor >= EFFECTS_OPTIONS_ITEMS)
+			effects_options_cursor = 0;
+		break;
+
+	case K_LEFTARROW:
+		M_EffectsOptions_AdjustSliders (-1, false);
+		break;
+
+	case K_RIGHTARROW:
+		M_EffectsOptions_AdjustSliders (1, false);
+		break;
+	}
+}
+
+static void M_EffectsOptions_Draw (cb_context_t *cbx)
+{
+	qpic_t	 *p;
+	const int top = MENU_TOP;
+
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	p = Draw_CachePic ("gfx/p_option.lmp");
+	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM, "Bloom");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_BLOOM, &rt_bloom_intensity, 0.2f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_QUALITY, "Bloom quality");
+	M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * EFFECTS_OPT_BLOOM_QUALITY,
+		CLAMP (0.0f, CVAR_TO_FLOAT (rt_bloom_quality) / 2.0f, 1.0f), M_GetQualityName (&rt_bloom_quality));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_NEAR_DOF, "Near DOF");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_NEAR_DOF, &rt_dof_near, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_TONEMAP_TYPE, "Tonemap type");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * EFFECTS_OPT_TONEMAP_TYPE,
+		effects_tonemap_names[CLAMP (0, (int)rt_tonemap.value, EFFECTS_TONEMAP_TYPES - 1)]);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_TONEMAPPING, "Tonemap power");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_TONEMAPPING, &rt_tonemap_power, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_EXPOSURE, "Exposure bias");
+	M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * EFFECTS_OPT_EXPOSURE,
+		(CLAMP (-3.0f, CVAR_TO_FLOAT (rt_exposure_bias), 3.0f) + 3.0f) / 6.0f,
+		va ("%+.1f EV", CVAR_TO_FLOAT (rt_exposure_bias)));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_DAMAGE, "Damage aberration");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_DAMAGE, &rt_ef_damage_strength, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LIQUID, "Liquid aberration");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_LIQUID, &rt_ef_liquid_strength, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_SHARPEN, "Sharpen");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_SHARPEN, &rt_sharpen_strength, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_VIGNETTE, "Vignette");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_VIGNETTE, &rt_vignette, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_FILM_GRAIN, "Film grain");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_FILM_GRAIN, &rt_filmgrain, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_LOCAL_EXPOSURE, "Local exposure");
+	M_EffectsOptions_DrawSlider (cbx, EFFECTS_OPT_LOCAL_EXPOSURE, &rt_local_exposure, 1.0f);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * EFFECTS_OPT_RESET, "Reset effects defaults");
+
+	M_Mouse_UpdateListCursor (&effects_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, EFFECTS_OPTIONS_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + effects_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+}
+
+
 //=============================================================================
 /* OPTIONS MENU */
 
@@ -2560,6 +2787,7 @@ enum
 	OPT_CONTROLS,
 	OPT_VIDEO,
 	OPT_GRAPHICS,
+	OPT_EFFECTS,
 	OPT_LIGHTING,
 	OPT_SOUND,
 	OPT_BENCHMARK,
@@ -2592,6 +2820,7 @@ static void M_Options_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_CONTROLS, "Key Bindings");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_VIDEO, "Video");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GRAPHICS, "Graphics");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_EFFECTS, "Effects");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_LIGHTING, "Lighting");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_SOUND, "Sound");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_BENCHMARK, "Benchmark");
@@ -2644,6 +2873,9 @@ void M_Options_Key (int k)
 			break;
 		case OPT_GRAPHICS:
 			M_Menu_GraphicsOptions_f ();
+			break;
+		case OPT_EFFECTS:
+			M_Menu_EffectsOptions_f ();
 			break;
 		case OPT_LIGHTING:
 			M_Menu_LightingOptions_f ();
@@ -5412,6 +5644,8 @@ void M_UpdateMouse (void)
 			M_GameOptions_AdjustSliders (0, true);
 		else if (keydown[K_MOUSE1] && (m_state == m_sound) && (sound_options_cursor >= SOUND_OPT_SNDVOL) && (sound_options_cursor <= SOUND_OPT_MUSICVOL))
 			M_SoundOptions_AdjustSliders (0, true);
+		else if (keydown[K_MOUSE1] && (m_state == m_effects) && (effects_options_cursor != EFFECTS_OPT_RESET))
+			M_EffectsOptions_AdjustSliders (0, true);
 		else
 			slider_grab = false;
 	}
@@ -5499,6 +5733,10 @@ void M_Draw (cb_context_t *cbx)
 
 	case m_graphics:
 		M_GraphicsOptions_Draw (cbx);
+		break;
+
+	case m_effects:
+		M_EffectsOptions_Draw (cbx);
 		break;
 
 	case m_lighting:
@@ -5697,6 +5935,10 @@ void M_Keydown (int key, qboolean repeat)
 
 	case m_graphics:
 		M_GraphicsOptions_Key (key);
+		return;
+
+	case m_effects:
+		M_EffectsOptions_Key (key);
 		return;
 
 	case m_lighting:

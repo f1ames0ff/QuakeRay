@@ -15,46 +15,33 @@
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 //
 
-struct EffectColorTint_PushConst
+struct EffectVignette_PushConst
 {
     float intensity;
-    float r;
-    float g;
-    float b;
+    float start;
+    float end;
+    float roundness;
 };
 
-#define EFFECT_PUSH_CONST_T EffectColorTint_PushConst
+#define EFFECT_PUSH_CONST_T EffectVignette_PushConst
 #include "EfSimple.hlsli"
-#include "ColorCompositing.hlsli"
-
-float3 applyTint(float3 color)
-{
-    float3 tint = float3(push.custom.r, push.custom.g, push.custom.b);
-
-    float t = push.custom.intensity * clamp(getLuminance(color), 0.05, 1.0) * getProgress();
-    return colorApplyTint(color, tint, t);
-}
-
-#define APPLY_RADIAL_OFFSET 1
 
 [numthreads(COMPUTE_EFFECT_GROUP_SIZE_X, COMPUTE_EFFECT_GROUP_SIZE_Y, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    const int2 pix = int2(dispatchThreadID.x, dispatchThreadID.y);
-
+    const int2 pix = int2(dispatchThreadID.xy);
     if (!effect_isPixValid(pix))
     {
         return;
     }
 
-#if APPLY_RADIAL_OFFSET
-    float2 c = effect_getCenteredFromPix(pix);
-    c *= lerp(1, 0.985, getProgress());
+    const int2 size = effect_getFramebufSize();
+    const float aspect = float(size.x) / max(float(size.y), 1.0);
+    const float2 shape = lerp(float2(1.0, 1.0), float2(aspect, 1.0), push.custom.roundness);
+    const float2 centered = (effect_getFramebufUV(pix) - 0.5) * 2.0 * shape;
+    const float distance = length(centered) / length(shape);
+    const float fade = smoothstep(push.custom.start, push.custom.end, distance);
+    const float3 color = effect_loadFromSource(pix) * (1.0 - push.custom.intensity * fade);
 
-    float3 rgb = lerp(effect_loadFromSource(pix), applyTint(effect_loadFromSource_Centered(c)), 0.5 * dot(c, c));
-#else
-    float3 rgb = applyTint(effect_loadFromSource(pix));
-#endif
-
-    effect_storeToTarget(colorLimitPreserveHue(rgb, 1.0), pix);
+    effect_storeToTarget(color, pix);
 }

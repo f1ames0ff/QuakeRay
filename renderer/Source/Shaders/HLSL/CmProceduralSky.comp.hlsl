@@ -156,10 +156,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         cloudShare = 1.0 - smoothstep(motionCosAng, cosAng, dot(dir, sunDir));
     }
 
-    float3 sky = skyColor;
-    float3 visible = sky * cloud.a + params.sunDiscColor.xyz * sunIntensity * disc * discTransmittance + cloud.rgb;
+    float3 visible = skyColor * cloud.a + params.sunDiscColor.xyz * sunIntensity * disc * discTransmittance + cloud.rgb;
     cubemapOut[ipos] = float4(visible * multiplier, cloudShare);
 
-    float3 env = sky * cloud.a + cloud.rgb;
+    float3 env = skyColor * cloud.a + cloud.rgb;
     envCubemapOut[ipos] = float4(env * multiplier, 1.0);
 }

@@ -42,7 +42,6 @@ PROBE_BUFFER_BINDINGS = [
     ("ShTonemapping", "tonemapping"),
     ("ShLightEncoded", "lights"),
     ("ShIndirectDrawCommand", "drawCmds"),
-    ("ShLensFlareInstance", "lensFlares"),
     ("ShDecalInstance", "decals"),
 ]
 PROBE_PORTALS_BINDING = 7
@@ -86,7 +85,7 @@ def read_structs():
                             int(member.group(3)) if member.group(3) else None))
         structs[match.group(1)] = members
     for required in ["ShVertex", "ShGeometryInstance", "ShTonemapping", "ShLightEncoded",
-                     "ShIndirectDrawCommand", "ShLensFlareInstance", "ShDecalInstance",
+                      "ShIndirectDrawCommand", "ShDecalInstance",
                      "ShPortalInstance", "ShVertPreprocessing", "ShGlobalUniform"]:
         if required not in structs:
             fail("the header does not define the struct " + required)

@@ -313,9 +313,6 @@ CONST = {
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_STATS"        : 6,
     "BINDING_LIGHT_SOURCES_TAL_CDF"               : 7,
     "BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS"    : 8,
-    "BINDING_LENS_FLARES_CULLING_INPUT"         : 0,
-    "BINDING_LENS_FLARES_DRAW_CMDS"             : 1,
-    "BINDING_DRAW_LENS_FLARES_INSTANCES"        : 0,
     "BINDING_DECAL_INSTANCES"                   : 0,
     "BINDING_PORTAL_INSTANCES"                  : 0,
     "BINDING_LPM_PARAMS"                        : 0,
@@ -432,9 +429,6 @@ CONST = {
 
     "COMPUTE_ASVGF_STRATA_SIZE"                         : 3,
     "COMPUTE_ASVGF_GRADIENT_ATROUS_ITERATION_COUNT"     : 4,
-
-    "COMPUTE_INDIRECT_DRAW_FLARES_GROUP_SIZE_X"         : 256,
-    "LENS_FLARES_MAX_DRAW_CMD_COUNT"                    : 512,
 
     "DEBUG_SHOW_FLAG_MOTION_VECTORS"        : "1 << 0",
     "DEBUG_SHOW_FLAG_GRADIENTS"             : "1 << 1",
@@ -641,8 +635,8 @@ GLOBAL_UNIFORM_MEMBERS = [
     (FLOAT32, 1, "primaryRayMinDist",             1),
 
     (UINT32, 1, "rayCullMaskWorld_Shadow",        1),
-    (UINT32, 1, "lensFlareCullingInputCount",     1),
-    (UINT32, 1, "applyViewProjToLensFlares",      1),
+    (UINT32, 1, "__pad5",                        1),
+    (UINT32, 1, "__pad6",                        1),
     (UINT32, 1, "twirlPortalNormal",              1),
 
     (UINT32, 1, "lightIndexIgnoreFPVShadows",     1),
@@ -757,7 +751,7 @@ TONEMAPPING_MEMBERS = [
     (FLOAT32, 1, "tmNoiseBlend",             1),
     (FLOAT32, 1, "tmNoiseStops",             1),
     (FLOAT32, 1, "tmDynRangeStops",          1),
-    (FLOAT32, 1, "tmReinhard",               1),
+    (FLOAT32, 1, "tonemapPower",             1),
     (FLOAT32, 1, "tmKneeStart",              1),
     (FLOAT32, 1, "tmWhitePoint",             1),
     (FLOAT32, 1, "tmSlopeBlurSigma",         1),
@@ -771,6 +765,7 @@ TONEMAPPING_MEMBERS = [
     (FLOAT32, 1, "normalized",               CONST["COMPUTE_LUM_HISTOGRAM_BIN_COUNT"]),
     (FLOAT32, 1, "adaptedLuminance",         1),
     (FLOAT32, 1, "avgLuminance",             1),
+    (UINT32, 1, "tonemapType",               1),
 ]
 
 VERT_PREPROC_PUSH_MEMBERS = [
@@ -784,13 +779,6 @@ INDIRECT_DRAW_CMD_MEMBERS = [
     (UINT32, 1, "firstIndex",           1),
     (INT32,  1, "vertexOffset",         1),
     (UINT32, 1, "firstInstance",        1),
-    (FLOAT32, 1, "positionToCheck_X",    1),
-    (FLOAT32, 1, "positionToCheck_Y",    1),
-    (FLOAT32, 1, "positionToCheck_Z",    1),
-]
-
-LENS_FLARES_INSTANCE_MEMBERS = [
-    (UINT32, 1, "textureIndex",         1),
 ]
 
 DECAL_INSTANCE_MEMBERS = [
@@ -823,7 +811,6 @@ STRUCTS = {
     "ShLightEncoded":           (LIGHT_ENCODED_MEMBERS,       False, ALIGN_STD430, BREAK_NONE),
     "ShVertPreprocessing":      (VERT_PREPROC_PUSH_MEMBERS,   False, ALIGN_NONE,   BREAK_NONE),
     "ShIndirectDrawCommand":    (INDIRECT_DRAW_CMD_MEMBERS,   False, ALIGN_STD430, BREAK_NONE),
-    "ShLensFlareInstance":      (LENS_FLARES_INSTANCE_MEMBERS, False, ALIGN_NONE,  BREAK_NONE),
     "ShDecalInstance":          (DECAL_INSTANCE_MEMBERS,      False, ALIGN_STD430, BREAK_NONE),
     "ShPortalInstance":         (PORTAL_INSTANCE_MEMBERS,     False, ALIGN_STD140, BREAK_NONE),
 }

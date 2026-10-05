@@ -28,6 +28,14 @@ extern cvar_t vid_contrast;
 
 extern uint8_t v_blend[4];
 
+extern float rt_ef_damage_pulse;
+extern float rt_ef_damage_peak;
+extern float rt_ef_damage_elapsed;
+extern float rt_ef_lowhealth_pulse;
+extern float rt_ef_liquid_pulse;
+extern float rt_ef_pickup_pulse;
+extern float rt_ef_suit_pulse;
+
 void  V_Init (void);
 void  V_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task);
 void  V_CalcBlend (void);
