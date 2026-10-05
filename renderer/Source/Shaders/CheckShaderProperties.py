@@ -46,11 +46,16 @@ member of it. The probe's HLSL lives in Probes/, out of the shader build, while 
 half lives in GLSL/ like the GLSL half of any other pair.
 
 Usage:
-    python CheckShaderProperties.py [--rebuild] [shader ...]
+    python CheckShaderProperties.py [--rebuild] [--skip-glsl] [shader ...]
 
 With no arguments, every <name>.<stage>.hlsl next to this script and every
 Probes/<name>.<stage>.hlsl is checked against GLSL/<name>.<stage>. Exits with a non-zero
 status if a property does not match.
+
+With --skip-glsl the GLSL twins are not compiled or compared: each HLSL half is still
+compiled, disassembled and reflected, and only its own property set is reported. This is
+the transitional mode of docs/glsl-deprecation.md while the deprecated GLSL sources await
+removal; the default stays the full comparison until the owner flips it.
 """
 
 import difflib
@@ -747,11 +752,35 @@ def compareProperties(name, glslProperties, hlslProperties, allowList):
     return messages, mismatches
 
 
-def checkPair(name, allowList):
+def checkHLSLOnly(baseName, hlslPath):
+    hlslSpvPath = TEMP_FOLDER_PATH + baseName + ".hlsl.spv"
+
+    success, compilerOutput = compileShader(hlslPath, hlslSpvPath, isHLSL=True)
+    if not success:
+        return 1, [TAB + "dxc failed", compilerOutput], False
+
+    hlslTxtPath = TEMP_FOLDER_PATH + baseName + ".hlsl.spv.txt"
+
+    if not disassemble(hlslSpvPath, hlslTxtPath)[0]:
+        return 1, [TAB + "spirv-dis failed"], False
+
+    with open(hlslTxtPath, "r", encoding="utf-8") as f:
+        hlslModule = Module(f.read())
+
+    properties = hlslModule.getPropertySet()
+
+    return 0, [TAB + "glsl half skipped; the hlsl half reflects " + str(len(properties)) +
+               " properties"], False
+
+
+def checkPair(name, allowList, skipGlsl):
     # A probe carries its folder in the name, its GLSL original does not.
     baseName = os.path.basename(name)
     glslPath = GLSL_FOLDER_PATH + baseName
     hlslPath = name + HLSL_SUFFIX
+
+    if skipGlsl:
+        return checkHLSLOnly(baseName, hlslPath)
 
     if not os.path.isfile(glslPath):
         return 0, [TAB + "skipped: " + glslPath + " does not exist"], True
@@ -820,6 +849,7 @@ def main():
         os.makedirs(TEMP_FOLDER_PATH)
 
     arguments = [a for a in sys.argv[1:] if not a.startswith("-")]
+    skipGlsl = "--skip-glsl" in sys.argv[1:]
     pairs = getPairs(arguments)
 
     if len(pairs) == 0:
@@ -832,7 +862,7 @@ def main():
 
     for pair in pairs:
         print("=== " + pair)
-        pairMismatches, messages, pairSkipped = checkPair(pair, allowList)
+        pairMismatches, messages, pairSkipped = checkPair(pair, allowList, skipGlsl)
         mismatches += pairMismatches
 
         for message in messages:
@@ -840,7 +870,7 @@ def main():
 
         if pairSkipped:
             skipped += 1
-        elif pairMismatches == 0:
+        elif pairMismatches == 0 and not skipGlsl:
             print(TAB + "all properties match")
 
     if mismatches > 0:

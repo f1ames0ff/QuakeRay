@@ -38,10 +38,14 @@ This is the expected state while GLSL is deprecated; the parity check is now a t
 
 - [ ] Stage 0 — freeze: no new GLSL files; HLSL changes no longer carry a GLSL update; the checker's
       GLSL failures are recorded, not fixed.
-- [ ] Stage 1 — make the check HLSL-only: add a `--skip-glsl` / warning mode to
-      `CheckShaderProperties.py` (default off until the owner flips it), then flip the default once
-      the remaining twins are frozen. Keep property verification for the HLSL side through the
-      generated `ShaderCommon` tables and the allow list.
+- [~] Stage 1 — make the check HLSL-only: the `--skip-glsl` mode is in `CheckShaderProperties.py`
+      (default off): it compiles, disassembles and reflects each HLSL half alone and skips the GLSL
+      twins entirely. Verified: `--skip-glsl` exits zero on this branch, the default mode still
+      fails exactly as recorded above. The mode also surfaced a stale HLSL probe —
+      `Probes/ShaderCommonFunc.probe.comp.hlsl` still touched the removed `tmReinhard` — now aligned
+      with the current `ShTonemapping` block. Remaining: flip the default once the owner freezes the
+      twins. Keep property verification for the HLSL side through the generated `ShaderCommon`
+      tables and the allow list.
 - [ ] Stage 2 — retire the probe parity: decide the probes' new golden half (HLSL reflection or
       recorded SPIR-V), because `Probes/*.hlsl` currently pair with `GLSL/*`.
 - [ ] Stage 3 — delete the folder in batches, each verified by the new check: post/prepare passes
