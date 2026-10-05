@@ -104,12 +104,13 @@ static const char *rt_light_header =
     "#\n"
     "# * one section per level, named after the map (the file name without path or\n"
     "#   extension), with the custom dlights the level does not have and its fog.\n"
-    "#   A density of 0 draws no fog; \"enabled: false\" of an older file loads the\n"
-    "#   section's fog with that density:\n"
+    "#   A density of 0 draws no fog; \"enabled: false\" renders no fog while the\n"
+    "#   section's density and colour are kept for a later change:\n"
     "# start:\n"
     "#   fog:\n"
     "#     color: 8899aa          # rrggbb\n"
     "#     density: 1.5           # 0 turns the fog off\n"
+    "#     enabled: true          # false renders no fog at all\n"
     "#   lights:\n"
     "#     - origin: 512 -256 64  # x y z, Quake units\n"
     "#       radius: 0.4          # rt_dlight_radius units, 0..10\n"
@@ -947,19 +948,19 @@ void RT_CustomFogSet(const rt_custom_fog_t *fog)
 
 void RT_CustomLights_ApplyFog(void)
 {
-    float density;
-
     if (!rt_custom_fog.has_fog || rt_custom_fog_applied)
         return;
 
     rt_custom_fog_applied = true;
 
-    density = (rt_custom_fog.has_enabled && !rt_custom_fog.enabled) ? 0.0f : rt_custom_fog.density;
+    /* The section's "enabled" drives the fog_enabled cvar for the loaded map;
+       the fog command below is the path the console and the editor's fog widget
+       use, and it runs on the next command-buffer pump, after the worldspawn
+       keys have been parsed, so the file's fog wins over the map's own. */
+    if (rt_custom_fog.has_enabled)
+        Cvar_Set("fog_enabled", rt_custom_fog.enabled ? "1" : "0");
 
-    /* The `fog` command is the path the console and the editor's fog widget
-       use; it runs on the next command-buffer pump, after the worldspawn keys
-       have been parsed, so the file's fog wins over the map's own. */
-    Cbuf_AddText(va("fog %f %f %f %f\n", density,
+    Cbuf_AddText(va("fog %f %f %f %f\n", rt_custom_fog.density,
                     CLAMP(0.0f, rt_custom_fog.color[0], 1.0f),
                     CLAMP(0.0f, rt_custom_fog.color[1], 1.0f),
                     CLAMP(0.0f, rt_custom_fog.color[2], 1.0f)));

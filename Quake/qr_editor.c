@@ -83,6 +83,7 @@ extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_s
 // 0 draws no fog.
 float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
+qboolean Fog_Enabled (void);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
 
 // ---------------------------------------------------------------------------
@@ -6170,6 +6171,7 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 	         (int)(CLAMP (0.0f, fog.color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
 	         (int)(CLAMP (0.0f, fog.color[2], 1.0f) * 255.0f + 0.5f) & 0xff);
 	fprintf (out, "    density: %.6g\n", fog.density);
+	fprintf (out, "    enabled: %s\n", Fog_Enabled () ? "true" : "false");
 
 	if (count > 0)
 	{
