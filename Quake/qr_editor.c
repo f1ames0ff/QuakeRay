@@ -3895,9 +3895,6 @@ static const qre_global_t qre_globals[] = {
 	  "Brightness of the simple fog's color, which is the sky's flat color (mode 1)." },
 	{ NULL,  "rt_volume_far",                QRE_G_FLOAT, 0, 4000,
 	  "How far from the camera the volumetric volume reaches (mode 2)." },
-
-	{ "Fog", "fog_enabled",          QRE_G_BOOL,  0, 0,
-	  "Draw the level's fog; 0 keeps the density and the color below but renders no fog at all. The value is saved to the config and to the level's section of qray.lights.yaml." },
 };
 
 static char     qre_globals_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];

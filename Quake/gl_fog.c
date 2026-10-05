@@ -32,7 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define DEFAULT_DENSITY 0.0
 #define DEFAULT_GRAY    0.3
 
-cvar_t fog_enabled = { "fog_enabled", "1", CVAR_ARCHIVE };
+cvar_t fog_enabled = { "fog_enabled", "0", CVAR_ROM };
 
 float fog_density;
 float fog_red;
