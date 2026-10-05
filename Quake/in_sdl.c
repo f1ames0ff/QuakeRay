@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "qr_editor.h"
 #include "photocam.h"
+#include "observer.h"
 #include "snd_eq.h"
 
 static qboolean textmode;
@@ -645,6 +646,15 @@ void IN_MouseMove (usercmd_t *cmd)
 		return;
 	}
 
+	// camera observer: the mouse only lifts or lowers the orbit, the turn itself
+	// runs at the speed the wheel set
+	if (Observer_Active ())
+	{
+		if (key_dest == key_game)
+			Observer_MouseMove (dmy);
+		return;
+	}
+
 	if ((in_strafe.state & 1) || (lookstrafe.value && (in_mlook.state & 1)))
 		cmd->sidemove += m_side.value * dmx;
 	else
@@ -1070,6 +1080,13 @@ void IN_SendKeyEvents (void)
 				QR_Editor_GizmoRelease ();
 				break;
 			}
+			// camera_observer: RMB is held while the vertical mouse movement
+			// brings the camera closer or moves it away
+			if (Observer_Active () && buttonremap[event.button.button - 1] == K_MOUSE2)
+			{
+				Observer_Zoom (event.button.state == SDL_PRESSED);
+				break;
+			}
 			// photocam: RMB runs the world, and letting it go freezes it again
 			if (PhotoCam_Active () && buttonremap[event.button.button - 1] == K_MOUSE2)
 			{
@@ -1095,6 +1112,13 @@ void IN_SendKeyEvents (void)
 			break;
 
 		case SDL_MOUSEWHEEL:
+			// camera observer: the wheel sets the rotation speed and never
+			// reaches the weapon binds
+			if (Observer_Active () && key_dest == key_game)
+			{
+				Observer_Wheel (event.wheel.y);
+				break;
+			}
 			if (event.wheel.y > 0)
 			{
 				Key_Event (K_MWHEELUP, true);
