@@ -1,10 +1,14 @@
-"""Generates the ShaderCommon probe from the generated headers.
+"""Generates the ShaderCommon probe from the generated header.
 
-The generated headers have no shader stage of their own, so they can not be compiled on their
-own and CheckShaderProperties.py can not compare them. This script writes a compute shader
-whose only purpose is to instantiate everything the headers declare:
+The generated header has no shader stage of its own, so it can not be compiled on its own and
+CheckShaderProperties.py can not compare it. This script reads the header back and writes a
+compute shader whose only purpose is to instantiate everything it declares:
 
     Probes/ShaderCommon.probe.comp.hlsl  -- includes Shaders/ShaderCommonHLSL.hlsli
+
+The probe is derived from ShaderCommonHLSL.hlsli itself: the structs, the framebuffer
+declarations and their bindings are parsed out of the header and turned into statements that
+touch every member.
 
 Every framebuffer has to be touched, not sampled: dxc drops the declarations that are not
 referenced, and the checker only compares the variables that appear inside a function. A
@@ -19,7 +23,6 @@ import os
 import re
 import sys
 
-GLSL_HEADER = "../Generated/ShaderCommonGLSL.h"
 HLSL_HEADER = "../Generated/ShaderCommonHLSL.hlsli"
 HLSL_OUTPUT = "Probes/ShaderCommon.probe.comp.hlsl"
 
@@ -42,12 +45,6 @@ PROBE_OUTPUT_BINDING = 8
 STRUCT_RE = re.compile(r"^struct (\w+)\s*\{(.*?)^\};", re.S | re.M)
 MEMBER_RE = re.compile(r"^(\w+)\s+(\w+)\s*(?:\[\s*(\d+)\s*\])?;$")
 
-GLSL_STORAGE_RE = re.compile(
-    r"layout\(set = DESC_SET_FRAMEBUFFERS, binding = (\d+)(?:, (\w+))?\) uniform (u?)image2D (\w+);")
-GLSL_SAMPLED_RE = re.compile(
-    r"layout\(set = DESC_SET_FRAMEBUFFERS, binding = (\d+)\) uniform (u?)texture2D (\w+);")
-GLSL_SAMPLER_RE = re.compile(
-    r"layout\(set = DESC_SET_FRAMEBUFFERS, binding = (\d+)\) uniform sampler (\w+);")
 HLSL_STORAGE_RE = re.compile(
     r'\[\[vk::binding\((\d+), DESC_SET_FRAMEBUFFERS\), vk::image_format\("(\w+)"\)\]\] '
     r'RWTexture2D<(\w+)> (\w+);')
@@ -62,9 +59,9 @@ def fail(message):
 
 
 def read_structs():
-    """Returns {name: [(glslType, memberName, arraySize or None)]} in declaration order."""
+    """Returns {name: [(type, memberName, arraySize or None)]} in declaration order."""
     structs = {}
-    for match in STRUCT_RE.finditer(open(GLSL_HEADER, encoding="utf-8").read()):
+    for match in STRUCT_RE.finditer(open(HLSL_HEADER, encoding="utf-8").read()):
         members = []
         for line in match.group(2).splitlines():
             line = line.strip()
@@ -84,23 +81,23 @@ def read_structs():
     return structs
 
 
-def member_accessor(glsl_type, reference):
+def member_accessor(hlsl_type, reference):
     """Returns an expression that reads a single component of the member.
 
-    Matrices are spelled transposed in HLSL, but that is exactly what makes an element access
-    copy over unchanged, so the same expression works in both languages.
+    Matrices are declared as the transpose of the column-major original, so the [0][0] element
+    of a matrix and the x component of a vector are the same in every spelling.
     """
-    if glsl_type == "float":
+    if hlsl_type == "float":
         return reference
-    if glsl_type in ("int", "uint"):
+    if hlsl_type in ("int", "uint"):
         return "float(%s)" % reference
-    if glsl_type in ("vec2", "vec3", "vec4"):
+    if hlsl_type in ("float2", "float3", "float4"):
         return reference + ".x"
-    if glsl_type in ("ivec2", "ivec3", "ivec4", "uvec2", "uvec3", "uvec4"):
+    if hlsl_type in ("int2", "int3", "int4", "uint2", "uint3", "uint4"):
         return "float(%s.x)" % reference
-    if re.match(r"^mat[234](x[234])?$", glsl_type):
+    if re.match(r"^float[234]x[234]$", hlsl_type):
         return reference + "[0][0]"
-    fail("no accessor for the type " + glsl_type)
+    fail("no accessor for the type " + hlsl_type)
 
 
 def wrap(items, statement, prefix="    ", width=100):
@@ -125,11 +122,11 @@ def wrap(items, statement, prefix="    ", width=100):
 def struct_board(structs, struct_name, reference, indent="    "):
     """Returns the statements that read every member of the struct."""
     items = []
-    for glsl_type, member_name, array_size in structs[struct_name]:
+    for member_type, member_name, array_size in structs[struct_name]:
         member = reference + "." + member_name
         if array_size is not None:
             member += "[0]"
-        items.append(member_accessor(glsl_type, member))
+        items.append(member_accessor(member_type, member))
     lines = wrap(items, "v += ", prefix=indent)
     lines[-1] += ";"
     return lines
@@ -143,59 +140,31 @@ def read_framebuffers():
     the probe relies on the naming to touch all three of them.
     """
     slots = {}
-    for line in open(GLSL_HEADER, encoding="utf-8"):
-        line = line.strip()
-        match = GLSL_STORAGE_RE.match(line)
-        if match:
-            slots[match.group(4)] = {"binding": int(match.group(1)), "format": match.group(2),
-                                     "unsigned": match.group(3) == "u"}
-            continue
-        match = GLSL_SAMPLED_RE.match(line)
-        if match:
-            slots[strip_suffix(match.group(3), "_Sampled")]["sampled"] = match.group(2) == "u"
-            continue
-        match = GLSL_SAMPLER_RE.match(line)
-        if match:
-            slots[strip_suffix(match.group(2), "_Sampler")]["sampler"] = True
-
-    if not slots:
-        fail("no framebuffer is declared by " + GLSL_HEADER)
-
-    for name, slot in slots.items():
-        if "sampled" not in slot or "sampler" not in slot:
-            fail("the framebuffer %s has no matching %s" % (name, "_Sampled/_Sampler"))
-        if slot["sampled"] != slot["unsigned"]:
-            fail("the framebuffer %s is sampled and stored with different signedness" % name)
-
-    hlsl = {}
     for line in open(HLSL_HEADER, encoding="utf-8"):
         line = line.strip()
         match = HLSL_STORAGE_RE.match(line)
         if match:
-            hlsl[match.group(4)] = {"format": match.group(2), "component": match.group(3)}
+            slots[match.group(4)] = {"binding": int(match.group(1)), "format": match.group(2),
+                                     "component": match.group(3)}
             continue
         match = HLSL_SAMPLED_RE.match(line)
         if match:
-            hlsl[strip_suffix(match.group(3), "_Sampled")]["sampledComponent"] = match.group(2)
+            slots[strip_suffix(match.group(3), "_Sampled")]["sampledComponent"] = match.group(2)
             continue
         match = HLSL_SAMPLER_RE.match(line)
         if match:
-            hlsl[strip_suffix(match.group(2), "_Sampler")]["sampler"] = True
+            slots[strip_suffix(match.group(2), "_Sampler")]["sampler"] = True
 
-    if set(hlsl) != set(slots):
-        only_glsl = sorted(set(slots) - set(hlsl))
-        only_hlsl = sorted(set(hlsl) - set(slots))
-        fail("the two headers do not declare the same framebuffers, GLSL only %s, HLSL only %s"
-             % (only_glsl, only_hlsl))
+    if not slots:
+        fail("no framebuffer is declared by " + HLSL_HEADER)
 
     for name, slot in slots.items():
-        for key in ["sampledComponent", "sampler"]:
-            if key not in hlsl[name]:
-                fail("the HLSL header is missing a part of the framebuffer " + name)
-        expected = "uint4" if slot["unsigned"] else "float4"
-        if hlsl[name]["component"] != expected or hlsl[name]["sampledComponent"] != expected:
-            fail("the framebuffer %s is declared as %s/%s in HLSL, expected %s"
-                 % (name, hlsl[name]["component"], hlsl[name]["sampledComponent"], expected))
+        if "sampledComponent" not in slot or "sampler" not in slot:
+            fail("the framebuffer %s has no matching %s" % (name, "_Sampled/_Sampler"))
+        if slot["sampledComponent"] != slot["component"]:
+            fail("the framebuffer %s is stored as %s and sampled as %s"
+                 % (name, slot["component"], slot["sampledComponent"]))
+        slot["unsigned"] = slot["component"] == "uint4"
 
     return [dict(slot, name=name) for name, slot in
             sorted(slots.items(), key=lambda item: item[1]["binding"])]
@@ -228,10 +197,10 @@ def hlsl_framebuffer_board(framebuffers, reference_texture):
 
 
 HLSL_TEMPLATE = """// Generated by GenerateShaderCommonProbe.py, do not edit by hand. The probe has no shader stage
-// of its own: it exists so that CheckShaderProperties.py can compile both generated headers and
-// compare the layouts, the bindings and the framebuffer declarations that glslc and dxc derive
-// from them. Every framebuffer is touched, because dxc drops the unused declarations and the
-// checker can only compare the ones inside a function.
+// of its own: it exists so that CheckShaderProperties.py can compile the generated header and
+// pin the layouts, the bindings and the framebuffer declarations it derives. Every framebuffer
+// is touched, because dxc drops the unused declarations and the checker can only compare the
+// ones inside a function.
 
 #define DESC_SET_FRAMEBUFFERS 0
 #define DESC_SET_GLOBAL_UNIFORM 1
@@ -277,46 +246,24 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 """
 
 
-def probe_buffers_lines(hlsl):
-    """Returns the declarations of the probe buffers, both languages, aligned the same way."""
+def probe_buffers_lines():
+    """Returns the declarations of the probe buffers."""
     lines = []
     for binding, (struct_name, name) in enumerate(PROBE_BUFFER_BINDINGS):
-        if hlsl:
-            lines.append("[[vk::binding(%d, PROBE_DESC_SET)]] %-52s %s;"
-                         % (binding, "StructuredBuffer<%s>" % struct_name, name))
-        else:
-            lines.append("layout(set = PROBE_DESC_SET, binding = %d, std430) readonly buffer "
-                         "Probe%s_BT" % (binding, struct_name))
-            lines.append("{")
-            lines.append("    %s %s[];" % (struct_name, name))
-            lines.append("};")
-            lines.append("")
-    if hlsl:
-        lines.append("[[vk::binding(%d, PROBE_DESC_SET)]] ConstantBuffer<ProbeShPortalInstance_BT> "
-                     "portalBuffer;" % PROBE_PORTALS_BINDING)
-        lines.append("[[vk::binding(%d, PROBE_DESC_SET)]] RWStructuredBuffer<float> "
-                     "probeOutput;" % PROBE_OUTPUT_BINDING)
-    else:
-        lines.append("layout(set = PROBE_DESC_SET, binding = %d, std140) uniform readonly "
-                     "ProbeShPortalInstance_BT" % PROBE_PORTALS_BINDING)
-        lines.append("{")
-        lines.append("    ShPortalInstance portals[PORTAL_MAX_COUNT];")
-        lines.append("};")
-        lines.append("")
-        lines.append("layout(set = PROBE_DESC_SET, binding = %d, std430) writeonly buffer "
-                     "ProbeOutput_BT" % PROBE_OUTPUT_BINDING)
-        lines.append("{")
-        lines.append("    float probeOutput[];")
-        lines.append("};")
+        lines.append("[[vk::binding(%d, PROBE_DESC_SET)]] %-52s %s;"
+                     % (binding, "StructuredBuffer<%s>" % struct_name, name))
+    lines.append("[[vk::binding(%d, PROBE_DESC_SET)]] ConstantBuffer<ProbeShPortalInstance_BT> "
+                 "portalBuffer;" % PROBE_PORTALS_BINDING)
+    lines.append("[[vk::binding(%d, PROBE_DESC_SET)]] RWStructuredBuffer<float> "
+                 "probeOutput;" % PROBE_OUTPUT_BINDING)
     return lines
 
 
 def struct_boards_text(structs, portals_reference):
     """Returns the statements that read every member of every probe buffer struct.
 
-    The portal instance is the one struct that is reached differently by the two languages: a
-    GLSL uniform block exposes its members directly, while a HLSL constant buffer has to be
-    subscripted through its member.
+    The portal instance is reached through the constant buffer member: a constant buffer is
+    subscripted through its member, unlike a block that exposes its members directly.
     """
     boards = []
     for struct_name, name in PROBE_BUFFER_BINDINGS:
@@ -334,7 +281,7 @@ def main():
 
     hlsl = HLSL_TEMPLATE % {
         "probe_set": PROBE_DESC_SET,
-        "probe_buffers": "\n".join(probe_buffers_lines(True)),
+        "probe_buffers": "\n".join(probe_buffers_lines()),
         "uniform_board": "\n".join(["    // ShGlobalUniform"] +
                                    struct_board(structs, "ShGlobalUniform", "globalUniform")),
         "push_board": "\n".join(["    // ShVertPreprocessing"] +

@@ -128,7 +128,7 @@ Keep the resulting **`stats-<date>-<time>.dump`** file from the active game fold
 
 This section is for contributors. Players can skip it.
 
-Install [Git](https://git-scm.com/download/win), [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with **Desktop development with C++**, [CMake](https://cmake.org/download/) 3.20 or newer, [Ninja](https://ninja-build.org/) and a recent [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) with `glslc`, `dxc` and Vulkan C++ headers. Vulkan SDK 1.4.321.1 is used for local builds.
+Install [Git](https://git-scm.com/download/win), [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with **Desktop development with C++**, [CMake](https://cmake.org/download/) 3.20 or newer, [Ninja](https://ninja-build.org/) and a recent [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) with `dxc` and Vulkan C++ headers. Vulkan SDK 1.4.321.1 is used for local builds.
 
 In PowerShell:
 

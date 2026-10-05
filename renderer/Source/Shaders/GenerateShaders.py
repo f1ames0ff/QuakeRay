@@ -26,11 +26,11 @@ CACHE_FOLDER_PATH = "Build/"
 OUTPUT_FOLDER_PATH = "../../Build/"
 CACHE_FILE_NAME = "GenerateShadersCache.txt"
 EXTENSIONS = [".comp", ".vert", "frag", ".rgen", ".rahit", ".rchit", ".rmiss"]
-DEPENDENCY_EXTENSIONS = [".h", ".inl", ".glsl", ".hlsl", ".hlsli"]
+DEPENDENCY_EXTENSIONS = [".h", ".inl", ".hlsl", ".hlsli"]
 DEPENDENCY_FOLDERS = {"", "../Generated/"}
 HLSL_FOLDER_PATH = "HLSL/"
 SOURCE_FOLDERS = ["", HLSL_FOLDER_PATH]
-DEPENDENCY_FOLDERS_IGNORE = [CACHE_FOLDER_PATH, ".vscode/", "GLSL/", HLSL_FOLDER_PATH]
+DEPENDENCY_FOLDERS_IGNORE = [CACHE_FOLDER_PATH, ".vscode/", HLSL_FOLDER_PATH]
 DEPENDENCY_IGNORE = ["BlueNoiseFileNames.h", "ShaderCommonC.h", "ShaderCommonCFramebuf.h"]
 
 HLSL_SUFFIX = ".hlsl"
@@ -100,7 +100,7 @@ def getHLSLStage(filename):
 
 
 def isShaderSource(filename):
-    return any([filename.endswith(ext) for ext in EXTENSIONS]) or getHLSLStage(filename) is not None
+    return getHLSLStage(filename) is not None
 
 
 def getOutputFilename(filename):
@@ -114,13 +114,6 @@ def getOutputFilename(filename):
 
 def getCompileCommand(filename, outputFilename):
     stage = getHLSLStage(filename)
-
-    if stage is None:
-        return [
-            "glslc", "--target-env=vulkan1.2"
-        ] + getDependentFoldersProcArg() + [
-            filename,
-            "-o", outputFilename]
 
     extensions = list(SPIRV_EXTENSIONS)
     if sourceUsesRayQuery(filename):
@@ -198,8 +191,8 @@ def main():
         print("-g        : same as \"-gencomm\"")
         print("-ps       : same as \"-psout\"")
         print("")
-        print("GLSL shaders are compiled with glslc, HLSL shaders (<name>.<stage>.hlsl)")
-        print("are compiled with dxc into the very same <name>.<stage>.spv blobs.")
+        print("HLSL shaders (<name>.<stage>.hlsl) are compiled with dxc into")
+        print("<name>.<stage>.spv blobs.")
         return
 
     forceRebuild = False
