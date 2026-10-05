@@ -1417,6 +1417,29 @@ void RT_LightReportPrint (const char *fmt, ...)
 		fputs (msg, rt_light_report_file);
 }
 
+void RT_ClusterLightDumpHeader (FILE *f)
+{
+	if (f == NULL)
+		return;
+
+	fprintf (f, "# viewpos (%.0f %.0f %.0f) (%.0f %.0f %.0f) | engine %.2f | frame %i\n",
+		rt_cluster_vieworg[0], rt_cluster_vieworg[1], rt_cluster_vieworg[2],
+		cl.viewangles[0], cl.viewangles[1], cl.viewangles[2],
+		ENGINE_VERSION, host_framecount);
+	fprintf (f, "# cvars rt_cluster_sampling=%s rt_dtal_groups=%s rt_dtal_spacing=%s "
+		"rt_light_reach=%s rt_light_reach_max=%s rt_denoiser=%s rt_restir=%s "
+		"rt_antifirefly=%s rt_nee_samples=%s\n",
+		Cvar_VariableString ("rt_cluster_sampling"),
+		Cvar_VariableString ("rt_dtal_groups"),
+		Cvar_VariableString ("rt_dtal_spacing"),
+		Cvar_VariableString ("rt_light_reach"),
+		Cvar_VariableString ("rt_light_reach_max"),
+		Cvar_VariableString ("rt_denoiser"),
+		Cvar_VariableString ("rt_restir"),
+		Cvar_VariableString ("rt_antifirefly"),
+		Cvar_VariableString ("rt_nee_samples"));
+}
+
 void RT_ClusterLightReport_f (void)
 {
 	const int maxLines = (rt_light_report_file != NULL) ? RT_CLUSTER_MAX_LIGHTS

@@ -1461,6 +1461,7 @@ void RT_LightReportDump_f (void)
 		stamp[0] = 0;
 
 	fprintf (f, "# rt_light_report_dump %s\n", stamp);
+	RT_ClusterLightDumpHeader (f);
 
 	// Mirror every report line into the file in addition to the console.
 	rt_light_report_file = f;

@@ -429,6 +429,7 @@ extern int rt_cluster_last_move_footprint;
 int RT_ResolvePointCluster (const vec3_t p);
 void RT_BrushClusterCacheReset (void);
 void RT_ClusterLightReport_f (void);
+void RT_ClusterLightDumpHeader (FILE *f);
 void RT_LightReport_f (void);
 void RT_PrintEmissiveStats (void);
 void RT_LightReportDump_f (void);
