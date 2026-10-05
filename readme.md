@@ -27,8 +27,10 @@ QuakeRay is a ray tracing engine for Quake 1 with Q2RTX-style partial path traci
 The game is edited from inside it: `qr_editor` opens a dialog that offers the material editor or the light editor, and `qr_editor_stop` leaves either. Both fly over the frozen level; the crosshair picks what is edited, the fire button selects it, and Tab brings up the panel.
 
 * **Material editor**: the material of the surface you are looking at — its textures, its glow, its gloss and metalness, and the light it casts. Every animation frame of a model or an animated texture is a block of its own. Select emissive colors with an eyedropper or draw polygon masks over the preview; focused and projected emission share the Emissive section. Save writes the session, and the exit question saves it permanently or discards it.
+* **Weapon view models**: the material editor's Entities tab lists the weapon models of the level with the one in hand marked; the picked model is drawn in first person from the editor camera, its skins open in the same panel as any material, and an `animation` dropdown with a `frame` slider scrubs its sequences. The material is keyed by the model's skin name, so a save applies to the whole mod.
 * **Light editor**: a selectable list of generated emitter lights, custom points or spotlights that can be added and cloned, and the level's lighting itself — the sky, the clouds, the sun, the god rays and the fog. Emitter styles can be overridden, and spotlight gizmos provide continuous Y/Z rotation and direction-aligned horizontal movement. A torch lights the way while a level has no light yet.
 * **Editor reset**: the trash button beside the tabs clears the active mod's saved material or light work after confirmation and restores defaults, including the corresponding editor settings.
+* **Photocam**: `photocam` freezes the world and turns the player into a free camera for screenshots — the interface is hidden except the console, WASD and the mouse fly, LMB takes a screenshot through the `screenshot` path, and holding RMB runs the world; Esc or the command leaves and restores the view.
 
 ### Game data
 
