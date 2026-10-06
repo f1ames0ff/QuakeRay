@@ -145,6 +145,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_voxel_smoke_steps, "96") \
 	CVAR_DEF_T (rt_voxel_smoke_extinction, "1.5") \
 	CVAR_DEF_T (rt_voxel_smoke_grey, "0.5") \
+	CVAR_DEF_T (rt_voxel_smoke_emitter, "") \
 	CVAR_DEF_T (rt_dlight_radius, "0.1") \
 	\
 	CVAR_DEF_T (rt_emis_light_intensity, "1.0") \
@@ -2893,10 +2894,32 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	QrDrawFrameVoxelSmokeParams voxel_smoke_params = {};
 
-	voxel_smoke_params.enabled = CVAR_TO_BOOL (rt_voxel_smoke);
+	const qboolean voxel_smoke_enabled = CVAR_TO_BOOL (rt_voxel_smoke) && !CVAR_TO_BOOL (rt_materials_only);
+	voxel_smoke_params.enabled = voxel_smoke_enabled;
+
+	static vec3_t voxel_smoke_anchor;
+	static struct qmodel_s *voxel_smoke_anchor_model = NULL;
+	static qboolean voxel_smoke_anchor_valid = false;
+	static qboolean voxel_smoke_was_enabled = false;
 
 	vec3_t voxel_smoke_forward, voxel_smoke_right, voxel_smoke_up;
 	AngleVectors (r_refdef.viewangles, voxel_smoke_forward, voxel_smoke_right, voxel_smoke_up);
+
+	if (voxel_smoke_enabled &&
+	    (!voxel_smoke_anchor_valid || !voxel_smoke_was_enabled || cl.worldmodel != voxel_smoke_anchor_model))
+	{
+		VectorCopy (r_refdef.vieworg, voxel_smoke_anchor);
+		VectorMA (voxel_smoke_anchor, 128.0f, voxel_smoke_forward, voxel_smoke_anchor);
+		voxel_smoke_anchor_valid = true;
+	}
+
+	voxel_smoke_was_enabled = voxel_smoke_enabled;
+	voxel_smoke_anchor_model = cl.worldmodel;
+
+	float voxel_smoke_emitter[3];
+	const qboolean voxel_smoke_emitter_set =
+		sscanf (Cvar_VariableString ("rt_voxel_smoke_emitter"), "%f %f %f",
+		        &voxel_smoke_emitter[0], &voxel_smoke_emitter[1], &voxel_smoke_emitter[2]) == 3;
 
 	if (cl.worldmodel)
 	{
@@ -2904,7 +2927,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		{
 			voxel_smoke_params.worldMin.data[i] = cl.worldmodel->mins[i] - 64.0f;
 			voxel_smoke_params.worldMax.data[i] = cl.worldmodel->maxs[i] + 64.0f;
-			voxel_smoke_params.emitterCenter.data[i] = r_refdef.vieworg[i] + voxel_smoke_forward[i] * 128.0f;
 		}
 	}
 	else
@@ -2913,8 +2935,13 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		{
 			voxel_smoke_params.worldMin.data[i] = -256.0f;
 			voxel_smoke_params.worldMax.data[i] = 256.0f;
-			voxel_smoke_params.emitterCenter.data[i] = voxel_smoke_forward[i] * 128.0f;
 		}
+	}
+
+	for (int i = 0; i < 3; i++)
+	{
+		voxel_smoke_params.emitterCenter.data[i] =
+			voxel_smoke_emitter_set ? voxel_smoke_emitter[i] : voxel_smoke_anchor[i];
 	}
 
 	voxel_smoke_params.emitterRadius = CVAR_TO_FLOAT (rt_voxel_smoke_radius);
