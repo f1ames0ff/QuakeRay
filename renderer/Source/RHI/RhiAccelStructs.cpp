@@ -591,6 +591,7 @@ bool RhiAccelStructs::Create(nvrhi::IDevice *pDevice,
     // submitted a static set (see BuildStatic); aligning the counter here keeps that decision
     // correct when the first level was submitted before this object existed.
     staticGeneration = pAsManager->GetStaticGeneration();
+    staticMovableRevision = pAsManager->GetStaticMovableRevision();
 
     return true;
 }
@@ -759,7 +760,10 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
         staticPrimitiveCount = 0;
     }
 
-    if (staticBuilt)
+    const uint32_t movableRevision = asManager->GetStaticMovableRevision();
+    const bool rebuildMovable = staticBuilt && movableRevision != staticMovableRevision;
+
+    if (staticBuilt && !rebuildMovable)
     {
         return;
     }
@@ -812,6 +816,11 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
             continue;
         }
 
+        if (rebuildMovable && !(filter & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE))
+        {
+            continue;
+        }
+
         const std::vector<VkAccelerationStructureGeometryKHR> &geoms = collector->GetASGeometries(filter);
         const std::vector<VkAccelerationStructureBuildRangeInfoKHR> &ranges =
             collector->GetASBuildRangeInfos(filter);
@@ -848,6 +857,7 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
     {
         // No decision: static geometry arrives with a level load, so a later frame may still bring
         // it and the build stays pending.
+        staticMovableRevision = movableRevision;
         return;
     }
 
@@ -873,13 +883,43 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
                                                   candidate.geometries.size(), STATIC_BLAS_BUILD_FLAGS);
 
         candidate.handle = std::move(handle);
-        staticBlas.push_back(std::move(candidate));
+
+        if (!rebuildMovable)
+        {
+            staticBlas.push_back(std::move(candidate));
+            continue;
+        }
+
+        StaticBlas *existing = nullptr;
+        for (StaticBlas &blas : staticBlas)
+        {
+            if (blas.filter == candidate.filter)
+            {
+                existing = &blas;
+                break;
+            }
+        }
+
+        if (existing == nullptr)
+        {
+            staticBlas.push_back(std::move(candidate));
+            continue;
+        }
+
+        frameContext->Retire(std::move(existing->handle));
+        existing->handle = std::move(candidate.handle);
+        existing->geometries = std::move(candidate.geometries);
     }
 
-    staticGeometryCount = geometryCount;
-    staticVertexCount = vertexCount;
-    staticPrimitiveCount = primitiveCount;
-    staticBuilt = true;
+    staticMovableRevision = movableRevision;
+
+    if (!rebuildMovable)
+    {
+        staticGeometryCount = geometryCount;
+        staticVertexCount = vertexCount;
+        staticPrimitiveCount = primitiveCount;
+        staticBuilt = true;
+    }
 }
 
 const RhiAccelStructs::StaticBlas *RhiAccelStructs::FindStaticBlas(uint32_t filter) const
@@ -956,6 +996,8 @@ void RhiAccelStructs::AppendStaticInstances(uint32_t rayCullMaskWorld,
             instanceGeomInfo[instanceIndex].offset =
                 static_cast<int32_t>(VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(filter));
             instanceGeomInfo[instanceIndex].count = static_cast<int32_t>(blas->geometries.size());
+            instanceGeomInfo[instanceIndex].movable =
+                (filter & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE) != 0;
         }
 
         instances.push_back(MakeInstanceDesc(record, blas->handle.Get()));
@@ -1307,6 +1349,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 instanceGeomInfo[instanceIndex].offset =
                     static_cast<int32_t>(VertexCollectorFilterTypeFlags_GetOffsetInGlobalArray(filter));
                 instanceGeomInfo[instanceIndex].count = static_cast<int32_t>(blas->geometries.size());
+                instanceGeomInfo[instanceIndex].movable = false;
 
                 // The vertex-preprocessing mask for this instance (see RecordVertexPreprocessing):
                 // the shader reads word tlasInstanceIndex / 32 and bit tlasInstanceIndex % 32, so the
@@ -1335,6 +1378,11 @@ void RhiAccelStructs::RecordVertexDataCopies(nvrhi::ICommandList *pCommandList, 
     }
 
     VertexDataCopies &copies = vertexDataCopies[frameIndex];
+
+    // The movable ranges are written from the host-mapped staging: the host writes both slots'
+    // staging when a mover moves, so a GPU copy from the other slot's staging could read it while
+    // it is being written. A host snapshot taken here has no such race.
+    const ShGeometryInstance *stagingRecords = geomInfoMgr->GetStagingData(frameIndex);
 
     // The geometry records: one copy per instance's geometry range, in the global geometry index
     // space the shaders address (instanceGeomInfoOffset[i] .. + instanceGeomInfoCount[i], times the
@@ -1370,8 +1418,17 @@ void RhiAccelStructs::RecordVertexDataCopies(nvrhi::ICommandList *pCommandList, 
                     continue;
                 }
 
-                pCommandList->copyBuffer(copies.geometryInstances.Get(), offset,
-                                         geometryStagingBuffer[frameIndex].Get(), offset, size);
+                if (instanceGeomInfo[i].movable && stagingRecords != nullptr)
+                {
+                    pCommandList->writeBuffer(copies.geometryInstances.Get(),
+                                              stagingRecords + instanceGeomInfo[i].offset, size_t(size), offset);
+                }
+                else
+                {
+                    pCommandList->copyBuffer(copies.geometryInstances.Get(), offset,
+                                             geometryStagingBuffer[frameIndex].Get(), offset, size);
+                }
+
                 vertexDataCopyBytes += size;
             }
         }

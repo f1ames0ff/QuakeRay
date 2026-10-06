@@ -412,6 +412,8 @@ void Mod_ResetAll (void)
 	int       i;
 	qmodel_t *mod;
 
+	RT_StaticMovableClear ();
+
 	// ericw -- free alias model VBOs
 	GLMesh_DeleteVertexBuffers ();
 

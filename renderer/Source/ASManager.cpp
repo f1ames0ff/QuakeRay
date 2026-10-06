@@ -343,7 +343,7 @@ bool ASManager::SetupBLAS(BLASComponent &blas, const std::shared_ptr<VertexColle
     asBuilder->AddBLAS(blas.GetAS(), (uint32_t)geoms.size(),
                        geoms.data(), ranges.data(),
                        buildSizes,
-                       fastTrace, update, blas.GetFilter() & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE);
+                       fastTrace, update);
 
     return true;
 }
@@ -465,6 +465,12 @@ void ASManager::BeginDynamicGeometry(VkCommandBuffer cmd, uint32_t frameIndex)
 void ASManager::UpdateStaticMovableTransform(uint32_t simpleIndex, const QrUpdateTransformInfo &updateInfo)
 {
     collectorStatic->UpdateTransform(simpleIndex, updateInfo);
+    staticMovableRevision.fetch_add(1, std::memory_order_relaxed);
+}
+
+uint32_t ASManager::GetStaticMovableRevision() const
+{
+    return staticMovableRevision.load(std::memory_order_relaxed);
 }
 
 void ASManager::UpdateStaticTexCoords(uint32_t simpleIndex, const QrUpdateTexCoordsInfo &texCoordsInfo)
@@ -694,7 +700,7 @@ void ASManager::BuildTLAS(VkCommandBuffer cmd, uint32_t frameIndex, const TLASPr
 
     if (!tlasBuildSizesValid[frameIndex] || tlasBuildSizesInstanceCount[frameIndex] != r.instanceCount)
     {
-        tlasBuildSizes[frameIndex] = asBuilder->GetTopBuildSizes(&instGeom, r.instanceCount, false);
+        tlasBuildSizes[frameIndex] = asBuilder->GetTopBuildSizes(&instGeom, r.instanceCount, true);
         tlasBuildSizesInstanceCount[frameIndex] = r.instanceCount;
         tlasBuildSizesValid[frameIndex] = true;
     }

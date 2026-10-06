@@ -112,7 +112,7 @@ void ASBuilder::AddBLAS(
     const VkAccelerationStructureGeometryKHR *pGeometries,
     const VkAccelerationStructureBuildRangeInfoKHR *pRangeInfos,
     const VkAccelerationStructureBuildSizesInfoKHR &buildSizes,
-    bool fastTrace, bool update, bool isBLASUpdateable)
+    bool fastTrace, bool update)
 {
     assert(topLBuildInfo.geomInfos.empty() && topLBuildInfo.rangeInfos.empty());
     assert(geometryCount > 0);
@@ -121,7 +121,7 @@ void ASBuilder::AddBLAS(
 
     VkBuildAccelerationStructureFlagsKHR flags = GetBuildFlags(fastTrace);
 
-    if (isBLASUpdateable || update)
+    if (update)
     {
         flags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     }

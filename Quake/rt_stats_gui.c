@@ -122,6 +122,11 @@ static void RT_StatsOverlayRays (const rt_stats_snapshot_t *snap)
 	RT_StatsOverlayCount ("SHADOW DIR", snap->gpu.raysPerCategory[3]);
 	RT_StatsOverlayCount ("SHADOW IND", snap->gpu.raysPerCategory[4]);
 	RT_StatsOverlayCount ("CALLS", snap->gpu.apiCalls);
+	RT_StatsOverlayCount (" geometry", snap->gpu.apiCallsGeometry);
+	RT_StatsOverlayCount (" raster", snap->gpu.apiCallsRasterized);
+	RT_StatsOverlayCount (" lights", snap->gpu.apiCallsLights);
+	RT_StatsOverlayCount (" other",
+		snap->gpu.apiCalls - snap->gpu.apiCallsGeometry - snap->gpu.apiCallsRasterized - snap->gpu.apiCallsLights);
 }
 
 static void RT_StatsOverlayGpu (const rt_stats_snapshot_t *snap)

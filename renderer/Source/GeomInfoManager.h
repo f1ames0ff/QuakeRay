@@ -72,6 +72,7 @@ public:
     uint32_t GetStaticGeomBaseVertexIndex(uint32_t simpleIndex);
 
     VkBuffer GetStagingBuffer(uint32_t frameIndex);
+    const ShGeometryInstance *GetStagingData(uint32_t frameIndex);
     VkDeviceSize GetBufferSize() const;
     VkDeviceSize GetMatchPrevSize() const;
     const int32_t *GetMatchPrevData() const;

@@ -217,6 +217,30 @@ if(QR_BUILD_TESTS)
     endif()
     add_test(NAME qray_posteffects_gpu COMMAND qray_posteffects_smoke "${CMAKE_CURRENT_SOURCE_DIR}/Build" "${QR_PROBE_DIR}")
     set_tests_properties(qray_posteffects_gpu PROPERTIES TIMEOUT 120 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
+    set(QR_DTAL_PROBE "${QR_PROBE_DIR}/DtalPerf.comp.spv")
+    add_custom_command(OUTPUT "${QR_DTAL_PROBE}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${QR_PROBE_DIR}"
+        COMMAND "${QR_DXC}" -spirv -fspv-target-env=vulkan1.3 -fvk-use-gl-layout -T cs_6_6 -E main
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/Source/Shaders" "${CMAKE_CURRENT_SOURCE_DIR}/Tests/DtalPerf.comp.hlsl"
+            -Fo "${QR_DTAL_PROBE}"
+        DEPENDS
+            Tests/DtalPerf.comp.hlsl
+            Source/Shaders/Light.hlsli
+            Source/Shaders/Random.hlsli
+            Source/Shaders/ShaderCommonHLSLFunc.hlsli
+            Source/Shaders/ShaderCommonHLSL.hlsli
+            Source/Shaders/Structs.hlsli
+            Source/Generated/ShaderCommonHLSL.hlsli
+        VERBATIM)
+    add_executable(qray_dtal_perf Tests/DtalPerf.cpp "${QR_DTAL_PROBE}")
+    target_compile_features(qray_dtal_perf PRIVATE cxx_std_20)
+    target_include_directories(qray_dtal_perf PRIVATE Source)
+    target_link_libraries(qray_dtal_perf PRIVATE renderer nvrhi nvrhi_vk)
+    if(WIN32)
+        target_link_libraries(qray_dtal_perf PRIVATE user32)
+    endif()
+    add_test(NAME qray_dtal_perf COMMAND qray_dtal_perf "${QR_DTAL_PROBE}" "${QR_PROBE_DIR}/DtalPerf.baseline.txt")
+    set_tests_properties(qray_dtal_perf PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 endif()
 
 add_library(renderer STATIC
