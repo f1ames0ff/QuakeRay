@@ -835,6 +835,7 @@ void SV_BuildEntityState (edict_t *ent, entity_state_t *state)
 byte       *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
 
 cvar_t sv_water_vis = {"sv_water_vis", "1", CVAR_NONE};
+cvar_t sv_novis = {"sv_novis", "1", CVAR_NONE};
 
 static qboolean SV_WaterSeesEntity (vec3_t org, edict_t *ent)
 {
@@ -861,12 +862,13 @@ static qboolean SV_WaterSeesEntity (vec3_t org, edict_t *ent)
 static void SVFTE_BuildSnapshotForClient (client_t *client)
 {
 	unsigned int  e, i;
-	byte		 *pvs;
+	byte		 *pvs = NULL;
 	vec3_t        org;
 	edict_t      *ent, *parent;
 	unsigned int  maxentities = client->limit_entities;
 	edict_t      *clent = client->edict;
 	unsigned char eflags;
+	const qboolean pvs_cull = !CVAR_TO_BOOL (sv_novis);
 
 	struct entity_num_state_s *ents = snapshot_entstate;
 	size_t                     numents = 0;
@@ -874,7 +876,8 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 
 	// find the client's PVS
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
-	pvs = SV_FatPVS (org, qcvm->worldmodel);
+	if (pvs_cull)
+		pvs = SV_FatPVS (org, qcvm->worldmodel);
 
 	if (maxentities > (unsigned int)qcvm->num_edicts)
 		maxentities = (unsigned int)qcvm->num_edicts;
@@ -897,7 +900,7 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 				// attached entities should use the pvs of the parent rather than the child (because the child will typically be bugging out around '0 0 0', so
 				// won't be useful)
 				parent = ent;
-				if (parent->num_leafs)
+				if (pvs_cull && parent->num_leafs)
 				{
 					// ignore if not touching a PV leaf
 					for (i = 0; i < parent->num_leafs; i++)
@@ -1125,6 +1128,7 @@ void SV_Init (void)
 	extern cvar_t sv_aim;
 	extern cvar_t sv_altnoclip; // johnfitz
 	extern cvar_t sv_water_vis;
+	extern cvar_t sv_novis;
 
 	Cvar_RegisterVariable (&sv_maxvelocity);
 	Cvar_RegisterVariable (&sv_gravity);
@@ -1143,6 +1147,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&pr_checkextension);
 	Cvar_RegisterVariable (&sv_altnoclip); // johnfitz
 	Cvar_RegisterVariable (&sv_water_vis);
+	Cvar_RegisterVariable (&sv_novis);
 
 	SV_Gibs_Init ();
 
@@ -1869,12 +1874,13 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 	edict_t     *clent = client->edict;
 	unsigned int e, i, maxedict = qcvm->num_edicts;
 	int          bits;
-	byte        *pvs;
+	byte        *pvs = NULL;
 	vec3_t       org;
 	float        miss;
 	edict_t     *ent;
 	eval_t      *val;
 	int          maxsize = msg->maxsize;
+	const qboolean pvs_cull = !CVAR_TO_BOOL (sv_novis);
 
 	// try to avoid sounds getting lost. flickering entities are weird, but missing sounds+particles are just eerie.
 	maxsize -= client->datagram.cursize;
@@ -1885,7 +1891,8 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 
 	// find the client's PVS
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
-	pvs = SV_FatPVS (org, qcvm->worldmodel);
+	if (pvs_cull)
+		pvs = SV_FatPVS (org, qcvm->worldmodel);
 
 	// send over all entities (excpet the client) that touch the pvs
 	ent = NEXT_EDICT (qcvm->edicts);
@@ -1903,20 +1910,23 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 				continue;
 
 			// ignore if not touching a PV leaf
-			for (i = 0; i < ent->num_leafs; i++)
-				if (pvs[ent->leafnums[i] >> 3] & (1 << (ent->leafnums[i] & 7)))
-					break;
-
-			// ericw -- added ent->num_leafs < MAX_ENT_LEAFS condition.
-			//
-			// if ent->num_leafs == MAX_ENT_LEAFS, the ent is visible from too many leafs
-			// for us to say whether it's in the PVS, so don't try to vis cull it.
-			// this commonly happens with rotators, because they often have huge bboxes
-			// spanning the entire map, or really tall lifts, etc.
-			if (i == ent->num_leafs && ent->num_leafs < MAX_ENT_LEAFS)
+			if (pvs_cull)
 			{
-				if (!SV_WaterSeesEntity (org, ent))
-					continue;
+				for (i = 0; i < ent->num_leafs; i++)
+					if (pvs[ent->leafnums[i] >> 3] & (1 << (ent->leafnums[i] & 7)))
+						break;
+
+				// ericw -- added ent->num_leafs < MAX_ENT_LEAFS condition.
+				//
+				// if ent->num_leafs == MAX_ENT_LEAFS, the ent is visible from too many leafs
+				// for us to say whether it's in the PVS, so don't try to vis cull it.
+				// this commonly happens with rotators, because they often have huge bboxes
+				// spanning the entire map, or really tall lifts, etc.
+				if (i == ent->num_leafs && ent->num_leafs < MAX_ENT_LEAFS)
+				{
+					if (!SV_WaterSeesEntity (org, ent))
+						continue;
+				}
 			}
 		}
 

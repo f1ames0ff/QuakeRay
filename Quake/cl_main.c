@@ -748,9 +748,11 @@ void CL_RelinkEntities (void)
 	if (frametime > 0.1)
 		frametime = 0.1;
 
-	if (cl_numvisedicts + 64 > cl_maxvisedicts)
+	const int visedict_capacity = cl.num_entities + cl.num_statics + MAX_TEMP_ENTITIES + 64;
+
+	if (cl_maxvisedicts < visedict_capacity)
 	{
-		cl_maxvisedicts = cl_maxvisedicts + 64;
+		cl_maxvisedicts = visedict_capacity;
 		cl_visedicts = Mem_Realloc (cl_visedicts, sizeof (*cl_visedicts) * cl_maxvisedicts);
 	}
 	cl_numvisedicts = 0;

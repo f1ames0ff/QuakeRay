@@ -174,6 +174,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   -- it names a texture of the rasterizer's lightmap pass. 0 keeps the historical test, \
 	   whose alpha comparison has its sign inverted and which reads no other state. */ \
 	CVAR_DEF_T (rt_world_batch_merge, "1") \
+	CVAR_DEF_T (rt_brush_persistent, "0") \
 	/* 0 uploads the map's lights one call at a time, for measuring the batched path. */ \
 	CVAR_DEF_T (rt_wmodel_lights_batch, "1") \
 	/* DTAL: 1 lights an alias model from the triangles of the pose it draws, when its material
@@ -685,8 +686,10 @@ qboolean RT_Bench_Report (const char *demo)
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "rt_enable_pvs");
+	RT_Bench_Setting (f, "sv_novis");
 	RT_Bench_Setting (f, "rt_truelight");
 	RT_Bench_Setting (f, "rt_world_batch_merge");
+	RT_Bench_Setting (f, "rt_brush_persistent");
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");
 	RT_Bench_Setting (f, "rt_cluster_sampling");
@@ -967,6 +970,11 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "shadow dir", snap->gpu.raysPerCategory[3]);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "shadow ind", snap->gpu.raysPerCategory[4]);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "rg entry points", snap->gpu.apiCalls);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "geometry", snap->gpu.apiCallsGeometry);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "raster", snap->gpu.apiCallsRasterized);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "lights", snap->gpu.apiCallsLights);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "other",
+			snap->gpu.apiCalls - snap->gpu.apiCallsGeometry - snap->gpu.apiCallsRasterized - snap->gpu.apiCallsLights);
 	}
 	else
 	{
@@ -1166,7 +1174,7 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped,"
 	       "clust_dirty_max,clust_move_footprint",
 	       f);
-	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls\n", f);
+	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls,calls_geometry,calls_raster,calls_lights,calls_other\n", f);
 
 	for (i = 0; i < job->count; i++)
 	{
@@ -1259,6 +1267,15 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysPerCategory[4]);
 		RT_StatsRecordField (f, &first);
 		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCalls);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCallsGeometry);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCallsRasterized);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.apiCallsLights);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u",
+			snap->gpu.apiCalls - snap->gpu.apiCallsGeometry - snap->gpu.apiCallsRasterized - snap->gpu.apiCallsLights);
 
 		fputc ('\n', f);
 	}
@@ -3169,6 +3186,12 @@ static void RT_LightStylesChanged_f (cvar_t *var)
 	Atomic_StoreUInt32 (&rt_require_static_submit, true);
 }
 
+static void RT_BrushPersistentChanged_f (cvar_t *var)
+{
+	(void)var;
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+}
+
 static void RT_EmissiveLimitsChanged_f (cvar_t *var)
 {
 	(void)var;
@@ -3404,6 +3427,7 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_sky_sun_edit, RT_SunEditChanged_f);
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
+	Cvar_SetCallback (&rt_brush_persistent, RT_BrushPersistentChanged_f);
 	Cvar_SetCallback (&rt_dtal_minarea, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_maxpolys, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_clearance, RT_EmissiveLimitsChanged_f);
