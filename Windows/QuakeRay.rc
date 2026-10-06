@@ -3,8 +3,8 @@
 icon ICON "QuakeRay.ico"
 
 1 VERSIONINFO
-FILEVERSION 0,20,1,0
-PRODUCTVERSION 0,20,1,0
+FILEVERSION 0,30,1,0
+PRODUCTVERSION 0,30,1,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -14,12 +14,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "f1ames0ff"
             VALUE "FileDescription", "QuakeRay"
-            VALUE "FileVersion", "0.20.1"
+            VALUE "FileVersion", "0.30.1"
             VALUE "InternalName", "quakeray"
-            VALUE "LegalCopyright", "Copyright (c) 2025-2026 f1ames0ff; portions (c) id Software, QuakeSpasm, NVIDIA and others - see LICENSE.txt and AUTHORS.md"
+            VALUE "LegalCopyright", "Copyright (c) 2026 f1ames0ff; portions (c) id Software, QuakeSpasm, NVIDIA and others - see LICENSE.txt and AUTHORS.md"
             VALUE "OriginalFilename", "quakeray.exe"
             VALUE "ProductName", "QuakeRay"
-            VALUE "ProductVersion", "0.20.1"
+            VALUE "ProductVersion", "0.30.1"
         END
     END
     BLOCK "VarFileInfo"

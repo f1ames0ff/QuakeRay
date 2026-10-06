@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -46,7 +46,8 @@ public:
     void PrepareExposureParams(
         uint32_t frameIndex,
         const std::shared_ptr<const GlobalUniform> &uniform,
-        float exposureBias, float contrast);
+        float exposureBias, float tonemapPower, uint32_t tonemapType,
+        const QrDrawFrameTonemappingParams &params);
 
     VkBuffer GetBuffer(uint32_t frameIndex) const;
 
@@ -63,7 +64,8 @@ private:
     Buffer tmBuffer[MAX_FRAMES_IN_FLIGHT];
 
     void *mappedTmBuffer[MAX_FRAMES_IN_FLIGHT] = {};
-    bool  resetRequired[MAX_FRAMES_IN_FLIGHT] = {};
+    bool exposureReady = false;
+    float previousTime = -1.0f;
 };
 
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -298,5 +298,7 @@ uint32_t qray::Utils::GetWorkGroupCount(uint32_t size, uint32_t groupSize)
         return 0;
     }
 
-    return 1 + (size + (groupSize - 1)) / groupSize;
+    const uint32_t count = (size + (groupSize - 1)) / groupSize;
+
+    return count == 0 ? 1 : count;
 }

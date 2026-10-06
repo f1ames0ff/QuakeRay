@@ -28,11 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_material.h"
 #include "sys.h"
 
-#if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
-#include <SDL2/SDL.h>
-#else
 #include "SDL.h"
-#endif
 
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #define STB_IMAGE_RESIZE_STATIC
@@ -501,7 +497,7 @@ static void TexMgr_RTMatDump_f (void)
 		}
 		else
 		{
-			Con_Printf ("RT dump:   authored: <no materials.yaml entry>\n");
+			Con_Printf ("RT dump:   authored: <no qray.materials.yaml entry>\n");
 		}
 		Con_Printf ("RT dump:   applied: is_light=%d lightstyles=%d emissivetex=%d emissive=%d haslightcolor=%d\n",
 		            glt->rtislight, glt->rtlightstyles, glt->rtemissivetex, glt->rtemissive, glt->rthaslightcolor);
@@ -784,7 +780,7 @@ void TexMgr_Init (void)
 	static byte       notexture_data[16] = {159, 91, 83, 255, 0, 0, 0, 255, 0, 0, 0, 255, 159, 91, 83, 255};                    // black and pink checker
 	static byte       nulltexture_data[16] = {127, 191, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 127, 191, 255, 255};              // black and blue checker
 	static byte       whitetexture_data[16] = {255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}; // white
-	static byte       greytexture_data[16] = {127, 127, 127, 255, 127, 127, 127, 255, 127, 127, 127, 255, 127, 127, 127, 255};  // 50% grey
+	static byte       greytexture_data[16] = {127, 127, 127, 255, 127, 127, 127, 255, 127, 127, 127, 255, 127, 127, 127, 255};  // 50% gray
 	extern texture_t *r_notexture_mip, *r_notexture_mip2;
 
 	texmgr_mutex = SDL_CreateMutex ();
@@ -837,8 +833,8 @@ static unsigned *TexMgr_Downsample (unsigned *data, int in_width, int in_height,
 {
 	const int out_size_bytes = out_width * out_height * 4;
 
-	assert ((out_width >= 1) && (out_width < in_width));
-	assert ((out_height >= 1) && (out_height < in_height));
+	assert ((out_width >= 1) && (out_width <= in_width));
+	assert ((out_height >= 1) && (out_height <= in_height));
 
 	byte *image_resize_buffer;
 	TEMP_ALLOC (byte, image_resize_buffer, out_size_bytes);
@@ -1206,9 +1202,9 @@ static void TexMgr_DumpReloadTGA (const char *suffix, const char *name, int w, i
 TexMgr_FeatherEmissive
 
 Softens an emission map: a box blur of the given radius over the map, so the
-mask's edge fades on both sides of the threshold's selection (inwards as well as
-outwards), without looking at the colours themselves. Two separable passes, each
-a running sum, so the cost does not depend on the radius.
+mask's edge fades outward from the threshold's selection while the selected
+pixels keep their value, without looking at the colors themselves. Two
+separable passes, each a running sum, so the cost does not depend on the radius.
 ================
 */
 static void TexMgr_FeatherEmissive (float *emiss, int w, int h, int radius)
@@ -1261,7 +1257,11 @@ static void TexMgr_FeatherEmissive (float *emiss, int w, int h, int radius)
 		}
 		for (y = 0; y < h; y++)
 		{
-			emiss[(size_t)y * w + x] = sum / (float)window;
+			const float blurred = sum / (float)window;
+			size_t      index = (size_t)y * w + x;
+
+			if (blurred > emiss[index])
+				emiss[index] = blurred;
 			{
 				int add = y + radius + 1;
 				int sub = y - radius;
@@ -1279,7 +1279,7 @@ static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, fl
 {
 	float outerDeg = mat->emissive_focus;
 
-	if (!(outerDeg > 0.0f) || outerDeg >= 89.0f)
+	if (!(outerDeg > 0.0f) || outerDeg > 90.0f)
 	{
 		if (!mat->emissive_projector)
 		{
@@ -1288,13 +1288,13 @@ static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, fl
 			return;
 		}
 
-		outerDeg = 60.0f;
+		outerDeg = 45.0f;
 	}
 
 	float softDeg = mat->emissive_focus_soft;
 
 	if (softDeg < 0.0f)
-		softDeg = outerDeg * 0.1f;
+		softDeg = mat->emissive_projector ? 45.0f : outerDeg * 0.1f;
 	if (softDeg < 0.05f)
 		softDeg = 0.05f;
 	if (softDeg > outerDeg)
@@ -1315,7 +1315,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		// texture gets when it is loaded with no material.
 		glt->rtlightcolor[0] = glt->rtlightcolor[1] = glt->rtlightcolor[2] = 0.0f;
 		glt->rthaslightcolor = false;
-		glt->rtupoffset = 0.0f;
 		glt->rtmirror = false;
 		glt->rtexactnormals = false;
 		glt->rtforcerasterize = false;
@@ -1352,7 +1351,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rthaslightcolor = false;
 		glt->rtlightcolor[0] = glt->rtlightcolor[1] = glt->rtlightcolor[2] = 0.0f;
 	}
-	glt->rtupoffset = mat->light_upoffset;
 	TexMgr_EmissiveCone (mat, &glt->rtemisangleinner, &glt->rtemisangleouter);
 	glt->rtemisprojector = mat->emissive_projector;
 	glt->rtmirror = mat->mirror;
@@ -1430,7 +1428,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (has_luma_key && !emisBuf)
 		Con_Printf ("RT: material '%s': texture_emissive '%s' could not be loaded; using no emissive mask\n",
 		            mat->name, mat->filename_emissive);
-	const float lightBright = CLAMP (0.0f, mat->light_brightness, 100.0f);
+	const float lightBright = CLAMP (0.0f, mat->light_brightness, 1000.0f);
 	/* Per-material rt_emis_blend override, packed into the alpha of the
 	   roughness-metallic-emission texture: 0 = not authored, so the global
 	   cvar applies; otherwise the authored mode plus one. */
@@ -1455,17 +1453,22 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	double emissMeanBase = 0.0;
 	int    glowminx = tw, glowminy = th, glowmaxx = -1, glowmaxy = -1;
 
-	/* The colour blocks: each one builds its own mask (its threshold picks the
-	   pixels whose colour matches it) and feathers it on its own — both sides of
-	   the mask edge, without comparing colours — then the strongest block wins
-	   per pixel and its blend mode travels with it in the alpha of the rme
+	/* The color blocks: each one builds its own mask (its threshold picks the
+	   pixels whose color matches it) and feathers it on its own — outward from
+	   the mask edge, leaving the pixels it selected untouched — then every
+	   pixel goes to the block whose color is nearest among those that match
+	   it, and that block's blend mode travels with it in the alpha of the rme
 	   texture. */
 	float *colorEmis  = NULL;
 	byte  *colorBlend = NULL;
+	float *colorDist  = NULL;
 	if (use_color_emissive && !emisBuf && !fullbrightOverride)
 	{
 		colorEmis  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
 		colorBlend = (byte *)Mem_Alloc ((size_t)npix);
+		colorDist  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+		memset (colorEmis, 0, (size_t)npix * sizeof (float));
+		memset (colorDist, 0, (size_t)npix * sizeof (float));
 		memset (colorBlend, (byte)emisBlendCode, (size_t)npix);
 
 		for (int c = 0; c < mat->color_emissive_count; c++)
@@ -1475,6 +1478,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			const int            feather = (block->feather >= 1.0f) ? (int)(block->feather + 0.5f) : 0;
 			const byte           blockCode = (byte)((block->blend >= 0) ? (block->blend + 1) : 0);
 			float               *mask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+			float               *dist = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
 
 			for (int i = 0; i < npix; i++)
 			{
@@ -1485,7 +1489,30 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 				const float d2 = dr * dr + dg * dg + db * db;
 
 				mask[i] = 0.0f;
-				if (d2 <= 3.0f * thr * thr)
+				dist[i] = d2;
+				if (block->poly_count >= 3)
+				{
+					const float u = ((float)(i % tw) + 0.5f) / (float)tw;
+					const float v = ((float)(i / tw) + 0.5f) / (float)th;
+					qboolean    inside = false;
+					int         p, q;
+
+					for (p = 0, q = block->poly_count - 1; p < block->poly_count; q = p++)
+					{
+						const float pu = block->poly_uv[p][0], pv = block->poly_uv[p][1];
+						const float qu = block->poly_uv[q][0], qv = block->poly_uv[q][1];
+
+						if (((pv > v) != (qv > v)) && (u < (qu - pu) * (v - pv) / (qv - pv) + pu))
+							inside = !inside;
+					}
+
+					if (inside)
+					{
+						mask[i] = block->factor;
+						dist[i] = 0.0f;
+					}
+				}
+				else if (d2 <= 3.0f * thr * thr)
 				{
 					const float dnorm = (thr > 0.0f) ? sqrtf (d2 / 3.0f) / thr : 0.0f;
 					const float k = RT_COLOR_EMISSIVE_FALLOFF;
@@ -1500,14 +1527,18 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 			for (int i = 0; i < npix; i++)
 			{
-				if (mask[i] > colorEmis[i])
-				{
-					colorEmis[i] = mask[i];
-					colorBlend[i] = blockCode;
-				}
+				if (!(mask[i] > 0.0f))
+					continue;
+				if (colorEmis[i] > 0.0f && !(dist[i] < colorDist[i]))
+					continue;
+
+				colorEmis[i] = mask[i];
+				colorBlend[i] = blockCode;
+				colorDist[i] = dist[i];
 			}
 
 			Mem_Free (mask);
+			Mem_Free (dist);
 		}
 	}
 
@@ -1615,6 +1646,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	if (colorEmis)  Mem_Free (colorEmis);
 	if (colorBlend) Mem_Free (colorBlend);
+	if (colorDist)  Mem_Free (colorDist);
 
 	if (baseBuf) Mem_Free (baseBuf);
 	if (normBuf) Mem_Free (normBuf);
@@ -1949,7 +1981,6 @@ gltexture_t *TexMgr_LoadImage (
 
 	glt->rtlightcolor[0] = glt->rtlightcolor[1] = glt->rtlightcolor[2] = 0.0f;
 	glt->rthaslightcolor = false;
-	glt->rtupoffset = 0.0f;
 	glt->rtmirror = false;
 	glt->rtexactnormals = false;
 	glt->rtforcerasterize = false;
@@ -2220,7 +2251,7 @@ int TexMgr_CollectGroupNames (const char *texname, char (*names)[MAX_QPATH], int
 TexMgr_LoadRgbaForPreview
 
 The RGBA8 pixels of a texture's own source, for the editor's texture preview
-and its colour picker. The source is resolved the way TexMgr_ReloadImage
+and its color picker. The source is resolved the way TexMgr_ReloadImage
 resolves it (a lump in a file, an image file, or a buffer the loader kept).
 The caller frees the returned buffer.
 ================
@@ -2379,8 +2410,8 @@ static gltexture_t *TexMgr_FindFullbrightTexture (const gltexture_t *base)
 TexMgr_ReloadAllImages
 
 Reloads every reloadable image texture so that material properties baked in
-at load time (emissive colour, light brightness, ...) are re-applied from a
-fresh materials.yaml. Called by vid_restart.
+at load time (emissive color, light brightness, ...) are re-applied from a
+fresh qray.materials.yaml. Called by vid_restart.
 
 Skips lightmaps / surface-indices (they never carry a material) and reloads the
 auxiliary fullbright texture of the two-pass load together with its base

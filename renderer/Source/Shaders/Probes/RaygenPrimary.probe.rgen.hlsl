@@ -473,7 +473,7 @@ void main()
     // Every remaining function is instantiated from here, with arguments that keep every divisor
     // and every normalize operand away from zero.
     v += getMotionVectorForUpscaler(PROBE_DIRECTION.xy).x;
-    v += getMotionForInfinitePoint(int2(3, 4)).x;
+    v += getMotionForInfinitePoint(PROBE_DIRECTION).x;
     v += (float)getNewRayMedia(0, MEDIA_TYPE_VACUUM, 0u);
 
     storeQ2GBuffer(

@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -82,19 +82,19 @@ float computePrefixSum(float val, const uint linear_idx)
 [numthreads(COMPUTE_LUM_HISTOGRAM_BIN_COUNT, 1, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint localInvocationIndex : SV_GroupIndex)
 {
-    const int2 ipos = int2(dispatchThreadID.xy);
-    if (any(ipos >= int2(globalUniform.renderWidth, globalUniform.renderHeight)))
-        return;
-
     const int linear_idx = (int)localInvocationIndex;
 
-    float original_hist = 1.0 + (float)tonemapping[0].histogram[linear_idx] / FIXED_POINT_FRAC_MULTIPLIER;
+    float original_hist = (float)tonemapping[0].histogram[linear_idx] / FIXED_POINT_FRAC_MULTIPLIER;
     const float hist_sum = computeSharedSum(original_hist, linear_idx);
+    if (hist_sum <= 0.0)
+    {
+        original_hist = linear_idx == 0 ? 1.0 : 0.0;
+    }
     const float hist_max = computeSharedMax(original_hist, linear_idx);
 
-    tonemapping[0].normalized[linear_idx] = original_hist / hist_max;
+    tonemapping[0].normalized[linear_idx] = original_hist / max(hist_max, 1e-6);
 
-    original_hist /= hist_sum;
+    original_hist /= hist_sum > 0.0 ? hist_sum : 1.0;
 
     const float bin_log_luminance = ((float)linear_idx / (float)HISTOGRAM_BINS) * (max_log_luminance - min_log_luminance) + min_log_luminance;
 
@@ -107,25 +107,24 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint localInvocationInde
     float weight_sum = 0.0;
     float bin_sum = 0.0;
 
-    if ((lower_limit <= histogram_cdf) && (histogram_cdf_prev <= upper_limit))
-    {
-        weight_sum = bin_log_luminance * original_hist;
-        bin_sum = original_hist;
-    }
+    const float selectedWeight = max(0.0, min(histogram_cdf, upper_limit) - max(histogram_cdf_prev, lower_limit));
+    weight_sum = bin_log_luminance * selectedWeight;
+    bin_sum = selectedWeight;
 
     weight_sum = computeSharedSum(weight_sum, linear_idx);
     bin_sum = computeSharedSum(bin_sum, linear_idx);
 
     float log_target_lum = weight_sum / max(0.0001, bin_sum);
+    if (hist_sum <= 0.0)
+    {
+        log_target_lum = log2(max(tonemapping[0].tmMinLuminance, 1e-4));
+    }
     log_target_lum = clamp(log_target_lum, log2(tonemapping[0].tmMinLuminance), log2(tonemapping[0].tmMaxLuminance));
 
     if (tonemapping[0].resetCurve == 0)
     {
-        float log_old_lum = tonemapping[0].adaptedLuminance;
-        if (log_old_lum > 0.0)
-        {
-            log_old_lum = log2(log_old_lum);
-        }
+        const float old_lum = tonemapping[0].adaptedLuminance;
+        const float log_old_lum = isfinite(old_lum) && old_lum > 0.0 ? log2(old_lum) : log_target_lum;
 
         const float speed = (log_old_lum < log_target_lum) ? tonemapping[0].tmExposureSpeedUp : tonemapping[0].tmExposureSpeedDown;
         log_target_lum = lerp(log_target_lum, log_old_lum, exp(-tonemapping[0].frameTime * speed));
@@ -138,6 +137,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint localInvocationInde
         tonemapping[0].avgLuminance = adapted_luminance;
     }
 
+
+    original_hist = (1.0 + (float)tonemapping[0].histogram[linear_idx] / FIXED_POINT_FRAC_MULTIPLIER) /
+                    (hist_sum + (float)HISTOGRAM_BINS);
 
     if (bin_log_luminance < tonemapping[0].tmNoiseStops)
         original_hist = 0;
@@ -156,13 +158,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint localInvocationInde
         thresh_passed = step(thresh, original_hist);
         len_omega = computeSharedSum(thresh_passed, linear_idx);
         sum_recip = computeSharedSum(rcp_hist * thresh_passed, linear_idx);
-        thresh = (len_omega - r_over_delta) / sum_recip;
+        thresh = (len_omega - r_over_delta) / max(sum_recip, 1e-6);
     }
 
     thresh_passed = step(thresh, original_hist);
     len_omega = computeSharedSum(thresh_passed, linear_idx);
     sum_recip = computeSharedSum(rcp_hist * thresh_passed, linear_idx);
-    float my_slope = (1.0 + rcp_hist * (r_over_delta - len_omega) / sum_recip) * thresh_passed;
+    float my_slope = (1.0 + rcp_hist * (r_over_delta - len_omega) / max(sum_recip, 1e-6)) * thresh_passed;
 
     float gaussian_sum = 0.0;
     float weights[14];
@@ -194,9 +196,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint localInvocationInde
     const float noise_stop_bin = clamp((tonemapping[0].tmNoiseStops * log_luminance_scale + log_luminance_bias) * HISTOGRAM_BINS, 0.0, HISTOGRAM_BINS - 1.0);
     if (linear_idx < noise_stop_bin)
     {
-        const float my_tonecurve_at_ns = s_Shared[(int)noise_stop_bin - 1] * delta - r;
+        const float my_tonecurve_at_ns = s_Shared[max((int)noise_stop_bin - 1, 0)] * delta - r;
         const float bin_log_luminance_at_ns = ((float)(noise_stop_bin - 1) / (float)HISTOGRAM_BINS) * (max_log_luminance - min_log_luminance) + min_log_luminance;
-        const float fudge = -(my_tonecurve_at_ns - bin_log_luminance_at_ns) / log_target_lum;
+        const float safe_log_lum = abs(log_target_lum) < 1e-4 ? -1e-4 : log_target_lum;
+        const float fudge = -(my_tonecurve_at_ns - bin_log_luminance_at_ns) / safe_log_lum;
 
         const float tone_curve_ae = bin_log_luminance - log_target_lum * fudge;
         my_tonecurve = lerp(tone_curve_ae, my_tonecurve, lerp(smoothstep(0.5 * noise_stop_bin, noise_stop_bin, (float)linear_idx), 1.0, tonemapping[0].tmNoiseBlend));
@@ -209,6 +212,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint localInvocationInde
         const float blend_speed = (my_old_tonecurve < my_tonecurve) ? tonemapping[0].tmExposureSpeedUp : tonemapping[0].tmExposureSpeedDown;
 
         my_tonecurve = lerp(my_tonecurve, my_old_tonecurve, exp(-tonemapping[0].frameTime * blend_speed));
+    }
+
+    if (hist_sum <= 0.0 || !isfinite(my_tonecurve))
+    {
+        my_tonecurve = bin_log_luminance - log_target_lum;
     }
 
     tonemapping[0].curve[linear_idx] = my_tonecurve;

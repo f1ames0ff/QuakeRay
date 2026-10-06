@@ -33,19 +33,19 @@ static void S_MODPLUG_SetSettings (snd_stream_t *stream)
 
 	ModPlug_GetSettings (&settings);
 	settings.mFlags = MODPLUG_ENABLE_OVERSAMPLING;
-	settings.mChannels = shm->channels;
-	settings.mBits = shm->samplebits;
-	settings.mFrequency = shm->speed;
+	settings.mChannels = snd_output.channels;
+	settings.mBits = snd_output.samplebits;
+	settings.mFrequency = snd_output.speed;
 	settings.mResamplingMode = MODPLUG_RESAMPLE_SPLINE; /*MODPLUG_RESAMPLE_FIR*/
 	settings.mLoopCount = -1;                           /* to enable module internal loops */
 	ModPlug_SetSettings (&settings);
 
 	if (stream)
 	{
-		stream->info.rate = shm->speed;
-		stream->info.bits = shm->samplebits;
+		stream->info.rate = snd_output.speed;
+		stream->info.bits = snd_output.samplebits;
 		stream->info.width = stream->info.bits / 8;
-		stream->info.channels = shm->channels;
+		stream->info.channels = snd_output.channels;
 	}
 }
 

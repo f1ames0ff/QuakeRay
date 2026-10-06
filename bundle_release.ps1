@@ -3,9 +3,11 @@
     Bundles a Release build of QuakeRay into a distributable ZIP archive.
 
 .DESCRIPTION
-    Packages quakeray.exe, the runtime DLLs, and the id1 runtime assets
-    (materials, mdl_skins, progs, shaders, textures, and the BlueNoise /
-    WaterNormal KTX2 files) plus documentation into a single ZIP ready for
+    Packages quakeray.exe, the runtime DLLs, the id1 engine assets
+    (qray.pkz -- the shaders, textures with the material textures and the model
+    skins, luma and gloss maps among them, the axe cursor artwork, the GUI font
+    and the BlueNoise / WaterNormal tables -- and the loose qray.materials.yaml
+    the editor rewrites) plus documentation into a single ZIP ready for
     distribution.
 
     The engine binary is taken from the Release configuration, which is built
@@ -61,17 +63,21 @@ if (-not (Test-Path $gameDir)) {
 }
 
 # Resolve the version from the engine header when not supplied explicitly.
-if (-not $Version) {
-    $qdef  = Join-Path $repoRoot "Quake\quakedef.h"
-    $text  = Get-Content $qdef -Raw
-    $maj   = [regex]::Match($text, 'ENGINE_VERSION\s+([0-9]+(?:\.[0-9]+)?)').Groups[1].Value
-    $patch = [regex]::Match($text, 'ENGINE_VER_PATCH\s+([0-9]+)').Groups[1].Value
-    if (-not $maj) { throw "Could not read ENGINE_VERSION from $qdef" }
-    $Version = "$maj.$patch"
+$qdef  = Join-Path $repoRoot "Quake\quakedef.h"
+$text  = Get-Content $qdef -Raw
+$maj   = [regex]::Match($text, 'ENGINE_VERSION\s+([0-9]+(?:\.[0-9]+)?)').Groups[1].Value
+$patch = [regex]::Match($text, 'ENGINE_VER_PATCH\s+([0-9]+)').Groups[1].Value
+if (-not $maj) { throw "Could not read ENGINE_VERSION from $qdef" }
+$buildVersion = "$maj.$patch"
+if (-not $Version) { $Version = $buildVersion }
+
+$exeVersion = "$((Get-Item $exe).VersionInfo.FileVersion)".Trim()
+if ($exeVersion -ne $buildVersion) {
+    throw "quakeray.exe in $BuildDir reports version '$exeVersion' but Quake\quakedef.h says '$buildVersion'. Rebuild first: .\build_win.ps1 $Config"
 }
 
 $distDir  = Join-Path $repoRoot $OutDir
-$rootName = "QuakeRay-$Version-win64"
+$rootName = "QuakeRay-v$Version-win64"
 $zipPath  = Join-Path $distDir "$rootName.zip"
 $stage    = Join-Path $distDir $rootName
 
@@ -94,25 +100,14 @@ Write-Host "Added $($dlls.Count) DLL(s)"
 $stageId1 = Join-Path $stage "id1"
 New-Item -ItemType Directory -Path $stageId1 -Force | Out-Null
 
-foreach ($sub in @("materials", "mdl_skins", "progs", "shaders", "textures")) {
-    $src = Join-Path $gameDir $sub
-    if (Test-Path $src) {
-        Copy-Item $src (Join-Path $stageId1 $sub) -Recurse -Force
-        Write-Host "Added id1\$sub"
-    }
-    else {
-        Write-Warning "Skipped id1\$sub (not found in $gameDir)"
-    }
-}
-
-foreach ($f in @("BlueNoise_LDR_RGBA_128.ktx2", "WaterNormal_n.ktx2")) {
+foreach ($f in @("qray.pkz", "qray.materials.yaml")) {
     $src = Join-Path $gameDir $f
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stageId1 $f) -Force
         Write-Host "Added id1\$f"
     }
     else {
-        Write-Warning "Skipped id1\$f (not found in $gameDir)"
+        throw "id1\$f not found in $gameDir. Build the Release configuration first: .\build_win.ps1 Release"
     }
 }
 
@@ -125,7 +120,26 @@ foreach ($d in @("readme.md", "changelog.md", "LICENSE.txt")) {
     }
 }
 
-# 5) Create the ZIP with a top-level QuakeRay-<version>-win64 folder.
+# 4b) Licence notices for the bundled runtime DLLs.
+$licenseDir = Join-Path $stage "licenses"
+New-Item -ItemType Directory -Path $licenseDir -Force | Out-Null
+
+$openalNotices = @{
+    "COPYING"       = "OpenAL-Soft-LGPL.txt"
+    "LICENSE-pffft" = "OpenAL-Soft-pffft.txt"
+}
+foreach ($notice in $openalNotices.GetEnumerator()) {
+    $src = Join-Path $repoRoot "third_party\openal-soft\$($notice.Key)"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $licenseDir $notice.Value) -Force
+        Write-Host "Added licenses\$($notice.Value)"
+    }
+    else {
+        Write-Warning "Skipped licenses\$($notice.Value) (not found in third_party\openal-soft)"
+    }
+}
+
+# 5) Create the ZIP with a top-level QuakeRay-v<version>-win64 folder.
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 
 Add-Type -AssemblyName System.IO.Compression

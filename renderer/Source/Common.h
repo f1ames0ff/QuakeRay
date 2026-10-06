@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cassert>
+#include <cstdio>
 #include <memory>
 #include <cstring>
 #include <vulkan/vulkan.h>
@@ -61,6 +62,11 @@ VK_DEVICE_DEBUG_UTILS_FUNCTION_LIST
 void InitInstanceExtensionFunctions_DebugUtils(VkInstance instance);
 void InitDeviceExtensionFunctions(VkDevice device);
 void InitDeviceExtensionFunctions_DebugUtils(VkDevice device);
+bool InitInstanceExtensionFunctions_SurfaceCapabilities2(VkInstance instance);
+bool InitDeviceExtensionFunctions_PresentWait2(VkDevice device);
+
+extern PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR sVkGetPhysicalDeviceSurfaceCapabilities2KHR;
+extern PFN_vkWaitForPresent2KHR sVkWaitForPresent2KHR;
 
 #pragma endregion
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -25,13 +25,14 @@ struct EffectColorTint_PushConst
 
 #define EFFECT_PUSH_CONST_T EffectColorTint_PushConst
 #include "EfSimple.hlsli"
+#include "ColorCompositing.hlsli"
 
 float3 applyTint(float3 color)
 {
     float3 tint = float3(push.custom.r, push.custom.g, push.custom.b);
 
     float t = push.custom.intensity * clamp(getLuminance(color), 0.05, 1.0) * getProgress();
-    return lerp(color, tint, t);
+    return colorApplyTint(color, tint, t);
 }
 
 #define APPLY_RADIAL_OFFSET 1
@@ -55,5 +56,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float3 rgb = applyTint(effect_loadFromSource(pix));
 #endif
 
-    effect_storeToTarget(rgb, pix);
+    effect_storeToTarget(colorLimitPreserveHue(rgb, 1.0), pix);
 }

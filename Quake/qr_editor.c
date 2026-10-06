@@ -5,14 +5,15 @@
 // While the editor runs the view belongs to a free camera (the player stands
 // still): aim with the crosshair, fire selects the face under it and opens the
 // material panel on the right edge of the screen. The panel is Dear ImGui
-// (Quake/qr_gui.cpp), and it edits the materials.yaml parameters of every
+// (Quake/qr_gui.cpp), and it edits the qray.materials.yaml parameters of every
 // animation frame of the picked texture (medkits, blinking buttons, ...).
 // The world is frozen while the editor runs (the server is paused and cl.time
 // stands still, so nothing animates). Apply writes the session to
-// materials.editor.yaml; Exit asks whether to save, and only Save copies the
-// session file over <gamedir>/materials.yaml (backing the previous file up as
-// backup_materials.yaml) — a mod's materials.yaml overrides the id1 one, both
-// because it is loaded after it and because Save writes to the mod's file.
+// qray.materials.editor.yaml; Exit asks whether to save, and only Save copies
+// the session file over <gamedir>/qray.materials.yaml (backing the previous
+// file up as qray.backup_materials.yaml) — a mod's qray.materials.yaml overrides
+// the id1 one, both because it is loaded after it and because Save writes to the
+// mod's file.
 //
 // Editing model: the editor mutates the live rt_material_t structs and
 // re-synthesizes the affected textures (TexMgr_ReloadImagesForMaterial). That
@@ -24,9 +25,8 @@
 // so Cancel/Exit can restore the yaml state.
 //
 // The light editor shares the camera and the session
-// flow but owns two files: the emitter overrides of <gamedir>/lights.yaml and
-// the level's custom dlights and fog in <gamedir>/qray/lights.yaml, each with
-// its own session and backup file.
+// flow and keeps its emitter overrides and the level's custom dlights and fog
+// in one file, <gamedir>/qray.lights.yaml, with its own session and backup.
 
 #include "quakedef.h"
 #include "glquake.h"
@@ -43,22 +43,24 @@
 #include "console.h"
 #include "mathlib.h"
 #include "input.h"
+#include "cursor.h"
 #include "vid.h"
 #include "atomics.h"
 
 #include "SDL.h"
 
-#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <commdlg.h>
-#endif
 
 #include "qr_editor.h"
 #include "qr_gui.h"
+#include "photocam.h"
+#include "observer.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <math.h>
 #include <stdarg.h>
 
@@ -73,16 +75,17 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea;
-extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale, rt_water_aciddensity;
+extern cvar_t rt_model_lights;
+extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minarea;
+extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale;
 
 // The level's own fog (gl_fog.c): read through the getters and written through
-// the `fog` command, the same path a map's key and the console use. Whether the
-// fog is drawn at all is the rt_level_fog switch (gl_vidsdl.c), which the level's
-// section may carry too.
+// the `fog` command, the same path a map's key and the console use; a density of
+// 0 draws no fog.
 float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
+qboolean Fog_Enabled (void);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
-extern cvar_t rt_level_fog;                          // gl_vidsdl.c
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -107,93 +110,100 @@ enum
 	PARAM_ROUGH,
 	PARAM_METAL,
 	PARAM_BASEF,
-	PARAM_LBRIGHT,
-	PARAM_LUPOFF,
-	PARAM_EFOCUS,
-	PARAM_ESOFT,
-	PARAM_EPROJ,
-	PARAM_LCOLOR,
-	PARAM_ISLIGHT,
-	PARAM_LSTYLES,
 	PARAM_METALALPHA,
 	PARAM_MIRROR,
 	PARAM_EXACTN,
 	PARAM_FRAST,
+	PARAM_ISLIGHT,
+	PARAM_LSTYLES,
+	PARAM_LCOLOR,
+	PARAM_LBRIGHT,
+	PARAM_EFOCUS,
+	PARAM_ESOFT,
+	PARAM_EPROJ,
 	PARAM_CEMIS,
 	PARAM_COUNT,
 };
 
 static const struct qre_param_s
 {
+	const char *section;
 	const char *label;
 	int         type;
 	float       min, max, step;
 	const char *tip;
 } qre_params[PARAM_COUNT] = {
-	[PARAM_BASE]     = { "texture_base",     QRE_T_TEXT,  0, 0, 0,
+	[PARAM_BASE]     = { "Textures", "texture_base",     QRE_T_TEXT,  0, 0, 0,
 	                     "The diffuse texture. NONE keeps the map's own; an authored file replaces it." },
-	[PARAM_NORMALS]  = { "texture_normals",  QRE_T_TEXT,  0, 0, 0,
+	[PARAM_NORMALS]  = { NULL, "texture_normals",  QRE_T_TEXT,  0, 0, 0,
 	                     "Per-pixel bump direction. Its alpha channel can drive metalness_from_normal_alpha." },
-	[PARAM_EMISSIVE] = { "texture_emissive", QRE_T_TEXT,  0, 0, 0,
+	[PARAM_EMISSIVE] = { NULL, "texture_emissive", QRE_T_TEXT,  0, 0, 0,
 	                     "A luma mask image: what is bright in it is what the surface emits. Replaces color_emissive." },
-	[PARAM_GLOSS]    = { "texture_gloss",    QRE_T_TEXT,  0, 0, 0,
+	[PARAM_GLOSS]    = { NULL, "texture_gloss",    QRE_T_TEXT,  0, 0, 0,
 	                     "White means mirror-smooth, black means rough (roughness = 1 - gloss). Ignored while roughness_override is set." },
-	[PARAM_BUMP]     = { "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
+	[PARAM_BUMP]     = { "Surface", "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
 	                     "How pronounced the normal map's bumps are. Needs texture_normals." },
-	[PARAM_ROUGH]    = { "roughness_override", QRE_T_FLOAT, 0, 1, 0.01f,
+	[PARAM_ROUGH]    = { NULL, "roughness_override", QRE_T_FLOAT, 0, 1, 0.01f,
 	                     "Ignore the gloss map and pin the roughness. 0 leaves it to the gloss; mirror forces 0." },
-	[PARAM_METAL]    = { "metalness_factor", QRE_T_FLOAT, 0, 1, 0.01f,
+	[PARAM_METAL]    = { NULL, "metalness_factor", QRE_T_FLOAT, 0, 1, 0.01f,
 	                     "How metal-like the surface is. With metalness_from_normal_alpha it scales that mask." },
-	[PARAM_BASEF]    = { "base_factor",      QRE_T_FLOAT, 0, 4, 0.01f,
+	[PARAM_BASEF]    = { NULL, "base_factor",      QRE_T_FLOAT, 0, 4, 0.01f,
 	                     "Multiplies the albedo: dims or lifts the whole texture." },
-	[PARAM_LBRIGHT]  = { "light_brightness", QRE_T_FLOAT, 0, 100, 0.01f,
-	                     "How bright the light the surface casts is; the visible glow is set by emissive_factor and does not change with this." },
-	[PARAM_LUPOFF]   = { "light_upoffset",   QRE_T_FLOAT, -64, 64, 0.5f,
-	                     "Lifts the cast light above the model's origin (alias models)." },
-	[PARAM_EFOCUS]   = { "emissive_focus",   QRE_T_FLOAT, -1, 88.99f, 0.01f,
-	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond; -1 keeps the default wide lobe. The edge is softened inward from this angle by emissive_focus_soft." },
-	[PARAM_ESOFT]    = { "emissive_focus_soft", QRE_T_FLOAT, -1, 88.99f, 0.01f,
-	                     "How wide the beam's soft edge is, in absolute degrees: brightness holds to (emissive_focus - emissive_focus_soft) and then falls smoothly (smoothstep squared) to zero at the focus angle, so the edge always grows inward from it. -1 = a tenth of the focus (the renderer's default); 0 = a nearly hard edge. In a projector it blurs the projected pattern too." },
-	[PARAM_EPROJ]    = { "emissive_projector", QRE_T_BOOL, 0, 0, 0,
-	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (emissive_focus; no key = 60 degrees) and emissive_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
-	[PARAM_CEMIS]    = { "color_emissive",   QRE_T_BOOL,  0, 0, 0,
-	                     "Glow by colour: every block below matches its own colour and carries its own threshold, feather, emissive_factor and blend." },
-	[PARAM_ISLIGHT]  = { "is_light",         QRE_T_BOOL,  0, 0, 0,
-	                     "The surface casts light into the scene, not only glows (BSP faces; models light from light_color)." },
-	[PARAM_LSTYLES]  = { "light_styles",     QRE_T_BOOL,  0, 0, 0,
-	                     "Tick to let the map's light styles dim this light; off by default, so a light stays at full brightness unless it asks otherwise." },
-	[PARAM_METALALPHA] = { "metalness_from_normal_alpha", QRE_T_BOOL, 0, 0, 0,
+	[PARAM_METALALPHA] = { NULL, "metalness_from_normal_alpha", QRE_T_BOOL, 0, 0, 0,
 	                     "Read metalness from the normal map's alpha channel instead of a flat factor." },
-	[PARAM_MIRROR]   = { "mirror",           QRE_T_BOOL,  0, 0, 0,
+	[PARAM_MIRROR]   = { NULL, "mirror",           QRE_T_BOOL,  0, 0, 0,
 	                     "Mirror-smooth reflection; roughness is forced to 0." },
-	[PARAM_EXACTN]   = { "exact_normals",    QRE_T_BOOL,  0, 0, 0,
+	[PARAM_EXACTN]   = { "Model", "exact_normals",    QRE_T_BOOL,  0, 0, 0,
 	                     "Use the model's own vertex normals instead of generated ones (models only)." },
-	[PARAM_FRAST]    = { "force_rasterize",  QRE_T_BOOL,  0, 0, 0,
+	[PARAM_FRAST]    = { NULL, "force_rasterize",  QRE_T_BOOL,  0, 0, 0,
 	                     "Draw the model or sprite with the rasterizer instead of tracing it (models only)." },
-	[PARAM_LCOLOR]   = { "light_color",      QRE_T_COLOR, 0, 0, 0,
-	                     "The colour of the light the surface casts (needs is_light on BSP faces; models light by themselves)." },
+	[PARAM_ISLIGHT]  = { "", "is_light",         QRE_T_BOOL,  0, 0, 0,
+	                     "The surface casts light into the scene, not only glows." },
+	[PARAM_LSTYLES]  = { "Light", "light_styles",     QRE_T_BOOL,  0, 0, 0,
+	                     "Tick to let the map's light styles dim this light; off by default, so a light stays at full brightness unless it asks otherwise." },
+	[PARAM_LCOLOR]   = { NULL, "light_color",      QRE_T_COLOR, 0, 0, 0,
+	                     "The color of the light the surface casts; needs is_light." },
+	[PARAM_LBRIGHT]  = { NULL, "light_brightness", QRE_T_FLOAT, 0.001f, 1000, 0.0001f,
+	                     "How bright the light the surface casts is; the visible glow is set by emissive_factor and does not change with this." },
+	[PARAM_EFOCUS]   = { "Emissive", "emissive_focus",   QRE_T_FLOAT, 1, 90, 0.01f,
+	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond. The edge is softened inward from this angle by emissive_focus_soft." },
+	[PARAM_ESOFT]    = { NULL, "emissive_focus_soft", QRE_T_FLOAT, 1, 90, 0.01f,
+	                     "How wide the beam's soft edge is, in absolute degrees: brightness holds to (emissive_focus - emissive_focus_soft) and then falls smoothly (smoothstep squared) to zero at the focus angle, so the edge always grows inward from it. In a projector it blurs the projected pattern too." },
+	[PARAM_EPROJ]    = { NULL, "emissive_projector", QRE_T_BOOL, 0, 0, 0,
+	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (emissive_focus; no key = 45 degrees) and emissive_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
+	[PARAM_CEMIS]    = { NULL, "color_emissive",   QRE_T_BOOL,  0, 0, 0,
+	                     "Glow by color: every block below matches its own color and carries its own threshold, feather, emissive_factor and blend." },
 };
 
 // The emissive blend modes as the combos offer them: the index is the mode's
 // value plus one, so index 0 is "cvar" (-1) and the rest line up with
 // RT_MAT_EmissiveBlendName.
 static const char *const qre_emissive_blends[] = {
-	"cvar", "off", "normal", "screen", "overlay", "hard light", "colour dodge"
+	"cvar", "off", "normal", "screen", "overlay", "hard light", "color dodge"
 };
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-#define QRE_GROUP_MAX    12
+#define QRE_GROUP_MAX    32
+#define QRE_ENTITY_MAX   64
+#define QRE_ANIM_MAX     8
 #define QRE_DIRTY_MAX    64
 #define QRE_TOUCHED_MAX  512
 #define QRE_PREVIEW_SLOTS QRE_GROUP_MAX
 
-// One texture preview: the QrMaterial the panel draws and the pixels the colour
+// One texture preview: the QrMaterial the panel draws and the pixels the color
 // picker samples, cached under the key of what they were built from, one slot
 // per group entry so rebuilding one section never frees a material another
 // section's draw command already names.
+typedef struct
+{
+	const char *name;
+	int         first;
+	int         last;
+} qre_anim_t;
+
 typedef struct qre_preview_s
 {
 	char        key[MAX_QPATH * 2 + 32];
@@ -203,8 +213,8 @@ typedef struct qre_preview_s
 	unsigned    last_frame;
 } qre_preview_t;
 
-// What the editor edits: the surfaces (materials.yaml) or the dynamic lights
-// the emitters cast (lights.yaml). The camera, the picking and the session flow
+// What the editor edits: the surfaces (qray.materials.yaml) or the dynamic
+// lights the emitters cast (qray.lights.yaml). The camera, the picking and the flow
 // (Apply / Cancel / the exit dialog) are shared; the panel and the files differ.
 enum
 {
@@ -257,15 +267,14 @@ static struct
 	char        light_touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int         light_touched_count;
 
-	// snapshot of the custom lights and the fog that was in effect (its colour,
-	// its density and the rt_level_fog switch): the Custom tab and the Global
-	// tab edit the live state without marking anything, so this is what
-	// Cancel/Exit restore and what QRE_CustomTouched compares to
+	// snapshot of the custom lights and the fog that was in effect (its color
+	// and its density): the Custom tab and the Global tab edit the live state
+	// without marking anything, so this is what Cancel/Exit restore and what
+	// QRE_CustomTouched compares to
 	rt_custom_light_t snap_custom[RT_CUSTOM_LIGHTS_MAX];
 	int               snap_custom_count;
 	float             snap_fog_color[3];
 	float             snap_fog_density;
-	qboolean          snap_fog_enabled;
 
 	// the light editor: the light the crosshair is over, and the one selected
 	// (the panel edits the entry of the selected light's emitter)
@@ -279,9 +288,22 @@ static struct
 
 	int mat_tab;
 
+	qmodel_t  *entity_weapons[QRE_ENTITY_MAX];
+	int        entity_weapon_count;
+	qboolean   entity_list_built;
+	qmodel_t  *entity_sel_model;
+	qmodel_t  *entity_preview_model;
+	qre_anim_t entity_anims[QRE_ANIM_MAX];
+	int        entity_anim_count;
+	int        entity_anim;
+	int        entity_frame;
+
 	// the Custom tab's placement mode: "Add light" waits for the fire button and
 	// drops the new light where the crosshair hits
 	qboolean custom_placing;
+
+	qboolean          custom_cloning;
+	rt_custom_light_t clone_source;
 
 	qboolean panel_drawing;
 	qboolean stop_pending;
@@ -296,26 +318,38 @@ static struct
 	int      custom_drag_index;
 	vec3_t   custom_drag_origin;
 	vec3_t   custom_drag_dir_start;
+	vec3_t   custom_drag_vector;
 	float    custom_drag_mouse[2];
+
+	// the flying-mode drag of the light under the crosshair (Alt+LMB grabs,
+	// LMB drops, Esc returns it)
+	qboolean    light_dragging;
+	int         light_drag_kind;
+	int         light_drag_custom;
+	char        light_drag_name[MAX_QPATH];
+	char        light_drag_key[MAX_QPATH];
+	rt_light_t *light_drag_entry;
+	qboolean    light_drag_created;
+	qboolean    light_drag_backup_valid;
+	rt_light_t  light_drag_backup;
+	vec3_t      light_drag_emitter;
+	vec3_t      light_drag_custom_origin;
+
+	qboolean gizmo_fly_drag;
+	float    gizmo_fly_mouse[2];
+	vec3_t   gizmo_fly_anchor_local;
 
 	// which of the two editors this is
 	int mode;
 	qboolean choosing;
 
-	// the session files, resolved on start: <gamedir>/materials.yaml is the file
-	// the editor saves to (a mod's file overrides the id1 one), while
-	// materials.editor.yaml carries the session until the exit dialog decides and
-	// backup_materials.yaml keeps the target as it was before a save
+	// the session files, resolved on start: <gamedir>/qray.materials.yaml (or
+	// qray.lights.yaml) is the file the editor saves to (a mod's file overrides
+	// the id1 one), the .editor.yaml file carries the session until the exit
+	// dialog decides and the backup keeps the target as it was before a save
 	char target_file[MAX_OSPATH];
 	char editor_file[MAX_OSPATH];
 	char backup_file[MAX_OSPATH];
-
-	// the light editor has a second session for the custom lights and the fog:
-	// <gamedir>/qray/lights.yaml with its own session and backup files (the
-	// emitter overrides keep the gamedir's lights.yaml and its session)
-	char custom_target_file[MAX_OSPATH];
-	char custom_editor_file[MAX_OSPATH];
-	char custom_backup_file[MAX_OSPATH];
 
 	// a material created by the editor for a texture that has none in yaml
 	rt_material_t tmp_mat;
@@ -324,12 +358,14 @@ static struct
 	// the exit dialog is up: Save/Discard, the editor keeps running until
 	// answered; prompt_from_flying is the mode to go back to when dismissed
 	qboolean exit_prompt;
+	qboolean reset_prompt;
+	qboolean reset_pending;
 	qboolean prompt_from_flying;
 
 	// the pause state the editor found, restored when it closes
 	qboolean sv_paused_prev;
 
-	// the base-texture previews of the selected material (the emissive colour
+	// the base-texture previews of the selected material (the emissive color
 	// picker): one slot per group entry in flight, so a section rebuild never
 	// destroys a material an earlier section's draw command still names
 	qre_preview_t preview[QRE_PREVIEW_SLOTS];
@@ -356,6 +392,11 @@ static qboolean QRE_WriteSession (void);
 static qboolean QRE_FileExists (const char *path);
 static void     QRE_SessionSave (void);
 static void     QRE_SessionDiscard (void);
+static void     QRE_ClearSessionState (void);
+static void     QRE_ResetAll (void);
+static void     QRE_CancelLightDrag (void);
+static void     QRE_UpdateLightDrag (void);
+static void     QRE_CustomGizmoCancel (void);
 static qboolean QRE_BrowseTexture (char *out, size_t outsize);
 
 // ---------------------------------------------------------------------------
@@ -478,7 +519,6 @@ static void QRE_TakeCustomSnapshot (void)
 	qre.snap_fog_color[1] = color[1];
 	qre.snap_fog_color[2] = color[2];
 	qre.snap_fog_density = Fog_GetDensity ();
-	qre.snap_fog_enabled = CVAR_TO_BOOL (rt_level_fog);
 }
 
 static void QRE_RestoreCustomSnapshot (void)
@@ -501,10 +541,6 @@ static void QRE_RestoreCustomSnapshot (void)
 		                  CLAMP (0.0f, qre.snap_fog_color[1], 1.0f),
 		                  CLAMP (0.0f, qre.snap_fog_color[2], 1.0f)));
 	}
-
-	// the fog switch is a plain cvar: it goes back straight away
-	if (CVAR_TO_BOOL (rt_level_fog) != qre.snap_fog_enabled)
-		Cvar_Set ("rt_level_fog", qre.snap_fog_enabled ? "1" : "0");
 }
 
 // Whether the live custom list or the fog differs from the snapshot: what the
@@ -525,16 +561,11 @@ static qboolean QRE_CustomTouched (void)
 	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
 		return true;
 
-	// a change of only the rt_level_fog checkbox counts too: the section
-	// carries the switch as "enabled"
-	if (CVAR_TO_BOOL (rt_level_fog) != qre.snap_fog_enabled)
-		return true;
-
 	return false;
 }
 
-// The light editor owns two sessions: the emitter overrides of the gamedir's
-// lights.yaml and the custom lights and fog of qray/lights.yaml.
+// The light editor's session: the emitter overrides and the custom lights and
+// fog, both kept in the gamedir's qray.lights.yaml.
 static qboolean QRE_LightSessionTouched (void)
 {
 	return (qre.light_touched_count > 0 || QRE_CustomTouched () || QRE_GlobalsTouched ()) ? true : false;
@@ -763,7 +794,7 @@ static void QRE_EnsureLive (int g)
 
 static void QRE_GetColor (const rt_material_t *m, int param, qboolean *enabled, float *rgb)
 {
-	(void)param; // only light_color is a single colour now; color_emissive is a list
+	(void)param; // only light_color is a single color now; color_emissive is a list
 	*enabled = m->has_light_color;
 	VectorCopy (m->light_color, rgb);
 }
@@ -798,9 +829,8 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_METAL:    return m->metalness_factor;
 	case PARAM_BASEF:    return m->base_factor;
 	case PARAM_LBRIGHT:  return m->light_brightness;
-	case PARAM_LUPOFF:   return m->light_upoffset;
-	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : -1.0f;
-	case PARAM_ESOFT:    return m->emissive_focus_soft;
+	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : 45.0f;
+	case PARAM_ESOFT:    return m->emissive_focus_soft >= 0.0f ? m->emissive_focus_soft : 45.0f;
 	default:             return 0.0f;
 	}
 }
@@ -851,7 +881,6 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_ROUGH:    m->roughness_override = value; break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
-	case PARAM_LUPOFF:   m->light_upoffset = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
 	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
 	default:             break;
@@ -1001,6 +1030,7 @@ static void QRE_ResolveGroup (const char *texname)
 			// its :frameN names resolve, so a stale base entry stays hidden
 			// (for a texture ring the base is a real material and is shown).
 			if (qre.pick_model && qre.pick_model->type != mod_brush &&
+			    q_strcasecmp (texname, groupbase) != 0 &&
 			    !q_strcasecmp (list[i].name, groupbase))
 				continue;
 			if (!QRE_NameInGroup (list[i].name, groupbase))
@@ -1714,10 +1744,12 @@ static void QRE_DoLightPick (qboolean select)
 	            qre.sel_light.kind == RT_LIGHT_KIND_DLIGHT ? "legacy dlight" :
 	            qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM ? "custom light" : "map light");
 
-	// An authored light is edited in the Custom tab: open it right away, so the
-	// click that selected the light lands on its row.
+	// The picked light opens its own tab: an emitter light is edited in Entity,
+	// an authored one in Custom, so the click lands on its rows.
 	if (qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM)
 		qre.light_tab = 1;
+	else
+		qre.light_tab = 0;
 
 	QRE_CursorMode (true);
 }
@@ -1922,6 +1954,56 @@ static void QRE_DrawLightWireframes (void)
 	QRE_DrawGizmoArrows ();
 }
 
+// Opens one texture's material group in the panel: the pick path and the
+// Entities tab both end here.
+static void QRE_OpenMaterial (qmodel_t *model, msurface_t *surf, entity_t *ent, gltexture_t *glt)
+{
+	char texname[MAX_QPATH];
+	char *dot;
+	int   i;
+
+	if (!glt)
+		return;
+	if (!QR_GUI_Ready ())
+	{
+		QRE_Notify ("the ImGui panel is not available");
+		return;
+	}
+
+	qre.pick_model = model;
+	qre.pick_surf = surf;
+	qre.pick_ent = ent;
+	qre.pick_glt = glt;
+	qre.hover_model = NULL;
+	qre.hover_surf = NULL;
+	qre.hover_ent = NULL;
+	qre.hover_glt = NULL;
+
+	RT_MAT_NormalizeName (glt->name, texname, sizeof (texname));
+	dot = strrchr (texname, '.');
+	if (dot && !strchr (dot, ':'))
+		*dot = '\0';
+
+	q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
+
+	if (qre.mode == QRE_MODE_LIGHT)
+	{
+		Con_Printf ("qr light editor: picked emitter '%s'\n", texname);
+	}
+	else
+	{
+		QRE_ResolveGroup (texname);
+
+		Con_Printf ("qr editor: picked '%s' (%d material(s) in the group)\n", texname, qre.group_count);
+		for (i = 0; i < qre.group_count; i++)
+			Con_Printf ("qr editor:   group material '%s'\n", qre.group[i]->name);
+	}
+
+	// the panel owns the mouse: free the cursor (keeping its motion events
+	// for ImGui), freeze the camera
+	QRE_CursorMode (true);
+}
+
 // Hover pick (crosshair, flying) or select pick (fire button).
 static void QRE_DoPick (qboolean select)
 {
@@ -1955,52 +2037,10 @@ static void QRE_DoPick (qboolean select)
 		return;
 	}
 
-	if (!glt)
-		return;
-	if (!QR_GUI_Ready ())
-	{
-		QRE_Notify ("the ImGui panel is not available");
-		return;
-	}
+	qre.entity_sel_model = NULL;
+	qre.entity_preview_model = NULL;
 
-	qre.pick_model = model;
-	qre.pick_surf = surf;
-	qre.pick_ent = ent;
-	qre.pick_glt = glt;
-	qre.hover_model = NULL;
-	qre.hover_surf = NULL;
-	qre.hover_ent = NULL;
-	qre.hover_glt = NULL;
-
-	{
-		char texname[MAX_QPATH];
-		char *dot;
-		int   i;
-
-		RT_MAT_NormalizeName (glt->name, texname, sizeof (texname));
-		dot = strrchr (texname, '.');
-		if (dot && !strchr (dot, ':'))
-			*dot = '\0';
-
-		q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
-
-		if (qre.mode == QRE_MODE_LIGHT)
-		{
-			Con_Printf ("qr light editor: picked emitter '%s'\n", texname);
-		}
-		else
-		{
-			QRE_ResolveGroup (texname);
-
-			Con_Printf ("qr editor: picked '%s' (%d material(s) in the group)\n", texname, qre.group_count);
-			for (i = 0; i < qre.group_count; i++)
-				Con_Printf ("qr editor:   group material '%s'\n", qre.group[i]->name);
-		}
-	}
-
-	// the panel owns the mouse: free the cursor (keeping its motion events
-	// for ImGui), freeze the camera
-	QRE_CursorMode (true);
+	QRE_OpenMaterial (model, surf, ent, glt);
 }
 
 // ---------------------------------------------------------------------------
@@ -2232,6 +2272,15 @@ void QR_Editor_UpdateView (void)
 	VectorCopy (qre.cam_origin, r_refdef.vieworg);
 	VectorCopy (cl.viewangles, r_refdef.viewangles);
 
+	if (QR_Editor_ShowViewModel ())
+	{
+		cl.viewent.model = qre.entity_preview_model;
+		cl.viewent.frame = qre.entity_frame;
+		cl.viewent.lerpflags |= LERP_RESETANIM;
+		VectorCopy (cl.viewangles, cl.viewent.angles);
+		VectorCopy (r_refdef.vieworg, cl.viewent.origin);
+	}
+
 	// Before the frame renders: a re-synthesis replaces the material handles,
 	// and the world's static upload (R_DrawWorldTask) runs later in this frame,
 	// so the re-upload the flush asks for happens in the same frame.
@@ -2243,7 +2292,7 @@ void QR_Editor_UpdateView (void)
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Texture preview (the emissive colour picker)
+// Texture preview (the emissive color picker)
 // ---------------------------------------------------------------------------
 
 static void QRE_FreePreview (void)
@@ -2264,7 +2313,7 @@ static void QRE_FreePreview (void)
 
 // The pixels the emissive mask is synthesized from: the author's texture_base
 // when the material has one, the engine texture of the picked face otherwise.
-// The eyedropper samples this copy, so a picked colour is the colour the
+// The eyedropper samples this copy, so a picked color is the color the
 // synthesis will match, and the same pixels become the preview's QrMaterial.
 // A slot stays alive while the frame still draws it; a failed load is cached
 // too, so a texture that cannot be read is not decoded once per frame.
@@ -2389,7 +2438,7 @@ static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *o
 
 	if (p == PARAM_CEMIS)
 	{
-		// every block's colour and tone controls count as one parameter
+		// every block's color and tone controls count as one parameter
 		return m->has_color_emissive != orig->has_color_emissive ||
 		       memcmp (m->color_emissive, orig->color_emissive, sizeof (m->color_emissive)) != 0;
 	}
@@ -2471,7 +2520,7 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		float    rgb[3];
 		int      c;
 
-		// the channels are restored even behind a disabled colour: enabling it
+		// the channels are restored even behind a disabled color: enabling it
 		// again has to show the original tint, not the last one edited
 		QRE_GetColor (orig, p, &enabled, rgb);
 		for (c = 0; c < 3; c++)
@@ -2484,10 +2533,11 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 	}
 }
 
-// The Emissive section of a material: the eyedropper preview, the colour list
-// and the "+" that adds one. The preview comes first so adding colours never
-// pushes it off the panel, and a click picks into the last colour — adding a
-// colour is the button's job.
+// The Emissive section of a material: the color blocks with their previews (the
+// eyedropper for a color, the polygon editor for a mask) and the buttons that
+// add one. The preview comes first so adding blocks never pushes it off the
+// panel, and a click picks into the last color — adding a block is the button's
+// job.
 static void QRE_EmissiveEditor (int g)
 {
 	rt_material_t *m = qre.group[g];
@@ -2498,66 +2548,113 @@ static void QRE_EmissiveEditor (int g)
 		char     id[32];
 		char     label[32];
 		qboolean open;
+		qboolean poly;
 
 		q_snprintf (id, sizeof (id), "cemis%d", ci);
-		q_snprintf (label, sizeof (label), "Colour %d", ci + 1);
+		poly = (m->color_emissive[ci].poly_count >= 3) ? true : false;
+		q_snprintf (label, sizeof (label), poly ? "Mask %d" : "Color %d", ci + 1);
 
 		QR_GUI_PushID (id);
 		open = QR_GUI_Section (label, 1) ? true : false;
 
 		if (open)
 		{
-			const int res = QR_GUI_ColorRow ("##color", m->color_emissive[ci].color,
-			                                 "The colour this block matches, up to the threshold's distance.");
-
-			if (res & 1)
-				QRE_MarkDirty (m);
-			if (res & 2)
+			if (poly)
 			{
-				int k;
-
-				for (k = ci; k + 1 < m->color_emissive_count; k++)
-					m->color_emissive[k] = m->color_emissive[k + 1];
-				m->color_emissive_count--;
-				if (m->color_emissive_count == 0)
-					m->has_color_emissive = false;
-				QRE_MarkDirty (m);
-				QR_GUI_PopID ();
-				break;
-			}
-
-			// this block's own preview: the eyedropper picks a colour into it
-			{
-				qre_preview_t *slot = QRE_PreviewFor (m);
-
-				if (slot)
+				if (QR_GUI_Button ("Remove mask"))
 				{
-					float u = 0.5f, v = 0.5f;
+					int k;
 
-					if (QR_GUI_ImagePick ("##color_pick", (int64_t)slot->mat, slot->w, slot->h, &u, &v))
+					for (k = ci; k + 1 < m->color_emissive_count; k++)
+						m->color_emissive[k] = m->color_emissive[k + 1];
+					m->color_emissive_count--;
+					if (m->color_emissive_count == 0)
+						m->has_color_emissive = false;
+					QRE_MarkDirty (m);
+					QR_GUI_PopID ();
+					break;
+				}
+				QR_GUI_Tooltip ("Remove this mask block");
+
+				// this block's own preview: the polygon editor draws and edits
+				// the mask over the texture
+				{
+					qre_preview_t *slot = QRE_PreviewFor (m);
+
+					if (slot)
 					{
-						const int   px = CLAMP (0, (int)(u * (float)slot->w), slot->w - 1);
-						const int   py = CLAMP (0, (int)(v * (float)slot->h), slot->h - 1);
-						const byte *pix = slot->pixels + ((size_t)py * (size_t)slot->w + (size_t)px) * 4;
+						float poly_uv[RT_MAT_EMIS_POLY_MAX][2];
+						int   poly_count = m->color_emissive[ci].poly_count;
 
-						QRE_EnsureLive (g);
-						m = qre.group[g];
-						m->color_emissive[ci].color[0] = pix[0] / 255.0f;
-						m->color_emissive[ci].color[1] = pix[1] / 255.0f;
-						m->color_emissive[ci].color[2] = pix[2] / 255.0f;
-						QRE_MarkDirty (m);
+						memcpy (poly_uv, m->color_emissive[ci].poly_uv, sizeof (poly_uv));
+
+						if (QR_GUI_PolygonEdit ("##mask_pick", (int64_t)slot->mat, slot->w, slot->h,
+						                        poly_uv, &poly_count, RT_MAT_EMIS_POLY_MAX))
+						{
+							QRE_EnsureLive (g);
+							m = qre.group[g];
+							memcpy (m->color_emissive[ci].poly_uv, poly_uv, sizeof (poly_uv));
+							m->color_emissive[ci].poly_count = poly_count;
+							QRE_MarkDirty (m);
+						}
 					}
 				}
+				QR_GUI_Tooltip ("Drag a point to move it, an edge to slide it, the mask to move the whole polygon, Ctrl+click to add a point, right-click a point to remove it");
 			}
+			else
+			{
+				const int res = QR_GUI_ColorRow ("##color", m->color_emissive[ci].color,
+				                                 "The color this block matches, up to the threshold's distance.");
 
-			if (QR_GUI_SliderFloat ("color_emissive_threshold", &m->color_emissive[ci].threshold, 0.0f, 1.0f,
-			                        "How far a pixel's colour may differ from this block's colour and still glow."))
-				QRE_MarkDirty (m);
+				if (res & 1)
+					QRE_MarkDirty (m);
+				if (res & 2)
+				{
+					int k;
+
+					for (k = ci; k + 1 < m->color_emissive_count; k++)
+						m->color_emissive[k] = m->color_emissive[k + 1];
+					m->color_emissive_count--;
+					if (m->color_emissive_count == 0)
+						m->has_color_emissive = false;
+					QRE_MarkDirty (m);
+					QR_GUI_PopID ();
+					break;
+				}
+
+				// this block's own preview: the eyedropper picks a color into it
+				{
+					qre_preview_t *slot = QRE_PreviewFor (m);
+
+					if (slot)
+					{
+						float u = 0.5f, v = 0.5f;
+
+						if (QR_GUI_ImagePick ("##color_pick", (int64_t)slot->mat, slot->w, slot->h, &u, &v))
+						{
+							const int   px = CLAMP (0, (int)(u * (float)slot->w), slot->w - 1);
+							const int   py = CLAMP (0, (int)(v * (float)slot->h), slot->h - 1);
+							const byte *pix = slot->pixels + ((size_t)py * (size_t)slot->w + (size_t)px) * 4;
+
+							QRE_EnsureLive (g);
+							m = qre.group[g];
+							m->color_emissive[ci].color[0] = pix[0] / 255.0f;
+							m->color_emissive[ci].color[1] = pix[1] / 255.0f;
+							m->color_emissive[ci].color[2] = pix[2] / 255.0f;
+							QRE_MarkDirty (m);
+						}
+					}
+				}
+
+				if (QR_GUI_SliderFloat ("color_emissive_threshold", &m->color_emissive[ci].threshold, 0.0f, 1.0f,
+				                        "How far a pixel's color may differ from this block's color and still glow."))
+					QRE_MarkDirty (m);
+			}
 			{
 				int feather = (int)(m->color_emissive[ci].feather + 0.5f);
 
 				if (QR_GUI_SliderInt ("color_emissive_feather", &feather, 0, 16,
-				                      "Softens this block's mask edge over this many pixels, on both sides of it, without comparing colours."))
+				                      "Softens this block's mask edge over this many pixels, extending it outward without dimming the pixels it selected."))
 				{
 					m->color_emissive[ci].feather = (float)feather;
 					QRE_MarkDirty (m);
@@ -2583,7 +2680,7 @@ static void QRE_EmissiveEditor (int g)
 
 	if (m->color_emissive_count < RT_MAT_MAX_EMISSIVE_COLORS)
 	{
-		if (QR_GUI_Button ("+"))
+		if (QR_GUI_Button ("Add color"))
 		{
 			rt_emissive_t *block;
 
@@ -2602,133 +2699,183 @@ static void QRE_EmissiveEditor (int g)
 			m->has_color_emissive = true;
 			QRE_MarkDirty (m);
 		}
-		QR_GUI_Tooltip ("Add a colour block (up to ten)");
+		QR_GUI_Tooltip ("Add a color block: it glows where the texture matches its color (up to ten)");
+		QR_GUI_SameLine ();
+		if (QR_GUI_Button ("Add mask"))
+		{
+			rt_emissive_t *block;
+
+			QRE_EnsureLive (g);
+			m = qre.group[g];
+			block = &m->color_emissive[m->color_emissive_count];
+			memset (block, 0, sizeof (*block));
+			block->color[0] = 1.0f;
+			block->threshold = (m->color_emissive_threshold > 0.0f) ? m->color_emissive_threshold : 0.02f;
+			block->feather = m->color_emissive_feather;
+			block->factor = m->emissive_factor;
+			block->blend = m->emissive_blend;
+			block->has_threshold = block->has_feather = true;
+			block->has_factor = block->has_blend = true;
+			block->poly_count = 4;
+			block->poly_uv[0][0] = 0.25f; block->poly_uv[0][1] = 0.25f;
+			block->poly_uv[1][0] = 0.75f; block->poly_uv[1][1] = 0.25f;
+			block->poly_uv[2][0] = 0.75f; block->poly_uv[2][1] = 0.75f;
+			block->poly_uv[3][0] = 0.25f; block->poly_uv[3][1] = 0.75f;
+			m->color_emissive_count++;
+			m->has_color_emissive = true;
+			QRE_MarkDirty (m);
+		}
+		QR_GUI_Tooltip ("Add a mask block: a white square over the texture; drag its points to shape the glow (up to ten)");
 	}
+}
+
+static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
+{
+	const char   *label = qre_params[p].label;
+	const char   *tip   = qre_params[p].tip;
+	// re-read every iteration: the first change of a material that has no
+	// yaml entry moves qre.group[g] into the live list (QRE_EnsureLive)
+	rt_material_t *m = qre.group[g];
+	// mirror drives roughness on its own (the synthesis gives it the last
+	// word): the override is meaningless there, and is locked at 0
+	const qboolean mirror_locks_rough = (p == PARAM_ROUGH && m->mirror);
+	const qboolean is_light_locks_color = (p == PARAM_LCOLOR && !m->is_light);
+
+	if (mirror_locks_rough || is_light_locks_color)
+		QR_GUI_PushDisabled (1);
+
+	switch (qre_params[p].type)
+	{
+	case QRE_T_TEXT:
+	{
+		char buf[MAX_QPATH];
+		int  res;
+		char file[MAX_QPATH];
+
+		q_strlcpy (buf, QRE_GetText (m, p), sizeof (buf));
+		res = QR_GUI_TexturePath (label, buf, sizeof (buf), tip);
+		if (res & 1)
+		{
+			// NONE typed by hand means "no texture", as an empty field does.
+			// Normalize before the compare: typing NONE into an empty field
+			// is not an edit, and it must not create the material.
+			if (!q_strcasecmp (buf, "NONE"))
+				buf[0] = '\0';
+			if (strcmp (buf, QRE_GetText (m, p)))
+				QRE_SetText (g, p, buf);
+		}
+		if (res & 2)
+		{
+			if (QRE_BrowseTexture (file, sizeof (file)))
+				QRE_SetText (g, p, file);
+		}
+		break;
+	}
+	case QRE_T_FLOAT:
+	{
+		float       value = QRE_GetFloat (m, p);
+		const float step = qre_params[p].step;
+		const float grid = (step > 0.0f && step < 0.01f) ? step : 0.01f;
+
+		if (QR_GUI_SliderFloatFmt (label, &value, qre_params[p].min, qre_params[p].max,
+		                           grid < 0.01f ? "%.4f" : "%.2f", tip))
+		{
+			// the panel shows the parameter's precision; a value out of the
+			// slider (or typed) is snapped to that grid. A reset does not pass
+			// through here, so it restores the snapshot exactly.
+			QRE_SetFloat (g, p, roundf (value / grid) * grid);
+		}
+		break;
+	}
+	case QRE_T_INT:
+	{
+		int value = QRE_GetInt (m, p);
+
+		if (QR_GUI_SliderInt (label, &value, (int)qre_params[p].min, (int)qre_params[p].max, tip))
+			QRE_SetInt (g, p, value);
+		break;
+	}
+	case QRE_T_BOOL:
+	{
+		int value = QRE_GetBool (m, p) ? 1 : 0;
+		if (QR_GUI_Checkbox (label, &value, tip))
+			QRE_SetBool (g, p, value != 0);
+		break;
+	}
+	case QRE_T_COLOR:
+	{
+		qboolean enabled;
+		float    rgb[3];
+		float    old_rgb[3];
+		int      en;
+		int      c;
+
+		QRE_GetColor (m, p, &enabled, rgb);
+		VectorCopy (rgb, old_rgb);
+		en = enabled ? 1 : 0;
+
+		if (QR_GUI_ColorHex (label, rgb, &en, tip))
+		{
+			if (!en)
+			{
+				QRE_SetColorEnabled (g, p, false);
+			}
+			else
+			{
+				QRE_SetColorEnabled (g, p, true);
+				for (c = 0; c < 3; c++)
+					if (rgb[c] != old_rgb[c])
+						QRE_SetColorChannel (g, p, c, rgb[c]);
+			}
+		}
+		break;
+	}
+	default:
+		break;
+	}
+
+	// Reset one parameter to the state it had when the editor started
+	// (or to the defaults, for a material the editor created itself).
+	m = qre.group[g];
+	if (QR_GUI_ResetButton (label, !mirror_locks_rough && !is_light_locks_color && QRE_ParamChanged (m, orig, p)))
+		QRE_ResetParam (g, p, orig);
+
+	if (mirror_locks_rough || is_light_locks_color)
+		QR_GUI_PopDisabled ();
 }
 
 static void QRE_ParamWidgets (int g)
 {
 	rt_material_t        defbuf;
 	const rt_material_t *orig = QRE_OriginalOf (qre.group[g], &defbuf);
+	const char          *section = NULL;
 	int                  p;
 
 	for (p = 0; p < PARAM_COUNT; p++)
 	{
-		const char   *label = qre_params[p].label;
-		const char   *tip   = qre_params[p].tip;
-		// re-read every iteration: the first change of a material that has no
-		// yaml entry moves qre.group[g] into the live list (QRE_EnsureLive)
-		rt_material_t *m = qre.group[g];
-		// mirror drives roughness on its own (the synthesis gives it the last
-		// word): the override is meaningless there, and is locked at 0
-		const qboolean mirror_locks_rough = (p == PARAM_ROUGH && m->mirror);
+		if (p >= PARAM_LSTYLES && p <= PARAM_LBRIGHT && !qre.group[g]->is_light)
+			continue;
 
-		if (mirror_locks_rough)
-			QR_GUI_PushDisabled (1);
-
-		switch (qre_params[p].type)
+		if (qre_params[p].section && (!section || strcmp (section, qre_params[p].section)))
 		{
-		case QRE_T_TEXT:
-		{
-			char buf[MAX_QPATH];
-			int  res;
-			char file[MAX_QPATH];
-
-			q_strlcpy (buf, QRE_GetText (m, p), sizeof (buf));
-			res = QR_GUI_TexturePath (label, buf, sizeof (buf), tip);
-			if (res & 1)
-			{
-				// NONE typed by hand means "no texture", as an empty field does.
-				// Normalize before the compare: typing NONE into an empty field
-				// is not an edit, and it must not create the material.
-				if (!q_strcasecmp (buf, "NONE"))
-					buf[0] = '\0';
-				if (strcmp (buf, QRE_GetText (m, p)))
-					QRE_SetText (g, p, buf);
-			}
-			if (res & 2)
-			{
-				if (QRE_BrowseTexture (file, sizeof (file)))
-					QRE_SetText (g, p, file);
-			}
-			break;
-		}
-		case QRE_T_FLOAT:
-		{
-			float value = QRE_GetFloat (m, p);
-			if (QR_GUI_SliderFloat (label, &value, qre_params[p].min, qre_params[p].max, tip))
-			{
-				// the panel shows two decimals; a value out of the slider (or
-				// typed) is snapped to that grid. A reset does not pass through
-				// here, so it restores the snapshot exactly.
-				QRE_SetFloat (g, p, roundf (value * 100.0f) / 100.0f);
-			}
-			break;
-		}
-		case QRE_T_INT:
-		{
-			int value = QRE_GetInt (m, p);
-
-			if (QR_GUI_SliderInt (label, &value, (int)qre_params[p].min, (int)qre_params[p].max, tip))
-				QRE_SetInt (g, p, value);
-			break;
-		}
-		case QRE_T_BOOL:
-		{
-			int value = QRE_GetBool (m, p) ? 1 : 0;
-			if (QR_GUI_Checkbox (label, &value, tip))
-				QRE_SetBool (g, p, value != 0);
-			break;
-		}
-		case QRE_T_COLOR:
-		{
-			qboolean enabled;
-			float    rgb[3];
-			float    old_rgb[3];
-			int      en;
-			int      c;
-
-			QRE_GetColor (m, p, &enabled, rgb);
-			VectorCopy (rgb, old_rgb);
-			en = enabled ? 1 : 0;
-
-			if (QR_GUI_ColorHex (label, rgb, &en, tip))
-			{
-				if (!en)
-				{
-					QRE_SetColorEnabled (g, p, false);
-				}
-				else
-				{
-					QRE_SetColorEnabled (g, p, true);
-					for (c = 0; c < 3; c++)
-						if (rgb[c] != old_rgb[c])
-							QRE_SetColorChannel (g, p, c, rgb[c]);
-				}
-			}
-			break;
-		}
-		default:
-			break;
+			section = qre_params[p].section;
+			if (p == PARAM_LSTYLES)
+				QR_GUI_SectionTitle (section);
+			else if (section[0])
+				QR_GUI_SectionHeader (section);
+			else
+				QR_GUI_Separator ();
 		}
 
-		// Reset one parameter to the state it had when the editor started
-		// (or to the defaults, for a material the editor created itself).
-		m = qre.group[g];
-		if (QR_GUI_ResetButton (label, !mirror_locks_rough && QRE_ParamChanged (m, orig, p)))
-			QRE_ResetParam (g, p, orig);
+		QRE_ParamRow (g, p, orig);
 
-		// The Emissive section sits right under the color_emissive checkbox row
-		// (its own row is the one just drawn); without the checkbox there is no
-		// section.
-		if (p == PARAM_CEMIS && m->has_color_emissive)
+		// The Emissive blocks sit right under the color_emissive checkbox row
+		// (its own row is the one just drawn); without the checkbox there are
+		// none.
+		if (p == PARAM_CEMIS && qre.group[g]->has_color_emissive)
 		{
-			if (QR_GUI_Section ("Emissive", 1))
-				QRE_EmissiveEditor (g);
+			QRE_EmissiveEditor (g);
 		}
-
-		if (mirror_locks_rough)
-			QR_GUI_PopDisabled ();
 	}
 }
 
@@ -2764,13 +2911,36 @@ static const struct
 	{ "rt_water_normstren",   0.0f,   4.0f, "How strongly the water's normal map bends the surface." },
 	{ "rt_water_normsharp",   0.0f,  16.0f, "Sharpness of the water's normal map: higher tightens the ripple pattern." },
 	{ "rt_water_scale",       0.0f,   4.0f, "Scale of the wave pattern over the water: larger stretches the waves." },
-	{ "rt_water_aciddensity", 0.0f, 100.0f, "How dense the acid is: higher makes its surface look thicker." },
 };
 
 static char     qre_water_snapshot[countof (qre_water)][QRE_SNAPSHOT_MAX];
 static qboolean qre_water_snapshot_set[countof (qre_water)];
 static float    qre_water_color_snapshot[3];
 static float    qre_acid_color_snapshot[3];
+
+static const char *const qre_mat_cvars[] = {
+	"rt_model_lights",
+	"rt_dtal_clearance",
+	"rt_dtal_maxpolys",
+	"rt_dtal_minarea",
+	"rt_dtal_model_minarea",
+	"rt_dtal_model_maxpolys",
+	"rt_dtal_model_budget",
+};
+
+static char     qre_mat_cvar_snapshot[countof (qre_mat_cvars)][QRE_SNAPSHOT_MAX];
+static qboolean qre_mat_cvar_snapshot_set[countof (qre_mat_cvars)];
+
+static void QRE_MatCvarsRestore (void)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
+	{
+		if (qre_mat_cvar_snapshot_set[i])
+			Cvar_Set (qre_mat_cvars[i], qre_mat_cvar_snapshot[i]);
+	}
+}
 
 static void QRE_WaterColorSet (const char *name, const float rgb[3])
 {
@@ -2801,6 +2971,21 @@ static void QRE_TakeWaterSnapshot (void)
 
 	RT_GetWaterColor (qre_water_color_snapshot);
 	RT_GetAcidColor (qre_acid_color_snapshot);
+
+	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
+	{
+		cvar_t *var = Cvar_FindVar (qre_mat_cvars[i]);
+
+		if (!var)
+		{
+			qre_mat_cvar_snapshot_set[i] = false;
+			qre_mat_cvar_snapshot[i][0] = '\0';
+			continue;
+		}
+
+		qre_mat_cvar_snapshot_set[i] = true;
+		q_strlcpy (qre_mat_cvar_snapshot[i], var->string ? var->string : "", sizeof (qre_mat_cvar_snapshot[i]));
+	}
 }
 
 static qboolean QRE_WaterTouched (void)
@@ -2824,7 +3009,21 @@ static qboolean QRE_WaterTouched (void)
 	if (memcmp (color, qre_water_color_snapshot, sizeof (color)))
 		return true;
 	RT_GetAcidColor (color);
-	return memcmp (color, qre_acid_color_snapshot, sizeof (color)) != 0;
+	if (memcmp (color, qre_acid_color_snapshot, sizeof (color)) != 0)
+		return true;
+
+	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
+	{
+		cvar_t *var;
+
+		if (!qre_mat_cvar_snapshot_set[i])
+			continue;
+
+		var = Cvar_FindVar (qre_mat_cvars[i]);
+		if (var && strcmp (var->string ? var->string : "", qre_mat_cvar_snapshot[i]))
+			return true;
+	}
+	return false;
 }
 
 static void QRE_WaterRestore (void)
@@ -2839,6 +3038,8 @@ static void QRE_WaterRestore (void)
 
 	QRE_WaterColorSet ("rt_water_color", qre_water_color_snapshot);
 	QRE_WaterColorSet ("rt_water_acidcolor", qre_acid_color_snapshot);
+
+	QRE_MatCvarsRestore ();
 }
 
 static void QRE_MatWaterSection (void)
@@ -2877,7 +3078,7 @@ static void QRE_MatWaterSection (void)
 		int   en = 1;
 
 		RT_GetWaterColor (rgb);
-		if (QR_GUI_ColorHex ("rt_water_color", rgb, &en, "The colour of the water surface."))
+		if (QR_GUI_ColorHex ("rt_water_color", rgb, &en, "The color of the water surface."))
 			QRE_WaterColorSet ("rt_water_color", rgb);
 		if (QR_GUI_ResetButton ("rt_water_color", memcmp (rgb, qre_water_color_snapshot, sizeof (rgb)) != 0))
 		{
@@ -2886,7 +3087,7 @@ static void QRE_MatWaterSection (void)
 		}
 
 		RT_GetAcidColor (rgb);
-		if (QR_GUI_ColorHex ("rt_water_acidcolor", rgb, &en, "The colour of the acid."))
+		if (QR_GUI_ColorHex ("rt_water_acidcolor", rgb, &en, "The color of the acid."))
 			QRE_WaterColorSet ("rt_water_acidcolor", rgb);
 		if (QR_GUI_ResetButton ("rt_water_acidcolor", memcmp (rgb, qre_acid_color_snapshot, sizeof (rgb)) != 0))
 		{
@@ -2896,7 +3097,7 @@ static void QRE_MatWaterSection (void)
 	}
 
 	QR_GUI_Spacing ();
-	QR_GUI_LabelDim ("the water and acid values are saved to the config by Save; Cancel puts them back");
+	QR_GUI_LabelDim ("the water, acid and DTAL values are saved to the config by Save; Cancel puts them back");
 }
 
 static void QRE_MatSystemTab (void)
@@ -2905,6 +3106,11 @@ static void QRE_MatSystemTab (void)
 	float                     value;
 	int                       dbg = CVAR_TO_INT32 (rt_dtal_debug);
 	int                       maxpolys;
+	int                       dtal_entities = CVAR_TO_BOOL (rt_model_lights) ? 1 : 0;
+
+	if (QR_GUI_Checkbox ("DTAL dynamic map entities", &dtal_entities,
+	                     "Light the moving map emitters (flames, lava balls and the like) from their emissive geometry (DTAL) instead of their generated dlight; the DTAL (models) limits below still bound what qualifies."))
+		Cvar_Set ("rt_model_lights", dtal_entities ? "1" : "0");
 
 	if (dbg < 0 || dbg > 2)
 		dbg = 0;
@@ -2913,6 +3119,8 @@ static void QRE_MatSystemTab (void)
 		Cvar_Set ("rt_dtal_debug", va ("%d", dbg));
 
 	QR_GUI_Spacing ();
+
+	QR_GUI_SectionHeader ("DTAL (BSP)");
 
 	value = CVAR_TO_FLOAT (rt_dtal_clearance);
 	if (QR_GUI_SliderFloat ("rt_dtal_clearance", &value, 0.0f, 16.0f,
@@ -2929,7 +3137,224 @@ static void QRE_MatSystemTab (void)
 	                        "Drops a DTAL polygon under this area, in world units squared (0 off)."))
 		Cvar_Set ("rt_dtal_minarea", va ("%.4g", value));
 
+	QR_GUI_SectionHeader ("DTAL (models)");
+
+	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
+	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
+	                        "Drops a model's DTAL polygon under this percentage of the model's bounding box face (0 off)."))
+		Cvar_Set ("rt_dtal_model_minarea", va ("%.4g", value));
+
+	maxpolys = CVAR_TO_INT32 (rt_dtal_model_maxpolys);
+	if (QR_GUI_SliderInt ("rt_dtal_model_maxpolys", &maxpolys, 0, 64,
+	                      "Caps one model's DTAL pieces, the largest kept (0 = no cuts)."))
+		Cvar_Set ("rt_dtal_model_maxpolys", va ("%d", maxpolys));
+
+	maxpolys = CVAR_TO_INT32 (rt_dtal_model_budget);
+	if (QR_GUI_SliderInt ("rt_dtal_model_budget", &maxpolys, 0, 4096,
+	                      "Caps the DTAL pieces every model of a frame may upload, the largest ranked first (0 = none)."))
+		Cvar_Set ("rt_dtal_model_budget", va ("%d", maxpolys));
+
 	QRE_MatWaterSection ();
+}
+
+static int QRE_CompareModelNames (const void *a, const void *b)
+{
+	const qmodel_t *ma = *(qmodel_t *const *) a;
+	const qmodel_t *mb = *(qmodel_t *const *) b;
+
+	return q_strcasecmp (ma->name, mb->name);
+}
+
+static void QRE_EntityListAdd (qmodel_t **list, int *count, qmodel_t *model)
+{
+	int i;
+
+	if (*count >= QRE_ENTITY_MAX)
+		return;
+
+	for (i = 0; i < *count; i++)
+		if (list[i] == model)
+			return;
+
+	list[(*count)++] = model;
+}
+
+static void QRE_BuildEntityLists (void)
+{
+	int i;
+
+	qre.entity_weapon_count = 0;
+
+	for (i = 1; i < MAX_MODELS; i++)
+	{
+		qmodel_t   *m = cl.model_precache[i];
+		const char *base;
+
+		if (!m || m->type != mod_alias)
+			continue;
+
+		base = COM_SkipPath (m->name);
+		if (!q_strncasecmp (base, "v_", 2))
+			QRE_EntityListAdd (qre.entity_weapons, &qre.entity_weapon_count, m);
+	}
+
+	if (cl.viewent.model && cl.viewent.model->type == mod_alias)
+		QRE_EntityListAdd (qre.entity_weapons, &qre.entity_weapon_count, cl.viewent.model);
+
+	qsort (qre.entity_weapons, (size_t) qre.entity_weapon_count, sizeof (qre.entity_weapons[0]),
+	       QRE_CompareModelNames);
+
+	qre.entity_list_built = true;
+}
+
+typedef struct
+{
+	const char *model;
+	const char *animation;
+	int         first;
+	int         last;
+} qre_weapon_anim_t;
+
+static const qre_weapon_anim_t qre_weapon_anims[] = {
+	{ "progs/v_axe.mdl",   "idle",     0, 0 },
+	{ "progs/v_axe.mdl",   "attack",   1, 4 },
+	{ "progs/v_axe.mdl",   "attack 2", 5, 8 },
+	{ "progs/v_shot.mdl",  "idle",     0, 0 },
+	{ "progs/v_shot.mdl",  "fire",     1, 6 },
+	{ "progs/v_shot2.mdl", "idle",     0, 0 },
+	{ "progs/v_shot2.mdl", "fire",     1, 6 },
+	{ "progs/v_nail.mdl",  "idle",     0, 0 },
+	{ "progs/v_nail.mdl",  "fire",     1, 8 },
+	{ "progs/v_nail2.mdl", "idle",     0, 0 },
+	{ "progs/v_nail2.mdl", "fire",     1, 8 },
+	{ "progs/v_rock.mdl",  "idle",     0, 0 },
+	{ "progs/v_rock.mdl",  "fire",     1, 6 },
+	{ "progs/v_rock2.mdl", "idle",     0, 0 },
+	{ "progs/v_rock2.mdl", "fire",     1, 6 },
+	{ "progs/v_light.mdl", "idle",     0, 0 },
+	{ "progs/v_light.mdl", "fire",     1, 4 },
+};
+
+static void QRE_BuildWeaponAnims (qmodel_t *model, aliashdr_t *hdr)
+{
+	int i;
+
+	qre.entity_anim_count = 0;
+
+	for (i = 0; i < (int) countof (qre_weapon_anims) && qre.entity_anim_count < QRE_ANIM_MAX; i++)
+	{
+		const qre_weapon_anim_t *a = &qre_weapon_anims[i];
+		qre_anim_t              *dst;
+
+		if (q_strcasecmp (a->model, model->name))
+			continue;
+
+		dst = &qre.entity_anims[qre.entity_anim_count++];
+		dst->name = a->animation;
+		dst->first = (a->first < hdr->numframes) ? a->first : 0;
+		dst->last = (a->last < hdr->numframes) ? a->last : hdr->numframes - 1;
+		if (dst->last < dst->first)
+			dst->last = dst->first;
+	}
+
+	if (qre.entity_anim_count == 0 && hdr->numframes > 0)
+	{
+		qre.entity_anims[0].name = "frames";
+		qre.entity_anims[0].first = 0;
+		qre.entity_anims[0].last = hdr->numframes - 1;
+		qre.entity_anim_count = 1;
+	}
+
+	qre.entity_anim = 0;
+	qre.entity_frame = (qre.entity_anim_count > 0) ? qre.entity_anims[0].first : 0;
+}
+
+static void QRE_SelectEntityModel (qmodel_t *model)
+{
+	aliashdr_t  *hdr;
+	gltexture_t *glt;
+
+	if (!model)
+		return;
+
+	hdr = (aliashdr_t *) Mod_Extradata (model);
+	glt = (hdr && hdr->numskins > 0) ? hdr->gltextures[0][0] : NULL;
+	if (!hdr || !glt || !glt->name[0])
+	{
+		QRE_Notify ("'%s' has no skin texture to edit", model->name);
+		return;
+	}
+
+	QRE_BuildWeaponAnims (model, hdr);
+
+	qre.entity_sel_model = model;
+	qre.entity_preview_model = model;
+
+	QRE_OpenMaterial (model, NULL, NULL, glt);
+}
+
+static void QRE_MatEntitiesTab (void)
+{
+	char label[MAX_QPATH + 24];
+	int  i;
+
+	if (!qre.entity_list_built)
+		QRE_BuildEntityLists ();
+
+	QR_GUI_LabelDim ("Entity materials are saved for the whole mod.");
+	QR_GUI_Spacing ();
+
+	QR_GUI_SectionHeader ("Weapons");
+	if (qre.entity_weapon_count == 0)
+		QR_GUI_LabelDim ("no weapon view model in this level");
+
+	for (i = 0; i < qre.entity_weapon_count; i++)
+	{
+		qmodel_t *m = qre.entity_weapons[i];
+		qboolean  selected = (qre.entity_sel_model == m);
+
+		if (m == cl.viewent.model)
+			q_snprintf (label, sizeof (label), "%s (held)", COM_SkipPath (m->name));
+		else
+			q_strlcpy (label, COM_SkipPath (m->name), sizeof (label));
+
+		QR_GUI_PushID (m->name);
+		if (QR_GUI_SectionSelected (label, selected))
+			QRE_SelectEntityModel (m);
+		QR_GUI_PopID ();
+	}
+
+	if (qre.entity_preview_model != NULL && qre.entity_anim_count > 0)
+	{
+		const char *names[QRE_ANIM_MAX];
+		int         anim, frame, span;
+
+		for (i = 0; i < qre.entity_anim_count; i++)
+			names[i] = qre.entity_anims[i].name;
+
+		QR_GUI_Spacing ();
+
+		anim = qre.entity_anim;
+		if (QR_GUI_Combo ("animation", &anim, (const char *const *) names, qre.entity_anim_count,
+		                  "The weapon animation the preview plays.") &&
+		    anim >= 0 && anim < qre.entity_anim_count)
+		{
+			qre.entity_anim = anim;
+			qre.entity_frame = qre.entity_anims[anim].first;
+		}
+
+		span = qre.entity_anims[qre.entity_anim].last - qre.entity_anims[qre.entity_anim].first;
+		frame = qre.entity_frame - qre.entity_anims[qre.entity_anim].first;
+		if (QR_GUI_SliderInt ("frame", &frame, 0, span, "The animation frame the preview shows."))
+		{
+			if (frame < 0)
+				frame = 0;
+			if (frame > span)
+				frame = span;
+
+			qre.entity_frame = qre.entity_anims[qre.entity_anim].first + frame;
+		}
+	}
 }
 
 static void QRE_BuildPanelGUI (void)
@@ -2956,22 +3381,28 @@ static void QRE_BuildPanelGUI (void)
 	}
 	QR_GUI_Spacing ();
 
-	QRE_PanelActionRow (QRE_RequestExit);
-
 	{
-		static const char *const tabs[] = { "Materials", "System" };
+		static const char *const tabs[] = { "Materials", "Entities", "System" };
+		int reset = 0;
 
-		QR_GUI_Tabs ("material_tabs", tabs, (int)countof (tabs), &qre.mat_tab);
+		QR_GUI_Tabs ("material_tabs", tabs, (int)countof (tabs), &qre.mat_tab, &reset);
+		if (reset)
+			qre.reset_prompt = true;
 		QR_GUI_Spacing ();
 	}
 
-	if (qre.mat_tab == 1)
+	QRE_PanelActionRow (QRE_RequestExit);
+
+	if (qre.mat_tab == 2)
 	{
 		QRE_MatSystemTab ();
 		QR_GUI_EndScroll ();
 		QR_GUI_EndPanel ();
 		return;
 	}
+
+	if (qre.mat_tab == 1)
+		QRE_MatEntitiesTab ();
 
 	for (g = 0; g < qre.group_count; g++)
 	{
@@ -2996,7 +3427,11 @@ enum
 	QRE_LIGHT_F_RADIUS = 0,
 	QRE_LIGHT_F_INTENSITY,
 	QRE_LIGHT_F_OFFSET,
+	QRE_LIGHT_F_OFFSET_X,
+	QRE_LIGHT_F_OFFSET_Y,
+	QRE_LIGHT_F_OFFSET_Z,
 	QRE_LIGHT_F_COLOR,
+	QRE_LIGHT_F_STYLE,
 	QRE_LIGHT_F_FRAST,
 };
 
@@ -3024,10 +3459,13 @@ static void QRE_LightApply (rt_light_t *l, int field, float v0, float v1, float 
 		l->offset[0] = v0; l->offset[1] = v1; l->offset[2] = v2;
 		l->has_offset = true;
 		break;
+	case QRE_LIGHT_F_OFFSET_X:  l->offset[0] = v0; l->has_offset = true; break;
+	case QRE_LIGHT_F_OFFSET_Y:  l->offset[1] = v0; l->has_offset = true; break;
+	case QRE_LIGHT_F_OFFSET_Z:  l->offset[2] = v0; l->has_offset = true; break;
 	case QRE_LIGHT_F_COLOR:
 		if (v0 < 0.0f)
 		{
-			l->has_color = false; // the colour is switched off
+			l->has_color = false; // the color is switched off
 		}
 		else
 		{
@@ -3036,6 +3474,10 @@ static void QRE_LightApply (rt_light_t *l, int field, float v0, float v1, float 
 		}
 		break;
 	case QRE_LIGHT_F_FRAST:     l->force_rasterize = b; break;
+	case QRE_LIGHT_F_STYLE:
+		l->style = (int)v0;
+		l->has_style = (v0 >= 0.0f);
+		break;
 	default: break;
 	}
 	QRE_TouchLight (l->name);
@@ -3053,6 +3495,7 @@ static void QRE_LightApplyOriginal (rt_light_t *l, const rt_light_t *orig, int f
 		case QRE_LIGHT_F_INTENSITY: l->has_intensity = false; break;
 		case QRE_LIGHT_F_OFFSET:    l->has_offset = false; break;
 		case QRE_LIGHT_F_COLOR:     l->has_color = false; break;
+		case QRE_LIGHT_F_STYLE:     l->has_style = false; break;
 		case QRE_LIGHT_F_FRAST:     l->force_rasterize = false; break;
 		default: break;
 		}
@@ -3065,6 +3508,7 @@ static void QRE_LightApplyOriginal (rt_light_t *l, const rt_light_t *orig, int f
 		case QRE_LIGHT_F_INTENSITY: l->has_intensity = orig->has_intensity; l->intensity = orig->intensity; break;
 		case QRE_LIGHT_F_OFFSET:    l->has_offset = orig->has_offset; VectorCopy (orig->offset, l->offset); break;
 		case QRE_LIGHT_F_COLOR:     l->has_color = orig->has_color; VectorCopy (orig->color, l->color); break;
+		case QRE_LIGHT_F_STYLE:     l->has_style = orig->has_style; l->style = orig->style; break;
 		case QRE_LIGHT_F_FRAST:     l->force_rasterize = orig->force_rasterize; break;
 		default: break;
 		}
@@ -3188,6 +3632,9 @@ static qboolean QRE_LightFieldChanged (const rt_light_t *l, const rt_light_t *or
 		       (l->has_color && orig && memcmp (orig->color, l->color, sizeof (l->color)) != 0);
 	case QRE_LIGHT_F_FRAST:
 		return l->force_rasterize != (orig ? orig->force_rasterize : false);
+	case QRE_LIGHT_F_STYLE:
+		return l->has_style != (orig && orig->has_style ? true : false) ||
+		       (l->has_style && orig && orig->style != l->style);
 	default:
 		return false;
 	}
@@ -3230,18 +3677,119 @@ static void QRE_LightJoinGroup (rt_light_t *l)
 		VectorCopy (shared->offset, l->offset);
 		l->has_color = shared->has_color;
 		VectorCopy (shared->color, l->color);
+		l->has_style = shared->has_style;
+		l->style = shared->style;
 		l->force_rasterize = shared->force_rasterize;
 	}
 	l->group_edit = true;
 	QRE_TouchLight (l->name);
 }
 
+static int QRE_LightFieldDiffers (const rt_light_t *l, const rt_light_t *self, int kind, int field)
+{
+	switch (field)
+	{
+	case QRE_LIGHT_F_RADIUS:
+		return (l && l->has_radius ? l->radius : QRE_LightDefaultRadius (kind)) !=
+		       (self->has_radius ? self->radius : QRE_LightDefaultRadius (kind));
+	case QRE_LIGHT_F_INTENSITY:
+		return (l && l->has_intensity ? l->intensity : QRE_LightDefaultIntensity (kind)) !=
+		       (self->has_intensity ? self->intensity : QRE_LightDefaultIntensity (kind));
+	case QRE_LIGHT_F_OFFSET:
+	{
+		int mask = 0, c;
+
+		for (c = 0; c < 3; c++)
+		{
+			const float a = (l && l->has_offset) ? l->offset[c] : 0.0f;
+			const float b = self->has_offset ? self->offset[c] : 0.0f;
+
+			if (a != b)
+				mask |= 1 << c;
+		}
+		return mask;
+	}
+	case QRE_LIGHT_F_COLOR:
+	{
+		const qboolean has = (l && l->has_color) ? true : false;
+
+		if (has != self->has_color)
+			return 1;
+		if (has && (l->color[0] != self->color[0] || l->color[1] != self->color[1] || l->color[2] != self->color[2]))
+			return 1;
+		return 0;
+	}
+	case QRE_LIGHT_F_FRAST:
+		return ((l && l->force_rasterize) ? true : false) != (self->force_rasterize ? true : false);
+	case QRE_LIGHT_F_STYLE:
+	{
+		const qboolean has = (l && l->has_style) ? true : false;
+
+		if (has != self->has_style)
+			return 1;
+		if (has && l->style != self->style)
+			return 1;
+		return 0;
+	}
+	default:
+		return 0;
+	}
+}
+
+static int QRE_LightGroupMixedMask (const rt_light_t *self, int field)
+{
+	char        base[MAX_QPATH];
+	char        g2[MAX_QPATH];
+	int         count = 0, i, mask = 0;
+	rt_light_t *list = RT_LIGHT_List (&count);
+	const int   kind = qre.sel_light.kind;
+
+	RT_MAT_GroupBaseOf (self->name, base, sizeof (base));
+	for (i = 0; i < count; i++)
+	{
+		const rt_light_t *l = &list[i];
+
+		if (!l->valid || !l->group_edit || l == self)
+			continue;
+		RT_MAT_GroupBaseOf (l->name, g2, sizeof (g2));
+		if (strcmp (g2, base))
+			continue;
+
+		mask |= QRE_LightFieldDiffers (l, self, kind, field);
+	}
+
+	{
+		const rt_tracked_light_t *tracked = RT_TRACK_Lights (&count);
+
+		for (i = 0; i < count; i++)
+		{
+			rt_light_t *l;
+
+			if (!tracked[i].ready || !tracked[i].name[0] || !strcmp (tracked[i].name, self->name))
+				continue;
+			RT_MAT_GroupBaseOf (tracked[i].name, g2, sizeof (g2));
+			if (strcmp (g2, base))
+				continue;
+
+			l = RT_LIGHT_Find (tracked[i].name);
+			if (l == self)
+				continue;
+			if (l && (!l->valid || !l->group_edit))
+				continue;
+
+			mask |= QRE_LightFieldDiffers (l, self, tracked[i].kind, field);
+		}
+	}
+
+	return mask;
+}
+
 // The light editor's panel: the dlight of the picked emitter. Its fields live in
-// lights.yaml (radius, intensity, offset); an emitter without an entry shows the
-// global defaults, and authoring a value creates one.
+// qray.lights.yaml (radius, intensity, offset); an emitter without an entry
+// shows the global defaults, and authoring a value creates one.
 // ---------------------------------------------------------------------------
 // The global tab of the light editor: the sky, its clouds and the sun. These
-// are engine cvars (the colours are cvars behind a console command, as the rest
+// are engine cvars (the colors are cvars behind a console command, as the rest
 // of the renderer uses them), so an edit takes effect at once and is archived
 // in the config; Apply and Cancel do not own them.
 // ---------------------------------------------------------------------------
@@ -3255,6 +3803,12 @@ enum
 	QRE_G_BUTTON, // a press sets the cvar in `action` (the row name is its caption)
 };
 
+enum
+{
+	QRE_COND_NONE = 0,
+	QRE_COND_PHYSICAL_SKY,
+};
+
 // One row: the cvar, its kind and the range of its slider. A section name opens
 // a group; the rows under it belong to it until the next name. A button row
 // carries its caption in `name` and the cvar it writes in `action`.
@@ -3266,70 +3820,82 @@ typedef struct
 	float       min, max;
 	const char *tip;
 	const char *action;
+	const char *show_when;
+	int         cond;
 } qre_global_t;
 
 static const qre_global_t qre_globals[] = {
 	{ "Global", "rt_brightness",    QRE_G_FLOAT, 0, 3,
 	  "The brightness of the whole ray-traced image." },
 	{ NULL,  "rt_globallight",      QRE_G_COLOR, 0, 0,
-	  "The colour every light starts from, before its own colour and the light tint are applied." },
-	{ NULL,  "rt_globallight_mult", QRE_G_FLOAT, 0, 10,
-	  "How much that global light colour counts." },
+	  "The color every light starts from, before its own color and the light tint are applied." },
 
 	{ "Sky", "rt_sky",              QRE_G_FLOAT, 0, 8,
 	  "Intensity of the sky; the classic sky texture is scaled by it." },
-	{ NULL,  "rt_physical_sky",     QRE_G_BOOL,  0, 0,
-	  "1 draws the procedural sky (painted in rt_sky_color, with clouds and a sun disc); 0 draws the classic sky texture." },
-	{ NULL,  "rt_sky_brightness",   QRE_G_FLOAT, 0, 4,
+	{ NULL,  "rt_sky_brightness",   QRE_G_FLOAT, 0, 10,
 	  "Brightness of the procedural sky." },
+	{ NULL,  "rt_sky_light_mult",   QRE_G_FLOAT, 0, 8,
+	  "How much light the sky casts on the level, separate from how bright the sky is drawn (rt_sky_brightness)." },
 	{ NULL,  "rt_sky_color",        QRE_G_COLOR, 0, 0,
-	  "The colour the procedural sky is painted in, and the colour of the light it casts." },
+	  "The color the procedural sky is painted in, and the color of the light it casts." },
 	{ NULL,  "rt_sky_ambient_lod",  QRE_G_INT,   0, 10,
 	  "Mip level the ambient sky light is read from: lower is more directional, 10 a flat wash." },
 	{ NULL,  "rt_sky_nee",          QRE_G_BOOL,  0, 0,
 	  "Sample the sky as an explicit light source." },
+	{ NULL,  "rt_physical_sky",     QRE_G_BOOL,  0, 0,
+	  "1 draws the procedural sky (painted in rt_sky_color, with clouds and a sun disc); 0 draws the classic sky texture." },
 
 	{ "Clouds", "rt_sky_clouds",        QRE_G_BOOL,  0, 0,
-	  "Draw the volumetric clouds." },
+	  "Draw the volumetric clouds.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
 	{ NULL,  "rt_sky_clouds_color",     QRE_G_COLOR, 0, 0,
-	  "The colour the clouds are drawn in; they may be darker than the sky." },
-	{ NULL,  "rt_sky_cloud_alpha",      QRE_G_FLOAT, 0, 1,
-	  "Opacity the clouds are composited over the sky with; 0 takes them out." },
-	{ NULL,  "rt_sky_cloud_coverage",   QRE_G_FLOAT, 0, 1,
-	  "How much of the sky the clouds cover." },
-	{ NULL,  "rt_sky_cloud_density",    QRE_G_FLOAT, 0, 1,
-	  "Sharpness of the cloud contour: 1 a hard edge, 0 a soft one." },
-	{ NULL,  "rt_sky_cloud_speed",      QRE_G_FLOAT, 0, 4,
-	  "How fast the cloud layer drifts." },
+	  "The color the clouds are drawn in; they may be darker than the sky.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_alpha",      QRE_G_FLOAT, 0, 1,
+	  "Opacity the clouds are composited over the sky with; 0 takes them out.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_coverage",   QRE_G_FLOAT, 0, 1,
+	  "How much of the sky the clouds cover.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_density",    QRE_G_FLOAT, 0, 10,
+	  "Optical density of the volumetric cloud layer at every quality level.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_speed",      QRE_G_FLOAT, 0, 4,
+	  "How fast the cloud layer drifts.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_quality",    QRE_G_INT, 0, QR_SKY_CLOUDS_MAX_QUALITY,
+	  "0 low, 1 medium, 2 high, 3 ultra; all levels use volumetric clouds.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_height",     QRE_G_FLOAT, 1, 300000,
+	  "Height of the cloud layer over the camera, in world units.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_clouds_thickness",  QRE_G_FLOAT, 1, 300000,
+	  "Depth of the cloud layer, in world units.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
 
-	{ "Sun", "rt_sun",              QRE_G_FLOAT, 0, 10,
-	  "Strength of the sun: 1 is a usable daylight, 0 turns it off." },
-	{ NULL,  "rt_sun_color",        QRE_G_COLOR, 0, 0,
-	  "The colour of the sun: its light, the disc in the procedural sky and everything that reads it (the indirect sun, the god rays, the fog's shafts)." },
-	{ NULL,  "rt_sun_pitch",        QRE_G_FLOAT, -180, 180,
+	{ "", "rt_physical_sun",        QRE_G_BOOL,  0, 0,
+	  "1 enables sunlight and makes the sun the source of the god rays, following rt_sky_sun_pitch and rt_sky_sun_yaw; 0 disables sunlight and uses the bright areas of the classic sky texture for the god rays instead." },
+	{ "Sun", "rt_sky_sun",              QRE_G_FLOAT, 0, 10,
+	  "Strength of the sun: 1 is a usable daylight, 0 turns it off.", NULL, "rt_physical_sun" },
+	{ NULL,  "rt_sky_sun_color",        QRE_G_COLOR, 0, 0,
+	  "The color of the sun: its light, the disc in the procedural sky and everything that reads it (the indirect sun, the god rays, the fog's shafts).",
+	  NULL },
+	{ NULL,  "rt_sky_sun_size",         QRE_G_FLOAT, 0, 10,
+	  "Sun disc size multiplier: 1 keeps the original size, 0 hides the disc without disabling sunlight." },
+	{ NULL,  "rt_sky_sun_pitch",        QRE_G_FLOAT, -180, 180,
 	  "The pitch the sun stands at." },
-	{ NULL,  "rt_sun_yaw",          QRE_G_FLOAT, -180, 180,
+	{ NULL,  "rt_sky_sun_yaw",          QRE_G_FLOAT, -180, 180,
 	  "The yaw the sun stands at." },
 	{ NULL,  "Set sun position",    QRE_G_BUTTON, 0, 0,
 	  "Place the sun by aiming: it follows the crosshair, and the fire button leaves it where it points (that press is swallowed).",
-	  "rt_sun_edit" },
+	  "rt_sky_sun_edit" },
 
-	{ "God rays", "rt_godrays",         QRE_G_BOOL,  0, 0,
+	{ "", "rt_sky_godrays",                QRE_G_BOOL,  0, 0,
 	  "Draw the sun shafts." },
-	{ NULL,  "rt_godrays_intensity",    QRE_G_FLOAT, 0, 4,
-	  "Strength of the sun shafts." },
+	{ "God rays", "rt_sky_godrays_intensity", QRE_G_FLOAT, 0, 4,
+	  "Strength of the sun shafts.", NULL, "rt_sky_godrays" },
+	{ NULL,  "rt_sky_godrays_sky_threshold", QRE_G_FLOAT, 0, 1,
+	  "How bright a sky area must be to pull the god rays to itself; the rays come from the centre of everything above it, and from the brightest point when nothing is (0 leaves the brightest point alone)." },
 
 	{ "Volumetric fog", "rt_volume_type",    QRE_G_INT,   0, 2,
-	  "0 off, 1 a simple depth-based fog (the density and the colour below), 2 the volumetric pass the sky light feeds." },
+	  "0 off, 1 a simple depth-based fog (the density and the color below), 2 the volumetric pass the sky light feeds." },
 	{ NULL,  "rt_volume_scatter",            QRE_G_FLOAT, 0, 1,
 	  "Density of the simple depth-based fog (mode 1)." },
 	{ NULL,  "rt_volume_ambient",            QRE_G_FLOAT, 0, 8,
-	  "Brightness of the simple fog's colour, which is the sky's flat colour (mode 1)." },
+	  "Brightness of the simple fog's color, which is the sky's flat color (mode 1)." },
 	{ NULL,  "rt_volume_far",                QRE_G_FLOAT, 0, 4000,
 	  "How far from the camera the volumetric volume reaches (mode 2)." },
-
-	{ "Fog", "rt_level_fog",        QRE_G_BOOL,  0, 0,
-	  "Draw the level's own fog (the worldspawn \"fog\" key or the console `fog` command)." },
 };
 
 static char     qre_globals_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];
@@ -3338,6 +3904,21 @@ static qboolean qre_globals_snapshot_set[countof (qre_globals)];
 static const char *QRE_GlobalCvarName (const qre_global_t *g)
 {
 	return (g->type == QRE_G_BUTTON) ? g->action : g->name;
+}
+
+static qboolean QRE_GlobalCondMet (int cond)
+{
+	switch (cond)
+	{
+	case QRE_COND_PHYSICAL_SKY:
+	{
+		cvar_t *var = Cvar_FindVar ("rt_physical_sky");
+
+		return (var && CVAR_TO_BOOL (*var)) ? true : false;
+	}
+	default:
+		return true;
+	}
 }
 
 static void QRE_TakeGlobalsSnapshot (void)
@@ -3395,7 +3976,7 @@ static void QRE_GlobalColorGet (const char *name, float rgb[3])
 {
 	if (!strcmp (name, "rt_sky_color"))
 		RT_GetSkyColor (rgb);
-	else if (!strcmp (name, "rt_sun_color"))
+	else if (!strcmp (name, "rt_sky_sun_color"))
 		RT_GetSunColor (rgb);
 	else if (!strcmp (name, "rt_globallight"))
 		RT_GetGlobalLightColor (rgb);
@@ -3411,9 +3992,38 @@ static void QRE_GlobalColorSet (const char *name, const float rgb[3])
 	                    (int)(CLAMP (0.0f, rgb[2], 1.0f) * 255.0f + 0.5f)));
 }
 
+static qboolean QRE_GlobalSectionVisible (const char *condition)
+{
+	if (!condition)
+		return true;
+
+	const char *p = condition;
+
+	while (*p)
+	{
+		char name[64];
+		int  n = 0;
+
+		while (*p && *p != '|' && n < (int)sizeof (name) - 1)
+			name[n++] = *p++;
+		name[n] = '\0';
+
+		if (*p == '|')
+			p++;
+
+		cvar_t *var = Cvar_FindVar (name);
+
+		if (var && CVAR_TO_BOOL (*var))
+			return true;
+	}
+
+	return false;
+}
+
 static void QRE_LightGlobalTab (void)
 {
 	const char *section = NULL;
+	qboolean    section_hidden = false;
 	int         i;
 
 	QR_GUI_LabelDim ("the light system itself: the sky, its clouds and the sun");
@@ -3424,12 +4034,25 @@ static void QRE_LightGlobalTab (void)
 		const qre_global_t *g = &qre_globals[i];
 		cvar_t             *var;
 
+		if (!QRE_GlobalCondMet (g->cond))
+			continue;
+
 		if (g->section && (!section || strcmp (section, g->section)))
 		{
 			section = g->section;
-			QR_GUI_Separator ();
-			QR_GUI_Label (section);
+			section_hidden = !QRE_GlobalSectionVisible (g->show_when);
+
+			if (!section_hidden)
+			{
+				if (!g->show_when && g->cond == QRE_COND_NONE)
+					QR_GUI_Separator ();
+				if (section[0])
+					QR_GUI_Label (section);
+			}
 		}
+
+		if (section_hidden)
+			continue;
 
 		if (g->type == QRE_G_BUTTON)
 		{
@@ -3505,43 +4128,43 @@ static void QRE_LightGlobalTab (void)
 		}
 	}
 
-	// The level's fog itself: the colour and the density are map data, not cvars,
+	// The level's fog itself: the color and the density are map data, not cvars,
 	// so they go through the `fog` command (the same path a map's key and the
 	// console use) while the getters keep the widgets in step with the map.
+	QR_GUI_Label ("Fog");
+
+	float    color[4];
+	float    density = Fog_GetDensity ();
+	int      en = 1;
+	qboolean changed = false;
+
+	Fog_GetColor (color);
+	color[3] = 1.0f;
+
+	if (QR_GUI_ColorHex ("fog_color", color, &en, "The color of the level's fog."))
+		changed = true;
+	if (QR_GUI_ResetButton ("fog_color", color[0] != qre.snap_fog_color[0] ||
+	                                        color[1] != qre.snap_fog_color[1] ||
+	                                        color[2] != qre.snap_fog_color[2]))
 	{
-		float    color[4];
-		float    density = Fog_GetDensity ();
-		int      en = 1;
-		qboolean changed = false;
-
-		Fog_GetColor (color);
-		color[3] = 1.0f;
-
-		if (QR_GUI_ColorHex ("fog_color", color, &en, "The colour of the level's fog."))
-			changed = true;
-		if (QR_GUI_ResetButton ("fog_color", color[0] != qre.snap_fog_color[0] ||
-		                                        color[1] != qre.snap_fog_color[1] ||
-		                                        color[2] != qre.snap_fog_color[2]))
-		{
-			VectorCopy (qre.snap_fog_color, color);
-			changed = true;
-		}
-		if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
-			changed = true;
-		if (QR_GUI_ResetButton ("fog_density", density != qre.snap_fog_density))
-		{
-			density = qre.snap_fog_density;
-			changed = true;
-		}
-
-		if (changed)
-			Cbuf_AddText (va ("fog %f %f %f %f\n", density,
-			                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
+		VectorCopy (qre.snap_fog_color, color);
+		changed = true;
 	}
+	if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
+		changed = true;
+	if (QR_GUI_ResetButton ("fog_density", density != qre.snap_fog_density))
+	{
+		density = qre.snap_fog_density;
+		changed = true;
+	}
+
+	if (changed)
+		Cbuf_AddText (va ("fog %f %f %f %f\n", density,
+		                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
 
 	QR_GUI_Spacing ();
 	QR_GUI_LabelDim ("the values above are saved to the config by Save; Cancel puts them back");
-	QR_GUI_LabelDim ("the fog is part of the level's session: it goes to qray/lights.yaml");
+	QR_GUI_LabelDim ("the fog is part of the level's session: it goes to qray.lights.yaml");
 }
 
 // ---------------------------------------------------------------------------
@@ -3567,6 +4190,18 @@ static void QRE_SelectCustomLight (int index)
 		VectorAdd (qre.sel_light.position, lights[index].offset, qre.sel_light.position);
 	qre.sel_light.radius = lights[index].radius;
 	VectorCopy (lights[index].color, qre.sel_light.color);
+
+	{
+		vec3_t dir, angles;
+
+		VectorSubtract (qre.sel_light.position, qre.cam_origin, dir);
+		if (VectorLength (dir) < 1.0f)
+			return;
+
+		VectorAngles (dir, NULL, angles);
+		cl.viewangles[YAW] = angles[YAW];
+		cl.viewangles[PITCH] = angles[PITCH];
+	}
 }
 
 enum
@@ -3595,6 +4230,7 @@ static qboolean QRE_CustomOriginal (int index, rt_custom_light_t *out)
 	out->radius = RT_CUSTOM_RADIUS_DEFAULT;
 	out->intensity = RT_CUSTOM_INTENSITY_DEFAULT;
 	out->color[0] = out->color[1] = out->color[2] = 1.0f;
+	out->dir[0] = 1.0f;
 	out->angle_outer = 30.0f;
 	return false;
 }
@@ -3637,6 +4273,7 @@ static void QRE_CustomResetField (rt_custom_light_t *l, const rt_custom_light_t 
 	case QRE_CUSTOM_F_ANGLE_OUTER: l->angle_outer = orig->angle_outer; break;
 	default: break;
 	}
+	RT_CustomLightValidate (l);
 }
 
 static void QRE_CustomLightsTab (void)
@@ -3646,7 +4283,7 @@ static void QRE_CustomLightsTab (void)
 	char               buf[96];
 	int                i;
 
-	QR_GUI_LabelDim ("lights the level does not have, kept in qray/lights.yaml");
+	QR_GUI_LabelDim ("lights the level does not have, kept in qray.lights.yaml");
 
 	q_snprintf (buf, sizeof (buf), "%d of %d on this level", count, RT_CUSTOM_LIGHTS_MAX);
 	QR_GUI_LabelDim (buf);
@@ -3725,7 +4362,7 @@ static void QRE_CustomLightsTab (void)
 			rgb[0] = l->color[0];
 			rgb[1] = l->color[1];
 			rgb[2] = l->color[2];
-			if (QR_GUI_ColorHex ("light_color", rgb, &en, "The colour of the light."))
+			if (QR_GUI_ColorHex ("light_color", rgb, &en, "The color of the light."))
 			{
 				l->color[0] = rgb[0];
 				l->color[1] = rgb[1];
@@ -3749,6 +4386,7 @@ static void QRE_CustomLightsTab (void)
 				                     "Make the light a cone (a spotlight) instead of a sphere, aimed by its direction."))
 				{
 					l->spot = spot ? true : false;
+					RT_CustomLightValidate (l);
 				}
 			}
 			if (QR_GUI_ResetButton ("light_spot", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_SPOT)))
@@ -3759,20 +4397,23 @@ static void QRE_CustomLightsTab (void)
 				if (QR_GUI_Vec3Input ("light_dir", l->dir, -1.0f, 1.0f,
 				                      "The axis of the cone, X Y Z (normalized when uploaded)."))
 				{
+					RT_CustomLightValidate (l);
 				}
 				if (QR_GUI_ResetButton ("light_dir", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_DIR)))
 					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_DIR);
 
-				if (QR_GUI_SliderFloat ("light_angle_inner", &l->angle_inner, 0.0f, 90.0f,
+				if (QR_GUI_SliderFloat ("light_angle_inner", &l->angle_inner, 0.0f, l->angle_outer,
 				                        "The cone's full-intensity core, in degrees."))
 				{
+					RT_CustomLightValidate (l);
 				}
 				if (QR_GUI_ResetButton ("light_angle_inner", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_ANGLE_INNER)))
 					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_ANGLE_INNER);
 
-				if (QR_GUI_SliderFloat ("light_angle_outer", &l->angle_outer, 0.0f, 90.0f,
+				if (QR_GUI_SliderFloat ("light_angle_outer", &l->angle_outer, l->angle_inner, 90.0f,
 				                        "Where the cone falls to nothing, in degrees."))
 				{
+					RT_CustomLightValidate (l);
 				}
 				if (QR_GUI_ResetButton ("light_angle_outer", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_ANGLE_OUTER)))
 					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_ANGLE_OUTER);
@@ -3800,6 +4441,14 @@ static void QRE_CustomLightsTab (void)
 				}
 			}
 			QR_GUI_SameLine ();
+			if (QR_GUI_Button ("Clone"))
+			{
+				qre.clone_source = *l;
+				qre.custom_cloning = true;
+				qre.custom_placing = false;
+				QRE_CursorMode (false);
+			}
+			QR_GUI_SameLine ();
 			if (QR_GUI_Button ("Remove"))
 			{
 				RT_CustomLights_Remove (i);
@@ -3813,12 +4462,331 @@ static void QRE_CustomLightsTab (void)
 	}
 }
 
+// The Entity tab: every generated light of the frame -- a material light, a
+// legacy dlight, a light entity of the map -- the way the Custom tab lists its
+// own lights. The list is the frame's, so it follows what is drawn.
+static const char *QRE_LightKindName (int kind)
+{
+	switch (kind)
+	{
+	case RT_LIGHT_KIND_MATERIAL: return "material";
+	case RT_LIGHT_KIND_DLIGHT:   return "dlight";
+	case RT_LIGHT_KIND_MAP:      return "map";
+	default:                     return "custom";
+	}
+}
+
+static void QRE_SelectEntityLight (const rt_tracked_light_t *l)
+{
+	vec3_t dir, angles;
+
+	qre.sel_light = *l;
+	qre.sel_light_valid = true;
+
+	VectorSubtract (qre.sel_light.position, qre.cam_origin, dir);
+	if (VectorLength (dir) < 1.0f)
+		return;
+
+	VectorAngles (dir, NULL, angles);
+	cl.viewangles[YAW] = angles[YAW];
+	cl.viewangles[PITCH] = angles[PITCH];
+}
+
+static void QRE_LightEntityFields (void)
+{
+	char        ikey[MAX_QPATH];
+	rt_light_t *inst = NULL;
+	rt_light_t *shared = NULL;
+	rt_light_t *light = NULL;
+
+	if (qre.sel_light_valid && qre.sel_light.name[0])
+	{
+		RT_LIGHT_MakeKey (qre.sel_light.name, qre.sel_light.uniqueID, ikey, sizeof (ikey));
+		inst = RT_LIGHT_Find (ikey);
+		shared = RT_LIGHT_Ensure (qre.sel_light.name);
+		light = inst ? inst : shared;
+	}
+
+	if (light)
+	{
+		const rt_light_t *orig = QRE_LightOriginal (light->name);
+		qboolean          group = false;
+		float             value;
+		int               radius_mixed;
+
+		// group_edit at the very top: whether an edit touches the whole group
+		{
+			int ge = inst ? 0 : 1;
+
+			if (QR_GUI_Checkbox ("group_edit", &ge,
+			                     "Edit every light of this group (the emitter's model) at once. Off gives this light an entry of its own; on drops it and takes the group's values back."))
+			{
+				if (ge)
+				{
+					// back into the group: the instance entry goes and the
+					// group's values apply again
+					RT_LIGHT_Remove (ikey);
+					inst = NULL;
+					light = RT_LIGHT_Ensure (qre.sel_light.name);
+					if (light)
+					{
+						light->group_edit = true;
+						if (!RT_LIGHT_HasFields (light))
+							QRE_LightJoinGroup (light);
+						else
+							QRE_TouchLight (light->name);
+					}
+				}
+				else
+				{
+					// its own entry: the values in effect move into it and the
+					// group stops touching this light
+					rt_light_t *own = RT_LIGHT_Ensure (ikey);
+
+					if (own)
+					{
+						if (light)
+						{
+							own->has_radius = light->has_radius;
+							own->radius = light->radius;
+							own->has_intensity = light->has_intensity;
+							own->intensity = light->intensity;
+							own->has_offset = light->has_offset;
+							VectorCopy (light->offset, own->offset);
+							own->has_color = light->has_color;
+							VectorCopy (light->color, own->color);
+							own->has_style = light->has_style;
+							own->style = light->style;
+							own->force_rasterize = light->force_rasterize;
+						}
+						own->group_edit = false;
+						QRE_TouchLight (own->name);
+						inst = own;
+						light = own;
+					}
+				}
+			}
+		}
+		if (QR_GUI_ResetButton ("group_edit", inst != NULL ||
+		                        (light->group_edit != (orig ? orig->group_edit : true))))
+		{
+			// the reset goes back to following the group
+			if (inst)
+			{
+				RT_LIGHT_Remove (ikey);
+				inst = NULL;
+				light = RT_LIGHT_Ensure (qre.sel_light.name);
+			}
+			if (light)
+			{
+				light->group_edit = true;
+				if (!RT_LIGHT_HasFields (light))
+					QRE_LightJoinGroup (light);
+				else
+					QRE_TouchLight (light->name);
+			}
+		}
+
+		group = (inst == NULL && light->group_edit) ? true : false;
+
+		radius_mixed = group ? QRE_LightGroupMixedMask (light, QRE_LIGHT_F_RADIUS) : 0;
+		value = light->has_radius ? light->radius : QRE_LightDefaultRadius (qre.sel_light.kind);
+		if (QR_GUI_SliderFloatMixed ("light_radius", &value, 0.0f, 10.0f, radius_mixed,
+		                             "The size of the light, in rt_dlight_radius units; the line under it is the radius the renderer draws."))
+			QRE_LightWrite (light, QRE_LIGHT_F_RADIUS, value, 0, 0, false);
+		if (QR_GUI_ResetButton ("light_radius", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_RADIUS)))
+			QRE_LightResetField (light, QRE_LIGHT_F_RADIUS);
+		if (!radius_mixed)
+		{
+			char buf[64];
+
+			q_snprintf (buf, sizeof (buf), "radius %.1f game units", METRIC_TO_QUAKEUNIT (value));
+			QR_GUI_LabelDim (buf);
+		}
+
+		value = light->has_intensity ? light->intensity : QRE_LightDefaultIntensity (qre.sel_light.kind);
+		if (QR_GUI_SliderFloatMixed ("light_intensity", &value, 0.0f, 100.0f,
+		                             (group && QRE_LightGroupMixedMask (light, QRE_LIGHT_F_INTENSITY)) ? 1 : 0,
+		                             "The brightness of the light: a multiplier of its color."))
+			QRE_LightWrite (light, QRE_LIGHT_F_INTENSITY, value, 0, 0, false);
+		if (QR_GUI_ResetButton ("light_intensity", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_INTENSITY)))
+			QRE_LightResetField (light, QRE_LIGHT_F_INTENSITY);
+
+		{
+			float         offs[3];
+			unsigned char mixed[3];
+			int           mask;
+
+			offs[0] = light->has_offset ? light->offset[0] : 0.0f;
+			offs[1] = light->has_offset ? light->offset[1] : 0.0f;
+			offs[2] = light->has_offset ? light->offset[2] : 0.0f;
+
+			mask = group ? QRE_LightGroupMixedMask (light, QRE_LIGHT_F_OFFSET) : 0;
+			mixed[0] = (mask & 1) ? 1 : 0;
+			mixed[1] = (mask & 2) ? 1 : 0;
+			mixed[2] = (mask & 4) ? 1 : 0;
+
+			int           changed;
+
+			changed = QR_GUI_Vec3InputMixed ("light_offset", offs, -128.0f, 128.0f, mixed,
+			                                 "The offset of the light from the emitter's pivot point (its origin), X Y Z.");
+			if (changed & 1)
+				QRE_LightWrite (light, QRE_LIGHT_F_OFFSET_X, offs[0], 0, 0, false);
+			if (changed & 2)
+				QRE_LightWrite (light, QRE_LIGHT_F_OFFSET_Y, offs[1], 0, 0, false);
+			if (changed & 4)
+				QRE_LightWrite (light, QRE_LIGHT_F_OFFSET_Z, offs[2], 0, 0, false);
+			if (QR_GUI_ResetButton ("light_offset", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_OFFSET)))
+				QRE_LightResetField (light, QRE_LIGHT_F_OFFSET);
+		}
+
+		{
+			int   en = light->has_color ? 1 : 0;
+			float rgb[3];
+
+			VectorCopy (light->has_color ? light->color : vec3_origin, rgb);
+			if (QR_GUI_ColorHexMixed ("light_color", rgb, &en,
+			                          (group && QRE_LightGroupMixedMask (light, QRE_LIGHT_F_COLOR)) ? 1 : 0,
+			                          "An explicit color of the light, replacing the emitter's own."))
+			{
+				if (!en)
+					QRE_LightWrite (light, QRE_LIGHT_F_COLOR, -1.0f, 0, 0, false);
+				else
+					QRE_LightWrite (light, QRE_LIGHT_F_COLOR, rgb[0], rgb[1], rgb[2], false);
+			}
+			if (QR_GUI_ResetButton ("light_color", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_COLOR)))
+				QRE_LightResetField (light, QRE_LIGHT_F_COLOR);
+		}
+
+		{
+			const char *items[RT_CUSTOM_STYLE_COUNT + 1];
+			int         style = light->has_style ? light->style + 1 : 0;
+			int         i;
+
+			items[0] = "NONE";
+			for (i = 0; i < RT_CUSTOM_STYLE_COUNT; i++)
+				items[i + 1] = rt_custom_style_names[i];
+
+			if (group && QRE_LightGroupMixedMask (light, QRE_LIGHT_F_STYLE))
+				style = -1;
+
+			if (QR_GUI_Combo ("light_style", &style, (const char *const *)items, RT_CUSTOM_STYLE_COUNT + 1,
+			                  "Force a light style on this emitter, overriding its own: the light follows that style's animation. NONE keeps the emitter's own."))
+				QRE_LightWrite (light, QRE_LIGHT_F_STYLE, (float)(style - 1), 0, 0, false);
+			if (QR_GUI_ResetButton ("light_style", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_STYLE)))
+				QRE_LightResetField (light, QRE_LIGHT_F_STYLE);
+		}
+
+		if (qre.sel_light.kind == RT_LIGHT_KIND_MATERIAL || qre.sel_light.kind == RT_LIGHT_KIND_DLIGHT)
+		{
+			int fr = light->force_rasterize ? 1 : 0;
+
+			if (QR_GUI_CheckboxMixed ("force_rasterize", &fr,
+			                          (group && QRE_LightGroupMixedMask (light, QRE_LIGHT_F_FRAST)) ? 1 : 0,
+			                          "Draw the emitter in the rasterized path."))
+				QRE_LightWrite (light, QRE_LIGHT_F_FRAST, 0, 0, 0, fr != 0);
+			if (QR_GUI_ResetButton ("force_rasterize", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_FRAST)))
+				QRE_LightResetField (light, QRE_LIGHT_F_FRAST);
+		}
+	}
+	else if (qre.sel_light_valid)
+	{
+		QR_GUI_LabelDim ("this light has no emitter name: there is nothing to save its fields to");
+	}
+	else
+	{
+		QR_GUI_Label ("nothing selected");
+	}
+}
+
+static void QRE_LightEntityList (void)
+{
+	const rt_tracked_light_t *lights;
+	int                       order[RT_TRACKED_LIGHTS_MAX];
+	int                       count = 0, live = 0, i, j;
+	int                       selected_any = 0;
+	char                      buf[96];
+
+	lights = RT_TRACK_Lights (&count);
+
+	for (i = 0; i < count; i++)
+	{
+		const rt_tracked_light_t *l = &lights[i];
+
+		if (l->kind == RT_LIGHT_KIND_CUSTOM)
+			continue;
+
+		for (j = 0; j < live; j++)
+		{
+			const rt_tracked_light_t *o = &lights[order[j]];
+
+			if (o->kind == l->kind && o->uniqueID == l->uniqueID && !strcmp (o->name, l->name))
+				break;
+		}
+		if (j < live)
+			continue;
+
+		for (j = live; j > 0; j--)
+		{
+			const rt_tracked_light_t *o = &lights[order[j - 1]];
+			const int                 cmp = strcmp (o->name, l->name);
+
+			if (cmp < 0 || (cmp == 0 && (o->kind < l->kind ||
+			                             (o->kind == l->kind && o->uniqueID <= l->uniqueID))))
+				break;
+
+			order[j] = order[j - 1];
+		}
+
+		order[j] = i;
+		live++;
+	}
+
+	q_snprintf (buf, sizeof (buf), "%d generated light%s in the frame", live, live == 1 ? "" : "s");
+	QR_GUI_LabelDim (buf);
+	QR_GUI_Spacing ();
+
+	for (j = 0; j < live; j++)
+	{
+		const rt_tracked_light_t *l = &lights[order[j]];
+		char                      label[MAX_QPATH + 32];
+		char                      id[MAX_QPATH + 48];
+		int                       selected;
+
+		if (l->name[0])
+			q_snprintf (label, sizeof (label), "%s  [%s]", l->name, QRE_LightKindName (l->kind));
+		else
+			q_snprintf (label, sizeof (label), "(no emitter)  [%s]", QRE_LightKindName (l->kind));
+
+		q_snprintf (id, sizeof (id), "%s#%d", label, j);
+		QR_GUI_PushID (id);
+
+		selected = (qre.sel_light_valid && qre.sel_light.kind == l->kind &&
+		            qre.sel_light.uniqueID == l->uniqueID && !strcmp (qre.sel_light.name, l->name)) ? 1 : 0;
+
+		if (QR_GUI_SectionSelected (label, selected))
+		{
+			QRE_SelectEntityLight (l);
+			selected = 1;
+		}
+
+		if (selected)
+		{
+			QRE_LightEntityFields ();
+			selected_any = 1;
+		}
+
+		QR_GUI_PopID ();
+	}
+
+	if (!selected_any)
+		QRE_LightEntityFields ();
+}
+
 static void QRE_BuildLightPanelGUI (void)
 {
 	int         panel_w = glwidth / 4;
-	rt_light_t *light = NULL;
 	rt_light_t *inst = NULL;
-	rt_light_t *shared = NULL;
 	char        ikey[MAX_QPATH];
 
 	if (panel_w < 352)
@@ -3830,24 +4798,25 @@ static void QRE_BuildLightPanelGUI (void)
 	QRE_RefreshSelectedLight ();
 	if (qre.sel_light_valid && qre.sel_light.name[0])
 	{
-		// A light that left its group has an entry of its own, keyed by the
-		// emitter and the instance id; otherwise the emitter's shared entry is
-		// what the panel edits (and an edit of it touches the whole group).
+		// "(own)" marks a light that left its group and has an entry of its
+		// own, keyed by the emitter and the instance id (the fields below use
+		// the same key).
 		RT_LIGHT_MakeKey (qre.sel_light.name, qre.sel_light.uniqueID, ikey, sizeof (ikey));
 		inst = RT_LIGHT_Find (ikey);
-		shared = RT_LIGHT_Ensure (qre.sel_light.name);
-		light = inst ? inst : shared;
 	}
 	QR_GUI_Spacing ();
 
-	QRE_PanelActionRow (QRE_RequestExit);
-
 	{
 		static const char *const tabs[] = { "Entity", "Custom", "Global" };
+		int reset = 0;
 
-		QR_GUI_Tabs ("light_tabs", tabs, (int)countof (tabs), &qre.light_tab);
+		QR_GUI_Tabs ("light_tabs", tabs, (int)countof (tabs), &qre.light_tab, &reset);
+		if (reset)
+			qre.reset_prompt = true;
 		QR_GUI_Spacing ();
 	}
+
+	QRE_PanelActionRow (QRE_RequestExit);
 
 	if (qre.light_tab == 2)
 	{
@@ -3899,152 +4868,7 @@ static void QRE_BuildLightPanelGUI (void)
 	}
 	QR_GUI_Spacing ();
 
-	if (light)
-	{
-		const rt_light_t *orig = QRE_LightOriginal (light->name);
-		float             value;
-
-		// group_edit at the very top: whether an edit touches the whole group
-		{
-			int ge = inst ? 0 : 1;
-
-			if (QR_GUI_Checkbox ("group_edit", &ge,
-			                     "Edit every light of this group (the emitter's model) at once. Off gives this light an entry of its own; on drops it and takes the group's values back."))
-			{
-				if (ge)
-				{
-					// back into the group: the instance entry goes and the
-					// group's values apply again
-					RT_LIGHT_Remove (ikey);
-					inst = NULL;
-					light = RT_LIGHT_Ensure (qre.sel_light.name);
-					if (light)
-					{
-						light->group_edit = true;
-						if (!RT_LIGHT_HasFields (light))
-							QRE_LightJoinGroup (light);
-						else
-							QRE_TouchLight (light->name);
-					}
-				}
-				else
-				{
-					// its own entry: the values in effect move into it and the
-					// group stops touching this light
-					rt_light_t *own = RT_LIGHT_Ensure (ikey);
-
-					if (own)
-					{
-						if (light)
-						{
-							own->has_radius = light->has_radius;
-							own->radius = light->radius;
-							own->has_intensity = light->has_intensity;
-							own->intensity = light->intensity;
-							own->has_offset = light->has_offset;
-							VectorCopy (light->offset, own->offset);
-							own->has_color = light->has_color;
-							VectorCopy (light->color, own->color);
-							own->force_rasterize = light->force_rasterize;
-						}
-						own->group_edit = false;
-						QRE_TouchLight (own->name);
-						inst = own;
-						light = own;
-					}
-				}
-			}
-		}
-		if (QR_GUI_ResetButton ("group_edit", inst != NULL ||
-		                        (light->group_edit != (orig ? orig->group_edit : true))))
-		{
-			// the reset goes back to following the group
-			if (inst)
-			{
-				RT_LIGHT_Remove (ikey);
-				inst = NULL;
-				light = RT_LIGHT_Ensure (qre.sel_light.name);
-			}
-			if (light)
-			{
-				light->group_edit = true;
-				if (!RT_LIGHT_HasFields (light))
-					QRE_LightJoinGroup (light);
-				else
-					QRE_TouchLight (light->name);
-			}
-		}
-
-		value = light->has_radius ? light->radius : QRE_LightDefaultRadius (qre.sel_light.kind);
-		if (QR_GUI_SliderFloat ("light_radius", &value, 0.0f, 10.0f,
-		                        "The size of the light, in rt_dlight_radius units; the line under it is the radius the renderer draws."))
-			QRE_LightWrite (light, QRE_LIGHT_F_RADIUS, value, 0, 0, false);
-		if (QR_GUI_ResetButton ("light_radius", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_RADIUS)))
-			QRE_LightResetField (light, QRE_LIGHT_F_RADIUS);
-		{
-			char buf[64];
-
-			q_snprintf (buf, sizeof (buf), "radius %.1f game units", METRIC_TO_QUAKEUNIT (value));
-			QR_GUI_LabelDim (buf);
-		}
-
-		value = light->has_intensity ? light->intensity : QRE_LightDefaultIntensity (qre.sel_light.kind);
-		if (QR_GUI_SliderFloat ("light_intensity", &value, 0.0f, 100.0f,
-		                        "The brightness of the light: a multiplier of its colour."))
-			QRE_LightWrite (light, QRE_LIGHT_F_INTENSITY, value, 0, 0, false);
-		if (QR_GUI_ResetButton ("light_intensity", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_INTENSITY)))
-			QRE_LightResetField (light, QRE_LIGHT_F_INTENSITY);
-
-		{
-			float offs[3];
-
-			offs[0] = light->has_offset ? light->offset[0] : 0.0f;
-			offs[1] = light->has_offset ? light->offset[1] : 0.0f;
-			offs[2] = light->has_offset ? light->offset[2] : 0.0f;
-
-			if (QR_GUI_Vec3Input ("light_offset", offs, -128.0f, 128.0f,
-			                      "The offset of the light from the emitter's pivot point (its origin), X Y Z.")
-			    )
-				QRE_LightWrite (light, QRE_LIGHT_F_OFFSET, offs[0], offs[1], offs[2], false);
-			if (QR_GUI_ResetButton ("light_offset", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_OFFSET)))
-				QRE_LightResetField (light, QRE_LIGHT_F_OFFSET);
-		}
-
-		{
-			int   en = light->has_color ? 1 : 0;
-			float rgb[3];
-
-			VectorCopy (light->has_color ? light->color : vec3_origin, rgb);
-			if (QR_GUI_ColorHex ("light_color", rgb, &en,
-			                     "An explicit colour of the light, replacing the emitter's own."))
-			{
-				if (!en)
-					QRE_LightWrite (light, QRE_LIGHT_F_COLOR, -1.0f, 0, 0, false);
-				else
-					QRE_LightWrite (light, QRE_LIGHT_F_COLOR, rgb[0], rgb[1], rgb[2], false);
-			}
-			if (QR_GUI_ResetButton ("light_color", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_COLOR)))
-				QRE_LightResetField (light, QRE_LIGHT_F_COLOR);
-		}
-
-		if (qre.sel_light.kind == RT_LIGHT_KIND_MATERIAL)
-		{
-			int fr = light->force_rasterize ? 1 : 0;
-
-			if (QR_GUI_Checkbox ("force_rasterize", &fr, "Draw the emitter in the rasterized path."))
-				QRE_LightWrite (light, QRE_LIGHT_F_FRAST, 0, 0, 0, fr != 0);
-			if (QR_GUI_ResetButton ("force_rasterize", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_FRAST)))
-				QRE_LightResetField (light, QRE_LIGHT_F_FRAST);
-		}
-	}
-	else if (qre.sel_light_valid)
-	{
-		QR_GUI_LabelDim ("this light has no emitter name: there is nothing to save its fields to");
-	}
-	else
-	{
-		QR_GUI_Label ("nothing selected");
-	}
+	QRE_LightEntityList ();
 
 	QR_GUI_EndScroll ();
 	QR_GUI_EndPanel ();
@@ -4057,14 +4881,14 @@ static void QRE_DrawHints (void)
 		"LMB - select the face under the crosshair",
 		"WASD + mouse - fly    Shift - faster    jump/movedown - up/down",
 		"Tab - the cursor mode (the panel) / fly again",
-		"Esc - exit the editor    ~ - console",
+		"Esc - editor menu    ~ - console",
 	};
 	static const char *const light_lines[] = {
 		"QR LIGHT EDITOR",
-		"LMB - select the emitter under the crosshair",
+		"LMB - pick a light in the list (Entity tab) or under the crosshair",
 		"WASD + mouse - fly    Shift - faster    jump/movedown - up/down",
 		"Tab - the cursor mode (the panel) / fly again",
-		"Esc - exit the editor    ~ - console",
+		"Esc - editor menu    ~ - console",
 	};
 	const char *const *shown = (qre.mode == QRE_MODE_LIGHT) ? light_lines : lines;
 
@@ -4078,7 +4902,11 @@ static void QRE_BuildFlyingOverlay (void)
 {
 	QR_GUI_DrawCrosshair ();
 
-	if (qre.custom_placing)
+	if (qre.light_dragging)
+		QR_GUI_LabelBottomRight ("Press LMB to drop the light, Esc to return it");
+	else if (qre.custom_cloning)
+		QR_GUI_LabelBottomRight ("Press LMB to paste the cloned light source to crosshair");
+	else if (qre.custom_placing)
 		QR_GUI_LabelBottomRight ("Press LMB to add new light at crosshair position");
 }
 
@@ -4105,6 +4933,12 @@ static void QRE_Frame (void)
 		return;
 	}
 
+	if (qre.reset_pending)
+	{
+		qre.reset_pending = false;
+		QRE_ResetAll ();
+	}
+
 	// While the console is up it owns the input; coming back, the panel needs
 	// its free cursor again (the console re-activated the relative mouse mode).
 	if (qre.panel_open && prev_key_dest != key_game && key_dest == key_game)
@@ -4117,6 +4951,9 @@ static void QRE_Frame (void)
 	if (QR_Editor_Flying ())
 		QRE_DoPick (false);
 
+	if (qre.light_dragging)
+		QRE_UpdateLightDrag ();
+
 	// the normal path flushes before the render (QR_Editor_UpdateView); this
 	// covers the frames in which V_CalcRefdef does not run (paused, intermission)
 	QRE_FlushDirty ();
@@ -4124,14 +4961,16 @@ static void QRE_Frame (void)
 
 static void QRE_DrawChooser (void)
 {
-	int answer = QR_GUI_DialogCentered ("QuakeRay v." ENGINE_VER_STRING,
+	int answer = QR_GUI_DialogVertical ("QuakeRay v." ENGINE_VER_STRING,
 	                            "Choose the editor to run on this level (Esc closes).",
-	                            "Material Editor", "Light Editor");
+	                            "Material Editor", "Light Editor", "Exit");
 
 	if (answer == 1)
 		QRE_StartMode (QRE_MODE_MATERIAL);
 	else if (answer == 2)
 		QRE_StartMode (QRE_MODE_LIGHT);
+	else if (answer == 3)
+		QRE_RequestExit ();
 }
 
 void QR_Editor_DrawPanel (cb_context_t *cbx)
@@ -4158,11 +4997,22 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	{
 		QRE_DrawChooser ();
 	}
+	else if (qre.reset_prompt)
+	{
+		int answer = QR_GUI_DialogCentered ("QuakeRay v." ENGINE_VER_STRING,
+		    "This will remove all your saved work and all materials/light and everything will be set to default. Are you REALLY SURE?",
+		    "Yes", "No");
+
+		if (answer != 0)
+		{
+			qre.reset_prompt = false;
+			qre.reset_pending = (answer == 1);
+		}
+	}
 	else if (qre.exit_prompt)
 	{
-		int answer = QR_GUI_Dialog ((qre.mode == QRE_MODE_LIGHT) ? "Save lights?" : "Save materials?",
-		                            (qre.mode == QRE_MODE_LIGHT) ? "Save all light changes?" : "Save all materials and water changes?",
-		                            "Save all", "Discard");
+		int answer = QR_GUI_DialogCentered ("QuakeRay v." ENGINE_VER_STRING,
+		                                    "Save your changes?", "Yes", "No");
 
 		if (answer == 1)
 		{
@@ -4218,6 +5068,16 @@ qboolean QR_Editor_KeyEvent (int key, qboolean down)
 
 	if (key == K_ESCAPE && down)
 	{
+		if (qre.custom_dragging)
+		{
+			QRE_CustomGizmoCancel ();
+			return true;
+		}
+		if (qre.light_dragging)
+		{
+			QRE_CancelLightDrag ();
+			return true;
+		}
 		QRE_RequestExit ();
 		return true;
 	}
@@ -4232,7 +5092,7 @@ qboolean QR_Editor_KeyEvent (int key, qboolean down)
 // and the release ends it.
 // ---------------------------------------------------------------------------
 
-#define QRE_GIZMO_LEN 24.0f // the drawn length of an axis arrow, world units
+#define QRE_GIZMO_LEN 12.0f // the drawn length of an axis arrow, world units
 
 static int QRE_CustomSelectedIndex (void)
 {
@@ -4255,25 +5115,39 @@ static void QRE_GizmoOrigin (const rt_custom_light_t *l, vec3_t out)
 		VectorAdd (out, l->offset, out);
 }
 
+static void QRE_GizmoAxis (const rt_custom_light_t *l, int axis, vec3_t out)
+{
+	out[0] = out[1] = out[2] = 0.0f;
+	out[axis] = 1.0f;
+	if (l->spot && axis < 2)
+	{
+		const float length = sqrtf (l->dir[0] * l->dir[0] + l->dir[1] * l->dir[1]);
+
+		if (length > 1e-6f)
+		{
+			out[0] = (axis == 0 ? l->dir[0] : -l->dir[1]) / length;
+			out[1] = (axis == 0 ? l->dir[1] : l->dir[0]) / length;
+		}
+	}
+}
+
 #define QRE_SPOT_ARC_RADIUS (QRE_GIZMO_LEN * 1.2f)
 #define QRE_SPOT_ARC_SEGS 24
 #define QRE_SPOT_ARC_SWEEP 300.0f
 
-static void QRE_SpotArcBasis (int axis, vec3_t u, vec3_t v)
+static void QRE_SpotArcBasis (const rt_custom_light_t *light, int axis, vec3_t u, vec3_t v)
 {
-	u[0] = u[1] = u[2] = 0.0f;
-	v[0] = v[1] = v[2] = 0.0f;
-	u[(axis + 1) % 3] = 1.0f;
-	v[(axis + 2) % 3] = 1.0f;
+	QRE_GizmoAxis (light, (axis + 1) % 3, u);
+	QRE_GizmoAxis (light, (axis + 2) % 3, v);
 }
 
-static qboolean QRE_SpotArcProject (const vec3_t centre, int axis, float *xy)
+static qboolean QRE_SpotArcProject (const rt_custom_light_t *light, const vec3_t center, int axis, float *xy)
 {
 	const float deg2rad = 3.14159265f / 180.0f;
 	vec3_t      u, v;
 	int         i;
 
-	QRE_SpotArcBasis (axis, u, v);
+	QRE_SpotArcBasis (light, axis, u, v);
 
 	for (i = 0; i <= QRE_SPOT_ARC_SEGS; i++)
 	{
@@ -4283,7 +5157,7 @@ static qboolean QRE_SpotArcProject (const vec3_t centre, int axis, float *xy)
 		int         k;
 
 		for (k = 0; k < 3; k++)
-			p[k] = centre[k] + QRE_SPOT_ARC_RADIUS * (cs * u[k] + sn * v[k]);
+			p[k] = center[k] + QRE_SPOT_ARC_RADIUS * (cs * u[k] + sn * v[k]);
 
 		if (!QRE_WorldToScreen (p, &xy[i * 2], &xy[i * 2 + 1]))
 			return false;
@@ -4292,7 +5166,7 @@ static qboolean QRE_SpotArcProject (const vec3_t centre, int axis, float *xy)
 	return true;
 }
 
-static void QRE_DrawSpotDirArcs (const vec3_t centre, const uint32_t axis_color[3])
+static void QRE_DrawSpotDirArcs (const rt_custom_light_t *light, const vec3_t center, const uint32_t axis_color[3])
 {
 	const float deg2rad = 3.14159265f / 180.0f;
 	const float head_angle = 28.0f * deg2rad;
@@ -4301,18 +5175,18 @@ static void QRE_DrawSpotDirArcs (const vec3_t centre, const uint32_t axis_color[
 	float       xy[(QRE_SPOT_ARC_SEGS + 1) * 2];
 	int         a;
 
-	for (a = 0; a < 3; a++)
+	for (a = 1; a < 3; a++)
 	{
 		vec3_t u, v, end, radial, tangent;
 		float  ex, ey, ec, es;
 		int    i, k;
 
-		if (!QRE_SpotArcProject (centre, a, xy))
+		if (!QRE_SpotArcProject (light, center, a, xy))
 			continue;
 
-		QR_GUI_DrawPolyline (xy, QRE_SPOT_ARC_SEGS + 1, axis_color[a], 2.0f);
+		QR_GUI_DrawPolyline (xy, QRE_SPOT_ARC_SEGS + 1, axis_color[a], 8.0f);
 
-		QRE_SpotArcBasis (a, u, v);
+		QRE_SpotArcBasis (light, a, u, v);
 		ec = cosf (end_angle);
 		es = sinf (end_angle);
 
@@ -4320,7 +5194,7 @@ static void QRE_DrawSpotDirArcs (const vec3_t centre, const uint32_t axis_color[
 		{
 			radial[k] = ec * u[k] + es * v[k];
 			tangent[k] = -es * u[k] + ec * v[k];
-			end[k] = centre[k] + QRE_SPOT_ARC_RADIUS * radial[k];
+			end[k] = center[k] + QRE_SPOT_ARC_RADIUS * radial[k];
 		}
 
 		if (!QRE_WorldToScreen (end, &ex, &ey))
@@ -4343,12 +5217,12 @@ static void QRE_DrawSpotDirArcs (const vec3_t centre, const uint32_t axis_color[
 			xy[1] = ey;
 			xy[2] = wx;
 			xy[3] = wy;
-			QR_GUI_DrawPolyline (xy, 2, axis_color[a], 2.0f);
+			QR_GUI_DrawPolyline (xy, 2, axis_color[a], 8.0f);
 		}
 	}
 }
 
-static void QRE_DrawGizmoAxisArrows (const vec3_t pos, const uint32_t axis_color[3])
+static void QRE_DrawGizmoAxisArrows (const rt_custom_light_t *light, const vec3_t pos, const uint32_t axis_color[3])
 {
 	vec3_t adir, tup, tip, head;
 	float  ox, oy;
@@ -4362,8 +5236,9 @@ static void QRE_DrawGizmoAxisArrows (const vec3_t pos, const uint32_t axis_color
 		float tx, ty, hx, hy, w;
 		float xy[4];
 
-		VectorCopy (pos, tip);
-		tip[a] += QRE_GIZMO_LEN;
+		QRE_GizmoAxis (light, a, adir);
+		for (int k = 0; k < 3; k++)
+			tip[k] = pos[k] + QRE_GIZMO_LEN * adir[k];
 		if (!QRE_WorldToScreen (tip, &tx, &ty))
 			continue;
 
@@ -4371,12 +5246,9 @@ static void QRE_DrawGizmoAxisArrows (const vec3_t pos, const uint32_t axis_color
 		xy[1] = oy;
 		xy[2] = tx;
 		xy[3] = ty;
-		QR_GUI_DrawPolyline (xy, 2, axis_color[a], 2.0f);
+		QR_GUI_DrawPolyline (xy, 2, axis_color[a], 8.0f);
 
-		adir[0] = adir[1] = adir[2] = 0.0f;
-		adir[a] = 1.0f;
-		tup[0] = tup[1] = tup[2] = 0.0f;
-		tup[(a + 1) % 3] = 1.0f;
+		QRE_GizmoAxis (light, (a + 1) % 3, tup);
 
 		w = CLAMP (0.4f, QRE_DepthToCamera (pos) * 0.003f, 8.0f);
 
@@ -4384,7 +5256,7 @@ static void QRE_DrawGizmoAxisArrows (const vec3_t pos, const uint32_t axis_color
 		{
 			VectorCopy (tip, head);
 			VectorMA (head, -QRE_GIZMO_LEN * 0.28f, adir, head);
-			VectorMA (head, (h == 0 ? 1.0f : -1.0f) * w * 3.0f, tup, head);
+			VectorMA (head, (h == 0 ? 1.0f : -1.0f) * w * 6.0f, tup, head);
 
 			if (!QRE_WorldToScreen (head, &hx, &hy))
 				continue;
@@ -4393,7 +5265,7 @@ static void QRE_DrawGizmoAxisArrows (const vec3_t pos, const uint32_t axis_color
 			xy[1] = ty;
 			xy[2] = hx;
 			xy[3] = hy;
-			QR_GUI_DrawPolyline (xy, 2, axis_color[a], 2.0f);
+			QR_GUI_DrawPolyline (xy, 2, axis_color[a], 8.0f);
 		}
 	}
 }
@@ -4418,10 +5290,10 @@ static void QRE_DrawGizmoArrows (void)
 	axis_color[2] = RT_PackColorToUint32 (64, 128, 255, 255);
 
 	QRE_GizmoOrigin (&custom[index], pos);
-	QRE_DrawGizmoAxisArrows (pos, axis_color);
+	QRE_DrawGizmoAxisArrows (&custom[index], pos, axis_color);
 
 	if (custom[index].spot)
-		QRE_DrawSpotDirArcs (pos, axis_color);
+		QRE_DrawSpotDirArcs (&custom[index], pos, axis_color);
 }
 
 // World space to screen pixels, with the view the editor camera uses.
@@ -4462,14 +5334,14 @@ static float QRE_DistToSegment (float px, float py, float x0, float y0, float x1
 	return sqrtf ((px - qx) * (px - qx) + (py - qy) * (py - qy));
 }
 
-static qboolean QRE_CustomGizmoBegin (void)
+static qboolean QRE_CustomGizmoBegin (float mx, float my)
 {
 	int                index = QRE_CustomSelectedIndex ();
 	int                count = 0;
 	rt_custom_light_t *lights;
 	rt_custom_light_t *l;
 	vec3_t             origin, tip;
-	float              ox, oy, mx = -1.0f, my = -1.0f;
+	float              ox, oy;
 	int                a, axis = -1;
 
 	if (index < 0)
@@ -4482,7 +5354,6 @@ static qboolean QRE_CustomGizmoBegin (void)
 	if (!QRE_WorldToScreen (origin, &ox, &oy))
 		return false;
 
-	QR_GUI_GetMousePos (&mx, &my);
 	if (mx < 0.0f)
 		return false;
 
@@ -4491,12 +5362,12 @@ static qboolean QRE_CustomGizmoBegin (void)
 		float best = 10.0f;
 		float xy[(QRE_SPOT_ARC_SEGS + 1) * 2];
 
-		for (a = 0; a < 3; a++)
+		for (a = 1; a < 3; a++)
 		{
 			float d = 1e30f;
 			int   i;
 
-			if (!QRE_SpotArcProject (origin, a, xy))
+			if (!QRE_SpotArcProject (l, origin, a, xy))
 				continue;
 
 			for (i = 0; i < QRE_SPOT_ARC_SEGS; i++)
@@ -4522,13 +5393,14 @@ static qboolean QRE_CustomGizmoBegin (void)
 		qre.custom_drag_dir = true;
 		qre.custom_drag_axis = axis;
 		qre.custom_drag_index = index;
+		QRE_GizmoAxis (l, axis, qre.custom_drag_vector);
 		VectorCopy (l->origin, qre.custom_drag_origin);
 		VectorCopy (l->dir, qre.custom_drag_dir_start);
 
 		if (qre.custom_drag_dir_start[0] == 0.0f && qre.custom_drag_dir_start[1] == 0.0f &&
 		    qre.custom_drag_dir_start[2] == 0.0f)
 		{
-			qre.custom_drag_dir_start[2] = -1.0f;
+			qre.custom_drag_dir_start[0] = 1.0f;
 			VectorCopy (qre.custom_drag_dir_start, l->dir);
 		}
 
@@ -4543,9 +5415,10 @@ static qboolean QRE_CustomGizmoBegin (void)
 		for (a = 0; a < 3; a++)
 		{
 			float ax, ay, d;
+			vec3_t direction;
 
-			VectorCopy (origin, tip);
-			tip[a] += QRE_GIZMO_LEN;
+			QRE_GizmoAxis (l, a, direction);
+			VectorMA (origin, QRE_GIZMO_LEN, direction, tip);
 			if (!QRE_WorldToScreen (tip, &ax, &ay))
 				continue;
 
@@ -4565,19 +5438,20 @@ static qboolean QRE_CustomGizmoBegin (void)
 	qre.custom_drag_dir = false;
 	qre.custom_drag_axis = axis;
 	qre.custom_drag_index = index;
+	QRE_GizmoAxis (l, axis, qre.custom_drag_vector);
 	VectorCopy (l->origin, qre.custom_drag_origin);
 	qre.custom_drag_mouse[0] = mx;
 	qre.custom_drag_mouse[1] = my;
 	return true;
 }
 
-static void QRE_CustomGizmoMove (void)
+static void QRE_CustomGizmoMove (float mx, float my)
 {
 	int                count = 0;
 	rt_custom_light_t *lights;
 	rt_custom_light_t *l;
 	vec3_t             origin, tip;
-	float              ox, oy, ax, ay, mx = -1.0f, my = -1.0f, dirx, diry, pixlen, delta;
+	float              ox, oy, ax, ay, dirx, diry, pixlen, delta;
 
 	if (!qre.custom_dragging)
 		return;
@@ -4591,47 +5465,34 @@ static void QRE_CustomGizmoMove (void)
 	if (l->has_offset)
 		VectorAdd (origin, l->offset, origin);
 
-	if (!QRE_WorldToScreen (origin, &ox, &oy))
-		return;
-
 	if (qre.custom_drag_dir)
 	{
-		const float rad2deg = 180.0f / 3.14159265f;
-		vec3_t      axis, rot, forward, side;
-		float       start_angle, now_angle;
+		vec3_t axis, rot, forward, right, up;
 
-		QR_GUI_GetMousePos (&mx, &my);
-		if (mx < 0.0f)
+		if (mx < 0.0f && !qre.gizmo_fly_drag)
 			return;
 
-		start_angle = atan2f (qre.custom_drag_mouse[1] - oy, qre.custom_drag_mouse[0] - ox);
-		now_angle = atan2f (my - oy, mx - ox);
-		delta = (now_angle - start_angle) * rad2deg;
+		delta = (qre.custom_drag_axis == 1 ? my - qre.custom_drag_mouse[1]
+		                                    : mx - qre.custom_drag_mouse[0]) * 0.5f;
+		VectorCopy (qre.custom_drag_vector, axis);
 
-		while (delta > 180.0f)
-			delta -= 360.0f;
-		while (delta < -180.0f)
-			delta += 360.0f;
-
-		axis[0] = axis[1] = axis[2] = 0.0f;
-		axis[qre.custom_drag_axis] = 1.0f;
-
-		AngleVectors (r_refdef.viewangles, forward, side, side);
+		AngleVectors (r_refdef.viewangles, forward, right, up);
 		if (DotProduct (forward, axis) < 0.0f)
 			delta = -delta;
 
-		RotatePointAroundVector (rot, axis, qre.custom_drag_dir_start, delta);
+		RotatePointAroundVector (rot, axis, qre.custom_drag_dir_start, fmodf (delta, 360.0f));
 		VectorNormalize (rot);
 		VectorCopy (rot, l->dir);
 		return;
 	}
 
-	VectorCopy (origin, tip);
-	tip[qre.custom_drag_axis] += QRE_GIZMO_LEN;
+	if (!QRE_WorldToScreen (origin, &ox, &oy))
+		return;
+
+	VectorMA (origin, QRE_GIZMO_LEN, qre.custom_drag_vector, tip);
 	if (!QRE_WorldToScreen (tip, &ax, &ay))
 		return;
 
-	QR_GUI_GetMousePos (&mx, &my);
 	if (mx < 0.0f)
 		return;
 
@@ -4648,8 +5509,7 @@ static void QRE_CustomGizmoMove (void)
 	delta = ((mx - qre.custom_drag_mouse[0]) * dirx + (my - qre.custom_drag_mouse[1]) * diry) /
 	        pixlen * QRE_GIZMO_LEN;
 
-	VectorCopy (qre.custom_drag_origin, l->origin);
-	l->origin[qre.custom_drag_axis] += floorf (delta + 0.5f);
+	VectorMA (qre.custom_drag_origin, floorf (delta + 0.5f), qre.custom_drag_vector, l->origin);
 }
 
 // Called for every SDL event before the engine handles it.
@@ -4669,18 +5529,26 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 	if (qre.mode == QRE_MODE_LIGHT)
 	{
 		if (!qre.custom_dragging && e->type == SDL_MOUSEBUTTONDOWN &&
-		    e->button.button == SDL_BUTTON_LEFT && !QR_GUI_WantsMouse () &&
-		    QRE_CustomGizmoBegin ())
-			return true;
+		    e->button.button == SDL_BUTTON_LEFT && !QR_GUI_WantsMouse ())
+		{
+			float gmx = -1.0f, gmy = -1.0f;
 
-		if (qre.custom_dragging)
+			QR_GUI_GetMousePos (&gmx, &gmy);
+			if (gmx >= 0.0f && QRE_CustomGizmoBegin (gmx, gmy))
+				return true;
+		}
+
+		if (qre.custom_dragging && !qre.gizmo_fly_drag)
 		{
 			if (e->type == SDL_MOUSEMOTION)
 			{
 				// the bridge owns the cursor position the drag reads: let it see
 				// the motion first, then move the light and swallow the event
+				float gmx = -1.0f, gmy = -1.0f;
+
 				QR_GUI_ProcessEvent (e);
-				QRE_CustomGizmoMove ();
+				QR_GUI_GetMousePos (&gmx, &gmy);
+				QRE_CustomGizmoMove (gmx, gmy);
 				return true;
 			}
 			if (e->type == SDL_MOUSEBUTTONUP && e->button.button == SDL_BUTTON_LEFT)
@@ -4702,7 +5570,7 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 	// fire button and flies again); a text field keeps its own Tab
 	if (e->type == SDL_KEYDOWN && e->key.keysym.scancode == SDL_SCANCODE_TAB && !QR_GUI_WantsKeyboard ())
 	{
-		if (!qre.choosing)
+		if (!qre.choosing && !qre.reset_prompt)
 			QRE_CursorMode (false);
 		return true;
 	}
@@ -4714,6 +5582,10 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 		if (qre.choosing)
 		{
 			QRE_RequestExit ();
+		}
+		else if (qre.reset_prompt)
+		{
+			qre.reset_prompt = false;
 		}
 		else if (qre.exit_prompt)
 		{
@@ -4754,11 +5626,12 @@ static void QRE_ClosePanel (void)
 static void QRE_Apply (void)
 {
 	const qboolean globals = (qre.mode == QRE_MODE_LIGHT) ? QRE_GlobalsTouched () : QRE_WaterTouched ();
+	const qboolean touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0);
 	const qboolean session = QRE_WriteSession ();
 
 	if (!session && !globals)
 	{
-		QRE_Notify ("nothing to save yet");
+		QRE_Notify (touched ? "the session could not be written" : "nothing to save yet");
 		return;
 	}
 
@@ -4767,18 +5640,11 @@ static void QRE_Apply (void)
 
 	if (qre.mode == QRE_MODE_LIGHT)
 	{
-		const qboolean emitter = QRE_FileExists (qre.editor_file);
-		const qboolean custom = QRE_FileExists (qre.custom_editor_file);
-
 		QRE_TakeLightSnapshot (); // Cancel now reverts to the state just saved
 		QRE_TakeGlobalsSnapshot ();
 
-		if (emitter && custom)
-			QRE_Notify ("session written to lights.editor.yaml and qray/lights.editor.yaml");
-		else if (custom)
-			QRE_Notify ("session written to qray/lights.editor.yaml");
-		else if (emitter)
-			QRE_Notify ("session written to lights.editor.yaml");
+		if (session)
+			QRE_Notify ("session written to qray.lights.editor.yaml");
 		if (globals)
 			QRE_Notify ("global settings written to the config");
 		return;
@@ -4787,9 +5653,9 @@ static void QRE_Apply (void)
 	QRE_TakeSnapshot (); // Cancel now reverts to the state just saved
 	QRE_TakeWaterSnapshot ();
 	if (session)
-		QRE_Notify ("session written to materials.editor.yaml");
+		QRE_Notify ("session written to qray.materials.editor.yaml");
 	if (globals)
-		QRE_Notify ("water settings written to the config");
+		QRE_Notify ("settings written to the config");
 }
 
 static void QRE_Cancel (void)
@@ -4800,8 +5666,8 @@ static void QRE_Cancel (void)
 		// snapshots back is enough; the fog goes back through the fog command
 		QRE_RestoreLightSnapshot ();
 
-		if (QRE_FileExists (qre.editor_file) && !QRE_WriteSession ())
-			remove (qre.editor_file);
+		remove (qre.editor_file);
+		QRE_ClearSessionState ();
 
 		QRE_Notify ("light overrides, custom lights, fog and global settings reverted");
 		return;
@@ -4829,20 +5695,19 @@ static void QRE_Cancel (void)
 		QRE_ResolveGroup (texname);
 	}
 
-	// the session file no longer matches the lists: put the reverted values
-	// there (the session's names stay known until the editor closes, so a later
-	// Save still writes what was applied earlier)
-	if (QRE_FileExists (qre.editor_file) && !QRE_WriteSession ())
-		remove (qre.editor_file);
+	// nothing is pending after a cancel: the session files go away, so Exit
+	// goes back to the chooser instead of asking to save them
+	remove (qre.editor_file);
+	QRE_ClearSessionState ();
 
-	QRE_Notify ("materials and water settings reverted to the values from materials.yaml and the config");
+	QRE_Notify ("materials and water settings reverted to the values from qray.materials.yaml and the config");
 }
 
 // ---------------------------------------------------------------------------
-// Saving materials.yaml
+// Saving qray.materials.yaml
 // ---------------------------------------------------------------------------
 
-// Written to the top of materials/materials.yaml. Kept in sync with the header
+// Written to the top of qray.materials.yaml. Kept in sync with the header
 // of renderer/Source/materials.yaml, which documents the accepted keys.
 static const char *qre_yaml_header =
 	"# Global material definitions for the qray ray-traced renderer.\n"
@@ -4855,23 +5720,28 @@ static const char *qre_yaml_header =
 	"#     its pixels' luminance is the emission. Most precise; keeps the mask\n"
 	"#     independent of the diffuse art.\n"
 	"#   * `color_emissive:` -- no mask file: each block below matches its own\n"
-	"#     colour against the base texture, so only pixels close to it glow. A\n"
-	"#     block carries its colour and its own tone controls:\n"
+	"#     color against the base texture, so only pixels close to it glow. A\n"
+	"#     block carries its color and its own tone controls:\n"
 	"#         color_emissive:\n"
 	"#           - color: ff0000          # rrggbb\n"
-	"#             threshold: 0.02        # 0..1 colour-cube distance / sqrt(3)\n"
-	"#             feather: 2             # pixels of edge softening, both sides\n"
+	"#             threshold: 0.02        # 0..1 color-cube distance / sqrt(3)\n"
+	"#             feather: 2             # pixels of outward edge softening\n"
 	"#             emissive_factor: 1     # scales this block's glow (0..5)\n"
 	"#             blend: screen          # cvar | off | normal | screen |\n"
-	"#                                    # overlay | hard light | colour dodge\n"
-	"#     The synthesized mask is white where the pixel matches the colour\n"
+	"#                                    # overlay | hard light | color dodge\n"
+	"#     The synthesized mask is white where the pixel matches the color\n"
 	"#     exactly and decays exponentially to black towards the threshold, so the\n"
 	"#     glow fades out softly instead of ending in a hard edge; the feather\n"
-	"#     blurs that edge on both sides without comparing colours. Up to ten\n"
+	"#     extends that edge outward without comparing colors, and the pixels\n"
+	"#     the threshold selected keep their value. Up to ten\n"
 	"#     blocks may share one texture; a pixel glows when any of them matches\n"
-	"#     it, and the strongest one's blend mode is used there. `emissive_factor`\n"
-	"#     scales the result. Combine with `is_light: true` to also cast light\n"
-	"#     (otherwise the surface only glows):\n"
+	"#     it, and the block whose color is nearest supplies its blend mode.\n"
+	"#     A block may carry `polygon: \"u,v u,v ...\"` (up to sixteen UV points,\n"
+	"#     0..1) instead of a color: the pixels inside the polygon glow, so the\n"
+	"#     mask follows the shape drawn on the texture; `threshold` does not\n"
+	"#     apply, `feather`, `emissive_factor` and `blend` do.\n"
+	"#     `emissive_factor` scales the result. Combine with `is_light: true`\n"
+	"#     to also cast light (otherwise the surface only glows):\n"
 	"#     e.g.  - name: textures/foo\n"
 	"#             color_emissive:\n"
 	"#               - color: ff0000\n"
@@ -4880,7 +5750,7 @@ static const char *qre_yaml_header =
 	"#                 emissive_factor: 2\n"
 	"#                 blend: screen\n"
 	"#             is_light: true\n"
-	"# The old single-colour keys (`color_emissive: ff0000,00ff00`,\n"
+	"# The old single-color keys (`color_emissive: ff0000,00ff00`,\n"
 	"# `color_emissive_threshold`, `color_emissive_feather`) are still read: a\n"
 	"# block without its own controls inherits them.\n"
 	"# Precedence: an authored `texture_emissive` always wins -- while the key is\n"
@@ -4891,14 +5761,14 @@ static const char *qre_yaml_header =
 	"#\n"
 	"# `emissive_blend: screen` (or a number) overrides the global `rt_emis_blend`\n"
 	"# cvar for the emission that has no block of its own (a texture_emissive\n"
-	"# mask); a colour block's own `blend` wins for its pixels. The names are what\n"
+	"# mask); a color block's own `blend` wins for its pixels. The names are what\n"
 	"# the shader does:\n"
 	"#   0 - off: emission is not composited at all\n"
 	"#   1 - normal: emission is used as coverage (this is the cvar default)\n"
 	"#   2 - screen: added on top of the image (brightest, keeps saturation)\n"
 	"#   3 - overlay: the overlay formula, driven by the underlying base color\n"
 	"#   4 - hard light: the same formula, driven by the emission color\n"
-	"#   5 - colour dodge: base divided by the inverted emission (brightens)\n"
+	"#   5 - color dodge: base divided by the inverted emission (brightens)\n"
 	"# Intended for emissive *mirrored* surfaces (stained glass, lit windows):\n"
 	"# they read as washed out in the default mode, while the additive mode keeps\n"
 	"# them bright and saturated.\n"
@@ -4906,16 +5776,17 @@ static const char *qre_yaml_header =
 	"#             mirror: true\n"
 	"#             emissive_blend: screen\n"
 	"#\n"
-	"# `emissive_focus` (degrees, 0..89) confines the light a material casts to a\n"
+	"# `emissive_focus` (degrees, 0..90) confines the light a material casts to a\n"
 	"# cone around its normal: full brightness up to the angle, nothing beyond.\n"
-	"# No key keeps the default wide lobe. `emissive_focus_soft` (degrees,\n"
-	"# absolute) is the width of the cone's soft edge: brightness holds to\n"
-	"# `emissive_focus - emissive_focus_soft` and then falls smoothly (smoothstep\n"
-	"# squared) to zero at the focus angle, so the edge always grows inward from\n"
-	"# it. No key uses a tenth of the focus angle; 0 is a nearly hard edge.\n"
+	"# No key keeps the default wide lobe; under a projector it is 45 degrees.\n"
+	"# `emissive_focus_soft` (degrees, absolute) is the width of the cone's soft\n"
+	"# edge: brightness holds to `emissive_focus - emissive_focus_soft` and then\n"
+	"# falls smoothly (smoothstep squared) to zero at the focus angle, so the edge\n"
+	"# always grows inward from it. No key uses 45 degrees under a projector and a\n"
+	"# tenth of the focus angle otherwise; 0 is a nearly hard edge.\n"
 	"# `emissive_projector: true` routes the light into the material's emissive\n"
 	"# mask instead of dimming it -- a gobo: the mask is read along the direction\n"
-	"# of each point it lights, over the same cone (`emissive_focus`; no key = 60\n"
+	"# of each point it lights, over the same cone (`emissive_focus`; no key = 45\n"
 	"# degrees), and `emissive_focus_soft` also blurs the projected pattern (the\n"
 	"# mask is read from a blurrier mip as the edge grows).\n"
 	"#     e.g.  - name: textures/window1_2\n"
@@ -4931,8 +5802,9 @@ static void QRE_WriteColor (FILE *f, const char *key, const vec3_t rgb)
 	         (int)(rgb[2] * 255.0f + 0.5f) & 0xff);
 }
 
-// The colour blocks, one YAML mapping each: the colour and the tone controls
-// that work for it alone.
+// The emissive blocks, one YAML mapping each: the color a block matches (or
+// the polygon that selects its pixels) and the tone controls that work for it
+// alone.
 static void QRE_WriteEmissiveBlocks (FILE *f, const rt_material_t *m)
 {
 	int i;
@@ -4942,11 +5814,23 @@ static void QRE_WriteEmissiveBlocks (FILE *f, const rt_material_t *m)
 	{
 		const rt_emissive_t *b = &m->color_emissive[i];
 
-		fprintf (f, "      - color: %02x%02x%02x\n",
-		         (int)(b->color[0] * 255.0f + 0.5f) & 0xff,
-		         (int)(b->color[1] * 255.0f + 0.5f) & 0xff,
-		         (int)(b->color[2] * 255.0f + 0.5f) & 0xff);
-		fprintf (f, "        threshold: %.6g\n", b->threshold);
+		if (b->poly_count >= 3)
+		{
+			int p;
+
+			fprintf (f, "      - polygon:");
+			for (p = 0; p < b->poly_count; p++)
+				fprintf (f, " %.4f,%.4f", b->poly_uv[p][0], b->poly_uv[p][1]);
+			fprintf (f, "\n");
+		}
+		else
+		{
+			fprintf (f, "      - color: %02x%02x%02x\n",
+			         (int)(b->color[0] * 255.0f + 0.5f) & 0xff,
+			         (int)(b->color[1] * 255.0f + 0.5f) & 0xff,
+			         (int)(b->color[2] * 255.0f + 0.5f) & 0xff);
+			fprintf (f, "        threshold: %.6g\n", b->threshold);
+		}
 		fprintf (f, "        feather: %.6g\n", b->feather);
 		fprintf (f, "        emissive_factor: %.6g\n", b->factor);
 		fprintf (f, "        blend: %s\n", RT_MAT_EmissiveBlendName (b->blend));
@@ -4993,8 +5877,6 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		QRE_WriteColor (f, "light_color", m->light_color);
 	if (m->light_brightness != 1.0f)
 		fprintf (f, "    light_brightness: %.6g\n", m->light_brightness);
-	if (m->light_upoffset != 0.0f)
-		fprintf (f, "    light_upoffset: %.6g\n", m->light_upoffset);
 	if (m->emissive_focus > 0.0f)
 		fprintf (f, "    emissive_focus: %.6g\n", m->emissive_focus);
 	if (m->emissive_focus_soft >= 0.0f)
@@ -5007,6 +5889,8 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    exact_normals: true\n");
 	if (m->force_rasterize)
 		fprintf (f, "    force_rasterize: true\n");
+	if (m->alpha_test)
+		fprintf (f, "    alpha_test: true\n");
 }
 
 static qboolean QRE_FileExists (const char *path)
@@ -5055,9 +5939,9 @@ static qboolean QRE_CopyFile (const char *from, const char *to)
 	return ok;
 }
 
-// The names the target materials.yaml already carries: the session file is what
-// replaces that file when it is saved, so those entries have to be written back
-// (with their live, possibly edited values) or the save would drop them.
+// The names the target qray.materials.yaml already carries: the session file is
+// what replaces that file when it is saved, so those entries have to be written
+// back (with their live, possibly edited values) or the save would drop them.
 #define QRE_SESSION_NAMES_MAX 1024
 
 // The touched entry of the current mode, written in the file's own format. A
@@ -5087,11 +5971,37 @@ static void QRE_SessionWriteEntry (FILE *f, const char *name)
 	}
 }
 
-// Writes materials.editor.yaml / lights.editor.yaml: the target file's own text
-// with the blocks of the touched entries replaced, so comments, formatting and
-// keys the loader does not understand survive a save. Entries the target does not
-// carry are appended; a target that does not exist gets the standard header.
-// Apply writes it, Save copies it over the target, Discard deletes it.
+// Creates every missing component of a directory path, without ending the game
+// when one of them cannot be made: a save that cannot reach its directory reports
+// the path and keeps the session. Sys_mkdir stays fatal for the directories the
+// game cannot run without; a mod's own folder an editor save writes into is not
+// one of them.
+static qboolean QRE_CreateDir (const char *path)
+{
+	char  buf[MAX_OSPATH];
+	char *ofs;
+
+	q_strlcpy (buf, path, sizeof (buf));
+
+	for (ofs = buf + 1; *ofs; ofs++)
+	{
+		if (*ofs == '/' || *ofs == '\\')
+		{
+			*ofs = '\0';
+			if (!Sys_TryMkdir (buf))
+				return false;
+			*ofs = '/';
+		}
+	}
+
+	return Sys_TryMkdir (buf);
+}
+
+// Writes the materials session file: the target file's own text with the blocks
+// of the touched entries replaced, so comments, formatting and keys the loader
+// does not understand survive a save. Entries the target does not carry are
+// appended; a target that does not exist gets the standard header. Apply writes
+// it, Save copies it over the target, Discard deletes it.
 static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_count)
 {
 	FILE    *in;
@@ -5106,6 +6016,12 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 		return false;
 
 	memset (written, 0, sizeof (written));
+
+	if (!QRE_CreateDir (com_gamedir))
+	{
+		QRE_Notify ("cannot create %s", com_gamedir);
+		return false;
+	}
 
 	in = fopen (qre.target_file, "r");
 	out = fopen (qre.editor_file, "w");
@@ -5123,7 +6039,7 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 		const qboolean light = (qre.mode == QRE_MODE_LIGHT);
 
 		fprintf (out, "%s", light ? RT_LIGHT_Header () : qre_yaml_header);
-		fprintf (out, "%s\n", light ? "lights:" : "materials:");
+		fprintf (out, "%s\n", light ? "qray_lights:" : "qray_materials:");
 	}
 	else
 	{
@@ -5177,6 +6093,20 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 				skipping = false;
 			}
 
+			if (line[0] != ' ' && line[0] != '\t')
+			{
+				if (!strncmp (line, "materials:", 10))
+				{
+					fputs ("qray_materials:\n", out); // migrate the old root key
+					continue;
+				}
+				if (!strncmp (line, "lights:", 7))
+				{
+					fputs ("qray_lights:\n", out); // migrate the old root key
+					continue;
+				}
+			}
+
 			fputs (line, out);
 		}
 		fclose (in);
@@ -5227,13 +6157,9 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 
 	// The fog block is always part of the section: the Global tab authors the
 	// level's fog, so the session has to carry it even when only a light
-	// changed. "enabled" is the live rt_level_fog switch, so the section always
-	// states whether the level's fog is drawn. (The colour getter fills four
-	// floats, hence the local.)
+	// changed. (The color getter fills four floats, hence the local.)
 	memset (&fog, 0, sizeof (fog));
 	fog.has_fog = true;
-	fog.has_enabled = true;
-	fog.enabled = CVAR_TO_BOOL (rt_level_fog);
 	Fog_GetColor (color);
 	fog.color[0] = color[0];
 	fog.color[1] = color[1];
@@ -5241,12 +6167,12 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 	fog.density = Fog_GetDensity ();
 
 	fprintf (out, "  fog:\n");
-	fprintf (out, "    enabled: %s\n", fog.enabled ? "true" : "false");
 	fprintf (out, "    color: %02x%02x%02x\n",
 	         (int)(CLAMP (0.0f, fog.color[0], 1.0f) * 255.0f + 0.5f) & 0xff,
 	         (int)(CLAMP (0.0f, fog.color[1], 1.0f) * 255.0f + 0.5f) & 0xff,
 	         (int)(CLAMP (0.0f, fog.color[2], 1.0f) * 255.0f + 0.5f) & 0xff);
 	fprintf (out, "    density: %.6g\n", fog.density);
+	fprintf (out, "    enabled: %s\n", Fog_Enabled () ? "true" : "false");
 
 	if (count > 0)
 	{
@@ -5256,73 +6182,86 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 	}
 }
 
-// Writes qray/lights.editor.yaml: the target's own text with the current level's
-// section replaced by the live fog and custom lights, so comments, the other
-// levels' sections and keys the loader does not understand survive a save. Only
-// the current level's section is rewritten; a target that does not exist gets
-// the standard header. The level key is the map's own (RT_CustomLights_LevelKey).
-static qboolean QRE_WriteCustomSession (void)
+// Whether the lines indented under a just-read key form an emitter list. The
+// key name alone cannot tell the root list from a level named like it, so the
+// body decides. The file position is the same after the call as before it.
+static qboolean QRE_NextIsEmitterBody (FILE *f)
 {
-	FILE    *in;
-	FILE    *out;
-	char     line[2048];
-	char     level[64];
-	qboolean skipping = false;
-	qboolean wrote = false;
+	char     probe[2048];
+	qboolean emitter = false;
+	long     pos = ftell (f);
 
-	RT_CustomLights_LevelKey (cl.worldmodel ? cl.worldmodel->name : "", level, sizeof (level));
-
-	{
-		// a mod may not have the qray directory yet
-		char dir[MAX_OSPATH];
-
-		q_snprintf (dir, sizeof (dir), "%s/qray", com_gamedir);
-		Sys_mkdir (dir);
-	}
-
-	in = fopen (qre.custom_target_file, "r");
-	out = fopen (qre.custom_editor_file, "w");
-	if (!out)
-	{
-		if (in)
-			fclose (in);
-		QRE_Notify ("cannot write %s", qre.custom_editor_file);
+	if (pos < 0)
 		return false;
+
+	while (fgets (probe, sizeof (probe), f))
+	{
+		char *p = probe;
+
+		if (probe[0] == '#')
+			continue;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+
+		if (!strncmp (p, "- name:", 7))
+		{
+			emitter = true;
+			break;
+		}
+
+		if (probe[0] != ' ' && probe[0] != '\t' && probe[0] != '\r' && probe[0] != '\n')
+			break; // the next root line; the body was not an emitter list
 	}
+
+	fseek (f, pos, SEEK_SET);
+	return emitter;
+}
+
+// Copies the level sections of a lights file into the session, leaving out the
+// current level's section (when the Custom tab was touched) and, of a merged
+// file, the emitter list under the root "qray_lights:" key.
+static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *skip_level)
+{
+	FILE    *in = fopen (source, "r");
+	char     line[2048];
+	qboolean skipping = false;
+	qboolean started = false;
 
 	if (!in)
-	{
-		// a target that does not exist yet: the standard header and the section
-		fprintf (out, "%s", RT_CustomLights_Header ());
-		QRE_CustomWriteLevel (out, level);
-		wrote = true;
-	}
-	else
-	{
-		qboolean any_line = false;
+		return;
 
-		while (fgets (line, sizeof (line), in))
+	while (fgets (line, sizeof (line), in))
+	{
+		if (!started)
 		{
-			char *colon = NULL;
-			char  key[64];
+			if (line[0] == '#' || line[0] == ' ' || line[0] == '\t' ||
+			    line[0] == '\r' || line[0] == '\n')
+				continue;
+			started = true;
+		}
 
-			any_line = true;
+		if (skipping)
+		{
+			if (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n')
+				continue;
+			skipping = false;
+		}
 
-			if (skipping)
-			{
-				if (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n')
-					continue; // the body of the section that was replaced
-				skipping = false;
-			}
+		if (line[0] == '-' && !strncmp (line, "- name:", 7))
+		{
+			skipping = true;
+			continue;
+		}
 
-			// a top-level key starts at column 0 (a level section); comments and
-			// the indented bodies pass through, as does every other key
-			if (line[0] != ' ' && line[0] != '\t' && line[0] != '#' &&
-			    line[0] != '\r' && line[0] != '\n')
-				colon = strchr (line, ':');
+		if (line[0] != ' ' && line[0] != '\t' && line[0] != '#' &&
+		    line[0] != '\r' && line[0] != '\n')
+		{
+			char *colon = strchr (line, ':');
 
 			if (colon)
 			{
+				char  key[64];
 				char *e = colon;
 				int   n;
 
@@ -5335,197 +6274,646 @@ static qboolean QRE_WriteCustomSession (void)
 				key[n] = '\0';
 				q_strlwr (key);
 
-				if (!wrote && !strcmp (key, level))
+				if (!strcmp (key, "qray_lights"))
 				{
-					QRE_CustomWriteLevel (out, level);
-					wrote = true;
+					skipping = true;
+					continue;
+				}
+				if (!strcmp (key, "lights") && QRE_NextIsEmitterBody (in))
+				{
+					skipping = true;
+					continue;
+				}
+				if (skip_level && !strcmp (key, skip_level))
+				{
 					skipping = true;
 					continue;
 				}
 			}
-
-			fputs (line, out);
 		}
-		fclose (in);
 
-		if (!wrote)
+		fputs (line, out);
+	}
+
+	fclose (in);
+}
+
+#define QRE_LIGHTS_ROOT_NONE   0
+#define QRE_LIGHTS_ROOT_LEGACY 1 // the old root key, "lights:"
+#define QRE_LIGHTS_ROOT_QRAY   2 // the namespaced root key, "qray_lights:"
+
+// Which root emitter key the target carries, if any. "qray_lights:" is the
+// namespaced root; a bare "lights:" is the root only when its body is an
+// emitter list, so a section named "lights" belongs to that level.
+static int QRE_FileLightsRootKind (const char *path)
+{
+	FILE *f = fopen (path, "r");
+	char  line[2048];
+	int   kind = QRE_LIGHTS_ROOT_NONE;
+
+	if (!f)
+		return QRE_LIGHTS_ROOT_NONE;
+
+	while (fgets (line, sizeof (line), f))
+	{
+		if (!strncmp (line, "qray_lights:", 12))
 		{
-			// the target did not carry the level: the new section goes last
-			if (any_line)
+			kind = QRE_LIGHTS_ROOT_QRAY;
+			break;
+		}
+		if (kind == QRE_LIGHTS_ROOT_NONE && !strncmp (line, "lights:", 7) &&
+		    QRE_NextIsEmitterBody (f))
+			kind = QRE_LIGHTS_ROOT_LEGACY;
+	}
+
+	fclose (f);
+	return kind;
+}
+
+static int QRE_LightTouchedIndex (const char *name)
+{
+	int i;
+
+	for (i = 0; i < qre.light_touched_count && i < QRE_TOUCHED_MAX; i++)
+	{
+		if (!q_strcasecmp (qre.light_touched[i], name))
+			return i;
+	}
+	return -1;
+}
+
+// Writes one touched emitter entry when it still resolves; false when the
+// writer has nothing to say about it.
+static qboolean QRE_LightWriteTouched (FILE *out, qboolean *written, int index)
+{
+	rt_light_t *l;
+
+	if (index < 0 || index >= qre.light_touched_count || written[index])
+		return false;
+
+	l = RT_LIGHT_Find (qre.light_touched[index]);
+	if (!l || !RT_LIGHT_HasFields (l))
+		return false;
+
+	RT_LIGHT_WriteEntry (out, l);
+	written[index] = true;
+	return true;
+}
+
+// True when the entry is a touched one that resolves but no longer carries any
+// field: the block in the target is stale and has to leave with the save.
+static qboolean QRE_LightDropTouched (qboolean *written, int index)
+{
+	if (index < 0 || index >= qre.light_touched_count || written[index])
+		return false;
+
+	if (!RT_LIGHT_Find (qre.light_touched[index]))
+		return false;
+
+	written[index] = true;
+	return true;
+}
+
+static int QRE_LightWriteMissing (FILE *out, qboolean *written)
+{
+	int i, count = 0;
+
+	for (i = 0; i < qre.light_touched_count && i < QRE_TOUCHED_MAX; i++)
+	{
+		if (QRE_LightWriteTouched (out, written, i))
+			count++;
+	}
+
+	return count;
+}
+
+// Writes qray.lights.editor.yaml: one file with the emitter overrides under the
+// root "qray_lights:" key and one section per level for the custom lights and the
+// fog. A merged target keeps its own text: only the touched emitter blocks and
+// the current level's section are replaced, so comments and keys the loader
+// does not understand survive a save.
+static qboolean QRE_WriteLightSession (void)
+{
+	char        names[QRE_SESSION_NAMES_MAX][MAX_QPATH];
+	int         name_count = 0;
+	char        level[64];
+	char        legacy_emitter[MAX_OSPATH];
+	char        legacy_custom[MAX_OSPATH];
+	const char *emitter_source;
+	qboolean    custom_touched = QRE_CustomTouched ();
+	qboolean    target_exists = QRE_FileExists (qre.target_file) ? true : false;
+	int         root_kind = target_exists ? QRE_FileLightsRootKind (qre.target_file) : QRE_LIGHTS_ROOT_NONE;
+	qboolean    merged_target = (root_kind != QRE_LIGHTS_ROOT_NONE);
+	FILE       *out;
+	qboolean    wrote = false;
+	int         i, n;
+
+	if (qre.light_touched_count <= 0 && !custom_touched)
+		return false;
+
+	if (!QRE_CreateDir (com_gamedir))
+	{
+		QRE_Notify ("cannot create %s", com_gamedir);
+		return false;
+	}
+
+	q_snprintf (legacy_emitter, sizeof (legacy_emitter), "%s/lights.yaml", com_gamedir);
+	q_snprintf (legacy_custom, sizeof (legacy_custom), "%s/qray/lights.yaml", com_gamedir);
+
+	emitter_source = target_exists ? qre.target_file : legacy_emitter;
+
+	if (QRE_FileExists (emitter_source))
+		name_count = RT_LIGHT_ReadNames (emitter_source, names, QRE_SESSION_NAMES_MAX);
+
+	for (i = 0; i < qre.light_touched_count && name_count < QRE_SESSION_NAMES_MAX; i++)
+	{
+		for (n = 0; n < name_count; n++)
+		{
+			if (!q_strcasecmp (names[n], qre.light_touched[i]))
+				break;
+		}
+		if (n == name_count)
+			q_strlcpy (names[name_count++], qre.light_touched[i], MAX_QPATH);
+	}
+
+	RT_CustomLights_LevelKey (cl.worldmodel ? cl.worldmodel->name : "", level, sizeof (level));
+
+	out = fopen (qre.editor_file, "w");
+	if (!out)
+	{
+		QRE_Notify ("cannot write %s", qre.editor_file);
+		return false;
+	}
+
+	if (!merged_target)
+	{
+		// no merged target yet: write the canonical file and copy the level
+		// sections the old files carry
+		const char *level_source = target_exists ? qre.target_file : legacy_custom;
+
+		fprintf (out, "%s", RT_LIGHT_Header ());
+		fprintf (out, "qray_lights:\n");
+		for (i = 0; i < name_count; i++)
+		{
+			rt_light_t *l = RT_LIGHT_Find (names[i]);
+
+			if (l && RT_LIGHT_HasFields (l))
+			{
+				RT_LIGHT_WriteEntry (out, l);
+				wrote = true;
+			}
+		}
+
+		if (QRE_FileExists (level_source))
+			QRE_WriteLevelBlocks (out, level_source, custom_touched ? level : NULL);
+
+		if (custom_touched)
+		{
+			if (QRE_FileExists (level_source) && !wrote)
 				fprintf (out, "\n");
 			QRE_CustomWriteLevel (out, level);
 			wrote = true;
 		}
 	}
+	else
+	{
+		FILE    *in = fopen (qre.target_file, "r");
+		char     line[2048];
+		qboolean written[QRE_TOUCHED_MAX];
+		qboolean skipping = false;
+		qboolean in_lights = false;
+		qboolean lights_closed = false;
+		qboolean level_written = false;
+
+		if (!in)
+		{
+			fclose (out);
+			remove (qre.editor_file);
+			return false;
+		}
+
+		memset (written, 0, sizeof (written));
+
+		while (fgets (line, sizeof (line), in))
+		{
+			char *p = line;
+
+			if (skipping)
+			{
+				char *q = line;
+
+				while (*q == ' ' || *q == '\t')
+					q++;
+
+				if (!strncmp (q, "- name:", 7) || !strncmp (q, "name:", 5))
+				{
+					skipping = false; // the next block already starts
+				}
+				else if (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n')
+				{
+					continue; // the body of the block that was replaced
+				}
+				else
+				{
+					skipping = false;
+				}
+			}
+
+			while (*p == ' ' || *p == '\t')
+				p++;
+
+			if (!strncmp (p, "- name:", 7) || !strncmp (p, "name:", 5))
+			{
+				char  name[MAX_QPATH];
+				char *e;
+				int   len;
+				int   touched;
+
+				p = strchr (p, ':') + 1;
+				while (*p == ' ' || *p == '\t')
+					p++;
+				e = p;
+				while (*e && *e != '\r' && *e != '\n' && *e != ' ' && *e != '\t')
+					e++;
+				len = (int)(e - p);
+				if (len >= MAX_QPATH)
+					len = MAX_QPATH - 1;
+				memcpy (name, p, (size_t)len);
+				name[len] = '\0';
+				q_strlwr (name);
+
+				touched = QRE_LightTouchedIndex (name);
+				if (touched >= 0)
+				{
+					if (written[touched] ||
+					    QRE_LightWriteTouched (out, written, touched) ||
+					    QRE_LightDropTouched (written, touched))
+					{
+						wrote = true;
+						skipping = true;
+						continue;
+					}
+				}
+			}
+
+			if (line[0] != ' ' && line[0] != '\t' && line[0] != '\r' && line[0] != '\n')
+			{
+				char *colon = strchr (line, ':');
+
+				if (line[0] != '#' && colon)
+				{
+					char  key[64];
+					char *e = colon;
+					int   len;
+
+					while (e > line && (e[-1] == ' ' || e[-1] == '\t'))
+						e--;
+					len = (int)(e - line);
+					if (len >= (int)sizeof (key))
+						len = (int)sizeof (key) - 1;
+					memcpy (key, line, (size_t)len);
+					key[len] = '\0';
+					q_strlwr (key);
+
+					if (!strcmp (key, "qray_lights"))
+					{
+						in_lights = true;
+						fputs (line, out);
+						continue;
+					}
+					if (!strcmp (key, "lights") && QRE_NextIsEmitterBody (in))
+					{
+						in_lights = true;
+						fputs ("qray_lights:\n", out); // migrate the old root key
+						continue;
+					}
+
+					if (in_lights && !lights_closed)
+					{
+						lights_closed = true;
+						if (QRE_LightWriteMissing (out, written) > 0)
+							wrote = true;
+					}
+
+					if (custom_touched && !level_written && !strcmp (key, level))
+					{
+						QRE_CustomWriteLevel (out, level);
+						level_written = true;
+						wrote = true;
+						skipping = true;
+						continue;
+					}
+				}
+			}
+
+			fputs (line, out);
+		}
+
+		if (!lights_closed)
+		{
+			fputc ('\n', out); // the file may not have ended on a newline
+			if (QRE_LightWriteMissing (out, written) > 0)
+				wrote = true;
+		}
+
+		if (custom_touched && !level_written)
+		{
+			fprintf (out, "\n");
+			QRE_CustomWriteLevel (out, level);
+			wrote = true;
+		}
+
+		if (in)
+			fclose (in);
+	}
+
+	if (!wrote)
+	{
+		fclose (out);
+		remove (qre.editor_file);
+		return false;
+	}
 
 	if (ferror (out) || fflush (out) != 0)
 	{
-		QRE_Notify ("write error in %s", qre.custom_editor_file);
+		QRE_Notify ("write error in %s", qre.editor_file);
 		fclose (out);
-		remove (qre.custom_editor_file);
+		remove (qre.editor_file);
 		return false;
 	}
 	fclose (out);
 
-	Con_Printf ("qr editor: session written to %s\n", qre.custom_editor_file);
+	Con_Printf ("qr editor: session written to %s\n", qre.editor_file);
 	return true;
 }
 
 static qboolean QRE_WriteSession (void)
 {
-	qboolean wrote = false;
-
 	if (qre.mode == QRE_MODE_LIGHT)
-	{
-		// the emitter overrides and the custom lights/fog are two targets; each
-		// half is written when it has something to say
-		if (qre.light_touched_count > 0 &&
-		    QRE_WriteMergedSession (qre.light_touched, qre.light_touched_count))
-			wrote = true;
-		if (QRE_CustomTouched () && QRE_WriteCustomSession ())
-			wrote = true;
-		return wrote;
-	}
+		return QRE_WriteLightSession ();
 	return QRE_WriteMergedSession (qre.touched, qre.touched_count);
 }
 
-// Saves one session file over its target: the target is backed up first (when
-// it exists), then the session becomes the target. A copy that cannot be made
-// keeps the session file and says so.
-static qboolean QRE_SaveOneSession (const char *editor_file, const char *target_file, const char *backup_file)
+static void QRE_RestoreModeState (void)
 {
-	if (!QRE_FileExists (editor_file))
-		return true; // this half of the session has nothing to save
-
-	if (QRE_FileExists (target_file) && !QRE_CopyFile (target_file, backup_file))
+	if (qre.mode == QRE_MODE_LIGHT)
 	{
-		QRE_Notify ("cannot write %s; the session is kept", backup_file);
-		return false;
+		QRE_RestoreLightSnapshot ();
 	}
-	if (!QRE_CopyFile (editor_file, target_file))
+	else
 	{
-		QRE_Notify ("cannot write %s; the session is kept", target_file);
-		return false;
+		QRE_RestoreSnapshot ();
+		QRE_ReapplyTouched ();
+		QRE_WaterRestore ();
 	}
-	return true;
 }
 
-// "Save" of the exit dialog: the targets are backed up first, then the session
-// files become the targets (a mod's materials.yaml / qray/lights.yaml, so they
-// override id1's). The light editor owns two sessions -- the emitter overrides
-// of the gamedir's lights.yaml and the custom lights and fog of qray/lights.yaml
-// -- and each one that exists is saved.
+static void QRE_ClearSessionState (void)
+{
+	qre.touched_count = 0;
+	qre.light_touched_count = 0;
+	qre.dirty_count = 0;
+	memset (qre.dirty_full, 0, sizeof (qre.dirty_full));
+	memset (qre.dirty_light, 0, sizeof (qre.dirty_light));
+}
+
+static void QRE_DtalDebugOff (void)
+{
+	if (CVAR_TO_INT32 (rt_dtal_debug) != 0)
+		Cvar_Set ("rt_dtal_debug", "0");
+}
+
+static void QRE_BackToChooser (void)
+{
+	QRE_CursorMode (true);
+
+	qre.choosing = true;
+	qre.exit_prompt = false;
+	qre.reset_prompt = false;
+	qre.reset_pending = false;
+	qre.prompt_from_flying = false;
+	qre.panel_open = true;
+
+	qre.pick_model = NULL;
+	qre.pick_surf = NULL;
+	qre.pick_ent = NULL;
+	qre.pick_glt = NULL;
+	qre.hover_model = NULL;
+	qre.hover_surf = NULL;
+	qre.hover_ent = NULL;
+	qre.hover_glt = NULL;
+	qre.pick_name[0] = '\0';
+	qre.hover_light = -1;
+	qre.group_count = 0;
+	qre.extra_count = 0;
+	qre.tmp_appended = false;
+	qre.sel_light_valid = false;
+	qre.custom_placing = false;
+	qre.custom_cloning = false;
+	QRE_CustomGizmoCancel ();
+	qre.custom_dragging = false;
+	QRE_CancelLightDrag ();
+	QRE_DtalDebugOff ();
+	qre.mat_tab = 0;
+	qre.light_tab = 0;
+	qre.entity_preview_model = NULL;
+	qre.entity_sel_model = NULL;
+
+	QRE_FreePreview ();
+
+	QRE_ClearSessionState ();
+}
+
+static void QRE_ResetCvar (const char *name)
+{
+	cvar_t *var = name ? Cvar_FindVar (name) : NULL;
+
+	if (var && var->default_string && !(var->flags & CVAR_ROM))
+		Cvar_SetQuick (var, var->default_string);
+}
+
+static qboolean QRE_ResetRemoveFile (const char *path)
+{
+	if (!path[0] || remove (path) == 0 || errno == ENOENT)
+		return true;
+
+	QRE_Notify ("cannot remove %s; reset failed", path);
+	return false;
+}
+
+static void QRE_ResetRemoveOptional (const char *path)
+{
+	if (path && path[0])
+		remove (path);
+}
+
+static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
+{
+	char            pattern[MAX_OSPATH];
+	WIN32_FIND_DATAA fd;
+	HANDLE           h;
+
+	q_snprintf (pattern, sizeof (pattern), "%s/materials/*.yaml", gamedir);
+	h = FindFirstFileA (pattern, &fd);
+	if (h == INVALID_HANDLE_VALUE)
+		return;
+
+	do
+	{
+		char path[MAX_OSPATH];
+
+		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			continue;
+
+		q_snprintf (path, sizeof (path), "%s/materials/%s", gamedir, fd.cFileName);
+		remove (path);
+	} while (FindNextFileA (h, &fd));
+
+	FindClose (h);
+}
+
+static void QRE_ResetAll (void)
+{
+	const int mode = qre.mode;
+	char      legacy[MAX_OSPATH];
+	int       i;
+
+	if (!QRE_ResetRemoveFile (qre.editor_file) ||
+	    !QRE_ResetRemoveFile (qre.target_file))
+		return;
+
+	if (mode == QRE_MODE_LIGHT)
+	{
+		q_snprintf (legacy, sizeof (legacy), "%s/lights.yaml", com_gamedir);
+		if (!QRE_ResetRemoveFile (legacy))
+			return;
+		q_snprintf (legacy, sizeof (legacy), "%s/qray/lights.yaml", com_gamedir);
+		if (!QRE_ResetRemoveFile (legacy))
+			return;
+
+		q_snprintf (legacy, sizeof (legacy), "%s/lights.editor.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		q_snprintf (legacy, sizeof (legacy), "%s/backup_lights.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		q_snprintf (legacy, sizeof (legacy), "%s/qray/lights.editor.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		q_snprintf (legacy, sizeof (legacy), "%s/qray/backup_lights.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+	}
+	else
+	{
+		q_snprintf (legacy, sizeof (legacy), "%s/materials.yaml", com_gamedir);
+		if (!QRE_ResetRemoveFile (legacy))
+			return;
+
+		q_snprintf (legacy, sizeof (legacy), "%s/materials.editor.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		q_snprintf (legacy, sizeof (legacy), "%s/backup_materials.yaml", com_gamedir);
+		QRE_ResetRemoveOptional (legacy);
+		QRE_ResetRemoveLegacyMaterials (com_gamedir);
+	}
+
+	QRE_BackToChooser ();
+
+	if (mode == QRE_MODE_LIGHT)
+	{
+		for (i = 0; i < (int)countof (qre_globals); i++)
+			QRE_ResetCvar (QRE_GlobalCvarName (&qre_globals[i]));
+		QRE_ResetCvar ("rt_sky_sun_edit");
+		RT_LIGHT_Reload ();
+		RT_CustomLights_ChangeMap (cl.mapname);
+		Fog_NewMap ();
+	}
+	else
+	{
+		for (i = 0; i < (int)countof (qre_water); i++)
+			QRE_ResetCvar (qre_water[i].name);
+		for (i = 0; i < (int)countof (qre_mat_cvars); i++)
+			QRE_ResetCvar (qre_mat_cvars[i]);
+		QRE_ResetCvar ("rt_water_color");
+		QRE_ResetCvar ("rt_water_acidcolor");
+		RT_MAT_Reload ();
+		TexMgr_ReloadAllImages ();
+	}
+
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+	Host_WriteConfiguration ();
+	QRE_StartMode (mode);
+	QRE_Notify ("all saved %s work and settings reset to defaults", mode == QRE_MODE_LIGHT ? "light" : "material");
+}
+
+// "Save" of the exit dialog: the target is backed up first, then the session
+// file becomes the target (a mod's qray.materials.yaml / qray.lights.yaml, so
+// they override id1's).
 static void QRE_SessionSave (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
 	const qboolean globals = light ? QRE_GlobalsTouched () : QRE_WaterTouched ();
-	const qboolean touched = light ? QRE_LightSessionTouched () : (qre.touched_count > 0 || QRE_WaterTouched ());
+	const qboolean entries = light ? (qre.light_touched_count > 0 || QRE_CustomTouched ()) : (qre.touched_count > 0);
+	const qboolean had_target = QRE_FileExists (qre.target_file);
 
-	if (touched && !QRE_WriteSession () && !globals)
+	if (entries && !QRE_WriteSession ())
 	{
-		QRE_Notify ("nothing to save");
+		QRE_Notify ("the session could not be written");
 		return;
 	}
 
 	if (globals)
 		Host_WriteConfiguration ();
 
-	if (!light)
+	if (!QRE_FileExists (qre.editor_file))
 	{
-		const qboolean had_target = QRE_FileExists (qre.target_file);
-
-		if (!QRE_FileExists (qre.editor_file))
-		{
-			if (globals)
-			{
-				QRE_StopEditor (false);
-				QRE_Notify ("water settings written to the config");
-			}
-			else
-			{
-				QRE_Notify ("nothing to save");
-			}
-			return;
-		}
-
-		if (had_target && !QRE_CopyFile (qre.target_file, qre.backup_file))
-		{
-			QRE_Notify ("cannot write %s; the session is kept", qre.backup_file);
-			return;
-		}
-		if (!QRE_CopyFile (qre.editor_file, qre.target_file))
-		{
-			QRE_Notify ("cannot write %s; the session is kept", qre.target_file);
-			return;
-		}
-
-		remove (qre.editor_file);
-
-		QRE_StopEditor (false);
-		QRE_Notify (had_target ? "materials.yaml saved; backup_materials.yaml holds the previous file"
-		                       : "materials.yaml saved");
 		if (globals)
-			QRE_Notify ("water settings written to the config");
+		{
+			QRE_BackToChooser ();
+			QRE_Notify ("settings written to the config");
+		}
+		else
+		{
+			QRE_Notify ("nothing to save");
+		}
 		return;
 	}
 
+	if (had_target && !QRE_CopyFile (qre.target_file, qre.backup_file))
 	{
-		const qboolean had_emitter = QRE_FileExists (qre.target_file);
-		const qboolean had_custom = QRE_FileExists (qre.custom_target_file);
-		const qboolean have_emitter = QRE_FileExists (qre.editor_file);
-		const qboolean have_custom = QRE_FileExists (qre.custom_editor_file);
-
-		if (!have_emitter && !have_custom)
-		{
-			if (globals)
-			{
-				QRE_StopEditor (false);
-				QRE_Notify ("global settings written to the config");
-			}
-			else
-			{
-				QRE_Notify ("nothing to save");
-			}
-			return;
-		}
-
-		if (!QRE_SaveOneSession (qre.editor_file, qre.target_file, qre.backup_file) ||
-		    !QRE_SaveOneSession (qre.custom_editor_file, qre.custom_target_file, qre.custom_backup_file))
-			return; // the session that could not be saved is kept
-
-		remove (qre.editor_file);
-		remove (qre.custom_editor_file);
-
-		QRE_StopEditor (false);
-
-		if (have_emitter && have_custom)
-			QRE_Notify (had_emitter || had_custom
-			                ? "lights.yaml and qray/lights.yaml saved; the backups hold the previous files"
-			                : "lights.yaml and qray/lights.yaml saved");
-		else if (have_custom)
-			QRE_Notify (had_custom ? "qray/lights.yaml saved; qray/backup_lights.yaml holds the previous file"
-			                       : "qray/lights.yaml saved");
-		else
-			QRE_Notify (had_emitter ? "lights.yaml saved; backup_lights.yaml holds the previous file"
-			                        : "lights.yaml saved");
-
-		if (globals)
-			QRE_Notify ("global settings written to the config");
+		QRE_Notify ("cannot write %s; the session is kept", qre.backup_file);
+		return;
 	}
+	if (!QRE_CopyFile (qre.editor_file, qre.target_file))
+	{
+		QRE_Notify ("cannot write %s; the session is kept", qre.target_file);
+		return;
+	}
+
+	remove (qre.editor_file);
+
+	QRE_BackToChooser ();
+
+	if (light)
+		QRE_Notify (had_target ? "qray.lights.yaml saved; qray.backup_lights.yaml holds the previous file"
+		                       : "qray.lights.yaml saved");
+	else
+		QRE_Notify (had_target ? "qray.materials.yaml saved; qray.backup_materials.yaml holds the previous file"
+		                       : "qray.materials.yaml saved");
+
+	if (globals)
+		QRE_Notify ("settings written to the config");
 }
 
 // "Discard": the session files go away and the original values come back on
 // screen; nothing on disk is touched.
 static void QRE_SessionDiscard (void)
 {
+	QRE_RestoreModeState ();
 	remove (qre.editor_file);
-	remove (qre.custom_editor_file);
-	QRE_StopEditor (true);
+	QRE_BackToChooser ();
 	QRE_Notify ("changes discarded");
 }
 
 // Exit (button, Esc, the console command): ask about the session when there is
-// one, close straight away when nothing was changed.
+// one, go back to the chooser when nothing was changed (while choosing, Esc and
+// the chooser's Exit close the editor).
 static void QRE_RequestExit (void)
 {
 	qboolean touched;
@@ -5538,9 +6926,9 @@ static void QRE_RequestExit (void)
 
 	touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0 || QRE_WaterTouched ());
 
-	if (!touched && !QRE_FileExists (qre.editor_file) && !QRE_FileExists (qre.custom_editor_file))
+	if (!touched && !QRE_FileExists (qre.editor_file))
 	{
-		QRE_StopEditor (true);
+		QRE_BackToChooser ();
 		return;
 	}
 
@@ -5553,10 +6941,9 @@ static void QRE_RequestExit (void)
 }
 
 // ---------------------------------------------------------------------------
-// Texture browse (Win32 open dialog; typed entry elsewhere)
+// Texture browse (Win32 open dialog)
 // ---------------------------------------------------------------------------
 
-#ifdef _WIN32
 static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 {
 	char          initdir[MAX_OSPATH];
@@ -5564,7 +6951,7 @@ static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 	OPENFILENAMEA ofn;
 	size_t        glen, i;
 
-	q_snprintf (initdir, sizeof (initdir), "%s/textures", com_gamedir);
+	q_snprintf (initdir, sizeof (initdir), "%s", com_gamedir);
 
 	memset (&ofn, 0, sizeof (ofn));
 	result[0] = '\0';
@@ -5600,14 +6987,6 @@ static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 
 	return true;
 }
-#else
-static qboolean QRE_BrowseTexture (char *out, size_t outsize)
-{
-	(void)out;
-	(void)outsize;
-	return false;
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -5626,25 +7005,25 @@ static void QRE_StopEditor (qboolean restore)
 	}
 
 	// revert whatever was not applied, then restore the player's view
+	QRE_CancelLightDrag ();
+	QRE_CustomGizmoCancel ();
+	QRE_DtalDebugOff ();
 	if (restore)
-	{
-		if (qre.mode == QRE_MODE_LIGHT)
-		{
-			QRE_RestoreLightSnapshot ();
-		}
-		else
-		{
-			QRE_RestoreSnapshot ();
-			QRE_ReapplyTouched ();
-			QRE_WaterRestore ();
-		}
-	}
+		QRE_RestoreModeState ();
+
+	if (qre.entity_preview_model != NULL && cl.viewent.model == qre.entity_preview_model)
+		cl.viewent.model = NULL;
 
 	qre.active = false;
 	qre.choosing = false;
 	qre.panel_open = false;
 	qre.torch = false;
+	qre.entity_preview_model = NULL;
+	qre.entity_sel_model = NULL;
+	qre.entity_list_built = false;
 	qre.exit_prompt = false;
+	qre.reset_prompt = false;
+	qre.reset_pending = false;
 	qre.pick_model = NULL;
 	qre.pick_surf = NULL;
 	qre.pick_ent = NULL;
@@ -5662,10 +7041,7 @@ static void QRE_StopEditor (qboolean restore)
 	if (sv.paused)
 		sv.paused = qre.sv_paused_prev;
 	if (!restore)
-	{
 		remove (qre.editor_file);
-		remove (qre.custom_editor_file);
-	}
 
 	VectorCopy (qre.player_viewangles, cl.viewangles);
 
@@ -5675,6 +7051,7 @@ static void QRE_StopEditor (qboolean restore)
 	IN_Activate ();
 	SDL_ShowCursor (SDL_ENABLE);
 	QR_GUI_SetMouseCursor (0);
+	Cursor_SetStandard (0);
 
 	QRE_Notify ("editor closed");
 }
@@ -5682,6 +7059,9 @@ static void QRE_StopEditor (qboolean restore)
 static void QRE_StartMode (int mode)
 {
 	const char *name = (mode == QRE_MODE_LIGHT) ? "light" : "material";
+
+	if (mode == QRE_MODE_LIGHT)
+		QRE_DtalDebugOff ();
 
 	qre.choosing = false;
 	qre.mode = mode;
@@ -5691,38 +7071,34 @@ static void QRE_StartMode (int mode)
 		QRE_TakeLightSnapshot ();
 		QRE_TakeGlobalsSnapshot ();
 
-		// the light session: the gamedir's lights.yaml holds the emitter
-		// overrides, with the session file and the backup the materials use too,
-		// and qray/lights.yaml holds the custom lights and the fog with its own
-		// pair of files
-		q_snprintf (qre.target_file, sizeof (qre.target_file), "%s/lights.yaml", com_gamedir);
-		q_snprintf (qre.editor_file, sizeof (qre.editor_file), "%s/lights.editor.yaml", com_gamedir);
-		q_snprintf (qre.backup_file, sizeof (qre.backup_file), "%s/backup_lights.yaml", com_gamedir);
-
-		q_snprintf (qre.custom_target_file, sizeof (qre.custom_target_file), "%s/qray/lights.yaml", com_gamedir);
-		q_snprintf (qre.custom_editor_file, sizeof (qre.custom_editor_file), "%s/qray/lights.editor.yaml", com_gamedir);
-		q_snprintf (qre.custom_backup_file, sizeof (qre.custom_backup_file), "%s/qray/backup_lights.yaml", com_gamedir);
+		// the light session: the gamedir's qray.lights.yaml holds both the
+		// emitter overrides and the custom lights and fog, with the session file
+		// carrying the edits until the exit dialog decides and the backup keeping
+		// the target as it was before a save
+		q_snprintf (qre.target_file, sizeof (qre.target_file), "%s/qray.lights.yaml", com_gamedir);
+		q_snprintf (qre.editor_file, sizeof (qre.editor_file), "%s/qray.lights.editor.yaml", com_gamedir);
+		q_snprintf (qre.backup_file, sizeof (qre.backup_file), "%s/qray.backup_lights.yaml", com_gamedir);
 	}
 	else
 	{
 		QRE_TakeSnapshot ();
 		QRE_TakeWaterSnapshot ();
 
-		// the session files: the target is the gamedir's own materials.yaml (for
-		// a mod that is the mod's file, which the loader reads after id1's and
-		// lets override it), the session file carries the edits until the exit
-		// dialog decides, and the backup keeps the target as it was before a save
-		q_snprintf (qre.target_file, sizeof (qre.target_file), "%s/materials.yaml", com_gamedir);
-		q_snprintf (qre.editor_file, sizeof (qre.editor_file), "%s/materials.editor.yaml", com_gamedir);
-		q_snprintf (qre.backup_file, sizeof (qre.backup_file), "%s/backup_materials.yaml", com_gamedir);
+		// the session files: the target is the gamedir's own qray.materials.yaml
+		// (for a mod that is the mod's file, which the loader reads after id1's
+		// and lets override it), the session file carries the edits until the
+		// exit dialog decides, and the backup keeps the target as it was before
+		// a save
+		q_snprintf (qre.target_file, sizeof (qre.target_file), "%s/qray.materials.yaml", com_gamedir);
+		q_snprintf (qre.editor_file, sizeof (qre.editor_file), "%s/qray.materials.editor.yaml", com_gamedir);
+		q_snprintf (qre.backup_file, sizeof (qre.backup_file), "%s/qray.backup_materials.yaml", com_gamedir);
 	}
 
 	// a session file left by a crash or a map change belongs to a session that
 	// is over: it must not be saved by this one
 	remove (qre.editor_file);
-	remove (qre.custom_editor_file);
 
-	Con_Printf ("qr %s editor: on (fly: WASD + mouse; LMB selects a face; ESC exits)\n", name);
+	Con_Printf ("qr %s editor: on (fly: WASD + mouse; LMB selects a face; ESC returns to the menu)\n", name);
 }
 
 static void QRE_StartEditor (void)
@@ -5748,6 +7124,9 @@ static void QRE_StartEditor (void)
 		return;
 	}
 
+	PhotoCam_Stop ();
+	Observer_Stop ();
+
 	memset (&qre, 0, sizeof (qre));
 	qre.active = true;
 	qre.panel_open = false;
@@ -5766,6 +7145,7 @@ static void QRE_StartEditor (void)
 	sv.paused = true;
 
 	QRE_CursorMode (true);
+	Cursor_SetStandard (1);
 
 	Con_Printf ("qr editor: choose the mode (Material Editor / Light Editor)\n");
 }
@@ -5786,23 +7166,89 @@ static void QR_Editor_Stop_f (void)
 // of the first reload of a material to <gamedir>/qre_dump.
 cvar_t qr_material_editor_debug = { "qr_material_editor_debug", "0", CVAR_NONE };
 
+cvar_t devmode = { "devmode", "0", CVAR_NONE };
+
+static cmd_function_t *qre_devmode_editor_cmd;
+static cmd_function_t *qre_devmode_stop_cmd;
+
+static void QRE_DevmodeCommands (qboolean on)
+{
+	if (on)
+	{
+		if (qre_devmode_editor_cmd == NULL)
+			qre_devmode_editor_cmd = Cmd_AddCommand2 ("qr_editor", QR_Editor_Start_f, src_command);
+		if (qre_devmode_stop_cmd == NULL)
+			qre_devmode_stop_cmd = Cmd_AddCommand2 ("qr_editor_stop", QR_Editor_Stop_f, src_command);
+
+		Observer_Register ();
+
+		Con_Printf ("devmode: on (qr_editor, qr_editor_stop and camera_observer are available)\n");
+	}
+	else
+	{
+		if (qre_devmode_editor_cmd != NULL)
+		{
+			Cmd_RemoveCommand (qre_devmode_editor_cmd);
+			qre_devmode_editor_cmd = NULL;
+		}
+		if (qre_devmode_stop_cmd != NULL)
+		{
+			Cmd_RemoveCommand (qre_devmode_stop_cmd);
+			qre_devmode_stop_cmd = NULL;
+		}
+
+		Observer_Unregister ();
+
+		Con_Printf ("devmode: off (the dev commands are gone)\n");
+	}
+}
+
+static void QRE_DevmodeChanged_f (cvar_t *var)
+{
+	if (CVAR_TO_BOOL (devmode))
+	{
+		QRE_DevmodeCommands (true);
+		return;
+	}
+
+	if (qre.active)
+	{
+		Con_Printf ("qr editor: closed, devmode is off\n");
+		QRE_StopEditor (false);
+	}
+
+	QRE_DevmodeCommands (false);
+}
+
 void QR_Editor_Init (void)
 {
 	static qboolean qr_editor_registered = false;
-	char            font_path[MAX_OSPATH];
+	int             font_handle = -1;
+	int             font_size = 0;
+	void           *font_data = NULL;
 
 	if (qr_editor_registered)
 		return;
 	qr_editor_registered = true;
 
 	Cvar_RegisterVariable (&qr_material_editor_debug);
+	Cvar_RegisterVariable (&devmode);
+	Cvar_SetCallback (&devmode, QRE_DevmodeChanged_f);
 
-	Cmd_AddCommand ("qr_editor", QR_Editor_Start_f);
-	Cmd_AddCommand ("qr_editor_stop", QR_Editor_Stop_f);
+	if (CVAR_TO_BOOL (devmode))
+		QRE_DevmodeCommands (true);
 
-	// the font is deployed next to the executable by the build
-	q_snprintf (font_path, sizeof (font_path), "%s/fonts/Roboto-Regular.ttf", host_parms->basedir);
-	QR_GUI_Init (VID_GetWindow (), vulkan_globals.instance, font_path);
+	// the font is part of the game data, next to the cursor artwork
+	font_size = COM_OpenFile ("gfx/Roboto-Regular.ttf", &font_handle, NULL);
+	if (font_handle != -1 && font_size > 0)
+	{
+		font_data = malloc ((size_t)font_size);
+		if (font_data)
+			Sys_FileRead (font_handle, font_data, font_size);
+		COM_CloseFile (font_handle);
+	}
+
+	QR_GUI_Init (VID_GetWindow (), vulkan_globals.instance, font_data, font_size);
 }
 
 // ---------------------------------------------------------------------------
@@ -5822,6 +7268,20 @@ qboolean QR_Editor_PanelOpen (void)
 qboolean QR_Editor_Flying (void)
 {
 	return qre.active && !qre.panel_open;
+}
+
+qboolean QR_Editor_ShowViewModel (void)
+{
+	return qre.active && qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 1 &&
+	       qre.entity_preview_model != NULL && !cl.intermission;
+}
+
+void QR_Editor_SunPlacement (qboolean on)
+{
+	if (!qre.active)
+		return;
+
+	QRE_CursorMode (!on);
 }
 
 qboolean QR_Editor_TorchOn (void)
@@ -5851,11 +7311,278 @@ void QR_Editor_Pick (void)
 // of the surface); with nothing under the crosshair it goes a step ahead of the
 // camera. Either way the editor comes back to the cursor mode with the new light
 // selected.
+static int QRE_CustomLightIndexForUnique (uint64_t uniqueID)
+{
+	if (uniqueID <= (uint64_t)UINT32_MAX)
+		return -1;
+	return (int)(uniqueID - (uint64_t)UINT32_MAX - 1);
+}
+
+static void QRE_UpdateLightDrag (void)
+{
+	vec3_t target;
+
+	if (!qre.light_dragging)
+		return;
+
+	if (qre.pick_impact_frame == (unsigned)host_framecount && (qre.pick_surf || qre.pick_ent))
+		VectorMA (qre.pick_impact, -8.0f, vpn, target);
+	else
+		VectorMA (qre.cam_origin, 128.0f, vpn, target);
+
+	if (qre.light_drag_custom >= 0)
+	{
+		int                count = 0;
+		rt_custom_light_t *custom = RT_CustomLights (&count);
+
+		if (custom && qre.light_drag_custom < count)
+			VectorCopy (target, custom[qre.light_drag_custom].origin);
+	}
+	else if (qre.light_drag_entry)
+	{
+		VectorSubtract (target, qre.light_drag_emitter, qre.light_drag_entry->offset);
+		qre.light_drag_entry->has_offset = true;
+	}
+}
+
+static void QRE_CancelLightDrag (void)
+{
+	if (!qre.light_dragging)
+		return;
+
+	if (qre.light_drag_custom >= 0)
+	{
+		int                count = 0;
+		rt_custom_light_t *custom = RT_CustomLights (&count);
+
+		if (custom && qre.light_drag_custom < count)
+			VectorCopy (qre.light_drag_custom_origin, custom[qre.light_drag_custom].origin);
+	}
+	else if (qre.light_drag_entry)
+	{
+		if (qre.light_drag_created)
+			RT_LIGHT_Remove (qre.light_drag_key);
+		else if (qre.light_drag_backup_valid)
+			*qre.light_drag_entry = qre.light_drag_backup;
+	}
+
+	qre.light_dragging = false;
+	qre.light_drag_entry = NULL;
+}
+
+qboolean QR_Editor_LightDragActive (void)
+{
+	return (qre.active && qre.light_dragging) ? true : false;
+}
+
+void QR_Editor_LightGrab (void)
+{
+	const rt_tracked_light_t *lights;
+	int                       count = 0, index;
+
+	if (!qre.active || !QR_Editor_Flying () || qre.light_dragging)
+		return;
+
+	index = QRE_LightUnderCrosshair ();
+	if (index < 0)
+		return;
+
+	lights = RT_TRACK_Lights (&count);
+	if (index >= count || !lights[index].ready)
+		return;
+
+	qre.light_drag_kind = lights[index].kind;
+	q_strlcpy (qre.light_drag_name, lights[index].name, sizeof (qre.light_drag_name));
+	qre.light_drag_custom = (lights[index].kind == RT_LIGHT_KIND_CUSTOM)
+	                            ? QRE_CustomLightIndexForUnique (lights[index].uniqueID)
+	                            : -1;
+	qre.light_drag_entry = NULL;
+	qre.light_drag_created = false;
+	qre.light_drag_backup_valid = false;
+
+	if (qre.light_drag_custom >= 0)
+	{
+		rt_custom_light_t *custom = RT_CustomLights (&count);
+
+		if (!custom || qre.light_drag_custom >= count)
+			return;
+
+		VectorCopy (custom[qre.light_drag_custom].origin, qre.light_drag_custom_origin);
+	}
+	else
+	{
+		rt_light_t *inst;
+
+		RT_LIGHT_MakeKey (lights[index].name, lights[index].uniqueID, qre.light_drag_key, sizeof (qre.light_drag_key));
+
+		inst = RT_LIGHT_Find (qre.light_drag_key);
+		if (inst)
+		{
+			qre.light_drag_backup = *inst;
+			qre.light_drag_backup_valid = true;
+		}
+		else
+		{
+			rt_light_t *shared = RT_LIGHT_Ensure (lights[index].name);
+
+			if (!shared)
+				return;
+
+			inst = RT_LIGHT_Ensure (qre.light_drag_key);
+			if (!inst)
+				return;
+
+			*inst = *shared;
+			qre.light_drag_created = true;
+		}
+
+		inst->group_edit = false;
+		qre.light_drag_entry = inst;
+
+		if (inst->has_offset)
+		{
+			VectorSubtract (lights[index].position, inst->offset, qre.light_drag_emitter);
+		}
+		else
+		{
+			VectorCopy (lights[index].position, qre.light_drag_emitter);
+		}
+	}
+
+	qre.light_dragging = true;
+}
+
+void QR_Editor_LightDrop (void)
+{
+	if (!qre.active || !qre.light_dragging)
+		return;
+
+	QRE_UpdateLightDrag ();
+
+	if (qre.light_drag_custom < 0 && qre.light_drag_entry)
+		QRE_TouchLight (qre.light_drag_key);
+
+	qre.light_dragging = false;
+	qre.light_drag_entry = NULL;
+	QRE_Notify ("light moved");
+}
+
+static void QRE_CustomGizmoCancel (void)
+{
+	int                count = 0;
+	rt_custom_light_t *lights;
+
+	if (!qre.custom_dragging || qre.custom_drag_index < 0)
+		return;
+
+	lights = RT_CustomLights (&count);
+	if (lights && qre.custom_drag_index < count)
+		VectorCopy (qre.custom_drag_origin, lights[qre.custom_drag_index].origin);
+
+	qre.custom_dragging = false;
+	qre.gizmo_fly_drag = false;
+}
+
+qboolean QR_Editor_GizmoDragActive (void)
+{
+	return (qre.active && qre.custom_dragging && qre.gizmo_fly_drag) ? true : false;
+}
+
+qboolean QR_Editor_GizmoPress (void)
+{
+	if (!qre.active || !QR_Editor_Flying () || qre.custom_dragging)
+		return false;
+
+	if (!QRE_CustomGizmoBegin ((float)glwidth * 0.5f, (float)glheight * 0.5f))
+		return false;
+
+	qre.gizmo_fly_drag = true;
+	qre.gizmo_fly_mouse[0] = (float)glwidth * 0.5f;
+	qre.gizmo_fly_mouse[1] = (float)glheight * 0.5f;
+
+	{
+		qre.gizmo_fly_anchor_local[0] = qre.gizmo_fly_anchor_local[1] = qre.gizmo_fly_anchor_local[2] = 0.0f;
+
+		if (!qre.custom_drag_dir)
+		{
+			int                count = 0;
+			rt_custom_light_t *custom = RT_CustomLights (&count);
+
+			if (custom && qre.custom_drag_index >= 0 && qre.custom_drag_index < count)
+			{
+				vec3_t origin, w0, e, anchor;
+				float  b, d, ee, denom, t;
+
+				QRE_GizmoOrigin (&custom[qre.custom_drag_index], origin);
+				VectorCopy (qre.custom_drag_vector, e);
+				VectorSubtract (r_refdef.vieworg, origin, w0);
+				b = DotProduct (vpn, e);
+				d = DotProduct (vpn, w0);
+				ee = DotProduct (e, w0);
+				denom = 1.0f - b * b;
+				t = (denom > 1e-4f) ? (ee - b * d) / denom : 0.0f;
+				VectorMA (origin, t, e, anchor);
+				VectorSubtract (anchor, origin, qre.gizmo_fly_anchor_local);
+			}
+		}
+	}
+
+	return true;
+}
+
+static void QRE_GizmoFlyFollow (void)
+{
+	int                count = 0;
+	rt_custom_light_t *lights;
+	rt_custom_light_t *l;
+	vec3_t             origin, anchor, dir, angles;
+
+	if (qre.custom_drag_dir || qre.custom_drag_index < 0)
+		return;
+
+	lights = RT_CustomLights (&count);
+	if (qre.custom_drag_index >= count)
+		return;
+
+	l = &lights[qre.custom_drag_index];
+	QRE_GizmoOrigin (l, origin);
+	VectorAdd (origin, qre.gizmo_fly_anchor_local, anchor);
+	VectorSubtract (anchor, r_refdef.vieworg, dir);
+
+	if (VectorLength (dir) < 1.0f)
+		return;
+
+	VectorAngles (dir, NULL, angles);
+	cl.viewangles[YAW] = angles[YAW];
+	cl.viewangles[PITCH] = angles[PITCH];
+}
+
+void QR_Editor_GizmoMotion (int dx, int dy)
+{
+	if (!QR_Editor_GizmoDragActive ())
+		return;
+
+	qre.gizmo_fly_mouse[0] += (float)dx;
+	qre.gizmo_fly_mouse[1] += (float)dy;
+	QRE_CustomGizmoMove (qre.gizmo_fly_mouse[0], qre.gizmo_fly_mouse[1]);
+	QRE_GizmoFlyFollow ();
+}
+
+void QR_Editor_GizmoRelease (void)
+{
+	if (!qre.custom_dragging)
+		return;
+
+	qre.custom_dragging = false;
+	qre.gizmo_fly_drag = false;
+}
+
 void QR_Editor_PlaceAtCrosshair (void)
 {
 	rt_custom_light_t *l;
+	const qboolean     cloning = qre.custom_cloning;
 
-	if (!qre.active || !qre.custom_placing)
+	if (!qre.active || (!qre.custom_placing && !qre.custom_cloning))
 		return;
 
 	l = RT_CustomLights_Ensure ();
@@ -5863,8 +7590,12 @@ void QR_Editor_PlaceAtCrosshair (void)
 	{
 		QRE_Notify ("no room for another custom light");
 		qre.custom_placing = false;
+		qre.custom_cloning = false;
 		return;
 	}
+
+	if (cloning)
+		*l = qre.clone_source;
 
 	if (qre.pick_impact_frame == (unsigned)host_framecount && (qre.pick_surf || qre.pick_ent))
 		VectorMA (qre.pick_impact, -8.0f, vpn, l->origin);
@@ -5881,14 +7612,15 @@ void QR_Editor_PlaceAtCrosshair (void)
 	}
 
 	qre.custom_placing = false;
+	qre.custom_cloning = false;
 	qre.light_tab = 1;
 	QRE_CursorMode (true);
-	QRE_Notify ("light added; tune it in the Custom tab");
+	QRE_Notify (cloning ? "light cloned; tune it in the Custom tab" : "light added; tune it in the Custom tab");
 }
 
 qboolean QR_Editor_PlacePending (void)
 {
-	return qre.active && qre.custom_placing;
+	return (qre.active && (qre.custom_placing || qre.custom_cloning)) ? true : false;
 }
 
 void QR_Editor_OnNewMap (void)

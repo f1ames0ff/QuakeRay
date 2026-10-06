@@ -1,8 +1,9 @@
 // Q2RTX-style material definitions (phase 4.5).
 // Ported from Q2RTX material.c and adapted to the vkquake host: materials are
-// loaded from materials/*.yaml files (global + <map>.yaml) found either on disk
-// or inside a mounted .pkz archive, and are used to synthesize the qray
-// RGBA8 material textures (albedo-alpha, roughness-metallic-emissive, normal).
+// loaded from a gamedir's qray.materials.yaml (or the older materials.yaml and
+// the materials/*.yaml files, global + <map>.yaml) found either on disk or
+// inside a mounted .pkz archive, and are used to synthesize the qray RGBA8
+// material textures (albedo-alpha, roughness-metallic-emissive, normal).
 
 #ifndef RT_MATERIAL_H
 #define RT_MATERIAL_H
@@ -14,6 +15,7 @@
    hold several differently coloured emissive regions (window panes, lamps),
    each with its own tone controls. */
 #define RT_MAT_MAX_EMISSIVE_COLORS 10
+#define RT_MAT_EMIS_POLY_MAX 16
 
 /* One colour_emissive block: a colour and the tone controls that work for it
    alone (they were material-level before). */
@@ -24,6 +26,8 @@ typedef struct rt_emissive_s
     float    feather;        // pixels of edge softening (0 = a hard mask)
     float    factor;         // scales this block's emission (emissive_factor)
     int      blend;          // how the glow is composited; -1 = the material's / cvar
+    int      poly_count;
+    float    poly_uv[RT_MAT_EMIS_POLY_MAX][2];
     /* Set while a file is read: a block that does not carry its own value
        inherits the material-level one (the old single-colour keys). */
     qboolean has_threshold;
@@ -41,7 +45,7 @@ enum {
 
 typedef struct rt_material_s {
     char name[MAX_QPATH];
-    /* The materials/*.yaml file this material was loaded from ("materials/materials.yaml",
+    /* The yaml file this material was loaded from ("qray.materials.yaml",
        "materials/<map>.yaml", ...). Empty for materials created by the editor at runtime. */
     char source_file[MAX_QPATH];
     char filename_base[MAX_QPATH];
@@ -93,7 +97,7 @@ rt_material_t *RT_MAT_Find(const char *name);
 /* Editor support: the live material lists and their provenance. */
 
 enum {
-    RT_MAT_LIST_GLOBAL = 0, /* every materials/*.yaml file (dir scan + pkz) */
+    RT_MAT_LIST_GLOBAL = 0, /* every materials yaml of the gamedirs (scan + pkz) */
     RT_MAT_LIST_MAP    = 1, /* materials/<map>.yaml for the current map only */
 };
 

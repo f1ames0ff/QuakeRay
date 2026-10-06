@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 // HLSL counterpart of SmokeLight.h. Like the golden it includes nothing itself: the shader has to
 // pull in ShaderCommonHLSLFunc.hlsli first (globalUniform, lightSources and the INSTANCE_MASK_*
@@ -149,7 +149,7 @@ float smokeLightWeight(const ShLightEncoded e, const float3 p)
     return intensity * radius2 / (dist2 + radius2 + 1.0);
 }
 
-float3 smokeLightAt(const float3 worldPos, const uint cluster, const float seed)
+float3 smokeLightAt(const float3 worldPos, const uint cluster, const float seed, const float strength, const float minLight)
 {
     const float3 toViewer = normalize(globalUniform.cameraPosition.xyz - worldPos);
     const float2 rnd      = float2(smokeHash(float3(seed, 1.7, 3.1)), smokeHash(float3(seed, 5.3, 7.9)));
@@ -213,7 +213,12 @@ float3 smokeLightAt(const float3 worldPos, const uint cluster, const float seed)
         }
     }
 
-    return max(light * SMOKE_LIGHT_STRENGTH, (float3)SMOKE_MIN_LIGHT);
+    return max(light * strength, (float3)minLight);
+}
+
+float3 smokeLightAt(const float3 worldPos, const uint cluster, const float seed)
+{
+    return smokeLightAt(worldPos, cluster, seed, SMOKE_LIGHT_STRENGTH, SMOKE_MIN_LIGHT);
 }
 
 #endif // SMOKE_LIGHT_HLSLI_

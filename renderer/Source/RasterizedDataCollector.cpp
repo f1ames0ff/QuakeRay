@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -141,6 +141,20 @@ void RasterizedDataCollector::GetSmokeVertexLayout(
         { 3, VK_FORMAT_R32G32B32_SFLOAT, offsetof(QrVertex, normal)       },
         { 4, VK_FORMAT_R32G32_SFLOAT,    offsetof(QrVertex, texCoordLayer1) },
         { 5, VK_FORMAT_R32_UINT,         offsetof(QrVertex, cluster)      },
+    };
+
+    FillVertexAttributes(attrs, std::size(attrs), outAttrs, outAttrsCount);
+}
+
+void RasterizedDataCollector::GetParticleVertexLayout(
+    VkVertexInputAttributeDescription *outAttrs, uint32_t *outAttrsCount)
+{
+    const VertexAttribute attrs[] =
+    {
+        { 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(QrVertex, position)    },
+        { 1, VK_FORMAT_R8G8B8A8_UNORM,   offsetof(QrVertex, packedColor) },
+        { 2, VK_FORMAT_R32G32_SFLOAT,    offsetof(QrVertex, texCoord)    },
+        { 3, VK_FORMAT_R32_UINT,         offsetof(QrVertex, cluster)     },
     };
 
     FillVertexAttributes(attrs, std::size(attrs), outAttrs, outAttrsCount);

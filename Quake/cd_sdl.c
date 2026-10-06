@@ -50,9 +50,6 @@ static void CDAudio_Eject (void)
 	if (!cd_handle || !enabled)
 		return;
 
-#ifdef __linux__
-	SDL_CDStop (cd_handle); /* see CDAudio_Stop() */
-#endif
 	if (SDL_CDEject (cd_handle) < 0)
 		Con_Printf ("Unable to eject CD-ROM: %s\n", SDL_GetError ());
 }
@@ -141,19 +138,8 @@ void CDAudio_Stop (void)
 	if (!playing)
 		return;
 
-#ifdef __linux__
-	/* Don't really stop, but just pause: On some devices, the CDROMSTOP
-	 * ioctl causes any followup ioctls to fail for a considerable time.
-	 * observed with a TSSTcorp CDW/DVD SH-M522C drive with TS05 and TS08
-	 * firmware versions running under a 2.6.27.25 kernel, and with a
-	 * Samsung DVD r/w drive running under 2.6.35.6 kernel.
-	 * Therefore, avoid dead stops if playback may be resumed shortly. */
-	if (SDL_CDPause (cd_handle) < 0)
-		Con_Printf ("CDAudio_Stop: Unable to stop CD-ROM (%s)\n", SDL_GetError ());
-#else
 	if (SDL_CDStop (cd_handle) < 0)
 		Con_Printf ("CDAudio_Stop: Unable to stop CD-ROM (%s)\n", SDL_GetError ());
-#endif
 
 	wasPlaying = false;
 	playing = false;
@@ -424,7 +410,6 @@ void CDAudio_Update (void)
 
 static const char *get_cddev_arg (const char *arg)
 {
-#if defined(_WIN32)
 	/* arg should be like "D:\", make sure it is so,
 	 * but tolerate args like "D" or "D:", as well. */
 	static char drive[4];
@@ -460,26 +445,6 @@ static const char *get_cddev_arg (const char *arg)
 		return drive;
 	}
 	return NULL;
-#else
-	if (!arg || !*arg)
-		return NULL;
-	return arg;
-#endif
-}
-
-static void export_cddev_arg (void)
-{
-/* Bad ugly hack to workaround SDL's cdrom device detection.
- * not needed for windows due to the way SDL_cdrom works. */
-#if !defined(_WIN32)
-	int i = COM_CheckParm ("-cddev");
-	if (i != 0 && i < com_argc - 1 && com_argv[i + 1][0] != '\0')
-	{
-		static char arg[64];
-		q_snprintf (arg, sizeof (arg), "SDL_CDROM=%s", com_argv[i + 1]);
-		putenv (arg);
-	}
-#endif
 }
 
 int CDAudio_Init (void)
@@ -488,8 +453,6 @@ int CDAudio_Init (void)
 
 	if (safemode || COM_CheckParm ("-nocdaudio"))
 		return -1;
-
-	export_cddev_arg ();
 
 	if (SDL_InitSubSystem (SDL_INIT_CDROM) < 0)
 	{
@@ -565,9 +528,6 @@ void CDAudio_Shutdown (void)
 	CDAudio_Stop ();
 	if (hw_vol_works)
 		CD_SetVolume (NULL); /* no SDL support at present. */
-#ifdef __linux__
-	SDL_CDStop (cd_handle);  /* see CDAudio_Stop() */
-#endif
 	SDL_CDClose (cd_handle);
 	cd_handle = NULL;
 	cd_dev = -1;

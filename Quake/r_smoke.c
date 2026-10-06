@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -59,7 +59,7 @@ cvar_t r_smoke_density = {"r_smoke_density", "2", CVAR_ARCHIVE};
 cvar_t r_smoke_color   = {"r_smoke_color", "0.4 0.4 0.4", CVAR_ARCHIVE};
 cvar_t r_smoke_drift   = {"r_smoke_drift", "128", CVAR_ARCHIVE};
 cvar_t r_smoke_rise    = {"r_smoke_rise", "64", CVAR_ARCHIVE};
-cvar_t r_smoke_damp    = {"r_smoke_damp", "20", CVAR_ARCHIVE};
+cvar_t r_smoke_damp    = {"r_smoke_damp", "5", CVAR_ARCHIVE};
 cvar_t r_smoke_spacing = {"r_smoke_spacing", "4", CVAR_ARCHIVE};
 
 cvar_t r_smoke_shape      = {"r_smoke_shape", "0", CVAR_ARCHIVE};

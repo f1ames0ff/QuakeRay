@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -180,9 +180,6 @@ public:
 
     // 'pDevice' is the RHI device; 'pFrameContext' is the host's frame model
     // (RHI/RhiFrameContext.h) that owns the retire queue every replaced wrap and set goes through.
-    // 'pShaderFolderPath' is the folder the engine blobs are loaded from, with the trailing
-    // separator; the nine `Ef*.comp.spv` effect files (and, when 'wipeIsUsed' is set, its tenth)
-    // are read from it. 'wipeIsUsed' is the engine instance's effectWipeIsUsed. None is owned.
     // Returns false and leaves the pass unusable if a binding layout, a shader or a pipeline of the
     // nine non-wipe effects cannot be created; the wipe's own pieces are soft failures that log a
     // warning and leave the wipe unavailable.
@@ -255,6 +252,10 @@ private:
         EFFECT_WIPE,
         EFFECT_CRT_DEMODULATE_ENCODE,
         EFFECT_CRT_DECODE,
+        EFFECT_SHARPEN,
+        EFFECT_GAMEPLAY_FEEDBACK,
+        EFFECT_VIGNETTE,
+        EFFECT_FILM_GRAIN,
         EFFECT_COUNT,
     };
 
@@ -388,20 +389,17 @@ private:
     bool wipeIsUsed = false;
     bool wipeAvailable = false;
 
-    // The ten effects; every one but the wipe is a hard requirement of Create.
     Effect effects[EFFECT_COUNT];
 
-    // The layouts of the module: the three set-0 shapes, the uniform set and the three
-    // push-constant layouts the effects' block sizes call for (16, 24 and 28 bytes). Every layout
-    // is Compute visibility and the pinned backend keeps the order the pipelines add them in, which
-    // is the shader's set numbering.
     nvrhi::BindingLayoutHandle simpleFramebufferLayout;
     nvrhi::BindingLayoutHandle albedoFramebufferLayout;
     nvrhi::BindingLayoutHandle wipeFramebufferLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle pushConstant16Layout;
+    nvrhi::BindingLayoutHandle pushConstant20Layout;
     nvrhi::BindingLayoutHandle pushConstant24Layout;
     nvrhi::BindingLayoutHandle pushConstant28Layout;
+    nvrhi::BindingLayoutHandle pushConstant44Layout;
 
     // The wipe's persistent push state, exactly the legacy `EffectWipe::push` member: begin/end
     // and the start frame survive across frames until a new `beginNow` overwrites them. The layout

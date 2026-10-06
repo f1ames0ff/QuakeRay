@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -175,20 +175,6 @@ SamplerState g_illuminationVolume_Sampler;
 #endif
 
 
-
-#ifdef DESC_SET_LENS_FLARES
-[[vk::binding(BINDING_LENS_FLARES_CULLING_INPUT, DESC_SET_LENS_FLARES)]]
-StructuredBuffer<ShIndirectDrawCommand> lensFlareCullingInput;
-
-struct LensFlareDrawCmds_BT
-{
-    ShIndirectDrawCommand lensFlareDrawCmds[LENS_FLARES_MAX_DRAW_CMD_COUNT];
-    uint lensFlareDrawCmdsCount;
-};
-
-[[vk::binding(BINDING_LENS_FLARES_DRAW_CMDS, DESC_SET_LENS_FLARES)]]
-RWStructuredBuffer<LensFlareDrawCmds_BT> lensFlareDrawCmds;
-#endif
 
 
 

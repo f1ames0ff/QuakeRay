@@ -1,0 +1,69 @@
+# Format: 1
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+=== block set 0 binding 0
+
+[0] offset 0 m3(v3(float32)) matrixstride 16
+[1] offset 48 m3(v3(float32)) matrixstride 16
+[2] offset 96 m3(v3(float32)) matrixstride 16
+[3] offset 144 array[3](m2(v3(float32))) stride 24 matrixstride 8
+[4] offset 224 array[3](v4(float32)) stride 16
+[5] offset 272 array[3](v3(uint32)) stride 16
+[6] offset 320 array[3](uint32) stride 4
+[7] offset 332 uint32
+[8] offset 336 v4(float32)
+[9] offset 352 float32
+[10] offset 356 float32
+[11] offset 360 float32
+[12] offset 364 uint32
+[13] offset 368 uint32
+[14] offset 372 uint32
+=== block set 0 binding 1
+
+[0] offset 0 v3(float32)
+[1] offset 12 float32
+[2] offset 16 v3(float32)
+[3] offset 28 float32
+[4] offset 32 v3(float32)
+[5] offset 44 float32
+[6] offset 48 v3(float32)
+[7] offset 60 uint32
+[8] offset 64 uint32
+[9] offset 68 uint32
+[10] offset 72 uint32
+=== block set 0 binding 2
+
+[0] offset 0 v2(float32)
+[1] offset 8 uint32
+[2] offset 12 uint32
+=== block set 0 binding 3
+
+[0] offset 0 uint32
+=== block set 0 binding 4
+
+[0] offset 0 array[](float32) stride 4
+=== capability Shader
+declared
+=== descriptor set 0 binding 0
+struct nonwritable
+=== descriptor set 0 binding 0: storage class
+StorageBuffer
+=== descriptor set 0 binding 1
+struct nonwritable
+=== descriptor set 0 binding 1: storage class
+StorageBuffer
+=== descriptor set 0 binding 2
+struct nonwritable
+=== descriptor set 0 binding 2: storage class
+StorageBuffer
+=== descriptor set 0 binding 3
+struct nonwritable
+=== descriptor set 0 binding 3: storage class
+StorageBuffer
+=== descriptor set 0 binding 4
+struct
+=== descriptor set 0 binding 4: storage class
+StorageBuffer
+=== entry point
+GLCompute main
+=== workgroup size
+1 1 1

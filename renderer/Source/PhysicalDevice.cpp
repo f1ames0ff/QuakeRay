@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -26,6 +26,8 @@ using namespace qray;
 
 PhysicalDevice::PhysicalDevice(VkInstance instance)
     : physDevice(VK_NULL_HANDLE)
+    , properties{}
+    , driverProperties{}
     , memoryProperties{}
     , rtPipelineProperties{}
     , asProperties{}
@@ -68,6 +70,21 @@ PhysicalDevice::PhysicalDevice(VkInstance instance)
         rtPipelineProperties.pNext = &asProperties;
 
         vkGetPhysicalDeviceProperties2(physDevice, &properties2);
+        properties = properties2.properties;
+
+        if (properties.apiVersion >= VK_API_VERSION_1_2)
+        {
+            VkPhysicalDeviceDriverProperties driverProperties11{};
+            driverProperties11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
+
+            VkPhysicalDeviceProperties2 properties11{};
+            properties11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            properties11.pNext = &driverProperties11;
+
+            vkGetPhysicalDeviceProperties2(physDevice, &properties11);
+            driverProperties = driverProperties11;
+        }
+
         vkGetPhysicalDeviceMemoryProperties(physDevice, &memoryProperties);
 
         break;
@@ -82,6 +99,16 @@ PhysicalDevice::PhysicalDevice(VkInstance instance)
 VkPhysicalDevice PhysicalDevice::Get() const
 {
     return physDevice;
+}
+
+const VkPhysicalDeviceProperties &PhysicalDevice::GetProperties() const
+{
+    return properties;
+}
+
+const VkPhysicalDeviceDriverProperties &PhysicalDevice::GetDriverProperties() const
+{
+    return driverProperties;
 }
 
 uint32_t PhysicalDevice::GetMemoryTypeIndex(uint32_t memoryTypeBits, VkFlags requirementsMask) const

@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -34,6 +34,8 @@ public:
     PhysicalDevice &operator=(PhysicalDevice &&other) noexcept = delete;
 
     VkPhysicalDevice Get() const;
+    const VkPhysicalDeviceProperties &GetProperties() const;
+    const VkPhysicalDeviceDriverProperties &GetDriverProperties() const;
     const VkPhysicalDeviceMemoryProperties &GetMemoryProperties() const;
     const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &GetRTPipelineProperties() const;
     const VkPhysicalDeviceAccelerationStructurePropertiesKHR &GetASProperties() const;
@@ -42,6 +44,8 @@ public:
 
 private:
     VkPhysicalDevice physDevice;
+    VkPhysicalDeviceProperties properties;
+    VkPhysicalDeviceDriverProperties driverProperties;
     VkPhysicalDeviceMemoryProperties memoryProperties;
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtPipelineProperties;
     VkPhysicalDeviceAccelerationStructurePropertiesKHR asProperties;

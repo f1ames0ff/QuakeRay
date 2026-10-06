@@ -24,9 +24,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "qr_editor.h"
+#include "photocam.h"
+#include "observer.h"
 
 // we need to declare some mouse variables here, because the menu system
-// references them even when on a unix system.
+// references them.
 
 // these two are not intended to be set directly
 cvar_t cl_name = {"_cl_name", "player", CVAR_ARCHIVE};
@@ -133,6 +135,14 @@ void CL_ClearState (void)
 	memset (cl_temp_entities, 0, sizeof (cl_temp_entities));
 	memset (cl_beams, 0, sizeof (cl_beams));
 
+	rt_ef_damage_pulse = 0;
+	rt_ef_damage_peak = 0;
+	rt_ef_damage_elapsed = 0;
+	rt_ef_lowhealth_pulse = 0;
+	rt_ef_liquid_pulse = 0;
+	rt_ef_pickup_pulse = 0;
+	rt_ef_suit_pulse = 0;
+
 	// johnfitz -- cl_entities is now dynamically allocated
 	cl.max_edicts = CLAMP (MIN_EDICTS, (int)max_edicts.value, MAX_EDICTS);
 	cl.entities = (entity_t *)Mem_Alloc (cl.max_edicts * sizeof (entity_t));
@@ -192,6 +202,14 @@ void CL_Disconnect (void)
 	cl.intermission = 0;
 	cl.worldmodel = NULL;
 	cl.sendprespawn = false;
+
+	rt_ef_damage_pulse = 0;
+	rt_ef_damage_peak = 0;
+	rt_ef_damage_elapsed = 0;
+	rt_ef_lowhealth_pulse = 0;
+	rt_ef_liquid_pulse = 0;
+	rt_ef_pickup_pulse = 0;
+	rt_ef_suit_pulse = 0;
 }
 
 void CL_Disconnect_f (void)
@@ -477,9 +495,9 @@ float CL_LerpPoint (void)
 {
 	float f, frac;
 
-	// The light editor holds the clock: no lerp may pull cl.time forward while
-	// the world is meant to stand still.
-	if (QR_Editor_Active ())
+	// The light editor, photocam and the camera observer hold the clock: no lerp
+	// may pull cl.time forward while the world is meant to stand still.
+	if (QR_Editor_Active () || PhotoCam_Frozen () || Observer_Frozen ())
 		return 1;
 
 	f = cl.mtime[0] - cl.mtime[1];
@@ -1044,10 +1062,10 @@ int CL_ReadFromServer (void)
 	int        i;                 // johnfitz
 
 	cl.oldtime = cl.time;
-	// The light editor freezes the client clock with the server: its camera and
-	// its re-synthesis run on host frames, and a frozen cl.time holds every
-	// animation that reads it (textures, poses, particles) still.
-	if (!QR_Editor_Active ())
+	// The light editor, photocam and the camera observer freeze the client clock
+	// with the server: their cameras run on host frames, and a frozen cl.time
+	// holds every animation that reads it (textures, poses, particles) still.
+	if (!QR_Editor_Active () && !PhotoCam_Frozen () && !Observer_Frozen ())
 		cl.time += host_frametime;
 
 	needs_relink = true;
@@ -1143,10 +1161,10 @@ void CL_SendCmd (void)
 	if (cls.state != ca_connected)
 		return;
 
-	// qr light editor: while the editor camera is flying, the player stands
-	// still -- no commands reach the server (the editor reads the movement keys
-	// and the mouse itself)
-	if (QR_Editor_Active ())
+	// qr light editor / photocam / camera observer: while a free camera is
+	// flying, the player stands still -- no commands reach the server (the
+	// cameras read the movement keys and the mouse themselves)
+	if (QR_Editor_Active () || PhotoCam_Active () || Observer_Active ())
 	{
 		memset (&cl.pendingcmd, 0, sizeof (cl.pendingcmd));
 		cl.pendingcmd.servertime = cl.time;

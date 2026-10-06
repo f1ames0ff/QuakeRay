@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -33,9 +33,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint linear_idx : SV_Gro
 
     const bool validThread = !any(ipos >= screenSize);
 
-    const float3 input_color = validThread ? framebufPreFinal_Sampled.Load(int3(ipos, 0)).rgb : (float3)0.0;
+    float3 input_color = validThread ? framebufPreFinal_Sampled.Load(int3(ipos, 0)).rgb : (float3)0.0;
+    if (any(isnan(input_color)) || any(isinf(input_color)))
+    {
+        input_color = (float3)0.0;
+    }
+    input_color = max(input_color, (float3)0.0);
 
-    if (validThread && linear_idx < HISTOGRAM_BINS)
+    if (linear_idx < HISTOGRAM_BINS)
     {
         s_Histogram[linear_idx] = 0;
     }
@@ -68,7 +73,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint linear_idx : SV_Gro
 
     GroupMemoryBarrierWithGroupSync();
 
-    if (validThread && linear_idx < HISTOGRAM_BINS)
+    if (linear_idx < HISTOGRAM_BINS)
     {
         const int localBinValue = (int)s_Histogram[linear_idx];
         if (localBinValue != 0)

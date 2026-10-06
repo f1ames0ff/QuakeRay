@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
 #include "NvrhiFrameSkeleton.h"
 
 #include "RhiAccelStructs.h"
+#include "RhiBloomPass.h"
 #include "RhiDecalPass.h"
 #include "RhiFsrPass.h"
 #include "RhiPostEffectPass.h"
@@ -97,11 +98,13 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiRtComposePass *pRtComposePass,
                                        RhiRtReflRefrPass *pReflRefrPass,
                                        RhiProceduralSkyPass *pProceduralSkyPass,
+                                       RhiCloudsPass *pCloudsPass,
                                        RhiRasterSkyPass *pRasterSkyPass,
                                        RhiRasterOverlayPass *pRasterOverlayPass,
                                        RhiDecalPass *pDecalPass,
                                        RhiFsrPass *pFsrPass,
                                        RhiPostEffectPass *pPostEffectPass,
+                                       RhiBloomPass *pBloomPass,
                                        RhiShadowMapPass *pShadowMapPass,
                                        RhiRtGodRaysPass *pGodRaysPass,
                                        RhiUiPass *pUiPass,
@@ -117,11 +120,13 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , rtComposePass(pRtComposePass)
     , reflRefrPass(pReflRefrPass)
     , proceduralSkyPass(pProceduralSkyPass)
+    , cloudsPass(pCloudsPass)
     , rasterSkyPass(pRasterSkyPass)
     , rasterOverlayPass(pRasterOverlayPass)
     , decalPass(pDecalPass)
     , fsrPass(pFsrPass)
     , postEffectPass(pPostEffectPass)
+    , bloomPass(pBloomPass)
     , shadowMapPass(pShadowMapPass)
     , godRaysPass(pGodRaysPass)
     , uiPass(pUiPass)
@@ -454,6 +459,134 @@ static bool WriteScreenshotPng(const std::string &path, const nvrhi::TextureDesc
     return file.good();
 }
 
+void NvrhiFrameSkeleton::CreateGpuTimers()
+{
+    static_assert(GPU_PASS_COUNT == QR_GPU_PASS_COUNT, "the GPU pass list and the public pass count disagree");
+
+    if (gpuTimersCreated)
+    {
+        return;
+    }
+
+    gpuTimersCreated = true;
+
+    bool ready = true;
+
+    for (uint32_t slot = 0; slot < MAX_FRAMES_IN_FLIGHT && ready; slot++)
+    {
+        gpuFrameQueries[slot] = device->createTimerQuery();
+        ready = gpuFrameQueries[slot] != nullptr;
+
+        for (uint32_t pass = 0; pass < GPU_PASS_COUNT && ready; pass++)
+        {
+            gpuPassQueries[slot][pass] = device->createTimerQuery();
+            ready = gpuPassQueries[slot][pass] != nullptr;
+        }
+    }
+
+    gpuTimersReady = ready;
+
+    if (!ready)
+    {
+        print("Warning: RHI: the GPU timer queries could not be created; the pass timings stay empty");
+    }
+}
+
+void NvrhiFrameSkeleton::ReadGpuTimings(uint32_t frameIndex)
+{
+    if (!gpuTimersReady || frameIndex >= MAX_FRAMES_IN_FLIGHT)
+    {
+        return;
+    }
+
+    nvrhi::ITimerQuery *frameQuery = gpuFrameQueries[frameIndex].Get();
+
+    if (frameQuery == nullptr || !device->pollTimerQuery(frameQuery))
+    {
+        if (frameQuery != nullptr)
+        {
+            device->resetTimerQuery(frameQuery);
+        }
+        return;
+    }
+
+    gpuFrameMs = device->getTimerQueryTime(frameQuery) * 1000.0f;
+
+    for (uint32_t pass = 0; pass < GPU_PASS_COUNT; pass++)
+    {
+        nvrhi::ITimerQuery *query = gpuPassQueries[frameIndex][pass].Get();
+
+        if (query == nullptr)
+        {
+            continue;
+        }
+
+        if (device->pollTimerQuery(query))
+        {
+            gpuPassMs[pass] = device->getTimerQueryTime(query) * 1000.0f;
+        }
+        else
+        {
+            device->resetTimerQuery(query);
+        }
+    }
+
+    gpuTimingValid = true;
+}
+
+void NvrhiFrameSkeleton::BeginGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass)
+{
+    if (!gpuTimersReady || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT || pass >= GPU_PASS_COUNT)
+    {
+        return;
+    }
+
+    nvrhi::ITimerQuery *query = gpuPassQueries[frameIndex][pass].Get();
+
+    if (query != nullptr)
+    {
+        pCommandList->beginTimerQuery(query);
+    }
+}
+
+void NvrhiFrameSkeleton::EndGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass)
+{
+    if (!gpuTimersReady || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT || pass >= GPU_PASS_COUNT)
+    {
+        return;
+    }
+
+    nvrhi::ITimerQuery *query = gpuPassQueries[frameIndex][pass].Get();
+
+    if (query != nullptr)
+    {
+        pCommandList->endTimerQuery(query);
+    }
+}
+
+bool NvrhiFrameSkeleton::GetGpuTimings(float *pFrameMs, float *pPassMs) const
+{
+    if (!gpuTimingValid)
+    {
+        return false;
+    }
+
+    if (pFrameMs != nullptr)
+    {
+        *pFrameMs = gpuFrameMs;
+    }
+
+    if (pPassMs != nullptr)
+    {
+        for (uint32_t pass = 0; pass < GPU_PASS_COUNT; pass++)
+        {
+            pPassMs[pass] = gpuPassMs[pass];
+        }
+    }
+
+    return true;
+}
+
 bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex, const SkyFrameInputs &sky,
                                 VkSemaphore semaphoreToWait, VkSemaphore semaphoreToSignal)
 {
@@ -484,6 +617,15 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
     nvrhi::ICommandList *commandList = frameContext->GetCommandList(frameIndex);
     assert(commandList != nullptr);
+
+    CreateGpuTimers();
+    ReadGpuTimings(frameIndex);
+
+    if (gpuTimersReady)
+    {
+        commandList->beginTimerQuery(gpuFrameQueries[frameIndex].Get());
+        BeginGpuPass(commandList, frameIndex, GPU_PASS_SETUP);
+    }
 
     // Newly wrapped engine textures are foreign to NVRHI and need their first-use state declared in
     // the first command list that samples them (RhiTextureSource.h); the shared table hands over
@@ -589,6 +731,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         }
     }
 
+    EndGpuPass(commandList, frameIndex, GPU_PASS_SETUP);
+
     if (!tracedFrame)
     {
         // The engine's rasterized sky, exactly the calls the pass's contract requires, on the one
@@ -671,12 +815,36 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (proceduralSkyPass != nullptr && proceduralSkyPass->IsCreated() && uniform != nullptr &&
             uniform->skyType == SKY_TYPE_PROCEDURAL)
         {
-            proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams);
+            bool cloudsUpdated = false;
+            if (cloudsPass != nullptr && cloudsPass->IsCreated() && sky.cloudsLayer)
+            {
+                BeginGpuPass(commandList, frameIndex, GPU_PASS_CLOUDS);
+                cloudsUpdated = cloudsPass->Render(commandList, frameIndex, sky.cloudsParams,
+                                                    sky.cloudsShadowParams, sky.cloudsQuality);
+                EndGpuPass(commandList, frameIndex, GPU_PASS_CLOUDS);
+                proceduralSkyPass->SetCloudLayer(cloudsPass->GetLayerTexture(), cloudsPass->GetLayerSampler());
+                if (rtDirectPass != nullptr)
+                {
+                    rtDirectPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+                if (rtIndirectPass != nullptr)
+                {
+                    rtIndirectPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+                if (godRaysPass != nullptr)
+                {
+                    godRaysPass->SetCloudShadow(cloudsPass->GetShadowTexture(), cloudsPass->GetShadowSampler());
+                }
+            }
+
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_SKY);
+            proceduralSkyPass->Render(commandList, frameIndex, sky.proceduralSkyParams, cloudsUpdated);
+            EndGpuPass(commandList, frameIndex, GPU_PASS_SKY);
         }
 
         // The raster sky (RHI/RhiRasterSkyPass.h): the legacy frame's `DrawSkyToCubemap` ->
         // `DrawSkyToAlbedo` pair (VulkanDevice.cpp:748-753), recorded on this list before the
-        // primary because under this sky type the primary takes its sky colour from the raster
+        // primary because under this sky type the primary takes its sky color from the raster
         // ALBEDO it reads back (RaygenPrimary.hlsli:213-264, storeSky with
         // calculateSkyAndStoreToAlbedo false), and the indirect and reflect/refract passes sample
         // `renderCubemap` for the ambient and the reflections (RaygenCommon.hlsli:393-417) - the
@@ -692,6 +860,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // passes the same values to the same call.
             skyPass->SetSkyCamera(sky.view, sky.projection, sky.jitter, sky.skyViewerPos);
 
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_SKY);
+
             // The cube half first, like the legacy `DrawSkyToCubemap` (VulkanDevice.cpp:752): it
             // writes the cube the RT passes below (and the primary's own ambient) sample through
             // their set 8. The module is a no-op until its geometry buffers are installed and the
@@ -700,6 +870,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             {
                 rasterSkyPass->Render(commandList, sky.draws, sky.drawCount, sky.skyFaceViewProj,
                                       sky.applyVertexColorGamma);
+
+                if (proceduralSkyPass != nullptr && proceduralSkyPass->IsCreated())
+                {
+                    proceduralSkyPass->Invalidate ();
+                }
             }
 
             // The ALBEDO half, with the legacy viewport: the raygen reads this image back as the
@@ -710,6 +885,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // convention (`exposure.y` in the present params below).
             skyPass->Render(commandList, sky.draws, sky.drawCount, sky.applyVertexColorGamma,
                             /* legacyViewport = */ true);
+
+            EndGpuPass(commandList, frameIndex, GPU_PASS_SKY);
 
             // The ALBEDO hand-off: the sky's framebuffer use left the engine image in
             // COLOR_ATTACHMENT_OPTIMAL, while the primary (and the compose after it) announce
@@ -725,6 +902,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             }
         }
 
+        BeginGpuPass(commandList, frameIndex, GPU_PASS_PRIMARY);
         rtPrimaryPass->Render(
             commandList, frameIndex,
             accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
@@ -732,6 +910,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             passVertexData,
             sky.framebuffers,
             sky.width, sky.height);
+        EndGpuPass(commandList, frameIndex, GPU_PASS_PRIMARY);
 
         // The decals (A5.6): the ported DecalManager::Draw into ALBEDO right after the primary and
         // before the god-rays block - the legacy order (VulkanDevice.cpp:901 -> :904 -> :909) - so
@@ -797,8 +976,10 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
             if (decalStagingWraps[frameIndex] != nullptr && decalDeviceWrap != nullptr)
             {
+                BeginGpuPass(commandList, frameIndex, GPU_PASS_DECALS);
                 decalPass->Render(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
                                   worldUniformBuffer.Get(), sky.decalCount);
+                EndGpuPass(commandList, frameIndex, GPU_PASS_DECALS);
             }
         }
 
@@ -830,11 +1011,14 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 godRaysParams.godRaysEccentricity = sky.godRays.eccentricity;
                 godRaysParams.godRaysEnabled = 0;
 
+                BeginGpuPass(commandList, frameIndex, GPU_PASS_GODRAYS);
                 godRaysPass->RenderInput(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
                                          worldUniformBuffer.Get(), godRaysParams, false);
+                EndGpuPass(commandList, frameIndex, GPU_PASS_GODRAYS);
             }
             else if (shadowMapPass != nullptr && shadowMapPass->IsCreated())
             {
+                BeginGpuPass(commandList, frameIndex, GPU_PASS_GODRAYS);
                 RhiShadowMapPass::GeometryBuffers geometry;
                 geometry.staticVertices = vertexData.staticVertices;
                 geometry.staticIndices = vertexData.staticIndices;
@@ -867,6 +1051,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                         worldUniformBuffer.Get(), godRaysParams,
                         uniform != nullptr && uniform->reflectRefractMaxDepth > 0);
                 }
+
+                EndGpuPass(commandList, frameIndex, GPU_PASS_GODRAYS);
             }
         }
 
@@ -933,10 +1119,12 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
             if (uniform != nullptr && uniform->reflectRefractMaxDepth > 0)
             {
+                BeginGpuPass(commandList, frameIndex, GPU_PASS_REFLREFR);
                 reflRefrPass->Render(commandList, frameIndex,
                                      accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
                                      worldUniformBuffer.Get(), passVertexData, sky.framebuffers,
                                      sky.width, sky.height);
+                EndGpuPass(commandList, frameIndex, GPU_PASS_REFLREFR);
             }
         }
 
@@ -947,15 +1135,19 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // legacy records trace(1) + filter on the godRaysActive path.
         if (godRaysReflectionsPending && godRaysPass != nullptr && godRaysPass->IsCreated())
         {
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_REFLGODR);
             godRaysPass->RenderReflections(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
                                            worldUniformBuffer.Get(), godRaysParams);
+            EndGpuPass(commandList, frameIndex, GPU_PASS_REFLGODR);
         }
 
         if (rtComposePass != nullptr && filterEnabled)
         {
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_GRADIENT);
             rtComposePass->RenderGradientReproject(
                 commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
                 sky.upscaledWidth, sky.upscaledHeight, worldUniformBuffer.Get());
+            EndGpuPass(commandList, frameIndex, GPU_PASS_GRADIENT);
         }
 
         // The direct-lighting pass reads what the primary just wrote (the G-buffer, the Q2 cluster
@@ -967,6 +1159,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // documents the contract).
         if (rtDirectPass != nullptr && uniform != nullptr)
         {
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_DIRECT);
             rtDirectPass->Render(
                 commandList, frameIndex,
                 uniform->frameId, uniform->q2LightStatsMode,
@@ -975,6 +1168,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 passVertexData,
                 sky.framebuffers,
                 sky.width, sky.height);
+            EndGpuPass(commandList, frameIndex, GPU_PASS_DIRECT);
         }
 
         // The indirect / GI pass reads the G-buffer and the direct outputs and writes the unfiltered
@@ -983,6 +1177,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // (RhiRtIndirectPass.h documents the sizing).
         if (rtIndirectPass != nullptr && uniform != nullptr)
         {
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_INDIRECT);
             rtIndirectPass->Render(
                 commandList, frameIndex,
                 uniform->giBounceRays[0],
@@ -991,6 +1186,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 passVertexData,
                 sky.framebuffers,
                 sky.width, sky.height);
+            EndGpuPass(commandList, frameIndex, GPU_PASS_INDIRECT);
         }
 
         // The host-only exposure parameters of the traced frame: the compose chain's histogram and
@@ -999,7 +1195,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // now delegates to the same method; Tonemapping.h documents the split).
         if (rtComposePass != nullptr && sky.tonemapping != nullptr && sky.uniform != nullptr)
         {
-            sky.tonemapping->PrepareExposureParams(frameIndex, sky.uniform, sky.exposureBias, sky.contrast);
+            sky.tonemapping->PrepareExposureParams(frameIndex, sky.uniform, sky.exposureBias, sky.tonemapPower,
+                                                   sky.tonemapType, sky.exposureParams);
         }
 
         // The raster overlay (A5.5) draws the DEFAULT list inside the compose chain's window, from
@@ -1106,6 +1303,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // samples (RhiRtComposePass.h documents both entry points and the sizes they take).
         if (rtComposePass != nullptr)
         {
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_COMPOSE);
+
             // The raster overlay's window: the compose calls the callback between its checkerboard
             // and prepare-final dispatches - the legacy order (VulkanDevice.cpp:1066 -> :1071 ->
             // :1085); the overlay writes FINAL and SCREEN_EMISSION and leaves them in UnorderedAccess
@@ -1113,6 +1312,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             rtComposePass->Render(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
                                   sky.upscaledWidth, sky.upscaledHeight, filterEnabled,
                                   worldUniformBuffer.Get(),
+                                  sky.postEffectParams,
                                   [&](nvrhi::ICommandList *pOverlayList)
                                   {
                                       if (rasterOverlayPass != nullptr &&
@@ -1125,6 +1325,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               sky.worldDraws, sky.worldDrawCount,
                                               sky.view, sky.projection, sky.applyVertexColorGamma,
                                               sky.smokeDraws, sky.smokeDrawCount,
+                                              sky.particleDraws, sky.particleDrawCount,
                                               accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
                                               rtDirectPass != nullptr ? rtDirectPass->GetLightSet(frameIndex).Get() : nullptr,
                                               sky.voxelSmokeParams, uniform->timeDelta);
@@ -1153,6 +1354,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                       "frame is upscaled by the TAAU instead (deferred, RhiFsrPass.h)");
             }
 
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_UPSCALE);
             if (fsrPass != nullptr && fsrPass->IsCreated() && sky.renderResolution != nullptr &&
                 uniform != nullptr &&
                 sky.renderResolution->IsAmdFsr3Enabled())
@@ -1196,6 +1398,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                           sky.upscaledWidth, sky.upscaledHeight, worldUniformBuffer.Get());
             }
 
+            EndGpuPass(commandList, frameIndex, GPU_PASS_UPSCALE);
+
             // The post-upscale effect chain, the pre-UI half (RhiPostEffectPass): the legacy
             // consumers 1-7 of `drawInfo.postEffectParams` (VulkanDevice.cpp:1166-1193) recorded
             // over the upscaled image pair, after the upscaler wrote image 29 and before the UI
@@ -1206,12 +1410,14 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // VulkanDevice.cpp:174), and the same wrap carries it to the device.
             if (postEffectPass != nullptr && postEffectPass->IsCreated() && uniform != nullptr)
             {
+                BeginGpuPass(commandList, frameIndex, GPU_PASS_POST);
                 postEffectPass->Render(commandList, frameIndex, sky.framebuffers,
                                        sky.width, sky.height,
                                        sky.upscaledWidth, sky.upscaledHeight,
                                        uniform->time,
                                        worldUniformBuffer.Get(),
                                        sky.postEffectParams);
+                EndGpuPass(commandList, frameIndex, GPU_PASS_POST);
             }
 
             // The 2D UI (A5.1): the frame's SWAPCHAIN overlay into the same upscaled image the
@@ -1273,11 +1479,13 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 {
                     uiPass->SetGeometryBuffers(uiVertexStagingWraps[frameIndex],
                                                uiIndexStagingWraps[frameIndex]);
+                    BeginGpuPass(commandList, frameIndex, GPU_PASS_UI);
                     uiPass->Render(commandList, frameIndex,
                                    rtComposePass->GetUpscaledTexture(frameIndex),
                                    sky.upscaledWidth, sky.upscaledHeight,
                                    sky.swapchainDraws, sky.swapchainDrawCount,
                                    uniform->view, uniform->projection, sky.applyVertexColorGamma);
+                    EndGpuPass(commandList, frameIndex, GPU_PASS_UI);
                 }
             }
 
@@ -1289,6 +1497,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // configuration: `pWipe` is never filled, `rt_ef_crt` defaults to 0).
             if (postEffectPass != nullptr && postEffectPass->IsCreated() && uniform != nullptr)
             {
+                BeginGpuPass(commandList, frameIndex, GPU_PASS_POSTUI);
                 postEffectPass->RenderPostUi(commandList, frameIndex, sky.framebuffers,
                                              sky.width, sky.height,
                                              sky.upscaledWidth, sky.upscaledHeight,
@@ -1296,7 +1505,10 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                              worldUniformBuffer.Get(),
                                              sky.postEffectParams,
                                              sky.postEffectFrameId);
+                EndGpuPass(commandList, frameIndex, GPU_PASS_POSTUI);
             }
+
+            EndGpuPass(commandList, frameIndex, GPU_PASS_COMPOSE);
         }
     }
 
@@ -1333,6 +1545,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     }
     else if (directTexture != nullptr && PreparePresentBindingSet(frameIndex, albedo, directTexture))
     {
+        BeginGpuPass(commandList, frameIndex, GPU_PASS_PRESENT);
+
         // The exposure of the present: the write takes the next version of the volatile buffer and,
         // as every volatile-buffer write, has to follow the list's open(), which BeginSlot did.
         // exposure.y is the mirror flag of the frame's mode: the engine-convention traced frames
@@ -1414,10 +1628,17 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         commandList->setTextureState(albedo, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
 
         commandList->setTextureState(backBuffer, nvrhi::AllSubresources, nvrhi::ResourceStates::Present);
+
+        EndGpuPass(commandList, frameIndex, GPU_PASS_PRESENT);
+    }
+
+    if (gpuTimersReady)
+    {
+        commandList->endTimerQuery(gpuFrameQueries[frameIndex].Get());
     }
 
     // The context closes the slot's list and submits it: the image is not available until the
-    // acquire semaphore is signalled, and the presentation engine cannot start before the pass is
+    // acquire semaphore is signaled, and the presentation engine cannot start before the pass is
     // done, so EndSlot waits on 'semaphoreToWait' and signals 'semaphoreToSignal' where the manual
     // queue state and the execute used to be.
     frameContext->EndSlot(frameIndex, semaphoreToWait, semaphoreToSignal);
@@ -1857,6 +2078,11 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
     if (rtComposePass != nullptr)
     {
         rtComposePass->ReleaseTargets();
+    }
+
+    if (bloomPass != nullptr)
+    {
+        bloomPass->ReleaseTargets();
     }
 
     // The god-rays pass wraps the eight engine images it reads and writes (63/64 among them) and

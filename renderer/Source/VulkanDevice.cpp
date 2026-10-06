@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -45,7 +45,14 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
     }
 
     swapchain->RequestPresentMode(startInfo.presentMode);
+    swapchain->SetMaxFrameLatency(startInfo.maxFrameLatency);
     swapchain->AcquireImage(imageAvailableSemaphores[frameIndex]);
+
+    if (swapchain->IsPresentWaitActive() && !printedPresentWaitActive)
+    {
+        printedPresentWaitActive = true;
+        Print("RHI: present wait is active, the swapchain caps the frames queued for display");
+    }
 
     {
         const std::string presentModeName = swapchain->GetPresentModeName();
@@ -216,6 +223,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
             gu->skyColorMultiplier = sp.skyColorMultiplier;
             gu->skyColorSaturation = std::max( sp.skyColorSaturation, 0.0f );
             gu->skyAmbientLod      = std::clamp( sp.skyAmbientLod, 0.0f, 10.0f );
+            gu->skyLightMultiplier = std::max( sp.skyLightMultiplier, 0.0f );
             gu->skyNee             = sp.skyNee != 0 ? 1.0f : 0.0f;
 
             gu->skyType = sp.skyType == QR_SKY_TYPE_CUBEMAP ? SKY_TYPE_CUBEMAP :
@@ -236,6 +244,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
             gu->skyColorMultiplier                                                                                    = 1.0f;
             gu->skyColorSaturation                                                                                    = 1.0f;
             gu->skyAmbientLod                                                                                         = 10.0f;
+            gu->skyLightMultiplier                                                                                    = 1.0f;
             gu->skyNee                                                                                                = 0.0f;
             gu->skyType                                                                                               = SKY_TYPE_COLOR;
             gu->skyCubemapIndex                                                                                       = QR_EMPTY_CUBEMAP;
@@ -726,6 +735,15 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         }
     }
 
+    particleDraws.clear();
+    for (const RasterizedDataCollector::DrawInfo &info : worldDraws)
+    {
+        if ((info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_PARTICLE) != 0)
+        {
+            particleDraws.push_back(info);
+        }
+    }
+
     const std::vector<RasterizedDataCollector::DrawInfo> &swapchainDraws =
         rasterizedDataCollector->GetSwapchainDrawInfos();
 
@@ -756,6 +774,8 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.worldDrawCount = static_cast<uint32_t>(worldDraws.size());
     sky.smokeDraws = smokeDraws.data();
     sky.smokeDrawCount = static_cast<uint32_t>(smokeDraws.size());
+    sky.particleDraws = particleDraws.data();
+    sky.particleDrawCount = static_cast<uint32_t>(particleDraws.size());
 
     sky.swapchainDraws = swapchainDraws.data();
     sky.swapchainDrawCount = static_cast<uint32_t>(swapchainDraws.size());
@@ -771,7 +791,9 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     if (drawInfo.pTonemappingParams != nullptr)
     {
         sky.exposureBias = drawInfo.pTonemappingParams->exposureBias;
-        sky.contrast = std::clamp(drawInfo.pTonemappingParams->contrast, 0.0f, 1.0f);
+        sky.tonemapPower = std::clamp(drawInfo.pTonemappingParams->tonemapPower, 0.0f, 1.0f);
+        sky.tonemapType = std::min(drawInfo.pTonemappingParams->tonemapType, 4u);
+        sky.exposureParams = *drawInfo.pTonemappingParams;
     }
     sky.rayCullMaskWorld = uniform->GetData()->rayCullMaskWorld;
     sky.allowGeometryWithSkyFlag = allowGeometryWithSkyFlag;
@@ -796,7 +818,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         const bool godRaysOn = godRaysEnabled && (sunExists || useSkyBrightest);
 
         sky.godRays.enabled = godRaysOn;
-        sky.godRays.intensity = 8.0f * godRaysIntensity;
+        sky.godRays.intensity = 0.05f * godRaysIntensity;
         sky.godRays.eccentricity = 0.75f;
 
         if (godRaysOn)
@@ -889,11 +911,18 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             p.sunDirection[1] = d[1] / len;
             p.sunDirection[2] = d[2] / len;
         }
-        p.skyTint[3] = sunAngularRadius;
         p.skyParams[0] = globalUniform->skyColorMultiplier;
         p.skyParams[1] = globalUniform->skyColorSaturation;
-        p.skyParams[2] = 6.0f;
-        p.skyParams[3] = 0.025f;
+        p.skyParams[2] = 30.0f;
+        float sunDiscSize = drawInfo.pSkyParams != nullptr ? drawInfo.pSkyParams->sunDiscSize : 1.0f;
+        sunDiscSize = std::isfinite(sunDiscSize) ? std::clamp(sunDiscSize, 0.0f, 10.0f) : 1.0f;
+        p.skyParams[3] = 0.025f * sunDiscSize;
+
+        const uint32_t cloudsQuality = drawInfo.pSkyParams != nullptr
+            ? std::min(drawInfo.pSkyParams->skyCloudsQuality, uint32_t(QR_SKY_CLOUDS_MAX_QUALITY))
+            : 2;
+        float cloudAltitude = 140000.0f;
+        float cloudThickness = 90000.0f;
 
         p.cloudColor[3] = globalUniform->time;
         if (drawInfo.pSkyParams)
@@ -906,7 +935,20 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             p.cloudParams[1] = c[4];
             p.cloudParams[2] = c[5];
             p.cloudParams[3] = c[6];
+
+            if (c[7] > 0.0f)
+            {
+                cloudAltitude = c[7];
+            }
+            if (c[8] > 0.0f)
+            {
+                cloudThickness = c[8];
+            }
         }
+
+        p.skyTint[3] = 0.0f;
+        const float wind = RhiCloudsPass::GetWindSpeed(p.cloudParams[2], cloudAltitude);
+        p.cloudParams[2] = wind;
 
         constexpr float PI = 3.14159265358979323846f;
         const float faceAngles[6][2] = {
@@ -927,6 +969,65 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             p.faceBasis[face * 3 + 0][0] = view[0];  p.faceBasis[face * 3 + 0][1] = view[4];  p.faceBasis[face * 3 + 0][2] = view[8];
             p.faceBasis[face * 3 + 1][0] = view[1];  p.faceBasis[face * 3 + 1][1] = view[5];  p.faceBasis[face * 3 + 1][2] = view[9];
             p.faceBasis[face * 3 + 2][0] = view[2];  p.faceBasis[face * 3 + 2][1] = view[6];  p.faceBasis[face * 3 + 2][2] = view[10];
+        }
+
+        RhiCloudsPass::LayerParams clouds = {};
+        static_assert(offsetof(RhiCloudsPass::LayerParams, cloudLayer) == sizeof(RhiProceduralSkyPass::Params),
+                      "the layer params must start with the procedural sky params");
+        memcpy(&clouds, &p, sizeof(p));
+
+        if (hasSun)
+        {
+            clouds.sunDiscColor[0] = sunColor[0];
+            clouds.sunDiscColor[1] = sunColor[1];
+            clouds.sunDiscColor[2] = sunColor[2];
+        }
+
+        clouds.cloudParams[2] = wind;
+
+        clouds.cloudLayer[0] = cloudAltitude;
+        clouds.cloudLayer[1] = cloudThickness;
+        clouds.cloudLayer[2] = 1.0f;
+        clouds.cloudLayer[3] = 1.0f;
+        clouds.cloudMarch[0] = float(RhiCloudsPass::GetViewSteps(cloudsQuality));
+        clouds.cloudMarch[2] = 0.35f;
+        clouds.cloudMarch[3] = 0.75f;
+        clouds.cloudAnchor[0] = globalUniform->cameraPosition[0];
+        clouds.cloudAnchor[1] = globalUniform->cameraPosition[1];
+        clouds.cloudAnchor[2] = globalUniform->cameraPosition[2];
+        sky.cloudsParams = clouds;
+
+        RhiCloudsPass::ShadowParams cloudsShadow = {};
+        cloudsShadow.sunDirection[0] = p.sunDirection[0];
+        cloudsShadow.sunDirection[1] = p.sunDirection[1];
+        cloudsShadow.sunDirection[2] = p.sunDirection[2];
+        cloudsShadow.sunDirection[3] = cloudAltitude;
+        cloudsShadow.cloudLayer[0] = cloudThickness;
+        cloudsShadow.cloudLayer[1] = p.cloudParams[0];
+        cloudsShadow.cloudLayer[2] = p.cloudParams[1];
+        cloudsShadow.cloudLayer[3] = clouds.cloudMarch[2];
+        cloudsShadow.cloudMarch[0] = p.cloudColor[3];
+        cloudsShadow.cloudMarch[1] = wind;
+        sky.cloudsShadowParams = cloudsShadow;
+
+        sky.cloudsLayer = p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;
+        sky.cloudsQuality = cloudsQuality;
+
+        auto *cloudUniform = uniform->GetData();
+        const bool cloudsEnabled = globalUniform->skyType == SKY_TYPE_PROCEDURAL &&
+                                   p.cloudParams[3] > 0.5f && p.skyParams[1] > 0.0f;
+        const bool volumeEnabled = cloudsEnabled &&
+                                   rhiCloudsPass != nullptr && rhiCloudsPass->IsCreated() &&
+                                   rhiProceduralSkyPass != nullptr && rhiProceduralSkyPass->IsCreated();
+        cloudUniform->cloudLayerMotion[0] = cloudsEnabled ? p.cloudParams[2] : 0.0f;
+        cloudUniform->cloudLayerMotion[1] = volumeEnabled ? cloudAltitude : 0.0f;
+        cloudUniform->cloudLayerMotion[2] = volumeEnabled ? cloudThickness : 0.0f;
+        cloudUniform->cloudLayerMotion[3] = cloudsEnabled ? std::clamp(p.skyParams[1], 0.0f, 1.0f) : 0.0f;
+        const auto placement = RhiCloudsPass::MakeShadowPlacement(clouds);
+        memcpy(cloudUniform->cloudShadowPlacement, placement.data(), sizeof(cloudUniform->cloudShadowPlacement));
+        if (!volumeEnabled)
+        {
+            cloudUniform->cloudShadowPlacement[0] = 0.0f;
         }
 
         sky.proceduralSkyParams = p;
@@ -1053,6 +1154,23 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
 
         if (RenderThroughRhi(*drawInfo))
         {
+            if (nvrhiFrameSkeleton != nullptr)
+            {
+                float frameMs = 0.0f;
+                float passMs[QR_GPU_PASS_COUNT] = {};
+
+                if (nvrhiFrameSkeleton->GetGpuTimings(&frameMs, passMs))
+                {
+                    statsGpuTimingValid = true;
+                    statsGpuFrameMs = frameMs;
+
+                    for (uint32_t i = 0; i < QR_GPU_PASS_COUNT; i++)
+                    {
+                        statsGpuPassMs[i] = passMs[i];
+                    }
+                }
+            }
+
             currentFrameState.OnEndFrame();
             return;
         }
@@ -1138,6 +1256,39 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
         pStats->raysPerCategory[i] = statsRaysPerCategory[i];
     }
     pStats->fpsX10 = statsFpsX10;
+
+    pStats->gpuTimingValid = statsGpuTimingValid ? 1 : 0;
+    pStats->gpuFrameMs = statsGpuFrameMs;
+    for (uint32_t i = 0; i < QR_GPU_PASS_COUNT; i++)
+    {
+        pStats->gpuPassMs[i] = statsGpuPassMs[i];
+    }
+}
+
+void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
+{
+    if (pInfo == nullptr)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
+    }
+
+    memset(pInfo, 0, sizeof(QrAdapterInfo));
+
+    if (physDevice == nullptr)
+    {
+        return;
+    }
+
+    const VkPhysicalDeviceProperties &properties = physDevice->GetProperties();
+    const VkPhysicalDeviceDriverProperties &driverProperties = physDevice->GetDriverProperties();
+
+    std::snprintf(pInfo->name, sizeof(pInfo->name), "%s", properties.deviceName);
+    std::snprintf(pInfo->driverName, sizeof(pInfo->driverName), "%s", driverProperties.driverName);
+    std::snprintf(pInfo->driverInfo, sizeof(pInfo->driverInfo), "%s", driverProperties.driverInfo);
+    pInfo->vendorId = properties.vendorID;
+    pInfo->deviceId = properties.deviceID;
+    pInfo->driverVersion = properties.driverVersion;
+    pInfo->apiVersion = properties.apiVersion;
 }
 
 void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)

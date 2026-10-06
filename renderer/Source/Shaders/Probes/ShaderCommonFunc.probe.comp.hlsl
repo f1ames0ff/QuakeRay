@@ -21,7 +21,6 @@
 #define DESC_SET_TONEMAPPING    3
 #define DESC_SET_LIGHT_SOURCES  4
 #define DESC_SET_VOLUMETRIC     5
-#define DESC_SET_LENS_FLARES    6
 #define DESC_SET_DECALS         7
 
 #include "ShaderCommonHLSLFunc.hlsli"
@@ -86,11 +85,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          tonemapping[0].tmExposureSpeedUp + tonemapping[0].tmLowPercentile +
          tonemapping[0].tmHighPercentile + tonemapping[0].tmMinLuminance + tonemapping[0].tmMaxLuminance +
          tonemapping[0].tmNoiseBlend + tonemapping[0].tmNoiseStops + tonemapping[0].tmDynRangeStops +
-         tonemapping[0].tmReinhard + tonemapping[0].tmKneeStart + tonemapping[0].tmWhitePoint +
+         tonemapping[0].tonemapPower + tonemapping[0].tmKneeStart + tonemapping[0].tmWhitePoint +
          tonemapping[0].tmSlopeBlurSigma + tonemapping[0].frameTime + float(tonemapping[0].resetCurve) +
          tonemapping[0].kneeW + tonemapping[0].kneeA + tonemapping[0].kneeB +
          float(tonemapping[0].histogram[0]) + tonemapping[0].curve[0] + tonemapping[0].normalized[0] +
-         tonemapping[0].adaptedLuminance + tonemapping[0].avgLuminance;
+         tonemapping[0].adaptedLuminance + tonemapping[0].avgLuminance + float(tonemapping[0].tonemapType);
 
     // DESC_SET_LIGHT_SOURCES
     v += lightSources[0].color.x + lightSources_Prev[0].color.x;
@@ -106,11 +105,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += g_volumetric_Sampled.SampleLevel(g_volumetric_Sampler, volUVW, 0.0).x;
     v += g_volumetric_Sampled_Prev.SampleLevel(g_volumetric_Sampler_Prev, volUVW, 0.0).x;
     v += g_illuminationVolume_Sampled.SampleLevel(g_illuminationVolume_Sampler, volUVW, 0.0).x;
-
-    // DESC_SET_LENS_FLARES
-    v += lensFlareCullingInput[0].positionToCheck_X;
-    lensFlareDrawCmds[0].lensFlareDrawCmds[0] = lensFlareCullingInput[0];
-    lensFlareDrawCmds[0].lensFlareDrawCmdsCount = 1u;
 
     // DESC_SET_DECALS
     v += decalInstances[0].transform[0][0];

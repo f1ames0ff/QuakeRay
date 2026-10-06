@@ -25,57 +25,15 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "qr_editor.h"
+#include "qr_gui.h"
+#include "photocam.h"
+#include "observer.h"
+#include "snd_eq.h"
 
 #include "cfgfile.h"
 #include "rt_dtal_debug.h"
 
 #include <setjmp.h>
-
-/*
-
-background clear
-rendering
-turtle/net/ram icons
-sbar
-centerprint / slow centerprint
-notify lines
-intermission / finale overlay
-loading plaque
-console
-menu
-
-required background clears
-required update regions
-
-
-syncronous draw mode or async
-One off screen buffer, with updates either copied or xblited
-Need to double buffer?
-
-
-async draw will require the refresh area to be cleared, because it will be
-xblited, but sync draw can just ignore it.
-
-sync
-draw
-
-CenterPrint ()
-SlowPrint ()
-Screen_Update ();
-Con_Printf ();
-
-net
-turn off messages option
-
-the refresh is allways rendered, unless the console is full screen
-
-
-console is:
-    notify lines
-    half
-    full
-
-*/
 
 int glx, gly, glwidth, glheight;
 
@@ -649,236 +607,6 @@ void SCR_DrawFPS (cb_context_t *cbx)
 	}
 }
 
-static const QrFloat4D color_orange = { 1.0f, 0.30f, 0.05f, 1.0f };
-static const QrFloat4D color_detail = { 0.60f, 0.85f, 1.00f, 1.0f };
-static const QrFloat4D color_shadow = { 0.0f, 0.0f, 0.0f, 1.0f };
-
-static void SCR_DrawRTStatsString (cb_context_t *cbx, int x, int y, const char *str, float scale,
-                                   const QrFloat4D *color, const QrFloat4D *shadow)
-{
-	Draw_StringScaled (cbx, x + 4, y + 4, str, scale, shadow);
-	Draw_StringScaled (cbx, x, y, str, scale, color);
-}
-
-// One scale, one line spacing and one column width for the whole readout, so that
-// the panels rt_stats asks for look like the single readout they belong to.
-static const float rt_stats_scale = 2.0f;
-static const int   rt_stats_step = 16;  // 8 pixels of glyph times the scale
-static const int   rt_stats_col = 360;  // the table columns: 22 characters at that scale
-
-static void SCR_DrawRTStatsRow (cb_context_t *cbx, int x, int y, const char *name, float ms,
-                                const QrFloat4D *color)
-{
-	const unsigned ms10 = (unsigned)(ms * 10.0f + 0.5f);
-	char           st[64];
-
-	sprintf (st, "%-14s %5u.%u ms", name, ms10 / 10, ms10 % 10);
-	SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, color, &color_shadow);
-}
-
-/*
-================
-SCR_DrawRTStats
-
-The frame readout, in the panels that rt_stats asks for: the ray counters, the
-GPU pass timings and the CPU side of the frame. They are drawn in that order, one
-under the other, with a blank line between them, so the whole frame can be read
-as a single column.
-
-The GPU numbers come from the backend's frame stats and the CPU numbers from
-rt_prof_report, refreshed every `rt_stats_interval` seconds by RT_Prof_Update.
-Slots hold the longest sample of the reporting window rather than the values of
-one frame, so they must not be added up.
-
-Returns the line the next section should start at.
-================
-*/
-int SCR_DrawRTStats (cb_context_t *cbx)
-{
-	const qboolean rays = RT_StatsPanel (RT_STATS_RAYS);
-	const qboolean passes = RT_StatsPanel (RT_STATS_PASSES);
-	const qboolean profile = RT_StatsPanel (RT_STATS_PROFILE);
-	const rt_prof_report_t *rep = &rt_prof_report;
-	rt_stats_snapshot_t     snap;
-
-	const int x = 8;
-	int       y = 8;
-	int       i;
-	char      st[64];
-
-	if (!rays && !passes && !profile)
-		return y;
-
-	RT_StatsCapture (&snap);
-
-	GL_SetCanvas (cbx, CANVAS_DEFAULT);
-
-	st[0] = 0;
-
-	if (snap.haveGpu)
-		sprintf (st, "FPS: %u.%u", snap.gpu.fpsX10 / 10, snap.gpu.fpsX10 % 10);
-	else if (snap.haveProfile)
-	{
-		const unsigned fps10 = (unsigned)(rep->fps * 10.0f + 0.5f);
-		sprintf (st, "FPS: %u.%u", fps10 / 10, fps10 % 10);
-	}
-
-	if (st[0])
-	{
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-	}
-
-	// The counters are accumulated by the shaders only while panel 1 is on, so with
-	// the other panels alone they would read as a permanent zero.
-	if (rays && snap.haveGpu)
-	{
-		y += rt_stats_step; // blank line before the section
-
-		sprintf (st, "RAYS: %u", snap.gpu.raysTotal);
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-
-		sprintf (st, "PRIMARY: %u", snap.gpu.raysPerCategory[0]);
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-
-		sprintf (st, "REFL/REFR: %u", snap.gpu.raysPerCategory[1]);
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-
-		sprintf (st, "INDIRECT: %u", snap.gpu.raysPerCategory[2]);
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-
-		sprintf (st, "SHADOW DIR: %u", snap.gpu.raysPerCategory[3]);
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-
-		sprintf (st, "SHADOW IND: %u", snap.gpu.raysPerCategory[4]);
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-
-		sprintf (st, "CALLS: %u", snap.gpu.apiCalls);
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-	}
-
-	// The pass timestamps are collected only while panel 2 is on, and only the
-	// backend knows whether they could be read back for this frame.
-	if (passes && snap.haveGpu && snap.gpu.gpuTimingValid)
-	{
-		const unsigned gpu_ms10 = (unsigned)(snap.gpu.gpuFrameMs * 10.0f + 0.5f);
-		const int      rows = (QR_GPU_PASS_COUNT + 1) / 2;
-
-		y += rt_stats_step; // blank line before the section
-
-		sprintf (st, "GPU: %u.%u ms", gpu_ms10 / 10, gpu_ms10 % 10);
-		SCR_DrawRTStatsString (cbx, x, y, st, rt_stats_scale, &color_orange, &color_shadow);
-		y += rt_stats_step;
-
-		for (i = 0; i < QR_GPU_PASS_COUNT; i++)
-			SCR_DrawRTStatsRow (cbx, x + (i / rows) * rt_stats_col, y + (i % rows) * rt_stats_step,
-			                    qrGetGpuPassName (i), snap.gpu.gpuPassMs[i], &color_detail);
-
-		y += rows * rt_stats_step;
-	}
-
-	return y;
-}
-
-/*
-================
-SCR_DrawRTProf
-
-The CPU side of the frame, the last section of the readout. It starts at the line
-the sections above left off at, so that the panels continue one another, and the
-numbers come from rt_prof_report, refreshed every `rt_stats_interval` seconds by
-RT_Prof_Update.
-================
-*/
-void SCR_DrawRTProf (cb_context_t *cbx, int x, int y)
-{
-	if (!RT_StatsPanel (RT_STATS_PROFILE) || !rt_prof_report.valid)
-		return;
-
-	static const struct
-	{
-		int         slot;
-		const char *label;
-	} left[] = {
-		{ RT_PROF_SETUP, "setup" },       { RT_PROF_MARK, "mark" },         { RT_PROF_EFRAGS, "efrags" },
-		{ RT_PROF_CULL, "cull" },         { RT_PROF_CHAIN, "chain" },       { RT_PROF_WORLD, "world" },
-		{ RT_PROF_SKY, "sky" },           { RT_PROF_ENTS, "ents" },         { RT_PROF_ALPHA, "alpha" },
-		{ RT_PROF_PARTICLES, "particles" }, { RT_PROF_VIEWMODEL, "viewmodel" }, { RT_PROF_VIEWMODEL_DRAW, "vm draw" },
-	};
-
-	static const struct
-	{
-		int         slot;
-		const char *label;
-	} right[] = {
-		{ RT_PROF_ELIGHTS, "elights" }, { RT_PROF_WMODEL_LIGHTS, "wmodel lights" }, { RT_PROF_TELEPORTS, "teleports" },
-		{ RT_PROF_CLUSTERS, "clusters" }, { RT_PROF_CLUSTERS_LISTS, "clust lists" },
-		{ RT_PROF_CLUSTERS_RESOLVE, "clust resolve" }, { RT_PROF_CLUSTERS_VIS, "clust vis" },
-		{ RT_PROF_CLUSTERS_TOPUP, "clust topup" },
-		{ RT_PROF_CLUSTERS_FILL, "clust fill" }, { RT_PROF_CLUSTERS_UPLOAD, "clust upload" },
-	};
-
-	const rt_prof_report_t *rep = &rt_prof_report;
-	int  i;
-	char st[64];
-
-	GL_SetCanvas (cbx, CANVAS_DEFAULT);
-
-	y += rt_stats_step; // blank line before the section
-
-	SCR_DrawRTStatsRow (cbx, x, y, "FRAME", rep->frameMs, &color_orange);
-	y += rt_stats_step;
-
-	SCR_DrawRTStatsRow (cbx, x, y, "MAIN", rep->frameMs - rep->waitMs, &color_orange);
-	y += rt_stats_step;
-
-	SCR_DrawRTStatsRow (cbx, x, y, "WAIT", rep->waitMs, &color_orange);
-	y += rt_stats_step;
-
-	SCR_DrawRTStatsRow (cbx, x, y, "qrDrawFrame", rep->ms[RT_PROF_DRAWFRAME], &color_orange);
-	y += rt_stats_step;
-
-	for (i = 0; i < (int)countof (left); i++)
-		SCR_DrawRTStatsRow (cbx, x, y + i * rt_stats_step, left[i].label, rep->ms[left[i].slot], &color_detail);
-
-	for (i = 0; i < (int)countof (right); i++)
-		SCR_DrawRTStatsRow (cbx, x + rt_stats_col, y + i * rt_stats_step,
-		                    right[i].label, rep->ms[right[i].slot], &color_detail);
-
-	y += (int)countof (left) * rt_stats_step;
-
-	// Slots hold the longest sample of the window, so the passes keep showing their rebuild cost
-	// even when almost every frame reused the cache. The ratio below is what tells the two apart.
-	const int cacheFrames = rep->clusterCacheHits + rep->clusterCacheMisses;
-	if (cacheFrames > 0)
-	{
-		int row = y + rt_stats_step; // blank line before the cluster counters
-
-		sprintf (st, "clust cache  %3i%% of %i", (100 * rep->clusterCacheHits) / cacheFrames, cacheFrames);
-		SCR_DrawRTStatsString (cbx, x + rt_stats_col, row, st, rt_stats_scale, &color_detail, &color_shadow);
-		row += rt_stats_step;
-
-		sprintf (st, "clust miss  set %i move %i other %i", rep->clusterMissSet, rep->clusterMissMove, rep->clusterMissOther);
-		SCR_DrawRTStatsString (cbx, x + rt_stats_col, row, st, rt_stats_scale, &color_detail, &color_shadow);
-		row += rt_stats_step;
-
-		sprintf (st, "clust rebuild grants %i denied %i gated %i",
-			rep->clusterGrants, rep->clusterDenied, rep->clusterGated);
-		SCR_DrawRTStatsString (cbx, x + rt_stats_col, row, st, rt_stats_scale, &color_detail, &color_shadow);
-		row += rt_stats_step;
-
-		sprintf (st, "clust lights %i add %i drop %i", rep->clusterLights, rep->clusterAttempts, rep->clusterDropped);
-		SCR_DrawRTStatsString (cbx, x + rt_stats_col, row, st, rt_stats_scale, &color_detail, &color_shadow);
-	}
-}
-
 /*
 ==============
 SCR_DrawClock -- johnfitz
@@ -1333,6 +1061,24 @@ static void SCR_DrawGUI (void *unused)
 			SCR_DrawConsole (cbx);
 			QR_Editor_DrawPanel (cbx);
 		}
+		else if (PhotoCam_Active ())
+		{
+			if (scr_con_current)
+			{
+				Con_DrawConsole (cbx, scr_con_current, true);
+				clearconsole = 0;
+			}
+			M_Draw (cbx);
+		}
+		else if (Observer_Active ())
+		{
+			if (scr_con_current)
+			{
+				Con_DrawConsole (cbx, scr_con_current, true);
+				clearconsole = 0;
+			}
+			M_Draw (cbx);
+		}
 		else
 		{
 			SCR_DrawCrosshair (cbx); // johnfitz
@@ -1343,13 +1089,25 @@ static void SCR_DrawGUI (void *unused)
 			Sbar_Draw (cbx);
 			SCR_DrawDevStats (cbx); // johnfitz
 			SCR_DrawFPS (cbx);      // johnfitz
-			const int stats_y = SCR_DrawRTStats (cbx);
-			SCR_DrawRTProf (cbx, 8, stats_y);
 			SCR_DrawClock (cbx);    // johnfitz
 			SCR_DrawConsole (cbx);
 			M_Draw (cbx);
-			RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), (unsigned int) host_framecount, (float) host_frametime,
-			                     glx, gly, glwidth, glheight, vid.height);
+
+			const qboolean stats_on = RT_StatsPanel (RT_STATS_RAYS) || RT_StatsPanel (RT_STATS_PASSES) ||
+			                          RT_StatsPanel (RT_STATS_PROFILE);
+			const qboolean gui_on = SNDEQ_DialogActive () || (int) CVAR_TO_FLOAT (rt_dtal_debug) == 2;
+			const qboolean record_on = RT_StatsRecording ();
+
+			if ((stats_on || gui_on || record_on) &&
+			    QR_GUI_BeginFrame ((unsigned int) host_framecount, (float) host_frametime, glx, gly, glwidth, glheight, vid.height))
+			{
+				RT_StatsDrawGui ();
+				if (SNDEQ_DialogActive ())
+					SNDEQ_DrawDialog ();
+				RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), (unsigned int) host_framecount, (float) host_frametime,
+				                     glx, gly, glwidth, glheight, vid.height);
+				QR_GUI_EndFrame ();
+			}
 		}
 	}
 	R_EndDebugUtilsLabel (cbx);
@@ -1420,9 +1178,6 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		}
 	}
 
-	if (vid.recalc_refdef)
-		SCR_CalcRefdef ();
-
 	// decide on the height of the console
 	con_forcedup = !cl.worldmodel || cls.signon != SIGNONS;
 
@@ -1432,6 +1187,8 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		in_update_screen = false;
 		return;
 	}
+
+	if (vid.recalc_refdef) SCR_CalcRefdef ();
 
 	if (use_tasks)
 	{

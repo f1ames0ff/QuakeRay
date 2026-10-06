@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -24,9 +24,12 @@
 
 #include <nvrhi/vulkan.h>
 
+#include <qray/qray.h>
+
 #include "../Common.h"
 #include "../ISwapchainDependency.h"
 #include "../RasterizedDataCollector.h"
+#include "RhiCloudsPass.h"
 #include "RhiProceduralSkyPass.h"
 
 namespace qray
@@ -35,6 +38,7 @@ namespace qray
 class Framebuffers;
 class GlobalUniform;
 class RenderResolutionHelper;
+class RhiBloomPass;
 class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
@@ -145,6 +149,9 @@ public:
         const QrDrawFrameVoxelSmokeParams *voxelSmokeParams = nullptr;
         uint32_t smokeDrawCount = 0;
 
+        const RasterizedDataCollector::DrawInfo *particleDraws = nullptr;
+        uint32_t particleDrawCount = 0;
+
         // -- the 2D UI pass (A5.1) --
         // The frame's SWAPCHAIN draw list and the collector's per-slot staging vertex and index
         // buffers: the UI is rewritten every frame, so the pass reads the staging - the device copy
@@ -171,13 +178,13 @@ public:
         {
             bool enabled = false;                   // godRaysOn: the final switch, not the cvar
             bool hasAabb = false;                   // scene->HasAABB()
-            float intensity = 0.0f;                 // 8.0f * rt_godrays_intensity (clamped >= 0)
+            float intensity = 0.0f;
             float eccentricity = 0.75f;
             float aabbMin[3] = {};
             float aabbMax[3] = {};
             float shadowLightDirection[3] = {};     // the shadow map's from-sun light direction
             float sunDirection[4] = {};             // toward the sun, for the params (xyz)
-            float sunColor[4] = {};                 // the fixed-up colour (xyz)
+            float sunColor[4] = {};                 // the fixed-up color (xyz)
             float worldCenter[3] = {};
             float worldHalfSizeInv[3] = {};         // 1 / max(halfSize, 1) per axis
             const VertexCollector *staticCollector = nullptr;
@@ -201,6 +208,11 @@ public:
         // compute before the trace only when the uniform selects SKY_TYPE_PROCEDURAL; the module
         // early-outs by these bytes, so an unchanged frame (clouds off) costs one memcmp.
         RhiProceduralSkyPass::Params proceduralSkyParams = {};
+
+        bool cloudsLayer = false;
+        uint32_t cloudsQuality = 2;
+        RhiCloudsPass::LayerParams cloudsParams = {};
+        RhiCloudsPass::ShadowParams cloudsShadowParams = {};
 
         // -- the decals (A5.6) --
         // The engine DecalManager buffers for this slot: the staging the game's uploads go to and
@@ -245,8 +257,10 @@ public:
         // copies them (VulkanDevice.cpp:1051-1059): the bias is authoritative (the game clamps it),
         // the contrast is clamped in the engine. They feed the traced mode's host-only
         // exposure-parameter write; the raster mode's neutral stand-in does not use them.
-        float exposureBias = -2.8f;
-        float contrast = 0.6f;
+        float exposureBias = 0.0f;
+        float tonemapPower = 0.6f;
+        uint32_t tonemapType = 1;
+        QrDrawFrameTonemappingParams exposureParams = {};
 
         // -- the acceleration-structure stream --
 
@@ -334,7 +348,7 @@ public:
     // TAAU. Optional: a null one keeps the TAAU always.
     // 'pPostEffectPass' is the host's post-upscale effect chain (RhiPostEffectPass,
     // RHI/RhiPostEffectPass.h): after the upscaler and before the UI, Render records the legacy
-    // `postEffectParams` consumers 1-7 (the colour tint and its variants, the inverse-BW and
+    // `postEffectParams` consumers 1-7 (the color tint and its variants, the inverse-BW and
     // hue-shift effects, the chromatic aberration, the distorted sides, the waves, the radial
     // blur), and after the UI block Render records the wipe and the CRT half - the legacy order
     // (VulkanDevice.cpp:1166-1223). Optional: a null one draws the frame without the post effects
@@ -360,11 +374,13 @@ public:
                                 RhiRtComposePass *pRtComposePass,
                                 RhiRtReflRefrPass *pReflRefrPass,
                                 RhiProceduralSkyPass *pProceduralSkyPass,
+                                RhiCloudsPass *pCloudsPass,
                                 RhiRasterSkyPass *pRasterSkyPass,
                                 RhiRasterOverlayPass *pRasterOverlayPass,
                                 RhiDecalPass *pDecalPass,
                                 RhiFsrPass *pFsrPass,
                                 RhiPostEffectPass *pPostEffectPass,
+                                RhiBloomPass *pBloomPass,
                                 RhiShadowMapPass *pShadowMapPass,
                                 RhiRtGodRaysPass *pGodRaysPass,
                                 RhiUiPass *pUiPass,
@@ -415,6 +431,11 @@ public:
     RhiSkyPass *GetSkyPass() const { return skyPass.get(); }
 
     void RequestScreenshot(const std::string &path);
+
+    // The GPU timings of the most recent frame the timer queries produced. 'pPassMs' receives
+    // QR_GPU_PASS_COUNT entries in the order of qrGetGpuPassName. Returns false until the first
+    // frame's timestamps could be read back (and forever when the timer queries are unavailable).
+    bool GetGpuTimings(float *pFrameMs, float *pPassMs) const;
 
 private:
     static nvrhi::Format ConvertSurfaceFormat(VkFormat format);
@@ -510,6 +531,13 @@ private:
     // in which case the passes sample their placeholders.
     RhiProceduralSkyPass *proceduralSkyPass = nullptr;
 
+    // The host's cloud layer pass (RhiCloudsPass, RHI/RhiCloudsPass.h), driven in the traced chain
+    // right before the procedural sky when the frame asks for the layer: it writes the layer the
+    // sky's composite samples and the shadow volume of that layer. Not owned; null when the host's
+    // creation failed or the frame's `cloudsLayer` is off, in which case the sky keeps its flat
+    // clouds.
+    RhiCloudsPass *cloudsPass = nullptr;
+
     // The host's raster sky pass (RhiRasterSkyPass, RHI/RhiRasterSkyPass.h), driven in the traced
     // chain right after the procedural-sky block and before the primary whenever the uniform
     // selects SKY_TYPE_RASTERIZED_GEOMETRY: it writes the raster sky's cube (the procedural sky
@@ -540,6 +568,8 @@ private:
     // owned; null when the host's creation failed, in which case the frame is drawn without the
     // post-upscale effects.
     RhiPostEffectPass *postEffectPass = nullptr;
+
+    RhiBloomPass *bloomPass = nullptr;
 
     // The wraps of the engine DecalManager buffers (A5.6): the per-slot staging as a copy source and
     // the device-local instance array once as the pass's set 3 buffer (stride
@@ -640,6 +670,51 @@ private:
 
     // Frames left until the one-time fallback-slot log; 0 after it has been printed.
     uint32_t framesUntilFallbackLog = 300;
+
+    // -- the GPU pass timings --
+
+    // The frame's sections the timer queries measure, in the order qrGetGpuPassName reports them.
+    enum GpuPassIndex
+    {
+        GPU_PASS_SETUP = 0,
+        GPU_PASS_CLOUDS,
+        GPU_PASS_SKY,
+        GPU_PASS_PRIMARY,
+        GPU_PASS_DECALS,
+        GPU_PASS_GODRAYS,
+        GPU_PASS_REFLREFR,
+        GPU_PASS_REFLGODR,
+        GPU_PASS_GRADIENT,
+        GPU_PASS_DIRECT,
+        GPU_PASS_INDIRECT,
+        GPU_PASS_COMPOSE,
+        GPU_PASS_UPSCALE,
+        GPU_PASS_POST,
+        GPU_PASS_UI,
+        GPU_PASS_POSTUI,
+        GPU_PASS_PRESENT,
+        GPU_PASS_COUNT
+    };
+
+    void CreateGpuTimers();
+    void ReadGpuTimings(uint32_t frameIndex);
+    void BeginGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass);
+    void EndGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass);
+
+    // One timer query pair per frame slot and measured section, plus one for the whole frame. The
+    // queries are per slot because a query cannot be reset and re-used while the submission that
+    // wrote it is still in flight; BeginSlot waits for the slot's previous submission, which is the
+    // point ReadGpuTimings reads the slot's timestamps at.
+    bool gpuTimersCreated = false;
+    bool gpuTimersReady = false;
+    nvrhi::TimerQueryHandle gpuFrameQueries[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::TimerQueryHandle gpuPassQueries[MAX_FRAMES_IN_FLIGHT][GPU_PASS_COUNT];
+
+    // The most recent timings read back, in milliseconds, with 0.0f for a section that has not run
+    // yet since the renderer started.
+    float gpuFrameMs = 0.0f;
+    float gpuPassMs[GPU_PASS_COUNT] = {};
+    bool gpuTimingValid = false;
 
     // Set after the one-time warning that there is no ALBEDO wrap to present.
     bool warnedMissingAlbedo = false;

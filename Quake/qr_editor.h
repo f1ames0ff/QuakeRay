@@ -5,8 +5,8 @@
 // editor. While it runs, the view is driven by a free camera (the
 // player stands still); aiming at a face and pressing fire opens the material
 // panel (Dear ImGui, Quake/qr_gui.cpp) on the right side of the screen, where
-// the materials.yaml parameters of every animation frame of the picked texture
-// can be edited live and saved back to materials.yaml (Apply), reverted
+// the qray.materials.yaml parameters of every animation frame of the picked
+// texture can be edited live and saved back to qray.materials.yaml (Apply), reverted
 // (Cancel), or the editor closed (Exit).
 
 #ifndef QR_EDITOR_H
@@ -22,6 +22,8 @@ void QR_Editor_Init (void);
 qboolean QR_Editor_Active (void);   // the editor owns the view (flying or panel)
 qboolean QR_Editor_PanelOpen (void); // the material panel is on screen
 qboolean QR_Editor_Flying (void);   // active, no panel: free camera + crosshair aim
+qboolean QR_Editor_ShowViewModel (void); // the Entities tab previews a weapon in first person
+void     QR_Editor_SunPlacement (qboolean on);
 
 qboolean QR_Editor_TorchOn (void);
 void     QR_Editor_TorchOrigin (vec3_t out);
@@ -39,6 +41,19 @@ qboolean QR_Editor_KeyEvent (int key, qboolean down);      // true = the key was
 // button, and the press itself drops the light at the crosshair.
 qboolean QR_Editor_PlacePending (void);
 void     QR_Editor_PlaceAtCrosshair (void);
+
+// The flying-mode light drag: Alt+LMB grabs the light under the crosshair,
+// LMB drops it, Esc returns it.
+qboolean QR_Editor_LightDragActive (void);
+void     QR_Editor_LightGrab (void);
+void     QR_Editor_LightDrop (void);
+
+// The selected custom light's axis gizmo: in the flying mode the crosshair
+// grabs an arrow and the mouse drags the light along that axis.
+qboolean QR_Editor_GizmoDragActive (void);
+qboolean QR_Editor_GizmoPress (void);
+void     QR_Editor_GizmoMotion (int dx, int dy);
+void     QR_Editor_GizmoRelease (void);
 qboolean QR_Editor_GuiProcessEvent (const void *sdl_event); // ImGui panel event routing
 qboolean QR_Editor_TextEntryActive (void);                 // SDL text input wanted
 

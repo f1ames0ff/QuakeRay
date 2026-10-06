@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 #include <stdint.h>
 
-#if defined(_WIN32) && !defined(QR_STATIC)
+#if !defined(QR_STATIC)
     #ifdef QR_LIBRARY_EXPORTS
         #define QRAPI __declspec(dllexport)
     #else
@@ -36,22 +36,6 @@
 
 #ifdef QR_USE_SURFACE_WIN32
     #include <windows.h>
-#endif
-#ifdef QR_USE_SURFACE_METAL
-    #ifdef __OBJC__
-    @class CAMetalLayer;
-    #else
-    typedef void CAMetalLayer;
-    #endif
-#endif
-#ifdef QR_USE_SURFACE_WAYLAND
-    #include <wayland-client.h>
-#endif
-#ifdef QR_USE_SURFACE_XCB
-    #include <xcb/xcb.h>
-#endif
-#ifdef QR_USE_SURFACE_XLIB
-    #include <X11/Xlib.h>
 #endif
 
 #ifdef __cplusplus
@@ -104,10 +88,6 @@ typedef void (*PFN_qrOpenFile)(const char *pFilePath, void *pUserData, const voi
 typedef void (*PFN_qrCloseFile)(void *pFileUserHandle, void *pUserData);
 
 typedef struct QrWin32SurfaceCreateInfo QrWin32SurfaceCreateInfo;
-typedef struct QrMetalSurfaceCreateInfo QrMetalSurfaceCreateInfo;
-typedef struct QrWaylandSurfaceCreateInfo QrWaylandSurfaceCreateInfo;
-typedef struct QrXcbSurfaceCreateInfo QrXcbSurfaceCreateInfo;
-typedef struct QrXlibSurfaceCreateInfo QrXlibSurfaceCreateInfo;
 
 #ifdef QR_USE_SURFACE_WIN32
 typedef struct QrWin32SurfaceCreateInfo
@@ -115,37 +95,6 @@ typedef struct QrWin32SurfaceCreateInfo
     HINSTANCE           hinstance;
     HWND                hwnd;
 } QrWin32SurfaceCreateInfo;
-#endif
-
-#ifdef QR_USE_SURFACE_METAL
-typedef struct QrMetalSurfaceCreateInfo
-{
-    const CAMetalLayer  *pLayer;
-} QrMetalSurfaceCreateInfo;
-#endif
-
-#ifdef QR_USE_SURFACE_WAYLAND
-typedef struct QrWaylandSurfaceCreateInfo
-{
-    struct wl_display   *display;
-    struct wl_surface   *surface;
-} QrWaylandSurfaceCreateInfo;
-#endif
-
-#ifdef QR_USE_SURFACE_XCB
-typedef struct QrXcbSurfaceCreateInfo
-{
-    xcb_connection_t    *connection;
-    xcb_window_t        window;
-} QrXcbSurfaceCreateInfo;
-#endif
-
-#ifdef QR_USE_SURFACE_XLIB
-typedef struct QrXlibSurfaceCreateInfo
-{
-    Display             *dpy;
-    Window              window;
-} QrXlibSurfaceCreateInfo;
 #endif
 
 typedef enum QrTextureSwizzling
@@ -164,10 +113,6 @@ typedef struct QrInstanceCreateInfo
     const char                  *pAppGUID;
 
     QrWin32SurfaceCreateInfo    *pWin32SurfaceInfo;
-    QrMetalSurfaceCreateInfo    *pMetalSurfaceCreateInfo;
-    QrWaylandSurfaceCreateInfo  *pWaylandSurfaceCreateInfo;
-    QrXcbSurfaceCreateInfo      *pXcbSurfaceCreateInfo;
-    QrXlibSurfaceCreateInfo     *pXlibSurfaceCreateInfo;
 
     const char                  *pConfigPath;
 
@@ -223,13 +168,11 @@ typedef struct QrInstanceCreateInfo
 
     const char                  *pWaterNormalTexturePath;
 
-    QrBool32                    lensFlareVerticesInScreenSpace;
-
-    QrBool32                    lensFlarePointToCheckIsInScreenSpace;
-
     QrTextureSwizzling          pbrTextureSwizzling;
 
     QrBool32                    effectWipeIsUsed;
+
+    uint32_t                    godRaysQuality;
 } QrInstanceCreateInfo;
 
 QRAPI QrResult QRCONV qrCreateInstance(
@@ -437,6 +380,7 @@ typedef enum QrRasterizedGeometryStateFlagBits
     QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE        = 8,
     QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST    = 16,
     QR_RASTERIZED_GEOMETRY_STATE_SMOKE              = 32,
+    QR_RASTERIZED_GEOMETRY_STATE_PARTICLE           = 64,
 } QrRasterizedGeometryStateFlagBits;
 typedef uint32_t QrRasterizedGeometryStateFlags;
 
@@ -895,6 +839,7 @@ typedef enum QrPresentMode
 typedef struct QrStartFrameInfo
 {
     QrPresentMode   presentMode;
+    uint32_t        maxFrameLatency;
     QrBool32        requestShaderReload;
 } QrStartFrameInfo;
 
@@ -919,8 +864,18 @@ typedef struct QrDrawFrameTonemappingParams
 
     float       exposureBias;
 
-    float       contrast;
+    float       tonemapPower;
+    float       exposureSpeedUp;
+    float       exposureSpeedDown;
+    float       exposureLowPercentile;
+    float       exposureHighPercentile;
+    float       minAdaptedLuminance;
+    float       maxAdaptedLuminance;
+
+    uint32_t    tonemapType;
 } QrDrawFrameTonemappingParams;
+
+#define QR_SKY_CLOUDS_MAX_QUALITY 3
 
 typedef struct QrDrawFrameSkyParams
 {
@@ -934,6 +889,7 @@ typedef struct QrDrawFrameSkyParams
 
     float       skyColorSaturation;
     float       skyAmbientLod;
+    float       skyLightMultiplier;
     QrBool32    skyNee;
 
     QrFloat3D   skyViewerPosition;
@@ -949,6 +905,10 @@ typedef struct QrDrawFrameSkyParams
     QrBool32    godRaysFromSkyTexture;
     QrFloat3D   godRaysSkyDirection;
     QrFloat3D   godRaysSkyColor;
+
+    uint32_t    skyCloudsQuality;
+    uint32_t    godRaysQuality;
+    float       sunDiscSize;
 } QrDrawFrameSkyParams;
 
 #define QR_LIGHT_STYLE_COUNT 64
@@ -1161,6 +1121,55 @@ typedef struct QrPostEffectCRT
     QrBool32    isActive;
 } QrPostEffectCRT;
 
+typedef struct QrPostEffectsBloomParams
+{
+    QrBool32    isActive;
+    float       intensity;
+    float       threshold;
+    float       knee;
+    float       scatter;
+    float       radius;
+    uint32_t    quality;
+} QrPostEffectsBloomParams;
+
+typedef struct QrPostEffectsNearDofParams
+{
+    float       strength;
+    float       focusDistance;
+    float       maxRadius;
+} QrPostEffectsNearDofParams;
+
+typedef struct QrPostEffectsSharpenParams
+{
+    QrBool32    isActive;
+    float       strength;
+} QrPostEffectsSharpenParams;
+
+typedef struct QrPostEffectsGameplayFeedback
+{
+    float       damage;
+    float       liquid;
+    float       pickup;
+    float       pickupHeight;
+    float       aberration;
+    QrFloat3D   pickupColor;
+    float       suit;
+} QrPostEffectsGameplayFeedback;
+
+typedef struct QrPostEffectsVignetteParams
+{
+    float       intensity;
+    float       start;
+    float       end;
+    float       roundness;
+} QrPostEffectsVignetteParams;
+
+typedef struct QrPostEffectsFilmGrainParams
+{
+    float       intensity;
+    float       size;
+} QrPostEffectsFilmGrainParams;
+
 typedef struct QrDrawFramePostEffectsParams
 {
     const QrPostEffectWipe                  *pWipe;
@@ -1172,6 +1181,13 @@ typedef struct QrDrawFramePostEffectsParams
     const QrPostEffectWaves                 *pWaves;
     const QrPostEffectColorTint             *pColorTint;
     const QrPostEffectCRT                   *pCRT;
+    const QrPostEffectsBloomParams          *pBloom;
+    const QrPostEffectsNearDofParams        *pNearDof;
+    const QrPostEffectsSharpenParams        *pSharpen;
+    const QrPostEffectsGameplayFeedback     *pGameplayFeedback;
+    const QrPostEffectsVignetteParams        *pVignette;
+    const QrPostEffectsFilmGrainParams       *pFilmGrain;
+    float                                  localExposure;
 } QrDrawFramePostEffectsParams;
 
 typedef enum QrMediaType
@@ -1248,12 +1264,6 @@ typedef struct QrDrawFrameRenderResolutionParams
     const QrExtent2D            *pPixelizedRenderSize;
 } QrDrawFrameRenderResolutionParams;
 
-typedef struct QrDrawFrameLensFlareParams
-{
-    QrBlendFactor               lensFlareBlendFuncSrc;
-    QrBlendFactor               lensFlareBlendFuncDst;
-} QrDrawFrameLensFlareParams;
-
 typedef enum QrDrawFrameRayCullFlagBits
 {
     QR_DRAW_FRAME_RAY_CULL_WORLD_0_BIT  = 1,
@@ -1307,7 +1317,6 @@ typedef struct QrDrawFrameInfo
     const QrDrawFrameReflectRefractParams       *pReflectRefractParams;
     const QrDrawFrameSkyParams                  *pSkyParams;
     const QrDrawFrameTexturesParams             *pTexturesParams;
-    const QrDrawFrameLensFlareParams            *pLensFlareParams;
     const QrDrawFrameLevelFogParams             *pLevelFogParams;
     const QrDrawFrameDebugParams                *pDebugParams;
     QrDrawFramePostEffectsParams                postEffectParams;
@@ -1330,7 +1339,7 @@ QRAPI QrBool32 QRCONV qrIsRenderUpscaleTechniqueAvailable(
 QRAPI QrBool32 QRCONV qrIsSuspended(
     QrInstance                          qrInstance);
 
-#define QR_GPU_PASS_COUNT 18
+#define QR_GPU_PASS_COUNT 17
 
 #define QR_RAY_STATS_CATEGORY_COUNT 5
 
@@ -1349,6 +1358,21 @@ typedef struct QrFrameStats
 QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
+
+typedef struct QrAdapterInfo
+{
+    char        name[256];
+    char        driverName[256];
+    char        driverInfo[256];
+    uint32_t    vendorId;
+    uint32_t    deviceId;
+    uint32_t    driverVersion;
+    uint32_t    apiVersion;
+} QrAdapterInfo;
+
+QRAPI QrResult QRCONV qrGetAdapterInfo(
+    QrInstance                          qrInstance,
+    QrAdapterInfo                      *pInfo);
 
 QRAPI QrResult QRCONV qrRequestScreenshot(
     QrInstance                          qrInstance,

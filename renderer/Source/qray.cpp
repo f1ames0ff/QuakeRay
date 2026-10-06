@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -355,6 +355,11 @@ QrResult qrGetFrameStatsEx(QrInstance qrInstance, QrFrameStats *pStats)
     return r;
 }
 
+QrResult qrGetAdapterInfo(QrInstance qrInstance, QrAdapterInfo *pInfo)
+{
+    return Call(qrInstance, &VulkanDevice::GetAdapterInfo, pInfo);
+}
+
 QrResult qrRequestScreenshot(QrInstance qrInstance, const char *pFilePath)
 {
     return Call(qrInstance, &VulkanDevice::RequestScreenshot, pFilePath);
@@ -365,23 +370,22 @@ const char *qrGetGpuPassName(uint32_t passIndex)
     static const char *const passNames[QR_GPU_PASS_COUNT] =
     {
         "setup",
-        "lights",
+        "clouds",
+        "sky",
         "primary",
+        "decals",
         "godrays",
         "reflrefr",
         "reflgodr",
         "gradient",
         "direct",
         "indirect",
-        "denoise",
-        "exposure",
-        "composite",
+        "compose",
         "upscale",
-        "upsblit",
-        "sharpen",
         "post",
+        "ui",
+        "postui",
         "present",
-        "swapblit",
     };
 
     if (passIndex >= QR_GPU_PASS_COUNT)

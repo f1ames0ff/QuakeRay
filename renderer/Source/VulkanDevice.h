@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -56,10 +56,12 @@ namespace qray
 {
 class NvrhiContext;
 class NvrhiFrameSkeleton;
+class RhiBloomPass;
 class RhiDecalPass;
 class RhiFsrPass;
 class RhiPostEffectPass;
 class RhiProceduralSkyPass;
+class RhiCloudsPass;
 class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
 class RhiRtComposePass;
@@ -141,6 +143,8 @@ public:
 
     void GetFrameStatsEx(QrFrameStats *pStats) const;
 
+    void GetAdapterInfo(QrAdapterInfo *pInfo) const;
+
     void RequestScreenshot(const char *pFilePath);
 
     void Print(const char *pMessage) const;
@@ -183,7 +187,9 @@ private:
     std::shared_ptr<PhysicalDevice>         physDevice;
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
+    bool                                    presentWait2Enabled = false;
     std::string                             printedPresentModeName;
+    bool                                    printedPresentWaitActive = false;
     std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;
@@ -231,18 +237,21 @@ private:
     std::shared_ptr<RhiRtDirectPass>        rhiRtDirectPass;
     std::shared_ptr<RhiRtIndirectPass>      rhiRtIndirectPass;
     std::shared_ptr<RhiRtComposePass>       rhiRtComposePass;
+    std::shared_ptr<RhiBloomPass>           rhiBloomPass;
     std::shared_ptr<RhiShadowMapPass>       rhiShadowMapPass;
     std::shared_ptr<RhiRtGodRaysPass>       rhiRtGodRaysPass;
 
     std::shared_ptr<RhiRtReflRefrPass>      rhiRtReflRefrPass;
 
     std::shared_ptr<RhiProceduralSkyPass>   rhiProceduralSkyPass;
+    std::shared_ptr<RhiCloudsPass>          rhiCloudsPass;
 
     std::shared_ptr<RhiRasterSkyPass>       rhiRasterSkyPass;
 
     std::shared_ptr<RhiRasterOverlayPass>   rhiRasterOverlayPass;
 
     std::vector<RasterizedDataCollector::DrawInfo> smokeDraws;
+    std::vector<RasterizedDataCollector::DrawInfo> particleDraws;
 
     std::shared_ptr<RhiDecalPass>           rhiDecalPass;
 
@@ -274,5 +283,8 @@ private:
     uint32_t                                statsRaysPerCategory[RAY_STATS_CATEGORY_COUNT] = {};
     uint32_t                                statsFpsX10 = 0;
     float                                   statsSmoothedFps = 0.0f;
+    bool                                    statsGpuTimingValid = false;
+    float                                   statsGpuFrameMs = 0.0f;
+    float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
 };
 }

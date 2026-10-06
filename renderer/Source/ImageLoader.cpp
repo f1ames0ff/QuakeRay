@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,11 +19,26 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
+#include <fstream>
 
 #include <ktx.h>
 #include <ktxvulkan.h>
 
+#include "Stb/stb_image.h"
+
 using namespace qray;
+
+namespace
+{
+    bool IsPng(const std::filesystem::path &path)
+    {
+        std::string ext = path.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return ext == ".png" || ext == ".tga" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp";
+    }
+}
 
 ImageLoader::ImageLoader(std::shared_ptr<UserFileLoad> _userFileLoad)
     : userFileLoad(std::move(_userFileLoad))
@@ -33,6 +48,33 @@ ImageLoader::ImageLoader(std::shared_ptr<UserFileLoad> _userFileLoad)
 ImageLoader::~ImageLoader()
 {
     assert(loadedImages.empty());
+    assert(loadedPngs.empty());
+}
+
+bool ImageLoader::ReadFile(const std::filesystem::path &path, std::vector<uint8_t> &out) const
+{
+    if (userFileLoad->Exists())
+    {
+        auto fileHandle = userFileLoad->Open(path.string().c_str());
+
+        if (!fileHandle.Contains())
+        {
+            return false;
+        }
+
+        const uint8_t *pData = static_cast<const uint8_t *>(fileHandle.pData);
+        out.assign(pData, pData + fileHandle.dataSize);
+        return true;
+    }
+
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
+    {
+        return false;
+    }
+
+    out.assign(std::istreambuf_iterator<char>(file), {});
+    return !out.empty();
 }
 
 bool ImageLoader::LoadTextureFile(const std::filesystem::path &path, ktxTexture **ppTexture)
@@ -69,6 +111,41 @@ std::optional<ImageLoader::ResultInfo> ImageLoader::Load(const std::filesystem::
     if (path.empty())
     {
         return std::nullopt;
+    }
+
+    if (IsPng(path))
+    {
+        std::vector<uint8_t> fileData;
+
+        if (!ReadFile(path, fileData))
+        {
+            return std::nullopt;
+        }
+
+        int x = 0;
+        int y = 0;
+        stbi_uc *pData = stbi_load_from_memory(fileData.data(), static_cast<int>(fileData.size()),
+                                               &x, &y, nullptr, 4);
+
+        if (pData == nullptr || x <= 0 || y <= 0)
+        {
+            return std::nullopt;
+        }
+
+        const uint32_t dataSize = static_cast<uint32_t>(x) * static_cast<uint32_t>(y) * 4;
+
+        ResultInfo result{};
+        result.levelOffsets[0] = 0;
+        result.levelSizes[0] = dataSize;
+        result.levelCount = 1;
+        result.isPregenerated = false;
+        result.pData = pData;
+        result.dataSize = dataSize;
+        result.baseSize = { static_cast<uint32_t>(x), static_cast<uint32_t>(y) };
+        result.format = VK_FORMAT_R8G8B8A8_UNORM;
+
+        loadedPngs.push_back(pData);
+        return result;
     }
 
     ktxTexture *pTexture = nullptr;
@@ -118,6 +195,46 @@ std::optional<ImageLoader::LayeredResultInfo> ImageLoader::LoadLayered(const std
         return std::nullopt;
     }
 
+    if (IsPng(path))
+    {
+        std::vector<uint8_t> fileData;
+
+        if (!ReadFile(path, fileData))
+        {
+            return std::nullopt;
+        }
+
+        int x = 0;
+        int y = 0;
+        stbi_uc *pData = stbi_load_from_memory(fileData.data(), static_cast<int>(fileData.size()),
+                                               &x, &y, nullptr, 4);
+
+        if (pData == nullptr || x <= 0 || y <= 0 || (y % x) != 0)
+        {
+            if (pData != nullptr)
+            {
+                stbi_image_free(pData);
+            }
+            return std::nullopt;
+        }
+
+        const uint32_t layerSize = static_cast<uint32_t>(x) * static_cast<uint32_t>(x) * 4;
+        const uint32_t layerCount = static_cast<uint32_t>(y) / static_cast<uint32_t>(x);
+
+        LayeredResultInfo result{};
+        result.dataSize = static_cast<uint32_t>(x) * static_cast<uint32_t>(y) * 4;
+        result.baseSize = { static_cast<uint32_t>(x), static_cast<uint32_t>(x) };
+        result.format = VK_FORMAT_R8G8B8A8_UNORM;
+
+        for (uint32_t i = 0; i < layerCount; i++)
+        {
+            result.layerData.push_back(pData + static_cast<size_t>(i) * layerSize);
+        }
+
+        loadedPngs.push_back(pData);
+        return result;
+    }
+
     ktxTexture *pTexture = nullptr;
 
     if (!LoadTextureFile(path, &pTexture))
@@ -161,4 +278,11 @@ void ImageLoader::FreeLoaded()
     }
 
     loadedImages.clear();
+
+    for (void *pData : loadedPngs)
+    {
+        stbi_image_free(pData);
+    }
+
+    loadedPngs.clear();
 }

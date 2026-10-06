@@ -89,14 +89,14 @@ static qboolean S_MIKMOD_CodecInitialize (void)
 
 	/* set mode flags to only we like: */
 	md_mode = 0;
-	if ((shm->samplebits / 8) == 2)
+	if ((snd_output.samplebits / 8) == 2)
 		md_mode |= DMODE_16BITS;
-	if (shm->channels == 2)
+	if (snd_output.channels == 2)
 		md_mode |= DMODE_STEREO;
 	md_mode |= DMODE_SOFT_MUSIC; /* this is a software-only mixer */
 
 	/* md_mixfreq is UWORD, so something like 96000 isn't OK */
-	md_mixfreq = (shm->speed < 65536) ? shm->speed : 48000;
+	md_mixfreq = (snd_output.speed < 65536) ? snd_output.speed : 48000;
 
 	/* keeping md_device as 0 which is default (auto-detect: we
 	 * only register drv_nos, and it will be the only one found.)

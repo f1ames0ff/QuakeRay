@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -29,13 +29,16 @@
 #include "RHI/NvrhiFrameSkeleton.h"
 #include "RHI/NvrhiRequirements.h"
 #include "RHI/RhiAccelStructs.h"
+#include "RHI/RhiBloomPass.h"
 #include "RHI/RhiDecalPass.h"
 #include "RHI/RhiFsrPass.h"
 #include "RHI/RhiPostEffectPass.h"
 #include "RHI/RhiProceduralSkyPass.h"
+#include "RHI/RhiCloudsPass.h"
 #include "RHI/RhiRasterOverlayPass.h"
 #include "RHI/RhiRasterSkyPass.h"
 #include "RHI/RhiRtComposePass.h"
+#include "RHI/RhiPipeline.h"
 #include "RHI/RhiRtDirectPass.h"
 #include "RHI/RhiRtGodRaysPass.h"
 #include "RHI/RhiRtIndirectPass.h"
@@ -69,6 +72,8 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
     , currentFrameTime( 0 )
 {
     ValidateCreateInfo( info );
+
+    rhi::setShaderFileLoader( userFileLoad );
 
     CreateInstance( *info );
 
@@ -114,7 +119,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
 
     uniform             = std::make_shared<GlobalUniform>(device, memAllocator);
 
-    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager);
+    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager, presentWait2Enabled);
 
     worldSamplerManager     = std::make_shared<SamplerManager>(device, 8, info->textureSamplerForceMinificationFilterLinear,
                                                                rhiTextureTable.get());
@@ -230,9 +235,20 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
             }
 
             {
+                rhiCloudsPass = std::make_shared<RhiCloudsPass>();
+                if (!rhiCloudsPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                           info->pShaderFolderPath,
+                                           [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiCloudsPass.reset();
+                    Print("Warning: RHI: the cloud layer pass is unavailable");
+                }
+
                 rhiProceduralSkyPass = std::make_shared<RhiProceduralSkyPass>();
                 if (!rhiProceduralSkyPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
                                                   info->pShaderFolderPath,
+                                                  rhiCloudsPass != nullptr ? rhiCloudsPass->GetLayerTexture() : nullptr,
+                                                  rhiCloudsPass != nullptr ? rhiCloudsPass->GetLayerSampler() : nullptr,
                                                   [this](const char *pMessage) { Print(pMessage); }))
                 {
                     rhiProceduralSkyPass.reset();
@@ -420,6 +436,20 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                     }
                 }
 
+                rhiBloomPass = std::make_shared<RhiBloomPass>();
+                if (!rhiBloomPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
+                                          tonemapping.get(), info->pShaderFolderPath,
+                                          [this](const char *pMessage) { Print(pMessage); }))
+                {
+                    rhiBloomPass.reset();
+                    Print("Warning: RHI: the bloom pass is unavailable, the frame is drawn without bloom");
+                }
+
+                if (rhiRtComposePass != nullptr)
+                {
+                    rhiRtComposePass->SetBloomPass(rhiBloomPass.get());
+                }
+
                 rhiUiPass = std::make_shared<RhiUiPass>();
                 if (!rhiUiPass->Create(nvrhi->GetDevice(), rhiTextureTable.get(),
                                        rhiFrameContext.get(), info->pShaderFolderPath,
@@ -445,11 +475,13 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                 rhiRtComposePass.get(),
                 rhiRtReflRefrPass.get(),
                 rhiProceduralSkyPass.get(),
+                rhiCloudsPass.get(),
                 rhiRasterSkyPass.get(),
                 rhiRasterOverlayPass.get(),
                 rhiDecalPass.get(),
                 rhiFsrPass.get(),
                 rhiPostEffectPass.get(),
+                rhiBloomPass.get(),
                 rhiShadowMapPass.get(),
                 rhiRtGodRaysPass.get(),
                 rhiUiPass.get(),
@@ -509,9 +541,12 @@ VulkanDevice::~VulkanDevice()
 {
     vkDeviceWaitIdle(device);
 
+    rhi::setShaderFileLoader( nullptr );
+
     nvrhiFrameSkeleton.reset();
 
     rhiRtComposePass.reset();
+    rhiBloomPass.reset();
     rhiRtGodRaysPass.reset();
     rhiShadowMapPass.reset();
     rhiUiPass.reset();
@@ -525,6 +560,7 @@ VulkanDevice::~VulkanDevice()
     rhiPostEffectPass.reset();
     rhiRasterSkyPass.reset();
     rhiProceduralSkyPass.reset();
+    rhiCloudsPass.reset();
     rhiAccelStructs.reset();
 
     rhiTextureTable.reset();
@@ -635,31 +671,23 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
         vkEnumerateInstanceExtensionProperties(nullptr, &supportedExtensionsCount, supportedInstanceExtensions.data());
     }
 
+    const bool surfaceCapabilities2Supported = std::any_of(supportedInstanceExtensions.cbegin(), supportedInstanceExtensions.cend(),
+        [](const VkExtensionProperties& ext)
+        {
+            return !std::strcmp(ext.extensionName, VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+        });
+
     std::vector<const char *> extensions =
     {
         VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
         VK_KHR_SURFACE_EXTENSION_NAME,
-
-    #ifdef QR_USE_SURFACE_WIN32
         VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-    #endif
-
-    #ifdef QR_USE_SURFACE_METAL
-        VK_EXT_METAL_SURFACE_EXTENSION_NAME,
-    #endif
-
-    #ifdef QR_USE_SURFACE_WAYLAND
-        VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
-    #endif
-
-    #ifdef QR_USE_SURFACE_XCB
-        VK_KHR_XCB_SURFACE_EXTENSION_NAME,
-    #endif
-
-    #ifdef QR_USE_SURFACE_XLIB
-        VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
-    #endif
     };
+
+    if (surfaceCapabilities2Supported)
+    {
+        extensions.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+    }
 
     if (libconfig.vulkanValidation)
     {
@@ -704,6 +732,11 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
 
     VkResult r = vkCreateInstance(&instanceInfo, nullptr, &instance);
     VK_CHECKERROR(r);
+
+    if (surfaceCapabilities2Supported)
+    {
+        InitInstanceExtensionFunctions_SurfaceCapabilities2(instance);
+    }
 
     if (libconfig.vulkanValidation)
     {
@@ -862,6 +895,37 @@ void VulkanDevice::CreateDevice()
             return !std::strcmp(ext.extensionName, VK_KHR_RAY_QUERY_EXTENSION_NAME);
         });
 
+    const bool presentId2ExtensionSupported = std::any_of(supportedDeviceExtensions.cbegin(), supportedDeviceExtensions.cend(),
+        [](const VkExtensionProperties& ext)
+        {
+            return !std::strcmp(ext.extensionName, VK_KHR_PRESENT_ID_2_EXTENSION_NAME);
+        });
+
+    const bool presentWait2ExtensionSupported = std::any_of(supportedDeviceExtensions.cbegin(), supportedDeviceExtensions.cend(),
+        [](const VkExtensionProperties& ext)
+        {
+            return !std::strcmp(ext.extensionName, VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME);
+        });
+
+    VkPhysicalDevicePresentId2FeaturesKHR presentId2Features = {};
+    presentId2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR;
+
+    VkPhysicalDevicePresentWait2FeaturesKHR presentWait2Features = {};
+    presentWait2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR;
+    presentWait2Features.pNext = &presentId2Features;
+
+    bool presentWait2Supported = false;
+    if (presentId2ExtensionSupported && presentWait2ExtensionSupported)
+    {
+        VkPhysicalDeviceFeatures2 presentWaitFeatures2 = {};
+        presentWaitFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        presentWaitFeatures2.pNext = &presentWait2Features;
+        vkGetPhysicalDeviceFeatures2(physDevice->Get(), &presentWaitFeatures2);
+
+        presentWait2Supported = presentId2Features.presentId2 && presentWait2Features.presentWait2 &&
+                                sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
+    }
+
     VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
     rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
     rayQueryFeatures.pNext = &sync2Features;
@@ -881,6 +945,13 @@ void VulkanDevice::CreateDevice()
     physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     physicalDeviceFeatures2.pNext = &asFeatures;
     physicalDeviceFeatures2.features = features;
+
+    if (presentWait2Supported)
+    {
+        presentId2Features.pNext = physicalDeviceFeatures2.pNext;
+        presentWait2Features.pNext = &presentId2Features;
+        physicalDeviceFeatures2.pNext = &presentWait2Features;
+    }
 
     std::vector<const char *> deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -917,6 +988,12 @@ void VulkanDevice::CreateDevice()
         deviceExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
     }
 
+    if (presentWait2Supported)
+    {
+        deviceExtensions.push_back(VK_KHR_PRESENT_ID_2_EXTENSION_NAME);
+        deviceExtensions.push_back(VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME);
+    }
+
     enabledDeviceExtensions.clear();
     for (const char *n : deviceExtensions)
     {
@@ -939,6 +1016,8 @@ void VulkanDevice::CreateDevice()
     VK_CHECKERROR(r);
 
     InitDeviceExtensionFunctions(device);
+
+    presentWait2Enabled = presentWait2Supported && InitDeviceExtensionFunctions_PresentWait2(device);
 
     if (libconfig.vulkanValidation)
     {
@@ -1037,7 +1116,6 @@ VkSurfaceKHR VulkanDevice::GetSurfaceFromUser(VkInstance instance, const QrInsta
     VkSurfaceKHR surface;
     VkResult r;
 
-#ifdef QR_USE_SURFACE_WIN32
     if (info.pWin32SurfaceInfo != nullptr)
     {
         VkWin32SurfaceCreateInfoKHR win32Info = {};
@@ -1050,91 +1128,6 @@ VkSurfaceKHR VulkanDevice::GetSurfaceFromUser(VkInstance instance, const QrInsta
 
         return surface;
     }
-#else
-    if (info.pWin32SurfaceInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pWin32SurfaceInfo is specified, but the library wasn't built with QR_USE_SURFACE_WIN32 option");
-    }
-#endif
-
-#ifdef QR_USE_SURFACE_METAL
-    if (info.pMetalSurfaceCreateInfo != nullptr)
-    {
-        VkMetalSurfaceCreateInfoEXT metalInfo = {};
-        metalInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
-        metalInfo.pLayer = info.pMetalSurfaceCreateInfo->pLayer;
-
-        r = vkCreateMetalSurfaceEXT(instance, &metalInfo, nullptr, &surface);
-        VK_CHECKERROR(r);
-
-        return surface;
-    }
-#else
-    if (info.pMetalSurfaceCreateInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pMetalSurfaceCreateInfo is specified, but the library wasn't built with QR_USE_SURFACE_METAL option");
-    }
-#endif
-
-#ifdef QR_USE_SURFACE_WAYLAND
-    if (info.pWaylandSurfaceCreateInfo != nullptr)
-    {
-        VkWaylandSurfaceCreateInfoKHR wlInfo = {};
-        wlInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-        wlInfo.display = info.pWaylandSurfaceCreateInfo->display;
-        wlInfo.surface = info.pWaylandSurfaceCreateInfo->surface;
-
-        r = (instance, &wlInfo, nullptr, &surface);
-        VK_CHECKERROR(r);
-
-        return surface;
-    }
-#else
-    if (info.pWaylandSurfaceCreateInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pWaylandSurfaceCreateInfo is specified, but the library wasn't built with QR_USE_SURFACE_WAYLAND option");
-    }
-#endif
-
-#ifdef QR_USE_SURFACE_XCB
-    if (info.pXcbSurfaceCreateInfo != nullptr)
-    {
-        VkXcbSurfaceCreateInfoKHR xcbInfo = {};
-        xcbInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-        xcbInfo.connection = info.pXcbSurfaceCreateInfo->connection;
-        xcbInfo.window = info.pXcbSurfaceCreateInfo->window;
-
-        r = vkCreateXcbSurfaceKHR(instance, &xcbInfo, nullptr, &surface);
-        VK_CHECKERROR(r);
-
-        return surface;
-    }
-#else
-    if (info.pXcbSurfaceCreateInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pXcbSurfaceCreateInfo is specified, but the library wasn't built with QR_USE_SURFACE_XCB option");
-    }
-#endif
-
-#ifdef QR_USE_SURFACE_XLIB
-    if (info.pXlibSurfaceCreateInfo != nullptr)
-    {
-        VkXlibSurfaceCreateInfoKHR xlibInfo = {};
-        xlibInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-        xlibInfo.dpy = info.pXlibSurfaceCreateInfo->dpy;
-        xlibInfo.window = info.pXlibSurfaceCreateInfo->window;
-
-        r = vkCreateXlibSurfaceKHR(instance, &xlibInfo, nullptr, &surface);
-        VK_CHECKERROR(r);
-
-        return surface;
-    }
-#else
-    if (info.pXlibSurfaceCreateInfo != nullptr)
-    {
-        throw QrException(QR_WRONG_ARGUMENT, "pXlibSurfaceCreateInfo is specified, but the library wasn't built with QR_USE_SURFACE_XLIB option");
-    }
-#endif
 
     throw QrException(QR_WRONG_ARGUMENT, "Surface info wasn't specified");
 }
@@ -1177,16 +1170,9 @@ void VulkanDevice::ValidateCreateInfo(const QrInstanceCreateInfo *pInfo)
     }
 
     {
-        int count =
-            !!pInfo->pWin32SurfaceInfo +
-            !!pInfo->pMetalSurfaceCreateInfo +
-            !!pInfo->pWaylandSurfaceCreateInfo +
-            !!pInfo->pXcbSurfaceCreateInfo +
-            !!pInfo->pXlibSurfaceCreateInfo;
-
-        if (count != 1)
+        if (pInfo->pWin32SurfaceInfo == nullptr)
         {
-            throw QrException(QR_WRONG_ARGUMENT, "Exactly one of the surface infos must be not null");
+            throw QrException(QR_WRONG_ARGUMENT, "The Win32 surface info must not be null");
         }
     }
 

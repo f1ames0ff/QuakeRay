@@ -30,7 +30,10 @@ extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; 
 extern cvar_t scr_fov;
 
 extern cvar_t rt_model_rough, rt_model_metal, rt_enable_pvs;
-extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale;
+extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale, rt_viewm_normalize;
+
+float rt_viewmodel_depth_near = 0.0f;
+float rt_viewmodel_depth_far = 0.0f;
 extern cvar_t rt_dlight_intensity, rt_dlight_radius;
 extern cvar_t rt_cluster_dlights;
 
@@ -57,6 +60,9 @@ typedef struct
 } lerpdata_t;
 
 // johnfitz
+
+void R_SetupAliasFrame (entity_t *e, aliashdr_t *paliashdr, int frame, lerpdata_t *lerpdata);
+void R_SetupEntityTransform (entity_t *e, lerpdata_t *lerpdata);
 
 typedef struct
 {
@@ -136,7 +142,106 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
     return tempstorage;
 }
 
-static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpdata_t* lerpdata, qboolean isfirstperson)
+typedef struct
+{
+    const char *model;
+    float       factor;
+} rt_viewm_norm_manual_t;
+
+static const rt_viewm_norm_manual_t rt_viewm_norm_manual[] = {
+    {"v_axe", 0.90f},
+    {"v_shot", 1.15f},
+    {"v_shot2", 1.20f},
+    {"v_nail", 1.20f},
+    {"v_nail2", 1.29f},
+    {"v_rock", 1.1f},
+    {"v_rock2", 1.05f},
+    {"v_light", 0.95f},
+};
+
+static float RT_ViewmodelNormalizeManual (const char *modelname)
+{
+    float  factor = 0.0f;
+    size_t match = 0;
+
+    if (modelname == NULL)
+        return 0.0f;
+
+    for (size_t i = 0; i < sizeof (rt_viewm_norm_manual) / sizeof (rt_viewm_norm_manual[0]); i++)
+    {
+        const char *found = strstr (modelname, rt_viewm_norm_manual[i].model);
+
+        if (found == NULL || rt_viewm_norm_manual[i].factor <= 0.0f)
+            continue;
+
+        const size_t length = strlen (rt_viewm_norm_manual[i].model);
+        const char   boundary = found[length];
+
+        if (boundary != '\0' && boundary != '.' && boundary != '_')
+            continue;
+
+        if (length > match)
+        {
+            match = length;
+            factor = rt_viewm_norm_manual[i].factor;
+        }
+    }
+
+    return factor;
+}
+
+#define RT_VIEWM_NORMALIZE_SPAN 0.64f
+
+static float RT_ViewmodelProjectedSpan (const float mins[3], const float maxs[3], const float origin[3],
+                                        const float scale[3], const float fov[2])
+{
+    float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
+
+    for (int corner = 0; corner < 8; corner++)
+    {
+        const float cx = (corner & 1) ? maxs[0] : mins[0];
+        const float cy = (corner & 2) ? maxs[1] : mins[1];
+        const float cz = (corner & 4) ? maxs[2] : mins[2];
+
+        const float depth = origin[0] + scale[0] * cx;
+        if (depth <= 0.5f)
+            continue;
+
+        const float u = (origin[1] + scale[1] * cy) * fov[0] / depth;
+        const float v = (origin[2] + scale[2] * cz) * fov[1] / depth;
+
+        if (u < umin) umin = u;
+        if (u > umax) umax = u;
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+    }
+
+    if (umin > umax)
+        return 0.0f;
+
+    const float du = umax - umin;
+    const float dv = vmax - vmin;
+
+    return sqrtf (du * du + dv * dv);
+}
+
+static float RT_ViewmodelNormalizeScale (const aliashdr_t *hdr, const float mins[3], const float maxs[3],
+                                         const float fovscalex, const float fovscaley)
+{
+    if (!(maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2]))
+        return 1.0f;
+
+    const float fov[2] = {fovscalex, fovscaley};
+    const float span = RT_ViewmodelProjectedSpan (mins, maxs, hdr->scale_origin, hdr->scale, fov);
+
+    if (!(span > 1e-4f))
+        return 1.0f;
+
+    return CLAMP (0.2f, RT_VIEWM_NORMALIZE_SPAN / span, 5.0f);
+}
+
+static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpdata_t* lerpdata, qboolean isfirstperson,
+                                             const qmodel_t *model)
 {
     float model_matrix[16];
     IdentityMatrix(model_matrix);
@@ -158,16 +263,107 @@ static QrTransform RT_GetAliasModelTransform(const aliashdr_t* paliashdr, lerpda
         viewmscale = CVAR_TO_FLOAT(rt_viewm_scale);
     }
 
+    float sizescale = 1.0f;
+    float center[3] = {0.0f, 0.0f, 0.0f};
+    if (isfirstperson)
+    {
+        float mins[3], maxs[3];
+        for (int axis = 0; axis < 3; axis++)
+        {
+            mins[axis] = paliashdr->frames[0].bboxmin.v[axis];
+            maxs[axis] = paliashdr->frames[0].bboxmax.v[axis];
+        }
+
+        if (!(maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2]))
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                mins[axis] = model->mins[axis];
+                maxs[axis] = model->maxs[axis];
+            }
+        }
+
+        for (int axis = 0; axis < 3; axis++)
+            center[axis] = 0.5f * (mins[axis] + maxs[axis]);
+
+        if (maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2])
+        {
+            const float normalize = CLAMP(0.0f, CVAR_TO_FLOAT(rt_viewm_normalize), 1.0f);
+            if (normalize > 0.0f)
+            {
+                const float manual = RT_ViewmodelNormalizeManual (model->name);
+                const float factor = manual > 0.0f ? manual
+                                                   : RT_ViewmodelNormalizeScale(paliashdr, mins, maxs, fovscalex, fovscaley);
+
+                sizescale = 1.0f + normalize * (factor - 1.0f);
+            }
+        }
+    }
+
+    const float centerPull = 1.0f - sizescale;
+
     float translation_matrix[16];
-    TranslationMatrix(translation_matrix, paliashdr->scale_origin[0] * viewmscale,
-                      paliashdr->scale_origin[1] * fovscalex * viewmscale,
-                      paliashdr->scale_origin[2] * fovscaley * viewmscale);
+    TranslationMatrix(translation_matrix,
+                      viewmscale * (paliashdr->scale_origin[0] + centerPull * paliashdr->scale[0] * center[0]),
+                      viewmscale * fovscalex * (paliashdr->scale_origin[1] + centerPull * paliashdr->scale[1] * center[1]),
+                      viewmscale * fovscaley * (paliashdr->scale_origin[2] + centerPull * paliashdr->scale[2] * center[2]));
     MatrixMultiply(model_matrix, translation_matrix);
 
     float scale_matrix[16];
-    ScaleMatrix(scale_matrix, paliashdr->scale[0] * viewmscale, paliashdr->scale[1] * fovscalex * viewmscale,
-                paliashdr->scale[2] * fovscaley * viewmscale);
+    ScaleMatrix(scale_matrix, paliashdr->scale[0] * viewmscale * sizescale,
+                paliashdr->scale[1] * fovscalex * viewmscale * sizescale,
+                paliashdr->scale[2] * fovscaley * viewmscale * sizescale);
     MatrixMultiply(model_matrix, scale_matrix);
+
+    if (isfirstperson)
+    {
+        float mins[3];
+        float maxs[3];
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            mins[axis] = paliashdr->frames[0].bboxmin.v[axis];
+            maxs[axis] = paliashdr->frames[0].bboxmax.v[axis];
+        }
+
+        if (!(maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2]))
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                mins[axis] = model->mins[axis];
+                maxs[axis] = model->maxs[axis];
+            }
+        }
+
+        float minDepth = 1e30f;
+        float maxDepth = -1e30f;
+
+        for (int corner = 0; corner < 8; corner++)
+        {
+            const float cx = (corner & 1) ? maxs[0] : mins[0];
+            const float cy = (corner & 2) ? maxs[1] : mins[1];
+            const float cz = (corner & 4) ? maxs[2] : mins[2];
+
+            const float world[3] = {
+                model_matrix[0] * cx + model_matrix[4] * cy + model_matrix[8] * cz + model_matrix[12],
+                model_matrix[1] * cx + model_matrix[5] * cy + model_matrix[9] * cz + model_matrix[13],
+                model_matrix[2] * cx + model_matrix[6] * cy + model_matrix[10] * cz + model_matrix[14],
+            };
+            const float depth = (world[0] - r_refdef.vieworg[0]) * vpn[0] + (world[1] - r_refdef.vieworg[1]) * vpn[1] +
+                                (world[2] - r_refdef.vieworg[2]) * vpn[2];
+
+            if (depth < minDepth)
+                minDepth = depth;
+            if (depth > maxDepth)
+                maxDepth = depth;
+        }
+
+        if (maxDepth > minDepth)
+        {
+            rt_viewmodel_depth_near = minDepth;
+            rt_viewmodel_depth_far = maxDepth;
+        }
+    }
 
     return RT_GetModelTransform(model_matrix);
 }
@@ -195,7 +391,7 @@ static void GL_DrawAliasFrame(
     qboolean rasterize = entity_alpha < 1.0f;
     qboolean isfirstperson = (e == &cl.viewent);
     qboolean isviewer = (e == &cl.entities[cl.viewentity]) && !CVAR_TO_BOOL(chase_active);
-    rt_light_t *light_ov = tx ? RT_LIGHT_FindInstance (tx->name, RT_GetAliasModelUniqueId (entuniqueid)) : NULL;
+    rt_light_t *light_ov = tx ? RT_LIGHT_FindEmitter (tx->name, RT_GetAliasModelUniqueId (entuniqueid)) : NULL;
 
     if (tx && (tx->rtforcerasterize || (light_ov && light_ov->force_rasterize)))
         rasterize = true;
@@ -207,7 +403,8 @@ static void GL_DrawAliasFrame(
        the shared lerp scratch GetPoseVertices hands the geometry uploads: widening the window in
        which those uploads read it would let the parallel entity passes overwrite each other's
        pose. */
-    const QrTransform transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson);
+    const QrTransform transform =
+        RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model);
 
     /* DTAL: the model lights the scene from its own geometry when its material says it is a
        light and carries an emissive mask. The fake dlight stays as the fallback for everything
@@ -224,48 +421,21 @@ static void GL_DrawAliasFrame(
                                                    paliashdr->numverts_vbo, e->model->rtindices, paliashdr->numindexes,
                                                    &transform);
 
-    if (dtal_lights <= 0 && tx && tx->rthaslightcolor && RT_AllowFakeLights ())
+    if (dtal_lights <= 0 && tx && tx->rthaslightcolor && tx->rtislight && RT_AllowFakeLights ())
     {
-        vec3_t      color = {tx->rtlightcolor[0], tx->rtlightcolor[1], tx->rtlightcolor[2]};
-        vec3_t      lightorigin;
-        float       intensity = (light_ov && light_ov->has_intensity) ? light_ov->intensity : CVAR_TO_FLOAT (rt_dlight_intensity);
-        float       radius = (light_ov && light_ov->has_radius) ? light_ov->radius : CVAR_TO_FLOAT (rt_dlight_radius);
+        rt_emitter_light_t light;
 
-        if (light_ov && light_ov->has_color)
-        {
-            VectorCopy (light_ov->color, color);
-        }
+        memset (&light, 0, sizeof (light));
+        light.name = tx->name;
+        light.uniqueID = RT_GetAliasModelUniqueId (entuniqueid);
+        light.kind = RT_LIGHT_KIND_MATERIAL;
+        VectorCopy (lerpdata.origin, light.position);
+        VectorCopy (tx->rtlightcolor, light.color);
+        light.intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
+        light.radius = CVAR_TO_FLOAT (rt_dlight_radius);
+        light.style = -1;
 
-        VectorScale(color, intensity, color);
-        RT_FIXUP_LIGHT_INTENSITY(color, true);
-
-        VectorCopy(lerpdata.origin, lightorigin);
-        if (light_ov && light_ov->has_offset)
-        {
-            lightorigin[0] += light_ov->offset[0];
-            lightorigin[1] += light_ov->offset[1];
-            lightorigin[2] += light_ov->offset[2];
-        }
-        else
-        {
-            lightorigin[2] += tx->rtupoffset;
-        }
-
-        QrSphericalLightUploadInfo light_info = {
-            .uniqueID = RT_GetAliasModelUniqueId(entuniqueid),
-            .color = {color[0], color[1], color[2]},
-            .position = {lightorigin[0], lightorigin[1], lightorigin[2]},
-            .radius = METRIC_TO_QUAKEUNIT(radius),
-        };
-
-        QrResult r = qrUploadSphericalLight(vulkan_globals.instance, &light_info);
-        QR_CHECK(r);
-
-        RT_TRACK_Light (light_info.position.data, light_info.radius, light_info.color.data,
-                        light_info.uniqueID, RT_LIGHT_KIND_MATERIAL, tx->name);
-
-        if (CVAR_TO_FLOAT (rt_cluster_dlights) != 0)
-            RT_ClusterLightAdd(light_info.uniqueID, lightorigin, RT_ClusterLightReach ());
+        RT_LIGHT_Emit (&light);
     }
 
 assert(
@@ -344,6 +514,156 @@ else
 	}
 
 Atomic_AddUInt32(&rs_aliaspasses, paliashdr->numtris);
+}
+
+static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniqueid)
+{
+	lerpdata_t      lerpdata;
+	float           blend, entalpha;
+	uint64_t        baseid;
+	uint32_t        surface_index = 0;
+	qboolean        isfirstperson = (e == &cl.viewent);
+	qboolean        isviewer = (e == &cl.entities[cl.viewentity]) && !CVAR_TO_BOOL (chase_active);
+	const QrVertex *vertices;
+	QrTransform     transform;
+
+	R_SetupAliasFrame (e, paliashdr, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+
+	if (CVAR_TO_BOOL (rt_enable_pvs) && R_CullModelForEntity (e))
+		return;
+
+	if (r_lightmap_cheatsafe)
+		entalpha = 1;
+	else
+		entalpha = ENTALPHA_DECODE (e->alpha);
+	if (entalpha == 0)
+		return;
+
+	Atomic_AddUInt32 (&rs_aliaspolys, paliashdr->numtris);
+
+	blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0;
+	int cluster = RT_ResolvePointCluster (lerpdata.origin);
+	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster);
+	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model);
+
+	if (isfirstperson)
+	{
+		float minDepth = 1e30f;
+		float maxDepth = -1e30f;
+
+		for (int v = 0; v < paliashdr->numverts_vbo; v++)
+		{
+			const float *position = vertices[v].position;
+			const float  world[3] = {
+			    transform.matrix[0][0] * position[0] + transform.matrix[0][1] * position[1] +
+			        transform.matrix[0][2] * position[2] + transform.matrix[0][3],
+			    transform.matrix[1][0] * position[0] + transform.matrix[1][1] * position[1] +
+			        transform.matrix[1][2] * position[2] + transform.matrix[1][3],
+			    transform.matrix[2][0] * position[0] + transform.matrix[2][1] * position[1] +
+			        transform.matrix[2][2] * position[2] + transform.matrix[2][3],
+			};
+			const float depth = (world[0] - r_refdef.vieworg[0]) * vpn[0] + (world[1] - r_refdef.vieworg[1]) * vpn[1] +
+			                    (world[2] - r_refdef.vieworg[2]) * vpn[2];
+
+			if (depth < minDepth)
+				minDepth = depth;
+			if (depth > maxDepth)
+				maxDepth = depth;
+		}
+
+		if (maxDepth > minDepth)
+		{
+			rt_viewmodel_depth_near = minDepth;
+			rt_viewmodel_depth_far = maxDepth;
+		}
+	}
+
+	baseid = RT_GetAliasModelUniqueId (entuniqueid);
+
+	for (aliashdr_t *surf = paliashdr; surf; surf = surf->nextsurface, ++surface_index)
+	{
+		int          skinnum = e->skinnum;
+		gltexture_t *tx;
+		qboolean     rasterize = entalpha < 1.0f;
+		qboolean     alphatest = !!(e->model->flags & MF_HOLEY);
+
+		if (skinnum < 0 || skinnum >= surf->numskins)
+			skinnum = 0;
+		tx = surf->gltextures[skinnum][0];
+		if (!tx)
+			tx = notexture;
+		if (r_lightmap_cheatsafe)
+			tx = whitetexture;
+		if (tx && tx->rtalphatest)
+			alphatest = true;
+		if (tx && tx->rtforcerasterize)
+			rasterize = true;
+
+		if (rasterize)
+		{
+			if (isviewer)
+				continue;
+
+			QrRasterizedGeometryUploadInfo info = {
+				.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
+				.vertexCount = paliashdr->numverts_vbo,
+				.pVertices = vertices,
+				.indexCount = surf->numindices,
+				.pIndices = e->model->rtindices + surf->firstindex,
+				.transform = transform,
+				.color = RT_COLOR_WHITE,
+				.material = tx ? tx->rtmaterial : QR_NO_MATERIAL,
+				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
+				.blendFuncSrc = 0,
+				.blendFuncDst = 0,
+			};
+
+			if (alphatest)
+				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
+
+			QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+			QR_CHECK (r);
+		}
+		else
+		{
+			qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
+			qboolean exact_normals = tx ? tx->rtexactnormals : 0;
+
+			QrGeometryUploadInfo info = {
+				.uniqueID = baseid | ((uint64_t)surface_index << 32),
+				.flags =
+				    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
+				    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+				    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT),
+				.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
+				.passThroughType =
+				    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+				    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
+				                QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
+				.visibilityType =
+				    isfirstperson ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON :
+				    isviewer ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON_VIEWER :
+				               QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
+				.vertexCount = paliashdr->numverts_vbo,
+				.pVertices = vertices,
+				.indexCount = surf->numindices,
+				.pIndices = e->model->rtindices + surf->firstindex,
+				.layerColors = {RT_COLOR_WHITE},
+				.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
+				.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
+				.defaultRoughness = CVAR_TO_FLOAT (rt_model_rough),
+				.defaultMetallicity = CVAR_TO_FLOAT (rt_model_metal),
+				.defaultEmission = 0,
+				.transform = transform,
+			};
+
+			QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+			QR_CHECK (r);
+		}
+	}
+
+	Atomic_AddUInt32 (&rs_aliaspasses, paliashdr->numtris);
 }
 
 /*
@@ -511,6 +831,13 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
     // setup pose/lerp data -- do it first so we don't miss updates due to culling
     //
     paliashdr = (aliashdr_t*)Mod_Extradata(e->model);
+
+    if (paliashdr->poseverttype != PV_QUAKE1)
+    {
+        R_DrawEnhancedModel (e, paliashdr, entuniqueid);
+        return;
+    }
+
     R_SetupAliasFrame(e, paliashdr, e->frame, &lerpdata);
     R_SetupEntityTransform(e, &lerpdata);
 
@@ -537,7 +864,7 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
     Atomic_AddUInt32(&rs_aliaspolys, paliashdr->numtris);
 
     // The per-entity light trace is gone: nothing in the RT renderer reads the shade vector or the
-    // light colour it produced, and the cheatsafe modes only overrode that light colour.
+    // light color it produced, and the cheatsafe modes only overrode that light color.
 
     //
     // set up textures

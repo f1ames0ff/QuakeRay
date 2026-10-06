@@ -23,9 +23,7 @@
 #include <algorithm>
 #include <cstdio>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 
 // Prints where the failing Vulkan call was made (file and line, which the assert
@@ -101,7 +99,6 @@ void qray::VK_CHECKERROR_Report(const VkResult r, const char *file, int line)
         std::fclose(log);
     }
 
-#ifdef _WIN32
     // The assert dialog names this file and not the call, so say it here as well:
     // the message box is what the user copies.
     char message[1024];
@@ -111,7 +108,6 @@ void qray::VK_CHECKERROR_Report(const VkResult r, const char *file, int line)
                   "(the same line is appended to vk_last_error.txt)",
                   name, (int)r, file, line);
     MessageBoxA(nullptr, message, "qray: Vulkan error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
-#endif
 
     assert(r == VK_SUCCESS);
 }
@@ -124,6 +120,9 @@ namespace qray
     VK_DEVICE_FUNCTION_LIST
     VK_DEVICE_DEBUG_UTILS_FUNCTION_LIST
 #undef VK_EXTENSION_FUNCTION
+
+    PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR sVkGetPhysicalDeviceSurfaceCapabilities2KHR = nullptr;
+    PFN_vkWaitForPresent2KHR sVkWaitForPresent2KHR = nullptr;
 }
 
 void qray::InitInstanceExtensionFunctions_DebugUtils(VkInstance instance)
@@ -136,6 +135,13 @@ void qray::InitInstanceExtensionFunctions_DebugUtils(VkInstance instance)
 #undef VK_EXTENSION_FUNCTION
 }
 
+bool qray::InitInstanceExtensionFunctions_SurfaceCapabilities2(VkInstance instance)
+{
+    sVkGetPhysicalDeviceSurfaceCapabilities2KHR =
+        reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
+    return sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
+}
+
 void qray::InitDeviceExtensionFunctions(VkDevice device)
 {
 #define VK_EXTENSION_FUNCTION(fname) \
@@ -144,6 +150,12 @@ void qray::InitDeviceExtensionFunctions(VkDevice device)
 
     VK_DEVICE_FUNCTION_LIST
 #undef VK_EXTENSION_FUNCTION
+}
+
+bool qray::InitDeviceExtensionFunctions_PresentWait2(VkDevice device)
+{
+    sVkWaitForPresent2KHR = reinterpret_cast<PFN_vkWaitForPresent2KHR>(vkGetDeviceProcAddr(device, "vkWaitForPresent2KHR"));
+    return sVkWaitForPresent2KHR != nullptr;
 }
 
 void qray::InitDeviceExtensionFunctions_DebugUtils(VkDevice device)
