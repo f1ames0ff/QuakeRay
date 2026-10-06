@@ -1330,6 +1330,7 @@ void RT_StaticMovableUpload (cb_context_t *cbx)
 			continue;
 
 		rt_movable_upload_entry = entry;
+		entry->numBatches = 0;
 
 		R_ClearTextureChains (entry->model, chain_model_0);
 

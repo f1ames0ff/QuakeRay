@@ -1066,13 +1066,12 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
-	RT_StaticMovableUpdate ();
-
 	const qboolean static_submit = Atomic_LoadUInt32 (&rt_require_static_submit) != 0;
 	const qboolean light_recollect = Atomic_LoadUInt32 (&rt_require_world_light_recollect) != 0;
 
 	if (!static_submit && !light_recollect)
 	{
+		RT_StaticMovableUpdate ();
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1081,6 +1080,7 @@ void R_DrawWorldTask (void *unused)
 	{
 		Atomic_StoreUInt32 (&rt_require_world_light_recollect, false);
 		RT_RecollectWorldEmissiveLights ();
+		RT_StaticMovableUpdate ();
 
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
@@ -1105,6 +1105,8 @@ void R_DrawWorldTask (void *unused)
 
 	Atomic_StoreUInt32 (&rt_require_static_submit, false);
 	Atomic_StoreUInt32 (&rt_require_world_light_recollect, false);
+
+	RT_StaticMovableUpdate ();
 
 	RT_Prof_End (RT_PROF_WORLD, prof_start);
 }
