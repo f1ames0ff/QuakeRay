@@ -262,28 +262,18 @@ int RT_ClusterSelect_Build(rt_cluster_select_t *select, const rt_cluster_candida
 
     if (tailCount > 0)
     {
-        double fastPower = 0.0;
-        double tailPower = 0.0;
+        double fastScore = 0.0;
+        double tailScore = 0.0;
 
         for (int i = 0; i < select->fastCount; i++)
-        {
-            const float power = candidates[select->fastIndex[i]].power;
-
-            if (isfinite(power) && power > 0.0f)
-                fastPower += power;
-        }
+            fastScore += RT_ClusterSelect_Score(&candidates[select->fastIndex[i]]);
 
         for (int i = 0; i < tailCount; i++)
-        {
-            const float power = candidates[tail[i]].power;
+            tailScore += RT_ClusterSelect_Score(&candidates[tail[i]]);
 
-            if (isfinite(power) && power > 0.0f)
-                tailPower += power;
-        }
-
-        if (fastPower > 0.0 || tailPower > 0.0)
+        if (fastScore > 0.0 || tailScore > 0.0)
         {
-            const double beta = tailPower / (fastPower + tailPower);
+            const double beta = tailScore / (fastScore + tailScore);
 
             select->beta = (float)(beta < 0.1 ? 0.1 : (beta > 0.9 ? 0.9 : beta));
         }
@@ -292,8 +282,7 @@ int RT_ClusterSelect_Build(rt_cluster_select_t *select, const rt_cluster_candida
             select->beta = 0.5f;
         }
 
-        double positiveTotal = fastPower + tailPower;
-        const double floorWeight = 0.001 * (positiveTotal + 1.0);
+        const double floorWeight = 0.001 * (fastScore + tailScore + 1.0);
         double      *weights = (double *)malloc((size_t)tailCount * sizeof(double));
 
         if (weights == NULL)
@@ -307,10 +296,7 @@ int RT_ClusterSelect_Build(rt_cluster_select_t *select, const rt_cluster_candida
 
         for (int i = 0; i < tailCount; i++)
         {
-            const float power = candidates[tail[i]].power;
-            const double positive = (isfinite(power) && power > 0.0f) ? power : 0.0;
-
-            weights[i] = positive + floorWeight;
+            weights[i] = RT_ClusterSelect_Score(&candidates[tail[i]]) + floorWeight;
             select->tailIndex[i] = tail[i];
         }
 

@@ -202,7 +202,6 @@ void ClusterLightLists::Reset()
     tailMarginal.clear();
     tailAlias.clear();
     tailBeta.clear();
-    overflowOrder.clear();
     overflowWeights.clear();
     tailEntryCount = 0;
 
@@ -1529,39 +1528,55 @@ void ClusterLightLists::BuildOverflow()
 
         candidateCounts.push_back((uint32_t)candidateList.size());
 
-        overflowOrder.clear();
+        struct TailCandidate
+        {
+            double   mass;
+            uint32_t source;
+        };
 
-        double fastPower = 0.0;
-        double tailPower = 0.0;
+        std::vector<TailCandidate> tailCandidates;
+
+        double fastMass = 0.0;
+        double tailMass = 0.0;
 
         for (const Candidate &candidate : candidateList)
         {
+            const Source  &source = sources[candidate.source];
             const uint64_t mask = 1ull << (candidate.source & 63);
 
+            double distance = Dist2ToBounds(source.origin, c);
+            double scale = double(source.radius) * double(source.radius);
+
+            if (!(scale > 1.0))
+                scale = 1.0;
+
+            if (!(distance > scale))
+                distance = scale;
+
+            const double power = source.power > 0.0f ? double(source.power) : 0.0;
+            const double mass = power / distance;
+
             if (slotBits[size_t(c) * bitsWords + (candidate.source >> 6)] & mask)
-                fastPower += sources[candidate.source].power;
+                fastMass += mass;
             else
             {
-                overflowOrder.push_back(candidate.source);
-                tailPower += sources[candidate.source].power;
+                tailCandidates.push_back({mass, candidate.source});
+                tailMass += mass;
             }
         }
 
-        if (overflowOrder.empty())
+        if (tailCandidates.empty())
             continue;
 
-        std::sort(overflowOrder.begin(), overflowOrder.end(), [this](uint32_t a, uint32_t b)
+        std::sort(tailCandidates.begin(), tailCandidates.end(), [this](const TailCandidate &a, const TailCandidate &b)
         {
-            const float pa = sources[a].power;
-            const float pb = sources[b].power;
+            if (a.mass != b.mass)
+                return a.mass > b.mass;
 
-            if (pa != pb)
-                return pa > pb;
-
-            return sources[a].uid < sources[b].uid;
+            return sources[a.source].uid < sources[b.source].uid;
         });
 
-        if (entry + overflowOrder.size() > uint32_t(Q2_LIGHT_LIST_TAIL_CAPACITY))
+        if (entry + tailCandidates.size() > uint32_t(Q2_LIGHT_LIST_TAIL_CAPACITY))
         {
             stats.tailBudgetExceeded++;
             overflowFailed = true;
@@ -1572,9 +1587,9 @@ void ClusterLightLists::BuildOverflow()
 
         if (slotFill[c] == 0)
             beta = 1.0f;
-        else if (fastPower > 0.0 || tailPower > 0.0)
+        else if (fastMass > 0.0 || tailMass > 0.0)
         {
-            const double ratio = tailPower / (fastPower + tailPower);
+            const double ratio = tailMass / (fastMass + tailMass);
 
             beta = (float)(ratio < 0.1 ? 0.1 : (ratio > 0.9 ? 0.9 : ratio));
         }
@@ -1583,21 +1598,21 @@ void ClusterLightLists::BuildOverflow()
 
         tailBeta[c] = beta;
 
-        const double floorWeight = 0.001 * (fastPower + tailPower + 1.0);
+        const double floorWeight = 0.001 * (fastMass + tailMass + 1.0);
 
-        overflowWeights.resize(overflowOrder.size());
+        overflowWeights.resize(tailCandidates.size());
 
-        for (size_t i = 0; i < overflowOrder.size(); i++)
-            overflowWeights[i] = sources[overflowOrder[i]].power + floorWeight;
+        for (size_t i = 0; i < tailCandidates.size(); i++)
+            overflowWeights[i] = tailCandidates[i].mass + floorWeight;
 
         const size_t base = tailUids.size();
 
-        tailUids.resize(base + overflowOrder.size());
-        tailProb.resize(base + overflowOrder.size());
-        tailMarginal.resize(base + overflowOrder.size());
-        tailAlias.resize(base + overflowOrder.size());
+        tailUids.resize(base + tailCandidates.size());
+        tailProb.resize(base + tailCandidates.size());
+        tailMarginal.resize(base + tailCandidates.size());
+        tailAlias.resize(base + tailCandidates.size());
 
-        if (!RT_Alias_Build(overflowWeights.data(), (int)overflowOrder.size(), tailProb.data() + base,
+        if (!RT_Alias_Build(overflowWeights.data(), (int)tailCandidates.size(), tailProb.data() + base,
                             tailAlias.data() + base))
         {
             tailUids.resize(base);
@@ -1608,13 +1623,13 @@ void ClusterLightLists::BuildOverflow()
             break;
         }
 
-        RT_Alias_Marginals(tailProb.data() + base, tailAlias.data() + base, (int)overflowOrder.size(),
+        RT_Alias_Marginals(tailProb.data() + base, tailAlias.data() + base, (int)tailCandidates.size(),
                            tailMarginal.data() + base);
 
-        for (size_t i = 0; i < overflowOrder.size(); i++)
-            tailUids[base + i] = sources[overflowOrder[i]].uid;
+        for (size_t i = 0; i < tailCandidates.size(); i++)
+            tailUids[base + i] = sources[tailCandidates[i].source].uid;
 
-        entry += (uint32_t)overflowOrder.size();
+        entry += (uint32_t)tailCandidates.size();
         stats.clustersWithTail++;
     }
 

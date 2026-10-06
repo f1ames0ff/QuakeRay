@@ -206,7 +206,6 @@ private:
     std::vector<float>    tailMarginal;
     std::vector<uint32_t> tailAlias;
     std::vector<float>    tailBeta;
-    std::vector<uint32_t> overflowOrder;
     std::vector<double>   overflowWeights;
     uint32_t              tailEntryCount = 0;
     bool                  overflowEnabled = false;
