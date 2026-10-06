@@ -365,6 +365,7 @@ extern cvar_t rt_light_reach;
 extern cvar_t rt_light_reach_max;
 extern cvar_t rt_cluster_incremental;
 extern cvar_t rt_cluster_sampling;
+extern cvar_t rt_cluster_assert;
 extern cvar_t rt_light_report_filter;
 
 
@@ -1283,6 +1284,7 @@ void RT_ClusterLightListsUpload (void)
 		   recomposition - is engine-selectable only (Cvar_SetROM). */
 		.allowIncremental = CVAR_TO_BOOL (rt_cluster_incremental) ? 1 : 0,
 		.allowOverflow = CVAR_TO_BOOL (rt_cluster_sampling) ? 1 : 0,
+		.validate = CVAR_TO_BOOL (rt_cluster_assert) ? 1 : 0,
 	};
 
 	QrResult r = qrUploadClusterLightSources (vulkan_globals.instance, &info);

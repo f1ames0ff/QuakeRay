@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <unordered_map>
 
 #include "Generated/ShaderCommonC.h"
 #include "LightManager.h"
@@ -381,6 +382,11 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
         Compose(worldLightsRef, pUserPrint);
         stats.composedFrames = 1;
         compositionOrder = true;
+    }
+
+    if (uploadInfo.validate != 0)
+    {
+        ValidateComposition(pUserPrint);
     }
 
     const double tPublish = NowMs();
@@ -2109,6 +2115,177 @@ void ClusterLightLists::GetClusterTail(uint32_t cluster, uint64_t *pUniqueIds, f
             pMarginal[i] = tailMarginal[index];
         if (pAlias != nullptr)
             pAlias[i] = tailAlias[index];
+    }
+}
+
+void ClusterLightLists::ValidateComposition(UserPrint *pUserPrint) const
+{
+    if (pUserPrint == nullptr || numClusters == 0)
+        return;
+
+    const uint32_t        words = std::max(1u, uint32_t((sources.size() + 63) / 64));
+    std::vector<uint64_t> fastSeen(words, 0);
+    std::vector<uint64_t> unionSeen(words, 0);
+
+    std::unordered_map<uint64_t, uint32_t> placeByUid;
+    placeByUid.reserve(sources.size() * 2 + 1);
+
+    for (uint32_t li = 0; li < uint32_t(sources.size()); li++)
+    {
+        if (!sources[li].tombstone)
+            placeByUid.emplace(sources[li].uid, li);
+    }
+
+    const bool checkCandidates = overflowEnabled && bitsWords > 0 &&
+        candidateBits.size() >= size_t(numClusters) * bitsWords;
+
+    uint32_t mismatches = 0;
+    uint32_t firstCluster = 0;
+    uint32_t firstReason = 0;
+
+    for (uint32_t c = 1; c < numClusters; c++)
+    {
+        std::fill(fastSeen.begin(), fastSeen.end(), 0);
+        std::fill(unionSeen.begin(), unionSeen.end(), 0);
+
+        const uint32_t fill = slotFill[c];
+        const uint32_t base = c * kMaxPerList;
+
+        for (uint32_t s = 0; s < fill; s++)
+        {
+            const uint32_t li = slotSource[base + s];
+
+            if (li == kInvalidSource)
+                continue;
+
+            if (li >= uint32_t(sources.size()) || (li >> 6) >= words)
+            {
+                mismatches++;
+                if (mismatches == 1) { firstCluster = c; firstReason = 1; }
+                continue;
+            }
+
+            if ((fastSeen[li >> 6] & (1ull << (li & 63))) != 0)
+            {
+                mismatches++;
+                if (mismatches == 1) { firstCluster = c; firstReason = 2; }
+            }
+
+            fastSeen[li >> 6] |= 1ull << (li & 63);
+            unionSeen[li >> 6] |= 1ull << (li & 63);
+
+            if (checkCandidates &&
+                (candidateBits[size_t(c) * bitsWords + (li >> 6)] & (1ull << (li & 63))) == 0)
+            {
+                mismatches++;
+                if (mismatches == 1) { firstCluster = c; firstReason = 3; }
+            }
+        }
+
+        uint32_t tailCount = 0;
+        double   marginalSum = 0.0;
+
+        if (size_t(c) + 1 < tailOffsets.size())
+        {
+            const uint32_t tailBegin = tailOffsets[c];
+            const uint32_t tailEnd = std::min<uint32_t>(tailOffsets[c + 1], uint32_t(tailUids.size()));
+
+            for (uint32_t e = tailBegin; e < tailEnd; e++)
+            {
+                const auto it = placeByUid.find(tailUids[e]);
+
+                tailCount++;
+                marginalSum += (double)tailMarginal[e];
+
+                if (it == placeByUid.end())
+                {
+                    mismatches++;
+                    if (mismatches == 1) { firstCluster = c; firstReason = 4; }
+                    continue;
+                }
+
+                const uint32_t li = it->second;
+
+                if ((fastSeen[li >> 6] & (1ull << (li & 63))) != 0)
+                {
+                    mismatches++;
+                    if (mismatches == 1) { firstCluster = c; firstReason = 5; }
+                }
+
+                unionSeen[li >> 6] |= 1ull << (li & 63);
+
+                if (checkCandidates &&
+                    (candidateBits[size_t(c) * bitsWords + (li >> 6)] & (1ull << (li & 63))) == 0)
+                {
+                    mismatches++;
+                    if (mismatches == 1) { firstCluster = c; firstReason = 3; }
+                }
+            }
+        }
+
+        if (tailCount > 0 && fabs(marginalSum - 1.0) > 2e-3)
+        {
+            mismatches++;
+            if (mismatches == 1) { firstCluster = c; firstReason = 6; }
+        }
+
+        const float beta = (c < tailBeta.size()) ? tailBeta[c] : 0.0f;
+
+        if (tailCount == 0 && beta != 0.0f)
+        {
+            mismatches++;
+            if (mismatches == 1) { firstCluster = c; firstReason = 7; }
+        }
+        else if (tailCount > 0 && fill == 0 && fabs(beta - 1.0f) > 1e-4f)
+        {
+            mismatches++;
+            if (mismatches == 1) { firstCluster = c; firstReason = 7; }
+        }
+        else if (tailCount > 0 && fill > 0 && (beta < 0.0999f || beta > 0.9001f))
+        {
+            mismatches++;
+            if (mismatches == 1) { firstCluster = c; firstReason = 7; }
+        }
+
+        if (checkCandidates)
+        {
+            const uint64_t *pCand = &candidateBits[size_t(c) * bitsWords];
+
+            for (uint32_t w = 0; w < bitsWords; w++)
+            {
+                uint64_t bits = pCand[w];
+
+                for (uint32_t b = 0; b < 64 && bits != 0; b++)
+                {
+                    const uint64_t mask = 1ull << b;
+
+                    if ((bits & mask) == 0)
+                        continue;
+
+                    bits &= ~mask;
+
+                    const uint32_t li = w * 64 + b;
+
+                    if (li >= uint32_t(sources.size()))
+                        continue;
+
+                    if ((unionSeen[li >> 6] & (1ull << (li & 63))) == 0)
+                    {
+                        mismatches++;
+                        if (mismatches == 1) { firstCluster = c; firstReason = 8; }
+                    }
+                }
+            }
+        }
+    }
+
+    if (mismatches > 0)
+    {
+        char msg[256];
+
+        snprintf (msg, sizeof (msg), "RT: cluster validation: %u mismatches, first at cluster %u (reason %u)\n",
+            mismatches, firstCluster, firstReason);
+        pUserPrint->Print (msg);
     }
 }
 

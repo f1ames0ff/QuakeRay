@@ -162,6 +162,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	   what a lava ball was measured to cost. */ \
 	CVAR_DEF_T (rt_cluster_incremental, "1") \
 	CVAR_DEF_T (rt_cluster_sampling, "0") \
+	CVAR_DEF_T (rt_cluster_assert, "0") \
 	CVAR_DEF_T (rt_truelight, "1") \
 	CVAR_DEF_T (rt_materials_only, "0") \
 	CVAR_DEF_T (rt_light_styles, "1") \

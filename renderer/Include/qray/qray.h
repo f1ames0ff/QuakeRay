@@ -643,6 +643,8 @@ typedef struct QrClusterLightSourcesUploadInfo
     int32_t                     allowIncremental;
 
     int32_t                     allowOverflow;
+
+    int32_t                     validate;
 } QrClusterLightSourcesUploadInfo;
 
 QRAPI QrResult QRCONV qrUploadClusterLightSources(
