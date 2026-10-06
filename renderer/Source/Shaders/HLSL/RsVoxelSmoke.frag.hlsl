@@ -22,7 +22,8 @@ void main( float4 position : SV_Position,
     const float3 dir = normalize( farPoint.xyz / farPoint.w - origin );
 
     float t0, t1;
-    if ( !voxelSmokeBox( params.worldMin.xyz, params.worldMax.xyz, origin, dir, t0, t1 ) )
+    if ( !voxelSmokeBox( max( params.boundsMin.xyz, params.worldMin.xyz ),
+                         min( params.boundsMax.xyz, params.worldMax.xyz ), origin, dir, t0, t1 ) )
     {
         outColor = 0.0;
         return;
@@ -42,8 +43,9 @@ void main( float4 position : SV_Position,
         return;
     }
 
-    const float steps      = max( params.marchParams.x, 1.0 );
-    const float stepLength = ( t1 - t0 ) / steps;
+    const float budget     = max( params.marchParams.x, 1.0 );
+    const float stepLength = max( voxelSmokeVoxelSize( params ), ( t1 - t0 ) / budget );
+    const float steps      = ceil( ( t1 - t0 ) / stepLength );
     const float extinction = params.marchParams.y;
 
     float  transmittance = 1.0;

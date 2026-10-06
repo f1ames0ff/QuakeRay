@@ -5,6 +5,8 @@ struct VoxelSmokeParams
 {
     float4 worldMin;
     float4 worldMax;
+    float4 boundsMin;
+    float4 boundsMax;
     float4 emitterCenter;
     float4 emitterParams;
     float4 marchParams;
@@ -19,6 +21,14 @@ float3 voxelSmokeWorldToVolume( const VoxelSmokeParams p, const float3 world )
 float3 voxelSmokeVolumeToWorld( const VoxelSmokeParams p, const float3 volume )
 {
     return p.worldMin.xyz + volume * ( p.worldMax.xyz - p.worldMin.xyz );
+}
+
+float voxelSmokeVoxelSize( const VoxelSmokeParams p )
+{
+    const float3 size = max( p.worldMax.xyz - p.worldMin.xyz, (float3)1e-4 );
+    const float3 res  = max( p.resolution.xyz, (float3)1.0 );
+
+    return min( size.x / res.x, min( size.y / res.y, size.z / res.z ) );
 }
 
 bool voxelSmokeBox( const float3 boxMin, const float3 boxMax,

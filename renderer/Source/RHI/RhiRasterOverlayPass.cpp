@@ -60,6 +60,8 @@ struct VoxelSmokeParams
 {
     float worldMin[4];
     float worldMax[4];
+    float boundsMin[4];
+    float boundsMax[4];
     float emitterCenter[4];
     float emitterParams[4];
     float marchParams[4];
@@ -1185,6 +1187,16 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             params.worldMax[0] = pVoxelSmokeParams->worldMax.data[0];
             params.worldMax[1] = pVoxelSmokeParams->worldMax.data[1];
             params.worldMax[2] = pVoxelSmokeParams->worldMax.data[2];
+
+            const float boundsMargin = 128.0f;
+
+            for (int i = 0; i < 3; i++)
+            {
+                params.boundsMin[i] = pVoxelSmokeParams->emitterCenter.data[i] -
+                                      pVoxelSmokeParams->emitterRadius - boundsMargin;
+                params.boundsMax[i] = pVoxelSmokeParams->emitterCenter.data[i] +
+                                      pVoxelSmokeParams->emitterRadius + boundsMargin;
+            }
             params.emitterCenter[0] = pVoxelSmokeParams->emitterCenter.data[0];
             params.emitterCenter[1] = pVoxelSmokeParams->emitterCenter.data[1];
             params.emitterCenter[2] = pVoxelSmokeParams->emitterCenter.data[2];
