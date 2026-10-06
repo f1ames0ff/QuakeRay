@@ -146,6 +146,20 @@ void RasterizedDataCollector::GetSmokeVertexLayout(
     FillVertexAttributes(attrs, std::size(attrs), outAttrs, outAttrsCount);
 }
 
+void RasterizedDataCollector::GetParticleVertexLayout(
+    VkVertexInputAttributeDescription *outAttrs, uint32_t *outAttrsCount)
+{
+    const VertexAttribute attrs[] =
+    {
+        { 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(QrVertex, position)    },
+        { 1, VK_FORMAT_R8G8B8A8_UNORM,   offsetof(QrVertex, packedColor) },
+        { 2, VK_FORMAT_R32G32_SFLOAT,    offsetof(QrVertex, texCoord)    },
+        { 3, VK_FORMAT_R32_UINT,         offsetof(QrVertex, cluster)     },
+    };
+
+    FillVertexAttributes(attrs, std::size(attrs), outAttrs, outAttrsCount);
+}
+
 RasterizedDataCollector::RasterizedDataCollector( VkDevice                            _device,
                                                   std::shared_ptr< MemoryAllocator >& _allocator,
                                                   std::shared_ptr< TextureManager >   _textureMgr,

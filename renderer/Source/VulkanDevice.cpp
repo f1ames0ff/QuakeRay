@@ -735,6 +735,15 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         }
     }
 
+    particleDraws.clear();
+    for (const RasterizedDataCollector::DrawInfo &info : worldDraws)
+    {
+        if ((info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_PARTICLE) != 0)
+        {
+            particleDraws.push_back(info);
+        }
+    }
+
     const std::vector<RasterizedDataCollector::DrawInfo> &swapchainDraws =
         rasterizedDataCollector->GetSwapchainDrawInfos();
 
@@ -764,6 +773,8 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.worldDrawCount = static_cast<uint32_t>(worldDraws.size());
     sky.smokeDraws = smokeDraws.data();
     sky.smokeDrawCount = static_cast<uint32_t>(smokeDraws.size());
+    sky.particleDraws = particleDraws.data();
+    sky.particleDrawCount = static_cast<uint32_t>(particleDraws.size());
 
     sky.swapchainDraws = swapchainDraws.data();
     sky.swapchainDrawCount = static_cast<uint32_t>(swapchainDraws.size());

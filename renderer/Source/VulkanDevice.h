@@ -255,6 +255,7 @@ private:
     std::shared_ptr<RhiRasterOverlayPass>   rhiRasterOverlayPass;
 
     std::vector<RasterizedDataCollector::DrawInfo> smokeDraws;
+    std::vector<RasterizedDataCollector::DrawInfo> particleDraws;
 
     std::shared_ptr<RhiDecalPass>           rhiDecalPass;
 
