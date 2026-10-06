@@ -1384,6 +1384,9 @@ void RT_StaticMovableUpdate (void)
 
 		if (owner->model != entry->model)
 		{
+			if (owner->model == NULL && owner->msgtime != cl.mtime[0])
+				continue;
+
 			Atomic_StoreUInt32 (&rt_require_static_submit, true);
 			continue;
 		}
