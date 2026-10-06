@@ -680,6 +680,7 @@ qboolean RT_Bench_Report (const char *demo)
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "rt_enable_pvs");
+	RT_Bench_Setting (f, "sv_novis");
 	RT_Bench_Setting (f, "rt_truelight");
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_brush_persistent");
