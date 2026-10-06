@@ -569,18 +569,20 @@ private:
     // shaders declare no specialization constant. Built lazily against smokeLightLayout.
     std::unordered_map<uint32_t, nvrhi::GraphicsPipelineHandle> smokePipelines;
 
-    nvrhi::ShaderHandle voxelSmokeInjectShader;
+    nvrhi::ShaderHandle voxelSmokeAdvectShader;
     nvrhi::ShaderHandle voxelSmokePixelShader;
-    nvrhi::BindingLayoutHandle voxelSmokeInjectLayout;
+    nvrhi::BindingLayoutHandle voxelSmokeAdvectLayout;
     nvrhi::BindingLayoutHandle voxelSmokeMarchLayout;
-    nvrhi::TextureHandle voxelSmokeVolume;
+    nvrhi::TextureHandle voxelSmokeVolumes[2];
     nvrhi::SamplerHandle voxelSmokeSampler;
     nvrhi::BufferHandle voxelSmokeParamsBuffers[MAX_FRAMES_IN_FLIGHT];
-    nvrhi::BindingSetHandle voxelSmokeInjectSets[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BindingSetHandle voxelSmokeAdvectSets[MAX_FRAMES_IN_FLIGHT];
     nvrhi::BindingSetHandle voxelSmokeMarchSets[MAX_FRAMES_IN_FLIGHT];
-    nvrhi::ComputePipelineHandle voxelSmokeInjectPipeline;
+    nvrhi::ComputePipelineHandle voxelSmokeAdvectPipeline;
     nvrhi::GraphicsPipelineHandle voxelSmokeMarchPipeline;
-    bool voxelSmokeVolumeCleared = false;
+    bool voxelSmokeVolumeWritten[2] = { false, false };
+    bool voxelSmokeHasLastBox = false;
+    float voxelSmokeLastBox[6] = {};
     bool voxelSmokeParamsLogged = false;
 
     std::unordered_map<uint32_t, nvrhi::GraphicsPipelineHandle> particlePipelines;

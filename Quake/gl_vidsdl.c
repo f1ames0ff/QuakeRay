@@ -146,6 +146,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_voxel_smoke_extinction, "1.5") \
 	CVAR_DEF_T (rt_voxel_smoke_grey, "0.5") \
 	CVAR_DEF_T (rt_voxel_smoke_emitter, "") \
+	CVAR_DEF_T (rt_voxel_smoke_rise, "48") \
 	CVAR_DEF_T (rt_dlight_radius, "0.1") \
 	\
 	CVAR_DEF_T (rt_emis_light_intensity, "1.0") \
@@ -2950,6 +2951,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	voxel_smoke_params.marchSteps = CVAR_TO_FLOAT (rt_voxel_smoke_steps);
 	voxel_smoke_params.extinction = CVAR_TO_FLOAT (rt_voxel_smoke_extinction);
 	voxel_smoke_params.debugGrey = CVAR_TO_FLOAT (rt_voxel_smoke_grey);
+	voxel_smoke_params.riseSpeed = CVAR_TO_FLOAT (rt_voxel_smoke_rise);
 
 	// The light editor's world is frozen: the traced water warp and the cloud
 	// drift follow this clock, so it takes the held client time while the

@@ -1285,6 +1285,7 @@ typedef struct QrDrawFrameVoxelSmokeParams
     float       extinction;
     float       debugGrey;
     QrBool32    enabled;
+    float       riseSpeed;
 } QrDrawFrameVoxelSmokeParams;
 
 typedef struct QrDrawFrameInfo
