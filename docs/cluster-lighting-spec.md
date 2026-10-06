@@ -218,8 +218,12 @@ Declare checked byte/work budgets. On budget exhaustion, report failure or retai
 - [x] Validate mean lighting under oversubscription and parent reorder.
       (Deterministic CPU reference for 0/1/128/129/512/2048 candidates and shuffled order.)
 - [ ] Benchmark ordinary lights with A absent/off.
-- [ ] Tune ranking/branch/update policies from measured noise and cost.
-      (`beta` bounds, the 0.1% fast-mass floor and the tail weight floor are provisional defaults.)
+- [x] Shape the tail branch probability and the alias weights by the distance-shaped mass the shader
+      selects fast lights with (`power/max(d2, radius², 1)` over the same fast/tail partition, in the
+      composer and in the selector mirror); the `beta` bounds and the floors stay.
+      (Pinned `e4m1` gate: the tail-on/off wall gap falls 7.8% -> 2.1% with light statistics on and
+      4.7% -> 0.4% with them off; cluster 336 `beta` 0.356 -> 0.100; `rt_cluster_assert` clean.)
+- [ ] Tune the remaining ranking and update policies from measured noise and cost.
 - [x] Leave B's report and integrate A through the shared boundary without editing member geometry.
 
 Post-review state: an independent review of the branch found that several B0/B1/B2 items were not
@@ -227,8 +231,9 @@ actually satisfied by the published code. The branch history now carries the rep
 copies scheduled, full offsets/beta copy span, all-or-nothing tail publication, updates resolved
 before the capacity check, serialized renderer insertion, 24-bit half-open discrete draws, top-up
 candidates recorded before retention); the details are in `cluster-implementation-report.md` §2.6.
-The GPU runtime acceptance (oversubscription capture, noise and timing comparison) still has no
-evidence in this environment, so `rt_cluster_sampling` stays off by default.
+The GPU runtime acceptance now has the pinned `e4m1` lamp gate (oversubscription capture and the
+tail-on/off wall gap above); a frame-timing comparison and a wider benchmark are still missing, so
+`rt_cluster_sampling` stays off by default.
 
 ## 12. File map
 

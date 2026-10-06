@@ -37,17 +37,22 @@ published.
   construction.
 - `H` remains the existing 128-slot ranked list (distance order, nearest kept) so Project A's
   delivery is untouched. `T` is every accepted candidate not in a slot, ordered deterministically
-  by estimated power with the UID as the tie-breaker.
+  by the distance-shaped mass (below) with the UID as the tie-breaker.
 - Sources now carry an estimated power (DTAL groups publish the builder's aggregate, world DTAL
   publishes `area * meanEmiss * luma(color)`, dlights/spots publish `luma(color) * radius²`;
-  remaining light classes fall back to the nearest-source reserve).
+  remaining light classes fall back to the nearest-source reserve). The branch and the tail weights
+  shape that power by the distance term the fast selector's mass uses:
+  `mass = power / max(d², radius², 1)`, where `d²` is the squared distance from the source origin to
+  the cluster bounds (the DTAL group radius, floored at one unit, caps the term).
 - `beta` per cluster follows the specification: empty T → 0, empty H → 1, both non-empty with zero
-  estimated total power → 0.5, otherwise `clamp(tailPower / (fastPower + tailPower), 0.1, 0.9)`.
+  estimated total mass → 0.5, otherwise `clamp(tailMass / (fastMass + tailMass), 0.1, 0.9)`.
 
 ### 2.3 Overflow distribution (B2 tail side)
 
-- Per-cluster tail weights are `power + floor` with `floor = 0.001 * (fastPower + tailPower + 1)`,
-  so every accepted overflow source keeps positive support even at zero approximate power.
+- Per-cluster tail weights are `mass + floor` with `floor = 0.001 * (fastMass + tailMass + 1)`,
+  so every accepted overflow source keeps positive support even at zero approximate power. The
+  branch probability and the weights are built from the same masses, so the published distribution
+  follows the view-shaped estimate instead of raw emitter power.
 - `RT_Alias_Build` (shared with Project A) builds the tables in double precision; `RT_Alias_Marginals`
   publishes the actual marginal probability of every entry, so the shader divides by the marginal
   selection probability rather than by a sampling path probability. This corrects a real bias that
@@ -140,9 +145,12 @@ mirrors the published GPU algorithm:
 - shuffling the candidate array does not change which UIDs are in H or T;
 - H/T bounds, disjointness, coverage and beta range invariants are asserted per case.
 
-Unavailable in this environment: scripted GPU captures on an oversubscribed map. No runtime
-oversubscription benchmark, noise measurement or frame-timing comparison is claimed, and the
-`rt_cluster_sampling = 1` default is therefore left off until those measurements exist.
+The pinned `e4m1` lamp gate (scripted captures, exposure frozen, post and upscaling disabled, light
+styles frozen) measures the tail-on/off wall gap that motivated the branch shaping: 7.8% before the
+shaping and 2.1% after it with light statistics on, 4.7% -> 0.4% with them off, with cluster 336
+`beta` falling from 0.356 to 0.100 and `rt_cluster_assert` clean. Frame-timing comparison and a
+wider oversubscription benchmark are still not claimed, and `rt_cluster_sampling = 1` stays off by
+default until those exist.
 
 ## 4. Memory and capacity
 
@@ -156,10 +164,10 @@ oversubscription benchmark, noise measurement or frame-timing comparison is clai
 
 ## 5. Deviations, limitations and unresolved items
 
-1. **H ranking remains distance-based.** The repaired policy ranks the overflow tail by power and
-   derives beta from power, but the 128 fast slots keep the historical nearest-first order. A
-   power-aware fast ranking with a nearest reserve is a tuning step that needs the noise/cost
-   measurements this environment could not produce.
+1. **H ranking remains distance-based.** The overflow tail is ranked and weighted by the
+   distance-shaped mass and `beta` is derived from it, but the 128 fast slots keep the historical
+   nearest-first order. A mass-aware fast ranking with a nearest reserve is a tuning step that needs
+   cost measurements this environment could not produce.
 2. **No incremental overflow updates.** With overflow enabled, a changed light set recomposes the
    lists; the incremental path still serves the legacy policy. The spec allows this as the initial
    simple update and asks for profiling before finer repair.
@@ -168,9 +176,10 @@ oversubscription benchmark, noise measurement or frame-timing comparison is clai
    top-up pass still retains its nearest eight sources in the fast list, but every reach-accepted
    source is recorded as an overflow candidate before that retention, so the overflow set covers the
    full accepted domain rather than the retention survivors.
-4. **No runtime oversubscription evidence.** The 128-slot limit warning observed on `e4m1` during
-   the Project A manual test is the exact situation this policy repairs, but the repaired selector
-   has not been captured on a GPU here.
+4. **Runtime oversubscription evidence is partial.** The 128-slot limit warning observed on `e4m1`
+   during the Project A manual test is the exact situation this policy repairs; the pinned lamp
+   gate captures nine oversubscribed clusters and measures the tail-on/off difference, but a wider
+   benchmark and a frame-timing comparison are still missing.
 5. **Publication cost.** Fast and tail index publication resolves every referenced UID each time the
    lists change; the spec accepts this O(published entries) refresh until measured otherwise.
 6. **Power metadata coverage.** Some light classes (alias/sprite entity lights registered through
