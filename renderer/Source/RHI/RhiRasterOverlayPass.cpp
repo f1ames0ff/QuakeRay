@@ -1245,7 +1245,7 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             params.resolution[3] = (boxChanged || !voxelSmokeVolumeWritten[(frameIndex + 1) % 2]) ? 1.0f : 0.0f;
             params.advectParams[0] = rise;
 
-            if (!voxelSmokeParamsLogged)
+            if (!voxelSmokeParamsLogged || boxChanged)
             {
                 voxelSmokeParamsLogged = true;
 
