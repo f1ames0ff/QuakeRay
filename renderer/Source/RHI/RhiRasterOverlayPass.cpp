@@ -1238,7 +1238,7 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             params.emitterParams[3] = timeDelta;
             params.marchParams[0] = pVoxelSmokeParams->marchSteps;
             params.marchParams[1] = pVoxelSmokeParams->extinction;
-            params.marchParams[2] = pVoxelSmokeParams->debugGrey;
+            params.marchParams[2] = pVoxelSmokeParams->debugGray;
             params.resolution[0] = float(VOXEL_SMOKE_RESOLUTION);
             params.resolution[1] = float(VOXEL_SMOKE_RESOLUTION);
             params.resolution[2] = float(VOXEL_SMOKE_RESOLUTION);
