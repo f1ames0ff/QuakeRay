@@ -1093,6 +1093,10 @@ void VulkanDevice::EndFrame(VkCommandBuffer cmd)
 
 void VulkanDevice::StartFrame(const QrStartFrameInfo *startInfo)
 {
+    statsApiCallsGeometry = 0;
+    statsApiCallsRasterized = 0;
+    statsApiCallsLights = 0;
+
     if (currentFrameState.WasFrameStarted())
     {
         throw QrException(QR_FRAME_WASNT_ENDED);
@@ -1274,6 +1278,10 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
     {
         pStats->gpuPassMs[i] = statsGpuPassMs[i];
     }
+
+    pStats->apiCallsGeometry = statsApiCallsGeometry;
+    pStats->apiCallsRasterized = statsApiCallsRasterized;
+    pStats->apiCallsLights = statsApiCallsLights;
 }
 
 void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
@@ -1304,6 +1312,8 @@ void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
 
 void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)
 {
+    statsApiCallsGeometry++;
+
     using namespace std::string_literals;
 
     if (uploadInfo == nullptr)
@@ -1417,6 +1427,8 @@ void VulkanDevice::UpdateGeometryTexCoords(const QrUpdateTexCoordsInfo *updateIn
 void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo *pUploadInfo,
                                                 const float *pViewProjection, const QrViewport *pViewport)
 {
+    statsApiCallsRasterized++;
+
     if (pUploadInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1496,6 +1508,8 @@ void VulkanDevice::StartNewStaticScene()
 
 void VulkanDevice::UploadDirectionalLight(const QrDirectionalLightUploadInfo *pLightInfo)
 {
+    statsApiCallsLights++;
+
     if (pLightInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1506,6 +1520,8 @@ void VulkanDevice::UploadDirectionalLight(const QrDirectionalLightUploadInfo *pL
 
 void VulkanDevice::UploadSphericalLight(const QrSphericalLightUploadInfo *pLightInfo)
 {
+    statsApiCallsLights++;
+
     if (pLightInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1516,6 +1532,8 @@ void VulkanDevice::UploadSphericalLight(const QrSphericalLightUploadInfo *pLight
 
 void VulkanDevice::UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo)
 {
+    statsApiCallsLights++;
+
     if (pLightInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1526,6 +1544,8 @@ void VulkanDevice::UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo)
 
 void VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLightInfo)
 {
+    statsApiCallsLights++;
+
     if (pLightInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1536,6 +1556,8 @@ void VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLight
 
 void VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *pLightInfo)
 {
+    statsApiCallsLights++;
+
     if (pLightInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1549,6 +1571,8 @@ void VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *
 
 void VulkanDevice::UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo *pLightInfos, uint32_t count)
 {
+    statsApiCallsLights++;
+
     if (pLightInfos == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1587,6 +1611,8 @@ void VulkanDevice::UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo 
 
 void VulkanDevice::UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo)
 {
+    statsApiCallsLights++;
+
     if (pInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");

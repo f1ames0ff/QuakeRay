@@ -636,6 +636,11 @@ QrTransform RT_GetModelTransform (const float model_matrix[16]);
 QrTransform RT_GetBrushModelMatrix (entity_t *e);
 void      RT_RecollectWorldEmissiveLights (void);
 
+void RT_StaticMovablePrepare (void);
+void RT_StaticMovableUpload (cb_context_t *cbx);
+void RT_StaticMovableUpdate (void);
+void RT_StaticMovableClear (void);
+
 QrFloat3D RT_AnglesToDir (/* const */ vec3_t angles);
 float     RT_Luminance (const vec3_t color);
 

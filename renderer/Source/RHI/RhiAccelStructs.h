@@ -376,6 +376,7 @@ private:
     {
         int32_t offset = 0;
         int32_t count = 0;
+        bool    movable = false;
     };
 
     // Retires and clears the whole static set (a level change, or teardown before the handles are
@@ -533,6 +534,9 @@ private:
     bool staticCreationFailed = false;
     // The ASManager::GetStaticGeneration() value the current static set (or its absence) belongs to.
     uint32_t staticGeneration = 0;
+
+    // The ASManager::GetStaticMovableRevision() value the movable components were last rebuilt for.
+    uint32_t staticMovableRevision = 0;
 
     // The dynamic structures, up to one per dynamic filter per slot (a filter that is empty in a
     // frame keeps its handle but is not active).

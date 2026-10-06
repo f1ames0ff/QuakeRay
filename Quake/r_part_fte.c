@@ -6828,6 +6828,9 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 	if (!cl_numstris || !cl_maxstrisvert[current_buffer_index] || !cl_maxstrisidx[current_buffer_index])
 		return;
 
+	if (cl_maxstrisvert[current_buffer_index] == 0 && cl_maxstrisidx[current_buffer_index] == 0)
+		return;
+
 	R_BeginDebugUtilsLabel (cbx, "FTE Particles");
 	Fog_DisableGFog (cbx);
 

@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "ASBuilder.h"
 #include "CommandBufferManager.h"
 #include "GlobalUniform.h"
@@ -108,6 +110,7 @@ public:
                                          VkAccelerationStructureInstanceKHR &instance);
 
     uint32_t GetStaticGeneration() const;
+    uint32_t GetStaticMovableRevision() const;
 
 private:
     void CreateDescriptors();
@@ -148,6 +151,7 @@ private:
     std::vector<std::unique_ptr<BLASComponent>> allDynamicBlas[MAX_FRAMES_IN_FLIGHT];
 
     uint32_t staticGeneration = 0;
+    std::atomic<uint32_t> staticMovableRevision{0};
 
     VkAccelerationStructureBuildSizesInfoKHR tlasBuildSizes[MAX_FRAMES_IN_FLIGHT] = {};
     uint32_t tlasBuildSizesInstanceCount[MAX_FRAMES_IN_FLIGHT] = {};

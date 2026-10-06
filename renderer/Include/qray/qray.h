@@ -1346,6 +1346,9 @@ typedef struct QrFrameStats
     float       gpuPassMs[QR_GPU_PASS_COUNT];
 
     uint32_t    apiCalls;
+    uint32_t    apiCallsGeometry;
+    uint32_t    apiCallsRasterized;
+    uint32_t    apiCallsLights;
 } QrFrameStats;
 
 QRAPI QrResult QRCONV qrGetFrameStatsEx(

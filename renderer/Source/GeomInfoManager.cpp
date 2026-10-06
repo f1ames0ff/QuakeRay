@@ -571,6 +571,11 @@ VkBuffer qray::GeomInfoManager::GetStagingBuffer(uint32_t frameIndex)
     return buffer->GetStaging(frameIndex);
 }
 
+const qray::ShGeometryInstance *qray::GeomInfoManager::GetStagingData(uint32_t frameIndex)
+{
+    return (const ShGeometryInstance *)buffer->GetMapped(frameIndex);
+}
+
 VkDeviceSize qray::GeomInfoManager::GetBufferSize() const
 {
     return buffer->GetSize();

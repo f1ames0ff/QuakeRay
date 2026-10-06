@@ -54,6 +54,9 @@ extern cvar_t rt_dtal_minarea;
 extern cvar_t rt_dtal_maxpolys;
 extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_world_batch_merge;
+extern cvar_t rt_brush_persistent;
+
+extern atomic_uint32_t rt_require_static_submit;
 extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
 extern cvar_t rt_dtal_debug;
@@ -1186,6 +1189,229 @@ static uint32_t RT_PackSurfaceLightStyles (const rt_uploadsurf_state_t *s, const
 	return packed;
 }
 
+typedef struct rt_movable_model_s
+{
+	struct rt_movable_model_s *next;
+	qmodel_t                  *model;
+	int                        ownerIndex;
+	int                        numBatches;
+	int                        maxBatches;
+	uint64_t                  *batchUniqueIDs;
+	vec3_t                     lastOrigin;
+	vec3_t                     lastAngles;
+} rt_movable_model_t;
+
+static rt_movable_model_t *rt_movable_models;
+static THREAD_LOCAL rt_movable_model_t *rt_movable_upload_entry;
+
+static qboolean RT_StaticMovableEligible (const qmodel_t *model, const entity_t *owner)
+{
+	if (model->type != mod_brush || model->firstmodelsurface == 0 || model->nummodelsurfaces == 0)
+		return false;
+
+	if (owner == NULL || ENTALPHA_DECODE (owner->alpha) < 1.0f)
+		return false;
+
+	for (int i = 0; i < model->nummodelsurfaces; i++)
+	{
+		const msurface_t *surf = &model->surfaces[model->firstmodelsurface + i];
+
+		if (surf->flags & (SURF_DRAWSKY | SURF_DRAWTURB | SURF_DRAWTILED | SURF_NOTEXTURE | SURF_DRAWTELE))
+			return false;
+
+		if (surf->texinfo->texture->anim_total != 0)
+			return false;
+	}
+
+	return true;
+}
+
+void RT_StaticMovableClear (void)
+{
+	extern qmodel_t mod_known[];
+	extern int      mod_numknown;
+
+	rt_movable_model_t *entry = rt_movable_models;
+
+	while (entry != NULL)
+	{
+		rt_movable_model_t *next = entry->next;
+
+		if (entry->model >= mod_known && entry->model < mod_known + mod_numknown)
+			entry->model->rt_movable = NULL;
+
+		if (entry->batchUniqueIDs != NULL)
+			Mem_Free (entry->batchUniqueIDs);
+
+		Mem_Free (entry);
+		entry = next;
+	}
+
+	rt_movable_models = NULL;
+	rt_movable_upload_entry = NULL;
+}
+
+void RT_StaticMovablePrepare (void)
+{
+	extern qmodel_t mod_known[];
+	extern int      mod_numknown;
+
+	RT_StaticMovableClear ();
+
+	if (!CVAR_TO_BOOL (rt_brush_persistent))
+		return;
+
+	for (int m = 0; m < mod_numknown; m++)
+	{
+		qmodel_t *model = &mod_known[m];
+		int       ownerIndex = -1;
+
+		if (model->type != mod_brush || model->firstmodelsurface == 0 || model->nummodelsurfaces == 0)
+			continue;
+
+		for (int e = 1; e < cl.num_entities; e++)
+		{
+			if (cl.entities[e].model == model)
+			{
+				if (ownerIndex >= 0)
+				{
+					ownerIndex = -2;
+					break;
+				}
+
+				ownerIndex = e;
+			}
+		}
+
+		if (ownerIndex < 0 || !RT_StaticMovableEligible (model, &cl.entities[ownerIndex]))
+			continue;
+
+		rt_movable_model_t *entry = Mem_Alloc (sizeof (*entry));
+
+		memset (entry, 0, sizeof (*entry));
+		entry->model = model;
+		entry->ownerIndex = ownerIndex;
+		VectorCopy (cl.entities[ownerIndex].origin, entry->lastOrigin);
+		VectorCopy (cl.entities[ownerIndex].angles, entry->lastAngles);
+		entry->next = rt_movable_models;
+		rt_movable_models = entry;
+		model->rt_movable = entry;
+	}
+}
+
+static void RT_StaticMovableRecordBatch (uint64_t uniqueID)
+{
+	rt_movable_model_t *entry = rt_movable_upload_entry;
+
+	if (entry == NULL)
+		return;
+
+	if (entry->numBatches == entry->maxBatches)
+	{
+		entry->maxBatches = entry->maxBatches > 0 ? entry->maxBatches * 2 : 8;
+		entry->batchUniqueIDs = Mem_Realloc (entry->batchUniqueIDs, sizeof (uint64_t) * entry->maxBatches);
+	}
+
+	entry->batchUniqueIDs[entry->numBatches++] = uniqueID;
+}
+
+void RT_StaticMovableUpload (cb_context_t *cbx)
+{
+	for (rt_movable_model_t *entry = rt_movable_models; entry != NULL; entry = entry->next)
+	{
+		entity_t *owner;
+
+		if (entry->ownerIndex <= 0 || entry->ownerIndex >= cl.num_entities)
+			continue;
+
+		owner = &cl.entities[entry->ownerIndex];
+
+		if (owner->model != entry->model)
+			continue;
+
+		rt_movable_upload_entry = entry;
+		entry->numBatches = 0;
+
+		R_ClearTextureChains (entry->model, chain_model_0);
+
+		for (int i = 0; i < entry->model->nummodelsurfaces; i++)
+			R_ChainSurface (&entry->model->surfaces[entry->model->firstmodelsurface + i], chain_model_0);
+
+		R_DrawTextureChains (cbx, entry->model, owner, chain_model_0, RT_GetEntityUniqueId (owner));
+
+		rt_movable_upload_entry = NULL;
+	}
+}
+
+static qboolean RT_StaticMovableCovers (const rt_uploadsurf_state_t *s)
+{
+	const rt_movable_model_t *entry;
+
+	if (rt_movable_upload_entry != NULL)
+		return false;
+
+	if (s->model == NULL || s->model == cl.worldmodel || s->model->type != mod_brush)
+		return false;
+
+	entry = s->model->rt_movable;
+
+	if (entry == NULL || entry->numBatches == 0)
+		return false;
+
+	if (s->is_warp || s->is_teleport || s->alpha < 1.0f)
+		return false;
+
+	if (s->surf->texinfo->texture->anim_total != 0)
+		return false;
+
+	if (entry->ownerIndex <= 0 || entry->ownerIndex >= cl.num_entities)
+		return false;
+
+	return &cl.entities[entry->ownerIndex] == s->ent;
+}
+
+void RT_StaticMovableUpdate (void)
+{
+	for (rt_movable_model_t *entry = rt_movable_models; entry != NULL; entry = entry->next)
+	{
+		entity_t    *owner;
+		QrTransform  transform;
+
+		if (entry->numBatches == 0 || entry->ownerIndex <= 0 || entry->ownerIndex >= cl.num_entities)
+			continue;
+
+		owner = &cl.entities[entry->ownerIndex];
+
+		if (owner->model != entry->model)
+		{
+			if (owner->model == NULL && owner->msgtime != cl.mtime[0])
+				continue;
+
+			Atomic_StoreUInt32 (&rt_require_static_submit, true);
+			continue;
+		}
+
+		if (VectorCompare (owner->origin, entry->lastOrigin) && VectorCompare (owner->angles, entry->lastAngles))
+			continue;
+
+		transform = RT_GetBrushModelMatrix (owner);
+
+		for (int i = 0; i < entry->numBatches; i++)
+		{
+			QrUpdateTransformInfo updateInfo = {
+				.movableStaticUniqueID = entry->batchUniqueIDs[i],
+				.transform = transform,
+			};
+
+			QrResult r = qrUpdateGeometryTransform (vulkan_globals.instance, &updateInfo);
+			QR_CHECK (r);
+		}
+
+		VectorCopy (owner->origin, entry->lastOrigin);
+		VectorCopy (owner->angles, entry->lastAngles);
+	}
+}
+
 static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, uint32_t *brushpasses)
 {
 	if (cbx->batch_verts_count == 0 || cbx->batch_indices_count == 0)
@@ -1240,6 +1466,12 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 
 	if (rasterize)
 	{
+		if (rt_movable_upload_entry != NULL)
+		{
+			RT_ClearBatch (cbx);
+			return;
+		}
+
 		// worldmodel must be uploaded only once
 		assert (!is_static_geom);
 
@@ -1279,6 +1511,12 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 	}
 	else
 	{
+		if (RT_StaticMovableCovers (s))
+		{
+			RT_ClearBatch (cbx);
+			return;
+		}
+
 		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, 0),
 			.flags = 
@@ -1289,7 +1527,8 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    (s->alpha_transmission ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 			    (is_glass && s->alpha_test ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
                 QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
-			.geomType = is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC,
+			.geomType = rt_movable_upload_entry != NULL ? QR_GEOMETRY_TYPE_STATIC_MOVABLE :
+			            (is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC),
 			.passThroughType = 
 			    is_mirror ? QR_GEOMETRY_PASS_THROUGH_TYPE_MIRROR :
 			    s->is_water ? QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT :
@@ -1345,6 +1584,9 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
 		QR_CHECK (r);
+
+		if (rt_movable_upload_entry != NULL)
+			RT_StaticMovableRecordBatch (info.uniqueID);
 	}
 
 	RT_ClearBatch (cbx);
