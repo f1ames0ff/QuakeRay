@@ -148,6 +148,9 @@ public:
         const RasterizedDataCollector::DrawInfo *smokeDraws = nullptr;
         uint32_t smokeDrawCount = 0;
 
+        const RasterizedDataCollector::DrawInfo *particleDraws = nullptr;
+        uint32_t particleDrawCount = 0;
+
         // -- the 2D UI pass (A5.1) --
         // The frame's SWAPCHAIN draw list and the collector's per-slot staging vertex and index
         // buffers: the UI is rewritten every frame, so the pass reads the staging - the device copy

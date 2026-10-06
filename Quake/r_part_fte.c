@@ -499,6 +499,11 @@ static cvar_t r_part_maxdecals = {"r_part_maxdecals", "8192"};
 static cvar_t r_lightflicker = {"r_lightflicker", "1"};
 extern cvar_t r_showtris;
 extern cvar_t r_particles;
+extern cvar_t r_particle_lighting;
+extern cvar_t r_particle_light_gain;
+extern cvar_t r_particle_light_direct;
+extern cvar_t r_particle_light_floor;
+extern cvar_t r_particle_light_debug;
 
 static float particletime;
 
@@ -6883,6 +6888,19 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 				.blendFuncSrc = 0,
 				.blendFuncDst = 0,
 			};
+
+			if (CVAR_TO_BOOL (r_particle_lighting))
+			{
+				QrVertex *lit = (QrVertex *)info.pVertices;
+				for (uint32_t v = 0; v < info.vertexCount; v++)
+					lit[v].cluster = (uint32_t)RT_ResolvePointCluster (lit[v].position);
+
+				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_PARTICLE;
+				info.smokeLook.data[0] = CVAR_TO_BOOL (r_particle_light_debug) ? 1.0f : 0.0f;
+				info.smokeLook.data[1] = r_particle_light_direct.value;
+				info.smokeLook.data[2] = r_particle_light_gain.value;
+				info.smokeLook.data[3] = r_particle_light_floor.value;
+			}
 
             switch (blend_mode)
 			{

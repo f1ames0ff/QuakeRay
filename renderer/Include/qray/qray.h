@@ -380,6 +380,7 @@ typedef enum QrRasterizedGeometryStateFlagBits
     QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE        = 8,
     QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST    = 16,
     QR_RASTERIZED_GEOMETRY_STATE_SMOKE              = 32,
+    QR_RASTERIZED_GEOMETRY_STATE_PARTICLE           = 64,
 } QrRasterizedGeometryStateFlagBits;
 typedef uint32_t QrRasterizedGeometryStateFlags;
 
