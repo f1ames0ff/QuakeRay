@@ -22,6 +22,7 @@ QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, wi
 - **ReSTIR direct light sampling, NEE (Next Event Estimation) and ASVGF denoising** for more stable lighting and a cleaner image.
 - **PBR materials**, with adjustable roughness, metalness, emission and normal maps.
 - **Ray-traced water**, with moving waves, reflections and refraction.
+- **Ray-traced glass materials**, with per-pane refraction, thickness and colour, and light that crosses a pane tinted and shifted.
 
 ### Graphics
 
