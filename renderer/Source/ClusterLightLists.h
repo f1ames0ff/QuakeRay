@@ -140,6 +140,9 @@ private:
     void RecordCandidate(uint32_t cluster, uint32_t sourceIndex);
     void UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex);
     void BuildOverflow();
+    void MarkTailDirty(uint32_t cluster);
+    bool BuildTailBlock(uint32_t cluster, float &outBeta);
+    void RebuildDirtyTails();
     bool BuildGrid(const WorldLights &worldLights, float reach);
     int  GridAxis(uint32_t axis, float value) const;
     int  GridCell(int x, int y, int z) const;
@@ -208,8 +211,29 @@ private:
     std::vector<uint32_t> tailAlias;
     std::vector<float>    tailBeta;
     std::vector<double>   overflowWeights;
+    struct TailBlock
+    {
+        uint32_t cluster;
+        uint32_t begin;
+        uint32_t count;
+        float    beta;
+    };
+    std::vector<uint8_t>   tailDirty;
+    std::vector<uint32_t>  tailDirtyClusters;
+    std::vector<uint64_t>  tailBlockUids;
+    std::vector<float>     tailBlockProb;
+    std::vector<float>     tailBlockMarginal;
+    std::vector<uint32_t>  tailBlockAlias;
+    std::vector<TailBlock> tailBlocks;
+    std::vector<uint32_t>  candidateCounts;
+    std::vector<uint64_t>  tailUidsNext;
+    std::vector<float>     tailProbNext;
+    std::vector<float>     tailMarginalNext;
+    std::vector<uint32_t>  tailAliasNext;
     uint32_t              tailEntryCount = 0;
     bool                  overflowEnabled = false;
+    bool                  tailSuppressed = false;
+    bool                  tailInternalValid = true;
     // Clusters whose top-up set has to be looked at again on this frame, and the lights that
     // changed on it. All of them are left over between frames only as capacity.
     std::vector<uint8_t>  clusterDirty;   // one per cluster

@@ -203,6 +203,20 @@ void ClusterLightLists::Reset()
     tailAlias.clear();
     tailBeta.clear();
     overflowWeights.clear();
+    tailDirty.clear();
+    tailDirtyClusters.clear();
+    tailBlockUids.clear();
+    tailBlockProb.clear();
+    tailBlockMarginal.clear();
+    tailBlockAlias.clear();
+    tailBlocks.clear();
+    candidateCounts.clear();
+    tailUidsNext.clear();
+    tailProbNext.clear();
+    tailMarginalNext.clear();
+    tailAliasNext.clear();
+    tailSuppressed = false;
+    tailInternalValid = true;
     tailEntryCount = 0;
 
     stats = QrClusterLightStats{};
@@ -394,7 +408,7 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
     {
         LightManager::ClusterLightTailRange tails;
 
-        if (overflowEnabled && tailEntryCount > 0)
+        if (overflowEnabled && tailEntryCount > 0 && !tailSuppressed)
         {
             tails.pOffsets = tailOffsets.data();
             tails.pUniqueIds = tailUids.data();
@@ -462,6 +476,8 @@ void ClusterLightLists::PrepareTables(const WorldLights &worldLightsRef)
 
     clusterDirty.assign(numClusters, 0);
     dirtyClusters.clear();
+    tailDirty.assign(numClusters, 0);
+    tailDirtyClusters.clear();
     movedIndices.clear();
     frameToSource.clear();
     compositionOrder = false;
@@ -531,6 +547,8 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
             candidateList.clear();
 
         candidateBits.assign(size_t(numClusters) * bitsWords, 0);
+        tailDirty.assign(numClusters, 0);
+        tailDirtyClusters.clear();
     }
 
     tailOffsets.assign(size_t(numClusters) + 1, 0);
@@ -982,6 +1000,7 @@ void ClusterLightLists::HoleSlot(uint32_t cluster, uint32_t slot)
     slotSource[base + slot] = kInvalidSource;
     slotTopUp[base + slot] = 0;
     slotBits[size_t(cluster) * bitsWords + (li >> 6)] &= ~(1ull << (li & 63));
+    MarkTailDirty(cluster);
 }
 
 /* Takes back every slot a light holds, and queues the clusters that held one: a cluster whose
@@ -1048,6 +1067,17 @@ void ClusterLightLists::MarkDirty(uint32_t cluster)
 
     clusterDirty[cluster] = 1;
     dirtyClusters.push_back(cluster);
+}
+
+void ClusterLightLists::MarkTailDirty(uint32_t cluster)
+{
+    if (!overflowEnabled || cluster >= tailDirty.size() || tailDirty[cluster] != 0)
+    {
+        return;
+    }
+
+    tailDirty[cluster] = 1;
+    tailDirtyClusters.push_back(cluster);
 }
 
 /* Takes the origins, the leaves and the reaches this frame registered over the sources of the
@@ -1158,7 +1188,8 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
     }
 
     if (overflowEnabled &&
-        (candidates.size() != numClusters || candidateBits.size() != size_t(numClusters) * bitsWords))
+        (candidates.size() != numClusters || candidateBits.size() != size_t(numClusters) * bitsWords ||
+         tailDirty.size() != numClusters))
     {
         return false;
     }
@@ -1212,6 +1243,12 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
 
     std::fill(clusterDirty.begin(), clusterDirty.end(), 0);
     dirtyClusters.clear();
+
+    if (overflowEnabled)
+    {
+        std::fill(tailDirty.begin(), tailDirty.end(), 0);
+        tailDirtyClusters.clear();
+    }
 
     /* The lights the frame let go of give back every slot they hold, and the clusters that held
        one queue themselves as they do. The place each of them held is left holding no light, and
@@ -1383,7 +1420,7 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
 
     if (overflowEnabled)
     {
-        BuildOverflow();
+        RebuildDirtyTails();
     }
 
     stats.tailMs = float(NowMs() - tTail);
@@ -1477,6 +1514,7 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
                 pTopUp[s] = fromTopUp ? 1 : 0;
                 pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
                 slotHoles[cluster]--;
+                MarkTailDirty(cluster);
                 return true;
             }
         }
@@ -1490,6 +1528,7 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
         pTopUp[fill] = fromTopUp ? 1 : 0;
         pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
         slotFill[cluster] = fill + 1;
+        MarkTailDirty(cluster);
         return true;
     }
 
@@ -1527,6 +1566,7 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     pSource[farthest] = sourceIndex;
     pTopUp[farthest] = fromTopUp ? 1 : 0;
 
+    MarkTailDirty(cluster);
     return true;
 }
 
@@ -1544,6 +1584,7 @@ void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex)
 
     word |= mask;
     candidates[cluster].push_back({ sourceIndex });
+    MarkTailDirty(cluster);
 }
 
 void ClusterLightLists::UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex)
@@ -1572,20 +1613,123 @@ void ClusterLightLists::UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex
             break;
         }
     }
+
+    MarkTailDirty(cluster);
 }
 
-void ClusterLightLists::BuildOverflow()
+bool ClusterLightLists::BuildTailBlock(uint32_t cluster, float &outBeta)
+{
+    outBeta = 0.0f;
+
+    const std::vector<Candidate> &candidateList = candidates[cluster];
+
+    if (candidateList.empty())
+    {
+        return true;
+    }
+
+    struct TailCandidate
+    {
+        double   mass;
+        uint32_t source;
+    };
+
+    std::vector<TailCandidate> tailCandidates;
+
+    double fastMass = 0.0;
+    double tailMass = 0.0;
+
+    for (const Candidate &candidate : candidateList)
+    {
+        const Source  &source = sources[candidate.source];
+        const uint64_t mask = 1ull << (candidate.source & 63);
+
+        double distance = Dist2ToBounds(source.origin, cluster);
+        double scale = double(source.radius) * double(source.radius);
+
+        if (!(scale > 1.0))
+            scale = 1.0;
+
+        if (!(distance > scale))
+            distance = scale;
+
+        const double power = source.power > 0.0f ? double(source.power) : 0.0;
+        const double mass = power / distance;
+
+        if (slotBits[size_t(cluster) * bitsWords + (candidate.source >> 6)] & mask)
+            fastMass += mass;
+        else
+        {
+            tailCandidates.push_back({mass, candidate.source});
+            tailMass += mass;
+        }
+    }
+
+    if (tailCandidates.empty())
+    {
+        return true;
+    }
+
+    std::sort(tailCandidates.begin(), tailCandidates.end(), [this](const TailCandidate &a, const TailCandidate &b)
+    {
+        if (a.mass != b.mass)
+            return a.mass > b.mass;
+
+        return sources[a.source].uid < sources[b.source].uid;
+    });
+
+    if (slotFill[cluster] == 0)
+        outBeta = 1.0f;
+    else if (fastMass > 0.0 || tailMass > 0.0)
+    {
+        const double ratio = tailMass / (fastMass + tailMass);
+
+        outBeta = (float)(ratio < 0.1 ? 0.1 : (ratio > 0.9 ? 0.9 : ratio));
+    }
+    else
+        outBeta = 0.5f;
+
+    const double floorWeight = 0.001 * (fastMass + tailMass + 1.0);
+
+    overflowWeights.resize(tailCandidates.size());
+
+    for (size_t i = 0; i < tailCandidates.size(); i++)
+        overflowWeights[i] = tailCandidates[i].mass + floorWeight;
+
+    const size_t base = tailBlockUids.size();
+
+    tailBlockUids.resize(base + tailCandidates.size());
+    tailBlockProb.resize(base + tailCandidates.size());
+    tailBlockMarginal.resize(base + tailCandidates.size());
+    tailBlockAlias.resize(base + tailCandidates.size());
+
+    if (!RT_Alias_Build(overflowWeights.data(), (int)tailCandidates.size(), tailBlockProb.data() + base,
+                        tailBlockAlias.data() + base))
+    {
+        tailBlockUids.resize(base);
+        tailBlockProb.resize(base);
+        tailBlockMarginal.resize(base);
+        tailBlockAlias.resize(base);
+        outBeta = 0.0f;
+        return false;
+    }
+
+    RT_Alias_Marginals(tailBlockProb.data() + base, tailBlockAlias.data() + base, (int)tailCandidates.size(),
+                       tailBlockMarginal.data() + base);
+
+    for (size_t i = 0; i < tailCandidates.size(); i++)
+        tailBlockUids[base + i] = sources[tailCandidates[i].source].uid;
+
+    return true;
+}
+
+void ClusterLightLists::RebuildDirtyTails()
 {
     if (!overflowEnabled || numClusters == 0)
+    {
         return;
+    }
 
-    tailOffsets.assign(size_t(numClusters) + 1, 0);
-    tailUids.clear();
-    tailProb.clear();
-    tailMarginal.clear();
-    tailAlias.clear();
-    tailBeta.assign(numClusters, 0.0f);
-    tailEntryCount = 0;
     stats.tailEntries = 0;
     stats.clustersWithTail = 0;
     stats.tailBudgetExceeded = 0;
@@ -1593,151 +1737,179 @@ void ClusterLightLists::BuildOverflow()
     stats.candidateMedian = 0;
     stats.candidateP95 = 0;
 
-    std::vector<uint32_t> candidateCounts;
-    candidateCounts.reserve(numClusters);
-
-    uint32_t entry = 0;
-    bool     overflowFailed = false;
-
-    for (uint32_t c = 0; c < numClusters; c++)
+    if (!tailInternalValid || tailOffsets.size() != size_t(numClusters) + 1 ||
+        tailBeta.size() != numClusters || tailDirty.size() != numClusters)
     {
-        tailOffsets[c] = entry;
+        tailOffsets.assign(size_t(numClusters) + 1, 0);
+        tailBeta.assign(numClusters, 0.0f);
+        tailDirty.assign(numClusters, 1);
+        tailDirtyClusters.clear();
 
-        const std::vector<Candidate> &candidateList = candidates[c];
-
-        if (candidateList.empty())
-            continue;
-
-        candidateCounts.push_back((uint32_t)candidateList.size());
-
-        struct TailCandidate
+        for (uint32_t c = 0; c < numClusters; c++)
         {
-            double   mass;
-            uint32_t source;
-        };
-
-        std::vector<TailCandidate> tailCandidates;
-
-        double fastMass = 0.0;
-        double tailMass = 0.0;
-
-        for (const Candidate &candidate : candidateList)
-        {
-            const Source  &source = sources[candidate.source];
-            const uint64_t mask = 1ull << (candidate.source & 63);
-
-            double distance = Dist2ToBounds(source.origin, c);
-            double scale = double(source.radius) * double(source.radius);
-
-            if (!(scale > 1.0))
-                scale = 1.0;
-
-            if (!(distance > scale))
-                distance = scale;
-
-            const double power = source.power > 0.0f ? double(source.power) : 0.0;
-            const double mass = power / distance;
-
-            if (slotBits[size_t(c) * bitsWords + (candidate.source >> 6)] & mask)
-                fastMass += mass;
-            else
-            {
-                tailCandidates.push_back({mass, candidate.source});
-                tailMass += mass;
-            }
+            tailDirtyClusters.push_back(c);
         }
 
-        if (tailCandidates.empty())
-            continue;
-
-        std::sort(tailCandidates.begin(), tailCandidates.end(), [this](const TailCandidate &a, const TailCandidate &b)
-        {
-            if (a.mass != b.mass)
-                return a.mass > b.mass;
-
-            return sources[a.source].uid < sources[b.source].uid;
-        });
-
-        if (entry + tailCandidates.size() > uint32_t(Q2_LIGHT_LIST_TAIL_CAPACITY))
-        {
-            stats.tailBudgetExceeded++;
-            overflowFailed = true;
-            break;
-        }
-
-        float beta;
-
-        if (slotFill[c] == 0)
-            beta = 1.0f;
-        else if (fastMass > 0.0 || tailMass > 0.0)
-        {
-            const double ratio = tailMass / (fastMass + tailMass);
-
-            beta = (float)(ratio < 0.1 ? 0.1 : (ratio > 0.9 ? 0.9 : ratio));
-        }
-        else
-            beta = 0.5f;
-
-        tailBeta[c] = beta;
-
-        const double floorWeight = 0.001 * (fastMass + tailMass + 1.0);
-
-        overflowWeights.resize(tailCandidates.size());
-
-        for (size_t i = 0; i < tailCandidates.size(); i++)
-            overflowWeights[i] = tailCandidates[i].mass + floorWeight;
-
-        const size_t base = tailUids.size();
-
-        tailUids.resize(base + tailCandidates.size());
-        tailProb.resize(base + tailCandidates.size());
-        tailMarginal.resize(base + tailCandidates.size());
-        tailAlias.resize(base + tailCandidates.size());
-
-        if (!RT_Alias_Build(overflowWeights.data(), (int)tailCandidates.size(), tailProb.data() + base,
-                            tailAlias.data() + base))
-        {
-            tailUids.resize(base);
-            tailProb.resize(base);
-            tailMarginal.resize(base);
-            tailAlias.resize(base);
-            overflowFailed = true;
-            break;
-        }
-
-        RT_Alias_Marginals(tailProb.data() + base, tailAlias.data() + base, (int)tailCandidates.size(),
-                           tailMarginal.data() + base);
-
-        for (size_t i = 0; i < tailCandidates.size(); i++)
-            tailUids[base + i] = sources[tailCandidates[i].source].uid;
-
-        entry += (uint32_t)tailCandidates.size();
-        stats.clustersWithTail++;
+        tailInternalValid = true;
     }
 
-    if (overflowFailed)
+    if (tailDirtyClusters.empty())
     {
-        /* A budget or alias failure would leave some accepted clusters without their tail.
-           Publish one complete fast-only frame instead of an incomplete distribution; the
-           failure stays visible in the diagnostics. */
+        return;
+    }
+
+    std::sort(tailDirtyClusters.begin(), tailDirtyClusters.end());
+
+    tailBlockUids.clear();
+    tailBlockProb.clear();
+    tailBlockMarginal.clear();
+    tailBlockAlias.clear();
+    tailBlocks.clear();
+    tailBlocks.reserve(tailDirtyClusters.size());
+
+    bool blockFailed = false;
+
+    for (uint32_t cluster : tailDirtyClusters)
+    {
+        const size_t base = tailBlockUids.size();
+        float        beta = 0.0f;
+
+        if (!BuildTailBlock(cluster, beta))
+        {
+            blockFailed = true;
+            break;
+        }
+
+        tailBlocks.push_back({cluster, (uint32_t)base, (uint32_t)(tailBlockUids.size() - base), beta});
+    }
+
+    if (blockFailed)
+    {
         tailUids.clear();
         tailProb.clear();
         tailMarginal.clear();
         tailAlias.clear();
-        entry = 0;
-
-        for (uint32_t c = 0; c <= numClusters && c < tailOffsets.size(); c++)
-            tailOffsets[c] = 0;
-
-        for (size_t c = 0; c < tailBeta.size(); c++)
-            tailBeta[c] = 0.0f;
-
-        stats.clustersWithTail = 0;
+        tailUidsNext.clear();
+        tailProbNext.clear();
+        tailMarginalNext.clear();
+        tailAliasNext.clear();
+        tailOffsets.assign(size_t(numClusters) + 1, 0);
+        tailBeta.assign(numClusters, 0.0f);
+        tailEntryCount = 0;
+        tailSuppressed = true;
+        tailInternalValid = false;
+        return;
     }
 
-    tailOffsets[numClusters] = entry;
-    tailEntryCount = entry;
-    stats.tailEntries = entry;
+    size_t total = 0;
+
+    for (const TailBlock &block : tailBlocks)
+    {
+        total += block.count;
+    }
+
+    for (uint32_t c = 0; c < numClusters; c++)
+    {
+        if (tailDirty[c] == 0)
+        {
+            total += size_t(tailOffsets[c + 1] - tailOffsets[c]);
+        }
+    }
+
+    tailUidsNext.resize(total);
+    tailProbNext.resize(total);
+    tailMarginalNext.resize(total);
+    tailAliasNext.resize(total);
+
+    size_t   blockIndex = 0;
+    size_t   write = 0;
+    uint32_t clustersWithTail = 0;
+
+    for (uint32_t c = 0; c < numClusters; c++)
+    {
+        const uint32_t oldBegin = tailOffsets[c];
+        const uint32_t oldEnd = tailOffsets[c + 1];
+
+        tailOffsets[c] = (uint32_t)write;
+
+        if (tailDirty[c] != 0)
+        {
+            const TailBlock &block = tailBlocks[blockIndex++];
+
+            for (uint32_t i = 0; i < block.count; i++)
+            {
+                const size_t s = size_t(block.begin) + i;
+
+                tailUidsNext[write] = tailBlockUids[s];
+                tailProbNext[write] = tailBlockProb[s];
+                tailMarginalNext[write] = tailBlockMarginal[s];
+                tailAliasNext[write] = tailBlockAlias[s];
+                write++;
+            }
+
+            tailBeta[c] = block.beta;
+
+            if (block.count > 0)
+            {
+                clustersWithTail++;
+            }
+        }
+        else
+        {
+            for (uint32_t i = oldBegin; i < oldEnd; i++)
+            {
+                tailUidsNext[write] = tailUids[i];
+                tailProbNext[write] = tailProb[i];
+                tailMarginalNext[write] = tailMarginal[i];
+                tailAliasNext[write] = tailAlias[i];
+                write++;
+            }
+
+            if (oldEnd > oldBegin)
+            {
+                clustersWithTail++;
+            }
+        }
+    }
+
+    tailOffsets[numClusters] = (uint32_t)write;
+
+    tailUids.swap(tailUidsNext);
+    tailProb.swap(tailProbNext);
+    tailMarginal.swap(tailMarginalNext);
+    tailAlias.swap(tailAliasNext);
+
+    for (uint32_t cluster : tailDirtyClusters)
+    {
+        tailDirty[cluster] = 0;
+    }
+
+    tailDirtyClusters.clear();
+    tailInternalValid = true;
+
+    if (total > size_t(Q2_LIGHT_LIST_TAIL_CAPACITY))
+    {
+        stats.tailBudgetExceeded = 1;
+        tailEntryCount = 0;
+        tailSuppressed = true;
+    }
+    else
+    {
+        tailEntryCount = uint32_t(total);
+        stats.tailEntries = uint32_t(total);
+        stats.clustersWithTail = clustersWithTail;
+        tailSuppressed = false;
+    }
+
+    candidateCounts.clear();
+
+    for (uint32_t c = 0; c < numClusters; c++)
+    {
+        if (!candidates[c].empty())
+        {
+            candidateCounts.push_back((uint32_t)candidates[c].size());
+        }
+    }
 
     if (!candidateCounts.empty())
     {
@@ -1747,6 +1919,25 @@ void ClusterLightLists::BuildOverflow()
         stats.candidateMedian = candidateCounts[candidateCounts.size() / 2];
         stats.candidateP95 = candidateCounts[(size_t)((double)(candidateCounts.size() - 1) * 0.95)];
     }
+}
+
+void ClusterLightLists::BuildOverflow()
+{
+    if (!overflowEnabled || numClusters == 0)
+    {
+        return;
+    }
+
+    tailDirty.assign(numClusters, 1);
+    tailDirtyClusters.clear();
+
+    for (uint32_t c = 0; c < numClusters; c++)
+    {
+        tailDirtyClusters.push_back(c);
+    }
+
+    tailInternalValid = true;
+    RebuildDirtyTails();
 }
 
 /* Buckets the origins of the resolved lights into a uniform grid over the map, freed of the
@@ -2176,7 +2367,7 @@ void ClusterLightLists::GetClusterTail(uint32_t cluster, uint64_t *pUniqueIds, f
         *pBeta = 0.0f;
     }
 
-    if (cluster >= numClusters || size_t(cluster) + 1 >= tailOffsets.size())
+    if (tailSuppressed || cluster >= numClusters || size_t(cluster) + 1 >= tailOffsets.size())
     {
         return;
     }
