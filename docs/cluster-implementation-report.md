@@ -150,12 +150,15 @@ styles frozen) measures the tail-on/off wall gap that motivated the branch shapi
 shaping and 2.1% after it with light statistics on, 4.7% -> 0.4% with them off, with cluster 336
 `beta` falling from 0.356 to 0.100 and `rt_cluster_assert` clean. The in-game `rt_bench` comparison
 on the Arcane Dimensions `ad_tfuma` route (scripted demo, 4K, vsync off, FSR 3.1 ultra performance,
-statistics off) measures the frame cost of the policy as an ABBA set of four runs: 15.6/15.7 fps
-with the fast list only against 15.7/15.0 fps with the overflow tail, a GPU-bound scene in both
-arms; the active cluster work costs about 1.4 ms (`clust lists`) plus 0.44 ms (`clust tail`) per
-frame, and the route's full recompositions (about 95) stay inside that. `rt_cluster_assert 1` over
-the whole route reports no mismatches. The `rt_cluster_sampling` default stays off until that
-default is decided.
+statistics off) measures the frame cost of the policy. That route is CPU bound: the GPU frame is
+about 11 ms while the focused CPU frame is about 36 ms, and a run whose window loses focus sleeps
+16 ms in every frame, which is exactly the difference between the first run pair that looked like a
+large regression. With the window focused and the wall-to-CPU gap under 2 ms in every counted run,
+the route runs at 27.5 fps with the fast list only and 26.5/26.4 fps with the overflow tail; the
+difference is the measured cluster work, about 1.0 ms of `clust lists` plus 0.37 ms of `clust tail`
+per frame across the route's about 140 full recompositions. `rt_cluster_assert 1` over the whole
+route reports no mismatches. The `rt_cluster_sampling` default stays off until that default is
+decided.
 
 ## 4. Memory and capacity
 
@@ -183,7 +186,7 @@ default is decided.
    full accepted domain rather than the retention survivors.
 4. **Runtime oversubscription evidence covers the pinned scenes.** The lamp gate captures nine
    oversubscribed clusters; the `ad_tfuma` route exercises the policy over a moving player with
-   about 95 full recompositions and reports no `rt_cluster_assert` mismatches. The evidence is
+   about 140 full recompositions and reports no `rt_cluster_assert` mismatches. The evidence is
    still scene-limited (two maps), not a general guarantee.
 5. **Publication cost.** Fast and tail index publication resolves every referenced UID each time the
    lists change; the spec accepts this O(published entries) refresh until measured otherwise.

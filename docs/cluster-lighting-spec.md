@@ -232,9 +232,9 @@ copies scheduled, full offsets/beta copy span, all-or-nothing tail publication, 
 before the capacity check, serialized renderer insertion, 24-bit half-open discrete draws, top-up
 candidates recorded before retention); the details are in `cluster-implementation-report.md` §2.6.
 The GPU runtime acceptance now has the pinned `e4m1` lamp gate (oversubscription capture and the
-tail-on/off wall gap above) and the `ad_tfuma` `rt_bench` route (fps parity in an ABBA comparison,
-about 1.8 ms of cluster work with the tail on, no `rt_cluster_assert` mismatches); the default
-switch stays off until the remaining items above are settled.
+tail-on/off wall gap above) and the `ad_tfuma` `rt_bench` route (about 1.4 ms of extra cluster work
+per frame, about 4% of the CPU-bound frame at the measured spot, no `rt_cluster_assert`
+mismatches); the default switch stays off until the remaining items above are settled.
 
 ## 12. File map
 
