@@ -77,7 +77,7 @@ static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 
 // other 98 framebuffer images are neither referenced by the raygen's interface nor declared by its
 // module, so set 1 stays a partial layout exactly like the world pass's framebuffer layout - an
 // unwritten binding needs no descriptor (a4_recon §2.3).
-constexpr uint32_t FRAMEBUFFER_UAV_COUNT = 26;
+constexpr uint32_t FRAMEBUFFER_UAV_COUNT = 28;
 constexpr FramebufferImageIndex FRAMEBUFFER_UAV_IMAGES[FRAMEBUFFER_UAV_COUNT] =
 {
     FB_IMAGE_INDEX_ALBEDO,                       //  0  framebufAlbedo
@@ -106,6 +106,8 @@ constexpr FramebufferImageIndex FRAMEBUFFER_UAV_IMAGES[FRAMEBUFFER_UAV_COUNT] =
     FB_IMAGE_INDEX_Q2_FOG_ACCUM,                 // 90  framebufQ2FogAccum
     FB_IMAGE_INDEX_Q2_RNG_SEED,                  // 121 framebufQ2RngSeed
     FB_IMAGE_INDEX_Q2_CLUSTER,                   // 123 framebufQ2Cluster
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION,
 };
 
 // Set 3's bindings: vertex data, indices and the geometry-instance buffer `getTriangle` reads.
@@ -132,12 +134,15 @@ constexpr uint32_t MAX_ALBEDO_LAYERS_SPEC_ID = 0;
 constexpr uint32_t PRIMARY_RAYS_MAX_ALBEDO_LAYERS = 2;
 
 // The engine's pipeline-wide RT limits (RayTracingPipeline.cpp:203 and the measured blob structs):
-// recursion depth 2; the payload is ShPayload = {float2 baryCoords; uint instIdAndIndex; uint
-// geomAndPrimIndex} = 16 B and the hit attribute HitAttributes = {float2 inBaryCoords} = 8 B
-// (Structs.hlsli:47-57). NVRHI's two size fields are D3D12-only at this pin, so on Vulkan they are
-// documentation; they are kept exact for a future backend switch, as in RhiDebugTracePass.
+// recursion depth 2; the payloads are ShPayload = {float2 baryCoords; uint instIdAndIndex; uint
+// geomAndPrimIndex} = 16 B and ShPayloadShadow = {float3 transmittance; uint isShadowed; float3
+// glassNormal; float glassDistance; float4 glassParams; float3 glassDirection; float glassPad} =
+// 64 B, and the hit attribute
+// HitAttributes = {float2 inBaryCoords} = 8 B (Structs.hlsli:47-62); the pipeline union is 64 B.
+// NVRHI's two size fields are D3D12-only at this pin, so on Vulkan they are documentation; they
+// are kept exact for a future backend switch, as in RhiDebugTracePass.
 constexpr uint32_t MAX_RECURSION_DEPTH = 2;
-constexpr uint32_t MAX_PAYLOAD_SIZE = 2 * sizeof(float) + 2 * sizeof(uint32_t);
+constexpr uint32_t MAX_PAYLOAD_SIZE = 16 * sizeof(float);
 constexpr uint32_t MAX_ATTRIBUTE_SIZE = 2 * sizeof(float);
 
 // The engine's cubemap capacity: CubemapManager.cpp:30 MAX_CUBEMAP_COUNT. The cubemap table of set

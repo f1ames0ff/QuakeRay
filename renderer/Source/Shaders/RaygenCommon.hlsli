@@ -188,12 +188,16 @@ void resetPayload(inout ShPayload g_payload)
     g_payload.baryCoords = (float2)0.0;
     g_payload.instIdAndIndex = UINT32_MAX;
     g_payload.geomAndPrimIndex = UINT32_MAX;
+    g_payload.glassTint = (float3)1.0;
+    g_payload.glassDistance = MAX_RAY_LENGTH * 2.0;
+    g_payload.glassFilter = (float4)0.0;
 }
 
 ShPayload tracePrimaryRay(float3 origin, float3 direction)
 {
     ShPayload g_payload;
     resetPayload(g_payload);
+    g_payload.glassFilter.y = globalUniform.glassBlur != 0u ? 1.0 : 0.0;
 
     uint cullMask = getPrimaryVisibilityCullMask();
 
@@ -323,6 +327,30 @@ float3 getSkyFiltered(float3 direction, float lod)
     return globalUniform.skyColorDefault.xyz;
 }
 
+/* The visible sky: the cube the frame drew, sun, moon and clouds included.
+   getSkyFiltered samples the disc-less environment cube for the ambient, so
+   reflections and refractions ask this one instead. */
+float3 getSkyVisibleFiltered(float3 direction, float lod)
+{
+    uint skyType = globalUniform.skyType;
+
+#ifdef DESC_SET_RENDER_CUBEMAP
+    if (skyType == SKY_TYPE_RASTERIZED_GEOMETRY || skyType == SKY_TYPE_PROCEDURAL)
+    {
+        return renderCubemap.SampleLevel(renderCubemap_Sampler, direction, lod).rgb;
+    }
+#endif
+
+    if (skyType == SKY_TYPE_CUBEMAP)
+    {
+        direction = mul((float3x3)globalUniform.skyCubemapRotationTransform, direction);
+
+        return globalCubemaps[NonUniformResourceIndex(globalUniform.skyCubemapIndex)].SampleLevel(globalCubemaps_Sampler[NonUniformResourceIndex(globalUniform.skyCubemapIndex)], direction, lod).rgb;
+    }
+
+    return globalUniform.skyColorDefault.xyz;
+}
+
 float3 getSkyFilteredMultiplied(float3 direction, float lod)
 {
     float3 col = getSkyFiltered(direction, lod);
@@ -353,10 +381,12 @@ float evalSkyNeePdf(const float3 n, const float3 direction)
 #define SHADOW_RAY_EPS       0.01
 #define RAY_ORIGIN_LEAK_BIAS 0.01
 
-bool traceShadowRay(uint surfInstCustomIndex, float3 start, float3 end, bool ignoreFirstPersonViewer  )
+/* One segment per pane the light may cross, plus the segment that reaches it. */
+#define GLASS_SHADOW_MAX_SEGMENTS 3
+
+float3 traceShadowRay(uint surfInstCustomIndex, float3 start, float3 end, bool ignoreFirstPersonViewer  )
 {
     ShPayloadShadow g_payloadShadow;
-    g_payloadShadow.isShadowed = 1;
 
     uint cullMask = getShadowCullMask(surfInstCustomIndex);
 
@@ -365,60 +395,137 @@ bool traceShadowRay(uint surfInstCustomIndex, float3 start, float3 end, bool ign
         cullMask &= ~INSTANCE_MASK_FIRST_PERSON_VIEWER;
     }
 
-    float3 l = end - start;
-    float maxDistance = length(l);
-    l /= maxDistance;
+    float3 origin = start;
+    float3 dirOverride = (float3)0.0;
+    float3 transmittance = (float3)1.0;
 
-    RayDesc rayDesc;
-    rayDesc.Origin = start;
-    rayDesc.TMin = 0.001;
-    rayDesc.Direction = l;
-    rayDesc.TMax = maxDistance - SHADOW_RAY_EPS;
+    for (uint segment = 0; segment < GLASS_SHADOW_MAX_SEGMENTS; segment++)
+    {
+        float3 l = end - origin;
+        float maxDistance = length(l);
 
-    TraceRay(
-        topLevelAS,
-        RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | getAdditionalRayFlags(),
-        cullMask,
-        0, 0,
-        SBT_INDEX_MISS_SHADOW,
-        rayDesc,
-        g_payloadShadow);
+        /* The light sits where the segment starts: nothing is left to trace. */
+        if (maxDistance <= SHADOW_RAY_EPS)
+        {
+            return transmittance;
+        }
 
-    return g_payloadShadow.isShadowed == 1;
+        if (dot(dirOverride, dirOverride) > 0.0)
+        {
+        	l = dirOverride;
+        }
+        else
+        {
+        	l /= maxDistance;
+        }
+
+        g_payloadShadow.transmittance = (float3)1.0;
+        g_payloadShadow.isShadowed = 1;
+        g_payloadShadow.glassNormal = (float3)0.0;
+        g_payloadShadow.glassDistance = 0.0;
+        g_payloadShadow.glassParams = (float4)0.0;
+        g_payloadShadow.glassDirection = (float3)0.0;
+        g_payloadShadow.glassPad = 0.0;
+
+        RayDesc rayDesc;
+        rayDesc.Origin = origin;
+        rayDesc.TMin = 0.001;
+        rayDesc.Direction = l;
+        rayDesc.TMax = maxDistance - SHADOW_RAY_EPS;
+
+        TraceRay(
+            topLevelAS,
+            RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | getAdditionalRayFlags(),
+            cullMask,
+            0, 0,
+            SBT_INDEX_MISS_SHADOW,
+            rayDesc,
+            g_payloadShadow);
+
+        if (g_payloadShadow.isShadowed == 0)
+        {
+            return transmittance * g_payloadShadow.transmittance;
+        }
+
+        transmittance *= g_payloadShadow.transmittance;
+
+        if ((g_payloadShadow.isShadowed & 2) == 0)
+        {
+            return (float3)0.0;
+        }
+
+        /* A pane with depth crossed the light: it is bent by the index the
+           pane carries, leaves the far face the thickness implies and goes on
+           to the source from there. */
+        const float3 hitPoint = origin + l * g_payloadShadow.glassDistance;
+
+        float3 paneNormal = g_payloadShadow.glassNormal;
+
+        if (dot(paneNormal, l) > 0.0)
+        {
+            paneNormal = -paneNormal;
+        }
+
+        const float ior = g_payloadShadow.glassParams.x > 0.0
+            ? clamp(g_payloadShadow.glassParams.x, 1.0, 5.0)
+            : getIndexOfRefraction(MEDIA_TYPE_GLASS);
+
+        const float3 insideDir = refract(l, paneNormal, 1.0 / ior);
+
+        if (dot(insideDir, insideDir) == 0.0)
+        {
+            return (float3)0.0;
+        }
+
+        const float cosInside = max(-dot(insideDir, paneNormal), 0.1);
+
+        origin = hitPoint + insideDir * (max(g_payloadShadow.glassParams.y, 0.0) / cosInside);
+        dirOverride = g_payloadShadow.glassDirection;
+
+        /* A pane closer to the light than its own thickness: the exit point
+           would sit past the light and the next segment would look back at it. */
+        if (dot(end - origin, l) <= 0.0)
+        {
+            return transmittance;
+        }
+    }
+
+    /* The pane budget is spent: the tint of every crossing stands and the rest
+       of the path is taken as clear, rather than turning the light off. */
+    return transmittance;
 }
 
-float traceVisibility(const Surface surf, const float3 lightPosition, uint lightIndex)
+float3 traceVisibility(const Surface surf, const float3 lightPosition, uint lightIndex)
 {
     const float3 start = surf.position + surf.toViewerDir * RAY_ORIGIN_LEAK_BIAS;
     const float3 end = lightPosition;
 
     const bool ignoreFirstPersonViewer = (globalUniform.lightIndexIgnoreFPVShadows == lightIndex);
 
-    const bool isShadowed = traceShadowRay(surf.instCustomIndex, start, end, ignoreFirstPersonViewer);
-    return float(!isShadowed);
+    return traceShadowRay(surf.instCustomIndex, start, end, ignoreFirstPersonViewer);
 }
 
-float traceLightVisibility(const Surface surf, const LightSample light, uint lightIndex, out bool traced)
+float3 traceLightVisibility(const Surface surf, const LightSample light, uint lightIndex, out bool traced)
 {
     const float3 l = safeNormalize(light.position - surf.position);
     traced = dot(surf.normal, l) > 0.0 && dot(surf.normalGeom, l) > 0.0;
 
     if (!traced)
     {
-        return 0.0;
+        return (float3)0.0;
     }
 
     return traceVisibility(surf, light.position, lightIndex);
 }
 
-float traceSunVisibility(const Surface surf, const LightSample sunLight, out bool traced)
+float3 traceSunVisibility(const Surface surf, const LightSample sunLight, out bool traced)
 {
     const float3 l = safeNormalize(sunLight.position - surf.position);
     traced = dot(surf.normal, l) > 0.0 && dot(surf.normalGeom, l) > 0.0;
 
     if (!traced)
     {
-        return 0.0;
+        return (float3)0.0;
     }
 
 
@@ -427,12 +534,12 @@ float traceSunVisibility(const Surface surf, const LightSample sunLight, out boo
         (q2ClusterSkyVis[sunCluster >> 5] & (1u << (sunCluster & 31u))) == 0u)
     {
         traced = false;
-        return 0.0;
+        return (float3)0.0;
     }
 
-    float visibility = traceVisibility(surf, sunLight.position, LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET);
+    float3 visibility = traceVisibility(surf, sunLight.position, LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET);
 #ifdef DESC_SET_CLOUD_SHADOW
-    if (visibility > 0.0)
+    if (getLuminance(visibility) > 0.0)
     {
         visibility *= getCloudSunTransmittance(surf.position, l, false);
     }
@@ -440,13 +547,12 @@ float traceSunVisibility(const Surface surf, const LightSample sunLight, out boo
     return visibility;
 }
 
-float traceSkyVisibility(const Surface surf, const float3 skyDirection)
+float3 traceSkyVisibility(const Surface surf, const float3 skyDirection)
 {
     const float3 start = surf.position + surf.normalGeom * 0.01;
     const float3 end   = start + skyDirection * globalUniform.rayLength;
 
-    const bool isShadowed = traceShadowRay(surf.instCustomIndex, start, end, false);
-    return float(!isShadowed);
+    return traceShadowRay(surf.instCustomIndex, start, end, false);
 }
 #endif
 

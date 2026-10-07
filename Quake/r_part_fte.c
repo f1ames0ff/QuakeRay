@@ -6839,10 +6839,7 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 	rt_particles_fte = (int)(cl_numstrisvert / 4);
 	rt_particles_vertices = (int)cl_numstrisvert + rt_particles_classic * 3;
 
-	if (!cl_numstris)
-		return;
-
-	if (cl_maxstrisvert[current_buffer_index] == 0 && cl_maxstrisidx[current_buffer_index] == 0)
+	if (!cl_numstris || !cl_maxstrisvert[current_buffer_index] || !cl_maxstrisidx[current_buffer_index])
 		return;
 
 	if (!cl_numstrisvert && !cl_numstrisidx)
@@ -6908,7 +6905,8 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 				.transform = RT_TRANSFORM_IDENTITY,
 				.color = RT_COLOR_WHITE,
 				.material = tex ? tex->rtmaterial : QR_NO_MATERIAL,
-				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
+				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+				                 QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE,
 				.blendFuncSrc = 0,
 				.blendFuncDst = 0,
 			};

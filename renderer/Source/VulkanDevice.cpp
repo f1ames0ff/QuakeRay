@@ -462,6 +462,18 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         }
 
         gu->noBackfaceReflForNoMediaChange = !!rr.disableBackfaceReflectionsForNoMediaChange;
+        // The shader glass-blur mode was removed from the interface: the raygen always runs the
+        // normal-map path, and the CmGlassBlur pass only serves the optional denoiser.
+        gu->glassBlur                      = false;
+        gu->glassDenoise                   = !!rr.glassDenoise;
+
+        // The master switch is the cvar alone. Every per-draw decision is the draw's own proxy
+        // flag: a draw whose sprites or triangles were captured discards its raster copy behind a
+        // pane (and has a traced stand-in), one that was not - an unsupported blend mode, a
+        // per-frame cap, any other effect - keeps its raster copy. A frame that trips a cap must
+        // not switch the whole feature off, or every effect flickers between the traced and the
+        // raster look as the list crosses the bound.
+        gu->glassParticles                 = !!rr.glassParticles;
 
         gu->twirlPortalNormal = !!rr.portalNormalTwirl;
     }
@@ -487,6 +499,9 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->waterTextureAreaScale             = 1.0f;
 
         gu->noBackfaceReflForNoMediaChange = false;
+        gu->glassBlur                      = false;
+        gu->glassDenoise                   = false;
+        gu->glassParticles                 = false;
 
         gu->twirlPortalNormal = false;
     }
@@ -534,11 +549,19 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
 
         if( allowGeometryWithSkyFlag )
         {
-            gu->rayCullMaskWorld_Shadow = gu->rayCullMaskWorld & ( ~INSTANCE_MASK_WORLD_2 );
+            gu->rayCullMaskWorld_Shadow = ( gu->rayCullMaskWorld & ( ~INSTANCE_MASK_WORLD_2 ) );
         }
         else
         {
             gu->rayCullMaskWorld_Shadow = gu->rayCullMaskWorld;
+        }
+
+        // A pane joins shadow rays through its own bit: the light that crosses it
+        // is tinted by it and, with depth, leaves its far face bent. Switched off,
+        // panes are not on the shadow rays at all and the light passes untinted.
+        if( ( drawInfo.pReflectRefractParams == nullptr ) || ( drawInfo.pReflectRefractParams->glassShadows != 0 ) )
+        {
+            gu->rayCullMaskWorld_Shadow |= INSTANCE_MASK_GLASS;
         }
     }
 
@@ -787,6 +810,27 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.smokeDrawCount = static_cast<uint32_t>(smokeDraws.size());
     sky.particleDraws = particleDraws.data();
     sky.particleDrawCount = static_cast<uint32_t>(particleDraws.size());
+
+    const std::vector<ParticleProxy> &particleProxies =
+        rasterizedDataCollector->GetParticleProxies();
+    sky.particleProxies = particleProxies.empty() ? nullptr : particleProxies.data();
+    sky.particleProxyCount = static_cast<uint32_t>(particleProxies.size());
+
+    // Temporary diagnostics of the traced particle capture (removed once FTE is verified).
+    {
+        static uint32_t particleCaptureDiagFrame = 0;
+        if ((particleCaptureDiagFrame++ % 120u) == 0u)
+        {
+            const auto &stats = rasterizedDataCollector->GetParticleCaptureStats();
+            Print(("QR particle capture: draws=" + std::to_string(stats.candidateDraws) +
+                   " sprites=" + std::to_string(stats.capturedSprites) +
+                   " tris=" + std::to_string(stats.capturedTriangles) +
+                   " rejBlend=" + std::to_string(stats.rejectedBlend) +
+                   " rejCap=" + std::to_string(stats.rejectedCap) +
+                   " rejLines=" + std::to_string(stats.rejectedLines) +
+                   " proxies=" + std::to_string(particleProxies.size())).c_str());
+        }
+    }
 
     sky.swapchainDraws = swapchainDraws.data();
     sky.swapchainDrawCount = static_cast<uint32_t>(swapchainDraws.size());
@@ -1499,7 +1543,28 @@ void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo
         throw QrException(QR_WRONG_ARGUMENT, "Index data / count must be both not null or null");
     }
 
-    rasterizedDataCollector->AddGeometry(currentFrameState.GetFrameIndex(), *pUploadInfo, pViewProjection, pViewport);
+    // An upload outside a started frame cannot be drawn -- the collector is
+    // reset when the next frame starts -- so it is dropped here instead of
+    // piling up while frames are skipped (a minimized window keeps the game,
+    // and with it any draw producing uploads, running).
+    if (!currentFrameState.WasFrameStarted())
+    {
+        if (!printedRasterUploadWithoutFrame)
+        {
+            printedRasterUploadWithoutFrame = true;
+            Print("RHI: rasterized geometry uploaded outside a frame was dropped; the renderer is not drawing (minimized?)");
+        }
+        return;
+    }
+
+    if (!rasterizedDataCollector->AddGeometry(currentFrameState.GetFrameIndex(), *pUploadInfo, pViewProjection, pViewport))
+    {
+        if (!printedRasterOverflow)
+        {
+            printedRasterOverflow = true;
+            Print("RHI: the rasterized geometry buffer is full; the rest of the frame's overlays are skipped (raise rasterizedMaxVertexCount)");
+        }
+    }
 }
 
 void VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)

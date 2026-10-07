@@ -113,7 +113,7 @@ void main()
             if (getLuminance(light.color) > 0.0)
             {
                 bool lightTraced;
-                const float vis = traceLightVisibility(surf, light, lightIndex, lightTraced);
+                const float3 vis = traceLightVisibility(surf, light, lightIndex, lightTraced);
 
                 if (lightTraced)
                 {
@@ -125,7 +125,7 @@ void main()
                      lightSources[lightIndex].lightType == LIGHT_TYPE_TEXTURED_AREA ||
                      lightSources[lightIndex].lightType == LIGHT_TYPE_DTAL_GROUP))
                 {
-                    q2AccumulateLightStats(cluster, lightSlot, surf.normal, vis, (uint)s);
+                    q2AccumulateLightStats(cluster, lightSlot, surf.normal, getLuminance(vis), (uint)s);
                 }
 
                 float3 d, s;
@@ -145,7 +145,7 @@ void main()
         const LightSample sunLight = sampleDirectionalLight(sun, surf.position, sunRnd);
 
         bool sunTraced;
-        const float sunVis = traceSunVisibility(surf, sunLight, sunTraced);
+        const float3 sunVis = traceSunVisibility(surf, sunLight, sunTraced);
 
         if (sunTraced)
         {

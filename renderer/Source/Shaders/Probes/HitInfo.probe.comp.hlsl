@@ -99,7 +99,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     v += hPrim.albedo.x + hPrim.metallic + hPrim.normal.y + hPrim.roughness + hPrim.normalGeom.z +
          hPrim.emission + hPrim.hitPosition.x + float(hPrim.instCustomIndex) +
-         float(hPrim.geometryInstanceFlags) + float(hPrim.portalIndex) + float(hPrim.cluster);
+         float(hPrim.geometryInstanceFlags) + float(hPrim.portalIndex) + float(hPrim.cluster) +
+         hPrim.transparency;
     v += motion.x + motionDepthLinear + gradDepth.y + depthNDC + depthLinear + screenEmission +
          float(emissionBlendCode);
 
@@ -109,11 +110,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float rayLen = 0.0;
 
     const ShHitInfo hRfl = getHitInfoWithRayCone_ReflectionRefraction(
-        pl, rayCone, dir, dir, dir, virtualPosForMotion, rayLen, motion, motionDepthLinear, screenEmission, emissionBlendCode);
+        pl, rayCone, dir, dir, dir, virtualPosForMotion, rayLen, motion, motionDepthLinear, screenEmission, emissionBlendCode, 0.0f);
 
     v += hRfl.albedo.y + hRfl.metallic + hRfl.normal.z + hRfl.roughness + hRfl.normalGeom.x +
          hRfl.emission + hRfl.hitPosition.y + float(hRfl.instCustomIndex) +
-         float(hRfl.geometryInstanceFlags) + float(hRfl.portalIndex) + float(hRfl.cluster);
+         float(hRfl.geometryInstanceFlags) + float(hRfl.portalIndex) + float(hRfl.cluster) +
+         hRfl.transparency;
     v += virtualPosForMotion.z + rayLen + motion.y + motionDepthLinear + screenEmission +
          float(emissionBlendCode);
 
@@ -124,7 +126,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     v += hIndir.albedo.z + hIndir.metallic + hIndir.normal.x + hIndir.roughness + hIndir.normalGeom.y +
          hIndir.emission + hIndir.hitPosition.z + float(hIndir.instCustomIndex) +
-         float(hIndir.geometryInstanceFlags) + float(hIndir.portalIndex) + float(hIndir.cluster);
+         float(hIndir.geometryInstanceFlags) + float(hIndir.portalIndex) + float(hIndir.cluster) +
+         hIndir.transparency;
 
     probeOutput[0] = v;
 }

@@ -108,6 +108,11 @@ namespace
             flags |= GEOM_INST_FLAG_ALPHA_TRANSMISSION;
         }
 
+        if( info.flags & QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT )
+        {
+            flags |= GEOM_INST_FLAG_GLASS_CUTOUT;
+        }
+
         if( geomFlags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE )
         {
             flags |= GEOM_INST_FLAG_IS_MOVABLE;

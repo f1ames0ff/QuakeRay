@@ -1,4 +1,4 @@
-// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+﻿// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
 #include "RasterizedDataCollector.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "Utils.h"
 #include "QrException.h"
@@ -188,7 +189,7 @@ RasterizedDataCollector::~RasterizedDataCollector()
 {
 }
 
-void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
+bool RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
                                           const QrRasterizedGeometryUploadInfo &info,
                                           const float *pViewProjection, const QrViewport *pViewport)
 {
@@ -200,13 +201,13 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
         if (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST)
         {
             assert(0);
-            return;
+            return false;
         }
 
         if (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE)
         {
             assert(0);
-            return;
+            return false;
         }
     }
 
@@ -220,16 +221,14 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
 
     if (curVertexCount + info.vertexCount >= vertexBuffer->GetSize() / sizeof(QrVertex))
     {
-        assert(0 && "Increase the size of \"rasterizedMaxVertexCount\". Vertex buffer size reached the limit.");
         droppedUploadBatches++;
-        return;
+        return false;
     }
 
     if (curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof(uint32_t))
     {
-        assert(0 && "Increase the size of \"rasterizedMaxIndexCount\". Index buffer size reached the limit.");
         droppedUploadBatches++;
-        return;
+        return false;
     }
 
     DrawInfo &drawInfo = PushInfo(info.renderType);
@@ -265,9 +264,8 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
     {
         if( curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof( uint32_t ) )
         {
-            assert( 0 );
             droppedUploadBatches++;
-            return;
+            return false;
         }
 
         memcpy( &indicesBase[ curIndexCount ], info.pIndices, info.indexCount * sizeof( uint32_t ) );
@@ -279,6 +277,10 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
 
         curIndexCount += info.indexCount;
     }
+
+    drawInfo.particleProxy = CaptureParticleProxies(info);
+
+    return true;
 }
 
 RasterizedDataCollector::DrawInfo& RasterizedDataCollector::PushInfo(
@@ -319,11 +321,226 @@ void RasterizedDataCollector::CopyFromArrayOfStructs(
     memcpy(dstVerts, info.pVertices, sizeof(QrVertex) * info.vertexCount);
 }
 
+bool RasterizedDataCollector::CaptureParticleProxies(const QrRasterizedGeometryUploadInfo &info)
+{
+    // The sprite marker, not the lit-pipeline selector: the traced stand-ins have to exist for the
+    // unlit sprites too (the raster copy of those is drawn by the world pipeline).
+    if ((info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE) == 0)
+    {
+        return false;
+    }
+
+    particleCaptureStats.candidateDraws++;
+
+    const bool lit = (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_PARTICLE) != 0;
+
+    // The blend the raster copy uses, folded into the composite's premultiplied "over". The modes
+    // that scale the background per channel (SRC_COLOR/ONE_MINUS_SRC_COLOR and the two relatives)
+    // have no fold here and stay raster-only, without a proxy and so without the discard.
+    uint32_t blendOp = ~0u;
+    if (info.blendFuncSrc == QR_BLEND_FACTOR_SRC_ALPHA && info.blendFuncDst == QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+    {
+        blendOp = PARTICLE_BLEND_ALPHA_OVER;
+    }
+    else if (info.blendFuncSrc == QR_BLEND_FACTOR_ONE && info.blendFuncDst == QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+    {
+        blendOp = PARTICLE_BLEND_PREMUL;
+    }
+    else if (info.blendFuncSrc == QR_BLEND_FACTOR_SRC_ALPHA && info.blendFuncDst == QR_BLEND_FACTOR_ONE)
+    {
+        blendOp = PARTICLE_BLEND_ADD_ALPHA;
+    }
+    else if (info.blendFuncSrc == QR_BLEND_FACTOR_SRC_COLOR && info.blendFuncDst == QR_BLEND_FACTOR_ONE)
+    {
+        blendOp = PARTICLE_BLEND_ADD_COLOR;
+    }
+    else if (info.blendFuncSrc == QR_BLEND_FACTOR_ZERO && info.blendFuncDst == QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+    {
+        blendOp = PARTICLE_BLEND_MUL_INV_ALPHA;
+    }
+
+    if (blendOp == ~0u)
+    {
+        particleCaptureStats.rejectedBlend++;
+        return false;
+    }
+
+    const uint32_t textureIndex = ResolveTextureIndex_AlbedoAlpha(*textureMgr, info);
+    const size_t firstProxy = particleProxies.size();
+
+    if (info.indexCount == 0)
+    {
+        // The classic sprite: the non-indexed three-vertex camera-facing triangle r_part.c emits
+        // (Quake/r_part.c), which only ever blends straight alpha.
+        if (blendOp != PARTICLE_BLEND_ALPHA_OVER || info.vertexCount < 3 || (info.vertexCount % 3) != 0)
+        {
+            return false;
+        }
+
+        const uint32_t particleCount = info.vertexCount / 3;
+        if (uint64_t(particleProxies.size()) + particleCount > MAX_PARTICLE_PROXY_COUNT)
+        {
+            particleProxyOverflow = true;
+            particleCaptureStats.rejectedCap++;
+        return false;
+        }
+
+        static constexpr float cornerU[3] = { -1.0f / 3.0f, 2.0f / 3.0f, -1.0f / 3.0f };
+        static constexpr float cornerV[3] = { -1.0f / 3.0f, -1.0f / 3.0f, 2.0f / 3.0f };
+
+        for (uint32_t i = 0; i < particleCount; i++)
+        {
+            const QrVertex &v0 = info.pVertices[3 * i];
+            const QrVertex &v1 = info.pVertices[3 * i + 1];
+            const QrVertex &v2 = info.pVertices[3 * i + 2];
+
+            float leg[2][3];
+            for (int c = 0; c < 3; c++)
+            {
+                leg[0][c] = v1.position[c] - v0.position[c];
+                leg[1][c] = v2.position[c] - v0.position[c];
+            }
+
+            const float legRight = std::sqrt(leg[0][0] * leg[0][0] + leg[0][1] * leg[0][1] +
+                                             leg[0][2] * leg[0][2]);
+            const float legUp = std::sqrt(leg[1][0] * leg[1][0] + leg[1][1] * leg[1][1] +
+                                          leg[1][2] * leg[1][2]);
+            if (!(legRight > 1e-4f) || !(legUp > 1e-4f))
+            {
+                continue;
+            }
+
+            ParticleProxy &proxy = particleProxies.emplace_back();
+            proxy = ParticleProxy{};
+            proxy.kind = PARTICLE_PROXY_KIND_BILLBOARD;
+            proxy.blendOp = blendOp;
+
+            for (int c = 0; c < 3; c++)
+            {
+                proxy.center[c] = v0.position[c] + (leg[0][c] + leg[1][c]) / 3.0f;
+            }
+
+            float radius = 0.0f;
+            for (int corner = 0; corner < 3; corner++)
+            {
+                float offset[3];
+                for (int c = 0; c < 3; c++)
+                {
+                    offset[c] = cornerU[corner] * leg[0][c] + cornerV[corner] * leg[1][c];
+                }
+
+                radius = std::max(radius, std::sqrt(offset[0] * offset[0] + offset[1] * offset[1] +
+                                                    offset[2] * offset[2]));
+            }
+
+            proxy.radius       = radius;
+            proxy.legRight     = legRight;
+            proxy.legUp        = legUp;
+            proxy.packedColor  = v0.packedColor;
+            proxy.textureIndex = textureIndex;
+            proxy.cluster      = v0.cluster;
+            proxy.direct       = lit ? info.smokeLook.data[1] : 0.0f;
+            proxy.gain         = lit ? info.smokeLook.data[2] : -1.0f;
+            proxy.lightFloor   = lit ? info.smokeLook.data[3] : 0.0f;
+        }
+
+        particleCaptureStats.capturedSprites += static_cast<uint32_t>(particleProxies.size() - firstProxy);
+        return particleProxies.size() > firstProxy;
+    }
+
+    // An FTE effect: indexed world-space triangles (Quake/r_part_fte.c). They are exact geometry,
+    // so the record carries the triangle itself and the traced copy shows the same shape whichever
+    // way the pane bends the view at it. The three vertex colours ride the record's spare words.
+    // The line primitives (BEF_LINES) are not triangles and cannot be captured as such: their
+    // raster copy stays, the same documented exception as the per-channel blend modes.
+    if (info.pIndices == nullptr || info.indexCount < 3 ||
+        (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST) != 0)
+    {
+        particleCaptureStats.rejectedLines++;
+        return false;
+    }
+
+    const uint32_t triangleCount = info.indexCount / 3;
+    if (triangleCount > MAX_FTE_TRIANGLES_PER_DRAW ||
+        uint64_t(fteTriangleCount) + triangleCount > MAX_FTE_TRIANGLE_COUNT ||
+        uint64_t(particleProxies.size()) + triangleCount > MAX_PARTICLE_PROXY_COUNT)
+    {
+        particleProxyOverflow = true;
+        particleCaptureStats.rejectedCap++;
+        return false;
+    }
+
+    const uint32_t *const indices = static_cast<const uint32_t *>(info.pIndices);
+    uint32_t captured = 0;
+
+    for (uint32_t t = 0; t < triangleCount; t++)
+    {
+        const uint32_t i0 = indices[3 * t + 0];
+        const uint32_t i1 = indices[3 * t + 1];
+        const uint32_t i2 = indices[3 * t + 2];
+        if (i0 >= info.vertexCount || i1 >= info.vertexCount || i2 >= info.vertexCount)
+        {
+            continue;
+        }
+
+        const QrVertex &a = info.pVertices[i0];
+        const QrVertex &b = info.pVertices[i1];
+        const QrVertex &c = info.pVertices[i2];
+
+        ParticleProxy &proxy = particleProxies.emplace_back();
+        proxy = ParticleProxy{};
+        proxy.kind         = PARTICLE_PROXY_KIND_TRIANGLE;
+        proxy.blendOp      = blendOp;
+        proxy.textureIndex = textureIndex;
+        proxy.cluster      = a.cluster;
+        proxy.packedColor  = a.packedColor;
+        proxy.unused2      = b.packedColor;
+        proxy.unused3      = c.packedColor;
+        proxy.direct       = lit ? info.smokeLook.data[1] : 0.0f;
+        proxy.gain         = lit ? info.smokeLook.data[2] : -1.0f;
+        proxy.lightFloor   = lit ? info.smokeLook.data[3] : 0.0f;
+
+        float minimum[3];
+        float maximum[3];
+        float halfExtent[3];
+        for (int k = 0; k < 3; k++)
+        {
+            proxy.v0[k]     = a.position[k];
+            proxy.edge1[k]  = b.position[k] - a.position[k];
+            proxy.edge2[k]  = c.position[k] - a.position[k];
+
+            minimum[k] = std::min(a.position[k], std::min(b.position[k], c.position[k]));
+            maximum[k] = std::max(a.position[k], std::max(b.position[k], c.position[k]));
+            proxy.center[k] = 0.5f * (minimum[k] + maximum[k]);
+            halfExtent[k]   = 0.5f * (maximum[k] - minimum[k]);
+        }
+        proxy.radius = std::sqrt(halfExtent[0] * halfExtent[0] + halfExtent[1] * halfExtent[1] +
+                                 halfExtent[2] * halfExtent[2]) + 1e-3f;
+
+        proxy.uv0[0] = a.texCoord[0];
+        proxy.uv0[1] = a.texCoord[1];
+        proxy.uv1[0] = b.texCoord[0];
+        proxy.uv1[1] = b.texCoord[1];
+        proxy.uv2[0] = c.texCoord[0];
+        proxy.uv2[1] = c.texCoord[1];
+
+        captured++;
+    }
+
+    fteTriangleCount += captured;
+    particleCaptureStats.capturedTriangles += captured;
+    return particleProxies.size() > firstProxy;
+}
+
 void RasterizedDataCollector::Clear(uint32_t frameIndex)
 {
     rasterDrawInfos.clear();
     swapchainDrawInfos.clear();
     skyDrawInfos.clear();
+    particleProxies.clear();
+    fteTriangleCount = 0;
+    particleProxyOverflow = false;
+    particleCaptureStats = ParticleCaptureStats{};
 
     curVertexCount = 0;
     curIndexCount = 0;
@@ -374,6 +591,21 @@ const std::vector< RasterizedDataCollector::DrawInfo >& RasterizedDataCollector:
     GetRasterDrawInfos() const
 {
     return rasterDrawInfos;
+}
+
+const std::vector< ParticleProxy >& RasterizedDataCollector::GetParticleProxies() const
+{
+    return particleProxies;
+}
+
+bool RasterizedDataCollector::HasParticleProxyOverflow() const
+{
+    return particleProxyOverflow;
+}
+
+const RasterizedDataCollector::ParticleCaptureStats& RasterizedDataCollector::GetParticleCaptureStats() const
+{
+    return particleCaptureStats;
 }
 
 const std::vector< RasterizedDataCollector::DrawInfo >& RasterizedDataCollector::

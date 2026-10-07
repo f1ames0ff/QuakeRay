@@ -1026,7 +1026,10 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		.transform = RT_TRANSFORM_IDENTITY,
 		.color = RT_COLOR_WHITE,
 		.material = texture ? texture->rtmaterial : QR_NO_MATERIAL,
+		// The sprite marker is unconditional: the traced stand-ins of the reflect/refract rays are
+		// captured from it whatever shades the raster copy (the lit pipeline or the world one).
 		.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+		                 QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE |
 		                 (lit_particles ? QR_RASTERIZED_GEOMETRY_STATE_PARTICLE : 0),
 		.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA,
 		.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+﻿// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -44,6 +44,13 @@ float3 resolveCheckerboard( Texture2D<float4> src, const int2 regularPix, const 
     return lerp( center, crossColor, 0.5 );
 }
 
+float4 sampleGlassLayer(int2 pix, bool reflection)
+{
+    return float4(framebufScreenEmisRT_Sampled.Load(int3(pix, 0)).rgb, framebufDepthNdc.Load(pix).r);
+}
+
+#include "GlassLayers.hlsli"
+
 [numthreads(COMPUTE_COMPOSE_GROUP_SIZE_X, COMPUTE_COMPOSE_GROUP_SIZE_Y, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -59,7 +66,28 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float3 emis = framebufScreenEmisRT_Sampled.Load(int3( pix, 0 )).rgb;
     float3 fog  = framebufAcidFogRT_Sampled.Load(int3( pix, 0 )).rgb;
 
-    if( needResolveCheckerboard( checkerboardPix ) )
+    const float glass = framebufQ2GlassFilter_Sampled.Load(int3(checkerboardPix, 0)).a;
+    /* The traced particle stand-ins' layer, composited here on purpose: this pass runs right after
+       the pane's half-field reconstruction and writes FINAL, so the layer never passes the
+       checkerboard resolve (which mixed a one-field contribution at half weight) and lands before
+       the raster overlay draws the raster particles - the same temporal treatment they get. The
+       layer is written by the reflect/refract raygen at plain pixels and only for the panes it
+       covered, so the mask gates the read. */
+    if (globalUniform.glassParticles != 0u && abs(glass) >= 4.0)
+    {
+        const float4 particleLayer = framebufQ2ParticleLayer_Sampled.Load(int3(pix, 0));
+        hdr = particleLayer.rgb + hdr * (1.0 - particleLayer.a);
+    }
+    if (globalUniform.glassBlur != 0u && abs(glass) >= 1.0)
+    {
+        const float4 background = reconstructGlassLayer(pix, false);
+        emis = background.rgb;
+        if (glass <= -1.0)
+        {
+            framebufDepthNdc[pix] = (float4)(background.a > 0.0 ? background.a : 1.0);
+        }
+    }
+    else if( needResolveCheckerboard( checkerboardPix ) )
     {
         emis = resolveCheckerboard( framebufScreenEmisRT_Sampled, pix, checkerboardPix, emis );
         fog  = resolveCheckerboard( framebufAcidFogRT_Sampled, pix, checkerboardPix, fog );

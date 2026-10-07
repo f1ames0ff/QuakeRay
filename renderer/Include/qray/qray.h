@@ -279,6 +279,10 @@ typedef enum QrGeometryUploadFlagBits
 
     QR_GEOMETRY_UPLOAD_TURB_WARP_BIT = 128,
     QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT = 256,
+
+    /* The alpha is a cutout even where the surface traces as glass: the glass
+       any-hit runs the alpha test for it (a lattice window keeps its holes). */
+    QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT = 512,
 } QrGeometryUploadFlagBits;
 typedef QrFlags QrGeometryUploadFlags;
 
@@ -381,6 +385,10 @@ typedef enum QrRasterizedGeometryStateFlagBits
     QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST    = 16,
     QR_RASTERIZED_GEOMETRY_STATE_SMOKE              = 32,
     QR_RASTERIZED_GEOMETRY_STATE_PARTICLE           = 64,
+    // Marks a particle sprite regardless of what shades it: `QR_RASTERIZED_GEOMETRY_STATE_PARTICLE`
+    // is the lit pipeline selector and only set while `r_particle_lighting` is on, so the traced
+    // stand-ins of the classic sprites have to key on a flag the particle uploads always carry.
+    QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE    = 128,
 } QrRasterizedGeometryStateFlagBits;
 typedef uint32_t QrRasterizedGeometryStateFlags;
 
@@ -1319,6 +1327,10 @@ typedef struct QrDrawFrameReflectRefractParams
     QrBool32    disableBackfaceReflectionsForNoMediaChange;
 
     QrBool32    portalNormalTwirl;
+
+    QrBool32    glassShadows;
+    QrBool32    glassDenoise;
+    QrBool32    glassParticles;
 } QrDrawFrameReflectRefractParams;
 
 typedef enum QrRenderUpscaleTechnique

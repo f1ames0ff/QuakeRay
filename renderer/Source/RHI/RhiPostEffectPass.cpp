@@ -69,12 +69,10 @@ constexpr uint32_t SPEC_CONSTANT_IS_SOURCE_PING = 0;
 // 124 + image index. The layout offsets turn a raw binding into an NVRHI slot (RhiPipeline.h), so
 // the storage items need offset 0 and the sampled ALBEDO item the offset 124.
 constexpr uint32_t FRAMEBUFFER_UAV_OFFSET = 0;
-constexpr uint32_t FRAMEBUFFER_SRV_OFFSET = 124;
+const uint32_t FRAMEBUFFER_SRV_OFFSET = ShFramebuffers_Count;
 static_assert(FB_IMAGE_INDEX_UPSCALED_PING == 29 && FB_IMAGE_INDEX_UPSCALED_PONG == 30 &&
               FB_IMAGE_INDEX_WIPE_EFFECT_SOURCE == 72 && FB_IMAGE_INDEX_ALBEDO == 0,
               "the module's raw-binding table is written for the engine's image indices");
-static_assert(FRAMEBUFFER_SRV_OFFSET + FB_IMAGE_INDEX_ALBEDO == 124,
-              "the sampled ALBEDO is at raw binding 124 in every effect blob");
 
 // The engine's global uniform set (raw binding 0, the `BINDING_GLOBAL_UNIFORM` of
 // Generated/ShaderCommonC.h:27); the constant-buffer offset 0 keeps the NVRHI slot equal to the

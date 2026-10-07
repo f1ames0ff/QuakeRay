@@ -255,9 +255,25 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    // start marching from where the ray enters the world box
-    const float3 originalPos = isSky ? globalUniform.cameraPosition.xyz
-                                     : surfacePos - direction * rayDistance;
+    // March from where the stored segment starts: the camera for a primary sky
+    // pixel, and for the reflect/refract pass's sky continuation the origin its
+    // raygen left in the transport's spare RGB, because the camera segment the
+    // primary march already covered would otherwise be counted a second time.
+    // Every other pixel starts where its own segment does, reconstructed from
+    // the segment's end.
+    float3 originalPos;
+    if (isSky && push.passIndex != 0)
+    {
+        originalPos = framebufQ2GodRaysThroughputDist_Sampled.Load(int3(cbPix, 0)).rgb;
+    }
+    else if (isSky)
+    {
+        originalPos = globalUniform.cameraPosition.xyz;
+    }
+    else
+    {
+        originalPos = surfacePos - direction * rayDistance;
+    }
 
     // Medium the camera is in (Q2RTX reads the surface material's medium; for
     // the primary segment the camera medium is the physically correct one).
