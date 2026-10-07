@@ -4,7 +4,8 @@
 
 #define RT_STATS_HISTORY 60
 
-#define RT_STATS_COLOR_TOTAL 0xFFFF4D0Du
+#define RT_STATS_COLOR_TOTAL   0xFFFF4D0Du
+#define RT_STATS_COLOR_NEUTRAL 0xFFD3D3D3u
 
 #define RT_STATS_BUDGET_WARN_MS 5.5f
 #define RT_STATS_BUDGET_CRIT_MS 11.1f
@@ -105,20 +106,35 @@ static void RT_StatsOverlaySample (void)
 	RT_StatsRecordSample (snap);
 }
 
+static void RT_StatsFormatMs (char *st, size_t size, float ms)
+{
+	if (ms >= 100.0f)
+		q_snprintf (st, size, "%.0f ms", ms);
+	else if (ms >= 10.0f)
+		q_snprintf (st, size, "%.1f ms", ms);
+	else
+		q_snprintf (st, size, "%.2f ms", ms);
+}
+
 static void RT_StatsOverlayMs (const char *label, float ms, const rt_stats_series_t *series)
 {
 	const float shown = (series && series->count > 0) ? series->samples[series->count - 1] : ms;
 	char        st[32];
 
-	if (shown >= 100.0f)
-		q_snprintf (st, sizeof (st), "%.0f ms", shown);
-	else if (shown >= 10.0f)
-		q_snprintf (st, sizeof (st), "%.1f ms", shown);
-	else
-		q_snprintf (st, sizeof (st), "%.2f ms", shown);
+	RT_StatsFormatMs (st, sizeof (st), shown);
 
 	QR_GUI_OverlayBudgetRow (label, st, series ? series->samples : NULL, series ? series->count : 0, RT_STATS_BUDGET_WARN_MS,
 	                         RT_STATS_BUDGET_CRIT_MS);
+}
+
+static void RT_StatsOverlayNeutralMs (const char *label, float ms, const rt_stats_series_t *series)
+{
+	const float shown = (series && series->count > 0) ? series->samples[series->count - 1] : ms;
+	char        st[32];
+
+	RT_StatsFormatMs (st, sizeof (st), shown);
+
+	QR_GUI_OverlayRow (label, st, series ? series->samples : NULL, series ? series->count : 0, RT_STATS_COLOR_NEUTRAL);
 }
 
 static void RT_StatsOverlayCount (const char *label, unsigned value)
@@ -181,7 +197,7 @@ static void RT_StatsOverlayCpu (const rt_stats_snapshot_t *snap)
 
 	RT_StatsOverlayMs ("FRAME", rep->frameMs, &rt_stats_series_cpu_frame);
 	RT_StatsOverlayMs ("MAIN", rep->frameMs - rep->waitMs, &rt_stats_series_cpu_main);
-	RT_StatsOverlayMs ("WAIT", rep->waitMs, &rt_stats_series_cpu_wait);
+	RT_StatsOverlayNeutralMs ("WAIT", rep->waitMs, &rt_stats_series_cpu_wait);
 	RT_StatsOverlayMs ("qrDrawFrame", rep->ms[RT_PROF_DRAWFRAME], &rt_stats_series_cpu_draw);
 
 	for (i = 0; i < RT_PROF_COUNT; i++)
