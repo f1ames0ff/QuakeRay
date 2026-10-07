@@ -22,6 +22,7 @@
 #include <qray/qray.h>
 #include "AutoBuffer.h"
 #include "Common.h"
+#include "ParticleProxies.h"
 #include "TextureManager.h"
 #include "Utils.h"
 
@@ -54,6 +55,12 @@ namespace qray
 
             Float4D  smokeNoise = Float4D( NullifyToken );
             Float4D  smokeLook  = Float4D( NullifyToken );
+
+            // Whether every sprite of this draw has a traced stand-in in the frame's particle
+            // proxy list (CaptureParticleProxies). The raster particle fragment discards the
+            // sprites that lie behind a glass pane - the traced copy is what the pane shows -
+            // and the flag keeps draws the proxy list does not describe rasterized.
+            bool particleProxy = false;
         };
 
     public:
@@ -69,7 +76,7 @@ namespace qray
         RasterizedDataCollector& operator=( const RasterizedDataCollector& other ) = delete;
 
         RasterizedDataCollector& operator=( RasterizedDataCollector&& other ) noexcept = delete;
-        void                     AddGeometry( uint32_t                              frameIndex,
+        bool                     AddGeometry( uint32_t                              frameIndex,
                                               const QrRasterizedGeometryUploadInfo& info,
                                               const float*                          viewProjection,
                                               const QrViewport*                     viewport );
@@ -100,12 +107,35 @@ namespace qray
         const std::vector< DrawInfo >& GetSwapchainDrawInfos() const;
         const std::vector< DrawInfo >& GetSkyDrawInfos() const;
 
+        // The frame's lit particle sprites as traced stand-ins (ParticleProxies.h), collected from
+        // the same uploads the raster list sees. 'HasParticleProxyOverflow' reports a frame whose
+        // sprites did not all fit, which disables the traced particle path for that frame - a
+        // partial list would leave a raster hole wherever a proxy is missing.
+        const std::vector< ParticleProxy >& GetParticleProxies() const;
+        bool                                HasParticleProxyOverflow() const;
+
+        // Diagnostics of the traced stand-in capture: what arrived as a particle draw and what the
+        // capture did with it.
+        struct ParticleCaptureStats
+        {
+            uint32_t candidateDraws   = 0;
+            uint32_t capturedSprites  = 0;
+            uint32_t capturedTriangles = 0;
+            uint32_t rejectedBlend    = 0;
+            uint32_t rejectedCap      = 0;
+            uint32_t rejectedLines    = 0;
+        };
+
+        const ParticleCaptureStats& GetParticleCaptureStats() const;
+
     protected:
         DrawInfo& PushInfo( QrRasterizedGeometryRenderType renderType );
 
     private:
         static void CopyFromArrayOfStructs( const QrRasterizedGeometryUploadInfo& info,
                                             ShVertex*                             dstVerts );
+
+        bool CaptureParticleProxies( const QrRasterizedGeometryUploadInfo& info );
 
     private:
         VkDevice                          device;
@@ -120,6 +150,11 @@ namespace qray
         std::vector< DrawInfo > rasterDrawInfos;
         std::vector< DrawInfo > swapchainDrawInfos;
         std::vector< DrawInfo > skyDrawInfos;
+
+        std::vector< ParticleProxy > particleProxies;
+        uint32_t                     fteTriangleCount = 0;
+        bool                         particleProxyOverflow = false;
+        ParticleCaptureStats         particleCaptureStats;
     };
 
 }

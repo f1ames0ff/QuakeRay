@@ -80,6 +80,40 @@
 #             emissive_focus: 45
 #             emissive_focus_soft: 8
 #             emissive_projector: true
+#
+# `material_glass: true` turns the surface into a pane of glass: the traced
+# path reflects it with a Fresnel term and bends the rays through it, tinting
+# what passes with the base texture. `glass_ior` (1..5; 0 keeps the global
+# `rt_refr_glass`, 1.52) is how hard it bends and how bright the grazing
+# reflection is, and `glass_thickness` (world units, default 2; 0 is an
+# infinitely thin pane) is where the transmitted ray leaves the far face.
+# A flat pane only shifts what is behind it: the shift grows with the angle
+# to the pane and with the thickness, is zero straight through the pane and
+# zero against the sky, and the default 2 is subtle -- 8..16 is where it
+# reads. Where the pane meets a wall closer than its thickness, the shift
+# stops at the wall instead of tearing a hole through it. The light path
+# shifts the same way, so it moves the edges of a lit
+# patch and of a shadow cast through the pane; `rt_glass_shadows 0` passes
+# the light through untinted and straight instead. `transparency` (0..1,
+# default 1) is how much light the pane passes and how much its texture
+# absorbs: 1 passes the image with the glass colour alone, lower values dim it
+# and absorb it per channel towards the diffuse texture, and 0 blocks the
+# transmission entirely. `glass_color` (rrggbb, default white) is the colour
+# multiplied into the transmitted view and the light that crosses the pane, so
+# a red pane passes -- and shadows -- red. Transparency applies per pixel while
+# `glass_ior`/`glass_thickness`/`glass_color` ride the uploaded geometry and
+# take effect on the next full static re-submit (the material editor asks for one).
+# These are material keys, not console commands; `rt_reflrefr_depth 0`
+# drops the view shift. Glass wins over `mirror` (a mirrored window can
+# simply be ticked); an `alpha_test` cutout survives it -- the holes pass
+# the rays and the solid texels still refract. Water, lava and portals keep
+# their handling.
+#     e.g.  - name: textures/window01_1
+#             material_glass: true
+#             transparency: 0.8
+#             glass_ior: 1.52
+#             glass_thickness: 2
+#             glass_color: 88ccff
 qray_materials:
   - name: textures/#lava1
     texture_emissive: textures/_lava1_luma.png

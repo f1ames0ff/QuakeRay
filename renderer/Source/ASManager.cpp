@@ -560,6 +560,13 @@ bool ASManager::GetTLASInstanceForFilter(VertexCollectorFilterTypeFlags filter, 
         if (isWorld)
         {
             instance.mask = INSTANCE_MASK_REFRACT;
+
+            if ((filter & (uint32_t)FT::PT_GLASS) == (uint32_t)FT::PT_GLASS)
+            {
+                // glass joins shadow rays through its own bit: only glass, not
+                // water or acid, is tested by them
+                instance.mask |= INSTANCE_MASK_GLASS;
+            }
         }
     }
 
@@ -660,7 +667,7 @@ std::pair<ASManager::TLASPrepareResult, ShVertPreprocessing> ASManager::PrepareF
 
             if (isDynamic)
             {
-                push.tlasInstanceIsDynamicBits[result.instanceCount / MAX_TOP_LEVEL_INSTANCE_COUNT] |= 1 << (result.instanceCount % MAX_TOP_LEVEL_INSTANCE_COUNT);
+                push.tlasInstanceIsDynamicBits[result.instanceCount / 32] |= 1u << (result.instanceCount % 32);
             }
 
             WriteInstanceGeomInfo(instanceGeomInfoOffset, instanceGeomCount, result.instanceCount, *blas);

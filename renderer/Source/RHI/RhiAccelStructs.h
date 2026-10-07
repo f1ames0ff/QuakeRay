@@ -9,6 +9,7 @@
 
 #include "../Common.h"
 #include "../Generated/ShaderCommonC.h"
+#include "../ParticleProxies.h"
 
 namespace qray
 {
@@ -215,11 +216,21 @@ public:
     // leaving the slot's previous TLAS in place (as a zero instance count always has). A frame whose
     // instances were all culled does the same. Must be called on the same open command list as
     // BuildStatic.
+    // 'pParticleProxies'/'particleProxyCount' are the frame's traced particle stand-ins
+    // (ParticleProxies.h, collected by the host). A non-empty list appends one extra TLAS instance
+    // after the engine's own - the reserved last slot - whose BLAS holds one AABB per proxy and
+    // whose instance mask carries INSTANCE_MASK_PARTICLE alone, so no scene TraceRay can address
+    // it: only the reflect/refract raygen's inline query opts in. The reserved slot gets a {0, 0}
+    // geometry range (it has no engine geometries) and its BLAS is rebuilt each frame from the
+    // frame's records. An empty list, a list over MAX_PARTICLE_PROXY_COUNT or
+    // 'disableRayTracedGeometry' records nothing and leaves the slot's previous TLAS in place.
     void BuildTopLevel(nvrhi::ICommandList *pCommandList,
                        uint32_t frameIndex,
                        uint32_t rayCullMaskWorld,
                        bool allowGeometryWithSkyFlag,
-                       bool disableRayTracedGeometry);
+                       bool disableRayTracedGeometry,
+                       const ParticleProxy *pParticleProxies,
+                       uint32_t particleProxyCount);
 
     // Runs the engine's vertex preprocessing over the slot's dynamic copies (see the class comment,
     // "Dynamic vertex normals"): one dispatch of `CmVertexPreprocess.comp.spv`, specialized to
@@ -284,7 +295,14 @@ public:
     // instance list (disabled, not built yet, or every instance culled), and the caller then leaves
     // the uniform's CPU copy alone.
     uint32_t GetInstanceGeometryInfo(int32_t *pInstanceGeomInfoOffset,
-                                     int32_t *pInstanceGeomInfoCount) const;
+                                      int32_t *pInstanceGeomInfoCount) const;
+    bool HasGlassInstances() const { return hasGlassInstances; }
+
+    // The slot's particle proxy records (ShParticleProxy stride, ParticleProxies.h) as the last
+    // BuildTopLevel uploaded them, or null while the slot has none. The reflect/refract pass binds
+    // it at its set 5; the caller does not own the handle and every non-null one stays valid until
+    // the next BuildTopLevel of the same slot.
+    nvrhi::IBuffer *GetParticleProxyBuffer(uint32_t frameIndex) const;
 
 private:
     struct StaticBlas
@@ -399,6 +417,16 @@ private:
                            uint32_t rayCullMaskWorld,
                            bool allowGeometryWithSkyFlag,
                            std::vector<nvrhi::rt::InstanceDesc> &instances);
+
+    // Uploads the frame's particle proxies: the records to the slot's proxy buffer (set 5's SRV),
+    // the world-space AABBs to the slot's AABB buffer and the AABB BLAS rebuild from it. Creates
+    // the buffers and the BLAS on first use; the BLAS is created once with room for
+    // MAX_PARTICLE_PROXY_COUNT boxes and rebuilt per frame with the frame's count. Returns false
+    // without touching the TLAS when the records or the buffers cannot be produced.
+    bool BuildParticleProxies(nvrhi::ICommandList *pCommandList,
+                              uint32_t frameIndex,
+                              const ParticleProxy *pProxies,
+                              uint32_t proxyCount);
 
     // Makes 'buffer' at least 'needed' bytes large: creates a new buffer sized to the doubled
     // capacity (capped at 'maxCapacity', the collector's staging size) and retires the replaced one.
@@ -550,6 +578,23 @@ private:
     nvrhi::rt::AccelStructHandle topLevel[MAX_FRAMES_IN_FLIGHT];
     uint32_t topLevelCapacity[MAX_FRAMES_IN_FLIGHT] = {};
 
+    // The per-slot traced particle stand-ins: the proxy records the reflect/refract pass reads
+    // (set 5), the AABB build input and the one bottom-level structure the TLAS's masked particle
+    // instance references. The buffers grow through the same doubled-capacity policy, the BLAS is
+    // created once with room for MAX_PARTICLE_PROXY_COUNT boxes and only rebuilt afterwards. The
+    // AABB records are derived from the proxies every frame, so the buffers stay in the frames'
+    // rotate-and-retire discipline with everything else here.
+    nvrhi::BufferHandle particleProxyBuffer[MAX_FRAMES_IN_FLIGHT];
+    uint64_t particleProxyCapacity[MAX_FRAMES_IN_FLIGHT] = {};
+    nvrhi::BufferHandle particleAabbBuffer[MAX_FRAMES_IN_FLIGHT];
+    uint64_t particleAabbCapacity[MAX_FRAMES_IN_FLIGHT] = {};
+    nvrhi::rt::AccelStructHandle particleBlas[MAX_FRAMES_IN_FLIGHT];
+
+    // Whether the slot's last BuildTopLevel put the particle instance into the TLAS. Only then does
+    // the proxy buffer describe this frame's sprites, which is what the caller's uniform gate and
+    // the reflect/refract pass read.
+    bool particleProxyActive[MAX_FRAMES_IN_FLIGHT] = {};
+
     // The one-time evidence line: printed after the static decision so that its figures are final,
     // with a grace period for a scene that never brings static geometry.
     bool summaryPrinted = false;
@@ -574,6 +619,7 @@ private:
 
     // The instance count of the last BuildTopLevel, for the summary.
     uint32_t tlasInstanceCount = 0;
+    bool hasGlassInstances = false;
 
     // The one-time warning for a non-empty filter without an RHI BLAS.
     bool warnedUnresolvedInstance = false;

@@ -278,10 +278,10 @@ private:
         // as VkImages, because they are what the change detection compares; a change in any of them
         // or in the size means the engine re-created the framebuffers and the wraps and the set
         // have to follow.
-        uint64_t imageHandles[26] = {};
+        uint64_t imageHandles[28] = {};
         uint32_t width = 0;
         uint32_t height = 0;
-        nvrhi::TextureHandle framebufferTextures[26];
+        nvrhi::TextureHandle framebufferTextures[28];
         nvrhi::BindingSetHandle framebufferSet;
 
         // Set 0: the pointer is only the cache key that tells whether the set still addresses the

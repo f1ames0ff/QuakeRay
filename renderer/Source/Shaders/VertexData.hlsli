@@ -182,6 +182,9 @@ ShTriangle makeTriangle(const ShVertex a, const ShVertex b, const ShVertex c)
     tr.layerTexCoord[2][1] = float3(a.texCoordLayer2.y, b.texCoordLayer2.y, c.texCoordLayer2.y);
 
     tr.cluster = a.cluster;
+    tr.vertexColors[0] = a.packedColor;
+    tr.vertexColors[1] = b.packedColor;
+    tr.vertexColors[2] = c.packedColor;
     tr.lightStyleIndices = a.lightStyles;
 
     tr.tangent = getTangent(tr.positions, safeNormalize(transpose(tr.normals)[0] + transpose(tr.normals)[1] + transpose(tr.normals)[2]), tr.layerTexCoord[0]);

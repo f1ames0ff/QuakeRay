@@ -43,11 +43,20 @@ struct ShPayload
     float2 baryCoords;
     uint   instIdAndIndex;
     uint   geomAndPrimIndex;
+    float3 glassTint;
+    float  glassDistance;
+    float4 glassFilter;
 };
 
 struct ShPayloadShadow
 {
-    uint isShadowed;
+    float3 transmittance;
+    uint   isShadowed;
+    float3 glassNormal;
+    float  glassDistance;
+    float4 glassParams;
+    float3 glassDirection;
+    float  glassPad;
 };
 
 struct ShHitInfo
@@ -63,6 +72,9 @@ struct ShHitInfo
     uint   geometryInstanceFlags;
     uint   portalIndex;
     uint   cluster;
+    float  transparency;
+    float2 glassParams;
+    float3 glassColor;
 };
 
 #endif

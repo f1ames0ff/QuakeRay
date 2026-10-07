@@ -28,7 +28,7 @@
 void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 {
     uint tlasInstanceIndex = groupID.x;
-    bool isDynamic = (push.tlasInstanceIsDynamicBits[tlasInstanceIndex / 32] & (1u << tlasInstanceIndex)) != 0;
+    bool isDynamic = (push.tlasInstanceIsDynamicBits[tlasInstanceIndex / 32] & (1u << (tlasInstanceIndex % 32))) != 0;
 
 
     if (isDynamic)

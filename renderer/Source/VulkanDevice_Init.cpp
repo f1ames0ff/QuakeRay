@@ -395,6 +395,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                     rhiRtReflRefrPass = std::make_shared<RhiRtReflRefrPass>();
                     if (!rhiRtReflRefrPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
                                                    rhiTextureTable.get(), rhiRtPrimaryPass.get(),
+                                                   rhiRtDirectPass.get(),
                                                    info->pShaderFolderPath,
                                                    [this](const char *pMessage) { Print(pMessage); }))
                     {

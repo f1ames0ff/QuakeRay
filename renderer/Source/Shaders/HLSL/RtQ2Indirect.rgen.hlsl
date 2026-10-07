@@ -234,7 +234,7 @@ float3 processSecondDiffuseBounce(const uint seed, const Surface surf, const flo
         if ( getLuminance( sunLight.color ) > 0.0 )
         {
             bool sunTraced;
-            const float sunVis = traceSunVisibility( hitSurf, sunLight, sunTraced );
+            const float3 sunVis = traceSunVisibility( hitSurf, sunLight, sunTraced );
 
             if ( sunTraced )
             {
@@ -329,7 +329,7 @@ float3 q2SkyNee( const Surface surf, const uint seed )
         return (float3)0.0;
     }
 
-    const float vis = traceSkyVisibility( surf, skyDirection );
+    const float3 vis = traceSkyVisibility( surf, skyDirection );
     rayStatsAdd( RAY_STATS_CATEGORY_SHADOW_INDIRECT, 1 );
 
     return evalBRDFLambertian( 1.0 ) * nl * radiance * vis * oneOverPdfSky * misWeight;
@@ -449,7 +449,7 @@ void main()
                 if ( getLuminance( light.color ) > 0.0 )
                 {
                     bool lightTraced;
-                    const float vis =
+                    const float3 vis =
                         traceLightVisibility( hitSurf, light, lightIndex, lightTraced );
 
                     if ( lightTraced )
@@ -461,7 +461,7 @@ void main()
                          lightSources[ lightIndex ].lightType == LIGHT_TYPE_TEXTURED_AREA ||
                          lightSources[ lightIndex ].lightType == LIGHT_TYPE_DTAL_GROUP )
                     {
-                        q2AccumulateLightStats( cluster, lightSlot, hitSurf.normal, vis, 0u );
+                        q2AccumulateLightStats( cluster, lightSlot, hitSurf.normal, getLuminance( vis ), 0u );
                     }
 
                     float3 d;
@@ -487,7 +487,7 @@ void main()
             if ( getLuminance( sunLight.color ) > 0.0 )
             {
                 bool sunTraced;
-                const float sunVis = traceSunVisibility( hitSurf, sunLight, sunTraced );
+                const float3 sunVis = traceSunVisibility( hitSurf, sunLight, sunTraced );
 
                 if ( sunTraced )
                 {

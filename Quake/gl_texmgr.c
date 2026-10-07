@@ -1318,6 +1318,13 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtmirror = false;
 		glt->rtexactnormals = false;
 		glt->rtforcerasterize = false;
+		glt->rtalphatest = false;
+		glt->rtglass = false;
+		glt->rtglassior = 0.0f;
+		glt->rtglassthickness = 2.0f;
+		glt->rtglasscolor[0] = 1.0f;
+		glt->rtglasscolor[1] = 1.0f;
+		glt->rtglasscolor[2] = 1.0f;
 		glt->rtemissive = false;
 		glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 		glt->rtemissivemean = 0.0f;
@@ -1357,6 +1364,10 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
 	glt->rtalphatest = mat->alpha_test;
+	glt->rtglass = mat->material_glass;
+	glt->rtglassior = mat->glass_ior;
+	glt->rtglassthickness = mat->glass_thickness;
+	VectorCopy (mat->glass_color, glt->rtglasscolor);
 
 	const int tw = glt->width;
 	const int th = glt->height;
@@ -1418,6 +1429,20 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	const float baseFactor = (mat->base_factor > 0.0f) ? mat->base_factor : 1.0f;
 	const float roughOverride = mat->roughness_override;
+
+	/* The transparency of a glass material rides the alpha of the synthesized
+	   normal texture, the one channel the traced path reads but nothing else
+	   uses; the glass branch multiplies the refracted light by it. */
+	float glassT = mat->material_glass ? mat->transparency : 1.0f;
+
+	if (glassT != glassT)
+		glassT = 1.0f;
+	if (glassT < 0.0f)
+		glassT = 0.0f;
+	else if (glassT > 1.0f)
+		glassT = 1.0f;
+
+	const byte glassAlpha = (byte)(glassT * 255.0f + 0.5f);
 
 	const qboolean isBrush = glt->owner && glt->owner->type == mod_brush;
 	const float defaultRough = isBrush ? CVAR_TO_FLOAT (rt_brush_rough) : CVAR_TO_FLOAT (rt_model_rough);
@@ -1557,9 +1582,9 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			albedo[i * 4 + 3] = 255;
 
 		float rough;
-		if (glt->rtmirror)
+		if (glt->rtmirror && !glt->rtglass)
 			rough = 0.0f; // mirror has the last word; the panel locks the override
-		else if (roughOverride > 0.0f)
+		else if (mat->has_roughness_override)
 			rough = roughOverride;
 		else if (glossBuf)
 			rough = 1.0f - glossBuf[i * 4] / 255.0f;
@@ -1641,7 +1666,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			normal[i * 4 + 1] = 128;
 			normal[i * 4 + 2] = 255;
 		}
-		normal[i * 4 + 3] = 255;
+		normal[i * 4 + 3] = glassAlpha;
 	}
 
 	if (colorEmis)  Mem_Free (colorEmis);
@@ -1732,6 +1757,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		            glt->rtemisglowfrac, glt->rtemissiveglow,
 		            glt->rtemissiveglowtex ? 1 : 0);
 	}
+
 
 	if (texmgr_dumping_reload && !TexMgr_AlreadyDumped (mat->name) && CVAR_TO_BOOL (qr_material_editor_debug))
 	{
@@ -1985,6 +2011,12 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtexactnormals = false;
 	glt->rtforcerasterize = false;
 	glt->rtalphatest = false;
+	glt->rtglass = false;
+	glt->rtglassior = 0.0f;
+	glt->rtglassthickness = 2.0f;
+	glt->rtglasscolor[0] = 1.0f;
+	glt->rtglasscolor[1] = 1.0f;
+	glt->rtglasscolor[2] = 1.0f;
 	glt->rtemissive = false;
 	glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 	glt->rtemissivemean = 0.0f;

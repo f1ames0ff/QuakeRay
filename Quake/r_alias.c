@@ -477,17 +477,20 @@ if
 else
 	{
 		qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
+		qboolean is_glass = tx && tx->rtglass;
 		qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
 		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetAliasModelUniqueId (entuniqueid),
 			.flags =
 			    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
-			    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (tx && tx->rtalphatest ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (is_glass && alphatest ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
 			    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT ),
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType =
 			    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+			    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 			    // MF_HOLEY models (index 255 = transparent) must keep their alpha in the
 			    // traced path too, where the alpha test runs in the any-hit shader.
 			    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
@@ -500,7 +503,9 @@ else
 			.pVertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster),
 			.indexCount = paliashdr->numindexes,
 			.pIndices = e->model->rtindices,
-			.layerColors = {RT_COLOR_WHITE},
+			.layerColors = {RT_COLOR_WHITE, {is_glass && tx ? tx->rtglasscolor[0] : 0.0f, is_glass && tx ? tx->rtglasscolor[1] : 0.0f, is_glass && tx ? tx->rtglasscolor[2] : 0.0f, 0.0f},
+			                {is_glass && tx ? tx->rtglassior : 0.0f,
+			                 is_glass && tx ? tx->rtglassthickness : 0.0f, 0.0f, 0.0f}},
 			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
 			.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
 			.defaultRoughness = CVAR_TO_FLOAT(rt_model_rough),
@@ -628,6 +633,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 		else
 		{
 			qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
+			qboolean is_glass = tx && tx->rtglass;
 			qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
 			QrGeometryUploadInfo info = {
@@ -635,10 +641,12 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.flags =
 				    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
 				    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+				    (is_glass && alphatest ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
 				    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT),
 				.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 				.passThroughType =
 				    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+				    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 				    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
 				                QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
 				.visibilityType =
@@ -649,7 +657,9 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.pVertices = vertices,
 				.indexCount = surf->numindices,
 				.pIndices = e->model->rtindices + surf->firstindex,
-				.layerColors = {RT_COLOR_WHITE},
+				.layerColors = {RT_COLOR_WHITE, {is_glass && tx ? tx->rtglasscolor[0] : 0.0f, is_glass && tx ? tx->rtglasscolor[1] : 0.0f, is_glass && tx ? tx->rtglasscolor[2] : 0.0f, 0.0f},
+				                {is_glass && tx ? tx->rtglassior : 0.0f,
+				                 is_glass && tx ? tx->rtglassthickness : 0.0f, 0.0f, 0.0f}},
 				.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
 				.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
 				.defaultRoughness = CVAR_TO_FLOAT (rt_model_rough),

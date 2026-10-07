@@ -195,6 +195,8 @@ private:
     bool                                    presentWait2Enabled = false;
     std::string                             printedPresentModeName;
     bool                                    printedPresentWaitActive = false;
+    bool                                    printedRasterUploadWithoutFrame = false;
+    bool                                    printedRasterOverflow = false;
     std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;

@@ -259,6 +259,9 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
 	CVAR_DEF_T (rt_refr_water, "1.33") \
+	CVAR_DEF_T (rt_glass_shadows, "1") \
+	CVAR_DEF_T (rt_glass_denoise, "0") \
+	CVAR_DEF_T (rt_glass_particles, "1") \
 	\
 	CVAR_DEF_T (rt_volume_type, "2") \
 	/* The screen-space volumetric these parameterise is gone on the Q2RTX core:
@@ -2684,10 +2687,19 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	RT_GetWaterColor (water_color);
 	RT_GetAcidColor (acid_color);
 
+	// a zero or a hostile value here would poison the refraction of every glass
+	// surface with a division by zero, so the uniform gets a sane index
+	float refr_glass = CVAR_TO_FLOAT (rt_refr_glass);
+
+	if (!(refr_glass >= 1.0f))
+		refr_glass = 1.0f;
+	else if (refr_glass > 5.0f)
+		refr_glass = 5.0f;
+
 	QrDrawFrameReflectRefractParams refl_refr_params = {
 		.maxReflectRefractDepth = CVAR_TO_UINT32 (rt_reflrefr_depth),
 		.typeOfMediaAroundCamera = rt_cameramedia,
-		.indexOfRefractionGlass = CVAR_TO_FLOAT (rt_refr_glass),
+		.indexOfRefractionGlass = refr_glass,
 		.indexOfRefractionWater = CVAR_TO_FLOAT (rt_refr_water),
 		.waterWaveSpeed = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_speed)),
 		.waterWaveNormalStrength = CVAR_TO_FLOAT (rt_water_normstren),
@@ -2697,6 +2709,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.waterWaveTextureDerivativesMultiplier = CVAR_TO_FLOAT (rt_water_normsharp),
 		.waterTextureAreaScale = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_scale)),
 		.portalNormalTwirl = CVAR_TO_BOOL (rt_portal_twirl),
+		.glassShadows = CVAR_TO_BOOL (rt_glass_shadows),
+		.glassDenoise = CVAR_TO_BOOL (rt_glass_denoise),
+		.glassParticles = CVAR_TO_BOOL (rt_glass_particles),
 	};
 	// because 1 quake unit is not 1 meter
 	refl_refr_params.waterColor.data[0] = powf (refl_refr_params.waterColor.data[0], 1.0f / METRIC_TO_QUAKEUNIT (1.0f));

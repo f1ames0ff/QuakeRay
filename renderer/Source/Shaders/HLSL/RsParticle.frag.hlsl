@@ -12,6 +12,7 @@ struct RasterizerFrag_BT
     [[vk::offset(64)]]  float4 color;
     [[vk::offset(80)]]  uint   textureIndex;
     [[vk::offset(104)]] float  particleLook[4];
+    [[vk::offset(120)]] uint   particleProxy;
 };
 
 [[vk::push_constant]] ConstantBuffer<RasterizerFrag_BT> rasterizerFragInfo;
@@ -22,9 +23,10 @@ struct RsParticleFragOutput
     [[vk::location(1)]] float3 outScreenEmission : SV_Target1;
 };
 
-RsParticleFragOutput main( [[vk::location(0)]] float4 inColor    : COLOR0,
-                           [[vk::location(1)]] float2 inTexCoord : TEXCOORD0,
-                           [[vk::location(2)]] float3 inLit      : TEXCOORD1,
+RsParticleFragOutput main( [[vk::location(0)]] float4 inColor     : COLOR0,
+                           [[vk::location(1)]] float2 inTexCoord  : TEXCOORD0,
+                           [[vk::location(2)]] float3 inLit       : TEXCOORD1,
+                           [[vk::location(3)]] float  inViewDepth : TEXCOORD3,
                            float4 fragCoord : SV_Position )
 {
     const float lightGain  = rasterizerFragInfo.particleLook[2];
@@ -32,6 +34,22 @@ RsParticleFragOutput main( [[vk::location(0)]] float4 inColor    : COLOR0,
     const bool  debug      = rasterizerFragInfo.particleLook[0] > 0.5;
 
     const int2 cbPix = getCheckerboardPix(int2(fragCoord.xy));
+
+    /* A sprite whose stand-in the reflect/refract raygen traced is not rasterized behind a pane:
+       the traced copy is what the glass shows, and the raster one would be the sharp double over
+       it. The mask's blue is the pane's view depth (RaygenPrimary.hlsli) and its alpha's
+       magnitude above four marks the normal-map glass mode, the only mode that writes it. Draws
+       the proxy list does not describe (FTE strips and the other blend modes) keep their raster
+       copy - the per-draw flag the pass sets is false for them. */
+    if (rasterizerFragInfo.particleProxy != 0u && globalUniform.glassParticles != 0u)
+    {
+        const float4 glassMask = framebufQ2GlassFilter_Sampled.Load(int3(cbPix, 0));
+        if (abs(glassMask.a) >= 4.0 && inViewDepth > glassMask.z + max(0.01, glassMask.z * 1e-4))
+        {
+            discard;
+        }
+    }
+
     const int2 lfPix = int2(clamp(cbPix / Q2_GRAD_DWN, (int2)0, int2(globalUniform.renderWidth, globalUniform.renderHeight) / Q2_GRAD_DWN - (int2)1));
 
     Q2SH lf;

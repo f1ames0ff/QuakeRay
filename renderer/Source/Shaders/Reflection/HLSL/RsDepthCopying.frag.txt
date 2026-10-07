@@ -1,5 +1,5 @@
 # Format: 1
-# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); dxil.dll: 1.6(101.6.2112.13); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
 === builtin FragCoord
 v4(float32)
 === builtin FragDepth
@@ -8,9 +8,9 @@ float32
 declared
 === capability StorageImageExtendedFormats
 declared
-=== descriptor set 0 binding 136
+=== descriptor set 0 binding 143
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 136: storage class
+=== descriptor set 0 binding 143: storage class
 UniformConstant
 === entry point
 Fragment main

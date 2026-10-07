@@ -203,6 +203,26 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
         return NULL;
     }
 
+    /* The texture keys are paths under the game directories: accept Windows
+       separators and a leading ./ or /, so a hand-edited yaml resolves like a
+       path typed in the editor's field. */
+    char norm[MAX_QPATH];
+    {
+        const char *src = base;
+        char       *dst = norm;
+
+        while (*src == ' ' || *src == '\t')
+            src++;
+        if (src[0] == '.' && (src[1] == '/' || src[1] == '\\'))
+            src += 2;
+        while (*src == '/' || *src == '\\')
+            src++;
+        while (*src && dst < norm + sizeof (norm) - 1)
+            *dst++ = (*src == '\\') ? '/' : *src++;
+        *dst = '\0';
+    }
+    base = norm;
+
     const char *dot = strrchr(base, '.');
     const qboolean hasExt = (dot != NULL && dot[1] != '\0');
 
@@ -294,6 +314,12 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->emissive_blend = -1;
     mat->emissive_focus_soft = -1.0f;
     mat->base_factor = 1.0f;
+    mat->transparency = 1.0f;
+    mat->glass_ior = 0.0f;
+    mat->glass_thickness = 2.0f;
+    mat->glass_color[0] = 1.0f;
+    mat->glass_color[1] = 1.0f;
+    mat->glass_color[2] = 1.0f;
     mat->light_brightness = 1.0f;
     mat->light_styles = false;
     mat->color_emissive_threshold = 0.02f;
@@ -461,7 +487,10 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
     if (!q_strcasecmp(key, "bump_scale"))
         mat->bump_scale = (float)atof(value);
     else if (!q_strcasecmp(key, "roughness_override"))
+    {
         mat->roughness_override = (float)atof(value);
+        mat->has_roughness_override = true;
+    }
     else if (!q_strcasecmp(key, "metalness_factor"))
     {
         mat->metalness_factor = (float)atof(value);
@@ -572,6 +601,62 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->force_rasterize = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "alpha_test"))
         mat->alpha_test = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "material_glass"))
+        mat->material_glass = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "transparency"))
+    {
+        const float raw = (float)atof(value);
+        float       v   = raw;
+
+        if (v != v)
+            v = 1.0f;
+        else if (v < 0.0f)
+            v = 0.0f;
+        else if (v > 1.0f)
+            v = 1.0f;
+
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': transparency '%s' is not in 0..1; using %.3g\n", mat->name, value, v);
+
+        mat->transparency = v;
+    }
+    else if (!q_strcasecmp(key, "glass_ior") || !q_strcasecmp(key, "refractive_index"))
+    {
+        const float raw = (float)atof(value);
+        float       v   = raw;
+
+        if (v != v || v < 0.0f)
+            v = 0.0f;
+        else if (v > 0.0f && v < 1.0f)
+            v = 1.0f;
+        else if (v > 5.0f)
+            v = 5.0f;
+
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': glass_ior '%s' is not in 0..5; using %.3g\n", mat->name, value, v);
+
+        mat->glass_ior = v;
+    }
+    else if (!q_strcasecmp(key, "glass_thickness") || !q_strcasecmp(key, "thickness"))
+    {
+        const float raw = (float)atof(value);
+        float       v   = raw;
+
+        if (v != v || v < 0.0f)
+            v = 0.0f;
+        else if (v > 64.0f)
+            v = 64.0f;
+
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': glass_thickness '%s' is not in 0..64; using %.3g\n", mat->name, value, v);
+
+        mat->glass_thickness = v;
+    }
+    else if (!q_strcasecmp(key, "glass_color"))
+    {
+        if (!rt_mat_parse_hex_color(value, mat->glass_color))
+            Con_DWarning("RT mat: material '%s': glass_color '%s' is not rrggbb; using white\n", mat->name, value);
+    }
     else if (!q_strcasecmp(key, "texture_base"))
         q_strlcpy(mat->filename_base, value, sizeof(mat->filename_base));
     else if (!q_strcasecmp(key, "texture_normals"))
