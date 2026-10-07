@@ -148,11 +148,18 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_elight_threshold, "-1") \
     CVAR_DEF_T (rt_elight_radius, "0.01") \
     \
-	CVAR_DEF_T (rt_light_reach, "25") \
+	/* How far a light of the map itself is heard from where it stands, in metres. It is also the
+	   reach the top-up pass looks around a cluster with, so it bounds the lights a cluster takes
+	   beyond its own PVS. A setting of zero turns the pass off and falls back to the reach the
+	   moving lights are held to. */ \
+	CVAR_DEF_T (rt_light_reach_static, "25") \
 	/* Reach of a light of a moving entity, in metres: the distance it is promised not to reach
 	   past, and so the reason a torch or a flame reaches a few rooms instead of every list of
-	   the map. The lights of the map itself state no reach and keep the one their leaf gives
-	   them. */ \
+	   the map. */ \
+	CVAR_DEF_T (rt_light_reach_dynamic, "10") \
+	/* Kept only so old configs load without an unknown-cvar warning: the reaches are
+	   rt_light_reach_static and rt_light_reach_dynamic now. */ \
+	CVAR_DEF_T (rt_light_reach, "25") \
 	CVAR_DEF_T (rt_light_reach_max, "10") \
 	CVAR_DEF_T (rt_cluster_dlights, "1") \
 	/* 1 takes back only the slots of the lights that moved and hands them out again from where \
@@ -694,7 +701,11 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_cluster_incremental");
 	RT_Bench_Setting (f, "rt_cluster_sampling");
 	RT_Bench_Setting (f, "rt_cluster_dlights");
+	RT_Bench_Setting (f, "rt_light_reach_static");
+	RT_Bench_Setting (f, "rt_light_reach_dynamic");
 	RT_Bench_Setting (f, "rt_light_styles");
+	RT_Bench_Setting (f, "r_particles");
+	RT_Bench_Setting (f, "r_fteparticles");
 	RT_Bench_Setting (f, "rt_model_lights");
 	RT_Bench_Setting (f, "rt_dtal_model_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_model_budget");

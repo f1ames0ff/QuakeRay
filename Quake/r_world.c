@@ -4749,7 +4749,7 @@ void R_DrawWorld_ShowTris (cb_context_t *cbx)
 RT_RegisterWorldModelLight
 
 A light of the map itself: it stands where it stands every frame, so it is held to the reach of
-rt_light_reach rather than to the cap the moving lights are registered with. The leaf it resolved
+rt_light_reach_static rather than to the cap the moving lights are registered with. The leaf it resolved
 into is where its list starts, not how far the light is heard: the PVS of that leaf is as wide as
 the doorways of the map make it, and a light given the whole of it fills the lists of areas it
 only sees into, where the lights standing there are then the ones the pass has to drop.

@@ -387,12 +387,12 @@ void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach);
 void RT_ClusterLightAddPower (uint64_t uniqueID, const vec3_t origin, float reach, float power);
 void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reach, float radius,
                               const uint32_t *clusters, uint32_t clusterCount, float power);
-// Reach of a light of a moving entity, from rt_light_reach_max: the distance the host promises
+// Reach of a light of a moving entity, from rt_light_reach_dynamic: the distance the host promises
 // such a light does not reach past. The lights of the map itself pass the reach of
 // RT_ClusterLightReachStatic instead.
 float RT_ClusterLightReach (void);
-// Reach of a light of the map itself, from rt_light_reach: the distance such a light is heard
-// from where it stands. A setting of zero falls back to the cap of RT_ClusterLightReach.
+// Reach of a light of the map itself, from rt_light_reach_static: the distance such a light is
+// heard from where it stands. A setting of zero falls back to the cap of RT_ClusterLightReach.
 float RT_ClusterLightReachStatic (void);
 void RT_ClusterLightListsUpload (void);
 

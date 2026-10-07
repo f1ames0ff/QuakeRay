@@ -361,8 +361,8 @@ extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
 extern cvar_t rt_poi_trigger, rt_poi_func, rt_poi_weapon, rt_poi_pwrup, rt_poi_armor, rt_poi_key, rt_poi_health, rt_poi_ammo;
 extern cvar_t rt_poi_distthresh, rt_poi_distthresh_super;
-extern cvar_t rt_light_reach;
-extern cvar_t rt_light_reach_max;
+extern cvar_t rt_light_reach_static;
+extern cvar_t rt_light_reach_dynamic;
 extern cvar_t rt_cluster_incremental;
 extern cvar_t rt_cluster_sampling;
 extern cvar_t rt_cluster_assert;
@@ -1019,27 +1019,28 @@ void RT_ClusterLightListsReset (void)
 	VectorCopy (r_refdef.vieworg, rt_cluster_vieworg);
 }
 
-/* The reach a light of a moving entity is registered with, from rt_light_reach_max: the distance
-   the host promises such a light does not reach past, in Quake units. A light that moves is what
-   makes the lists rebuild, so this is what keeps one entity from reaching every list of the map. */
+/* The reach a light of a moving entity is registered with, from rt_light_reach_dynamic: the
+   distance the host promises such a light does not reach past, in Quake units. A light that moves
+   is what makes the lists rebuild, so this is what keeps one entity from reaching every list of
+   the map. */
 float RT_ClusterLightReach (void)
 {
-	return METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach_max));
+	return METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach_dynamic));
 }
 
-/* The reach a light of the map itself is registered with, from rt_light_reach: how far a light
-   that stands where it stands is heard, in Quake units. The leaf it resolved into is where its
-   list starts, but the PVS of that leaf is what the doorways of the map make wide, and a light
-   held to the PVS alone fills the lists of every area it merely sees into, where the lights that
-   do stand there are the ones pushed out of them. It also has to be the reach the incremental
+/* The reach a light of the map itself is registered with, from rt_light_reach_static: how far a
+   light that stands where it stands is heard, in Quake units. The leaf it resolved into is where
+   its list starts, but the PVS of that leaf is what the doorways of the map make wide, and a
+   light held to the PVS alone fills the lists of every area it merely sees into, where the lights
+   that do stand there are the ones pushed out of them. It also has to be the reach the incremental
    pass gates with, so that a light's list comes out the same whether it was composed or moved.
    A setting of zero turns the top-up pass off and is no reach at all, so it falls back to the cap
    the moving lights are held to instead of handing the light the whole row. */
 float RT_ClusterLightReachStatic (void)
 {
-	const float reach = CVAR_TO_FLOAT (rt_light_reach);
+	const float reach = CVAR_TO_FLOAT (rt_light_reach_static);
 
-	return METRIC_TO_QUAKEUNIT ((reach > 0.0f) ? reach : CVAR_TO_FLOAT (rt_light_reach_max));
+	return METRIC_TO_QUAKEUNIT ((reach > 0.0f) ? reach : CVAR_TO_FLOAT (rt_light_reach_dynamic));
 }
 
 void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reach, float radius,
@@ -1279,7 +1280,7 @@ void RT_ClusterLightListsUpload (void)
 	const QrClusterLightSourcesUploadInfo info = {
 		.numLights = (uint32_t)rt_cluster_light_count,
 		.pLights = rt_cluster_sources,
-		.topUpReach = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach)),
+		.topUpReach = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach_static)),
 		/* 1 in every run: the cvar is read-only (CVAR_ROM), and 0 - the legacy full
 		   recomposition - is engine-selectable only (Cvar_SetROM). */
 		.allowIncremental = CVAR_TO_BOOL (rt_cluster_incremental) ? 1 : 0,
@@ -1429,13 +1430,13 @@ void RT_ClusterLightDumpHeader (FILE *f)
 		cl.viewangles[0], cl.viewangles[1], cl.viewangles[2],
 		ENGINE_VERSION, host_framecount);
 	fprintf (f, "# cvars rt_cluster_sampling=%s rt_dtal_groups=%s rt_dtal_spacing=%s "
-		"rt_light_reach=%s rt_light_reach_max=%s rt_denoiser=%s rt_restir=%s "
+		"rt_light_reach_static=%s rt_light_reach_dynamic=%s rt_denoiser=%s rt_restir=%s "
 		"rt_antifirefly=%s rt_nee_samples=%s\n",
 		Cvar_VariableString ("rt_cluster_sampling"),
 		Cvar_VariableString ("rt_dtal_groups"),
 		Cvar_VariableString ("rt_dtal_spacing"),
-		Cvar_VariableString ("rt_light_reach"),
-		Cvar_VariableString ("rt_light_reach_max"),
+		Cvar_VariableString ("rt_light_reach_static"),
+		Cvar_VariableString ("rt_light_reach_dynamic"),
 		Cvar_VariableString ("rt_denoiser"),
 		Cvar_VariableString ("rt_restir"),
 		Cvar_VariableString ("rt_antifirefly"),
