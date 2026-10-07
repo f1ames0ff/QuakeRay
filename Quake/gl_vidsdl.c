@@ -147,6 +147,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_voxel_smoke_gray, "0.5") \
 	CVAR_DEF_T (rt_voxel_smoke_emitter, "") \
 	CVAR_DEF_T (rt_voxel_smoke_rise, "48") \
+	CVAR_DEF_T (rt_voxel_smoke_window, "384") \
 	CVAR_DEF_T (rt_dlight_radius, "0.1") \
 	\
 	CVAR_DEF_T (rt_emis_light_intensity, "1.0") \
@@ -2922,7 +2923,23 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		sscanf (Cvar_VariableString ("rt_voxel_smoke_emitter"), "%f %f %f",
 		        &voxel_smoke_emitter[0], &voxel_smoke_emitter[1], &voxel_smoke_emitter[2]) == 3;
 
-	if (cl.worldmodel)
+	for (int i = 0; i < 3; i++)
+	{
+		voxel_smoke_params.emitterCenter.data[i] =
+			voxel_smoke_emitter_set ? voxel_smoke_emitter[i] : voxel_smoke_anchor[i];
+	}
+
+	const float voxel_smoke_window = max (CVAR_TO_FLOAT (rt_voxel_smoke_window), 0.0f);
+
+	if (voxel_smoke_window > 0.0f)
+	{
+		for (int i = 0; i < 3; i++)
+		{
+			voxel_smoke_params.worldMin.data[i] = voxel_smoke_params.emitterCenter.data[i] - voxel_smoke_window;
+			voxel_smoke_params.worldMax.data[i] = voxel_smoke_params.emitterCenter.data[i] + voxel_smoke_window;
+		}
+	}
+	else if (cl.worldmodel)
 	{
 		for (int i = 0; i < 3; i++)
 		{
@@ -2937,12 +2954,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			voxel_smoke_params.worldMin.data[i] = -256.0f;
 			voxel_smoke_params.worldMax.data[i] = 256.0f;
 		}
-	}
-
-	for (int i = 0; i < 3; i++)
-	{
-		voxel_smoke_params.emitterCenter.data[i] =
-			voxel_smoke_emitter_set ? voxel_smoke_emitter[i] : voxel_smoke_anchor[i];
 	}
 
 	voxel_smoke_params.emitterRadius = CVAR_TO_FLOAT (rt_voxel_smoke_radius);
