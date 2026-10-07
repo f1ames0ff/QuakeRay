@@ -756,9 +756,39 @@ void CL_Bench_f (void)
 	if (cmd_source != src_command)
 		return;
 
+	if (Cmd_Argc () == 2 && !q_strcasecmp (Cmd_Argv (1), "start"))
+	{
+		RT_Bench_Start ();
+		Con_Printf ("rt_bench: the running game is measured until rt_bench stop\n");
+		return;
+	}
+
+	if (Cmd_Argc () == 2 && !q_strcasecmp (Cmd_Argv (1), "stop"))
+	{
+		const char *name = (cl.worldmodel && cl.worldmodel->name[0]) ? cl.worldmodel->name : "live";
+
+		if (!RT_Bench_Active ())
+		{
+			Con_Printf ("rt_bench: no run is active\n");
+			return;
+		}
+
+		if (RT_Bench_Report (name))
+		{
+			Con_Printf ("rt_bench: %i frames reported to benchmark.log\n", rt_bench_result.frames);
+		}
+		else
+		{
+			Con_Printf ("rt_bench: no frame was measured\n");
+		}
+
+		return;
+	}
+
 	if (Cmd_Argc () < 2 || Cmd_Argc () > 3 || (Cmd_Argc () == 3 && q_strcasecmp (Cmd_Argv (2), "quit")))
 	{
 		Con_Printf ("rt_bench <demoname> [quit] : plays a demo and reports the frame profile\n");
+		Con_Printf ("rt_bench start|stop : measures the running game between the two\n");
 		return;
 	}
 
