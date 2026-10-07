@@ -241,27 +241,6 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
         TryRecreate(requestedExtent, requestedPresentMode);
     }
 
-    if (usePresentWait2 && sVkWaitForPresent2KHR != nullptr && currentPresentId + 1 > maxFrameLatency)
-    {
-        const uint64_t targetPresentId = currentPresentId + 1 - maxFrameLatency;
-
-        if (targetPresentId <= waitablePresentId)
-        {
-            VkPresentWait2InfoKHR waitInfo = {};
-            waitInfo.sType = VK_STRUCTURE_TYPE_PRESENT_WAIT_2_INFO_KHR;
-            waitInfo.presentId = targetPresentId;
-            waitInfo.timeout = 50ull * 1000ull * 1000ull;
-
-            const VkResult waitResult = sVkWaitForPresent2KHR(device, swapchain, &waitInfo);
-
-            if (waitResult == VK_ERROR_OUT_OF_DATE_KHR)
-            {
-                ResetSurfaceCapabilitiesCache();
-                TryRecreate(GetOptimalExtent(), requestedPresentMode);
-            }
-        }
-    }
-
     while (true)
     {
         const VkResult r = vkAcquireNextImageKHR(
