@@ -85,6 +85,7 @@ void M_Menu_BenchmarkResults_f (void);
 void M_Print (cb_context_t *cbx, int cx, int cy, const char *str);
 
 void M_Draw (cb_context_t *cbx);
+qboolean M_ConsoleBackgroundIsOpaque (void);
 
 void M_DrawPic (cb_context_t *cbx, int x, int y, qpic_t *pic);
 void M_DrawTransPic (cb_context_t *cbx, int x, int y, qpic_t *pic);

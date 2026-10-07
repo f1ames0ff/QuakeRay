@@ -1,4 +1,5 @@
 #include "RhiFrameContext.h"
+#include "../CpuFrameProfiler.h"
 
 #include <thread>
 #include <utility>
@@ -70,7 +71,7 @@ bool RhiFrameContext::Create(nvrhi::IDevice *pDevice, uint32_t frameCount)
     return true;
 }
 
-void RhiFrameContext::BeginSlot(uint32_t slot)
+void RhiFrameContext::BeginSlot(uint32_t slot, CpuFrameProfiler *cpuProfiler)
 {
     if (!IsCreated() || slot >= slots.size())
     {
@@ -90,6 +91,7 @@ void RhiFrameContext::BeginSlot(uint32_t slot)
     // wait, so poll the Graphics queue's completed instance. The slot's submission is two frames old,
     // so the first read normally satisfies the condition and the loop only spins when the GPU is
     // behind the engine's pacing.
+    CpuProfileScope wait(cpuProfiler, QR_CPU_PASS_SLOT_WAIT);
     if (s.hasSubmission)
     {
         while (device->queueGetCompletedInstance(nvrhi::CommandQueue::Graphics) < s.lastSubmissionInstance)
@@ -97,6 +99,9 @@ void RhiFrameContext::BeginSlot(uint32_t slot)
             std::this_thread::yield();
         }
     }
+
+    wait.Finish();
+    CpuProfileScope collect(cpuProfiler, QR_CPU_PASS_SLOT_GC);
 
     // The engine's drain moment: retired in frame N, released at the start of frame N+2, right after
     // the fence wait (TextureManager::texturesToDestroy and the two sibling queues). Releasing here,

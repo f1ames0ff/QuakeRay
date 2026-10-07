@@ -77,7 +77,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     int2 found_pos_prev = (int2)0;
     float2 found_prev_lum = (float2)0;
 
-    for (int offy = 0; offy < Q2_GRAD_DWN; offy++)
+    for (int offy = 0; offy < Q2_GRAD_DWN && globalUniform.restirParams.z == 0u; offy++)
     {
         for (int offx = 0; offx < Q2_GRAD_DWN; offx++)
         {

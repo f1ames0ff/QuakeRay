@@ -529,6 +529,15 @@ endif()
 # Tests
 # ============================================================================
 if(BUILD_TESTING)
+    add_executable(frame_timing_tests tests/frame_timing_tests.cpp)
+    target_include_directories(frame_timing_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/renderer/Source
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+        ${CMAKE_SOURCE_DIR}/shared
+    )
+    target_compile_definitions(frame_timing_tests PRIVATE QR_STATIC)
+    add_test(NAME frame_timing_tests COMMAND frame_timing_tests)
+
     add_executable(rt_lighting_tests
         tests/rt_lighting_tests.c
         shared/rt_alias.c

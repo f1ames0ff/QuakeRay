@@ -834,7 +834,8 @@ void SCR_DrawConsole (cb_context_t *cbx)
 {
 	if (scr_con_current)
 	{
-		Con_DrawConsole (cbx, scr_con_current, true);
+		if (!M_ConsoleBackgroundIsOpaque ())
+			Con_DrawConsole (cbx, scr_con_current, true);
 		clearconsole = 0;
 	}
 	else

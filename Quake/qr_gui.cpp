@@ -21,14 +21,15 @@
 #include <cstring>
 #include <cmath>
 #include <cfloat>
+#include <algorithm>
 
 namespace
 {
 
 QrInstance   g_instance      = 0;
 QrMaterial   g_font_material = QR_NO_MATERIAL;
-constexpr int   kOverlayFontSizeCount = 8;
-constexpr float kOverlayFontSizes[kOverlayFontSizeCount] = { 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f };
+constexpr int   kOverlayFontSizeCount = 10;
+constexpr float kOverlayFontSizes[kOverlayFontSizeCount] = { 10.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f };
 ImFont      *g_stats_fonts[kOverlayFontSizeCount] = {};
 bool         g_ready         = false;
 bool         g_frame_open    = false;
@@ -1982,7 +1983,7 @@ void OverlaySparklineBudget (ImDrawList *dl, const ImVec2 &p, float w, float h, 
 
 }
 
-void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title)
+void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title, int columnCount)
 {
 	if (!g_ready)
 		return;
@@ -2003,13 +2004,17 @@ void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const c
 
 	float   font_size = kOverlayBaseFont * scale;
 	float   best_diff = FLT_MAX;
+	const float max_font_size = io.DisplaySize.x > 0.0f && columnCount > 0
+	    ? kOverlayBaseFont * io.DisplaySize.x / (columnCount * (kOverlayRowW + kOverlayGapX) + 32.0f)
+	    : kOverlayBaseFont;
+	font_size = std::min (font_size, std::max (kOverlayFontSizes[0], max_font_size));
 
 	g_overlay_font = nullptr;
 	g_overlay_font_size = font_size;
 
 	for (int i = 0; i < kOverlayFontSizeCount; i++)
 	{
-		if (g_stats_fonts[i] == nullptr)
+		if (g_stats_fonts[i] == nullptr || (i > 0 && kOverlayFontSizes[i] > max_font_size))
 			continue;
 
 		const float diff = std::fabs (kOverlayFontSizes[i] - font_size);
@@ -2057,6 +2062,8 @@ void QR_GUI_OverlaySection (const char *title)
 		{
 			ImGui::EndGroup ();
 			ImGui::SameLine ();
+			if (ImGui::GetCursorScreenPos ().x + kOverlayRowW * g_overlay_scale + 16.0f * g_overlay_scale > ImGui::GetIO ().DisplaySize.x)
+				ImGui::NewLine ();
 			ImGui::BeginGroup ();
 		}
 		g_overlay_first = false;

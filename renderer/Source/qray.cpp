@@ -378,6 +378,33 @@ QrResult qrRequestScreenshot(QrInstance qrInstance, const char *pFilePath)
     return Call(qrInstance, &VulkanDevice::RequestScreenshot, pFilePath);
 }
 
+const char *qrGetCpuPassName(uint32_t passIndex)
+{
+    static const char *const names[QR_CPU_PASS_COUNT] =
+    {
+        "prepare",
+        "hot reload",
+        "descriptors",
+        "staging",
+        "legacy AS",
+        "slot wait",
+        "slot GC",
+        "GPU queries",
+        "RHI setup",
+        "scene record",
+        "compose",
+        "upscale",
+        "post",
+        "UI record",
+        "postui",
+        "present record",
+        "RHI submit",
+        "legacy submit",
+        "present",
+    };
+    return passIndex < QR_CPU_PASS_COUNT ? names[passIndex] : "";
+}
+
 const char *qrGetGpuPassName(uint32_t passIndex)
 {
     static const char *const passNames[QR_GPU_PASS_COUNT] =

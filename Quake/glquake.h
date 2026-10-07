@@ -698,6 +698,10 @@ typedef struct
 	float    frameMs; // longest whole-frame time in the window
 	float    waitMs;  // longest wait for the task graph
 	float    ms[RT_PROF_COUNT];
+	float    averageMs[RT_PROF_COUNT];
+	float    rendererAverageMs[QR_CPU_PASS_COUNT];
+	float    rendererMaxMs[QR_CPU_PASS_COUNT];
+	int      rendererSamples;
 	int      clusterCacheHits;   // frames of the window that reused the cached cluster light lists
 	int      clusterCacheMisses; // frames that had to rebuild them
 	int      clusterMissSet;     // rebuilds caused by lights appearing or disappearing

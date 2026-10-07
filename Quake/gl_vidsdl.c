@@ -33,6 +33,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_lights.h"
 #include "qr_editor.h"
 #include "photocam.h"
+#include "../shared/rt_frame_policy.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
 #include <time.h> // for the timestamp of the frame rt_stats_dump appends
@@ -393,6 +394,10 @@ static double   rt_prof_frame_start;
 static double   rt_prof_window_start;
 static int      rt_prof_frames;
 static qboolean rt_prof_active;
+static double   rt_prof_sum[RT_PROF_COUNT];
+static double   rt_renderer_cpu_sum[QR_CPU_PASS_COUNT];
+static float    rt_renderer_cpu_max[QR_CPU_PASS_COUNT];
+static int      rt_renderer_cpu_samples;
 
 /* rt_bench: the same slots, summed over a whole demo run instead of maximized over one
    `rt_stats_interval` window. The on-screen panel wants the worst frame of the window; a
@@ -473,6 +478,7 @@ void RT_Prof_End (int slot, double start)
 
 	const double ms = (Sys_DoubleTime () - start) * 1000.0;
 	RT_Bench_Slot (slot, ms);
+	rt_prof_sum[slot] += ms;
 	if (ms > rt_prof_ms[slot])
 		rt_prof_ms[slot] = ms;
 }
@@ -480,6 +486,7 @@ void RT_Prof_End (int slot, double start)
 void RT_Prof_Sample (int slot, double ms)
 {
 	RT_Bench_Slot (slot, ms);
+	rt_prof_sum[slot] += ms;
 	if (ms > rt_prof_ms[slot])
 		rt_prof_ms[slot] = ms;
 }
@@ -503,6 +510,32 @@ void RT_Prof_FrameEnd (void)
 		++rt_bench_frames;
 }
 
+static void RT_Prof_ResetSamples (void)
+{
+	memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
+	memset (rt_prof_sum, 0, sizeof (rt_prof_sum));
+	memset (rt_renderer_cpu_sum, 0, sizeof (rt_renderer_cpu_sum));
+	memset (rt_renderer_cpu_max, 0, sizeof (rt_renderer_cpu_max));
+	rt_prof_frames = 0;
+	rt_renderer_cpu_samples = 0;
+}
+
+static void RT_Prof_RecordRenderer (void)
+{
+	QrFrameStats stats = {0};
+
+	if (qrGetFrameStatsEx (vulkan_globals.instance, &stats) != QR_SUCCESS || !stats.cpuTimingValid)
+		return;
+
+	++rt_renderer_cpu_samples;
+	for (int i = 0; i < QR_CPU_PASS_COUNT; i++)
+	{
+		rt_renderer_cpu_sum[i] += stats.cpuPassMs[i];
+		if (stats.cpuPassMs[i] > rt_renderer_cpu_max[i])
+			rt_renderer_cpu_max[i] = stats.cpuPassMs[i];
+	}
+}
+
 void RT_Prof_Update (void)
 {
 	if (!RT_StatsPanel (RT_STATS_PROFILE))
@@ -512,8 +545,7 @@ void RT_Prof_Update (void)
 
 		rt_prof_active = false;
 		rt_prof_report.valid = false;
-		memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
-		rt_prof_frames = 0;
+		RT_Prof_ResetSamples ();
 		if (!rt_bench_active)
 		{
 			rt_cluster_cache_hits = 0;
@@ -533,8 +565,7 @@ void RT_Prof_Update (void)
 		rt_prof_active = true;
 		rt_prof_report.valid = false;
 		rt_prof_window_start = now;
-		rt_prof_frames = 0;
-		memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
+		RT_Prof_ResetSamples ();
 		if (!rt_bench_active)
 		{
 			rt_cluster_cache_hits = 0;
@@ -570,7 +601,17 @@ void RT_Prof_Update (void)
 	rt_prof_report.waitMs = (float)rt_prof_ms[RT_PROF_WAIT];
 
 	for (int i = 0; i < RT_PROF_COUNT; ++i)
+	{
 		rt_prof_report.ms[i] = (float)rt_prof_ms[i];
+		rt_prof_report.averageMs[i] = rt_prof_frames > 0 ? (float)(rt_prof_sum[i] / rt_prof_frames) : 0.0f;
+	}
+	for (int i = 0; i < QR_CPU_PASS_COUNT; ++i)
+	{
+		rt_prof_report.rendererAverageMs[i] = rt_renderer_cpu_samples > 0
+		    ? (float)(rt_renderer_cpu_sum[i] / rt_renderer_cpu_samples) : 0.0f;
+		rt_prof_report.rendererMaxMs[i] = rt_renderer_cpu_max[i];
+	}
+	rt_prof_report.rendererSamples = rt_renderer_cpu_samples;
 
 	rt_prof_report.clusterCacheHits = rt_cluster_cache_hits;
 	rt_prof_report.clusterCacheMisses = rt_cluster_cache_misses;
@@ -595,8 +636,7 @@ void RT_Prof_Update (void)
 		rt_cluster_miss_move = 0;
 		rt_cluster_miss_other = 0;
 	}
-	memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
-	rt_prof_frames = 0;
+	RT_Prof_ResetSamples ();
 }
 
 /*
@@ -1004,6 +1044,14 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 		for (i = 0; i < RT_PROF_COUNT; i++)
 			fprintf (f, "%-11s %-17s %.2f\n", "cpu.slot", RT_ProfSlotName (i), snap->profile.ms[i]);
 
+		for (i = 0; i < RT_PROF_COUNT; i++)
+			fprintf (f, "%-11s %-17s %.2f\n", "cpu.avg", RT_ProfSlotName (i), snap->profile.averageMs[i]);
+
+		if (snap->profile.rendererSamples > 0)
+			for (i = 0; i < QR_CPU_PASS_COUNT; i++)
+				fprintf (f, "%-11s %-17s avg_ms=%.3f max_ms=%.3f\n", "cpu.draw", qrGetCpuPassName (i),
+				         snap->profile.rendererAverageMs[i], snap->profile.rendererMaxMs[i]);
+
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "cache hits", snap->profile.clusterCacheHits);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "cache misses", snap->profile.clusterCacheMisses);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "miss set", snap->profile.clusterMissSet);
@@ -1181,6 +1229,13 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 		fprintf (f, ",cpu.%s_ms", name);
 	}
 
+	fputs (",cpu.qrDrawFrame_avg_ms", f);
+	for (i = 0; i < QR_CPU_PASS_COUNT; i++)
+	{
+		RT_StatsRecordColName (name, sizeof (name), qrGetCpuPassName (i));
+		fprintf (f, ",cpu.draw.%s_avg_ms,cpu.draw.%s_max_ms", name, name);
+	}
+
 	fputs (",clust_cache_hits,clust_cache_misses,clust_miss_set,clust_miss_move,clust_miss_other,"
 	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped,"
 	       "clust_dirty_max,clust_move_footprint",
@@ -1235,6 +1290,19 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 			RT_StatsRecordField (f, &first);
 			if (snap->haveProfile)
 				fprintf (f, "%.2f", rep->ms[j]);
+		}
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile)
+			fprintf (f, "%.3f", rep->averageMs[RT_PROF_DRAWFRAME]);
+		for (j = 0; j < QR_CPU_PASS_COUNT; j++)
+		{
+			RT_StatsRecordField (f, &first);
+			if (snap->haveProfile && rep->rendererSamples > 0)
+				fprintf (f, "%.3f", rep->rendererAverageMs[j]);
+			RT_StatsRecordField (f, &first);
+			if (snap->haveProfile && rep->rendererSamples > 0)
+				fprintf (f, "%.3f", rep->rendererMaxMs[j]);
 		}
 
 		RT_StatsRecordField (f, &first);
@@ -2971,6 +3039,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 				.pGameplayFeedback = (cl.intermission || editor_active) ? NULL : &feedback_effect,
 			},
 		.pDebugParams = &debug_params,
+		.renderUiOnly = RT_ShouldRenderUiOnly (cl.worldmodel != NULL, cls.signon == SIGNONS),
+		.enableCpuProfiling = RT_StatsPanel (RT_STATS_PROFILE),
 	};
 	memcpy (info.view, vulkan_globals.view_matrix, 16 * sizeof(float));
 
@@ -2978,6 +3048,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	QrResult r = qrDrawFrame (vulkan_globals.instance, &info);
 	RT_Prof_End (RT_PROF_DRAWFRAME, prof_start);
 	QR_CHECK (r);
+	if (r == QR_SUCCESS && info.enableCpuProfiling)
+		RT_Prof_RecordRenderer ();
 }
 
 /*

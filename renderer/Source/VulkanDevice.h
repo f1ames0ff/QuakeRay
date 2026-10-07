@@ -51,6 +51,7 @@
 #include "WorldLights.h"
 #include "ClusterLightLists.h"
 #include "RayStats.h"
+#include "CpuFrameProfiler.h"
 
 namespace qray
 {
@@ -290,6 +291,9 @@ private:
     bool                                    statsGpuTimingValid = false;
     float                                   statsGpuFrameMs = 0.0f;
     float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
+    CpuFrameProfiler                        cpuFrameProfiler;
+    bool                                    statsCpuTimingValid = false;
+    bool                                    statsRenderedUiOnly = false;
     uint32_t                                statsApiCallsGeometry = 0;
     uint32_t                                statsApiCallsRasterized = 0;
     uint32_t                                statsApiCallsLights = 0;

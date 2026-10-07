@@ -1400,6 +1400,8 @@ typedef struct QrDrawFrameInfo
     const QrDrawFrameLevelFogParams             *pLevelFogParams;
     const QrDrawFrameDebugParams                *pDebugParams;
     QrDrawFramePostEffectsParams                postEffectParams;
+    QrBool32                                   renderUiOnly;
+    QrBool32                                   enableCpuProfiling;
 } QrDrawFrameInfo;
 
 QRAPI QrResult QRCONV qrDrawFrame(
@@ -1422,6 +1424,30 @@ QRAPI QrBool32 QRCONV qrIsSuspended(
 
 #define QR_RAY_STATS_CATEGORY_COUNT 5
 
+typedef enum QrCpuPassIndex
+{
+    QR_CPU_PASS_PREPARE = 0,
+    QR_CPU_PASS_HOT_RELOAD,
+    QR_CPU_PASS_DESCRIPTORS,
+    QR_CPU_PASS_STAGING,
+    QR_CPU_PASS_LEGACY_AS,
+    QR_CPU_PASS_SLOT_WAIT,
+    QR_CPU_PASS_SLOT_GC,
+    QR_CPU_PASS_GPU_TIMINGS,
+    QR_CPU_PASS_RHI_SETUP,
+    QR_CPU_PASS_SCENE,
+    QR_CPU_PASS_COMPOSE,
+    QR_CPU_PASS_UPSCALE,
+    QR_CPU_PASS_POST,
+    QR_CPU_PASS_UI,
+    QR_CPU_PASS_POSTUI,
+    QR_CPU_PASS_PRESENT_RECORD,
+    QR_CPU_PASS_RHI_SUBMIT,
+    QR_CPU_PASS_LEGACY_SUBMIT,
+    QR_CPU_PASS_PRESENT,
+    QR_CPU_PASS_COUNT,
+} QrCpuPassIndex;
+
 typedef struct QrFrameStats
 {
     uint32_t    raysTotal;
@@ -1435,11 +1461,16 @@ typedef struct QrFrameStats
     uint32_t    apiCallsGeometry;
     uint32_t    apiCallsRasterized;
     uint32_t    apiCallsLights;
+    QrBool32    cpuTimingValid;
+    QrBool32    renderedUiOnly;
+    float       cpuPassMs[QR_CPU_PASS_COUNT];
 } QrFrameStats;
 
 QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
+
+QRAPI const char *QRCONV qrGetCpuPassName(uint32_t passIndex);
 
 typedef struct QrAdapterInfo
 {
