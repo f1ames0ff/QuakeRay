@@ -203,7 +203,8 @@ Declare checked byte/work budgets. On budget exhaustion, report failure or retai
 - [x] Support ordinary domains and A's optional opaque group metadata.
 - [x] Define conservative top-up/visibility/reach eligibility.
 - [x] Rebuild affected clusters as a whole initially and verify full/incremental support parity.
-      (CPU support tests; the overflow policy bypasses the incremental path.)
+      (CPU support tests; the overflow path now maintains the candidate sets incrementally and
+      rebuilds only the clusters a change touched, sharing the tail builder with `Compose`.)
 
 ### B2. Fast/overflow sampling
 
@@ -232,9 +233,10 @@ copies scheduled, full offsets/beta copy span, all-or-nothing tail publication, 
 before the capacity check, serialized renderer insertion, 24-bit half-open discrete draws, top-up
 candidates recorded before retention); the details are in `cluster-implementation-report.md` §2.6.
 The GPU runtime acceptance now has the pinned `e4m1` lamp gate (oversubscription capture and the
-tail-on/off wall gap above) and the `ad_tfuma` `rt_bench` route (about 1.4 ms of extra cluster work
-per frame, about 4% of the CPU-bound frame at the measured spot, no `rt_cluster_assert`
-mismatches); the default switch stays off until the remaining items above are settled.
+tail-on/off wall gap above) and the `ad_tfuma` `rt_bench` route, where the overflow path runs
+incrementally: its sampling-on arm stops recomposing after the arm entry, the extra cluster work
+is about 0.2 ms per frame, and `rt_cluster_assert 1` over the whole route reports no mismatches;
+the default switch stays off until the remaining items above are settled.
 
 ## 12. File map
 

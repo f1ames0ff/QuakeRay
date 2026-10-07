@@ -90,11 +90,13 @@ published.
 - `rt_cluster_sampling`: `0` keeps the legacy fast-only policy (tails are not published, `beta = 0`,
   the shader reduces to the old selector); `1` enables the repaired candidate/overflow policy. It
   is a benchmark-metadata setting and does not affect DTAL grouping.
-- When overflow is enabled the incremental composition path is deliberately bypassed: the tail sets
-  are derived from the complete candidate sets, and keeping them exact for moved/removed sources
-  would require the same full walk. Frames that reuse an unchanged set still reuse the lists and
-  tails. This is the "whole affected cluster initially" rule of the spec applied at frame
-  granularity and is recorded as a limitation below.
+- When overflow is enabled the composition maintains its candidate sets incrementally: a vacated
+  place is un-recorded from every candidate cluster into which it was accepted, the candidate bit
+  set grows with the slot bit set, and only the clusters whose candidate or fast sets changed are
+  rebuilt into the tail layout. The layout is reassembled in one ping-pong pass that copies the
+  untouched ranges. `Compose` runs at map load and when the change-shape guards send a frame back
+  to it, and it shares the same tail builder. Frames that reuse an unchanged set still reuse the
+  lists and tails.
 - `rt_light_report` now prints per-frame candidate demand (`max`, `median`, `p95`), overflow entry
   and cluster counts, and the number of clusters whose tail did not fit the declared budget.
 
@@ -151,14 +153,15 @@ shaping and 2.1% after it with light statistics on, 4.7% -> 0.4% with them off, 
 `beta` falling from 0.356 to 0.100 and `rt_cluster_assert` clean. The in-game `rt_bench` comparison
 on the Arcane Dimensions `ad_tfuma` route (scripted demo, 4K, vsync off, FSR 3.1 ultra performance,
 statistics off) measures the frame cost of the policy. That route is CPU bound: the GPU frame is
-about 11 ms while the focused CPU frame is about 36 ms, and a run whose window loses focus sleeps
-16 ms in every frame, which is exactly the difference between the first run pair that looked like a
-large regression. With the window focused and the wall-to-CPU gap under 2 ms in every counted run,
-the route runs at 27.5 fps with the fast list only and 26.5/26.4 fps with the overflow tail; the
-difference is the measured cluster work, about 1.0 ms of `clust lists` plus 0.37 ms of `clust tail`
-per frame across the route's about 140 full recompositions. `rt_cluster_assert 1` over the whole
-route reports no mismatches. The `rt_cluster_sampling` default stays off until that default is
-decided.
+about 11 ms while the CPU frame is about 35 ms, and a run whose window loses focus sleeps 16 ms in
+every frame, so only runs whose wall-to-CPU gap stays under about 2 ms are comparable. With the
+overflow path incremental, the sampling-on arm stops recomposing after the arm's entry (cluster
+misses stay at 1 in every block) and its cluster work falls to about 0.31 ms of fast-list
+maintenance plus 0.08 ms of tail maintenance per frame, from 0.60 and 0.38 with the full tail
+rebuild, with the profiled CPU frame level with the fast-only arm. The earlier focused run measured
+27.5 fps fast-only against 26.5/26.4 with the full rebuild; the incremental route now runs at the
+fast-only frame cost. `rt_cluster_assert 1` over the whole route reports no mismatches. The
+`rt_cluster_sampling` default stays off until that default is decided.
 
 ## 4. Memory and capacity
 
@@ -176,18 +179,21 @@ decided.
    distance-shaped mass and `beta` is derived from it, but the 128 fast slots keep the historical
    nearest-first order. A mass-aware fast ranking with a nearest reserve is a tuning step that needs
    cost measurements this environment could not produce.
-2. **No incremental overflow updates.** With overflow enabled, a changed light set recomposes the
-   lists; the incremental path still serves the legacy policy. The spec allows this as the initial
-   simple update and asks for profiling before finer repair.
+2. **Incremental overflow maintenance is not a fresh-compose oracle.** The incremental path keeps
+   the candidate sets exact for the changes the detector reports and the tail blocks are
+   deterministic functions of those sets, but the candidate vector order can differ from a fresh
+   compose, so published weights must not be assumed bit-identical (support and order are the
+   same). Stationary power, radius and coverage changes stay on the grant-time record, as the fast
+   slots already do, until the light moves or a compose runs.
 3. **Fast-list retention is unchanged.** A cluster still keeps at most 128 sources in H and evicts
    by distance; the overflow set is what makes every accepted candidate sampleable. The supplemental
    top-up pass still retains its nearest eight sources in the fast list, but every reach-accepted
    source is recorded as an overflow candidate before that retention, so the overflow set covers the
    full accepted domain rather than the retention survivors.
 4. **Runtime oversubscription evidence covers the pinned scenes.** The lamp gate captures nine
-   oversubscribed clusters; the `ad_tfuma` route exercises the policy over a moving player with
-   about 140 full recompositions and reports no `rt_cluster_assert` mismatches. The evidence is
-   still scene-limited (two maps), not a general guarantee.
+   oversubscribed clusters; the `ad_tfuma` route exercises the incremental policy over a moving
+   player with no recomposition after the arm entry and reports no `rt_cluster_assert` mismatches.
+   The evidence is still scene-limited (two maps), not a general guarantee.
 5. **Publication cost.** Fast and tail index publication resolves every referenced UID each time the
    lists change; the spec accepts this O(published entries) refresh until measured otherwise.
 6. **Power metadata coverage.** Some light classes (alias/sprite entity lights registered through

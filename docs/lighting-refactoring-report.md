@@ -119,7 +119,8 @@ performance change. The structural effect is smaller code and data:
 
 - The fast 128-slot ranking remains distance-based; power ranking is used for the overflow tail and
   the branch only.
-- The overflow policy bypasses the incremental composition path; a changed light set recomposes.
+- The overflow policy maintains its candidate sets and tail blocks incrementally; only the clusters
+  a change touches are rebuilt, and `Compose` remains at map load and for the change-shape guards.
 - No runtime oversubscription benchmark, noise measurement or timing comparison was possible.
 - The candidate demand/tail diagnostics are printed at report time but are not exposed in the
   Light Editor yet.
