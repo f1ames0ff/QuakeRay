@@ -1982,7 +1982,7 @@ void OverlaySparklineBudget (ImDrawList *dl, const ImVec2 &p, float w, float h, 
 
 }
 
-static void OverlayBeginCommon (const char *id, float x, float y, bool from_bottom, float alpha, const char *title)
+void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title)
 {
 	if (!g_ready)
 		return;
@@ -2023,10 +2023,7 @@ static void OverlayBeginCommon (const char *id, float x, float y, bool from_bott
 
 	g_overlay_scale = g_overlay_font_size / kOverlayBaseFont;
 
-	const ImVec2 anchor = from_bottom ? ImVec2 (x * g_overlay_scale, io.DisplaySize.y - y * g_overlay_scale)
-	                                  : ImVec2 (x * g_overlay_scale, y * g_overlay_scale);
-
-	ImGui::SetNextWindowPos (anchor, ImGuiCond_Always, from_bottom ? ImVec2 (0.0f, 1.0f) : ImVec2 (0.0f, 0.0f));
+	ImGui::SetNextWindowPos (ImVec2 (x * g_overlay_scale, y * g_overlay_scale), ImGuiCond_Always);
 	ImGui::SetNextWindowBgAlpha (alpha);
 
 	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
@@ -2047,16 +2044,6 @@ static void OverlayBeginCommon (const char *id, float x, float y, bool from_bott
 	g_overlay_group = true;
 	g_overlay_first = true;
 	ImGui::BeginGroup ();
-}
-
-void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title)
-{
-	OverlayBeginCommon (id, x, y, false, alpha, title);
-}
-
-void QR_GUI_OverlayBeginBottom (const char *id, float x, float bottom_margin, float alpha, const char *title)
-{
-	OverlayBeginCommon (id, x, bottom_margin, true, alpha, title);
 }
 
 void QR_GUI_OverlaySection (const char *title)

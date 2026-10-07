@@ -141,7 +141,6 @@ int  QR_GUI_AnyItemActive (void);
 // ----- the rt_stats readout -----
 
 void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title);
-void QR_GUI_OverlayBeginBottom (const char *id, float x, float bottom_margin, float alpha, const char *title);
 void QR_GUI_OverlaySection (const char *title);
 void QR_GUI_OverlayEnd (void);
 void QR_GUI_OverlayRow (const char *label, const char *value, const float *samples, int count, uint32_t color);
