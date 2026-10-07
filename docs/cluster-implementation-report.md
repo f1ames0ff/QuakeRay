@@ -148,9 +148,14 @@ mirrors the published GPU algorithm:
 The pinned `e4m1` lamp gate (scripted captures, exposure frozen, post and upscaling disabled, light
 styles frozen) measures the tail-on/off wall gap that motivated the branch shaping: 7.8% before the
 shaping and 2.1% after it with light statistics on, 4.7% -> 0.4% with them off, with cluster 336
-`beta` falling from 0.356 to 0.100 and `rt_cluster_assert` clean. Frame-timing comparison and a
-wider oversubscription benchmark are still not claimed, and `rt_cluster_sampling = 1` stays off by
-default until those exist.
+`beta` falling from 0.356 to 0.100 and `rt_cluster_assert` clean. The in-game `rt_bench` comparison
+on the Arcane Dimensions `ad_tfuma` route (scripted demo, 4K, vsync off, FSR 3.1 ultra performance,
+statistics off) measures the frame cost of the policy as an ABBA set of four runs: 15.6/15.7 fps
+with the fast list only against 15.7/15.0 fps with the overflow tail, a GPU-bound scene in both
+arms; the active cluster work costs about 1.4 ms (`clust lists`) plus 0.44 ms (`clust tail`) per
+frame, and the route's full recompositions (about 95) stay inside that. `rt_cluster_assert 1` over
+the whole route reports no mismatches. The `rt_cluster_sampling` default stays off until that
+default is decided.
 
 ## 4. Memory and capacity
 
@@ -176,10 +181,10 @@ default until those exist.
    top-up pass still retains its nearest eight sources in the fast list, but every reach-accepted
    source is recorded as an overflow candidate before that retention, so the overflow set covers the
    full accepted domain rather than the retention survivors.
-4. **Runtime oversubscription evidence is partial.** The 128-slot limit warning observed on `e4m1`
-   during the Project A manual test is the exact situation this policy repairs; the pinned lamp
-   gate captures nine oversubscribed clusters and measures the tail-on/off difference, but a wider
-   benchmark and a frame-timing comparison are still missing.
+4. **Runtime oversubscription evidence covers the pinned scenes.** The lamp gate captures nine
+   oversubscribed clusters; the `ad_tfuma` route exercises the policy over a moving player with
+   about 95 full recompositions and reports no `rt_cluster_assert` mismatches. The evidence is
+   still scene-limited (two maps), not a general guarantee.
 5. **Publication cost.** Fast and tail index publication resolves every referenced UID each time the
    lists change; the spec accepts this O(published entries) refresh until measured otherwise.
 6. **Power metadata coverage.** Some light classes (alias/sprite entity lights registered through
