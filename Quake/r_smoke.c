@@ -239,7 +239,7 @@ void R_SmokeTrail (const vec3_t start, const vec3_t end, float sizeScale)
 	if ((int)r_smoke.value == 2)
 	{
 		vec3_t      span;
-		const float radius = q_max (r_smoke_size.value * sizeScale, 12.0f);
+		const float radius = q_max (r_smoke_size.value * sizeScale, 20.0f);
 
 		VectorSubtract (end, start, span);
 
@@ -247,7 +247,7 @@ void R_SmokeTrail (const vec3_t start, const vec3_t end, float sizeScale)
 
 		if (span_length > 0.0f && span_length <= 256.0f)
 		{
-			R_VoxelSmokePush (start, end, radius, r_smoke_density.value * sizeScale);
+			R_VoxelSmokePush (start, end, radius, r_smoke_density.value);
 		}
 
 		return;

@@ -2984,6 +2984,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	voxel_smoke_params.debugGray = CVAR_TO_FLOAT (rt_voxel_smoke_gray);
 	voxel_smoke_params.riseSpeed = CVAR_TO_FLOAT (rt_voxel_smoke_rise);
 
+	if ((int)r_smoke.value == 2)
+	{
+		voxel_smoke_params.emitterRadius = 0.0f;
+		voxel_smoke_params.emitterDensity = 0.0f;
+	}
+
 	voxel_smoke_params.emitterCount = 0;
 	voxel_smoke_params.generation = voxel_smoke_generation;
 
