@@ -256,6 +256,7 @@ void R_SmokeUpdate (void)
 	if (!CVAR_TO_BOOL (r_smoke))
 	{
 		smoke_count = 0;
+		rt_particles_smoke = 0;
 		return;
 	}
 
@@ -281,6 +282,8 @@ void R_SmokeUpdate (void)
 
 		i++;
 	}
+
+	rt_particles_smoke = smoke_count;
 }
 
 static int R_SmokeSortCompare (const void *a, const void *b)
@@ -375,7 +378,10 @@ void R_DrawSmoke (cb_context_t *cbx)
 		                 r_smoke_edge_power.value, r_smoke_edge_gain.value }},
 	};
 
+	rt_particle_upload_bytes += (uint64_t)(smoke_count * 6) * sizeof (QrVertex);
+	double prof_upload = RT_Prof_Begin ();
 	QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+	RT_Prof_End (RT_PROF_PARTICLES_UPLOAD, prof_upload);
 	QR_CHECK (r);
 
 	R_EndDebugUtilsLabel (cbx);

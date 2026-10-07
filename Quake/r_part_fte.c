@@ -3687,7 +3687,10 @@ static void P_AddRainParticles (qmodel_t *mod, vec3_t axis[3], vec3_t eorg, floa
 		while (st->nexttime < mod->skytime)
 		{
 			if (!free_particles)
+			{
+				rt_particles_dropped++;
 				return;
+			}
 
 			st->nexttime += 10000.0 / (st->area * r_part_rain_quantity.value * type->rainfrequency);
 
@@ -4596,7 +4599,10 @@ int PScript_RunParticleEffectState (vec3_t org, vec3_t dir, float count, int typ
 		for (i = 0; i < pcount; i++)
 		{
 			if (!free_particles)
+			{
+				rt_particles_dropped += (int)ceil (pcount) - i;
 				break;
+			}
 			p = free_particles;
 			if (ptype->looks.type == PT_BEAM)
 			{
@@ -5016,7 +5022,10 @@ void PScript_RunParticleWeather (vec3_t minb, vec3_t maxb, vec3_t dir, float cou
 	for (i = 0; i < count; i++)
 	{
 		if (!free_particles)
+		{
+			rt_particles_dropped++;
 			return;
+		}
 
 		for (j = 0; j < 3; j++)
 		{
@@ -5217,6 +5226,7 @@ static void PScript_ParticleTrailSpawn (vec3_t startpos, vec3_t end, part_type_t
 
 		if (!free_particles)
 		{
+			rt_particles_dropped += (int)count + 1;
 			len = stop;
 			break;
 		}
@@ -6189,6 +6199,7 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 			if (++r_particlerecycle >= r_numparticles)
 				r_particlerecycle = 0;
 		}
+		rt_particles_dropped += 256;
 	}
 
 	for (type = part_run_list, lastvalidtype = NULL; type != NULL; type = type->nexttorun)
@@ -6825,24 +6836,35 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 
 	particletime += pframetime;
 
+	rt_particles_fte = (int)(cl_numstrisvert / 4);
+	rt_particles_vertices = (int)cl_numstrisvert + rt_particles_classic * 3;
+
 	if (!cl_numstris)
 		return;
 
 	if (cl_maxstrisvert[current_buffer_index] == 0 && cl_maxstrisidx[current_buffer_index] == 0)
 		return;
 
+	if (!cl_numstrisvert && !cl_numstrisidx)
+		return;
+
 	R_BeginDebugUtilsLabel (cbx, "FTE Particles");
 	Fog_DisableGFog (cbx);
 
 
+	double prof_convert = RT_Prof_Begin ();
+	double upload_sum = 0.0;
+	const uint32_t num_verts = cl_numstrisvert;
+	const uint32_t num_idx = cl_numstrisidx;
+
 	uint8_t *memallc = RT_AllocScratchMemoryNulled (
-		cl_maxstrisvert[current_buffer_index] * sizeof (QrVertex) + 
-	    cl_maxstrisidx[current_buffer_index] * sizeof(uint32_t));
+		num_verts * sizeof (QrVertex) +
+	    num_idx * sizeof(uint32_t));
 
 	QrVertex *rtvertices = (QrVertex *)memallc;
-	for (uint32_t v = 0; v < cl_maxstrisvert[current_buffer_index]; v++)
+	for (uint32_t v = 0; v < num_verts; v++)
 	{
-		basicvertex_t *src = &cl_strisvert[current_buffer_index][v];
+		basicvertex_t *src = &cl_curstrisvert[v];
 		QrVertex      *dst = &rtvertices[v];
 
 		memcpy (dst->position, src->position, sizeof (float) * 3);
@@ -6850,11 +6872,13 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 		dst->packedColor = RT_PackColorToUint32 (src->color[0], src->color[1], src->color[2], src->color[3]);
 	}
 
-	uint32_t *rtindices = (uint32_t *)(memallc + (cl_maxstrisvert[current_buffer_index] * sizeof (QrVertex)));
-	for (uint32_t v = 0; v < cl_maxstrisidx[current_buffer_index]; v++)
+	uint32_t *rtindices = (uint32_t *)(memallc + (num_verts * sizeof (QrVertex)));
+	for (uint32_t v = 0; v < num_idx; v++)
 	{
-		rtindices[v] = cl_strisidx[current_buffer_index][v];
+		rtindices[v] = cl_curstrisidx[v];
 	}
+
+	rt_fte_convert_bytes += (uint64_t)num_verts * sizeof (QrVertex) + (uint64_t)num_idx * sizeof (uint32_t);
 
 	for (o = 0; o < 3; o++)
 	{
@@ -6946,10 +6970,16 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST;
 			}
 
+			rt_particle_upload_bytes += (uint64_t)info.vertexCount * sizeof (QrVertex) + (uint64_t)info.indexCount * sizeof (uint32_t);
+			double prof_upload = RT_Prof_Begin ();
 			QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+			if (prof_upload != 0.0)
+				upload_sum += (Sys_DoubleTime () - prof_upload) * 1000.0;
 			QR_CHECK (r);
 		}
 	}
+	RT_Prof_End (RT_PROF_FTE_CONVERT, prof_convert);
+	RT_Prof_Sample (RT_PROF_PARTICLES_UPLOAD, upload_sum);
 	R_EndDebugUtilsLabel (cbx);
 }
 
@@ -6979,6 +7009,9 @@ void PScript_DrawParticles (cb_context_t *cbx)
 	cl_numstrisidx = 0;
 	cl_curstrisvert = cl_strisvert[current_buffer_index];
 	cl_curstrisidx = cl_strisidx[current_buffer_index];
+
+	rt_particles_fte = 0;
+	rt_particles_vertices = rt_particles_classic * 3;
 
 	if (!r_particles.value)
 		return;

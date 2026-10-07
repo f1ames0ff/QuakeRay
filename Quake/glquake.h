@@ -422,6 +422,8 @@ extern int rt_cluster_last_lights;
 extern int rt_cluster_last_attempts;
 extern int rt_cluster_last_dropped;
 int RT_ResolvePointCluster (const vec3_t p);
+void RT_PointClusterCacheStats (uint64_t *hits, uint64_t *misses, double *totalMs, double *avgNs);
+void RT_PointClusterCacheSetEnabled (qboolean enabled);
 void RT_BrushClusterCacheReset (void);
 void RT_ClusterLightReport_f (void);
 void RT_LightReport_f (void);
@@ -679,6 +681,12 @@ enum
 	RT_PROF_WAIT,
 	RT_PROF_FRAME,
 
+	RT_PROF_PARTICLES_SIM,
+	RT_PROF_PARTICLES_RESOLVE,
+	RT_PROF_PARTICLES_FILL,
+	RT_PROF_PARTICLES_UPLOAD,
+	RT_PROF_FTE_CONVERT,
+
 	RT_PROF_COUNT
 };
 
@@ -703,6 +711,16 @@ typedef struct
 	int      clusterLights;      // lights accepted into the registry
 	int      clusterAttempts;    // additions attempted by the registrars
 	int      clusterDropped;     // additions refused because the registry was full
+	int      particlesClassic;
+	int      particlesFte;
+	int      particlesVertices;
+	int      particlesSmoke;
+	int      particlesDropped;
+	uint64_t fteConvertBytes;
+	uint64_t particleUploadBytes;
+	uint64_t particleResolveCacheHits;
+	uint64_t particleResolveCacheMisses;
+	double   particleResolveCacheAvgNs;
 } rt_prof_report_t;
 
 // Which readouts the rt_stats command asks for, as a bit per panel number: its
@@ -743,6 +761,14 @@ void     RT_StatsRecordSample (const rt_stats_snapshot_t *snap);
 
 extern double           rt_prof_ms[RT_PROF_COUNT];
 extern rt_prof_report_t rt_prof_report;
+
+extern int      rt_particles_classic;
+extern int      rt_particles_fte;
+extern int      rt_particles_vertices;
+extern int      rt_particles_smoke;
+extern int      rt_particles_dropped;
+extern uint64_t rt_fte_convert_bytes;
+extern uint64_t rt_particle_upload_bytes;
 
 // Returns 0 while the profiler is off, which RT_Prof_End treats as "no sample".
 double RT_Prof_Begin (void);

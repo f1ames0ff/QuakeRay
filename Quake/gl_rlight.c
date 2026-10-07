@@ -1113,13 +1113,111 @@ static mleaf_t *RT_ResolveLightLeaf (const vec3_t origin, qmodel_t *wm)
 	return NULL;
 }
 
+#define RT_POINT_CLUSTER_SETS 512
+#define RT_POINT_CLUSTER_WAYS 4
+
+typedef struct rt_point_cluster_slot_s
+{
+	int32_t  cell[3];
+	uint32_t cluster;
+	qboolean valid;
+} rt_point_cluster_slot_t;
+
+static rt_point_cluster_slot_t rt_point_cluster_cache[RT_POINT_CLUSTER_SETS][RT_POINT_CLUSTER_WAYS];
+
+static qboolean  rt_point_cluster_cache_enabled = true;
+static qboolean  rt_point_cluster_cache_map_valid;
+static qmodel_t *rt_point_cluster_cache_wm;
+static mleaf_t  *rt_point_cluster_cache_leafs;
+static int       rt_point_cluster_cache_numleafs;
+static int       rt_point_cluster_cache_revision;
+
+static uint64_t rt_point_cluster_cache_hits;
+static uint64_t rt_point_cluster_cache_misses;
+static uint64_t rt_point_cluster_cache_timed_calls;
+static double   rt_point_cluster_cache_total_ns;
+
+void RT_PointClusterCacheSetEnabled (qboolean enabled)
+{
+	rt_point_cluster_cache_enabled = enabled;
+}
+
 int RT_ResolvePointCluster (const vec3_t p)
 {
-	mleaf_t *leaf = RT_ResolveLightLeaf (p, cl.worldmodel);
-	if (!leaf)
-		return 0;
+	const double prof_start = RT_Prof_Begin ();
+	qmodel_t *wm = cl.worldmodel;
+	int cluster;
 
-	return RT_MapWorldCluster ((int)(leaf - cl.worldmodel->leafs));
+	if (rt_point_cluster_cache_enabled)
+	{
+		if (!rt_point_cluster_cache_map_valid || rt_point_cluster_cache_wm != wm ||
+		    rt_point_cluster_cache_leafs != (wm ? wm->leafs : NULL) ||
+		    rt_point_cluster_cache_numleafs != (wm ? wm->numleafs : 0) ||
+		    rt_point_cluster_cache_revision != rt_elights_revision)
+		{
+			memset (rt_point_cluster_cache, 0, sizeof (rt_point_cluster_cache));
+			rt_point_cluster_cache_map_valid = true;
+			rt_point_cluster_cache_wm = wm;
+			rt_point_cluster_cache_leafs = wm ? wm->leafs : NULL;
+			rt_point_cluster_cache_numleafs = wm ? wm->numleafs : 0;
+			rt_point_cluster_cache_revision = rt_elights_revision;
+		}
+
+		const int32_t cx = (int32_t)(p[0] * (1.0f / 16.0f));
+		const int32_t cy = (int32_t)(p[1] * (1.0f / 16.0f));
+		const int32_t cz = (int32_t)(p[2] * (1.0f / 16.0f));
+
+		const uint32_t hash = ((uint32_t)cx * 73856093u) ^ ((uint32_t)cy * 19349663u) ^ ((uint32_t)cz * 83492791u);
+		rt_point_cluster_slot_t *slot = &rt_point_cluster_cache[hash & (RT_POINT_CLUSTER_SETS - 1)][(hash >> 10) & (RT_POINT_CLUSTER_WAYS - 1)];
+
+		if (slot->valid && slot->cell[0] == cx && slot->cell[1] == cy && slot->cell[2] == cz)
+		{
+			cluster = (int)slot->cluster;
+			rt_point_cluster_cache_hits++;
+		}
+		else
+		{
+			mleaf_t *leaf = RT_ResolveLightLeaf (p, wm);
+			cluster = leaf ? RT_MapWorldCluster ((int)(leaf - wm->leafs)) : 0;
+
+			slot->valid = true;
+			slot->cell[0] = cx;
+			slot->cell[1] = cy;
+			slot->cell[2] = cz;
+			slot->cluster = (uint32_t)cluster;
+
+			rt_point_cluster_cache_misses++;
+		}
+	}
+	else
+	{
+		mleaf_t *leaf = RT_ResolveLightLeaf (p, wm);
+		cluster = leaf ? RT_MapWorldCluster ((int)(leaf - wm->leafs)) : 0;
+		rt_point_cluster_cache_misses++;
+	}
+
+
+	if (prof_start != 0.0)
+	{
+		rt_point_cluster_cache_total_ns += (Sys_DoubleTime () - prof_start) * 1e9;
+		rt_point_cluster_cache_timed_calls++;
+	}
+
+	return cluster;
+}
+
+void RT_PointClusterCacheStats (uint64_t *hits, uint64_t *misses, double *totalMs, double *avgNs)
+{
+	if (hits)
+		*hits = rt_point_cluster_cache_hits;
+	if (misses)
+		*misses = rt_point_cluster_cache_misses;
+	if (totalMs)
+		*totalMs = rt_point_cluster_cache_total_ns * 1e-6;
+	if (avgNs)
+		*avgNs = rt_point_cluster_cache_timed_calls
+			? rt_point_cluster_cache_total_ns / (double)rt_point_cluster_cache_timed_calls
+			: 0.0;
 }
 
 /* Sources of the frame, handed to the renderer. It composes the per-cluster lists out of them,
