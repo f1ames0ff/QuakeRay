@@ -221,12 +221,14 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
     if (curVertexCount + info.vertexCount >= vertexBuffer->GetSize() / sizeof(QrVertex))
     {
         assert(0 && "Increase the size of \"rasterizedMaxVertexCount\". Vertex buffer size reached the limit.");
+        droppedUploadBatches++;
         return;
     }
 
     if (curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof(uint32_t))
     {
         assert(0 && "Increase the size of \"rasterizedMaxIndexCount\". Index buffer size reached the limit.");
+        droppedUploadBatches++;
         return;
     }
 
@@ -253,6 +255,8 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
 
     CopyFromArrayOfStructs( info, &vertsBase[ curVertexCount ] );
 
+    uploadedBytes += static_cast< uint64_t >( info.vertexCount ) * sizeof( QrVertex );
+
     drawInfo.vertexCount = info.vertexCount;
     drawInfo.firstVertex  = static_cast< uint32_t >( curVertexCount );
     curVertexCount += info.vertexCount;
@@ -262,10 +266,13 @@ void RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
         if( curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof( uint32_t ) )
         {
             assert( 0 );
+            droppedUploadBatches++;
             return;
         }
 
         memcpy( &indicesBase[ curIndexCount ], info.pIndices, info.indexCount * sizeof( uint32_t ) );
+
+        uploadedBytes += static_cast< uint64_t >( info.indexCount ) * sizeof( uint32_t );
 
         drawInfo.indexCount = info.indexCount;
         drawInfo.firstIndex = static_cast< uint32_t >( curIndexCount );
@@ -320,6 +327,9 @@ void RasterizedDataCollector::Clear(uint32_t frameIndex)
 
     curVertexCount = 0;
     curIndexCount = 0;
+
+    uploadedBytes = 0;
+    droppedUploadBatches = 0;
 }
 
 void RasterizedDataCollector::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameIndex)
@@ -376,4 +386,14 @@ const std::vector< RasterizedDataCollector::DrawInfo >& RasterizedDataCollector:
     GetSkyDrawInfos() const
 {
     return skyDrawInfos;
+}
+
+uint64_t RasterizedDataCollector::GetUploadedBytes() const
+{
+    return uploadedBytes;
+}
+
+uint32_t RasterizedDataCollector::GetDroppedUploadBatches() const
+{
+    return droppedUploadBatches;
 }

@@ -510,6 +510,7 @@ void shadeDiffuse(const Surface surf, const LightSample light, float oneOverPdf,
 #define RAY_STATS_CATEGORY_INDIRECT           2
 #define RAY_STATS_CATEGORY_SHADOW_DIRECT      3
 #define RAY_STATS_CATEGORY_SHADOW_INDIRECT    4
+#define RAY_STATS_CATEGORY_PARTICLE           5
 
 struct RtRayStats
 {

@@ -54,6 +54,27 @@
 
 [[vk::binding(0, SMOKE_TLAS_SET)]] RaytracingAccelerationStructure topLevelAS;
 
+#define SMOKE_RAY_STATS_SET 7
+
+#ifndef RAY_STATS_CATEGORY_PARTICLE
+#define RAY_STATS_CATEGORY_PARTICLE 5
+#endif
+
+struct SmokeRayStats
+{
+    uint counts[RAY_STATS_CATEGORY_COUNT];
+};
+
+[[vk::binding(0, SMOKE_RAY_STATS_SET)]] RWStructuredBuffer<SmokeRayStats> smokeRayStats;
+
+void smokeRayStatsAdd(const uint count)
+{
+    if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_RAY_STATS) != 0)
+    {
+        InterlockedAdd(smokeRayStats[0].counts[RAY_STATS_CATEGORY_PARTICLE], count);
+    }
+}
+
 #define SMOKE_SHADOW_RAY_EPS 0.01
 
 #define SMOKE_CLUSTER_SCAN 16
@@ -72,6 +93,8 @@ bool smokeVisible(const float3 start, const float3 dir, const float maxDistance)
                          RAY_FLAG_NONE,
                          globalUniform.rayCullMaskWorld | INSTANCE_MASK_REFRACT,
                          rayDesc);
+
+    smokeRayStatsAdd(1u);
 
     while (query.Proceed())
     {

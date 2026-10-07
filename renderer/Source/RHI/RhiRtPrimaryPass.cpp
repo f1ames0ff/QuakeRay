@@ -458,7 +458,7 @@ bool RhiRtPrimaryPass::Create(nvrhi::IDevice *pDevice,
     {
         // Set 11: rtStats at raw binding 0 as an RWStructuredBuffer.
         nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::AllRayTracing;
+        desc.visibility = nvrhi::ShaderType::AllGraphics | nvrhi::ShaderType::AllRayTracing;
         desc.setBindingOffsets(nvrhi::VulkanBindingOffsets().setUnorderedAccessViewOffset(0));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(0));
 

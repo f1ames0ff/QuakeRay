@@ -275,6 +275,10 @@ public:
     // never calling this. Returns false without changing anything when the pass is not created.
     bool SetSmokeLightLayout(nvrhi::BindingLayoutHandle pLightLayout);
 
+    bool SetRayStatsLayout(nvrhi::BindingLayoutHandle pRayStatsLayout);
+
+    void SetParticleTimer(nvrhi::ITimerQuery *pParticleTimerQuery);
+
     // One call per frame, on the frame context's open command list of 'frameIndex', inside the
     // compose's window (see the class comment). It (re)resolves the engine images, (re)wraps them
     // and (re)builds the per-slot depth, framebuffers and sets when an image or the size changed,
@@ -356,7 +360,8 @@ public:
                 const RasterizedDataCollector::DrawInfo *pParticleDraws,
                 uint32_t particleDrawCount,
                 nvrhi::rt::IAccelStruct *pSmokeTopLevel,
-                nvrhi::IBindingSet *pSmokeLightSet);
+                nvrhi::IBindingSet *pSmokeLightSet,
+                nvrhi::IBindingSet *pRayStatsSet);
 
     // Drops the per-slot wraps, the pass-owned depth images, the framebuffers and the sets. The
     // caller has to call it before the engine destroys its framebuffer images (the
@@ -463,11 +468,11 @@ private:
     void RecordSmokeDraws(nvrhi::ICommandList *pCommandList, const Target &target,
                           uint32_t width, uint32_t height, const float *defaultViewProj,
                           const RasterizedDataCollector::DrawInfo *pDraws, uint32_t drawCount,
-                          nvrhi::IBindingSet *pSmokeLightSet);
+                          nvrhi::IBindingSet *pSmokeLightSet, nvrhi::IBindingSet *pRayStatsSet);
     void RecordParticleDraws(nvrhi::ICommandList *pCommandList, const Target &target,
                              uint32_t width, uint32_t height, const float *defaultViewProj,
                              const RasterizedDataCollector::DrawInfo *pDraws, uint32_t drawCount,
-                             nvrhi::IBindingSet *pLightSet);
+                             nvrhi::IBindingSet *pLightSet, nvrhi::IBindingSet *pRayStatsSet);
 
     void ReleaseTarget(Target &target);
     void ReleasePipelineCache();
@@ -560,6 +565,9 @@ private:
     // direct pass is destroyed before this pass, VulkanDevice_Init.cpp). A change drops the cached
     // smoke pipelines, which reference it.
     nvrhi::BindingLayoutHandle smokeLightLayout;
+
+    nvrhi::BindingLayoutHandle rayStatsLayout;
+    nvrhi::ITimerQuery *particleTimerQuery = nullptr;
 
     // One smoke pipeline per state key, like worldPipelines but with no vertex-gamma bit: the smoke
     // shaders declare no specialization constant. Built lazily against smokeLightLayout.

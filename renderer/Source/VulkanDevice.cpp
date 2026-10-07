@@ -1124,6 +1124,9 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
         rayStats->Reset(frameIndex);
     }
 
+    statsRasterUploadBytes = rasterizedDataCollector->GetUploadedBytes();
+    statsRasterUploadDroppedBatches = rasterizedDataCollector->GetDroppedUploadBatches();
+
     const double dt = std::max(currentFrameTime - previousFrameTime, 0.0001);
     const float fps = static_cast<float>(1.0 / dt);
     statsSmoothedFps = statsSmoothedFps <= 0.0f ? fps : statsSmoothedFps * 0.92f + fps * 0.08f;
@@ -1244,7 +1247,7 @@ void VulkanDevice::GetFrameStats(uint32_t *pRays, uint32_t *pFpsX10) const
 
 void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
 {
-    static_assert(RAY_STATS_CATEGORY_COUNT == QR_RAY_STATS_CATEGORY_COUNT, "Ray stats category count mismatch");
+    static_assert(RAY_STATS_CATEGORY_COUNT == QR_RAY_STATS_CATEGORY_COUNT + 1, "Ray stats category count mismatch");
 
     if (pStats == nullptr)
     {
@@ -1254,10 +1257,11 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
     memset(pStats, 0, sizeof(QrFrameStats));
 
     pStats->raysTotal = statsRays;
-    for (uint32_t i = 0; i < RAY_STATS_CATEGORY_COUNT; i++)
+    for (uint32_t i = 0; i < QR_RAY_STATS_CATEGORY_COUNT; i++)
     {
         pStats->raysPerCategory[i] = statsRaysPerCategory[i];
     }
+    pStats->raysParticle = statsRaysPerCategory[RAY_STATS_CATEGORY_PARTICLE];
     pStats->fpsX10 = statsFpsX10;
 
     pStats->gpuTimingValid = statsGpuTimingValid ? 1 : 0;
@@ -1270,6 +1274,8 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
     pStats->apiCallsGeometry = statsApiCallsGeometry;
     pStats->apiCallsRasterized = statsApiCallsRasterized;
     pStats->apiCallsLights = statsApiCallsLights;
+    pStats->rasterUploadBytes = statsRasterUploadBytes;
+    pStats->rasterUploadDroppedBatches = statsRasterUploadDroppedBatches;
 }
 
 void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const

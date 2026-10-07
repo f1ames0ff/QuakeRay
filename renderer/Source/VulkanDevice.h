@@ -289,5 +289,7 @@ private:
     uint32_t                                statsApiCallsGeometry = 0;
     uint32_t                                statsApiCallsRasterized = 0;
     uint32_t                                statsApiCallsLights = 0;
+    uint64_t                                statsRasterUploadBytes = 0;
+    uint32_t                                statsRasterUploadDroppedBatches = 0;
 };
 }

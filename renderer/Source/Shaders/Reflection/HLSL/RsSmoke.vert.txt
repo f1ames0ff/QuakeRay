@@ -149,6 +149,9 @@
 === block set 6 binding 8
 
 [0] offset 0 array[](uint32) stride 4
+=== block set 7 binding 0
+
+[0] offset 0 array[6](uint32) stride 4
 === builtin Position
 v4(float32)
 === capability RayQueryKHR
@@ -192,6 +195,10 @@ StorageBuffer
 === descriptor set 6 binding 8
 struct nonwritable
 === descriptor set 6 binding 8: storage class
+StorageBuffer
+=== descriptor set 7 binding 0
+struct
+=== descriptor set 7 binding 0: storage class
 StorageBuffer
 === entry point
 Vertex main

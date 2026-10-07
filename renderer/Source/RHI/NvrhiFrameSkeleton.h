@@ -692,6 +692,7 @@ private:
         GPU_PASS_UI,
         GPU_PASS_POSTUI,
         GPU_PASS_PRESENT,
+        GPU_PASS_PARTICLES,
         GPU_PASS_COUNT
     };
 
@@ -708,6 +709,7 @@ private:
     bool gpuTimersReady = false;
     nvrhi::TimerQueryHandle gpuFrameQueries[MAX_FRAMES_IN_FLIGHT];
     nvrhi::TimerQueryHandle gpuPassQueries[MAX_FRAMES_IN_FLIGHT][GPU_PASS_COUNT];
+    nvrhi::TimerQueryHandle gpuComposeTailQueries[MAX_FRAMES_IN_FLIGHT];
 
     // The most recent timings read back, in milliseconds, with 0.0f for a section that has not run
     // yet since the renderer started.

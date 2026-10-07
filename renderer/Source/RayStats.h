@@ -32,7 +32,9 @@
 namespace qray
 {
 
-constexpr uint32_t RAY_STATS_CATEGORY_COUNT = 5;
+constexpr uint32_t RAY_STATS_CATEGORY_COUNT = 6;
+
+constexpr uint32_t RAY_STATS_CATEGORY_PARTICLE = 5;
 
 class RayStats
 {

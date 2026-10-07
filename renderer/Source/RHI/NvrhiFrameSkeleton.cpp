@@ -477,6 +477,9 @@ void NvrhiFrameSkeleton::CreateGpuTimers()
         gpuFrameQueries[slot] = device->createTimerQuery();
         ready = gpuFrameQueries[slot] != nullptr;
 
+        gpuComposeTailQueries[slot] = device->createTimerQuery();
+        ready = ready && gpuComposeTailQueries[slot] != nullptr;
+
         for (uint32_t pass = 0; pass < GPU_PASS_COUNT && ready; pass++)
         {
             gpuPassQueries[slot][pass] = device->createTimerQuery();
@@ -512,6 +515,8 @@ void NvrhiFrameSkeleton::ReadGpuTimings(uint32_t frameIndex)
 
     gpuFrameMs = device->getTimerQueryTime(frameQuery) * 1000.0f;
 
+    bool composeHeadPolled = false;
+
     for (uint32_t pass = 0; pass < GPU_PASS_COUNT; pass++)
     {
         nvrhi::ITimerQuery *query = gpuPassQueries[frameIndex][pass].Get();
@@ -524,10 +529,34 @@ void NvrhiFrameSkeleton::ReadGpuTimings(uint32_t frameIndex)
         if (device->pollTimerQuery(query))
         {
             gpuPassMs[pass] = device->getTimerQueryTime(query) * 1000.0f;
+
+            if (pass == GPU_PASS_COMPOSE)
+            {
+                composeHeadPolled = true;
+            }
         }
         else
         {
             device->resetTimerQuery(query);
+
+            if (pass == GPU_PASS_PARTICLES)
+            {
+                gpuPassMs[pass] = 0.0f;
+            }
+        }
+    }
+
+    nvrhi::ITimerQuery *composeTailQuery = gpuComposeTailQueries[frameIndex].Get();
+
+    if (composeTailQuery != nullptr)
+    {
+        if (composeHeadPolled && device->pollTimerQuery(composeTailQuery))
+        {
+            gpuPassMs[GPU_PASS_COMPOSE] += device->getTimerQueryTime(composeTailQuery) * 1000.0f;
+        }
+        else
+        {
+            device->resetTimerQuery(composeTailQuery);
         }
     }
 
@@ -1303,6 +1332,10 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // samples (RhiRtComposePass.h documents both entry points and the sizes they take).
         if (rtComposePass != nullptr)
         {
+            const bool overlayRuns =
+                rasterOverlayPass != nullptr && rasterOverlayPass->IsCreated() && uniform != nullptr;
+            bool composeWindowOpened = false;
+
             BeginGpuPass(commandList, frameIndex, GPU_PASS_COMPOSE);
 
             // The raster overlay's window: the compose calls the callback between its checkerboard
@@ -1315,9 +1348,14 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                   sky.postEffectParams,
                                   [&](nvrhi::ICommandList *pOverlayList)
                                   {
-                                      if (rasterOverlayPass != nullptr &&
-                                          rasterOverlayPass->IsCreated() && uniform != nullptr)
+                                      if (overlayRuns)
                                       {
+                                          EndGpuPass(pOverlayList, frameIndex, GPU_PASS_COMPOSE);
+                                          composeWindowOpened = true;
+
+                                          rasterOverlayPass->SetParticleTimer(
+                                              gpuTimersReady ? gpuPassQueries[frameIndex][GPU_PASS_PARTICLES].Get() : nullptr);
+
                                           rasterOverlayPass->Render(
                                               pOverlayList, frameIndex, sky.framebuffers,
                                               sky.width, sky.height, sky.jitter,
@@ -1327,7 +1365,16 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               sky.smokeDraws, sky.smokeDrawCount,
                                               sky.particleDraws, sky.particleDrawCount,
                                               accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
-                                              rtDirectPass != nullptr ? rtDirectPass->GetLightSet(frameIndex).Get() : nullptr);
+                                              rtDirectPass != nullptr ? rtDirectPass->GetLightSet(frameIndex).Get() : nullptr,
+                                              rtPrimaryPass != nullptr ? rtPrimaryPass->GetRayStatsSet(frameIndex).Get() : nullptr);
+
+                                          if (gpuTimersReady)
+                                          {
+                                              if (nvrhi::ITimerQuery *tailQuery = gpuComposeTailQueries[frameIndex].Get())
+                                              {
+                                                  pOverlayList->beginTimerQuery(tailQuery);
+                                              }
+                                          }
                                       }
                                   });
             // The frame's upscaler (A5.7): the engine's own FSR 3.1 (the default configuration)
@@ -1507,7 +1554,20 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 EndGpuPass(commandList, frameIndex, GPU_PASS_POSTUI);
             }
 
-            EndGpuPass(commandList, frameIndex, GPU_PASS_COMPOSE);
+            if (composeWindowOpened)
+            {
+                if (gpuTimersReady)
+                {
+                    if (nvrhi::ITimerQuery *tailQuery = gpuComposeTailQueries[frameIndex].Get())
+                    {
+                        commandList->endTimerQuery(tailQuery);
+                    }
+                }
+            }
+            else
+            {
+                EndGpuPass(commandList, frameIndex, GPU_PASS_COMPOSE);
+            }
         }
     }
 

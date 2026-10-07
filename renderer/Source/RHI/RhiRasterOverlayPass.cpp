@@ -954,6 +954,31 @@ bool RhiRasterOverlayPass::SetSmokeLightLayout(nvrhi::BindingLayoutHandle pLight
     return smokeReady && particleReady;
 }
 
+bool RhiRasterOverlayPass::SetRayStatsLayout(nvrhi::BindingLayoutHandle pRayStatsLayout)
+{
+    if (!created)
+    {
+        LogMessage(print, "Warning: RHI: the raster overlay pass needs the pass created first");
+        return false;
+    }
+
+    if (rayStatsLayout.Get() != pRayStatsLayout.Get())
+    {
+        ReleaseSmokePipelineCache();
+        ReleaseParticlePipelineCache();
+        rayStatsLayout = pRayStatsLayout;
+    }
+
+    const bool smokeReady = PrewarmSmokePipeline();
+    const bool particleReady = PrewarmParticlePipeline();
+    return smokeReady && particleReady;
+}
+
+void RhiRasterOverlayPass::SetParticleTimer(nvrhi::ITimerQuery *pParticleTimerQuery)
+{
+    particleTimerQuery = pParticleTimerQuery;
+}
+
 void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                                   uint32_t frameIndex,
                                   const Framebuffers *pFramebuffers,
@@ -971,7 +996,8 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                                   const RasterizedDataCollector::DrawInfo *pParticleDraws,
                                   uint32_t particleDrawCount,
                                   nvrhi::rt::IAccelStruct *pSmokeTopLevel,
-                                  nvrhi::IBindingSet *pSmokeLightSet)
+                                  nvrhi::IBindingSet *pSmokeLightSet,
+                                  nvrhi::IBindingSet *pRayStatsSet)
 {
     if (!created || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT ||
         pFramebuffers == nullptr || width == 0 || height == 0)
@@ -1050,6 +1076,7 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
         smokeVertexShader != nullptr && smokePixelShader != nullptr && smokeInputLayout != nullptr &&
         smokeHoleSet != nullptr && smokeSampler != nullptr &&
         smokeLightLayout != nullptr && pSmokeLightSet != nullptr && pSmokeTopLevel != nullptr &&
+        rayStatsLayout != nullptr && pRayStatsSet != nullptr &&
         target.smokeFramebuffersSet != nullptr && target.smokeTlasSet != nullptr &&
         pSmokeDraws != nullptr && smokeDrawCount > 0;
 
@@ -1063,6 +1090,7 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
         particleVertexShader != nullptr && particlePixelShader != nullptr &&
         particleInputLayout != nullptr && particleHoleSet != nullptr && smokeSampler != nullptr &&
         smokeLightLayout != nullptr && pSmokeLightSet != nullptr && pSmokeTopLevel != nullptr &&
+        rayStatsLayout != nullptr && pRayStatsSet != nullptr &&
         target.particleFramebuffersSet != nullptr && target.smokeTlasSet != nullptr &&
         pParticleDraws != nullptr && particleDrawCount > 0;
 
@@ -1101,17 +1129,32 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                              pDraws, drawCount, applyVertexColorGamma, smokeDrawable, particleDrawable);
         }
 
+        if (particleTimerQuery != nullptr)
+        {
+            pCommandList->beginTimerQuery(particleTimerQuery);
+        }
+
         if (particleDrawable)
         {
             RecordParticleDraws(pCommandList, target, width, height, defaultViewProj,
-                                pParticleDraws, particleDrawCount, pSmokeLightSet);
+                                pParticleDraws, particleDrawCount, pSmokeLightSet, pRayStatsSet);
+        }
+
+        if (particleTimerQuery != nullptr)
+        {
+            pCommandList->endTimerQuery(particleTimerQuery);
         }
 
         if (smokeDrawable)
         {
             RecordSmokeDraws(pCommandList, target, width, height, defaultViewProj,
-                             pSmokeDraws, smokeDrawCount, pSmokeLightSet);
+                             pSmokeDraws, smokeDrawCount, pSmokeLightSet, pRayStatsSet);
         }
+    }
+    else if (particleTimerQuery != nullptr)
+    {
+        pCommandList->beginTimerQuery(particleTimerQuery);
+        pCommandList->endTimerQuery(particleTimerQuery);
     }
 
     // The framebuffer use left FINAL and SCREEN_EMISSION in the render-target layout, and the
@@ -1743,7 +1786,8 @@ void RhiRasterOverlayPass::RecordWorldDraws(nvrhi::ICommandList *pCommandList, c
 void RhiRasterOverlayPass::RecordSmokeDraws(nvrhi::ICommandList *pCommandList, const Target &target,
                                             uint32_t width, uint32_t height, const float *defaultViewProj,
                                             const RasterizedDataCollector::DrawInfo *pDraws,
-                                            uint32_t drawCount, nvrhi::IBindingSet *pSmokeLightSet)
+                                            uint32_t drawCount, nvrhi::IBindingSet *pSmokeLightSet,
+                                            nvrhi::IBindingSet *pRayStatsSet)
 {
     // The same loop shape the world draws use: the scissor is the draw's own when it has one and
     // the whole render area otherwise, the viewport is the draw's own when it has one and the full
@@ -1801,6 +1845,7 @@ void RhiRasterOverlayPass::RecordSmokeDraws(nvrhi::ICommandList *pCommandList, c
         state.addBindingSet(target.smokeFramebuffersSet);
         state.addBindingSet(target.smokeTlasSet);
         state.addBindingSet(pSmokeLightSet);
+        state.addBindingSet(pRayStatsSet);
         state.addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(vertexBuffer).setSlot(0).setOffset(0));
         state.setIndexBuffer(nvrhi::IndexBufferBinding()
                                  .setBuffer(indexBuffer)
@@ -1835,7 +1880,8 @@ void RhiRasterOverlayPass::RecordSmokeDraws(nvrhi::ICommandList *pCommandList, c
 void RhiRasterOverlayPass::RecordParticleDraws(nvrhi::ICommandList *pCommandList, const Target &target,
                                                uint32_t width, uint32_t height, const float *defaultViewProj,
                                                const RasterizedDataCollector::DrawInfo *pDraws,
-                                               uint32_t drawCount, nvrhi::IBindingSet *pLightSet)
+                                               uint32_t drawCount, nvrhi::IBindingSet *pLightSet,
+                                               nvrhi::IBindingSet *pRayStatsSet)
 {
     const nvrhi::Rect fullTarget = nvrhi::Rect(0, static_cast<int>(width), 0, static_cast<int>(height));
 
@@ -1882,6 +1928,7 @@ void RhiRasterOverlayPass::RecordParticleDraws(nvrhi::ICommandList *pCommandList
         state.addBindingSet(target.particleFramebuffersSet);
         state.addBindingSet(target.smokeTlasSet);
         state.addBindingSet(pLightSet);
+        state.addBindingSet(pRayStatsSet);
         state.addVertexBuffer(nvrhi::VertexBufferBinding().setBuffer(vertexBuffer).setSlot(0).setOffset(0));
         state.setIndexBuffer(nvrhi::IndexBufferBinding()
                                  .setBuffer(indexBuffer)
@@ -2191,7 +2238,7 @@ bool RhiRasterOverlayPass::PrewarmSmokePipeline()
 {
     if (smokeVertexShader == nullptr || smokePixelShader == nullptr || smokeInputLayout == nullptr ||
         smokePushConstantLayout == nullptr || smokeFramebuffersLayout == nullptr ||
-        smokeTlasLayout == nullptr || smokeLightLayout == nullptr)
+        smokeTlasLayout == nullptr || smokeLightLayout == nullptr || rayStatsLayout == nullptr)
     {
         return true;
     }
@@ -2242,7 +2289,7 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateSmokePipeline(uint32_t
 
     if (smokeVertexShader == nullptr || smokePixelShader == nullptr || smokeInputLayout == nullptr ||
         smokePushConstantLayout == nullptr || smokeFramebuffersLayout == nullptr ||
-        smokeTlasLayout == nullptr || smokeLightLayout == nullptr)
+        smokeTlasLayout == nullptr || smokeLightLayout == nullptr || rayStatsLayout == nullptr)
     {
         return nullptr;
     }
@@ -2291,6 +2338,7 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateSmokePipeline(uint32_t
     desc.addBindingLayout(smokeFramebuffersLayout);
     desc.addBindingLayout(smokeTlasLayout);
     desc.addBindingLayout(smokeLightLayout);
+    desc.addBindingLayout(rayStatsLayout);
 
     nvrhi::FramebufferInfo framebufferInfo;
     framebufferInfo.addColorFormat(pipelineColor0Format);
@@ -2314,7 +2362,7 @@ bool RhiRasterOverlayPass::PrewarmParticlePipeline()
     if (particleVertexShader == nullptr || particlePixelShader == nullptr ||
         particleInputLayout == nullptr || particlePushConstantLayout == nullptr ||
         particleFramebuffersLayout == nullptr || smokeTlasLayout == nullptr ||
-        smokeLightLayout == nullptr)
+        smokeLightLayout == nullptr || rayStatsLayout == nullptr)
     {
         return true;
     }
@@ -2359,7 +2407,7 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateParticlePipeline(uint3
     if (particleVertexShader == nullptr || particlePixelShader == nullptr ||
         particleInputLayout == nullptr || particlePushConstantLayout == nullptr ||
         particleFramebuffersLayout == nullptr || smokeTlasLayout == nullptr ||
-        smokeLightLayout == nullptr)
+        smokeLightLayout == nullptr || rayStatsLayout == nullptr)
     {
         return nullptr;
     }
@@ -2397,6 +2445,7 @@ nvrhi::GraphicsPipelineHandle RhiRasterOverlayPass::CreateParticlePipeline(uint3
     desc.addBindingLayout(particleFramebuffersLayout);
     desc.addBindingLayout(smokeTlasLayout);
     desc.addBindingLayout(smokeLightLayout);
+    desc.addBindingLayout(rayStatsLayout);
 
     nvrhi::FramebufferInfo framebufferInfo;
     framebufferInfo.addColorFormat(pipelineColor0Format);

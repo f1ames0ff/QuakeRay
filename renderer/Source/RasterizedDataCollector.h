@@ -100,6 +100,9 @@ namespace qray
         const std::vector< DrawInfo >& GetSwapchainDrawInfos() const;
         const std::vector< DrawInfo >& GetSkyDrawInfos() const;
 
+        uint64_t GetUploadedBytes() const;
+        uint32_t GetDroppedUploadBatches() const;
+
     protected:
         DrawInfo& PushInfo( QrRasterizedGeometryRenderType renderType );
 
@@ -116,6 +119,9 @@ namespace qray
 
         uint64_t curVertexCount;
         uint64_t curIndexCount;
+
+        uint64_t uploadedBytes = 0;
+        uint32_t droppedUploadBatches = 0;
 
         std::vector< DrawInfo > rasterDrawInfos;
         std::vector< DrawInfo > swapchainDrawInfos;

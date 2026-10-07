@@ -1324,7 +1324,7 @@ QRAPI QrBool32 QRCONV qrIsRenderUpscaleTechniqueAvailable(
 QRAPI QrBool32 QRCONV qrIsSuspended(
     QrInstance                          qrInstance);
 
-#define QR_GPU_PASS_COUNT 17
+#define QR_GPU_PASS_COUNT 18
 
 #define QR_RAY_STATS_CATEGORY_COUNT 5
 
@@ -1341,6 +1341,10 @@ typedef struct QrFrameStats
     uint32_t    apiCallsGeometry;
     uint32_t    apiCallsRasterized;
     uint32_t    apiCallsLights;
+
+    uint32_t    raysParticle;
+    uint64_t    rasterUploadBytes;
+    uint32_t    rasterUploadDroppedBatches;
 } QrFrameStats;
 
 QRAPI QrResult QRCONV qrGetFrameStatsEx(

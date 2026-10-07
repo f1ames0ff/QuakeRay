@@ -380,7 +380,7 @@ CONST = {
     "DEBUG_SHOW_FLAG_RAY_STATS"             : "1 << 10",
     "DEBUG_SHOW_FLAG_LUMA"                  : "1 << 11",
 
-    "RAY_STATS_CATEGORY_COUNT"              : 5,
+    "RAY_STATS_CATEGORY_COUNT"              : 6,
 
     "MAX_RAY_LENGTH"                        : "10000.0",
 
