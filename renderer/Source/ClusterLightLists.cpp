@@ -363,7 +363,7 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
            records, and the next frame is compared against them so that a light that walks is
            granted its slots again once it has walked out of its quantum. */
     }
-    else if (composeable && compositionOrder && uploadInfo.allowIncremental != 0 && !overflowEnabled &&
+    else if (composeable && compositionOrder && uploadInfo.allowIncremental != 0 &&
              UpdateSourceSet(worldLightsRef, pUserPrint))
     {
         /* The light set the lists were built for is the frame's but for the lights that changed
@@ -998,6 +998,11 @@ void ClusterLightLists::VacateSource(uint32_t sourceIndex)
 
     for (uint32_t c = 0; c < numClusters; c++)
     {
+        if (overflowEnabled)
+        {
+            UnrecordCandidate(c, sourceIndex);
+        }
+
         uint64_t *pBits = &slotBits[size_t(c) * bitsWords];
 
         if ((pBits[word] & bit) == 0)
@@ -1101,6 +1106,7 @@ bool ClusterLightLists::UpdateSourceRecords()
         sources[i].cluster = grantedSource.cluster;
         sources[i].reach = grantedSource.reach;
         sources[i].radius = grantedSource.radius;
+        sources[i].power = grantedSource.power;
         sources[i].clusterCount = grantedSource.clusterCount;
 
         for (uint32_t k = 0; k < grantedSource.clusterCount; k++)
@@ -1147,6 +1153,12 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
 
     if (granted.size() != sources.size() || frameToSource.size() != incoming.size() ||
         addedIndices.size() != added || removedIndices.size() != removed)
+    {
+        return false;
+    }
+
+    if (overflowEnabled &&
+        (candidates.size() != numClusters || candidateBits.size() != size_t(numClusters) * bitsWords))
     {
         return false;
     }
@@ -1366,6 +1378,15 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
     FillLists(pUserPrint);
 
     stats.fillMs = float(NowMs() - tFill);
+
+    const double tTail = NowMs();
+
+    if (overflowEnabled)
+    {
+        BuildOverflow();
+    }
+
+    stats.tailMs = float(NowMs() - tTail);
     stats.clusters = numClusters;
     stats.sources = uint32_t(incoming.size());
 
@@ -1384,20 +1405,40 @@ void ClusterLightLists::ResizeSlotBits(uint32_t newWords)
         return; // the stride in hand already reaches every place of the frame
     }
 
+    const uint32_t oldWords = bitsWords;
     std::vector<uint64_t> grown(size_t(numClusters) * newWords, 0);
 
     for (uint32_t c = 0; c < numClusters; c++)
     {
-        const uint64_t *pOld = &slotBits[size_t(c) * bitsWords];
+        const uint64_t *pOld = &slotBits[size_t(c) * oldWords];
         uint64_t       *pNew = &grown[size_t(c) * newWords];
 
-        for (uint32_t w = 0; w < bitsWords; w++)
+        for (uint32_t w = 0; w < oldWords; w++)
         {
             pNew[w] = pOld[w];
         }
     }
 
     slotBits.swap(grown);
+
+    if (overflowEnabled && candidateBits.size() == size_t(numClusters) * oldWords)
+    {
+        std::vector<uint64_t> grownCandidates(size_t(numClusters) * newWords, 0);
+
+        for (uint32_t c = 0; c < numClusters; c++)
+        {
+            const uint64_t *pOld = &candidateBits[size_t(c) * oldWords];
+            uint64_t       *pNew = &grownCandidates[size_t(c) * newWords];
+
+            for (uint32_t w = 0; w < oldWords; w++)
+            {
+                pNew[w] = pOld[w];
+            }
+        }
+
+        candidateBits.swap(grownCandidates);
+    }
+
     bitsWords = newWords;
 }
 
@@ -1491,7 +1532,8 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
 
 void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex)
 {
-    if (cluster >= candidates.size() || bitsWords == 0 || (sourceIndex >> 6) >= bitsWords)
+    if (cluster >= candidates.size() || bitsWords == 0 || (sourceIndex >> 6) >= bitsWords ||
+        candidateBits.size() < candidates.size() * size_t(bitsWords))
         return;
 
     uint64_t      &word = candidateBits[size_t(cluster) * bitsWords + (sourceIndex >> 6)];
@@ -1504,12 +1546,52 @@ void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex)
     candidates[cluster].push_back({ sourceIndex });
 }
 
+void ClusterLightLists::UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex)
+{
+    if (!overflowEnabled || cluster >= candidates.size() || bitsWords == 0 ||
+        (sourceIndex >> 6) >= bitsWords ||
+        candidateBits.size() < candidates.size() * size_t(bitsWords))
+        return;
+
+    uint64_t      &word = candidateBits[size_t(cluster) * bitsWords + (sourceIndex >> 6)];
+    const uint64_t mask = 1ull << (sourceIndex & 63);
+
+    if ((word & mask) == 0)
+        return;
+
+    word &= ~mask;
+
+    std::vector<Candidate> &candidateList = candidates[cluster];
+
+    for (size_t i = 0; i < candidateList.size(); i++)
+    {
+        if (candidateList[i].source == sourceIndex)
+        {
+            candidateList[i] = candidateList.back();
+            candidateList.pop_back();
+            break;
+        }
+    }
+}
+
 void ClusterLightLists::BuildOverflow()
 {
-    tailEntryCount = 0;
-
     if (!overflowEnabled || numClusters == 0)
         return;
+
+    tailOffsets.assign(size_t(numClusters) + 1, 0);
+    tailUids.clear();
+    tailProb.clear();
+    tailMarginal.clear();
+    tailAlias.clear();
+    tailBeta.assign(numClusters, 0.0f);
+    tailEntryCount = 0;
+    stats.tailEntries = 0;
+    stats.clustersWithTail = 0;
+    stats.tailBudgetExceeded = 0;
+    stats.candidateMax = 0;
+    stats.candidateMedian = 0;
+    stats.candidateP95 = 0;
 
     std::vector<uint32_t> candidateCounts;
     candidateCounts.reserve(numClusters);

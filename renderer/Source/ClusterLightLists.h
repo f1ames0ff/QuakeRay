@@ -138,6 +138,7 @@ private:
     bool UpdateSourceRecords();
     bool AppendSlot(uint32_t cluster, uint32_t sourceIndex, float dist2, bool fromTopUp);
     void RecordCandidate(uint32_t cluster, uint32_t sourceIndex);
+    void UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex);
     void BuildOverflow();
     bool BuildGrid(const WorldLights &worldLights, float reach);
     int  GridAxis(uint32_t axis, float value) const;
