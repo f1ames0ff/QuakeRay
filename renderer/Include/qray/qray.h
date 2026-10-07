@@ -1273,6 +1273,16 @@ typedef enum QrDrawFrameRayCullFlagBits
 } QrDrawFrameRayCullFlagBits;
 typedef QrFlags QrDrawFrameRayCullFlags;
 
+#define QR_VOXEL_SMOKE_MAX_EMITTERS 8
+
+typedef struct QrVoxelSmokeEmitter
+{
+    QrFloat3D   start;
+    QrFloat3D   end;
+    float       radius;
+    float       density;
+} QrVoxelSmokeEmitter;
+
 typedef struct QrDrawFrameVoxelSmokeParams
 {
     QrFloat3D   worldMin;
@@ -1286,6 +1296,9 @@ typedef struct QrDrawFrameVoxelSmokeParams
     float       debugGray;
     QrBool32    enabled;
     float       riseSpeed;
+    uint32_t    emitterCount;
+    uint32_t    generation;
+    QrVoxelSmokeEmitter emitters[QR_VOXEL_SMOKE_MAX_EMITTERS];
 } QrDrawFrameVoxelSmokeParams;
 
 typedef struct QrDrawFrameInfo

@@ -580,9 +580,10 @@ private:
     nvrhi::BindingSetHandle voxelSmokeMarchSets[MAX_FRAMES_IN_FLIGHT];
     nvrhi::ComputePipelineHandle voxelSmokeAdvectPipeline;
     nvrhi::GraphicsPipelineHandle voxelSmokeMarchPipeline;
-    bool voxelSmokeVolumeWritten[2] = { false, false };
+    float voxelSmokeVolumeWritten[2] = { false, false };
     bool voxelSmokeHasLastBox = false;
     float voxelSmokeLastBox[6] = {};
+    uint32_t voxelSmokeLastGeneration = 0;
     bool voxelSmokeParamsLogged = false;
 
     std::unordered_map<uint32_t, nvrhi::GraphicsPipelineHandle> particlePipelines;

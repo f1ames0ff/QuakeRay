@@ -12,6 +12,11 @@ struct VoxelSmokeParams
     float4 marchParams;
     float4 resolution;
     float4 advectParams;
+    float4 prevWorldMin;
+    float4 prevWorldMax;
+    float4 emitterStartRadius[8];
+    float4 emitterEndDensity[8];
+    float4 emitterCounts;
 };
 
 float3 voxelSmokeWorldToVolume( const VoxelSmokeParams p, const float3 world )

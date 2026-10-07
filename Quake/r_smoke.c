@@ -49,6 +49,31 @@ static int         smoke_count;
 
 static smokePuff_t *smoke_sorted[SMOKE_MAXPUFFS];
 
+static r_smokeVolumeEvent_t smoke_volume_events[SMOKE_VOLUME_EVENTS];
+static int                  smoke_volume_count;
+
+static void R_VoxelSmokePush (const vec3_t start, const vec3_t end, float radius, float density)
+{
+	if (smoke_volume_count >= SMOKE_VOLUME_EVENTS)
+	{
+		return;
+	}
+
+	r_smokeVolumeEvent_t *e = &smoke_volume_events[smoke_volume_count++];
+
+	VectorCopy (start, e->start);
+	VectorCopy (end, e->end);
+	e->radius  = radius;
+	e->density = density;
+}
+
+const r_smokeVolumeEvent_t *R_VoxelSmokeDrain (int *pCount)
+{
+	*pCount = smoke_volume_count;
+	smoke_volume_count = 0;
+	return smoke_volume_events;
+}
+
 cvar_t r_smoke         = {"r_smoke", "1", CVAR_ARCHIVE};
 cvar_t r_smoke_max     = {"r_smoke_max", "1024", CVAR_ARCHIVE};
 cvar_t r_smoke_life    = {"r_smoke_life", "1.5", CVAR_ARCHIVE};
@@ -211,6 +236,14 @@ void R_SmokeTrail (const vec3_t start, const vec3_t end, float sizeScale)
 	if (sizeScale <= 0.0f)
 		return;
 
+	if ((int)r_smoke.value == 2)
+	{
+		const float radius = q_max (r_smoke_size.value * sizeScale, 12.0f);
+
+		R_VoxelSmokePush (start, end, radius, r_smoke_density.value * sizeScale);
+		return;
+	}
+
 	VectorSubtract (end, start, delta);
 	len = VectorLength (delta);
 	if (len < 0.01f)
@@ -253,7 +286,7 @@ void R_SmokeUpdate (void)
 	float dt;
 	int   i;
 
-	if (!CVAR_TO_BOOL (r_smoke))
+	if ((int)r_smoke.value != 1)
 	{
 		smoke_count = 0;
 		return;
@@ -312,7 +345,7 @@ void R_DrawSmoke (cb_context_t *cbx)
 {
 	int i, v;
 
-	if (!CVAR_TO_BOOL (r_smoke))
+	if ((int)r_smoke.value != 1)
 		return;
 
 	if (smoke_count <= 0)

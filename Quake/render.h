@@ -182,6 +182,18 @@ float R_SmokeTrailScale (const char *modelName, int trailType);
 void R_SmokeTrail (const vec3_t start, const vec3_t end, float sizeScale);
 void R_SmokeUpdate (void);
 void R_DrawSmoke (cb_context_t *cbx);
+
+#define SMOKE_VOLUME_EVENTS 64
+
+typedef struct
+{
+	float start[3];
+	float end[3];
+	float radius;
+	float density;
+} r_smokeVolumeEvent_t;
+
+const r_smokeVolumeEvent_t *R_VoxelSmokeDrain (int *pCount);
 void R_EntityParticles (entity_t *ent);
 void R_BlobExplosion (vec3_t org);
 void R_ParticleExplosion (vec3_t org);

@@ -11,6 +11,11 @@
 [6] offset 96 v4(float32)
 [7] offset 112 v4(float32)
 [8] offset 128 v4(float32)
+[9] offset 144 v4(float32)
+[10] offset 160 v4(float32)
+[11] offset 176 array[8](v4(float32)) stride 16
+[12] offset 304 array[8](v4(float32)) stride 16
+[13] offset 432 v4(float32)
 === builtin GlobalInvocationId
 v3(int32)
 === capability Shader

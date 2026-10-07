@@ -69,6 +69,11 @@ struct VoxelSmokeParams
     float marchParams[4];
     float resolution[4];
     float advectParams[4];
+    float prevWorldMin[4];
+    float prevWorldMax[4];
+    float emitterStartRadius[QR_VOXEL_SMOKE_MAX_EMITTERS][4];
+    float emitterEndDensity[QR_VOXEL_SMOKE_MAX_EMITTERS][4];
+    float emitterCounts[4];
 };
 
 const char *const PARTICLE_VERTEX_SHADER_FILE_NAME   = "RsParticle.vert.spv";
@@ -1206,14 +1211,16 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             params.worldMax[1] = pVoxelSmokeParams->worldMax.data[1];
             params.worldMax[2] = pVoxelSmokeParams->worldMax.data[2];
 
-            const bool boxChanged =
-                !voxelSmokeHasLastBox ||
-                pVoxelSmokeParams->worldMin.data[0] != voxelSmokeLastBox[0] ||
-                pVoxelSmokeParams->worldMin.data[1] != voxelSmokeLastBox[1] ||
-                pVoxelSmokeParams->worldMin.data[2] != voxelSmokeLastBox[2] ||
-                pVoxelSmokeParams->worldMax.data[0] != voxelSmokeLastBox[3] ||
-                pVoxelSmokeParams->worldMax.data[1] != voxelSmokeLastBox[4] ||
-                pVoxelSmokeParams->worldMax.data[2] != voxelSmokeLastBox[5];
+            const bool generationChanged =
+                !voxelSmokeHasLastBox || pVoxelSmokeParams->generation != voxelSmokeLastGeneration;
+
+            for (int i = 0; i < 3; i++)
+            {
+                params.prevWorldMin[i] = voxelSmokeHasLastBox
+                    ? voxelSmokeLastBox[i] : pVoxelSmokeParams->worldMin.data[i];
+                params.prevWorldMax[i] = voxelSmokeHasLastBox
+                    ? voxelSmokeLastBox[3 + i] : pVoxelSmokeParams->worldMax.data[i];
+            }
 
             for (int i = 0; i < 3; i++)
             {
@@ -1221,18 +1228,75 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                 voxelSmokeLastBox[3 + i] = pVoxelSmokeParams->worldMax.data[i];
             }
             voxelSmokeHasLastBox = true;
+            voxelSmokeLastGeneration = pVoxelSmokeParams->generation;
 
             const float rise = pVoxelSmokeParams->riseSpeed;
             const float boundsMargin = 128.0f +
                 ((pVoxelSmokeParams->decayPerSecond > 1e-3f) ? rise / pVoxelSmokeParams->decayPerSecond : 0.0f);
 
+            const uint32_t emitterCount =
+                (pVoxelSmokeParams->emitterCount < QR_VOXEL_SMOKE_MAX_EMITTERS)
+                    ? pVoxelSmokeParams->emitterCount : QR_VOXEL_SMOKE_MAX_EMITTERS;
+
             for (int i = 0; i < 3; i++)
             {
-                params.boundsMin[i] = pVoxelSmokeParams->emitterCenter.data[i] -
-                                      pVoxelSmokeParams->emitterRadius - boundsMargin;
-                params.boundsMax[i] = pVoxelSmokeParams->emitterCenter.data[i] +
-                                      pVoxelSmokeParams->emitterRadius + boundsMargin;
+                float lo = pVoxelSmokeParams->emitterCenter.data[i];
+                float hi = lo;
+
+                if (emitterCount > 0)
+                {
+                    lo = pVoxelSmokeParams->emitters[0].start.data[i];
+                    hi = lo;
+
+                    for (uint32_t e = 0; e < emitterCount; e++)
+                    {
+                        const float radius = pVoxelSmokeParams->emitters[e].radius;
+
+                        lo = (pVoxelSmokeParams->emitters[e].start.data[i] < lo)
+                            ? pVoxelSmokeParams->emitters[e].start.data[i] : lo;
+                        lo = (pVoxelSmokeParams->emitters[e].end.data[i] < lo)
+                            ? pVoxelSmokeParams->emitters[e].end.data[i] : lo;
+                        hi = (pVoxelSmokeParams->emitters[e].start.data[i] > hi)
+                            ? pVoxelSmokeParams->emitters[e].start.data[i] : hi;
+                        hi = (pVoxelSmokeParams->emitters[e].end.data[i] > hi)
+                            ? pVoxelSmokeParams->emitters[e].end.data[i] : hi;
+
+                        lo -= radius;
+                        hi += radius;
+                    }
+                }
+                else
+                {
+                    lo -= pVoxelSmokeParams->emitterRadius;
+                    hi += pVoxelSmokeParams->emitterRadius;
+                }
+
+                params.boundsMin[i] = lo - boundsMargin;
+                params.boundsMax[i] = hi + boundsMargin;
             }
+
+            for (uint32_t e = 0; e < QR_VOXEL_SMOKE_MAX_EMITTERS; e++)
+            {
+                for (int k = 0; k < 4; k++)
+                {
+                    params.emitterStartRadius[e][k] = 0.0f;
+                    params.emitterEndDensity[e][k] = 0.0f;
+                }
+
+                if (e < emitterCount)
+                {
+                    params.emitterStartRadius[e][0] = pVoxelSmokeParams->emitters[e].start.data[0];
+                    params.emitterStartRadius[e][1] = pVoxelSmokeParams->emitters[e].start.data[1];
+                    params.emitterStartRadius[e][2] = pVoxelSmokeParams->emitters[e].start.data[2];
+                    params.emitterStartRadius[e][3] = pVoxelSmokeParams->emitters[e].radius;
+                    params.emitterEndDensity[e][0] = pVoxelSmokeParams->emitters[e].end.data[0];
+                    params.emitterEndDensity[e][1] = pVoxelSmokeParams->emitters[e].end.data[1];
+                    params.emitterEndDensity[e][2] = pVoxelSmokeParams->emitters[e].end.data[2];
+                    params.emitterEndDensity[e][3] = pVoxelSmokeParams->emitters[e].density;
+                }
+            }
+
+            params.emitterCounts[0] = float(emitterCount);
             params.emitterCenter[0] = pVoxelSmokeParams->emitterCenter.data[0];
             params.emitterCenter[1] = pVoxelSmokeParams->emitterCenter.data[1];
             params.emitterCenter[2] = pVoxelSmokeParams->emitterCenter.data[2];
@@ -1248,10 +1312,10 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             params.resolution[0] = float(VOXEL_SMOKE_RESOLUTION);
             params.resolution[1] = float(VOXEL_SMOKE_RESOLUTION);
             params.resolution[2] = float(VOXEL_SMOKE_RESOLUTION);
-            params.resolution[3] = (boxChanged || !voxelSmokeVolumeWritten[(frameIndex + 1) % 2]) ? 1.0f : 0.0f;
+            params.resolution[3] = (generationChanged || !voxelSmokeVolumeWritten[(frameIndex + 1) % 2]) ? 1.0f : 0.0f;
             params.advectParams[0] = rise;
 
-            if (!voxelSmokeParamsLogged || boxChanged)
+            if (!voxelSmokeParamsLogged || generationChanged)
             {
                 voxelSmokeParamsLogged = true;
 

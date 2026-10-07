@@ -23,7 +23,9 @@ void main( uint3 dtid : SV_DispatchThreadID )
 
     if ( params.resolution.w == 0.0 )
     {
-        const float3 source = voxelSmokeWorldToVolume( params, world - float3( 0.0, 0.0, params.advectParams.x ) * dt );
+        const float3 prevMin  = params.prevWorldMin.xyz;
+        const float3 prevSize = max( params.prevWorldMax.xyz - prevMin, (float3)1e-4 );
+        const float3 source   = ( world - float3( 0.0, 0.0, params.advectParams.x ) * dt - prevMin ) / prevSize;
 
         if ( all( source >= 0.0 ) && all( source <= 1.0 ) )
         {
@@ -33,10 +35,32 @@ void main( uint3 dtid : SV_DispatchThreadID )
 
     density *= exp( -max( params.emitterParams.z, 0.0 ) * dt );
 
-    const float d    = distance( world, params.emitterCenter.xyz );
-    const float fall = saturate( 1.0 - d / max( params.emitterParams.x, 1e-4 ) );
+    const uint emitterCount = (uint)params.emitterCounts.x;
 
-    density += fall * fall * params.emitterParams.y * dt;
+    if ( emitterCount == 0u )
+    {
+        const float d    = distance( world, params.emitterCenter.xyz );
+        const float fall = saturate( 1.0 - d / max( params.emitterParams.x, 1e-4 ) );
+
+        density += fall * fall * params.emitterParams.y * dt;
+    }
+    else
+    {
+        for ( uint e = 0u; e < emitterCount; e++ )
+        {
+            const float3 start  = params.emitterStartRadius[e].xyz;
+            const float3 end    = params.emitterEndDensity[e].xyz;
+            const float  radius = params.emitterStartRadius[e].w;
+            const float  rate   = params.emitterEndDensity[e].w;
+
+            const float3 segment = end - start;
+            const float  t       = saturate( dot( world - start, segment ) / max( dot( segment, segment ), 1e-4 ) );
+            const float  d       = distance( world, start + segment * t );
+            const float  fall    = saturate( 1.0 - d / max( radius, 1e-4 ) );
+
+            density += fall * fall * rate * dt;
+        }
+    }
 
     volumeNext[dtid] = saturate( density );
 }

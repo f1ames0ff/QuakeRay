@@ -2896,6 +2896,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	QrDrawFrameVoxelSmokeParams voxel_smoke_params = {};
 
+	int voxel_smoke_event_count = 0;
+	const r_smokeVolumeEvent_t *voxel_smoke_events = R_VoxelSmokeDrain (&voxel_smoke_event_count);
+
 	const qboolean voxel_smoke_enabled = CVAR_TO_BOOL (rt_voxel_smoke) && !CVAR_TO_BOOL (rt_materials_only);
 	voxel_smoke_params.enabled = voxel_smoke_enabled;
 
@@ -2903,6 +2906,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	static struct qmodel_s *voxel_smoke_anchor_model = NULL;
 	static qboolean voxel_smoke_anchor_valid = false;
 	static qboolean voxel_smoke_was_enabled = false;
+	static uint32_t voxel_smoke_generation = 0;
 
 	vec3_t voxel_smoke_forward, voxel_smoke_right, voxel_smoke_up;
 	AngleVectors (r_refdef.viewangles, voxel_smoke_forward, voxel_smoke_right, voxel_smoke_up);
@@ -2913,6 +2917,11 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		VectorCopy (r_refdef.vieworg, voxel_smoke_anchor);
 		VectorMA (voxel_smoke_anchor, 128.0f, voxel_smoke_forward, voxel_smoke_anchor);
 		voxel_smoke_anchor_valid = true;
+
+		if (cl.worldmodel != voxel_smoke_anchor_model)
+		{
+			voxel_smoke_generation++;
+		}
 	}
 
 	voxel_smoke_was_enabled = voxel_smoke_enabled;
@@ -2933,10 +2942,16 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	if (voxel_smoke_window > 0.0f)
 	{
+		const float voxel = voxel_smoke_window / 128.0f;
+
 		for (int i = 0; i < 3; i++)
 		{
-			voxel_smoke_params.worldMin.data[i] = voxel_smoke_params.emitterCenter.data[i] - voxel_smoke_window;
-			voxel_smoke_params.worldMax.data[i] = voxel_smoke_params.emitterCenter.data[i] + voxel_smoke_window;
+			const float center = (voxel_smoke_params.emitterCount > 0)
+				? r_refdef.vieworg[i] : voxel_smoke_params.emitterCenter.data[i];
+			const float snapped = (voxel > 0.0f) ? (floor (center / voxel) * voxel) : center;
+
+			voxel_smoke_params.worldMin.data[i] = snapped - voxel_smoke_window;
+			voxel_smoke_params.worldMax.data[i] = snapped + voxel_smoke_window;
 		}
 	}
 	else if (cl.worldmodel)
@@ -2963,6 +2978,24 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	voxel_smoke_params.extinction = CVAR_TO_FLOAT (rt_voxel_smoke_extinction);
 	voxel_smoke_params.debugGray = CVAR_TO_FLOAT (rt_voxel_smoke_gray);
 	voxel_smoke_params.riseSpeed = CVAR_TO_FLOAT (rt_voxel_smoke_rise);
+
+	voxel_smoke_params.emitterCount = 0;
+	voxel_smoke_params.generation = voxel_smoke_generation;
+
+	for (int i = 0; i < voxel_smoke_event_count &&
+	     voxel_smoke_params.emitterCount < QR_VOXEL_SMOKE_MAX_EMITTERS; i++)
+	{
+		QrVoxelSmokeEmitter *e = &voxel_smoke_params.emitters[voxel_smoke_params.emitterCount++];
+
+		for (int k = 0; k < 3; k++)
+		{
+			e->start.data[k] = voxel_smoke_events[i].start[k];
+			e->end.data[k] = voxel_smoke_events[i].end[k];
+		}
+
+		e->radius = voxel_smoke_events[i].radius;
+		e->density = voxel_smoke_events[i].density;
+	}
 
 	// The light editor's world is frozen: the traced water warp and the cloud
 	// drift follow this clock, so it takes the held client time while the
