@@ -7,6 +7,9 @@
 #define RT_STATS_COLOR_TOTAL  0xFFFF4D0Du
 #define RT_STATS_COLOR_DETAIL 0xFFD3D3D3u
 
+#define RT_STATS_BUDGET_WARN_MS 5.5f
+#define RT_STATS_BUDGET_CRIT_MS 11.1f
+
 typedef struct
 {
 	float samples[RT_STATS_HISTORY];
@@ -20,6 +23,8 @@ static rt_stats_series_t rt_stats_series_cpu_main;
 static rt_stats_series_t rt_stats_series_cpu_wait;
 static rt_stats_series_t rt_stats_series_cpu_draw;
 static rt_stats_series_t rt_stats_series_cpu_slot[RT_PROF_COUNT];
+static rt_stats_series_t rt_stats_series_host[RT_HOST_SPEED_COUNT];
+static rt_stats_series_t rt_stats_series_world;
 
 static rt_stats_snapshot_t rt_stats_overlay_snap;
 static qboolean             rt_stats_overlay_sampled;
@@ -45,6 +50,11 @@ static void RT_StatsSeriesResetAll (void)
 	RT_StatsSeriesReset (&rt_stats_series_cpu_draw);
 	for (i = 0; i < RT_PROF_COUNT; i++)
 		RT_StatsSeriesReset (&rt_stats_series_cpu_slot[i]);
+
+	for (i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		RT_StatsSeriesReset (&rt_stats_series_host[i]);
+
+	RT_StatsSeriesReset (&rt_stats_series_world);
 }
 
 static void RT_StatsSeriesPush (rt_stats_series_t *series, float value)
@@ -87,6 +97,11 @@ static void RT_StatsOverlaySample (void)
 		for (i = 0; i < RT_PROF_COUNT; i++)
 			RT_StatsSeriesPush (&rt_stats_series_cpu_slot[i], rep->ms[i]);
 	}
+
+	for (i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		RT_StatsSeriesPush (&rt_stats_series_host[i], rt_host_speeds_ms[i]);
+
+	RT_StatsSeriesPush (&rt_stats_series_world, rt_world_draw_ms);
 
 	RT_StatsRecordSample (snap);
 }
@@ -196,6 +211,39 @@ static void RT_StatsOverlayCpu (const rt_stats_snapshot_t *snap)
 	QR_GUI_OverlayNote (st);
 }
 
+static void RT_StatsOverlayBudgetMs (const char *label, float ms, const rt_stats_series_t *series)
+{
+	const float shown = (series && series->count > 0) ? series->samples[series->count - 1] : ms;
+	char        st[32];
+
+	if (shown >= 100.0f)
+		q_snprintf (st, sizeof (st), "%.0f ms", shown);
+	else if (shown >= 10.0f)
+		q_snprintf (st, sizeof (st), "%.1f ms", shown);
+	else
+		q_snprintf (st, sizeof (st), "%.2f ms", shown);
+
+	QR_GUI_OverlayBudgetRow (label, st, series ? series->samples : NULL, series ? series->count : 0, RT_STATS_BUDGET_WARN_MS,
+	                         RT_STATS_BUDGET_CRIT_MS);
+}
+
+static void RT_StatsOverlayBudget (void)
+{
+	static const char *const hostLabels[RT_HOST_SPEED_COUNT] = {"TOT", "SERVER", "GFX", "SND"};
+	char                     st[128];
+	int                      i;
+
+	for (i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		RT_StatsOverlayBudgetMs (hostLabels[i], rt_host_speeds_ms[i], &rt_stats_series_host[i]);
+
+	RT_StatsOverlayBudgetMs ("WORLD", rt_world_draw_ms, &rt_stats_series_world);
+
+	q_snprintf (st, sizeof (st), "wpoly %u/%u epoly %u/%u lmap %u sky %u/%u", Atomic_LoadUInt32 (&rs_brushpolys),
+	            Atomic_LoadUInt32 (&rs_brushpasses), Atomic_LoadUInt32 (&rs_aliaspolys), Atomic_LoadUInt32 (&rs_aliaspasses),
+	            Atomic_LoadUInt32 (&rs_dynamiclightmaps), Atomic_LoadUInt32 (&rs_skypolys), Atomic_LoadUInt32 (&rs_skypasses));
+	QR_GUI_OverlayNote (st);
+}
+
 void RT_StatsGuiReset (void)
 {
 	rt_stats_overlay_panels = 0;
@@ -273,4 +321,11 @@ void RT_StatsDrawGui (void)
 	}
 
 	QR_GUI_OverlayEnd ();
+
+	if (profile)
+	{
+		QR_GUI_OverlayBeginBottom ("##rt_stats_budget", 8.0f, 8.0f, 0.62f, "HOST / WORLD (16.6 ms budget)");
+		RT_StatsOverlayBudget ();
+		QR_GUI_OverlayEnd ();
+	}
 }

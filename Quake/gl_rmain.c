@@ -45,6 +45,7 @@ qboolean    rt_lavaeffects = false;
 // johnfitz -- rendering statistics
 atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles, rs_fogpolys;
 atomic_uint32_t rs_dynamiclightmaps, rs_brushpasses, rs_aliaspasses, rs_skypasses;
+float           rt_world_draw_ms;
 
 //
 // view origin
@@ -1261,22 +1262,18 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 	if (Atomic_LoadUInt32 (&rt_require_static_submit) != 0)
 		RT_StaticMovablePrepare ();
 
-	time1 = 0; /* avoid compiler warning */
-	if (r_speeds.value)
-	{
-		time1 = Sys_DoubleTime ();
+	time1 = Sys_DoubleTime ();
 
-		// johnfitz -- rendering statistics
-		Atomic_StoreUInt32 (&rs_brushpolys, 0u);
-		Atomic_StoreUInt32 (&rs_aliaspolys, 0u);
-		Atomic_StoreUInt32 (&rs_skypolys, 0u);
-		Atomic_StoreUInt32 (&rs_particles, 0u);
-		Atomic_StoreUInt32 (&rs_fogpolys, 0u);
-		Atomic_StoreUInt32 (&rs_dynamiclightmaps, 0u);
-		Atomic_StoreUInt32 (&rs_aliaspasses, 0u);
-		Atomic_StoreUInt32 (&rs_skypasses, 0u);
-		Atomic_StoreUInt32 (&rs_brushpasses, 0u);
-	}
+	// johnfitz -- rendering statistics
+	Atomic_StoreUInt32 (&rs_brushpolys, 0u);
+	Atomic_StoreUInt32 (&rs_aliaspolys, 0u);
+	Atomic_StoreUInt32 (&rs_skypolys, 0u);
+	Atomic_StoreUInt32 (&rs_particles, 0u);
+	Atomic_StoreUInt32 (&rs_fogpolys, 0u);
+	Atomic_StoreUInt32 (&rs_dynamiclightmaps, 0u);
+	Atomic_StoreUInt32 (&rs_aliaspasses, 0u);
+	Atomic_StoreUInt32 (&rs_skypasses, 0u);
+	Atomic_StoreUInt32 (&rs_brushpasses, 0u);
 
 	if (use_tasks)
 	{
@@ -1362,6 +1359,7 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 
 	// johnfitz -- modified r_speeds output
 	time2 = Sys_DoubleTime ();
+	rt_world_draw_ms = (float)((time2 - time1) * 1000.0);
 	if (r_pos.value)
 		Con_Printf (
 			"x %i y %i z %i (pitch %i yaw %i roll %i)\n", (int)cl.entities[cl.viewentity].origin[0], (int)cl.entities[cl.viewentity].origin[1],

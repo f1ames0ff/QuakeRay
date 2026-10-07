@@ -715,6 +715,18 @@ typedef struct
 	int      clusterDropped;     // additions refused because the registry was full
 } rt_prof_report_t;
 
+enum
+{
+	RT_HOST_SPEED_TOTAL = 0,
+	RT_HOST_SPEED_SERVER,
+	RT_HOST_SPEED_GFX,
+	RT_HOST_SPEED_SOUND,
+	RT_HOST_SPEED_COUNT,
+};
+
+extern float rt_host_speeds_ms[RT_HOST_SPEED_COUNT];
+extern float rt_world_draw_ms;
+
 // Which readouts the rt_stats command asks for, as a bit per panel number: its
 // level argument sets the bits up to the level, so 2 is the ray counters and the
 // GPU pass timings and 3 is all of them. The command is the only writer, so the
