@@ -1,0 +1,33 @@
+@startuml
+!pragma layout smetana
+title D05 - Small world DTAL cache state model
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+
+state "Empty" as Empty
+state "Building temporary data" as Building
+state "Ready" as Ready
+Ready : Ordinary frames update parameters without topology rebuild
+state "No compatible data / reported failure" as Failed
+
+[*] --> Empty
+Empty --> Building : regeneration at safe boundary
+Ready --> Building : relevant invalidation
+Failed --> Building : explicit or bounded retry
+Building --> Ready : valid complete replacement installed
+Building --> Ready : failure / obsolete request and old data compatible
+Building --> Failed : failure and no compatible installed data
+Ready --> Empty : map unload / reset
+Failed --> Empty : map unload / reset
+Empty --> [*] : cache teardown
+
+note right of Building
+  Installed data is not mutated while temporary data is built.
+  A later request remains pending.
+  No background generation service is required.
+end note
+note bottom of Ready
+  Replaced native buffers and wrappers use existing RHI retirement.
+  Older submitted frames keep valid resource lifetimes.
+end note
+@enduml

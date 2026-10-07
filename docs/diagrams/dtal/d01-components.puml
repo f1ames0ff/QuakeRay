@@ -1,0 +1,49 @@
+@startuml
+!pragma layout smetana
+title D01 - Two projects and three existing owners
+top to bottom direction
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam defaultFontName SansSerif
+
+package "Project A - DTAL optimization" {
+  [World DTAL builder / cache] as Builder
+  [Group GPU data and current parameters\ninside existing LightManager] as Manager
+  [Member / point sampler] as MemberSampler
+}
+
+package "Shared small source interface" {
+  [UID, bounds, reach, coverage, power] as Domain
+  [Current parent index, p_source, statistics slot] as Selection
+}
+
+package "Project B - cluster improvement" {
+  [Existing ClusterLightLists\ncandidates, fast / tail, source selector] as Clusters
+}
+
+[Ordinary / dynamic source producers] as Ordinary
+[Direct and indirect shading] as Shading
+[Existing frame slots and RHI lifetime] as Frame
+
+Builder --> Manager : validated groups / patches / member aliases
+Builder --> Domain : group source domain
+Ordinary --> Domain : ordinary source domain
+Domain --> Clusters : opaque parent metadata
+Clusters --> Manager : CPU tables reference UIDs
+Manager --> Selection : current-index publication
+Selection --> MemberSampler : selected parent and source probability
+Manager --> MemberSampler : real geometry and current emission
+MemberSampler --> Shading : sample, dw and p_member
+Frame ..> Manager : existing copies, descriptors and retirement
+Frame ..> Shading : compatible resources for the frame
+
+note bottom of Builder
+  Build only on relevant regeneration.
+  No representative energy transfer.
+end note
+note right of Clusters
+  B also works with ordinary sources alone.
+  A initially uses the existing cluster policy
+  through its minimal group-domain adapter.
+end note
+@enduml

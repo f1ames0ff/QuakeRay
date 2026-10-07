@@ -1,0 +1,75 @@
+@startuml
+!pragma layout smetana
+title D02 - Plain DTAL records and existing publication ownership
+hide methods
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam classAttributeIconSize 0
+
+class DtalBuildData <<Project A>> {
+  inputKey
+  groupGeneration
+  diagnostics
+}
+class DtalGroup <<plain data>> {
+  uid
+  compatibleEmissionKey
+  gridKey
+  memberRange
+  bounds
+  sourceClusterRange
+}
+class DtalMember <<plain data>> {
+  patchIndex
+  probability
+  aliasThreshold
+  aliasEntryIndex
+}
+class DtalPatch <<plain data>> {
+  positionsAndUv
+  orientedNormal
+  geometricArea
+}
+class LightManager <<existing owner>> {
+  groupBuffers
+  currentParentRecords
+  existingUidRegistry
+  framePublicationState
+}
+class ClusterLightLists <<existing owner / B>> {
+  listGeneration
+  cpuCandidateUids
+  cpuFastAndTailTables
+}
+class PublishedLightTables <<existing frame storage>> {
+  currentParentIndices
+  probabilitiesAndAliasData
+  compatibleCopyState
+}
+class RhiFrameContext <<existing owner>> {
+  frameSlots
+  retireQueues
+}
+
+DtalBuildData "1" *-- "0..*" DtalGroup
+DtalBuildData "1" *-- "0..*" DtalMember
+DtalBuildData "1" *-- "0..*" DtalPatch
+DtalGroup "1" --> "1..*" DtalMember : range
+DtalMember "1" --> "1" DtalPatch : selects actual patch
+LightManager --> DtalBuildData : owns uploaded copy
+ClusterLightLists --> DtalGroup : reads opaque source metadata
+ClusterLightLists --> LightManager : publishes UID tables
+LightManager "1" *-- "1..*" PublishedLightTables : resolves UID to frame index
+RhiFrameContext --> LightManager : resources survive outstanding uses
+
+note bottom of PublishedLightTables
+  A changed parent order refreshes published indices.
+  CPU PMFs can retain the same UID entry order.
+  No additional GPU source-map layer is required.
+end note
+note bottom of DtalGroup
+  Geometry and member aliases are immutable between builds.
+  Current emission lives in the parent's frame record.
+  Singleton comparison groups have one member.
+end note
+@enduml

@@ -753,6 +753,94 @@ void CheckLocalExposure(nvrhi::IDevice *device, const std::string &probes)
     }
 }
 
+void CheckTaauHistoryReset(nvrhi::IDevice *device, const std::string &shaderFolder)
+{
+    auto imageLayout = Layout(device, {
+        nvrhi::BindingLayoutItem::Texture_UAV(29),
+        nvrhi::BindingLayoutItem::Texture_UAV(119),
+        nvrhi::BindingLayoutItem::Texture_SRV(152),
+        nvrhi::BindingLayoutItem::Texture_SRV(155),
+        nvrhi::BindingLayoutItem::Texture_SRV(244),
+        nvrhi::BindingLayoutItem::Sampler(368),
+    });
+    auto uniformLayout = Layout(device, {nvrhi::BindingLayoutItem::ConstantBuffer(0)});
+    auto pipeline = Pipeline(device, shaderFolder + "/CmQ2TAAU.comp.spv", {imageLayout, uniformLayout});
+
+    nvrhi::TextureDesc desc;
+    desc.width = desc.height = 32;
+    desc.format = nvrhi::Format::RGBA32_FLOAT;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    auto current = device->createTexture(desc);
+    desc.format = nvrhi::Format::RG16_FLOAT;
+    auto motion = device->createTexture(desc);
+    desc.format = nvrhi::Format::RGBA16_FLOAT;
+    auto previous = device->createTexture(desc);
+    desc.isUAV = true;
+    desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    auto history = device->createTexture(desc);
+    desc.format = nvrhi::Format::R11G11B10_FLOAT;
+    auto output = device->createTexture(desc);
+    Require(current && motion && previous && history && output, "create TAAU reset textures");
+
+    nvrhi::SamplerDesc samplerDesc;
+    samplerDesc.setAllFilters(false).setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
+    auto sampler = device->createSampler(samplerDesc);
+    nvrhi::BindingSetDesc images;
+    images.addItem(nvrhi::BindingSetItem::Texture_UAV(29, output));
+    images.addItem(nvrhi::BindingSetItem::Texture_UAV(119, history));
+    images.addItem(nvrhi::BindingSetItem::Texture_SRV(152, current));
+    images.addItem(nvrhi::BindingSetItem::Texture_SRV(155, motion));
+    images.addItem(nvrhi::BindingSetItem::Texture_SRV(244, previous));
+    images.addItem(nvrhi::BindingSetItem::Sampler(368, sampler));
+    auto imageSet = device->createBindingSet(images, imageLayout);
+
+    nvrhi::BufferDesc bufferDesc;
+    bufferDesc.byteSize = sizeof(ShGlobalUniform);
+    bufferDesc.isConstantBuffer = true;
+    bufferDesc.initialState = nvrhi::ResourceStates::ConstantBuffer;
+    bufferDesc.keepInitialState = true;
+    auto uniform = device->createBuffer(bufferDesc);
+    nvrhi::BindingSetDesc uniforms;
+    uniforms.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, uniform));
+    auto uniformSet = device->createBindingSet(uniforms, uniformLayout);
+    Require(imageSet && uniformSet, "create TAAU reset binding sets");
+
+    auto pixels = Image(32, 32, 0.1f);
+    for (uint32_t y = 0; y < 32; y++)
+        for (uint32_t x = 0; x < 32; x++)
+            for (uint32_t channel = 0; channel < 3; channel++)
+                pixels[(y * 32 + x) * 4 + channel] = (x + y) % 2 ? 0.9f : 0.1f;
+
+    float values[2] = {};
+    for (uint32_t reset = 0; reset < 2; reset++)
+    {
+        ShGlobalUniform frame = {};
+        frame.renderWidth = frame.renderHeight = 32.0f;
+        frame.upscaledRenderWidth = frame.upscaledRenderHeight = 32.0f;
+        frame.restirParams[2] = reset;
+        auto cmd = device->createCommandList();
+        cmd->open();
+        cmd->writeTexture(current, 0, 0, pixels.data(), 32 * sizeof(float) * 4);
+        cmd->clearTextureFloat(motion, nvrhi::AllSubresources, nvrhi::Color(0.f, 0.f, 0.f, 0.f));
+        cmd->clearTextureFloat(previous, nvrhi::AllSubresources, nvrhi::Color(0.5f, 0.5f, 0.5f, 1.f));
+        cmd->writeBuffer(uniform, &frame, sizeof(frame));
+        nvrhi::ComputeState state;
+        state.setPipeline(pipeline);
+        state.addBindingSet(imageSet);
+        state.addBindingSet(uniformSet);
+        cmd->setComputeState(state);
+        cmd->dispatch(2, 2);
+        cmd->close();
+        device->executeCommandList(cmd);
+        const auto result = ReadTexture(device, output);
+        values[reset] = result[16 * 32 + 16];
+    }
+
+    Require(values[0] > 0.4f, "TAAU normally reuses valid history");
+    Require(std::abs(values[1] - 0.1f) < 0.005f, "UI-to-scene reset rejects previous TAAU history");
+}
+
 }
 
 int main(int argc, char **argv)
@@ -814,10 +902,11 @@ int main(int argc, char **argv)
             CheckGameplayColor(device, argv[1]);
             CheckNearDof(device, argv[2]);
             CheckLocalExposure(device, argv[2]);
+            CheckTaauHistoryReset(device, argv[1]);
         }
         Require(device->waitForIdle(), "finish GPU tests");
         Require(gpu.errors.load() == 0, "Vulkan validation errors");
-        std::cout << "PASS: histogram, adaptation, local exposure, vignette, film grain, color compositing, gameplay tint and near weapon DOF\n";
+        std::cout << "PASS: histogram, adaptation, local exposure, vignette, film grain, color compositing, gameplay tint, near weapon DOF and TAAU history reset\n";
         return 0;
     }
     catch (const std::exception &e)

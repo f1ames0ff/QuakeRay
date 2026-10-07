@@ -554,7 +554,69 @@ QRAPI QrResult QRCONV qrUploadTexturedAreaLights(
     const QrTexturedAreaLightUploadInfo *pUploadInfos,
     uint32_t                            count);
 
+#define QR_DTAL_MAX_UPLOAD_MEMBERS 131072
+
+typedef struct QrDtalMemberUpload
+{
+    QrFloat3D       A;
+    float           area;
+
+    QrFloat3D       B;
+    float           numVerts;
+
+    QrFloat3D       C;
+    float           prob;
+
+    QrFloat3D       normal;
+    float           marginalProb;
+
+    QrFloat2D       uv[MAX_TEXTURED_AREA_LIGHT_VERTS];
+
+    uint32_t        aliasIndex;
+    uint32_t        reserved[3];
+} QrDtalMemberUpload;
+
+typedef struct QrDtalGroupUploadInfo
+{
+    uint64_t        uniqueID;
+    QrFloat3D       color;
+    QrFloat3D       center;
+    QrFloat3D       normal;
+    QrFloat3D       boundsMin;
+    QrFloat3D       boundsMax;
+
+    QrMaterial      material;
+
+    float           area;
+    float           meanEmiss;
+    float           angleInner;
+    float           angleOuter;
+    float           projector;
+    float           reach;
+    float           estimatedPower;
+    float           boundsRadius;
+
+    uint32_t        memberBase;
+    uint32_t        memberCount;
+} QrDtalGroupUploadInfo;
+
+typedef struct QrDtalGroupUploadBatch
+{
+    uint32_t                     groupCount;
+    const QrDtalGroupUploadInfo *pGroups;
+    uint32_t                     memberCount;
+    const QrDtalMemberUpload    *pMembers;
+} QrDtalGroupUploadBatch;
+
+QRAPI QrResult QRCONV qrUploadDtalGroups(
+    QrInstance                          qrInstance,
+    const QrDtalGroupUploadBatch        *pUploadInfo);
+
 #define QR_CLUSTER_LIGHT_NO_CLUSTER    (~0u)
+
+#define QR_CLUSTER_MAX_REGISTERED_LIGHTS 4095
+
+#define QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS 16
 
 typedef struct QrClusterLightSource
 {
@@ -564,6 +626,12 @@ typedef struct QrClusterLightSource
     uint32_t  cluster;
 
     float     reach;
+
+    float           radius;
+    uint32_t        clusterCount;
+    const uint32_t *pClusters;
+
+    float           power;
 } QrClusterLightSource;
 
 typedef struct QrClusterLightSourcesUploadInfo
@@ -574,6 +642,10 @@ typedef struct QrClusterLightSourcesUploadInfo
     float                       topUpReach;
 
     int32_t                     allowIncremental;
+
+    int32_t                     allowOverflow;
+
+    int32_t                     validate;
 } QrClusterLightSourcesUploadInfo;
 
 QRAPI QrResult QRCONV qrUploadClusterLightSources(
@@ -607,9 +679,20 @@ typedef struct QrClusterLightStats
 
     uint32_t fullClusters;
 
+    uint32_t incrementalDirty;
+    uint32_t moveFootprint;
+
+    uint32_t tailEntries;
+    uint32_t clustersWithTail;
+    uint32_t tailBudgetExceeded;
+    uint32_t candidateMax;
+    uint32_t candidateMedian;
+    uint32_t candidateP95;
+
     float    visMs;
     float    topUpMs;
     float    fillMs;
+    float    tailMs;
     float    publishMs;
     float    totalMs;
 } QrClusterLightStats;
@@ -629,6 +712,17 @@ QRAPI QrResult QRCONV qrGetClusterLightList(
     QrInstance  qrInstance,
     uint32_t    cluster,
     uint64_t   *pLightUniqueIds,
+    uint32_t    maxCount,
+    uint32_t   *pCount);
+
+QRAPI QrResult QRCONV qrGetClusterLightTail(
+    QrInstance  qrInstance,
+    uint32_t    cluster,
+    uint64_t   *pLightUniqueIds,
+    float      *pProb,
+    float      *pMarginal,
+    uint32_t   *pAlias,
+    float      *pBeta,
     uint32_t    maxCount,
     uint32_t   *pCount);
 
@@ -1306,6 +1400,8 @@ typedef struct QrDrawFrameInfo
     const QrDrawFrameLevelFogParams             *pLevelFogParams;
     const QrDrawFrameDebugParams                *pDebugParams;
     QrDrawFramePostEffectsParams                postEffectParams;
+    QrBool32                                   renderUiOnly;
+    QrBool32                                   enableCpuProfiling;
 } QrDrawFrameInfo;
 
 QRAPI QrResult QRCONV qrDrawFrame(
@@ -1328,6 +1424,30 @@ QRAPI QrBool32 QRCONV qrIsSuspended(
 
 #define QR_RAY_STATS_CATEGORY_COUNT 5
 
+typedef enum QrCpuPassIndex
+{
+    QR_CPU_PASS_PREPARE = 0,
+    QR_CPU_PASS_HOT_RELOAD,
+    QR_CPU_PASS_DESCRIPTORS,
+    QR_CPU_PASS_STAGING,
+    QR_CPU_PASS_LEGACY_AS,
+    QR_CPU_PASS_SLOT_WAIT,
+    QR_CPU_PASS_SLOT_GC,
+    QR_CPU_PASS_GPU_TIMINGS,
+    QR_CPU_PASS_RHI_SETUP,
+    QR_CPU_PASS_SCENE,
+    QR_CPU_PASS_COMPOSE,
+    QR_CPU_PASS_UPSCALE,
+    QR_CPU_PASS_POST,
+    QR_CPU_PASS_UI,
+    QR_CPU_PASS_POSTUI,
+    QR_CPU_PASS_PRESENT_RECORD,
+    QR_CPU_PASS_RHI_SUBMIT,
+    QR_CPU_PASS_LEGACY_SUBMIT,
+    QR_CPU_PASS_PRESENT,
+    QR_CPU_PASS_COUNT,
+} QrCpuPassIndex;
+
 typedef struct QrFrameStats
 {
     uint32_t    raysTotal;
@@ -1342,6 +1462,10 @@ typedef struct QrFrameStats
     uint32_t    apiCallsRasterized;
     uint32_t    apiCallsLights;
 
+    QrBool32    cpuTimingValid;
+    QrBool32    renderedUiOnly;
+    float       cpuPassMs[QR_CPU_PASS_COUNT];
+
     uint32_t    raysParticle;
     uint64_t    rasterUploadBytes;
     uint32_t    rasterUploadDroppedBatches;
@@ -1350,6 +1474,8 @@ typedef struct QrFrameStats
 QRAPI QrResult QRCONV qrGetFrameStatsEx(
     QrInstance                          qrInstance,
     QrFrameStats                       *pStats);
+
+QRAPI const char *QRCONV qrGetCpuPassName(uint32_t passIndex);
 
 typedef struct QrAdapterInfo
 {

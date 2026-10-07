@@ -6,6 +6,8 @@ if(QR_BUILD_TESTS)
 endif()
 project(quakeray LANGUAGES C CXX)
 
+include(CTest)
+
 # ============================================================================
 # C / C++ Standard
 # ============================================================================
@@ -345,6 +347,9 @@ set(CORE_SOURCES
     Quake/r_sprite.c
     Quake/r_world.c
     Quake/rt_dtal_debug.cpp
+    shared/rt_alias.c
+    Quake/rt_cluster_select.c
+    Quake/rt_dtal_groups.c
     Quake/rt_material.c
     Quake/rt_lights.c
     Quake/rt_pkz.c
@@ -464,6 +469,7 @@ add_executable(quakeray ${ALL_SOURCES})
 # ============================================================================
 target_include_directories(quakeray PRIVATE
     ${CMAKE_SOURCE_DIR}/Quake
+    ${CMAKE_SOURCE_DIR}/shared
 )
 
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -518,6 +524,48 @@ endif()
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE SDL2::SDL2 SDL2::SDL2main)
 endif()
+
+# ============================================================================
+# Tests
+# ============================================================================
+if(BUILD_TESTING)
+    add_executable(frame_timing_tests tests/frame_timing_tests.cpp)
+    target_include_directories(frame_timing_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/renderer/Source
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+        ${CMAKE_SOURCE_DIR}/shared
+    )
+    target_compile_definitions(frame_timing_tests PRIVATE QR_STATIC)
+    add_test(NAME frame_timing_tests COMMAND frame_timing_tests)
+
+    add_executable(rt_lighting_tests
+        tests/rt_lighting_tests.c
+        shared/rt_alias.c
+        Quake/rt_cluster_select.c
+        Quake/rt_dtal_groups.c
+    )
+    target_include_directories(rt_lighting_tests PRIVATE ${CMAKE_SOURCE_DIR}/Quake ${CMAKE_SOURCE_DIR}/shared)
+
+    if(MSVC)
+        target_compile_options(rt_lighting_tests PRIVATE /W4)
+    else()
+        target_compile_options(rt_lighting_tests PRIVATE -Wall -Wextra)
+    endif()
+
+    add_test(NAME rt_lighting_tests COMMAND rt_lighting_tests)
+endif()
+
+# ============================================================================
+# Runtime assets
+# ============================================================================
+# The qr light editor loads the GUI font from next to the executable.
+add_custom_command(TARGET quakeray POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/fonts/Roboto-Regular.ttf"
+        "$<TARGET_FILE_DIR:quakeray>/fonts/Roboto-Regular.ttf"
+    COMMENT "Copying the GUI font"
+)
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE ws2_32 winmm shell32 ole32)

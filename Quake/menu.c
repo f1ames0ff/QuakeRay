@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "snd_openal.h"
 #include "snd_eq.h"
+#include "../shared/rt_frame_policy.h"
 #include <stdbool.h>
 
 void (*vid_menucmdfn) (void); // johnfitz
@@ -5741,6 +5742,12 @@ void M_UpdateMouse (void)
 	}
 
 	scrollbar_size = 0;
+}
+
+qboolean M_ConsoleBackgroundIsOpaque (void)
+{
+	return RT_ShouldSkipConsoleDraw (key_dest == key_menu && m_state != m_none && !m_recursiveDraw,
+	                                con_forcedup, 1.0f - M_MenuPreviewFraction ());
 }
 
 void M_Draw (cb_context_t *cbx)

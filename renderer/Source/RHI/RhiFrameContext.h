@@ -7,6 +7,11 @@
 #include <functional>
 #include <vector>
 
+namespace qray
+{
+class CpuFrameProfiler;
+}
+
 namespace qray::rhi
 {
 
@@ -58,7 +63,7 @@ public:
     // Waits until the queue finished the slot's previous submission, releases everything retired in that
     // slot, runs NVRHI's garbage collection and opens the slot's command list. Call it where the engine
     // waits its frame fence - inside the frame's recording, before the first RHI command.
-    void BeginSlot(uint32_t slot);
+    void BeginSlot(uint32_t slot, CpuFrameProfiler *cpuProfiler = nullptr);
 
     // The slot's open command list; null unless the slot is between BeginSlot and EndSlot.
     nvrhi::ICommandList *GetCommandList(uint32_t slot) const;

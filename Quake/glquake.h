@@ -384,12 +384,15 @@ void RT_ClusterLightListsReset (void);
 // that. A light that is registered twice in one frame with the same uniqueID keeps the last
 // origin and reach it was given.
 void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach);
-// Reach of a light of a moving entity, from rt_light_reach_max: the distance the host promises
+void RT_ClusterLightAddPower (uint64_t uniqueID, const vec3_t origin, float reach, float power);
+void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reach, float radius,
+                              const uint32_t *clusters, uint32_t clusterCount, float power);
+// Reach of a light of a moving entity, from rt_light_reach_dynamic: the distance the host promises
 // such a light does not reach past. The lights of the map itself pass the reach of
 // RT_ClusterLightReachStatic instead.
 float RT_ClusterLightReach (void);
-// Reach of a light of the map itself, from rt_light_reach: the distance such a light is heard
-// from where it stands. A setting of zero falls back to the cap of RT_ClusterLightReach.
+// Reach of a light of the map itself, from rt_light_reach_static: the distance such a light is
+// heard from where it stands. A setting of zero falls back to the cap of RT_ClusterLightReach.
 float RT_ClusterLightReachStatic (void);
 void RT_ClusterLightListsUpload (void);
 
@@ -421,11 +424,15 @@ extern int rt_cluster_last_gated;
 extern int rt_cluster_last_lights;
 extern int rt_cluster_last_attempts;
 extern int rt_cluster_last_dropped;
+extern int rt_cluster_last_dirty;
+extern int rt_cluster_last_move_footprint;
 int RT_ResolvePointCluster (const vec3_t p);
 void RT_PointClusterCacheStats (uint64_t *hits, uint64_t *misses, double *totalMs, double *avgNs);
 void RT_PointClusterCacheSetEnabled (qboolean enabled);
 void RT_BrushClusterCacheReset (void);
 void RT_ClusterLightReport_f (void);
+void RT_ClusterLists_f (void);
+void RT_ClusterLightDumpHeader (FILE *f);
 void RT_LightReport_f (void);
 void RT_PrintEmissiveStats (void);
 void RT_LightReportDump_f (void);
@@ -676,6 +683,7 @@ enum
 	RT_PROF_CLUSTERS_VIS,
 	RT_PROF_CLUSTERS_TOPUP,
 	RT_PROF_CLUSTERS_FILL,
+	RT_PROF_CLUSTERS_TAIL,
 	RT_PROF_CLUSTERS_UPLOAD,
 	RT_PROF_DRAWFRAME,
 	RT_PROF_WAIT,
@@ -698,6 +706,10 @@ typedef struct
 	float    frameMs; // longest whole-frame time in the window
 	float    waitMs;  // longest wait for the task graph
 	float    ms[RT_PROF_COUNT];
+	float    averageMs[RT_PROF_COUNT];
+	float    rendererAverageMs[QR_CPU_PASS_COUNT];
+	float    rendererMaxMs[QR_CPU_PASS_COUNT];
+	int      rendererSamples;
 	int      clusterCacheHits;   // frames of the window that reused the cached cluster light lists
 	int      clusterCacheMisses; // frames that had to rebuild them
 	int      clusterMissSet;     // rebuilds caused by lights appearing or disappearing
@@ -705,6 +717,8 @@ typedef struct
 	                             // resolved into a different leaf
 	int      clusterMissOther;   // rebuilds with neither of those, i.e. a new map, a new top-up
 	                             // reach, or a frame the incremental path turned down
+	int      clusterDirty;
+	int      clusterMoveFootprint;
 	int      clusterGrants;      // slots granted by the last rebuild
 	int      clusterDenied;      // slots refused by the last rebuild
 	int      clusterGated;       // candidate slots refused for standing beyond the light's reach
@@ -722,6 +736,18 @@ typedef struct
 	uint64_t particleResolveCacheMisses;
 	double   particleResolveCacheAvgNs;
 } rt_prof_report_t;
+
+enum
+{
+	RT_HOST_SPEED_TOTAL = 0,
+	RT_HOST_SPEED_SERVER,
+	RT_HOST_SPEED_GFX,
+	RT_HOST_SPEED_SOUND,
+	RT_HOST_SPEED_COUNT,
+};
+
+extern float rt_host_speeds_ms[RT_HOST_SPEED_COUNT];
+extern float rt_world_draw_ms;
 
 // Which readouts the rt_stats command asks for, as a bit per panel number: its
 // level argument sets the bits up to the level, so 2 is the ray counters and the

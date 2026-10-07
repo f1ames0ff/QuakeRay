@@ -17,6 +17,7 @@
 
 #ifndef LIGHT_HLSLI_
 #define LIGHT_HLSLI_
+#include "AliasTable.hlsli"
 #include "Random.hlsli"
 
 struct DirectionalLight
@@ -69,6 +70,24 @@ struct SpotLight
     float cosAngleInner;
     float3 color;
     float cosAngleOuter;
+};
+
+struct DtalGroupLight
+{
+    uint   memberBase;
+    uint   memberCount;
+    float  reach;
+    float  meanEmiss;
+    float  area;
+    float  estimatedPower;
+    float  boundsRadius;
+    float3 center;
+    float3 normal;
+    float3 color;
+    float  coneCosInner;
+    float  coneCosOuter;
+    float  textureIndex;
+    float  projector;
 };
 
 DirectionalLight decodeAsDirectionalLight(const ShLightEncoded encoded)
@@ -139,6 +158,27 @@ TexturedAreaLight decodeAsTexturedAreaLight(const ShLightEncoded encoded)
     return l;
 }
 
+DtalGroupLight decodeAsDtalGroupLight(const ShLightEncoded encoded)
+{
+    DtalGroupLight l;
+    l.memberBase = asuint(encoded.data_0.x);
+    l.memberCount = asuint(encoded.data_0.y);
+    l.reach = encoded.data_0.z;
+    l.textureIndex = encoded.data_0.w;
+    l.meanEmiss = encoded.data_1.x;
+    l.area = encoded.data_1.y;
+    l.estimatedPower = encoded.data_1.z;
+    l.boundsRadius = encoded.data_1.w;
+    l.center = encoded.data_2.xyz;
+    l.projector = encoded.data_2.w;
+    l.normal = encoded.data_7.xyz;
+    l.color = encoded.color;
+    l.coneCosInner = encoded.coneCosInner;
+    l.coneCosOuter = encoded.coneCosOuter;
+
+    return l;
+}
+
 SpotLight decodeAsSpotLight(const ShLightEncoded encoded)
 {
     SpotLight l;
@@ -195,6 +235,17 @@ float calcSolidAngleForArea(float area, const float3 areaPosition, const float3 
 {
     const DirectionAndLength areaLightToSurf = calcDirectionAndLength(areaPosition, surfPosition);
     return safeSolidAngle(area * getGeometryFactor(areaNormal, areaLightToSurf.dir, areaLightToSurf.len));
+}
+
+#define DTAL_MIN_DISTANCE 1.0
+
+float getTexturedAreaLightDw(float area, const float3 lightNormal, const float3 lightToSurf, float distance)
+{
+    const float cosNL = max(dot(lightNormal, lightToSurf), 0.0);
+    const float dist = max(distance, DTAL_MIN_DISTANCE);
+    const float dw = area * cosNL * safePositiveRcp(square(dist));
+
+    return (isnan(dw) || isinf(dw) || dw < 0.0) ? 0.0 : dw;
 }
 
 
@@ -314,6 +365,15 @@ float getSpotLightWeight(const SpotLight l, const float3 cellCenter, float cellR
         getLightColorWeight(l.color) *
         calcSolidAngleForSphere(l.radius, max(length(l.center - cellCenter), cellRadius)) *
         isSphereInFront(l.direction, l.center, cellCenter, cellRadius);
+}
+
+float getDtalGroupWeight(const ShLightEncoded encoded, const float3 cellCenter, float cellRadius)
+{
+    const DtalGroupLight l = decodeAsDtalGroupLight(encoded);
+
+    return
+        getLightColorWeight(l.color) * max(l.meanEmiss, 0.05) *
+        calcSolidAngleForSphere(max(l.boundsRadius, 1e-3), max(length(l.center - cellCenter), cellRadius));
 }
 
 
@@ -557,9 +617,70 @@ LightSample sampleTexturedAreaLight(const TexturedAreaLight l, const float3 surf
     const float spotlight = (l.coneCosOuter > 0.0) ? getSpotFactor(cosNL, l.coneCosInner, l.coneCosOuter) : sqrt(cosNL);
 
     r.color = l.color * mask * spotlight;
-    r.dw = safeSolidAngle(emiss * l.area * getGeometryFactorClamped(l.normal, lightToSurf.dir, lightToSurf.len));
+    r.dw = emiss * getTexturedAreaLightDw(l.area, l.normal, lightToSurf.dir, lightToSurf.len);
 
     return r;
+}
+
+LightSample sampleDtalGroupMember(const DtalGroupLight g, const uint memberIndex, const float3 surfPosition, const float2 pointRnd)
+{
+    const ShDtalMember m = dtalMembers[g.memberBase + memberIndex];
+
+    TexturedAreaLight tal;
+    tal.A = m.A;
+    tal.B = m.B;
+    tal.C = m.C;
+    tal.normal = m.normal;
+    tal.area = m.area;
+    tal.textureIndex = g.textureIndex;
+    tal.meanEmiss = g.meanEmiss;
+    tal.coneCosInner = g.coneCosInner;
+    tal.coneCosOuter = g.coneCosOuter;
+    tal.projector = g.projector;
+    tal.numVerts = clamp((int)m.numVerts, 0, MAX_TEXTURED_AREA_LIGHT_VERTS);
+    tal.color = g.color;
+
+    for (int i = 0; i < MAX_TEXTURED_AREA_LIGHT_VERTS; i++)
+    {
+        tal.uvVerts[i] = m.uv[i];
+    }
+
+    return sampleTexturedAreaLight(tal, surfPosition, pointRnd);
+}
+
+LightSample sampleDtalGroup(const ShLightEncoded encoded, const float3 surfPosition, const float2 pointRnd, const float2 memberRnd,
+                            out float outMemberPdf)
+{
+    const DtalGroupLight g = decodeAsDtalGroupLight(encoded);
+    outMemberPdf = 1.0;
+
+    if (g.memberCount == 0u)
+    {
+        return emptyLightSample();
+    }
+
+    const int          column = aliasColumn(memberRnd.x, (int)g.memberCount);
+    const ShDtalMember columnMember = dtalMembers[g.memberBase + (uint)column];
+    const uint         chosen = aliasChoice(memberRnd.x, (int)g.memberCount, column, columnMember.prob,
+                                            columnMember.aliasIndex);
+
+    if (chosen >= g.memberCount)
+    {
+        return emptyLightSample();
+    }
+
+    const ShDtalMember chosenMember = dtalMembers[g.memberBase + chosen];
+
+    outMemberPdf = max(chosenMember.marginalProb, 0.0);
+
+    const LightSample memberSample = sampleDtalGroupMember(g, chosen, surfPosition, pointRnd);
+
+    if (!(g.reach > 0.0) || length(surfPosition - memberSample.position) > g.reach)
+    {
+        return emptyLightSample();
+    }
+
+    return memberSample;
 }
 
 LightSample sampleSpotLight(const SpotLight l, const float3 surfPosition, const float2 pointRnd)
@@ -592,6 +713,7 @@ float getLightWeight(const ShLightEncoded encoded, const float3 cellCenter, floa
         case LIGHT_TYPE_TRIANGLE:          return getTriangleLightWeight       (decodeAsTriangleLight        (encoded), cellCenter, cellRadius);
         case LIGHT_TYPE_SPOT:              return getSpotLightWeight           (decodeAsSpotLight            (encoded), cellCenter, cellRadius);
         case LIGHT_TYPE_TEXTURED_AREA:     return getTexturedAreaLightWeight   (decodeAsTexturedAreaLight    (encoded), cellCenter, cellRadius);
+        case LIGHT_TYPE_DTAL_GROUP:        return getDtalGroupWeight           (encoded, cellCenter, cellRadius);
         default:                           return 0.0;
     }
 }
@@ -607,6 +729,29 @@ LightSample sampleLight(const ShLightEncoded encoded, const float3 surfPosition,
         case LIGHT_TYPE_TEXTURED_AREA:     return sampleTexturedAreaLight      (decodeAsTexturedAreaLight    (encoded), surfPosition, pointRnd);
         default:                           return emptyLightSample();
     }
+}
+
+LightSample sampleLightFullDomain(const ShLightEncoded encoded, const float3 surfPosition, const float2 pointRnd)
+{
+    if (encoded.lightType == LIGHT_TYPE_TEXTURED_AREA)
+    {
+        return sampleLight(encoded, surfPosition, pointRnd);
+    }
+
+    return sampleLight(encoded, surfPosition, pointRnd * 0.99);
+}
+
+LightSample sampleLightNee(const ShLightEncoded encoded, const float3 surfPosition, const float2 pointRnd, const float2 memberRnd,
+                           out float outMemberPdf)
+{
+    outMemberPdf = 1.0;
+
+    if (encoded.lightType == LIGHT_TYPE_DTAL_GROUP)
+    {
+        return sampleDtalGroup(encoded, surfPosition, pointRnd, memberRnd, outMemberPdf);
+    }
+
+    return sampleLightFullDomain(encoded, surfPosition, pointRnd);
 }
 
 #endif

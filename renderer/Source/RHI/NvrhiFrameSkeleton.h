@@ -27,6 +27,7 @@
 #include <qray/qray.h>
 
 #include "../Common.h"
+#include "../CpuFrameProfiler.h"
 #include "../ISwapchainDependency.h"
 #include "../RasterizedDataCollector.h"
 #include "RhiCloudsPass.h"
@@ -164,6 +165,8 @@ public:
         uint64_t swapchainVertexStagingSize = 0;
         uint64_t swapchainIndexStagingSize = 0;
         bool disableRasterization = false;
+        bool renderUiOnly = false;
+        CpuFrameProfiler *cpuProfiler = nullptr;
 
         // -- the god rays and their shadow map (A5.2) --
         // The host block of the legacy frame (VulkanDevice.cpp:908-1007) precomputed: the final
@@ -470,6 +473,12 @@ private:
     // worldCreationFailed (every failure mode there is permanent).
     bool PrepareWorld(uint32_t frameIndex, const SkyFrameInputs &sky);
 
+    nvrhi::ITexture *PrepareUiTarget(uint32_t frameIndex, const SkyFrameInputs &sky);
+    bool PrepareUiGeometry(uint32_t frameIndex, const SkyFrameInputs &sky);
+    void RenderUi(nvrhi::ICommandList *commandList, uint32_t frameIndex,
+                  const SkyFrameInputs &sky, nvrhi::ITexture *target, bool clearTarget = false);
+    void RenderPostUi(nvrhi::ICommandList *commandList, uint32_t frameIndex, const SkyFrameInputs &sky);
+
     bool CreatePipeline(nvrhi::Format colorFormat);
     bool CreateSwapchainResources(const Swapchain *pSwapchain);
     void DestroySwapchainResources();
@@ -609,6 +618,10 @@ private:
     nvrhi::BufferHandle uiIndexStagingWraps[MAX_FRAMES_IN_FLIGHT];
     uint64_t uiVertexStagingHandles[MAX_FRAMES_IN_FLIGHT] = {};
     uint64_t uiIndexStagingHandles[MAX_FRAMES_IN_FLIGHT] = {};
+    nvrhi::TextureHandle uiFrameTextures[MAX_FRAMES_IN_FLIGHT];
+    uint64_t uiFrameImageHandles[MAX_FRAMES_IN_FLIGHT] = {};
+    CpuFrameProfiler *cpuProfiler = nullptr;
+    bool previousFrameUiOnly = true;
 
     // The frame mode of the whole run: which chain Render records into ALBEDO. The host hard-wires
     // it to Traced (VulkanDevice_Init.cpp) and it does not change while the skeleton lives.
@@ -697,6 +710,7 @@ private:
     };
 
     void CreateGpuTimers();
+    static QrCpuPassIndex CpuPassForGpuPass(uint32_t pass);
     void ReadGpuTimings(uint32_t frameIndex);
     void BeginGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass);
     void EndGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass);
@@ -709,7 +723,7 @@ private:
     bool gpuTimersReady = false;
     nvrhi::TimerQueryHandle gpuFrameQueries[MAX_FRAMES_IN_FLIGHT];
     nvrhi::TimerQueryHandle gpuPassQueries[MAX_FRAMES_IN_FLIGHT][GPU_PASS_COUNT];
-    nvrhi::TimerQueryHandle gpuComposeTailQueries[MAX_FRAMES_IN_FLIGHT];
+    uint32_t gpuPassMasks[MAX_FRAMES_IN_FLIGHT] = {};
 
     // The most recent timings read back, in milliseconds, with 0.0f for a section that has not run
     // yet since the renderer started.

@@ -42,6 +42,7 @@
 #include "RhiTextureTable.h"
 
 #include <fstream>
+#include <algorithm>
 
 #include "../Const.h"
 #include "../Framebuffers.h"
@@ -477,9 +478,6 @@ void NvrhiFrameSkeleton::CreateGpuTimers()
         gpuFrameQueries[slot] = device->createTimerQuery();
         ready = gpuFrameQueries[slot] != nullptr;
 
-        gpuComposeTailQueries[slot] = device->createTimerQuery();
-        ready = ready && gpuComposeTailQueries[slot] != nullptr;
-
         for (uint32_t pass = 0; pass < GPU_PASS_COUNT && ready; pass++)
         {
             gpuPassQueries[slot][pass] = device->createTimerQuery();
@@ -497,74 +495,75 @@ void NvrhiFrameSkeleton::CreateGpuTimers()
 
 void NvrhiFrameSkeleton::ReadGpuTimings(uint32_t frameIndex)
 {
+    gpuTimingValid = false;
+    gpuFrameMs = 0.0f;
+    std::fill_n(gpuPassMs, GPU_PASS_COUNT, 0.0f);
+
     if (!gpuTimersReady || frameIndex >= MAX_FRAMES_IN_FLIGHT)
     {
         return;
     }
 
     nvrhi::ITimerQuery *frameQuery = gpuFrameQueries[frameIndex].Get();
-
-    if (frameQuery == nullptr || !device->pollTimerQuery(frameQuery))
+    bool complete = frameQuery != nullptr && device->pollTimerQuery(frameQuery);
+    const uint32_t recordedPasses = gpuPassMasks[frameIndex];
+    for (uint32_t pass = 0; pass < GPU_PASS_COUNT && complete; pass++)
     {
-        if (frameQuery != nullptr)
+        if ((recordedPasses & (1u << pass)) != 0)
         {
-            device->resetTimerQuery(frameQuery);
+            nvrhi::ITimerQuery *query = gpuPassQueries[frameIndex][pass].Get();
+            complete = query != nullptr && device->pollTimerQuery(query);
         }
-        return;
     }
 
-    gpuFrameMs = device->getTimerQueryTime(frameQuery) * 1000.0f;
-
-    bool composeHeadPolled = false;
-
-    for (uint32_t pass = 0; pass < GPU_PASS_COUNT; pass++)
+    if (complete)
     {
-        nvrhi::ITimerQuery *query = gpuPassQueries[frameIndex][pass].Get();
-
-        if (query == nullptr)
+        gpuFrameMs = device->getTimerQueryTime(frameQuery) * 1000.0f;
+        for (uint32_t pass = 0; pass < GPU_PASS_COUNT; pass++)
         {
-            continue;
-        }
-
-        if (device->pollTimerQuery(query))
-        {
-            gpuPassMs[pass] = device->getTimerQueryTime(query) * 1000.0f;
-
-            if (pass == GPU_PASS_COMPOSE)
+            if ((recordedPasses & (1u << pass)) != 0)
             {
-                composeHeadPolled = true;
+                gpuPassMs[pass] = device->getTimerQueryTime(gpuPassQueries[frameIndex][pass].Get()) * 1000.0f;
             }
         }
-        else
-        {
-            device->resetTimerQuery(query);
-
-            if (pass == GPU_PASS_PARTICLES)
-            {
-                gpuPassMs[pass] = 0.0f;
-            }
-        }
+        gpuTimingValid = true;
     }
 
-    nvrhi::ITimerQuery *composeTailQuery = gpuComposeTailQueries[frameIndex].Get();
-
-    if (composeTailQuery != nullptr)
+    if (frameQuery != nullptr)
     {
-        if (composeHeadPolled && device->pollTimerQuery(composeTailQuery))
+        device->resetTimerQuery(frameQuery);
+    }
+    for (const auto &query : gpuPassQueries[frameIndex])
+    {
+        if (query != nullptr)
         {
-            gpuPassMs[GPU_PASS_COMPOSE] += device->getTimerQueryTime(composeTailQuery) * 1000.0f;
-        }
-        else
-        {
-            device->resetTimerQuery(composeTailQuery);
+            device->resetTimerQuery(query.Get());
         }
     }
+    gpuPassMasks[frameIndex] = 0;
+}
 
-    gpuTimingValid = true;
+QrCpuPassIndex NvrhiFrameSkeleton::CpuPassForGpuPass(uint32_t pass)
+{
+    switch (pass)
+    {
+        case GPU_PASS_SETUP: return QR_CPU_PASS_RHI_SETUP;
+        case GPU_PASS_COMPOSE: return QR_CPU_PASS_COMPOSE;
+        case GPU_PASS_UPSCALE: return QR_CPU_PASS_UPSCALE;
+        case GPU_PASS_POST: return QR_CPU_PASS_POST;
+        case GPU_PASS_UI: return QR_CPU_PASS_UI;
+        case GPU_PASS_POSTUI: return QR_CPU_PASS_POSTUI;
+        case GPU_PASS_PRESENT: return QR_CPU_PASS_PRESENT_RECORD;
+        default: return QR_CPU_PASS_COUNT;
+    }
 }
 
 void NvrhiFrameSkeleton::BeginGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass)
 {
+    if (cpuProfiler != nullptr)
+    {
+        cpuProfiler->Begin(CpuPassForGpuPass(pass));
+    }
     if (!gpuTimersReady || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT || pass >= GPU_PASS_COUNT)
     {
         return;
@@ -580,6 +579,10 @@ void NvrhiFrameSkeleton::BeginGpuPass(nvrhi::ICommandList *pCommandList, uint32_
 
 void NvrhiFrameSkeleton::EndGpuPass(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t pass)
 {
+    if (cpuProfiler != nullptr)
+    {
+        cpuProfiler->End(CpuPassForGpuPass(pass));
+    }
     if (!gpuTimersReady || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT || pass >= GPU_PASS_COUNT)
     {
         return;
@@ -590,6 +593,7 @@ void NvrhiFrameSkeleton::EndGpuPass(nvrhi::ICommandList *pCommandList, uint32_t 
     if (query != nullptr)
     {
         pCommandList->endTimerQuery(query);
+        gpuPassMasks[frameIndex] |= 1u << pass;
     }
 }
 
@@ -642,19 +646,24 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
     // The frame context owns the frame model: BeginSlot waits for the slot's previous submission,
     // drains the slot's retire queue and opens its list, so no long-lived list is opened here.
-    frameContext->BeginSlot(frameIndex);
+    cpuProfiler = sky.cpuProfiler;
+    const bool resetHistory = previousFrameUiOnly && !sky.renderUiOnly;
+    frameContext->BeginSlot(frameIndex, cpuProfiler);
 
     nvrhi::ICommandList *commandList = frameContext->GetCommandList(frameIndex);
     assert(commandList != nullptr);
 
-    CreateGpuTimers();
-    ReadGpuTimings(frameIndex);
+    {
+        CpuProfileScope queries(cpuProfiler, QR_CPU_PASS_GPU_TIMINGS);
+        CreateGpuTimers();
+        ReadGpuTimings(frameIndex);
+    }
 
     if (gpuTimersReady)
     {
         commandList->beginTimerQuery(gpuFrameQueries[frameIndex].Get());
-        BeginGpuPass(commandList, frameIndex, GPU_PASS_SETUP);
     }
+    BeginGpuPass(commandList, frameIndex, GPU_PASS_SETUP);
 
     // Newly wrapped engine textures are foreign to NVRHI and need their first-use state declared in
     // the first command list that samples them (RhiTextureSource.h); the shared table hands over
@@ -665,7 +674,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // announces the state the engine leaves it in (UnorderedAccess, i.e. GENERAL) - the wrap the
     // present samples below and, in the traced mode, the announcement the primary trace's UAV write
     // relies on (the trace is then the image's first use of the list, so no transition precedes it).
-    if (skyPass != nullptr && sky.framebuffers != nullptr)
+    if (!sky.renderUiOnly && skyPass != nullptr && sky.framebuffers != nullptr)
     {
         skyPass->Prepare(commandList, frameIndex, *sky.framebuffers, sky.width, sky.height);
     }
@@ -696,7 +705,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             uniformDesc);
     }
 
-    const bool tracedFrame = frameMode != FrameMode::Rasterized;
+    const bool tracedFrame = !sky.renderUiOnly && frameMode != FrameMode::Rasterized;
 
     // The acceleration-structure stream of the frame, recorded in every mode and before anything
     // reads it: BuildStatic keeps the static BLAS in sync with the engine's components (it rebuilds
@@ -704,7 +713,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // the module synthesises the instance list itself, from the engine's components and filters with
     // our own BLAS handles, so nothing here depends on the engine's instance buffer any more. Only
     // the traced modes need the TLAS, so the rasterized frame records no top-level build.
-    if (accelStructs != nullptr)
+    if (!sky.renderUiOnly && accelStructs != nullptr)
     {
         accelStructs->BuildStatic(commandList);
 
@@ -724,6 +733,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // engine's own list. A frame whose build produced no instance list leaves the CPU copy alone.
     if (sky.uniform != nullptr && worldUniformBuffer != nullptr)
     {
+        sky.uniform->GetData()->restirParams[2] = resetHistory ? 1u : 0u;
         if (tracedFrame && accelStructs != nullptr)
         {
             int32_t instanceGeomInfoOffset[MAX_TOP_LEVEL_INSTANCE_COUNT] = {};
@@ -760,9 +770,16 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         }
     }
 
+    nvrhi::ITexture *uiTarget = sky.renderUiOnly ? PrepareUiTarget(frameIndex, sky) : nullptr;
     EndGpuPass(commandList, frameIndex, GPU_PASS_SETUP);
 
-    if (!tracedFrame)
+    CpuProfileScope sceneRecording(sky.renderUiOnly ? nullptr : cpuProfiler, QR_CPU_PASS_SCENE);
+
+    if (sky.renderUiOnly)
+    {
+        RenderUi(commandList, frameIndex, sky, uiTarget, true);
+    }
+    else if (!tracedFrame)
     {
         // The engine's rasterized sky, exactly the calls the pass's contract requires, on the one
         // open list: Prepare above selected the slot's ALBEDO target, SetSkyCamera carries the same
@@ -1334,8 +1351,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         {
             const bool overlayRuns =
                 rasterOverlayPass != nullptr && rasterOverlayPass->IsCreated() && uniform != nullptr;
-            bool composeWindowOpened = false;
 
+            sceneRecording.Finish();
             BeginGpuPass(commandList, frameIndex, GPU_PASS_COMPOSE);
 
             // The raster overlay's window: the compose calls the callback between its checkerboard
@@ -1350,9 +1367,6 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                   {
                                       if (overlayRuns)
                                       {
-                                          EndGpuPass(pOverlayList, frameIndex, GPU_PASS_COMPOSE);
-                                          composeWindowOpened = true;
-
                                           rasterOverlayPass->SetParticleTimer(
                                               gpuTimersReady ? gpuPassQueries[frameIndex][GPU_PASS_PARTICLES].Get() : nullptr);
 
@@ -1370,13 +1384,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
                                           if (gpuTimersReady)
                                           {
-                                              if (nvrhi::ITimerQuery *tailQuery = gpuComposeTailQueries[frameIndex].Get())
-                                              {
-                                                  pOverlayList->beginTimerQuery(tailQuery);
-                                              }
+                                              gpuPassMasks[frameIndex] |= 1u << GPU_PASS_PARTICLES;
                                           }
                                       }
                                   });
+            EndGpuPass(commandList, frameIndex, GPU_PASS_COMPOSE);
             // The frame's upscaler (A5.7): the engine's own FSR 3.1 (the default configuration)
             // writes image 30 through the module's interop contract; on success the skeleton copies
             // it into the TAAU target 29, which the 2D UI below and the present sample, and restores
@@ -1414,7 +1426,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 const float dy = cur[1] - prev[1];
                 const float dz = cur[2] - prev[2];
                 constexpr float kTeleportDist = 100.0f;
-                const bool reset = (dx * dx + dy * dy + dz * dz) > (kTeleportDist * kTeleportDist);
+                const bool reset = resetHistory || (dx * dx + dy * dy + dz * dz) > (kTeleportDist * kTeleportDist);
 
                 upscaledByFsr = fsrPass->Render(
                     commandList, frameIndex, sky.framebuffers, *sky.renderResolution,
@@ -1471,69 +1483,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // geometry - wrapped here once, because the UI is rewritten every frame while the
             // engine's device copy is recorded on the legacy command buffer, submitted after this
             // list - and it restores the image to UnorderedAccess for the present.
-            if (uiPass != nullptr && uiPass->IsCreated() && uniform != nullptr &&
-                !sky.disableRasterization && sky.swapchainDrawCount > 0 &&
-                sky.swapchainVertexStaging != 0 && sky.swapchainIndexStaging != 0)
-            {
-                if (uiVertexStagingWraps[frameIndex] == nullptr ||
-                    uiVertexStagingHandles[frameIndex] != sky.swapchainVertexStaging)
-                {
-                    if (uiVertexStagingWraps[frameIndex] != nullptr && frameContext != nullptr)
-                    {
-                        frameContext->Retire(uiVertexStagingWraps[frameIndex]);
-                    }
-
-                    nvrhi::BufferDesc desc;
-                    desc.byteSize = sky.swapchainVertexStagingSize;
-                    desc.isVertexBuffer = true;
-                    desc.initialState = nvrhi::ResourceStates::VertexBuffer;
-                    desc.keepInitialState = true;
-                    desc.debugName = "RHI UI vertex staging";
-
-                    uiVertexStagingWraps[frameIndex] = device->createHandleForNativeBuffer(
-                        nvrhi::ObjectTypes::VK_Buffer,
-                        nvrhi::Object(static_cast<uint64_t>(sky.swapchainVertexStaging)),
-                        desc);
-                    uiVertexStagingHandles[frameIndex] =
-                        uiVertexStagingWraps[frameIndex] != nullptr ? sky.swapchainVertexStaging : 0;
-                }
-
-                if (uiIndexStagingWraps[frameIndex] == nullptr ||
-                    uiIndexStagingHandles[frameIndex] != sky.swapchainIndexStaging)
-                {
-                    if (uiIndexStagingWraps[frameIndex] != nullptr && frameContext != nullptr)
-                    {
-                        frameContext->Retire(uiIndexStagingWraps[frameIndex]);
-                    }
-
-                    nvrhi::BufferDesc desc;
-                    desc.byteSize = sky.swapchainIndexStagingSize;
-                    desc.isIndexBuffer = true;
-                    desc.initialState = nvrhi::ResourceStates::IndexBuffer;
-                    desc.keepInitialState = true;
-                    desc.debugName = "RHI UI index staging";
-
-                    uiIndexStagingWraps[frameIndex] = device->createHandleForNativeBuffer(
-                        nvrhi::ObjectTypes::VK_Buffer,
-                        nvrhi::Object(static_cast<uint64_t>(sky.swapchainIndexStaging)),
-                        desc);
-                    uiIndexStagingHandles[frameIndex] =
-                        uiIndexStagingWraps[frameIndex] != nullptr ? sky.swapchainIndexStaging : 0;
-                }
-
-                if (uiVertexStagingWraps[frameIndex] != nullptr && uiIndexStagingWraps[frameIndex] != nullptr)
-                {
-                    uiPass->SetGeometryBuffers(uiVertexStagingWraps[frameIndex],
-                                               uiIndexStagingWraps[frameIndex]);
-                    BeginGpuPass(commandList, frameIndex, GPU_PASS_UI);
-                    uiPass->Render(commandList, frameIndex,
-                                   rtComposePass->GetUpscaledTexture(frameIndex),
-                                   sky.upscaledWidth, sky.upscaledHeight,
-                                   sky.swapchainDraws, sky.swapchainDrawCount,
-                                   uniform->view, uniform->projection, sky.applyVertexColorGamma);
-                    EndGpuPass(commandList, frameIndex, GPU_PASS_UI);
-                }
-            }
+            RenderUi(commandList, frameIndex, sky, rtComposePass->GetUpscaledTexture(frameIndex));
 
             // The post-upscale effect chain, the post-UI half (RhiPostEffectPass): the legacy
             // records the wipe and the CRT after `Rasterizer::DrawToSwapchain` because they "work
@@ -1541,34 +1491,14 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             // into image 29 is part of their input. The call leaves the image the present samples
             // in 29 and is a no-op while no wipe and no CRT is requested (the default
             // configuration: `pWipe` is never filled, `rt_ef_crt` defaults to 0).
-            if (postEffectPass != nullptr && postEffectPass->IsCreated() && uniform != nullptr)
-            {
-                BeginGpuPass(commandList, frameIndex, GPU_PASS_POSTUI);
-                postEffectPass->RenderPostUi(commandList, frameIndex, sky.framebuffers,
-                                             sky.width, sky.height,
-                                             sky.upscaledWidth, sky.upscaledHeight,
-                                             uniform->time,
-                                             worldUniformBuffer.Get(),
-                                             sky.postEffectParams,
-                                             sky.postEffectFrameId);
-                EndGpuPass(commandList, frameIndex, GPU_PASS_POSTUI);
-            }
-
-            if (composeWindowOpened)
-            {
-                if (gpuTimersReady)
-                {
-                    if (nvrhi::ITimerQuery *tailQuery = gpuComposeTailQueries[frameIndex].Get())
-                    {
-                        commandList->endTimerQuery(tailQuery);
-                    }
-                }
-            }
-            else
-            {
-                EndGpuPass(commandList, frameIndex, GPU_PASS_COMPOSE);
-            }
+            RenderPostUi(commandList, frameIndex, sky);
         }
+    }
+
+    sceneRecording.Finish();
+    if (sky.renderUiOnly)
+    {
+        RenderPostUi(commandList, frameIndex, sky);
     }
 
     // The present samples the source of this slot: the ALBEDO wrap of the raster and diagnostic
@@ -1580,7 +1510,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // resolves it, because the layout's unordered-access item is always filled, but the shader
     // reads it only in the diagnostic mode (the params flag below).
     nvrhi::ITexture *albedo = nullptr;
-    if (rtComposePass != nullptr)
+    if (sky.renderUiOnly)
+    {
+        albedo = uiTarget;
+    }
+    else if (rtComposePass != nullptr)
     {
         albedo = rtComposePass->GetUpscaledTexture(frameIndex);
     }
@@ -1615,7 +1549,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // diagnostic present - the compose pass feeds display-referred FINAL, which already carries
         // the light and the tone curve, so the term and the curve stay off (exposure.w).
         const bool traced = frameMode == FrameMode::Traced;
-        const bool compose = rtComposePass != nullptr;
+        const bool compose = sky.renderUiOnly || rtComposePass != nullptr;
         RhiPresentParams presentParams = PRESENT_PARAMS;
         presentParams.exposure[1] = traced ? 1.0f : 0.0f;
         presentParams.exposure[2] = (traced && !compose) ? 1.0f : 0.0f;
@@ -1700,7 +1634,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // acquire semaphore is signaled, and the presentation engine cannot start before the pass is
     // done, so EndSlot waits on 'semaphoreToWait' and signals 'semaphoreToSignal' where the manual
     // queue state and the execute used to be.
-    frameContext->EndSlot(frameIndex, semaphoreToWait, semaphoreToSignal);
+    {
+        CpuProfileScope submit(cpuProfiler, QR_CPU_PASS_RHI_SUBMIT);
+        frameContext->EndSlot(frameIndex, semaphoreToWait, semaphoreToSignal);
+    }
+    previousFrameUiOnly = sky.renderUiOnly;
 
     if (screenshotPending)
     {
@@ -1741,6 +1679,123 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     }
 
     return true;
+}
+
+nvrhi::ITexture *NvrhiFrameSkeleton::PrepareUiTarget(uint32_t frameIndex, const SkyFrameInputs &sky)
+{
+    if (sky.framebuffers == nullptr || sky.upscaledWidth == 0 || sky.upscaledHeight == 0)
+    {
+        return nullptr;
+    }
+
+    const auto [image, view, format] = sky.framebuffers->GetImageHandles(FB_IMAGE_INDEX_UPSCALED_PING, frameIndex);
+    const uint64_t handle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(image));
+    auto &texture = uiFrameTextures[frameIndex];
+    if (texture == nullptr || uiFrameImageHandles[frameIndex] != handle ||
+        texture->getDesc().width != sky.upscaledWidth || texture->getDesc().height != sky.upscaledHeight)
+    {
+        if (texture != nullptr)
+        {
+            frameContext->Retire(texture);
+        }
+        texture = rhi::wrapEngineRenderTarget(device, handle,
+            static_cast<uint64_t>(reinterpret_cast<uintptr_t>(view)), format,
+            sky.upscaledWidth, sky.upscaledHeight, "RHI UI-only target " + std::to_string(frameIndex));
+        uiFrameImageHandles[frameIndex] = texture != nullptr ? handle : 0;
+    }
+    return texture.Get();
+}
+
+bool NvrhiFrameSkeleton::PrepareUiGeometry(uint32_t frameIndex, const SkyFrameInputs &sky)
+{
+    if (sky.swapchainVertexStaging == 0 || sky.swapchainIndexStaging == 0)
+    {
+        return false;
+    }
+
+    if (uiVertexStagingWraps[frameIndex] == nullptr || uiVertexStagingHandles[frameIndex] != sky.swapchainVertexStaging)
+    {
+        if (uiVertexStagingWraps[frameIndex] != nullptr)
+        {
+            frameContext->Retire(uiVertexStagingWraps[frameIndex]);
+        }
+        nvrhi::BufferDesc desc;
+        desc.byteSize = sky.swapchainVertexStagingSize;
+        desc.isVertexBuffer = true;
+        desc.initialState = nvrhi::ResourceStates::VertexBuffer;
+        desc.keepInitialState = true;
+        desc.debugName = "RHI UI vertex staging";
+        uiVertexStagingWraps[frameIndex] = device->createHandleForNativeBuffer(
+            nvrhi::ObjectTypes::VK_Buffer, nvrhi::Object(sky.swapchainVertexStaging), desc);
+        uiVertexStagingHandles[frameIndex] = uiVertexStagingWraps[frameIndex] != nullptr ? sky.swapchainVertexStaging : 0;
+    }
+
+    if (uiIndexStagingWraps[frameIndex] == nullptr || uiIndexStagingHandles[frameIndex] != sky.swapchainIndexStaging)
+    {
+        if (uiIndexStagingWraps[frameIndex] != nullptr)
+        {
+            frameContext->Retire(uiIndexStagingWraps[frameIndex]);
+        }
+        nvrhi::BufferDesc desc;
+        desc.byteSize = sky.swapchainIndexStagingSize;
+        desc.isIndexBuffer = true;
+        desc.initialState = nvrhi::ResourceStates::IndexBuffer;
+        desc.keepInitialState = true;
+        desc.debugName = "RHI UI index staging";
+        uiIndexStagingWraps[frameIndex] = device->createHandleForNativeBuffer(
+            nvrhi::ObjectTypes::VK_Buffer, nvrhi::Object(sky.swapchainIndexStaging), desc);
+        uiIndexStagingHandles[frameIndex] = uiIndexStagingWraps[frameIndex] != nullptr ? sky.swapchainIndexStaging : 0;
+    }
+
+    return uiVertexStagingWraps[frameIndex] != nullptr && uiIndexStagingWraps[frameIndex] != nullptr;
+}
+
+void NvrhiFrameSkeleton::RenderUi(nvrhi::ICommandList *commandList, uint32_t frameIndex,
+                                 const SkyFrameInputs &sky, nvrhi::ITexture *target, bool clearTarget)
+{
+    if (target == nullptr)
+    {
+        return;
+    }
+    const bool drawUi = uiPass != nullptr && uiPass->IsCreated() && sky.uniform != nullptr &&
+                        !sky.disableRasterization && sky.swapchainDrawCount > 0;
+    if (!clearTarget && !drawUi)
+    {
+        return;
+    }
+
+    BeginGpuPass(commandList, frameIndex, GPU_PASS_UI);
+    if (clearTarget)
+    {
+        commandList->beginTrackingTextureState(target, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+        commandList->clearTextureFloat(target, nvrhi::AllSubresources, nvrhi::Color(0.f, 0.f, 0.f, 1.f));
+        commandList->setTextureState(target, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+        commandList->commitBarriers();
+    }
+    if (drawUi && PrepareUiGeometry(frameIndex, sky))
+    {
+        const ShGlobalUniform *uniform = sky.uniform->GetData();
+        uiPass->SetGeometryBuffers(uiVertexStagingWraps[frameIndex], uiIndexStagingWraps[frameIndex]);
+        uiPass->Render(commandList, frameIndex, target, sky.upscaledWidth, sky.upscaledHeight,
+                       sky.swapchainDraws, sky.swapchainDrawCount,
+                       uniform->view, uniform->projection, sky.applyVertexColorGamma);
+    }
+    EndGpuPass(commandList, frameIndex, GPU_PASS_UI);
+}
+
+void NvrhiFrameSkeleton::RenderPostUi(nvrhi::ICommandList *commandList, uint32_t frameIndex, const SkyFrameInputs &sky)
+{
+    if (postEffectPass == nullptr || !postEffectPass->IsCreated() || sky.uniform == nullptr)
+    {
+        return;
+    }
+
+    BeginGpuPass(commandList, frameIndex, GPU_PASS_POSTUI);
+    postEffectPass->RenderPostUi(commandList, frameIndex, sky.framebuffers,
+                                 sky.width, sky.height, sky.upscaledWidth, sky.upscaledHeight,
+                                 sky.uniform->GetData()->time, worldUniformBuffer.Get(),
+                                 sky.postEffectParams, sky.postEffectFrameId);
+    EndGpuPass(commandList, frameIndex, GPU_PASS_POSTUI);
 }
 
 bool NvrhiFrameSkeleton::PrepareWorld(uint32_t frameIndex, const SkyFrameInputs &sky)
@@ -2213,6 +2268,8 @@ void NvrhiFrameSkeleton::DestroySwapchainResources()
         presentDirectSetTextures[i] = nullptr;
         presentDirectTextures[i] = nullptr;
         presentDirectImageHandles[i] = 0;
+        uiFrameTextures[i] = nullptr;
+        uiFrameImageHandles[i] = 0;
     }
 
     swapchainFramebuffers.clear();

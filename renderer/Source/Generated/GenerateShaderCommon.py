@@ -250,6 +250,9 @@ CONST = {
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_STATS"        : 6,
     "BINDING_LIGHT_SOURCES_TAL_CDF"               : 7,
     "BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS"    : 8,
+    "BINDING_LIGHT_SOURCES_DTAL_MEMBERS"          : 9,
+    "BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS" : 10,
+    "BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL"         : 11,
     "BINDING_DECAL_INSTANCES"                   : 0,
     "BINDING_PORTAL_INSTANCES"                  : 0,
     "BINDING_LPM_PARAMS"                        : 0,
@@ -398,11 +401,14 @@ CONST = {
     "LIGHT_TYPE_TRIANGLE"                   : 3,
     "LIGHT_TYPE_SPOT"                       : 4,
     "LIGHT_TYPE_TEXTURED_AREA"              : 5,
+    "LIGHT_TYPE_DTAL_GROUP"                 : 6,
 
     "LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET"  : 0,
     "LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET"     : 1,
 
     "LIGHT_INDEX_NONE"                      : ((1 << 15) - 1),
+
+    "Q2_LIGHT_LIST_TAIL_CAPACITY"           : (1 << 20),
 
     "TAL_CDF_LUT_ENTRIES"                   : 256,
     "TAL_CDF_EMPTY_ENTRY"                   : "0xFFFFFFFFu",
@@ -660,6 +666,32 @@ GEOM_INSTANCE_MEMBERS = [
     (UINT32, 1, "_unused1",   1),
 ]
 
+DTAL_MEMBER_MEMBERS = [
+    (FLOAT32, 3, "A",                    1),
+    (FLOAT32, 1, "area",                 1),
+
+    (FLOAT32, 3, "B",                    1),
+    (FLOAT32, 1, "numVerts",             1),
+
+    (FLOAT32, 3, "C",                    1),
+    (FLOAT32, 1, "prob",                 1),
+
+    (FLOAT32, 3, "normal",               1),
+    (FLOAT32, 1, "marginalProb",         1),
+
+    (FLOAT32, 2, "uv",                   8),
+
+    (UINT32,  1, "aliasIndex",           1),
+    (UINT32,  1, "reserved",             3),
+]
+
+Q2_LIGHT_TAIL_MEMBERS = [
+    (UINT32, 1, "lightIndex",    1),
+    (UINT32, 1, "aliasIndex",    1),
+    (FLOAT32, 1, "prob",         1),
+    (FLOAT32, 1, "marginalProb", 1),
+]
+
 LIGHT_ENCODED_MEMBERS = [
     (FLOAT32, 3, "color",                1),
     (UINT32, 1, "lightType",            1),
@@ -746,6 +778,8 @@ STRUCTS = {
     "ShGeometryInstance":       (GEOM_INSTANCE_MEMBERS,       ALIGN_STD430, BREAK_NONE),
     "ShTonemapping":            (TONEMAPPING_MEMBERS,         ALIGN_NONE,   BREAK_NONE),
     "ShLightEncoded":           (LIGHT_ENCODED_MEMBERS,       ALIGN_STD430, BREAK_NONE),
+    "ShDtalMember":             (DTAL_MEMBER_MEMBERS,         ALIGN_STD430, BREAK_NONE),
+    "ShQ2LightTail":            (Q2_LIGHT_TAIL_MEMBERS,       ALIGN_STD430, BREAK_NONE),
     "ShVertPreprocessing":      (VERT_PREPROC_PUSH_MEMBERS,   ALIGN_NONE,   BREAK_NONE),
     "ShIndirectDrawCommand":    (INDIRECT_DRAW_CMD_MEMBERS,   ALIGN_STD430, BREAK_NONE),
     "ShDecalInstance":          (DECAL_INSTANCE_MEMBERS,      ALIGN_STD430, BREAK_NONE),

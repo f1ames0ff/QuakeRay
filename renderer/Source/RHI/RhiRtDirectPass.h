@@ -313,14 +313,14 @@ private:
         nvrhi::IBuffer *vertexBuffers[7] = {};
         nvrhi::BindingSetHandle vertexDataSet;
 
-        // Set 6: the five device-local engine buffers as the slot wraps them (the raw handles are
-        // the key) and the set over the wraps, plus the four copy-source wraps of this slot's
+        // Set 6: the eight device-local engine buffers as the slot wraps them (the raw handles are
+        // the key) and the set over the wraps, plus the seven copy-source wraps of this slot's
         // pending light copies, keyed by their staging handles.
-        VkBuffer lightHandles[5] = {};
-        nvrhi::BufferHandle lightWraps[5];
+        VkBuffer lightHandles[8] = {};
+        nvrhi::BufferHandle lightWraps[8];
         nvrhi::BindingSetHandle lightSet;
-        VkBuffer lightStagingHandles[4] = {};
-        nvrhi::BufferHandle lightStagingWraps[4];
+        VkBuffer lightStagingHandles[7] = {};
+        nvrhi::BufferHandle lightStagingWraps[7];
     };
 
     bool LoadShader(const char *pFileName, nvrhi::ShaderType type, nvrhi::ShaderHandle &result);

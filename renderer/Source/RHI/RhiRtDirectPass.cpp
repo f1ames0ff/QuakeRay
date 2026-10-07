@@ -149,13 +149,15 @@ constexpr uint32_t MAX_RECURSION_DEPTH = 2;
 constexpr uint32_t MAX_PAYLOAD_SIZE = 2 * sizeof(float) + 2 * sizeof(uint32_t);
 constexpr uint32_t MAX_ATTRIBUTE_SIZE = 2 * sizeof(float);
 
-// The five device-local engine buffers of set 6, in the order of `LightManager::Buffers` and of the
-// engine's own descriptor writes (LightManager::CreateDescriptors / UpdateDescriptors): the light
-// array, the list offsets, the list words, the light statistics and the cluster sky visibility. The
-// raw bindings are the generated BINDING_LIGHT_SOURCES* numbers (0, 4, 5, 6, 8); the sizes are the
-// engine's own creation sizes (LightManager.cpp:71-96) and are what a native wrap has to carry,
-// because `LightManager::Buffers` hands out the VkBuffers without their sizes. The strides are the
-// shader's element strides: ShLightEncoded is 160 B and every other buffer is a uint array.
+// The eight device-local engine buffers of set 6, in the order of `LightManager::Buffers` and of
+// the engine's own descriptor writes (LightManager::CreateDescriptors / UpdateDescriptors): the
+// light array, the list offsets, the list words, the light statistics, the cluster sky visibility,
+// the DTAL group members and the two overflow tail buffers. The raw bindings are the generated
+// BINDING_LIGHT_SOURCES* numbers (0, 4, 5, 6, 8, 9, 10, 11); the sizes are the engine's own
+// creation sizes (LightManager.cpp:71-96) and are what a native wrap has to carry, because
+// `LightManager::Buffers` hands out the VkBuffers without their sizes. The strides are the shader's
+// element strides: ShLightEncoded is 160 B, ShDtalMember is 144 B, ShQ2LightTail is 16 B and the
+// remaining buffers are uint arrays.
 //
 // The statistics buffer is the only UAV item (the raygen's `q2AccumulateLightStats` writes it) and
 // the only one the RHI never copies. While `globalUniform.q2LightStatsMode` is
@@ -171,7 +173,7 @@ struct LightBufferBinding
     uint32_t structStride;
 };
 
-constexpr uint32_t LIGHT_BUFFER_COUNT = 5;
+constexpr uint32_t LIGHT_BUFFER_COUNT = 8;
 constexpr LightBufferBinding LIGHT_BUFFER_BINDINGS[LIGHT_BUFFER_COUNT] =
 {
     {
@@ -205,6 +207,24 @@ constexpr LightBufferBinding LIGHT_BUFFER_BINDINGS[LIGHT_BUFFER_COUNT] =
         uint64_t(sizeof(uint32_t)) * LightManager::CLUSTER_SKY_VIS_WORD_COUNT,
         static_cast<uint32_t>(sizeof(uint32_t)),
     },
+    {
+        BINDING_LIGHT_SOURCES_DTAL_MEMBERS,
+        false,
+        uint64_t(sizeof(ShDtalMember)) * LightManager::DTAL_MEMBER_CAPACITY,
+        static_cast<uint32_t>(sizeof(ShDtalMember)),
+    },
+    {
+        BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS,
+        false,
+        uint64_t(sizeof(uint32_t)) * (Q2_MAX_CLUSTERS + 1 + Q2_MAX_CLUSTERS),
+        static_cast<uint32_t>(sizeof(uint32_t)),
+    },
+    {
+        BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL,
+        false,
+        uint64_t(sizeof(ShQ2LightTail)) * Q2_LIGHT_LIST_TAIL_CAPACITY,
+        static_cast<uint32_t>(sizeof(ShQ2LightTail)),
+    },
 };
 
 // The statistics buffer of the table above: the only item the light-statistics fill touches, and
@@ -218,16 +238,20 @@ static_assert(LIGHT_BUFFER_BINDINGS[LIGHT_STATS_BUFFER_INDEX].binding ==
 static_assert(sizeof(ShLightEncoded) == 160,
               "the shader's StructuredBuffer<ShLightEncoded> strides by 160 B (Generated/ShaderCommonC.h:389-401)");
 
-// The four items `LightManager::GetFrameCopies` reports, mapped to the set-6 buffer each one copies
-// into: the light-array prefix (binding 0), the list offsets (4), the list words (5) and the sky
-// visibility (8). The statistics buffer (6) has no copy. The order is `FrameCopies`'s.
-constexpr uint32_t LIGHT_COPY_COUNT = 4;
+// The seven items `LightManager::GetFrameCopies` reports, mapped to the set-6 buffer each one
+// copies into: the light-array prefix (binding 0), the list offsets (4), the list words (5), the
+// sky visibility (8), the DTAL group members (9) and the two overflow tail buffers (10, 11). The
+// statistics buffer (6) has no copy. The order is `FrameCopies`'s.
+constexpr uint32_t LIGHT_COPY_COUNT = 7;
 constexpr uint32_t LIGHT_COPY_BUFFER_INDICES[LIGHT_COPY_COUNT] =
 {
     0, // lights
     1, // listOffsets
     2, // listLights
     4, // clusterSkyVis
+    5, // dtalMembers
+    6, // tailOffsets
+    7, // tailEntries
 };
 
 const char *const LIGHT_BUFFER_DEBUG_NAMES[LIGHT_BUFFER_COUNT] =
@@ -237,6 +261,9 @@ const char *const LIGHT_BUFFER_DEBUG_NAMES[LIGHT_BUFFER_COUNT] =
     "q2 light list lights",
     "q2 light stats",
     "q2 cluster sky visibility",
+    "dtal group members",
+    "q2 light list tail offsets",
+    "q2 light list tail entries",
 };
 
 // The descriptor of a native wrap of an engine device-local buffer that a shader reads as a
@@ -1105,6 +1132,9 @@ bool RhiRtDirectPass::PrepareLightSet(nvrhi::ICommandList *pCommandList, Target 
         buffers.listLights,
         buffers.lightStats,
         buffers.clusterSkyVis,
+        buffers.dtalMembers,
+        buffers.tailOffsets,
+        buffers.tailEntries,
     };
 
     for (uint32_t i = 0; i < LIGHT_BUFFER_COUNT; i++)
@@ -1200,6 +1230,9 @@ bool RhiRtDirectPass::PrepareLightSet(nvrhi::ICommandList *pCommandList, Target 
         copies.listOffsets,
         copies.listLights,
         copies.clusterSkyVis,
+        copies.dtalMembers,
+        copies.tailOffsets,
+        copies.tailEntries,
     };
 
     for (uint32_t i = 0; i < LIGHT_COPY_COUNT; i++)
