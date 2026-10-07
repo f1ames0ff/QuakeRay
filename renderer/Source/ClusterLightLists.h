@@ -137,7 +137,7 @@ private:
     // the lights the lists hold.
     bool UpdateSourceRecords();
     bool AppendSlot(uint32_t cluster, uint32_t sourceIndex, float dist2, bool fromTopUp);
-    void RecordCandidate(uint32_t cluster, uint32_t sourceIndex);
+    void RecordCandidate(uint32_t cluster, uint32_t sourceIndex, float dist2);
     void UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex);
     void BuildOverflow();
     void MarkTailDirty(uint32_t cluster);
@@ -198,6 +198,8 @@ private:
     // distribution is built from these sets as C \ H.
     struct Candidate
     {
+        uint64_t uid;
+        float    mass;
         uint32_t source;
     };
 
@@ -225,6 +227,14 @@ private:
     std::vector<float>     tailBlockMarginal;
     std::vector<uint32_t>  tailBlockAlias;
     std::vector<TailBlock> tailBlocks;
+    struct TailCandidate
+    {
+        double   mass;
+        uint64_t uid;
+        uint32_t source;
+    };
+
+    std::vector<TailCandidate> tailScratch;
     std::vector<uint32_t>  candidateCounts;
     std::vector<uint64_t>  tailUidsNext;
     std::vector<float>     tailProbNext;

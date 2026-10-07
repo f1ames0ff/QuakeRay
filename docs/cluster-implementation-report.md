@@ -150,18 +150,34 @@ mirrors the published GPU algorithm:
 The pinned `e4m1` lamp gate (scripted captures, exposure frozen, post and upscaling disabled, light
 styles frozen) measures the tail-on/off wall gap that motivated the branch shaping: 7.8% before the
 shaping and 2.1% after it with light statistics on, 4.7% -> 0.4% with them off, with cluster 336
-`beta` falling from 0.356 to 0.100 and `rt_cluster_assert` clean. The in-game `rt_bench` comparison
+`beta` falling from 0.356 to 0.100 and `rt_cluster_assert` clean. Rerun on the tip of this work, the
+same gate measures a 2.30% wall gap with statistics on and 1.49% with them off, cluster 336 still
+`beta = 0.100` and `rt_cluster_assert` with nothing to report. The in-game `rt_bench` comparison
 on the Arcane Dimensions `ad_tfuma` route (scripted demo, 4K, vsync off, FSR 3.1 ultra performance,
 statistics off) measures the frame cost of the policy. That route is CPU bound: the GPU frame is
 about 11 ms while the CPU frame is about 35 ms, and a run whose window loses focus sleeps 16 ms in
 every frame, so only runs whose wall-to-CPU gap stays under about 2 ms are comparable. With the
 overflow path incremental, the sampling-on arm stops recomposing after the arm's entry (cluster
-misses stay at 1 in every block) and its cluster work falls to about 0.31 ms of fast-list
-maintenance plus 0.08 ms of tail maintenance per frame, from 0.60 and 0.38 with the full tail
-rebuild, with the profiled CPU frame level with the fast-only arm. The earlier focused run measured
-27.5 fps fast-only against 26.5/26.4 with the full rebuild; the incremental route now runs at the
-fast-only frame cost. `rt_cluster_assert 1` over the whole route reports no mismatches. The
-`rt_cluster_sampling` default stays off until that default is decided.
+misses stay at 1 in every block) and its cluster work on this route is 0.32-0.35 ms, of which
+0.05-0.06 ms is tail maintenance, against 0.20-0.22 ms fast-only; the CPU frame stays within about
+1 ms of the fast-only arm on the same blocks. `rt_cluster_assert 1` over the whole route reports
+no mismatches. The `rt_cluster_sampling` default stays off until that default is decided.
+
+The wide-reach stress case the tail maintenance was measured against is the Arcane Dimensions
+`start` hub (6125 clusters, 551 lights, a median of 183 accepted candidates per cluster and 823424
+published tail entries in 6124 clusters), with the player at the spawn while the map's own
+particles, lights and movers keep changing. Sampled with `rt_stats` over a fixed eight-second
+window on both sampling arms, the cluster pass of a change frame falls from 46.8 ms to about 30 ms
+across runs and the overflow tail from 27.3 ms to about 12 ms of it, with the incremental path
+serving the whole window (`cluster misses = 0`). The steps in between, each measured on the same scene: ordering a
+tail block by source index instead of mass took the tail median to 23.7 ms; copying runs of clean
+clusters with `memcpy` in the repack took the repack from 11.5 ms to 2.3 ms per change frame
+(instrumented); and recording the candidate mass with the candidate took a block rebuild from
+29.5 us to 25.6 us (instrumented). The remaining per-frame costs on that scene are the publication
+of the tail entries (8.2 ms, one 16-byte record per entry resolved and written into the mapped
+staging buffer), the top-up of the clusters a changed light reaches (about 6 ms), the block
+rebuilds themselves (about 10 ms over roughly 400 dirty blocks) and the fast-list compaction
+(about 1 ms).
 
 ## 4. Memory and capacity
 
@@ -180,11 +196,12 @@ fast-only frame cost. `rt_cluster_assert 1` over the whole route reports no mism
    nearest-first order. A mass-aware fast ranking with a nearest reserve is a tuning step that needs
    cost measurements this environment could not produce.
 2. **Incremental overflow maintenance is not a fresh-compose oracle.** The incremental path keeps
-   the candidate sets exact for the changes the detector reports and the tail blocks are
-   deterministic functions of those sets, but the candidate vector order can differ from a fresh
-   compose, so published weights must not be assumed bit-identical (support and order are the
-   same). Stationary power, radius and coverage changes stay on the grant-time record, as the fast
-   slots already do, until the light moves or a compose runs.
+   the candidate sets exact for the changes the detector reports, and a rebuilt block is ordered by
+   source index, so support and order match a fresh compose; the weights, however, come from the
+   mass recorded with each candidate, which a compose computes from the light's current origin, so
+   a published weight must not be assumed bit-identical to a fresh compose while a light drifts
+   inside its quantum. Stationary power, radius and coverage changes stay on the grant-time record,
+   as the fast slots already do, until the light moves or a compose runs.
 3. **Fast-list retention is unchanged.** A cluster still keeps at most 128 sources in H and evicts
    by distance; the overflow set is what makes every accepted candidate sampleable. The supplemental
    top-up pass still retains its nearest eight sources in the fast list, but every reach-accepted

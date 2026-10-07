@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <unordered_map>
 
@@ -830,7 +831,7 @@ void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t
            nearest-few retention selects the fast list: the overflow set is built from C, not
            from the survivors of that retention. */
         if (overflowEnabled)
-            RecordCandidate(cluster, uint32_t(li));
+            RecordCandidate(cluster, uint32_t(li), dist2);
 
         // A small sorted list of the closest candidates: the pass rejects most of them,
         // and only the ones that survive are handed to the cluster.
@@ -1488,7 +1489,7 @@ void ClusterLightLists::ResizeSlotBits(uint32_t newWords)
 bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float dist2, bool fromTopUp)
 {
     if (overflowEnabled)
-        RecordCandidate(cluster, sourceIndex);
+        RecordCandidate(cluster, sourceIndex, dist2);
 
     const uint32_t  base = cluster * kMaxPerList;
     uint64_t       *pUids = &slotUids[base];
@@ -1570,7 +1571,7 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     return true;
 }
 
-void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex)
+void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex, float dist2)
 {
     if (cluster >= candidates.size() || bitsWords == 0 || (sourceIndex >> 6) >= bitsWords ||
         candidateBits.size() < candidates.size() * size_t(bitsWords))
@@ -1583,7 +1584,20 @@ void ClusterLightLists::RecordCandidate(uint32_t cluster, uint32_t sourceIndex)
         return;
 
     word |= mask;
-    candidates[cluster].push_back({ sourceIndex });
+
+    const Source &source = sources[sourceIndex];
+    double        distance = double(dist2);
+    double        scale = double(source.radius) * double(source.radius);
+
+    if (!(scale > 1.0))
+        scale = 1.0;
+
+    if (!(distance > scale))
+        distance = scale;
+
+    const double power = source.power > 0.0f ? double(source.power) : 0.0;
+
+    candidates[cluster].push_back({ source.uid, float(power / distance), sourceIndex });
     MarkTailDirty(cluster);
 }
 
@@ -1628,40 +1642,22 @@ bool ClusterLightLists::BuildTailBlock(uint32_t cluster, float &outBeta)
         return true;
     }
 
-    struct TailCandidate
-    {
-        double   mass;
-        uint32_t source;
-    };
-
-    std::vector<TailCandidate> tailCandidates;
+    std::vector<TailCandidate> &tailCandidates = tailScratch;
+    tailCandidates.clear();
 
     double fastMass = 0.0;
     double tailMass = 0.0;
 
     for (const Candidate &candidate : candidateList)
     {
-        const Source  &source = sources[candidate.source];
         const uint64_t mask = 1ull << (candidate.source & 63);
 
-        double distance = Dist2ToBounds(source.origin, cluster);
-        double scale = double(source.radius) * double(source.radius);
-
-        if (!(scale > 1.0))
-            scale = 1.0;
-
-        if (!(distance > scale))
-            distance = scale;
-
-        const double power = source.power > 0.0f ? double(source.power) : 0.0;
-        const double mass = power / distance;
-
         if (slotBits[size_t(cluster) * bitsWords + (candidate.source >> 6)] & mask)
-            fastMass += mass;
+            fastMass += double(candidate.mass);
         else
         {
-            tailCandidates.push_back({mass, candidate.source});
-            tailMass += mass;
+            tailCandidates.push_back({double(candidate.mass), candidate.uid, candidate.source});
+            tailMass += double(candidate.mass);
         }
     }
 
@@ -1670,12 +1666,9 @@ bool ClusterLightLists::BuildTailBlock(uint32_t cluster, float &outBeta)
         return true;
     }
 
-    std::sort(tailCandidates.begin(), tailCandidates.end(), [this](const TailCandidate &a, const TailCandidate &b)
+    std::sort(tailCandidates.begin(), tailCandidates.end(), [](const TailCandidate &a, const TailCandidate &b)
     {
-        if (a.mass != b.mass)
-            return a.mass > b.mass;
-
-        return sources[a.source].uid < sources[b.source].uid;
+        return a.source < b.source;
     });
 
     if (slotFill[cluster] == 0)
@@ -1718,7 +1711,7 @@ bool ClusterLightLists::BuildTailBlock(uint32_t cluster, float &outBeta)
                        tailBlockMarginal.data() + base);
 
     for (size_t i = 0; i < tailCandidates.size(); i++)
-        tailBlockUids[base + i] = sources[tailCandidates[i].source].uid;
+        tailBlockUids[base + i] = tailCandidates[i].uid;
 
     return true;
 }
@@ -1825,16 +1818,13 @@ void ClusterLightLists::RebuildDirtyTails()
     size_t   write = 0;
     uint32_t clustersWithTail = 0;
 
-    for (uint32_t c = 0; c < numClusters; c++)
+    for (uint32_t c = 0; c < numClusters; )
     {
-        const uint32_t oldBegin = tailOffsets[c];
-        const uint32_t oldEnd = tailOffsets[c + 1];
-
-        tailOffsets[c] = (uint32_t)write;
-
         if (tailDirty[c] != 0)
         {
             const TailBlock &block = tailBlocks[blockIndex++];
+
+            tailOffsets[c] = (uint32_t)write;
 
             for (uint32_t i = 0; i < block.count; i++)
             {
@@ -1853,23 +1843,44 @@ void ClusterLightLists::RebuildDirtyTails()
             {
                 clustersWithTail++;
             }
-        }
-        else
-        {
-            for (uint32_t i = oldBegin; i < oldEnd; i++)
-            {
-                tailUidsNext[write] = tailUids[i];
-                tailProbNext[write] = tailProb[i];
-                tailMarginalNext[write] = tailMarginal[i];
-                tailAliasNext[write] = tailAlias[i];
-                write++;
-            }
 
-            if (oldEnd > oldBegin)
+            ++c;
+            continue;
+        }
+
+        uint32_t runEnd = c + 1;
+
+        while (runEnd < numClusters && tailDirty[runEnd] == 0)
+        {
+            runEnd++;
+        }
+
+        const uint32_t oldBegin = tailOffsets[c];
+        const size_t   runCount = size_t(tailOffsets[runEnd] - oldBegin);
+
+        for (uint32_t k = c; k < runEnd; k++)
+        {
+            const uint32_t oldStart = tailOffsets[k];
+            const uint32_t oldCount = tailOffsets[k + 1] - oldStart;
+
+            tailOffsets[k] = (uint32_t)(write + size_t(oldStart - oldBegin));
+
+            if (oldCount > 0)
             {
                 clustersWithTail++;
             }
         }
+
+        if (runCount > 0)
+        {
+            memcpy(&tailUidsNext[write], &tailUids[oldBegin], runCount * sizeof(uint64_t));
+            memcpy(&tailProbNext[write], &tailProb[oldBegin], runCount * sizeof(float));
+            memcpy(&tailMarginalNext[write], &tailMarginal[oldBegin], runCount * sizeof(float));
+            memcpy(&tailAliasNext[write], &tailAlias[oldBegin], runCount * sizeof(uint32_t));
+        }
+
+        write += runCount;
+        c = runEnd;
     }
 
     tailOffsets[numClusters] = (uint32_t)write;
