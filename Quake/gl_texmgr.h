@@ -87,6 +87,7 @@ typedef struct gltexture_s
 	qboolean             rtglass;
 	float                rtglassior;
 	float                rtglassthickness;
+	float                rtglasscolor[3];
 	qboolean             rtemissive;
 	vec3_t               rtemissivecolor;
 	float                rtemissivemean;

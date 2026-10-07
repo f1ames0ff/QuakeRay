@@ -40,7 +40,7 @@ namespace
         sizeof(qray::VertexCollectorFilterGroup_ChangeFrequency)   / sizeof(qray::VertexCollectorFilterGroup_ChangeFrequency[0]) *
         sizeof(qray::VertexCollectorFilterGroup_PassThrough)       / sizeof(qray::VertexCollectorFilterGroup_PassThrough[0]) *
         sizeof(qray::VertexCollectorFilterGroup_PrimaryVisibility) / sizeof(qray::VertexCollectorFilterGroup_PrimaryVisibility[0])
-        == MAX_TOP_LEVEL_INSTANCE_COUNT, "It's recommended for MAX_TOP_LEVEL_INSTANCE_COUNT to be such value");
+        + 1 == MAX_TOP_LEVEL_INSTANCE_COUNT, "The TLAS also reserves one procedural particle instance");
 
     static_assert(MAX_TOP_LEVEL_INSTANCE_COUNT < FLAG_TO_INDEX_MAX_VALUE, "");
 

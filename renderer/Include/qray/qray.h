@@ -385,6 +385,10 @@ typedef enum QrRasterizedGeometryStateFlagBits
     QR_RASTERIZED_GEOMETRY_STATE_FORCE_LINE_LIST    = 16,
     QR_RASTERIZED_GEOMETRY_STATE_SMOKE              = 32,
     QR_RASTERIZED_GEOMETRY_STATE_PARTICLE           = 64,
+    // Marks a particle sprite regardless of what shades it: `QR_RASTERIZED_GEOMETRY_STATE_PARTICLE`
+    // is the lit pipeline selector and only set while `r_particle_lighting` is on, so the traced
+    // stand-ins of the classic sprites have to key on a flag the particle uploads always carry.
+    QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE    = 128,
 } QrRasterizedGeometryStateFlagBits;
 typedef uint32_t QrRasterizedGeometryStateFlags;
 
@@ -1231,8 +1235,8 @@ typedef struct QrDrawFrameReflectRefractParams
     QrBool32    portalNormalTwirl;
 
     QrBool32    glassShadows;
-    QrBool32    glassBlur;
     QrBool32    glassDenoise;
+    QrBool32    glassParticles;
 } QrDrawFrameReflectRefractParams;
 
 typedef enum QrRenderUpscaleTechnique

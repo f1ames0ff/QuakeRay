@@ -95,11 +95,14 @@
 # shifts the same way, so it moves the edges of a lit
 # patch and of a shadow cast through the pane; `rt_glass_shadows 0` passes
 # the light through untinted and straight instead. `transparency` (0..1,
-# default 1) scales what the pane passes: 1 lets everything through untinted,
-# values in between keep the base texture as an absorbing tint, and 0 blocks
-# the transmission entirely so only the reflection remains; it applies per pixel while
-# `glass_ior`/`glass_thickness` ride the uploaded geometry and take effect
-# on the next full static re-submit (the material editor asks for one).
+# default 1) is how much light the pane passes and how much its texture
+# absorbs: 1 passes the image with the glass colour alone, lower values dim it
+# and absorb it per channel towards the diffuse texture, and 0 blocks the
+# transmission entirely. `glass_color` (rrggbb, default white) is the colour
+# multiplied into the transmitted view and the light that crosses the pane, so
+# a red pane passes -- and shadows -- red. Transparency applies per pixel while
+# `glass_ior`/`glass_thickness`/`glass_color` ride the uploaded geometry and
+# take effect on the next full static re-submit (the material editor asks for one).
 # These are material keys, not console commands; `rt_reflrefr_depth 0`
 # drops the view shift. Glass wins over `mirror` (a mirrored window can
 # simply be ticked); an `alpha_test` cutout survives it -- the holes pass
@@ -110,6 +113,7 @@
 #             transparency: 0.8
 #             glass_ior: 1.52
 #             glass_thickness: 2
+#             glass_color: 88ccff
 qray_materials:
   - name: textures/#lava1
     texture_emissive: textures/_lava1_luma.png

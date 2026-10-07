@@ -667,7 +667,7 @@ std::pair<ASManager::TLASPrepareResult, ShVertPreprocessing> ASManager::PrepareF
 
             if (isDynamic)
             {
-                push.tlasInstanceIsDynamicBits[result.instanceCount / MAX_TOP_LEVEL_INSTANCE_COUNT] |= 1 << (result.instanceCount % MAX_TOP_LEVEL_INSTANCE_COUNT);
+                push.tlasInstanceIsDynamicBits[result.instanceCount / 32] |= 1u << (result.instanceCount % 32);
             }
 
             WriteInstanceGeomInfo(instanceGeomInfoOffset, instanceGeomCount, result.instanceCount, *blas);

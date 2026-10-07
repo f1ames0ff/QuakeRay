@@ -1,4 +1,4 @@
-#include "RhiRtComposePass.h"
+﻿#include "RhiRtComposePass.h"
 
 #include "RhiBloomPass.h"
 #include "RhiFrameContext.h"
@@ -128,7 +128,7 @@ struct ComposeImage
 // the three are part of the union so the per-list announcement below names their resting state and
 // the restore lists return the ones this module moves to it. The god-rays module owns their
 // contents and has to leave them in GENERAL (see the class comment).
-constexpr uint32_t COMPOSE_IMAGE_COUNT = 87;
+constexpr uint32_t COMPOSE_IMAGE_COUNT = 88;
 constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
 {
     { FB_IMAGE_INDEX_ALBEDO,                ComposeImageSize::Render }, //   0  framebufAlbedo           (adapter/gradient-reproj/atrous/PF)
@@ -218,9 +218,10 @@ constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
     { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV, ComposeImageSize::Render },
     { FB_IMAGE_INDEX_Q2_GLASS_HISTORY,     ComposeImageSize::Render },
     { FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV, ComposeImageSize::Render },
+{ FB_IMAGE_INDEX_Q2_PARTICLE_LAYER, ComposeImageSize::Render }, // 130  framebufQ2ParticleLayer (checkerboard SRV, refl/refr UAV)
 };
 
-static_assert(COMPOSE_IMAGE_COUNT == 87,
+static_assert(COMPOSE_IMAGE_COUNT == 88,
               "the per-slot image arrays of RhiRtComposePass.h are sized 87 (COMPOSE_IMAGES)");
 
 // One item of a pass's set 0: the engine image, the binding kind and whether the item is a sampler
@@ -430,7 +431,7 @@ constexpr ComposeBinding HISTOGRAM_BINDINGS[HISTOGRAM_BINDING_COUNT] =
 };
 
 // CmCheckerboard: 3 storage images and 4 sampled images.
-constexpr uint32_t CHECKERBOARD_BINDING_COUNT = 9;
+constexpr uint32_t CHECKERBOARD_BINDING_COUNT = 10;
 constexpr ComposeBinding CHECKERBOARD_BINDINGS[CHECKERBOARD_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_FINAL,            true, false }, //  28  framebufFinal
@@ -441,6 +442,7 @@ constexpr ComposeBinding CHECKERBOARD_BINDINGS[CHECKERBOARD_BINDING_COUNT] =
     { FB_IMAGE_INDEX_ACID_FOG_R_T,     false, false }, // 183  framebufAcidFogRT_Sampled
     { FB_IMAGE_INDEX_SCREEN_EMIS_R_T,  false, false }, // 185  framebufScreenEmisRT_Sampled
     { FB_IMAGE_INDEX_Q2_GLASS_FILTER, false, false },
+    { FB_IMAGE_INDEX_Q2_PARTICLE_LAYER, false, false },
     { FB_IMAGE_INDEX_DEPTH_NDC, true, false },
 };
 
@@ -663,7 +665,7 @@ constexpr bool AreComposeImagesDistinct()
 // it is the image this module really moves to read-only and has to move back; 63/89 are bound by no
 // compose set, and their requirement is a same-state UnorderedAccess barrier that names the
 // god-rays module's hand-off (the class comment's contract), not a transition.
-constexpr uint32_t COMPOSE_RESTORE_COUNT = 23;
+constexpr uint32_t COMPOSE_RESTORE_COUNT = 25;
 constexpr FramebufferImageIndex COMPOSE_RESTORE_IMAGES[COMPOSE_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_SURFACE_POSITION,
@@ -689,9 +691,11 @@ constexpr FramebufferImageIndex COMPOSE_RESTORE_IMAGES[COMPOSE_RESTORE_COUNT] =
     FB_IMAGE_INDEX_Q2_GOD_RAYS_THROUGHPUT_DIST,
     FB_IMAGE_INDEX_Q2_FOG_ACCUM,
     FB_IMAGE_INDEX_Q2_COLOR,
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER,
+    FB_IMAGE_INDEX_Q2_PARTICLE_LAYER,
 };
 
-constexpr uint32_t CHAIN_RESTORE_COUNT = 56;
+constexpr uint32_t CHAIN_RESTORE_COUNT = 58;
 constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_SURFACE_POSITION,
@@ -750,6 +754,8 @@ constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
     FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS_PREV,
     FB_IMAGE_INDEX_Q2_COLOR,
     FB_IMAGE_INDEX_Q2_RNG_SEED_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER,
+    FB_IMAGE_INDEX_Q2_PARTICLE_LAYER,
 };
 
 // The reproject's sampled reads and the TAAU's: each call is self-contained, so it restores what it

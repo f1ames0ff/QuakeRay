@@ -82,9 +82,10 @@ constexpr nvrhi::Format WORLD_STORAGE_FORMAT = nvrhi::Format::RGBA32_UINT;
 // same block, and HLSL/RsSky.frag.hlsl:27-37 and HLSL/RsWorld.frag.hlsl:77-84 keep its offsets).
 // The unused emissionMultiplier the old sky block ended with is gone, so the declaration is
 // exactly what the stages read. The legacy RasterizedPushConst is 120 bytes since the smoke fields
-// at 88/104 were appended (Rasterizer.cpp:70-72), but these stages read only its first 88 bytes;
-// the pass mirrors that legacy prefix, so both renderers give the stages the same bytes.
-constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
+// at 88/104 were appended (Rasterizer.cpp:70-72); the world sub-pass's fragment reads the overlay's
+// particle proxy flag at 120 on top of that, which is the 124 bytes the shared `RsWorld.frag.spv`
+// declares - every pipeline that binds that blob has to cover the whole block.
+constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 124;
 
 // Both stages use SpecId 0 for their single constant: RsRasterizer.vert declares
 // applyVertexColorGamma, RsSky.frag declares alphaTest, each 4 bytes and written as a uint32
@@ -227,6 +228,13 @@ struct SkyPushConstants
     float    c[4];
     uint32_t t;
     uint32_t e;
+    float    unused[8];
+
+    // The world sub-pass shares `RsWorld.frag.spv` with the overlay's world pipeline, and that
+    // fragment declares the particle proxy flag at offset 120: the range has to cover it. The
+    // raster mode's world has no traced stand-ins, so the flag stays zero and the fragment's
+    // discard never runs here - and this pipeline binds no glass mask either.
+    uint32_t particleProxy;
 
     explicit SkyPushConstants(const RasterizedDataCollector::DrawInfo &info, const float *defaultViewProj)
     {
@@ -245,6 +253,8 @@ struct SkyPushConstants
         memcpy(c, info.color.Get(), 4 * sizeof(float));
         t = info.textureIndex;
         e = info.emissionTextureIndex;
+        memset(unused, 0, sizeof(unused));
+        particleProxy = 0u;
     }
 };
 
@@ -252,7 +262,8 @@ static_assert(offsetof(SkyPushConstants, vp) == 0);
 static_assert(offsetof(SkyPushConstants, c) == 64);
 static_assert(offsetof(SkyPushConstants, t) == 80);
 static_assert(offsetof(SkyPushConstants, e) == 84);
-static_assert(sizeof(SkyPushConstants) == 88);
+static_assert(offsetof(SkyPushConstants, particleProxy) == 120);
+static_assert(sizeof(SkyPushConstants) == 124);
 
 // The legacy viewport of the engine-convention targets, as an NVRHI viewport that makes the Vulkan
 // backend emit the legacy's own VkViewport. The legacy `vkCmdSetViewport` takes (x, y, w, +h)

@@ -248,8 +248,8 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
 	CVAR_DEF_T (rt_refr_water, "1.33") \
 	CVAR_DEF_T (rt_glass_shadows, "1") \
-	CVAR_DEF_T (rt_glass_blur, "0") \
 	CVAR_DEF_T (rt_glass_denoise, "0") \
+	CVAR_DEF_T (rt_glass_particles, "1") \
 	\
 	CVAR_DEF_T (rt_volume_type, "2") \
 	/* The screen-space volumetric these parameterise is gone on the Q2RTX core:
@@ -2614,8 +2614,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.waterTextureAreaScale = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_scale)),
 		.portalNormalTwirl = CVAR_TO_BOOL (rt_portal_twirl),
 		.glassShadows = CVAR_TO_BOOL (rt_glass_shadows),
-		.glassBlur = CVAR_TO_BOOL (rt_glass_blur),
 		.glassDenoise = CVAR_TO_BOOL (rt_glass_denoise),
+		.glassParticles = CVAR_TO_BOOL (rt_glass_particles),
 	};
 	// because 1 quake unit is not 1 meter
 	refl_refr_params.waterColor.data[0] = powf (refl_refr_params.waterColor.data[0], 1.0f / METRIC_TO_QUAKEUNIT (1.0f));

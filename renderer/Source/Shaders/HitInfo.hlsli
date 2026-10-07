@@ -172,6 +172,7 @@ ShHitInfo getHitInfoBounce(
     ShHitInfo h;
     h.transparency = 1.0f;
     h.glassParams = (float2)0.0f;
+    h.glassColor = (float3)1.0f;
 
     int instanceId, instCustomIndex;
     int geomIndex, primIndex;
@@ -193,6 +194,12 @@ ShHitInfo getHitInfoBounce(
 
     h.hitPosition = mul(tr.positions, baryCoords);
     h.glassParams = tr.materialColors[2].xy;
+    if ((tr.geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_GLASS) != 0)
+    {
+        /* The pane's tint rides the second layer's colour words, which a glass
+           surface's unused second texture layer leaves free. */
+        h.glassColor = tr.materialColors[1].xyz;
+    }
 
     if( ( tr.geometryInstanceFlags & GEOM_INST_FLAG_EXACT_NORMALS ) == 0 )
     {

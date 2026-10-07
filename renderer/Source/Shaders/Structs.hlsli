@@ -74,6 +74,7 @@ struct ShHitInfo
     uint   cluster;
     float  transparency;
     float2 glassParams;
+    float3 glassColor;
 };
 
 #endif

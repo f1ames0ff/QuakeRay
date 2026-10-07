@@ -1,4 +1,4 @@
-// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+﻿// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@ namespace qray
 {
 
 class Framebuffers;
+class RhiRtDirectPass;
 
 namespace rhi
 {
@@ -253,6 +254,7 @@ public:
                 rhi::RhiFrameContext *pFrameContext,
                 rhi::RhiTextureTable *pTextureTable,
                 const RhiRtPrimaryPass *pPrimaryPass,
+                const RhiRtDirectPass *pDirectPass,
                 const char *pShaderFolderPath,
                 PrintFunction pfnPrint);
 
@@ -323,8 +325,24 @@ public:
     // No-op when the pass is not created, the frame index is out of range, the size is zero, the
     // portal buffer was not set, the TLAS or the framebuffers are missing, or the uniform or
     // vertex-data inputs are missing or in a shape NVRHI's validation refuses.
+    // 'pParticleProxies' is the slot's traced particle proxy buffer
+    // (RhiAccelStructs::GetParticleProxyBuffer, the frame's sprites), bound at this pass's set 5;
+    // it may be null, the set then keeps the last real buffer (or the module's dummy) - the shader
+    // only reads it when the frame's TLAS really carries the proxy instance, which the caller's
+    // uniform gate already ties to the same condition. 'pLightSet' is this frame's set 6
+    // (RhiRtDirectPass::GetLightSet, prepared early through EnsureLightSet): the raygen lights the
+    // particle stand-ins with the same sun/cluster data the raster particles use.
+    // 'pTonemappingBuffer' is the frame's `ShTonemapping` array as the overlay binds it
+    // (Tonemapping::GetBuffer, wrapped by the skeleton): the unlit traced particle stand-ins
+    // reproduce the world fragment's exposure factor from its `avgLuminance`, so the raygen reads
+    // it at this pass's set 10. A null handle binds the module's one-element placeholder, whose
+    // zero average luminance makes the factor 1 (the stand-ins then differ from the raster copies
+    // by that factor only in the pathological case the wrap failed).
     void Render(nvrhi::ICommandList *pCommandList,
                 uint32_t frameIndex,
+                nvrhi::IBuffer *pParticleProxies,
+                nvrhi::IBuffer *pTonemappingBuffer,
+                nvrhi::BindingSetHandle pLightSet,
                 nvrhi::rt::IAccelStruct *pTopLevel,
                 nvrhi::IBuffer *pUniformBuffer,
                 const RhiRtPrimaryPass::VertexData &vertexData,
@@ -349,15 +367,15 @@ private:
     // uniform set follows the uniform pointer.
     struct Target
     {
-        // Set 1: the 24 engine images (the .cpp's FRAMEBUFFER_BINDINGS table) the slot currently
+        // Set 1: the 25 engine images (the .cpp's FRAMEBUFFER_BINDINGS table) the slot currently
         // wraps and the set over them. The handles are kept in the form Render received them, not
         // as VkImages, because they are what the change detection compares; a change in any of them
         // or in the size means the engine re-created the framebuffers and the wraps and the set
         // have to follow.
-        uint64_t imageHandles[24] = {};
+        uint64_t imageHandles[27] = {};
         uint32_t width = 0;
         uint32_t height = 0;
-        nvrhi::TextureHandle framebufferTextures[24];
+        nvrhi::TextureHandle framebufferTextures[28];
         nvrhi::BindingSetHandle framebufferSet;
 
         // Set 0: the pointer is only the cache key that tells whether the set still addresses the
@@ -379,6 +397,16 @@ private:
         // the key) and the set itself.
         nvrhi::IBuffer *portalBuffer = nullptr;
         nvrhi::BindingSetHandle portalSet;
+
+        // Set 5: the particle proxy buffer the set was built over (the caller's pointer is the
+        // key; the buffer it names is rewritten every frame, so only a replaced handle rebuilds
+        // it) and the set itself.
+        nvrhi::IBuffer *particleProxyBuffer = nullptr;
+        nvrhi::BindingSetHandle particleSet;
+
+        // Set 10: the tonemapping buffer the set was built over, the same pointer-keyed shape.
+        nvrhi::IBuffer *tonemappingBuffer = nullptr;
+        nvrhi::BindingSetHandle tonemappingSet;
     };
 
     bool LoadShader(const char *pFileName, nvrhi::ShaderType type, nvrhi::ShaderHandle &result);
@@ -397,6 +425,17 @@ private:
     // Set 9: builds (or rebuilds, when the pointer changed) the one-item set over the module's
     // portal layout. Returns false when no valid buffer was set (a one-shot warning).
     bool PreparePortalSet(Target &target);
+
+    // Set 5 over 'pParticleProxies' (or the module's dummy while the caller has none and the slot
+    // never had one): the set follows the buffer pointer, so a replaced handle rebuilds it through
+    // the retire queue while the per-frame contents never do.
+    bool PrepareParticleSet(Target &target, nvrhi::IBuffer *pParticleProxies);
+
+    // Set 10 over 'pTonemappingBuffer' (or the module's placeholder while the caller has none -
+    // its one zero record is written on the first list that binds it, so the shader's exposure
+    // factor reads a defined 1).
+    bool PrepareTonemappingSet(nvrhi::ICommandList *pCommandList, Target &target,
+                               nvrhi::IBuffer *pTonemappingBuffer);
 
     // Set 8: builds (or rebuilds, when a key changed) the four-item set over the coordinator's
     // render-cubemap pair, or over the placeholder pair when none was set. Returns false when the
@@ -429,6 +468,19 @@ private:
     // primary's own handle.
     nvrhi::BindingLayoutHandle framebufferLayout;
     nvrhi::BindingLayoutHandle portalLayout;
+
+    // Set 6: the direct pass's light layout handle (borrowed, kept alive here) and set 5's one-item
+    // particle proxy layout, which this module owns. The dummy buffer fills set 5 before the first
+    // frame that carries proxies, so the slot's set never has an unfilled item.
+    nvrhi::BindingLayoutHandle lightLayout;
+    nvrhi::BindingLayoutHandle particleLayout;
+    nvrhi::BufferHandle particleDummyBuffer;
+
+    // Set 10: the one-item `StructuredBuffer<ShTonemapping>` layout the raygen's exposure read
+    // uses, and the placeholder buffer for a frame that brought none.
+    nvrhi::BindingLayoutHandle tonemappingLayout;
+    nvrhi::BufferHandle tonemappingDummyBuffer;
+    bool tonemappingDummyInitialized = false;
     nvrhi::BindingLayoutHandle cubemapLayout;
     nvrhi::BindingLayoutHandle renderCubemapLayout;
 
@@ -481,6 +533,7 @@ private:
     bool warnedUnexpectedSize = false;
     bool warnedBadRenderCubemap = false;
     bool warnedRenderCubemapSampler = false;
+    bool warnedMissingLightSet = false;
 
     bool created = false;
 };

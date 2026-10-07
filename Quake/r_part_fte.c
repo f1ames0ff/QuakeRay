@@ -6884,7 +6884,8 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 				.transform = RT_TRANSFORM_IDENTITY,
 				.color = RT_COLOR_WHITE,
 				.material = tex ? tex->rtmaterial : QR_NO_MATERIAL,
-				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
+				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+				                 QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE,
 				.blendFuncSrc = 0,
 				.blendFuncDst = 0,
 			};

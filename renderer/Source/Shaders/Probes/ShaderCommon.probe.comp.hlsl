@@ -97,7 +97,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          globalUniform.sunBounce.x + globalUniform.levelFogColorDensity.x +
          globalUniform.levelFogSkyBlend.x + float(globalUniform.restirParams.x) +
          globalUniform.cloudShadowPlacement.x + globalUniform.cloudLayerMotion.x +
-         float(globalUniform.glassBlur) + float(globalUniform.glassDenoise);
+         float(globalUniform.glassBlur) + float(globalUniform.glassDenoise) +
+         float(globalUniform.glassParticles);
 
     // ShVertPreprocessing
     v += float(pushConstant.push.tlasInstanceCount) + float(pushConstant.push.tlasInstanceIsDynamicBits[0]);
@@ -666,13 +667,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += float(framebufQ2BaseColor_Prev_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufQ2BaseColor_Prev_Sampler, uv, 0.0).x;
 
-    // framebufQ2Metallic  rg8
+    // framebufQ2Metallic  rgba8
     framebufQ2Metallic[pix] = float4(1.0, 1.0, 1.0, 1.0);
     v += float(framebufQ2Metallic[pix].x);
     v += float(framebufQ2Metallic_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufQ2Metallic_Sampler, uv, 0.0).x;
 
-    // framebufQ2Metallic_Prev  rg8
+    // framebufQ2Metallic_Prev  rgba8
     framebufQ2Metallic_Prev[pix] = float4(1.0, 1.0, 1.0, 1.0);
     v += float(framebufQ2Metallic_Prev[pix].x);
     v += float(framebufQ2Metallic_Prev_Sampled.Load(int3(pix, 0)).x);
@@ -935,6 +936,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += float(framebufQ2GlassHistory_Prev[pix].x);
     v += float(framebufQ2GlassHistory_Prev_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufQ2GlassHistory_Prev_Sampler, uv, 0.0).x;
+
+    // framebufQ2ParticleLayer  rgba16f
+    framebufQ2ParticleLayer[pix] = float4(1.0, 1.0, 1.0, 1.0);
+    v += float(framebufQ2ParticleLayer[pix].x);
+    v += float(framebufQ2ParticleLayer_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ParticleLayer_Sampler, uv, 0.0).x;
 
     probeOutput[0] = v;
 }

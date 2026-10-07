@@ -116,6 +116,7 @@ enum
 	PARAM_TRANSPARENCY,
 	PARAM_GLASS_IOR,
 	PARAM_GLASS_THICKNESS,
+	PARAM_GLASS_COLOR,
 	PARAM_EXACTN,
 	PARAM_FRAST,
 	PARAM_ISLIGHT,
@@ -146,9 +147,9 @@ static const struct qre_param_s
 	[PARAM_GLOSS]    = { NULL, "texture_gloss",    QRE_T_TEXT,  0, 0, 0,
 	                     "White means mirror-smooth, black means rough (roughness = 1 - gloss). Ignored while roughness_override is set." },
 	[PARAM_BUMP]     = { "Surface", "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
-	                     "How pronounced the normal map's bumps are. Glass also generates fine normal detail, scaled by roughness." },
+	                     "How pronounced the normal map's bumps are. Needs texture_normals." },
 	[PARAM_ROUGH]    = { NULL, "roughness_override", QRE_T_FLOAT, 0, 1, 0.01f,
-	                     "Pin the roughness instead of the gloss map: 0 disables generated glass dispersion. Glass is smooth by default; authored normal maps keep their bumps. For other surfaces mirror forces 0." },
+	                     "Ignore the gloss map and pin the roughness (0..1). Mirror forces 0; glass keeps its override." },
 	[PARAM_METAL]    = { NULL, "metalness_factor", QRE_T_FLOAT, 0, 1, 0.01f,
 	                     "How metal-like the surface is. With metalness_from_normal_alpha it scales that mask." },
 	[PARAM_BASEF]    = { NULL, "base_factor",      QRE_T_FLOAT, 0, 4, 0.01f,
@@ -160,11 +161,13 @@ static const struct qre_param_s
 	[PARAM_GLASS]    = { NULL, "material_glass",   QRE_T_BOOL,  0, 0, 0,
 	                     "Glass: the traced path bends the rays through the surface and tints them with the diffuse texture, while transparency absorbs what passes. Wins over mirror; an alpha_test cutout keeps its holes." },
 	[PARAM_TRANSPARENCY] = { NULL, "transparency", QRE_T_FLOAT, 0, 1, 0.01f,
-	                     "How much of the transmission the glass lets through: 1 passes everything untinted, values in between absorb and tint it with the diffuse texture, and 0 blocks the transmission entirely so only the reflection remains. Needs material_glass." },
+	                     "How much light the glass passes and how much its texture absorbs: 1 passes the image with the glass colour alone (the texture blocks nothing), lower values dim it and absorb it per channel towards the diffuse texture, and 0 blocks the transmission entirely so only the reflection remains. Needs material_glass." },
 	[PARAM_GLASS_IOR] = { NULL, "glass_ior",       QRE_T_FLOAT, 0, 5, 0.01f,
 	                     "The pane's index of refraction (1..5): what it bends, how strong the mirror reflection at grazing angles is. 0 uses the engine's rt_refr_glass. Needs material_glass." },
 	[PARAM_GLASS_THICKNESS] = { NULL, "glass_thickness", QRE_T_FLOAT, 0, 64, 0.1f,
 	                     "How thick the pane is, in world units: the view through it is shifted by where the ray leaves the far face, and the light through it lands shifted the same way. The shift shows at a slant; straight through the pane and against the sky it is zero. 0 is an infinitely thin pane that only tints and reflects. Needs material_glass." },
+	[PARAM_GLASS_COLOR] = { NULL, "glass_color", QRE_T_COLOR, 0, 0, 0,
+	                     "The colour of the glass, multiplied into the transmitted view and the light that crosses the pane. White leaves what passes uncoloured. Needs material_glass." },
 	[PARAM_EXACTN]   = { "Model", "exact_normals",    QRE_T_BOOL,  0, 0, 0,
 	                     "Use the model's own vertex normals instead of generated ones (models only)." },
 	[PARAM_FRAST]    = { NULL, "force_rasterize",  QRE_T_BOOL,  0, 0, 0,
@@ -465,6 +468,9 @@ static void QRE_InitDefault (rt_material_t *m, const char *name)
 	m->transparency = 1.0f;
 	m->glass_ior = 0.0f;
 	m->glass_thickness = 2.0f;
+	m->glass_color[0] = 1.0f;
+	m->glass_color[1] = 1.0f;
+	m->glass_color[2] = 1.0f;
 	m->light_brightness = 1.0f;
 	m->light_styles = false;
 	m->color_emissive_threshold = 0.02f;
@@ -809,7 +815,14 @@ static void QRE_EnsureLive (int g)
 
 static void QRE_GetColor (const rt_material_t *m, int param, qboolean *enabled, float *rgb)
 {
-	(void)param; // only light_color is a single color now; color_emissive is a list
+	// color_emissive is a list; the two single colours are light_color and glass_color
+	if (param == PARAM_GLASS_COLOR)
+	{
+		*enabled = true; // the filter has no off switch: white leaves the pane clear
+		VectorCopy (m->glass_color, rgb);
+		return;
+	}
+
 	*enabled = m->has_light_color;
 	VectorCopy (m->light_color, rgb);
 }
@@ -819,7 +832,19 @@ static void QRE_SetColorEnabled (int g, int param, qboolean enabled)
 	QRE_EnsureLive (g);
 	rt_material_t *m = qre.group[g];
 
-	(void)param;
+	if (param == PARAM_GLASS_COLOR)
+	{
+		// disabling the filter means the neutral white, not a separate flag
+		if (!enabled)
+		{
+			m->glass_color[0] = 1.0f;
+			m->glass_color[1] = 1.0f;
+			m->glass_color[2] = 1.0f;
+		}
+		QRE_MarkDirtyFull (m); // the colour rides the uploaded geometry
+		return;
+	}
+
 	m->has_light_color = enabled;
 	QRE_MarkDirtyLight (m);
 }
@@ -829,7 +854,13 @@ static void QRE_SetColorChannel (int g, int param, int channel, float value)
 	QRE_EnsureLive (g);
 	rt_material_t *m = qre.group[g];
 
-	(void)param;
+	if (param == PARAM_GLASS_COLOR)
+	{
+		m->glass_color[channel] = value;
+		QRE_MarkDirtyFull (m); // the colour rides the uploaded geometry
+		return;
+	}
+
 	m->has_light_color = true;
 	m->light_color[channel] = value;
 	QRE_MarkDirtyLight (m);
@@ -972,17 +1003,70 @@ static void QRE_SetBool (int g, int param, qboolean value)
 		QRE_MarkDirty (m);
 }
 
+// The texture keys name files under the game directories: separators become
+// forward slashes, a leading ./ or / is dropped, and an absolute path inside
+// the game directory is made relative to it, the form the loader searches and
+// the yaml carries.
+static void QRE_NormalizeTexturePath (char *path)
+{
+	char   gamedir[MAX_OSPATH];
+	char  *src = path;
+	char  *dst = path;
+	size_t glen;
+	size_t i;
+
+	while (*src == ' ' || *src == '\t')
+		src++;
+	if (src[0] == '.' && (src[1] == '/' || src[1] == '\\'))
+		src += 2;
+	while (*src == '/' || *src == '\\')
+		src++;
+
+	for (; *src; src++)
+		*dst++ = (*src == '\\') ? '/' : *src;
+	*dst = '\0';
+
+	q_strlcpy (gamedir, com_gamedir, sizeof (gamedir));
+	for (i = 0; gamedir[i]; i++)
+	{
+		if (gamedir[i] == '\\')
+			gamedir[i] = '/';
+	}
+	glen = strlen (gamedir);
+	while (glen > 0 && gamedir[glen - 1] == '/')
+		gamedir[--glen] = '\0';
+
+	if (glen > 0 && !q_strncasecmp (path, gamedir, glen) && path[glen] == '/')
+	{
+		memmove (path, path + glen + 1, strlen (path + glen + 1) + 1);
+	}
+}
+
 static void QRE_SetText (int g, int param, const char *value)
 {
 	QRE_EnsureLive (g);
 	rt_material_t *m = qre.group[g];
+	char           path[MAX_QPATH];
+
+	q_strlcpy (path, value, sizeof (path));
+	QRE_NormalizeTexturePath (path);
+
+	// A path that stays absolute points outside the game directories, where
+	// the material loader cannot find it: keep the current value and say so.
+	if (path[0] == '/' ||
+	    (((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) &&
+	     path[1] == ':'))
+	{
+		QRE_Notify ("the texture must be inside %s", com_gamedir);
+		return;
+	}
 
 	switch (param)
 	{
-	case PARAM_BASE:     q_strlcpy (m->filename_base, value, sizeof (m->filename_base)); break;
-	case PARAM_NORMALS:  q_strlcpy (m->filename_normals, value, sizeof (m->filename_normals)); break;
-	case PARAM_EMISSIVE: q_strlcpy (m->filename_emissive, value, sizeof (m->filename_emissive)); break;
-	case PARAM_GLOSS:    q_strlcpy (m->filename_gloss, value, sizeof (m->filename_gloss)); break;
+	case PARAM_BASE:     q_strlcpy (m->filename_base, path, sizeof (m->filename_base)); break;
+	case PARAM_NORMALS:  q_strlcpy (m->filename_normals, path, sizeof (m->filename_normals)); break;
+	case PARAM_EMISSIVE: q_strlcpy (m->filename_emissive, path, sizeof (m->filename_emissive)); break;
+	case PARAM_GLOSS:    q_strlcpy (m->filename_gloss, path, sizeof (m->filename_gloss)); break;
 	default:             break;
 	}
 	QRE_MarkDirtyFull (m);
@@ -2803,7 +2887,7 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	const qboolean is_light_locks_color = (p == PARAM_LCOLOR && !m->is_light);
 	// transparency and the per-material refraction only mean something once the
 	// material is glass
-	const qboolean glass_locks_slider = (p == PARAM_TRANSPARENCY || p == PARAM_GLASS_IOR || p == PARAM_GLASS_THICKNESS) && !m->material_glass;
+	const qboolean glass_locks_slider = (p == PARAM_TRANSPARENCY || p == PARAM_GLASS_IOR || p == PARAM_GLASS_THICKNESS || p == PARAM_GLASS_COLOR) && !m->material_glass;
 
 	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider)
 		QR_GUI_PushDisabled (1);
@@ -5872,11 +5956,16 @@ static const char *qre_yaml_header =
 	"# shifts the same way, so it moves the edges of a lit\n"
 	"# patch and of a shadow cast through the pane; `rt_glass_shadows 0` passes\n"
 	"# the light through untinted and straight instead. `transparency` (0..1,\n"
-	"# default 1) bleaches the diffuse filter of everything that passes: 1 lets\n"
-	"# the base texture block nothing, 0 applies its colour whole (a white\n"
-	"# texture stays clear at any value), and it applies per pixel at once, while\n"
-	"# `glass_ior`/`glass_thickness` ride the uploaded geometry and take effect\n"
-	"# on the next full static re-submit (the material editor asks for one).\n"
+	"# default 1) is how much light the pane passes and how much its texture\n"
+	"# absorbs: 1 passes the image with the glass colour alone, lower values dim\n"
+	"# it and absorb it per channel towards the diffuse texture, and 0 blocks the\n"
+	"# transmission entirely. `glass_color` (rrggbb, default white) is the colour\n"
+	"# multiplied into the transmitted view and the light that crosses the pane,\n"
+	"# so a red pane passes -- and shadows -- red. Transparency applies per pixel\n"
+	"# at once, while\n"
+	"# `glass_ior`/`glass_thickness`/`glass_color` ride the uploaded geometry and\n"
+	"# take effect on the next full static re-submit (the material editor asks\n"
+	"# for one).\n"
 	"# These are material keys, not console commands; `rt_reflrefr_depth 0`\n"
 	"# drops the view shift. Glass wins over `mirror` (a mirrored window can\n"
 	"# simply be ticked); an `alpha_test` cutout survives it -- the holes pass\n"
@@ -5886,7 +5975,8 @@ static const char *qre_yaml_header =
 	"#             material_glass: true\n"
 	"#             transparency: 0.8\n"
 	"#             glass_ior: 1.52\n"
-	"#             glass_thickness: 2\n";
+	"#             glass_thickness: 2\n"
+	"#             glass_color: 88ccff\n";
 
 static void QRE_WriteColor (FILE *f, const char *key, const vec3_t rgb)
 {
@@ -5987,6 +6077,9 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    glass_ior: %.6g\n", m->glass_ior);
 	if (m->material_glass && m->glass_thickness != 2.0f)
 		fprintf (f, "    glass_thickness: %.6g\n", m->glass_thickness);
+	if (m->material_glass &&
+	    (m->glass_color[0] != 1.0f || m->glass_color[1] != 1.0f || m->glass_color[2] != 1.0f))
+		QRE_WriteColor (f, "glass_color", m->glass_color);
 	if (m->exact_normals)
 		fprintf (f, "    exact_normals: true\n");
 	if (m->force_rasterize)
@@ -7051,7 +7144,6 @@ static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 	char          initdir[MAX_OSPATH];
 	char          result[MAX_OSPATH];
 	OPENFILENAMEA ofn;
-	size_t        glen, i;
 
 	q_snprintf (initdir, sizeof (initdir), "%s", com_gamedir);
 
@@ -7067,26 +7159,21 @@ static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 	if (!GetOpenFileNameA (&ofn))
 		return false;
 
-	// The dialog returns backslashes while com_gamedir may carry forward
-	// slashes: normalize before comparing, and store forward slashes.
-	for (i = 0; result[i]; i++)
-	{
-		if (result[i] == '\\')
-			result[i] = '/';
-	}
+	// The canonical relative form: normalize the separators and strip the game
+	// directory prefix (the dialog returns backslashes, com_gamedir mixes them).
+	QRE_NormalizeTexturePath (result);
 
-	glen = strlen (com_gamedir);
-	if (!q_strncasecmp (result, com_gamedir, glen) && result[glen] == '/')
+	// A path that stays absolute points outside the game directory, where the
+	// material loader cannot find it.
+	if (result[0] == '/' ||
+	    (((result[0] >= 'a' && result[0] <= 'z') || (result[0] >= 'A' && result[0] <= 'Z')) &&
+	     result[1] == ':'))
 	{
-		q_strlcpy (out, result + glen + 1, outsize);
-	}
-	else
-	{
-		// outside the gamedir the material loader cannot find the file
 		QRE_Notify ("the texture must be inside %s", com_gamedir);
 		return false;
 	}
 
+	q_strlcpy (out, result, outsize);
 	return true;
 }
 

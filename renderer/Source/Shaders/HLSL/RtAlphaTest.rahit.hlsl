@@ -101,7 +101,8 @@ void main(inout ShPayloadShadow g_payloadShadow, in HitAttributes attribs)
 			{
 				roughness = getTextureSampleLod(tr.materials[0][MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX], texCoord, 0.0).r;
 			}
-			g_payloadShadow.glassNormal = lerp(max(tint, (float3)0.0), (float3)1.0, saturate(transparency));
+			const float3 glassColor = tr.materialColors[1].xyz;
+			g_payloadShadow.glassNormal = glassTransmissionFilter(tint, glassColor, transparency);
 			g_payloadShadow.glassDistance = RayTCurrent();
 			g_payloadShadow.glassParams.x = saturate(globalUniform.squareInputRoughness == 0u ? roughness : roughness * roughness);
 			g_payloadShadow.glassParams.z = 1.0;
@@ -132,8 +133,12 @@ void main(inout ShPayloadShadow g_payloadShadow, in HitAttributes attribs)
 
 		const float3 tint = getTextureSampleLod(tr.materials[0][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord, tintLod).rgb * tr.materialColors[0].rgb;
 		const float transparency = getTextureSampleLod(tr.materials[0][MATERIAL_NORMAL_INDEX], texCoord, tintLod).a;
+		const float3 glassColor = tr.materialColors[1].xyz;
 
-		g_payloadShadow.transmittance *= lerp(max(tint, (float3)0.0), (float3)1.0, clamp(transparency, 0.0, 1.0)) * clamp(transparency, 0.0, 1.0);
+		/* The light crossing the pane is filtered exactly as the transmitted view is:
+		   transparency is how much passes, the diffuse colour times the glass colour is
+		   the tint it is absorbed into. */
+		g_payloadShadow.transmittance *= glassTransmissionFilter(tint, glassColor, transparency);
 
 		const float thickness = max(tr.materialColors[2].y, 0.0);
 

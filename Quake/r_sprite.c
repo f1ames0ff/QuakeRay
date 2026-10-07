@@ -280,7 +280,7 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 			.pVertices = vertices,
 			.indexCount = RT_GetFanIndexCount (countof (vertices)),
 			.pIndices = RT_GetFanIndices (countof (vertices)),
-			.layerColors = {RT_COLOR_WHITE, {0.0f, 0.0f, 0.0f, 0.0f},
+			.layerColors = {RT_COLOR_WHITE, {tx && tx->rtglass ? tx->rtglasscolor[0] : 0.0f, tx && tx->rtglass ? tx->rtglasscolor[1] : 0.0f, tx && tx->rtglass ? tx->rtglasscolor[2] : 0.0f, 0.0f},
 			                {tx && tx->rtglass ? tx->rtglassior : 0.0f,
 			                 tx && tx->rtglass ? tx->rtglassthickness : 0.0f, 0.0f, 0.0f}},
 			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},

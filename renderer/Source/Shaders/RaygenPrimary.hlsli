@@ -1,4 +1,4 @@
-// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+﻿// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -54,6 +54,7 @@
 #include "RaygenCommon.hlsli"
 #include "Q2Fog.hlsli"
 #include "Q2Asvgf.hlsli"
+#include "ParticleProxies.hlsli"
 
 #if defined(Q2_REFL_REFR_SHADER)
 
@@ -85,7 +86,7 @@ float2 getMotionVectorForUpscaler(const float2 motionCurToPrev)
 
 void storeQ2GBuffer(
     const int2 pix,
-    const float3 baseColor, float transparency, const float2 glassParams,
+    const float3 baseColor, float transparency, const float2 glassParams, const float3 glassColor,
     float metallic, float roughness,
     float depth,
     float halfConeAngle, float distToLight,
@@ -100,8 +101,10 @@ void storeQ2GBuffer(
 
     framebufQ2ViewDepth[pix]                = (float4)depth;
     framebufQ2BaseColor[pix]                = float4(baseColor, transparency);
-    framebufQ2Metallic[pix]                 = float4(metallic, roughness, 0.0, 0.0);
-    framebufQ2BounceThroughput[pix]         = float4(glassParams, 1.0, halfConeAngle);
+    /* The metallic buffer's free tail and the bounce throughput's third channel carry the
+       pane's glass colour to the reflect/refract pass, which reads it back for the tint. */
+    framebufQ2Metallic[pix]                 = float4(metallic, roughness, glassColor.g, glassColor.b);
+    framebufQ2BounceThroughput[pix]         = float4(glassParams, glassColor.r, halfConeAngle);
     framebufQ2Transparent[pix]              = float4(transparentColor, transparentAlpha);
     framebufQ2GodRaysThroughputDist[pix]    = float4(1.0, 1.0, 1.0, distToLight);
     framebufQ2RngSeed[pix]                  = (uint4)getRandomSeed(pix, globalUniform.frameId);
@@ -134,7 +137,7 @@ void storeSky(
 
         framebufAlbedo[getRegularPixFromCheckerboardPix(pix)] = float4(albedo, 0.0);
 
-        storeQ2GBuffer(pix, albedo, 1.0, (float2)0.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
+        storeQ2GBuffer(pix, albedo, 1.0, (float2)0.0, (float3)1.0, 0.0, 1.0, MAX_RAY_LENGTH * 2.0, 0.0, MAX_RAY_LENGTH * 2.0, albedo, 1.0, fogAccum, ~0u);
     }
 
     float2 m = getMotionForInfinitePoint(rayDir);
@@ -367,7 +370,14 @@ void main()
         (h.geometryInstanceFlags & GEOM_INST_FLAG_IGNORE_REFRACT_AFTER) == 0u)
     {
         const float field = isRegularPixOdd(regularPix) == 0 ? -1.0 : 1.0;
-        framebufQ2GlassFilter[pix] = float4(rtGlassPaneNormalOct(h.normalGeom), max(h.glassParams.y, 0.0),
+        /* The mask's blue channel carries the pane's own view-space depth (the axis depth the
+           raster particles' SV_Position.w interpolates to), which is what lets a raster sprite
+           tell whether it stands behind this pane: RsParticle.frag discards the ones that do,
+           because the reflect/refract raygen already traced their stand-in. The thickness the
+           channel held before moved nowhere else; the (off-by-default) glass denoiser compares
+           it only as a pane identity. */
+        const float paneViewDepth = -mul(globalUniform.view, float4(h.hitPosition, 1.0)).z;
+        framebufQ2GlassFilter[pix] = float4(rtGlassPaneNormalOct(h.normalGeom), paneViewDepth,
                                           field * (4.0 + h.roughness));
         framebufQ2GlassReflection[regularPix] = float4(motionCurToPrev, firstHitDepthLinear, motionDepthLinearCurToPrev);
     }
@@ -412,7 +422,7 @@ void main()
     uint4 q2Fog1, q2Fog2;
     q2FindFogVolumes(cameraOrigin, cameraRayDir, 0.0, firstHitDepthLinear, q2Fog1, q2Fog2);
     const float4 q2FogAccum = q2SegmentFog(q2Fog1, q2Fog2, firstHitDepthLinear);
-    storeQ2GBuffer(pix, h.albedo, h.transparency, h.glassParams, h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, h.transparency, h.glassParams, h.glassColor, h.metallic, h.roughness,
                    firstHitDepthLinear, 0.5 * length(cameraRayDir - cameraRayDirAX), firstHitDepthLinear,
                    (float3)0.0, 0.0, q2FogAccum, h.cluster);
 }
@@ -676,7 +686,7 @@ void main()
     framebufThroughput[pix]                 = float4(throughput, wasSplit ? 1.0 : -1.0);
 
     const float q2HalfConeAngle = framebufQ2BounceThroughput_Sampled.Load(int3(pix, 0)).w;
-    storeQ2GBuffer(pix, h.albedo, 1.0, (float2)0.0, h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, 1.0, (float2)0.0, (float3)1.0, h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    (float3)0.0, 0.0, q2FogAccum, h.cluster);
 }
@@ -695,6 +705,11 @@ void main()
     const int2 regularPix = (int2)DispatchRaysIndex().xy;
     const int2 pix = getCheckerboardPix(regularPix);
     const float2 inUV = getPixelUVWithJitter(regularPix);
+    /* This pass owns the traced particle stand-ins' layer, and this zero is its per-frame clear:
+       it runs before every early-out, so every regular pixel the composite can read is reset,
+       and the writes of q2BlendParticleProxies below accumulate on top. A pixel that leaves the
+       loop early keeps the zero, which is the composite's identity. */
+    framebufQ2ParticleLayer[getRegularPixFromCheckerboardPix(pix)] = (float4)0.0;
     const float3 cameraRayDir = getRayDir(inUV);
 
     if (framebufIsSky.Load(pix).r != 0)
@@ -745,9 +760,14 @@ void main()
     /* The channel carries the primary surface's glass transparency (written by
        the primary pass), which the glass branch below absorbs the rays with. */
     h.transparency = clamp(q2BaseColor.a, 0.0, 1.0);
-    h.glassParams = framebufQ2BounceThroughput.Load(pix).xy;
-    const float q2HalfConeAngle         = framebufQ2BounceThroughput.Load(pix).w;
+    const float4 q2BounceThroughput       = framebufQ2BounceThroughput.Load(pix);
+    h.glassParams = q2BounceThroughput.xy;
+    /* The primary pass stored the pane's glass colour beside its ior and thickness: one channel
+       in the bounce throughput and the free tail of the metallic buffer. */
+    const float3 paneGlassColor = float3(q2BounceThroughput.z, framebufQ2Metallic.Load(pix).zw);
+    const float q2HalfConeAngle           = q2BounceThroughput.w;
     float4 q2Transparent                  = framebufQ2Transparent.Load(pix);
+
     float4 q2FogAccum                     = framebufQ2FogAccum.Load(pix);
 
     RayCone rayCone;
@@ -921,6 +941,11 @@ void main()
                 F = 0.0;
             }
 
+            /* The checkerboard split carries the pane's two images: one field refracts (the
+               transmission) and the other reflects, both Fresnel-weighted, and CmQ2Interleave
+               reconstructs the pair. The traced copy writes its own hit's motion into the
+               upscaler's motion buffer further down, so the FSR/TAAU history follows the surface
+               the pixel shows instead of the pane that happens to cover it. */
             doSplit = globalUniform.glassBlur == 0u && !wasSplit;
             doRefraction = globalUniform.glassBlur == 0u && h.transparency > 0.0f && (doSplit ? isPixOdd : true);
             if (doRefraction)
@@ -953,10 +978,11 @@ void main()
 
                             rayOrigin += refr1 * traceClearance(rayOrigin, refr1, thickness / cosT, clearanceMask);
                         }
-                        /* transparency bleaches the diffuse filter: 1 lets the texture
-                           block nothing, 0 applies its colour whole */
+                        /* The pane's transmission: transparency is how much light passes (0
+                           blocks it outright) and the diffuse texture times the glass colour
+                           is the tint it is filtered into. */
                         throughput *= (1.0 - F);
-                        throughput *= lerp(h.albedo, (float3)1.0, clamp(h.transparency, 0.0, 1.0)) * clamp(h.transparency, 0.0, 1.0);
+                        throughput *= glassTransmissionFilter(h.albedo, paneGlassColor, h.transparency);
                         correctMotionVector = 2;
                     }
                     else
@@ -1003,6 +1029,10 @@ void main()
             const float3 env = getSkyVisibleFiltered(rayDir, skyLod);
             q2Transparent = q2AlphaBlendPremultiplied(float4(env * throughput, 1.0), q2Transparent);
 
+            /* The segment leaves the pane and reaches the sky: the frame's particle stand-ins
+               are the only thing between the two. */
+            q2BlendParticleProxies(rayOrigin, rayDir, MAX_RAY_LENGTH * 2.0, throughput, pix);
+
             uint4 q2SegFog1, q2SegFog2;
             q2FindFogVolumes(rayOrigin, rayDir, 0.0, 1e6, q2SegFog1, q2SegFog2);
             q2FogAccum = q2AlphaBlendPremultiplied(q2SegmentFog(q2SegFog1, q2SegFog2, 1e6), q2FogAccum);
@@ -1016,7 +1046,7 @@ void main()
             }
 
             storeSky(pix, rayDir, true, throughput, wasSplit, q2FogAccum);
-            storeQ2GBuffer(pix, (float3)0.0, 1.0, (float2)0.0, 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
+            storeQ2GBuffer(pix, (float3)0.0, 1.0, (float2)0.0, (float3)1.0, 0.0, 1.0, -MAX_RAY_LENGTH * 2.0, q2HalfConeAngle, MAX_RAY_LENGTH * 2.0,
                            q2Transparent.rgb, q2Transparent.a, q2FogAccum, ~0u);
 
             /* The transport's spare RGB carries the segment's own origin to the
@@ -1044,6 +1074,14 @@ void main()
         uint4 q2SegFog1, q2SegFog2;
         q2FindFogVolumes(rayOrigin, rayDir, 0.0, rayLen, q2SegFog1, q2SegFog2);
         q2FogAccum = q2AlphaBlendPremultiplied(q2SegmentFog(q2SegFog1, q2SegFog2, rayLen), q2FogAccum);
+
+        /* The particle stand-ins between the pane and the surface the segment found: blended into
+           the through-glass signal before the segment's material enters the compose, so the
+           sprite's coverage hides the surface behind it exactly as an opaque-adjacent sprite does
+           in the raster path. Every segment of the loop gets its own query: a stack of panes sees
+           the sprites at each interface, at the cost of one more traversal on the pixels that
+           recurse at all. */
+        q2BlendParticleProxies(rayOrigin, rayDir, rayLen, throughput, pix);
 
         hitInfoWasOverwritten = true;
         if (correctMotionVector == 2 && isPixOdd)
@@ -1084,12 +1122,16 @@ void main()
         framebufDepthNdc[pairPix] = (float4)refrDepthNdc;
     }
     framebufMotion[pix]                     = float4(motionCurToPrev, motionDepthLinearCurToPrev, 0.0);
+    /* The upscaler reprojects what the pixel shows, and for a pane that is the refracted hit,
+       not the pane surface the primary pass wrote its own motion vector for. Without this the
+       FSR/TAAU history follows the pane and smears the transmitted image. */
+    framebufMotionDlss[getRegularPixFromCheckerboardPix(pix)] = float4(getMotionVectorForUpscaler(motionCurToPrev), 0.0, 0.0);
     framebufSurfacePosition[pix]            = float4(h.hitPosition, asfloat(h.instCustomIndex));
     framebufVisibilityBuffer[pix]           = packVisibilityBuffer(currentPayload);
     framebufViewDirection[pix]              = float4(rayDir, 0.0);
     framebufThroughput[pix]                 = float4(throughput, wasSplit ? 1.0 : -1.0);
 
-    storeQ2GBuffer(pix, h.albedo, h.transparency, h.glassParams, h.metallic, h.roughness,
+    storeQ2GBuffer(pix, h.albedo, h.transparency, h.glassParams, h.glassColor, h.metallic, h.roughness,
                    -fullPathLength, q2HalfConeAngle, q2LastSegmentLen,
                    q2Transparent.rgb, q2Transparent.a, q2FogAccum, h.cluster);
 }

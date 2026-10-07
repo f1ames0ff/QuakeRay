@@ -87,6 +87,7 @@ typedef struct rt_material_s {
     float    transparency;
     float    glass_ior;
     float    glass_thickness;
+    vec3_t   glass_color;
     qboolean valid;
 } rt_material_t;
 

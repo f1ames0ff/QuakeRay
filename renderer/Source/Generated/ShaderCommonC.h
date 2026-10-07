@@ -15,7 +15,7 @@ namespace qray
 #define MAX_GEOMETRY_PRIMITIVE_COUNT (1048576)
 #define MAX_GEOMETRY_PRIMITIVE_COUNT_POW (20)
 #define LOWER_BOTTOM_LEVEL_GEOMETRIES_COUNT (256)
-#define MAX_TOP_LEVEL_INSTANCE_COUNT (60)
+#define MAX_TOP_LEVEL_INSTANCE_COUNT (61)
 #define BINDING_VERTEX_BUFFER_STATIC (0)
 #define BINDING_VERTEX_BUFFER_DYNAMIC (1)
 #define BINDING_INDEX_BUFFER_STATIC (2)
@@ -65,7 +65,7 @@ namespace qray
 #define INSTANCE_MASK_WORLD_1 (2)
 #define INSTANCE_MASK_WORLD_2 (4)
 #define INSTANCE_MASK_GLASS (8)
-#define INSTANCE_MASK_RESERVED_1 (16)
+#define INSTANCE_MASK_PARTICLE (16)
 #define INSTANCE_MASK_REFRACT (32)
 #define INSTANCE_MASK_FIRST_PERSON (64)
 #define INSTANCE_MASK_FIRST_PERSON_VIEWER (128)
@@ -312,9 +312,9 @@ struct ShGlobalUniform
     uint32_t reflRefrEarlyOut;
     uint32_t neeLightSamples;
     float turbWarpStrength;
-    int32_t instanceGeomInfoOffset[60];
-    int32_t instanceGeomInfoOffsetPrev[60];
-    int32_t instanceGeomCount[60];
+    int32_t instanceGeomInfoOffset[64];
+    int32_t instanceGeomInfoOffsetPrev[64];
+    int32_t instanceGeomCount[64];
     float viewProjCubemap[96];
     float skyCubemapRotationTransform[16];
     float fogMins[32];
@@ -334,6 +334,7 @@ struct ShGlobalUniform
     float cloudLayerMotion[4];
     uint32_t glassBlur;
     uint32_t glassDenoise;
+    uint32_t glassParticles;
 };
 
 struct ShGeometryInstance

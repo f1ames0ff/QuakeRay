@@ -1304,64 +1304,6 @@ static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, fl
 	*angleInner = (float)((outerDeg - softDeg) * M_PI_DIV_180);
 }
 
-static void TexMgr_GlassNormalDetail (const rt_material_t *mat, const byte *authoredNormal, int normalWidth, int normalHeight,
-                                     int *width, int *height, byte **albedo, byte **rme, byte **normal)
-{
-	const int sourceWidth = *width;
-	const int sourceHeight = *height;
-	const int detailWidth = q_max (sourceWidth, CLAMP (256, normalWidth, 1024));
-	const int detailHeight = q_max (sourceHeight, CLAMP (256, normalHeight, 1024));
-	const size_t count = (size_t)detailWidth * detailHeight;
-	const float bumpScale = mat->bump_scale >= 0.0f ? CLAMP (0.0f, mat->bump_scale, 4.0f) : 1.0f;
-	byte *detailAlbedo = Mem_Alloc (count * 4);
-	byte *detailRme = Mem_Alloc (count * 4);
-	byte *detailNormal = Mem_Alloc (count * 4);
-	if (authoredNormal)
-		stbir_resize_uint8 (authoredNormal, normalWidth, normalHeight, 0, detailNormal, detailWidth, detailHeight, 0, 4);
-
-	uint32_t seed = 2166136261u;
-	for (const unsigned char *p = (const unsigned char *)mat->name; *p; p++)
-		seed = (seed ^ *p) * 16777619u;
-
-	for (int y = 0; y < detailHeight; y++)
-	{
-		for (int x = 0; x < detailWidth; x++)
-		{
-			const size_t dst = ((size_t)y * detailWidth + x) * 4;
-			const size_t src = ((size_t)(y * sourceHeight / detailHeight) * sourceWidth + x * sourceWidth / detailWidth) * 4;
-			memcpy (detailAlbedo + dst, *albedo + src, 4);
-			memcpy (detailRme + dst, *rme + src, 4);
-			uint32_t key = seed ^ (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u;
-			key ^= key >> 16;
-			key *= 0x7feb352du;
-			key ^= key >> 15;
-			key *= 0x846ca68bu;
-			key ^= key >> 16;
-			const float noiseX = ((int)(key & 255u) + (int)((key >> 8) & 255u) - 255) / 255.0f;
-			const float noiseY = ((int)((key >> 16) & 255u) + (int)(key >> 24) - 255) / 255.0f;
-			const float strength = 0.65f * (detailRme[dst] / 255.0f) * bumpScale;
-			float nx = authoredNormal ? (detailNormal[dst] - 128.0f) / 127.0f * bumpScale : 0.0f;
-			float ny = authoredNormal ? (detailNormal[dst + 1] - 128.0f) / 127.0f * bumpScale : 0.0f;
-			float nz = authoredNormal ? q_max (0.01f, (detailNormal[dst + 2] - 128.0f) / 127.0f) : 1.0f;
-			nx += strength * noiseX;
-			ny += strength * noiseY;
-			const float length = sqrtf (nx * nx + ny * ny + nz * nz);
-			detailNormal[dst] = CLAMP (0, (int)(128.0f + 127.0f * nx / length + 0.5f), 255);
-			detailNormal[dst + 1] = CLAMP (0, (int)(128.0f + 127.0f * ny / length + 0.5f), 255);
-			detailNormal[dst + 2] = CLAMP (0, (int)(128.0f + 127.0f * nz / length + 0.5f), 255);
-			detailNormal[dst + 3] = (*normal)[src + 3];
-		}
-	}
-	Mem_Free (*albedo);
-	Mem_Free (*rme);
-	Mem_Free (*normal);
-	*albedo = detailAlbedo;
-	*rme = detailRme;
-	*normal = detailNormal;
-	*width = detailWidth;
-	*height = detailHeight;
-}
-
 static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
@@ -1380,6 +1322,9 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtglass = false;
 		glt->rtglassior = 0.0f;
 		glt->rtglassthickness = 2.0f;
+		glt->rtglasscolor[0] = 1.0f;
+		glt->rtglasscolor[1] = 1.0f;
+		glt->rtglasscolor[2] = 1.0f;
 		glt->rtemissive = false;
 		glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 		glt->rtemissivemean = 0.0f;
@@ -1422,6 +1367,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtglass = mat->material_glass;
 	glt->rtglassior = mat->glass_ior;
 	glt->rtglassthickness = mat->glass_thickness;
+	VectorCopy (mat->glass_color, glt->rtglasscolor);
 
 	const int tw = glt->width;
 	const int th = glt->height;
@@ -1439,13 +1385,12 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	byte *baseBuf = NULL, *normBuf = NULL, *emisBuf = NULL, *glossBuf = NULL;
 	if (baseTex) { baseBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (baseTex, bw, bh, 0, baseBuf, tw, th, 0, 4); Mem_Free (baseTex); }
-	if (normTex) { normBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (normTex, nw, nh, 0, normBuf, tw, th, 0, 4); }
+	if (normTex) { normBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (normTex, nw, nh, 0, normBuf, tw, th, 0, 4); Mem_Free (normTex); }
 	if (emisTex) { emisBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (emisTex, ew, eh, 0, emisBuf, tw, th, 0, 4); Mem_Free (emisTex); }
 	if (glossTex) { glossBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (glossTex, gw, gh, 0, glossBuf, tw, th, 0, 4); Mem_Free (glossTex); }
 
 	if (!baseBuf && !albedoFallback)
 	{
-		if (normTex) Mem_Free (normTex);
 		if (normBuf) Mem_Free (normBuf);
 		if (emisBuf) Mem_Free (emisBuf);
 		if (glossBuf) Mem_Free (glossBuf);
@@ -1643,8 +1588,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			rough = roughOverride;
 		else if (glossBuf)
 			rough = 1.0f - glossBuf[i * 4] / 255.0f;
-		else if (glt->rtglass)
-			rough = 0.0f; // glass is smooth unless the material pins a roughness
 		else if (baseHasAlpha && !engineAlpha)
 			rough = baseBuf[i * 4 + 3] / 255.0f;
 		else
@@ -1709,7 +1652,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		rme[i * 4 + 2] = CLAMP (0, (int)(emissOut * 255), 255);
 		rme[i * 4 + 3] = colorBlend ? colorBlend[i] : (byte)emisBlendCode;
 
-		if (normBuf && !glt->rtglass)
+		if (normBuf)
 		{
 			float nx = (normBuf[i * 4 + 0] - 128.0f) * mat->bump_scale + 128.0f;
 			float ny = (normBuf[i * 4 + 1] - 128.0f) * mat->bump_scale + 128.0f;
@@ -1815,11 +1758,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		            glt->rtemissiveglowtex ? 1 : 0);
 	}
 
-	int uploadWidth = tw;
-	int uploadHeight = th;
-	if (glt->rtglass)
-		TexMgr_GlassNormalDetail (mat, normTex, nw, nh, &uploadWidth, &uploadHeight, &albedo, &rme, &normal);
-	if (normTex) Mem_Free (normTex);
 
 	if (texmgr_dumping_reload && !TexMgr_AlreadyDumped (mat->name) && CVAR_TO_BOOL (qr_material_editor_debug))
 	{
@@ -1833,9 +1771,9 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		Con_Printf ("qr editor dump:   loaded base=%d emis=%d gloss=%d norm=%d mean=%.4f\n",
 		            baseBuf ? 1 : 0, emisBuf ? 1 : 0, glossBuf ? 1 : 0, normBuf ? 1 : 0, glt->rtemissivemean);
 
-		TexMgr_DumpReloadTGA ("_albedo", glt->name, uploadWidth, uploadHeight, albedo);
-		TexMgr_DumpReloadTGA ("_rme", glt->name, uploadWidth, uploadHeight, rme);
-		TexMgr_DumpReloadTGA ("_normal", glt->name, uploadWidth, uploadHeight, normal);
+		TexMgr_DumpReloadTGA ("_albedo", glt->name, tw, th, albedo);
+		TexMgr_DumpReloadTGA ("_rme", glt->name, tw, th, rme);
+		TexMgr_DumpReloadTGA ("_normal", glt->name, tw, th, normal);
 
 		if (texmgr_dumped_count < QRE_DUMPED_MAX)
 			q_strlcpy (texmgr_dumped[texmgr_dumped_count++], mat->name, MAX_QPATH);
@@ -1846,7 +1784,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	if (texmgr_live_reload && !texmgr_live_recreate && oldMaterial != QR_NULL_HANDLE)
 	{
-		const QrExtent2D updateSize = {(uint32_t)uploadWidth, (uint32_t)uploadHeight};
+		const QrExtent2D updateSize = {(uint32_t)tw, (uint32_t)th};
 
 		if (qrCanUpdateMaterialContents (vulkan_globals.instance, oldMaterial, updateSize) == QR_SUCCESS)
 		{
@@ -1877,7 +1815,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	QrMaterialCreateInfo info = {
 		.flags = TexMgr_GetRtCreateFlags (glt),
-		.size = {uploadWidth, uploadHeight},
+		.size = {tw, th},
 		.textures =
 			{
 				.pDataAlbedoAlpha = albedo,
@@ -2076,6 +2014,9 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtglass = false;
 	glt->rtglassior = 0.0f;
 	glt->rtglassthickness = 2.0f;
+	glt->rtglasscolor[0] = 1.0f;
+	glt->rtglasscolor[1] = 1.0f;
+	glt->rtglasscolor[2] = 1.0f;
 	glt->rtemissive = false;
 	glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 	glt->rtemissivemean = 0.0f;

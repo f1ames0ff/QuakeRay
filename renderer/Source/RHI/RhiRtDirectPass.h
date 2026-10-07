@@ -220,6 +220,15 @@ public:
         return targets[frameIndex].lightSet;
     }
 
+    // Prepares this frame's light set early, for the reflect/refract sibling, which records before
+    // this pass in the frame and borrows the set at its own position 6 (the same shared-layout
+    // contract the indirect pass uses). The host calls it right before that pass, with the same
+    // 'frameId'/'lightStatsMode' it will pass to Render; Render's own call then finds the set
+    // prepared and records nothing twice. Returns false when the light buffers or a pending copy
+    // source are missing - the caller treats it as "no light data for this frame".
+    bool EnsureLightSet(nvrhi::ICommandList *pCommandList, uint32_t frameIndex, uint32_t frameId,
+                        uint32_t lightStatsMode);
+
     // One call per frame, on the frame context's open command list of 'frameIndex', after
     // RhiRtPrimaryPass::Render of the same slot. 'frameId' is the engine counter
     // (`ShGlobalUniform::frameId`, i.e. sky.uniform->GetData()->frameId) and 'lightStatsMode' the
@@ -379,6 +388,11 @@ private:
     // items). Every other layout is the primary's.
     nvrhi::BindingLayoutHandle framebufferLayout;
     nvrhi::BindingLayoutHandle lightLayout;
+
+    // The frame id each slot's set 6 was prepared for: one preparation per frame, whether
+    // EnsureLightSet (the reflect/refract sibling asking early) or Render made it.
+    uint32_t lightSetPreparedFrame[MAX_FRAMES_IN_FLIGHT] = {};
+    bool lightSetPrepared[MAX_FRAMES_IN_FLIGHT] = {};
 
     // The pipeline and its table: one raygen (RGenDirect), the engine's two misses, the two engine
     // hit groups. Both are created once; the table is uncached, so the backend bakes it per list.

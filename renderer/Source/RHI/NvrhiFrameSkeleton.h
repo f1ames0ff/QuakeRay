@@ -151,6 +151,16 @@ public:
         const RasterizedDataCollector::DrawInfo *particleDraws = nullptr;
         uint32_t particleDrawCount = 0;
 
+        // -- the traced particle stand-ins of the reflect/refract rays --
+        // The frame's lit particle sprites in the shape ParticleProxies.h describes: the host
+        // copies the collector's list here (VulkanDevice) and the skeleton feeds it to
+        // RhiAccelStructs::BuildTopLevel, which builds the proxy BLAS and the one masked TLAS
+        // instance the reflect/refract raygen's inline query traverses. An empty list (or one over
+        // MAX_PARTICLE_PROXY_COUNT) turns the feature off for the frame, the same flag the raster
+        // particle discard reads from the uniform.
+        const ParticleProxy *particleProxies = nullptr;
+        uint32_t particleProxyCount = 0;
+
         // -- the 2D UI pass (A5.1) --
         // The frame's SWAPCHAIN draw list and the collector's per-slot staging vertex and index
         // buffers: the UI is rewritten every frame, so the pass reads the staging - the device copy

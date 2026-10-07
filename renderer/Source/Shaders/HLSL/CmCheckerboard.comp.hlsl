@@ -1,4 +1,4 @@
-// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+﻿// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -67,6 +67,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float3 fog  = framebufAcidFogRT_Sampled.Load(int3( pix, 0 )).rgb;
 
     const float glass = framebufQ2GlassFilter_Sampled.Load(int3(checkerboardPix, 0)).a;
+    /* The traced particle stand-ins' layer, composited here on purpose: this pass runs right after
+       the pane's half-field reconstruction and writes FINAL, so the layer never passes the
+       checkerboard resolve (which mixed a one-field contribution at half weight) and lands before
+       the raster overlay draws the raster particles - the same temporal treatment they get. The
+       layer is written by the reflect/refract raygen at plain pixels and only for the panes it
+       covered, so the mask gates the read. */
+    if (globalUniform.glassParticles != 0u && abs(glass) >= 4.0)
+    {
+        const float4 particleLayer = framebufQ2ParticleLayer_Sampled.Load(int3(pix, 0));
+        hdr = particleLayer.rgb + hdr * (1.0 - particleLayer.a);
+    }
     if (globalUniform.glassBlur != 0u && abs(glass) >= 1.0)
     {
         const float4 background = reconstructGlassLayer(pix, false);

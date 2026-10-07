@@ -186,6 +186,12 @@ SamplerState g_illuminationVolume_Sampler;
 
 #define CHECKERBOARD_SEPARATOR_DIVISOR 2
 
+float3 glassTransmissionFilter(const float3 tint, const float3 glassColor, const float transparency)
+{
+    const float t = clamp(transparency, 0.0, 1.0);
+    return t * max(glassColor, (float3)0.0) * lerp((float3)1.0, max(tint, (float3)0.0), 1.0 - t);
+}
+
 #ifdef DESC_SET_GLOBAL_UNIFORM
 #ifdef DESC_SET_FRAMEBUFFERS
 float2 getPrevScreenPos(const float2 motionCurToPrev, const int2 pix)

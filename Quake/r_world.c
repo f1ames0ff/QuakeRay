@@ -1547,7 +1547,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			.layerColors =
 				{
 					RT_COLOR_WHITE,
-					{0.0f, 0.0f, 0.0f, 0.0f},
+					{is_glass && diffuse_tex ? diffuse_tex->rtglasscolor[0] : 0.0f, is_glass && diffuse_tex ? diffuse_tex->rtglasscolor[1] : 0.0f, is_glass && diffuse_tex ? diffuse_tex->rtglasscolor[2] : 0.0f, 0.0f},
 					{is_glass && diffuse_tex ? diffuse_tex->rtglassior : 0.0f,
 					 is_glass && diffuse_tex ? diffuse_tex->rtglassthickness : 0.0f, 0.0f, 0.0f},
 				},

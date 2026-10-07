@@ -32,6 +32,7 @@
 [10] offset 72 uint32
 [11] offset 76 float32
 [12] offset 80 v2(float32)
+[13] offset 96 v3(float32)
 === block set 0 binding 2
 
 [0] offset 0 v2(float32)

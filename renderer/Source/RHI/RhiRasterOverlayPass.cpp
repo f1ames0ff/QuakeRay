@@ -56,15 +56,19 @@ const char *const PARTICLE_PIXEL_SHADER_FILE_NAME    = "RsParticle.frag.spv";
 // 120 bytes since the smoke fields at 88/104 were appended (Rasterizer.cpp:70-72), but the world
 // stage reads only its first 88 bytes; the pass mirrors that legacy prefix, so both renderers give
 // the stage the same bytes.
-constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
+// The world, smoke and particle fragments share one push block. It grew by the particle proxy
+// flag the two particle-bearing fragments read at offset 120 (RsWorld.frag and RsParticle.frag):
+// the world's own range used to end at the 88 bytes its fragment declares, the shared struct and
+// every range now cover the flag.
+constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 124;
 
 // The smoke block is the full legacy RasterizedPushConst: 120 bytes (Rasterizer.cpp:72), the two
 // texture indices at 80/84 plus the smokeNoise and smokeLook quartets at 88 and 104 that
 // RsSmoke.frag reads (RsSmoke.frag:24-28). The smoke fragment's push block starts at offset 88, so
 // the pipeline layout has to declare the whole 120 bytes for both stages.
-constexpr uint32_t SMOKE_PUSH_CONSTANT_SIZE = 120;
+constexpr uint32_t SMOKE_PUSH_CONSTANT_SIZE = RASTERIZED_PUSH_CONSTANT_SIZE;
 
-constexpr uint32_t PARTICLE_PUSH_CONSTANT_SIZE = SMOKE_PUSH_CONSTANT_SIZE;
+constexpr uint32_t PARTICLE_PUSH_CONSTANT_SIZE = RASTERIZED_PUSH_CONSTANT_SIZE;
 
 // The legacy DepthCopying pipeline layout declares exactly the two uints of DepthCopyingFrag_BT
 // (DepthCopying.cpp:205-208) and the process pushes { width, height } to the fragment stage
@@ -258,6 +262,12 @@ struct OverlayPushConstants
     float    c[4];
     uint32_t t;
     uint32_t e;
+    float    unused[8];
+
+    // The world sub-pass shares `RsWorld.frag.spv` with the overlay's world pipeline, and that
+    // fragment reads the particle proxy flag at offset 120: the block has to carry it, or the
+    // fragment's discard would read whatever the driver left beyond the 88 bytes it used to push.
+    uint32_t particleProxy;
 
     explicit OverlayPushConstants(const RasterizedDataCollector::DrawInfo &info, const float *defaultViewProj)
     {
@@ -276,6 +286,8 @@ struct OverlayPushConstants
         memcpy(c, info.color.Get(), 4 * sizeof(float));
         t = info.textureIndex;
         e = info.emissionTextureIndex;
+        memset(unused, 0, sizeof(unused));
+        particleProxy = info.particleProxy ? 1u : 0u;
     }
 };
 
@@ -283,7 +295,8 @@ static_assert(offsetof(OverlayPushConstants, vp) == 0);
 static_assert(offsetof(OverlayPushConstants, c) == 64);
 static_assert(offsetof(OverlayPushConstants, t) == 80);
 static_assert(offsetof(OverlayPushConstants, e) == 84);
-static_assert(sizeof(OverlayPushConstants) == 88);
+static_assert(offsetof(OverlayPushConstants, particleProxy) == 120);
+static_assert(sizeof(OverlayPushConstants) == RASTERIZED_PUSH_CONSTANT_SIZE);
 
 // The smoke block, byte for byte the legacy RasterizedPushConst (Rasterizer.cpp:33-72): the world
 // block above extended with the two quartets the smoke fragment reads at 88 and 104. The vert
@@ -298,6 +311,11 @@ struct RasterizedPushConstants
     uint32_t e;
     float    smokeNoise[4];
     float    smokeLook[4];
+
+    // The particle proxy flag (offset 120): whether the draw's sprites have traced stand-ins this
+    // frame, which is what lets the world and particle fragments drop the raster copy behind a
+    // pane. Zero for every other draw - a zero flag keeps the fragment's discard out of the way.
+    uint32_t particleProxy;
 
     explicit RasterizedPushConstants(const RasterizedDataCollector::DrawInfo &info, const float *defaultViewProj)
     {
@@ -319,6 +337,7 @@ struct RasterizedPushConstants
 
         memcpy(smokeNoise, info.smokeNoise.Get(), 4 * sizeof(float));
         memcpy(smokeLook, info.smokeLook.Get(), 4 * sizeof(float));
+        particleProxy = info.particleProxy ? 1u : 0u;
     }
 };
 
@@ -328,7 +347,10 @@ static_assert(offsetof(RasterizedPushConstants, t) == 80);
 static_assert(offsetof(RasterizedPushConstants, e) == 84);
 static_assert(offsetof(RasterizedPushConstants, smokeNoise) == 88);
 static_assert(offsetof(RasterizedPushConstants, smokeLook) == 104);
+static_assert(offsetof(RasterizedPushConstants, particleProxy) == 120);
+static_assert(sizeof(RasterizedPushConstants) == RASTERIZED_PUSH_CONSTANT_SIZE);
 static_assert(sizeof(RasterizedPushConstants) == SMOKE_PUSH_CONSTANT_SIZE);
+static_assert(sizeof(RasterizedPushConstants) == PARTICLE_PUSH_CONSTANT_SIZE);
 
 // The legacy viewport of a DrawInfo, as an NVRHI viewport that makes the Vulkan backend emit the
 // legacy's own VkViewport. The legacy `vkCmdSetViewport` takes (x, y, w, +h) (Rasterizer.cpp:
@@ -694,6 +716,10 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
         const nvrhi::BindingLayoutItem layoutItems[] =
         {
             nvrhi::BindingLayoutItem::Texture_UAV(WORLD_STORAGE_SLOT),
+            // The glass mask: the world fragment discards the sprites that stand behind a pane
+            // (the traced stand-ins are what the pane shows), so it reads the same mask the
+            // particle fragment does.
+            nvrhi::BindingLayoutItem::Texture_SRV(GLASS_MASK_SRV_SLOT),
         };
         const nvrhi::VulkanBindingOffsets offsets = nvrhi::VulkanBindingOffsets()
             .setShaderResourceOffset(WORLD_FRAMEBUFFERS_SRV_OFFSET)
@@ -1283,6 +1309,13 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
         pCommandList->beginTrackingTextureState(target.smokePingLfCocgTexture, nvrhi::AllSubresources,
                                                 nvrhi::ResourceStates::UnorderedAccess);
     }
+    // The particle fragment reads the glass mask (the pane-depth test of its discard), so its
+    // state has to be announced in the list that samples it, exactly as the smoke images above.
+    if (target.glassMaskTexture != nullptr)
+    {
+        pCommandList->beginTrackingTextureState(target.glassMaskTexture, nvrhi::AllSubresources,
+                                                nvrhi::ResourceStates::UnorderedAccess);
+    }
 
     // The smoke TLAS set: a valid one is part of the smoke half's drawability, a failure (or a null
     // TLAS) is not fatal to the world half.
@@ -1444,6 +1477,10 @@ bool RhiRasterOverlayPass::CreateTargetObjects(
     {
         nvrhi::BindingSetDesc desc;
         desc.addItem(nvrhi::BindingSetItem::Texture_UAV(WORLD_STORAGE_SLOT, target.storageTexture));
+        if (target.glassMaskTexture != nullptr)
+        {
+            desc.addItem(nvrhi::BindingSetItem::Texture_SRV(GLASS_MASK_SRV_SLOT, target.glassMaskTexture));
+        }
         target.framebuffersSet = device->createBindingSet(desc, worldFramebuffersLayout);
 
         if (target.framebuffersSet == nullptr)

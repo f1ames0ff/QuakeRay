@@ -682,7 +682,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (tracedFrame)
         {
             accelStructs->BuildTopLevel(commandList, frameIndex, sky.rayCullMaskWorld,
-                                        sky.allowGeometryWithSkyFlag, sky.disableRayTracedGeometry);
+                                        sky.allowGeometryWithSkyFlag, sky.disableRayTracedGeometry,
+                                        sky.particleProxies, sky.particleProxyCount);
         }
     }
 
@@ -709,6 +710,13 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 memcpy(sky.uniform->GetData()->instanceGeomCount, instanceGeomInfoCount,
                        instanceCount * sizeof(int32_t));
             }
+
+            // The traced particle half is effective only while this frame's TLAS really carries the
+            // proxy instance: the raster particle discard reads the same flag, and without the
+            // traced stand-ins it would leave holes where the sprites are.
+            sky.uniform->GetData()->glassParticles =
+                sky.uniform->GetData()->glassParticles != 0 &&
+                accelStructs->GetParticleProxyBuffer(frameIndex) != nullptr;
         }
 
         // A4.5: fltEnable is no longer forced - the engine's cvar-driven value selects the
@@ -1120,7 +1128,47 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             if (uniform != nullptr && uniform->reflectRefractMaxDepth > 0)
             {
                 BeginGpuPass(commandList, frameIndex, GPU_PASS_REFLREFR);
+
+                // Set 6 is prepared before this pass records: the reflect/refract raygen lights the
+                // traced particle stand-ins with the same light data the raster particles read, and
+                // this pass runs before the direct pass owns the frame's set. The direct pass's own
+                // call later finds the set prepared and records nothing twice.
+                nvrhi::BindingSetHandle lightSet;
+                if (rtDirectPass != nullptr)
+                {
+                    rtDirectPass->EnsureLightSet(commandList, frameIndex, uniform->frameId,
+                                                 uniform->q2LightStatsMode);
+                    lightSet = rtDirectPass->GetLightSet(frameIndex);
+                }
+
+                // The unlit traced particle stand-ins reproduce the world fragment's exposure
+                // factor, which reads the engine's tonemapping array - the wraps the overlay/UI
+                // block builds later in the frame are ensured here so the raygen has them.
+                if (sky.tonemapping != nullptr && worldTonemappingBuffers[0] == nullptr)
+                {
+                    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                    {
+                        nvrhi::BufferDesc tonemappingDesc;
+                        tonemappingDesc.byteSize = sky.tonemapping->GetElementSize();
+                        tonemappingDesc.structStride = sky.tonemapping->GetElementSize();
+                        tonemappingDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+                        tonemappingDesc.keepInitialState = true;
+                        tonemappingDesc.debugName = "RHI world tonemapping wrap (refl/refr) " + std::to_string(i);
+
+                        worldTonemappingBuffers[i] = device->createHandleForNativeBuffer(
+                            nvrhi::ObjectTypes::VK_Buffer,
+                            nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+                                sky.tonemapping->GetBuffer(i)))),
+                            tonemappingDesc);
+                    }
+                }
+
                 reflRefrPass->Render(commandList, frameIndex,
+                                     accelStructs != nullptr
+                                         ? accelStructs->GetParticleProxyBuffer(frameIndex)
+                                         : nullptr,
+                                     worldTonemappingBuffers[frameIndex].Get(),
+                                     lightSet,
                                      accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
                                      worldUniformBuffer.Get(), passVertexData, sky.framebuffers,
                                      sky.width, sky.height);

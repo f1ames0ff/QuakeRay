@@ -974,8 +974,13 @@ int QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const cha
 	LabelColumn (label, tooltip);
 	ImGui::SetNextItemWidth (RowWidth (kBrowseButtonW + ImGui::GetStyle ().ItemSpacing.x));
 	// An unauthored path is shown as NONE; the buffer stays empty, and typing
-	// NONE by hand commits as "no texture" as well.
-	if (ImGui::InputTextWithHint (id, "NONE", buf, capacity))
+	// NONE by hand commits as "no texture" as well. The value commits on Enter
+	// or when the field loses focus: a path reaches the loader once, complete,
+	// instead of on every keystroke, so partial names never search the disks
+	// and never ask for a full static re-submit.
+	if (ImGui::InputTextWithHint (id, "NONE", buf, capacity, ImGuiInputTextFlags_EnterReturnsTrue))
+		result |= 1;
+	if (ImGui::IsItemDeactivatedAfterEdit ())
 		result |= 1;
 	ItemTooltip (tooltip);
 

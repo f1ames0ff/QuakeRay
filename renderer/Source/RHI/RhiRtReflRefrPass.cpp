@@ -1,14 +1,16 @@
-#include "RhiRtReflRefrPass.h"
+﻿#include "RhiRtReflRefrPass.h"
 
 #include "RhiDescriptors.h"
 #include "RhiFrameContext.h"
 #include "RhiPipeline.h"
 #include "RhiResources.h"
+#include "RhiRtDirectPass.h"
 #include "RhiTextureSource.h"
 #include "RhiTextureTable.h"
 
 #include "../Framebuffers.h"
 #include "../Generated/ShaderCommonC.h"
+#include "../ParticleProxies.h"
 
 #include <cstring>
 #include <string>
@@ -88,9 +90,15 @@ struct FramebufferBinding
 {
     FramebufferImageIndex image;
     bool isUAV;
+
+    // The engine's own framebuffer flag table marks the smaller images (the gradient sample
+    // positions, the LF ping pair), and the pass's size guard refuses those - except for the
+    // entries a shader reads at explicit texels, which the wrap's own view sizes correctly: the
+    // particle proxie shading reads the LF pings that way, so those entries set this.
+    bool allowNotRenderSized = false;
 };
 
-constexpr uint32_t FRAMEBUFFER_BINDING_COUNT = 24;
+constexpr uint32_t FRAMEBUFFER_BINDING_COUNT = 28;
 constexpr FramebufferBinding FRAMEBUFFER_BINDINGS[FRAMEBUFFER_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_ALBEDO,                      true  }, //   0  framebufAlbedo
@@ -101,6 +109,7 @@ constexpr FramebufferBinding FRAMEBUFFER_BINDINGS[FRAMEBUFFER_BINDING_COUNT] =
     { FB_IMAGE_INDEX_DEPTH_WORLD,                 true  }, //   9  framebufDepthWorld
     { FB_IMAGE_INDEX_DEPTH_NDC,                   true  }, //  12  framebufDepthNdc
     { FB_IMAGE_INDEX_MOTION,                      true  }, //  13  framebufMotion
+    { FB_IMAGE_INDEX_MOTION_DLSS,                 true  }, //  31  framebufMotionDlss
     { FB_IMAGE_INDEX_SURFACE_POSITION,            true  }, //  19  framebufSurfacePosition
     { FB_IMAGE_INDEX_VISIBILITY_BUFFER,           true  }, //  21  framebufVisibilityBuffer
     { FB_IMAGE_INDEX_VIEW_DIRECTION,              true  }, //  23  framebufViewDirection
@@ -117,6 +126,11 @@ constexpr FramebufferBinding FRAMEBUFFER_BINDINGS[FRAMEBUFFER_BINDING_COUNT] =
     { FB_IMAGE_INDEX_Q2_RNG_SEED,                 true  }, // 121  framebufQ2RngSeed
     { FB_IMAGE_INDEX_Q2_CLUSTER,                  true  }, // 123  framebufQ2Cluster
     { FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR,        false }, // 149  framebufPrimaryToReflRefr_Sampled
+    { FB_IMAGE_INDEX_Q2_PARTICLE_LAYER,            true }, // 130  framebufQ2ParticleLayer
+    // The two LF pings are the one third-sized pair the raygen reads by explicit texel (the traced
+    // particles' ambient term), so the render-sized guard has to let them through.
+    { FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_S_H,      false, true }, // 231  framebufQ2AtrousPingLF_SH_Sampled
+    { FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_C_O_C_G,  false, true }, // 233  framebufQ2AtrousPingLF_COCG_Sampled
 };
 
 // The engine raw binding of one entry: the UAV array for the storage images, the sampled array for
@@ -302,6 +316,7 @@ bool RhiRtReflRefrPass::Create(nvrhi::IDevice *pDevice,
                                rhi::RhiFrameContext *pFrameContext,
                                rhi::RhiTextureTable *pTextureTable,
                                const RhiRtPrimaryPass *pPrimaryPass,
+                               const RhiRtDirectPass *pDirectPass,
                                const char *pShaderFolderPath,
                                PrintFunction pfnPrint)
 {
@@ -350,6 +365,19 @@ bool RhiRtReflRefrPass::Create(nvrhi::IDevice *pDevice,
         LogMessage(print, "Warning: RHI: the reflect/refract RT pass needs the created primary RT pass for its shared set layouts");
         return false;
     }
+
+    // Set 6 is the direct pass's light layout: the traced particle stand-ins are lit with the same
+    // sun and cluster data the raster particle path reads, so this pass borrows the layout handle
+    // and the per-frame set (EnsureLightSet / GetLightSet) instead of wrapping the light buffers a
+    // second time - the same shared-layout contract the indirect pass uses. The direct pass
+    // therefore has to be created first and has to outlive this object.
+    if (pDirectPass == nullptr || !pDirectPass->IsCreated() || pDirectPass->GetLightLayout() == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: the reflect/refract RT pass needs the created direct RT pass for its set-6 light layout");
+        return false;
+    }
+
+    lightLayout = pDirectPass->GetLightLayout();
 
     // The pipeline declares twelve binding layouts, so the pinned NVRHI's cap has to be the raised
     // one: the module is written against `c_MaxBindingLayouts == 16` (the patch build_win.ps1
@@ -460,9 +488,30 @@ bool RhiRtReflRefrPass::Create(nvrhi::IDevice *pDevice,
 
         renderCubemapLayout = device->createBindingLayout(desc);
     }
+    {
+        // Set 5: the frame's particle proxy records (ShParticleProxy, ParticleProxies.h), one
+        // structured buffer at raw binding 0. The per-slot set follows the buffer pointer the
+        // caller passes; the dummy below fills the position until the first frame with proxies.
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::AllRayTracing;
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
+
+        particleLayout = device->createBindingLayout(desc);
+    }
+    {
+        // Set 10: the engine's `ShTonemapping` array (one element per slot) the unlit traced
+        // particle stand-ins read for the world fragment's exposure factor. The engine keeps the
+        // array in its own buffer (Tonemapping::GetBuffer), so the skeleton wraps it per slot and
+        // the set follows the pointer exactly as set 5 does.
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::AllRayTracing;
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
+
+        tonemappingLayout = device->createBindingLayout(desc);
+    }
 
     if (framebufferLayout == nullptr || portalLayout == nullptr || cubemapLayout == nullptr ||
-        renderCubemapLayout == nullptr)
+        renderCubemapLayout == nullptr || particleLayout == nullptr || tonemappingLayout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a reflect/refract RT pass binding layout");
         return false;
@@ -536,6 +585,43 @@ bool RhiRtReflRefrPass::Create(nvrhi::IDevice *pDevice,
         }
     }
 
+    // Set 5's placeholder: one proxy record that no ray can ever reach (the traced half is only
+    // active while the TLAS carries the particle instance), so the slot's set has a real buffer to
+    // bind on the frames before the first one with proxies.
+    {
+        nvrhi::BufferDesc desc;
+        desc.byteSize = sizeof(ParticleProxy);
+        desc.structStride = sizeof(ParticleProxy);
+        desc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
+        desc.keepInitialState = true;
+        desc.debugName = "RhiRtReflRefrPass particle proxy placeholder";
+
+        particleDummyBuffer = device->createBuffer(desc);
+        if (particleDummyBuffer == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the reflect/refract RT pass particle proxy placeholder");
+            return false;
+        }
+    }
+
+    // Set 10's placeholder: one zeroed ShTonemapping record (its avgLuminance zero makes the
+    // exposure factor 1) for the frames the host brings no buffer for.
+    {
+        nvrhi::BufferDesc desc;
+        desc.byteSize = sizeof(ShTonemapping);
+        desc.structStride = sizeof(ShTonemapping);
+        desc.initialState = nvrhi::ResourceStates::CopyDest;
+        desc.keepInitialState = true;
+        desc.debugName = "RhiRtReflRefrPass tonemapping placeholder";
+
+        tonemappingDummyBuffer = device->createBuffer(desc);
+        if (tonemappingDummyBuffer == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the reflect/refract RT pass tonemapping placeholder");
+            return false;
+        }
+    }
+
     // The pipeline: one raygen (the specialized RGenQ2ReflRefr), the engine's default miss as a
     // GENERAL group, and the engine's two hit groups in the order the instance records address
     // (fully opaque first, alpha tested second; the alpha-tested any-hit needs sets 2/3/4 and runs
@@ -566,12 +652,12 @@ bool RhiRtReflRefrPass::Create(nvrhi::IDevice *pDevice,
         desc.addBindingLayout(primaryPass->GetUniformLayout());        // 2
         desc.addBindingLayout(primaryPass->GetVertexDataLayout());     // 3
         desc.addBindingLayout(textureTable->GetLayout());              // 4
-        desc.addBindingLayout(primaryPass->GetHoleLayout());           // 5
-        desc.addBindingLayout(primaryPass->GetHoleLayout());           // 6
+        desc.addBindingLayout(particleLayout);                         // 5
+        desc.addBindingLayout(lightLayout);                            // 6
         desc.addBindingLayout(cubemapLayout);                          // 7
         desc.addBindingLayout(renderCubemapLayout);                    // 8
         desc.addBindingLayout(portalLayout);                           // 9
-        desc.addBindingLayout(primaryPass->GetHoleLayout());           // 10
+        desc.addBindingLayout(tonemappingLayout);                      // 10
         desc.addBindingLayout(primaryPass->GetRayStatsLayout());       // 11
 
         desc.setMaxPayloadSize(MAX_PAYLOAD_SIZE);
@@ -698,6 +784,9 @@ void RhiRtReflRefrPass::SetRenderCubemaps(nvrhi::ITexture *pCubemap, nvrhi::ITex
 
 void RhiRtReflRefrPass::Render(nvrhi::ICommandList *pCommandList,
                                uint32_t frameIndex,
+                               nvrhi::IBuffer *pParticleProxies,
+                               nvrhi::IBuffer *pTonemappingBuffer,
+                               nvrhi::BindingSetHandle pLightSet,
                                nvrhi::rt::IAccelStruct *pTopLevel,
                                nvrhi::IBuffer *pUniformBuffer,
                                const RhiRtPrimaryPass::VertexData &vertexData,
@@ -721,6 +810,25 @@ void RhiRtReflRefrPass::Render(nvrhi::ICommandList *pCommandList,
 
     if (!PreparePortalSet(target))
     {
+        return;
+    }
+
+    if (!PrepareParticleSet(target, pParticleProxies) ||
+        !PrepareTonemappingSet(pCommandList, target, pTonemappingBuffer))
+    {
+        return;
+    }
+
+    // Set 6 is the frame's light set the host prepared before this pass (EnsureLightSet): the
+    // traced particle stand-ins need the sun and cluster data, and a frame without it has no
+    // defined lighting for them.
+    if (pLightSet == nullptr)
+    {
+        if (!warnedMissingLightSet)
+        {
+            warnedMissingLightSet = true;
+            LogMessage(print, "Warning: RHI: the reflect/refract RT pass got no light set, the trace is skipped");
+        }
         return;
     }
 
@@ -778,7 +886,8 @@ void RhiRtReflRefrPass::Render(nvrhi::ICommandList *pCommandList,
     {
         const FramebufferImageIndex index = FRAMEBUFFER_BINDINGS[i].image;
 
-        if ((ShFramebuffers_Flags[index] & NOT_RENDER_SIZED_FLAGS) != 0)
+        if ((ShFramebuffers_Flags[index] & NOT_RENDER_SIZED_FLAGS) != 0 &&
+            !FRAMEBUFFER_BINDINGS[i].allowNotRenderSized)
         {
             if (!warnedUnexpectedSize)
             {
@@ -930,12 +1039,12 @@ void RhiRtReflRefrPass::Render(nvrhi::ICommandList *pCommandList,
     state.addBindingSet(target.uniformSet);               // 2
     state.addBindingSet(target.vertexDataSet);            // 3
     state.addBindingSet(textureTable->GetTable());        // 4
-    state.addBindingSet(primaryPass->GetHoleSet());       // 5
-    state.addBindingSet(primaryPass->GetHoleSet());       // 6
+    state.addBindingSet(target.particleSet);              // 5
+    state.addBindingSet(pLightSet);                       // 6
     state.addBindingSet(cubemapTable);                    // 7
     state.addBindingSet(renderCubemapSet);                // 8
     state.addBindingSet(target.portalSet);                // 9
-    state.addBindingSet(primaryPass->GetHoleSet());       // 10
+    state.addBindingSet(target.tonemappingSet);           // 10
     state.addBindingSet(primaryPass->GetRayStatsSet(frameIndex)); // 11
 
     pCommandList->setRayTracingState(state);
@@ -1027,6 +1136,14 @@ void RhiRtReflRefrPass::ReleaseTarget(Target &target)
         {
             frameContext->Retire(target.portalSet);
         }
+        if (target.particleSet != nullptr)
+        {
+            frameContext->Retire(target.particleSet);
+        }
+        if (target.tonemappingSet != nullptr)
+        {
+            frameContext->Retire(target.tonemappingSet);
+        }
     }
 
     target.tlasSet = nullptr;
@@ -1036,6 +1153,10 @@ void RhiRtReflRefrPass::ReleaseTarget(Target &target)
     target.vertexDataSet = nullptr;
     target.portalSet = nullptr;
     target.portalBuffer = nullptr;
+    target.particleSet = nullptr;
+    target.particleProxyBuffer = nullptr;
+    target.tonemappingSet = nullptr;
+    target.tonemappingBuffer = nullptr;
 
     for (nvrhi::IBuffer *&buffer : target.vertexBuffers)
     {
@@ -1222,6 +1343,83 @@ bool RhiRtReflRefrPass::PreparePortalSet(Target &target)
     }
 
     target.portalBuffer = portalBuffer;
+    return true;
+}
+
+bool RhiRtReflRefrPass::PrepareParticleSet(Target &target, nvrhi::IBuffer *pParticleProxies)
+{
+    // The buffer the set binds: this frame's proxy buffer while it has one, otherwise the slot's
+    // last real buffer (the contents are rewritten every frame the proxies are active, and no ray
+    // reaches the buffer while the instance is out of the TLAS) or the placeholder before the
+    // first frame with proxies. Only a replaced handle rebuilds the set.
+    nvrhi::IBuffer *const buffer = pParticleProxies != nullptr
+                                       ? pParticleProxies
+                                       : (target.particleProxyBuffer != nullptr
+                                              ? target.particleProxyBuffer
+                                              : particleDummyBuffer.Get());
+
+    if (target.particleSet != nullptr && target.particleProxyBuffer == buffer)
+    {
+        return true;
+    }
+
+    if (target.particleSet != nullptr)
+    {
+        frameContext->Retire(target.particleSet);
+    }
+    target.particleSet = nullptr;
+
+    nvrhi::BindingSetDesc setDesc;
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, buffer));
+
+    target.particleSet = device->createBindingSet(setDesc, particleLayout);
+
+    if (target.particleSet == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create the reflect/refract RT pass particle proxy binding set");
+        return false;
+    }
+
+    target.particleProxyBuffer = buffer;
+    return true;
+}
+
+bool RhiRtReflRefrPass::PrepareTonemappingSet(nvrhi::ICommandList *pCommandList, Target &target,
+                                              nvrhi::IBuffer *pTonemappingBuffer)
+{
+    nvrhi::IBuffer *const buffer = pTonemappingBuffer != nullptr ? pTonemappingBuffer
+                                                                 : tonemappingDummyBuffer.Get();
+
+    if (target.tonemappingSet != nullptr && target.tonemappingBuffer == buffer)
+    {
+        return true;
+    }
+
+    if (buffer == tonemappingDummyBuffer.Get() && !tonemappingDummyInitialized)
+    {
+        const ShTonemapping zero = {};
+        pCommandList->writeBuffer(buffer, &zero, sizeof(zero), 0);
+        tonemappingDummyInitialized = true;
+    }
+
+    if (target.tonemappingSet != nullptr)
+    {
+        frameContext->Retire(target.tonemappingSet);
+    }
+    target.tonemappingSet = nullptr;
+
+    nvrhi::BindingSetDesc setDesc;
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, buffer));
+
+    target.tonemappingSet = device->createBindingSet(setDesc, tonemappingLayout);
+
+    if (target.tonemappingSet == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create the reflect/refract RT pass tonemapping binding set");
+        return false;
+    }
+
+    target.tonemappingBuffer = buffer;
     return true;
 }
 

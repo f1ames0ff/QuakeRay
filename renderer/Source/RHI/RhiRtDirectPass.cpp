@@ -762,7 +762,7 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
     // Set 6, the four light copies and the light-statistics fill. The copies and the fill go before
     // the state below, so the automatic barriers order each of them before the dispatch that reads
     // or writes the buffer.
-    if (!PrepareLightSet(pCommandList, target, frameIndex, frameId, lightStatsMode))
+    if (!EnsureLightSet(pCommandList, frameIndex, frameId, lightStatsMode))
     {
         return;
     }
@@ -1091,6 +1091,29 @@ bool RhiRtDirectPass::PrepareVertexDataSet(Target &target, const RhiRtPrimaryPas
         target.vertexBuffers[i] = buffers[i];
     }
 
+    return true;
+}
+
+bool RhiRtDirectPass::EnsureLightSet(nvrhi::ICommandList *pCommandList, uint32_t frameIndex,
+                                     uint32_t frameId, uint32_t lightStatsMode)
+{
+    if (frameIndex >= MAX_FRAMES_IN_FLIGHT)
+    {
+        return false;
+    }
+
+    if (lightSetPrepared[frameIndex] && lightSetPreparedFrame[frameIndex] == frameId)
+    {
+        return true;
+    }
+
+    if (!PrepareLightSet(pCommandList, targets[frameIndex], frameIndex, frameId, lightStatsMode))
+    {
+        return false;
+    }
+
+    lightSetPrepared[frameIndex] = true;
+    lightSetPreparedFrame[frameIndex] = frameId;
     return true;
 }
 

@@ -70,6 +70,15 @@ constexpr nvrhi::rt::AccelStructBuildFlags TOP_LEVEL_BUILD_FLAGS =
 // never exceeding this keeps the two indexings aligned.
 constexpr uint32_t MAX_TLAS_INSTANCES = MAX_TOP_LEVEL_INSTANCE_COUNT;
 
+// The AABB record of an rt::GeometryAABBs build input: VkAabbPositionsKHR's six floats (min xyz
+// first), the 24-byte stride the particle proxy BLAS is built with.
+struct ParticleAabb
+{
+    float min[3];
+    float max[3];
+};
+static_assert(sizeof(ParticleAabb) == 24, "The particle AABB record must stay a VkAabbPositionsKHR");
+
 // The engine's vertex-preprocessing blob, by the file name ShaderManager maps "CVertexPreprocess" to
 // (ShaderManager.cpp:66): the RHI pass and the legacy renderer load the same shader.
 const char *const VERTEX_PREPROCESS_SHADER_FILE_NAME = "CmVertexPreprocess.comp.spv";
@@ -1670,11 +1679,130 @@ void RhiAccelStructs::WarnUnresolvedFilter(uint32_t filter)
            " has geometry but no RHI BLAS; its instances are missing from the top-level structure").c_str());
 }
 
+bool RhiAccelStructs::BuildParticleProxies(nvrhi::ICommandList *pCommandList,
+                                           uint32_t frameIndex,
+                                           const ParticleProxy *pProxies,
+                                           uint32_t proxyCount)
+{
+    if (pProxies == nullptr || proxyCount == 0 || proxyCount > MAX_PARTICLE_PROXY_COUNT ||
+        frameIndex >= MAX_FRAMES_IN_FLIGHT)
+    {
+        return false;
+    }
+
+    // The two buffers follow the module's vertex-data copy policy: CopyDest as the claimed initial
+    // state so the frame's writeBuffer is transition-free, doubles up to the bound the proxy cap
+    // gives, and a replaced handle goes through the retire queue. The AABB buffer additionally
+    // carries the AS build-input flag the validation device requires.
+    const auto ensureBuffer = [&](nvrhi::BufferHandle &buffer, uint64_t &capacity, uint64_t needed,
+                                  uint32_t stride, bool buildInput, const char *kind) -> bool {
+        if (buffer != nullptr && capacity >= needed)
+        {
+            return true;
+        }
+
+        const uint64_t maxCapacity = uint64_t(MAX_PARTICLE_PROXY_COUNT) * stride;
+        uint64_t newCapacity = std::min(std::max(needed, capacity * 2), maxCapacity);
+
+        nvrhi::BufferDesc desc;
+        desc.byteSize = newCapacity;
+        desc.structStride = stride;
+        desc.isAccelStructBuildInput = buildInput;
+        desc.initialState = nvrhi::ResourceStates::CopyDest;
+        desc.keepInitialState = true;
+        desc.debugName = std::string("RHI ") + kind + " slot " + std::to_string(frameIndex);
+
+        nvrhi::BufferHandle created = device->createBuffer(desc);
+        if (created == nullptr)
+        {
+            print(("Warning: RHI: failed to create the slot " + std::to_string(frameIndex) + " " +
+                   kind + " buffer, the traced particle proxies are skipped").c_str());
+            return false;
+        }
+
+        if (buffer != nullptr)
+        {
+            frameContext->Retire(std::move(buffer));
+        }
+
+        buffer = std::move(created);
+        capacity = newCapacity;
+        return true;
+    };
+
+    if (!ensureBuffer(particleProxyBuffer[frameIndex], particleProxyCapacity[frameIndex],
+                      uint64_t(proxyCount) * sizeof(ParticleProxy), sizeof(ParticleProxy), false,
+                      "particle proxy") ||
+        !ensureBuffer(particleAabbBuffer[frameIndex], particleAabbCapacity[frameIndex],
+                      uint64_t(proxyCount) * sizeof(ParticleAabb), sizeof(ParticleAabb), true,
+                      "particle AABB"))
+    {
+        return false;
+    }
+
+    pCommandList->writeBuffer(particleProxyBuffer[frameIndex].Get(), pProxies,
+                              size_t(proxyCount) * sizeof(ParticleProxy), 0);
+
+    std::vector<ParticleAabb> aabbs(proxyCount);
+    for (uint32_t i = 0; i < proxyCount; i++)
+    {
+        const ParticleProxy &proxy = pProxies[i];
+        for (int c = 0; c < 3; c++)
+        {
+            aabbs[i].min[c] = proxy.center[c] - proxy.radius;
+            aabbs[i].max[c] = proxy.center[c] + proxy.radius;
+        }
+    }
+
+    pCommandList->writeBuffer(particleAabbBuffer[frameIndex].Get(), aabbs.data(),
+                              aabbs.size() * sizeof(ParticleAabb), 0);
+
+    // The structure is created once with room for the whole cap and only rebuilt afterwards, so a
+    // frame that brings more (or fewer) sprites never pays for a create.
+    if (particleBlas[frameIndex] == nullptr)
+    {
+        nvrhi::rt::GeometryAABBs boxes;
+        boxes.setBuffer(particleAabbBuffer[frameIndex].Get()).setOffset(0)
+             .setCount(MAX_PARTICLE_PROXY_COUNT).setStride(sizeof(ParticleAabb));
+
+        nvrhi::rt::GeometryDesc geometry;
+        geometry.setAABBs(boxes);
+        geometry.setFlags(nvrhi::rt::GeometryFlags::None);
+
+        nvrhi::rt::AccelStructDesc desc;
+        desc.bottomLevelGeometries = { geometry };
+        desc.setBuildFlags(DYNAMIC_BLAS_BUILD_FLAGS);
+        desc.setDebugName("RHI particle proxies slot " + std::to_string(frameIndex));
+
+        particleBlas[frameIndex] = device->createAccelStruct(desc);
+        if (particleBlas[frameIndex] == nullptr)
+        {
+            print(("Warning: RHI: failed to create the slot " + std::to_string(frameIndex) +
+                   " particle proxy BLAS, the traced particle proxies are skipped").c_str());
+            return false;
+        }
+    }
+
+    nvrhi::rt::GeometryAABBs boxes;
+    boxes.setBuffer(particleAabbBuffer[frameIndex].Get()).setOffset(0)
+         .setCount(proxyCount).setStride(sizeof(ParticleAabb));
+
+    nvrhi::rt::GeometryDesc geometry;
+    geometry.setAABBs(boxes);
+    geometry.setFlags(nvrhi::rt::GeometryFlags::None);
+
+    pCommandList->buildBottomLevelAccelStruct(particleBlas[frameIndex].Get(), &geometry, 1,
+                                              DYNAMIC_BLAS_BUILD_FLAGS);
+    return true;
+}
+
 void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
                                     uint32_t frameIndex,
                                     uint32_t rayCullMaskWorld,
                                     bool allowGeometryWithSkyFlag,
-                                    bool disableRayTracedGeometry)
+                                    bool disableRayTracedGeometry,
+                                    const ParticleProxy *pParticleProxies,
+                                    uint32_t particleProxyCount)
 {
     if (device == nullptr || pCommandList == nullptr || frameIndex >= MAX_FRAMES_IN_FLIGHT)
     {
@@ -1696,6 +1824,7 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
     vertexDataCopyBytes = 0;
     tlasInstanceCount = 0;
     hasGlassInstances = false;
+    particleProxyActive[frameIndex] = false;
 
     // The vertex-preprocessing push describes this frame's instance list only; a frame that records
     // none (disabled or all culled) leaves a zero count, and RecordVertexPreprocessing then does
@@ -1711,6 +1840,27 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
         // filter-grid order (ASManager.cpp:1045-1049 walks allStaticBlas then allDynamicBlas[slot]).
         AppendStaticInstances(rayCullMaskWorld, allowGeometryWithSkyFlag, instances);
         AppendDynamicSlot(pCommandList, frameIndex, rayCullMaskWorld, allowGeometryWithSkyFlag, instances);
+    }
+
+    // The frame's traced particle stand-ins: the reserved slot after the engine's instances, so
+    // every engine instance keeps its index in the uniform's per-instance ranges. Its BLAS and
+    // buffers are built here, before the TLAS build records them, and the instance carries the
+    // particle mask alone - no scene ray's cull mask includes it, only the reflect/refract raygen's
+    // inline query opts in with its own mask.
+    if (!disableRayTracedGeometry && pParticleProxies != nullptr && particleProxyCount > 0 &&
+        instances.size() < MAX_TLAS_INSTANCES &&
+        BuildParticleProxies(pCommandList, frameIndex, pParticleProxies, particleProxyCount))
+    {
+        nvrhi::rt::InstanceDesc instance;
+        instance.setBLAS(particleBlas[frameIndex].Get());
+        instance.setInstanceMask(INSTANCE_MASK_PARTICLE);
+        instance.setInstanceID(0);
+        instance.setInstanceContributionToHitGroupIndex(0);
+        instance.setFlags(nvrhi::rt::InstanceFlags::None);
+        instances.push_back(instance);
+
+        instanceGeomInfo[instances.size() - 1] = InstanceGeomInfo{};
+        particleProxyActive[frameIndex] = true;
     }
 
     if (instances.size() > MAX_TLAS_INSTANCES)
@@ -1798,6 +1948,16 @@ nvrhi::rt::IAccelStruct *RhiAccelStructs::GetTopLevel(uint32_t frameIndex) const
     }
 
     return topLevel[frameIndex].Get();
+}
+
+nvrhi::IBuffer *RhiAccelStructs::GetParticleProxyBuffer(uint32_t frameIndex) const
+{
+    if (frameIndex >= MAX_FRAMES_IN_FLIGHT || !particleProxyActive[frameIndex])
+    {
+        return nullptr;
+    }
+
+    return particleProxyBuffer[frameIndex].Get();
 }
 
 RhiAccelStructs::VertexDataBuffers RhiAccelStructs::GetVertexDataBuffers(uint32_t frameIndex) const
