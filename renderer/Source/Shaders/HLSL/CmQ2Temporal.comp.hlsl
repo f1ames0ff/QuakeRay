@@ -227,6 +227,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV
     float3 temporal_color_hf = (float3)0.0;
     float4 temporal_color_histlen_spec = (float4)0.0;
     float4 temporal_moments_histlen_hf = (float4)0.0;
+    if (globalUniform.restirParams.z == 0u)
     {
         float temporal_sum_w_diff = 0.0;
         float temporal_sum_w_spec = 0.0;

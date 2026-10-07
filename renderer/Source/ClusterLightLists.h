@@ -80,16 +80,25 @@ public:
     // and one cluster list as the lists were left for it.
     void GetGrants(uint32_t *pGranted, uint32_t *pDenied, uint32_t maxCount, uint32_t *pCount) const;
     void GetClusterList(uint32_t cluster, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const;
+    void GetClusterTail(uint32_t cluster, uint64_t *pUniqueIds, float *pProb, float *pMarginal,
+                        uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount) const;
+    void ValidateComposition(UserPrint *pUserPrint) const;
 
 private:
     // One registered light: what it is, where it stands, how far it reaches, and the leaf that
     // resolved it. They are kept together so that a frame can be compared against the
     // composition without touching the map again.
+    static constexpr uint32_t kMaxSourceClusters = QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS;
+
     struct Source
     {
         uint64_t uid;
         float    origin[3];
         uint32_t cluster;
+        float    radius = 0.0f;
+        uint32_t clusterCount = 0;
+        uint32_t clusters[kMaxSourceClusters] = {};
+        float    power = 0.0f;
         // Distance up to which the light belongs in a list, zero for no limit of its own. It
         // is clamped to the top-up reach when the sources are taken: the two passes have to
         // agree on where a light stops mattering.
@@ -128,6 +137,12 @@ private:
     // the lights the lists hold.
     bool UpdateSourceRecords();
     bool AppendSlot(uint32_t cluster, uint32_t sourceIndex, float dist2, bool fromTopUp);
+    void RecordCandidate(uint32_t cluster, uint32_t sourceIndex, float dist2);
+    void UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex);
+    void BuildOverflow();
+    void MarkTailDirty(uint32_t cluster);
+    bool BuildTailBlock(uint32_t cluster, float &outBeta);
+    void RebuildDirtyTails();
     bool BuildGrid(const WorldLights &worldLights, float reach);
     int  GridAxis(uint32_t axis, float value) const;
     int  GridCell(int x, int y, int z) const;
@@ -178,6 +193,57 @@ private:
     // that the top-up pass does not hand the same light to the same cluster twice.
     std::vector<uint64_t> slotBits;
     uint32_t              bitsWords = 0;
+    // Every accepted (cluster, source) pair of the composition, recorded when the pair is
+    // granted or topped up, independent of whether it ended in a fast slot. The overflow
+    // distribution is built from these sets as C \ H.
+    struct Candidate
+    {
+        uint64_t uid;
+        float    mass;
+        uint32_t source;
+    };
+
+    std::vector<std::vector<Candidate>> candidates; // one per cluster
+    std::vector<uint64_t> candidateBits;
+
+    std::vector<uint32_t> tailOffsets;
+    std::vector<uint64_t> tailUids;
+    std::vector<float>    tailProb;
+    std::vector<float>    tailMarginal;
+    std::vector<uint32_t> tailAlias;
+    std::vector<float>    tailBeta;
+    std::vector<double>   overflowWeights;
+    struct TailBlock
+    {
+        uint32_t cluster;
+        uint32_t begin;
+        uint32_t count;
+        float    beta;
+    };
+    std::vector<uint8_t>   tailDirty;
+    std::vector<uint32_t>  tailDirtyClusters;
+    std::vector<uint64_t>  tailBlockUids;
+    std::vector<float>     tailBlockProb;
+    std::vector<float>     tailBlockMarginal;
+    std::vector<uint32_t>  tailBlockAlias;
+    std::vector<TailBlock> tailBlocks;
+    struct TailCandidate
+    {
+        double   mass;
+        uint64_t uid;
+        uint32_t source;
+    };
+
+    std::vector<TailCandidate> tailScratch;
+    std::vector<uint32_t>  candidateCounts;
+    std::vector<uint64_t>  tailUidsNext;
+    std::vector<float>     tailProbNext;
+    std::vector<float>     tailMarginalNext;
+    std::vector<uint32_t>  tailAliasNext;
+    uint32_t              tailEntryCount = 0;
+    bool                  overflowEnabled = false;
+    bool                  tailSuppressed = false;
+    bool                  tailInternalValid = true;
     // Clusters whose top-up set has to be looked at again on this frame, and the lights that
     // changed on it. All of them are left over between frames only as capacity.
     std::vector<uint8_t>  clusterDirty;   // one per cluster

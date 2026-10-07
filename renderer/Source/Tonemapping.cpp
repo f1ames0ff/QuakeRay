@@ -110,7 +110,7 @@ void Tonemapping::PrepareExposureParams(uint32_t frameIndex, const std::shared_p
         const float delta = frame->cameraPosition[axis] - frame->cameraPositionPrev[axis];
         cameraDeltaSquared += delta * delta;
     }
-    tm->resetCurve = !exposureReady || frame->time < previousTime ||
+    tm->resetCurve = !exposureReady || frame->restirParams[2] != 0 || frame->time < previousTime ||
                      frame->timeDelta > 1.0f || cameraDeltaSquared > 10000.0f ? 1u : 0u;
 
     const float kneeStart      = tm->tmKneeStart;

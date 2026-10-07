@@ -361,9 +361,11 @@ extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
 extern cvar_t rt_poi_trigger, rt_poi_func, rt_poi_weapon, rt_poi_pwrup, rt_poi_armor, rt_poi_key, rt_poi_health, rt_poi_ammo;
 extern cvar_t rt_poi_distthresh, rt_poi_distthresh_super;
-extern cvar_t rt_light_reach;
-extern cvar_t rt_light_reach_max;
+extern cvar_t rt_light_reach_static;
+extern cvar_t rt_light_reach_dynamic;
 extern cvar_t rt_cluster_incremental;
+extern cvar_t rt_cluster_sampling;
+extern cvar_t rt_cluster_assert;
 extern cvar_t rt_light_report_filter;
 
 
@@ -929,13 +931,17 @@ void RT_UploadAllElights ()
 	}
 }
 
-#define RT_CLUSTER_MAX_LIGHTS    1024
+#define RT_CLUSTER_MAX_LIGHTS    QR_CLUSTER_MAX_REGISTERED_LIGHTS
 
 typedef struct rt_cluster_light_s
 {
 	uint64_t uniqueID;
 	vec3_t   origin;
 	float    reach;   /* Quake units, zero when the light states no reach of its own */
+	float    radius;  /* Source bounds radius, zero for point-like sources */
+	float    power;   /* Estimated radiance power, used to rank the fast and overflow sets */
+	uint32_t cluster_count;
+	uint32_t clusters[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
 } rt_cluster_light_t;
 
 static rt_cluster_light_t rt_cluster_lights[RT_CLUSTER_MAX_LIGHTS];
@@ -986,9 +992,23 @@ int rt_cluster_reg_dropped;   /* additions refused by RT_CLUSTER_MAX_LIGHTS */
 int rt_cluster_last_lights;   /* lights in the registry of the last frame that uploaded */
 int rt_cluster_last_attempts; /* additions that frame attempted */
 int rt_cluster_last_dropped;  /* additions that frame lost to the cap */
+int rt_cluster_last_dirty;
+int rt_cluster_last_move_footprint;
+
+int rt_cluster_demand_max;        /* most accepted candidates a cluster held before ranking */
+int rt_cluster_demand_median;     /* median of the per-cluster candidate counts */
+int rt_cluster_demand_p95;        /* 95th percentile of the per-cluster candidate counts */
+int rt_cluster_tail_entries;      /* overflow entries published */
+int rt_cluster_tail_clusters;     /* clusters with a non-empty overflow tail */
+int rt_cluster_tail_budget;       /* clusters whose tail did not fit the published budget */
+
+static SDL_mutex *rt_cluster_reg_mutex;
 
 void RT_ClusterLightListsReset (void)
 {
+	if (rt_cluster_reg_mutex == NULL)
+		rt_cluster_reg_mutex = SDL_CreateMutex ();
+
 	rt_cluster_light_count = 0;
 	rt_light_diag_count = 0;
 	rt_light_diag_unresolved = 0;
@@ -999,90 +1019,123 @@ void RT_ClusterLightListsReset (void)
 	VectorCopy (r_refdef.vieworg, rt_cluster_vieworg);
 }
 
-/* The reach a light of a moving entity is registered with, from rt_light_reach_max: the distance
-   the host promises such a light does not reach past, in Quake units. A light that moves is what
-   makes the lists rebuild, so this is what keeps one entity from reaching every list of the map. */
+/* The reach a light of a moving entity is registered with, from rt_light_reach_dynamic: the
+   distance the host promises such a light does not reach past, in Quake units. A light that moves
+   is what makes the lists rebuild, so this is what keeps one entity from reaching every list of
+   the map. */
 float RT_ClusterLightReach (void)
 {
-	return METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach_max));
+	return METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach_dynamic));
 }
 
-/* The reach a light of the map itself is registered with, from rt_light_reach: how far a light
-   that stands where it stands is heard, in Quake units. The leaf it resolved into is where its
-   list starts, but the PVS of that leaf is what the doorways of the map make wide, and a light
-   held to the PVS alone fills the lists of every area it merely sees into, where the lights that
-   do stand there are the ones pushed out of them. It also has to be the reach the incremental
+/* The reach a light of the map itself is registered with, from rt_light_reach_static: how far a
+   light that stands where it stands is heard, in Quake units. The leaf it resolved into is where
+   its list starts, but the PVS of that leaf is what the doorways of the map make wide, and a
+   light held to the PVS alone fills the lists of every area it merely sees into, where the lights
+   that do stand there are the ones pushed out of them. It also has to be the reach the incremental
    pass gates with, so that a light's list comes out the same whether it was composed or moved.
    A setting of zero turns the top-up pass off and is no reach at all, so it falls back to the cap
    the moving lights are held to instead of handing the light the whole row. */
 float RT_ClusterLightReachStatic (void)
 {
-	const float reach = CVAR_TO_FLOAT (rt_light_reach);
+	const float reach = CVAR_TO_FLOAT (rt_light_reach_static);
 
-	return METRIC_TO_QUAKEUNIT ((reach > 0.0f) ? reach : CVAR_TO_FLOAT (rt_light_reach_max));
+	return METRIC_TO_QUAKEUNIT ((reach > 0.0f) ? reach : CVAR_TO_FLOAT (rt_light_reach_dynamic));
 }
 
-void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach)
+void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reach, float radius,
+                              const uint32_t *clusters, uint32_t clusterCount, float power)
 {
+	if (rt_cluster_reg_mutex != NULL)
+		SDL_LockMutex (rt_cluster_reg_mutex);
+
 	rt_cluster_reg_attempts++;
 
-	if (rt_cluster_light_count >= RT_CLUSTER_MAX_LIGHTS)
-	{
-		rt_cluster_reg_dropped++;
-
-		if (!rt_cluster_dropped_warned)
-		{
-			Con_DWarning ("RT: light count exceeded RT_CLUSTER_MAX_LIGHTS (%i), "
-				"some lights will not be sampled by the RT renderer.\n",
-				RT_CLUSTER_MAX_LIGHTS);
-			rt_cluster_dropped_warned = true;
-		}
-		return;
-	}
+	if (clusters != NULL && clusterCount > QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
+		clusterCount = QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS;
 
 	/* A light that registers twice in one frame keeps its slot, but not the position or the
 	   reach it was first seen at: a flame that is drawn by two passes, or a light that the
 	   frame registers again after it moved, must be handed to the lists where it stands now. */
-	/* The slot only says where to look; the comparison below says whether to trust it. */
+	/* The slot only says where to look; the comparison below says whether to trust it. An
+	   update of a light the frame already holds is resolved before the entry budget is
+	   consumed, so a full registry still refreshes the lights it knows. */
 	const uint32_t hint = RT_ClusterUidHint (uniqueID);
+
+	int index = -1;
 
 	if (rt_cluster_uid_hint[hint] < rt_cluster_light_count &&
 	    rt_cluster_lights[rt_cluster_uid_hint[hint]].uniqueID == uniqueID)
 	{
-		const int i = rt_cluster_uid_hint[hint];
-
-		VectorCopy (origin, rt_cluster_lights[i].origin);
-		rt_cluster_lights[i].reach = reach;
-		VectorCopy (origin, rt_light_diag[i].origin);
-		return;
+		index = rt_cluster_uid_hint[hint];
 	}
-
-	for (int i = 0; i < rt_cluster_light_count; i++)
+	else
 	{
-		if (rt_cluster_lights[i].uniqueID == uniqueID)
+		for (int i = 0; i < rt_cluster_light_count; i++)
 		{
-			VectorCopy (origin, rt_cluster_lights[i].origin);
-			rt_cluster_lights[i].reach = reach;
-			VectorCopy (origin, rt_light_diag[i].origin);
-			rt_cluster_uid_hint[hint] = (uint16_t) i;
-			return;
+			if (rt_cluster_lights[i].uniqueID == uniqueID)
+			{
+				index = i;
+				rt_cluster_uid_hint[hint] = (uint16_t) i;
+				break;
+			}
 		}
 	}
 
-	rt_cluster_uid_hint[hint] = (uint16_t) rt_cluster_light_count;
+	if (index < 0)
+	{
+		if (rt_cluster_light_count >= RT_CLUSTER_MAX_LIGHTS)
+		{
+			rt_cluster_reg_dropped++;
 
-	rt_cluster_lights[rt_cluster_light_count].uniqueID = uniqueID;
-	VectorCopy (origin, rt_cluster_lights[rt_cluster_light_count].origin);
-	rt_cluster_lights[rt_cluster_light_count].reach = reach;
+			if (!rt_cluster_dropped_warned)
+			{
+				Con_DWarning ("RT: light count exceeded RT_CLUSTER_MAX_LIGHTS (%i), "
+					"some lights will not be sampled by the RT renderer.\n",
+					RT_CLUSTER_MAX_LIGHTS);
+				rt_cluster_dropped_warned = true;
+			}
 
-	rt_light_diag[rt_cluster_light_count].uniqueID = uniqueID;
-	VectorCopy (origin, rt_light_diag[rt_cluster_light_count].origin);
-	rt_light_diag[rt_cluster_light_count].resolved = false;
-	rt_light_diag[rt_cluster_light_count].granted = 0;
-	rt_light_diag[rt_cluster_light_count].denied = 0;
-	rt_light_diag_count = rt_cluster_light_count + 1;
+			if (rt_cluster_reg_mutex != NULL)
+				SDL_UnlockMutex (rt_cluster_reg_mutex);
+			return;
+		}
 
-	rt_cluster_light_count++;
+		rt_cluster_uid_hint[hint] = (uint16_t) rt_cluster_light_count;
+		index = rt_cluster_light_count;
+		rt_cluster_light_count++;
+
+		rt_light_diag[index].uniqueID = uniqueID;
+		rt_light_diag[index].resolved = false;
+		rt_light_diag[index].granted = 0;
+		rt_light_diag[index].denied = 0;
+		rt_light_diag_count = rt_cluster_light_count;
+	}
+
+	rt_cluster_lights[index].uniqueID = uniqueID;
+	VectorCopy (origin, rt_cluster_lights[index].origin);
+	rt_cluster_lights[index].reach = reach;
+	rt_cluster_lights[index].radius = radius;
+	rt_cluster_lights[index].power = (isfinite (power) && power > 0.0f) ? power : 0.0f;
+	rt_cluster_lights[index].cluster_count = clusterCount;
+
+	for (uint32_t k = 0; k < clusterCount; k++)
+		rt_cluster_lights[index].clusters[k] = clusters[k];
+
+	VectorCopy (origin, rt_light_diag[index].origin);
+
+	if (rt_cluster_reg_mutex != NULL)
+		SDL_UnlockMutex (rt_cluster_reg_mutex);
+}
+
+void RT_ClusterLightAdd (uint64_t uniqueID, const vec3_t origin, float reach)
+{
+	RT_ClusterLightAddMulti (uniqueID, origin, reach, 0.0f, NULL, 0, 0.0f);
+}
+
+void RT_ClusterLightAddPower (uint64_t uniqueID, const vec3_t origin, float reach, float power)
+{
+	RT_ClusterLightAddMulti (uniqueID, origin, reach, 0.0f, NULL, 0, power);
 }
 
 static mleaf_t *RT_ResolveLightLeaf (const vec3_t origin, qmodel_t *wm)
@@ -1199,16 +1252,25 @@ void RT_ClusterLightListsUpload (void)
 			cached->leafIndex = leafIndex;
 		}
 
+		const uint32_t clusterCount = rt_cluster_lights[li].cluster_count;
+
 		rt_cluster_sources[li].uniqueID = rt_cluster_lights[li].uniqueID;
 		VectorCopy (rt_cluster_lights[li].origin, rt_cluster_sources[li].origin.data);
 		rt_cluster_sources[li].cluster = (leafIndex >= 0)
 			? (uint32_t)RT_MapWorldCluster (leafIndex)
 			: (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER;
 		rt_cluster_sources[li].reach = rt_cluster_lights[li].reach;
+		rt_cluster_sources[li].radius = rt_cluster_lights[li].radius;
+		rt_cluster_sources[li].clusterCount = clusterCount;
+		rt_cluster_sources[li].pClusters = (clusterCount > 0) ? rt_cluster_lights[li].clusters : NULL;
+		rt_cluster_sources[li].power = rt_cluster_lights[li].power;
 
-		rt_light_diag[li].resolved = (leafIndex >= 0);
+		if (clusterCount > 0 && rt_cluster_sources[li].cluster == (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER)
+			rt_cluster_sources[li].cluster = rt_cluster_lights[li].clusters[0];
 
-		if (leafIndex < 0)
+		rt_light_diag[li].resolved = (leafIndex >= 0) || (clusterCount > 0);
+
+		if (leafIndex < 0 && clusterCount == 0)
 			rt_light_diag_unresolved++;
 	}
 
@@ -1218,10 +1280,12 @@ void RT_ClusterLightListsUpload (void)
 	const QrClusterLightSourcesUploadInfo info = {
 		.numLights = (uint32_t)rt_cluster_light_count,
 		.pLights = rt_cluster_sources,
-		.topUpReach = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach)),
+		.topUpReach = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach_static)),
 		/* 1 in every run: the cvar is read-only (CVAR_ROM), and 0 - the legacy full
 		   recomposition - is engine-selectable only (Cvar_SetROM). */
 		.allowIncremental = CVAR_TO_BOOL (rt_cluster_incremental) ? 1 : 0,
+		.allowOverflow = CVAR_TO_BOOL (rt_cluster_sampling) ? 1 : 0,
+		.validate = CVAR_TO_BOOL (rt_cluster_assert) ? 1 : 0,
 	};
 
 	QrResult r = qrUploadClusterLightSources (vulkan_globals.instance, &info);
@@ -1237,6 +1301,14 @@ void RT_ClusterLightListsUpload (void)
 		rt_cluster_last_gated = (int)st.reachGated;
 		rt_light_diag_granted = (int)st.grants;
 		rt_light_diag_denied = (int)st.denied;
+		rt_cluster_demand_max = (int)st.candidateMax;
+		rt_cluster_demand_median = (int)st.candidateMedian;
+		rt_cluster_demand_p95 = (int)st.candidateP95;
+		rt_cluster_tail_entries = (int)st.tailEntries;
+		rt_cluster_tail_clusters = (int)st.clustersWithTail;
+		rt_cluster_tail_budget = (int)st.tailBudgetExceeded;
+		rt_cluster_last_dirty = (int)st.incrementalDirty;
+		rt_cluster_last_move_footprint = (int)st.moveFootprint;
 
 		if (st.reusedFrames)
 			rt_cluster_cache_hits++;
@@ -1263,6 +1335,7 @@ void RT_ClusterLightListsUpload (void)
 		RT_Prof_Sample (RT_PROF_CLUSTERS_VIS, st.visMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_TOPUP, st.topUpMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_FILL, st.fillMs);
+		RT_Prof_Sample (RT_PROF_CLUSTERS_TAIL, st.tailMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_UPLOAD, st.publishMs);
 	}
 
@@ -1347,6 +1420,128 @@ void RT_LightReportPrint (const char *fmt, ...)
 		fputs (msg, rt_light_report_file);
 }
 
+void RT_ClusterLightDumpHeader (FILE *f)
+{
+	if (f == NULL)
+		return;
+
+	fprintf (f, "# viewpos (%.0f %.0f %.0f) (%.0f %.0f %.0f) | engine %.2f | frame %i\n",
+		rt_cluster_vieworg[0], rt_cluster_vieworg[1], rt_cluster_vieworg[2],
+		cl.viewangles[0], cl.viewangles[1], cl.viewangles[2],
+		ENGINE_VERSION, host_framecount);
+	fprintf (f, "# cvars rt_cluster_sampling=%s rt_dtal_groups=%s rt_dtal_spacing=%s "
+		"rt_light_reach_static=%s rt_light_reach_dynamic=%s rt_denoiser=%s rt_restir=%s "
+		"rt_antifirefly=%s rt_nee_samples=%s\n",
+		Cvar_VariableString ("rt_cluster_sampling"),
+		Cvar_VariableString ("rt_dtal_groups"),
+		Cvar_VariableString ("rt_dtal_spacing"),
+		Cvar_VariableString ("rt_light_reach_static"),
+		Cvar_VariableString ("rt_light_reach_dynamic"),
+		Cvar_VariableString ("rt_denoiser"),
+		Cvar_VariableString ("rt_restir"),
+		Cvar_VariableString ("rt_antifirefly"),
+		Cvar_VariableString ("rt_nee_samples"));
+}
+
+#define RT_CLUSTER_TAIL_REPORT_SLOTS 512
+
+static int RT_ClusterDiagIndexForUid (uint64_t uid)
+{
+	int i;
+
+	for (i = 0; i < rt_light_diag_count; i++)
+	{
+		if (rt_light_diag[i].uniqueID == uid)
+			return i;
+	}
+
+	return -1;
+}
+
+void RT_ClusterLists_f (void)
+{
+	uint64_t uids[RT_CLUSTER_REPORT_SLOTS];
+	uint64_t tailUids[RT_CLUSTER_TAIL_REPORT_SLOTS];
+	float    tailProb[RT_CLUSTER_TAIL_REPORT_SLOTS];
+	float    tailMarginal[RT_CLUSTER_TAIL_REPORT_SLOTS];
+	uint32_t tailAlias[RT_CLUSTER_TAIL_REPORT_SLOTS];
+	uint32_t fastCount = 0;
+	uint32_t tailCount = 0;
+	float    beta = 0.0f;
+	int      cluster = -1;
+	int      i;
+
+	if (Cmd_Argc () > 1)
+	{
+		cluster = atoi (Cmd_Argv (1));
+	}
+	else if (cl.worldmodel && cl.worldmodel->type == mod_brush)
+	{
+		mleaf_t *leaf = Mod_PointInLeaf (rt_cluster_vieworg, cl.worldmodel);
+
+		if (leaf && leaf != cl.worldmodel->leafs)
+			cluster = RT_MapWorldCluster ((int)(leaf - cl.worldmodel->leafs));
+	}
+
+	if (cluster < 0)
+	{
+		RT_LightReportPrint ("rt_cluster_lists: no cluster; pass one or stand where the world draw runs\n");
+		return;
+	}
+
+	if (qrGetClusterLightTail (vulkan_globals.instance, (uint32_t)cluster, tailUids, tailProb, tailMarginal,
+			tailAlias, &beta, (uint32_t)countof (tailUids), &tailCount) != QR_SUCCESS)
+	{
+		tailCount = 0;
+	}
+
+	if (qrGetClusterLightList (vulkan_globals.instance, (uint32_t)cluster, uids,
+			(uint32_t)countof (uids), &fastCount) != QR_SUCCESS)
+	{
+		fastCount = 0;
+	}
+
+	RT_LightReportPrint ("cluster %i: %u fast, %u tail, beta %.3f\n", cluster, fastCount, tailCount, beta);
+
+	for (i = 0; i < (int)fastCount; i++)
+	{
+		const int di = RT_ClusterDiagIndexForUid (uids[i]);
+		char      id[64];
+
+		RT_FormatLightId (id, sizeof (id), uids[i]);
+
+		if (di >= 0)
+			RT_LightReportPrint ("  fast %3i  %-34s granted %i denied %i\n", i, id,
+				rt_light_diag[di].granted, rt_light_diag[di].denied);
+		else
+			RT_LightReportPrint ("  fast %3i  %-34s not in the frame's registry table\n", i, id);
+	}
+
+	{
+		double probSum = 0.0;
+		double marginalSum = 0.0;
+
+		for (i = 0; i < (int)tailCount; i++)
+		{
+			probSum += (double)tailProb[i];
+			marginalSum += (double)tailMarginal[i];
+		}
+
+		RT_LightReportPrint ("  tail sums: prob %.5f, marginal %.5f%s\n", probSum, marginalSum,
+			(tailCount < RT_CLUSTER_TAIL_REPORT_SLOTS) ? "" : " (read stopped at the slot count)");
+	}
+
+	for (i = 0; i < (int)tailCount; i++)
+	{
+		const int di = RT_ClusterDiagIndexForUid (tailUids[i]);
+		char      id[64];
+
+		RT_FormatLightId (id, sizeof (id), tailUids[i]);
+		RT_LightReportPrint ("  tail %3i  prob %.5f marginal %.6f alias %u  %s%s\n", i, tailProb[i],
+			tailMarginal[i], tailAlias[i], id, (di >= 0) ? "" : "  (not in the frame's registry table)");
+	}
+}
+
 void RT_ClusterLightReport_f (void)
 {
 	const int maxLines = (rt_light_report_file != NULL) ? RT_CLUSTER_MAX_LIGHTS
@@ -1360,6 +1555,9 @@ void RT_ClusterLightReport_f (void)
 
 	RT_LightReportPrint ("RT lights: %i registered, %i dropped (no open leaf), %i cluster slots granted, %i denied\n",
 		rt_cluster_light_count, rt_light_diag_unresolved, rt_light_diag_granted, rt_light_diag_denied);
+	RT_LightReportPrint ("cluster demand: max %i, median %i, p95 %i; overflow tail: %i entries in %i clusters, %i clusters over budget\n",
+		rt_cluster_demand_max, rt_cluster_demand_median, rt_cluster_demand_p95,
+		rt_cluster_tail_entries, rt_cluster_tail_clusters, rt_cluster_tail_budget);
 
 	int      viewCluster = -1;
 	int      viewFill = 0;
@@ -1372,7 +1570,7 @@ void RT_ClusterLightReport_f (void)
 
 		if (viewleaf && viewleaf != cl.worldmodel->leafs)
 		{
-			viewCluster = (int)(viewleaf - cl.worldmodel->leafs);
+			viewCluster = RT_MapWorldCluster ((int)(viewleaf - cl.worldmodel->leafs));
 
 			if (qrGetClusterLightList (vulkan_globals.instance, (uint32_t)viewCluster,
 					viewUids, (uint32_t)countof (viewUids), &viewCount) != QR_SUCCESS)

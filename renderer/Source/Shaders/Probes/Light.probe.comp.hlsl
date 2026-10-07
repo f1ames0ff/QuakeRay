@@ -56,6 +56,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += (float)(lightSources_Index_PrevToCur[0] + lightSources_Index_CurToPrev[0] +
                  q2LightListOffsets[0] + q2LightListLights[0] +
                  talCdf[0] + q2ClusterSkyVis[0]);
+    v += dtalMembers[0].A.x + dtalMembers[0].area + (float)dtalMembers[0].aliasIndex + dtalMembers[0].uv[0].x;
+    v += (float)q2LightListTailOffsets[0] + (float)q2LightListTail[0].lightIndex + q2LightListTail[0].prob;
     q2LightStats[0] = 1u;
 
     // A single encoded light drives every decoder: data_0.w is a texture index and data_2.w is a

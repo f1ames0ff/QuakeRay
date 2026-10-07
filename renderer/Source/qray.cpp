@@ -226,6 +226,11 @@ QrResult qrUploadTexturedAreaLights(QrInstance qrInstance, const QrTexturedAreaL
     return Call(qrInstance, &VulkanDevice::UploadTexturedAreaLights, pUploadInfos, count);
 }
 
+QrResult qrUploadDtalGroups(QrInstance qrInstance, const QrDtalGroupUploadBatch *pUploadInfo)
+{
+    return Call(qrInstance, &VulkanDevice::UploadDtalGroups, pUploadInfo);
+}
+
 QrResult qrUploadClusterLightSources(QrInstance qrInstance, const QrClusterLightSourcesUploadInfo *pUploadInfo)
 {
     return Call(qrInstance, &VulkanDevice::UploadClusterLightSources, pUploadInfo);
@@ -246,6 +251,14 @@ QrResult qrGetClusterLightList(QrInstance qrInstance, uint32_t cluster, uint64_t
                                uint32_t maxCount, uint32_t *pCount)
 {
     return Call(qrInstance, &VulkanDevice::GetClusterLightList, cluster, pLightUniqueIds, maxCount, pCount);
+}
+
+QrResult qrGetClusterLightTail(QrInstance qrInstance, uint32_t cluster, uint64_t *pLightUniqueIds,
+                               float *pProb, float *pMarginal, uint32_t *pAlias, float *pBeta,
+                               uint32_t maxCount, uint32_t *pCount)
+{
+    return Call(qrInstance, &VulkanDevice::GetClusterLightTail, cluster, pLightUniqueIds, pProb, pMarginal,
+                pAlias, pBeta, maxCount, pCount);
 }
 
 QrResult qrUploadWorldLights(QrInstance qrInstance, const QrWorldLightsUploadInfo *pUploadInfo)
@@ -363,6 +376,33 @@ QrResult qrGetAdapterInfo(QrInstance qrInstance, QrAdapterInfo *pInfo)
 QrResult qrRequestScreenshot(QrInstance qrInstance, const char *pFilePath)
 {
     return Call(qrInstance, &VulkanDevice::RequestScreenshot, pFilePath);
+}
+
+const char *qrGetCpuPassName(uint32_t passIndex)
+{
+    static const char *const names[QR_CPU_PASS_COUNT] =
+    {
+        "prepare",
+        "hot reload",
+        "descriptors",
+        "staging",
+        "legacy AS",
+        "slot wait",
+        "slot GC",
+        "GPU queries",
+        "RHI setup",
+        "scene record",
+        "compose",
+        "upscale",
+        "post",
+        "UI record",
+        "postui",
+        "present record",
+        "RHI submit",
+        "legacy submit",
+        "present",
+    };
+    return passIndex < QR_CPU_PASS_COUNT ? names[passIndex] : "";
 }
 
 const char *qrGetGpuPassName(uint32_t passIndex)

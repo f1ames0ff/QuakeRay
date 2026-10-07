@@ -1,0 +1,47 @@
+@startuml
+title D07 - Independent Project B candidate and overflow update
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+
+start
+:Read accepted generic parent domains and current UID order;
+
+if (Membership / source policy changed?) then (yes)
+  :Identify affected receiver clusters;
+  :Rebuild their complete accepted candidate sets C;
+else (no)
+  :Reuse cached candidate membership;
+endif
+
+if (Affected proposals need rebuilding?) then (yes)
+  :Rank useful fast set H with at most 128 sources;
+  :Keep every other candidate in T = C minus H;
+  :Build supported tail aliases and branch probability;
+  :Invalidate only changed fast-slot attribution safely;
+else (no)
+  :Reuse supported proposals and actual stored probabilities;
+endif
+
+:Pass CPU UID tables to existing LightManager publisher;
+if (UID/index order or table generation changed?) then (yes)
+  :Resolve UIDs and refresh current GPU indices;
+else (no)
+  :Reuse matching index publication;
+endif
+
+if (Union, PDFs, indices and budgets valid?) then (yes)
+  :Publish complete fast / tail table data;
+  :Return p_source including selected branch probability;
+  :Report demand before truncation and branch occupancy;
+else (no)
+  :Report failure; do not publish an incomplete tail;
+  stop
+endif
+
+note right
+  C = H union T; H intersection T is empty.
+  UID conversion reuses existing publication.
+  No dependency on DTAL grid or member geometry.
+end note
+stop
+@enduml

@@ -137,6 +137,15 @@
 [11] offset 148 float32
 [12] offset 152 float32
 [13] offset 156 uint32
+=== block set 6 binding 10
+
+[0] offset 0 array[](uint32) stride 4
+=== block set 6 binding 11
+
+[0] offset 0 uint32
+[1] offset 4 uint32
+[2] offset 8 float32
+[3] offset 12 float32
 === block set 6 binding 4
 
 [0] offset 0 array[](uint32) stride 4
@@ -169,6 +178,14 @@ Uniform
 === descriptor set 6 binding 0
 struct nonwritable
 === descriptor set 6 binding 0: storage class
+StorageBuffer
+=== descriptor set 6 binding 10
+struct nonwritable
+=== descriptor set 6 binding 10: storage class
+StorageBuffer
+=== descriptor set 6 binding 11
+struct nonwritable
+=== descriptor set 6 binding 11: storage class
 StorageBuffer
 === descriptor set 6 binding 4
 struct nonwritable

@@ -214,7 +214,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     // Scale the motion for the weight calculation below
     motion *= float2(outWidth, outHeight);
 
-    if (all(int2(pos_prev) >= (int2)1)
+    if (globalUniform.restirParams.z == 0u && all(int2(pos_prev) >= (int2)1)
     && all(int2(pos_prev) < int2(outWidth, outHeight) - 1))
     {
         // Motion vector was valid - sample the previous frame's TAA output

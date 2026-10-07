@@ -21,14 +21,15 @@
 #include <cstring>
 #include <cmath>
 #include <cfloat>
+#include <algorithm>
 
 namespace
 {
 
 QrInstance   g_instance      = 0;
 QrMaterial   g_font_material = QR_NO_MATERIAL;
-constexpr int   kOverlayFontSizeCount = 8;
-constexpr float kOverlayFontSizes[kOverlayFontSizeCount] = { 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f };
+constexpr int   kOverlayFontSizeCount = 10;
+constexpr float kOverlayFontSizes[kOverlayFontSizeCount] = { 10.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f };
 ImFont      *g_stats_fonts[kOverlayFontSizeCount] = {};
 bool         g_ready         = false;
 bool         g_frame_open    = false;
@@ -1879,6 +1880,11 @@ constexpr float kOverlayGraphH   = 26.0f;
 constexpr float kOverlayGapX     = 12.0f;
 constexpr float kOverlayRowW     = kOverlayLabelW + kOverlayValueW + kOverlayGapX + kOverlayGraphW;
 
+constexpr uint32_t kOverlayBudgetGreen  = 0xFF4DFF4Du;
+constexpr uint32_t kOverlayBudgetYellow = 0xFF33CCFFu;
+constexpr uint32_t kOverlayBudgetRed    = 0xFF4D4DFFu;
+constexpr uint32_t kOverlayBudgetNone   = 0xFFD3D3D3u;
+
 float   g_overlay_scale = 1.0f;
 float   g_overlay_font_size = kOverlayBaseFont;
 ImFont *g_overlay_font = nullptr;
@@ -1923,9 +1929,61 @@ void OverlaySparkline (ImDrawList *dl, const ImVec2 &p, float w, float h, const 
 	dl->AddPolyline (pts, n, col, ImDrawFlags_None, g_overlay_scale > 0.75f ? 2.0f : 1.0f);
 }
 
+ImU32 OverlayBudgetColor (float ms, float warn_ms, float crit_ms)
+{
+	if (ms >= crit_ms)
+		return PackedColorToU32 (kOverlayBudgetRed);
+	if (ms >= warn_ms)
+		return PackedColorToU32 (kOverlayBudgetYellow);
+
+	return PackedColorToU32 (kOverlayBudgetGreen);
 }
 
-void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title)
+void OverlaySparklineBudget (ImDrawList *dl, const ImVec2 &p, float w, float h, const float *v, int n, float warn_ms, float crit_ms)
+{
+	const float scale = g_overlay_scale;
+
+	dl->AddRectFilled (p, ImVec2 (p.x + w, p.y + h), IM_COL32 (0, 0, 0, 110), 4.0f * scale);
+
+	float vmax = 0.0f;
+	for (int i = 0; i < n; i++)
+		if (v[i] > vmax)
+			vmax = v[i];
+
+	if (vmax < 1e-4f)
+		vmax = 1e-4f;
+	vmax *= 1.15f;
+
+	const float pad = 2.0f * scale;
+	const float x0 = p.x + pad, x1 = p.x + w - pad;
+	const float y0 = p.y + pad, y1 = p.y + h - pad;
+	const float dy = y1 - y0;
+	const float thickness = g_overlay_scale > 0.75f ? 2.0f : 1.0f;
+
+	ImVec2 pts[128];
+	if (n > (int)(sizeof (pts) / sizeof (pts[0])))
+		n = (int)(sizeof (pts) / sizeof (pts[0]));
+
+	for (int i = 0; i < n; i++)
+	{
+		const float t = (float)i / (float)(n - 1);
+		pts[i] = ImVec2 (x0 + t * (x1 - x0), y1 - (v[i] / vmax) * dy);
+	}
+
+	for (int i = 1; i < n; i++)
+	{
+		const float peak = v[i - 1] > v[i] ? v[i - 1] : v[i];
+		const ImU32 col = OverlayBudgetColor (peak, warn_ms, crit_ms);
+		const ImU32 fill = (col & 0x00FFFFFFu) | 0x28000000u;
+
+		dl->AddQuadFilled (ImVec2 (pts[i - 1].x, y1), pts[i - 1], pts[i], ImVec2 (pts[i].x, y1), fill);
+		dl->AddLine (pts[i - 1], pts[i], col, thickness);
+	}
+}
+
+}
+
+void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const char *title, int columnCount)
 {
 	if (!g_ready)
 		return;
@@ -1946,13 +2004,17 @@ void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const c
 
 	float   font_size = kOverlayBaseFont * scale;
 	float   best_diff = FLT_MAX;
+	const float max_font_size = io.DisplaySize.x > 0.0f && columnCount > 0
+	    ? kOverlayBaseFont * io.DisplaySize.x / (columnCount * (kOverlayRowW + kOverlayGapX) + 32.0f)
+	    : kOverlayBaseFont;
+	font_size = std::min (font_size, std::max (kOverlayFontSizes[0], max_font_size));
 
 	g_overlay_font = nullptr;
 	g_overlay_font_size = font_size;
 
 	for (int i = 0; i < kOverlayFontSizeCount; i++)
 	{
-		if (g_stats_fonts[i] == nullptr)
+		if (g_stats_fonts[i] == nullptr || (i > 0 && kOverlayFontSizes[i] > max_font_size))
 			continue;
 
 		const float diff = std::fabs (kOverlayFontSizes[i] - font_size);
@@ -2000,6 +2062,8 @@ void QR_GUI_OverlaySection (const char *title)
 		{
 			ImGui::EndGroup ();
 			ImGui::SameLine ();
+			if (ImGui::GetCursorScreenPos ().x + kOverlayRowW * g_overlay_scale + 16.0f * g_overlay_scale > ImGui::GetIO ().DisplaySize.x)
+				ImGui::NewLine ();
 			ImGui::BeginGroup ();
 		}
 		g_overlay_first = false;
@@ -2044,6 +2108,41 @@ void QR_GUI_OverlayRow (const char *label, const char *value, const float *sampl
 	{
 		const ImVec2 graph (pos.x + label_w + value_w + gap_x, pos.y + (row_h - graph_h) * 0.5f);
 		OverlaySparkline (dl, graph, graph_w, graph_h, samples, count, col);
+	}
+}
+
+void QR_GUI_OverlayBudgetRow (const char *label, const char *value, const float *samples, int count, float warn_ms, float crit_ms)
+{
+	if (!g_ready)
+		return;
+
+	ImDrawList  *dl = ImGui::GetWindowDrawList ();
+	const float  label_w = kOverlayLabelW * g_overlay_scale;
+	const float  value_w = kOverlayValueW * g_overlay_scale;
+	const float  graph_w = kOverlayGraphW * g_overlay_scale;
+	const float  graph_h = kOverlayGraphH * g_overlay_scale;
+	const float  gap_x = kOverlayGapX * g_overlay_scale;
+	const float  row_w = kOverlayRowW * g_overlay_scale;
+	const float  line_h = ImGui::GetTextLineHeight ();
+	const float  row_h = line_h > graph_h + 8.0f * g_overlay_scale ? line_h : graph_h + 8.0f * g_overlay_scale;
+	const ImVec2 pos = ImGui::GetCursorScreenPos ();
+	const ImU32  col = (samples && count > 0) ? OverlayBudgetColor (samples[count - 1], warn_ms, crit_ms)
+	                                          : PackedColorToU32 (kOverlayBudgetNone);
+
+	ImGui::Dummy (ImVec2 (row_w, row_h));
+
+	dl->AddText (pos, col, label ? label : "");
+
+	if (value && value[0])
+	{
+		const ImVec2 ts = ImGui::CalcTextSize (value);
+		dl->AddText (ImVec2 (pos.x + label_w + value_w - ts.x, pos.y), col, value);
+	}
+
+	if (samples && count >= 2)
+	{
+		const ImVec2 graph (pos.x + label_w + value_w + gap_x, pos.y + (row_h - graph_h) * 0.5f);
+		OverlaySparklineBudget (dl, graph, graph_w, graph_h, samples, count, warn_ms, crit_ms);
 	}
 }
 

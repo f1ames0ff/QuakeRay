@@ -714,6 +714,8 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 
     const uint32_t frameIndex = currentFrameState.GetFrameIndex();
 
+    CpuFrameProfiler *cpuProfiler = cpuFrameProfiler.IsEnabled() ? &cpuFrameProfiler : nullptr;
+    CpuProfileScope prepareInputs(cpuProfiler, QR_CPU_PASS_PREPARE);
     framebuffers->PrepareForSize(renderResolution.GetResolutionState());
 
     const ShGlobalUniform *globalUniform = uniform->GetData();
@@ -748,13 +750,23 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         rasterizedDataCollector->GetSwapchainDrawInfos();
 
     const std::shared_ptr<ASManager> &asManager = scene->GetASManager();
-    const auto prepare = asManager->PrepareForBuildingTLAS(
-        frameIndex, *uniform->GetData(), uniform->GetData()->rayCullMaskWorld,
-        allowGeometryWithSkyFlag, drawInfo.disableRayTracedGeometry);
+    ShVertPreprocessing preprocessing = {};
+    prepareInputs.Finish();
+    if (!drawInfo.renderUiOnly)
+    {
+        CpuProfileScope legacyAs(cpuProfiler, QR_CPU_PASS_LEGACY_AS);
+        const auto prepare = asManager->PrepareForBuildingTLAS(
+            frameIndex, *uniform->GetData(), uniform->GetData()->rayCullMaskWorld,
+            allowGeometryWithSkyFlag, drawInfo.disableRayTracedGeometry);
+        asManager->BuildTLAS(currentFrameState.GetCmdBuffer(), frameIndex, prepare.first);
+        preprocessing = prepare.second;
+    }
 
-    asManager->BuildTLAS(currentFrameState.GetCmdBuffer(), frameIndex, prepare.first);
+    CpuProfileScope fillInputs(cpuProfiler, QR_CPU_PASS_PREPARE);
 
     NvrhiFrameSkeleton::SkyFrameInputs sky = {};
+    sky.renderUiOnly = drawInfo.renderUiOnly != 0;
+    sky.cpuProfiler = cpuProfiler;
     sky.framebuffers = framebuffers.get();
     sky.draws = skyDraws.data();
     sky.drawCount = static_cast<uint32_t>(skyDraws.size());
@@ -798,6 +810,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.allowGeometryWithSkyFlag = allowGeometryWithSkyFlag;
     sky.disableRayTracedGeometry = drawInfo.disableRayTracedGeometry;
 
+    if (!drawInfo.renderUiOnly)
     {
         const float godRaysIntensity = (drawInfo.pSkyParams == nullptr)
             ? 1.0f : std::max(drawInfo.pSkyParams->godRaysIntensity, 0.0f);
@@ -878,6 +891,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.postEffectParams = drawInfo.postEffectParams;
     sky.postEffectFrameId = frameId;
 
+    if (!drawInfo.renderUiOnly)
     {
         RhiProceduralSkyPass::Params p = {};
 
@@ -1043,17 +1057,28 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         pendingScreenshotPath.clear();
     }
 
+    fillInputs.Finish();
     if (!nvrhiFrameSkeleton->Render(swapchain.get(), frameIndex, sky, semaphoreToWait, renderFinishedSemaphores[frameIndex]))
     {
         currentFrameState.SetSemaphore(semaphoreToWait, semaphoreWaitStage);
         return false;
     }
 
-    scene->PreprocessVertices(currentFrameState.GetCmdBuffer(), frameIndex, uniform, prepare.second);
+    if (!drawInfo.renderUiOnly)
+    {
+        CpuProfileScope legacyAs(cpuProfiler, QR_CPU_PASS_LEGACY_AS);
+        scene->PreprocessVertices(currentFrameState.GetCmdBuffer(), frameIndex, uniform, preprocessing);
+    }
 
-    cmdManager->Submit(currentFrameState.GetCmdBuffer(), frameFences[frameIndex]);
+    {
+        CpuProfileScope submit(cpuProfiler, QR_CPU_PASS_LEGACY_SUBMIT);
+        cmdManager->Submit(currentFrameState.GetCmdBuffer(), frameFences[frameIndex]);
+    }
 
-    swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
+    {
+        CpuProfileScope present(cpuProfiler, QR_CPU_PASS_PRESENT);
+        swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
+    }
 
     frameId++;
     return true;
@@ -1061,18 +1086,25 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 
 void VulkanDevice::EndFrame(VkCommandBuffer cmd)
 {
+    CpuFrameProfiler *cpuProfiler = cpuFrameProfiler.IsEnabled() ? &cpuFrameProfiler : nullptr;
     uint32_t frameIndex = currentFrameState.GetFrameIndex();
     VkPipelineStageFlags semaphoreWaitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     VkSemaphore semaphoreToWait = currentFrameState.GetSemaphoreForWaitAndRemove(&semaphoreWaitStage);
 
-    cmdManager->Submit(
-        cmd,
-        semaphoreToWait,
-        semaphoreWaitStage,
-        renderFinishedSemaphores[frameIndex],
-        frameFences[frameIndex]);
+    {
+        CpuProfileScope submit(cpuProfiler, QR_CPU_PASS_LEGACY_SUBMIT);
+        cmdManager->Submit(
+            cmd,
+            semaphoreToWait,
+            semaphoreWaitStage,
+            renderFinishedSemaphores[frameIndex],
+            frameFences[frameIndex]);
+    }
 
-    swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
+    {
+        CpuProfileScope present(cpuProfiler, QR_CPU_PASS_PRESENT);
+        swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
+    }
 
     frameId++;
 }
@@ -1111,6 +1143,15 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
     }
 
+    cpuFrameProfiler.Reset(drawInfo->enableCpuProfiling != 0);
+    CpuFrameProfiler *cpuProfiler = cpuFrameProfiler.IsEnabled() ? &cpuFrameProfiler : nullptr;
+    CpuProfileScope prepare(cpuProfiler, QR_CPU_PASS_PREPARE);
+    statsCpuTimingValid = false;
+    statsRenderedUiOnly = drawInfo->renderUiOnly != 0;
+    statsGpuTimingValid = false;
+    statsGpuFrameMs = 0.0f;
+    std::fill_n(statsGpuPassMs, QR_GPU_PASS_COUNT, 0.0f);
+
     VkCommandBuffer cmd = currentFrameState.GetCmdBuffer();
     const uint32_t frameIndex = currentFrameState.GetFrameIndex();
 
@@ -1139,21 +1180,33 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
         amdFsr->SetUpscaleVersion(*lastUpscaleTechnique);
     }
 
-    textureManager->CheckForHotReload(cmd, frameIndex);
+    prepare.Finish();
+    {
+        CpuProfileScope hotReload(cpuProfiler, QR_CPU_PASS_HOT_RELOAD);
+        textureManager->CheckForHotReload(cmd, frameIndex);
+    }
 
     const bool canRender = renderResolution.Width() > 0 && renderResolution.Height() > 0;
 
     if (canRender)
     {
+        CpuProfileScope fillUniform(cpuProfiler, QR_CPU_PASS_PREPARE);
         FillUniform(uniform->GetData(), *drawInfo);
     }
 
     if (canRender)
     {
-        const bool mipLodBiasUpdated = worldSamplerManager->TryChangeMipLodBias(frameIndex, renderResolution.GetMipLodBias());
-        textureManager->SubmitDescriptors(frameIndex, drawInfo->pTexturesParams, mipLodBiasUpdated);
+        {
+            CpuProfileScope descriptors(cpuProfiler, QR_CPU_PASS_DESCRIPTORS);
+            const bool mipLodBiasUpdated = worldSamplerManager->TryChangeMipLodBias(frameIndex, renderResolution.GetMipLodBias());
+            textureManager->SubmitDescriptors(frameIndex, drawInfo->pTexturesParams, mipLodBiasUpdated);
+        }
 
-        rasterizedDataCollector->CopyFromStaging(cmd, frameIndex);
+        if (!drawInfo->renderUiOnly)
+        {
+            CpuProfileScope staging(cpuProfiler, QR_CPU_PASS_STAGING);
+            rasterizedDataCollector->CopyFromStaging(cmd, frameIndex);
+        }
 
         if (RenderThroughRhi(*drawInfo))
         {
@@ -1162,19 +1215,13 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
                 float frameMs = 0.0f;
                 float passMs[QR_GPU_PASS_COUNT] = {};
 
-                if (nvrhiFrameSkeleton->GetGpuTimings(&frameMs, passMs))
-                {
-                    statsGpuTimingValid = true;
-                    statsGpuFrameMs = frameMs;
-
-                    for (uint32_t i = 0; i < QR_GPU_PASS_COUNT; i++)
-                    {
-                        statsGpuPassMs[i] = passMs[i];
-                    }
-                }
+                statsGpuTimingValid = nvrhiFrameSkeleton->GetGpuTimings(&frameMs, passMs);
+                statsGpuFrameMs = frameMs;
+                std::copy_n(passMs, QR_GPU_PASS_COUNT, statsGpuPassMs);
             }
 
             currentFrameState.OnEndFrame();
+            statsCpuTimingValid = cpuFrameProfiler.IsEnabled();
             return;
         }
 
@@ -1187,6 +1234,7 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
 
     EndFrame(cmd);
     currentFrameState.OnEndFrame();
+    statsCpuTimingValid = cpuFrameProfiler.IsEnabled();
 }
 
 bool VulkanDevice::IsSuspended() const
@@ -1270,6 +1318,9 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
     pStats->apiCallsGeometry = statsApiCallsGeometry;
     pStats->apiCallsRasterized = statsApiCallsRasterized;
     pStats->apiCallsLights = statsApiCallsLights;
+    pStats->cpuTimingValid = statsCpuTimingValid ? 1 : 0;
+    pStats->renderedUiOnly = statsRenderedUiOnly ? 1 : 0;
+    std::copy_n(cpuFrameProfiler.GetMilliseconds().data(), QR_CPU_PASS_COUNT, pStats->cpuPassMs);
 }
 
 void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
@@ -1576,6 +1627,51 @@ void VulkanDevice::UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo 
     }
 }
 
+void VulkanDevice::UploadDtalGroups(const QrDtalGroupUploadBatch *pUploadInfo)
+{
+    if (pUploadInfo == nullptr)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
+    }
+
+    if (pUploadInfo->groupCount == 0 || pUploadInfo->pGroups == nullptr || pUploadInfo->pMembers == nullptr)
+    {
+        return;
+    }
+
+    std::vector<uint32_t> textureIndices(pUploadInfo->groupCount);
+
+    const uint32_t materialCacheSize = 512;
+    uint32_t cachedMaterial[materialCacheSize];
+    uint32_t cachedTextureIndex[materialCacheSize];
+    bool     cachedValid[materialCacheSize] = {};
+
+    for (uint32_t i = 0; i < pUploadInfo->groupCount; i++)
+    {
+        const QrDtalGroupUploadInfo *pGroup = pUploadInfo->pGroups + i;
+        const uint32_t slot = pGroup->material & (materialCacheSize - 1);
+
+        if (cachedValid[slot] && cachedMaterial[slot] == pGroup->material)
+        {
+            textureIndices[i] = cachedTextureIndex[slot];
+        }
+        else
+        {
+            const MaterialTextures textures = textureManager->GetMaterialTextures(pGroup->material);
+            textureIndices[i] = textures.indices[MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX];
+
+            cachedMaterial[slot] = pGroup->material;
+            cachedTextureIndex[slot] = textureIndices[i];
+            cachedValid[slot] = true;
+        }
+    }
+
+    if (!scene->UploadDtalGroups(currentFrameState.GetFrameIndex(), *pUploadInfo, textureIndices.data()))
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "DTAL group batch did not fit the renderer light storage");
+    }
+}
+
 void VulkanDevice::UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo)
 {
     statsApiCallsLights++;
@@ -1609,6 +1705,13 @@ void VulkanDevice::GetClusterLightList(uint32_t cluster, uint64_t *pLightUniqueI
                                        uint32_t *pCount)
 {
     clusterLightLists->GetClusterList(cluster, pLightUniqueIds, maxCount, pCount);
+}
+
+void VulkanDevice::GetClusterLightTail(uint32_t cluster, uint64_t *pLightUniqueIds, float *pProb,
+                                       float *pMarginal, uint32_t *pAlias, float *pBeta, uint32_t maxCount,
+                                       uint32_t *pCount)
+{
+    clusterLightLists->GetClusterTail(cluster, pLightUniqueIds, pProb, pMarginal, pAlias, pBeta, maxCount, pCount);
 }
 
 void VulkanDevice::UploadWorldLights(const QrWorldLightsUploadInfo *pInfo)

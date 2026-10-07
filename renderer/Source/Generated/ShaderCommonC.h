@@ -46,6 +46,9 @@ namespace qray
 #define BINDING_LIGHT_SOURCES_Q2_LIGHT_STATS (6)
 #define BINDING_LIGHT_SOURCES_TAL_CDF (7)
 #define BINDING_LIGHT_SOURCES_Q2_CLUSTER_SKY_VIS (8)
+#define BINDING_LIGHT_SOURCES_DTAL_MEMBERS (9)
+#define BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS (10)
+#define BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL (11)
 #define BINDING_DECAL_INSTANCES (0)
 #define BINDING_PORTAL_INSTANCES (0)
 #define BINDING_LPM_PARAMS (0)
@@ -172,9 +175,11 @@ namespace qray
 #define LIGHT_TYPE_TRIANGLE (3)
 #define LIGHT_TYPE_SPOT (4)
 #define LIGHT_TYPE_TEXTURED_AREA (5)
+#define LIGHT_TYPE_DTAL_GROUP (6)
 #define LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET (0)
 #define LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET (1)
 #define LIGHT_INDEX_NONE (32767)
+#define Q2_LIGHT_LIST_TAIL_CAPACITY (1048576)
 #define TAL_CDF_LUT_ENTRIES (256)
 #define TAL_CDF_EMPTY_ENTRY (0xFFFFFFFFu)
 #define TAL_CDF_GRID_MAX_SIZE (256)
@@ -406,6 +411,29 @@ struct ShLightEncoded
     float coneCosOuter;
     float projector;
     uint32_t __pad0;
+};
+
+struct ShDtalMember
+{
+    float A[3];
+    float area;
+    float B[3];
+    float numVerts;
+    float C[3];
+    float prob;
+    float normal[3];
+    float marginalProb;
+    float uv[8][2];
+    uint32_t aliasIndex;
+    uint32_t reserved[3];
+};
+
+struct ShQ2LightTail
+{
+    uint32_t lightIndex;
+    uint32_t aliasIndex;
+    float prob;
+    float marginalProb;
 };
 
 struct ShVertPreprocessing

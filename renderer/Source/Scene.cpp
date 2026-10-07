@@ -322,3 +322,9 @@ void qray::Scene::UploadLight(uint32_t frameIndex, const QrSpotLightUploadInfo &
 {
     lightManager->AddSpotlight(frameIndex, lightInfo);
 }
+
+bool qray::Scene::UploadDtalGroups(uint32_t frameIndex, const QrDtalGroupUploadBatch &batch,
+                                   const uint32_t *pTextureIndices)
+{
+    return lightManager->AddDtalGroups(frameIndex, batch, pTextureIndices);
+}

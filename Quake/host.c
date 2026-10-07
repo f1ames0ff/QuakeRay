@@ -899,6 +899,8 @@ static void CL_LoadCSProgs (void)
 	}
 }
 
+float rt_host_speeds_ms[RT_HOST_SPEED_COUNT];
+
 /*
 ==================
 Host_Frame
@@ -925,8 +927,7 @@ void _Host_Frame (double time)
 	if (!Host_FilterTime (time))
 		return; // don't run too fast, or packets will flood out
 
-	if (host_speeds.value)
-		time3 = Sys_DoubleTime ();
+	time3 = Sys_DoubleTime ();
 
 	// get new key events
 	Key_UpdateForDest ();
@@ -998,8 +999,7 @@ void _Host_Frame (double time)
 		CL_ReadFromServer ();
 
 	// update video
-	if (host_speeds.value)
-		time1 = Sys_DoubleTime ();
+	time1 = Sys_DoubleTime ();
 
 	// a finished benchmark run asks for its results screen here, after the disconnect it may
 	// have ended in has settled
@@ -1010,8 +1010,7 @@ void _Host_Frame (double time)
 	CL_RunParticles (); // johnfitz -- seperated from rendering
 	R_SmokeUpdate ();
 
-	if (host_speeds.value)
-		time2 = Sys_DoubleTime ();
+	time2 = Sys_DoubleTime ();
 
 	// update audio
 	BGM_Update (); // adds music raw samples and/or advances midi driver
@@ -1025,14 +1024,18 @@ void _Host_Frame (double time)
 
 	CDAudio_Update ();
 
+	pass1 = (time1 - time3) * 1000;
+	time3 = Sys_DoubleTime ();
+	pass2 = (time2 - time1) * 1000;
+	pass3 = (time3 - time2) * 1000;
+
+	rt_host_speeds_ms[RT_HOST_SPEED_TOTAL] = (float)(pass1 + pass2 + pass3);
+	rt_host_speeds_ms[RT_HOST_SPEED_SERVER] = (float)pass1;
+	rt_host_speeds_ms[RT_HOST_SPEED_GFX] = (float)pass2;
+	rt_host_speeds_ms[RT_HOST_SPEED_SOUND] = (float)pass3;
+
 	if (host_speeds.value)
-	{
-		pass1 = (time1 - time3) * 1000;
-		time3 = Sys_DoubleTime ();
-		pass2 = (time2 - time1) * 1000;
-		pass3 = (time3 - time2) * 1000;
 		Con_Printf ("%5.2f tot %5.2f server %5.2f gfx %5.2f snd\n", pass1 + pass2 + pass3, pass1, pass2, pass3);
-	}
 
 	host_framecount++;
 }

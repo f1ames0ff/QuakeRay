@@ -9,8 +9,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$anchorRoot = $PSScriptRoot
+Set-Location $anchorRoot
+[Environment]::CurrentDirectory = $anchorRoot
+
 if (-not $BuildDir) {
-    $BuildDir = Join-Path "build" $Config
+    $BuildDir = Join-Path (Join-Path $anchorRoot "build") $Config
+} elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
+    $BuildDir = Join-Path $anchorRoot $BuildDir
 }
 
 if (-not $PkzOnly)

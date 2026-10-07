@@ -51,6 +51,7 @@
 #include "WorldLights.h"
 #include "ClusterLightLists.h"
 #include "RayStats.h"
+#include "CpuFrameProfiler.h"
 
 namespace qray
 {
@@ -112,11 +113,15 @@ public:
 
     void UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo *pLightInfos, uint32_t count);
 
+    void UploadDtalGroups(const QrDtalGroupUploadBatch *pUploadInfo);
+
     void UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo);
 
     void GetClusterLightStats(QrClusterLightStats *pStats);
     void GetClusterLightGrants(uint32_t *pGranted, uint32_t *pDenied, uint32_t maxCount, uint32_t *pCount);
     void GetClusterLightList(uint32_t cluster, uint64_t *pLightUniqueIds, uint32_t maxCount, uint32_t *pCount);
+    void GetClusterLightTail(uint32_t cluster, uint64_t *pLightUniqueIds, float *pProb, float *pMarginal,
+                             uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount);
 
     void UploadWorldLights(const QrWorldLightsUploadInfo *pInfo);
 
@@ -286,6 +291,9 @@ private:
     bool                                    statsGpuTimingValid = false;
     float                                   statsGpuFrameMs = 0.0f;
     float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
+    CpuFrameProfiler                        cpuFrameProfiler;
+    bool                                    statsCpuTimingValid = false;
+    bool                                    statsRenderedUiOnly = false;
     uint32_t                                statsApiCallsGeometry = 0;
     uint32_t                                statsApiCallsRasterized = 0;
     uint32_t                                statsApiCallsLights = 0;
