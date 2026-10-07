@@ -55,6 +55,8 @@ constexpr uint32_t VOXEL_SMOKE_VOLUME_UAV_SLOT = 0;
 constexpr uint32_t VOXEL_SMOKE_VOLUME_SRV_SLOT = 0;
 constexpr uint32_t VOXEL_SMOKE_SAMPLER_SLOT    = 0;
 constexpr uint32_t VOXEL_SMOKE_DEPTH_SRV_SLOT  = 1;
+constexpr uint32_t VOXEL_SMOKE_LF_SH_SRV_SLOT  = 2;
+constexpr uint32_t VOXEL_SMOKE_LF_COCG_SRV_SLOT = 3;
 
 struct VoxelSmokeParams
 {
@@ -903,6 +905,8 @@ bool RhiRasterOverlayPass::Create(nvrhi::IDevice *pDevice,
             nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_VOLUME_SRV_SLOT),
             nvrhi::BindingLayoutItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT),
             nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT),
+            nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_LF_SH_SRV_SLOT),
+            nvrhi::BindingLayoutItem::Texture_SRV(VOXEL_SMOKE_LF_COCG_SRV_SLOT),
         };
         voxelSmokeMarchLayout = rhi::createBindingLayout(device, marchLayoutItems, "RhiRasterOverlay voxel smoke march");
 
@@ -1239,6 +1243,8 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
             params.marchParams[0] = pVoxelSmokeParams->marchSteps;
             params.marchParams[1] = pVoxelSmokeParams->extinction;
             params.marchParams[2] = pVoxelSmokeParams->debugGray;
+            params.marchParams[3] = (target.smokePingLfShTexture != nullptr &&
+                                     target.smokePingLfCocgTexture != nullptr) ? 1.0f : 0.0f;
             params.resolution[0] = float(VOXEL_SMOKE_RESOLUTION);
             params.resolution[1] = float(VOXEL_SMOKE_RESOLUTION);
             params.resolution[2] = float(VOXEL_SMOKE_RESOLUTION);
@@ -1288,6 +1294,15 @@ void RhiRasterOverlayPass::Render(nvrhi::ICommandList *pCommandList,
                 setDesc.addItem(nvrhi::BindingSetItem::Sampler(VOXEL_SMOKE_SAMPLER_SLOT, voxelSmokeSampler));
                 setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_DEPTH_SRV_SLOT,
                                                                    target.depthNdcTexture));
+
+                nvrhi::ITexture *pLfSh = (target.smokePingLfShTexture != nullptr)
+                    ? target.smokePingLfShTexture.Get() : target.depthNdcTexture.Get();
+                nvrhi::ITexture *pLfCocg = (target.smokePingLfCocgTexture != nullptr)
+                    ? target.smokePingLfCocgTexture.Get() : target.depthNdcTexture.Get();
+
+                setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_LF_SH_SRV_SLOT, pLfSh));
+                setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(VOXEL_SMOKE_LF_COCG_SRV_SLOT, pLfCocg));
+
                 voxelSmokeMarchSets[frameIndex] = device->createBindingSet(setDesc, voxelSmokeMarchLayout);
             }
         }

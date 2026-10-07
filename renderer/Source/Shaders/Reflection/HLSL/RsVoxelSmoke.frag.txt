@@ -148,10 +148,18 @@ sampler
 UniformConstant
 === descriptor set 0 binding 1: storage class
 UniformConstant
+=== descriptor set 0 binding 2
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 256
 struct
 === descriptor set 0 binding 256: storage class
 Uniform
+=== descriptor set 0 binding 2: storage class
+UniformConstant
+=== descriptor set 0 binding 3
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 3: storage class
+UniformConstant
 === descriptor set 1 binding 0
 struct
 === descriptor set 1 binding 0: storage class

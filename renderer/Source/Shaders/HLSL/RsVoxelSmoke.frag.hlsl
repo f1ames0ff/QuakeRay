@@ -1,12 +1,16 @@
 #define DESC_SET_GLOBAL_UNIFORM 1
 #include "ShaderCommonHLSLFunc.hlsli"
 
+#include "Q2Asvgf.hlsli"
+#include "Smoke.hlsli"
 #include "VoxelSmoke.hlsli"
 
 [[vk::binding(256, 0)]] ConstantBuffer<VoxelSmokeParams> params;
 [[vk::binding(0, 0)]] Texture3D<float> volume;
 [[vk::binding(128, 0)]] SamplerState volumeSampler;
 [[vk::binding(1, 0)]] Texture2D<float> sceneDepth;
+[[vk::binding(2, 0)]] Texture2D<float4> smokeLfSh;
+[[vk::binding(3, 0)]] Texture2D<float4> smokeLfCocg;
 
 void main( float4 position : SV_Position,
            out float4 outColor : SV_Target0,
@@ -48,6 +52,21 @@ void main( float4 position : SV_Position,
     const float steps      = ceil( ( t1 - t0 ) / stepLength );
     const float extinction = params.marchParams.y;
 
+    const int2 cbPix = getCheckerboardPix( (int2)position.xy );
+    const int2 lfPix = int2( clamp( cbPix / Q2_GRAD_DWN, (int2)0,
+                                    int2( globalUniform.renderWidth, globalUniform.renderHeight ) / Q2_GRAD_DWN - (int2)1 ) );
+
+    Q2SH lf;
+    lf.shY = smokeLfSh.Load( int3( lfPix, 0 ) );
+    lf.CoCg = smokeLfCocg.Load( int3( lfPix, 0 ) ).xy;
+    lf.shY /= Q2_STORAGE_SCALE_LF;
+    lf.CoCg /= Q2_STORAGE_SCALE_LF;
+
+    const float3 ambient = q2SHToIrradiance( lf, (float3)0.0 ) * SMOKE_AMBIENT_GAIN;
+    const float3 inScatter = ( params.marchParams.w != 0.0 )
+        ? ( ambient + SMOKE_MIN_LIGHT )
+        : (float3)params.marchParams.z;
+
     float  transmittance = 1.0;
     float3 scattered = 0.0;
 
@@ -59,7 +78,7 @@ void main( float4 position : SV_Position,
 
         const float opacity = 1.0 - exp( -density * extinction * stepLength );
 
-        scattered     += params.marchParams.z * opacity * transmittance;
+        scattered     += inScatter * opacity * transmittance;
         transmittance *= 1.0 - opacity;
 
         if ( transmittance < 0.01 )
