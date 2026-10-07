@@ -10,6 +10,11 @@ save and every save is run in two load modes:
 | `gpumax` | GPU bound, CPU with headroom | 3840x2160, no upscaling, denoiser on, `rt_gi_level 2`, godrays extreme, clouds high, bloom, exposure, sharpen, vignette, filmgrain |
 | `cpumax` | CPU bound, GPU nearly idle | 1280x720 window, no upscaling, denoiser off, `rt_gi_level 0`, no godrays, no clouds, no post |
 
+Each mode config unlocks the video mode and restarts it (`vid_unlock`, then
+`vid_width`/`vid_height`, then `vid_restart`) so the resolution in the table is the one measured: a
+mode set from a config is otherwise ignored, because the startup video mode stays locked while the
+config files run. Every block records the mode that was really in force in its `vid=` field.
+
 Everything that shapes the cluster system is pinned in `qr_perf_common.cfg` and is identical in
 both modes: `rt_light_reach_static 25`, `rt_light_reach_dynamic 10`, `rt_cluster_incremental 1`,
 `rt_cluster_assert 0`, `rt_stats 0`, `developer 0`, `vid_vsync 0`, `host_maxfps 0`, and both
