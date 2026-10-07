@@ -87,6 +87,7 @@ modestate_t     modestate = MS_UNINIT;
 extern qboolean scr_initialized;
 extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate;
 extern cvar_t   scr_showfps, scr_fov;
+extern cvar_t   r_smoke;
 
 //====================================
 
@@ -2912,7 +2913,11 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	AngleVectors (r_refdef.viewangles, voxel_smoke_forward, voxel_smoke_right, voxel_smoke_up);
 
 	if (voxel_smoke_enabled &&
-	    (!voxel_smoke_anchor_valid || !voxel_smoke_was_enabled || cl.worldmodel != voxel_smoke_anchor_model))
+	    (!voxel_smoke_anchor_valid || !voxel_smoke_was_enabled || cl.worldmodel != voxel_smoke_anchor_model ||
+	     (voxel_smoke_anchor_valid &&
+	      (fabs (r_refdef.vieworg[0] - voxel_smoke_anchor[0]) > 256.0f ||
+	       fabs (r_refdef.vieworg[1] - voxel_smoke_anchor[1]) > 256.0f ||
+	       fabs (r_refdef.vieworg[2] - voxel_smoke_anchor[2]) > 256.0f))))
 	{
 		VectorCopy (r_refdef.vieworg, voxel_smoke_anchor);
 		VectorMA (voxel_smoke_anchor, 128.0f, voxel_smoke_forward, voxel_smoke_anchor);
@@ -2946,8 +2951,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 		for (int i = 0; i < 3; i++)
 		{
-			const float center = (voxel_smoke_params.emitterCount > 0)
-				? r_refdef.vieworg[i] : voxel_smoke_params.emitterCenter.data[i];
+			const qboolean follow_player = ((int)r_smoke.value == 2) || (voxel_smoke_params.emitterCount > 0);
+			const float center = follow_player ? r_refdef.vieworg[i] : voxel_smoke_params.emitterCenter.data[i];
 			const float snapped = (voxel > 0.0f) ? (floor (center / voxel) * voxel) : center;
 
 			voxel_smoke_params.worldMin.data[i] = snapped - voxel_smoke_window;
