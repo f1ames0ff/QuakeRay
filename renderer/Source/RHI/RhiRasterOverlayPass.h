@@ -266,6 +266,8 @@ public:
     // skeleton wires the UI pass.
     void SetGeometryBuffers(nvrhi::IBuffer *pVertexBuffer, nvrhi::IBuffer *pIndexBuffer);
 
+    void SetParticlePointBuffer(nvrhi::IBuffer *pBuffer);
+
     // Installs the direct pass's set-6 light layout (RhiRtDirectPass::GetLightLayout) for the smoke
     // and particle pipelines. The direct pass is created after this one in VulkanDevice_Init, so the
     // layout cannot be a Create argument; the overlay keeps the handle, which also keeps the layout
@@ -359,6 +361,8 @@ public:
                 uint32_t smokeDrawCount,
                 const RasterizedDataCollector::DrawInfo *pParticleDraws,
                 uint32_t particleDrawCount,
+                const RasterizedDataCollector::ParticlePointDrawInfo *pParticlePointDraws,
+                uint32_t particlePointDrawCount,
                 nvrhi::rt::IAccelStruct *pSmokeTopLevel,
                 nvrhi::IBindingSet *pSmokeLightSet,
                 nvrhi::IBindingSet *pRayStatsSet);
@@ -478,11 +482,17 @@ private:
                              uint32_t width, uint32_t height, const float *defaultViewProj,
                              const RasterizedDataCollector::DrawInfo *pDraws, uint32_t drawCount,
                              nvrhi::IBindingSet *pLightSet, nvrhi::IBindingSet *pRayStatsSet);
+    void RecordParticlePointDraws(nvrhi::ICommandList *pCommandList, const Target &target,
+                                  uint32_t width, uint32_t height, const float *defaultViewProj,
+                                  const RasterizedDataCollector::ParticlePointDrawInfo *pDraws,
+                                  uint32_t drawCount, nvrhi::IBindingSet *pLightSet,
+                                  nvrhi::IBindingSet *pRayStatsSet);
 
     void ReleaseTarget(Target &target);
     void ReleasePipelineCache();
     void ReleaseSmokePipelineCache();
     void ReleaseParticlePipelineCache();
+    void ReleaseParticlePointPipelineCache();
 
     nvrhi::IGraphicsPipeline *GetWorldPipeline(uint32_t stateFlags, bool applyVertexColorGamma);
     nvrhi::GraphicsPipelineHandle CreateWorldPipeline(uint32_t stateFlags, bool applyVertexColorGamma);
@@ -494,6 +504,10 @@ private:
     nvrhi::IGraphicsPipeline *GetParticlePipeline(uint32_t stateFlags);
     nvrhi::GraphicsPipelineHandle CreateParticlePipeline(uint32_t stateFlags);
     bool PrewarmParticlePipeline();
+
+    nvrhi::IGraphicsPipeline *GetParticlePointPipeline(uint32_t stateFlags);
+    nvrhi::GraphicsPipelineHandle CreateParticlePointPipeline(uint32_t stateFlags);
+    bool PrewarmParticlePointPipeline();
 
     nvrhi::IDevice *device = nullptr;
     PrintFunction print;
@@ -560,6 +574,9 @@ private:
     nvrhi::ShaderHandle particlePixelShader;
     nvrhi::InputLayoutHandle particleInputLayout;
 
+    nvrhi::ShaderHandle particlePointVertexShader;
+    nvrhi::InputLayoutHandle particlePointInputLayout;
+
     nvrhi::BindingLayoutHandle particlePushConstantLayout;
     nvrhi::BindingLayoutHandle particleFramebuffersLayout;
 
@@ -579,6 +596,7 @@ private:
     std::unordered_map<uint32_t, nvrhi::GraphicsPipelineHandle> smokePipelines;
 
     std::unordered_map<uint32_t, nvrhi::GraphicsPipelineHandle> particlePipelines;
+    std::unordered_map<uint32_t, nvrhi::GraphicsPipelineHandle> particlePointPipelines;
 
     // The host's table and frame model; not owned, both outlive this object. The table provides the
     // bindless set and the first-use tracking of the engine textures it wrapped; the frame context
@@ -589,6 +607,8 @@ private:
     // The geometry the draws bind; not owned, the caller keeps them alive.
     nvrhi::BufferHandle vertexBuffer;
     nvrhi::BufferHandle indexBuffer;
+
+    nvrhi::BufferHandle particlePointBuffer;
 
     // The set-2 wraps of SetTonemappingBuffers; not owned.
     nvrhi::IBuffer *tonemappingBuffers[MAX_FRAMES_IN_FLIGHT] = {};
@@ -620,6 +640,8 @@ private:
     bool warnedFailedSmokePipeline = false;
     bool warnedMissingParticleInputs = false;
     bool warnedFailedParticlePipeline = false;
+    bool warnedMissingParticlePointInputs = false;
+    bool warnedFailedParticlePointPipeline = false;
 
     bool created = false;
 };
