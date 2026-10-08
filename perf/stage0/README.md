@@ -85,6 +85,22 @@ game. Expected in at least part of the rows: `particles_smoke` > 0, `cpu.particl
 `gpu.particles_ms` > 0, `particles_cache_hits + particles_cache_misses` > 0, and `rays_particle` > 0
 while `r_particle_lighting 1`.
 
+## Automated Stage-2 point A/B
+
+`run_points_ab.ps1` drives one engine session end to end: it loads a save, dismisses the menu, waits
+for the world spawn, then fires the rocket launcher for a few seconds twice - first with
+`r_particles_points 1`, then with `0` - recording an `rt_bench` block and a stats dump per arm:
+
+```powershell
+powershell -File perf\stage0\run_points_ab.ps1 -Save start1 -FireSeconds 5
+```
+
+It writes `stage2-points-on.dump` / `stage2-points-off.dump` into the game directory, prints the new
+benchmark blocks (frame and particle slots) and runs `particle_attribution.ps1` on the two dumps.
+Requirements: the save rests where firing keeps particles in view, the player owns the rocket
+launcher (the script selects it with `impulse 7`), and no other engine instance is running. Keep
+the engine window uncovered while the run is in flight - an unfocused window sleeps 16 ms per frame.
+
 ## Landed instrumentation
 
 - The Stage-0 slots and columns are in this tree (commits `c53c52d8`, `e89abc1c`): the dump carries
