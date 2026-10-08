@@ -1034,6 +1034,8 @@ void _Host_Frame (double time)
 	rt_host_speeds_ms[RT_HOST_SPEED_GFX] = (float)pass2;
 	rt_host_speeds_ms[RT_HOST_SPEED_SOUND] = (float)pass3;
 
+	RT_Bench_HostFrame ();
+
 	if (host_speeds.value)
 		Con_Printf ("%5.2f tot %5.2f server %5.2f gfx %5.2f snd\n", pass1 + pass2 + pass3, pass1, pass2, pass3);
 

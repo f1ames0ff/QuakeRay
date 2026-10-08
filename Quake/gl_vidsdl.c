@@ -412,6 +412,8 @@ static double   rt_bench_start_time;
 static double   rt_bench_frame_min;
 static double   rt_bench_sum[RT_PROF_COUNT];
 static double   rt_bench_max[RT_PROF_COUNT];
+static double   rt_bench_host_sum[RT_HOST_SPEED_COUNT];
+static int      rt_bench_host_frames;
 
 /* What the results screen of the benchmark menu shows, filled by RT_Bench_Report. */
 rt_bench_result_t rt_bench_result;
@@ -430,6 +432,8 @@ void RT_Bench_Start (void)
 	rt_bench_frame_min = 0.0;
 	memset (rt_bench_sum, 0, sizeof (rt_bench_sum));
 	memset (rt_bench_max, 0, sizeof (rt_bench_max));
+	memset (rt_bench_host_sum, 0, sizeof (rt_bench_host_sum));
+	rt_bench_host_frames = 0;
 	rt_cluster_cache_hits = 0;
 	rt_cluster_cache_misses = 0;
 	rt_cluster_miss_set = 0;
@@ -464,6 +468,17 @@ static void RT_Bench_Slot (int slot, double ms)
 
 	if (slot == RT_PROF_FRAME && (rt_bench_frames == 0 || ms < rt_bench_frame_min))
 		rt_bench_frame_min = ms;
+}
+
+void RT_Bench_HostFrame (void)
+{
+	if (!rt_bench_active)
+		return;
+
+	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		rt_bench_host_sum[i] += rt_host_speeds_ms[i];
+
+	++rt_bench_host_frames;
 }
 
 double RT_Prof_Begin (void)
@@ -727,6 +742,12 @@ qboolean RT_Bench_Report (const char *demo)
 	fprintf (f, "cpu.main    %-17s avg_ms=%.2f\n", "frame minus wait",
 	         (rt_bench_sum[RT_PROF_FRAME] - rt_bench_sum[RT_PROF_WAIT]) / frames);
 
+	static const char *const hostPasses[RT_HOST_SPEED_COUNT] = {"tot", "server", "gfx", "snd"};
+	const int                hostFrames = rt_bench_host_frames > 0 ? rt_bench_host_frames : 1;
+
+	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		fprintf (f, "host.pass   %-17s avg_ms=%.2f\n", hostPasses[i], rt_bench_host_sum[i] / hostFrames);
+
 	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d\n", "lists",
 	         rt_cluster_cache_hits, rt_cluster_cache_misses, rt_cluster_miss_set,
 	         rt_cluster_miss_move, rt_cluster_miss_other);
@@ -790,6 +811,9 @@ qboolean RT_Bench_Report (const char *demo)
 	for (int i = 0; i < RT_PROF_COUNT; i++)
 		Con_Printf ("  %-17s avg %.2f ms, max %.2f ms\n", RT_ProfSlotName (i),
 		            rt_bench_sum[i] / frames, rt_bench_max[i]);
+
+	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		Con_Printf ("  host %-12s avg %.2f ms\n", hostPasses[i], rt_bench_host_sum[i] / hostFrames);
 
 	return true;
 }

@@ -799,6 +799,7 @@ extern rt_bench_result_t rt_bench_result;
 qboolean RT_Bench_Active (void);
 void     RT_Bench_Start (void);
 void     RT_Bench_Stop (void);
+void     RT_Bench_HostFrame (void);
 // Marks a run that ended before its demo did (a map change, a pause, a disconnect).
 void     RT_Bench_Interrupt (void);
 qboolean RT_Bench_Interrupted (void);
