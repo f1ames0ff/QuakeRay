@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_world.c: world model rendering
 
 #include "quakedef.h"
+#include "rt_brush_transform_cache.h"
 #include "atomics.h"
 #include "rt_dtal_debug.h"
 #include "rt_dtal_groups.h"
@@ -956,11 +957,18 @@ static void RT_ClearBatch (cb_context_t *cbx)
 
 QrTransform RT_GetBrushModelMatrix (entity_t *e)
 {
+	COMPILE_TIME_ASSERT (brush_transform_cache_size, sizeof (QrTransform) == sizeof (((rt_brush_transform_cache_t *) 0)->matrix));
+
 	if (e == NULL)
 	{
 		const static QrTransform identity = RT_TRANSFORM_IDENTITY;
 		return identity;
 	}
+
+	static THREAD_LOCAL rt_brush_transform_cache_t cache;
+	QrTransform transform;
+	if (RT_BrushTransformCacheGet (&cache, e, e->origin, e->angles, &transform))
+		return transform;
 
 	vec3_t e_angles;
 	VectorCopy (e->angles, e_angles);
@@ -970,7 +978,9 @@ QrTransform RT_GetBrushModelMatrix (entity_t *e)
 	IdentityMatrix (model_matrix);
 	R_RotateForEntity (model_matrix, e->origin, e_angles);
 
-	return RT_GetModelTransform (model_matrix);
+	transform = RT_GetModelTransform (model_matrix);
+	RT_BrushTransformCacheStore (&cache, e, e->origin, e->angles, &transform);
+	return transform;
 }
 
 static qboolean  RT_FindNearestTeleport (const QrGeometryUploadInfo *info, uint8_t *result, qboolean *potentially_mirror);
