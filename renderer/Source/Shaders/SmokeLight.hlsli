@@ -50,9 +50,10 @@
 #ifndef SMOKE_LIGHT_HLSLI_
 #define SMOKE_LIGHT_HLSLI_
 
+#ifndef SMOKE_LIGHT_EXTERNAL_TLAS
 #define SMOKE_TLAS_SET 5
-
 [[vk::binding(0, SMOKE_TLAS_SET)]] RaytracingAccelerationStructure topLevelAS;
+#endif
 
 #define SMOKE_SHADOW_RAY_EPS 0.01
 

@@ -183,7 +183,6 @@ private:
 
     VkFence             frameFences[MAX_FRAMES_IN_FLIGHT] = {};
     VkSemaphore         imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
-    VkSemaphore         renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
     VkSemaphore         inFrameSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
 
     bool                waitForOutOfFrameFence;
@@ -195,6 +194,8 @@ private:
     bool                                    presentWait2Enabled = false;
     std::string                             printedPresentModeName;
     bool                                    printedPresentWaitActive = false;
+    bool                                    printedRasterUploadWithoutFrame = false;
+    bool                                    printedRasterOverflow = false;
     std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;

@@ -28,9 +28,10 @@
 
 struct RasterizerFrag_BT
 {
-    [[vk::offset(64)]] float4 color;
-    [[vk::offset(80)]] uint   textureIndex;
-    [[vk::offset(84)]] uint   emissionTextureIndex;
+    [[vk::offset(64)]]  float4 color;
+    [[vk::offset(80)]]  uint   textureIndex;
+    [[vk::offset(84)]]  uint   emissionTextureIndex;
+    [[vk::offset(120)]] uint   particleProxy;
 };
 
 [[vk::push_constant]] ConstantBuffer<RasterizerFrag_BT> rasterizerFragInfo;
@@ -51,6 +52,22 @@ RsWorldFragOutput main( [[vk::location(0)]] float4 vertColor    : TEXCOORD0,
                         float4 fragCoord : SV_Position )
 {
     RsWorldFragOutput o;
+
+    /* An unlit particle sprite whose stand-in the reflect/refract raygen traced is not rasterized
+       behind a pane: the traced copy is what the glass shows. The mask's blue is the pane's view
+       depth (RaygenPrimary.hlsli) and its alpha's magnitude above four marks the normal-map glass
+       mode; the fragment's own view depth is the reciprocal of SV_Position.w, the clip-space w the
+       perspective divide interpolates to 1/w. The flag is zero for every non-sprite draw. */
+    if (rasterizerFragInfo.particleProxy != 0u && globalUniform.glassParticles != 0u)
+    {
+        const int2 cbPix = getCheckerboardPix(int2(fragCoord.xy));
+        const float4 glassMask = framebufQ2GlassFilter_Sampled.Load(int3(cbPix, 0));
+        const float viewDepth = 1.0 / max(fragCoord.w, 1e-6);
+        if (abs(glassMask.a) >= 4.0 && viewDepth > glassMask.z + max(0.01, glassMask.z * 1e-4))
+        {
+            discard;
+        }
+    }
 
     float4 albedoAlpha = getTextureSample( rasterizerFragInfo.textureIndex, vertTexCoord );
     o.outColor         = rasterizerFragInfo.color * vertColor * albedoAlpha;

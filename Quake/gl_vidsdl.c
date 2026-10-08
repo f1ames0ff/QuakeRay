@@ -259,6 +259,9 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
 	CVAR_DEF_T (rt_refr_water, "1.33") \
+	CVAR_DEF_T (rt_glass_shadows, "1") \
+	CVAR_DEF_T (rt_glass_denoise, "0") \
+	CVAR_DEF_T (rt_glass_particles, "1") \
 	\
 	CVAR_DEF_T (rt_volume_type, "2") \
 	/* The screen-space volumetric these parameterise is gone on the Q2RTX core:
@@ -414,6 +417,28 @@ static double   rt_bench_sum[RT_PROF_COUNT];
 static double   rt_bench_max[RT_PROF_COUNT];
 static double   rt_bench_host_sum[RT_HOST_SPEED_COUNT];
 static int      rt_bench_host_frames;
+static double   rt_bench_frame_slots[RT_PROF_COUNT];
+static double   rt_bench_last_frame_end;
+static QrFrameStats rt_bench_renderer_stats;
+
+#define RT_BENCH_FRAME_CAPACITY 32768
+
+typedef struct
+{
+	double       timeMs;
+	double       intervalMs;
+	double       hostIntervalMs;
+	double       clientTime;
+	double       slots[RT_PROF_COUNT];
+	QrFrameStats renderer;
+	int          keyGame;
+	int          paused;
+	int          signon;
+} rt_bench_frame_t;
+
+static rt_bench_frame_t *rt_bench_frame_samples;
+static int              rt_bench_frame_sample_count;
+static unsigned         rt_bench_capture_id;
 
 /* What the results screen of the benchmark menu shows, filled by RT_Bench_Report. */
 rt_bench_result_t rt_bench_result;
@@ -425,11 +450,18 @@ qboolean RT_Bench_Active (void)
 
 void RT_Bench_Start (void)
 {
+	if (!rt_bench_frame_samples)
+		rt_bench_frame_samples = Mem_Alloc (RT_BENCH_FRAME_CAPACITY * sizeof (*rt_bench_frame_samples));
+
 	rt_bench_active = true;
 	rt_bench_interrupted = false;
 	rt_bench_frames = 0;
 	rt_bench_start_time = Sys_DoubleTime ();
 	rt_bench_frame_min = 0.0;
+	rt_bench_last_frame_end = 0.0;
+	rt_bench_frame_sample_count = 0;
+	memset (rt_bench_frame_slots, 0, sizeof (rt_bench_frame_slots));
+	memset (&rt_bench_renderer_stats, 0, sizeof (rt_bench_renderer_stats));
 	memset (rt_bench_sum, 0, sizeof (rt_bench_sum));
 	memset (rt_bench_max, 0, sizeof (rt_bench_max));
 	memset (rt_bench_host_sum, 0, sizeof (rt_bench_host_sum));
@@ -463,6 +495,7 @@ static void RT_Bench_Slot (int slot, double ms)
 		return;
 
 	rt_bench_sum[slot] += ms;
+	rt_bench_frame_slots[slot] += ms;
 	if (ms > rt_bench_max[slot])
 		rt_bench_max[slot] = ms;
 
@@ -512,6 +545,11 @@ void RT_Prof_FrameStart (void)
 		return;
 
 	rt_prof_frame_start = Sys_DoubleTime ();
+	if (rt_bench_active)
+	{
+		memset (rt_bench_frame_slots, 0, sizeof (rt_bench_frame_slots));
+		memset (&rt_bench_renderer_stats, 0, sizeof (rt_bench_renderer_stats));
+	}
 	++rt_prof_frames;
 }
 
@@ -522,7 +560,27 @@ void RT_Prof_FrameEnd (void)
 
 	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
 	if (rt_bench_active)
+	{
+		const double now = Sys_DoubleTime ();
+		if (rt_bench_frame_sample_count < RT_BENCH_FRAME_CAPACITY)
+		{
+			rt_bench_frame_t *sample = &rt_bench_frame_samples[rt_bench_frame_sample_count++];
+			sample->timeMs = (now - rt_bench_start_time) * 1000.0;
+			sample->intervalMs = rt_bench_last_frame_end > 0.0 ? (now - rt_bench_last_frame_end) * 1000.0 : 0.0;
+			sample->hostIntervalMs = host_rawframetime * 1000.0;
+			sample->clientTime = cl.time;
+			memcpy (sample->slots, rt_bench_frame_slots, sizeof (sample->slots));
+			sample->renderer = rt_bench_renderer_stats;
+			sample->keyGame = key_dest == key_game;
+			sample->paused = sv.paused || cl.paused;
+			sample->signon = cls.signon;
+		}
+		for (int i = 0; i < RT_PROF_COUNT; ++i)
+			if (rt_bench_frame_slots[i] > rt_bench_max[i])
+				rt_bench_max[i] = rt_bench_frame_slots[i];
+		rt_bench_last_frame_end = now;
 		++rt_bench_frames;
+	}
 }
 
 static void RT_Prof_ResetSamples (void)
@@ -541,6 +599,9 @@ static void RT_Prof_RecordRenderer (void)
 
 	if (qrGetFrameStatsEx (vulkan_globals.instance, &stats) != QR_SUCCESS || !stats.cpuTimingValid)
 		return;
+
+	if (rt_bench_active)
+		rt_bench_renderer_stats = stats;
 
 	++rt_renderer_cpu_samples;
 	for (int i = 0; i < QR_CPU_PASS_COUNT; i++)
@@ -675,6 +736,68 @@ static void RT_Bench_Setting (FILE *f, const char *name)
 	fprintf (f, " %s=%s", name, var ? var->string : "?");
 }
 
+static void RT_Bench_Column (FILE *f, const char *prefix, const char *name)
+{
+	fprintf (f, ",%s", prefix);
+	for (; *name; ++name)
+		fputc (*name == ' ' ? '_' : *name, f);
+	fputs ("_ms", f);
+}
+
+static void RT_Bench_WriteFrames (FILE *log, const char *demo)
+{
+	char stamp[32];
+	char name[80];
+	char path[MAX_OSPATH];
+	const time_t now = time (NULL);
+	struct tm *local = localtime (&now);
+	FILE *f;
+
+	if (local)
+		strftime (stamp, sizeof (stamp), "%Y%m%d-%H%M%S", local);
+	else
+		q_strlcpy (stamp, "unknown", sizeof (stamp));
+	q_snprintf (name, sizeof (name), "benchmark-frames-%s-%u.csv", stamp, ++rt_bench_capture_id);
+	q_snprintf (path, sizeof (path), "%s/%s", com_gamedir, name);
+	f = fopen (path, "w");
+	if (!f)
+	{
+		Con_Printf ("rt_bench: could not write frame samples to %s\n", path);
+		return;
+	}
+
+	fprintf (f, "# rt_bench_frames demo=%s frames=%d samples=%d dropped=%d\n", demo ? demo : "?",
+	         rt_bench_frames, rt_bench_frame_sample_count, rt_bench_frames - rt_bench_frame_sample_count);
+	fputs ("frame,time_ms,interval_ms,host_interval_ms,client_time,key_game,paused,signon,gpu_valid,gpu.frame_ms", f);
+	for (int i = 0; i < RT_PROF_COUNT; ++i)
+		RT_Bench_Column (f, "cpu.", RT_ProfSlotName (i));
+	for (int i = 0; i < QR_CPU_PASS_COUNT; ++i)
+		RT_Bench_Column (f, "cpu.draw.", qrGetCpuPassName (i));
+	for (int i = 0; i < QR_GPU_PASS_COUNT; ++i)
+		RT_Bench_Column (f, "gpu.", qrGetGpuPassName (i));
+	fputs (",calls_geometry,calls_raster,calls_lights,ui_only\n", f);
+
+	for (int i = 0; i < rt_bench_frame_sample_count; ++i)
+	{
+		const rt_bench_frame_t *sample = &rt_bench_frame_samples[i];
+		const QrFrameStats *stats = &sample->renderer;
+		fprintf (f, "%d,%.4f,%.4f,%.4f,%.6f,%d,%d,%d,%u,%.4f", i, sample->timeMs,
+		         sample->intervalMs, sample->hostIntervalMs, sample->clientTime,
+		         sample->keyGame, sample->paused, sample->signon, stats->gpuTimingValid, stats->gpuFrameMs);
+		for (int j = 0; j < RT_PROF_COUNT; ++j)
+			fprintf (f, ",%.4f", sample->slots[j]);
+		for (int j = 0; j < QR_CPU_PASS_COUNT; ++j)
+			fprintf (f, ",%.4f", stats->cpuPassMs[j]);
+		for (int j = 0; j < QR_GPU_PASS_COUNT; ++j)
+			fprintf (f, ",%.4f", stats->gpuPassMs[j]);
+		fprintf (f, ",%u,%u,%u,%u\n", stats->apiCallsGeometry, stats->apiCallsRasterized,
+		         stats->apiCallsLights, stats->renderedUiOnly);
+	}
+	fclose (f);
+	fprintf (log, "frame_samples file=%s samples=%d dropped=%d\n", name,
+	         rt_bench_frame_sample_count, rt_bench_frames - rt_bench_frame_sample_count);
+}
+
 qboolean RT_Bench_Report (const char *demo)
 {
 	char        path[MAX_OSPATH];
@@ -753,6 +876,15 @@ qboolean RT_Bench_Report (const char *demo)
 	         rt_cluster_miss_move, rt_cluster_miss_other);
 
 	fprintf (f, "settings");
+	RT_Bench_Setting (f, "host_maxfps");
+	RT_Bench_Setting (f, "host_timescale");
+	RT_Bench_Setting (f, "fov");
+	RT_Bench_Setting (f, "vid_maxframelatency");
+	RT_Bench_Setting (f, "r_drawviewmodel");
+	RT_Bench_Setting (f, "r_enhancedmodels");
+	RT_Bench_Setting (f, "r_simd");
+	RT_Bench_Setting (f, "r_lerpmodels");
+	RT_Bench_Setting (f, "r_smoke");
 	RT_Bench_Setting (f, "rt_enable_pvs");
 	RT_Bench_Setting (f, "sv_novis");
 	RT_Bench_Setting (f, "rt_truelight");
@@ -792,6 +924,13 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_sky_clouds_height");
 	RT_Bench_Setting (f, "rt_sky_clouds_thickness");
 	RT_Bench_Setting (f, "rt_denoiser");
+	RT_Bench_Setting (f, "rt_reflrefr_depth");
+	RT_Bench_Setting (f, "rt_glass_shadows");
+	RT_Bench_Setting (f, "rt_glass_denoise");
+	RT_Bench_Setting (f, "rt_glass_particles");
+	RT_Bench_Setting (f, "rt_bloom");
+	RT_Bench_Setting (f, "rt_bloom_quality");
+	RT_Bench_Setting (f, "rt_local_exposure");
 	RT_Bench_Setting (f, "rt_gi_level");
 	RT_Bench_Setting (f, "rt_nee_samples");
 	RT_Bench_Setting (f, "rt_restir");
@@ -803,6 +942,7 @@ qboolean RT_Bench_Report (const char *demo)
 	fprintf (f, " vid=%dx%d@%d vsync=%d version=%s\n", vid.width, vid.height, vid_display_refresh,
 	         (int)vid_vsync.value, ENGINE_VER_STRING);
 
+	RT_Bench_WriteFrames (f, demo);
 	fclose (f);
 
 	Con_Printf ("rt_bench: %d frames, %.2f s, %.1f fps -> %s\n", rt_bench_frames, seconds,
@@ -885,6 +1025,10 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_WORLD, "world" },
 		{ RT_PROF_SKY, "sky" },
 		{ RT_PROF_ENTS, "ents" },
+		{ RT_PROF_ENTS_ALIAS, "ents alias" },
+		{ RT_PROF_ENTS_BRUSH, "ents brush" },
+		{ RT_PROF_ENTS_SPRITE, "ents sprite" },
+		{ RT_PROF_BRUSH_LIGHTMARK, "brush lightmark" },
 		{ RT_PROF_ALPHA, "alpha" },
 		{ RT_PROF_PARTICLES, "particles" },
 		{ RT_PROF_VIEWMODEL, "viewmodel" },
@@ -903,6 +1047,16 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_DRAWFRAME, "qrDrawFrame" },
 		{ RT_PROF_WAIT, "wait" },
 		{ RT_PROF_FRAME, "frame" },
+		{ RT_PROF_BRUSH_CHAIN, "brush chain" },
+		{ RT_PROF_BRUSH_LIGHTS, "brush lights" },
+		{ RT_PROF_BRUSH_PACK, "brush pack" },
+		{ RT_PROF_BRUSH_UPLOAD, "brush upload" },
+		{ RT_PROF_ALIAS_POSE, "alias pose" },
+		{ RT_PROF_ALIAS_LIGHTS, "alias lights" },
+		{ RT_PROF_ALIAS_UPLOAD, "alias upload" },
+		{ RT_PROF_BRUSH_MATRIX, "brush matrix" },
+		{ RT_PROF_BRUSH_STYLES, "brush styles" },
+		{ RT_PROF_BRUSH_CLUSTER, "brush cluster" },
 	};
 
 	int i;
@@ -2708,10 +2862,19 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	RT_GetWaterColor (water_color);
 	RT_GetAcidColor (acid_color);
 
+	// a zero or a hostile value here would poison the refraction of every glass
+	// surface with a division by zero, so the uniform gets a sane index
+	float refr_glass = CVAR_TO_FLOAT (rt_refr_glass);
+
+	if (!(refr_glass >= 1.0f))
+		refr_glass = 1.0f;
+	else if (refr_glass > 5.0f)
+		refr_glass = 5.0f;
+
 	QrDrawFrameReflectRefractParams refl_refr_params = {
 		.maxReflectRefractDepth = CVAR_TO_UINT32 (rt_reflrefr_depth),
 		.typeOfMediaAroundCamera = rt_cameramedia,
-		.indexOfRefractionGlass = CVAR_TO_FLOAT (rt_refr_glass),
+		.indexOfRefractionGlass = refr_glass,
 		.indexOfRefractionWater = CVAR_TO_FLOAT (rt_refr_water),
 		.waterWaveSpeed = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_speed)),
 		.waterWaveNormalStrength = CVAR_TO_FLOAT (rt_water_normstren),
@@ -2721,6 +2884,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.waterWaveTextureDerivativesMultiplier = CVAR_TO_FLOAT (rt_water_normsharp),
 		.waterTextureAreaScale = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_water_scale)),
 		.portalNormalTwirl = CVAR_TO_BOOL (rt_portal_twirl),
+		.glassShadows = CVAR_TO_BOOL (rt_glass_shadows),
+		.glassDenoise = CVAR_TO_BOOL (rt_glass_denoise),
+		.glassParticles = CVAR_TO_BOOL (rt_glass_particles),
 	};
 	// because 1 quake unit is not 1 meter
 	refl_refr_params.waterColor.data[0] = powf (refl_refr_params.waterColor.data[0], 1.0f / METRIC_TO_QUAKEUNIT (1.0f));
@@ -3013,7 +3179,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	{
 		debug_params.drawFlags |= QR_DEBUG_DRAW_STATS_BIT;
 	}
-	if (RT_StatsPanel (RT_STATS_PASSES))
+	if (RT_StatsPanel (RT_STATS_PASSES) || rt_bench_active)
 	{
 		debug_params.drawFlags |= QR_DEBUG_DRAW_PASS_STATS_BIT;
 	}
@@ -3064,7 +3230,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			},
 		.pDebugParams = &debug_params,
 		.renderUiOnly = RT_ShouldRenderUiOnly (cl.worldmodel != NULL, cls.signon == SIGNONS),
-		.enableCpuProfiling = RT_StatsPanel (RT_STATS_PROFILE),
+		.enableCpuProfiling = RT_StatsPanel (RT_STATS_PROFILE) || rt_bench_active,
 	};
 	memcpy (info.view, vulkan_globals.view_matrix, 16 * sizeof(float));
 

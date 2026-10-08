@@ -395,6 +395,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                     rhiRtReflRefrPass = std::make_shared<RhiRtReflRefrPass>();
                     if (!rhiRtReflRefrPass->Create(nvrhi->GetDevice(), rhiFrameContext.get(),
                                                    rhiTextureTable.get(), rhiRtPrimaryPass.get(),
+                                                   rhiRtDirectPass.get(),
                                                    info->pShaderFolderPath,
                                                    [this](const char *pMessage) { Print(pMessage); }))
                     {
@@ -862,6 +863,7 @@ void VulkanDevice::CreateDevice()
     vulkan13Features.computeFullSubgroups = 1;
     vulkan13Features.subgroupSizeControl = 1;
     vulkan13Features.dynamicRendering = 1;
+    vulkan13Features.synchronization2 = 1;
 
     vulkan12Features.pNext = &vulkan13Features;
 
@@ -874,11 +876,6 @@ void VulkanDevice::CreateDevice()
     storage16.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
     storage16.pNext = &multiviewFeatures;
     storage16.storageBuffer16BitAccess = 1;
-
-    VkPhysicalDeviceSynchronization2FeaturesKHR sync2Features = {};
-    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
-    sync2Features.pNext = &storage16;
-    sync2Features.synchronization2 = 1;
 
     std::vector<VkExtensionProperties> supportedDeviceExtensions;
     uint32_t supportedExtensionsCount;
@@ -928,12 +925,12 @@ void VulkanDevice::CreateDevice()
 
     VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
     rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
-    rayQueryFeatures.pNext = &sync2Features;
+    rayQueryFeatures.pNext = &storage16;
     rayQueryFeatures.rayQuery = rayQuerySupported ? 1 : 0;
 
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures = {};
     rtPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-    rtPipelineFeatures.pNext = rayQuerySupported ? static_cast<void *>(&rayQueryFeatures) : static_cast<void *>(&sync2Features);
+    rtPipelineFeatures.pNext = rayQuerySupported ? static_cast<void *>(&rayQueryFeatures) : static_cast<void *>(&storage16);
     rtPipelineFeatures.rayTracingPipeline = 1;
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = {};
@@ -1093,8 +1090,6 @@ void VulkanDevice::CreateSyncPrimitives()
     {
         r = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]);
         VK_CHECKERROR(r);
-        r = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]);
-        VK_CHECKERROR(r);
         r = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &inFrameSemaphores[i]);
         VK_CHECKERROR(r);
 
@@ -1104,7 +1099,6 @@ void VulkanDevice::CreateSyncPrimitives()
         VK_CHECKERROR(r);
 
         SET_DEBUG_NAME(device, imageAvailableSemaphores[i], VK_OBJECT_TYPE_SEMAPHORE, "Image available semaphore");
-        SET_DEBUG_NAME(device, renderFinishedSemaphores[i], VK_OBJECT_TYPE_SEMAPHORE, "Render finished semaphore");
         SET_DEBUG_NAME(device, inFrameSemaphores[i], VK_OBJECT_TYPE_SEMAPHORE, "In-frame semaphore");
         SET_DEBUG_NAME(device, frameFences[i], VK_OBJECT_TYPE_FENCE, "Frame fence");
         SET_DEBUG_NAME(device, outOfFrameFences[i], VK_OBJECT_TYPE_FENCE, "Out of frame fence");
@@ -1152,7 +1146,6 @@ void VulkanDevice::DestroySyncPrimitives()
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
-        vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
         vkDestroySemaphore(device, inFrameSemaphores[i], nullptr);
 
         vkDestroyFence(device, frameFences[i], nullptr);

@@ -40,7 +40,11 @@ enum class VertexCollectorFilterTypeFlagBits : uint32_t
     PT_OPAQUE                   = 0b00000001 << VERTEX_COLLECTOR_FILTER_TYPE_BIT_OFFSET_PT,
     PT_ALPHA_TESTED             = 0b00000010 << VERTEX_COLLECTOR_FILTER_TYPE_BIT_OFFSET_PT,
     PT_REFRACT                  = 0b00000100 << VERTEX_COLLECTOR_FILTER_TYPE_BIT_OFFSET_PT,
-    MASK_PASS_THROUGH_GROUP     = PT_OPAQUE | PT_ALPHA_TESTED | PT_REFRACT,
+    /* Glass is the alpha-tested and the refract class at once: it keeps the
+       refract instance mask while the alpha-tested hit group gives it an
+       any-hit shader, so a pane can keep an alpha cutout. */
+    PT_GLASS                    = 0b00000110 << VERTEX_COLLECTOR_FILTER_TYPE_BIT_OFFSET_PT,
+    MASK_PASS_THROUGH_GROUP     = PT_OPAQUE | PT_ALPHA_TESTED | PT_REFRACT | PT_GLASS,
 
     PV_WORLD_0                  = 0b00000001 << VERTEX_COLLECTOR_FILTER_TYPE_BIT_OFFSET_PV,
     PV_WORLD_1                  = 0b00000010 << VERTEX_COLLECTOR_FILTER_TYPE_BIT_OFFSET_PV,
@@ -64,6 +68,7 @@ constexpr VertexCollectorFilterTypeFlagBits VertexCollectorFilterGroup_PassThrou
     VertexCollectorFilterTypeFlagBits::PT_OPAQUE,
     VertexCollectorFilterTypeFlagBits::PT_ALPHA_TESTED,
     VertexCollectorFilterTypeFlagBits::PT_REFRACT,
+    VertexCollectorFilterTypeFlagBits::PT_GLASS,
 };
 
 constexpr VertexCollectorFilterTypeFlagBits VertexCollectorFilterGroup_PrimaryVisibility[] =

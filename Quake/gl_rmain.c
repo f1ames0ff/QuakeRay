@@ -818,17 +818,21 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, qboolean alphapass, int chain, int
 			continue;
 
 		const int entuniqueid = RT_GetEntityUniqueId (currententity);
+		const double prof_entity = RT_Prof_Begin ();
 
 		switch (currententity->model->type)
 		{
 		case mod_alias:
 			R_DrawAliasModel (cbx, currententity, entuniqueid);
+			RT_Prof_End (RT_PROF_ENTS_ALIAS, prof_entity);
 			break;
 		case mod_brush:
 			R_DrawBrushModel (cbx, currententity, chain, entuniqueid);
+			RT_Prof_End (RT_PROF_ENTS_BRUSH, prof_entity);
 			break;
 		case mod_sprite:
 			R_DrawSpriteModel (cbx, currententity, entuniqueid);
+			RT_Prof_End (RT_PROF_ENTS_SPRITE, prof_entity);
 			break;
 		}
 	}
@@ -1079,8 +1083,8 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
-	const qboolean static_submit = Atomic_LoadUInt32 (&rt_require_static_submit) != 0;
-	const qboolean light_recollect = Atomic_LoadUInt32 (&rt_require_world_light_recollect) != 0;
+	const qboolean static_submit = Atomic_ExchangeUInt32 (&rt_require_static_submit, false) != 0;
+	const qboolean light_recollect = Atomic_ExchangeUInt32 (&rt_require_world_light_recollect, false) != 0;
 
 	if (!static_submit && !light_recollect)
 	{
@@ -1091,7 +1095,6 @@ void R_DrawWorldTask (void *unused)
 
 	if (!static_submit)
 	{
-		Atomic_StoreUInt32 (&rt_require_world_light_recollect, false);
 		RT_RecollectWorldEmissiveLights ();
 		RT_StaticMovableUpdate ();
 

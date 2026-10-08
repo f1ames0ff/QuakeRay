@@ -218,7 +218,7 @@ CONST = {
     "MAX_GEOMETRY_PRIMITIVE_COUNT_POW"      : RESOLVE_LATER,
     "LOWER_BOTTOM_LEVEL_GEOMETRIES_COUNT"   : 1 << 8,
 
-    "MAX_TOP_LEVEL_INSTANCE_COUNT"          : 45,
+    "MAX_TOP_LEVEL_INSTANCE_COUNT"          : 61,
 
     "BINDING_VERTEX_BUFFER_STATIC"              : 0,
     "BINDING_VERTEX_BUFFER_DYNAMIC"             : 1,
@@ -273,8 +273,8 @@ CONST = {
     "INSTANCE_MASK_WORLD_0"                 : 1 << 0,
     "INSTANCE_MASK_WORLD_1"                 : 1 << 1,
     "INSTANCE_MASK_WORLD_2"                 : 1 << 2,
-    "INSTANCE_MASK_RESERVED_0"              : 1 << 3,
-    "INSTANCE_MASK_RESERVED_1"              : 1 << 4,
+    "INSTANCE_MASK_GLASS"                   : 1 << 3,
+    "INSTANCE_MASK_PARTICLE"                : 1 << 4,
     "INSTANCE_MASK_REFRACT"                 : 1 << 5,
     "INSTANCE_MASK_FIRST_PERSON"            : 1 << 6,
     "INSTANCE_MASK_FIRST_PERSON_VIEWER"     : 1 << 7,
@@ -310,7 +310,7 @@ CONST = {
     "GEOM_INST_FLAG_ALPHA_TRANSMISSION"     : "1 << 14",
     "GEOM_INST_FLAG_RESERVED_2"             : "1 << 15",
     "GEOM_INST_FLAG_RESERVED_3"             : "1 << 16",
-    "GEOM_INST_FLAG_RESERVED_4"             : "1 << 17",
+    "GEOM_INST_FLAG_GLASS_CUTOUT"           : "1 << 17",
     "GEOM_INST_FLAG_MEDIA_TYPE_ACID"        : "1 << 18",
     "GEOM_INST_FLAG_EXACT_NORMALS"          : "1 << 19",
     "GEOM_INST_FLAG_IGNORE_REFRACT_AFTER"   : "1 << 20",
@@ -638,6 +638,13 @@ GLOBAL_UNIFORM_MEMBERS = [
     (UINT32,  4, "restirParams",             1),
     (FLOAT32, 4, "cloudShadowPlacement",     1),
     (FLOAT32, 4, "cloudLayerMotion",         1),
+
+    # The shader glass-blur mode is gone (no cvar, no parameter): the host pins this to 0, so the
+    # raygen's normal-map path is the only one left and the CmGlassBlur pass serves only the
+    # (default-off) glass denoiser. The field stays until the dead branches are removed.
+    (UINT32, 1, "glassBlur",                      1),
+    (UINT32, 1, "glassDenoise",                   1),
+    (UINT32, 1, "glassParticles",                 1),
 ]
 
 GEOM_INSTANCE_MEMBERS = [
@@ -915,7 +922,7 @@ if Q2_CORE_ENABLED:
 
         "Q2ViewDepth"                   : (FLOAT32,   CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
         "Q2BaseColor"                   : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2Metallic"                    : (UNORM8,    CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2Metallic"                    : (UNORM8,    CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
         "Q2BounceThroughput"            : (FLOAT16,   CHANNELS_RGBA, 0),
         "Q2Transparent"                 : (FLOAT16,   CHANNELS_RGBA, 0),
         "Q2GodRaysThroughputDist"       : (FLOAT16,   CHANNELS_RGBA, 0),
@@ -951,6 +958,16 @@ if Q2_CORE_ENABLED:
         "Q2RngSeed"                     : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
 
         "Q2Cluster"                     : (UINT32,    CHANNELS_R,    0),
+        "Q2GlassFilter"                 : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2GlassReflection"             : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+        "Q2GlassHistory"                : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
+
+        # The traced particle stand-ins' own layer: the reflect/refract raygen writes the
+        # behind-glass particle contribution here at plain render pixels (no checkerboard field),
+        # and the raster overlay composites it over FINAL before the raster particles. It exists
+        # so the contribution never passes the pane's half-field reconstruction, which mixes a
+        # one-field signal at half weight and made a moving particle flicker.
+        "Q2ParticleLayer"               : (FLOAT16,   CHANNELS_RGBA, 0),
     })
 
 
@@ -1218,8 +1235,8 @@ def emit_vulkan_framebuffer_definitions():
                 "const uint32_t qray::ShFramebuffers_BindingsSwapped[] = \n{\n%s};\n\n"
                 "const uint32_t qray::ShFramebuffers_Sampled_Bindings[] = \n{\n%s};\n\n"
                 "const uint32_t qray::ShFramebuffers_Sampled_BindingsSwapped[] = \n{\n%s};\n\n"
-                "const uint32_t qray::ShFramebuffers_Sampler_Bindings[] = \n{\n%s};\n\n"
-                "const uint32_t qray::ShFramebuffers_Sampler_BindingsSwapped[] = \n{\n%s};\n\n"
+                "const uint32_t qray::ShFramebuffers_Sampler_Bindings[] =\n{\n%s};\n\n"
+                "const uint32_t qray::ShFramebuffers_Sampler_BindingsSwapped[] =\n{\n%s};\n\n"
                 "const char *const qray::ShFramebuffers_DebugNames[] = \n{\n%s};\n\n")
 
     tab = "    "

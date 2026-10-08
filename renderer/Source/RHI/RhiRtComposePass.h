@@ -1,4 +1,4 @@
-// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+﻿// Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -311,6 +311,8 @@ public:
                 uint32_t upscaledWidth,
                 uint32_t upscaledHeight,
                 bool filterEnabled,
+                bool glassBlurEnabled,
+
                 nvrhi::IBuffer *pUniformBuffer,
                 const QrDrawFramePostEffectsParams &postEffectParams,
                 const std::function<void(nvrhi::ICommandList *)> &pfnRasterOverlay = {});
@@ -376,12 +378,12 @@ private:
         // not as VkImages, because they are what the change detection compares; a change in any of
         // them or in any of the three sizes means the engine re-created the framebuffers (or the
         // resolution changed) and the wraps and the sets have to follow.
-        uint64_t imageHandles[80] = {};
+        uint64_t imageHandles[88] = {};
         uint32_t width = 0;
         uint32_t height = 0;
         uint32_t upscaledWidth = 0;
         uint32_t upscaledHeight = 0;
-        nvrhi::TextureHandle engineTextures[80];
+        nvrhi::TextureHandle engineTextures[88];
         nvrhi::BindingSetHandle gradientReprojectSet;
         nvrhi::BindingSetHandle adapterSet;
         nvrhi::BindingSetHandle gradientImgSet;
@@ -393,6 +395,7 @@ private:
         nvrhi::BindingSetHandle histogramSet;
         nvrhi::BindingSetHandle checkerboardSet;
         nvrhi::BindingSetHandle prepareHdrSet;
+        nvrhi::BindingSetHandle glassBlurSet;
         nvrhi::BindingSetHandle prepareFinalSet;
         nvrhi::BindingSetHandle taauSet;
 
@@ -495,6 +498,7 @@ private:
     nvrhi::ShaderHandle averageShader;
     nvrhi::ShaderHandle checkerboardShader;
     nvrhi::ShaderHandle prepareHdrShader;
+    nvrhi::ShaderHandle glassBlurShader;
     nvrhi::ShaderHandle prepareFinalShader;
     nvrhi::ShaderHandle taauShader;
 
@@ -514,6 +518,7 @@ private:
     nvrhi::BindingLayoutHandle histogramFramebufferLayout;
     nvrhi::BindingLayoutHandle checkerboardFramebufferLayout;
     nvrhi::BindingLayoutHandle prepareHdrFramebufferLayout;
+    nvrhi::BindingLayoutHandle glassBlurFramebufferLayout;
     nvrhi::BindingLayoutHandle prepareFinalFramebufferLayout;
     nvrhi::BindingLayoutHandle taauFramebufferLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
@@ -540,6 +545,7 @@ private:
     nvrhi::ComputePipelineHandle averagePipeline;
     nvrhi::ComputePipelineHandle checkerboardPipeline;
     nvrhi::ComputePipelineHandle prepareHdrPipeline;
+    nvrhi::ComputePipelineHandle glassBlurPipeline;
     nvrhi::ComputePipelineHandle prepareFinalPipeline;
     nvrhi::ComputePipelineHandle taauPipeline;
 

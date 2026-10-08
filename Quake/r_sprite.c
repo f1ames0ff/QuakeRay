@@ -269,15 +269,20 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetSpriteModelUniqueId (entuniqueid),
 			.flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT |
-			         ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0),
+			         ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			         ((tx && tx->rtglass) ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0),
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
-			.passThroughType = QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED,
+			.passThroughType = (tx && tx->rtglass)
+			    ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT
+			    : QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED,
 			.visibilityType = QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
 			.vertexCount = countof (vertices),
 			.pVertices = vertices,
 			.indexCount = RT_GetFanIndexCount (countof (vertices)),
 			.pIndices = RT_GetFanIndices (countof (vertices)),
-			.layerColors = {RT_COLOR_WHITE},
+			.layerColors = {RT_COLOR_WHITE, {tx && tx->rtglass ? tx->rtglasscolor[0] : 0.0f, tx && tx->rtglass ? tx->rtglasscolor[1] : 0.0f, tx && tx->rtglass ? tx->rtglasscolor[2] : 0.0f, 0.0f},
+			                {tx && tx->rtglass ? tx->rtglassior : 0.0f,
+			                 tx && tx->rtglass ? tx->rtglassthickness : 0.0f, 0.0f, 0.0f}},
 			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
 			.defaultRoughness = CVAR_TO_FLOAT (rt_model_rough),
 			.defaultMetallicity = CVAR_TO_FLOAT (rt_model_metal),

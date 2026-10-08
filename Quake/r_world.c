@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_world.c: world model rendering
 
 #include "quakedef.h"
+#include "rt_brush_transform_cache.h"
 #include "atomics.h"
 #include "rt_dtal_debug.h"
 #include "rt_dtal_groups.h"
@@ -956,11 +957,18 @@ static void RT_ClearBatch (cb_context_t *cbx)
 
 QrTransform RT_GetBrushModelMatrix (entity_t *e)
 {
+	COMPILE_TIME_ASSERT (brush_transform_cache_size, sizeof (QrTransform) == sizeof (((rt_brush_transform_cache_t *) 0)->matrix));
+
 	if (e == NULL)
 	{
 		const static QrTransform identity = RT_TRANSFORM_IDENTITY;
 		return identity;
 	}
+
+	static THREAD_LOCAL rt_brush_transform_cache_t cache;
+	QrTransform transform;
+	if (RT_BrushTransformCacheGet (&cache, e, e->origin, e->angles, &transform))
+		return transform;
 
 	vec3_t e_angles;
 	VectorCopy (e->angles, e_angles);
@@ -970,7 +978,9 @@ QrTransform RT_GetBrushModelMatrix (entity_t *e)
 	IdentityMatrix (model_matrix);
 	R_RotateForEntity (model_matrix, e->origin, e_angles);
 
-	return RT_GetModelTransform (model_matrix);
+	transform = RT_GetModelTransform (model_matrix);
+	RT_BrushTransformCacheStore (&cache, e, e->origin, e->angles, &transform);
+	return transform;
 }
 
 static qboolean  RT_FindNearestTeleport (const QrGeometryUploadInfo *info, uint8_t *result, qboolean *potentially_mirror);
@@ -1461,8 +1471,11 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 	float alpha = CLAMP (0.0f, s->alpha, 1.0f);
 	uint8_t portalindex = 0;
 
-	qboolean is_mirror = diffuse_tex && diffuse_tex->rtmirror;
-	qboolean rasterize = (alpha < 1.0f) && !s->is_warp;
+	/* Glass outranks mirror -- the shipped window materials are mirrors -- and
+	   it keeps the traced path even where an entity alpha would blend it. */
+	qboolean is_glass = diffuse_tex && diffuse_tex->rtglass;
+	qboolean is_mirror = diffuse_tex && diffuse_tex->rtmirror && !is_glass;
+	qboolean rasterize = (alpha < 1.0f) && !s->is_warp && !is_glass;
 
 	if (rasterize)
 	{
@@ -1506,7 +1519,9 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE;
 		}
 
+		const double prof_upload = RT_Prof_Begin ();
 		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+		RT_Prof_End (RT_PROF_BRUSH_UPLOAD, prof_upload);
 		QR_CHECK (r);
 	}
 	else
@@ -1525,6 +1540,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    // water and slime already churn through the RT wave normals
 			    (s->is_warp && !s->is_water && !s->is_acid ? QR_GEOMETRY_UPLOAD_TURB_WARP_BIT : 0) |
 			    (s->alpha_transmission ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (is_glass && s->alpha_test ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
                 QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
 			.geomType = rt_movable_upload_entry != NULL ? QR_GEOMETRY_TYPE_STATIC_MOVABLE :
 			            (is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC),
@@ -1533,6 +1549,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    s->is_water ? QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT :
 			    s->is_acid ? QR_GEOMETRY_PASS_THROUGH_TYPE_ACID_REFLECT_REFRACT :
 			    is_teleport_portal ? QR_GEOMETRY_PASS_THROUGH_TYPE_PORTAL :
+			    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 			    // A fence texture keeps its alpha only in the traced path: the rasterized
 			    // one is reserved for translucent surfaces, which a fence is not.
 			    s->alpha_test ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
@@ -1545,6 +1562,9 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			.layerColors =
 				{
 					RT_COLOR_WHITE,
+					{is_glass && diffuse_tex ? diffuse_tex->rtglasscolor[0] : 0.0f, is_glass && diffuse_tex ? diffuse_tex->rtglasscolor[1] : 0.0f, is_glass && diffuse_tex ? diffuse_tex->rtglasscolor[2] : 0.0f, 0.0f},
+					{is_glass && diffuse_tex ? diffuse_tex->rtglassior : 0.0f,
+					 is_glass && diffuse_tex ? diffuse_tex->rtglassthickness : 0.0f, 0.0f, 0.0f},
 				},
 			.layerBlendingTypes =
 				{
@@ -1577,7 +1597,9 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			}
 		}
 
+		const double prof_upload = RT_Prof_Begin ();
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		RT_Prof_End (RT_PROF_BRUSH_UPLOAD, prof_upload);
 		QR_CHECK (r);
 
 		if (rt_movable_upload_entry != NULL)
@@ -4315,7 +4337,11 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 	int num_surf_indices = R_NumTriangleIndicesForSurf (num_surf_verts);
 
 	if (s->model != cl.worldmodel)
+	{
+		const double prof_lights = RT_Prof_Begin ();
 		RT_AddEmissiveLight (s);
+		RT_Prof_End (RT_PROF_BRUSH_LIGHTS, prof_lights);
+	}
 
 	if (cbx->batch_indices_count + num_surf_indices > MAX_BATCH_INDICES ||
 		cbx->batch_verts_count + num_surf_verts > MAX_BATCH_VERTS)
@@ -4323,21 +4349,28 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 		RT_FlushBatch (cbx, s, brushpasses);
 	}
 
+	const double prof_pack = RT_Prof_Begin ();
 	R_TriangleIndicesForSurf (cbx->batch_verts_count, num_surf_verts, &cbx->batch_indices[cbx->batch_indices_count]);
 	QrVertex *batch_verts = &cbx->batch_verts[cbx->batch_verts_count];
 	memcpy (batch_verts, rtallbrushvertices + s->surf->vbo_firstvert, sizeof (QrVertex) * num_surf_verts);
 
 	if (s->ent && s->model != cl.worldmodel)
 	{
+		const double prof_cluster = RT_Prof_Begin ();
 		const uint32_t cluster = (uint32_t) RT_ResolveBrushSurfCluster (s, batch_verts, num_surf_verts);
+		RT_Prof_End (RT_PROF_BRUSH_CLUSTER, prof_cluster);
 
 		for (int i = 0; i < num_surf_verts; i++)
 			batch_verts[i].cluster = cluster;
 	}
 
 	{
+		const double prof_matrix = RT_Prof_Begin ();
 		const QrTransform transform = RT_GetBrushModelMatrix (s->ent);
+		RT_Prof_End (RT_PROF_BRUSH_MATRIX, prof_matrix);
+		const double prof_styles = RT_Prof_Begin ();
 		const uint32_t    packed_styles = RT_PackSurfaceLightStyles (s, batch_verts, num_surf_verts, &transform);
+		RT_Prof_End (RT_PROF_BRUSH_STYLES, prof_styles);
 
 		if (packed_styles != 0)
 			for (int i = 0; i < num_surf_verts; i++)
@@ -4346,6 +4379,7 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 
 	cbx->batch_indices_count += num_surf_indices;
 	cbx->batch_verts_count += num_surf_verts;
+	RT_Prof_End (RT_PROF_BRUSH_PACK, prof_pack);
 }
 
 /*

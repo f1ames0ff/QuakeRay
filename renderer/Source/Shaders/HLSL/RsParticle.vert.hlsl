@@ -1,5 +1,6 @@
 // Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
 
+#define DESC_SET_FRAMEBUFFERS 4
 #define DESC_SET_GLOBAL_UNIFORM 1
 #define DESC_SET_TEXTURES       0
 #define DESC_SET_LIGHT_SOURCES  6
@@ -27,6 +28,7 @@ void main(
     [[vk::location(0)]] out float4 outColor    : COLOR0,
     [[vk::location(1)]] out float2 outTexCoord : TEXCOORD1,
     [[vk::location(2)]] out float3 outLit      : TEXCOORD2,
+    [[vk::location(3)]] out float  outViewDepth : TEXCOORD3,
     out float4 outPosition : SV_Position)
 {
     outColor    = color;
@@ -34,4 +36,8 @@ void main(
     outLit      = smokeLightAt(position, particleCluster, 0.0, rasterizerVertInfo.particleLook[1], 0.0);
 
     outPosition = mul(rasterizerVertInfo.viewProj, float4(position, 1.0));
+    /* The pane-depth test of the fragment needs the sprite's own view depth: the clip-space w is
+       the axis depth the glass mask stores (RaygenPrimary.hlsli writes the pane's -view.z), and
+       the perspective-correct varying interpolation keeps them comparable per fragment. */
+    outViewDepth = outPosition.w;
 }

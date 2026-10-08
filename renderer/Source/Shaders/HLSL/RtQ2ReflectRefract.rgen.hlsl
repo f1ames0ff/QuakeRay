@@ -40,3 +40,4 @@
 
 #define Q2_REFL_REFR_SHADER
 #include "RaygenPrimary.hlsli"
+#include "RayClearance.hlsli"

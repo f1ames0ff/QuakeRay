@@ -366,6 +366,7 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
     assert(swapchain == VK_NULL_HANDLE);
     assert(swapchainImages.empty());
     assert(swapchainViews.empty());
+    assert(renderFinishedSemaphores.empty());
 
     uint32_t imageCount = std::max(3u, surfCapabilities.minImageCount);
     if (surfCapabilities.maxImageCount > 0)
@@ -455,6 +456,23 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
         SET_DEBUG_NAME(device, swapchainViews[i], VK_OBJECT_TYPE_IMAGE_VIEW, "Swapchain image view");
     }
 
+    // One render-finished semaphore per swapchain image, re-created with the swapchain (an image
+    // count change has to bring its own pair of semaphores with it).
+    {
+        VkSemaphoreCreateInfo semaphoreInfo = {};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        renderFinishedSemaphores.resize(imageCount);
+
+        for (uint32_t i = 0; i < imageCount; i++)
+        {
+            r = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]);
+            VK_CHECKERROR(r);
+
+            SET_DEBUG_NAME(device, renderFinishedSemaphores[i], VK_OBJECT_TYPE_SEMAPHORE, "Render finished semaphore");
+        }
+    }
+
     const VkCommandBuffer cmd = cmdManager->StartGraphicsCmd();
 
     for (uint32_t i = 0; i < imageCount; i++)
@@ -485,6 +503,13 @@ VkSwapchainKHR Swapchain::DestroyWithoutSwapchain()
     {
         CallDestroySubscribers();
     }
+
+    for (const VkSemaphore semaphore : renderFinishedSemaphores)
+    {
+        vkDestroySemaphore(device, semaphore, nullptr);
+    }
+
+    renderFinishedSemaphores.clear();
 
     for (const VkImageView view : swapchainViews)
     {
@@ -593,4 +618,10 @@ const VkImageView *Swapchain::GetImageViews() const
     }
 
     return swapchainViews.data();
+}
+
+VkSemaphore Swapchain::GetRenderFinishedSemaphore(uint32_t imageIndex) const
+{
+    assert(imageIndex < renderFinishedSemaphores.size());
+    return renderFinishedSemaphores[imageIndex];
 }

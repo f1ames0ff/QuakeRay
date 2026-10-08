@@ -31,7 +31,7 @@ const char *const FILTER_SHADER_FILE_NAME = "CmGodRaysFilter.comp.spv";
 // ShFramebuffers_Bindings / ShFramebuffers_Sampled_Bindings, ShaderCommonC.h:31-32-style offsets).
 // An item's NVRHI slot is `raw - offset`.
 constexpr uint32_t FRAMEBUFFER_UAV_OFFSET = 0;
-constexpr uint32_t FRAMEBUFFER_SRV_OFFSET = 124;
+const uint32_t FRAMEBUFFER_SRV_OFFSET = ShFramebuffers_Count;
 
 // The engine images of the module, in the module's own slot order (RhiRtGodRaysPass::ImageSlot).
 // 63/64 are the god-rays pair, 9/19/23/26/81 are the checkerboard-stored surface data the trace

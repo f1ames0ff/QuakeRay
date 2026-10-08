@@ -1,0 +1,4 @@
+# rt_stats_dump_start 2026-10-08 10:00:00 panels 7 interval 0.200 samples 2 duration 0.40
+t,fps,gpu.frame_ms,gpu.primary_ms,cpu.frame_ms,cpu.qrDrawFrame_avg_ms,clust_cache_hits,calls_raster,new_counter
+0.200,50.0,12.0,0.0,18.0,2.100,1,10,7
+0.400,50.0,,0.0,19.0,2.200,1,10,8

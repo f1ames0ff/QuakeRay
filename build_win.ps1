@@ -8,6 +8,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "tests\perf\machine_guard.ps1")
+$machineGuard = Enter-QuakeRayMachine
+try {
 
 $anchorRoot = $PSScriptRoot
 Set-Location $anchorRoot
@@ -291,4 +294,21 @@ if ($nvrhiPatchedHere)
     Write-Host "Reverted the NVRHI patch, third_party/nvrhi is clean again" -ForegroundColor Yellow
 }
 
+if ($exitCode -eq 0 -and -not $PkzOnly) {
+    $receipt = [ordered]@{
+        SchemaVersion = 1
+        Producer = 'build_win.ps1'
+        BuildConfig = $Config
+        Revision = (git rev-parse HEAD)
+        WorkingChanges = @(git status --short)
+        ExecutableSha256 = (Get-FileHash (Join-Path $BuildDir 'quakeray.exe') -Algorithm SHA256).Hash
+        EngineAssetsSha256 = (Get-FileHash $pkzPath -Algorithm SHA256).Hash
+        CompileDatabaseSha256 = (Get-FileHash (Join-Path $BuildDir 'compile_commands.json') -Algorithm SHA256).Hash
+        Timestamp = [DateTime]::UtcNow.ToString('o')
+    }
+    $receipt | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $BuildDir 'qray-build.json') -Encoding UTF8
+}
 exit $exitCode
+} finally {
+    Exit-QuakeRayMachine $machineGuard
+}

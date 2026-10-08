@@ -1,4 +1,4 @@
-#include "RhiRtComposePass.h"
+﻿#include "RhiRtComposePass.h"
 
 #include "RhiBloomPass.h"
 #include "RhiFrameContext.h"
@@ -47,6 +47,7 @@ const char *const HISTOGRAM_SHADER_FILE_NAME = "CmLuminanceHistogram.comp.spv";
 const char *const AVERAGE_SHADER_FILE_NAME = "CmLuminanceAvg.comp.spv";
 const char *const CHECKERBOARD_SHADER_FILE_NAME = "CmCheckerboard.comp.spv";
 const char *const PREPARE_HDR_SHADER_FILE_NAME = "CmPrepareHdr.comp.spv";
+const char *const GLASS_BLUR_SHADER_FILE_NAME = "CmGlassBlur.comp.spv";
 const char *const PREPARE_FINAL_SHADER_FILE_NAME = "CmPrepareFinal.comp.spv";
 const char *const TAAU_SHADER_FILE_NAME = "CmQ2TAAU.comp.spv";
 
@@ -89,11 +90,11 @@ static_assert(COMPUTE_SVGF_ATROUS_ITERATION_COUNT == 4,
 // NVRHI slot: raw = offset + slot (RhiPipeline.h). The numbers are still derived from the generated
 // arrays at run time (GetComposeSlot), so a generator change cannot drift from them.
 constexpr uint32_t FRAMEBUFFER_UAV_OFFSET = 0;
-constexpr uint32_t FRAMEBUFFER_SRV_OFFSET = 124;
-constexpr uint32_t FRAMEBUFFER_SAMPLER_OFFSET = 248;
+const uint32_t FRAMEBUFFER_SRV_OFFSET = ShFramebuffers_Count;
+const uint32_t FRAMEBUFFER_SAMPLER_OFFSET = ShFramebuffers_Count * 2;
 
-constexpr uint32_t COMPOSE_BLOOM_RESULT_SLOT = COMPOSE_BLOOM_RESULT_BINDING - FRAMEBUFFER_SRV_OFFSET;
-constexpr uint32_t COMPOSE_OPTICAL_SAMPLER_SLOT = COMPOSE_OPTICAL_SAMPLER_BINDING - FRAMEBUFFER_SAMPLER_OFFSET;
+const uint32_t COMPOSE_BLOOM_RESULT_SLOT = COMPOSE_BLOOM_RESULT_BINDING - FRAMEBUFFER_SRV_OFFSET;
+const uint32_t COMPOSE_OPTICAL_SAMPLER_SLOT = COMPOSE_OPTICAL_SAMPLER_BINDING - FRAMEBUFFER_SAMPLER_OFFSET;
 
 // The size class of one union image: the engine's `GetFramebufSize` maps the generated flags onto
 // the render size, the `(render + 1) / 2` half (FB_IMAGE_FLAGS_FRAMEBUF_FLAGS_FORCE_SIZE_1_2: the
@@ -127,7 +128,7 @@ struct ComposeImage
 // the three are part of the union so the per-list announcement below names their resting state and
 // the restore lists return the ones this module moves to it. The god-rays module owns their
 // contents and has to leave them in GENERAL (see the class comment).
-constexpr uint32_t COMPOSE_IMAGE_COUNT = 80;
+constexpr uint32_t COMPOSE_IMAGE_COUNT = 88;
 constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
 {
     { FB_IMAGE_INDEX_ALBEDO,                ComposeImageSize::Render }, //   0  framebufAlbedo           (adapter/gradient-reproj/atrous/PF)
@@ -210,10 +211,18 @@ constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
     { FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV,   ComposeImageSize::Upscaled }, // 120 framebufQ2TaaHistory_Prev (TAAU SRV + sampler)
     { FB_IMAGE_INDEX_Q2_RNG_SEED,           ComposeImageSize::Render }, // 121  framebufQ2RngSeed        (reproj UAV, raygen read)
     { FB_IMAGE_INDEX_Q2_RNG_SEED_PREV,      ComposeImageSize::Render }, // 122  framebufQ2RngSeed_Prev   (reproj SRV)
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER,       ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION,   ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_DEPTH_NDC,            ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER_PREV, ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV, ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_HISTORY,     ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV, ComposeImageSize::Render },
+{ FB_IMAGE_INDEX_Q2_PARTICLE_LAYER, ComposeImageSize::Render }, // 130  framebufQ2ParticleLayer (checkerboard SRV, refl/refr UAV)
 };
 
-static_assert(COMPOSE_IMAGE_COUNT == 80,
-              "the per-slot image arrays of RhiRtComposePass.h are sized 80 (COMPOSE_IMAGES)");
+static_assert(COMPOSE_IMAGE_COUNT == 88,
+              "the per-slot image arrays of RhiRtComposePass.h are sized 87 (COMPOSE_IMAGES)");
 
 // One item of a pass's set 0: the engine image, the binding kind and whether the item is a sampler
 // (only the TAAU history carries one). 'isUAV' selects both the layout item and the set item type;
@@ -400,12 +409,17 @@ constexpr ComposeBinding ATROUS_BINDINGS[ATROUS_BINDING_COUNT] =
 };
 
 // CmQ2Interleave: 1 storage image and 2 sampled images.
-constexpr uint32_t INTERLEAVE_BINDING_COUNT = 3;
+constexpr uint32_t INTERLEAVE_BINDING_COUNT = 8;
 constexpr ComposeBinding INTERLEAVE_BINDINGS[INTERLEAVE_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_PRE_FINAL, true, false }, //  27  framebufPreFinal
     { FB_IMAGE_INDEX_THROUGHPUT, false, false }, // 150  framebufThroughput_Sampled
     { FB_IMAGE_INDEX_Q2_COLOR,  false, false }, // 241  framebufQ2Color_Sampled
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION, true, false },
+    { FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR, false, false },
+    { FB_IMAGE_INDEX_SCREEN_EMIS_R_T, false, false },
+    { FB_IMAGE_INDEX_GOD_RAYS_FILTERED, false, false },
 };
 
 // CmLuminanceHistogram: 1 sampled image and no storage image - the exposure histogram only reads
@@ -417,7 +431,7 @@ constexpr ComposeBinding HISTOGRAM_BINDINGS[HISTOGRAM_BINDING_COUNT] =
 };
 
 // CmCheckerboard: 3 storage images and 4 sampled images.
-constexpr uint32_t CHECKERBOARD_BINDING_COUNT = 7;
+constexpr uint32_t CHECKERBOARD_BINDING_COUNT = 10;
 constexpr ComposeBinding CHECKERBOARD_BINDINGS[CHECKERBOARD_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_FINAL,            true, false }, //  28  framebufFinal
@@ -427,9 +441,12 @@ constexpr ComposeBinding CHECKERBOARD_BINDINGS[CHECKERBOARD_BINDING_COUNT] =
     { FB_IMAGE_INDEX_PRE_FINAL,        false, false }, // 151  framebufPreFinal_Sampled
     { FB_IMAGE_INDEX_ACID_FOG_R_T,     false, false }, // 183  framebufAcidFogRT_Sampled
     { FB_IMAGE_INDEX_SCREEN_EMIS_R_T,  false, false }, // 185  framebufScreenEmisRT_Sampled
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER, false, false },
+    { FB_IMAGE_INDEX_Q2_PARTICLE_LAYER, false, false },
+    { FB_IMAGE_INDEX_DEPTH_NDC, true, false },
 };
 
-constexpr uint32_t PREPARE_HDR_BINDING_COUNT = 6;
+constexpr uint32_t PREPARE_HDR_BINDING_COUNT = 7;
 constexpr ComposeBinding PREPARE_HDR_BINDINGS[PREPARE_HDR_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_FINAL,                 true, false },
@@ -438,6 +455,22 @@ constexpr ComposeBinding PREPARE_HDR_BINDINGS[PREPARE_HDR_BINDING_COUNT] =
     { FB_IMAGE_INDEX_THROUGHPUT,            false, false },
     { FB_IMAGE_INDEX_SCREEN_EMISSION,       false, false },
     { FB_IMAGE_INDEX_GOD_RAYS_FILTERED,     false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER,       false, false },
+};
+
+constexpr uint32_t GLASS_BLUR_BINDING_COUNT = 10;
+constexpr ComposeBinding GLASS_BLUR_BINDINGS[GLASS_BLUR_BINDING_COUNT] =
+{
+    { FB_IMAGE_INDEX_BLOOM_INPUT,     true, false },
+    { FB_IMAGE_INDEX_PRE_FINAL,       true, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_FILTER_PREV, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV, false, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_HISTORY, true, false },
+    { FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV, false, false },
+    { FB_IMAGE_INDEX_Q2_VIEW_DEPTH, false, false },
+    { FB_IMAGE_INDEX_NORMAL_GEOMETRY, false, false },
 };
 
 constexpr uint32_t PREPARE_FINAL_BINDING_COUNT = 17;
@@ -561,6 +594,7 @@ constexpr bool ComposeTablesAreConsistent()
         HISTOGRAM_BINDINGS,
         CHECKERBOARD_BINDINGS,
         PREPARE_HDR_BINDINGS,
+        GLASS_BLUR_BINDINGS,
         PREPARE_FINAL_BINDINGS,
         TAAU_BINDINGS,
     };
@@ -577,11 +611,13 @@ constexpr bool ComposeTablesAreConsistent()
         HISTOGRAM_BINDING_COUNT,
         CHECKERBOARD_BINDING_COUNT,
         PREPARE_HDR_BINDING_COUNT,
+        GLASS_BLUR_BINDING_COUNT,
         PREPARE_FINAL_BINDING_COUNT,
         TAAU_BINDING_COUNT,
     };
 
-    for (uint32_t table = 0; table < 13; table++)
+    static_assert(std::size(tables) == std::size(counts));
+    for (uint32_t table = 0; table < std::size(tables); table++)
     {
         for (uint32_t i = 0; i < counts[table]; i++)
         {
@@ -625,11 +661,14 @@ constexpr bool AreComposeImagesDistinct()
 // path adds the images the ASVGF chain reads last: the `_PREV` histories and the reproject's
 // sampled inputs, the temporal and a-trous SRVs, and the adapter's four channel UAVs (73/75/77/79),
 // which the temporal pass reads as sampled images after the adapter wrote them as storage images.
+// Both lists also carry the images the glass-blur pass samples when it runs (the glass filter, its
+// prev/reflection roles and the glass history prev); the unfiltered one additionally carries the
+// view-depth and normal-geometry images that pass samples, which the filtered chain already lists.
 // The god-rays images are in both lists: 64 is sampled by the final composition in either path, so
 // it is the image this module really moves to read-only and has to move back; 63/89 are bound by no
 // compose set, and their requirement is a same-state UnorderedAccess barrier that names the
 // god-rays module's hand-off (the class comment's contract), not a transition.
-constexpr uint32_t COMPOSE_RESTORE_COUNT = 23;
+constexpr uint32_t COMPOSE_RESTORE_COUNT = 31;
 constexpr FramebufferImageIndex COMPOSE_RESTORE_IMAGES[COMPOSE_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_SURFACE_POSITION,
@@ -655,9 +694,17 @@ constexpr FramebufferImageIndex COMPOSE_RESTORE_IMAGES[COMPOSE_RESTORE_COUNT] =
     FB_IMAGE_INDEX_Q2_GOD_RAYS_THROUGHPUT_DIST,
     FB_IMAGE_INDEX_Q2_FOG_ACCUM,
     FB_IMAGE_INDEX_Q2_COLOR,
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION,
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV,
+    FB_IMAGE_INDEX_Q2_VIEW_DEPTH,
+    FB_IMAGE_INDEX_NORMAL_GEOMETRY,
+    FB_IMAGE_INDEX_Q2_PARTICLE_LAYER,
 };
 
-constexpr uint32_t CHAIN_RESTORE_COUNT = 56;
+constexpr uint32_t CHAIN_RESTORE_COUNT = 62;
 constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_SURFACE_POSITION,
@@ -716,6 +763,12 @@ constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
     FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS_PREV,
     FB_IMAGE_INDEX_Q2_COLOR,
     FB_IMAGE_INDEX_Q2_RNG_SEED_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION,
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV,
+    FB_IMAGE_INDEX_Q2_PARTICLE_LAYER,
 };
 
 // The reproject's sampled reads and the TAAU's: each call is self-contained, so it restores what it
@@ -748,6 +801,26 @@ constexpr FramebufferImageIndex TAAU_RESTORE_IMAGES[TAAU_RESTORE_COUNT] =
     FB_IMAGE_INDEX_FINAL,
     FB_IMAGE_INDEX_MOTION_DLSS,
     FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV,
+};
+
+// The images the raster-overlay callback's own announces claim as UnorderedAccess on its first use
+// (RhiRasterOverlayPass::PrepareTarget): the compose half owns them up to the callback, and moves
+// each back to GENERAL here so the announces tell the truth. FINAL, SCREEN_EMISSION and DEPTH_NDC
+// rest in GENERAL after the checkerboard; the interleave reads 25 as a sampled image, so it is the
+// one that really needs the transition, and the smoke and particle reads of the earlier chain
+// passes are covered the same way. The glass mask is not here: the callback announces it as a
+// ShaderResource and only samples it, so the compose leaves it in the read-only state the
+// checkerboard left it in.
+constexpr uint32_t RASTER_OVERLAY_HANDOFF_COUNT = 7;
+constexpr FramebufferImageIndex RASTER_OVERLAY_HANDOFF_IMAGES[RASTER_OVERLAY_HANDOFF_COUNT] =
+{
+    FB_IMAGE_INDEX_FINAL,
+    FB_IMAGE_INDEX_SCREEN_EMISSION,
+    FB_IMAGE_INDEX_DEPTH_NDC,
+    FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR,
+    FB_IMAGE_INDEX_DEPTH_WORLD,
+    FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_S_H,
+    FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_C_O_C_G,
 };
 
 // The images each iteration of an iterative pass writes, in the order the barrier requirement is
@@ -813,6 +886,14 @@ constexpr bool AreRestoreImagesWrapped()
         }
     }
 
+    for (uint32_t i = 0; i < RASTER_OVERLAY_HANDOFF_COUNT; i++)
+    {
+        if (FindComposeImage(RASTER_OVERLAY_HANDOFF_IMAGES[i]) == COMPOSE_IMAGE_NONE)
+        {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -831,6 +912,9 @@ static_assert(UPSCALED_IMAGE_SLOT != COMPOSE_IMAGE_NONE,
               "UPSCALED_PING has to be part of the compose image union");
 
 constexpr uint32_t BLOOM_INPUT_IMAGE_SLOT = FindComposeImage(FB_IMAGE_INDEX_BLOOM_INPUT);
+
+
+
 static_assert(BLOOM_INPUT_IMAGE_SLOT != COMPOSE_IMAGE_NONE,
               "BLOOM_INPUT has to be part of the compose image union");
 
@@ -1059,6 +1143,7 @@ RhiRtComposePass::~RhiRtComposePass()
         target.histogramSet = nullptr;
         target.checkerboardSet = nullptr;
         target.prepareHdrSet = nullptr;
+        target.glassBlurSet = nullptr;
         target.prepareFinalSet = nullptr;
         target.taauSet = nullptr;
         target.prepareFinalBloomTexture = nullptr;
@@ -1102,6 +1187,7 @@ RhiRtComposePass::~RhiRtComposePass()
 
     taauPipeline = nullptr;
     prepareHdrPipeline = nullptr;
+    glassBlurPipeline = nullptr;
     prepareFinalPipeline = nullptr;
     checkerboardPipeline = nullptr;
     averagePipeline = nullptr;
@@ -1124,6 +1210,7 @@ RhiRtComposePass::~RhiRtComposePass()
     taauFramebufferLayout = nullptr;
     prepareFinalFramebufferLayout = nullptr;
     prepareHdrFramebufferLayout = nullptr;
+    glassBlurFramebufferLayout = nullptr;
     checkerboardFramebufferLayout = nullptr;
     histogramFramebufferLayout = nullptr;
     interleaveFramebufferLayout = nullptr;
@@ -1142,6 +1229,7 @@ RhiRtComposePass::~RhiRtComposePass()
 
     taauShader = nullptr;
     prepareHdrShader = nullptr;
+    glassBlurShader = nullptr;
     prepareFinalShader = nullptr;
     checkerboardShader = nullptr;
     averageShader = nullptr;
@@ -1210,6 +1298,7 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         !LoadShader(AVERAGE_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, averageShader) ||
         !LoadShader(CHECKERBOARD_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, checkerboardShader) ||
         !LoadShader(PREPARE_HDR_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, prepareHdrShader) ||
+        !LoadShader(GLASS_BLUR_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, glassBlurShader) ||
         !LoadShader(PREPARE_FINAL_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, prepareFinalShader) ||
         !LoadShader(TAAU_SHADER_FILE_NAME, nvrhi::ShaderType::Compute, taauShader))
     {
@@ -1243,6 +1332,8 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         CreateFramebufferLayout(device, CHECKERBOARD_BINDINGS, CHECKERBOARD_BINDING_COUNT);
     prepareHdrFramebufferLayout =
         CreateFramebufferLayout(device, PREPARE_HDR_BINDINGS, PREPARE_HDR_BINDING_COUNT);
+    glassBlurFramebufferLayout =
+        CreateFramebufferLayout(device, GLASS_BLUR_BINDINGS, GLASS_BLUR_BINDING_COUNT);
     prepareFinalFramebufferLayout = CreatePrepareFinalLayout(device);
     taauFramebufferLayout =
         CreateFramebufferLayout(device, TAAU_BINDINGS, TAAU_BINDING_COUNT);
@@ -1338,7 +1429,7 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         temporalFramebufferLayout == nullptr || atrousLfFramebufferLayout == nullptr ||
         atrousFramebufferLayout == nullptr || interleaveFramebufferLayout == nullptr ||
         histogramFramebufferLayout == nullptr || checkerboardFramebufferLayout == nullptr ||
-        prepareHdrFramebufferLayout == nullptr ||
+        prepareHdrFramebufferLayout == nullptr || glassBlurFramebufferLayout == nullptr ||
         prepareFinalFramebufferLayout == nullptr || taauFramebufferLayout == nullptr ||
         uniformLayout == nullptr || pushConstantLayout == nullptr ||
         prepareFinalControlLayout == nullptr ||
@@ -1421,7 +1512,9 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
     checkerboardPipeline = CreateComposePipeline(device, checkerboardShader,
                                                  { checkerboardFramebufferLayout, uniformLayout });
     prepareHdrPipeline = CreateComposePipeline(device, prepareHdrShader,
-                                               { prepareHdrFramebufferLayout, uniformLayout });
+                                                { prepareHdrFramebufferLayout, uniformLayout });
+    glassBlurPipeline = CreateComposePipeline(device, glassBlurShader,
+                                               { glassBlurFramebufferLayout, uniformLayout, pushConstantLayout });
     prepareFinalPipeline = CreateComposePipeline(device, prepareFinalShader,
                                                  { prepareFinalFramebufferLayout, uniformLayout,
                                                    tonemappingSrvLayout, emptyLayout,
@@ -1434,7 +1527,7 @@ bool RhiRtComposePass::Create(nvrhi::IDevice *pDevice,
         temporalPipeline == nullptr || atrousLfPipeline == nullptr ||
         interleavePipeline == nullptr || histogramPipeline == nullptr ||
         averagePipeline == nullptr || checkerboardPipeline == nullptr ||
-        prepareHdrPipeline == nullptr ||
+        prepareHdrPipeline == nullptr || glassBlurPipeline == nullptr ||
         prepareFinalPipeline == nullptr || taauPipeline == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a compose pass compute pipeline");
@@ -1789,6 +1882,8 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
                               uint32_t upscaledWidth,
                               uint32_t upscaledHeight,
                               bool filterEnabled,
+                              bool glassBlurEnabled,
+
                               nvrhi::IBuffer *pUniformBuffer,
                               const QrDrawFramePostEffectsParams &postEffectParams,
                               const std::function<void(nvrhi::ICommandList *)> &pfnRasterOverlay)
@@ -1959,13 +2054,41 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
     // second public entry point is spelled out on `Render`: the overlay's only contract with this
     // chain is this window, and keeping the pre-TAAU chain one atomic host call avoids exposing
     // the module's intermediate wrap/set state.
+    //
+    // The hand-off: the callback's own wraps announce UnorderedAccess for the images it uses
+    // (RhiRasterOverlayPass::PrepareTarget), so each has to really be in GENERAL when it is
+    // called. The checkerboard left FINAL, SCREEN_EMISSION and DEPTH_NDC there, but the
+    // interleave read PRIMARY_TO_REFL_REFR as a sampled image and the earlier chain passes read
+    // the smoke images the same way; these requirements move each one back through the compose
+    // wraps before the callback's announces claim it. The glass mask is not in the list: the
+    // callback announces it read-only and only samples it, so it stays in the state the
+    // checkerboard left it in.
+    for (uint32_t i = 0; i < RASTER_OVERLAY_HANDOFF_COUNT; i++)
+    {
+        RequireImageUnorderedAccess(pCommandList, target, RASTER_OVERLAY_HANDOFF_IMAGES[i]);
+    }
+
     if (pfnRasterOverlay)
     {
         pfnRasterOverlay(pCommandList);
     }
 
     RecordDispatch(pCommandList, prepareHdrPipeline, { target.prepareHdrSet, target.uniformSet },
-                   groupsX, groupsY, 1);
+                    groupsX, groupsY, 1);
+
+    if (glassBlurEnabled)
+    {
+        for (uint32_t axis = 0; axis < 2; axis++)
+        {
+            pCommandList->setTextureState(target.engineTextures[BLOOM_INPUT_IMAGE_SLOT], nvrhi::AllSubresources,
+                                          nvrhi::ResourceStates::UnorderedAccess);
+            pCommandList->setTextureState(target.engineTextures[FindComposeImage(FB_IMAGE_INDEX_PRE_FINAL)], nvrhi::AllSubresources,
+                                          nvrhi::ResourceStates::UnorderedAccess);
+            pCommandList->commitBarriers();
+            RecordDispatch(pCommandList, glassBlurPipeline, { target.glassBlurSet, target.uniformSet },
+                            groupsX, groupsY, 1, &axis, sizeof(axis));
+        }
+    }
 
     float bloomStrength = 0.0f;
     nvrhi::ITexture *pBloomResult = nullptr;
@@ -2233,6 +2356,10 @@ void RhiRtComposePass::ReleaseFramebufferSets(Target &target)
         {
             frameContext->Retire(target.prepareHdrSet);
         }
+        if (target.glassBlurSet != nullptr)
+        {
+            frameContext->Retire(target.glassBlurSet);
+        }
         if (target.prepareFinalSet != nullptr)
         {
             frameContext->Retire(target.prepareFinalSet);
@@ -2254,6 +2381,7 @@ void RhiRtComposePass::ReleaseFramebufferSets(Target &target)
     target.histogramSet = nullptr;
     target.checkerboardSet = nullptr;
     target.prepareHdrSet = nullptr;
+    target.glassBlurSet = nullptr;
     target.prepareFinalSet = nullptr;
     target.taauSet = nullptr;
     target.prepareFinalBloomTexture = nullptr;
@@ -2485,6 +2613,21 @@ bool RhiRtComposePass::PrepareFramebufferSets(Target &target)
             {
                 warnedBadTable = true;
                 LogMessage(print, "Warning: RHI: failed to create the compose pass prepare-HDR binding set");
+            }
+            return false;
+        }
+    }
+
+    if (target.glassBlurSet == nullptr)
+    {
+        target.glassBlurSet = CreateFramebufferSet(device, GLASS_BLUR_BINDINGS, GLASS_BLUR_BINDING_COUNT,
+                                                   target.engineTextures, nullptr, glassBlurFramebufferLayout);
+        if (target.glassBlurSet == nullptr)
+        {
+            if (!warnedBadTable)
+            {
+                warnedBadTable = true;
+                LogMessage(print, "Warning: RHI: failed to create the glass blur binding set");
             }
             return false;
         }

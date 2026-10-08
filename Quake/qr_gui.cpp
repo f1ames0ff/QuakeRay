@@ -253,13 +253,12 @@ void UploadDrawData (void)
 			if (x1 <= x0 || y1 <= y0)
 				continue;
 
-			// rebase the indices to the command's own vertex span
 			g_indices.resize (cmd.ElemCount);
 			unsigned maxv = 0;
 			const ImDrawIdx *src = dl->IdxBuffer.Data + cmd.IdxOffset;
 			for (unsigned i = 0; i < cmd.ElemCount; i++)
 			{
-				unsigned idx = (unsigned)src[i] - (unsigned)cmd.VtxOffset;
+				unsigned idx = (unsigned)src[i];
 				g_indices[i] = idx;
 				if (idx > maxv)
 					maxv = idx;
@@ -336,6 +335,7 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font
 	ImGuiIO &io = ImGui::GetIO ();
 	io.IniFilename = nullptr;
 	io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+	io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
 
 	ApplyStyle ();
 
@@ -975,8 +975,13 @@ int QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const cha
 	LabelColumn (label, tooltip);
 	ImGui::SetNextItemWidth (RowWidth (kBrowseButtonW + ImGui::GetStyle ().ItemSpacing.x));
 	// An unauthored path is shown as NONE; the buffer stays empty, and typing
-	// NONE by hand commits as "no texture" as well.
-	if (ImGui::InputTextWithHint (id, "NONE", buf, capacity))
+	// NONE by hand commits as "no texture" as well. The value commits on Enter
+	// or when the field loses focus: a path reaches the loader once, complete,
+	// instead of on every keystroke, so partial names never search the disks
+	// and never ask for a full static re-submit.
+	if (ImGui::InputTextWithHint (id, "NONE", buf, capacity, ImGuiInputTextFlags_EnterReturnsTrue))
+		result |= 1;
+	if (ImGui::IsItemDeactivatedAfterEdit ())
 		result |= 1;
 	ItemTooltip (tooltip);
 

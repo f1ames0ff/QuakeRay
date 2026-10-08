@@ -106,12 +106,14 @@ static void LerpPosition(float* dst, const float* src1, const float* src2, float
 static const QrVertex*
 GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, float blend, int cluster)
 {
+    const double prof_pose = RT_Prof_Begin ();
     const QrVertex* v_pose1 = GetModelVerticesForPose(m, hdr, pose1);
     const QrVertex* v_pose2 = GetModelVerticesForPose(m, hdr, pose2);
 
     // we don't care about per-vertex colors with RT
     if (blend < FLT_EPSILON && cluster <= 0)
     {
+        RT_Prof_End (RT_PROF_ALIAS_POSE, prof_pose);
         return v_pose1;
     }
 
@@ -139,6 +141,7 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
             dst->cluster = (uint32_t)cluster;
     }
 
+    RT_Prof_End (RT_PROF_ALIAS_POSE, prof_pose);
     return tempstorage;
 }
 
@@ -413,6 +416,7 @@ static void GL_DrawAliasFrame(
        a light built from it would ride the camera, light the room from inside the viewer and
        churn the cluster lists every frame; a weapon that lights the room keeps its light_color
        and the dlight below. */
+    const double prof_lights = RT_Prof_Begin ();
     const int dtal_lights =
         isfirstperson ? 0
                       : RT_AddAliasEmissiveLights (e->model, tx, RT_GetAliasModelUniqueId (entuniqueid),
@@ -437,6 +441,7 @@ static void GL_DrawAliasFrame(
 
         RT_LIGHT_Emit (&light);
     }
+    RT_Prof_End (RT_PROF_ALIAS_LIGHTS, prof_lights);
 
 assert(
     (!isviewer && !isfirstperson) ||
@@ -470,24 +475,29 @@ if
         info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
     }
 
+    const double prof_upload = RT_Prof_Begin ();
     QrResult r = qrUploadRasterizedGeometry(vulkan_globals.instance, &info, NULL, NULL);
+    RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
     QR_CHECK(r);
 }
 
 else
 	{
 		qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
+		qboolean is_glass = tx && tx->rtglass;
 		qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
 		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetAliasModelUniqueId (entuniqueid),
 			.flags =
 			    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
-			    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (tx && tx->rtalphatest ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+			    (is_glass && alphatest ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
 			    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT ),
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType =
 			    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+			    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 			    // MF_HOLEY models (index 255 = transparent) must keep their alpha in the
 			    // traced path too, where the alpha test runs in the any-hit shader.
 			    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
@@ -500,7 +510,9 @@ else
 			.pVertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster),
 			.indexCount = paliashdr->numindexes,
 			.pIndices = e->model->rtindices,
-			.layerColors = {RT_COLOR_WHITE},
+			.layerColors = {RT_COLOR_WHITE, {is_glass && tx ? tx->rtglasscolor[0] : 0.0f, is_glass && tx ? tx->rtglasscolor[1] : 0.0f, is_glass && tx ? tx->rtglasscolor[2] : 0.0f, 0.0f},
+			                {is_glass && tx ? tx->rtglassior : 0.0f,
+			                 is_glass && tx ? tx->rtglassthickness : 0.0f, 0.0f, 0.0f}},
 			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
 			.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
 			.defaultRoughness = CVAR_TO_FLOAT(rt_model_rough),
@@ -509,7 +521,9 @@ else
 			.transform = transform,
 		};
 
+		const double prof_upload = RT_Prof_Begin ();
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
 		QR_CHECK(r);
 	}
 
@@ -622,12 +636,15 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 			if (alphatest)
 				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
 
+			const double prof_upload = RT_Prof_Begin ();
 			QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+			RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
 			QR_CHECK (r);
 		}
 		else
 		{
 			qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
+			qboolean is_glass = tx && tx->rtglass;
 			qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
 			QrGeometryUploadInfo info = {
@@ -635,10 +652,12 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.flags =
 				    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
 				    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
+				    (is_glass && alphatest ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
 				    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT),
 				.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 				.passThroughType =
 				    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+				    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 				    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
 				                QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
 				.visibilityType =
@@ -649,7 +668,9 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.pVertices = vertices,
 				.indexCount = surf->numindices,
 				.pIndices = e->model->rtindices + surf->firstindex,
-				.layerColors = {RT_COLOR_WHITE},
+				.layerColors = {RT_COLOR_WHITE, {is_glass && tx ? tx->rtglasscolor[0] : 0.0f, is_glass && tx ? tx->rtglasscolor[1] : 0.0f, is_glass && tx ? tx->rtglasscolor[2] : 0.0f, 0.0f},
+				                {is_glass && tx ? tx->rtglassior : 0.0f,
+				                 is_glass && tx ? tx->rtglassthickness : 0.0f, 0.0f, 0.0f}},
 				.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
 				.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
 				.defaultRoughness = CVAR_TO_FLOAT (rt_model_rough),
@@ -658,7 +679,9 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.transform = transform,
 			};
 
+			const double prof_upload = RT_Prof_Begin ();
 			QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+			RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
 			QR_CHECK (r);
 		}
 	}

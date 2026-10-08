@@ -16,6 +16,7 @@
 //
 
 #include "Scene.h"
+#include "GeometryBounds.h"
 #include "Generated/ShaderCommonC.h"
 #include "QrException.h"
 
@@ -94,49 +95,7 @@ bool qray::Scene::Upload(uint32_t frameIndex, const QrGeometryUploadInfo &upload
 {
     assert(!DoesUniqueIDExist(uploadInfo.uniqueID));
 
-    {
-        const QrVertex *verts = uploadInfo.pVertices;
-        const uint32_t count = uploadInfo.vertexCount;
-
-        for (uint32_t i = 0; i < count; i++)
-        {
-            const float *src = verts[i].position;
-            float p[3];
-
-            for (int k = 0; k < 3; k++)
-            {
-                p[k] = uploadInfo.transform.matrix[k][0] * src[0] +
-                       uploadInfo.transform.matrix[k][1] * src[1] +
-                       uploadInfo.transform.matrix[k][2] * src[2] +
-                       uploadInfo.transform.matrix[k][3];
-            }
-
-            if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2]))
-            {
-                continue;
-            }
-
-            if (std::abs(p[0]) > 1.0e7f || std::abs(p[1]) > 1.0e7f || std::abs(p[2]) > 1.0e7f)
-            {
-                continue;
-            }
-
-            if (!aabbInitialized)
-            {
-                aabbInitialized = true;
-                std::copy(p, p + 3, aabbMin);
-                std::copy(p, p + 3, aabbMax);
-            }
-            else
-            {
-                for (int k = 0; k < 3; k++)
-                {
-                    aabbMin[k] = std::min(aabbMin[k], p[k]);
-                    aabbMax[k] = std::max(aabbMax[k], p[k]);
-                }
-            }
-        }
-    }
+    AccumulateGeometryBounds(uploadInfo, aabbInitialized, aabbMin, aabbMax);
 
     if (uploadInfo.geomType == QR_GEOMETRY_TYPE_DYNAMIC)
     {

@@ -140,13 +140,13 @@ constexpr uint32_t VERTEX_DATA_BINDINGS[VERTEX_DATA_BUFFER_COUNT] =
 // The engine's pipeline-wide RT limits (RayTracingPipeline.cpp:203 and the measured blob structs):
 // recursion depth 2; the payload is ShPayload = {float2 baryCoords; uint instIdAndIndex; uint
 // geomAndPrimIndex} = 16 B and the hit attribute HitAttributes = {float2 inBaryCoords} = 8 B
-// (Structs.hlsli:47-57). The direct raygen and the shadow miss statically carry only
-// ShPayloadShadow = {uint isShadowed} = 4 B (measured: their entry-point interfaces name
-// `g_payloadShadow` alone), but the pipeline also carries `RtMiss` and `RtClsOpaque`, which use the
-// 16 B `g_payload`, so the union stays 16 B. NVRHI's two size fields are D3D12-only at this pin, so
+// (Structs.hlsli:47-62). The direct raygen and the shadow miss statically carry only
+// ShPayloadShadow = {float3 transmittance; uint isShadowed; float3 glassNormal; float
+// glassDistance; float4 glassParams} = 48 B, while `RtMiss` and `RtClsOpaque` use the 16 B
+// `g_payload`, so the pipeline union is 48 B. NVRHI's two size fields are D3D12-only at this pin, so
 // on Vulkan they are documentation; they are kept exact for a future backend switch.
 constexpr uint32_t MAX_RECURSION_DEPTH = 2;
-constexpr uint32_t MAX_PAYLOAD_SIZE = 2 * sizeof(float) + 2 * sizeof(uint32_t);
+constexpr uint32_t MAX_PAYLOAD_SIZE = 16 * sizeof(float);
 constexpr uint32_t MAX_ATTRIBUTE_SIZE = 2 * sizeof(float);
 
 // The eight device-local engine buffers of set 6, in the order of `LightManager::Buffers` and of
@@ -789,7 +789,7 @@ void RhiRtDirectPass::Render(nvrhi::ICommandList *pCommandList,
     // Set 6, the four light copies and the light-statistics fill. The copies and the fill go before
     // the state below, so the automatic barriers order each of them before the dispatch that reads
     // or writes the buffer.
-    if (!PrepareLightSet(pCommandList, target, frameIndex, frameId, lightStatsMode))
+    if (!EnsureLightSet(pCommandList, frameIndex, frameId, lightStatsMode))
     {
         return;
     }
@@ -1118,6 +1118,29 @@ bool RhiRtDirectPass::PrepareVertexDataSet(Target &target, const RhiRtPrimaryPas
         target.vertexBuffers[i] = buffers[i];
     }
 
+    return true;
+}
+
+bool RhiRtDirectPass::EnsureLightSet(nvrhi::ICommandList *pCommandList, uint32_t frameIndex,
+                                     uint32_t frameId, uint32_t lightStatsMode)
+{
+    if (frameIndex >= MAX_FRAMES_IN_FLIGHT)
+    {
+        return false;
+    }
+
+    if (lightSetPrepared[frameIndex] && lightSetPreparedFrame[frameIndex] == frameId)
+    {
+        return true;
+    }
+
+    if (!PrepareLightSet(pCommandList, targets[frameIndex], frameIndex, frameId, lightStatsMode))
+    {
+        return false;
+    }
+
+    lightSetPrepared[frameIndex] = true;
+    lightSetPreparedFrame[frameIndex] = frameId;
     return true;
 }
 
