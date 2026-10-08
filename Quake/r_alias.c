@@ -106,12 +106,14 @@ static void LerpPosition(float* dst, const float* src1, const float* src2, float
 static const QrVertex*
 GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, float blend, int cluster)
 {
+    const double prof_pose = RT_Prof_Begin ();
     const QrVertex* v_pose1 = GetModelVerticesForPose(m, hdr, pose1);
     const QrVertex* v_pose2 = GetModelVerticesForPose(m, hdr, pose2);
 
     // we don't care about per-vertex colors with RT
     if (blend < FLT_EPSILON && cluster <= 0)
     {
+        RT_Prof_End (RT_PROF_ALIAS_POSE, prof_pose);
         return v_pose1;
     }
 
@@ -139,6 +141,7 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
             dst->cluster = (uint32_t)cluster;
     }
 
+    RT_Prof_End (RT_PROF_ALIAS_POSE, prof_pose);
     return tempstorage;
 }
 
@@ -413,6 +416,7 @@ static void GL_DrawAliasFrame(
        a light built from it would ride the camera, light the room from inside the viewer and
        churn the cluster lists every frame; a weapon that lights the room keeps its light_color
        and the dlight below. */
+    const double prof_lights = RT_Prof_Begin ();
     const int dtal_lights =
         isfirstperson ? 0
                       : RT_AddAliasEmissiveLights (e->model, tx, RT_GetAliasModelUniqueId (entuniqueid),
@@ -437,6 +441,7 @@ static void GL_DrawAliasFrame(
 
         RT_LIGHT_Emit (&light);
     }
+    RT_Prof_End (RT_PROF_ALIAS_LIGHTS, prof_lights);
 
 assert(
     (!isviewer && !isfirstperson) ||
@@ -470,7 +475,9 @@ if
         info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
     }
 
+    const double prof_upload = RT_Prof_Begin ();
     QrResult r = qrUploadRasterizedGeometry(vulkan_globals.instance, &info, NULL, NULL);
+    RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
     QR_CHECK(r);
 }
 
@@ -514,7 +521,9 @@ else
 			.transform = transform,
 		};
 
+		const double prof_upload = RT_Prof_Begin ();
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
 		QR_CHECK(r);
 	}
 
@@ -627,7 +636,9 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 			if (alphatest)
 				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST;
 
+			const double prof_upload = RT_Prof_Begin ();
 			QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+			RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
 			QR_CHECK (r);
 		}
 		else
@@ -668,7 +679,9 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.transform = transform,
 			};
 
+			const double prof_upload = RT_Prof_Begin ();
 			QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+			RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
 			QR_CHECK (r);
 		}
 	}

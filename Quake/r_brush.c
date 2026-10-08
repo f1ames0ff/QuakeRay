@@ -330,6 +330,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
 
 	// calculate dynamic lighting for bmodel if it's not an
 	// instanced model
+	const double prof_lightmark = RT_Prof_Begin ();
 	if (clmodel->firstmodelsurface != 0)
 	{
 		for (k = 0; k < MAX_DLIGHTS; k++)
@@ -340,7 +341,9 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
 			R_MarkLights (&cl_dlights[k], k, clmodel->nodes + clmodel->hulls[0].firstclipnode);
 		}
 	}
+	RT_Prof_End (RT_PROF_BRUSH_LIGHTMARK, prof_lightmark);
 
+	const double prof_chain = RT_Prof_Begin ();
 	R_ClearTextureChains (clmodel, chain);
 	for (i = 0; i < clmodel->nummodelsurfaces; i++, psurf++)
 	{
@@ -356,6 +359,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
         Atomic_IncrementUInt32 (&rs_brushpolys);
     }
 
+	RT_Prof_End (RT_PROF_BRUSH_CHAIN, prof_chain);
 	R_DrawTextureChains (cbx, clmodel, e, chain, entuniqueid);
 	R_DrawTextureChains_Water (cbx, clmodel, e, chain, entuniqueid);
 }
