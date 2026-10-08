@@ -144,6 +144,8 @@ Follow the producer and only the implicated backend boundary:
 
 These API calls perform CPU work **before** `qrDrawFrame`; their time is included in producer upload slots. Later `cpu.draw.staging_ms` is not the total cost of preparing or copying entity geometry.
 
+The ImGui bridge advertises `ImGuiBackendFlags_RendererHasVtxOffset` during initialization and preserves command-local indices in [UploadDrawData](Quake/qr_gui.cpp#L174). `ImDrawCmd::VtxOffset` shifts only the uploaded vertex pointer; it must not be subtracted from the already-local indices. This supports draw lists above 65,535 vertices with 16-bit ImGui indices. [gui_draw_tests.cpp](tests/gui_draw_tests.cpp) exercises the real bridge using headless SDL and renderer stubs, including multiple rollover offsets, material/clip splits and exact vertex attributes; no GPU is needed.
+
 ### Dependency and data-flow graph
 
 ```mermaid
