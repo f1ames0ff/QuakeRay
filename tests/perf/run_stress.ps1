@@ -1,9 +1,10 @@
 param(
-    [ValidateSet('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy')][string[]]$Saves = @('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy'),
-    [ValidateSet('balanced', 'quality')][string[]]$Presets = @('balanced', 'quality'),
+    [ValidateSet('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy')][string[]]$Saves = @('qr_fuma_start'),
+    [ValidateSet('balanced', 'quality')][string[]]$Presets = @('balanced'),
     [ValidateRange(2, 25)][int]$Seconds = 10,
     [ValidateRange(2, 30)][int]$Warmup = 5,
-    [ValidateRange(1, 5)][int]$Repeats = 1,
+    [ValidateRange(1, 2)][int]$Repeats = 1,
+    [ValidateRange(30, 300)][int]$MaxRunSeconds = 300,
     [string]$Basedir = '',
     [string]$Tag = 'baseline',
     [string[]]$Overrides = @(),
@@ -13,6 +14,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'stress_budget.ps1')
+if ($Saves.Count -ne 1 -or $Presets.Count -ne 1) {
+    throw 'Run one save and one preset per invocation; release the GPU between short runs.'
+}
+$script:RunDeadline = $null
+$shutdownReserve = 15
+$minimumCaptureSeconds = $Warmup + $Seconds + $shutdownReserve
+if ($minimumCaptureSeconds -gt $MaxRunSeconds) {
+    throw 'Warmup, capture and shutdown reserve cannot fit within MaxRunSeconds.'
+}
 if (-not $Basedir) { $Basedir = Join-Path $PSScriptRoot '..\..\build\Debug' }
 $Basedir = (Resolve-Path $Basedir).Path
 $gameDir = Join-Path $Basedir 'ad'
@@ -41,6 +52,7 @@ $manifest = [ordered]@{
     Seconds = $Seconds
     Warmup = $Warmup
     Repeats = $Repeats
+    MaxRunSeconds = $MaxRunSeconds
     StatsLevel = $StatsLevel
     NoSound = [bool]$NoSound
     Overrides = $Overrides
@@ -79,8 +91,7 @@ public static class StressWin32 {
 "@
 
 function Wait-Idle {
-    $deadline = (Get-Date).AddMinutes(30)
-    $pattern = 'run_' + '(menu|place|stress|audit)'
+    $deadline = Get-StressDeadline -Deadline $script:RunDeadline -MaximumSeconds 300
     $ancestors = @($PID)
     $ancestor = Get-CimInstance Win32_Process -Filter "ProcessId=$PID"
     while ($ancestor -and $ancestor.ParentProcessId -gt 0 -and $ancestor.ParentProcessId -notin $ancestors) {
@@ -91,14 +102,14 @@ function Wait-Idle {
     while ($true) {
         $busy = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)' })
         $runners = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" |
-            Where-Object { $_.ProcessId -notin $ancestors -and $_.CommandLine -match $pattern })
+            Where-Object { $_.ProcessId -notin $ancestors -and (Test-StressExternalRunnerOwner $_.CommandLine) })
         if ($busy.Count -eq 0 -and $runners.Count -eq 0) { return }
         if (-not $reported) {
             Write-Host "Waiting for GPU/build owners: $($busy.Id -join ', '); runners: $($runners.ProcessId -join ', ')"
             $reported = $true
         }
         if ((Get-Date) -ge $deadline) {
-            throw "Another agent still owns the machine after 30 minutes: $($busy.Id -join ', '); runners $($runners.ProcessId -join ', ')."
+            throw "Another agent still owns the machine after 5 minutes or the shared deadline expired; defer this run: $($busy.Id -join ', '); runners $($runners.ProcessId -join ', ')."
         }
         Start-Sleep -Seconds 10
     }
@@ -112,7 +123,7 @@ function Send-Key([IntPtr]$Window, [int]$Key, [int]$Scan) {
 }
 
 function Wait-Marker($Process, [string]$Marker) {
-    $deadline = (Get-Date).AddMinutes(4)
+    $deadline = $script:RunDeadline
     while ((Get-Date) -lt $deadline) {
         $Process.Refresh()
         if ($Process.HasExited) { throw "Runtime exited with code $($Process.ExitCode) before $Marker" }
@@ -130,13 +141,21 @@ $mutex = New-Object System.Threading.Mutex($false, 'Local\QuakeRayPerformanceRun
 $locked = $false
 $results = @()
 try {
-    try { $locked = $mutex.WaitOne([TimeSpan]::FromMinutes(30)) }
+    try { $locked = $mutex.WaitOne([TimeSpan]::FromMinutes(5)) }
     catch [System.Threading.AbandonedMutexException] { $locked = $true }
-    if (-not $locked) { throw 'Performance-run mutex was not available within 30 minutes.' }
+    if (-not $locked) { throw 'Performance-run mutex was not available within 5 minutes; defer this run.' }
     foreach ($save in $Saves) {
         foreach ($preset in $Presets) {
             for ($repeat = 1; $repeat -le $Repeats; $repeat++) {
+                if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
+                    Write-Host 'Runtime budget reached; remaining repeats are deferred.'
+                    break
+                }
                 Wait-Idle
+                if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
+                    Write-Host 'Runtime budget reached; remaining repeats are deferred.'
+                    break
+                }
                 $id = [Guid]::NewGuid().ToString('N').Substring(0, 8)
                 $fixture = Join-Path $gameDir "qs_$id.cfg"
                 $label = "$save-$preset-$repeat"
@@ -182,12 +201,23 @@ echo QR_LOADED_$id
                         RedirectStandardError = Join-Path $output "$label.stderr.log"
                     }
                     $script:CurrentStderr = $launch.RedirectStandardError
+                    if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
+                        Write-Host 'Preparation consumed the capture budget; remaining repeats are deferred.'
+                        break
+                    }
+                    if (-not $script:RunDeadline) { $script:RunDeadline = (Get-Date).AddSeconds($MaxRunSeconds) }
                     $process = Start-Process @launch
                     $null = $process.Handle
                     Wait-Marker $process "QR_LOADED_$id"
                     $process.Refresh()
                     $window = $process.MainWindowHandle
                     if ($window -eq [IntPtr]::Zero) { throw 'No runtime window' }
+                    if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
+                        Write-Host 'Loading consumed the capture budget; this attempt is deferred.'
+                        Send-Key $window 0x7a 0x57
+                        $null = $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))
+                        break
+                    }
                     [StressWin32]::SetForegroundWindow($window) | Out-Null
                     Start-Sleep -Seconds $Warmup
                     Send-Key $window 0x76 0x41
@@ -195,14 +225,29 @@ echo QR_LOADED_$id
                     if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Runtime lacks foreground focus; refusing a contaminated measurement.' }
                     Send-Key $window 0x73 0x3e
                     Wait-Marker $process "QR_START_$id"
-                    $deadline = (Get-Date).AddSeconds($Seconds)
+                    if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds ($Seconds + $shutdownReserve))) {
+                        Write-Host 'Start marker consumed the capture budget; this attempt is deferred.'
+                        Send-Key $window 0x74 0x3f
+                        Send-Key $window 0x7a 0x57
+                        $null = $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))
+                        break
+                    }
+                    $deadline = Get-StressDeadline -Deadline $script:RunDeadline.AddSeconds(-$shutdownReserve) -MaximumSeconds $Seconds
                     while ((Get-Date) -lt $deadline) {
                         if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Focus was lost during capture.' }
                         Start-Sleep -Milliseconds 100
                     }
                     Send-Key $window 0x74 0x3f
                     Wait-Marker $process "QR_STOP_$id"
-                    Start-Sleep -Seconds 1
+                    if ($Screenshot -and (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds 10)) {
+                        Send-Key $window 0x75 0x40
+                        Start-Sleep -Seconds 2
+                    }
+                    Send-Key $window 0x7a 0x57
+                    if (-not $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))) {
+                        throw 'Runtime did not exit within the remaining budget'
+                    }
+                    if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
                     if ($StatsLevel -gt 0) {
                         $dump = Get-ChildItem $gameDir -Filter 'stats-*.dump' | Where-Object FullName -notin $oldDumps |
                             Sort-Object LastWriteTime | Select-Object -Last 1
@@ -223,21 +268,15 @@ echo QR_LOADED_$id
                     $samplePath = Join-Path $gameDir $Matches[1]
                     $framePath = Join-Path $output "$label.frames.csv"
                     Copy-Item $samplePath $framePath
-                    python (Join-Path $PSScriptRoot 'analyze_stress.py') $framePath --json (Join-Path $output "$label.summary.json")
-                    if ($LASTEXITCODE -ne 0) { throw 'Capture validation failed; see the frame samples.' }
                     if ($Screenshot) {
-                        Send-Key $window 0x75 0x40
-                        Start-Sleep -Seconds 2
                         foreach ($image in Get-ChildItem $gameDir -Filter 'screenshot*.png' | Where-Object FullName -notin $oldScreenshots) {
                             Copy-Item $image.FullName (Join-Path $output "$label-$($image.Name)")
                         }
                     }
-                    Send-Key $window 0x7a 0x57
-                    if (-not $process.WaitForExit(15000)) { throw 'Runtime did not exit cleanly' }
-                    if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
                     Copy-Item $console (Join-Path $output "$label.console.log")
-                    $results += [PSCustomObject]@{ Save = $save; Preset = $preset; Repeat = $repeat; Output = $output }
-                    Write-Host "Captured $label"
+                    $results += [PSCustomObject]@{ Save = $save; Preset = $preset; Repeat = $repeat; Output = $output;
+                        Frames = $framePath; Summary = Join-Path $output "$label.summary.json" }
+                    Write-Host "Saved $label; runtime closed before analysis."
                 } finally {
                     if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
                     if (Test-Path $console) { Copy-Item $console (Join-Path $output "$label.console.log") }
@@ -252,5 +291,9 @@ echo QR_LOADED_$id
 } finally {
     if ($locked) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
+}
+foreach ($capture in $results) {
+    python (Join-Path $PSScriptRoot 'analyze_stress.py') $capture.Frames --json $capture.Summary
+    if ($LASTEXITCODE -ne 0) { throw 'Capture validation failed; see the frame samples.' }
 }
 $results | Format-Table -AutoSize
