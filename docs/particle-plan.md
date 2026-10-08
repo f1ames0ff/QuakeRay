@@ -27,7 +27,7 @@ scale to the content that actually exists.
 | A1 | Volume accuracy contract | Paint `leaf_cluster` per texel (never position->cell arithmetic; tfuma counterexample leaf 12278 -> cluster 1766 vs arithmetic 3118); ambiguous texels follow the CPU rule; keep 0 where the CPU returns 0 (cluster 0 has no PVS row; the sun is ray-gated) |
 | A2 | Volume generation | Its own map generation bumped where the clusters rebuild; never `listGeneration` (that ticks per composition) |
 | A3 | Volume memory/bounds | 64 u base (start ~195 KiB, tfuma ~2.73 MiB); pin origin/dims/sampling in the upload; 32 u optional |
-| L1 | Lighting end state | Per-particle evaluation; cluster sample from the volume/table; delete the per-vertex loop |
+| L1 | Lighting end state | One evaluation per particle for small sprites; large FTE sprites keep a spatially varying evaluation (per vertex, cheap once the volume exists) and must not jump dark/light across cluster boundaries; cluster sample from the volume/table; the ray budget is per particle |
 | L2 | RT ray budget | Hard per-frame cap, spent deterministically by particle index; <=1 sun/shadow ray per particle at its center, distance-faded, temporally reused keyed on (generation, light revision, cluster) |
 | L3 | TLAS membership | Engine particles stay out; they cast no shadows and add no GI; AD sprites and entity beams are a separate case, do not generalize |
 | L4 | DTAL compatibility gate | Particle/smoke consumers must use `q2SampleClusterLights` (fast + tail) -> `sampleLightNee` -> divide by `lightPdf * memberPdf`; parity matrices with `rt_dtal_groups {0,1}` x `rt_cluster_sampling {0,1}` |
@@ -123,11 +123,19 @@ scale to the content that actually exists.
   clusters); resolve cost ~0.
 
 ### Stage 4 — per-particle lighting, DTAL gate, ray budget
-- One cluster/light evaluation per particle; <=1 budgeted ray per particle under a hard per-frame
-  cap; delete the per-vertex loop (RsParticle.vert.hlsl:34).
+- One cluster/light evaluation per particle for small sprites; <=1 budgeted ray per particle under a
+  hard per-frame cap; delete the per-vertex loop where the sprite size allows it
+  (RsParticle.vert.hlsl:34).
+- Large-sprite constraint (owner, 2026-10-08): FTE carries many large sprites and they must not
+  jump dark/light as they cross cluster boundaries, especially near torches. Large sprites keep the
+  spatially varying cluster/light evaluation - per vertex, which becomes a texture fetch once the
+  Stage-3 volume exists - while the shadow/occlusion rays stay bounded per particle (L2) rather
+  than per vertex. The volume sample must not step visibly between neighbouring samples. The
+  current dark smoke next to torches is a defect this stage fixes, not a state to preserve.
 - DTAL gate (L4): the smoke decoder currently misreads groups and drops them; implement the direct-
   pass pattern and prove parity with `rt_dtal_groups`/`rt_cluster_sampling` matrices.
-- Gate: bounded ray counter; visual parity; `rt_bench` baselines unchanged or better.
+- Gate: bounded ray counter; visual parity; the large-sprite lighting does not pop (owner check on
+  the torch scenes); `rt_bench` baselines unchanged or better.
 
 ### Stage 5 — GPU simulation (classic only, optional until measured)
 - Ping-pong state, spawn ring, append/compaction, indirect draw; bench-freeze mode for determinism
