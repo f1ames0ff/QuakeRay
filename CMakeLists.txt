@@ -677,11 +677,18 @@ if(QUAKERAY_PLATFORM_WINDOWS)
         COMMENT "Copying OpenAL32.dll..."
     )
 
-    # amd_fidelityfx_vk.dll (AMD-signed, FSR 3.1) — from the vendored qray
-    add_custom_command(TARGET quakeray POST_BUILD
+    # amd_fidelityfx_vk.dll (FSR 3.1 provider, locally rebuilt — see the README in
+    # renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL).
+    # An always-run target, not a POST_BUILD step: under Ninja a POST_BUILD command runs only
+    # when quakeray relinks, so a provider-only change would leave existing build trees with
+    # the stale DLL.
+    add_custom_target(qray_deploy_fidelityfx ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"
             "$<TARGET_FILE_DIR:quakeray>"
         COMMENT "Copying amd_fidelityfx_vk.dll..."
+        VERBATIM
     )
+    add_dependencies(quakeray qray_deploy_fidelityfx)
 endif()

@@ -80,15 +80,17 @@ The baseline invocation in the historical jobs stopped on its validation gate be
 execution, which is why the pre-fix records list different coverage per arm. No validation family
 was allowlisted away; the post-fix job's gate passed on both arms.
 
-## Remaining third-party advisory warning
+## Third-party advisory warning resolved (2026-10-09)
 
-`Undefined-Value-StorageImage-FormatMismatch-ImageView` is still reported with variable
+`Undefined-Value-StorageImage-FormatMismatch-ImageView` was reported with variable
 `rw_luma_history` (format operand Rgba8 against an R16G16B16A16_SFLOAT image view) while the FSR
-3.1 upscale provider is active. The variable lives inside the prebuilt signed
-`amd_fidelityfx_vk.dll` (`PrebuiltSignedDLL`, no shader source in the repository), so the fix is
-not in this tree; it is an advisory warning, not a `VUID` error, and does not fail the validation
-gate. It was previously masked by the layer's per-message duplicate limit (the bloom `bloomDest`
-warning consumed it).
+3.1 upscale provider was active. The qualifier is compiled into the vendor shader, so the fix
+required rebuilding the provider from AMD's FidelityFX SDK 1.1.4 sources (one-line
+`rgba8`->`rgba16f` change) and vendoring the result; the full analysis, recipe and evidence are
+in [fsr-luma-history-format-fix.md](fsr-luma-history-format-fix.md). Validation smoke runs with
+the rebuilt provider report zero mismatch warnings with the upscaler active, and the signed
+original warned 10 times per run. The rebuilt provider is unsigned (documented trade-off); the
+original signed binary remains in git history and the AMD SDK archive.
 
 ## Independent safety/API audit and corrections
 
@@ -116,6 +118,7 @@ The Local mutex coordinates one Windows logon session, not every session on the 
 - MCP safety/API acceptance: scoped checks passed, with documented limits.
 - Capture/GPU/transition tooling: exercised; provenance and invalid-result gates enforced.
 - Renderer Vulkan validation: passed the recorded validation runs (VUID-clean); the FSR provider's
-  `rw_luma_history` advisory warning remains outside this tree. This is not a general
-  spec-cleanliness proof beyond the recorded scenarios.
+  `rw_luma_history` warning was fixed on 2026-10-09 by the rebuilt provider described in
+  [fsr-luma-history-format-fix.md](fsr-luma-history-format-fix.md), with the unsigned trade-off
+  recorded there. This is not a general spec-cleanliness proof beyond the recorded scenarios.
 - Broad image/gameplay/all-map equivalence: not established by these short tests.
