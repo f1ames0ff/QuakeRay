@@ -71,3 +71,7 @@ Terror Fuma, Debug, 4K FSR Balanced, unchanged `qr_audit_max.cfg`, 8-second warm
 Candidate data: `build/Debug/audit-bounds-short-fuma-20261008-102803-39ce70/`. The short paired-control attempt was deferred after the machine remained busy for three minutes. The first capture is promising but not a completed interleaved A/B campaign; the other saves/presets remain unmeasured for this candidate.
 
 Four independent read-only reviewers found no concrete regression in the SSE2 bounds calculation, its scalar fallback, Scene integration, or tests. Their consensus findings concerned the short-run harness lifecycle, which is being repaired and checked separately.
+
+### Controlled entity-profile follow-up
+
+The same-runtime integration comparison in `docs/entity-cpu-combined-performance.md` now isolates this change against a transform-only control. On Bogbottom Balanced, alias geometry API time decreased from 8.44 to 4.47 ms, brush API time from 3.81 to 2.84 ms and FPS increased from 21.15 to 23.89. On Fuma Balanced, alias API time decreased from 3.46 to 1.80 ms and FPS increased from 33.62 to 37.18. Both arms used identical effective settings and recorded asset/save hashes. The current short-run budget is 300 seconds per invocation, superseding the earlier 180-second limit. This is still not an all-save/all-preset validation.
