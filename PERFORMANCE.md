@@ -186,6 +186,24 @@ C2 repeats: [Fuma Balanced](build/Debug/audit-entity-combined-fuma-repeat-202610
 
 ## Reproduction and update protocol
 
+### MCP live verification after the ImGui fix
+
+On 2026-10-08 the approved Debug runtime and documented AD saves were available locally.
+`job_074a7aa9047946e790edd4f60c292642` completed an 8-second warmup / 6-second Fuma Balanced
+benchmark through the contained supervisor, with 34.80 FPS and 28.74 ms mean interval.
+This is a tooling smoke observation, not a paired optimization result or new canonical control.
+
+The AD-hub StatsLevel-3 capture initially hit the 16-bit ImGui draw-list assertion. The fix
+from `3bc99d9b` was cherry-picked as `e55982af`; Debug deployment and all three CPU CTests,
+including `gui_draw_tests`, passed. The repeated diagnostic job
+`job_4e99860f7ead4dfbbef571911d01bfbe` succeeded with no assertion. Its overlay-enabled timings
+are diagnostic only and must not be compared to StatsLevel-0 performance controls.
+
+Raw evidence remains under `%LOCALAPPDATA%/QuakeRayMCP/acd0cbf5d5998a3e91a76882/jobs/<job-id>/runtime/`.
+Failed jobs from missing assets, focus loss and console/instrumentation changes were retained
+and rejected, not promoted to baselines. Binary/asset acceptance, long gameplay, visual
+equivalence and the remaining MCP phases are not certified by these short verification runs.
+
 Build and runner ownership now uses the shared
 [machine guard](tests/perf/machine_guard.ps1). It defers when another owner is detected and
 does not stop foreign processes. The MCP supervisor's runtime adapters work on private copied
