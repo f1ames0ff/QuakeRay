@@ -89,6 +89,15 @@ scale to the content that actually exists.
   are kept for the new path.
 - The gate above is unchanged and still awaits the Stage-0 demos (`ad_particle_heavy` /
   `ad_particle_idle`); no Stage-2 measurement is claimed yet.
+- Preliminary reading, not the gate: a diagnostic run of the owner's `start1` save at the benchmark
+  viewpoint (3840x2160, FSR 2, vsync off, dtal master) shows `particles_classic = 0` at rest -
+  the classic transport changes nothing on that scene - while the FTE path carries the bucket:
+  `particles_fte` about 7-8k live, `fte convert` averaging 5.7-6.3 ms, the per-vertex
+  `particles resolve` 3.6-3.9 ms and `particles upload` 1.4-1.5 ms per frame, with `rays_particle`
+  10-17k per window. The automated salvo that was meant to spawn classic particles never
+  registered (the scripted attack did not fire), so the classic figure is an idle figure. This
+  points at the FTE conversion/resolve as the measured hot spots and at the owner's recorded demos
+  as the decisive Stage-2 exercise.
 
 ### Stage 3 — cluster volume, remove CPU resolves (after dtal; accuracy contract A1-A3)
 - R16_UINT volume painted from `leaf_cluster`; 64 u base; own map generation; keep 0 semantics.

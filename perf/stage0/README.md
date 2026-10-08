@@ -98,8 +98,13 @@ powershell -File perf\stage0\run_points_ab.ps1 -Save start1 -FireSeconds 5
 It writes `stage2-points-on.dump` / `stage2-points-off.dump` into the game directory, prints the new
 benchmark blocks (frame and particle slots) and runs `particle_attribution.ps1` on the two dumps.
 Requirements: the save rests where firing keeps particles in view, the player owns the rocket
-launcher (the script selects it with `impulse 7`), and no other engine instance is running. Keep
-the engine window uncovered while the run is in flight - an unfocused window sleeps 16 ms per frame.
+launcher (the script gives and selects it), and no other engine instance is running. Keep the engine
+window uncovered while the run is in flight - an unfocused window sleeps 16 ms per frame.
+
+Before trusting the deltas, check either dump for `particles_classic` > 0: a salvo that never
+registers leaves both arms without classic particles and the comparison measures nothing. The
+scripted attack is less reliable than hand input; the recorded `ad_particle_*` demos remain the
+decisive Stage-2 exercise.
 
 ## Landed instrumentation
 
