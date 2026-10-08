@@ -63,6 +63,16 @@ namespace qray
             bool particleProxy = false;
         };
 
+        struct ParticlePointDrawInfo
+        {
+            uint32_t firstPoint = 0;
+            uint32_t count = 0;
+            uint32_t textureIndex = 0;
+            uint32_t pipelineState = 0;
+            Float4D  smokeLook = Float4D( NullifyToken );
+            uint32_t particleProxy = 0;
+        };
+
     public:
         explicit RasterizedDataCollector( VkDevice                            device,
                                           std::shared_ptr< MemoryAllocator >& allocator,
@@ -81,18 +91,24 @@ namespace qray
                                               const float*                          viewProjection,
                                               const QrViewport*                     viewport );
 
+        bool                     AddParticles( uint32_t                   frameIndex,
+                                               const QrParticleUploadInfo& info );
+
         void Clear( uint32_t frameIndex );
 
         void CopyFromStaging( VkCommandBuffer cmd, uint32_t frameIndex );
 
         VkBuffer GetVertexBuffer() const;
         VkBuffer GetIndexBuffer() const;
+        VkBuffer GetParticlePointBuffer() const;
 
         VkBuffer GetVertexStagingBuffer(uint32_t frameIndex);
         VkBuffer GetIndexStagingBuffer(uint32_t frameIndex);
+        VkBuffer GetParticlePointStagingBuffer(uint32_t frameIndex);
 
         VkDeviceSize GetVertexBufferSize() const;
         VkDeviceSize GetIndexBufferSize() const;
+        VkDeviceSize GetParticlePointBufferSize() const;
 
         static uint32_t GetVertexStride();
         static void     GetVertexLayout( VkVertexInputAttributeDescription* outAttrs,
@@ -106,6 +122,8 @@ namespace qray
         const std::vector< DrawInfo >& GetRasterDrawInfos() const;
         const std::vector< DrawInfo >& GetSwapchainDrawInfos() const;
         const std::vector< DrawInfo >& GetSkyDrawInfos() const;
+
+        const std::vector< ParticlePointDrawInfo >& GetParticlePointDrawInfos() const;
 
         uint64_t GetUploadedBytes() const;
         uint32_t GetDroppedUploadBatches() const;
@@ -139,6 +157,7 @@ namespace qray
                                             ShVertex*                             dstVerts );
 
         bool CaptureParticleProxies( const QrRasterizedGeometryUploadInfo& info );
+        bool CaptureParticlePointProxies( const QrParticleUploadInfo& info );
 
     private:
         VkDevice                          device;
@@ -146,9 +165,11 @@ namespace qray
 
         std::shared_ptr< AutoBuffer > vertexBuffer;
         std::shared_ptr< AutoBuffer > indexBuffer;
+        std::shared_ptr< AutoBuffer > particlePointBuffer;
 
         uint64_t curVertexCount;
         uint64_t curIndexCount;
+        uint64_t curParticlePointCount;
 
         uint64_t uploadedBytes = 0;
         uint32_t droppedUploadBatches = 0;
@@ -156,6 +177,8 @@ namespace qray
         std::vector< DrawInfo > rasterDrawInfos;
         std::vector< DrawInfo > swapchainDrawInfos;
         std::vector< DrawInfo > skyDrawInfos;
+
+        std::vector< ParticlePointDrawInfo > particlePointDrawInfos;
 
         std::vector< ParticleProxy > particleProxies;
         uint32_t                     fteTriangleCount = 0;

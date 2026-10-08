@@ -99,6 +99,7 @@ public:
 
     void UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo *pUploadInfo,
                                   const float *pViewProjection, const QrViewport *pViewport);
+    QrResult UploadParticles(const QrParticleUploadInfo *pUploadInfo);
     void UploadDecal(const QrDecalUploadInfo *pUploadInfo);
     void UploadPortal(const QrPortalUploadInfo *pUploadInfo);
 
@@ -197,6 +198,8 @@ private:
     bool                                    printedPresentWaitActive = false;
     bool                                    printedRasterUploadWithoutFrame = false;
     bool                                    printedRasterOverflow = false;
+    bool                                    printedParticlePointOverflow = false;
+    uint32_t                                lastParticlePointOverflowWarnFrameId = 0;
     std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;

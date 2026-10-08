@@ -449,6 +449,28 @@ QRAPI QrResult QRCONV qrUploadRasterizedGeometry(
     const float                             *pViewProjection,
     const QrViewport                        *pViewport);
 
+typedef struct QrParticlePoint
+{
+    float       position[3];
+    uint32_t    packedColor;
+    float       size;
+    uint32_t    cluster;
+} QrParticlePoint;
+
+typedef struct QrParticleUploadInfo
+{
+    const QrParticlePoint   *pPoints;
+    uint32_t                count;
+
+    QrMaterial              material;
+    uint32_t                pipelineState;
+    QrFloat4D               smokeLook;
+} QrParticleUploadInfo;
+
+QRAPI QrResult QRCONV qrUploadParticles(
+    QrInstance                              qrInstance,
+    const QrParticleUploadInfo              *pUploadInfo);
+
 typedef struct QrDecalUploadInfo
 {
     QrTransform     transform;

@@ -152,6 +152,10 @@ public:
         const RasterizedDataCollector::DrawInfo *particleDraws = nullptr;
         uint32_t particleDrawCount = 0;
 
+        const RasterizedDataCollector::ParticlePointDrawInfo *particlePointDraws = nullptr;
+        uint32_t particlePointDrawCount = 0;
+        uint64_t particlePointGeometry = 0;
+
         // -- the traced particle stand-ins of the reflect/refract rays --
         // The frame's lit particle sprites in the shape ParticleProxies.h describes: the host
         // copies the collector's list here (VulkanDevice) and the skeleton feeds it to
@@ -628,6 +632,9 @@ private:
     nvrhi::BufferHandle uiIndexStagingWraps[MAX_FRAMES_IN_FLIGHT];
     uint64_t uiVertexStagingHandles[MAX_FRAMES_IN_FLIGHT] = {};
     uint64_t uiIndexStagingHandles[MAX_FRAMES_IN_FLIGHT] = {};
+    nvrhi::BufferHandle particlePointStagingWraps[MAX_FRAMES_IN_FLIGHT];
+    uint64_t particlePointStagingHandles[MAX_FRAMES_IN_FLIGHT] = {};
+    uint64_t particlePointStagingBytes[MAX_FRAMES_IN_FLIGHT] = {};
     nvrhi::TextureHandle uiFrameTextures[MAX_FRAMES_IN_FLIGHT];
     uint64_t uiFrameImageHandles[MAX_FRAMES_IN_FLIGHT] = {};
     CpuFrameProfiler *cpuProfiler = nullptr;

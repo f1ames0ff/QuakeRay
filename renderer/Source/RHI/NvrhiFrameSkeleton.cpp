@@ -1386,6 +1386,50 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 rasterOverlayPass->SetGeometryBuffers(uiVertexStagingWraps[frameIndex],
                                                       uiIndexStagingWraps[frameIndex]);
             }
+
+            uint64_t particlePointBytes = 0;
+            if (sky.particlePointDraws != nullptr)
+            {
+                for (uint32_t i = 0; i < sky.particlePointDrawCount; i++)
+                {
+                    const RasterizedDataCollector::ParticlePointDrawInfo &pointDraw = sky.particlePointDraws[i];
+                    particlePointBytes = std::max(
+                        particlePointBytes,
+                        (static_cast<uint64_t>(pointDraw.firstPoint) + pointDraw.count) * sizeof(QrParticlePoint));
+                }
+            }
+
+            if (sky.particlePointDraws != nullptr && sky.particlePointDrawCount > 0 &&
+                sky.particlePointGeometry != 0 &&
+                (particlePointStagingWraps[frameIndex] == nullptr ||
+                 particlePointStagingHandles[frameIndex] != sky.particlePointGeometry ||
+                 particlePointStagingBytes[frameIndex] < particlePointBytes))
+            {
+                if (particlePointStagingWraps[frameIndex] != nullptr && frameContext != nullptr)
+                {
+                    frameContext->Retire(particlePointStagingWraps[frameIndex]);
+                }
+
+                nvrhi::BufferDesc desc;
+                desc.byteSize = particlePointBytes;
+                desc.isVertexBuffer = true;
+                desc.initialState = nvrhi::ResourceStates::VertexBuffer;
+                desc.keepInitialState = true;
+                desc.debugName = "RHI particle point staging";
+
+                particlePointStagingWraps[frameIndex] = device->createHandleForNativeBuffer(
+                    nvrhi::ObjectTypes::VK_Buffer,
+                    nvrhi::Object(static_cast<uint64_t>(sky.particlePointGeometry)),
+                    desc);
+                particlePointStagingHandles[frameIndex] =
+                    particlePointStagingWraps[frameIndex] != nullptr ? sky.particlePointGeometry : 0;
+                particlePointStagingBytes[frameIndex] = particlePointBytes;
+            }
+
+            if (particlePointStagingWraps[frameIndex] != nullptr)
+            {
+                rasterOverlayPass->SetParticlePointBuffer(particlePointStagingWraps[frameIndex]);
+            }
         }
 
         // The compose pass: the real chain over the G-buffer and the direct and indirect buffers,
@@ -1429,6 +1473,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                               sky.view, sky.projection, sky.applyVertexColorGamma,
                                               sky.smokeDraws, sky.smokeDrawCount,
                                               sky.particleDraws, sky.particleDrawCount,
+                                              sky.particlePointDraws, sky.particlePointDrawCount,
                                               accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
                                               rtDirectPass != nullptr ? rtDirectPass->GetLightSet(frameIndex).Get() : nullptr,
                                               rtPrimaryPass != nullptr ? rtPrimaryPass->GetRayStatsSet(frameIndex).Get() : nullptr);

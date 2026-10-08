@@ -769,6 +769,9 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         }
     }
 
+    const std::vector<RasterizedDataCollector::ParticlePointDrawInfo> &particlePointDraws =
+        rasterizedDataCollector->GetParticlePointDrawInfos();
+
     const std::vector<RasterizedDataCollector::DrawInfo> &swapchainDraws =
         rasterizedDataCollector->GetSwapchainDrawInfos();
 
@@ -810,6 +813,10 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.smokeDrawCount = static_cast<uint32_t>(smokeDraws.size());
     sky.particleDraws = particleDraws.data();
     sky.particleDrawCount = static_cast<uint32_t>(particleDraws.size());
+    sky.particlePointDraws = particlePointDraws.data();
+    sky.particlePointDrawCount = static_cast<uint32_t>(particlePointDraws.size());
+    sky.particlePointGeometry = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        rasterizedDataCollector->GetParticlePointStagingBuffer(frameIndex)));
 
     const std::vector<ParticleProxy> &particleProxies =
         rasterizedDataCollector->GetParticleProxies();
@@ -1565,6 +1572,45 @@ void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo
             Print("RHI: the rasterized geometry buffer is full; the rest of the frame's overlays are skipped (raise rasterizedMaxVertexCount)");
         }
     }
+}
+
+QrResult VulkanDevice::UploadParticles(const QrParticleUploadInfo *pUploadInfo)
+{
+    statsApiCallsRasterized++;
+
+    if (pUploadInfo == nullptr)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
+    }
+
+    if (pUploadInfo->pPoints == nullptr || pUploadInfo->count == 0)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Particle point data / count is null");
+    }
+
+    if (!currentFrameState.WasFrameStarted())
+    {
+        if (!printedRasterUploadWithoutFrame)
+        {
+            printedRasterUploadWithoutFrame = true;
+            Print("RHI: particle points uploaded outside a frame were dropped; the renderer is not drawing (minimized?)");
+        }
+        return QR_SUCCESS;
+    }
+
+    if (!rasterizedDataCollector->AddParticles(currentFrameState.GetFrameIndex(), *pUploadInfo))
+    {
+        if (!printedParticlePointOverflow || frameId - lastParticlePointOverflowWarnFrameId >= 120u)
+        {
+            printedParticlePointOverflow = true;
+            lastParticlePointOverflowWarnFrameId = frameId;
+            Print("RHI: the particle point buffer is full; the overflowing particles are skipped this frame (raise rasterizedMaxVertexCount)");
+        }
+
+        return QR_CANT_UPLOAD_RASTERIZED_GEOMETRY;
+    }
+
+    return QR_SUCCESS;
 }
 
 void VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)

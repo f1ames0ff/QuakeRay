@@ -22,6 +22,8 @@
 
 using namespace qray;
 
+static_assert(sizeof(QrParticlePoint) == 24, "QrParticlePoint must stay 24 bytes");
+
 constexpr uint32_t MAX_DEVICE_COUNT = 8;
 static rgl::unordered_map<QrInstance, std::unique_ptr<VulkanDevice>> G_DEVICES;
 
@@ -173,6 +175,11 @@ QrResult qrUploadRasterizedGeometry(QrInstance qrInstance, const QrRasterizedGeo
                                     const float *pViewProjection, const QrViewport *pViewport)
 {
     return Call(qrInstance, &VulkanDevice::UploadRasterizedGeometry, pUploadInfo, pViewProjection, pViewport);
+}
+
+QrResult qrUploadParticles(QrInstance qrInstance, const QrParticleUploadInfo *pUploadInfo)
+{
+    return Call(qrInstance, &VulkanDevice::UploadParticles, pUploadInfo);
 }
 
 QrResult qrUploadDecal(QrInstance qrInstance, const QrDecalUploadInfo *pUploadInfo)
