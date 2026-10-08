@@ -183,7 +183,6 @@ private:
 
     VkFence             frameFences[MAX_FRAMES_IN_FLIGHT] = {};
     VkSemaphore         imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
-    VkSemaphore         renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
     VkSemaphore         inFrameSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
 
     bool                waitForOutOfFrameFence;

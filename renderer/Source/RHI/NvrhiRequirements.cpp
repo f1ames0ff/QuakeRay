@@ -49,6 +49,10 @@ std::vector<std::string> NvrhiRequirements::GetUnsupported() const
     {
         unsupported.push_back("shaderStorageImageArrayNonUniformIndexing");
     }
+    if (!samplerFilterMinmax)
+    {
+        unsupported.push_back("samplerFilterMinmax");
+    }
     if (!dynamicRendering)
     {
         unsupported.push_back("dynamicRendering");
@@ -65,6 +69,7 @@ bool NvrhiRequirements::IsCriticalSupported() const
         && descriptorBindingSampledImageUpdateAfterBind
         && descriptorBindingStorageImageUpdateAfterBind
         && descriptorBindingStorageBufferUpdateAfterBind
+        && samplerFilterMinmax
         && dynamicRendering;
 }
 
@@ -96,6 +101,7 @@ NvrhiRequirements QueryNvrhiRequirements(VkPhysicalDevice physDevice)
     requirements.descriptorBindingPartiallyBound               = supported12.descriptorBindingPartiallyBound == VK_TRUE;
     requirements.descriptorBindingUpdateUnusedWhilePending     = supported12.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
     requirements.shaderStorageImageArrayNonUniformIndexing     = supported12.shaderStorageImageArrayNonUniformIndexing == VK_TRUE;
+    requirements.samplerFilterMinmax                            = supported12.samplerFilterMinmax == VK_TRUE;
 
     return requirements;
 }
@@ -142,6 +148,10 @@ void ApplyNvrhiRequirements(const NvrhiRequirements &requirements,
     if (requirements.shaderStorageImageArrayNonUniformIndexing)
     {
         features12.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
+    }
+    if (requirements.samplerFilterMinmax)
+    {
+        features12.samplerFilterMinmax = VK_TRUE;
     }
 }
 
