@@ -988,6 +988,8 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 			.smokeLook = {{ CVAR_TO_BOOL (r_particle_light_debug) ? 1.0f : 0.0f,
 			                r_particle_light_direct.value,
 			                r_particle_light_gain.value, r_particle_light_floor.value }},
+			.viewRight = {{ vright[0], vright[1], vright[2] }},
+			.viewUp = {{ vup[0], vup[1], vup[2] }},
 		};
 
 		rt_particle_upload_bytes += (uint64_t)num_particles * sizeof (QrParticlePoint);

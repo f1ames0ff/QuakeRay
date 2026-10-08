@@ -465,6 +465,9 @@ typedef struct QrParticleUploadInfo
     QrMaterial              material;
     uint32_t                pipelineState;
     QrFloat4D               smokeLook;
+
+    QrFloat3D               viewRight;
+    QrFloat3D               viewUp;
 } QrParticleUploadInfo;
 
 QRAPI QrResult QRCONV qrUploadParticles(

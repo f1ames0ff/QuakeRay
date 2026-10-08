@@ -617,7 +617,8 @@ bool RasterizedDataCollector::CaptureParticlePointProxies(const QrParticleUpload
 
         for (int c = 0; c < 3; c++)
         {
-            proxy.center[c] = point.position[c];
+            proxy.center[c] = point.position[c] +
+                              (info.viewRight.data[c] + info.viewUp.data[c]) * (leg / 3.0f);
         }
 
         proxy.radius       = std::sqrt(5.0f) / 3.0f * leg;
