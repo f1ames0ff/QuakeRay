@@ -204,6 +204,47 @@ class JobTests(unittest.TestCase):
             self.manager.runtime_health(runtime)
         self.assertEqual(error.exception.code, "RECOVERY_REQUIRED")
 
+    def capture_fixture(self, preset="quality"):
+        receipt = self.launch()
+        self.finish(receipt)
+        directory = self.manager.store.directory(receipt["job_id"])
+        fixture_root = WORKER.parent
+        path = directory / "example.frames.csv"
+        path.write_text((fixture_root / "frames.csv").read_text())
+        bench_text = (fixture_root / "benchmark.log").read_text()
+        if preset == "quality":
+            bench_text = bench_text.replace("rt_upscale_fsr31=3", "rt_upscale_fsr31=2")
+        (directory / "example.bench.log").write_text(bench_text)
+        (directory / "manifest.json").write_text(json.dumps({"ExecutableSha256": "unverified_test_value"}))
+        (directory / "request.json").write_text(json.dumps({"preset": preset}))
+        return receipt, directory, path
+
+    def test_quality_budget_and_provenance_retained(self):
+        receipt, directory, path = self.capture_fixture()
+        ids = self.manager._collect_runs(receipt["job_id"], {"captures": [str(path)]})
+        record = self.manager.list_runs()["runs"][0]
+        self.assertEqual(record["run_id"], ids[0])
+        self.assertAlmostEqual(record["metrics"]["budget_ms"], 1000 / 45)
+        self.assertEqual(record["metrics"]["over_budget_percent"], 0)
+        self.assertIn("effective_settings", record["provenance"])
+        self.assertFalse(record["provenance_verified"])
+
+    def test_partial_batch_never_published(self):
+        receipt, directory, path = self.capture_fixture()
+        bad = directory / "bad.frames.csv"
+        bad.write_text("truncated")
+        with self.assertRaises(EvidenceError):
+            self.manager._collect_runs(receipt["job_id"], {"captures": [str(path), str(bad)]})
+        self.assertEqual(self.manager.list_runs()["runs"], [])
+        self.assertFalse((directory / "runs/batch.json").exists())
+
+    def test_benchmark_association_mismatch_rejected(self):
+        receipt, directory, path = self.capture_fixture()
+        bench = directory / "example.bench.log"
+        bench.write_text(bench.read_text().replace("demo=maps/start.bsp", "demo=maps/other.bsp"))
+        with self.assertRaises(EvidenceError):
+            self.manager._collect_runs(receipt["job_id"], {"captures": [str(path)]})
+
 
 if __name__ == "__main__":
     unittest.main()

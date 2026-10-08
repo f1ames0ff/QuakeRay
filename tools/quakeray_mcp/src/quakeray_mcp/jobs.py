@@ -13,6 +13,7 @@ import uuid
 from .errors import EvidenceError
 from .job_store import JobStore
 from .parsers import load_analyzer, parse_stats
+from .run_records import prepare_records
 from .windows_process import ContainedProcess
 
 
@@ -170,41 +171,31 @@ class JobManager:
     def _collect_runs(self, identifier, result):
         directory = self.store.directory(identifier)
         analyzer = load_analyzer(self.root)
-        identifiers = []
-        for value in result.get("captures", []):
-            path = Path(value).resolve()
-            if not path.is_relative_to(directory):
-                raise EvidenceError("PERMISSION_DENIED", "Worker result refers to external evidence")
-            raw = path.read_bytes()
-            if len(raw) > 64 * 1024 * 1024:
-                raise EvidenceError("FILE_TOO_LARGE", "Worker capture exceeds the import bound")
-            capture = parse_stats(raw.decode("utf-8-sig").replace("\r\n", "\n"), analyzer, 1000 / 60)
-            run_id = "run_" + uuid.uuid4().hex
-            record = {"schema_version": 1, "run_id": run_id, "job_id": identifier,
-                      "artifact_path": str(path.relative_to(self.store.root)), "sha256": hashlib.sha256(raw).hexdigest(),
-                      "format": capture.format, "aggregation_kind": capture.aggregation_kind,
-                      "metrics": capture.metrics, "validity": "captured_not_accepted",
-                      "provenance_verified": False, "visual": "not_checked", "build_config": "unknown"}
-            runs = directory / "runs"
-            runs.mkdir(exist_ok=True)
-            target = runs / (run_id + ".json")
-            target.write_text(json.dumps(record, allow_nan=False, indent=2), encoding="utf-8")
-            with self.store.locked():
+        records = prepare_records(directory, self.store.root, identifier, result, analyzer)
+        identifiers = [record["run_id"] for record in records]
+        runs = directory / "runs"
+        runs.mkdir(exist_ok=True)
+        temporary = runs / (uuid.uuid4().hex + ".tmp")
+        with self.store.locked():
+            temporary.write_text(json.dumps(records, allow_nan=False, indent=2), encoding="utf-8")
+            os.replace(temporary, runs / "batch.json")
+            for record in records:
                 with (self.store.root / "index.jsonl").open("a", encoding="utf-8") as stream:
-                    stream.write(json.dumps({"run_id": run_id, "job_id": identifier, "record": str(target.relative_to(self.store.root))}) + "\n")
-            identifiers.append(run_id)
-        if not identifiers:
-            raise EvidenceError("CAPTURE_MISSING", "No completed capture was validated")
+                    stream.write(json.dumps({"run_id": record["run_id"], "job_id": identifier, "batch": str((runs / "batch.json").relative_to(self.store.root))}) + "\n")
         return identifiers
 
     def list_runs(self, last_n=20):
-        paths = sorted(self.store.root.glob("job_*/runs/run_*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        paths = sorted([*self.store.root.glob("job_*/runs/batch.json"), *self.store.root.glob("job_*/runs/run_*.json")],
+                       key=lambda path: path.stat().st_mtime, reverse=True)
         records = []
-        for path in paths[:last_n]:
-            if not path.resolve().is_relative_to(self.store.root) or path.stat().st_size > 1024 * 1024:
+        for path in paths:
+            if not path.resolve().is_relative_to(self.store.root) or path.stat().st_size > 4 * 1024 * 1024:
                 raise EvidenceError("RECOVERY_REQUIRED", "Run catalog entry needs manual review")
-            records.append(json.loads(path.read_text(encoding="utf-8")))
-        return {"runs": records, "acceptance": "not_checked"}
+            value = json.loads(path.read_text(encoding="utf-8"))
+            records.extend(value if isinstance(value, list) else [value])
+            if len(records) >= last_n:
+                break
+        return {"runs": records[:last_n], "acceptance": "not_checked"}
 
     def runtime_health(self, runtime):
         records = []

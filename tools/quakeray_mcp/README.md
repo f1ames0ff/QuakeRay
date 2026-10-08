@@ -52,6 +52,11 @@ interpret the opt-in flag or fake-worker tests as a certified benchmark environm
 - Persistent jobs and capture records live under `%LOCALAPPDATA%/QuakeRayMCP/<repo-id>/jobs`.
   Captures remain unaccepted until binary/settings/assets/control compatibility is established.
   The store retains evidence and has no destructive pruning/experiment-removal API yet.
+  Capture batches are fully validated before atomic publication. Frame captures require their
+  benchmark block and manifest; effective resolution/FSR and sample/map associations are
+  checked. Quality uses the explicit 45-FPS budget instead of the Balanced budget. Manifest
+  and benchmark hashes are retained, but missing binary/asset/control verification still
+  prevents acceptance. Legacy single-record catalog files remain readable.
 
 The Windows tests use fake workers, including grandchildren and forced owner death. They do
 not build or launch QuakeRay. Asset preflight errors are typed and launch no process.

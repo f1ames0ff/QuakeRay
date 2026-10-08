@@ -104,6 +104,12 @@ suite now runs 56 tests (55 passed, one privilege-dependent symlink skip). Submo
 uninitialized and no Debug runtime is present; live acceptance requires an approved runtime
 or approval to initialize dependencies/build, plus an approved game/mod/save fixture source.
 
+RunRecord collection now checks complete frame/benchmark/manifest associations, effective
+4K/FSR preset and map/sample counts, retains original provenance and publishes the entire
+validated batch atomically. Quality captures use `1000/45`, not the Balanced frame budget.
+This closes partial-publication and budget-selection defects without claiming live capture
+acceptance; binary/control/asset compatibility and image checks remain pending.
+
 Setup, API bounds and current tests are documented in
 [tools/quakeray_mcp/README.md](../tools/quakeray_mcp/README.md). The implementation does not
 change engine execution boundaries or profiler counters; existing engine performance indexes
