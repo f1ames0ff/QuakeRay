@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import uuid
 import re
+from .asset_inventory import inventory
 
 from .errors import EvidenceError
 from .parsers import parse_benchmarks, parse_stats
@@ -74,7 +75,19 @@ def prepare_records(directory, store_root, identifier, result, analyzer):
                     for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                         digest.update(chunk)
                 return digest.hexdigest().upper()
-            valid_assets = True
+            current_inventory = inventory(runtime)
+            recorded_inventory = manifest.get('AssetInventory')
+            if isinstance(recorded_inventory, list) and len(recorded_inventory) == 1 and isinstance(recorded_inventory[0], dict) and set(recorded_inventory[0]) == {'value', 'Count'}:
+                wrapped = recorded_inventory[0]
+                if isinstance(wrapped['value'], list) and wrapped['Count'] == len(wrapped['value']):
+                    recorded_inventory = wrapped['value']
+            inventory_file = path.parent / 'assets.json'
+            if manifest.get('AssetInventorySha256') and inventory_file.is_file():
+                inventory_raw = bounded_bytes(inventory_file, 4 * 1024 * 1024)
+                if hashlib.sha256(inventory_raw).hexdigest().upper() != manifest['AssetInventorySha256']:
+                    raise EvidenceError('EVIDENCE_CHANGED', 'Asset inventory file changed after capture')
+                recorded_inventory = json.loads(inventory_raw.decode('utf-8-sig'))
+            valid_assets = manifest.get('AssetInventoryPolicy') == 1 and recorded_inventory == current_inventory
             assets = {}
             for asset in manifest.get('Assets', []):
                 name = asset.get('File', '')
@@ -100,11 +113,14 @@ def prepare_records(directory, store_root, identifier, result, analyzer):
             focus = checks.get('FocusVerified') is True and checks.get('Completed') is True
             provenance['focus'] = 'runner_verified' if focus else 'unverified'
             bundle = hashlib.sha256(json.dumps(assets, sort_keys=True).encode()).hexdigest()
+            if valid_assets:
+                bundle = hashlib.sha256(json.dumps(current_inventory, sort_keys=True).encode()).hexdigest()
             save_hash = assets.get(request.get('save', '') + '.sav')
             identity = {'scenario_id': request.get('scenario_id'), 'save_sha256': save_hash,
                         'map_assets_fingerprint': hashlib.sha256((capture.metadata['map'] + bundle).encode()).hexdigest(),
                         'mod_assets_sha256': bundle, 'engine_assets_sha256': manifest.get('EngineAssetsSha256'),
-                        'profile': 'stress_target', 'effective_settings': block['settings'], 'hardware': hardware,
+                        'profile': 'stress_target' if manifest.get('StatsLevel') == 0 and not manifest.get('LoaderLayers') else 'diagnostic_instrumentation',
+                        'effective_settings': block['settings'], 'hardware': hardware,
                         'driver': drivers, 'build_config': provenance.get('build_receipt', {}).get('BuildConfig'),
                         'instrumentation': {'stats_level': manifest.get('StatsLevel'), 'sound_disabled': manifest.get('NoSound'),
                                             'loader_layers': manifest.get('LoaderLayers')}}

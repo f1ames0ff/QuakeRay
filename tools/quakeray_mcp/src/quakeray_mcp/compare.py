@@ -12,6 +12,9 @@ IDENTITY_FIELDS = (
 def compare_records(baseline, candidate):
     reasons = []
     for side, record in (("baseline", baseline), ("candidate", candidate)):
+        instrumentation = record.get('identity', {}).get('instrumentation', {})
+        if isinstance(instrumentation, dict) and instrumentation.get('stats_level', 0) != 0 or record.get('identity', {}).get('profile') == 'diagnostic_instrumentation':
+            reasons.append(f'{side}: diagnostic instrumentation is not a target-performance control')
         if record.get("validity") != "valid":
             reasons.append(f"{side}: measurement validity not established")
         if record.get("provenance_verified") is not True:

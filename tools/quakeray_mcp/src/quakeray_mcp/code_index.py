@@ -110,8 +110,8 @@ class CodeIndex:
 
     def identity(self, path):
         headers = hashlib.sha256()
-        for folder in ('Quake', 'shared', 'renderer/Include'):
-            for header in sorted((self.root / folder).rglob('*.h')):
+        for folder in ('Quake', 'shared', 'renderer', 'third_party', 'Windows'):
+            for header in sorted(path for path in (self.root / folder).rglob('*') if path.suffix in {'.h', '.hpp', '.hxx', '.inl', '.hlsli'}):
                 headers.update(str(header.relative_to(self.root)).encode())
                 headers.update(header.read_bytes())
         return {"source_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -181,6 +181,8 @@ class CodeIndex:
         if source_id not in self.symbols or target_id not in self.symbols:
             raise EvidenceError('NOT_FOUND', 'Select both symbols from the current index session')
         target = self.symbols[target_id]
+        if self.identity(self.file(target['file'])) != target['identity']:
+            raise EvidenceError('INDEX_STALE', 'Target source/database/dependencies changed')
         frontier = [(source_id, [self.symbols[source_id]['name']])]
         seen = set()
         checks = 0
@@ -201,7 +203,7 @@ class CodeIndex:
                     continue
                 relative = str(file.relative_to(self.root)).replace('\\', '/')
                 position = item['selectionRange']['start']
-                if item['name'] == target['name'] and relative == target['file'].replace('\\', '/'):
+                if item['name'] == target['name'] and relative == target['file'].replace('\\', '/') and position == target['position']:
                     return {'paths': [path + [item['name']]], 'coverage': 'resolved_path_only', 'complete_graph': False}
                 identity = self.identity(file)
                 key = hashlib.sha256(json.dumps([relative, item['name'], position, identity], sort_keys=True).encode()).hexdigest()

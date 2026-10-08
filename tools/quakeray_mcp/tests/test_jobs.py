@@ -64,6 +64,14 @@ class JobTests(unittest.TestCase):
         self.assertIsNone(retry["control_token"])
         self.finish(receipt)
 
+    def test_active_two_arm_retry_does_not_reserve_twice(self):
+        arguments = {'idempotency_key': 'two_arm_request_01', 'baseline': 'registered'}
+        factory = lambda directory, deadline: [sys.executable, '-B', str(WORKER), 'sleep', '--seconds', '0.5']
+        receipt = self.manager.start('fake', arguments, factory, 5)
+        retry = self.manager.start('fake', arguments, factory, 5)
+        self.assertEqual(receipt['job_id'], retry['job_id'])
+        self.finish(receipt)
+
     def test_changed_arguments_conflict(self):
         receipt = self.launch(seconds=0.5)
         with self.assertRaises(EvidenceError) as error:
@@ -237,6 +245,14 @@ class JobTests(unittest.TestCase):
             self.manager._collect_runs(receipt["job_id"], {"captures": [str(path), str(bad)]})
         self.assertEqual(self.manager.list_runs()["runs"], [])
         self.assertFalse((directory / "runs/batch.json").exists())
+
+    def test_changed_supporting_manifest_rejected_on_reverification(self):
+        receipt, directory, path = self.capture_fixture()
+        identifier = self.manager._collect_runs(receipt['job_id'], {'captures': [str(path)]})[0]
+        (directory / 'manifest.json').write_text(json.dumps({'ExecutableSha256': 'changed'}))
+        with self.assertRaises(EvidenceError) as error:
+            self.manager.verify_run(identifier)
+        self.assertEqual(error.exception.code, 'EVIDENCE_CHANGED')
 
     def test_benchmark_association_mismatch_rejected(self):
         receipt, directory, path = self.capture_fixture()

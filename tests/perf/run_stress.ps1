@@ -71,6 +71,16 @@ foreach ($asset in @('pak0.pak', 'pak1.pak', 'pak2.pak', 'qray.materials.yaml', 
     }
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $output 'manifest.json') -Encoding UTF8
+$inventoryPython = Join-Path $PSScriptRoot '..\..\tools\quakeray_mcp\.venv\Scripts\python.exe'
+if (Test-Path -LiteralPath $inventoryPython) {
+    $inventoryJson = & $inventoryPython -B -m quakeray_mcp.asset_inventory $Basedir
+    if ($LASTEXITCODE -ne 0) { throw 'Asset inventory failed; refusing an unverified run.' }
+    $inventoryPath = Join-Path $output 'assets.json'
+    [IO.File]::WriteAllText($inventoryPath, ($inventoryJson -join "`n"), [Text.UTF8Encoding]::new($false))
+    $manifest.AssetInventorySha256 = (Get-FileHash $inventoryPath -Algorithm SHA256).Hash
+    $manifest.AssetInventoryPolicy = 1
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $output 'manifest.json') -Encoding UTF8
+}
 
 Add-Type @"
 using System;
@@ -231,9 +241,17 @@ echo QR_LOADED_$id
                         break
                     }
                     $deadline = Get-StressDeadline -Deadline $script:RunDeadline.AddSeconds(-$shutdownReserve) -MaximumSeconds $Seconds
+                    $nextOwnerCheck = Get-Date
                     while ((Get-Date) -lt $deadline) {
                         if (Test-QuakeRayStopRequested) { break }
                         if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Focus was lost during capture.' }
+                        if ((Get-Date) -ge $nextOwnerCheck) {
+                            $foreign = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+                                $_.Id -ne $process.Id -and $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)'
+                            })
+                            if ($foreign.Count) { throw 'MACHINE_BUSY: foreign heavy activity contaminated this capture.' }
+                            $nextOwnerCheck = (Get-Date).AddSeconds(1)
+                        }
                         Start-Sleep -Milliseconds 100
                     }
                     Send-Key $window 0x74 0x3f

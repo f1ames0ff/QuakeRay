@@ -305,6 +305,7 @@ class EvidenceService:
             if not configured:
                 raise EvidenceError("ENV_MISSING_BUILD", "Operator must register QUAKERAY_BASELINE_RUNTIME")
             baseline = Path(configured).resolve()
+            self.jobs.runtime_health(baseline)
             if not (baseline / "quakeray.exe").is_file() or not (baseline / "id1/pak0.pak").is_file():
                 raise EvidenceError("ENV_MISSING_GAME_DATA", "Registered baseline runtime is incomplete")
             arguments["baseline"] = str(baseline)
@@ -327,10 +328,8 @@ class EvidenceService:
 
     def compare_retained_runs(self, baseline_id, candidate_id):
         from .compare import compare_records
-        self.jobs.verify_run(baseline_id)
-        self.jobs.verify_run(candidate_id)
-        baseline = self.jobs.find_run(baseline_id)
-        candidate = self.jobs.find_run(candidate_id)
+        baseline = self.jobs.reverify_record(baseline_id)
+        candidate = self.jobs.reverify_record(candidate_id)
         return compare_records(baseline, candidate)
 
     def promote_baseline(self, run_id, name, confirm=False):
@@ -400,6 +399,8 @@ class EvidenceService:
     def start_experiment_suite(self, experiment_id, scenario_id, idempotency_key, seconds=6, warmup_s=8, order='baseline_first'):
         record = self.research.read(experiment_id)
         candidate = Path(record['worktree']).resolve() / 'build/Debug'
+        self.jobs.runtime_health(candidate)
+        self.jobs.runtime_health(self.paths.runtime)
         if not (candidate / 'quakeray.exe').is_file() or not (candidate / 'id1/qray.pkz').is_file():
             raise EvidenceError('ENV_MISSING_BUILD', 'Build the isolated experiment candidate first')
         match = next((value for value in self.list_scenarios()['scenarios'] if value['scenario_id'] == scenario_id), None)

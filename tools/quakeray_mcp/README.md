@@ -173,6 +173,8 @@ powershell -NoProfile -File tests/perf/test_stress_budget.ps1
 ```
 
 See [the plan](../../docs/quakeray-mcp-plan.md) for P2 prerequisites and subsequent phases.
+See [the acceptance record](../../docs/quakeray-mcp-acceptance.md) for full matrix, GPU/transition
+checks, corrected audit findings and the unresolved renderer validation failures.
 
 ## Additional opt-in interfaces (not full phase acceptance)
 
@@ -213,4 +215,5 @@ a claim of a separately extracted BSP hash.
 
 Statistical claims, all-map coverage, image/geometry/gameplay equivalence and model-cost savings
 are not implied by implementation completion or short integration tests. Visual/noise output
-remains diagnostic; the pilot evaluation is an operator exercise, not an automatic PASS.
+remains diagnostic. The formal benefit pilot is excluded from current acceptance by owner
+decision; usability and actual agent-cost benefits will be evaluated later in practical use.

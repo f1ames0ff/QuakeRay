@@ -67,13 +67,6 @@ class JobManager:
         with self.lock, self.store.locked():
             if self.closed:
                 raise EvidenceError("SERVICE_CLOSED", "Job manager is shutting down")
-            used = sum(path.stat().st_size for path in self.store.root.rglob('*') if path.is_file() and not path.is_symlink())
-            quota = 32 * 1024 * 1024 * 1024
-            reservations = sum(self.store.read(path.parent.name).get('reserved_bytes', 0) for path in self.store.root.glob('job_*/job.json')
-                               if self.store.read(path.parent.name)['state'] not in TERMINAL)
-            reserve = 16 * 1024 * 1024 * 1024 if arguments.get('baseline') else 8 * 1024 * 1024 * 1024
-            if used + reservations + reserve > quota:
-                raise EvidenceError('DISK_QUOTA', 'Job store reached its 32 GiB quota; inspect/prune retained jobs first')
             for path in self.store.root.glob("job_*/job.json"):
                 old = self.store.read(path.parent.name)
                 if old["key_hash"] == key_hash:
@@ -82,6 +75,13 @@ class JobManager:
                     result = self.public(old)
                     result["control_token"] = None
                     return result
+            used = sum(path.stat().st_size for path in self.store.root.rglob('*') if path.is_file() and not path.is_symlink())
+            quota = 32 * 1024 * 1024 * 1024
+            reservations = sum(self.store.read(path.parent.name).get('reserved_bytes', 0) for path in self.store.root.glob('job_*/job.json')
+                               if self.store.read(path.parent.name)['state'] not in TERMINAL)
+            reserve = 16 * 1024 * 1024 * 1024 if arguments.get('baseline') else 8 * 1024 * 1024 * 1024
+            if used + reservations + reserve > quota:
+                raise EvidenceError('DISK_QUOTA', 'Job store reached its 32 GiB quota; inspect/prune retained jobs first')
             if any(not entry["finished"].is_set() for entry in self.active.values()):
                 raise EvidenceError("MACHINE_BUSY", "This server already has an active heavy job", retryable=True)
             identifier = "job_" + uuid.uuid4().hex
@@ -147,6 +147,8 @@ class JobManager:
             if record["state"] == "failed" and record["error"] is None:
                 tail = self._tail(directory / "stderr.log")
                 known = next((code for code in ("MACHINE_BUSY", "BUILD_FAILED", "RUN_TIMEOUT", "PERMISSION_DENIED", "DISK_QUOTA") if code in tail), "PROCESS_FAILED")
+                if 'Renderer validation errors' in tail:
+                    known = 'VALIDATION_ERRORS'
                 record["error"] = {"code": known, "message": tail or "Worker exited unsuccessfully"}
             if record["operation"] == "build" and record["state"] != "succeeded":
                 record["recovery"] = "runtime_and_submodule_review_required"
@@ -219,7 +221,7 @@ class JobManager:
                     return record
         raise EvidenceError('NOT_FOUND', 'Run is not retained in this catalog')
 
-    def verify_run(self, identifier):
+    def reverify_record(self, identifier):
         record = self.find_run(identifier)
         path = (self.store.root / record['artifact_path']).resolve()
         if not path.is_relative_to(self.store.root):
@@ -230,14 +232,25 @@ class JobManager:
             raise EvidenceError('EVIDENCE_CHANGED', 'Retained capture no longer matches its hash')
         directory = self.store.directory(record['job_id'])
         refreshed = prepare_records(directory, self.store.root, record['job_id'], {'captures': [str(path)]}, load_analyzer(self.root))[0]
+        for key in ('manifest_sha256', 'benchmark_sha256'):
+            old = record.get('provenance', {}).get(key)
+            if old is not None and old != refreshed.get('provenance', {}).get(key):
+                raise EvidenceError('EVIDENCE_CHANGED', 'Supporting provenance changed after publication')
+        refreshed['run_id'] = identifier
+        return refreshed
+
+    def verify_run(self, identifier):
+        refreshed = self.reverify_record(identifier)
         return {'run_id': identifier, 'capture_integrity': 'verified', 'provenance_verified': refreshed['provenance_verified'],
-                'build_config': record.get('build_config', 'unknown'), 'visual': 'not_checked',
+                'build_config': refreshed.get('build_config', 'unknown'), 'visual': 'not_checked',
                 'reason': 'Integrity alone does not establish binary/control/asset compatibility'}
 
     def promote_baseline(self, identifier, name, confirm=False):
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', name):
             raise EvidenceError('INVALID_ARGUMENT', 'Safe baseline name required')
         verification = self.verify_run(identifier)
+        if self.find_run(identifier).get('identity', {}).get('profile') == 'diagnostic_instrumentation':
+            raise EvidenceError('INCOMPARABLE', 'Diagnostic instrumentation cannot become a target-performance baseline')
         if not verification['provenance_verified']:
             raise EvidenceError('INCOMPARABLE', 'Baseline provenance must be verified first')
         if not confirm:
@@ -272,7 +285,8 @@ class JobManager:
         with self.store.locked():
             records = [self.store.read(path.parent.name) for path in self.store.root.glob('job_*/job.json')]
             records.sort(key=lambda value: value['created_utc'], reverse=True)
-            removable = [record for record in records[keep_last:] if record['state'] in TERMINAL and not record.get('run_ids')]
+            removable = [record for record in records[keep_last:] if record['state'] in TERMINAL and not record.get('run_ids')
+                         and record.get('recovery', 'not_required') == 'not_required' and record.get('operation') != 'build']
             plan = [{'job_id': record['job_id'], 'path': str(self.store.directory(record['job_id']))} for record in removable]
             if not dry_run:
                 for record in removable:

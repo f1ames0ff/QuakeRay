@@ -47,9 +47,8 @@ What is worth building is therefore narrower and more useful than the proposal s
 artifact-intelligence layer over the existing harness (parser, comparison, provenance,
 shared ownership in the supported Windows session), then a supervised run layer, then code
 intelligence, then
-experiments and a run knowledge base. The first two phases are deliberately small enough to be
-falsified: a pilot gate compares the MCP against a plain skill-and-scripts workflow on defined
-metrics before later phases are funded.
+experiments and a run knowledge base. Agent-effort and cost benefits will be assessed during
+later practical use; they are not a gate for the current implementation or acceptance.
 
 | Phase | Deliverable | Game required |
 |---|---|---|
@@ -60,6 +59,11 @@ metrics before later phases are funded.
 | P5 | Run history and knowledge base; optional screenshot diff | No |
 
 ### Completed implementation scope and verification matrix
+
+The final acceptance campaign and corrective audit results are recorded in
+[quakeray-mcp-acceptance.md](quakeray-mcp-acceptance.md). This supersedes historical smoke-only
+coverage below. Full Debug CTest passed 6/6 and the 12-capture matrix revalidated successfully;
+Vulkan validation remains explicitly FAIL rather than a completed clean-engine gate.
 
 | Layer | Implemented | Direct verification / remaining evidence limits |
 |---|---|---|
@@ -185,7 +189,7 @@ Checked on 2026-10-08 against the primary sources linked in section 11:
 | No single `run_shell_command` tool | Adopt | No generic shell; argument-array subprocess calls only |
 | UML/architecture/performance documents as resources | Adopt | Serve the new root indexes and existing `docs/` specifications/diagrams; no duplicate architecture |
 | "No evidence of hierarchical visibility culling" | Do not infer | Existing visibility mechanisms do not establish full coverage; evaluate the active path and RT consumers |
-| "80% of infrastructure work removed", "$70 burned", SSIM 0.9987 | Not evidence | No measured savings or visual guarantee follows from these examples; use the pilot gate |
+| "80% of infrastructure work removed", "$70 burned", SSIM 0.9987 | Not evidence | No measured savings or visual guarantee follows from these examples; benefit evaluation is deferred to practical use |
 
 ### 2.3 What the proposal missed
 
@@ -204,8 +208,8 @@ A skill plus the existing scripts (`run_stress.ps1`, `analyze_stress.py`, `run_m
 quiet machine. The MCP earns its cost where the work is *shared*: one ownership guard across
 agents and worktrees, one authoritative parser and comparison, typed errors instead of failed
 shell lines, and durable provenance. The plan protects that bet: the core is a plain Python
-package usable from a CLI and as a skill fallback, and the pilot gate (section 8.3) can stop
-the project after P2 if the server does not demonstrably reduce agent effort.
+package usable from a CLI and as a skill fallback. Benefit evaluation is deferred to practical
+use (section 8.3), without blocking implementation or technical acceptance.
 
 ## 3. What QuakeRay already provides
 
@@ -687,20 +691,15 @@ the Debug build/deployment, applicable CTest checks, the one-save/preset stress 
 artifact verification are specified in PERFORMANCE.md's reproduction section. Capture budgets
 and test selection are explicit; never run the real game/GPU tests in the default unit suite.
 
-### 8.3 Pilot gate (falsification)
+### 8.3 Practical benefit evaluation — deferred
 
-After P2, run five matched investigation tasks within a pre-agreed time budget, comparing MCP
-against the **current** architecture/performance indexes and skill+scripts (not an artificially
-unstructured baseline). Fix the agent model/effort, source/binary/settings, task acceptance
-requirements and cold/warm-cache policy; counterbalance task order where practical. Record
-turns, tool calls/failures, wall time, comparable evidence produced and measurement mistakes.
-Use actual usage/cost data when available; otherwise mark it unavailable rather than estimate
-token savings from transcript length.
+Owner decision: exclude the formal five-task MCP-versus-scripts pilot from the current scope
+and acceptance checklist. Agent effort, token/cost savings and usability will be assessed
+later through practical use. No continuation/stop gate depends on this evaluation.
 
-Agree a continuation criterion before running (for example lower median time to valid
-evidence without more measurement failures). Five tasks are a feasibility pilot, not a claim
-of model equivalence or a statistically proven 80% saving. If the benefit is unclear, stop
-expansion and retain parsers/ownership/history as CLI/skill functionality.
+Technical acceptance still requires the scenario matrix, GPU/transition/validation checks and
+implementation safety/API audit. Deferring benefit evaluation does not mark those checks PASS
+and does not establish any quantitative efficiency claim.
 
 ## 9. Operations, risks, exclusions
 
@@ -720,7 +719,7 @@ expansion and retain parsers/ownership/history as CLI/skill functionality.
 ### 9.2 Risks
 
 Machine contention and focus fragility (high; mitigated by serialization, explicit validity
-flags, and the pilot gate); parser drift when the engine renames passes or columns (medium;
+flags, and technical acceptance checks); parser drift when the engine renames passes or columns (medium;
 header-driven parsing, unknown columns preserved, engine version and schema hash recorded);
 clangd quality on MSVC/macro-heavy C (medium; spike before promising, grep fallback);
 save/game-data prerequisites (medium; degradation and explicit fixture preparation);
