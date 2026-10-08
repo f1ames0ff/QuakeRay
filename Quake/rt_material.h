@@ -51,6 +51,7 @@ typedef struct rt_material_s {
     char filename_base[MAX_QPATH];
     char filename_normals[MAX_QPATH];
     char filename_emissive[MAX_QPATH];
+    char filename_overlay[MAX_QPATH];
     char filename_gloss[MAX_QPATH];
     float bump_scale;
     float roughness_override;
@@ -140,6 +141,7 @@ enum {
     RT_MAT_TEX_BASE,
     RT_MAT_TEX_NORMALS,
     RT_MAT_TEX_EMISSIVE,
+    RT_MAT_TEX_OVERLAY,
     RT_MAT_TEX_GLOSS,
 };
 

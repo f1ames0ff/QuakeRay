@@ -1382,18 +1382,50 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtemissivetex = (emisTex != NULL);
 	int gw = 0, gh = 0;
 	byte *glossTex = RT_MAT_LoadTexture (mat, RT_MAT_TEX_GLOSS, &gw, &gh);
+	int lw = 0, lh = 0;
+	byte *overlayTex = RT_MAT_LoadTexture (mat, RT_MAT_TEX_OVERLAY, &lw, &lh);
+	int overlayPixels = 0;
+	unsigned overlayCovMax = 0;
+	unsigned long long overlayCovSum = 0;
 
-	byte *baseBuf = NULL, *normBuf = NULL, *emisBuf = NULL, *glossBuf = NULL;
+	byte *baseBuf = NULL, *normBuf = NULL, *emisBuf = NULL, *glossBuf = NULL, *overlayBuf = NULL;
 	if (baseTex) { baseBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (baseTex, bw, bh, 0, baseBuf, tw, th, 0, 4); Mem_Free (baseTex); }
 	if (normTex) { normBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (normTex, nw, nh, 0, normBuf, tw, th, 0, 4); Mem_Free (normTex); }
 	if (emisTex) { emisBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (emisTex, ew, eh, 0, emisBuf, tw, th, 0, 4); Mem_Free (emisTex); }
 	if (glossTex) { glossBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (glossTex, gw, gh, 0, glossBuf, tw, th, 0, 4); Mem_Free (glossTex); }
+	if (overlayTex)
+	{
+		const int ln = lw * lh;
+		for (int i = 0; i < ln; i++)
+		{
+			const unsigned a = overlayTex[i * 4 + 3];
+			overlayTex[i * 4 + 0] = (byte)((overlayTex[i * 4 + 0] * a + 127) / 255);
+			overlayTex[i * 4 + 1] = (byte)((overlayTex[i * 4 + 1] * a + 127) / 255);
+			overlayTex[i * 4 + 2] = (byte)((overlayTex[i * 4 + 2] * a + 127) / 255);
+			overlayCovSum += a;
+			if (a > overlayCovMax)
+				overlayCovMax = a;
+		}
+		overlayPixels = ln;
+		overlayBuf = (byte *)Mem_Alloc (npix * 4);
+		stbir_resize_uint8 (overlayTex, lw, lh, 0, overlayBuf, tw, th, 0, 4);
+		Mem_Free (overlayTex);
+
+		if (overlayCovMax == 0)
+			Con_Printf ("RT: material '%s': texture_overlay '%s' is fully transparent; the overlay paints nothing\n",
+			            mat->name, mat->filename_overlay);
+		else if (overlayPixels && overlayCovSum / (unsigned long long)overlayPixels < 13)
+			Con_Printf ("RT: material '%s': texture_overlay '%s' covers only %.1f%% on average; the overlay will barely show\n",
+			            mat->name, mat->filename_overlay,
+			            (double)(overlayCovSum / (unsigned long long)overlayPixels) * 100.0 / 255.0);
+	}
 
 	if (!baseBuf && !albedoFallback)
 	{
 		if (normBuf) Mem_Free (normBuf);
 		if (emisBuf) Mem_Free (emisBuf);
 		if (glossBuf) Mem_Free (glossBuf);
+		if (overlayBuf) Mem_Free (overlayBuf);
 		return false;
 	}
 
@@ -1453,6 +1485,9 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (has_luma_key && !emisBuf)
 		Con_Printf ("RT: material '%s': texture_emissive '%s' could not be loaded; using no emissive mask\n",
 		            mat->name, mat->filename_emissive);
+	if (mat->filename_overlay[0] && !overlayBuf)
+		Con_Printf ("RT: material '%s': texture_overlay '%s' could not be loaded; using the base texture alone\n",
+		            mat->name, mat->filename_overlay);
 	const float lightBright = CLAMP (0.0f, mat->light_brightness, 1000.0f);
 	/* Per-material rt_emis_blend override, packed into the alpha of the
 	   roughness-metallic-emission texture: 0 = not authored, so the global
@@ -1570,9 +1605,20 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	for (int i = 0; i < npix; i++)
 	{
 		const byte *src = baseBuf ? baseBuf + i * 4 : (byte *)albedoFallback + i * 4;
-		int r = (int)(src[0] * baseFactor);
-		int g = (int)(src[1] * baseFactor);
-		int b = (int)(src[2] * baseFactor);
+		int r = (int)CLAMP (0.0f, src[0] * baseFactor, 255.0f);
+		int g = (int)CLAMP (0.0f, src[1] * baseFactor, 255.0f);
+		int b = (int)CLAMP (0.0f, src[2] * baseFactor, 255.0f);
+		if (overlayBuf)
+		{
+			const int a = overlayBuf[i * 4 + 3];
+			if (a != 0)
+			{
+				const int inv = 255 - a;
+				r = (r * inv + overlayBuf[i * 4 + 0] * 255 + 127) / 255;
+				g = (g * inv + overlayBuf[i * 4 + 1] * 255 + 127) / 255;
+				b = (b * inv + overlayBuf[i * 4 + 2] * 255 + 127) / 255;
+			}
+		}
 		albedo[i * 4 + 0] = CLAMP (0, r, 255);
 		albedo[i * 4 + 1] = CLAMP (0, g, 255);
 		albedo[i * 4 + 2] = CLAMP (0, b, 255);
@@ -1667,6 +1713,17 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			normal[i * 4 + 2] = 255;
 		}
 		normal[i * 4 + 3] = glassAlpha;
+		if (overlayBuf && mat->material_glass)
+		{
+			const int a = overlayBuf[i * 4 + 3];
+			if (a != 0)
+			{
+				int t = (glassAlpha * (255 - a) + 127) / 255;
+				if (glassAlpha > 0 && t < 1)
+					t = 1;
+				normal[i * 4 + 3] = (byte)t;
+			}
+		}
 	}
 
 	if (colorEmis)  Mem_Free (colorEmis);
@@ -1677,6 +1734,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (normBuf) Mem_Free (normBuf);
 	if (emisBuf) Mem_Free (emisBuf);
 	if (glossBuf) Mem_Free (glossBuf);
+	if (overlayBuf) Mem_Free (overlayBuf);
 
 	if (emissR > 0.0f || emissG > 0.0f || emissB > 0.0f)
 	{
@@ -1731,11 +1789,12 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			if (mv < mMin) mMin = mv; if (mv > mMax) mMax = mv;
 			if (ev < eMin) eMin = ev; if (ev > eMax) eMax = ev;
 		}
-		Con_Printf ("RT: applied material '%s' (glt='%s') base=%s norm=%s emis=%s gloss=%s (%ix%i) baseAlpha=%d normAlpha=%d defRough=%.2f\n",
+		Con_Printf ("RT: applied material '%s' (glt='%s') base=%s norm=%s emis=%s overlay=%s gloss=%s (%ix%i) baseAlpha=%d normAlpha=%d defRough=%.2f\n",
 		            mat->name, glt->name,
 		            mat->filename_base[0] ? mat->filename_base : "-",
 		            mat->filename_normals[0] ? mat->filename_normals : "-",
 		            mat->filename_emissive[0] ? mat->filename_emissive : "-",
+		            mat->filename_overlay[0] ? mat->filename_overlay : "-",
 		            mat->filename_gloss[0] ? mat->filename_gloss : "-",
 		            tw, th, baseHasAlpha ? 1 : 0, normHasAlpha ? 1 : 0, defaultRough);
 		Con_Printf ("RT:   rme rough[min=%.0f avg=%.2f max=%.0f] metal[min=%.0f avg=%.2f max=%.0f] emis[min=%.0f avg=%.2f max=%.0f]\n",
@@ -1761,15 +1820,16 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	if (texmgr_dumping_reload && !TexMgr_AlreadyDumped (mat->name) && CVAR_TO_BOOL (qr_material_editor_debug))
 	{
-		Con_Printf ("qr editor dump: material '%s' tex '%s' %dx%d base='%s' emis='%s' gloss='%s' norm='%s' light=%d\n",
+		Con_Printf ("qr editor dump: material '%s' tex '%s' %dx%d base='%s' emis='%s' overlay='%s' gloss='%s' norm='%s' light=%d\n",
 		            mat->name, glt->name, tw, th,
 		            mat->filename_base[0] ? mat->filename_base : "-",
 		            mat->filename_emissive[0] ? mat->filename_emissive : "-",
+		            mat->filename_overlay[0] ? mat->filename_overlay : "-",
 		            mat->filename_gloss[0] ? mat->filename_gloss : "-",
 		            mat->filename_normals[0] ? mat->filename_normals : "-",
 		            mat->is_light ? 1 : 0);
-		Con_Printf ("qr editor dump:   loaded base=%d emis=%d gloss=%d norm=%d mean=%.4f\n",
-		            baseBuf ? 1 : 0, emisBuf ? 1 : 0, glossBuf ? 1 : 0, normBuf ? 1 : 0, glt->rtemissivemean);
+		Con_Printf ("qr editor dump:   loaded base=%d emis=%d overlay=%d gloss=%d norm=%d mean=%.4f\n",
+		            baseBuf ? 1 : 0, emisBuf ? 1 : 0, overlayBuf ? 1 : 0, glossBuf ? 1 : 0, normBuf ? 1 : 0, glt->rtemissivemean);
 
 		TexMgr_DumpReloadTGA ("_albedo", glt->name, tw, th, albedo);
 		TexMgr_DumpReloadTGA ("_rme", glt->name, tw, th, rme);

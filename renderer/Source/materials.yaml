@@ -81,6 +81,20 @@
 #             emissive_focus_soft: 8
 #             emissive_projector: true
 #
+# `texture_overlay: textures/foo_grunge.png` paints over the base texture:
+# its RGB lands where its alpha is set, while `base_factor` still dims or
+# lifts the base underneath. The overlay's alpha is only the paint's
+# coverage -- the surface's own alpha, `alpha_test` cutouts and engine
+# transparency keep reading the base texture. The paint is baked into the
+# material's albedo, so the traced view, the light and the rasterized
+# surfaces all show it. On a `material_glass` pane the paint's coverage
+# also thickens the pane: painted texels absorb what shows through and the
+# light that crosses it at any `transparency`, and fully covered texels
+# turn opaque; the paint's colour itself reads at partial coverage. A file
+# whose alpha is everywhere zero paints nothing (and is reported): the RGB
+# alone is not a mask. A developer texture override (`mat/`) replaces the
+# albedo file when the material is created and bypasses the overlay.
+#
 # `material_glass: true` turns the surface into a pane of glass: the traced
 # path reflects it with a Fresnel term and bends the rays through it, tinting
 # what passes with the base texture. `glass_ior` (1..5; 0 keeps the global

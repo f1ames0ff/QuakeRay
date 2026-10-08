@@ -105,6 +105,7 @@ enum
 	PARAM_BASE,     // texture_base
 	PARAM_NORMALS,  // texture_normals
 	PARAM_EMISSIVE, // texture_emissive
+	PARAM_OVERLAY,  // texture_overlay
 	PARAM_GLOSS,    // texture_gloss
 	PARAM_BUMP,
 	PARAM_ROUGH,
@@ -144,6 +145,8 @@ static const struct qre_param_s
 	                     "Per-pixel bump direction. Its alpha channel can drive metalness_from_normal_alpha." },
 	[PARAM_EMISSIVE] = { NULL, "texture_emissive", QRE_T_TEXT,  0, 0, 0,
 	                     "A luma mask image: what is bright in it is what the surface emits. Replaces color_emissive." },
+	[PARAM_OVERLAY]  = { NULL, "texture_overlay",  QRE_T_TEXT,  0, 0, 0,
+	                     "Painted over the base texture: its RGB lands where its alpha is set, and the alpha is only the paint's coverage (alpha_test and engine transparency keep reading the base). On a glass pane the coverage also absorbs the view through it and the light crossing it at any transparency, and fully covered texels turn opaque; a fully transparent file warns and paints nothing." },
 	[PARAM_GLOSS]    = { NULL, "texture_gloss",    QRE_T_TEXT,  0, 0, 0,
 	                     "White means mirror-smooth, black means rough (roughness = 1 - gloss). Ignored while roughness_override is set." },
 	[PARAM_BUMP]     = { "Surface", "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
@@ -915,6 +918,7 @@ static const char *QRE_GetText (const rt_material_t *m, int param)
 	case PARAM_BASE:     return m->filename_base;
 	case PARAM_NORMALS:  return m->filename_normals;
 	case PARAM_EMISSIVE: return m->filename_emissive;
+	case PARAM_OVERLAY:  return m->filename_overlay;
 	case PARAM_GLOSS:    return m->filename_gloss;
 	default:             return "";
 	}
@@ -1066,6 +1070,7 @@ static void QRE_SetText (int g, int param, const char *value)
 	case PARAM_BASE:     q_strlcpy (m->filename_base, path, sizeof (m->filename_base)); break;
 	case PARAM_NORMALS:  q_strlcpy (m->filename_normals, path, sizeof (m->filename_normals)); break;
 	case PARAM_EMISSIVE: q_strlcpy (m->filename_emissive, path, sizeof (m->filename_emissive)); break;
+	case PARAM_OVERLAY:  q_strlcpy (m->filename_overlay, path, sizeof (m->filename_overlay)); break;
 	case PARAM_GLOSS:    q_strlcpy (m->filename_gloss, path, sizeof (m->filename_gloss)); break;
 	default:             break;
 	}
@@ -5957,6 +5962,20 @@ static const char *qre_yaml_header =
 	"#             emissive_focus_soft: 8\n"
 	"#             emissive_projector: true\n"
 	"#\n"
+	"# `texture_overlay: textures/foo_grunge.png` paints over the base texture:\n"
+	"# its RGB lands where its alpha is set, while `base_factor` still dims or\n"
+	"# lifts the base underneath. The overlay's alpha is only the paint's\n"
+	"# coverage -- the surface's own alpha, `alpha_test` cutouts and engine\n"
+	"# transparency keep reading the base texture. The paint is baked into the\n"
+	"# material's albedo, so the traced view, the light and the rasterized\n"
+	"# surfaces all show it. On a `material_glass` pane the paint's coverage\n"
+	"# also thickens the pane: painted texels absorb what shows through and the\n"
+	"# light that crosses it at any `transparency`, and fully covered texels\n"
+	"# turn opaque; the paint's colour itself reads at partial coverage. A file\n"
+	"# whose alpha is everywhere zero paints nothing (and is reported): the RGB\n"
+	"# alone is not a mask. A developer texture override (`mat/`) replaces the\n"
+	"# albedo file when the material is created and bypasses the overlay.\n"
+	"#\n"
 	"# `material_glass: true` turns the surface into a pane of glass: the traced\n"
 	"# path reflects it with a Fresnel term and bends the rays through it, tinting\n"
 	"# what passes with the base texture. `glass_ior` (1..5; 0 keeps the global\n"
@@ -6048,6 +6067,8 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    texture_normals: %s\n", m->filename_normals);
 	if (m->filename_emissive[0])
 		fprintf (f, "    texture_emissive: %s\n", m->filename_emissive);
+	if (m->filename_overlay[0])
+		fprintf (f, "    texture_overlay: %s\n", m->filename_overlay);
 	if (m->filename_gloss[0])
 		fprintf (f, "    texture_gloss: %s\n", m->filename_gloss);
 	if (m->bump_scale != 1.0f)
