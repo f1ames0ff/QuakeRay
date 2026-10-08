@@ -1,7 +1,7 @@
 param(
     [string]$Save = 'start1',
     [int]$FireSeconds = 5,
-    [int]$WarmupSeconds = 3,
+    [int]$WarmupSeconds = 8,
     [string]$Basedir = ''
 )
 
@@ -97,12 +97,14 @@ rt_stats 3
 rt_stats_interval 0.2
 load $saveName
 echo ==== SAVE_LOADED
+alias fire_on "+attack"
+alias fire_off "-attack"
 bind F1 "r_particles_points 1; echo ==== POINTS_ON"
 bind F2 "r_particles_points 0; echo ==== POINTS_OFF"
 bind F4 "rt_stats_dump_start; rt_bench start; echo ==== ARM_START"
 bind F5 "give 7 1; give 6 1; give r 50; impulse 7; echo ==== RL_SELECTED"
-bind F6 "+attack; echo ==== FIRE"
-bind F7 "-attack; rt_bench stop; rt_stats_dump_end; echo ==== ARM_DONE"
+bind F6 "fire_on; echo ==== FIRE"
+bind F7 "fire_off; rt_bench stop; rt_stats_dump_end; echo ==== ARM_DONE"
 bind F9 "quit"
 "@
 Set-Content -Path $runCfg -Value $cfgText
