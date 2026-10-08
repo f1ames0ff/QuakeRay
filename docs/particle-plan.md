@@ -108,9 +108,10 @@ scale to the content that actually exists.
   `perf/stage0/attribution-2026-10-08.md`. Particle-attributable cost about 4.7 ms of a 25 ms
   frame; the lighting/resolve path about 2.6 ms; the FTE conversion about 2.8 ms; a comparable
   effect-driven share sits outside the particle slots (removed by `r_fteparticles 0`). The classic
-  and smoke paths are empty on this content (`points_off` and `r_smoke 0` are no-ops).
-  `rt_particle_resolve_cache 0` reproducibly collapses the demo (about 19 fps against 39.4) and
-  must stay off the shipping defaults until the mechanism is diagnosed.
+  and smoke paths are empty on this content (`points_off` and `r_smoke 0` are no-ops). The
+  point-cluster cache is worth about 1.2-1.7 ms of the heavy demo's frame (62% hits, a hit about
+  63 ns against a miss's 194 ns) and stays on; two collapse-looking runs did not survive a
+  controlled diagnostic and are recorded as contamination.
 
 ### Stage 3 — cluster volume, remove CPU resolves (after dtal; accuracy contract A1-A3)
 - R16_UINT volume painted from `leaf_cluster`; 64 u base; own map generation; keep 0 semantics.

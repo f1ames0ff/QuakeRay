@@ -25,9 +25,9 @@ and reused), so treat them as latched values, not per-frame costs.
 | no_smoke (`r_smoke 0`) | 39.5 | 2741 | 24.95 | 4.84 | 2.67 | 0.99 | 4.09 | 7.21 | 4.06 | 1.75 | 7.46 | 4.12 |
 | flat (`r_particle_lighting 0`) | 43.9 | 3047 | 22.42 | 2.01 | 0.23 | 1.00 | 1.25 | 7.11 | 3.97 | 1.74 | 7.35 | 4.02 |
 | points_off (`r_particles_points 0`) | 39.6 | 2749 | 24.87 | 4.83 | 2.68 | 0.99 | 4.09 | 7.19 | 4.05 | 1.74 | 7.44 | 4.13 |
-| partcache_off (`rt_particle_resolve_cache 0`) | 19.2 | 1334 | 51.62 | 6.81 | 4.56 | 1.01 | 6.00 | 31.93 | 5.05 | 25.29 | 32.20 | 4.14 |
+| partcache_off (`rt_particle_resolve_cache 0`), contaminated | 19.2 | 1334 | 51.62 | 6.81 | 4.56 | 1.01 | 6.00 | 31.93 | 5.05 | 25.29 | 32.20 | 4.14 |
 | baseline B | 39.3 | 2729 | 25.05 | 4.84 | 2.68 | 0.99 | 4.09 | 7.28 | 4.12 | 1.75 | 7.53 | 4.17 |
-| partcache_off (rerun) | 18.7 | 1298 | 53.04 | 6.81 | 4.56 | 1.00 | 5.99 | 33.39 | 5.19 | 26.56 | 33.66 | 4.13 |
+| partcache_off (rerun), contaminated | 18.7 | 1298 | 53.04 | 6.81 | 4.56 | 1.00 | 5.99 | 33.39 | 5.19 | 26.56 | 33.66 | 4.13 |
 
 ## Findings
 
@@ -45,11 +45,17 @@ and reused), so treat them as latched values, not per-frame costs.
    cluster readout does not show; killing the FTE emitters removes it. This corroborates the
    owner's `r_particles 0` observation: the particle bucket plus the effect-driven work together
    account for roughly double what the particle slots alone suggest.
-4. `rt_particle_resolve_cache 0` reproducibly collapses the demo: 19.2 and 18.7 fps against
-   39.5/39.3, `frame` 51.6/53.0, with the renderer's latched cluster readout inflating
-   (`clust upload` 25.3/26.6). The mechanism is not identified (the second-order interaction is
-   far larger than the +1.9 ms the resolve slot gains); the cache must stay on by default and the
-   cache-off path needs a dedicated diagnostic before any dtal/volume work touches `gl_rlight.c`.
+4. `rt_particle_resolve_cache 0`: two runs inside the matrix (19.2 and 18.7 fps, `frame` 51.6/53.0,
+   `clust upload` 25.3/26.6) looked like a collapse, but a dedicated diagnostic the same day did
+   not reproduce it. Three controlled runs with dumps (cache on / cache off / cache off + flat)
+   measured fps 52.9 / 51.4 / 51.0 on the same demo window, `gpu.frame_ms` 18.14 / 18.38 / 17.84
+   and `rays_particle` 14.5k / 14.6k / 0, and a confirmation pair put cache-off at 37.5 and 37.7
+   fps against the 39.3-39.8 baselines. The two collapse rows above are environmental
+   contamination, not a property of the cache; the inflated latched cluster readout belongs to the
+   same contaminated runs. The clean cost of disabling the cache is the resolve delta alone -
+   `particles resolve` 2.56 -> 4.28 ms, about 1.2-1.7 ms per frame end to end - at a 62% hit rate
+   (a hit costs about 63 ns against a miss's 194 ns), with the GPU unchanged. Keep the cache on;
+   the earlier warning is withdrawn and no rescue diagnostic is needed.
 5. `r_smoke 0` and `r_particles_points 0` are no-ops on this content (no smoke, no classic
    particles) - recorded for completeness.
 
