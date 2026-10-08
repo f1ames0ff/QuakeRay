@@ -6,9 +6,10 @@ renderer validation fix `b7bf2414`. Formal agent-cost/usability pilot is exclude
 ## Outcome
 
 MCP safety/API corrections, capture-tool integration and the renderer validation fix passed the
-scoped checks below. **Vulkan validation is VUID-clean in the recorded runs.** One third-party
-advisory warning remains and is documented below; passing GPU tests, successful capture jobs
-or the audit result are still not a claim of visual equivalence or stable 60/45-FPS achievement.
+scoped checks below. **Vulkan validation is VUID-clean in the recorded runs.** The third-party
+FSR advisory warning was resolved on 2026-10-09 (see below); passing GPU tests, successful
+capture jobs or the audit result are still not a claim of visual equivalence or stable
+60/45-FPS achievement.
 
 ## Directly executed checks
 

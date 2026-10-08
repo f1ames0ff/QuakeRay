@@ -124,7 +124,7 @@ add_compile_definitions(
     # KTX-Software
     KHRONOS_STATIC
     LIBKTX
-    # FSR 3.1 via prebuilt AMD-signed FidelityFX API DLL
+    # FSR 3.1 via the prebuilt FidelityFX API provider (locally rebuilt; see the README next to the DLL)
     QR_USE_FSR3
 )
 
