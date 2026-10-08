@@ -12,6 +12,7 @@ class ContainedProcess:
         import win32api
         import win32con
         import win32file
+        import win32event
         import win32job
         import win32process
 
@@ -45,6 +46,7 @@ class ContainedProcess:
         except Exception as exc:
             if self.process:
                 win32process.TerminateProcess(self.process, 240)
+                win32event.WaitForSingleObject(self.process, 5000)
             self.close()
             raise EvidenceError("PROCESS_CONTAINMENT_FAILED", "Cannot safely contain the worker process") from exc
         finally:
