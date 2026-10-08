@@ -35,6 +35,11 @@ interpret the opt-in flag or fake-worker tests as a certified benchmark environm
 - Workers are created suspended, assigned to kill-on-close Job Objects, then resumed.
   Containment failure executes no worker code. Cancellation/timeouts target that job tree only;
   server exit terminates contained descendants. Other servers cannot cancel an owned job.
+  Cancellation first publishes a private stop-request marker and allows two seconds for a
+  cooperative exit. The stress capture loop requests benchmark stop/quit; loading checks
+  abort through owned cleanup. Nonresponsive preparation/build/menu work falls back to
+  contained termination. `stop_mode` distinguishes cooperative and forced outcomes; neither
+  grants capture acceptance. Live-game graceful-stop behavior is still unverified.
 - Build jobs have a 1,500-second deadline; runtime jobs 300 seconds. Polling never resets them.
   Compiling `-Tests` is not running CTest. Failed builds block launch until reviewed/rebuilt.
 - The shared `Local\QuakeRayPerformanceRun` guard covers supported direct scripts and nested

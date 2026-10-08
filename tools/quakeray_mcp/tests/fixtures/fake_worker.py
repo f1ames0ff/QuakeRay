@@ -8,10 +8,15 @@ import time
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("mode", choices=["sleep", "fail", "child", "marker"])
+parser.add_argument("mode", choices=["sleep", "fail", "child", "marker", "cooperate"])
 parser.add_argument("--file", type=Path)
 parser.add_argument("--seconds", type=float, default=30)
+parser.add_argument("--stop-file", type=Path)
 args = parser.parse_args()
+if args.mode == "cooperate":
+    while not args.stop_file.is_file():
+        time.sleep(0.02)
+    raise SystemExit(0)
 if args.mode == "fail":
     raise SystemExit(7)
 if args.mode == "marker":

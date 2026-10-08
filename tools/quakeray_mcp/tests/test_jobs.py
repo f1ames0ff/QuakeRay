@@ -46,6 +46,17 @@ class JobTests(unittest.TestCase):
         self.assertEqual(self.finish(self.launch())["state"], "succeeded")
         self.assertEqual(self.finish(self.launch("fail", key="test_request_key_02"))["exit_code"], 7)
 
+    def test_cooperative_cancel_before_forced_termination(self):
+        receipt = self.manager.start("fake", {"idempotency_key": "cooperative_stop_01"},
+            lambda directory, deadline: [sys.executable, "-B", str(WORKER), "cooperate", "--stop-file", str(directory / "stop.request")], 10)
+        deadline = time.monotonic() + 3
+        while self.manager.get(receipt["job_id"])["state"] == "accepted" and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.manager.cancel(receipt["job_id"], receipt["control_token"])
+        result = self.finish(receipt)
+        self.assertEqual(result["state"], "cancelled")
+        self.assertEqual(result["stop_mode"], "cooperative")
+
     def test_idempotent_start_returns_same_job(self):
         receipt = self.launch(seconds=0.5)
         retry = self.launch(seconds=0.5)

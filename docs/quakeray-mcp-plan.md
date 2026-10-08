@@ -98,6 +98,12 @@ cross-owner refusal, assignment-failure fail-closed behavior, grandchildren cont
 forced owner death, restart reconciliation and failed-build launch refusal. These checks are
 not a real game benchmark, CTest GPU run or proof of visual correctness.
 
+Cancellation now has a two-second cooperative stop-request phase before contained termination,
+with explicit stop-mode recording and stress-loop benchmark-stop/quit handling. The package
+suite now runs 56 tests (55 passed, one privilege-dependent symlink skip). Submodules remain
+uninitialized and no Debug runtime is present; live acceptance requires an approved runtime
+or approval to initialize dependencies/build, plus an approved game/mod/save fixture source.
+
 Setup, API bounds and current tests are documented in
 [tools/quakeray_mcp/README.md](../tools/quakeray_mcp/README.md). The implementation does not
 change engine execution boundaries or profiler counters; existing engine performance indexes

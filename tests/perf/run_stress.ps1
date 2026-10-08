@@ -128,6 +128,7 @@ function Send-Key([IntPtr]$Window, [int]$Key, [int]$Scan) {
 function Wait-Marker($Process, [string]$Marker) {
     $deadline = $script:RunDeadline
     while ((Get-Date) -lt $deadline) {
+        if (Test-QuakeRayStopRequested) { throw 'CANCELLED: stop requested while awaiting runtime readiness.' }
         $Process.Refresh()
         if ($Process.HasExited) { throw "Runtime exited with code $($Process.ExitCode) before $Marker" }
         if ($script:CurrentStderr -and (Test-Path $script:CurrentStderr)) {
@@ -231,11 +232,12 @@ echo QR_LOADED_$id
                     }
                     $deadline = Get-StressDeadline -Deadline $script:RunDeadline.AddSeconds(-$shutdownReserve) -MaximumSeconds $Seconds
                     while ((Get-Date) -lt $deadline) {
+                        if (Test-QuakeRayStopRequested) { break }
                         if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Focus was lost during capture.' }
                         Start-Sleep -Milliseconds 100
                     }
                     Send-Key $window 0x74 0x3f
-                    Wait-Marker $process "QR_STOP_$id"
+                    if (-not (Test-QuakeRayStopRequested)) { Wait-Marker $process "QR_STOP_$id" }
                     if ($Screenshot -and (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds 10)) {
                         Send-Key $window 0x75 0x40
                         Start-Sleep -Seconds 2
@@ -245,6 +247,7 @@ echo QR_LOADED_$id
                         throw 'Runtime did not exit within the remaining budget'
                     }
                     if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
+                    if (Test-QuakeRayStopRequested) { throw 'CANCELLED: owned runtime stopped; capture remains unaccepted.' }
                     if ($StatsLevel -gt 0) {
                         $dump = Get-ChildItem $gameDir -Filter 'stats-*.dump' | Where-Object FullName -notin $oldDumps |
                             Sort-Object LastWriteTime | Select-Object -Last 1

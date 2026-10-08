@@ -34,3 +34,7 @@ function Exit-QuakeRayMachine {
         $Guard.Dispose()
     }
 }
+
+function Test-QuakeRayStopRequested {
+    return $env:QUAKERAY_JOB_STOP_FILE -and (Test-Path -LiteralPath $env:QUAKERAY_JOB_STOP_FILE)
+}

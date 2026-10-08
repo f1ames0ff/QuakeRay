@@ -3,6 +3,7 @@ param([Parameter(Mandatory = $true)][string]$Spec)
 $ErrorActionPreference = 'Stop'
 $request = Get-Content -LiteralPath $Spec -Raw | ConvertFrom-Json
 $jobDir = Split-Path -Parent $Spec
+$env:QUAKERAY_JOB_STOP_FILE = Join-Path $jobDir 'stop.request'
 . (Join-Path $request.repo_root 'tests\perf\machine_guard.ps1')
 $guard = $null
 try {

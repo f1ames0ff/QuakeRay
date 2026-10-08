@@ -118,9 +118,17 @@ class JobManager:
                     record.update(exit_code=exit_code, state="succeeded" if exit_code == 0 else "failed")
                     break
                 if entry["cancel"].is_set() or time.monotonic() - started >= timeout:
-                    process.terminate()
-                    exit_code = process.wait(5000)
+                    (directory / "stop.request").write_text("stop", encoding="ascii")
+                    record["state"] = "cancelling"
+                    with self.store.locked():
+                        self.store.write(identifier, record)
+                    exit_code = process.wait(2000)
+                    forced = exit_code is None
+                    if forced:
+                        process.terminate()
+                        exit_code = process.wait(5000)
                     record.update(exit_code=exit_code, state="cancelled" if entry["cancel"].is_set() else "failed")
+                    record["stop_mode"] = "forced" if forced else "cooperative"
                     record["error"] = {"code": "CANCELLED" if entry["cancel"].is_set() else "RUN_TIMEOUT",
                                        "message": "Owned process tree terminated; in-memory capture may be unavailable"}
                     break
