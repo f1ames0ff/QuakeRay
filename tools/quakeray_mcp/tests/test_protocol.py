@@ -93,7 +93,7 @@ class ProtocolTests(unittest.TestCase):
                 try:
                     async with Client(create_server(service), mode="legacy") as client:
                         tools = await client.list_tools()
-                        self.assertEqual(len(tools.tools), 13)
+                        self.assertEqual(len(tools.tools), 17)
                         for tool in tools.tools:
                             Draft202012Validator.check_schema(tool.input_schema)
                             Draft202012Validator.check_schema(tool.output_schema)
@@ -103,6 +103,27 @@ class ProtocolTests(unittest.TestCase):
                         self.assertEqual(result.structured_content["error"]["code"], "INVALID_ARGUMENT")
                         result = await client.call_tool("list_runs", {})
                         self.assertEqual(result.structured_content["data"]["runs"], [])
+                finally:
+                    service.close()
+        anyio.run(check)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows extension APIs')
+    def test_research_catalog_schemas(self):
+        import tempfile
+        from unittest.mock import patch
+        async def check():
+            with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'QUAKERAY_ENABLE_RESEARCH':'1'}):
+                service = EvidenceService(ROOT, enable_jobs=True, state_root=Path(temp)/'jobs')
+                try:
+                    async with Client(create_server(service), mode='legacy') as client:
+                        result = await client.list_tools()
+                        self.assertIn('start_experiment_suite', [tool.name for tool in result.tools])
+                        self.assertIn('search_findings', [tool.name for tool in result.tools])
+                        for tool in result.tools:
+                            Draft202012Validator.check_schema(tool.input_schema)
+                            Draft202012Validator.check_schema(tool.output_schema)
+                        response = await client.call_tool('search_findings', {})
+                        self.assertEqual(response.structured_content['data']['findings'], [])
                 finally:
                     service.close()
         anyio.run(check)

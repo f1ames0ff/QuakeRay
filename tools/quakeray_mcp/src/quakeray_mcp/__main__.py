@@ -25,7 +25,7 @@ def main():
     try:
         service = EvidenceService(arguments.root, roots)
         if arguments.selfcheck:
-            print(json.dumps({"phase": "P0-P2-gated" if service.jobs else "P0-P1", "tools": service.tool_names,
+            print(json.dumps({"phase": service.server_status()['phase'], "tools": service.tool_names,
                               "documents": service.get_architecture(), "runtime_launch": bool(service.jobs)}, allow_nan=False))
             return
         if arguments.inspect:

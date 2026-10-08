@@ -188,6 +188,20 @@ C2 repeats: [Fuma Balanced](build/Debug/audit-entity-combined-fuma-repeat-202610
 
 ### MCP live verification after the ImGui fix
 
+Subsequent integration verification exercised a no-op owned experiment at `e55982af`, with
+independently initialized local dependencies and successful contained Debug build
+(`job_727a9a30229645bb98cce5d8c530d57d`). Its two-arm Fuma suite
+`job_9ad4d5533e294a5e82e0e682a0c87236` completed baseline then candidate with ownership released
+between invocations. These short no-op observations are not an optimization claim.
+
+Isolated menu A/A `job_f3860abe2ce743ab9449410fc243d5a7` completed and produced two PNGs;
+their diagnostic pixel comparison was intentionally not classified as visual equivalence.
+The research finding/search roundtrip retained the suite's two run IDs as an inconclusive
+operator interpretation. A later receipt-matched Fuma control
+`job_76c7a188be37419f89dd42ff9792adeb` verified retained provenance and was explicitly promoted
+as `fuma_balanced_debug_control`; matched mean/p95 comparison was within the labeled 5% policy.
+Visual/gameplay/validation statuses remain independent, not silently PASS.
+
 On 2026-10-08 the approved Debug runtime and documented AD saves were available locally.
 `job_074a7aa9047946e790edd4f60c292642` completed an 8-second warmup / 6-second Fuma Balanced
 benchmark through the contained supervisor, with 34.80 FPS and 28.74 ms mean interval.

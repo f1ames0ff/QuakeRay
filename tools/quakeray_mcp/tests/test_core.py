@@ -309,6 +309,16 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(result["comparability"], "incomparable")
         self.assertEqual(result["missing_metrics"], ["fps"])
 
+    def test_matched_timing_policy_separate_from_visual_acceptance(self):
+        a, b = self.record(), self.record()
+        a['metrics']['p95_ms'] = 25
+        b['metrics']['p95_ms'] = 25
+        result = compare_records(a, b)
+        self.assertEqual(result['performance'], 'within_5pct_tolerance')
+        self.assertEqual(result['visual'], 'not_checked')
+        b['metrics']['p95_ms'] = 30
+        self.assertEqual(compare_records(a, b)['performance'], 'regression')
+
     def test_nonfinite_metrics_rejected(self):
         b = self.record()
         b["metrics"]["fps"] = float("nan")

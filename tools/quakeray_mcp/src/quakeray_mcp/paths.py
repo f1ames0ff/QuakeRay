@@ -15,7 +15,7 @@ class ApprovedPaths:
         self.runtime = (self.root / os.environ.get("QUAKERAY_BUILD", "build/Debug")).resolve()
         self.roots = (self.runtime, *self.import_roots)
 
-    def resolve_import(self, value):
+    def resolve_import(self, value, extensions=None):
         if not isinstance(value, str) or not value or len(value) > 2048:
             raise EvidenceError("INVALID_ARGUMENT", "An import path is required")
         path = Path(value)
@@ -25,7 +25,7 @@ class ApprovedPaths:
                                 "Configure QUAKERAY_IMPORT_ROOTS explicitly before importing evidence")
         if not path.is_file():
             raise EvidenceError("NOT_FOUND", "Evidence file does not exist")
-        if path.suffix.lower() not in {".csv", ".dump", ".log", ".json"}:
+        if path.suffix.lower() not in (extensions or {".csv", ".dump", ".log", ".json"}):
             raise EvidenceError("INVALID_ARGUMENT", "Unsupported evidence file extension")
         return path
 

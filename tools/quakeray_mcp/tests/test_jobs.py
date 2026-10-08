@@ -245,6 +245,18 @@ class JobTests(unittest.TestCase):
         with self.assertRaises(EvidenceError):
             self.manager._collect_runs(receipt["job_id"], {"captures": [str(path)]})
 
+    def test_prune_preview_and_completed_evidence_protection(self):
+        receipt = self.launch()
+        self.finish(receipt)
+        directory = self.manager.store.directory(receipt['job_id'])
+        self.assertTrue(self.manager.prune(0, True)['dry_run'])
+        self.assertTrue(directory.exists())
+        record = self.manager.store.read(receipt['job_id'])
+        record['run_ids'] = ['run_' + 'a' * 32]
+        self.manager.store.write(receipt['job_id'], record)
+        self.assertEqual(self.manager.prune(0, False)['jobs'], [])
+        self.assertTrue(directory.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

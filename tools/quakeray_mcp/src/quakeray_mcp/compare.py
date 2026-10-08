@@ -4,7 +4,7 @@ from .errors import EvidenceError
 
 
 IDENTITY_FIELDS = (
-    "scenario_id", "save_sha256", "map_sha256", "mod_assets_sha256", "engine_assets_sha256",
+    "scenario_id", "save_sha256", "map_assets_fingerprint", "mod_assets_sha256", "engine_assets_sha256",
     "profile", "effective_settings", "hardware", "driver", "build_config", "instrumentation",
 )
 
@@ -54,7 +54,12 @@ def compare_records(baseline, candidate):
                        "direction": direction})
     if not deltas:
         reasons.append("No common measured metrics")
+    performance = 'not_checked'
+    if not reasons:
+        timings = [row for row in deltas if row['name'] in {'mean_ms', 'p95_ms'}]
+        if len(timings) == 2:
+            performance = 'regression' if any(row['candidate'] > row['baseline'] * 1.05 for row in timings) else 'within_5pct_tolerance'
     return {"comparability": "incomparable" if reasons else "compatible",
             "reasons": reasons, "missing_metrics": missing, "deltas": deltas,
-            "performance": "not_checked", "visual": "not_checked", "gameplay": "not_checked",
-            "validation": "not_checked", "policy": "diagnostic_no_acceptance"}
+            "performance": performance, "visual": "not_checked", "gameplay": "not_checked",
+            "validation": "not_checked", "policy": "matched_mean_p95_5pct" if not reasons else "diagnostic_no_acceptance"}

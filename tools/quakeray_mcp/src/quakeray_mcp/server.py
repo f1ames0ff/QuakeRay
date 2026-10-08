@@ -25,7 +25,7 @@ def create_server(service):
     tools = [Tool(name=name, description=DESCRIPTIONS[name], input_schema=ALL_INPUTS[name],
                   output_schema=output_schema(name),
                   annotations=ToolAnnotations(read_only_hint=name in INPUTS or name in {"get_job", "list_runs"},
-                                              destructive_hint=name == "cancel_job",
+                                              destructive_hint=name in {"cancel_job", "prune_runs", "remove_experiment"},
                                               idempotent_hint=True, open_world_hint=False))
              for name in service.tool_names]
 
@@ -76,6 +76,7 @@ def create_server(service):
         return ListResourceTemplatesResult(resource_templates=[
             ResourceTemplate(name="Repository document", uri_template="quakeray://docs/{name}", mime_type="application/json"),
             ResourceTemplate(name="Imported artifact", uri_template="quakeray://artifacts/{id}", mime_type="application/json"),
+            *([ResourceTemplate(name='Named baseline', uri_template='quakeray://baselines/{name}', mime_type='application/json')] if service.jobs else []),
         ])
 
     async def read_resource(ctx, params):
@@ -95,6 +96,15 @@ def create_server(service):
             elif uri.startswith("quakeray://artifacts/"):
                 identifier = uri.removeprefix("quakeray://artifacts/")
                 data = service.import_source({"artifact_id": identifier})["ref"]
+            elif uri.startswith('quakeray://baselines/') and service.jobs:
+                import re
+                name = uri.removeprefix('quakeray://baselines/')
+                if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', name):
+                    raise EvidenceError('NOT_FOUND', 'Unknown baseline')
+                path = service.jobs.store.root.parent / 'baselines' / (name + '.json')
+                if not path.is_file():
+                    raise EvidenceError('NOT_FOUND', 'Named baseline not found')
+                data = json.loads(path.read_text(encoding='utf-8'))
             else:
                 raise EvidenceError("NOT_FOUND", "Unknown QuakeRay resource")
             text = json.dumps(data, allow_nan=False)

@@ -215,6 +215,14 @@ Do not simply re-enable the old render task graph: [the alias pose scratch is sh
 
 ## Developer tooling and machine ownership
 
+Opt-in developer interfaces now include selected-translation-unit clangd symbols/references/
+call edges and bounded paths, retained run comparisons/baseline promotion, isolated experiment
+worktrees/builds/suites and research/image diagnostics. Index identities include source, headers,
+compile database and backend version; diagnostics/unresolved coverage remain visible. CDB
+warning-as-error flags are adjusted only in a temporary index database, never in the build.
+The research store is a ledger linking these authoritative documents and captures, not a
+second architecture specification. See the package README for activation and limits.
+
 The [QuakeRay MCP package](tools/quakeray_mcp/README.md) exposes the existing indexes and
 capture formats. Read-only tools do not launch the engine. Runtime jobs are operator opt-in,
 use Windows Job Objects for owned-process containment, and retain incomplete captures as

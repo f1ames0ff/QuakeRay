@@ -7,6 +7,9 @@ from pathlib import Path
 import secrets
 import subprocess
 import threading
+import shutil
+import stat
+import re
 import time
 import uuid
 
@@ -64,6 +67,13 @@ class JobManager:
         with self.lock, self.store.locked():
             if self.closed:
                 raise EvidenceError("SERVICE_CLOSED", "Job manager is shutting down")
+            used = sum(path.stat().st_size for path in self.store.root.rglob('*') if path.is_file() and not path.is_symlink())
+            quota = 32 * 1024 * 1024 * 1024
+            reservations = sum(self.store.read(path.parent.name).get('reserved_bytes', 0) for path in self.store.root.glob('job_*/job.json')
+                               if self.store.read(path.parent.name)['state'] not in TERMINAL)
+            reserve = 16 * 1024 * 1024 * 1024 if arguments.get('baseline') else 8 * 1024 * 1024 * 1024
+            if used + reservations + reserve > quota:
+                raise EvidenceError('DISK_QUOTA', 'Job store reached its 32 GiB quota; inspect/prune retained jobs first')
             for path in self.store.root.glob("job_*/job.json"):
                 old = self.store.read(path.parent.name)
                 if old["key_hash"] == key_hash:
@@ -81,6 +91,7 @@ class JobManager:
                       "owner_instance": self.instance, "server_pid": self.server_pid, "server_creation": self.server_creation,
                       "key_hash": key_hash, "control_hash": hashlib.sha256(token.encode()).hexdigest(),
                       "arguments_sha256": args_hash, "created_utc": now.isoformat(), "deadline_seconds": timeout,
+                      "reserved_bytes": reserve,
                       "exit_code": None, "error": None, "run_ids": [], "recovery": "not_required"}
             self.store.write(identifier, record)
             directory = self.store.directory(identifier)
@@ -197,6 +208,53 @@ class JobManager:
                 break
         return {"runs": records[:last_n], "acceptance": "not_checked"}
 
+    def find_run(self, identifier):
+        if not isinstance(identifier, str) or len(identifier) != 36 or not identifier.startswith('run_'):
+            raise EvidenceError('NOT_FOUND', 'Unknown run ID')
+        for path in self.store.root.glob('job_*/runs/batch.json'):
+            if path.stat().st_size > 4 * 1024 * 1024:
+                raise EvidenceError('RECOVERY_REQUIRED', 'Run batch exceeds its bound')
+            for record in json.loads(path.read_text(encoding='utf-8')):
+                if record['run_id'] == identifier:
+                    return record
+        raise EvidenceError('NOT_FOUND', 'Run is not retained in this catalog')
+
+    def verify_run(self, identifier):
+        record = self.find_run(identifier)
+        path = (self.store.root / record['artifact_path']).resolve()
+        if not path.is_relative_to(self.store.root):
+            raise EvidenceError('PERMISSION_DENIED', 'Run evidence escapes the store')
+        from .run_records import bounded_bytes
+        raw = bounded_bytes(path)
+        if hashlib.sha256(raw).hexdigest() != record['sha256']:
+            raise EvidenceError('EVIDENCE_CHANGED', 'Retained capture no longer matches its hash')
+        directory = self.store.directory(record['job_id'])
+        refreshed = prepare_records(directory, self.store.root, record['job_id'], {'captures': [str(path)]}, load_analyzer(self.root))[0]
+        return {'run_id': identifier, 'capture_integrity': 'verified', 'provenance_verified': refreshed['provenance_verified'],
+                'build_config': record.get('build_config', 'unknown'), 'visual': 'not_checked',
+                'reason': 'Integrity alone does not establish binary/control/asset compatibility'}
+
+    def promote_baseline(self, identifier, name, confirm=False):
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', name):
+            raise EvidenceError('INVALID_ARGUMENT', 'Safe baseline name required')
+        verification = self.verify_run(identifier)
+        if not verification['provenance_verified']:
+            raise EvidenceError('INCOMPARABLE', 'Baseline provenance must be verified first')
+        if not confirm:
+            return {'confirmation_required': True, 'name': name, 'run_id': identifier}
+        with self.store.locked():
+            folder = self.store.root.parent / 'baselines'
+            folder.mkdir(exist_ok=True)
+            path = folder / (name + '.json')
+            if path.exists():
+                raise EvidenceError('BASELINE_EXISTS', 'Existing baseline is preserved; select a new name')
+            value = {'name': name, 'run_id': identifier, 'capture_sha256': self.find_run(identifier)['sha256'],
+                     'verification': verification}
+            temporary = folder / (uuid.uuid4().hex + '.tmp')
+            temporary.write_text(json.dumps(value, allow_nan=False), encoding='utf-8')
+            os.replace(temporary, path)
+            return value
+
     def runtime_health(self, runtime):
         records = []
         for path in self.store.root.glob("job_*/request.json"):
@@ -209,6 +267,21 @@ class JobManager:
             newest = max(records, key=lambda record: record["created_utc"])
             if newest["state"] != "succeeded":
                 raise EvidenceError("RECOVERY_REQUIRED", "Latest build is incomplete; inspect/rebuild the runtime before launching it")
+
+    def prune(self, keep_last=20, dry_run=True):
+        with self.store.locked():
+            records = [self.store.read(path.parent.name) for path in self.store.root.glob('job_*/job.json')]
+            records.sort(key=lambda value: value['created_utc'], reverse=True)
+            removable = [record for record in records[keep_last:] if record['state'] in TERMINAL and not record.get('run_ids')]
+            plan = [{'job_id': record['job_id'], 'path': str(self.store.directory(record['job_id']))} for record in removable]
+            if not dry_run:
+                for record in removable:
+                    directory = self.store.directory(record['job_id'])
+                    if any(path.is_symlink() or getattr(path.lstat(), 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                           for path in directory.rglob('*')):
+                        raise EvidenceError('PERMISSION_DENIED', 'Refusing cleanup of a job with redirected paths')
+                    shutil.rmtree(directory)
+            return {'dry_run': dry_run, 'jobs': plan, 'protected_completed_evidence': True}
 
     def get(self, identifier, wait_seconds=0):
         entry = self.active.get(identifier)

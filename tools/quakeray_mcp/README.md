@@ -1,6 +1,6 @@
-# QuakeRay MCP (P0–P1, opt-in P2 foundation)
+# QuakeRay MCP developer laboratory
 
-Local read-only MCP server for the existing QuakeRay architecture and performance evidence.
+Local MCP server with a read-only default and explicitly enabled runtime/index/research layers.
 Python 3.10 or newer, official `mcp==2.3.0`, locked dependencies and stdio transport. The
 engine renderer/counter code is unchanged. Build and capture entry points now share a machine
 ownership helper; supervised runtime adapters use private copies of registered runtimes.
@@ -16,17 +16,19 @@ ownership helper; supervised runtime adapters use private copies of registered r
 - Legacy (2025-11-25) and modern (2026-07-28) protocol clients, plus a read-only investigation
   prompt. Protocol errors and expected tool-execution errors use distinct paths.
 
-**Still pending:** real game/build acceptance, fully verified RunRecords, named baselines,
-semantic call graphs, experiment worktrees and image acceptance. No generic shell, console,
-Git-mutation or arbitrary-PID-killing tools are exposed.
+Real build/capture, verified retained controls, named baselines, scoped AST call queries,
+owned experiment worktrees/suites and research/image diagnostics have been exercised.
+No generic shell/console, arbitrary Git command or arbitrary-PID-killing tool is exposed.
+Whole-program/dynamic graph completeness and automatic visual/gameplay equivalence are
+deliberately not claimed.
 
 ## Opt-in job foundation
 
 Default configuration remains read-only. An operator can set `QUAKERAY_ENABLE_JOBS=1` in the
-server environment to advertise seven additional tools: `start_build`, `start_benchmark`,
-`start_capture`, `start_menu_ab`, `get_job`, `cancel_job`, `list_runs`. Real runtime acceptance
-has not been exercised in this checkout because deployed assets/saves are missing; do not
-interpret the opt-in flag or fake-worker tests as a certified benchmark environment.
+server environment to advertise build/capture/menu jobs, job inspection/cancellation,
+retained run listing/verification/comparison, protected pruning and explicit baseline promotion.
+Real integration checks complement fake-worker tests; enabling a tool is not certification
+that a different checkout's assets, settings or hardware are ready.
 
 - Only the registered `debug` runtime, Debug builds and documented scenarios are accepted.
 - Starts persist before spawning and require a request nonce of at least 16 characters. Reuse
@@ -39,7 +41,7 @@ interpret the opt-in flag or fake-worker tests as a certified benchmark environm
   cooperative exit. The stress capture loop requests benchmark stop/quit; loading checks
   abort through owned cleanup. Nonresponsive preparation/build/menu work falls back to
   contained termination. `stop_mode` distinguishes cooperative and forced outcomes; neither
-  grants capture acceptance. Live-game graceful-stop behavior is still unverified.
+  grants capture acceptance. A live Fuma cancellation completed cooperatively in integration.
 - Build jobs have a 1,500-second deadline; runtime jobs 300 seconds. Polling never resets them.
   Compiling `-Tests` is not running CTest. Failed builds block launch until reviewed/rebuilt.
 - The shared `Local\QuakeRayPerformanceRun` guard covers supported direct scripts and nested
@@ -47,11 +49,10 @@ interpret the opt-in flag or fake-worker tests as a certified benchmark environm
 - Capture/menu jobs copy a registered runtime into their job directory and reject reparse
   points. Mutable configs/logs do not share writable links with the source runtime. Copies are
   limited to 8 GiB and must fit the deadline; large build directories should be staged into an
-  independent minimal runtime first. The initial menu adapter is candidate-only, not a full
-  multi-runtime A/B registry.
+  independent minimal runtime first. Menu A/B uses the operator-approved baseline registry.
 - Persistent jobs and capture records live under `%LOCALAPPDATA%/QuakeRayMCP/<repo-id>/jobs`.
   Captures remain unaccepted until binary/settings/assets/control compatibility is established.
-  The store retains evidence and has no destructive pruning/experiment-removal API yet.
+  Pruning and experiment removal protect retained evidence and dirty worktrees as documented.
   Capture batches are fully validated before atomic publication. Frame captures require their
   benchmark block and manifest; effective resolution/FSR and sample/map associations are
   checked. Quality uses the explicit 45-FPS budget instead of the Balanced budget. Manifest
@@ -172,3 +173,44 @@ powershell -NoProfile -File tests/perf/test_stress_budget.ps1
 ```
 
 See [the plan](../../docs/quakeray-mcp-plan.md) for P2 prerequisites and subsequent phases.
+
+## Additional opt-in interfaces (not full phase acceptance)
+
+`QUAKERAY_CLANGD` selects an operator-approved clangd executable. `find_symbol`, references,
+callers/callees, bounded `trace_path` and refresh operate on selected translation units with
+source/CDB fingerprints. Index-only `/clang:-Wno-error` is applied to a temporary database;
+the build database is not changed. Diagnostics and partial coverage are returned. Cross-TU,
+function-pointer and HLSL completeness are not claimed. The locally approved clangd 23.1.0
+archive was verified against official SHA256
+`23412a240756a162e7b98a282f36aa2a23a88db5ce16a0cbc4fef7253768c810`.
+
+`QUAKERAY_ENABLE_RESEARCH=1` together with enabled jobs provides finding/search interfaces and
+tool-owned detached experiment worktrees. Creation accepts only explicit commit SHA/name;
+dependency preparation uses approved local submodule checkouts with no implicit remote fetch.
+Experiment builds use Debug/private mutable dependencies. Removal previews by default and
+refuses dirty worktrees without force. Findings reference retained runs and remain operator
+interpretations, not verified measurements.
+
+`prune_runs` protects all published capture evidence; deletion is explicit and limited to
+terminal jobs without run IDs. Admission reserves disk space against a 32 GiB job-store quota.
+An operator-registered `QUAKERAY_BASELINE_RUNTIME` enables isolated menu baseline/candidate
+capture; tool arguments do not select arbitrary filesystem runtimes.
+
+`prepare_experiment` initializes local pinned dependencies, `start_experiment_build` compiles
+the private source, and `start_experiment_suite` executes one primary/guard scenario per
+invocation on copied baseline/candidate arms, releasing the shared guard between invocations.
+The end-to-end no-op build/suite was exercised, as was isolated menu baseline/candidate capture.
+`diff_screenshots` supports bounded RGB/RGBA 8-bit noninterlaced PNG, checks CRC/filter/data
+integrity and reports diagnostic RMSE/pixel differences, never geometry-equivalence PASS.
+`verify_run` verifies retained artifact hashes; `compare_retained_runs` compares catalog IDs.
+
+New captures match retained asset hashes, focus/completion checks, hardware/driver output and
+the deployment receipt before provenance verification. `compare_retained_runs` requires those
+identities and reports the explicit mean/p95 5% policy separately from visual/gameplay/validation
+status. `promote_baseline` previews by default, needs explicit confirmation and never overwrites
+an existing name. The map-assets fingerprint identifies map name plus its asset bundle, not
+a claim of a separately extracted BSP hash.
+
+Statistical claims, all-map coverage, image/geometry/gameplay equivalence and model-cost savings
+are not implied by implementation completion or short integration tests. Visual/noise output
+remains diagnostic; the pilot evaluation is an operator exercise, not an automatic PASS.

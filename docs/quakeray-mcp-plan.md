@@ -1,8 +1,9 @@
 # QuakeRay MCP server — analysis and implementation plan
 
-Status: implementation in progress, 2026-10-08. The P0–P1 inspection layer and opt-in P2 job
-foundation live in `tools/quakeray_mcp`. Real P2 build/game acceptance and P3–P5 remain pending.
-Effort numbers are estimates, not measurements.
+Status: API implementation and scoped integration verification, 2026-10-08. P0–P5 interfaces
+live in `tools/quakeray_mcp`, with opt-in mutation/indexing. Coverage and evidence limitations
+remain explicit: this is not an all-map visual/performance guarantee or a measured agent-cost
+improvement. Effort numbers are estimates, not measurements.
 
 Reviewed source snapshot: `2b12ebbc` (`origin/master`, 2026-10-08). Read
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [PERFORMANCE.md](../PERFORMANCE.md) first; these now
@@ -58,7 +59,29 @@ metrics before later phases are funded.
 | P4 | Experiment control: tool-owned worktrees, suites, cleanup | Yes |
 | P5 | Run history and knowledge base; optional screenshot diff | No |
 
-### Implementation progress
+### Completed implementation scope and verification matrix
+
+| Layer | Implemented | Direct verification / remaining evidence limits |
+|---|---|---|
+| P0–P1 | Locked SDK, four parsers, schema/resource/prompt contracts, allowlists and bounded reads | In-memory/stdio legacy+modern tests; malformed/blank/nonfinite/context-invalid data rejected |
+| P2 | Contained jobs, cooperative stop, ownership, disk reservations/pruning, build receipts, matched provenance, retained comparisons and explicit baseline promotion | Real Fuma captures, verified matching controls, AD-hub overlay capture and isolated menu A/A completed; visual/gameplay/validation remain separate checks |
+| P3 | Local approved clangd, symbol/references/callers/callees, bounded path tracing, source/CDB/version freshness | Actual R_DrawViewModelTask → R_DrawViewModel caller resolved; selected-TU coverage and Clang/MSVC diagnostics retained, no complete dynamic/HLSL graph claim |
+| P4 | Owned detached worktrees, independent local pinned dependencies, Debug builds, bounded baseline/candidate suites and clean-only removal | Real no-op experiment build and Fuma two-arm suite completed; dirty-removal refusal tested; arm order configurable for repeated/interleaved controls |
+| P5 | Retained run/finding search, experiment decisions, protected evidence, diagnostic PNG pixel comparison | Real finding/search roundtrip and menu PNG comparison completed; pixel similarity is not geometry equivalence or a visual acceptance gate |
+
+Defaults remain read-only. Operators configure `QUAKERAY_ENABLE_JOBS`, `QUAKERAY_ENABLE_RESEARCH`
+and the approved `QUAKERAY_CLANGD` path explicitly. `QUAKERAY_BASELINE_RUNTIME` is an approved
+runtime registry setting, not an arbitrary tool path. Historical milestone text below records
+the earlier development state and is superseded by this matrix for current API availability.
+
+Final verification on this implementation: 74 package tests ran with the explicit real-clangd
+integration enabled (73 passed; one Windows symlink-privilege skip), six existing analyzer
+tests and ownership/budget checks passed, and the Debug CTest suite passed 3/3. Actual retained
+controls verified provenance and baseline promotion; live cancellation was cooperative.
+The developer pilot's token/cost savings and broad visual/gameplay/driver compatibility remain
+unmeasured evaluation questions, not missing API implementations or promised guarantees.
+
+### Historical implementation milestones
 
 - P0 package, exact `mcp==2.3.0` dependency/`uv.lock`, four artifact parsers, explicit schemas,
   stdio entry point and offline startup are implemented on Python 3.10.6.

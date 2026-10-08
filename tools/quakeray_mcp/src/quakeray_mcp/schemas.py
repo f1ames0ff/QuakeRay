@@ -46,14 +46,60 @@ JOB_INPUTS = {
                                      "duration_s": {**integer(25, 6), "minimum": 2}},
                                     ("scenario_id", "runtime_id", "idempotency_key")),
     "start_menu_ab": object_schema({"candidate_runtime": RUNTIME_ID, "idempotency_key": REQUEST_KEY,
+                                     "baseline_runtime": {"type": "string", "enum": ["baseline"]},
                                      "seconds": {**integer(25, 8), "minimum": 2}, "smoke": {"type": "boolean", "default": False},
                                      "validation": {"type": "boolean", "default": False}}, ("candidate_runtime", "idempotency_key")),
     "get_job": object_schema({"job_id": JOB_ID, "wait_seconds": integer(10)}, ("job_id",)),
     "cancel_job": object_schema({"job_id": JOB_ID, "control_token": {"type": "string", "minLength": 16, "maxLength": 128}},
                                  ("job_id", "control_token")),
     "list_runs": object_schema({"last_n": {**integer(50, 20), "minimum": 1}}),
+    "prune_runs": object_schema({"keep_last": integer(1000, 20), "dry_run": {"type": "boolean", "default": True}}),
+    "verify_run": object_schema({'run_id': {'type':'string','pattern':'^run_[0-9a-f]{32}$'}}, ('run_id',)),
+    "compare_retained_runs": object_schema({'baseline_id': {'type':'string','pattern':'^run_[0-9a-f]{32}$'},
+                                           'candidate_id': {'type':'string','pattern':'^run_[0-9a-f]{32}$'}},
+                                          ('baseline_id','candidate_id')),
+    "promote_baseline": object_schema({'run_id': {'type':'string','pattern':'^run_[0-9a-f]{32}$'},
+                                      'name': {'type':'string','pattern':'^[A-Za-z0-9_-]{1,64}$'},
+                                      'confirm': {'type':'boolean','default':False}}, ('run_id','name')),
 }
-ALL_INPUTS = {**INPUTS, **JOB_INPUTS}
+CODE_INPUTS = {
+    "find_symbol": object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 256},
+                                  "file": {"type": "string", "maxLength": 256}}, ("query",)),
+    **{name: object_schema({"symbol_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, ("symbol_id",))
+       for name in ("get_references", "get_callers", "get_callees")},
+    "refresh_index": object_schema({}),
+    "trace_path": object_schema({"from_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                                  "to_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                                  "depth": {**integer(8, 4), "minimum": 1}}, ("from_id", "to_id")),
+}
+RUN_IDS = {"type": "array", "maxItems": 20, "items": {"type": "string", "pattern": "^run_[0-9a-f]{32}$"}}
+DECISION = {"type": "string", "enum": ["accepted", "rejected", "inconclusive"]}
+RESEARCH_INPUTS = {
+    "diff_screenshots": object_schema({"baseline": {"type": "string", "maxLength": 2048},
+                                       "candidate": {"type": "string", "maxLength": 2048}}, ('baseline', 'candidate')),
+    "record_finding": object_schema({"hypothesis": {"type": "string", "minLength": 1, "maxLength": 4000},
+                                     "subsystem": {"type": "string", "maxLength": 64}, "run_ids": RUN_IDS,
+                                     "decision": DECISION}, ("hypothesis", "subsystem", "run_ids")),
+    "search_findings": object_schema({"subsystem": {"type": "string", "maxLength": 64},
+                                      "query": {"type": "string", "maxLength": 256}, "limit": integer(50, 20)}),
+    "create_experiment": object_schema({"base_commit": {"type": "string", "pattern": "^[0-9a-fA-F]{7,40}$"},
+                                        "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}}, ("base_commit", "name")),
+    "finish_experiment": object_schema({"experiment_id": {"type": "string", "pattern": "^experiment_[0-9a-f]{32}$"},
+                                        "decision": DECISION, "run_ids": RUN_IDS}, ("experiment_id", "decision", "run_ids")),
+    "remove_experiment": object_schema({"experiment_id": {"type": "string", "pattern": "^experiment_[0-9a-f]{32}$"},
+                                        "confirm": {"type": "boolean", "default": False}}, ("experiment_id",)),
+    "prepare_experiment": object_schema({"experiment_id": {"type": "string", "pattern": "^experiment_[0-9a-f]{32}$"}}, ("experiment_id",)),
+    "start_experiment_build": object_schema({"experiment_id": {"type": "string", "pattern": "^experiment_[0-9a-f]{32}$"},
+                                             "idempotency_key": REQUEST_KEY, "parallel": {**integer(16,4), "minimum":1}},
+                                            ("experiment_id", "idempotency_key")),
+    "start_experiment_suite": object_schema({"experiment_id": {"type": "string", "pattern": "^experiment_[0-9a-f]{32}$"},
+                                             "scenario_id": SCENARIO_ID, "idempotency_key": REQUEST_KEY,
+                                             "seconds": {**integer(25,6), "minimum":2},
+                                             "warmup_s": {**integer(30,8), "minimum":2},
+                                             "order": {"type":"string","enum":["baseline_first","candidate_first"],"default":"baseline_first"}},
+                                            ("experiment_id", "scenario_id", "idempotency_key")),
+}
+ALL_INPUTS = {**INPUTS, **JOB_INPUTS, **CODE_INPUTS, **RESEARCH_INPUTS}
 
 DESCRIPTIONS = {
     "server_status": "Inspect source, runtime readiness and processes without building or launching the game.",
@@ -71,7 +117,28 @@ DESCRIPTIONS.update({
     "get_job": "Inspect a persistent job and bounded untrusted log tails; waiting never resets the deadline.",
     "cancel_job": "Terminate only the owned process tree using the creator control capability; no arbitrary PID.",
     "list_runs": "List persistent completed capture records without granting performance or visual acceptance.",
+    "prune_runs": "Preview or explicitly delete only terminal jobs without published runs; completed evidence is protected.",
+    "verify_run": "Verify retained capture SHA256 without claiming full baseline or visual acceptance.",
+    "compare_retained_runs": "Compare retained run metrics after integrity checks; unknown compatibility never produces PASS.",
+    "promote_baseline": "Explicitly name a provenance-verified retained run as a baseline; no overwrite or compare side effect.",
 })
+DESCRIPTIONS.update({name: text for name, text in (
+    ("find_symbol", "Find AST symbols in a selected translation unit with diagnostics and source/CDB freshness."),
+    ("get_references", "Return clangd references for a current symbol; unresolved scope remains explicit."),
+    ("get_callers", "Return resolved incoming call hierarchy edges, not a complete dynamic graph."),
+    ("get_callees", "Return resolved outgoing call hierarchy edges with partial coverage."),
+    ("refresh_index", "Clear cached symbol identities; AST is refreshed on demand."),
+    ("trace_path", "Trace only bounded resolved AST edges; an empty path never proves absence of a dynamic dependency."),
+    ("record_finding", "Record an operator hypothesis/decision referencing retained evidence, not a verified fact."),
+    ("search_findings", "Search retained research notes by subsystem/query."),
+    ("diff_screenshots", "Compare bounded RGB/RGBA PNG pixels diagnostically; similarity does not certify visual or geometry equivalence."),
+    ("create_experiment", "Create an isolated detached worktree at an explicit commit; dependencies and build are separate."),
+    ("finish_experiment", "Record an experiment decision without deleting edits or evidence."),
+    ("remove_experiment", "Preview or explicitly remove only a clean tool-owned worktree; force removal is unavailable."),
+    ("prepare_experiment", "Initialize independent pinned submodules from approved local objects; no implicit remote fetch."),
+    ("start_experiment_build", "Build only a prepared owned experiment using Debug and isolated mutable dependencies."),
+    ("start_experiment_suite", "Run one approved scenario on isolated baseline/candidate arms, releasing ownership between game invocations; no automatic acceptance."),
+)})
 
 REQUIRED_OUTPUTS = {
     "server_status": ("phase", "source", "runtime", "processes", "capabilities"),
@@ -123,7 +190,7 @@ def output_schema(name):
              "properties": {"code": {"type": "string"}, "message": {"type": "string"},
                             "remediation": {"type": "string"}, "retryable": {"type": "boolean"}},
              "additionalProperties": False}
-    if name in JOB_INPUTS:
+    if name in JOB_INPUTS or name in CODE_INPUTS or name in RESEARCH_INPUTS:
         return {"type": "object", "required": ["schema_version", "ok", "data", "error"],
                 "properties": {"schema_version": {"const": 1}, "ok": {"type": "boolean"},
                                "data": {"type": ["object", "null"]}, "error": {"anyOf": [error, {"type": "null"}]}},

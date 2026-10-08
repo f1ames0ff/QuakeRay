@@ -45,6 +45,14 @@ class EvidenceService:
         for path in sorted((self.root / "docs").glob("*.md")):
             self.documents[f"docs/{path.stem}"] = str(path.relative_to(self.root))
         self.jobs = None
+        self.research = None
+        self.code_index = None
+        clangd = os.environ.get("QUAKERAY_CLANGD")
+        if clangd == 'auto':
+            clangd = str(Path(os.environ.get('LOCALAPPDATA', '')) / 'QuakeRayMCP/tools/clangd-23.1.0/clangd_23.1.0/bin/clangd.exe')
+        if clangd:
+            from .code_index import CodeIndex
+            self.code_index = CodeIndex(self.root, clangd)
         enabled = os.environ.get("QUAKERAY_ENABLE_JOBS") == "1" if enable_jobs is None else enable_jobs
         if enabled:
             if os.name != "nt":
@@ -54,6 +62,9 @@ class EvidenceService:
             repo_id = hashlib.sha256(str((self.root / common).resolve()).encode()).hexdigest()[:24]
             state = state_root or Path(os.environ["LOCALAPPDATA"]) / "QuakeRayMCP" / repo_id / "jobs"
             self.jobs = JobManager(self.root, state)
+            if os.environ.get("QUAKERAY_ENABLE_RESEARCH") == "1":
+                from .research import ResearchStore
+                self.research = ResearchStore(self.root, self.jobs.store)
             self.paths.roots = (*self.paths.roots, self.jobs.store.root)
 
     def close(self):
@@ -62,8 +73,9 @@ class EvidenceService:
 
     @property
     def tool_names(self):
-        from .schemas import INPUTS, JOB_INPUTS
-        return sorted([*INPUTS, *(JOB_INPUTS if self.jobs else {})])
+        from .schemas import INPUTS, JOB_INPUTS, CODE_INPUTS, RESEARCH_INPUTS
+        return sorted([*INPUTS, *(JOB_INPUTS if self.jobs else {}), *(CODE_INPUTS if self.code_index else {}),
+                       *(RESEARCH_INPUTS if self.research else {})])
 
     def source_identity(self):
         def git(*args):
@@ -90,14 +102,14 @@ class EvidenceService:
 
     def server_status(self):
         runtime = self.paths.runtime
-        return {"phase": "P0-P2-gated" if self.jobs else "P0-P1", "source": self.source_identity(),
+        return {"phase": "P0-P5-gated" if self.research or self.code_index else "P0-P2-gated" if self.jobs else "P0-P1", "source": self.source_identity(),
                 "runtime": {"id": "debug", "requested_build_config": "Debug", "verified_build_config": None,
                             "exists": runtime.is_dir(),
                             "executable_exists": (runtime / "quakeray.exe").is_file(),
                             "engine_pack_exists": (runtime / "id1/qray.pkz").is_file()},
                 "processes": self.process_status(),
                 "capabilities": {"read_only": not bool(self.jobs), "game_launch": bool(self.jobs), "build": bool(self.jobs),
-                                 "jobs": bool(self.jobs), "experiments": False, "semantic_index": False,
+                                 "jobs": bool(self.jobs), "experiments": bool(self.research), "semantic_index": bool(self.code_index),
                                  "persistent_run_catalog": bool(self.jobs)}}
 
     def list_scenarios(self, runtime_id="debug", kind="stress"):
@@ -282,12 +294,20 @@ class EvidenceService:
     def start_capture(self, scenario_id, runtime_id, idempotency_key, warmup_s=8, duration_s=6):
         return self._start_capture("capture", scenario_id, runtime_id, idempotency_key, warmup_s, duration_s, 1, 3)
 
-    def start_menu_ab(self, candidate_runtime, idempotency_key, seconds=8, smoke=False, validation=False):
+    def start_menu_ab(self, candidate_runtime, idempotency_key, seconds=8, smoke=False, validation=False, baseline_runtime=None):
         self.jobs.runtime_health(self.paths.runtime)
         if not (self.paths.runtime / "quakeray.exe").is_file() or not (self.paths.runtime / "id1/pak0.pak").is_file():
             raise EvidenceError("ENV_MISSING_GAME_DATA", "A complete base-game Debug runtime is required")
         arguments = {"idempotency_key": idempotency_key, "runtime_id": candidate_runtime,
                      "seconds": seconds, "smoke": smoke, "validation": validation}
+        if baseline_runtime:
+            configured = os.environ.get("QUAKERAY_BASELINE_RUNTIME")
+            if not configured:
+                raise EvidenceError("ENV_MISSING_BUILD", "Operator must register QUAKERAY_BASELINE_RUNTIME")
+            baseline = Path(configured).resolve()
+            if not (baseline / "quakeray.exe").is_file() or not (baseline / "id1/pak0.pak").is_file():
+                raise EvidenceError("ENV_MISSING_GAME_DATA", "Registered baseline runtime is incomplete")
+            arguments["baseline"] = str(baseline)
         return self.jobs.start("menu", arguments, self.jobs.worker_command("menu", arguments, self.paths.runtime), 300)
 
     def get_job(self, job_id, wait_seconds=0):
@@ -298,3 +318,99 @@ class EvidenceService:
 
     def list_runs(self, last_n=20):
         return self.jobs.list_runs(last_n)
+
+    def prune_runs(self, keep_last=20, dry_run=True):
+        return self.jobs.prune(keep_last, dry_run)
+
+    def verify_run(self, run_id):
+        return self.jobs.verify_run(run_id)
+
+    def compare_retained_runs(self, baseline_id, candidate_id):
+        from .compare import compare_records
+        self.jobs.verify_run(baseline_id)
+        self.jobs.verify_run(candidate_id)
+        baseline = self.jobs.find_run(baseline_id)
+        candidate = self.jobs.find_run(candidate_id)
+        return compare_records(baseline, candidate)
+
+    def promote_baseline(self, run_id, name, confirm=False):
+        return self.jobs.promote_baseline(run_id, name, confirm)
+
+    def find_symbol(self, query, file="Quake/gl_rmain.c"):
+        if self.process_status()["instances"]:
+            raise EvidenceError("MACHINE_BUSY", "Defer AST parsing until heavy owners finish")
+        return self.code_index.find(query, file)
+
+    def get_references(self, symbol_id):
+        if self.process_status()["instances"]:
+            raise EvidenceError("MACHINE_BUSY", "Defer AST parsing until heavy owners finish")
+        return self.code_index.related(symbol_id, "references")
+
+    def get_callers(self, symbol_id):
+        if self.process_status()["instances"]:
+            raise EvidenceError("MACHINE_BUSY", "Defer AST parsing until heavy owners finish")
+        return self.code_index.related(symbol_id, "incomingCalls")
+
+    def get_callees(self, symbol_id):
+        if self.process_status()["instances"]:
+            raise EvidenceError("MACHINE_BUSY", "Defer AST parsing until heavy owners finish")
+        return self.code_index.related(symbol_id, "outgoingCalls")
+
+    def refresh_index(self):
+        self.code_index.symbols.clear()
+        return {"status": "cleared", "refresh_policy": "on_demand", "full_project_coverage": False}
+
+    def trace_path(self, from_id, to_id, depth=4):
+        if self.process_status()['instances']:
+            raise EvidenceError('MACHINE_BUSY', 'Defer graph parsing until heavy owners finish')
+        return self.code_index.trace(from_id, to_id, depth)
+
+    def record_finding(self, hypothesis, subsystem, run_ids, decision="inconclusive"):
+        return self.research.record_finding(hypothesis, subsystem, run_ids, decision)
+
+    def search_findings(self, subsystem="", query="", limit=20):
+        return self.research.search(subsystem, query, limit)
+
+    def diff_screenshots(self, baseline, candidate):
+        from .images import compare_png
+        from .run_records import bounded_bytes
+        a = self.paths.resolve_import(baseline, {'.png'})
+        b = self.paths.resolve_import(candidate, {'.png'})
+        return compare_png(bounded_bytes(a, 32 * 1024 * 1024), bounded_bytes(b, 32 * 1024 * 1024))
+
+    def create_experiment(self, base_commit, name):
+        return self.research.create_experiment(base_commit, name)
+
+    def finish_experiment(self, experiment_id, decision, run_ids):
+        return self.research.finish_experiment(experiment_id, decision, run_ids)
+
+    def prepare_experiment(self, experiment_id):
+        return self.research.prepare_experiment(experiment_id)
+
+    def start_experiment_build(self, experiment_id, idempotency_key, parallel=4):
+        record = self.research.read(experiment_id)
+        if record['dependency_status'] != 'local_pinned_checkouts_initialized':
+            raise EvidenceError('ENV_MISSING_DEPENDENCIES', 'Prepare independent experiment dependencies first')
+        source = Path(record['worktree']).resolve()
+        arguments = {'idempotency_key': idempotency_key, 'experiment_id': experiment_id,
+                     'source_root': str(source), 'parallel': parallel, 'tests': True}
+        runtime = source / 'build/Debug'
+        return self.jobs.start('build', arguments, self.jobs.worker_command('build', arguments, runtime), 1500)
+
+    def start_experiment_suite(self, experiment_id, scenario_id, idempotency_key, seconds=6, warmup_s=8, order='baseline_first'):
+        record = self.research.read(experiment_id)
+        candidate = Path(record['worktree']).resolve() / 'build/Debug'
+        if not (candidate / 'quakeray.exe').is_file() or not (candidate / 'id1/qray.pkz').is_file():
+            raise EvidenceError('ENV_MISSING_BUILD', 'Build the isolated experiment candidate first')
+        match = next((value for value in self.list_scenarios()['scenarios'] if value['scenario_id'] == scenario_id), None)
+        if not match or match['missing']:
+            raise EvidenceError('ENV_MISSING_SCENARIO', 'Approved baseline fixtures are required')
+        arguments = {'experiment_id': experiment_id, 'scenario_id': scenario_id, 'idempotency_key': idempotency_key,
+                     'baseline': str(self.paths.runtime), 'asset_source': str(self.paths.runtime),
+                     'preset': match['preset'], 'save': match['save'], 'seconds': seconds,
+                     'warmup': warmup_s, 'repeats': 1, 'stats_level': 0}
+        arguments['order'] = order
+        return self.jobs.start('suite', arguments, self.jobs.worker_command('suite', arguments, candidate), 600)
+
+    def remove_experiment(self, experiment_id, confirm=False):
+        return self.research.remove_experiment(experiment_id, confirm)
