@@ -62,8 +62,9 @@ later practical use; they are not a gate for the current implementation or accep
 
 The final acceptance campaign and corrective audit results are recorded in
 [quakeray-mcp-acceptance.md](quakeray-mcp-acceptance.md). This supersedes historical smoke-only
-coverage below. Full Debug CTest passed 6/6 and the 12-capture matrix revalidated successfully;
-Vulkan validation remains explicitly FAIL rather than a completed clean-engine gate.
+coverage below. Full Debug CTest passed 6/6, the 12-capture matrix revalidated successfully, and
+the renderer VUID blocker was fixed and re-verified VUID-clean in the menu/transition validation
+runs.
 
 | Layer | Implemented | Direct verification / remaining evidence limits |
 |---|---|---|
