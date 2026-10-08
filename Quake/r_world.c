@@ -1509,7 +1509,9 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE;
 		}
 
+		const double prof_upload = RT_Prof_Begin ();
 		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+		RT_Prof_End (RT_PROF_BRUSH_UPLOAD, prof_upload);
 		QR_CHECK (r);
 	}
 	else
@@ -1585,7 +1587,9 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			}
 		}
 
+		const double prof_upload = RT_Prof_Begin ();
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		RT_Prof_End (RT_PROF_BRUSH_UPLOAD, prof_upload);
 		QR_CHECK (r);
 
 		if (rt_movable_upload_entry != NULL)
@@ -4323,7 +4327,11 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 	int num_surf_indices = R_NumTriangleIndicesForSurf (num_surf_verts);
 
 	if (s->model != cl.worldmodel)
+	{
+		const double prof_lights = RT_Prof_Begin ();
 		RT_AddEmissiveLight (s);
+		RT_Prof_End (RT_PROF_BRUSH_LIGHTS, prof_lights);
+	}
 
 	if (cbx->batch_indices_count + num_surf_indices > MAX_BATCH_INDICES ||
 		cbx->batch_verts_count + num_surf_verts > MAX_BATCH_VERTS)
@@ -4331,21 +4339,28 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 		RT_FlushBatch (cbx, s, brushpasses);
 	}
 
+	const double prof_pack = RT_Prof_Begin ();
 	R_TriangleIndicesForSurf (cbx->batch_verts_count, num_surf_verts, &cbx->batch_indices[cbx->batch_indices_count]);
 	QrVertex *batch_verts = &cbx->batch_verts[cbx->batch_verts_count];
 	memcpy (batch_verts, rtallbrushvertices + s->surf->vbo_firstvert, sizeof (QrVertex) * num_surf_verts);
 
 	if (s->ent && s->model != cl.worldmodel)
 	{
+		const double prof_cluster = RT_Prof_Begin ();
 		const uint32_t cluster = (uint32_t) RT_ResolveBrushSurfCluster (s, batch_verts, num_surf_verts);
+		RT_Prof_End (RT_PROF_BRUSH_CLUSTER, prof_cluster);
 
 		for (int i = 0; i < num_surf_verts; i++)
 			batch_verts[i].cluster = cluster;
 	}
 
 	{
+		const double prof_matrix = RT_Prof_Begin ();
 		const QrTransform transform = RT_GetBrushModelMatrix (s->ent);
+		RT_Prof_End (RT_PROF_BRUSH_MATRIX, prof_matrix);
+		const double prof_styles = RT_Prof_Begin ();
 		const uint32_t    packed_styles = RT_PackSurfaceLightStyles (s, batch_verts, num_surf_verts, &transform);
+		RT_Prof_End (RT_PROF_BRUSH_STYLES, prof_styles);
 
 		if (packed_styles != 0)
 			for (int i = 0; i < num_surf_verts; i++)
@@ -4354,6 +4369,7 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 
 	cbx->batch_indices_count += num_surf_indices;
 	cbx->batch_verts_count += num_surf_verts;
+	RT_Prof_End (RT_PROF_BRUSH_PACK, prof_pack);
 }
 
 /*

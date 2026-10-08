@@ -1023,6 +1023,16 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_DRAWFRAME, "qrDrawFrame" },
 		{ RT_PROF_WAIT, "wait" },
 		{ RT_PROF_FRAME, "frame" },
+		{ RT_PROF_BRUSH_CHAIN, "brush chain" },
+		{ RT_PROF_BRUSH_LIGHTS, "brush lights" },
+		{ RT_PROF_BRUSH_PACK, "brush pack" },
+		{ RT_PROF_BRUSH_UPLOAD, "brush upload" },
+		{ RT_PROF_ALIAS_POSE, "alias pose" },
+		{ RT_PROF_ALIAS_LIGHTS, "alias lights" },
+		{ RT_PROF_ALIAS_UPLOAD, "alias upload" },
+		{ RT_PROF_BRUSH_MATRIX, "brush matrix" },
+		{ RT_PROF_BRUSH_STYLES, "brush styles" },
+		{ RT_PROF_BRUSH_CLUSTER, "brush cluster" },
 	};
 
 	int i;
