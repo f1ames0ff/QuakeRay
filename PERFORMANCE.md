@@ -186,6 +186,15 @@ C2 repeats: [Fuma Balanced](build/Debug/audit-entity-combined-fuma-repeat-202610
 
 ## Reproduction and update protocol
 
+Build and runner ownership now uses the shared
+[machine guard](tests/perf/machine_guard.ps1). It defers when another owner is detected and
+does not stop foreign processes. The MCP supervisor's runtime adapters work on private copied
+runtime directories; source-runtime configs are not their recovery targets. Failed/canceled
+builds require runtime/submodule review or a successful rebuild before MCP launches that
+runtime. Real MCP capture acceptance is not established by fake-worker containment tests;
+missing assets, workload identities or visual checks remain explicitly unverified. This
+tooling update adds no performance measurements to the historical tables above.
+
 1. Verify source branch, dirty files, executable SHA256, engine pack and matching mod/save hashes. Retained baseline PAK copies may be read-only hardlinks: never overwrite linked assets to prepare a candidate.
 2. Check machine ownership before builds, GPU tests or game launch. Never run a second game, steal another run's focus, or stop another owner's process. If occupied, defer; no unbounded wait.
 3. Build/deploy **Debug** with `build_win.ps1`, not only a plain CMake build. Run the applicable CPU/reference tests and, when ownership permits, GPU smoke tests.

@@ -15,6 +15,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'stress_budget.ps1')
+. (Join-Path $PSScriptRoot 'machine_guard.ps1')
 if ($Saves.Count -ne 1 -or $Presets.Count -ne 1) {
     throw 'Run one save and one preset per invocation; release the GPU between short runs.'
 }
@@ -24,6 +25,8 @@ $minimumCaptureSeconds = $Warmup + $Seconds + $shutdownReserve
 if ($minimumCaptureSeconds -gt $MaxRunSeconds) {
     throw 'Warmup, capture and shutdown reserve cannot fit within MaxRunSeconds.'
 }
+$mutex = Enter-QuakeRayMachine
+try {
 if (-not $Basedir) { $Basedir = Join-Path $PSScriptRoot '..\..\build\Debug' }
 $Basedir = (Resolve-Path $Basedir).Path
 $gameDir = Join-Path $Basedir 'ad'
@@ -137,13 +140,7 @@ function Wait-Marker($Process, [string]$Marker) {
     throw "Timed out waiting for $Marker"
 }
 
-$mutex = New-Object System.Threading.Mutex($false, 'Local\QuakeRayPerformanceRun')
-$locked = $false
 $results = @()
-try {
-    try { $locked = $mutex.WaitOne([TimeSpan]::FromMinutes(5)) }
-    catch [System.Threading.AbandonedMutexException] { $locked = $true }
-    if (-not $locked) { throw 'Performance-run mutex was not available within 5 minutes; defer this run.' }
     foreach ($save in $Saves) {
         foreach ($preset in $Presets) {
             for ($repeat = 1; $repeat -le $Repeats; $repeat++) {
@@ -289,8 +286,7 @@ echo QR_LOADED_$id
         }
     }
 } finally {
-    if ($locked) { $mutex.ReleaseMutex() }
-    $mutex.Dispose()
+    Exit-QuakeRayMachine $mutex
 }
 foreach ($capture in $results) {
     python (Join-Path $PSScriptRoot 'analyze_stress.py') $capture.Frames --json $capture.Summary

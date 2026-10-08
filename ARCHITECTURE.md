@@ -211,6 +211,20 @@ Potential blocking sites are code facts, not a claim that they caused the measur
 
 Do not simply re-enable the old render task graph: [the alias pose scratch is shared and mutable](Quake/r_alias.c#L120), brush chains/caches mutate shared data, and geometry APIs mutate collectors. Parallel gathering requires explicit task-owned data and a controlled upload/commit stage.
 
+## Developer tooling and machine ownership
+
+The [QuakeRay MCP package](tools/quakeray_mcp/README.md) exposes the existing indexes and
+capture formats. Read-only tools do not launch the engine. Runtime jobs are operator opt-in,
+use Windows Job Objects for owned-process containment, and retain incomplete captures as
+unaccepted evidence. MCP does not change renderer execution boundaries or profiler counters.
+
+[machine_guard.ps1](tests/perf/machine_guard.ps1) is shared by `build_win.ps1`, `run_stress.ps1`,
+`run_menu.ps1` and `run_place.ps1`. It acquires `Local\QuakeRayPerformanceRun` and checks foreign
+game/build owners before proceeding. Nested supervised calls reuse the acquiring PowerShell
+thread rather than locking a parent and a different child against each other. This guard is
+Windows-logon-session scoped, not a cross-session guarantee. Non-cooperating/manual launches
+still require process checks and contaminated-run rejection.
+
 ## Profiler lookup and maintenance
 
 - Quake CPU slots: [enum](Quake/glquake.h#L661), [display/CSV names](Quake/gl_vidsdl.c#L989), [capture serialization](Quake/gl_vidsdl.c#L732).

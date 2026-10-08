@@ -1,8 +1,8 @@
 # QuakeRay MCP server — analysis and implementation plan
 
-Status: proposed plan, 2026-10-08. Scope: analysis of the "Engine MCP" proposal and a concrete
-plan for building it for QuakeRay. No implementation is included; all effort numbers are
-estimates, not measurements.
+Status: implementation in progress, 2026-10-08. The P0–P1 inspection layer and opt-in P2 job
+foundation live in `tools/quakeray_mcp`. Real P2 build/game acceptance and P3–P5 remain pending.
+Effort numbers are estimates, not measurements.
 
 Reviewed source snapshot: `2b12ebbc` (`origin/master`, 2026-10-08). Read
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [PERFORMANCE.md](../PERFORMANCE.md) first; these now
@@ -57,6 +57,51 @@ metrics before later phases are funded.
 | P3 | Code intelligence: clangd-backed symbol/reference/call queries | No |
 | P4 | Experiment control: tool-owned worktrees, suites, cleanup | Yes |
 | P5 | Run history and knowledge base; optional screenshot diff | No |
+
+### Implementation progress
+
+- P0 package, exact `mcp==2.3.0` dependency/`uv.lock`, four artifact parsers, explicit schemas,
+  stdio entry point and offline startup are implemented on Python 3.10.6.
+- P1 implements the six read-only tools, the three repository entry resources and a scoped
+  prompt, with header-driven parsing, existing-analyzer reuse and diagnostic comparison.
+  OpenCode's project configuration connects the server without changing permission policy.
+- Artifact IDs currently refer to a bounded immutable **session cache**, not persisted
+  RunRecords. Imported evidence cannot become an accepted baseline; focus and runtime identity
+  remain unknown unless established by a later supervised capture. Real retained-capture
+  import/acceptance remains pending an approved fixture location.
+- Game/build jobs, persistent history, clangd and experiments are not advertised or enabled.
+  P2 still needs the documented shared ownership, containment and recovery gates.
+  This describes the default read-only mode; the opt-in P2 foundation below is now available.
+- Implementation verification: 40 package tests ran (39 passed; the unprivileged Windows
+  symlink test skipped, while the junction-escape test passed), plus the existing six analyzer
+  tests and stress-budget checks. Both protocol versions passed in-memory and real stdio
+  tests. Live OpenCode calls verified readiness, the entry document and all six scenarios.
+  The shell's `opencode` CLI was unavailable; connection was checked through the actual MCP
+  integration instead. No engine build or game launch was performed.
+
+P2 foundation now implements persistent jobs, start idempotency, bounded polling, creator-only
+capability cancellation, Windows kill-on-close containment and interrupted-owner reconciliation.
+The build and three direct runners share `machine_guard.ps1`. Runtime adapters use private
+copied directories instead of relying on `finally` to undo writes to source-runtime configs.
+Failed builds block MCP launch pending review/rebuild; no pre-existing NVRHI patch is reversed
+automatically. Build output, runtime/submodule recovery and full live acceptance still require
+real deployments and owner-approved assets. Capture records are retained but remain unaccepted.
+
+`QUAKERAY_ENABLE_JOBS=1` is an explicit operator opt-in; the default configuration keeps only
+the six inspection tools. The initial P2 surface adds seven jobs/catalog tools, one runtime
+ID and candidate-only menu capture. Multi-runtime A/B, destructive pruning, full verified
+RunRecords and experiments are not claimed complete. Control tokens are returned only with
+the first start receipt, not reissued on an idempotent retry or exposed in history.
+
+Fake-worker tests establish success/failure, conflict/idempotency behavior, timeout/cancel,
+cross-owner refusal, assignment-failure fail-closed behavior, grandchildren containment,
+forced owner death, restart reconciliation and failed-build launch refusal. These checks are
+not a real game benchmark, CTest GPU run or proof of visual correctness.
+
+Setup, API bounds and current tests are documented in
+[tools/quakeray_mcp/README.md](../tools/quakeray_mcp/README.md). The implementation does not
+change engine execution boundaries or profiler counters; existing engine performance indexes
+remain authoritative.
 
 ## 2. The proposal on trial
 
@@ -233,8 +278,8 @@ quakeray MCP facade (thin)          tools/quakeray_mcp
 
 ### 4.1 Decisions
 
-- **Location:** `tools/quakeray_mcp/` in this repository (no `tools/` directory exists today;
-  the tool is coupled to the runners, formats and worktrees, and must version with them).
+- **Location:** `tools/quakeray_mcp/` in this repository, now implemented for P0–P1;
+  the tool is coupled to the runners, formats and worktrees, and must version with them.
   Layout: `pyproject.toml`, committed lockfile, `src/quakeray_mcp/`, `tests/`, `fixtures/`.
 - **Runtime:** Python 3.10+ (3.10.6 observed locally), managed by `uv`; initially pin
   `mcp==2.3.0` and commit the full `uv.lock`. An interval such as `mcp>=2.3,<3` is not an exact
@@ -273,10 +318,12 @@ quakeray MCP facade (thin)          tools/quakeray_mcp
 
 ### 4.2 OpenCode configuration
 
-Planned project-local `opencode.jsonc` snippet; merge it with existing configuration rather
-than replacing it. The package/environment do not exist yet. Once P0 creates them, run
-`uv sync --locked --project tools/quakeray_mcp` explicitly. Normal startup must use the
-installed environment without downloading or resolving new dependencies:
+Project-local `opencode.jsonc` is now registered and tested. Install the package/environment
+explicitly with `uv sync --locked --project tools/quakeray_mcp --python 3.10`; normal startup
+uses the installed environment without downloading or resolving dependencies. The reference
+snippet below includes a recommended ask policy for an operator to apply deliberately;
+the actual project configuration inherits existing permissions and does not override them.
+Merge with existing configuration rather than replacing it:
 
 ```jsonc
 {
@@ -285,7 +332,7 @@ installed environment without downloading or resolving new dependencies:
     "servers": {
       "quakeray": {
         "type": "local",
-        "command": ["uv", "run", "--offline", "--frozen", "--no-sync", "--project", "tools/quakeray_mcp", "python", "-m", "quakeray_mcp"],
+        "command": ["uv", "run", "--offline", "--frozen", "--no-sync", "--project", "tools/quakeray_mcp", "python", "-B", "-m", "quakeray_mcp"],
         "cwd": ".",
         "environment": { "QUAKERAY_ROOT": ".", "QUAKERAY_BUILD": "build/Debug" },
         "protocol": "legacy",

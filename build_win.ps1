@@ -8,6 +8,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "tests\perf\machine_guard.ps1")
+$machineGuard = Enter-QuakeRayMachine
+try {
 
 $anchorRoot = $PSScriptRoot
 Set-Location $anchorRoot
@@ -292,3 +295,6 @@ if ($nvrhiPatchedHere)
 }
 
 exit $exitCode
+} finally {
+    Exit-QuakeRayMachine $machineGuard
+}
