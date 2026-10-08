@@ -119,7 +119,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
 
     uniform             = std::make_shared<GlobalUniform>(device, memAllocator);
 
-    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager, presentWait2Enabled);
+    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager, presentWait2Enabled, swapchainMaintenance1Enabled);
 
     worldSamplerManager     = std::make_shared<SamplerManager>(device, 8, info->textureSamplerForceMinificationFilterLinear,
                                                                rhiTextureTable.get());
@@ -923,6 +923,38 @@ void VulkanDevice::CreateDevice()
                                 sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
     }
 
+    // The present-operation fences of VK_KHR_swapchain_maintenance1 (VK_EXT_swapchain_maintenance1
+    // is the same extension under its old name): they are the completion signal of a presentation
+    // operation, which vkDeviceWaitIdle does not cover. Prefer the KHR spelling, accept EXT.
+    const char *swapchainMaintenance1ExtensionName = nullptr;
+    for (const VkExtensionProperties &ext : supportedDeviceExtensions)
+    {
+        if (!std::strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
+        {
+            swapchainMaintenance1ExtensionName = VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
+            break;
+        }
+
+        if (!std::strcmp(ext.extensionName, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
+        {
+            swapchainMaintenance1ExtensionName = VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
+        }
+    }
+
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchainMaintenance1Features = {};
+    swapchainMaintenance1Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR;
+
+    bool swapchainMaintenance1Supported = false;
+    if (swapchainMaintenance1ExtensionName != nullptr)
+    {
+        VkPhysicalDeviceFeatures2 swapchainMaintenanceFeatures2 = {};
+        swapchainMaintenanceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        swapchainMaintenanceFeatures2.pNext = &swapchainMaintenance1Features;
+        vkGetPhysicalDeviceFeatures2(physDevice->Get(), &swapchainMaintenanceFeatures2);
+
+        swapchainMaintenance1Supported = swapchainMaintenance1Features.swapchainMaintenance1 == VK_TRUE;
+    }
+
     VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
     rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
     rayQueryFeatures.pNext = &storage16;
@@ -948,6 +980,12 @@ void VulkanDevice::CreateDevice()
         presentId2Features.pNext = physicalDeviceFeatures2.pNext;
         presentWait2Features.pNext = &presentId2Features;
         physicalDeviceFeatures2.pNext = &presentWait2Features;
+    }
+
+    if (swapchainMaintenance1Supported)
+    {
+        swapchainMaintenance1Features.pNext = physicalDeviceFeatures2.pNext;
+        physicalDeviceFeatures2.pNext = &swapchainMaintenance1Features;
     }
 
     std::vector<const char *> deviceExtensions = {
@@ -991,6 +1029,11 @@ void VulkanDevice::CreateDevice()
         deviceExtensions.push_back(VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME);
     }
 
+    if (swapchainMaintenance1Supported)
+    {
+        deviceExtensions.push_back(swapchainMaintenance1ExtensionName);
+    }
+
     enabledDeviceExtensions.clear();
     for (const char *n : deviceExtensions)
     {
@@ -1015,6 +1058,7 @@ void VulkanDevice::CreateDevice()
     InitDeviceExtensionFunctions(device);
 
     presentWait2Enabled = presentWait2Supported && InitDeviceExtensionFunctions_PresentWait2(device);
+    swapchainMaintenance1Enabled = swapchainMaintenance1Supported;
 
     if (libconfig.vulkanValidation)
     {
