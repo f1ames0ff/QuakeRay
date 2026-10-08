@@ -18,6 +18,7 @@ dumps: mean, p95 and the delta against the baseline arm for every frozen column.
 | `arm_no_smoke.cfg` | `r_smoke 0` |
 | `arm_no_fte.cfg` | `r_fteparticles 0` |
 | `arm_partcache_off.cfg` | `rt_particle_resolve_cache 0` |
+| `arm_points_off.cfg` | `r_particles_points 0` |
 
 ## Workflow
 
@@ -46,6 +47,7 @@ dumps: mean, p95 and the delta against the baseline arm for every frozen column.
        no_smoke      = 'build\Debug\ad\stats-heavy-no_smoke.dump'
        no_fte        = 'build\Debug\ad\stats-heavy-no_fte.dump'
        partcache_off = 'build\Debug\ad\stats-heavy-partcache_off.dump'
+       points_off    = 'build\Debug\ad\stats-heavy-points_off.dump'
    } -Output perf\stage0\attribution.md
    ```
 
@@ -55,6 +57,12 @@ dumps: mean, p95 and the delta against the baseline arm for every frozen column.
    per-frame times.
 6. Repeat step 4 for every arm and rerun the script. Compare arms recorded in one session on one
    machine and driver.
+
+Stage 2 adds the transport switch: a run that measures the compact-point path holds
+`r_particles_points 1` (its default), and `arm_points_off` is the only arm that sets it to 0 for
+the legacy `QrVertex` transport. Name the cvar in the control configs so every run pins it, and
+because it is archived, set it back to 1 (`exec arm_baseline` does not name it today) before a run
+that follows `points_off`.
 
 ## Arms and expected signature
 
@@ -66,6 +74,7 @@ dumps: mean, p95 and the delta against the baseline arm for every frozen column.
 | no_smoke | `r_smoke 0` | smoke puffs stop; rockets and grenades fall back to classic trails (`r_part.c:675-685`), so `particles_classic` may rise while `particles_smoke` -> 0 |
 | no_fte | `r_fteparticles 0` | the FTE sim stops and its effects fall back to classic; `particles_fte`, `particles_vertices` and `fte_convert_bytes` -> 0, `cpu.fte_convert_ms` -> 0, `particles_classic` may rise |
 | partcache_off | `rt_particle_resolve_cache 0` | once the cache cvar exists: the point-cluster cache is off, `cpu.particles_resolve_ms` rises and fps falls; the counts stay unchanged |
+| points_off | `r_particles_points 0` | the legacy `QrVertex` transport instead of the 24 B point: `particle_upload_bytes` and `raster_upload_bytes` rise (3 `QrVertex` per sprite, ~240 B), `cpu.particles_fill_ms` rises, the live counts stay; the measured fps/slot delta against baseline is what the Stage-2 gate reads |
 
 ## Manual smoke check (instrumentation)
 
@@ -76,16 +85,14 @@ game. Expected in at least part of the rows: `particles_smoke` > 0, `cpu.particl
 `gpu.particles_ms` > 0, `particles_cache_hits + particles_cache_misses` > 0, and `rays_particle` > 0
 while `r_particle_lighting 1`.
 
-## Pending instrumentation
+## Landed instrumentation
 
-- `rt_particle_resolve_cache` is not registered in this tree yet: the 512x4 point-cluster cache in
-  `Quake/gl_rlight.c` is a working-tree change without a cvar or counters (Stage 1 adds the cvar).
-  A config line naming it prints `Unknown command` and the rest of the `exec` still runs, so the
-  control configs, `arm_baseline` and `arm_partcache_off` are safe to run today; the off arm is a
-  no-op until the cvar lands and must not fail the run.
-- The frozen dump columns (`cpu.particles_sim_ms`, `cpu.particles_resolve_ms`,
-  `cpu.particles_fill_ms`, `cpu.particles_upload_ms`, `cpu.fte_convert_ms`, `particles_classic`,
-  `particles_fte`, `particles_vertices`, `particles_smoke`, `particles_dropped`,
-  `fte_convert_bytes`, `particle_upload_bytes`, `gpu.particles_ms`, `rays_particle`) are added by
-  the Stage 0 instrumentation. Until that build lands, the attribution script reports every one of
-  them as a missing column with a warning rather than skipping it.
+- The Stage-0 slots and columns are in this tree (commits `c53c52d8`, `e89abc1c`): the dump carries
+  every column the attribution script lists, `rt_particle_resolve_cache` is registered, and the
+  control configs and arms can be run as written.
+- Stage 2 adds `r_particles_points` (default `1`, archived) and no new columns; `arm_points_off`
+  switches the classic traffic back to the legacy transport. A build predating the Stage-2 work
+  prints `Unknown command` for it and runs the rest of the `exec`, so the arm is not a hard failure
+  on an older binary.
+- `particle_heavy.cfg` and `particle_idle.cfg` pin `r_particles_points 1`; the reset before every
+  arm stays `exec particle_heavy`.

@@ -77,6 +77,19 @@ scale to the content that actually exists.
 - Classic first; keep per-vertex ray behavior for parity until Stage 4.
 - Gate: <=5% fps / <=10% slot regression on both demos; upload-byte counter; caps raised loudly.
 
+### Stage 2 — implementation notes (pending measurement)
+- The new public API: `QrParticlePoint` (24 B: position, packedColor, size, cluster),
+  `QrParticleUploadInfo` and `qrUploadParticles`. Classic sprites upload one point per particle
+  through a per-instance buffer; the new `RsParticlePoints.vert.hlsl` expands the point into the
+  triangle, replacing the 3-vertex `QrVertex` transport.
+- `r_particles_points` (default `1`, archived) selects the compact-point transport for classic
+  triangles; `0` restores the legacy transport for the A/B arm. `QUAD_PARTICLES` always falls back
+  to legacy.
+- FTE and smoke keep the legacy `QrVertex` path; the traced glass stand-ins of the classic sprites
+  are kept for the new path.
+- The gate above is unchanged and still awaits the Stage-0 demos (`ad_particle_heavy` /
+  `ad_particle_idle`); no Stage-2 measurement is claimed yet.
+
 ### Stage 3 — cluster volume, remove CPU resolves (after dtal; accuracy contract A1-A3)
 - R16_UINT volume painted from `leaf_cluster`; 64 u base; own map generation; keep 0 semantics.
 - Replace every CPU resolve for classic/FTE/smoke with a volume sample plus the CPU-cluster fallback

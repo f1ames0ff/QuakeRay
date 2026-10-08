@@ -77,7 +77,7 @@ Record the baseline with the same flags (`-Update -Samples ...`): a plain `-Upda
 
 ### Particle Stage 0 workflow
 
-Stage 0 of `docs/particle-plan.md` is the measurement gate for the particle work, and these runs are its evidence. The planned control demos are `ad_particle_heavy` (dense particle trail) and `ad_particle_idle` (the same viewpoint at rest), recorded on Arcane Dimensions `start` from one saved `setpos`/`setangle`. Record them once, keep demos and logs out of git, and hold the settings fixed on every run (`vid_vsync 0`, `rt_stats 0`, the same resolution, FSR/DLSS and render scale as the stored baseline):
+Stage 0 of `docs/particle-plan.md` is the measurement gate for the particle work, and these runs are its evidence. The planned control demos are `ad_particle_heavy` (dense particle trail) and `ad_particle_idle` (the same viewpoint at rest), recorded on Arcane Dimensions `start` from one saved `setpos`/`setangle`. Record them once, keep demos and logs out of git, and hold the settings fixed on every run (`vid_vsync 0`, `rt_stats 0`, the same resolution, FSR/DLSS and render scale as the stored baseline). Stage 2 adds the transport switch `r_particles_points` (default `1`, archived): a compact-point run holds it on, and `perf\stage0\arm_points_off.cfg` holds it at `0` for the legacy `QrVertex` transport, so pin it on every run like the settings above:
 
 1. `rt_bench ad_particle_heavy quit` plays the demo and appends a block to `<game>\benchmark.log` (for example `build\Debug\ad\benchmark.log`).
 2. `rt_stats_dump_start`, replay the same demo window, `rt_stats_dump_end` writes `stats-<datetime>.dump`.
@@ -114,3 +114,5 @@ The instrumentation has landed these columns; the status tracks the guard's cont
 | `raster_upload_dropped_batches` | dump (`QrFrameStats`) | batches dropped by the raster collector | landed |
 
 The counter columns (`particles_*`, `*_bytes`, `rays_particle`, `raster_upload_*`, the cache counters) are recorded but not compared yet: the guard's dump reader computes p95 only for the timing columns, so the counters need their own compare rule (direction and zero baseline) before they can be pinned. The timing columns above need no parser change.
+
+Stage 2 changes the particle transport without adding columns: the compact-point path against the legacy `QrVertex` transport is measured by the existing `cpu.particles_fill_ms`, `cpu.particles_upload_ms`, `particle_upload_bytes` and `raster_upload_bytes` columns.
