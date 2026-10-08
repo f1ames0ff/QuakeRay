@@ -15,6 +15,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'stress_budget.ps1')
+. (Join-Path $PSScriptRoot 'machine_guard.ps1')
 if ($Saves.Count -ne 1 -or $Presets.Count -ne 1) {
     throw 'Run one save and one preset per invocation; release the GPU between short runs.'
 }
@@ -24,6 +25,8 @@ $minimumCaptureSeconds = $Warmup + $Seconds + $shutdownReserve
 if ($minimumCaptureSeconds -gt $MaxRunSeconds) {
     throw 'Warmup, capture and shutdown reserve cannot fit within MaxRunSeconds.'
 }
+$mutex = Enter-QuakeRayMachine
+try {
 if (-not $Basedir) { $Basedir = Join-Path $PSScriptRoot '..\..\build\Debug' }
 $Basedir = (Resolve-Path $Basedir).Path
 $gameDir = Join-Path $Basedir 'ad'
@@ -68,6 +71,16 @@ foreach ($asset in @('pak0.pak', 'pak1.pak', 'pak2.pak', 'qray.materials.yaml', 
     }
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $output 'manifest.json') -Encoding UTF8
+$inventoryPython = Join-Path $PSScriptRoot '..\..\tools\quakeray_mcp\.venv\Scripts\python.exe'
+if (Test-Path -LiteralPath $inventoryPython) {
+    $inventoryJson = & $inventoryPython -B -m quakeray_mcp.asset_inventory $Basedir
+    if ($LASTEXITCODE -ne 0) { throw 'Asset inventory failed; refusing an unverified run.' }
+    $inventoryPath = Join-Path $output 'assets.json'
+    [IO.File]::WriteAllText($inventoryPath, ($inventoryJson -join "`n"), [Text.UTF8Encoding]::new($false))
+    $manifest.AssetInventorySha256 = (Get-FileHash $inventoryPath -Algorithm SHA256).Hash
+    $manifest.AssetInventoryPolicy = 1
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $output 'manifest.json') -Encoding UTF8
+}
 
 Add-Type @"
 using System;
@@ -125,6 +138,7 @@ function Send-Key([IntPtr]$Window, [int]$Key, [int]$Scan) {
 function Wait-Marker($Process, [string]$Marker) {
     $deadline = $script:RunDeadline
     while ((Get-Date) -lt $deadline) {
+        if (Test-QuakeRayStopRequested) { throw 'CANCELLED: stop requested while awaiting runtime readiness.' }
         $Process.Refresh()
         if ($Process.HasExited) { throw "Runtime exited with code $($Process.ExitCode) before $Marker" }
         if ($script:CurrentStderr -and (Test-Path $script:CurrentStderr)) {
@@ -137,13 +151,7 @@ function Wait-Marker($Process, [string]$Marker) {
     throw "Timed out waiting for $Marker"
 }
 
-$mutex = New-Object System.Threading.Mutex($false, 'Local\QuakeRayPerformanceRun')
-$locked = $false
 $results = @()
-try {
-    try { $locked = $mutex.WaitOne([TimeSpan]::FromMinutes(5)) }
-    catch [System.Threading.AbandonedMutexException] { $locked = $true }
-    if (-not $locked) { throw 'Performance-run mutex was not available within 5 minutes; defer this run.' }
     foreach ($save in $Saves) {
         foreach ($preset in $Presets) {
             for ($repeat = 1; $repeat -le $Repeats; $repeat++) {
@@ -233,12 +241,21 @@ echo QR_LOADED_$id
                         break
                     }
                     $deadline = Get-StressDeadline -Deadline $script:RunDeadline.AddSeconds(-$shutdownReserve) -MaximumSeconds $Seconds
+                    $nextOwnerCheck = Get-Date
                     while ((Get-Date) -lt $deadline) {
+                        if (Test-QuakeRayStopRequested) { break }
                         if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Focus was lost during capture.' }
+                        if ((Get-Date) -ge $nextOwnerCheck) {
+                            $foreign = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+                                $_.Id -ne $process.Id -and $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)'
+                            })
+                            if ($foreign.Count) { throw 'MACHINE_BUSY: foreign heavy activity contaminated this capture.' }
+                            $nextOwnerCheck = (Get-Date).AddSeconds(1)
+                        }
                         Start-Sleep -Milliseconds 100
                     }
                     Send-Key $window 0x74 0x3f
-                    Wait-Marker $process "QR_STOP_$id"
+                    if (-not (Test-QuakeRayStopRequested)) { Wait-Marker $process "QR_STOP_$id" }
                     if ($Screenshot -and (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds 10)) {
                         Send-Key $window 0x75 0x40
                         Start-Sleep -Seconds 2
@@ -248,6 +265,7 @@ echo QR_LOADED_$id
                         throw 'Runtime did not exit within the remaining budget'
                     }
                     if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
+                    if (Test-QuakeRayStopRequested) { throw 'CANCELLED: owned runtime stopped; capture remains unaccepted.' }
                     if ($StatsLevel -gt 0) {
                         $dump = Get-ChildItem $gameDir -Filter 'stats-*.dump' | Where-Object FullName -notin $oldDumps |
                             Sort-Object LastWriteTime | Select-Object -Last 1
@@ -274,6 +292,9 @@ echo QR_LOADED_$id
                         }
                     }
                     Copy-Item $console (Join-Path $output "$label.console.log")
+                    if (-not $manifest.Contains('CaptureChecks')) { $manifest.CaptureChecks = [ordered]@{} }
+                    $manifest.CaptureChecks[$label] = @{ FocusVerified = $true; Completed = $true; StatsLevel = $StatsLevel }
+                    $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $output 'manifest.json') -Encoding UTF8
                     $results += [PSCustomObject]@{ Save = $save; Preset = $preset; Repeat = $repeat; Output = $output;
                         Frames = $framePath; Summary = Join-Path $output "$label.summary.json" }
                     Write-Host "Saved $label; runtime closed before analysis."
@@ -289,8 +310,7 @@ echo QR_LOADED_$id
         }
     }
 } finally {
-    if ($locked) { $mutex.ReleaseMutex() }
-    $mutex.Dispose()
+    Exit-QuakeRayMachine $mutex
 }
 foreach ($capture in $results) {
     python (Join-Path $PSScriptRoot 'analyze_stress.py') $capture.Frames --json $capture.Summary

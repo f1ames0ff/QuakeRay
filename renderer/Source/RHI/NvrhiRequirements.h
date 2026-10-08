@@ -30,6 +30,10 @@ struct NvrhiRequirements
 
     bool shaderStorageImageArrayNonUniformIndexing = false;
 
+    // The shadow map sampler uses VK_SAMPLER_REDUCTION_MODE_MIN (RhiShadowMapPass), which requires
+    // this feature; creating the sampler without it is invalid usage.
+    bool samplerFilterMinmax = false;
+
     // Vulkan 1.3: every pass the RHI layer records is a dynamic rendering pass.
     bool dynamicRendering = false;
 

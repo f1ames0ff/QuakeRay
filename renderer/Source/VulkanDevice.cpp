@@ -1101,8 +1101,11 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         pendingScreenshotPath.clear();
     }
 
+    const VkSemaphore renderFinishedSemaphore =
+        swapchain->GetRenderFinishedSemaphore(swapchain->GetCurrentImageIndex());
+
     fillInputs.Finish();
-    if (!nvrhiFrameSkeleton->Render(swapchain.get(), frameIndex, sky, semaphoreToWait, renderFinishedSemaphores[frameIndex]))
+    if (!nvrhiFrameSkeleton->Render(swapchain.get(), frameIndex, sky, semaphoreToWait, renderFinishedSemaphore))
     {
         currentFrameState.SetSemaphore(semaphoreToWait, semaphoreWaitStage);
         return false;
@@ -1121,7 +1124,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
 
     {
         CpuProfileScope present(cpuProfiler, QR_CPU_PASS_PRESENT);
-        swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
+        swapchain->Present(queues, renderFinishedSemaphore);
     }
 
     frameId++;
@@ -1135,19 +1138,22 @@ void VulkanDevice::EndFrame(VkCommandBuffer cmd)
     VkPipelineStageFlags semaphoreWaitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     VkSemaphore semaphoreToWait = currentFrameState.GetSemaphoreForWaitAndRemove(&semaphoreWaitStage);
 
+    const VkSemaphore renderFinishedSemaphore =
+        swapchain->GetRenderFinishedSemaphore(swapchain->GetCurrentImageIndex());
+
     {
         CpuProfileScope submit(cpuProfiler, QR_CPU_PASS_LEGACY_SUBMIT);
         cmdManager->Submit(
             cmd,
             semaphoreToWait,
             semaphoreWaitStage,
-            renderFinishedSemaphores[frameIndex],
+            renderFinishedSemaphore,
             frameFences[frameIndex]);
     }
 
     {
         CpuProfileScope present(cpuProfiler, QR_CPU_PASS_PRESENT);
-        swapchain->Present(queues, renderFinishedSemaphores[frameIndex]);
+        swapchain->Present(queues, renderFinishedSemaphore);
     }
 
     frameId++;

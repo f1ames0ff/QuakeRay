@@ -144,6 +144,8 @@ Follow the producer and only the implicated backend boundary:
 
 These API calls perform CPU work **before** `qrDrawFrame`; their time is included in producer upload slots. Later `cpu.draw.staging_ms` is not the total cost of preparing or copying entity geometry.
 
+The ImGui bridge advertises `ImGuiBackendFlags_RendererHasVtxOffset` during initialization and preserves command-local indices in [UploadDrawData](Quake/qr_gui.cpp#L174). `ImDrawCmd::VtxOffset` shifts only the uploaded vertex pointer; it must not be subtracted from the already-local indices. This supports draw lists above 65,535 vertices with 16-bit ImGui indices. [gui_draw_tests.cpp](tests/gui_draw_tests.cpp) exercises the real bridge using headless SDL and renderer stubs, including multiple rollover offsets, material/clip splits and exact vertex attributes; no GPU is needed.
+
 ### Dependency and data-flow graph
 
 ```mermaid
@@ -210,6 +212,28 @@ Potential blocking sites are code facts, not a claim that they caused the measur
 | Diagnostics | [Screenshot handling waits for device idle](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L1683); [focus loss/pause/minimize sleeps](Quake/main_sdl.c#L107) and [audio locks](Quake/snd_dma.c#L827) are other blockers. | Keep screenshots outside capture; reject unfocused/paused runs. |
 
 Do not simply re-enable the old render task graph: [the alias pose scratch is shared and mutable](Quake/r_alias.c#L120), brush chains/caches mutate shared data, and geometry APIs mutate collectors. Parallel gathering requires explicit task-owned data and a controlled upload/commit stage.
+
+## Developer tooling and machine ownership
+
+Opt-in developer interfaces now include selected-translation-unit clangd symbols/references/
+call edges and bounded paths, retained run comparisons/baseline promotion, isolated experiment
+worktrees/builds/suites and research/image diagnostics. Index identities include source, headers,
+compile database and backend version; diagnostics/unresolved coverage remain visible. CDB
+warning-as-error flags are adjusted only in a temporary index database, never in the build.
+The research store is a ledger linking these authoritative documents and captures, not a
+second architecture specification. See the package README for activation and limits.
+
+The [QuakeRay MCP package](tools/quakeray_mcp/README.md) exposes the existing indexes and
+capture formats. Read-only tools do not launch the engine. Runtime jobs are operator opt-in,
+use Windows Job Objects for owned-process containment, and retain incomplete captures as
+unaccepted evidence. MCP does not change renderer execution boundaries or profiler counters.
+
+[machine_guard.ps1](tests/perf/machine_guard.ps1) is shared by `build_win.ps1`, `run_stress.ps1`,
+`run_menu.ps1` and `run_place.ps1`. It acquires `Local\QuakeRayPerformanceRun` and checks foreign
+game/build owners before proceeding. Nested supervised calls reuse the acquiring PowerShell
+thread rather than locking a parent and a different child against each other. This guard is
+Windows-logon-session scoped, not a cross-session guarantee. Non-cooperating/manual launches
+still require process checks and contaminated-run rejection.
 
 ## Profiler lookup and maintenance
 

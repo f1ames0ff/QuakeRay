@@ -1,0 +1,13 @@
+# rt_stats_dump 2026-10-08 10:00:00 panels 7
+gpu.frame ms 12.00
+gpu.pass primary 0.00
+gpu.rays total 100
+gpu.calls geometry 10
+cpu.frame ms 18.00
+cpu.main ms 17.00
+cpu.wait ms 1.00
+fps - 50.0
+cpu.slot ents 7.00
+cpu.avg ents 6.00
+cpu.draw RHI setup avg_ms=2.100 max_ms=2.200
+cpu.cluster cache hits 1

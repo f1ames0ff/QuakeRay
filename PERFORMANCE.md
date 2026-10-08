@@ -186,6 +186,47 @@ C2 repeats: [Fuma Balanced](build/Debug/audit-entity-combined-fuma-repeat-202610
 
 ## Reproduction and update protocol
 
+### MCP live verification after the ImGui fix
+
+Subsequent integration verification exercised a no-op owned experiment at `e55982af`, with
+independently initialized local dependencies and successful contained Debug build
+(`job_727a9a30229645bb98cce5d8c530d57d`). Its two-arm Fuma suite
+`job_9ad4d5533e294a5e82e0e682a0c87236` completed baseline then candidate with ownership released
+between invocations. These short no-op observations are not an optimization claim.
+
+Isolated menu A/A `job_f3860abe2ce743ab9449410fc243d5a7` completed and produced two PNGs;
+their diagnostic pixel comparison was intentionally not classified as visual equivalence.
+The research finding/search roundtrip retained the suite's two run IDs as an inconclusive
+operator interpretation. A later receipt-matched Fuma control
+`job_76c7a188be37419f89dd42ff9792adeb` verified retained provenance and was explicitly promoted
+as `fuma_balanced_debug_control`; matched mean/p95 comparison was within the labeled 5% policy.
+Visual/gameplay/validation statuses remain independent, not silently PASS.
+
+On 2026-10-08 the approved Debug runtime and documented AD saves were available locally.
+`job_074a7aa9047946e790edd4f60c292642` completed an 8-second warmup / 6-second Fuma Balanced
+benchmark through the contained supervisor, with 34.80 FPS and 28.74 ms mean interval.
+This is a tooling smoke observation, not a paired optimization result or new canonical control.
+
+The AD-hub StatsLevel-3 capture initially hit the 16-bit ImGui draw-list assertion. The fix
+from `3bc99d9b` was cherry-picked as `e55982af`; Debug deployment and all three CPU CTests,
+including `gui_draw_tests`, passed. The repeated diagnostic job
+`job_4e99860f7ead4dfbbef571911d01bfbe` succeeded with no assertion. Its overlay-enabled timings
+are diagnostic only and must not be compared to StatsLevel-0 performance controls.
+
+Raw evidence remains under `%LOCALAPPDATA%/QuakeRayMCP/acd0cbf5d5998a3e91a76882/jobs/<job-id>/runtime/`.
+Failed jobs from missing assets, focus loss and console/instrumentation changes were retained
+and rejected, not promoted to baselines. Binary/asset acceptance, long gameplay, visual
+equivalence and the remaining MCP phases are not certified by these short verification runs.
+
+Build and runner ownership now uses the shared
+[machine guard](tests/perf/machine_guard.ps1). It defers when another owner is detected and
+does not stop foreign processes. The MCP supervisor's runtime adapters work on private copied
+runtime directories; source-runtime configs are not their recovery targets. Failed/canceled
+builds require runtime/submodule review or a successful rebuild before MCP launches that
+runtime. Real MCP capture acceptance is not established by fake-worker containment tests;
+missing assets, workload identities or visual checks remain explicitly unverified. This
+tooling update adds no performance measurements to the historical tables above.
+
 1. Verify source branch, dirty files, executable SHA256, engine pack and matching mod/save hashes. Retained baseline PAK copies may be read-only hardlinks: never overwrite linked assets to prepare a candidate.
 2. Check machine ownership before builds, GPU tests or game launch. Never run a second game, steal another run's focus, or stop another owner's process. If occupied, defer; no unbounded wait.
 3. Build/deploy **Debug** with `build_win.ps1`, not only a plain CMake build. Run the applicable CPU/reference tests and, when ownership permits, GPU smoke tests.
