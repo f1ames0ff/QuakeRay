@@ -98,6 +98,11 @@ scale to the content that actually exists.
   registered (the scripted attack did not fire), so the classic figure is an idle figure. This
   points at the FTE conversion/resolve as the measured hot spots and at the owner's recorded demos
   as the decisive Stage-2 exercise.
+- Runtime check (stock `demo1`, both transports, 74 s each, 3840x2160): the compact-point path ran
+  with classic sprites in the capture and left no crash, and the frame held within noise -
+  `frame` 15.77 vs 15.80 ms, `particles fill` 0.10 vs 0.10 ms, `particles upload` 0.01 vs 0.02 ms
+  (points on vs off). The stock demo carries too few classic particles (~81 sprites at its peak)
+  for the transport win to show; the gate still awaits the owner's dense demos.
 
 ### Stage 3 — cluster volume, remove CPU resolves (after dtal; accuracy contract A1-A3)
 - R16_UINT volume painted from `leaf_cluster`; 64 u base; own map generation; keep 0 semantics.

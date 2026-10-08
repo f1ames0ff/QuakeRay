@@ -106,6 +106,12 @@ registers leaves both arms without classic particles and the comparison measures
 scripted attack is less reliable than hand input; the recorded `ad_particle_*` demos remain the
 decisive Stage-2 exercise.
 
+A deterministic smoke that needs no save: put the particle cvars and `rt_bench demo1 quit` into a
+config, `+exec` it and let the demo play to its report (74 s for the stock `demo1`, and it exits by
+itself; cap the run at ~3 minutes). It proves the transport runs and leaves a comparable `rt_bench`
+block per arm. Stock demos carry few classic particles, so the win only shows on the owner's
+recorded demos.
+
 ## Landed instrumentation
 
 - The Stage-0 slots and columns are in this tree (commits `c53c52d8`, `e89abc1c`): the dump carries
