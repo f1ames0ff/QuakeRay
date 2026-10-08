@@ -54,6 +54,7 @@ cvar_t r_particle_light_gain = {"r_particle_light_gain", "10.0", CVAR_ARCHIVE};
 cvar_t r_particle_light_direct = {"r_particle_light_direct", "1", CVAR_ARCHIVE};
 cvar_t r_particle_light_floor = {"r_particle_light_floor", "0.001", CVAR_ARCHIVE};
 cvar_t r_particle_light_debug = {"r_particle_light_debug", "0", CVAR_NONE};
+cvar_t r_particles_points = {"r_particles_points", "1", CVAR_ARCHIVE};
 
 #define QUAD_PARTICLES 0
 static uint32_t *quadindices = NULL;
@@ -212,6 +213,7 @@ void R_InitParticles (void)
 	Cvar_RegisterVariable (&r_particle_light_direct);
 	Cvar_RegisterVariable (&r_particle_light_floor);
 	Cvar_RegisterVariable (&r_particle_light_debug);
+	Cvar_RegisterVariable (&r_particles_points);
 
 	R_InitParticleTextures (); // johnfitz
 	R_InitParticleIndexBuffer ();
@@ -943,6 +945,58 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		num_particles += 1;
 
 	rt_particles_classic = num_particles;
+
+	if (!QUAD_PARTICLES && CVAR_TO_BOOL (r_particles_points) && CVAR_TO_BOOL (r_particle_lighting))
+	{
+		const qboolean lit_particles = CVAR_TO_BOOL (r_particle_lighting);
+		QrParticlePoint *points = RT_AllocScratchMemory (num_particles * sizeof (QrParticlePoint));
+		int             current_point = 0;
+
+		for (p = active_particles; p; p = p->next)
+		{
+			// hack a scale up to keep particles from disapearing
+			scale = (p->org[0] - r_origin[0]) * vpn[0] + (p->org[1] - r_origin[1]) * vpn[1] + (p->org[2] - r_origin[2]) * vpn[2];
+			if (scale < 20)
+				scale = 1 + 0.08; // johnfitz -- added .08 to be consistent
+			else
+				scale = 1 + scale * 0.004;
+
+			scale *= texturescalefactor; // johnfitz -- compensate for apparent size of different particle textures
+
+			byte *c = (byte *)&d_8to24table[(int)p->color];
+
+			points[current_point].position[0] = p->org[0];
+			points[current_point].position[1] = p->org[1];
+			points[current_point].position[2] = p->org[2];
+			points[current_point].packedColor = RT_PackColorToUint32 (c[0], c[1], c[2], 255);
+			points[current_point].size = scale;
+			points[current_point].cluster =
+				lit_particles ? (uint32_t)RT_ResolvePointCluster (p->org) : 0u;
+			current_point++;
+		}
+
+		// One add for the whole batch: nothing reads the counter while the particles are emitted.
+		Atomic_AddUInt32 (&rs_particles, num_particles);
+		RT_Prof_End (RT_PROF_PARTICLES_FILL, prof_fill);
+
+		QrParticleUploadInfo info = {
+			.pPoints = points,
+			.count = num_particles,
+			.material = texture ? texture->rtmaterial : QR_NO_MATERIAL,
+			.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+			                 QR_RASTERIZED_GEOMETRY_STATE_PARTICLE | QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE,
+			.smokeLook = {{ CVAR_TO_BOOL (r_particle_light_debug) ? 1.0f : 0.0f,
+			                r_particle_light_direct.value,
+			                r_particle_light_gain.value, r_particle_light_floor.value }},
+		};
+
+		rt_particle_upload_bytes += (uint64_t)num_particles * sizeof (QrParticlePoint);
+		double prof_upload = RT_Prof_Begin ();
+		QrResult r = qrUploadParticles (vulkan_globals.instance, &info);
+		RT_Prof_End (RT_PROF_PARTICLES_UPLOAD, prof_upload);
+		QR_CHECK (r);
+		return;
+	}
 
 	QrVertex *vertices;
 	if (QUAD_PARTICLES)

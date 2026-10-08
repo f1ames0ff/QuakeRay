@@ -838,6 +838,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "r_fteparticles");
 	RT_Bench_Setting (f, "r_smoke");
 	RT_Bench_Setting (f, "rt_particle_resolve_cache");
+	RT_Bench_Setting (f, "r_particles_points");
 	fprintf (f, " vid=%dx%d@%d vsync=%d version=%s\n", vid.width, vid.height, vid_display_refresh,
 	         (int)vid_vsync.value, ENGINE_VER_STRING);
 
