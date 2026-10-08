@@ -312,6 +312,15 @@ void RasterizedDataCollector::CopyFromArrayOfStructs(
     static_assert(offsetof(ShVertex, packedColor)       == offsetof(QrVertex, packedColor));
 
     memcpy(dstVerts, info.pVertices, sizeof(QrVertex) * info.vertexCount);
+
+    if ( info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_TEXCOORD_TRANSFORM )
+    {
+        for ( uint32_t i = 0; i < info.vertexCount; i++ )
+        {
+            dstVerts[ i ].texCoord[0] = dstVerts[ i ].texCoord[0] * info.texCoordScale[0] + info.texCoordOffset[0];
+            dstVerts[ i ].texCoord[1] = dstVerts[ i ].texCoord[1] * info.texCoordScale[1] + info.texCoordOffset[1];
+        }
+    }
 }
 
 bool RasterizedDataCollector::CaptureParticleProxies(const QrRasterizedGeometryUploadInfo &info)

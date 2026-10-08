@@ -53,6 +53,8 @@ typedef struct rt_material_s {
     char filename_emissive[MAX_QPATH];
     char filename_overlay[MAX_QPATH];
     char filename_gloss[MAX_QPATH];
+    float    texture_scale_u, texture_scale_v;
+    float    texture_offset_u, texture_offset_v;
     float bump_scale;
     float roughness_override;
     float metalness_factor;

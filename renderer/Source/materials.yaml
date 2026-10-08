@@ -85,15 +85,26 @@
 # its RGB lands where its alpha is set, while `base_factor` still dims or
 # lifts the base underneath. The overlay's alpha is only the paint's
 # coverage -- the surface's own alpha, `alpha_test` cutouts and engine
-# transparency keep reading the base texture. The paint is baked into the
-# material's albedo, so the traced view, the light and the rasterized
-# surfaces all show it. On a `material_glass` pane the paint's coverage
-# also thickens the pane: painted texels absorb what shows through and the
-# light that crosses it at any `transparency`, and fully covered texels
-# turn opaque; the paint's colour itself reads at partial coverage. A file
+# transparency keep reading the base texture. Non-glass and rasterized
+# surfaces use a baked albedo composite. On traced `material_glass` the
+# overlay is a separate matte surface: RGB is its reflectance and alpha
+# is its coverage. The sun, up to 16 cluster lights and environment
+# ambient shade the paint independently of the background. It is alpha-blended after glass
+# reconstruction, without switching depth or normals between frames. Shadow
+# rays pass only the uncovered fraction of the glass transmission. A file
 # whose alpha is everywhere zero paints nothing (and is reported): the RGB
 # alone is not a mask. A developer texture override (`mat/`) replaces the
-# albedo file when the material is created and bypasses the overlay.
+# base albedo file when the material is created; traced glass paint is
+# separate and is not replaced by that override.
+#
+# `texture_scale_u`/`texture_scale_v` (0.05..16, default 1) and
+# `texture_offset_u`/`texture_offset_v` (-8..8, default 0) transform the
+# surface's texture coordinates for *all* of the material's maps at once,
+# so an overlay stays aligned with the base: the scale sets how many
+# texture repeats fit across the surface and the offset slides the mapping.
+# The transform is baked into the uploaded geometry (traced and rasterized
+# alike), so an edit lands on the next full static re-submit; warped
+# surfaces keep their own animation.
 #
 # `material_glass: true` turns the surface into a pane of glass: the traced
 # path reflects it with a Fresnel term and bends the rays through it, tinting

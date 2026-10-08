@@ -1486,8 +1486,11 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			.pIndices = indices,
 			.transform = RT_GetBrushModelMatrix (s->ent),
 			.color = RT_COLOR_WHITE,
-			.material = diffuse_tex ? diffuse_tex->rtmaterial : greytexture->rtmaterial,
-			.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST,
+			.texCoordScale = {diffuse_tex ? diffuse_tex->rtuvscale[0] : 1.0f, diffuse_tex ? diffuse_tex->rtuvscale[1] : 1.0f},
+			.texCoordOffset = {diffuse_tex ? diffuse_tex->rtuvoffset[0] : 0.0f, diffuse_tex ? diffuse_tex->rtuvoffset[1] : 0.0f},
+			.material = diffuse_tex ? RT_RASTER_MATERIAL (diffuse_tex) : greytexture->rtmaterial,
+			.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+			                 (RT_UV_TRANSFORM_ACTIVE (diffuse_tex) ? QR_RASTERIZED_GEOMETRY_STATE_TEXCOORD_TRANSFORM : 0),
 			.blendFuncSrc = 0,
 			.blendFuncDst = 0,
 		};
@@ -1529,6 +1532,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    (s->is_warp && !s->is_water && !s->is_acid ? QR_GEOMETRY_UPLOAD_TURB_WARP_BIT : 0) |
 			    (s->alpha_transmission ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 			    (is_glass && s->alpha_test ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
+			    (RT_UV_TRANSFORM_ACTIVE (diffuse_tex) ? QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT : 0) |
                 QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
 			.geomType = rt_movable_upload_entry != NULL ? QR_GEOMETRY_TYPE_STATIC_MOVABLE :
 			            (is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC),
@@ -1558,9 +1562,20 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 				{
 					QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE,
 				},
+			.texCoordScale =
+				{
+					diffuse_tex ? diffuse_tex->rtuvscale[0] : 1.0f,
+					diffuse_tex ? diffuse_tex->rtuvscale[1] : 1.0f,
+				},
+			.texCoordOffset =
+				{
+					diffuse_tex ? diffuse_tex->rtuvoffset[0] : 0.0f,
+					diffuse_tex ? diffuse_tex->rtuvoffset[1] : 0.0f,
+				},
 			.geomMaterial =
 				{
 					diffuse_tex ? diffuse_tex->rtmaterial : greytexture->rtmaterial,
+					is_glass && diffuse_tex ? diffuse_tex->rtoverlaymaterial : QR_NO_MATERIAL,
 				},
 			.defaultRoughness = CVAR_TO_FLOAT (rt_brush_rough),
 			.defaultMetallicity = CVAR_TO_FLOAT (rt_brush_metal),
