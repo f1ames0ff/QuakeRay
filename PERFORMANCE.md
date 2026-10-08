@@ -113,7 +113,7 @@ Balanced GPU timestamp snapshots, milliseconds. These are backend pass buckets, 
 | `gpu.ui_ms` | 0.008 | 0.008 | 0.009 |
 | `gpu.present_ms` (fullscreen draw) | 0.040 | 0.037 | 0.032 |
 
-`decals`, `reflgodr` and `postui` were zero in these Balanced summaries. Standalone GPU **world / particles / viewmodel / all-shadows** times are **unknown**: those counters do not exist at this snapshot. The measured GPU means already exceed 16.67 ms, so CPU improvements alone cannot establish the 60-FPS target. GPU shading experiments remain a separate, deferred priority.
+`decals`, `reflgodr` and `postui` were zero in these Balanced summaries. Standalone GPU **world / viewmodel / all-shadows** times are **unknown**: those counters do not exist at this snapshot; the particle branch (`calm-eagle`, not part of these captures) adds a dedicated `particles` pass timer (`gpu.particles_ms`) and the `rays.particle` counter. The measured GPU means already exceed 16.67 ms, so CPU improvements alone cannot establish the 60-FPS target. GPU shading experiments remain a separate, deferred priority.
 
 ## Controlled entity improvements
 
