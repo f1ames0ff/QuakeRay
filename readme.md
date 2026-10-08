@@ -6,6 +6,8 @@ QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, wi
 
 [Download](https://github.com/f1ames0ff/QuakeRay/releases) · [What's new](changelog.md) · [Report a problem](https://github.com/f1ames0ff/QuakeRay/issues)
 
+Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.md) · [Performance evidence](PERFORMANCE.md).
+
 ## Features
 
 ### Lighting and editing

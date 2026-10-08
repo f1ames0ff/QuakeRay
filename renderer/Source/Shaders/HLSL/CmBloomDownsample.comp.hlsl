@@ -20,7 +20,7 @@
 
 [[vk::binding(0, 0)]] Texture2D<float4> bloomSource;
 [[vk::binding(1, 0)]] SamplerState bloomSource_Sampler;
-[[vk::binding(0, 3)]] RWTexture2D<float4> bloomDest;
+[[vk::binding(0, 3), vk::image_format("rgba16f")]] RWTexture2D<float4> bloomDest;
 
 struct BloomDownsamplePush_BT
 {

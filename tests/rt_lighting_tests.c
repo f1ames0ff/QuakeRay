@@ -7,6 +7,7 @@
 #include "rt_alias.h"
 #include "rt_cluster_select.h"
 #include "rt_dtal_groups.h"
+#include "rt_brush_transform_cache.h"
 
 static int g_failures = 0;
 static int g_checks = 0;
@@ -928,6 +929,48 @@ static void TestGroupConservativeBounds(void)
     }
 }
 
+static void TestBrushTransformCache(void)
+{
+    rt_brush_transform_cache_t cache = {0};
+    int entity_a = 0;
+    int entity_b = 0;
+    float origin[3] = {4.0f, -17.0f, 256.0f};
+    float angles[3] = {15.0f, 90.0f, -30.0f};
+    float matrix[12];
+    float output[12];
+    for (int i = 0; i < 12; ++i)
+        matrix[i] = (float)i * 0.25f - 1.0f;
+    CHECK(!RT_BrushTransformCacheGet(&cache, &entity_a, origin, angles, output), "empty transform cache misses");
+    RT_BrushTransformCacheStore(&cache, &entity_a, origin, angles, matrix);
+    CHECK(RT_BrushTransformCacheGet(&cache, &entity_a, origin, angles, output), "unchanged transform cache hits");
+    CHECK(memcmp(matrix, output, sizeof(matrix)) == 0, "transform cache copies exact matrix bits");
+    CHECK(!RT_BrushTransformCacheGet(&cache, &entity_b, origin, angles, output), "different entity misses");
+    origin[1] += 1.0f;
+    CHECK(!RT_BrushTransformCacheGet(&cache, &entity_a, origin, angles, output), "translation changes invalidate cache");
+    origin[1] -= 1.0f;
+    angles[2] += 1.0f;
+    CHECK(!RT_BrushTransformCacheGet(&cache, &entity_a, origin, angles, output), "rotation changes invalidate cache");
+    angles[2] -= 1.0f;
+    origin[0] = 0.0f;
+    RT_BrushTransformCacheStore(&cache, &entity_a, origin, angles, matrix);
+    origin[0] = -0.0f;
+    CHECK(!RT_BrushTransformCacheGet(&cache, &entity_a, origin, angles, output), "signed-zero changes invalidate cache");
+    RT_BrushTransformCacheStore(&cache, &entity_b, origin, angles, matrix);
+    CHECK(!RT_BrushTransformCacheGet(&cache, &entity_a, origin, angles, output), "entity alternation cannot reuse another entity transform");
+    CHECK(RT_BrushTransformCacheGet(&cache, &entity_b, origin, angles, output), "last entity transform is reusable");
+
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        RT_BrushTransformCacheStore(&cache, &entity_a, origin, angles, matrix);
+        origin[axis] += 1.0f;
+        CHECK(!RT_BrushTransformCacheGet(&cache, &entity_a, origin, angles, output), "origin axis %d invalidates", axis);
+        origin[axis] -= 1.0f;
+        angles[axis] += 1.0f;
+        CHECK(!RT_BrushTransformCacheGet(&cache, &entity_a, origin, angles, output), "angle axis %d invalidates", axis);
+        angles[axis] -= 1.0f;
+    }
+}
+
 int main(void)
 {
     TestAliasEdgeCases();
@@ -944,6 +987,7 @@ int main(void)
     TestClusterSelectionCounts();
     TestClusterSelectionOrderIdentity();
     TestBuilderBudgetFailure();
+    TestBrushTransformCache();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);
 

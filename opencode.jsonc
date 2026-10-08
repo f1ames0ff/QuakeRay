@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "quakeray": {
+        "type": "local",
+        "command": ["uv", "run", "--offline", "--frozen", "--no-sync", "--project", "tools/quakeray_mcp", "python", "-B", "-m", "quakeray_mcp"],
+        "cwd": ".",
+        "environment": {
+          "QUAKERAY_ROOT": ".",
+          "QUAKERAY_BUILD": "build/Debug",
+          "QUAKERAY_CLANGD": "auto",
+          "QUAKERAY_ENABLE_JOBS": "0",
+          "QUAKERAY_ENABLE_RESEARCH": "0"
+        },
+        "protocol": "legacy",
+        "codemode": true,
+        "disabled": false,
+        "timeout": { "startup": 30000, "catalog": 30000, "execution": 30000 }
+      }
+    }
+  }
+}

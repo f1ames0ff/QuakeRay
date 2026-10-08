@@ -19,6 +19,7 @@
 #include "RHI/RhiPipeline.h"
 #include "RHI/RhiExposureHistory.h"
 #include "Generated/ShaderCommonC.h"
+#include "Generated/ShaderCommonCFramebuf.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -31,6 +32,23 @@ using namespace qray;
 
 namespace
 {
+
+uint32_t UavBinding(FramebufferImageIndex image)
+{
+    return ShFramebuffers_Bindings[image];
+}
+
+uint32_t SrvBinding(FramebufferImageIndex image)
+{
+    return ShFramebuffers_Sampled_Bindings[image];
+}
+
+uint32_t SamplerBinding(FramebufferImageIndex image)
+{
+    const uint32_t binding = ShFramebuffers_Sampler_Bindings[image];
+    Require(binding != FB_SAMPLER_INVALID_BINDING, "generated framebuffer sampler binding");
+    return binding;
+}
 
 nvrhi::BindingLayoutHandle Layout(nvrhi::IDevice *device, std::initializer_list<nvrhi::BindingLayoutItem> items)
 {
@@ -152,7 +170,7 @@ class ExposureProbe
 public:
     ExposureProbe(nvrhi::IDevice *dev, const std::string &shaders) : device(dev)
     {
-        histogramLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(151)});
+        histogramLayout = Layout(device, {nvrhi::BindingLayoutItem::Texture_SRV(SrvBinding(FB_IMAGE_INDEX_PRE_FINAL))});
         emptyLayout = Layout(device, {});
         uniformLayout = Layout(device, {nvrhi::BindingLayoutItem::ConstantBuffer(0)});
         exposureLayout = Layout(device, {nvrhi::BindingLayoutItem::StructuredBuffer_UAV(0)});
@@ -205,7 +223,7 @@ public:
         desc.keepInitialState = true;
         auto input = device->createTexture(desc);
         auto inputSet = device->createBindingSet(nvrhi::BindingSetDesc().addItem(
-            nvrhi::BindingSetItem::Texture_SRV(151, input)), histogramLayout);
+            nvrhi::BindingSetItem::Texture_SRV(SrvBinding(FB_IMAGE_INDEX_PRE_FINAL), input)), histogramLayout);
         Require(input != nullptr && inputSet != nullptr, "create exposure input");
 
         ShGlobalUniform frame{};
@@ -285,8 +303,8 @@ std::vector<float> Image(uint32_t width, uint32_t height, float value)
 
 void CheckVignette(nvrhi::IDevice *device, const std::string &shaders)
 {
-    auto images = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(29),
-        nvrhi::BindingLayoutItem::Texture_UAV(30)});
+    auto images = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PING)),
+        nvrhi::BindingLayoutItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PONG))});
     auto emptyLayout = Layout(device, {});
     auto empty = device->createBindingSet(nvrhi::BindingSetDesc(), emptyLayout);
     auto pushLayout = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 28)});
@@ -303,8 +321,8 @@ void CheckVignette(nvrhi::IDevice *device, const std::string &shaders)
         auto ping = device->createTexture(desc);
         auto pong = device->createTexture(desc);
         auto set = device->createBindingSet(nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_UAV(29, ping))
-            .addItem(nvrhi::BindingSetItem::Texture_UAV(30, pong)), images);
+            .addItem(nvrhi::BindingSetItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PING), ping))
+            .addItem(nvrhi::BindingSetItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PONG), pong)), images);
         Require(set != nullptr, "create vignette set");
         for (float intensity : {0.0f, 0.5f})
         {
@@ -424,8 +442,8 @@ void CheckColorCompositing(nvrhi::IDevice *device, const std::string &probes)
 
 void CheckGameplayColor(nvrhi::IDevice *device, const std::string &shaders)
 {
-    auto images = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(29),
-        nvrhi::BindingLayoutItem::Texture_UAV(30)});
+    auto images = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PING)),
+        nvrhi::BindingLayoutItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PONG))});
     auto uniforms = Layout(device, {nvrhi::BindingLayoutItem::ConstantBuffer(0)});
     auto feedbackPush = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 44)});
     auto tintPush = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 28)});
@@ -443,8 +461,8 @@ void CheckGameplayColor(nvrhi::IDevice *device, const std::string &shaders)
     auto ping = device->createTexture(desc);
     auto pong = device->createTexture(desc);
     auto imageSet = device->createBindingSet(nvrhi::BindingSetDesc()
-        .addItem(nvrhi::BindingSetItem::Texture_UAV(29, ping))
-        .addItem(nvrhi::BindingSetItem::Texture_UAV(30, pong)), images);
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PING), ping))
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PONG), pong)), images);
     nvrhi::BufferDesc buffer;
     buffer.byteSize = sizeof(ShGlobalUniform);
     buffer.isConstantBuffer = true;
@@ -507,8 +525,8 @@ void CheckGameplayColor(nvrhi::IDevice *device, const std::string &shaders)
 
 void CheckFilmGrain(nvrhi::IDevice *device, const std::string &shaders)
 {
-    auto images = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(29),
-        nvrhi::BindingLayoutItem::Texture_UAV(30)});
+    auto images = Layout(device, {nvrhi::BindingLayoutItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PING)),
+        nvrhi::BindingLayoutItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PONG))});
     auto uniforms = Layout(device, {nvrhi::BindingLayoutItem::ConstantBuffer(0)});
     auto pushLayout = Layout(device, {nvrhi::BindingLayoutItem::PushConstants(0, 20)});
     auto pipeline = Pipeline(device, shaders + "/EfFilmGrain.comp.spv", {images, uniforms, pushLayout});
@@ -524,8 +542,8 @@ void CheckFilmGrain(nvrhi::IDevice *device, const std::string &shaders)
     auto ping = device->createTexture(desc);
     auto pong = device->createTexture(desc);
     auto imageSet = device->createBindingSet(nvrhi::BindingSetDesc()
-        .addItem(nvrhi::BindingSetItem::Texture_UAV(29, ping))
-        .addItem(nvrhi::BindingSetItem::Texture_UAV(30, pong)), images);
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PING), ping))
+        .addItem(nvrhi::BindingSetItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PONG), pong)), images);
     nvrhi::BufferDesc buffer;
     buffer.byteSize = sizeof(ShGlobalUniform);
     buffer.isConstantBuffer = true;
@@ -756,12 +774,12 @@ void CheckLocalExposure(nvrhi::IDevice *device, const std::string &probes)
 void CheckTaauHistoryReset(nvrhi::IDevice *device, const std::string &shaderFolder)
 {
     auto imageLayout = Layout(device, {
-        nvrhi::BindingLayoutItem::Texture_UAV(29),
-        nvrhi::BindingLayoutItem::Texture_UAV(119),
-        nvrhi::BindingLayoutItem::Texture_SRV(152),
-        nvrhi::BindingLayoutItem::Texture_SRV(155),
-        nvrhi::BindingLayoutItem::Texture_SRV(244),
-        nvrhi::BindingLayoutItem::Sampler(368),
+        nvrhi::BindingLayoutItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PING)),
+        nvrhi::BindingLayoutItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_Q2_TAA_HISTORY)),
+        nvrhi::BindingLayoutItem::Texture_SRV(SrvBinding(FB_IMAGE_INDEX_FINAL)),
+        nvrhi::BindingLayoutItem::Texture_SRV(SrvBinding(FB_IMAGE_INDEX_MOTION_DLSS)),
+        nvrhi::BindingLayoutItem::Texture_SRV(SrvBinding(FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV)),
+        nvrhi::BindingLayoutItem::Sampler(SamplerBinding(FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV)),
     });
     auto uniformLayout = Layout(device, {nvrhi::BindingLayoutItem::ConstantBuffer(0)});
     auto pipeline = Pipeline(device, shaderFolder + "/CmQ2TAAU.comp.spv", {imageLayout, uniformLayout});
@@ -787,12 +805,12 @@ void CheckTaauHistoryReset(nvrhi::IDevice *device, const std::string &shaderFold
     samplerDesc.setAllFilters(false).setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
     auto sampler = device->createSampler(samplerDesc);
     nvrhi::BindingSetDesc images;
-    images.addItem(nvrhi::BindingSetItem::Texture_UAV(29, output));
-    images.addItem(nvrhi::BindingSetItem::Texture_UAV(119, history));
-    images.addItem(nvrhi::BindingSetItem::Texture_SRV(152, current));
-    images.addItem(nvrhi::BindingSetItem::Texture_SRV(155, motion));
-    images.addItem(nvrhi::BindingSetItem::Texture_SRV(244, previous));
-    images.addItem(nvrhi::BindingSetItem::Sampler(368, sampler));
+    images.addItem(nvrhi::BindingSetItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_UPSCALED_PING), output));
+    images.addItem(nvrhi::BindingSetItem::Texture_UAV(UavBinding(FB_IMAGE_INDEX_Q2_TAA_HISTORY), history));
+    images.addItem(nvrhi::BindingSetItem::Texture_SRV(SrvBinding(FB_IMAGE_INDEX_FINAL), current));
+    images.addItem(nvrhi::BindingSetItem::Texture_SRV(SrvBinding(FB_IMAGE_INDEX_MOTION_DLSS), motion));
+    images.addItem(nvrhi::BindingSetItem::Texture_SRV(SrvBinding(FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV), previous));
+    images.addItem(nvrhi::BindingSetItem::Sampler(SamplerBinding(FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV), sampler));
     auto imageSet = device->createBindingSet(images, imageLayout);
 
     nvrhi::BufferDesc bufferDesc;

@@ -1,0 +1,7 @@
+# rt_bench 2026-10-08 10:00:00 demo=maps/start.bsp frames=5 seconds=0.10 fps=50.0 interrupted=0
+cpu.slot frame avg_ms=17.00 max_ms=17.00
+cpu.slot ents avg_ms=7.00 max_ms=7.00
+cpu.main frame minus wait avg_ms=17.00
+cpu.cluster lists hits=1 misses=0 set=0 move=0 other=0
+settings host_maxfps=0 rt_stats_panels=0 vid=3840x2160@60 vsync=0 rt_upscale_fsr31=3 version=0.31.0
+frame_samples file=frames.csv samples=5 dropped=0

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=75,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quakeray-mcp"
+version = "0.1.0"
+description = "Read-only QuakeRay architecture and performance evidence MCP server"
+requires-python = ">=3.10"
+dependencies = ["mcp==2.3.0"]
+
+[project.scripts]
+quakeray-mcp = "quakeray_mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

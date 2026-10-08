@@ -553,6 +553,19 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME rt_lighting_tests COMMAND rt_lighting_tests)
+
+    add_executable(gui_draw_tests tests/gui_draw_tests.cpp Quake/qr_gui.cpp)
+    target_include_directories(gui_draw_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/Quake
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+    )
+    target_compile_definitions(gui_draw_tests PRIVATE QR_STATIC SDL_MAIN_HANDLED)
+    target_link_libraries(gui_draw_tests PRIVATE imgui)
+    if(MSVC)
+        target_compile_options(gui_draw_tests PRIVATE /W4 /EHsc)
+    endif()
+    add_test(NAME gui_draw_tests COMMAND gui_draw_tests)
+    set_tests_properties(gui_draw_tests PROPERTIES TIMEOUT 30)
 endif()
 
 # ============================================================================

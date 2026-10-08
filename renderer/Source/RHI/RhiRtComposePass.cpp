@@ -661,11 +661,14 @@ constexpr bool AreComposeImagesDistinct()
 // path adds the images the ASVGF chain reads last: the `_PREV` histories and the reproject's
 // sampled inputs, the temporal and a-trous SRVs, and the adapter's four channel UAVs (73/75/77/79),
 // which the temporal pass reads as sampled images after the adapter wrote them as storage images.
+// Both lists also carry the images the glass-blur pass samples when it runs (the glass filter, its
+// prev/reflection roles and the glass history prev); the unfiltered one additionally carries the
+// view-depth and normal-geometry images that pass samples, which the filtered chain already lists.
 // The god-rays images are in both lists: 64 is sampled by the final composition in either path, so
 // it is the image this module really moves to read-only and has to move back; 63/89 are bound by no
 // compose set, and their requirement is a same-state UnorderedAccess barrier that names the
 // god-rays module's hand-off (the class comment's contract), not a transition.
-constexpr uint32_t COMPOSE_RESTORE_COUNT = 25;
+constexpr uint32_t COMPOSE_RESTORE_COUNT = 31;
 constexpr FramebufferImageIndex COMPOSE_RESTORE_IMAGES[COMPOSE_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_SURFACE_POSITION,
@@ -692,10 +695,16 @@ constexpr FramebufferImageIndex COMPOSE_RESTORE_IMAGES[COMPOSE_RESTORE_COUNT] =
     FB_IMAGE_INDEX_Q2_FOG_ACCUM,
     FB_IMAGE_INDEX_Q2_COLOR,
     FB_IMAGE_INDEX_Q2_GLASS_FILTER,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION,
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV,
+    FB_IMAGE_INDEX_Q2_VIEW_DEPTH,
+    FB_IMAGE_INDEX_NORMAL_GEOMETRY,
     FB_IMAGE_INDEX_Q2_PARTICLE_LAYER,
 };
 
-constexpr uint32_t CHAIN_RESTORE_COUNT = 58;
+constexpr uint32_t CHAIN_RESTORE_COUNT = 62;
 constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_SURFACE_POSITION,
@@ -755,6 +764,10 @@ constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
     FB_IMAGE_INDEX_Q2_COLOR,
     FB_IMAGE_INDEX_Q2_RNG_SEED_PREV,
     FB_IMAGE_INDEX_Q2_GLASS_FILTER,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION,
+    FB_IMAGE_INDEX_Q2_GLASS_FILTER_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_REFLECTION_PREV,
+    FB_IMAGE_INDEX_Q2_GLASS_HISTORY_PREV,
     FB_IMAGE_INDEX_Q2_PARTICLE_LAYER,
 };
 
@@ -788,6 +801,26 @@ constexpr FramebufferImageIndex TAAU_RESTORE_IMAGES[TAAU_RESTORE_COUNT] =
     FB_IMAGE_INDEX_FINAL,
     FB_IMAGE_INDEX_MOTION_DLSS,
     FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV,
+};
+
+// The images the raster-overlay callback's own announces claim as UnorderedAccess on its first use
+// (RhiRasterOverlayPass::PrepareTarget): the compose half owns them up to the callback, and moves
+// each back to GENERAL here so the announces tell the truth. FINAL, SCREEN_EMISSION and DEPTH_NDC
+// rest in GENERAL after the checkerboard; the interleave reads 25 as a sampled image, so it is the
+// one that really needs the transition, and the smoke and particle reads of the earlier chain
+// passes are covered the same way. The glass mask is not here: the callback announces it as a
+// ShaderResource and only samples it, so the compose leaves it in the read-only state the
+// checkerboard left it in.
+constexpr uint32_t RASTER_OVERLAY_HANDOFF_COUNT = 7;
+constexpr FramebufferImageIndex RASTER_OVERLAY_HANDOFF_IMAGES[RASTER_OVERLAY_HANDOFF_COUNT] =
+{
+    FB_IMAGE_INDEX_FINAL,
+    FB_IMAGE_INDEX_SCREEN_EMISSION,
+    FB_IMAGE_INDEX_DEPTH_NDC,
+    FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR,
+    FB_IMAGE_INDEX_DEPTH_WORLD,
+    FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_S_H,
+    FB_IMAGE_INDEX_Q2_ATROUS_PING_L_F_C_O_C_G,
 };
 
 // The images each iteration of an iterative pass writes, in the order the barrier requirement is
@@ -848,6 +881,14 @@ constexpr bool AreRestoreImagesWrapped()
     for (uint32_t i = 0; i < CHAIN_RESTORE_COUNT; i++)
     {
         if (FindComposeImage(CHAIN_RESTORE_IMAGES[i]) == COMPOSE_IMAGE_NONE)
+        {
+            return false;
+        }
+    }
+
+    for (uint32_t i = 0; i < RASTER_OVERLAY_HANDOFF_COUNT; i++)
+    {
+        if (FindComposeImage(RASTER_OVERLAY_HANDOFF_IMAGES[i]) == COMPOSE_IMAGE_NONE)
         {
             return false;
         }
@@ -2013,6 +2054,19 @@ void RhiRtComposePass::Render(nvrhi::ICommandList *pCommandList,
     // second public entry point is spelled out on `Render`: the overlay's only contract with this
     // chain is this window, and keeping the pre-TAAU chain one atomic host call avoids exposing
     // the module's intermediate wrap/set state.
+    //
+    // The hand-off: the callback's own wraps announce UnorderedAccess for the images it uses
+    // (RhiRasterOverlayPass::PrepareTarget), so each has to really be in GENERAL when it is
+    // called. The checkerboard left FINAL, SCREEN_EMISSION and DEPTH_NDC there, but the
+    // interleave read PRIMARY_TO_REFL_REFR as a sampled image and the earlier chain passes read
+    // the smoke images the same way; these requirements move each one back through the compose
+    // wraps before the callback's announces claim it. The glass mask is not in the list: the
+    // callback announces it read-only and only samples it, so it stays in the state the
+    // checkerboard left it in.
+    for (uint32_t i = 0; i < RASTER_OVERLAY_HANDOFF_COUNT; i++)
+    {
+        RequireImageUnorderedAccess(pCommandList, target, RASTER_OVERLAY_HANDOFF_IMAGES[i]);
+    }
 
     if (pfnRasterOverlay)
     {

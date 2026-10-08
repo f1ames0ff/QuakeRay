@@ -8,6 +8,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'machine_guard.ps1')
+$machineGuard = Enter-QuakeRayMachine
+try {
+$configBackedUpHere = $false
 
 if (-not $Basedir) {
     $Basedir = (Resolve-Path (Join-Path $PSScriptRoot '..\..\build\Debug')).Path
@@ -108,7 +112,8 @@ function Show-Blocks([int]$fromLine, [string]$printTag) {
     }
 }
 
-if (Test-Path $cfg) { Copy-Item $cfg $cfgBak -Force }
+if (Test-Path -LiteralPath $cfgBak) { throw 'RECOVERY_REQUIRED: an existing performance backup needs manual review.' }
+if (Test-Path $cfg) { Copy-Item $cfg $cfgBak -Force; $configBackedUpHere = $true }
 
 foreach ($m in $modes) {
     $template = Join-Path $PSScriptRoot ("qr_perf_{0}.cfg" -f $m)
@@ -185,3 +190,10 @@ foreach ($m in $modes) {
 if (Test-Path $cfgBak) { Copy-Item $cfgBak $cfg -Force; Remove-Item $cfgBak -Force }
 
 Write-Host 'perf run finished'
+} finally {
+    if ($configBackedUpHere -and $cfgBak -and (Test-Path -LiteralPath $cfgBak)) {
+        Copy-Item -LiteralPath $cfgBak -Destination $cfg -Force
+        Remove-Item -LiteralPath $cfgBak
+    }
+    Exit-QuakeRayMachine $machineGuard
+}

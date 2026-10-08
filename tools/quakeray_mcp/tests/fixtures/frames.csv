@@ -1,0 +1,7 @@
+# rt_bench_frames demo=maps/start.bsp frames=5 samples=5 dropped=0
+frame,time_ms,interval_ms,host_interval_ms,client_time,key_game,paused,signon,gpu_valid,gpu.frame_ms,cpu.frame_ms,cpu.ents_ms,calls_geometry,ui_only
+0,10,0,20,1.00,1,0,4,1,12,17,7,100,0
+1,30,20,20,1.02,1,0,4,1,12,17,7,100,0
+2,50,20,20,1.04,1,0,4,1,12,17,7,100,0
+3,70,20,20,1.06,1,0,4,1,12,17,7,100,0
+4,90,20,20,1.08,1,0,4,1,12,17,7,100,0

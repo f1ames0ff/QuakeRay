@@ -395,11 +395,13 @@ private:
     nvrhi::BindingLayoutHandle albedoFramebufferLayout;
     nvrhi::BindingLayoutHandle wipeFramebufferLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
-    nvrhi::BindingLayoutHandle pushConstant16Layout;
-    nvrhi::BindingLayoutHandle pushConstant20Layout;
-    nvrhi::BindingLayoutHandle pushConstant24Layout;
-    nvrhi::BindingLayoutHandle pushConstant28Layout;
-    nvrhi::BindingLayoutHandle pushConstant44Layout;
+
+    // One range for every effect pipeline: the largest custom block the chain pushes
+    // (EffectGameplayFeedbackPush). The effects share their framebuffer and uniform sets, and the
+    // pinned backend re-binds descriptor sets only when the set array changes (vulkan-compute.cpp:
+    // 137-140), so pipelines that share a set array have to be pipeline-layout compatible - which
+    // requires identical push constant ranges, not just identical set layouts.
+    nvrhi::BindingLayoutHandle pushConstantLayout;
 
     // The wipe's persistent push state, exactly the legacy `EffectWipe::push` member: begin/end
     // and the start frame survive across frames until a new `beginNow` overwrites them. The layout

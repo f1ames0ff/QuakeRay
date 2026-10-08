@@ -10,6 +10,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'machine_guard.ps1')
+$machineGuard = Enter-QuakeRayMachine
+try {
 if (-not $Candidate) { $Candidate = Join-Path $PSScriptRoot '..\..\build\Debug' }
 
 Add-Type @"
@@ -215,3 +218,6 @@ if ($BaselineOnly -and -not $Baseline) { throw '-BaselineOnly requires -Baseline
 if ($Baseline) { $results += Run-Arm $Baseline 'baseline' ([bool]($BaselineOnly -and $Smoke)) }
 if (-not $BaselineOnly) { $results += Run-Arm $Candidate 'candidate' ([bool]$Smoke) }
 $results | Format-List
+} finally {
+    Exit-QuakeRayMachine $machineGuard
+}

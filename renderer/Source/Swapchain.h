@@ -65,6 +65,13 @@ public:
     VkImage GetImage(uint32_t index) const;
     const VkImageView *GetImageViews() const;
 
+    // The semaphore paired with one swapchain image: the render-finished semaphore the submit
+    // signals before the present of that image. One per image, not one per frame in flight,
+    // because a binary semaphore may only be re-signaled after the present that waited on it
+    // finished - which acquiring the image again guarantees (the validation layer's own advice
+    // for VUID-vkQueueSubmit-pSignalSemaphores-00067).
+    VkSemaphore GetRenderFinishedSemaphore(uint32_t imageIndex) const;
+
     bool IsExtentOptimal() const;
     bool HasValidExtent() const;
     const char *GetPresentModeName() const;
@@ -103,6 +110,7 @@ private:
     VkSwapchainKHR swapchain;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainViews;
+    std::vector<VkSemaphore> renderFinishedSemaphores;
 
     bool presentWait2Supported;
     bool surfacePresentWait2Supported;
