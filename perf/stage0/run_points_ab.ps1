@@ -100,7 +100,7 @@ echo ==== SAVE_LOADED
 bind F1 "r_particles_points 1; echo ==== POINTS_ON"
 bind F2 "r_particles_points 0; echo ==== POINTS_OFF"
 bind F4 "rt_stats_dump_start; rt_bench start; echo ==== ARM_START"
-bind F5 "impulse 7; echo ==== RL_SELECTED"
+bind F5 "give 7 1; give 6 1; give r 50; impulse 7; echo ==== RL_SELECTED"
 bind F6 "+attack; echo ==== FIRE"
 bind F7 "-attack; rt_bench stop; rt_stats_dump_end; echo ==== ARM_DONE"
 bind F9 "quit"
@@ -147,8 +147,9 @@ try {
         Start-Sleep -Seconds 1
         Send-Key $hwnd 'F5'
         Start-Sleep -Seconds 1
+        $armStartFrom = Count-Text $console '==== ARM_START'
         Send-Key $hwnd 'F4'
-        $r = Wait-Text $p 60 '==== ARM_START' (Count-Text $console '==== ARM_START')
+        $r = Wait-Text $p 60 '==== ARM_START' $armStartFrom
         if ($r -le 0) { throw "arm $($arm.Name) did not start (code $r)" }
         Send-Key $hwnd 'F6'
         Start-Sleep -Seconds $FireSeconds
