@@ -818,17 +818,21 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, qboolean alphapass, int chain, int
 			continue;
 
 		const int entuniqueid = RT_GetEntityUniqueId (currententity);
+		const double prof_entity = RT_Prof_Begin ();
 
 		switch (currententity->model->type)
 		{
 		case mod_alias:
 			R_DrawAliasModel (cbx, currententity, entuniqueid);
+			RT_Prof_End (RT_PROF_ENTS_ALIAS, prof_entity);
 			break;
 		case mod_brush:
 			R_DrawBrushModel (cbx, currententity, chain, entuniqueid);
+			RT_Prof_End (RT_PROF_ENTS_BRUSH, prof_entity);
 			break;
 		case mod_sprite:
 			R_DrawSpriteModel (cbx, currententity, entuniqueid);
+			RT_Prof_End (RT_PROF_ENTS_SPRITE, prof_entity);
 			break;
 		}
 	}
