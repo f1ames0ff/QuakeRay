@@ -104,6 +104,13 @@ scale to the content that actually exists.
   (points on vs off). A confirmation run saw the classic capture reach about 1090 sprites and still
   left no point-pipeline or validation warning. The stock demo carries too few classic particles on
   average for the transport win to show; the gate still awaits the owner's dense demos.
+- Stage-0 ablation session on the re-recorded heavy demo (2026-10-08, build `691e02e1`):
+  `perf/stage0/attribution-2026-10-08.md`. Particle-attributable cost about 4.7 ms of a 25 ms
+  frame; the lighting/resolve path about 2.6 ms; the FTE conversion about 2.8 ms; a comparable
+  effect-driven share sits outside the particle slots (removed by `r_fteparticles 0`). The classic
+  and smoke paths are empty on this content (`points_off` and `r_smoke 0` are no-ops).
+  `rt_particle_resolve_cache 0` reproducibly collapses the demo (about 19 fps against 39.4) and
+  must stay off the shipping defaults until the mechanism is diagnosed.
 
 ### Stage 3 — cluster volume, remove CPU resolves (after dtal; accuracy contract A1-A3)
 - R16_UINT volume painted from `leaf_cluster`; 64 u base; own map generation; keep 0 semantics.

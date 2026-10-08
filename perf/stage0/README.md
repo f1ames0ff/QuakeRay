@@ -110,7 +110,9 @@ A deterministic smoke that needs no save: put the particle cvars and `rt_bench d
 config, `+exec` it and let the demo play to its report (74 s for the stock `demo1`, and it exits by
 itself; cap the run at ~3 minutes). It proves the transport runs and leaves a comparable `rt_bench`
 block per arm. Stock demos carry few classic particles, so the win only shows on the owner's
-recorded demos.
+recorded demos. Send one ESC once the window appears - the startup menu otherwise stays over the
+game; the same step belongs to every `rt_bench` arm. The first full ablation on the re-recorded
+`ad_particle_heavy` is `attribution-2026-10-08.md`.
 
 ## Landed instrumentation
 
