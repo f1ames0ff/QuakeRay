@@ -1,9 +1,13 @@
 # Particle rendering — the current architecture
 
 Planning draft, corrected after an external review and a verification round. Pinned to commit
-`ae589e04` (branch `perf/particle-cluster-cache`). All anchors below are valid at that commit; the
-working tree additionally carries an uncommitted 512x4 point-cluster cache in `Quake/gl_rlight.c`
-(not part of the committed tree, no counters, untested).
+`ae589e04`; the anchors below are valid at that commit and the body describes the pre-implementation
+snapshot. Since then, on the same branch: Stage 0 instrumentation (particle slots and per-path
+counters, cache stats, upload/conversion bytes, the particle GPU pass timer and the ray counter),
+Stage 1 repairs (live-count FTE conversion, counted overflow, the point-cluster cache behind
+`rt_particle_resolve_cache`) and Stage 2 (classic particles travel as 24 B `QrParticlePoint`
+records expanded by `RsParticlePoints.vert`, cvar `r_particles_points`) have landed;
+`docs/particle-plan.md` carries the implementation notes.
 
 ## 1. Component view
 
@@ -87,13 +91,13 @@ sequenceDiagram
 | Step | Where | Cost/limits | Anchor |
 |---|---|---|---|
 | Classic pool | CPU | `MAX_PARTICLES 16384` default; `-particles` can raise it without an upper clamp; `particle_t` 48 B | r_part.c:30-35,188-205; glquake.h:80-91 |
-| Classic geometry | CPU main | 3 `QrVertex` (80 B) per particle = 240 B; one resolve per particle | r_part.c:57,917-919,939 |
+| Classic geometry | CPU main | 3 `QrVertex` (80 B) per particle = 240 B; one resolve per particle; Stage 2: 24 B `QrParticlePoint` + vertex-shader expansion when `r_particles_points` is on | r_part.c:57,917-919,939 |
 | FTE pool | CPU main | 262144 compiled, `r_part_maxparticles 65536` default; beams 2048 segments; decals 262144 compiled / 8192 default | r_part_fte.c:457-459,497-498 |
 | FTE geometry | CPU main | geometry varies: line sparks 2 verts, fan/clipped decals 3, billboards 4 (`r_part_fte.c:5615-5715,5859,6016-6102`); one resolve per vertex | r_part_fte.c:6070-6087,6895-6896 |
 | FTE conversion | CPU main | early-out when no live scenetri or empty buffers (`6828-6832`); otherwise copies the grow-only capacity arrays `cl_maxstrisvert`/`cl_maxstrisidx` | r_part_fte.c:6838-6857 |
 | Smoke | CPU main | 1024 puffs, 6 verts per puff (480 B), resolve once at spawn | r_smoke.c:25,140,328 |
 | Resolve | CPU main | `RT_ResolvePointCluster` -> `RT_ResolveLightLeaf`: 1 `Mod_PointInLeaf` + up to 18 probes at 2/8/24 u, else cluster 0 | gl_rlight.c:1088-1114,1116 |
-| Upload | CPU main | per-batch memcpy to mapped staging; one device copy per frame of accumulated totals; collector caps 262144 verts / 524288 idx; assert (Debug) or silent batch drop (Release) on overflow | RasterizedDataCollector.cpp:221-231,254,298-312; VulkanDevice.cpp:1156 |
+| Upload | CPU main | per-batch memcpy to mapped staging; one device copy per frame of accumulated totals; collector caps 262144 verts / 524288 idx and 262144 points; Stage 1 counts and warns on overflow (`droppedUploadBatches`) instead of the assert/silent drop; the Stage-2 point stream draws from its staging directly | RasterizedDataCollector.cpp:221-231,254,298-312; VulkanDevice.cpp:1156 |
 | Lighting lists | CPU main | per-cluster lists, `Q2_MAX_CLUSTERS 8192`; reuse or incremental/recompose; `listGeneration` ticks per composition | ClusterLightLists.cpp:198,790; LightManager.cpp:666; ShaderCommonC.h:181 |
 | GPU shading | GPU | per vertex: <=16 candidate evals (`SMOKE_CLUSTER_SCAN 16`) + ray queries; no particle GPU pass timer | SmokeLight.hlsli:59,152-217; qray.cpp:368-389 |
 | AD sprites | CPU main | QC-created sprite edicts bypass the particle pools but use the same raster overlay; `part_max=max(particlemax,1024)*multiplier` | part_generate.qc:224-230,780-804; r_sprite.c:245-291 |
@@ -105,18 +109,25 @@ Frame model: `use_tasks` is forced false (gl_screen.c:1163-1164); classic and sm
 
 1. Light-cluster resolves are CPU BSP walks on the main thread: classic added by PR #30
    (r_part.c:939), FTE by `3f7b644c` (r_part_fte.c:6896), smoke earlier by `cde75f9b`
-   (r_smoke.c:140). The uncommitted work-tree cache changes this only when enabled and hit.
+   (r_smoke.c:140). The point-cluster cache is committed behind `rt_particle_resolve_cache`
+   (default on) with hit/miss and ns counters (Stage 1); Stage 2 keeps one resolve per classic
+   particle before the point upload.
 2. No threading anywhere in the path (use_tasks false).
 3. FTE scratch is capacity-sized and grow-only: conversion is skipped when nothing is live, but
    when it runs it walks the grown capacity, not the live counts (r_part_fte.c:6838-6857).
+   Stage 1 bounds the conversion and the scratch by the live counts.
 4. Full re-upload of all particle vertices every frame (240 B/classic particle, 320 B + 24 B indices
-   per FTE billboard, 480 B per smoke puff).
+   per FTE billboard, 480 B per smoke puff). Stage 2 cuts the classic figure to 24 B per particle
+   (`r_particles_points`); FTE and smoke keep the old transport.
 5. Shader lighting per vertex: 3x (classic) / 4x (FTE billboard) redundant cluster scans and rays.
 6. Silent failure modes: classic stops spawning at pool exhaustion; the raster collector asserts in
-   Debug and drops batches in Release (RasterizedDataCollector.cpp:221-231).
+   Debug and drops batches in Release (RasterizedDataCollector.cpp:221-231). Stage 1 replaces both
+   with counted, rate-limited warnings (classic pool and collector dropped batches).
 7. One-frame simulation lag for classic and smoke; FTE sim inside the draw.
 8. No live counters in dumps (`rs_particles` computed at r_part.c:985, never dumped), no FTE/smoke
-   counts, no overflow counters.
+   counts, no overflow counters. Stage 0 dumps per-path live/dropped counts, upload and conversion
+   bytes, cache hit/miss and the particle GPU pass; `rs_particles` stays the engine-side atomic
+   behind those columns.
 
 ## 5. Measured data (corrected)
 
