@@ -1159,11 +1159,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 
 	in_update_screen = true;
 	RT_Prof_FrameStart ();
-#if 0
 	use_tasks = use_tasks && (Tasks_NumWorkers () > 1) && r_tasks.value && r_gpulightmapupdate.value && !r_showtris.value && !r_showbboxes.value;
-#else
-	use_tasks = false;
-#endif
 
 	if (scr_disabled_for_loading)
 	{
