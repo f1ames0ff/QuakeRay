@@ -235,12 +235,22 @@ echo QR_LOADED0_$id
                     }
                     [StressWin32]::SetForegroundWindow($window) | Out-Null
                     if (-not $mapMode) {
-                        Start-Sleep -Seconds 2
+                        Wait-Marker $process 'demo(s) in loop'
+                        Start-Sleep -Milliseconds 500
+                        [StressWin32]::SetForegroundWindow($window) | Out-Null
+                        Send-Key $window 0x1B 0x01
+                        Wait-Marker $process 'RHI: acceleration structures:'
+                        Start-Sleep -Milliseconds 300
                         Send-Key $window 0x77 0x42
                         Wait-Marker $process "QR_RESTART_$id"
-                        Start-Sleep -Seconds 2
+                        Start-Sleep -Milliseconds 800
+                        Send-Key $window 0x1B 0x01
+                        Start-Sleep -Milliseconds 300
                         Send-Key $window 0x79 0x43
                         Wait-Marker $process "QR_RELOAD_$id"
+                        Start-Sleep -Milliseconds 800
+                        Send-Key $window 0x1B 0x01
+                        Start-Sleep -Milliseconds 300
                         if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
                             Write-Host 'The restart sequence consumed the capture budget; this attempt is deferred.'
                             Send-Key $window 0x7a 0x57
@@ -248,7 +258,6 @@ echo QR_LOADED0_$id
                             break
                         }
                     }
-                    Send-Key $window 0x1B 0x01
                     Start-Sleep -Seconds $Warmup
                     Send-Key $window 0x76 0x41
                     Wait-Marker $process "QR_EFFECTIVE_$id"
