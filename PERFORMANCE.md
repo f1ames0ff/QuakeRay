@@ -221,7 +221,8 @@ FSR Quality on/off (tasks vs serial, same binary), with repeats (tasks): Fuma 35
 AD hub 41.2 → 41.6/41.5/42.3 (24.28 → 24.03/24.10/23.64), `gpu.frame` ≈ 21.9–22.0 ms — same balance
 point; Bogbottom fresh spawn 22.7 → 27.8/30.9/31.5 (44.06 → 35.93/32.37/31.70), `gpu.frame` ≈
 26.9–28.1 ms — 45 FPS at Quality there needs GPU-side reduction as well, and its run-to-run spread
-reaches ~4 ms. Captures: `audit-q-*`, `audit-final-*`.
+reaches ~4 ms. Captures: `audit-q-*`, `audit-final-*`. A 25 s capture on the Bogbottom fresh spawn
+(tasks, Quality) holds 31.3 FPS / mean 31.99 ms, p95 34.51 — matching the 6 s repeats.
 
 ## Current CPU priorities
 
