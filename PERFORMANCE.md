@@ -283,6 +283,49 @@ completed-frame/result counts, not just nonempty columns. All three captures pas
 and recorded `FocusLosses=0`. QuakeRay MCP reads the added window-identity/count columns as
 reporting-window metrics; imported artifacts still do not carry MCP-verified provenance.
 
+## Dynamic BLAS reuse re-validated on the merged task graph (2026-10-09)
+
+The accepted sequential change on `perf/rhi-dyn-blas-clean` @ `dc89557a` (persistent descriptor and
+shape scratch plus handle reuse while each dynamic build fits its create-time envelope) was
+re-validated after the merge of `origin/master` `0c04f86f` (task graph, engine 0.40.0). Its
+pre-merge serial acceptance (Fuma outer `RHI_setup` -0.646 ms, frame mean -0.946 ms, +1.36 FPS;
+Bogbottom and fresh spawn neutral; Fuma Quality smoke -0.724 ms) is recorded in
+`stage5-rhi-setup-report.md` on `perf/rhi-dyn-blas-reuse`.
+
+Same-binary paired captures: staged runner, Balanced, 8 s warmup + 6 s capture, one save per
+invocation, ABBA order, `cpu.wait_ms` used to confirm the effective mode. Control =
+`perf/run-stress-capture-fixes` @ `9d7a6804` (engine sources byte-equal to master, exe `5374A9CB…`);
+candidate = clean @ `dc89557a` (exe `910D42E8…`), same `id1/qray.pkz` per arm.
+
+| Scenario | Arm | Control mean/p95 ms (FPS) | Clean mean/p95 ms (FPS) | Frame delta |
+| --- | --- | --- | --- | ---: |
+| Fuma | `r_tasks 0` | 27.51/28.48 (36.4); 27.47/28.33 (36.4) | 27.07/28.92 (36.9); 26.93/28.93 (37.1) | -0.49 ms |
+| Fuma | `r_tasks 1` | 20.04/22.78 (49.9); 20.72/24.20 (48.3) | 20.15/23.06 (49.6); 20.01/22.72 (50.0) | -0.30 ms, inside spread |
+| Bogbottom | `r_tasks 0` | 41.04/42.10 (24.4); 40.97/42.17 (24.4) | 40.58/41.82 (24.6); 40.53/41.61 (24.7) | -0.45 ms, `RHI_setup` neutral |
+| Bogbottom | `r_tasks 1` | 31.59/32.46 (31.7); 31.78/33.82 (31.5) | 31.56/32.50 (31.7); 32.09/36.62 (31.2) | 0.0 ms |
+
+Outer `RHI_setup` means: Fuma serial 3.14/3.11 control vs 2.57/2.71 clean; Fuma tasks 3.40/3.51 vs
+3.36/3.40; Bogbottom serial 4.19/4.19 vs 4.10/4.15; Bogbottom tasks 5.59/5.55 vs 5.54/5.56. The
+serial Fuma reduction reproduces the pre-merge result; under `r_tasks 1` it does not separate from
+the control, and no frame-level difference is resolvable.
+
+Mechanism, from the diagnostics twin `perf/rhi-dyn-blas-reuse` @ `3b5a18ec` (exe `FCD31349…`,
+`rhi_setup_diag` window bound by `bench_active`): handle recreations are 0.27-0.52 per frame in
+serial but chronic under `r_tasks 1` - 2.00 per frame on both scenarios, with `dyn_create_ms`
+1.02 (Fuma) / 1.45-1.49 (Bogbottom), i.e. most of the task-mode `RHI_setup` increase. The per-index
+fit predicate cannot match across frames because the order of dynamic geometry inside a filter
+follows task completion order; the diagnostics-only branch with the older equality predicate shows
+1.38-1.43 recreations per frame under tasks, so the churn is task-graph-driven, not specific to the
+envelope predicate. An order-insensitive create-time envelope (or a different reuse policy) is the
+recommended next bounded candidate in `docs/multithreading-integration.md`; its upside is bounded by
+the recreation cost, not assumed.
+
+Captures: `build/Debug/audit-s5d-ctrl-*`, `audit-s5d-clean-*`, `audit-s5d-reuse-*`,
+`audit-s5d-diag-*`; receipts and CTest logs under `build/Debug/audit-stage5d-*`. One clean
+Bogbottom tasks repeat (35.56 ms, `rhi` 5.94) was flagged and excluded; the other repeats and the
+control agree at 31.4-32.1 ms. Coverage: Debug, two scenarios, Balanced, 6 s captures; no long
+gameplay, other maps or Quality here.
+
 ## Current CPU priorities
 
 Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale pre-fix profile. These are **observed inclusive costs**, not predicted savings:
@@ -290,7 +333,7 @@ Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale 
 | Observed work | C2 cost | Functions to inspect | Unverified lead / smallest discriminating experiment |
 | --- | ---: | --- | --- |
 | Alias geometry APIs | 4.47 ms | [`R_DrawEnhancedModel`](Quake/r_alias.c#L533) → [`Scene::Upload`](renderer/Source/Scene.cpp#L94) → [`VertexCollector::AddGeometry`](renderer/Source/VertexCollector.cpp#L285) / [`WriteGeomInfo`](renderer/Source/GeomInfoManager.cpp#L303) | Separate remaining bounds/copy/metadata costs; record actual model surfaces and duplicated vertex bytes. Surface-local submission or invariant-attribute reuse helps only if those bytes dominate. Preserve indices, stable IDs and motion history. |
-| RHI setup | 4.60 ms | [RHI setup bracket](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666) → [`AppendDynamicSlot`](renderer/Source/RHI/RhiAccelStructs.cpp#L1146) / [`BuildTopLevel`](renderer/Source/RHI/RhiAccelStructs.cpp#L1799) | Split descriptor/shape preparation, copy/build recording and normal preprocessing. Persistent topology/refit is a hypothesis, not an enabled or proven solution; require deletion/opacity/animation/ownership invalidation. |
+| RHI setup | 4.60 ms | [RHI setup bracket](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666) → [`AppendDynamicSlot`](renderer/Source/RHI/RhiAccelStructs.cpp#L1147) / [`BuildTopLevel`](renderer/Source/RHI/RhiAccelStructs.cpp#L1801) | Split descriptor/shape preparation, copy/build recording and normal preprocessing. Persistent topology/refit is a hypothesis, not an enabled or proven solution; require deletion/opacity/animation/ownership invalidation. |
 | Brush light styles | 3.12 ms | [`RT_PackSurfaceLightStyles`](Quake/r_world.c#L1144) → [`RT_SurfacePackLightStyles`](Quake/r_world.c#L1106) → [`RT_NearestStyledLightDistance`](Quake/gl_rlight.c#L828) | Measure cache hits/collisions and reach-query work; transform/light/settings changes versus cache eviction must be distinguished before designing reuse. |
 | Other entity costs | Brush uploads 2.84 ms; alias posing 2.30 ms | [`RT_FlushBatch`](Quake/r_world.c#L1428), [`GetPoseVertices`](Quake/r_alias.c#L107) | Keep these separate from their parent entity/packing totals. Legacy brush light marking is only about 0.045 ms here, not a main target. |
 
