@@ -529,6 +529,13 @@ endif()
 # Tests
 # ============================================================================
 if(BUILD_TESTING)
+    find_package(Threads REQUIRED)
+    add_executable(prof_window_tests tests/prof_window_tests.cpp)
+    target_include_directories(prof_window_tests PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(prof_window_tests PRIVATE Threads::Threads)
+    add_test(NAME prof_window_tests COMMAND prof_window_tests)
+    set_tests_properties(prof_window_tests PROPERTIES TIMEOUT 30)
+
     add_executable(frame_timing_tests tests/frame_timing_tests.cpp)
     target_include_directories(frame_timing_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/renderer/Source

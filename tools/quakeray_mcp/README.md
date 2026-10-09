@@ -64,6 +64,13 @@ not build or launch QuakeRay. Asset preflight errors are typed and launch no pro
 
 ## Setup and connection
 
+**Every repository agent must use this engine MCP as its primary inspection and evidence interface.**
+The authoritative policy is [AGENTS.md](../../AGENTS.md#mandatory-engine-mcp-workflow): start with
+`server_status`, use the applicable documentation/symbol/capture tools, and report unavailable
+capabilities or partial coverage instead of silently bypassing them. File reads, edits and guarded
+execution scripts supplement MCP where it has no corresponding operation. Runtime activation still
+requires explicit operator authorization; this policy does not enable disabled jobs or research.
+
 From the repository root:
 
 ```powershell

@@ -1163,9 +1163,9 @@ void VulkanDevice::EndFrame(VkCommandBuffer cmd)
 
 void VulkanDevice::StartFrame(const QrStartFrameInfo *startInfo)
 {
-    statsApiCallsGeometry = 0;
-    statsApiCallsRasterized = 0;
-    statsApiCallsLights = 0;
+    statsApiCallsGeometry.store(0, std::memory_order_relaxed);
+    statsApiCallsRasterized.store(0, std::memory_order_relaxed);
+    statsApiCallsLights.store(0, std::memory_order_relaxed);
 
     if (currentFrameState.WasFrameStarted())
     {
@@ -1365,9 +1365,9 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
         pStats->gpuPassMs[i] = statsGpuPassMs[i];
     }
 
-    pStats->apiCallsGeometry = statsApiCallsGeometry;
-    pStats->apiCallsRasterized = statsApiCallsRasterized;
-    pStats->apiCallsLights = statsApiCallsLights;
+    pStats->apiCallsGeometry = statsApiCallsGeometry.load(std::memory_order_relaxed);
+    pStats->apiCallsRasterized = statsApiCallsRasterized.load(std::memory_order_relaxed);
+    pStats->apiCallsLights = statsApiCallsLights.load(std::memory_order_relaxed);
     pStats->cpuTimingValid = statsCpuTimingValid ? 1 : 0;
     pStats->renderedUiOnly = statsRenderedUiOnly ? 1 : 0;
     std::copy_n(cpuFrameProfiler.GetMilliseconds().data(), QR_CPU_PASS_COUNT, pStats->cpuPassMs);
@@ -1401,7 +1401,8 @@ void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
 
 void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)
 {
-    statsApiCallsGeometry++;
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
+    statsApiCallsGeometry.fetch_add(1, std::memory_order_relaxed);
 
     using namespace std::string_literals;
 
@@ -1495,6 +1496,7 @@ void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)
 
 void VulkanDevice::UpdateGeometryTransform(const QrUpdateTransformInfo *updateInfo)
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     if (updateInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1505,6 +1507,7 @@ void VulkanDevice::UpdateGeometryTransform(const QrUpdateTransformInfo *updateIn
 
 void VulkanDevice::UpdateGeometryTexCoords(const QrUpdateTexCoordsInfo *updateInfo)
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     if (updateInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1516,7 +1519,8 @@ void VulkanDevice::UpdateGeometryTexCoords(const QrUpdateTexCoordsInfo *updateIn
 void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo *pUploadInfo,
                                                 const float *pViewProjection, const QrViewport *pViewport)
 {
-    statsApiCallsRasterized++;
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
+    statsApiCallsRasterized.fetch_add(1, std::memory_order_relaxed);
 
     if (pUploadInfo == nullptr)
     {
@@ -1567,6 +1571,7 @@ void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo
 
 void VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     if (pUploadInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1577,6 +1582,7 @@ void VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)
 
 void VulkanDevice::UploadPortal(const QrPortalUploadInfo *pUploadInfo)
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     if (pUploadInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1587,17 +1593,19 @@ void VulkanDevice::UploadPortal(const QrPortalUploadInfo *pUploadInfo)
 
 void VulkanDevice::SubmitStaticGeometries()
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     scene->SubmitStatic();
 }
 
 void VulkanDevice::StartNewStaticScene()
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     scene->StartNewStatic();
 }
 
 void VulkanDevice::UploadDirectionalLight(const QrDirectionalLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1609,7 +1617,7 @@ void VulkanDevice::UploadDirectionalLight(const QrDirectionalLightUploadInfo *pL
 
 void VulkanDevice::UploadSphericalLight(const QrSphericalLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1621,7 +1629,7 @@ void VulkanDevice::UploadSphericalLight(const QrSphericalLightUploadInfo *pLight
 
 void VulkanDevice::UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1633,7 +1641,7 @@ void VulkanDevice::UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo)
 
 void VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1645,7 +1653,7 @@ void VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLight
 
 void VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1660,7 +1668,7 @@ void VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *
 
 void VulkanDevice::UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo *pLightInfos, uint32_t count)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfos == nullptr)
     {
@@ -1745,7 +1753,7 @@ void VulkanDevice::UploadDtalGroups(const QrDtalGroupUploadBatch *pUploadInfo)
 
 void VulkanDevice::UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pInfo == nullptr)
     {
