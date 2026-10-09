@@ -61,13 +61,23 @@ main thread joins `draw_done` inside `SCR_UpdateScreen`, then continues into the
 end task still runs. The task reads frame inputs that only the main thread owns (cvars, `cl.time`,
 `cl.items`, `cl.stats`, the editor flags), so `_Host_Frame` joins it with
 `GL_SynchronizeEndRenderingTask()` before the frame handles input: key events, the menus and
-`Cbuf_Execute` all mutate render state on paths outside the command buffer, and the join has to
-precede all of them. Do not move that join later without moving those reads into a frame-owned
+`Cbuf_Execute` must all follow the join; menu and key handlers can mutate cvars without going
+through the command buffer. Do not move that join later without moving those reads into a frame-owned
 snapshot. Debug builds check the boundary: the end task raises `rt_end_task_running` and the input
 phase asserts it is clear, and `rt_end_task_delay_ms` stretches the task to exercise the check. The
 task's profiler results carry a frame serial and are merged into the sample of their own frame
-(`RT_Prof_EndTaskRecord`); the profiler window is published from the frame-start join, after the
-previous end task has reported, so every frame the window covers is complete.
+(`RT_Prof_EndTaskRecord`). The shared production component [rt_prof_window.h](../shared/rt_prof_window.h)
+owns the reporting-window lifecycle. `RT_Prof_FrameStart` joins any previous end task before applying
+enable/disable changes, so the first captured frame cannot be reset after submission. An end-result
+callback writes the slot sums, renderer samples and benchmark data under the profiler lock; only
+then does the component release its pending count, in the same critical section. Publication and
+accumulator clearing also share one critical section. A window must have closed frames, no open
+frame and no outstanding end result to publish. Both the host-start join and the screen-end update
+can publish; the latter remains deferred while the current end task is running.
+
+[prof_window_tests.cpp](../tests/prof_window_tests.cpp) exercises this same component with real
+threads and a paused result writer, both completion orders, multi-frame windows, and disable/re-enable
+transitions. It checks payloads, denominators and exactly-once publication, not just a counter predicate.
 
 ## Worker rules
 
@@ -103,7 +113,10 @@ The graph currently relies on:
 - thread-local caches with a reset generation: the surface-pack entity cache
   ([r_world.c](../Quake/r_world.c#L1072)) and the brush-cluster cache
   ([r_world.c](../Quake/r_world.c#L4300)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
-  the generation at map load and each thread clears its own table on first use;
+  the generation at map load and each thread clears its own table on first use. The buried-answer
+  DTAL cache follows the same ownership rule through `RT_BuriedCacheReset`;
+- the emissive skip-table spinlock (`RT_EmisSkipLock`) — covers lookup/insertion, reset and report
+  snapshotting; printing happens after the snapshot lock is released;
 - the styled-light index (`RT_BuildStyledLightIndex`) — built on the single-threaded map-load path
   right after `RT_ParseElights`, only read by draw tasks afterwards;
 - the colour cache (`rt_colors`) — refreshed by `RT_ColorsRefresh` on the main thread in
@@ -116,6 +129,10 @@ a dependency edge or protected by a lock, and keep `r_tasks 0` byte-compatible w
 
 - Enable with `r_tasks 1`; the official runner takes it as
   `-Overrides @('r_tasks 1')` (`tests/perf/run_stress.ps1`).
+- Use `-StatsLevel 3 -EnableStatsAfterWarmup` to enable profiling in an already loaded game.
+  Combine it with `-Overrides @('r_tasks 1', 'rt_end_task_delay_ms 30')` for delayed-end activation.
+  Window dumps expose `cpu.window_id`, `cpu.window_frames` and `cpu.renderer_samples`; the runner
+  requires multiple advancing windows, nonzero draw-frame averages and matching frame/result counts.
 - Task mode changes the meaning of the CPU counters: `cpu.wait_ms` is the join wait, and per-slot
   sums accumulate worker wall times across parallel tasks — they can exceed the frame interval and
   are **not** comparable to serial slot values. Use the frame interval/FPS for on/off acceptance.

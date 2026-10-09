@@ -710,6 +710,8 @@ enum
 typedef struct
 {
 	qboolean valid;
+	unsigned windowId;
+	unsigned frames;
 	float    fps;
 	float    frameMs; // longest whole-frame time in the window
 	float    waitMs;  // longest wait for the task graph

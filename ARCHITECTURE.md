@@ -58,7 +58,8 @@ Order for an accepted, fully loaded game frame; conditional simulation ticks, ma
 
 ```mermaid
 flowchart TD
-    host["_Host_Frame / Host_FilterTime"] --> input["Input, Cbuf_Execute, NET_Poll, CL_AccumulateCmd"]
+    host["_Host_Frame / Host_FilterTime"] --> previousEnd["GL_SynchronizeEndRenderingTask<br/>publish completed profiler window"]
+    previousEnd --> input["Input, Cbuf_Execute, NET_Poll, CL_AccumulateCmd"]
     input --> simulation["CL_SendCmd / Host_ServerFrame / optional CSQC physics"]
     simulation --> client["CL_ReadFromServer / relink / temporary entities"]
     client --> screen["SCR_UpdateScreen / CPU frame timer begins"]
@@ -216,7 +217,14 @@ Presentation fences are per image; teardown waits pending fences before retiring
 | Submission / display | RHI list [signals the render-finished semaphore](renderer/Source/RHI/RhiFrameContext.cpp#L130); [the `RenderThroughRhi` submission tail](renderer/Source/VulkanDevice.cpp#L1105) also submits the legacy list, then calls [`Swapchain::Present`](renderer/Source/Swapchain.cpp#L306). | CPU submit/present buckets measure API call time, not GPU completion or scanout. |
 | Diagnostics | [Screenshot handling waits for device idle](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L1683); [focus loss/pause/minimize sleeps](Quake/main_sdl.c#L107) and [audio locks](Quake/snd_dma.c#L827) are other blockers. | Keep screenshots outside capture; reject unfocused/paused runs. |
 
-Do not simply re-enable the old render task graph: [the alias pose scratch is shared and mutable](Quake/r_alias.c#L120), brush chains/caches mutate shared data, and geometry APIs mutate collectors. Parallel gathering requires explicit task-owned data and a controlled upload/commit stage.
+The opt-in render graph relies on thread-local alias/brush scratch and caches, ordered static/dynamic
+producers and synchronized geometry APIs. Keep those ownership boundaries when adding producers;
+the host joins the previous end task before input can mutate its frame inputs.
+
+The reporting-window lifecycle is shared production code in [shared/rt_prof_window.h](shared/rt_prof_window.h),
+called by `RT_Prof_FrameStart`, `RT_Prof_EndTaskRecord` and `RT_Prof_Update` in `Quake/gl_vidsdl.c`.
+Enable/disable reset happens before submission, and result writes plus pending release are one locked
+transaction. `prof_window_tests` tests the same component with concurrent record/publication attempts.
 
 ## Developer tooling and machine ownership
 

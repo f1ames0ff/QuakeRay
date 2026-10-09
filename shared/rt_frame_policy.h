@@ -26,11 +26,6 @@ static inline int RT_CacheGenerationStale(unsigned threadGeneration, unsigned gl
     return threadGeneration != globalGeneration;
 }
 
-static inline int RT_ProfWindowPublishes(int pendingEndResults)
-{
-    return pendingEndResults <= 0;
-}
-
 static inline int RT_ReportTakeRun(unsigned *active)
 {
     if (!*active)
@@ -38,16 +33,6 @@ static inline int RT_ReportTakeRun(unsigned *active)
 
     *active = 0;
     return 1;
-}
-
-static inline int RT_ProfPendingAfterSubmit(int pendingEndResults)
-{
-    return pendingEndResults + 1;
-}
-
-static inline int RT_ProfPendingAfterRecord(int pendingEndResults)
-{
-    return pendingEndResults > 0 ? pendingEndResults - 1 : 0;
 }
 
 #endif

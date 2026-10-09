@@ -10,10 +10,14 @@ param(
     [string[]]$Overrides = @(),
     [ValidateRange(0, 3)][int]$StatsLevel = 0,
     [switch]$NoSound,
+    [switch]$EnableStatsAfterWarmup,
     [switch]$Screenshot
 )
 
 $ErrorActionPreference = 'Stop'
+if ($EnableStatsAfterWarmup -and $StatsLevel -ne 3) {
+    throw 'EnableStatsAfterWarmup requires StatsLevel 3.'
+}
 . (Join-Path $PSScriptRoot 'stress_budget.ps1')
 . (Join-Path $PSScriptRoot 'machine_guard.ps1')
 if ($Saves.Count -ne 1 -or $Presets.Count -ne 1) {
@@ -61,6 +65,7 @@ $manifest = [ordered]@{
     MaxRunSeconds = $MaxRunSeconds
     StatsLevel = $StatsLevel
     NoSound = [bool]$NoSound
+    EnableStatsAfterWarmup = [bool]$EnableStatsAfterWarmup
     Overrides = $Overrides
     LoaderLayers = $env:VK_INSTANCE_LAYERS
     LoaderLayersDisabled = $env:VK_LOADER_LAYERS_DISABLE
@@ -181,6 +186,8 @@ $results = @()
                 $fsr = switch ($preset) { 'quality' { 2 } 'balanced' { 3 } 'performance' { 4 } 'ultra' { 5 } }
                 $startDump = if ($StatsLevel -gt 0) { 'rt_stats_dump_start;' } else { '' }
                 $endDump = if ($StatsLevel -gt 0) { 'rt_stats_dump_end;' } else { '' }
+                $initialStatsLevel = if ($EnableStatsAfterWarmup) { 0 } else { $StatsLevel }
+                $startStats = if ($EnableStatsAfterWarmup) { "rt_stats $StatsLevel;" } else { '' }
                 $mapCommand = if ($mapMode) { "map $($expectedMaps[$save])" } else { "load $save" }
                 $fixtureText = (Get-Content (Join-Path $PSScriptRoot 'qr_audit_max.cfg') -Raw) + "`n" +
                     "rt_upscale_fsr31 $fsr`n" + ($Overrides -join "`n") + "`n" + @"
@@ -189,8 +196,8 @@ vid_fullscreen 0
 vid_width 3840
 vid_height 2160
 vid_restart
-rt_stats $StatsLevel
-bind F4 "rt_bench start; $startDump echo QR_START_$id"
+rt_stats $initialStatsLevel
+bind F4 "$startStats rt_bench start; $startDump echo QR_START_$id"
 bind F5 "rt_bench stop; $endDump echo QR_STOP_$id"
 bind F6 "screenshot"
 bind F7 "mapname; vid_describecurrentmode; echo QR_EFFECTIVE_$id"
@@ -301,11 +308,27 @@ echo QR_LOADED0_$id
                     }
                     if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
                     if (Test-QuakeRayStopRequested) { throw 'CANCELLED: owned runtime stopped; capture remains unaccepted.' }
+                    $windowChecks = $null
                     if ($StatsLevel -gt 0) {
                         $dump = Get-ChildItem $gameDir -Filter 'stats-*.dump' | Where-Object FullName -notin $oldDumps |
                             Sort-Object LastWriteTime | Select-Object -Last 1
                         if (-not $dump) { throw 'No stats dump was generated' }
                         Copy-Item $dump.FullName (Join-Path $output "$label.dump")
+                        if ($StatsLevel -eq 3) {
+                            $dumpRows = @(Get-Content $dump.FullName | Where-Object { $_ -and $_ -notmatch '^#' } | ConvertFrom-Csv)
+                            $published = @($dumpRows | Where-Object { $_.'cpu.window_id' -match '^[1-9][0-9]*$' })
+                            $ids = @($published | ForEach-Object { [uint32]$_.'cpu.window_id' } | Sort-Object -Unique)
+                            if ($ids.Count -lt 2) { throw 'Profiler windows did not advance during capture; rebuild or investigate publication.' }
+                            foreach ($row in $published) {
+                                if ([int]$row.'cpu.window_frames' -le 0 -or
+                                    [int]$row.'cpu.window_frames' -ne [int]$row.'cpu.renderer_samples' -or
+                                    [double]$row.'cpu.qrDrawFrame_avg_ms' -le 0) {
+                                    throw 'Profiler window has an incomplete result set or an invalid denominator.'
+                                }
+                            }
+                            $windowChecks = @{ PublishedWindows = $ids.Count; FirstWindowFrames = [int]$published[0].'cpu.window_frames';
+                                FirstRendererSamples = [int]$published[0].'cpu.renderer_samples'; Complete = $true }
+                        }
                     }
                     $blocks = @(Get-Content $bench)
                     $newBlock = $blocks[$oldBench..($blocks.Count - 1)]
@@ -329,6 +352,7 @@ echo QR_LOADED0_$id
                     Copy-Item $console (Join-Path $output "$label.console.log")
                     if (-not $manifest.Contains('CaptureChecks')) { $manifest.CaptureChecks = [ordered]@{} }
                     $manifest.CaptureChecks[$label] = @{ FocusVerified = ($focusLosses -eq 0); FocusLosses = $focusLosses; Completed = $true; StatsLevel = $StatsLevel }
+                    if ($null -ne $windowChecks) { $manifest.CaptureChecks[$label].ProfilerWindows = $windowChecks }
                     $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $output 'manifest.json') -Encoding UTF8
                     $results += [PSCustomObject]@{ Save = $save; Preset = $preset; Repeat = $repeat; Output = $output;
                         Frames = $framePath; Summary = Join-Path $output "$label.summary.json" }

@@ -27,6 +27,7 @@ The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/q
 | `cpu.qrDrawFrame_ms` / `cpu.draw.*` | Inclusive renderer call versus its CPU phases. Entity geometry API preparation occurs earlier; `RHI_setup` contains several setup operations, not AS work alone. | [Call bracket](Quake/gl_vidsdl.c#L3213), [RHI setup recording](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666). |
 | `gpu.frame_ms` / `gpu.*` | Asynchronously completed timestamp-query snapshots for the timed NVRHI command list. Query results come from a reused frame slot, not the CPU sample's synchronized present latency. The separately submitted legacy Vulkan list, acquire/display pacing and scanout are not this timer's full scope. | [Read/poll queries](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L496), [frame-query bounds](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L662), [legacy submission](renderer/Source/VulkanDevice.cpp#L1105). |
 | `rt_stats 3` / statistics dumps | CPU/GPU inspection overlay and reporting-window aggregates. Quake slot maxima are per invocation in a window, not whole-frame percentiles; sequential entity chunks can differ from benchmark frame totals. | [`RT_Prof_End`](Quake/gl_vidsdl.c#L507), [`RT_Prof_Update`](Quake/gl_vidsdl.c#L600), [GUI](Quake/rt_stats_gui.c). |
+| `cpu.window_id`, `cpu.window_frames`, `cpu.renderer_samples` | Reporting-window identity, completed-frame denominator and available renderer CPU samples. Repeated window IDs are repeated snapshots, not new publications. These fields belong to statistics dumps, not the per-frame benchmark CSV. | [Window lifecycle](shared/rt_prof_window.h), `RT_StatsRecordWrite`; `run_stress.ps1 -StatsLevel 3` checks advancing complete windows. |
 | `calls_geometry`, `calls_raster`, `calls_lights` | Geometry/raster/light API call counts recorded with the frame. Useful workload checks, not triangle counts or standalone cost attribution. | [CSV serialization](Quake/gl_vidsdl.c#L763), [geometry API counter](renderer/Source/VulkanDevice.cpp#L1396). |
 
 `rt_bench` enables CPU and GPU-pass collection while `rt_stats 0` avoids the overlay and per-ray statistics flag: [debug flags](Quake/gl_vidsdl.c#L3150), [CPU enable](Quake/gl_vidsdl.c#L3209). Benchmark samples are buffered; CSV writes happen [at reporting](Quake/gl_vidsdl.c#L732), not once per measured frame.
@@ -254,6 +255,33 @@ sample: tasks (35.70 ms mean, 40/40 samples, `qrDrawFrame` 8.75 ms average) and 
 `rt_end_task_delay_ms 30` (67.50 ms, 37/37 samples, 8.92 ms) — in the delayed run every frame's end
 task provably outlives the frame-end update, so every publication happens at a join. Captures:
 `audit-review3-stats-20261009-164835-f59510`, `audit-review3-statsdelay-20261009-164856-50dd49`.
+
+Those review-round captures remain historical throughput/readout observations: filled dump columns
+did not establish atomic result publication or correct first-window activation. The split pending/data
+transaction and activation reset were subsequently replaced by the shared production window component.
+
+Final window-lifecycle verification on top of `d361af64` (Debug exe
+`1ED2CC40EB8FD27058F43B7E444E9C54BA8DFF9FE1430855BA801E5DA16AF2E2`):
+`RT_ProfWindowRecordEnd` writes the full result before releasing pending under the same lock;
+`RT_ProfWindowBeginFrame` applies mode changes before submission, after joining the previous end task.
+`prof_window_tests` covers real component transactions, a paused concurrent writer/publisher, both
+completion orders, several frames per window and disable/re-enable. Twenty repetitions passed, as
+did the full Debug CTest suite (8/8).
+
+All runs below use the save-free `qr_swampy_start` scenario, Balanced, `rt_stats 3`, 5 s warmup and
+8 s capture. Cold activation uses `-EnableStatsAfterWarmup`, so profiling stays off while loading
+and warming up and is enabled in the already loaded game at the capture-start command.
+
+| Capture | Mode | Mean interval ms | Distinct published windows | First observed window frames / renderer samples |
+| --- | --- | ---: | ---: | ---: |
+| `audit-polish-window-normal-20261009-171930-d92ac8` | Tasks, profiler enabled before warmup | 35.72 | 39 | 6 / 6 (window 27) |
+| `audit-polish-window-cold-delay-20261009-171951-4fb168` | Tasks, cold activation, 30 ms end-task delay | 67.15 | 35 | 4 / 4 (window 1) |
+| `audit-polish-window-cold-serial-20261009-172011-a2b9b4` | Serial, cold activation | 45.34 | 37 | 5 / 5 (window 1) |
+
+The runner checked every observed published window for a positive draw-frame average and equal
+completed-frame/result counts, not just nonempty columns. All three captures passed those checks
+and recorded `FocusLosses=0`. QuakeRay MCP reads the added window-identity/count columns as
+reporting-window metrics; imported artifacts still do not carry MCP-verified provenance.
 
 ## Current CPU priorities
 
