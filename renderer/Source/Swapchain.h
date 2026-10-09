@@ -26,6 +26,7 @@
 #include "PhysicalDevice.h"
 #include "CommandBufferManager.h"
 #include "ISwapchainDependency.h"
+#include "SwapchainPolicy.h"
 
 namespace qray
 {
@@ -38,7 +39,8 @@ public:
         VkSurfaceKHR surface,
         VkPhysicalDevice physDevice,
         std::shared_ptr<CommandBufferManager> cmdManager,
-        bool presentWait2Supported);
+        bool presentWait2Supported,
+        bool swapchainMaintenance1Supported);
     ~Swapchain();
 
     Swapchain(const Swapchain &other) = delete;
@@ -83,11 +85,13 @@ private:
     VkPresentModeKHR GetVkPresentMode(QrPresentMode mode) const;
     bool IsWaitablePresentMode(QrPresentMode mode) const;
 
-    bool TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode);
+    bool TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode, bool force = false);
 
     void Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE);
     void Destroy();
     VkSwapchainKHR DestroyWithoutSwapchain();
+
+    void WaitPresentFences();
 
     void CallCreateSubscribers();
     void CallDestroySubscribers();
@@ -112,12 +116,18 @@ private:
     std::vector<VkImageView> swapchainViews;
     std::vector<VkSemaphore> renderFinishedSemaphores;
 
+    bool usePresentFences;
+    std::vector<VkFence> presentFences;
+    std::vector<uint8_t> presentFencePending;
+
     bool presentWait2Supported;
     bool surfacePresentWait2Supported;
     bool usePresentWait2;
     uint64_t currentPresentId;
     uint64_t waitablePresentId;
     uint64_t maxFrameLatency;
+
+    SwapchainRecreateState recreateState;
 
     uint32_t currentSwapchainIndex;
 

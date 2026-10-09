@@ -18,6 +18,18 @@
 - **An empty draw batch no longer trips the scratch allocator** — `Draw_StringScaled` with an empty or blank line, `DrawGLPoly` with no vertices, and an FTE particle batch with no vertices or indices could ask the shared scratch heap for zero bytes, the one size it asserts on; each returns before the request now.
 - **A movable geometry upload no longer sizes its acceleration structure for an update it never performs** — the static submit asked `ASBuilder` to build the movable components with `VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR` while `vkGetAccelerationStructureBuildSizesKHR` had been queried without that flag, and the structure was allocated at the queried size. The update-capable structure needs about 55 per cent more memory on the affected GPU, so the build wrote past its dedicated allocation and the AMD driver reset the device (`VK_ERROR_DEVICE_LOST`, a TDR) on Arcane Dimensions' `ad_tfuma` as soon as the map's submodels became movable geometry; the flag now comes from the same value the size query used. The top-level size query also matches its build now.
 
+## v0.31.3
+
+### Fixed
+- **Acquire-only SUBOPTIMAL no longer rebuilds the swapchain every frame** — a successful present previously reset the recreation guard even when acquisition had reported `VK_SUBOPTIMAL_KHR`, so an unchanged surface could repeatedly drain the device and rebuild presentation resources. The episode now ends only after both acquisition and presentation succeed without SUBOPTIMAL. Deterministic CPU tests cover acquire-only, present-only and combined episodes, recovery and parameter changes using the same policy as the renderer.
+- **The EXT presentation-fence fallback survives mixed extension availability** — instance creation now enables both supported surface-maintenance spellings, and device creation selects a complete enabled instance/device pair, preferring KHR when available. A selected device exposing only EXT swapchain maintenance can therefore use presentation fences even when the instance also exposes KHR surface maintenance. The regression suite covers missing dependencies, KHR/EXT availability combinations and device enumeration order without requiring a GPU.
+
+## v0.31.2
+
+### Fixed
+- **A suboptimal acquisition is used instead of retried** — `vkAcquireNextImageKHR` returning `VK_SUBOPTIMAL_KHR` was handled like `VK_ERROR_OUT_OF_DATE_KHR`: the acquire was retried with the image's already-signaled semaphore instead of that image being consumed by the frame, which is invalid. The image now belongs to the frame, the swapchain is rebuilt before the next acquire once per suboptimal episode, and `VK_ERROR_OUT_OF_DATE_KHR` from the acquire, the present or the present-wait path forces a recreation with refreshed surface capabilities.
+- **Presentation completion is waited before the swapchain teardown** — every present queues a per-image present-operation fence through `VK_KHR_swapchain_maintenance1`, and the pending fences are waited before the swapchain, its semaphores and its image views are destroyed; `vkDeviceWaitIdle` does not cover the presentation engine, so the previous teardown could destroy resources a pending presentation still referenced. The extension pair (`VK_KHR_swapchain_maintenance1` with its instance-level `VK_KHR_surface_maintenance1` dependency, or the `EXT` spellings) is enabled only when both sides are supported; without it the previous idle-only behavior is kept as the fallback.
+
 ## v0.31.1
 
 ### Fixed
