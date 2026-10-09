@@ -12,9 +12,6 @@ Read [ARCHITECTURE.md](../ARCHITECTURE.md) first for subsystem routes; measured 
 - In the serial path (`r_tasks 0`) the same producers run in fixed order on the main thread; the
   frame contents and the NVRHI ray-tracing renderer are identical in both modes.
 - `cpu.wait_ms` is nonzero only in task mode: it is the main thread's join wait, not idle time.
-- The alias pose job module (`../Quake/alias_pose_jobs.{h,c}`) is a separate, standalone stage for
-  task-owned pose preparation. It is not wired into the renderer yet; do not confuse it with the
-  graph below.
 
 ## The task system
 
@@ -26,7 +23,8 @@ submitted tasks. When adding work:
   copied; keep it small and do not put pointers to stack locals in it);
 - add every dependency **before** the task is submitted — `Task_AddDependency` is epoch-checked and
   silently drops an edge to an already-finished task, which can hide a missing order;
-- keep the dependency fan-in below `MAX_DEPENDENT_TASKS` (16);
+- keep the dependents of any one task (its fan-out; `num_dependents` in `Task_AddDependency`)
+  below `MAX_DEPENDENT_TASKS` (16);
 - submit each task once, and join from a non-worker thread (`Task_Join`, typically with
   `SDL_MUTEX_MAXWAIT`; `Tasks_IsWorker()` tells the caller whether it may be a worker).
 
@@ -39,12 +37,15 @@ pumping extra audio updates.
 | Edge | Meaning |
 | --- | --- |
 | `prev_end_rendering_task -> begin_rendering_task` | a new frame never reuses swapchain/frame state before the previous frame's end task finished |
-| `begin_rendering_task -> setup_frame_task`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: fence/acquire, scene collector reset, light-registry frame preparation) happens before anything reads or uploads |
-| `store_efrags -> before_mark` | dynamic light collection runs after the efrag pass |
-| `cull_surfaces -> chain_surfaces -> draw_world_task` | the visibility output feeds the world task |
+| `begin_rendering_task -> setup_frame_task`, `setup_frame_task -> before_mark`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: fence/acquire, scene collector reset, light-registry frame preparation) happens before the setup pass, and the setup pass before everything that reads it |
+| `before_mark -> prepare_mark -> mark_surfaces`, then `mark_surfaces -> store_efrags` and `mark_surfaces -> cull_surfaces -> chain_surfaces` | the efrag store and the visibility chain run after the view is set up |
+| `store_efrags -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task` | the producers that read the frame's dynamic light list run after the efrag pass filled it |
+| `chain_surfaces -> draw_world_task` | the visibility output feeds the world task |
+| `cull_surfaces -> update_lightmaps_task`, `draw_world_task -> update_lightmaps_task` | the lightmap updates run after the world surfaces are culled and drawn |
 | `draw_world_task -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task`, `-> draw_particles_task` | every dynamic uploader runs after the world task closed the static-geometry window (see below) |
 | `draw_world_task, draw_sky_and_water_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task -> draw_view_model_task` | the viewmodel producer runs last among the producers |
-| `draw_gui_task -> draw_done_task -> end_rendering_task` | GUI recording, then the renderer recording/end task |
+| `draw_gui_task -> draw_done_task`, producers `-> draw_done_task` | the GUI and every producer feed the join point |
+| `draw_done_task -> end_rendering_task` | the renderer recording/end task runs last |
 
 `draw_entities_task` is indexed with `NUM_ENTITIES_CBX` (6) slices, so several workers draw entity
 ranges in parallel.
@@ -55,16 +56,33 @@ ranges in parallel.
 geometry. Order every dynamic uploader after `draw_world_task`, and keep static uploads inside the
 world task.
 
+**The end-task boundary.** `GL_EndRenderingTask` is the one producer that outlives its frame: the
+main thread joins `draw_done` inside `SCR_UpdateScreen`, then continues into the host tail while the
+end task still runs. The task reads frame inputs that only the main thread owns (cvars, `cl.time`,
+`cl.items`, `cl.stats`, the editor flags), so `_Host_Frame` joins it with
+`GL_SynchronizeEndRenderingTask()` before the next command phase (`Cbuf_Execute`) can mutate any of
+them. Do not move that join later without moving those reads into a frame-owned snapshot. The
+task's profiler results carry a frame serial and are merged into the sample of their own frame
+(`RT_Prof_EndTaskRecord`), never into whatever frame happens to accumulate when it finishes.
+
 ## Worker rules
 
-A worker thread must not:
+The contract for work added to the graph:
 
-- allocate or free engine memory (`Mem_*`, hunk/zone helpers);
-- call renderer `qr*` entry points outside the synchronized ones;
-- write profiler/bench state except through the locked helpers;
-- read or write cvars, or print through `Con_*`.
+- Put producer buffers in task-owned or thread-local storage; do not add new shared mutable state
+  without a lock or an ordering edge. The shared channels the graph relies on are listed below.
+- Tasks inside the frame's draw graph are joined before the main thread executes the next command
+  buffer, so their reads of cvars and `cl.*` are ordered by that join. The end task is the
+  exception, kept in order by its own boundary (see above); do not extend a task past the join.
+- Call renderer `qr*` entry points only through the synchronized ones listed below, and follow the
+  static-geometry window rule for uploads.
+- Touch profiler/bench state only through the locked helpers (`RT_Prof_*`); the cluster counters are
+  `atomic_uint32_t`.
+- Engine memory (`Mem_*`) and `Con_*` output are thread-safe (mimalloc, the console lock), and a few
+  single-threaded channels (map load, one-time warnings) use them from workers; do not allocate or
+  print per object on a parallel path.
 
-Put producer buffers in task-owned or thread-local storage. The graph currently relies on:
+The graph currently relies on:
 
 - `VulkanDevice::geometryUploadMutex` in [VulkanDevice.cpp](../renderer/Source/VulkanDevice.cpp#L1404) —
   held by `UploadGeometry`, `UploadRasterizedGeometry`, `UpdateGeometryTransform`,
@@ -76,7 +94,15 @@ Put producer buffers in task-owned or thread-local storage. The graph currently 
   the frame reset/copy and `RT_Bench_Report`;
 - thread-local scratch: the alias pose buffer (`tempstorage` in
   [r_alias.c](../Quake/r_alias.c#L120)) and the fan/scratch buffers in
-  [gl_heap.c](../Quake/gl_heap.c#L42).
+  [gl_heap.c](../Quake/gl_heap.c#L42);
+- thread-local caches with a reset generation: the surface-pack entity cache
+  ([r_world.c](../Quake/r_world.c#L1072)) and the brush-cluster cache
+  ([r_world.c](../Quake/r_world.c#L4300)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
+  the generation at map load and each thread clears its own table on first use;
+- the styled-light index (`RT_BuildStyledLightIndex`) — built on the single-threaded map-load path
+  right after `RT_ParseElights`, only read by draw tasks afterwards;
+- the colour cache (`rt_colors`) — refreshed by `RT_ColorsRefresh` on the main thread in
+  `R_RenderView`, workers only read it.
 
 When you add a producer that runs on a worker, ensure its shared writer/reader pairs are ordered by
 a dependency edge or protected by a lock, and keep `r_tasks 0` byte-compatible with `r_tasks 1`.
@@ -100,6 +126,5 @@ a dependency edge or protected by a lock, and keep `r_tasks 0` byte-compatible w
 - `r_tasks` stays off by default until the stability matrix and the default-flip review complete.
 - `r_gpulightmapupdate`'s GPU lightmap path is an unimplemented stub (assert); task mode does not
   require it.
-- The pose job module awaits the geometry kernel hand-off before integration.
 - No worker watchdog: a hung task hangs the join loop; the join reports the `wait` slot so a
   persistent value is visible in captures.

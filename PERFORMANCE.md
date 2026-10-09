@@ -224,6 +224,15 @@ point; Bogbottom fresh spawn 22.7 → 27.8/30.9/31.5 (44.06 → 35.93/32.37/31.7
 reaches ~4 ms. Captures: `audit-q-*`, `audit-final-*`. A 25 s capture on the Bogbottom fresh spawn
 (tasks, Quality) holds 31.3 FPS / mean 31.99 ms, p95 34.51 — matching the 6 s repeats.
 
+End-task review fixes (branch `perf/render-tasks` on top of `f9711ea7`: the end task is joined in
+`_Host_Frame` before `Cbuf_Execute`, its draw-frame cost and renderer stats are merged into the
+sample of its own frame by serial, the brush caches are per-thread and the bench report releases
+the profiler lock before I/O). Same-binary fresh-spawn pair (Balanced): 22.3 FPS / mean 44.78 ms
+serial vs 26.8 / 37.26 ms tasks; the tasks capture attributes `qrDrawFrame` to 225/225 frames
+(avg 9.32 ms) and the serial control to 188/188 (7.10 ms), `dropped=0` in both, focus verified.
+Captures: `audit-pe-final-serial-20261009-155044-a78f40`,
+`audit-pe-final-tasks-20261009-155024-c7fec8`.
+
 ## Current CPU priorities
 
 Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale pre-fix profile. These are **observed inclusive costs**, not predicted savings:

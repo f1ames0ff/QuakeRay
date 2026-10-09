@@ -37,6 +37,16 @@ void TestFramePolicy()
     Require(!RT_ShouldSkipConsoleDraw(1, 0, 1.0f), "a non-forced console remains visible");
     Require(!RT_ShouldSkipConsoleDraw(1, 1, 0.5f), "a translucent preview preserves console draws");
     Require(!RT_ShouldSkipConsoleDraw(1, 1, 0.0f), "a hidden menu preserves console draws");
+
+    Require(RT_EndTaskResultMergesNow(7, 7), "a frame waiting for its end task takes the result");
+    Require(!RT_EndTaskResultMergesNow(7, 8), "a stale waiting frame does not take a newer result");
+    Require(!RT_EndTaskResultMergesNow(0, 7), "a frame that never waits takes no result");
+    Require(!RT_EndTaskResultMergesNow(7, 0), "a zero serial never merges");
+
+    Require(RT_EndFrameConsumesEarlyResult(7, 7), "a frame consumes its own early result");
+    Require(!RT_EndFrameConsumesEarlyResult(7, 8), "a frame does not consume a foreign early result");
+    Require(!RT_EndFrameConsumesEarlyResult(0, 7), "serial mode consumes no task results");
+    Require(!RT_EndFrameConsumesEarlyResult(7, 0), "a frame without an early result consumes nothing");
 }
 
 void TestCpuProfiler()

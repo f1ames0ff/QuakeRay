@@ -433,6 +433,13 @@ static void RT_Prof_Unlock (void)
 }
 static double   rt_bench_last_frame_end;
 static QrFrameStats rt_bench_renderer_stats;
+static uint32_t     rt_end_task_serial;
+static uint32_t     rt_end_task_current_serial;
+static uint32_t     rt_end_task_finished_serial;
+static double       rt_end_task_finished_ms;
+static QrFrameStats rt_end_task_finished_stats;
+static uint32_t     rt_bench_pending_end_serial;
+static int          rt_bench_pending_end_index;
 
 #define RT_BENCH_FRAME_CAPACITY 32768
 
@@ -479,6 +486,9 @@ void RT_Bench_Start (void)
 	memset (rt_bench_sum, 0, sizeof (rt_bench_sum));
 	memset (rt_bench_max, 0, sizeof (rt_bench_max));
 	memset (rt_bench_host_sum, 0, sizeof (rt_bench_host_sum));
+	rt_end_task_finished_serial = 0;
+	memset (&rt_end_task_finished_stats, 0, sizeof (rt_end_task_finished_stats));
+	rt_bench_pending_end_serial = 0;
 	RT_Prof_Unlock ();
 	rt_bench_host_frames = 0;
 	rt_cluster_cache_hits = 0;
@@ -579,6 +589,9 @@ void RT_Prof_FrameEnd (void)
 	if (!RT_StatsPanel (RT_STATS_PROFILE) && !rt_bench_active)
 		return;
 
+	const uint32_t end_serial = rt_end_task_current_serial;
+	rt_end_task_current_serial = 0;
+
 	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
 	if (rt_bench_active)
 	{
@@ -596,6 +609,24 @@ void RT_Prof_FrameEnd (void)
 			sample->keyGame = key_dest == key_game;
 			sample->paused = sv.paused || cl.paused;
 			sample->signon = cls.signon;
+
+			if (end_serial != 0)
+			{
+				sample->slots[RT_PROF_DRAWFRAME] = 0.0;
+				memset (&sample->renderer, 0, sizeof (sample->renderer));
+
+				if (RT_EndFrameConsumesEarlyResult (end_serial, rt_end_task_finished_serial))
+				{
+					sample->slots[RT_PROF_DRAWFRAME] += rt_end_task_finished_ms;
+					sample->renderer = rt_end_task_finished_stats;
+					rt_end_task_finished_serial = 0;
+				}
+				else
+				{
+					rt_bench_pending_end_serial = end_serial;
+					rt_bench_pending_end_index = rt_bench_frame_sample_count - 1;
+				}
+			}
 		}
 		for (int i = 0; i < RT_PROF_COUNT; ++i)
 			if (rt_bench_frame_slots[i] > rt_bench_max[i])
@@ -636,6 +667,59 @@ static void RT_Prof_RecordRenderer (void)
 		if (stats.cpuPassMs[i] > rt_renderer_cpu_max[i])
 			rt_renderer_cpu_max[i] = stats.cpuPassMs[i];
 	}
+	RT_Prof_Unlock ();
+}
+
+static void RT_Prof_EndTaskRecord (uint32_t serial, double start, const QrFrameStats *stats)
+{
+	if (start == 0.0)
+		return;
+
+	const double ms = (Sys_DoubleTime () - start) * 1000.0;
+
+	RT_Prof_Lock ();
+
+	rt_prof_sum[RT_PROF_DRAWFRAME] += ms;
+	if (ms > rt_prof_ms[RT_PROF_DRAWFRAME])
+		rt_prof_ms[RT_PROF_DRAWFRAME] = ms;
+
+	if (stats)
+	{
+		++rt_renderer_cpu_samples;
+		for (int i = 0; i < QR_CPU_PASS_COUNT; i++)
+		{
+			rt_renderer_cpu_sum[i] += stats->cpuPassMs[i];
+			if (stats->cpuPassMs[i] > rt_renderer_cpu_max[i])
+				rt_renderer_cpu_max[i] = stats->cpuPassMs[i];
+		}
+	}
+
+	if (rt_bench_active)
+	{
+		rt_bench_sum[RT_PROF_DRAWFRAME] += ms;
+		if (ms > rt_bench_max[RT_PROF_DRAWFRAME])
+			rt_bench_max[RT_PROF_DRAWFRAME] = ms;
+
+		if (RT_EndTaskResultMergesNow (rt_bench_pending_end_serial, serial))
+		{
+			rt_bench_frame_t *sample = &rt_bench_frame_samples[rt_bench_pending_end_index];
+
+			sample->slots[RT_PROF_DRAWFRAME] += ms;
+			if (stats)
+				sample->renderer = *stats;
+			rt_bench_pending_end_serial = 0;
+		}
+		else
+		{
+			rt_end_task_finished_serial = serial;
+			rt_end_task_finished_ms = ms;
+			if (stats)
+				rt_end_task_finished_stats = *stats;
+			else
+				memset (&rt_end_task_finished_stats, 0, sizeof (rt_end_task_finished_stats));
+		}
+	}
+
 	RT_Prof_Unlock ();
 }
 
@@ -856,9 +940,24 @@ qboolean RT_Bench_Report (const char *demo)
 
 	rt_bench_active = false;
 
-	const double frameAvg = rt_bench_sum[RT_PROF_FRAME] / frames;
+	double slotSum[RT_PROF_COUNT];
+	double slotMax[RT_PROF_COUNT];
+	double hostSum[RT_HOST_SPEED_COUNT];
+	const int interrupted = rt_bench_interrupted;
+	const int clusterHits = rt_cluster_cache_hits;
+	const int clusterMisses = rt_cluster_cache_misses;
+	const int clusterSet = rt_cluster_miss_set;
+	const int clusterMove = rt_cluster_miss_move;
+	const int clusterOther = rt_cluster_miss_other;
+
+	memcpy (slotSum, rt_bench_sum, sizeof (slotSum));
+	memcpy (slotMax, rt_bench_max, sizeof (slotMax));
+	memcpy (hostSum, rt_bench_host_sum, sizeof (hostSum));
+	RT_Prof_Unlock ();
+
+	const double frameAvg = slotSum[RT_PROF_FRAME] / frames;
 	const double frameMin = rt_bench_frame_min > 0.0 ? rt_bench_frame_min : frameAvg;
-	const double frameMax = rt_bench_max[RT_PROF_FRAME];
+	const double frameMax = slotMax[RT_PROF_FRAME];
 
 	rt_bench_result.valid = true;
 	q_strlcpy (rt_bench_result.demo, (demo && demo[0]) ? demo : "?", sizeof (rt_bench_result.demo));
@@ -885,30 +984,29 @@ qboolean RT_Bench_Report (const char *demo)
 	if (!f)
 	{
 		Con_Printf ("rt_bench: could not write %s\n", path);
-		RT_Prof_Unlock ();
 		return true; // the result itself is there, only the log file is not
 	}
 
 	fprintf (f, "# rt_bench %s demo=%s frames=%d seconds=%.2f fps=%.1f interrupted=%d\n", stamp,
 	         (demo && demo[0]) ? demo : "?", frames, seconds,
-	         seconds > 0.0 ? frames / seconds : 0.0, rt_bench_interrupted ? 1 : 0);
+	         seconds > 0.0 ? frames / seconds : 0.0, interrupted ? 1 : 0);
 
 	for (int i = 0; i < RT_PROF_COUNT; i++)
 		fprintf (f, "cpu.slot    %-17s avg_ms=%.2f max_ms=%.2f\n", RT_ProfSlotName (i),
-		         rt_bench_sum[i] / frames, rt_bench_max[i]);
+		         slotSum[i] / frames, slotMax[i]);
 
 	fprintf (f, "cpu.main    %-17s avg_ms=%.2f\n", "frame minus wait",
-	         (rt_bench_sum[RT_PROF_FRAME] - rt_bench_sum[RT_PROF_WAIT]) / frames);
+	         (slotSum[RT_PROF_FRAME] - slotSum[RT_PROF_WAIT]) / frames);
 
 	static const char *const hostPasses[RT_HOST_SPEED_COUNT] = {"tot", "server", "gfx", "snd"};
 	const int                hostFrames = rt_bench_host_frames > 0 ? rt_bench_host_frames : 1;
 
 	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
-		fprintf (f, "host.pass   %-17s avg_ms=%.2f\n", hostPasses[i], rt_bench_host_sum[i] / hostFrames);
+		fprintf (f, "host.pass   %-17s avg_ms=%.2f\n", hostPasses[i], hostSum[i] / hostFrames);
 
 	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d\n", "lists",
-	         rt_cluster_cache_hits, rt_cluster_cache_misses, rt_cluster_miss_set,
-	         rt_cluster_miss_move, rt_cluster_miss_other);
+	         clusterHits, clusterMisses, clusterSet,
+	         clusterMove, clusterOther);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");
@@ -985,12 +1083,11 @@ qboolean RT_Bench_Report (const char *demo)
 
 	for (int i = 0; i < RT_PROF_COUNT; i++)
 		Con_Printf ("  %-17s avg %.2f ms, max %.2f ms\n", RT_ProfSlotName (i),
-		            rt_bench_sum[i] / frames, rt_bench_max[i]);
+		            slotSum[i] / frames, slotMax[i]);
 
 	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
-		Con_Printf ("  host %-12s avg %.2f ms\n", hostPasses[i], rt_bench_host_sum[i] / hostFrames);
+		Con_Printf ("  host %-12s avg %.2f ms\n", hostPasses[i], hostSum[i] / hostFrames);
 
-	RT_Prof_Unlock ();
 	return true;
 }
 
@@ -2330,6 +2427,12 @@ static void RT_ColorGet (rt_color_t *c, float *out)
 {
 	if (c->dirty)
 	{
+		if (Tasks_IsWorker ())
+		{
+			VectorCopy (c->value, out);
+			return;
+		}
+
 		c->dirty = false;
 
 		if (!RT_ColorParse (c->cvar->string, c->value))
@@ -2340,6 +2443,14 @@ static void RT_ColorGet (rt_color_t *c, float *out)
 	}
 
 	VectorCopy (c->value, out);
+}
+
+void RT_ColorsRefresh (void)
+{
+	float color[3];
+
+	for (size_t i = 0; i < countof (rt_colors); i++)
+		RT_ColorGet (&rt_colors[i], color);
 }
 
 void RT_GetSkyColor (float color[3])
@@ -2771,8 +2882,9 @@ static const char *GetUpscalerOptionName (int i, QrRenderUpscaleTechnique techni
 
 typedef struct end_rendering_parms_s
 {
-	float   vid_width;
-	float   vid_height;
+	uint32_t serial;
+	float    vid_width;
+	float    vid_height;
 } end_rendering_parms_t;
 
 #define DEG2RAD(a) ((a)*M_PI_DIV_180)
@@ -3272,10 +3384,21 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	double prof_start = RT_Prof_Begin ();
 	QrResult r = qrDrawFrame (vulkan_globals.instance, &info);
-	RT_Prof_End (RT_PROF_DRAWFRAME, prof_start);
 	QR_CHECK (r);
-	if (r == QR_SUCCESS && info.enableCpuProfiling)
-		RT_Prof_RecordRenderer ();
+
+	if (parms->serial != 0)
+	{
+		QrFrameStats stats = {0};
+		const qboolean stats_valid = (r == QR_SUCCESS && info.enableCpuProfiling) && qrGetFrameStatsEx (vulkan_globals.instance, &stats) == QR_SUCCESS && stats.cpuTimingValid;
+
+		RT_Prof_EndTaskRecord (parms->serial, prof_start, stats_valid ? &stats : NULL);
+	}
+	else
+	{
+		RT_Prof_End (RT_PROF_DRAWFRAME, prof_start);
+		if (r == QR_SUCCESS && info.enableCpuProfiling)
+			RT_Prof_RecordRenderer ();
+	}
 }
 
 /*
@@ -3285,7 +3408,17 @@ GL_EndRendering
 */
 task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 {
+	if (use_tasks)
+	{
+		if (++rt_end_task_serial == 0)
+			rt_end_task_serial = 1;
+		rt_end_task_current_serial = rt_end_task_serial;
+	}
+	else
+		rt_end_task_current_serial = 0;
+
 	end_rendering_parms_t parms = {
+		.serial = rt_end_task_current_serial,
 		.vid_width = (float)vid.width,
 		.vid_height = (float)vid.height,
 	};

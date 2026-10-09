@@ -778,7 +778,7 @@ qboolean RT_AllowFakeLights (void)
 	return !CVAR_TO_BOOL (rt_materials_only) && CVAR_TO_FLOAT (rt_truelight) < 2;
 }
 
-static void RT_BuildStyledLightIndex (void)
+void RT_BuildStyledLightIndex (void)
 {
 	int starts[MAX_LIGHTSTYLES + 1];
 	int counts[MAX_LIGHTSTYLES];
@@ -832,10 +832,7 @@ float RT_NearestStyledLightDistance (int style, const vec3_t point)
 		return -1.0f;
 	}
 
-	if (rt_styled_elight_revision != rt_elights_revision)
-	{
-		RT_BuildStyledLightIndex ();
-	}
+	assert (rt_styled_elight_revision == rt_elights_revision);
 
 	const int start = rt_styled_elights[style];
 	const int count = rt_styled_elight_counts[style];

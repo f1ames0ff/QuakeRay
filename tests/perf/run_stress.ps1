@@ -270,10 +270,11 @@ echo QR_LOADED0_$id
                     $deadline = Get-StressDeadline -Deadline $script:RunDeadline.AddSeconds(-$shutdownReserve) -MaximumSeconds $Seconds
                     $nextOwnerCheck = Get-Date
                     $focusLostSince = $null
+                    $focusLosses = 0
                     while ((Get-Date) -lt $deadline) {
                         if (Test-QuakeRayStopRequested) { break }
                         if (-not [StressWin32]::OwnsFocus($process.Id)) {
-                            if ($null -eq $focusLostSince) { $focusLostSince = Get-Date }
+                            if ($null -eq $focusLostSince) { $focusLostSince = Get-Date; $focusLosses++ }
                             [StressWin32]::SetForegroundWindow($window) | Out-Null
                             if (((Get-Date) - $focusLostSince).TotalSeconds -gt 3) { throw 'Focus was lost during capture.' }
                         } else {
@@ -327,7 +328,7 @@ echo QR_LOADED0_$id
                     }
                     Copy-Item $console (Join-Path $output "$label.console.log")
                     if (-not $manifest.Contains('CaptureChecks')) { $manifest.CaptureChecks = [ordered]@{} }
-                    $manifest.CaptureChecks[$label] = @{ FocusVerified = $true; Completed = $true; StatsLevel = $StatsLevel }
+                    $manifest.CaptureChecks[$label] = @{ FocusVerified = ($focusLosses -eq 0); FocusLosses = $focusLosses; Completed = $true; StatsLevel = $StatsLevel }
                     $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $output 'manifest.json') -Encoding UTF8
                     $results += [PSCustomObject]@{ Save = $save; Preset = $preset; Repeat = $repeat; Output = $output;
                         Frames = $framePath; Summary = Join-Path $output "$label.summary.json" }

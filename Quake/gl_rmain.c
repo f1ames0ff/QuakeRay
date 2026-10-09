@@ -1258,6 +1258,8 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 
 	rt_editor_draw_done_task = INVALID_TASK_HANDLE;
 
+	RT_ColorsRefresh ();
+
 	// The light editor's list of the frame's lights starts empty every frame; the
 	// four upload sites fill it as they go.
 	RT_TRACK_BeginFrame ();

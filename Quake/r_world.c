@@ -1070,8 +1070,15 @@ typedef struct
 
 #define RT_SURFACEPACK_ENT_SIZE 512
 
+typedef struct
+{
+	uint32_t                  generation;
+	rt_surfacepackent_entry_t entries[RT_SURFACEPACK_ENT_SIZE];
+} rt_surfacepackent_cache_t;
+
 static rt_surfacepack_entry_t    *rt_surfacepack;
-static rt_surfacepackent_entry_t  rt_surfacepack_ent[RT_SURFACEPACK_ENT_SIZE];
+static uint32_t                   rt_surfacepack_generation = 1;
+static THREAD_LOCAL rt_surfacepackent_cache_t rt_surfacepack_ent;
 static const qmodel_t            *rt_surfacepack_model;
 static int                        rt_surfacepack_size;
 
@@ -1091,7 +1098,10 @@ static void RT_SurfacePacksReset (void)
 	rt_surfacepack = NULL;
 	rt_surfacepack_model = NULL;
 	rt_surfacepack_size = 0;
-	memset (rt_surfacepack_ent, 0, sizeof (rt_surfacepack_ent));
+	rt_surfacepack_generation++;
+
+	if (rt_surfacepack_generation == 0)
+		rt_surfacepack_generation = 1;
 
 	const qmodel_t *model = cl.worldmodel;
 
@@ -1167,7 +1177,13 @@ static uint32_t RT_PackSurfaceLightStyles (const rt_uploadsurf_state_t *s, const
 		   faces of a model are visited in order, so a stride index keeps them in step, and the
 		   entity moves the window so that two models do not share it. */
 		const size_t               index = (((size_t) (s->surf - s->model->surfaces)) + ((uintptr_t) s->ent >> 4)) % RT_SURFACEPACK_ENT_SIZE;
-		rt_surfacepackent_entry_t *ententry = &rt_surfacepack_ent[index];
+		if (rt_surfacepack_ent.generation != rt_surfacepack_generation)
+		{
+			memset (rt_surfacepack_ent.entries, 0, sizeof (rt_surfacepack_ent.entries));
+			rt_surfacepack_ent.generation = rt_surfacepack_generation;
+		}
+
+		rt_surfacepackent_entry_t *ententry = &rt_surfacepack_ent.entries[index];
 
 		if (ententry->set && ententry->ent == s->ent && ententry->surf == s->surf &&
 		    ententry->tex == s->surf->texinfo->texture &&
@@ -4285,11 +4301,32 @@ typedef struct
 	int             cluster;
 } rt_brushcluster_cacheentry_t;
 
-static rt_brushcluster_cacheentry_t rt_brushcluster_cache[RT_BRUSHCLUSTER_CACHE_SIZE];
+typedef struct
+{
+	uint32_t                     generation;
+	rt_brushcluster_cacheentry_t entries[RT_BRUSHCLUSTER_CACHE_SIZE];
+} rt_brushcluster_cache_t;
+
+static uint32_t rt_brushcluster_cache_generation = 1;
+static THREAD_LOCAL rt_brushcluster_cache_t rt_brushcluster_cache;
+
+static rt_brushcluster_cacheentry_t *RT_BrushClusterCacheEntry (size_t index)
+{
+	if (rt_brushcluster_cache.generation != rt_brushcluster_cache_generation)
+	{
+		memset (rt_brushcluster_cache.entries, 0, sizeof (rt_brushcluster_cache.entries));
+		rt_brushcluster_cache.generation = rt_brushcluster_cache_generation;
+	}
+
+	return &rt_brushcluster_cache.entries[index];
+}
 
 void RT_BrushClusterCacheReset (void)
 {
-	memset (rt_brushcluster_cache, 0, sizeof (rt_brushcluster_cache));
+	rt_brushcluster_cache_generation++;
+
+	if (rt_brushcluster_cache_generation == 0)
+		rt_brushcluster_cache_generation = 1;
 
 	RT_BuriedCacheReset ();
 
@@ -4302,7 +4339,7 @@ void RT_BrushClusterCacheReset (void)
 static int RT_ResolveBrushSurfCluster (const rt_uploadsurf_state_t *s, const QrVertex *verts, int numverts)
 {
 	const size_t idx = ((size_t) s->ent / sizeof (void *) + (size_t) s->surf->vbo_firstvert) % RT_BRUSHCLUSTER_CACHE_SIZE;
-	rt_brushcluster_cacheentry_t *ce = &rt_brushcluster_cache[idx];
+	rt_brushcluster_cacheentry_t *ce = RT_BrushClusterCacheEntry (idx);
 
 	if (ce->ent == s->ent && ce->vbo_firstvert == s->surf->vbo_firstvert &&
 		VectorCompare (ce->origin, s->ent->origin))
