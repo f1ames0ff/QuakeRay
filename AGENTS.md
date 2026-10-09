@@ -3,6 +3,7 @@
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) first. Use its subsystem routes and real entry points instead of rediscovering the whole repository.
 - Build only through `.\build_win.ps1 Debug`: it prepares the MSVC environment, applies the pinned NVRHI patch and deploys the runtime assets. A bare `cmake --build build\Debug` in a shell without that environment fails with C1083 on standard headers and must not be used for builds or verification.
 - For profiling or optimization, then read [PERFORMANCE.md](PERFORMANCE.md), select the relevant capture and verify the current source/binary/settings before forming hypotheses.
+- For worker-thread, task-graph or render-parallelism work, read [docs/multithreading.md](docs/multithreading.md) before adding tasks or changing producers: it lists the frame graph edges, the worker rules and the synchronization boundaries.
 - Inspect the implicated caller, callee and ownership boundary first. Expand the search only when that route cannot answer the question.
 - The [QuakeRay MCP server](tools/quakeray_mcp/README.md) is registered as `quakeray` in `opencode.jsonc`. Prefer its available inspection tools/resources where they cover the task; otherwise use scoped source searches.
 - Runtime jobs are disabled by default. Operator activation requires `QUAKERAY_ENABLE_JOBS=1` in the MCP server environment; research additionally requires `QUAKERAY_ENABLE_RESEARCH=1`. The project configuration explicitly sets both to `0`.
