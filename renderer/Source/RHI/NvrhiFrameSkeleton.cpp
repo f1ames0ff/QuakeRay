@@ -57,6 +57,8 @@
 
 using namespace qray;
 
+extern "C" uint32_t RT_Bench_Active(void);
+
 namespace
 {
 
@@ -114,6 +116,8 @@ struct RhiSetupDiagSample
     uint32_t dynCreates;
     float    dynCreateMs;
     float    dynRecordMs;
+    double   steadyMs;
+    uint32_t benchActive;
 };
 
 constexpr uint32_t kRhiSetupDiagCapacity = 65536;
@@ -138,16 +142,18 @@ void RhiSetupDiagWrite()
 
     std::fprintf(file, "frame,ui_only,total_ms,resources_ms,as_static_ms,as_toplevel_ms,uniform_patch_ms,preprocess_ms,"
                        "tl_static_ms,tl_dynamic_ms,tl_particles_ms,tl_vertex_copies_ms,tl_rest_ms,"
-                       "dyn_copies_ms,dyn_descs_ms,dyn_build_ms,dyn_instances_ms,dyn_creates,dyn_create_ms,dyn_record_ms\n");
+                       "dyn_copies_ms,dyn_descs_ms,dyn_build_ms,dyn_instances_ms,dyn_creates,dyn_create_ms,dyn_record_ms,"
+                       "steady_ms,bench_active\n");
     for (uint32_t i = 0; i < g_rhiSetupDiagCount; ++i)
     {
         const RhiSetupDiagSample &sample = g_rhiSetupDiagSamples[i];
-        std::fprintf(file, "%u,%u,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%u,%.6f,%.6f\n",
+        std::fprintf(file, "%u,%u,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%u,%.6f,%.6f,%.6f,%u\n",
                      sample.frame, sample.uiOnly, sample.totalMs, sample.resourcesMs, sample.asStaticMs,
                      sample.asTopLevelMs, sample.uniformPatchMs, sample.preprocessMs, sample.tlStaticMs,
                      sample.tlDynamicMs, sample.tlParticlesMs, sample.tlVertexCopiesMs, sample.tlRestMs,
                      sample.dynCopiesMs, sample.dynDescsMs, sample.dynBuildMs, sample.dynInstancesMs,
-                     sample.dynCreates, sample.dynCreateMs, sample.dynRecordMs);
+                     sample.dynCreates, sample.dynCreateMs, sample.dynRecordMs, sample.steadyMs,
+                     sample.benchActive);
     }
     std::fclose(file);
     std::fprintf(stdout, "RHI_SETUP_DIAG file=%s rows=%u\n", name, g_rhiSetupDiagCount);
@@ -998,6 +1004,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             sample.dynCreates        = rhiSetupDiagDynCreates;
             sample.dynCreateMs       = (float)rhiSetupDiagDynCreate;
             sample.dynRecordMs       = (float)rhiSetupDiagDynRecord;
+            sample.steadyMs          = std::chrono::duration<double, std::milli>(now.time_since_epoch()).count();
+            sample.benchActive       = RT_Bench_Active() != 0 ? 1u : 0u;
         }
         else
         {
