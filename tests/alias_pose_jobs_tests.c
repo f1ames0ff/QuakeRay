@@ -142,7 +142,7 @@ static qboolean ExpectedBorrow (float blend, int cluster)
 
 static void TestBorrowBoundaries (void)
 {
-	static const float blends[] = {0.0f, -0.0f, 0.25f, 1.0f, FLT_EPSILON, NAN, INFINITY};
+	float              blends[] = {0.0f, -0.0f, -1.0f, 0.25f, 1.0f, FLT_EPSILON, nextafterf (FLT_EPSILON, 0.0f), NAN, INFINITY};
 	static const int   clusters[] = {-1, 0, 1, 2147483647};
 	const int          count = 1024;
 	QrVertex          *pose1 = AllocateVertices (count);
@@ -471,6 +471,9 @@ static void TestTimingSeparation (void)
 		CHECK (isfinite (stats->phase_ms) && stats->phase_ms >= 0.0, "phase_ms finite");
 		CHECK (isfinite (stats->worker_ms) && stats->worker_ms >= 0.0, "worker_ms finite");
 		CHECK (stats->jobs == 1 && stats->chunks >= 1, "job and chunk counters reported");
+
+		if (Tasks_NumWorkers () > 1 && stats->chunks > 1)
+			CHECK (stats->worker_ms > 0.0, "parallel worker time is measured");
 	}
 
 	AliasPoseJobs_Release (&result);
