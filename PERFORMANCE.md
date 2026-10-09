@@ -172,6 +172,15 @@ comparable to the save-state capture above. A restart without the second load ch
 scene to a fresh map spawn (22.3 FPS, mean 44.93 in `audit-pose-gate-0313c-…`), so keep the
 load → restart → load sequence.
 
+Clean set on the load → restart → load runner (synced saves, exe `01852035…`, revision `92c79365`,
+balanced preset, 8 s warmup + 6 s capture):
+
+| Scenario | Capture | FPS | mean ms | p95 ms | `alias_pose` ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Fuma | `build/Debug/audit-clean-fuma-20261009-133342-e997c2` | 36.0 | 27.82 | 31.48 | 1.08 |
+| AD hub | `build/Debug/audit-clean-ad-20261009-133404-e03797` | 42.7 | 23.41 | 32.21 | 0.26 |
+| Bogbottom | `build/Debug/audit-clean-heavy-20261009-133426-c640d1` | 25.3 | 39.52 | 44.05 | 2.34 |
+
 ## Current CPU priorities
 
 Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale pre-fix profile. These are **observed inclusive costs**, not predicted savings:
