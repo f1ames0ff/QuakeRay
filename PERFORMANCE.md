@@ -207,7 +207,7 @@ over a frame arena, exact-argument re-validation on every lookup, thread-local i
 kernel shared with the inline path). It was built and measured to decide whether the parallel stage is
 justified on top of the task graph, where pose computation already runs inside the six entity slices.
 
-Measured binary: Debug `quakeray.exe` SHA256
+Measured development binary: Debug `quakeray.exe` SHA256
 `43F49557B8E12E7EBA334F5F76B71B2B44D8AF61A507960F4EAF551B1BB88F2B`, pack `9857E59B…`, staged
 runner, balanced preset, 8 s warmup + 6 s capture, same binary per arm.
 
@@ -218,6 +218,12 @@ runner, balanced preset, 8 s warmup + 6 s capture, same binary per arm.
 | Fuma, tasks, producer on | 1 | 19.82 | 50.4 |
 | Fuma, tasks, producer off | 1 | 20.03 | 49.9 |
 | Bogbottom serial control | 1 | 40.20 | 24.9 |
+
+Frozen-build verification pair (clean tree, `quakeray.exe` SHA256
+`12350691D0372912F68BF5FABFCEE262851745401BAF67624289AE05FBA3DD6D`, pack `9567F165…`): Bogbottom
+tasks producer off 31.85 ms / 31.4 FPS (`audit-alias-pose-final-off-20261009-213801-27cd3a`) vs
+producer on 33.70 ms / 29.7 FPS (`audit-alias-pose-final-on-20261009-213832-f9252c`), confirming the
+~+1.9 ms split on the frozen revision.
 
 Temporary counters on Bogbottom (removed before the final commit): ~987 prepared copies and ~987
 lookup hits per frame, ~2105 declines. The provider duplicates
