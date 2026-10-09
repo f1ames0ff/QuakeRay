@@ -924,17 +924,35 @@ void VulkanDevice::CreateDevice()
     }
 
     const char *swapchainMaintenance1ExtensionName = nullptr;
+    const char *surfaceMaintenance1ExtensionName = nullptr;
     for (const VkExtensionProperties &ext : supportedDeviceExtensions)
     {
         if (!std::strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
         {
             swapchainMaintenance1ExtensionName = VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
+            surfaceMaintenance1ExtensionName = VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
             break;
         }
 
         if (!std::strcmp(ext.extensionName, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
         {
             swapchainMaintenance1ExtensionName = VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
+            surfaceMaintenance1ExtensionName = VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
+        }
+    }
+
+    if (swapchainMaintenance1ExtensionName != nullptr)
+    {
+        const bool surfaceMaintenance1Supported = std::any_of(supportedDeviceExtensions.cbegin(), supportedDeviceExtensions.cend(),
+            [&](const VkExtensionProperties& ext)
+            {
+                return !std::strcmp(ext.extensionName, surfaceMaintenance1ExtensionName);
+            });
+
+        if (!surfaceMaintenance1Supported)
+        {
+            swapchainMaintenance1ExtensionName = nullptr;
+            surfaceMaintenance1ExtensionName = nullptr;
         }
     }
 
@@ -1029,6 +1047,7 @@ void VulkanDevice::CreateDevice()
     if (swapchainMaintenance1Supported)
     {
         deviceExtensions.push_back(swapchainMaintenance1ExtensionName);
+        deviceExtensions.push_back(surfaceMaintenance1ExtensionName);
     }
 
     enabledDeviceExtensions.clear();
