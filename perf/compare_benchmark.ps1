@@ -44,6 +44,12 @@ function Read-BenchmarkBlocks([string]$Path)
             continue
         }
 
+        if ($line -match '^\s*host\.pass\s+(.+?)\s+avg_ms=([0-9.]+)')
+        {
+            $current.Values["host:$($Matches[1].Trim())"] = [double]$Matches[2]
+            continue
+        }
+
         if ($line -match '^\s*cpu\.cluster lists\s+hits=(\d+)\s+misses=(\d+)')
         {
             $current.Values['cluster:hits'] = [double]$Matches[1]

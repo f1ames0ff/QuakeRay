@@ -27,6 +27,7 @@ The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/q
 | `cpu.qrDrawFrame_ms` / `cpu.draw.*` | Inclusive renderer call versus its CPU phases. Entity geometry API preparation occurs earlier; `RHI_setup` contains several setup operations, not AS work alone. | [Call bracket](Quake/gl_vidsdl.c#L3213), [RHI setup recording](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666). |
 | `gpu.frame_ms` / `gpu.*` | Asynchronously completed timestamp-query snapshots for the timed NVRHI command list. Query results come from a reused frame slot, not the CPU sample's synchronized present latency. The separately submitted legacy Vulkan list, acquire/display pacing and scanout are not this timer's full scope. | [Read/poll queries](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L496), [frame-query bounds](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L662), [legacy submission](renderer/Source/VulkanDevice.cpp#L1105). |
 | `rt_stats 3` / statistics dumps | CPU/GPU inspection overlay and reporting-window aggregates. Quake slot maxima are per invocation in a window, not whole-frame percentiles; sequential entity chunks can differ from benchmark frame totals. | [`RT_Prof_End`](Quake/gl_vidsdl.c#L507), [`RT_Prof_Update`](Quake/gl_vidsdl.c#L600), [GUI](Quake/rt_stats_gui.c). |
+| `cpu.window_id`, `cpu.window_frames`, `cpu.renderer_samples` | Reporting-window identity, completed-frame denominator and available renderer CPU samples. Repeated window IDs are repeated snapshots, not new publications. These fields belong to statistics dumps, not the per-frame benchmark CSV. | [Window lifecycle](shared/rt_prof_window.h), `RT_StatsRecordWrite`; `run_stress.ps1 -StatsLevel 3` checks advancing complete windows. |
 | `calls_geometry`, `calls_raster`, `calls_lights` | Geometry/raster/light API call counts recorded with the frame. Useful workload checks, not triangle counts or standalone cost attribution. | [CSV serialization](Quake/gl_vidsdl.c#L763), [geometry API counter](renderer/Source/VulkanDevice.cpp#L1396). |
 
 `rt_bench` enables CPU and GPU-pass collection while `rt_stats 0` avoids the overlay and per-ray statistics flag: [debug flags](Quake/gl_vidsdl.c#L3150), [CPU enable](Quake/gl_vidsdl.c#L3209). Benchmark samples are buffered; CSV writes happen [at reporting](Quake/gl_vidsdl.c#L732), not once per measured frame.
@@ -41,9 +42,9 @@ Hardware reported by the B0 console capture: **Ryzen 9 7950X, Radeon RX 9070 XT,
 | --- | --- | --- | --- |
 | Fuma | `qr_fuma_start.sav` | `maps/ad_tfuma.bsp` | `27D2992C64A14332E1804C139580778A7AB595C86F28FD1C39289BDF4ECC3326` |
 | AD hub | `qr_ad_start.sav` | `maps/start.bsp` | `A1FCE672F441BE2938A9D9D717868A25CB87E83230552BDD23CE8F6A3BDFEE88` |
-| Bogbottom | `qr_gpu_heavy.sav` | `maps/ad_swampy.bsp` | `F9C09773CFB386CC4BEC171661C65CA5AD1EAE0FF989B80691D8F17D06AA5C72` |
+| Bogbottom | `qr_gpu_heavy.sav` | `maps/ad_swampy.bsp` | `07CE5BB16B6498521AEF63951F46AEAA3E9785255B3CD3099624DC2631BA6427` |
 
-The name `qr_gpu_heavy` is not evidence that Bogbottom is GPU-bound: its measured CPU preparation dominates these captures. Matching AD PAK/material/light assets are required; a save name alone is not a reproducible scenario.
+The name `qr_gpu_heavy` is not evidence that Bogbottom is GPU-bound: its measured CPU preparation dominates these captures. Matching AD PAK/material/light assets are required; a save name alone is not a reproducible scenario. The Bogbottom save was replaced with the synced revision on 2026-10-09; captures before that recorded `F9C09773…` under the same name. Match the manifest's asset hash, never the name alone.
 
 | ID | Source / role | Executable SHA256 |
 | --- | --- | --- |
@@ -135,6 +136,152 @@ Independent contributions, measured on their respective controlled arms:
 | C2: SIMD bounds on C1 | [`Scene::Upload`](renderer/Source/Scene.cpp#L94) → [`AccumulateGeometryBounds`](renderer/Source/GeometryBounds.h#L52); same vertices, finite/range rules and operation order, scalar fallback. | C1 → C2 Bogbottom alias uploads **8.44 → 4.47 ms**, brush uploads **3.81 → 2.84 ms**; Fuma alias **3.46 → 1.80 ms**, brush **2.86 → 2.02 ms**. [Integration report](docs/entity-cpu-combined-performance.md), [SIMD semantics/tests](docs/scene-bounds-performance.md). |
 
 Both changes passed the full Debug CTest suite, **5/5**, including scalar-reference bounds checks, transform-cache tests and cloud/post-effects GPU smoke tests. Transform-copy correctness and input invalidation are tested; Fuma screenshots provide a visual smoke check, not pixel-identical temporal validation. No visibility deletion, quality preset reduction, particle/cluster rewrite, geometry persistence or GPU-shading change is part of C2. Neither solution was merged into master during this campaign.
+
+## Merged-master pose gate (2026-10-09)
+
+First per-frame capture on the merged tree (`b4269845`): Debug `quakeray.exe` SHA256
+`D0D27C09161CC7B148D09624733B9640B69FBF69BEFB0FA6BC6FEA4FF663DE1B`, engine pack
+`034CBC93986E3CC64EB2D0793E3B16730696AC8CEE7532F4A685D4F1430ADB1D`, balanced preset
+(`qr_audit_max.cfg`, FSR Balanced, 3840x2160 windowed, particles/FTE on, `rt_stats 0`), one
+Bogbottom run, 8 s warmup + 6 s capture; capture
+`build/Debug/audit-pose-gate-manual-20261009-101307`. Result: 19.8 FPS, mean 50.53 ms, p95 58.65 ms,
+p99 63.72 ms. CPU means: `frame` 47.13, `ents` 25.59 (alias 11.60, brush 15.28), `alias_pose` 2.79
+(p50 2.72, p95 3.36, max 4.36, every frame above 1.5), `alias_upload` 4.94, `alias_lights` 1.00,
+`particles` 4.29, `qrDrawFrame` 8.03; `gpu.frame` 25.38. Alias pose preparation is the measured gate
+for the multithreading workstream and matches the C2 order of magnitude.
+
+Runner note: the strict analyzer (`393323cf`) rejects captures where the startup main menu is still
+up (`key_game=0`, frozen `client_time`); `run_stress.ps1` sends Escape after the save-loaded marker
+and before warmup (`18b6005e`). The pose-gate capture above predates that change and came from an
+equivalent local script. After the change and the Bogbottom save sync, runner captures are
+`build/Debug/audit-esc-fix-20261009-114605-52d1c1` (exe `B01F8831…`, revision `bd559b6a`, old save,
+23.3 FPS / mean 42.96 / `alias_pose` 2.38) and
+`build/Debug/audit-pose-gate-0313b-20261009-131828-c4873b` (exe `01852035…`, revision `664b3ac7`,
+synced save `07CE5BB1…`; 25.8 FPS, mean 38.73 ms, p95 39.78, `alias_pose` 2.24; focus verified,
+completed). The analyzer also rejects manual contamination: `audit-pose-gate-0313-20261009-131150-b7d6cc`
+was rejected because a typed console `restart` executed mid-capture and spawned a second map,
+resetting the measured state. Do not interact with the live window during a capture.
+
+Black-load workaround (staged sequence, `426d2e07`): the fixture loads the save once and marks
+`QR_LOADED0`; the runner waits 2 s, triggers `restart` (F8, `QR_RESTART`), waits 2 s, triggers the
+reload (F9, `QR_RELOAD`), and only then dismisses the menu and proceeds. An immediate restart in the
+same command block did not cure the intermittent partial-load bug: the map must be loaded before the
+restart, so the waits are real wall time, not frames. Historical variants: in-block sequence
+(`audit-pose-gate-0313d-…`, 25.6 FPS / mean 39.07) and restart without reload (22.3 / 44.93).
+Staged-sequence captures: `audit-seq-check-serial-20261009-141242-bc8451`,
+`audit-render-tasks-fix2-20261009-141316-215209`, `audit-render-tasks-fix3-20261009-141434-2389f2`.
+
+Clean set on the load → restart → load runner (synced saves, exe `01852035…`, revision `92c79365`,
+balanced preset, 8 s warmup + 6 s capture):
+
+| Scenario | Capture | FPS | mean ms | p95 ms | `alias_pose` ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Fuma | `build/Debug/audit-clean-fuma-20261009-133342-e997c2` | 36.0 | 27.82 | 31.48 | 1.08 |
+| AD hub | `build/Debug/audit-clean-ad-20261009-133404-e03797` | 42.7 | 23.41 | 32.21 | 0.26 |
+| Bogbottom | `build/Debug/audit-clean-heavy-20261009-133426-c640d1` | 25.3 | 39.52 | 44.05 | 2.34 |
+
+Task-graph enablement (branch `perf/render-tasks`): the `SCR_UpdateScreen` task path is real again
+(guard decoupled from the unimplemented `r_gpulightmapupdate`; `r_tasks` still defaults 0). Paired
+same-binary runs with the staged sequence:
+
+| Scenario | Serial | Tasks (`r_tasks 1`) |
+| --- | --- | --- |
+| Fuma | 35.1 FPS / mean 28.49 ms | 50.0 / 20.00 |
+| AD hub | 44.6 / 22.41 | 47.6 / 21.01 |
+| Bogbottom | 25.3 / 39.48 | 33.6 / 29.76 |
+
+`cpu.wait_ms` is nonzero only under tasks (the main thread's join wait); per-slot sums accumulate
+worker wall times across parallel tasks and can exceed the frame interval, so do not compare `ents`
+totals across modes. The only recorded tasks-on crash is `audit-render-tasks-diag2-…` (`0xC0000374`);
+after the frame-start ordering edges, thread-local scratches, the geometry-upload mutex and the
+profiler/light-registry lock coverage landed, the recorded runs completed without corruption.
+Coverage limits: Debug, one repeat per scenario (two for Bogbottom); the WER crash dump was not
+analyzed; the serial path's added uncontended lock cost is unmeasured; the black-world workaround is
+the staged restart, not the task graph.
+
+Fresh-spawn scenario `qr_swampy_start` (`map ad_swampy`, no save; the Bogbottom save intermittently
+triggers the black-world load bug) and the FSR scaling check on it (tasks on unless noted):
+
+| FSR mode (`rt_upscale_fsr31`) | FPS | interval mean ms | `cpu.frame` ms | `cpu.wait` ms | `gpu.frame` ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Quality (2) | 27.8 | 35.93 | 33.79 | 33.79 | 26.86 |
+| Balanced (3) | 29.4 | 34.02 | 31.95 | 31.95 | 23.96 |
+| Performance (4) | 30.2 | 33.16 | 31.21 | 31.20 | 20.79 |
+| Ultra (5) | 29.5 | 33.86 | 31.93 | 31.93 | 14.98 |
+| Balanced, serial control | 22.5 | 44.53 | 42.39 | 0.0 | 23.94 |
+
+The GPU time scales with the upscale factor (26.9 → 15.0 ms), but the frame does not: the main thread
+is blocked in the join (`wait` ≈ `frame`) and the task DAG's wall time stays at ~31–34 ms in every
+mode, so the frame is CPU-bound at the 4K targets. Reaching 45 FPS at FSR Quality (22.2 ms) and
+linear FSR scaling requires cutting the CPU critical path below the per-mode GPU time; the component
+targets are in the CPU priorities table. Captures: `audit-scale-q-bog-…`, `audit-spawn-bog2-…`,
+`audit-scale-p-bog-…`, `audit-scale-u-bog-…`, `audit-scale-s-bog-…`.
+
+FSR Quality on/off (tasks vs serial, same binary), with repeats (tasks): Fuma 35.9 → 41.7/42.1/40.7 FPS
+(27.84 → 23.97/23.73/24.54 ms), `gpu.frame` ≈ 22.1–22.7 ms — the frame sits at the GPU balance point;
+AD hub 41.2 → 41.6/41.5/42.3 (24.28 → 24.03/24.10/23.64), `gpu.frame` ≈ 21.9–22.0 ms — same balance
+point; Bogbottom fresh spawn 22.7 → 27.8/30.9/31.5 (44.06 → 35.93/32.37/31.70), `gpu.frame` ≈
+26.9–28.1 ms — 45 FPS at Quality there needs GPU-side reduction as well, and its run-to-run spread
+reaches ~4 ms. Captures: `audit-q-*`, `audit-final-*`. A 25 s capture on the Bogbottom fresh spawn
+(tasks, Quality) holds 31.3 FPS / mean 31.99 ms, p95 34.51 — matching the 6 s repeats.
+
+End-task review fixes (branch `perf/render-tasks` on top of `f9711ea7`: the end task is joined in
+`_Host_Frame` before `Cbuf_Execute`, its draw-frame cost and renderer stats are merged into the
+sample of its own frame by serial, the brush caches are per-thread and the bench report releases
+the profiler lock before I/O). Same-binary fresh-spawn pair (Balanced): 22.3 FPS / mean 44.78 ms
+serial vs 26.8 / 37.26 ms tasks; the tasks
+capture attributes `qrDrawFrame` to 225/225 frames (avg 9.32 ms) and the serial control to 188/188
+(7.10 ms), `dropped=0` in both, focus verified. Captures:
+`audit-pe-final-serial-20261009-155044-a78f40`,
+`audit-pe-final-tasks-20261009-155024-c7fec8`.
+
+Second review round (same branch, exe `B7C69FA8…`): the end task is joined in `_Host_Frame` before
+the frame handles any input (key events and the menus mutate render cvars outside `Cbuf_Execute`),
+the profiler window waits for every frame it covers, the brush and buried-answer caches are
+per-thread and the bench report hands the run to exactly one caller. Same-binary fresh-spawn pair
+(Balanced): 21.7 FPS / mean 46.07 ms serial vs 28.0 / 35.66 ms tasks; both captures attribute
+`qrDrawFrame` to every frame (236/236 tasks, avg 8.95 ms; 182/182 serial, avg 7.39 ms), `dropped=0`,
+focus verified. A control with `rt_end_task_delay_ms 30` (tasks) adds the delay to the frame
+(65.61 ms) and completes with the same attribution (129/129, avg 8.96 ms) — the boundary check: the
+input phase asserts the end task is not running. Captures:
+`audit-review2-serial-20261009-162730-c3684b`, `audit-review2-tasks-20261009-162707-796c38`,
+`audit-review2-delay-20261009-162751-72fc90`.
+
+Follow-up on the profiler window (same branch, exe `5709F64D…`): the wait is booked when the end
+task is submitted and released when it reports, so an early report cannot leave it stuck, and the
+window is published from the frame-start join, where every frame of the window has reported. Both
+cases were exercised with `rt_stats 3` captures whose dump profile columns are filled on every
+sample: tasks (35.70 ms mean, 40/40 samples, `qrDrawFrame` 8.75 ms average) and tasks with
+`rt_end_task_delay_ms 30` (67.50 ms, 37/37 samples, 8.92 ms) — in the delayed run every frame's end
+task provably outlives the frame-end update, so every publication happens at a join. Captures:
+`audit-review3-stats-20261009-164835-f59510`, `audit-review3-statsdelay-20261009-164856-50dd49`.
+
+Those review-round captures remain historical throughput/readout observations: filled dump columns
+did not establish atomic result publication or correct first-window activation. The split pending/data
+transaction and activation reset were subsequently replaced by the shared production window component.
+
+Final window-lifecycle verification on top of `d361af64` (Debug exe
+`1ED2CC40EB8FD27058F43B7E444E9C54BA8DFF9FE1430855BA801E5DA16AF2E2`):
+`RT_ProfWindowRecordEnd` writes the full result before releasing pending under the same lock;
+`RT_ProfWindowBeginFrame` applies mode changes before submission, after joining the previous end task.
+`prof_window_tests` covers real component transactions, a paused concurrent writer/publisher, both
+completion orders, several frames per window and disable/re-enable. Twenty repetitions passed, as
+did the full Debug CTest suite (8/8).
+
+All runs below use the save-free `qr_swampy_start` scenario, Balanced, `rt_stats 3`, 5 s warmup and
+8 s capture. Cold activation uses `-EnableStatsAfterWarmup`, so profiling stays off while loading
+and warming up and is enabled in the already loaded game at the capture-start command.
+
+| Capture | Mode | Mean interval ms | Distinct published windows | First observed window frames / renderer samples |
+| --- | --- | ---: | ---: | ---: |
+| `audit-polish-window-normal-20261009-171930-d92ac8` | Tasks, profiler enabled before warmup | 35.72 | 39 | 6 / 6 (window 27) |
+| `audit-polish-window-cold-delay-20261009-171951-4fb168` | Tasks, cold activation, 30 ms end-task delay | 67.15 | 35 | 4 / 4 (window 1) |
+| `audit-polish-window-cold-serial-20261009-172011-a2b9b4` | Serial, cold activation | 45.34 | 37 | 5 / 5 (window 1) |
+
+The runner checked every observed published window for a positive draw-frame average and equal
+completed-frame/result counts, not just nonempty columns. All three captures passed those checks
+and recorded `FocusLosses=0`. QuakeRay MCP reads the added window-identity/count columns as
+reporting-window metrics; imported artifacts still do not carry MCP-verified provenance.
 
 ## Current CPU priorities
 

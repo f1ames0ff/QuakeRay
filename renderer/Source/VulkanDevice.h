@@ -20,7 +20,9 @@
 #include <qray/qray.h>
 
 #include <array>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -293,11 +295,12 @@ private:
     bool                                    statsGpuTimingValid = false;
     float                                   statsGpuFrameMs = 0.0f;
     float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
+    std::mutex                              geometryUploadMutex;
     CpuFrameProfiler                        cpuFrameProfiler;
     bool                                    statsCpuTimingValid = false;
     bool                                    statsRenderedUiOnly = false;
-    uint32_t                                statsApiCallsGeometry = 0;
-    uint32_t                                statsApiCallsRasterized = 0;
-    uint32_t                                statsApiCallsLights = 0;
+    std::atomic<uint32_t>                   statsApiCallsGeometry{0};
+    std::atomic<uint32_t>                   statsApiCallsRasterized{0};
+    std::atomic<uint32_t>                   statsApiCallsLights{0};
 };
 }
