@@ -6,6 +6,7 @@
 
 #define ALIAS_POSE_ARENA_INITIAL_VERTS 65536
 #define ALIAS_POSE_ARENA_MAX_VERTS     524288
+#define ALIAS_POSE_TASK_CHUNK          32
 
 typedef struct
 {
@@ -112,53 +113,60 @@ void AliasPoseJobs_Begin (int visedict_capacity, alias_pose_provider_t provider)
 
 int AliasPoseJobs_TaskLimit (void)
 {
-	return alias_pose_entry_capacity;
+	return (alias_pose_entry_capacity + ALIAS_POSE_TASK_CHUNK - 1) / ALIAS_POSE_TASK_CHUNK;
 }
 
-void AliasPoseJobs_PrepareTask (int index, void *unused)
+void AliasPoseJobs_PrepareTask (int unit, void *unused)
 {
 	alias_pose_request_t request;
 	alias_pose_entry_t  *entry;
 	uint32_t             offset;
 	double               prof_prep;
 	double               prof_pose;
+	int                  first;
+	int                  last;
 
 	if (!alias_pose_enabled)
 		return;
 
+	first = unit * ALIAS_POSE_TASK_CHUNK;
+	last = q_min (first + ALIAS_POSE_TASK_CHUNK, alias_pose_entry_capacity);
+
 	prof_prep = RT_Prof_Begin ();
 
-	if (!alias_pose_provider (index, &request))
+	for (int index = first; index < last; index++)
 	{
-		Atomic_IncrementUInt32 (&alias_pose_stat_declined);
-		RT_Prof_End (RT_PROF_ALIAS_POSE_PREP, prof_prep);
-		return;
+		if (!alias_pose_provider (index, &request))
+		{
+			Atomic_IncrementUInt32 (&alias_pose_stat_declined);
+			continue;
+		}
+
+		offset = Atomic_AddUInt32 (&alias_pose_arena_bump, (uint32_t)request.vertex_count);
+
+		if (offset + (uint32_t)request.vertex_count > (uint32_t)alias_pose_arena_capacity)
+		{
+			Atomic_IncrementUInt32 (&alias_pose_stat_overflow);
+			continue;
+		}
+
+		prof_pose = RT_Prof_Begin ();
+		AliasPoseJobs_Kernel (request.pose1, request.pose2, alias_pose_arena + offset, 0, request.vertex_count,
+		                      request.blend, request.cluster);
+		RT_Prof_End (RT_PROF_ALIAS_POSE, prof_pose);
+
+		entry = &alias_pose_entries[index];
+		entry->pose1 = request.pose1;
+		entry->pose2 = request.pose2;
+		entry->vertices = alias_pose_arena + offset;
+		entry->vertex_count = request.vertex_count;
+		entry->blend = request.blend;
+		entry->cluster = request.cluster;
+		entry->serial = alias_pose_serial;
+
+		Atomic_IncrementUInt32 (&alias_pose_stat_prepared);
 	}
 
-	offset = Atomic_AddUInt32 (&alias_pose_arena_bump, (uint32_t)request.vertex_count);
-
-	if (offset + (uint32_t)request.vertex_count > (uint32_t)alias_pose_arena_capacity)
-	{
-		Atomic_IncrementUInt32 (&alias_pose_stat_overflow);
-		RT_Prof_End (RT_PROF_ALIAS_POSE_PREP, prof_prep);
-		return;
-	}
-
-	prof_pose = RT_Prof_Begin ();
-	AliasPoseJobs_Kernel (request.pose1, request.pose2, alias_pose_arena + offset, 0, request.vertex_count,
-	                      request.blend, request.cluster);
-	RT_Prof_End (RT_PROF_ALIAS_POSE, prof_pose);
-
-	entry = &alias_pose_entries[index];
-	entry->pose1 = request.pose1;
-	entry->pose2 = request.pose2;
-	entry->vertices = alias_pose_arena + offset;
-	entry->vertex_count = request.vertex_count;
-	entry->blend = request.blend;
-	entry->cluster = request.cluster;
-	entry->serial = alias_pose_serial;
-
-	Atomic_IncrementUInt32 (&alias_pose_stat_prepared);
 	RT_Prof_End (RT_PROF_ALIAS_POSE_PREP, prof_prep);
 }
 

@@ -65,9 +65,9 @@ pumping extra audio updates.
 `draw_entities_task` is indexed with `NUM_ENTITIES_CBX` (6) slices, so several workers draw entity
 ranges in parallel.
 
-**Opt-in alias pose preparation.** With `r_tasks 1` and `r_alias_pose_prep` (default `1`), an indexed
-`prepare_alias_pose_task` covers `cl_maxvisedicts` indexes between `store_efrags` and the entity
-passes. Before submission the main thread calls `AliasPoseJobs_Begin`, which bumps the frame serial,
+**Opt-in alias pose preparation (measured slower on Bogbottom, off by default).** With `r_tasks 1`
+and `r_alias_pose_prep` (default `0`), an indexed `prepare_alias_pose_task` covers `cl_maxvisedicts`
+indexes in 32-index units between `store_efrags` and the entity passes. Before submission the main thread calls `AliasPoseJobs_Begin`, which bumps the frame serial,
 sizes the per-index entry table, grows the shared vertex arena only when the previous frame's demand
 exceeded it (initial 65536 vertices, double growth, 524288 cap) and resets the arena bump. Each
 worker asks `R_AliasPoseSlotProvider` for the draw-path pose inputs of its index — evaluated on a
@@ -78,7 +78,11 @@ cluster) re-validate exactly; otherwise it runs the thread-local inline pose. A 
 match, overflows the arena or was disabled is therefore never drawn. The viewmodel is not prepared
 (index `-1`). With `r_alias_pose_prep 0` or `r_tasks 0` the producer is disabled (`r_tasks 0` keeps
 the inline path identical), and a runtime toggle cannot leave usable stale entries because every
-`Begin` bumps the serial and the serial-`else` branch disables the module.
+`Begin` bumps the serial and the serial-`else` branch disables the module. The same-binary measurement
+in `PERFORMANCE.md` shows a stable ~+1.7 ms interval regression on the Bogbottom pose gate with ~987
+prepared copies per frame, while Fuma stays within noise; the stage duplicates the draw path's
+per-entity setup and the inline pose it replaces is only ~2 ms summed across the six entity slices,
+so it stays off by default.
 
 **Static-geometry window.** `R_DrawWorldTask` calls `qrBeginStaticGeometries` … `qrSubmitStaticGeometries`
 (`gl_rmain.c#L1107`/`#L1119`). Inside that window only `QR_GEOMETRY_TYPE_STATIC` and

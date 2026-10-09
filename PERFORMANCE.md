@@ -199,6 +199,41 @@ Coverage limits: Debug, one repeat per scenario (two for Bogbottom); the WER cra
 analyzed; the serial path's added uncontended lock cost is unmeasured; the black-world workaround is
 the staged restart, not the task graph.
 
+### Alias pose producer experiment (branch `perf/alias-pose-dag`)
+
+The `perf/pose-jobs` prototype was refactored into an opt-in indexed producer that prepares alias pose
+copies between `store_efrags` and the entity passes (32-index task units, frame-serial entry table
+over a frame arena, exact-argument re-validation on every lookup, thread-local inline fallback, pose
+kernel shared with the inline path). It was built and measured to decide whether the parallel stage is
+justified on top of the task graph, where pose computation already runs inside the six entity slices.
+
+Measured binary: Debug `quakeray.exe` SHA256
+`43F49557B8E12E7EBA334F5F76B71B2B44D8AF61A507960F4EAF551B1BB88F2B`, pack `9857E59B…`, staged
+runner, balanced preset, 8 s warmup + 6 s capture, same binary per arm.
+
+| Scenario / arm | Runs | interval mean ms | FPS |
+| --- | ---: | ---: | ---: |
+| Bogbottom, tasks, producer off | 2 | 31.60 / 31.64 (earlier 31.55) | 31.7 / 31.6 |
+| Bogbottom, tasks, producer on (chunked) | 3 | 33.27 / 33.31 / 33.34 | 30.1 / 30.0 |
+| Fuma, tasks, producer on | 1 | 19.82 | 50.4 |
+| Fuma, tasks, producer off | 1 | 20.03 | 49.9 |
+| Bogbottom serial control | 1 | 40.20 | 24.9 |
+
+Temporary counters on Bogbottom (removed before the final commit): ~987 prepared copies and ~987
+lookup hits per frame, ~2105 declines. The provider duplicates
+`R_SetupAliasFrame`/`R_SetupEntityTransform` for every alias entity because the draw path must still
+run them to advance lerp state, while the inline pose work it replaces is only ~2 ms summed across the
+six slices; the producer is a stable net loss on the pose-gate scene and stays opt-in with
+`r_alias_pose_prep 0` as the default. `r_tasks 1` without the producer keeps the task-graph baseline
+(~31.6 ms on the Bogbottom save). An earlier 2000-unit variant of the same task measured 34.17 ms
+(`audit-alias-pose-prep-on-pilot2-20261009-212652-1aebe4`). Captures:
+`build/Debug/audit-alias-pose-off-r2-20261009-213234-8cd243`,
+`audit-alias-pose-on-r2-20261009-213138-b3670a`,
+`audit-alias-pose-chunk-on-20261009-213028-ba5f9e`,
+`audit-alias-pose-fuma-on-20261009-213344-852486`,
+`audit-alias-pose-fuma-off-20261009-213413-47b4ad`,
+`audit-alias-pose-serial-20261009-213446-73dc13`.
+
 Fresh-spawn scenario `qr_swampy_start` (`map ad_swampy`, no save; the Bogbottom save intermittently
 triggers the black-world load bug) and the FSR scaling check on it (tasks on unless noted):
 

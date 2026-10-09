@@ -117,7 +117,7 @@ qboolean r_drawworld_cheatsafe, r_fullbright_cheatsafe, r_lightmap_cheatsafe; //
 cvar_t r_gpulightmapupdate = {"r_gpulightmapupdate", "0", CVAR_NONE};
 
 cvar_t r_tasks = {"r_tasks", "0", CVAR_NONE};
-cvar_t r_alias_pose_prep = {"r_alias_pose_prep", "1", CVAR_NONE};
+cvar_t r_alias_pose_prep = {"r_alias_pose_prep", "0", CVAR_NONE};
 
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;

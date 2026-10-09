@@ -202,10 +202,20 @@ static void TestLifecycle (void)
 	g_provider_limit = TEST_LIFECYCLE_LIMIT;
 
 	AliasPoseJobs_Begin (TEST_LIFECYCLE_LIMIT, StrideProvider);
-	CHECK (AliasPoseJobs_TaskLimit () == TEST_LIFECYCLE_LIMIT, "task limit follows begin");
 
-	for (int i = 0; i < TEST_LIFECYCLE_LIMIT; i++)
-		AliasPoseJobs_PrepareTask (i, NULL);
+	{
+		const int          unit_count = AliasPoseJobs_TaskLimit ();
+		const unsigned int prepared_before = AliasPoseJobs_Stats ()->prepared;
+
+		CHECK (unit_count >= 1, "task limit is at least one unit");
+
+		for (int unit = 0; unit < unit_count; unit++)
+			AliasPoseJobs_PrepareTask (unit, NULL);
+
+		AliasPoseJobs_PrepareTask (unit_count, NULL);
+		CHECK (AliasPoseJobs_Stats ()->prepared == prepared_before + (unsigned)TEST_LIFECYCLE_LIMIT,
+		       "units beyond the limit prepare nothing");
+	}
 
 	CHECK (AliasPoseJobs_Stats ()->prepared == (unsigned)TEST_LIFECYCLE_LIMIT, "every index prepared once");
 	CHECK (AliasPoseJobs_Stats ()->declined == 0, "no declines");
