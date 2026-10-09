@@ -177,12 +177,18 @@ ABBA order, `cpu.wait_ms` as the mode check), mean/p95 ms:
 | Bogbottom | `r_tasks 0` | 41.04/42.10; 40.97/42.17 | 40.58/41.82; 40.53/41.61 | 40.88/41.87; 40.95/41.84 | - |
 | Bogbottom | `r_tasks 1` | 31.59/32.46; 31.78/33.82 | 31.56/32.50; 32.09/36.62 | 31.67/33.33; 31.41/32.17 | - |
 
-Mechanism (`rhi_setup_diag` on the reuse tip, `bench_active` window; frame-id alignment on diag):
+Mechanism (`rhi_setup_diag` on the reuse tip, `bench_active` window; `total_ms` alignment on diag,
+mean |Δ| ≈ 0.002 ms):
 handle recreations per frame are 0.27-0.52 serial (Fuma/Bogbottom) and 2.00 under `r_tasks 1` on
 both scenarios, with `dyn_create_ms` 1.02 (Fuma) and 1.45-1.49 (Bogbottom); the diag branch's
-equality predicate shows 1.38-1.43 recreations per frame under tasks. The cause is the
-task-scheduled order of dynamic geometry inside a filter against the per-index create-time
+equality predicate also shows 2.00 recreations per frame under tasks (serial 1.32-1.36). The cause is
+the task-scheduled order of dynamic geometry inside a filter against the per-index create-time
 envelope: allowing bounds to shrink does not help once the order changes.
+
+Percentiles are the higher-order statistic over `interval_ms` (first partial frame excluded). A
+third clean Bogbottom tasks repeat (35.56/40.94 ms; identical executable, pack and checks) was
+uniformly elevated across independent counters and is retained raw; it does not change the no-gain
+reading (median 32.09 vs the control's 31.69 ms).
 
 Decision: no code change on this evidence branch. The order-insensitive create-time envelope (or a
 different reuse policy) is the next bounded candidate, with its upside bounded by the measured
