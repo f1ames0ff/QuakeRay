@@ -43,6 +43,9 @@
 
 #include <fstream>
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 
 #include "../Const.h"
 #include "../Framebuffers.h"
@@ -83,6 +86,65 @@ const RhiPresentParams PRESENT_PARAMS =
 // The constant buffer is written every frame, and up to two frames (the engine's pacing) plus the
 // swapchain's images can be in flight, so NVRHI keeps this many versions of it.
 const uint32_t PRESENT_PARAMS_VERSIONS = 4;
+
+}
+
+namespace
+{
+
+struct RhiSetupDiagSample
+{
+    uint32_t frame;
+    uint32_t uiOnly;
+    float    totalMs;
+    float    resourcesMs;
+    float    asBuildMs;
+    float    uniformPatchMs;
+    float    preprocessMs;
+};
+
+constexpr uint32_t kRhiSetupDiagCapacity = 65536;
+RhiSetupDiagSample g_rhiSetupDiagSamples[kRhiSetupDiagCapacity];
+uint32_t           g_rhiSetupDiagCount = 0;
+uint32_t           g_rhiSetupDiagFrame = 0;
+bool               g_rhiSetupDiagRegistered = false;
+
+void RhiSetupDiagWrite()
+{
+    const long long stamp = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
+    char name[128];
+    std::snprintf(name, sizeof(name), "rhi_setup_diag_%lld.csv", stamp);
+
+    FILE *file = std::fopen(name, "w");
+    if (file == nullptr)
+    {
+        return;
+    }
+
+    std::fprintf(file, "frame,ui_only,total_ms,resources_ms,as_build_ms,uniform_patch_ms,preprocess_ms\n");
+    for (uint32_t i = 0; i < g_rhiSetupDiagCount; ++i)
+    {
+        const RhiSetupDiagSample &sample = g_rhiSetupDiagSamples[i];
+        std::fprintf(file, "%u,%u,%.6f,%.6f,%.6f,%.6f,%.6f\n", sample.frame, sample.uiOnly, sample.totalMs,
+                     sample.resourcesMs, sample.asBuildMs, sample.uniformPatchMs, sample.preprocessMs);
+    }
+    std::fclose(file);
+    std::fprintf(stdout, "RHI_SETUP_DIAG file=%s rows=%u\n", name, g_rhiSetupDiagCount);
+    std::fflush(stdout);
+}
+
+inline std::chrono::steady_clock::time_point RhiSetupDiagNow()
+{
+    return std::chrono::steady_clock::now();
+}
+
+inline double RhiSetupDiagMs(const std::chrono::steady_clock::time_point &from,
+                             const std::chrono::steady_clock::time_point &to)
+{
+    return std::chrono::duration<double, std::milli>(to - from).count();
+}
 
 }
 
@@ -665,10 +727,22 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     }
     BeginGpuPass(commandList, frameIndex, GPU_PASS_SETUP);
 
+    const std::chrono::steady_clock::time_point rhiSetupDiagStart = RhiSetupDiagNow();
+    std::chrono::steady_clock::time_point       rhiSetupDiagMark = rhiSetupDiagStart;
+    double rhiSetupDiagResources = 0.0;
+    double rhiSetupDiagAsBuild = 0.0;
+    double rhiSetupDiagUniform = 0.0;
+    double rhiSetupDiagPreprocess = 0.0;
+
     // Newly wrapped engine textures are foreign to NVRHI and need their first-use state declared in
     // the first command list that samples them (RhiTextureSource.h); the shared table hands over
     // what was wrapped since the last frame.
     textureTable->TrackPendingTextures(commandList);
+    {
+        const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
+        rhiSetupDiagResources += RhiSetupDiagMs(rhiSetupDiagMark, now);
+        rhiSetupDiagMark = now;
+    }
 
     // The sky pass's Prepare runs in both modes: it selects the slot's ALBEDO target, wraps it and
     // announces the state the engine leaves it in (UnorderedAccess, i.e. GENERAL) - the wrap the
@@ -677,6 +751,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     if (!sky.renderUiOnly && skyPass != nullptr && sky.framebuffers != nullptr)
     {
         skyPass->Prepare(commandList, frameIndex, *sky.framebuffers, sky.width, sky.height);
+    }
+    {
+        const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
+        rhiSetupDiagResources += RhiSetupDiagMs(rhiSetupDiagMark, now);
+        rhiSetupDiagMark = now;
     }
 
     // The engine's GlobalUniform::Upload runs only from Scene::SubmitForFrame (Scene.cpp:112), which
@@ -704,6 +783,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(sky.uniform->GetBuffer()))),
             uniformDesc);
     }
+    {
+        const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
+        rhiSetupDiagResources += RhiSetupDiagMs(rhiSetupDiagMark, now);
+        rhiSetupDiagMark = now;
+    }
 
     const bool tracedFrame = !sky.renderUiOnly && frameMode != FrameMode::Rasterized;
 
@@ -716,12 +800,22 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     if (!sky.renderUiOnly && accelStructs != nullptr)
     {
         accelStructs->BuildStatic(commandList);
+        {
+            const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
+            rhiSetupDiagAsBuild += RhiSetupDiagMs(rhiSetupDiagMark, now);
+            rhiSetupDiagMark = now;
+        }
 
         if (tracedFrame)
         {
             accelStructs->BuildTopLevel(commandList, frameIndex, sky.rayCullMaskWorld,
                                         sky.allowGeometryWithSkyFlag, sky.disableRayTracedGeometry,
                                         sky.particleProxies, sky.particleProxyCount);
+        }
+        {
+            const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
+            rhiSetupDiagAsBuild += RhiSetupDiagMs(rhiSetupDiagMark, now);
+            rhiSetupDiagMark = now;
         }
     }
 
@@ -764,6 +858,11 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // agree.
 
         rhi::writeBuffer(commandList, worldUniformBuffer, sky.uniform->GetData(), sizeof(ShGlobalUniform));
+        {
+            const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
+            rhiSetupDiagUniform += RhiSetupDiagMs(rhiSetupDiagMark, now);
+            rhiSetupDiagMark = now;
+        }
 
         // The dynamic geometry's shading normals (see RhiAccelStructs::RecordVertexPreprocessing):
         // the engine's own preprocessing pass writes the engine's dynamic buffers, which the RHI
@@ -776,9 +875,41 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         {
             accelStructs->RecordVertexPreprocessing(commandList, frameIndex, worldUniformBuffer.Get());
         }
+        {
+            const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
+            rhiSetupDiagPreprocess += RhiSetupDiagMs(rhiSetupDiagMark, now);
+            rhiSetupDiagMark = now;
+        }
     }
 
     nvrhi::ITexture *uiTarget = sky.renderUiOnly ? PrepareUiTarget(frameIndex, sky) : nullptr;
+    {
+        const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
+        rhiSetupDiagResources += RhiSetupDiagMs(rhiSetupDiagMark, now);
+        rhiSetupDiagMark = now;
+
+        if (g_rhiSetupDiagCount < kRhiSetupDiagCapacity)
+        {
+            RhiSetupDiagSample &sample = g_rhiSetupDiagSamples[g_rhiSetupDiagCount++];
+            sample.frame          = g_rhiSetupDiagFrame++;
+            sample.uiOnly         = sky.renderUiOnly ? 1u : 0u;
+            sample.totalMs        = (float)RhiSetupDiagMs(rhiSetupDiagStart, now);
+            sample.resourcesMs    = (float)rhiSetupDiagResources;
+            sample.asBuildMs      = (float)rhiSetupDiagAsBuild;
+            sample.uniformPatchMs = (float)rhiSetupDiagUniform;
+            sample.preprocessMs   = (float)rhiSetupDiagPreprocess;
+        }
+        else
+        {
+            g_rhiSetupDiagFrame++;
+        }
+
+        if (!g_rhiSetupDiagRegistered)
+        {
+            g_rhiSetupDiagRegistered = true;
+            std::atexit(RhiSetupDiagWrite);
+        }
+    }
     EndGpuPass(commandList, frameIndex, GPU_PASS_SETUP);
 
     CpuProfileScope sceneRecording(sky.renderUiOnly ? nullptr : cpuProfiler, QR_CPU_PASS_SCENE);
