@@ -161,14 +161,16 @@ completed). The analyzer also rejects manual contamination: `audit-pose-gate-031
 was rejected because a typed console `restart` executed mid-capture and spawned a second map,
 resetting the measured state. Do not interact with the live window during a capture.
 
-Black-load workaround: the generated fixture now forces `restart` immediately after `load` to dodge
-the intermittent Bogbottom partial-load bug (the corrective task is separate). The Escape dismissal
-still runs after the restart, because `restart` alone does not clear the main menu; validation
-capture `build/Debug/audit-pose-gate-0313c-20261009-132252-871de6` (exe `01852035…`, synced save,
-142 of 142 frames `key_game=1`, `client_time` 8.97 → 15.31) reports 22.3 FPS, mean 44.93 ms, p95
-50.71, `alias_pose` 2.43, `ents` 23.96. The forced restart changes the measured scene from the
-save's live state to a fresh map spawn, so captures made before and after this change are not
-comparable; paired control/candidate runs on the same runner state remain valid.
+Black-load workaround: the generated fixture loads the save, forces `restart`, then loads the save
+again, so the corrective restart runs before the final load and the measured scene stays the save's
+live state (a corrective task for the intermittent Bogbottom partial-load bug is separate). The
+Escape dismissal still runs after the load marker, because `restart` alone does not clear the main
+menu. Validation capture `build/Debug/audit-pose-gate-0313d-20261009-133058-a0baa2` (exe
+`01852035…`, synced save, 164 of 164 frames `key_game=1`, `client_time` 31.01 → 37.38, i.e. the
+save's time) reports 25.6 FPS, mean 39.07 ms, p95 40.02, `alias_pose` 2.28, `ents` 23.32,
+comparable to the save-state capture above. A restart without the second load changes the measured
+scene to a fresh map spawn (22.3 FPS, mean 44.93 in `audit-pose-gate-0313c-…`), so keep the
+load → restart → load sequence.
 
 ## Current CPU priorities
 
