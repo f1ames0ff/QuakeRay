@@ -630,6 +630,8 @@ void RT_Prof_FrameStart (void)
 		memset (&rt_bench_renderer_stats, 0, sizeof (rt_bench_renderer_stats));
 		RT_Prof_Unlock ();
 	}
+
+	RT_PointClusterCacheStats (NULL, NULL, &rt_particle_cache_total_ms_last, NULL);
 }
 
 void RT_Prof_FrameEnd (void)
@@ -641,6 +643,12 @@ void RT_Prof_FrameEnd (void)
 	rt_end_task_current_serial = 0;
 
 	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
+
+	double cacheTotalMs;
+	RT_PointClusterCacheStats (NULL, NULL, &cacheTotalMs, NULL);
+	RT_Prof_Sample (RT_PROF_PARTICLES_RESOLVE, cacheTotalMs - rt_particle_cache_total_ms_last);
+	rt_particle_cache_total_ms_last = cacheTotalMs;
+
 	RT_ProfWindowEndFrame (&rt_prof_window, &rt_prof_window_sync);
 	if (rt_bench_active)
 	{
