@@ -269,6 +269,26 @@ nvrhi::rt::GeometryDesc MakeGeometryDesc(const VkAccelerationStructureGeometryKH
     return result;
 }
 
+bool DynamicShapeFits(const std::vector<uint32_t> &envelope, const std::vector<uint32_t> &current)
+{
+    if (envelope.size() != current.size())
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < envelope.size(); i += 5)
+    {
+        if (current[i] > envelope[i] || current[i + 1] > envelope[i + 1] ||
+            current[i + 2] != envelope[i + 2] || current[i + 3] != envelope[i + 3] ||
+            current[i + 4] != envelope[i + 4])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // One record filled by ASManager::GetTLASInstanceForFilter as this module's instance: every field is
 // translated, and the reference - which the engine's helper deliberately leaves alone, because a
 // bare filter carries no BLAS - becomes this module's handle (the one thing the engine cannot
@@ -1315,9 +1335,9 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
             geometries.reserve(geoms.size());
 
             // The shape the handle has to cover. A size query is unreachable from here (no native
-            // VkDevice in the pinned NVRHI, no ASManager wrapper), so the module recreates the
-            // structure exactly when this changes, which keeps the create-time allocation valid for
-            // every build of the handle by construction (see RhiAccelStructs.h).
+            // VkDevice in the pinned NVRHI, no ASManager wrapper), so the module keeps the handle
+            // while this fits the create-time envelope and recreates it only when it does not
+            // (see RhiAccelStructs.h).
             std::vector<uint32_t> &shape = blas->shapeScratch;
             shape.clear();
             shape.reserve(geoms.size() * 5);
@@ -1342,7 +1362,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 diagFilterMark = now;
             }
 
-            if (blas->handle == nullptr || blas->shape != shape)
+            if (blas->handle == nullptr || !DynamicShapeFits(blas->shape, shape))
             {
                 g_rhiSetupDiagDynCreates++;
                 const std::chrono::steady_clock::time_point diagCreateMark = std::chrono::steady_clock::now();

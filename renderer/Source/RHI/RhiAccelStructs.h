@@ -111,17 +111,20 @@ class RhiFrameContext;
 //  - NVRHI sizes each rt::IAccelStruct from the descriptors given to createAccelStruct and errors at
 //    build time if the allocation is smaller than the build requires, and neither rt::IAccelStruct
 //    nor the pinned NVRHI exposes the data buffer, its size, or the native VkDevice needed to query
-//    the requirement (there is no ASManager size wrapper either). The growth policy is therefore
-//    "recreate exactly when the geometry shape changes": the handle is created from the same
-//    descriptor list it is built with, and while a later frame's shape (per-geometry primitive
-//    counts, vertex counts, stride, indexedness and transform presence) matches the create-time one,
-//    the handle is reused and only rebuilt. A changed shape retires the old handle through
-//    RhiFrameContext::Retire and creates a new one for the new shape. This is the conservative
-//    fallback of the two policies the reconnaissance listed; it never under-allocates because the
-//    create-time and build-time descriptors are identical by construction.
+//    the requirement (there is no ASManager size wrapper either). The create-time size covers any
+//    later build whose per-geometry primitive counts and vertex counts are at most the create-time
+//    ones, whose stride, vertex format, indexedness and transform presence are unchanged, and whose
+//    geometry count does not grow, with equal geometry and build flags
+//    (vkGetAccelerationStructureBuildSizesKHR). The handle is therefore reused while every build
+//    fits that create-time envelope and is recreated only when a build no longer does; a recreated
+//    handle retires the old one through RhiFrameContext::Retire and adopts the current shape as the
+//    new envelope. Geometry flags, the vertex format and the build flags are invariants of the
+//    filter key (VertexCollector) and of MakeGeometryDesc, so the remaining equalities hold by
+//    construction.
 //  - A dynamic filter that is empty in a frame records nothing and produces no instance, but its
 //    handle stays alive: a TLAS of an earlier frame may still reference it while the queue has not
-//    finished. The next frame that brings geometry either rebuilds it (same shape) or replaces it.
+//    finished. The next frame that brings geometry either rebuilds it, while the frame's shape fits
+//    the create-time envelope, or replaces it when it does not.
 //  - NVRHI never holds a reference to the BLAS an instance points at (it only transitions its state
 //    when the TLAS is recorded), so a replaced BLAS is protected from release solely by this module's
 //    retire call - every replaced handle goes through RhiFrameContext::Retire.
@@ -330,9 +333,10 @@ private:
         // which the copy inside createAccelStruct nulls).
         std::vector<nvrhi::rt::GeometryDesc> geometries;
 
-        // The geometry shape the current handle was created for (see the class comment): the
-        // per-geometry primitive count, vertex count, stride, indexedness and transform presence.
-        // Recreated when this changes.
+        // The create-time shape envelope of the current handle (see the class comment): the
+        // per-geometry primitive count and vertex count maxima, stride, indexedness and transform
+        // presence. The handle is reused while every build fits these maxima and is recreated,
+        // adopting the current shape as the new envelope, when it does not.
         std::vector<uint32_t> shape;
         std::vector<uint32_t> shapeScratch;
 
