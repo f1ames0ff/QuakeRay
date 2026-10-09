@@ -239,7 +239,7 @@ echo QR_LOADED0_$id
                         Start-Sleep -Milliseconds 500
                         [StressWin32]::SetForegroundWindow($window) | Out-Null
                         Send-Key $window 0x1B 0x01
-                        Wait-Marker $process 'acceleration structures'
+                        Wait-Marker $process 'RHI: acceleration structures:'
                         Start-Sleep -Milliseconds 300
                         Send-Key $window 0x77 0x42
                         Wait-Marker $process "QR_RESTART_$id"
