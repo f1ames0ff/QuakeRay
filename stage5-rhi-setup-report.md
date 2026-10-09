@@ -2,6 +2,8 @@
 
 Date: 2026-10-09. Branch `diag/rhi-setup-stage5`, base `93b890eb` (engine 0.31.3, master + host split + runner menu fix). Operator-approved temporary instrumentation; no public profiler schema, CSV or CMake changes.
 
+Superseded note (2026-10-09): this is the original decomposition snapshot. The residual claim in it (0.02–0.40 ms) was corrected on the reuse branch after the exact `bench_active` window binding (≈0.002 ms). The accepted candidate analysis, the merged-tip builds/CTest and the same-binary `r_tasks 0/1` re-validation live on `perf/rhi-dyn-blas-reuse` and `perf/rhi-dyn-blas-clean`; this branch is kept as historical evidence (post-merge build and CTest 8/8 were also run on its tip).
+
 ## Method
 
 - Temporary per-frame `steady_clock` sub-timers inside the RHI setup bracket (`renderer/Source/RHI/NvrhiFrameSkeleton.cpp`) and inside `RhiAccelStructs::BuildTopLevel` / `AppendDynamicSlot` (`renderer/Source/RHI/RhiAccelStructs.cpp`). Samples accumulate in preallocated buffers without allocations or logging inside the measured regions; the CSV (`rhi_setup_diag_<stamp>.csv`, unique per run) is written at process exit and its name is echoed on stdout (`RHI_SETUP_DIAG file=…`).
