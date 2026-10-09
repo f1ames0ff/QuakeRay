@@ -287,7 +287,6 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 
         if (r == VK_SUCCESS)
         {
-            forcedRecreateAttempted = false;
             return;
         }
 
@@ -374,6 +373,10 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     {
         ResetSurfaceCapabilitiesCache();
         TryRecreate(GetOptimalExtent(), requestedPresentMode, true);
+    }
+    else if (r == VK_SUCCESS)
+    {
+        forcedRecreateAttempted = false;
     }
     else if (r == VK_SUBOPTIMAL_KHR)
     {
