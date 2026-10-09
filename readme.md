@@ -6,7 +6,11 @@ QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, wi
 
 [Download](https://github.com/f1ames0ff/QuakeRay/releases) · [What's new](changelog.md) · [Report a problem](https://github.com/f1ames0ff/QuakeRay/issues)
 
-Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.md) · [Performance evidence](PERFORMANCE.md).
+Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.md) · [Performance evidence](PERFORMANCE.md) · [Multithreading](docs/multithreading.md).
+
+Agents must use the **QuakeRay engine MCP** as their primary inspection/evidence interface and follow
+the [mandatory workflow](AGENTS.md#mandatory-engine-mcp-workflow), including explicit reporting of
+unavailable tools or coverage gaps.
 
 ## Features
 
@@ -36,6 +40,7 @@ Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.m
 - **Soft, lit smoke trails** for rockets, grenades and lava balls, with a classic smoke option.
 - **Smooth or classic texture filtering**, and a choice of particle styles.
 - **FSR 3.1 upscaling** to improve performance, plus adjustable lighting, cloud and reflection quality.
+- **CPU task-graph multithreading platform** — a reusable worker pool, scalar/indexed tasks, dependencies, synchronized upload channels and frame-aware profiling provide the foundation for adapting further CPU work. Render-scene producers already use it; this does not mean the whole engine or arbitrary existing code is worker-safe. Historical same-binary Debug A/B captures recorded FPS gains of around **40%** in selected CPU-bound scenes, not a guaranteed gain for every map or the final binary. Off by default during broader validation — set `r_tasks 1` to enable it. See the [agent adaptation checklist](docs/multithreading.md#agent-checklist-adapting-an-existing-solution) and [benchmark evidence](PERFORMANCE.md).
 - **Vsync options**, including adaptive vsync and a FreeSync mode.
 
 ### Game data and compatibility
@@ -62,8 +67,16 @@ QuakeRay is still in development. Some maps and mods may have visual or compatib
 - Full path tracing and further lighting improvements
 - More visual effects
 - Improved Arcane Dimensions support
+- Production-ready whole-frame CPU multithreading: extend task coverage beyond render producers,
+  reduce measured serial/lock bottlenecks, harden scheduling and finish the correctness/scalability
+  matrix before enabling the render task path by default. See the
+  [multithreading milestones and acceptance gates](docs/multithreading.md#roadmap-to-production-ready-whole-frame-multithreading).
 
 These are goals, not promises of a release date.
+
+The separate performance goal is at least **45 FPS at 4K FSR Quality** on the reference hardware
+throughout the maintained gameplay scene matrix, with frame-time improvement as internal resolution
+is reduced. Both CPU and GPU budgets must be met; multithreading alone cannot guarantee that target.
 
 ## Requirements
 

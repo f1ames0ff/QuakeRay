@@ -39,8 +39,8 @@ static size_t GetNextStep64 (size_t count, size_t step)
 
 
 
-static uint32_t *fan_indices = NULL;
-static int       fan_indices_count = 0;
+static THREAD_LOCAL uint32_t *fan_indices = NULL;
+static THREAD_LOCAL int       fan_indices_count = 0;
 #define FANINDEX_ALLOC_STEP 255
 
 int RT_GetFanIndexCount(int vertexcount)
@@ -83,8 +83,8 @@ const uint32_t *RT_GetFanIndices (int vertexcount)
 }
 
 
-static void  *scratch_bytes = NULL;
-static size_t scratch_bytes_count = 0;
+static THREAD_LOCAL void  *scratch_bytes = NULL;
+static THREAD_LOCAL size_t scratch_bytes_count = 0;
 #define SCRATCH_ALLOC_STEP 4096
 
 void *RT_AllocScratchMemory (size_t bytecount)
