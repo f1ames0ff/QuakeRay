@@ -41,9 +41,9 @@ Hardware reported by the B0 console capture: **Ryzen 9 7950X, Radeon RX 9070 XT,
 | --- | --- | --- | --- |
 | Fuma | `qr_fuma_start.sav` | `maps/ad_tfuma.bsp` | `27D2992C64A14332E1804C139580778A7AB595C86F28FD1C39289BDF4ECC3326` |
 | AD hub | `qr_ad_start.sav` | `maps/start.bsp` | `A1FCE672F441BE2938A9D9D717868A25CB87E83230552BDD23CE8F6A3BDFEE88` |
-| Bogbottom | `qr_gpu_heavy.sav` | `maps/ad_swampy.bsp` | `F9C09773CFB386CC4BEC171661C65CA5AD1EAE0FF989B80691D8F17D06AA5C72` |
+| Bogbottom | `qr_gpu_heavy.sav` | `maps/ad_swampy.bsp` | `07CE5BB16B6498521AEF63951F46AEAA3E9785255B3CD3099624DC2631BA6427` |
 
-The name `qr_gpu_heavy` is not evidence that Bogbottom is GPU-bound: its measured CPU preparation dominates these captures. Matching AD PAK/material/light assets are required; a save name alone is not a reproducible scenario.
+The name `qr_gpu_heavy` is not evidence that Bogbottom is GPU-bound: its measured CPU preparation dominates these captures. Matching AD PAK/material/light assets are required; a save name alone is not a reproducible scenario. The Bogbottom save was replaced with the synced revision on 2026-10-09; captures before that recorded `F9C09773…` under the same name. Match the manifest's asset hash, never the name alone.
 
 | ID | Source / role | Executable SHA256 |
 | --- | --- | --- |
@@ -150,13 +150,25 @@ p99 63.72 ms. CPU means: `frame` 47.13, `ents` 25.59 (alias 11.60, brush 15.28),
 for the multithreading workstream and matches the C2 order of magnitude.
 
 Runner note: the strict analyzer (`393323cf`) rejects captures where the startup main menu is still
-up (`key_game=0`, frozen `client_time`). `run_stress.ps1` now sends Escape after the save-loaded
-marker and before warmup, so runner captures are valid. The capture above predates that change and
-came from an equivalent local script that dismissed the menu the same way. After the change, the
-validation capture `build/Debug/audit-esc-fix-20261009-114605-52d1c1` (exe `B01F8831…`, revision
-`bd559b6a`, focus verified, completed) reports 23.3 FPS, mean 42.96 ms, p95 44.44, `alias_pose`
-2.38 ms on the same save/preset, confirming both the runner fix and the gate on the current binary
-that includes the stage-1 pose-jobs module.
+up (`key_game=0`, frozen `client_time`); `run_stress.ps1` sends Escape after the save-loaded marker
+and before warmup (`18b6005e`). The pose-gate capture above predates that change and came from an
+equivalent local script. After the change and the Bogbottom save sync, runner captures are
+`build/Debug/audit-esc-fix-20261009-114605-52d1c1` (exe `B01F8831…`, revision `bd559b6a`, old save,
+23.3 FPS / mean 42.96 / `alias_pose` 2.38) and
+`build/Debug/audit-pose-gate-0313b-20261009-131828-c4873b` (exe `01852035…`, revision `664b3ac7`,
+synced save `07CE5BB1…`; 25.8 FPS, mean 38.73 ms, p95 39.78, `alias_pose` 2.24; focus verified,
+completed). The analyzer also rejects manual contamination: `audit-pose-gate-0313-20261009-131150-b7d6cc`
+was rejected because a typed console `restart` executed mid-capture and spawned a second map,
+resetting the measured state. Do not interact with the live window during a capture.
+
+Black-load workaround: the generated fixture now forces `restart` immediately after `load` to dodge
+the intermittent Bogbottom partial-load bug (the corrective task is separate). The Escape dismissal
+still runs after the restart, because `restart` alone does not clear the main menu; validation
+capture `build/Debug/audit-pose-gate-0313c-20261009-132252-871de6` (exe `01852035…`, synced save,
+142 of 142 frames `key_game=1`, `client_time` 8.97 → 15.31) reports 22.3 FPS, mean 44.93 ms, p95
+50.71, `alias_pose` 2.43, `ents` 23.96. The forced restart changes the measured scene from the
+save's live state to a fresh map spawn, so captures made before and after this change are not
+comparable; paired control/candidate runs on the same runner state remain valid.
 
 ## Current CPU priorities
 
