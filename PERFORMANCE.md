@@ -149,10 +149,14 @@ p99 63.72 ms. CPU means: `frame` 47.13, `ents` 25.59 (alias 11.60, brush 15.28),
 `particles` 4.29, `qrDrawFrame` 8.03; `gpu.frame` 25.38. Alias pose preparation is the measured gate
 for the multithreading workstream and matches the C2 order of magnitude.
 
-Runner note: on this HEAD `run_stress.ps1` does not dismiss the startup main menu, and the strict
-analyzer (`393323cf`) rejects such captures (`key_game=0`, frozen `client_time`). The capture above
-came from an equivalent local script that sends Escape after the save-loaded marker; a one-line
-runner fix is proposed for the shared script.
+Runner note: the strict analyzer (`393323cf`) rejects captures where the startup main menu is still
+up (`key_game=0`, frozen `client_time`). `run_stress.ps1` now sends Escape after the save-loaded
+marker and before warmup, so runner captures are valid. The capture above predates that change and
+came from an equivalent local script that dismissed the menu the same way. After the change, the
+validation capture `build/Debug/audit-esc-fix-20261009-114605-52d1c1` (exe `B01F8831…`, revision
+`bd559b6a`, focus verified, completed) reports 23.3 FPS, mean 42.96 ms, p95 44.44, `alias_pose`
+2.38 ms on the same save/preset, confirming both the runner fix and the gate on the current binary
+that includes the stage-1 pose-jobs module.
 
 ## Current CPU priorities
 

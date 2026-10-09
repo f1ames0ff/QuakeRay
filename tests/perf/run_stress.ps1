@@ -227,6 +227,7 @@ echo QR_LOADED_$id
                         break
                     }
                     [StressWin32]::SetForegroundWindow($window) | Out-Null
+                    Send-Key $window 0x1B 0x01
                     Start-Sleep -Seconds $Warmup
                     Send-Key $window 0x76 0x41
                     Wait-Marker $process "QR_EFFECTIVE_$id"
