@@ -26,6 +26,7 @@
 #include "PhysicalDevice.h"
 #include "CommandBufferManager.h"
 #include "ISwapchainDependency.h"
+#include "SwapchainPolicy.h"
 
 namespace qray
 {
@@ -126,8 +127,7 @@ private:
     uint64_t waitablePresentId;
     uint64_t maxFrameLatency;
 
-    bool suboptimalAcquire;
-    bool forcedRecreateAttempted;
+    SwapchainRecreateState recreateState;
 
     uint32_t currentSwapchainIndex;
 

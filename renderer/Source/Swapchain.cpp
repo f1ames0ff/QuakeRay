@@ -83,8 +83,6 @@ Swapchain::Swapchain(
     , currentPresentId(0)
     , waitablePresentId(0)
     , maxFrameLatency(0)
-    , suboptimalAcquire(false)
-    , forcedRecreateAttempted(false)
     , currentSwapchainIndex(UINT32_MAX)
     , subscribers{}
     , cachedSurfaceCaps{}
@@ -244,18 +242,15 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
         !AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode ||
         usePresentWait2 != wantPresentWait2;
 
+    const bool forceRecreate = recreateState.BeginAcquire(parametersChanged);
     if (parametersChanged)
     {
         TryRecreate(requestedExtent, requestedPresentMode);
-        forcedRecreateAttempted = false;
     }
-    else if (suboptimalAcquire && !forcedRecreateAttempted)
+    else if (forceRecreate)
     {
         TryRecreate(requestedExtent, requestedPresentMode, true);
-        forcedRecreateAttempted = true;
     }
-
-    suboptimalAcquire = false;
 
     if (usePresentWait2 && sVkWaitForPresent2KHR != nullptr && currentPresentId + 1 > maxFrameLatency)
     {
@@ -285,6 +280,8 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
             imageAvailableSemaphore,
             VK_NULL_HANDLE, &currentSwapchainIndex);
 
+        recreateState.Acquired(r);
+
         if (r == VK_SUCCESS)
         {
             return;
@@ -292,7 +289,6 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 
         if (r == VK_SUBOPTIMAL_KHR)
         {
-            suboptimalAcquire = true;
             return;
         }
 
@@ -346,6 +342,7 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     }
 
     const VkResult r = vkQueuePresentKHR(queues->GetGraphics(), &presentInfo);
+    recreateState.Presented(r);
 
     if (usePresentFences)
     {
@@ -373,14 +370,6 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     {
         ResetSurfaceCapabilitiesCache();
         TryRecreate(GetOptimalExtent(), requestedPresentMode, true);
-    }
-    else if (r == VK_SUCCESS)
-    {
-        forcedRecreateAttempted = false;
-    }
-    else if (r == VK_SUBOPTIMAL_KHR)
-    {
-        suboptimalAcquire = true;
     }
 }
 

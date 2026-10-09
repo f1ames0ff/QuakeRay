@@ -25,6 +25,7 @@
 #include "Const.h"
 #include "Generated/ShaderCommonC.h"
 #include "LibraryConfig.h"
+#include "SwapchainPolicy.h"
 #include "RHI/NvrhiContext.h"
 #include "RHI/NvrhiFrameSkeleton.h"
 #include "RHI/NvrhiRequirements.h"
@@ -690,28 +691,7 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
         extensions.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
     }
 
-    const char *surfaceMaintenance1InstanceName = nullptr;
-    if (surfaceCapabilities2Supported)
-    {
-        for (const VkExtensionProperties &ext : supportedInstanceExtensions)
-        {
-            if (!std::strcmp(ext.extensionName, VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME))
-            {
-                surfaceMaintenance1InstanceName = VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
-                break;
-            }
-
-            if (!std::strcmp(ext.extensionName, VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME))
-            {
-                surfaceMaintenance1InstanceName = VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
-            }
-        }
-    }
-
-    if (surfaceMaintenance1InstanceName != nullptr)
-    {
-        extensions.push_back(surfaceMaintenance1InstanceName);
-    }
+    AppendSurfaceMaintenanceExtensions(extensions, supportedInstanceExtensions, surfaceCapabilities2Supported);
 
     if (libconfig.vulkanValidation)
     {
@@ -946,37 +926,8 @@ void VulkanDevice::CreateDevice()
                                 sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
     }
 
-    const char *swapchainMaintenance1ExtensionName = nullptr;
-    const char *surfaceMaintenance1ExtensionName = nullptr;
-    for (const VkExtensionProperties &ext : supportedDeviceExtensions)
-    {
-        if (!std::strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
-        {
-            swapchainMaintenance1ExtensionName = VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
-            surfaceMaintenance1ExtensionName = VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
-            break;
-        }
-
-        if (!std::strcmp(ext.extensionName, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
-        {
-            swapchainMaintenance1ExtensionName = VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
-            surfaceMaintenance1ExtensionName = VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
-        }
-    }
-
-    if (swapchainMaintenance1ExtensionName != nullptr)
-    {
-        const bool surfaceMaintenance1Enabled = std::any_of(enabledInstanceExtensions.cbegin(), enabledInstanceExtensions.cend(),
-            [&](const std::string &name)
-            {
-                return name == surfaceMaintenance1ExtensionName;
-            });
-
-        if (!surfaceMaintenance1Enabled)
-        {
-            swapchainMaintenance1ExtensionName = nullptr;
-        }
-    }
+    const char *swapchainMaintenance1ExtensionName =
+        SelectSwapchainMaintenanceExtension(supportedDeviceExtensions, enabledInstanceExtensions);
 
     VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchainMaintenance1Features = {};
     swapchainMaintenance1Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR;
