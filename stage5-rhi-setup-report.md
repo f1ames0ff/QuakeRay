@@ -2,6 +2,8 @@
 
 Date: 2026-10-09. Branch `diag/rhi-setup-stage5`, base `93b890eb` (engine 0.31.3, master + host split + runner menu fix). Operator-approved temporary instrumentation; no public profiler schema, CSV or CMake changes.
 
+Provenance note (2026-10-09): the decomposition below was captured on `diag/rhi-setup-stage5` at base `93b890eb` (engine 0.31.3). The candidate and acceptance sections ran on `perf/rhi-dyn-blas-reuse` (diagnostics) and `perf/rhi-dyn-blas-clean` (functional), which are now merged with `origin/master` `0c04f86f` (engine 0.40.0, render task graph). The "Post-merge task-graph adaptation" section below records the merged-tip builds, tests and same-binary `r_tasks 0/1` captures.
+
 ## Method
 
 - Temporary per-frame `steady_clock` sub-timers inside the RHI setup bracket (`renderer/Source/RHI/NvrhiFrameSkeleton.cpp`) and inside `RhiAccelStructs::BuildTopLevel` / `AppendDynamicSlot` (`renderer/Source/RHI/RhiAccelStructs.cpp`). Samples accumulate in preallocated buffers without allocations or logging inside the measured regions; the CSV (`rhi_setup_diag_<stamp>.csv`, unique per run) is written at process exit and its name is echoed on stdout (`RHI_SETUP_DIAG file=…`).
@@ -142,4 +144,47 @@ The audit of the candidate section found three gaps: the functional state lived 
 | FPS | 37.27 | 38.63 | +1.36 |
 
   Complete separation on the outer bracket: candidate 2.546/2.507 vs control 3.148/3.196. Bogbottom remains neutral (Δ +0.033 ms inside a 4.05–4.38 candidate spread), the two spawn captures are neutral (4.097 vs 4.061), and a Quality smoke on Fuma shows the same reduction (−0.724 ms, one run per arm, not a statistical claim). On Fuma every frame metric improves, which also addresses the earlier p95 concern from the diagnostics-branch pair.
-- **Coverage limits**: Balanced on Bogbottom and Fuma plus the spawn scenario, Quality on Fuma; save reload and fresh spawn cover level transitions, but long gameplay, other maps and task-agent integration are not covered by this set.
+- **Coverage limits**: Balanced on Bogbottom and Fuma plus the spawn scenario, Quality on Fuma; save reload and fresh spawn cover level transitions, but long gameplay, other maps and task-agent integration are not covered by this set. The task-agent integration limit is closed by the post-merge section below; long gameplay and other maps remain untested.
+
+## Post-merge task-graph adaptation (2026-10-09)
+
+The merged tips were built and measured after `origin/master` `0c04f86f` (engine 0.40.0, render task
+graph); this closes the earlier "task-agent integration not covered" limit. No functional code change
+was required for `r_tasks 1`: the RHI recording still runs inside the single ordered end task
+(`GL_EndRenderingTask` -> `qrDrawFrame`), serialized by `prev_end_rendering_task ->
+begin_rendering_task` and the end-task join, and the reuse state is per frame slot. The
+`bench_active` diagnostic sample reads `rt_bench_active` exactly as the pre-existing end-task read
+in `gl_vidsdl.c` does; the commands that flip it run after the join, so the read is ordered and was
+left unchanged.
+
+Builds and tests: every tip passes `.\build_win.ps1 Debug -Tests` plus CTest 8/8 (receipts and logs
+under `build/Debug/audit-stage5d-*`).
+
+| Tip | Revision | exe sha256 (16) | Role |
+| --- | --- | --- | --- |
+| `perf/run-stress-capture-fixes` | `9d7a6804` | `5374A9CB…` | control (sources byte-equal to master) |
+| `perf/rhi-dyn-blas-clean` | `dc89557a` | `910D42E8…` | functional deliverable |
+| `perf/rhi-dyn-blas-reuse` | `3b5a18ec` | `FCD31349…` | diagnostics twin (this branch) |
+| `diag/rhi-setup-stage5` | `2b49b3c1` | `4FA11F71…` | historical diagnostics validation |
+
+Same-binary captures (staged runner, Balanced, 8 s warmup + 6 s capture, one save per invocation,
+ABBA order, `cpu.wait_ms` as the mode check), mean/p95 ms:
+
+| Scenario | Arm | Control | Clean | Reuse | Diag |
+| --- | --- | --- | --- | --- | --- |
+| Fuma | `r_tasks 0` | 27.51/28.48; 27.47/28.33 | 27.07/28.92; 26.93/28.93 | 26.80/28.32; 27.08/28.46 | 27.59/28.58; 28.05/29.45 |
+| Fuma | `r_tasks 1` | 20.04/22.78; 20.72/24.20 | 20.15/23.06; 20.01/22.72 | 20.01/22.65; 20.13/22.94 | 19.92/22.75; 20.01/22.82 |
+| Bogbottom | `r_tasks 0` | 41.04/42.10; 40.97/42.17 | 40.58/41.82; 40.53/41.61 | 40.88/41.87; 40.95/41.84 | - |
+| Bogbottom | `r_tasks 1` | 31.59/32.46; 31.78/33.82 | 31.56/32.50; 32.09/36.62 | 31.67/33.33; 31.41/32.17 | - |
+
+Mechanism (`rhi_setup_diag` on the reuse tip, `bench_active` window; frame-id alignment on diag):
+handle recreations per frame are 0.27-0.52 serial (Fuma/Bogbottom) and 2.00 under `r_tasks 1` on
+both scenarios, with `dyn_create_ms` 1.02 (Fuma) and 1.45-1.49 (Bogbottom); the diag branch's
+equality predicate shows 1.38-1.43 recreations per frame under tasks. The cause is the
+task-scheduled order of dynamic geometry inside a filter against the per-index create-time
+envelope: allowing bounds to shrink does not help once the order changes.
+
+Decision: no code change on this evidence branch. The order-insensitive create-time envelope (or a
+different reuse policy) is the next bounded candidate, with its upside bounded by the measured
+recreation cost. Raw captures: `build/Debug/audit-s5d-{ctrl,clean,reuse,diag}-*`; receipts and
+CTest logs: `build/Debug/audit-stage5d-*`.

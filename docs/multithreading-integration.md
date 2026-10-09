@@ -2,7 +2,7 @@
 
 Updated: 2026-10-09.
 
-Status: proposed follow-up after the multithreading changes and accepted sequential RHI changes are integrated into master. This document does not assert that either integration has already happened or authorize implementation of every candidate below.
+Status: step 1 (freeze and profile the integrated master) was executed on the merged branches on 2026-10-09; its results are recorded in `PERFORMANCE.md` and in the step 1 results note below. Candidate work remains proposed unless separately accepted.
 
 ## Objective and principles
 
@@ -32,6 +32,10 @@ Before choosing another optimization:
 Do not add historical sequential bucket times or divide aggregate worker time by the worker count to derive the new critical path. Do not add CPU and GPU times. If GPU execution already exceeds the target frame budget, reducing CPU cost alone cannot establish the FPS target.
 
 **Exit condition:** a reproducible combined control and a measured critical path that selects the next small experiment. Update the architecture/performance evidence for the integrated execution path.
+
+### Step 1 results (executed 2026-10-09)
+
+The merged branches were built and measured after `origin/master` `0c04f86f`: `perf/rhi-dyn-blas-clean` (`dc89557a`, exe `910D42E8…`) and `perf/rhi-dyn-blas-reuse` (`3b5a18ec`, exe `FCD31349…`) pass CTest 8/8; the control is `perf/run-stress-capture-fixes` (`9d7a6804`, sources byte-equal to master, exe `5374A9CB…`). Same-binary `r_tasks 0/1` captures (staged runner, Balanced, Fuma + Bogbottom) reproduce the sequential Fuma win in serial mode (frame 27.0 vs 27.5 ms; `RHI_setup` 2.6 vs 3.1 ms) while under `r_tasks 1` the task graph dominates and the reuse does not separate. The diagnostics twin shows why: handle recreations are 0.3-0.5 per frame serial but chronic under tasks (2.00 per frame; `dyn_create_ms` 1.0-1.5), because the per-index create-time envelope cannot match across the task-scheduled geometry order inside a filter. Evidence: `PERFORMANCE.md` ("Dynamic BLAS reuse re-validated on the merged task graph") and `stage5-rhi-setup-report.md` ("Post-merge task-graph adaptation").
 
 ## 2. First bounded experiment: remove repeated CPU preparation work
 
@@ -106,4 +110,4 @@ Consider broader batching, GPU pose/deformation preparation and GPU-driven submi
 
 ## Immediate next action
 
-After integration, perform step 1 on the actual combined master. If the end-render task is still limiting, begin with the NVRHI recording decomposition; otherwise prioritize the measured entity bottleneck, including the stage-6 brush-style investigation. The first larger architectural experiment remains persistent rigid geometry with instance transforms, followed by a separately measured animation-refit candidate.
+Step 1 is executed on the combined branches (see the step 1 results above): builds/tests pass and same-binary tasks on/off captures exist. The next bounded experiment is the order-insensitive create-time envelope for the dynamic BLAS reuse (the recreation cost under tasks is established); if it does not separate at the frame level, proceed to the NVRHI recording decomposition. Stage 6 brush styles remains the parallel CPU lane. The larger architectural experiments (persistent rigid geometry with instance transforms, then animation refit) are unchanged.
