@@ -302,29 +302,31 @@ candidate = clean @ `dc89557a` (exe `910D42E8…`), same `id1/qray.pkz` per arm.
 | Fuma | `r_tasks 0` | 27.51/28.48 (36.4); 27.47/28.33 (36.4) | 27.07/28.92 (36.9); 26.93/28.93 (37.1) | -0.49 ms |
 | Fuma | `r_tasks 1` | 20.04/22.78 (49.9); 20.72/24.20 (48.3) | 20.15/23.06 (49.6); 20.01/22.72 (50.0) | -0.30 ms, inside spread |
 | Bogbottom | `r_tasks 0` | 41.04/42.10 (24.4); 40.97/42.17 (24.4) | 40.58/41.82 (24.6); 40.53/41.61 (24.7) | -0.45 ms, `RHI_setup` neutral |
-| Bogbottom | `r_tasks 1` | 31.59/32.46 (31.7); 31.78/33.82 (31.5) | 31.56/32.50 (31.7); 32.09/36.62 (31.2) | 0.0 ms |
+| Bogbottom | `r_tasks 1` | 31.59/32.46 (31.7); 31.78/33.82 (31.5) | 31.56/32.50 (31.7); 32.09/36.62 (31.2) | +0.14 ms |
 
-Outer `RHI_setup` means: Fuma serial 3.14/3.11 control vs 2.57/2.71 clean; Fuma tasks 3.40/3.51 vs
+Outer `RHI_setup` means: Fuma serial 3.14/3.11 control vs 2.57/2.71 clean; Fuma tasks 3.40/3.50 vs
 3.36/3.40; Bogbottom serial 4.19/4.19 vs 4.10/4.15; Bogbottom tasks 5.59/5.55 vs 5.54/5.56. The
 serial Fuma reduction reproduces the pre-merge result; under `r_tasks 1` it does not separate from
-the control, and no frame-level difference is resolvable.
+the control, and no frame-level difference is resolvable. Percentiles in the tables are the
+higher-order statistic over `interval_ms` (first partial frame excluded).
 
 Mechanism, from the diagnostics twin `perf/rhi-dyn-blas-reuse` @ `3b5a18ec` (exe `FCD31349…`,
 `rhi_setup_diag` window bound by `bench_active`): handle recreations are 0.27-0.52 per frame in
 serial but chronic under `r_tasks 1` - 2.00 per frame on both scenarios, with `dyn_create_ms`
 1.02 (Fuma) / 1.45-1.49 (Bogbottom), i.e. most of the task-mode `RHI_setup` increase. The per-index
 fit predicate cannot match across frames because the order of dynamic geometry inside a filter
-follows task completion order; the diagnostics-only branch with the older equality predicate shows
-1.38-1.43 recreations per frame under tasks, so the churn is task-graph-driven, not specific to the
-envelope predicate. An order-insensitive create-time envelope (or a different reuse policy) is the
+follows task completion order; the diagnostics-only branch with the older equality predicate also
+shows 2.00 recreations per frame under tasks (serial 1.32-1.36), so the churn is task-graph-driven,
+not specific to the envelope predicate. An order-insensitive create-time envelope (or a different reuse policy) is the
 recommended next bounded candidate in `docs/multithreading-integration.md`; its upside is bounded by
 the recreation cost, not assumed.
 
 Captures: `build/Debug/audit-s5d-ctrl-*`, `audit-s5d-clean-*`, `audit-s5d-reuse-*`,
-`audit-s5d-diag-*`; receipts and CTest logs under `build/Debug/audit-stage5d-*`. One clean
-Bogbottom tasks repeat (35.56 ms, `rhi` 5.94) was flagged and excluded; the other repeats and the
-control agree at 31.4-32.1 ms. Coverage: Debug, two scenarios, Balanced, 6 s captures; no long
-gameplay, other maps or Quality here.
+`audit-s5d-diag-*`; receipts and CTest logs under `build/Debug/audit-stage5d-*`. A third clean
+Bogbottom tasks repeat (35.56 ms, `rhi` 5.94; identical exe/pack/checks) was uniformly elevated
+across independent counters and is retained raw: with it the arm is 31.56/35.56/32.09 ms against
+the control's 31.59/31.78, so no gain is claimed either way (median 32.09 vs 31.69). Coverage:
+Debug, two scenarios, Balanced, 6 s captures; no long gameplay, other maps or Quality here.
 
 ## Current CPU priorities
 
