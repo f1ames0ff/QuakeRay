@@ -10,6 +10,7 @@
 #include "../VertexCollector.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -1796,6 +1797,21 @@ bool RhiAccelStructs::BuildParticleProxies(nvrhi::ICommandList *pCommandList,
     return true;
 }
 
+double g_rhiSetupDiagTlStaticMs = 0.0;
+double g_rhiSetupDiagTlDynamicMs = 0.0;
+double g_rhiSetupDiagTlParticlesMs = 0.0;
+double g_rhiSetupDiagTlVertexCopiesMs = 0.0;
+double g_rhiSetupDiagTlRestMs = 0.0;
+
+namespace
+{
+double RhiSetupDiagSpanMs(const std::chrono::steady_clock::time_point &from,
+                          const std::chrono::steady_clock::time_point &to)
+{
+    return std::chrono::duration<double, std::milli>(to - from).count();
+}
+}
+
 void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
                                     uint32_t frameIndex,
                                     uint32_t rayCullMaskWorld,
@@ -1808,6 +1824,14 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
     {
         return;
     }
+
+    g_rhiSetupDiagTlStaticMs = 0.0;
+    g_rhiSetupDiagTlDynamicMs = 0.0;
+    g_rhiSetupDiagTlParticlesMs = 0.0;
+    g_rhiSetupDiagTlVertexCopiesMs = 0.0;
+    g_rhiSetupDiagTlRestMs = 0.0;
+
+    std::chrono::steady_clock::time_point diagTlMark = std::chrono::steady_clock::now();
 
     // The summary is due on this frame or not; decided before the work so that its grace period
     // ticks on every frame the TLAS build is asked for, and printed after the work so that its
@@ -1839,7 +1863,17 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
         // The engine's order: the static components first, then the slot's dynamic filters, each in
         // filter-grid order (ASManager.cpp:1045-1049 walks allStaticBlas then allDynamicBlas[slot]).
         AppendStaticInstances(rayCullMaskWorld, allowGeometryWithSkyFlag, instances);
+        {
+            const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+            g_rhiSetupDiagTlStaticMs = RhiSetupDiagSpanMs(diagTlMark, now);
+            diagTlMark = now;
+        }
         AppendDynamicSlot(pCommandList, frameIndex, rayCullMaskWorld, allowGeometryWithSkyFlag, instances);
+        {
+            const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+            g_rhiSetupDiagTlDynamicMs = RhiSetupDiagSpanMs(diagTlMark, now);
+            diagTlMark = now;
+        }
     }
 
     // The frame's traced particle stand-ins: the reserved slot after the engine's instances, so
@@ -1861,6 +1895,11 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
 
         instanceGeomInfo[instances.size() - 1] = InstanceGeomInfo{};
         particleProxyActive[frameIndex] = true;
+    }
+    {
+        const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        g_rhiSetupDiagTlParticlesMs = RhiSetupDiagSpanMs(diagTlMark, now);
+        diagTlMark = now;
     }
 
     if (instances.size() > MAX_TLAS_INSTANCES)
@@ -1887,6 +1926,11 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
     // in the same list finds them current; a frame without an instance list copies nothing and keeps
     // the previous frame's content, which is exactly what the TLAS it still binds describes.
     RecordVertexDataCopies(pCommandList, frameIndex);
+    {
+        const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        g_rhiSetupDiagTlVertexCopiesMs = RhiSetupDiagSpanMs(diagTlMark, now);
+        diagTlMark = now;
+    }
 
     if (tlasInstanceCount > 0)
     {
@@ -1937,6 +1981,11 @@ void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
     if (summaryDue)
     {
         PrintSummary();
+    }
+
+    {
+        const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        g_rhiSetupDiagTlRestMs = RhiSetupDiagSpanMs(diagTlMark, now);
     }
 }
 
