@@ -49,6 +49,7 @@ extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
 
 extern cvar_t r_gpulightmapupdate;
 extern cvar_t r_tasks;
+extern cvar_t r_alias_pose_prep;
 extern cvar_t r_parallelmark;
 extern cvar_t r_usesops;
 
@@ -236,6 +237,7 @@ void R_Init (void)
 
 	Cvar_RegisterVariable (&r_gpulightmapupdate);
 	Cvar_RegisterVariable (&r_tasks);
+	Cvar_RegisterVariable (&r_alias_pose_prep);
 	Cvar_RegisterVariable (&r_parallelmark);
 	Cvar_RegisterVariable (&r_usesops);
 

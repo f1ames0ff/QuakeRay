@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "atomics.h"
 #include "tasks.h"
+#include "alias_pose_jobs.h"
 
 void          GL_WaitForDeviceIdle (void);
 qboolean      GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *x, int *y, int *width, int *height);
@@ -356,7 +357,8 @@ void R_TranslatePlayerSkin (int playernum);
 void R_TranslateNewPlayerSkin (int playernum); // johnfitz -- this handles cases when the actual texture changes
 
 void R_DrawWorld (cb_context_t *cbx);
-void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int entuniqueid);
+void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int entuniqueid, int pose_index);
+qboolean R_AliasPoseSlotProvider (int index, alias_pose_request_t *out);
 void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniqueid);
 void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid);
 
@@ -697,6 +699,7 @@ enum
 	RT_PROF_BRUSH_PACK,
 	RT_PROF_BRUSH_UPLOAD,
 	RT_PROF_ALIAS_POSE,
+	RT_PROF_ALIAS_POSE_PREP,
 	RT_PROF_ALIAS_LIGHTS,
 	RT_PROF_ALIAS_UPLOAD,
 	RT_PROF_BRUSH_MATRIX,

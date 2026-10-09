@@ -1179,6 +1179,7 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_BRUSH_PACK, "brush pack" },
 		{ RT_PROF_BRUSH_UPLOAD, "brush upload" },
 		{ RT_PROF_ALIAS_POSE, "alias pose" },
+		{ RT_PROF_ALIAS_POSE_PREP, "alias pose prep" },
 		{ RT_PROF_ALIAS_LIGHTS, "alias lights" },
 		{ RT_PROF_ALIAS_UPLOAD, "alias upload" },
 		{ RT_PROF_BRUSH_MATRIX, "brush matrix" },

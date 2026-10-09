@@ -45,7 +45,7 @@ submitted tasks. When adding work:
 ## The render frame graph
 
 Entry: [SCR_UpdateScreen](../Quake/gl_screen.c#L1149) takes the tasks branch when the condition
-holds, builds the frame in [R_RenderView](../Quake/gl_rmain.c#L1281), and joins `draw_done` while
+holds, builds the frame in [R_RenderView](../Quake/gl_rmain.c#L1254), and joins `draw_done` while
 pumping extra audio updates.
 
 | Edge | Meaning |
@@ -54,6 +54,7 @@ pumping extra audio updates.
 | `begin_rendering_task -> setup_frame_task`, `setup_frame_task -> before_mark`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: fence/acquire, scene collector reset, light-registry frame preparation) happens before the setup pass, and the setup pass before everything that reads it |
 | `before_mark -> prepare_mark -> mark_surfaces`, then `mark_surfaces -> store_efrags` and `mark_surfaces -> cull_surfaces -> chain_surfaces` | the efrag store and the visibility chain run after the view is set up |
 | `store_efrags -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task` | the producers that draw the frame's visible-entity list run after the efrag pass added the entities to it |
+| `store_efrags -> prepare_alias_pose_task`, `begin_rendering_task -> prepare_alias_pose_task`, `prepare_alias_pose_task -> draw_entities_task`, `-> draw_alpha_entities_task` | the opt-in alias pose producer prepares pose copies for the visible-entity indexes before the entity passes read them; it waits for the final entity list and frame start, and is only allocated when `r_alias_pose_prep` is on |
 | `chain_surfaces -> draw_world_task` | the visibility output feeds the world task |
 | `cull_surfaces -> update_lightmaps_task`, `draw_world_task -> update_lightmaps_task` | the lightmap updates run after the world surfaces are culled and drawn |
 | `draw_world_task -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task`, `-> draw_particles_task` | every dynamic uploader runs after the world task closed the static-geometry window (see below) |
@@ -63,6 +64,21 @@ pumping extra audio updates.
 
 `draw_entities_task` is indexed with `NUM_ENTITIES_CBX` (6) slices, so several workers draw entity
 ranges in parallel.
+
+**Opt-in alias pose preparation.** With `r_tasks 1` and `r_alias_pose_prep` (default `1`), an indexed
+`prepare_alias_pose_task` covers `cl_maxvisedicts` indexes between `store_efrags` and the entity
+passes. Before submission the main thread calls `AliasPoseJobs_Begin`, which bumps the frame serial,
+sizes the per-index entry table, grows the shared vertex arena only when the previous frame's demand
+exceeded it (initial 65536 vertices, double growth, 524288 cap) and resets the arena bump. Each
+worker asks `R_AliasPoseSlotProvider` for the draw-path pose inputs of its index — evaluated on a
+shadow copy, so the entity's lerp state is never mutated by preparation — bump-allocates the copy
+from the arena with engine atomics and runs the pose kernel into it. `GetPoseVertices` accepts a
+prepared copy only when the entry serial and every input (`pose1`, `pose2`, vertex count, blend,
+cluster) re-validate exactly; otherwise it runs the thread-local inline pose. A prep that does not
+match, overflows the arena or was disabled is therefore never drawn. The viewmodel is not prepared
+(index `-1`). With `r_alias_pose_prep 0` or `r_tasks 0` the producer is disabled (`r_tasks 0` keeps
+the inline path identical), and a runtime toggle cannot leave usable stale entries because every
+`Begin` bumps the serial and the serial-`else` branch disables the module.
 
 **Static-geometry window.** `R_DrawWorldTask` calls `qrBeginStaticGeometries` … `qrSubmitStaticGeometries`
 (`gl_rmain.c#L1107`/`#L1119`). Inside that window only `QR_GEOMETRY_TYPE_STATIC` and
@@ -123,8 +139,14 @@ The graph currently relies on:
 - the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L421) — profiler/bench accumulation,
   the frame reset/copy and `RT_Bench_Report`;
 - thread-local scratch: the alias pose buffer (`tempstorage` in
-  [r_alias.c](../Quake/r_alias.c#L120)) and the fan/scratch buffers in
+  [r_alias.c](../Quake/r_alias.c#L115)) and the fan/scratch buffers in
   [gl_heap.c](../Quake/gl_heap.c#L42);
+- the alias pose producer ([alias_pose_jobs.c](../Quake/alias_pose_jobs.c)): frame-serial-tagged
+  entries and an atomically bump-allocated vertex arena written by `prepare_alias_pose_task` and
+  read by the entity draw tasks through the graph edges. The entry table and arena are allocated
+  and grown only on the main thread in `AliasPoseJobs_Begin`, and every worker-side counter update
+  uses the engine atomics. Entries from an older serial, entries whose inputs do not match and
+  requests that overflow the arena are never drawn: the draw path falls back to the inline pose;
 - thread-local caches with a reset generation: the surface-pack entity cache
   ([r_world.c](../Quake/r_world.c#L1072)) and the brush-cluster cache
   ([r_world.c](../Quake/r_world.c#L4300)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
@@ -194,6 +216,11 @@ serial branch is not ready for integration.
 - Task mode changes the meaning of the CPU counters: `cpu.wait_ms` is the join wait, and per-slot
   sums accumulate worker wall times across parallel tasks — they can exceed the frame interval and
   are **not** comparable to serial slot values. Use the frame interval/FPS for on/off acceptance.
+- `cpu.alias pose prep` exists only in task mode when `r_alias_pose_prep` is on: it covers the
+  provider call, the arena bump and the kernel of the prep task, and it contains the same kernel
+  work that the fallback path reports as `cpu.alias pose`. Frames whose prepared poses all
+  re-validate report little `cpu.alias pose` from the entity passes; mismatch or overflow frames
+  report the inline pose there instead.
 - Paired Debug captures (same binary, 8 s warmup + 6 s capture): FSR Balanced — Fuma
   28.49 → 20.00 ms, Bogbottom save 39.48 → 29.76 ms, AD hub 22.41 → 21.01 ms; FSR Quality — Fuma
   27.84 → 23.97 ms, Bogbottom fresh spawn 44.06 → 35.93 ms, AD hub 24.28 → 24.03 ms. The frame is

@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "tasks.h"
 #include "atomics.h"
+#include "alias_pose_jobs.h"
 #include "rt_lights.h"
 
 // The editor's GUI depends on this task when tasks are on (see gl_screen.c).
@@ -116,6 +117,7 @@ qboolean r_drawworld_cheatsafe, r_fullbright_cheatsafe, r_lightmap_cheatsafe; //
 cvar_t r_gpulightmapupdate = {"r_gpulightmapupdate", "0", CVAR_NONE};
 
 cvar_t r_tasks = {"r_tasks", "0", CVAR_NONE};
+cvar_t r_alias_pose_prep = {"r_alias_pose_prep", "1", CVAR_NONE};
 
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;
@@ -823,7 +825,7 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, qboolean alphapass, int chain, int
 		switch (currententity->model->type)
 		{
 		case mod_alias:
-			R_DrawAliasModel (cbx, currententity, entuniqueid);
+			R_DrawAliasModel (cbx, currententity, entuniqueid, i);
 			RT_Prof_End (RT_PROF_ENTS_ALIAS, prof_entity);
 			break;
 		case mod_brush:
@@ -870,7 +872,7 @@ void R_DrawViewModel (cb_context_t *cbx)
 	GL_Viewport (
 		cbx, glx + r_refdef.vrect.x, gly + glheight - r_refdef.vrect.y - r_refdef.vrect.height, r_refdef.vrect.width, r_refdef.vrect.height, 0.7f, 1.0f);
 
-	R_DrawAliasModel (cbx, currententity, ENT_UNIQUEID_VIEWMODEL);
+	R_DrawAliasModel (cbx, currententity, ENT_UNIQUEID_VIEWMODEL, -1);
 
 	GL_Viewport (
 		cbx, glx + r_refdef.vrect.x, gly + glheight - r_refdef.vrect.y - r_refdef.vrect.height, r_refdef.vrect.width, r_refdef.vrect.height, 0.0f, 1.0f);
@@ -1322,6 +1324,23 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (begin_rendering_task, draw_alpha_entities_task);
 		Task_AddDependency (draw_alpha_entities_task, draw_done_task);
 
+		task_handle_t prepare_alias_pose_task = INVALID_TASK_HANDLE;
+
+		if (CVAR_TO_BOOL (r_alias_pose_prep) && cl_maxvisedicts >= 1)
+		{
+			AliasPoseJobs_Begin (cl_maxvisedicts, R_AliasPoseSlotProvider);
+			prepare_alias_pose_task = Task_AllocateAndAssignIndexedFunc (
+			    AliasPoseJobs_PrepareTask, (uint32_t)AliasPoseJobs_TaskLimit (), NULL, 0);
+			Task_AddDependency (store_efrags, prepare_alias_pose_task);
+			Task_AddDependency (begin_rendering_task, prepare_alias_pose_task);
+			Task_AddDependency (prepare_alias_pose_task, draw_entities_task);
+			Task_AddDependency (prepare_alias_pose_task, draw_alpha_entities_task);
+		}
+		else
+		{
+			AliasPoseJobs_Disable ();
+		}
+
 		task_handle_t draw_particles_task = Task_AllocateAndAssignFunc (R_DrawParticlesTask, NULL, 0);
 		Task_AddDependency (before_mark, draw_particles_task);
 		Task_AddDependency (begin_rendering_task, draw_particles_task);
@@ -1344,9 +1363,22 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (draw_world_task, draw_alpha_entities_task);
 		Task_AddDependency (draw_world_task, draw_particles_task);
 
-		task_handle_t tasks[] = {before_mark,          store_efrags,		                         draw_world_task,     draw_sky_and_water_task,
-		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task, update_lightmaps_task};
-		Tasks_Submit ((sizeof (tasks) / sizeof (task_handle_t)), tasks);
+		task_handle_t tasks[10];
+		int           num_tasks = 0;
+
+		tasks[num_tasks++] = before_mark;
+		tasks[num_tasks++] = store_efrags;
+		tasks[num_tasks++] = draw_world_task;
+		tasks[num_tasks++] = draw_sky_and_water_task;
+		tasks[num_tasks++] = draw_view_model_task;
+		tasks[num_tasks++] = draw_entities_task;
+		tasks[num_tasks++] = draw_alpha_entities_task;
+		tasks[num_tasks++] = draw_particles_task;
+		tasks[num_tasks++] = update_lightmaps_task;
+		if (prepare_alias_pose_task != INVALID_TASK_HANDLE)
+			tasks[num_tasks++] = prepare_alias_pose_task;
+
+		Tasks_Submit (num_tasks, tasks);
 		if (store_efrags != cull_surfaces)
 		{
 			Task_Submit (cull_surfaces);
@@ -1355,6 +1387,8 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 	}
 	else
 	{
+		AliasPoseJobs_Disable ();
+
 		R_SetupViewBeforeMark (NULL);
 		R_MarkSurfaces (use_tasks, INVALID_TASK_HANDLE, NULL, NULL, NULL); // johnfitz -- create texture chains from PVS
 		R_DrawWorldTask (NULL);

@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "rt_lights.h"
+#include "alias_pose_jobs.h"
 
 extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; // johnfitz
 extern cvar_t scr_fov;
@@ -89,22 +90,8 @@ static size_t GetNextAllocStep(size_t x)
     return i * step;
 }
 
-static float Lerp(float a, float b, float t)
-{
-    float dt = b - a;
-    return a + dt * t;
-}
-
-static void LerpPosition(float* dst, const float* src1, const float* src2, float blend)
-{
-    for (int j = 0; j < 3; j++)
-    {
-        dst[j] = Lerp(src1[j], src2[j], blend);
-    }
-}
-
 static const QrVertex*
-GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, float blend, int cluster)
+GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, float blend, int cluster, int pose_index)
 {
     const double prof_pose = RT_Prof_Begin ();
     const QrVertex* v_pose1 = GetModelVerticesForPose(m, hdr, pose1);
@@ -117,6 +104,14 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
         return v_pose1;
     }
 
+    const QrVertex* v_prepared;
+
+    if (AliasPoseJobs_Lookup (pose_index, v_pose1, v_pose2, hdr->numverts_vbo, blend, cluster, &v_prepared))
+    {
+        RT_Prof_End (RT_PROF_ALIAS_POSE, prof_pose);
+        return v_prepared;
+    }
+
     static THREAD_LOCAL QrVertex* tempstorage = NULL;
     static THREAD_LOCAL size_t tempstorage_numverts = 0;
     if ((size_t)hdr->numverts_vbo > tempstorage_numverts)
@@ -126,20 +121,7 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
         tempstorage = Mem_Alloc(tempstorage_numverts * sizeof(QrVertex));
     }
 
-    memcpy(tempstorage, v_pose1, hdr->numverts_vbo * sizeof(QrVertex));
-
-    for (int i = 0; i < hdr->numverts_vbo; i++)
-    {
-        QrVertex* dst = &tempstorage[i];
-
-        const QrVertex* src1 = &v_pose1[i];
-        const QrVertex* src2 = &v_pose2[i];
-
-        LerpPosition(dst->position, src1->position, src2->position, blend);
-
-        if (cluster > 0)
-            dst->cluster = (uint32_t)cluster;
-    }
+    AliasPoseJobs_Kernel (v_pose1, v_pose2, tempstorage, 0, hdr->numverts_vbo, blend, cluster);
 
     RT_Prof_End (RT_PROF_ALIAS_POSE, prof_pose);
     return tempstorage;
@@ -386,7 +368,7 @@ Based on code by MH from RMQEngine
 */
 static void GL_DrawAliasFrame(
     cb_context_t* cbx, entity_t* e, aliashdr_t* paliashdr, lerpdata_t lerpdata, gltexture_t* tx, float entity_alpha,
-    qboolean alphatest, int entuniqueid)
+    qboolean alphatest, int entuniqueid, int pose_index)
 {
     // poses the same means either 1. the entity has paused its animation, or 2. r_lerpmodels is disabled
     float blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0;
@@ -459,7 +441,7 @@ if
     QrRasterizedGeometryUploadInfo info = {
         .renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
         .vertexCount = paliashdr->numverts_vbo,
-        .pVertices = GetPoseVertices(e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster),
+        .pVertices = GetPoseVertices(e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster, pose_index),
         .indexCount = paliashdr->numindexes,
         .pIndices = e->model->rtindices,
         .transform = transform,
@@ -507,7 +489,7 @@ else
 		        isviewer ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON_VIEWER :
 		        QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
 			.vertexCount = paliashdr->numverts_vbo,
-			.pVertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster),
+			.pVertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster, pose_index),
 			.indexCount = paliashdr->numindexes,
 			.pIndices = e->model->rtindices,
 			.layerColors = {RT_COLOR_WHITE, {is_glass && tx ? tx->rtglasscolor[0] : 0.0f, is_glass && tx ? tx->rtglasscolor[1] : 0.0f, is_glass && tx ? tx->rtglasscolor[2] : 0.0f, 0.0f},
@@ -530,7 +512,7 @@ else
 Atomic_AddUInt32(&rs_aliaspasses, paliashdr->numtris);
 }
 
-static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniqueid)
+static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniqueid, int pose_index)
 {
 	lerpdata_t      lerpdata;
 	float           blend, entalpha;
@@ -558,7 +540,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 
 	blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0;
 	int cluster = RT_ResolvePointCluster (lerpdata.origin);
-	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster);
+	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster, pose_index);
 	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model);
 
 	if (isfirstperson)
@@ -837,12 +819,61 @@ void R_SetupEntityTransform(entity_t* e, lerpdata_t* lerpdata)
     }
 }
 
+qboolean R_AliasPoseSlotProvider (int index, alias_pose_request_t *out)
+{
+    entity_t* e;
+    entity_t tmp;
+    lerpdata_t lerpdata;
+    aliashdr_t* paliashdr;
+    float blend;
+    int cluster;
+
+    if (index < 0 || index >= cl_numvisedicts)
+        return false;
+
+    if (!r_drawentities.value)
+        return false;
+
+    e = cl_visedicts[index];
+
+    if (e->eflags & EFLAGS_EXTERIORMODEL)
+        return false;
+
+    if (!e->model || e->model->type != mod_alias)
+        return false;
+
+    if (ENTALPHA_DECODE (e->alpha) == 0 && !r_lightmap_cheatsafe)
+        return false;
+
+    tmp = *e;
+
+    if (e == &cl.entities[cl.viewentity])
+        tmp.angles[0] *= 0.3;
+
+    paliashdr = (aliashdr_t*)Mod_Extradata (tmp.model);
+    R_SetupAliasFrame (&tmp, paliashdr, tmp.frame, &lerpdata);
+    R_SetupEntityTransform (&tmp, &lerpdata);
+
+    blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0;
+    cluster = RT_ResolvePointCluster (lerpdata.origin);
+
+    if (!AliasPoseJobs_NeedsCopy (blend, cluster))
+        return false;
+
+    out->pose1 = GetModelVerticesForPose (tmp.model, paliashdr, lerpdata.pose1);
+    out->pose2 = GetModelVerticesForPose (tmp.model, paliashdr, lerpdata.pose2);
+    out->vertex_count = paliashdr->numverts_vbo;
+    out->blend = blend;
+    out->cluster = cluster;
+    return true;
+}
+
 /*
 =================
 R_DrawAliasModel -- johnfitz -- almost completely rewritten
 =================
 */
-void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
+void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid, int pose_index)
 {
     aliashdr_t* paliashdr;
     int anim, skinnum;
@@ -857,7 +888,7 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
 
     if (paliashdr->poseverttype != PV_QUAKE1)
     {
-        R_DrawEnhancedModel (e, paliashdr, entuniqueid);
+        R_DrawEnhancedModel (e, paliashdr, entuniqueid, pose_index);
         return;
     }
 
@@ -916,7 +947,7 @@ void R_DrawAliasModel(cb_context_t* cbx, entity_t* e, int entuniqueid)
     //
     // draw it
     //
-    GL_DrawAliasFrame(cbx, e, paliashdr, lerpdata, tx, entalpha, alphatest, entuniqueid);
+    GL_DrawAliasFrame(cbx, e, paliashdr, lerpdata, tx, entalpha, alphatest, entuniqueid, pose_index);
 }
 
 // johnfitz -- values for shadow matrix
