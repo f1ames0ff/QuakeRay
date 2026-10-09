@@ -201,6 +201,33 @@ serial branch is not ready for integration.
   26.9 → 15.0 ms from Quality to Ultra) while the graph's wall time stays at ~31–34 ms. See
   PERFORMANCE.md for the full matrix and identities.
 
+## Roadmap to production-ready whole-frame multithreading
+
+The current reusable task platform is the starting point, not completion of this roadmap. A mature
+multithreaded engine does not run every function on a worker: input, UI/window ownership, ordered
+QuakeC execution and final submission may retain a single owner. The goal is to put independent,
+material CPU work on tasks and make every remaining serial boundary explicit, safe and measured.
+The milestones below are **open acceptance goals**, not claims about implemented or tested features.
+
+| Milestone | Work required | Completion evidence |
+| --- | --- | --- |
+| M1. Complete render-path ownership | Audit all producer inputs, lazy caches, diagnostics, mutable model/material state, resource rebuilds and teardown, including optional paths. Preserve serial rendering, stable IDs, scene content and temporal history. | An ownership map for every shared writer/reader pair, production-code concurrency/invalidation regressions, and serial/tasks correctness comparisons across the supported render modes. No unresolved threading-safety findings in the changed paths. |
+| M2. Remove measured serialization bottlenecks | Profile task imbalance, upload-lock contention, main-thread joins and ordered backend preparation. Split costly independent geometry/pose/light preparation into task-owned work and a controlled commit where justified. Parallel backend recording is a separate reviewed design, not an assumption. | Same-binary Debug captures and task/lock timings show reduced CPU critical-path time without moving cost into a larger join or another global lock. Remaining serial stages have a documented owner and measured budget. |
+| M3. Extend beyond render producers | Evaluate client interpolation/relink preparation, classic/smoke/scripted-particle simulation and independent server/physics calculations. Use immutable tick/frame inputs and deterministic result commit. Keep mutable QuakeC/gameplay state ordered unless a separate safe design exists. | Each materially expensive host phase is either integrated into the task platform or has a justified measured serial boundary. Gameplay, particle lifecycle, networking and tick/frame-rate separation remain correct under parallel preparation. |
+| M4. Harden the task runtime | Add deterministic coverage for empty indexed ranges, queue/pool capacity, handle reuse, dependency ordering/cycles, slow tasks and low-core/single-worker operation. Add diagnosable stall/watchdog behavior and define safe shutdown/timeout ownership. | Automated runtime tests and stress runs complete without deadlock, stale handles or capacity corruption. Stalls identify the blocked task/dependency; a timeout never permits freeing data still used by a worker. |
+| M5. Establish production validation and default-on readiness | Maintain a scene/transition matrix for supported Quake content, mission packs and Arcane Dimensions. Include representative busy scenes, repeated sessions, map/save/restart/disconnect, menu/editor/photo modes, resize/fullscreen/minimize, profiling toggles and available core counts. | Final-revision Debug build/CTest results, repeated serial/tasks captures, visual/gameplay checks, memory/race diagnostics where supported, and an explicit review of coverage gaps. No unexplained correctness failures or material regressions in the maintained matrix. |
+| M6. Meet the performance program | On the declared reference hardware, target at least 45 FPS at 3840x2160 FSR Quality throughout the maintained loaded-gameplay scene matrix. The mean and p95 frame intervals must be at most 22.22 ms; also report p99/max and hitches. Remove the CPU ceiling so lowering FSR internal resolution improves the frame interval instead of leaving it flat. | Matched captures for every maintained scene/preset meet the budget and demonstrate resolution-driven scaling. CPU critical-path and GPU timings are checked independently: GPU work above 22.22 ms requires GPU optimization too, not more CPU threads. Fixed-cost work and deviations from proportional scaling are reported, not hidden. |
+
+**Two release decisions, not one:** M1, M2, M4 and M5 gate a default-on *render* task path; broader
+whole-frame CPU task parallelism additionally requires M3. A named final review must authorize the
+default change, and the serial fallback remains available. M6 is the separate performance target;
+meeting one FPS number does not certify thread safety, and a GPU bottleneck does not make the task
+platform incomplete. Neither one short capture nor the historical ~40% uplift closes these gates.
+
+Every milestone handoff must include MCP source/evidence identities, the changed ownership/DAG
+boundaries, exact tests/captures, measured deltas and remaining gaps. Keep the milestone open until
+its completion evidence exists; do not mark it done merely because tasks were added.
+
 ## Known limitations
 
 - `r_tasks` stays off by default until the stability matrix and the default-flip review complete.

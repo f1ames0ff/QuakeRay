@@ -67,8 +67,16 @@ QuakeRay is still in development. Some maps and mods may have visual or compatib
 - Full path tracing and further lighting improvements
 - More visual effects
 - Improved Arcane Dimensions support
+- Production-ready whole-frame CPU multithreading: extend task coverage beyond render producers,
+  reduce measured serial/lock bottlenecks, harden scheduling and finish the correctness/scalability
+  matrix before enabling the render task path by default. See the
+  [multithreading milestones and acceptance gates](docs/multithreading.md#roadmap-to-production-ready-whole-frame-multithreading).
 
 These are goals, not promises of a release date.
+
+The separate performance goal is at least **45 FPS at 4K FSR Quality** on the reference hardware
+throughout the maintained gameplay scene matrix, with frame-time improvement as internal resolution
+is reduced. Both CPU and GPU budgets must be met; multithreading alone cannot guarantee that target.
 
 ## Requirements
 
