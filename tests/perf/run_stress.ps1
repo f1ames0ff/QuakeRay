@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy')][string[]]$Saves = @('qr_fuma_start'),
+    [ValidateSet('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy', 'qr_swampy_start')][string[]]$Saves = @('qr_fuma_start'),
     [ValidateSet('balanced', 'quality', 'performance', 'ultra')][string[]]$Presets = @('balanced'),
     [ValidateRange(2, 25)][int]$Seconds = 10,
     [ValidateRange(2, 30)][int]$Warmup = 5,
@@ -33,14 +33,17 @@ $gameDir = Join-Path $Basedir 'ad'
 $exe = Join-Path $Basedir 'quakeray.exe'
 $console = Join-Path $Basedir 'qconsole.log'
 $config = Join-Path $gameDir 'config.cfg'
-$expectedMaps = @{ qr_fuma_start = 'ad_tfuma'; qr_ad_start = 'start'; qr_gpu_heavy = 'ad_swampy' }
+$expectedMaps = @{ qr_fuma_start = 'ad_tfuma'; qr_ad_start = 'start'; qr_gpu_heavy = 'ad_swampy'; qr_swampy_start = 'ad_swampy' }
+$mapMode = $Saves[0] -eq 'qr_swampy_start'
 $runTag = ($Tag -replace '[^a-zA-Z0-9_-]', '_') + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' +
     [Guid]::NewGuid().ToString('N').Substring(0, 6)
 $output = (New-Item -ItemType Directory -Path (Join-Path $Basedir "audit-$runTag")).FullName
 
 if (-not (Test-Path $exe)) { throw "Missing Debug runtime: $exe" }
-foreach ($save in $Saves) {
-    if (-not (Test-Path (Join-Path $gameDir "$save.sav"))) { throw "Missing save: $save" }
+if (-not $mapMode) {
+    foreach ($save in $Saves) {
+        if (-not (Test-Path (Join-Path $gameDir "$save.sav"))) { throw "Missing save: $save" }
+    }
 }
 
 $manifest = [ordered]@{
@@ -63,8 +66,9 @@ $manifest = [ordered]@{
     LoaderLayersDisabled = $env:VK_LOADER_LAYERS_DISABLE
     Assets = @()
 }
-foreach ($asset in @('pak0.pak', 'pak1.pak', 'pak2.pak', 'qray.materials.yaml', 'qray.lights.yaml') +
-    @($Saves | ForEach-Object { "$_.sav" })) {
+$assetNames = @('pak0.pak', 'pak1.pak', 'pak2.pak', 'qray.materials.yaml', 'qray.lights.yaml')
+if (-not $mapMode) { $assetNames += @($Saves | ForEach-Object { "$_.sav" }) }
+foreach ($asset in $assetNames) {
     $path = Join-Path $gameDir $asset
     if (Test-Path $path) {
         $manifest.Assets += [ordered]@{ File = $asset; Sha256 = (Get-FileHash $path -Algorithm SHA256).Hash }
@@ -177,6 +181,7 @@ $results = @()
                 $fsr = switch ($preset) { 'quality' { 2 } 'balanced' { 3 } 'performance' { 4 } 'ultra' { 5 } }
                 $startDump = if ($StatsLevel -gt 0) { 'rt_stats_dump_start;' } else { '' }
                 $endDump = if ($StatsLevel -gt 0) { 'rt_stats_dump_end;' } else { '' }
+                $mapCommand = if ($mapMode) { "map $($expectedMaps[$save])" } else { "load $save" }
                 $fixtureText = (Get-Content (Join-Path $PSScriptRoot 'qr_audit_max.cfg') -Raw) + "`n" +
                     "rt_upscale_fsr31 $fsr`n" + ($Overrides -join "`n") + "`n" + @"
 vid_unlock
@@ -192,7 +197,7 @@ bind F7 "mapname; vid_describecurrentmode; echo QR_EFFECTIVE_$id"
 bind F8 "restart; echo QR_RESTART_$id"
 bind F9 "load $save; echo QR_RELOAD_$id"
 bind F11 "toggleconsole; quit"
-load $save
+$mapCommand
 echo QR_LOADED0_$id
 "@
                 $fixtureText | Set-Content $fixture -Encoding Ascii
@@ -229,22 +234,29 @@ echo QR_LOADED0_$id
                         break
                     }
                     [StressWin32]::SetForegroundWindow($window) | Out-Null
-                    Start-Sleep -Seconds 2
-                    Send-Key $window 0x77 0x42
-                    Wait-Marker $process "QR_RESTART_$id"
-                    Start-Sleep -Seconds 2
-                    Send-Key $window 0x79 0x43
-                    Wait-Marker $process "QR_RELOAD_$id"
-                    if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
-                        Write-Host 'The restart sequence consumed the capture budget; this attempt is deferred.'
-                        Send-Key $window 0x7a 0x57
-                        $null = $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))
-                        break
+                    if (-not $mapMode) {
+                        Start-Sleep -Seconds 2
+                        Send-Key $window 0x77 0x42
+                        Wait-Marker $process "QR_RESTART_$id"
+                        Start-Sleep -Seconds 2
+                        Send-Key $window 0x79 0x43
+                        Wait-Marker $process "QR_RELOAD_$id"
+                        if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
+                            Write-Host 'The restart sequence consumed the capture budget; this attempt is deferred.'
+                            Send-Key $window 0x7a 0x57
+                            $null = $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))
+                            break
+                        }
                     }
                     Send-Key $window 0x1B 0x01
                     Start-Sleep -Seconds $Warmup
                     Send-Key $window 0x76 0x41
                     Wait-Marker $process "QR_EFFECTIVE_$id"
+                    for ($focusTry = 0; $focusTry -lt 10; $focusTry++) {
+                        if ([StressWin32]::OwnsFocus($process.Id)) { break }
+                        [StressWin32]::SetForegroundWindow($window) | Out-Null
+                        Start-Sleep -Milliseconds 300
+                    }
                     if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Runtime lacks foreground focus; refusing a contaminated measurement.' }
                     Send-Key $window 0x73 0x3e
                     Wait-Marker $process "QR_START_$id"
@@ -257,9 +269,16 @@ echo QR_LOADED0_$id
                     }
                     $deadline = Get-StressDeadline -Deadline $script:RunDeadline.AddSeconds(-$shutdownReserve) -MaximumSeconds $Seconds
                     $nextOwnerCheck = Get-Date
+                    $focusLostSince = $null
                     while ((Get-Date) -lt $deadline) {
                         if (Test-QuakeRayStopRequested) { break }
-                        if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Focus was lost during capture.' }
+                        if (-not [StressWin32]::OwnsFocus($process.Id)) {
+                            if ($null -eq $focusLostSince) { $focusLostSince = Get-Date }
+                            [StressWin32]::SetForegroundWindow($window) | Out-Null
+                            if (((Get-Date) - $focusLostSince).TotalSeconds -gt 3) { throw 'Focus was lost during capture.' }
+                        } else {
+                            $focusLostSince = $null
+                        }
                         if ((Get-Date) -ge $nextOwnerCheck) {
                             $foreign = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
                                 $_.Id -ne $process.Id -and $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)'
