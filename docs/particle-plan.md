@@ -118,12 +118,12 @@ scale to the content that actually exists.
   foreground-contamination caveat: `perf/stage0/stage2-gate-2026-10-10.md`. The same build restored
   the `cpu.particles_resolve_ms` feed the merge had dropped, and a `r_tasks 1` smoke ran the heavy
   demo at 41.1 fps with the feed alive and no crash.
-- Known hazard, fix undecided: the shared point-cluster cache behind `RT_ResolvePointCluster`
-  (`Quake/gl_rlight.c`) has no thread protection. Under `r_tasks 1` the particle task
-  (`R_DrawParticlesTask`), the entity brush chains (`RT_ResolveBrushSurfCluster`, `Quake/r_world.c`)
-  and the alias paths call it from different workers concurrently, so cache entries and the
-  hit/miss/ns counters can tear. Serial mode is unaffected; the options are a thread-local table
-  with a reset generation or a protected table.
+- Point-cluster cache thread safety (2026-10-10): the one shared table was the race - under
+  `r_tasks 1` the particle task, the entity brush chains and the alias paths resolve from different
+  workers at once. It is now one table per thread with the map identity kept in the table and
+  per-thread hit/miss/ns counters, summed by `RT_PointClusterCacheStats` on reads that happen after
+  the frame's join (`Quake/gl_rlight.c`); serial numbers are unchanged, the task-mode counters now
+  add up correctly.
 
 ### Stage 3 — cluster volume, remove CPU resolves (after dtal; accuracy contract A1-A3)
 - R16_UINT volume painted from `leaf_cluster`; 64 u base; own map generation; keep 0 semantics.

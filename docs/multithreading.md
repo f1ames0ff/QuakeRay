@@ -129,7 +129,12 @@ The graph currently relies on:
   ([r_world.c](../Quake/r_world.c#L1072)) and the brush-cluster cache
   ([r_world.c](../Quake/r_world.c#L4300)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
   the generation at map load and each thread clears its own table on first use. The buried-answer
-  DTAL cache follows the same ownership rule through `RT_BuriedCacheReset`;
+  DTAL cache follows the same ownership rule through `RT_BuriedCacheReset`, and so does the
+  point-cluster resolve cache ([gl_rlight.c](../Quake/gl_rlight.c#L1176)): one slot table per thread
+  with the map identity kept in the table, and per-thread hit/miss/nanosecond counters that
+  `RT_PointClusterCacheStats` sums. Its readers all run on the main thread after the frame's join
+  (`RT_Prof_FrameStart`, `RT_Prof_FrameEnd`, `RT_Prof_Update`), which is what keeps the unlocked sum
+  correct;
 - the emissive skip-table spinlock (`RT_EmisSkipLock`) — covers lookup/insertion, reset and report
   snapshotting; printing happens after the snapshot lock is released;
 - the styled-light index (`RT_BuildStyledLightIndex`) — built on the single-threaded map-load path

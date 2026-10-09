@@ -117,9 +117,10 @@ after `SCR_UpdateScreen` (host.c:1020-1021); FTE simulates inside its draw (r_pa
    producer tasks instead.
 2. The particle path runs inside `R_DrawParticlesTask` (gl_rmain.c:1191). Under `r_tasks 1` that
    task runs on a worker concurrently with the entity and water tasks, and all of them call
-   `RT_ResolvePointCluster`; the shared point-cluster cache has no protection (known hazard, fix
-   undecided). The resolve slot feed is sampled after the `draw_done_task` join, so it stays exact
-   in both modes.
+   `RT_ResolvePointCluster`; the cache is one table per thread with per-thread counters
+   (gl_rlight.c), summed on reads that happen after the frame's join, so the concurrent resolves
+   share no mutable cache state. The resolve slot feed is sampled after the `draw_done_task` join,
+   so it stays exact in both modes.
 3. FTE scratch is capacity-sized and grow-only: conversion is skipped when nothing is live, but
    when it runs it walks the grown capacity, not the live counts (r_part_fte.c:6838-6857).
    Stage 1 bounds the conversion and the scratch by the live counts.
