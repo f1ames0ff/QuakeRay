@@ -1288,18 +1288,38 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
             dynamicActiveFilterCount++;
 
+            DynamicBlas *blas = nullptr;
+            for (DynamicBlas &candidate : dynamicBlas[frameIndex])
+            {
+                if (candidate.filter == filter)
+                {
+                    blas = &candidate;
+                    break;
+                }
+            }
+
+            if (blas == nullptr)
+            {
+                dynamicBlas[frameIndex].push_back(DynamicBlas{});
+                blas = &dynamicBlas[frameIndex].back();
+                blas->filter = filter;
+                blas->debugName = MakeBlasDebugName(filter);
+            }
+
             // The descriptors of this frame's geometry, built from this module's copy buffers. The
             // engine's addresses only serve the offset arithmetic (copy starts at 0, same layout),
             // and the transforms come from the collector's CPU staging array, which NVRHI copies into
             // its own upload buffer at build time.
-            std::vector<nvrhi::rt::GeometryDesc> geometries;
+            std::vector<nvrhi::rt::GeometryDesc> &geometries = blas->geometries;
+            geometries.clear();
             geometries.reserve(geoms.size());
 
             // The shape the handle has to cover. A size query is unreachable from here (no native
             // VkDevice in the pinned NVRHI, no ASManager wrapper), so the module recreates the
             // structure exactly when this changes, which keeps the create-time allocation valid for
             // every build of the handle by construction (see RhiAccelStructs.h).
-            std::vector<uint32_t> shape;
+            std::vector<uint32_t> &shape = blas->shapeScratch;
+            shape.clear();
             shape.reserve(geoms.size() * 5);
 
             for (size_t i = 0; i < geoms.size(); i++)
@@ -1320,24 +1340,6 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
                 g_rhiSetupDiagDynDescsMs += RhiSetupDiagSpanMs(diagFilterMark, now);
                 diagFilterMark = now;
-            }
-
-            DynamicBlas *blas = nullptr;
-            for (DynamicBlas &candidate : dynamicBlas[frameIndex])
-            {
-                if (candidate.filter == filter)
-                {
-                    blas = &candidate;
-                    break;
-                }
-            }
-
-            if (blas == nullptr)
-            {
-                dynamicBlas[frameIndex].push_back(DynamicBlas{});
-                blas = &dynamicBlas[frameIndex].back();
-                blas->filter = filter;
-                blas->debugName = MakeBlasDebugName(filter);
             }
 
             if (blas->handle == nullptr || blas->shape != shape)
@@ -1368,14 +1370,13 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 }
 
                 blas->handle = std::move(handle);
-                blas->shape = std::move(shape);
+                blas->shape.swap(shape);
                 {
                     const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
                     g_rhiSetupDiagDynCreateMs += RhiSetupDiagSpanMs(diagCreateMark, now);
                 }
             }
 
-            blas->geometries = std::move(geometries);
             blas->active = true;
 
             const std::chrono::steady_clock::time_point diagRecordMark = std::chrono::steady_clock::now();

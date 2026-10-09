@@ -334,6 +334,7 @@ private:
         // per-geometry primitive count, vertex count, stride, indexedness and transform presence.
         // Recreated when this changes.
         std::vector<uint32_t> shape;
+        std::vector<uint32_t> shapeScratch;
 
         // Whether this filter's BLAS was built in the slot's current frame; only an active entry is
         // added to the TLAS. Empty filters keep the handle but stay inactive.
