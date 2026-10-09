@@ -216,6 +216,13 @@ linear FSR scaling requires cutting the CPU critical path below the per-mode GPU
 targets are in the CPU priorities table. Captures: `audit-scale-q-bog-…`, `audit-spawn-bog2-…`,
 `audit-scale-p-bog-…`, `audit-scale-u-bog-…`, `audit-scale-s-bog-…`.
 
+FSR Quality on/off (tasks vs serial, same binary): Fuma 35.9 → 41.7 FPS (27.84 → 23.97 ms) with
+`gpu.frame` ≈ 22.1–22.7 ms — the task frame sits at the GPU balance point, which is why the task
+gain narrows from −8.5 ms at Balanced to −3.9 ms here; Bogbottom fresh spawn 22.7 → 27.8 FPS
+(44.06 → 35.93 ms) with `gpu.frame` ≈ 26.9–28.1 ms — 45 FPS at Quality there needs GPU-side
+reduction as well, since the GPU list alone exceeds the 22.2 ms budget. Captures:
+`audit-q-fuma-t-…`, `audit-q-fuma-s-…`, `audit-q-bog-s-…`; AD hub at Quality is unmeasured.
+
 ## Current CPU priorities
 
 Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale pre-fix profile. These are **observed inclusive costs**, not predicted savings:
