@@ -18,6 +18,11 @@
 - **An empty draw batch no longer trips the scratch allocator** — `Draw_StringScaled` with an empty or blank line, `DrawGLPoly` with no vertices, and an FTE particle batch with no vertices or indices could ask the shared scratch heap for zero bytes, the one size it asserts on; each returns before the request now.
 - **A movable geometry upload no longer sizes its acceleration structure for an update it never performs** — the static submit asked `ASBuilder` to build the movable components with `VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR` while `vkGetAccelerationStructureBuildSizesKHR` had been queried without that flag, and the structure was allocated at the queried size. The update-capable structure needs about 55 per cent more memory on the affected GPU, so the build wrote past its dedicated allocation and the AMD driver reset the device (`VK_ERROR_DEVICE_LOST`, a TDR) on Arcane Dimensions' `ad_tfuma` as soon as the map's submodels became movable geometry; the flag now comes from the same value the size query used. The top-level size query also matches its build now.
 
+## v0.31.1
+
+### Fixed
+- **The FSR 3.1 upscaler no longer uses undefined luma history** — the vendored AMD FidelityFX provider declared its internal `rw_luma_history` storage image as `rgba8` while the resource it binds is `R16G16B16A16_SFLOAT`, so every store and load through it was undefined behavior that Vulkan validation reported once per frame (`Undefined-Value-StorageImage-FormatMismatch-ImageView`, 10 occurrences per smoke run). The provider is now a local rebuild of the same FidelityFX SDK 1.1.4 source with the one-line `rgba16f` qualifier fix and an unchanged export ABI; validation smoke runs show zero mismatch warnings with FSR still active, and the paired control run on the signed original warned. The rebuild is not Authenticode-signed, so AMD's driver overlay FSR detection (v2.1.0) may not recognize the provider; the README next to `amd_fidelityfx_vk.dll` records the build provenance and when to replace it, and the earlier signed binary stays in git history and the AMD SDK archive.
+
 ## v0.31.0
 
 ### Added
