@@ -1,6 +1,6 @@
 param(
     [ValidateSet('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy')][string[]]$Saves = @('qr_fuma_start'),
-    [ValidateSet('balanced', 'quality')][string[]]$Presets = @('balanced'),
+    [ValidateSet('balanced', 'quality', 'performance', 'ultra')][string[]]$Presets = @('balanced'),
     [ValidateRange(2, 25)][int]$Seconds = 10,
     [ValidateRange(2, 30)][int]$Warmup = 5,
     [ValidateRange(1, 2)][int]$Repeats = 1,
@@ -174,7 +174,7 @@ $results = @()
                 $savedMinimize = $env:SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS
                 $bench = Join-Path $gameDir 'benchmark.log'
                 $oldBench = if (Test-Path $bench) { @(Get-Content $bench).Count } else { 0 }
-                $fsr = if ($preset -eq 'balanced') { 3 } else { 2 }
+                $fsr = switch ($preset) { 'quality' { 2 } 'balanced' { 3 } 'performance' { 4 } 'ultra' { 5 } }
                 $startDump = if ($StatsLevel -gt 0) { 'rt_stats_dump_start;' } else { '' }
                 $endDump = if ($StatsLevel -gt 0) { 'rt_stats_dump_end;' } else { '' }
                 $fixtureText = (Get-Content (Join-Path $PSScriptRoot 'qr_audit_max.cfg') -Raw) + "`n" +
