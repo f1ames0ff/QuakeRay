@@ -98,9 +98,15 @@ struct RhiSetupDiagSample
     uint32_t uiOnly;
     float    totalMs;
     float    resourcesMs;
-    float    asBuildMs;
+    float    asStaticMs;
+    float    asTopLevelMs;
     float    uniformPatchMs;
     float    preprocessMs;
+    float    tlStaticMs;
+    float    tlDynamicMs;
+    float    tlParticlesMs;
+    float    tlVertexCopiesMs;
+    float    tlRestMs;
 };
 
 constexpr uint32_t kRhiSetupDiagCapacity = 65536;
@@ -123,12 +129,15 @@ void RhiSetupDiagWrite()
         return;
     }
 
-    std::fprintf(file, "frame,ui_only,total_ms,resources_ms,as_build_ms,uniform_patch_ms,preprocess_ms\n");
+    std::fprintf(file, "frame,ui_only,total_ms,resources_ms,as_static_ms,as_toplevel_ms,uniform_patch_ms,preprocess_ms,"
+                       "tl_static_ms,tl_dynamic_ms,tl_particles_ms,tl_vertex_copies_ms,tl_rest_ms\n");
     for (uint32_t i = 0; i < g_rhiSetupDiagCount; ++i)
     {
         const RhiSetupDiagSample &sample = g_rhiSetupDiagSamples[i];
-        std::fprintf(file, "%u,%u,%.6f,%.6f,%.6f,%.6f,%.6f\n", sample.frame, sample.uiOnly, sample.totalMs,
-                     sample.resourcesMs, sample.asBuildMs, sample.uniformPatchMs, sample.preprocessMs);
+        std::fprintf(file, "%u,%u,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", sample.frame, sample.uiOnly,
+                     sample.totalMs, sample.resourcesMs, sample.asStaticMs, sample.asTopLevelMs, sample.uniformPatchMs,
+                     sample.preprocessMs, sample.tlStaticMs, sample.tlDynamicMs, sample.tlParticlesMs,
+                     sample.tlVertexCopiesMs, sample.tlRestMs);
     }
     std::fclose(file);
     std::fprintf(stdout, "RHI_SETUP_DIAG file=%s rows=%u\n", name, g_rhiSetupDiagCount);
@@ -147,6 +156,21 @@ inline double RhiSetupDiagMs(const std::chrono::steady_clock::time_point &from,
 }
 
 }
+
+namespace qray::rhi
+{
+extern double g_rhiSetupDiagTlStaticMs;
+extern double g_rhiSetupDiagTlDynamicMs;
+extern double g_rhiSetupDiagTlParticlesMs;
+extern double g_rhiSetupDiagTlVertexCopiesMs;
+extern double g_rhiSetupDiagTlRestMs;
+}
+
+using qray::rhi::g_rhiSetupDiagTlStaticMs;
+using qray::rhi::g_rhiSetupDiagTlDynamicMs;
+using qray::rhi::g_rhiSetupDiagTlParticlesMs;
+using qray::rhi::g_rhiSetupDiagTlVertexCopiesMs;
+using qray::rhi::g_rhiSetupDiagTlRestMs;
 
 
 NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
@@ -730,9 +754,15 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     const std::chrono::steady_clock::time_point rhiSetupDiagStart = RhiSetupDiagNow();
     std::chrono::steady_clock::time_point       rhiSetupDiagMark = rhiSetupDiagStart;
     double rhiSetupDiagResources = 0.0;
-    double rhiSetupDiagAsBuild = 0.0;
+    double rhiSetupDiagAsStatic = 0.0;
+    double rhiSetupDiagAsTopLevel = 0.0;
     double rhiSetupDiagUniform = 0.0;
     double rhiSetupDiagPreprocess = 0.0;
+    double rhiSetupDiagTlStatic = 0.0;
+    double rhiSetupDiagTlDynamic = 0.0;
+    double rhiSetupDiagTlParticles = 0.0;
+    double rhiSetupDiagTlVertexCopies = 0.0;
+    double rhiSetupDiagTlRest = 0.0;
 
     // Newly wrapped engine textures are foreign to NVRHI and need their first-use state declared in
     // the first command list that samples them (RhiTextureSource.h); the shared table hands over
@@ -802,19 +832,31 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         accelStructs->BuildStatic(commandList);
         {
             const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
-            rhiSetupDiagAsBuild += RhiSetupDiagMs(rhiSetupDiagMark, now);
+            rhiSetupDiagAsStatic += RhiSetupDiagMs(rhiSetupDiagMark, now);
             rhiSetupDiagMark = now;
         }
 
         if (tracedFrame)
         {
+            g_rhiSetupDiagTlStaticMs = 0.0;
+            g_rhiSetupDiagTlDynamicMs = 0.0;
+            g_rhiSetupDiagTlParticlesMs = 0.0;
+            g_rhiSetupDiagTlVertexCopiesMs = 0.0;
+            g_rhiSetupDiagTlRestMs = 0.0;
+
             accelStructs->BuildTopLevel(commandList, frameIndex, sky.rayCullMaskWorld,
                                         sky.allowGeometryWithSkyFlag, sky.disableRayTracedGeometry,
                                         sky.particleProxies, sky.particleProxyCount);
+
+            rhiSetupDiagTlStatic = g_rhiSetupDiagTlStaticMs;
+            rhiSetupDiagTlDynamic = g_rhiSetupDiagTlDynamicMs;
+            rhiSetupDiagTlParticles = g_rhiSetupDiagTlParticlesMs;
+            rhiSetupDiagTlVertexCopies = g_rhiSetupDiagTlVertexCopiesMs;
+            rhiSetupDiagTlRest = g_rhiSetupDiagTlRestMs;
         }
         {
             const std::chrono::steady_clock::time_point now = RhiSetupDiagNow();
-            rhiSetupDiagAsBuild += RhiSetupDiagMs(rhiSetupDiagMark, now);
+            rhiSetupDiagAsTopLevel += RhiSetupDiagMs(rhiSetupDiagMark, now);
             rhiSetupDiagMark = now;
         }
     }
@@ -891,13 +933,19 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (g_rhiSetupDiagCount < kRhiSetupDiagCapacity)
         {
             RhiSetupDiagSample &sample = g_rhiSetupDiagSamples[g_rhiSetupDiagCount++];
-            sample.frame          = g_rhiSetupDiagFrame++;
-            sample.uiOnly         = sky.renderUiOnly ? 1u : 0u;
-            sample.totalMs        = (float)RhiSetupDiagMs(rhiSetupDiagStart, now);
-            sample.resourcesMs    = (float)rhiSetupDiagResources;
-            sample.asBuildMs      = (float)rhiSetupDiagAsBuild;
-            sample.uniformPatchMs = (float)rhiSetupDiagUniform;
-            sample.preprocessMs   = (float)rhiSetupDiagPreprocess;
+            sample.frame             = g_rhiSetupDiagFrame++;
+            sample.uiOnly            = sky.renderUiOnly ? 1u : 0u;
+            sample.totalMs           = (float)RhiSetupDiagMs(rhiSetupDiagStart, now);
+            sample.resourcesMs       = (float)rhiSetupDiagResources;
+            sample.asStaticMs        = (float)rhiSetupDiagAsStatic;
+            sample.asTopLevelMs      = (float)rhiSetupDiagAsTopLevel;
+            sample.uniformPatchMs    = (float)rhiSetupDiagUniform;
+            sample.preprocessMs      = (float)rhiSetupDiagPreprocess;
+            sample.tlStaticMs        = (float)rhiSetupDiagTlStatic;
+            sample.tlDynamicMs       = (float)rhiSetupDiagTlDynamic;
+            sample.tlParticlesMs     = (float)rhiSetupDiagTlParticles;
+            sample.tlVertexCopiesMs  = (float)rhiSetupDiagTlVertexCopies;
+            sample.tlRestMs          = (float)rhiSetupDiagTlRest;
         }
         else
         {
