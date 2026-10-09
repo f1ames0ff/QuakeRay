@@ -1,5 +1,6 @@
 #include "RhiAccelStructs.h"
 
+#include "DynamicBlasShape.h"
 #include "RhiFrameContext.h"
 #include "RhiPipeline.h"
 
@@ -1253,34 +1254,6 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
             dynamicActiveFilterCount++;
 
-            // The descriptors of this frame's geometry, built from this module's copy buffers. The
-            // engine's addresses only serve the offset arithmetic (copy starts at 0, same layout),
-            // and the transforms come from the collector's CPU staging array, which NVRHI copies into
-            // its own upload buffer at build time.
-            std::vector<nvrhi::rt::GeometryDesc> geometries;
-            geometries.reserve(geoms.size());
-
-            // The shape the handle has to cover. A size query is unreachable from here (no native
-            // VkDevice in the pinned NVRHI, no ASManager wrapper), so the module recreates the
-            // structure exactly when this changes, which keeps the create-time allocation valid for
-            // every build of the handle by construction (see RhiAccelStructs.h).
-            std::vector<uint32_t> shape;
-            shape.reserve(geoms.size() * 5);
-
-            for (size_t i = 0; i < geoms.size(); i++)
-            {
-                geometries.push_back(MakeGeometryDesc(geoms[i], ranges[i], vertexBufferAddress,
-                                                      indexBufferAddress, transformsBufferAddress,
-                                                      transforms, copies.vertex.Get(), copies.index.Get()));
-
-                const VkAccelerationStructureGeometryTrianglesDataKHR &triangles = geoms[i].geometry.triangles;
-                shape.push_back(ranges[i].primitiveCount);
-                shape.push_back(triangles.maxVertex);
-                shape.push_back(triangles.vertexStride);
-                shape.push_back(triangles.indexType == VK_INDEX_TYPE_UINT32 ? 1u : 0u);
-                shape.push_back(triangles.transformData.deviceAddress != 0 ? 1u : 0u);
-            }
-
             DynamicBlas *blas = nullptr;
             for (DynamicBlas &candidate : dynamicBlas[frameIndex])
             {
@@ -1299,7 +1272,37 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 blas->debugName = MakeBlasDebugName(filter);
             }
 
-            if (blas->handle == nullptr || blas->shape != shape)
+            // The descriptors of this frame's geometry, built from this module's copy buffers. The
+            // engine's addresses only serve the offset arithmetic (copy starts at 0, same layout),
+            // and the transforms come from the collector's CPU staging array, which NVRHI copies into
+            // its own upload buffer at build time.
+            std::vector<nvrhi::rt::GeometryDesc> &geometries = blas->geometries;
+            geometries.clear();
+            geometries.reserve(geoms.size());
+
+            // The shape the handle has to cover. A size query is unreachable from here (no native
+            // VkDevice in the pinned NVRHI, no ASManager wrapper), so the module keeps the handle
+            // while this fits the create-time envelope and recreates it only when it does not
+            // (see RhiAccelStructs.h).
+            std::vector<uint32_t> &shape = blas->shapeScratch;
+            shape.clear();
+            shape.reserve(geoms.size() * 5);
+
+            for (size_t i = 0; i < geoms.size(); i++)
+            {
+                geometries.push_back(MakeGeometryDesc(geoms[i], ranges[i], vertexBufferAddress,
+                                                      indexBufferAddress, transformsBufferAddress,
+                                                      transforms, copies.vertex.Get(), copies.index.Get()));
+
+                const VkAccelerationStructureGeometryTrianglesDataKHR &triangles = geoms[i].geometry.triangles;
+                shape.push_back(ranges[i].primitiveCount);
+                shape.push_back(triangles.maxVertex);
+                shape.push_back(triangles.vertexStride);
+                shape.push_back(triangles.indexType == VK_INDEX_TYPE_UINT32 ? 1u : 0u);
+                shape.push_back(triangles.transformData.deviceAddress != 0 ? 1u : 0u);
+            }
+
+            if (blas->handle == nullptr || !DynamicShapeFits(blas->shape, shape))
             {
                 // Create from the very list this build uses, so the allocation covers the build
                 // (vulkan-raytracing.cpp:376-386 against :803-815). The replaced handle is not
@@ -1325,10 +1328,9 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 }
 
                 blas->handle = std::move(handle);
-                blas->shape = std::move(shape);
+                blas->shape.swap(shape);
             }
 
-            blas->geometries = std::move(geometries);
             blas->active = true;
 
             pCommandList->buildBottomLevelAccelStruct(blas->handle.Get(), blas->geometries.data(),
