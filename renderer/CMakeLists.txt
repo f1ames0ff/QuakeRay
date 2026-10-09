@@ -124,7 +124,6 @@ add_compile_definitions(
     # KTX-Software
     KHRONOS_STATIC
     LIBKTX
-    # FSR 3.1 via prebuilt AMD-signed FidelityFX API DLL
     QR_USE_FSR3
 )
 
@@ -149,6 +148,12 @@ endif()
 
 option(QR_BUILD_TESTS "Build headless renderer GPU regression tests" OFF)
 if(QR_BUILD_TESTS)
+    add_executable(qray_swapchain_policy Tests/SwapchainPolicyTests.cpp)
+    target_compile_features(qray_swapchain_policy PRIVATE cxx_std_20)
+    target_include_directories(qray_swapchain_policy PRIVATE Source ${Vulkan_INCLUDE_DIRS})
+    add_test(NAME qray_swapchain_policy COMMAND qray_swapchain_policy)
+    set_tests_properties(qray_swapchain_policy PROPERTIES TIMEOUT 30)
+
     get_filename_component(QR_VULKAN_BIN "${Vulkan_GLSLC_EXECUTABLE}" DIRECTORY)
     find_program(QR_DXC NAMES dxc HINTS "${QR_VULKAN_BIN}" REQUIRED)
     set(QR_PROBE_DIR "${CMAKE_CURRENT_BINARY_DIR}/Tests")
@@ -280,11 +285,9 @@ target_link_libraries(renderer PUBLIC Vulkan::Vulkan)
 # Vulkan backend, nvrhi holds the shared interface and the validation layer).
 target_link_libraries(renderer PRIVATE nvrhi_vk nvrhi)
 
-# FSR 3.1 — prebuilt AMD-signed FidelityFX API DLL
 if(WIN32)
     set(renderer_FFX_API_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Source/FidelityFX_SDK_1.1.4/src")
     target_sources(renderer PRIVATE "Source/FSR.cpp")
     target_include_directories(renderer PRIVATE "${renderer_FFX_API_DIR}/ffx-api/include")
     target_link_libraries(renderer PUBLIC "${renderer_FFX_API_DIR}/PrebuiltSignedDLL/amd_fidelityfx_vk.lib")
-    # amd_fidelityfx_vk.dll is copied next to quakeray.exe in the root CMakeLists
 endif()

@@ -1462,10 +1462,15 @@ bool RhiRasterOverlayPass::PrepareTarget(nvrhi::ICommandList *pCommandList, uint
     }
     // The particle fragment reads the glass mask (the pane-depth test of its discard), so its
     // state has to be announced in the list that samples it, exactly as the smoke images above.
+    // The mask is a sampled-only image inside this window: the compose's checkerboard read it last
+    // (through the compose's own wrap) and the compose chain reads it again after the callback
+    // (prepareHdr, the glass blur), so the truthful announce is the read-only state, not
+    // UnorderedAccess - a UAV claim here would make the compose emit an SRV transition whose
+    // GENERAL old layout the image is not in.
     if (target.glassMaskTexture != nullptr)
     {
         pCommandList->beginTrackingTextureState(target.glassMaskTexture, nvrhi::AllSubresources,
-                                                nvrhi::ResourceStates::UnorderedAccess);
+                                                nvrhi::ResourceStates::ShaderResource);
     }
 
     // The smoke TLAS set: a valid one is part of the smoke half's drawability, a failure (or a null

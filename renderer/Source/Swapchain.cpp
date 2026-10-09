@@ -60,7 +60,8 @@ Swapchain::Swapchain(
     VkSurfaceKHR _surface,
     VkPhysicalDevice _physDevice,
     std::shared_ptr<CommandBufferManager> _cmdManager,
-    bool _presentWait2Supported)
+    bool _presentWait2Supported,
+    bool _swapchainMaintenance1Supported)
     : device(_device)
     , surface(_surface)
     , physDevice(_physDevice)
@@ -75,6 +76,7 @@ Swapchain::Swapchain(
     , swapchain(VK_NULL_HANDLE)
     , swapchainImages{}
     , swapchainViews{}
+    , usePresentFences(_swapchainMaintenance1Supported)
     , presentWait2Supported(_presentWait2Supported)
     , surfacePresentWait2Supported(false)
     , usePresentWait2(false)
@@ -236,9 +238,39 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
     const VkExtent2D requestedExtent = GetOptimalExtent();
 
     const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(requestedPresentMode);
-    if (!AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode || usePresentWait2 != wantPresentWait2)
+    const bool parametersChanged =
+        !AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode ||
+        usePresentWait2 != wantPresentWait2;
+
+    const bool forceRecreate = recreateState.BeginAcquire(parametersChanged);
+    if (parametersChanged)
     {
         TryRecreate(requestedExtent, requestedPresentMode);
+    }
+    else if (forceRecreate)
+    {
+        TryRecreate(requestedExtent, requestedPresentMode, true);
+    }
+
+    if (usePresentWait2 && sVkWaitForPresent2KHR != nullptr && currentPresentId + 1 > maxFrameLatency)
+    {
+        const uint64_t targetPresentId = currentPresentId + 1 - maxFrameLatency;
+
+        if (targetPresentId <= waitablePresentId)
+        {
+            VkPresentWait2InfoKHR waitInfo = {};
+            waitInfo.sType = VK_STRUCTURE_TYPE_PRESENT_WAIT_2_INFO_KHR;
+            waitInfo.presentId = targetPresentId;
+            waitInfo.timeout = 50ull * 1000ull * 1000ull;
+
+            const VkResult waitResult = sVkWaitForPresent2KHR(device, swapchain, &waitInfo);
+
+            if (waitResult == VK_ERROR_OUT_OF_DATE_KHR)
+            {
+                ResetSurfaceCapabilitiesCache();
+                TryRecreate(GetOptimalExtent(), requestedPresentMode, true);
+            }
+        }
     }
 
     while (true)
@@ -248,14 +280,22 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
             imageAvailableSemaphore,
             VK_NULL_HANDLE, &currentSwapchainIndex);
 
+        recreateState.Acquired(r);
+
         if (r == VK_SUCCESS)
         {
             return;
         }
 
-        if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
+        if (r == VK_SUBOPTIMAL_KHR)
         {
-            TryRecreate(requestedExtent, requestedPresentMode);
+            return;
+        }
+
+        if (r == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            ResetSurfaceCapabilitiesCache();
+            TryRecreate(GetOptimalExtent(), requestedPresentMode, true);
             continue;
         }
 
@@ -273,6 +313,23 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     presentInfo.pSwapchains = &swapchain;
     presentInfo.pImageIndices = &currentSwapchainIndex;
 
+    VkSwapchainPresentFenceInfoKHR presentFenceInfo{};
+    if (usePresentFences)
+    {
+        if (presentFencePending[currentSwapchainIndex])
+        {
+            VK_CHECKERROR(vkWaitForFences(device, 1, &presentFences[currentSwapchainIndex], VK_TRUE, UINT64_MAX));
+            VK_CHECKERROR(vkResetFences(device, 1, &presentFences[currentSwapchainIndex]));
+            presentFencePending[currentSwapchainIndex] = 0;
+        }
+
+        presentFenceInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_KHR;
+        presentFenceInfo.swapchainCount = 1;
+        presentFenceInfo.pFences = &presentFences[currentSwapchainIndex];
+        presentFenceInfo.pNext = presentInfo.pNext;
+        presentInfo.pNext = &presentFenceInfo;
+    }
+
     const uint64_t nextPresentId = currentPresentId + 1;
     VkPresentId2KHR presentIdInfo{};
     if (usePresentWait2)
@@ -280,10 +337,24 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
         presentIdInfo.sType = VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR;
         presentIdInfo.swapchainCount = 1;
         presentIdInfo.pPresentIds = &nextPresentId;
+        presentIdInfo.pNext = presentInfo.pNext;
         presentInfo.pNext = &presentIdInfo;
     }
 
     const VkResult r = vkQueuePresentKHR(queues->GetGraphics(), &presentInfo);
+    recreateState.Presented(r);
+
+    if (usePresentFences)
+    {
+        const bool queued =
+            r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_OUT_OF_DATE_KHR ||
+            r == VK_ERROR_SURFACE_LOST_KHR || r == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT;
+
+        if (queued)
+        {
+            presentFencePending[currentSwapchainIndex] = 1;
+        }
+    }
 
     if (usePresentWait2)
     {
@@ -295,18 +366,18 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
         }
     }
 
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
+    if (r == VK_ERROR_OUT_OF_DATE_KHR)
     {
         ResetSurfaceCapabilitiesCache();
-        TryRecreate(GetOptimalExtent(), requestedPresentMode);
+        TryRecreate(GetOptimalExtent(), requestedPresentMode, true);
     }
 }
 
-bool Swapchain::TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode)
+bool Swapchain::TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode, bool force)
 {
     const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(mode);
 
-    if (AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode && usePresentWait2 == wantPresentWait2)
+    if (!force && AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode && usePresentWait2 == wantPresentWait2)
     {
         return false;
     }
@@ -345,6 +416,8 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
     assert(swapchain == VK_NULL_HANDLE);
     assert(swapchainImages.empty());
     assert(swapchainViews.empty());
+    assert(renderFinishedSemaphores.empty());
+    assert(presentFences.empty());
 
     uint32_t imageCount = std::max(3u, surfCapabilities.minImageCount);
     if (surfCapabilities.maxImageCount > 0)
@@ -434,6 +507,40 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
         SET_DEBUG_NAME(device, swapchainViews[i], VK_OBJECT_TYPE_IMAGE_VIEW, "Swapchain image view");
     }
 
+    // One render-finished semaphore per swapchain image, re-created with the swapchain (an image
+    // count change has to bring its own pair of semaphores with it).
+    {
+        VkSemaphoreCreateInfo semaphoreInfo = {};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        renderFinishedSemaphores.resize(imageCount);
+
+        for (uint32_t i = 0; i < imageCount; i++)
+        {
+            r = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]);
+            VK_CHECKERROR(r);
+
+            SET_DEBUG_NAME(device, renderFinishedSemaphores[i], VK_OBJECT_TYPE_SEMAPHORE, "Render finished semaphore");
+        }
+    }
+
+    if (usePresentFences)
+    {
+        VkFenceCreateInfo fenceInfo = {};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+
+        presentFences.resize(imageCount);
+        presentFencePending.assign(imageCount, 0);
+
+        for (uint32_t i = 0; i < imageCount; i++)
+        {
+            r = vkCreateFence(device, &fenceInfo, nullptr, &presentFences[i]);
+            VK_CHECKERROR(r);
+
+            SET_DEBUG_NAME(device, presentFences[i], VK_OBJECT_TYPE_FENCE, "Present fence");
+        }
+    }
+
     const VkCommandBuffer cmd = cmdManager->StartGraphicsCmd();
 
     for (uint32_t i = 0; i < imageCount; i++)
@@ -460,10 +567,27 @@ VkSwapchainKHR Swapchain::DestroyWithoutSwapchain()
 {
     vkDeviceWaitIdle(device);
 
+    WaitPresentFences();
+
     if (swapchain != VK_NULL_HANDLE)
     {
         CallDestroySubscribers();
     }
+
+    for (const VkFence fence : presentFences)
+    {
+        vkDestroyFence(device, fence, nullptr);
+    }
+
+    presentFences.clear();
+    presentFencePending.clear();
+
+    for (const VkSemaphore semaphore : renderFinishedSemaphores)
+    {
+        vkDestroySemaphore(device, semaphore, nullptr);
+    }
+
+    renderFinishedSemaphores.clear();
 
     for (const VkImageView view : swapchainViews)
     {
@@ -477,6 +601,20 @@ VkSwapchainKHR Swapchain::DestroyWithoutSwapchain()
     swapchain = VK_NULL_HANDLE;
 
     return oldSwapchain;
+}
+
+void Swapchain::WaitPresentFences()
+{
+    for (size_t i = 0; i < presentFences.size(); i++)
+    {
+        if (!presentFencePending[i])
+        {
+            continue;
+        }
+
+        VK_CHECKERROR(vkWaitForFences(device, 1, &presentFences[i], VK_TRUE, UINT64_MAX));
+        presentFencePending[i] = 0;
+    }
 }
 
 void Swapchain::CallCreateSubscribers()
@@ -572,4 +710,10 @@ const VkImageView *Swapchain::GetImageViews() const
     }
 
     return swapchainViews.data();
+}
+
+VkSemaphore Swapchain::GetRenderFinishedSemaphore(uint32_t imageIndex) const
+{
+    assert(imageIndex < renderFinishedSemaphores.size());
+    return renderFinishedSemaphores[imageIndex];
 }

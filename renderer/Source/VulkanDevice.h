@@ -20,7 +20,9 @@
 #include <qray/qray.h>
 
 #include <array>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -184,7 +186,6 @@ private:
 
     VkFence             frameFences[MAX_FRAMES_IN_FLIGHT] = {};
     VkSemaphore         imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
-    VkSemaphore         renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
     VkSemaphore         inFrameSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
 
     bool                waitForOutOfFrameFence;
@@ -194,6 +195,7 @@ private:
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
     bool                                    presentWait2Enabled = false;
+    bool                                    swapchainMaintenance1Enabled = false;
     std::string                             printedPresentModeName;
     bool                                    printedPresentWaitActive = false;
     bool                                    printedRasterUploadWithoutFrame = false;
@@ -296,12 +298,13 @@ private:
     bool                                    statsGpuTimingValid = false;
     float                                   statsGpuFrameMs = 0.0f;
     float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
+    std::mutex                              geometryUploadMutex;
     CpuFrameProfiler                        cpuFrameProfiler;
     bool                                    statsCpuTimingValid = false;
     bool                                    statsRenderedUiOnly = false;
-    uint32_t                                statsApiCallsGeometry = 0;
-    uint32_t                                statsApiCallsRasterized = 0;
-    uint32_t                                statsApiCallsLights = 0;
+    std::atomic<uint32_t>                   statsApiCallsGeometry{0};
+    std::atomic<uint32_t>                   statsApiCallsRasterized{0};
+    std::atomic<uint32_t>                   statsApiCallsLights{0};
     uint64_t                                statsRasterUploadBytes = 0;
     uint32_t                                statsRasterUploadDroppedBatches = 0;
 };

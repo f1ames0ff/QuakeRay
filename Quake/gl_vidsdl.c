@@ -34,6 +34,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "qr_editor.h"
 #include "photocam.h"
 #include "../shared/rt_frame_policy.h"
+#include "../shared/rt_prof_window.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
 #include <time.h> // for the timestamp of the frame rt_stats_dump appends
@@ -109,6 +110,7 @@ cvar_t                          vid_contrast = {"contrast", "1", CVAR_ARCHIVE}; 
 cvar_t                          r_usesops = {"r_usesops", "1", CVAR_ARCHIVE};   // johnfitz
 
 task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
+atomic_uint32_t rt_end_task_running;
 
 // RT
 #define CVAR_DEF_LIST( CVAR_DEF_T ) \
@@ -357,6 +359,7 @@ task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 	CVAR_DEF_T (rt_restir_candidates, "8") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
 	CVAR_DEF_T (rt_stats_interval, "0.2") \
+	CVAR_DEF_T (rt_end_task_delay_ms, "0") \
 	CVAR_DEF_T (rt_worldcensus, "0") \
 	CVAR_DEF_T (rt_worldlights_stats, "0") \
 	CVAR_DEF_T (rt_worldclusters_grid, "1")
@@ -387,9 +390,6 @@ RT_StatsDrawGui, and rt_prof_report, which it reads, is rebuilt every
 overlay refreshes at; the setting may only make the readout faster) by
 RT_Prof_Update; rt_stats_dump writes one snapshot to qperfdump.log.
 
-The slots are written from worker threads without synchronization, so taking the
-report and the reset that follows it can race a running task; for a diagnostic
-tool the worst case is a garbage value in one window.
 ================
 */
 double           rt_prof_ms[RT_PROF_COUNT];
@@ -408,9 +408,8 @@ static uint64_t rt_particle_cache_misses_last;
 static double   rt_particle_cache_total_ms_last;
 
 static double   rt_prof_frame_start;
-static double   rt_prof_window_start;
-static int      rt_prof_frames;
-static qboolean rt_prof_active;
+static rt_prof_window_t rt_prof_window;
+static qboolean rt_prof_capture_frame;
 static double   rt_prof_sum[RT_PROF_COUNT];
 static double   rt_renderer_cpu_sum[QR_CPU_PASS_COUNT];
 static float    rt_renderer_cpu_max[QR_CPU_PASS_COUNT];
@@ -429,9 +428,59 @@ static double   rt_bench_start_time;
 static double   rt_bench_frame_min;
 static double   rt_bench_sum[RT_PROF_COUNT];
 static double   rt_bench_max[RT_PROF_COUNT];
+static double   rt_bench_host_sum[RT_HOST_SPEED_COUNT];
+static int      rt_bench_host_frames;
 static double   rt_bench_frame_slots[RT_PROF_COUNT];
+static atomic_uint32_t rt_prof_spin;
+
+static void RT_Prof_Lock (void)
+{
+	uint32_t expected = 0;
+	while (!Atomic_CompareExchangeUInt32 (&rt_prof_spin, &expected, 1))
+		expected = 0;
+}
+
+static void RT_Prof_Unlock (void)
+{
+	Atomic_StoreUInt32 (&rt_prof_spin, 0);
+}
+
+static void RT_Prof_WindowLock (void *unused)
+{
+	RT_Prof_Lock ();
+}
+
+static void RT_Prof_WindowUnlock (void *unused)
+{
+	RT_Prof_Unlock ();
+}
+
+static const rt_prof_window_sync_t rt_prof_window_sync = {NULL, RT_Prof_WindowLock, RT_Prof_WindowUnlock};
+
+static void RT_Prof_ClearWindow (void *unused)
+{
+	memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
+	memset (rt_prof_sum, 0, sizeof (rt_prof_sum));
+	memset (rt_renderer_cpu_sum, 0, sizeof (rt_renderer_cpu_sum));
+	memset (rt_renderer_cpu_max, 0, sizeof (rt_renderer_cpu_max));
+	rt_renderer_cpu_samples = 0;
+}
+
+static void RT_Prof_ResetWindow (void *unused)
+{
+	RT_Prof_ClearWindow (NULL);
+	rt_prof_report.valid = false;
+}
+
 static double   rt_bench_last_frame_end;
 static QrFrameStats rt_bench_renderer_stats;
+static uint32_t     rt_end_task_serial;
+static uint32_t     rt_end_task_current_serial;
+static uint32_t     rt_end_task_finished_serial;
+static double       rt_end_task_finished_ms;
+static QrFrameStats rt_end_task_finished_stats;
+static uint32_t     rt_bench_pending_end_serial;
+static int          rt_bench_pending_end_index;
 
 #define RT_BENCH_FRAME_CAPACITY 32768
 
@@ -472,10 +521,17 @@ void RT_Bench_Start (void)
 	rt_bench_frame_min = 0.0;
 	rt_bench_last_frame_end = 0.0;
 	rt_bench_frame_sample_count = 0;
+	RT_Prof_Lock ();
 	memset (rt_bench_frame_slots, 0, sizeof (rt_bench_frame_slots));
 	memset (&rt_bench_renderer_stats, 0, sizeof (rt_bench_renderer_stats));
 	memset (rt_bench_sum, 0, sizeof (rt_bench_sum));
 	memset (rt_bench_max, 0, sizeof (rt_bench_max));
+	memset (rt_bench_host_sum, 0, sizeof (rt_bench_host_sum));
+	rt_end_task_finished_serial = 0;
+	memset (&rt_end_task_finished_stats, 0, sizeof (rt_end_task_finished_stats));
+	rt_bench_pending_end_serial = 0;
+	RT_Prof_Unlock ();
+	rt_bench_host_frames = 0;
 	rt_cluster_cache_hits = 0;
 	rt_cluster_cache_misses = 0;
 	rt_cluster_miss_set = 0;
@@ -516,6 +572,17 @@ static void RT_Bench_Slot (int slot, double ms)
 		rt_bench_frame_min = ms;
 }
 
+void RT_Bench_HostFrame (void)
+{
+	if (!rt_bench_active)
+		return;
+
+	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		rt_bench_host_sum[i] += rt_host_speeds_ms[i];
+
+	++rt_bench_host_frames;
+}
+
 double RT_Prof_Begin (void)
 {
 	return (RT_StatsPanel (RT_STATS_PROFILE) || rt_bench_active) ? Sys_DoubleTime () : 0.0;
@@ -527,51 +594,58 @@ void RT_Prof_End (int slot, double start)
 		return;
 
 	const double ms = (Sys_DoubleTime () - start) * 1000.0;
+	RT_Prof_Lock ();
 	RT_Bench_Slot (slot, ms);
 	rt_prof_sum[slot] += ms;
 	if (ms > rt_prof_ms[slot])
 		rt_prof_ms[slot] = ms;
+	RT_Prof_Unlock ();
 }
 
 void RT_Prof_Sample (int slot, double ms)
 {
+	RT_Prof_Lock ();
 	RT_Bench_Slot (slot, ms);
 	rt_prof_sum[slot] += ms;
 	if (ms > rt_prof_ms[slot])
 		rt_prof_ms[slot] = ms;
+	RT_Prof_Unlock ();
 }
 
 void RT_Prof_FrameStart (void)
 {
-	if (!RT_StatsPanel (RT_STATS_PROFILE) && !rt_bench_active)
+	GL_SynchronizeEndRenderingTask ();
+	const qboolean enabled = RT_StatsPanel (RT_STATS_PROFILE);
+	rt_prof_capture_frame = enabled || rt_bench_active;
+	const double now = Sys_DoubleTime ();
+	RT_ProfWindowBeginFrame (&rt_prof_window, &rt_prof_window_sync, enabled, rt_prof_capture_frame, now, RT_Prof_ResetWindow, NULL);
+	if (!rt_prof_capture_frame)
 		return;
 
-	rt_prof_frame_start = Sys_DoubleTime ();
+	rt_prof_frame_start = now;
 	if (rt_bench_active)
 	{
+		RT_Prof_Lock ();
 		memset (rt_bench_frame_slots, 0, sizeof (rt_bench_frame_slots));
 		memset (&rt_bench_renderer_stats, 0, sizeof (rt_bench_renderer_stats));
+		RT_Prof_Unlock ();
 	}
-	++rt_prof_frames;
-
-	RT_PointClusterCacheStats (NULL, NULL, &rt_particle_cache_total_ms_last, NULL);
 }
 
 void RT_Prof_FrameEnd (void)
 {
-	if (!RT_StatsPanel (RT_STATS_PROFILE) && !rt_bench_active)
+	if (!rt_prof_capture_frame)
 		return;
 
+	const uint32_t end_serial = rt_end_task_current_serial;
+	rt_end_task_current_serial = 0;
+
 	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
-
-	double cacheTotalMs;
-	RT_PointClusterCacheStats (NULL, NULL, &cacheTotalMs, NULL);
-	RT_Prof_Sample (RT_PROF_PARTICLES_RESOLVE, cacheTotalMs - rt_particle_cache_total_ms_last);
-	rt_particle_cache_total_ms_last = cacheTotalMs;
-
+	RT_ProfWindowEndFrame (&rt_prof_window, &rt_prof_window_sync);
 	if (rt_bench_active)
 	{
 		const double now = Sys_DoubleTime ();
+		RT_Prof_Lock ();
 		if (rt_bench_frame_sample_count < RT_BENCH_FRAME_CAPACITY)
 		{
 			rt_bench_frame_t *sample = &rt_bench_frame_samples[rt_bench_frame_sample_count++];
@@ -584,23 +658,32 @@ void RT_Prof_FrameEnd (void)
 			sample->keyGame = key_dest == key_game;
 			sample->paused = sv.paused || cl.paused;
 			sample->signon = cls.signon;
+
+			if (end_serial != 0)
+			{
+				sample->slots[RT_PROF_DRAWFRAME] = 0.0;
+				memset (&sample->renderer, 0, sizeof (sample->renderer));
+
+				if (RT_EndFrameConsumesEarlyResult (end_serial, rt_end_task_finished_serial))
+				{
+					sample->slots[RT_PROF_DRAWFRAME] += rt_end_task_finished_ms;
+					sample->renderer = rt_end_task_finished_stats;
+					rt_end_task_finished_serial = 0;
+				}
+				else
+				{
+					rt_bench_pending_end_serial = end_serial;
+					rt_bench_pending_end_index = rt_bench_frame_sample_count - 1;
+				}
+			}
 		}
 		for (int i = 0; i < RT_PROF_COUNT; ++i)
 			if (rt_bench_frame_slots[i] > rt_bench_max[i])
 				rt_bench_max[i] = rt_bench_frame_slots[i];
+		RT_Prof_Unlock ();
 		rt_bench_last_frame_end = now;
 		++rt_bench_frames;
 	}
-}
-
-static void RT_Prof_ResetSamples (void)
-{
-	memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
-	memset (rt_prof_sum, 0, sizeof (rt_prof_sum));
-	memset (rt_renderer_cpu_sum, 0, sizeof (rt_renderer_cpu_sum));
-	memset (rt_renderer_cpu_max, 0, sizeof (rt_renderer_cpu_max));
-	rt_prof_frames = 0;
-	rt_renderer_cpu_samples = 0;
 }
 
 static void RT_Prof_RecordRenderer (void)
@@ -610,6 +693,7 @@ static void RT_Prof_RecordRenderer (void)
 	if (qrGetFrameStatsEx (vulkan_globals.instance, &stats) != QR_SUCCESS || !stats.cpuTimingValid)
 		return;
 
+	RT_Prof_Lock ();
 	if (rt_bench_active)
 		rt_bench_renderer_stats = stats;
 
@@ -620,75 +704,89 @@ static void RT_Prof_RecordRenderer (void)
 		if (stats.cpuPassMs[i] > rt_renderer_cpu_max[i])
 			rt_renderer_cpu_max[i] = stats.cpuPassMs[i];
 	}
+	RT_Prof_Unlock ();
 }
 
-void RT_Prof_Update (void)
+typedef struct
 {
-	if (!RT_StatsPanel (RT_STATS_PROFILE))
-	{
-		if (!rt_prof_active)
-			return;
+	uint32_t serial;
+	double ms;
+	qboolean measured;
+	const QrFrameStats *stats;
+} rt_prof_end_result_t;
 
-		rt_prof_active = false;
-		rt_prof_report.valid = false;
-		RT_Prof_ResetSamples ();
-		if (!rt_bench_active)
-		{
-			rt_cluster_cache_hits = 0;
-			rt_cluster_cache_misses = 0;
-			rt_cluster_miss_set = 0;
-			rt_cluster_miss_move = 0;
-			rt_cluster_miss_other = 0;
-			rt_particles_dropped = 0;
-			rt_fte_convert_bytes = 0;
-			rt_particle_upload_bytes = 0;
-		}
+static void RT_Prof_RecordEndResult (void *context)
+{
+	const rt_prof_end_result_t *result = context;
+	if (!result->measured)
 		return;
+
+	const double ms = result->ms;
+	const uint32_t serial = result->serial;
+	const QrFrameStats *stats = result->stats;
+
+	rt_prof_sum[RT_PROF_DRAWFRAME] += ms;
+	if (ms > rt_prof_ms[RT_PROF_DRAWFRAME])
+		rt_prof_ms[RT_PROF_DRAWFRAME] = ms;
+
+	if (stats)
+	{
+		++rt_renderer_cpu_samples;
+		for (int i = 0; i < QR_CPU_PASS_COUNT; i++)
+		{
+			rt_renderer_cpu_sum[i] += stats->cpuPassMs[i];
+			if (stats->cpuPassMs[i] > rt_renderer_cpu_max[i])
+				rt_renderer_cpu_max[i] = stats->cpuPassMs[i];
+		}
 	}
 
-	const double now = Sys_DoubleTime ();
-
-	if (!rt_prof_active)
+	if (rt_bench_active)
 	{
-		// start a fresh window, so switching the profiler on never shows stale numbers
-		rt_prof_active = true;
-		rt_prof_report.valid = false;
-		rt_prof_window_start = now;
-		RT_Prof_ResetSamples ();
-		RT_PointClusterCacheStats (&rt_particle_cache_hits_last, &rt_particle_cache_misses_last, NULL, NULL);
-		if (!rt_bench_active)
+		rt_bench_sum[RT_PROF_DRAWFRAME] += ms;
+		if (ms > rt_bench_max[RT_PROF_DRAWFRAME])
+			rt_bench_max[RT_PROF_DRAWFRAME] = ms;
+
+		if (RT_EndTaskResultMergesNow (rt_bench_pending_end_serial, serial))
 		{
-			rt_cluster_cache_hits = 0;
-			rt_cluster_cache_misses = 0;
-			rt_cluster_miss_set = 0;
-			rt_cluster_miss_move = 0;
-			rt_cluster_miss_other = 0;
-			rt_particles_dropped = 0;
-			rt_fte_convert_bytes = 0;
-			rt_particle_upload_bytes = 0;
+			rt_bench_frame_t *sample = &rt_bench_frame_samples[rt_bench_pending_end_index];
+
+			sample->slots[RT_PROF_DRAWFRAME] += ms;
+			if (stats)
+				sample->renderer = *stats;
+			rt_bench_pending_end_serial = 0;
 		}
-		return;
+		else
+		{
+			rt_end_task_finished_serial = serial;
+			rt_end_task_finished_ms = ms;
+			if (stats)
+				rt_end_task_finished_stats = *stats;
+			else
+				memset (&rt_end_task_finished_stats, 0, sizeof (rt_end_task_finished_stats));
+		}
 	}
+}
 
-	/* A cvar can hold a value no comparison reaches --- a "nan" typed in the console or
-	   written into a config --- and the clamp would hand it straight back, making every
-	   frame look like the end of a window; such a value falls back to the default. */
-	double interval = CLAMP (0.05, CVAR_TO_FLOAT (rt_stats_interval), 0.2);
+static void RT_Prof_EndTaskRecord (uint32_t serial, double start, const QrFrameStats *stats)
+{
+	rt_prof_end_result_t result = {
+		.serial = serial,
+		.ms = start != 0.0 ? (Sys_DoubleTime () - start) * 1000.0 : 0.0,
+		.measured = start != 0.0,
+		.stats = stats,
+	};
+	RT_ProfWindowRecordEnd (&rt_prof_window, &rt_prof_window_sync, RT_Prof_RecordEndResult, &result);
+}
 
-	if (!(interval >= 0.05 && interval <= 0.2))
-		interval = 0.2;
-
-	const double elapsed = now - rt_prof_window_start;
-	if (elapsed < interval)
-		return;
-
-	rt_prof_window_start = now;
-
-	float fps = (float)(rt_prof_frames / elapsed);
+static void RT_Prof_PublishWindow (void *unused, unsigned frames, double elapsed, unsigned publication)
+{
+	float fps = (float)(frames / elapsed);
 	if (fps < 0.1f)
 		fps = 0.1f;
 
 	memset (&rt_prof_report, 0, sizeof (rt_prof_report));
+	rt_prof_report.windowId = publication;
+	rt_prof_report.frames = frames;
 	rt_prof_report.fps = fps;
 	rt_prof_report.frameMs = (float)rt_prof_ms[RT_PROF_FRAME];
 	rt_prof_report.waitMs = (float)rt_prof_ms[RT_PROF_WAIT];
@@ -696,7 +794,7 @@ void RT_Prof_Update (void)
 	for (int i = 0; i < RT_PROF_COUNT; ++i)
 	{
 		rt_prof_report.ms[i] = (float)rt_prof_ms[i];
-		rt_prof_report.averageMs[i] = rt_prof_frames > 0 ? (float)(rt_prof_sum[i] / rt_prof_frames) : 0.0f;
+		rt_prof_report.averageMs[i] = (float)(rt_prof_sum[i] / frames);
 	}
 	for (int i = 0; i < QR_CPU_PASS_COUNT; ++i)
 	{
@@ -736,6 +834,19 @@ void RT_Prof_Update (void)
 	rt_particle_cache_hits_last = particleCacheHits;
 	rt_particle_cache_misses_last = particleCacheMisses;
 	rt_prof_report.valid = true;
+}
+
+void RT_Prof_Update (void)
+{
+	if (!RT_StatsPanel (RT_STATS_PROFILE))
+		return;
+
+	double interval = CLAMP (0.05, CVAR_TO_FLOAT (rt_stats_interval), 0.2);
+	if (!(interval >= 0.05 && interval <= 0.2))
+		interval = 0.2;
+	if (!RT_ProfWindowTryPublish (&rt_prof_window, &rt_prof_window_sync, Sys_DoubleTime (), interval,
+		RT_Prof_PublishWindow, RT_Prof_ClearWindow, NULL))
+		return;
 
 	if (!rt_bench_active)
 	{
@@ -748,7 +859,6 @@ void RT_Prof_Update (void)
 		rt_fte_convert_bytes = 0;
 		rt_particle_upload_bytes = 0;
 	}
-	RT_Prof_ResetSamples ();
 }
 
 /*
@@ -836,6 +946,7 @@ static void RT_Bench_WriteFrames (FILE *log, const char *demo)
 
 qboolean RT_Bench_Report (const char *demo)
 {
+	RT_Prof_Lock ();
 	char        path[MAX_OSPATH];
 	char        stamp[32];
 	time_t      now;
@@ -844,23 +955,39 @@ qboolean RT_Bench_Report (const char *demo)
 	const int    frames = rt_bench_frames > 0 ? rt_bench_frames : 1;
 	const double seconds = rt_bench_frames > 0 ? (Sys_DoubleTime () - rt_bench_start_time) : 0.0;
 
-	if (!rt_bench_active)
+	if (!RT_ReportTakeRun (&rt_bench_active))
+	{
+		RT_Prof_Unlock ();
 		return false;
+	}
 
 	/* A run that ended before a single frame was finished has nothing to report and no result
 	   to show; it is not a measurement of zero frames. */
 	if (rt_bench_frames == 0)
 	{
-		rt_bench_active = false;
 		rt_bench_result.valid = false;
+		RT_Prof_Unlock ();
 		return false;
 	}
 
-	rt_bench_active = false;
+	double slotSum[RT_PROF_COUNT];
+	double slotMax[RT_PROF_COUNT];
+	double hostSum[RT_HOST_SPEED_COUNT];
+	const int interrupted = rt_bench_interrupted;
+	const int clusterHits = rt_cluster_cache_hits;
+	const int clusterMisses = rt_cluster_cache_misses;
+	const int clusterSet = rt_cluster_miss_set;
+	const int clusterMove = rt_cluster_miss_move;
+	const int clusterOther = rt_cluster_miss_other;
 
-	const double frameAvg = rt_bench_sum[RT_PROF_FRAME] / frames;
+	memcpy (slotSum, rt_bench_sum, sizeof (slotSum));
+	memcpy (slotMax, rt_bench_max, sizeof (slotMax));
+	memcpy (hostSum, rt_bench_host_sum, sizeof (hostSum));
+	RT_Prof_Unlock ();
+
+	const double frameAvg = slotSum[RT_PROF_FRAME] / frames;
 	const double frameMin = rt_bench_frame_min > 0.0 ? rt_bench_frame_min : frameAvg;
-	const double frameMax = rt_bench_max[RT_PROF_FRAME];
+	const double frameMax = slotMax[RT_PROF_FRAME];
 
 	rt_bench_result.valid = true;
 	q_strlcpy (rt_bench_result.demo, (demo && demo[0]) ? demo : "?", sizeof (rt_bench_result.demo));
@@ -892,18 +1019,24 @@ qboolean RT_Bench_Report (const char *demo)
 
 	fprintf (f, "# rt_bench %s demo=%s frames=%d seconds=%.2f fps=%.1f interrupted=%d\n", stamp,
 	         (demo && demo[0]) ? demo : "?", frames, seconds,
-	         seconds > 0.0 ? frames / seconds : 0.0, rt_bench_interrupted ? 1 : 0);
+	         seconds > 0.0 ? frames / seconds : 0.0, interrupted ? 1 : 0);
 
 	for (int i = 0; i < RT_PROF_COUNT; i++)
 		fprintf (f, "cpu.slot    %-17s avg_ms=%.2f max_ms=%.2f\n", RT_ProfSlotName (i),
-		         rt_bench_sum[i] / frames, rt_bench_max[i]);
+		         slotSum[i] / frames, slotMax[i]);
 
 	fprintf (f, "cpu.main    %-17s avg_ms=%.2f\n", "frame minus wait",
-	         (rt_bench_sum[RT_PROF_FRAME] - rt_bench_sum[RT_PROF_WAIT]) / frames);
+	         (slotSum[RT_PROF_FRAME] - slotSum[RT_PROF_WAIT]) / frames);
+
+	static const char *const hostPasses[RT_HOST_SPEED_COUNT] = {"tot", "server", "gfx", "snd"};
+	const int                hostFrames = rt_bench_host_frames > 0 ? rt_bench_host_frames : 1;
+
+	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		fprintf (f, "host.pass   %-17s avg_ms=%.2f\n", hostPasses[i], hostSum[i] / hostFrames);
 
 	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d\n", "lists",
-	         rt_cluster_cache_hits, rt_cluster_cache_misses, rt_cluster_miss_set,
-	         rt_cluster_miss_move, rt_cluster_miss_other);
+	         clusterHits, clusterMisses, clusterSet,
+	         clusterMove, clusterOther);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");
@@ -986,7 +1119,10 @@ qboolean RT_Bench_Report (const char *demo)
 
 	for (int i = 0; i < RT_PROF_COUNT; i++)
 		Con_Printf ("  %-17s avg %.2f ms, max %.2f ms\n", RT_ProfSlotName (i),
-		            rt_bench_sum[i] / frames, rt_bench_max[i]);
+		            slotSum[i] / frames, slotMax[i]);
+
+	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
+		Con_Printf ("  host %-12s avg %.2f ms\n", hostPasses[i], hostSum[i] / hostFrames);
 
 	return true;
 }
@@ -1252,6 +1388,9 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 
 	if (snap->haveProfile)
 	{
+		fprintf (f, "%-11s %-17s %u\n", "cpu.window", "id", snap->profile.windowId);
+		fprintf (f, "%-11s %-17s %u\n", "cpu.window", "frames", snap->profile.frames);
+		fprintf (f, "%-11s %-17s %i\n", "cpu.window", "renderer samples", snap->profile.rendererSamples);
 		fprintf (f, "%-11s %-17s %.2f\n", "cpu.frame", "ms", snap->profile.frameMs);
 		fprintf (f, "%-11s %-17s %.2f\n", "cpu.main", "ms", snap->profile.frameMs - snap->profile.waitMs);
 		fprintf (f, "%-11s %-17s %.2f\n", "cpu.wait", "ms", snap->profile.waitMs);
@@ -1456,10 +1595,11 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped,"
 	       "clust_dirty_max,clust_move_footprint",
 	       f);
-	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls,calls_geometry,calls_raster,calls_lights,calls_other,rays_particle\n", f);
-	fputs (",particles_classic,particles_fte,particles_vertices,particles_smoke,particles_dropped,"
+	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls,calls_geometry,calls_raster,calls_lights,calls_other,rays_particle,"
+	       "particles_classic,particles_fte,particles_vertices,particles_smoke,particles_dropped,"
 	       "fte_convert_bytes,particle_upload_bytes,particles_cache_hits,particles_cache_misses,"
-	       "particles_cache_avg_ns,raster_upload_bytes,raster_upload_dropped_batches\n", f);
+	       "particles_cache_avg_ns,raster_upload_bytes,raster_upload_dropped_batches,"
+	       "cpu.window_id,cpu.window_frames,cpu.renderer_samples\n", f);
 
 	for (i = 0; i < job->count; i++)
 	{
@@ -1601,6 +1741,16 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 		if (snap->haveGpu) fprintf (f, "%llu", (unsigned long long)snap->gpu.rasterUploadBytes);
 		RT_StatsRecordField (f, &first);
 		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.rasterUploadDroppedBatches);
+
+		for (j = 0; j < 3; j++)
+		{
+			RT_StatsRecordField (f, &first);
+			if (snap->haveProfile)
+			{
+				const unsigned values[3] = {rep->windowId, rep->frames, (unsigned)rep->rendererSamples};
+				fprintf (f, "%u", values[j]);
+			}
+		}
 
 		fputc ('\n', f);
 	}
@@ -2362,6 +2512,12 @@ static void RT_ColorGet (rt_color_t *c, float *out)
 {
 	if (c->dirty)
 	{
+		if (Tasks_IsWorker ())
+		{
+			VectorCopy (c->value, out);
+			return;
+		}
+
 		c->dirty = false;
 
 		if (!RT_ColorParse (c->cvar->string, c->value))
@@ -2372,6 +2528,14 @@ static void RT_ColorGet (rt_color_t *c, float *out)
 	}
 
 	VectorCopy (c->value, out);
+}
+
+void RT_ColorsRefresh (void)
+{
+	float color[3];
+
+	for (size_t i = 0; i < countof (rt_colors); i++)
+		RT_ColorGet (&rt_colors[i], color);
 }
 
 void RT_GetSkyColor (float color[3])
@@ -2803,8 +2967,10 @@ static const char *GetUpscalerOptionName (int i, QrRenderUpscaleTechnique techni
 
 typedef struct end_rendering_parms_s
 {
-	float   vid_width;
-	float   vid_height;
+	uint32_t serial;
+	uint32_t delay_ms;
+	float    vid_width;
+	float    vid_height;
 } end_rendering_parms_t;
 
 #define DEG2RAD(a) ((a)*M_PI_DIV_180)
@@ -2849,6 +3015,11 @@ GL_EndRenderingTask
 */
 static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 {
+	Atomic_StoreUInt32 (&rt_end_task_running, 1);
+
+	if (parms->delay_ms > 0)
+		SDL_Delay (parms->delay_ms);
+
 	const QrExtent2D winsize = {.width = parms->vid_width, .height = parms->vid_height};
 	const qboolean editor_active = QR_Editor_Active ();
 
@@ -3304,10 +3475,23 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	double prof_start = RT_Prof_Begin ();
 	QrResult r = qrDrawFrame (vulkan_globals.instance, &info);
-	RT_Prof_End (RT_PROF_DRAWFRAME, prof_start);
 	QR_CHECK (r);
-	if (r == QR_SUCCESS && info.enableCpuProfiling)
-		RT_Prof_RecordRenderer ();
+
+	if (parms->serial != 0)
+	{
+		QrFrameStats stats = {0};
+		const qboolean stats_valid = (r == QR_SUCCESS && info.enableCpuProfiling) && qrGetFrameStatsEx (vulkan_globals.instance, &stats) == QR_SUCCESS && stats.cpuTimingValid;
+
+		RT_Prof_EndTaskRecord (parms->serial, prof_start, stats_valid ? &stats : NULL);
+	}
+	else
+	{
+		RT_Prof_End (RT_PROF_DRAWFRAME, prof_start);
+		if (r == QR_SUCCESS && info.enableCpuProfiling)
+			RT_Prof_RecordRenderer ();
+	}
+
+	Atomic_StoreUInt32 (&rt_end_task_running, 0);
 }
 
 /*
@@ -3317,7 +3501,20 @@ GL_EndRendering
 */
 task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 {
+	if (use_tasks)
+	{
+		if (++rt_end_task_serial == 0)
+			rt_end_task_serial = 1;
+		rt_end_task_current_serial = rt_end_task_serial;
+
+		RT_ProfWindowSubmitEnd (&rt_prof_window, &rt_prof_window_sync);
+	}
+	else
+		rt_end_task_current_serial = 0;
+
 	end_rendering_parms_t parms = {
+		.serial = rt_end_task_current_serial,
+		.delay_ms = use_tasks ? (uint32_t)q_max (0.0f, CVAR_TO_FLOAT (rt_end_task_delay_ms)) : 0,
 		.vid_width = (float)vid.width,
 		.vid_height = (float)vid.height,
 	};

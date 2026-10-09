@@ -253,13 +253,12 @@ void UploadDrawData (void)
 			if (x1 <= x0 || y1 <= y0)
 				continue;
 
-			// rebase the indices to the command's own vertex span
 			g_indices.resize (cmd.ElemCount);
 			unsigned maxv = 0;
 			const ImDrawIdx *src = dl->IdxBuffer.Data + cmd.IdxOffset;
 			for (unsigned i = 0; i < cmd.ElemCount; i++)
 			{
-				unsigned idx = (unsigned)src[i] - (unsigned)cmd.VtxOffset;
+				unsigned idx = (unsigned)src[i];
 				g_indices[i] = idx;
 				if (idx > maxv)
 					maxv = idx;
@@ -336,6 +335,7 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font
 	ImGuiIO &io = ImGui::GetIO ();
 	io.IniFilename = nullptr;
 	io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+	io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
 
 	ApplyStyle ();
 

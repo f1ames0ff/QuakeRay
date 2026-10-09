@@ -284,10 +284,7 @@ RhiPostEffectPass::~RhiPostEffectPass()
     albedoFramebufferLayout = nullptr;
     wipeFramebufferLayout = nullptr;
     uniformLayout = nullptr;
-    pushConstant16Layout = nullptr;
-    pushConstant24Layout = nullptr;
-    pushConstant28Layout = nullptr;
-    pushConstant44Layout = nullptr;
+    pushConstantLayout = nullptr;
 }
 
 bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
@@ -387,39 +384,13 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
     {
         nvrhi::BindingLayoutDesc desc;
         desc.visibility = nvrhi::ShaderType::Compute;
-        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectBasePush)));
-        pushConstant16Layout = device->createBindingLayout(desc);
-    }
-    {
-        nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::Compute;
-        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectFilmGrainPush)));
-        pushConstant20Layout = device->createBindingLayout(desc);
-    }
-    {
-        nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::Compute;
-        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectWavesPush)));
-        pushConstant24Layout = device->createBindingLayout(desc);
-    }
-    {
-        nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::Compute;
-        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectColorTintPush)));
-        pushConstant28Layout = device->createBindingLayout(desc);
-    }
-    {
-        nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::Compute;
         desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EffectGameplayFeedbackPush)));
-        pushConstant44Layout = device->createBindingLayout(desc);
+        pushConstantLayout = device->createBindingLayout(desc);
     }
 
     if (simpleFramebufferLayout == nullptr || albedoFramebufferLayout == nullptr ||
         wipeFramebufferLayout == nullptr || uniformLayout == nullptr ||
-        pushConstant16Layout == nullptr || pushConstant20Layout == nullptr ||
-        pushConstant24Layout == nullptr || pushConstant28Layout == nullptr ||
-        pushConstant44Layout == nullptr)
+        pushConstantLayout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a post-effect pass binding layout");
         return false;
@@ -447,7 +418,7 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
 
                 wipe.pipelines[sourceIsPing] = CreateEffectPipeline(
                     device, wipe.shader, sourceIsPing != 0, wipe.specializedShaders[sourceIsPing],
-                    { wipeFramebufferLayout, uniformLayout, pushConstant16Layout },
+                    { wipeFramebufferLayout, uniformLayout, pushConstantLayout },
                     pipelineName);
             }
 
@@ -466,7 +437,6 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         const char *debugName;
         const char *fileName;
         uint32_t framebufferKind; // FB_SIMPLE / FB_ALBEDO
-        uint32_t pushConstantSize;
         bool usesUniform;
     };
 
@@ -475,22 +445,22 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
 
     const EffectDesc descs[] =
     {
-        { EFFECT_COLOR_TINT, "color tint", COLOR_TINT_SHADER_FILE_NAME, FB_SIMPLE, 28, true },
-        { EFFECT_INVERSE_BW, "inverse black and white", INVERSE_BW_SHADER_FILE_NAME, FB_ALBEDO, 16, true },
-        { EFFECT_HUE_SHIFT, "hue shift", HUE_SHIFT_SHADER_FILE_NAME, FB_ALBEDO, 16, true },
-        { EFFECT_CHROMATIC_ABERRATION, "chromatic aberration", CHROMATIC_ABERRATION_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
-        { EFFECT_DISTORTED_SIDES, "distorted sides", DISTORTED_SIDES_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
-        { EFFECT_WAVES, "waves", WAVES_SHADER_FILE_NAME, FB_SIMPLE, 24, true },
-        { EFFECT_RADIAL_BLUR, "radial blur", RADIAL_BLUR_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
-        { EFFECT_CRT_DEMODULATE_ENCODE, "CRT demodulate/encode", CRT_DEMODULATE_ENCODE_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
+        { EFFECT_COLOR_TINT, "color tint", COLOR_TINT_SHADER_FILE_NAME, FB_SIMPLE, true },
+        { EFFECT_INVERSE_BW, "inverse black and white", INVERSE_BW_SHADER_FILE_NAME, FB_ALBEDO, true },
+        { EFFECT_HUE_SHIFT, "hue shift", HUE_SHIFT_SHADER_FILE_NAME, FB_ALBEDO, true },
+        { EFFECT_CHROMATIC_ABERRATION, "chromatic aberration", CHROMATIC_ABERRATION_SHADER_FILE_NAME, FB_SIMPLE, true },
+        { EFFECT_DISTORTED_SIDES, "distorted sides", DISTORTED_SIDES_SHADER_FILE_NAME, FB_SIMPLE, true },
+        { EFFECT_WAVES, "waves", WAVES_SHADER_FILE_NAME, FB_SIMPLE, true },
+        { EFFECT_RADIAL_BLUR, "radial blur", RADIAL_BLUR_SHADER_FILE_NAME, FB_SIMPLE, true },
+        { EFFECT_CRT_DEMODULATE_ENCODE, "CRT demodulate/encode", CRT_DEMODULATE_ENCODE_SHADER_FILE_NAME, FB_SIMPLE, true },
         // EfCrtDecode's entry point declares neither the push block nor set 1 (measured), so its
         // list stops after set 0 and the push-constant layout; the module mirrors the legacy host's
         // unread push anyway (the layout is still added, the bytes are still pushed).
-        { EFFECT_CRT_DECODE, "CRT decode", CRT_DECODE_SHADER_FILE_NAME, FB_SIMPLE, 16, false },
-        { EFFECT_SHARPEN, "sharpen", SHARPEN_SHADER_FILE_NAME, FB_SIMPLE, 16, true },
-        { EFFECT_GAMEPLAY_FEEDBACK, "gameplay feedback", GAMEPLAY_FEEDBACK_SHADER_FILE_NAME, FB_SIMPLE, 44, true },
-        { EFFECT_VIGNETTE, "vignette", "EfVignette.comp.spv", FB_SIMPLE, 28, true },
-        { EFFECT_FILM_GRAIN, "film grain", "EfFilmGrain.comp.spv", FB_SIMPLE, 20, true },
+        { EFFECT_CRT_DECODE, "CRT decode", CRT_DECODE_SHADER_FILE_NAME, FB_SIMPLE, false },
+        { EFFECT_SHARPEN, "sharpen", SHARPEN_SHADER_FILE_NAME, FB_SIMPLE, true },
+        { EFFECT_GAMEPLAY_FEEDBACK, "gameplay feedback", GAMEPLAY_FEEDBACK_SHADER_FILE_NAME, FB_SIMPLE, true },
+        { EFFECT_VIGNETTE, "vignette", "EfVignette.comp.spv", FB_SIMPLE, true },
+        { EFFECT_FILM_GRAIN, "film grain", "EfFilmGrain.comp.spv", FB_SIMPLE, true },
     };
 
     static_assert(std::size(descs) == EFFECT_COUNT - 1,
@@ -508,11 +478,7 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
         nvrhi::IBindingLayout *framebufferLayout =
             desc.framebufferKind == FB_ALBEDO ? albedoFramebufferLayout.Get() : simpleFramebufferLayout.Get();
 
-        nvrhi::IBindingLayout *pushConstantLayout =
-            desc.pushConstantSize == 44 ? pushConstant44Layout.Get() :
-            desc.pushConstantSize == 28 ? pushConstant28Layout.Get() :
-            desc.pushConstantSize == 24 ? pushConstant24Layout.Get() :
-            desc.pushConstantSize == 20 ? pushConstant20Layout.Get() : pushConstant16Layout.Get();
+        nvrhi::IBindingLayout *pushLayout = pushConstantLayout.Get();
 
         for (uint32_t sourceIsPing = 0; sourceIsPing < 2; sourceIsPing++)
         {
@@ -525,13 +491,13 @@ bool RhiPostEffectPass::Create(nvrhi::IDevice *pDevice,
             {
                 effect.pipelines[sourceIsPing] = CreateEffectPipeline(
                     device, effect.shader, sourceIsPing != 0, effect.specializedShaders[sourceIsPing],
-                    { framebufferLayout, uniformLayout, pushConstantLayout }, pipelineName);
+                    { framebufferLayout, uniformLayout, pushLayout }, pipelineName);
             }
             else
             {
                 effect.pipelines[sourceIsPing] = CreateEffectPipeline(
                     device, effect.shader, sourceIsPing != 0, effect.specializedShaders[sourceIsPing],
-                    { framebufferLayout, pushConstantLayout }, pipelineName);
+                    { framebufferLayout, pushLayout }, pipelineName);
             }
 
             if (effect.pipelines[sourceIsPing] == nullptr)

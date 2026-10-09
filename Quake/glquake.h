@@ -372,6 +372,8 @@ void GLMesh_DeleteVertexBuffer (qmodel_t *m);
 
 int R_LightPoint (vec3_t p, lightcache_t *cache, vec3_t *lightcolor);
 void RT_ParseElights (void);
+void RT_BuildStyledLightIndex (void);
+void RT_ColorsRefresh (void);
 void RT_UploadAllElights (void);
 float RT_NearestStyledLightDistance (int style, const vec3_t point);
 qboolean RT_AllowFakeLights (void);
@@ -716,6 +718,8 @@ enum
 typedef struct
 {
 	qboolean valid;
+	unsigned windowId;
+	unsigned frames;
 	float    fps;
 	float    frameMs; // longest whole-frame time in the window
 	float    waitMs;  // longest wait for the task graph
@@ -839,6 +843,7 @@ extern rt_bench_result_t rt_bench_result;
 qboolean RT_Bench_Active (void);
 void     RT_Bench_Start (void);
 void     RT_Bench_Stop (void);
+void     RT_Bench_HostFrame (void);
 // Marks a run that ended before its demo did (a map change, a pause, a disconnect).
 void     RT_Bench_Interrupt (void);
 qboolean RT_Bench_Interrupted (void);

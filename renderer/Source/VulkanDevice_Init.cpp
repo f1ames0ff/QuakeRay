@@ -25,6 +25,7 @@
 #include "Const.h"
 #include "Generated/ShaderCommonC.h"
 #include "LibraryConfig.h"
+#include "SwapchainPolicy.h"
 #include "RHI/NvrhiContext.h"
 #include "RHI/NvrhiFrameSkeleton.h"
 #include "RHI/NvrhiRequirements.h"
@@ -119,7 +120,7 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
 
     uniform             = std::make_shared<GlobalUniform>(device, memAllocator);
 
-    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager, presentWait2Enabled);
+    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager, presentWait2Enabled, swapchainMaintenance1Enabled);
 
     worldSamplerManager     = std::make_shared<SamplerManager>(device, 8, info->textureSamplerForceMinificationFilterLinear,
                                                                rhiTextureTable.get());
@@ -695,6 +696,8 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
         extensions.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
     }
 
+    AppendSurfaceMaintenanceExtensions(extensions, supportedInstanceExtensions, surfaceCapabilities2Supported);
+
     if (libconfig.vulkanValidation)
     {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -868,6 +871,7 @@ void VulkanDevice::CreateDevice()
     vulkan13Features.computeFullSubgroups = 1;
     vulkan13Features.subgroupSizeControl = 1;
     vulkan13Features.dynamicRendering = 1;
+    vulkan13Features.synchronization2 = 1;
 
     vulkan12Features.pNext = &vulkan13Features;
 
@@ -880,11 +884,6 @@ void VulkanDevice::CreateDevice()
     storage16.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
     storage16.pNext = &multiviewFeatures;
     storage16.storageBuffer16BitAccess = 1;
-
-    VkPhysicalDeviceSynchronization2FeaturesKHR sync2Features = {};
-    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
-    sync2Features.pNext = &storage16;
-    sync2Features.synchronization2 = 1;
 
     std::vector<VkExtensionProperties> supportedDeviceExtensions;
     uint32_t supportedExtensionsCount;
@@ -932,14 +931,31 @@ void VulkanDevice::CreateDevice()
                                 sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
     }
 
+    const char *swapchainMaintenance1ExtensionName =
+        SelectSwapchainMaintenanceExtension(supportedDeviceExtensions, enabledInstanceExtensions);
+
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchainMaintenance1Features = {};
+    swapchainMaintenance1Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR;
+
+    bool swapchainMaintenance1Supported = false;
+    if (swapchainMaintenance1ExtensionName != nullptr)
+    {
+        VkPhysicalDeviceFeatures2 swapchainMaintenanceFeatures2 = {};
+        swapchainMaintenanceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        swapchainMaintenanceFeatures2.pNext = &swapchainMaintenance1Features;
+        vkGetPhysicalDeviceFeatures2(physDevice->Get(), &swapchainMaintenanceFeatures2);
+
+        swapchainMaintenance1Supported = swapchainMaintenance1Features.swapchainMaintenance1 == VK_TRUE;
+    }
+
     VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
     rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
-    rayQueryFeatures.pNext = &sync2Features;
+    rayQueryFeatures.pNext = &storage16;
     rayQueryFeatures.rayQuery = rayQuerySupported ? 1 : 0;
 
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures = {};
     rtPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-    rtPipelineFeatures.pNext = rayQuerySupported ? static_cast<void *>(&rayQueryFeatures) : static_cast<void *>(&sync2Features);
+    rtPipelineFeatures.pNext = rayQuerySupported ? static_cast<void *>(&rayQueryFeatures) : static_cast<void *>(&storage16);
     rtPipelineFeatures.rayTracingPipeline = 1;
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = {};
@@ -957,6 +973,12 @@ void VulkanDevice::CreateDevice()
         presentId2Features.pNext = physicalDeviceFeatures2.pNext;
         presentWait2Features.pNext = &presentId2Features;
         physicalDeviceFeatures2.pNext = &presentWait2Features;
+    }
+
+    if (swapchainMaintenance1Supported)
+    {
+        swapchainMaintenance1Features.pNext = physicalDeviceFeatures2.pNext;
+        physicalDeviceFeatures2.pNext = &swapchainMaintenance1Features;
     }
 
     std::vector<const char *> deviceExtensions = {
@@ -1000,6 +1022,11 @@ void VulkanDevice::CreateDevice()
         deviceExtensions.push_back(VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME);
     }
 
+    if (swapchainMaintenance1Supported)
+    {
+        deviceExtensions.push_back(swapchainMaintenance1ExtensionName);
+    }
+
     enabledDeviceExtensions.clear();
     for (const char *n : deviceExtensions)
     {
@@ -1024,6 +1051,7 @@ void VulkanDevice::CreateDevice()
     InitDeviceExtensionFunctions(device);
 
     presentWait2Enabled = presentWait2Supported && InitDeviceExtensionFunctions_PresentWait2(device);
+    swapchainMaintenance1Enabled = swapchainMaintenance1Supported;
 
     if (libconfig.vulkanValidation)
     {
@@ -1099,8 +1127,6 @@ void VulkanDevice::CreateSyncPrimitives()
     {
         r = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]);
         VK_CHECKERROR(r);
-        r = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]);
-        VK_CHECKERROR(r);
         r = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &inFrameSemaphores[i]);
         VK_CHECKERROR(r);
 
@@ -1110,7 +1136,6 @@ void VulkanDevice::CreateSyncPrimitives()
         VK_CHECKERROR(r);
 
         SET_DEBUG_NAME(device, imageAvailableSemaphores[i], VK_OBJECT_TYPE_SEMAPHORE, "Image available semaphore");
-        SET_DEBUG_NAME(device, renderFinishedSemaphores[i], VK_OBJECT_TYPE_SEMAPHORE, "Render finished semaphore");
         SET_DEBUG_NAME(device, inFrameSemaphores[i], VK_OBJECT_TYPE_SEMAPHORE, "In-frame semaphore");
         SET_DEBUG_NAME(device, frameFences[i], VK_OBJECT_TYPE_FENCE, "Frame fence");
         SET_DEBUG_NAME(device, outOfFrameFences[i], VK_OBJECT_TYPE_FENCE, "Out of frame fence");
@@ -1158,7 +1183,6 @@ void VulkanDevice::DestroySyncPrimitives()
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
-        vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
         vkDestroySemaphore(device, inFrameSemaphores[i], nullptr);
 
         vkDestroyFence(device, frameFences[i], nullptr);

@@ -52,7 +52,7 @@ struct nonwritable
 === descriptor set 2 binding 0: storage class
 StorageBuffer
 === descriptor set 3 binding 0
-image:2D:0:0:0:2:Rgba32f
+image:2D:0:0:0:2:Rgba16f
 === descriptor set 3 binding 0: storage class
 UniformConstant
 === entry point

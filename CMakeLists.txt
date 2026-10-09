@@ -529,6 +529,13 @@ endif()
 # Tests
 # ============================================================================
 if(BUILD_TESTING)
+    find_package(Threads REQUIRED)
+    add_executable(prof_window_tests tests/prof_window_tests.cpp)
+    target_include_directories(prof_window_tests PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(prof_window_tests PRIVATE Threads::Threads)
+    add_test(NAME prof_window_tests COMMAND prof_window_tests)
+    set_tests_properties(prof_window_tests PROPERTIES TIMEOUT 30)
+
     add_executable(frame_timing_tests tests/frame_timing_tests.cpp)
     target_include_directories(frame_timing_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/renderer/Source
@@ -553,6 +560,19 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME rt_lighting_tests COMMAND rt_lighting_tests)
+
+    add_executable(gui_draw_tests tests/gui_draw_tests.cpp Quake/qr_gui.cpp)
+    target_include_directories(gui_draw_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/Quake
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+    )
+    target_compile_definitions(gui_draw_tests PRIVATE QR_STATIC SDL_MAIN_HANDLED)
+    target_link_libraries(gui_draw_tests PRIVATE imgui)
+    if(MSVC)
+        target_compile_options(gui_draw_tests PRIVATE /W4 /EHsc)
+    endif()
+    add_test(NAME gui_draw_tests COMMAND gui_draw_tests)
+    set_tests_properties(gui_draw_tests PROPERTIES TIMEOUT 30)
 endif()
 
 # ============================================================================
@@ -664,11 +684,13 @@ if(QUAKERAY_PLATFORM_WINDOWS)
         COMMENT "Copying OpenAL32.dll..."
     )
 
-    # amd_fidelityfx_vk.dll (AMD-signed, FSR 3.1) — from the vendored qray
-    add_custom_command(TARGET quakeray POST_BUILD
+    add_custom_target(qray_deploy_fidelityfx ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"
             "$<TARGET_FILE_DIR:quakeray>"
         COMMENT "Copying amd_fidelityfx_vk.dll..."
+        VERBATIM
     )
+    add_dependencies(quakeray qray_deploy_fidelityfx)
 endif()
