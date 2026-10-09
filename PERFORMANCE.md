@@ -136,6 +136,24 @@ Independent contributions, measured on their respective controlled arms:
 
 Both changes passed the full Debug CTest suite, **5/5**, including scalar-reference bounds checks, transform-cache tests and cloud/post-effects GPU smoke tests. Transform-copy correctness and input invalidation are tested; Fuma screenshots provide a visual smoke check, not pixel-identical temporal validation. No visibility deletion, quality preset reduction, particle/cluster rewrite, geometry persistence or GPU-shading change is part of C2. Neither solution was merged into master during this campaign.
 
+## Merged-master pose gate (2026-10-09)
+
+First per-frame capture on the merged tree (`b4269845`): Debug `quakeray.exe` SHA256
+`D0D27C09161CC7B148D09624733B9640B69FBF69BEFB0FA6BC6FEA4FF663DE1B`, engine pack
+`034CBC93986E3CC64EB2D0793E3B16730696AC8CEE7532F4A685D4F1430ADB1D`, balanced preset
+(`qr_audit_max.cfg`, FSR Balanced, 3840x2160 windowed, particles/FTE on, `rt_stats 0`), one
+Bogbottom run, 8 s warmup + 6 s capture; capture
+`build/Debug/audit-pose-gate-manual-20261009-101307`. Result: 19.8 FPS, mean 50.53 ms, p95 58.65 ms,
+p99 63.72 ms. CPU means: `frame` 47.13, `ents` 25.59 (alias 11.60, brush 15.28), `alias_pose` 2.79
+(p50 2.72, p95 3.36, max 4.36, every frame above 1.5), `alias_upload` 4.94, `alias_lights` 1.00,
+`particles` 4.29, `qrDrawFrame` 8.03; `gpu.frame` 25.38. Alias pose preparation is the measured gate
+for the multithreading workstream and matches the C2 order of magnitude.
+
+Runner note: on this HEAD `run_stress.ps1` does not dismiss the startup main menu, and the strict
+analyzer (`393323cf`) rejects such captures (`key_game=0`, frozen `client_time`). The capture above
+came from an equivalent local script that sends Escape after the save-loaded marker; a one-line
+runner fix is proposed for the shared script.
+
 ## Current CPU priorities
 
 Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale pre-fix profile. These are **observed inclusive costs**, not predicted savings:
