@@ -1,5 +1,6 @@
 #include "RhiAccelStructs.h"
 
+#include "DynamicBlasShape.h"
 #include "RhiFrameContext.h"
 #include "RhiPipeline.h"
 
@@ -267,26 +268,6 @@ nvrhi::rt::GeometryDesc MakeGeometryDesc(const VkAccelerationStructureGeometryKH
                         : nvrhi::rt::GeometryFlags::NoDuplicateAnyHitInvocation);
 
     return result;
-}
-
-bool DynamicShapeFits(const std::vector<uint32_t> &envelope, const std::vector<uint32_t> &current)
-{
-    if (current.size() > envelope.size())
-    {
-        return false;
-    }
-
-    for (size_t i = 0; i < current.size(); i += 5)
-    {
-        if (current[i] > envelope[i] || current[i + 1] > envelope[i + 1] ||
-            current[i + 2] != envelope[i + 2] || current[i + 3] != envelope[i + 3] ||
-            current[i + 4] != envelope[i + 4])
-        {
-            return false;
-        }
-    }
-
-    return true;
 }
 
 // One record filled by ASManager::GetTLASInstanceForFilter as this module's instance: every field is
