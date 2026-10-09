@@ -690,6 +690,29 @@ void VulkanDevice::CreateInstance(const QrInstanceCreateInfo &info)
         extensions.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
     }
 
+    const char *surfaceMaintenance1InstanceName = nullptr;
+    if (surfaceCapabilities2Supported)
+    {
+        for (const VkExtensionProperties &ext : supportedInstanceExtensions)
+        {
+            if (!std::strcmp(ext.extensionName, VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME))
+            {
+                surfaceMaintenance1InstanceName = VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
+                break;
+            }
+
+            if (!std::strcmp(ext.extensionName, VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME))
+            {
+                surfaceMaintenance1InstanceName = VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
+            }
+        }
+    }
+
+    if (surfaceMaintenance1InstanceName != nullptr)
+    {
+        extensions.push_back(surfaceMaintenance1InstanceName);
+    }
+
     if (libconfig.vulkanValidation)
     {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -943,16 +966,15 @@ void VulkanDevice::CreateDevice()
 
     if (swapchainMaintenance1ExtensionName != nullptr)
     {
-        const bool surfaceMaintenance1Supported = std::any_of(supportedDeviceExtensions.cbegin(), supportedDeviceExtensions.cend(),
-            [&](const VkExtensionProperties& ext)
+        const bool surfaceMaintenance1Enabled = std::any_of(enabledInstanceExtensions.cbegin(), enabledInstanceExtensions.cend(),
+            [&](const std::string &name)
             {
-                return !std::strcmp(ext.extensionName, surfaceMaintenance1ExtensionName);
+                return name == surfaceMaintenance1ExtensionName;
             });
 
-        if (!surfaceMaintenance1Supported)
+        if (!surfaceMaintenance1Enabled)
         {
             swapchainMaintenance1ExtensionName = nullptr;
-            surfaceMaintenance1ExtensionName = nullptr;
         }
     }
 
@@ -1047,7 +1069,6 @@ void VulkanDevice::CreateDevice()
     if (swapchainMaintenance1Supported)
     {
         deviceExtensions.push_back(swapchainMaintenance1ExtensionName);
-        deviceExtensions.push_back(surfaceMaintenance1ExtensionName);
     }
 
     enabledDeviceExtensions.clear();
