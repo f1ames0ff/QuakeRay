@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // host.c -- coordinates spawning and killing of local servers
 
 #include "quakedef.h"
+#include "atomics.h"
 #include "bgmusic.h"
 #include "tasks.h"
 #include "qr_editor.h"
@@ -65,6 +66,9 @@ cvar_t host_maxfps = {"host_maxfps", "200", CVAR_ARCHIVE};  // johnfitz
 
 extern cvar_t vid_vsync;
 extern cvar_t scr_usekfont;
+void         GL_SynchronizeEndRenderingTask (void);
+extern atomic_uint32_t rt_end_task_running;
+void         RT_Prof_Update (void);
 cvar_t host_timescale = {"host_timescale", "0", CVAR_NONE}; // johnfitz
 cvar_t max_edicts = {"max_edicts", "8192", CVAR_NONE};      // johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};           // spike -- blocks the loading of any csqc modules
@@ -928,6 +932,11 @@ void _Host_Frame (double time)
 		return; // don't run too fast, or packets will flood out
 
 	time3 = Sys_DoubleTime ();
+
+	GL_SynchronizeEndRenderingTask ();
+	assert (Atomic_LoadUInt32 (&rt_end_task_running) == 0);
+
+	RT_Prof_Update ();
 
 	// get new key events
 	Key_UpdateForDest ();

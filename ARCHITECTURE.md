@@ -4,7 +4,11 @@ Start here to locate code, not to learn the engine from scratch. Read [PERFORMAN
 
 **Verified source snapshot:** `7a14d0fe`, 2026-10-08. This snapshot includes entity profiling, exact brush-transform reuse and SIMD bounds; it is not an assertion about master or another worktree. Function names are the durable lookup keys; `#L` links identify their locations at this snapshot. Recheck a changed function and its immediate caller/callee, not the entire repository.
 
-Prefer scoped IDE/MCP symbol lookup when available: pass this worktree as `projectPath` and restrict `paths` to the mapped files. Confirm returned locations against the current source; do not assume an optional call-graph tool exists or that another open project's index describes this branch.
+Engine MCP use is mandatory for all agents under [AGENTS.md](AGENTS.md#mandatory-engine-mcp-workflow).
+Start with `quakeray.server_status`, then use scoped `find_symbol` (`query`, `file`) and the available
+reference/call tools. Confirm source identities and returned locations against this worktree; retain
+diagnostics and partial coverage. File/IDE inspection supplements these tools only where coverage is
+missing, with an explicit fallback reason. Do not assume another open project's index describes this branch.
 
 ## Task routing
 
@@ -54,11 +58,12 @@ The C ABI is [renderer/Include/qray/qray.h](renderer/Include/qray/qray.h); its d
 
 ## CPU execution graph
 
-Order for an accepted, fully loaded game frame; conditional simulation ticks, map rebuilds and debug paths are abbreviated. **Render tasks currently run serially:** [the `SCR_UpdateScreen` task override](Quake/gl_screen.c#L1162) forces `use_tasks = false`; the active producer order is [the `R_RenderView` non-task branch](Quake/gl_rmain.c#L1346).
+Order for an accepted, fully loaded game frame; conditional simulation ticks, map rebuilds and debug paths are abbreviated. **Render tasks are gated by `r_tasks`** (default `0`): [the `SCR_UpdateScreen` condition](Quake/gl_screen.c#L1162) enables the task path when workers are available, and the producer order then follows [the `R_RenderView` task branch](Quake/gl_rmain.c#L1281); the serial order below is [the non-task branch](Quake/gl_rmain.c#L1354). Workers must not touch shared non-atomic state: pose and scratch buffers are thread-local, geometry uploads take the device mutex, and profiler accumulators use a spinlock. The threading contract, the frame graph edges and the rules for adding producers are in [docs/multithreading.md](docs/multithreading.md).
 
 ```mermaid
 flowchart TD
-    host["_Host_Frame / Host_FilterTime"] --> input["Input, Cbuf_Execute, NET_Poll, CL_AccumulateCmd"]
+    host["_Host_Frame / Host_FilterTime"] --> previousEnd["GL_SynchronizeEndRenderingTask<br/>publish completed profiler window"]
+    previousEnd --> input["Input, Cbuf_Execute, NET_Poll, CL_AccumulateCmd"]
     input --> simulation["CL_SendCmd / Host_ServerFrame / optional CSQC physics"]
     simulation --> client["CL_ReadFromServer / relink / temporary entities"]
     client --> screen["SCR_UpdateScreen / CPU frame timer begins"]
@@ -130,7 +135,7 @@ Counter names below are CSV names from `rt_bench`; `rt_stats 3` displays the cor
 | Models / materials / files | [`Mod_LoadModel`](Quake/gl_model.c#L489), [`Mod_LoadBrushModel`](Quake/gl_model.c#L2622), [`TexMgr_LoadImage`](Quake/gl_texmgr.c#L1949), [`RT_MAT_Init`](Quake/rt_material.c#L1088), [`RT_LIGHT_Init`](Quake/rt_lights.c#L793), [`COM_InitFilesystem`](Quake/common.c#L2764), `Quake/rt_pkz.c` | BSP/MDL/MD3/MD5 loading, replacement textures, material/light YAML and PAK/PKZ search. Backend: [`TextureManager::CreateMaterial`](renderer/Source/TextureManager.cpp#L463), [`CheckForHotReload`](renderer/Source/TextureManager.cpp#L983). | `cpu.draw.hot_reload_ms`, `descriptors`; loading/rebuild costs are not steady-state entity timings. |
 | HUD / menus / editor | [`SCR_DrawGUI`](Quake/gl_screen.c#L1019), `Quake/{gl_draw,menu,sbar}.c`, [`QR_Editor_DrawPanel`](Quake/qr_editor.c#L5139), [`QR_GUI_BeginFrame`](Quake/qr_gui.cpp#L421) | CPU GUI geometry and ImGui callbacks → SWAPCHAIN raster list → [`RenderUi`](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L1793). Editor map teardown: [`QR_Editor_OnNewMap`](Quake/qr_editor.c#L7855). | GPU `ui`; `cpu.draw.UI_record_ms` measures backend recording, **not** all CPU GUI construction. |
 | Audio / music | [`S_Update`](Quake/snd_dma.c#L827), [`S_ExtraUpdate`](Quake/snd_dma.c#L884), `Quake/{snd_openal,bgmusic,snd_codec}.c` | Spatialization, OpenAL, streaming/mixing and equalizer; sound mutex can block. | `host_speeds` sound group; no dedicated audio CSV phase. |
-| Tasks / profiling / tests | [`Tasks_Init`](Quake/tasks.c#L307), [`Task_Join`](Quake/tasks.c#L485); [`RT_Prof_Begin`](Quake/gl_vidsdl.c#L502), [`RT_Prof_FrameEnd`](Quake/gl_vidsdl.c#L541), [CPU profiler](renderer/Source/CpuFrameProfiler.h), [tests](CMakeLists.txt#L529) | Worker infrastructure exists, but screen rendering is serialized; capture buffering and CPU/GPU instrumentation are distinct from execution. | [Performance contract and reproduction](PERFORMANCE.md#reproduction-and-update-protocol). |
+| Tasks / profiling / tests | [`Tasks_Init`](Quake/tasks.c#L307), [`Task_Join`](Quake/tasks.c#L485); [`RT_Prof_Begin`](Quake/gl_vidsdl.c#L532), [`RT_Prof_FrameEnd`](Quake/gl_vidsdl.c#L577), [CPU profiler](renderer/Source/CpuFrameProfiler.h), [tests](CMakeLists.txt#L529) | Worker infrastructure exists and the screen task path is gated by `r_tasks` (default off); capture buffering and CPU/GPU instrumentation are distinct from execution. | [Performance contract and reproduction](PERFORMANCE.md#reproduction-and-update-protocol). |
 
 ## Geometry upload paths
 
@@ -216,7 +221,14 @@ Presentation fences are per image; teardown waits pending fences before retiring
 | Submission / display | RHI list [signals the render-finished semaphore](renderer/Source/RHI/RhiFrameContext.cpp#L130); [the `RenderThroughRhi` submission tail](renderer/Source/VulkanDevice.cpp#L1105) also submits the legacy list, then calls [`Swapchain::Present`](renderer/Source/Swapchain.cpp#L306). | CPU submit/present buckets measure API call time, not GPU completion or scanout. |
 | Diagnostics | [Screenshot handling waits for device idle](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L1683); [focus loss/pause/minimize sleeps](Quake/main_sdl.c#L107) and [audio locks](Quake/snd_dma.c#L827) are other blockers. | Keep screenshots outside capture; reject unfocused/paused runs. |
 
-Do not simply re-enable the old render task graph: [the alias pose scratch is shared and mutable](Quake/r_alias.c#L120), brush chains/caches mutate shared data, and geometry APIs mutate collectors. Parallel gathering requires explicit task-owned data and a controlled upload/commit stage.
+The opt-in render graph relies on thread-local alias/brush scratch and caches, ordered static/dynamic
+producers and synchronized geometry APIs. Keep those ownership boundaries when adding producers;
+the host joins the previous end task before input can mutate its frame inputs.
+
+The reporting-window lifecycle is shared production code in [shared/rt_prof_window.h](shared/rt_prof_window.h),
+called by `RT_Prof_FrameStart`, `RT_Prof_EndTaskRecord` and `RT_Prof_Update` in `Quake/gl_vidsdl.c`.
+Enable/disable reset happens before submission, and result writes plus pending release are one locked
+transaction. `prof_window_tests` tests the same component with concurrent record/publication attempts.
 
 ## Developer tooling and machine ownership
 
