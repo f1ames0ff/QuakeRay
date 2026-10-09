@@ -198,6 +198,24 @@ Coverage limits: Debug, one repeat per scenario (two for Bogbottom); the WER cra
 analyzed; the serial path's added uncontended lock cost is unmeasured; the black-world workaround is
 the staged restart, not the task graph.
 
+Fresh-spawn scenario `qr_swampy_start` (`map ad_swampy`, no save; the Bogbottom save intermittently
+triggers the black-world load bug) and the FSR scaling check on it (tasks on unless noted):
+
+| FSR mode (`rt_upscale_fsr31`) | FPS | interval mean ms | `cpu.frame` ms | `cpu.wait` ms | `gpu.frame` ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Quality (2) | 27.8 | 35.93 | 33.79 | 33.79 | 26.86 |
+| Balanced (3) | 29.4 | 34.02 | 31.95 | 31.95 | 23.96 |
+| Performance (4) | 30.2 | 33.16 | 31.21 | 31.20 | 20.79 |
+| Ultra (5) | 29.5 | 33.86 | 31.93 | 31.93 | 14.98 |
+| Balanced, serial control | 22.5 | 44.53 | 42.39 | 0.0 | 23.94 |
+
+The GPU time scales with the upscale factor (26.9 → 15.0 ms), but the frame does not: the main thread
+is blocked in the join (`wait` ≈ `frame`) and the task DAG's wall time stays at ~31–34 ms in every
+mode, so the frame is CPU-bound at the 4K targets. Reaching 45 FPS at FSR Quality (22.2 ms) and
+linear FSR scaling requires cutting the CPU critical path below the per-mode GPU time; the component
+targets are in the CPU priorities table. Captures: `audit-scale-q-bog-…`, `audit-spawn-bog2-…`,
+`audit-scale-p-bog-…`, `audit-scale-u-bog-…`, `audit-scale-s-bog-…`.
+
 ## Current CPU priorities
 
 Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale pre-fix profile. These are **observed inclusive costs**, not predicted savings:
