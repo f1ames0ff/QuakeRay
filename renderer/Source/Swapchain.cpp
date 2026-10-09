@@ -251,8 +251,6 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
     }
     else if (suboptimalAcquire && !forcedRecreateAttempted)
     {
-        // The surface reported the swapchain as suboptimal without a parameter change the checks
-        // above can see: rebuild with the same parameters, once per suboptimal episode.
         TryRecreate(requestedExtent, requestedPresentMode, true);
         forcedRecreateAttempted = true;
     }
@@ -295,8 +293,6 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
 
         if (r == VK_SUBOPTIMAL_KHR)
         {
-            // The image is acquired and the semaphore is going to be signaled: it has to be consumed
-            // by this frame's submit. The swapchain stays usable; the next acquire rebuilds it.
             suboptimalAcquire = true;
             return;
         }
@@ -322,9 +318,6 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     presentInfo.pSwapchains = &swapchain;
     presentInfo.pImageIndices = &currentSwapchainIndex;
 
-    // The present-operation fence of this image. The acquire of the image guarantees the previous
-    // present that used it finished, so the pending wait below returns without blocking; it exists
-    // so the fence is unsignaled before it is queued again.
     VkSwapchainPresentFenceInfoKHR presentFenceInfo{};
     if (usePresentFences)
     {
@@ -357,10 +350,6 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
 
     if (usePresentFences)
     {
-        // VK_ERROR_OUT_OF_DATE_KHR, VK_ERROR_SURFACE_LOST_KHR and the full-screen-exclusive loss
-        // still enqueue the queue operations, so the fence signals. The remaining failures leave
-        // the synchronization primitives untouched. Present timing is not used by the engine, so
-        // its queue-full error cannot occur.
         const bool queued =
             r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_OUT_OF_DATE_KHR ||
             r == VK_ERROR_SURFACE_LOST_KHR || r == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT;
@@ -388,7 +377,6 @@ void Swapchain::Present(const std::shared_ptr<Queues> &queues, VkSemaphore rende
     }
     else if (r == VK_SUBOPTIMAL_KHR)
     {
-        // The swapchain stays usable for the next frame; the acquire-side rebuild handles it.
         suboptimalAcquire = true;
     }
 }
@@ -544,9 +532,6 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
         }
     }
 
-    // One present-operation fence per swapchain image when VK_KHR_swapchain_maintenance1 is
-    // enabled. DestroyWithoutSwapchain waits the pending ones before it destroys the presentation
-    // resources, which is the presentation-engine completion signal vkDeviceWaitIdle cannot give.
     if (usePresentFences)
     {
         VkFenceCreateInfo fenceInfo = {};
@@ -590,11 +575,6 @@ VkSwapchainKHR Swapchain::DestroyWithoutSwapchain()
 {
     vkDeviceWaitIdle(device);
 
-    // The presentation operations are not covered by vkDeviceWaitIdle. Their fences ARE the
-    // completion signal for the resources they hold: wait every queued present-operation fence
-    // before the semaphores and the swapchain itself go away, which is exactly what
-    // VkSwapchainPresentFenceInfoKHR documents. Without the extension the device idle above is the
-    // only available guarantee and is kept as the fallback.
     WaitPresentFences();
 
     if (swapchain != VK_NULL_HANDLE)

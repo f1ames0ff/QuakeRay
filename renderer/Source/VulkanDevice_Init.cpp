@@ -923,9 +923,6 @@ void VulkanDevice::CreateDevice()
                                 sVkGetPhysicalDeviceSurfaceCapabilities2KHR != nullptr;
     }
 
-    // The present-operation fences of VK_KHR_swapchain_maintenance1 (VK_EXT_swapchain_maintenance1
-    // is the same extension under its old name): they are the completion signal of a presentation
-    // operation, which vkDeviceWaitIdle does not cover. Prefer the KHR spelling, accept EXT.
     const char *swapchainMaintenance1ExtensionName = nullptr;
     for (const VkExtensionProperties &ext : supportedDeviceExtensions)
     {

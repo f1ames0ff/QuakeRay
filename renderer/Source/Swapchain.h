@@ -90,9 +90,6 @@ private:
     void Destroy();
     VkSwapchainKHR DestroyWithoutSwapchain();
 
-    // Blocks until every queued present-operation fence of the current swapchain has signaled.
-    // DestroyWithoutSwapchain uses it before destroying the presentation resources; Present uses
-    // it before a fence is queued again. Fences that were never queued are skipped.
     void WaitPresentFences();
 
     void CallCreateSubscribers();
@@ -118,10 +115,6 @@ private:
     std::vector<VkImageView> swapchainViews;
     std::vector<VkSemaphore> renderFinishedSemaphores;
 
-    // One present-operation fence per swapchain image, created only when the
-    // VK_KHR_swapchain_maintenance1 feature is enabled. A present queues the fence of the image it
-    // presents; the fence signals when the presentation engine has taken its references, which is
-    // the signal DestroyWithoutSwapchain waits for before it destroys the presentation resources.
     bool usePresentFences;
     std::vector<VkFence> presentFences;
     std::vector<uint8_t> presentFencePending;
@@ -133,10 +126,6 @@ private:
     uint64_t waitablePresentId;
     uint64_t maxFrameLatency;
 
-    // Set when an acquire or a present reported VK_SUBOPTIMAL_KHR: the swapchain stays usable for
-    // the frame, and the next acquire rebuilds it before it acquires again. forcedRecreateAttempted
-    // keeps a surface that keeps reporting SUBOPTIMAL from rebuilding every frame; a successful
-    // acquire re-arms the forced rebuild.
     bool suboptimalAcquire;
     bool forcedRecreateAttempted;
 
