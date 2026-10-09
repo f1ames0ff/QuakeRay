@@ -66,7 +66,7 @@ Round-4 level — inside the build path (single runs):
 
 ## Dominant mechanism
 
-`AppendDynamicSlot` is 91–96 % of the outer setup slot (3.95–4.19 ms of 4.12–4.49 on Bogbottom; 2.72–2.87 of 3.10–3.42 on Fuma). Its steady-state per-frame cost is the dynamic BLAS maintenance:
+`AppendDynamicSlot` is 96.3–96.5 % of the outer setup slot on Bogbottom and 87.2–88.3 % on Fuma (rounds 2–4 re-measured with the exact window binding: 4.00–4.05 ms of 4.15–4.20 on Bogbottom, 2.74–3.02 of 3.13–3.42 on Fuma). Its steady-state per-frame cost is the dynamic BLAS maintenance:
 
 1. recording the dynamic builds (2.53 ms Bog / 1.18 ms Fuma) — scales with the dynamic geometry records per frame (~2336 / ~1285);
 2. building the per-geometry descriptors and the shape vector (1.34 / 0.74 ms), including two heap-allocated per-filter vectors every frame;
@@ -77,7 +77,7 @@ Round-4 level — inside the build path (single runs):
 1. Keep the existing BLAS handle while each frame's build fits the create-time allocation and recreate only when the list grows; validate the allocation semantics against the pinned NVRHI before use. Upper bound of the saving: the create share (≈0.75 ms Fuma, ≈0.15 ms Bog).
 2. Reuse the per-filter `GeometryDesc`/`shape` buffers across frames instead of allocating them per frame (part of the 1.34 / 0.74 ms descriptor bucket).
 
-The build-recording floor (the largest share) is the animated-geometry cost unless the per-geometry records are restructured; that exceeds stage 5's reuse scope. If the paired candidate runs cannot separate the candidate from the noise band, the plan falls back to stage 6 (brush styles).
+The build-recording share is the largest bucket, but it is not decomposed further: inside it sit the engine-side animated geometry, NVRHI's own conversion (five temporary vectors per build, transform uploads, a build-size query), scratch management and the driver-facing build recording. How much of the 2.5 / 1.2 ms is irreducible animated-geometry cost is not measured; restructuring the per-geometry records would exceed stage 5's reuse scope. If the paired candidate runs cannot separate the candidate from the noise band, the plan falls back to stage 6 (brush styles).
 
 Next: implement the candidate on a `perf/` branch from the same base with identical instrumentation on control and candidate, paired Bogbottom + Fuma runs, and decide per evidence.
 
@@ -122,4 +122,24 @@ Safety: the predicate uses the spec's per-build properties (equal type/flags, pe
 
 Scope and limits: Debug builds only; two scenarios (Bogbottom/AD swampy, Fuma/id1); 6 s captures at ~25–38 FPS; the accepted functional chain is `b58abacf` → `4c8121f6` → `5b89b25a` on top of the shared base (the strict policy of `4c8121f6` is superseded by `5b89b25a`, which builds on the scratch infrastructure it introduces; only the 5b89b25a policy is accepted), with `c4557972` as the runner fix worth keeping (the binding/instrumentation commits are temporary diagnostics). Raw evidence: `build/Debug/audit-stage5c-*` (manifests with revision/executable/asset hashes, `frames.csv`, `rhi_setup_diag.csv`, screenshots, console logs); build logs binding each executable hash to its revision are retained at `build/Debug/audit-stage5c-build-logs/`.
 
-Conclusion: both separable mechanisms were measured. Descriptor churn removal is a small win (−0.11 ms Bog / −0.05 ms Fuma); handle recreation on geometry-count shrink is a large win on Fuma (−0.54 ms, −17.5 % of the bracket) and neutral on Bog. The build-recording floor (~2.5 / ~1.2 ms) remains the animated-geometry cost outside this reuse scope, as the decomposition predicted.
+Conclusion: both separable mechanisms were measured. Descriptor churn removal is a small win (−0.11 ms Bog / −0.05 ms Fuma); handle recreation on geometry-count shrink is a large win on Fuma (−0.54 ms, −17.5 % of the bracket, reproduced at −0.65 ms on the clean build) and neutral on Bog. The build-recording share (~2.5 / ~1.2 ms) is not reduced by this reuse scope and is not decomposed further here.
+
+## Acceptance on the clean functional branch, tests and runner fixes (2026-10-09, post-audit)
+
+The audit of the candidate section found three gaps: the functional state lived only on the diagnostics branch, the Debug test suite had not been run for it, and the runner dismissal/wait had two defects. All three are closed:
+
+- **Clean functional branch** `perf/rhi-dyn-blas-clean` (pushed): base `600a9278` → `9bce4f4b` (runner) → `96b1b45a` (descriptor/capacity reuse) → `79d91902` (shape-fit test). `git diff` against the diagnostics branch shows only the timer insertions; against the base, only the functional changes (no diagnostics, no CMake change — the predicate test extends the existing `frame_timing_tests` target).
+- **Tests**: `.\build_win.ps1 Debug -Tests` + `ctest --test-dir build/Debug` — 7/7 passed; `frame_timing_tests` now covers the shape-fit policy (identity, count and per-index bound shrink, empty shape, growth of the count, of bounds and of a later geometry, stride/index-type/transform mismatch, malformed lengths). Evidence: `build/Debug/audit-stage5c-tests/ctest.log`; the build receipt at the same revision matches the deployed executable.
+- **Runner**: the wait marker matched the startup NVRHI capability line (`...acceleration structures yes`) and never actually waited; it now waits for `RHI: acceleration structures:`. The spawn scenario (`qr_swampy_start`) needs no dismissal — `Host_Map_f` clears the menu — and a spawn capture is valid without one (160/160 frames in game); the save flows keep the per-load dismissals.
+- **Paired acceptance on the clean builds** (2+2 per scenario, alternating, one frozen pack `E2CA480B…`, exes control `9314AEFE…` (`9bce4f4b`) / candidate `75A5852B…` (`79d91902`)):
+
+| metric, Fuma | control | candidate | Δ |
+| --- | ---: | ---: | ---: |
+| outer RHI setup, mean | 3.172 | 2.526 | **−0.646** |
+| outer RHI setup, p95 | 3.594 | 3.232 | −0.362 |
+| frame mean | 26.834 | 25.889 | −0.946 |
+| frame p95 | 28.114 | 27.075 | −1.039 |
+| FPS | 37.27 | 38.63 | +1.36 |
+
+  Complete separation on the outer bracket: candidate 2.546/2.507 vs control 3.148/3.196. Bogbottom remains neutral (Δ +0.033 ms inside a 4.05–4.38 candidate spread), the two spawn captures are neutral (4.097 vs 4.061), and a Quality smoke on Fuma shows the same reduction (−0.724 ms, one run per arm, not a statistical claim). On Fuma every frame metric improves, which also addresses the earlier p95 concern from the diagnostics-branch pair.
+- **Coverage limits**: Balanced on Bogbottom and Fuma plus the spawn scenario, Quality on Fuma; save reload and fresh spawn cover level transitions, but long gameplay, other maps and task-agent integration are not covered by this set.
