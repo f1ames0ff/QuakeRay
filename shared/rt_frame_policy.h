@@ -40,4 +40,14 @@ static inline int RT_ReportTakeRun(unsigned *active)
     return 1;
 }
 
+static inline int RT_ProfPendingAfterSubmit(int pendingEndResults)
+{
+    return pendingEndResults + 1;
+}
+
+static inline int RT_ProfPendingAfterRecord(int pendingEndResults)
+{
+    return pendingEndResults > 0 ? pendingEndResults - 1 : 0;
+}
+
 #endif

@@ -66,7 +66,8 @@ precede all of them. Do not move that join later without moving those reads into
 snapshot. Debug builds check the boundary: the end task raises `rt_end_task_running` and the input
 phase asserts it is clear, and `rt_end_task_delay_ms` stretches the task to exercise the check. The
 task's profiler results carry a frame serial and are merged into the sample of their own frame
-(`RT_Prof_EndTaskRecord`); a window is published only once every frame it covers has reported.
+(`RT_Prof_EndTaskRecord`); the profiler window is published from the frame-start join, after the
+previous end task has reported, so every frame the window covers is complete.
 
 ## Worker rules
 

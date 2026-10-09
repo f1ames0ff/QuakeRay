@@ -600,13 +600,6 @@ void RT_Prof_FrameEnd (void)
 	const uint32_t end_serial = rt_end_task_current_serial;
 	rt_end_task_current_serial = 0;
 
-	if (end_serial != 0)
-	{
-		RT_Prof_Lock ();
-		rt_prof_pending_end++;
-		RT_Prof_Unlock ();
-	}
-
 	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
 	if (rt_bench_active)
 	{
@@ -688,15 +681,16 @@ static void RT_Prof_RecordRenderer (void)
 
 static void RT_Prof_EndTaskRecord (uint32_t serial, double start, const QrFrameStats *stats)
 {
+	RT_Prof_Lock ();
+	rt_prof_pending_end = RT_ProfPendingAfterRecord (rt_prof_pending_end);
+	RT_Prof_Unlock ();
+
 	if (start == 0.0)
 		return;
 
 	const double ms = (Sys_DoubleTime () - start) * 1000.0;
 
 	RT_Prof_Lock ();
-
-	if (rt_prof_pending_end > 0)
-		rt_prof_pending_end--;
 
 	rt_prof_sum[RT_PROF_DRAWFRAME] += ms;
 	if (ms > rt_prof_ms[RT_PROF_DRAWFRAME])
@@ -3451,6 +3445,10 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 		if (++rt_end_task_serial == 0)
 			rt_end_task_serial = 1;
 		rt_end_task_current_serial = rt_end_task_serial;
+
+		RT_Prof_Lock ();
+		rt_prof_pending_end = RT_ProfPendingAfterSubmit (rt_prof_pending_end);
+		RT_Prof_Unlock ();
 	}
 	else
 		rt_end_task_current_serial = 0;

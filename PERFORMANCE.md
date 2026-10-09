@@ -246,6 +246,15 @@ input phase asserts the end task is not running. Captures:
 `audit-review2-serial-20261009-162730-c3684b`, `audit-review2-tasks-20261009-162707-796c38`,
 `audit-review2-delay-20261009-162751-72fc90`.
 
+Follow-up on the profiler window (same branch, exe `5709F64D…`): the wait is booked when the end
+task is submitted and released when it reports, so an early report cannot leave it stuck, and the
+window is published from the frame-start join, where every frame of the window has reported. Both
+cases were exercised with `rt_stats 3` captures whose dump profile columns are filled on every
+sample: tasks (35.70 ms mean, 40/40 samples, `qrDrawFrame` 8.75 ms average) and tasks with
+`rt_end_task_delay_ms 30` (67.50 ms, 37/37 samples, 8.92 ms) — in the delayed run every frame's end
+task provably outlives the frame-end update, so every publication happens at a join. Captures:
+`audit-review3-stats-20261009-164835-f59510`, `audit-review3-statsdelay-20261009-164856-50dd49`.
+
 ## Current CPU priorities
 
 Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale pre-fix profile. These are **observed inclusive costs**, not predicted savings:

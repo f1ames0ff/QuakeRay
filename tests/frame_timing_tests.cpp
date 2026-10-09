@@ -86,9 +86,30 @@ void TestEndTaskCompletionOrder()
 
 void TestProfilerWindowPublication()
 {
-    Require(RT_ProfWindowPublishes(0), "a window with every frame reported publishes");
-    Require(!RT_ProfWindowPublishes(1), "a pending end task defers the window");
-    Require(!RT_ProfWindowPublishes(3), "several pending end tasks defer the window");
+    int pending = 0;
+
+    pending = RT_ProfPendingAfterSubmit(pending);
+    Require(pending == 1, "a submitted end task is outstanding");
+    pending = RT_ProfPendingAfterRecord(pending);
+    Require(pending == 0, "an early report clears the wait before the frame closes");
+    Require(RT_ProfWindowPublishes(pending), "the frame-end update publishes after an early report");
+
+    pending = RT_ProfPendingAfterSubmit(pending);
+    Require(!RT_ProfWindowPublishes(pending), "the frame-end update defers while the task runs");
+    pending = RT_ProfPendingAfterRecord(pending);
+    Require(RT_ProfWindowPublishes(pending), "the join after the report publishes");
+
+    for (int frame = 0; frame < 4; frame++)
+    {
+        pending = RT_ProfPendingAfterSubmit(pending);
+        Require(pending == 1, "one frame's end task is outstanding");
+        Require(!RT_ProfWindowPublishes(pending), "each late frame defers its window");
+        pending = RT_ProfPendingAfterRecord(pending);
+        Require(RT_ProfWindowPublishes(pending), "each report releases the window");
+    }
+
+    pending = RT_ProfPendingAfterRecord(0);
+    Require(pending == 0, "a report without a submission never underflows the wait");
 }
 
 void TestCacheGeneration()
