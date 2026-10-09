@@ -1144,12 +1144,35 @@ bool RhiAccelStructs::EnsureVertexDataCopyBuffer(nvrhi::BufferHandle &buffer,
     return true;
 }
 
+double g_rhiSetupDiagDynCopiesMs = 0.0;
+double g_rhiSetupDiagDynDescsMs = 0.0;
+double g_rhiSetupDiagDynBuildMs = 0.0;
+double g_rhiSetupDiagDynInstancesMs = 0.0;
+uint32_t g_rhiSetupDiagDynCreates = 0;
+
+namespace
+{
+double RhiSetupDiagSpanMs(const std::chrono::steady_clock::time_point &from,
+                          const std::chrono::steady_clock::time_point &to)
+{
+    return std::chrono::duration<double, std::milli>(to - from).count();
+}
+}
+
 void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                                         uint32_t frameIndex,
                                         uint32_t rayCullMaskWorld,
                                         bool allowGeometryWithSkyFlag,
                                         std::vector<nvrhi::rt::InstanceDesc> &instances)
 {
+    g_rhiSetupDiagDynCopiesMs = 0.0;
+    g_rhiSetupDiagDynDescsMs = 0.0;
+    g_rhiSetupDiagDynBuildMs = 0.0;
+    g_rhiSetupDiagDynInstancesMs = 0.0;
+    g_rhiSetupDiagDynCreates = 0;
+
+    std::chrono::steady_clock::time_point diagDynMark = std::chrono::steady_clock::now();
+
     // Only a filter built in this frame is active: a skipped or failed dynamic frame must produce no
     // instances, while the handles of the earlier frames stay alive for TLAS builds still in flight.
     for (DynamicBlas &blas : dynamicBlas[frameIndex])
@@ -1231,12 +1254,19 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
         pCommandList->copyBuffer(copies.index.Get(), 0, stagingIndexBuffer[frameIndex].Get(), 0, indexBytes);
         dynamicCopyBytes += indexBytes;
     }
+    {
+        const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        g_rhiSetupDiagDynCopiesMs += RhiSetupDiagSpanMs(diagDynMark, now);
+        diagDynMark = now;
+    }
 
     // The public filter iteration is the authoritative grid order (VertexCollectorFilterType.cpp:
     // 45-57), which the instance ordering and the engine's per-instance uniform arrays rely on.
     VertexCollectorFilterTypeFlags_IterateOverFlags(
         [&](VertexCollectorFilterTypeFlags filter)
         {
+            std::chrono::steady_clock::time_point diagFilterMark = std::chrono::steady_clock::now();
+
             if (!(filter & VertexCollectorFilterTypeFlagBits::CF_DYNAMIC))
             {
                 return;
@@ -1282,6 +1312,12 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 shape.push_back(triangles.transformData.deviceAddress != 0 ? 1u : 0u);
             }
 
+            {
+                const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+                g_rhiSetupDiagDynDescsMs += RhiSetupDiagSpanMs(diagFilterMark, now);
+                diagFilterMark = now;
+            }
+
             DynamicBlas *blas = nullptr;
             for (DynamicBlas &candidate : dynamicBlas[frameIndex])
             {
@@ -1302,6 +1338,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
             if (blas->handle == nullptr || blas->shape != shape)
             {
+                g_rhiSetupDiagDynCreates++;
                 // Create from the very list this build uses, so the allocation covers the build
                 // (vulkan-raytracing.cpp:376-386 against :803-815). The replaced handle is not
                 // dropped while the queue may still read it - it goes through the frame context's
@@ -1342,6 +1379,11 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 dynamicVertexCount += geoms[i].geometry.triangles.maxVertex;
                 dynamicPrimitiveCount += ranges[i].primitiveCount;
             }
+            {
+                const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+                g_rhiSetupDiagDynBuildMs += RhiSetupDiagSpanMs(diagFilterMark, now);
+                diagFilterMark = now;
+            }
 
             // The engine's attribute rules with this module's handle, exactly as for the static set.
             VkAccelerationStructureInstanceKHR record = {};
@@ -1373,6 +1415,10 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
             instances.push_back(MakeInstanceDesc(record, blas->handle.Get()));
             hasGlassInstances |= (filter & uint32_t(VertexCollectorFilterTypeFlagBits::PT_GLASS)) == uint32_t(VertexCollectorFilterTypeFlagBits::PT_GLASS);
+            {
+                const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+                g_rhiSetupDiagDynInstancesMs += RhiSetupDiagSpanMs(diagFilterMark, now);
+            }
         });
 }
 
@@ -1802,15 +1848,6 @@ double g_rhiSetupDiagTlDynamicMs = 0.0;
 double g_rhiSetupDiagTlParticlesMs = 0.0;
 double g_rhiSetupDiagTlVertexCopiesMs = 0.0;
 double g_rhiSetupDiagTlRestMs = 0.0;
-
-namespace
-{
-double RhiSetupDiagSpanMs(const std::chrono::steady_clock::time_point &from,
-                          const std::chrono::steady_clock::time_point &to)
-{
-    return std::chrono::duration<double, std::milli>(to - from).count();
-}
-}
 
 void RhiAccelStructs::BuildTopLevel(nvrhi::ICommandList *pCommandList,
                                     uint32_t frameIndex,
