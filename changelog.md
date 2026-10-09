@@ -18,6 +18,12 @@
 - **An empty draw batch no longer trips the scratch allocator** — `Draw_StringScaled` with an empty or blank line, `DrawGLPoly` with no vertices, and an FTE particle batch with no vertices or indices could ask the shared scratch heap for zero bytes, the one size it asserts on; each returns before the request now.
 - **A movable geometry upload no longer sizes its acceleration structure for an update it never performs** — the static submit asked `ASBuilder` to build the movable components with `VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR` while `vkGetAccelerationStructureBuildSizesKHR` had been queried without that flag, and the structure was allocated at the queried size. The update-capable structure needs about 55 per cent more memory on the affected GPU, so the build wrote past its dedicated allocation and the AMD driver reset the device (`VK_ERROR_DEVICE_LOST`, a TDR) on Arcane Dimensions' `ad_tfuma` as soon as the map's submodels became movable geometry; the flag now comes from the same value the size query used. The top-level size query also matches its build now.
 
+## v0.31.3
+
+### Fixed
+- **Acquire-only SUBOPTIMAL no longer rebuilds the swapchain every frame** — a successful present previously reset the recreation guard even when acquisition had reported `VK_SUBOPTIMAL_KHR`, so an unchanged surface could repeatedly drain the device and rebuild presentation resources. The episode now ends only after both acquisition and presentation succeed without SUBOPTIMAL. Deterministic CPU tests cover acquire-only, present-only and combined episodes, recovery and parameter changes using the same policy as the renderer.
+- **The EXT presentation-fence fallback survives mixed extension availability** — instance creation now enables both supported surface-maintenance spellings, and device creation selects a complete enabled instance/device pair, preferring KHR when available. A selected device exposing only EXT swapchain maintenance can therefore use presentation fences even when the instance also exposes KHR surface maintenance. The regression suite covers missing dependencies, KHR/EXT availability combinations and device enumeration order without requiring a GPU.
+
 ## v0.31.2
 
 ### Fixed
