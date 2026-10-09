@@ -240,6 +240,11 @@ thread rather than locking a parent and a different child against each other. Th
 Windows-logon-session scoped, not a cross-session guarantee. Non-cooperating/manual launches
 still require process checks and contaminated-run rejection.
 
+Builds go strictly through [build_win.ps1](build_win.ps1): it prepares the MSVC environment
+(`VsDevCmd`), applies the pinned NVRHI patch for the build and deploys the runtime assets. A bare
+`cmake --build build\Debug` in a shell without that environment fails at compile time (`C1083` on
+standard headers such as `assert.h`) and is not a supported build or verification entry point.
+
 ## Profiler lookup and maintenance
 
 - Quake CPU slots: [enum](Quake/glquake.h#L661), [display/CSV names](Quake/gl_vidsdl.c#L989), [capture serialization](Quake/gl_vidsdl.c#L732).
