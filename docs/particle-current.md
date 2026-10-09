@@ -76,7 +76,7 @@ sequenceDiagram
   participant R as Renderer CPU
   participant V as GPU
   H->>P: CL_ReadFromServer host.c:998 -> TE_*/trails/smoke spawn (cl_tent.c:149, r_part.c:515, r_smoke.c:119)
-  H->>P: SCR_UpdateScreen host.c:1008 (use_tasks false, gl_screen.c:1163)
+  H->>P: SCR_UpdateScreen host.c:1017 (tasks when r_tasks and workers>1, gl_screen.c:1162)
   P->>P: R_DrawSmoke r_smoke.c:311 (qsort)
   P->>P: R_DrawParticlesFaces r_part.c:878: resolve/particle, 3 verts, upload
   P->>P: PScript_DrawParticles r_part_fte.c:6961: sim-in-draw 6105, resolve/vertex 6896, upload/scenetri 6949
@@ -102,17 +102,24 @@ sequenceDiagram
 | GPU shading | GPU | per vertex: <=16 candidate evals (`SMOKE_CLUSTER_SCAN 16`) + ray queries; no particle GPU pass timer | SmokeLight.hlsli:59,152-217; qray.cpp:368-389 |
 | AD sprites | CPU main | QC-created sprite edicts bypass the particle pools but use the same raster overlay; `part_max=max(particlemax,1024)*multiplier` | part_generate.qc:224-230,780-804; r_sprite.c:245-291 |
 
-Frame model: `use_tasks` is forced false (gl_screen.c:1163-1164); classic and smoke simulate after
-`SCR_UpdateScreen` (host.c:1008-1011); FTE simulates inside its draw (r_part_fte.c:6105).
+Frame model: with `r_tasks 1` the producers, `R_DrawParticlesTask` included (gl_rmain.c:1191), run
+as tasks and the main thread joins `draw_done_task` before `RT_Prof_FrameEnd` (gl_screen.c:1217,1235);
+with tasks off the same functions run inline (gl_rmain.c:1356-1366). Classic and smoke simulate
+after `SCR_UpdateScreen` (host.c:1020-1021); FTE simulates inside its draw (r_part_fte.c:6105).
 
 ## 4. Architectural flaws (facts, not proposals)
 
-1. Light-cluster resolves are CPU BSP walks on the main thread: classic added by PR #30
-   (r_part.c:939), FTE by `3f7b644c` (r_part_fte.c:6896), smoke earlier by `cde75f9b`
-   (r_smoke.c:140). The point-cluster cache is committed behind `rt_particle_resolve_cache`
-   (default on) with hit/miss and ns counters (Stage 1); Stage 2 keeps one resolve per classic
-   particle before the point upload.
-2. No threading anywhere in the path (use_tasks false).
+1. Light-cluster resolves are CPU BSP walks: classic added by PR #30 (r_part.c:939), FTE by
+   `3f7b644c` (r_part_fte.c:6896), smoke earlier by `cde75f9b` (r_smoke.c:140). The point-cluster
+   cache is committed behind `rt_particle_resolve_cache` (default on) with hit/miss and ns
+   counters (Stage 1); Stage 2 keeps one resolve per classic particle before the point upload.
+   Serial runs execute the resolves on the main thread; with `r_tasks 1` they run inside the
+   producer tasks instead.
+2. The particle path runs inside `R_DrawParticlesTask` (gl_rmain.c:1191). Under `r_tasks 1` that
+   task runs on a worker concurrently with the entity and water tasks, and all of them call
+   `RT_ResolvePointCluster`; the shared point-cluster cache has no protection (known hazard, fix
+   undecided). The resolve slot feed is sampled after the `draw_done_task` join, so it stays exact
+   in both modes.
 3. FTE scratch is capacity-sized and grow-only: conversion is skipped when nothing is live, but
    when it runs it walks the grown capacity, not the live counts (r_part_fte.c:6838-6857).
    Stage 1 bounds the conversion and the scratch by the live counts.

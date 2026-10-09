@@ -106,6 +106,21 @@ registers leaves both arms without classic particles and the comparison measures
 scripted attack is less reliable than hand input; the recorded `ad_particle_*` demos remain the
 decisive Stage-2 exercise.
 
+`run_points_demo_ab.ps1` takes the demos as the A/B: for every demo in `-Demos` it runs the
+`points_on` and `points_off` arms, writes `qr_gate_<arm>.cfg` into the game directory (the particle
+cvars, `rt_particle_resolve_cache 1`, the arm value and `rt_bench <demo> quit`), brings the engine
+window to the foreground, sends one ESC and lets the demo end the run; every arm is capped at 170 s
+and the new `benchmark.log` blocks are printed at the end.
+
+```powershell
+powershell -File perf\stage0\run_points_demo_ab.ps1
+powershell -Command "& './perf/stage0/run_points_demo_ab.ps1' -Demos 'ad_particle_heavy' -Arms 'points_on' -ExtraCvars 'r_tasks 1'"
+```
+
+The foreground step is part of the measurement: a run whose window lost the foreground measures
+20-24 fps with normal slot values and is contamination, not a result. The Stage-2 gate session on
+the owner demos is `perf/stage0/stage2-gate-2026-10-10.md`.
+
 A deterministic smoke that needs no save: put the particle cvars and `rt_bench demo1 quit` into a
 config, `+exec` it and let the demo play to its report (74 s for the stock `demo1`, and it exits by
 itself; cap the run at ~3 minutes). It proves the transport runs and leaves a comparable `rt_bench`

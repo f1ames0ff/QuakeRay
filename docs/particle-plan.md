@@ -87,8 +87,7 @@ scale to the content that actually exists.
   to legacy.
 - FTE and smoke keep the legacy `QrVertex` path; the traced glass stand-ins of the classic sprites
   are kept for the new path.
-- The gate above is unchanged and still awaits the Stage-0 demos (`ad_particle_heavy` /
-  `ad_particle_idle`); no Stage-2 measurement is claimed yet.
+- The gate above ran on the Stage-0 demos on 2026-10-10; the result is at the end of this section.
 - Preliminary reading, not the gate: a diagnostic run of the owner's `start1` save at the benchmark
   viewpoint (3840x2160, FSR 2, vsync off, dtal master) shows `particles_classic = 0` at rest -
   the classic transport changes nothing on that scene - while the FTE path carries the bucket:
@@ -112,6 +111,19 @@ scale to the content that actually exists.
   point-cluster cache is worth about 1.2-1.7 ms of the heavy demo's frame (62% hits, a hit about
   63 ns against a miss's 194 ns) and stays on; two collapse-looking runs did not survive a
   controlled diagnostic and are recorded as contamination.
+- Stage-2 gate (2026-10-10, build `ef41fdad` with the restored resolve slot feed): the points A/B on
+  both owner demos passes the <=5% fps / <=10% slot criterion; the largest paired delta is 1.6%,
+  and the classic path is empty on both demos, so the reading is a no-regression check - the
+  transport's live-sprite evidence stays the stock `demo1` capture. Method, table and the
+  foreground-contamination caveat: `perf/stage0/stage2-gate-2026-10-10.md`. The same build restored
+  the `cpu.particles_resolve_ms` feed the merge had dropped, and a `r_tasks 1` smoke ran the heavy
+  demo at 41.1 fps with the feed alive and no crash.
+- Known hazard, fix undecided: the shared point-cluster cache behind `RT_ResolvePointCluster`
+  (`Quake/gl_rlight.c`) has no thread protection. Under `r_tasks 1` the particle task
+  (`R_DrawParticlesTask`), the entity brush chains (`RT_ResolveBrushSurfCluster`, `Quake/r_world.c`)
+  and the alias paths call it from different workers concurrently, so cache entries and the
+  hit/miss/ns counters can tear. Serial mode is unaffected; the options are a thread-local table
+  with a reset generation or a protected table.
 
 ### Stage 3 — cluster volume, remove CPU resolves (after dtal; accuracy contract A1-A3)
 - R16_UINT volume painted from `leaf_cluster`; 64 u base; own map generation; keep 0 semantics.
