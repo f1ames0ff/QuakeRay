@@ -1,5 +1,6 @@
 #include "CpuFrameProfiler.h"
 #include "GeometryBounds.h"
+#include "RHI/DynamicBlasShape.h"
 #include "rt_frame_policy.h"
 
 #include <array>
@@ -218,6 +219,34 @@ void BenchmarkGeometryBounds()
               << " ms, ratio " << scalar / simd << "x; 2097152 vertices per arm\n";
 }
 
+void TestDynamicBlasShape()
+{
+    using qray::rhi::DynamicShapeFits;
+    const std::vector<uint32_t> envelope = { 12, 100, 80, 1, 1, 40, 200, 80, 1, 1 };
+
+    Require(DynamicShapeFits(envelope, envelope), "an identical shape fits the envelope");
+    Require(DynamicShapeFits(envelope, { 12, 100, 80, 1, 1 }), "a shorter geometry count fits the envelope");
+    Require(DynamicShapeFits(envelope, { 8, 90, 80, 1, 1, 40, 200, 80, 1, 1 }), "shrunk bounds fit the envelope");
+    Require(DynamicShapeFits(envelope, std::vector<uint32_t>()), "an empty shape fits the envelope");
+
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 1, 1, 40, 200, 80, 1, 1, 5, 5, 80, 1, 1 }),
+            "a growing geometry count does not fit");
+    Require(!DynamicShapeFits(envelope, { 13, 100, 80, 1, 1, 40, 200, 80, 1, 1 }),
+            "a growing primitive count does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 101, 80, 1, 1, 40, 200, 80, 1, 1 }),
+            "a growing vertex count does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 64, 1, 1, 40, 200, 80, 1, 1 }),
+            "a changed stride does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 0, 1, 40, 200, 80, 1, 1 }),
+            "a changed index type does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 1, 0, 40, 200, 80, 1, 1 }),
+            "a changed transform presence does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 1 }), "a malformed shape does not fit");
+    Require(!DynamicShapeFits({ 12, 100, 80 }, { 12, 100, 80 }), "a malformed envelope does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 1, 1, 41, 200, 80, 1, 1 }),
+            "growth in a later geometry does not fit");
+}
+
 }
 
 int main(int argc, char **argv)
@@ -227,7 +256,8 @@ int main(int argc, char **argv)
         TestFramePolicy();
         TestCpuProfiler();
         TestGeometryBounds();
-        std::cout << "Frame policy, CPU timing and geometry bounds tests passed\n";
+        TestDynamicBlasShape();
+        std::cout << "Frame policy, CPU timing, geometry bounds and dynamic BLAS shape tests passed\n";
         if (argc == 2 && std::strcmp(argv[1], "--bench-bounds") == 0)
             BenchmarkGeometryBounds();
         return 0;
