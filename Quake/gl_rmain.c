@@ -1282,6 +1282,8 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 	{
 		task_handle_t before_mark = Task_AllocateAndAssignFunc (R_SetupViewBeforeMark, NULL, 0);
 		Task_AddDependency (setup_frame_task, before_mark);
+		Task_AddDependency (begin_rendering_task, setup_frame_task);
+		Task_AddDependency (begin_rendering_task, before_mark);
 
 		task_handle_t store_efrags = INVALID_TASK_HANDLE;
 		task_handle_t cull_surfaces = INVALID_TASK_HANDLE;
@@ -1326,6 +1328,7 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		task_handle_t update_lightmaps_task = Task_AllocateAndAssignFunc (R_UpdateLightmaps, NULL, 0);
 		Task_AddDependency (cull_surfaces, update_lightmaps_task);
 		Task_AddDependency (begin_rendering_task, update_lightmaps_task);
+		Task_AddDependency (draw_world_task, update_lightmaps_task);
 		Task_AddDependency (update_lightmaps_task, draw_done_task);
 
 		Task_AddDependency (draw_world_task, draw_view_model_task);

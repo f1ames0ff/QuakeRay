@@ -418,6 +418,19 @@ static double   rt_bench_max[RT_PROF_COUNT];
 static double   rt_bench_host_sum[RT_HOST_SPEED_COUNT];
 static int      rt_bench_host_frames;
 static double   rt_bench_frame_slots[RT_PROF_COUNT];
+static atomic_uint32_t rt_prof_spin;
+
+static void RT_Prof_Lock (void)
+{
+	uint32_t expected = 0;
+	while (!Atomic_CompareExchangeUInt32 (&rt_prof_spin, &expected, 1))
+		expected = 0;
+}
+
+static void RT_Prof_Unlock (void)
+{
+	Atomic_StoreUInt32 (&rt_prof_spin, 0);
+}
 static double   rt_bench_last_frame_end;
 static QrFrameStats rt_bench_renderer_stats;
 
@@ -460,11 +473,13 @@ void RT_Bench_Start (void)
 	rt_bench_frame_min = 0.0;
 	rt_bench_last_frame_end = 0.0;
 	rt_bench_frame_sample_count = 0;
+	RT_Prof_Lock ();
 	memset (rt_bench_frame_slots, 0, sizeof (rt_bench_frame_slots));
 	memset (&rt_bench_renderer_stats, 0, sizeof (rt_bench_renderer_stats));
 	memset (rt_bench_sum, 0, sizeof (rt_bench_sum));
 	memset (rt_bench_max, 0, sizeof (rt_bench_max));
 	memset (rt_bench_host_sum, 0, sizeof (rt_bench_host_sum));
+	RT_Prof_Unlock ();
 	rt_bench_host_frames = 0;
 	rt_cluster_cache_hits = 0;
 	rt_cluster_cache_misses = 0;
@@ -525,18 +540,22 @@ void RT_Prof_End (int slot, double start)
 		return;
 
 	const double ms = (Sys_DoubleTime () - start) * 1000.0;
+	RT_Prof_Lock ();
 	RT_Bench_Slot (slot, ms);
 	rt_prof_sum[slot] += ms;
 	if (ms > rt_prof_ms[slot])
 		rt_prof_ms[slot] = ms;
+	RT_Prof_Unlock ();
 }
 
 void RT_Prof_Sample (int slot, double ms)
 {
+	RT_Prof_Lock ();
 	RT_Bench_Slot (slot, ms);
 	rt_prof_sum[slot] += ms;
 	if (ms > rt_prof_ms[slot])
 		rt_prof_ms[slot] = ms;
+	RT_Prof_Unlock ();
 }
 
 void RT_Prof_FrameStart (void)
@@ -547,8 +566,10 @@ void RT_Prof_FrameStart (void)
 	rt_prof_frame_start = Sys_DoubleTime ();
 	if (rt_bench_active)
 	{
+		RT_Prof_Lock ();
 		memset (rt_bench_frame_slots, 0, sizeof (rt_bench_frame_slots));
 		memset (&rt_bench_renderer_stats, 0, sizeof (rt_bench_renderer_stats));
+		RT_Prof_Unlock ();
 	}
 	++rt_prof_frames;
 }
@@ -562,6 +583,7 @@ void RT_Prof_FrameEnd (void)
 	if (rt_bench_active)
 	{
 		const double now = Sys_DoubleTime ();
+		RT_Prof_Lock ();
 		if (rt_bench_frame_sample_count < RT_BENCH_FRAME_CAPACITY)
 		{
 			rt_bench_frame_t *sample = &rt_bench_frame_samples[rt_bench_frame_sample_count++];
@@ -578,6 +600,7 @@ void RT_Prof_FrameEnd (void)
 		for (int i = 0; i < RT_PROF_COUNT; ++i)
 			if (rt_bench_frame_slots[i] > rt_bench_max[i])
 				rt_bench_max[i] = rt_bench_frame_slots[i];
+		RT_Prof_Unlock ();
 		rt_bench_last_frame_end = now;
 		++rt_bench_frames;
 	}
@@ -585,12 +608,14 @@ void RT_Prof_FrameEnd (void)
 
 static void RT_Prof_ResetSamples (void)
 {
+	RT_Prof_Lock ();
 	memset (rt_prof_ms, 0, sizeof (rt_prof_ms));
 	memset (rt_prof_sum, 0, sizeof (rt_prof_sum));
 	memset (rt_renderer_cpu_sum, 0, sizeof (rt_renderer_cpu_sum));
 	memset (rt_renderer_cpu_max, 0, sizeof (rt_renderer_cpu_max));
 	rt_prof_frames = 0;
 	rt_renderer_cpu_samples = 0;
+	RT_Prof_Unlock ();
 }
 
 static void RT_Prof_RecordRenderer (void)
@@ -671,6 +696,7 @@ void RT_Prof_Update (void)
 	if (fps < 0.1f)
 		fps = 0.1f;
 
+	RT_Prof_Lock ();
 	memset (&rt_prof_report, 0, sizeof (rt_prof_report));
 	rt_prof_report.fps = fps;
 	rt_prof_report.frameMs = (float)rt_prof_ms[RT_PROF_FRAME];
@@ -703,6 +729,7 @@ void RT_Prof_Update (void)
 	rt_prof_report.clusterAttempts = rt_cluster_last_attempts;
 	rt_prof_report.clusterDropped = rt_cluster_last_dropped;
 	rt_prof_report.valid = true;
+	RT_Prof_Unlock ();
 
 	if (!rt_bench_active)
 	{

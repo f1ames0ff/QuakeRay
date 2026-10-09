@@ -1142,6 +1142,7 @@ void R_UpdateLightmaps (void *unused)
 {
 	if (CVAR_TO_BOOL (r_gpulightmapupdate))
 	{
+		assert (false);
 		Con_Warning ("Updating lightmaps using GPU is not implemented");
 	}
 }
