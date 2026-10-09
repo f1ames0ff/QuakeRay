@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "rt_brush_transform_cache.h"
 #include "atomics.h"
+#include "../shared/rt_frame_policy.h"
 #include "rt_dtal_debug.h"
 #include "rt_dtal_groups.h"
 #include "rt_lights.h"
@@ -162,25 +163,43 @@ static char rt_emis_skip_texture[RT_EMIS_SKIP_NAMES][32];
 static char rt_emis_skip_reason[RT_EMIS_SKIP_NAMES][24];
 static int  rt_emis_skip_count[RT_EMIS_SKIP_NAMES];
 static int  rt_emis_skip_num;
+static atomic_uint32_t rt_emis_skip_spin;
+
+static void RT_EmisSkipLock (void)
+{
+	uint32_t expected = 0;
+	while (!Atomic_CompareExchangeUInt32 (&rt_emis_skip_spin, &expected, 1))
+		expected = 0;
+}
+
+static void RT_EmisSkipUnlock (void)
+{
+	Atomic_StoreUInt32 (&rt_emis_skip_spin, 0);
+}
 
 static void RT_EmisNoteSkip (const char *texture, const char *reason)
 {
+	RT_EmisSkipLock ();
+
 	for (int i = 0; i < rt_emis_skip_num; i++)
 	{
 		if (!strcmp (rt_emis_skip_texture[i], texture) && !strcmp (rt_emis_skip_reason[i], reason))
 		{
 			rt_emis_skip_count[i]++;
+			RT_EmisSkipUnlock ();
 			return;
 		}
 	}
 
-	if (rt_emis_skip_num >= RT_EMIS_SKIP_NAMES)
-		return;
+	if (rt_emis_skip_num < RT_EMIS_SKIP_NAMES)
+	{
+		q_snprintf (rt_emis_skip_texture[rt_emis_skip_num], sizeof (rt_emis_skip_texture[0]), "%s", texture);
+		q_snprintf (rt_emis_skip_reason[rt_emis_skip_num], sizeof (rt_emis_skip_reason[0]), "%s", reason);
+		rt_emis_skip_count[rt_emis_skip_num] = 1;
+		rt_emis_skip_num++;
+	}
 
-	q_snprintf (rt_emis_skip_texture[rt_emis_skip_num], sizeof (rt_emis_skip_texture[0]), "%s", texture);
-	q_snprintf (rt_emis_skip_reason[rt_emis_skip_num], sizeof (rt_emis_skip_reason[0]), "%s", reason);
-	rt_emis_skip_count[rt_emis_skip_num] = 1;
-	rt_emis_skip_num++;
+	RT_EmisSkipUnlock ();
 }
 
 #define RT_EMIS_WATCH_MAX 16
@@ -1177,7 +1196,7 @@ static uint32_t RT_PackSurfaceLightStyles (const rt_uploadsurf_state_t *s, const
 		   faces of a model are visited in order, so a stride index keeps them in step, and the
 		   entity moves the window so that two models do not share it. */
 		const size_t               index = (((size_t) (s->surf - s->model->surfaces)) + ((uintptr_t) s->ent >> 4)) % RT_SURFACEPACK_ENT_SIZE;
-		if (rt_surfacepack_ent.generation != rt_surfacepack_generation)
+		if (RT_CacheGenerationStale (rt_surfacepack_ent.generation, rt_surfacepack_generation))
 		{
 			memset (rt_surfacepack_ent.entries, 0, sizeof (rt_surfacepack_ent.entries));
 			rt_surfacepack_ent.generation = rt_surfacepack_generation;
@@ -1792,16 +1811,38 @@ typedef struct
 	qboolean buried;
 } rt_dtal_buried_entry_t;
 
-static rt_dtal_buried_entry_t rt_dtal_buried_cache[RT_DTAL_BURIED_CACHE];
+typedef struct
+{
+	uint32_t                generation;
+	rt_dtal_buried_entry_t  entries[RT_DTAL_BURIED_CACHE];
+} rt_dtal_buried_cache_t;
+
+static uint32_t rt_dtal_buried_generation = 1;
+static THREAD_LOCAL rt_dtal_buried_cache_t rt_dtal_buried_cache;
 
 static atomic_uint32_t rt_buried_traces;
 static atomic_uint32_t rt_buried_hits;
 static atomic_uint32_t rt_buried_model_traces;
 static atomic_uint32_t rt_buried_model_hits;
 
+static rt_dtal_buried_entry_t *RT_BuriedCacheEntry (size_t index)
+{
+	if (RT_CacheGenerationStale (rt_dtal_buried_cache.generation, rt_dtal_buried_generation))
+	{
+		memset (rt_dtal_buried_cache.entries, 0, sizeof (rt_dtal_buried_cache.entries));
+		rt_dtal_buried_cache.generation = rt_dtal_buried_generation;
+	}
+
+	return &rt_dtal_buried_cache.entries[index];
+}
+
 static void RT_BuriedCacheReset (void)
 {
-	memset (rt_dtal_buried_cache, 0, sizeof (rt_dtal_buried_cache));
+	rt_dtal_buried_generation++;
+
+	if (rt_dtal_buried_generation == 0)
+		rt_dtal_buried_generation = 1;
+
 	Atomic_StoreUInt32 (&rt_buried_traces, 0);
 	Atomic_StoreUInt32 (&rt_buried_hits, 0);
 	Atomic_StoreUInt32 (&rt_buried_model_traces, 0);
@@ -1836,7 +1877,7 @@ static unsigned int RT_BuriedHash (const float *center, const float *normal, flo
 static qboolean RT_LightBuried (vec3_t center, const float *normal, float clearance, qboolean *traced)
 {
 	vec3_t                  n = {normal[0], normal[1], normal[2]};
-	rt_dtal_buried_entry_t *entry = &rt_dtal_buried_cache[RT_BuriedHash (center, n, clearance)];
+	rt_dtal_buried_entry_t *entry = RT_BuriedCacheEntry (RT_BuriedHash (center, n, clearance));
 
 	if (entry->clearance == clearance && VectorCompare (entry->center, center) && VectorCompare (entry->normal, n))
 	{
@@ -4278,7 +4319,11 @@ static void RT_CollectWorldEmissiveLightsAndBuild (void)
 	rt_wldlights_style_accepted_dirty = true;
 
 	memset (&rt_emis_stats, 0, sizeof (rt_emis_stats));
+
+	RT_EmisSkipLock ();
 	rt_emis_skip_num = 0;
+	RT_EmisSkipUnlock ();
+
 	RT_EmisWatchFrameEnd ();
 
 	RT_DtalGroups_BeginCollect ();
@@ -4312,7 +4357,7 @@ static THREAD_LOCAL rt_brushcluster_cache_t rt_brushcluster_cache;
 
 static rt_brushcluster_cacheentry_t *RT_BrushClusterCacheEntry (size_t index)
 {
-	if (rt_brushcluster_cache.generation != rt_brushcluster_cache_generation)
+	if (RT_CacheGenerationStale (rt_brushcluster_cache.generation, rt_brushcluster_cache_generation))
 	{
 		memset (rt_brushcluster_cache.entries, 0, sizeof (rt_brushcluster_cache.entries));
 		rt_brushcluster_cache.generation = rt_brushcluster_cache_generation;
@@ -6385,10 +6430,22 @@ void RT_PrintEmissiveStats (void)
 			"raise MAX_WORLDLIGHTS_COUNT or reduce emissive surfaces\n",
 			rt_wldlights_emissive_count, MAX_WORLDLIGHTS_COUNT, rt_emis_stats.static_dropped);
 
-	for (int i = 0; i < rt_emis_skip_num; i++)
-		RT_LightReportPrint ("  skipped %-16s x%-5i (%s)\n", rt_emis_skip_texture[i], rt_emis_skip_count[i], rt_emis_skip_reason[i]);
+	char skipTexture[RT_EMIS_SKIP_NAMES][32];
+	char skipReason[RT_EMIS_SKIP_NAMES][24];
+	int  skipCount[RT_EMIS_SKIP_NAMES];
+	int  skipNum;
 
-	if (rt_emis_skip_num >= RT_EMIS_SKIP_NAMES)
+	RT_EmisSkipLock ();
+	skipNum = rt_emis_skip_num;
+	memcpy (skipTexture, rt_emis_skip_texture, sizeof (skipTexture));
+	memcpy (skipReason, rt_emis_skip_reason, sizeof (skipReason));
+	memcpy (skipCount, rt_emis_skip_count, sizeof (skipCount));
+	RT_EmisSkipUnlock ();
+
+	for (int i = 0; i < skipNum; i++)
+		RT_LightReportPrint ("  skipped %-16s x%-5i (%s)\n", skipTexture[i], skipCount[i], skipReason[i]);
+
+	if (skipNum >= RT_EMIS_SKIP_NAMES)
 		RT_LightReportPrint ("  ... more rejected textures not listed\n");
 
 	for (int i = 0; i < rt_emis_watch_num; i++)

@@ -228,10 +228,23 @@ End-task review fixes (branch `perf/render-tasks` on top of `f9711ea7`: the end 
 `_Host_Frame` before `Cbuf_Execute`, its draw-frame cost and renderer stats are merged into the
 sample of its own frame by serial, the brush caches are per-thread and the bench report releases
 the profiler lock before I/O). Same-binary fresh-spawn pair (Balanced): 22.3 FPS / mean 44.78 ms
-serial vs 26.8 / 37.26 ms tasks; the tasks capture attributes `qrDrawFrame` to 225/225 frames
-(avg 9.32 ms) and the serial control to 188/188 (7.10 ms), `dropped=0` in both, focus verified.
-Captures: `audit-pe-final-serial-20261009-155044-a78f40`,
+serial vs 26.8 / 37.26 ms tasks; the tasks
+capture attributes `qrDrawFrame` to 225/225 frames (avg 9.32 ms) and the serial control to 188/188
+(7.10 ms), `dropped=0` in both, focus verified. Captures:
+`audit-pe-final-serial-20261009-155044-a78f40`,
 `audit-pe-final-tasks-20261009-155024-c7fec8`.
+
+Second review round (same branch, exe `B7C69FA8…`): the end task is joined in `_Host_Frame` before
+the frame handles any input (key events and the menus mutate render cvars outside `Cbuf_Execute`),
+the profiler window waits for every frame it covers, the brush and buried-answer caches are
+per-thread and the bench report hands the run to exactly one caller. Same-binary fresh-spawn pair
+(Balanced): 21.7 FPS / mean 46.07 ms serial vs 28.0 / 35.66 ms tasks; both captures attribute
+`qrDrawFrame` to every frame (236/236 tasks, avg 8.95 ms; 182/182 serial, avg 7.39 ms), `dropped=0`,
+focus verified. A control with `rt_end_task_delay_ms 30` (tasks) adds the delay to the frame
+(65.61 ms) and completes with the same attribution (129/129, avg 8.96 ms) — the boundary check: the
+input phase asserts the end task is not running. Captures:
+`audit-review2-serial-20261009-162730-c3684b`, `audit-review2-tasks-20261009-162707-796c38`,
+`audit-review2-delay-20261009-162751-72fc90`.
 
 ## Current CPU priorities
 

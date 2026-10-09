@@ -39,7 +39,7 @@ pumping extra audio updates.
 | `prev_end_rendering_task -> begin_rendering_task` | a new frame never reuses swapchain/frame state before the previous frame's end task finished |
 | `begin_rendering_task -> setup_frame_task`, `setup_frame_task -> before_mark`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: fence/acquire, scene collector reset, light-registry frame preparation) happens before the setup pass, and the setup pass before everything that reads it |
 | `before_mark -> prepare_mark -> mark_surfaces`, then `mark_surfaces -> store_efrags` and `mark_surfaces -> cull_surfaces -> chain_surfaces` | the efrag store and the visibility chain run after the view is set up |
-| `store_efrags -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task` | the producers that read the frame's dynamic light list run after the efrag pass filled it |
+| `store_efrags -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task` | the producers that draw the frame's visible-entity list run after the efrag pass added the entities to it |
 | `chain_surfaces -> draw_world_task` | the visibility output feeds the world task |
 | `cull_surfaces -> update_lightmaps_task`, `draw_world_task -> update_lightmaps_task` | the lightmap updates run after the world surfaces are culled and drawn |
 | `draw_world_task -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task`, `-> draw_particles_task` | every dynamic uploader runs after the world task closed the static-geometry window (see below) |
@@ -60,10 +60,13 @@ world task.
 main thread joins `draw_done` inside `SCR_UpdateScreen`, then continues into the host tail while the
 end task still runs. The task reads frame inputs that only the main thread owns (cvars, `cl.time`,
 `cl.items`, `cl.stats`, the editor flags), so `_Host_Frame` joins it with
-`GL_SynchronizeEndRenderingTask()` before the next command phase (`Cbuf_Execute`) can mutate any of
-them. Do not move that join later without moving those reads into a frame-owned snapshot. The
+`GL_SynchronizeEndRenderingTask()` before the frame handles input: key events, the menus and
+`Cbuf_Execute` all mutate render state on paths outside the command buffer, and the join has to
+precede all of them. Do not move that join later without moving those reads into a frame-owned
+snapshot. Debug builds check the boundary: the end task raises `rt_end_task_running` and the input
+phase asserts it is clear, and `rt_end_task_delay_ms` stretches the task to exercise the check. The
 task's profiler results carry a frame serial and are merged into the sample of their own frame
-(`RT_Prof_EndTaskRecord`), never into whatever frame happens to accumulate when it finishes.
+(`RT_Prof_EndTaskRecord`); a window is published only once every frame it covers has reported.
 
 ## Worker rules
 
@@ -76,8 +79,9 @@ The contract for work added to the graph:
   exception, kept in order by its own boundary (see above); do not extend a task past the join.
 - Call renderer `qr*` entry points only through the synchronized ones listed below, and follow the
   static-geometry window rule for uploads.
-- Touch profiler/bench state only through the locked helpers (`RT_Prof_*`); the cluster counters are
-  `atomic_uint32_t`.
+- Touch profiler/bench state only through the locked helpers (`RT_Prof_*`); the cluster statistics
+  are written by the cluster upload in the viewmodel task and read on the main thread only after
+  the frame's join.
 - Engine memory (`Mem_*`) and `Con_*` output are thread-safe (mimalloc, the console lock), and a few
   single-threaded channels (map load, one-time warnings) use them from workers; do not allocate or
   print per object on a parallel path.

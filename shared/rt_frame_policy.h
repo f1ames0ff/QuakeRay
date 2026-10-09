@@ -21,4 +21,23 @@ static inline int RT_EndFrameConsumesEarlyResult(unsigned frameSerial, unsigned 
     return frameSerial != 0 && frameSerial == finishedSerial;
 }
 
+static inline int RT_CacheGenerationStale(unsigned threadGeneration, unsigned globalGeneration)
+{
+    return threadGeneration != globalGeneration;
+}
+
+static inline int RT_ProfWindowPublishes(int pendingEndResults)
+{
+    return pendingEndResults <= 0;
+}
+
+static inline int RT_ReportTakeRun(unsigned *active)
+{
+    if (!*active)
+        return 0;
+
+    *active = 0;
+    return 1;
+}
+
 #endif
