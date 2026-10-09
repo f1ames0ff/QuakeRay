@@ -148,6 +148,12 @@ endif()
 
 option(QR_BUILD_TESTS "Build headless renderer GPU regression tests" OFF)
 if(QR_BUILD_TESTS)
+    add_executable(qray_swapchain_policy Tests/SwapchainPolicyTests.cpp)
+    target_compile_features(qray_swapchain_policy PRIVATE cxx_std_20)
+    target_include_directories(qray_swapchain_policy PRIVATE Source ${Vulkan_INCLUDE_DIRS})
+    add_test(NAME qray_swapchain_policy COMMAND qray_swapchain_policy)
+    set_tests_properties(qray_swapchain_policy PROPERTIES TIMEOUT 30)
+
     get_filename_component(QR_VULKAN_BIN "${Vulkan_GLSLC_EXECUTABLE}" DIRECTORY)
     find_program(QR_DXC NAMES dxc HINTS "${QR_VULKAN_BIN}" REQUIRED)
     set(QR_PROBE_DIR "${CMAKE_CURRENT_BINARY_DIR}/Tests")
