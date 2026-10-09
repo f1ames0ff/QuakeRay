@@ -189,11 +189,11 @@ bind F4 "rt_bench start; $startDump echo QR_START_$id"
 bind F5 "rt_bench stop; $endDump echo QR_STOP_$id"
 bind F6 "screenshot"
 bind F7 "mapname; vid_describecurrentmode; echo QR_EFFECTIVE_$id"
+bind F8 "restart; echo QR_RESTART_$id"
+bind F9 "load $save; echo QR_RELOAD_$id"
 bind F11 "toggleconsole; quit"
 load $save
-restart
-load $save
-echo QR_LOADED_$id
+echo QR_LOADED0_$id
 "@
                 $fixtureText | Set-Content $fixture -Encoding Ascii
                 Copy-Item $fixture (Join-Path $output "$label.cfg")
@@ -218,7 +218,7 @@ echo QR_LOADED_$id
                     if (-not $script:RunDeadline) { $script:RunDeadline = (Get-Date).AddSeconds($MaxRunSeconds) }
                     $process = Start-Process @launch
                     $null = $process.Handle
-                    Wait-Marker $process "QR_LOADED_$id"
+                    Wait-Marker $process "QR_LOADED0_$id"
                     $process.Refresh()
                     $window = $process.MainWindowHandle
                     if ($window -eq [IntPtr]::Zero) { throw 'No runtime window' }
@@ -229,6 +229,18 @@ echo QR_LOADED_$id
                         break
                     }
                     [StressWin32]::SetForegroundWindow($window) | Out-Null
+                    Start-Sleep -Seconds 2
+                    Send-Key $window 0x77 0x42
+                    Wait-Marker $process "QR_RESTART_$id"
+                    Start-Sleep -Seconds 2
+                    Send-Key $window 0x79 0x43
+                    Wait-Marker $process "QR_RELOAD_$id"
+                    if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
+                        Write-Host 'The restart sequence consumed the capture budget; this attempt is deferred.'
+                        Send-Key $window 0x7a 0x57
+                        $null = $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))
+                        break
+                    }
                     Send-Key $window 0x1B 0x01
                     Start-Sleep -Seconds $Warmup
                     Send-Key $window 0x76 0x41
