@@ -189,6 +189,8 @@ bind F4 "rt_bench start; $startDump echo QR_START_$id"
 bind F5 "rt_bench stop; $endDump echo QR_STOP_$id"
 bind F6 "screenshot"
 bind F7 "mapname; vid_describecurrentmode; echo QR_EFFECTIVE_$id"
+bind F8 "restart; echo QR_RESTARTED_$id"
+bind F9 "load $save; echo QR_RELOADED_$id"
 bind F11 "toggleconsole; quit"
 load $save
 echo QR_LOADED_$id
@@ -229,10 +231,24 @@ echo QR_LOADED_$id
                     [StressWin32]::SetForegroundWindow($window) | Out-Null
                     Wait-Marker $process 'demo(s) in loop'
                     Start-Sleep -Milliseconds 500
+                    [StressWin32]::SetForegroundWindow($window) | Out-Null
                     Send-Key $window 0x1B 0x01
+                    Wait-Marker $process 'acceleration structures'
+                    Start-Sleep -Milliseconds 300
+                    Send-Key $window 0x77 0x42
+                    Wait-Marker $process "QR_RESTARTED_$id"
+                    Start-Sleep -Seconds 1
+                    Send-Key $window 0x78 0x43
+                    Wait-Marker $process "QR_RELOADED_$id"
+                    Start-Sleep -Seconds 1
                     Start-Sleep -Seconds $Warmup
                     Send-Key $window 0x76 0x41
                     Wait-Marker $process "QR_EFFECTIVE_$id"
+                    for ($focusTry = 0; $focusTry -lt 10; $focusTry++) {
+                        if ([StressWin32]::OwnsFocus($process.Id)) { break }
+                        [StressWin32]::SetForegroundWindow($window) | Out-Null
+                        Start-Sleep -Milliseconds 300
+                    }
                     if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Runtime lacks foreground focus; refusing a contaminated measurement.' }
                     Send-Key $window 0x73 0x3e
                     Wait-Marker $process "QR_START_$id"
