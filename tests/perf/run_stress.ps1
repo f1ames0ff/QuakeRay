@@ -237,10 +237,14 @@ echo QR_LOADED_$id
                     Start-Sleep -Milliseconds 300
                     Send-Key $window 0x77 0x42
                     Wait-Marker $process "QR_RESTARTED_$id"
-                    Start-Sleep -Seconds 1
+                    Start-Sleep -Milliseconds 800
+                    Send-Key $window 0x1B 0x01
+                    Start-Sleep -Milliseconds 300
                     Send-Key $window 0x78 0x43
                     Wait-Marker $process "QR_RELOADED_$id"
-                    Start-Sleep -Seconds 1
+                    Start-Sleep -Milliseconds 800
+                    Send-Key $window 0x1B 0x01
+                    Start-Sleep -Milliseconds 300
                     Start-Sleep -Seconds $Warmup
                     Send-Key $window 0x76 0x41
                     Wait-Marker $process "QR_EFFECTIVE_$id"
@@ -261,9 +265,17 @@ echo QR_LOADED_$id
                     }
                     $deadline = Get-StressDeadline -Deadline $script:RunDeadline.AddSeconds(-$shutdownReserve) -MaximumSeconds $Seconds
                     $nextOwnerCheck = Get-Date
+                    $focusLostSince = $null
                     while ((Get-Date) -lt $deadline) {
                         if (Test-QuakeRayStopRequested) { break }
-                        if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Focus was lost during capture.' }
+                        if (-not [StressWin32]::OwnsFocus($process.Id)) {
+                            if ($null -eq $focusLostSince) { $focusLostSince = Get-Date }
+                            [StressWin32]::SetForegroundWindow($window) | Out-Null
+                            if (((Get-Date) - $focusLostSince).TotalSeconds -gt 3) { throw 'Focus was lost during capture.' }
+                        }
+                        else {
+                            $focusLostSince = $null
+                        }
                         if ((Get-Date) -ge $nextOwnerCheck) {
                             $foreign = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
                                 $_.Id -ne $process.Id -and $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)'
