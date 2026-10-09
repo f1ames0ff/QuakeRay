@@ -80,3 +80,46 @@ Round-4 level — inside the build path (single runs):
 The build-recording floor (the largest share) is the animated-geometry cost unless the per-geometry records are restructured; that exceeds stage 5's reuse scope. If the paired candidate runs cannot separate the candidate from the noise band, the plan falls back to stage 6 (brush styles).
 
 Next: implement the candidate on a `perf/` branch from the same base with identical instrumentation on control and candidate, paired Bogbottom + Fuma runs, and decide per evidence.
+
+## Stage 5 candidates: descriptor-buffer reuse and BLAS capacity reuse (2026-10-09)
+
+Branch `perf/rhi-dyn-blas-reuse`, rebased onto `origin/refactor/dtal-cluster-dedup` @ `600a9278`. Method per the agreed protocol: temporary diagnostics, no public schema/CMake/threading changes. The binding fix `99eb7fb6` adds `steady_ms` and `bench_active` to the diagnostic CSV; the analysis selects the exact `rt_bench` window (the contiguous `bench_active` run) and accepts it only with count == samples == frames, `dropped=0`, `ui_only=0` and per-frame agreement of `total_ms` with the engine's `cpu.draw.RHI_setup_ms` (|Δ| ≈ 0.002 ms mean, ≤ 0.043 ms max across all runs). The runner flow fix `c4557972` (dismiss the menu after each load) sits below both arms: the single dismissal sent immediately after the QR_RELOAD marker was swallowed by the loading screen and the main menu stayed open for the whole capture (two rejected Bogbottom captures with `key_game=0` in every frame; the screenshot shows the main menu).
+
+All runs: one frozen asset pack (`E6A6AFD5…`), 8 s warmup + 6 s capture, Balanced, one save per invocation, machine guard, arms alternating within pairs. Executable hashes: binding-only control `34EEB9D6…` (`99eb7fb6`), descriptor reuse `93DA90F5…` (`b58abacf`), strict capacity reuse `42274498…` (`4c8121f6`), relaxed capacity reuse `E472945D…` (`5b89b25a`). The rebased arm commits differ from the pre-rebase ones only in `tests/perf/run_stress.ps1` (`git diff` verified), so the compiled sources are identical.
+
+### Candidate 1 — descriptor storage reuse (`b58abacf`) — accepted
+
+The per-entry descriptor vector is refilled in place and the shape scratch persists instead of two per-filter allocations per frame. 2+2 per scenario, alternating order:
+
+| metric, ms | Bog control | Bog cand. | Δ | Fuma control | Fuma cand. | Δ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| outer RHI setup | 4.218 | 4.110 | **−0.107** | 3.179 | 3.131 | **−0.048** |
+| `dyn_descs_ms` | 1.389 | 1.301 | −0.088 | 0.754 | 0.717 | −0.037 |
+| `dyn_build_ms` | 2.633 | 2.636 | +0.002 | 2.027 | 2.012 | −0.015 |
+
+Both per-pair differences are negative on both scenarios (Bog −0.103/−0.111; Fuma −0.029/−0.066); the within-arm repeat spreads are an order of magnitude smaller.
+
+### Candidate 2 (strict) — capacity reuse with equal geometry count (`4c8121f6`) — rejected
+
+The handle was kept while the current shape fit the create-time envelope with the same geometry count. 3+3 per scenario: recreations did not move (Bog 0.541→0.559 per frame; Fuma 1.331→1.317), outer deltas stayed inside the control spreads (−0.045 Bog, +0.024 Fuma). The same-count envelope reuses nothing in this workload.
+
+### Candidate 2b — capacity reuse, geometry count may shrink (`5b89b25a`) — accepted
+
+`vkGetAccelerationStructureBuildSizesKHR` guarantees the create-time size for any build whose `geometryCount` is at most the queried count (with the per-index bounds unchanged), so dropping trailing geometries is a spec-safe reuse; only a count increase or a per-geometry bound increase recreates. 3+3 per scenario:
+
+| metric | Bog control | Bog cand. | Δ | Fuma control | Fuma cand. | Δ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| outer RHI setup, ms | 4.161 | 4.172 | +0.011 | 3.103 | 2.559 | **−0.544** |
+| recreations / frame | 0.514 | 0.450 | −0.064 | 1.262 | 0.336 | −0.925 |
+| `dyn_create_ms` | 0.150 | 0.128 | −0.022 | 0.759 | 0.210 | −0.549 |
+| `dyn_build_ms` | 2.628 | 2.653 | +0.025 | 1.977 | 1.449 | −0.528 |
+| `dyn_descs_ms` | 1.346 | 1.336 | −0.010 | 0.726 | 0.709 | −0.017 |
+| `dyn_record_ms` | 2.457 | 2.471 | +0.014 | 1.202 | 1.209 | +0.007 |
+
+Fuma per-run outers: control 3.118/3.114/3.078 vs candidate 2.503/2.517/2.657 — complete separation (0.42 ms gap); spreads 0.040/0.154. Bog is neutral on the bracket (Δ inside the spread) while the mechanism still moves down (~12 % fewer recreations); no bucket regresses beyond noise. On Fuma the gained time equals the removed create path (Δcreate ≈ Δouter).
+
+Safety: the predicate uses the spec's per-build properties (equal type/flags, per-index primitive-count and maxVertex maxima, equal vertex format, index type, stride and transform presence, `geometryCount` ≤). Geometry flags, vertex format and build flags are invariants of the filter key, `MakeGeometryDesc` and the module constants. An independent review confirmed the guarantee and the NVRHI paths: the create-time size query (`vulkan-raytracing.cpp:341-402`) and the build-time re-query with a skip on insufficiency (`:839-851`), so a predicate error degrades to a skipped build, never to an out-of-bounds write. Runtime checks: no NVRHI size errors in any candidate capture, `6/6 dynamic BLAS` built every time, screenshots render.
+
+Scope and limits: Debug builds only; two scenarios (Bogbottom/AD swampy, Fuma/id1); 6 s captures at ~25–36 FPS; the accepted functional delta is `b58abacf` + `5b89b25a` on top of the shared base, with `c4557972` as the runner fix worth keeping (the binding/instrumentation commits are temporary diagnostics). Raw evidence: `build/Debug/audit-stage5c-*` (manifests with revision/executable/asset hashes, `frames.csv`, `rhi_setup_diag.csv`, screenshots, console logs).
+
+Conclusion: both separable mechanisms were measured. Descriptor churn removal is a small win (−0.11 ms Bog / −0.05 ms Fuma); handle recreation on geometry-count shrink is a large win on Fuma (−0.54 ms, −17.5 % of the bracket) and neutral on Bog. The build-recording floor (~2.5 / ~1.2 ms) remains the animated-geometry cost outside this reuse scope, as the decomposition predicted.
