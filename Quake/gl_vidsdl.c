@@ -625,6 +625,7 @@ static void RT_Prof_RecordRenderer (void)
 	if (qrGetFrameStatsEx (vulkan_globals.instance, &stats) != QR_SUCCESS || !stats.cpuTimingValid)
 		return;
 
+	RT_Prof_Lock ();
 	if (rt_bench_active)
 		rt_bench_renderer_stats = stats;
 
@@ -635,6 +636,7 @@ static void RT_Prof_RecordRenderer (void)
 		if (stats.cpuPassMs[i] > rt_renderer_cpu_max[i])
 			rt_renderer_cpu_max[i] = stats.cpuPassMs[i];
 	}
+	RT_Prof_Unlock ();
 }
 
 void RT_Prof_Update (void)

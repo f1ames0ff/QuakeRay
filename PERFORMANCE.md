@@ -167,7 +167,8 @@ reload (F9, `QR_RELOAD`), and only then dismisses the menu and proceeds. An imme
 same command block did not cure the intermittent partial-load bug: the map must be loaded before the
 restart, so the waits are real wall time, not frames. Historical variants: in-block sequence
 (`audit-pose-gate-0313d-…`, 25.6 FPS / mean 39.07) and restart without reload (22.3 / 44.93).
-Staged-sequence captures: `audit-seq-check-serial-…` and `audit-render-tasks-fix2/3-…`.
+Staged-sequence captures: `audit-seq-check-serial-20261009-141242-bc8451`,
+`audit-render-tasks-fix2-20261009-141316-215209`, `audit-render-tasks-fix3-20261009-141434-2389f2`.
 
 Clean set on the load → restart → load runner (synced saves, exe `01852035…`, revision `92c79365`,
 balanced preset, 8 s warmup + 6 s capture):
@@ -190,10 +191,12 @@ same-binary runs with the staged sequence:
 
 `cpu.wait_ms` is nonzero only under tasks (the main thread's join wait); per-slot sums accumulate
 worker wall times across parallel tasks and can exceed the frame interval, so do not compare `ents`
-totals across modes. The first fix attempts died with `0xC0000374`; the recorded runs completed
-without corruption after the frame-start ordering edges, thread-local scratches and the geometry
-upload mutex landed. Coverage limits: Debug, one repeat per scenario (two for Bogbottom); the WER
-crash dump was not analyzed; the black-world workaround is the staged restart, not the task graph.
+totals across modes. The only recorded tasks-on crash is `audit-render-tasks-diag2-…` (`0xC0000374`);
+after the frame-start ordering edges, thread-local scratches, the geometry-upload mutex and the
+profiler/light-registry lock coverage landed, the recorded runs completed without corruption.
+Coverage limits: Debug, one repeat per scenario (two for Bogbottom); the WER crash dump was not
+analyzed; the serial path's added uncontended lock cost is unmeasured; the black-world workaround is
+the staged restart, not the task graph.
 
 ## Current CPU priorities
 

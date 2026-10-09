@@ -350,6 +350,7 @@ qray::LightManager::~LightManager()
 
 void qray::LightManager::PrepareForFrame(VkCommandBuffer cmd, uint32_t frameIndex)
 {
+    std::lock_guard<std::mutex> registryLock(registryMutex);
     regLightCount_Prev = regLightCount;
     dirLightCount_Prev = dirLightCount;
 
@@ -382,6 +383,7 @@ void qray::LightManager::PrepareForFrame(VkCommandBuffer cmd, uint32_t frameInde
 
 void qray::LightManager::Reset()
 {
+    std::lock_guard<std::mutex> registryLock(registryMutex);
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         const uint32_t arrayEnd = std::max(GetLightArrayEnd(regLightCount, dirLightCount),
