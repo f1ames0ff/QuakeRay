@@ -4,7 +4,11 @@ Start here to locate code, not to learn the engine from scratch. Read [PERFORMAN
 
 **Verified source snapshot:** `7a14d0fe`, 2026-10-08. This snapshot includes entity profiling, exact brush-transform reuse and SIMD bounds; it is not an assertion about master or another worktree. Function names are the durable lookup keys; `#L` links identify their locations at this snapshot. Recheck a changed function and its immediate caller/callee, not the entire repository.
 
-Prefer scoped IDE/MCP symbol lookup when available: pass this worktree as `projectPath` and restrict `paths` to the mapped files. Confirm returned locations against the current source; do not assume an optional call-graph tool exists or that another open project's index describes this branch.
+Engine MCP use is mandatory for all agents under [AGENTS.md](AGENTS.md#mandatory-engine-mcp-workflow).
+Start with `quakeray.server_status`, then use scoped `find_symbol` (`query`, `file`) and the available
+reference/call tools. Confirm source identities and returned locations against this worktree; retain
+diagnostics and partial coverage. File/IDE inspection supplements these tools only where coverage is
+missing, with an explicit fallback reason. Do not assume another open project's index describes this branch.
 
 ## Task routing
 

@@ -4,8 +4,20 @@ How QuakeRay runs the CPU part of a frame on worker threads, and the rules for b
 Read [ARCHITECTURE.md](../ARCHITECTURE.md) first for subsystem routes; measured numbers live in
 [PERFORMANCE.md](../PERFORMANCE.md).
 
+All agents must follow the [mandatory engine-MCP workflow](../AGENTS.md#mandatory-engine-mcp-workflow).
+Use the engine MCP to establish the current source, implicated callers/callees and retained evidence
+before adapting a producer; document any unavailable tooling or incomplete coverage.
+
 ## Status and scope
 
+- This is a reusable **CPU task-graph multithreading platform**: the existing worker pool and
+  scalar/indexed task API are integrated with render producers, dependency ordering, data-ownership
+  rules, synchronized upload channels and frame-aware profiling. Other CPU work can reuse it only
+  after satisfying the same ownership and join contract.
+- It is not a claim that the whole engine is parallelized or that arbitrary code is worker-safe.
+  Input, command execution and server/client simulation remain on the main-thread host path.
+  Backend recording/submission is still an ordered end-frame operation; this platform does not
+  authorize concurrent NVRHI command-list recording or bypass existing renderer locks.
 - The render frame runs as a dependency graph of tasks when `r_tasks 1` — the switch is the
   `use_tasks` condition in [SCR_UpdateScreen](../Quake/gl_screen.c#L1162); `r_tasks` defaults to
   `0` until the broader stability validation flips it.
@@ -20,11 +32,13 @@ function tasks, indexed tasks (each index claimed exactly once), and dependencie
 submitted tasks. When adding work:
 
 - allocate with `Task_AllocateAndAssignFunc` or `Task_AllocateAndAssignIndexedFunc` (the payload is
-  copied; keep it small and do not put pointers to stack locals in it);
+  copied and limited to 32 bytes; pointed-to buffers are not copied and must outlive their consumers);
 - add every dependency **before** the task is submitted — `Task_AddDependency` is epoch-checked and
   silently drops an edge to an already-finished task, which can hide a missing order;
 - keep the dependents of any one task (its fan-out; `num_dependents` in `Task_AddDependency`)
-  below `MAX_DEPENDENT_TASKS` (16);
+  at no more than `MAX_DEPENDENT_TASKS` (16);
+- keep the graph bounded: task storage/queues are fixed-size, so do not allocate an unbounded task
+  per object before submission; partition long lists with indexed work instead;
 - submit each task once, and join from a non-worker thread (`Task_Join`, typically with
   `SDL_MUTEX_MAXWAIT`; `Tasks_IsWorker()` tells the caller whether it may be a worker).
 
@@ -93,9 +107,10 @@ The contract for work added to the graph:
 - Touch profiler/bench state only through the locked helpers (`RT_Prof_*`); the cluster statistics
   are written by the cluster upload in the viewmodel task and read on the main thread only after
   the frame's join.
-- Engine memory (`Mem_*`) and `Con_*` output are thread-safe (mimalloc, the console lock), and a few
-  single-threaded channels (map load, one-time warnings) use them from workers; do not allocate or
-  print per object on a parallel path.
+- `Mem_*` uses mimalloc, but allocator thread safety does not make its owner/container safe.
+  Audit allocation, publication, reallocation and freeing together; do not assume hunk/zone helpers
+  are interchangeable worker allocators. The console's buffer lock likewise does not authorize
+  arbitrary worker-side command, cvar, UI or logging mutations. Avoid per-object allocation/printing.
 
 The graph currently relies on:
 
@@ -123,7 +138,50 @@ The graph currently relies on:
   `R_RenderView`, workers only read it.
 
 When you add a producer that runs on a worker, ensure its shared writer/reader pairs are ordered by
-a dependency edge or protected by a lock, and keep `r_tasks 0` byte-compatible with `r_tasks 1`.
+a dependency edge or protected by a lock. Preserve scene content, stable IDs, transforms, material
+flags and renderer semantics in both task and serial modes; parallel submission order need not be
+byte-identical, and FPS alone does not establish visual equivalence.
+
+## Agent checklist: adapting an existing solution
+
+Apply this to optimizations and bug fixes as well as new tasks. A solution that works only in the
+serial branch is not ready for integration.
+
+1. **Locate and measure.** Use MCP to identify the producer, its caller/callee and consumers.
+   Select the matching baseline from PERFORMANCE.md and verify binary/assets/settings identity.
+   Do not move work to threads merely because it looks expensive; measure the critical path.
+2. **Write the ownership map.** For every input, output and cache, identify its writer, readers,
+   execution phase and lifetime. Include function/file statics, lazy parsing, cache misses,
+   diagnostic tables, counters, map/material invalidation and teardown, not just the main loop.
+   Each shared writer/reader pair needs an ordering edge, a single owner or complete lock coverage.
+3. **Choose the execution model.** Keep pure preparation independent from renderer upload/commit
+   where possible. Use task-owned/per-index outputs or thread-local scratch. Distinct indexed
+   slices must not mutate the same model/cache entry without protection. Thread-local caches need
+   reset generations; shared caches need protected lookup, computation/publication and invalidation.
+   Do not create a separate worker pool or parallel backend recording path without a design review.
+4. **Wire both paths.** Put the shared kernel in the appropriate existing producer, or wire the new
+   producer into both branches of `R_RenderView`. Register dependencies before submission. Require
+   setup/visibility/entity-list readiness for the data read; require `draw_world_task` completion
+   before dynamic uploads. Join outputs before GUI/viewmodel/end-frame consumers read them, and
+   include new frame work in the `draw_done_task` boundary. Some visibility handles alias each other
+   outside parallel-mark mode; do not assume they always name distinct tasks or add self-edges.
+5. **Respect frame lifetime.** A copied payload does not extend pointed-to stack or temporary data.
+   Do not let work outlive the frame's join unless it has an explicit frame-owned snapshot and
+   synchronization contract. Keep the end-task join before input, menus and commands. Map changes,
+   resource rebuilding and freeing must wait for the tasks that still reference the old generation.
+   Do not join from a worker or call main-thread device-idle helpers there.
+6. **Preserve instrumentation.** Use `RT_Prof_*` and the shared window component, not direct writes
+   or a new ad hoc pending counter. Result data and completion acknowledgement are one locked
+   transaction; enable/reset precedes submission. Compare interval/FPS between modes, not summed
+   worker slot times. Update ARCHITECTURE.md/PERFORMANCE.md when boundaries or counters change.
+7. **Verify the final revision.** Build through `build_win.ps1 Debug -Tests`, run the relevant tests,
+   and compare the same binary with `r_tasks 0` and `r_tasks 1`. Check visual/scene correctness as
+   well as timing. Exercise applicable collisions, capacity limits, invalidation, map transitions,
+   cold enable/disable and early/late completion. Test the production kernel/state machine with
+   real payloads and controlled interleavings, not only predicates or manually simulated counters.
+8. **Hand off evidence.** Record source/binary identity, MCP inspections and gaps, the ownership map,
+   new DAG edges, tests and capture identities. Separate observed gains from hypotheses; state
+   untested cases and keep `r_tasks` opt-in until broader validation explicitly authorizes a change.
 
 ## Measurement
 

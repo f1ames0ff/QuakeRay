@@ -8,6 +8,10 @@ QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, wi
 
 Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.md) · [Performance evidence](PERFORMANCE.md) · [Multithreading](docs/multithreading.md).
 
+Agents must use the **QuakeRay engine MCP** as their primary inspection/evidence interface and follow
+the [mandatory workflow](AGENTS.md#mandatory-engine-mcp-workflow), including explicit reporting of
+unavailable tools or coverage gaps.
+
 ## Features
 
 ### Lighting and editing
@@ -36,7 +40,7 @@ Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.m
 - **Soft, lit smoke trails** for rockets, grenades and lava balls, with a classic smoke option.
 - **Smooth or classic texture filtering**, and a choice of particle styles.
 - **FSR 3.1 upscaling** to improve performance, plus adjustable lighting, cloud and reflection quality.
-- **CPU multithreading** for the render frame: the scene producers (visibility, world, entities, sky, particles, viewmodel) run as a dependency graph on worker threads, cutting up to about a third of the CPU frame time on the CPU-bound scenes we measure. Off by default while it is being validated — set `r_tasks 1` to enable it; see [docs/multithreading.md](docs/multithreading.md).
+- **CPU task-graph multithreading platform** — a reusable worker pool, scalar/indexed tasks, dependencies, synchronized upload channels and frame-aware profiling provide the foundation for adapting further CPU work. Render-scene producers already use it; this does not mean the whole engine or arbitrary existing code is worker-safe. Historical same-binary Debug A/B captures recorded FPS gains of around **40%** in selected CPU-bound scenes, not a guaranteed gain for every map or the final binary. Off by default during broader validation — set `r_tasks 1` to enable it. See the [agent adaptation checklist](docs/multithreading.md#agent-checklist-adapting-an-existing-solution) and [benchmark evidence](PERFORMANCE.md).
 - **Vsync options**, including adaptive vsync and a FreeSync mode.
 
 ### Game data and compatibility
