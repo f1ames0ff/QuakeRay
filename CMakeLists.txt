@@ -373,6 +373,7 @@ set(CORE_SOURCES
     Quake/sv_phys.c
     Quake/sv_user.c
     Quake/tasks.c
+    Quake/alias_pose_jobs.c
     Quake/view.c
     Quake/wad.c
     Quake/world.c
@@ -566,6 +567,25 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME gui_draw_tests COMMAND gui_draw_tests)
     set_tests_properties(gui_draw_tests PROPERTIES TIMEOUT 30)
+
+    add_executable(alias_pose_jobs_tests
+        tests/alias_pose_jobs_tests.c
+        Quake/alias_pose_jobs.c
+        Quake/tasks.c
+    )
+    target_include_directories(alias_pose_jobs_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/Quake
+        ${CMAKE_SOURCE_DIR}/shared
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+        ${SDL2_INCLUDE_DIR}
+    )
+    target_compile_definitions(alias_pose_jobs_tests PRIVATE QR_STATIC SDL_MAIN_HANDLED)
+    target_link_libraries(alias_pose_jobs_tests PRIVATE SDL2::SDL2)
+    if(MSVC)
+        target_compile_options(alias_pose_jobs_tests PRIVATE /W4 /wd4100)
+    endif()
+    add_test(NAME alias_pose_jobs_tests COMMAND alias_pose_jobs_tests)
+    set_tests_properties(alias_pose_jobs_tests PROPERTIES TIMEOUT 60)
 endif()
 
 # ============================================================================
