@@ -1,6 +1,7 @@
 # Repository entry point
 
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) first. Use its subsystem routes and real entry points instead of rediscovering the whole repository.
+- Build only through `.\build_win.ps1 Debug`: it prepares the MSVC environment, applies the pinned NVRHI patch and deploys the runtime assets. A bare `cmake --build build\Debug` in a shell without that environment fails with C1083 on standard headers and must not be used for builds or verification.
 - For profiling or optimization, then read [PERFORMANCE.md](PERFORMANCE.md), select the relevant capture and verify the current source/binary/settings before forming hypotheses.
 - Inspect the implicated caller, callee and ownership boundary first. Expand the search only when that route cannot answer the question.
 - The [QuakeRay MCP server](tools/quakeray_mcp/README.md) is registered as `quakeray` in `opencode.jsonc`. Prefer its available inspection tools/resources where they cover the task; otherwise use scoped source searches.
