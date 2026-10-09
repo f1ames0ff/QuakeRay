@@ -1149,6 +1149,8 @@ double g_rhiSetupDiagDynDescsMs = 0.0;
 double g_rhiSetupDiagDynBuildMs = 0.0;
 double g_rhiSetupDiagDynInstancesMs = 0.0;
 uint32_t g_rhiSetupDiagDynCreates = 0;
+double g_rhiSetupDiagDynCreateMs = 0.0;
+double g_rhiSetupDiagDynRecordMs = 0.0;
 
 namespace
 {
@@ -1170,6 +1172,8 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
     g_rhiSetupDiagDynBuildMs = 0.0;
     g_rhiSetupDiagDynInstancesMs = 0.0;
     g_rhiSetupDiagDynCreates = 0;
+    g_rhiSetupDiagDynCreateMs = 0.0;
+    g_rhiSetupDiagDynRecordMs = 0.0;
 
     std::chrono::steady_clock::time_point diagDynMark = std::chrono::steady_clock::now();
 
@@ -1339,6 +1343,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
             if (blas->handle == nullptr || blas->shape != shape)
             {
                 g_rhiSetupDiagDynCreates++;
+                const std::chrono::steady_clock::time_point diagCreateMark = std::chrono::steady_clock::now();
                 // Create from the very list this build uses, so the allocation covers the build
                 // (vulkan-raytracing.cpp:376-386 against :803-815). The replaced handle is not
                 // dropped while the queue may still read it - it goes through the frame context's
@@ -1364,13 +1369,22 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
                 blas->handle = std::move(handle);
                 blas->shape = std::move(shape);
+                {
+                    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+                    g_rhiSetupDiagDynCreateMs += RhiSetupDiagSpanMs(diagCreateMark, now);
+                }
             }
 
             blas->geometries = std::move(geometries);
             blas->active = true;
 
+            const std::chrono::steady_clock::time_point diagRecordMark = std::chrono::steady_clock::now();
             pCommandList->buildBottomLevelAccelStruct(blas->handle.Get(), blas->geometries.data(),
                                                       blas->geometries.size(), DYNAMIC_BLAS_BUILD_FLAGS);
+            {
+                const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+                g_rhiSetupDiagDynRecordMs += RhiSetupDiagSpanMs(diagRecordMark, now);
+            }
 
             dynamicBlasCount++;
             dynamicGeometryCount += uint32_t(blas->geometries.size());
