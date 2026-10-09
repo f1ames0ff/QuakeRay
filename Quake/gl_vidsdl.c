@@ -829,6 +829,7 @@ static void RT_Bench_WriteFrames (FILE *log, const char *demo)
 
 qboolean RT_Bench_Report (const char *demo)
 {
+	RT_Prof_Lock ();
 	char        path[MAX_OSPATH];
 	char        stamp[32];
 	time_t      now;
@@ -838,7 +839,10 @@ qboolean RT_Bench_Report (const char *demo)
 	const double seconds = rt_bench_frames > 0 ? (Sys_DoubleTime () - rt_bench_start_time) : 0.0;
 
 	if (!rt_bench_active)
+	{
+		RT_Prof_Unlock ();
 		return false;
+	}
 
 	/* A run that ended before a single frame was finished has nothing to report and no result
 	   to show; it is not a measurement of zero frames. */
@@ -846,6 +850,7 @@ qboolean RT_Bench_Report (const char *demo)
 	{
 		rt_bench_active = false;
 		rt_bench_result.valid = false;
+		RT_Prof_Unlock ();
 		return false;
 	}
 
@@ -880,6 +885,7 @@ qboolean RT_Bench_Report (const char *demo)
 	if (!f)
 	{
 		Con_Printf ("rt_bench: could not write %s\n", path);
+		RT_Prof_Unlock ();
 		return true; // the result itself is there, only the log file is not
 	}
 
@@ -984,6 +990,7 @@ qboolean RT_Bench_Report (const char *demo)
 	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
 		Con_Printf ("  host %-12s avg %.2f ms\n", hostPasses[i], rt_bench_host_sum[i] / hostFrames);
 
+	RT_Prof_Unlock ();
 	return true;
 }
 

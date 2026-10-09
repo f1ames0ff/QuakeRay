@@ -670,28 +670,32 @@ void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUplo
 
 void qray::LightManager::AddDirectionalLight(uint32_t frameIndex, const QrDirectionalLightUploadInfo &info)
 {
-    if (dirLightCount > 0)
     {
-        throw QrException(QR_WRONG_ARGUMENT, "Only one directional light is allowed");
+        std::lock_guard<std::mutex> registryLock(registryMutex);
+
+        if (dirLightCount > 0)
+        {
+            throw QrException(QR_WRONG_ARGUMENT, "Only one directional light is allowed");
+        }
+
+        if (IsColorTooDim(info.color.data) || info.angularDiameterDegrees < 0.0f)
+        {
+            return;
+        }
+
+        lastDirLightColor[0] = info.color.data[0];
+        lastDirLightColor[1] = info.color.data[1];
+        lastDirLightColor[2] = info.color.data[2];
+
+        float direction[3] = { info.direction.data[0], info.direction.data[1], info.direction.data[2] };
+        Utils::Normalize(direction);
+
+        lastDirLightDirection[0] = direction[0];
+        lastDirLightDirection[1] = direction[1];
+        lastDirLightDirection[2] = direction[2];
+
+        lastDirLightAngularRadius = GetAngularRadius(info.angularDiameterDegrees);
     }
-
-    if (IsColorTooDim(info.color.data) || info.angularDiameterDegrees < 0.0f)
-    {
-        return;
-    }
-
-    lastDirLightColor[0] = info.color.data[0];
-    lastDirLightColor[1] = info.color.data[1];
-    lastDirLightColor[2] = info.color.data[2];
-
-    float direction[3] = { info.direction.data[0], info.direction.data[1], info.direction.data[2] };
-    Utils::Normalize(direction);
-
-    lastDirLightDirection[0] = direction[0];
-    lastDirLightDirection[1] = direction[1];
-    lastDirLightDirection[2] = direction[2];
-
-    lastDirLightAngularRadius = GetAngularRadius(info.angularDiameterDegrees);
 
     AddLight(frameIndex, info.uniqueID, EncodeAsDirectionalLight(info));
 }
