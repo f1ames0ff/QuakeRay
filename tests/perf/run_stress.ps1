@@ -191,6 +191,7 @@ bind F6 "screenshot"
 bind F7 "mapname; vid_describecurrentmode; echo QR_EFFECTIVE_$id"
 bind F11 "toggleconsole; quit"
 load $save
+restart
 echo QR_LOADED_$id
 "@
                 $fixtureText | Set-Content $fixture -Encoding Ascii
