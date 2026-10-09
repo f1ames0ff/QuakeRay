@@ -6,7 +6,7 @@ QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, wi
 
 [Download](https://github.com/f1ames0ff/QuakeRay/releases) · [What's new](changelog.md) · [Report a problem](https://github.com/f1ames0ff/QuakeRay/issues)
 
-Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.md) · [Performance evidence](PERFORMANCE.md).
+Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.md) · [Performance evidence](PERFORMANCE.md) · [Multithreading](docs/multithreading.md).
 
 ## Features
 
@@ -36,6 +36,7 @@ Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.m
 - **Soft, lit smoke trails** for rockets, grenades and lava balls, with a classic smoke option.
 - **Smooth or classic texture filtering**, and a choice of particle styles.
 - **FSR 3.1 upscaling** to improve performance, plus adjustable lighting, cloud and reflection quality.
+- **CPU multithreading** for the render frame: the scene producers (visibility, world, entities, sky, particles, viewmodel) run as a dependency graph on worker threads, cutting up to about a third of the CPU frame time on the CPU-bound scenes we measure. Off by default while it is being validated — set `r_tasks 1` to enable it; see [docs/multithreading.md](docs/multithreading.md).
 - **Vsync options**, including adaptive vsync and a FreeSync mode.
 
 ### Game data and compatibility
