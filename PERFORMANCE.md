@@ -161,16 +161,13 @@ completed). The analyzer also rejects manual contamination: `audit-pose-gate-031
 was rejected because a typed console `restart` executed mid-capture and spawned a second map,
 resetting the measured state. Do not interact with the live window during a capture.
 
-Black-load workaround: the generated fixture loads the save, forces `restart`, then loads the save
-again, so the corrective restart runs before the final load and the measured scene stays the save's
-live state (a corrective task for the intermittent Bogbottom partial-load bug is separate). The
-Escape dismissal still runs after the load marker, because `restart` alone does not clear the main
-menu. Validation capture `build/Debug/audit-pose-gate-0313d-20261009-133058-a0baa2` (exe
-`01852035…`, synced save, 164 of 164 frames `key_game=1`, `client_time` 31.01 → 37.38, i.e. the
-save's time) reports 25.6 FPS, mean 39.07 ms, p95 40.02, `alias_pose` 2.28, `ents` 23.32,
-comparable to the save-state capture above. A restart without the second load changes the measured
-scene to a fresh map spawn (22.3 FPS, mean 44.93 in `audit-pose-gate-0313c-…`), so keep the
-load → restart → load sequence.
+Black-load workaround (staged sequence, `426d2e07`): the fixture loads the save once and marks
+`QR_LOADED0`; the runner waits 2 s, triggers `restart` (F8, `QR_RESTART`), waits 2 s, triggers the
+reload (F9, `QR_RELOAD`), and only then dismisses the menu and proceeds. An immediate restart in the
+same command block did not cure the intermittent partial-load bug: the map must be loaded before the
+restart, so the waits are real wall time, not frames. Historical variants: in-block sequence
+(`audit-pose-gate-0313d-…`, 25.6 FPS / mean 39.07) and restart without reload (22.3 / 44.93).
+Staged-sequence captures: `audit-seq-check-serial-…` and `audit-render-tasks-fix2/3-…`.
 
 Clean set on the load → restart → load runner (synced saves, exe `01852035…`, revision `92c79365`,
 balanced preset, 8 s warmup + 6 s capture):
@@ -180,6 +177,23 @@ balanced preset, 8 s warmup + 6 s capture):
 | Fuma | `build/Debug/audit-clean-fuma-20261009-133342-e997c2` | 36.0 | 27.82 | 31.48 | 1.08 |
 | AD hub | `build/Debug/audit-clean-ad-20261009-133404-e03797` | 42.7 | 23.41 | 32.21 | 0.26 |
 | Bogbottom | `build/Debug/audit-clean-heavy-20261009-133426-c640d1` | 25.3 | 39.52 | 44.05 | 2.34 |
+
+Task-graph enablement (branch `perf/render-tasks`): the `SCR_UpdateScreen` task path is real again
+(guard decoupled from the unimplemented `r_gpulightmapupdate`; `r_tasks` still defaults 0). Paired
+same-binary runs with the staged sequence:
+
+| Scenario | Serial | Tasks (`r_tasks 1`) |
+| --- | --- | --- |
+| Fuma | 35.1 FPS / mean 28.49 ms | 50.0 / 20.00 |
+| AD hub | 44.6 / 22.41 | 47.6 / 21.01 |
+| Bogbottom | 25.3 / 39.48 | 33.6 / 29.76 |
+
+`cpu.wait_ms` is nonzero only under tasks (the main thread's join wait); per-slot sums accumulate
+worker wall times across parallel tasks and can exceed the frame interval, so do not compare `ents`
+totals across modes. The first fix attempts died with `0xC0000374`; the recorded runs completed
+without corruption after the frame-start ordering edges, thread-local scratches and the geometry
+upload mutex landed. Coverage limits: Debug, one repeat per scenario (two for Bogbottom); the WER
+crash dump was not analyzed; the black-world workaround is the staged restart, not the task graph.
 
 ## Current CPU priorities
 
