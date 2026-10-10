@@ -108,8 +108,8 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
 - Serial is **not literally unchanged** (dump upper-median; cl-b4 against cl-b3): `clusters` +
   `publish` = 7.57/7.62 against the batch-2 7.34/7.40, paired +0.23/+0.22 and +0.17..+0.28 across
   the runs. The isolated stage (`publish` 2.37/2.32; per-frame CSV medians 2.28-2.32) against the
-  batch-2 `upload` 1.89/1.94 is +0.43 in both paired runs (+0.31..+0.48 across the bands; the 2.01
-  in the baseline row is the pre-batch-2 build, not batch 2). The totals sit at or just above the
+  batch-2 `upload` 1.89/1.94 is +0.43 in both paired runs (the 2.01 in the baseline row is the
+  pre-batch-2 build, not batch 2; the per-frame CSV medians for the same two runs are 2.32/2.28). The totals sit at or just above the
   pre-batch-3 envelope (6.52-7.56, i.e. +0.01..+0.06 above its maximum); the isolated-stage delta
   has no identified mechanism beyond codegen/measurement-bracket differences. Re-measure on a
   quiet machine before signing it off; no owner-facing serial regression was observed in the frame
@@ -119,8 +119,9 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
   (fill is still 1.32-1.37 ms on copy frames and runs serially in `FinishLists`).
 - Statistics and evidence: dump rows are upper-middle (`sorted[n//2]`) values of the per-window
   maxima series; runs `cl-b4-*` and the batch-2 serial pair `cl-b3-serial-*` under
-  `%LOCALAPPDATA%\Temp\opencode\`, per-frame CSVs `benchmark-frames-20261010-2224*.csv` and
-  `…2146*.csv`, blocks in `build/Debug/ad/benchmark.log`.
+  `%LOCALAPPDATA%\Temp\opencode\`, per-frame CSVs `benchmark-frames-20261010-222500-1.csv` /
+  `…222536-1.csv` (batch-3 serial) and `…214805-1.csv` / `…214842-1.csv` (batch-2 serial), blocks
+  in `build/Debug/ad/benchmark.log`.
 - The low-fps samples (`cl-b4-task-1/2` ~38 fps, `cl-b4-serial-2` 27.9, the demo at 50.8 fps)
   carry an outside-frame gap of +16-17 ms with every changed slot normal; the shape matches the
   engine's 16 ms focus/pause sleep path (`main_sdl.c`) and repeats on pre-change builds
