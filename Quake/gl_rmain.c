@@ -1270,6 +1270,16 @@ static void R_ClusterLightListsFinishTask (void *unused)
 	RT_ClusterLightListsFinish ();
 }
 
+static void R_ClusterPublishSliceTask (int index, void *unused)
+{
+	RT_ClusterLightListsPublishSlice (index, RT_CLUSTER_SLICES);
+}
+
+static void R_ClusterLightListsCommitTask (void *unused)
+{
+	RT_ClusterLightListsCommit ();
+}
+
 /*
 ================
 R_RenderView
@@ -1343,7 +1353,14 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 
 		task_handle_t cluster_finish_task = Task_AllocateAndAssignFunc (R_ClusterLightListsFinishTask, NULL, 0);
 		Task_AddDependency (cluster_topup_task, cluster_finish_task);
-		Task_AddDependency (cluster_finish_task, draw_done_task);
+
+		task_handle_t cluster_publish_task =
+		    Task_AllocateAndAssignIndexedFunc (R_ClusterPublishSliceTask, RT_CLUSTER_SLICES, NULL, 0);
+		Task_AddDependency (cluster_finish_task, cluster_publish_task);
+
+		task_handle_t cluster_commit_task = Task_AllocateAndAssignFunc (R_ClusterLightListsCommitTask, NULL, 0);
+		Task_AddDependency (cluster_publish_task, cluster_commit_task);
+		Task_AddDependency (cluster_commit_task, draw_done_task);
 
 		// The editor's GUI reads what the draw tasks uploaded (the tracked lights
 		// of the frame), so it has to wait for the task that carries them.
@@ -1383,7 +1400,7 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 
 		task_handle_t tasks[] = {before_mark,          store_efrags,		                         draw_world_task,     draw_sky_and_water_task,
 		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task, update_lightmaps_task,
-		                         cluster_prepare_task, cluster_topup_task, cluster_finish_task};
+		                         cluster_prepare_task, cluster_topup_task, cluster_finish_task, cluster_publish_task, cluster_commit_task};
 		Tasks_Submit ((sizeof (tasks) / sizeof (task_handle_t)), tasks);
 		if (store_efrags != cull_surfaces)
 		{

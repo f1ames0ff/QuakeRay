@@ -274,6 +274,16 @@ QrResult qrFinishClusterLightSources(QrInstance qrInstance)
     return Call(qrInstance, &VulkanDevice::FinishClusterLightSources);
 }
 
+QrResult qrRunClusterListPublishSlice(QrInstance qrInstance, uint32_t slice, uint32_t sliceCount)
+{
+    return Call(qrInstance, &VulkanDevice::RunClusterListPublishSlice, slice, sliceCount);
+}
+
+QrResult qrCommitClusterListPublication(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::CommitClusterListPublication);
+}
+
 QrResult qrGetClusterLightStats(QrInstance qrInstance, QrClusterLightStats *pStats)
 {
     return Call(qrInstance, &VulkanDevice::GetClusterLightStats, pStats);

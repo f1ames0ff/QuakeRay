@@ -402,6 +402,8 @@ void RT_ClusterLightListsUpload (void);
 void RT_ClusterLightListsPrepare (uint32_t sliceCount);
 void RT_ClusterLightListsSlice (uint32_t slice, uint32_t sliceCount);
 void RT_ClusterLightListsFinish (void);
+void RT_ClusterLightListsPublishSlice (int slice, int sliceCount);
+void RT_ClusterLightListsCommit (void);
 
 // Frames that reused the cached cluster light lists and frames that rebuilt them. The profiler
 // reads and clears them once per reporting window, so the panel can show a hit rate.
@@ -705,6 +707,7 @@ enum
 	RT_PROF_CLUSTERS_FILL,
 	RT_PROF_CLUSTERS_TAIL,
 	RT_PROF_CLUSTERS_UPLOAD,
+	RT_PROF_CLUSTERS_PUBLISH,
 	RT_PROF_DRAWFRAME,
 	RT_PROF_WAIT,
 	RT_PROF_FRAME,

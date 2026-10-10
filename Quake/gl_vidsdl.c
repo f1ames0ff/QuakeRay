@@ -1257,6 +1257,7 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_CLUSTERS_FILL, "clust fill" },
 		{ RT_PROF_CLUSTERS_TAIL, "clust tail" },
 		{ RT_PROF_CLUSTERS_UPLOAD, "clust upload" },
+	{ RT_PROF_CLUSTERS_PUBLISH, "clust publish" },
 		{ RT_PROF_DRAWFRAME, "qrDrawFrame" },
 		{ RT_PROF_WAIT, "wait" },
 		{ RT_PROF_FRAME, "frame" },

@@ -708,6 +708,14 @@ QRAPI QrResult QRCONV qrRunClusterLightSourceSlice(
 QRAPI QrResult QRCONV qrFinishClusterLightSources(
     QrInstance                              qrInstance);
 
+QRAPI QrResult QRCONV qrRunClusterListPublishSlice(
+    QrInstance                              qrInstance,
+    uint32_t                                 slice,
+    uint32_t                                 sliceCount);
+
+QRAPI QrResult QRCONV qrCommitClusterListPublication(
+    QrInstance                              qrInstance);
+
 #define QR_CLUSTER_PUB_STALE_VALID       (1u << 0)
 #define QR_CLUSTER_PUB_STALE_GENERATION  (1u << 1)
 #define QR_CLUSTER_PUB_STALE_CLUSTERS    (1u << 2)

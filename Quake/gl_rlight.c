@@ -1348,6 +1348,8 @@ static int       rt_leaf_cache_revision;
 
 static qboolean rt_cluster_pipeline_active;
 static double   rt_cluster_pipeline_start;
+static qboolean rt_cluster_publish_copy;
+static double   rt_cluster_publish_start;
 
 void RT_ClusterLightListsPrepare (uint32_t sliceCount)
 {
@@ -1457,8 +1459,6 @@ void RT_ClusterLightListsFinish (void)
 	if (!rt_cluster_pipeline_active)
 		return;
 
-	rt_cluster_pipeline_active = false;
-
 	QrResult r = qrFinishClusterLightSources (vulkan_globals.instance);
 	QR_CHECK (r);
 
@@ -1486,6 +1486,8 @@ void RT_ClusterLightListsFinish (void)
 			rt_cluster_pub_skips++;
 		else if (st.publicationMask & QR_CLUSTER_PUB_COPY)
 			rt_cluster_pub_copies++;
+
+		rt_cluster_publish_copy = (st.publicationMask & QR_CLUSTER_PUB_COPY) != 0;
 
 		if (st.reusedFrames)
 			rt_cluster_cache_hits++;
@@ -1537,6 +1539,31 @@ void RT_ClusterLightListsFinish (void)
 	}
 
 	RT_Prof_End (RT_PROF_CLUSTERS, rt_cluster_pipeline_start);
+
+	rt_cluster_publish_start = RT_Prof_Begin ();
+}
+
+void RT_ClusterLightListsPublishSlice (int slice, int sliceCount)
+{
+	if (!rt_cluster_pipeline_active)
+		return;
+
+	QrResult r = qrRunClusterListPublishSlice (vulkan_globals.instance, (uint32_t)slice, (uint32_t)sliceCount);
+	QR_CHECK (r);
+}
+
+void RT_ClusterLightListsCommit (void)
+{
+	if (!rt_cluster_pipeline_active)
+		return;
+
+	rt_cluster_pipeline_active = false;
+
+	QrResult r = qrCommitClusterListPublication (vulkan_globals.instance);
+	QR_CHECK (r);
+
+	if (rt_cluster_publish_copy)
+		RT_Prof_End (RT_PROF_CLUSTERS_PUBLISH, rt_cluster_publish_start);
 }
 
 void RT_ClusterLightListsUpload (void)
@@ -1544,6 +1571,8 @@ void RT_ClusterLightListsUpload (void)
 	RT_ClusterLightListsPrepare (1);
 	RT_ClusterLightListsSlice (0, 1);
 	RT_ClusterLightListsFinish ();
+	RT_ClusterLightListsPublishSlice (0, 1);
+	RT_ClusterLightListsCommit ();
 }
 
 

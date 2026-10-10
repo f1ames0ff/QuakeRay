@@ -613,8 +613,8 @@ void ClusterLightLists::FinishSources()
             tails.tailCount = tailEntryCount;
         }
 
-        pendingLightManager->SetClusterLightLists(pendingFrameIndex, numClusters, offsets.data(), list.data(),
-                                                 listEntries, listGeneration, tails);
+        pendingLightManager->PrepareClusterListPublication(pendingFrameIndex, numClusters, offsets.data(), list.data(),
+                                                          listEntries, listGeneration, tails);
         stats.publicationMask = pendingLightManager->GetLastPublicationMask();
     }
 

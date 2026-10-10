@@ -86,10 +86,12 @@ public:
         uint32_t        tailCount = 0;
     };
 
-    void SetClusterLightLists(uint32_t frameIndex, uint32_t numClusters,
-                              const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
-                              uint32_t totalLightCount, uint64_t listGeneration,
-                              const ClusterLightTailRange &tails);
+    bool PrepareClusterListPublication(uint32_t frameIndex, uint32_t numClusters,
+                                       const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
+                                       uint32_t totalLightCount, uint64_t listGeneration,
+                                       const ClusterLightTailRange &tails);
+    void RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount);
+    void CommitClusterListPublication();
 
     uint32_t GetLastPublicationMask() const { return publicationMask; }
 
@@ -205,6 +207,25 @@ private:
     std::vector<uint32_t> deviceLightIndex;
 
     uint32_t publicationMask = 0;
+
+    struct ResolveCacheEntry
+    {
+        uint64_t uid;
+        uint32_t index;
+    };
+
+    static constexpr uint32_t kResolveCacheSize = 2048;
+
+    uint32_t ResolveLightUid(uint32_t frameIndex, uint64_t uid, ResolveCacheEntry *pCache);
+
+    bool            publishPending = false;
+    uint32_t        publishFrameIndex = 0;
+    uint32_t        publishNumClusters = 0;
+    uint32_t        publishWordCount = 0;
+    uint32_t        publishTailWordCount = 0;
+    uint64_t        publishGeneration = 0;
+    const uint64_t *publishLightUniqueIds = nullptr;
+    ClusterLightTailRange publishTails = {};
 
     static constexpr uint32_t kDeferredUploadSlots = 8;
     static constexpr uint32_t kDeferredUploadCapacity = 8192;

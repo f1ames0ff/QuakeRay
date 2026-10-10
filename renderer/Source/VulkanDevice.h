@@ -125,6 +125,8 @@ public:
     void BeginClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo, uint32_t sliceCount);
     void RunClusterLightSourceSlice(uint32_t slice, uint32_t sliceCount);
     void FinishClusterLightSources();
+    void RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount);
+    void CommitClusterListPublication();
 
     void GetClusterLightStats(QrClusterLightStats *pStats);
     void GetClusterLightGrants(uint32_t *pGranted, uint32_t *pDenied, uint32_t maxCount, uint32_t *pCount);

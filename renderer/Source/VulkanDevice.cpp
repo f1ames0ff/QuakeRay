@@ -1824,6 +1824,8 @@ void VulkanDevice::UploadClusterLightSources(const QrClusterLightSourcesUploadIn
     BeginClusterLightSources(pInfo, 1);
     RunClusterLightSourceSlice(0, 1);
     FinishClusterLightSources();
+    RunClusterListPublishSlice(0, 1);
+    CommitClusterListPublication();
 }
 
 void VulkanDevice::BeginClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo, uint32_t sliceCount)
@@ -1847,6 +1849,16 @@ void VulkanDevice::RunClusterLightSourceSlice(uint32_t slice, uint32_t sliceCoun
 void VulkanDevice::FinishClusterLightSources()
 {
     clusterLightLists->FinishSources();
+}
+
+void VulkanDevice::RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount)
+{
+    scene->GetLightManager()->RunClusterListPublishSlice(slice, sliceCount);
+}
+
+void VulkanDevice::CommitClusterListPublication()
+{
+    scene->GetLightManager()->CommitClusterListPublication();
 }
 
 void VulkanDevice::GetClusterLightStats(QrClusterLightStats *pStats)
