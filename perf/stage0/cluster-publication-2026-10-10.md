@@ -86,6 +86,28 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
 - Known independent defects noticed on this path: the sun uid collides with custom light 0
   (`gl_rmain.c`), dropping the sun when a custom light 0 exists; `SetSources` is dead code.
 
+## Batch 3 - parallel sliced publication (commit `c8a6a945`, build `B5C3F71D…B2C3`)
+
+- The publication splits into `PrepareClusterListPublication` (predicate, range initialization,
+  offsets and tail beta), `RunClusterListPublishSlice` (the uid resolve of a disjoint word range,
+  one per `RT_CLUSTER_SLICES` task with a per-slice cache) and `CommitClusterListPublication`
+  (tail entries, unresolved handling, device bookkeeping). The task graph gains
+  `cluster_publish_task` (indexed 16, after finish) and `cluster_commit_task` (before
+  `draw_done`); the serial composition runs the same stages with `sliceCount` 1, byte-identical.
+- Row re-scoping: `clusters`/`clust lists` no longer span the publication; `clust upload`
+  measures the prepare and the new `clust publish` row the resolve+commit wall.
+- Measured on AD start task mode: the copy-frame resolve 2.1 -> **0.45-0.47 ms** across three
+  runs (16 slices, `clust publish`); the clean run shows the cluster work 5.1 -> **2.96** and
+  **70.6 fps**, publication skips preserved (557/526); serial `clusters` 5.20-5.30 plus
+  `publish` 2.32-2.37 (total unchanged against the 7.34-7.40 baseline); tfuma unchanged; assert
+  run clean (`clusters` 8.51 + `publish` 0.48).
+- The runs `cl-b4-task-1/2`, `cl-b4-serial-2` and the demo sample (50.8 fps with a 9.58 ms frame
+  average, i.e. idle time outside the frames) coincided with external machine load and stand as
+  contention outliers; re-run the demo and the repeat arms on a quiet machine before accepting
+  them.
+- Remaining: the fill fold (fill still 1.32-1.37 ms on copy frames), the published-span reuse
+  (the serial resolve lever, `clust publish` 2.3) and the parity amortization.
+
 ## Evidence pointers
 
 - Baselines: tags `cl-b1-*`; per-frame CSVs `benchmark-frames-20261010-*.csv` (start task
