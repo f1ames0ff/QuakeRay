@@ -54,6 +54,7 @@ vec3_t vup;
 vec3_t vpn;
 vec3_t vright;
 vec3_t r_origin;
+qboolean r_vieworg_valid;
 
 float r_fovx, r_fovy; // johnfitz -- rendering fov may be different becuase of r_waterwarp
 
@@ -682,6 +683,7 @@ void R_SetupViewBeforeMark (void *unused)
 
 	// build the transformation matrix for the given view angles
 	VectorCopy (r_refdef.vieworg, r_origin);
+	r_vieworg_valid = true;
 	AngleVectors (r_refdef.viewangles, vpn, vright, vup);
 
 	// The sun editor follows the crosshair, which is this very vector.

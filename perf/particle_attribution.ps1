@@ -64,6 +64,8 @@ $metricList = @(
     [pscustomobject]@{ Name = 'particles_vertices';       Unit = 'count'; Format = '0.##' }
     [pscustomobject]@{ Name = 'particles_smoke';          Unit = 'count'; Format = '0.##' }
     [pscustomobject]@{ Name = 'particles_dropped';        Unit = 'count'; Format = '0.##' }
+    [pscustomobject]@{ Name = 'particles_emit_culled';    Unit = 'count'; Format = '0.##' }
+    [pscustomobject]@{ Name = 'particles_emit_faded';     Unit = 'count'; Format = '0.##' }
     [pscustomobject]@{ Name = 'fte_convert_bytes';        Unit = 'bytes'; Format = '0.##' }
     [pscustomobject]@{ Name = 'particle_upload_bytes';    Unit = 'bytes'; Format = '0.##' }
     [pscustomobject]@{ Name = 'particles_cache_hits';     Unit = 'count'; Format = '0.##' }

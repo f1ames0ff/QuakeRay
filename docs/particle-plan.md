@@ -36,6 +36,7 @@ scale to the content that actually exists.
 | D6 | FTE end state | Simulation/PSET/dlights stay CPU; FTE geometry converges in the deferred stage; classic gets GPU sim first |
 | D7 | `SMOKE_CLUSTER_SCAN` | Keep 16 until the GPU pass is measured; after dtal choose fast/tail/group sampling deliberately |
 | D8 | Legacy-path removal | Define a parity suite (demos, maps, vendor matrix, counters) and thresholds; not just "two releases" |
+| E1 | ssqc pointparticles distance gate (owner, 2026-10-10) | ON by default, radius 2048 (`r_part_emit_distance`, 0=off); deterministic multiplicative count scaling with a hard drop at R; scope = `CL_ParseParticles` point branch only; the visual wall at R is accepted (upstream parity), and the Stage-1 "no visual change" gate does not apply to this deliberate visual change |
 
 ## 3. Stages
 
@@ -148,6 +149,13 @@ scale to the content that actually exists.
   pass pattern and prove parity with `rt_dtal_groups`/`rt_cluster_sampling` matrices.
 - Gate: bounded ray counter; visual parity; the large-sprite lighting does not pop (owner check on
   the torch scenes); `rt_bench` baselines unchanged or better.
+
+### Pointparticle distance gate (owner item, 2026-10-10)
+- Client-side gate in `CL_ParseParticles`: the message `count` scales linearly from 1 at `R/2` to 0 at `R`, and the message is dropped at `d >= R`; `R = r_part_emit_distance` (default 2048, 0 = off).
+- Only messages that would spawn are gated (`efnum` valid, `count > 0`); the latch `r_vieworg_valid` disables gating until the first rendered frame so signon/load packets are not culled against a zero origin.
+- Scope: the point branch only. Trails, per-entity `emiteffectnum`/model emitters, CSQC-local effects and the rain path are untouched.
+- Counters: `particles_emit_culled` / `particles_emit_faded` (window-scoped, dumped and added to the bench settings witness).
+- Known behavior: `pp1` (count=1) and `countabsolute` recipes reduce only at the hard wall at R; multi-count recipes step down inside the window (owner-approved wall semantics, upstream parity).
 
 ### Stage 5 — GPU simulation (classic only, optional until measured)
 - Ping-pong state, spawn ring, append/compaction, indirect draw; bench-freeze mode for determinism

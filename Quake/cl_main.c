@@ -127,6 +127,8 @@ void CL_ClearState (void)
 	// wipe the entire cl structure
 	CL_FreeState ();
 
+	r_vieworg_valid = false;
+
 	SZ_Clear (&cls.message);
 
 	// clear other arrays

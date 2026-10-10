@@ -217,6 +217,7 @@ extern vec3_t vup;
 extern vec3_t vpn;
 extern vec3_t vright;
 extern vec3_t r_origin;
+extern qboolean r_vieworg_valid;
 
 //
 // screen size info
@@ -754,6 +755,8 @@ typedef struct
 	int      particlesVertices;
 	int      particlesSmoke;
 	int      particlesDropped;
+	int      particlesEmitCulled;
+	int      particlesEmitFaded;
 	uint64_t fteConvertBytes;
 	uint64_t particleUploadBytes;
 	uint64_t particleResolveCacheHits;
@@ -817,6 +820,8 @@ extern int      rt_particles_fte;
 extern int      rt_particles_vertices;
 extern int      rt_particles_smoke;
 extern int      rt_particles_dropped;
+extern int      rt_particles_emit_culled;
+extern int      rt_particles_emit_faded;
 extern uint64_t rt_fte_convert_bytes;
 extern uint64_t rt_particle_upload_bytes;
 

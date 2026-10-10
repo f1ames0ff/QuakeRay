@@ -400,6 +400,8 @@ int      rt_particles_fte;
 int      rt_particles_vertices;
 int      rt_particles_smoke;
 int      rt_particles_dropped;
+int      rt_particles_emit_culled;
+int      rt_particles_emit_faded;
 uint64_t rt_fte_convert_bytes;
 uint64_t rt_particle_upload_bytes;
 
@@ -538,6 +540,8 @@ void RT_Bench_Start (void)
 	rt_cluster_miss_move = 0;
 	rt_cluster_miss_other = 0;
 	rt_particles_dropped = 0;
+	rt_particles_emit_culled = 0;
+	rt_particles_emit_faded = 0;
 	rt_fte_convert_bytes = 0;
 	rt_particle_upload_bytes = 0;
 }
@@ -830,6 +834,8 @@ static void RT_Prof_PublishWindow (void *unused, unsigned frames, double elapsed
 	rt_prof_report.particlesVertices = rt_particles_vertices;
 	rt_prof_report.particlesSmoke = rt_particles_smoke;
 	rt_prof_report.particlesDropped = rt_particles_dropped;
+	rt_prof_report.particlesEmitCulled = rt_particles_emit_culled;
+	rt_prof_report.particlesEmitFaded = rt_particles_emit_faded;
 	rt_prof_report.fteConvertBytes = rt_fte_convert_bytes;
 	rt_prof_report.particleUploadBytes = rt_particle_upload_bytes;
 
@@ -864,6 +870,8 @@ void RT_Prof_Update (void)
 		rt_cluster_miss_move = 0;
 		rt_cluster_miss_other = 0;
 		rt_particles_dropped = 0;
+		rt_particles_emit_culled = 0;
+		rt_particles_emit_faded = 0;
 		rt_fte_convert_bytes = 0;
 		rt_particle_upload_bytes = 0;
 	}
@@ -1116,6 +1124,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "r_smoke");
 	RT_Bench_Setting (f, "rt_particle_resolve_cache");
 	RT_Bench_Setting (f, "r_particles_points");
+	RT_Bench_Setting (f, "r_part_emit_distance");
 	fprintf (f, " vid=%dx%d@%d vsync=%d version=%s\n", vid.width, vid.height, vid_display_refresh,
 	         (int)vid_vsync.value, ENGINE_VER_STRING);
 
@@ -1609,7 +1618,7 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 	       "particles_classic,particles_fte,particles_vertices,particles_smoke,particles_dropped,"
 	       "fte_convert_bytes,particle_upload_bytes,particles_cache_hits,particles_cache_misses,"
 	       "particles_cache_avg_ns,raster_upload_bytes,raster_upload_dropped_batches,"
-	       "cpu.window_id,cpu.window_frames,cpu.renderer_samples\n", f);
+	       "cpu.window_id,cpu.window_frames,cpu.renderer_samples,particles_emit_culled,particles_emit_faded\n", f);
 
 	for (i = 0; i < job->count; i++)
 	{
@@ -1761,6 +1770,11 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 				fprintf (f, "%u", values[j]);
 			}
 		}
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesEmitCulled);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesEmitFaded);
 
 		fputc ('\n', f);
 	}

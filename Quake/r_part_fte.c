@@ -30,6 +30,7 @@ The engine has a few builtins.
 #include "gl_heap.h"
 
 cvar_t r_fteparticles = {"r_fteparticles", "1", CVAR_ARCHIVE};
+cvar_t r_part_emit_distance = {"r_part_emit_distance", "2048"};
 
 #ifdef PSET_SCRIPT
 #define USE_DECALS
@@ -3296,6 +3297,7 @@ void PScript_InitParticles (void)
 	Cvar_RegisterVariable (&r_part_density);
 	Cvar_RegisterVariable (&r_part_maxparticles);
 	Cvar_RegisterVariable (&r_part_maxdecals);
+	Cvar_RegisterVariable (&r_part_emit_distance);
 	Cvar_RegisterVariable (&r_lightflicker);
 
 	Cmd_AddCommand ("r_partredirect", P_PartRedirect_f);
