@@ -99,12 +99,15 @@ slice phase.
   top-up is sliced like the incremental one, while the compose pass 1 stays serial. The publication
   is the next candidate (an exact sliced map); its `clust upload` values across the listed runs
   span 1.57-3.41 ms (central band ~1.8-2.0).
-- The counter equivalence rests on an invariant stated nowhere in the code: within a frame, a
-  top-up append can never be evicted again (appends run in non-decreasing distance order), so every
-  slice-phase removal targets a pre-slice slot. The `rt_cluster_assert` check verifies the end
-  state (`granted[li]` vs the slots) but the invariant itself is not asserted.
-- `rt_cluster_sampling 1` (overflow/tails) was not exercised by any recorded run of this change;
-  the sliced candidate and tail-dirty writes are per-cluster by inspection only.
+- The counter equivalence rests on an invariant now asserted in code: under `rt_cluster_assert`
+  the slice records every slot it appends and the eviction path checks its victim against that
+  list, so a same-phase append-then-evict reports instead of passing silently; the finish still
+  checks `granted[li]` against the slots.
+- `rt_cluster_sampling 1` (overflow/tails) is exercised (2026-10-10, task, serial and
+  task+assert): tails active (`clust tail` 4.5-6.9 ms), no validator, grant-counter or
+  append-invariant messages in any mode; the sliced candidate and tail-dirty writes are
+  per-cluster, and the overflow-mode spikes (topup max up to ~99 ms on a compose frame, tail
+  rebuild up to ~28 ms) are the documented cost of tails.
 - Cross-mode byte identity is still not guaranteed at the baseline (arrival-ordered light
   registration under `r_tasks 1`); the acceptance for this change is the validator plus the
   per-cluster equivalence argument, not a byte diff.

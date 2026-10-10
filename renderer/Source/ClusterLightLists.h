@@ -291,8 +291,10 @@ private:
         std::vector<std::pair<uint32_t, int32_t>> grantedDelta;
         std::vector<std::pair<uint32_t, int32_t>> deniedDelta;
         std::vector<uint32_t>                     tailDirty;
+        std::vector<uint32_t>                     appendedSlots;
         uint32_t                                  reachGated = 0;
         uint32_t                                  topUpGrants = 0;
+        uint32_t                                  violations = 0;
     };
 
     PendingShape  pendingShape = kShapeNone;

@@ -428,8 +428,10 @@ void ClusterLightLists::BeginSources(const WorldLights &worldLightsRef,
             topUpSlices[s].grantedDelta.clear();
             topUpSlices[s].deniedDelta.clear();
             topUpSlices[s].tailDirty.clear();
+            topUpSlices[s].appendedSlots.clear();
             topUpSlices[s].reachGated = 0;
             topUpSlices[s].topUpGrants = 0;
+            topUpSlices[s].violations = 0;
         }
     }
 }
@@ -462,6 +464,8 @@ void ClusterLightLists::FinishSources()
 
     if (pendingShape == kShapeIncremental || pendingShape == kShapeCompose)
     {
+        uint32_t violations = 0;
+
         for (uint32_t s = 0; s < pendingSliceCount; s++)
         {
             TopUpSlice &slice = topUpSlices[s];
@@ -477,7 +481,11 @@ void ClusterLightLists::FinishSources()
 
             stats.reachGated += slice.reachGated;
             stats.topUpGrants += slice.topUpGrants;
+            violations += slice.violations;
         }
+
+        if (violations > 0 && pendingPrint != nullptr)
+            pendingPrint->Print("RT: cluster top-up evicted a slot appended in the same phase\n");
     }
 
     if (pendingShape == kShapeIncremental)
@@ -1679,6 +1687,10 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
                 pTopUp[s] = fromTopUp ? 1 : 0;
                 pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
                 slotHoles[cluster]--;
+
+                if (activeSliceTls && pendingValidate)
+                    activeSliceTls->appendedSlots.push_back(base + s);
+
                 MarkTailDirty(cluster);
                 return true;
             }
@@ -1693,6 +1705,10 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
         pTopUp[fill] = fromTopUp ? 1 : 0;
         pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
         slotFill[cluster] = fill + 1;
+
+        if (activeSliceTls && pendingValidate)
+            activeSliceTls->appendedSlots.push_back(base + fill);
+
         MarkTailDirty(cluster);
         return true;
     }
@@ -1712,6 +1728,20 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     if (dist2 >= farthestDist2)
     {
         return false; // the cluster already holds kMaxPerList closer lights
+    }
+
+    if (activeSliceTls && pendingValidate)
+    {
+        const uint32_t victim = base + farthest;
+
+        for (uint32_t appended : activeSliceTls->appendedSlots)
+        {
+            if (appended == victim)
+            {
+                activeSliceTls->violations++;
+                break;
+            }
+        }
     }
 
     // The evicted light is no longer sampled by this cluster, so its bit must stop claiming the
