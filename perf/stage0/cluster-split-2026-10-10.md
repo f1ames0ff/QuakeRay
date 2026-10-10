@@ -38,36 +38,38 @@ raw blocks in `build/Debug/ad/benchmark.log`, per-frame captures in
 
 ## Measured runs (owner demo `ad_particle_heavy`, points-on config, cache on)
 
-Mode is inferred from `cpu.wait_ms` (> 0 = task mode; `r_tasks` is not recorded in the log). The
-split was built three times during the session (pre-fix, after the thread-local routing fix, and the
-frozen build at 02:48:43 that carries this commit's code); runs from different builds are listed
-separately and must not be averaged together. The serial path is the same code as before (one slice
-through the same stages), so its band tracks the session, not this change.
+Mode is inferred from `cpu.wait_ms` (> 0 = task mode; `r_tasks` is not recorded in the log). Engine
+links were recorded at ~02:35:16, ~02:45:26 and ~02:48:43 (`build/Debug/.ninja_log`); the last one is
+tied to this commit's code by `build/Debug/qray-build.json`. Run-to-build attribution below is
+inferred from each run's start time (block time minus ~71 s) and marks the link the run started
+after; runs from different links are listed separately. The serial path is the same code as before
+(one slice through the same stages), so its band tracks the session, not this change.
 
 | time | mode | build | frames | fps | clust topup | frame |
 |---|---|---|---:|---:|---:|---:|
 | 00:33:47 | task | pre-split | 2855 | 41.1 | 4.15 | 19.23 |
 | 01:04:18 | task | pre-split | 2901 | 41.8 | 3.98 | 18.95 |
-| 02:39:58 | task | split, pre-fix | 3340 | 48.1 | 0.78 | 15.63 |
-| 02:42:42 | task, assert | split, pre-fix | 3205 | 46.2 | 0.82 | 16.69 |
-| 02:48:08 | task, assert | split, pre-fix | 3112 | 44.9 | 0.83 | 17.47 |
-| 02:50:12 | task, assert | frozen | 3082 | 44.4 | 0.84 | 17.61 |
-| 02:51:28 | task | frozen | 3076 | 44.3 | 0.85 | 17.67 |
-| 03:08:13 | task, assert, `-condebug` | frozen | 2898 | 41.8 | 0.86 | 19.11 |
-| 02:44:52 | task (idle demo) | split, pre-fix | 2544 | 47.1 | 0.40 | 16.21 |
+| 02:39:58 | task | after link 1 | 3340 | 48.1 | 0.78 | 15.63 |
+| 02:42:42 | task, assert | after link 1 | 3205 | 46.2 | 0.82 | 16.69 |
+| 02:48:08 | task, assert | after link 2 | 3112 | 44.9 | 0.83 | 17.47 |
+| 02:50:12 | task, assert | after link 3 (frozen) | 3082 | 44.4 | 0.84 | 17.61 |
+| 02:51:28 | task | after link 3 (frozen) | 3076 | 44.3 | 0.85 | 17.67 |
+| 03:08:13 | task, assert, `-condebug` | after link 3 (frozen) | 2898 | 41.8 | 0.86 | 19.11 |
+| 02:44:52 | task (idle demo) | after link 1 | 2544 | 47.1 | 0.40 | 16.21 |
 | 01:03:01 | serial | pre-split | 2667 | 38.4 | 4.11 | 25.65 |
 | 00:28:22 | serial | pre-split | 2596 | 37.4 | 4.25 | 26.35 |
 | 00:29:38 | serial | pre-split | 2553 | 36.8 | 4.33 | 26.77 |
-| 02:36:50 | serial | split | 2627 | 37.8 | 4.29 | 26.02 |
-| 02:41:26 | serial | split | 2595 | 37.4 | 4.34 | 26.33 |
-| 02:43:51 | serial (idle demo) | split | 1947 | 36.0 | 1.97 | 27.51 |
-| 02:46:51 | serial | split | 2361 | 34.0 | 4.41 | 29.02 |
-| 02:52:45 | serial, assert | frozen | 2221 | 32.0 | 4.63 | 30.87 |
+| 02:36:50 | serial | after link 1 | 2627 | 37.8 | 4.29 | 26.02 |
+| 02:41:26 | serial | after link 1 | 2595 | 37.4 | 4.34 | 26.33 |
+| 02:43:51 | serial (idle demo) | after link 1 | 1947 | 36.0 | 1.97 | 27.51 |
+| 02:46:51 | serial | after link 2 | 2361 | 34.0 | 4.41 | 29.02 |
+| 02:52:45 | serial, assert | after link 3 (frozen) | 2221 | 32.0 | 4.63 | 30.87 |
 
 The per-frame captures reproduce the log means (e.g. `clust topup` 3.982 for 01:04:18, 0.785 for
 02:39:58, 0.853 for 02:51:28). The 03:08:13 run was launched without the runner's ESC and
 foreground handling, so its fps/frame are not comparable; it is the validator evidence below.
-Pre-split idle-serial `clust topup` reads 1.80-1.96; the post-split task idle run reads 0.40.
+Pre-split idle-serial `clust topup` reads 1.80-1.96 (the 00:21:02 run at 2.37, fps 23.6, is a
+throttled outlier); the post-split task idle run reads 0.40.
 
 `clusters` and `clust lists` (`stats.totalMs`) now span prepare..finish across tasks and include
 the inter-task wait, so they are **not** comparable to the pre-split rows; `clust mark` / `clust
@@ -95,7 +97,8 @@ slice phase.
 
 - Pass 1 (`GrantSource`), the tail rebuild and the publication stay single-threaded; the compose
   top-up is sliced like the incremental one, while the compose pass 1 stays serial. The publication
-  (~1.8-2.0 ms/frame) is the next candidate (an exact sliced map).
+  is the next candidate (an exact sliced map); its `clust upload` values across the listed runs
+  span 1.57-3.41 ms (central band ~1.8-2.0).
 - The counter equivalence rests on an invariant stated nowhere in the code: within a frame, a
   top-up append can never be evicted again (appends run in non-decreasing distance order), so every
   slice-phase removal targets a pre-slice slot. The `rt_cluster_assert` check verifies the end
