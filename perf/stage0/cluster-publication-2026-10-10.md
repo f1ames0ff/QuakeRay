@@ -63,6 +63,16 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
    same stage functions (today `SetSources` is dead code).
 4. **Batch 4 - amortization.** Publish at most once per N frames with immediate publication of
    structural changes (owner idea: 16 ms of light latency is invisible, the saving is ~50%).
+   Owner refinement (2026-10-10): spread the refresh with an interleaved (checkerboard) scheme -
+   evaluate/rebuild the sources whose stable key has parity P only on frames of parity P, so each
+   light is refreshed every two frames while every frame carries half the work (no "double batch"
+   frame). Rules: structural changes (a light appears or disappears) are handled immediately; the
+   parity key is a stable id (the uid, or the index once Batch 2 lands), never the arrival-ordered
+   index; the cheap per-frame light-value upload stays per-frame (flicker latency); the interleave
+   applies to the list-side evaluation, marking, top-up and publication. Per-light list staleness
+   is bounded by two frames (~33 ms). The content-based skip stays in force: when a frame's half
+   evaluates to no change, the packet is identical and the publication still skips entirely, and
+   with Batch 3 the publication cost scales with the changed half.
 
 ## Verification notes carried from the design falsifiers
 
