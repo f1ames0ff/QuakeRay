@@ -2,7 +2,7 @@
 
 Start here to locate code, not to learn the engine from scratch. Read [PERFORMANCE.md](PERFORMANCE.md) for measured costs, binary identities and capture locations before proposing an optimization.
 
-**Verified source snapshot:** `7a14d0fe`, 2026-10-08. This snapshot includes entity profiling, exact brush-transform reuse and SIMD bounds; it is not an assertion about master or another worktree. Function names are the durable lookup keys; `#L` links identify their locations at this snapshot. Recheck a changed function and its immediate caller/callee, not the entire repository.
+**Verified source snapshot:** `2491c038`, 2026-10-10. This snapshot includes entity profiling, exact brush-transform reuse, SIMD bounds and the staged cluster pipeline; it is not an assertion about master or another worktree. Function names are the durable lookup keys; `#L` links identify their locations at this snapshot. Recheck a changed function and its immediate caller/callee, not the entire repository.
 
 Engine MCP use is mandatory for all agents under [AGENTS.md](AGENTS.md#mandatory-engine-mcp-workflow).
 Start with `quakeray.server_status`, then use scoped `find_symbol` (`query`, `file`) and the available
@@ -264,7 +264,7 @@ standard headers such as `assert.h`) and is not a supported build or verificatio
 - Quake CPU slots: [enum](Quake/glquake.h#L661), [display/CSV names](Quake/gl_vidsdl.c#L989), [capture serialization](Quake/gl_vidsdl.c#L732).
 - Backend CPU phases: [public enum](renderer/Include/qray/qray.h#L1439), [names](renderer/Source/qray.cpp#L381), [`CpuPassForGpuPass`](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L546).
 - GPU buckets: [names](renderer/Source/qray.cpp#L408), [timer polling](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L496). Renderer GPU totals cover the timed RHI list, not all host work or display latency.
-- Measured hotspots and evidence: [PERFORMANCE.md](PERFORMANCE.md). Particle/FTE and cluster workstreams are separately owned there; navigation is not authorization to duplicate them.
+- Measured hotspots and evidence: [PERFORMANCE.md](PERFORMANCE.md). The staged cluster pipeline is edited by the particle workstream with the owner's approval (boundary note, 2026-10-10); navigation is not authorization to duplicate the remaining workstream paths.
 
 When changing a listed boundary, update its links, ordering, counter scope and verified snapshot. Store new measurements in `PERFORMANCE.md` with save/settings/build/binary identity and raw capture location. Mark an unmeasured cost **unknown**; mark a hypothesis **unverified**. Do not turn an example, a function name or a historical report into a measured fact.
 

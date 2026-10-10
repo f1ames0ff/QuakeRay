@@ -112,8 +112,8 @@ The contract for work added to the graph:
 - Call renderer `qr*` entry points only through the synchronized ones listed below, and follow the
   static-geometry window rule for uploads.
 - Touch profiler/bench state only through the locked helpers (`RT_Prof_*`); the cluster statistics
-  are written by the cluster upload in the viewmodel task and read on the main thread only after
-  the frame's join.
+  are written by the cluster prepare/slice/finish chain (the finish task runs on a worker) and read
+  on the main thread only after the frame's join.
 - `Mem_*` uses mimalloc, but allocator thread safety does not make its owner/container safe.
   Audit allocation, publication, reallocation and freeing together; do not assume hunk/zone helpers
   are interchangeable worker allocators. The console's buffer lock likewise does not authorize
