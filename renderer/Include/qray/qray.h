@@ -698,6 +698,17 @@ QRAPI QrResult QRCONV qrRunClusterLightSourceSlice(
 QRAPI QrResult QRCONV qrFinishClusterLightSources(
     QrInstance                              qrInstance);
 
+#define QR_CLUSTER_PUB_STALE_VALID       (1u << 0)
+#define QR_CLUSTER_PUB_STALE_GENERATION  (1u << 1)
+#define QR_CLUSTER_PUB_STALE_CLUSTERS    (1u << 2)
+#define QR_CLUSTER_PUB_STALE_WORDS       (1u << 3)
+#define QR_CLUSTER_PUB_STALE_TAILS       (1u << 4)
+#define QR_CLUSTER_PUB_STALE_PLACES      (1u << 5)
+#define QR_CLUSTER_PUB_STALE_ORDER       (1u << 6)
+#define QR_CLUSTER_PUB_SKIP_DEVICE       (1u << 7)
+#define QR_CLUSTER_PUB_SKIP_SLOT         (1u << 8)
+#define QR_CLUSTER_PUB_COPY              (1u << 9)
+
 typedef struct QrClusterLightStats
 {
     uint32_t clusters;
@@ -743,6 +754,8 @@ typedef struct QrClusterLightStats
     float    tailMs;
     float    publishMs;
     float    totalMs;
+
+    uint32_t publicationMask;
 } QrClusterLightStats;
 
 QRAPI QrResult QRCONV qrGetClusterLightStats(

@@ -190,6 +190,7 @@ void ClusterLightLists::Reset()
     list.clear();
     listEntries = 0;
     listGeneration++;
+    InvalidatePacketShadow();
     granted.clear();
     denied.clear();
     prevUidIndex.clear();
@@ -362,6 +363,7 @@ void ClusterLightLists::BeginSources(const WorldLights &worldLightsRef,
         overflowEnabled = allowOverflow;
         listsValid = false; // the overflow policy is part of what the lists are made of
         listGeneration++;
+        InvalidatePacketShadow();
     }
 
     const bool composeable = listsValid && sameReach && numClusters > 0;
@@ -458,6 +460,8 @@ void ClusterLightLists::RunTopUpSlice(uint32_t slice, uint32_t sliceCount)
 void ClusterLightLists::FinishSources()
 {
     activeSliceTls = nullptr;
+
+    stats.publicationMask = 0;
 
     if (pendingShape == kShapeNone)
         return;
@@ -583,6 +587,15 @@ void ClusterLightLists::FinishSources()
         ValidateComposition(pendingPrint);
     }
 
+    if (pendingShape == kShapeIncremental || pendingShape == kShapeCompose)
+    {
+        if (!packetShadowValid || !PacketMatchesShadow())
+        {
+            listGeneration++;
+            CommitPacketShadow();
+        }
+    }
+
     const double tPublish = NowMs();
 
     if (numClusters > 0 && pendingLightManager != nullptr)
@@ -602,6 +615,7 @@ void ClusterLightLists::FinishSources()
 
         pendingLightManager->SetClusterLightLists(pendingFrameIndex, numClusters, offsets.data(), list.data(),
                                                  listEntries, listGeneration, tails);
+        stats.publicationMask = pendingLightManager->GetLastPublicationMask();
     }
 
     stats.publishMs = float(NowMs() - tPublish);
@@ -718,6 +732,7 @@ void ClusterLightLists::PrepareTables(const WorldLights &worldLightsRef)
     list.assign(slots, 0);
     listEntries = 0;
     listGeneration++; // the tables of the previous map are not the tables of this one
+    InvalidatePacketShadow();
 
     // The composition that follows must run even when the new map registers the same lights.
     sources.clear();
@@ -1175,10 +1190,83 @@ void ClusterLightLists::FillLists(UserPrint *pUserPrint)
         pUserPrint->Print(buffer);
         warnedAboutFullList = true;
     }
+}
 
-    /* The words of this composition are not the words of the frame before it, whatever the
-       frame before it published. */
-    listGeneration++;
+bool ClusterLightLists::PacketMatchesShadow() const
+{
+    if (!packetShadowValid)
+        return false;
+
+    if (packetShadowClusters != numClusters || packetShadowEntries != listEntries)
+        return false;
+
+    if (numClusters > 0 &&
+        (packetShadowOffsets.size() != size_t(numClusters) + 1 ||
+         memcmp(packetShadowOffsets.data(), offsets.data(), sizeof(uint32_t) * (numClusters + 1)) != 0))
+    {
+        return false;
+    }
+
+    if (listEntries > 0 &&
+        (packetShadowList.size() != listEntries ||
+         memcmp(packetShadowList.data(), list.data(), sizeof(uint64_t) * listEntries) != 0))
+    {
+        return false;
+    }
+
+    if (packetShadowTailEntries != tailEntryCount || packetShadowTailSuppressed != tailSuppressed)
+        return false;
+
+    if (tailEntryCount > 0 && !tailSuppressed)
+    {
+        if (packetShadowTailOffsets.size() < size_t(numClusters) + 1 ||
+            memcmp(packetShadowTailOffsets.data(), tailOffsets.data(), sizeof(uint32_t) * (numClusters + 1)) != 0 ||
+            packetShadowTailUids.size() < tailEntryCount ||
+            memcmp(packetShadowTailUids.data(), tailUids.data(), sizeof(uint64_t) * tailEntryCount) != 0 ||
+            packetShadowTailProb.size() < tailEntryCount ||
+            memcmp(packetShadowTailProb.data(), tailProb.data(), sizeof(float) * tailEntryCount) != 0 ||
+            packetShadowTailMarginal.size() < tailEntryCount ||
+            memcmp(packetShadowTailMarginal.data(), tailMarginal.data(), sizeof(float) * tailEntryCount) != 0 ||
+            packetShadowTailAlias.size() < tailEntryCount ||
+            memcmp(packetShadowTailAlias.data(), tailAlias.data(), sizeof(uint32_t) * tailEntryCount) != 0 ||
+            packetShadowTailBeta.size() < numClusters ||
+            memcmp(packetShadowTailBeta.data(), tailBeta.data(), sizeof(float) * numClusters) != 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void ClusterLightLists::CommitPacketShadow()
+{
+    packetShadowValid = true;
+    packetShadowClusters = numClusters;
+    packetShadowEntries = listEntries;
+    packetShadowTailEntries = tailEntryCount;
+    packetShadowTailSuppressed = tailSuppressed;
+
+    if (numClusters > 0)
+        packetShadowOffsets.assign(offsets.begin(), offsets.begin() + (numClusters + 1));
+
+    if (listEntries > 0)
+        packetShadowList.assign(list.begin(), list.begin() + listEntries);
+
+    if (tailEntryCount > 0 && !tailSuppressed)
+    {
+        packetShadowTailOffsets.assign(tailOffsets.begin(), tailOffsets.begin() + (numClusters + 1));
+        packetShadowTailUids.assign(tailUids.begin(), tailUids.begin() + tailEntryCount);
+        packetShadowTailProb.assign(tailProb.begin(), tailProb.begin() + tailEntryCount);
+        packetShadowTailMarginal.assign(tailMarginal.begin(), tailMarginal.begin() + tailEntryCount);
+        packetShadowTailAlias.assign(tailAlias.begin(), tailAlias.begin() + tailEntryCount);
+        packetShadowTailBeta.assign(tailBeta.begin(), tailBeta.begin() + numClusters);
+    }
+}
+
+void ClusterLightLists::InvalidatePacketShadow()
+{
+    packetShadowValid = false;
 }
 
 /* Leaves a slot of a cluster holding no light, and clears the bit of the light it named: the

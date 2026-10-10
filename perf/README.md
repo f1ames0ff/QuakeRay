@@ -118,6 +118,9 @@ The instrumentation has landed these columns; the status tracks the guard's cont
 | `particles_cache_avg_ns` | dump | mean resolve cost per profiled call | landed |
 | `raster_upload_bytes` | dump (`QrFrameStats`) | bytes accepted by the raster collector | landed |
 | `raster_upload_dropped_batches` | dump (`QrFrameStats`) | batches dropped by the raster collector | landed |
+| `clust_pub_mask` | dump, `cpu.cluster` block line | reason bits of the last cluster light-list publication attempt (see `QR_CLUSTER_PUB_*` in `qray.h`); `skip device`/`skip slot` bits mean the publication was avoided, `copy` means the lists were rewritten | landed |
+| `clust_pub_skips` | dump, `cpu.cluster` block line | frames of the window whose cluster light-list publication reused the device's lists | landed |
+| `clust_pub_copies` | dump, `cpu.cluster` block line | frames of the window whose cluster light-list publication rewrote the lists | landed |
 
 The counter columns (`particles_*`, `*_bytes`, `rays_particle`, `raster_upload_*`, the cache counters) are recorded but not compared yet: the guard's dump reader computes p95 only for the timing columns, so the counters need their own compare rule (direction and zero baseline) before they can be pinned. The timing columns above need no parser change.
 

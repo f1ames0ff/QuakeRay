@@ -130,6 +130,9 @@ private:
     // every other slot of the cluster where it stands.
     void HoleSlot(uint32_t cluster, uint32_t slot);
     void MarkDirty(uint32_t cluster);
+    bool PacketMatchesShadow() const;
+    void CommitPacketShadow();
+    void InvalidatePacketShadow();
     void FillLists(UserPrint *pUserPrint);
     // Places the lights that changed -- the ones that moved, the ones that appeared and the ones
     // that disappeared -- and returns false when the frame is not one this can be done for and
@@ -323,6 +326,20 @@ private:
        whose lists are the ones it was last handed from a frame whose lists have to be built
        again: two publications of one generation carry the same words. */
     uint64_t              listGeneration = 0;
+
+    bool     packetShadowValid = false;
+    uint32_t packetShadowClusters = 0;
+    uint32_t packetShadowEntries = 0;
+    uint32_t packetShadowTailEntries = 0;
+    bool     packetShadowTailSuppressed = true;
+    std::vector<uint32_t> packetShadowOffsets;
+    std::vector<uint64_t> packetShadowList;
+    std::vector<uint32_t> packetShadowTailOffsets;
+    std::vector<uint64_t> packetShadowTailUids;
+    std::vector<float>    packetShadowTailProb;
+    std::vector<float>    packetShadowTailMarginal;
+    std::vector<uint32_t> packetShadowTailAlias;
+    std::vector<float>    packetShadowTailBeta;
 
     std::vector<uint32_t> granted;
     std::vector<uint32_t> denied;

@@ -545,6 +545,9 @@ void RT_Bench_Start (void)
 	rt_cluster_miss_set = 0;
 	rt_cluster_miss_move = 0;
 	rt_cluster_miss_other = 0;
+	rt_cluster_pub_skips = 0;
+	rt_cluster_pub_copies = 0;
+	rt_cluster_last_pub_mask = 0;
 	rt_particles_dropped = 0;
 	rt_particles_emit_culled = 0;
 	rt_particles_emit_faded = 0;
@@ -836,6 +839,9 @@ static void RT_Prof_PublishWindow (void *unused, unsigned frames, double elapsed
 	rt_prof_report.clusterLights = rt_cluster_last_lights;
 	rt_prof_report.clusterAttempts = rt_cluster_last_attempts;
 	rt_prof_report.clusterDropped = rt_cluster_last_dropped;
+	rt_prof_report.clusterPublicationMask = rt_cluster_last_pub_mask;
+	rt_prof_report.clusterPublicationSkips = rt_cluster_pub_skips;
+	rt_prof_report.clusterPublicationCopies = rt_cluster_pub_copies;
 	rt_prof_report.particlesClassic = rt_particles_classic;
 	rt_prof_report.particlesFte = rt_particles_fte;
 	rt_prof_report.particlesVertices = rt_particles_vertices;
@@ -882,6 +888,9 @@ void RT_Prof_Update (void)
 		rt_cluster_miss_set = 0;
 		rt_cluster_miss_move = 0;
 		rt_cluster_miss_other = 0;
+		rt_cluster_pub_skips = 0;
+		rt_cluster_pub_copies = 0;
+		rt_cluster_last_pub_mask = 0;
 		rt_particles_dropped = 0;
 		rt_particles_emit_culled = 0;
 		rt_particles_emit_faded = 0;
@@ -1064,9 +1073,9 @@ qboolean RT_Bench_Report (const char *demo)
 	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
 		fprintf (f, "host.pass   %-17s avg_ms=%.2f\n", hostPasses[i], hostSum[i] / hostFrames);
 
-	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d\n", "lists",
+	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d pubskips=%d pubcopies=%d\n", "lists",
 	         clusterHits, clusterMisses, clusterSet,
-	         clusterMove, clusterOther);
+	         clusterMove, clusterOther, rt_cluster_pub_skips, rt_cluster_pub_copies);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");
@@ -1453,6 +1462,9 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights", snap->profile.clusterLights);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights add", snap->profile.clusterAttempts);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights drop", snap->profile.clusterDropped);
+		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "pub skips", snap->profile.clusterPublicationSkips);
+		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "pub copies", snap->profile.clusterPublicationCopies);
+		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "pub mask", snap->profile.clusterPublicationMask);
 	}
 	else
 	{
@@ -1628,7 +1640,7 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 
 	fputs (",clust_cache_hits,clust_cache_misses,clust_miss_set,clust_miss_move,clust_miss_other,"
 	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped,"
-	       "clust_dirty_max,clust_move_footprint",
+	       "clust_dirty_max,clust_move_footprint,clust_pub_mask,clust_pub_skips,clust_pub_copies",
 	       f);
 	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls,calls_geometry,calls_raster,calls_lights,calls_other,rays_particle,"
 	       "particles_classic,particles_fte,particles_vertices,particles_smoke,particles_dropped,"
@@ -1726,6 +1738,12 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 		if (snap->haveProfile) fprintf (f, "%i", rep->clusterDirty);
 		RT_StatsRecordField (f, &first);
 		if (snap->haveProfile) fprintf (f, "%i", rep->clusterMoveFootprint);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterPublicationMask);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterPublicationSkips);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterPublicationCopies);
 
 		RT_StatsRecordField (f, &first);
 		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysTotal);

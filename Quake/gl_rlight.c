@@ -976,6 +976,9 @@ static vec3_t rt_cluster_vieworg;
    now, and these counters are the only numbers the host still has on it. */
 int rt_cluster_cache_hits;    /* frames that found the light set unchanged and reused the lists */
 int rt_cluster_cache_misses;  /* frames that composed the lists again */
+int rt_cluster_pub_skips;
+int rt_cluster_pub_copies;
+int rt_cluster_last_pub_mask;
 int rt_cluster_miss_set;      /* compositions set off by lights appearing or disappearing */
 int rt_cluster_miss_move;     /* compositions set off by lights that moved, changed their reach,
                                  or resolved into a different leaf */
@@ -1477,6 +1480,12 @@ void RT_ClusterLightListsFinish (void)
 		rt_cluster_tail_budget = (int)st.tailBudgetExceeded;
 		rt_cluster_last_dirty = (int)st.incrementalDirty;
 		rt_cluster_last_move_footprint = (int)st.moveFootprint;
+		rt_cluster_last_pub_mask = (int)st.publicationMask;
+
+		if (st.publicationMask & (QR_CLUSTER_PUB_SKIP_DEVICE | QR_CLUSTER_PUB_SKIP_SLOT))
+			rt_cluster_pub_skips++;
+		else if (st.publicationMask & QR_CLUSTER_PUB_COPY)
+			rt_cluster_pub_copies++;
 
 		if (st.reusedFrames)
 			rt_cluster_cache_hits++;

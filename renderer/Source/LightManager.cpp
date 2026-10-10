@@ -839,20 +839,61 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
          memcmp(publishedLightIndex[frameIndex].data(), registeredLightIndex[frameIndex].data(),
                 sizeof(uint32_t) * registeredCount) == 0);
 
+    const bool sameGeneration = publishedListGeneration[frameIndex] == listGeneration;
+    const bool sameClusters = publishedListClusters[frameIndex] == numClusters;
+    const bool sameWords = publishedListWords[frameIndex] == listWordCount;
+    const bool sameTailWords = publishedTailWords[frameIndex] == tailWordCount;
+    const bool sameTailClusters = publishedTailClusters[frameIndex] == numClusters;
+    const bool sameOrder = publishedLightOrder[frameIndex] == registeredLightOrder[frameIndex];
+
     const bool sameAsPublished =
-        publishedListValid[frameIndex] && publishedListGeneration[frameIndex] == listGeneration &&
-        publishedListClusters[frameIndex] == numClusters && publishedListWords[frameIndex] == listWordCount &&
-        publishedTailWords[frameIndex] == tailWordCount &&
-        samePlaces && publishedLightOrder[frameIndex] == registeredLightOrder[frameIndex];
+        publishedListValid[frameIndex] && sameGeneration && sameClusters && sameWords &&
+        sameTailWords && samePlaces && sameOrder;
+
+    const bool deviceHoldsCurrent =
+        deviceListValid && deviceListGeneration == listGeneration && deviceListClusters == numClusters &&
+        deviceListWords == listWordCount && deviceTailWords == tailWordCount &&
+        deviceTailClusters == numClusters && deviceLightOrder == registeredLightOrder[frameIndex] &&
+        deviceLightIndex.size() == registeredCount &&
+        (registeredCount == 0 ||
+         memcmp(deviceLightIndex.data(), registeredLightIndex[frameIndex].data(),
+                sizeof(uint32_t) * registeredCount) == 0);
+
+    uint32_t staleMask = 0;
+
+    if (!publishedListValid[frameIndex])
+        staleMask |= QR_CLUSTER_PUB_STALE_VALID;
+    if (!sameGeneration)
+        staleMask |= QR_CLUSTER_PUB_STALE_GENERATION;
+    if (!sameClusters)
+        staleMask |= QR_CLUSTER_PUB_STALE_CLUSTERS;
+    if (!sameWords)
+        staleMask |= QR_CLUSTER_PUB_STALE_WORDS;
+    if (!sameTailWords || !sameTailClusters)
+        staleMask |= QR_CLUSTER_PUB_STALE_TAILS;
+    if (!samePlaces)
+        staleMask |= QR_CLUSTER_PUB_STALE_PLACES;
+    if (!sameOrder)
+        staleMask |= QR_CLUSTER_PUB_STALE_ORDER;
+
+    if (deviceHoldsCurrent)
+    {
+        publicationMask = staleMask | QR_CLUSTER_PUB_SKIP_DEVICE;
+        return;
+    }
 
     if (sameAsPublished)
     {
+        publicationMask = staleMask | QR_CLUSTER_PUB_SKIP_SLOT;
+
         if (!DeviceHoldsPublishedList(frameIndex))
         {
             lightListCopyPending[frameIndex] = true;
         }
         return;
     }
+
+    publicationMask = staleMask | QR_CLUSTER_PUB_COPY;
 
     uint32_t *pDstOffsets = static_cast<uint32_t *>(lightListOffsets->GetMapped(frameIndex));
 

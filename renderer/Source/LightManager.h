@@ -87,6 +87,8 @@ public:
                               uint32_t totalLightCount, uint64_t listGeneration,
                               const ClusterLightTailRange &tails);
 
+    uint32_t GetLastPublicationMask() const { return publicationMask; }
+
     void SetClusterSkyVisibility(const uint8_t *pBits, uint32_t numClusters);
 
     void ResetLightStats(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t frameId);
@@ -197,6 +199,8 @@ private:
     uint32_t deviceTailClusters = 0;
     std::vector<uint64_t> deviceLightOrder;
     std::vector<uint32_t> deviceLightIndex;
+
+    uint32_t publicationMask = 0;
 
     Buffer lightStats;
 

@@ -406,6 +406,9 @@ void RT_ClusterLightListsFinish (void);
 // Frames that reused the cached cluster light lists and frames that rebuilt them. The profiler
 // reads and clears them once per reporting window, so the panel can show a hit rate.
 extern int rt_cluster_cache_hits;
+extern int rt_cluster_pub_skips;
+extern int rt_cluster_pub_copies;
+extern int rt_cluster_last_pub_mask;
 extern int rt_cluster_cache_misses;
 
 // Why the cluster light lists were rebuilt, counted per rebuild. The set of registered lights
@@ -754,6 +757,9 @@ typedef struct
 	int      clusterLights;      // lights accepted into the registry
 	int      clusterAttempts;    // additions attempted by the registrars
 	int      clusterDropped;     // additions refused because the registry was full
+	int      clusterPublicationMask;
+	int      clusterPublicationSkips;
+	int      clusterPublicationCopies;
 	int      particlesClassic;
 	int      particlesFte;
 	int      particlesVertices;
