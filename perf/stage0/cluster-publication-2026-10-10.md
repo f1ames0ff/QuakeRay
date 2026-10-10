@@ -127,9 +127,33 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
   engine's 16 ms focus/pause sleep path (`main_sdl.c`) and repeats on pre-change builds
   (`cl-b1-task-2`), so they stand as an environment/harness condition, not as a regression;
   re-run the demo and the repeat arms on a quiet machine before accepting them.
-- Remaining: the fill fold (fill 1.32-1.37 ms on copy frames), the published-span reuse (the
-  serial resolve lever, `clust publish` 2.3; design and measurement still missing) and the parity
-  amortization.
+- Remaining: the fill fold (fill 1.32-1.37 ms on copy frames), the parity amortization (25-31%
+  of the copies; no stable-index precondition), and stable uid-keyed indices, which the span
+  reuse measured above needs before it can be re-attempted.
+
+## Span reuse attempt - measured as a regression, reverted (2026-10-11, no commit)
+
+The next serial lever was the published-span reuse: keep the last copied packet (uids and
+resolved words, double-buffered) and reuse a cluster's resolved words when its uid run and the
+registration mapping are unchanged. Implemented in `LightManager` (Prepare stores the offsets and
+gates the reuse on a mapping snapshot; the slices compare per-cluster uid runs and copy the
+shadow words, resolving only changed clusters; Commit flips the planes; Reset invalidates).
+
+Measured on AD start (build `B0B339E6…`, runs `cl-b7-*`): `clust publish` **rose** from 0.46-0.50
+to **0.64-0.74** (task) and from 2.32-2.37 to **3.24-4.60** (serial), with clean logs (the
+sampled staged-word check passed in every run, so the reuse path is correct where it fires). The
+reuse itself never fired: with ~96% of clusters unchanged a hit would save ~1.8 ms of the serial
+resolve, far more than the shadow writes (~2.8 MB of stores) cost, so the measured increase
+means every word was resolved while the shadow was still written. The cause is structural: the
+light array indices are positional by registration order, and the frames that publish are
+exactly the frames on which the light set or order moves, so the mapping snapshot never matches.
+The lever requires **stable uid-keyed indices** (the O1b option) before the span can ever be
+reused.
+
+Reverted; the batch-3 numbers are restored and re-measured on the rebuild (runs `cl-b8-*`: task
+`publish` 0.46, `clusters` 3.02; serial `clusters` 5.45 + `publish` 2.43; logs and manifests
+clean). Note: the `cl-b7` demo run (`ad_particle_heavy`, 23:51) was touched by the owner during
+the run; its fps is not usable and a clean demo re-run is pending.
 
 ## Evidence pointers
 
