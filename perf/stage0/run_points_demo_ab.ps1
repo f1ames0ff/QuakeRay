@@ -57,6 +57,7 @@ r_smoke 1
 rt_particle_resolve_cache 1
 r_particles_points $armValue
 $($ExtraCvars -join "`n")
+bind F9 "menu_main"
 rt_bench $demo quit
 "@
         Set-Content -Path $cfgPath -Value $cfgText
@@ -81,6 +82,10 @@ rt_bench $demo quit
             [PointsDemoWin32]::ShowWindow($hwnd, 5) | Out-Null
             [PointsDemoWin32]::SetForegroundWindow($hwnd) | Out-Null
             Start-Sleep -Seconds 2
+            [PointsDemoWin32]::Key($hwnd, 0x78, 0x43, $false)
+            Start-Sleep -Milliseconds 60
+            [PointsDemoWin32]::Key($hwnd, 0x78, 0x43, $true)
+            Start-Sleep -Milliseconds 400
             [PointsDemoWin32]::Key($hwnd, 0x1B, 0x01, $false)
             Start-Sleep -Milliseconds 60
             [PointsDemoWin32]::Key($hwnd, 0x1B, 0x01, $true)

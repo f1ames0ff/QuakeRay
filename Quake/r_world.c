@@ -69,6 +69,8 @@ extern cvar_t rt_light_report_filter;
 extern cvar_t rt_worldcensus;
 extern cvar_t rt_worldlights_stats;
 extern cvar_t rt_worldclusters_grid;
+extern cvar_t rt_particle_volume;
+extern cvar_t rt_particle_volume_check;
 
 cvar_t r_parallelmark = {"r_parallelmark", "1", CVAR_NONE};
 
@@ -5559,6 +5561,9 @@ typedef struct
 	// mapping run before the upload that would otherwise build them.
 	qmodel_t *model;
 
+	// Bumped on every build attempt, so a baked volume can prove which table it was painted from.
+	uint32_t generation;
+
 	int        num_clusters;
 	QrFloat3D *cluster_mins;
 	QrFloat3D *cluster_maxs;
@@ -5580,6 +5585,23 @@ typedef struct
 } rt_worldclusters_t;
 
 static rt_worldclusters_t rt_worldclusters;
+static uint32_t           rt_worldclusters_generation;
+
+typedef struct
+{
+	uint16_t *cells;
+	float     mins[3];
+	float     cell;
+	int       dims[3];
+	uint32_t  generation;
+} rt_cluster_volume_t;
+
+static rt_cluster_volume_t rt_cluster_volume;
+
+atomic_uint32_t rt_volume_verify_samples;
+atomic_uint32_t rt_volume_verify_mismatch;
+atomic_uint32_t rt_volume_verify_lost;
+atomic_uint32_t rt_volume_verify_extra;
 
 static void RT_AllocClusterTables (int num_clusters)
 {
@@ -5986,6 +6008,8 @@ void RT_BuildWorldClusters (void)
 
 	RT_FreeWorldClusters ();
 
+	rt_worldclusters.generation = ++rt_worldclusters_generation;
+
 	if (!model || !model->leafs || model->numleafs < 2)
 		return;
 
@@ -6060,6 +6084,192 @@ void RT_BuildWorldClusters (void)
 
 	Con_Printf ("RT: %i leafs folded into %i clusters over a %ix%ix%i grid, %i bytes of PVS rows\n",
 		model->numleafs, num_cells + 1, dims[0], dims[1], dims[2], rt_worldclusters.vis_data_size);
+}
+
+/*
+=================
+RT_BuildClusterVolume
+
+Bakes the cluster of the leaf each texel centre resolves into, using the same rule the CPU
+resolve applies (fresh, not the 16 u point cache), so the particle paths can read the cluster
+of a point instead of walking the BSP per vertex. The volume names the table generation it was
+painted from and is discarded whenever the tables are rebuilt.
+=================
+*/
+#define RT_CLUSTER_VOLUME_CELL 64.0f
+#define RT_CLUSTER_VOLUME_MAX_TEXELS (4 * 1024 * 1024)
+
+void RT_BuildClusterVolume (void)
+{
+	qmodel_t *model = cl.worldmodel;
+	vec3_t    mins, maxs, ext;
+	qboolean  have_bounds = false;
+	double    start_time;
+	int       dims[3], texels, painted = 0, painted_zero = 0;
+
+	Mem_Free (rt_cluster_volume.cells);
+	memset (&rt_cluster_volume, 0, sizeof (rt_cluster_volume));
+
+	if (!CVAR_TO_BOOL (rt_particle_volume) || !model || !model->leafs || model->numleafs < 2 ||
+	    !rt_worldclusters.leaf_cluster)
+		return;
+
+	for (int i = 1; i < model->numleafs; i++)
+	{
+		const mleaf_t *leaf = &model->leafs[i];
+
+		if (leaf->contents == CONTENTS_SOLID)
+			continue;
+
+		for (int a = 0; a < 3; a++)
+		{
+			if (!have_bounds || leaf->minmaxs[a] < mins[a])
+				mins[a] = leaf->minmaxs[a];
+			if (!have_bounds || leaf->minmaxs[a + 3] > maxs[a])
+				maxs[a] = leaf->minmaxs[a + 3];
+		}
+
+		have_bounds = true;
+	}
+
+	if (!have_bounds)
+	{
+		for (int a = 0; a < 3; a++)
+		{
+			mins[a] = model->mins[a];
+			maxs[a] = model->maxs[a];
+		}
+	}
+
+	texels = 1;
+	for (int a = 0; a < 3; a++)
+	{
+		ext[a] = maxs[a] - mins[a];
+		dims[a] = (int)ceil (ext[a] / RT_CLUSTER_VOLUME_CELL);
+		if (dims[a] < 1)
+			dims[a] = 1;
+		texels *= dims[a];
+	}
+
+	if (texels > RT_CLUSTER_VOLUME_MAX_TEXELS)
+	{
+		Con_DWarning ("RT: cluster volume needs %i texels, over the %i cap; the CPU resolve stays\n",
+			texels, RT_CLUSTER_VOLUME_MAX_TEXELS);
+		return;
+	}
+
+	rt_cluster_volume.cells = (uint16_t *)Mem_Alloc (sizeof (uint16_t) * texels);
+	rt_cluster_volume.cell = RT_CLUSTER_VOLUME_CELL;
+	rt_cluster_volume.generation = rt_worldclusters.generation;
+	for (int a = 0; a < 3; a++)
+	{
+		rt_cluster_volume.mins[a] = mins[a];
+		rt_cluster_volume.dims[a] = dims[a];
+	}
+
+	start_time = Sys_DoubleTime ();
+
+	for (int z = 0; z < dims[2]; z++)
+	{
+		for (int y = 0; y < dims[1]; y++)
+		{
+			for (int x = 0; x < dims[0]; x++)
+			{
+				vec3_t center;
+				int    cluster;
+
+				center[0] = mins[0] + ((float)x + 0.5f) * RT_CLUSTER_VOLUME_CELL;
+				center[1] = mins[1] + ((float)y + 0.5f) * RT_CLUSTER_VOLUME_CELL;
+				center[2] = mins[2] + ((float)z + 0.5f) * RT_CLUSTER_VOLUME_CELL;
+
+				cluster = RT_ResolvePointClusterUncached (center);
+				rt_cluster_volume.cells[(z * dims[1] + y) * dims[0] + x] = (uint16_t)cluster;
+				painted++;
+				if (!cluster)
+					painted_zero++;
+			}
+		}
+	}
+
+	Con_Printf ("RT: cluster volume %ix%ix%i, %i texels, %i zero, %.1f ms, generation %u\n",
+		dims[0], dims[1], dims[2], painted, painted_zero,
+		(Sys_DoubleTime () - start_time) * 1000.0, rt_worldclusters.generation);
+}
+
+static int RT_SampleClusterVolume (const float *p)
+{
+	int idx[3];
+
+	for (int a = 0; a < 3; a++)
+	{
+		float f = (p[a] - rt_cluster_volume.mins[a]) / rt_cluster_volume.cell;
+
+		if (!(f > 0.0f))
+			f = 0.0f;
+		else if (f >= (float)rt_cluster_volume.dims[a])
+			f = (float)rt_cluster_volume.dims[a] - 1.0f;
+
+		idx[a] = (int)f;
+	}
+
+	return rt_cluster_volume.cells[(idx[2] * rt_cluster_volume.dims[1] + idx[1]) * rt_cluster_volume.dims[0] + idx[0]];
+}
+
+int RT_ParticleClusterAt (const vec3_t p)
+{
+	if (rt_cluster_volume.cells && rt_worldclusters.model == cl.worldmodel &&
+	    rt_cluster_volume.generation == rt_worldclusters.generation)
+	{
+		const int check = (int)rt_particle_volume_check.value;
+
+		if (check > 0)
+		{
+			static atomic_uint32_t verify_counter;
+			const uint32_t         n = Atomic_IncrementUInt32 (&verify_counter);
+
+			if (n % (uint32_t)check == 0)
+			{
+				const int volume = RT_SampleClusterVolume (p);
+				const int cpu = RT_ResolvePointClusterUncached (p);
+
+				Atomic_AddUInt32 (&rt_volume_verify_samples, 1);
+
+				if (volume != cpu)
+				{
+					Atomic_AddUInt32 (&rt_volume_verify_mismatch, 1);
+
+					if (!volume && cpu)
+						Atomic_AddUInt32 (&rt_volume_verify_lost, 1);
+					else if (volume && !cpu)
+						Atomic_AddUInt32 (&rt_volume_verify_extra, 1);
+				}
+			}
+		}
+
+		return RT_SampleClusterVolume (p);
+	}
+
+	return RT_ResolvePointCluster (p);
+}
+
+void RT_ClusterVolumeVerifyStats (uint64_t *samples, uint64_t *mismatch, uint64_t *lost, uint64_t *extra)
+{
+	if (samples)
+		*samples = Atomic_LoadUInt32 (&rt_volume_verify_samples);
+	if (mismatch)
+		*mismatch = Atomic_LoadUInt32 (&rt_volume_verify_mismatch);
+	if (lost)
+		*lost = Atomic_LoadUInt32 (&rt_volume_verify_lost);
+	if (extra)
+		*extra = Atomic_LoadUInt32 (&rt_volume_verify_extra);
+}
+
+void RT_ClusterVolumeResetVerify (void)
+{
+	Atomic_StoreUInt32 (&rt_volume_verify_samples, 0);
+	Atomic_StoreUInt32 (&rt_volume_verify_mismatch, 0);
+	Atomic_StoreUInt32 (&rt_volume_verify_lost, 0);
+	Atomic_StoreUInt32 (&rt_volume_verify_extra, 0);
 }
 
 /*
@@ -6285,6 +6495,10 @@ void RT_UploadWorldLights (void)
 
 	// The cluster tables are what turns a leaf index into the index the renderer indexes with.
 	RT_BuildWorldClusters ();
+
+	// The particle paths read the cluster of a point from the baked volume instead of walking
+	// the BSP per vertex; the volume is rebuilt together with the tables it was painted from.
+	RT_BuildClusterVolume ();
 
 	// Which of those clusters can see the sky at all: the renderer skips the sun shadow ray
 	// of the ones that cannot (Q2RTX's sky_visibility).

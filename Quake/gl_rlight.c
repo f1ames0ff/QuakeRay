@@ -1212,6 +1212,14 @@ void RT_PointClusterCacheSetEnabled (qboolean enabled)
 	rt_point_cluster_cache_enabled = enabled;
 }
 
+int RT_ResolvePointClusterUncached (const vec3_t p)
+{
+	qmodel_t *wm = cl.worldmodel;
+	mleaf_t  *leaf = RT_ResolveLightLeaf (p, wm);
+
+	return leaf ? RT_MapWorldCluster ((int)(leaf - wm->leafs)) : 0;
+}
+
 int RT_ResolvePointCluster (const vec3_t p)
 {
 	const double prof_start = RT_Prof_Begin ();
@@ -1254,8 +1262,7 @@ int RT_ResolvePointCluster (const vec3_t p)
 		}
 		else
 		{
-			mleaf_t *leaf = RT_ResolveLightLeaf (p, wm);
-			cluster = leaf ? RT_MapWorldCluster ((int)(leaf - wm->leafs)) : 0;
+			cluster = RT_ResolvePointClusterUncached (p);
 
 			slot->valid = true;
 			slot->cell[0] = cx;
@@ -1268,8 +1275,7 @@ int RT_ResolvePointCluster (const vec3_t p)
 	}
 	else
 	{
-		mleaf_t *leaf = RT_ResolveLightLeaf (p, wm);
-		cluster = leaf ? RT_MapWorldCluster ((int)(leaf - wm->leafs)) : 0;
+		cluster = RT_ResolvePointClusterUncached (p);
 		cache->misses++;
 	}
 

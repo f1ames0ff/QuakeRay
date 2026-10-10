@@ -150,7 +150,7 @@ after `SCR_UpdateScreen` (host.c:1020-1021); FTE simulates inside its draw (r_pa
   `r_particle_lighting 1`, `r_smoke 1`, `vid_vsync 2`, `host_maxfps 200` — only the classic path is
   off; every A/B must pin the rest.
 - Map data (verified from the shipped paks and the loader): `maps/start.bsp` raw leaf lump 7308,
-  **world visleafs 6125 -> identity mapping, 6126 clusters**; `maps/ad_tfuma.bsp` raw 24232,
+  **world visleafs 6125 -> identity mapping, 6125 clusters (cluster 0 shared, no +1 slot)**; `maps/ad_tfuma.bsp` raw 24232,
   **visleafs 18806 -> grid 23x23x15 = 7935 cells + reserved 0 = 7936 clusters** (the loader reads
   `visleafs` into `mod->numleafs`, gl_model.c:2376,2598; the world cluster count uses
   `submodels[0].visleafs`, r_world.c:1919,1961).

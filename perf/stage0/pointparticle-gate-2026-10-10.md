@@ -8,6 +8,13 @@ spawning far from the camera. Owner decision (2026-10-10): gate ON by default, r
 point branch only. Register row E1 and the stage note live in `docs/particle-plan.md`; the column
 contract is in `perf/README.md`.
 
+> Run-generation note (added 2026-10-10 after Stage 3): the `gate-*` runs in this record were
+> produced with a harness whose blind ESC raced the load screen and could leave the main menu or
+> the quit dialog open (a paused world invalidates a run). Those runs are therefore marked
+> invalid as evidence; the gate arms were re-run on the Stage 3 build with the deterministic
+> menu close and the clean exit path, and the conclusions below were reproduced there (see the
+> revalidation section at the end).
+
 ## Revision and inputs
 
 - Build: `.\build_win.ps1 Debug` (exit 0), `quakeray.exe` SHA256
@@ -108,6 +115,27 @@ including `r_particles 0`/`r_fteparticles 0` arms is 0.22-4.56 / 0-6.00), with n
   code-inspected only; `r_tasks` is not part of the bench settings witness (the t0 arm is witnessed
   by its generated fixture); `r_part_emit_distance` is not archived, so tuning does not persist
   across sessions.
+
+## Revalidation after the harness menu fix (Stage 3 build)
+
+The gate arms were re-run on the Stage 3 build with the fixed harness (deterministic
+`menu_main`+ESC close, clean `toggleconsole;quit` exit, live-total sampling). The cluster volume
+is on by default in this build, so the resolve column is near the floor and the gate evidence here
+is the population and the counters, exactly as before. Window-maxima medians:
+
+| Arm | fps | frame | resolve | convert | fte | cull | fade | live |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| start gate=0 | 67.3 | 11.62 | 0.32 | 3.12 | 7061 | 0 | 0 | 7133-7195 |
+| start gate=1024 | 74.6 | 10.56 | 0.28 | 1.17 | 2338 | 377 | 461 | 1962-2486 |
+| start gate=2048 | 68.9 | 11.48 | 0.31 | 2.78 | 6206 | 31 | 349 | 5981-6323 |
+| start gate=2048, r_tasks 0 | 53.7 | 21.83 | 0.24 | 1.89 | 6245 | 21 | 358 | 5653-6082 |
+| tfuma gate=0 | 43.9 | 15.98 | 1.89 | 1.85 | 3917 | 0 | 0 | 3846-4170 |
+| tfuma gate=2048 | 45.0 | 15.87 | 1.91 | 1.50 | 3142 | 1354 | 610 | 3161-2974 |
+| swampy gate=2048 | 29.2 | 23.98 | 2.80 | 0.14 | 1 | 0 | 0 | 2-0 |
+
+The dose response reproduces: start population -12% at 2048 and -67% at 1024, tfuma -20%,
+swampy unchanged with zero counters; the `r_tasks 0` arm keeps the same counter totals; every run
+exited through `F10 toggleconsole;quit` and shows differing live totals (world not paused).
 
 ## Changed files (this change)
 

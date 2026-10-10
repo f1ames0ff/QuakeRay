@@ -971,7 +971,7 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 			points[current_point].packedColor = RT_PackColorToUint32 (c[0], c[1], c[2], 255);
 			points[current_point].size = scale;
 			points[current_point].cluster =
-				lit_particles ? (uint32_t)RT_ResolvePointCluster (p->org) : 0u;
+				lit_particles ? (uint32_t)RT_ParticleClusterAt (p->org) : 0u;
 			current_point++;
 		}
 
@@ -1024,7 +1024,7 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		// All vertices of one particle carry the same colour, so it is packed once per particle.
 		const uint32_t packed_color = RT_PackColorToUint32 (c[0], c[1], c[2], 255);
 		const uint32_t particle_cluster =
-			lit_particles ? (uint32_t)RT_ResolvePointCluster (p->org) : 0u;
+			lit_particles ? (uint32_t)RT_ParticleClusterAt (p->org) : 0u;
 
 		vertices[current_vertex].position[0] = p->org[0];
 		vertices[current_vertex].position[1] = p->org[1];

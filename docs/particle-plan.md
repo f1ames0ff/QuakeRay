@@ -22,7 +22,7 @@ scale to the content that actually exists.
 | ID | Decision | Recommendation |
 |---|---|---|
 | G0 | Confirm T1 scene and numbers; separate synthetic stress scenario | AD `start` saved viewpoint + dense-trail demo + a synthetic 100k test |
-| D1 | Identity-map volume policy (start: 6125 visleafs -> 6126 identity clusters) | Bake an R16_UINT volume by painting `leaf_cluster`; keep the CPU resolve behind a flag; 64 u is lossy and must be measured |
+| D1 | Identity-map volume policy (start: 6125 visleafs -> 6125 identity clusters, cluster 0 shared) | Bake an R16_UINT volume by painting `leaf_cluster`; keep the CPU resolve behind a flag; 64 u is lossy and must be measured |
 | D2 | Resolve removal first? | Stage 0 decides; if resolve is not dominant, prioritize conversion/upload instead of the volume |
 | A1 | Volume accuracy contract | Paint `leaf_cluster` per texel (never position->cell arithmetic; tfuma counterexample leaf 12278 -> cluster 1766 vs arithmetic 3118); ambiguous texels follow the CPU rule; keep 0 where the CPU returns 0 (cluster 0 has no PVS row; the sun is ray-gated) |
 | A2 | Volume generation | Its own map generation bumped where the clusters rebuild; never `listGeneration` (that ticks per composition) |
@@ -132,8 +132,11 @@ scale to the content that actually exists.
   behind a cvar.
 - Known precision: one 64 u texel on start holds clusters 2 and 4; tfuma engine cells are ~358 u.
   Mismatch counters are required; the visual tolerance is an owner decision.
-- Gate: parity on `start` (identity, 6126 clusters) and `ad_tfuma` (grid, 18806 visleafs -> 7936
-  clusters); resolve cost ~0.
+- Gate: parity on `start` (identity, 6125 clusters) and `ad_tfuma` (grid, 18806 visleafs -> 7936
+  clusters); the particle-attributable share of `cpu.particles_resolve_ms` must collapse onto the
+  per-map non-particle floor (measured with `r_particles 0`: start ~0.3 ms, tfuma ~1.8-2.0 ms,
+  swamp ~3.2-3.4 ms), or a particle-only counter must carry the gate; volume-vs-CPU mismatch
+  counters and the one-shot bake report are required evidence.
 
 ### Stage 4 — per-particle lighting, DTAL gate, ray budget
 - One cluster/light evaluation per particle for small sprites; <=1 budgeted ray per particle under a

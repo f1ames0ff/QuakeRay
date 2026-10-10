@@ -6917,7 +6917,7 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 			{
 				QrVertex *lit = (QrVertex *)info.pVertices;
 				for (uint32_t v = 0; v < info.vertexCount; v++)
-					lit[v].cluster = (uint32_t)RT_ResolvePointCluster (lit[v].position);
+					lit[v].cluster = (uint32_t)RT_ParticleClusterAt (lit[v].position);
 
 				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_PARTICLE;
 				info.smokeLook.data[0] = CVAR_TO_BOOL (r_particle_light_debug) ? 1.0f : 0.0f;

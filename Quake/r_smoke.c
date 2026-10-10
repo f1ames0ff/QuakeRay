@@ -137,7 +137,7 @@ static void R_SmokeSpawn (const vec3_t org, const vec3_t vel, float sizeScale, f
 
 	VectorCopy (org, p->org);
 	VectorCopy (vel, p->vel);
-	p->cluster  = RT_ResolvePointCluster (org);
+	p->cluster  = RT_ParticleClusterAt (org);
 
 	p->birth    = (float)cl.time;
 	p->lifetime = q_max (0.05f, r_smoke_life.value * SmokeRandomRange (0.75f, 1.25f));
