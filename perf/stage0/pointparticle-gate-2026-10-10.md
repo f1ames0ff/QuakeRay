@@ -46,8 +46,9 @@ PORTALFRONT 840/744/656/656/592/592, PORTALSIDE 672/576; gate=2048 — LFLAME 82
 Running-effect types: 64 -> 64 -> 44; total live 7140/6940 -> 5804/6039 -> 2132/2348.
 
 Demo regression: `ad_particle_heavy` with the gate at 2048 — 2747 frames, 69.42 s, fps 39.6,
-`interrupted=0`, no parse/desync errors; the run reports particles 2.45 / fte convert 3.64, inside
-the historical range for this demo (2.21-4.56 / 3.36-6.00), with no same-session A/B arm.
+`interrupted=0`, no parse/desync errors; the run reports particles resolve 2.45 / fte convert 3.64,
+inside the same-config historical band for this demo (2.24-4.56 / 3.43-6.00; the broader band
+including `r_particles 0`/`r_fteparticles 0` arms is 0.22-4.56 / 0-6.00), with no same-session A/B arm.
 
 ## Findings
 
@@ -67,7 +68,7 @@ the historical range for this demo (2.21-4.56 / 3.36-6.00), with no same-session
    are beyond 2048; most of the win at 2048 comes from scaling counts of messages in
    [1024, 2048). 1024 cuts far more (owner-facing dose-response recorded; the cvar allows tuning
    without a code change).
-5. Regressions clean: `ad_swampy` (essentially particle-free: 1-6 live, 23 vertices) shows zero
+5. Regressions clean: `ad_swampy` (essentially particle-free: 1-2 live, 23 vertices) shows zero
    counters and no resolvable change (the frame/fps deltas are cross-build and inside the spread).
    The demo `ad_particle_heavy` with the gate at 2048 shows no desync indicator (`interrupted=0`,
    2747 frames / 69.42 s inside the historical 1256-3628 frame spread); it is a single arm, so an
@@ -92,9 +93,10 @@ the historical range for this demo (2.21-4.56 / 3.36-6.00), with no same-session
 ## Limitations
 
 - Window-maxima medians overstate per-frame values. Same-conditions repeats are scarce: the only
-  true repeat pair in the artifact set (tfuma) differs by ~48% in fps, and demo runs of the same
-  demo span 18-54 fps, so the gate=0 vs gate=2048 `start` fps delta (+2.2) is not resolved at this
-  radius; the live, vertex and transport reductions are the decisive evidence.
+  true repeat pair in the artifact set (tfuma) differs by ~49% in fps relative to the lower value
+  (27.1 vs 40.3), and demo runs of the same demo span 18-54 fps, so the gate=0 vs gate=2048 `start`
+  fps delta (+2.2) is not resolved at this radius; the live, vertex and transport reductions are the
+  decisive evidence.
 - Pre-change rows are a different binary; they are context only (cross-build comparisons are
   forbidden for acceptance). Within-build comparisons above are gate=0 vs 1024 vs 2048. The save
   captures are not frame-identical across arms, so "consistent" counter totals are qualitative.
