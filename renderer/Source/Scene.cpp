@@ -287,3 +287,18 @@ bool qray::Scene::UploadDtalGroups(uint32_t frameIndex, const QrDtalGroupUploadB
 {
     return lightManager->AddDtalGroups(frameIndex, batch, pTextureIndices);
 }
+
+void qray::Scene::BeginDeferredLightUploads(uint32_t slot)
+{
+    lightManager->BeginDeferredUploads(slot);
+}
+
+void qray::Scene::EndDeferredLightUploads()
+{
+    lightManager->EndDeferredUploads();
+}
+
+void qray::Scene::FlushDeferredLightUploads()
+{
+    lightManager->FlushDeferredUploads();
+}

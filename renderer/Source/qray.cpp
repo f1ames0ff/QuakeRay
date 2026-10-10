@@ -217,6 +217,21 @@ QrResult qrUploadSpotLight(QrInstance qrInstance, const QrSpotLightUploadInfo *p
     return Call(qrInstance, &VulkanDevice::UploadSpotlight, pUploadInfo);
 }
 
+QrResult qrBeginDeferredLightUploads(QrInstance qrInstance, uint32_t slot)
+{
+    return Call(qrInstance, &VulkanDevice::BeginDeferredLightUploads, slot);
+}
+
+QrResult qrEndDeferredLightUploads(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::EndDeferredLightUploads);
+}
+
+QrResult qrFlushDeferredLightUploads(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::FlushDeferredLightUploads);
+}
+
 QrResult qrUploadPolygonalLight(QrInstance qrInstance, const QrPolygonalLightUploadInfo *pUploadInfo)
 {
     return Call(qrInstance, &VulkanDevice::UploadPolygonalLight, pUploadInfo);

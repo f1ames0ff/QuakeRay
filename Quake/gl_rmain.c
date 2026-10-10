@@ -1085,12 +1085,15 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
+	qrBeginDeferredLightUploads (vulkan_globals.instance, 0);
+
 	const qboolean static_submit = Atomic_ExchangeUInt32 (&rt_require_static_submit, false) != 0;
 	const qboolean light_recollect = Atomic_ExchangeUInt32 (&rt_require_world_light_recollect, false) != 0;
 
 	if (!static_submit && !light_recollect)
 	{
 		RT_StaticMovableUpdate ();
+		qrEndDeferredLightUploads (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1100,6 +1103,7 @@ void R_DrawWorldTask (void *unused)
 		RT_RecollectWorldEmissiveLights ();
 		RT_StaticMovableUpdate ();
 
+		qrEndDeferredLightUploads (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1126,6 +1130,7 @@ void R_DrawWorldTask (void *unused)
 
 	RT_StaticMovableUpdate ();
 
+	qrEndDeferredLightUploads (vulkan_globals.instance);
 	RT_Prof_End (RT_PROF_WORLD, prof_start);
 }
 
@@ -1156,6 +1161,8 @@ static void R_DrawEntitiesTask (int index, void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
+	qrBeginDeferredLightUploads (vulkan_globals.instance, 1u + (uint32_t)index);
+
 	const int cbx_index = index + CBX_ENTITIES_0;
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[cbx_index]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[cbx_index]); // johnfitz
@@ -1163,6 +1170,8 @@ static void R_DrawEntitiesTask (int index, void *unused)
 	int       startedict = index * num_edicts_per_cb;
 	int       endedict = q_min ((index + 1) * num_edicts_per_cb, cl_numvisedicts);
 	R_DrawEntitiesOnList (&vulkan_globals.secondary_cb_contexts[cbx_index], false, index + chain_model_0, startedict, endedict);
+
+	qrEndDeferredLightUploads (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_ENTS, prof_start);
 }
@@ -1178,9 +1187,11 @@ static void R_DrawAlphaEntitiesTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES]);
+	qrBeginDeferredLightUploads (vulkan_globals.instance, 1u + NUM_ENTITIES_CBX);
 	R_DrawEntitiesOnList (
 		&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES], true, chain_alpha_model, 0,
 		cl_numvisedicts); // johnfitz -- true means this is the pass for alpha entities
+	qrEndDeferredLightUploads (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_ALPHA, prof_start);
 }
@@ -1216,6 +1227,8 @@ static void R_DrawViewModelTask (void *unused)
 	double prof_start;
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);
+
+	qrFlushDeferredLightUploads (vulkan_globals.instance);
 
 	prof_start = RT_Prof_Begin ();
 	// The editor draws the lights of the frame as wireframes, so their upload

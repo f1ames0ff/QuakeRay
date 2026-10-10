@@ -574,6 +574,16 @@ QRAPI QrResult QRCONV qrUploadSpotLight(
     QrInstance                          qrInstance,
     const QrSpotLightUploadInfo         *pUploadInfo);
 
+QRAPI QrResult QRCONV qrBeginDeferredLightUploads(
+    QrInstance                          qrInstance,
+    uint32_t                            slot);
+
+QRAPI QrResult QRCONV qrEndDeferredLightUploads(
+    QrInstance                          qrInstance);
+
+QRAPI QrResult QRCONV qrFlushDeferredLightUploads(
+    QrInstance                          qrInstance);
+
 QRAPI QrResult QRCONV qrUploadPolygonalLight(
     QrInstance                          qrInstance,
     const QrPolygonalLightUploadInfo    *pUploadInfo);

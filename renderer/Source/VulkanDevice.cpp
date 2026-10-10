@@ -1680,6 +1680,21 @@ void VulkanDevice::UploadSphericalLight(const QrSphericalLightUploadInfo *pLight
     scene->UploadLight(currentFrameState.GetFrameIndex(), *pLightInfo);
 }
 
+void VulkanDevice::BeginDeferredLightUploads(uint32_t slot)
+{
+    scene->BeginDeferredLightUploads(slot);
+}
+
+void VulkanDevice::EndDeferredLightUploads()
+{
+    scene->EndDeferredLightUploads();
+}
+
+void VulkanDevice::FlushDeferredLightUploads()
+{
+    scene->FlushDeferredLightUploads();
+}
+
 void VulkanDevice::UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo)
 {
     statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);

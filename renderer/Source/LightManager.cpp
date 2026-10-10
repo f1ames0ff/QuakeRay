@@ -569,8 +569,93 @@ void qray::LightManager::AddLight(uint32_t frameIndex, uint64_t uniqueId,
     registeredLightIndex[frameIndex].push_back(index.GetArrayIndex());
 }
 
+static thread_local int activeDeferredSlot = -1;
+
+bool qray::LightManager::TryDeferUpload(uint32_t frameIndex, DeferredUploadKind kind, const void *pPayload,
+                                        size_t payloadSize, uint32_t textureIndex)
+{
+    if (activeDeferredSlot < 0)
+    {
+        return false;
+    }
+
+    std::vector<DeferredUpload> &queue = deferredUploads[activeDeferredSlot];
+
+    if (queue.size() >= kDeferredUploadCapacity)
+    {
+        deferredUploadsDropped++;
+        return true;
+    }
+
+    DeferredUpload entry = {};
+    entry.frameIndex = frameIndex;
+    entry.kind = kind;
+    entry.textureIndex = textureIndex;
+    memcpy(&entry.payload, pPayload, payloadSize);
+    queue.push_back(entry);
+
+    return true;
+}
+
+void qray::LightManager::BeginDeferredUploads(uint32_t slot)
+{
+    assert(slot < kDeferredUploadSlots);
+    activeDeferredSlot = int(slot);
+}
+
+void qray::LightManager::EndDeferredUploads()
+{
+    activeDeferredSlot = -1;
+}
+
+void qray::LightManager::FlushDeferredUploads()
+{
+    const int previous = activeDeferredSlot;
+    activeDeferredSlot = -1;
+
+    for (uint32_t slot = 0; slot < kDeferredUploadSlots; slot++)
+    {
+        std::vector<DeferredUpload> &queue = deferredUploads[slot];
+
+        for (const DeferredUpload &entry : queue)
+        {
+            switch (entry.kind)
+            {
+            case kDeferredDirectional:
+                AddDirectionalLight(entry.frameIndex, entry.payload.dir);
+                break;
+
+            case kDeferredSpherical:
+                AddSphericalLight(entry.frameIndex, entry.payload.sph);
+                break;
+
+            case kDeferredPolygonal:
+                AddPolygonalLight(entry.frameIndex, entry.payload.poly);
+                break;
+
+            case kDeferredTexturedArea:
+                AddTexturedAreaLight(entry.frameIndex, entry.payload.area, entry.textureIndex);
+                break;
+
+            case kDeferredSpot:
+                AddSpotlight(entry.frameIndex, entry.payload.spot);
+                break;
+            }
+        }
+
+        queue.clear();
+    }
+
+    activeDeferredSlot = previous;
+}
+
 void qray::LightManager::AddSphericalLight(uint32_t frameIndex, const QrSphericalLightUploadInfo &info)
 {
+    if (TryDeferUpload(frameIndex, kDeferredSpherical, &info, sizeof(info), 0))
+    {
+        return;
+    }
+
     if (IsColorTooDim(info.color.data))
     {
         return;
@@ -581,6 +666,11 @@ void qray::LightManager::AddSphericalLight(uint32_t frameIndex, const QrSpherica
 
 void qray::LightManager::AddPolygonalLight(uint32_t frameIndex, const QrPolygonalLightUploadInfo &info)
 {
+    if (TryDeferUpload(frameIndex, kDeferredPolygonal, &info, sizeof(info), 0))
+    {
+        return;
+    }
+
     if (IsColorTooDim(info.color.data))
     {
         return;
@@ -599,6 +689,11 @@ void qray::LightManager::AddPolygonalLight(uint32_t frameIndex, const QrPolygona
 void qray::LightManager::AddTexturedAreaLight(uint32_t frameIndex, const QrTexturedAreaLightUploadInfo &info,
                                               uint32_t textureIndex)
 {
+    if (TryDeferUpload(frameIndex, kDeferredTexturedArea, &info, sizeof(info), textureIndex))
+    {
+        return;
+    }
+
     if (IsColorTooDim(info.color.data))
     {
         return;
@@ -659,6 +754,11 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
 
 void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUploadInfo &info)
 {
+    if (TryDeferUpload(frameIndex, kDeferredSpot, &info, sizeof(info), 0))
+    {
+        return;
+    }
+
     /* `!(x > 0)` rather than `x <= 0`: the latter takes a nan angle for a valid one. */
     if (IsColorTooDim(info.color.data) || info.radius < 0.0f || !(info.angleOuter > 0.0f))
     {
@@ -670,6 +770,11 @@ void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUplo
 
 void qray::LightManager::AddDirectionalLight(uint32_t frameIndex, const QrDirectionalLightUploadInfo &info)
 {
+    if (TryDeferUpload(frameIndex, kDeferredDirectional, &info, sizeof(info), 0))
+    {
+        return;
+    }
+
     {
         std::lock_guard<std::mutex> registryLock(registryMutex);
 

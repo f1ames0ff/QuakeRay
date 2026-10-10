@@ -110,6 +110,9 @@ public:
 
     void UploadDirectionalLight(const QrDirectionalLightUploadInfo *pLightInfo);
     void UploadSphericalLight(const QrSphericalLightUploadInfo *pLightInfo);
+    void BeginDeferredLightUploads(uint32_t slot);
+    void EndDeferredLightUploads();
+    void FlushDeferredLightUploads();
     void UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo);
     void UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLightInfo);
     void UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *pLightInfo);
