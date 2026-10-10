@@ -685,6 +685,19 @@ QRAPI QrResult QRCONV qrUploadClusterLightSources(
     QrInstance                              qrInstance,
     const QrClusterLightSourcesUploadInfo   *pUploadInfo);
 
+QRAPI QrResult QRCONV qrBeginClusterLightSources(
+    QrInstance                              qrInstance,
+    const QrClusterLightSourcesUploadInfo   *pUploadInfo,
+    uint32_t                                 sliceCount);
+
+QRAPI QrResult QRCONV qrRunClusterLightSourceSlice(
+    QrInstance                              qrInstance,
+    uint32_t                                 slice,
+    uint32_t                                 sliceCount);
+
+QRAPI QrResult QRCONV qrFinishClusterLightSources(
+    QrInstance                              qrInstance);
+
 typedef struct QrClusterLightStats
 {
     uint32_t clusters;

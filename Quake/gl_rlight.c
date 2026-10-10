@@ -1337,11 +1337,20 @@ static mleaf_t  *rt_leaf_cache_leafs;
 static int       rt_leaf_cache_numleafs;
 static int       rt_leaf_cache_revision;
 
-void RT_ClusterLightListsUpload (void)
+static qboolean rt_cluster_pipeline_active;
+static double   rt_cluster_pipeline_start;
+
+void RT_ClusterLightListsPrepare (uint32_t sliceCount)
 {
 	qmodel_t *wm = cl.worldmodel;
+
+	rt_cluster_pipeline_active = false;
+
 	if (!wm || wm->type != mod_brush || !wm->leafs || wm->numleafs < 2)
 		return;
+
+	rt_cluster_pipeline_active = true;
+	rt_cluster_pipeline_start = RT_Prof_Begin ();
 
 	/* The registry is what the lists are built from, so how many lights were accepted, how many
 	   additions were attempted and how many fell off the cap explain most of the churn. */
@@ -1421,7 +1430,27 @@ void RT_ClusterLightListsUpload (void)
 		.validate = CVAR_TO_BOOL (rt_cluster_assert) ? 1 : 0,
 	};
 
-	QrResult r = qrUploadClusterLightSources (vulkan_globals.instance, &info);
+	QrResult r = qrBeginClusterLightSources (vulkan_globals.instance, &info, sliceCount);
+	QR_CHECK (r);
+}
+
+void RT_ClusterLightListsSlice (uint32_t slice, uint32_t sliceCount)
+{
+	if (!rt_cluster_pipeline_active)
+		return;
+
+	QrResult r = qrRunClusterLightSourceSlice (vulkan_globals.instance, slice, sliceCount);
+	QR_CHECK (r);
+}
+
+void RT_ClusterLightListsFinish (void)
+{
+	if (!rt_cluster_pipeline_active)
+		return;
+
+	rt_cluster_pipeline_active = false;
+
+	QrResult r = qrFinishClusterLightSources (vulkan_globals.instance);
 	QR_CHECK (r);
 
 	QrClusterLightStats st;
@@ -1491,6 +1520,15 @@ void RT_ClusterLightListsUpload (void)
 			rt_light_diag[i].denied = (int)diagDenied[i];
 		}
 	}
+
+	RT_Prof_End (RT_PROF_CLUSTERS, rt_cluster_pipeline_start);
+}
+
+void RT_ClusterLightListsUpload (void)
+{
+	RT_ClusterLightListsPrepare (1);
+	RT_ClusterLightListsSlice (0, 1);
+	RT_ClusterLightListsFinish ();
 }
 
 

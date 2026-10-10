@@ -1806,6 +1806,13 @@ void VulkanDevice::UploadDtalGroups(const QrDtalGroupUploadBatch *pUploadInfo)
 
 void VulkanDevice::UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo)
 {
+    BeginClusterLightSources(pInfo, 1);
+    RunClusterLightSourceSlice(0, 1);
+    FinishClusterLightSources();
+}
+
+void VulkanDevice::BeginClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo, uint32_t sliceCount)
+{
     statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pInfo == nullptr)
@@ -1813,8 +1820,18 @@ void VulkanDevice::UploadClusterLightSources(const QrClusterLightSourcesUploadIn
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
     }
 
-    clusterLightLists->SetSources(*worldLights, *pInfo, scene->GetLightManager().get(), userPrint.get(),
-                                  currentFrameState.GetFrameIndex());
+    clusterLightLists->BeginSources(*worldLights, *pInfo, scene->GetLightManager().get(), userPrint.get(),
+                                    currentFrameState.GetFrameIndex(), sliceCount);
+}
+
+void VulkanDevice::RunClusterLightSourceSlice(uint32_t slice, uint32_t sliceCount)
+{
+    clusterLightLists->RunTopUpSlice(slice, sliceCount);
+}
+
+void VulkanDevice::FinishClusterLightSources()
+{
+    clusterLightLists->FinishSources();
 }
 
 void VulkanDevice::GetClusterLightStats(QrClusterLightStats *pStats)

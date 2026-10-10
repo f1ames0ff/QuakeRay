@@ -397,6 +397,10 @@ float RT_ClusterLightReach (void);
 // heard from where it stands. A setting of zero falls back to the cap of RT_ClusterLightReach.
 float RT_ClusterLightReachStatic (void);
 void RT_ClusterLightListsUpload (void);
+#define RT_CLUSTER_SLICES 16
+void RT_ClusterLightListsPrepare (uint32_t sliceCount);
+void RT_ClusterLightListsSlice (uint32_t slice, uint32_t sliceCount);
+void RT_ClusterLightListsFinish (void);
 
 // Frames that reused the cached cluster light lists and frames that rebuilt them. The profiler
 // reads and clears them once per reporting window, so the panel can show a hit rate.

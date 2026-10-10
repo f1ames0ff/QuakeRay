@@ -224,11 +224,26 @@ void ClusterLightLists::Reset()
     warnedAboutFullList = false;
 }
 
-void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
-                                   const QrClusterLightSourcesUploadInfo &uploadInfo,
-                                   LightManager *pLightManager, UserPrint *pUserPrint, uint32_t frameIndex)
+thread_local ClusterLightLists::TopUpSlice *ClusterLightLists::activeSliceTls = nullptr;
+
+void ClusterLightLists::BeginSources(const WorldLights &worldLightsRef,
+                                     const QrClusterLightSourcesUploadInfo &uploadInfo,
+                                     LightManager *pLightManager, UserPrint *pUserPrint, uint32_t frameIndex,
+                                     uint32_t sliceCount)
 {
     const double tStart = NowMs();
+
+    activeSliceTls = nullptr;
+    pipelineStartMs = tStart;
+    pendingLightManager = pLightManager;
+    pendingPrint = pUserPrint;
+    pendingFrameIndex = frameIndex;
+    pendingValidate = uploadInfo.validate != 0;
+    pendingSliceCount = std::max(1u, sliceCount);
+    pendingShape = kShapeNone;
+    topUpCount = 0;
+    topUpAllClusters = false;
+    topUpStartMs = 0.0;
 
     // The flags and the pass timings describe this frame alone: what is left of them on a frame
     // that composed nothing is exactly zero.
@@ -379,15 +394,17 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
            ones they were built for: the origins their slots were granted from stay in the
            records, and the next frame is compared against them so that a light that walks is
            granted its slots again once it has walked out of its quantum. */
+        pendingShape = kShapeReuse;
     }
     else if (composeable && compositionOrder && uploadInfo.allowIncremental != 0 &&
-             UpdateSourceSet(worldLightsRef, pUserPrint))
+             UpdateSourceSetBegin(worldLightsRef))
     {
         /* The light set the lists were built for is the frame's but for the lights that changed
            on it -- the ones that moved, the ones that appeared and the ones that disappeared --
            and the lists are wrong only where those lights reach: every other list of the scene
            is the one the composition left. */
         stats.reusedFrames = 1;
+        pendingShape = kShapeIncremental;
     }
     else
     {
@@ -395,19 +412,172 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
         // The counters are composed in the order of the sources, which is this frame's order,
         // so there is nothing to map them through.
         frameToSource.clear();
-        Compose(worldLightsRef, pUserPrint);
+        ComposeBegin(worldLightsRef, pUserPrint);
         stats.composedFrames = 1;
         compositionOrder = true;
+        pendingShape = kShapeCompose;
     }
 
-    if (uploadInfo.validate != 0)
+    if (pendingShape == kShapeIncremental || pendingShape == kShapeCompose)
     {
-        ValidateComposition(pUserPrint);
+        if (topUpSlices.size() < pendingSliceCount)
+            topUpSlices.resize(pendingSliceCount);
+
+        for (uint32_t s = 0; s < pendingSliceCount; s++)
+        {
+            topUpSlices[s].grantedDelta.clear();
+            topUpSlices[s].deniedDelta.clear();
+            topUpSlices[s].tailDirty.clear();
+            topUpSlices[s].reachGated = 0;
+            topUpSlices[s].topUpGrants = 0;
+        }
+    }
+}
+
+void ClusterLightLists::RunTopUpSlice(uint32_t slice, uint32_t sliceCount)
+{
+    if (pendingShape != kShapeIncremental && pendingShape != kShapeCompose)
+        return;
+
+    if (topUpCount == 0 || sliceCount != pendingSliceCount || slice >= pendingSliceCount)
+        return;
+
+    activeSliceTls = &topUpSlices[slice];
+
+    for (uint32_t i = slice; i < topUpCount; i += pendingSliceCount)
+    {
+        const uint32_t cluster = topUpAllClusters ? (i + 1) : dirtyClusters[i];
+        TopUpCluster(*worldLights, cluster, topUpReach);
+    }
+
+    activeSliceTls = nullptr;
+}
+
+void ClusterLightLists::FinishSources()
+{
+    activeSliceTls = nullptr;
+
+    if (pendingShape == kShapeNone)
+        return;
+
+    if (pendingShape == kShapeIncremental || pendingShape == kShapeCompose)
+    {
+        for (uint32_t s = 0; s < pendingSliceCount; s++)
+        {
+            TopUpSlice &slice = topUpSlices[s];
+
+            for (const auto &delta : slice.grantedDelta)
+                CountGranted(delta.first, delta.second);
+
+            for (const auto &delta : slice.deniedDelta)
+                CountDenied(delta.first);
+
+            for (uint32_t cluster : slice.tailDirty)
+                tailDirtyClusters.push_back(cluster);
+
+            stats.reachGated += slice.reachGated;
+            stats.topUpGrants += slice.topUpGrants;
+        }
+    }
+
+    if (pendingShape == kShapeIncremental)
+    {
+        stats.topUpMs = float(NowMs() - topUpStartMs);
+        stats.incrementalDirty = uint32_t(dirtyClusters.size());
+        stats.unresolved = 0;
+        stats.grants = 0;
+        stats.denied = 0;
+
+        for (uint32_t li = 0; li < uint32_t(sources.size()); li++)
+        {
+            if (sources[li].tombstone)
+            {
+                continue; // a place the frame let go of is no light of this frame
+            }
+
+            if (sources[li].cluster == QR_CLUSTER_LIGHT_NO_CLUSTER || sources[li].cluster >= numClusters)
+            {
+                stats.unresolved++;
+            }
+
+            stats.grants += granted[li];
+            stats.denied += denied[li];
+        }
+
+        const double tFill = NowMs();
+
+        FillLists(pendingPrint);
+
+        stats.fillMs = float(NowMs() - tFill);
+
+        const double tTail = NowMs();
+
+        if (overflowEnabled)
+        {
+            RebuildDirtyTails();
+        }
+
+        stats.tailMs = float(NowMs() - tTail);
+        stats.clusters = numClusters;
+        stats.sources = uint32_t(incoming.size());
+    }
+    else if (pendingShape == kShapeCompose)
+    {
+        for (uint32_t li = 0; li < uint32_t(sources.size()); li++)
+        {
+            stats.grants += granted[li];
+            stats.denied += denied[li];
+        }
+
+        stats.topUpMs = float(NowMs() - topUpStartMs);
+
+        const double tFill = NowMs();
+
+        FillLists(pendingPrint);
+
+        const double tTail = NowMs();
+
+        BuildOverflow();
+
+        stats.tailMs = float(NowMs() - tTail);
+
+        listsValid = true;
+        compositionOrder = true;
+        stats.fillMs = float(NowMs() - tFill);
+    }
+
+    if (pendingValidate)
+    {
+        std::vector<uint32_t> counted(sources.size(), 0);
+
+        for (uint32_t c = 0; c < numClusters; c++)
+        {
+            const uint32_t base = c * kMaxPerList;
+
+            for (uint32_t s = 0; s < slotFill[c]; s++)
+            {
+                const uint32_t li = slotSource[base + s];
+
+                if (li != kInvalidSource && li < counted.size())
+                    counted[li]++;
+            }
+        }
+
+        for (uint32_t li = 0; li < uint32_t(sources.size()); li++)
+        {
+            if (counted[li] != granted[li] && pendingPrint != nullptr)
+            {
+                pendingPrint->Print("RT: cluster grant counters do not match the slots the lights hold\n");
+                break;
+            }
+        }
+
+        ValidateComposition(pendingPrint);
     }
 
     const double tPublish = NowMs();
 
-    if (numClusters > 0 && pLightManager != nullptr)
+    if (numClusters > 0 && pendingLightManager != nullptr)
     {
         LightManager::ClusterLightTailRange tails;
 
@@ -422,12 +592,63 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
             tails.tailCount = tailEntryCount;
         }
 
-        pLightManager->SetClusterLightLists(frameIndex, numClusters, offsets.data(), list.data(), listEntries,
-                                            listGeneration, tails);
+        pendingLightManager->SetClusterLightLists(pendingFrameIndex, numClusters, offsets.data(), list.data(),
+                                                 listEntries, listGeneration, tails);
     }
 
     stats.publishMs = float(NowMs() - tPublish);
-    stats.totalMs = float(NowMs() - tStart);
+    stats.totalMs = float(NowMs() - pipelineStartMs);
+
+    pendingShape = kShapeNone;
+}
+
+void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
+                                   const QrClusterLightSourcesUploadInfo &uploadInfo,
+                                   LightManager *pLightManager, UserPrint *pUserPrint, uint32_t frameIndex)
+{
+    BeginSources(worldLightsRef, uploadInfo, pLightManager, pUserPrint, frameIndex, 1);
+    RunTopUpSlice(0, 1);
+    FinishSources();
+}
+
+void ClusterLightLists::CountGranted(uint32_t sourceIndex, int32_t delta)
+{
+    if (activeSliceTls)
+    {
+        if (delta >= 0 || granted[sourceIndex] > 0)
+            activeSliceTls->grantedDelta.emplace_back(sourceIndex, delta);
+
+        return;
+    }
+
+    if (delta >= 0)
+        granted[sourceIndex]++;
+    else if (granted[sourceIndex] > 0)
+        granted[sourceIndex]--;
+}
+
+void ClusterLightLists::CountDenied(uint32_t sourceIndex)
+{
+    if (activeSliceTls)
+        activeSliceTls->deniedDelta.emplace_back(sourceIndex, 1);
+    else
+        denied[sourceIndex]++;
+}
+
+void ClusterLightLists::TickReachGated(bool gated)
+{
+    if (activeSliceTls)
+        activeSliceTls->reachGated += gated ? 1 : 0;
+    else
+        stats.reachGated += gated ? 1 : 0;
+}
+
+void ClusterLightLists::TickTopUpGrant()
+{
+    if (activeSliceTls)
+        activeSliceTls->topUpGrants++;
+    else
+        stats.topUpGrants++;
 }
 
 void ClusterLightLists::PrepareTables(const WorldLights &worldLightsRef)
@@ -498,7 +719,7 @@ void ClusterLightLists::PrepareTables(const WorldLights &worldLightsRef)
     warnedAboutClusterClamp = false;
 }
 
-void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pUserPrint)
+void ClusterLightLists::ComposeBegin(const WorldLights &worldLightsRef, UserPrint *pUserPrint)
 {
     const uint32_t numSources = uint32_t(sources.size());
     const float    reach = topUpReach;
@@ -579,42 +800,15 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
 
     // Pass 2: a cluster tops itself up with the lights its own PVS hides but that stand close
     // enough to its bounds, so that a light does not stop lighting a wall it is right next to.
-    const double tTopUp = NowMs();
-    stats.visMs = float(tTopUp - tVis);
+    topUpStartMs = NowMs();
+    stats.visMs = float(topUpStartMs - tVis);
 
     const double tGrid = NowMs();
     const bool   gridReady = numSources > 0 && BuildGrid(worldLightsRef, reach);
     stats.gridMs = float(NowMs() - tGrid);
 
-    if (gridReady)
-    {
-        for (uint32_t c = 1; c < numClusters; c++)
-        {
-            TopUpCluster(worldLightsRef, c, reach);
-        }
-    }
-
-    for (uint32_t li = 0; li < numSources; li++)
-    {
-        stats.grants += granted[li];
-        stats.denied += denied[li];
-    }
-
-    stats.topUpMs = float(NowMs() - tTopUp);
-
-    const double tFill = NowMs();
-
-    FillLists(pUserPrint);
-
-    const double tTail = NowMs();
-
-    BuildOverflow();
-
-    stats.tailMs = float(NowMs() - tTail);
-
-    listsValid = true;
-    compositionOrder = true;
-    stats.fillMs = float(NowMs() - tFill);
+    topUpAllClusters = true;
+    topUpCount = (gridReady && numClusters > 0) ? (numClusters - 1) : 0;
 }
 
 /* Pass one for one light: every cluster the leaf the light resolved into sees, minus the ones
@@ -827,7 +1021,7 @@ void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t
 
         if (!WithinReach(sources[li].origin, cluster, gateSquared))
         {
-            stats.reachGated += (lightReach > 0.0f) ? 1 : 0;
+            TickReachGated(lightReach > 0.0f);
             continue;
         }
 
@@ -885,12 +1079,12 @@ void ClusterLightLists::TopUpCluster(const WorldLights &worldLightsRef, uint32_t
 
         if (AppendSlot(cluster, li, bestDist2[b], true))
         {
-            granted[li]++;
-            stats.topUpGrants++;
+            CountGranted(li, 1);
+            TickTopUpGrant();
         }
         else
         {
-            denied[li]++;
+            CountDenied(li);
         }
     }
 }
@@ -997,10 +1191,7 @@ void ClusterLightLists::HoleSlot(uint32_t cluster, uint32_t slot)
     // The slot was one of the grants the counters of this light stand for: they follow the
     // slots it holds, so that a light whose slots were all taken back is not reported as one
     // a cluster still samples.
-    if (granted[li] > 0)
-    {
-        granted[li]--;
-    }
+    CountGranted(li, -1);
 
     slotUids[base + slot] = kLightUidHole;
     slotDist2[base + slot] = 0.0f;
@@ -1084,7 +1275,11 @@ void ClusterLightLists::MarkTailDirty(uint32_t cluster)
     }
 
     tailDirty[cluster] = 1;
-    tailDirtyClusters.push_back(cluster);
+
+    if (activeSliceTls)
+        activeSliceTls->tailDirty.push_back(cluster);
+    else
+        tailDirtyClusters.push_back(cluster);
 }
 
 /* Takes the origins, the leaves and the reaches this frame registered over the sources of the
@@ -1180,7 +1375,7 @@ bool ClusterLightLists::UpdateSourceRecords()
    where the lights that changed are a large part of the set, because taking a light's slots
    back costs a walk over every cluster of the map while the composition costs one PVS row per
    light, and one whose tombstones have grown out of proportion to the lights that are left. */
-bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserPrint *pUserPrint)
+bool ClusterLightLists::UpdateSourceSetBegin(const WorldLights &worldLightsRef)
 {
     const uint32_t added = stats.addedSources;
     const uint32_t removed = stats.removedSources;
@@ -1343,8 +1538,8 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
         }
     }
 
-    const double tTopUp = NowMs();
-    stats.visMs = float(tTopUp - tVis);
+    topUpStartMs = NowMs();
+    stats.visMs = float(topUpStartMs - tVis);
 
     /* A cluster can gain a light that changed in one of two ways: pass one has just handed it
        out to every cluster the light's leaf sees, and the top-up pass can hand it to every
@@ -1394,53 +1589,8 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
     const bool   gridReady = !dirtyClusters.empty() && BuildGrid(worldLightsRef, reach);
     stats.gridMs = float(NowMs() - tGrid);
 
-    if (gridReady)
-    {
-        for (uint32_t d = 0; d < uint32_t(dirtyClusters.size()); d++)
-        {
-            TopUpCluster(worldLightsRef, dirtyClusters[d], reach);
-        }
-    }
-
-    stats.topUpMs = float(NowMs() - tTopUp);
-    stats.incrementalDirty = uint32_t(dirtyClusters.size());
-
-    stats.unresolved = 0;
-    stats.grants = 0;
-    stats.denied = 0;
-
-    for (uint32_t li = 0; li < uint32_t(sources.size()); li++)
-    {
-        if (sources[li].tombstone)
-        {
-            continue; // a place the frame let go of is no light of this frame
-        }
-
-        if (sources[li].cluster == QR_CLUSTER_LIGHT_NO_CLUSTER || sources[li].cluster >= numClusters)
-        {
-            stats.unresolved++;
-        }
-
-        stats.grants += granted[li];
-        stats.denied += denied[li];
-    }
-
-    const double tFill = NowMs();
-
-    FillLists(pUserPrint);
-
-    stats.fillMs = float(NowMs() - tFill);
-
-    const double tTail = NowMs();
-
-    if (overflowEnabled)
-    {
-        RebuildDirtyTails();
-    }
-
-    stats.tailMs = float(NowMs() - tTail);
-    stats.clusters = numClusters;
-    stats.sources = uint32_t(incoming.size());
+    topUpAllClusters = false;
+    topUpCount = gridReady ? uint32_t(dirtyClusters.size()) : 0;
 
     return true;
 }
@@ -1568,9 +1718,9 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     // opposite: otherwise the top-up pass would skip it as one that pass 1 had already placed.
     const uint32_t evicted = pSource[farthest];
 
-    if (evicted != kInvalidSource && granted[evicted] > 0)
+    if (evicted != kInvalidSource)
     {
-        granted[evicted]--; // the slot the counters of the light stand for went with it
+        CountGranted(evicted, -1); // the slot the counters of the light stand for went with it
     }
 
     pBits[evicted >> 6] &= ~(1ull << (evicted & 63));

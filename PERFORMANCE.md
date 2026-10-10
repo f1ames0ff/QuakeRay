@@ -84,7 +84,7 @@ Balanced, milliseconds; the same two-run aggregation. Indented/type/subphase row
 | `cpu.particles_ms` | 3.48 | **8.41** | 3.77 |
 | `cpu.viewmodel_ms` (inclusive) | 0.159 | **2.357** | 0.096 |
 | `cpu.vm_draw_ms` (weapon / debug draw only) | **0.027** | **0.017** | **0.017** |
-| `cpu.clusters_ms` (inside viewmodel task) | 0.069 | **2.170** | 0.047 |
+| `cpu.clusters_ms` (cluster pipeline; before 2026-10-10 inside the viewmodel task) | 0.069 | **2.170** | 0.047 |
 | `cpu.qrDrawFrame_ms` | 5.62 | 3.78 | 6.91 |
 | `cpu.draw.RHI_setup_ms` (inside renderer) | 3.27 | 1.71 | 4.47 |
 | `cpu.draw.slot_wait_ms` | 0.002 | 0.001 | 0.003 |
@@ -294,7 +294,7 @@ Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale 
 | Brush light styles | 3.12 ms | [`RT_PackSurfaceLightStyles`](Quake/r_world.c#L1144) → [`RT_SurfacePackLightStyles`](Quake/r_world.c#L1106) → [`RT_NearestStyledLightDistance`](Quake/gl_rlight.c#L828) | Measure cache hits/collisions and reach-query work; transform/light/settings changes versus cache eviction must be distinguished before designing reuse. |
 | Other entity costs | Brush uploads 2.84 ms; alias posing 2.30 ms | [`RT_FlushBatch`](Quake/r_world.c#L1428), [`GetPoseVertices`](Quake/r_alias.c#L107) | Keep these separate from their parent entity/packing totals. Legacy brush light marking is only about 0.045 ms here, not a main target. |
 
-**Workstream boundary, as recorded on 2026-10-08:** cluster implementation belongs to `crisp-pixel-2`; particle/FTE implementation belongs to `calm-eagle`. This branch does not contain their candidate changes. Coordinate ownership before editing those paths; the index does not authorize duplicate parallel work.
+**Workstream boundary, updated 2026-10-10:** the staged cluster pipeline (`renderer/Source/ClusterLightLists.*`, `LightManager` publication, `gl_rlight.c`/`gl_rmain.c` cluster calls) is edited by the particle workstream (`calm-eagle`) with the owner's approval; the 2026-10-08 note that put cluster implementation with `crisp-pixel-2` is superseded for this path. Further parallel edits to the same functions still need coordination. The staged-split measurements are in [perf/stage0/cluster-split-2026-10-10.md](perf/stage0/cluster-split-2026-10-10.md); `clusters` and `clust topup` changed meaning there (pipeline wall incl. the task wait; the top-up row is the merge-complete wall).
 
 ## Capture index
 

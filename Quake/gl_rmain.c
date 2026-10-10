@@ -1222,7 +1222,7 @@ static void R_DrawViewModelTask (void *unused)
 	RT_Prof_End (RT_PROF_ELIGHTS, prof_start);
 
 	// Only the draw itself, so that the model upload cost can be told apart from
-	// the light and cluster list uploads that share this task.
+	// the light uploads that share this task.
 	prof_start = RT_Prof_Begin ();
 	R_DrawViewModel (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);     // johnfitz -- moved here from R_RenderView
 	R_ShowTris (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);          // johnfitz
@@ -1237,11 +1237,22 @@ static void R_DrawViewModelTask (void *unused)
 	RT_UploadAllTeleports (); // RT
 	RT_Prof_End (RT_PROF_TELEPORTS, prof_start);
 
-	prof_start = RT_Prof_Begin ();
-	RT_ClusterLightListsUpload (); // RT
-	RT_Prof_End (RT_PROF_CLUSTERS, prof_start);
-
 	RT_Prof_End (RT_PROF_VIEWMODEL, prof_task);
+}
+
+static void R_ClusterLightListsPrepareTask (void *unused)
+{
+	RT_ClusterLightListsPrepare (RT_CLUSTER_SLICES);
+}
+
+static void R_ClusterTopUpSliceTask (int index, void *unused)
+{
+	RT_ClusterLightListsSlice ((uint32_t)index, RT_CLUSTER_SLICES);
+}
+
+static void R_ClusterLightListsFinishTask (void *unused)
+{
+	RT_ClusterLightListsFinish ();
 }
 
 /*
@@ -1308,6 +1319,17 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (begin_rendering_task, draw_view_model_task);
 		Task_AddDependency (draw_view_model_task, draw_done_task);
 
+		task_handle_t cluster_prepare_task = Task_AllocateAndAssignFunc (R_ClusterLightListsPrepareTask, NULL, 0);
+		Task_AddDependency (draw_view_model_task, cluster_prepare_task);
+
+		task_handle_t cluster_topup_task =
+		    Task_AllocateAndAssignIndexedFunc (R_ClusterTopUpSliceTask, RT_CLUSTER_SLICES, NULL, 0);
+		Task_AddDependency (cluster_prepare_task, cluster_topup_task);
+
+		task_handle_t cluster_finish_task = Task_AllocateAndAssignFunc (R_ClusterLightListsFinishTask, NULL, 0);
+		Task_AddDependency (cluster_topup_task, cluster_finish_task);
+		Task_AddDependency (cluster_finish_task, draw_done_task);
+
 		// The editor's GUI reads what the draw tasks uploaded (the tracked lights
 		// of the frame), so it has to wait for the task that carries them.
 		rt_editor_draw_done_task = draw_view_model_task;
@@ -1345,7 +1367,8 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (draw_world_task, draw_particles_task);
 
 		task_handle_t tasks[] = {before_mark,          store_efrags,		                         draw_world_task,     draw_sky_and_water_task,
-		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task, update_lightmaps_task};
+		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task, update_lightmaps_task,
+		                         cluster_prepare_task, cluster_topup_task, cluster_finish_task};
 		Tasks_Submit ((sizeof (tasks) / sizeof (task_handle_t)), tasks);
 		if (store_efrags != cull_surfaces)
 		{
@@ -1364,6 +1387,7 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		R_DrawAlphaEntitiesTask (NULL);
 		R_DrawParticlesTask (NULL);
 		R_DrawViewModelTask (NULL);
+		RT_ClusterLightListsUpload ();
 		if (r_gpulightmapupdate.value)
 			R_UpdateLightmaps (NULL);
 	}

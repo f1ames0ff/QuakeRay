@@ -243,6 +243,22 @@ QrResult qrUploadClusterLightSources(QrInstance qrInstance, const QrClusterLight
     return Call(qrInstance, &VulkanDevice::UploadClusterLightSources, pUploadInfo);
 }
 
+QrResult qrBeginClusterLightSources(QrInstance qrInstance, const QrClusterLightSourcesUploadInfo *pUploadInfo,
+                                    uint32_t sliceCount)
+{
+    return Call(qrInstance, &VulkanDevice::BeginClusterLightSources, pUploadInfo, sliceCount);
+}
+
+QrResult qrRunClusterLightSourceSlice(QrInstance qrInstance, uint32_t slice, uint32_t sliceCount)
+{
+    return Call(qrInstance, &VulkanDevice::RunClusterLightSourceSlice, slice, sliceCount);
+}
+
+QrResult qrFinishClusterLightSources(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::FinishClusterLightSources);
+}
+
 QrResult qrGetClusterLightStats(QrInstance qrInstance, QrClusterLightStats *pStats)
 {
     return Call(qrInstance, &VulkanDevice::GetClusterLightStats, pStats);
