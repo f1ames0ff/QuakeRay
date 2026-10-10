@@ -5561,7 +5561,6 @@ typedef struct
 	// mapping run before the upload that would otherwise build them.
 	qmodel_t *model;
 
-	// Bumped on every build attempt, so a baked volume can prove which table it was painted from.
 	uint32_t generation;
 
 	int        num_clusters;
@@ -6086,20 +6085,10 @@ void RT_BuildWorldClusters (void)
 		model->numleafs, num_cells + 1, dims[0], dims[1], dims[2], rt_worldclusters.vis_data_size);
 }
 
-/*
-=================
-RT_BuildClusterVolume
-
-Bakes the cluster of the leaf each texel centre resolves into, using the same rule the CPU
-resolve applies (fresh, not the 16 u point cache), so the particle paths can read the cluster
-of a point instead of walking the BSP per vertex. The volume names the table generation it was
-painted from and is discarded whenever the tables are rebuilt.
-=================
-*/
 #define RT_CLUSTER_VOLUME_CELL 64.0f
 #define RT_CLUSTER_VOLUME_MAX_TEXELS (4 * 1024 * 1024)
 
-void RT_BuildClusterVolume (void)
+static void RT_BuildClusterVolume (void)
 {
 	qmodel_t *model = cl.worldmodel;
 	vec3_t    mins, maxs, ext;
@@ -6217,7 +6206,8 @@ static int RT_SampleClusterVolume (const float *p)
 
 int RT_ParticleClusterAt (const vec3_t p)
 {
-	if (rt_cluster_volume.cells && rt_worldclusters.model == cl.worldmodel &&
+	if (CVAR_TO_BOOL (rt_particle_volume) && rt_cluster_volume.cells &&
+	    rt_worldclusters.model == cl.worldmodel &&
 	    rt_cluster_volume.generation == rt_worldclusters.generation)
 	{
 		const int check = (int)rt_particle_volume_check.value;
@@ -6496,8 +6486,6 @@ void RT_UploadWorldLights (void)
 	// The cluster tables are what turns a leaf index into the index the renderer indexes with.
 	RT_BuildWorldClusters ();
 
-	// The particle paths read the cluster of a point from the baked volume instead of walking
-	// the BSP per vertex; the volume is rebuilt together with the tables it was painted from.
 	RT_BuildClusterVolume ();
 
 	// Which of those clusters can see the sky at all: the renderer skips the sun shadow ray

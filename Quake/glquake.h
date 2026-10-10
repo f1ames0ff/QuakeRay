@@ -437,7 +437,6 @@ int RT_ResolvePointCluster (const vec3_t p);
 int RT_ResolvePointClusterUncached (const vec3_t p);
 void RT_PointClusterCacheStats (uint64_t *hits, uint64_t *misses, double *totalMs, double *avgNs);
 int  RT_ParticleClusterAt (const vec3_t p);
-void RT_BuildClusterVolume (void);
 void RT_ClusterVolumeVerifyStats (uint64_t *samples, uint64_t *mismatch, uint64_t *lost, uint64_t *extra);
 void RT_ClusterVolumeResetVerify (void);
 void RT_PointClusterCacheSetEnabled (qboolean enabled);

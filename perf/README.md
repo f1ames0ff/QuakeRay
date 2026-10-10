@@ -105,6 +105,10 @@ The instrumentation has landed these columns; the status tracks the guard's cont
 | `particles_dropped` | dump | particles dropped by the overflow policy | landed |
 | `particles_emit_culled` | dump | pointparticles messages dropped beyond `r_part_emit_distance` | landed |
 | `particles_emit_faded` | dump | pointparticles messages distance-faded inside the radius window | landed |
+| `particles_volume_samples` | dump | cluster-volume verifier samples (`rt_particle_volume_check`) | landed |
+| `particles_volume_mismatch` | dump | of those, volume cluster != CPU cluster | landed |
+| `particles_volume_lost` | dump | volume 0 where the CPU cluster is non-zero | landed |
+| `particles_volume_extra` | dump | volume non-zero where the CPU cluster is 0 | landed |
 | `fte_convert_bytes` | dump | bytes written by FTE conversion | landed |
 | `particle_upload_bytes` | dump | particle bytes uploaded per frame | landed |
 | `gpu.particles_ms` | dump | GPU particle pass timer | landed |
