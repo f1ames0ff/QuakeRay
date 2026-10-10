@@ -92,3 +92,33 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
   205555/211642/211718/211754, serial 143715/211830/211906, tfuma 205631).
 - Prior records: `perf/stage0/cluster-split-2026-10-10.md` (the staged split; names publication
   as the next candidate), `docs/cluster-lighting-spec.md`, `docs/cluster-implementation-report.md`.
+
+## Batch 1 - the skip fires where the device already holds the lists (commit `505e122c`, build `05DE1BAA…5E85`)
+
+- The publication predicate now compares the current generation and mapping against the device's
+  recorded publication (the reuse-run-head skips the slot-local check missed), the packet
+  generation is content-based (the ordered packet, tails included, is compared against a shadow
+  and bumped only when it differs; reset, overflow toggle and table rebuilds invalidate the
+  shadow), and the diagnostics are in: a reason bitmask (`QR_CLUSTER_PUB_*`), `pubskips`/
+  `pubcopies` in the `cpu.cluster lists` block line, the dump columns and the cluster panel.
+- Measured on AD start: serial skips 26-33% of frames -> 52-55% (the copies settle on the reuse
+  share); task mode stayed at 0 skips (the mask reports GEN+PLACES+ORDER+COPY - the arrival-order
+  registration); tfuma unchanged; assert run clean.
+
+## Batch 2 - deterministic registration order (commit `5cfe95fe`, build `D4049C51…3528`)
+
+- The light uploads of the parallel draw tasks are captured per slot (world 0, entity slices
+  1..NUM_ENTITIES_CBX, alpha NUM_ENTITIES_CBX+1) and flushed in slot order inside the viewmodel
+  task, before the map, world-model and teleport uploads and before the cluster prepare. The
+  registration sequence repeats for a stable light set, so the device-first skip fires in task
+  mode as well; serial mode runs the same capture and flush through the same task bodies.
+- Measured on AD start task mode: publication skips 45-64% of frames (three runs: 705/400,
+  614/493, 475/580 skips/copies), mask settles on `skip device`; fps 74.4 / 73.5 / 69.5 against the
+  baseline band 66.4-67.3; serial unchanged (~50% skips); tfuma unchanged; assert run clean
+  (skips 434 / copies 381); demo `ad_particle_heavy` 68.1 fps (baseline 67.2, batch 1 65.3). Two
+  serial/tfuma runs (55.2 -> 28.8 fps, 46.0 -> 28.9 fps) coincided with external machine load and
+  are recorded as contention outliers, not as a regression.
+- Remaining on the table: the copy frames (400-580 per run) still pay the full ~2.1 ms
+  publication and ~1.4 ms fill; Batch 3 (sliced publication with the V-A amendments, fill folded
+  into the publish slices) and Batch 4 (checkerboard amortization) are next.
+
