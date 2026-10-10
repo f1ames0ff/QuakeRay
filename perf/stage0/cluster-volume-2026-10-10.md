@@ -2,8 +2,9 @@
 
 Scope: bake a 64 u cluster volume from `leaf_cluster` and replace the CPU point-cluster
 resolves of the particle paths (FTE, classic, smoke) with a table sample; keep the CPU resolve
-behind `rt_particle_volume` (default 1, read by the dispatcher so a mid-session flip takes
-effect immediately). Register D1/A1/A2/A3 and the stage note live in `docs/particle-plan.md`.
+behind `rt_particle_volume` (default 1; the dispatcher reads it, so a 1->0 flip disables the
+volume immediately, while enabling after a load with it off needs the next bake). Register
+D1/A1/A2/A3 and the stage note live in `docs/particle-plan.md`.
 The GPU upload of the volume (`qrUploadClusterVolume` and the shader binding) is deferred to
 Stage 4, where a consumer exists; Stage 3 delivers the CPU volume, the dispatcher, the
 generation, the counters and the gate evidence.
@@ -23,9 +24,9 @@ generation, the counters and the gate evidence.
 
 | map | dims | texels | zero | bake ms | bytes |
 |---|---|---:|---:|---:|---:|
-| `start` (identity, 6125 clusters) | 54x45x41 | 99,630 | 81,577 | 40.0 | 194.6 KiB |
-| `ad_tfuma` (grid, 7936 clusters) | 129x129x86 | 1,431,126 | 445,459 | 249.6 | 2.73 MiB |
-| `ad_swampy` (grid, 7453 clusters) | 89x103x48 | 440,016 | 322,626 | 177.6 | 859.4 KiB |
+| `start` (identity, 6125 clusters) | 54x45x41 | 99,630 | 81,577 | 38.0-41.5 | 194.6 KiB |
+| `ad_tfuma` (grid, 7936 clusters) | 129x129x86 | 1,431,126 | 445,459 | 245.9-249.6 | 2.73 MiB |
+| `ad_swampy` (grid, 7453 clusters) | 89x103x48 | 440,016 | 322,626 | 176.7-177.6 | 859.4 KiB |
 
 The dims/texels reproduce the independently verified rule (non-solid leaf union over
 `i < model->numleafs`, `ceil(ext/64)`); the 64 u rule and the volume build are new code (the grid
@@ -72,13 +73,15 @@ Demo (`ad_particle_heavy`, same runner and build, paired arms, gate 2048 in both
 | tfuma vol=1 check | 135,315 | 34,347 (25.4%) | 2,163 (1.6%) | 18 (0.0%) |
 
 These rates sit between the offline uniform-box and leaf-weighted envelopes (the retained W4
-simulation: box-uniform ~6.8%/~3.5%, first-open conditioning 24.5%/~3.5%, leaf-weighted 73%/58%)
-because the runtime check samples actual particle vertices, which cluster near surfaces; the
-counters are the contract. One semantic deviation from "the same rule at texel centres": points
-outside the non-solid leaf-union box clamp to the edge texel instead of returning the CPU value
-(mostly 0 in void); that class is part of `extra`. The owner visual tolerance for the 64 u
-quantisation remains an owner decision; `rt_particle_volume 0` falls back to the cached CPU
-resolve (immediately at runtime; the dispatcher reads the cvar).
+simulation under `%LOCALAPPDATA%\Temp\opencode\w4-verify\`: box-uniform ~6.8%/~3.5%, first-open
+conditioning 24.5%/~3.5%, leaf-weighted 73%/58%) because the runtime check samples actual
+particle vertices, which cluster near surfaces; the counters are the contract. Both volume cvars
+are entries of the `CVAR_DEF_LIST` and therefore archived (`gl_vidsdl.c:371`); the check arms pin
+`rt_particle_volume_check 64` in their fixtures so a persisted value cannot add sampling
+silently. One semantic deviation from "the same rule at texel centres": points outside the
+non-solid leaf-union box clamp to the edge texel instead of returning the CPU value (mostly 0 in
+void); that class is part of `extra`. The owner visual tolerance for the 64 u quantisation remains
+an owner decision; `rt_particle_volume 0` falls back to the cached CPU resolve.
 
 ## Gate revalidation on this build
 
@@ -100,16 +103,21 @@ default in this build).
 
 - Every save arm exited through `F10 toggleconsole;quit` (no menu, no force kill) and reports two
   differing live totals, so the world was not paused; the demo arms exit via `rt_bench ... quit`
-  and the runner's deterministic menu close. The previous harness generation could leave the
-  menu/quit dialog open; those runs (`gate-*`, `s3-*`, `s3b-*`, `gate2-*`) are marked invalid for
-  evidence and are superseded by this matrix. Revision/exe/save/pak hashes are pinned per manifest.
-- Single run per arm; window-maxima medians overstate per-frame values; the bake is a one-shot
-  load cost outside the capture windows; the verifier counters are 32-bit and would wrap after
-  ~40+ minutes of continuous check mode (irrelevant to these captures).
+  and the runner's deterministic menu close (the demo arms have no manifests of their own; their
+  exe identity rests on the on-disk binary and the settings witness). Only the `gate-*` and `s3-*`
+  runs belong to the menu-hazard harness generation and are invalid as evidence; `s3b-*`/`gate2-*`
+  used the fixed harness and are superseded by this matrix's rebuild, not by the menu issue.
+  Revision/exe/save/pak hashes are pinned per manifest.
+- Single run per arm; medians are the `sorted[n//2]` element over the retained rows (a few cells
+  sit up to one order statistic away; the raw dumps stay per run for exact reproduction) and the
+  window values are maxima, so they overstate per-frame values; the bake is a one-shot load cost
+  outside the capture windows; the published verifier counters (32-bit atomics read as 64-bit
+  fields) would wrap only after ~45 h (start rate) / ~135 h (tfuma) of continuous check mode, and
+  the internal 64-step sampling counter wraps after ~42 min without affecting any dumped value.
 - The GPU upload and shader-side sampling are Stage 4; the classic swap is scene-reachable but
-  small on the owner saves (up to 7-9 live classic on tfuma, 26 on swampy; smoke 0 everywhere),
-  so classic/smoke parity rides other content (`demo1`-style classic capture, a rocket-trail
-  scene for smoke). The owner visual check for the 64 u quantisation is pending.
+  small on the owner saves (6-12 live classic on tfuma, 22-25 on swampy; smoke 0 everywhere), so
+  classic/smoke parity rides other content (`demo1`-style classic capture, a rocket-trail scene
+  for smoke). The owner visual check for the 64 u quantisation is pending.
 
 ## Changed files (this change)
 
