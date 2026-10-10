@@ -198,6 +198,11 @@ its observed spread; no cell separates the candidate from the control. One conta
 Quality pair (25.99/25.52 ms) is retained raw; a same-binary rerun matched the control. Full table,
 captures and identities: `PERFORMANCE.md` on `perf/rhi-dyn-blas-clean`.
 
+Window note: the raw diagnostics show the 2.00 recreations per benchmark-window frame (load/ramp
+frames excluded); full-play windows include a 6-create ramp and rare 1/3-create frames, and the diag
+CSV predates the `bench_active` binding (its serial ~1.3 figure comes from a trailing diagnostic
+window).
+
 Decision: no code change on this evidence branch. The order-insensitive create-time envelope (or a
 different reuse policy) is the next bounded candidate, with its upside bounded by the measured
 recreation cost. Raw captures: `build/Debug/audit-s5d-{ctrl,clean,reuse,diag}-*`; receipts and

@@ -82,6 +82,48 @@ Captures: `build/Debug/audit-s5d-ctrl-fuma-t1-r1-20261009-222225-b36c7a` and `bu
 
 The GPU snapshots already exceed the 16.67 ms Balanced target in both scenes. CPU improvements alone cannot establish 60 FPS. A hypothetical 1 ms reduction of a 31.6 ms critical path is approximately 3.3% more FPS, not a route to doubling throughput. Reducing submission and rebuild work may also help the GPU, but that benefit must be measured separately.
 
+## External review adjudication and DAG attribution (2026-10-10)
+
+An external review of PERFORMANCE.md/ARCHITECTURE.md was checked against the recorded artifacts and
+the current code. Accepted points and their measured anchors:
+
+- Every capture in this campaign is Debug; no Release or RelWithDebInfo profile exists
+  (`build/Debug` is the only runtime; `build_win.ps1` accepts a config, but the build policy and
+  all evidence remain Debug). Debug enlarges per-vertex loops (bounds, packing, posing). A
+  release-mode measurement line is a legitimate open item, but it requires explicit operator
+  authorization and separately identified binaries; do not re-rank candidates on an assumed
+  Release profile before that line exists.
+- Brush and alias producer shares: the B0 numbers (brush 12.02 ms Fuma / 16.66 Bog, alias
+  5.34/13.27, serial, engine 0.31.0) are serial-era and are not comparable to task-mode summed
+  slots. Under tasks the entity producers remain the largest CPU work (control capture summed
+  `ents_brush` 39.0 Fuma / 47.5 Bog; `ents_alias` 15.1 / 41.9), including upload-mutex wait.
+- The 2.2 ms cluster-publication figure is the AD hub B0 capture; cluster and particle work
+  belong to `crisp-pixel-2` and `calm-eagle` respectively and are not duplicated here.
+- SER is NVIDIA-specific and not applicable to the recorded RX 9070 XT. `opacityMicroMap`
+  references in the tree are support/feature paths; RDNA4 OMM capability must be verified before
+  any OMM candidate.
+- `alias_pose` CPU parallelization is closed: the adapted producer measured a frame regression and
+  stays default-off. A future GPU pose/refit direction remains in section 5; it is not a reason to
+  reopen the CPU producer.
+- The end-render task is longer under tasks in the same-binary control pair (Bogbottom
+  `qrDrawFrame` 6.67 -> 8.31 ms; Fuma 5.45 -> 5.67). The RHI-setup part of the Bogbottom increase
+  is the recreate churn WR01 addresses; the remainder is a separate attribution item (below).
+
+### DAG attribution experiment (lock wait and task boundaries)
+
+Hypothesis A: `VulkanDevice::geometryUploadMutex` (`VulkanDevice.cpp:1404`) is held across
+`Scene::Upload` (`:1494`), so producer uploads from the six entity slices, brush and sky serialize;
+lock wait sits inside the summed producer slots and cannot be separated from work with the current
+counters. Hypothesis B: the end-render task's CPU has grown under tasks beyond the recreation
+share; per-task boundaries are not recorded.
+
+Experiment: temporary mutex wait/hold counters plus per-task start/end timestamps; run Bogbottom
+and Fuma at Balanced and at Ultra (GPU-light) with `r_tasks 1`; falsifier: if aggregate lock wait is
+a small fraction of the producer slots and the end-task remainder is not material, both hypotheses
+fail and WR01/WR04/WR02-WR05 remain the queue. Exit condition: attribution evidence that selects
+the next experiment (for example atomic collector reservation with locking only for AS
+registration, or a producer/end-task split), or a documented rejection.
+
 ## 1. Freeze and profile the integrated master
 
 Before choosing another optimization:
@@ -98,7 +140,7 @@ Do not add historical sequential bucket times or divide aggregate worker time by
 
 ### Step 1 results (bounded campaign executed 2026-10-09)
 
-The merged branches were built and measured after `origin/master` `0c04f86f`: `perf/rhi-dyn-blas-clean` (`dc89557a`, exe `910D42E8…`) and `perf/rhi-dyn-blas-reuse` (`3b5a18ec`, exe `FCD31349…`) pass CTest 8/8; the control is `perf/run-stress-capture-fixes` (`9d7a6804`, engine sources byte-equal to master, exe `5374A9CB…`). Same-binary `r_tasks 0/1` captures (staged runner, Balanced, Fuma + Bogbottom) reproduce the sequential Fuma win in serial mode (frame 27.0 vs 27.5 ms; `RHI_setup` 2.6 vs 3.1 ms) while under `r_tasks 1` the reuse does not separate. The diagnostics twin shows chronic handle churn (2.00 recreations per frame under tasks; `dyn_create_ms` 1.0-1.5). Task-scheduled geometry order interacting with the per-index envelope is the leading explanation, not a directly instrumented causal result. WR01 must verify it before choosing a new allocation policy. Evidence: `PERFORMANCE.md` on the clean branch ("Dynamic BLAS reuse re-validated on the merged task graph") and `stage5-rhi-setup-report.md` ("Post-merge task-graph adaptation").
+The merged branches were built and measured after `origin/master` `0c04f86f`: `perf/rhi-dyn-blas-clean` (`dc89557a`, exe `910D42E8…`) and `perf/rhi-dyn-blas-reuse` (`3b5a18ec`, exe `FCD31349…`) pass CTest 8/8; the control is `perf/run-stress-capture-fixes` (`9d7a6804`, engine sources byte-equal to master, exe `5374A9CB…`). Same-binary `r_tasks 0/1` captures (staged runner, Balanced, Fuma + Bogbottom) reproduce the sequential Fuma win in serial mode (frame 27.0 vs 27.5 ms; `RHI_setup` 2.6 vs 3.1 ms) while under `r_tasks 1` the reuse does not separate. The diagnostics twin shows chronic handle churn (2.00 per benchmark-window frame under tasks; load/ramp frames excluded; `dyn_create_ms` 1.0-1.5). Task-scheduled geometry order interacting with the per-index envelope is the leading explanation, not a directly instrumented causal result. WR01 must verify it before choosing a new allocation policy. Evidence: `PERFORMANCE.md` on the clean branch ("Dynamic BLAS reuse re-validated on the merged task graph") and `stage5-rhi-setup-report.md` ("Post-merge task-graph adaptation").
 
 Extended on 2026-10-10: AD hub Balanced and Fuma/AD/Bogbottom Quality were captured with `r_tasks 1` on rebuilt matched binaries (control exe `EF499999…`, clean exe `8018D4B4…`). Every cell stays inside its observed spread; no cell separates the candidate from the control. One contaminated clean Fuma Quality pair is retained raw and a same-binary rerun matched the control. Full table, identities and captures: `PERFORMANCE.md` on the clean branch. Remaining step 1 coverage: fresh spawn, long gameplay, serial-mode parity beyond Fuma/Bogbottom Balanced and direct per-slice critical-path/join attribution. Retain every valid repeat, including elevated ones; do not discard a repeat merely because it weakens a performance claim.
 
@@ -129,7 +171,7 @@ Measure create/retire count and CPU cost, descriptor and recording costs, scratc
 Route: `RT_StaticMovablePrepare` / `RT_StaticMovableCovers` / `RT_StaticMovableUpdate` in [r_world.c](../Quake/r_world.c) -> `ASManager::UpdateStaticMovableTransform` in [ASManager.cpp](../renderer/Source/ASManager.cpp) -> `RhiAccelStructs::BuildStatic`.
 
 - The current audited preset uses `rt_brush_persistent 0`. Start with a same-binary `0/1` experiment under `r_tasks 1`; also retain the serial-mode regression check. This experiment does not authorize changing the default or audited preset.
-- A supplied multithreading-agent report cites 292 fewer uploads out of 598 and approximately 1.4 ms saved on Fuma. That report is a lead, not fresh acceptance for the current source/binary/settings; recover its original artifacts before treating the numbers as a control.
+- A supplied multithreading-agent report cites 292 fewer uploads out of 598 and approximately 1.4 ms saved on Fuma. That report is a lead, not fresh acceptance for the current source/binary/settings; recover its original artifacts before treating the numbers as a control. First step per the external review: same-binary A/B `rt_brush_persistent 1` across Fuma, AD hub and Bogbottom.
 - Existing eligibility is restrictive: the preparation path selects a single owning entity for a brush model, and covered surfaces exclude several dynamic material cases. Test those exclusions and fallbacks rather than extending eligibility immediately.
 - Transform updates increment the static-movable revision, and RHI rebuilds movable structures when that revision changes. This implementation can save uploads without eliminating builds during motion; measure both sides of the tradeoff.
 - Cover stationary and moving doors/platforms, rotation, model changes, despawn, multiple entities sharing a model, alpha/animated surfaces, reload and runtime enable/disable. Check lighting, transforms, occlusion and motion history.
@@ -146,7 +188,7 @@ The entity cache is already a 512-entry direct-mapped thread-local table, keyed 
 
 Measure hits and miss causes: cold/generation reset, direct-map eviction, actual movement, material/settings changes and different worker assignment across frames. Count expensive reach queries, not only cache lookups. A thread-local cache can lose useful history when an entity is drawn by a different worker; determine whether this matters in the actual scheduler before redesigning ownership.
 
-Candidates, selected by evidence: a better collision policy; bounded task-independent entity-owned results with explicit publication/lifetime; precomputed local surface centers to reduce miss cost; incremental recomputation only for genuinely dirty inputs. Do not share a TLS table without synchronization, force scheduling affinity as a substitute for ownership analysis, or simply enlarge the table and assume a gain.
+Candidates, selected by evidence: a better collision policy; bounded task-independent entity-owned results with explicit publication/lifetime; precomputed local surface centers to reduce miss cost; incremental recomputation only for genuinely dirty inputs; or replacing the per-surface reach query with a per-model styled-light source list recomputed on transform or `rt_dtal_*` change (external-review candidate, to be measured before implementation). Do not share a TLS table without synchronization, force scheduling affinity as a substitute for ownership analysis, or simply enlarge the table and assume a gain.
 
 Tests: collisions, worker changes, translation/rotation, texture and reach-setting changes, generation reset, entity reuse and map reload. Compare packed style values and reach decisions against the reference, with real production payloads.
 
