@@ -147,7 +147,7 @@ scale to the content that actually exists.
   spatially varying cluster/light evaluation - per vertex, which becomes a texture fetch once the
   Stage-3 volume exists - while the shadow/occlusion rays stay bounded per particle (L2) rather
   than per vertex. The volume sample must not step visibly between neighbouring samples. The
-  current dark smoke next to torches is a defect this stage fixes, not a state to preserve.
+  dark smoke next to torches is parked (owner, 2026-10-10): not touched further - the particle lighting path is to be reworked under a world-space radiance cache.
 - DTAL gate (L4): the smoke decoder currently misreads groups and drops them; implement the direct-
   pass pattern and prove parity with `rt_dtal_groups`/`rt_cluster_sampling` matrices.
 - Gate: bounded ray counter; visual parity; the large-sprite lighting does not pop (owner check on
@@ -167,6 +167,16 @@ scale to the content that actually exists.
 - L2 contract (owner, 2026-10-10): the gate is a hard per-frame cap with a reproducible spend
   order (cluster-keyed), not "by particle index"; stable IDs and a GPU-visible revision are
   prerequisites of the temporal reuse only.
+- Owner decision (2026-10-10, after the cross-check): the dark-smoke work is closed and not
+  touched further; particle lighting is to be reworked under a world-space radiance cache
+  (particles sample cached lighting instead of evaluating lights and tracing per-particle rays;
+  the id Tech 8 froxel irradiance / SHaRC direction; FSR Radiance Cache is not available on
+  Vulkan yet). Findings the rework inherits from the `start` brazier cross-check: the consumer's
+  weight ignores direction, so a one-sided emitter-card light can win at a point its hemisphere
+  excludes, `sampleLight` returns `dw=0` and the puff goes black; a single candidate is tested
+  (no fallback); and the inline visibility `RayQuery` has no alpha any-hit, so emitter geometry in
+  the path is opaque to it. Cross-check runs live in `%LOCALAPPDATA%\Temp\opencode` (`cc-*`,
+  `cc2-*`, `fl-*`, `fl2-*`, `fl3-*`, `fl5-*`).
 - Known issue before using `rays_particle` as a proxy metric (Stage 4 verification, 2026-10-10):
   the current `RtQ2ReflectRefract.rgen` blob declares `smokeRayStats` at set 7 binding 0 while the
   pass binds the bindless cubemap table there (ray stats are at set 11); the pass interface comment
