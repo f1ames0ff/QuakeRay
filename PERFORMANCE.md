@@ -311,13 +311,16 @@ the control, and no frame-level difference is resolvable. Percentiles in the tab
 higher-order statistic over `interval_ms` (first partial frame excluded).
 
 Mechanism, from the diagnostics twin `perf/rhi-dyn-blas-reuse` @ `3b5a18ec` (exe `FCD31349…`,
-`rhi_setup_diag` window bound by `bench_active`): handle recreations are 0.27-0.52 per frame in
-serial but chronic under `r_tasks 1` - 2.00 per frame on both scenarios, with `dyn_create_ms`
+`rhi_setup_diag` window bound by `bench_active`): handle recreations are 0.27-0.52 per
+benchmark-window frame in serial but chronic under `r_tasks 1` - 2.00 per benchmark-window frame on
+both scenarios (load/ramp frames excluded), with `dyn_create_ms`
 1.02 (Fuma) / 1.45-1.49 (Bogbottom), i.e. most of the task-mode `RHI_setup` increase. The per-index
 fit predicate cannot match across frames because the order of dynamic geometry inside a filter
 follows task completion order; the diagnostics-only branch with the older equality predicate also
-shows 2.00 recreations per frame under tasks (serial 1.32-1.36), so the churn is task-graph-driven,
-not specific to the envelope predicate. An order-insensitive create-time envelope (or a different reuse policy) is the
+shows 2.00 recreations per benchmark-window frame under tasks (its serial ~1.3 figure comes from a
+trailing diagnostic window because that CSV predates the `bench_active` binding), so the churn is
+task-graph-driven, not specific to the envelope predicate. An order-insensitive create-time envelope
+(or a different reuse policy) is the
 recommended next bounded candidate in `docs/multithreading-integration.md`; its upside is bounded by
 the recreation cost, not assumed.
 
