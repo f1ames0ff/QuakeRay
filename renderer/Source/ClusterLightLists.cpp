@@ -236,6 +236,8 @@ void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,
     stats.reusedFrames = 0;
     stats.visMs = 0.0f;
     stats.topUpMs = 0.0f;
+    stats.markMs = 0.0f;
+    stats.gridMs = 0.0f;
     stats.fillMs = 0.0f;
     stats.tailMs = 0.0f;
     stats.incrementalDirty = 0;
@@ -580,7 +582,11 @@ void ClusterLightLists::Compose(const WorldLights &worldLightsRef, UserPrint *pU
     const double tTopUp = NowMs();
     stats.visMs = float(tTopUp - tVis);
 
-    if (numSources > 0 && BuildGrid(worldLightsRef, reach))
+    const double tGrid = NowMs();
+    const bool   gridReady = numSources > 0 && BuildGrid(worldLightsRef, reach);
+    stats.gridMs = float(NowMs() - tGrid);
+
+    if (gridReady)
     {
         for (uint32_t c = 1; c < numClusters; c++)
         {
@@ -1358,6 +1364,8 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
         }
     }
 
+    const double tMark = NowMs();
+
     for (uint32_t i = 0; i < uint32_t(changedIndices.size()); i++)
     {
         const uint32_t li = changedIndices[i];
@@ -1380,7 +1388,13 @@ bool ClusterLightLists::UpdateSourceSet(const WorldLights &worldLightsRef, UserP
         }
     }
 
-    if (!dirtyClusters.empty() && BuildGrid(worldLightsRef, reach))
+    stats.markMs = float(NowMs() - tMark);
+
+    const double tGrid = NowMs();
+    const bool   gridReady = !dirtyClusters.empty() && BuildGrid(worldLightsRef, reach);
+    stats.gridMs = float(NowMs() - tGrid);
+
+    if (gridReady)
     {
         for (uint32_t d = 0; d < uint32_t(dirtyClusters.size()); d++)
         {

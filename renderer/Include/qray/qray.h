@@ -724,6 +724,8 @@ typedef struct QrClusterLightStats
 
     float    visMs;
     float    topUpMs;
+    float    markMs;
+    float    gridMs;
     float    fillMs;
     float    tailMs;
     float    publishMs;

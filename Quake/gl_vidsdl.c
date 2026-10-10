@@ -1218,6 +1218,8 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_CLUSTERS_RESOLVE, "clust resolve" },
 		{ RT_PROF_CLUSTERS_VIS, "clust vis" },
 		{ RT_PROF_CLUSTERS_TOPUP, "clust topup" },
+		{ RT_PROF_CLUSTERS_MARK, "clust mark" },
+		{ RT_PROF_CLUSTERS_GRID, "clust grid" },
 		{ RT_PROF_CLUSTERS_FILL, "clust fill" },
 		{ RT_PROF_CLUSTERS_TAIL, "clust tail" },
 		{ RT_PROF_CLUSTERS_UPLOAD, "clust upload" },

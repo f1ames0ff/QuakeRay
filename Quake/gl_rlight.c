@@ -1467,6 +1467,8 @@ void RT_ClusterLightListsUpload (void)
 		RT_Prof_Sample (RT_PROF_CLUSTERS_LISTS, st.totalMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_VIS, st.visMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_TOPUP, st.topUpMs);
+		RT_Prof_Sample (RT_PROF_CLUSTERS_MARK, st.markMs);
+		RT_Prof_Sample (RT_PROF_CLUSTERS_GRID, st.gridMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_FILL, st.fillMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_TAIL, st.tailMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_UPLOAD, st.publishMs);
