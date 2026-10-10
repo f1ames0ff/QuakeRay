@@ -27,8 +27,8 @@ scale to the content that actually exists.
 | A1 | Volume accuracy contract | Paint `leaf_cluster` per texel (never position->cell arithmetic; tfuma counterexample leaf 12278 -> cluster 1766 vs arithmetic 3118); ambiguous texels follow the CPU rule; keep 0 where the CPU returns 0 (cluster 0 has no PVS row; the sun is ray-gated) |
 | A2 | Volume generation | Its own map generation bumped where the clusters rebuild; never `listGeneration` (that ticks per composition) |
 | A3 | Volume memory/bounds | 64 u base (start ~195 KiB, tfuma ~2.73 MiB); pin origin/dims/sampling in the upload; 32 u optional |
-| L1 | Lighting end state | One evaluation per particle for small sprites; large FTE sprites keep a spatially varying evaluation (per vertex, cheap once the volume exists) and must not jump dark/light across cluster boundaries; cluster sample from the volume/table; the ray budget is per particle |
-| L2 | RT ray budget | Hard per-frame cap, spent deterministically by particle index; <=1 sun/shadow ray per particle at its center, distance-faded, temporally reused keyed on (generation, light revision, cluster) |
+| L1 | Lighting end state | One lighting result per particle for small sprites (all vertices of a small sprite evaluate its center; a literal single invocation is not available at vs_6_2 and remains the compute-pass follow-up for the T1 scale); large FTE sprites keep a spatially varying evaluation (per vertex, cheap once the volume exists) and must not jump dark/light across cluster boundaries; cluster sample from the volume/table; the ray budget is per particle |
+| L2 | RT ray budget | Hard per-frame cap on particle-path rays with a reproducible spend order (cluster-keyed where per-particle identity does not exist; the FTE legacy stream has none); <=1 sun/shadow ray per particle at its center, distance-faded, temporally reused keyed on (generation, light revision, cluster) once a GPU-visible revision exists |
 | L3 | TLAS membership | Engine particles stay out; they cast no shadows and add no GI; AD sprites and entity beams are a separate case, do not generalize |
 | L4 | DTAL compatibility gate | Particle/smoke consumers must use `q2SampleClusterLights` (fast + tail) -> `sampleLightNee` -> divide by `lightPdf * memberPdf`; parity matrices with `rt_dtal_groups {0,1}` x `rt_cluster_sampling {0,1}` |
 | D4 | Geometry/draw shape | Classic triangle `draw(3, N)`; FTE geometry varies (line sparks 2, fan/clipped 3, billboards 4); smoke 6 — a per-instance vertex buffer, not a universal quad |
@@ -152,6 +152,25 @@ scale to the content that actually exists.
   pass pattern and prove parity with `rt_dtal_groups`/`rt_cluster_sampling` matrices.
 - Gate: bounded ray counter; visual parity; the large-sprite lighting does not pop (owner check on
   the torch scenes); `rt_bench` baselines unchanged or better.
+- Owner decision (2026-10-10): Stage 4 is split and ordered `4b` -> the planned queue (glass gate,
+  compact transport, distance culling). `4b` = DTAL consumer correctness plus the dark-smoke
+  defect, and it starts with a scene cross-check (`rt_dtal_groups {0,1}` x `rt_particle_volume
+  {0,1}` arms on a torch-view smoke scene) to separate the DTAL-group drop from the volume-lost
+  class before choosing the fix shape. The GPU volume (`4a`), the L1 scale semantics (`4c`, gated
+  on the synthetic 100k scene) and the L2 budget/temporal reuse (`4d`, needs stable particle IDs
+  and a GPU-visible light revision) are backlog items: on the owner scenes the remaining particle
+  lighting measures <=0.11 ms GPU and <=0.4 ms CPU with no fps effect, so they do not gate
+  owner-visible work.
+- L1 contract (owner, 2026-10-10): "one evaluation per particle" means one lighting result per
+  small sprite (the center is evaluated and replicated to its vertices), not one shader
+  invocation; the per-invocation reading is the compute-pass follow-up.
+- L2 contract (owner, 2026-10-10): the gate is a hard per-frame cap with a reproducible spend
+  order (cluster-keyed), not "by particle index"; stable IDs and a GPU-visible revision are
+  prerequisites of the temporal reuse only.
+- Known issue before using `rays_particle` as a proxy metric (Stage 4 verification, 2026-10-10):
+  the current `RtQ2ReflectRefract.rgen` blob declares `smokeRayStats` at set 7 binding 0 while the
+  pass binds the bindless cubemap table there (ray stats are at set 11); the pass interface comment
+  is stale. Resolve/verify before counting proxy rays.
 
 ### Pointparticle distance gate (owner item, 2026-10-10)
 - Client-side gate in `CL_ParseParticles`: the message `count` scales linearly from 1 at `R/2` to 0 at `R`, and the message is dropped at `d >= R`; `R = r_part_emit_distance` (default 2048, 0 = off).
