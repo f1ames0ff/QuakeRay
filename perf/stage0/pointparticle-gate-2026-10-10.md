@@ -21,7 +21,9 @@ contract is in `perf/README.md`.
   Demo regression via `perf/stage0/run_points_demo_ab.ps1 -Demos ad_particle_heavy -Arms points_on
   -ExtraCvars 'r_part_emit_distance 2048'`.
 - Metrics are window-maxima medians from `stats-*.dump` (declared limitation); `fps` is the GPU-side
-  counter; `cull`/`fade` are the run totals of the new counters (last dump row).
+  counter; `cull`/`fade` are the run totals of the new counters (last dump row; under `rt_bench` the
+  counters accumulate for the whole run and reset at bench start, outside a bench they reset per
+  published window).
 
 ## Arms and results
 
@@ -44,28 +46,38 @@ PORTALFRONT 840/744/656/656/592/592, PORTALSIDE 672/576; gate=2048 — LFLAME 82
 Running-effect types: 64 -> 64 -> 44; total live 7140/6940 -> 5804/6039 -> 2132/2348.
 
 Demo regression: `ad_particle_heavy` with the gate at 2048 — 2747 frames, 69.42 s, fps 39.6,
-`interrupted=0`, no parse/desync errors; slots in family with the pre-change runs (particles 2.45,
-fte convert 3.64).
+`interrupted=0`, no parse/desync errors; the run reports particles 2.45 / fte convert 3.64, inside
+the historical range for this demo (2.21-4.56 / 3.36-6.00), with no same-session A/B arm.
 
 ## Findings
 
 1. Off path is inert: `r_part_emit_distance 0` produces zero `cull`/`fade` and live/fps within the
-   run-to-run spread (start 55.5 vs 52.7 fps across builds; tfuma 41.2 vs 40.3). The gate consumes
-   no RNG and adds no reads.
+   run-to-run spread (start 55.5 vs 52.7 fps across builds; tfuma 41.2 vs 40.3). The gate adds no
+   message reads and consumes no RNG; with `radius <= 0` or `!r_vieworg_valid` it short-circuits
+   before any gate statement, so the off path is a no-op beyond three loads. Firing the gate
+   deliberately removes downstream spawn draws, so particle evolution is not bit-identical to an
+   ungated run (expected, recorded).
 2. The counters work and are dose-monotone: cull 0/20/382 and fade 0/352/454 on start for
    0/2048/1024; tfuma 0/1344 cull at 2048. Both `r_tasks 1` and `r_tasks 0` produce consistent
    totals (20/352 vs 26/339 on start-2048).
 3. Population and transport scale with the cut: start 2048 removes ~12% of live particles
-   (7222 -> 6369) and ~12% of `fte convert` (6.71 -> 5.99); start 1024 removes ~68% (-> 2319,
+   (7222 -> 6369) and ~11% of `fte convert` (6.71 -> 5.99); start 1024 removes ~68% (-> 2319,
    convert 2.47); tfuma 2048 removes ~21% (3918 -> 3105, convert 2.59 -> 2.01, upload 1.21 -> 0.98).
 4. The approved default 2048 is a mild gate on `start` at this viewpoint: only 20 messages in 15 s
    are beyond 2048; most of the win at 2048 comes from scaling counts of messages in
    [1024, 2048). 1024 cuts far more (owner-facing dose-response recorded; the cvar allows tuning
    without a code change).
-5. Regressions clean: `ad_swampy` (no particles) unchanged with zero counters; the demo plays with
-   identical frame counts and no message errors.
-6. Known behavior (owner-approved): `pp1` (count=1) and `countabsolute` recipe parts reduce only at
-   the hard wall at R; multi-count recipes step down inside [R/2, R].
+5. Regressions clean: `ad_swampy` (essentially particle-free: 1-6 live, 23 vertices) shows zero
+   counters and no resolvable change (the frame/fps deltas are cross-build and inside the spread).
+   The demo `ad_particle_heavy` with the gate at 2048 shows no desync indicator (`interrupted=0`,
+   2747 frames / 69.42 s inside the historical 1256-3628 frame spread); it is a single arm, so an
+   in-session A/B was not performed (recorded as a limitation).
+6. Known behavior: recipes whose per-message effective count stays at or below 1 (a literal
+   `count 1` and the `countabsolute` parts of a recipe) reduce only at the hard wall at R;
+   multi-count recipes (e.g. AD LFLAME `count 12/4/4`) fade inside [R/2, R). The wall drop removes
+   the whole message, including any dlight or sound that message would have spawned (owner-approved
+   scope: point particles only). The `fade` counter counts scaled messages, not removed particles
+   (the kernel spawns `ceil(pcount)`, so a scaled message may still spawn the same count).
 
 ## Falsifiers checked
 
@@ -79,17 +91,25 @@ fte convert 3.64).
 
 ## Limitations
 
-- Window-maxima medians overstate per-frame values; run-to-run spread is ~5% on fps, so the
-  gate=0 vs gate=2048 start fps delta (+2.2) is not separately resolved at this radius; the live,
-  vertex and transport reductions are the decisive evidence.
+- Window-maxima medians overstate per-frame values. Same-conditions repeats are scarce: the only
+  true repeat pair in the artifact set (tfuma) differs by ~48% in fps, and demo runs of the same
+  demo span 18-54 fps, so the gate=0 vs gate=2048 `start` fps delta (+2.2) is not resolved at this
+  radius; the live, vertex and transport reductions are the decisive evidence.
 - Pre-change rows are a different binary; they are context only (cross-build comparisons are
-  forbidden for acceptance). Within-build comparisons above are gate=0 vs 1024 vs 2048.
-- Visual confirmation at the boundary (wall pop for pp1/countabsolute families) is an owner check
-  at the fixed save viewpoints; not performed in automation.
+  forbidden for acceptance). Within-build comparisons above are gate=0 vs 1024 vs 2048. The save
+  captures are not frame-identical across arms, so "consistent" counter totals are qualitative.
+- Visual confirmation at the boundary (wall pop for low-count recipes) is an owner check at the
+  fixed save viewpoints; not performed in automation.
 - The distance distribution is inferred from counters at two radii, not measured per particle.
+- The demo regression is a single arm; the idle-mode counter lifecycle was not captured (code
+  emits the same reset path as `particles_dropped`); NaN/negative-count/invalid-efnum paths are
+  code-inspected only; `r_tasks` is not part of the bench settings witness (the t0 arm is witnessed
+  by its generated fixture); `r_part_emit_distance` is not archived, so tuning does not persist
+  across sessions.
 
 ## Changed files (this change)
 
 `Quake/cl_parse.c` (gate), `Quake/r_part_fte.c` (cvar), `Quake/gl_rmain.c` +
 `Quake/cl_main.c` + `Quake/glquake.h` (`r_vieworg_valid` latch), `Quake/gl_vidsdl.c` (counters,
-CSV, witness), `perf/particle_attribution.ps1`, `perf/README.md`, `docs/particle-plan.md`.
+CSV, witness), `perf/particle_attribution.ps1`, `perf/README.md`, `docs/particle-plan.md`, and this
+evidence document itself.

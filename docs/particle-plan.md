@@ -154,8 +154,11 @@ scale to the content that actually exists.
 - Client-side gate in `CL_ParseParticles`: the message `count` scales linearly from 1 at `R/2` to 0 at `R`, and the message is dropped at `d >= R`; `R = r_part_emit_distance` (default 2048, 0 = off).
 - Only messages that would spawn are gated (`efnum` valid, `count > 0`); the latch `r_vieworg_valid` disables gating until the first rendered frame so signon/load packets are not culled against a zero origin.
 - Scope: the point branch only. Trails, per-entity `emiteffectnum`/model emitters, CSQC-local effects and the rain path are untouched.
-- Counters: `particles_emit_culled` / `particles_emit_faded` (window-scoped, dumped and added to the bench settings witness).
-- Known behavior: `pp1` (count=1) and `countabsolute` recipes reduce only at the hard wall at R; multi-count recipes step down inside the window (owner-approved wall semantics, upstream parity).
+- Counters: `particles_emit_culled` / `particles_emit_faded` (reset at bench start and per idle
+  window, so they are run totals under `rt_bench`; dumped and added to the bench settings witness).
+- Known behavior: recipes whose per-message effective count stays at or below 1 (a literal
+  `count 1` and `countabsolute` parts) reduce only at the hard wall at R; multi-count recipes fade
+  inside [R/2, R). The wall drop removes the whole message including its dlight/sound side effects.
 
 ### Stage 5 — GPU simulation (classic only, optional until measured)
 - Ping-pong state, spawn ring, append/compaction, indirect draw; bench-freeze mode for determinism
