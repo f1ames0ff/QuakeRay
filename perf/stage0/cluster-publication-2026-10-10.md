@@ -91,7 +91,7 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
 - The publication splits into `PrepareClusterListPublication` (predicate, range initialization,
   offsets and tail beta), `RunClusterListPublishSlice` (the uid resolve of a disjoint word range,
   one per `RT_CLUSTER_SLICES` task with a per-slice cache; a sampled self-check re-resolves the
-  first and last word of every slice against the staging and asserts on mismatch) and
+  first and last word of every non-empty slice range against the staging and asserts on mismatch) and
   `CommitClusterListPublication` (tail entries, unresolved handling, device bookkeeping). The
   task graph gains `cluster_publish_task` (indexed 16, after finish) and `cluster_commit_task`
   (before `draw_done`); the serial composition runs the same stages with `sliceCount` 1, so the
@@ -105,18 +105,22 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
   `cl-b4-task-3` shows the `clusters` row 5.03 (baseline band) -> **2.96** and **70.6 fps**
   (1083 frames / 15.33 s) with publication skips 557/526 preserved; tfuma unchanged; assert run
   clean (`clusters` 8.51 + `publish` 0.48).
-- Serial is **not literally unchanged**: `clusters` + `publish` = 7.57/7.62 ms against the batch-2
-  band 7.34-7.40 (+0.17..+0.23 ms, +2.3-3%) and the isolated publication stage 2.29-2.33 against
-  the batch-2 `upload` 1.89-2.01 (+0.3-0.4 ms). Both are within the historical serial spread
-  (6.52-7.56 across all pre-batch-3 runs) and the isolated-stage delta has no identified
-  mechanism beyond codegen/measurement-bracket differences; re-measure on a quiet machine before
-  signing it off. No owner-facing serial regression was observed in the frame totals.
+- Serial is **not literally unchanged** (dump upper-median; cl-b4 against cl-b3): `clusters` +
+  `publish` = 7.57/7.62 against the batch-2 7.34/7.40, paired +0.23/+0.22 and +0.17..+0.28 across
+  the runs. The isolated stage (`publish` 2.37/2.32; per-frame CSV medians 2.28-2.32) against the
+  batch-2 `upload` 1.89/1.94 is +0.43 in both paired runs (+0.31..+0.48 across the bands; the 2.01
+  in the baseline row is the pre-batch-2 build, not batch 2). The totals sit at or just above the
+  pre-batch-3 envelope (6.52-7.56, i.e. +0.01..+0.06 above its maximum); the isolated-stage delta
+  has no identified mechanism beyond codegen/measurement-bracket differences. Re-measure on a
+  quiet machine before signing it off; no owner-facing serial regression was observed in the frame
+  totals.
 - Scope note: the fill fold ("fold the fill into the publish slices") was part of this batch's
   original scope in the batch-2 plan; it did not land here and moves to the next batch explicitly
   (fill is still 1.32-1.37 ms on copy frames and runs serially in `FinishLists`).
 - Statistics and evidence: dump rows are upper-middle (`sorted[n//2]`) values of the per-window
-  maxima series; runs `cl-b4-*` under `%LOCALAPPDATA%\Temp\opencode\`, per-frame CSVs
-  `benchmark-frames-20261010-2224*.csv`, blocks in `build/Debug/ad/benchmark.log`.
+  maxima series; runs `cl-b4-*` and the batch-2 serial pair `cl-b3-serial-*` under
+  `%LOCALAPPDATA%\Temp\opencode\`, per-frame CSVs `benchmark-frames-20261010-2224*.csv` and
+  `…2146*.csv`, blocks in `build/Debug/ad/benchmark.log`.
 - The low-fps samples (`cl-b4-task-1/2` ~38 fps, `cl-b4-serial-2` 27.9, the demo at 50.8 fps)
   carry an outside-frame gap of +16-17 ms with every changed slot normal; the shape matches the
   engine's 16 ms focus/pause sleep path (`main_sdl.c`) and repeats on pre-change builds
