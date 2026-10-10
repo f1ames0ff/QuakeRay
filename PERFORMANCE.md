@@ -325,8 +325,33 @@ Captures: `build/Debug/audit-s5d-ctrl-*`, `audit-s5d-clean-*`, `audit-s5d-reuse-
 `audit-s5d-diag-*`; receipts and CTest logs under `build/Debug/audit-stage5d-*`. A third clean
 Bogbottom tasks repeat (35.56 ms, `rhi` 5.94; identical exe/pack/checks) was uniformly elevated
 across independent counters and is retained raw: with it the arm is 31.56/35.56/32.09 ms against
-the control's 31.59/31.78, so no gain is claimed either way (median 32.09 vs 31.69). Coverage:
-Debug, two scenarios, Balanced, 6 s captures; no long gameplay, other maps or Quality here.
+the control's 31.59/31.78, so no gain is claimed either way (median 32.09 vs 31.69).
+
+### Extended coverage: AD hub and Quality (2026-10-10, `r_tasks 1`)
+
+The step-1 scene/preset matrix was extended on separately rebuilt matched binaries: control
+`9d7a6804` exe `EF499999…` / pack `9B52B09D…`, clean `6613e196` exe `8018D4B4…` / pack `EC2806C7…`,
+same staged runner, 8 s warmup + 6 s capture, two accepted repeats per cell (Fuma and Bogbottom
+Balanced are retained from the 2026-10-09 campaign).
+
+| Cell, `r_tasks 1` | Control mean/p95 ms (FPS) | Clean mean/p95 ms (FPS) |
+| --- | --- | --- |
+| AD hub, Balanced | 20.55/35.16 (48.7); 19.43/24.38 (51.5) | 20.29/25.66 (49.3); 19.31/22.98 (51.8) |
+| Fuma, Quality | 23.52/26.99 (42.5); 23.66/28.16 (42.3) | 23.63/27.23 (42.3); 23.57/26.88 (42.4) |
+| AD hub, Quality | 24.03/34.38 (41.6); 24.36/39.81 (41.0) | 23.13/30.42 (43.2); 24.46/36.59 (40.9) |
+| Bogbottom, Quality | 33.84/35.60 (29.5); 33.34/34.48 (30.0) | 34.52/39.09 (29.0); 33.57/37.20 (29.8) |
+
+Every cell stays inside its observed spread; no cell separates the candidate from the control, and
+the AD-family p95 tails show run-to-run sensitivity at these settings. One additional clean Fuma
+Quality pair (25.99/25.52 ms, `RHI_setup` 4.12/4.11) was contaminated - out-of-family tail and
+`RHI_setup` - and is retained raw rather than discarded; a same-binary rerun reproduced the
+control-level 23.63/23.57 ms. Captures: `audit-s5d-ctrl2-*` and `audit-s5d-clean2-*`. The shared
+machine was contended during this extension (another agent's campaign): invocations were retried
+until the guard found a quiet window; every accepted capture passed the focus/sample checks.
+
+Coverage after this extension: Fuma, AD hub and Bogbottom at Balanced and Quality with `r_tasks 1`,
+same-binary paired control/candidate. Serial-mode parity beyond Fuma/Bogbottom Balanced, fresh
+spawn, long gameplay and direct per-slice critical-path attribution remain open.
 
 ## Current CPU priorities
 
