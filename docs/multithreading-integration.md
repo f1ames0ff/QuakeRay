@@ -2,7 +2,7 @@
 
 Updated: 2026-10-10.
 
-Status: the first bounded integration campaign was executed on the merged branches on 2026-10-09. Balanced captures cover Fuma and the Bogbottom save; the full step 1 matrix (AD hub, Quality and detailed critical-path attribution) remains open. The id Tech 8 research and prioritized work-reduction experiments below were added on 2026-10-10. They authorize no implementation or default-setting change by themselves.
+Status: the first bounded integration campaign was executed on the merged branches on 2026-10-09 and extended on 2026-10-10 (AD hub Balanced and Fuma/AD/Bogbottom Quality with tasks enabled on matched rebuilt control/clean binaries; all cells inside spread). Remaining step 1 coverage: fresh spawn, long gameplay, serial-mode parity beyond Fuma/Bogbottom Balanced and direct per-slice critical-path/join attribution. The id Tech 8 research and prioritized work-reduction experiments below were added on 2026-10-10. They authorize no implementation or default-setting change by themselves.
 
 ## Objective and principles
 
@@ -100,7 +100,7 @@ Do not add historical sequential bucket times or divide aggregate worker time by
 
 The merged branches were built and measured after `origin/master` `0c04f86f`: `perf/rhi-dyn-blas-clean` (`dc89557a`, exe `910D42E8…`) and `perf/rhi-dyn-blas-reuse` (`3b5a18ec`, exe `FCD31349…`) pass CTest 8/8; the control is `perf/run-stress-capture-fixes` (`9d7a6804`, engine sources byte-equal to master, exe `5374A9CB…`). Same-binary `r_tasks 0/1` captures (staged runner, Balanced, Fuma + Bogbottom) reproduce the sequential Fuma win in serial mode (frame 27.0 vs 27.5 ms; `RHI_setup` 2.6 vs 3.1 ms) while under `r_tasks 1` the reuse does not separate. The diagnostics twin shows chronic handle churn (2.00 recreations per frame under tasks; `dyn_create_ms` 1.0-1.5). Task-scheduled geometry order interacting with the per-index envelope is the leading explanation, not a directly instrumented causal result. WR01 must verify it before choosing a new allocation policy. Evidence: `PERFORMANCE.md` on the clean branch ("Dynamic BLAS reuse re-validated on the merged task graph") and `stage5-rhi-setup-report.md` ("Post-merge task-graph adaptation").
 
-Remaining step 1 coverage: AD hub, Quality, direct per-slice critical-path and lock attribution, broader gameplay/transition validation. Retain every valid repeat, including the elevated clean Bogbottom tasks capture; do not discard it merely because it weakens a performance claim.
+Extended on 2026-10-10: AD hub Balanced and Fuma/AD/Bogbottom Quality were captured with `r_tasks 1` on rebuilt matched binaries (control exe `EF499999…`, clean exe `8018D4B4…`). Every cell stays inside its observed spread; no cell separates the candidate from the control. One contaminated clean Fuma Quality pair is retained raw and a same-binary rerun matched the control. Full table, identities and captures: `PERFORMANCE.md` on the clean branch. Remaining step 1 coverage: fresh spawn, long gameplay, serial-mode parity beyond Fuma/Bogbottom Balanced and direct per-slice critical-path/join attribution. Retain every valid repeat, including elevated ones; do not discard a repeat merely because it weakens a performance claim.
 
 ## 2. First bounded experiment: remove repeated CPU preparation work
 

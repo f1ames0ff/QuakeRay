@@ -190,6 +190,14 @@ third clean Bogbottom tasks repeat (35.56/40.94 ms; identical executable, pack a
 uniformly elevated across independent counters and is retained raw; it does not change the no-gain
 reading (median 32.09 vs the control's 31.69 ms).
 
+Extended coverage (2026-10-10): AD hub Balanced and Fuma/AD/Bogbottom Quality were captured with
+`r_tasks 1` on rebuilt matched binaries (control `EF499999…`, clean `8018D4B4…`). Control means:
+20.55/19.43 (AD Balanced), 23.52/23.66 (Fuma Quality), 24.03/24.36 (AD Quality), 33.84/33.34 (Bog
+Quality) ms; clean: 20.29/19.31, 23.63/23.57, 23.13/24.46, 34.52/33.57 ms. Every cell stays inside
+its observed spread; no cell separates the candidate from the control. One contaminated clean Fuma
+Quality pair (25.99/25.52 ms) is retained raw; a same-binary rerun matched the control. Full table,
+captures and identities: `PERFORMANCE.md` on `perf/rhi-dyn-blas-clean`.
+
 Decision: no code change on this evidence branch. The order-insensitive create-time envelope (or a
 different reuse policy) is the next bounded candidate, with its upside bounded by the measured
 recreation cost. Raw captures: `build/Debug/audit-s5d-{ctrl,clean,reuse,diag}-*`; receipts and
