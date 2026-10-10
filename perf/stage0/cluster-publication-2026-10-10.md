@@ -155,6 +155,29 @@ Reverted; the batch-3 numbers are restored and re-measured on the rebuild (runs 
 clean). Note: the `cl-b7` demo run (`ad_particle_heavy`, 23:51) was touched by the owner during
 the run; its fps is not usable and a clean demo re-run is pending.
 
+## Parity amortization attempt - measured negligible, reverted (2026-10-11, no commit)
+
+The amortization idea was implemented in its safe form: the publication defers when (a) the
+previous frame published (at most every second frame), (b) the device's resolved mapping still
+equals the frame's live mapping (so the stale list words cannot alias another light) and (c) the
+frame carries no structural change (a light appearing or disappearing publishes immediately).
+`PrepareClusterListPublication` gained an `allowDefer` flag and a preparation/publication counter
+pair, the mask gained `QR_CLUSTER_PUB_DEFER`, and a `pubdefers` counter was added to the dump,
+the block line and the panel.
+
+Measured on AD start (builds `4F3C7798` and `388590C7` with the counter; runs `cl-b9-*`,
+`cl-b10-*`): the deferral fired on only **14 of ~347** publications in task mode (~4%) and **5 of
+~390** in serial (~1.3%), with every log and the validator clean. The cause is the measured
+change structure: the copy runs are mostly isolated or two frames long (per-frame CSVs), and an
+isolated change still needs a publication - a deferred change triggers a delivery publication on
+the following frame, so the count only drops when two changes actually merge, which is rare on
+this content. The net effect is below measurement noise; the mechanism, its counters and the
+mask bit were reverted to the pushed checkpoint `952bd1c7`.
+
+Consequence for the outlined checkerboard (V-E) variant: it faces the same isolated-change
+structure and would additionally need the source-margin and invalidation contracts; the saving
+would be similarly small, so it is not pursued.
+
 ## Evidence pointers
 
 - Baselines: tags `cl-b1-*`; per-frame CSVs `benchmark-frames-20261010-*.csv` (start task
