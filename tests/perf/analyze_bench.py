@@ -9,7 +9,7 @@ SLOT = re.compile(r'^cpu\.slot\s+(.+?)\s+avg_ms=([0-9.]+)\s+max_ms=([0-9.]+)')
 CLUST = re.compile(r'^cpu\.cluster\s+lists\s+hits=(\d+)\s+misses=(\d+)\s+set=(\d+)\s+move=(\d+)\s+other=(\d+)')
 SET = re.compile(r'^settings\s+(.*)$')
 
-SLOTS = ['frame', 'clusters', 'clust lists', 'clust topup', 'clust tail', 'clust fill', 'clust upload']
+SLOTS = ['frame', 'clusters', 'clust lists', 'clust topup', 'clust tail', 'clust fill', 'clust upload', 'clust publish']
 
 blocks = []
 cur = None

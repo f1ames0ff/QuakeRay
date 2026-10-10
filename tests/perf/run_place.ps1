@@ -100,7 +100,7 @@ function Show-Blocks([int]$fromLine, [string]$printTag) {
         }
         if ($line -match '^cpu\.slot\s+(.+?)\s+avg_ms=([0-9.]+)\s+max_ms=([0-9.]+)') {
             $slotName = $Matches[1].Trim()
-            if (@('frame', 'clusters', 'clust lists', 'clust resolve', 'clust vis', 'clust topup', 'clust fill', 'clust tail', 'clust upload') -contains $slotName) {
+            if (@('frame', 'clusters', 'clust lists', 'clust resolve', 'clust vis', 'clust topup', 'clust fill', 'clust tail', 'clust upload', 'clust publish') -contains $slotName) {
                 Write-Host ("   {0,-12} avg={1,8} max={2,8}" -f $slotName, $Matches[2], $Matches[3])
             }
             continue

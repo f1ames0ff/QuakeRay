@@ -584,6 +584,13 @@ bool qray::LightManager::TryDeferUpload(uint32_t frameIndex, DeferredUploadKind 
     if (queue.size() >= kDeferredUploadCapacity)
     {
         deferredUploadsDropped++;
+
+        if (deferredUploadsDropped == 1)
+        {
+            fprintf(stderr, "qray: more than %u deferred light uploads in one slot; the extra lights are dropped\n",
+                    kDeferredUploadCapacity);
+        }
+
         return true;
     }
 
@@ -1109,6 +1116,28 @@ void qray::LightManager::RunClusterListPublishSlice(uint32_t slice, uint32_t sli
     for (uint32_t i = wordBegin; i < wordEnd; i++)
     {
         pDstLights[i] = ResolveLightUid(publishFrameIndex, publishLightUniqueIds[i], cache);
+    }
+
+    const uint32_t probes[] = { wordBegin, wordEnd - 1 };
+
+    for (uint32_t probe = 0; probe < 2; probe++)
+    {
+        const uint32_t word = probes[probe];
+        const uint64_t uid = publishLightUniqueIds[word];
+        uint32_t       expected = uint32_t(LIGHT_INDEX_NONE);
+
+        if (uid != kLightUidHole)
+        {
+            uint32_t resolved = 0;
+            expected = FindRegisteredLight(publishFrameIndex, uid, resolved) ? resolved : uint32_t(LIGHT_INDEX_NONE);
+        }
+
+        if (pDstLights[word] != expected)
+        {
+            fprintf(stderr, "qray: cluster list word %u resolved to %u, the serial resolve gives %u\n",
+                    word, pDstLights[word], expected);
+            assert(0);
+        }
     }
 }
 

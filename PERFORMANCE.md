@@ -84,7 +84,7 @@ Balanced, milliseconds; the same two-run aggregation. Indented/type/subphase row
 | `cpu.particles_ms` | 3.48 | **8.41** | 3.77 |
 | `cpu.viewmodel_ms` (inclusive) | 0.159 | **2.357** | 0.096 |
 | `cpu.vm_draw_ms` (weapon / debug draw only) | **0.027** | **0.017** | **0.017** |
-| `cpu.clusters_ms` (cluster pipeline; before 2026-10-10 inside the viewmodel task) | 0.069 | **2.170** | 0.047 |
+| `cpu.clusters_ms` (cluster pipeline; before 2026-10-10 inside the viewmodel task; since the sliced publication the resolve+commit wall is separate as `cpu.clust_publish_ms`, 0.45-0.47 ms on AD start task-mode copy frames, see `perf/stage0/cluster-publication-2026-10-10.md`) | 0.069 | **2.170** | 0.047 |
 | `cpu.qrDrawFrame_ms` | 5.62 | 3.78 | 6.91 |
 | `cpu.draw.RHI_setup_ms` (inside renderer) | 3.27 | 1.71 | 4.47 |
 | `cpu.draw.slot_wait_ms` | 0.002 | 0.001 | 0.003 |

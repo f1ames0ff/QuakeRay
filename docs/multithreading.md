@@ -59,8 +59,8 @@ pumping extra audio updates.
 | `draw_world_task -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task`, `-> draw_particles_task` | every dynamic uploader runs after the world task closed the static-geometry window (see below) |
 | `draw_world_task, draw_sky_and_water_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task -> draw_view_model_task` | the viewmodel producer runs last among the producers |
 | `draw_view_model_task -> cluster_prepare_task` | the cluster pipeline starts after the last registration: the registry is complete once the viewmodel task's light uploads have run |
-| `cluster_prepare_task -> cluster_topup_task` (indexed, `RT_CLUSTER_SLICES` = 16) `-> cluster_finish_task` | the per-cluster top-up runs in slices over the frame's work list; the finish merges the slices, fills the lists, rebuilds the tails and publishes |
-| `cluster_finish_task -> draw_done_task` | the publication and the cluster stats readback are complete before the join |
+| `cluster_prepare_task -> cluster_topup_task` (indexed, `RT_CLUSTER_SLICES` = 16) `-> cluster_finish_task -> cluster_publish_task` (indexed, `RT_CLUSTER_SLICES`) `-> cluster_commit_task` | the per-cluster top-up runs in slices over the frame's work list; the finish merges the slices, fills the lists, rebuilds the tails and prepares the publication; the publish slices resolve the list words in parallel and the commit writes the tails and the publication bookkeeping |
+| `cluster_commit_task -> draw_done_task` | the publication and the cluster stats readback are complete before the join |
 | `draw_gui_task -> draw_done_task`, producers `-> draw_done_task` | the GUI and every producer feed the join point |
 | `draw_done_task -> end_rendering_task` | the renderer recording/end task runs last |
 
@@ -68,8 +68,11 @@ pumping extra audio updates.
 ranges in parallel. `cluster_topup_task` is indexed with `RT_CLUSTER_SLICES` (16) slices over
 `dirtyClusters` (incremental frames) or clusters `1..numClusters-1` (compose frames); every cluster
 is processed by exactly one slice, and the slice counters and tail-dirty marks are merged in
-`cluster_finish_task`. The serial branch runs the same prepare/slice/finish stages inline with one
-slice.
+`cluster_finish_task`; that task also prepares the list publication. `cluster_publish_task` is
+indexed with `RT_CLUSTER_SLICES` (16) slices over the publication's word range (a disjoint
+`floor(w*s/16)..floor(w*(s+1)/16)` interval each) and `cluster_commit_task` writes the tails and
+the publication bookkeeping. The serial branch runs the same prepare/slice/finish/publish/commit
+stages inline with one slice.
 
 **Static-geometry window.** `R_DrawWorldTask` calls `qrBeginStaticGeometries` … `qrSubmitStaticGeometries`
 (`gl_rmain.c#L1107`/`#L1119`). Inside that window only `QR_GEOMETRY_TYPE_STATIC` and

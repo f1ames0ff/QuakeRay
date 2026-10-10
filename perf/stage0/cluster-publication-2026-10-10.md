@@ -90,23 +90,41 @@ Assert run clean (no `cluster validation:` / `grant counters do not match` lines
 
 - The publication splits into `PrepareClusterListPublication` (predicate, range initialization,
   offsets and tail beta), `RunClusterListPublishSlice` (the uid resolve of a disjoint word range,
-  one per `RT_CLUSTER_SLICES` task with a per-slice cache) and `CommitClusterListPublication`
-  (tail entries, unresolved handling, device bookkeeping). The task graph gains
-  `cluster_publish_task` (indexed 16, after finish) and `cluster_commit_task` (before
-  `draw_done`); the serial composition runs the same stages with `sliceCount` 1, byte-identical.
-- Row re-scoping: `clusters`/`clust lists` no longer span the publication; `clust upload`
-  measures the prepare and the new `clust publish` row the resolve+commit wall.
+  one per `RT_CLUSTER_SLICES` task with a per-slice cache; a sampled self-check re-resolves the
+  first and last word of every slice against the staging and asserts on mismatch) and
+  `CommitClusterListPublication` (tail entries, unresolved handling, device bookkeeping). The
+  task graph gains `cluster_publish_task` (indexed 16, after finish) and `cluster_commit_task`
+  (before `draw_done`); the serial composition runs the same stages with `sliceCount` 1, so the
+  serial publication is byte-identical by construction (no executed byte-diff exists; the
+  reviewers verified the source-level equivalence and the sampled check covers the runtime path).
+- Row re-scoping: `clusters`/`clust lists` still include the prepare (`clust upload` measures it,
+  ~0.02 ms); what moved out of the bracket is the resolve+commit wall, recorded as the new
+  `clust publish` row and only on copy frames.
 - Measured on AD start task mode: the copy-frame resolve 2.1 -> **0.45-0.47 ms** across three
-  runs (16 slices, `clust publish`); the clean run shows the cluster work 5.1 -> **2.96** and
-  **70.6 fps**, publication skips preserved (557/526); serial `clusters` 5.20-5.30 plus
-  `publish` 2.32-2.37 (total unchanged against the 7.34-7.40 baseline); tfuma unchanged; assert
-  run clean (`clusters` 8.51 + `publish` 0.48).
-- The runs `cl-b4-task-1/2`, `cl-b4-serial-2` and the demo sample (50.8 fps with a 9.58 ms frame
-  average, i.e. idle time outside the frames) coincided with external machine load and stand as
-  contention outliers; re-run the demo and the repeat arms on a quiet machine before accepting
-  them.
-- Remaining: the fill fold (fill still 1.32-1.37 ms on copy frames), the published-span reuse
-  (the serial resolve lever, `clust publish` 2.3) and the parity amortization.
+  runs (dump upper-median; per-frame CSV central tendency ~0.39-0.40, p90 ~0.47); the clean run
+  `cl-b4-task-3` shows the `clusters` row 5.03 (baseline band) -> **2.96** and **70.6 fps**
+  (1083 frames / 15.33 s) with publication skips 557/526 preserved; tfuma unchanged; assert run
+  clean (`clusters` 8.51 + `publish` 0.48).
+- Serial is **not literally unchanged**: `clusters` + `publish` = 7.57/7.62 ms against the batch-2
+  band 7.34-7.40 (+0.17..+0.23 ms, +2.3-3%) and the isolated publication stage 2.29-2.33 against
+  the batch-2 `upload` 1.89-2.01 (+0.3-0.4 ms). Both are within the historical serial spread
+  (6.52-7.56 across all pre-batch-3 runs) and the isolated-stage delta has no identified
+  mechanism beyond codegen/measurement-bracket differences; re-measure on a quiet machine before
+  signing it off. No owner-facing serial regression was observed in the frame totals.
+- Scope note: the fill fold ("fold the fill into the publish slices") was part of this batch's
+  original scope in the batch-2 plan; it did not land here and moves to the next batch explicitly
+  (fill is still 1.32-1.37 ms on copy frames and runs serially in `FinishLists`).
+- Statistics and evidence: dump rows are upper-middle (`sorted[n//2]`) values of the per-window
+  maxima series; runs `cl-b4-*` under `%LOCALAPPDATA%\Temp\opencode\`, per-frame CSVs
+  `benchmark-frames-20261010-2224*.csv`, blocks in `build/Debug/ad/benchmark.log`.
+- The low-fps samples (`cl-b4-task-1/2` ~38 fps, `cl-b4-serial-2` 27.9, the demo at 50.8 fps)
+  carry an outside-frame gap of +16-17 ms with every changed slot normal; the shape matches the
+  engine's 16 ms focus/pause sleep path (`main_sdl.c`) and repeats on pre-change builds
+  (`cl-b1-task-2`), so they stand as an environment/harness condition, not as a regression;
+  re-run the demo and the repeat arms on a quiet machine before accepting them.
+- Remaining: the fill fold (fill 1.32-1.37 ms on copy frames), the published-span reuse (the
+  serial resolve lever, `clust publish` 2.3; design and measurement still missing) and the parity
+  amortization.
 
 ## Evidence pointers
 

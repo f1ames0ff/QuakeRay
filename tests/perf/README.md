@@ -76,7 +76,7 @@ python tests\perf\analyze_bench.py build\Debug\ad\benchmark.log 4
 
 - The primary metric is the `cpu.slot` averages in the `rt_bench` block: `frame`, `clusters`,
   `clust lists`, `clust topup`, `clust mark`, `clust grid`, `clust tail`, `clust fill`,
-  `clust upload`. Wall fps
+  `clust upload`, `clust publish`. Wall fps
   (`fps=` in the block header) is frames over wall seconds; an unfocused window sleeps 16 ms per
   frame in this engine, so wall fps is only comparable between runs that keep focus. The runner
   leaves the window in place, but do not cover it or work on the machine during a run.
