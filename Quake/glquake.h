@@ -663,6 +663,7 @@ float     RT_Luminance (const vec3_t color);
 enum
 {
 	RT_PROF_SETUP,
+	RT_PROF_BEGIN,
 	RT_PROF_MARK,
 	RT_PROF_EFRAGS,
 	RT_PROF_CULL,

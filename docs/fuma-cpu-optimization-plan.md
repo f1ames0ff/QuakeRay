@@ -344,3 +344,35 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   17.9 ms Fuma in these captures).
   A Debug-vs-Release gap larger than this is a signal that Debug-only overhead dominates the scene
   rather than the shipping build being slow.
+- 2026-10-11 (CPU pass, deep-reasoning round 1 - diagnosis and corrections): eight independent solver
+  passes, four blind falsification verifiers and three final reviewers (one round) established, with
+  corrections: (a) the visible ~8-10/32 busy threads are the graph's structural width for the draw
+  stage (6 entity chunks plus sky/water, alpha and particles; world and viewmodel are 1-wide
+  dependents), and workers park by design; no artifact records worker/queue state, so a scheduling
+  pathology is unmeasured rather than excluded; (b) on the acceptance profile the Release swamp entity
+  per-invocation maximum is 5.61 ms (max 7.65) and the upload-lock waiting is modest (alias 4.4 ms per
+  frame summed against 1.3 ms of hold; all lanes 11.9/2.3), unlike the Debug 720p convoy (58.96/9.79),
+  so Release is not convoy-bound; (c) the live `rt_stats 3` "CPU 20-24 > GPU" reading is a
+  window-maximum-versus-snapshot artifact: the gate means are CPU 18.79/15.44 against GPU 22.15/17.87,
+  with interval-minus-gpu of 0.95/0.50 ms; (d) the earlier cited "scalar control" (`mp4-swamp-off-r1`)
+  is `r_parallelmark 0`; the real serial arm (`swamp-rt0-r1/r2`, revision 19d1ca2b) is 40.67/40.65 ms
+  against the same-revision task runs 24.57 (traced) and 20.37, i.e. 1.65-2.0x; (e) per-invocation
+  maxima replace the sum-based "unattributed wall" reading: Release swamp shows ents 5.61,
+  particles_resolve 3.35, alpha 2.64, sky 1.1, chain 0.78. A dedicated `begin` profiler slot around
+  `qrStartFrame` in `GL_BeginRenderingTask` was added to settle the remaining begin-task pacing
+  question and to size the serial corridor in future captures.
+- 2026-10-11 (CPU pass, `begin` slot measurement on Release swamp): the new slot reports 12.78 ms mean
+  (max 20.97) inside an 18.72 ms `cpu.frame_ms` on the acceptance profile. The frame is therefore
+  GPU-pacing-bound - `qrStartFrame` waits on the frame fence of the in-flight slot and on image
+  acquire - and the actual CPU work in the frame is about 6 ms (frame minus begin): the top work items
+  are the entity stage (per-invocation chunk maximum about 5.6 ms; sums alias 9.88 + brush 14.56),
+  `chain` 6.25 summed, `particles resolve` 2.88, `alpha` 1.97. Consequence for the targets: at the
+  acceptance profile the CPU has large headroom (the minimum plan is not CPU-limited), and the maximum
+  plan (CPU must not limit even at FSR ultra performance) is a matter of shrinking the ~6 ms of work
+  and its critical path, not of adding workers.
+- 2026-10-11 (CPU pass, `rt_brush_persistent` on the acceptance profile, same binary): Release 4K FSR
+  Balanced Medium: swamp `cpu.frame_ms` 18.79 -> 17.34 (-1.45 ms), `calls_geometry` 2083 -> 973; Fuma
+  15.44 -> 14.42 (-1.02 ms), 1199 -> 638; fps 43.2/54.3 -> 42.9/54.1 and interval means 23.15/18.40 ->
+  23.28/18.50 stay inside the run noise because both saves are GPU-bound on the means. The flag stays
+  off by default pending the mover visual acceptance; the perf profiles keep pinning it off until that
+  decision is recorded.

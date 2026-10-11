@@ -1404,6 +1404,7 @@ const char *RT_ProfSlotName (int slot)
 		const char *name;
 	} names[] = {
 		{ RT_PROF_SETUP, "setup" },
+		{ RT_PROF_BEGIN, "begin" },
 		{ RT_PROF_MARK, "mark" },
 		{ RT_PROF_EFRAGS, "efrags" },
 		{ RT_PROF_CULL, "cull" },
@@ -3026,7 +3027,9 @@ void GL_BeginRenderingTask (void *unused)
 		.requestShaderReload = request_shaders_reload,
 	};
 
+	const double prof_begin = RT_Prof_Begin ();
 	QrResult r = qrStartFrame (vulkan_globals.instance, &info);
+	RT_Prof_End (RT_PROF_BEGIN, prof_begin);
 	QR_CHECK (r);
 
 	request_shaders_reload = false;
