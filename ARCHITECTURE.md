@@ -2,7 +2,7 @@
 
 Start here to locate code, not to learn the engine from scratch. Read [PERFORMANCE.md](PERFORMANCE.md) for measured costs, binary identities and capture locations before proposing an optimization.
 
-**Verified source snapshot:** `2491c038`, 2026-10-10. This snapshot includes entity profiling, exact brush-transform reuse, SIMD bounds and the staged cluster pipeline; it is not an assertion about master or another worktree. Function names are the durable lookup keys; `#L` links identify their locations at this snapshot. Recheck a changed function and its immediate caller/callee, not the entire repository.
+**Verified source snapshot:** `b4088595`, 2026-10-11 (stage-2.3 cleanup). This snapshot includes entity profiling, exact brush-transform reuse, the parallel world marking and the stage-2.3 dead-code cleanup; it is not an assertion about master or another worktree. Function names are the durable lookup keys; `#L` links identify their locations at this snapshot. Recheck a changed function and its immediate caller/callee, not the entire repository.
 
 Engine MCP use is mandatory for all agents under [AGENTS.md](AGENTS.md#mandatory-engine-mcp-workflow).
 Start with `quakeray.server_status`, then use scoped `find_symbol` (`query`, `file`) and the available
