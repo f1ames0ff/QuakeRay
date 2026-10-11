@@ -87,6 +87,8 @@ Balanced, milliseconds; the same two-run aggregation. Indented/type/subphase row
 
 Note (2026-10-11): the `cpu.mark_ms` rows below predate the parallel marking path. With the default `r_parallelmark 1` the slot is the summed CPU of the per-chunk mark invocations, and `cpu.chain_ms`/`cpu.efrags_ms` are nonzero (per-texture chain slices and the serial efrag pass). Steady frames now chain only the consumed textures - the ones the sky, water and animated passes read - and the chain slot therefore sums that subset; frames with a static-submit or world-light-recollect window, and `r_showtris`, keep the full set, and `rs_brushpolys` reflects the same subset in steady frames. Compare those slots only within one binary.
 
+Note (2026-10-11): `ents c0`..`ents c5` nest inside `ents` and split the opaque entity stage by `NUM_ENTITIES_CBX` chunk, so their per-window maxima identify the slowest chunk rather than the summed work (acceptance profile: swamp chunk means 2.1-4.8 ms with the slowest at 4.8 against a 5.9 ms post-begin graph, Fuma 1.1-2.8 ms). A compile-time assert ties the slot range to `NUM_ENTITIES_CBX`.
+
 | Counter | Fuma | AD hub | Bogbottom |
 | --- | ---: | ---: | ---: |
 | `cpu.mark_ms` | 2.18 | 0.70 | 3.99 |

@@ -1185,7 +1185,10 @@ static void R_DrawEntitiesTask (int index, void *unused)
 	int       startedict = index * num_edicts_per_cb;
 	int       endedict = q_min ((index + 1) * num_edicts_per_cb, cl_numvisedicts);
 	qrUploadLanePush (vulkan_globals.instance, (uint32_t)(QR_UPLOAD_LANE_ENTITIES_0 + index));
+	COMPILE_TIME_ASSERT (rt_ents_chunk_slots, RT_PROF_ENTS_CHUNK_5 - RT_PROF_ENTS_CHUNK_0 + 1 == NUM_ENTITIES_CBX);
+	const double prof_chunk = RT_Prof_Begin ();
 	R_DrawEntitiesOnList (&vulkan_globals.secondary_cb_contexts[cbx_index], false, index + chain_model_0, startedict, endedict);
+	RT_Prof_End (RT_PROF_ENTS_CHUNK_0 + index, prof_chunk);
 	qrUploadLanePop (vulkan_globals.instance);
 
 	qrEndDeferredLightUploads (vulkan_globals.instance);

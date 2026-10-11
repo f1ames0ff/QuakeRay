@@ -388,3 +388,10 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   edge). An 18-pair phase-matched demo screenshot comparison (best diffs 0.0005-0.006) shows
   identical drawn output, and the sky/ents/mark slots are unchanged. `rs_brushpolys` counts the
   consumed subset in steady frames (documented in PERFORMANCE.md).
+- 2026-10-11 (CPU pass, per-chunk entity timers): `ents c0`..`ents c5` are nested slots inside `ents`,
+  one per `NUM_ENTITIES_CBX` chunk, with a compile-time link to the constant. Acceptance-profile means:
+  swamp 4.19/3.77/3.28/4.82/4.83/2.12 ms (slowest/fastest 2.28x, `ents` sum 23.01, frame 18.75) and
+  Fuma 2.57/2.07/2.83/2.06/2.44/1.06 (frame 15.39). This confirms the post-begin graph wall is set by
+  the slowest chunk (4.8 ms against a 5.9 ms graph) rather than by the summed work, and it is the
+  baseline for any entity-width or partition change; `chain` measured 0.07 ms in the same captures
+  after the elision.
