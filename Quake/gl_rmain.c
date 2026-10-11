@@ -1093,6 +1093,8 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_WORLD);
+
 	qrBeginDeferredLightUploads (vulkan_globals.instance, 0);
 
 	const qboolean static_submit = Atomic_ExchangeUInt32 (&rt_require_static_submit, false) != 0;
@@ -1102,6 +1104,7 @@ void R_DrawWorldTask (void *unused)
 	{
 		RT_StaticMovableUpdate ();
 		qrEndDeferredLightUploads (vulkan_globals.instance);
+		qrUploadLanePop (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1112,6 +1115,7 @@ void R_DrawWorldTask (void *unused)
 		RT_StaticMovableUpdate ();
 
 		qrEndDeferredLightUploads (vulkan_globals.instance);
+		qrUploadLanePop (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1139,6 +1143,7 @@ void R_DrawWorldTask (void *unused)
 	RT_StaticMovableUpdate ();
 
 	qrEndDeferredLightUploads (vulkan_globals.instance);
+	qrUploadLanePop (vulkan_globals.instance);
 	RT_Prof_End (RT_PROF_WORLD, prof_start);
 }
 
@@ -1153,9 +1158,15 @@ static void R_DrawSkyAndWaterTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_SKY);
 	Sky_DrawSky (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
+	qrUploadLanePop (vulkan_globals.instance);
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_WATER);
 	R_DrawWorld_Water (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
+	qrUploadLanePop (vulkan_globals.instance);
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_ANIMATED);
 	R_DrawWorld_Animated (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
+	qrUploadLanePop (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_SKY, prof_start);
 }
@@ -1177,7 +1188,9 @@ static void R_DrawEntitiesTask (int index, void *unused)
 	const int num_edicts_per_cb = (cl_numvisedicts + NUM_ENTITIES_CBX - 1) / NUM_ENTITIES_CBX;
 	int       startedict = index * num_edicts_per_cb;
 	int       endedict = q_min ((index + 1) * num_edicts_per_cb, cl_numvisedicts);
+	qrUploadLanePush (vulkan_globals.instance, (uint32_t)(QR_UPLOAD_LANE_ENTITIES_0 + index));
 	R_DrawEntitiesOnList (&vulkan_globals.secondary_cb_contexts[cbx_index], false, index + chain_model_0, startedict, endedict);
+	qrUploadLanePop (vulkan_globals.instance);
 
 	qrEndDeferredLightUploads (vulkan_globals.instance);
 
@@ -1196,9 +1209,11 @@ static void R_DrawAlphaEntitiesTask (void *unused)
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES]);
 	qrBeginDeferredLightUploads (vulkan_globals.instance, 1u + NUM_ENTITIES_CBX);
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_ALPHA);
 	R_DrawEntitiesOnList (
 		&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES], true, chain_alpha_model, 0,
 		cl_numvisedicts); // johnfitz -- true means this is the pass for alpha entities
+	qrUploadLanePop (vulkan_globals.instance);
 	qrEndDeferredLightUploads (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_ALPHA, prof_start);
@@ -1215,11 +1230,13 @@ static void R_DrawParticlesTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]); // johnfitz
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_PARTICLES);
 	R_DrawSmoke (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 	R_DrawParticles (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 #ifdef PSET_SCRIPT
 	PScript_DrawParticles (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 #endif
+	qrUploadLanePop (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_PARTICLES, prof_start);
 }
@@ -1233,6 +1250,8 @@ static void R_DrawViewModelTask (void *unused)
 {
 	double prof_task = RT_Prof_Begin ();
 	double prof_start;
+
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_VIEWMODEL);
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);
 
@@ -1259,6 +1278,7 @@ static void R_DrawViewModelTask (void *unused)
 	prof_start = RT_Prof_Begin ();
 	RT_UploadAllTeleports (); // RT
 	RT_Prof_End (RT_PROF_TELEPORTS, prof_start);
+	qrUploadLanePop (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_VIEWMODEL, prof_task);
 }

@@ -177,6 +177,31 @@ QrResult qrUploadRasterizedGeometry(QrInstance qrInstance, const QrRasterizedGeo
     return Call(qrInstance, &VulkanDevice::UploadRasterizedGeometry, pUploadInfo, pViewProjection, pViewport);
 }
 
+QrResult qrUploadLanePush(QrInstance qrInstance, uint32_t lane)
+{
+    return Call(qrInstance, &VulkanDevice::UploadLanePush, lane);
+}
+
+QrResult qrUploadLanePop(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::UploadLanePop);
+}
+
+QrResult qrSetUploadLockTracing(QrInstance qrInstance, QrBool32 enable)
+{
+    return Call(qrInstance, &VulkanDevice::SetUploadLockTracing, enable != 0);
+}
+
+QrResult qrUploadLockStatsReset(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::ResetUploadLockStats);
+}
+
+QrResult qrGetUploadLockStats(QrInstance qrInstance, QrUploadLockStats *pStats)
+{
+    return Call(qrInstance, &VulkanDevice::GetUploadLockStats, pStats);
+}
+
 QrResult qrUploadParticles(QrInstance qrInstance, const QrParticleUploadInfo *pUploadInfo)
 {
     return Call(qrInstance, &VulkanDevice::UploadParticles, pUploadInfo);

@@ -160,6 +160,28 @@ public:
 
     void GetFrameStatsEx(QrFrameStats *pStats) const;
 
+    void UploadLanePush(uint32_t lane);
+    void UploadLanePop();
+    void SetUploadLockTracing(bool enable);
+    void ResetUploadLockStats();
+    void GetUploadLockStats(QrUploadLockStats *pStats) const;
+
+    class UploadLockScope
+    {
+    public:
+        UploadLockScope(VulkanDevice &device, uint32_t lane);
+        ~UploadLockScope();
+        UploadLockScope(const UploadLockScope &) = delete;
+        UploadLockScope &operator=(const UploadLockScope &) = delete;
+
+    private:
+        VulkanDevice &device;
+        uint32_t     lane;
+        bool         enabled;
+        uint64_t     waitNs;
+        uint64_t     holdStartNs;
+    };
+
     void GetAdapterInfo(QrAdapterInfo *pInfo) const;
 
     void RequestScreenshot(const char *pFilePath);
@@ -310,6 +332,12 @@ private:
     float                                   statsGpuFrameMs = 0.0f;
     float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
     std::mutex                              geometryUploadMutex;
+    std::atomic<uint64_t>                   uploadLockWaitSumNs[QR_UPLOAD_LANE_COUNT]{};
+    std::atomic<uint64_t>                   uploadLockWaitMaxNs[QR_UPLOAD_LANE_COUNT]{};
+    std::atomic<uint64_t>                   uploadLockHoldSumNs[QR_UPLOAD_LANE_COUNT]{};
+    std::atomic<uint64_t>                   uploadLockHoldMaxNs[QR_UPLOAD_LANE_COUNT]{};
+    std::atomic<uint64_t>                   uploadLockCalls[QR_UPLOAD_LANE_COUNT]{};
+    std::atomic<bool>                       uploadLockTracing{false};
     CpuFrameProfiler                        cpuFrameProfiler;
     bool                                    statsCpuTimingValid = false;
     bool                                    statsRenderedUiOnly = false;

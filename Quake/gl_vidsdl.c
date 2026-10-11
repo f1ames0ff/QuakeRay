@@ -373,6 +373,8 @@ atomic_uint32_t rt_end_task_running;
     CVAR_DEF_LIST (CVAR_DEF_T)
 #undef CVAR_DEF_T
 
+cvar_t rt_upload_trace = {"rt_upload_trace", "0", CVAR_NONE};
+
 cvar_t rt_light_report_filter = {"rt_light_report_filter", "", 0};
 cvar_t r_particles_overflow = {"r_particles_overflow", "0", CVAR_ARCHIVE};
 
@@ -457,6 +459,16 @@ typedef struct
 static rt_prof_tls_t rt_prof_tls_pool[RT_PROF_TLS_SLOTS];
 static uint32_t     rt_prof_tls_used;
 static THREAD_LOCAL rt_prof_tls_t *rt_prof_tls;
+
+static qboolean          rt_upload_trace_on;
+static uint32_t          rt_upload_lock_frames;
+static QrUploadLockStats rt_upload_lock_acc;
+
+static const char *const rt_upload_lane_names[QR_UPLOAD_LANE_COUNT] =
+{
+	"unattributed", "ents 0", "ents 1", "ents 2", "ents 3", "ents 4", "ents 5",
+	"world", "alpha", "sky", "water", "animated", "particles", "viewmodel", "gui"
+};
 
 static void RT_Prof_Lock (void)
 {
@@ -730,6 +742,19 @@ void RT_Prof_FrameStart (void)
 	}
 
 	RT_PointClusterCacheStats (NULL, NULL, &rt_particle_cache_total_ms_last, NULL);
+
+	const qboolean upload_trace = rt_upload_trace.value != 0;
+
+	if (upload_trace != rt_upload_trace_on)
+	{
+		rt_upload_trace_on = upload_trace;
+		rt_upload_lock_frames = 0;
+		memset (&rt_upload_lock_acc, 0, sizeof (rt_upload_lock_acc));
+	}
+
+	qrSetUploadLockTracing (vulkan_globals.instance, upload_trace);
+	if (upload_trace)
+		qrUploadLockStatsReset (vulkan_globals.instance);
 }
 
 void RT_Prof_FrameEnd (void)
@@ -797,6 +822,30 @@ void RT_Prof_FrameEnd (void)
 		RT_Prof_Unlock ();
 		rt_bench_last_frame_end = now;
 		++rt_bench_frames;
+	}
+
+	if (rt_upload_trace_on)
+	{
+		QrUploadLockStats stats;
+
+		qrGetUploadLockStats (vulkan_globals.instance, &stats);
+
+		if (stats.valid)
+		{
+			for (uint32_t i = 0; i < QR_UPLOAD_LANE_COUNT; ++i)
+			{
+				rt_upload_lock_acc.lanes[i].calls += stats.lanes[i].calls;
+				rt_upload_lock_acc.lanes[i].waitSumNs += stats.lanes[i].waitSumNs;
+				rt_upload_lock_acc.lanes[i].holdSumNs += stats.lanes[i].holdSumNs;
+
+				if (stats.lanes[i].waitMaxNs > rt_upload_lock_acc.lanes[i].waitMaxNs)
+					rt_upload_lock_acc.lanes[i].waitMaxNs = stats.lanes[i].waitMaxNs;
+				if (stats.lanes[i].holdMaxNs > rt_upload_lock_acc.lanes[i].holdMaxNs)
+					rt_upload_lock_acc.lanes[i].holdMaxNs = stats.lanes[i].holdMaxNs;
+			}
+
+			++rt_upload_lock_frames;
+		}
 	}
 }
 
@@ -1159,6 +1208,26 @@ qboolean RT_Bench_Report (const char *demo)
 	fprintf (f, "cpu.main    %-17s avg_ms=%.2f\n", "frame minus wait",
 	         (slotSum[RT_PROF_FRAME] - slotSum[RT_PROF_WAIT]) / frames);
 
+	if (rt_upload_trace_on && rt_upload_lock_frames > 0)
+	{
+		const double uploadFrames = (double)rt_upload_lock_frames;
+
+		fprintf (f, "upload.lock frames=%u\n", rt_upload_lock_frames);
+
+		for (uint32_t i = 0; i < QR_UPLOAD_LANE_COUNT; ++i)
+		{
+			const QrUploadLockLaneStats *lane = &rt_upload_lock_acc.lanes[i];
+
+			if (lane->calls == 0)
+				continue;
+
+			fprintf (f, "upload.lane %-12s calls=%llu wait_avg_ms=%.3f wait_max_ms=%.3f hold_avg_ms=%.3f hold_max_ms=%.3f\n",
+			         rt_upload_lane_names[i], (unsigned long long)lane->calls,
+			         (double)lane->waitSumNs / uploadFrames / 1e6, (double)lane->waitMaxNs / 1e6,
+			         (double)lane->holdSumNs / uploadFrames / 1e6, (double)lane->holdMaxNs / 1e6);
+		}
+	}
+
 	static const char *const hostPasses[RT_HOST_SPEED_COUNT] = {"tot", "server", "gfx", "snd"};
 	const int                hostFrames = rt_bench_host_frames > 0 ? rt_bench_host_frames : 1;
 
@@ -1184,6 +1253,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_truelight");
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_brush_persistent");
+	RT_Bench_Setting (f, "rt_upload_trace");
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");
 	RT_Bench_Setting (f, "rt_cluster_sampling");
@@ -4099,6 +4169,8 @@ void VID_Init (void)
 #define CVAR_DEF_T(name, default_value) Cvar_RegisterVariable (&name);
 		CVAR_DEF_LIST (CVAR_DEF_T)
 #undef CVAR_DEF_T
+
+		Cvar_RegisterVariable (&rt_upload_trace);
 
 		/* Read-only: the incremental composition is the only mode the renderer selects. The
 		   legacy non-incremental path (0) composes every list of the scene on every frame, and

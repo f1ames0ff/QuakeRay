@@ -190,3 +190,11 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   1283 to 726, `brush upload` worker sum 26.0 to 6.7 ms, `brush pack` 7.2 to 13-15 ms (covered surfaces
   still pack), `ents` sum 47-50 to 37-39, frame/wait slightly down; FPS 40.4/44.6 (0) vs 44.8/48.5 (1).
   The pack rise makes skip-covered-packing (C2) the companion candidate.
+- 2026-10-11 (P1 slice 2): the upload-lock probe landed (`rt_upload_trace 1`; per-lane wait/hold around
+  `geometryUploadMutex`, `upload.lock`/`upload.lane` rows in the bench block). First Fuma waterfall
+  (748 frames): total lock wait about **36 ms per frame summed across lanes** versus about **5 ms per
+  frame of actual hold**; entity lanes 4-5 ms each, alpha 3.9, sky 2.4; per-call maximum wait
+  0.92-1.25 ms; holds short (about 3-5 microseconds average, <= 0.15 ms maximum). Water needs only
+  ~2 uploads per frame (batching works), world sky ~95 calls per frame. Conclusion: the shared geometry
+  mutex is a first-order contention point; the brush/alias upload slots are dominated by wait, not by
+  copying. Next: sky/alpha/brush subphase and count timers; then the `r_tasks 1/0` comparison.

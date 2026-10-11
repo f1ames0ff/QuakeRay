@@ -330,6 +330,59 @@ typedef struct QrUpdateTexCoordsInfo
     const void      *pTexCoordLayerData[3];
 } QrUpdateTexCoordsInfo;
 
+typedef enum QrUploadLane
+{
+    QR_UPLOAD_LANE_UNATTRIBUTED = 0,
+    QR_UPLOAD_LANE_ENTITIES_0,
+    QR_UPLOAD_LANE_ENTITIES_1,
+    QR_UPLOAD_LANE_ENTITIES_2,
+    QR_UPLOAD_LANE_ENTITIES_3,
+    QR_UPLOAD_LANE_ENTITIES_4,
+    QR_UPLOAD_LANE_ENTITIES_5,
+    QR_UPLOAD_LANE_WORLD,
+    QR_UPLOAD_LANE_ALPHA,
+    QR_UPLOAD_LANE_SKY,
+    QR_UPLOAD_LANE_WATER,
+    QR_UPLOAD_LANE_ANIMATED,
+    QR_UPLOAD_LANE_PARTICLES,
+    QR_UPLOAD_LANE_VIEWMODEL,
+    QR_UPLOAD_LANE_GUI,
+    QR_UPLOAD_LANE_COUNT,
+} QrUploadLane;
+
+typedef struct QrUploadLockLaneStats
+{
+    uint64_t    calls;
+    uint64_t    waitSumNs;
+    uint64_t    waitMaxNs;
+    uint64_t    holdSumNs;
+    uint64_t    holdMaxNs;
+} QrUploadLockLaneStats;
+
+typedef struct QrUploadLockStats
+{
+    QrBool32                valid;
+    QrUploadLockLaneStats   lanes[QR_UPLOAD_LANE_COUNT];
+} QrUploadLockStats;
+
+QRAPI QrResult QRCONV qrUploadLanePush(
+    QrInstance                          qrInstance,
+    uint32_t                            lane);
+
+QRAPI QrResult QRCONV qrUploadLanePop(
+    QrInstance                          qrInstance);
+
+QRAPI QrResult QRCONV qrSetUploadLockTracing(
+    QrInstance                          qrInstance,
+    QrBool32                            enable);
+
+QRAPI QrResult QRCONV qrUploadLockStatsReset(
+    QrInstance                          qrInstance);
+
+QRAPI QrResult QRCONV qrGetUploadLockStats(
+    QrInstance                          qrInstance,
+    QrUploadLockStats                  *pStats);
+
 QRAPI QrResult QRCONV qrUploadGeometry(
     QrInstance                              qrInstance,
     const QrGeometryUploadInfo              *pUploadInfo);
