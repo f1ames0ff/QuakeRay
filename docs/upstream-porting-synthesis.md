@@ -95,7 +95,9 @@ Measurements, missing:
 
 Corrections still open:
 
-- H13 writer ownership (entity tasks vs world memset without a DAG edge) is not fixed yet.
+- H13 writer ownership landed with the Tier A slice (atomic `rt_emis_stats` fields plus a spinlock
+  around the `rt_emis_watch` table); the earlier "no DAG edge" note is superseded by the verified fact
+  that the `draw_world_task -> entities/alpha` edges already existed.
 - The `rt_brush_persistent` enablement decision (profile vs default, mover visual check) is pending.
 
 Focus caveat (measured): `main_sdl.c` sleeps 16 ms per frame while the game window has no input focus,

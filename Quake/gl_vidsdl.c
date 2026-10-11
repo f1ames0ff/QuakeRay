@@ -87,8 +87,7 @@ static void ClearAllStates (void);
 viddef_t        vid; // global video state
 modestate_t     modestate = MS_UNINIT;
 extern qboolean scr_initialized;
-extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate;
-extern cvar_t   r_tasks, r_parallelmark;
+extern cvar_t   r_particles, host_maxfps;
 extern cvar_t   scr_showfps, scr_fov;
 
 //====================================

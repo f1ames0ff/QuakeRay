@@ -252,7 +252,8 @@ its completion evidence exists; do not mark it done merely because tasks were ad
 - `r_tasks` defaults to `1` (flipped 2026-10-11); `r_tasks 0` is the deprecated serial path kept
   for bisection until the cvar, its fork and the serial compositions are removed and the engine
   always runs multithreaded.
-- `r_gpulightmapupdate`'s GPU lightmap path is an unimplemented stub (assert); task mode does not
-  require it.
+- `r_gpulightmapupdate` now only selects the non-interpolated lightstyle path in `R_AnimateLight`;
+  the GPU lightmap update task and the `lightmaps[].modified` field were removed in the Tier A port
+  (see H14 in `docs/upstream-porting-synthesis.md`).
 - No worker watchdog: a hung task hangs the join loop; the join reports the `wait` slot so a
   persistent value is visible in captures.

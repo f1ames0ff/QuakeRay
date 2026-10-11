@@ -37,7 +37,6 @@ extern cvar_t r_oldskyleaf;
 extern cvar_t r_showtris;
 extern cvar_t r_simd;
 extern cvar_t gl_zfix;
-extern cvar_t r_gpulightmapupdate;
 
 extern cvar_t rt_brush_metal;
 extern cvar_t rt_brush_rough;
@@ -208,13 +207,13 @@ static void RT_EmisNoteSkip (const char *texture, const char *reason)
 typedef struct rt_emis_watch_s
 {
 	char name[32];
-	int  surfaces;
-	int  lights;
-	int  no_material;
-	int  no_color;
-	int  style_off;
-	int  degenerate;
-	int  frame_off;
+	atomic_uint32_t surfaces;
+	atomic_uint32_t lights;
+	atomic_uint32_t no_material;
+	atomic_uint32_t no_color;
+	atomic_uint32_t style_off;
+	atomic_uint32_t degenerate;
+	atomic_uint32_t frame_off;
 	int  hist_frames;
 	int  hist_lit;
 	int  hist_dark;
@@ -233,10 +232,13 @@ static char            rt_emis_watch_filter[64];
 
 static rt_emis_watch_t *RT_EmisWatch (const char *texture)
 {
-	const char *filter = rt_light_report_filter.string;
+	const char      *filter = rt_light_report_filter.string;
+	rt_emis_watch_t *result = NULL;
 
 	if (!filter[0] || !texture)
 		return NULL;
+
+	RT_EmisSkipLock ();
 
 	if (strcmp (filter, rt_emis_watch_filter))
 	{
@@ -245,24 +247,31 @@ static rt_emis_watch_t *RT_EmisWatch (const char *texture)
 		q_snprintf (rt_emis_watch_filter, sizeof (rt_emis_watch_filter), "%s", filter);
 	}
 
-	if (!strstr (texture, filter))
-		return NULL;
-
-	for (int i = 0; i < rt_emis_watch_num; i++)
+	if (strstr (texture, filter))
 	{
-		if (!strcmp (rt_emis_watch[i].name, texture))
-			return &rt_emis_watch[i];
+		for (int i = 0; i < rt_emis_watch_num; i++)
+		{
+			if (!strcmp (rt_emis_watch[i].name, texture))
+			{
+				result = &rt_emis_watch[i];
+				break;
+			}
+		}
+
+		if (result == NULL && rt_emis_watch_num < RT_EMIS_WATCH_MAX)
+		{
+			rt_emis_watch_t *watch = &rt_emis_watch[rt_emis_watch_num++];
+			memset (watch, 0, sizeof (*watch));
+			watch->hist_min_lights = 0x7FFFFFFF;
+			watch->min_style_scale = 1.0f;
+			q_snprintf (watch->name, sizeof (watch->name), "%s", texture);
+			result = watch;
+		}
 	}
 
-	if (rt_emis_watch_num >= RT_EMIS_WATCH_MAX)
-		return NULL;
+	RT_EmisSkipUnlock ();
 
-	rt_emis_watch_t *watch = &rt_emis_watch[rt_emis_watch_num++];
-	memset (watch, 0, sizeof (*watch));
-	watch->hist_min_lights = 0x7FFFFFFF;
-	watch->min_style_scale = 1.0f;
-	q_snprintf (watch->name, sizeof (watch->name), "%s", texture);
-	return watch;
+	return result;
 }
 
 static void RT_EmisWatchFrameEnd (void)
@@ -270,34 +279,38 @@ static void RT_EmisWatchFrameEnd (void)
 	for (int i = 0; i < rt_emis_watch_num; i++)
 	{
 		rt_emis_watch_t *w = &rt_emis_watch[i];
+		const uint32_t   surfaces = Atomic_LoadUInt32 (&w->surfaces);
+		const uint32_t   lights = Atomic_LoadUInt32 (&w->lights);
+		const uint32_t   style_off = Atomic_LoadUInt32 (&w->style_off);
+		const uint32_t   frame_off = Atomic_LoadUInt32 (&w->frame_off);
 
-		if (w->surfaces > 0)
+		if (surfaces > 0)
 		{
 			w->hist_frames++;
 			/* A frame that carries no light of its own is a dark frame: the surface is still
 			   there and still visible, it just does not glow on that frame. Counting it as lit
 			   would hide the blinks of a lamp behind a steady "lit" history. */
-			if (w->lights > 0 && w->frame_off == 0)
+			if (lights > 0 && frame_off == 0)
 				w->hist_lit++;
 			else
 				w->hist_dark++;
-			if (w->style_off > 0)
+			if (style_off > 0)
 				w->hist_style_off++;
-			if (w->frame_off > 0)
+			if (frame_off > 0)
 				w->hist_frame_off++;
-			if (w->lights < w->hist_min_lights)
-				w->hist_min_lights = w->lights;
-			if (w->lights > w->hist_max_lights)
-				w->hist_max_lights = w->lights;
+			if ((int) lights < w->hist_min_lights)
+				w->hist_min_lights = (int) lights;
+			if ((int) lights > w->hist_max_lights)
+				w->hist_max_lights = (int) lights;
 		}
 
-		w->surfaces = 0;
-		w->lights = 0;
-		w->no_material = 0;
-		w->no_color = 0;
-		w->style_off = 0;
-		w->degenerate = 0;
-		w->frame_off = 0;
+		Atomic_StoreUInt32 (&w->surfaces, 0);
+		Atomic_StoreUInt32 (&w->lights, 0);
+		Atomic_StoreUInt32 (&w->no_material, 0);
+		Atomic_StoreUInt32 (&w->no_color, 0);
+		Atomic_StoreUInt32 (&w->style_off, 0);
+		Atomic_StoreUInt32 (&w->degenerate, 0);
+		Atomic_StoreUInt32 (&w->frame_off, 0);
 		w->min_style_scale = 1.0f;
 		w->style_count = 0;
 	}
@@ -3742,7 +3755,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	Atomic_AddUInt32 (&rt_emis_stats.surfaces, 1);
 	if (watch)
-		watch->surfaces++;
+		Atomic_AddUInt32 (&watch->surfaces, 1);
 
 	rt_emissive_params_t params;
 
@@ -3752,14 +3765,14 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		{
 			Atomic_AddUInt32 (&rt_emis_stats.no_material, 1);
 			if (watch)
-				watch->no_material++;
+				Atomic_AddUInt32 (&watch->no_material, 1);
 			RT_EmisNoteSkip (light_tex ? light_tex->name : "<no texture>", "no light material");
 		}
 		else
 		{
 			Atomic_AddUInt32 (&rt_emis_stats.no_color, 1);
 			if (watch)
-				watch->no_color++;
+				Atomic_AddUInt32 (&watch->no_color, 1);
 			RT_EmisNoteSkip (light_tex->name, "no light color");
 		}
 		return;
@@ -3802,7 +3815,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		{
 			Atomic_AddUInt32 (&rt_emis_stats.frame_off, 1);
 			if (watch)
-				watch->frame_off++;
+				Atomic_AddUInt32 (&watch->frame_off, 1);
 			RT_EmisNoteSkip (frame_tex->name, "dark animation frame");
 			VectorCopy (vec3_origin, params.color);
 		}
@@ -3816,7 +3829,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	{
 		Atomic_AddUInt32 (&rt_emis_stats.degenerate, 1);
 		if (watch)
-			watch->degenerate++;
+			Atomic_AddUInt32 (&watch->degenerate, 1);
 		return;
 	}
 
@@ -3875,7 +3888,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	{
 		Atomic_AddUInt32 (&rt_emis_stats.degenerate, 1);
 		if (watch)
-			watch->degenerate++;
+			Atomic_AddUInt32 (&watch->degenerate, 1);
 		return;
 	}
 
@@ -3893,6 +3906,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 		if (watch)
 		{
+			RT_EmisSkipLock ();
 			if (style_scale < watch->min_style_scale)
 				watch->min_style_scale = style_scale;
 			if (watch->style_count == 0)
@@ -3900,6 +3914,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 				for (int i = 0; i < MAXLIGHTMAPS && s->surf->styles[i] != 255; i++)
 					watch->styles[watch->style_count++] = s->surf->styles[i];
 			}
+			RT_EmisSkipUnlock ();
 		}
 
 		if (!is_static_geom)
@@ -3910,7 +3925,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 			{
 				Atomic_AddUInt32 (&rt_emis_stats.style_off, 1);
 				if (watch)
-					watch->style_off++;
+					Atomic_AddUInt32 (&watch->style_off, 1);
 				RT_EmisNoteSkip (light_tex->name, "lightstyle off");
 				return;
 			}
@@ -4105,7 +4120,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 			if (uploaded > 0)
 			{
 				if (watch)
-					watch->lights += uploaded;
+					Atomic_AddUInt32 (&watch->lights, uploaded);
 
 				return;
 			}
@@ -4161,7 +4176,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	VectorCopy (params.color, light_info.color.data);
 
 	if (watch)
-		watch->lights++;
+		Atomic_AddUInt32 (&watch->lights, 1);
 
 	if (params.glow)
 	{
