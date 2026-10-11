@@ -376,6 +376,16 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   23.28/18.50 stay inside the run noise because both saves are GPU-bound on the means. The flag stays
   off by default pending the mover visual acceptance; the perf profiles keep pinning it off until that
   decision is recorded.
+- 2026-10-11 (persist mover acceptance, **failed**): the recorded `qr_mover_check` demo shows a visible
+  shimmer on moving submodels with `rt_brush_persistent 1`. Still screenshot pairs between the arms are
+  identical (phase-matched diffs 0.0005-0.006), so the defect is temporal; the flag stays off by default
+  and the perf profiles keep pinning it off. First trail for the fix: `qrUpdateGeometryTransform` ->
+  `VertexCollector::UpdateTransform` writes the AS transform staging and
+  `GeomInfoManager::WriteStaticGeomInfoTransform` (new `model`, previous kept as `prevModel`, both frame
+  slots marked for copy, `movableIDToGeomFrameInfo` updated), while the renderer recreates the movable
+  BLAS from the transform staging and retires the old one behind the frame that referenced it; the
+  shimmer suggests a frame in which the traced transform and the motion/shading metadata disagree.
+  Repro: `playdemo qr_mover_check` with `rt_brush_persistent 1` (a live console toggle works).
 - 2026-10-11 (CPU pass, chain elision): steady frames now chain only the consumed texture subset -
   the textures whose chains the sky, water and animated passes read - while a static-submit or
   world-light-recollect window, or `r_showtris`, keeps the full set. The mode (`rt_chain_full_frame`)
