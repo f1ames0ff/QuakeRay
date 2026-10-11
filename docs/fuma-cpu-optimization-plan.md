@@ -240,3 +240,22 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   6-8 repeated one, so essentially every visible alias entity re-lerps its vertices each frame and an
   unchanged-pose alias cache is a dead end on these scenes. With persistence and C2 on, alias uploads
   are about 88% of the remaining 973 uploads per frame on swamp.
+- 2026-10-11 (focus sleep, measured): `main_sdl.c` sleeps `SDL_Delay(16)` in the main loop whenever the
+  game window has no input focus (or the game is paused). Every automated capture whose window was not
+  foreground therefore shows `interval = profiled frame + about 16-18 ms`, which is what produced the
+  contradicting FPS readings (for example swamp frame 17.0 ms with 28.3 FPS). Slot-based CPU numbers
+  and GPU pass timers stay valid; only the frame interval is contaminated. The acceptance ledger must
+  run with the game window focused (the `run_stress.ps1` focus gate exists for exactly this reason).
+- 2026-10-11 (acceptance infrastructure): `tests/perf/qr_medium.cfg` (Medium quality: clouds 1,
+  godrays 1, GI 1; everything else as the audit profile) plus `run_stress.ps1 -RtProfile audit|medium`
+  and the `qr_ad_swamp` save in the allow-list. 4K windows through the attribution harness need
+  `vid_unlock` before `vid_width/vid_height`, otherwise the resolution does not change.
+- 2026-10-11 (first 4K Medium capture with persistence, matched same-binary, window unfocused):
+  TF: CPU frame 10.32 ms, GPU frame 19.74 ms (setup 3.66, indirect 4.78, direct 2.99, compose 2.67,
+  clouds 1.37, gradient 0.98, primary 0.98, upscale 0.81, godrays 0.27, sky 0.22, post 0.26, ui 0.21).
+  Swamp: CPU frame 16.39 ms, GPU frame 24.24 ms (setup 5.84, indirect 5.19, direct 3.86, compose 2.89,
+  clouds 1.44, gradient 1.17, primary 0.97, upscale 0.84, reflrefr 0.41, godrays 0.28, sky 0.28,
+  post 0.29, ui 0.23). At 4K Medium the wall is the GPU: the 16.7 ms budget needs about 3 ms less on
+  TF and about 7.5 ms less on swamp; the swamp CPU frame (16.4 ms) is right at the budget. The largest
+  individual GPU items are the frame setup (TLAS/scene work), indirect GI and direct NEE rays, and
+  the compose pass.
