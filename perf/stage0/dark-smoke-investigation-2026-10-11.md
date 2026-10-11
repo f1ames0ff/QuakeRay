@@ -22,11 +22,17 @@ Method and evidence:
   differences. The cross-build "master light vs branch black" pairing compared master's *pre-fire*
   frame with the branch's *post-fire* frames; matched shots (fire 4: master 0102, branch 0078/0088)
   show large dark smoke on **both** builds.
-- Decisive state-controlled test (this branch, fresh spawns, `r_particles 0`,
+- State-controlled same-build test (this branch, fresh spawns, `r_particles 0`,
   `r_fteparticles 0` so only `r_smoke` calls the dispatcher): one process, arms
   `rt_particle_volume 1 -> 0 -> 1`, `smoke_puff 16` immediately before each capture, fixed
   delays. Artifacts: `%LOCALAPPDATA%\Temp\opencode\vol-decisive-1` (screenshots 0106-0111).
-  Result: no visible difference between the arms — the volume does not darken these plumes.
+  Result: no salient difference between the arms (the OFF frames measure ~2-4 % brighter in the
+  plume region, within the animation/population noise; the intra-arm shot-to-shot change dwarfs
+  any arm difference). Limits: one save/view, near-view corridor spawns (not the deep-solid
+  cells), single frames per state with unequal live counts — the test neither establishes a real
+  volume darkening nor forces the "lost cell + blocked sun" mode; that path stays theoretically
+  reachable and would be revived by a matched-moment master-vs-branch capture or by check-mode
+  counters at actual smoke spawn points.
 - Owner check: in vanilla `id1` the torches trace through water normally because they are traced
   models; in AD the torches are particle effects, which is why the water does not distort them
   through the scene path. This is a content/mechanism difference, not a master-vs-branch
@@ -46,6 +52,7 @@ Conclusions:
 4. The known set-7 `smokeRayStats` alias in the reflect/refract blob (documented in
    `docs/particle-plan.md`) is dormant with `rt_stats 0` and unrelated to this question.
 
-Coverage: solvers/verifiers were read-only; the decisive test ran on the branch Debug build; the
-owner's id1 check is their direct observation. No runtime measurement of the volume's "lost"
-counters at smoke spawn points exists (the check cvar was off; not needed after the decisive test).
+Coverage: solvers/verifiers were read-only; the test ran on the branch Debug build; the owner's
+id1 check is their direct observation. No archive holds a runtime readout of the volume's "lost"
+counters at smoke spawn points — the runner did enable `rt_particle_volume_check 64`, but the
+fixture used `rt_stats 0` and no dump was taken, so the counters were never recorded.

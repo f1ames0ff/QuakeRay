@@ -236,11 +236,13 @@ The milestones below are **open acceptance goals**, not claims about implemented
 | M5. Establish production validation and default-on readiness | Maintain a scene/transition matrix for supported Quake content, mission packs and Arcane Dimensions. Include representative busy scenes, repeated sessions, map/save/restart/disconnect, menu/editor/photo modes, resize/fullscreen/minimize, profiling toggles and available core counts. | Final-revision Debug build/CTest results, repeated serial/tasks captures, visual/gameplay checks, memory/race diagnostics where supported, and an explicit review of coverage gaps. No unexplained correctness failures or material regressions in the maintained matrix. |
 | M6. Meet the performance program | On the declared reference hardware, target at least 45 FPS at 3840x2160 FSR Quality throughout the maintained loaded-gameplay scene matrix. The mean and p95 frame intervals must be at most 22.22 ms; also report p99/max and hitches. Remove the CPU ceiling so lowering FSR internal resolution improves the frame interval instead of leaving it flat. | Matched captures for every maintained scene/preset meet the budget and demonstrate resolution-driven scaling. CPU critical-path and GPU timings are checked independently: GPU work above 22.22 ms requires GPU optimization too, not more CPU threads. Fixed-cost work and deviations from proportional scaling are reported, not hidden. |
 
-**Two release decisions, not one:** M1, M2, M4 and M5 gate a default-on *render* task path; broader
-whole-frame CPU task parallelism additionally requires M3. A named final review must authorize the
-default change, and the serial fallback remains available. M6 is the separate performance target;
-meeting one FPS number does not certify thread safety, and a GPU bottleneck does not make the task
-platform incomplete. Neither one short capture nor the historical ~40% uplift closes these gates.
+**Two release decisions, not one:** M1, M2, M4 and M5 gated the default-on *render* task path; the
+owner authorized that default on 2026-10-11 (`changelog.md`, Unreleased), and the serial fallback
+(`r_tasks 0`, deprecated) remains available while the M5 scene/transition matrix runs are
+completed under the default. Broader whole-frame CPU task parallelism additionally requires M3. M6
+is the separate performance target; meeting one FPS number does not certify thread safety, and a
+GPU bottleneck does not make the task platform incomplete. Neither one short capture nor the
+historical ~40% uplift closes these gates.
 
 Every milestone handoff must include MCP source/evidence identities, the changed ownership/DAG
 boundaries, exact tests/captures, measured deltas and remaining gaps. Keep the milestone open until

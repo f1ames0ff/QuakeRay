@@ -37,7 +37,7 @@ indices; smoke 6 x 80 = 480 B per puff. "240 B" is classic-only.
 5. **DTAL consumer incompatibility** — the correct pattern is `q2SampleClusterLights` (fast + tail)
    -> `sampleLightNee` -> divide by `lightPdf * memberPdf` (as in `RtRaygenDirect.rgen.hlsl:93-132`);
    `sampleLight` alone is wrong on dtal.
-6. **No threading** — the whole path is on the main thread (use_tasks forced false).
+6. **No threading** — the whole path is on the main thread (use_tasks forced false; true when this comparison was written — the task path is on by default since 2026-10-11).
 7. **Transparency/overdraw** — the next ceiling once CPU costs are removed.
 8. **No RT participation** — particles neither occlude nor contribute GI (document honestly).
 

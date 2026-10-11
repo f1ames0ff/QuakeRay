@@ -6,8 +6,8 @@ how to merge it, what conflicts to expect, how to resolve them, and what to veri
 
 ## 1. What the branch is
 
-`perf/particle-cluster-cache` is 61 commits over `origin/master` (`0c04f86f`), carrying the
-particle plan stages and the cluster publication line:
+`perf/particle-cluster-cache` is 64 commits over `origin/master` (`0c04f86f`; 60 non-merge plus
+4 merges), carrying the particle plan stages and the cluster publication line:
 
 - **Stage 2** — classic particles move to 24 B `QrParticlePoint` instances
   (`r_particles_points`, `RsParticlePoints.vert`), the point capture path in the collector and the
@@ -40,11 +40,17 @@ git merge origin/perf/particle-cluster-cache
 
 Per target branch (computed against `origin/master` on 2026-10-11):
 
-| Target | Files both sides changed | Conflict expectation |
+| Target | Files both sides changed vs `origin/master` | Merge reality |
 |---|---|---|
 | `perf/rhi-dyn-blas-clean` | `ARCHITECTURE.md`, `PERFORMANCE.md` only | near clean; docs combine |
-| `perf/rhi-dyn-blas-reuse` | + `renderer/Source/RHI/NvrhiFrameSkeleton.cpp` | one real file |
-| `refactor/dtal-cluster-dedup` | 14 files (cluster/light area) | expect real conflicts |
+| `perf/rhi-dyn-blas-reuse` | + `renderer/Source/RHI/NvrhiFrameSkeleton.cpp` | the actual conflict is `ARCHITECTURE.md`; the skeleton file auto-merges |
+| `refactor/dtal-cluster-dedup` | 14 files (cluster/light area) | the list is what **master** changed after the DTAL fork point; the DTAL ref itself only changed `tests/perf/run_stress.ps1` — the real conflict is that script |
+| `feature/voxel-smoke` | `renderer/Include/qray/qray.h`, `RHI/NvrhiFrameSkeleton.cpp`, `RHI/RhiRasterOverlayPass.{h,cpp}` | real conflicts; keep this branch's particle-point staging and gate plumbing and merge the smoke work around it |
+| `perf/alias-pose-dag` | `Quake/gl_rmain.c` | likely a conflict in the task-graph area |
+| `feature/water-caustics` | 12 files incl. modify/delete of GLSL sources removed since | older branch; re-derive after any refresh |
+
+Computed 2026-10-11 with `git diff --name-only` plus a `git merge-tree` simulation; recompute after
+any target branch is rebased, refreshed or re-extended.
 
 ### 2a. `perf/rhi-dyn-blas-clean` (dynamic BLAS shape/reuse)
 
@@ -63,25 +69,22 @@ tests; this branch does not touch those files. Interact only through runtime beh
 the smoke pipeline and the gate hand-off; the target's changes are elsewhere in the file — keep
 both when resolving; run the particle stands below.
 
-### 2c. `refactor/dtal-cluster-dedup` (expect conflicts)
+### 2c. `refactor/dtal-cluster-dedup`
 
-Shared, conflicting files: `Quake/gl_rlight.c`, `Quake/gl_rmain.c`, `Quake/gl_vidsdl.c`,
-`Quake/r_world.c`, `Quake/gl_heap.c`, `Quake/glquake.h`, `Quake/host.c`,
-`renderer/Source/LightManager.cpp`, `renderer/Source/VulkanDevice.{h,cpp}` and the docs.
-Resolution rules, in order of precedence for the merged behaviour:
+The shared-file list above is **not** a conflict set: those 14 files are what `origin/master`
+changed after the DTAL branch's merge base (`8ee2b72a`), while the DTAL ref's own delta since then
+is `tests/perf/run_stress.ps1` only — its cluster work is already in `origin/master`. Merging this
+branch into the current DTAL ref therefore conflicts in `tests/perf/run_stress.ps1` alone; resolve
+by combining the DTAL runner scenarios with the current runner and rerunning the DTAL evidence.
 
-1. Keep this branch's publication structure — Prepare / 16 publish slices / Commit, the new tasks
-   (`cluster_publish_task`, `cluster_commit_task`), the per-slot light-upload capture and flush
-   (`qrBeginDeferredLightUploads`/`qrFlushDeferredLightUploads`), the deterministic registration
-   order, the device-first skip and the `QR_CLUSTER_PUB_*` diagnostics. The DTAL branch's dedup
-   work sits inside the light-registration and decode paths — merge those semantics into the
-   corresponding stage of this structure rather than replacing the structure.
-2. Keep the L4 DTAL parity matrices (`docs/particle-plan.md`) as an acceptance obligation: run
-   them on the merged binary; a green publication assert run alone is not parity.
-3. `docs/multithreading.md` — keep the r_tasks default/deprecation text from this branch; merge
-   any new DAG edges from the DTAL branch.
-4. Where the same function conflicts irreconcilably, prefer the version matching the merged
-   task graph and file a follow-up for the other side — do not silently drop the DTAL work.
+If the DTAL branch is later rebased or re-extended onto the current master, recompute the overlap
+first. If it then re-touches the cluster/light files, keep this branch's structure — Prepare /
+16 publish slices / Commit, the `cluster_publish_task`/`cluster_commit_task` nodes, the per-slot
+light-upload capture and flush (`qrBeginDeferredLightUploads`/`qrFlushDeferredLightUploads`), the
+deterministic registration order, the device-first skip and the `QR_CLUSTER_PUB_*` diagnostics —
+and merge the DTAL semantics into the corresponding stage rather than replacing the structure.
+Keep the L4 DTAL parity matrices (`docs/particle-plan.md`) as an acceptance obligation: a green
+publication assert run alone is not parity.
 
 ## 3. Post-merge verification protocol (Debug)
 
@@ -102,14 +105,18 @@ Resolution rules, in order of precedence for the merged behaviour:
    `r_tasks` default, the proxy BLAS present on the water view (TLAS instance count 8 with the
    gate open vs 7 closed), no validation errors, and the DTAL parity matrices.
 4. Compare against the records' baselines (`perf/stage0/*-2026-10-10.md` / `*-2026-10-11.md`);
-   import cross-build numbers as context only.
+   import cross-build numbers as context only. Preserve the run fixture and the config backup in
+   the evidence tree — the default-flip verification (`rtasks-check-1`) lost its fixture, so its
+   "unpinned" premise stays re-auditable only through the recorded generator and the behavioral
+   signature.
 
 ## 4. Contracts to preserve
 
-- **Gate**: water and glass are always traced. Auto closes only when the last completed frame
-  traced no reflect/refract ray **and** submitted no `PT_GLASS` instance; the ray mark is
-  always-on (plain store with the debug counters off). Closed state is self-consistent: no
-  proxies → no BLAS/TLAS instance → `glassParticles` 0 → no query/discard/composite.
+- **Gate**: water and glass are always traced. Auto closes when `rt_glass_particles` is off, or when
+  the last built instance set has no `PT_GLASS` instance **and** the last completed frame traced no
+  reflect/refract ray; the ray mark is always-on (plain store with the debug counters off). Closed
+  state is self-consistent: no proxies → no BLAS/TLAS instance → `glassParticles` 0 → no
+  query/discard/composite.
 - **Water/glass layer**: the mask (`framebufQ2GlassFilter.a`, written for `MEDIA_TYPE_GLASS` and
   `MEDIA_TYPE_WATER`) gates both the composite (`CmCheckerboard`) and the raster discard
   (`RsParticle.frag`, `RsWorld.frag`); `.z` carries the surface view depth.
@@ -118,15 +125,23 @@ Resolution rules, in order of precedence for the merged behaviour:
   stand-ins; mirrors have no water/glass mask writer.
 - **Cluster publication**: deterministic order, sliced resolve, per-slot capture; the
   `QR_CLUSTER_PUB_*` mask and the skip/copy counters are the diagnostics.
+- **Default flip obligations**: the M5 scene/transition matrix in `docs/multithreading.md`
+  continues against the default-on task path; a material regression there reopens the flip.
 - **`r_tasks`**: default `1`; `0` deprecated; the cvar and the serial fork are slated for removal
-  — do not build new features on the `r_tasks 0` path.
+  — do not build new features on the `r_tasks 0` path. Removing the fork itself additionally
+  requires deciding the callers kept serial on purpose (console/menu/loading, the tris/bbox debug
+  views) and single-worker hosts, so it is a scoped follow-up rather than a delete.
 
 ## 5. Known limitations and open items
 
 - The owner scoped "all particles reflect" (smoke/per-channel/lines stand-ins) out of scope; the
   remaining exclusions above stand until that item is taken up.
-- The gate's water/mirror entry window is 2-3 frames (stats-ring lag); invisible today, revisit
-  with any water/mirror display work.
+- The gate's water/mirror entry window is 2-3 frames (stats-ring lag). Observable at water since
+  the water composite landed (a newly visible water surface uses the raster copies for the first
+  frames; the traced layer arrives with the gate); mirrors have no mask writer and stay raster-only.
+- The water mask also feeds `rt_glass_denoise`: water pixels now read as pane-like (mask value and
+  motion vectors); the denoiser-on check on a water scene is still pending (the owner's config has
+  the denoiser off).
 - The set-7 `smokeRayStats` alias in the reflect/refract blob (cubemap table vs stats buffer) is a
   known dormant issue (`docs/particle-plan.md`); fix by moving the smoke stats set.
 - `perf/stage0/dark-smoke-investigation-2026-10-11.md` records why the darker-smoke reports were

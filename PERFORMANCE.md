@@ -181,7 +181,8 @@ balanced preset, 8 s warmup + 6 s capture):
 | Bogbottom | `build/Debug/audit-clean-heavy-20261009-133426-c640d1` | 25.3 | 39.52 | 44.05 | 2.34 |
 
 Task-graph enablement (branch `perf/render-tasks`): the `SCR_UpdateScreen` task path is real again
-(guard decoupled from the unimplemented `r_gpulightmapupdate`; `r_tasks` still defaults 0). Paired
+(guard decoupled from the unimplemented `r_gpulightmapupdate`; at that time `r_tasks` still
+defaulted `0` — it now defaults `1`, owner decision 2026-10-11, with `0` deprecated). Paired
 same-binary runs with the staged sequence:
 
 | Scenario | Serial | Tasks (`r_tasks 1`) |
