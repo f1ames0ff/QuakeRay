@@ -4772,6 +4772,17 @@ void R_DrawTextureChains_Multitexture (
 				.is_teleport = false,
 			};
 
+			if (RT_StaticMovableCovers (&cur_state))
+			{
+				if (cur_state.model != cl.worldmodel)
+				{
+					const double prof_lights = RT_Prof_Begin ();
+					RT_AddEmissiveLight (&cur_state);
+					RT_Prof_End (RT_PROF_BRUSH_LIGHTS, prof_lights);
+				}
+				continue;
+			}
+
 			if (cur_state.lightmap_tex != last_state.lightmap_tex)
 			{
 				RT_FlushBatch (cbx, &last_state, &brushpasses);

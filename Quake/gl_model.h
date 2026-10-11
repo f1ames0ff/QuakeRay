@@ -462,6 +462,7 @@ typedef struct aliashdr_s
 	int                 poseverttype; // PV_QUAKE1 or PV_QUAKE3
 	int                 firstindex;   // MD3: range into the model index buffer
 	int                 numindices;
+	int                 firstvertex_vbo; // enhanced (MD3/MD5): first vertex of this surface in the model VBO
 
 	maliasframedesc_t   frames[1];                // variable sized
 } aliashdr_t;

@@ -291,7 +291,9 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 			.transform = RT_TRANSFORM_IDENTITY,
 		};
 
+		qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_SPRITE);
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		qrUploadLanePop (vulkan_globals.instance);
 		QR_CHECK (r);
 	}
 }

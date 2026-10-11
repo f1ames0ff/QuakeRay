@@ -275,7 +275,9 @@ void DrawGLPoly (
 			.transform = *transform,
 		};
 
+		qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_BRUSH);
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		qrUploadLanePop (vulkan_globals.instance);
 		QR_CHECK (r);
 	}
 }

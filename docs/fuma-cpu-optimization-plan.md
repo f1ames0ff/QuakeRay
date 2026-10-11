@@ -218,3 +218,25 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   1.69/3.01. No renderer errors in either run; build and CTest green. The swamp FPS reading (24.3 versus
   28.5) contradicted the improved frame slot and is treated as run noise to be re-checked in the next
   matched capture.
+- 2026-10-11 (P1 slice 3, per-type upload lanes): uploads are now attributed at their call sites
+  (brush/sprite/alias, plus `alias surf` for the enhanced md5/md3 per-surface path). Same-binary swamp
+  run (361 frames): about 2.3k uploads per frame total; alias 856 per frame (wait 24.2 ms per frame
+  summed, hold 5.4 ms), the `ents`/`alpha` lanes about 1352 per frame (bmodel batch flushes: the
+  immediate brush lane is empty on both maps, world and entity brush go through `RT_FlushBatch`), sky 7,
+  water 3, animated 5, sprite 11, unattributed (HUD/raster) 86. `alias pose` costs only 2.5 ms per
+  frame; the slot is dominated by upload queueing. The enhanced md5/md3 path is unused on both maps
+  (`enhanced_draws=0`), so every alias upload is one visible entity on the Q1 path.
+- 2026-10-11 (P1 slice 3, per-surface vertex slices for md5/md3): the loaders store the per-surface
+  vertex base (`firstvertex_vbo`) and rebase `rtindices` to their surface, so each md5/md3 surface
+  uploads only its own vertex range instead of the whole model VBO. Inert on Fuma and swamp (enhanced
+  path unused there); no renderer errors on either map.
+- 2026-10-11 (C2 skip-covered-packing, matched same-binary with `rt_brush_persistent`): covered
+  static-movable surfaces no longer pack (the per-surface DTAL emissive light still runs). Swamp:
+  uploads per frame 2082 to 973, `brush pack` 8.96 to 0.64 ms (-93%), `brush upload` 35.7 to 4.4,
+  frame 23.86 to 17.02, FPS 23.6 to 28.3. Fuma: 1193 to 636, pack 5.68 to 1.09 (-81%), brush upload
+  26.7 to 9.8, frame 14.03 to 10.52, FPS 31.1 to 34.9. The pre-C2 persistence A/B left pack at
+  8.4/13-15 ms, so C2 removed the covered packing entirely.
+- 2026-10-11 (alias pose probe): of about 750k alias draws on swamp only 116-136 were static poses and
+  6-8 repeated one, so essentially every visible alias entity re-lerps its vertices each frame and an
+  unchanged-pose alias cache is a dead end on these scenes. With persistence and C2 on, alias uploads
+  are about 88% of the remaining 973 uploads per frame on swamp.

@@ -461,13 +461,16 @@ static uint32_t     rt_prof_tls_used;
 static THREAD_LOCAL rt_prof_tls_t *rt_prof_tls;
 
 static qboolean          rt_upload_trace_on;
+extern atomic_uint32_t   rs_alias_enhanced_draws;
+extern atomic_uint32_t   rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
 static uint32_t          rt_upload_lock_frames;
 static QrUploadLockStats rt_upload_lock_acc;
 
 static const char *const rt_upload_lane_names[QR_UPLOAD_LANE_COUNT] =
 {
 	"unattributed", "ents 0", "ents 1", "ents 2", "ents 3", "ents 4", "ents 5",
-	"world", "alpha", "sky", "water", "animated", "particles", "viewmodel", "gui"
+	"world", "alpha", "sky", "water", "animated", "particles", "viewmodel", "gui",
+	"brush", "sprite", "alias", "alias surf"
 };
 
 static void RT_Prof_Lock (void)
@@ -1226,6 +1229,13 @@ qboolean RT_Bench_Report (const char *demo)
 			         (double)lane->waitSumNs / uploadFrames / 1e6, (double)lane->waitMaxNs / 1e6,
 			         (double)lane->holdSumNs / uploadFrames / 1e6, (double)lane->holdMaxNs / 1e6);
 		}
+
+		fprintf (f, "upload.alias enhanced_draws=%u surf_calls=%llu pose_draws=%u pose_static=%u pose_repeat=%u\n",
+		         Atomic_LoadUInt32 (&rs_alias_enhanced_draws),
+		         (unsigned long long)rt_upload_lock_acc.lanes[QR_UPLOAD_LANE_ALIAS_SURF].calls,
+		         Atomic_LoadUInt32 (&rs_alias_pose_draws),
+		         Atomic_LoadUInt32 (&rs_alias_pose_static),
+		         Atomic_LoadUInt32 (&rs_alias_pose_repeat));
 	}
 
 	static const char *const hostPasses[RT_HOST_SPEED_COUNT] = {"tot", "server", "gfx", "snd"};

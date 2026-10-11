@@ -3689,6 +3689,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		surf->numindexes = numtris * 3;
 		surf->firstindex = indexbase;
 		surf->numindices = numtris * 3;
+		surf->firstvertex_vbo = vertbase;
 		surf->numframes = numframes;
 		surf->numposes = 1;
 		surf->skinwidth = 0;
@@ -3762,7 +3763,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		pintriangle = (const md3Triangle_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsTriangles));
 		for (int t = 0; t < numtris; t++)
 			for (int k = 0; k < 3; k++)
-				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)(ReadLongUnaligned ((byte *)&pintriangle[t].indexes[2 - k]) + vertbase);
+				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)ReadLongUnaligned ((byte *)&pintriangle[t].indexes[2 - k]);
 
 		vertbase += numverts;
 		indexbase += numtris * 3;
@@ -4319,6 +4320,7 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 		surf->numindexes = (int)(mesh->numtris * 3);
 		surf->firstindex = (int)indexbase;
 		surf->numindices = (int)(mesh->numtris * 3);
+		surf->firstvertex_vbo = (int)vertbase;
 		surf->numframes = (int)numposes;
 		surf->numposes = 1;
 		for (int k = 0; k < 3; k++)
@@ -4347,7 +4349,7 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 
 		for (size_t t = 0; t < mesh->numtris; t++)
 			for (int k = 0; k < 3; k++)
-				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)mesh->indices[t * 3 + 2 - k] + (uint32_t)vertbase;
+				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)mesh->indices[t * 3 + 2 - k];
 
 		for (p = 0; p < numposes; p++)
 		{
