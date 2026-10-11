@@ -259,3 +259,7 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   TF and about 7.5 ms less on swamp; the swamp CPU frame (16.4 ms) is right at the budget. The largest
   individual GPU items are the frame setup (TLAS/scene work), indirect GI and direct NEE rays, and
   the compose pass.
+- 2026-10-11 (upstream synthesis frozen): the pre-merge upstream-porting synthesis (H01-H16
+  classification, the adopted verifier corrections, the decisive cross-conclusion and the proposed
+  P0/P1 → measurements → Tier A/B/C order) is recorded in `docs/upstream-porting-synthesis.md`
+  together with the P0/P1 status this branch has already delivered.
