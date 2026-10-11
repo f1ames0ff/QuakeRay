@@ -273,3 +273,14 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   dropped as unmeasurable); the Debug duplicate-find consolidation in the renderer. The runner now
   validates the clouds quality per profile and the bench settings record `r_tasks`/`r_parallelmark`.
   Build and CTest green.
+- 2026-10-11 (parallel world marking, v2): the marking pipeline runs as `prepare -> mark_leafs
+  (64 leaf chunks, word-run atomic OR into the shared surfvis mask) -> {store_efrags, chain_slices
+  (per-texture indexed chain) -> chain_finish}` under `r_parallelmark 1`; `r_parallelmark 0` and
+  `r_tasks 0` keep the scalar path. Same-binary audit A/B: swamp frame/wait 23.05 -> 19.62 ms
+  (-3.4 ms; fps 30.4 -> 33.6), Fuma 13.12 -> 11.82 ms (-1.3 ms); `calls_geometry` identical
+  (2082 both, 1194 both). Water-shot on/off pairs differ only by particle animation phases
+  (mean absolute difference within the within-run noise). Accepted deviation: per-texture chain
+  order is surface-index order instead of the scalar leaf first-touch order (docs contract
+  updated). The v1 order-preserving attempt (per-chunk first-touch lists plus a serial merge)
+  measured no wall win (mark sum 3.56 ms plus an applied serial chain of 3.60 ms against the
+  scalar 3.90 ms) and was replaced.

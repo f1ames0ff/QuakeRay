@@ -24,7 +24,11 @@ before adapting a producer; document any unavailable tooling or incomplete cover
   and the fork it selects are slated for removal, after which the engine always runs
   multithreaded.
 - In the serial path (`r_tasks 0`) the same producers run in fixed order on the main thread; the
-  frame contents and the NVRHI ray-tracing renderer are identical in both modes.
+  frame contents and the NVRHI ray-tracing renderer are identical in both modes. With
+  `r_parallelmark 1` the world texture chains are rebuilt in surface-index order instead of the
+  scalar leaf first-touch order (owner-accepted 2026-10-11; the chained surface set is identical —
+  `calls_geometry` matches on the audit captures and the water-shot on/off pairs differ only by
+  particle animation phases).
 - `cpu.wait_ms` is nonzero only in task mode: it is the main thread's join wait, not idle time.
 
 ## The task system
@@ -54,7 +58,7 @@ pumping extra audio updates.
 | --- | --- |
 | `prev_end_rendering_task -> begin_rendering_task` | a new frame never reuses swapchain/frame state before the previous frame's end task finished |
 | `begin_rendering_task -> setup_frame_task`, `setup_frame_task -> before_mark`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: fence/acquire, scene collector reset, light-registry frame preparation) happens before the setup pass, and the setup pass before everything that reads it |
-| `before_mark -> prepare_mark -> mark_surfaces`, then `mark_surfaces -> store_efrags` and `mark_surfaces -> cull_surfaces -> chain_surfaces` | the efrag store and the visibility chain run after the view is set up |
+| `before_mark -> prepare_mark -> mark_leafs`, then `mark_leafs -> store_efrags` and `mark_leafs -> chain_slices -> chain_finish` (`r_parallelmark 1`; `cull_surfaces` aliases `mark_leafs`; with `r_parallelmark 0` one scalar `mark_surfaces` serves all three handles) | the efrag store and the visibility chain run after the view is set up; `mark_leafs` fills the shared `surfvis` bitmask, `chain_slices` rebuilds the world texture chains per texture in parallel and `chain_finish` publishes the totals |
 | `store_efrags -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task` | the producers that draw the frame's visible-entity list run after the efrag pass added the entities to it |
 | `chain_surfaces -> draw_world_task` | the visibility output feeds the world task |
 | `draw_world_task -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task`, `-> draw_particles_task` | every dynamic uploader runs after the world task closed the static-geometry window (see below) |

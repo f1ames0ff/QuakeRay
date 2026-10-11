@@ -878,11 +878,12 @@ GL_PrepareSIMDData
 */
 void GL_PrepareSIMDData (void)
 {
+	cl.worldmodel->surfvis = Mem_Alloc (((cl.worldmodel->numsurfaces + 31) / 8));
+
 #ifdef USE_SIMD
 	int i;
 
 	cl.worldmodel->soa_leafbounds = Mem_Alloc (6 * sizeof (float) * ((cl.worldmodel->numleafs + 31) & ~7));
-	cl.worldmodel->surfvis = Mem_Alloc (((cl.worldmodel->numsurfaces + 31) / 8));
 	cl.worldmodel->soa_surfplanes = Mem_Alloc (4 * sizeof (float) * ((cl.worldmodel->numsurfaces + 31) & ~7));
 
 	for (i = 0; i < cl.worldmodel->numleafs; ++i)

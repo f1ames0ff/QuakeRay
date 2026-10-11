@@ -843,6 +843,7 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		pixels = mt.width * mt.height / 64 * 85;
 		tx = (texture_t *)Mem_Alloc (sizeof (texture_t) + pixels);
 		mod->textures[i] = tx;
+		tx->rt_chain_index = i;
 
 		memcpy (tx->name, mt.name, sizeof (tx->name));
 		tx->width = mt.width;

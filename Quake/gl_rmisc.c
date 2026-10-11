@@ -433,6 +433,7 @@ void R_NewMap (void)
 		Atomic_StoreUInt32 (&rt_require_static_submit, true);
 	}
 	GL_PrepareSIMDData ();
+	RT_MarkParallel_NewMap ();
 	// ericw -- no longer load alias models into a VBO here, it's done in Mod_LoadAliasModel
 
 	r_framecount = 0;    // johnfitz -- paranoid?
