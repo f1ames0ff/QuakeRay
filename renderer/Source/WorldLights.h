@@ -51,6 +51,7 @@ public:
     uint32_t GetFaceVertexCount() const { return uint32_t(faceVertices.size()); }
     uint32_t GetVisDataSize() const { return uint32_t(visData.size()); }
     uint32_t GetPvsRowBytes() const { return pvsRowBytes; }
+    uint32_t GetGeneration() const { return generation; }
 
     const QrFloat3D        &GetClusterMin(uint32_t index) const { return clusterMins[index]; }
     const QrFloat3D        &GetClusterMax(uint32_t index) const { return clusterMaxs[index]; }
@@ -63,7 +64,15 @@ public:
         return cluster < clusterFlags.size() && (clusterFlags[cluster] & QR_WORLD_CLUSTER_SOLID_BIT) != 0;
     }
 
-    // Row of the compressed PVS of a cluster, or nullptr when it sees everything.
+    // Row of the compressed PVS of a cluster, or nullptr when the map carries no row for it.
+    // The light lists hand out nothing for a rowless cluster: that is a leaf the map's vis says
+    // nothing about (the reserved solid hole, an inline-model hull, or the last world leaf of a
+    // map whose leaf lump stops short of it), and the top-up pass still reaches the clusters
+    // around a light that stands in one. An over-wide row has no such cost, but no such use
+    // either: a light offered to a room it is sealed from is tested by the shadow ray and can
+    // only spend a slot of the list, never add radiance. A map compiled without visibility has
+    // no rows at all: the host publishes one all-seeing row for it, the reading the engine's own
+    // Mod_DecompressVis takes.
     const uint8_t *GetClusterVis(uint32_t cluster) const;
 
     // Bit c of byte c/8 is 1 when a sun ray from cluster c can still reach the sky;
@@ -88,6 +97,7 @@ private:
     std::vector<int32_t>          visOffsets;
     std::vector<uint8_t>          clusterSkyVisibility;
     uint32_t                      pvsRowBytes = 0;
+    uint32_t                      generation = 0;
 };
 
 }

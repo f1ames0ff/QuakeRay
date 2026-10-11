@@ -5579,7 +5579,10 @@ typedef struct
 	int32_t   *vis_offsets;
 	uint32_t   pvs_row_bytes;
 
-	// Only the grid publishes its own rows; the identity table leaves the map's visdata in place.
+	// Every table publishes rows of its own: the identity table of a map with vis keeps a copy of
+	// the map's visdata (with one row of padding, see the builder), the grid compresses its cell
+	// rows, and a map without vis gets rows of ones (one shared row in the identity layout, one
+	// per cell in the grid).
 	uint8_t *vis_data;
 	int      vis_data_size;
 
@@ -5647,7 +5650,11 @@ int RT_MapWorldCluster (int leaf_index)
 	if (rt_worldclusters.model != cl.worldmodel || !rt_worldclusters.leaf_cluster)
 		RT_BuildWorldClusters ();
 
-	if (leaf_index <= 0 || leaf_index >= rt_worldclusters.num_leafs)
+	/* The world's leaves are 1..numleafs inclusive: the engine's own loops read leafs[1..numleafs]
+	   and the PVS row convention names leaf bit+1, so the last one carries a row of its own and a
+	   cluster. A leaf past it is an inline-model hull, and those fold into the solid hole. A table
+	   built without the last leaf's entry (a malformed map, see the builders) keeps it at 0. */
+	if (leaf_index <= 0 || leaf_index > rt_worldclusters.num_leafs)
 		return 0;
 
 	return rt_worldclusters.leaf_cluster[leaf_index];
@@ -5861,10 +5868,14 @@ static qboolean RT_IsLiquidContents (int contents)
 static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 {
 	const int num_leafs = model->numleafs;
-	// Cluster i is leaf i, and cluster 0 is reserved for the solid leaf and geometry that has no
-	// leaf of its own, so the table holds one cluster per leaf.
-	const int num_clusters = num_leafs;
+	// The world's leaves are 1..num_leafs and each of them carries a cluster, plus cluster 0 for
+	// the solid leaf and geometry that has no leaf of its own.
+	const int num_clusters = num_leafs + 1;
 	const int row_bytes = (num_leafs + 31) / 8;
+	// The table can read leafs[num_leafs] only where the leaf lump holds that entry. A well-formed
+	// map has one -- the inline-model hulls follow the world's leaves -- and the check is what the
+	// earlier layout lacked.
+	const qboolean have_edge_leaf = (model->numleafs_lump > num_leafs);
 
 	rt_worldclusters.num_leafs = num_leafs;
 	rt_worldclusters.leaf_cluster = (int32_t *)Mem_Alloc (sizeof (int32_t) * num_clusters);
@@ -5881,8 +5892,57 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 	rt_worldclusters.cluster_flags[0] = QR_WORLD_CLUSTER_SOLID_BIT;
 	rt_worldclusters.vis_offsets[0] = -1;
 
-	for (int i = 1; i < num_leafs; i++)
+	if (!have_edge_leaf)
 	{
+		/* The world's last leaf index is inside the renderer's tables either way, so the slot
+		   stays, but nothing lives in it: the table keeps every leaf that asks for it at 0. */
+		rt_worldclusters.leaf_cluster[num_leafs] = 0;
+		VectorCopy (model->mins, rt_worldclusters.cluster_mins[num_leafs].data);
+		VectorCopy (model->maxs, rt_worldclusters.cluster_maxs[num_leafs].data);
+		rt_worldclusters.cluster_flags[num_leafs] = QR_WORLD_CLUSTER_SOLID_BIT;
+		rt_worldclusters.vis_offsets[num_leafs] = -1;
+	}
+
+	/* A map compiled without visibility has no row to point at for any leaf, and the renderer
+	   reads a missing row as handing out nothing. The engine's own reading of that map is the
+	   other one (Mod_DecompressVis: "no vis info, so make all visible"), and the light lists have
+	   to agree with it or every light of the scene would be left to the top-up pass. One row of
+	   ones serves every cluster: an all-ones row is literal-only, so the renderer's own
+	   decompressor expands it to itself, and the row is the same for each cluster. */
+	if (model->visdata == NULL)
+	{
+		rt_worldclusters.vis_data = (uint8_t *)Mem_Alloc (sizeof (uint8_t) * row_bytes);
+		memset (rt_worldclusters.vis_data, 0xFF, row_bytes);
+		rt_worldclusters.vis_data_size = row_bytes;
+
+		for (int i = 1; i < num_clusters; i++)
+		{
+			if (i == num_leafs && !have_edge_leaf)
+				continue;
+
+			rt_worldclusters.vis_offsets[i] = 0;
+		}
+	}
+	else
+	{
+		/* The rows are the map's own and keep their offsets, but the table hands the renderer a
+		   copy with one row of padding: a row's decode reads from its start for as long as it
+		   needs output, and the last row ends at the end of the lump, so the read would leave it.
+		   The padding is filled with ones, and the bits such a read can produce name clusters
+		   the renderer drops anyway. */
+		const int copy_bytes = model->visdatasize + row_bytes;
+
+		rt_worldclusters.vis_data = (uint8_t *)Mem_Alloc (sizeof (uint8_t) * copy_bytes);
+		memcpy (rt_worldclusters.vis_data, model->visdata, model->visdatasize);
+		memset (rt_worldclusters.vis_data + model->visdatasize, 0xFF, row_bytes);
+		rt_worldclusters.vis_data_size = copy_bytes;
+	}
+
+	for (int i = 1; i <= num_leafs; i++)
+	{
+		if (i == num_leafs && !have_edge_leaf)
+			continue;
+
 		const mleaf_t *leaf = &model->leafs[i];
 		int32_t        offset = -1;
 
@@ -5893,13 +5953,11 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 			((leaf->contents == CONTENTS_SOLID) ? QR_WORLD_CLUSTER_SOLID_BIT : 0) |
 			(RT_IsLiquidContents (leaf->contents) ? QR_WORLD_CLUSTER_LIQUID_BIT : 0);
 
-		if (leaf->compressed_vis)
-		{
-			offset = (int32_t)(leaf->compressed_vis - model->visdata);
+		if (model->visdata == NULL)
+			continue;
 
-			if ((int)offset + row_bytes > rt_worldclusters.vis_data_size)
-				rt_worldclusters.vis_data_size = (int)offset + row_bytes;
-		}
+		if (leaf->compressed_vis)
+			offset = (int32_t)(leaf->compressed_vis - model->visdata);
 
 		rt_worldclusters.vis_offsets[i] = offset;
 	}
@@ -5935,6 +5993,9 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 	const int num_clusters = num_cells + 1;
 	const int cluster_row_bytes = (num_clusters + 7) / 8;
 	const int leaf_row_bytes = (num_leafs + 31) / 8;
+	// The world's leaves are 1..num_leafs; the last of them belongs to a cell like every other
+	// one, and it is read only where the leaf lump holds its entry (see the identity builder).
+	const int last_leaf = (model->numleafs_lump > num_leafs) ? num_leafs : (num_leafs - 1);
 
 	int     *cell_counts = (int *)Mem_Alloc (sizeof (int) * num_cells);
 	int     *cell_start = (int *)Mem_Alloc (sizeof (int) * (num_cells + 1));
@@ -5978,7 +6039,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 	rt_worldclusters.vis_offsets[0] = -1;
 
-	for (int i = 1; i < num_leafs; i++)
+	for (int i = 1; i <= last_leaf; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
 		float          center[3];
@@ -6019,7 +6080,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 	cell_start[num_cells] = running;
 
-	for (int i = 1; i < num_leafs; i++)
+	for (int i = 1; i <= last_leaf; i++)
 	{
 		int cell;
 
@@ -6046,7 +6107,16 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 			const uint8_t *compressed = model->leafs[members[m]].compressed_vis;
 			int            offset;
 
-			if (compressed == NULL || model->visdata == NULL)
+			/* No vis in the map at all: every cell sees every cluster, the way the engine's own
+			   Mod_DecompressVis reads a map that never had a PVS computed for it. */
+			if (model->visdata == NULL)
+			{
+				memset (row, 0xFF, cluster_row_bytes);
+				have_row = true;
+				break;
+			}
+
+			if (compressed == NULL)
 				continue;
 
 			offset = (int)(compressed - model->visdata);
@@ -6113,8 +6183,8 @@ void RT_BuildWorldClusters (void)
 	if (!model || !model->leafs || model->numleafs < 2)
 		return;
 
-	/* The identity table needs one cluster per leaf plus the reserved cluster 0, so it fits the
-	   renderer's table when the leaves do. */
+	/* The identity table needs a cluster for every world leaf plus the reserved cluster 0, so it
+	   takes one more cluster than the map has world leaves; the check below keeps that slot. */
 	if (model->numleafs < RT_WORLD_CLUSTER_MAX || !CVAR_TO_BOOL (rt_worldclusters_grid))
 	{
 		if (model->numleafs >= RT_WORLD_CLUSTER_MAX)
@@ -6131,7 +6201,9 @@ void RT_BuildWorldClusters (void)
 
 	/* The grid has to hold the leafs a light or a view can stand in, and the solid leafs reach
 	   all around the map, so the open ones are what its box is measured from. Leaf 0 is the solid
-	   leaf and is skipped; the real leafs are leafs[1..numleafs-1]. */
+	   leaf and is skipped here; the leaves up to numleafs-1 are measured. The world's last leaf is
+	   placed into a cell with the others when the grid runs, and a centre outside this box is
+	   clamped to the outermost cell. */
 	for (int i = 1; i < model->numleafs; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
@@ -6661,8 +6733,8 @@ void RT_UploadWorldLights (void)
 		}
 	}
 
-	// The grid carries its own rows; the identity table leaves the map's visdata in place, and
-	// RT_BuildWorldClusters measured the span the renderer walks in it.
+	// Every table publishes rows of its own, so the renderer always reads them from the table's
+	// own buffer rather than from the map's visdata.
 	const uint8_t *pvis_data = model->visdata;
 	uint32_t       vis_data_size = (uint32_t)rt_worldclusters.vis_data_size;
 
@@ -6685,6 +6757,7 @@ void RT_UploadWorldLights (void)
 		.pvsRowBytes     = rt_worldclusters.pvs_row_bytes,
 		.pVisOffsets     = rt_worldclusters.vis_offsets,
 		.pClusterSkyVisibility = rt_worldclusters.sky_vis,
+		.clusterGeneration = rt_worldclusters.generation,
 	};
 
 	QrResult r = qrUploadWorldLights (vulkan_globals.instance, &info);

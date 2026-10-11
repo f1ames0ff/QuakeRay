@@ -555,7 +555,8 @@ typedef struct qmodel_s
 	int       numplanes;
 	mplane_t *planes;
 
-	int      numleafs; // number of visible leafs, not counting 0
+	int      numleafs;      // number of visible leafs, not counting 0
+	int      numleafs_lump; // leafs in the BSP's leaf lump; the world's own are 1..numleafs
 	mleaf_t *leafs;
 
 	int        numvertexes;
