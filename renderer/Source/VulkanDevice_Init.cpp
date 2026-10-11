@@ -327,6 +327,11 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
                     }
                 }
 
+                if (rhiRasterOverlayPass != nullptr && rhiRtPrimaryPass != nullptr)
+                {
+                    rhiRasterOverlayPass->SetRayStatsLayout(rhiRtPrimaryPass->GetRayStatsLayout());
+                }
+
                 if (rhiRasterOverlayPass != nullptr && rhiRtDirectPass != nullptr)
                 {
                     rhiRasterOverlayPass->SetSmokeLightLayout(rhiRtDirectPass->GetLightLayout());

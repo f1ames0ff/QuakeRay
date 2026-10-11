@@ -69,6 +69,10 @@ public:
     void AddTexturedAreaLight(uint32_t frameIndex, const QrTexturedAreaLightUploadInfo &info, uint32_t textureIndex);
     void AddDirectionalLight(uint32_t frameIndex, const QrDirectionalLightUploadInfo &info);
     void AddSpotlight(uint32_t frameIndex, const QrSpotLightUploadInfo &info);
+
+    void BeginDeferredUploads(uint32_t slot);
+    void EndDeferredUploads();
+    void FlushDeferredUploads();
     bool AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUploadBatch &batch, const uint32_t *pTextureIndices);
 
     struct ClusterLightTailRange
@@ -82,10 +86,14 @@ public:
         uint32_t        tailCount = 0;
     };
 
-    void SetClusterLightLists(uint32_t frameIndex, uint32_t numClusters,
-                              const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
-                              uint32_t totalLightCount, uint64_t listGeneration,
-                              const ClusterLightTailRange &tails);
+    bool PrepareClusterListPublication(uint32_t frameIndex, uint32_t numClusters,
+                                       const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
+                                       uint32_t totalLightCount, uint64_t listGeneration,
+                                       const ClusterLightTailRange &tails);
+    void RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount);
+    void CommitClusterListPublication();
+
+    uint32_t GetLastPublicationMask() const { return publicationMask; }
 
     void SetClusterSkyVisibility(const uint8_t *pBits, uint32_t numClusters);
 
@@ -197,6 +205,60 @@ private:
     uint32_t deviceTailClusters = 0;
     std::vector<uint64_t> deviceLightOrder;
     std::vector<uint32_t> deviceLightIndex;
+
+    uint32_t publicationMask = 0;
+
+    struct ResolveCacheEntry
+    {
+        uint64_t uid;
+        uint32_t index;
+    };
+
+    static constexpr uint32_t kResolveCacheSize = 2048;
+
+    uint32_t ResolveLightUid(uint32_t frameIndex, uint64_t uid, ResolveCacheEntry *pCache);
+
+    bool            publishPending = false;
+    uint32_t        publishFrameIndex = 0;
+    uint32_t        publishNumClusters = 0;
+    uint32_t        publishWordCount = 0;
+    uint32_t        publishTailWordCount = 0;
+    uint64_t        publishGeneration = 0;
+    const uint64_t *publishLightUniqueIds = nullptr;
+    ClusterLightTailRange publishTails = {};
+
+    static constexpr uint32_t kDeferredUploadSlots = 8;
+    static constexpr uint32_t kDeferredUploadCapacity = 8192;
+
+    enum DeferredUploadKind : uint32_t
+    {
+        kDeferredDirectional = 1,
+        kDeferredSpherical,
+        kDeferredPolygonal,
+        kDeferredTexturedArea,
+        kDeferredSpot
+    };
+
+    struct DeferredUpload
+    {
+        uint32_t           frameIndex;
+        DeferredUploadKind kind;
+        uint32_t           textureIndex;
+        union
+        {
+            QrDirectionalLightUploadInfo  dir;
+            QrSphericalLightUploadInfo    sph;
+            QrPolygonalLightUploadInfo    poly;
+            QrTexturedAreaLightUploadInfo area;
+            QrSpotLightUploadInfo         spot;
+        } payload;
+    };
+
+    std::vector<DeferredUpload> deferredUploads[kDeferredUploadSlots];
+    uint32_t                    deferredUploadsDropped = 0;
+
+    bool TryDeferUpload(uint32_t frameIndex, DeferredUploadKind kind, const void *pPayload, size_t payloadSize,
+                        uint32_t textureIndex);
 
     Buffer lightStats;
 

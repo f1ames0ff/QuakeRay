@@ -569,8 +569,100 @@ void qray::LightManager::AddLight(uint32_t frameIndex, uint64_t uniqueId,
     registeredLightIndex[frameIndex].push_back(index.GetArrayIndex());
 }
 
+static thread_local int activeDeferredSlot = -1;
+
+bool qray::LightManager::TryDeferUpload(uint32_t frameIndex, DeferredUploadKind kind, const void *pPayload,
+                                        size_t payloadSize, uint32_t textureIndex)
+{
+    if (activeDeferredSlot < 0)
+    {
+        return false;
+    }
+
+    std::vector<DeferredUpload> &queue = deferredUploads[activeDeferredSlot];
+
+    if (queue.size() >= kDeferredUploadCapacity)
+    {
+        deferredUploadsDropped++;
+
+        if (deferredUploadsDropped == 1)
+        {
+            fprintf(stderr, "qray: more than %u deferred light uploads in one slot; the extra lights are dropped\n",
+                    kDeferredUploadCapacity);
+        }
+
+        return true;
+    }
+
+    DeferredUpload entry = {};
+    entry.frameIndex = frameIndex;
+    entry.kind = kind;
+    entry.textureIndex = textureIndex;
+    memcpy(&entry.payload, pPayload, payloadSize);
+    queue.push_back(entry);
+
+    return true;
+}
+
+void qray::LightManager::BeginDeferredUploads(uint32_t slot)
+{
+    assert(slot < kDeferredUploadSlots);
+    activeDeferredSlot = int(slot);
+}
+
+void qray::LightManager::EndDeferredUploads()
+{
+    activeDeferredSlot = -1;
+}
+
+void qray::LightManager::FlushDeferredUploads()
+{
+    const int previous = activeDeferredSlot;
+    activeDeferredSlot = -1;
+
+    for (uint32_t slot = 0; slot < kDeferredUploadSlots; slot++)
+    {
+        std::vector<DeferredUpload> &queue = deferredUploads[slot];
+
+        for (const DeferredUpload &entry : queue)
+        {
+            switch (entry.kind)
+            {
+            case kDeferredDirectional:
+                AddDirectionalLight(entry.frameIndex, entry.payload.dir);
+                break;
+
+            case kDeferredSpherical:
+                AddSphericalLight(entry.frameIndex, entry.payload.sph);
+                break;
+
+            case kDeferredPolygonal:
+                AddPolygonalLight(entry.frameIndex, entry.payload.poly);
+                break;
+
+            case kDeferredTexturedArea:
+                AddTexturedAreaLight(entry.frameIndex, entry.payload.area, entry.textureIndex);
+                break;
+
+            case kDeferredSpot:
+                AddSpotlight(entry.frameIndex, entry.payload.spot);
+                break;
+            }
+        }
+
+        queue.clear();
+    }
+
+    activeDeferredSlot = previous;
+}
+
 void qray::LightManager::AddSphericalLight(uint32_t frameIndex, const QrSphericalLightUploadInfo &info)
 {
+    if (TryDeferUpload(frameIndex, kDeferredSpherical, &info, sizeof(info), 0))
+    {
+        return;
+    }
+
     if (IsColorTooDim(info.color.data))
     {
         return;
@@ -581,6 +673,11 @@ void qray::LightManager::AddSphericalLight(uint32_t frameIndex, const QrSpherica
 
 void qray::LightManager::AddPolygonalLight(uint32_t frameIndex, const QrPolygonalLightUploadInfo &info)
 {
+    if (TryDeferUpload(frameIndex, kDeferredPolygonal, &info, sizeof(info), 0))
+    {
+        return;
+    }
+
     if (IsColorTooDim(info.color.data))
     {
         return;
@@ -599,6 +696,11 @@ void qray::LightManager::AddPolygonalLight(uint32_t frameIndex, const QrPolygona
 void qray::LightManager::AddTexturedAreaLight(uint32_t frameIndex, const QrTexturedAreaLightUploadInfo &info,
                                               uint32_t textureIndex)
 {
+    if (TryDeferUpload(frameIndex, kDeferredTexturedArea, &info, sizeof(info), textureIndex))
+    {
+        return;
+    }
+
     if (IsColorTooDim(info.color.data))
     {
         return;
@@ -659,6 +761,11 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
 
 void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUploadInfo &info)
 {
+    if (TryDeferUpload(frameIndex, kDeferredSpot, &info, sizeof(info), 0))
+    {
+        return;
+    }
+
     /* `!(x > 0)` rather than `x <= 0`: the latter takes a nan angle for a valid one. */
     if (IsColorTooDim(info.color.data) || info.radius < 0.0f || !(info.angleOuter > 0.0f))
     {
@@ -670,6 +777,11 @@ void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUplo
 
 void qray::LightManager::AddDirectionalLight(uint32_t frameIndex, const QrDirectionalLightUploadInfo &info)
 {
+    if (TryDeferUpload(frameIndex, kDeferredDirectional, &info, sizeof(info), 0))
+    {
+        return;
+    }
+
     {
         std::lock_guard<std::mutex> registryLock(registryMutex);
 
@@ -815,11 +927,13 @@ VkDeviceSize qray::LightManager::GetLightStatsClusterSize() const
     return GetLightStatsSlotSize() / LIGHT_STATS_CLUSTER_COUNT;
 }
 
-void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numClusters,
-                                              const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
-                                              uint32_t totalLightCount, uint64_t listGeneration,
-                                              const ClusterLightTailRange &tails)
+bool qray::LightManager::PrepareClusterListPublication(uint32_t frameIndex, uint32_t numClusters,
+                                                       const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
+                                                       uint32_t totalLightCount, uint64_t listGeneration,
+                                                       const ClusterLightTailRange &tails)
 {
+    publishPending = false;
+
     numClusters = std::min(numClusters, uint32_t(Q2_MAX_CLUSTERS));
     statsClusterTarget = numClusters;
 
@@ -839,20 +953,70 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
          memcmp(publishedLightIndex[frameIndex].data(), registeredLightIndex[frameIndex].data(),
                 sizeof(uint32_t) * registeredCount) == 0);
 
+    const bool sameGeneration = publishedListGeneration[frameIndex] == listGeneration;
+    const bool sameClusters = publishedListClusters[frameIndex] == numClusters;
+    const bool sameWords = publishedListWords[frameIndex] == listWordCount;
+    const bool sameTailWords = publishedTailWords[frameIndex] == tailWordCount;
+    const bool sameTailClusters = publishedTailClusters[frameIndex] == numClusters;
+    const bool sameOrder = publishedLightOrder[frameIndex] == registeredLightOrder[frameIndex];
+
     const bool sameAsPublished =
-        publishedListValid[frameIndex] && publishedListGeneration[frameIndex] == listGeneration &&
-        publishedListClusters[frameIndex] == numClusters && publishedListWords[frameIndex] == listWordCount &&
-        publishedTailWords[frameIndex] == tailWordCount &&
-        samePlaces && publishedLightOrder[frameIndex] == registeredLightOrder[frameIndex];
+        publishedListValid[frameIndex] && sameGeneration && sameClusters && sameWords &&
+        sameTailWords && samePlaces && sameOrder;
+
+    const bool deviceHoldsCurrent =
+        deviceListValid && deviceListGeneration == listGeneration && deviceListClusters == numClusters &&
+        deviceListWords == listWordCount && deviceTailWords == tailWordCount &&
+        deviceTailClusters == numClusters && deviceLightOrder == registeredLightOrder[frameIndex] &&
+        deviceLightIndex.size() == registeredCount &&
+        (registeredCount == 0 ||
+         memcmp(deviceLightIndex.data(), registeredLightIndex[frameIndex].data(),
+                sizeof(uint32_t) * registeredCount) == 0);
+
+    uint32_t staleMask = 0;
+
+    if (!publishedListValid[frameIndex])
+        staleMask |= QR_CLUSTER_PUB_STALE_VALID;
+    if (!sameGeneration)
+        staleMask |= QR_CLUSTER_PUB_STALE_GENERATION;
+    if (!sameClusters)
+        staleMask |= QR_CLUSTER_PUB_STALE_CLUSTERS;
+    if (!sameWords)
+        staleMask |= QR_CLUSTER_PUB_STALE_WORDS;
+    if (!sameTailWords || !sameTailClusters)
+        staleMask |= QR_CLUSTER_PUB_STALE_TAILS;
+    if (!samePlaces)
+        staleMask |= QR_CLUSTER_PUB_STALE_PLACES;
+    if (!sameOrder)
+        staleMask |= QR_CLUSTER_PUB_STALE_ORDER;
+
+    if (deviceHoldsCurrent)
+    {
+        publicationMask = staleMask | QR_CLUSTER_PUB_SKIP_DEVICE;
+        return false;
+    }
 
     if (sameAsPublished)
     {
+        publicationMask = staleMask | QR_CLUSTER_PUB_SKIP_SLOT;
+
         if (!DeviceHoldsPublishedList(frameIndex))
         {
             lightListCopyPending[frameIndex] = true;
         }
-        return;
+        return false;
     }
+
+    publicationMask = staleMask | QR_CLUSTER_PUB_COPY;
+
+    publishPending = true;
+    publishFrameIndex = frameIndex;
+    publishNumClusters = numClusters;
+    publishWordCount = listWordCount;
+    publishTailWordCount = tailWordCount;
+    publishGeneration = listGeneration;
+    publishLightUniqueIds = pLightUniqueIds;
+    publishTails = tailsProvided ? tails : ClusterLightTailRange{};
 
     uint32_t *pDstOffsets = static_cast<uint32_t *>(lightListOffsets->GetMapped(frameIndex));
 
@@ -866,66 +1030,7 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
         pDstOffsets[i] = pOffsets[i];
     }
 
-    uint32_t *pDstLights = static_cast<uint32_t *>(lightListLights->GetMapped(frameIndex));
-
-    struct CachedIndex
-    {
-        uint64_t uid;
-        uint32_t index;
-    };
-
-    constexpr uint32_t kCacheSize = 2048;
-    constexpr uint32_t kNotCached = ~0u;
-
-    CachedIndex cache[kCacheSize];
-    memset(cache, 0xFF, sizeof(cache));
-
-    const auto resolveUid = [&](uint64_t uid) -> uint32_t
-    {
-        if (uid == kLightUidHole)
-        {
-            return uint32_t(LIGHT_INDEX_NONE);
-        }
-
-        const uint64_t hash = uid * 0x9E3779B97F4A7C15ull;
-        uint32_t       slot = static_cast<uint32_t>(hash >> 32) & (kCacheSize - 1);
-
-        for (uint32_t probe = 0; probe < kCacheSize; probe++)
-        {
-            const CachedIndex &entry = cache[slot];
-
-            if (entry.index == kNotCached)
-            {
-                break;
-            }
-
-            if (entry.uid == uid)
-            {
-                return entry.index;
-            }
-
-            slot = (slot + 1) & (kCacheSize - 1);
-        }
-
-        uint32_t       resolved = 0;
-        const uint32_t index = FindRegisteredLight(frameIndex, uid, resolved) ? resolved : uint32_t(LIGHT_INDEX_NONE);
-
-        if (cache[slot].index == kNotCached)
-        {
-            cache[slot].uid = uid;
-            cache[slot].index = index;
-        }
-
-        return index;
-    };
-
-    for (uint32_t i = 0; i < listWordCount; i++)
-    {
-        pDstLights[i] = resolveUid(pLightUniqueIds[i]);
-    }
-
     uint32_t *pTailOffsets = static_cast<uint32_t *>(lightListTailOffsets->GetMapped(frameIndex));
-    ShQ2LightTail *pTailEntries = static_cast<ShQ2LightTail *>(lightListTailEntries->GetMapped(frameIndex));
 
     for (uint32_t i = 0; i < 2 * Q2_MAX_CLUSTERS + 1; i++)
     {
@@ -947,18 +1052,126 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
 
             pTailBeta[c] = (std::isfinite(beta) && beta > 0.0f) ? (beta > 1.0f ? 1.0f : beta) : 0.0f;
         }
+    }
+
+    return true;
+}
+
+uint32_t qray::LightManager::ResolveLightUid(uint32_t frameIndex, uint64_t uid, ResolveCacheEntry *pCache)
+{
+    constexpr uint32_t kNotCached = ~0u;
+
+    if (uid == kLightUidHole)
+    {
+        return uint32_t(LIGHT_INDEX_NONE);
+    }
+
+    const uint64_t hash = uid * 0x9E3779B97F4A7C15ull;
+    uint32_t       slot = static_cast<uint32_t>(hash >> 32) & (kResolveCacheSize - 1);
+
+    for (uint32_t probe = 0; probe < kResolveCacheSize; probe++)
+    {
+        const ResolveCacheEntry &entry = pCache[slot];
+
+        if (entry.index == kNotCached)
+        {
+            break;
+        }
+
+        if (entry.uid == uid)
+        {
+            return entry.index;
+        }
+
+        slot = (slot + 1) & (kResolveCacheSize - 1);
+    }
+
+    uint32_t       resolved = 0;
+    const uint32_t index = FindRegisteredLight(frameIndex, uid, resolved) ? resolved : uint32_t(LIGHT_INDEX_NONE);
+
+    if (pCache[slot].index == kNotCached)
+    {
+        pCache[slot].uid = uid;
+        pCache[slot].index = index;
+    }
+
+    return index;
+}
+
+void qray::LightManager::RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount)
+{
+    if (!publishPending || sliceCount == 0 || slice >= sliceCount || publishWordCount == 0)
+    {
+        return;
+    }
+
+    const uint32_t wordBegin = uint32_t((uint64_t(publishWordCount) * slice) / sliceCount);
+    const uint32_t wordEnd = uint32_t((uint64_t(publishWordCount) * (slice + 1)) / sliceCount);
+
+    uint32_t *pDstLights = static_cast<uint32_t *>(lightListLights->GetMapped(publishFrameIndex));
+
+    ResolveCacheEntry cache[kResolveCacheSize];
+    memset(cache, 0xFF, sizeof(cache));
+
+    for (uint32_t i = wordBegin; i < wordEnd; i++)
+    {
+        pDstLights[i] = ResolveLightUid(publishFrameIndex, publishLightUniqueIds[i], cache);
+    }
+
+    if (wordBegin < wordEnd)
+    {
+        const uint32_t probes[] = { wordBegin, wordEnd - 1 };
+
+        for (uint32_t probe = 0; probe < 2; probe++)
+        {
+            const uint32_t word = probes[probe];
+            const uint64_t uid = publishLightUniqueIds[word];
+            uint32_t       expected = uint32_t(LIGHT_INDEX_NONE);
+
+            if (uid != kLightUidHole)
+            {
+                uint32_t resolved = 0;
+                expected = FindRegisteredLight(publishFrameIndex, uid, resolved) ? resolved : uint32_t(LIGHT_INDEX_NONE);
+            }
+
+            if (pDstLights[word] != expected)
+            {
+                fprintf(stderr, "qray: cluster list word %u resolved to %u, the serial resolve gives %u\n",
+                        word, pDstLights[word], expected);
+                assert(0);
+            }
+        }
+    }
+}
+
+void qray::LightManager::CommitClusterListPublication()
+{
+    if (!publishPending)
+    {
+        return;
+    }
+
+    const uint32_t frameIndex = publishFrameIndex;
+    uint32_t       tailWordCount = publishTailWordCount;
+
+    ShQ2LightTail *pTailEntries = static_cast<ShQ2LightTail *>(lightListTailEntries->GetMapped(frameIndex));
+
+    if (tailWordCount > 0)
+    {
+        ResolveCacheEntry cache[kResolveCacheSize];
+        memset(cache, 0xFF, sizeof(cache));
 
         uint32_t unresolved = 0;
 
         for (uint32_t i = 0; i < tailWordCount; i++)
         {
-            const uint32_t index = resolveUid(tails.pUniqueIds[i]);
+            const uint32_t index = ResolveLightUid(frameIndex, publishTails.pUniqueIds[i], cache);
             const bool     resolved = index != uint32_t(LIGHT_INDEX_NONE);
 
             pTailEntries[i].lightIndex = index;
-            pTailEntries[i].aliasIndex = resolved ? tails.pAlias[i] : i;
-            pTailEntries[i].prob = tails.pProb[i];
-            pTailEntries[i].marginalProb = resolved ? tails.pMarginal[i] : 0.0f;
+            pTailEntries[i].aliasIndex = resolved ? publishTails.pAlias[i] : i;
+            pTailEntries[i].prob = publishTails.pProb[i];
+            pTailEntries[i].marginalProb = resolved ? publishTails.pMarginal[i] : 0.0f;
 
             if (!resolved)
             {
@@ -975,6 +1188,8 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
 
             tailWordCount = 0;
 
+            uint32_t *pTailOffsets = static_cast<uint32_t *>(lightListTailOffsets->GetMapped(frameIndex));
+
             for (uint32_t i = 0; i < 2 * Q2_MAX_CLUSTERS + 1; i++)
             {
                 pTailOffsets[i] = 0;
@@ -983,16 +1198,17 @@ void qray::LightManager::SetClusterLightLists(uint32_t frameIndex, uint32_t numC
     }
 
     publishedListValid[frameIndex] = true;
-    publishedListGeneration[frameIndex] = listGeneration;
-    publishedListClusters[frameIndex] = numClusters;
-    publishedListWords[frameIndex] = listWordCount;
+    publishedListGeneration[frameIndex] = publishGeneration;
+    publishedListClusters[frameIndex] = publishNumClusters;
+    publishedListWords[frameIndex] = publishWordCount;
     publishedTailWords[frameIndex] = tailWordCount;
-    publishedTailClusters[frameIndex] = numClusters;
+    publishedTailClusters[frameIndex] = publishNumClusters;
     publishedLightOrder[frameIndex] = registeredLightOrder[frameIndex];
     publishedLightIndex[frameIndex].assign(registeredLightIndex[frameIndex].begin(),
                                            registeredLightIndex[frameIndex].end());
 
     lightListCopyPending[frameIndex] = true;
+    publishPending = false;
 }
 
 void qray::LightManager::SetClusterSkyVisibility(const uint8_t *pBits, uint32_t numClusters)

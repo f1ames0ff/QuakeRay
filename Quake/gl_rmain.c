@@ -54,6 +54,7 @@ vec3_t vup;
 vec3_t vpn;
 vec3_t vright;
 vec3_t r_origin;
+qboolean r_vieworg_valid;
 
 float r_fovx, r_fovy; // johnfitz -- rendering fov may be different becuase of r_waterwarp
 
@@ -115,7 +116,10 @@ qboolean r_drawworld_cheatsafe, r_fullbright_cheatsafe, r_lightmap_cheatsafe; //
 
 cvar_t r_gpulightmapupdate = {"r_gpulightmapupdate", "0", CVAR_NONE};
 
-cvar_t r_tasks = {"r_tasks", "0", CVAR_NONE};
+// Deprecated: r_tasks 0 is the legacy serial path. The engine is preparing to move to
+// multithreading; the r_tasks command and the fork it selects will be removed and the engine
+// will always run multithreaded.
+cvar_t r_tasks = {"r_tasks", "1", CVAR_NONE};
 
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;
@@ -127,6 +131,8 @@ extern cvar_t rt_sky_sun_yaw;
 extern cvar_t rt_physical_sun;
 extern cvar_t rt_materials_only;
 extern cvar_t rt_cluster_dlights;
+extern cvar_t rt_particle_proxy_gate;
+extern cvar_t rt_glass_particles;
 extern cvar_t rt_viewm_scale;
 
 /*
@@ -682,6 +688,7 @@ void R_SetupViewBeforeMark (void *unused)
 
 	// build the transformation matrix for the given view angles
 	VectorCopy (r_refdef.vieworg, r_origin);
+	r_vieworg_valid = true;
 	AngleVectors (r_refdef.viewangles, vpn, vright, vup);
 
 	// The sun editor follows the crosshair, which is this very vector.
@@ -772,6 +779,9 @@ void R_SetupViewBeforeMark (void *unused)
 	RT_ClusterLightListsReset ();
 
 	RT_UploadAllDlights ();
+
+	qrSetParticleProxyGate (vulkan_globals.instance, (uint32_t)rt_particle_proxy_gate.value,
+	                        CVAR_TO_BOOL (rt_glass_particles) ? 1u : 0u);
 
 	RT_Prof_End (RT_PROF_SETUP, prof_start);
 }
@@ -1083,12 +1093,15 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
+	qrBeginDeferredLightUploads (vulkan_globals.instance, 0);
+
 	const qboolean static_submit = Atomic_ExchangeUInt32 (&rt_require_static_submit, false) != 0;
 	const qboolean light_recollect = Atomic_ExchangeUInt32 (&rt_require_world_light_recollect, false) != 0;
 
 	if (!static_submit && !light_recollect)
 	{
 		RT_StaticMovableUpdate ();
+		qrEndDeferredLightUploads (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1098,6 +1111,7 @@ void R_DrawWorldTask (void *unused)
 		RT_RecollectWorldEmissiveLights ();
 		RT_StaticMovableUpdate ();
 
+		qrEndDeferredLightUploads (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1124,6 +1138,7 @@ void R_DrawWorldTask (void *unused)
 
 	RT_StaticMovableUpdate ();
 
+	qrEndDeferredLightUploads (vulkan_globals.instance);
 	RT_Prof_End (RT_PROF_WORLD, prof_start);
 }
 
@@ -1154,6 +1169,8 @@ static void R_DrawEntitiesTask (int index, void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
+	qrBeginDeferredLightUploads (vulkan_globals.instance, 1u + (uint32_t)index);
+
 	const int cbx_index = index + CBX_ENTITIES_0;
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[cbx_index]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[cbx_index]); // johnfitz
@@ -1161,6 +1178,8 @@ static void R_DrawEntitiesTask (int index, void *unused)
 	int       startedict = index * num_edicts_per_cb;
 	int       endedict = q_min ((index + 1) * num_edicts_per_cb, cl_numvisedicts);
 	R_DrawEntitiesOnList (&vulkan_globals.secondary_cb_contexts[cbx_index], false, index + chain_model_0, startedict, endedict);
+
+	qrEndDeferredLightUploads (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_ENTS, prof_start);
 }
@@ -1176,9 +1195,11 @@ static void R_DrawAlphaEntitiesTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES]);
+	qrBeginDeferredLightUploads (vulkan_globals.instance, 1u + NUM_ENTITIES_CBX);
 	R_DrawEntitiesOnList (
 		&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES], true, chain_alpha_model, 0,
 		cl_numvisedicts); // johnfitz -- true means this is the pass for alpha entities
+	qrEndDeferredLightUploads (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_ALPHA, prof_start);
 }
@@ -1215,6 +1236,8 @@ static void R_DrawViewModelTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);
 
+	qrFlushDeferredLightUploads (vulkan_globals.instance);
+
 	prof_start = RT_Prof_Begin ();
 	// The editor draws the lights of the frame as wireframes, so their upload
 	// (the map light entities) has to happen before the selection draw.
@@ -1222,7 +1245,7 @@ static void R_DrawViewModelTask (void *unused)
 	RT_Prof_End (RT_PROF_ELIGHTS, prof_start);
 
 	// Only the draw itself, so that the model upload cost can be told apart from
-	// the light and cluster list uploads that share this task.
+	// the light uploads that share this task.
 	prof_start = RT_Prof_Begin ();
 	R_DrawViewModel (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);     // johnfitz -- moved here from R_RenderView
 	R_ShowTris (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);          // johnfitz
@@ -1237,11 +1260,32 @@ static void R_DrawViewModelTask (void *unused)
 	RT_UploadAllTeleports (); // RT
 	RT_Prof_End (RT_PROF_TELEPORTS, prof_start);
 
-	prof_start = RT_Prof_Begin ();
-	RT_ClusterLightListsUpload (); // RT
-	RT_Prof_End (RT_PROF_CLUSTERS, prof_start);
-
 	RT_Prof_End (RT_PROF_VIEWMODEL, prof_task);
+}
+
+static void R_ClusterLightListsPrepareTask (void *unused)
+{
+	RT_ClusterLightListsPrepare (RT_CLUSTER_SLICES);
+}
+
+static void R_ClusterTopUpSliceTask (int index, void *unused)
+{
+	RT_ClusterLightListsSlice ((uint32_t)index, RT_CLUSTER_SLICES);
+}
+
+static void R_ClusterLightListsFinishTask (void *unused)
+{
+	RT_ClusterLightListsFinish ();
+}
+
+static void R_ClusterPublishSliceTask (int index, void *unused)
+{
+	RT_ClusterLightListsPublishSlice (index, RT_CLUSTER_SLICES);
+}
+
+static void R_ClusterLightListsCommitTask (void *unused)
+{
+	RT_ClusterLightListsCommit ();
 }
 
 /*
@@ -1308,6 +1352,24 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (begin_rendering_task, draw_view_model_task);
 		Task_AddDependency (draw_view_model_task, draw_done_task);
 
+		task_handle_t cluster_prepare_task = Task_AllocateAndAssignFunc (R_ClusterLightListsPrepareTask, NULL, 0);
+		Task_AddDependency (draw_view_model_task, cluster_prepare_task);
+
+		task_handle_t cluster_topup_task =
+		    Task_AllocateAndAssignIndexedFunc (R_ClusterTopUpSliceTask, RT_CLUSTER_SLICES, NULL, 0);
+		Task_AddDependency (cluster_prepare_task, cluster_topup_task);
+
+		task_handle_t cluster_finish_task = Task_AllocateAndAssignFunc (R_ClusterLightListsFinishTask, NULL, 0);
+		Task_AddDependency (cluster_topup_task, cluster_finish_task);
+
+		task_handle_t cluster_publish_task =
+		    Task_AllocateAndAssignIndexedFunc (R_ClusterPublishSliceTask, RT_CLUSTER_SLICES, NULL, 0);
+		Task_AddDependency (cluster_finish_task, cluster_publish_task);
+
+		task_handle_t cluster_commit_task = Task_AllocateAndAssignFunc (R_ClusterLightListsCommitTask, NULL, 0);
+		Task_AddDependency (cluster_publish_task, cluster_commit_task);
+		Task_AddDependency (cluster_commit_task, draw_done_task);
+
 		// The editor's GUI reads what the draw tasks uploaded (the tracked lights
 		// of the frame), so it has to wait for the task that carries them.
 		rt_editor_draw_done_task = draw_view_model_task;
@@ -1345,7 +1407,8 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (draw_world_task, draw_particles_task);
 
 		task_handle_t tasks[] = {before_mark,          store_efrags,		                         draw_world_task,     draw_sky_and_water_task,
-		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task, update_lightmaps_task};
+		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task, update_lightmaps_task,
+		                         cluster_prepare_task, cluster_topup_task, cluster_finish_task, cluster_publish_task, cluster_commit_task};
 		Tasks_Submit ((sizeof (tasks) / sizeof (task_handle_t)), tasks);
 		if (store_efrags != cull_surfaces)
 		{
@@ -1364,6 +1427,7 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		R_DrawAlphaEntitiesTask (NULL);
 		R_DrawParticlesTask (NULL);
 		R_DrawViewModelTask (NULL);
+		RT_ClusterLightListsUpload ();
 		if (r_gpulightmapupdate.value)
 			R_UpdateLightmaps (NULL);
 	}
