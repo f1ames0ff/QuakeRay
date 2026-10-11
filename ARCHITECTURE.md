@@ -58,6 +58,8 @@ The C ABI is [renderer/Include/qray/qray.h](renderer/Include/qray/qray.h); its d
 
 ## CPU execution graph
 
+The scoped Terror Fuma producer investigation and its 4K FSR Balanced / volumetric sky Medium requirements are in [docs/fuma-cpu-optimization-plan.md](docs/fuma-cpu-optimization-plan.md). It covers entity slices, sky/water, alpha and upload contention; clusters, particles and BLAS work remain with the separately owned workstream.
+
 Order for an accepted, fully loaded game frame; conditional simulation ticks, map rebuilds and debug paths are abbreviated. **Render tasks are gated by `r_tasks`** (default `0`): [the `SCR_UpdateScreen` condition](Quake/gl_screen.c#L1162) enables the task path when workers are available, and the producer order then follows [the `R_RenderView` task branch](Quake/gl_rmain.c#L1281); the serial order below is [the non-task branch](Quake/gl_rmain.c#L1354). Workers must not touch shared non-atomic state: pose and scratch buffers are thread-local, geometry uploads take the device mutex, and profiler accumulators use a spinlock. The threading contract, the frame graph edges and the rules for adding producers are in [docs/multithreading.md](docs/multithreading.md).
 
 ```mermaid
