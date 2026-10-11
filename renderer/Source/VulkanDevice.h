@@ -20,7 +20,9 @@
 #include <qray/qray.h>
 
 #include <array>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -99,6 +101,7 @@ public:
 
     void UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo *pUploadInfo,
                                   const float *pViewProjection, const QrViewport *pViewport);
+    QrResult UploadParticles(const QrParticleUploadInfo *pUploadInfo);
     void UploadDecal(const QrDecalUploadInfo *pUploadInfo);
     void UploadPortal(const QrPortalUploadInfo *pUploadInfo);
 
@@ -107,6 +110,10 @@ public:
 
     void UploadDirectionalLight(const QrDirectionalLightUploadInfo *pLightInfo);
     void UploadSphericalLight(const QrSphericalLightUploadInfo *pLightInfo);
+    void BeginDeferredLightUploads(uint32_t slot);
+    void EndDeferredLightUploads();
+    void FlushDeferredLightUploads();
+    void SetParticleProxyGate(uint32_t gate, uint32_t glassParticles);
     void UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo);
     void UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLightInfo);
     void UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *pLightInfo);
@@ -116,6 +123,11 @@ public:
     void UploadDtalGroups(const QrDtalGroupUploadBatch *pUploadInfo);
 
     void UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo);
+    void BeginClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo, uint32_t sliceCount);
+    void RunClusterLightSourceSlice(uint32_t slice, uint32_t sliceCount);
+    void FinishClusterLightSources();
+    void RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount);
+    void CommitClusterListPublication();
 
     void GetClusterLightStats(QrClusterLightStats *pStats);
     void GetClusterLightGrants(uint32_t *pGranted, uint32_t *pDenied, uint32_t maxCount, uint32_t *pCount);
@@ -192,10 +204,13 @@ private:
     std::shared_ptr<Queues>                 queues;
     std::shared_ptr<Swapchain>              swapchain;
     bool                                    presentWait2Enabled = false;
+    bool                                    swapchainMaintenance1Enabled = false;
     std::string                             printedPresentModeName;
     bool                                    printedPresentWaitActive = false;
     bool                                    printedRasterUploadWithoutFrame = false;
     bool                                    printedRasterOverflow = false;
+    bool                                    printedParticlePointOverflow = false;
+    uint32_t                                lastParticlePointOverflowWarnFrameId = 0;
     std::string                             pendingScreenshotPath;
 
     std::shared_ptr<MemoryAllocator>        memAllocator;
@@ -209,6 +224,8 @@ private:
 
     std::shared_ptr<ShaderManager>          shaderManager;
     std::shared_ptr<RasterizedDataCollector> rasterizedDataCollector;
+    bool particleProxyGateOpen = true;
+    bool lastReflRefrTraced = false;
     std::shared_ptr<DecalManager>           decalManager;
     std::shared_ptr<PortalList>             portalList;
     std::shared_ptr<Tonemapping>            tonemapping;
@@ -292,11 +309,14 @@ private:
     bool                                    statsGpuTimingValid = false;
     float                                   statsGpuFrameMs = 0.0f;
     float                                   statsGpuPassMs[QR_GPU_PASS_COUNT] = {};
+    std::mutex                              geometryUploadMutex;
     CpuFrameProfiler                        cpuFrameProfiler;
     bool                                    statsCpuTimingValid = false;
     bool                                    statsRenderedUiOnly = false;
-    uint32_t                                statsApiCallsGeometry = 0;
-    uint32_t                                statsApiCallsRasterized = 0;
-    uint32_t                                statsApiCallsLights = 0;
+    std::atomic<uint32_t>                   statsApiCallsGeometry{0};
+    std::atomic<uint32_t>                   statsApiCallsRasterized{0};
+    std::atomic<uint32_t>                   statsApiCallsLights{0};
+    uint64_t                                statsRasterUploadBytes = 0;
+    uint32_t                                statsRasterUploadDroppedBatches = 0;
 };
 }

@@ -217,6 +217,7 @@ extern vec3_t vup;
 extern vec3_t vpn;
 extern vec3_t vright;
 extern vec3_t r_origin;
+extern qboolean r_vieworg_valid;
 
 //
 // screen size info
@@ -372,6 +373,8 @@ void GLMesh_DeleteVertexBuffer (qmodel_t *m);
 
 int R_LightPoint (vec3_t p, lightcache_t *cache, vec3_t *lightcolor);
 void RT_ParseElights (void);
+void RT_BuildStyledLightIndex (void);
+void RT_ColorsRefresh (void);
 void RT_UploadAllElights (void);
 float RT_NearestStyledLightDistance (int style, const vec3_t point);
 qboolean RT_AllowFakeLights (void);
@@ -395,10 +398,19 @@ float RT_ClusterLightReach (void);
 // heard from where it stands. A setting of zero falls back to the cap of RT_ClusterLightReach.
 float RT_ClusterLightReachStatic (void);
 void RT_ClusterLightListsUpload (void);
+#define RT_CLUSTER_SLICES 16
+void RT_ClusterLightListsPrepare (uint32_t sliceCount);
+void RT_ClusterLightListsSlice (uint32_t slice, uint32_t sliceCount);
+void RT_ClusterLightListsFinish (void);
+void RT_ClusterLightListsPublishSlice (int slice, int sliceCount);
+void RT_ClusterLightListsCommit (void);
 
 // Frames that reused the cached cluster light lists and frames that rebuilt them. The profiler
 // reads and clears them once per reporting window, so the panel can show a hit rate.
 extern int rt_cluster_cache_hits;
+extern int rt_cluster_pub_skips;
+extern int rt_cluster_pub_copies;
+extern int rt_cluster_last_pub_mask;
 extern int rt_cluster_cache_misses;
 
 // Why the cluster light lists were rebuilt, counted per rebuild. The set of registered lights
@@ -427,6 +439,12 @@ extern int rt_cluster_last_dropped;
 extern int rt_cluster_last_dirty;
 extern int rt_cluster_last_move_footprint;
 int RT_ResolvePointCluster (const vec3_t p);
+int RT_ResolvePointClusterUncached (const vec3_t p);
+void RT_PointClusterCacheStats (uint64_t *hits, uint64_t *misses, double *totalMs, double *avgNs);
+int  RT_ParticleClusterAt (const vec3_t p);
+void RT_ClusterVolumeVerifyStats (uint64_t *samples, uint64_t *mismatch, uint64_t *lost, uint64_t *extra);
+void RT_ClusterVolumeResetVerify (void);
+void RT_PointClusterCacheSetEnabled (qboolean enabled);
 void RT_BrushClusterCacheReset (void);
 void RT_ClusterLightReport_f (void);
 void RT_ClusterLists_f (void);
@@ -684,9 +702,12 @@ enum
 	RT_PROF_CLUSTERS_RESOLVE,
 	RT_PROF_CLUSTERS_VIS,
 	RT_PROF_CLUSTERS_TOPUP,
+	RT_PROF_CLUSTERS_MARK,
+	RT_PROF_CLUSTERS_GRID,
 	RT_PROF_CLUSTERS_FILL,
 	RT_PROF_CLUSTERS_TAIL,
 	RT_PROF_CLUSTERS_UPLOAD,
+	RT_PROF_CLUSTERS_PUBLISH,
 	RT_PROF_DRAWFRAME,
 	RT_PROF_WAIT,
 	RT_PROF_FRAME,
@@ -701,6 +722,12 @@ enum
 	RT_PROF_BRUSH_STYLES,
 	RT_PROF_BRUSH_CLUSTER,
 
+	RT_PROF_PARTICLES_SIM,
+	RT_PROF_PARTICLES_RESOLVE,
+	RT_PROF_PARTICLES_FILL,
+	RT_PROF_PARTICLES_UPLOAD,
+	RT_PROF_FTE_CONVERT,
+
 	RT_PROF_COUNT
 };
 
@@ -708,6 +735,8 @@ enum
 typedef struct
 {
 	qboolean valid;
+	unsigned windowId;
+	unsigned frames;
 	float    fps;
 	float    frameMs; // longest whole-frame time in the window
 	float    waitMs;  // longest wait for the task graph
@@ -731,6 +760,25 @@ typedef struct
 	int      clusterLights;      // lights accepted into the registry
 	int      clusterAttempts;    // additions attempted by the registrars
 	int      clusterDropped;     // additions refused because the registry was full
+	int      clusterPublicationMask;
+	int      clusterPublicationSkips;
+	int      clusterPublicationCopies;
+	int      particlesClassic;
+	int      particlesFte;
+	int      particlesVertices;
+	int      particlesSmoke;
+	int      particlesDropped;
+	int      particlesEmitCulled;
+	int      particlesEmitFaded;
+	uint64_t volumeVerifySamples;
+	uint64_t volumeVerifyMismatch;
+	uint64_t volumeVerifyLost;
+	uint64_t volumeVerifyExtra;
+	uint64_t fteConvertBytes;
+	uint64_t particleUploadBytes;
+	uint64_t particleResolveCacheHits;
+	uint64_t particleResolveCacheMisses;
+	double   particleResolveCacheAvgNs;
 } rt_prof_report_t;
 
 enum
@@ -784,6 +832,16 @@ void     RT_StatsRecordSample (const rt_stats_snapshot_t *snap);
 extern double           rt_prof_ms[RT_PROF_COUNT];
 extern rt_prof_report_t rt_prof_report;
 
+extern int      rt_particles_classic;
+extern int      rt_particles_fte;
+extern int      rt_particles_vertices;
+extern int      rt_particles_smoke;
+extern int      rt_particles_dropped;
+extern int      rt_particles_emit_culled;
+extern int      rt_particles_emit_faded;
+extern uint64_t rt_fte_convert_bytes;
+extern uint64_t rt_particle_upload_bytes;
+
 // Returns 0 while the profiler is off, which RT_Prof_End treats as "no sample".
 double RT_Prof_Begin (void);
 void   RT_Prof_End (int slot, double start);
@@ -813,6 +871,7 @@ extern rt_bench_result_t rt_bench_result;
 qboolean RT_Bench_Active (void);
 void     RT_Bench_Start (void);
 void     RT_Bench_Stop (void);
+void     RT_Bench_HostFrame (void);
 // Marks a run that ended before its demo did (a map change, a pause, a disconnect).
 void     RT_Bench_Interrupt (void);
 qboolean RT_Bench_Interrupted (void);

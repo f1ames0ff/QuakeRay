@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gl_heap.h"
 
 extern cvar_t r_smoke;
+extern cvar_t r_particles_overflow;
 
 #define MAX_PARTICLES \
 	16384 // default max # of particles at one
@@ -53,6 +54,7 @@ cvar_t r_particle_light_gain = {"r_particle_light_gain", "10.0", CVAR_ARCHIVE};
 cvar_t r_particle_light_direct = {"r_particle_light_direct", "1", CVAR_ARCHIVE};
 cvar_t r_particle_light_floor = {"r_particle_light_floor", "0.001", CVAR_ARCHIVE};
 cvar_t r_particle_light_debug = {"r_particle_light_debug", "0", CVAR_NONE};
+cvar_t r_particles_points = {"r_particles_points", "1", CVAR_ARCHIVE};
 
 #define QUAD_PARTICLES 0
 static uint32_t *quadindices = NULL;
@@ -211,9 +213,59 @@ void R_InitParticles (void)
 	Cvar_RegisterVariable (&r_particle_light_direct);
 	Cvar_RegisterVariable (&r_particle_light_floor);
 	Cvar_RegisterVariable (&r_particle_light_debug);
+	Cvar_RegisterVariable (&r_particles_points);
 
 	R_InitParticleTextures (); // johnfitz
 	R_InitParticleIndexBuffer ();
+}
+
+static double rt_particle_pool_warn_time;
+
+static void R_ClassicParticleOverflow (void)
+{
+	const double now = Sys_DoubleTime ();
+
+	if (rt_particle_pool_warn_time != 0.0 && now - rt_particle_pool_warn_time < 5.0)
+		return;
+
+	rt_particle_pool_warn_time = now;
+	Con_DWarning ("Particles: classic pool of %i exhausted, %i dropped, overflow %s\n",
+		r_numparticles, rt_particles_dropped, CVAR_TO_BOOL (r_particles_overflow) ? "on" : "off");
+}
+
+static particle_t *R_NewClassicParticle (int wanted)
+{
+	particle_t *p, *prev;
+
+	if (free_particles)
+	{
+		p = free_particles;
+		free_particles = p->next;
+	}
+	else if (CVAR_TO_BOOL (r_particles_overflow) && active_particles)
+	{
+		prev = NULL;
+		for (p = active_particles; p->next; p = p->next)
+			prev = p;
+
+		if (prev)
+			prev->next = NULL;
+		else
+			active_particles = NULL;
+
+		rt_particles_dropped++;
+		R_ClassicParticleOverflow ();
+	}
+	else
+	{
+		rt_particles_dropped += wanted;
+		R_ClassicParticleOverflow ();
+		return NULL;
+	}
+
+	p->next = active_particles;
+	active_particles = p;
+	return p;
 }
 
 /*
@@ -269,12 +321,9 @@ void R_EntityParticles (entity_t *ent)
 		forward[1] = cp * sy;
 		forward[2] = -sp;
 
-		if (!free_particles)
+		p = R_NewClassicParticle (NUMVERTEXNORMALS - i);
+		if (!p)
 			return;
-		p = free_particles;
-		free_particles = p->next;
-		p->next = active_particles;
-		active_particles = p;
 
 		p->die = cl.time + 0.01;
 		p->color = 0x6f;
@@ -339,15 +388,12 @@ void R_ReadPointFile_f (void)
 			break;
 		c++;
 
-		if (!free_particles)
+		p = R_NewClassicParticle (1);
+		if (!p)
 		{
 			Con_Printf ("Not enough free particles\n");
 			break;
 		}
-		p = free_particles;
-		free_particles = p->next;
-		p->next = active_particles;
-		active_particles = p;
 
 		p->die = 99999;
 		p->color = (-c) & 15;
@@ -399,12 +445,9 @@ void R_ParticleExplosion (vec3_t org)
 
 	for (i = 0; i < 1024; i++)
 	{
-		if (!free_particles)
+		p = R_NewClassicParticle (1024 - i);
+		if (!p)
 			return;
-		p = free_particles;
-		free_particles = p->next;
-		p->next = active_particles;
-		active_particles = p;
 
 		p->die = cl.time + 5;
 		p->color = ramp1[0];
@@ -443,12 +486,9 @@ void R_ParticleExplosion2 (vec3_t org, int colorStart, int colorLength)
 
 	for (i = 0; i < 512; i++)
 	{
-		if (!free_particles)
+		p = R_NewClassicParticle (512 - i);
+		if (!p)
 			return;
-		p = free_particles;
-		free_particles = p->next;
-		p->next = active_particles;
-		active_particles = p;
 
 		p->die = cl.time + 0.3;
 		p->color = colorStart + (colorMod % colorLength);
@@ -475,12 +515,9 @@ void R_BlobExplosion (vec3_t org)
 
 	for (i = 0; i < 1024; i++)
 	{
-		if (!free_particles)
+		p = R_NewClassicParticle (1024 - i);
+		if (!p)
 			return;
-		p = free_particles;
-		free_particles = p->next;
-		p->next = active_particles;
-		active_particles = p;
 
 		p->die = cl.time + 1 + (rand () & 8) * 0.05;
 
@@ -519,12 +556,9 @@ void R_RunParticleEffect (vec3_t org, vec3_t dir, int color, int count)
 
 	for (i = 0; i < count; i++)
 	{
-		if (!free_particles)
+		p = R_NewClassicParticle (count - i);
+		if (!p)
 			return;
-		p = free_particles;
-		free_particles = p->next;
-		p->next = active_particles;
-		active_particles = p;
 
 		if (count == 1024)
 		{ // rocket explosion
@@ -580,12 +614,9 @@ void R_LavaSplash (vec3_t org)
 		for (j = -16; j < 16; j++)
 			for (k = 0; k < 1; k++)
 			{
-				if (!free_particles)
+				p = R_NewClassicParticle ((15 - i) * 32 + (16 - j));
+				if (!p)
 					return;
-				p = free_particles;
-				free_particles = p->next;
-				p->next = active_particles;
-				active_particles = p;
 
 				p->die = cl.time + 2 + (rand () & 31) * 0.02;
 				p->color = 224 + (rand () & 7);
@@ -621,12 +652,9 @@ void R_TeleportSplash (vec3_t org)
 		for (j = -16; j < 16; j += 4)
 			for (k = -24; k < 32; k += 4)
 			{
-				if (!free_particles)
+				p = R_NewClassicParticle ((7 - (i + 16) / 4) * 112 + (7 - (j + 16) / 4) * 14 + (14 - (k + 24) / 4));
+				if (!p)
 					return;
-				p = free_particles;
-				free_particles = p->next;
-				p->next = active_particles;
-				active_particles = p;
 
 				p->die = cl.time + 0.2 + (rand () & 7) * 0.02;
 				p->color = 7 + (rand () & 7);
@@ -684,12 +712,9 @@ void R_RocketTrail (vec3_t start, vec3_t end, int type)
 			continue;
 		}
 
-		if (!free_particles)
+		p = R_NewClassicParticle (1);
+		if (!p)
 			return;
-		p = free_particles;
-		free_particles = p->next;
-		p->next = active_particles;
-		active_particles = p;
 
 		VectorCopy (vec3_origin, p->vel);
 		p->die = cl.time + 2;
@@ -884,10 +909,18 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 	extern cvar_t r_particles; // johnfitz
 
 	if (CVAR_TO_INT32(r_particles) == 0)
+	{
+		rt_particles_classic = 0;
 		return;
+	}
 
 	if (!active_particles)
+	{
+		rt_particles_classic = 0;
 		return;
+	}
+
+	double prof_fill = RT_Prof_Begin ();
 
 	const gltexture_t *texture = GetParticleTexture (&texturescalefactor);
 
@@ -911,6 +944,61 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 	for (p = active_particles; p; p = p->next)
 		num_particles += 1;
 
+	rt_particles_classic = num_particles;
+
+	if (!QUAD_PARTICLES && CVAR_TO_BOOL (r_particles_points) && CVAR_TO_BOOL (r_particle_lighting))
+	{
+		const qboolean lit_particles = CVAR_TO_BOOL (r_particle_lighting);
+		QrParticlePoint *points = RT_AllocScratchMemory (num_particles * sizeof (QrParticlePoint));
+		int             current_point = 0;
+
+		for (p = active_particles; p; p = p->next)
+		{
+			// hack a scale up to keep particles from disapearing
+			scale = (p->org[0] - r_origin[0]) * vpn[0] + (p->org[1] - r_origin[1]) * vpn[1] + (p->org[2] - r_origin[2]) * vpn[2];
+			if (scale < 20)
+				scale = 1 + 0.08; // johnfitz -- added .08 to be consistent
+			else
+				scale = 1 + scale * 0.004;
+
+			scale *= texturescalefactor; // johnfitz -- compensate for apparent size of different particle textures
+
+			byte *c = (byte *)&d_8to24table[(int)p->color];
+
+			points[current_point].position[0] = p->org[0];
+			points[current_point].position[1] = p->org[1];
+			points[current_point].position[2] = p->org[2];
+			points[current_point].packedColor = RT_PackColorToUint32 (c[0], c[1], c[2], 255);
+			points[current_point].size = scale;
+			points[current_point].cluster =
+				lit_particles ? (uint32_t)RT_ParticleClusterAt (p->org) : 0u;
+			current_point++;
+		}
+
+		// One add for the whole batch: nothing reads the counter while the particles are emitted.
+		Atomic_AddUInt32 (&rs_particles, num_particles);
+		RT_Prof_End (RT_PROF_PARTICLES_FILL, prof_fill);
+
+		QrParticleUploadInfo info = {
+			.pPoints = points,
+			.count = num_particles,
+			.material = texture ? texture->rtmaterial : QR_NO_MATERIAL,
+			.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+			                 QR_RASTERIZED_GEOMETRY_STATE_PARTICLE | QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE,
+			.smokeLook = {{ CVAR_TO_BOOL (r_particle_light_debug) ? 1.0f : 0.0f,
+			                r_particle_light_direct.value,
+			                r_particle_light_gain.value, r_particle_light_floor.value }},
+			.viewRight = {{ vright[0], vright[1], vright[2] }},
+			.viewUp = {{ vup[0], vup[1], vup[2] }},
+		};
+
+		rt_particle_upload_bytes += (uint64_t)num_particles * sizeof (QrParticlePoint);
+		double prof_upload = RT_Prof_Begin ();
+		QrResult r = qrUploadParticles (vulkan_globals.instance, &info);
+		RT_Prof_End (RT_PROF_PARTICLES_UPLOAD, prof_upload);
+		QR_CHECK (r);
+		return;
+	}
 
 	QrVertex *vertices;
 	if (QUAD_PARTICLES)
@@ -936,7 +1024,7 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		// All vertices of one particle carry the same colour, so it is packed once per particle.
 		const uint32_t packed_color = RT_PackColorToUint32 (c[0], c[1], c[2], 255);
 		const uint32_t particle_cluster =
-			lit_particles ? (uint32_t)RT_ResolvePointCluster (p->org) : 0u;
+			lit_particles ? (uint32_t)RT_ParticleClusterAt (p->org) : 0u;
 
 		vertices[current_vertex].position[0] = p->org[0];
 		vertices[current_vertex].position[1] = p->org[1];
@@ -983,6 +1071,7 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 
 	// One add for the whole batch: nothing reads the counter while the particles are emitted.
 	Atomic_AddUInt32 (&rs_particles, num_particles);
+	RT_Prof_End (RT_PROF_PARTICLES_FILL, prof_fill);
 
 	QrRasterizedGeometryUploadInfo info = {
 		.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
@@ -1005,7 +1094,11 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		                r_particle_light_gain.value, r_particle_light_floor.value }},
 	};
 
+	rt_particle_upload_bytes += (uint64_t)current_vertex * sizeof (QrVertex) +
+	                            (uint64_t)(QUAD_PARTICLES ? num_particles * 6 : 0) * sizeof (uint32_t);
+	double prof_upload = RT_Prof_Begin ();
     QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
+	RT_Prof_End (RT_PROF_PARTICLES_UPLOAD, prof_upload);
 	QR_CHECK (r);
 }
 

@@ -37,6 +37,71 @@ void TestFramePolicy()
     Require(!RT_ShouldSkipConsoleDraw(1, 0, 1.0f), "a non-forced console remains visible");
     Require(!RT_ShouldSkipConsoleDraw(1, 1, 0.5f), "a translucent preview preserves console draws");
     Require(!RT_ShouldSkipConsoleDraw(1, 1, 0.0f), "a hidden menu preserves console draws");
+
+    Require(RT_EndTaskResultMergesNow(7, 7), "a frame waiting for its end task takes the result");
+    Require(!RT_EndTaskResultMergesNow(7, 8), "a stale waiting frame does not take a newer result");
+    Require(!RT_EndTaskResultMergesNow(0, 7), "a frame that never waits takes no result");
+    Require(!RT_EndTaskResultMergesNow(7, 0), "a zero serial never merges");
+
+    Require(RT_EndFrameConsumesEarlyResult(7, 7), "a frame consumes its own early result");
+    Require(!RT_EndFrameConsumesEarlyResult(7, 8), "a frame does not consume a foreign early result");
+    Require(!RT_EndFrameConsumesEarlyResult(0, 7), "serial mode consumes no task results");
+    Require(!RT_EndFrameConsumesEarlyResult(7, 0), "a frame without an early result consumes nothing");
+}
+
+void TestEndTaskCompletionOrder()
+{
+    {
+        unsigned pending = 0;
+        const unsigned serial = 5;
+        double sample = 0.0;
+
+        Require(!RT_EndTaskResultMergesNow(pending, serial), "a result without a waiting frame stores early");
+        pending = serial;
+        Require(!RT_EndTaskResultMergesNow(pending, serial + 1), "a foreign result does not merge into the wait");
+        Require(RT_EndTaskResultMergesNow(pending, serial), "the frame's own result merges into the wait");
+        sample += 7.5;
+        pending = 0;
+        Require(!RT_EndTaskResultMergesNow(pending, serial), "a merged result cannot merge twice");
+        Require(sample == 7.5, "the late result lands exactly once");
+    }
+
+    {
+        unsigned finished = 0;
+        const unsigned serial = 6;
+        double sample = 0.0;
+
+        Require(!RT_EndFrameConsumesEarlyResult(serial, finished), "a frame consumes nothing before its result");
+        finished = serial;
+        Require(!RT_EndFrameConsumesEarlyResult(serial + 1, finished), "a frame does not consume a foreign early result");
+        Require(RT_EndFrameConsumesEarlyResult(serial, finished), "a frame consumes its own early result");
+        sample += 6.25;
+        finished = 0;
+        Require(!RT_EndFrameConsumesEarlyResult(serial, finished), "a consumed early result cannot be taken twice");
+        Require(sample == 6.25, "the early result lands exactly once");
+    }
+
+    Require(!RT_EndFrameConsumesEarlyResult(0, 9), "the serial frame never consumes a task result");
+}
+
+void TestCacheGeneration()
+{
+    Require(RT_CacheGenerationStale(0, 1), "a table that was never used is stale");
+    Require(!RT_CacheGenerationStale(1, 1), "a refreshed table is current");
+    Require(RT_CacheGenerationStale(1, 2), "a reset makes every thread's table stale");
+    Require(!RT_CacheGenerationStale(2, 2), "a table refreshed after the reset is current");
+}
+
+void TestReportRunOwnership()
+{
+    unsigned active = 1;
+
+    Require(RT_ReportTakeRun(&active), "the first caller owns the finished run");
+    Require(active == 0, "taking the run clears it");
+    Require(!RT_ReportTakeRun(&active), "a re-entrant caller finds the run taken");
+
+    active = 0;
+    Require(!RT_ReportTakeRun(&active), "an inactive run is never reported");
 }
 
 void TestCpuProfiler()
@@ -225,9 +290,12 @@ int main(int argc, char **argv)
     try
     {
         TestFramePolicy();
+        TestEndTaskCompletionOrder();
+        TestCacheGeneration();
+        TestReportRunOwnership();
         TestCpuProfiler();
         TestGeometryBounds();
-        std::cout << "Frame policy, CPU timing and geometry bounds tests passed\n";
+        std::cout << "Frame policy, end-task routing, cache and report tests passed\n";
         if (argc == 2 && std::strcmp(argv[1], "--bench-bounds") == 0)
             BenchmarkGeometryBounds();
         return 0;

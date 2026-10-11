@@ -443,6 +443,7 @@ void R_NewMap (void)
 	RT_CustomLights_ApplyFog (); // qray -- an authored level's fog wins over the worldspawn key
 	R_ParseWorldspawn (); // ericw -- wateralpha, lavaalpha, telealpha, slimealpha in worldspawn
 	RT_ParseElights ();
+	RT_BuildStyledLightIndex ();
 	RT_ParseTeleports();
 
 // !!!SHIPPING HACK!!!

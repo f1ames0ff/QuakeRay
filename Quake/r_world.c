@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "rt_brush_transform_cache.h"
 #include "atomics.h"
+#include "../shared/rt_frame_policy.h"
 #include "rt_dtal_debug.h"
 #include "rt_dtal_groups.h"
 #include "rt_lights.h"
@@ -68,6 +69,8 @@ extern cvar_t rt_light_report_filter;
 extern cvar_t rt_worldcensus;
 extern cvar_t rt_worldlights_stats;
 extern cvar_t rt_worldclusters_grid;
+extern cvar_t rt_particle_volume;
+extern cvar_t rt_particle_volume_check;
 
 cvar_t r_parallelmark = {"r_parallelmark", "1", CVAR_NONE};
 
@@ -162,25 +165,43 @@ static char rt_emis_skip_texture[RT_EMIS_SKIP_NAMES][32];
 static char rt_emis_skip_reason[RT_EMIS_SKIP_NAMES][24];
 static int  rt_emis_skip_count[RT_EMIS_SKIP_NAMES];
 static int  rt_emis_skip_num;
+static atomic_uint32_t rt_emis_skip_spin;
+
+static void RT_EmisSkipLock (void)
+{
+	uint32_t expected = 0;
+	while (!Atomic_CompareExchangeUInt32 (&rt_emis_skip_spin, &expected, 1))
+		expected = 0;
+}
+
+static void RT_EmisSkipUnlock (void)
+{
+	Atomic_StoreUInt32 (&rt_emis_skip_spin, 0);
+}
 
 static void RT_EmisNoteSkip (const char *texture, const char *reason)
 {
+	RT_EmisSkipLock ();
+
 	for (int i = 0; i < rt_emis_skip_num; i++)
 	{
 		if (!strcmp (rt_emis_skip_texture[i], texture) && !strcmp (rt_emis_skip_reason[i], reason))
 		{
 			rt_emis_skip_count[i]++;
+			RT_EmisSkipUnlock ();
 			return;
 		}
 	}
 
-	if (rt_emis_skip_num >= RT_EMIS_SKIP_NAMES)
-		return;
+	if (rt_emis_skip_num < RT_EMIS_SKIP_NAMES)
+	{
+		q_snprintf (rt_emis_skip_texture[rt_emis_skip_num], sizeof (rt_emis_skip_texture[0]), "%s", texture);
+		q_snprintf (rt_emis_skip_reason[rt_emis_skip_num], sizeof (rt_emis_skip_reason[0]), "%s", reason);
+		rt_emis_skip_count[rt_emis_skip_num] = 1;
+		rt_emis_skip_num++;
+	}
 
-	q_snprintf (rt_emis_skip_texture[rt_emis_skip_num], sizeof (rt_emis_skip_texture[0]), "%s", texture);
-	q_snprintf (rt_emis_skip_reason[rt_emis_skip_num], sizeof (rt_emis_skip_reason[0]), "%s", reason);
-	rt_emis_skip_count[rt_emis_skip_num] = 1;
-	rt_emis_skip_num++;
+	RT_EmisSkipUnlock ();
 }
 
 #define RT_EMIS_WATCH_MAX 16
@@ -1070,8 +1091,15 @@ typedef struct
 
 #define RT_SURFACEPACK_ENT_SIZE 512
 
+typedef struct
+{
+	uint32_t                  generation;
+	rt_surfacepackent_entry_t entries[RT_SURFACEPACK_ENT_SIZE];
+} rt_surfacepackent_cache_t;
+
 static rt_surfacepack_entry_t    *rt_surfacepack;
-static rt_surfacepackent_entry_t  rt_surfacepack_ent[RT_SURFACEPACK_ENT_SIZE];
+static uint32_t                   rt_surfacepack_generation = 1;
+static THREAD_LOCAL rt_surfacepackent_cache_t rt_surfacepack_ent;
 static const qmodel_t            *rt_surfacepack_model;
 static int                        rt_surfacepack_size;
 
@@ -1091,7 +1119,10 @@ static void RT_SurfacePacksReset (void)
 	rt_surfacepack = NULL;
 	rt_surfacepack_model = NULL;
 	rt_surfacepack_size = 0;
-	memset (rt_surfacepack_ent, 0, sizeof (rt_surfacepack_ent));
+	rt_surfacepack_generation++;
+
+	if (rt_surfacepack_generation == 0)
+		rt_surfacepack_generation = 1;
 
 	const qmodel_t *model = cl.worldmodel;
 
@@ -1167,7 +1198,13 @@ static uint32_t RT_PackSurfaceLightStyles (const rt_uploadsurf_state_t *s, const
 		   faces of a model are visited in order, so a stride index keeps them in step, and the
 		   entity moves the window so that two models do not share it. */
 		const size_t               index = (((size_t) (s->surf - s->model->surfaces)) + ((uintptr_t) s->ent >> 4)) % RT_SURFACEPACK_ENT_SIZE;
-		rt_surfacepackent_entry_t *ententry = &rt_surfacepack_ent[index];
+		if (RT_CacheGenerationStale (rt_surfacepack_ent.generation, rt_surfacepack_generation))
+		{
+			memset (rt_surfacepack_ent.entries, 0, sizeof (rt_surfacepack_ent.entries));
+			rt_surfacepack_ent.generation = rt_surfacepack_generation;
+		}
+
+		rt_surfacepackent_entry_t *ententry = &rt_surfacepack_ent.entries[index];
 
 		if (ententry->set && ententry->ent == s->ent && ententry->surf == s->surf &&
 		    ententry->tex == s->surf->texinfo->texture &&
@@ -1791,16 +1828,38 @@ typedef struct
 	qboolean buried;
 } rt_dtal_buried_entry_t;
 
-static rt_dtal_buried_entry_t rt_dtal_buried_cache[RT_DTAL_BURIED_CACHE];
+typedef struct
+{
+	uint32_t                generation;
+	rt_dtal_buried_entry_t  entries[RT_DTAL_BURIED_CACHE];
+} rt_dtal_buried_cache_t;
+
+static uint32_t rt_dtal_buried_generation = 1;
+static THREAD_LOCAL rt_dtal_buried_cache_t rt_dtal_buried_cache;
 
 static atomic_uint32_t rt_buried_traces;
 static atomic_uint32_t rt_buried_hits;
 static atomic_uint32_t rt_buried_model_traces;
 static atomic_uint32_t rt_buried_model_hits;
 
+static rt_dtal_buried_entry_t *RT_BuriedCacheEntry (size_t index)
+{
+	if (RT_CacheGenerationStale (rt_dtal_buried_cache.generation, rt_dtal_buried_generation))
+	{
+		memset (rt_dtal_buried_cache.entries, 0, sizeof (rt_dtal_buried_cache.entries));
+		rt_dtal_buried_cache.generation = rt_dtal_buried_generation;
+	}
+
+	return &rt_dtal_buried_cache.entries[index];
+}
+
 static void RT_BuriedCacheReset (void)
 {
-	memset (rt_dtal_buried_cache, 0, sizeof (rt_dtal_buried_cache));
+	rt_dtal_buried_generation++;
+
+	if (rt_dtal_buried_generation == 0)
+		rt_dtal_buried_generation = 1;
+
 	Atomic_StoreUInt32 (&rt_buried_traces, 0);
 	Atomic_StoreUInt32 (&rt_buried_hits, 0);
 	Atomic_StoreUInt32 (&rt_buried_model_traces, 0);
@@ -1835,7 +1894,7 @@ static unsigned int RT_BuriedHash (const float *center, const float *normal, flo
 static qboolean RT_LightBuried (vec3_t center, const float *normal, float clearance, qboolean *traced)
 {
 	vec3_t                  n = {normal[0], normal[1], normal[2]};
-	rt_dtal_buried_entry_t *entry = &rt_dtal_buried_cache[RT_BuriedHash (center, n, clearance)];
+	rt_dtal_buried_entry_t *entry = RT_BuriedCacheEntry (RT_BuriedHash (center, n, clearance));
 
 	if (entry->clearance == clearance && VectorCompare (entry->center, center) && VectorCompare (entry->normal, n))
 	{
@@ -4277,7 +4336,11 @@ static void RT_CollectWorldEmissiveLightsAndBuild (void)
 	rt_wldlights_style_accepted_dirty = true;
 
 	memset (&rt_emis_stats, 0, sizeof (rt_emis_stats));
+
+	RT_EmisSkipLock ();
 	rt_emis_skip_num = 0;
+	RT_EmisSkipUnlock ();
+
 	RT_EmisWatchFrameEnd ();
 
 	RT_DtalGroups_BeginCollect ();
@@ -4300,11 +4363,32 @@ typedef struct
 	int             cluster;
 } rt_brushcluster_cacheentry_t;
 
-static rt_brushcluster_cacheentry_t rt_brushcluster_cache[RT_BRUSHCLUSTER_CACHE_SIZE];
+typedef struct
+{
+	uint32_t                     generation;
+	rt_brushcluster_cacheentry_t entries[RT_BRUSHCLUSTER_CACHE_SIZE];
+} rt_brushcluster_cache_t;
+
+static uint32_t rt_brushcluster_cache_generation = 1;
+static THREAD_LOCAL rt_brushcluster_cache_t rt_brushcluster_cache;
+
+static rt_brushcluster_cacheentry_t *RT_BrushClusterCacheEntry (size_t index)
+{
+	if (RT_CacheGenerationStale (rt_brushcluster_cache.generation, rt_brushcluster_cache_generation))
+	{
+		memset (rt_brushcluster_cache.entries, 0, sizeof (rt_brushcluster_cache.entries));
+		rt_brushcluster_cache.generation = rt_brushcluster_cache_generation;
+	}
+
+	return &rt_brushcluster_cache.entries[index];
+}
 
 void RT_BrushClusterCacheReset (void)
 {
-	memset (rt_brushcluster_cache, 0, sizeof (rt_brushcluster_cache));
+	rt_brushcluster_cache_generation++;
+
+	if (rt_brushcluster_cache_generation == 0)
+		rt_brushcluster_cache_generation = 1;
 
 	RT_BuriedCacheReset ();
 
@@ -4317,7 +4401,7 @@ void RT_BrushClusterCacheReset (void)
 static int RT_ResolveBrushSurfCluster (const rt_uploadsurf_state_t *s, const QrVertex *verts, int numverts)
 {
 	const size_t idx = ((size_t) s->ent / sizeof (void *) + (size_t) s->surf->vbo_firstvert) % RT_BRUSHCLUSTER_CACHE_SIZE;
-	rt_brushcluster_cacheentry_t *ce = &rt_brushcluster_cache[idx];
+	rt_brushcluster_cacheentry_t *ce = RT_BrushClusterCacheEntry (idx);
 
 	if (ce->ent == s->ent && ce->vbo_firstvert == s->surf->vbo_firstvert &&
 		VectorCompare (ce->origin, s->ent->origin))
@@ -5492,6 +5576,8 @@ typedef struct
 	// mapping run before the upload that would otherwise build them.
 	qmodel_t *model;
 
+	uint32_t generation;
+
 	int        num_clusters;
 	QrFloat3D *cluster_mins;
 	QrFloat3D *cluster_maxs;
@@ -5513,6 +5599,23 @@ typedef struct
 } rt_worldclusters_t;
 
 static rt_worldclusters_t rt_worldclusters;
+static uint32_t           rt_worldclusters_generation;
+
+typedef struct
+{
+	uint16_t *cells;
+	float     mins[3];
+	float     cell;
+	int       dims[3];
+	uint32_t  generation;
+} rt_cluster_volume_t;
+
+static rt_cluster_volume_t rt_cluster_volume;
+
+atomic_uint32_t rt_volume_verify_samples;
+atomic_uint32_t rt_volume_verify_mismatch;
+atomic_uint32_t rt_volume_verify_lost;
+atomic_uint32_t rt_volume_verify_extra;
 
 static void RT_AllocClusterTables (int num_clusters)
 {
@@ -5919,6 +6022,8 @@ void RT_BuildWorldClusters (void)
 
 	RT_FreeWorldClusters ();
 
+	rt_worldclusters.generation = ++rt_worldclusters_generation;
+
 	if (!model || !model->leafs || model->numleafs < 2)
 		return;
 
@@ -5993,6 +6098,183 @@ void RT_BuildWorldClusters (void)
 
 	Con_Printf ("RT: %i leafs folded into %i clusters over a %ix%ix%i grid, %i bytes of PVS rows\n",
 		model->numleafs, num_cells + 1, dims[0], dims[1], dims[2], rt_worldclusters.vis_data_size);
+}
+
+#define RT_CLUSTER_VOLUME_CELL 64.0f
+#define RT_CLUSTER_VOLUME_MAX_TEXELS (4 * 1024 * 1024)
+
+static void RT_BuildClusterVolume (void)
+{
+	qmodel_t *model = cl.worldmodel;
+	vec3_t    mins, maxs, ext;
+	qboolean  have_bounds = false;
+	double    start_time;
+	int       dims[3], texels, painted = 0, painted_zero = 0;
+
+	Mem_Free (rt_cluster_volume.cells);
+	memset (&rt_cluster_volume, 0, sizeof (rt_cluster_volume));
+
+	if (!CVAR_TO_BOOL (rt_particle_volume) || !model || !model->leafs || model->numleafs < 2 ||
+	    !rt_worldclusters.leaf_cluster)
+		return;
+
+	for (int i = 1; i < model->numleafs; i++)
+	{
+		const mleaf_t *leaf = &model->leafs[i];
+
+		if (leaf->contents == CONTENTS_SOLID)
+			continue;
+
+		for (int a = 0; a < 3; a++)
+		{
+			if (!have_bounds || leaf->minmaxs[a] < mins[a])
+				mins[a] = leaf->minmaxs[a];
+			if (!have_bounds || leaf->minmaxs[a + 3] > maxs[a])
+				maxs[a] = leaf->minmaxs[a + 3];
+		}
+
+		have_bounds = true;
+	}
+
+	if (!have_bounds)
+	{
+		for (int a = 0; a < 3; a++)
+		{
+			mins[a] = model->mins[a];
+			maxs[a] = model->maxs[a];
+		}
+	}
+
+	texels = 1;
+	for (int a = 0; a < 3; a++)
+	{
+		ext[a] = maxs[a] - mins[a];
+		dims[a] = (int)ceil (ext[a] / RT_CLUSTER_VOLUME_CELL);
+		if (dims[a] < 1)
+			dims[a] = 1;
+		texels *= dims[a];
+	}
+
+	if (texels > RT_CLUSTER_VOLUME_MAX_TEXELS)
+	{
+		Con_DWarning ("RT: cluster volume needs %i texels, over the %i cap; the CPU resolve stays\n",
+			texels, RT_CLUSTER_VOLUME_MAX_TEXELS);
+		return;
+	}
+
+	rt_cluster_volume.cells = (uint16_t *)Mem_Alloc (sizeof (uint16_t) * texels);
+	rt_cluster_volume.cell = RT_CLUSTER_VOLUME_CELL;
+	rt_cluster_volume.generation = rt_worldclusters.generation;
+	for (int a = 0; a < 3; a++)
+	{
+		rt_cluster_volume.mins[a] = mins[a];
+		rt_cluster_volume.dims[a] = dims[a];
+	}
+
+	start_time = Sys_DoubleTime ();
+
+	for (int z = 0; z < dims[2]; z++)
+	{
+		for (int y = 0; y < dims[1]; y++)
+		{
+			for (int x = 0; x < dims[0]; x++)
+			{
+				vec3_t center;
+				int    cluster;
+
+				center[0] = mins[0] + ((float)x + 0.5f) * RT_CLUSTER_VOLUME_CELL;
+				center[1] = mins[1] + ((float)y + 0.5f) * RT_CLUSTER_VOLUME_CELL;
+				center[2] = mins[2] + ((float)z + 0.5f) * RT_CLUSTER_VOLUME_CELL;
+
+				cluster = RT_ResolvePointClusterUncached (center);
+				rt_cluster_volume.cells[(z * dims[1] + y) * dims[0] + x] = (uint16_t)cluster;
+				painted++;
+				if (!cluster)
+					painted_zero++;
+			}
+		}
+	}
+
+	Con_Printf ("RT: cluster volume %ix%ix%i, %i texels, %i zero, %.1f ms, generation %u\n",
+		dims[0], dims[1], dims[2], painted, painted_zero,
+		(Sys_DoubleTime () - start_time) * 1000.0, rt_worldclusters.generation);
+}
+
+static int RT_SampleClusterVolume (const float *p)
+{
+	int idx[3];
+
+	for (int a = 0; a < 3; a++)
+	{
+		float f = (p[a] - rt_cluster_volume.mins[a]) / rt_cluster_volume.cell;
+
+		if (!(f > 0.0f))
+			f = 0.0f;
+		else if (f >= (float)rt_cluster_volume.dims[a])
+			f = (float)rt_cluster_volume.dims[a] - 1.0f;
+
+		idx[a] = (int)f;
+	}
+
+	return rt_cluster_volume.cells[(idx[2] * rt_cluster_volume.dims[1] + idx[1]) * rt_cluster_volume.dims[0] + idx[0]];
+}
+
+int RT_ParticleClusterAt (const vec3_t p)
+{
+	if (CVAR_TO_BOOL (rt_particle_volume) && rt_cluster_volume.cells &&
+	    rt_worldclusters.model == cl.worldmodel &&
+	    rt_cluster_volume.generation == rt_worldclusters.generation)
+	{
+		const int check = (int)rt_particle_volume_check.value;
+
+		if (check > 0)
+		{
+			static atomic_uint32_t verify_counter;
+			const uint32_t         n = Atomic_IncrementUInt32 (&verify_counter);
+
+			if (n % (uint32_t)check == 0)
+			{
+				const int volume = RT_SampleClusterVolume (p);
+				const int cpu = RT_ResolvePointClusterUncached (p);
+
+				Atomic_AddUInt32 (&rt_volume_verify_samples, 1);
+
+				if (volume != cpu)
+				{
+					Atomic_AddUInt32 (&rt_volume_verify_mismatch, 1);
+
+					if (!volume && cpu)
+						Atomic_AddUInt32 (&rt_volume_verify_lost, 1);
+					else if (volume && !cpu)
+						Atomic_AddUInt32 (&rt_volume_verify_extra, 1);
+				}
+			}
+		}
+
+		return RT_SampleClusterVolume (p);
+	}
+
+	return RT_ResolvePointCluster (p);
+}
+
+void RT_ClusterVolumeVerifyStats (uint64_t *samples, uint64_t *mismatch, uint64_t *lost, uint64_t *extra)
+{
+	if (samples)
+		*samples = Atomic_LoadUInt32 (&rt_volume_verify_samples);
+	if (mismatch)
+		*mismatch = Atomic_LoadUInt32 (&rt_volume_verify_mismatch);
+	if (lost)
+		*lost = Atomic_LoadUInt32 (&rt_volume_verify_lost);
+	if (extra)
+		*extra = Atomic_LoadUInt32 (&rt_volume_verify_extra);
+}
+
+void RT_ClusterVolumeResetVerify (void)
+{
+	Atomic_StoreUInt32 (&rt_volume_verify_samples, 0);
+	Atomic_StoreUInt32 (&rt_volume_verify_mismatch, 0);
+	Atomic_StoreUInt32 (&rt_volume_verify_lost, 0);
+	Atomic_StoreUInt32 (&rt_volume_verify_extra, 0);
 }
 
 /*
@@ -6219,6 +6501,8 @@ void RT_UploadWorldLights (void)
 	// The cluster tables are what turns a leaf index into the index the renderer indexes with.
 	RT_BuildWorldClusters ();
 
+	RT_BuildClusterVolume ();
+
 	// Which of those clusters can see the sky at all: the renderer skips the sun shadow ray
 	// of the ones that cannot (Q2RTX's sky_visibility).
 	RT_BuildClusterSkyVisibility ();
@@ -6363,10 +6647,22 @@ void RT_PrintEmissiveStats (void)
 			"raise MAX_WORLDLIGHTS_COUNT or reduce emissive surfaces\n",
 			rt_wldlights_emissive_count, MAX_WORLDLIGHTS_COUNT, rt_emis_stats.static_dropped);
 
-	for (int i = 0; i < rt_emis_skip_num; i++)
-		RT_LightReportPrint ("  skipped %-16s x%-5i (%s)\n", rt_emis_skip_texture[i], rt_emis_skip_count[i], rt_emis_skip_reason[i]);
+	char skipTexture[RT_EMIS_SKIP_NAMES][32];
+	char skipReason[RT_EMIS_SKIP_NAMES][24];
+	int  skipCount[RT_EMIS_SKIP_NAMES];
+	int  skipNum;
 
-	if (rt_emis_skip_num >= RT_EMIS_SKIP_NAMES)
+	RT_EmisSkipLock ();
+	skipNum = rt_emis_skip_num;
+	memcpy (skipTexture, rt_emis_skip_texture, sizeof (skipTexture));
+	memcpy (skipReason, rt_emis_skip_reason, sizeof (skipReason));
+	memcpy (skipCount, rt_emis_skip_count, sizeof (skipCount));
+	RT_EmisSkipUnlock ();
+
+	for (int i = 0; i < skipNum; i++)
+		RT_LightReportPrint ("  skipped %-16s x%-5i (%s)\n", skipTexture[i], skipCount[i], skipReason[i]);
+
+	if (skipNum >= RT_EMIS_SKIP_NAMES)
 		RT_LightReportPrint ("  ... more rejected textures not listed\n");
 
 	for (int i = 0; i < rt_emis_watch_num; i++)

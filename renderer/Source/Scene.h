@@ -58,6 +58,9 @@ public:
     void UploadLight(uint32_t frameIndex, const QrTexturedAreaLightUploadInfo &lightInfo, uint32_t textureIndex);
     void UploadLight(uint32_t frameIndex, const QrDirectionalLightUploadInfo &lightInfo);
     void UploadLight(uint32_t frameIndex, const QrSpotLightUploadInfo &lightInfo);
+void BeginDeferredLightUploads(uint32_t slot);
+void EndDeferredLightUploads();
+void FlushDeferredLightUploads();
     bool UploadDtalGroups(uint32_t frameIndex, const QrDtalGroupUploadBatch &batch, const uint32_t *pTextureIndices);
 
     void SubmitStatic();

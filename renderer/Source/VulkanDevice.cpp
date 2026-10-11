@@ -28,6 +28,7 @@
 #include "Const.h"
 #include "Generated/ShaderCommonC.h"
 #include "RHI/NvrhiFrameSkeleton.h"
+#include "RHI/RhiAccelStructs.h"
 
 using namespace qray;
 
@@ -769,6 +770,9 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         }
     }
 
+    const std::vector<RasterizedDataCollector::ParticlePointDrawInfo> &particlePointDraws =
+        rasterizedDataCollector->GetParticlePointDrawInfos();
+
     const std::vector<RasterizedDataCollector::DrawInfo> &swapchainDraws =
         rasterizedDataCollector->GetSwapchainDrawInfos();
 
@@ -810,6 +814,10 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.smokeDrawCount = static_cast<uint32_t>(smokeDraws.size());
     sky.particleDraws = particleDraws.data();
     sky.particleDrawCount = static_cast<uint32_t>(particleDraws.size());
+    sky.particlePointDraws = particlePointDraws.data();
+    sky.particlePointDrawCount = static_cast<uint32_t>(particlePointDraws.size());
+    sky.particlePointGeometry = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        rasterizedDataCollector->GetParticlePointStagingBuffer(frameIndex)));
 
     const std::vector<ParticleProxy> &particleProxies =
         rasterizedDataCollector->GetParticleProxies();
@@ -828,6 +836,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
                    " rejBlend=" + std::to_string(stats.rejectedBlend) +
                    " rejCap=" + std::to_string(stats.rejectedCap) +
                    " rejLines=" + std::to_string(stats.rejectedLines) +
+                   (particleProxyGateOpen ? " gate=open" : " gate=closed") +
                    " proxies=" + std::to_string(particleProxies.size())).c_str());
         }
     }
@@ -1163,9 +1172,9 @@ void VulkanDevice::EndFrame(VkCommandBuffer cmd)
 
 void VulkanDevice::StartFrame(const QrStartFrameInfo *startInfo)
 {
-    statsApiCallsGeometry = 0;
-    statsApiCallsRasterized = 0;
-    statsApiCallsLights = 0;
+    statsApiCallsGeometry.store(0, std::memory_order_relaxed);
+    statsApiCallsRasterized.store(0, std::memory_order_relaxed);
+    statsApiCallsLights.store(0, std::memory_order_relaxed);
 
     if (currentFrameState.WasFrameStarted())
     {
@@ -1212,8 +1221,12 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
     {
         statsRays = rayStats->GetRays(frameIndex);
         rayStats->GetRaysPerCategory(frameIndex, statsRaysPerCategory);
+        lastReflRefrTraced = statsRaysPerCategory[RAY_STATS_CATEGORY_REFLECTION_REFRACTION] != 0;
         rayStats->Reset(frameIndex);
     }
+
+    statsRasterUploadBytes = rasterizedDataCollector->GetUploadedBytes();
+    statsRasterUploadDroppedBatches = rasterizedDataCollector->GetDroppedUploadBatches();
 
     const double dt = std::max(currentFrameTime - previousFrameTime, 0.0001);
     const float fps = static_cast<float>(1.0 / dt);
@@ -1342,7 +1355,7 @@ void VulkanDevice::GetFrameStats(uint32_t *pRays, uint32_t *pFpsX10) const
 
 void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
 {
-    static_assert(RAY_STATS_CATEGORY_COUNT == QR_RAY_STATS_CATEGORY_COUNT, "Ray stats category count mismatch");
+    static_assert(RAY_STATS_CATEGORY_COUNT == QR_RAY_STATS_CATEGORY_COUNT + 1, "Ray stats category count mismatch");
 
     if (pStats == nullptr)
     {
@@ -1352,10 +1365,11 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
     memset(pStats, 0, sizeof(QrFrameStats));
 
     pStats->raysTotal = statsRays;
-    for (uint32_t i = 0; i < RAY_STATS_CATEGORY_COUNT; i++)
+    for (uint32_t i = 0; i < QR_RAY_STATS_CATEGORY_COUNT; i++)
     {
         pStats->raysPerCategory[i] = statsRaysPerCategory[i];
     }
+    pStats->raysParticle = statsRaysPerCategory[RAY_STATS_CATEGORY_PARTICLE];
     pStats->fpsX10 = statsFpsX10;
 
     pStats->gpuTimingValid = statsGpuTimingValid ? 1 : 0;
@@ -1365,12 +1379,15 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
         pStats->gpuPassMs[i] = statsGpuPassMs[i];
     }
 
-    pStats->apiCallsGeometry = statsApiCallsGeometry;
-    pStats->apiCallsRasterized = statsApiCallsRasterized;
-    pStats->apiCallsLights = statsApiCallsLights;
+    pStats->apiCallsGeometry = statsApiCallsGeometry.load(std::memory_order_relaxed);
+    pStats->apiCallsRasterized = statsApiCallsRasterized.load(std::memory_order_relaxed);
+    pStats->apiCallsLights = statsApiCallsLights.load(std::memory_order_relaxed);
     pStats->cpuTimingValid = statsCpuTimingValid ? 1 : 0;
     pStats->renderedUiOnly = statsRenderedUiOnly ? 1 : 0;
     std::copy_n(cpuFrameProfiler.GetMilliseconds().data(), QR_CPU_PASS_COUNT, pStats->cpuPassMs);
+
+    pStats->rasterUploadBytes = statsRasterUploadBytes;
+    pStats->rasterUploadDroppedBatches = statsRasterUploadDroppedBatches;
 }
 
 void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
@@ -1401,7 +1418,8 @@ void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
 
 void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)
 {
-    statsApiCallsGeometry++;
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
+    statsApiCallsGeometry.fetch_add(1, std::memory_order_relaxed);
 
     using namespace std::string_literals;
 
@@ -1495,6 +1513,7 @@ void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)
 
 void VulkanDevice::UpdateGeometryTransform(const QrUpdateTransformInfo *updateInfo)
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     if (updateInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1505,6 +1524,7 @@ void VulkanDevice::UpdateGeometryTransform(const QrUpdateTransformInfo *updateIn
 
 void VulkanDevice::UpdateGeometryTexCoords(const QrUpdateTexCoordsInfo *updateInfo)
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     if (updateInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1516,7 +1536,8 @@ void VulkanDevice::UpdateGeometryTexCoords(const QrUpdateTexCoordsInfo *updateIn
 void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo *pUploadInfo,
                                                 const float *pViewProjection, const QrViewport *pViewport)
 {
-    statsApiCallsRasterized++;
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
+    statsApiCallsRasterized.fetch_add(1, std::memory_order_relaxed);
 
     if (pUploadInfo == nullptr)
     {
@@ -1565,8 +1586,48 @@ void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo
     }
 }
 
+QrResult VulkanDevice::UploadParticles(const QrParticleUploadInfo *pUploadInfo)
+{
+    statsApiCallsRasterized++;
+
+    if (pUploadInfo == nullptr)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
+    }
+
+    if (pUploadInfo->pPoints == nullptr || pUploadInfo->count == 0)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Particle point data / count is null");
+    }
+
+    if (!currentFrameState.WasFrameStarted())
+    {
+        if (!printedRasterUploadWithoutFrame)
+        {
+            printedRasterUploadWithoutFrame = true;
+            Print("RHI: particle points uploaded outside a frame were dropped; the renderer is not drawing (minimized?)");
+        }
+        return QR_SUCCESS;
+    }
+
+    if (!rasterizedDataCollector->AddParticles(currentFrameState.GetFrameIndex(), *pUploadInfo))
+    {
+        if (!printedParticlePointOverflow || frameId - lastParticlePointOverflowWarnFrameId >= 120u)
+        {
+            printedParticlePointOverflow = true;
+            lastParticlePointOverflowWarnFrameId = frameId;
+            Print("RHI: the particle point buffer is full; the overflowing particles are skipped this frame (raise rasterizedMaxVertexCount)");
+        }
+
+        return QR_CANT_UPLOAD_RASTERIZED_GEOMETRY;
+    }
+
+    return QR_SUCCESS;
+}
+
 void VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     if (pUploadInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1577,6 +1638,7 @@ void VulkanDevice::UploadDecal(const QrDecalUploadInfo *pUploadInfo)
 
 void VulkanDevice::UploadPortal(const QrPortalUploadInfo *pUploadInfo)
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     if (pUploadInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
@@ -1587,17 +1649,19 @@ void VulkanDevice::UploadPortal(const QrPortalUploadInfo *pUploadInfo)
 
 void VulkanDevice::SubmitStaticGeometries()
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     scene->SubmitStatic();
 }
 
 void VulkanDevice::StartNewStaticScene()
 {
+    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
     scene->StartNewStatic();
 }
 
 void VulkanDevice::UploadDirectionalLight(const QrDirectionalLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1609,7 +1673,7 @@ void VulkanDevice::UploadDirectionalLight(const QrDirectionalLightUploadInfo *pL
 
 void VulkanDevice::UploadSphericalLight(const QrSphericalLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1619,9 +1683,42 @@ void VulkanDevice::UploadSphericalLight(const QrSphericalLightUploadInfo *pLight
     scene->UploadLight(currentFrameState.GetFrameIndex(), *pLightInfo);
 }
 
+void VulkanDevice::BeginDeferredLightUploads(uint32_t slot)
+{
+    scene->BeginDeferredLightUploads(slot);
+}
+
+void VulkanDevice::EndDeferredLightUploads()
+{
+    scene->EndDeferredLightUploads();
+}
+
+void VulkanDevice::FlushDeferredLightUploads()
+{
+    scene->FlushDeferredLightUploads();
+}
+
+void VulkanDevice::SetParticleProxyGate(uint32_t gate, uint32_t glassParticles)
+{
+    const bool hasGlass = rhiAccelStructs != nullptr && rhiAccelStructs->HasGlassInstances();
+    const bool enabled = gate == 0u ? true : (gate == 2u ? false : (glassParticles != 0u && (lastReflRefrTraced || hasGlass)));
+
+    if (rasterizedDataCollector != nullptr)
+    {
+        rasterizedDataCollector->SetParticleProxyCaptureEnabled(enabled);
+    }
+
+    if (enabled != particleProxyGateOpen)
+    {
+        particleProxyGateOpen = enabled;
+        fprintf(stderr, "qray: particle proxy gate %s (refl/refr traced last frame: %s, glass instances: %s)\n",
+                enabled ? "open" : "closed", lastReflRefrTraced ? "yes" : "no", hasGlass ? "present" : "absent");
+    }
+}
+
 void VulkanDevice::UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1633,7 +1730,7 @@ void VulkanDevice::UploadSpotlight(const QrSpotLightUploadInfo *pLightInfo)
 
 void VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1645,7 +1742,7 @@ void VulkanDevice::UploadPolygonalLight(const QrPolygonalLightUploadInfo *pLight
 
 void VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *pLightInfo)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfo == nullptr)
     {
@@ -1660,7 +1757,7 @@ void VulkanDevice::UploadTexturedAreaLight(const QrTexturedAreaLightUploadInfo *
 
 void VulkanDevice::UploadTexturedAreaLights(const QrTexturedAreaLightUploadInfo *pLightInfos, uint32_t count)
 {
-    statsApiCallsLights++;
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pLightInfos == nullptr)
     {
@@ -1745,15 +1842,44 @@ void VulkanDevice::UploadDtalGroups(const QrDtalGroupUploadBatch *pUploadInfo)
 
 void VulkanDevice::UploadClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo)
 {
-    statsApiCallsLights++;
+    BeginClusterLightSources(pInfo, 1);
+    RunClusterLightSourceSlice(0, 1);
+    FinishClusterLightSources();
+    RunClusterListPublishSlice(0, 1);
+    CommitClusterListPublication();
+}
+
+void VulkanDevice::BeginClusterLightSources(const QrClusterLightSourcesUploadInfo *pInfo, uint32_t sliceCount)
+{
+    statsApiCallsLights.fetch_add(1, std::memory_order_relaxed);
 
     if (pInfo == nullptr)
     {
         throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
     }
 
-    clusterLightLists->SetSources(*worldLights, *pInfo, scene->GetLightManager().get(), userPrint.get(),
-                                  currentFrameState.GetFrameIndex());
+    clusterLightLists->BeginSources(*worldLights, *pInfo, scene->GetLightManager().get(), userPrint.get(),
+                                    currentFrameState.GetFrameIndex(), sliceCount);
+}
+
+void VulkanDevice::RunClusterLightSourceSlice(uint32_t slice, uint32_t sliceCount)
+{
+    clusterLightLists->RunTopUpSlice(slice, sliceCount);
+}
+
+void VulkanDevice::FinishClusterLightSources()
+{
+    clusterLightLists->FinishSources();
+}
+
+void VulkanDevice::RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount)
+{
+    scene->GetLightManager()->RunClusterListPublishSlice(slice, sliceCount);
+}
+
+void VulkanDevice::CommitClusterListPublication()
+{
+    scene->GetLightManager()->CommitClusterListPublication();
 }
 
 void VulkanDevice::GetClusterLightStats(QrClusterLightStats *pStats)

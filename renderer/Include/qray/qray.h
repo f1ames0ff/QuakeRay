@@ -460,6 +460,31 @@ QRAPI QrResult QRCONV qrUploadRasterizedGeometry(
     const float                             *pViewProjection,
     const QrViewport                        *pViewport);
 
+typedef struct QrParticlePoint
+{
+    float       position[3];
+    uint32_t    packedColor;
+    float       size;
+    uint32_t    cluster;
+} QrParticlePoint;
+
+typedef struct QrParticleUploadInfo
+{
+    const QrParticlePoint   *pPoints;
+    uint32_t                count;
+
+    QrMaterial              material;
+    uint32_t                pipelineState;
+    QrFloat4D               smokeLook;
+
+    QrFloat3D               viewRight;
+    QrFloat3D               viewUp;
+} QrParticleUploadInfo;
+
+QRAPI QrResult QRCONV qrUploadParticles(
+    QrInstance                              qrInstance,
+    const QrParticleUploadInfo              *pUploadInfo);
+
 typedef struct QrDecalUploadInfo
 {
     QrTransform     transform;
@@ -559,6 +584,21 @@ QRAPI QrResult QRCONV qrUploadSphericalLight(
 QRAPI QrResult QRCONV qrUploadSpotLight(
     QrInstance                          qrInstance,
     const QrSpotLightUploadInfo         *pUploadInfo);
+
+QRAPI QrResult QRCONV qrBeginDeferredLightUploads(
+    QrInstance                          qrInstance,
+    uint32_t                            slot);
+
+QRAPI QrResult QRCONV qrEndDeferredLightUploads(
+    QrInstance                          qrInstance);
+
+QRAPI QrResult QRCONV qrFlushDeferredLightUploads(
+    QrInstance                          qrInstance);
+
+QRAPI QrResult QRCONV qrSetParticleProxyGate(
+    QrInstance                          qrInstance,
+    uint32_t                            gate,
+    uint32_t                            glassParticles);
 
 QRAPI QrResult QRCONV qrUploadPolygonalLight(
     QrInstance                          qrInstance,
@@ -671,6 +711,38 @@ QRAPI QrResult QRCONV qrUploadClusterLightSources(
     QrInstance                              qrInstance,
     const QrClusterLightSourcesUploadInfo   *pUploadInfo);
 
+QRAPI QrResult QRCONV qrBeginClusterLightSources(
+    QrInstance                              qrInstance,
+    const QrClusterLightSourcesUploadInfo   *pUploadInfo,
+    uint32_t                                 sliceCount);
+
+QRAPI QrResult QRCONV qrRunClusterLightSourceSlice(
+    QrInstance                              qrInstance,
+    uint32_t                                 slice,
+    uint32_t                                 sliceCount);
+
+QRAPI QrResult QRCONV qrFinishClusterLightSources(
+    QrInstance                              qrInstance);
+
+QRAPI QrResult QRCONV qrRunClusterListPublishSlice(
+    QrInstance                              qrInstance,
+    uint32_t                                 slice,
+    uint32_t                                 sliceCount);
+
+QRAPI QrResult QRCONV qrCommitClusterListPublication(
+    QrInstance                              qrInstance);
+
+#define QR_CLUSTER_PUB_STALE_VALID       (1u << 0)
+#define QR_CLUSTER_PUB_STALE_GENERATION  (1u << 1)
+#define QR_CLUSTER_PUB_STALE_CLUSTERS    (1u << 2)
+#define QR_CLUSTER_PUB_STALE_WORDS       (1u << 3)
+#define QR_CLUSTER_PUB_STALE_TAILS       (1u << 4)
+#define QR_CLUSTER_PUB_STALE_PLACES      (1u << 5)
+#define QR_CLUSTER_PUB_STALE_ORDER       (1u << 6)
+#define QR_CLUSTER_PUB_SKIP_DEVICE       (1u << 7)
+#define QR_CLUSTER_PUB_SKIP_SLOT         (1u << 8)
+#define QR_CLUSTER_PUB_COPY              (1u << 9)
+
 typedef struct QrClusterLightStats
 {
     uint32_t clusters;
@@ -710,10 +782,14 @@ typedef struct QrClusterLightStats
 
     float    visMs;
     float    topUpMs;
+    float    markMs;
+    float    gridMs;
     float    fillMs;
     float    tailMs;
     float    publishMs;
     float    totalMs;
+
+    uint32_t publicationMask;
 } QrClusterLightStats;
 
 QRAPI QrResult QRCONV qrGetClusterLightStats(
@@ -1443,7 +1519,7 @@ QRAPI QrBool32 QRCONV qrIsRenderUpscaleTechniqueAvailable(
 QRAPI QrBool32 QRCONV qrIsSuspended(
     QrInstance                          qrInstance);
 
-#define QR_GPU_PASS_COUNT 17
+#define QR_GPU_PASS_COUNT 18
 
 #define QR_RAY_STATS_CATEGORY_COUNT 5
 
@@ -1484,9 +1560,14 @@ typedef struct QrFrameStats
     uint32_t    apiCallsGeometry;
     uint32_t    apiCallsRasterized;
     uint32_t    apiCallsLights;
+
     QrBool32    cpuTimingValid;
     QrBool32    renderedUiOnly;
     float       cpuPassMs[QR_CPU_PASS_COUNT];
+
+    uint32_t    raysParticle;
+    uint64_t    rasterUploadBytes;
+    uint32_t    rasterUploadDroppedBatches;
 } QrFrameStats;
 
 QRAPI QrResult QRCONV qrGetFrameStatsEx(

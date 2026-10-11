@@ -117,8 +117,8 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
         return v_pose1;
     }
 
-    static QrVertex* tempstorage = NULL;
-    static size_t tempstorage_numverts = 0;
+    static THREAD_LOCAL QrVertex* tempstorage = NULL;
+    static THREAD_LOCAL size_t tempstorage_numverts = 0;
     if ((size_t)hdr->numverts_vbo > tempstorage_numverts)
     {
         tempstorage_numverts = GetNextAllocStep(hdr->numverts_vbo);
