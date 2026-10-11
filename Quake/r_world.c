@@ -5579,7 +5579,6 @@ typedef struct
 	int32_t   *vis_offsets;
 	uint32_t   pvs_row_bytes;
 
-	// Only the grid publishes its own rows; the identity table leaves the map's visdata in place.
 	uint8_t *vis_data;
 	int      vis_data_size;
 
@@ -5647,7 +5646,7 @@ int RT_MapWorldCluster (int leaf_index)
 	if (rt_worldclusters.model != cl.worldmodel || !rt_worldclusters.leaf_cluster)
 		RT_BuildWorldClusters ();
 
-	if (leaf_index <= 0 || leaf_index >= rt_worldclusters.num_leafs)
+	if (leaf_index <= 0 || leaf_index > rt_worldclusters.num_leafs)
 		return 0;
 
 	return rt_worldclusters.leaf_cluster[leaf_index];
@@ -5863,8 +5862,9 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 	const int num_leafs = model->numleafs;
 	// Cluster i is leaf i, and cluster 0 is reserved for the solid leaf and geometry that has no
 	// leaf of its own, so the table holds one cluster per leaf.
-	const int num_clusters = num_leafs;
+	const int num_clusters = num_leafs + 1;
 	const int row_bytes = (num_leafs + 31) / 8;
+	const qboolean have_edge_leaf = (model->numleafs_lump > num_leafs);
 
 	rt_worldclusters.num_leafs = num_leafs;
 	rt_worldclusters.leaf_cluster = (int32_t *)Mem_Alloc (sizeof (int32_t) * num_clusters);
@@ -5881,8 +5881,44 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 	rt_worldclusters.cluster_flags[0] = QR_WORLD_CLUSTER_SOLID_BIT;
 	rt_worldclusters.vis_offsets[0] = -1;
 
-	for (int i = 1; i < num_leafs; i++)
+	if (!have_edge_leaf)
 	{
+		rt_worldclusters.leaf_cluster[num_leafs] = 0;
+		VectorCopy (model->mins, rt_worldclusters.cluster_mins[num_leafs].data);
+		VectorCopy (model->maxs, rt_worldclusters.cluster_maxs[num_leafs].data);
+		rt_worldclusters.cluster_flags[num_leafs] = QR_WORLD_CLUSTER_SOLID_BIT;
+		rt_worldclusters.vis_offsets[num_leafs] = -1;
+	}
+
+	if (model->visdata == NULL)
+	{
+		rt_worldclusters.vis_data = (uint8_t *)Mem_Alloc (sizeof (uint8_t) * row_bytes);
+		memset (rt_worldclusters.vis_data, 0xFF, row_bytes);
+		rt_worldclusters.vis_data_size = row_bytes;
+
+		for (int i = 1; i < num_clusters; i++)
+		{
+			if (i == num_leafs && !have_edge_leaf)
+				continue;
+
+			rt_worldclusters.vis_offsets[i] = 0;
+		}
+	}
+	else
+	{
+		const int copy_bytes = model->visdatasize + row_bytes;
+
+		rt_worldclusters.vis_data = (uint8_t *)Mem_Alloc (sizeof (uint8_t) * copy_bytes);
+		memcpy (rt_worldclusters.vis_data, model->visdata, model->visdatasize);
+		memset (rt_worldclusters.vis_data + model->visdatasize, 0xFF, row_bytes);
+		rt_worldclusters.vis_data_size = copy_bytes;
+	}
+
+	for (int i = 1; i <= num_leafs; i++)
+	{
+		if (i == num_leafs && !have_edge_leaf)
+			continue;
+
 		const mleaf_t *leaf = &model->leafs[i];
 		int32_t        offset = -1;
 
@@ -5893,13 +5929,11 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 			((leaf->contents == CONTENTS_SOLID) ? QR_WORLD_CLUSTER_SOLID_BIT : 0) |
 			(RT_IsLiquidContents (leaf->contents) ? QR_WORLD_CLUSTER_LIQUID_BIT : 0);
 
-		if (leaf->compressed_vis)
-		{
-			offset = (int32_t)(leaf->compressed_vis - model->visdata);
+		if (model->visdata == NULL)
+			continue;
 
-			if ((int)offset + row_bytes > rt_worldclusters.vis_data_size)
-				rt_worldclusters.vis_data_size = (int)offset + row_bytes;
-		}
+		if (leaf->compressed_vis)
+			offset = (int32_t)(leaf->compressed_vis - model->visdata);
 
 		rt_worldclusters.vis_offsets[i] = offset;
 	}
@@ -5935,6 +5969,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 	const int num_clusters = num_cells + 1;
 	const int cluster_row_bytes = (num_clusters + 7) / 8;
 	const int leaf_row_bytes = (num_leafs + 31) / 8;
+	const int last_leaf = (model->numleafs_lump > num_leafs) ? num_leafs : (num_leafs - 1);
 
 	int     *cell_counts = (int *)Mem_Alloc (sizeof (int) * num_cells);
 	int     *cell_start = (int *)Mem_Alloc (sizeof (int) * (num_cells + 1));
@@ -5978,7 +6013,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 	rt_worldclusters.vis_offsets[0] = -1;
 
-	for (int i = 1; i < num_leafs; i++)
+	for (int i = 1; i <= last_leaf; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
 		float          center[3];
@@ -6019,7 +6054,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 	cell_start[num_cells] = running;
 
-	for (int i = 1; i < num_leafs; i++)
+	for (int i = 1; i <= last_leaf; i++)
 	{
 		int cell;
 
@@ -6046,7 +6081,14 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 			const uint8_t *compressed = model->leafs[members[m]].compressed_vis;
 			int            offset;
 
-			if (compressed == NULL || model->visdata == NULL)
+			if (model->visdata == NULL)
+			{
+				memset (row, 0xFF, cluster_row_bytes);
+				have_row = true;
+				break;
+			}
+
+			if (compressed == NULL)
 				continue;
 
 			offset = (int)(compressed - model->visdata);
@@ -6131,7 +6173,7 @@ void RT_BuildWorldClusters (void)
 
 	/* The grid has to hold the leafs a light or a view can stand in, and the solid leafs reach
 	   all around the map, so the open ones are what its box is measured from. Leaf 0 is the solid
-	   leaf and is skipped; the real leafs are leafs[1..numleafs-1]. */
+	   leaf and is skipped. */
 	for (int i = 1; i < model->numleafs; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
@@ -6661,8 +6703,6 @@ void RT_UploadWorldLights (void)
 		}
 	}
 
-	// The grid carries its own rows; the identity table leaves the map's visdata in place, and
-	// RT_BuildWorldClusters measured the span the renderer walks in it.
 	const uint8_t *pvis_data = model->visdata;
 	uint32_t       vis_data_size = (uint32_t)rt_worldclusters.vis_data_size;
 
@@ -6685,6 +6725,7 @@ void RT_UploadWorldLights (void)
 		.pvsRowBytes     = rt_worldclusters.pvs_row_bytes,
 		.pVisOffsets     = rt_worldclusters.vis_offsets,
 		.pClusterSkyVisibility = rt_worldclusters.sky_vis,
+		.clusterGeneration = rt_worldclusters.generation,
 	};
 
 	QrResult r = qrUploadWorldLights (vulkan_globals.instance, &info);

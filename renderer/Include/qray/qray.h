@@ -876,6 +876,8 @@ typedef struct QrWorldLightsUploadInfo
     const int32_t *pVisOffsets;
 
     const uint8_t *pClusterSkyVisibility;
+
+    uint32_t clusterGeneration;
 } QrWorldLightsUploadInfo;
 
 QRAPI QrResult QRCONV qrUploadWorldLights(

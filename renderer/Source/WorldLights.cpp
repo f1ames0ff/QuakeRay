@@ -53,6 +53,7 @@ void WorldLights::Upload(const QrWorldLightsUploadInfo &uploadInfo, UserPrint *p
     CopyTable(uploadInfo.pVisData, uploadInfo.visDataSize, visData, "World lights: no PVS data");
 
     pvsRowBytes = uploadInfo.pvsRowBytes;
+    generation = uploadInfo.clusterGeneration;
 
     /* The sky visibility is sized by the cluster count, so it is copied by hand rather than
        through CopyTable, and a missing table is not an error: the light manager keeps every

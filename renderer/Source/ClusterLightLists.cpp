@@ -101,6 +101,7 @@ uint64_t MapSignature(const WorldLights &worldLights)
         worldLights.GetFaceCount(),
         worldLights.GetVisDataSize(),
         worldLights.GetPvsRowBytes(),
+        worldLights.GetGeneration(),
     };
 
     uint64_t signature = 0xcbf29ce484222325ull;
