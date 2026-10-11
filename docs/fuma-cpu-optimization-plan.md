@@ -376,3 +376,15 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   23.28/18.50 stay inside the run noise because both saves are GPU-bound on the means. The flag stays
   off by default pending the mover visual acceptance; the perf profiles keep pinning it off until that
   decision is recorded.
+- 2026-10-11 (CPU pass, chain elision): steady frames now chain only the consumed texture subset -
+  the textures whose chains the sky, water and animated passes read - while a static-submit or
+  world-light-recollect window, or `r_showtris`, keeps the full set. The mode (`rt_chain_full_frame`)
+  is decided and written pre-submit next to `rt_mark_parallel_frame`, and the consumed set is built
+  once in `RT_MarkParallel_NewMap` (`rt_chain_textures`/`rt_chain_consumed`). Verified on one binary:
+  the mover-demo A/B shows `chain` avg 1.30 -> 0.02 ms (max 8.26 -> 4.13, the maxima being the
+  static-window frames), and the acceptance captures show chain 6.25 -> 0.10 ms (swamp) and 6.25-like
+  -> 0.05 (Fuma) summed, with frame 18.12 / 15.40 against the pre-change 18.72-19.27 / 15.44 (the wall
+  change sits inside the run spread; the win is the removed per-frame work and the chain barrier
+  edge). An 18-pair phase-matched demo screenshot comparison (best diffs 0.0005-0.006) shows
+  identical drawn output, and the sky/ents/mark slots are unchanged. `rs_brushpolys` counts the
+  consumed subset in steady frames (documented in PERFORMANCE.md).

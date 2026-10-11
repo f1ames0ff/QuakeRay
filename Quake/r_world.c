@@ -59,6 +59,7 @@ extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_brush_persistent;
 
 extern atomic_uint32_t rt_require_static_submit;
+extern atomic_uint32_t rt_require_world_light_recollect;
 extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
 extern cvar_t rt_dtal_debug;
@@ -393,6 +394,10 @@ static uint32_t *rt_mark_tex_surfaces;
 static uint32_t *rt_mark_tex_polys;
 static qboolean  rt_mark_parallel_built;
 static qboolean  rt_mark_parallel_frame;
+static uint32_t *rt_chain_textures;
+static uint8_t  *rt_chain_consumed;
+static uint32_t  rt_chain_count;
+static qboolean  rt_chain_full_frame = true;
 
 static int RT_MarkChunkFirstLeaf (int chunk, int numleafs)
 {
@@ -407,10 +412,18 @@ static void RT_MarkParallel_Free (void)
 		Mem_Free (rt_mark_tex_surfaces);
 	if (rt_mark_tex_polys)
 		Mem_Free (rt_mark_tex_polys);
+	if (rt_chain_textures)
+		Mem_Free (rt_chain_textures);
+	if (rt_chain_consumed)
+		Mem_Free (rt_chain_consumed);
 
 	rt_mark_tex_start = NULL;
 	rt_mark_tex_surfaces = NULL;
 	rt_mark_tex_polys = NULL;
+	rt_chain_textures = NULL;
+	rt_chain_consumed = NULL;
+	rt_chain_count = 0;
+	rt_chain_full_frame = true;
 	rt_mark_numtextures = 0;
 	rt_mark_parallel_built = false;
 }
@@ -424,6 +437,41 @@ void RT_MarkParallel_NewMap (void)
 
 	if (numtextures <= 0 || numsurfaces <= 0)
 		return;
+
+	rt_chain_consumed = Mem_Alloc ((size_t)numtextures);
+	memset (rt_chain_consumed, 0, (size_t)numtextures);
+
+	for (int i = 0; i < numsurfaces; ++i)
+	{
+		const msurface_t *surf = &cl.worldmodel->surfaces[i];
+		const texture_t  *tex;
+
+		if (!(surf->flags & (SURF_DRAWSKY | SURF_DRAWTURB)))
+			continue;
+
+		tex = surf->texinfo->texture;
+		if (tex && tex->rt_chain_index >= 0 && tex->rt_chain_index < numtextures)
+			rt_chain_consumed[tex->rt_chain_index] = 1;
+	}
+
+	for (int t = 0; t < numtextures; ++t)
+		if (cl.worldmodel->textures[t] && cl.worldmodel->textures[t]->anim_total)
+			rt_chain_consumed[t] = 1;
+
+	rt_chain_count = 0;
+	for (int t = 0; t < numtextures; ++t)
+		if (rt_chain_consumed[t])
+			++rt_chain_count;
+
+	if (rt_chain_count > 0)
+	{
+		rt_chain_textures = Mem_Alloc ((size_t)rt_chain_count * sizeof (uint32_t));
+
+		uint32_t cursor = 0;
+		for (int t = 0; t < numtextures; ++t)
+			if (rt_chain_consumed[t])
+				rt_chain_textures[cursor++] = (uint32_t)t;
+	}
 
 	rt_mark_numtextures = (uint32_t)numtextures;
 	rt_mark_tex_start = Mem_Alloc ((size_t)(numtextures + 1) * sizeof (uint32_t));
@@ -557,13 +605,16 @@ static void R_ChainTextureSlice (int index, void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
-	if (index < (int)rt_mark_numtextures)
+	const uint32_t chain_count = rt_chain_full_frame ? rt_mark_numtextures : rt_chain_count;
+
+	if ((uint32_t)index < chain_count)
 	{
+		const uint32_t  tindex = rt_chain_full_frame ? (uint32_t)index : rt_chain_textures[index];
 		const qboolean  use_pvs = CVAR_TO_BOOL (rt_enable_pvs);
 		const byte     *surfvis = (const byte *)cl.worldmodel->surfvis;
 		uint32_t        polys = 0;
 
-		for (uint32_t k = rt_mark_tex_start[index]; k < rt_mark_tex_start[index + 1]; ++k)
+		for (uint32_t k = rt_mark_tex_start[tindex]; k < rt_mark_tex_start[tindex + 1]; ++k)
 		{
 			const unsigned int surf_index = rt_mark_tex_surfaces[k];
 			const byte         bit = (byte)(1u << (surf_index & 7));
@@ -578,7 +629,7 @@ static void R_ChainTextureSlice (int index, void *unused)
 			R_ChainSurface (&cl.worldmodel->surfaces[surf_index], chain_world);
 		}
 
-		rt_mark_tex_polys[index] = polys;
+		rt_mark_tex_polys[tindex] = polys;
 	}
 
 	RT_Prof_End (RT_PROF_CHAIN, prof_start);
@@ -588,8 +639,16 @@ static void R_ChainTexturesFinish (void *unused)
 {
 	uint32_t polys = 0;
 
-	for (uint32_t t = 0; t < rt_mark_numtextures; ++t)
-		polys += rt_mark_tex_polys[t];
+	if (rt_chain_full_frame)
+	{
+		for (uint32_t t = 0; t < rt_mark_numtextures; ++t)
+			polys += rt_mark_tex_polys[t];
+	}
+	else
+	{
+		for (uint32_t i = 0; i < rt_chain_count; ++i)
+			polys += rt_mark_tex_polys[rt_chain_textures[i]];
+	}
 
 	Atomic_AddUInt32 (&rs_brushpolys, polys);
 }
@@ -635,6 +694,14 @@ static void R_MarkVisSurfaces (void *unused)
                 if (CVAR_TO_BOOL (rt_enable_pvs))
                 {		    
                     if (R_BackFaceCull (surf))
+                        continue;
+                }
+
+                if (!rt_chain_full_frame)
+                {
+                    const int tindex = surf->texinfo->texture ? surf->texinfo->texture->rt_chain_index : -1;
+
+                    if (tindex < 0 || tindex >= (int)rt_mark_numtextures || !rt_chain_consumed[tindex])
                         continue;
                 }
 
@@ -698,6 +765,10 @@ R_MarkSurfaces -- johnfitz -- mark surfaces based on PVS and rebuild texture cha
 */
 void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_t *store_efrags, task_handle_t *cull_surfaces, task_handle_t *chain_surfaces)
 {
+	const qboolean full_chains = rt_chain_consumed == NULL || Atomic_LoadUInt32 (&rt_require_static_submit) != 0 ||
+	                             Atomic_LoadUInt32 (&rt_require_world_light_recollect) != 0 || r_showtris.value != 0.0f;
+	rt_chain_full_frame = full_chains;
+
 	if (use_tasks)
 	{
 		const qboolean parallel_mark = (r_parallelmark.value != 0.0f) && rt_mark_parallel_built;
@@ -715,7 +786,8 @@ void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_
 			*store_efrags = Task_AllocateAndAssignFunc (R_StoreMarkedEFrags, NULL, 0);
 			Task_AddDependency (mark_leafs, *store_efrags);
 
-			task_handle_t chain_slices = Task_AllocateAndAssignIndexedFunc (R_ChainTextureSlice, rt_mark_numtextures, NULL, 0);
+			const uint32_t chain_slice_count = full_chains ? rt_mark_numtextures : rt_chain_count;
+			task_handle_t chain_slices = Task_AllocateAndAssignIndexedFunc (R_ChainTextureSlice, chain_slice_count > 0 ? chain_slice_count : 1, NULL, 0);
 			Task_AddDependency (mark_leafs, chain_slices);
 
 			*chain_surfaces = Task_AllocateAndAssignFunc (R_ChainTexturesFinish, NULL, 0);

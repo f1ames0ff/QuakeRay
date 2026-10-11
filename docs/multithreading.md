@@ -67,7 +67,7 @@ pumping extra audio updates.
 | --- | --- |
 | `prev_end_rendering_task -> begin_rendering_task` | a new frame never reuses swapchain/frame state before the previous frame's end task finished |
 | `begin_rendering_task -> setup_frame_task`, `setup_frame_task -> before_mark`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: fence/acquire, scene collector reset, light-registry frame preparation) happens before the setup pass, and the setup pass before everything that reads it |
-| `before_mark -> prepare_mark -> mark_leafs`, then `mark_leafs -> store_efrags` and `mark_leafs -> chain_slices -> chain_finish` (`r_parallelmark 1`; `cull_surfaces` aliases `mark_leafs`; with `r_parallelmark 0` one scalar `mark_surfaces` serves all three handles) | the efrag store and the visibility chain run after the view is set up; `R_MarkSurfaces` decides `rt_mark_parallel_frame` and writes it **before** `Task_Submit(prepare_mark)`, `prepare_mark` clears the world texture chains and (on the parallel path) zeroes the shared `surfvis` bitmask, `mark_leafs` fills `surfvis` with atomic word runs, `chain_slices` rebuilds the world texture chains per texture in parallel and `chain_finish` publishes the chain totals |
+| `before_mark -> prepare_mark -> mark_leafs`, then `mark_leafs -> store_efrags` and `mark_leafs -> chain_slices -> chain_finish` (`r_parallelmark 1`; `cull_surfaces` aliases `mark_leafs`; with `r_parallelmark 0` one scalar `mark_surfaces` serves all three handles) | the efrag store and the visibility chain run after the view is set up; `R_MarkSurfaces` decides `rt_mark_parallel_frame` and `rt_chain_full_frame` and writes both **before** `Task_Submit(prepare_mark)`, `prepare_mark` clears the world texture chains and (on the parallel path) zeroes the shared `surfvis` bitmask, `mark_leafs` fills `surfvis` with atomic word runs, `chain_slices` rebuilds the world texture chains per texture in parallel (in steady frames only for the consumed set - the textures whose chains the sky, water and animated passes read; the full set when a static-submit or world-light-recollect window is open or `r_showtris` is on) and `chain_finish` publishes the chain totals |
 | `store_efrags -> draw_sky_and_water_task`, `chain_surfaces -> draw_sky_and_water_task`, `store_efrags -> draw_entities_task`, `-> draw_alpha_entities_task` | the sky/water producer runs after the efrag pass and the rebuilt chains; the entity drawers run after the efrag pass added the entities to the frame's visible list |
 | `chain_surfaces -> draw_world_task` | the visibility output feeds the world task |
 | `draw_world_task -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task`, `-> draw_particles_task` | every dynamic uploader runs after the world task closed the static-geometry window (see below) |
@@ -151,7 +151,11 @@ The graph currently relies on:
 - the parallel-mark state in [r_world.c](../Quake/r_world.c#L390): `rt_mark_parallel_frame` is
   decided and written by the submitting thread before `Task_Submit(prepare_mark)`, which is what
   lets `R_MarkSurfacesPrepare` read it without a lock; `rt_mark_parallel_built` is fixed at map
-  load. `surfvis` (allocated with the world model in [r_brush.c](../Quake/r_brush.c#L765), freed in
+  load. The same pre-submit path writes `rt_chain_full_frame` (full chains when
+  `rt_require_static_submit` or `rt_require_world_light_recollect` is set, or `r_showtris` is on),
+  and the `rt_chain_textures`/`rt_chain_consumed` arrays built in `RT_MarkParallel_NewMap` hold the
+  steady-state consumed-texture subset the chain slices walk. `surfvis` (allocated with the world
+  model in [r_brush.c](../Quake/r_brush.c#L765), freed in
   `Mod_FreeModelMemory`) is written by atomic word runs in the chunked marker and read by the chain
   slices after the `mark_leafs` edge; the `rt_mark_tex_start`/`rt_mark_tex_surfaces`/
   `rt_mark_tex_polys` arrays are built once in `RT_MarkParallel_NewMap`, each chain slice writes its
