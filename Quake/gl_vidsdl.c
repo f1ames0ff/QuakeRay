@@ -442,6 +442,22 @@ static int      rt_bench_host_frames;
 static double   rt_bench_frame_slots[RT_PROF_COUNT];
 static atomic_uint32_t rt_prof_spin;
 
+#define RT_PROF_TLS_SLOTS 64
+
+typedef struct
+{
+	double   sum[RT_PROF_COUNT];
+	double   max[RT_PROF_COUNT];
+	double   bench_sum[RT_PROF_COUNT];
+	double   bench_max[RT_PROF_COUNT];
+	uint32_t calls[RT_PROF_COUNT];
+	qboolean used;
+} rt_prof_tls_t;
+
+static rt_prof_tls_t rt_prof_tls_pool[RT_PROF_TLS_SLOTS];
+static uint32_t     rt_prof_tls_used;
+static THREAD_LOCAL rt_prof_tls_t *rt_prof_tls;
+
 static void RT_Prof_Lock (void)
 {
 	uint32_t expected = 0;
@@ -452,6 +468,73 @@ static void RT_Prof_Lock (void)
 static void RT_Prof_Unlock (void)
 {
 	Atomic_StoreUInt32 (&rt_prof_spin, 0);
+}
+
+static rt_prof_tls_t *RT_Prof_TLSGet (void)
+{
+	if (rt_prof_tls != NULL)
+		return rt_prof_tls;
+
+	RT_Prof_Lock ();
+	if (rt_prof_tls_used < RT_PROF_TLS_SLOTS)
+	{
+		rt_prof_tls = &rt_prof_tls_pool[rt_prof_tls_used++];
+		rt_prof_tls->used = true;
+	}
+	RT_Prof_Unlock ();
+
+	return rt_prof_tls;
+}
+
+static void RT_Prof_TLSAccumulate (int slot, double ms)
+{
+	rt_prof_tls_t *tls = RT_Prof_TLSGet ();
+
+	if (tls == NULL)
+		return;
+
+	tls->sum[slot] += ms;
+	if (ms > tls->max[slot])
+		tls->max[slot] = ms;
+	++tls->calls[slot];
+
+	if (rt_bench_active)
+	{
+		tls->bench_sum[slot] += ms;
+		if (ms > tls->bench_max[slot])
+			tls->bench_max[slot] = ms;
+	}
+}
+
+static void RT_Prof_MergeTLS (void)
+{
+	for (uint32_t i = 0; i < rt_prof_tls_used; ++i)
+	{
+		rt_prof_tls_t *tls = &rt_prof_tls_pool[i];
+
+		if (!tls->used)
+			continue;
+
+		for (int slot = 0; slot < RT_PROF_COUNT; ++slot)
+		{
+			if (tls->calls[slot] == 0)
+				continue;
+
+			rt_prof_sum[slot] += tls->sum[slot];
+			if (tls->max[slot] > rt_prof_ms[slot])
+				rt_prof_ms[slot] = tls->max[slot];
+			rt_bench_sum[slot] += tls->bench_sum[slot];
+			rt_bench_frame_slots[slot] += tls->bench_sum[slot];
+			if (tls->bench_max[slot] > rt_bench_max[slot])
+				rt_bench_max[slot] = tls->bench_max[slot];
+
+			tls->sum[slot] = 0.0;
+			tls->max[slot] = 0.0;
+			tls->bench_sum[slot] = 0.0;
+			tls->bench_max[slot] = 0.0;
+			tls->calls[slot] = 0;
+		}
+	}
 }
 
 static void RT_Prof_WindowLock (void *unused)
@@ -473,6 +556,17 @@ static void RT_Prof_ClearWindow (void *unused)
 	memset (rt_renderer_cpu_sum, 0, sizeof (rt_renderer_cpu_sum));
 	memset (rt_renderer_cpu_max, 0, sizeof (rt_renderer_cpu_max));
 	rt_renderer_cpu_samples = 0;
+
+	for (uint32_t i = 0; i < rt_prof_tls_used; ++i)
+	{
+		rt_prof_tls_t *tls = &rt_prof_tls_pool[i];
+
+		memset (tls->sum, 0, sizeof (tls->sum));
+		memset (tls->max, 0, sizeof (tls->max));
+		memset (tls->bench_sum, 0, sizeof (tls->bench_sum));
+		memset (tls->bench_max, 0, sizeof (tls->bench_max));
+		memset (tls->calls, 0, sizeof (tls->calls));
+	}
 }
 
 static void RT_Prof_ResetWindow (void *unused)
@@ -608,23 +702,12 @@ void RT_Prof_End (int slot, double start)
 	if (start == 0.0)
 		return;
 
-	const double ms = (Sys_DoubleTime () - start) * 1000.0;
-	RT_Prof_Lock ();
-	RT_Bench_Slot (slot, ms);
-	rt_prof_sum[slot] += ms;
-	if (ms > rt_prof_ms[slot])
-		rt_prof_ms[slot] = ms;
-	RT_Prof_Unlock ();
+	RT_Prof_TLSAccumulate (slot, (Sys_DoubleTime () - start) * 1000.0);
 }
 
 void RT_Prof_Sample (int slot, double ms)
 {
-	RT_Prof_Lock ();
-	RT_Bench_Slot (slot, ms);
-	rt_prof_sum[slot] += ms;
-	if (ms > rt_prof_ms[slot])
-		rt_prof_ms[slot] = ms;
-	RT_Prof_Unlock ();
+	RT_Prof_TLSAccumulate (slot, ms);
 }
 
 void RT_Prof_FrameStart (void)
@@ -657,12 +740,20 @@ void RT_Prof_FrameEnd (void)
 	const uint32_t end_serial = rt_end_task_current_serial;
 	rt_end_task_current_serial = 0;
 
-	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
+	const double frame_ms = (Sys_DoubleTime () - rt_prof_frame_start) * 1000.0;
 
 	double cacheTotalMs;
 	RT_PointClusterCacheStats (NULL, NULL, &cacheTotalMs, NULL);
 	RT_Prof_Sample (RT_PROF_PARTICLES_RESOLVE, cacheTotalMs - rt_particle_cache_total_ms_last);
 	rt_particle_cache_total_ms_last = cacheTotalMs;
+
+	RT_Prof_Lock ();
+	RT_Prof_MergeTLS ();
+	RT_Bench_Slot (RT_PROF_FRAME, frame_ms);
+	rt_prof_sum[RT_PROF_FRAME] += frame_ms;
+	if (frame_ms > rt_prof_ms[RT_PROF_FRAME])
+		rt_prof_ms[RT_PROF_FRAME] = frame_ms;
+	RT_Prof_Unlock ();
 
 	RT_ProfWindowEndFrame (&rt_prof_window, &rt_prof_window_sync);
 	if (rt_bench_active)

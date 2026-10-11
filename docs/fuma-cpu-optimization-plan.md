@@ -181,3 +181,12 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
 - 2026-10-11: actualized after the PR #41 merge; three active targets (entities, sky, indirect);
   upstream-comparison conclusions and corrections folded in; scene hashes, harness recipes and the water/
   validation quirks recorded; ownership note updated (particles and clusters have landed).
+- 2026-10-11 (P1 slice 1): the profiler now accumulates slots in thread-local buffers and merges once per
+  frame, removing the per-invocation `RT_Prof_End` spinlock from the hot paths while preserving the
+  published per-invocation maxima and the bench sums (build and CTest green; a matched Fuma run shows
+  comparable magnitudes, with run-to-run variance dominating). The wait/hold upload probe, per-producer
+  subphase timers and counters, and the observer call/wait publication are the next slices.
+- 2026-10-11 (operator A/B): `rt_brush_persistent 0/1` on Fuma, two repeats per arm: `calls_geometry`
+  1283 to 726, `brush upload` worker sum 26.0 to 6.7 ms, `brush pack` 7.2 to 13-15 ms (covered surfaces
+  still pack), `ents` sum 47-50 to 37-39, frame/wait slightly down; FPS 40.4/44.6 (0) vs 44.8/48.5 (1).
+  The pack rise makes skip-covered-packing (C2) the companion candidate.
