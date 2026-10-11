@@ -116,7 +116,10 @@ qboolean r_drawworld_cheatsafe, r_fullbright_cheatsafe, r_lightmap_cheatsafe; //
 
 cvar_t r_gpulightmapupdate = {"r_gpulightmapupdate", "0", CVAR_NONE};
 
-cvar_t r_tasks = {"r_tasks", "0", CVAR_NONE};
+// Deprecated: r_tasks 0 is the legacy serial path. The engine is preparing to move to
+// multithreading; the r_tasks command and the fork it selects will be removed and the engine
+// will always run multithreaded.
+cvar_t r_tasks = {"r_tasks", "1", CVAR_NONE};
 
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;

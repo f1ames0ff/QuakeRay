@@ -20,7 +20,9 @@ before adapting a producer; document any unavailable tooling or incomplete cover
   authorize concurrent NVRHI command-list recording or bypass existing renderer locks.
 - The render frame runs as a dependency graph of tasks when `r_tasks 1` — the switch is the
   `use_tasks` condition in [SCR_UpdateScreen](../Quake/gl_screen.c#L1162); `r_tasks` defaults to
-  `0` until the broader stability validation flips it.
+  `1` (owner decision, 2026-10-11). `r_tasks 0` is the deprecated legacy serial path: the cvar
+  and the fork it selects are slated for removal, after which the engine always runs
+  multithreaded.
 - In the serial path (`r_tasks 0`) the same producers run in fixed order on the main thread; the
   frame contents and the NVRHI ray-tracing renderer are identical in both modes.
 - `cpu.wait_ms` is nonzero only in task mode: it is the main thread's join wait, not idle time.
@@ -195,8 +197,9 @@ serial branch is not ready for integration.
    cold enable/disable and early/late completion. Test the production kernel/state machine with
    real payloads and controlled interleavings, not only predicates or manually simulated counters.
 8. **Hand off evidence.** Record source/binary identity, MCP inspections and gaps, the ownership map,
-   new DAG edges, tests and capture identities. Separate observed gains from hypotheses; state
-   untested cases and keep `r_tasks` opt-in until broader validation explicitly authorizes a change.
+   new DAG edges, tests and capture identities. Separate observed gains from hypotheses and state
+   untested cases. `r_tasks` now defaults to `1` (owner decision, 2026-10-11); the serial path is
+   deprecated and kept only for bisection until the cvar and its fork are removed.
 
 ## Measurement
 
@@ -245,7 +248,9 @@ its completion evidence exists; do not mark it done merely because tasks were ad
 
 ## Known limitations
 
-- `r_tasks` stays off by default until the stability matrix and the default-flip review complete.
+- `r_tasks` defaults to `1` (flipped 2026-10-11); `r_tasks 0` is the deprecated serial path kept
+  for bisection until the cvar, its fork and the serial compositions are removed and the engine
+  always runs multithreaded.
 - `r_gpulightmapupdate`'s GPU lightmap path is an unimplemented stub (assert); task mode does not
   require it.
 - No worker watchdog: a hung task hangs the join loop; the join reports the `wait` slot so a
