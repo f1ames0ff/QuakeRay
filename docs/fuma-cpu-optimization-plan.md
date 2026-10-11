@@ -198,3 +198,23 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   ~2 uploads per frame (batching works), world sky ~95 calls per frame. Conclusion: the shared geometry
   mutex is a first-order contention point; the brush/alias upload slots are dominated by wait, not by
   copying. Next: sky/alpha/brush subphase and count timers; then the `r_tasks 1/0` comparison.
+- 2026-10-11 (`r_tasks 1` vs `r_tasks 0`, same binary, two runs per map): worker sums in task mode are
+  3-12x inflated by the lock convoy. Fuma: ents 46.2 (task) versus 13.5 (serial), brush upload 26.6 versus
+  2.2, alias upload 12.2 versus 1.9, sky 4.1 versus 0.9, alpha 5.1 versus 0.8; FPS 48.9 versus 22.6.
+  Swamp: ents 90.5 versus 23.9, brush upload 38.7 versus 3.1, alias upload 38.9 versus 4.8, sky 8.3
+  versus 1.3, alpha 8.0 versus 1.3; FPS 28.5 versus 23.4. Conclusions: the red sky/alpha rows are almost
+  pure queue artifacts (real uncontended work <= 1.3 ms on both maps); the real remaining work sits in
+  `ents` (13.5 / 23.9 ms serial); task mode buys 2.1x on Fuma but only 1.2x on swamp because the convoy
+  eats the parallelism.
+- 2026-10-11 (operator A/B): `rt_brush_persistent 0/1` on swamp, two repeats per arm: `calls_geometry`
+  2333 to 1224 (-47.5%), `brush upload` sum 35.9 to 3.8 (-89%), `ents` sum 85.1 to 55.3 (-35%), frame
+  slot 23.4 to 17.8 ms (-24%); FPS controls 29.3/29.7 versus 34.6/27.8 (noisy, frame slot is the solid
+  signal). Sky/alpha sums and `brush pack` change little. Companion candidates: skip-covered-packing (C2)
+  and world-sky batching.
+- 2026-10-11 (world-sky batching): world sky polygons now append to the per-context batch buffers and
+  upload once per chain (`Sky_FlushPolyBatch` in `gl_sky.c`, mirroring the water batch scheme; per-surface
+  `rs_brushpasses` kept, entity sky stays dynamic). Swamp: sky lane calls 257 to 7 per frame, `sky` slot
+  8.34/15.02 to 1.54/2.30 ms, frame slot 24.57 to 22.87; Fuma: calls 95 to 7, `sky` slot 4.09/6.68 to
+  1.69/3.01. No renderer errors in either run; build and CTest green. The swamp FPS reading (24.3 versus
+  28.5) contradicted the improved frame slot and is treated as run noise to be re-checked in the next
+  matched capture.
