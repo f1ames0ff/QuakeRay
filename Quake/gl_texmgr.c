@@ -1335,6 +1335,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtemisglowfrac = 1.0f;
 		glt->rtemissiveglowtex = false;
 		glt->rtemissivetex = false;
+		glt->rtlightgain = 1.0f;
 		glt->rtislight = false;
 		glt->rtlightstyles = true;
 		glt->rthasmaterial = false;
@@ -1715,6 +1716,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	}
 
 	glt->rtislight = mat->is_light;
+	glt->rtlightgain = lightBright;
 
 	extern cvar_t rt_mat_debug;
 	if (CVAR_TO_BOOL (rt_mat_debug))
@@ -2030,6 +2032,7 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtemisglowfrac = 1.0f;
 	glt->rtemissiveglowtex = false;
 	glt->rtemissivetex = false;
+	glt->rtlightgain = 1.0f;
 	glt->rtislight = false;
 	glt->rtlightstyles = true;
 	glt->rthasmaterial = false;

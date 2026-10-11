@@ -2158,7 +2158,10 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	if (!light_tex || !light_tex->rtislight)
 		return false;
 
-	if (!light_tex->rthaslightcolor && VectorLength (light_tex->rtemissivecolor) <= 0.0005f)
+	if (!(light_tex->rtlightgain > 0.0f))
+		return false;
+
+	if (!light_tex->rthaslightcolor && light_tex->rtemissivemeanbase <= 0.0f)
 		return false;
 
 	/* Whether a mask is there is a question about the material, not about how bright the mask is:

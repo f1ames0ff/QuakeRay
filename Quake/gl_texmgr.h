@@ -104,6 +104,7 @@ typedef struct gltexture_s
 	float                rtemissiveglow;
 	float                rtemisglowfrac;
 	qboolean             rtemissiveglowtex;
+	float                rtlightgain;
 	qboolean             rtislight;
 	qboolean             rtlightstyles;
 	qboolean             rthasmaterial;

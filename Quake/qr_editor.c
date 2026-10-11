@@ -5874,9 +5874,14 @@ static void QRE_Cancel (void)
 // of renderer/Source/materials.yaml, which documents the accepted keys.
 static const char *qre_yaml_header =
 	"# Global material definitions for the qray ray-traced renderer.\n"
-	"# `is_light: false` marks a *static* surface (textures/*) whose luma\n"
-	"# texture should generate emissive triangle lights. Dynamic surfaces\n"
-	"# (progs/* models and sprites) are gated separately by the engine.\n"
+	"# `is_light: true` marks a surface whose luma casts light: a static surface\n"
+	"# (textures/*) or an alias model builds an emissive area light from its own\n"
+	"# geometry (a model also needs an emissive mask), and a sprite lights from\n"
+	"# `light_color` as a point light.\n"
+	"#\n"
+	"# `light_brightness` (default 1) scales the cast light: any positive value\n"
+	"# keeps it, 0 turns the cast light off while the glow stays, and\n"
+	"# `is_light: false` leaves the surface glowing without lighting the scene.\n"
 	"#\n"
 	"# Emissive masks can be authored two ways:\n"
 	"#   * `texture_emissive: textures/foo_luma.png` -- a hand-painted mask file:\n"

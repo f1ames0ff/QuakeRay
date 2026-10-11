@@ -4,6 +4,10 @@
 # geometry (a model also needs an emissive mask), and a sprite lights from
 # `light_color` as a point light.
 #
+# `light_brightness` (default 1) scales the cast light: any positive value
+# keeps it, 0 turns the cast light off while the glow stays, and
+# `is_light: false` leaves the surface glowing without lighting the scene.
+#
 # Emissive masks can be authored two ways:
 #   * `texture_emissive: textures/foo_luma.png` -- a hand-painted mask file:
 #     its pixels' luminance is the emission. Most precise; keeps the mask
