@@ -298,6 +298,16 @@ void qray::GeomInfoManager::PrepareForFrame(uint32_t frameIndex)
 
     dynamicIDToGeomFrameInfo[frameIndex].clear();
     ResetOnlyDynamic(frameIndex);
+
+    for (const auto &entry : movableIDToGeomFrameInfo)
+    {
+        const GeomFrameInfo &info = entry.second;
+
+        ShGeometryInstance *dst = GetGeomInfoAddressByGlobalIndex(frameIndex, info.prevGlobalGeomIndex);
+
+        memcpy(dst->prevModel, info.model, sizeof(float) * 16);
+        MarkMovableHasPrevInfo(*dst);
+    }
 }
 
 uint32_t qray::GeomInfoManager::WriteGeomInfo(
