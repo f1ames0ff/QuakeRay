@@ -263,3 +263,13 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   classification, the adopted verifier corrections, the decisive cross-conclusion and the proposed
   P0/P1 → measurements → Tier A/B/C order) is recorded in `docs/upstream-porting-synthesis.md`
   together with the P0/P1 status this branch has already delivered.
+- 2026-10-11 (Tier A upstream port, first slice): H02 was refuted as a live mechanism (the SIMD
+  mark/cull/chain block is compiled out; PDB and frame-CSV evidence) and moved to a separate
+  parallel-marking design task. Landed: H15 task-queue sizing invariant with the upstream-style
+  asserts; H14 removal of the dead `update_warp` writes, the `lightmaps[].modified` field and the
+  no-op `R_UpdateLightmaps` task with its DAG edges; H01 per-call batching of `rs_brushpolys`;
+  H12 devstats gate; H04 prefix clearing in `RT_TRACK_BeginFrame`; H09 entity-side per-model sky
+  classification (`used_specials`); H13 emissive-diagnostics ownership fix (atomic counters; the gate
+  dropped as unmeasurable); the Debug duplicate-find consolidation in the renderer. The runner now
+  validates the clouds quality per profile and the bench settings record `r_tasks`/`r_parallelmark`.
+  Build and CTest green.

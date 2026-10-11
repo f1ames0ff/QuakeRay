@@ -103,6 +103,26 @@ so every unfocused capture shows `interval = profiled frame + about 16-18 ms`. C
 timers stay valid; the acceptance ledger must run with a focused window (the runner's focus gate exists
 for exactly this reason).
 
+### Tier A port (first slice, landed 2026-10-11)
+
+- H02 was refuted as a live mechanism during verification: the SIMD mark/cull/chain block is compiled
+  out in `r_world.c` (preprocessor, PDB and frame-CSV evidence), so it moved to a separate
+  parallel-marking design task instead of the port list.
+- Landed: H15 (task-queue sizing invariant `MAX_EXECUTABLE_TASKS = MAX_PENDING_TASKS * MAX_WORKERS`
+  with the upstream-style compile-time asserts); H14 (removed the dead `update_warp` writes and the
+  `lightmaps[].modified` field, the no-op `R_UpdateLightmaps` task and its DAG edges;
+  `r_gpulightmapupdate` stays for the lightstyle interpolation); H01 (per-call batching of
+  `rs_brushpolys` in `R_DrawBrushModel`; the sky sites are single-task and were left unchanged);
+  H12 (devstats edict-walk gate); H04 (prefix clearing in `RT_TRACK_BeginFrame` instead of the 28 KB
+  memset); H09 entity side (load-time per-model `used_specials` for the sky-entity skip; the world
+  texture list/`texofs` was left out); H13 ownership fix (the emissive diagnostic counters are atomic;
+  the gating itself was dropped as unmeasurable and UX-changing); the Debug duplicate-find
+  consolidation in `Scene::Upload`/`GeomInfoManager` (the release-path duplicate policy in
+  `VulkanDevice` is untouched).
+- Infrastructure: `run_stress.ps1` validates the clouds quality per profile (so a `-RtProfile medium`
+  run no longer throws), and the bench settings block records `r_tasks` and `r_parallelmark`.
+- Build and CTest green; the per-item acceptance captures belong to the following measurement stage.
+
 ## References
 
 - `docs/fuma-cpu-optimization-plan.md` — the live plan and changelog with all measured numbers.

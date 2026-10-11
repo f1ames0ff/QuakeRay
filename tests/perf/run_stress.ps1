@@ -346,8 +346,9 @@ echo QR_LOADED0_$id
                     $newBlock = $blocks[$oldBench..($blocks.Count - 1)]
                     $newBlock | Set-Content (Join-Path $output "$label.bench.log")
                     $settings = $newBlock | Where-Object { $_ -match '^settings ' } | Select-Object -Last 1
+                    $expectedClouds = if ($RtProfile -eq 'medium') { 1 } else { 0 }
                     if ($settings -notmatch 'vid=3840x2160@' -or $settings -notmatch "rt_upscale_fsr31=$fsr(?: |$)" -or
-                        $settings -notmatch 'rt_sky_clouds_quality=0(?: |$)') { throw 'Effective resolution/FSR/cloud quality does not match the requested target.' }
+                        $settings -notmatch "rt_sky_clouds_quality=$expectedClouds(?: |$)") { throw 'Effective resolution/FSR/cloud quality does not match the requested target.' }
                     if (($newBlock -join "`n") -notmatch "demo=maps/$($expectedMaps[$save])\.bsp") { throw 'Unexpected map in benchmark capture' }
                     $sampleRecord = $newBlock | Where-Object { $_ -match '^frame_samples file=' } | Select-Object -Last 1
                     if ($sampleRecord -notmatch '^frame_samples file=(\S+) samples=(\d+) dropped=0$') {

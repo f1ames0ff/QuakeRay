@@ -200,7 +200,7 @@ All files are under `renderer/Source/`; shader sources are [HLSL and shared `.hl
 | Path | Verified behavior | Source |
 | --- | --- | --- |
 | World PVS choice | `rt_enable_pvs` defaults to `0`; disabled selects `Mod_NoVisPVS`, not a blanket removal of all culling. | [Default](Quake/gl_vidsdl.c#L116), [`R_MarkSurfacesPrepare`](Quake/r_world.c#L796). |
-| SIMD world marking | With `use_simd`, leaf-frustum and surface-backface rejection still run. `r_simd` defaults to `1` and is selected on SSE/SSE2-capable hardware. | [`R_MarkVisSurfacesSIMD`](Quake/r_world.c#L508), [default](Quake/gl_rmain.c#L78), [selection](Quake/gl_rmisc.c#L121). |
+| SIMD world marking | `r_world.c` undefines `USE_SIMD`/`USE_SSE2` at file scope, so the SIMD mark/cull block is not compiled and the scalar path runs under both task modes; `r_simd` only gates the brush lightmap SIMD helpers. | [`#undef`](Quake/r_world.c#L308), [`R_MarkVisSurfaces`](Quake/r_world.c#L755). |
 | Scalar world / brush / alias | Scalar world leaf/backface tests and brush/alias model frustum rejection are conditional on `rt_enable_pvs`. | [`R_MarkVisSurfaces`](Quake/r_world.c#L734), [brush model guard](Quake/r_brush.c#L305), [enhanced model](Quake/r_alias.c#L547), [classic model](Quake/r_alias.c#L845). |
 | Entity list versus RT visibility | Dynamic entities enter `cl_visedicts` during relinking; static efrags are collected during world marking. RT filter masks are then assigned independently of that list's name. | [Relink append](Quake/cl_main.c#L1013), [`R_StoreEfrags`](Quake/gl_refrag.c#L202), [`ASManager::GetTLASInstanceForFilter`](renderer/Source/ASManager.cpp#L481). |
 
