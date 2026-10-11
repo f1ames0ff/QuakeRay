@@ -53,6 +53,7 @@ Red overlay rows on **Terror Fuma and Foggy Bogbottom**:
 
 - T-E: `ents` up to ~12 ms per frame.
 - T-S: `sky` up to ~12 ms per frame.
+- T-A: `alpha` up to ~9-12 ms per frame.
 - T-I: `indirect` (GPU pass) red on both maps.
 
 Every target needs the same first answer: is the time compute, shared-state wait, or observer cost, and which
@@ -72,6 +73,15 @@ sub-work dominates. No optimization starts from an unmatched screenshot.
   - swamp: `frame` slot 24.46/29.16 ms, `qrDrawFrame` 8.36/9.44 ms, `particles resolve` 2.70/3.18 ms; gate
     open with a small proxy set.
   - 4K demo `ad_particle_heavy`: 38.9 fps; `particles upload` 0.32 ms; `fte convert` 1.08 ms.
+- Matched producer captures on 2026-10-11 (`97ec30cf`, audit fixture, 1280x720 window, profile panel on).
+  Report maxima (`stats` dump samples of the per-invocation window maxima) versus bench `cpu.slot` sums
+  (summed worker time across the frame's tasks - mechanism evidence, not a frame cost):
+  - Fuma (`qr_fuma_start`): report maxima `ents 14.14`, `sky 8.31`, `alpha 8.49`, `particles 1.56`;
+    bench worker sums `ents brush 36.63`, `ents alias 13.79`, `ents sprite 1.95`; `frame` slot 14.20/18.82;
+    36.8 fps. Brush-model entities dominate the summed entity worker time on this map.
+  - Swamp (`qr_ad_swamp`): report maxima `ents 19.06`, `sky 11.33`, `alpha 9.26`; `frame` slot 24.46/29.16.
+  - GPU at this window: `gpu.indirect` at or below 0.92 ms on both maps. GPU rows depend on the internal
+    render resolution, so T-I evidence must be captured at 3840x2160 before it is used.
 - Observer note (verified): `RT_Prof_End` takes a global spinlock per entity/pose/surface; with the profile
   panel on - the acceptance situation - it inflates the **outer** slots (`ents`, `sky`, `alpha`) and the
   frame wall, while each slot's own sample is taken before the lock. Current maxima mix work, wait and
