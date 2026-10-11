@@ -11,7 +11,9 @@
 # Emissive masks can be authored two ways:
 #   * `texture_emissive: textures/foo_luma.png` -- a hand-painted mask file:
 #     its pixels' luminance is the emission. Most precise; keeps the mask
-#     independent of the diffuse art.
+#     independent of the diffuse art. `emissive_factor` (default 1) scales
+#     this mask's emission and `emissive_blend` composites its glow (see
+#     below).
 #   * `color_emissive:` -- no mask file: each block below matches its own
 #     color against the base texture, so only pixels close to it glow. A block
 #     carries its color and its own tone controls:
