@@ -33,6 +33,7 @@ struct Surface
     float   emission;
     float3  toViewerDir;
     uint    cluster;
+    uint    geometryInstanceFlags;
 };
 
 
@@ -66,6 +67,7 @@ Surface fetchGbufferSurface(const int2 pix)
     s.normal                    = texelFetchNormal(pix);
     s.toViewerDir               = -framebufViewDirection.Load(pix).xyz;
     s.cluster                   = framebufQ2Cluster_Sampled.Load(int3(pix, 0)).r;
+    s.geometryInstanceFlags     = 0u;
     return s;
 }
 
@@ -88,6 +90,8 @@ Surface fetchGbufferSurface_NoAlbedoViewDir_Prev(const int2 pix)
     s.normalGeom                = texelFetchNormalGeometry_Prev(pix);
     s.normal                    = texelFetchNormal_Prev(pix);
     s.toViewerDir               = (float3)0.0;
+    s.cluster                   = 0u;
+    s.geometryInstanceFlags     = 0u;
     return s;
 }
 #endif
@@ -109,6 +113,7 @@ Surface hitInfoToSurface_Indirect(const ShHitInfo h, const float3 rayDirection)
     s.emission = h.emission;
     s.toViewerDir = -rayDirection;
     s.cluster = h.cluster;
+    s.geometryInstanceFlags = h.geometryInstanceFlags;
     return s;
 }
 

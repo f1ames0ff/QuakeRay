@@ -168,6 +168,7 @@ typedef struct cb_context_s
 	uint32_t *batch_indices;
 	int       batch_verts_count;
 	int       batch_indices_count;
+	qboolean  batch_emission_ray_only;
 } cb_context_t;
 
 typedef struct

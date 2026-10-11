@@ -113,6 +113,11 @@ namespace
             flags |= GEOM_INST_FLAG_GLASS_CUTOUT;
         }
 
+        if( info.flags & QR_GEOMETRY_UPLOAD_EMISSION_RAY_ONLY_BIT )
+        {
+            flags |= GEOM_INST_FLAG_EMISSION_RAY_ONLY;
+        }
+
         if( geomFlags & VertexCollectorFilterTypeFlagBits::CF_STATIC_MOVABLE )
         {
             flags |= GEOM_INST_FLAG_IS_MOVABLE;
