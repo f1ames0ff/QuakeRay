@@ -174,6 +174,10 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_particle_resolve_cache, "1") \
 	CVAR_DEF_T (rt_cluster_sampling, "0") \
 	CVAR_DEF_T (rt_cluster_assert, "0") \
+	/* A map's vis closes a liquid surface, and the cluster light lists are built from it, so a \
+	   light is also handed the clusters on the other side of the water that its reach covers. 0 \
+	   restores the historical lists, in which a lamp above a pool lit nothing under it. */ \
+	CVAR_DEF_T (rt_cluster_water_cross, "1") \
 	CVAR_DEF_T (rt_truelight, "1") \
 	CVAR_DEF_T (rt_materials_only, "0") \
 	CVAR_DEF_T (rt_light_styles, "1") \
@@ -1096,6 +1100,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");
 	RT_Bench_Setting (f, "rt_cluster_sampling");
+	RT_Bench_Setting (f, "rt_cluster_water_cross");
 	RT_Bench_Setting (f, "rt_cluster_dlights");
 	RT_Bench_Setting (f, "rt_light_reach_static");
 	RT_Bench_Setting (f, "rt_light_reach_dynamic");
