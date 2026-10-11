@@ -1191,6 +1191,9 @@ void Sky_ProcessEntities (cb_context_t *cbx, float color[3])
 		if (e->model->type != mod_brush)
 			continue;
 
+		if (!(e->model->used_specials & SURF_DRAWSKY))
+			continue;
+
 		if (CVAR_TO_BOOL (rt_enable_pvs))
 		{
 		    if (R_CullModelForEntity (e))

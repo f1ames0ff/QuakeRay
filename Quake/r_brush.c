@@ -26,7 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "gl_heap.h"
 
-extern cvar_t gl_fullbrights, r_drawflat, r_gpulightmapupdate; // johnfitz
+extern cvar_t gl_fullbrights, r_drawflat; // johnfitz
 extern cvar_t rt_brush_metal, rt_brush_rough, rt_enable_pvs;
 
 int gl_lightmap_format;
@@ -347,6 +347,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
 
 	const double prof_chain = RT_Prof_Begin ();
 	R_ClearTextureChains (clmodel, chain);
+	uint32_t brushpolys = 0;
 	for (i = 0; i < clmodel->nummodelsurfaces; i++, psurf++)
 	{
 		if (CVAR_TO_BOOL (rt_enable_pvs))
@@ -358,8 +359,11 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
 		}
 
         R_ChainSurface (psurf, chain);
-        Atomic_IncrementUInt32 (&rs_brushpolys);
+        brushpolys++;
     }
+
+	if (brushpolys != 0)
+		Atomic_AddUInt32 (&rs_brushpolys, brushpolys);
 
 	RT_Prof_End (RT_PROF_BRUSH_CHAIN, prof_chain);
 	R_DrawTextureChains (cbx, clmodel, e, chain, entuniqueid);
@@ -720,7 +724,6 @@ void GL_BuildLightmaps (void)
 	for (i = 0; i < lightmap_count; i++)
 	{
 		lm = &lightmaps[i];
-		Atomic_StoreUInt32(&lm->modified, false);
 		lm->rectchange.l = LMBLOCK_WIDTH;
 		lm->rectchange.t = LMBLOCK_HEIGHT;
 		lm->rectchange.w = 0;
@@ -1133,18 +1136,4 @@ void R_BuildLightMap (msurface_t *surf, byte *dest, int stride)
 	}
 
 	R_StoreLightmap (dest, smax, tmax, stride);
-}
-
-/*
-=============
-R_UpdateLightmaps
-=============
-*/
-void R_UpdateLightmaps (void *unused)
-{
-	if (CVAR_TO_BOOL (r_gpulightmapupdate))
-	{
-		assert (false);
-		Con_Warning ("Updating lightmaps using GPU is not implemented");
-	}
 }

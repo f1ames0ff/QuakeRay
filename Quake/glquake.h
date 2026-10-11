@@ -302,7 +302,6 @@ struct lightmap_s
 {
 	gltexture_t    *texture;
 	glpoly_t       *polys;
-	atomic_uint32_t modified;
 	glRect_t        rectchange;
 
 	// the lightmap texture data needs to be kept in
@@ -334,7 +333,6 @@ void  Fog_Init (void);
 void R_NewGame (void);
 
 void R_AnimateLight (void);
-void R_UpdateLightmaps (void *unused);
 void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_t *store_efrags, task_handle_t *cull_surfaces, task_handle_t *chain_surfaces);
 qboolean R_CullBox (vec3_t emins, vec3_t emaxs);
 void     R_StoreEfrags (efrag_t **ppefrag);

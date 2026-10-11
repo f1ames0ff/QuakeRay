@@ -100,7 +100,6 @@ typedef struct texture_s
 	struct gltexture_s *gltexture;                // johnfitz -- pointer to gltexture
 	struct gltexture_s *fullbright;               // johnfitz -- fullbright mask texture; RT -- not used
 	struct gltexture_s *warpimage;                // johnfitz -- for water animation
-	atomic_uint32_t     update_warp;              // johnfitz -- update warp this frame
 	struct msurface_s  *texturechains[chain_num]; // for texture chains
 	uint32_t            chain_size[chain_num];    // for texture chains
 	int                 anim_total;               // total tenths in sequence ( 0 = no)
@@ -549,6 +548,7 @@ typedef struct qmodel_s
 	// brush model
 	//
 	int firstmodelsurface, nummodelsurfaces;
+	int used_specials;
 
 	int       numsubmodels;
 	dmodel_t *submodels;

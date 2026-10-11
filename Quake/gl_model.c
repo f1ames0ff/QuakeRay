@@ -728,7 +728,6 @@ static void Mod_LoadTextureTask (int i, load_texture_task_args_t *args)
 		q_snprintf (texturename, sizeof (texturename), "%s_warp", texturename);
 		q_snprintf (rtname, sizeof (rtname), "%s_warp", rtname);
 		tx->warpimage = TexMgr_LoadImage (rtname, mod, texturename, WARPIMAGESIZE, WARPIMAGESIZE, SRC_RGBA, NULL, "", 0, TEXPREF_NOPICMIP | TEXPREF_WARPIMAGE);
-		Atomic_StoreUInt32 (&tx->update_warp, true);
 	}
 	else // regular texture
 	{
@@ -863,7 +862,6 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 			pixels = q_max (0, (mod_base + l->fileofs + l->filelen) - pixels_p);
 		}
 
-		Atomic_StoreUInt32 (&tx->update_warp, false); // johnfitz
 		tx->warpimage = NULL;                         // johnfitz
 		tx->shift = 0;                                // Q64 only
 
@@ -2596,6 +2594,11 @@ static void Mod_SetupSubmodels (qmodel_t *mod)
 		// johnfitz
 
 		mod->numleafs = bm->visleafs;
+
+		mod->used_specials = 0;
+		for (int k = 0; k < mod->nummodelsurfaces; ++k)
+			mod->used_specials |= (SURF_DRAWSKY | SURF_DRAWTURB | SURF_DRAWWATER | SURF_DRAWLAVA | SURF_DRAWSLIME | SURF_DRAWTELE) &
+			                      mod->surfaces[mod->firstmodelsurface + k].flags;
 
 		if (i < mod->numsubmodels - 1)
 		{ // duplicate the basic information

@@ -132,21 +132,21 @@ static float    rt_wldlights_style_accepted_reach = 0.0f;
 
 typedef struct rt_emis_stats_s
 {
-	int surfaces;
-	int no_material;
-	int no_color;
-	int style_off;
-	int degenerate;
-	int frame_off;
-	int static_queued;
-	int static_dropped;
-	int projector;
-	int dynamic;
-	int glow_lights;
-	int glow_faces;
-	int glow_fallback;
-	int too_small;
-	int poly_capped;
+	atomic_uint32_t surfaces;
+	atomic_uint32_t no_material;
+	atomic_uint32_t no_color;
+	atomic_uint32_t style_off;
+	atomic_uint32_t degenerate;
+	atomic_uint32_t frame_off;
+	atomic_uint32_t static_queued;
+	atomic_uint32_t static_dropped;
+	atomic_uint32_t projector;
+	atomic_uint32_t dynamic;
+	atomic_uint32_t glow_lights;
+	atomic_uint32_t glow_faces;
+	atomic_uint32_t glow_fallback;
+	atomic_uint32_t too_small;
+	atomic_uint32_t poly_capped;
 	atomic_uint32_t buried;
 	atomic_uint32_t model_lights;
 	atomic_uint32_t model_capped;
@@ -585,8 +585,6 @@ void R_MarkVisSurfacesSIMD (qboolean *use_tasks)
 			surf = &cl.worldmodel->surfaces[i + j];
 			++brushpolys;
 			R_ChainSurface (surf, chain_world);
-			if (surf->texinfo->texture->warpimage)
-				Atomic_StoreUInt32 (&surf->texinfo->texture->update_warp, true);
 		}
 	}
 
@@ -672,12 +670,6 @@ void R_BackfaceCullSurfacesSIMD (int index, void *unused)
 	while (mask_iter != 0)
 	{
 		const int i = FindFirstBitNonZero (mask_iter);
-
-		surf = &cl.worldmodel->surfaces[(index * 32) + i];
-		if (surf->lightmaptexturenum >= 0)
-			Atomic_StoreUInt32 (&lightmaps[surf->lightmaptexturenum].modified, true);
-		if (surf->texinfo->texture->warpimage)
-			Atomic_StoreUInt32 (&surf->texinfo->texture->update_warp, true);
 
 		const uint32_t bit_mask = ~(1u << i);
 		mask_iter &= bit_mask;
@@ -793,8 +785,6 @@ void R_MarkVisSurfaces (qboolean *use_tasks)
 
                 ++brushpolys;
                 R_ChainSurface (surf, chain_world);
-                if (surf->texinfo->texture->warpimage)
-                    Atomic_StoreUInt32 (&surf->texinfo->texture->update_warp, true);
             }
         }
 
@@ -1919,7 +1909,7 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 {
 	if (!is_static_geom)
 	{
-		rt_emis_stats.dynamic++;
+		Atomic_AddUInt32 (&rt_emis_stats.dynamic, 1);
 
 		QrTexturedAreaLightUploadInfo li = *light_info;
 		RT_ScaleEmissiveLightColor (li.color.data);
@@ -2016,13 +2006,13 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 			/* The stored light does not move, so the center it is placed by is derived here and
 			   not once per frame. */
 			RT_TexturedAreaLightCenter (&rt_wldlights_emissive[index], rt_wldlights_emissive_center[index]);
-			rt_emis_stats.static_queued++;
+			Atomic_AddUInt32 (&rt_emis_stats.static_queued, 1);
 			if (light_info->projector > 0.5f)
-				rt_emis_stats.projector++;
+				Atomic_AddUInt32 (&rt_emis_stats.projector, 1);
 		}
 		else
 		{
-			rt_emis_stats.static_dropped++;
+			Atomic_AddUInt32 (&rt_emis_stats.static_dropped, 1);
 
 			static qboolean warned = false;
 			if (!warned)
@@ -3081,7 +3071,7 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const QrFloa
 
 			if (area < min_area)
 			{
-				rt_emis_stats.too_small++;
+				Atomic_AddUInt32 (&rt_emis_stats.too_small, 1);
 				*size_refused = true;
 				continue;
 			}
@@ -3096,7 +3086,7 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const QrFloa
 			li.meanEmiss = params->glow_mean;
 
 			if (!RT_EmissivePolyAdd (out, &num, out_max, &li))
-				rt_emis_stats.poly_capped++;
+				Atomic_AddUInt32 (&rt_emis_stats.poly_capped, 1);
 		}
 	}
 
@@ -3750,7 +3740,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	gltexture_t *light_tex = s->light_tex ? s->light_tex : s->diffuse_tex;
 	rt_emis_watch_t *watch = RT_EmisWatch (light_tex ? light_tex->name : NULL);
 
-	rt_emis_stats.surfaces++;
+	Atomic_AddUInt32 (&rt_emis_stats.surfaces, 1);
 	if (watch)
 		watch->surfaces++;
 
@@ -3760,14 +3750,14 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	{
 		if (!light_tex || !light_tex->rtislight)
 		{
-			rt_emis_stats.no_material++;
+			Atomic_AddUInt32 (&rt_emis_stats.no_material, 1);
 			if (watch)
 				watch->no_material++;
 			RT_EmisNoteSkip (light_tex ? light_tex->name : "<no texture>", "no light material");
 		}
 		else
 		{
-			rt_emis_stats.no_color++;
+			Atomic_AddUInt32 (&rt_emis_stats.no_color, 1);
 			if (watch)
 				watch->no_color++;
 			RT_EmisNoteSkip (light_tex->name, "no light color");
@@ -3810,7 +3800,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		}
 		else
 		{
-			rt_emis_stats.frame_off++;
+			Atomic_AddUInt32 (&rt_emis_stats.frame_off, 1);
 			if (watch)
 				watch->frame_off++;
 			RT_EmisNoteSkip (frame_tex->name, "dark animation frame");
@@ -3824,7 +3814,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	if (vertcount < 3)
 	{
-		rt_emis_stats.degenerate++;
+		Atomic_AddUInt32 (&rt_emis_stats.degenerate, 1);
 		if (watch)
 			watch->degenerate++;
 		return;
@@ -3883,7 +3873,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	if (num_tris == 0 || total_area <= 0.0f)
 	{
-		rt_emis_stats.degenerate++;
+		Atomic_AddUInt32 (&rt_emis_stats.degenerate, 1);
 		if (watch)
 			watch->degenerate++;
 		return;
@@ -3918,7 +3908,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 			if (style_scale <= 0.0f)
 			{
-				rt_emis_stats.style_off++;
+				Atomic_AddUInt32 (&rt_emis_stats.style_off, 1);
 				if (watch)
 					watch->style_off++;
 				RT_EmisNoteSkip (light_tex->name, "lightstyle off");
@@ -4089,7 +4079,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				if (area < min_area)
 				{
-					rt_emis_stats.too_small++;
+					Atomic_AddUInt32 (&rt_emis_stats.too_small, 1);
 					refused++;
 					continue;
 				}
@@ -4184,8 +4174,8 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 			if (num > 0)
 			{
-				rt_emis_stats.glow_faces++;
-				rt_emis_stats.glow_lights += num;
+				Atomic_AddUInt32 (&rt_emis_stats.glow_faces, 1);
+				Atomic_AddUInt32 (&rt_emis_stats.glow_lights, num);
 
 				for (int i = 0; i < num; i++)
 					RT_UploadEmissiveLight (&polys[i], is_static_geom, s->surf, light_tex);
@@ -4199,12 +4189,12 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 		/* No glow polygon survived (too many repetitions, or a surface that has no uv fit):
 		   the whole surface keeps the light instead. */
-		rt_emis_stats.glow_fallback++;
+		Atomic_AddUInt32 (&rt_emis_stats.glow_fallback, 1);
 	}
 
 	if (light_info.area < min_area)
 	{
-		rt_emis_stats.too_small++;
+		Atomic_AddUInt32 (&rt_emis_stats.too_small, 1);
 		return;
 	}
 
@@ -4604,14 +4594,6 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 
 		for (s = t->texturechains[chain]; s; s = s->texturechains[chain])
 		{
-			if (model != cl.worldmodel)
-			{
-				// ericw -- this is copied from R_DrawSequentialPoly.
-				// If the poly is not part of the world we have to
-				// set this flag
-				Atomic_StoreUInt32 (&t->update_warp, true); // FIXME: one frame too late!
-			}
-
 			rt_uploadsurf_state_t cur_state = {
 				.entuniqueid = entuniqueid,
 				.ent = ent,
@@ -6604,17 +6586,22 @@ void RT_UploadWorldLights (void)
 void RT_PrintEmissiveStats (void)
 {
 	RT_LightReportPrint ("emissive pass: %i surfaces considered -> %i static world lights baked (whole map, %i projectors), %i entity lights uploaded (all passes)\n",
-		rt_emis_stats.surfaces, rt_emis_stats.static_queued, rt_emis_stats.projector, rt_emis_stats.dynamic);
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.surfaces), (int) Atomic_LoadUInt32 (&rt_emis_stats.static_queued),
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.projector), (int) Atomic_LoadUInt32 (&rt_emis_stats.dynamic));
 	RT_LightReportPrint ("rejected: %i no light material, %i no light color, %i lightstyle off, %i degenerate, %i of a dark animation frame\n",
-		rt_emis_stats.no_material, rt_emis_stats.no_color, rt_emis_stats.style_off, rt_emis_stats.degenerate, rt_emis_stats.frame_off);
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.no_material), (int) Atomic_LoadUInt32 (&rt_emis_stats.no_color),
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.style_off), (int) Atomic_LoadUInt32 (&rt_emis_stats.degenerate),
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.frame_off));
 
-	if (rt_emis_stats.glow_lights || rt_emis_stats.glow_fallback)
+	if (Atomic_LoadUInt32 (&rt_emis_stats.glow_lights) || Atomic_LoadUInt32 (&rt_emis_stats.glow_fallback))
 		RT_LightReportPrint ("partial-glow textures: %i faces built %i polygon lights, %i faces fell back to the whole surface\n",
-			rt_emis_stats.glow_faces, rt_emis_stats.glow_lights, rt_emis_stats.glow_fallback);
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.glow_faces), (int) Atomic_LoadUInt32 (&rt_emis_stats.glow_lights),
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.glow_fallback));
 
-	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || Atomic_LoadUInt32 (&rt_emis_stats.buried) || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
+	if (Atomic_LoadUInt32 (&rt_emis_stats.too_small) || Atomic_LoadUInt32 (&rt_emis_stats.poly_capped) || Atomic_LoadUInt32 (&rt_emis_stats.buried) || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
 		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_dtal_model_minarea, %i polygons buried under rt_dtal_clearance\n",
-			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.buried));
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.too_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.poly_capped),
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.buried));
 
 	if (Atomic_LoadUInt32 (&rt_buried_traces) || Atomic_LoadUInt32 (&rt_buried_hits) ||
 	    Atomic_LoadUInt32 (&rt_buried_model_traces) || Atomic_LoadUInt32 (&rt_buried_model_hits))
@@ -6638,10 +6625,10 @@ void RT_PrintEmissiveStats (void)
 			rt_dtal_groups_active ? "active" : (rt_dtal_groups_failed ? "failed, per-piece lights stay" : "inactive"));
 	}
 
-	if (rt_emis_stats.static_dropped || rt_wldlights_emissive_count >= MAX_WORLDLIGHTS_COUNT)
+	if (Atomic_LoadUInt32 (&rt_emis_stats.static_dropped) || rt_wldlights_emissive_count >= MAX_WORLDLIGHTS_COUNT)
 		RT_LightReportPrint ("WARNING: the static world-light list is full (%i/%i), %i dropped - "
 			"raise MAX_WORLDLIGHTS_COUNT or reduce emissive surfaces\n",
-			rt_wldlights_emissive_count, MAX_WORLDLIGHTS_COUNT, rt_emis_stats.static_dropped);
+			rt_wldlights_emissive_count, MAX_WORLDLIGHTS_COUNT, (int) Atomic_LoadUInt32 (&rt_emis_stats.static_dropped));
 
 	char skipTexture[RT_EMIS_SKIP_NAMES][32];
 	char skipReason[RT_EMIS_SKIP_NAMES][24];

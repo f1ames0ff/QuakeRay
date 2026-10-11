@@ -1409,12 +1409,6 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (begin_rendering_task, draw_particles_task);
 		Task_AddDependency (draw_particles_task, draw_done_task);
 
-		task_handle_t update_lightmaps_task = Task_AllocateAndAssignFunc (R_UpdateLightmaps, NULL, 0);
-		Task_AddDependency (cull_surfaces, update_lightmaps_task);
-		Task_AddDependency (begin_rendering_task, update_lightmaps_task);
-		Task_AddDependency (draw_world_task, update_lightmaps_task);
-		Task_AddDependency (update_lightmaps_task, draw_done_task);
-
 		Task_AddDependency (draw_world_task, draw_view_model_task);
 		Task_AddDependency (draw_sky_and_water_task, draw_view_model_task);
 		Task_AddDependency (draw_entities_task, draw_view_model_task);
@@ -1427,7 +1421,7 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (draw_world_task, draw_particles_task);
 
 		task_handle_t tasks[] = {before_mark,          store_efrags,		                         draw_world_task,     draw_sky_and_water_task,
-		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task, update_lightmaps_task,
+		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task,
 		                         cluster_prepare_task, cluster_topup_task, cluster_finish_task, cluster_publish_task, cluster_commit_task};
 		Tasks_Submit ((sizeof (tasks) / sizeof (task_handle_t)), tasks);
 		if (store_efrags != cull_surfaces)
@@ -1448,8 +1442,6 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		R_DrawParticlesTask (NULL);
 		R_DrawViewModelTask (NULL);
 		RT_ClusterLightListsUpload ();
-		if (r_gpulightmapupdate.value)
-			R_UpdateLightmaps (NULL);
 	}
 
 	// johnfitz

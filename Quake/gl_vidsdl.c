@@ -88,6 +88,7 @@ viddef_t        vid; // global video state
 modestate_t     modestate = MS_UNINIT;
 extern qboolean scr_initialized;
 extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate;
+extern cvar_t   r_tasks, r_parallelmark;
 extern cvar_t   scr_showfps, scr_fov;
 
 //====================================
@@ -1256,6 +1257,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "r_drawviewmodel");
 	RT_Bench_Setting (f, "r_enhancedmodels");
 	RT_Bench_Setting (f, "r_simd");
+	RT_Bench_Setting (f, "r_tasks");
+	RT_Bench_Setting (f, "r_parallelmark");
 	RT_Bench_Setting (f, "r_lerpmodels");
 	RT_Bench_Setting (f, "r_smoke");
 	RT_Bench_Setting (f, "rt_enable_pvs");
