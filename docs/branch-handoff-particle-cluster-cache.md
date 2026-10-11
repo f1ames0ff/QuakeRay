@@ -148,3 +148,37 @@ publication assert run alone is not parity.
   measurement artifacts, not a regression (no code change made).
 - Evidence trees from this work live under `%LOCALAPPDATA%\Temp\opencode` (`gg*`, `wg-*`, `cl-b*`,
   `fl*`/`cc*` as imported history) and in `build/Debug/ad/benchmark.log`.
+
+## 6. Remaining plan items (not delivered by this branch)
+
+From `docs/particle-plan.md`, the owner queue (2026-10-10/11) and the final-review follow-ups;
+everything not listed here is delivered by this branch or by master.
+
+- **Compact FTE transport** — the queue's next item and Stage 2's remaining half: FTE particles
+  still use the legacy 80 B `QrVertex` transport. The designed replacement is a 28 B vertex record
+  with its own upload path (no shader changes, A/B behind a planned `r_particles_fte_compact`).
+- **Distance culling** — the queue's third item; not scoped in detail yet.
+- **Stage 4b — DTAL parity (L4 hard gate)** — the smoke decoder still misreads light groups and
+  drops them; the direct-pass pattern and the `rt_dtal_groups` x `rt_cluster_sampling` parity
+  matrices are unimplemented, parked behind the radiance-cache rework (owner, 2026-10-10).
+- **Stage 4a/4c/4d backlog** — the GPU cluster volume, the L1 scale semantics on the synthetic 100k
+  scene, and the L2 per-frame ray budget/temporal reuse (needs stable particle IDs and a
+  GPU-visible light revision).
+- **Radiance-cache rework (future cycle)** — particles sample a world-space cached lighting instead
+  of per-particle evaluation (froxel/SHaRC direction; FSR Radiance Cache is unavailable on Vulkan);
+  it inherits the cross-check findings (direction-ignoring weight, `dw=0` single candidate,
+  missing alpha any-hit).
+- **Stage 6 named future work** — particles in the TLAS, froxel ambient, culling,
+  sorting/transparency, soft particles, FTE convergence, smoke on the volume; coordinate with
+  `feature/voxel-smoke`.
+- **Stage 5 (GPU simulation, classic)** — optional until measured; not started by design.
+- **Cluster-volume accuracy** — the owner visual-tolerance decision for the 64 u volume (mismatch
+  ~43 %, 6 % "lost" on `start`) is open; the one-line zero-fallback (volume 0 -> exact resolve)
+  and the bake-time fill for zero cells are ready candidates.
+- **Water/gate follow-ups** — the 2-3 frame entry window on a newly visible water surface, and the
+  pending water x `rt_glass_denoise` check (the water mask reads as pane-like).
+- **Out-of-scope remainder (owner, 2026-10-11)** — stand-ins for the engine smoke, the per-channel
+  FTE blends and the line sparks; plus the mirror water/glass mask writer.
+- **Small items** — per-frame p50/p95 instrumentation (the dump still holds window maxima only); a
+  strict fail-on-missing-columns mode for `perf/compare_benchmark.ps1` (p95 support exists); the M5
+  scene/transition matrix that continues against the default-on task path.
