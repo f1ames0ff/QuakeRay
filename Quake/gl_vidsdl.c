@@ -4189,6 +4189,8 @@ void VID_Init (void)
 		CVAR_DEF_LIST (CVAR_DEF_T)
 #undef CVAR_DEF_T
 
+		rt_enable_pvs.flags |= CVAR_ROM;
+
 		Cvar_RegisterVariable (&rt_upload_trace);
 
 		/* Read-only: the incremental composition is the only mode the renderer selects. The
