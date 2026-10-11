@@ -5584,6 +5584,8 @@ typedef struct
 
 	// Bit c of byte c/8 is 1 when a sun ray from cluster c can still reach the sky.
 	uint8_t *sky_vis;
+	int      sky_tracing;
+	int      sky_holding;
 
 	float grid_mins[3];
 	float grid_cell_size[3];
@@ -5600,6 +5602,8 @@ typedef struct
 	float     mins[3];
 	float     cell;
 	int       dims[3];
+	int       texels;
+	int       empty;
 	uint32_t  generation;
 } rt_cluster_volume_t;
 
@@ -6323,6 +6327,9 @@ static void RT_BuildClusterVolume (void)
 		}
 	}
 
+	rt_cluster_volume.texels = painted;
+	rt_cluster_volume.empty = painted_zero;
+
 	Con_Printf ("RT: cluster volume %ix%ix%i, %i texels, %i zero, %.1f ms, generation %u\n",
 		dims[0], dims[1], dims[2], painted, painted_zero,
 		(Sys_DoubleTime () - start_time) * 1000.0, rt_worldclusters.generation);
@@ -6565,24 +6572,48 @@ static void RT_BuildClusterSkyVisibility (void)
 	if (everything)
 		memset (rt_worldclusters.sky_vis, 0xFF, num_bytes);
 
-	if (CVAR_TO_BOOL (rt_worldlights_stats))
+	rt_worldclusters.sky_tracing = 0;
+	rt_worldclusters.sky_holding = 0;
+
+	for (int i = 0; i < num_clusters; i++)
 	{
-		int traced = 0, sky_clusters = 0;
+		if (rt_worldclusters.sky_vis[i >> 3] & (1u << (i & 7)))
+			rt_worldclusters.sky_tracing++;
 
-		for (int i = 0; i < num_clusters; i++)
-		{
-			if (rt_worldclusters.sky_vis[i >> 3] & (1u << (i & 7)))
-				traced++;
-
-			if (has_sky[i >> 3] & (1u << (i & 7)))
-				sky_clusters++;
-		}
-
-		Con_Printf ("sky visibility: %i of %i clusters trace the sun (%i clusters hold sky%s)\n",
-			traced, num_clusters, sky_clusters, everything ? ", every cluster traces" : "");
+		if (has_sky[i >> 3] & (1u << (i & 7)))
+			rt_worldclusters.sky_holding++;
 	}
 
+	if (CVAR_TO_BOOL (rt_worldlights_stats))
+		Con_Printf ("sky visibility: %i of %i clusters trace the sun (%i clusters hold sky%s)\n",
+			rt_worldclusters.sky_tracing, num_clusters, rt_worldclusters.sky_holding,
+			everything ? ", every cluster traces" : "");
+
 	Mem_Free (has_sky);
+}
+
+void RT_WorldMapStats (rt_world_report_t *out)
+{
+	memset (out, 0, sizeof (*out));
+
+	if (!rt_worldclusters.num_clusters || !rt_worldclusters.vis_offsets)
+		return;
+
+	out->clusters = rt_worldclusters.num_clusters;
+	out->rowBytes = (int)rt_worldclusters.pvs_row_bytes;
+	out->visdataBytes = rt_worldclusters.vis_data_size;
+	out->skyTracing = rt_worldclusters.sky_tracing;
+	out->skyHolding = rt_worldclusters.sky_holding;
+
+	for (int i = 0; i < rt_worldclusters.num_clusters; i++)
+		if (rt_worldclusters.vis_offsets[i] < 0)
+			out->clustersWithoutRow++;
+
+	out->volumeDims[0] = rt_cluster_volume.dims[0];
+	out->volumeDims[1] = rt_cluster_volume.dims[1];
+	out->volumeDims[2] = rt_cluster_volume.dims[2];
+	out->volumeTexels = rt_cluster_volume.texels;
+	out->volumeEmpty = rt_cluster_volume.empty;
 }
 
 /*

@@ -285,6 +285,37 @@ void RT_StatsGuiReset (void)
 	RT_StatsSeriesResetAll ();
 }
 
+static void RT_StatsOverlayWorld (const rt_stats_snapshot_t *snap)
+{
+	const rt_world_report_t *w = &snap->world;
+	char                     st[64];
+
+	if (!snap->haveWorld)
+	{
+		QR_GUI_OverlayNote ("no map loaded");
+		return;
+	}
+
+	RT_StatsOverlayCount ("CLUSTERS", (unsigned)w->clusters);
+	RT_StatsOverlayCount (" no row", (unsigned)w->clustersWithoutRow);
+	RT_StatsOverlayCount ("PVS ROW", (unsigned)w->rowBytes);
+	q_snprintf (st, sizeof (st), "%.1f K", w->visdataBytes / 1024.0);
+	QR_GUI_OverlayRow ("VISDATA", st, NULL, 0, RT_STATS_COLOR_TOTAL);
+	q_snprintf (st, sizeof (st), "%d / %d", w->skyTracing, w->clusters);
+	QR_GUI_OverlayRow ("SUN TRACE", st, NULL, 0, RT_STATS_COLOR_TOTAL);
+	RT_StatsOverlayCount (" sky holds", (unsigned)w->skyHolding);
+	q_snprintf (st, sizeof (st), "%dx%dx%d", w->volumeDims[0], w->volumeDims[1], w->volumeDims[2]);
+	QR_GUI_OverlayRow ("VOLUME", st, NULL, 0, RT_STATS_COLOR_TOTAL);
+	RT_StatsOverlayCount (" texels", (unsigned)w->volumeTexels);
+	RT_StatsOverlayCount (" empty", (unsigned)w->volumeEmpty);
+	RT_StatsOverlayCount ("LIGHTS", (unsigned)w->lightsRegistered);
+	RT_StatsOverlayCount (" dropped", (unsigned)w->lightsDropped);
+	RT_StatsOverlayCount (" granted", (unsigned)w->slotsGranted);
+	RT_StatsOverlayCount (" denied", (unsigned)w->slotsDenied);
+	q_snprintf (st, sizeof (st), "%d / %d / %d", w->demandMax, w->demandMedian, w->demandP95);
+	QR_GUI_OverlayRow ("DEMAND", st, NULL, 0, RT_STATS_COLOR_TOTAL);
+}
+
 void RT_StatsDrawGui (void)
 {
 	const unsigned             panels = CVAR_TO_UINT32 (rt_stats_panels);
@@ -292,6 +323,7 @@ void RT_StatsDrawGui (void)
 	const qboolean             rays = (panels & (1u << (RT_STATS_RAYS - 1))) != 0;
 	const qboolean             passes = (panels & (1u << (RT_STATS_PASSES - 1))) != 0;
 	const qboolean             profile = (panels & (1u << (RT_STATS_PROFILE - 1))) != 0;
+	const qboolean             world = (panels & (1u << (RT_STATS_WORLD - 1))) != 0;
 	char                       title[64];
 	double                     now;
 	double                     interval;
@@ -331,7 +363,7 @@ void RT_StatsDrawGui (void)
 	else if (snap->haveProfile)
 		q_snprintf (title, sizeof (title), "%.1f FPS", snap->profile.fps);
 
-	const int columns = (profile ? 3 : 0) + (passes ? 1 : 0) + (rays ? 1 : 0);
+	const int columns = (profile ? 3 : 0) + (passes ? 1 : 0) + (rays ? 1 : 0) + (world ? 1 : 0);
 	QR_GUI_OverlayBegin ("##rt_stats", 8.0f, 8.0f, 0.62f, title[0] ? title : NULL, columns);
 
 	if (profile)
@@ -361,6 +393,12 @@ void RT_StatsDrawGui (void)
 	{
 		QR_GUI_OverlaySection ("HOST / WORLD");
 		RT_StatsOverlayBudget ();
+	}
+
+	if (world)
+	{
+		QR_GUI_OverlaySection ("WORLD");
+		RT_StatsOverlayWorld (snap);
 	}
 
 	QR_GUI_OverlayEnd ();
