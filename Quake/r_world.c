@@ -974,6 +974,7 @@ static void RT_ClearBatch (cb_context_t *cbx)
 {
 	cbx->batch_verts_count = 0;
 	cbx->batch_indices_count = 0;
+	cbx->batch_emission_ray_only = false;
 }
 
 QrTransform RT_GetBrushModelMatrix (entity_t *e)
@@ -1578,6 +1579,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    (s->is_warp && !s->is_water && !s->is_acid ? QR_GEOMETRY_UPLOAD_TURB_WARP_BIT : 0) |
 			    (s->alpha_transmission ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 			    (is_glass && s->alpha_test ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
+			    (cbx->batch_emission_ray_only ? QR_GEOMETRY_UPLOAD_EMISSION_RAY_ONLY_BIT : 0) |
                 QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
 			.geomType = rt_movable_upload_entry != NULL ? QR_GEOMETRY_TYPE_STATIC_MOVABLE :
 			            (is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC),
@@ -4459,6 +4461,13 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 		if (packed_styles != 0)
 			for (int i = 0; i < num_surf_verts; i++)
 				batch_verts[i].lightStyles = packed_styles;
+	}
+
+	{
+		rt_emissive_params_t emissive_params;
+
+		if (!RT_EmissiveLightParamsForTex (s->light_tex ? s->light_tex : s->diffuse_tex, &emissive_params))
+			cbx->batch_emission_ray_only = true;
 	}
 
 	cbx->batch_indices_count += num_surf_indices;

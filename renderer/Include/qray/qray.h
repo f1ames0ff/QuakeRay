@@ -283,6 +283,12 @@ typedef enum QrGeometryUploadFlagBits
     /* The alpha is a cutout even where the surface traces as glass: the glass
        any-hit runs the alpha test for it (a lattice window keeps its holes). */
     QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT = 512,
+
+    /* The glow of this geometry has no analytic light behind it, so the
+       indirect pass has to carry it on the bounce ray that hits it. Left off
+       by default: a surface whose emission a registered area light already
+       counts must not add it again. */
+    QR_GEOMETRY_UPLOAD_EMISSION_RAY_ONLY_BIT = 1024,
 } QrGeometryUploadFlagBits;
 typedef QrFlags QrGeometryUploadFlags;
 
