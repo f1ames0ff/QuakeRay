@@ -72,6 +72,8 @@ Two live runs per save/preset, **8-second warmup + 10-second capture**, particle
 
 Balanced, milliseconds; the same two-run aggregation. Indented/type/subphase rows overlap their parents. Counter scopes and real functions are indexed in [ARCHITECTURE.md](ARCHITECTURE.md#subsystem-index).
 
+Note (2026-10-11): the `cpu.mark_ms` rows below predate the parallel marking path. With the default `r_parallelmark 1` the slot is the summed CPU of the per-chunk mark invocations, and `cpu.chain_ms`/`cpu.efrags_ms` are nonzero (per-texture chain slices and the serial efrag pass). Compare those slots only within one binary.
+
 | Counter | Fuma | AD hub | Bogbottom |
 | --- | ---: | ---: | ---: |
 | `cpu.mark_ms` | 2.18 | 0.70 | 3.99 |

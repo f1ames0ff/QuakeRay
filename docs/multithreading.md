@@ -28,7 +28,11 @@ before adapting a producer; document any unavailable tooling or incomplete cover
   `r_parallelmark 1` the world texture chains are rebuilt in surface-index order instead of the
   scalar leaf first-touch order (owner-accepted 2026-10-11; the chained surface set is identical —
   `calls_geometry` matches on the audit captures and the water-shot on/off pairs differ only by
-  particle animation phases).
+  particle animation phases). The order change is safe only while every head-of-chain flag
+  (`SURF_DRAWTURB`, `SURF_DRAWTILED`, `SURF_DRAWSKY`, `SURF_NOTEXTURE`, `SURF_DRAWFENCE`) stays
+  uniform across all surfaces of one texture; if a future change makes such a flag per-texinfo,
+  the per-texture slicing must be revisited because batch grouping would stop being
+  order-invariant.
 - `cpu.wait_ms` is nonzero only in task mode: it is the main thread's join wait, not idle time.
 
 ## The task system

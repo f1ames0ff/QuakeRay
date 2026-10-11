@@ -759,6 +759,7 @@ static uint32_t *rt_mark_tex_start;
 static uint32_t *rt_mark_tex_surfaces;
 static uint32_t *rt_mark_tex_polys;
 static qboolean  rt_mark_parallel_built;
+static qboolean  rt_mark_parallel_frame;
 
 static int RT_MarkChunkFirstLeaf (int chunk, int numleafs)
 {
@@ -1060,7 +1061,7 @@ static void R_MarkSurfacesPrepare (void *unused)
 			cl.worldmodel->textures[i]->chain_size[chain_world] = 0;
 		}
 
-	if (r_parallelmark.value != 0.0f && rt_mark_parallel_built)
+	if (rt_mark_parallel_frame && rt_mark_parallel_built)
 		memset (cl.worldmodel->surfvis, 0, (cl.worldmodel->numsurfaces + 31) / 8);
 
 #if defined(USE_SIMD)
@@ -1134,6 +1135,8 @@ void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_
 		{
 			if (r_parallelmark.value != 0.0f && rt_mark_parallel_built)
 			{
+				rt_mark_parallel_frame = true;
+
 				task_handle_t mark_leafs = Task_AllocateAndAssignIndexedFunc (R_MarkLeafsChunked, RT_MARK_CHUNKS, NULL, 0);
 				Task_AddDependency (prepare_mark, mark_leafs);
 
@@ -1151,6 +1154,8 @@ void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_
 			}
 			else
 			{
+				rt_mark_parallel_frame = false;
+
 				task_handle_t mark_surfaces = Task_AllocateAndAssignFunc ((task_func_t)R_MarkVisSurfaces, &use_tasks, sizeof (qboolean));
 				Task_AddDependency (prepare_mark, mark_surfaces);
 				*store_efrags = mark_surfaces;
@@ -1161,6 +1166,8 @@ void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_
 	}
 	else
 	{
+		rt_mark_parallel_frame = false;
+
 		R_MarkSurfacesPrepare (NULL);
 		// iterate through leaves, marking surfaces
 #if defined(USE_SIMD)

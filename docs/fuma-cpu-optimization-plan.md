@@ -277,10 +277,19 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   (64 leaf chunks, word-run atomic OR into the shared surfvis mask) -> {store_efrags, chain_slices
   (per-texture indexed chain) -> chain_finish}` under `r_parallelmark 1`; `r_parallelmark 0` and
   `r_tasks 0` keep the scalar path. Same-binary audit A/B: swamp frame/wait 23.05 -> 19.62 ms
-  (-3.4 ms; fps 30.4 -> 33.6), Fuma 13.12 -> 11.82 ms (-1.3 ms); `calls_geometry` identical
-  (2082 both, 1194 both). Water-shot on/off pairs differ only by particle animation phases
+  (-3.4 ms; fps 30.4 -> 33.6), Fuma 13.12 -> 11.82 ms (-1.3 ms); `calls_geometry` matches
+  modal/mean (2082 both, 1194 both). Water-shot on/off pairs differ only by particle animation phases
   (mean absolute difference within the within-run noise). Accepted deviation: per-texture chain
   order is surface-index order instead of the scalar leaf first-touch order (docs contract
   updated). The v1 order-preserving attempt (per-chunk first-touch lists plus a serial merge)
   measured no wall win (mark sum 3.56 ms plus an applied serial chain of 3.60 ms against the
   scalar 3.90 ms) and was replaced.
+- 2026-10-11 (mark-parallel v2 review fixes): the three final reviewers classified M01-M07 CONFIRMED
+  and M08 REFUTED on one added code comment (removed). Also fixed: the surfvis memset now runs only on
+  the selected parallel path; the docs order note carries the head-flag homogeneity precondition;
+  PERFORMANCE.md notes the new mark/chain slot semantics. Recorded evidence limits: the Fuma wall/fps
+  numbers are confounded by a ~16.5 ms unprofiled block and a 5x server-pass difference between the
+  arms (frame/wait is the controlled metric), the water-pair toggle provenance is not recorded
+  (fixtures deleted), and `calls_geometry` equality is modal/mean rather than frame-exact. Known benign
+  exception: the two shared dummy textures keep `rt_chain_index = 0`; their surfaces still chain via
+  the texture pointer.
