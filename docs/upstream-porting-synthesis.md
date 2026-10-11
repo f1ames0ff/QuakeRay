@@ -98,7 +98,8 @@ Corrections still open:
 - H13 writer ownership landed with the Tier A slice (atomic `rt_emis_stats` fields plus a spinlock
   around the `rt_emis_watch` table); the earlier "no DAG edge" note is superseded by the verified fact
   that the `draw_world_task -> entities/alpha` edges already existed.
-- The `rt_brush_persistent` enablement decision (profile vs default, mover visual check) is pending.
+- The `rt_brush_persistent` enablement decision is resolved: the default is `1` after the mover demo
+  acceptance, with the per-frame `prevModel` fix (`ce81db59`) as the renderer prerequisite.
 
 Focus caveat (measured): `main_sdl.c` sleeps 16 ms per frame while the game window has no input focus,
 so every unfocused capture shows `interval = profiled frame + about 16-18 ms`. CPU slots and GPU pass

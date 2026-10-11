@@ -183,7 +183,7 @@ atomic_uint32_t rt_end_task_running;
 	   -- it names a texture of the rasterizer's lightmap pass. 0 keeps the historical test, \
 	   whose alpha comparison has its sign inverted and which reads no other state. */ \
 	CVAR_DEF_T (rt_world_batch_merge, "1") \
-	CVAR_DEF_T (rt_brush_persistent, "0") \
+	CVAR_DEF_T (rt_brush_persistent, "1") \
 	/* 0 uploads the map's lights one call at a time, for measuring the batched path. */ \
 	CVAR_DEF_T (rt_wmodel_lights_batch, "1") \
 	/* DTAL: 1 lights an alias model from the triangles of the pose it draws, when its material

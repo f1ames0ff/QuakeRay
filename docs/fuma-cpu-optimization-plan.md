@@ -386,6 +386,13 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   BLAS from the transform staging and retires the old one behind the frame that referenced it; the
   shimmer suggests a frame in which the traced transform and the motion/shading metadata disagree.
   Repro: `playdemo qr_mover_check` with `rt_brush_persistent 1` (a live console toggle works).
+- 2026-10-11 (persist mover acceptance, **passed**; default flipped): the recorded `qr_mover_check`
+  demo is clean after the per-frame `prevModel` fix (`ce81db59`): `PrepareForFrame` copies each
+  movable record's model into `prevModel` before the producers run, so a frame without an update
+  reports zero motion while a transform update in the same frame still overwrites the pair. The cvar
+  now defaults to `1` (`Quake/gl_vidsdl.c:186`) and neither perf profile pins it any more; `0` remains
+  the opt-out. Acceptance: Debug build exit 0, CTest 8/8, Release build exit 0, and the operator's
+  visual pass on the demo (the still-pair audit had already shown identical frames).
 - 2026-10-11 (CPU pass, chain elision): steady frames now chain only the consumed texture subset -
   the textures whose chains the sky, water and animated passes read - while a static-submit or
   world-light-recollect window, or `r_showtris`, keeps the full set. The mode (`rt_chain_full_frame`)
