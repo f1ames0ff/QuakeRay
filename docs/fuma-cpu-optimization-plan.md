@@ -395,3 +395,12 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   the slowest chunk (4.8 ms against a 5.9 ms graph) rather than by the summed work, and it is the
   baseline for any entity-width or partition change; `chain` measured 0.07 ms in the same captures
   after the elision.
+- 2026-10-11 (CPU pass, entity widening 6 -> 12, measured and reverted): raising
+  `NUM_ENTITIES_CBX` to 12 (CBX/chain/lane enums grown, deferred light slots 8 -> 14, per-chunk
+  slots and names extended; compile-time asserts updated) did not reduce the wall. Acceptance
+  captures: the entity work sums roughly doubled (swamp `ents` 23.0 -> 50.5, alias 10.2 -> 25.6,
+  brush 14.6 -> 28.4; Fuma 13.0 -> 33.0) while the frame stayed put (18.72 / 15.40) and the slowest
+  chunk worsened on swamp (4.83 -> 5.56 with about one entity per chunk). The stage is limited by
+  the shared upload and deferred-light-flush path rather than by chunk count, which matches the
+  earlier aliasplit/typelanes nulls; the change was reverted. Widening becomes worth re-testing only
+  after the upload critical section shrinks.
