@@ -93,8 +93,6 @@ uint32_t qray::Scene::GetVertexPreprocessingMode() const
 
 bool qray::Scene::Upload(uint32_t frameIndex, const QrGeometryUploadInfo &uploadInfo)
 {
-    assert(!DoesUniqueIDExist(uploadInfo.uniqueID));
-
     AccumulateGeometryBounds(uploadInfo, aabbInitialized, aabbMin, aabbMax);
 
     if (uploadInfo.geomType == QR_GEOMETRY_TYPE_DYNAMIC)
@@ -108,7 +106,9 @@ bool qray::Scene::Upload(uint32_t frameIndex, const QrGeometryUploadInfo &upload
 
         if (simpleIndex != UINT32_MAX)
         {
-            dynamicUniqueIDToSimpleIndex[uploadInfo.uniqueID] = simpleIndex;
+            const auto inserted = dynamicUniqueIDToSimpleIndex.insert_or_assign(uploadInfo.uniqueID, simpleIndex);
+            assert(inserted.second);
+            (void)inserted;
             return true;
         }
     }
@@ -123,7 +123,9 @@ bool qray::Scene::Upload(uint32_t frameIndex, const QrGeometryUploadInfo &upload
 
         if (simpleIndex != UINT32_MAX)
         {
-            staticUniqueIDToSimpleIndex[uploadInfo.uniqueID] = simpleIndex;
+            const auto inserted = staticUniqueIDToSimpleIndex.insert_or_assign(uploadInfo.uniqueID, simpleIndex);
+            assert(inserted.second);
+            (void)inserted;
 
             if (uploadInfo.geomType == QR_GEOMETRY_TYPE_STATIC_MOVABLE)
             {
