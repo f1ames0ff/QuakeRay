@@ -6174,7 +6174,9 @@ void RT_BuildWorldClusters (void)
 	/* The grid has to hold the leafs a light or a view can stand in, and the solid leafs reach
 	   all around the map, so the open ones are what its box is measured from. Leaf 0 is the solid
 	   leaf and is skipped. */
-	for (int i = 1; i < model->numleafs; i++)
+	const int last_leaf = (model->numleafs_lump > model->numleafs) ? model->numleafs : (model->numleafs - 1);
+
+	for (int i = 1; i <= last_leaf; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
 
@@ -6246,7 +6248,9 @@ static void RT_BuildClusterVolume (void)
 	    !rt_worldclusters.leaf_cluster)
 		return;
 
-	for (int i = 1; i < model->numleafs; i++)
+	const int last_leaf = (model->numleafs_lump > model->numleafs) ? model->numleafs : (model->numleafs - 1);
+
+	for (int i = 1; i <= last_leaf; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
 
@@ -6437,6 +6441,8 @@ static void RT_BuildClusterSkyVisibility (void)
 	if (!model || num_clusters <= 0 || num_leafs <= 0 || !rt_worldclusters.leaf_cluster)
 		return;
 
+	const int last_leaf = (model->numleafs_lump > num_leafs) ? num_leafs : (num_leafs - 1);
+
 	rt_worldclusters.sky_vis = (uint8_t *)Mem_Alloc (num_bytes);
 	memset (rt_worldclusters.sky_vis, 0, num_bytes);
 	// Cluster 0 is where geometry with no leaf of its own lands; it keeps tracing, as Q2RTX
@@ -6479,7 +6485,7 @@ static void RT_BuildClusterSkyVisibility (void)
 			everything = true;
 		}
 
-		for (int leaf = 1; !everything && leaf < num_leafs; leaf++)
+		for (int leaf = 1; !everything && leaf <= last_leaf; leaf++)
 		{
 			const int      c = rt_worldclusters.leaf_cluster[leaf];
 			const uint8_t *prow;
