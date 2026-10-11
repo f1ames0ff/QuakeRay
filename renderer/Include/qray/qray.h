@@ -877,9 +877,6 @@ typedef struct QrWorldLightsUploadInfo
 
     const uint8_t *pClusterSkyVisibility;
 
-    /* Identity of this particular build of the tables above. The renderer keeps what it prepared
-       for a map and compares this value to decide whether the tables in front of it are new, so
-       two different maps can no longer be taken for each other on equal sizes alone. */
     uint32_t clusterGeneration;
 } QrWorldLightsUploadInfo;
 
