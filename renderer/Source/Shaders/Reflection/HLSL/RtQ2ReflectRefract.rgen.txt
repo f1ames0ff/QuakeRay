@@ -29,7 +29,7 @@
 [24] offset 1620 uint32
 === block set 11 binding 0
 
-[0] offset 0 array[5](uint32) stride 4
+[0] offset 0 array[6](uint32) stride 4
 === block set 2 binding 0
 
 [0] offset 0 m4(v4(float32)) matrixstride 16
@@ -259,6 +259,9 @@
 === block set 6 binding 8
 
 [0] offset 0 array[](uint32) stride 4
+=== block set 7 binding 0
+
+[0] offset 0 array[6](uint32) stride 4
 === block set 9 binding 0
 
 [0] offset 0 v4(float32)
@@ -460,9 +463,9 @@ struct nonwritable
 === descriptor set 6 binding 8: storage class
 StorageBuffer
 === descriptor set 7 binding 0
-image:Cube:0:0:0:1:Unknown
+struct
 === descriptor set 7 binding 0: storage class
-UniformConstant
+StorageBuffer
 === descriptor set 7 binding 1
 sampler
 === descriptor set 7 binding 1: storage class

@@ -22,6 +22,8 @@
 
 using namespace qray;
 
+static_assert(sizeof(QrParticlePoint) == 24, "QrParticlePoint must stay 24 bytes");
+
 constexpr uint32_t MAX_DEVICE_COUNT = 8;
 static rgl::unordered_map<QrInstance, std::unique_ptr<VulkanDevice>> G_DEVICES;
 
@@ -175,6 +177,11 @@ QrResult qrUploadRasterizedGeometry(QrInstance qrInstance, const QrRasterizedGeo
     return Call(qrInstance, &VulkanDevice::UploadRasterizedGeometry, pUploadInfo, pViewProjection, pViewport);
 }
 
+QrResult qrUploadParticles(QrInstance qrInstance, const QrParticleUploadInfo *pUploadInfo)
+{
+    return Call(qrInstance, &VulkanDevice::UploadParticles, pUploadInfo);
+}
+
 QrResult qrUploadDecal(QrInstance qrInstance, const QrDecalUploadInfo *pUploadInfo)
 {
     return Call(qrInstance, &VulkanDevice::UploadDecal, pUploadInfo);
@@ -210,6 +217,26 @@ QrResult qrUploadSpotLight(QrInstance qrInstance, const QrSpotLightUploadInfo *p
     return Call(qrInstance, &VulkanDevice::UploadSpotlight, pUploadInfo);
 }
 
+QrResult qrBeginDeferredLightUploads(QrInstance qrInstance, uint32_t slot)
+{
+    return Call(qrInstance, &VulkanDevice::BeginDeferredLightUploads, slot);
+}
+
+QrResult qrEndDeferredLightUploads(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::EndDeferredLightUploads);
+}
+
+QrResult qrFlushDeferredLightUploads(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::FlushDeferredLightUploads);
+}
+
+QrResult qrSetParticleProxyGate(QrInstance qrInstance, uint32_t gate, uint32_t glassParticles)
+{
+    return Call(qrInstance, &VulkanDevice::SetParticleProxyGate, gate, glassParticles);
+}
+
 QrResult qrUploadPolygonalLight(QrInstance qrInstance, const QrPolygonalLightUploadInfo *pUploadInfo)
 {
     return Call(qrInstance, &VulkanDevice::UploadPolygonalLight, pUploadInfo);
@@ -234,6 +261,32 @@ QrResult qrUploadDtalGroups(QrInstance qrInstance, const QrDtalGroupUploadBatch 
 QrResult qrUploadClusterLightSources(QrInstance qrInstance, const QrClusterLightSourcesUploadInfo *pUploadInfo)
 {
     return Call(qrInstance, &VulkanDevice::UploadClusterLightSources, pUploadInfo);
+}
+
+QrResult qrBeginClusterLightSources(QrInstance qrInstance, const QrClusterLightSourcesUploadInfo *pUploadInfo,
+                                    uint32_t sliceCount)
+{
+    return Call(qrInstance, &VulkanDevice::BeginClusterLightSources, pUploadInfo, sliceCount);
+}
+
+QrResult qrRunClusterLightSourceSlice(QrInstance qrInstance, uint32_t slice, uint32_t sliceCount)
+{
+    return Call(qrInstance, &VulkanDevice::RunClusterLightSourceSlice, slice, sliceCount);
+}
+
+QrResult qrFinishClusterLightSources(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::FinishClusterLightSources);
+}
+
+QrResult qrRunClusterListPublishSlice(QrInstance qrInstance, uint32_t slice, uint32_t sliceCount)
+{
+    return Call(qrInstance, &VulkanDevice::RunClusterListPublishSlice, slice, sliceCount);
+}
+
+QrResult qrCommitClusterListPublication(QrInstance qrInstance)
+{
+    return Call(qrInstance, &VulkanDevice::CommitClusterListPublication);
 }
 
 QrResult qrGetClusterLightStats(QrInstance qrInstance, QrClusterLightStats *pStats)
@@ -426,6 +479,7 @@ const char *qrGetGpuPassName(uint32_t passIndex)
         "ui",
         "postui",
         "present",
+        "particles",
     };
 
     if (passIndex >= QR_GPU_PASS_COUNT)

@@ -86,14 +86,20 @@ namespace
     }
 
     uint32_t ResolveTextureIndex_AlbedoAlpha(
-        const qray::TextureManager &manager, const QrRasterizedGeometryUploadInfo &info)
+        const qray::TextureManager &manager, QrMaterial material)
     {
-        if (info.material == QR_NO_MATERIAL)
+        if (material == QR_NO_MATERIAL)
         {
             return EMPTY_TEXTURE_INDEX;
         }
 
-        return manager.GetMaterialTextures(info.material).indices[MATERIAL_ALBEDO_ALPHA_INDEX];
+        return manager.GetMaterialTextures(material).indices[MATERIAL_ALBEDO_ALPHA_INDEX];
+    }
+
+    uint32_t ResolveTextureIndex_AlbedoAlpha(
+        const qray::TextureManager &manager, const QrRasterizedGeometryUploadInfo &info)
+    {
+        return ResolveTextureIndex_AlbedoAlpha(manager, info.material);
     }
 
     uint32_t ResolveTextureIndex_RME(
@@ -111,6 +117,8 @@ namespace
 
         return manager.GetMaterialTextures(info.material).indices[MATERIAL_ROUGHNESS_METALLIC_EMISSION_INDEX];
     }
+
+    constexpr float PARTICLE_POINT_LEG_SCALE = 1.5f;
 }
 
 void RasterizedDataCollector::GetVertexLayout(
@@ -170,9 +178,11 @@ RasterizedDataCollector::RasterizedDataCollector( VkDevice                      
     , textureMgr( std::move( _textureMgr ) )
     , curVertexCount( 0 )
     , curIndexCount( 0 )
+    , curParticlePointCount( 0 )
 {
     vertexBuffer = std::make_shared<AutoBuffer>(_device, _allocator);
     indexBuffer = std::make_shared<AutoBuffer>(_device, _allocator);
+    particlePointBuffer = std::make_shared<AutoBuffer>(_device, _allocator);
 
     _maxVertexCount = std::max(_maxVertexCount, 64u);
     _maxIndexCount = std::max(_maxIndexCount, 64u);
@@ -183,6 +193,9 @@ RasterizedDataCollector::RasterizedDataCollector( VkDevice                      
     indexBuffer->Create(_maxIndexCount * sizeof(uint32_t),
                         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                         "Rasterizer index buffer");
+    particlePointBuffer->Create(_maxVertexCount * sizeof(QrParticlePoint),
+                                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                                "Rasterizer particle point buffer");
 }
 
 RasterizedDataCollector::~RasterizedDataCollector()
@@ -221,11 +234,13 @@ bool RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
 
     if (curVertexCount + info.vertexCount >= vertexBuffer->GetSize() / sizeof(QrVertex))
     {
+        droppedUploadBatches++;
         return false;
     }
 
     if (curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof(uint32_t))
     {
+        droppedUploadBatches++;
         return false;
     }
 
@@ -252,6 +267,8 @@ bool RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
 
     CopyFromArrayOfStructs( info, &vertsBase[ curVertexCount ] );
 
+    uploadedBytes += static_cast< uint64_t >( info.vertexCount ) * sizeof( QrVertex );
+
     drawInfo.vertexCount = info.vertexCount;
     drawInfo.firstVertex  = static_cast< uint32_t >( curVertexCount );
     curVertexCount += info.vertexCount;
@@ -260,10 +277,13 @@ bool RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
     {
         if( curIndexCount + info.indexCount >= indexBuffer->GetSize() / sizeof( uint32_t ) )
         {
+            droppedUploadBatches++;
             return false;
         }
 
         memcpy( &indicesBase[ curIndexCount ], info.pIndices, info.indexCount * sizeof( uint32_t ) );
+
+        uploadedBytes += static_cast< uint64_t >( info.indexCount ) * sizeof( uint32_t );
 
         drawInfo.indexCount = info.indexCount;
         drawInfo.firstIndex = static_cast< uint32_t >( curIndexCount );
@@ -272,6 +292,41 @@ bool RasterizedDataCollector::AddGeometry(uint32_t frameIndex,
     }
 
     drawInfo.particleProxy = CaptureParticleProxies(info);
+
+    return true;
+}
+
+bool RasterizedDataCollector::AddParticles(uint32_t frameIndex, const QrParticleUploadInfo &info)
+{
+    assert(info.count > 0);
+    assert(info.pPoints != nullptr);
+
+    if (curParticlePointCount + info.count > particlePointBuffer->GetSize() / sizeof(QrParticlePoint))
+    {
+        droppedUploadBatches++;
+        return false;
+    }
+
+    ParticlePointDrawInfo &drawInfo = particlePointDrawInfos.emplace_back();
+
+    drawInfo = {
+        .firstPoint    = static_cast< uint32_t >( curParticlePointCount ),
+        .count         = info.count,
+        .textureIndex  = ResolveTextureIndex_AlbedoAlpha( *textureMgr, info.material ),
+        .pipelineState = info.pipelineState,
+        .smokeLook     = Float4D( info.smokeLook.data ),
+    };
+
+    QrParticlePoint *const pointsBase =
+        static_cast< QrParticlePoint* >( particlePointBuffer->GetMapped( frameIndex ) );
+
+    memcpy( &pointsBase[ curParticlePointCount ], info.pPoints, info.count * sizeof( QrParticlePoint ) );
+
+    uploadedBytes += static_cast< uint64_t >( info.count ) * sizeof( QrParticlePoint );
+
+    curParticlePointCount += info.count;
+
+    drawInfo.particleProxy = CaptureParticlePointProxies(info) ? 1u : 0u;
 
     return true;
 }
@@ -316,6 +371,11 @@ void RasterizedDataCollector::CopyFromArrayOfStructs(
 
 bool RasterizedDataCollector::CaptureParticleProxies(const QrRasterizedGeometryUploadInfo &info)
 {
+    if (!particleProxyCaptureEnabled)
+    {
+        return false;
+    }
+
     // The sprite marker, not the lit-pipeline selector: the traced stand-ins have to exist for the
     // unlit sprites too (the raster copy of those is drawn by the world pipeline).
     if ((info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE) == 0)
@@ -525,11 +585,73 @@ bool RasterizedDataCollector::CaptureParticleProxies(const QrRasterizedGeometryU
     return particleProxies.size() > firstProxy;
 }
 
+bool RasterizedDataCollector::CaptureParticlePointProxies(const QrParticleUploadInfo &info)
+{
+    if (!particleProxyCaptureEnabled)
+    {
+        return false;
+    }
+
+    if ((info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE) == 0)
+    {
+        return false;
+    }
+
+    particleCaptureStats.candidateDraws++;
+
+    const bool lit = (info.pipelineState & QR_RASTERIZED_GEOMETRY_STATE_PARTICLE) != 0;
+
+    if (uint64_t(particleProxies.size()) + info.count > MAX_PARTICLE_PROXY_COUNT)
+    {
+        particleProxyOverflow = true;
+        particleCaptureStats.rejectedCap++;
+        return false;
+    }
+
+    const uint32_t textureIndex = ResolveTextureIndex_AlbedoAlpha(*textureMgr, info.material);
+    const size_t firstProxy = particleProxies.size();
+
+    for (uint32_t i = 0; i < info.count; i++)
+    {
+        const QrParticlePoint &point = info.pPoints[i];
+        const float leg = PARTICLE_POINT_LEG_SCALE * point.size;
+        if (!(leg > 1e-4f))
+        {
+            continue;
+        }
+
+        ParticleProxy &proxy = particleProxies.emplace_back();
+        proxy = ParticleProxy{};
+        proxy.kind = PARTICLE_PROXY_KIND_BILLBOARD;
+        proxy.blendOp = PARTICLE_BLEND_ALPHA_OVER;
+
+        for (int c = 0; c < 3; c++)
+        {
+            proxy.center[c] = point.position[c] +
+                              (info.viewRight.data[c] + info.viewUp.data[c]) * (leg / 3.0f);
+        }
+
+        proxy.radius       = std::sqrt(5.0f) / 3.0f * leg;
+        proxy.legRight     = leg;
+        proxy.legUp        = leg;
+        proxy.packedColor  = point.packedColor;
+        proxy.textureIndex = textureIndex;
+        proxy.cluster      = point.cluster;
+        proxy.direct       = lit ? info.smokeLook.data[1] : 0.0f;
+        proxy.gain         = lit ? info.smokeLook.data[2] : -1.0f;
+        proxy.lightFloor   = lit ? info.smokeLook.data[3] : 0.0f;
+    }
+
+    particleCaptureStats.capturedSprites += static_cast<uint32_t>(particleProxies.size() - firstProxy);
+    return particleProxies.size() > firstProxy;
+}
+
 void RasterizedDataCollector::Clear(uint32_t frameIndex)
 {
     rasterDrawInfos.clear();
     swapchainDrawInfos.clear();
     skyDrawInfos.clear();
+    particlePointDrawInfos.clear();
     particleProxies.clear();
     fteTriangleCount = 0;
     particleProxyOverflow = false;
@@ -537,6 +659,10 @@ void RasterizedDataCollector::Clear(uint32_t frameIndex)
 
     curVertexCount = 0;
     curIndexCount = 0;
+    curParticlePointCount = 0;
+
+    uploadedBytes = 0;
+    droppedUploadBatches = 0;
 }
 
 void RasterizedDataCollector::CopyFromStaging(VkCommandBuffer cmd, uint32_t frameIndex)
@@ -555,6 +681,11 @@ VkBuffer RasterizedDataCollector::GetIndexBuffer() const
     return indexBuffer->GetDeviceLocal();
 }
 
+VkBuffer RasterizedDataCollector::GetParticlePointBuffer() const
+{
+    return particlePointBuffer->GetDeviceLocal();
+}
+
 VkBuffer RasterizedDataCollector::GetVertexStagingBuffer(uint32_t frameIndex)
 {
     assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
@@ -567,6 +698,12 @@ VkBuffer RasterizedDataCollector::GetIndexStagingBuffer(uint32_t frameIndex)
     return indexBuffer->GetStaging(frameIndex);
 }
 
+VkBuffer RasterizedDataCollector::GetParticlePointStagingBuffer(uint32_t frameIndex)
+{
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
+    return particlePointBuffer->GetStaging(frameIndex);
+}
+
 VkDeviceSize RasterizedDataCollector::GetVertexBufferSize() const
 {
     return vertexBuffer->GetSize();
@@ -575,6 +712,11 @@ VkDeviceSize RasterizedDataCollector::GetVertexBufferSize() const
 VkDeviceSize RasterizedDataCollector::GetIndexBufferSize() const
 {
     return indexBuffer->GetSize();
+}
+
+VkDeviceSize RasterizedDataCollector::GetParticlePointBufferSize() const
+{
+    return particlePointBuffer->GetSize();
 }
 
 const std::vector< RasterizedDataCollector::DrawInfo >& RasterizedDataCollector::
@@ -608,4 +750,20 @@ const std::vector< RasterizedDataCollector::DrawInfo >& RasterizedDataCollector:
     GetSkyDrawInfos() const
 {
     return skyDrawInfos;
+}
+
+const std::vector< RasterizedDataCollector::ParticlePointDrawInfo >& RasterizedDataCollector::
+    GetParticlePointDrawInfos() const
+{
+    return particlePointDrawInfos;
+}
+
+uint64_t RasterizedDataCollector::GetUploadedBytes() const
+{
+    return uploadedBytes;
+}
+
+uint32_t RasterizedDataCollector::GetDroppedUploadBatches() const
+{
+    return droppedUploadBatches;
 }

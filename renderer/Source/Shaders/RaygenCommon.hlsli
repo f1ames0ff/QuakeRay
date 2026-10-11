@@ -616,6 +616,7 @@ void shadeDiffuse(const Surface surf, const LightSample light, float oneOverPdf,
 #define RAY_STATS_CATEGORY_INDIRECT           2
 #define RAY_STATS_CATEGORY_SHADOW_DIRECT      3
 #define RAY_STATS_CATEGORY_SHADOW_INDIRECT    4
+#define RAY_STATS_CATEGORY_PARTICLE           5
 
 struct RtRayStats
 {
@@ -629,6 +630,18 @@ void rayStatsAdd(const uint category, const uint count)
     if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_RAY_STATS) != 0)
     {
         InterlockedAdd(rtStats[0].counts[category], count);
+    }
+}
+
+void rayStatsMark(const uint category)
+{
+    if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_RAY_STATS) != 0)
+    {
+        InterlockedAdd(rtStats[0].counts[category], 1);
+    }
+    else
+    {
+        rtStats[0].counts[category] = 1;
     }
 }
 

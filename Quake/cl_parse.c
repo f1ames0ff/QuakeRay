@@ -1618,6 +1618,9 @@ CL_ParseParticles
 
 spike -- this handles the various ssqc builtins (the ones that were based on csqc)
 */
+extern cvar_t   r_part_emit_distance;
+extern qboolean r_vieworg_valid;
+
 static void CL_ParseParticles (int type)
 {
 	vec3_t org, vel;
@@ -1641,24 +1644,42 @@ static void CL_ParseParticles (int type)
 	else
 	{ // point
 		int efnum = MSG_ReadShort ();
-		int count;
+		float count;
 		org[0] = MSG_ReadCoord (cl.protocolflags);
 		org[1] = MSG_ReadCoord (cl.protocolflags);
 		org[2] = MSG_ReadCoord (cl.protocolflags);
 		if (type)
 		{
 			vel[0] = vel[1] = vel[2] = 0;
-			count = 1;
+			count = 1.0f;
 		}
 		else
 		{
 			vel[0] = MSG_ReadCoord (cl.protocolflags);
 			vel[1] = MSG_ReadCoord (cl.protocolflags);
 			vel[2] = MSG_ReadCoord (cl.protocolflags);
-			count = MSG_ReadShort ();
+			count = (float)MSG_ReadShort ();
 		}
 		if (efnum < MAX_PARTICLETYPES && cl.particle_precache[efnum].name)
 		{
+			float radius = r_part_emit_distance.value;
+			if (count > 0 && r_vieworg_valid && radius > 0)
+			{
+				vec3_t delta;
+				float  dist;
+				VectorSubtract (org, r_refdef.vieworg, delta);
+				dist = VectorLength (delta);
+				if (dist >= radius)
+				{
+					rt_particles_emit_culled++;
+					return;
+				}
+				if (dist > radius * 0.5f)
+				{
+					count *= (radius - dist) / (radius * 0.5f);
+					rt_particles_emit_faded++;
+				}
+			}
 			PScript_RunParticleEffectState (org, vel, count, cl.particle_precache[efnum].index, NULL);
 		}
 	}

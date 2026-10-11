@@ -20,7 +20,9 @@ before adapting a producer; document any unavailable tooling or incomplete cover
   authorize concurrent NVRHI command-list recording or bypass existing renderer locks.
 - The render frame runs as a dependency graph of tasks when `r_tasks 1` — the switch is the
   `use_tasks` condition in [SCR_UpdateScreen](../Quake/gl_screen.c#L1162); `r_tasks` defaults to
-  `0` until the broader stability validation flips it.
+  `1` (owner decision, 2026-10-11). `r_tasks 0` is the deprecated legacy serial path: the cvar
+  and the fork it selects are slated for removal, after which the engine always runs
+  multithreaded.
 - In the serial path (`r_tasks 0`) the same producers run in fixed order on the main thread; the
   frame contents and the NVRHI ray-tracing renderer are identical in both modes.
 - `cpu.wait_ms` is nonzero only in task mode: it is the main thread's join wait, not idle time.
@@ -58,11 +60,21 @@ pumping extra audio updates.
 | `cull_surfaces -> update_lightmaps_task`, `draw_world_task -> update_lightmaps_task` | the lightmap updates run after the world surfaces are culled and drawn |
 | `draw_world_task -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task`, `-> draw_particles_task` | every dynamic uploader runs after the world task closed the static-geometry window (see below) |
 | `draw_world_task, draw_sky_and_water_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task -> draw_view_model_task` | the viewmodel producer runs last among the producers |
+| `draw_view_model_task -> cluster_prepare_task` | the cluster pipeline starts after the last registration: the registry is complete once the viewmodel task's light uploads have run |
+| `cluster_prepare_task -> cluster_topup_task` (indexed, `RT_CLUSTER_SLICES` = 16) `-> cluster_finish_task -> cluster_publish_task` (indexed, `RT_CLUSTER_SLICES`) `-> cluster_commit_task` | the per-cluster top-up runs in slices over the frame's work list; the finish merges the slices, fills the lists, rebuilds the tails and prepares the publication; the publish slices resolve the list words in parallel and the commit writes the tails and the publication bookkeeping |
+| `cluster_commit_task -> draw_done_task` | the publication and the cluster stats readback are complete before the join |
 | `draw_gui_task -> draw_done_task`, producers `-> draw_done_task` | the GUI and every producer feed the join point |
 | `draw_done_task -> end_rendering_task` | the renderer recording/end task runs last |
 
 `draw_entities_task` is indexed with `NUM_ENTITIES_CBX` (6) slices, so several workers draw entity
-ranges in parallel.
+ranges in parallel. `cluster_topup_task` is indexed with `RT_CLUSTER_SLICES` (16) slices over
+`dirtyClusters` (incremental frames) or clusters `1..numClusters-1` (compose frames); every cluster
+is processed by exactly one slice, and the slice counters and tail-dirty marks are merged in
+`cluster_finish_task`; that task also prepares the list publication. `cluster_publish_task` is
+indexed with `RT_CLUSTER_SLICES` (16) slices over the publication's word range (a disjoint
+`floor(w*s/16)..floor(w*(s+1)/16)` interval each) and `cluster_commit_task` writes the tails and
+the publication bookkeeping. The serial branch runs the same prepare/slice/finish/publish/commit
+stages inline with one slice.
 
 **Static-geometry window.** `R_DrawWorldTask` calls `qrBeginStaticGeometries` … `qrSubmitStaticGeometries`
 (`gl_rmain.c#L1107`/`#L1119`). Inside that window only `QR_GEOMETRY_TYPE_STATIC` and
@@ -105,8 +117,8 @@ The contract for work added to the graph:
 - Call renderer `qr*` entry points only through the synchronized ones listed below, and follow the
   static-geometry window rule for uploads.
 - Touch profiler/bench state only through the locked helpers (`RT_Prof_*`); the cluster statistics
-  are written by the cluster upload in the viewmodel task and read on the main thread only after
-  the frame's join.
+  are written by the cluster prepare/slice/finish chain (the finish task runs on a worker) and read
+  on the main thread only after the frame's join.
 - `Mem_*` uses mimalloc, but allocator thread safety does not make its owner/container safe.
   Audit allocation, publication, reallocation and freeing together; do not assume hunk/zone helpers
   are interchangeable worker allocators. The console's buffer lock likewise does not authorize
@@ -129,7 +141,12 @@ The graph currently relies on:
   ([r_world.c](../Quake/r_world.c#L1072)) and the brush-cluster cache
   ([r_world.c](../Quake/r_world.c#L4300)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
   the generation at map load and each thread clears its own table on first use. The buried-answer
-  DTAL cache follows the same ownership rule through `RT_BuriedCacheReset`;
+  DTAL cache follows the same ownership rule through `RT_BuriedCacheReset`, and so does the
+  point-cluster resolve cache ([gl_rlight.c](../Quake/gl_rlight.c#L1176)): one slot table per thread
+  with the map identity kept in the table, and per-thread hit/miss/nanosecond counters that
+  `RT_PointClusterCacheStats` sums. Its readers all run on the main thread after the frame's join
+  (`RT_Prof_FrameStart`, `RT_Prof_FrameEnd`, `RT_Prof_Update`), which is what keeps the unlocked sum
+  correct;
 - the emissive skip-table spinlock (`RT_EmisSkipLock`) — covers lookup/insertion, reset and report
   snapshotting; printing happens after the snapshot lock is released;
 - the styled-light index (`RT_BuildStyledLightIndex`) — built on the single-threaded map-load path
@@ -180,8 +197,9 @@ serial branch is not ready for integration.
    cold enable/disable and early/late completion. Test the production kernel/state machine with
    real payloads and controlled interleavings, not only predicates or manually simulated counters.
 8. **Hand off evidence.** Record source/binary identity, MCP inspections and gaps, the ownership map,
-   new DAG edges, tests and capture identities. Separate observed gains from hypotheses; state
-   untested cases and keep `r_tasks` opt-in until broader validation explicitly authorizes a change.
+   new DAG edges, tests and capture identities. Separate observed gains from hypotheses and state
+   untested cases. `r_tasks` now defaults to `1` (owner decision, 2026-10-11); the serial path is
+   deprecated and kept only for bisection until the cvar and its fork are removed.
 
 ## Measurement
 
@@ -218,11 +236,13 @@ The milestones below are **open acceptance goals**, not claims about implemented
 | M5. Establish production validation and default-on readiness | Maintain a scene/transition matrix for supported Quake content, mission packs and Arcane Dimensions. Include representative busy scenes, repeated sessions, map/save/restart/disconnect, menu/editor/photo modes, resize/fullscreen/minimize, profiling toggles and available core counts. | Final-revision Debug build/CTest results, repeated serial/tasks captures, visual/gameplay checks, memory/race diagnostics where supported, and an explicit review of coverage gaps. No unexplained correctness failures or material regressions in the maintained matrix. |
 | M6. Meet the performance program | On the declared reference hardware, target at least 45 FPS at 3840x2160 FSR Quality throughout the maintained loaded-gameplay scene matrix. The mean and p95 frame intervals must be at most 22.22 ms; also report p99/max and hitches. Remove the CPU ceiling so lowering FSR internal resolution improves the frame interval instead of leaving it flat. | Matched captures for every maintained scene/preset meet the budget and demonstrate resolution-driven scaling. CPU critical-path and GPU timings are checked independently: GPU work above 22.22 ms requires GPU optimization too, not more CPU threads. Fixed-cost work and deviations from proportional scaling are reported, not hidden. |
 
-**Two release decisions, not one:** M1, M2, M4 and M5 gate a default-on *render* task path; broader
-whole-frame CPU task parallelism additionally requires M3. A named final review must authorize the
-default change, and the serial fallback remains available. M6 is the separate performance target;
-meeting one FPS number does not certify thread safety, and a GPU bottleneck does not make the task
-platform incomplete. Neither one short capture nor the historical ~40% uplift closes these gates.
+**Two release decisions, not one:** M1, M2, M4 and M5 gated the default-on *render* task path; the
+owner authorized that default on 2026-10-11 (`changelog.md`, Unreleased), and the serial fallback
+(`r_tasks 0`, deprecated) remains available while the M5 scene/transition matrix runs are
+completed under the default. Broader whole-frame CPU task parallelism additionally requires M3. M6
+is the separate performance target; meeting one FPS number does not certify thread safety, and a
+GPU bottleneck does not make the task platform incomplete. Neither one short capture nor the
+historical ~40% uplift closes these gates.
 
 Every milestone handoff must include MCP source/evidence identities, the changed ownership/DAG
 boundaries, exact tests/captures, measured deltas and remaining gaps. Keep the milestone open until
@@ -230,7 +250,9 @@ its completion evidence exists; do not mark it done merely because tasks were ad
 
 ## Known limitations
 
-- `r_tasks` stays off by default until the stability matrix and the default-flip review complete.
+- `r_tasks` defaults to `1` (flipped 2026-10-11); `r_tasks 0` is the deprecated serial path kept
+  for bisection until the cvar, its fork and the serial compositions are removed and the engine
+  always runs multithreaded.
 - `r_gpulightmapupdate`'s GPU lightmap path is an unimplemented stub (assert); task mode does not
   require it.
 - No worker watchdog: a hung task hangs the join loop; the join reports the `wait` slot so a

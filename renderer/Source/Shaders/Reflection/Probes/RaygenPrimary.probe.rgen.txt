@@ -2,7 +2,7 @@
 # Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
 === block set 11 binding 0
 
-[0] offset 0 array[5](uint32) stride 4
+[0] offset 0 array[6](uint32) stride 4
 === block set 12 binding 0
 
 [0] offset 0 array[](float32) stride 4

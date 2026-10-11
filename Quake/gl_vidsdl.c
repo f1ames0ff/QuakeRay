@@ -171,6 +171,7 @@ atomic_uint32_t rt_end_task_running;
 	   lists all or nothing, a light that moves takes every list of the scene with it, which is \
 	   what a lava ball was measured to cost. */ \
 	CVAR_DEF_T (rt_cluster_incremental, "1") \
+	CVAR_DEF_T (rt_particle_resolve_cache, "1") \
 	CVAR_DEF_T (rt_cluster_sampling, "0") \
 	CVAR_DEF_T (rt_cluster_assert, "0") \
 	CVAR_DEF_T (rt_truelight, "1") \
@@ -264,6 +265,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_glass_shadows, "1") \
 	CVAR_DEF_T (rt_glass_denoise, "0") \
 	CVAR_DEF_T (rt_glass_particles, "1") \
+	CVAR_DEF_T (rt_particle_proxy_gate, "1") \
 	\
 	CVAR_DEF_T (rt_volume_type, "2") \
 	/* The screen-space volumetric these parameterise is gone on the Q2RTX core:
@@ -361,6 +363,8 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_end_task_delay_ms, "0") \
 	CVAR_DEF_T (rt_worldcensus, "0") \
 	CVAR_DEF_T (rt_worldlights_stats, "0") \
+	CVAR_DEF_T (rt_particle_volume, "1") \
+	CVAR_DEF_T (rt_particle_volume_check, "0") \
 	CVAR_DEF_T (rt_worldclusters_grid, "1")
 
 
@@ -370,6 +374,7 @@ atomic_uint32_t rt_end_task_running;
 #undef CVAR_DEF_T
 
 cvar_t rt_light_report_filter = {"rt_light_report_filter", "", 0};
+cvar_t r_particles_overflow = {"r_particles_overflow", "0", CVAR_ARCHIVE};
 
 // The sun editor is a mode, not a setting: it must not come back on after a
 // restart, which would grab the sun without anybody asking for it.
@@ -392,6 +397,24 @@ RT_Prof_Update; rt_stats_dump writes one snapshot to qperfdump.log.
 */
 double           rt_prof_ms[RT_PROF_COUNT];
 rt_prof_report_t rt_prof_report;
+
+int      rt_particles_classic;
+int      rt_particles_fte;
+int      rt_particles_vertices;
+int      rt_particles_smoke;
+int      rt_particles_dropped;
+int      rt_particles_emit_culled;
+int      rt_particles_emit_faded;
+uint64_t rt_particles_volume_samples;
+uint64_t rt_particles_volume_mismatch;
+uint64_t rt_particles_volume_lost;
+uint64_t rt_particles_volume_extra;
+uint64_t rt_fte_convert_bytes;
+uint64_t rt_particle_upload_bytes;
+
+static uint64_t rt_particle_cache_hits_last;
+static uint64_t rt_particle_cache_misses_last;
+static double   rt_particle_cache_total_ms_last;
 
 static double   rt_prof_frame_start;
 static rt_prof_window_t rt_prof_window;
@@ -523,6 +546,15 @@ void RT_Bench_Start (void)
 	rt_cluster_miss_set = 0;
 	rt_cluster_miss_move = 0;
 	rt_cluster_miss_other = 0;
+	rt_cluster_pub_skips = 0;
+	rt_cluster_pub_copies = 0;
+	rt_cluster_last_pub_mask = 0;
+	rt_particles_dropped = 0;
+	rt_particles_emit_culled = 0;
+	rt_particles_emit_faded = 0;
+	RT_ClusterVolumeResetVerify ();
+	rt_fte_convert_bytes = 0;
+	rt_particle_upload_bytes = 0;
 }
 
 void RT_Bench_Stop (void)
@@ -613,6 +645,8 @@ void RT_Prof_FrameStart (void)
 		memset (&rt_bench_renderer_stats, 0, sizeof (rt_bench_renderer_stats));
 		RT_Prof_Unlock ();
 	}
+
+	RT_PointClusterCacheStats (NULL, NULL, &rt_particle_cache_total_ms_last, NULL);
 }
 
 void RT_Prof_FrameEnd (void)
@@ -624,6 +658,12 @@ void RT_Prof_FrameEnd (void)
 	rt_end_task_current_serial = 0;
 
 	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
+
+	double cacheTotalMs;
+	RT_PointClusterCacheStats (NULL, NULL, &cacheTotalMs, NULL);
+	RT_Prof_Sample (RT_PROF_PARTICLES_RESOLVE, cacheTotalMs - rt_particle_cache_total_ms_last);
+	rt_particle_cache_total_ms_last = cacheTotalMs;
+
 	RT_ProfWindowEndFrame (&rt_prof_window, &rt_prof_window_sync);
 	if (rt_bench_active)
 	{
@@ -800,6 +840,33 @@ static void RT_Prof_PublishWindow (void *unused, unsigned frames, double elapsed
 	rt_prof_report.clusterLights = rt_cluster_last_lights;
 	rt_prof_report.clusterAttempts = rt_cluster_last_attempts;
 	rt_prof_report.clusterDropped = rt_cluster_last_dropped;
+	rt_prof_report.clusterPublicationMask = rt_cluster_last_pub_mask;
+	rt_prof_report.clusterPublicationSkips = rt_cluster_pub_skips;
+	rt_prof_report.clusterPublicationCopies = rt_cluster_pub_copies;
+	rt_prof_report.particlesClassic = rt_particles_classic;
+	rt_prof_report.particlesFte = rt_particles_fte;
+	rt_prof_report.particlesVertices = rt_particles_vertices;
+	rt_prof_report.particlesSmoke = rt_particles_smoke;
+	rt_prof_report.particlesDropped = rt_particles_dropped;
+	rt_prof_report.particlesEmitCulled = rt_particles_emit_culled;
+	rt_prof_report.particlesEmitFaded = rt_particles_emit_faded;
+	RT_ClusterVolumeVerifyStats (&rt_particles_volume_samples, &rt_particles_volume_mismatch,
+		&rt_particles_volume_lost, &rt_particles_volume_extra);
+	rt_prof_report.volumeVerifySamples = rt_particles_volume_samples;
+	rt_prof_report.volumeVerifyMismatch = rt_particles_volume_mismatch;
+	rt_prof_report.volumeVerifyLost = rt_particles_volume_lost;
+	rt_prof_report.volumeVerifyExtra = rt_particles_volume_extra;
+	rt_prof_report.fteConvertBytes = rt_fte_convert_bytes;
+	rt_prof_report.particleUploadBytes = rt_particle_upload_bytes;
+
+	uint64_t particleCacheHits, particleCacheMisses;
+	double   particleCacheAvgNs;
+	RT_PointClusterCacheStats (&particleCacheHits, &particleCacheMisses, NULL, &particleCacheAvgNs);
+	rt_prof_report.particleResolveCacheHits = particleCacheHits - rt_particle_cache_hits_last;
+	rt_prof_report.particleResolveCacheMisses = particleCacheMisses - rt_particle_cache_misses_last;
+	rt_prof_report.particleResolveCacheAvgNs = particleCacheAvgNs;
+	rt_particle_cache_hits_last = particleCacheHits;
+	rt_particle_cache_misses_last = particleCacheMisses;
 	rt_prof_report.valid = true;
 }
 
@@ -822,6 +889,15 @@ void RT_Prof_Update (void)
 		rt_cluster_miss_set = 0;
 		rt_cluster_miss_move = 0;
 		rt_cluster_miss_other = 0;
+		rt_cluster_pub_skips = 0;
+		rt_cluster_pub_copies = 0;
+		rt_cluster_last_pub_mask = 0;
+		rt_particles_dropped = 0;
+		rt_particles_emit_culled = 0;
+		rt_particles_emit_faded = 0;
+		RT_ClusterVolumeResetVerify ();
+		rt_fte_convert_bytes = 0;
+		rt_particle_upload_bytes = 0;
 	}
 }
 
@@ -998,9 +1074,9 @@ qboolean RT_Bench_Report (const char *demo)
 	for (int i = 0; i < RT_HOST_SPEED_COUNT; i++)
 		fprintf (f, "host.pass   %-17s avg_ms=%.2f\n", hostPasses[i], hostSum[i] / hostFrames);
 
-	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d\n", "lists",
+	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d pubskips=%d pubcopies=%d\n", "lists",
 	         clusterHits, clusterMisses, clusterSet,
-	         clusterMove, clusterOther);
+	         clusterMove, clusterOther, rt_cluster_pub_skips, rt_cluster_pub_copies);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");
@@ -1055,6 +1131,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_glass_shadows");
 	RT_Bench_Setting (f, "rt_glass_denoise");
 	RT_Bench_Setting (f, "rt_glass_particles");
+	RT_Bench_Setting (f, "rt_particle_proxy_gate");
 	RT_Bench_Setting (f, "rt_bloom");
 	RT_Bench_Setting (f, "rt_bloom_quality");
 	RT_Bench_Setting (f, "rt_local_exposure");
@@ -1066,6 +1143,15 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
 	RT_Bench_Setting (f, "rt_upscale_dlss");
 	RT_Bench_Setting (f, "rt_stats_panels");
+	RT_Bench_Setting (f, "r_particles");
+	RT_Bench_Setting (f, "r_particle_lighting");
+	RT_Bench_Setting (f, "r_fteparticles");
+	RT_Bench_Setting (f, "r_smoke");
+	RT_Bench_Setting (f, "rt_particle_resolve_cache");
+	RT_Bench_Setting (f, "r_particles_points");
+	RT_Bench_Setting (f, "r_part_emit_distance");
+	RT_Bench_Setting (f, "rt_particle_volume");
+	RT_Bench_Setting (f, "rt_particle_volume_check");
 	fprintf (f, " vid=%dx%d@%d vsync=%d version=%s\n", vid.width, vid.height, vid_display_refresh,
 	         (int)vid_vsync.value, ENGINE_VER_STRING);
 
@@ -1168,9 +1254,12 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_CLUSTERS_RESOLVE, "clust resolve" },
 		{ RT_PROF_CLUSTERS_VIS, "clust vis" },
 		{ RT_PROF_CLUSTERS_TOPUP, "clust topup" },
+		{ RT_PROF_CLUSTERS_MARK, "clust mark" },
+		{ RT_PROF_CLUSTERS_GRID, "clust grid" },
 		{ RT_PROF_CLUSTERS_FILL, "clust fill" },
 		{ RT_PROF_CLUSTERS_TAIL, "clust tail" },
 		{ RT_PROF_CLUSTERS_UPLOAD, "clust upload" },
+		{ RT_PROF_CLUSTERS_PUBLISH, "clust publish" },
 		{ RT_PROF_DRAWFRAME, "qrDrawFrame" },
 		{ RT_PROF_WAIT, "wait" },
 		{ RT_PROF_FRAME, "frame" },
@@ -1184,6 +1273,11 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_BRUSH_MATRIX, "brush matrix" },
 		{ RT_PROF_BRUSH_STYLES, "brush styles" },
 		{ RT_PROF_BRUSH_CLUSTER, "brush cluster" },
+		{ RT_PROF_PARTICLES_SIM, "particles sim" },
+		{ RT_PROF_PARTICLES_RESOLVE, "particles resolve" },
+		{ RT_PROF_PARTICLES_FILL, "particles fill" },
+		{ RT_PROF_PARTICLES_UPLOAD, "particles upload" },
+		{ RT_PROF_FTE_CONVERT, "fte convert" },
 	};
 
 	int i;
@@ -1371,6 +1465,9 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights", snap->profile.clusterLights);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights add", snap->profile.clusterAttempts);
 		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "lights drop", snap->profile.clusterDropped);
+		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "pub skips", snap->profile.clusterPublicationSkips);
+		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "pub copies", snap->profile.clusterPublicationCopies);
+		fprintf (f, "%-11s %-17s %i\n", "cpu.cluster", "pub mask", snap->profile.clusterPublicationMask);
 	}
 	else
 	{
@@ -1546,9 +1643,14 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 
 	fputs (",clust_cache_hits,clust_cache_misses,clust_miss_set,clust_miss_move,clust_miss_other,"
 	       "clust_grants,clust_denied,clust_gated,clust_lights,clust_attempts,clust_dropped,"
-	       "clust_dirty_max,clust_move_footprint",
+	       "clust_dirty_max,clust_move_footprint,clust_pub_mask,clust_pub_skips,clust_pub_copies",
 	       f);
-	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls,calls_geometry,calls_raster,calls_lights,calls_other,cpu.window_id,cpu.window_frames,cpu.renderer_samples\n", f);
+	fputs (",rays_total,rays_primary,rays_refl_refr,rays_indirect,rays_shadow_dir,rays_shadow_ind,calls,calls_geometry,calls_raster,calls_lights,calls_other,rays_particle,"
+	       "particles_classic,particles_fte,particles_vertices,particles_smoke,particles_dropped,"
+	       "fte_convert_bytes,particle_upload_bytes,particles_cache_hits,particles_cache_misses,"
+	       "particles_cache_avg_ns,raster_upload_bytes,raster_upload_dropped_batches,"
+	       "cpu.window_id,cpu.window_frames,cpu.renderer_samples,particles_emit_culled,particles_emit_faded,"
+	       "particles_volume_samples,particles_volume_mismatch,particles_volume_lost,particles_volume_extra\n", f);
 
 	for (i = 0; i < job->count; i++)
 	{
@@ -1639,6 +1741,12 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 		if (snap->haveProfile) fprintf (f, "%i", rep->clusterDirty);
 		RT_StatsRecordField (f, &first);
 		if (snap->haveProfile) fprintf (f, "%i", rep->clusterMoveFootprint);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterPublicationMask);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterPublicationSkips);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->clusterPublicationCopies);
 
 		RT_StatsRecordField (f, &first);
 		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysTotal);
@@ -1663,6 +1771,33 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 		RT_StatsRecordField (f, &first);
 		if (snap->haveGpu) fprintf (f, "%u",
 			snap->gpu.apiCalls - snap->gpu.apiCallsGeometry - snap->gpu.apiCallsRasterized - snap->gpu.apiCallsLights);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.raysParticle);
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesClassic);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesFte);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesVertices);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesSmoke);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesDropped);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%llu", (unsigned long long)rep->fteConvertBytes);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%llu", (unsigned long long)rep->particleUploadBytes);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%llu", (unsigned long long)rep->particleResolveCacheHits);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%llu", (unsigned long long)rep->particleResolveCacheMisses);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%.0f", rep->particleResolveCacheAvgNs);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%llu", (unsigned long long)snap->gpu.rasterUploadBytes);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveGpu) fprintf (f, "%u", snap->gpu.rasterUploadDroppedBatches);
 
 		for (j = 0; j < 3; j++)
 		{
@@ -1673,6 +1808,19 @@ static void RT_StatsRecordWrite (FILE *f, const rt_stats_record_job_t *job)
 				fprintf (f, "%u", values[j]);
 			}
 		}
+
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesEmitCulled);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%i", rep->particlesEmitFaded);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%llu", (unsigned long long)rep->volumeVerifySamples);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%llu", (unsigned long long)rep->volumeVerifyMismatch);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%llu", (unsigned long long)rep->volumeVerifyLost);
+		RT_StatsRecordField (f, &first);
+		if (snap->haveProfile) fprintf (f, "%llu", (unsigned long long)rep->volumeVerifyExtra);
 
 		fputc ('\n', f);
 	}
@@ -3814,6 +3962,11 @@ no_volume:
 	Con_Printf ("volume not specified\n");
 }
 
+static void RT_ParticleResolveCacheChanged_f (cvar_t *var)
+{
+	RT_PointClusterCacheSetEnabled (CVAR_TO_BOOL (*var));
+}
+
 /*
 ===================
 VID_Init
@@ -3866,6 +4019,10 @@ void VID_Init (void)
 
 		Cvar_RegisterVariable (&rt_light_report_filter);
 		Cvar_RegisterVariable (&rt_sky_sun_edit);
+		Cvar_RegisterVariable (&r_particles_overflow);
+
+		Cvar_SetCallback (&rt_particle_resolve_cache, RT_ParticleResolveCacheChanged_f);
+		RT_ParticleResolveCacheChanged_f (&rt_particle_resolve_cache);
 
 		// The panels cvar is archived and used to hold any set of panels; the command
 		// takes a level now, so a value left by the old form --- or typed by hand --- is

@@ -91,7 +91,6 @@ void *RT_AllocScratchMemory (size_t bytecount)
 {
 	if (bytecount == 0)
 	{
-		assert (false);
 		return NULL;
 	}
 

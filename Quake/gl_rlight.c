@@ -976,6 +976,9 @@ static vec3_t rt_cluster_vieworg;
    now, and these counters are the only numbers the host still has on it. */
 int rt_cluster_cache_hits;    /* frames that found the light set unchanged and reused the lists */
 int rt_cluster_cache_misses;  /* frames that composed the lists again */
+int rt_cluster_pub_skips;
+int rt_cluster_pub_copies;
+int rt_cluster_last_pub_mask;
 int rt_cluster_miss_set;      /* compositions set off by lights appearing or disappearing */
 int rt_cluster_miss_move;     /* compositions set off by lights that moved, changed their reach,
                                  or resolved into a different leaf */
@@ -1163,13 +1166,155 @@ static mleaf_t *RT_ResolveLightLeaf (const vec3_t origin, qmodel_t *wm)
 	return NULL;
 }
 
+#define RT_POINT_CLUSTER_SETS 512
+#define RT_POINT_CLUSTER_WAYS 4
+
+typedef struct rt_point_cluster_slot_s
+{
+	int32_t  cell[3];
+	uint32_t cluster;
+	qboolean valid;
+} rt_point_cluster_slot_t;
+
+typedef struct rt_point_cluster_cache_s
+{
+	struct rt_point_cluster_cache_s *next;
+	rt_point_cluster_slot_t slots[RT_POINT_CLUSTER_SETS][RT_POINT_CLUSTER_WAYS];
+	qmodel_t *wm;
+	mleaf_t  *leafs;
+	int       numleafs;
+	int       revision;
+	qboolean  valid;
+	qboolean  registered;
+	uint64_t  hits;
+	uint64_t  misses;
+	uint64_t  timed_calls;
+	double    total_ns;
+} rt_point_cluster_cache_t;
+
+static THREAD_LOCAL rt_point_cluster_cache_t rt_point_cluster_cache;
+static rt_point_cluster_cache_t *rt_point_cluster_cache_list;
+static atomic_uint32_t           rt_point_cluster_cache_spin;
+
+static qboolean rt_point_cluster_cache_enabled = true;
+
+static void RT_PointClusterCacheRegister (rt_point_cluster_cache_t *cache)
+{
+	uint32_t expected = 0;
+	while (!Atomic_CompareExchangeUInt32 (&rt_point_cluster_cache_spin, &expected, 1))
+		expected = 0;
+
+	cache->next = rt_point_cluster_cache_list;
+	rt_point_cluster_cache_list = cache;
+
+	Atomic_StoreUInt32 (&rt_point_cluster_cache_spin, 0);
+}
+
+void RT_PointClusterCacheSetEnabled (qboolean enabled)
+{
+	rt_point_cluster_cache_enabled = enabled;
+}
+
+int RT_ResolvePointClusterUncached (const vec3_t p)
+{
+	qmodel_t *wm = cl.worldmodel;
+	mleaf_t  *leaf = RT_ResolveLightLeaf (p, wm);
+
+	return leaf ? RT_MapWorldCluster ((int)(leaf - wm->leafs)) : 0;
+}
+
 int RT_ResolvePointCluster (const vec3_t p)
 {
-	mleaf_t *leaf = RT_ResolveLightLeaf (p, cl.worldmodel);
-	if (!leaf)
-		return 0;
+	const double prof_start = RT_Prof_Begin ();
+	qmodel_t *wm = cl.worldmodel;
+	rt_point_cluster_cache_t *cache = &rt_point_cluster_cache;
+	int cluster;
 
-	return RT_MapWorldCluster ((int)(leaf - cl.worldmodel->leafs));
+	if (!cache->registered)
+	{
+		RT_PointClusterCacheRegister (cache);
+		cache->registered = true;
+	}
+
+	if (rt_point_cluster_cache_enabled)
+	{
+		if (!cache->valid || cache->wm != wm ||
+		    cache->leafs != (wm ? wm->leafs : NULL) ||
+		    cache->numleafs != (wm ? wm->numleafs : 0) ||
+		    cache->revision != rt_elights_revision)
+		{
+			memset (cache->slots, 0, sizeof (cache->slots));
+			cache->valid = true;
+			cache->wm = wm;
+			cache->leafs = wm ? wm->leafs : NULL;
+			cache->numleafs = wm ? wm->numleafs : 0;
+			cache->revision = rt_elights_revision;
+		}
+
+		const int32_t cx = (int32_t)(p[0] * (1.0f / 16.0f));
+		const int32_t cy = (int32_t)(p[1] * (1.0f / 16.0f));
+		const int32_t cz = (int32_t)(p[2] * (1.0f / 16.0f));
+
+		const uint32_t hash = ((uint32_t)cx * 73856093u) ^ ((uint32_t)cy * 19349663u) ^ ((uint32_t)cz * 83492791u);
+		rt_point_cluster_slot_t *slot = &cache->slots[hash & (RT_POINT_CLUSTER_SETS - 1)][(hash >> 10) & (RT_POINT_CLUSTER_WAYS - 1)];
+
+		if (slot->valid && slot->cell[0] == cx && slot->cell[1] == cy && slot->cell[2] == cz)
+		{
+			cluster = (int)slot->cluster;
+			cache->hits++;
+		}
+		else
+		{
+			cluster = RT_ResolvePointClusterUncached (p);
+
+			slot->valid = true;
+			slot->cell[0] = cx;
+			slot->cell[1] = cy;
+			slot->cell[2] = cz;
+			slot->cluster = (uint32_t)cluster;
+
+			cache->misses++;
+		}
+	}
+	else
+	{
+		cluster = RT_ResolvePointClusterUncached (p);
+		cache->misses++;
+	}
+
+
+	if (prof_start != 0.0)
+	{
+		cache->total_ns += (Sys_DoubleTime () - prof_start) * 1e9;
+		cache->timed_calls++;
+	}
+
+	return cluster;
+}
+
+void RT_PointClusterCacheStats (uint64_t *hits, uint64_t *misses, double *totalMs, double *avgNs)
+{
+	uint64_t hitTotal = 0;
+	uint64_t missTotal = 0;
+	uint64_t callTotal = 0;
+	double   nsTotal = 0.0;
+
+	for (rt_point_cluster_cache_t *cache = rt_point_cluster_cache_list; cache; cache = cache->next)
+	{
+		hitTotal += cache->hits;
+		missTotal += cache->misses;
+		callTotal += cache->timed_calls;
+		nsTotal += cache->total_ns;
+	}
+
+	if (hits)
+		*hits = hitTotal;
+	if (misses)
+		*misses = missTotal;
+	if (totalMs)
+		*totalMs = nsTotal * 1e-6;
+	if (avgNs)
+		*avgNs = callTotal ? nsTotal / (double)callTotal : 0.0;
 }
 
 /* Sources of the frame, handed to the renderer. It composes the per-cluster lists out of them,
@@ -1201,11 +1346,22 @@ static mleaf_t  *rt_leaf_cache_leafs;
 static int       rt_leaf_cache_numleafs;
 static int       rt_leaf_cache_revision;
 
-void RT_ClusterLightListsUpload (void)
+static qboolean rt_cluster_pipeline_active;
+static double   rt_cluster_pipeline_start;
+static qboolean rt_cluster_publish_copy;
+static double   rt_cluster_publish_start;
+
+void RT_ClusterLightListsPrepare (uint32_t sliceCount)
 {
 	qmodel_t *wm = cl.worldmodel;
+
+	rt_cluster_pipeline_active = false;
+
 	if (!wm || wm->type != mod_brush || !wm->leafs || wm->numleafs < 2)
 		return;
+
+	rt_cluster_pipeline_active = true;
+	rt_cluster_pipeline_start = RT_Prof_Begin ();
 
 	/* The registry is what the lists are built from, so how many lights were accepted, how many
 	   additions were attempted and how many fell off the cap explain most of the churn. */
@@ -1285,7 +1441,25 @@ void RT_ClusterLightListsUpload (void)
 		.validate = CVAR_TO_BOOL (rt_cluster_assert) ? 1 : 0,
 	};
 
-	QrResult r = qrUploadClusterLightSources (vulkan_globals.instance, &info);
+	QrResult r = qrBeginClusterLightSources (vulkan_globals.instance, &info, sliceCount);
+	QR_CHECK (r);
+}
+
+void RT_ClusterLightListsSlice (uint32_t slice, uint32_t sliceCount)
+{
+	if (!rt_cluster_pipeline_active)
+		return;
+
+	QrResult r = qrRunClusterLightSourceSlice (vulkan_globals.instance, slice, sliceCount);
+	QR_CHECK (r);
+}
+
+void RT_ClusterLightListsFinish (void)
+{
+	if (!rt_cluster_pipeline_active)
+		return;
+
+	QrResult r = qrFinishClusterLightSources (vulkan_globals.instance);
 	QR_CHECK (r);
 
 	QrClusterLightStats st;
@@ -1306,6 +1480,14 @@ void RT_ClusterLightListsUpload (void)
 		rt_cluster_tail_budget = (int)st.tailBudgetExceeded;
 		rt_cluster_last_dirty = (int)st.incrementalDirty;
 		rt_cluster_last_move_footprint = (int)st.moveFootprint;
+		rt_cluster_last_pub_mask = (int)st.publicationMask;
+
+		if (st.publicationMask & (QR_CLUSTER_PUB_SKIP_DEVICE | QR_CLUSTER_PUB_SKIP_SLOT))
+			rt_cluster_pub_skips++;
+		else if (st.publicationMask & QR_CLUSTER_PUB_COPY)
+			rt_cluster_pub_copies++;
+
+		rt_cluster_publish_copy = (st.publicationMask & QR_CLUSTER_PUB_COPY) != 0;
 
 		if (st.reusedFrames)
 			rt_cluster_cache_hits++;
@@ -1331,6 +1513,8 @@ void RT_ClusterLightListsUpload (void)
 		RT_Prof_Sample (RT_PROF_CLUSTERS_LISTS, st.totalMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_VIS, st.visMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_TOPUP, st.topUpMs);
+		RT_Prof_Sample (RT_PROF_CLUSTERS_MARK, st.markMs);
+		RT_Prof_Sample (RT_PROF_CLUSTERS_GRID, st.gridMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_FILL, st.fillMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_TAIL, st.tailMs);
 		RT_Prof_Sample (RT_PROF_CLUSTERS_UPLOAD, st.publishMs);
@@ -1353,6 +1537,42 @@ void RT_ClusterLightListsUpload (void)
 			rt_light_diag[i].denied = (int)diagDenied[i];
 		}
 	}
+
+	RT_Prof_End (RT_PROF_CLUSTERS, rt_cluster_pipeline_start);
+
+	rt_cluster_publish_start = RT_Prof_Begin ();
+}
+
+void RT_ClusterLightListsPublishSlice (int slice, int sliceCount)
+{
+	if (!rt_cluster_pipeline_active)
+		return;
+
+	QrResult r = qrRunClusterListPublishSlice (vulkan_globals.instance, (uint32_t)slice, (uint32_t)sliceCount);
+	QR_CHECK (r);
+}
+
+void RT_ClusterLightListsCommit (void)
+{
+	if (!rt_cluster_pipeline_active)
+		return;
+
+	rt_cluster_pipeline_active = false;
+
+	QrResult r = qrCommitClusterListPublication (vulkan_globals.instance);
+	QR_CHECK (r);
+
+	if (rt_cluster_publish_copy)
+		RT_Prof_End (RT_PROF_CLUSTERS_PUBLISH, rt_cluster_publish_start);
+}
+
+void RT_ClusterLightListsUpload (void)
+{
+	RT_ClusterLightListsPrepare (1);
+	RT_ClusterLightListsSlice (0, 1);
+	RT_ClusterLightListsFinish ();
+	RT_ClusterLightListsPublishSlice (0, 1);
+	RT_ClusterLightListsCommit ();
 }
 
 

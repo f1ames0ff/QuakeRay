@@ -71,6 +71,12 @@ public:
     void SetSources(const WorldLights &worldLights, const QrClusterLightSourcesUploadInfo &uploadInfo,
                     LightManager *pLightManager, UserPrint *pUserPrint, uint32_t frameIndex);
 
+    void BeginSources(const WorldLights &worldLights, const QrClusterLightSourcesUploadInfo &uploadInfo,
+                      LightManager *pLightManager, UserPrint *pUserPrint, uint32_t frameIndex,
+                      uint32_t sliceCount);
+    void RunTopUpSlice(uint32_t slice, uint32_t sliceCount);
+    void FinishSources();
+
     // Forgets the map together with the lists: the next SetSources composes from scratch.
     void Reset();
 
@@ -111,7 +117,7 @@ private:
     };
 
     void PrepareTables(const WorldLights &worldLights);
-    void Compose(const WorldLights &worldLights, UserPrint *pUserPrint);
+    void ComposeBegin(const WorldLights &worldLights, UserPrint *pUserPrint);
     // Pass one for one light, as the composition runs it for every light.
     void GrantSource(uint32_t sourceIndex);
     // Pass two for one cluster, as the composition runs it for every cluster.
@@ -124,11 +130,14 @@ private:
     // every other slot of the cluster where it stands.
     void HoleSlot(uint32_t cluster, uint32_t slot);
     void MarkDirty(uint32_t cluster);
+    bool PacketMatchesShadow() const;
+    void CommitPacketShadow();
+    void InvalidatePacketShadow();
     void FillLists(UserPrint *pUserPrint);
     // Places the lights that changed -- the ones that moved, the ones that appeared and the ones
     // that disappeared -- and returns false when the frame is not one this can be done for and
     // the caller has to compose.
-    bool UpdateSourceSet(const WorldLights &worldLights, UserPrint *pUserPrint);
+    bool UpdateSourceSetBegin(const WorldLights &worldLights);
     // Lays the membership set out again with a new stride, keeping the bit of every source where
     // the place it names stands. The stride grows only when the set of places does.
     void ResizeSlotBits(uint32_t newWords);
@@ -151,6 +160,10 @@ private:
     bool  WithinReach(const float *pOrigin, uint32_t cluster, float reachSquared) const;
     void  CountSourceChanges();
     void  ReorderStats();
+    void  CountGranted(uint32_t sourceIndex, int32_t delta);
+    void  CountDenied(uint32_t sourceIndex);
+    void  TickReachGated(bool gated);
+    void  TickTopUpGrant();
 
     const WorldLights *worldLights = nullptr;
     // Leaf count of the map the tables were prepared for, before clamping to the cluster cap.
@@ -268,6 +281,38 @@ private:
     // granted again on it are read through. Left over between frames only as capacity.
     std::vector<uint32_t> sourceToFrame;
 
+    enum PendingShape
+    {
+        kShapeNone,
+        kShapeReuse,
+        kShapeIncremental,
+        kShapeCompose
+    };
+
+    struct TopUpSlice
+    {
+        std::vector<std::pair<uint32_t, int32_t>> grantedDelta;
+        std::vector<std::pair<uint32_t, int32_t>> deniedDelta;
+        std::vector<uint32_t>                     tailDirty;
+        std::vector<uint32_t>                     appendedSlots;
+        uint32_t                                  reachGated = 0;
+        uint32_t                                  topUpGrants = 0;
+        uint32_t                                  violations = 0;
+    };
+
+    PendingShape  pendingShape = kShapeNone;
+    uint32_t      pendingSliceCount = 0;
+    uint32_t      topUpCount = 0;
+    bool          topUpAllClusters = false;
+    double        topUpStartMs = 0.0;
+    double        pipelineStartMs = 0.0;
+    LightManager *pendingLightManager = nullptr;
+    UserPrint    *pendingPrint = nullptr;
+    uint32_t      pendingFrameIndex = 0;
+    bool          pendingValidate = false;
+    std::vector<TopUpSlice> topUpSlices;
+    static thread_local TopUpSlice *activeSliceTls;
+
     std::vector<int32_t> gridHead;
     std::vector<int32_t> gridNext;
     int   gridDims[3] = { 1, 1, 1 };
@@ -281,6 +326,20 @@ private:
        whose lists are the ones it was last handed from a frame whose lists have to be built
        again: two publications of one generation carry the same words. */
     uint64_t              listGeneration = 0;
+
+    bool     packetShadowValid = false;
+    uint32_t packetShadowClusters = 0;
+    uint32_t packetShadowEntries = 0;
+    uint32_t packetShadowTailEntries = 0;
+    bool     packetShadowTailSuppressed = true;
+    std::vector<uint32_t> packetShadowOffsets;
+    std::vector<uint64_t> packetShadowList;
+    std::vector<uint32_t> packetShadowTailOffsets;
+    std::vector<uint64_t> packetShadowTailUids;
+    std::vector<float>    packetShadowTailProb;
+    std::vector<float>    packetShadowTailMarginal;
+    std::vector<uint32_t> packetShadowTailAlias;
+    std::vector<float>    packetShadowTailBeta;
 
     std::vector<uint32_t> granted;
     std::vector<uint32_t> denied;

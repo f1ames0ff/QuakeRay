@@ -1016,8 +1016,10 @@ void _Host_Frame (double time)
 
 	SCR_UpdateScreen (true);
 
+	double prof_particles = RT_Prof_Begin ();
 	CL_RunParticles (); // johnfitz -- seperated from rendering
 	R_SmokeUpdate ();
+	RT_Prof_End (RT_PROF_PARTICLES_SIM, prof_particles);
 
 	time2 = Sys_DoubleTime ();
 

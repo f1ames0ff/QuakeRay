@@ -9,6 +9,7 @@
         "environment": {
           "QUAKERAY_ROOT": ".",
           "QUAKERAY_BUILD": "build/Debug",
+          "QUAKERAY_IMPORT_ROOTS": "build/Debug/ad",
           "QUAKERAY_CLANGD": "auto",
           "QUAKERAY_ENABLE_JOBS": "0",
           "QUAKERAY_ENABLE_RESEARCH": "0"
