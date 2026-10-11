@@ -84,9 +84,6 @@ typedef struct entity_s
 	int              visframe; // last frame this entity was
 	                           //  found in an active leaf
 
-	int dlightframe; // dynamic lighting
-	int dlightbits;
-
 	// FIXME: could turn these into a union
 	int             trivial_accept;
 	struct mnode_s *topnode; // for bmodels, first world node
@@ -153,8 +150,6 @@ typedef struct
 //
 // refresh
 //
-extern int reinit_surfcache;
-
 extern refdef_t r_refdef;
 extern vec3_t   r_origin, vpn, vright, vup;
 
@@ -192,8 +187,6 @@ void R_TeleportSplash (vec3_t org);
 //
 // surface cache related
 //
-extern int reinit_surfcache; // if 1, surface cache is currently empty and
-
 int  D_SurfaceCacheForRes (int width, int height);
 void D_DeleteSurfaceCache (void);
 void D_InitCaches (void *buffer, int size);

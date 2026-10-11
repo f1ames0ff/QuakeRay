@@ -41,7 +41,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #pragma GCC diagnostic pop
 #endif
 
-static cvar_t gl_max_size = {"gl_max_size", "0", CVAR_NONE};
 static cvar_t gl_picmip = {"gl_picmip", "0", CVAR_NONE};
 
 extern cvar_t vid_filter;
@@ -797,7 +796,6 @@ void TexMgr_Init (void)
 	// palette
 	TexMgr_LoadPalette ();
 
-	Cvar_RegisterVariable (&gl_max_size);
 	Cvar_RegisterVariable (&gl_picmip);
 	Cmd_AddCommand ("imagelist", &TexMgr_Imagelist_f);
 	Cmd_AddCommand ("rt_mat_dump", &TexMgr_RTMatDump_f);
@@ -977,23 +975,6 @@ static int TexMgr_DeriveNumMips (int width, int height)
 		num_mips += 1;
 	}
 	return num_mips;
-}
-
-/*
-================
-TexMgr_DeriveStagingSize
-================
-*/
-static int TexMgr_DeriveStagingSize (int width, int height)
-{
-	int size = 0;
-	while (width >= 1 && height >= 1)
-	{
-		size += width * height * 4;
-		width /= 2;
-		height /= 2;
-	}
-	return size;
 }
 
 /*

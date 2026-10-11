@@ -2,8 +2,8 @@
 
 Updated: 2026-10-11. Supersedes the 2026-10-10 planning revision and the temporary pause notes.
 
-Status: active. Branch `perf/rhi-dyn-blas-clean` @ `97ec30cf` (pushed), with the `origin/master` PR #41
-merge included.
+Status: active. Branch `perf/rhi-dyn-blas-clean`; the tip carries the Tier A port, the parallel world
+marking and the stage-2.3 cleanup (the changelog below records the trail and the PR-gate numbers).
 
 ## 1. State of the tree
 
@@ -82,10 +82,12 @@ sub-work dominates. No optimization starts from an unmatched screenshot.
   - Swamp (`qr_ad_swamp`): report maxima `ents 19.06`, `sky 11.33`, `alpha 9.26`; `frame` slot 24.46/29.16.
   - GPU at this window: `gpu.indirect` at or below 0.92 ms on both maps. GPU rows depend on the internal
     render resolution, so T-I evidence must be captured at 3840x2160 before it is used.
-- Observer note (verified): `RT_Prof_End` takes a global spinlock per entity/pose/surface; with the profile
-  panel on - the acceptance situation - it inflates the **outer** slots (`ents`, `sky`, `alpha`) and the
-  frame wall, while each slot's own sample is taken before the lock. Current maxima mix work, wait and
-  observer cost; P1 must separate them without changing the published per-invocation-max semantics.
+- Observer note (verified for the captures this section interprets, i.e. before slice 1 of P1): the
+  then-current `RT_Prof_End` took a global spinlock per entity/pose/surface; with the profile panel on -
+  the acceptance situation - it inflated the **outer** slots (`ents`, `sky`, `alpha`) and the frame
+  wall, while each slot's own sample was taken before the lock. Those maxima mix work, wait and observer
+  cost. The thread-local profiler accumulation that landed with P1 removed the lock from the sampling
+  path, so current captures no longer carry that inflation.
 - Upstream-comparison conclusions relevant to the targets: per-item `rs_*` atomics remain in the sky and
   brush sites; mark/cull still use one atomic per marked surface and one task item per 32-block; world sky
   surfaces are uploaded per surface per frame; water/animated chains are re-batched and re-uploaded per frame
@@ -278,8 +280,8 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   (per-texture indexed chain) -> chain_finish}` under `r_parallelmark 1`; `r_parallelmark 0` and
   `r_tasks 0` keep the scalar path. Same-binary audit A/B: swamp frame/wait 23.05 -> 19.62 ms
   (-3.4 ms; fps 30.4 -> 33.6), Fuma 13.12 -> 11.82 ms (-1.3 ms); `calls_geometry` matches
-  modal/mean (2082 both, 1194 both). Water-shot on/off pairs differ only by particle animation phases
-  (mean absolute difference within the within-run noise). Accepted deviation: per-texture chain
+  modal/mean (2082 both, 1194 both). Water-shot on/off pairs showed no difference beyond the within-run
+  noise; the pair provenance was not retained (see the review-fixes entry below). Accepted deviation: per-texture chain
   order is surface-index order instead of the scalar leaf first-touch order (docs contract
   updated). The v1 order-preserving attempt (per-chunk first-touch lists plus a serial merge)
   measured no wall win (mark sum 3.56 ms plus an applied serial chain of 3.60 ms against the
@@ -293,3 +295,52 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   (fixtures deleted), and `calls_geometry` equality is modal/mean rather than frame-exact. Known benign
   exception: the two shared dummy textures keep `rt_chain_index = 0`; their surfaces still chain via
   the texture pointer.
+- 2026-10-11 (stage 2.1, remaining producers and the CPU/GPU bound): with parallel marking in place the
+  remaining above-threshold rows on the audit profile are `ents` (window max 25.5 / avg 17.3 on swamp,
+  the entity worker sum), `alpha` 12.4/7.8, `cpu.draw.RHI_setup` (renderer CPU inside qrDrawFrame)
+  11.6/5.7 and `ents_brush` 6.4/4.2; sky is down to 2.3/1.4. At 1280x720 the audit run is CPU-bound
+  (CPU frame/wait about 19.6 ms against a GPU frame of 10.6 ms); at 4K Medium it is GPU-bound (CPU about
+  13 ms after the marking win against a GPU frame of 24.2 ms). The Fuma arm of this batch was lost to a
+  foreign machine owner and the swamp scalar control was disturbed (121 ms outlier); the swamp on-arm
+  reproduces the v2 numbers (frame 19.57, mark 1.48, chain 8.28). Next: the code-review stage, then the
+  GPU investigation with the Radeon Raytracing Analyzer.
+- 2026-10-11 (stage 2.2, code review): six independent review axes covered the changed surface - dead
+  code and leftovers, duplication, architecture and responsibilities, code smells, concurrency
+  contracts against `docs/multithreading.md`, and documentation/evidence consistency - producing 90+
+  findings. Accepted for the cleanup: the dead constructs confirmed by at least two reviewers (the
+  compiled-out SIMD mark/cull/chain block and its SoA buffers, `world_texstart/end` with
+  `R_SetupWorldCBXTexRanges`, the legacy dynamic-light marking chain with its write-only fields, dead
+  counters and lightmap-era statics, six reader-less cvars, stale externs and declaration leftovers),
+  plus the diagnostics fixes (sky upload-lane attribution, the never-pushed `gui` lane, compile-time
+  lane coupling asserts, the alias pose probe gate, the `QrUploadLockStats` initialization), the
+  fan-index single source, the unreachable flush-time covers gate, the mark-flag ordering, the
+  warn-once parallel fallback, and the profiler/multithreading documentation corrections. Deferred
+  with recorded reasons: the animated light-texture divergence, the emissive counter unification, the
+  lightmap material removal project, the warp-image removal (needs a renderer-side check), the
+  `cull_surfaces` naming, the emis-watch lock split, the task-runtime capacity asserts and the load-
+  time scaffolding questions. Rejected: removing `r_gpulightmapupdate` (documented retention) and the
+  `rt_mark_parallel_frame` race hypothesis (submission order already made it safe; the cleanup writes
+  the flag before the prepare submit regardless).
+- 2026-10-11 (stage 2.3, cleanup): two verification agents falsified the deletion set first (no hidden
+  readers; `R_MarkLights`/`R_AddDynamicLights` removed as one unit) and the behavioral risks (all safe;
+  the single guard needed was `QrUploadLockStats`: `valid` stays, but the engine now zero-initializes
+  the struct so the suspended-call path cannot inject garbage). The cleanup touches 25 files (964
+  deletions, 77 insertions), keeps `surfvis`, `cl_dlights` and `rt_dmg_inthisframe`, and fixes the
+  mark-flag ordering, the fallback warning, `R_ClearTextureChains` reuse, the fan-index helper, the
+  sky lane, the alias probe gate and the lane asserts. Acceptance: Debug build exit 0, CTest 8/8, and
+  a matched audit run reproducing the v2 numbers (swamp frame 20.37, mark 1.47, chain 8.41; Fuma frame
+  12.65, mark 0.90; no renderer errors; `calls_geometry` modal 2082/2084, means 2082.1/2082.7). Two
+  final code reviewers confirmed the removals (no blockers) and the behavior claims; their nits were
+  fixed (the `r_parallelmark` gate keeps its exact non-zero test, the `TexMgr_PreMultiply32` banner
+  was restored, one comment reworded, `changelog.md` lost the stale `lmap` mention).
+- 2026-10-11 (PR gate, standing procedure before every PR): build Release (`build_win.ps1 Release`;
+  the runtime needs the base paks and named saves copied forward on a fresh config) and run one matched
+  capture per save on both binaries with identical settings (4K FSR Balanced, Medium) through
+  `tests/perf/run_stress.ps1`, retrying a capture when the focus gate rejects it (shared machine).
+  Result on the stage-2.3 tree: swamp Debug 38.6 fps / 25.90 ms (p95 27.69) against Release 43.2 fps /
+  23.15 ms (p95 26.40), i.e. +11.9% fps / -2.75 ms; Fuma Debug 51.7 fps / 19.33 ms (p95 24.47) against
+  Release 54.3 fps / 18.40 ms (p95 19.22), i.e. +5.0% fps / -0.93 ms. Both saves remain below 60 fps at
+  the acceptance profile, matching the known GPU-bound state (GPU frame about 21.5-22.1 ms swamp and
+  17.9 ms Fuma in these captures).
+  A Debug-vs-Release gap larger than this is a signal that Debug-only overhead dominates the scene
+  rather than the shipping build being slow.

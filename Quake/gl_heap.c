@@ -49,6 +49,16 @@ int RT_GetFanIndexCount(int vertexcount)
 	return tricount * 3;
 }
 
+void RT_WriteFanIndices (int basevert, int vertexcount, uint32_t *dest)
+{
+	for (int i = 2; i < vertexcount; i++)
+	{
+		*dest++ = (uint32_t)(basevert + i);
+		*dest++ = (uint32_t)(basevert + i - 1);
+		*dest++ = (uint32_t)basevert;
+	}
+}
+
 const uint32_t *RT_GetFanIndices (int vertexcount)
 {
 	int count = RT_GetFanIndexCount (vertexcount);
@@ -71,12 +81,7 @@ const uint32_t *RT_GetFanIndices (int vertexcount)
 
 		assert (fan_indices_count % 3 == 0);
 
-		for (int i = 0; i < fan_indices_count / 3; i++)
-		{
-			fan_indices[i * 3 + 0] = 2 + i;
-			fan_indices[i * 3 + 1] = 1 + i;
-			fan_indices[i * 3 + 2] = 0;
-		}
+		RT_WriteFanIndices (0, fan_indices_count / 3 + 2, fan_indices);
 	}
 
 	return fan_indices;

@@ -57,8 +57,6 @@ SDL_mutex *lightcache_mutex;
 
 extern cvar_t rt_brush_metal;
 extern cvar_t rt_brush_rough;
-extern cvar_t rt_model_metal;
-extern cvar_t rt_model_rough;
 extern cvar_t rt_enable_pvs;
 
 /*
@@ -330,9 +328,7 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 		mod->numclipnodes = 0;
 		SAFE_FREE (mod->marksurfaces);
 		mod->nummarksurfaces = 0;
-		SAFE_FREE (mod->soa_leafbounds);
 		SAFE_FREE (mod->surfvis);
-		SAFE_FREE (mod->soa_surfplanes);
 		SAFE_FREE (mod->textures);
 		mod->numtextures = 0;
 		SAFE_FREE (mod->visdata);

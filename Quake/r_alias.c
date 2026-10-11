@@ -26,16 +26,18 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "rt_lights.h"
 
-extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; // johnfitz
+extern cvar_t r_lerpmodels, r_lerpmove; // johnfitz
 extern cvar_t scr_fov;
 
 extern cvar_t rt_model_rough, rt_model_metal, rt_enable_pvs;
 extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale, rt_viewm_normalize;
+extern cvar_t rt_upload_trace;
 
 atomic_uint32_t rs_alias_enhanced_draws;
 atomic_uint32_t rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
 
 #define RT_ALIAS_POSECACHE_SIZE 2048
+COMPILE_TIME_ASSERT (rt_alias_posecache_pow2, (RT_ALIAS_POSECACHE_SIZE & (RT_ALIAS_POSECACHE_SIZE - 1)) == 0);
 
 typedef struct
 {
@@ -414,6 +416,7 @@ static void GL_DrawAliasFrame(
 
     int cluster = RT_ResolvePointCluster (lerpdata.origin);
 
+    if (rt_upload_trace.value != 0)
     {
         /* Sizing probe: an alias upload can reuse the previous frame's vertices only when it
            uploads the raw pose block (no lerp, no forced cluster) and that block did not move

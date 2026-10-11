@@ -125,6 +125,16 @@ for exactly this reason).
   run no longer throws), and the bench settings block records `r_tasks` and `r_parallelmark`.
 - Build and CTest green; the per-item acceptance captures belong to the following measurement stage.
 
+### Stage-2.3 cleanup (landed 2026-10-11)
+
+- The dead remains of the items above were removed: H02's compiled-out SIMD mark/cull/chain block and
+  its SoA buffers (`soa_leafbounds`/`soa_surfplanes`, the `SoA_Fill*` helpers and their model
+  fields); the legacy dynamic-light marking (`R_MarkLights`, `R_AddDynamicLights`, `r_dlightframecount`,
+  the per-surface/entity `dlightbits`/`dlightframe` and the cached-light fields); and the lightmap-era
+  statics (`gl_lightmap_format`, `R_FillLightstyleTextures`, `R_AssignSurfaceIndex`, the `glRect_t`
+  type and `lightmaps[].polys`/`rectchange`). This is cleanup of already-recorded items, not a
+  reclassification: the H01-H16 classification and adoption decisions above stand.
+
 ## References
 
 - `docs/fuma-cpu-optimization-plan.md` — the live plan and changelog with all measured numbers.

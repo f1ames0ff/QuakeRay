@@ -170,14 +170,8 @@ typedef struct msurface_s
 	int vbo_firstvert; // index of this surface's first vert in the VBO
 
 	// lighting info
-	int          dlightframe;
-	unsigned int dlightbits[(MAX_DLIGHTS + 31) >> 5];
-	// int is 32 bits, need an array for MAX_DLIGHTS > 32
-
 	int      lightmaptexturenum;
 	byte     styles[MAXLIGHTMAPS];
-	int      cached_light[MAXLIGHTMAPS]; // values currently used in lightmap
-	qboolean cached_dlight;              // true if dynamic light in cache
 	byte    *samples;                    // [numstyles*surfsize]
 } msurface_t;
 
@@ -226,9 +220,6 @@ typedef struct
 	vec3_t       clip_mins;
 	vec3_t       clip_maxs;
 } hull_t;
-
-typedef float soa_aabb_t[2 * 3 * 8]; // 8 AABB's in SoA form
-typedef float soa_plane_t[4 * 8];    // 8 planes in SoA form
 
 /*
 ==============================================================================
@@ -584,9 +575,7 @@ typedef struct qmodel_s
 	int  nummarksurfaces;
 	int *marksurfaces;
 
-	soa_aabb_t  *soa_leafbounds;
-	byte        *surfvis;
-	soa_plane_t *soa_surfplanes;
+	byte *surfvis;
 
 	hull_t hulls[MAX_MAP_HULLS];
 

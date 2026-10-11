@@ -101,7 +101,4 @@ qboolean VID_HasMouseOrInputFocus (void);
 qboolean VID_IsMinimized (void);
 void     VID_Lock (void);
 
-void VID_FocusGained (void);
-void VID_FocusLost (void);
-
 #endif /* __VID_DEFS_H */

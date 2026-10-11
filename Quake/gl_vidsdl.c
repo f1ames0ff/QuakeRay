@@ -66,7 +66,6 @@ static vmode_t *modelist = NULL;
 static int      nummodes;
 
 static qboolean vid_initialized = false;
-static qboolean has_focus = true;
 
 static SDL_Window   *draw_context;
 static SDL_SysWMinfo sys_wm_info;
@@ -107,7 +106,6 @@ static cvar_t                   vid_palettize = {"vid_palettize", "0", CVAR_ARCH
 cvar_t                          vid_filter = {"vid_filter", "1", CVAR_ARCHIVE};
 cvar_t                          vid_gamma = {"gamma", "1", CVAR_ARCHIVE};       // johnfitz -- moved here from view.c
 cvar_t                          vid_contrast = {"contrast", "1", CVAR_ARCHIVE}; // QuakeSpasm, MarkV
-cvar_t                          r_usesops = {"r_usesops", "1", CVAR_ARCHIVE};   // johnfitz
 
 task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 atomic_uint32_t rt_end_task_running;
@@ -466,12 +464,14 @@ extern atomic_uint32_t   rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pos
 static uint32_t          rt_upload_lock_frames;
 static QrUploadLockStats rt_upload_lock_acc;
 
-static const char *const rt_upload_lane_names[QR_UPLOAD_LANE_COUNT] =
+static const char *const rt_upload_lane_names[] =
 {
 	"unattributed", "ents 0", "ents 1", "ents 2", "ents 3", "ents 4", "ents 5",
-	"world", "alpha", "sky", "water", "animated", "particles", "viewmodel", "gui",
+	"world", "alpha", "sky", "water", "animated", "particles", "viewmodel",
 	"brush", "sprite", "alias", "alias surf"
 };
+COMPILE_TIME_ASSERT (rt_upload_lane_names_count, countof (rt_upload_lane_names) == QR_UPLOAD_LANE_COUNT);
+COMPILE_TIME_ASSERT (rt_upload_lane_entities, (int)(QR_UPLOAD_LANE_ENTITIES_0 + NUM_ENTITIES_CBX) == (int)QR_UPLOAD_LANE_WORLD);
 
 static void RT_Prof_Lock (void)
 {
@@ -829,7 +829,7 @@ void RT_Prof_FrameEnd (void)
 
 	if (rt_upload_trace_on)
 	{
-		QrUploadLockStats stats;
+		QrUploadLockStats stats = {0};
 
 		qrGetUploadLockStats (vulkan_globals.instance, &stats);
 
@@ -1414,7 +1414,6 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_ENTS_ALIAS, "ents alias" },
 		{ RT_PROF_ENTS_BRUSH, "ents brush" },
 		{ RT_PROF_ENTS_SPRITE, "ents sprite" },
-		{ RT_PROF_BRUSH_LIGHTMARK, "brush lightmark" },
 		{ RT_PROF_ALPHA, "alpha" },
 		{ RT_PROF_PARTICLES, "particles" },
 		{ RT_PROF_VIEWMODEL, "viewmodel" },
@@ -3225,7 +3224,6 @@ extern float  r_fovx, r_fovy;
 extern cvar_t r_fastsky;
 extern float  skyflatcolor[3];
 extern float  skyfog;
-extern float    rt_dmg_value;
 extern qboolean rt_dmg_inthisframe;
 extern QrMediaType rt_cameramedia;
 extern qboolean rt_lavaeffects;
@@ -5133,14 +5131,4 @@ void SCR_ScreenShot_f (void)
 	{
 		Con_Printf ("screenshot: failed (%s)\n", qrGetResultDescription (result));
 	}
-}
-
-void VID_FocusGained (void)
-{
-	has_focus = true;
-}
-
-void VID_FocusLost (void)
-{
-	has_focus = false;
 }

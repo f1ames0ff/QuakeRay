@@ -272,9 +272,9 @@ static void RT_StatsOverlayBudget (void)
 
 	RT_StatsOverlayMs ("WORLD", rt_world_draw_ms, &rt_stats_series_world);
 
-	q_snprintf (st, sizeof (st), "wpoly %u/%u epoly %u/%u lmap %u sky %u/%u", Atomic_LoadUInt32 (&rs_brushpolys),
+	q_snprintf (st, sizeof (st), "wpoly %u/%u epoly %u/%u sky %u/%u", Atomic_LoadUInt32 (&rs_brushpolys),
 	            Atomic_LoadUInt32 (&rs_brushpasses), Atomic_LoadUInt32 (&rs_aliaspolys), Atomic_LoadUInt32 (&rs_aliaspasses),
-	            Atomic_LoadUInt32 (&rs_dynamiclightmaps), Atomic_LoadUInt32 (&rs_skypolys), Atomic_LoadUInt32 (&rs_skypasses));
+	            Atomic_LoadUInt32 (&rs_skypolys), Atomic_LoadUInt32 (&rs_skypasses));
 	QR_GUI_OverlayNote (st);
 }
 

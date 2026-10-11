@@ -73,7 +73,6 @@ extern cvar_t crosshair;
 extern cvar_t crosshair_def;
 extern cvar_t crosshair_size;
 extern cvar_t r_tasks;
-extern cvar_t r_gpulightmapupdate;
 extern cvar_t r_showtris;
 extern cvar_t r_showbboxes;
 extern cvar_t rt_dtal_debug;

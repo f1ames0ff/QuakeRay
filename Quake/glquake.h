@@ -131,7 +131,6 @@ extern int r_trace_line_cache_counter;
 
 #define MAX_BATCH_INDICES 65536
 #define MAX_BATCH_VERTS   8196
-#define NUM_WORLD_CBX     6
 #define NUM_ENTITIES_CBX  6
 
 typedef enum
@@ -238,9 +237,7 @@ extern cvar_t r_wateralpha;
 extern cvar_t r_lavaalpha;
 extern cvar_t r_telealpha;
 extern cvar_t r_slimealpha;
-extern cvar_t r_dynamic;
 
-extern cvar_t gl_polyblend;
 extern cvar_t gl_nocolors;
 
 // johnfitz -- polygon offset
@@ -248,8 +245,8 @@ extern cvar_t gl_nocolors;
 #define OFFSET_DECAL 1
 
 // johnfitz -- rendering statistics
-extern atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles, rs_fogpolys;
-extern atomic_uint32_t rs_dynamiclightmaps, rs_brushpasses, rs_aliaspasses, rs_skypasses;
+extern atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles;
+extern atomic_uint32_t rs_brushpasses, rs_aliaspasses, rs_skypasses;
 
 extern size_t total_device_vulkan_allocation_size;
 extern size_t total_host_vulkan_allocation_size;
@@ -286,23 +283,14 @@ typedef struct
 	byte  color[4];
 } basicvertex_t;
 
-// johnfitz -- moved here from r_brush.c
-extern int gl_lightmap_format;
-
 #define LMBLOCK_WIDTH \
 	1024 // FIXME: make dynamic. if we have a decent card there's no real reason not to use 4k or 16k (assuming there's no lightstyles/dynamics that need
 	     // uploading...)
 #define LMBLOCK_HEIGHT 1024 // Alternatively, use texture arrays, which would avoid the need to switch textures as often.
 
-typedef struct glRect_s
-{
-	unsigned short l, t, w, h;
-} glRect_t;
 struct lightmap_s
 {
 	gltexture_t    *texture;
-	glpoly_t       *polys;
-	glRect_t        rectchange;
 
 	// the lightmap texture data needs to be kept in
 	// main memory so texsubimage can update properly
@@ -345,8 +333,6 @@ void R_GetSpriteQuadCorners (entity_t *e, mspriteframe_t *frame, vec3_t corners[
 // The draw task the editor's GUI has to wait for (the one that uploads the
 // frame's lights); invalid when tasks are off.
 extern task_handle_t rt_editor_draw_done_task;
-void     R_MarkLights (dlight_t *light, int num, mnode_t *node);
-
 void R_InitParticles (void);
 void R_DrawParticles (cb_context_t *cbx);
 void CL_RunParticles (void);
@@ -468,7 +454,6 @@ void RT_BuildWorldClusters (void);
 void RT_FreeWorldClusters (void);
 int RT_MapWorldCluster (int leaf_index);
 
-void GL_SubdivideSurface (msurface_t *fa);
 void R_BuildLightMap (msurface_t *surf, byte *dest, int stride);
 
 void R_DrawWorld_ShowTris (cb_context_t *cbx);
@@ -688,7 +673,6 @@ enum
 	RT_PROF_ENTS_ALIAS,
 	RT_PROF_ENTS_BRUSH,
 	RT_PROF_ENTS_SPRITE,
-	RT_PROF_BRUSH_LIGHTMARK,
 	RT_PROF_ALPHA,
 	RT_PROF_PARTICLES,
 	RT_PROF_VIEWMODEL,

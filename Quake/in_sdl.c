@@ -976,12 +976,10 @@ void IN_SendKeyEvents (void)
 			if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
 			{
 				S_UnblockSound ();
-				VID_FocusGained ();
 			}
 			else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
 			{
 				S_BlockSound ();
-				VID_FocusLost ();
 			}
 			else if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
 			{

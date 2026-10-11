@@ -26,10 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "gl_heap.h"
 
-extern cvar_t gl_fullbrights, r_drawflat; // johnfitz
 extern cvar_t rt_brush_metal, rt_brush_rough, rt_enable_pvs;
-
-int gl_lightmap_format;
 
 #define SHELF_HEIGHT 256
 #define SHELVES      (LMBLOCK_HEIGHT / SHELF_HEIGHT)
@@ -49,7 +46,6 @@ unsigned blocklights[LMBLOCK_WIDTH * LMBLOCK_HEIGHT * 3 + 1]; // johnfitz -- was
                                                               // (LMBLOCK_WIDTH*LMBLOCK_HEIGHT)
 
 extern cvar_t r_showtris;
-extern cvar_t r_simd;
 
 QrVertex *rtallbrushvertices;
 
@@ -275,7 +271,7 @@ void DrawGLPoly (
 			.transform = *transform,
 		};
 
-		qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_BRUSH);
+		qrUploadLanePush (vulkan_globals.instance, is_sky ? QR_UPLOAD_LANE_SKY : QR_UPLOAD_LANE_BRUSH);
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
 		qrUploadLanePop (vulkan_globals.instance);
 		QR_CHECK (r);
@@ -297,7 +293,7 @@ R_DrawBrushModel
 */
 void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniqueid)
 {
-	int         i, k;
+	int         i;
 	msurface_t *psurf;
 	float       dot;
 	mplane_t   *pplane;
@@ -329,21 +325,6 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
 	}
 
 	psurf = &clmodel->surfaces[clmodel->firstmodelsurface];
-
-	// calculate dynamic lighting for bmodel if it's not an
-	// instanced model
-	const double prof_lightmark = RT_Prof_Begin ();
-	if (clmodel->firstmodelsurface != 0)
-	{
-		for (k = 0; k < MAX_DLIGHTS; k++)
-		{
-			if ((cl_dlights[k].die < cl.time) || (!cl_dlights[k].radius))
-				continue;
-
-			R_MarkLights (&cl_dlights[k], k, clmodel->nodes + clmodel->hulls[0].firstclipnode);
-		}
-	}
-	RT_Prof_End (RT_PROF_BRUSH_LIGHTMARK, prof_lightmark);
 
 	const double prof_chain = RT_Prof_Begin ();
 	R_ClearTextureChains (clmodel, chain);
@@ -488,66 +469,6 @@ mvertex_t *r_pcurrentvertbase;
 qmodel_t  *currentmodel;
 
 int nColinElim;
-
-/*
-===============
-R_AssignSurfaceIndex
-===============
-*/
-static void R_AssignSurfaceIndex (msurface_t *surf, uint32_t index, uint32_t *surface_indices, int stride)
-{
-	int width = (surf->extents[0] >> 4) + 1;
-	int height = (surf->extents[1] >> 4) + 1;
-
-	stride -= width;
-	while (height-- > 0)
-	{
-		int i;
-		for (i = 0; i < width; i++)
-		{
-			*surface_indices++ = index;
-		}
-		surface_indices += stride;
-	}
-}
-
-/*
-===============
-R_FillLightstyleTexture
-===============
-*/
-static void R_FillLightstyleTextures (msurface_t *surf, byte **lightstyles, int stride)
-{
-	int   smax, tmax;
-	byte *lightmap;
-	int   maps;
-
-	smax = (surf->extents[0] >> 4) + 1;
-	tmax = (surf->extents[1] >> 4) + 1;
-	lightmap = surf->samples;
-	stride -= smax * LIGHTMAP_BYTES;
-
-	// add all the lightmaps
-	if (lightmap)
-	{
-		for (maps = 0; maps < MAXLIGHTMAPS && surf->styles[maps] != 255; ++maps)
-		{
-			int height = tmax;
-			while (height-- > 0)
-			{
-				int i;
-				for (i = 0; i < smax; i++)
-				{
-					*lightstyles[maps]++ = *lightmap++;
-					*lightstyles[maps]++ = *lightmap++;
-					*lightstyles[maps]++ = *lightmap++;
-					*lightstyles[maps]++ = 0;
-				}
-				lightstyles[maps] += stride;
-			}
-		}
-	}
-}
 
 /*
 ========================
@@ -724,10 +645,6 @@ void GL_BuildLightmaps (void)
 	for (i = 0; i < lightmap_count; i++)
 	{
 		lm = &lightmaps[i];
-		lm->rectchange.l = LMBLOCK_WIDTH;
-		lm->rectchange.t = LMBLOCK_HEIGHT;
-		lm->rectchange.w = 0;
-		lm->rectchange.h = 0;
 
 		sprintf (name, "lightmap%07i", i);
 		lm->texture = TexMgr_LoadImage (
@@ -839,39 +756,6 @@ void GL_BuildBModelVertexBuffer (void)
 }
 
 /*
-=================
-SoA_FillBoxLane
-=================
-*/
-void SoA_FillBoxLane (soa_aabb_t *boxes, int index, vec3_t mins, vec3_t maxs)
-{
-	float *dst = boxes[index >> 3];
-	index &= 7;
-	dst[index + 0] = mins[0];
-	dst[index + 8] = maxs[0];
-	dst[index + 16] = mins[1];
-	dst[index + 24] = maxs[1];
-	dst[index + 32] = mins[2];
-	dst[index + 40] = maxs[2];
-}
-
-/*
-=================
-SoA_FillPlaneLane
-=================
-*/
-void SoA_FillPlaneLane (soa_plane_t *planes, int index, mplane_t *src, qboolean flip)
-{
-	float  side = flip ? -1.0f : 1.0f;
-	float *dst = planes[index >> 3];
-	index &= 7;
-	dst[index + 0] = side * src->normal[0];
-	dst[index + 8] = side * src->normal[1];
-	dst[index + 16] = side * src->normal[2];
-	dst[index + 24] = side * src->dist;
-}
-
-/*
 ===============
 GL_PrepareSIMDData
 ===============
@@ -879,108 +763,6 @@ GL_PrepareSIMDData
 void GL_PrepareSIMDData (void)
 {
 	cl.worldmodel->surfvis = Mem_Alloc (((cl.worldmodel->numsurfaces + 31) / 8));
-
-#ifdef USE_SIMD
-	int i;
-
-	cl.worldmodel->soa_leafbounds = Mem_Alloc (6 * sizeof (float) * ((cl.worldmodel->numleafs + 31) & ~7));
-	cl.worldmodel->soa_surfplanes = Mem_Alloc (4 * sizeof (float) * ((cl.worldmodel->numsurfaces + 31) & ~7));
-
-	for (i = 0; i < cl.worldmodel->numleafs; ++i)
-	{
-		mleaf_t *leaf = &cl.worldmodel->leafs[i + 1];
-		SoA_FillBoxLane (cl.worldmodel->soa_leafbounds, i, leaf->minmaxs, leaf->minmaxs + 3);
-	}
-
-	for (i = 0; i < cl.worldmodel->numsurfaces; ++i)
-	{
-		msurface_t *surf = &cl.worldmodel->surfaces[i];
-		SoA_FillPlaneLane (cl.worldmodel->soa_surfplanes, i, surf->plane, surf->flags & SURF_PLANEBACK);
-	}
-#endif // def USE_SIMD
-}
-
-/*
-===============
-R_AddDynamicLights
-===============
-*/
-void R_AddDynamicLights (msurface_t *surf)
-{
-	int         lnum;
-	int         sd, td;
-	float       dist, rad, minlight;
-	vec3_t      impact, local;
-	int         s, t;
-	int         i;
-	int         smax, tmax;
-	mtexinfo_t *tex;
-	// johnfitz -- lit support via lordhavoc
-	float       cred, cgreen, cblue, brightness;
-	unsigned   *bl;
-	// johnfitz
-
-	smax = (surf->extents[0] >> 4) + 1;
-	tmax = (surf->extents[1] >> 4) + 1;
-	tex = surf->texinfo;
-
-	for (lnum = 0; lnum < MAX_DLIGHTS; lnum++)
-	{
-		if (!(surf->dlightbits[lnum >> 5] & (1U << (lnum & 31))))
-			continue; // not lit by this light
-
-		rad = cl_dlights[lnum].radius;
-		dist = DotProduct (cl_dlights[lnum].origin, surf->plane->normal) - surf->plane->dist;
-		rad -= fabs (dist);
-		minlight = cl_dlights[lnum].minlight;
-		if (rad < minlight)
-			continue;
-		minlight = rad - minlight;
-
-		for (i = 0; i < 3; i++)
-		{
-			impact[i] = cl_dlights[lnum].origin[i] - surf->plane->normal[i] * dist;
-		}
-
-		local[0] = DotProduct (impact, tex->vecs[0]) + tex->vecs[0][3];
-		local[1] = DotProduct (impact, tex->vecs[1]) + tex->vecs[1][3];
-
-		local[0] -= surf->texturemins[0];
-		local[1] -= surf->texturemins[1];
-
-		// johnfitz -- lit support via lordhavoc
-		bl = blocklights;
-		cred = cl_dlights[lnum].color[0] * 256.0f;
-		cgreen = cl_dlights[lnum].color[1] * 256.0f;
-		cblue = cl_dlights[lnum].color[2] * 256.0f;
-		// johnfitz
-		for (t = 0; t < tmax; t++)
-		{
-			td = local[1] - t * 16;
-			if (td < 0)
-				td = -td;
-			for (s = 0; s < smax; s++)
-			{
-				sd = local[0] - s * 16;
-				if (sd < 0)
-					sd = -sd;
-				if (sd > td)
-					dist = sd + (td >> 1);
-				else
-					dist = td + (sd >> 1);
-				if (dist < minlight)
-				// johnfitz -- lit support via lordhavoc
-				{
-					brightness = rad - dist;
-					bl[0] += (int)(brightness * cred);
-					bl[1] += (int)(brightness * cgreen);
-					bl[2] += (int)(brightness * cblue);
-				}
-				bl += 3;
-				// johnfitz
-			}
-		}
-	}
 }
 
 /*
@@ -1100,8 +882,6 @@ void R_BuildLightMap (msurface_t *surf, byte *dest, int stride)
 	unsigned scale;
 	int      maps;
 
-	surf->cached_dlight = (surf->dlightframe >= r_framecount - 1 && surf->dlightframe <= r_framecount + 1);
-
 	smax = (surf->extents[0] >> 4) + 1;
 	tmax = (surf->extents[1] >> 4) + 1;
 	size = smax * tmax;
@@ -1118,17 +898,12 @@ void R_BuildLightMap (msurface_t *surf, byte *dest, int stride)
 			for (maps = 0; maps < MAXLIGHTMAPS && surf->styles[maps] != 255; maps++)
 			{
 				scale = d_lightstylevalue[surf->styles[maps]];
-				surf->cached_light[maps] = scale; // 8.8 fraction
 				// johnfitz -- lit support via lordhavoc
 				R_AccumulateLightmap (lightmap, scale, size);
 				lightmap += size * 3;
 				// johnfitz
 			}
 		}
-
-		// add all the dynamic lights
-		if (surf->dlightframe >= r_framecount - 1 && surf->dlightframe <= r_framecount + 1)
-			R_AddDynamicLights (surf);
 	}
 	else
 	{

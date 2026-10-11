@@ -19,17 +19,22 @@ before adapting a producer; document any unavailable tooling or incomplete cover
   Backend recording/submission is still an ordered end-frame operation; this platform does not
   authorize concurrent NVRHI command-list recording or bypass existing renderer locks.
 - The render frame runs as a dependency graph of tasks when `r_tasks 1` — the switch is the
-  `use_tasks` condition in [SCR_UpdateScreen](../Quake/gl_screen.c#L1162); `r_tasks` defaults to
+  `use_tasks` condition in [SCR_UpdateScreen](../Quake/gl_screen.c#L1161); `r_tasks` defaults to
   `1` (owner decision, 2026-10-11). `r_tasks 0` is the deprecated legacy serial path: the cvar
   and the fork it selects are slated for removal, after which the engine always runs
   multithreaded.
 - In the serial path (`r_tasks 0`) the same producers run in fixed order on the main thread; the
   frame contents and the NVRHI ray-tracing renderer are identical in both modes. With
   `r_parallelmark 1` the world texture chains are rebuilt in surface-index order instead of the
-  scalar leaf first-touch order (owner-accepted 2026-10-11; the chained surface set is identical —
-  `calls_geometry` matches on the audit captures and the water-shot on/off pairs differ only by
-  particle animation phases). The order change is safe only while every head-of-chain flag
-  (`SURF_DRAWTURB`, `SURF_DRAWTILED`, `SURF_DRAWSKY`, `SURF_NOTEXTURE`, `SURF_DRAWFENCE`) stays
+  scalar leaf first-touch order (owner-accepted 2026-10-11). The code-level guarantee is predicate
+  equivalence, not an identical chain: both paths chain exactly the surfaces that pass the same
+  PVS/backface/sky tests, and the parallel path only reorders the chaining within one texture. The
+  retained audit captures match in the modal/mean `calls_geometry` (not frame-exact), and the
+  water-shot on/off provenance was not recorded (its fixtures were deleted), so those captures are
+  not evidence of an identical chained set. Two shared dummy textures keep `rt_chain_index == 0` and
+  are gathered into one surface bucket; this is benign because the slice chains each surface to its
+  own `texinfo->texture`, which it re-reads. The order change is safe only while every head-of-chain
+  flag (`SURF_DRAWTURB`, `SURF_DRAWTILED`, `SURF_DRAWSKY`, `SURF_NOTEXTURE`, `SURF_DRAWFENCE`) stays
   uniform across all surfaces of one texture; if a future change makes such a flag per-texinfo,
   the per-texture slicing must be revisited because batch grouping would stop being
   order-invariant.
@@ -54,16 +59,16 @@ submitted tasks. When adding work:
 
 ## The render frame graph
 
-Entry: [SCR_UpdateScreen](../Quake/gl_screen.c#L1149) takes the tasks branch when the condition
-holds, builds the frame in [R_RenderView](../Quake/gl_rmain.c#L1281), and joins `draw_done` while
+Entry: [SCR_UpdateScreen](../Quake/gl_screen.c#L1148) takes the tasks branch when the condition
+holds, builds the frame in [R_RenderView](../Quake/gl_rmain.c#L1312), and joins `draw_done` while
 pumping extra audio updates.
 
 | Edge | Meaning |
 | --- | --- |
 | `prev_end_rendering_task -> begin_rendering_task` | a new frame never reuses swapchain/frame state before the previous frame's end task finished |
 | `begin_rendering_task -> setup_frame_task`, `setup_frame_task -> before_mark`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: fence/acquire, scene collector reset, light-registry frame preparation) happens before the setup pass, and the setup pass before everything that reads it |
-| `before_mark -> prepare_mark -> mark_leafs`, then `mark_leafs -> store_efrags` and `mark_leafs -> chain_slices -> chain_finish` (`r_parallelmark 1`; `cull_surfaces` aliases `mark_leafs`; with `r_parallelmark 0` one scalar `mark_surfaces` serves all three handles) | the efrag store and the visibility chain run after the view is set up; `mark_leafs` fills the shared `surfvis` bitmask, `chain_slices` rebuilds the world texture chains per texture in parallel and `chain_finish` publishes the totals |
-| `store_efrags -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task` | the producers that draw the frame's visible-entity list run after the efrag pass added the entities to it |
+| `before_mark -> prepare_mark -> mark_leafs`, then `mark_leafs -> store_efrags` and `mark_leafs -> chain_slices -> chain_finish` (`r_parallelmark 1`; `cull_surfaces` aliases `mark_leafs`; with `r_parallelmark 0` one scalar `mark_surfaces` serves all three handles) | the efrag store and the visibility chain run after the view is set up; `R_MarkSurfaces` decides `rt_mark_parallel_frame` and writes it **before** `Task_Submit(prepare_mark)`, `prepare_mark` clears the world texture chains and (on the parallel path) zeroes the shared `surfvis` bitmask, `mark_leafs` fills `surfvis` with atomic word runs, `chain_slices` rebuilds the world texture chains per texture in parallel and `chain_finish` publishes the chain totals |
+| `store_efrags -> draw_sky_and_water_task`, `chain_surfaces -> draw_sky_and_water_task`, `store_efrags -> draw_entities_task`, `-> draw_alpha_entities_task` | the sky/water producer runs after the efrag pass and the rebuilt chains; the entity drawers run after the efrag pass added the entities to the frame's visible list |
 | `chain_surfaces -> draw_world_task` | the visibility output feeds the world task |
 | `draw_world_task -> draw_sky_and_water_task`, `-> draw_entities_task`, `-> draw_alpha_entities_task`, `-> draw_particles_task` | every dynamic uploader runs after the world task closed the static-geometry window (see below) |
 | `draw_world_task, draw_sky_and_water_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task -> draw_view_model_task` | the viewmodel producer runs last among the producers |
@@ -84,7 +89,7 @@ the publication bookkeeping. The serial branch runs the same prepare/slice/finis
 stages inline with one slice.
 
 **Static-geometry window.** `R_DrawWorldTask` calls `qrBeginStaticGeometries` … `qrSubmitStaticGeometries`
-(`gl_rmain.c#L1107`/`#L1119`). Inside that window only `QR_GEOMETRY_TYPE_STATIC` and
+(`gl_rmain.c#L1121`/`#L1133`). Inside that window only `QR_GEOMETRY_TYPE_STATIC` and
 `STATIC_MOVABLE` uploads are accepted; `Scene::Upload` throws `QR_WRONG_FUNCTION_CALL` for dynamic
 geometry. Order every dynamic uploader after `draw_world_task`, and keep static uploads inside the
 world task.
@@ -123,9 +128,10 @@ The contract for work added to the graph:
   exception, kept in order by its own boundary (see above); do not extend a task past the join.
 - Call renderer `qr*` entry points only through the synchronized ones listed below, and follow the
   static-geometry window rule for uploads.
-- Touch profiler/bench state only through the locked helpers (`RT_Prof_*`); the cluster statistics
-  are written by the cluster prepare/slice/finish chain (the finish task runs on a worker) and read
-  on the main thread only after the frame's join.
+- Touch profiler/bench state only through the `RT_Prof_*` helpers: per-invocation slots accumulate
+  into a thread-local buffer, and the per-frame merge and the window publication/reset run under
+  the profiler lock. The cluster statistics are written by the cluster prepare/slice/finish chain
+  (the finish task runs on a worker) and read on the main thread only after the frame's join.
 - `Mem_*` uses mimalloc, but allocator thread safety does not make its owner/container safe.
   Audit allocation, publication, reallocation and freeing together; do not assume hunk/zone helpers
   are interchangeable worker allocators. The console's buffer lock likewise does not authorize
@@ -133,29 +139,45 @@ The contract for work added to the graph:
 
 The graph currently relies on:
 
-- `VulkanDevice::geometryUploadMutex` in [VulkanDevice.cpp](../renderer/Source/VulkanDevice.cpp#L1404) —
+- `VulkanDevice::geometryUploadMutex` in [VulkanDevice.cpp](../renderer/Source/VulkanDevice.cpp#L1450) —
   held by `UploadGeometry`, `UploadRasterizedGeometry`, `UpdateGeometryTransform`,
   `UpdateGeometryTexCoords`, `UploadDecal`, `UploadPortal`, `SubmitStaticGeometries`,
   `StartNewStaticScene`; the renderer's API counters are `std::atomic`;
 - `LightManager::registryMutex` — held by `AddLight`, `PrepareForFrame` and `Reset`
   ([LightManager.cpp](../renderer/Source/LightManager.cpp#L351));
-- the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L421) — profiler/bench accumulation,
-  the frame reset/copy and `RT_Bench_Report`;
+- the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L476) — the once-per-frame TLS merge,
+  the window publication/reset and `RT_Bench_Report`'s snapshot; per-invocation accumulation runs
+  into a thread-local buffer without the lock (a thread claims its pool slot once);
+- the parallel-mark state in [r_world.c](../Quake/r_world.c#L390): `rt_mark_parallel_frame` is
+  decided and written by the submitting thread before `Task_Submit(prepare_mark)`, which is what
+  lets `R_MarkSurfacesPrepare` read it without a lock; `rt_mark_parallel_built` is fixed at map
+  load. `surfvis` (allocated with the world model in [r_brush.c](../Quake/r_brush.c#L765), freed in
+  `Mod_FreeModelMemory`) is written by atomic word runs in the chunked marker and read by the chain
+  slices after the `mark_leafs` edge; the `rt_mark_tex_start`/`rt_mark_tex_surfaces`/
+  `rt_mark_tex_polys` arrays are built once in `RT_MarkParallel_NewMap`, each chain slice writes its
+  own `rt_mark_tex_polys[index]` and `chain_finish` merges them;
 - thread-local scratch: the alias pose buffer (`tempstorage` in
-  [r_alias.c](../Quake/r_alias.c#L120)) and the fan/scratch buffers in
+  [r_alias.c](../Quake/r_alias.c#L135)) and the fan/scratch buffers in
   [gl_heap.c](../Quake/gl_heap.c#L42);
 - thread-local caches with a reset generation: the surface-pack entity cache
-  ([r_world.c](../Quake/r_world.c#L1072)) and the brush-cluster cache
-  ([r_world.c](../Quake/r_world.c#L4300)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
+  ([r_world.c](../Quake/r_world.c#L880)) and the brush-cluster cache
+  ([r_world.c](../Quake/r_world.c#L4114)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
   the generation at map load and each thread clears its own table on first use. The buried-answer
   DTAL cache follows the same ownership rule through `RT_BuriedCacheReset`, and so does the
-  point-cluster resolve cache ([gl_rlight.c](../Quake/gl_rlight.c#L1176)): one slot table per thread
+  point-cluster resolve cache ([gl_rlight.c](../Quake/gl_rlight.c#L1108)): one slot table per thread
   with the map identity kept in the table, and per-thread hit/miss/nanosecond counters that
   `RT_PointClusterCacheStats` sums. Its readers all run on the main thread after the frame's join
   (`RT_Prof_FrameStart`, `RT_Prof_FrameEnd`, `RT_Prof_Update`), which is what keeps the unlocked sum
   correct;
-- the emissive skip-table spinlock (`RT_EmisSkipLock`) — covers lookup/insertion, reset and report
-  snapshotting; printing happens after the snapshot lock is released;
+- the profiler/upload-trace thread-local slots: one `rt_prof_tls_pool` accumulator per thread
+  ([gl_vidsdl.c](../Quake/gl_vidsdl.c#L457)) and the upload-lane attribution stack
+  (`g_uploadLane`/`g_uploadLaneStack` in [VulkanDevice.cpp](../renderer/Source/VulkanDevice.cpp#L1438));
+  the wait/hold counters they feed are atomic device counters, read once per frame in
+  `RT_Prof_FrameEnd`;
+- the emissive skip-table and watch-table spinlock (`RT_EmisSkipLock`) — covers skip
+  lookup/insertion and reset, the watch-table lookup and filter reset, and the non-atomic
+  per-watch style fields (`min_style_scale`, `styles`); the per-watch counters are atomic, and
+  the report snapshots the skip table under the lock before printing;
 - the styled-light index (`RT_BuildStyledLightIndex`) — built on the single-threaded map-load path
   right after `RT_ParseElights`, only read by draw tasks afterwards;
 - the colour cache (`rt_colors`) — refreshed by `RT_ColorsRefresh` on the main thread in

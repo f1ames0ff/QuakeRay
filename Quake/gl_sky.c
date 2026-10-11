@@ -988,16 +988,6 @@ static void RT_GetSkyTintColor (float color[3])
 
 static uint64_t sky_batch_uniqueid;
 
-static void Sky_BatchTriangleIndices (int basevert, int vertcount, uint32_t *dest)
-{
-	for (int i = 2; i < vertcount; i++)
-	{
-		*dest++ = (uint32_t)(basevert + i);
-		*dest++ = (uint32_t)(basevert + i - 1);
-		*dest++ = (uint32_t)basevert;
-	}
-}
-
 static void Sky_FlushPolyBatch (cb_context_t *cbx, float color[3])
 {
 	if (cbx->batch_verts_count == 0 || cbx->batch_indices_count == 0)
@@ -1063,7 +1053,7 @@ static void Sky_AppendPoly (cb_context_t *cbx, glpoly_t *p, float color[3], uint
 		dst[i].packedColor = RT_PACKED_COLOR_WHITE;
 	}
 
-	Sky_BatchTriangleIndices (cbx->batch_verts_count, numverts, &cbx->batch_indices[cbx->batch_indices_count]);
+	RT_WriteFanIndices (cbx->batch_verts_count, numverts, &cbx->batch_indices[cbx->batch_indices_count]);
 
 	cbx->batch_verts_count += numverts;
 	cbx->batch_indices_count += numindices;

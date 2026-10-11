@@ -43,8 +43,8 @@ QrMediaType rt_cameramedia = QR_MEDIA_TYPE_VACUUM;
 qboolean    rt_lavaeffects = false;
 
 // johnfitz -- rendering statistics
-atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles, rs_fogpolys;
-atomic_uint32_t rs_dynamiclightmaps, rs_brushpasses, rs_aliaspasses, rs_skypasses;
+atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles;
+atomic_uint32_t rs_brushpasses, rs_aliaspasses, rs_skypasses;
 float           rt_world_draw_ms;
 
 //
@@ -74,13 +74,10 @@ cvar_t r_pos = {"r_pos", "0", CVAR_NONE};
 cvar_t r_fullbright = {"r_fullbright", "0", CVAR_NONE};
 cvar_t r_lightmap = {"r_lightmap", "0", CVAR_NONE};
 cvar_t r_wateralpha = {"r_wateralpha", "1", CVAR_ARCHIVE};
-cvar_t r_dynamic = {"r_dynamic", "0", CVAR_ARCHIVE}; // RT: was 1, but there are significant performance drops e.g. on E1M6 when lavaballs fly and touch a lot of surfaces
 #if defined(USE_SIMD)
 cvar_t r_simd = {"r_simd", "1", CVAR_ARCHIVE};
 #endif
 
-cvar_t gl_finish = {"gl_finish", "0", CVAR_NONE};
-cvar_t gl_polyblend = {"gl_polyblend", "1", CVAR_NONE};
 cvar_t gl_nocolors = {"gl_nocolors", "0", CVAR_NONE};
 
 // johnfitz -- new cvars
@@ -100,7 +97,6 @@ cvar_t r_nolerp_list = {
 	"v_xfist.mdl,progs/h2stuff/newfire.mdl",
 	CVAR_NONE};
 
-extern cvar_t r_vfog;
 // johnfitz
 
 cvar_t gl_zfix = {"gl_zfix", "1", CVAR_ARCHIVE}; // QuakeSpasm z-fighting fix
@@ -1338,8 +1334,6 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 	Atomic_StoreUInt32 (&rs_aliaspolys, 0u);
 	Atomic_StoreUInt32 (&rs_skypolys, 0u);
 	Atomic_StoreUInt32 (&rs_particles, 0u);
-	Atomic_StoreUInt32 (&rs_fogpolys, 0u);
-	Atomic_StoreUInt32 (&rs_dynamiclightmaps, 0u);
 	Atomic_StoreUInt32 (&rs_aliaspasses, 0u);
 	Atomic_StoreUInt32 (&rs_skypasses, 0u);
 	Atomic_StoreUInt32 (&rs_brushpasses, 0u);
@@ -1455,9 +1449,9 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 			(int)cl.entities[cl.viewentity].origin[2], (int)cl.viewangles[PITCH], (int)cl.viewangles[YAW], (int)cl.viewangles[ROLL]);
 	else if (r_speeds.value == 2)
 		Con_Printf (
-			"%6.3f ms  %4u/%4u wpoly %4u/%4u epoly %3u lmap %4u/%4u sky\n", (time2 - time1) * 1000.0, rs_brushpolys, rs_brushpasses, rs_aliaspolys,
-			rs_aliaspasses, rs_dynamiclightmaps, rs_skypolys, rs_skypasses);
+			"%6.3f ms  %4u/%4u wpoly %4u/%4u epoly %4u/%4u sky\n", (time2 - time1) * 1000.0, rs_brushpolys, rs_brushpasses, rs_aliaspolys,
+			rs_aliaspasses, rs_skypolys, rs_skypasses);
 	else if (r_speeds.value)
-		Con_Printf ("%3i ms  %4i wpoly %4i epoly %3i lmap\n", (int)((time2 - time1) * 1000), rs_brushpolys, rs_aliaspolys, rs_dynamiclightmaps);
+		Con_Printf ("%3i ms  %4i wpoly %4i epoly\n", (int)((time2 - time1) * 1000), rs_brushpolys, rs_aliaspolys);
 	// johnfitz
 }
