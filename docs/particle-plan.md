@@ -214,13 +214,14 @@ scale to the content that actually exists.
   46k); the 4K demo runs closed at 71.0 fps with zero proxies and the `gate=closed` line.
 - Display: water fixed 2026-10-11 (`perf/stage0/water-particle-reflection-2026-10-11.md`): the
   mask branch accepts `MEDIA_TYPE_WATER`, so the traced layer composites and the raster discard
-  fires at water pixels; mirrors remain out of scope. Remaining particle-side exclusions
-  (follow-up item "all particles reflect", owner 2026-10-11 — every particle path must show in
-  water/glass, not only FTE): the per-channel FTE blends
-  (`BM_BLENDCOLOUR`/`BM_SUBTRACT`/`BM_INVMODC` -> `rejBlend`), the line sparks (`BEF_LINES` ->
-  `rejLines`) and the engine smoke path (`r_smoke`, never a capture candidate). The per-channel
-  blends need a per-channel (multiply, add) accumulation in the layer compositing; the smoke
-  needs a capture branch and its procedural look in the traced hit.
+  fires at water pixels; mirrors remain out of scope. Two documented capture exclusions stay
+  (the per-channel FTE blends `BM_BLENDCOLOUR`/`BM_SUBTRACT`/`BM_INVMODC` -> `rejBlend` and the
+  line sparks `BEF_LINES` -> `rejLines`; the engine smoke path `r_smoke` is never a capture
+  candidate). Owner decision (2026-10-11): lifting those exclusions ("all particles reflect") is
+  **out of scope for now** — the delivered scope is the water/glass compositing of the
+  already-captured particles. If revisited: the per-channel blends need a per-channel
+  (multiply, add) accumulation in the layer compositing, the lines a segment proxy kind, the
+  smoke a capture branch plus its procedural look in the traced hit.
 
 ### Stage 5 — GPU simulation (classic only, optional until measured)
 - Ping-pong state, spawn ring, append/compaction, indirect draw; bench-freeze mode for determinism
