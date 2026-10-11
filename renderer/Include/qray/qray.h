@@ -848,6 +848,11 @@ typedef enum QrWorldLightsUploadFlags
 typedef enum QrWorldClusterFlags
 {
     QR_WORLD_CLUSTER_SOLID_BIT = 1 << 0,
+
+    /* The cluster is a liquid volume (water, slime or lava). The host uses the bit to hand a
+       light the liquid clusters on the other side of their surfaces; the renderer does not
+       read it, so the lists do not depend on it. */
+    QR_WORLD_CLUSTER_LIQUID_BIT = 1 << 1,
 } QrWorldClusterFlags;
 
 typedef struct QrWorldLightsUploadInfo

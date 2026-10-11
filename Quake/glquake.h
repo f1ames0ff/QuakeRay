@@ -469,6 +469,8 @@ int RT_GetSurfaceCluster (const qmodel_t *m, const msurface_t *s);
 void RT_BuildWorldClusters (void);
 void RT_FreeWorldClusters (void);
 int RT_MapWorldCluster (int leaf_index);
+uint32_t RT_WorldClustersAcrossLiquid (const vec3_t origin, uint32_t fromCluster, float reach,
+                                       uint32_t *out, uint32_t maxOut);
 
 void GL_SubdivideSurface (msurface_t *fa);
 void R_BuildLightMap (msurface_t *surf, byte *dest, int stride);

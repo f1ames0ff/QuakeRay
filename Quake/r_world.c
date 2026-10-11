@@ -5653,6 +5653,88 @@ int RT_MapWorldCluster (int leaf_index)
 	return rt_worldclusters.leaf_cluster[leaf_index];
 }
 
+/*
+=================
+RT_WorldClustersAcrossLiquid
+
+The clusters of the other side of the water: liquid clusters for a light that stands in air, dry
+ones for a light that stands in a liquid, nearest first and no further than the reach the light
+states for itself. A map's vis closes a liquid surface for the classic renderer (Mod_CheckWaterVis),
+and the light lists are built from those rows, so without this a lamp above a pool is never handed
+the clusters under it. The light carries them as part of its own cluster list.
+=================
+*/
+uint32_t RT_WorldClustersAcrossLiquid (const vec3_t origin, uint32_t fromCluster, float reach,
+                                       uint32_t *out, uint32_t maxOut)
+{
+	if (maxOut == 0)
+		return 0;
+
+	if (rt_worldclusters.model != cl.worldmodel || !rt_worldclusters.leaf_cluster)
+		RT_BuildWorldClusters ();
+
+	if (rt_worldclusters.num_clusters <= 1 || fromCluster == QR_CLUSTER_LIGHT_NO_CLUSTER ||
+	    fromCluster >= (uint32_t)rt_worldclusters.num_clusters)
+		return 0;
+
+	const qboolean fromLiquid =
+		(rt_worldclusters.cluster_flags[fromCluster] & QR_WORLD_CLUSTER_LIQUID_BIT) != 0;
+	const float reachSquared = reach * reach;
+	uint32_t    count = 0;
+	float       distances[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
+
+	if (maxOut > QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
+		maxOut = QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS;
+
+	for (int c = 1; c < rt_worldclusters.num_clusters; c++)
+	{
+		const uint8_t flags = rt_worldclusters.cluster_flags[c];
+
+		if ((flags & QR_WORLD_CLUSTER_SOLID_BIT) != 0)
+			continue;
+
+		if (((flags & QR_WORLD_CLUSTER_LIQUID_BIT) != 0) == fromLiquid)
+			continue;
+
+		float dist2 = 0.0f;
+
+		for (int a = 0; a < 3; a++)
+		{
+			const float lo = rt_worldclusters.cluster_mins[c].data[a];
+			const float hi = rt_worldclusters.cluster_maxs[c].data[a];
+			const float v  = origin[a];
+			const float d  = (v < lo) ? (lo - v) : ((v > hi) ? (v - hi) : 0.0f);
+
+			dist2 += d * d;
+		}
+
+		if (dist2 > reachSquared)
+			continue;
+
+		uint32_t slot = count;
+
+		while (slot > 0 && distances[slot - 1] > dist2)
+			slot--;
+
+		if (slot >= maxOut)
+			continue;
+
+		if (count < maxOut)
+			count++;
+
+		for (uint32_t move = count - 1; move > slot; move--)
+		{
+			out[move] = out[move - 1];
+			distances[move] = distances[move - 1];
+		}
+
+		out[slot] = (uint32_t)c;
+		distances[slot] = dist2;
+	}
+
+	return count;
+}
+
 static int RT_GridCellOfPoint (const float *p)
 {
 	int cell = 0;
@@ -5771,6 +5853,11 @@ static int RT_CompressVisRow (const uint8_t *p_row, int row_bytes, uint8_t *p_ou
 	return out;
 }
 
+static qboolean RT_IsLiquidContents (int contents)
+{
+	return contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA;
+}
+
 static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 {
 	const int num_leafs = model->numleafs;
@@ -5802,7 +5889,9 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 		rt_worldclusters.leaf_cluster[i] = i;
 		VectorCopy (leaf->minmaxs, rt_worldclusters.cluster_mins[i].data);
 		VectorCopy (leaf->minmaxs + 3, rt_worldclusters.cluster_maxs[i].data);
-		rt_worldclusters.cluster_flags[i] = (leaf->contents == CONTENTS_SOLID) ? QR_WORLD_CLUSTER_SOLID_BIT : 0;
+		rt_worldclusters.cluster_flags[i] =
+			((leaf->contents == CONTENTS_SOLID) ? QR_WORLD_CLUSTER_SOLID_BIT : 0) |
+			(RT_IsLiquidContents (leaf->contents) ? QR_WORLD_CLUSTER_LIQUID_BIT : 0);
 
 		if (leaf->compressed_vis)
 		{
@@ -5904,6 +5993,9 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 		if (leaf->contents == CONTENTS_SOLID)
 			continue;
+
+		if (RT_IsLiquidContents (leaf->contents))
+			rt_worldclusters.cluster_flags[cell + 1] |= QR_WORLD_CLUSTER_LIQUID_BIT;
 
 		cell_counts[cell]++;
 
