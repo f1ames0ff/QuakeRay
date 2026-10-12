@@ -134,13 +134,54 @@ float q2ReuseCapUcw(const float ucw, const uint cfg)
     return (e > 0u) ? min(ucw, exp2((float)e)) : ucw;
 }
 
-bool q2ReuseIsReceiverDependent(const ShLightEncoded l)
+uint2 q2ReuseEncodeDir(const float3 n)
 {
-    if (l.lightType == LIGHT_TYPE_SPHERE)
+    const float l1 = max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
+    float2 p = n.xy / l1;
+
+    if (n.z < 0.0)
     {
-        return true;
+        p = (1.0 - abs(p.yx)) * sign(p);
     }
 
+    return uint2(q2ReusePack16(p.x * 0.5 + 0.5), q2ReusePack16(p.y * 0.5 + 0.5));
+}
+
+float3 q2ReuseDecodeDir(const uint2 e)
+{
+    const float2 f = float2(q2ReuseUnpack16(e.x), q2ReuseUnpack16(e.y)) * 2.0 - 1.0;
+    float3 n = float3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
+
+    if (n.z < 0.0)
+    {
+        n.xy = (1.0 - abs(n.yx)) * sign(n.xy);
+    }
+
+    return normalize(n);
+}
+
+LightSample q2ReuseSampleStored(const uint lightIndex, const float3 surfPosition, const float2 pointRnd, const float memberRnd, out float memberPdf)
+{
+    const ShLightEncoded encoded = lightSources[lightIndex];
+    memberPdf = 1.0;
+
+    if (encoded.lightType == LIGHT_TYPE_SPHERE)
+    {
+        const SphereLight sl = decodeAsSphereLight(encoded);
+        const float3 lightNormal = q2ReuseDecodeDir(uint2(q2ReusePack16(pointRnd.x), q2ReusePack16(pointRnd.y)));
+
+        LightSample r;
+        r.position = sl.center + lightNormal * sl.radius;
+        r.color = sl.color;
+        r.dw = calcSolidAngleForSphere(sl.radius, length(sl.center - surfPosition));
+        return r;
+    }
+
+    return sampleLightNee(encoded, surfPosition, pointRnd, float2(memberRnd, 0.0), memberPdf);
+}
+
+bool q2ReuseIsReceiverDependent(const ShLightEncoded l)
+{
     if (l.projector > 0.5 &&
         (l.lightType == LIGHT_TYPE_TEXTURED_AREA || l.lightType == LIGHT_TYPE_DTAL_GROUP))
     {

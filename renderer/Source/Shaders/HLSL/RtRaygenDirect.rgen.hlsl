@@ -109,7 +109,27 @@ void main()
             const float2 pointRnd = rnd16_2(seedBase, Q2_REUSE_RNG_POINT);
             const float2 memberRnd = rnd16_2(seedBase, Q2_REUSE_RNG_MEMBER);
             float memberPdf = 1.0;
-            const LightSample candLight = sampleLightNee(lightSources[lightIndex], surf.position, pointRnd, memberRnd, memberPdf);
+            float2 storedPointRnd = pointRnd;
+            LightSample candLight;
+
+            if (lightSources[lightIndex].lightType == LIGHT_TYPE_SPHERE)
+            {
+                const SphereLight sl = decodeAsSphereLight(lightSources[lightIndex]);
+                const DirectionAndLength toLightCenter = calcDirectionAndLength(surf.position, sl.center);
+                float oneOverPdf;
+                const float3 lightNormal = sampleOrientedHemisphere(-toLightCenter.dir, pointRnd.x, pointRnd.y, oneOverPdf);
+
+                candLight.position = sl.center + lightNormal * sl.radius;
+                candLight.color = sl.color;
+                candLight.dw = calcSolidAngleForSphere(sl.radius, toLightCenter.len);
+
+                const uint2 stored = q2ReuseEncodeDir(lightNormal);
+                storedPointRnd = float2(q2ReuseUnpack16(stored.x), q2ReuseUnpack16(stored.y));
+            }
+            else
+            {
+                candLight = sampleLightNee(lightSources[lightIndex], surf.position, pointRnd, memberRnd, memberPdf);
+            }
 
             float3 dCand, sCand;
             shade(surf, candLight, 1.0, dCand, sCand);
@@ -119,7 +139,7 @@ void main()
             wSum = target / max(lightPdf * memberPdf, 1e-9);
             mSum = 1u;
             selLight = lightIndex;
-            selPointRnd = pointRnd;
+            selPointRnd = storedPointRnd;
             selMemberRnd = memberRnd.x;
             selTarget = target;
             selCluster = cluster;
@@ -149,7 +169,7 @@ void main()
             const float  depthCurr = framebufQ2ViewDepth_Sampled.Load(int3(pix, 0)).r;
             const float3 geoNormalCurr = texelFetchNormalGeometry(pix);
 
-            for (int attempt = 0; attempt < 2 && !histValid; attempt++)
+            for (int attempt = 0; attempt < 2; attempt++)
             {
                 const float2 off = (attempt == 0) ? (float2)0.0 : nbrOff;
                 const int2 prevPix = q2FlatToChecker((int2)floor(posPrev - (float2)0.5 + off), width);
@@ -184,15 +204,14 @@ void main()
                 histHash = hist.candidateHash;
 
                 float memberPdfHist = 1.0;
-                const LightSample histLight = sampleLightNee(lightSources[hist.lightIndex], surf.position,
-                                                             hist.pointRnd, float2(hist.memberRnd, 0.0), memberPdfHist);
+                const LightSample histLight = q2ReuseSampleStored(hist.lightIndex, surf.position, hist.pointRnd, hist.memberRnd, memberPdfHist);
 
                 float3 dHist, sHist;
                 shade(surf, histLight, 1.0, dHist, sHist);
 
                 const float targetHist = max(getLuminance(dHist + sHist), Q2_REUSE_TARGET_EPS);
                 const float wHist = targetHist * hist.ucw * (float)hist.m;
-                const float mergeRnd = rnd16(seedBase, Q2_REUSE_RNG_MERGE);
+                const float mergeRnd = rnd16(seedBase, Q2_REUSE_RNG_MERGE + (uint)attempt);
 
                 wSum += wHist;
                 mSum += hist.m;
@@ -261,8 +280,7 @@ void main()
         if (selLight != LIGHT_INDEX_NONE)
         {
             float memberPdfSel = 1.0;
-            const LightSample selLightSample = sampleLightNee(lightSources[selLight], surf.position,
-                                                              selPointRnd, float2(selMemberRnd, 0.0), memberPdfSel);
+            const LightSample selLightSample = q2ReuseSampleStored(selLight, surf.position, selPointRnd, selMemberRnd, memberPdfSel);
 
             bool lightTraced;
             const float3 vis = traceLightVisibility(surf, selLightSample, selLight, lightTraced);
