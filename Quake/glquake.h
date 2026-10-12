@@ -246,6 +246,7 @@ extern cvar_t gl_nocolors;
 
 // johnfitz -- rendering statistics
 extern atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles;
+extern atomic_uint32_t rs_covered_surfaces, rs_covered_models, rs_covered_emissive_us;
 extern atomic_uint32_t rs_brushpasses, rs_aliaspasses, rs_skypasses;
 
 extern size_t total_device_vulkan_allocation_size;

@@ -44,6 +44,7 @@ qboolean    rt_lavaeffects = false;
 
 // johnfitz -- rendering statistics
 atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles;
+atomic_uint32_t rs_covered_surfaces, rs_covered_models, rs_covered_emissive_us;
 atomic_uint32_t rs_brushpasses, rs_aliaspasses, rs_skypasses;
 float           rt_world_draw_ms;
 
@@ -1335,6 +1336,9 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 	// johnfitz -- rendering statistics
 	Atomic_StoreUInt32 (&rs_brushpolys, 0u);
 	Atomic_StoreUInt32 (&rs_aliaspolys, 0u);
+	Atomic_StoreUInt32 (&rs_covered_surfaces, 0u);
+	Atomic_StoreUInt32 (&rs_covered_models, 0u);
+	Atomic_StoreUInt32 (&rs_covered_emissive_us, 0u);
 	Atomic_StoreUInt32 (&rs_skypolys, 0u);
 	Atomic_StoreUInt32 (&rs_particles, 0u);
 	Atomic_StoreUInt32 (&rs_aliaspasses, 0u);

@@ -1503,6 +1503,9 @@ void VulkanDevice::ResetUploadLockStats()
         uploadLockHoldMaxNs[i].store(0, std::memory_order_relaxed);
         uploadLockCalls[i].store(0, std::memory_order_relaxed);
     }
+
+    if (scene)
+        scene->ResetBoundsScanStats();
 }
 
 void VulkanDevice::GetUploadLockStats(QrUploadLockStats *pStats) const
@@ -1520,6 +1523,13 @@ void VulkanDevice::GetUploadLockStats(QrUploadLockStats *pStats) const
         pStats->lanes[i].waitMaxNs = uploadLockWaitMaxNs[i].load(std::memory_order_relaxed);
         pStats->lanes[i].holdSumNs = uploadLockHoldSumNs[i].load(std::memory_order_relaxed);
         pStats->lanes[i].holdMaxNs = uploadLockHoldMaxNs[i].load(std::memory_order_relaxed);
+    }
+
+    if (scene)
+    {
+        pStats->boundsScanSumNs = scene->GetBoundsScanSumNs();
+        pStats->boundsScanCalls = scene->GetBoundsScanCalls();
+        pStats->boundsScanVerts = scene->GetBoundsScanVerts();
     }
 }
 

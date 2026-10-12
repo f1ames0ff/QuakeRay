@@ -438,6 +438,9 @@ static double   rt_bench_frame_min;
 static double   rt_bench_sum[RT_PROF_COUNT];
 static double   rt_bench_max[RT_PROF_COUNT];
 static double   rt_bench_host_sum[RT_HOST_SPEED_COUNT];
+static uint64_t rt_bench_covered_surfaces_sum;
+static uint64_t rt_bench_covered_models_sum;
+static uint64_t rt_bench_covered_emissive_us_sum;
 static int      rt_bench_host_frames;
 static double   rt_bench_frame_slots[RT_PROF_COUNT];
 static atomic_uint32_t rt_prof_spin;
@@ -461,6 +464,7 @@ static THREAD_LOCAL rt_prof_tls_t *rt_prof_tls;
 static qboolean          rt_upload_trace_on;
 extern atomic_uint32_t   rs_alias_enhanced_draws;
 extern atomic_uint32_t   rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
+extern atomic_uint32_t   rs_covered_surfaces, rs_covered_models, rs_covered_emissive_us;
 static uint32_t          rt_upload_lock_frames;
 static QrUploadLockStats rt_upload_lock_acc;
 
@@ -650,6 +654,9 @@ void RT_Bench_Start (void)
 	rt_bench_pending_end_serial = 0;
 	RT_Prof_Unlock ();
 	rt_bench_host_frames = 0;
+	rt_bench_covered_surfaces_sum = 0;
+	rt_bench_covered_models_sum = 0;
+	rt_bench_covered_emissive_us_sum = 0;
 	rt_cluster_cache_hits = 0;
 	rt_cluster_cache_misses = 0;
 	rt_cluster_miss_set = 0;
@@ -822,6 +829,10 @@ void RT_Prof_FrameEnd (void)
 		for (int i = 0; i < RT_PROF_COUNT; ++i)
 			if (rt_bench_frame_slots[i] > rt_bench_max[i])
 				rt_bench_max[i] = rt_bench_frame_slots[i];
+
+		rt_bench_covered_surfaces_sum += Atomic_LoadUInt32 (&rs_covered_surfaces);
+		rt_bench_covered_models_sum += Atomic_LoadUInt32 (&rs_covered_models);
+		rt_bench_covered_emissive_us_sum += Atomic_LoadUInt32 (&rs_covered_emissive_us);
 		RT_Prof_Unlock ();
 		rt_bench_last_frame_end = now;
 		++rt_bench_frames;
@@ -846,6 +857,10 @@ void RT_Prof_FrameEnd (void)
 				if (stats.lanes[i].holdMaxNs > rt_upload_lock_acc.lanes[i].holdMaxNs)
 					rt_upload_lock_acc.lanes[i].holdMaxNs = stats.lanes[i].holdMaxNs;
 			}
+
+			rt_upload_lock_acc.boundsScanSumNs += stats.boundsScanSumNs;
+			rt_upload_lock_acc.boundsScanCalls += stats.boundsScanCalls;
+			rt_upload_lock_acc.boundsScanVerts += stats.boundsScanVerts;
 
 			++rt_upload_lock_frames;
 		}
@@ -1236,6 +1251,13 @@ qboolean RT_Bench_Report (const char *demo)
 		         Atomic_LoadUInt32 (&rs_alias_pose_draws),
 		         Atomic_LoadUInt32 (&rs_alias_pose_static),
 		         Atomic_LoadUInt32 (&rs_alias_pose_repeat));
+
+		if (rt_upload_lock_acc.boundsScanCalls > 0)
+			fprintf (f, "upload.bounds calls=%llu verts=%llu avg_ms=%.3f per_call_us=%.2f\n",
+			         (unsigned long long)rt_upload_lock_acc.boundsScanCalls,
+			         (unsigned long long)rt_upload_lock_acc.boundsScanVerts,
+			         (double)rt_upload_lock_acc.boundsScanSumNs / uploadFrames / 1e6,
+			         (double)rt_upload_lock_acc.boundsScanSumNs / (double)rt_upload_lock_acc.boundsScanCalls / 1e3);
 	}
 
 	static const char *const hostPasses[RT_HOST_SPEED_COUNT] = {"tot", "server", "gfx", "snd"};
@@ -1247,6 +1269,11 @@ qboolean RT_Bench_Report (const char *demo)
 	fprintf (f, "cpu.cluster %-17s hits=%d misses=%d set=%d move=%d other=%d pubskips=%d pubcopies=%d\n", "lists",
 	         clusterHits, clusterMisses, clusterSet,
 	         clusterMove, clusterOther, rt_cluster_pub_skips, rt_cluster_pub_copies);
+
+	fprintf (f, "brush.covered surfaces_avg=%.1f models_avg=%.1f emissive_avg_ms=%.3f\n",
+	         (double)rt_bench_covered_surfaces_sum / frames,
+	         (double)rt_bench_covered_models_sum / frames,
+	         (double)rt_bench_covered_emissive_us_sum / frames / 1000.0);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");

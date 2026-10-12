@@ -4551,6 +4551,9 @@ void R_DrawTextureChains_Multitexture (
 	rt_uploadsurf_state_t last_state = {0};
 	
 	uint32_t brushpasses = 0;
+	uint32_t coveredSurfaces = 0;
+	uint32_t visitedSurfaces = 0;
+	uint32_t coveredEmissiveUs = 0;
 	for (i = texstart; i < texend; ++i)
 	{
 		t = model->textures[i];
@@ -4574,6 +4577,8 @@ void R_DrawTextureChains_Multitexture (
 			if (s->flags & SURF_DRAWSKY)
 				continue;
 
+			visitedSurfaces++;
+
 			rt_uploadsurf_state_t cur_state = {
 				.entuniqueid = entuniqueid,
 				.ent = ent,
@@ -4594,10 +4599,16 @@ void R_DrawTextureChains_Multitexture (
 
 			if (RT_StaticMovableCovers (&cur_state))
 			{
+				coveredSurfaces++;
+
 				if (cur_state.model != cl.worldmodel)
 				{
 					const double prof_lights = RT_Prof_Begin ();
 					RT_AddEmissiveLight (&cur_state);
+
+					if (prof_lights != 0.0)
+						coveredEmissiveUs += (uint32_t)((Sys_DoubleTime () - prof_lights) * 1e6);
+
 					RT_Prof_End (RT_PROF_BRUSH_LIGHTS, prof_lights);
 				}
 				continue;
@@ -4616,6 +4627,15 @@ void R_DrawTextureChains_Multitexture (
 	}
 
 	Atomic_AddUInt32 (&rs_brushpasses, brushpasses);
+
+	if (coveredSurfaces != 0)
+		Atomic_AddUInt32 (&rs_covered_surfaces, coveredSurfaces);
+
+	if (coveredEmissiveUs != 0)
+		Atomic_AddUInt32 (&rs_covered_emissive_us, coveredEmissiveUs);
+
+	if (ent != NULL && visitedSurfaces != 0 && coveredSurfaces == visitedSurfaces)
+		Atomic_AddUInt32 (&rs_covered_models, 1u);
 }
 
 /*

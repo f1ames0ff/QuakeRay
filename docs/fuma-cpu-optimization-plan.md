@@ -421,3 +421,12 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   the shared upload and deferred-light-flush path rather than by chunk count, which matches the
   earlier aliasplit/typelanes nulls; the change was reverted. Widening becomes worth re-testing only
   after the upload critical section shrinks.
+- 2026-10-12 (step 0 instrumentation for the culling/residency decision): the upload trace now carries the
+  per-vertex bounds-scan attribution (`upload.bounds calls/verts/avg_ms/per_call_us`; the
+  `AccumulateGeometryBounds` time is sampled in `Scene::Upload` and surfaced through `QrUploadLockStats`),
+  and the bench block carries the covered-path counters (`brush.covered surfaces_avg/models_avg/
+  emissive_avg_ms`; a model counts as covered when every visited non-sky surface of a discrete entity
+  draw was skipped by `RT_StaticMovableCovers`). The FSR ultra-performance arm needs no code:
+  `run_stress.ps1 -Presets ultra`. Decision inputs for the next steps: bounds share of lock hold, the
+  fully covered persistent movables and their emissive cost, and `frame - begin` against the measured GPU
+  period at ultra performance. Debug build exit 0, CTest exit 0, Release build exit 0.

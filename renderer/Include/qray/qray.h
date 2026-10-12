@@ -366,6 +366,9 @@ typedef struct QrUploadLockStats
 {
     QrBool32                valid;
     QrUploadLockLaneStats   lanes[QR_UPLOAD_LANE_COUNT];
+    uint64_t                boundsScanSumNs;
+    uint64_t                boundsScanCalls;
+    uint64_t                boundsScanVerts;
 } QrUploadLockStats;
 
 QRAPI QrResult QRCONV qrUploadLanePush(
