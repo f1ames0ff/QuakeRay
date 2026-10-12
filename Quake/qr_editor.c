@@ -3459,11 +3459,6 @@ static void QRE_MatSystemTab (void)
 	float                     value;
 	int                       dbg = CVAR_TO_INT32 (rt_dtal_debug);
 	int                       maxpolys;
-	int                       dtal_entities = CVAR_TO_BOOL (rt_model_lights) ? 1 : 0;
-
-	if (QR_GUI_Checkbox ("DTAL dynamic map entities", &dtal_entities,
-	                     "Light the moving map emitters (flames, lava balls and the like) from their emissive geometry (DTAL) instead of their generated dlight; the DTAL (models) limits below still bound what qualifies."))
-		Cvar_Set ("rt_model_lights", dtal_entities ? "1" : "0");
 
 	if (dbg < 0 || dbg > 2)
 		dbg = 0;
@@ -3504,6 +3499,14 @@ static void QRE_MatSystemTab (void)
 		Cvar_Set ("rt_dtal_spacing", va ("%.4g", value));
 
 	QR_GUI_SectionHeader ("DTAL (models)");
+
+	{
+		int dtal_models = CVAR_TO_BOOL (rt_model_lights) ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("DTAL on models", &dtal_models,
+		                     "Light a model or sprite from its emissive geometry (DTAL) instead of its generated dlight; the limits below still bound what qualifies. With this off the is_light surface keeps its glow and only the cast light falls back to a dlight."))
+			Cvar_Set ("rt_model_lights", dtal_models ? "1" : "0");
+	}
 
 	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
