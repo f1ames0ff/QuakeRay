@@ -430,3 +430,18 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   `run_stress.ps1 -Presets ultra`. Decision inputs for the next steps: bounds share of lock hold, the
   fully covered persistent movables and their emissive cost, and `frame - begin` against the measured GPU
   period at ultra performance. Debug build exit 0, CTest exit 0, Release build exit 0.
+- 2026-10-12 (step 0 results, Release 4K FSR medium, `rt_brush_persistent=1`): the decision inputs landed.
+  Lock convoy (trace on): all-lane wait/hold 13.42/1.85 ms per frame on swamp and 8.23/1.23 on Fuma; the
+  alias lane owns 9.31/1.53 (69%/82%) and 4.59/0.80 (56%/65%). The bounds scan (972 calls/frame on swamp,
+  642 on Fuma) costs 0.378/0.229 ms per frame (0.39/0.36 us per call, about 20% of hold) - above the 15%
+  bar, so the critical-section shrink stays a candidate with a small expected hold cut. Covered persistent
+  movables: 405 (swamp) / 257 (Fuma) fully covered models per frame, 8943/7361 covered surfaces, covered
+  emissive 0.093/0.261 ms per frame - below the 0.5 ms bar, so the emissive retention rework is dropped;
+  the covered-model fast path keeps its expected ~0.5-1 ms brush-chain cut. Ultra-performance arm (no
+  trace): CPU `frame - begin` 2.37 (Fuma) / 4.07 (swamp) against GPU periods 9.13/11.29 ms and 103/63 fps -
+  the max plan is GPU-bound at ultra, and `gpu.setup` (3.35/5.21 ms, 37%/46% of the GPU frame) is the top
+  GPU item. Open: on swamp the wall interval exceeds the GPU period by about 4.5 ms at ultra (1.6 at
+  balanced) while Fuma is tight (0.5); not attributable to CPU from these captures. Note: a stale
+  `rt_brush_persistent "0"` saved in `build/{Debug,Release}/ad/config.cfg` overrode the new default and
+  flipped the switch off in the first Debug run; the line was removed from both configs and every reported
+  capture shows `rt_brush_persistent=1` in its settings row.
