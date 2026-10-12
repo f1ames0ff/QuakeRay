@@ -151,7 +151,7 @@ void main()
 
             for (int attempt = 0; attempt < 2 && !histValid; attempt++)
             {
-                const float2 off = (attempt == 0) ? nbrOff : (float2)0.0;
+                const float2 off = (attempt == 0) ? (float2)0.0 : nbrOff;
                 const int2 prevPix = q2FlatToChecker((int2)floor(posPrev - (float2)0.5 + off), width);
 
                 if (prevPix.x < 0 || prevPix.y < 0 || prevPix.x >= width || prevPix.y >= height)
@@ -174,7 +174,8 @@ void main()
                     !q2ReuseLoadPrev(prevPix, hist) ||
                     hist.lightIndex < (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET ||
                     hist.lightIndex >= (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET + globalUniform.lightCount ||
-                    hist.fingerprint != q2ReuseFingerprint(lightSources[hist.lightIndex]))
+                    hist.fingerprint != q2ReuseFingerprint(lightSources[hist.lightIndex]) ||
+                    (attempt == 1 && q2ReuseIsReceiverDependent(lightSources[hist.lightIndex])))
                 {
                     continue;
                 }
@@ -247,7 +248,7 @@ void main()
         outReservoir.pointRnd = selPointRnd;
         outReservoir.memberRnd = selMemberRnd;
         outReservoir.targetOwn = min(selTarget, Q2_REUSE_TARGET_MAX);
-        outReservoir.ucw = (selLight != LIGHT_INDEX_NONE) ? wSum / ((float)mSum * selTarget) : 0.0;
+        outReservoir.ucw = (selLight != LIGHT_INDEX_NONE) ? q2ReuseCapUcw(wSum / ((float)mSum * selTarget), reuseCfg) : 0.0;
         outReservoir.fingerprint = (selLight != LIGHT_INDEX_NONE) ? q2ReuseFingerprint(lightSources[selLight]) : 0u;
         outReservoir.candidateHash = q2ReuseSampleHash(selLight, selPointRnd, selMemberRnd);
         outReservoir.cluster = selCluster;
@@ -284,7 +285,7 @@ void main()
             float3 d, s;
             shade(surf, selLightSample, 1.0, d, s);
 
-            const float ucw = wSum / ((float)mSum * selTarget);
+            const float ucw = q2ReuseCapUcw(wSum / ((float)mSum * selTarget), reuseCfg);
             directDiffuse += d * vis * ucw;
             directSpecular += s * vis * ucw;
         }

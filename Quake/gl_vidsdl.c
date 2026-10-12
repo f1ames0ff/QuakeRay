@@ -365,6 +365,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_direct_reuse, "0") \
 	CVAR_DEF_T (rt_direct_reuse_cap, "20") \
 	CVAR_DEF_T (rt_direct_reuse_radius, "30") \
+	CVAR_DEF_T (rt_direct_reuse_ucw, "0") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
 	CVAR_DEF_T (rt_stats_interval, "0.2") \
 	CVAR_DEF_T (rt_end_task_delay_ms, "0") \
@@ -1150,6 +1151,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_direct_reuse");
 	RT_Bench_Setting (f, "rt_direct_reuse_cap");
 	RT_Bench_Setting (f, "rt_direct_reuse_radius");
+	RT_Bench_Setting (f, "rt_direct_reuse_ucw");
 	RT_Bench_Setting (f, "rt_renderscale");
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
 	RT_Bench_Setting (f, "rt_upscale_dlss");
@@ -3142,7 +3144,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.restirCandidates = (uint32_t)CLAMP (1.0f, CVAR_TO_FLOAT (rt_restir_candidates), 64.0f),
 		.directReuseEnabled = (CVAR_TO_BOOL (rt_direct_reuse) ? 1u : 0u) |
 		                      ((uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_direct_reuse_radius), 255.0f) << 8) |
-		                      ((uint32_t)CLAMP (1.0f, CVAR_TO_FLOAT (rt_direct_reuse_cap), 255.0f) << 16),
+		                      ((uint32_t)CLAMP (1.0f, CVAR_TO_FLOAT (rt_direct_reuse_cap), 255.0f) << 16) |
+		                      ((uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_direct_reuse_ucw), 255.0f) << 24),
 		.giBounceRays = gi_level,
 		// Q2RTX pt_sun_bounce_range / sun_bounce: how far the sun reaches into an
 		// indirect bounce (game units, 0 turns indirect sunlight off) and a

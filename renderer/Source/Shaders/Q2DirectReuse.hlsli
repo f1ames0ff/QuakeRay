@@ -128,6 +128,28 @@ uint q2ReuseSampleHash(const uint lightIndex, const float2 pointRnd, const float
     return h & 0xFFFFu;
 }
 
+float q2ReuseCapUcw(const float ucw, const uint cfg)
+{
+    const uint e = (cfg >> 24u) & 0xFFu;
+    return (e > 0u) ? min(ucw, exp2((float)e)) : ucw;
+}
+
+bool q2ReuseIsReceiverDependent(const ShLightEncoded l)
+{
+    if (l.lightType == LIGHT_TYPE_SPHERE)
+    {
+        return true;
+    }
+
+    if (l.projector > 0.5 &&
+        (l.lightType == LIGHT_TYPE_TEXTURED_AREA || l.lightType == LIGHT_TYPE_DTAL_GROUP))
+    {
+        return true;
+    }
+
+    return false;
+}
+
 void q2ReuseStore(const int2 pix, const Q2ReuseReservoir r)
 {
     framebufQ2ReuseReservoir[pix] = uint4(
