@@ -384,6 +384,41 @@ Supports optional fullbright pixels.
 Based on code by MH from RMQEngine
 =============
 */
+// The physical radius of the drawn model: half the diagonal of the pose's
+// bounding box, in the metric units a light radius is measured in. An alias
+// model's frame boxes live in the pose's own space, so the model's own scale is
+// applied; a model whose frame boxes are degenerate falls back to its bounding
+// box.
+static float RT_AliasModelLightSize(const aliashdr_t *paliashdr, const lerpdata_t *lerpdata, const qmodel_t *model)
+{
+    float size[3];
+
+    if (paliashdr->numframes > 0)
+    {
+        float     mins[3], maxs[3];
+        const int pose = CLAMP(0, lerpdata->pose1, paliashdr->numframes - 1);
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            mins[axis] = paliashdr->frames[pose].bboxmin.v[axis];
+            maxs[axis] = paliashdr->frames[pose].bboxmax.v[axis];
+        }
+
+        if (maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2])
+        {
+            for (int axis = 0; axis < 3; axis++)
+                size[axis] = (maxs[axis] - mins[axis]) * fabsf(paliashdr->scale[axis]);
+
+            return QUAKEUNIT_TO_METRIC(0.5f * sqrtf(size[0] * size[0] + size[1] * size[1] + size[2] * size[2]));
+        }
+    }
+
+    for (int axis = 0; axis < 3; axis++)
+        size[axis] = model->maxs[axis] - model->mins[axis];
+
+    return QUAKEUNIT_TO_METRIC(0.5f * sqrtf(size[0] * size[0] + size[1] * size[1] + size[2] * size[2]));
+}
+
 static void GL_DrawAliasFrame(
     cb_context_t* cbx, entity_t* e, aliashdr_t* paliashdr, lerpdata_t lerpdata, gltexture_t* tx, float entity_alpha,
     qboolean alphatest, int entuniqueid)
@@ -437,6 +472,7 @@ static void GL_DrawAliasFrame(
         VectorCopy (tx->rtlightcolor, light.color);
         light.intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
         light.radius = CVAR_TO_FLOAT (rt_dlight_radius);
+        light.modelSize = RT_AliasModelLightSize (paliashdr, &lerpdata, e->model);
         light.style = -1;
 
         RT_LIGHT_Emit (&light);

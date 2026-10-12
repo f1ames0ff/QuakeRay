@@ -5111,15 +5111,21 @@ static void QRE_LightEntityFields (void)
 		radius_mixed = group ? QRE_LightGroupMixedMask (light, QRE_LIGHT_F_RADIUS) : 0;
 		value = light->has_radius ? light->radius : QRE_LightDefaultRadius (qre.sel_light.kind);
 		if (QR_GUI_SliderFloatMixed ("light_radius", &value, 0.0f, 10.0f, radius_mixed,
-		                             "The size of the light, in rt_dlight_radius units; the line under it is the radius the renderer draws."))
+		                             "The light's size: a light a model casts takes this fraction of the model's own size (rt_dlight_radius is the default fraction), a map light takes it as its size in rt_dlight_radius units."))
 			QRE_LightWrite (light, QRE_LIGHT_F_RADIUS, value, 0, 0, false);
 		if (QR_GUI_ResetButton ("light_radius", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_RADIUS)))
 			QRE_LightResetField (light, QRE_LIGHT_F_RADIUS);
 		if (!radius_mixed)
 		{
-			char buf[64];
+			char buf[96];
 
-			q_snprintf (buf, sizeof (buf), "radius %.1f game units", METRIC_TO_QUAKEUNIT (value));
+			/* a model's light is as big as the model: the slider is the fraction
+			   of that, everything else is an absolute size */
+			if (qre.sel_light.kind == RT_LIGHT_KIND_MATERIAL)
+				q_snprintf (buf, sizeof (buf), "%.2f x the model's own size", value);
+			else
+				q_snprintf (buf, sizeof (buf), "radius %.1f game units", METRIC_TO_QUAKEUNIT (value));
+
 			QR_GUI_LabelDim (buf);
 		}
 

@@ -132,13 +132,19 @@ typedef struct rt_emitter_light_s
     vec3_t      position;    // where the light's own geometry puts it
     vec3_t      color;       // the light's own color
     float       intensity;   // the light's own brightness
-    float       radius;      // the light's own size (rt_dlight_radius units)
+    float       radius;      // the light's own size: the fraction of the model's own size it
+                             // takes (rt_dlight_radius units), absolute when no model is behind it
     vec3_t      offset;      // the light's own offset from its pivot
     int         style;       // the light's own style, -1 when it has none
     qboolean    spot;
     vec3_t      direction;
     float       angleInner;
     float       angleOuter;
+    /* The physical radius of the model the light comes from, metric, when it is
+       a model's light: the radius above is then the fraction of the model's own
+       size the light takes, so two flames of one model at different sizes light
+       as differently as they look. 0 for a light that has no model behind it. */
+    float       modelSize;
 } rt_emitter_light_t;
 
 typedef struct rt_emitter_resolved_s

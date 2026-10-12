@@ -378,6 +378,14 @@ void RT_LIGHT_ResolveEmitter(const rt_emitter_light_t *emitter, rt_emitter_resol
         intensity *= style_scale;
     }
 
+    /* A light that comes from a model is as big as the model is: the emitter's
+       radius -- or the entry's light_radius -- is the fraction of the model's
+       own size the light takes, so a flame drawn large lights large. */
+    if (emitter->modelSize > 0.0f)
+    {
+        out->radius *= emitter->modelSize;
+    }
+
     VectorScale(out->color, intensity, out->color);
 }
 
