@@ -450,6 +450,52 @@ static void CLFTE_ParseBaseline (entity_state_t *es)
 	CLFTE_ReadDelta (0, es, &nullentitystate, &nullentitystate);
 }
 
+// A temporary probe for the leftover model reports: an entity whose model is
+// one the mod uses for its debris (misc_corner1 / misc_broken) is written once,
+// with what the client draws for it and what the server's edict says it is.
+static void CL_DebugGhostModel (int entnum, const entity_t *ent, const qmodel_t *model)
+{
+	static byte logged[MAX_EDICTS];
+
+	if (!model || entnum <= 0 || entnum >= MAX_EDICTS || logged[entnum])
+		return;
+	if (!strstr (model->name, "misc_broken") && !strstr (model->name, "misc_corner1"))
+		return;
+
+	logged[entnum] = 1;
+
+	const char *classname = "<no local server>";
+	const char *srvmodel = "";
+	int         srvindex = -1;
+
+	if (sv.active)
+	{
+		PR_SwitchQCVM (&sv.qcvm);
+
+		if (entnum < qcvm->num_edicts)
+		{
+			edict_t *e = EDICT_NUM (entnum);
+
+			if (e && !e->free)
+			{
+				classname = PR_GetString (e->v.classname);
+				srvmodel = PR_GetString (e->v.model);
+				srvindex = (int)e->v.modelindex;
+			}
+			else
+			{
+				classname = "<server edict free>";
+			}
+		}
+
+		PR_SwitchQCVM (NULL);
+	}
+
+	Con_Printf ("qr ghost probe: ent %i client model '%s' netindex %i at (%g %g %g) | server classname '%s' model '%s' index %i\n",
+	            entnum, model->name, (int)ent->netstate.modelindex,
+	            ent->origin[0], ent->origin[1], ent->origin[2], classname, srvmodel, srvindex);
+}
+
 // called with both fte+dp deltas
 static void CL_EntitiesDeltaed (void)
 {
@@ -516,6 +562,7 @@ static void CL_EntitiesDeltaed (void)
 #endif
 
 		model = cl.model_precache[ent->netstate.modelindex];
+		CL_DebugGhostModel (newnum, ent, model);
 		if (model != ent->model)
 		{
 			ent->model = model;
