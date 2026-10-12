@@ -725,6 +725,11 @@ static void R_MarkVisSurfaces (void *unused)
 R_MarkSurfacesPrepare
 ===============
 */
+qboolean RT_ChainFullFrame (void)
+{
+	return rt_chain_full_frame;
+}
+
 static void R_MarkSurfacesPrepare (void *unused)
 {
 	int      i;

@@ -1097,6 +1097,22 @@ void R_DrawWorldTask (void *unused)
 	const qboolean static_submit = Atomic_ExchangeUInt32 (&rt_require_static_submit, false) != 0;
 	const qboolean light_recollect = Atomic_ExchangeUInt32 (&rt_require_world_light_recollect, false) != 0;
 
+	if (static_submit && !RT_ChainFullFrame ())
+	{
+		Con_DWarning ("RT: a static submit was deferred; the frame's chains were built before the request\n");
+
+		Atomic_StoreUInt32 (&rt_require_static_submit, true);
+
+		if (light_recollect)
+			Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
+
+		RT_StaticMovableUpdate ();
+		qrEndDeferredLightUploads (vulkan_globals.instance);
+		qrUploadLanePop (vulkan_globals.instance);
+		RT_Prof_End (RT_PROF_WORLD, prof_start);
+		return;
+	}
+
 	if (!static_submit && !light_recollect)
 	{
 		RT_StaticMovableUpdate ();
