@@ -160,14 +160,12 @@ public:
     // frame's geometry is in them when Render records and that they stay valid until the
     // submission finishes. Render is a no-op until both are set.
     //
-    // Wiring hazard the host has to settle: the legacy `CopyFromStaging` that fills these buffers
-    // is recorded on the legacy command buffer (VulkanDevice.cpp:1471) which the engine submits
-    // *after* the RHI list (VulkanDevice.cpp:1346-1353), so an RHI list of frame N reads the copy
-    // of frame N-1. The sky tolerates that (static level geometry, VulkanDevice_Init.cpp:552-561);
-    // the UI does not, because the HUD is re-uploaded every frame and the ranges move with it. The
-    // host has to record the frame's own copy on the RHI list before Render (or bind buffers it
-    // copied there), otherwise the overlay shows the previous frame's - possibly mismatched -
-    // vertex data.
+    // Wiring: the pass reads the per-slot staging buffer the host fills, through the wraps
+    // NvrhiFrameSkeleton::Render creates for the sky, the raster overlay and the UI alike. The
+    // collector's device copy is *not* the source: that copy is recorded on the legacy command
+    // buffer (VulkanDevice.cpp:1471), which the engine submits *after* the RHI list
+    // (VulkanDevice.cpp:1346-1353), so an RHI list of frame N would read the copy of frame N-1
+    // while its draw infos are the frame's own.
     void SetGeometryBuffers(nvrhi::IBuffer *pVertexBuffer, nvrhi::IBuffer *pIndexBuffer);
 
     // One call per frame, on the frame context's open command list of 'frameIndex', after

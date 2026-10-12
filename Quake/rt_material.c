@@ -425,7 +425,7 @@ static rt_emissive_t *rt_mat_add_emissive_color(rt_material_t *mat, const char *
 
     if (!rt_mat_parse_hex_color(buf, c))
     {
-        Con_DWarning("RT mat: material '%s': color_emissive '%s' is not rrggbb; ignored\n",
+        Con_DWarning("RT mat: material '%s': luma '%s' is not rrggbb; ignored\n",
                      mat->name, buf);
         return NULL;
     }
@@ -504,13 +504,13 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->emissive_factor = (float)atof(value);
     else if (!q_strcasecmp(key, "base_factor"))
         mat->base_factor = (float)atof(value);
-    else if (!q_strcasecmp(key, "emissive_blend"))
+    else if (!q_strcasecmp(key, "luma_blend") || !q_strcasecmp(key, "emissive_blend"))
     {
         const int v = rt_mat_parse_emissive_blend(value);
 
         if (v == -2)
         {
-            Con_DWarning("RT mat: material '%s': emissive_blend '%s' is not a mode; ignored\n",
+            Con_DWarning("RT mat: material '%s': luma_blend '%s' is not a mode; ignored\n",
                          mat->name, value);
         }
         else
@@ -518,33 +518,33 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
             mat->emissive_blend = v;
         }
     }
-    else if (!q_strcasecmp(key, "emissive_focus"))
+    else if (!q_strcasecmp(key, "light_focus") || !q_strcasecmp(key, "emissive_focus"))
     {
         const float v = (float)atof(value);
 
         if (v >= 0.0f && v <= 90.0f)
             mat->emissive_focus = v;
         else
-            Con_DWarning("RT mat: material '%s': emissive_focus %.1f is not in 0..90 degrees; ignored\n",
+            Con_DWarning("RT mat: material '%s': light_focus %.1f is not in 0..90 degrees; ignored\n",
                          mat->name, v);
     }
-    else if (!q_strcasecmp(key, "emissive_focus_soft"))
+    else if (!q_strcasecmp(key, "light_focus_soft") || !q_strcasecmp(key, "emissive_focus_soft"))
     {
         const float v = (float)atof(value);
 
         if (v >= 0.0f && v <= 90.0f)
             mat->emissive_focus_soft = v;
         else
-            Con_DWarning("RT mat: material '%s': emissive_focus_soft %.1f is not in 0..90 degrees; ignored\n",
+            Con_DWarning("RT mat: material '%s': light_focus_soft %.1f is not in 0..90 degrees; ignored\n",
                          mat->name, v);
     }
-    else if (!q_strcasecmp(key, "emissive_projector"))
+    else if (!q_strcasecmp(key, "light_projector") || !q_strcasecmp(key, "emissive_projector"))
         mat->emissive_projector = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))
         mat->light_styles = rt_mat_parse_bool(value);
-    else if (!q_strcasecmp(key, "color_emissive"))
+    else if (!q_strcasecmp(key, "luma") || !q_strcasecmp(key, "color_emissive"))
     {
         // one or more colors, comma separated: "ff0000,00ff00"
         char  buf[1024];
@@ -571,9 +571,9 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
             }
         }
     }
-    else if (!q_strcasecmp(key, "color_emissive_threshold"))
+    else if (!q_strcasecmp(key, "luma_threshold") || !q_strcasecmp(key, "color_emissive_threshold"))
         mat->color_emissive_threshold = (float)atof(value);
-    else if (!q_strcasecmp(key, "color_emissive_feather"))
+    else if (!q_strcasecmp(key, "luma_feather") || !q_strcasecmp(key, "color_emissive_feather"))
     {
         float f = (float)atof(value);
 
@@ -747,10 +747,10 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
 
                         if (mv->type == YAML_SEQUENCE_NODE)
                         {
-                            // a list value: only color_emissive takes one, so
-                            // both "color_emissive: ff0000,00ff00" and a YAML
+                            // a list value: only luma takes one, so
+                            // both "luma: ff0000,00ff00" and a YAML
                             // list of colors author the same thing
-                            if (!q_strcasecmp(keybuf, "color_emissive"))
+                            if (!q_strcasecmp(keybuf, "luma") || !q_strcasecmp(keybuf, "color_emissive"))
                             {
                                 for (yaml_node_item_t *sit = mv->data.sequence.items.start;
                                      sit < mv->data.sequence.items.top; sit++)

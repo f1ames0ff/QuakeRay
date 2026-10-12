@@ -98,6 +98,7 @@ enum
 	QRE_T_BOOL,
 	QRE_T_TEXT,
 	QRE_T_COLOR,
+	QRE_T_COMBO,
 };
 
 enum
@@ -127,6 +128,8 @@ enum
 	PARAM_ESOFT,
 	PARAM_EPROJ,
 	PARAM_CEMIS,
+	PARAM_EFACTOR,
+	PARAM_EBLEND,
 	PARAM_COUNT,
 };
 
@@ -143,7 +146,7 @@ static const struct qre_param_s
 	[PARAM_NORMALS]  = { NULL, "texture_normals",  QRE_T_TEXT,  0, 0, 0,
 	                     "Per-pixel bump direction. Its alpha channel can drive metalness_from_normal_alpha." },
 	[PARAM_EMISSIVE] = { NULL, "texture_emissive", QRE_T_TEXT,  0, 0, 0,
-	                     "A luma mask image: what is bright in it is what the surface emits. Replaces color_emissive." },
+	                     "A luma mask image: what is bright in it is what the surface emits. Replaces luma." },
 	[PARAM_GLOSS]    = { NULL, "texture_gloss",    QRE_T_TEXT,  0, 0, 0,
 	                     "White means mirror-smooth, black means rough (roughness = 1 - gloss). Ignored while roughness_override is set." },
 	[PARAM_BUMP]     = { "Surface", "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
@@ -180,13 +183,17 @@ static const struct qre_param_s
 	                     "The color of the light the surface casts; needs is_light." },
 	[PARAM_LBRIGHT]  = { NULL, "light_brightness", QRE_T_FLOAT, 0.001f, 1000, 0.0001f,
 	                     "How bright the light the surface casts is; the visible glow is set by emissive_factor and does not change with this." },
-	[PARAM_EFOCUS]   = { "Emissive", "emissive_focus",   QRE_T_FLOAT, 1, 90, 0.01f,
-	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond. The edge is softened inward from this angle by emissive_focus_soft." },
-	[PARAM_ESOFT]    = { NULL, "emissive_focus_soft", QRE_T_FLOAT, 1, 90, 0.01f,
-	                     "How wide the beam's soft edge is, in absolute degrees: brightness holds to (emissive_focus - emissive_focus_soft) and then falls smoothly (smoothstep squared) to zero at the focus angle, so the edge always grows inward from it. In a projector it blurs the projected pattern too." },
-	[PARAM_EPROJ]    = { NULL, "emissive_projector", QRE_T_BOOL, 0, 0, 0,
-	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (emissive_focus; no key = 45 degrees) and emissive_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
-	[PARAM_CEMIS]    = { NULL, "color_emissive",   QRE_T_BOOL,  0, 0, 0,
+	[PARAM_EFACTOR]  = { "Luma", "emissive_factor", QRE_T_FLOAT, 0, 5, 0.01f,
+	                     "Scales the texture_emissive mask's emission: below 1 it dims, above 1 it brightens." },
+	[PARAM_EBLEND]   = { NULL, "luma_blend", QRE_T_COMBO, 0, 0, 0,
+	                     "How the texture_emissive mask's glow is composited into the frame; cvar follows rt_emis_blend." },
+	[PARAM_EFOCUS]   = { "Light", "light_focus",   QRE_T_FLOAT, 1, 90, 0.01f,
+	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond. The edge is softened inward from this angle by light_focus_soft." },
+	[PARAM_ESOFT]    = { NULL, "light_focus_soft", QRE_T_FLOAT, 1, 90, 0.01f,
+	                     "How wide the beam's soft edge is, in absolute degrees: brightness holds to (light_focus - light_focus_soft) and then falls smoothly (smoothstep squared) to zero at the focus angle, so the edge always grows inward from it. In a projector it blurs the projected pattern too." },
+	[PARAM_EPROJ]    = { NULL, "light_projector", QRE_T_BOOL, 0, 0, 0,
+	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (light_focus; no key = 45 degrees) and light_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
+	[PARAM_CEMIS]    = { "Luma", "luma",   QRE_T_BOOL,  0, 0, 0,
 	                     "Glow by color: every block below matches its own color and carries its own threshold, feather, emissive_factor and blend." },
 };
 
@@ -878,6 +885,7 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_GLASS_IOR: return m->glass_ior;
 	case PARAM_GLASS_THICKNESS: return m->glass_thickness;
 	case PARAM_LBRIGHT:  return m->light_brightness;
+	case PARAM_EFACTOR:  return m->emissive_factor;
 	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : 45.0f;
 	case PARAM_ESOFT:    return m->emissive_focus_soft >= 0.0f ? m->emissive_focus_soft : 45.0f;
 	default:             return 0.0f;
@@ -886,9 +894,11 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 
 static int QRE_GetInt (const rt_material_t *m, int param)
 {
-	(void)m;
-	(void)param;
-	return 0; // the per-block controls are edited inside QRE_EmissiveEditor
+	switch (param)
+	{
+	case PARAM_EBLEND: return m->emissive_blend;
+	default:           return 0; // the per-block controls are edited inside QRE_EmissiveEditor
+	}
 }
 
 static qboolean QRE_GetBool (const rt_material_t *m, int param)
@@ -931,6 +941,7 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_ROUGH:    m->roughness_override = value; m->has_roughness_override = true; break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
+	case PARAM_EFACTOR:  m->emissive_factor = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
 	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
 	case PARAM_TRANSPARENCY:
@@ -961,9 +972,21 @@ static void QRE_SetFloat (int g, int param, float value)
 
 static void QRE_SetInt (int g, int param, int value)
 {
-	(void)g;
-	(void)param;
-	(void)value; // the per-block controls are edited inside QRE_EmissiveEditor
+	switch (param)
+	{
+	case PARAM_EBLEND:
+	{
+		rt_material_t *m;
+
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->emissive_blend = value;
+		QRE_MarkDirty (m);
+		break;
+	}
+	default:
+		break; // the per-block controls are edited inside QRE_EmissiveEditor
+	}
 }
 
 static void QRE_SetBool (int g, int param, qboolean value)
@@ -2578,7 +2601,8 @@ static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *o
 	switch (qre_params[p].type)
 	{
 	case QRE_T_FLOAT:  return QRE_GetFloat (m, p) != QRE_GetFloat (orig, p);
-	case QRE_T_INT:    return QRE_GetInt (m, p) != QRE_GetInt (orig, p);
+	case QRE_T_INT:
+	case QRE_T_COMBO:  return QRE_GetInt (m, p) != QRE_GetInt (orig, p);
 	case QRE_T_BOOL:   return QRE_GetBool (m, p) != QRE_GetBool (orig, p);
 	case QRE_T_TEXT:   return strcmp (QRE_GetText (m, p), QRE_GetText (orig, p)) != 0;
 	case QRE_T_COLOR:
@@ -2651,6 +2675,7 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		QRE_SetFloat (g, p, QRE_GetFloat (orig, p));
 		break;
 	case QRE_T_INT:
+	case QRE_T_COMBO:
 		QRE_SetInt (g, p, QRE_GetInt (orig, p));
 		break;
 	case QRE_T_BOOL:
@@ -2791,14 +2816,14 @@ static void QRE_EmissiveEditor (int g)
 					}
 				}
 
-				if (QR_GUI_SliderFloat ("color_emissive_threshold", &m->color_emissive[ci].threshold, 0.0f, 1.0f,
+				if (QR_GUI_SliderFloat ("luma_threshold", &m->color_emissive[ci].threshold, 0.0f, 1.0f,
 				                        "How far a pixel's color may differ from this block's color and still glow."))
 					QRE_MarkDirty (m);
 			}
 			{
 				int feather = (int)(m->color_emissive[ci].feather + 0.5f);
 
-				if (QR_GUI_SliderInt ("color_emissive_feather", &feather, 0, 16,
+				if (QR_GUI_SliderInt ("luma_feather", &feather, 0, 16,
 				                      "Softens this block's mask edge over this many pixels, extending it outward without dimming the pixels it selected."))
 				{
 					m->color_emissive[ci].feather = (float)feather;
@@ -2811,7 +2836,7 @@ static void QRE_EmissiveEditor (int g)
 			{
 				int idx = m->color_emissive[ci].blend + 1;
 
-				if (QR_GUI_Combo ("emissive_blend", &idx, qre_emissive_blends, (int)countof (qre_emissive_blends),
+				if (QR_GUI_Combo ("luma_blend", &idx, qre_emissive_blends, (int)countof (qre_emissive_blends),
 				                  "How this block's glow is composited into the frame (normal, screen, overlay...)."))
 				{
 					m->color_emissive[ci].blend = idx - 1;
@@ -2888,8 +2913,9 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	// transparency and the per-material refraction only mean something once the
 	// material is glass
 	const qboolean glass_locks_slider = (p == PARAM_TRANSPARENCY || p == PARAM_GLASS_IOR || p == PARAM_GLASS_THICKNESS || p == PARAM_GLASS_COLOR) && !m->material_glass;
+	const qboolean emis_tex_locks_color = (p == PARAM_CEMIS && m->filename_emissive[0] != '\0');
 
-	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider)
+	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider || emis_tex_locks_color)
 		QR_GUI_PushDisabled (1);
 
 	switch (qre_params[p].type)
@@ -2978,6 +3004,14 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 		}
 		break;
 	}
+	case QRE_T_COMBO:
+	{
+		int idx = QRE_GetInt (m, p) + 1;
+
+		if (QR_GUI_Combo (label, &idx, qre_emissive_blends, (int)countof (qre_emissive_blends), tip))
+			QRE_SetInt (g, p, idx - 1);
+		break;
+	}
 	default:
 		break;
 	}
@@ -2985,10 +3019,10 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	// Reset one parameter to the state it had when the editor started
 	// (or to the defaults, for a material the editor created itself).
 	m = qre.group[g];
-	if (QR_GUI_ResetButton (label, !mirror_locks_rough && !is_light_locks_color && !glass_locks_slider && QRE_ParamChanged (m, orig, p)))
+	if (QR_GUI_ResetButton (label, !mirror_locks_rough && !is_light_locks_color && !glass_locks_slider && !emis_tex_locks_color && QRE_ParamChanged (m, orig, p)))
 		QRE_ResetParam (g, p, orig);
 
-	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider)
+	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider || emis_tex_locks_color)
 		QR_GUI_PopDisabled ();
 }
 
@@ -3001,7 +3035,10 @@ static void QRE_ParamWidgets (int g)
 
 	for (p = 0; p < PARAM_COUNT; p++)
 	{
-		if (p >= PARAM_LSTYLES && p <= PARAM_LBRIGHT && !qre.group[g]->is_light)
+		if (p >= PARAM_LSTYLES && p <= PARAM_EPROJ && !qre.group[g]->is_light)
+			continue;
+
+		if ((p == PARAM_EFACTOR || p == PARAM_EBLEND) && qre.group[g]->filename_emissive[0] == '\0')
 			continue;
 
 		if (qre_params[p].section && (!section || strcmp (section, qre_params[p].section)))
@@ -5874,18 +5911,25 @@ static void QRE_Cancel (void)
 // of renderer/Source/materials.yaml, which documents the accepted keys.
 static const char *qre_yaml_header =
 	"# Global material definitions for the qray ray-traced renderer.\n"
-	"# `is_light: false` marks a *static* surface (textures/*) whose luma\n"
-	"# texture should generate emissive triangle lights. Dynamic surfaces\n"
-	"# (progs/* models and sprites) are gated separately by the engine.\n"
+	"# `is_light: true` marks a surface whose luma casts light: a static surface\n"
+	"# (textures/*) or an alias model builds an emissive area light from its own\n"
+	"# geometry (a model also needs an emissive mask), and a sprite lights from\n"
+	"# `light_color` as a point light.\n"
+	"#\n"
+	"# `light_brightness` (default 1) scales the cast light: any positive value\n"
+	"# keeps it, 0 turns the cast light off while the glow stays, and\n"
+	"# `is_light: false` leaves the surface glowing without lighting the scene.\n"
 	"#\n"
 	"# Emissive masks can be authored two ways:\n"
 	"#   * `texture_emissive: textures/foo_luma.png` -- a hand-painted mask file:\n"
 	"#     its pixels' luminance is the emission. Most precise; keeps the mask\n"
-	"#     independent of the diffuse art.\n"
-	"#   * `color_emissive:` -- no mask file: each block below matches its own\n"
+	"#     independent of the diffuse art. `emissive_factor` (default 1) scales\n"
+	"#     this mask's emission and `luma_blend` composites its glow (see\n"
+	"#     below).\n"
+	"#   * `luma:` -- no mask file: each block below matches its own\n"
 	"#     color against the base texture, so only pixels close to it glow. A\n"
 	"#     block carries its color and its own tone controls:\n"
-	"#         color_emissive:\n"
+	"#         luma:\n"
 	"#           - color: ff0000          # rrggbb\n"
 	"#             threshold: 0.02        # 0..1 color-cube distance / sqrt(3)\n"
 	"#             feather: 2             # pixels of outward edge softening\n"
@@ -5906,23 +5950,24 @@ static const char *qre_yaml_header =
 	"#     `emissive_factor` scales the result. Combine with `is_light: true`\n"
 	"#     to also cast light (otherwise the surface only glows):\n"
 	"#     e.g.  - name: textures/foo\n"
-	"#             color_emissive:\n"
+	"#             luma:\n"
 	"#               - color: ff0000\n"
 	"#                 threshold: 0.02\n"
 	"#                 feather: 3\n"
 	"#                 emissive_factor: 2\n"
 	"#                 blend: screen\n"
 	"#             is_light: true\n"
-	"# The old single-color keys (`color_emissive: ff0000,00ff00`,\n"
-	"# `color_emissive_threshold`, `color_emissive_feather`) are still read: a\n"
-	"# block without its own controls inherits them.\n"
+	"# The single-color form (`luma: ff0000,00ff00`) and the material-level\n"
+	"# `luma_threshold`/`luma_feather` are still read: a block without its own\n"
+	"# controls inherits them, and the old `color_emissive*` keys still load as\n"
+	"# aliases.\n"
 	"# Precedence: an authored `texture_emissive` always wins -- while the key is\n"
-	"# present in an entry, `color_emissive` in that same entry is ignored\n"
+	"# present in an entry, `luma` in that same entry is ignored\n"
 	"# entirely (even if the luma file fails to load, which is reported at\n"
 	"# startup). The classic fullbright mask is merged rather than replaced, so\n"
 	"# its pixels emit in addition to the luma mask.\n"
 	"#\n"
-	"# `emissive_blend: screen` (or a number) overrides the global `rt_emis_blend`\n"
+	"# `luma_blend: screen` (or a number) overrides the global `rt_emis_blend`\n"
 	"# cvar for the emission that has no block of its own (a texture_emissive\n"
 	"# mask); a color block's own `blend` wins for its pixels. The names are what\n"
 	"# the shader does:\n"
@@ -5937,25 +5982,25 @@ static const char *qre_yaml_header =
 	"# them bright and saturated.\n"
 	"#     e.g.  - name: textures/window01_1\n"
 	"#             mirror: true\n"
-	"#             emissive_blend: screen\n"
+	"#             luma_blend: screen\n"
 	"#\n"
-	"# `emissive_focus` (degrees, 0..90) confines the light a material casts to a\n"
+	"# `light_focus` (degrees, 0..90) confines the light a material casts to a\n"
 	"# cone around its normal: full brightness up to the angle, nothing beyond.\n"
 	"# No key keeps the default wide lobe; under a projector it is 45 degrees.\n"
-	"# `emissive_focus_soft` (degrees, absolute) is the width of the cone's soft\n"
-	"# edge: brightness holds to `emissive_focus - emissive_focus_soft` and then\n"
+	"# `light_focus_soft` (degrees, absolute) is the width of the cone's soft\n"
+	"# edge: brightness holds to `light_focus - light_focus_soft` and then\n"
 	"# falls smoothly (smoothstep squared) to zero at the focus angle, so the edge\n"
 	"# always grows inward from it. No key uses 45 degrees under a projector and a\n"
 	"# tenth of the focus angle otherwise; 0 is a nearly hard edge.\n"
-	"# `emissive_projector: true` routes the light into the material's emissive\n"
+	"# `light_projector: true` routes the light into the material's emissive\n"
 	"# mask instead of dimming it -- a gobo: the mask is read along the direction\n"
-	"# of each point it lights, over the same cone (`emissive_focus`; no key = 45\n"
-	"# degrees), and `emissive_focus_soft` also blurs the projected pattern (the\n"
+	"# of each point it lights, over the same cone (`light_focus`; no key = 45\n"
+	"# degrees), and `light_focus_soft` also blurs the projected pattern (the\n"
 	"# mask is read from a blurrier mip as the edge grows).\n"
 	"#     e.g.  - name: textures/window1_2\n"
-	"#             emissive_focus: 45\n"
-	"#             emissive_focus_soft: 8\n"
-	"#             emissive_projector: true\n"
+	"#             light_focus: 45\n"
+	"#             light_focus_soft: 8\n"
+	"#             light_projector: true\n"
 	"#\n"
 	"# `material_glass: true` turns the surface into a pane of glass: the traced\n"
 	"# path reflects it with a Fresnel term and bends the rays through it, tinting\n"
@@ -6008,7 +6053,7 @@ static void QRE_WriteEmissiveBlocks (FILE *f, const rt_material_t *m)
 {
 	int i;
 
-	fprintf (f, "    color_emissive:\n");
+	fprintf (f, "    luma:\n");
 	for (i = 0; i < m->color_emissive_count; i++)
 	{
 		const rt_emissive_t *b = &m->color_emissive[i];
@@ -6063,7 +6108,7 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 	if (m->emissive_factor != 1.0f)
 		fprintf (f, "    emissive_factor: %.6g\n", m->emissive_factor);
 	if (m->emissive_blend >= 0)
-		fprintf (f, "    emissive_blend: %s\n", RT_MAT_EmissiveBlendName (m->emissive_blend));
+		fprintf (f, "    luma_blend: %s\n", RT_MAT_EmissiveBlendName (m->emissive_blend));
 	if (m->base_factor != 1.0f)
 		fprintf (f, "    base_factor: %.6g\n", m->base_factor);
 	if (m->is_light)
@@ -6077,11 +6122,11 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 	if (m->light_brightness != 1.0f)
 		fprintf (f, "    light_brightness: %.6g\n", m->light_brightness);
 	if (m->emissive_focus > 0.0f)
-		fprintf (f, "    emissive_focus: %.6g\n", m->emissive_focus);
+		fprintf (f, "    light_focus: %.6g\n", m->emissive_focus);
 	if (m->emissive_focus_soft >= 0.0f)
-		fprintf (f, "    emissive_focus_soft: %.6g\n", m->emissive_focus_soft);
+		fprintf (f, "    light_focus_soft: %.6g\n", m->emissive_focus_soft);
 	if (m->emissive_projector)
-		fprintf (f, "    emissive_projector: true\n");
+		fprintf (f, "    light_projector: true\n");
 	if (m->mirror)
 		fprintf (f, "    mirror: true\n");
 	if (m->material_glass)

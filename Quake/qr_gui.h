@@ -106,7 +106,7 @@ int  QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const ch
 // changed.
 int  QR_GUI_ColorHex (const char *label, float rgb[3], int *enabled, const char *tooltip);
 int  QR_GUI_ColorHexMixed (const char *label, float rgb[3], int *enabled, int mixed, const char *tooltip);
-// A row of the color_emissive list: a swatch/hex editor with a remove button.
+// A row of the luma list: a swatch/hex editor with a remove button.
 // Returns 1 when the color changed and 2 when remove was pressed (3 = both).
 int  QR_GUI_ColorRow (const char *id, float rgb[3], const char *tooltip);
 // A square button with a circular arrow, right-aligned in the current row.

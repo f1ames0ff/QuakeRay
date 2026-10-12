@@ -2158,7 +2158,7 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	if (!light_tex || !light_tex->rtislight)
 		return false;
 
-	if (!light_tex->rthaslightcolor && VectorLength (light_tex->rtemissivecolor) <= 0.0005f)
+	if (!(light_tex->rtlightgain > 0.0f))
 		return false;
 
 	/* Whether a mask is there is a question about the material, not about how bright the mask is:
@@ -2166,11 +2166,20 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	   instead of glowing evenly over its whole polygon. */
 	const qboolean has_mask = light_tex->rtemissivetex;
 
+	/* The luma factors scale how brightly the surface glows; the light itself answers to
+	   light_brightness. Where a texture carries them it also carries a second mask, the shape
+	   with none of the factors folded in, and that is the one the light reads. */
+	const qboolean shape_split = has_mask && light_tex->rtlightmaterial != QR_NULL_HANDLE;
+	const float    mean_base   = shape_split ? light_tex->rtemissivemeanbaseraw : light_tex->rtemissivemeanbase;
+
+	if (!light_tex->rthaslightcolor && mean_base <= 0.0f)
+		return false;
+
 	/* The light has to glow where the surface glows, so a masked texture sends its material along
 	   and the shader reads the mask at the point it sampled. Only a texture with no mask is
 	   uniform over its polygon, and only there does meanEmiss describe the emission. */
-	p->material  = has_mask ? light_tex->rtmaterial : QR_NO_MATERIAL;
-	p->meanEmiss = has_mask ? light_tex->rtemissivemean : 1.0f;
+	p->material  = has_mask ? (shape_split ? light_tex->rtlightmaterial : light_tex->rtmaterial) : QR_NO_MATERIAL;
+	p->meanEmiss = has_mask ? (shape_split ? light_tex->rtemissivemeanraw : light_tex->rtemissivemean) : 1.0f;
 	p->glow      = false;
 	p->glow_mean = p->meanEmiss;
 	p->angleInner = light_tex->rtemisangleinner;
@@ -2183,8 +2192,12 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	}
 	else if (has_mask)
 	{
-		const float meanBase = light_tex->rtemissivemeanbase > 1e-6f ? light_tex->rtemissivemeanbase : 1e-6f;
-		VectorScale (light_tex->rtemissivecolor, 1.0f / meanBase, p->color);
+		const float meanBase = mean_base > 1e-6f ? mean_base : 1e-6f;
+
+		if (shape_split)
+			VectorScale (light_tex->rtemissivecolorraw, 1.0f / meanBase, p->color);
+		else
+			VectorScale (light_tex->rtemissivecolor, 1.0f / meanBase, p->color);
 	}
 	else
 	{
@@ -2200,7 +2213,8 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 		p->glow_uvmax[1] = light_tex->rtemisuvmax[1];
 		/* Area mean over the glow extents: the polygon lights cover only those, so they carry
 		   the emission the whole surface would have had over the glowing part. */
-		p->glow_mean     = light_tex->rtemissiveglow;
+		p->glow_mean     = shape_split ? light_tex->rtemissivemeanraw / light_tex->rtemisglowfrac
+		                               : light_tex->rtemissiveglow;
 	}
 
 	return true;
