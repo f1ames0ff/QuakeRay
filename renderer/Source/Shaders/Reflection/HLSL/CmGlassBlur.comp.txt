@@ -1,5 +1,5 @@
 # Format: 1
-# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); dxil.dll: 1.6(101.6.2112.13); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
 === block pushconstant
 
 [0] offset 0 uint32
@@ -137,33 +137,33 @@ declared
 image:2D:0:0:0:2:Rgba16f
 === descriptor set 0 binding 128: storage class
 UniformConstant
-=== descriptor set 0 binding 136
+=== descriptor set 0 binding 142
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 136: storage class
+=== descriptor set 0 binding 142: storage class
 UniformConstant
-=== descriptor set 0 binding 212
+=== descriptor set 0 binding 218
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 212: storage class
+=== descriptor set 0 binding 218: storage class
 UniformConstant
-=== descriptor set 0 binding 255
+=== descriptor set 0 binding 261
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 255: storage class
+=== descriptor set 0 binding 261: storage class
 UniformConstant
-=== descriptor set 0 binding 256
+=== descriptor set 0 binding 262
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 256: storage class
+=== descriptor set 0 binding 262: storage class
 UniformConstant
-=== descriptor set 0 binding 257
+=== descriptor set 0 binding 263
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 257: storage class
+=== descriptor set 0 binding 263: storage class
 UniformConstant
-=== descriptor set 0 binding 258
+=== descriptor set 0 binding 264
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 258: storage class
+=== descriptor set 0 binding 264: storage class
 UniformConstant
-=== descriptor set 0 binding 260
+=== descriptor set 0 binding 266
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 260: storage class
+=== descriptor set 0 binding 266: storage class
 UniformConstant
 === descriptor set 0 binding 27
 image:2D:0:0:0:2:R11fG11fB10f

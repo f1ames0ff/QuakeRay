@@ -943,5 +943,41 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += float(framebufQ2ParticleLayer_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ParticleLayer_Sampler, uv, 0.0).x;
 
+    // framebufQ2ReuseReservoir  rgba32ui
+    framebufQ2ReuseReservoir[pix] = uint4(1u, 1u, 1u, 1u);
+    v += float(framebufQ2ReuseReservoir[pix].x);
+    v += float(framebufQ2ReuseReservoir_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseReservoir_Sampler, uv, 0.0).x;
+
+    // framebufQ2ReuseReservoir_Prev  rgba32ui
+    framebufQ2ReuseReservoir_Prev[pix] = uint4(1u, 1u, 1u, 1u);
+    v += float(framebufQ2ReuseReservoir_Prev[pix].x);
+    v += float(framebufQ2ReuseReservoir_Prev_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseReservoir_Prev_Sampler, uv, 0.0).x;
+
+    // framebufQ2ReuseReservoirMeta  rg32ui
+    framebufQ2ReuseReservoirMeta[pix] = uint4(1u, 1u, 1u, 1u);
+    v += float(framebufQ2ReuseReservoirMeta[pix].x);
+    v += float(framebufQ2ReuseReservoirMeta_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseReservoirMeta_Sampler, uv, 0.0).x;
+
+    // framebufQ2ReuseReservoirMeta_Prev  rg32ui
+    framebufQ2ReuseReservoirMeta_Prev[pix] = uint4(1u, 1u, 1u, 1u);
+    v += float(framebufQ2ReuseReservoirMeta_Prev[pix].x);
+    v += float(framebufQ2ReuseReservoirMeta_Prev_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseReservoirMeta_Prev_Sampler, uv, 0.0).x;
+
+    // framebufQ2ReuseTemporal  rgba32ui
+    framebufQ2ReuseTemporal[pix] = uint4(1u, 1u, 1u, 1u);
+    v += float(framebufQ2ReuseTemporal[pix].x);
+    v += float(framebufQ2ReuseTemporal_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseTemporal_Sampler, uv, 0.0).x;
+
+    // framebufQ2ReuseTemporalMeta  rg32ui
+    framebufQ2ReuseTemporalMeta[pix] = uint4(1u, 1u, 1u, 1u);
+    v += float(framebufQ2ReuseTemporalMeta[pix].x);
+    v += float(framebufQ2ReuseTemporalMeta_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseTemporalMeta_Sampler, uv, 0.0).x;
+
     probeOutput[0] = v;
 }

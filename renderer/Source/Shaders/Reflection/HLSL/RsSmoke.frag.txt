@@ -1,5 +1,5 @@
 # Format: 1
-# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); dxil.dll: 1.6(101.6.2112.13); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
 === block pushconstant
 
 [0] offset 88 array[4](float32) stride 4
@@ -138,17 +138,17 @@ declared
 struct
 === descriptor set 1 binding 0: storage class
 Uniform
-=== descriptor set 4 binding 140
+=== descriptor set 4 binding 146
 image:2D:0:0:0:1:Unknown
-=== descriptor set 4 binding 140: storage class
+=== descriptor set 4 binding 146: storage class
 UniformConstant
-=== descriptor set 4 binding 232
+=== descriptor set 4 binding 238
 image:2D:0:0:0:1:Unknown
-=== descriptor set 4 binding 232: storage class
+=== descriptor set 4 binding 238: storage class
 UniformConstant
-=== descriptor set 4 binding 234
+=== descriptor set 4 binding 240
 image:2D:0:0:0:1:Unknown
-=== descriptor set 4 binding 234: storage class
+=== descriptor set 4 binding 240: storage class
 UniformConstant
 === entry point
 Fragment main

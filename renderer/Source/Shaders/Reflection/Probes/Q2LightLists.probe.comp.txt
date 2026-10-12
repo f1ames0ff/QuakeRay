@@ -1,5 +1,5 @@
 # Format: 1
-# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); dxil.dll: 1.6(101.6.2112.13); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
 === block set 2 binding 0
 
 [0] offset 0 m4(v4(float32)) matrixstride 16
@@ -170,9 +170,9 @@ declared
 declared
 === capability StorageImageExtendedFormats
 declared
-=== descriptor set 1 binding 246
+=== descriptor set 1 binding 252
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 246: storage class
+=== descriptor set 1 binding 252: storage class
 UniformConstant
 === descriptor set 2 binding 0
 struct

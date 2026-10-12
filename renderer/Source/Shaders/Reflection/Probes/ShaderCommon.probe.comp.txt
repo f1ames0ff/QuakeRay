@@ -384,27 +384,27 @@ image:2D:0:0:0:2:Rgba16f
 === descriptor set 0 binding 130: storage class
 UniformConstant
 === descriptor set 0 binding 131
-image:2D:0:0:0:1:Unknown
+image:2D:0:0:0:2:Rgba32ui
 === descriptor set 0 binding 131: storage class
 UniformConstant
 === descriptor set 0 binding 132
-image:2D:0:0:0:1:Unknown
+image:2D:0:0:0:2:Rgba32ui
 === descriptor set 0 binding 132: storage class
 UniformConstant
 === descriptor set 0 binding 133
-image:2D:0:0:0:1:Unknown
+image:2D:0:0:0:2:Rg32ui
 === descriptor set 0 binding 133: storage class
 UniformConstant
 === descriptor set 0 binding 134
-image:2D:0:0:0:1:Unknown
+image:2D:0:0:0:2:Rg32ui
 === descriptor set 0 binding 134: storage class
 UniformConstant
 === descriptor set 0 binding 135
-image:2D:0:0:0:1:Unknown
+image:2D:0:0:0:2:Rgba32ui
 === descriptor set 0 binding 135: storage class
 UniformConstant
 === descriptor set 0 binding 136
-image:2D:0:0:0:1:Unknown
+image:2D:0:0:0:2:Rg32ui
 === descriptor set 0 binding 136: storage class
 UniformConstant
 === descriptor set 0 binding 137
@@ -964,35 +964,35 @@ image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 261: storage class
 UniformConstant
 === descriptor set 0 binding 262
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 262: storage class
 UniformConstant
 === descriptor set 0 binding 263
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 263: storage class
 UniformConstant
 === descriptor set 0 binding 264
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 264: storage class
 UniformConstant
 === descriptor set 0 binding 265
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 265: storage class
 UniformConstant
 === descriptor set 0 binding 266
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 266: storage class
 UniformConstant
 === descriptor set 0 binding 267
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 267: storage class
 UniformConstant
 === descriptor set 0 binding 268
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 268: storage class
 UniformConstant
 === descriptor set 0 binding 269
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 269: storage class
 UniformConstant
 === descriptor set 0 binding 26: storage class
@@ -1000,19 +1000,19 @@ UniformConstant
 === descriptor set 0 binding 27
 image:2D:0:0:0:2:R11fG11fB10f
 === descriptor set 0 binding 270
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 270: storage class
 UniformConstant
 === descriptor set 0 binding 271
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 271: storage class
 UniformConstant
 === descriptor set 0 binding 272
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 272: storage class
 UniformConstant
 === descriptor set 0 binding 273
-sampler
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 273: storage class
 UniformConstant
 === descriptor set 0 binding 274
@@ -1543,6 +1543,34 @@ UniformConstant
 sampler
 === descriptor set 0 binding 392: storage class
 UniformConstant
+=== descriptor set 0 binding 393
+sampler
+=== descriptor set 0 binding 393: storage class
+UniformConstant
+=== descriptor set 0 binding 394
+sampler
+=== descriptor set 0 binding 394: storage class
+UniformConstant
+=== descriptor set 0 binding 395
+sampler
+=== descriptor set 0 binding 395: storage class
+UniformConstant
+=== descriptor set 0 binding 396
+sampler
+=== descriptor set 0 binding 396: storage class
+UniformConstant
+=== descriptor set 0 binding 397
+sampler
+=== descriptor set 0 binding 397: storage class
+UniformConstant
+=== descriptor set 0 binding 398
+sampler
+=== descriptor set 0 binding 398: storage class
+UniformConstant
+=== descriptor set 0 binding 399
+sampler
+=== descriptor set 0 binding 399: storage class
+UniformConstant
 === descriptor set 0 binding 39: storage class
 UniformConstant
 === descriptor set 0 binding 3: storage class
@@ -1551,10 +1579,54 @@ UniformConstant
 image:2D:0:0:0:2:R32ui
 === descriptor set 0 binding 40
 image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 400
+sampler
+=== descriptor set 0 binding 400: storage class
+UniformConstant
+=== descriptor set 0 binding 401
+sampler
+=== descriptor set 0 binding 401: storage class
+UniformConstant
+=== descriptor set 0 binding 402
+sampler
+=== descriptor set 0 binding 402: storage class
+UniformConstant
+=== descriptor set 0 binding 403
+sampler
+=== descriptor set 0 binding 403: storage class
+UniformConstant
+=== descriptor set 0 binding 404
+sampler
+=== descriptor set 0 binding 404: storage class
+UniformConstant
+=== descriptor set 0 binding 405
+sampler
+=== descriptor set 0 binding 405: storage class
+UniformConstant
+=== descriptor set 0 binding 406
+sampler
+=== descriptor set 0 binding 406: storage class
+UniformConstant
+=== descriptor set 0 binding 407
+sampler
+=== descriptor set 0 binding 407: storage class
+UniformConstant
+=== descriptor set 0 binding 408
+sampler
+=== descriptor set 0 binding 408: storage class
+UniformConstant
+=== descriptor set 0 binding 409
+sampler
+=== descriptor set 0 binding 409: storage class
+UniformConstant
 === descriptor set 0 binding 40: storage class
 UniformConstant
 === descriptor set 0 binding 41
 image:2D:0:0:0:2:Rgba16f
+=== descriptor set 0 binding 410
+sampler
+=== descriptor set 0 binding 410: storage class
+UniformConstant
 === descriptor set 0 binding 41: storage class
 UniformConstant
 === descriptor set 0 binding 42

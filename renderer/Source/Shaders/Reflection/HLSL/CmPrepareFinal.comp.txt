@@ -1,5 +1,5 @@
 # Format: 1
-# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); dxil.dll: 1.6(101.6.2112.13); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
+# Toolchain: dxc dxcompiler.dll: 1.9 - 1.8.0.4973 (8f5595872); spirv-dis SPIRV-Tools v2025.3 v2025.3.rc1-0-g33e02568
 === block pushconstant
 
 [0] offset 0 v4(float32)
@@ -164,25 +164,13 @@ declared
 declared
 === capability StorageImageExtendedFormats
 declared
-=== descriptor set 0 binding 131
+=== descriptor set 0 binding 137
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 131: storage class
-UniformConstant
-=== descriptor set 0 binding 134
-image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 134: storage class
+=== descriptor set 0 binding 137: storage class
 UniformConstant
 === descriptor set 0 binding 140
 image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 140: storage class
-UniformConstant
-=== descriptor set 0 binding 144
-image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 144: storage class
-UniformConstant
-=== descriptor set 0 binding 145
-image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 145: storage class
 UniformConstant
 === descriptor set 0 binding 146
 image:2D:0:0:0:1:Unknown
@@ -191,6 +179,18 @@ UniformConstant
 === descriptor set 0 binding 150
 image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 150: storage class
+UniformConstant
+=== descriptor set 0 binding 151
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 151: storage class
+UniformConstant
+=== descriptor set 0 binding 152
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 152: storage class
+UniformConstant
+=== descriptor set 0 binding 156
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 156: storage class
 UniformConstant
 === descriptor set 0 binding 16
 image:2D:0:0:0:2:Rgba16f
@@ -204,21 +204,21 @@ UniformConstant
 image:2D:0:0:0:2:Rgba16f
 === descriptor set 0 binding 18: storage class
 UniformConstant
-=== descriptor set 0 binding 191
+=== descriptor set 0 binding 197
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 191: storage class
+=== descriptor set 0 binding 197: storage class
 UniformConstant
-=== descriptor set 0 binding 193
+=== descriptor set 0 binding 199
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 193: storage class
+=== descriptor set 0 binding 199: storage class
 UniformConstant
-=== descriptor set 0 binding 195
+=== descriptor set 0 binding 201
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 195: storage class
+=== descriptor set 0 binding 201: storage class
 UniformConstant
-=== descriptor set 0 binding 196
+=== descriptor set 0 binding 202
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 196: storage class
+=== descriptor set 0 binding 202: storage class
 UniformConstant
 === descriptor set 0 binding 28
 image:2D:0:0:0:2:R11fG11fB10f
