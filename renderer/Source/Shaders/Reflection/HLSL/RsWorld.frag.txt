@@ -189,11 +189,11 @@ struct nonwritable
 StorageBuffer
 === descriptor set 4 binding 25
 image:2D:0:0:0:2:Rgba32ui
-=== descriptor set 4 binding 25: storage class
-UniformConstant
-=== descriptor set 4 binding 261
+=== descriptor set 4 binding 259
 image:2D:0:0:0:1:Unknown
-=== descriptor set 4 binding 261: storage class
+=== descriptor set 4 binding 259: storage class
+UniformConstant
+=== descriptor set 4 binding 25: storage class
 UniformConstant
 === entry point
 Fragment main

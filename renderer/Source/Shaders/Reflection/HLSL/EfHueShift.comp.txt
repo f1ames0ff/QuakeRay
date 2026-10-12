@@ -139,9 +139,9 @@ declared
 declared
 === constant_id 0
 uint32 = 0
-=== descriptor set 0 binding 137
+=== descriptor set 0 binding 135
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 137: storage class
+=== descriptor set 0 binding 135: storage class
 UniformConstant
 === descriptor set 0 binding 29
 image:2D:0:0:0:2:R11fG11fB10f

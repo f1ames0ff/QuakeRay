@@ -254,13 +254,17 @@ uint32 = 0
 accelerationstructure
 === descriptor set 0 binding 0: storage class
 UniformConstant
+=== descriptor set 1 binding 135
+image:2D:0:0:0:1:Unknown
+=== descriptor set 1 binding 135: storage class
+UniformConstant
 === descriptor set 1 binding 137
 image:2D:0:0:0:1:Unknown
 === descriptor set 1 binding 137: storage class
 UniformConstant
-=== descriptor set 1 binding 139
+=== descriptor set 1 binding 138
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 139: storage class
+=== descriptor set 1 binding 138: storage class
 UniformConstant
 === descriptor set 1 binding 140
 image:2D:0:0:0:1:Unknown
@@ -270,15 +274,11 @@ UniformConstant
 image:2D:0:0:0:1:Unknown
 === descriptor set 1 binding 142: storage class
 UniformConstant
-=== descriptor set 1 binding 144
-image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 144: storage class
-UniformConstant
 === descriptor set 1 binding 15
 image:2D:0:0:0:2:R32ui
-=== descriptor set 1 binding 156
+=== descriptor set 1 binding 154
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 156: storage class
+=== descriptor set 1 binding 154: storage class
 UniformConstant
 === descriptor set 1 binding 15: storage class
 UniformConstant
@@ -298,17 +298,17 @@ UniformConstant
 image:2D:0:0:0:2:Rgba16f
 === descriptor set 1 binding 23: storage class
 UniformConstant
-=== descriptor set 1 binding 252
+=== descriptor set 1 binding 250
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 252: storage class
+=== descriptor set 1 binding 250: storage class
+UniformConstant
+=== descriptor set 1 binding 256
+image:2D:0:0:0:1:Unknown
+=== descriptor set 1 binding 256: storage class
 UniformConstant
 === descriptor set 1 binding 258
 image:2D:0:0:0:1:Unknown
 === descriptor set 1 binding 258: storage class
-UniformConstant
-=== descriptor set 1 binding 260
-image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 260: storage class
 UniformConstant
 === descriptor set 11 binding 0
 struct

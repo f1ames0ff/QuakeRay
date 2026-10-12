@@ -971,8 +971,6 @@ if Q2_CORE_ENABLED:
 
         "Q2ReuseReservoir"              : (UINT32,    CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
         "Q2ReuseReservoirMeta"          : (UINT32,    CHANNELS_RG,   FRAMEBUF_FLAGS_STORE_PREV),
-        "Q2ReuseTemporal"               : (UINT32,    CHANNELS_RGBA, 0),
-        "Q2ReuseTemporalMeta"           : (UINT32,    CHANNELS_RG,   0),
     })
 
 

@@ -967,17 +967,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += float(framebufQ2ReuseReservoirMeta_Prev_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseReservoirMeta_Prev_Sampler, uv, 0.0).x;
 
-    // framebufQ2ReuseTemporal  rgba32ui
-    framebufQ2ReuseTemporal[pix] = uint4(1u, 1u, 1u, 1u);
-    v += float(framebufQ2ReuseTemporal[pix].x);
-    v += float(framebufQ2ReuseTemporal_Sampled.Load(int3(pix, 0)).x);
-    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseTemporal_Sampler, uv, 0.0).x;
-
-    // framebufQ2ReuseTemporalMeta  rg32ui
-    framebufQ2ReuseTemporalMeta[pix] = uint4(1u, 1u, 1u, 1u);
-    v += float(framebufQ2ReuseTemporalMeta[pix].x);
-    v += float(framebufQ2ReuseTemporalMeta_Sampled.Load(int3(pix, 0)).x);
-    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2ReuseTemporalMeta_Sampler, uv, 0.0).x;
-
     probeOutput[0] = v;
 }

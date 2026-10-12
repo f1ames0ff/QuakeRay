@@ -130,25 +130,25 @@ v3(int32)
 declared
 === capability StorageImageExtendedFormats
 declared
-=== descriptor set 0 binding 162
+=== descriptor set 0 binding 160
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 162: storage class
+=== descriptor set 0 binding 160: storage class
 UniformConstant
-=== descriptor set 0 binding 163
+=== descriptor set 0 binding 161
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 163: storage class
+=== descriptor set 0 binding 161: storage class
+UniformConstant
+=== descriptor set 0 binding 197
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 197: storage class
 UniformConstant
 === descriptor set 0 binding 199
 image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 199: storage class
 UniformConstant
-=== descriptor set 0 binding 201
+=== descriptor set 0 binding 259
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 201: storage class
-UniformConstant
-=== descriptor set 0 binding 261
-image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 261: storage class
+=== descriptor set 0 binding 259: storage class
 UniformConstant
 === descriptor set 0 binding 28
 image:2D:0:0:0:2:R11fG11fB10f

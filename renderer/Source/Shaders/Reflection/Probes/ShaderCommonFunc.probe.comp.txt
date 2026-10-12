@@ -230,9 +230,17 @@ declared
 struct
 === descriptor set 0 binding 0: storage class
 Uniform
+=== descriptor set 1 binding 135
+image:2D:0:0:0:1:Unknown
+=== descriptor set 1 binding 135: storage class
+UniformConstant
 === descriptor set 1 binding 137
 image:2D:0:0:0:1:Unknown
 === descriptor set 1 binding 137: storage class
+UniformConstant
+=== descriptor set 1 binding 138
+image:2D:0:0:0:1:Unknown
+=== descriptor set 1 binding 138: storage class
 UniformConstant
 === descriptor set 1 binding 139
 image:2D:0:0:0:1:Unknown
@@ -246,31 +254,23 @@ UniformConstant
 image:2D:0:0:0:1:Unknown
 === descriptor set 1 binding 141: storage class
 UniformConstant
-=== descriptor set 1 binding 142
+=== descriptor set 1 binding 151
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 142: storage class
+=== descriptor set 1 binding 151: storage class
 UniformConstant
-=== descriptor set 1 binding 143
+=== descriptor set 1 binding 152
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 143: storage class
+=== descriptor set 1 binding 152: storage class
 UniformConstant
 === descriptor set 1 binding 153
 image:2D:0:0:0:1:Unknown
 === descriptor set 1 binding 153: storage class
 UniformConstant
-=== descriptor set 1 binding 154
-image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 154: storage class
-UniformConstant
-=== descriptor set 1 binding 155
-image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 155: storage class
-UniformConstant
 === descriptor set 1 binding 16
 image:2D:0:0:0:2:Rgba16f
-=== descriptor set 1 binding 163
+=== descriptor set 1 binding 161
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 163: storage class
+=== descriptor set 1 binding 161: storage class
 UniformConstant
 === descriptor set 1 binding 16: storage class
 UniformConstant
@@ -280,6 +280,14 @@ image:2D:0:0:0:2:Rgba16f
 UniformConstant
 === descriptor set 1 binding 18
 image:2D:0:0:0:2:Rgba16f
+=== descriptor set 1 binding 181
+image:2D:0:0:0:1:Unknown
+=== descriptor set 1 binding 181: storage class
+UniformConstant
+=== descriptor set 1 binding 182
+image:2D:0:0:0:1:Unknown
+=== descriptor set 1 binding 182: storage class
+UniformConstant
 === descriptor set 1 binding 183
 image:2D:0:0:0:1:Unknown
 === descriptor set 1 binding 183: storage class
@@ -296,19 +304,11 @@ UniformConstant
 image:2D:0:0:0:1:Unknown
 === descriptor set 1 binding 186: storage class
 UniformConstant
-=== descriptor set 1 binding 187
-image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 187: storage class
-UniformConstant
-=== descriptor set 1 binding 188
-image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 188: storage class
-UniformConstant
 === descriptor set 1 binding 18: storage class
 UniformConstant
-=== descriptor set 1 binding 280
+=== descriptor set 1 binding 276
 sampler
-=== descriptor set 1 binding 280: storage class
+=== descriptor set 1 binding 276: storage class
 UniformConstant
 === descriptor set 1 binding 3
 image:2D:0:0:0:2:R32ui

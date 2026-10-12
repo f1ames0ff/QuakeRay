@@ -149,17 +149,17 @@ UniformConstant
 image:2D:0:0:0:2:Rg16f
 === descriptor set 0 binding 104: storage class
 UniformConstant
-=== descriptor set 0 binding 142
+=== descriptor set 0 binding 140
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 142: storage class
+=== descriptor set 0 binding 140: storage class
 UniformConstant
-=== descriptor set 0 binding 148
+=== descriptor set 0 binding 146
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 148: storage class
+=== descriptor set 0 binding 146: storage class
 UniformConstant
-=== descriptor set 0 binding 218
+=== descriptor set 0 binding 216
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 218: storage class
+=== descriptor set 0 binding 216: storage class
 UniformConstant
 === descriptor set 1 binding 0
 struct

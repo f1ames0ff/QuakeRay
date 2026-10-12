@@ -723,7 +723,6 @@ private:
         GPU_PASS_POSTUI,
         GPU_PASS_PRESENT,
         GPU_PASS_PARTICLES,
-        GPU_PASS_REUSE,
         GPU_PASS_COUNT
     };
 

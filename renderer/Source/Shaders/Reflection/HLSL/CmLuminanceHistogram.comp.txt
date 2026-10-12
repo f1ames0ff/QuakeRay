@@ -159,9 +159,9 @@ int32
 declared
 === capability StorageImageExtendedFormats
 declared
-=== descriptor set 0 binding 164
+=== descriptor set 0 binding 162
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 164: storage class
+=== descriptor set 0 binding 162: storage class
 UniformConstant
 === descriptor set 1 binding 0
 struct

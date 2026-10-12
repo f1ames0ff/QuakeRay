@@ -8,9 +8,9 @@ float32
 declared
 === capability StorageImageExtendedFormats
 declared
-=== descriptor set 0 binding 149
+=== descriptor set 0 binding 147
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 149: storage class
+=== descriptor set 0 binding 147: storage class
 UniformConstant
 === entry point
 Fragment main

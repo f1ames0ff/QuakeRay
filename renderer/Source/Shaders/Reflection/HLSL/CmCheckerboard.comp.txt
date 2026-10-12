@@ -134,29 +134,29 @@ declared
 image:2D:0:0:0:2:R32f
 === descriptor set 0 binding 12: storage class
 UniformConstant
-=== descriptor set 0 binding 163
+=== descriptor set 0 binding 161
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 163: storage class
+=== descriptor set 0 binding 161: storage class
 UniformConstant
-=== descriptor set 0 binding 164
+=== descriptor set 0 binding 162
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 164: storage class
+=== descriptor set 0 binding 162: storage class
+UniformConstant
+=== descriptor set 0 binding 194
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 194: storage class
 UniformConstant
 === descriptor set 0 binding 196
 image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 196: storage class
 UniformConstant
-=== descriptor set 0 binding 198
+=== descriptor set 0 binding 259
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 198: storage class
+=== descriptor set 0 binding 259: storage class
 UniformConstant
-=== descriptor set 0 binding 261
+=== descriptor set 0 binding 265
 image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 261: storage class
-UniformConstant
-=== descriptor set 0 binding 267
-image:2D:0:0:0:1:Unknown
-=== descriptor set 0 binding 267: storage class
+=== descriptor set 0 binding 265: storage class
 UniformConstant
 === descriptor set 0 binding 28
 image:2D:0:0:0:2:R11fG11fB10f

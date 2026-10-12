@@ -170,9 +170,9 @@ declared
 declared
 === capability StorageImageExtendedFormats
 declared
-=== descriptor set 1 binding 252
+=== descriptor set 1 binding 250
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 252: storage class
+=== descriptor set 1 binding 250: storage class
 UniformConstant
 === descriptor set 2 binding 0
 struct

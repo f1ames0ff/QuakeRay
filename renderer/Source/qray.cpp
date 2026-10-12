@@ -480,7 +480,6 @@ const char *qrGetGpuPassName(uint32_t passIndex)
         "postui",
         "present",
         "particles",
-        "reuse",
     };
 
     if (passIndex >= QR_GPU_PASS_COUNT)

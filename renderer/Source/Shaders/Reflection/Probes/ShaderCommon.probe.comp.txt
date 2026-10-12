@@ -400,11 +400,11 @@ image:2D:0:0:0:2:Rg32ui
 === descriptor set 0 binding 134: storage class
 UniformConstant
 === descriptor set 0 binding 135
-image:2D:0:0:0:2:Rgba32ui
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 135: storage class
 UniformConstant
 === descriptor set 0 binding 136
-image:2D:0:0:0:2:Rg32ui
+image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 136: storage class
 UniformConstant
 === descriptor set 0 binding 137
@@ -1000,19 +1000,19 @@ UniformConstant
 === descriptor set 0 binding 27
 image:2D:0:0:0:2:R11fG11fB10f
 === descriptor set 0 binding 270
-image:2D:0:0:0:1:Unknown
+sampler
 === descriptor set 0 binding 270: storage class
 UniformConstant
 === descriptor set 0 binding 271
-image:2D:0:0:0:1:Unknown
+sampler
 === descriptor set 0 binding 271: storage class
 UniformConstant
 === descriptor set 0 binding 272
-image:2D:0:0:0:1:Unknown
+sampler
 === descriptor set 0 binding 272: storage class
 UniformConstant
 === descriptor set 0 binding 273
-image:2D:0:0:0:1:Unknown
+sampler
 === descriptor set 0 binding 273: storage class
 UniformConstant
 === descriptor set 0 binding 274
@@ -1599,34 +1599,10 @@ UniformConstant
 sampler
 === descriptor set 0 binding 404: storage class
 UniformConstant
-=== descriptor set 0 binding 405
-sampler
-=== descriptor set 0 binding 405: storage class
-UniformConstant
-=== descriptor set 0 binding 406
-sampler
-=== descriptor set 0 binding 406: storage class
-UniformConstant
-=== descriptor set 0 binding 407
-sampler
-=== descriptor set 0 binding 407: storage class
-UniformConstant
-=== descriptor set 0 binding 408
-sampler
-=== descriptor set 0 binding 408: storage class
-UniformConstant
-=== descriptor set 0 binding 409
-sampler
-=== descriptor set 0 binding 409: storage class
-UniformConstant
 === descriptor set 0 binding 40: storage class
 UniformConstant
 === descriptor set 0 binding 41
 image:2D:0:0:0:2:Rgba16f
-=== descriptor set 0 binding 410
-sampler
-=== descriptor set 0 binding 410: storage class
-UniformConstant
 === descriptor set 0 binding 41: storage class
 UniformConstant
 === descriptor set 0 binding 42

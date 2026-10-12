@@ -147,9 +147,9 @@ declared
 struct
 === descriptor set 0 binding 0: storage class
 Uniform
-=== descriptor set 1 binding 156
+=== descriptor set 1 binding 154
 image:2D:0:0:0:1:Unknown
-=== descriptor set 1 binding 156: storage class
+=== descriptor set 1 binding 154: storage class
 UniformConstant
 === descriptor set 2 binding 0
 image:2D:0:0:0:1:Unknown
