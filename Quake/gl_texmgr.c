@@ -486,10 +486,10 @@ static void TexMgr_RTMatDump_f (void)
 		            glt->name, glt->rtname, !!(glt->flags & TEXPREF_RT_IS_EMISSIVE));
 		if (mat)
 		{
-			Con_Printf ("RT dump:   authored: brightness=%.3f is_light=%d light_styles=%d has_light_color=%d light_color=(%.4f,%.4f,%.4f) emissive_blend=%d\n",
+			Con_Printf ("RT dump:   authored: brightness=%.3f is_light=%d light_styles=%d has_light_color=%d light_color=(%.4f,%.4f,%.4f) luma_blend=%d\n",
 			            mat->light_brightness, mat->is_light, mat->light_styles, mat->has_light_color,
 			            mat->light_color[0], mat->light_color[1], mat->light_color[2], mat->emissive_blend);
-			Con_Printf ("RT dump:   authored: color_emissive=%d blocks=%d first=(%.4f,%.4f,%.4f) threshold=%.4f feather=%.2f blend=%s emissive_factor=%.3f\n",
+			Con_Printf ("RT dump:   authored: luma=%d blocks=%d first=(%.4f,%.4f,%.4f) threshold=%.4f feather=%.2f blend=%s emissive_factor=%.3f\n",
 			            mat->has_color_emissive, mat->color_emissive_count,
 			            mat->color_emissive[0].color[0], mat->color_emissive[0].color[1], mat->color_emissive[0].color[2],
 			            mat->color_emissive[0].threshold, mat->color_emissive[0].feather,
