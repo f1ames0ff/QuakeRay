@@ -74,7 +74,7 @@ void main()
 
     const int numNeeSamples = clamp((int)globalUniform.neeLightSamples, 1, Q2_NEE_MAX_SAMPLES);
 
-    const bool reuseEnabled = globalUniform.restirParams[3] != 0u && !useGlobalRestir && numNeeSamples == 1;
+    const bool reuseEnabled = (globalUniform.restirParams[3] & 1u) != 0u && !useGlobalRestir && numNeeSamples == 1;
 
     if (reuseEnabled)
     {
@@ -107,8 +107,7 @@ void main()
         if (lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0)
         {
             const float2 pointRnd = rnd16_2(seedBase, Q2_REUSE_RNG_POINT);
-            const float2 memberRnd = float2(rnd24(seedBase, Q2_REUSE_RNG_MEMBER),
-                                            rnd24(seedBase, Q2_REUSE_RNG_MEMBER + 1u));
+            const float2 memberRnd = rnd16_2(seedBase, Q2_REUSE_RNG_MEMBER);
             float memberPdf = 1.0;
             const LightSample candLight = sampleLightNee(lightSources[lightIndex], surf.position, pointRnd, memberRnd, memberPdf);
 
@@ -137,8 +136,6 @@ void main()
 
         bool histValid = false;
         uint histHash = 0u;
-        int2 histPix = int2(0, 0);
-        bool histPixValid = false;
 
         if (globalUniform.restirParams.z == 0u)
         {
@@ -147,16 +144,22 @@ void main()
                                     float2(1.0 / globalUniform.renderWidth, 1.0 / globalUniform.renderHeight) + motion.xy) *
                                    float2(width, height);
             const float2 nbrRnd = rnd16_2(seedBase, Q2_REUSE_RNG_NEIGHBOR);
-            const int2 prevPix = q2FlatToChecker((int2)floor(posPrev - (float2)0.5 + (nbrRnd * 2.0 - 1.0) * neighborRadius), width);
+            const float2 nbrOff = (nbrRnd * 2.0 - 1.0) * neighborRadius;
 
-            histPix = prevPix;
-            histPixValid = prevPix.x >= 0 && prevPix.y >= 0 && prevPix.x < width && prevPix.y < height;
+            const float  depthCurr = framebufQ2ViewDepth_Sampled.Load(int3(pix, 0)).r;
+            const float3 geoNormalCurr = texelFetchNormalGeometry(pix);
 
-            if (prevPix.x >= 0 && prevPix.y >= 0 && prevPix.x < width && prevPix.y < height)
+            for (int attempt = 0; attempt < 2 && !histValid; attempt++)
             {
-                const float  depthCurr = framebufQ2ViewDepth_Sampled.Load(int3(pix, 0)).r;
+                const float2 off = (attempt == 0) ? nbrOff : (float2)0.0;
+                const int2 prevPix = q2FlatToChecker((int2)floor(posPrev - (float2)0.5 + off), width);
+
+                if (prevPix.x < 0 || prevPix.y < 0 || prevPix.x >= width || prevPix.y >= height)
+                {
+                    continue;
+                }
+
                 const float  depthPrev = framebufQ2ViewDepth_Prev_Sampled.Load(int3(prevPix, 0)).r;
-                const float3 geoNormalCurr = texelFetchNormalGeometry(pix);
                 const float3 geoNormalPrev = texelFetchNormalGeometry_Prev(prevPix);
                 const float  motionZ = (depthCurr < 0.0) ? -motion.z : motion.z;
                 float        distDepth = abs(depthCurr - depthPrev + motionZ) / max(abs(depthCurr), 1e-6);
@@ -167,73 +170,75 @@ void main()
                 }
 
                 Q2ReuseReservoir hist;
-                if (distDepth < 0.1 && dot(geoNormalCurr, geoNormalPrev) > 0.9 &&
-                    q2ReuseLoadPrev(prevPix, hist) &&
-                    hist.lightIndex >= (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET &&
-                    hist.lightIndex < (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET + globalUniform.lightCount &&
-                    hist.fingerprint == q2ReuseFingerprint(lightSources[hist.lightIndex]))
-                {
-                    histValid = true;
-                    histHash = hist.candidateHash;
-
-                    float memberPdfHist = 1.0;
-                    const LightSample histLight = sampleLightNee(lightSources[hist.lightIndex], surf.position,
-                                                                 hist.pointRnd, float2(hist.memberRnd, 0.0), memberPdfHist);
-
-                    float3 dHist, sHist;
-                    shade(surf, histLight, 1.0, dHist, sHist);
-
-                    const float targetHist = max(getLuminance(dHist + sHist), Q2_REUSE_TARGET_EPS);
-                    const float wHist = targetHist * hist.ucw * (float)hist.m;
-                    const float mergeRnd = rnd16(seedBase, Q2_REUSE_RNG_MERGE);
-
-                    wSum += wHist;
-                    mSum += hist.m;
-
-                    if (mergeRnd * wSum < wHist)
-                    {
-                        selLight = hist.lightIndex;
-                        selPointRnd = hist.pointRnd;
-                        selMemberRnd = hist.memberRnd;
-                        selTarget = targetHist;
-                        selCluster = hist.cluster;
-                        selSlot = hist.slot;
-                        selFlags = hist.flags & 0x3u;
-                    }
-                }
-            }
-        }
-
-        uint mCap = mCapCfg;
-        if (histValid && histPixValid)
-        {
-            const int2 dupOff[8] = { int2(0, 0), int2(7, 0), int2(-7, 0), int2(0, 7), int2(0, -7), int2(7, 7), int2(-7, 7), int2(7, -7) };
-            uint dupCount = 0u;
-
-            for (int i = 0; i < 8; i++)
-            {
-                const int2 p = histPix + dupOff[i];
-                if (p.x < 0 || p.y < 0 || p.x >= width || p.y >= height)
+                if (!(distDepth < 0.1 && dot(geoNormalCurr, geoNormalPrev) > 0.9) ||
+                    !q2ReuseLoadPrev(prevPix, hist) ||
+                    hist.lightIndex < (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET ||
+                    hist.lightIndex >= (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET + globalUniform.lightCount ||
+                    hist.fingerprint != q2ReuseFingerprint(lightSources[hist.lightIndex]))
                 {
                     continue;
                 }
 
-                const uint4 metaNbr = framebufQ2ReuseReservoirMeta_Prev_Sampled.Load(int3(p, 0));
-                if (((metaNbr.x >> 16u) & 0xFFFFu) == histHash)
+                histValid = true;
+                histHash = hist.candidateHash;
+
+                float memberPdfHist = 1.0;
+                const LightSample histLight = sampleLightNee(lightSources[hist.lightIndex], surf.position,
+                                                             hist.pointRnd, float2(hist.memberRnd, 0.0), memberPdfHist);
+
+                float3 dHist, sHist;
+                shade(surf, histLight, 1.0, dHist, sHist);
+
+                const float targetHist = max(getLuminance(dHist + sHist), Q2_REUSE_TARGET_EPS);
+                const float wHist = targetHist * hist.ucw * (float)hist.m;
+                const float mergeRnd = rnd16(seedBase, Q2_REUSE_RNG_MERGE);
+
+                wSum += wHist;
+                mSum += hist.m;
+
+                if (mergeRnd * wSum < wHist)
                 {
-                    dupCount += 1u;
+                    selLight = hist.lightIndex;
+                    selPointRnd = hist.pointRnd;
+                    selMemberRnd = hist.memberRnd;
+                    selTarget = targetHist;
+                    selCluster = hist.cluster;
+                    selSlot = hist.slot;
+                    selFlags = hist.flags & 0x3u;
                 }
             }
 
-            const float dupScore = (float)dupCount / 8.0;
-            mCap = max(Q2_REUSE_M_CAP_MIN, (uint)round(lerp((float)mCapCfg, (float)Q2_REUSE_M_CAP_MIN, pow(dupScore, 0.1))));
-        }
+            uint mCap = mCapCfg;
+            if (histValid)
+            {
+                const int2 dupOffFlat[8] = { int2(7, 0), int2(-7, 0), int2(0, 7), int2(0, -7), int2(7, 7), int2(-7, 7), int2(7, -7), int2(-7, -7) };
+                uint dupCount = 0u;
 
-        if (mSum > mCap)
-        {
-            const float meanW = wSum / (float)mSum;
-            mSum = mCap;
-            wSum = meanW * (float)mSum;
+                for (int i = 0; i < 8; i++)
+                {
+                    const int2 p = q2FlatToChecker((int2)floor(posPrev - (float2)0.5 + (float2)dupOffFlat[i]), width);
+                    if (p.x < 0 || p.y < 0 || p.x >= width || p.y >= height)
+                    {
+                        continue;
+                    }
+
+                    const uint4 metaNbr = framebufQ2ReuseReservoirMeta_Prev_Sampled.Load(int3(p, 0));
+                    if (((metaNbr.x >> 16u) & 0xFFFFu) == histHash)
+                    {
+                        dupCount += 1u;
+                    }
+                }
+
+                const float dupScore = (float)dupCount / 8.0;
+                mCap = max(Q2_REUSE_M_CAP_MIN, (uint)round(lerp((float)mCapCfg, (float)Q2_REUSE_M_CAP_MIN, pow(dupScore, 0.1))));
+            }
+
+            if (mSum > mCap)
+            {
+                const float meanW = wSum / (float)mSum;
+                mSum = mCap;
+                wSum = meanW * (float)mSum;
+            }
         }
 
         Q2ReuseReservoir outReservoir;
@@ -241,10 +246,10 @@ void main()
         outReservoir.m = mSum;
         outReservoir.pointRnd = selPointRnd;
         outReservoir.memberRnd = selMemberRnd;
-        outReservoir.targetOwn = selTarget;
+        outReservoir.targetOwn = min(selTarget, Q2_REUSE_TARGET_MAX);
         outReservoir.ucw = (selLight != LIGHT_INDEX_NONE) ? wSum / ((float)mSum * selTarget) : 0.0;
         outReservoir.fingerprint = (selLight != LIGHT_INDEX_NONE) ? q2ReuseFingerprint(lightSources[selLight]) : 0u;
-        outReservoir.candidateHash = wellonsLowBias32(seedBase ^ 0x85EBCA6Bu) & 0xFFFFu;
+        outReservoir.candidateHash = q2ReuseSampleHash(selLight, selPointRnd, selMemberRnd);
         outReservoir.cluster = selCluster;
         outReservoir.slot = selSlot;
         outReservoir.flags = (selLight != LIGHT_INDEX_NONE)

@@ -8,12 +8,12 @@
 #define Q2_REUSE_RNG_NEIGHBOR 80u
 
 #define Q2_REUSE_TARGET_EPS 1e-6
+#define Q2_REUSE_TARGET_MAX 60000.0
 #define Q2_REUSE_M_CAP 20u
 #define Q2_REUSE_M_CAP_MIN 1u
 #define Q2_REUSE_NEIGHBOR_RADIUS 30.0
 
 #define Q2_REUSE_FLAG_VALID 1u
-#define Q2_REUSE_FLAG_TAIL 2u
 
 struct Q2ReuseReservoir
 {
@@ -32,7 +32,7 @@ struct Q2ReuseReservoir
 
 uint q2ReusePack16(const float v)
 {
-    return (uint)(clamp(v, 0.0, 1.0) * 65535.0);
+    return (uint)round(clamp(v, 0.0, 1.0) * 65535.0);
 }
 
 float q2ReuseUnpack16(const uint v)
@@ -42,29 +42,90 @@ float q2ReuseUnpack16(const uint v)
 
 uint q2ReuseFingerprint(const ShLightEncoded l)
 {
-    uint h = wellonsLowBias32(asuint(l.data_0.x) ^ 0x9E3779B9u);
+    uint h = wellonsLowBias32(l.lightType ^ 0x9E3779B9u);
+    h = wellonsLowBias32(h ^ asuint(l.data_0.x));
     h = wellonsLowBias32(h ^ asuint(l.data_0.y));
     h = wellonsLowBias32(h ^ asuint(l.data_0.z));
-    h = wellonsLowBias32(h ^ asuint(l.data_0.w));
-    h = wellonsLowBias32(h ^ asuint(l.data_1.x));
-    h = wellonsLowBias32(h ^ asuint(l.data_1.y));
-    h = wellonsLowBias32(h ^ asuint(l.data_1.z));
-    h = wellonsLowBias32(h ^ asuint(l.data_1.w));
-    h = wellonsLowBias32(h ^ asuint(l.data_2.x));
-    h = wellonsLowBias32(h ^ asuint(l.data_2.y));
-    h = wellonsLowBias32(h ^ l.lightType);
+
+    if (l.lightType == LIGHT_TYPE_SPHERE || l.lightType == LIGHT_TYPE_SPOT)
+    {
+        h = wellonsLowBias32(h ^ asuint(l.data_0.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.y));
+    }
+    else if (l.lightType == LIGHT_TYPE_TRIANGLE)
+    {
+        h = wellonsLowBias32(h ^ asuint(l.data_0.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.w));
+    }
+    else if (l.lightType == LIGHT_TYPE_TEXTURED_AREA)
+    {
+        h = wellonsLowBias32(h ^ asuint(l.data_0.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_3.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_3.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_3.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_3.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_4.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_4.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_4.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_4.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_5.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_5.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_5.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_5.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_6.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_6.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_6.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_6.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_7.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_7.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_7.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_7.w));
+    }
+    else if (l.lightType == LIGHT_TYPE_DTAL_GROUP)
+    {
+        h = wellonsLowBias32(h ^ asuint(l.data_0.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_1.w));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_2.z));
+        h = wellonsLowBias32(h ^ asuint(l.data_7.x));
+        h = wellonsLowBias32(h ^ asuint(l.data_7.y));
+        h = wellonsLowBias32(h ^ asuint(l.data_7.z));
+    }
+
+    h = wellonsLowBias32(h ^ asuint(l.coneCosInner));
+    h = wellonsLowBias32(h ^ asuint(l.coneCosOuter));
+    h = wellonsLowBias32(h ^ asuint(l.projector));
+
     return h & 0xFFFFu;
 }
 
-float q2ReuseTargetAt(const Surface surf, const ShLightEncoded encoded, const float2 pointRnd, const float2 memberRnd)
+uint q2ReuseSampleHash(const uint lightIndex, const float2 pointRnd, const float memberRnd)
 {
-    float memberPdf;
-    const LightSample l = sampleLightNee(encoded, surf.position, pointRnd, memberRnd, memberPdf);
-
-    float3 d, s;
-    shade(surf, l, 1.0, d, s);
-
-    return max(getLuminance(d + s), Q2_REUSE_TARGET_EPS);
+    uint h = wellonsLowBias32(lightIndex ^ 0x85EBCA6Bu);
+    h = wellonsLowBias32(h ^ asuint(pointRnd.x));
+    h = wellonsLowBias32(h ^ asuint(pointRnd.y));
+    h = wellonsLowBias32(h ^ asuint(memberRnd));
+    return h & 0xFFFFu;
 }
 
 void q2ReuseStore(const int2 pix, const Q2ReuseReservoir r)
