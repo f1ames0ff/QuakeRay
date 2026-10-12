@@ -1187,9 +1187,11 @@ static qboolean RT_CustomBoolFromString(const char *s, qboolean *out)
 
 // ---------------------------------------------------------------------------
 // The level's sky, sun and cloud settings. The cvars the light editor's Global
-// tab drives are managed here: a level's section may carry them under "sky:",
-// the keys it carries win over the config's global values for as long as the
-// level is loaded, and the config keeps the globals themselves, so one level's
+// tab drives are managed here as two sets: the globals (the config's values,
+// which every level shares) and the level's own (the level's "sky:" block). The
+// active set drives the cvars: a loaded level drives its own where the block
+// authors a key and the globals elsewhere, and the editor's scope switch swaps
+// the sets on screen. The config always carries the globals, so one level's
 // block never leaks into another level's defaults.
 // ---------------------------------------------------------------------------
 
@@ -1207,13 +1209,14 @@ static const char *const rt_sky_names[] = {
 #define RT_SKY_COUNT (int)(sizeof(rt_sky_names) / sizeof(rt_sky_names[0]))
 #define RT_SKY_VALUE_MAX 96
 
-// The config's values, captured before a level's block first drove the cvars,
-// and which settings the loaded level's block carries.
+// The globals and the level's own set, and which of the two drives the cvars.
 static char     rt_sky_globals[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
 static qboolean rt_sky_globals_ready;
-static qboolean rt_sky_file_override[RT_SKY_COUNT];
+static char     rt_sky_level_values[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static qboolean rt_sky_level_set[RT_SKY_COUNT];
 static qboolean rt_sky_level_mode;
 static qboolean rt_sky_level_block;
+static qboolean rt_sky_session_active;
 
 // The block the parser just read, applied once the whole file has been loaded.
 static int  rt_sky_parsed_count;
@@ -1222,11 +1225,11 @@ static char rt_sky_parsed_value[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
 
 // The editor session's snapshot of the state above.
 static char     rt_sky_session_globals[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static char     rt_sky_session_values[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static qboolean rt_sky_session_set[RT_SKY_COUNT];
 static qboolean rt_sky_session_globals_ready;
-static qboolean rt_sky_session_override[RT_SKY_COUNT];
+static qboolean rt_sky_session_level_mode;
 static qboolean rt_sky_session_block;
-static qboolean rt_sky_session_mode;
-static qboolean rt_sky_session_active;
 
 static int RT_SkySettings_Index(const char *name)
 {
@@ -1269,23 +1272,77 @@ static void RT_SkySettings_CaptureGlobals(void)
     rt_sky_globals_ready = true;
 }
 
-// The value the config carries: the captured global wherever the level's block
-// or the editor's level scope owns the live one, NULL (the live string) for
-// everything else.
+// The value the config carries: the global wherever the level's own set owns
+// the live cvar, the live value itself where the globals do (a session that
+// edits them is editing the config's values), and the captured global for a
+// loaded level's block.
 static const char *RT_SkySettings_ConfigValue(const cvar_t *var)
 {
     const int index = RT_SkySettings_Index(var ? var->name : NULL);
 
     if (index < 0 || !rt_sky_globals_ready)
         return NULL;
-    if (!rt_sky_level_mode && !rt_sky_file_override[index])
+    if (rt_sky_session_active && !rt_sky_level_mode)
         return NULL;
+    if (rt_sky_session_active && rt_sky_level_mode)
+        return rt_sky_globals[index];
+    if (rt_sky_level_set[index])
+        return rt_sky_globals[index];
 
-    return rt_sky_globals[index];
+    return NULL;
 }
 
-// Applies the block the parser read: the globals first (the previous level's
-// overrides go away), then the block's own entries.
+// The active set drives the cvars.
+static void RT_SkySettings_ApplyScope(void)
+{
+    int i;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        const char *value = rt_sky_globals[i];
+
+        if (rt_sky_level_mode && rt_sky_level_set[i])
+            value = rt_sky_level_values[i];
+
+        RT_SkySettings_SetCvar(i, value);
+    }
+}
+
+// The live cvars belong to the active set: an edit lands in the set it was made
+// in, and a value the level's set does not need anymore stops being part of it.
+void RT_SkySettings_CaptureScope(void)
+{
+    int i;
+
+    if (!rt_sky_globals_ready)
+        RT_SkySettings_CaptureGlobals();
+
+    if (!rt_sky_level_mode)
+    {
+        for (i = 0; i < RT_SKY_COUNT; i++)
+            q_strlcpy(rt_sky_globals[i], RT_SkySettings_Live(i), RT_SKY_VALUE_MAX);
+
+        return;
+    }
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        const char *live = RT_SkySettings_Live(i);
+
+        if (strcmp(live, rt_sky_globals[i]))
+        {
+            q_strlcpy(rt_sky_level_values[i], live, RT_SKY_VALUE_MAX);
+            rt_sky_level_set[i] = true;
+        }
+        else
+        {
+            rt_sky_level_set[i] = false;
+        }
+    }
+}
+
+// The block the parser read becomes the level's own set, and the level drives
+// the cvars: loading a map is the level's scope.
 void RT_SkySettings_ApplyParsed(void)
 {
     int i;
@@ -1296,18 +1353,17 @@ void RT_SkySettings_ApplyParsed(void)
     Cvar_SetConfigValueProvider(RT_SkySettings_ConfigValue);
 
     for (i = 0; i < RT_SKY_COUNT; i++)
-    {
-        rt_sky_file_override[i] = false;
-        RT_SkySettings_SetCvar(i, rt_sky_globals[i]);
-    }
+        rt_sky_level_set[i] = false;
 
     for (i = 0; i < rt_sky_parsed_count; i++)
     {
-        rt_sky_file_override[rt_sky_parsed_index[i]] = true;
-        RT_SkySettings_SetCvar(rt_sky_parsed_index[i], rt_sky_parsed_value[i]);
+        rt_sky_level_set[rt_sky_parsed_index[i]] = true;
+        q_strlcpy(rt_sky_level_values[rt_sky_parsed_index[i]], rt_sky_parsed_value[i], RT_SKY_VALUE_MAX);
     }
 
     rt_sky_level_block = (rt_sky_parsed_count > 0) ? true : false;
+    rt_sky_level_mode = true;
+    RT_SkySettings_ApplyScope();
 }
 
 qboolean RT_SkySettings_IsManaged(const char *cvar)
@@ -1315,76 +1371,62 @@ qboolean RT_SkySettings_IsManaged(const char *cvar)
     return (RT_SkySettings_Index(cvar) >= 0) ? true : false;
 }
 
-const char *RT_SkySettings_GlobalValue(const char *cvar)
-{
-    const int index = RT_SkySettings_Index(cvar);
-
-    if (index < 0 || !rt_sky_globals_ready)
-        return NULL;
-
-    return rt_sky_globals[index];
-}
-
 qboolean RT_SkySettings_LevelHasBlock(void)
 {
     return rt_sky_level_block;
 }
 
-void RT_SkySettings_SetLevelMode(qboolean level)
+// The editor's "Global settings" box: swapping the scope takes whatever the
+// live cvars carry into the set they were edited in and puts the other set on
+// screen, so switching between global and local shows the values of each.
+void RT_SkySettings_SetScope(qboolean level)
 {
+    RT_SkySettings_CaptureScope();
     rt_sky_level_mode = level;
+    RT_SkySettings_ApplyScope();
 }
 
-void RT_SkySettings_AdoptGlobals(void)
-{
-    RT_SkySettings_CaptureGlobals();
-}
-
-void RT_SkySettings_ClearLevelOverrides(void)
+// Whether this session changed the sky settings or their scope at all.
+qboolean RT_SkySettings_SessionDirty(void)
 {
     int i;
 
-    for (i = 0; i < RT_SKY_COUNT; i++)
-        rt_sky_file_override[i] = false;
+    if (!rt_sky_session_active)
+        return false;
 
-    rt_sky_level_block = false;
-}
-
-void RT_SkySettings_SyncLevelOverrides(void)
-{
-    int  i;
-    qboolean any = false;
+    if (rt_sky_session_globals_ready != rt_sky_globals_ready ||
+        rt_sky_session_level_mode != rt_sky_level_mode ||
+        rt_sky_session_block != rt_sky_level_block)
+        return true;
 
     for (i = 0; i < RT_SKY_COUNT; i++)
     {
-        const qboolean over = (rt_sky_globals_ready && strcmp(RT_SkySettings_Live(i), rt_sky_globals[i])) ? true : false;
-
-        rt_sky_file_override[i] = over;
-        any = any || over;
+        if (rt_sky_session_set[i] != rt_sky_level_set[i])
+            return true;
+        if (rt_sky_level_set[i] && strcmp(rt_sky_session_values[i], rt_sky_level_values[i]))
+            return true;
+        if (rt_sky_session_globals_ready && strcmp(rt_sky_session_globals[i], rt_sky_globals[i]))
+            return true;
     }
 
-    rt_sky_level_block = any;
+    return false;
 }
 
-// The level's block as the session writes it: the settings that differ from the
-// globals, so the rest of the level keeps following the config.
+// The level's block as the session writes it: its own set, which the capture
+// above has just brought up to date with the live cvars.
 int RT_SkySettings_WriteLevel(FILE *f)
 {
     int i, written = 0;
 
     for (i = 0; i < RT_SKY_COUNT; i++)
     {
-        const char *live = RT_SkySettings_Live(i);
-
-        if (!live[0])
-            continue;
-        if (rt_sky_globals_ready && !strcmp(live, rt_sky_globals[i]))
+        if (!rt_sky_level_set[i] || !rt_sky_level_values[i][0])
             continue;
 
         if (written == 0)
             fprintf(f, "  sky:\n");
 
-        fprintf(f, "    %s: %s\n", rt_sky_names[i], live);
+        fprintf(f, "    %s: %s\n", rt_sky_names[i], rt_sky_level_values[i]);
         written++;
     }
 
@@ -1400,14 +1442,17 @@ void RT_SkySettings_BeginSession(void)
     for (i = 0; i < RT_SKY_COUNT; i++)
     {
         q_strlcpy(rt_sky_session_globals[i], rt_sky_globals[i], RT_SKY_VALUE_MAX);
-        rt_sky_session_override[i] = rt_sky_file_override[i];
+        q_strlcpy(rt_sky_session_values[i], rt_sky_level_values[i], RT_SKY_VALUE_MAX);
+        rt_sky_session_set[i] = rt_sky_level_set[i];
     }
 
     rt_sky_session_block = rt_sky_level_block;
-    rt_sky_session_mode = rt_sky_level_mode;
+    rt_sky_session_level_mode = rt_sky_level_mode;
     rt_sky_session_active = true;
 }
 
+// Discard, or an editor closed without saving: the snapshot comes back, and the
+// level's own set is what drives a loaded level again.
 void RT_SkySettings_EndSession(void)
 {
     int i;
@@ -1420,12 +1465,42 @@ void RT_SkySettings_EndSession(void)
     for (i = 0; i < RT_SKY_COUNT; i++)
     {
         q_strlcpy(rt_sky_globals[i], rt_sky_session_globals[i], RT_SKY_VALUE_MAX);
-        rt_sky_file_override[i] = rt_sky_session_override[i];
+        q_strlcpy(rt_sky_level_values[i], rt_sky_session_values[i], RT_SKY_VALUE_MAX);
+        rt_sky_level_set[i] = rt_sky_session_set[i];
     }
 
     rt_sky_level_block = rt_sky_session_block;
-    rt_sky_level_mode = rt_sky_session_mode;
+    rt_sky_level_mode = true;
     rt_sky_session_active = false;
+}
+
+// The session was saved: what the save carried becomes the state. A save in
+// global scope drops the level's own set with the file's block; a save in level
+// scope keeps exactly the entries the file now holds.
+void RT_SkySettings_CommitSession(qboolean global_scope)
+{
+    int i;
+
+    RT_SkySettings_CaptureScope();
+
+    rt_sky_level_block = false;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        if (global_scope)
+            rt_sky_level_set[i] = false;
+        else if (rt_sky_level_set[i])
+            rt_sky_level_block = true;
+    }
+
+    rt_sky_level_mode = true;
+    rt_sky_session_active = false;
+}
+
+// The live values become the globals (the editor's Reset).
+void RT_SkySettings_AdoptGlobals(void)
+{
+    RT_SkySettings_CaptureGlobals();
 }
 
 // The "sky:" block of a level section: one entry per cvar the light editor's

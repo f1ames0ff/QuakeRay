@@ -234,36 +234,37 @@ void RT_CustomLights_ApplyFog (void);
 
 // ---------------------------------------------------------------------------
 // The level's sky, sun and cloud settings: the cvars the light editor's Global
-// tab drives, saved in the level's section under "sky:". The keys the block
-// carries win over the config's global values, the rest of the level keeps the
-// globals, and the config always keeps the global values themselves
-// (Cvar_SetConfigValueProvider -> RT_SkySettings_ConfigValue), so one level's
-// block never becomes another level's default.
+// tab drives, saved in the level's section under "sky:". Two sets live here:
+// the globals (the config's values) and the level's own. A loaded level drives
+// its own where the block authors a key and the globals elsewhere, the editor's
+// scope switch swaps the sets on screen, and the config always carries the
+// globals themselves (Cvar_SetConfigValueProvider -> RT_SkySettings_ConfigValue),
+// so one level's block never becomes another level's default.
 // ---------------------------------------------------------------------------
 
 // Whether a cvar is one of the settings a level's block may carry.
 qboolean RT_SkySettings_IsManaged (const char *cvar);
-// The global (config) value of a managed setting, NULL for a name it does not
-// know or before the first map load captured the globals.
-const char *RT_SkySettings_GlobalValue (const char *cvar);
 // Whether the level now loaded carried a sky block.
 qboolean RT_SkySettings_LevelHasBlock (void);
-// The editor's Global settings checkbox: with it off the session's edits belong
-// to the level, and the config write must not take any of them.
-void RT_SkySettings_SetLevelMode (qboolean level);
-// The live values become the globals (a save with the checkbox on), and the
-// block's flags are dropped with the file's block.
-void RT_SkySettings_AdoptGlobals (void);
-void RT_SkySettings_ClearLevelOverrides (void);
-// After the session wrote the level's block: the flags follow what it carries.
-void RT_SkySettings_SyncLevelOverrides (void);
-// Writes the level's "sky:" block (the settings that differ from the globals)
-// for the editor's session file; returns the entries written.
+// The editor's Global settings checkbox: swapping the scope takes the live
+// values into the set they were edited in and puts the other set on screen.
+void RT_SkySettings_SetScope (qboolean level);
+// Whether this session changed the sky settings or their scope at all.
+qboolean RT_SkySettings_SessionDirty (void);
+// The live values belong to the active set, for the session's writer.
+void RT_SkySettings_CaptureScope (void);
+// Writes the level's "sky:" block (its own set) for the editor's session file;
+// returns the entries written.
 int  RT_SkySettings_WriteLevel (FILE *f);
-// The editor session's snapshot of the module's state (Discard puts it back;
-// the cvars themselves are the editor's own snapshot).
+// The editor session: BeginSession snapshots the state, EndSession (Discard, or
+// an editor closed without saving) puts it back, and CommitSession (a save)
+// makes what the save carried the state -- in global scope the level's own set
+// goes away with the file's block.
 void RT_SkySettings_BeginSession (void);
 void RT_SkySettings_EndSession (void);
+void RT_SkySettings_CommitSession (qboolean global_scope);
+// The live values become the globals (the editor's Reset).
+void RT_SkySettings_AdoptGlobals (void);
 
 // The section key of a map and the file's writer, for the editor's session.
 void RT_CustomLights_LevelKey (const char *mapname, char *out, size_t outsize);

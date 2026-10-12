@@ -277,6 +277,14 @@ static struct
 	rt_material_t  extra[QRE_GROUP_MAX];
 	int            extra_count;
 
+	// the frame blocks of a model pick: the settings one frame hands to another
+	// (Copy/Paste), the texture frame the preview shows, and the model the
+	// animation list above the blocks belongs to
+	rt_material_t mat_clip;
+	qboolean      mat_clip_valid;
+	int           frame_tex;
+	qmodel_t     *frame_anims_model;
+
 	// snapshot of both material lists for Cancel/Exit
 	rt_material_t *snap_global;
 	int            snap_global_count;
@@ -1235,6 +1243,16 @@ static void QRE_ResolveGroup (const char *texname)
 	}
 }
 
+// Whether the open group is a model's texture frames: those blocks get the
+// frame controls above them and the Copy/Paste row in their headers.
+static qboolean QRE_ModelFrameGroup (void)
+{
+	if (!qre.pick_model || qre.pick_model->type != mod_alias || qre.group_count <= 0)
+		return false;
+
+	return true;
+}
+
 // ---------------------------------------------------------------------------
 // Picking
 // ---------------------------------------------------------------------------
@@ -1541,6 +1559,44 @@ static gltexture_t *QRE_EntityTexture (entity_t *e)
 	}
 
 	return NULL;
+}
+
+// The texture frame the picked model shows now: the frame the preview was set
+// to when the preview carries the picked model, and otherwise the texture the
+// model entity draws in the world.
+static int QRE_ActiveFrame (void)
+{
+	if (qre.entity_preview_model && qre.entity_preview_model == qre.pick_model)
+		return qre.frame_tex;
+
+	if (qre.pick_ent)
+	{
+		gltexture_t *glt = QRE_EntityTexture (qre.pick_ent);
+
+		if (glt)
+			return QRE_FrameDigit (glt->name);
+	}
+
+	return -1;
+}
+
+// A model pick starts the frame controls where the model stands: the texture
+// frame it draws now and the pose it holds. The preview itself waits for the
+// first touch of the controls.
+static void QRE_FramePickInit (void)
+{
+	if (!QRE_ModelFrameGroup ())
+	{
+		qre.frame_tex = -1;
+		qre.frame_anims_model = NULL;
+		return;
+	}
+
+	qre.frame_tex = QRE_ActiveFrame ();
+	if (qre.frame_tex < 0)
+		qre.frame_tex = 0;
+	qre.entity_frame = qre.pick_ent ? qre.pick_ent->frame : 0;
+	qre.frame_anims_model = NULL;
 }
 
 // Moller-Trumbore: the fraction along the ray where it crosses the triangle,
@@ -2153,6 +2209,7 @@ static void QRE_OpenMaterial (qmodel_t *model, msurface_t *surf, entity_t *ent, 
 	else
 	{
 		QRE_ResolveGroup (texname);
+		QRE_FramePickInit ();
 
 		Con_Printf ("qr editor: picked '%s' (%d material(s) in the group)\n", texname, qre.group_count);
 		for (i = 0; i < qre.group_count; i++)
@@ -2436,6 +2493,9 @@ void QR_Editor_UpdateView (void)
 	{
 		cl.viewent.model = qre.entity_preview_model;
 		cl.viewent.frame = qre.entity_frame;
+		// the picked model's preview shows the texture frame the controls chose
+		// (for a weapon preview this stays skin 0, as the model has one skin)
+		cl.viewent.skinnum = (qre.entity_preview_model == qre.pick_model && qre.frame_tex >= 0) ? qre.frame_tex : 0;
 		cl.viewent.lerpflags |= LERP_RESETANIM;
 		VectorCopy (cl.viewangles, cl.viewent.angles);
 		VectorCopy (r_refdef.vieworg, cl.viewent.origin);
@@ -2545,7 +2605,9 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 		info.size.width = (uint32_t)w;
 		info.size.height = (uint32_t)h;
 		info.textures.pDataAlbedoAlpha = pixels;
-		info.filter = QR_SAMPLER_FILTER_LINEAR;
+		// nearest: the preview is the author's pixels, not a resampled picture
+		// of them, so a mask's edges and a zoomed texel stay crisp
+		info.filter = QR_SAMPLER_FILTER_NEAREST;
 		info.addressModeU = QR_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 		info.addressModeV = QR_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 
@@ -3562,6 +3624,106 @@ static void QRE_MatEntitiesTab (void)
 	}
 }
 
+// The frame blocks of a model's texture frames: Copy takes one frame's settings
+// and Paste puts them into another, so a model whose frames differ in one
+// setting does not have to be authored frame by frame.
+static void QRE_CopyFrame (int g)
+{
+	qre.mat_clip = *qre.group[g];
+	qre.mat_clip_valid = true;
+	QRE_Notify (va ("%s: settings copied; Paste appears on every frame", qre.group[g]->name));
+}
+
+static void QRE_PasteFrame (int g)
+{
+	rt_material_t *m;
+	char           name[MAX_QPATH];
+	qboolean       valid;
+
+	if (!qre.mat_clip_valid)
+		return;
+
+	QRE_EnsureLive (g);
+	m = qre.group[g];
+
+	// the frame keeps its own name (and its place in the list), everything else
+	// comes from the copied one
+	q_strlcpy (name, m->name, sizeof (name));
+	valid = m->valid;
+	*m = qre.mat_clip;
+	q_strlcpy (m->name, name, sizeof (m->name));
+	m->valid = valid;
+
+	QRE_MarkDirtyFull (m);
+	QRE_Notify (va ("settings pasted into %s", m->name));
+}
+
+// The controls above a model's texture frames: the animation the preview plays
+// (the same list the Entities tab builds) and the texture frame -- the frame*
+// block below -- it shows. Touching either engages the preview, so a frame can
+// be inspected without waiting for the model's own animation.
+static void QRE_FrameControls (void)
+{
+	aliashdr_t *hdr;
+	const char *names[QRE_ANIM_MAX];
+	int         i, anim, frame;
+	int         lo = -1, hi = -1;
+
+	hdr = (aliashdr_t *)Mod_Extradata (qre.pick_model);
+	if (!hdr)
+		return;
+
+	if (qre.frame_anims_model != qre.pick_model)
+	{
+		QRE_BuildWeaponAnims (qre.pick_model, hdr);
+		qre.frame_anims_model = qre.pick_model;
+		qre.entity_frame = qre.pick_ent ? qre.pick_ent->frame : qre.entity_frame;
+	}
+
+	for (i = 0; i < qre.group_count; i++)
+	{
+		const int digit = QRE_FrameDigit (qre.group[i]->name);
+
+		if (digit < 0)
+			continue;
+		if (lo < 0 || digit < lo)
+			lo = digit;
+		if (hi < 0 || digit > hi)
+			hi = digit;
+	}
+
+	if (lo < 0)
+		return;
+
+	if (qre.frame_tex < lo || qre.frame_tex > hi)
+		qre.frame_tex = lo;
+
+	QR_GUI_LabelDim ("the model's texture frames: the frame* blocks below");
+	QR_GUI_Spacing ();
+
+	if (qre.entity_anim_count > 0)
+	{
+		for (i = 0; i < qre.entity_anim_count; i++)
+			names[i] = qre.entity_anims[i].name;
+
+		anim = qre.entity_anim;
+		if (QR_GUI_Combo ("animation", &anim, (const char *const *) names, qre.entity_anim_count,
+		                  "The animation the preview plays.") && anim >= 0 && anim < qre.entity_anim_count)
+		{
+			qre.entity_anim = anim;
+			qre.entity_frame = qre.entity_anims[anim].first;
+			qre.entity_preview_model = qre.pick_model;
+		}
+	}
+
+	frame = qre.frame_tex;
+	if (QR_GUI_SliderInt ("frame", &frame, lo, hi, "The texture frame (the frame* block) the preview shows."))
+	{
+		qre.frame_tex = CLAMP (lo, frame, hi);
+		qre.entity_preview_model = qre.pick_model;
+	}
+}
+
 static void QRE_BuildPanelGUI (void)
 {
 	int      panel_w = glwidth / 4; // a quarter of the screen wide, as asked
@@ -3609,14 +3771,43 @@ static void QRE_BuildPanelGUI (void)
 	if (qre.mat_tab == 1)
 		QRE_MatEntitiesTab ();
 
-	for (g = 0; g < qre.group_count; g++)
 	{
-		// the animation frames share their parameter names, so every section
-		// needs its own ID scope, or their widgets collide
-		QR_GUI_PushID (qre.group[g]->name);
-		if (QR_GUI_Section (qre.group[g]->name, 1))
-			QRE_ParamWidgets (g);
-		QR_GUI_PopID ();
+		const qboolean model_frames = QRE_ModelFrameGroup ();
+		const int      active = model_frames ? QRE_ActiveFrame () : -1;
+
+		if (model_frames)
+			QRE_FrameControls ();
+
+		for (g = 0; g < qre.group_count; g++)
+		{
+			// the animation frames share their parameter names, so every section
+			// needs its own ID scope, or their widgets collide
+			QR_GUI_PushID (qre.group[g]->name);
+
+			if (model_frames)
+			{
+				int       open = 0;
+				const int actions = QR_GUI_SectionFrameActions (
+				    qre.group[g]->name,
+				    (active >= 0 && QRE_FrameDigit (qre.group[g]->name) == active) ? 1 : 0,
+				    qre.mat_clip_valid ? 1 : 0, &open,
+				    "Copy this frame's settings to paste into another frame.",
+				    "Paste the copied settings into this frame.");
+
+				if (actions & 1)
+					QRE_CopyFrame (g);
+				if (actions & 2)
+					QRE_PasteFrame (g);
+				if (open)
+					QRE_ParamWidgets (g);
+			}
+			else if (QR_GUI_Section (qre.group[g]->name, 1))
+			{
+				QRE_ParamWidgets (g);
+			}
+
+			QR_GUI_PopID ();
+		}
 	}
 
 	QR_GUI_EndScroll ();
@@ -4158,9 +4349,9 @@ static qboolean QRE_GlobalsTouched (void)
 		if (!qre_globals_snapshot_set[i])
 			continue;
 
-		// the sky settings of a level are the level's to keep: they go to its
-		// own section, never to the config
-		if (!qre.sky_global && RT_SkySettings_IsManaged (QRE_GlobalCvarName (&qre_globals[i])))
+		// the sky settings of a level are the module's: it keeps their global
+		// values in the config (see rt_lights.c), whatever the tab's scope
+		if (RT_SkySettings_IsManaged (QRE_GlobalCvarName (&qre_globals[i])))
 			continue;
 
 		var = Cvar_FindVar (QRE_GlobalCvarName (&qre_globals[i]));
@@ -4171,32 +4362,14 @@ static qboolean QRE_GlobalsTouched (void)
 	return false;
 }
 
-// Whether the sky settings themselves changed in this session: with the tab in
-// level scope that is an edit of a managed cvar, and with it in global scope it
-// is a level that was about to keep its own settings and no longer does.
+// Whether the sky settings themselves changed in this session: an edit of
+// either set, or a scope switch, is the module's to report.
 static qboolean QRE_SkyTouched (void)
 {
-	int i;
-
 	if (qre.mode != QRE_MODE_LIGHT)
 		return false;
 
-	if (qre.sky_global)
-		return RT_SkySettings_LevelHasBlock ();
-
-	for (i = 0; i < (int)countof (qre_globals); i++)
-	{
-		cvar_t *var;
-
-		if (!qre_globals_snapshot_set[i] || !RT_SkySettings_IsManaged (QRE_GlobalCvarName (&qre_globals[i])))
-			continue;
-
-		var = Cvar_FindVar (QRE_GlobalCvarName (&qre_globals[i]));
-		if (var && strcmp (var->string ? var->string : "", qre_globals_snapshot[i]))
-			return true;
-	}
-
-	return false;
+	return RT_SkySettings_SessionDirty ();
 }
 
 static void QRE_GlobalsRestore (void)
@@ -4267,10 +4440,11 @@ static void QRE_SkyScopeCheckbox (void)
 
 	if (QR_GUI_Checkbox ("Global settings", &value,
 	                     "On: the sky, sun and cloud settings below are global -- the config carries them and every level shares them. "
-	                     "Off: they are saved for this level only, and a level's own settings win over the global ones."))
+	                     "Off: they are saved for this level only, and a level's own settings win over the global ones. "
+	                     "Switching the box puts the values of the chosen scope on screen."))
 	{
 		qre.sky_global = value ? true : false;
-		RT_SkySettings_SetLevelMode (!qre.sky_global);
+		RT_SkySettings_SetScope (!qre.sky_global);
 	}
 }
 
@@ -5881,9 +6055,17 @@ static void QRE_ClosePanel (void)
 
 static void QRE_Apply (void)
 {
-	const qboolean globals = (qre.mode == QRE_MODE_LIGHT) ? QRE_GlobalsTouched () : QRE_WaterTouched ();
-	const qboolean touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0);
-	const qboolean session = QRE_WriteSession ();
+	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
+	const qboolean globals = light ? (QRE_GlobalsTouched () || qre.sky_global) : QRE_WaterTouched ();
+	const qboolean touched = light ? QRE_LightSessionTouched () : (qre.touched_count > 0);
+	qboolean       session;
+
+	// the live cvars belong to the scope they were edited in, so the writer
+	// knows what the level's own set now is
+	if (light)
+		RT_SkySettings_CaptureScope ();
+
+	session = QRE_WriteSession ();
 
 	if (!session && !globals)
 	{
@@ -5894,10 +6076,11 @@ static void QRE_Apply (void)
 	if (globals)
 		Host_WriteConfiguration ();
 
-	if (qre.mode == QRE_MODE_LIGHT)
+	if (light)
 	{
 		QRE_TakeLightSnapshot (); // Cancel now reverts to the state just saved
 		QRE_TakeGlobalsSnapshot ();
+		RT_SkySettings_BeginSession ();
 
 		if (session)
 			QRE_Notify ("session written to qray.lights.editor.yaml");
@@ -7033,7 +7216,7 @@ static void QRE_BackToChooser (void)
 	qre.custom_dragging = false;
 	QRE_CancelLightDrag ();
 	QRE_DtalDebugOff ();
-	RT_SkySettings_SetLevelMode (false);
+	RT_SkySettings_EndSession ();
 	qre.mat_tab = 0;
 	qre.light_tab = 0;
 	qre.entity_preview_model = NULL;
@@ -7145,7 +7328,6 @@ static void QRE_ResetAll (void)
 		// the files are gone and the cvars are back at their defaults: those
 		// defaults are the globals from here on
 		RT_SkySettings_AdoptGlobals ();
-		RT_SkySettings_ClearLevelOverrides ();
 		RT_CustomLights_ChangeMap (cl.mapname);
 		Fog_NewMap ();
 	}
@@ -7173,30 +7355,19 @@ static void QRE_ResetAll (void)
 static void QRE_SessionSave (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
-	const qboolean sky_level = light && !qre.sky_global && QRE_SkyTouched ();
-	const qboolean sky_global = light && qre.sky_global && RT_SkySettings_LevelHasBlock ();
-	const qboolean globals = light ? (QRE_GlobalsTouched () || sky_global) : QRE_WaterTouched ();
+	const qboolean globals = light ? (QRE_GlobalsTouched () || qre.sky_global) : QRE_WaterTouched ();
 	const qboolean entries = light ? (qre.light_touched_count > 0 || QRE_CustomTouched ()) : (qre.touched_count > 0);
 	const qboolean had_target = QRE_FileExists (qre.target_file);
+
+	// the live cvars belong to the scope they were edited in, so the writer
+	// knows what the level's own set now is
+	if (light)
+		RT_SkySettings_CaptureScope ();
 
 	if (entries && !QRE_WriteSession ())
 	{
 		QRE_Notify ("the session could not be written");
 		return;
-	}
-
-	// The module follows what the file now carries: a save with the scope on
-	// makes the live values the config's, a save with it off records which
-	// settings the level's block owns.
-	if (light)
-	{
-		if (qre.sky_global)
-		{
-			RT_SkySettings_AdoptGlobals ();
-			RT_SkySettings_ClearLevelOverrides ();
-		}
-		else if (sky_level)
-			RT_SkySettings_SyncLevelOverrides ();
 	}
 
 	if (globals)
@@ -7228,6 +7399,11 @@ static void QRE_SessionSave (void)
 	}
 
 	remove (qre.editor_file);
+
+	// what the save carried is the state from here on: in global scope the
+	// level's own set is gone with the file's block
+	if (light)
+		RT_SkySettings_CommitSession (qre.sky_global);
 
 	QRE_BackToChooser ();
 
@@ -7348,7 +7524,7 @@ static void QRE_StopEditor (qboolean restore)
 
 	// with the editor gone the sky settings are the level's and the config's
 	// again, not a session's
-	RT_SkySettings_SetLevelMode (false);
+	RT_SkySettings_EndSession ();
 
 	if (qre.entity_preview_model != NULL && cl.viewent.model == qre.entity_preview_model)
 		cl.viewent.model = NULL;
@@ -7411,11 +7587,11 @@ static void QRE_StartMode (int mode)
 		QRE_TakeGlobalsSnapshot ();
 
 		// the sky settings the level carries are the session's starting point:
-		// the scope follows them, so a level with its own block opens in level
-		// scope and one without opens global
-		RT_SkySettings_BeginSession ();
+		// a level with its own block opens in level scope and one without
+		// opens global, and that state is what the session's snapshot keeps
 		qre.sky_global = RT_SkySettings_LevelHasBlock () ? false : true;
-		RT_SkySettings_SetLevelMode (!qre.sky_global);
+		RT_SkySettings_SetScope (!qre.sky_global);
+		RT_SkySettings_BeginSession ();
 
 		// the light session: the gamedir's qray.lights.yaml holds both the
 		// emitter overrides and the custom lights and fog, with the session file
@@ -7643,8 +7819,14 @@ qboolean QR_Editor_Flying (void)
 
 qboolean QR_Editor_ShowViewModel (void)
 {
-	return qre.active && qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 1 &&
-	       qre.entity_preview_model != NULL && !cl.intermission;
+	if (!qre.active || qre.mode != QRE_MODE_MATERIAL || cl.intermission || qre.entity_preview_model == NULL)
+		return false;
+
+	if (qre.mat_tab == 1)
+		return true;
+
+	// the frame controls of a model's texture frames preview that model
+	return (qre.mat_tab == 0 && qre.entity_preview_model == qre.pick_model) ? true : false;
 }
 
 void QR_Editor_SunPlacement (qboolean on)
