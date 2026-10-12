@@ -6,6 +6,7 @@
 
 #define RT_STATS_COLOR_TOTAL   0xFFFF4D0Du
 #define RT_STATS_COLOR_NEUTRAL 0xFFD3D3D3u
+#define RT_STATS_COLOR_WHITE   0xFFFFFFFFu
 
 #define RT_STATS_BUDGET_WARN_MS 5.5f
 #define RT_STATS_BUDGET_CRIT_MS 11.1f
@@ -146,28 +147,34 @@ static void RT_StatsOverlayNeutralMs (const char *label, float ms, const rt_stat
 	QR_GUI_OverlayRow (label, st, series ? series->samples : NULL, series ? series->count : 0, RT_STATS_COLOR_NEUTRAL);
 }
 
-static void RT_StatsOverlayCount (const char *label, unsigned value)
+static void RT_StatsOverlayCountColor (const char *label, unsigned value, uint32_t color)
 {
 	char st[32];
 
 	q_snprintf (st, sizeof (st), "%u", value);
-	QR_GUI_OverlayRow (label, st, NULL, 0, RT_STATS_COLOR_TOTAL);
+	QR_GUI_OverlayRow (label, st, NULL, 0, color);
+}
+
+static void RT_StatsOverlayCount (const char *label, unsigned value)
+{
+	RT_StatsOverlayCountColor (label, value, RT_STATS_COLOR_TOTAL);
 }
 
 static void RT_StatsOverlayRays (const rt_stats_snapshot_t *snap)
 {
-	RT_StatsOverlayCount ("RAYS", snap->gpu.raysTotal);
-	RT_StatsOverlayCount ("PRIMARY", snap->gpu.raysPerCategory[0]);
-	RT_StatsOverlayCount ("REFL/REFR", snap->gpu.raysPerCategory[1]);
-	RT_StatsOverlayCount ("INDIRECT", snap->gpu.raysPerCategory[2]);
-	RT_StatsOverlayCount ("SHADOW DIR", snap->gpu.raysPerCategory[3]);
-	RT_StatsOverlayCount ("SHADOW IND", snap->gpu.raysPerCategory[4]);
-	RT_StatsOverlayCount ("CALLS", snap->gpu.apiCalls);
-	RT_StatsOverlayCount (" geometry", snap->gpu.apiCallsGeometry);
-	RT_StatsOverlayCount (" raster", snap->gpu.apiCallsRasterized);
-	RT_StatsOverlayCount (" lights", snap->gpu.apiCallsLights);
-	RT_StatsOverlayCount (" other",
-		snap->gpu.apiCalls - snap->gpu.apiCallsGeometry - snap->gpu.apiCallsRasterized - snap->gpu.apiCallsLights);
+	RT_StatsOverlayCountColor ("RAYS", snap->gpu.raysTotal, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor ("PRIMARY", snap->gpu.raysPerCategory[0], RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor ("REFL/REFR", snap->gpu.raysPerCategory[1], RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor ("INDIRECT", snap->gpu.raysPerCategory[2], RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor ("SHADOW DIR", snap->gpu.raysPerCategory[3], RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor ("SHADOW IND", snap->gpu.raysPerCategory[4], RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor ("CALLS", snap->gpu.apiCalls, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" geometry", snap->gpu.apiCallsGeometry, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" raster", snap->gpu.apiCallsRasterized, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" lights", snap->gpu.apiCallsLights, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" other",
+		snap->gpu.apiCalls - snap->gpu.apiCallsGeometry - snap->gpu.apiCallsRasterized - snap->gpu.apiCallsLights,
+		RT_STATS_COLOR_WHITE);
 }
 
 static void RT_StatsOverlayGpu (const rt_stats_snapshot_t *snap)
@@ -296,7 +303,7 @@ static void RT_StatsOverlayWorld (const rt_stats_snapshot_t *snap)
 		return;
 	}
 
-	RT_StatsOverlayCount ("CLUSTERS", (unsigned)w->clusters);
+	RT_StatsOverlayCountColor ("CLUSTERS", (unsigned)w->clusters, RT_STATS_COLOR_WHITE);
 	RT_StatsOverlayCount (" no row", (unsigned)w->clustersWithoutRow);
 	RT_StatsOverlayCount ("PVS ROW", (unsigned)w->rowBytes);
 	q_snprintf (st, sizeof (st), "%.1f K", w->visdataBytes / 1024.0);
