@@ -317,6 +317,9 @@ public:
         uint32_t positionalFails = 0;
         uint32_t sortedPassPositionalFails = 0;
         uint32_t sortedFails = 0;
+        uint32_t sortedCountFails = 0;
+        uint32_t sortedShapeFails = 0;
+        uint32_t geometryCount = 0;
     };
 
     const DynamicFilterCounters *GetDynamicFilterCounters(uint32_t *count) const;

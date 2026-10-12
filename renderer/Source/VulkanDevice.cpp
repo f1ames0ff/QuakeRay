@@ -1419,6 +1419,9 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
             pStats->dynamicFilters[i].positionalFails = filters[i].positionalFails;
             pStats->dynamicFilters[i].sortedPassPositionalFails = filters[i].sortedPassPositionalFails;
             pStats->dynamicFilters[i].sortedFails = filters[i].sortedFails;
+            pStats->dynamicFilters[i].sortedCountFails = filters[i].sortedCountFails;
+            pStats->dynamicFilters[i].sortedShapeFails = filters[i].sortedShapeFails;
+            pStats->dynamicFilters[i].geometryCount = filters[i].geometryCount;
         }
     }
 }

@@ -433,6 +433,12 @@ static uint64_t rt_bench_dyn_filter_recreates[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint64_t rt_bench_dyn_filter_pfail[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint64_t rt_bench_dyn_filter_sord[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint64_t rt_bench_dyn_filter_sset[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_scount[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_sshape[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_len_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_min[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_max[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_samples[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint32_t rt_bench_dyn_filter_count;
 
 /* rt_bench: the same slots, summed over a whole demo run instead of maximized over one
@@ -903,7 +909,17 @@ static void RT_Bench_AddDynamicFilterStats (const QrFrameStats *stats)
 			if (rt_bench_dyn_filter_count >= QR_DYNAMIC_BLAS_FILTER_MAX)
 				continue;
 
-			rt_bench_dyn_filter_id[rt_bench_dyn_filter_count++] = src->filter;
+			slot = rt_bench_dyn_filter_count++;
+			rt_bench_dyn_filter_id[slot] = src->filter;
+			rt_bench_dyn_filter_builds[slot] = 0;
+			rt_bench_dyn_filter_recreates[slot] = 0;
+			rt_bench_dyn_filter_pfail[slot] = 0;
+			rt_bench_dyn_filter_sord[slot] = 0;
+			rt_bench_dyn_filter_sset[slot] = 0;
+			rt_bench_dyn_filter_scount[slot] = 0;
+			rt_bench_dyn_filter_sshape[slot] = 0;
+			rt_bench_dyn_filter_len_sum[slot] = 0;
+			rt_bench_dyn_filter_len_samples[slot] = 0;
 		}
 
 		rt_bench_dyn_filter_builds[slot] += src->builds;
@@ -911,6 +927,24 @@ static void RT_Bench_AddDynamicFilterStats (const QrFrameStats *stats)
 		rt_bench_dyn_filter_pfail[slot] += src->positionalFails;
 		rt_bench_dyn_filter_sord[slot] += src->sortedPassPositionalFails;
 		rt_bench_dyn_filter_sset[slot] += src->sortedFails;
+		rt_bench_dyn_filter_scount[slot] += src->sortedCountFails;
+		rt_bench_dyn_filter_sshape[slot] += src->sortedShapeFails;
+
+		if (rt_bench_dyn_filter_len_samples[slot] == 0)
+		{
+			rt_bench_dyn_filter_len_min[slot] = src->geometryCount;
+			rt_bench_dyn_filter_len_max[slot] = src->geometryCount;
+		}
+		else
+		{
+			if (src->geometryCount < rt_bench_dyn_filter_len_min[slot])
+				rt_bench_dyn_filter_len_min[slot] = src->geometryCount;
+			if (src->geometryCount > rt_bench_dyn_filter_len_max[slot])
+				rt_bench_dyn_filter_len_max[slot] = src->geometryCount;
+		}
+
+		rt_bench_dyn_filter_len_sum[slot] += src->geometryCount;
+		rt_bench_dyn_filter_len_samples[slot]++;
 	}
 }
 
@@ -1346,13 +1380,21 @@ qboolean RT_Bench_Report (const char *demo)
 		         rt_bench_dyn_blas_samples);
 
 	for (uint32_t i = 0; i < rt_bench_dyn_filter_count && rt_bench_dyn_blas_samples > 0; i++)
-		fprintf (f, "as.filter filter=0x%08x builds_avg=%.2f recreates_avg=%.2f pfail_avg=%.2f sord_avg=%.2f sset_avg=%.2f\n",
+		fprintf (f, "as.filter filter=0x%08x builds_avg=%.2f recreates_avg=%.2f pfail_avg=%.2f sord_avg=%.2f sset_avg=%.2f scount_avg=%.2f sshape_avg=%.2f len_avg=%.1f len_min=%u len_max=%u len_samples=%u\n",
 		         rt_bench_dyn_filter_id[i],
 		         (double)rt_bench_dyn_filter_builds[i] / rt_bench_dyn_blas_samples,
 		         (double)rt_bench_dyn_filter_recreates[i] / rt_bench_dyn_blas_samples,
 		         (double)rt_bench_dyn_filter_pfail[i] / rt_bench_dyn_blas_samples,
 		         (double)rt_bench_dyn_filter_sord[i] / rt_bench_dyn_blas_samples,
-		         (double)rt_bench_dyn_filter_sset[i] / rt_bench_dyn_blas_samples);
+		         (double)rt_bench_dyn_filter_sset[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_scount[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_sshape[i] / rt_bench_dyn_blas_samples,
+		         rt_bench_dyn_filter_len_samples[i] > 0
+		             ? (double)rt_bench_dyn_filter_len_sum[i] / rt_bench_dyn_filter_len_samples[i]
+		             : 0.0,
+		         rt_bench_dyn_filter_len_min[i],
+		         rt_bench_dyn_filter_len_max[i],
+		         rt_bench_dyn_filter_len_samples[i]);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");

@@ -1319,6 +1319,15 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 else
                 {
                     failures.sortedFails++;
+
+                    if (shape.size() != blas->shape.size())
+                    {
+                        failures.sortedCountFails++;
+                    }
+                    else
+                    {
+                        failures.sortedShapeFails++;
+                    }
                 }
             }
 
@@ -1369,7 +1378,9 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                                                       blas->geometries.size(), DYNAMIC_BLAS_BUILD_FLAGS);
 
             dynamicFrameBuilds++;
-            FilterCountersFor(blas->filter).builds++;
+            DynamicFilterCounters &builtCounters = FilterCountersFor(blas->filter);
+            builtCounters.builds++;
+            builtCounters.geometryCount = uint32_t(blas->geometries.size());
             dynamicBlasCount++;
             dynamicGeometryCount += uint32_t(blas->geometries.size());
             for (size_t i = 0; i < geoms.size(); i++)

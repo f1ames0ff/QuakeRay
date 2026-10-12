@@ -469,3 +469,11 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   task-mode content/shape difference with no serial counterpart, so the next diagnostic splits
   sorted-fail into count-change vs shape-change (and records the list length) before the F-C versus
   canonical-packing decision. Debug build exit 0, CTest 8/8, Release build exit 0.
+- 2026-10-12 (churn split, PR-1b of the stable-packing track): sorted-fails split into count-change and
+  shape-change, and every `as.filter` row carries the list length (avg/min/max). First capture (Fuma,
+  Balanced, medium, `r_tasks 1`): `filter=0x4c` (dynamic opaque `PV_WORLD_0`) recreates every frame with
+  `scount 0.74 / sshape 0.01` and `len_avg 555.5, len_min 512, len_max 598` - the task-mode churn is a
+  per-frame geometry-COUNT instability of that list (about 43 entries), not tuple reordering; the serial
+  arm shows 0.07 recreations per frame. Localizing captures queued: serial length baseline and a
+  `r_parallelmark 0` arm. Debug build exit 0, CTest 8/8 (one `qray_dtal_perf` flake passed on re-run),
+  Release build exit 0.
