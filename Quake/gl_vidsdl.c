@@ -3105,10 +3105,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	const float q2_lightstats_value = CVAR_TO_FLOAT (rt_q2_lightstats);
 	const uint32_t q2_lightstats_mode = (q2_lightstats_value < 0.0f || q2_lightstats_value > 4.0f) ? 1u : (uint32_t)q2_lightstats_value;
 
-	// Single- vs double-sample NEE in the direct pass. The estimator divides by
-	// the count, so both values are unbiased; the range cannot go above 2 because
-	// a third sample's RNG salt would collide with the sun disk stream.
-	const uint32_t nee_samples = (CVAR_TO_FLOAT (rt_nee_samples) < 1.5f) ? 1u : 2u;
+	// Single- vs multi-sample NEE in the direct pass. The estimator divides by
+	// the count, so every value is unbiased; the per-sample RNG streams are
+	// disjoint up to 8 (Q2_NEE_MAX_SAMPLES in RtRaygenDirect.rgen.hlsl).
+	const float    nee_samples_value = CVAR_TO_FLOAT (rt_nee_samples);
+	const int      nee_samples_int   = (int)(nee_samples_value + 0.5f);
+	const uint32_t nee_samples       = (uint32_t)((nee_samples_int < 1) ? 1 : ((nee_samples_int > 8) ? 8 : nee_samples_int));
 
 	// Q2RTX-style global illumination level (pt_num_bounce_rays): 0 disables the
 	// indirect pass, 1 mirrors the historical single-bounce behavior and 2 adds a

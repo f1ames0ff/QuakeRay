@@ -369,7 +369,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->q2DepthGradMode            = drawInfo.pIlluminationParams->q2DepthGradMode;
         gu->q2LightStatsMode           = drawInfo.pIlluminationParams->q2LightStatsMode;
         gu->reflRefrEarlyOut           = drawInfo.pIlluminationParams->reflRefrEarlyOut != 0;
-        gu->neeLightSamples            = std::clamp( drawInfo.pIlluminationParams->neeLightSamples, 1u, 2u );
+        gu->neeLightSamples            = std::clamp( drawInfo.pIlluminationParams->neeLightSamples, 1u, 8u );
         gu->restirParams[0]            = drawInfo.pIlluminationParams->restirEnabled != 0 ? 1u : 0u;
         gu->restirParams[1]            = std::clamp( drawInfo.pIlluminationParams->restirCandidates, 1u, 64u );
         gu->restirParams[2]            = 0u;

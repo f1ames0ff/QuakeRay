@@ -32,10 +32,12 @@
 #include "Q2LightLists.hlsli"
 #include "GlobalLightSampling.hlsli"
 
-#define Q2_RNG_CELL_SELECT 200
-#define Q2_RNG_LIGHT_POINT 208
-#define Q2_RNG_LIGHT_MEMBER 216
+#define Q2_RNG_CELL_SELECT 2000
+#define Q2_RNG_LIGHT_POINT 2100
+#define Q2_RNG_LIGHT_MEMBER 2200
 #define Q2_RNG_SUN_DISK 212
+
+#define Q2_NEE_MAX_SAMPLES 8
 
 #define Q2_DIRECT_MAX_SPHERE_SOLID_ANGLE (2.0 * M_PI)
 
@@ -69,7 +71,7 @@ void main()
     float3 directDiffuse = (float3)0.0;
     float3 directSpecular = (float3)0.0;
 
-    const int numNeeSamples = clamp((int)globalUniform.neeLightSamples, 1, 2);
+    const int numNeeSamples = clamp((int)globalUniform.neeLightSamples, 1, Q2_NEE_MAX_SAMPLES);
 
     for (int s = 0; s < numNeeSamples; s++)
     {
