@@ -178,10 +178,12 @@ scale to the content that actually exists.
   (no fallback); and the inline visibility `RayQuery` has no alpha any-hit, so emitter geometry in
   the path is opaque to it. Cross-check runs live in `%LOCALAPPDATA%\Temp\opencode` (`cc-*`,
   `cc2-*`, `fl-*`, `fl2-*`, `fl3-*`, `fl5-*`).
-- Known issue before using `rays_particle` as a proxy metric (Stage 4 verification, 2026-10-10):
-  the current `RtQ2ReflectRefract.rgen` blob declares `smokeRayStats` at set 7 binding 0 while the
-  pass binds the bindless cubemap table there (ray stats are at set 11); the pass interface comment
-  is stale. Resolve/verify before counting proxy rays.
+- Proxy ray counting (known issue raised 2026-10-10, fixed 2026-10-12): the `RtQ2ReflectRefract.rgen`
+  blob used to declare `smokeRayStats` at set 7 binding 0, aliasing the pass's bindless cubemap table
+  (the pass binds ray stats at set 11). The declaration now follows `SMOKE_RAY_STATS_SET`, which
+  `RaygenPrimary.hlsli` sets to the pass's ray-stats set; the interface recording was re-recorded and
+  CheckShaderProperties passes. The raster particle pipelines keep set 7. Count proxy rays again on the
+  next validation-enabled capture.
 
 ### Pointparticle distance gate (owner item, 2026-10-10)
 - Client-side gate in `CL_ParseParticles`: the message `count` scales linearly from 1 at `R/2` to 0 at `R`, and the message is dropped at `d >= R`; `R = r_part_emit_distance` (default 2048, 0 = off).

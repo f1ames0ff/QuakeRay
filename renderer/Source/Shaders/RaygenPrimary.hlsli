@@ -54,6 +54,7 @@
 #include "RaygenCommon.hlsli"
 #include "Q2Fog.hlsli"
 #include "Q2Asvgf.hlsli"
+#define SMOKE_RAY_STATS_SET DESC_SET_RAY_STATS
 #include "ParticleProxies.hlsli"
 
 #if defined(Q2_REFL_REFR_SHADER)

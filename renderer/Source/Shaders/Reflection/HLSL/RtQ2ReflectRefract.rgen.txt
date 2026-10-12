@@ -259,9 +259,6 @@
 === block set 6 binding 8
 
 [0] offset 0 array[](uint32) stride 4
-=== block set 7 binding 0
-
-[0] offset 0 array[6](uint32) stride 4
 === block set 9 binding 0
 
 [0] offset 0 v4(float32)
@@ -463,9 +460,9 @@ struct nonwritable
 === descriptor set 6 binding 8: storage class
 StorageBuffer
 === descriptor set 7 binding 0
-struct
+image:Cube:0:0:0:1:Unknown
 === descriptor set 7 binding 0: storage class
-StorageBuffer
+UniformConstant
 === descriptor set 7 binding 1
 sampler
 === descriptor set 7 binding 1: storage class

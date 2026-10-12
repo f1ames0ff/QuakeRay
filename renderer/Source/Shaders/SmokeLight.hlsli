@@ -55,7 +55,9 @@
 [[vk::binding(0, SMOKE_TLAS_SET)]] RaytracingAccelerationStructure topLevelAS;
 #endif
 
+#ifndef SMOKE_RAY_STATS_SET
 #define SMOKE_RAY_STATS_SET 7
+#endif
 
 #ifndef RAY_STATS_CATEGORY_PARTICLE
 #define RAY_STATS_CATEGORY_PARTICLE 5

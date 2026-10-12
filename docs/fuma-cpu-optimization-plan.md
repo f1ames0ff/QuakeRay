@@ -15,11 +15,13 @@ marking and the stage-2.3 cleanup (the changelog below records the trail and the
 - This branch carries the dynamic BLAS shape/reuse policy (`RhiAccelStructs`, `DynamicBlasShape.h`). The
   post-merge water stand verified the interaction: gate open, capture on, no runtime errors, and the TLAS
   instance count increases by one while the proxy capture is armed.
-- Known documented defect, pre-existing: validation-enabled runs emit one
-  `VUID-VkRayTracingPipelineCreateInfoKHR-layout-07990` (`RtQ2ReflectRefract.rgen`, set-7 `smokeRayStats`;
-  `docs/particle-plan.md:182`). It is not merge-introduced; the fix is scheduled by the particle docs
-  (move the smoke stats set). Validation layers are enabled by the renderer config file `qray.txt`
-  (`vulkanvalidation`); the engine `-validation` argv flag is dead code.
+- The pre-existing `VUID-VkRayTracingPipelineCreateInfoKHR-layout-07990` is resolved (2026-10-12): the
+  smoke ray-stats declaration now follows `SMOKE_RAY_STATS_SET`, which `RaygenPrimary.hlsli` sets to the
+  pass's ray-stats set (11), so `RtQ2ReflectRefract.rgen` no longer aliases the set-7 cubemap table; the
+  raster particle pipelines keep set 7. The interface recording was re-recorded and the full
+  CheckShaderProperties run passes; the validation-enabled confirmation lands with the next capture
+  batch. Validation layers are enabled by the renderer config file `qray.txt` (`vulkanvalidation`); the
+  engine `-validation` argv flag is dead code.
 - Acceptance-profile note: the audited runner preset pins `rt_sky_clouds_quality 0` (Low). The operator
   target is clouds **Medium**; a dedicated profile must land before any 4K/Medium capture.
 
