@@ -78,6 +78,8 @@ typedef struct gltexture_s
 
 	char                 rtname[64];
 	QrMaterial           rtmaterial;
+	QrMaterial           rtoverlaymaterial;
+	QrMaterial           rtrastermaterial;
 	QrMaterial           rtlightmaterial;
 	vec3_t	             rtlightcolor;
 	qboolean             rthaslightcolor;
@@ -89,6 +91,8 @@ typedef struct gltexture_s
 	float                rtglassior;
 	float                rtglassthickness;
 	float                rtglasscolor[3];
+	float                rtuvscale[2];
+	float                rtuvoffset[2];
 	qboolean             rtemissive;
 	vec3_t               rtemissivecolor;
 	vec3_t               rtemissivecolorraw;
@@ -113,6 +117,13 @@ typedef struct gltexture_s
 	qboolean             rtlightstyles;
 	qboolean             rthasmaterial;
 } gltexture_t;
+
+#define RT_UV_TRANSFORM_ACTIVE(tex) \
+	((tex) && ((tex)->rtuvscale[0] != 1.0f || (tex)->rtuvscale[1] != 1.0f || \
+	           (tex)->rtuvoffset[0] != 0.0f || (tex)->rtuvoffset[1] != 0.0f))
+
+#define RT_RASTER_MATERIAL(tex) \
+	((tex)->rtrastermaterial != QR_NO_MATERIAL ? (tex)->rtrastermaterial : (tex)->rtmaterial)
 
 extern gltexture_t *notexture;
 extern gltexture_t *nulltexture;

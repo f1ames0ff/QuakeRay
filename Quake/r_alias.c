@@ -464,8 +464,11 @@ if
         .pIndices = e->model->rtindices,
         .transform = transform,
         .color = RT_COLOR_WHITE,
-        .material = tx ? tx->rtmaterial : QR_NO_MATERIAL,
-        .pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
+        .texCoordScale = {tx ? tx->rtuvscale[0] : 1.0f, tx ? tx->rtuvscale[1] : 1.0f},
+        .texCoordOffset = {tx ? tx->rtuvoffset[0] : 0.0f, tx ? tx->rtuvoffset[1] : 0.0f},
+        .material = tx ? RT_RASTER_MATERIAL (tx) : QR_NO_MATERIAL,
+        .pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE |
+                         (RT_UV_TRANSFORM_ACTIVE (tx) ? QR_RASTERIZED_GEOMETRY_STATE_TEXCOORD_TRANSFORM : 0),
         .blendFuncSrc = 0,
         .blendFuncDst = 0,
     };
@@ -493,6 +496,7 @@ else
 			    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
 			    (tx && tx->rtalphatest ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 			    (is_glass && alphatest ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
+			    (RT_UV_TRANSFORM_ACTIVE (tx) ? QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT : 0) |
 			    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT ),
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType =
@@ -514,7 +518,9 @@ else
 			                {is_glass && tx ? tx->rtglassior : 0.0f,
 			                 is_glass && tx ? tx->rtglassthickness : 0.0f, 0.0f, 0.0f}},
 			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
-			.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
+			.texCoordScale = {tx ? tx->rtuvscale[0] : 1.0f, tx ? tx->rtuvscale[1] : 1.0f},
+			.texCoordOffset = {tx ? tx->rtuvoffset[0] : 0.0f, tx ? tx->rtuvoffset[1] : 0.0f},
+			.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL, is_glass && tx ? tx->rtoverlaymaterial : QR_NO_MATERIAL},
 			.defaultRoughness = CVAR_TO_FLOAT(rt_model_rough),
 			.defaultMetallicity = CVAR_TO_FLOAT(rt_model_metal),
 			.defaultEmission = 0,
@@ -627,8 +633,11 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.pIndices = e->model->rtindices + surf->firstindex,
 				.transform = transform,
 				.color = RT_COLOR_WHITE,
-				.material = tx ? tx->rtmaterial : QR_NO_MATERIAL,
-				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
+				.texCoordScale = {tx ? tx->rtuvscale[0] : 1.0f, tx ? tx->rtuvscale[1] : 1.0f},
+				.texCoordOffset = {tx ? tx->rtuvoffset[0] : 0.0f, tx ? tx->rtuvoffset[1] : 0.0f},
+				.material = tx ? RT_RASTER_MATERIAL (tx) : QR_NO_MATERIAL,
+				.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE |
+				                 (RT_UV_TRANSFORM_ACTIVE (tx) ? QR_RASTERIZED_GEOMETRY_STATE_TEXCOORD_TRANSFORM : 0),
 				.blendFuncSrc = 0,
 				.blendFuncDst = 0,
 			};
@@ -653,6 +662,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				    (is_invis ? QR_GEOMETRY_UPLOAD_IGNORE_REFRACT_AFTER_REFRACT_BIT : 0) |
 				    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 				    (is_glass && alphatest ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
+				    (RT_UV_TRANSFORM_ACTIVE (tx) ? QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT : 0) |
 				    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT),
 				.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 				.passThroughType =
@@ -672,7 +682,9 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				                {is_glass && tx ? tx->rtglassior : 0.0f,
 				                 is_glass && tx ? tx->rtglassthickness : 0.0f, 0.0f, 0.0f}},
 				.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
-				.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL},
+				.texCoordScale = {tx ? tx->rtuvscale[0] : 1.0f, tx ? tx->rtuvscale[1] : 1.0f},
+				.texCoordOffset = {tx ? tx->rtuvoffset[0] : 0.0f, tx ? tx->rtuvoffset[1] : 0.0f},
+				.geomMaterial = {tx ? tx->rtmaterial : QR_NO_MATERIAL, is_glass && tx ? tx->rtoverlaymaterial : QR_NO_MATERIAL},
 				.defaultRoughness = CVAR_TO_FLOAT (rt_model_rough),
 				.defaultMetallicity = CVAR_TO_FLOAT (rt_model_metal),
 				.defaultEmission = 0,

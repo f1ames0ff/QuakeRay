@@ -134,11 +134,17 @@ void main(inout ShPayloadShadow g_payloadShadow, in HitAttributes attribs)
 		const float3 tint = getTextureSampleLod(tr.materials[0][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord, tintLod).rgb * tr.materialColors[0].rgb;
 		const float transparency = getTextureSampleLod(tr.materials[0][MATERIAL_NORMAL_INDEX], texCoord, tintLod).a;
 		const float3 glassColor = tr.materialColors[1].xyz;
+		float overlayTransmission = 1.0;
+		if (tr.materials[1][MATERIAL_ALBEDO_ALPHA_INDEX] != MATERIAL_NO_TEXTURE)
+		{
+			overlayTransmission = 1.0 - saturate(getTextureSampleLod(
+				tr.materials[1][MATERIAL_ALBEDO_ALPHA_INDEX], texCoord, tintLod).a);
+		}
 
 		/* The light crossing the pane is filtered exactly as the transmitted view is:
 		   transparency is how much passes, the diffuse colour times the glass colour is
 		   the tint it is absorbed into. */
-		g_payloadShadow.transmittance *= glassTransmissionFilter(tint, glassColor, transparency);
+		g_payloadShadow.transmittance *= overlayTransmission * glassTransmissionFilter(tint, glassColor, transparency);
 
 		const float thickness = max(tr.materialColors[2].y, 0.0);
 
