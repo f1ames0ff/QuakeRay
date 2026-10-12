@@ -184,6 +184,10 @@ scale to the content that actually exists.
   `RaygenPrimary.hlsli` sets to the pass's ray-stats set; the interface recording was re-recorded and
   CheckShaderProperties passes. The raster particle pipelines keep set 7. Count proxy rays again on the
   next validation-enabled capture.
+- Compute-stage ray query (2026-10-12): `Probes/SmokeLight.probe.comp.hlsl` pins a `cs_6_2` translation
+  unit that instantiates the smoke ray query through `SmokeLight.hlsli`; dxc emits `RayQueryKHR` and
+  `SPV_KHR_ray_query` for it, so a compute cache updater is not blocked at compile time (a
+  Compute-visible TLAS descriptor layout remains host work).
 
 ### Pointparticle distance gate (owner item, 2026-10-10)
 - Client-side gate in `CL_ParseParticles`: the message `count` scales linearly from 1 at `R/2` to 0 at `R`, and the message is dropped at `d >= R`; `R = r_part_emit_distance` (default 2048, 0 = off).
