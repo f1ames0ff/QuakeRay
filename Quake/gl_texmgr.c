@@ -1304,6 +1304,65 @@ static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, fl
 	*angleInner = (float)((outerDeg - softDeg) * M_PI_DIV_180);
 }
 
+static qboolean TexMgr_ApplyLightMaterial (gltexture_t *glt, const QrMaterialCreateInfo *info, const byte *shapeRme, qboolean splitShape)
+{
+	qboolean replaced = false;
+
+	SDL_LockMutex (rtspecial_mutex);
+
+	if (splitShape && glt->rtlightmaterial != QR_NULL_HANDLE && texmgr_live_reload && !texmgr_live_recreate)
+	{
+		const QrExtent2D updateSize = {info->size.width, info->size.height};
+
+		if (qrCanUpdateMaterialContents (vulkan_globals.instance, glt->rtlightmaterial, updateSize) == QR_SUCCESS)
+		{
+			QrMaterialUpdateInfo update = {
+				.target = glt->rtlightmaterial,
+				.textures =
+					{
+						.pDataAlbedoAlpha = info->textures.pDataAlbedoAlpha,
+						.pDataRoughnessMetallicEmission = shapeRme,
+						.pDataNormal = info->textures.pDataNormal,
+					},
+			};
+
+			QrResult ur = qrUpdateMaterialContents (vulkan_globals.instance, &update);
+			SDL_UnlockMutex (rtspecial_mutex);
+
+			if (ur == QR_SUCCESS)
+				return false;
+
+			SDL_LockMutex (rtspecial_mutex);
+		}
+	}
+
+	if (glt->rtlightmaterial != QR_NULL_HANDLE)
+	{
+		QrResult dr = qrDestroyMaterial (vulkan_globals.instance, glt->rtlightmaterial);
+		QR_CHECK (dr);
+		glt->rtlightmaterial = QR_NULL_HANDLE;
+		replaced = true;
+	}
+
+	if (splitShape)
+	{
+		QrMaterialCreateInfo shapeInfo = *info;
+		QrMaterial            shapeMaterial = QR_NULL_HANDLE;
+
+		shapeInfo.textures.pDataRoughnessMetallicEmission = shapeRme;
+
+		QrResult cr = qrCreateMaterial (vulkan_globals.instance, &shapeInfo, &shapeMaterial);
+		QR_CHECK (cr);
+
+		glt->rtlightmaterial = shapeMaterial;
+		replaced = true;
+	}
+
+	SDL_UnlockMutex (rtspecial_mutex);
+
+	return replaced;
+}
+
 static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
@@ -1464,8 +1523,13 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtemissivecolor[0] = 0.0f;
 	glt->rtemissivecolor[1] = 0.0f;
 	glt->rtemissivecolor[2] = 0.0f;
+	glt->rtemissivecolorraw[0] = 0.0f;
+	glt->rtemissivecolorraw[1] = 0.0f;
+	glt->rtemissivecolorraw[2] = 0.0f;
 	glt->rtemissivemean = 0.0f;
+	glt->rtemissivemeanraw = 0.0f;
 	glt->rtemissivemeanbase = 0.0f;
+	glt->rtemissivemeanbaseraw = 0.0f;
 	glt->rtemisuvmin[0] = 0.0f;
 	glt->rtemisuvmin[1] = 0.0f;
 	glt->rtemisuvmax[0] = 1.0f;
@@ -1475,9 +1539,17 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtemissiveglowtex = false;
 	glt->rtislight = false;
 	float emissR = 0.0f, emissG = 0.0f, emissB = 0.0f;
+	float emissRRaw = 0.0f, emissGRaw = 0.0f, emissBRaw = 0.0f;
 	double emissMean = 0.0;
+	double emissMeanRaw = 0.0;
 	double emissMeanBase = 0.0;
+	double emissMeanBaseRaw = 0.0;
+	qboolean shapeDiffers = false;
 	int    glowminx = tw, glowminy = th, glowmaxx = -1, glowmaxy = -1;
+	byte  *emissRawBytes = NULL;
+
+	if (emisBuf || use_color_emissive)
+		emissRawBytes = (byte *)Mem_Alloc ((size_t)npix);
 
 	/* The color blocks: each one builds its own mask (its threshold picks the
 	   pixels whose color matches it) and feathers it on its own — outward from
@@ -1488,13 +1560,16 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	float *colorEmis  = NULL;
 	byte  *colorBlend = NULL;
 	float *colorDist  = NULL;
+	float *colorRaw   = NULL;
 	if (use_color_emissive && !emisBuf && !fullbrightOverride)
 	{
 		colorEmis  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
 		colorBlend = (byte *)Mem_Alloc ((size_t)npix);
 		colorDist  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+		colorRaw   = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
 		memset (colorEmis, 0, (size_t)npix * sizeof (float));
 		memset (colorDist, 0, (size_t)npix * sizeof (float));
+		memset (colorRaw, 0, (size_t)npix * sizeof (float));
 		memset (colorBlend, (byte)emisBlendCode, (size_t)npix);
 
 		for (int c = 0; c < mat->color_emissive_count; c++)
@@ -1504,6 +1579,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			const int            feather = (block->feather >= 1.0f) ? (int)(block->feather + 0.5f) : 0;
 			const byte           blockCode = (byte)((block->blend >= 0) ? (block->blend + 1) : 0);
 			float               *mask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+			float               *rawmask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
 			float               *dist = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
 
 			for (int i = 0; i < npix; i++)
@@ -1515,6 +1591,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 				const float d2 = dr * dr + dg * dg + db * db;
 
 				mask[i] = 0.0f;
+				rawmask[i] = 0.0f;
 				dist[i] = d2;
 				if (block->poly_count >= 3)
 				{
@@ -1535,6 +1612,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 					if (inside)
 					{
 						mask[i] = block->factor;
+						rawmask[i] = 1.0f;
 						dist[i] = 0.0f;
 					}
 				}
@@ -1543,8 +1621,10 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 					const float dnorm = (thr > 0.0f) ? sqrtf (d2 / 3.0f) / thr : 0.0f;
 					const float k = RT_COLOR_EMISSIVE_FALLOFF;
 					const float tail = expf (-k);
+					const float v = (expf (-k * dnorm) - tail) / (1.0f - tail);
 
-					mask[i] = (expf (-k * dnorm) - tail) / (1.0f - tail) * block->factor;
+					mask[i] = v * block->factor;
+					rawmask[i] = v;
 				}
 			}
 
@@ -1559,11 +1639,13 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 					continue;
 
 				colorEmis[i] = mask[i];
+				colorRaw[i] = rawmask[i];
 				colorBlend[i] = blockCode;
 				colorDist[i] = dist[i];
 			}
 
 			Mem_Free (mask);
+			Mem_Free (rawmask);
 			Mem_Free (dist);
 		}
 	}
@@ -1605,20 +1687,35 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		}
 
 		float emiss = 0.0f;
+		float emissRaw = 0.0f;
 		if (emisBuf)
 		{
-			emiss = (0.2126f * emisBuf[i * 4 + 0] + 0.7152f * emisBuf[i * 4 + 1] + 0.0722f * emisBuf[i * 4 + 2]) / 255.0f;
-			emiss *= mat->emissive_factor;
+			emissRaw = (0.2126f * emisBuf[i * 4 + 0] + 0.7152f * emisBuf[i * 4 + 1] + 0.0722f * emisBuf[i * 4 + 2]) / 255.0f;
+			emiss = emissRaw * mat->emissive_factor;
 		}
 		if (fullbrightOverride)
 		{
 			const float fb = fullbrightOverride[i * 4 + 2] / 255.0f;
 			if (fb > emiss)
 				emiss = fb;
+			if (fb > emissRaw)
+				emissRaw = fb;
 		}
 		else if (colorEmis)
 		{
 			emiss = colorEmis[i];
+			emissRaw = colorRaw[i];
+		}
+
+		if (emissRaw != emiss)
+			shapeDiffers = true;
+
+		if (emissRawBytes != NULL)
+		{
+			float rawOut = emissRaw;
+			if (rawOut > 1.0f)
+				rawOut = 1.0f;
+			emissRawBytes[i] = (byte)(rawOut * 255.0f + 0.5f);
 		}
 
 		if (emiss > 0.0f)
@@ -1628,16 +1725,29 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			emissB += albedo[i * 4 + 2] * emiss;
 		}
 
+		if (emissRaw > 0.0f)
+		{
+			emissRRaw += albedo[i * 4 + 0] * emissRaw;
+			emissGRaw += albedo[i * 4 + 1] * emissRaw;
+			emissBRaw += albedo[i * 4 + 2] * emissRaw;
+		}
+
 		emissMeanBase += emiss;
+		emissMeanBaseRaw += emissRaw;
 
 		float emissOut = emiss;
 		if (emissOut > 1.0f)
 			emissOut = 1.0f;
 		emissMean += emissOut;
 
+		float emissRawOut = emissRaw;
+		if (emissRawOut > 1.0f)
+			emissRawOut = 1.0f;
+		emissMeanRaw += emissRawOut;
+
 		/* The glow extents are the shape of the mask: brightness dims what it
 		   emits, it does not move the light. */
-		if (emiss > RT_EMIS_GLOW_THRESHOLD)
+		if (emissRaw > RT_EMIS_GLOW_THRESHOLD)
 		{
 			const int px = i % tw;
 			const int py = i / tw;
@@ -1702,9 +1812,16 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			glt->rtemissiveglow = (glowfrac > 1e-6f) ? glt->rtemissivemean / glowfrac : glt->rtemissivemean;
 		}
 
-		if (use_color_emissive)
-			glt->rtemissivetex = true;
 	}
+
+	glt->rtemissivecolorraw[0] = emissRRaw / (npix * 255.0f);
+	glt->rtemissivecolorraw[1] = emissGRaw / (npix * 255.0f);
+	glt->rtemissivecolorraw[2] = emissBRaw / (npix * 255.0f);
+	glt->rtemissivemeanraw = (float)(emissMeanRaw / npix);
+	glt->rtemissivemeanbaseraw = (float)(emissMeanBaseRaw / npix);
+
+	if (use_color_emissive)
+		glt->rtemissivetex = true;
 
 	if (lightBright != 1.0f)
 	{
@@ -1713,6 +1830,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		if (glt->rthaslightcolor)
 			VectorScale (glt->rtlightcolor, gain, glt->rtlightcolor);
 		VectorScale (glt->rtemissivecolor, gain, glt->rtemissivecolor);
+		VectorScale (glt->rtemissivecolorraw, gain, glt->rtemissivecolorraw);
 	}
 
 	glt->rtislight = mat->is_light;
@@ -1744,7 +1862,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		            rMin / 255.0f * 100.0f, npix ? rSum / npix / 255.0f * 100.0f : 0.0, rMax / 255.0f * 100.0f,
 		            mMin / 255.0f * 100.0f, npix ? mSum / npix / 255.0f * 100.0f : 0.0, mMax / 255.0f * 100.0f,
 		            eMin / 255.0f, npix ? eSum / npix / 255.0f : 0.0, eMax / 255.0f);
-		Con_Printf ("RT:   flags is_light=%d light_styles=%d light_brightness=%.3f has_light_color=%d rtlightcolor=(%.3f, %.3f, %.3f) rtemissive=%d rtemissivecolor=(%.4f, %.4f, %.4f) rtemissivemean=%.4f rtemissivemeanbase=%.4f\n",
+		Con_Printf ("RT:   flags is_light=%d light_styles=%d light_brightness=%.3f has_light_color=%d rtlightcolor=(%.3f, %.3f, %.3f) rtemissive=%d rtemissivecolor=(%.4f, %.4f, %.4f) rtemissivemean=%.4f rtemissivemeanbase=%.4f rtemissivemeanraw=%.4f rtemissivemeanbaseraw=%.4f shapediffers=%d\n",
 		            glt->rtislight ? 1 : 0, glt->rtlightstyles ? 1 : 0,
 		            mat->light_brightness,
 		            glt->rthaslightcolor ? 1 : 0,
@@ -1752,7 +1870,10 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		            glt->rtemissive ? 1 : 0,
 		            glt->rtemissivecolor[0], glt->rtemissivecolor[1], glt->rtemissivecolor[2],
 		            glt->rtemissivemean,
-		            glt->rtemissivemeanbase);
+		            glt->rtemissivemeanbase,
+		            glt->rtemissivemeanraw,
+		            glt->rtemissivemeanbaseraw,
+		            shapeDiffers ? 1 : 0);
 		Con_Printf ("RT:   glow uv=(%.3f, %.3f)-(%.3f, %.3f) areaFrac=%.3f density=%.4f wholeTexture=%d\n",
 		            glt->rtemisuvmin[0], glt->rtemisuvmin[1],
 		            glt->rtemisuvmax[0], glt->rtemisuvmax[1],
@@ -1784,6 +1905,33 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	QrMaterial oldMaterial = glt->rtmaterial;
 	QrMaterial newMaterial = QR_NULL_HANDLE;
 
+	const qboolean splitShape = mat->is_light && glt->rtemissivetex && shapeDiffers && emissRawBytes != NULL;
+	byte          *shapeRme   = NULL;
+
+	if (splitShape)
+	{
+		shapeRme = (byte *)Mem_Alloc ((size_t)npix * 4);
+		memcpy (shapeRme, rme, (size_t)npix * 4);
+
+		for (int i = 0; i < npix; i++)
+			shapeRme[i * 4 + 2] = emissRawBytes[i];
+	}
+
+	QrMaterialCreateInfo info = {
+		.flags = TexMgr_GetRtCreateFlags (glt),
+		.size = {tw, th},
+		.textures =
+			{
+				.pDataAlbedoAlpha = albedo,
+				.pDataRoughnessMetallicEmission = rme,
+				.pDataNormal = normal,
+			},
+		.pRelativePath = glt->rtname,
+		.filter = TexMgr_GetFilterMode (glt),
+		.addressModeU = QR_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeV = QR_SAMPLER_ADDRESS_MODE_REPEAT,
+	};
+
 	if (texmgr_live_reload && !texmgr_live_recreate && oldMaterial != QR_NULL_HANDLE)
 	{
 		const QrExtent2D updateSize = {(uint32_t)tw, (uint32_t)th};
@@ -1806,6 +1954,12 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 			if (ur == QR_SUCCESS)
 			{
+				if (TexMgr_ApplyLightMaterial (glt, &info, shapeRme, splitShape) && texmgr_live_reload)
+					texmgr_live_material_replaced = true;
+
+				if (shapeRme) Mem_Free (shapeRme);
+				if (emissRawBytes) Mem_Free (emissRawBytes);
+
 				Mem_Free (albedo);
 				Mem_Free (rme);
 				Mem_Free (normal);
@@ -1815,21 +1969,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		}
 	}
 
-	QrMaterialCreateInfo info = {
-		.flags = TexMgr_GetRtCreateFlags (glt),
-		.size = {tw, th},
-		.textures =
-			{
-				.pDataAlbedoAlpha = albedo,
-				.pDataRoughnessMetallicEmission = rme,
-				.pDataNormal = normal,
-			},
-		.pRelativePath = glt->rtname,
-		.filter = TexMgr_GetFilterMode (glt),
-		.addressModeU = QR_SAMPLER_ADDRESS_MODE_REPEAT,
-		.addressModeV = QR_SAMPLER_ADDRESS_MODE_REPEAT,
-	};
-
 	SDL_LockMutex (rtspecial_mutex);
 	QrResult r = qrCreateMaterial (vulkan_globals.instance, &info, &newMaterial);
 	if (oldMaterial)
@@ -1838,6 +1977,12 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	QR_CHECK (r);
 
 	glt->rtmaterial = newMaterial;
+
+	if (TexMgr_ApplyLightMaterial (glt, &info, shapeRme, splitShape) && texmgr_live_reload)
+		texmgr_live_material_replaced = true;
+
+	if (shapeRme) Mem_Free (shapeRme);
+	if (emissRawBytes) Mem_Free (emissRawBytes);
 
 	if (texmgr_live_reload && oldMaterial != QR_NULL_HANDLE && newMaterial != oldMaterial)
 		texmgr_live_material_replaced = true;
@@ -2021,8 +2166,10 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtglasscolor[2] = 1.0f;
 	glt->rtemissive = false;
 	glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
+	glt->rtemissivecolorraw[0] = glt->rtemissivecolorraw[1] = glt->rtemissivecolorraw[2] = 0.0f;
 	glt->rtemissivemean = 0.0f;
 	glt->rtemissivemeanbase = 0.0f;
+	glt->rtemissivemeanbaseraw = 0.0f;
 	glt->rtemisangleinner = 0.0f;
 	glt->rtemisangleouter = 0.0f;
 	glt->rtemisprojector = false;
@@ -2033,6 +2180,8 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtemissiveglowtex = false;
 	glt->rtemissivetex = false;
 	glt->rtlightgain = 1.0f;
+	glt->rtlightmaterial = QR_NULL_HANDLE;
+	glt->rtemissivemeanraw = 0.0f;
 	glt->rtislight = false;
 	glt->rtlightstyles = true;
 	glt->rthasmaterial = false;
@@ -2658,6 +2807,16 @@ static void GL_DeleteTexture (gltexture_t *texture)
 		QR_CHECK (r);
 
 		texture->rtmaterial = QR_NO_MATERIAL;
+	}
+
+	if (texture->rtlightmaterial != QR_NO_MATERIAL && !texmgr_live_reload)
+	{
+		SDL_LockMutex (rtspecial_mutex);
+		QrResult r = qrDestroyMaterial (vulkan_globals.instance, texture->rtlightmaterial);
+		SDL_UnlockMutex (rtspecial_mutex);
+		QR_CHECK (r);
+
+		texture->rtlightmaterial = QR_NO_MATERIAL;
 	}
 
 	SDL_UnlockMutex (texmgr_mutex);
