@@ -96,6 +96,7 @@ bool q2ReuseLoadPrev(const int2 pix, out Q2ReuseReservoir r)
     r.flags = (b.y >> 24u) & 0xFFu;
 
     return (r.flags & Q2_REUSE_FLAG_VALID) != 0u &&
+           ((r.flags >> 2u) & 0x3Fu) == ((globalUniform.frameId + 63u) & 0x3Fu) &&
            r.lightIndex != (uint)LIGHT_INDEX_NONE &&
            r.m > 0u &&
            r.ucw > 0.0 && r.ucw < 1.0e9 && !isnan(r.ucw) && !isinf(r.ucw) &&

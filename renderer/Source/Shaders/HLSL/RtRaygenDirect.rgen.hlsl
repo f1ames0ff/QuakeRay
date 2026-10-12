@@ -178,7 +178,7 @@ void main()
                         selTarget = targetHist;
                         selCluster = hist.cluster;
                         selSlot = hist.slot;
-                        selFlags = hist.flags;
+                        selFlags = hist.flags & 0x3u;
                     }
                 }
             }
@@ -202,7 +202,9 @@ void main()
         outReservoir.candidateHash = wellonsLowBias32(seedBase ^ 0x85EBCA6Bu) & 0xFFFFu;
         outReservoir.cluster = selCluster;
         outReservoir.slot = selSlot;
-        outReservoir.flags = (selLight != LIGHT_INDEX_NONE) ? (Q2_REUSE_FLAG_VALID | selFlags) : 0u;
+        outReservoir.flags = (selLight != LIGHT_INDEX_NONE)
+                                 ? (Q2_REUSE_FLAG_VALID | selFlags | ((globalUniform.frameId & 0x3Fu) << 2u))
+                                 : 0u;
         q2ReuseStore(pix, outReservoir);
 
         if (selLight != LIGHT_INDEX_NONE)
