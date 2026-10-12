@@ -558,7 +558,7 @@ float3 traceSkyVisibility(const Surface surf, const float3 skyDirection)
 
 
 
-#define LIGHT_CHROMA_BOOST 1.3
+#define LIGHT_CHROMA_BOOST 1.0
 float3 boostChroma(const float3 c)
 {
     const float lum = getLuminance(c);

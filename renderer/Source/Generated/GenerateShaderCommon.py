@@ -309,7 +309,7 @@ CONST = {
     "GEOM_INST_FLAG_TURB_WARP"              : "1 << 13",
     "GEOM_INST_FLAG_ALPHA_TRANSMISSION"     : "1 << 14",
     "GEOM_INST_FLAG_RESERVED_2"             : "1 << 15",
-    "GEOM_INST_FLAG_RESERVED_3"             : "1 << 16",
+    "GEOM_INST_FLAG_EMISSION_RAY_ONLY"      : "1 << 16",
     "GEOM_INST_FLAG_GLASS_CUTOUT"           : "1 << 17",
     "GEOM_INST_FLAG_MEDIA_TYPE_ACID"        : "1 << 18",
     "GEOM_INST_FLAG_EXACT_NORMALS"          : "1 << 19",

@@ -358,9 +358,10 @@ quakeray MCP facade (thin)          tools/quakeray_mcp
 
 ### 4.2 OpenCode configuration
 
-Project-local `opencode.jsonc` is now registered and tested. Install the package/environment
-explicitly with `uv sync --locked --project tools/quakeray_mcp --python 3.10`; normal startup
-uses the installed environment without downloading or resolving dependencies. The reference
+Project-local `opencode.jsonc` is now registered and tested. The one-time package/environment
+install is `uv sync --locked --project tools/quakeray_mcp --python 3.10` (the only network
+step); the launch command below then syncs the environment from `uv.lock` and the local uv
+cache whenever `.venv` is missing or stale, offline, without rewriting the lock. The reference
 snippet below includes a recommended ask policy for an operator to apply deliberately;
 the actual project configuration inherits existing permissions and does not override them.
 Merge with existing configuration rather than replacing it:
@@ -372,7 +373,7 @@ Merge with existing configuration rather than replacing it:
     "servers": {
       "quakeray": {
         "type": "local",
-        "command": ["uv", "run", "--offline", "--frozen", "--no-sync", "--project", "tools/quakeray_mcp", "python", "-B", "-m", "quakeray_mcp"],
+        "command": ["uv", "run", "--offline", "--frozen", "--project", "tools/quakeray_mcp", "python", "-B", "-m", "quakeray_mcp"],
         "cwd": ".",
         "environment": { "QUAKERAY_ROOT": ".", "QUAKERAY_BUILD": "build/Debug" },
         "protocol": "legacy",

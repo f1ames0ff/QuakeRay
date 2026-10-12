@@ -896,6 +896,62 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
             EndGpuPass(commandList, frameIndex, GPU_PASS_SKY);
         }
 
+        auto ensureRasterStagingWraps = [&]() -> bool
+        {
+            if (sky.swapchainVertexStaging == 0 || sky.swapchainIndexStaging == 0)
+            {
+                return false;
+            }
+
+            if (uiVertexStagingWraps[frameIndex] == nullptr ||
+                uiVertexStagingHandles[frameIndex] != sky.swapchainVertexStaging)
+            {
+                if (uiVertexStagingWraps[frameIndex] != nullptr && frameContext != nullptr)
+                {
+                    frameContext->Retire(uiVertexStagingWraps[frameIndex]);
+                }
+
+                nvrhi::BufferDesc desc;
+                desc.byteSize = sky.swapchainVertexStagingSize;
+                desc.isVertexBuffer = true;
+                desc.initialState = nvrhi::ResourceStates::VertexBuffer;
+                desc.keepInitialState = true;
+                desc.debugName = "RHI sky vertex staging";
+
+                uiVertexStagingWraps[frameIndex] = device->createHandleForNativeBuffer(
+                    nvrhi::ObjectTypes::VK_Buffer,
+                    nvrhi::Object(static_cast<uint64_t>(sky.swapchainVertexStaging)),
+                    desc);
+                uiVertexStagingHandles[frameIndex] =
+                    uiVertexStagingWraps[frameIndex] != nullptr ? sky.swapchainVertexStaging : 0;
+            }
+
+            if (uiIndexStagingWraps[frameIndex] == nullptr ||
+                uiIndexStagingHandles[frameIndex] != sky.swapchainIndexStaging)
+            {
+                if (uiIndexStagingWraps[frameIndex] != nullptr && frameContext != nullptr)
+                {
+                    frameContext->Retire(uiIndexStagingWraps[frameIndex]);
+                }
+
+                nvrhi::BufferDesc desc;
+                desc.byteSize = sky.swapchainIndexStagingSize;
+                desc.isIndexBuffer = true;
+                desc.initialState = nvrhi::ResourceStates::IndexBuffer;
+                desc.keepInitialState = true;
+                desc.debugName = "RHI sky index staging";
+
+                uiIndexStagingWraps[frameIndex] = device->createHandleForNativeBuffer(
+                    nvrhi::ObjectTypes::VK_Buffer,
+                    nvrhi::Object(static_cast<uint64_t>(sky.swapchainIndexStaging)),
+                    desc);
+                uiIndexStagingHandles[frameIndex] =
+                    uiIndexStagingWraps[frameIndex] != nullptr ? sky.swapchainIndexStaging : 0;
+            }
+
+            return uiVertexStagingWraps[frameIndex] != nullptr && uiIndexStagingWraps[frameIndex] != nullptr;
+        };
+
         // The raster sky (RHI/RhiRasterSkyPass.h): the legacy frame's `DrawSkyToCubemap` ->
         // `DrawSkyToAlbedo` pair (VulkanDevice.cpp:748-753), recorded on this list before the
         // primary because under this sky type the primary takes its sky color from the raster
@@ -909,6 +965,18 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         if (skyPass != nullptr && sky.framebuffers != nullptr && !sky.disableRasterization &&
             uniform != nullptr && uniform->skyType == SKY_TYPE_RASTERIZED_GEOMETRY)
         {
+            if (ensureRasterStagingWraps())
+            {
+                skyPass->SetGeometryBuffers(uiVertexStagingWraps[frameIndex].Get(),
+                                            uiIndexStagingWraps[frameIndex].Get());
+
+                if (rasterSkyPass != nullptr)
+                {
+                    rasterSkyPass->SetGeometryBuffers(uiVertexStagingWraps[frameIndex].Get(),
+                                                      uiIndexStagingWraps[frameIndex].Get());
+                }
+            }
+
             // The frame's camera, which the traced branch never set because the sky never ran
             // there; the ALBEDO half below does nothing without it. The raster frame's own branch
             // passes the same values to the same call.

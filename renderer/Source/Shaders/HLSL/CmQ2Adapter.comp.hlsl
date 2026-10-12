@@ -71,6 +71,8 @@
 #define Q2_FIREFLY_FACTOR 8.0
 #define Q2_FIREFLY_MIN_LUM 1.0
 
+#define Q2_LF_CHROMA_TO_RADIANCE (1.0 / 0.282095)
+
 float3 q2AntiFirefly(const int2 pix, const float3 center, const Texture2D<uint4> buf, const int width, const int height)
 {
     float maxNeighborLum = 1.0f;
@@ -210,5 +212,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     // LF: indirect diffuse SH converted to the YCoCg luma-SH + chroma format
     const Q2SH lf = q2IrradianceToSH(indir.r, indir.g, indir.b);
     framebufQ2ColorLF_SH[pix] = lf.shY * Q2_STORAGE_SCALE_LF;
-    framebufQ2ColorLF_COCG[pix] = float4(lf.CoCg * Q2_STORAGE_SCALE_LF, 0.0, 0.0);
+    framebufQ2ColorLF_COCG[pix] = float4(lf.CoCg * Q2_LF_CHROMA_TO_RADIANCE * Q2_STORAGE_SCALE_LF, 0.0, 0.0);
 }

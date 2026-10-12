@@ -974,6 +974,7 @@ static void RT_ClearBatch (cb_context_t *cbx)
 {
 	cbx->batch_verts_count = 0;
 	cbx->batch_indices_count = 0;
+	cbx->batch_emission_ray_only = false;
 }
 
 QrTransform RT_GetBrushModelMatrix (entity_t *e)
@@ -1582,6 +1583,7 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			    (s->alpha_transmission ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 			    (is_glass && s->alpha_test ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
 			    (RT_UV_TRANSFORM_ACTIVE (diffuse_tex) ? QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT : 0) |
+			    (cbx->batch_emission_ray_only ? QR_GEOMETRY_UPLOAD_EMISSION_RAY_ONLY_BIT : 0) |
                 QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
 			.geomType = rt_movable_upload_entry != NULL ? QR_GEOMETRY_TYPE_STATIC_MOVABLE :
 			            (is_static_geom ? QR_GEOMETRY_TYPE_STATIC : QR_GEOMETRY_TYPE_DYNAMIC),
@@ -2171,7 +2173,7 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	if (!light_tex || !light_tex->rtislight)
 		return false;
 
-	if (!light_tex->rthaslightcolor && VectorLength (light_tex->rtemissivecolor) <= 0.0005f)
+	if (!(light_tex->rtlightgain > 0.0f))
 		return false;
 
 	/* Whether a mask is there is a question about the material, not about how bright the mask is:
@@ -2179,11 +2181,20 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	   instead of glowing evenly over its whole polygon. */
 	const qboolean has_mask = light_tex->rtemissivetex;
 
+	/* The luma factors scale how brightly the surface glows; the light itself answers to
+	   light_brightness. Where a texture carries them it also carries a second mask, the shape
+	   with none of the factors folded in, and that is the one the light reads. */
+	const qboolean shape_split = has_mask && light_tex->rtlightmaterial != QR_NULL_HANDLE;
+	const float    mean_base   = shape_split ? light_tex->rtemissivemeanbaseraw : light_tex->rtemissivemeanbase;
+
+	if (!light_tex->rthaslightcolor && mean_base <= 0.0f)
+		return false;
+
 	/* The light has to glow where the surface glows, so a masked texture sends its material along
 	   and the shader reads the mask at the point it sampled. Only a texture with no mask is
 	   uniform over its polygon, and only there does meanEmiss describe the emission. */
-	p->material  = has_mask ? light_tex->rtmaterial : QR_NO_MATERIAL;
-	p->meanEmiss = has_mask ? light_tex->rtemissivemean : 1.0f;
+	p->material  = has_mask ? (shape_split ? light_tex->rtlightmaterial : light_tex->rtmaterial) : QR_NO_MATERIAL;
+	p->meanEmiss = has_mask ? (shape_split ? light_tex->rtemissivemeanraw : light_tex->rtemissivemean) : 1.0f;
 	p->glow      = false;
 	p->glow_mean = p->meanEmiss;
 	p->angleInner = light_tex->rtemisangleinner;
@@ -2196,8 +2207,12 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	}
 	else if (has_mask)
 	{
-		const float meanBase = light_tex->rtemissivemeanbase > 1e-6f ? light_tex->rtemissivemeanbase : 1e-6f;
-		VectorScale (light_tex->rtemissivecolor, 1.0f / meanBase, p->color);
+		const float meanBase = mean_base > 1e-6f ? mean_base : 1e-6f;
+
+		if (shape_split)
+			VectorScale (light_tex->rtemissivecolorraw, 1.0f / meanBase, p->color);
+		else
+			VectorScale (light_tex->rtemissivecolor, 1.0f / meanBase, p->color);
 	}
 	else
 	{
@@ -2213,7 +2228,8 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 		p->glow_uvmax[1] = light_tex->rtemisuvmax[1];
 		/* Area mean over the glow extents: the polygon lights cover only those, so they carry
 		   the emission the whole surface would have had over the glowing part. */
-		p->glow_mean     = light_tex->rtemissiveglow;
+		p->glow_mean     = shape_split ? light_tex->rtemissivemeanraw / light_tex->rtemisglowfrac
+		                               : light_tex->rtemissiveglow;
 	}
 
 	return true;
@@ -4476,6 +4492,13 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 				batch_verts[i].lightStyles = packed_styles;
 	}
 
+	{
+		rt_emissive_params_t emissive_params;
+
+		if (!RT_EmissiveLightParamsForTex (s->light_tex ? s->light_tex : s->diffuse_tex, &emissive_params))
+			cbx->batch_emission_ray_only = true;
+	}
+
 	cbx->batch_indices_count += num_surf_indices;
 	cbx->batch_verts_count += num_surf_verts;
 	RT_Prof_End (RT_PROF_BRUSH_PACK, prof_pack);
@@ -5585,12 +5608,13 @@ typedef struct
 	int32_t   *vis_offsets;
 	uint32_t   pvs_row_bytes;
 
-	// Only the grid publishes its own rows; the identity table leaves the map's visdata in place.
 	uint8_t *vis_data;
 	int      vis_data_size;
 
 	// Bit c of byte c/8 is 1 when a sun ray from cluster c can still reach the sky.
 	uint8_t *sky_vis;
+	int      sky_tracing;
+	int      sky_holding;
 
 	float grid_mins[3];
 	float grid_cell_size[3];
@@ -5607,6 +5631,8 @@ typedef struct
 	float     mins[3];
 	float     cell;
 	int       dims[3];
+	int       texels;
+	int       empty;
 	uint32_t  generation;
 } rt_cluster_volume_t;
 
@@ -5653,10 +5679,92 @@ int RT_MapWorldCluster (int leaf_index)
 	if (rt_worldclusters.model != cl.worldmodel || !rt_worldclusters.leaf_cluster)
 		RT_BuildWorldClusters ();
 
-	if (leaf_index <= 0 || leaf_index >= rt_worldclusters.num_leafs)
+	if (leaf_index <= 0 || leaf_index > rt_worldclusters.num_leafs)
 		return 0;
 
 	return rt_worldclusters.leaf_cluster[leaf_index];
+}
+
+/*
+=================
+RT_WorldClustersAcrossLiquid
+
+The clusters of the other side of the water: liquid clusters for a light that stands in air, dry
+ones for a light that stands in a liquid, nearest first and no further than the reach the light
+states for itself. A map's vis closes a liquid surface for the classic renderer (Mod_CheckWaterVis),
+and the light lists are built from those rows, so without this a lamp above a pool is never handed
+the clusters under it. The light carries them as part of its own cluster list.
+=================
+*/
+uint32_t RT_WorldClustersAcrossLiquid (const vec3_t origin, uint32_t fromCluster, float reach,
+                                       uint32_t *out, uint32_t maxOut)
+{
+	if (maxOut == 0)
+		return 0;
+
+	if (rt_worldclusters.model != cl.worldmodel || !rt_worldclusters.leaf_cluster)
+		RT_BuildWorldClusters ();
+
+	if (rt_worldclusters.num_clusters <= 1 || fromCluster == QR_CLUSTER_LIGHT_NO_CLUSTER ||
+	    fromCluster >= (uint32_t)rt_worldclusters.num_clusters)
+		return 0;
+
+	const qboolean fromLiquid =
+		(rt_worldclusters.cluster_flags[fromCluster] & QR_WORLD_CLUSTER_LIQUID_BIT) != 0;
+	const float reachSquared = reach * reach;
+	uint32_t    count = 0;
+	float       distances[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
+
+	if (maxOut > QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
+		maxOut = QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS;
+
+	for (int c = 1; c < rt_worldclusters.num_clusters; c++)
+	{
+		const uint8_t flags = rt_worldclusters.cluster_flags[c];
+
+		if ((flags & QR_WORLD_CLUSTER_SOLID_BIT) != 0)
+			continue;
+
+		if (((flags & QR_WORLD_CLUSTER_LIQUID_BIT) != 0) == fromLiquid)
+			continue;
+
+		float dist2 = 0.0f;
+
+		for (int a = 0; a < 3; a++)
+		{
+			const float lo = rt_worldclusters.cluster_mins[c].data[a];
+			const float hi = rt_worldclusters.cluster_maxs[c].data[a];
+			const float v  = origin[a];
+			const float d  = (v < lo) ? (lo - v) : ((v > hi) ? (v - hi) : 0.0f);
+
+			dist2 += d * d;
+		}
+
+		if (dist2 > reachSquared)
+			continue;
+
+		uint32_t slot = count;
+
+		while (slot > 0 && distances[slot - 1] > dist2)
+			slot--;
+
+		if (slot >= maxOut)
+			continue;
+
+		if (count < maxOut)
+			count++;
+
+		for (uint32_t move = count - 1; move > slot; move--)
+		{
+			out[move] = out[move - 1];
+			distances[move] = distances[move - 1];
+		}
+
+		out[slot] = (uint32_t)c;
+		distances[slot] = dist2;
+	}
+
+	return count;
 }
 
 static int RT_GridCellOfPoint (const float *p)
@@ -5777,13 +5885,19 @@ static int RT_CompressVisRow (const uint8_t *p_row, int row_bytes, uint8_t *p_ou
 	return out;
 }
 
+static qboolean RT_IsLiquidContents (int contents)
+{
+	return contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA;
+}
+
 static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 {
 	const int num_leafs = model->numleafs;
 	// Cluster i is leaf i, and cluster 0 is reserved for the solid leaf and geometry that has no
 	// leaf of its own, so the table holds one cluster per leaf.
-	const int num_clusters = num_leafs;
+	const int num_clusters = num_leafs + 1;
 	const int row_bytes = (num_leafs + 31) / 8;
+	const qboolean have_edge_leaf = (model->numleafs_lump > num_leafs);
 
 	rt_worldclusters.num_leafs = num_leafs;
 	rt_worldclusters.leaf_cluster = (int32_t *)Mem_Alloc (sizeof (int32_t) * num_clusters);
@@ -5800,23 +5914,59 @@ static void RT_BuildWorldClustersIdentity (qmodel_t *model)
 	rt_worldclusters.cluster_flags[0] = QR_WORLD_CLUSTER_SOLID_BIT;
 	rt_worldclusters.vis_offsets[0] = -1;
 
-	for (int i = 1; i < num_leafs; i++)
+	if (!have_edge_leaf)
 	{
+		rt_worldclusters.leaf_cluster[num_leafs] = 0;
+		VectorCopy (model->mins, rt_worldclusters.cluster_mins[num_leafs].data);
+		VectorCopy (model->maxs, rt_worldclusters.cluster_maxs[num_leafs].data);
+		rt_worldclusters.cluster_flags[num_leafs] = QR_WORLD_CLUSTER_SOLID_BIT;
+		rt_worldclusters.vis_offsets[num_leafs] = -1;
+	}
+
+	if (model->visdata == NULL)
+	{
+		rt_worldclusters.vis_data = (uint8_t *)Mem_Alloc (sizeof (uint8_t) * row_bytes);
+		memset (rt_worldclusters.vis_data, 0xFF, row_bytes);
+		rt_worldclusters.vis_data_size = row_bytes;
+
+		for (int i = 1; i < num_clusters; i++)
+		{
+			if (i == num_leafs && !have_edge_leaf)
+				continue;
+
+			rt_worldclusters.vis_offsets[i] = 0;
+		}
+	}
+	else
+	{
+		const int copy_bytes = model->visdatasize + row_bytes;
+
+		rt_worldclusters.vis_data = (uint8_t *)Mem_Alloc (sizeof (uint8_t) * copy_bytes);
+		memcpy (rt_worldclusters.vis_data, model->visdata, model->visdatasize);
+		memset (rt_worldclusters.vis_data + model->visdatasize, 0xFF, row_bytes);
+		rt_worldclusters.vis_data_size = copy_bytes;
+	}
+
+	for (int i = 1; i <= num_leafs; i++)
+	{
+		if (i == num_leafs && !have_edge_leaf)
+			continue;
+
 		const mleaf_t *leaf = &model->leafs[i];
 		int32_t        offset = -1;
 
 		rt_worldclusters.leaf_cluster[i] = i;
 		VectorCopy (leaf->minmaxs, rt_worldclusters.cluster_mins[i].data);
 		VectorCopy (leaf->minmaxs + 3, rt_worldclusters.cluster_maxs[i].data);
-		rt_worldclusters.cluster_flags[i] = (leaf->contents == CONTENTS_SOLID) ? QR_WORLD_CLUSTER_SOLID_BIT : 0;
+		rt_worldclusters.cluster_flags[i] =
+			((leaf->contents == CONTENTS_SOLID) ? QR_WORLD_CLUSTER_SOLID_BIT : 0) |
+			(RT_IsLiquidContents (leaf->contents) ? QR_WORLD_CLUSTER_LIQUID_BIT : 0);
+
+		if (model->visdata == NULL)
+			continue;
 
 		if (leaf->compressed_vis)
-		{
 			offset = (int32_t)(leaf->compressed_vis - model->visdata);
-
-			if ((int)offset + row_bytes > rt_worldclusters.vis_data_size)
-				rt_worldclusters.vis_data_size = (int)offset + row_bytes;
-		}
 
 		rt_worldclusters.vis_offsets[i] = offset;
 	}
@@ -5852,6 +6002,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 	const int num_clusters = num_cells + 1;
 	const int cluster_row_bytes = (num_clusters + 7) / 8;
 	const int leaf_row_bytes = (num_leafs + 31) / 8;
+	const int last_leaf = (model->numleafs_lump > num_leafs) ? num_leafs : (num_leafs - 1);
 
 	int     *cell_counts = (int *)Mem_Alloc (sizeof (int) * num_cells);
 	int     *cell_start = (int *)Mem_Alloc (sizeof (int) * (num_cells + 1));
@@ -5895,7 +6046,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 	rt_worldclusters.vis_offsets[0] = -1;
 
-	for (int i = 1; i < num_leafs; i++)
+	for (int i = 1; i <= last_leaf; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
 		float          center[3];
@@ -5910,6 +6061,9 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 		if (leaf->contents == CONTENTS_SOLID)
 			continue;
+
+		if (RT_IsLiquidContents (leaf->contents))
+			rt_worldclusters.cluster_flags[cell + 1] |= QR_WORLD_CLUSTER_LIQUID_BIT;
 
 		cell_counts[cell]++;
 
@@ -5933,7 +6087,7 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 
 	cell_start[num_cells] = running;
 
-	for (int i = 1; i < num_leafs; i++)
+	for (int i = 1; i <= last_leaf; i++)
 	{
 		int cell;
 
@@ -5960,7 +6114,14 @@ static void RT_BuildWorldClustersGrid (qmodel_t *model, const float *map_mins, c
 			const uint8_t *compressed = model->leafs[members[m]].compressed_vis;
 			int            offset;
 
-			if (compressed == NULL || model->visdata == NULL)
+			if (model->visdata == NULL)
+			{
+				memset (row, 0xFF, cluster_row_bytes);
+				have_row = true;
+				break;
+			}
+
+			if (compressed == NULL)
 				continue;
 
 			offset = (int)(compressed - model->visdata);
@@ -6045,7 +6206,7 @@ void RT_BuildWorldClusters (void)
 
 	/* The grid has to hold the leafs a light or a view can stand in, and the solid leafs reach
 	   all around the map, so the open ones are what its box is measured from. Leaf 0 is the solid
-	   leaf and is skipped; the real leafs are leafs[1..numleafs-1]. */
+	   leaf and is skipped. */
 	for (int i = 1; i < model->numleafs; i++)
 	{
 		const mleaf_t *leaf = &model->leafs[i];
@@ -6194,6 +6355,9 @@ static void RT_BuildClusterVolume (void)
 			}
 		}
 	}
+
+	rt_cluster_volume.texels = painted;
+	rt_cluster_volume.empty = painted_zero;
 
 	Con_Printf ("RT: cluster volume %ix%ix%i, %i texels, %i zero, %.1f ms, generation %u\n",
 		dims[0], dims[1], dims[2], painted, painted_zero,
@@ -6437,24 +6601,48 @@ static void RT_BuildClusterSkyVisibility (void)
 	if (everything)
 		memset (rt_worldclusters.sky_vis, 0xFF, num_bytes);
 
-	if (CVAR_TO_BOOL (rt_worldlights_stats))
+	rt_worldclusters.sky_tracing = 0;
+	rt_worldclusters.sky_holding = 0;
+
+	for (int i = 0; i < num_clusters; i++)
 	{
-		int traced = 0, sky_clusters = 0;
+		if (rt_worldclusters.sky_vis[i >> 3] & (1u << (i & 7)))
+			rt_worldclusters.sky_tracing++;
 
-		for (int i = 0; i < num_clusters; i++)
-		{
-			if (rt_worldclusters.sky_vis[i >> 3] & (1u << (i & 7)))
-				traced++;
-
-			if (has_sky[i >> 3] & (1u << (i & 7)))
-				sky_clusters++;
-		}
-
-		Con_Printf ("sky visibility: %i of %i clusters trace the sun (%i clusters hold sky%s)\n",
-			traced, num_clusters, sky_clusters, everything ? ", every cluster traces" : "");
+		if (has_sky[i >> 3] & (1u << (i & 7)))
+			rt_worldclusters.sky_holding++;
 	}
 
+	if (CVAR_TO_BOOL (rt_worldlights_stats))
+		Con_Printf ("sky visibility: %i of %i clusters trace the sun (%i clusters hold sky%s)\n",
+			rt_worldclusters.sky_tracing, num_clusters, rt_worldclusters.sky_holding,
+			everything ? ", every cluster traces" : "");
+
 	Mem_Free (has_sky);
+}
+
+void RT_WorldMapStats (rt_world_report_t *out)
+{
+	memset (out, 0, sizeof (*out));
+
+	if (!rt_worldclusters.num_clusters || !rt_worldclusters.vis_offsets)
+		return;
+
+	out->clusters = rt_worldclusters.num_clusters;
+	out->rowBytes = (int)rt_worldclusters.pvs_row_bytes;
+	out->visdataBytes = rt_worldclusters.vis_data_size;
+	out->skyTracing = rt_worldclusters.sky_tracing;
+	out->skyHolding = rt_worldclusters.sky_holding;
+
+	for (int i = 0; i < rt_worldclusters.num_clusters; i++)
+		if (rt_worldclusters.vis_offsets[i] < 0)
+			out->clustersWithoutRow++;
+
+	out->volumeDims[0] = rt_cluster_volume.dims[0];
+	out->volumeDims[1] = rt_cluster_volume.dims[1];
+	out->volumeDims[2] = rt_cluster_volume.dims[2];
+	out->volumeTexels = rt_cluster_volume.texels;
+	out->volumeEmpty = rt_cluster_volume.empty;
 }
 
 /*
@@ -6575,8 +6763,6 @@ void RT_UploadWorldLights (void)
 		}
 	}
 
-	// The grid carries its own rows; the identity table leaves the map's visdata in place, and
-	// RT_BuildWorldClusters measured the span the renderer walks in it.
 	const uint8_t *pvis_data = model->visdata;
 	uint32_t       vis_data_size = (uint32_t)rt_worldclusters.vis_data_size;
 
@@ -6599,6 +6785,7 @@ void RT_UploadWorldLights (void)
 		.pvsRowBytes     = rt_worldclusters.pvs_row_bytes,
 		.pVisOffsets     = rt_worldclusters.vis_offsets,
 		.pClusterSkyVisibility = rt_worldclusters.sky_vis,
+		.clusterGeneration = rt_worldclusters.generation,
 	};
 
 	QrResult r = qrUploadWorldLights (vulkan_globals.instance, &info);

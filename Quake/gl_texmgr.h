@@ -80,6 +80,7 @@ typedef struct gltexture_s
 	QrMaterial           rtmaterial;
 	QrMaterial           rtoverlaymaterial;
 	QrMaterial           rtrastermaterial;
+	QrMaterial           rtlightmaterial;
 	vec3_t	             rtlightcolor;
 	qboolean             rthaslightcolor;
 	qboolean             rtmirror;
@@ -94,8 +95,11 @@ typedef struct gltexture_s
 	float                rtuvoffset[2];
 	qboolean             rtemissive;
 	vec3_t               rtemissivecolor;
+	vec3_t               rtemissivecolorraw;
 	float                rtemissivemean;
+	float                rtemissivemeanraw;
 	float                rtemissivemeanbase;
+	float                rtemissivemeanbaseraw;
 	float                rtemisangleinner;
 	float                rtemisangleouter;
 	qboolean             rtemisprojector;
@@ -108,6 +112,7 @@ typedef struct gltexture_s
 	float                rtemissiveglow;
 	float                rtemisglowfrac;
 	qboolean             rtemissiveglowtex;
+	float                rtlightgain;
 	qboolean             rtislight;
 	qboolean             rtlightstyles;
 	qboolean             rthasmaterial;
