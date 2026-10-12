@@ -1229,6 +1229,64 @@ int QR_GUI_AnyItemActive (void)
 	return ImGui::IsAnyItemActive () ? 1 : 0;
 }
 
+// The view of a texture preview: the zoom in [1, 5], which the wheel over the
+// preview raises, and the image coordinates of the view's top-left corner.
+// Every widget keeps its own under its ImGui ID. The wheel is anchored at the
+// cursor: the texel under the pointer holds its place while the view shrinks
+// around it, and the view stays inside the texture.
+struct PreviewView
+{
+	float zoom;
+	float u0;
+	float v0;
+};
+
+constexpr float kPreviewZoomMax = 5.0f;
+
+PreviewView PreviewViewLoad (ImGuiID id)
+{
+	ImGuiStorage *storage = ImGui::GetStateStorage ();
+	PreviewView   view;
+
+	view.zoom = storage->GetFloat (id, 1.0f);
+	view.u0 = storage->GetFloat (id + 1, 0.0f);
+	view.v0 = storage->GetFloat (id + 2, 0.0f);
+
+	view.zoom = ClampF (view.zoom, 1.0f, kPreviewZoomMax);
+	view.u0 = ClampF (view.u0, 0.0f, 1.0f - 1.0f / view.zoom);
+	view.v0 = ClampF (view.v0, 0.0f, 1.0f - 1.0f / view.zoom);
+
+	return view;
+}
+
+void PreviewViewStore (ImGuiID id, const PreviewView &view)
+{
+	ImGuiStorage *storage = ImGui::GetStateStorage ();
+
+	storage->SetFloat (id, view.zoom);
+	storage->SetFloat (id + 1, view.u0);
+	storage->SetFloat (id + 2, view.v0);
+}
+
+PreviewView PreviewViewWheel (PreviewView view, const ImVec2 &pos, const ImVec2 &size, float wheel)
+{
+	const ImVec2 mouse = ImGui::GetIO ().MousePos;
+	const float  sx = (size.x > 1.0f) ? size.x : 1.0f;
+	const float  sy = (size.y > 1.0f) ? size.y : 1.0f;
+	const float  fu = ClampF ((mouse.x - pos.x) / sx, 0.0f, 1.0f);
+	const float  fv = ClampF ((mouse.y - pos.y) / sy, 0.0f, 1.0f);
+	const float  cu = view.u0 + fu / view.zoom;
+	const float  cv = view.v0 + fv / view.zoom;
+
+	view.zoom = ClampF (view.zoom * powf (1.4f, wheel), 1.0f, kPreviewZoomMax);
+	view.u0 = cu - fu / view.zoom;
+	view.v0 = cv - fv / view.zoom;
+	view.u0 = ClampF (view.u0, 0.0f, 1.0f - 1.0f / view.zoom);
+	view.v0 = ClampF (view.v0, 0.0f, 1.0f - 1.0f / view.zoom);
+
+	return view;
+}
+
 int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, float *out_u, float *out_v)
 {
 	ImGui::PushID (id);
@@ -1243,7 +1301,23 @@ int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, flo
 	const ImVec2 pos = ImGui::GetCursorScreenPos ();
 	const ImVec2 size (w, h);
 
-	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (0.0f, 0.0f), ImVec2 (1.0f, 1.0f));
+	const ImGuiID view_id = ImGui::GetID ("##preview_view");
+	PreviewView   view = PreviewViewLoad (view_id);
+	const bool    over = ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h));
+
+	if (over && ImGui::GetIO ().MouseWheel != 0.0f)
+	{
+		view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
+		PreviewViewStore (view_id, view);
+	}
+
+	const float span = 1.0f / view.zoom;
+
+	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
+
+	// while the pointer is on the preview the wheel is the zoom's, not the
+	// panel's scroll
+	ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
 
 	const bool hovered = ImGui::IsItemHovered ();
 	const ImVec2 mouse = ImGui::GetIO ().MousePos;
@@ -1251,8 +1325,8 @@ int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, flo
 
 	if (hovered)
 	{
-		float u = (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f);
-		float v = (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f);
+		float u = view.u0 + (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f) * span;
+		float v = view.v0 + (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f) * span;
 
 		u = u < 0.0f ? 0.0f : (u > 1.0f ? 1.0f : u);
 		v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
@@ -1333,12 +1407,33 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	const float  h = w * (float)tex_h / (float)tex_w;
 	const ImVec2 pos = ImGui::GetCursorScreenPos ();
 	const ImVec2 mouse = ImGui::GetIO ().MousePos;
+	const ImVec2 size (w, h);
 
-	ImGui::Image ((ImTextureID)(uint64_t)texture, ImVec2 (w, h), ImVec2 (0.0f, 0.0f), ImVec2 (1.0f, 1.0f));
+	const ImGuiID view_id = ImGui::GetID ("##preview_view");
+	PreviewView   view = PreviewViewLoad (view_id);
+
+	if (ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h)) && ImGui::GetIO ().MouseWheel != 0.0f)
+	{
+		view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
+		PreviewViewStore (view_id, view);
+	}
+
+	const float span = 1.0f / view.zoom;
+
+	// the view maps the texture through the zoom, so a point of the polygon
+	// follows it and the pointer keeps reading the texel it is on
+	auto sx = [&] (float u) { return pos.x + (u - view.u0) / span * w; };
+	auto sy = [&] (float v) { return pos.y + (v - view.v0) / span * h; };
+
+	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
 
 	ImGui::SetCursorScreenPos (pos);
-	ImGui::InvisibleButton ("##mask", ImVec2 (w, h),
+	ImGui::InvisibleButton ("##mask", size,
 	                        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+
+	// while the pointer is on the preview the wheel is the zoom's, not the
+	// panel's scroll
+	ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
 
 	const ImGuiID item = ImGui::GetItemID ();
 	int           changed = 0;
@@ -1348,8 +1443,8 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	{
 		for (int p = 0; p < points; p++)
 		{
-			const float px = pos.x + uv[p][0] * w;
-			const float py = pos.y + uv[p][1] * h;
+			const float px = sx (uv[p][0]);
+			const float py = sy (uv[p][1]);
 
 			if (mouse.x >= px - grab && mouse.x <= px + grab && mouse.y >= py - grab && mouse.y <= py + grab)
 			{
@@ -1369,8 +1464,8 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		for (int p = 0; p < points; p++)
 		{
 			const int   q = (p + 1) % points;
-			const float ax = pos.x + uv[p][0] * w, ay = pos.y + uv[p][1] * h;
-			const float bx = pos.x + uv[q][0] * w, by = pos.y + uv[q][1] * h;
+			const float ax = sx (uv[p][0]), ay = sy (uv[p][1]);
+			const float bx = sx (uv[q][0]), by = sy (uv[q][1]);
 			const float dx = bx - ax, dy = by - ay;
 			const float len2 = dx * dx + dy * dy;
 			float       t = 0.0f;
@@ -1393,8 +1488,8 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 			ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeAll);
 	}
 
-	const float u = ClampF ((mouse.x - pos.x) / (w > 1.0f ? w : 1.0f), 0.0f, 1.0f);
-	const float v = ClampF ((mouse.y - pos.y) / (h > 1.0f ? h : 1.0f), 0.0f, 1.0f);
+	const float u = ClampF (view.u0 + (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f) * span, 0.0f, 1.0f);
+	const float v = ClampF (view.v0 + (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f) * span, 0.0f, 1.0f);
 	const bool  inside = PointInPoly (uv, points, u, v);
 
 	if (ImGui::IsItemActivated ())
@@ -1574,7 +1669,11 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	ImVec2      pts[32];
 
 	for (int p = 0; p < points; p++)
-		pts[p] = ImVec2 (pos.x + uv[p][0] * w, pos.y + uv[p][1] * h);
+		pts[p] = ImVec2 (sx (uv[p][0]), sy (uv[p][1]));
+
+	// the zoomed view may carry points outside the preview, so the mask and its
+	// handles are clipped to the box
+	dl->PushClipRect (pos, ImVec2 (pos.x + w, pos.y + h), true);
 
 	dl->AddConcavePolyFilled (pts, points, IM_COL32 (255, 255, 255, 128));
 	dl->AddPolyline (pts, points, IM_COL32 (255, 255, 255, 220), ImDrawFlags_Closed, 1.5f);
@@ -1599,6 +1698,8 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		dl->AddCircleFilled (pts[p], 9.0f, fill);
 		dl->AddCircle (pts[p], 9.0f, IM_COL32 (0, 0, 0, 180), 16, 1.5f);
 	}
+
+	dl->PopClipRect ();
 
 	dl->AddRect (pos, ImVec2 (pos.x + w, pos.y + h), IM_COL32 (150, 160, 185, 255));
 

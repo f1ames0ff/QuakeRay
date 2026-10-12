@@ -130,6 +130,13 @@ void Cvar_WriteVariables (FILE *f);
 // Writes lines containing "set variable value" for all variables
 // with the CVAR_ARCHIVE flag set
 
+// A value the config should carry in place of the cvar's live one, or NULL to
+// write the live string. The per-level sky settings (RT_SkySettings_ConfigValue)
+// are the one user: a level's block drives the live cvar while the config keeps
+// the global value.
+typedef const char *(*cvarcfgvalue_t) (const cvar_t *var);
+void Cvar_SetConfigValueProvider (cvarcfgvalue_t provider);
+
 cvar_t *Cvar_FindVar (const char *var_name);
 cvar_t *Cvar_FindVarAfter (const char *prev_name, unsigned int with_flags);
 

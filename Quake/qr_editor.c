@@ -308,6 +308,10 @@ static struct
 	// and sun (the global settings)
 	int light_tab;
 
+	// the Global tab's "Global settings": on, the sky, sun and cloud settings
+	// belong to the config (all levels); off, they are saved for this level
+	qboolean sky_global;
+
 	int mat_tab;
 
 	qmodel_t  *entity_weapons[QRE_ENTITY_MAX];
@@ -410,6 +414,7 @@ static void     QRE_RequestExit (void);
 static void     QRE_StartMode (int mode);
 static void     QRE_GlobalsRestore (void);
 static qboolean QRE_GlobalsTouched (void);
+static qboolean QRE_SkyTouched (void);
 static qboolean QRE_WriteSession (void);
 static qboolean QRE_FileExists (const char *path);
 static void     QRE_SessionSave (void);
@@ -589,7 +594,7 @@ static qboolean QRE_CustomTouched (void)
 	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
 		return true;
 
-	return false;
+	return QRE_SkyTouched ();
 }
 
 // The light editor's session: the emitter overrides and the custom lights and
@@ -4153,6 +4158,39 @@ static qboolean QRE_GlobalsTouched (void)
 		if (!qre_globals_snapshot_set[i])
 			continue;
 
+		// the sky settings of a level are the level's to keep: they go to its
+		// own section, never to the config
+		if (!qre.sky_global && RT_SkySettings_IsManaged (QRE_GlobalCvarName (&qre_globals[i])))
+			continue;
+
+		var = Cvar_FindVar (QRE_GlobalCvarName (&qre_globals[i]));
+		if (var && strcmp (var->string ? var->string : "", qre_globals_snapshot[i]))
+			return true;
+	}
+
+	return false;
+}
+
+// Whether the sky settings themselves changed in this session: with the tab in
+// level scope that is an edit of a managed cvar, and with it in global scope it
+// is a level that was about to keep its own settings and no longer does.
+static qboolean QRE_SkyTouched (void)
+{
+	int i;
+
+	if (qre.mode != QRE_MODE_LIGHT)
+		return false;
+
+	if (qre.sky_global)
+		return RT_SkySettings_LevelHasBlock ();
+
+	for (i = 0; i < (int)countof (qre_globals); i++)
+	{
+		cvar_t *var;
+
+		if (!qre_globals_snapshot_set[i] || !RT_SkySettings_IsManaged (QRE_GlobalCvarName (&qre_globals[i])))
+			continue;
+
 		var = Cvar_FindVar (QRE_GlobalCvarName (&qre_globals[i]));
 		if (var && strcmp (var->string ? var->string : "", qre_globals_snapshot[i]))
 			return true;
@@ -4220,6 +4258,22 @@ static qboolean QRE_GlobalSectionVisible (const char *condition)
 	return false;
 }
 
+// The Global tab's scope switch: on, the sky, sun and cloud settings belong to
+// the config and every level shares them; off, they are saved in the current
+// level's own section and win over the config there.
+static void QRE_SkyScopeCheckbox (void)
+{
+	int value = qre.sky_global ? 1 : 0;
+
+	if (QR_GUI_Checkbox ("Global settings", &value,
+	                     "On: the sky, sun and cloud settings below are global -- the config carries them and every level shares them. "
+	                     "Off: they are saved for this level only, and a level's own settings win over the global ones."))
+	{
+		qre.sky_global = value ? true : false;
+		RT_SkySettings_SetLevelMode (!qre.sky_global);
+	}
+}
+
 static void QRE_LightGlobalTab (void)
 {
 	const char *section = NULL;
@@ -4246,6 +4300,8 @@ static void QRE_LightGlobalTab (void)
 			{
 				if (!g->show_when && g->cond == QRE_COND_NONE)
 					QR_GUI_Separator ();
+				if (!strcmp (g->section, "Sky"))
+					QRE_SkyScopeCheckbox ();
 				if (section[0])
 					QR_GUI_Label (section);
 			}
@@ -6410,6 +6466,12 @@ static void QRE_CustomWriteLevel (FILE *out, const char *level)
 
 	fprintf (out, "%s:\n", level);
 
+	// The level's own sky settings, when the Global tab is in level scope: the
+	// entries that differ from the globals, so the rest of the level keeps
+	// following the config.
+	if (!qre.sky_global)
+		RT_SkySettings_WriteLevel (out);
+
 	// The fog block is always part of the section: the Global tab authors the
 	// level's fog, so the session has to carry it even when only a light
 	// changed. (The color getter fills four floats, hence the local.)
@@ -6914,6 +6976,8 @@ static void QRE_RestoreModeState (void)
 	if (qre.mode == QRE_MODE_LIGHT)
 	{
 		QRE_RestoreLightSnapshot ();
+		RT_SkySettings_EndSession ();
+		qre.sky_global = RT_SkySettings_LevelHasBlock () ? false : true;
 	}
 	else
 	{
@@ -6969,6 +7033,7 @@ static void QRE_BackToChooser (void)
 	qre.custom_dragging = false;
 	QRE_CancelLightDrag ();
 	QRE_DtalDebugOff ();
+	RT_SkySettings_SetLevelMode (false);
 	qre.mat_tab = 0;
 	qre.light_tab = 0;
 	qre.entity_preview_model = NULL;
@@ -7076,6 +7141,11 @@ static void QRE_ResetAll (void)
 			QRE_ResetCvar (QRE_GlobalCvarName (&qre_globals[i]));
 		QRE_ResetCvar ("rt_sky_sun_edit");
 		RT_LIGHT_Reload ();
+
+		// the files are gone and the cvars are back at their defaults: those
+		// defaults are the globals from here on
+		RT_SkySettings_AdoptGlobals ();
+		RT_SkySettings_ClearLevelOverrides ();
 		RT_CustomLights_ChangeMap (cl.mapname);
 		Fog_NewMap ();
 	}
@@ -7103,7 +7173,9 @@ static void QRE_ResetAll (void)
 static void QRE_SessionSave (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
-	const qboolean globals = light ? QRE_GlobalsTouched () : QRE_WaterTouched ();
+	const qboolean sky_level = light && !qre.sky_global && QRE_SkyTouched ();
+	const qboolean sky_global = light && qre.sky_global && RT_SkySettings_LevelHasBlock ();
+	const qboolean globals = light ? (QRE_GlobalsTouched () || sky_global) : QRE_WaterTouched ();
 	const qboolean entries = light ? (qre.light_touched_count > 0 || QRE_CustomTouched ()) : (qre.touched_count > 0);
 	const qboolean had_target = QRE_FileExists (qre.target_file);
 
@@ -7111,6 +7183,20 @@ static void QRE_SessionSave (void)
 	{
 		QRE_Notify ("the session could not be written");
 		return;
+	}
+
+	// The module follows what the file now carries: a save with the scope on
+	// makes the live values the config's, a save with it off records which
+	// settings the level's block owns.
+	if (light)
+	{
+		if (qre.sky_global)
+		{
+			RT_SkySettings_AdoptGlobals ();
+			RT_SkySettings_ClearLevelOverrides ();
+		}
+		else if (sky_level)
+			RT_SkySettings_SyncLevelOverrides ();
 	}
 
 	if (globals)
@@ -7260,6 +7346,10 @@ static void QRE_StopEditor (qboolean restore)
 	if (restore)
 		QRE_RestoreModeState ();
 
+	// with the editor gone the sky settings are the level's and the config's
+	// again, not a session's
+	RT_SkySettings_SetLevelMode (false);
+
 	if (qre.entity_preview_model != NULL && cl.viewent.model == qre.entity_preview_model)
 		cl.viewent.model = NULL;
 
@@ -7319,6 +7409,13 @@ static void QRE_StartMode (int mode)
 	{
 		QRE_TakeLightSnapshot ();
 		QRE_TakeGlobalsSnapshot ();
+
+		// the sky settings the level carries are the session's starting point:
+		// the scope follows them, so a level with its own block opens in level
+		// scope and one without opens global
+		RT_SkySettings_BeginSession ();
+		qre.sky_global = RT_SkySettings_LevelHasBlock () ? false : true;
+		RT_SkySettings_SetLevelMode (!qre.sky_global);
 
 		// the light session: the gamedir's qray.lights.yaml holds both the
 		// emitter overrides and the custom lights and fog, with the session file
