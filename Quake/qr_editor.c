@@ -2583,6 +2583,53 @@ static void QRE_FreePreview (void)
 // synthesis will match, and the same pixels become the preview's QrMaterial.
 // A slot stays alive while the frame still draws it; a failed load is cached
 // too, so a texture that cannot be read is not decoded once per frame.
+// The engine texture of one texture frame of the picked model or sprite: what
+// the preview must show for that frame, whatever texture was picked. A frame
+// the model does not have (or a pick that is not a model) answers NULL.
+static gltexture_t *QRE_FrameTexture (int frame)
+{
+	if (!qre.pick_model || frame < 0)
+		return NULL;
+
+	if (qre.pick_model->type == mod_alias)
+	{
+		aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata (qre.pick_model);
+
+		if (!hdr || frame >= hdr->numskins)
+			return NULL;
+
+		return hdr->gltextures[frame][0];
+	}
+
+	if (qre.pick_model->type == mod_sprite)
+	{
+		msprite_t     *psprite = (msprite_t *)qre.pick_model->extradata;
+		mspriteframe_t *f;
+
+		if (!psprite || frame >= psprite->numframes)
+			return NULL;
+
+		if (psprite->frames[frame].type != SPR_SINGLE)
+		{
+			// a group animates through its own steps: its first frame stands in
+			mspritegroup_t *group = (mspritegroup_t *)psprite->frames[frame].frameptr;
+
+			if (!group || group->numframes <= 0)
+				return NULL;
+
+			f = group->frames[0];
+		}
+		else
+		{
+			f = psprite->frames[frame].frameptr;
+		}
+
+		return f ? f->gltexture : NULL;
+	}
+
+	return NULL;
+}
+
 static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 {
 	char          key[MAX_QPATH * 2 + 32];
@@ -2635,7 +2682,13 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 	if (m->filename_base[0])
 		pixels = RT_MAT_LoadTexture (m, RT_MAT_TEX_BASE, &w, &h);
 	if (!pixels)
-		pixels = TexMgr_LoadRgbaForPreview (qre.pick_glt, &w, &h);
+	{
+		// the texture of the frame the material stands for: a model's skin or a
+		// sprite's frame, not the texture the pick happened to land on
+		gltexture_t *frame_tex = QRE_FrameTexture (QRE_FrameDigit (m->name));
+
+		pixels = TexMgr_LoadRgbaForPreview (frame_tex ? frame_tex : qre.pick_glt, &w, &h);
+	}
 
 	if (!pixels || w <= 0 || h <= 0)
 	{
