@@ -879,7 +879,7 @@ qray_materials:
     is_light: false
   - name: progs/v_light.mdl:frame0
     texture_gloss: progs/v_light/0_gloss.png
-    texture_emissive: textures/v_light_skin0_luma.png
+    texture_emissive: progs/v_light/0_luma.png
     metalness_factor: 0.25
     exact_normals: true
     light_brightness: 0.5
@@ -920,7 +920,7 @@ qray_materials:
     is_light: true
   - name: progs/v_shot2.mdl:frame0
     texture_gloss: progs/v_shot2/0_gloss.png
-    texture_emissive: textures_v_shot2_skin0_luma.png
+    texture_emissive: progs/v_shot2/0_luma.png
     metalness_factor: 0.5
     exact_normals: true
     light_brightness: 0.5
