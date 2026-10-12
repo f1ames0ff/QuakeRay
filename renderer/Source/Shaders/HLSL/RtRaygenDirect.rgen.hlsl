@@ -31,6 +31,7 @@
 #include "Q2Asvgf.hlsli"
 #include "Q2LightLists.hlsli"
 #include "GlobalLightSampling.hlsli"
+#include "Q2DirectReuse.hlsli"
 
 #define Q2_RNG_CELL_SELECT 2000
 #define Q2_RNG_LIGHT_POINT 2100
@@ -73,6 +74,171 @@ void main()
 
     const int numNeeSamples = clamp((int)globalUniform.neeLightSamples, 1, Q2_NEE_MAX_SAMPLES);
 
+    const bool reuseEnabled = globalUniform.restirParams[3] != 0u && !useGlobalRestir && numNeeSamples == 1;
+
+    if (reuseEnabled)
+    {
+        const int  width = (int)globalUniform.renderWidth;
+        const int  height = (int)globalUniform.renderHeight;
+        const uint seedBase = isGradient ? wellonsLowBias32(seed ^ 0x9E3779B9u) : seed;
+        const float3 selRng = float3(
+            rnd24(seedBase, Q2_REUSE_RNG_SELECT),
+            rnd24(seedBase, Q2_REUSE_RNG_SELECT + 1u),
+            rnd24(seedBase, Q2_REUSE_RNG_SELECT + 2u));
+
+        uint  lightIndex = LIGHT_INDEX_NONE;
+        uint  lightSlot = 0u;
+        float lightPdf = 0.0;
+
+        q2SampleClusterLights(cluster, surf.position, surf.normal, surf.toViewerDir,
+                              phongExp, phongScale, phongWeight, isGradient, selRng,
+                              lightIndex, lightSlot, lightPdf);
+
+        float  wSum = 0.0;
+        uint   mSum = 0u;
+        uint   selLight = LIGHT_INDEX_NONE;
+        uint   selFlags = 0u;
+        uint   selCluster = cluster;
+        uint   selSlot = 0xFFu;
+        float2 selPointRnd = (float2)0.0;
+        float  selMemberRnd = 0.0;
+        float  selTarget = Q2_REUSE_TARGET_EPS;
+
+        if (lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0)
+        {
+            const float2 pointRnd = rnd16_2(seedBase, Q2_REUSE_RNG_POINT);
+            const float2 memberRnd = float2(rnd24(seedBase, Q2_REUSE_RNG_MEMBER),
+                                            rnd24(seedBase, Q2_REUSE_RNG_MEMBER + 1u));
+            float memberPdf = 1.0;
+            const LightSample candLight = sampleLightNee(lightSources[lightIndex], surf.position, pointRnd, memberRnd, memberPdf);
+
+            float3 dCand, sCand;
+            shade(surf, candLight, 1.0, dCand, sCand);
+
+            const float target = max(getLuminance(dCand + sCand), Q2_REUSE_TARGET_EPS);
+
+            wSum = target / max(lightPdf * memberPdf, 1e-9);
+            mSum = 1u;
+            selLight = lightIndex;
+            selPointRnd = pointRnd;
+            selMemberRnd = memberRnd.x;
+            selTarget = target;
+            selCluster = cluster;
+            selSlot = (lightSlot == (uint)Q2_LIGHT_LIST_INVALID_SLOT) ? 0xFFu : lightSlot;
+        }
+
+        if (globalUniform.restirParams.z == 0u)
+        {
+            const float4 motion = framebufMotion_Sampled.Load(int3(pix, 0));
+            const float2 posPrev = ((float2(q2CheckerToFlat(pix, width)) + (float2)0.5) *
+                                    float2(1.0 / globalUniform.renderWidth, 1.0 / globalUniform.renderHeight) + motion.xy) *
+                                   float2(width, height);
+            const int2 prevPix = q2FlatToChecker((int2)floor(posPrev - (float2)0.5), width);
+
+            if (prevPix.x >= 0 && prevPix.y >= 0 && prevPix.x < width && prevPix.y < height)
+            {
+                const float  depthCurr = framebufQ2ViewDepth_Sampled.Load(int3(pix, 0)).r;
+                const float  depthPrev = framebufQ2ViewDepth_Prev_Sampled.Load(int3(prevPix, 0)).r;
+                const float3 geoNormalCurr = texelFetchNormalGeometry(pix);
+                const float3 geoNormalPrev = texelFetchNormalGeometry_Prev(prevPix);
+                const float  motionZ = (depthCurr < 0.0) ? -motion.z : motion.z;
+                float        distDepth = abs(depthCurr - depthPrev + motionZ) / max(abs(depthCurr), 1e-6);
+
+                if (depthCurr < 0.0)
+                {
+                    distDepth *= 0.25;
+                }
+
+                Q2ReuseReservoir hist;
+                if (distDepth < 0.1 && dot(geoNormalCurr, geoNormalPrev) > 0.9 &&
+                    q2ReuseLoadPrev(prevPix, hist) &&
+                    hist.lightIndex >= (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET &&
+                    hist.lightIndex < (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET + globalUniform.lightCount &&
+                    hist.fingerprint == q2ReuseFingerprint(lightSources[hist.lightIndex]))
+                {
+                    float memberPdfHist = 1.0;
+                    const LightSample histLight = sampleLightNee(lightSources[hist.lightIndex], surf.position,
+                                                                 hist.pointRnd, float2(hist.memberRnd, 0.0), memberPdfHist);
+
+                    float3 dHist, sHist;
+                    shade(surf, histLight, 1.0, dHist, sHist);
+
+                    const float targetHist = max(getLuminance(dHist + sHist), Q2_REUSE_TARGET_EPS);
+                    const float wHist = targetHist * hist.ucw * (float)hist.m;
+                    const float mergeRnd = rnd16(seedBase, Q2_REUSE_RNG_MERGE);
+
+                    wSum += wHist;
+                    mSum += hist.m;
+
+                    if (mergeRnd * wSum < wHist)
+                    {
+                        selLight = hist.lightIndex;
+                        selPointRnd = hist.pointRnd;
+                        selMemberRnd = hist.memberRnd;
+                        selTarget = targetHist;
+                        selCluster = hist.cluster;
+                        selSlot = hist.slot;
+                        selFlags = hist.flags;
+                    }
+                }
+            }
+        }
+
+        if (mSum > Q2_REUSE_M_CAP)
+        {
+            const float meanW = wSum / (float)mSum;
+            mSum = Q2_REUSE_M_CAP;
+            wSum = meanW * (float)mSum;
+        }
+
+        Q2ReuseReservoir outReservoir;
+        outReservoir.lightIndex = selLight;
+        outReservoir.m = mSum;
+        outReservoir.pointRnd = selPointRnd;
+        outReservoir.memberRnd = selMemberRnd;
+        outReservoir.targetOwn = selTarget;
+        outReservoir.ucw = (selLight != LIGHT_INDEX_NONE) ? wSum / ((float)mSum * selTarget) : 0.0;
+        outReservoir.fingerprint = (selLight != LIGHT_INDEX_NONE) ? q2ReuseFingerprint(lightSources[selLight]) : 0u;
+        outReservoir.candidateHash = wellonsLowBias32(seedBase ^ 0x85EBCA6Bu) & 0xFFFFu;
+        outReservoir.cluster = selCluster;
+        outReservoir.slot = selSlot;
+        outReservoir.flags = (selLight != LIGHT_INDEX_NONE) ? (Q2_REUSE_FLAG_VALID | selFlags) : 0u;
+        q2ReuseStore(pix, outReservoir);
+
+        if (selLight != LIGHT_INDEX_NONE)
+        {
+            float memberPdfSel = 1.0;
+            const LightSample selLightSample = sampleLightNee(lightSources[selLight], surf.position,
+                                                              selPointRnd, float2(selMemberRnd, 0.0), memberPdfSel);
+
+            bool lightTraced;
+            const float3 vis = traceLightVisibility(surf, selLightSample, selLight, lightTraced);
+
+            if (lightTraced)
+            {
+                rayStatsAdd(RAY_STATS_CATEGORY_SHADOW_DIRECT, 1);
+            }
+
+            const uint selType = lightSources[selLight].lightType;
+
+            if ((selType == LIGHT_TYPE_TRIANGLE ||
+                 selType == LIGHT_TYPE_TEXTURED_AREA ||
+                 selType == LIGHT_TYPE_DTAL_GROUP) &&
+                selSlot != 0xFFu && selCluster < (uint)Q2_MAX_CLUSTERS)
+            {
+                q2AccumulateLightStats(selCluster, selSlot, surf.normal, getLuminance(vis), 0u);
+            }
+
+            float3 d, s;
+            shade(surf, selLightSample, 1.0, d, s);
+
+            const float ucw = wSum / ((float)mSum * selTarget);
+            directDiffuse += d * vis * ucw;
+            directSpecular += s * vis * ucw;
+        }
+    }
+    else
+    {
     for (int s = 0; s < numNeeSamples; s++)
     {
         uint lightIndex = LIGHT_INDEX_NONE;
@@ -136,6 +302,7 @@ void main()
                 directSpecular += s * vis;
             }
         }
+    }
     }
     directDiffuse  *= (1.0 / (float)numNeeSamples);
     directSpecular *= (1.0 / (float)numNeeSamples);

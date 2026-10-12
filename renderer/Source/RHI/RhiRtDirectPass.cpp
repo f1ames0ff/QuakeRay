@@ -71,45 +71,50 @@ static_assert(SET_TLAS == 0 && SET_FRAMEBUFFERS == 1 && SET_GLOBAL_UNIFORM == 2 
     PIPELINE_SET_COUNT == 13,
               "the RT set order is frozen by the engine's RT shaders");
 
-// The 12 images `RtRaygenDirect.rgen` references, measured 2026-09-25 with `spirv-dis` over the
-// blob the current sources build to (the command of GenerateShaders.py:157-164, dxc from Vulkan
-// SDK 1.4.321.1). The three UAVs first (the blob's set-1 storage images), then the nine SRVs (its
-// sampled images); the entry-point interface and the descriptor decorations name exactly these and
-// no other set-1 binding. The array order is not a requirement of NVRHI - a binding set's items are
-// keyed by slot - it only groups the writes and the reads the way the raygen uses them.
+// The images `RtRaygenDirect.rgen` references, measured with `spirv-dis` over the blob the current
+// sources build to (the command of GenerateShaders.py:157-164, dxc from Vulkan SDK 1.4.321.1). The
+// three UAVs first (the blob's set-1 storage images), then the sampled images; the entry-point
+// interface and the descriptor decorations name exactly these and no other set-1 binding. The array
+// order is not a requirement of NVRHI - a binding set's items are keyed by slot - it only groups the
+// writes and the reads the way the raygen uses them.
 //
-// The engine binding numbers are the identity for the UAVs (`ShFramebuffers_Bindings[index]`) and
-// `124 + index` for the sampled views (`ShFramebuffers_Sampled_Bindings[index]`), so the table
-// carries the image index and the kind and the module derives both the layout item and the set
-// item from the generated arrays; a hand-written binding number could drift from the shader build,
-// the generated ones cannot.
+// The engine binding numbers come from the generated arrays (`ShFramebuffers_Bindings[index]` for
+// the UAVs, `ShFramebuffers_Sampled_Bindings[index]` for the sampled views), so the table carries
+// the image index and the kind and the module derives both the layout item and the set item from
+// the generated arrays; a hand-written binding number could drift from the shader build, the
+// generated ones cannot.
 //
-// The A4.2a shader-side fix is what makes this list 12 items and not 13: the sampled view of the
-// view direction (raw binding 147, the same image as the UAV at 23) is gone from the blob, so no
-// image is bound as both an SRV and a UAV and the set has no layout conflict (a42_recon.md §0.1.1,
-// §7.1). The sampled screen emission (185) is not on the list either - DXC dead-strips that load,
-// because the raygen never reads `surf.emission` (a42_recon.md §1).
+// The A4.2a shader-side fix is what makes the set conflict-free: no image is bound as both an SRV
+// and a UAV and the set has no layout conflict (a42_recon.md §0.1.1, §7.1).
 struct FramebufferBinding
 {
     FramebufferImageIndex image;
     bool isUAV;
 };
 
-constexpr uint32_t FRAMEBUFFER_BINDING_COUNT = 12;
+constexpr uint32_t FRAMEBUFFER_BINDING_COUNT = 20;
 constexpr FramebufferBinding FRAMEBUFFER_BINDINGS[FRAMEBUFFER_BINDING_COUNT] =
 {
-    { FB_IMAGE_INDEX_UNFILTERED_DIRECT,      true  }, //  14  framebufUnfilteredDirect
-    { FB_IMAGE_INDEX_UNFILTERED_SPECULAR,    true  }, //  15  framebufUnfilteredSpecular
-    { FB_IMAGE_INDEX_VIEW_DIRECTION,         true  }, //  23  framebufViewDirection
-    { FB_IMAGE_INDEX_ALBEDO,                 false }, // 124  framebufAlbedo_Sampled
-    { FB_IMAGE_INDEX_IS_SKY,                 false }, // 126  framebufIsSky_Sampled
-    { FB_IMAGE_INDEX_NORMAL,                 false }, // 127  framebufNormal_Sampled
-    { FB_IMAGE_INDEX_NORMAL_GEOMETRY,        false }, // 129  framebufNormalGeometry_Sampled
-    { FB_IMAGE_INDEX_METALLIC_ROUGHNESS,     false }, // 131  framebufMetallicRoughness_Sampled
-    { FB_IMAGE_INDEX_SURFACE_POSITION,       false }, // 143  framebufSurfacePosition_Sampled
-    { FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS,       false }, // 239  framebufQ2GradSmplPos_Sampled
-    { FB_IMAGE_INDEX_Q2_RNG_SEED,            false }, // 245  framebufQ2RngSeed_Sampled
-    { FB_IMAGE_INDEX_Q2_CLUSTER,             false }, // 247  framebufQ2Cluster_Sampled
+    { FB_IMAGE_INDEX_UNFILTERED_DIRECT,      true  }, // framebufUnfilteredDirect
+    { FB_IMAGE_INDEX_UNFILTERED_SPECULAR,    true  }, // framebufUnfilteredSpecular
+    { FB_IMAGE_INDEX_VIEW_DIRECTION,         true  }, // framebufViewDirection
+    { FB_IMAGE_INDEX_ALBEDO,                 false }, // framebufAlbedo_Sampled
+    { FB_IMAGE_INDEX_IS_SKY,                 false }, // framebufIsSky_Sampled
+    { FB_IMAGE_INDEX_NORMAL,                 false }, // framebufNormal_Sampled
+    { FB_IMAGE_INDEX_NORMAL_GEOMETRY,        false }, // framebufNormalGeometry_Sampled
+    { FB_IMAGE_INDEX_METALLIC_ROUGHNESS,     false }, // framebufMetallicRoughness_Sampled
+    { FB_IMAGE_INDEX_SURFACE_POSITION,       false }, // framebufSurfacePosition_Sampled
+    { FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS,       false }, // framebufQ2GradSmplPos_Sampled
+    { FB_IMAGE_INDEX_Q2_RNG_SEED,            false }, // framebufQ2RngSeed_Sampled
+    { FB_IMAGE_INDEX_Q2_CLUSTER,             false }, // framebufQ2Cluster_Sampled
+    { FB_IMAGE_INDEX_Q2_REUSE_RESERVOIR,     true  }, // framebufQ2ReuseReservoir
+    { FB_IMAGE_INDEX_Q2_REUSE_RESERVOIR_META,true  }, // framebufQ2ReuseReservoirMeta
+    { FB_IMAGE_INDEX_Q2_REUSE_RESERVOIR_PREV,false }, // framebufQ2ReuseReservoir_Prev_Sampled
+    { FB_IMAGE_INDEX_Q2_REUSE_RESERVOIR_META_PREV, false }, // framebufQ2ReuseReservoirMeta_Prev_Sampled
+    { FB_IMAGE_INDEX_MOTION,                 false }, // framebufMotion_Sampled
+    { FB_IMAGE_INDEX_Q2_VIEW_DEPTH,          false }, // framebufQ2ViewDepth_Sampled
+    { FB_IMAGE_INDEX_Q2_VIEW_DEPTH_PREV,     false }, // framebufQ2ViewDepth_Prev_Sampled
+    { FB_IMAGE_INDEX_NORMAL_GEOMETRY_PREV,   false }, // framebufNormalGeometry_Prev_Sampled
 };
 
 // The engine raw binding of one entry: the UAV array for the storage images, the sampled array for
