@@ -195,6 +195,7 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
         case RT_MAT_TEX_BASE:     base = mat->filename_base; break;
         case RT_MAT_TEX_NORMALS:  base = mat->filename_normals; break;
         case RT_MAT_TEX_EMISSIVE: base = mat->filename_emissive; break;
+        case RT_MAT_TEX_OVERLAY:  base = mat->filename_overlay; break;
         case RT_MAT_TEX_GLOSS:    base = mat->filename_gloss; break;
         default: return NULL;
     }
@@ -320,6 +321,8 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->glass_color[0] = 1.0f;
     mat->glass_color[1] = 1.0f;
     mat->glass_color[2] = 1.0f;
+    mat->texture_scale_u = 1.0f;
+    mat->texture_scale_v = 1.0f;
     mat->light_brightness = 1.0f;
     mat->light_styles = false;
     mat->color_emissive_threshold = 0.02f;
@@ -663,8 +666,46 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         q_strlcpy(mat->filename_normals, value, sizeof(mat->filename_normals));
     else if (!q_strcasecmp(key, "texture_emissive"))
         q_strlcpy(mat->filename_emissive, value, sizeof(mat->filename_emissive));
+    else if (!q_strcasecmp(key, "texture_overlay"))
+        q_strlcpy(mat->filename_overlay, value, sizeof(mat->filename_overlay));
     else if (!q_strcasecmp(key, "texture_gloss"))
         q_strlcpy(mat->filename_gloss, value, sizeof(mat->filename_gloss));
+    else if (!q_strcasecmp(key, "texture_scale_u"))
+    {
+        float v = (float)atof(value);
+        float raw = v;
+        v = CLAMP(0.05f, v, 16.0f);
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': texture_scale_u '%s' is not in 0.05..16; using %.3g\n", mat->name, value, v);
+        mat->texture_scale_u = v;
+    }
+    else if (!q_strcasecmp(key, "texture_scale_v"))
+    {
+        float v = (float)atof(value);
+        float raw = v;
+        v = CLAMP(0.05f, v, 16.0f);
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': texture_scale_v '%s' is not in 0.05..16; using %.3g\n", mat->name, value, v);
+        mat->texture_scale_v = v;
+    }
+    else if (!q_strcasecmp(key, "texture_offset_u"))
+    {
+        float v = (float)atof(value);
+        float raw = v;
+        v = CLAMP(-8.0f, v, 8.0f);
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': texture_offset_u '%s' is not in -8..8; using %.3g\n", mat->name, value, v);
+        mat->texture_offset_u = v;
+    }
+    else if (!q_strcasecmp(key, "texture_offset_v"))
+    {
+        float v = (float)atof(value);
+        float raw = v;
+        v = CLAMP(-8.0f, v, 8.0f);
+        if (v != raw)
+            Con_DWarning("RT mat: material '%s': texture_offset_v '%s' is not in -8..8; using %.3g\n", mat->name, value, v);
+        mat->texture_offset_v = v;
+    }
     else
         Con_DWarning("RT mat: unknown attribute '%s' in material '%s'\n", key, mat->name);
 }

@@ -39,6 +39,10 @@ float3 processAlbedo(uint geometryInstanceFlags, const float2 texCoords[3], cons
 
     for (int i = 0; i < MATERIAL_MAX_ALBEDO_LAYERS; i++)
     {
+        if (i > 0 && (geometryInstanceFlags & GEOM_INST_FLAG_MEDIA_TYPE_GLASS) != 0u)
+        {
+            continue;
+        }
         if (materials[i][MATERIAL_ALBEDO_ALPHA_INDEX] != MATERIAL_NO_TEXTURE)
         {
             const float4 src = materialColors[i] *

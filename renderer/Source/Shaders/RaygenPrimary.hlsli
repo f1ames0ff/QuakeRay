@@ -56,6 +56,7 @@
 #include "Q2Asvgf.hlsli"
 #define SMOKE_RAY_STATS_SET DESC_SET_RAY_STATS
 #include "ParticleProxies.hlsli"
+#include "GlassPaint.hlsli"
 
 #if defined(Q2_REFL_REFR_SHADER)
 
@@ -790,6 +791,10 @@ void main()
     float3 refrHitPosition = h.hitPosition;
 
     propagateRayCone(rayCone, firstHitDepthLinear);
+    h.cluster = framebufQ2Cluster[pix].r;
+    h.instCustomIndex = unpackInstanceIdAndCustomIndex(currentPayload.instIdAndIndex).y;
+    h.emission = 0.0;
+    const float4 panePaint = shadeGlassPaint(h, rayCone, rayDir, pix) * float4(throughput, 1.0);
 
     for (int i = 0; i < globalUniform.reflectRefractMaxDepth; i++)
     {
@@ -1054,6 +1059,7 @@ void main()
                god-rays reflection pass, whose sky continuation would otherwise
                march from the camera and count the primary segment twice. */
             framebufQ2GodRaysThroughputDist[pix] = float4(rayOrigin, MAX_RAY_LENGTH * 2.0);
+            compositeGlassPaint(pix, panePaint);
             return;
         }
 
@@ -1100,6 +1106,7 @@ void main()
     }
 
 
+    compositeGlassPaint(pix, panePaint);
     if (!hitInfoWasOverwritten)
     {
         return;

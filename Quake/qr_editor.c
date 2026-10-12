@@ -106,7 +106,12 @@ enum
 	PARAM_BASE,     // texture_base
 	PARAM_NORMALS,  // texture_normals
 	PARAM_EMISSIVE, // texture_emissive
+	PARAM_OVERLAY,  // texture_overlay
 	PARAM_GLOSS,    // texture_gloss
+	PARAM_TSCALE_U, // texture_scale_u
+	PARAM_TSCALE_V, // texture_scale_v
+	PARAM_TOFFS_U,  // texture_offset_u
+	PARAM_TOFFS_V,  // texture_offset_v
 	PARAM_BUMP,
 	PARAM_ROUGH,
 	PARAM_METAL,
@@ -147,8 +152,18 @@ static const struct qre_param_s
 	                     "Per-pixel bump direction. Its alpha channel can drive metalness_from_normal_alpha." },
 	[PARAM_EMISSIVE] = { NULL, "texture_emissive", QRE_T_TEXT,  0, 0, 0,
 	                     "A luma mask image: what is bright in it is what the surface emits. Replaces luma." },
+	[PARAM_OVERLAY]  = { NULL, "texture_overlay",  QRE_T_TEXT,  0, 0, 0,
+	                     "RGBA paint: alpha sets coverage and RGB sets colour. On traced glass a separate matte layer uses the sun, up to 16 cluster lights with visibility tests and environment ambient, then blends continuously over the glass. It does not use the lighting of the background seen through the pane. No random coverage switching; base cutouts remain unchanged. rt_no_textures 1 shows unlit overlay coverage for diagnosis." },
 	[PARAM_GLOSS]    = { NULL, "texture_gloss",    QRE_T_TEXT,  0, 0, 0,
 	                     "White means mirror-smooth, black means rough (roughness = 1 - gloss). Ignored while roughness_override is set." },
+	[PARAM_TSCALE_U] = { NULL, "texture_scale_u",  QRE_T_FLOAT, 0.05f, 16, 0.01f,
+	                     "Horizontal texture repeat: 1 keeps the map's own mapping, 2 repeats every texture_* map twice across it. Applies to every texture_* key at once." },
+	[PARAM_TSCALE_V] = { NULL, "texture_scale_v",  QRE_T_FLOAT, 0.05f, 16, 0.01f,
+	                     "Vertical texture repeat, the pair of texture_scale_u. Applies to every texture_* key at once." },
+	[PARAM_TOFFS_U]  = { NULL, "texture_offset_u", QRE_T_FLOAT, -8, 8, 0.01f,
+	                     "Horizontal shift of every texture_* map, in texture repeats: moves the mapping without changing its scale." },
+	[PARAM_TOFFS_V]  = { NULL, "texture_offset_v", QRE_T_FLOAT, -8, 8, 0.01f,
+	                     "Vertical shift of every texture_* map, the pair of texture_offset_u." },
 	[PARAM_BUMP]     = { "Surface", "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
 	                     "How pronounced the normal map's bumps are. Needs texture_normals." },
 	[PARAM_ROUGH]    = { NULL, "roughness_override", QRE_T_FLOAT, 0, 1, 0.01f,
@@ -478,6 +493,8 @@ static void QRE_InitDefault (rt_material_t *m, const char *name)
 	m->glass_color[0] = 1.0f;
 	m->glass_color[1] = 1.0f;
 	m->glass_color[2] = 1.0f;
+	m->texture_scale_u = 1.0f;
+	m->texture_scale_v = 1.0f;
 	m->light_brightness = 1.0f;
 	m->light_styles = false;
 	m->color_emissive_threshold = 0.02f;
@@ -877,6 +894,10 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 {
 	switch (param)
 	{
+	case PARAM_TSCALE_U: return m->texture_scale_u;
+	case PARAM_TSCALE_V: return m->texture_scale_v;
+	case PARAM_TOFFS_U:  return m->texture_offset_u;
+	case PARAM_TOFFS_V:  return m->texture_offset_v;
 	case PARAM_BUMP:     return m->bump_scale;
 	case PARAM_ROUGH:    return m->roughness_override;
 	case PARAM_METAL:    return m->metalness_factor;
@@ -925,6 +946,7 @@ static const char *QRE_GetText (const rt_material_t *m, int param)
 	case PARAM_BASE:     return m->filename_base;
 	case PARAM_NORMALS:  return m->filename_normals;
 	case PARAM_EMISSIVE: return m->filename_emissive;
+	case PARAM_OVERLAY:  return m->filename_overlay;
 	case PARAM_GLOSS:    return m->filename_gloss;
 	default:             return "";
 	}
@@ -937,6 +959,10 @@ static void QRE_SetFloat (int g, int param, float value)
 
 	switch (param)
 	{
+	case PARAM_TSCALE_U: m->texture_scale_u = value; break;
+	case PARAM_TSCALE_V: m->texture_scale_v = value; break;
+	case PARAM_TOFFS_U:  m->texture_offset_u = value; break;
+	case PARAM_TOFFS_V:  m->texture_offset_v = value; break;
 	case PARAM_BUMP:     m->bump_scale = value; break;
 	case PARAM_ROUGH:    m->roughness_override = value; m->has_roughness_override = true; break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
@@ -1091,6 +1117,7 @@ static void QRE_SetText (int g, int param, const char *value)
 	case PARAM_BASE:     q_strlcpy (m->filename_base, path, sizeof (m->filename_base)); break;
 	case PARAM_NORMALS:  q_strlcpy (m->filename_normals, path, sizeof (m->filename_normals)); break;
 	case PARAM_EMISSIVE: q_strlcpy (m->filename_emissive, path, sizeof (m->filename_emissive)); break;
+	case PARAM_OVERLAY:  q_strlcpy (m->filename_overlay, path, sizeof (m->filename_overlay)); break;
 	case PARAM_GLOSS:    q_strlcpy (m->filename_gloss, path, sizeof (m->filename_gloss)); break;
 	default:             break;
 	}
@@ -3559,6 +3586,34 @@ static void QRE_MatEntitiesTab (void)
 	}
 }
 
+static void QRE_DrawMaterialTextureInfo (void)
+{
+	const gltexture_t   *glt = qre.pick_glt;
+	const rt_material_t *m = qre.group_count > 0 ? qre.group[0] : NULL;
+	char buf[512];
+
+	if (!glt)
+		return;
+
+	q_snprintf (buf, sizeof (buf), "material texture: %s -- %u x %u px; overlays and masks are baked at this size",
+	            glt->name, glt->width, glt->height);
+	QR_GUI_LabelDim (buf);
+	if (m)
+	{
+		q_snprintf (buf, sizeof (buf), "maps: base %s | normals %s | emissive %s | overlay %s | gloss %s",
+		            m->filename_base[0] ? m->filename_base : "-",
+		            m->filename_normals[0] ? m->filename_normals : "-",
+		            m->filename_emissive[0] ? m->filename_emissive : "-",
+		            m->filename_overlay[0] ? m->filename_overlay : "-",
+		            m->filename_gloss[0] ? m->filename_gloss : "-");
+		QR_GUI_LabelDim (buf);
+		q_snprintf (buf, sizeof (buf), "uv: scale %.2f x %.2f  offset %.2f, %.2f",
+		            m->texture_scale_u, m->texture_scale_v, m->texture_offset_u, m->texture_offset_v);
+		QR_GUI_LabelDim (buf);
+	}
+	QR_GUI_Spacing ();
+}
+
 static void QRE_BuildPanelGUI (void)
 {
 	int      panel_w = glwidth / 4; // a quarter of the screen wide, as asked
@@ -3594,6 +3649,9 @@ static void QRE_BuildPanelGUI (void)
 	}
 
 	QRE_PanelActionRow (QRE_RequestExit);
+
+	if (qre.mat_tab != 2)
+		QRE_DrawMaterialTextureInfo ();
 
 	if (qre.mat_tab == 2)
 	{
@@ -6004,6 +6062,31 @@ static const char *qre_yaml_header =
 	"#             light_focus_soft: 8\n"
 	"#             light_projector: true\n"
 	"#\n"
+	"# `texture_overlay: textures/foo_grunge.png` paints over the base texture:\n"
+	"# its RGB lands where its alpha is set, while `base_factor` still dims or\n"
+	"# lifts the base underneath. The overlay's alpha is only the paint's\n"
+	"# coverage -- the surface's own alpha, `alpha_test` cutouts and engine\n"
+	"# transparency keep reading the base texture. Non-glass and rasterized\n"
+	"# surfaces use a baked albedo composite. On traced `material_glass` the\n"
+	"# overlay is a separate matte surface: RGB is its reflectance and alpha\n"
+	"# is its coverage. The sun, up to 16 cluster lights and environment\n"
+	"# ambient shade the paint independently of the background. It is alpha-blended after glass\n"
+	"# reconstruction, without switching depth or normals between frames. Shadow\n"
+	"# rays pass only the uncovered fraction of the glass transmission. A file\n"
+	"# whose alpha is everywhere zero paints nothing (and is reported): the RGB\n"
+	"# alone is not a mask. A developer texture override (`mat/`) replaces the\n"
+	"# base albedo file when the material is created; traced glass paint is\n"
+	"# separate and is not replaced by that override.\n"
+	"#\n"
+	"# `texture_scale_u`/`texture_scale_v` (0.05..16, default 1) and\n"
+	"# `texture_offset_u`/`texture_offset_v` (-8..8, default 0) transform the\n"
+	"# surface's texture coordinates for *all* of the material's maps at once,\n"
+	"# so an overlay stays aligned with the base: the scale sets how many\n"
+	"# texture repeats fit across the surface and the offset slides the mapping.\n"
+	"# The transform is baked into the uploaded geometry (traced and rasterized\n"
+	"# alike), so an edit lands on the next full static re-submit; warped\n"
+	"# surfaces keep their own animation.\n"
+	"#\n"
 	"# `material_glass: true` turns the surface into a pane of glass: the traced\n"
 	"# path reflects it with a Fresnel term and bends the rays through it, tinting\n"
 	"# what passes with the base texture. `glass_ior` (1..5; 0 keeps the global\n"
@@ -6095,8 +6178,18 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    texture_normals: %s\n", m->filename_normals);
 	if (m->filename_emissive[0])
 		fprintf (f, "    texture_emissive: %s\n", m->filename_emissive);
+	if (m->filename_overlay[0])
+		fprintf (f, "    texture_overlay: %s\n", m->filename_overlay);
 	if (m->filename_gloss[0])
 		fprintf (f, "    texture_gloss: %s\n", m->filename_gloss);
+	if (m->texture_scale_u != 1.0f)
+		fprintf (f, "    texture_scale_u: %.6g\n", m->texture_scale_u);
+	if (m->texture_scale_v != 1.0f)
+		fprintf (f, "    texture_scale_v: %.6g\n", m->texture_scale_v);
+	if (m->texture_offset_u != 0.0f)
+		fprintf (f, "    texture_offset_u: %.6g\n", m->texture_offset_u);
+	if (m->texture_offset_v != 0.0f)
+		fprintf (f, "    texture_offset_v: %.6g\n", m->texture_offset_v);
 	if (m->bump_scale != 1.0f)
 		fprintf (f, "    bump_scale: %.6g\n", m->bump_scale);
 	// mirror forces roughness_override to 0; the synthesis gives it the last
