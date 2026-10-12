@@ -382,6 +382,10 @@ QRAPI QrResult QRCONV qrSetUploadLockTracing(
     QrInstance                          qrInstance,
     QrBool32                            enable);
 
+QRAPI QrResult QRCONV qrSetDynamicShapeSortedReuse(
+    QrInstance                          qrInstance,
+    QrBool32                            enable);
+
 QRAPI QrResult QRCONV qrUploadLockStatsReset(
     QrInstance                          qrInstance);
 

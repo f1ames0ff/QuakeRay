@@ -307,6 +307,8 @@ public:
     // the next BuildTopLevel of the same slot.
     nvrhi::IBuffer *GetParticleProxyBuffer(uint32_t frameIndex) const;
 
+    void SetSortedShapeReuse(bool enable);
+
     void GetDynamicFrameCounters(uint32_t *builds, uint32_t *recreations, float *createMs) const;
 
     struct DynamicFilterCounters
@@ -642,6 +644,7 @@ private:
     uint32_t dynamicFrameBuilds = 0;
     uint32_t dynamicFrameRecreations = 0;
     double   dynamicFrameCreateMs = 0.0;
+    bool     sortedShapeReuse = false;
     static constexpr uint32_t MAX_DYNAMIC_FILTER_COUNTERS = 20;
     DynamicFilterCounters dynamicFrameFilters[MAX_DYNAMIC_FILTER_COUNTERS];
     DynamicFilterCounters dynamicFrameFilterOverflow;

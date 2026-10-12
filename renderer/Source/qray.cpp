@@ -192,6 +192,11 @@ QrResult qrSetUploadLockTracing(QrInstance qrInstance, QrBool32 enable)
     return Call(qrInstance, &VulkanDevice::SetUploadLockTracing, enable != 0);
 }
 
+QrResult qrSetDynamicShapeSortedReuse(QrInstance qrInstance, QrBool32 enable)
+{
+    return Call(qrInstance, &VulkanDevice::SetDynamicShapeSortedReuse, enable != 0);
+}
+
 QrResult qrUploadLockStatsReset(QrInstance qrInstance)
 {
     return Call(qrInstance, &VulkanDevice::ResetUploadLockStats);

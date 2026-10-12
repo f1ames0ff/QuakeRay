@@ -1531,6 +1531,14 @@ void VulkanDevice::SetUploadLockTracing(bool enable)
     uploadLockTracing.store(enable, std::memory_order_relaxed);
 }
 
+void VulkanDevice::SetDynamicShapeSortedReuse(bool enable)
+{
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->SetSortedShapeReuse(enable);
+    }
+}
+
 void VulkanDevice::ResetUploadLockStats()
 {
     for (uint32_t i = 0; i < QR_UPLOAD_LANE_COUNT; ++i)

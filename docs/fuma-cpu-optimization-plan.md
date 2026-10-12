@@ -488,3 +488,14 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   should stop the reorder-triggered resets and bring the task-mode churn toward the serial floor; its
   driver-side spec safety rests on the NVRHI build-time re-query guard (skip and log, never out of bounds).
   Debug build exit 0, CTest 8/8, Release build exit 0.
+- 2026-10-12 (order-insensitive reuse predicate behind a cvar, PR-2): `rt_dyn_blas_sorted` (default 0)
+  switches the dynamic-BLAS reuse predicate to the rank-wise sorted comparison. Same-binary A/B (Fuma,
+  Balanced, medium, `r_tasks 1`): off - recreations 1.00, create 0.458 ms, sord 0.26 / scount 0.73; on -
+  recreations 0.81, create 0.365 ms, sord 0.00 / scount 0.80; no NVRHI guard messages in either arm. The
+  sorted predicate removes the order component entirely but not the churn: the remaining failures are
+  genuine geometry-count changes, and the envelope is current-sized by construction, so any count rise
+  recreates the handle. Across repeats the serial arm stays flat (0.07-0.11 recreations) while every
+  task-mode repeat rose (1.00-1.01); the content-level cause of that mode-correlated trend is still open.
+  Next: a create-time headroom envelope (allocate with slack and reuse the handle while the build fits the
+  allocation) to absorb the fluctuation, with the memory cost measured. Debug build exit 0, CTest 8/8,
+  Release build exit 0.

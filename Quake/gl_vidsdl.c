@@ -184,6 +184,7 @@ atomic_uint32_t rt_end_task_running;
 	   whose alpha comparison has its sign inverted and which reads no other state. */ \
 	CVAR_DEF_T (rt_world_batch_merge, "1") \
 	CVAR_DEF_T (rt_brush_persistent, "1") \
+	CVAR_DEF_T (rt_dyn_blas_sorted, "0") \
 	/* 0 uploads the map's lights one call at a time, for measuring the batched path. */ \
 	CVAR_DEF_T (rt_wmodel_lights_batch, "1") \
 	/* DTAL: 1 lights an alias model from the triangles of the pose it draws, when its material
@@ -485,6 +486,7 @@ static uint32_t     rt_prof_tls_used;
 static THREAD_LOCAL rt_prof_tls_t *rt_prof_tls;
 
 static qboolean          rt_upload_trace_on;
+static qboolean          rt_dyn_blas_sorted_on;
 extern atomic_uint32_t   rs_alias_enhanced_draws;
 extern atomic_uint32_t   rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
 extern atomic_uint32_t   rs_covered_surfaces, rs_covered_models, rs_covered_emissive_us;
@@ -793,6 +795,14 @@ void RT_Prof_FrameStart (void)
 	qrSetUploadLockTracing (vulkan_globals.instance, upload_trace);
 	if (upload_trace)
 		qrUploadLockStatsReset (vulkan_globals.instance);
+
+	const qboolean dyn_blas_sorted = CVAR_TO_BOOL (rt_dyn_blas_sorted);
+
+	if (dyn_blas_sorted != rt_dyn_blas_sorted_on)
+	{
+		rt_dyn_blas_sorted_on = dyn_blas_sorted;
+		qrSetDynamicShapeSortedReuse (vulkan_globals.instance, dyn_blas_sorted);
+	}
 }
 
 void RT_Prof_FrameEnd (void)
@@ -1447,6 +1457,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_truelight");
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_brush_persistent");
+	RT_Bench_Setting (f, "rt_dyn_blas_sorted");
 	RT_Bench_Setting (f, "rt_upload_trace");
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");

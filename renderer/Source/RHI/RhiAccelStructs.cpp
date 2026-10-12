@@ -1304,7 +1304,9 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
             }
 
             const bool replacingHandle = blas->handle != nullptr;
-            const bool shapeFits = replacingHandle && DynamicShapeFits(blas->shape, shape);
+            const bool shapeFits =
+                replacingHandle && (sortedShapeReuse ? DynamicShapeSortedFits(blas->shape, shape)
+                                                     : DynamicShapeFits(blas->shape, shape));
 
             DynamicFilterCounters &predecessor = FilterCountersFor(blas->filter);
             predecessor.envelopeCount = uint32_t(blas->shape.size() / 5);
@@ -2144,6 +2146,11 @@ const RhiAccelStructs::DynamicFilterCounters *RhiAccelStructs::GetDynamicFilterC
         *count = dynamicFrameFilterCount;
     }
     return dynamicFrameFilters;
+}
+
+void RhiAccelStructs::SetSortedShapeReuse(bool enable)
+{
+    sortedShapeReuse = enable;
 }
 
 RhiAccelStructs::DynamicFilterCounters &RhiAccelStructs::FilterCountersFor(uint32_t filter)
