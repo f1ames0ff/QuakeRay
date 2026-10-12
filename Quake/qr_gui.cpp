@@ -2077,7 +2077,17 @@ void QR_GUI_OverlaySection (const char *title)
 	if (title && title[0])
 	{
 		ImGui::Dummy (ImVec2 (0.0f, 4.0f * g_overlay_scale));
-		ImGui::TextColored (ImVec4 (0.85f, 0.85f, 0.85f, 1.0f), "%s", title);
+		{
+			ImDrawList  *dl = ImGui::GetWindowDrawList ();
+			const ImVec2 pos = ImGui::GetCursorScreenPos ();
+			const ImVec2 size = ImGui::CalcTextSize (title);
+			const float  bold = 1.0f * g_overlay_scale;
+			const ImU32  col = IM_COL32 (217, 217, 217, 255);
+
+			dl->AddText (pos, col, title);
+			dl->AddText (ImVec2 (pos.x + bold, pos.y), col, title);
+			ImGui::Dummy (ImVec2 (size.x + bold, size.y));
+		}
 		ImGui::Dummy (ImVec2 (0.0f, 2.0f * g_overlay_scale));
 	}
 }
