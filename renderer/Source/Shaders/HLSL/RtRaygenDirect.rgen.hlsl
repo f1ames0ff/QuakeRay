@@ -127,13 +127,30 @@ void main()
             selSlot = (lightSlot == (uint)Q2_LIGHT_LIST_INVALID_SLOT) ? 0xFFu : lightSlot;
         }
 
+        const uint reuseCfg = globalUniform.restirParams[3];
+        const float neighborRadius = (float)((reuseCfg >> 8u) & 0xFFu);
+        uint mCapCfg = (reuseCfg >> 16u) & 0xFFu;
+        if (mCapCfg == 0u)
+        {
+            mCapCfg = Q2_REUSE_M_CAP;
+        }
+
+        bool histValid = false;
+        uint histHash = 0u;
+        int2 histPix = int2(0, 0);
+        bool histPixValid = false;
+
         if (globalUniform.restirParams.z == 0u)
         {
             const float4 motion = framebufMotion_Sampled.Load(int3(pix, 0));
             const float2 posPrev = ((float2(q2CheckerToFlat(pix, width)) + (float2)0.5) *
                                     float2(1.0 / globalUniform.renderWidth, 1.0 / globalUniform.renderHeight) + motion.xy) *
                                    float2(width, height);
-            const int2 prevPix = q2FlatToChecker((int2)floor(posPrev - (float2)0.5), width);
+            const float2 nbrRnd = rnd16_2(seedBase, Q2_REUSE_RNG_NEIGHBOR);
+            const int2 prevPix = q2FlatToChecker((int2)floor(posPrev - (float2)0.5 + (nbrRnd * 2.0 - 1.0) * neighborRadius), width);
+
+            histPix = prevPix;
+            histPixValid = prevPix.x >= 0 && prevPix.y >= 0 && prevPix.x < width && prevPix.y < height;
 
             if (prevPix.x >= 0 && prevPix.y >= 0 && prevPix.x < width && prevPix.y < height)
             {
@@ -156,6 +173,9 @@ void main()
                     hist.lightIndex < (uint)LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET + globalUniform.lightCount &&
                     hist.fingerprint == q2ReuseFingerprint(lightSources[hist.lightIndex]))
                 {
+                    histValid = true;
+                    histHash = hist.candidateHash;
+
                     float memberPdfHist = 1.0;
                     const LightSample histLight = sampleLightNee(lightSources[hist.lightIndex], surf.position,
                                                                  hist.pointRnd, float2(hist.memberRnd, 0.0), memberPdfHist);
@@ -184,10 +204,35 @@ void main()
             }
         }
 
-        if (mSum > Q2_REUSE_M_CAP)
+        uint mCap = mCapCfg;
+        if (histValid && histPixValid)
+        {
+            const int2 dupOff[8] = { int2(0, 0), int2(7, 0), int2(-7, 0), int2(0, 7), int2(0, -7), int2(7, 7), int2(-7, 7), int2(7, -7) };
+            uint dupCount = 0u;
+
+            for (int i = 0; i < 8; i++)
+            {
+                const int2 p = histPix + dupOff[i];
+                if (p.x < 0 || p.y < 0 || p.x >= width || p.y >= height)
+                {
+                    continue;
+                }
+
+                const uint4 metaNbr = framebufQ2ReuseReservoirMeta_Prev_Sampled.Load(int3(p, 0));
+                if (((metaNbr.x >> 16u) & 0xFFFFu) == histHash)
+                {
+                    dupCount += 1u;
+                }
+            }
+
+            const float dupScore = (float)dupCount / 8.0;
+            mCap = max(Q2_REUSE_M_CAP_MIN, (uint)round(lerp((float)mCapCfg, (float)Q2_REUSE_M_CAP_MIN, pow(dupScore, 0.1))));
+        }
+
+        if (mSum > mCap)
         {
             const float meanW = wSum / (float)mSum;
-            mSum = Q2_REUSE_M_CAP;
+            mSum = mCap;
             wSum = meanW * (float)mSum;
         }
 

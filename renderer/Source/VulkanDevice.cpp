@@ -373,7 +373,7 @@ void VulkanDevice::FillUniform(ShGlobalUniform *gu, const QrDrawFrameInfo &drawI
         gu->restirParams[0]            = drawInfo.pIlluminationParams->restirEnabled != 0 ? 1u : 0u;
         gu->restirParams[1]            = std::clamp( drawInfo.pIlluminationParams->restirCandidates, 1u, 64u );
         gu->restirParams[2]            = 0u;
-        gu->restirParams[3]            = drawInfo.pIlluminationParams->directReuseEnabled != 0 ? 1u : 0u;
+        gu->restirParams[3]            = drawInfo.pIlluminationParams->directReuseEnabled;
         gu->giBounceRays[0]            = std::clamp( drawInfo.pIlluminationParams->giBounceRays, 0.0f, 2.0f );
         gu->fltEnable[0]               = drawInfo.pIlluminationParams->denoiserEnabled != 0 ? 1.0f : 0.0f;
         gu->fixedAlbedo[0]             = std::max( drawInfo.pIlluminationParams->fixedAlbedo, 0.0f );
