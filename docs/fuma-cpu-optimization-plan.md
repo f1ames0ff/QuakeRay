@@ -477,3 +477,14 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   arm shows 0.07 recreations per frame. Localizing captures queued: serial length baseline and a
   `r_parallelmark 0` arm. Debug build exit 0, CTest 8/8 (one `qray_dtal_perf` flake passed on re-run),
   Release build exit 0.
+- 2026-10-12 (churn mechanism pinned, PR-1c): fail deltas and envelope sizes are exported per filter
+  (`env_avg/min/max`, `fdelta_avg/min/max`). Tasks (Fuma, Balanced, medium): `len_avg 561.4` against
+  `env_avg 561.3`, `pfail 1.00`, `fdelta_avg +0.37`, `fdelta_min -30`, `fdelta_max +200`; serial:
+  `len_avg 560.1` against `env_avg 578.9`, `pfail 0.08`, `fdelta_avg -8.30`. Mechanism: under tasks the
+  envelope is re-adopted every frame, so any small count change or reorder-induced per-index bound shift
+  fails the positional test and resets it; under serial the deterministic order lets the envelope persist
+  as a high-water (579 against a 560 mean) and only genuine growth beyond it fails. The count fluctuation
+  itself (about +/-40) is genuine and mode-independent. Consequence: the order-insensitive predicate (F-C)
+  should stop the reorder-triggered resets and bring the task-mode churn toward the serial floor; its
+  driver-side spec safety rests on the NVRHI build-time re-query guard (skip and log, never out of bounds).
+  Debug build exit 0, CTest 8/8, Release build exit 0.

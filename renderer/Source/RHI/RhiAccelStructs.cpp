@@ -1306,11 +1306,25 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
             const bool replacingHandle = blas->handle != nullptr;
             const bool shapeFits = replacingHandle && DynamicShapeFits(blas->shape, shape);
 
+            DynamicFilterCounters &predecessor = FilterCountersFor(blas->filter);
+            predecessor.envelopeCount = uint32_t(blas->shape.size() / 5);
+
             if (replacingHandle && !shapeFits)
             {
                 DynamicFilterCounters &failures = FilterCountersFor(blas->filter);
 
                 failures.positionalFails++;
+
+                const int64_t failDelta = int64_t(shape.size()) - int64_t(blas->shape.size());
+                failures.failDeltaSum += failDelta;
+                if (failDelta > failures.failDeltaMax)
+                {
+                    failures.failDeltaMax = int32_t(failDelta);
+                }
+                if (failDelta < failures.failDeltaMin)
+                {
+                    failures.failDeltaMin = int32_t(failDelta);
+                }
 
                 if (DynamicShapeSortedFits(blas->shape, shape))
                 {

@@ -1422,6 +1422,10 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
             pStats->dynamicFilters[i].sortedCountFails = filters[i].sortedCountFails;
             pStats->dynamicFilters[i].sortedShapeFails = filters[i].sortedShapeFails;
             pStats->dynamicFilters[i].geometryCount = filters[i].geometryCount;
+            pStats->dynamicFilters[i].envelopeCount = filters[i].envelopeCount;
+            pStats->dynamicFilters[i].failDeltaSum = filters[i].failDeltaSum;
+            pStats->dynamicFilters[i].failDeltaMin = filters[i].failDeltaMin;
+            pStats->dynamicFilters[i].failDeltaMax = filters[i].failDeltaMax;
         }
     }
 }

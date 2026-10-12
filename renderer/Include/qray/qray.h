@@ -1608,6 +1608,10 @@ typedef struct QrDynamicBlasFilterCounters
     uint32_t    sortedCountFails;
     uint32_t    sortedShapeFails;
     uint32_t    geometryCount;
+    uint32_t    envelopeCount;
+    int64_t     failDeltaSum;
+    int32_t     failDeltaMin;
+    int32_t     failDeltaMax;
 } QrDynamicBlasFilterCounters;
 
 typedef struct QrFrameStats

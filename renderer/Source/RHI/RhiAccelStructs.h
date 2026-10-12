@@ -320,6 +320,10 @@ public:
         uint32_t sortedCountFails = 0;
         uint32_t sortedShapeFails = 0;
         uint32_t geometryCount = 0;
+        uint32_t envelopeCount = 0;
+        int64_t  failDeltaSum = 0;
+        int32_t  failDeltaMin = 0;
+        int32_t  failDeltaMax = 0;
     };
 
     const DynamicFilterCounters *GetDynamicFilterCounters(uint32_t *count) const;
