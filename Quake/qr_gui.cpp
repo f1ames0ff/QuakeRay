@@ -1292,8 +1292,11 @@ int QR_GUI_SectionFrameActions (const char *label, int selected, int show_paste,
 	if (tip_first && *tip_first)
 		ImGui::SetItemTooltip ("%s", tip_first);
 
-	// the body keeps flowing under the header, not next to the buttons
+	// the body keeps flowing under the header, not next to the buttons; the
+	// zero-size dummy is what ImGui wants after a SetCursorPos that the row's
+	// buttons may have moved (its own assert asks for an item here)
 	ImGui::SetCursorPos (cursor);
+	ImGui::Dummy (ImVec2 (0.0f, 0.0f));
 
 	return result;
 }
