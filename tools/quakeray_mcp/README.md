@@ -75,13 +75,17 @@ From the repository root:
 
 ```powershell
 uv sync --locked --project tools/quakeray_mcp --python 3.10
-uv run --offline --frozen --no-sync --project tools/quakeray_mcp python -B -m quakeray_mcp --selfcheck
+uv run --offline --frozen --project tools/quakeray_mcp python -B -m quakeray_mcp --selfcheck
 ```
 
 The project `opencode.jsonc` registers `quakeray`. It inherits existing permission policy;
 it does not change global configuration or add blanket permission grants. A missing Debug
-runtime does not prevent documentation/status inspection. Package setup requires dependency
-downloads once; normal startup is offline and does not sync/install packages.
+runtime does not prevent documentation/status inspection. The registration runs
+`uv run --offline --frozen` without `--no-sync`, so a worktree whose `.venv` is missing or
+stale gets it created and installed from `uv.lock` and the local uv cache before the server
+starts; normal startup stays offline and never rewrites the lock. A fresh git worktree
+therefore needs no setup of its own. The machine-wide `uv sync` above remains the one-time
+network step before the first start on a machine with a cold uv cache.
 Use `/mcps` in OpenCode to inspect/reconnect the server after development changes. If the
 OpenCode CLI is installed on PATH, `opencode mcp list` provides the same connection check.
 The implementation was connected and called through this session's OpenCode MCP integration;
@@ -104,7 +108,7 @@ must still match a supported capture format, so an arbitrary JSON file is not a 
 For a synthetic CLI smoke check, without game data:
 
 ```powershell
-uv run --offline --frozen --no-sync --project tools/quakeray_mcp python -B -m quakeray_mcp --import-root tools/quakeray_mcp/tests/fixtures --inspect tools/quakeray_mcp/tests/fixtures/frames.csv
+uv run --offline --frozen --project tools/quakeray_mcp python -B -m quakeray_mcp --import-root tools/quakeray_mcp/tests/fixtures --inspect tools/quakeray_mcp/tests/fixtures/frames.csv
 ```
 
 Tool argument examples:
@@ -161,7 +165,7 @@ The word `gpu_heavy` is not a GPU-bound classification.
 ## Tests
 
 ```powershell
-uv run --offline --frozen --no-sync --project tools/quakeray_mcp python -B -m unittest discover -s tools/quakeray_mcp/tests -v
+uv run --offline --frozen --project tools/quakeray_mcp python -B -m unittest discover -s tools/quakeray_mcp/tests -v
 python -B -m unittest discover -s tests/perf -p test_analyze_stress.py
 ```
 

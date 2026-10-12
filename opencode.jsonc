@@ -4,7 +4,7 @@
     "servers": {
       "quakeray": {
         "type": "local",
-        "command": ["uv", "run", "--offline", "--frozen", "--no-sync", "--project", "tools/quakeray_mcp", "python", "-B", "-m", "quakeray_mcp"],
+        "command": ["uv", "run", "--offline", "--frozen", "--project", "tools/quakeray_mcp", "python", "-B", "-m", "quakeray_mcp"],
         "cwd": ".",
         "environment": {
           "QUAKERAY_ROOT": ".",
@@ -17,7 +17,7 @@
         "protocol": "legacy",
         "codemode": true,
         "disabled": false,
-        "timeout": { "startup": 30000, "catalog": 30000, "execution": 30000 }
+        "timeout": { "startup": 60000, "catalog": 30000, "execution": 30000 }
       }
     }
   }
