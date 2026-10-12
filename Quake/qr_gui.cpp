@@ -31,6 +31,31 @@ QrMaterial   g_font_material = QR_NO_MATERIAL;
 constexpr int   kOverlayFontSizeCount = 10;
 constexpr float kOverlayFontSizes[kOverlayFontSizeCount] = { 10.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f };
 ImFont      *g_stats_fonts[kOverlayFontSizeCount] = {};
+ImFont      *g_stats_mono_fonts[kOverlayFontSizeCount] = {};
+
+static ImFont *QrGuiAddMonoFont (ImFontAtlas *atlas, float size)
+{
+	static const char *paths[] = {
+		"C:/Windows/Fonts/consola.ttf",
+		"C:/Windows/Fonts/lucon.ttf",
+		"C:/Windows/Fonts/cour.ttf",
+	};
+
+	for (int i = 0; i < (int)(sizeof (paths) / sizeof (paths[0])); i++)
+	{
+		FILE *probe = fopen (paths[i], "rb");
+
+		if (!probe)
+			continue;
+
+		fclose (probe);
+
+		if (ImFont *font = atlas->AddFontFromFileTTF (paths[i], size))
+			return font;
+	}
+
+	return nullptr;
+}
 bool         g_ready         = false;
 bool         g_frame_open    = false;
 bool         g_custom_cursor = false;
@@ -357,6 +382,8 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font
 		for (int i = 0; i < kOverlayFontSizeCount; i++)
 			g_stats_fonts[i] = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, kOverlayFontSizes[i], &stats_config);
 	}
+	for (int i = 0; i < kOverlayFontSizeCount; i++)
+		g_stats_mono_fonts[i] = QrGuiAddMonoFont (io.Fonts, kOverlayFontSizes[i]);
 	if (!font)
 	{
 		ImFontConfig cfg;
@@ -1893,6 +1920,8 @@ constexpr uint32_t kOverlayBudgetNone   = 0xFFD3D3D3u;
 float   g_overlay_scale = 1.0f;
 float   g_overlay_font_size = kOverlayBaseFont;
 ImFont *g_overlay_font = nullptr;
+float   g_overlay_mono_size = kOverlayBaseFont;
+ImFont *g_overlay_mono_font = nullptr;
 
 bool g_overlay_group = false;
 bool g_overlay_first = true;
@@ -2016,6 +2045,8 @@ void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const c
 
 	g_overlay_font = nullptr;
 	g_overlay_font_size = font_size;
+	g_overlay_mono_font = nullptr;
+	g_overlay_mono_size = font_size;
 
 	for (int i = 0; i < kOverlayFontSizeCount; i++)
 	{
@@ -2027,7 +2058,9 @@ void QR_GUI_OverlayBegin (const char *id, float x, float y, float alpha, const c
 		{
 			best_diff = diff;
 			g_overlay_font = g_stats_fonts[i];
+			g_overlay_mono_font = g_stats_mono_fonts[i];
 			g_overlay_font_size = kOverlayFontSizes[i];
+			g_overlay_mono_size = kOverlayFontSizes[i];
 		}
 	}
 
@@ -2097,16 +2130,18 @@ void QR_GUI_OverlayRow (const char *label, const char *value, const float *sampl
 	const float  line_h = ImGui::GetTextLineHeight ();
 	const float  row_h = line_h > graph_h + 8.0f * g_overlay_scale ? line_h : graph_h + 8.0f * g_overlay_scale;
 	const ImVec2 pos = ImGui::GetCursorScreenPos ();
-	const ImU32  col = PackedColorToU32 (color);
+	const ImU32   col = PackedColorToU32 (color);
+	ImFont *font = (g_overlay_mono_font != nullptr) ? g_overlay_mono_font : ImGui::GetFont ();
+	const float   font_size = (g_overlay_mono_font != nullptr) ? g_overlay_mono_size : ImGui::GetFontSize ();
 
 	ImGui::Dummy (ImVec2 (row_w, row_h));
 
-	dl->AddText (pos, col, label ? label : "");
+	dl->AddText (font, font_size, pos, col, label ? label : "");
 
 	if (value && value[0])
 	{
-		const ImVec2 ts = ImGui::CalcTextSize (value);
-		dl->AddText (ImVec2 (pos.x + label_w + value_w - ts.x, pos.y), col, value);
+		const ImVec2 ts = font->CalcTextSizeA (font_size, FLT_MAX, 0.0f, value);
+		dl->AddText (font, font_size, ImVec2 (pos.x + label_w + value_w - ts.x, pos.y), col, value);
 	}
 
 	if (samples && count >= 2)
@@ -2133,15 +2168,17 @@ void QR_GUI_OverlayBudgetRow (const char *label, const char *value, const float 
 	const ImVec2 pos = ImGui::GetCursorScreenPos ();
 	const ImU32  col = (samples && count > 0) ? OverlayBudgetColor (samples[count - 1], warn_ms, crit_ms)
 	                                          : PackedColorToU32 (kOverlayBudgetNone);
+	ImFont *font = (g_overlay_mono_font != nullptr) ? g_overlay_mono_font : ImGui::GetFont ();
+	const float   font_size = (g_overlay_mono_font != nullptr) ? g_overlay_mono_size : ImGui::GetFontSize ();
 
 	ImGui::Dummy (ImVec2 (row_w, row_h));
 
-	dl->AddText (pos, col, label ? label : "");
+	dl->AddText (font, font_size, pos, col, label ? label : "");
 
 	if (value && value[0])
 	{
-		const ImVec2 ts = ImGui::CalcTextSize (value);
-		dl->AddText (ImVec2 (pos.x + label_w + value_w - ts.x, pos.y), col, value);
+		const ImVec2 ts = font->CalcTextSizeA (font_size, FLT_MAX, 0.0f, value);
+		dl->AddText (font, font_size, ImVec2 (pos.x + label_w + value_w - ts.x, pos.y), col, value);
 	}
 
 	if (samples && count >= 2)

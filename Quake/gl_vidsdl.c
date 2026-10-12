@@ -172,6 +172,10 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_particle_resolve_cache, "1") \
 	CVAR_DEF_T (rt_cluster_sampling, "0") \
 	CVAR_DEF_T (rt_cluster_assert, "0") \
+	/* A map's vis closes a liquid surface, and the cluster light lists are built from it, so a \
+	   light is also handed the clusters on the other side of the water that its reach covers. 0 \
+	   restores the historical lists, in which a lamp above a pool lit nothing under it. */ \
+	CVAR_DEF_T (rt_cluster_water_cross, "1") \
 	CVAR_DEF_T (rt_truelight, "1") \
 	CVAR_DEF_T (rt_materials_only, "0") \
 	CVAR_DEF_T (rt_light_styles, "1") \
@@ -1471,6 +1475,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");
 	RT_Bench_Setting (f, "rt_cluster_sampling");
+	RT_Bench_Setting (f, "rt_cluster_water_cross");
 	RT_Bench_Setting (f, "rt_cluster_dlights");
 	RT_Bench_Setting (f, "rt_light_reach_static");
 	RT_Bench_Setting (f, "rt_light_reach_dynamic");
@@ -1558,7 +1563,7 @@ why the value can be read straight from here.
 */
 qboolean RT_StatsPanel (int panel)
 {
-	if (panel < RT_STATS_RAYS || panel > RT_STATS_PROFILE)
+	if (panel < RT_STATS_RAYS || panel > RT_STATS_WORLD)
 		return false;
 
 	return (CVAR_TO_UINT32 (rt_stats_panels) & (1u << (panel - 1))) != 0;
@@ -1691,6 +1696,13 @@ void RT_StatsCapture (rt_stats_snapshot_t *snap)
 		snap->profile = rt_prof_report;
 		snap->haveProfile = true;
 	}
+
+	if (cl.worldmodel != NULL)
+	{
+		RT_WorldMapStats (&snap->world);
+		RT_WorldLightStats (&snap->world);
+		snap->haveWorld = true;
+	}
 }
 
 
@@ -1704,12 +1716,12 @@ static void RT_StatsPrintPanels (const char *prefix)
 	char on[8];
 	int  i, n = 0;
 
-	for (i = RT_STATS_RAYS; i <= RT_STATS_PROFILE; i++)
+	for (i = RT_STATS_RAYS; i <= RT_STATS_WORLD; i++)
 		if (RT_StatsPanel (i))
 			on[n++] = (char)('0' + i);
 	on[n] = 0;
 
-	Con_Printf ("%s showing %s   (1 = ray counters, 2 = + GPU pass timings, 3 = + CPU profile, 0 = off)\n",
+	Con_Printf ("%s showing %s   (1 = ray counters, 2 = + GPU pass timings, 3 = + CPU profile, 4 = + the world report, 0 = off)\n",
 	            prefix, n ? on : "nothing");
 }
 
@@ -1736,10 +1748,10 @@ static void RT_Stats_f (void)
 
 	arg = Cmd_Argv (1);
 
-	if (Cmd_Argc () > 2 || arg[0] == 0 || arg[1] != 0 || arg[0] < '0' || arg[0] > '0' + RT_STATS_PROFILE)
+	if (Cmd_Argc () > 2 || arg[0] == 0 || arg[1] != 0 || arg[0] < '0' || arg[0] > '0' + RT_STATS_WORLD)
 	{
-		Con_Printf ("rt_stats: expected one level 0 to %d: 1 = ray counters, 2 = + GPU pass timings, 3 = + CPU profile, 0 = off\n",
-		            (int)RT_STATS_PROFILE);
+		Con_Printf ("rt_stats: expected one level 0 to %d: 1 = ray counters, 2 = + GPU pass timings, 3 = + CPU profile, 4 = + the world report, 0 = off\n",
+		            (int)RT_STATS_WORLD);
 		return;
 	}
 
@@ -1810,6 +1822,32 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 	else
 	{
 		fprintf (f, "%-11s %-17s %s\n", "gpu", "unavailable", "the backend returned no frame stats");
+	}
+
+	fputc ('\n', f);
+
+	if (snap->haveWorld)
+	{
+		fprintf (f, "%-11s %-17s %d\n", "world", "clusters", snap->world.clusters);
+		fprintf (f, "%-11s %-17s %d\n", "world", "without row", snap->world.clustersWithoutRow);
+		fprintf (f, "%-11s %-17s %d\n", "world", "pvs row bytes", snap->world.rowBytes);
+		fprintf (f, "%-11s %-17s %d\n", "world", "visdata bytes", snap->world.visdataBytes);
+		fprintf (f, "%-11s %-17s %d\n", "world", "sun tracing", snap->world.skyTracing);
+		fprintf (f, "%-11s %-17s %d\n", "world", "sky holding", snap->world.skyHolding);
+		fprintf (f, "%-11s %-17s %dx%dx%d\n", "world", "volume dims", snap->world.volumeDims[0],
+			snap->world.volumeDims[1], snap->world.volumeDims[2]);
+		fprintf (f, "%-11s %-17s %d\n", "world", "volume texels", snap->world.volumeTexels);
+		fprintf (f, "%-11s %-17s %d\n", "world", "volume empty", snap->world.volumeEmpty);
+		fprintf (f, "%-11s %-17s %d\n", "world", "lights", snap->world.lightsRegistered);
+		fprintf (f, "%-11s %-17s %d\n", "world", "lights dropped", snap->world.lightsDropped);
+		fprintf (f, "%-11s %-17s %d\n", "world", "slots granted", snap->world.slotsGranted);
+		fprintf (f, "%-11s %-17s %d\n", "world", "slots denied", snap->world.slotsDenied);
+		fprintf (f, "%-11s %-17s %d / %d / %d\n", "world", "demand", snap->world.demandMax,
+			snap->world.demandMedian, snap->world.demandP95);
+	}
+	else
+	{
+		fprintf (f, "%-11s %-17s %s\n", "world", "unavailable", "no map loaded");
 	}
 
 	fputc ('\n', f);

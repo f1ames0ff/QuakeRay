@@ -549,6 +549,7 @@ typedef struct qmodel_s
 	mplane_t *planes;
 
 	int      numleafs; // number of visible leafs, not counting 0
+	int      numleafs_lump;
 	mleaf_t *leafs;
 
 	int        numvertexes;

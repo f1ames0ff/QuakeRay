@@ -195,6 +195,7 @@ Surface traceBounce(const float3 originPosition, float originRoughness, uint ori
     {
         Surface s;
         s.isSky = true;
+        s.geometryInstanceFlags = 0u;
         return s;
     }
 
@@ -247,8 +248,14 @@ float3 processSecondDiffuseBounce(const uint seed, const Surface surf, const flo
         }
     }
 
-    const float3 reflected = boostChroma( directDiffuse * hitSurf.albedo );
-    return reflected * oneOverPdf;
+    float3 radiance = boostChroma( directDiffuse * hitSurf.albedo );
+
+    if ( ( hitSurf.geometryInstanceFlags & GEOM_INST_FLAG_EMISSION_RAY_ONLY ) != 0 )
+    {
+        radiance += hitSurf.emission * hitSurf.albedo;
+    }
+
+    return radiance * oneOverPdf;
 }
 
 void q2ShadeIndirect(const Surface surf, const float3 hitPos, const float3 hitRadiance,
@@ -521,6 +528,11 @@ void main()
 
         hitPos = hitSurf.position;
         hitRadiance = boostChroma( directDiffuse * hitSurf.albedo );
+
+        if ( ( hitSurf.geometryInstanceFlags & GEOM_INST_FLAG_EMISSION_RAY_ONLY ) != 0 )
+        {
+            hitRadiance += hitSurf.emission * hitSurf.albedo;
+        }
     }
 
     float3 diffuse, specular;

@@ -283,6 +283,12 @@ typedef enum QrGeometryUploadFlagBits
     /* The alpha is a cutout even where the surface traces as glass: the glass
        any-hit runs the alpha test for it (a lattice window keeps its holes). */
     QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT = 512,
+
+    /* The glow of this geometry has no analytic light behind it, so the
+       indirect pass has to carry it on the bounce ray that hits it. Left off
+       by default: a surface whose emission a registered area light already
+       counts must not add it again. */
+    QR_GEOMETRY_UPLOAD_EMISSION_RAY_ONLY_BIT = 1024,
 } QrGeometryUploadFlagBits;
 typedef QrFlags QrGeometryUploadFlags;
 
@@ -905,6 +911,11 @@ typedef enum QrWorldLightsUploadFlags
 typedef enum QrWorldClusterFlags
 {
     QR_WORLD_CLUSTER_SOLID_BIT = 1 << 0,
+
+    /* The cluster is a liquid volume (water, slime or lava). The host uses the bit to hand a
+       light the liquid clusters on the other side of their surfaces; the renderer does not
+       read it, so the lists do not depend on it. */
+    QR_WORLD_CLUSTER_LIQUID_BIT = 1 << 1,
 } QrWorldClusterFlags;
 
 typedef struct QrWorldLightsUploadInfo
@@ -928,6 +939,8 @@ typedef struct QrWorldLightsUploadInfo
     const int32_t *pVisOffsets;
 
     const uint8_t *pClusterSkyVisibility;
+
+    uint32_t clusterGeneration;
 } QrWorldLightsUploadInfo;
 
 QRAPI QrResult QRCONV qrUploadWorldLights(

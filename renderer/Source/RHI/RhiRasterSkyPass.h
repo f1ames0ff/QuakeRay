@@ -135,8 +135,10 @@ class RhiTextureTable;
 //    expected 1024-square, 6-face, 11-mip RGBA16_FLOAT render target (the module's own depth and
 //    framebuffers are fixed to that shape, so a mismatch is refused loudly instead of being drawn
 //    wrong);
-//  - call SetGeometryBuffers() with the same two QrVertex / R32_UINT wraps `RhiSkyPass` receives
-//    (VulkanDevice_Init.cpp:727-771);
+//  - call SetGeometryBuffers() with the frame's own per-slot staging wraps before Render
+//    (NvrhiFrameSkeleton::Render binds them next to the raster overlay's and the UI's); the
+//    init-time device-buffer binding (VulkanDevice_Init.cpp:727-771) is only a fallback for a
+//    frame the skeleton has not rebound yet;
 //  - record one Render per traced frame on the frame context's open command list, when the
 //    uniform's `skyType` is SKY_TYPE_RASTERIZED_GEOMETRY, before the passes that sample the cube
 //    (the legacy order is DrawSkyToCubemap -> DrawSkyToAlbedo -> pathTracer->Bind,
@@ -201,9 +203,9 @@ public:
     // RasterizedDataCollector::GetVertexStride() bytes and R32_UINT indices
     // (Rasterizer.cpp:385-386). The pass neither owns nor fills them - the caller has to make sure
     // that the frame's geometry is in them when Render records and that they stay valid until the
-    // submission finishes. This is the same wrap pair, fed by the same legacy `CopyFromStaging`,
-    // that RhiSkyPass::SetGeometryBuffers takes; RhiUiPass.h:168-175 records why the sky is the
-    // stream that tolerates the legacy copy's frame lag. Render is a no-op until both are set.
+    // submission finishes. The frame skeleton binds the frame's own per-slot staging wraps before
+    // Render, the same pair RhiSkyPass::SetGeometryBuffers and the raster overlay take, so the
+    // draw infos and the vertex data are from the same frame. Render is a no-op until both are set.
     void SetGeometryBuffers(nvrhi::IBuffer *pVertexBuffer, nvrhi::IBuffer *pIndexBuffer);
 
     // Records the raster sky into the borrowed cube: for every mip level (0 first, the size

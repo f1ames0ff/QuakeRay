@@ -279,6 +279,7 @@ extern cvar_t rt_light_reach_dynamic;
 extern cvar_t rt_cluster_incremental;
 extern cvar_t rt_cluster_sampling;
 extern cvar_t rt_cluster_assert;
+extern cvar_t rt_cluster_water_cross;
 extern cvar_t rt_light_report_filter;
 
 
@@ -856,6 +857,11 @@ typedef struct rt_cluster_light_s
 
 static rt_cluster_light_t rt_cluster_lights[RT_CLUSTER_MAX_LIGHTS];
 static int rt_cluster_light_count;
+
+/* The cluster list a light travels with when it also has to carry the water: pass one walks
+   only the clusters named here, so the light's own cluster is the first entry and the clusters
+   of the other side of the water follow. One row per registered light. */
+static uint32_t *rt_cluster_source_clusters;
 static qboolean rt_cluster_dropped_warned;
 
 /* Slot a light's id was last registered at; the id comparison is what validates it. */
@@ -1247,6 +1253,9 @@ typedef struct rt_leaf_cache_s
 	vec3_t   origin;
 	int      leafIndex;  /* -1 when that origin resolved to no leaf at all */
 	qboolean valid;
+	int      acrossCount; /* -1 until the clusters across the water were asked for */
+	qboolean acrossCrossed; /* whether the cvar was on when they were */
+	uint32_t acrossClusters[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
 } rt_leaf_cache_t;
 
 static rt_leaf_cache_t rt_leaf_cache[RT_CLUSTER_MAX_LIGHTS];
@@ -1316,20 +1325,70 @@ void RT_ClusterLightListsPrepare (uint32_t sliceCount)
 			cached->uniqueID = rt_cluster_lights[li].uniqueID;
 			VectorCopy (rt_cluster_lights[li].origin, cached->origin);
 			cached->leafIndex = leafIndex;
+			cached->acrossCount = -1;
 		}
 
 		const uint32_t clusterCount = rt_cluster_lights[li].cluster_count;
 
-		rt_cluster_sources[li].uniqueID = rt_cluster_lights[li].uniqueID;
-		VectorCopy (rt_cluster_lights[li].origin, rt_cluster_sources[li].origin.data);
-		rt_cluster_sources[li].cluster = (leafIndex >= 0)
+		const uint32_t lightCluster = (leafIndex >= 0)
 			? (uint32_t)RT_MapWorldCluster (leafIndex)
 			: (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER;
+
+		/* A liquid surface is closed in the map's vis, and the lists are built from those rows,
+		   so a light is also handed the clusters on the other side of the water that its own
+		   reach covers. A light that already carries a list of its own (a group) keeps it. */
+		const qboolean waterCross = CVAR_TO_BOOL (rt_cluster_water_cross);
+
+		if (cached->acrossCount < 0 || cached->acrossCrossed != waterCross)
+		{
+			cached->acrossCrossed = waterCross;
+			cached->acrossCount = 0;
+
+			if (waterCross && clusterCount == 0 && lightCluster != (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER)
+			{
+				cached->acrossCount = (int)RT_WorldClustersAcrossLiquid (
+					rt_cluster_lights[li].origin, lightCluster, rt_cluster_lights[li].reach,
+					cached->acrossClusters, QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS);
+			}
+		}
+
+		if (rt_cluster_source_clusters == NULL)
+		{
+			rt_cluster_source_clusters = (uint32_t *)Mem_Alloc (
+				sizeof (uint32_t) * RT_CLUSTER_MAX_LIGHTS * QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS);
+		}
+
+		rt_cluster_sources[li].uniqueID = rt_cluster_lights[li].uniqueID;
+		VectorCopy (rt_cluster_lights[li].origin, rt_cluster_sources[li].origin.data);
+		rt_cluster_sources[li].cluster = lightCluster;
 		rt_cluster_sources[li].reach = rt_cluster_lights[li].reach;
 		rt_cluster_sources[li].radius = rt_cluster_lights[li].radius;
-		rt_cluster_sources[li].clusterCount = clusterCount;
-		rt_cluster_sources[li].pClusters = (clusterCount > 0) ? rt_cluster_lights[li].clusters : NULL;
 		rt_cluster_sources[li].power = rt_cluster_lights[li].power;
+
+		if (clusterCount > 0)
+		{
+			rt_cluster_sources[li].clusterCount = clusterCount;
+			rt_cluster_sources[li].pClusters = rt_cluster_lights[li].clusters;
+		}
+		else if (cached->acrossCount > 0)
+		{
+			uint32_t *list = &rt_cluster_source_clusters[li * QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
+			uint32_t  n = 0;
+
+			if (lightCluster != (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER)
+				list[n++] = lightCluster;
+
+			for (int k = 0; k < cached->acrossCount && n < QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS; k++)
+				list[n++] = cached->acrossClusters[k];
+
+			rt_cluster_sources[li].clusterCount = n;
+			rt_cluster_sources[li].pClusters = list;
+		}
+		else
+		{
+			rt_cluster_sources[li].clusterCount = 0;
+			rt_cluster_sources[li].pClusters = NULL;
+		}
 
 		if (clusterCount > 0 && rt_cluster_sources[li].cluster == (uint32_t)QR_CLUSTER_LIGHT_NO_CLUSTER)
 			rt_cluster_sources[li].cluster = rt_cluster_lights[li].clusters[0];
@@ -1670,6 +1729,17 @@ void RT_ClusterLists_f (void)
 		RT_LightReportPrint ("  tail %3i  prob %.5f marginal %.6f alias %u  %s%s\n", i, tailProb[i],
 			tailMarginal[i], tailAlias[i], id, (di >= 0) ? "" : "  (not in the frame's registry table)");
 	}
+}
+
+void RT_WorldLightStats (rt_world_report_t *out)
+{
+	out->lightsRegistered = rt_cluster_light_count;
+	out->lightsDropped = rt_light_diag_unresolved;
+	out->slotsGranted = rt_light_diag_granted;
+	out->slotsDenied = rt_light_diag_denied;
+	out->demandMax = rt_cluster_demand_max;
+	out->demandMedian = rt_cluster_demand_median;
+	out->demandP95 = rt_cluster_demand_p95;
 }
 
 void RT_ClusterLightReport_f (void)

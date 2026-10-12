@@ -312,6 +312,7 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 		mod->numplanes = 0;
 		SAFE_FREE (mod->leafs);
 		mod->numleafs = 0;
+		mod->numleafs_lump = 0;
 		SAFE_FREE (mod->vertexes);
 		mod->numvertexes = 0;
 		SAFE_FREE (mod->edges);
@@ -1749,6 +1750,7 @@ static void Mod_ProcessLeafs_S (qmodel_t *mod, byte *in, int filelen)
 
 	mod->leafs = out;
 	mod->numleafs = count;
+	mod->numleafs_lump = count;
 
 	for (i = 0; i < count; i++, in += sizeof (dsleaf_t), out++)
 	{
@@ -1793,6 +1795,7 @@ static void Mod_ProcessLeafs_L1 (qmodel_t *mod, byte *in, int filelen)
 
 	mod->leafs = out;
 	mod->numleafs = count;
+	mod->numleafs_lump = count;
 
 	for (i = 0; i < count; i++, in += sizeof (dl1leaf_t), out++)
 	{
@@ -1836,6 +1839,7 @@ static void Mod_ProcessLeafs_L2 (qmodel_t *mod, byte *in, int filelen)
 
 	mod->leafs = out;
 	mod->numleafs = count;
+	mod->numleafs_lump = count;
 
 	for (i = 0; i < count; i++, in += sizeof (dl2leaf_t), out++)
 	{
@@ -2684,6 +2688,7 @@ static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffe
 		{
 			mod->leafs = NULL;
 			mod->numleafs = 0;
+			mod->numleafs_lump = 0;
 			Con_DPrintf ("found valid external .vis file for map\n");
 			mod->visdata = Mod_LoadVisibilityExternal (fvis, &mod->visdatasize);
 			if (mod->visdata)
