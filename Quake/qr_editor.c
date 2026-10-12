@@ -1020,7 +1020,9 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	default:               break;
 	}
 
-	if (param == PARAM_ISLIGHT || param == PARAM_EPROJ)
+	if (param == PARAM_ISLIGHT)
+		QRE_MarkDirtyFull (m);
+	else if (param == PARAM_EPROJ)
 		QRE_MarkDirtyLight (m);
 	else
 		QRE_MarkDirty (m);

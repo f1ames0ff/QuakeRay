@@ -1311,7 +1311,7 @@ static qboolean TexMgr_ApplyLightMaterial (gltexture_t *glt, const QrMaterialCre
 			SDL_UnlockMutex (rtspecial_mutex);
 
 			if (ur == QR_SUCCESS)
-				return false;
+				return true;
 
 			SDL_LockMutex (rtspecial_mutex);
 		}
