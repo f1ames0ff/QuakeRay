@@ -278,12 +278,10 @@ static struct
 	int            extra_count;
 
 	// the frame blocks of a model pick: the settings one frame hands to another
-	// (Copy/Paste), the texture frame the preview shows, and the model the
-	// animation list above the blocks belongs to
+	// (Copy/Paste) and the texture frame the model shows and the panel edits
 	rt_material_t mat_clip;
 	qboolean      mat_clip_valid;
 	int           frame_tex;
-	qmodel_t     *frame_anims_model;
 
 	// snapshot of both material lists for Cancel/Exit
 	rt_material_t *snap_global;
@@ -1588,15 +1586,12 @@ static void QRE_FramePickInit (void)
 	if (!QRE_ModelFrameGroup ())
 	{
 		qre.frame_tex = -1;
-		qre.frame_anims_model = NULL;
 		return;
 	}
 
 	qre.frame_tex = QRE_ActiveFrame ();
 	if (qre.frame_tex < 0)
 		qre.frame_tex = 0;
-	qre.entity_frame = qre.pick_ent ? qre.pick_ent->frame : 0;
-	qre.frame_anims_model = NULL;
 }
 
 // Moller-Trumbore: the fraction along the ray where it crosses the triangle,
@@ -2493,12 +2488,17 @@ void QR_Editor_UpdateView (void)
 	{
 		cl.viewent.model = qre.entity_preview_model;
 		cl.viewent.frame = qre.entity_frame;
-		// the picked model's preview shows the texture frame the controls chose
-		// (for a weapon preview this stays skin 0, as the model has one skin)
-		cl.viewent.skinnum = (qre.entity_preview_model == qre.pick_model && qre.frame_tex >= 0) ? qre.frame_tex : 0;
 		cl.viewent.lerpflags |= LERP_RESETANIM;
 		VectorCopy (cl.viewangles, cl.viewent.angles);
 		VectorCopy (r_refdef.vieworg, cl.viewent.origin);
+	}
+
+	// the frame slider drives the picked entity's texture frame: the model in
+	// the world shows the frame the panel edits, wherever the camera looks
+	if (qre.active && qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 0 && qre.frame_tex >= 0 &&
+	    qre.pick_ent && qre.pick_ent->model == qre.pick_model && QRE_ModelFrameGroup ())
+	{
+		qre.pick_ent->skinnum = qre.frame_tex;
 	}
 
 	// Before the frame renders: a re-synthesis replaces the material handles,
@@ -3658,27 +3658,14 @@ static void QRE_PasteFrame (int g)
 	QRE_Notify (va ("settings pasted into %s", m->name));
 }
 
-// The controls above a model's texture frames: the animation the preview plays
-// (the same list the Entities tab builds) and the texture frame -- the frame*
-// block below -- it shows. Touching either engages the preview, so a frame can
-// be inspected without waiting for the model's own animation.
+// The frame slider above a model's texture frames: it picks the frame* block
+// the panel edits and shows that frame on the picked entity in the world (the
+// editor sets the entity's skin every frame, see QRE_EditorFrame), so a frame
+// is worked on where the model actually stands.
 static void QRE_FrameControls (void)
 {
-	aliashdr_t *hdr;
-	const char *names[QRE_ANIM_MAX];
-	int         i, anim, frame;
-	int         lo = -1, hi = -1;
-
-	hdr = (aliashdr_t *)Mod_Extradata (qre.pick_model);
-	if (!hdr)
-		return;
-
-	if (qre.frame_anims_model != qre.pick_model)
-	{
-		QRE_BuildWeaponAnims (qre.pick_model, hdr);
-		qre.frame_anims_model = qre.pick_model;
-		qre.entity_frame = qre.pick_ent ? qre.pick_ent->frame : qre.entity_frame;
-	}
+	int i, frame;
+	int lo = -1, hi = -1;
 
 	for (i = 0; i < qre.group_count; i++)
 	{
@@ -3698,30 +3685,13 @@ static void QRE_FrameControls (void)
 	if (qre.frame_tex < lo || qre.frame_tex > hi)
 		qre.frame_tex = lo;
 
-	QR_GUI_LabelDim ("the model's texture frames: the frame* blocks below");
+	QR_GUI_LabelDim ("the texture frames of this model: the one below is shown and edited");
 	QR_GUI_Spacing ();
 
-	if (qre.entity_anim_count > 0)
-	{
-		for (i = 0; i < qre.entity_anim_count; i++)
-			names[i] = qre.entity_anims[i].name;
-
-		anim = qre.entity_anim;
-		if (QR_GUI_Combo ("animation", &anim, (const char *const *) names, qre.entity_anim_count,
-		                  "The animation the preview plays.") && anim >= 0 && anim < qre.entity_anim_count)
-		{
-			qre.entity_anim = anim;
-			qre.entity_frame = qre.entity_anims[anim].first;
-			qre.entity_preview_model = qre.pick_model;
-		}
-	}
-
 	frame = qre.frame_tex;
-	if (QR_GUI_SliderInt ("frame", &frame, lo, hi, "The texture frame (the frame* block) the preview shows."))
-	{
+	if (QR_GUI_SliderInt ("frame", &frame, lo, hi,
+	                      "The model's texture frame: the entity shows it and the section below edits it."))
 		qre.frame_tex = CLAMP (lo, frame, hi);
-		qre.entity_preview_model = qre.pick_model;
-	}
 }
 
 static void QRE_BuildPanelGUI (void)
@@ -3771,41 +3741,56 @@ static void QRE_BuildPanelGUI (void)
 	if (qre.mat_tab == 1)
 		QRE_MatEntitiesTab ();
 
+	if (QRE_ModelFrameGroup ())
 	{
-		const qboolean model_frames = QRE_ModelFrameGroup ();
-		const int      active = model_frames ? QRE_ActiveFrame () : -1;
+		int frame_g = -1;
 
-		if (model_frames)
-			QRE_FrameControls ();
+		// one section edits the frame the slider picked, not one block per
+		// frame: the frame* names are the model's texture frames and the slider
+		// is what chooses between them (and what the entity shows)
+		QRE_FrameControls ();
 
+		for (g = 0; g < qre.group_count; g++)
+		{
+			if (QRE_FrameDigit (qre.group[g]->name) == qre.frame_tex)
+			{
+				frame_g = g;
+				break;
+			}
+		}
+
+		if (frame_g < 0)
+		{
+			QR_GUI_LabelDim (va ("the model has no frame %d", qre.frame_tex));
+		}
+		else
+		{
+			int       open = 0;
+			const int actions = QR_GUI_SectionFrameActions (
+			    qre.group[frame_g]->name, 1, qre.mat_clip_valid ? 1 : 0, &open,
+			    "Copy this frame's settings to paste into another frame.",
+			    "Paste the copied settings into this frame.");
+
+			if (actions & 1)
+				QRE_CopyFrame (frame_g);
+			if (actions & 2)
+				QRE_PasteFrame (frame_g);
+
+			QR_GUI_PushID (qre.group[frame_g]->name);
+			if (open)
+				QRE_ParamWidgets (frame_g);
+			QR_GUI_PopID ();
+		}
+	}
+	else
+	{
 		for (g = 0; g < qre.group_count; g++)
 		{
 			// the animation frames share their parameter names, so every section
 			// needs its own ID scope, or their widgets collide
 			QR_GUI_PushID (qre.group[g]->name);
-
-			if (model_frames)
-			{
-				int       open = 0;
-				const int actions = QR_GUI_SectionFrameActions (
-				    qre.group[g]->name,
-				    (active >= 0 && QRE_FrameDigit (qre.group[g]->name) == active) ? 1 : 0,
-				    qre.mat_clip_valid ? 1 : 0, &open,
-				    "Copy this frame's settings to paste into another frame.",
-				    "Paste the copied settings into this frame.");
-
-				if (actions & 1)
-					QRE_CopyFrame (g);
-				if (actions & 2)
-					QRE_PasteFrame (g);
-				if (open)
-					QRE_ParamWidgets (g);
-			}
-			else if (QR_GUI_Section (qre.group[g]->name, 1))
-			{
+			if (QR_GUI_Section (qre.group[g]->name, 1))
 				QRE_ParamWidgets (g);
-			}
-
 			QR_GUI_PopID ();
 		}
 	}
@@ -7819,14 +7804,8 @@ qboolean QR_Editor_Flying (void)
 
 qboolean QR_Editor_ShowViewModel (void)
 {
-	if (!qre.active || qre.mode != QRE_MODE_MATERIAL || cl.intermission || qre.entity_preview_model == NULL)
-		return false;
-
-	if (qre.mat_tab == 1)
-		return true;
-
-	// the frame controls of a model's texture frames preview that model
-	return (qre.mat_tab == 0 && qre.entity_preview_model == qre.pick_model) ? true : false;
+	return qre.active && qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 1 &&
+	       qre.entity_preview_model != NULL && !cl.intermission;
 }
 
 void QR_Editor_SunPlacement (qboolean on)

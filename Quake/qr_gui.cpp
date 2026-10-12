@@ -1248,7 +1248,10 @@ int QR_GUI_SectionFrameActions (const char *label, int selected, int show_paste,
 	ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Framed;
 	int                result = 0;
 
-	ImGui::SetNextItemOpen (selected != 0, ImGuiCond_Always);
+	// a selected section is highlighted and kept open; an unselected one keeps
+	// whatever the user left it as
+	if (selected)
+		ImGui::SetNextItemOpen (true, ImGuiCond_Always);
 
 	if (selected)
 	{
