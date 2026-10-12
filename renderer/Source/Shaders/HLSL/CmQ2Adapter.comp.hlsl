@@ -73,6 +73,19 @@
 
 #define Q2_LF_CHROMA_TO_RADIANCE (1.0 / 0.282095)
 
+#define Q2_LF_MAX_SH 62.5
+#define Q2_LF_MAX_COCG 17.0
+
+float4 lfStoreSafe(const float4 v, const float limit)
+{
+    if (any(isnan(v)) || any(isinf(v)))
+    {
+        return (float4)0.0;
+    }
+
+    return clamp(v, (float4)(-limit), (float4)limit);
+}
+
 float3 q2AntiFirefly(const int2 pix, const float3 center, const Texture2D<uint4> buf, const int width, const int height)
 {
     float maxNeighborLum = 1.0f;
@@ -211,6 +224,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     // LF: indirect diffuse SH converted to the YCoCg luma-SH + chroma format
     const Q2SH lf = q2IrradianceToSH(indir.r, indir.g, indir.b);
-    framebufQ2ColorLF_SH[pix] = lf.shY * Q2_STORAGE_SCALE_LF;
-    framebufQ2ColorLF_COCG[pix] = float4(lf.CoCg * Q2_LF_CHROMA_TO_RADIANCE * Q2_STORAGE_SCALE_LF, 0.0, 0.0);
+    const float4 lfChroma = lfStoreSafe(float4(lf.CoCg, 0.0, 0.0), Q2_LF_MAX_COCG);
+    framebufQ2ColorLF_SH[pix] = lfStoreSafe(lf.shY, Q2_LF_MAX_SH) * Q2_STORAGE_SCALE_LF;
+    framebufQ2ColorLF_COCG[pix] = float4(lfChroma.xy * (Q2_LF_CHROMA_TO_RADIANCE * Q2_STORAGE_SCALE_LF), 0.0, 0.0);
 }

@@ -309,6 +309,17 @@ float getAntilagAlpha(const float gradSample, const float normFactor)
 #include "SphericalHarmonics.hlsli"
 
 #define SH_COMPRESSION_MULTIPLIER 1000
+#define SH_STORE_LIMIT 62.0
+
+float4 shStoreSafe(const float4 v)
+{
+    if (any(isnan(v)) || any(isinf(v)))
+    {
+        return (float4)0.0;
+    }
+
+    return clamp(v, (float4)(-SH_STORE_LIMIT), (float4)SH_STORE_LIMIT);
+}
 
 SH texelFetchSH(Texture2D<float4> textureIndirR, Texture2D<float4> textureIndirG, Texture2D<float4> textureIndirB, int2 pix)
 {
@@ -359,30 +370,30 @@ SH imageLoadUnfilteredIndirectSH(int2 pix)
 
 void imageStoreUnfilteredIndirectSH(int2 pix, const SH sh)
 {
-    framebufUnfilteredIndirectSH_R[pix] = sh.r * SH_COMPRESSION_MULTIPLIER;
-    framebufUnfilteredIndirectSH_G[pix] = sh.g * SH_COMPRESSION_MULTIPLIER;
-    framebufUnfilteredIndirectSH_B[pix] = sh.b * SH_COMPRESSION_MULTIPLIER;
+    framebufUnfilteredIndirectSH_R[pix] = shStoreSafe(sh.r) * SH_COMPRESSION_MULTIPLIER;
+    framebufUnfilteredIndirectSH_G[pix] = shStoreSafe(sh.g) * SH_COMPRESSION_MULTIPLIER;
+    framebufUnfilteredIndirectSH_B[pix] = shStoreSafe(sh.b) * SH_COMPRESSION_MULTIPLIER;
 }
 
 void imageStoreIndirAccumSH(int2 pix, const SH sh)
 {
-    framebufIndirAccumSH_R[pix] = sh.r * SH_COMPRESSION_MULTIPLIER;
-    framebufIndirAccumSH_G[pix] = sh.g * SH_COMPRESSION_MULTIPLIER;
-    framebufIndirAccumSH_B[pix] = sh.b * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirAccumSH_R[pix] = shStoreSafe(sh.r) * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirAccumSH_G[pix] = shStoreSafe(sh.g) * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirAccumSH_B[pix] = shStoreSafe(sh.b) * SH_COMPRESSION_MULTIPLIER;
 }
 
 void imageStoreIndirPingSH(int2 pix, const SH sh)
 {
-    framebufIndirPingSH_R[pix] = sh.r * SH_COMPRESSION_MULTIPLIER;
-    framebufIndirPingSH_G[pix] = sh.g * SH_COMPRESSION_MULTIPLIER;
-    framebufIndirPingSH_B[pix] = sh.b * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirPingSH_R[pix] = shStoreSafe(sh.r) * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirPingSH_G[pix] = shStoreSafe(sh.g) * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirPingSH_B[pix] = shStoreSafe(sh.b) * SH_COMPRESSION_MULTIPLIER;
 }
 
 void imageStoreIndirPongSH(int2 pix, const SH sh)
 {
-    framebufIndirPongSH_R[pix] = sh.r * SH_COMPRESSION_MULTIPLIER;
-    framebufIndirPongSH_G[pix] = sh.g * SH_COMPRESSION_MULTIPLIER;
-    framebufIndirPongSH_B[pix] = sh.b * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirPongSH_R[pix] = shStoreSafe(sh.r) * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirPongSH_G[pix] = shStoreSafe(sh.g) * SH_COMPRESSION_MULTIPLIER;
+    framebufIndirPongSH_B[pix] = shStoreSafe(sh.b) * SH_COMPRESSION_MULTIPLIER;
 }
 
 float3 texelFetchNormal(const int2 pix)

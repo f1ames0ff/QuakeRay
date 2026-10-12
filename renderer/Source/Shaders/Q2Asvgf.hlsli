@@ -272,7 +272,15 @@ float3 q2SHToIrradiance(const Q2SH sh, const float3 N)
     Y = max(Y, 0.0);
 
     // Guard against chroma explosion when the DC (L00) term is near zero
-    const float chromaScale = clamp(Y * 0.282095 / (sh.shY.w + 1e-6), 0.0, 8.0);
+    const float chromaDenominator = sh.shY.w + 1e-6;
+    float chromaScale = 0.0;
+
+    if (!isnan(chromaDenominator) && !isinf(chromaDenominator) && chromaDenominator > 1e-6 &&
+        !isnan(Y) && !isinf(Y))
+    {
+        chromaScale = clamp(Y * 0.282095 / chromaDenominator, 0.0, 8.0);
+    }
+
     const float2 CoCg = sh.CoCg * chromaScale;
 
     const float T = Y - CoCg.y * 0.5;
