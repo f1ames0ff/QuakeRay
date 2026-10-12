@@ -308,9 +308,23 @@ public:
     nvrhi::IBuffer *GetParticleProxyBuffer(uint32_t frameIndex) const;
 
     void GetDynamicFrameCounters(uint32_t *builds, uint32_t *recreations, float *createMs) const;
+
+    struct DynamicFilterCounters
+    {
+        uint32_t filter = 0;
+        uint32_t builds = 0;
+        uint32_t recreates = 0;
+        uint32_t positionalFails = 0;
+        uint32_t sortedPassPositionalFails = 0;
+        uint32_t sortedFails = 0;
+    };
+
+    const DynamicFilterCounters *GetDynamicFilterCounters(uint32_t *count) const;
     void ResetDynamicFrameCounters();
 
 private:
+    DynamicFilterCounters &FilterCountersFor(uint32_t filter);
+
     struct StaticBlas
     {
         // The engine filter this structure mirrors (VertexCollectorFilterTypeFlags): the mapping
@@ -621,6 +635,10 @@ private:
     uint32_t dynamicFrameBuilds = 0;
     uint32_t dynamicFrameRecreations = 0;
     double   dynamicFrameCreateMs = 0.0;
+    static constexpr uint32_t MAX_DYNAMIC_FILTER_COUNTERS = 20;
+    DynamicFilterCounters dynamicFrameFilters[MAX_DYNAMIC_FILTER_COUNTERS];
+    DynamicFilterCounters dynamicFrameFilterOverflow;
+    uint32_t dynamicFrameFilterCount = 0;
     uint64_t dynamicVertexCount = 0;
     uint64_t dynamicPrimitiveCount = 0;
     uint64_t dynamicCopyBytes = 0;

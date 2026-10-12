@@ -427,6 +427,13 @@ static uint64_t rt_bench_dyn_blas_builds;
 static uint64_t rt_bench_dyn_blas_recreations;
 static double   rt_bench_dyn_blas_create_ms;
 static uint32_t rt_bench_dyn_blas_samples;
+static uint32_t rt_bench_dyn_filter_id[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_builds[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_recreates[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_pfail[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_sord[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_sset[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_count;
 
 /* rt_bench: the same slots, summed over a whole demo run instead of maximized over one
    `rt_stats_interval` window. The on-screen panel wants the worst frame of the window; a
@@ -665,6 +672,7 @@ void RT_Bench_Start (void)
 	rt_bench_dyn_blas_recreations = 0;
 	rt_bench_dyn_blas_create_ms = 0;
 	rt_bench_dyn_blas_samples = 0;
+	rt_bench_dyn_filter_count = 0;
 	rt_cluster_cache_hits = 0;
 	rt_cluster_cache_misses = 0;
 	rt_cluster_miss_set = 0;
@@ -875,6 +883,37 @@ void RT_Prof_FrameEnd (void)
 	}
 }
 
+static void RT_Bench_AddDynamicFilterStats (const QrFrameStats *stats)
+{
+	uint32_t i;
+	uint32_t slot;
+
+	for (i = 0; i < stats->dynamicFilterCount; i++)
+	{
+		const QrDynamicBlasFilterCounters *src = &stats->dynamicFilters[i];
+
+		for (slot = 0; slot < rt_bench_dyn_filter_count; slot++)
+		{
+			if (rt_bench_dyn_filter_id[slot] == src->filter)
+				break;
+		}
+
+		if (slot == rt_bench_dyn_filter_count)
+		{
+			if (rt_bench_dyn_filter_count >= QR_DYNAMIC_BLAS_FILTER_MAX)
+				continue;
+
+			rt_bench_dyn_filter_id[rt_bench_dyn_filter_count++] = src->filter;
+		}
+
+		rt_bench_dyn_filter_builds[slot] += src->builds;
+		rt_bench_dyn_filter_recreates[slot] += src->recreates;
+		rt_bench_dyn_filter_pfail[slot] += src->positionalFails;
+		rt_bench_dyn_filter_sord[slot] += src->sortedPassPositionalFails;
+		rt_bench_dyn_filter_sset[slot] += src->sortedFails;
+	}
+}
+
 static void RT_Prof_RecordRenderer (void)
 {
 	QrFrameStats stats = {0};
@@ -890,6 +929,7 @@ static void RT_Prof_RecordRenderer (void)
 		rt_bench_dyn_blas_recreations += stats.dynamicBlasRecreations;
 		rt_bench_dyn_blas_create_ms += stats.dynamicBlasCreateMs;
 		++rt_bench_dyn_blas_samples;
+		RT_Bench_AddDynamicFilterStats (&stats);
 	}
 
 	++rt_renderer_cpu_samples;
@@ -940,6 +980,7 @@ static void RT_Prof_RecordEndResult (void *context)
 			rt_bench_dyn_blas_recreations += stats->dynamicBlasRecreations;
 			rt_bench_dyn_blas_create_ms += stats->dynamicBlasCreateMs;
 			++rt_bench_dyn_blas_samples;
+			RT_Bench_AddDynamicFilterStats (stats);
 		}
 	}
 
@@ -1303,6 +1344,15 @@ qboolean RT_Bench_Report (const char *demo)
 		         (double)rt_bench_dyn_blas_recreations / rt_bench_dyn_blas_samples,
 		         rt_bench_dyn_blas_create_ms / rt_bench_dyn_blas_samples,
 		         rt_bench_dyn_blas_samples);
+
+	for (uint32_t i = 0; i < rt_bench_dyn_filter_count && rt_bench_dyn_blas_samples > 0; i++)
+		fprintf (f, "as.filter filter=0x%08x builds_avg=%.2f recreates_avg=%.2f pfail_avg=%.2f sord_avg=%.2f sset_avg=%.2f\n",
+		         rt_bench_dyn_filter_id[i],
+		         (double)rt_bench_dyn_filter_builds[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_recreates[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_pfail[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_sord[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_sset[i] / rt_bench_dyn_blas_samples);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");

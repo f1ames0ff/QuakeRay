@@ -1400,6 +1400,26 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
     {
         rhiAccelStructs->GetDynamicFrameCounters(&pStats->dynamicBlasBuilds, &pStats->dynamicBlasRecreations,
                                                  &pStats->dynamicBlasCreateMs);
+
+        uint32_t filterCount = 0;
+        const rhi::RhiAccelStructs::DynamicFilterCounters *filters =
+            rhiAccelStructs->GetDynamicFilterCounters(&filterCount);
+
+        if (filterCount > QR_DYNAMIC_BLAS_FILTER_MAX)
+        {
+            filterCount = QR_DYNAMIC_BLAS_FILTER_MAX;
+        }
+
+        pStats->dynamicFilterCount = filterCount;
+        for (uint32_t i = 0; i < filterCount; i++)
+        {
+            pStats->dynamicFilters[i].filter = filters[i].filter;
+            pStats->dynamicFilters[i].builds = filters[i].builds;
+            pStats->dynamicFilters[i].recreates = filters[i].recreates;
+            pStats->dynamicFilters[i].positionalFails = filters[i].positionalFails;
+            pStats->dynamicFilters[i].sortedPassPositionalFails = filters[i].sortedPassPositionalFails;
+            pStats->dynamicFilters[i].sortedFails = filters[i].sortedFails;
+        }
     }
 }
 

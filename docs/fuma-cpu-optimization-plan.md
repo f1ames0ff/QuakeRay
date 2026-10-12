@@ -457,3 +457,15 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   (Fuma, Balanced, medium, `r_tasks 1`): builds 6.00, recreations 1.00, create 0.563 ms per frame - one
   dynamic BLAS handle recreated per frame at about 0.56 ms, about 19% of the same capture's
   `cpu.draw.RHI_setup_ms` (2.91). Debug build exit 0, CTest 8/8, Release build exit 0.
+- 2026-10-12 (per-filter churn attribution, PR-1 of the stable-packing track): `DynamicShapeSortedFits`
+  (rank-wise dominance of sorted shape tuples, `DynamicBlasShape.h`) is computed whenever the positional
+  envelope fails, and every dynamic filter reports builds/recreates/positional-fails/sorted-pass/sorted-fail
+  through `QrFrameStats`; the bench block prints one `as.filter filter=0x... ...` row per filter.
+  Acceptance captures (Fuma, Balanced, medium, Release): `r_tasks 1` - 6.00 builds, 1.00 recreations,
+  0.423 ms create per frame, all of it in `filter=0x0000004c` (dynamic opaque `PV_WORLD_0`), whose
+  failures split 0.24 sorted-pass (order-or-shrink) and 0.76 sorted-fail; `r_tasks 0` - 0.07 recreations,
+  0.030 ms, sorted-fail 0.06, sorted-pass 0.00. Consequence: the churn is not order-only; the
+  order-insensitive envelope alone (F-C) would remove at most the 0.24 share, and the 0.76 share is a
+  task-mode content/shape difference with no serial counterpart, so the next diagnostic splits
+  sorted-fail into count-change vs shape-change (and records the list length) before the F-C versus
+  canonical-packing decision. Debug build exit 0, CTest 8/8, Release build exit 0.

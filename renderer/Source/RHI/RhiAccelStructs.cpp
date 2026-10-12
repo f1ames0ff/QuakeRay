@@ -1303,9 +1303,27 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 shape.push_back(triangles.transformData.deviceAddress != 0 ? 1u : 0u);
             }
 
-            if (blas->handle == nullptr || !DynamicShapeFits(blas->shape, shape))
+            const bool replacingHandle = blas->handle != nullptr;
+            const bool shapeFits = replacingHandle && DynamicShapeFits(blas->shape, shape);
+
+            if (replacingHandle && !shapeFits)
             {
-                const bool replacingHandle = blas->handle != nullptr;
+                DynamicFilterCounters &failures = FilterCountersFor(blas->filter);
+
+                failures.positionalFails++;
+
+                if (DynamicShapeSortedFits(blas->shape, shape))
+                {
+                    failures.sortedPassPositionalFails++;
+                }
+                else
+                {
+                    failures.sortedFails++;
+                }
+            }
+
+            if (blas->handle == nullptr || !shapeFits)
+            {
                 const std::chrono::steady_clock::time_point createStart = std::chrono::steady_clock::now();
 
                 // Create from the very list this build uses, so the allocation covers the build
@@ -1341,6 +1359,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 if (replacingHandle)
                 {
                     dynamicFrameRecreations++;
+                    FilterCountersFor(blas->filter).recreates++;
                 }
             }
 
@@ -1350,6 +1369,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                                                       blas->geometries.size(), DYNAMIC_BLAS_BUILD_FLAGS);
 
             dynamicFrameBuilds++;
+            FilterCountersFor(blas->filter).builds++;
             dynamicBlasCount++;
             dynamicGeometryCount += uint32_t(blas->geometries.size());
             for (size_t i = 0; i < geoms.size(); i++)
@@ -2089,6 +2109,36 @@ void RhiAccelStructs::ResetDynamicFrameCounters()
     dynamicFrameBuilds = 0;
     dynamicFrameRecreations = 0;
     dynamicFrameCreateMs = 0.0;
+    dynamicFrameFilterCount = 0;
+}
+
+const RhiAccelStructs::DynamicFilterCounters *RhiAccelStructs::GetDynamicFilterCounters(uint32_t *count) const
+{
+    if (count != nullptr)
+    {
+        *count = dynamicFrameFilterCount;
+    }
+    return dynamicFrameFilters;
+}
+
+RhiAccelStructs::DynamicFilterCounters &RhiAccelStructs::FilterCountersFor(uint32_t filter)
+{
+    for (uint32_t i = 0; i < dynamicFrameFilterCount; i++)
+    {
+        if (dynamicFrameFilters[i].filter == filter)
+        {
+            return dynamicFrameFilters[i];
+        }
+    }
+
+    if (dynamicFrameFilterCount < MAX_DYNAMIC_FILTER_COUNTERS)
+    {
+        dynamicFrameFilters[dynamicFrameFilterCount] = DynamicFilterCounters{};
+        dynamicFrameFilters[dynamicFrameFilterCount].filter = filter;
+        return dynamicFrameFilters[dynamicFrameFilterCount++];
+    }
+
+    return dynamicFrameFilterOverflow;
 }
 
 }

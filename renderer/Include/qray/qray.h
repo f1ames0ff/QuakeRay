@@ -1595,6 +1595,18 @@ typedef enum QrCpuPassIndex
     QR_CPU_PASS_COUNT,
 } QrCpuPassIndex;
 
+#define QR_DYNAMIC_BLAS_FILTER_MAX 20
+
+typedef struct QrDynamicBlasFilterCounters
+{
+    uint32_t    filter;
+    uint32_t    builds;
+    uint32_t    recreates;
+    uint32_t    positionalFails;
+    uint32_t    sortedPassPositionalFails;
+    uint32_t    sortedFails;
+} QrDynamicBlasFilterCounters;
+
 typedef struct QrFrameStats
 {
     uint32_t    raysTotal;
@@ -1619,6 +1631,8 @@ typedef struct QrFrameStats
     uint32_t    dynamicBlasBuilds;
     uint32_t    dynamicBlasRecreations;
     float       dynamicBlasCreateMs;
+    uint32_t    dynamicFilterCount;
+    QrDynamicBlasFilterCounters dynamicFilters[QR_DYNAMIC_BLAS_FILTER_MAX];
 } QrFrameStats;
 
 QRAPI QrResult QRCONV qrGetFrameStatsEx(
