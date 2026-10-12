@@ -11,6 +11,7 @@
 #include "../VertexCollector.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -1304,6 +1305,9 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
             if (blas->handle == nullptr || !DynamicShapeFits(blas->shape, shape))
             {
+                const bool replacingHandle = blas->handle != nullptr;
+                const std::chrono::steady_clock::time_point createStart = std::chrono::steady_clock::now();
+
                 // Create from the very list this build uses, so the allocation covers the build
                 // (vulkan-raytracing.cpp:376-386 against :803-815). The replaced handle is not
                 // dropped while the queue may still read it - it goes through the frame context's
@@ -1329,6 +1333,15 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
                 blas->handle = std::move(handle);
                 blas->shape.swap(shape);
+
+                dynamicFrameCreateMs +=
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - createStart)
+                        .count();
+
+                if (replacingHandle)
+                {
+                    dynamicFrameRecreations++;
+                }
             }
 
             blas->active = true;
@@ -1336,6 +1349,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
             pCommandList->buildBottomLevelAccelStruct(blas->handle.Get(), blas->geometries.data(),
                                                       blas->geometries.size(), DYNAMIC_BLAS_BUILD_FLAGS);
 
+            dynamicFrameBuilds++;
             dynamicBlasCount++;
             dynamicGeometryCount += uint32_t(blas->geometries.size());
             for (size_t i = 0; i < geoms.size(); i++)
@@ -2052,6 +2066,29 @@ void RhiAccelStructs::PrintSummary()
              static_cast<unsigned long long>(vertexDataCopyBytes / 1024),
              tlasInstanceCount);
     print(buffer);
+}
+
+void RhiAccelStructs::GetDynamicFrameCounters(uint32_t *builds, uint32_t *recreations, float *createMs) const
+{
+    if (builds != nullptr)
+    {
+        *builds = dynamicFrameBuilds;
+    }
+    if (recreations != nullptr)
+    {
+        *recreations = dynamicFrameRecreations;
+    }
+    if (createMs != nullptr)
+    {
+        *createMs = static_cast<float>(dynamicFrameCreateMs);
+    }
+}
+
+void RhiAccelStructs::ResetDynamicFrameCounters()
+{
+    dynamicFrameBuilds = 0;
+    dynamicFrameRecreations = 0;
+    dynamicFrameCreateMs = 0.0;
 }
 
 }

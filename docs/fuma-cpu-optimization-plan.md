@@ -445,3 +445,15 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   `rt_brush_persistent "0"` saved in `build/{Debug,Release}/ad/config.cfg` overrode the new default and
   flipped the switch off in the first Debug run; the line was removed from both configs and every reported
   capture shows `rt_brush_persistent=1` in its settings row.
+- 2026-10-12 (as-churn counters for the GPU-first pass): the frame stats carry the dynamic BLAS counters
+  of a frame - `dynamicBlasBuilds`, `dynamicBlasRecreations` and `dynamicBlasCreateMs` (`QrFrameStats`,
+  filled from `RhiAccelStructs::GetDynamicFrameCounters`; zeroed once per frame in `VulkanDevice::DrawFrame`
+  so frames that build no TLAS report zeros, counted after each build and in the create branch of
+  `AppendDynamicSlot`). The bench block prints `as.dynamic builds_avg/recreations_avg/create_avg_ms`
+  (the create time is the per-frame sum over that frame's create path - descriptor construction, allocation
+  and the retire of the replaced handle; recreations count handle replacements only and conflate the
+  order-only shape mismatches with genuine list growth or reactivation). Purpose: size the task-order
+  handle churn before the order-insensitive envelope or the stable-packing refactor. First Release capture
+  (Fuma, Balanced, medium, `r_tasks 1`): builds 6.00, recreations 1.00, create 0.563 ms per frame - one
+  dynamic BLAS handle recreated per frame at about 0.56 ms, about 19% of the same capture's
+  `cpu.draw.RHI_setup_ms` (2.91). Debug build exit 0, CTest 8/8, Release build exit 0.

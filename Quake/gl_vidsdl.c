@@ -423,6 +423,10 @@ static double   rt_prof_sum[RT_PROF_COUNT];
 static double   rt_renderer_cpu_sum[QR_CPU_PASS_COUNT];
 static float    rt_renderer_cpu_max[QR_CPU_PASS_COUNT];
 static int      rt_renderer_cpu_samples;
+static uint64_t rt_bench_dyn_blas_builds;
+static uint64_t rt_bench_dyn_blas_recreations;
+static double   rt_bench_dyn_blas_create_ms;
+static uint32_t rt_bench_dyn_blas_samples;
 
 /* rt_bench: the same slots, summed over a whole demo run instead of maximized over one
    `rt_stats_interval` window. The on-screen panel wants the worst frame of the window; a
@@ -657,6 +661,10 @@ void RT_Bench_Start (void)
 	rt_bench_covered_surfaces_sum = 0;
 	rt_bench_covered_models_sum = 0;
 	rt_bench_covered_emissive_us_sum = 0;
+	rt_bench_dyn_blas_builds = 0;
+	rt_bench_dyn_blas_recreations = 0;
+	rt_bench_dyn_blas_create_ms = 0;
+	rt_bench_dyn_blas_samples = 0;
 	rt_cluster_cache_hits = 0;
 	rt_cluster_cache_misses = 0;
 	rt_cluster_miss_set = 0;
@@ -876,7 +884,13 @@ static void RT_Prof_RecordRenderer (void)
 
 	RT_Prof_Lock ();
 	if (rt_bench_active)
+	{
 		rt_bench_renderer_stats = stats;
+		rt_bench_dyn_blas_builds += stats.dynamicBlasBuilds;
+		rt_bench_dyn_blas_recreations += stats.dynamicBlasRecreations;
+		rt_bench_dyn_blas_create_ms += stats.dynamicBlasCreateMs;
+		++rt_bench_dyn_blas_samples;
+	}
 
 	++rt_renderer_cpu_samples;
 	for (int i = 0; i < QR_CPU_PASS_COUNT; i++)
@@ -918,6 +932,14 @@ static void RT_Prof_RecordEndResult (void *context)
 			rt_renderer_cpu_sum[i] += stats->cpuPassMs[i];
 			if (stats->cpuPassMs[i] > rt_renderer_cpu_max[i])
 				rt_renderer_cpu_max[i] = stats->cpuPassMs[i];
+		}
+
+		if (rt_bench_active)
+		{
+			rt_bench_dyn_blas_builds += stats->dynamicBlasBuilds;
+			rt_bench_dyn_blas_recreations += stats->dynamicBlasRecreations;
+			rt_bench_dyn_blas_create_ms += stats->dynamicBlasCreateMs;
+			++rt_bench_dyn_blas_samples;
 		}
 	}
 
@@ -1274,6 +1296,13 @@ qboolean RT_Bench_Report (const char *demo)
 	         (double)rt_bench_covered_surfaces_sum / frames,
 	         (double)rt_bench_covered_models_sum / frames,
 	         (double)rt_bench_covered_emissive_us_sum / frames / 1000.0);
+
+	if (rt_bench_dyn_blas_samples > 0)
+		fprintf (f, "as.dynamic builds_avg=%.2f recreations_avg=%.2f create_avg_ms=%.3f samples=%u\n",
+		         (double)rt_bench_dyn_blas_builds / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_blas_recreations / rt_bench_dyn_blas_samples,
+		         rt_bench_dyn_blas_create_ms / rt_bench_dyn_blas_samples,
+		         rt_bench_dyn_blas_samples);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");

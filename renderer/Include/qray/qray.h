@@ -1616,6 +1616,9 @@ typedef struct QrFrameStats
     uint32_t    raysParticle;
     uint64_t    rasterUploadBytes;
     uint32_t    rasterUploadDroppedBatches;
+    uint32_t    dynamicBlasBuilds;
+    uint32_t    dynamicBlasRecreations;
+    float       dynamicBlasCreateMs;
 } QrFrameStats;
 
 QRAPI QrResult QRCONV qrGetFrameStatsEx(

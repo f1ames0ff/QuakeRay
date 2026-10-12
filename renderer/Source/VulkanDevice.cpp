@@ -1213,6 +1213,11 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
     statsGpuFrameMs = 0.0f;
     std::fill_n(statsGpuPassMs, QR_GPU_PASS_COUNT, 0.0f);
 
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->ResetDynamicFrameCounters();
+    }
+
     VkCommandBuffer cmd = currentFrameState.GetCmdBuffer();
     const uint32_t frameIndex = currentFrameState.GetFrameIndex();
 
@@ -1390,6 +1395,12 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
 
     pStats->rasterUploadBytes = statsRasterUploadBytes;
     pStats->rasterUploadDroppedBatches = statsRasterUploadDroppedBatches;
+
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->GetDynamicFrameCounters(&pStats->dynamicBlasBuilds, &pStats->dynamicBlasRecreations,
+                                                 &pStats->dynamicBlasCreateMs);
+    }
 }
 
 void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
