@@ -304,23 +304,23 @@ static void RT_StatsOverlayWorld (const rt_stats_snapshot_t *snap)
 	}
 
 	RT_StatsOverlayCountColor ("CLUSTERS", (unsigned)w->clusters, RT_STATS_COLOR_WHITE);
-	RT_StatsOverlayCount (" no row", (unsigned)w->clustersWithoutRow);
-	RT_StatsOverlayCount ("PVS ROW", (unsigned)w->rowBytes);
+	RT_StatsOverlayCountColor (" no row", (unsigned)w->clustersWithoutRow, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor ("PVS ROW", (unsigned)w->rowBytes, RT_STATS_COLOR_WHITE);
 	q_snprintf (st, sizeof (st), "%.1f K", w->visdataBytes / 1024.0);
-	QR_GUI_OverlayRow ("VISDATA", st, NULL, 0, RT_STATS_COLOR_TOTAL);
+	QR_GUI_OverlayRow ("VISDATA", st, NULL, 0, RT_STATS_COLOR_WHITE);
 	q_snprintf (st, sizeof (st), "%d / %d", w->skyTracing, w->clusters);
-	QR_GUI_OverlayRow ("SUN TRACE", st, NULL, 0, RT_STATS_COLOR_TOTAL);
-	RT_StatsOverlayCount (" sky holds", (unsigned)w->skyHolding);
+	QR_GUI_OverlayRow ("SUN TRACE", st, NULL, 0, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" sky holds", (unsigned)w->skyHolding, RT_STATS_COLOR_WHITE);
 	q_snprintf (st, sizeof (st), "%dx%dx%d", w->volumeDims[0], w->volumeDims[1], w->volumeDims[2]);
-	QR_GUI_OverlayRow ("VOLUME", st, NULL, 0, RT_STATS_COLOR_TOTAL);
-	RT_StatsOverlayCount (" texels", (unsigned)w->volumeTexels);
-	RT_StatsOverlayCount (" empty", (unsigned)w->volumeEmpty);
-	RT_StatsOverlayCount ("LIGHTS", (unsigned)w->lightsRegistered);
-	RT_StatsOverlayCount (" dropped", (unsigned)w->lightsDropped);
-	RT_StatsOverlayCount (" granted", (unsigned)w->slotsGranted);
-	RT_StatsOverlayCount (" denied", (unsigned)w->slotsDenied);
+	QR_GUI_OverlayRow ("VOLUME", st, NULL, 0, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" texels", (unsigned)w->volumeTexels, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" empty", (unsigned)w->volumeEmpty, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor ("LIGHTS", (unsigned)w->lightsRegistered, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" dropped", (unsigned)w->lightsDropped, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" granted", (unsigned)w->slotsGranted, RT_STATS_COLOR_WHITE);
+	RT_StatsOverlayCountColor (" denied", (unsigned)w->slotsDenied, RT_STATS_COLOR_WHITE);
 	q_snprintf (st, sizeof (st), "%d / %d / %d", w->demandMax, w->demandMedian, w->demandP95);
-	QR_GUI_OverlayRow ("DEMAND", st, NULL, 0, RT_STATS_COLOR_TOTAL);
+	QR_GUI_OverlayRow ("DEMAND", st, NULL, 0, RT_STATS_COLOR_WHITE);
 }
 
 void RT_StatsDrawGui (void)
