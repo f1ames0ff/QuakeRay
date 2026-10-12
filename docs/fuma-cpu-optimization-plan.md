@@ -499,3 +499,8 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   Next: a create-time headroom envelope (allocate with slack and reuse the handle while the build fits the
   allocation) to absorb the fluctuation, with the memory cost measured. Debug build exit 0, CTest 8/8,
   Release build exit 0.
+- 2026-10-12 (list-length trend telemetry): the as.filter row now carries len_first/len_last per filter, so
+  a capture shows whether the churning filter's list length rose or fell across the window. Built and tested
+  (Debug exit 0, CTest 8/8, Release exit 0); the trend captures are blocked in the current desktop session by
+  VK_ERROR_OUT_OF_DATE_KHR at swapchain creation (Swapchain.cpp:139), the same non-interactive-session class
+  as the earlier focus-gate refusals, and will be re-taken when the desktop is interactive again.

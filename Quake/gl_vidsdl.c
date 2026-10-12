@@ -439,6 +439,8 @@ static uint64_t rt_bench_dyn_filter_sshape[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint64_t rt_bench_dyn_filter_len_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint32_t rt_bench_dyn_filter_len_min[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint32_t rt_bench_dyn_filter_len_max[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_first[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_last[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint32_t rt_bench_dyn_filter_len_samples[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint64_t rt_bench_dyn_filter_env_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint32_t rt_bench_dyn_filter_env_min[QR_DYNAMIC_BLAS_FILTER_MAX];
@@ -935,6 +937,8 @@ static void RT_Bench_AddDynamicFilterStats (const QrFrameStats *stats)
 			rt_bench_dyn_filter_scount[slot] = 0;
 			rt_bench_dyn_filter_sshape[slot] = 0;
 			rt_bench_dyn_filter_len_sum[slot] = 0;
+			rt_bench_dyn_filter_len_first[slot] = 0;
+			rt_bench_dyn_filter_len_last[slot] = 0;
 			rt_bench_dyn_filter_len_samples[slot] = 0;
 			rt_bench_dyn_filter_env_sum[slot] = 0;
 			rt_bench_dyn_filter_env_min[slot] = 0;
@@ -966,6 +970,9 @@ static void RT_Bench_AddDynamicFilterStats (const QrFrameStats *stats)
 		}
 
 		rt_bench_dyn_filter_len_sum[slot] += src->geometryCount;
+		if (rt_bench_dyn_filter_len_first[slot] == 0)
+			rt_bench_dyn_filter_len_first[slot] = src->geometryCount;
+		rt_bench_dyn_filter_len_last[slot] = src->geometryCount;
 		rt_bench_dyn_filter_len_samples[slot]++;
 
 		if (rt_bench_dyn_filter_env_max[slot] == 0 || src->envelopeCount > rt_bench_dyn_filter_env_max[slot])
@@ -1414,7 +1421,7 @@ qboolean RT_Bench_Report (const char *demo)
 		         rt_bench_dyn_blas_samples);
 
 	for (uint32_t i = 0; i < rt_bench_dyn_filter_count && rt_bench_dyn_blas_samples > 0; i++)
-		fprintf (f, "as.filter filter=0x%08x builds_avg=%.2f recreates_avg=%.2f pfail_avg=%.2f sord_avg=%.2f sset_avg=%.2f scount_avg=%.2f sshape_avg=%.2f len_avg=%.1f len_min=%u len_max=%u env_avg=%.1f env_min=%u env_max=%u fdelta_avg=%+.2f fdelta_min=%d fdelta_max=%d len_samples=%u\n",
+		fprintf (f, "as.filter filter=0x%08x builds_avg=%.2f recreates_avg=%.2f pfail_avg=%.2f sord_avg=%.2f sset_avg=%.2f scount_avg=%.2f sshape_avg=%.2f len_avg=%.1f len_min=%u len_max=%u len_first=%u len_last=%u env_avg=%.1f env_min=%u env_max=%u fdelta_avg=%+.2f fdelta_min=%d fdelta_max=%d len_samples=%u\n",
 		         rt_bench_dyn_filter_id[i],
 		         (double)rt_bench_dyn_filter_builds[i] / rt_bench_dyn_blas_samples,
 		         (double)rt_bench_dyn_filter_recreates[i] / rt_bench_dyn_blas_samples,
@@ -1428,6 +1435,8 @@ qboolean RT_Bench_Report (const char *demo)
 		             : 0.0,
 		         rt_bench_dyn_filter_len_min[i],
 		         rt_bench_dyn_filter_len_max[i],
+		         rt_bench_dyn_filter_len_first[i],
+		         rt_bench_dyn_filter_len_last[i],
 		         rt_bench_dyn_filter_len_samples[i] > 0
 		             ? (double)rt_bench_dyn_filter_env_sum[i] / rt_bench_dyn_filter_len_samples[i]
 		             : 0.0,
