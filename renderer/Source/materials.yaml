@@ -672,7 +672,6 @@ qray_materials:
     light_brightness: 0.01
     is_light: true
   - name: textures/window1_2
-    texture_emissive: textures/window1_2_luma.png
     luma_blend: 2
     light_brightness: 0.01
     mirror: true
