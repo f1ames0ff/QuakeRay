@@ -277,11 +277,16 @@ static struct
 	rt_material_t  extra[QRE_GROUP_MAX];
 	int            extra_count;
 
-	// the frame blocks of a model pick: the settings one frame hands to another
-	// (Copy/Paste) and the texture frame the model shows and the panel edits
+	// the frame blocks of a model or sprite pick: the settings one frame hands
+	// to another (Copy/Paste), the frame the panel shows and edits, and the
+	// entity value the frame override has to give back
 	rt_material_t mat_clip;
 	qboolean      mat_clip_valid;
 	int           frame_tex;
+	entity_t     *frame_backup_ent;
+	int           frame_backup_value;
+	qboolean      frame_backup_is_sprite;
+	qboolean      frame_backup_valid;
 
 	// snapshot of both material lists for Cancel/Exit
 	rt_material_t *snap_global;
@@ -1241,14 +1246,15 @@ static void QRE_ResolveGroup (const char *texname)
 	}
 }
 
-// Whether the open group is a model's texture frames: those blocks get the
-// frame controls above them and the Copy/Paste row in their headers.
-static qboolean QRE_ModelFrameGroup (void)
+// Whether the open group is a model's or sprite's texture frames: those get the
+// frame slider above them, a single section for the selected frame and the
+// Copy/Paste row in its header.
+static qboolean QRE_FrameGroup (void)
 {
-	if (!qre.pick_model || qre.pick_model->type != mod_alias || qre.group_count <= 0)
+	if (!qre.pick_model || (qre.pick_model->type != mod_alias && qre.pick_model->type != mod_sprite))
 		return false;
 
-	return true;
+	return (qre.group_count > 0) ? true : false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1559,12 +1565,12 @@ static gltexture_t *QRE_EntityTexture (entity_t *e)
 	return NULL;
 }
 
-// The texture frame the picked model shows now: the frame the preview was set
-// to when the preview carries the picked model, and otherwise the texture the
-// model entity draws in the world.
+// The texture frame the picked model or sprite shows now: the frame the slider
+// picked while the override is in place, and otherwise the texture the entity
+// draws in the world.
 static int QRE_ActiveFrame (void)
 {
-	if (qre.entity_preview_model && qre.entity_preview_model == qre.pick_model)
+	if (qre.frame_backup_valid && qre.frame_backup_ent == qre.pick_ent)
 		return qre.frame_tex;
 
 	if (qre.pick_ent)
@@ -1578,12 +1584,51 @@ static int QRE_ActiveFrame (void)
 	return -1;
 }
 
-// A model pick starts the frame controls where the model stands: the texture
-// frame it draws now and the pose it holds. The preview itself waits for the
-// first touch of the controls.
+// The frame controls write into the picked entity -- its skin for a model, its
+// frame for a sprite -- so the world shows the frame the panel edits. The value
+// the entity had is kept once and given back when the panel stops driving it.
+static void QRE_FrameOverrideRelease (void)
+{
+	if (!qre.frame_backup_valid)
+		return;
+
+	if (qre.frame_backup_ent)
+	{
+		if (qre.frame_backup_is_sprite)
+			qre.frame_backup_ent->frame = qre.frame_backup_value;
+		else
+			qre.frame_backup_ent->skinnum = qre.frame_backup_value;
+	}
+
+	qre.frame_backup_valid = false;
+	qre.frame_backup_ent = NULL;
+}
+
+static void QRE_FrameOverrideApply (void)
+{
+	const qboolean sprite = (qre.pick_model && qre.pick_model->type == mod_sprite) ? true : false;
+
+	if (!qre.frame_backup_valid)
+	{
+		qre.frame_backup_ent = qre.pick_ent;
+		qre.frame_backup_is_sprite = sprite;
+		qre.frame_backup_value = sprite ? qre.pick_ent->frame : qre.pick_ent->skinnum;
+		qre.frame_backup_valid = true;
+	}
+
+	if (sprite)
+		qre.pick_ent->frame = qre.frame_tex;
+	else
+		qre.pick_ent->skinnum = qre.frame_tex;
+}
+
+// A pick of a model or sprite starts the frame slider where the entity stands;
+// the entity the previous pick drove gets its own value back first.
 static void QRE_FramePickInit (void)
 {
-	if (!QRE_ModelFrameGroup ())
+	QRE_FrameOverrideRelease ();
+
+	if (!QRE_FrameGroup ())
 	{
 		qre.frame_tex = -1;
 		return;
@@ -2493,13 +2538,14 @@ void QR_Editor_UpdateView (void)
 		VectorCopy (r_refdef.vieworg, cl.viewent.origin);
 	}
 
-	// the frame slider drives the picked entity's texture frame: the model in
-	// the world shows the frame the panel edits, wherever the camera looks
-	if (qre.active && qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 0 && qre.frame_tex >= 0 &&
-	    qre.pick_ent && qre.pick_ent->model == qre.pick_model && QRE_ModelFrameGroup ())
-	{
-		qre.pick_ent->skinnum = qre.frame_tex;
-	}
+	// the frame slider drives the picked entity's frame: the world shows the
+	// frame the panel edits, and the entity's own value comes back as soon as
+	// the panel stops showing its group
+	if (qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 0 && qre.frame_tex >= 0 &&
+	    qre.pick_ent && qre.pick_ent->model == qre.pick_model && QRE_FrameGroup ())
+		QRE_FrameOverrideApply ();
+	else
+		QRE_FrameOverrideRelease ();
 
 	// Before the frame renders: a re-synthesis replaces the material handles,
 	// and the world's static upload (R_DrawWorldTask) runs later in this frame,
@@ -3685,12 +3731,16 @@ static void QRE_FrameControls (void)
 	if (qre.frame_tex < lo || qre.frame_tex > hi)
 		qre.frame_tex = lo;
 
-	QR_GUI_LabelDim ("the texture frames of this model: the one below is shown and edited");
+	QR_GUI_LabelDim ((qre.pick_model->type == mod_sprite)
+	                     ? "the frames of this sprite: the one below is shown and edited"
+	                     : "the texture frames of this model: the one below is shown and edited");
 	QR_GUI_Spacing ();
 
 	frame = qre.frame_tex;
 	if (QR_GUI_SliderInt ("frame", &frame, lo, hi,
-	                      "The model's texture frame: the entity shows it and the section below edits it."))
+	                      (qre.pick_model->type == mod_sprite)
+	                          ? "The sprite frame the entity shows and the section below edits."
+	                          : "The model's texture frame: the entity shows it and the section below edits it."))
 		qre.frame_tex = CLAMP (lo, frame, hi);
 }
 
@@ -3741,13 +3791,13 @@ static void QRE_BuildPanelGUI (void)
 	if (qre.mat_tab == 1)
 		QRE_MatEntitiesTab ();
 
-	if (QRE_ModelFrameGroup ())
+	if (QRE_FrameGroup ())
 	{
 		int frame_g = -1;
 
-		// one section edits the frame the slider picked, not one block per
-		// frame: the frame* names are the model's texture frames and the slider
-		// is what chooses between them (and what the entity shows)
+		// one section edits the frame the slider picked, under a plain header:
+		// the frame* names are the model's or sprite's frames and the slider is
+		// what chooses between them (and what the entity shows)
 		QRE_FrameControls ();
 
 		for (g = 0; g < qre.group_count; g++)
@@ -3761,24 +3811,25 @@ static void QRE_BuildPanelGUI (void)
 
 		if (frame_g < 0)
 		{
-			QR_GUI_LabelDim (va ("the model has no frame %d", qre.frame_tex));
+			QR_GUI_LabelDim (va ("this %s has no frame %d",
+			                     (qre.pick_model->type == mod_sprite) ? "sprite" : "model", qre.frame_tex));
 		}
 		else
 		{
-			int       open = 0;
-			const int actions = QR_GUI_SectionFrameActions (
-			    qre.group[frame_g]->name, 1, qre.mat_clip_valid ? 1 : 0, &open,
-			    "Copy this frame's settings to paste into another frame.",
-			    "Paste the copied settings into this frame.");
+			int actions;
+
+			QR_GUI_PushID (qre.group[frame_g]->name);
+			QR_GUI_Separator ();
+			actions = QR_GUI_HeaderFrameActions (qre.group[frame_g]->name, qre.mat_clip_valid ? 1 : 0,
+			                                     "Copy this frame's settings to paste into another frame.",
+			                                     "Paste the copied settings into this frame.");
 
 			if (actions & 1)
 				QRE_CopyFrame (frame_g);
 			if (actions & 2)
 				QRE_PasteFrame (frame_g);
 
-			QR_GUI_PushID (qre.group[frame_g]->name);
-			if (open)
-				QRE_ParamWidgets (frame_g);
+			QRE_ParamWidgets (frame_g);
 			QR_GUI_PopID ();
 		}
 	}
@@ -7508,8 +7559,10 @@ static void QRE_StopEditor (qboolean restore)
 		QRE_RestoreModeState ();
 
 	// with the editor gone the sky settings are the level's and the config's
-	// again, not a session's
+	// again, not a session's, and the frame the panel drove belongs to the
+	// entity again
 	RT_SkySettings_EndSession ();
+	QRE_FrameOverrideRelease ();
 
 	if (qre.entity_preview_model != NULL && cl.viewent.model == qre.entity_preview_model)
 		cl.viewent.model = NULL;

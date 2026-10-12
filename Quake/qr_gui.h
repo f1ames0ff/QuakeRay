@@ -135,13 +135,12 @@ int  QR_GUI_DialogVertical (const char *title, const char *text, const char *fir
 // and fills out_u/out_v with the cursor's normalized position (0..1).
 int  QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, float *out_u, float *out_v);
 int  QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h, float (*uv)[2], int *count, int max_count);
-// A framed section header with up to two small icon buttons at its right edge:
-// the first (the copy icon) is always there, the second (the paste icon) only
-// when the caller has something to paste. `selected` highlights the header and
-// keeps it open (the active animation frame). Returns a bitmask of the buttons
-// pressed (1 = the first, 2 = the second); *open tells whether the body shows.
-int  QR_GUI_SectionFrameActions (const char *label, int selected, int show_paste, int *open,
-                                 const char *tip_first, const char *tip_second);
+// A plain section header (a centered title, nothing to collapse) with the same
+// icon buttons at its right end: the copy icon always, the paste icon when the
+// caller has something to paste. Returns a bitmask of the buttons pressed
+// (1 = the first, 2 = the second).
+int  QR_GUI_HeaderFrameActions (const char *label, int show_paste,
+                                const char *tip_first, const char *tip_second);
 // 1 while any ImGui item is being dragged or edited.
 int  QR_GUI_AnyItemActive (void);
 

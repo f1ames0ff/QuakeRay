@@ -668,6 +668,82 @@ void QR_GUI_SectionTitle (const char *label)
 	dl->AddText (ImVec2 (pos.x + x, pos.y), col, label);
 }
 
+// The icon buttons of a section header row: the copy icon (two sheets) and the
+// paste icon (a clipboard), drawn like the panel's other icon buttons.
+static bool SectionIconButton (const char *id, float x, float y, float size, bool paste)
+{
+	ImGui::SetCursorScreenPos (ImVec2 (x, y));
+	const bool pressed = ImGui::Button (id, ImVec2 (size, size));
+
+	const ImVec2 min = ImGui::GetItemRectMin ();
+	const ImVec2 max = ImGui::GetItemRectMax ();
+	const ImVec2 c ((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+	const float  r = size * 0.22f;
+	ImDrawList  *draw = ImGui::GetWindowDrawList ();
+	const ImU32  color = ImGui::GetColorU32 (ImGuiCol_Text);
+
+	if (!paste)
+	{
+		draw->AddRect (ImVec2 (c.x - r * 1.1f, c.y - r * 0.55f), ImVec2 (c.x + r * 0.5f, c.y + r * 1.1f), color, 1.0f, 0, 1.4f);
+		draw->AddRect (ImVec2 (c.x - r * 0.5f, c.y - r * 1.1f), ImVec2 (c.x + r * 1.1f, c.y + r * 0.55f), color, 1.0f, 0, 1.4f);
+	}
+	else
+	{
+		draw->AddRect (ImVec2 (c.x - r, c.y - r * 0.55f), ImVec2 (c.x + r, c.y + r * 1.2f), color, 1.0f, 0, 1.4f);
+		draw->AddRect (ImVec2 (c.x - r * 0.45f, c.y - r * 1.2f), ImVec2 (c.x + r * 0.45f, c.y - r * 0.5f), color, 0.0f, 0, 1.4f);
+	}
+
+	return pressed;
+}
+
+int QR_GUI_HeaderFrameActions (const char *label, int show_paste, const char *tip_first, const char *tip_second)
+{
+	const ImVec2 pos = ImGui::GetCursorScreenPos ();
+	const float  avail = ImGui::GetContentRegionAvail ().x;
+	const ImVec2 text = ImGui::CalcTextSize (label);
+	const float  row_h = (text.y > ImGui::GetFrameHeight ()) ? text.y : ImGui::GetFrameHeight ();
+	const float  text_x = (avail - text.x) * 0.5f;
+	const float  text_y = pos.y + (row_h - text.y) * 0.5f;
+	const ImU32  col = ImGui::GetColorU32 (ImGuiCol_Text);
+	ImDrawList  *dl = ImGui::GetWindowDrawList ();
+	int          result = 0;
+
+	// the row: a centered outlined title (the look the section headers use) and
+	// the icon buttons at its right end
+	ImGui::Dummy (ImVec2 (avail, row_h));
+
+	const ImVec2 below = ImGui::GetCursorPos ();
+
+	dl->AddText (ImVec2 (pos.x + text_x - 0.6f, text_y), col, label);
+	dl->AddText (ImVec2 (pos.x + text_x + 0.6f, text_y), col, label);
+	dl->AddText (ImVec2 (pos.x + text_x, text_y - 0.6f), col, label);
+	dl->AddText (ImVec2 (pos.x + text_x, text_y + 0.6f), col, label);
+	dl->AddText (ImVec2 (pos.x + text_x, text_y), col, label);
+
+	const float btn = row_h * 0.82f;
+	float       x = pos.x + avail - 3.0f - btn;
+
+	if (show_paste)
+	{
+		if (SectionIconButton ("##paste", x, pos.y + (row_h - btn) * 0.5f, btn, true))
+			result |= 2;
+		if (tip_second && *tip_second)
+			ImGui::SetItemTooltip ("%s", tip_second);
+		x -= btn + 2.0f;
+	}
+
+	if (SectionIconButton ("##copy", x, pos.y + (row_h - btn) * 0.5f, btn, false))
+		result |= 1;
+	if (tip_first && *tip_first)
+		ImGui::SetItemTooltip ("%s", tip_first);
+
+	// the buttons moved the cursor into the row; the layout continues below it
+	ImGui::SetCursorPos (below);
+	ImGui::Dummy (ImVec2 (0.0f, 0.0f));
+
+	return result;
+}
+
 void QR_GUI_Spacing (void)
 {
 	ImGui::Spacing ();
@@ -1212,96 +1288,6 @@ int QR_GUI_SectionSelected (const char *label, int selected)
 		ImGui::PopStyleColor (3);
 
 	return clicked;
-}
-
-// The icon buttons of a section header row: the copy icon (two sheets) and the
-// paste icon (a clipboard), drawn like the panel's other icon buttons.
-static bool SectionIconButton (const char *id, float x, float y, float size, bool paste)
-{
-	ImGui::SetCursorScreenPos (ImVec2 (x, y));
-	const bool pressed = ImGui::Button (id, ImVec2 (size, size));
-
-	const ImVec2 min = ImGui::GetItemRectMin ();
-	const ImVec2 max = ImGui::GetItemRectMax ();
-	const ImVec2 c ((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
-	const float  r = size * 0.22f;
-	ImDrawList  *draw = ImGui::GetWindowDrawList ();
-	const ImU32  color = ImGui::GetColorU32 (ImGuiCol_Text);
-
-	if (!paste)
-	{
-		draw->AddRect (ImVec2 (c.x - r * 1.1f, c.y - r * 0.55f), ImVec2 (c.x + r * 0.5f, c.y + r * 1.1f), color, 1.0f, 0, 1.4f);
-		draw->AddRect (ImVec2 (c.x - r * 0.5f, c.y - r * 1.1f), ImVec2 (c.x + r * 1.1f, c.y + r * 0.55f), color, 1.0f, 0, 1.4f);
-	}
-	else
-	{
-		draw->AddRect (ImVec2 (c.x - r, c.y - r * 0.55f), ImVec2 (c.x + r, c.y + r * 1.2f), color, 1.0f, 0, 1.4f);
-		draw->AddRect (ImVec2 (c.x - r * 0.45f, c.y - r * 1.2f), ImVec2 (c.x + r * 0.45f, c.y - r * 0.5f), color, 0.0f, 0, 1.4f);
-	}
-
-	return pressed;
-}
-
-int QR_GUI_SectionFrameActions (const char *label, int selected, int show_paste, int *open,
-                                const char *tip_first, const char *tip_second)
-{
-	ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Framed;
-	int                result = 0;
-
-	// a selected section is highlighted and kept open; an unselected one keeps
-	// whatever the user left it as
-	if (selected)
-		ImGui::SetNextItemOpen (true, ImGuiCond_Always);
-
-	if (selected)
-	{
-		const ImVec4 active = ImGui::GetStyleColorVec4 (ImGuiCol_HeaderActive);
-
-		ImGui::PushStyleColor (ImGuiCol_Header, active);
-		ImGui::PushStyleColor (ImGuiCol_HeaderHovered, active);
-		ImGui::PushStyleColor (ImGuiCol_HeaderActive, active);
-	}
-
-	// the buttons share the header's row, so the header lets them take it
-	ImGui::SetNextItemAllowOverlap ();
-
-	const bool   is_open = ImGui::CollapsingHeader (label, flags);
-	const ImVec2 rect_min = ImGui::GetItemRectMin ();
-	const ImVec2 rect_max = ImGui::GetItemRectMax ();
-	const ImVec2 cursor = ImGui::GetCursorPos ();
-
-	if (selected)
-		ImGui::PopStyleColor (3);
-
-	if (open)
-		*open = is_open ? 1 : 0;
-
-	const float row_h = rect_max.y - rect_min.y;
-	const float size = row_h * 0.66f;
-	const float pad = 3.0f;
-	float       x = rect_max.x - pad - size;
-
-	if (show_paste)
-	{
-		if (SectionIconButton ("##paste", x, rect_min.y + (row_h - size) * 0.5f, size, true))
-			result |= 2;
-		if (tip_second && *tip_second)
-			ImGui::SetItemTooltip ("%s", tip_second);
-		x -= size + 2.0f;
-	}
-
-	if (SectionIconButton ("##copy", x, rect_min.y + (row_h - size) * 0.5f, size, false))
-		result |= 1;
-	if (tip_first && *tip_first)
-		ImGui::SetItemTooltip ("%s", tip_first);
-
-	// the body keeps flowing under the header, not next to the buttons; the
-	// zero-size dummy is what ImGui wants after a SetCursorPos that the row's
-	// buttons may have moved (its own assert asks for an item here)
-	ImGui::SetCursorPos (cursor);
-	ImGui::Dummy (ImVec2 (0.0f, 0.0f));
-
-	return result;
 }
 
 void QR_GUI_PushID (const char *id)
