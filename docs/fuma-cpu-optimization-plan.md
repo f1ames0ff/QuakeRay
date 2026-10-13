@@ -528,3 +528,23 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   a separate `VUID-vkCmdDrawIndexed-None-08600` (a raster draw against an 88-byte push-constant
   layout where the raster overlay's is 124) for a follow-up. Debug build exit 0, CTest 8/8, Release
   build exit 0 (post-merge).
+
+- 2026-10-13 (dynamic BLAS headroom envelope and the rank-wise reuse fit; `b9e49b9e`): the step the
+  2026-10-12 entries left open is closed, and the measurement moved the fix. `rt_dyn_blas_headroom`
+  (percent, default 25) makes the create descriptors and the adopted envelope larger than the shape
+  that created them (per-geometry counts padded with floors, extra slots sized from the list's mean);
+  the sorted test was refined to rank-wise dominance of the primitive counts - the allocation is a
+  function of the geometry count and the primitive counts only, so the identity fields (stride,
+  format, indexedness, transform presence) need no comparison - and now defaults to 1, which makes
+  it a superset of the positional test. Matrix on Fuma (Balanced, medium), filter 0x4c:
+  positional/0 - recreations 1.00, create 0.417 ms, env_prims 83.7k; positional/25 - 1.00, 0.69 ms
+  (the identity comparisons reject every frame once the list reorders and the reserve slots
+  interleave - this is what forced the predicate revision); rank-wise/0 - 0.00, 0.000 ms,
+  env_prims 135.9k (the envelope is the natural high-water of the frame that created the handle);
+  rank-wise/25 (the default) - 0.00, 0.000 ms, env_prims 135.2k; serial rank-wise/25 - 0.00;
+  serial positional/25 - 0.05, 0.033 ms. No NVRHI build-size guard message in any arm;
+  `env_prims_avg`/`len_prims_avg` in the `as.filter` row carry the envelope's cost in
+  allocation-driving units (the pinned NVRHI exposes no byte size). Debug build exit 0, CTest 8/8
+  (the shape tests follow the new contract), Release build exit 0. Follow-ups: the guard's own
+  message stays the only exact byte figure (it must never fire), and the serial positional arm is
+  the only arm left with recreations above zero.
