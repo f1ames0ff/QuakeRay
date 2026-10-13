@@ -195,7 +195,7 @@ atomic_uint32_t rt_end_task_running;
 	/* DTAL: 1 lights an alias model from the triangles of the pose it draws, when its material
 	   is a light and carries an emissive mask; 0 keeps the fake dlight for it. The per-model cap
 	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
-	CVAR_DEF_T (rt_model_lights, "1") \
+	CVAR_DEF_T (rt_model_lights, "0") \
 	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
 	CVAR_DEF_T (rt_dtal_model_budget, "512") \
 	CVAR_DEF_T (rt_dtal_model_minarea, "0") \
@@ -212,7 +212,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_poi_key, "1") \
 	\
 	CVAR_DEF_T (rt_sky_sun, "1") \
-	CVAR_DEF_T (rt_sky_sun_color, "255 255 255") \
+	CVAR_DEF_T (rt_sky_sun_color, "255 238 191") \
 	CVAR_DEF_T (rt_sky_sun_size, "1.0") \
 	CVAR_DEF_T (rt_sky_sun_pitch, "140") \
 	CVAR_DEF_T (rt_sky_sun_yaw, "120") \
@@ -229,14 +229,14 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_sky_nee, "1") \
 	CVAR_DEF_T (rt_physical_sky, "1") \
 	CVAR_DEF_T (rt_physical_sun, "0") \
-	CVAR_DEF_T (rt_sky_color, "255 255 255") \
+	CVAR_DEF_T (rt_sky_color, "0 169 255") \
 	CVAR_DEF_T (rt_sky_brightness, "1.0") \
 	CVAR_DEF_T (rt_sky_light_mult, "1.0") \
 	CVAR_DEF_T (rt_brightness, "1.0") \
 	CVAR_DEF_T (rt_light_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_clouds, "1") \
 	CVAR_DEF_T (rt_sky_clouds_quality, "2") \
-	CVAR_DEF_T (rt_sky_clouds_color, "0 0 0") \
+	CVAR_DEF_T (rt_sky_clouds_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_clouds_alpha, "1.0") \
 	CVAR_DEF_T (rt_sky_clouds_coverage, "0.2") \
 	CVAR_DEF_T (rt_sky_clouds_density, "0.8") \
@@ -2516,9 +2516,9 @@ typedef enum
 } rt_color_index_t;
 
 static rt_color_t rt_colors[RT_COLOR_COUNT] = {
-	[RT_COLOR_SKY]         = {.cvar = &rt_sky_color,        .fallback = {32 / 255.0f, 0.0f, 64 / 255.0f}, .dirty = true},
-	[RT_COLOR_SUN]         = {.cvar = &rt_sky_sun_color,        .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
-	[RT_COLOR_CLOUDS]      = {.cvar = &rt_sky_clouds_color, .fallback = {0.0f, 0.0f, 0.0f},                .dirty = true},
+	[RT_COLOR_SKY]         = {.cvar = &rt_sky_color,        .fallback = {0.0f, 169 / 255.0f, 1.0f},       .dirty = true},
+	[RT_COLOR_SUN]         = {.cvar = &rt_sky_sun_color,        .fallback = {1.0f, 238 / 255.0f, 191 / 255.0f}, .dirty = true},
+	[RT_COLOR_CLOUDS]      = {.cvar = &rt_sky_clouds_color, .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_LIGHT]       = {.cvar = &rt_light_color,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_GLOBALLIGHT] = {.cvar = &rt_globallight,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_WATER]       = {.cvar = &rt_water_color,      .fallback = {171 / 255.0f, 193 / 255.0f, 210 / 255.0f}, .dirty = true},

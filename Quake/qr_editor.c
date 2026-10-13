@@ -75,7 +75,6 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea, rt_dtal_groups, rt_dtal_spacing;
-extern cvar_t rt_model_lights;
 extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minarea;
 extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale;
 
@@ -3270,7 +3269,6 @@ static float    qre_water_color_snapshot[3];
 static float    qre_acid_color_snapshot[3];
 
 static const char *const qre_mat_cvars[] = {
-	"rt_model_lights",
 	"rt_dtal_clearance",
 	"rt_dtal_maxpolys",
 	"rt_dtal_minarea",
@@ -3499,14 +3497,6 @@ static void QRE_MatSystemTab (void)
 		Cvar_Set ("rt_dtal_spacing", va ("%.4g", value));
 
 	QR_GUI_SectionHeader ("DTAL (models)");
-
-	{
-		int dtal_models = CVAR_TO_BOOL (rt_model_lights) ? 1 : 0;
-
-		if (QR_GUI_Checkbox ("DTAL on models", &dtal_models,
-		                     "Light a model or sprite from its emissive geometry (DTAL) instead of its generated dlight; the limits below still bound what qualifies. With this off the is_light surface keeps its glow and only the cast light falls back to a dlight."))
-			Cvar_Set ("rt_model_lights", dtal_models ? "1" : "0");
-	}
 
 	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
@@ -4310,9 +4300,13 @@ typedef struct
 	const char *action;
 	const char *show_when;
 	int         cond;
+	const char *label; // the caption a row shows instead of its cvar name
 } qre_global_t;
 
 static const qre_global_t qre_globals[] = {
+	{ "Global", "rt_model_lights",  QRE_G_BOOL,  0, 0,
+	  "Light a model or sprite from its emissive geometry (DTAL) instead of its generated dlight; the limits in the material editor's DTAL (models) section still bound what qualifies. With this off the is_light surface keeps its glow and only the cast light falls back to a dlight.",
+	  NULL, NULL, QRE_COND_NONE, "DTAL dynamic entities" },
 	{ "Global", "rt_brightness",    QRE_G_FLOAT, 0, 3,
 	  "The brightness of the whole ray-traced image." },
 	{ NULL,  "rt_globallight",      QRE_G_COLOR, 0, 0,
@@ -4607,7 +4601,7 @@ static void QRE_LightGlobalTab (void)
 		{
 			int value = CVAR_TO_BOOL (*var) ? 1 : 0;
 
-			if (QR_GUI_Checkbox (g->name, &value, g->tip))
+			if (QR_GUI_Checkbox (g->label ? g->label : g->name, &value, g->tip))
 				Cvar_Set (g->name, value ? "1" : "0");
 			break;
 		}
