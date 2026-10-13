@@ -434,6 +434,7 @@ typedef struct
 	char           pick_name[MAX_QPATH];
 	rt_material_t *group[QRE_GROUP_MAX];
 	int            group_kind[QRE_GROUP_MAX]; // >=0 an extra index, -1 a live material, -2 tmp_mat
+	char           group_name[QRE_GROUP_MAX][MAX_QPATH];
 	int            group_count;
 	rt_material_t  extra[QRE_GROUP_MAX];
 	int            extra_count;
@@ -493,6 +494,7 @@ static void QRE_InstanceSave (qre_instance_t *dst)
 		{
 			dst->group[i] = m;
 			dst->group_kind[i] = -1;
+			q_strlcpy (dst->group_name[i], m->name, sizeof (dst->group_name[i]));
 		}
 	}
 }
@@ -531,7 +533,8 @@ static void QRE_InstanceLoad (const qre_instance_t *src)
 		{
 			qre.group[i] = src->group[i];
 
-			if (qre.group[i] == NULL || !qre.group[i]->valid)
+			if (qre.group[i] == NULL || !qre.group[i]->valid ||
+			    strcmp (qre.group[i]->name, src->group_name[i]) != 0)
 				resolve = true;
 		}
 		else
@@ -6867,6 +6870,10 @@ static void QRE_Cancel (void)
 			*dot = '\0';
 		q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
 		QRE_ResolveGroup (texname);
+	}
+	else if (qre.pick_name[0])
+	{
+		QRE_ResolveGroup (qre.pick_name);
 	}
 
 	// nothing is pending after a cancel: the session files go away, so Exit
