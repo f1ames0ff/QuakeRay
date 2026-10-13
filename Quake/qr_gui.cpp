@@ -995,39 +995,6 @@ int QR_GUI_Combo (const char *label, int *value, const char *const *items, int c
 	return changed;
 }
 
-// A square button with a bin drawn in it, right-aligned in the row it follows: the luma colour
-// and mask blocks remove themselves with it, so the control reads the same in both.
-int QR_GUI_TrashButton (const char *label, int enabled)
-{
-	char id[192];
-	snprintf (id, sizeof (id), "##trash_%s", label);
-
-	const ImVec2 prev_max = ImGui::GetItemRectMax ();
-	const float  after    = (prev_max.x - ImGui::GetWindowPos ().x) + ImGui::GetStyle ().ItemSpacing.x;
-	const float  right    = ImGui::GetWindowContentRegionMax ().x - kResetButtonSize;
-	const float  x        = right > after ? right : after;
-
-	ImGui::SameLine (x);
-	ImGui::SetCursorPosY (ImGui::GetCursorPosY () +
-	                      (ImGui::GetFrameHeight () - kResetButtonSize) * 0.5f);
-
-	if (!enabled)
-		ImGui::BeginDisabled ();
-
-	ImGui::PushStyleColor (ImGuiCol_Button, ImVec4 (0.16f, 0.17f, 0.21f, 0.85f));
-	const bool pressed = ImGui::Button (id, ImVec2 (kResetButtonSize, kResetButtonSize));
-	ImGui::PopStyleColor ();
-
-	// The bin is drawn, not a glyph: the panel font has no trash character.
-	DrawBinIcon (ImGui::GetItemRectMin (), ImGui::GetItemRectMax (),
-	             ImGui::GetColorU32 (ImGuiCol_Text, enabled ? 1.0f : 0.45f));
-
-	if (!enabled)
-		ImGui::EndDisabled ();
-
-	return pressed ? 1 : 0;
-}
-
 // Case-insensitive substring test, so a search field finds "flame2" in "progs/flame2.mdl".
 static bool QRGuiTextHas (const char *haystack, const char *needle)
 {
@@ -1594,9 +1561,9 @@ int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, flo
 	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
 
 	// while the pointer is on the preview and Ctrl is down the wheel is the zoom's,
-	// not the panel's scroll
+	// not the panel's scroll (the image has no item ID, so the owner is the view's)
 	if (over && ImGui::GetIO ().KeyCtrl)
-		ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
+		ImGui::SetKeyOwner (ImGuiKey_MouseWheelY, view_id);
 
 	const bool hovered = ImGui::IsItemHovered ();
 	const ImVec2 mouse = ImGui::GetIO ().MousePos;

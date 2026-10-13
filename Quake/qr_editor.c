@@ -485,7 +485,8 @@ static void QRE_InstanceSave (qre_instance_t *dst)
 			dst->group[i] = NULL;
 			dst->group_kind[i] = -2;
 		}
-		else if (m >= &qre.extra[0] && m < &qre.extra[QRE_GROUP_MAX])
+		else if ((uintptr_t) m >= (uintptr_t) &qre.extra[0] &&
+		         (uintptr_t) m < (uintptr_t) &qre.extra[QRE_GROUP_MAX])
 		{
 			dst->group[i] = NULL;
 			dst->group_kind[i] = (int) (m - &qre.extra[0]);
@@ -949,7 +950,9 @@ static void QRE_ReapplyTouched (void)
 // defaults are qre.tmp_mat and the qre.extra frames of a model pick.
 static qboolean QRE_IsDetached (const rt_material_t *m)
 {
-	return m == &qre.tmp_mat || (m >= &qre.extra[0] && m < &qre.extra[QRE_GROUP_MAX]);
+	return m == &qre.tmp_mat ||
+	       ((uintptr_t) m >= (uintptr_t) &qre.extra[0] &&
+	        (uintptr_t) m < (uintptr_t) &qre.extra[QRE_GROUP_MAX]);
 }
 
 static void QRE_EnsureLive (int g)
@@ -4050,6 +4053,8 @@ typedef struct
 
 static qre_texentry_t qre_texentries[QRE_TEXLIST_MAX];
 static char           qre_texlabels[QRE_TEXLIST_MAX][MAX_QPATH + 16];
+static unsigned int   qre_texlist_revision;
+static int            qre_texlist_count;
 
 static int QRE_CompareTexEntries (const void *a, const void *b)
 {
@@ -4103,65 +4108,80 @@ static void QRE_MatTexturePicker (void)
 {
 	static char names[QRE_TEXLIST_MAX][MAX_QPATH];
 
-	const char *items[QRE_TEXLIST_MAX];
-	char        pick_base[MAX_QPATH];
-	int         count, i, groups = 0, choice = -1;
+	const char  *items[QRE_TEXLIST_MAX];
+	char         pick_base[MAX_QPATH];
+	unsigned int revision = TexMgr_TextureListRevision ();
+	int          i, count, choice = -1;
 
-	count = TexMgr_CollectTextureNames (names, QRE_TEXLIST_MAX);
-
-	for (i = 0; i < count; i++)
+	if (revision != qre_texlist_revision)
 	{
-		const int digit = QRE_FrameDigit (names[i]);
+		int groups = 0;
 
-		QRE_GroupBaseOf (names[i], qre_texentries[i].base, sizeof (qre_texentries[i].base));
-		q_strlcpy (qre_texentries[i].open_name, names[i], sizeof (qre_texentries[i].open_name));
-		qre_texentries[i].frames = (digit >= 0) ? 1 : 0;
+		qre_texlist_revision = revision;
+
+		count = TexMgr_CollectTextureNames (names, QRE_TEXLIST_MAX);
+
+		for (i = 0; i < count; i++)
+		{
+			const int digit = QRE_FrameDigit (names[i]);
+
+			QRE_GroupBaseOf (names[i], qre_texentries[i].base, sizeof (qre_texentries[i].base));
+			q_strlcpy (qre_texentries[i].open_name, names[i], sizeof (qre_texentries[i].open_name));
+			qre_texentries[i].frames = (digit >= 0) ? 1 : 0;
+		}
+
+		if (count > 1)
+			qsort (qre_texentries, count, sizeof (qre_texentries[0]), QRE_CompareTexEntries);
+
+		for (i = 0; i < count; i++)
+		{
+			qre_texentry_t *e = &qre_texentries[i];
+
+			if (groups > 0 && !q_strcasecmp (qre_texentries[groups - 1].base, e->base))
+			{
+				qre_texentry_t *prev = &qre_texentries[groups - 1];
+				const int       digit = QRE_FrameDigit (e->open_name);
+				const int       cur = QRE_FrameDigit (prev->open_name);
+
+				prev->frames += e->frames;
+				if (digit >= 0 && (cur < 0 || digit < cur))
+					q_strlcpy (prev->open_name, e->open_name, sizeof (prev->open_name));
+			}
+			else
+			{
+				if (groups != i)
+					qre_texentries[groups] = *e;
+				groups++;
+			}
+		}
+
+		qre_texlist_count = groups;
+
+		for (i = 0; i < qre_texlist_count; i++)
+		{
+			if (qre_texentries[i].frames > 0)
+				q_snprintf (qre_texlabels[i], sizeof (qre_texlabels[i]), "%s (%d)",
+				            qre_texentries[i].base, qre_texentries[i].frames);
+			else
+				q_strlcpy (qre_texlabels[i], qre_texentries[i].base, sizeof (qre_texlabels[i]));
+		}
 	}
 
-	if (count > 1)
-		qsort (qre_texentries, count, sizeof (qre_texentries[0]), QRE_CompareTexEntries);
-
-	for (i = 0; i < count; i++)
-	{
-		qre_texentry_t *e = &qre_texentries[i];
-
-		if (groups > 0 && !q_strcasecmp (qre_texentries[groups - 1].base, e->base))
-		{
-			qre_texentry_t *prev = &qre_texentries[groups - 1];
-			const int       digit = QRE_FrameDigit (e->open_name);
-			const int       cur = QRE_FrameDigit (prev->open_name);
-
-			prev->frames += e->frames;
-			if (digit >= 0 && (cur < 0 || digit < cur))
-				q_strlcpy (prev->open_name, e->open_name, sizeof (prev->open_name));
-		}
-		else
-		{
-			if (groups != i)
-				qre_texentries[groups] = *e;
-			groups++;
-		}
-	}
+	count = qre_texlist_count;
 
 	QRE_GroupBaseOf (qre.pick_name, pick_base, sizeof (pick_base));
 
-	for (i = 0; i < groups; i++)
+	for (i = 0; i < count; i++)
 	{
-		if (qre_texentries[i].frames > 0)
-			q_snprintf (qre_texlabels[i], sizeof (qre_texlabels[i]), "%s (%d)",
-			            qre_texentries[i].base, qre_texentries[i].frames);
-		else
-			q_strlcpy (qre_texlabels[i], qre_texentries[i].base, sizeof (qre_texlabels[i]));
-
 		items[i] = qre_texlabels[i];
 
 		if (!q_strcasecmp (qre_texentries[i].base, pick_base))
 			choice = i;
 	}
 
-	if (QR_GUI_ComboFiltered ("Material", &choice, items, groups,
+	if (QR_GUI_ComboFiltered ("Material", &choice, items, count,
 	                          "Every texture the engine has, its frames grouped; the search finds one by name. Choosing one opens its materials like a pick in the world.") &&
-	    choice >= 0 && choice < groups)
+	    choice >= 0 && choice < count)
 		QRE_OpenTexture (qre_texentries[choice].open_name);
 
 	QR_GUI_Spacing ();
@@ -4441,10 +4461,13 @@ static void QRE_BuildPanelGUI (void)
 		}
 
 		// a group entry with no frame digit (a ring's base material) keeps its
-		// own section below the shown frame
+		// own section below the shown frame, and so does a frame that shares the
+		// shown one's digit: the slider reaches only the first of them
 		for (g = 0; g < qre.group_count; g++)
 		{
-			if (QRE_FrameDigit (qre.group[g]->name) >= 0)
+			const int digit = QRE_FrameDigit (qre.group[g]->name);
+
+			if (digit >= 0 && (digit != qre.frame_tex || g == frame_g))
 				continue;
 
 			QR_GUI_PushID (qre.group[g]->name);
@@ -4762,6 +4785,13 @@ static void QRE_LightJoinGroup (rt_light_t *l)
 		l->has_style = shared->has_style;
 		l->style = shared->style;
 		l->force_rasterize = shared->force_rasterize;
+		l->has_spot = shared->has_spot;
+		l->spot = shared->spot;
+		l->has_dir = shared->has_dir;
+		VectorCopy (shared->dir, l->dir);
+		l->has_angles = shared->has_angles;
+		l->angle_inner = shared->angle_inner;
+		l->angle_outer = shared->angle_outer;
 	}
 	l->group_edit = true;
 	QRE_TouchLight (l->name);
@@ -4803,6 +4833,36 @@ static int QRE_LightFieldDiffers (const rt_light_t *l, const rt_light_t *self, i
 	}
 	case QRE_LIGHT_F_FRAST:
 		return ((l && l->force_rasterize) ? true : false) != (self->force_rasterize ? true : false);
+	case QRE_LIGHT_F_SPOT:
+	{
+		const qboolean has = (l && l->has_spot) ? true : false;
+
+		if (has != self->has_spot)
+			return 1;
+		if (has && l->spot != self->spot)
+			return 1;
+		return 0;
+	}
+	case QRE_LIGHT_F_DIR:
+	{
+		const qboolean has = (l && l->has_dir) ? true : false;
+
+		if (has != self->has_dir)
+			return 1;
+		if (has && memcmp (l->dir, self->dir, sizeof (l->dir)) != 0)
+			return 1;
+		return 0;
+	}
+	case QRE_LIGHT_F_ANGLE:
+	{
+		const qboolean has = (l && l->has_angles) ? true : false;
+
+		if (has != self->has_angles)
+			return 1;
+		if (has && (l->angle_inner != self->angle_inner || l->angle_outer != self->angle_outer))
+			return 1;
+		return 0;
+	}
 	case QRE_LIGHT_F_STYLE:
 	{
 		const qboolean has = (l && l->has_style) ? true : false;
@@ -5681,6 +5741,13 @@ static void QRE_LightEntityFields (void)
 							own->has_style = light->has_style;
 							own->style = light->style;
 							own->force_rasterize = light->force_rasterize;
+							own->has_spot = light->has_spot;
+							own->spot = light->spot;
+							own->has_dir = light->has_dir;
+							VectorCopy (light->dir, own->dir);
+							own->has_angles = light->has_angles;
+							own->angle_inner = light->angle_inner;
+							own->angle_outer = light->angle_outer;
 						}
 						own->group_edit = false;
 						QRE_TouchLight (own->name);
@@ -5920,7 +5987,7 @@ static void QRE_LightEntityList (void)
 		char        labels[RT_TRACKED_LIGHTS_MAX][MAX_QPATH + 32];
 		const char *items[RT_TRACKED_LIGHTS_MAX];
 		int         selected = -1;
-		int         choice = 0;
+		int         choice = -1;
 
 		for (j = 0; j < live; j++)
 		{
@@ -6842,6 +6909,11 @@ static void QRE_Cancel (void)
 		// the light uploads read the live lists every frame, so putting the
 		// snapshots back is enough; the fog goes back through the fog command
 		QRE_RestoreLightSnapshot ();
+
+		RT_SkySettings_EndSession ();
+		qre.sky_global = RT_SkySettings_LevelHasBlock () ? false : true;
+		RT_SkySettings_SetScope (!qre.sky_global);
+		RT_SkySettings_BeginSession ();
 
 		remove (qre.editor_file);
 		QRE_ClearSessionState ();
@@ -7951,6 +8023,8 @@ static void QRE_BackToChooser (void)
 	qre.group_count = 0;
 	qre.extra_count = 0;
 	qre.tmp_appended = false;
+	qre.mat_clip_valid = false;
+	qre.luma_clip_valid = false;
 	memset (qre_instances, 0, sizeof (qre_instances));
 	qre_instance_cur = 0;
 	qre.sel_light_valid = false;
@@ -8099,14 +8173,15 @@ static void QRE_ResetAll (void)
 static void QRE_SessionSave (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
+
+	// the live cvars belong to the scope they were edited in, so the session
+	// sees the edit and the writer knows what the level's own set now is
+	if (light)
+		RT_SkySettings_CaptureScope ();
+
 	const qboolean globals = light ? (QRE_GlobalsTouched () || qre.sky_global) : QRE_WaterTouched ();
 	const qboolean entries = light ? (qre.light_touched_count > 0 || QRE_CustomTouched ()) : (qre.touched_count > 0);
 	const qboolean had_target = QRE_FileExists (qre.target_file);
-
-	// the live cvars belong to the scope they were edited in, so the writer
-	// knows what the level's own set now is
-	if (light)
-		RT_SkySettings_CaptureScope ();
 
 	if (entries && !QRE_WriteSession ())
 	{
@@ -8184,6 +8259,9 @@ static void QRE_RequestExit (void)
 		QRE_StopEditor (false);
 		return;
 	}
+
+	if (qre.mode == QRE_MODE_LIGHT)
+		RT_SkySettings_CaptureScope ();
 
 	touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0 || QRE_WaterTouched ());
 

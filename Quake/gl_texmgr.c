@@ -59,6 +59,7 @@ extern cvar_t rt_model_metal;
 
 static int          numgltextures;
 static gltexture_t *active_gltextures, *free_gltextures;
+static unsigned int texmgr_list_revision;
 gltexture_t        *notexture, *nulltexture, *whitetexture, *greytexture;
 
 unsigned int d_8to24table[256];
@@ -558,6 +559,7 @@ gltexture_t *TexMgr_NewTexture (void)
 	active_gltextures = glt;
 
 	numgltextures++;
+	texmgr_list_revision++;
 	SDL_UnlockMutex (texmgr_mutex);
 	return glt;
 }
@@ -588,6 +590,7 @@ void TexMgr_FreeTexture (gltexture_t *kill)
 
 		GL_DeleteTexture (kill);
 		numgltextures--;
+		texmgr_list_revision++;
 		goto unlock_mutex;
 	}
 
@@ -601,6 +604,7 @@ void TexMgr_FreeTexture (gltexture_t *kill)
 
 			GL_DeleteTexture (kill);
 			numgltextures--;
+			texmgr_list_revision++;
 			goto unlock_mutex;
 		}
 	}
@@ -793,6 +797,7 @@ void TexMgr_Init (void)
 		free_gltextures[i].next = &free_gltextures[i + 1];
 	free_gltextures[i].next = NULL;
 	numgltextures = 0;
+	texmgr_list_revision++;
 
 	// palette
 	TexMgr_LoadPalette ();
@@ -2477,6 +2482,17 @@ int TexMgr_CollectTextureNames (char (*names)[MAX_QPATH], int max)
 	}
 
 	return count;
+}
+
+unsigned int TexMgr_TextureListRevision (void)
+{
+	unsigned int revision;
+
+	SDL_LockMutex (texmgr_mutex);
+	revision = texmgr_list_revision;
+	SDL_UnlockMutex (texmgr_mutex);
+
+	return revision;
 }
 
 /*
