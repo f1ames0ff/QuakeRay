@@ -264,7 +264,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
 	CVAR_DEF_T (rt_dtal_clearance, "1") \
 	CVAR_DEF_T (rt_dtal_groups, "0") \
-	CVAR_DEF_T (rt_dtal_spacing, "128") \
+	CVAR_DEF_T (rt_dtal_spacing, "8") \
 	CVAR_DEF_T (rt_dtal_maxgroups, "2048") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
