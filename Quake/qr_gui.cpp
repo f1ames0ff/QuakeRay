@@ -926,6 +926,95 @@ int QR_GUI_Combo (const char *label, int *value, const char *const *items, int c
 	return changed;
 }
 
+// Case-insensitive substring test, so a search field finds "flame2" in "progs/flame2.mdl".
+static bool QRGuiTextHas (const char *haystack, const char *needle)
+{
+	if (!needle || !needle[0])
+		return true;
+	if (!haystack)
+		return false;
+
+	for (; *haystack; haystack++)
+	{
+		const char *h = haystack;
+		const char *n = needle;
+
+		while (*h && *n &&
+		       ((*h >= 'A' && *h <= 'Z') ? *h + 32 : *h) == ((*n >= 'A' && *n <= 'Z') ? *n + 32 : *n))
+		{
+			h++;
+			n++;
+		}
+
+		if (!*n)
+			return true;
+	}
+
+	return false;
+}
+
+// A combo with a search field in its popup: the same label column, width and tooltip every row
+// uses, and the filter starts empty each time the popup opens. The list is filtered as it is
+// typed, the keyboard walks it like any combo's list, and the value changes only on a pick.
+int QR_GUI_ComboFiltered (const char *label, int *value, const char *const *items, int count, const char *tooltip)
+{
+	static char filter[128];
+
+	char id[192];
+	int  changed = 0;
+
+	if (count <= 0)
+	{
+		LabelColumn (label, tooltip);
+		ImGui::TextDisabled ("-");
+		return 0;
+	}
+
+	WidgetId (id, sizeof (id), label);
+	LabelColumn (label, tooltip);
+	ImGui::SetNextItemWidth (RowWidth (0.0f));
+
+	if (ImGui::BeginCombo (id, (*value >= 0 && *value < count) ? items[*value] : ""))
+	{
+		if (ImGui::IsWindowAppearing ())
+		{
+			filter[0] = '\0';
+			ImGui::SetKeyboardFocusHere ();
+		}
+
+		ImGui::SetNextItemWidth (ImGui::GetContentRegionAvail ().x);
+		ImGui::InputTextWithHint ("##filter", "search...", filter, sizeof (filter));
+
+		int shown = 0;
+
+		for (int i = 0; i < count; i++)
+		{
+			if (!QRGuiTextHas (items[i], filter))
+				continue;
+
+			ImGui::PushID (i);
+
+			if (ImGui::Selectable (items[i], i == *value))
+			{
+				*value = i;
+				changed = 1;
+			}
+
+			ImGui::PopID ();
+			shown++;
+		}
+
+		if (shown == 0)
+			ImGui::TextDisabled ("no match");
+
+		ImGui::EndCombo ();
+	}
+
+	ItemTooltip (tooltip);
+
+	return changed;
+}
+
 int QR_GUI_InputText (const char *label, char *buf, size_t capacity, const char *tooltip)
 {
 	char id[192];

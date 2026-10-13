@@ -3749,8 +3749,7 @@ static void QRE_SelectEntityModel (qmodel_t *model)
 
 static void QRE_MatEntitiesTab (void)
 {
-	char label[MAX_QPATH + 24];
-	int  i;
+	int i;
 
 	if (!qre.entity_list_built)
 		QRE_BuildEntityLists ();
@@ -3759,23 +3758,34 @@ static void QRE_MatEntitiesTab (void)
 	QR_GUI_Spacing ();
 
 	QR_GUI_SectionHeader ("Weapons");
+
 	if (qre.entity_weapon_count == 0)
 		QR_GUI_LabelDim ("no weapon view model in this level");
-
-	for (i = 0; i < qre.entity_weapon_count; i++)
+	else
 	{
-		qmodel_t *m = qre.entity_weapons[i];
-		qboolean  selected = (qre.entity_sel_model == m);
+		static char labels[QRE_ENTITY_MAX][MAX_QPATH];
+		const char *items[QRE_ENTITY_MAX];
+		int         choice = -1;
 
-		if (m == cl.viewent.model)
-			q_snprintf (label, sizeof (label), "%s (held)", COM_SkipPath (m->name));
-		else
-			q_strlcpy (label, COM_SkipPath (m->name), sizeof (label));
+		for (i = 0; i < qre.entity_weapon_count; i++)
+		{
+			qmodel_t *m = qre.entity_weapons[i];
 
-		QR_GUI_PushID (m->name);
-		if (QR_GUI_SectionSelected (label, selected))
-			QRE_SelectEntityModel (m);
-		QR_GUI_PopID ();
+			if (m == cl.viewent.model)
+				q_snprintf (labels[i], sizeof (labels[i]), "%s (held)", COM_SkipPath (m->name));
+			else
+				q_strlcpy (labels[i], COM_SkipPath (m->name), sizeof (labels[i]));
+
+			items[i] = labels[i];
+
+			if (qre.entity_sel_model == m)
+				choice = i;
+		}
+
+		if (QR_GUI_ComboFiltered ("model", &choice, items, qre.entity_weapon_count,
+		                          "The model whose materials are edited; the search finds one by name.") &&
+		    choice >= 0 && choice < qre.entity_weapon_count)
+			QRE_SelectEntityModel (qre.entity_weapons[choice]);
 	}
 
 	if (qre.entity_preview_model != NULL && qre.entity_anim_count > 0)
@@ -5391,8 +5401,8 @@ static void QRE_LightEntityList (void)
 		if (selected >= 0)
 			choice = selected;
 
-		if (QR_GUI_Combo ("light", &choice, items, live,
-		                  "The lights this frame generated; pick one and the form below edits it."))
+		if (QR_GUI_ComboFiltered ("light", &choice, items, live,
+		                          "The lights this frame generated; pick one and the form below edits it."))
 			QRE_SelectEntityLight (&lights[order[choice]]);
 
 		QR_GUI_Spacing ();
