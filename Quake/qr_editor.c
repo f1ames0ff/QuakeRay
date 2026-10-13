@@ -3465,7 +3465,7 @@ static void QRE_MatSystemTab (void)
 	if (dbg < 0 || dbg > 2)
 		dbg = 0;
 	if (QR_GUI_Combo ("debug DTAL", &dbg, dbg_modes, (int)countof (dbg_modes),
-	                  "Draw the triangle area lights every model and sprite pose generates: the polygons (wireframe) or their centers and normals (rt_dtal_debug)."))
+	                  "Draw the triangle area lights of the scene: the polygons (wireframe) or their centers and normals. The DTAL grid groups are drawn the same way, as their member patches and their parents (rt_dtal_debug)."))
 		Cvar_Set ("rt_dtal_debug", va ("%d", dbg));
 
 	QR_GUI_Spacing ();

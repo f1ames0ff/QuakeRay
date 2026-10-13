@@ -2897,6 +2897,56 @@ static void RT_DtalGroups_Register (void)
 	}
 }
 
+static void RT_DtalGroupsDebugDraw (void)
+{
+	const float mode = CVAR_TO_FLOAT (rt_dtal_debug);
+	int         drawn = 0;
+
+	if (rt_dtal_build == NULL || mode <= 0.0f)
+		return;
+
+	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+		if (mode == 2.0f)
+		{
+			RT_DtalDebugAdd (group->center, source->normal, group->area, source->params.projector);
+			continue;
+		}
+
+		for (int mi = 0; mi < group->memberCount && drawn < RT_DTAL_DEBUG_MAX; mi++, drawn++)
+		{
+			const rt_dtal_member_t *member = &rt_dtal_build->members[group->firstMember + mi];
+			QrTexturedAreaLightUploadInfo li = {0};
+
+			for (int k = 0; k < 3; k++)
+			{
+				li.A.data[k] = member->A[k];
+				li.B.data[k] = member->B[k];
+				li.C.data[k] = member->C[k];
+				li.normal.data[k] = member->normal[k];
+				li.color.data[k] = source->params.color[k];
+			}
+
+			li.area = member->area;
+			li.numVerts = member->numVerts;
+
+			for (int k = 0; k < member->numVerts && k < MAX_TEXTURED_AREA_LIGHT_VERTS; k++)
+			{
+				li.uvVerts[k].data[0] = member->uv[k][0];
+				li.uvVerts[k].data[1] = member->uv[k][1];
+			}
+
+			RT_EmitEmissiveWirePolygon (&li);
+		}
+
+		if (drawn >= RT_DTAL_DEBUG_MAX)
+			break;
+	}
+}
+
 static float RT_UvPolyArea (const QrFloat2D *p, int n)
 {
 	float a = 0.0f;
@@ -5063,6 +5113,7 @@ void RT_UploadAllWorldModelLights (void)
 		}
 
 		RT_DtalGroups_Register ();
+		RT_DtalGroupsDebugDraw ();
 
 		return;
 	}
