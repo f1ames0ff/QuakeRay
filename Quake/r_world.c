@@ -51,6 +51,7 @@ extern cvar_t rt_light_styles_reach;
 extern cvar_t rt_wmodel_lights_batch;
 extern cvar_t rt_model_lights;
 extern cvar_t rt_level_lights;
+extern cvar_t rt_level_light_maxpolys;
 extern cvar_t rt_level_light_models;
 extern cvar_t rt_dtal_model_maxpolys;
 extern cvar_t rt_dtal_model_budget;
@@ -60,6 +61,7 @@ extern cvar_t rt_dtal_maxpolys;
 extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_dtal_groups;
 extern cvar_t rt_dtal_spacing;
+extern cvar_t rt_dtal_maxgroups;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_brush_persistent;
 
@@ -2767,11 +2769,16 @@ static void RT_DtalGroups_Rebuild (void)
 	rt_dtal_build_spacing = spacing;
 	rt_dtal_build_mode = mode;
 
+	const int groupBudget = (int) CVAR_TO_FLOAT (rt_dtal_maxgroups);
+
+	RT_Dtal_BuilderSetGroupBudget (rt_dtal_builder, groupBudget);
+
 	if (!RT_Dtal_BuilderBuild (rt_dtal_builder, spacing, mode >= 2.0f))
 	{
 		rt_dtal_groups_failed = true;
-		Con_DWarning ("RT: DTAL grid grouping refused this map (inputs %i); the per-piece lights stay\n",
-		              rt_dtal_group_inputs);
+		Con_DWarning ("RT: DTAL grid grouping refused this map (inputs %i, group budget %i); "
+		              "the per-piece lights stay\n",
+		              rt_dtal_group_inputs, groupBudget);
 		return;
 	}
 
@@ -2785,6 +2792,17 @@ static void RT_DtalGroups_Rebuild (void)
 		rt_dtal_build = NULL;
 		Con_DWarning ("RT: DTAL groups exceed the renderer member budget (%i); the per-piece lights stay\n",
 		              members);
+		return;
+	}
+
+	if (groupBudget > 0 && rt_dtal_build->groupCount > groupBudget)
+	{
+		const int groups = rt_dtal_build->groupCount;
+
+		rt_dtal_groups_failed = true;
+		rt_dtal_build = NULL;
+		Con_DWarning ("RT: DTAL groups exceed the budget (%i of %i); the per-piece lights stay\n",
+		              groups, groupBudget);
 		return;
 	}
 
@@ -3627,9 +3645,10 @@ model actually glows. A brush face is collected once per map and re-emitted ever
 (RT_UploadAllWorldModelLights); a model moves and animates, so its lights are built here, in the
 draw path that knows the pose -- the same place the fake dlight of the model was uploaded before.
 
-The caller keeps that fake dlight when this returns zero, so a model the pass cannot light from
-its geometry (no light material, no emissive mask, the feature off, a frame the budget turned
-down) does not go dark.
+The caller keeps that fake dlight when the model cannot light from its geometry at all -- no light
+material, no emissive mask, the feature off for its kind; a frame the budget turned down leaves the
+model without pieces for that frame instead of switching its light to the dlight, so the kind of a
+model's light cannot flicker with the frame.
 
 Budget. Uploading every emissive triangle of every visible model would push the light array and
 the cluster lists with hundreds of tiny sources, so a model is capped at rt_dtal_model_maxpolys
@@ -3642,15 +3661,20 @@ RT_UploadAllWorldModelLights resets it once per frame after every draw has uploa
 */
 int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
                                const QrVertex *pose2, float blend, int numverts, const uint32_t *indices,
-                               int numindices, const QrTransform *transform)
+                               int numindices, const QrTransform *transform, qboolean *out_qualifies)
 {
+	const qboolean level_light = RT_IsLevelLightModel (model ? model->name : NULL);
+
+	if (out_qualifies)
+		*out_qualifies = false;
+
 	if (!model || !tex || !pose1 || !pose2 || !indices || !transform || numindices < 3)
 		return 0;
 
 	if (!RT_AllowTexturedAreaLights ())
 		return 0;
 
-	if (!CVAR_TO_BOOL (RT_IsLevelLightModel (model->name) ? rt_level_lights : rt_model_lights))
+	if (!CVAR_TO_BOOL (level_light ? rt_level_lights : rt_model_lights))
 		return 0;
 
 	/* The revision is taken before the material is read. A synthesis that lands while the pieces
@@ -3707,8 +3731,20 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	int max_lights = (int) CVAR_TO_FLOAT (rt_dtal_model_maxpolys);
 	if (max_lights > RT_DTAL_MAX_PIECES)
 		max_lights = RT_DTAL_MAX_PIECES;
+
+	if (level_light)
+	{
+		const int cap = (int) CVAR_TO_FLOAT (rt_level_light_maxpolys);
+
+		if (cap < max_lights)
+			max_lights = cap;
+	}
+
 	if (max_lights <= 0)
 		return 0;
+
+	if (out_qualifies)
+		*out_qualifies = true;
 
 	int budget = (int) CVAR_TO_FLOAT (rt_dtal_model_budget);
 	if (budget < 0)

@@ -42,6 +42,8 @@ struct rt_dtal_builder_s
 
     double           *weightScratch;
 
+    int               groupBudget;
+
     int               failed;
 };
 
@@ -330,7 +332,8 @@ static int RT_Dtal_FindOrAddGroup(rt_dtal_builder_t *builder, const rt_dtal_key_
         return 0;
     if (found > 0)
     {
-        if (builder->result.groupCount >= RT_DTAL_MAX_GROUPS)
+        if (builder->result.groupCount >= RT_DTAL_MAX_GROUPS ||
+            (builder->groupBudget > 0 && builder->result.groupCount >= builder->groupBudget))
             return 0;
 
         if (!RT_Dtal_GrowArray((void **)&builder->result.groups, &builder->groupCapacity,
@@ -864,6 +867,12 @@ void RT_Dtal_BuilderResetInputs(rt_dtal_builder_t *builder)
 {
     if (builder != NULL)
         builder->inputCount = 0;
+}
+
+void RT_Dtal_BuilderSetGroupBudget(rt_dtal_builder_t *builder, int maxGroups)
+{
+    if (builder != NULL)
+        builder->groupBudget = maxGroups > 0 ? maxGroups : 0;
 }
 
 void RT_Dtal_BuilderDestroy(rt_dtal_builder_t *builder)

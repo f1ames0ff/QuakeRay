@@ -452,15 +452,16 @@ static void GL_DrawAliasFrame(
        churn the cluster lists every frame; a weapon that lights the room keeps its light_color
        and the dlight below. */
     const double prof_lights = RT_Prof_Begin ();
-    const int dtal_lights =
-        isfirstperson ? 0
-                      : RT_AddAliasEmissiveLights (e->model, tx, RT_GetAliasModelUniqueId (entuniqueid),
-                                                   GetModelVerticesForPose (e->model, paliashdr, lerpdata.pose1),
-                                                   GetModelVerticesForPose (e->model, paliashdr, lerpdata.pose2), blend,
-                                                   paliashdr->numverts_vbo, e->model->rtindices, paliashdr->numindexes,
-                                                   &transform);
+    qboolean dtal_qualifies = false;
 
-    if (dtal_lights <= 0 && tx && tx->rthaslightcolor && tx->rtislight && RT_AllowFakeLights ())
+    if (!isfirstperson)
+        RT_AddAliasEmissiveLights (e->model, tx, RT_GetAliasModelUniqueId (entuniqueid),
+                                   GetModelVerticesForPose (e->model, paliashdr, lerpdata.pose1),
+                                   GetModelVerticesForPose (e->model, paliashdr, lerpdata.pose2), blend,
+                                   paliashdr->numverts_vbo, e->model->rtindices, paliashdr->numindexes,
+                                   &transform, &dtal_qualifies);
+
+    if (!dtal_qualifies && tx && tx->rthaslightcolor && tx->rtislight && RT_AllowFakeLights ())
     {
         rt_emitter_light_t light;
 

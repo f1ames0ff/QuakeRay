@@ -75,6 +75,8 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea, rt_dtal_groups, rt_dtal_spacing;
+extern cvar_t rt_dtal_maxgroups;
+extern cvar_t rt_level_light_maxpolys;
 extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minarea;
 extern cvar_t rt_water_speed, rt_water_normstren, rt_water_normsharp, rt_water_scale;
 
@@ -3274,6 +3276,8 @@ static const char *const qre_mat_cvars[] = {
 	"rt_dtal_minarea",
 	"rt_dtal_groups",
 	"rt_dtal_spacing",
+	"rt_dtal_maxgroups",
+	"rt_level_light_maxpolys",
 	"rt_dtal_model_minarea",
 	"rt_dtal_model_maxpolys",
 	"rt_dtal_model_budget",
@@ -3496,6 +3500,11 @@ static void QRE_MatSystemTab (void)
 	                        "Edge of the world-aligned grid cell a DTAL group lives in, in world units."))
 		Cvar_Set ("rt_dtal_spacing", va ("%.4g", value));
 
+	maxpolys = CVAR_TO_INT32 (rt_dtal_maxgroups);
+	if (QR_GUI_SliderInt ("rt_dtal_maxgroups", &maxpolys, 0, 8192,
+	                      "Caps the grid groups of the map: a group is a light of the light array, so a finer spacing reaches this budget and the map keeps its per-piece lights instead (0 = the engine's own ceiling)."))
+		Cvar_Set ("rt_dtal_maxgroups", va ("%d", maxpolys));
+
 	QR_GUI_SectionHeader ("DTAL (models)");
 
 	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
@@ -3512,6 +3521,11 @@ static void QRE_MatSystemTab (void)
 	if (QR_GUI_SliderInt ("rt_dtal_model_budget", &maxpolys, 0, 4096,
 	                      "Caps the DTAL pieces every model of a frame may upload, the largest ranked first (0 = none)."))
 		Cvar_Set ("rt_dtal_model_budget", va ("%d", maxpolys));
+
+	maxpolys = CVAR_TO_INT32 (rt_level_light_maxpolys);
+	if (QR_GUI_SliderInt ("rt_level_light_maxpolys", &maxpolys, 0, 64,
+	                      "Caps the DTAL pieces one of the level's own light models (see rt_level_light_models) uploads: a torch flame is one or two pieces, not the crowd of micro-sources a character model may spend."))
+		Cvar_Set ("rt_level_light_maxpolys", va ("%d", maxpolys));
 
 	QRE_MatWaterSection ();
 }

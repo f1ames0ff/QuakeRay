@@ -197,6 +197,7 @@ atomic_uint32_t rt_end_task_running;
 	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
 	CVAR_DEF_T (rt_model_lights, "1") \
 	CVAR_DEF_T (rt_level_lights, "0") \
+	CVAR_DEF_T (rt_level_light_maxpolys, "2") \
 	CVAR_DEF_T (rt_level_light_models, "flame.mdl flame2.mdl lavaball.mdl proj_balllava.mdl missile.mdl bolt1.mdl proj_lightning2.mdl w_spike.mdl misc_flame_big.mdl misc_flame_med.mdl misc_candle1.mdl misc_candle2.mdl misc_candle3.mdl misc_lightpost.mdl misc_lighttube.mdl misc_spark.mdl") \
 	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
 	CVAR_DEF_T (rt_dtal_model_budget, "512") \
@@ -264,6 +265,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_dtal_clearance, "1") \
 	CVAR_DEF_T (rt_dtal_groups, "0") \
 	CVAR_DEF_T (rt_dtal_spacing, "128") \
+	CVAR_DEF_T (rt_dtal_maxgroups, "2048") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
@@ -1111,6 +1113,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "r_fteparticles");
 	RT_Bench_Setting (f, "rt_model_lights");
 	RT_Bench_Setting (f, "rt_level_lights");
+	RT_Bench_Setting (f, "rt_level_light_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_model_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_model_budget");
 	RT_Bench_Setting (f, "rt_dtal_model_minarea");
@@ -1119,6 +1122,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_dtal_clearance");
 	RT_Bench_Setting (f, "rt_dtal_groups");
 	RT_Bench_Setting (f, "rt_dtal_spacing");
+	RT_Bench_Setting (f, "rt_dtal_maxgroups");
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_sky_godrays");
 	RT_Bench_Setting (f, "rt_sky_godrays_intensity");
