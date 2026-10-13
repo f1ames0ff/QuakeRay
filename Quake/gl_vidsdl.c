@@ -198,7 +198,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_model_lights, "1") \
 	CVAR_DEF_T (rt_level_lights, "0") \
 	CVAR_DEF_T (rt_level_light_maxpolys, "2") \
-	CVAR_DEF_T (rt_level_light_models, "flame.mdl flame2.mdl lavaball.mdl proj_balllava.mdl missile.mdl bolt1.mdl proj_lightning2.mdl w_spike.mdl misc_flame_big.mdl misc_flame_med.mdl misc_candle1.mdl misc_candle2.mdl misc_candle3.mdl misc_lightpost.mdl misc_lighttube.mdl misc_spark.mdl") \
+	CVAR_DEF_T (rt_level_light_models, "flame.mdl flame2.mdl lavaball.mdl proj_balllava.mdl") \
 	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
 	CVAR_DEF_T (rt_dtal_model_budget, "512") \
 	CVAR_DEF_T (rt_dtal_model_minarea, "0") \
