@@ -2777,9 +2777,25 @@ static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *o
 
 	if (p == PARAM_CEMIS)
 	{
-		// every block's color and tone controls count as one parameter
-		return m->has_color_emissive != orig->has_color_emissive ||
-		       memcmp (m->color_emissive, orig->color_emissive, sizeof (m->color_emissive)) != 0;
+		// every block's color and tone controls count as one parameter, and the
+		// editor's own name for a block is not one of them
+		rt_emissive_t a[RT_MAT_MAX_EMISSIVE_COLORS];
+		rt_emissive_t b[RT_MAT_MAX_EMISSIVE_COLORS];
+		int           i;
+
+		if (m->has_color_emissive != orig->has_color_emissive)
+			return true;
+
+		memcpy (a, m->color_emissive, sizeof (a));
+		memcpy (b, orig->color_emissive, sizeof (b));
+
+		for (i = 0; i < RT_MAT_MAX_EMISSIVE_COLORS; i++)
+		{
+			memset (a[i].name, 0, sizeof (a[i].name));
+			memset (b[i].name, 0, sizeof (b[i].name));
+		}
+
+		return memcmp (a, b, sizeof (a)) != 0;
 	}
 
 	switch (qre_params[p].type)
@@ -2920,6 +2936,26 @@ static void QRE_EmissiveSetName (rt_material_t *m, rt_emissive_t *block)
 	}
 }
 
+static int QRE_EmissiveNameNumber (const char *name)
+{
+	const char *p = strrchr (name, ' ');
+
+	return (p != NULL) ? atoi (p + 1) : 0;
+}
+
+static qboolean QRE_EmissiveBefore (const rt_material_t *m, int a, int b)
+{
+	const rt_emissive_t *ba = &m->color_emissive[a];
+	const rt_emissive_t *bb = &m->color_emissive[b];
+	const qboolean       mask_a = (ba->poly_count >= 3) ? true : false;
+	const qboolean       mask_b = (bb->poly_count >= 3) ? true : false;
+
+	if (mask_a != mask_b)
+		return mask_a ? false : true;
+
+	return QRE_EmissiveNameNumber (ba->name) < QRE_EmissiveNameNumber (bb->name);
+}
+
 // The Emissive section of a material: one list of its luma blocks, the form of
 // the chosen one (the eyedropper for a color, the polygon editor for a mask)
 // and the buttons that add a block.
@@ -2941,15 +2977,22 @@ static void QRE_EmissiveEditor (int g)
 		int         count = 0, i, sel;
 
 		for (ci = 0; ci < m->color_emissive_count; ci++)
-		{
-			if (m->color_emissive[ci].poly_count < 3)
-				order[count++] = ci;
-		}
+			order[count++] = ci;
 
-		for (ci = 0; ci < m->color_emissive_count; ci++)
+		for (i = 0; i < count; i++)
 		{
-			if (m->color_emissive[ci].poly_count >= 3)
-				order[count++] = ci;
+			int j;
+
+			for (j = i + 1; j < count; j++)
+			{
+				if (QRE_EmissiveBefore (m, order[j], order[i]))
+				{
+					const int t = order[i];
+
+					order[i] = order[j];
+					order[j] = t;
+				}
+			}
 		}
 
 		if (count > 0)
