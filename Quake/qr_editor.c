@@ -323,6 +323,8 @@ static struct
 	// and sun (the global settings)
 	int light_tab;
 	int luma_sel;
+	rt_emissive_t luma_clip;
+	qboolean      luma_clip_valid;
 
 	// the Global tab's "Global settings": on, the sky, sun and cloud settings
 	// belong to the config (all levels); off, they are saved for this level
@@ -420,6 +422,105 @@ static struct
 	char    touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int     touched_count;
 } qre;
+
+// The panel keeps one form instance per tab: the Materials tab and the Entities tab each hold
+// the material or model they opened, so switching tabs shows both without losing either.
+typedef struct
+{
+	qmodel_t      *pick_model;
+	msurface_t    *pick_surf;
+	entity_t      *pick_ent;
+	gltexture_t   *pick_glt;
+	char           pick_name[MAX_QPATH];
+	rt_material_t *group[QRE_GROUP_MAX];
+	int            group_kind[QRE_GROUP_MAX]; // >=0 an extra index, -1 a live material, -2 tmp_mat
+	int            group_count;
+	rt_material_t  extra[QRE_GROUP_MAX];
+	int            extra_count;
+	rt_material_t  tmp_mat;
+	qboolean       tmp_appended;
+	int            frame_tex;
+	int            luma_sel;
+} qre_instance_t;
+
+static qre_instance_t qre_instances[2];
+static int            qre_instance_cur;
+
+static void QRE_InstanceSave (qre_instance_t *dst)
+{
+	int i;
+
+	dst->pick_model = qre.pick_model;
+	dst->pick_surf = qre.pick_surf;
+	dst->pick_ent = qre.pick_ent;
+	dst->pick_glt = qre.pick_glt;
+	q_strlcpy (dst->pick_name, qre.pick_name, sizeof (dst->pick_name));
+	dst->frame_tex = qre.frame_tex;
+	dst->luma_sel = qre.luma_sel;
+	dst->group_count = qre.group_count;
+	dst->extra_count = qre.extra_count;
+	memcpy (dst->extra, qre.extra, sizeof (dst->extra));
+	dst->tmp_mat = qre.tmp_mat;
+	dst->tmp_appended = qre.tmp_appended;
+
+	for (i = 0; i < qre.group_count; i++)
+	{
+		rt_material_t *m = qre.group[i];
+
+		if (m == &qre.tmp_mat)
+		{
+			dst->group[i] = NULL;
+			dst->group_kind[i] = -2;
+		}
+		else if (m >= &qre.extra[0] && m < &qre.extra[QRE_GROUP_MAX])
+		{
+			dst->group[i] = NULL;
+			dst->group_kind[i] = (int) (m - &qre.extra[0]);
+		}
+		else
+		{
+			dst->group[i] = m;
+			dst->group_kind[i] = -1;
+		}
+	}
+}
+
+static void QRE_InstanceLoad (const qre_instance_t *src)
+{
+	int i;
+
+	qre.pick_model = src->pick_model;
+	qre.pick_surf = src->pick_surf;
+	qre.pick_ent = src->pick_ent;
+	qre.pick_glt = src->pick_glt;
+	q_strlcpy (qre.pick_name, src->pick_name, sizeof (qre.pick_name));
+	qre.frame_tex = src->frame_tex;
+	qre.luma_sel = src->luma_sel;
+	qre.group_count = src->group_count;
+	qre.extra_count = src->extra_count;
+	memcpy (qre.extra, src->extra, sizeof (qre.extra));
+	qre.tmp_mat = src->tmp_mat;
+	qre.tmp_appended = src->tmp_appended;
+
+	for (i = 0; i < src->group_count; i++)
+	{
+		if (src->group_kind[i] == -2)
+			qre.group[i] = &qre.tmp_mat;
+		else if (src->group_kind[i] == -1)
+			qre.group[i] = src->group[i];
+		else
+			qre.group[i] = &qre.extra[src->group_kind[i]];
+	}
+}
+
+static void QRE_InstanceSwitch (int inst)
+{
+	if (qre_instance_cur >= 0)
+		QRE_InstanceSave (&qre_instances[qre_instance_cur]);
+
+	QRE_InstanceLoad (&qre_instances[inst]);
+	qre_instance_cur = inst;
+}
 
 // forward declarations (the panel code sits above the apply/save code)
 static void     QRE_Apply (void);
@@ -3038,8 +3139,33 @@ static void QRE_EmissiveEditor (int g)
 
 		if (open)
 		{
-			QR_GUI_Label (label);
-			if (QR_GUI_TrashButton (id, 1))
+			const qboolean can_paste = (qre.luma_clip_valid &&
+			                            ((qre.luma_clip.poly_count >= 3) == poly)) ? true : false;
+			int            actions;
+
+			actions = QR_GUI_BlockActions (label, can_paste,
+			                               "Copy this block's settings to paste into another block of the same kind.",
+			                               "Paste the copied settings into this block.",
+			                               "Remove this color or mask block");
+
+			if (actions & 1)
+			{
+				qre.luma_clip = m->color_emissive[ci];
+				qre.luma_clip_valid = true;
+			}
+			if (actions & 2)
+			{
+				char keep[sizeof (m->color_emissive[ci].name)];
+
+				QRE_EnsureLive (g);
+				m = qre.group[g];
+
+				q_strlcpy (keep, m->color_emissive[ci].name, sizeof (keep));
+				m->color_emissive[ci] = qre.luma_clip;
+				q_strlcpy (m->color_emissive[ci].name, keep, sizeof (keep));
+				QRE_MarkDirty (m);
+			}
+			if (actions & 4)
 			{
 				int k;
 
@@ -3056,7 +3182,6 @@ static void QRE_EmissiveEditor (int g)
 				QR_GUI_PopID ();
 				break;
 			}
-			QR_GUI_Tooltip ("Remove this color or mask block");
 
 			if (poly)
 			{
@@ -3879,9 +4004,22 @@ static void QRE_SelectEntityModel (qmodel_t *model)
 
 #define QRE_TEXLIST_MAX 2048
 
-static int QRE_CompareTextureNames (const void *a, const void *b)
+typedef struct
 {
-	return q_strcasecmp ((const char *) a, (const char *) b);
+	char base[MAX_QPATH];
+	char open_name[MAX_QPATH];
+	int  frames;
+} qre_texentry_t;
+
+static qre_texentry_t qre_texentries[QRE_TEXLIST_MAX];
+static char           qre_texlabels[QRE_TEXLIST_MAX][MAX_QPATH + 16];
+
+static int QRE_CompareTexEntries (const void *a, const void *b)
+{
+	const qre_texentry_t *ea = (const qre_texentry_t *) a;
+	const qre_texentry_t *eb = (const qre_texentry_t *) b;
+
+	return q_strcasecmp (ea->base, eb->base);
 }
 
 // Opens a texture by name the way a pick in the world does: the same normalisation, the same
@@ -3921,32 +4059,73 @@ static void QRE_OpenTexture (const char *texname)
 	QRE_Notify (va ("%s: %d material(s) in the group", name, qre.group_count));
 }
 
-// The Materials tab's picker: every texture the engine has, in one searchable list, so a texture
-// nothing in the level points at can be opened without hunting for a surface that uses it.
+// The Materials tab's picker: every texture the engine has in one searchable list, its frame
+// sets (a model's skins, a ring's frames) grouped into one entry each, so a texture nothing in
+// the level points at can be opened without hunting for a surface that uses it.
 static void QRE_MatTexturePicker (void)
 {
 	static char names[QRE_TEXLIST_MAX][MAX_QPATH];
 
 	const char *items[QRE_TEXLIST_MAX];
-	int         count, i, choice = -1;
+	char        pick_base[MAX_QPATH];
+	int         count, i, groups = 0, choice = -1;
 
 	count = TexMgr_CollectTextureNames (names, QRE_TEXLIST_MAX);
 
+	for (i = 0; i < count; i++)
+	{
+		const int digit = QRE_FrameDigit (names[i]);
+
+		QRE_GroupBaseOf (names[i], qre_texentries[i].base, sizeof (qre_texentries[i].base));
+		q_strlcpy (qre_texentries[i].open_name, names[i], sizeof (qre_texentries[i].open_name));
+		qre_texentries[i].frames = (digit >= 0) ? 1 : 0;
+	}
+
 	if (count > 1)
-		qsort (names, count, MAX_QPATH, QRE_CompareTextureNames);
+		qsort (qre_texentries, count, sizeof (qre_texentries[0]), QRE_CompareTexEntries);
 
 	for (i = 0; i < count; i++)
 	{
-		items[i] = names[i];
+		qre_texentry_t *e = &qre_texentries[i];
 
-		if (!strcmp (names[i], qre.pick_name))
+		if (groups > 0 && !strcmp (qre_texentries[groups - 1].base, e->base))
+		{
+			qre_texentry_t *prev = &qre_texentries[groups - 1];
+			const int       digit = QRE_FrameDigit (e->open_name);
+			const int       cur = QRE_FrameDigit (prev->open_name);
+
+			prev->frames += e->frames;
+			if (digit >= 0 && (cur < 0 || digit < cur))
+				q_strlcpy (prev->open_name, e->open_name, sizeof (prev->open_name));
+		}
+		else
+		{
+			if (groups != i)
+				qre_texentries[groups] = *e;
+			groups++;
+		}
+	}
+
+	QRE_GroupBaseOf (qre.pick_name, pick_base, sizeof (pick_base));
+
+	for (i = 0; i < groups; i++)
+	{
+		if (qre_texentries[i].frames > 0)
+			q_snprintf (qre_texlabels[i], sizeof (qre_texlabels[i]), "%s (%d)",
+			            qre_texentries[i].base, qre_texentries[i].frames);
+		else
+			q_strlcpy (qre_texlabels[i], qre_texentries[i].base, sizeof (qre_texlabels[i]));
+
+		items[i] = qre_texlabels[i];
+
+		if (!strcmp (qre_texentries[i].base, pick_base))
 			choice = i;
 	}
 
-	if (QR_GUI_ComboFiltered ("Material", &choice, items, count,
-	                          "Every texture the engine has; the search finds one by name. Choosing one opens its materials like a pick in the world.") &&
-	    choice >= 0 && choice < count)
-		QRE_OpenTexture (names[choice]);
+	if (QR_GUI_ComboFiltered ("Material", &choice, items, groups,
+	                          "Every texture the engine has, its frames grouped; the search finds one by name. Choosing one opens its materials like a pick in the world.") &&
+	    choice >= 0 && choice < groups)
+		QRE_OpenTexture (qre_texentries[choice].open_name);
 
 	QR_GUI_Spacing ();
 }
@@ -4155,6 +4334,13 @@ static void QRE_BuildPanelGUI (void)
 		if (reset)
 			qre.reset_prompt = true;
 		QR_GUI_Spacing ();
+	}
+
+	{
+		const int inst = (qre.mat_tab == 1) ? 1 : 0;
+
+		if (qre_instance_cur != inst)
+			QRE_InstanceSwitch (inst);
 	}
 
 	QRE_PanelActionRow (QRE_RequestExit);
@@ -8167,6 +8353,8 @@ static void QRE_StartEditor (void)
 	Observer_Stop ();
 
 	memset (&qre, 0, sizeof (qre));
+	memset (qre_instances, 0, sizeof (qre_instances));
+	qre_instance_cur = 0;
 	qre.active = true;
 	qre.panel_open = false;
 	qre.mode = QRE_MODE_MATERIAL;

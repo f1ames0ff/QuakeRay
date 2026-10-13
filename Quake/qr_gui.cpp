@@ -668,9 +668,26 @@ void QR_GUI_SectionTitle (const char *label)
 	dl->AddText (ImVec2 (pos.x + x, pos.y), col, label);
 }
 
-// The icon buttons of a section header row: the copy icon (two sheets) and the
-// paste icon (a clipboard), drawn like the panel's other icon buttons.
-static bool SectionIconButton (const char *id, float x, float y, float size, bool paste)
+// The bin icon of the remove buttons: drawn, because the panel font has no trash character.
+static void DrawBinIcon (const ImVec2 &mn, const ImVec2 &mx, ImU32 col)
+{
+	ImDrawList *dl  = ImGui::GetWindowDrawList ();
+	const float cx  = (mn.x + mx.x) * 0.5f;
+	const float cy  = (mn.y + mx.y) * 0.5f;
+	const float w   = (mx.x - mn.x) * 0.20f;
+	const float hgt = (mx.y - mn.y) * 0.26f;
+	const float lid = cy - hgt * 0.55f;
+
+	dl->AddLine (ImVec2 (cx - w * 1.35f, lid), ImVec2 (cx + w * 1.35f, lid), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w * 0.55f, lid - 2.6f), ImVec2 (cx + w * 0.55f, lid - 2.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w, lid + 1.8f), ImVec2 (cx - w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx + w, lid + 1.8f), ImVec2 (cx + w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w * 0.82f, lid + hgt * 1.6f), ImVec2 (cx + w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+}
+
+// The icon buttons of a block or section header row: 0 is the copy icon (two sheets), 1 the
+// paste icon (a clipboard), 2 the bin.
+static bool SectionIconButton (const char *id, float x, float y, float size, int kind)
 {
 	ImGui::SetCursorScreenPos (ImVec2 (x, y));
 	const bool pressed = ImGui::Button (id, ImVec2 (size, size));
@@ -682,15 +699,19 @@ static bool SectionIconButton (const char *id, float x, float y, float size, boo
 	ImDrawList  *draw = ImGui::GetWindowDrawList ();
 	const ImU32  color = ImGui::GetColorU32 (ImGuiCol_Text);
 
-	if (!paste)
+	if (kind == 0)
 	{
 		draw->AddRect (ImVec2 (c.x - r * 1.1f, c.y - r * 0.55f), ImVec2 (c.x + r * 0.5f, c.y + r * 1.1f), color, 1.0f, 0, 1.4f);
 		draw->AddRect (ImVec2 (c.x - r * 0.5f, c.y - r * 1.1f), ImVec2 (c.x + r * 1.1f, c.y + r * 0.55f), color, 1.0f, 0, 1.4f);
 	}
-	else
+	else if (kind == 1)
 	{
 		draw->AddRect (ImVec2 (c.x - r, c.y - r * 0.55f), ImVec2 (c.x + r, c.y + r * 1.2f), color, 1.0f, 0, 1.4f);
 		draw->AddRect (ImVec2 (c.x - r * 0.45f, c.y - r * 1.2f), ImVec2 (c.x + r * 0.45f, c.y - r * 0.5f), color, 0.0f, 0, 1.4f);
+	}
+	else
+	{
+		DrawBinIcon (min, max, color);
 	}
 
 	return pressed;
@@ -725,19 +746,67 @@ int QR_GUI_HeaderFrameActions (const char *label, int show_paste, const char *ti
 
 	if (show_paste)
 	{
-		if (SectionIconButton ("##paste", x, pos.y + (row_h - btn) * 0.5f, btn, true))
+		if (SectionIconButton ("##paste", x, pos.y + (row_h - btn) * 0.5f, btn, 1))
 			result |= 2;
 		if (tip_second && *tip_second)
 			ImGui::SetItemTooltip ("%s", tip_second);
 		x -= btn + 2.0f;
 	}
 
-	if (SectionIconButton ("##copy", x, pos.y + (row_h - btn) * 0.5f, btn, false))
+	if (SectionIconButton ("##copy", x, pos.y + (row_h - btn) * 0.5f, btn, 0))
 		result |= 1;
 	if (tip_first && *tip_first)
 		ImGui::SetItemTooltip ("%s", tip_first);
 
 	// the buttons moved the cursor into the row; the layout continues below it
+	ImGui::SetCursorPos (below);
+	ImGui::Dummy (ImVec2 (0.0f, 0.0f));
+
+	return result;
+}
+
+// The row of one luma block: its name on the left, and the copy, the paste (offered once
+// something is copied) and the remove icon at its right end. The result is a bit field: 1 the
+// copy was pressed, 2 the paste, 4 the remove.
+int QR_GUI_BlockActions (const char *label, int show_paste, const char *tip_copy, const char *tip_paste, const char *tip_remove)
+{
+	const ImVec2 pos = ImGui::GetCursorScreenPos ();
+	const float  avail = ImGui::GetContentRegionAvail ().x;
+	const float  row_h = ImGui::GetFrameHeight ();
+	const float  btn = row_h * 0.82f;
+	const float  y = pos.y + (row_h - btn) * 0.5f;
+	const ImVec2 text = ImGui::CalcTextSize (label);
+	int          result = 0;
+
+	ImGui::Dummy (ImVec2 (avail, row_h));
+
+	const ImVec2 below = ImGui::GetCursorPos ();
+
+	ImGui::GetWindowDrawList ()->AddText (ImVec2 (pos.x, pos.y + (row_h - text.y) * 0.5f),
+	                                      ImGui::GetColorU32 (ImGuiCol_Text), label);
+
+	float x = pos.x + avail - btn;
+
+	if (SectionIconButton ("##remove", x, y, btn, 2))
+		result |= 4;
+	if (tip_remove && *tip_remove)
+		ImGui::SetItemTooltip ("%s", tip_remove);
+	x -= btn + 2.0f;
+
+	if (show_paste)
+	{
+		if (SectionIconButton ("##paste", x, y, btn, 1))
+			result |= 2;
+		if (tip_paste && *tip_paste)
+			ImGui::SetItemTooltip ("%s", tip_paste);
+		x -= btn + 2.0f;
+	}
+
+	if (SectionIconButton ("##copy", x, y, btn, 0))
+		result |= 1;
+	if (tip_copy && *tip_copy)
+		ImGui::SetItemTooltip ("%s", tip_copy);
+
 	ImGui::SetCursorPos (below);
 	ImGui::Dummy (ImVec2 (0.0f, 0.0f));
 
@@ -950,22 +1019,8 @@ int QR_GUI_TrashButton (const char *label, int enabled)
 	ImGui::PopStyleColor ();
 
 	// The bin is drawn, not a glyph: the panel font has no trash character.
-	const ImVec2 mn  = ImGui::GetItemRectMin ();
-	const ImVec2 mx  = ImGui::GetItemRectMax ();
-	const ImU32  col = ImGui::GetColorU32 (ImGuiCol_Text, enabled ? 1.0f : 0.45f);
-	ImDrawList  *dl  = ImGui::GetWindowDrawList ();
-
-	const float cx  = (mn.x + mx.x) * 0.5f;
-	const float cy  = (mn.y + mx.y) * 0.5f;
-	const float w   = kResetButtonSize * 0.20f;
-	const float hgt = kResetButtonSize * 0.26f;
-	const float lid = cy - hgt * 0.55f;
-
-	dl->AddLine (ImVec2 (cx - w * 1.35f, lid), ImVec2 (cx + w * 1.35f, lid), col, 1.5f);
-	dl->AddLine (ImVec2 (cx - w * 0.55f, lid - 2.6f), ImVec2 (cx + w * 0.55f, lid - 2.6f), col, 1.5f);
-	dl->AddLine (ImVec2 (cx - w, lid + 1.8f), ImVec2 (cx - w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
-	dl->AddLine (ImVec2 (cx + w, lid + 1.8f), ImVec2 (cx + w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
-	dl->AddLine (ImVec2 (cx - w * 0.82f, lid + hgt * 1.6f), ImVec2 (cx + w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+	DrawBinIcon (ImGui::GetItemRectMin (), ImGui::GetItemRectMax (),
+	             ImGui::GetColorU32 (ImGuiCol_Text, enabled ? 1.0f : 0.45f));
 
 	if (!enabled)
 		ImGui::EndDisabled ();

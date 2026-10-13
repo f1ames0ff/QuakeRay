@@ -143,6 +143,11 @@ int  QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h, 
 // (1 = the first, 2 = the second).
 int  QR_GUI_HeaderFrameActions (const char *label, int show_paste,
                                 const char *tip_first, const char *tip_second);
+// The row of one luma block: its name on the left, and the copy, the paste (offered once
+// something is copied) and the remove icon at its right end. Returns a bitmask of the buttons
+// pressed (1 = copy, 2 = paste, 4 = remove).
+int  QR_GUI_BlockActions (const char *label, int show_paste,
+                          const char *tip_copy, const char *tip_paste, const char *tip_remove);
 // 1 while any ImGui item is being dragged or edited.
 int  QR_GUI_AnyItemActive (void);
 
