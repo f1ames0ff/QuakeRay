@@ -1980,17 +1980,13 @@ int QR_GUI_ColorRow (const char *id, float rgb[3], const char *tooltip)
 	int result = 0;
 
 	ImGui::PushID (id);
-	ImGui::SetNextItemWidth (ImGui::GetContentRegionAvail ().x - kBrowseButtonW - ImGui::GetStyle ().ItemSpacing.x);
+	ImGui::SetNextItemWidth (RowWidth (0.0f));
 	if (ImGui::ColorEdit3 ("##color", rgb, ImGuiColorEditFlags_DisplayHex))
 		result |= 1;
 	if (tooltip && *tooltip)
 		ImGui::SetItemTooltip ("%s\nClick the swatch to pick, type the hex value", tooltip);
 	else
 		ImGui::SetItemTooltip ("Click the swatch to pick, type the hex value");
-	ImGui::SameLine ();
-	if (ImGui::Button ("x", ImVec2 (kBrowseButtonW, 0.0f)))
-		result |= 2;
-	ImGui::SetItemTooltip ("Remove this color");
 	ImGui::PopID ();
 
 	return result;

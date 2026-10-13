@@ -3014,19 +3014,6 @@ static void QRE_EmissiveEditor (int g)
 
 				if (res & 1)
 					QRE_MarkDirty (m);
-				if (res & 2)
-				{
-					int k;
-
-					for (k = ci; k + 1 < m->color_emissive_count; k++)
-						m->color_emissive[k] = m->color_emissive[k + 1];
-					m->color_emissive_count--;
-					if (m->color_emissive_count == 0)
-						m->has_color_emissive = false;
-					QRE_MarkDirty (m);
-					QR_GUI_PopID ();
-					break;
-				}
 
 				// this block's own preview: the eyedropper picks a color into it
 				{
