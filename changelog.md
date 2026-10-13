@@ -37,7 +37,7 @@
 
 - **The Custom tab's light list is the same chooser as the Entity tab's** — the authored lights were an accordion of `Light N` sections while the Entity tab used the searchable dropdown; both use the dropdown now, with the shown light's form below it (Add light and the count line stay).
 - **A material without frames gets a plain header, not an accordion** — a single-entry group (a plain texture with no `frame*` digits) drew a collapsing header whose only state was open; it shows the same plain header the frame section uses, Copy/Paste included, and the accordion stays for groups with more than one entry.
-- **The luma list's hint sits above it** — `colors & masks` carries the dim line the other blocks use (`the color and mask blocks of this material: the one below is shown and edited`) instead of leaving the explanation to the tooltip alone.
+- **The luma editor's hints sit above the list, not on the preview** — the mask preview's cursor tooltip (drag a point, Shift+drag an edge…) covered the texture while editing; both kinds show their hint as a dim line above `colors & masks` now (`the mask below: …` / `the preview below: click a pixel to set the color; Ctrl+wheel zooms`), and the previews carry no popup tooltip.
 
 ### Fixed
 - **`light_spot` makes a cone for a generated dlight too** — the dlights the engine generates (a lava ball, a monster, a map's own dlight) carry no direction of their own, so an entry whose `spot` was ticked kept its sphere; a spot with no axis aims straight down now until `light_dir` gives it another, and a source that does carry a direction is untouched.

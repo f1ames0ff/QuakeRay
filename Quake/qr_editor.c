@@ -3182,7 +3182,15 @@ static void QRE_EmissiveEditor (int g)
 			}
 			qre.luma_sel = order[sel];
 
-			QR_GUI_LabelDim ("the color and mask blocks of this material: the one below is shown and edited");
+			if (m->color_emissive[qre.luma_sel].poly_count >= 3)
+			{
+				QR_GUI_LabelDim ("the mask below: drag a point, an edge to slide it, Shift+drag an edge");
+				QR_GUI_LabelDim ("along its own normal; Ctrl+click adds a point; Ctrl+wheel zooms");
+			}
+			else
+			{
+				QR_GUI_LabelDim ("the preview below: click a pixel to set the color; Ctrl+wheel zooms");
+			}
 			QR_GUI_Spacing ();
 
 			if (QR_GUI_ComboFiltered ("colors & masks", &sel, items, count,
@@ -3279,7 +3287,6 @@ static void QRE_EmissiveEditor (int g)
 						}
 					}
 				}
-				QR_GUI_Tooltip ("Drag a point to move it, an edge to slide it, Shift+drag an edge to move it along its own normal, the mask to move the whole polygon, Ctrl+click to add a point, right-click a point to remove it");
 			}
 			else
 			{
