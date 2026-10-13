@@ -501,8 +501,30 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   Next: a create-time headroom envelope (allocate with slack and reuse the handle while the build fits the
   allocation) to absorb the fluctuation, with the memory cost measured. Debug build exit 0, CTest 8/8,
   Release build exit 0.
-- 2026-10-12 (list-length trend telemetry): the as.filter row now carries len_first/len_last per filter, so
+- 2026-10-12 (list-length trend telemetry): the `as.filter` row now carries `len_first/len_last` per filter, so
   a capture shows whether the churning filter's list length rose or fell across the window. Built and tested
   (Debug exit 0, CTest 8/8, Release exit 0); the trend captures are blocked in the current desktop session by
-  VK_ERROR_OUT_OF_DATE_KHR at swapchain creation (Swapchain.cpp:139), the same non-interactive-session class
+  `VK_ERROR_OUT_OF_DATE_KHR` at swapchain creation (`Swapchain.cpp:139`), the same non-interactive-session class
   as the earlier focus-gate refusals, and will be re-taken when the desktop is interactive again.
+
+- 2026-10-13 (editor and world-submit fixes, PR #48/#49 merged, cluster defaults flipped): two
+  world-visibility bugs are fixed - the editor's light-material edits take the full re-upload path
+  again (`is_light` is no longer light-only, and a shape-changing in-place light-material update
+  reports itself as a replacement), and a static submit now defers when the frame's chains were built
+  before the request, so a partial chain set can never replace the static world (the wall-disappearing
+  bug the owner hit in the editor; diagnostic line `static submit was deferred`). `origin/master`
+  (PR #48 texture-overlay, PR #49 one-more-leaf) is merged; the interface recording of
+  `RtQ2ReflectRefract.rgen` was re-recorded from the merged source and the full CheckShaderProperties
+  run passes. The repaired cluster source selection (`rt_cluster_sampling`) and the DTAL grouping
+  (`rt_dtal_groups`) default to `1` now after the owner's in-game A/B on the AD `start` hub (93
+  clusters at the 128-light cap; the sampled arm there reports them as overflow now, clusters
+  0.76 -> 1.08 ms) and neutral matched captures on `ad_tfuma` (A0B0 54.6 / A0B1 54.5 /
+  A1B0 54.8 / A1B1 55.8 fps; gpu 17.5-17.8 ms; cluster work 0.05-0.06 ms against 0.76 ms on the
+  `start` baseline). The trend captures show the task-mode dynamic-BLAS churn is a genuine count
+  oscillation (len_first/last 565/569 and 578/597, +/-40 swing) and that the sorted predicate alone
+  does not pay (with `rt_dyn_blas_sorted 1` from the local config, serial churn rose from 0.07 to
+  0.85 recreations per frame), so the create-time headroom envelope stays the next geometry step.
+  The first validation-enabled capture confirms the ray-stats set move (no `VUID-07990`) and surfaces
+  a separate `VUID-vkCmdDrawIndexed-None-08600` (a raster draw against an 88-byte push-constant
+  layout where the raster overlay's is 124) for a follow-up. Debug build exit 0, CTest 8/8, Release
+  build exit 0 (post-merge).

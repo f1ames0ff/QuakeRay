@@ -2,10 +2,10 @@
 
 ## 1. Status and authoritative documents
 
-- Status: both projects are implemented on their branches; the delivered scope, checks, measured
-  results and remaining limitations are in [the Project A report](dtal-implementation-report.md)
-  and [the Project B report](cluster-implementation-report.md), and the final simplifications are
-  in [the refactoring report](lighting-refactoring-report.md).
+- Status: both projects are implemented, merged into `master`, and enabled by default (owner
+  decision, 2026-10-13); the delivered scope, checks, measured results and remaining limitations
+  are in [the Project A report](dtal-implementation-report.md) and [the Project B report](cluster-implementation-report.md),
+  and the final simplifications are in [the refactoring report](lighting-refactoring-report.md).
 - Code baseline inspected: `dac6cdc4`; implementation started from `d365d033` (the then-current
   `origin/master`).
 - Primary reproduction: fragmented static-world emissive geometry, especially lava floors and glowing walls.

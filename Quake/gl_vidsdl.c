@@ -170,7 +170,7 @@ atomic_uint32_t rt_end_task_running;
 	   what a lava ball was measured to cost. */ \
 	CVAR_DEF_T (rt_cluster_incremental, "1") \
 	CVAR_DEF_T (rt_particle_resolve_cache, "1") \
-	CVAR_DEF_T (rt_cluster_sampling, "0") \
+	CVAR_DEF_T (rt_cluster_sampling, "1") \
 	CVAR_DEF_T (rt_cluster_assert, "0") \
 	/* A map's vis closes a liquid surface, and the cluster light lists are built from it, so a \
 	   light is also handed the clusters on the other side of the water that its reach covers. 0 \
@@ -259,7 +259,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_dtal_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
 	CVAR_DEF_T (rt_dtal_clearance, "1") \
-	CVAR_DEF_T (rt_dtal_groups, "0") \
+	CVAR_DEF_T (rt_dtal_groups, "1") \
 	CVAR_DEF_T (rt_dtal_spacing, "128") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \

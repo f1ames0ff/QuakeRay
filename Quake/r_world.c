@@ -720,16 +720,16 @@ static void R_MarkVisSurfaces (void *unused)
 	RT_Prof_End (RT_PROF_MARK, prof_start);
 }
 
-/*
-===============
-R_MarkSurfacesPrepare
-===============
-*/
 qboolean RT_ChainFullFrame (void)
 {
 	return rt_chain_full_frame;
 }
 
+/*
+===============
+R_MarkSurfacesPrepare
+===============
+*/
 static void R_MarkSurfacesPrepare (void *unused)
 {
 	int      i;
