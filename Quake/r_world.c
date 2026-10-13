@@ -3427,14 +3427,19 @@ void RT_ModelLightsCacheFree (qmodel_t *model)
 
 extern atomic_uint32_t rt_require_static_submit;
 
+void RT_DtalRequestRebuild (void)
+{
+	GL_SynchronizeEndRenderingTask ();
+	rt_dtal_groups_rebuild_pending = true;
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+}
+
 void RT_DtalRebuild_f (void)
 {
 	extern qmodel_t mod_known[];
 	extern int      mod_numknown;
 
-	GL_SynchronizeEndRenderingTask ();
-	rt_dtal_groups_rebuild_pending = true;
-	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+	RT_DtalRequestRebuild ();
 
 	int models = 0;
 

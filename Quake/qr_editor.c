@@ -179,9 +179,9 @@ static const struct qre_param_s
 	                     "Use the model's own vertex normals instead of generated ones (models only)." },
 	[PARAM_FRAST]    = { NULL, "force_rasterize",  QRE_T_BOOL,  0, 0, 0,
 	                     "Draw the model or sprite with the rasterizer instead of tracing it (models only)." },
-	[PARAM_ISLIGHT]  = { "", "is_light",         QRE_T_BOOL,  0, 0, 0,
+	[PARAM_ISLIGHT]  = { "Light", "is_light",     QRE_T_BOOL,  0, 0, 0,
 	                     "The surface casts light into the scene, not only glows." },
-	[PARAM_LSTYLES]  = { "Light", "light_styles",     QRE_T_BOOL,  0, 0, 0,
+	[PARAM_LSTYLES]  = { NULL, "light_styles",   QRE_T_BOOL,  0, 0, 0,
 	                     "Tick to let the map's light styles dim this light; off by default, so a light stays at full brightness unless it asks otherwise." },
 	[PARAM_LCOLOR]   = { NULL, "light_color",      QRE_T_COLOR, 0, 0, 0,
 	                     "The color of the light the surface casts; needs is_light." },
@@ -322,8 +322,7 @@ static struct
 	// the light editor's tabs: 0 = the selected emitter, 1 = the sky, clouds
 	// and sun (the global settings)
 	int light_tab;
-	int luma_color_sel; // the colour block the luma form edits (a block index)
-	int luma_mask_sel;  // the mask block the luma form edits, likewise
+	int luma_sel;
 
 	// the Global tab's "Global settings": on, the sky, sun and cloud settings
 	// belong to the config (all levels); off, they are saved for this level
@@ -1261,6 +1260,19 @@ static qboolean QRE_FrameGroup (void)
 		return false;
 
 	return (qre.group_count > 0) ? true : false;
+}
+
+static qboolean QRE_GroupHasFrames (void)
+{
+	int i;
+
+	for (i = 0; i < qre.group_count; i++)
+	{
+		if (QRE_FrameDigit (qre.group[i]->name) >= 0)
+			return true;
+	}
+
+	return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -2875,76 +2887,58 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 	}
 }
 
-// The Emissive section of a material: the color blocks with their previews (the
-// eyedropper for a color, the polygon editor for a mask) and the buttons that
-// add one. The preview comes first so adding blocks never pushes it off the
-// panel, and a click picks into the last color — adding a block is the button's
-// job.
+// The Emissive section of a material: one list of its luma blocks, the form of
+// the chosen one (the eyedropper for a color, the polygon editor for a mask)
+// and the buttons that add a block.
 static void QRE_EmissiveEditor (int g)
 {
 	rt_material_t *m = qre.group[g];
 	int            ci;
 
-	// one dropdown per kind: the list is the blocks of that kind, and the form below edits the
-	// chosen one alone instead of an accordion of every block
 	{
 		char        labels[RT_MAT_MAX_EMISSIVE_COLORS][32];
 		const char *items[RT_MAT_MAX_EMISSIVE_COLORS];
-		int         colors[RT_MAT_MAX_EMISSIVE_COLORS], masks[RT_MAT_MAX_EMISSIVE_COLORS];
-		int         color_count = 0, mask_count = 0, i, sel;
+		int         order[RT_MAT_MAX_EMISSIVE_COLORS];
+		int         count = 0, i, sel;
+
+		for (ci = 0; ci < m->color_emissive_count; ci++)
+		{
+			if (m->color_emissive[ci].poly_count < 3)
+				order[count++] = ci;
+		}
 
 		for (ci = 0; ci < m->color_emissive_count; ci++)
 		{
 			if (m->color_emissive[ci].poly_count >= 3)
-				masks[mask_count++] = ci;
-			else
-				colors[color_count++] = ci;
+				order[count++] = ci;
 		}
 
-		if (color_count > 0)
+		if (count > 0)
 		{
-			for (i = 0; i < color_count; i++)
+			for (i = 0; i < count; i++)
 			{
-				q_snprintf (labels[i], sizeof (labels[i]), "Color %d", colors[i] + 1);
+				if (m->color_emissive[order[i]].poly_count >= 3)
+					q_snprintf (labels[i], sizeof (labels[i]), "Mask %d", order[i] + 1);
+				else
+					q_snprintf (labels[i], sizeof (labels[i]), "Color %d", order[i] + 1);
 				items[i] = labels[i];
 			}
 
 			sel = 0;
 
-			for (i = 0; i < color_count; i++)
+			for (i = 0; i < count; i++)
 			{
-				if (colors[i] == qre.luma_color_sel)
+				if (order[i] == qre.luma_sel)
 					sel = i;
 			}
+			qre.luma_sel = order[sel];
 
-			if (QR_GUI_ComboFiltered ("color", &sel, items, color_count,
-			                          "The color block the form below edits."))
-				qre.luma_color_sel = colors[sel];
-		}
+			if (QR_GUI_ComboFiltered ("colors & masks", &sel, items, count,
+			                          "The luma block the form below edits."))
+				qre.luma_sel = order[sel];
 
-		if (mask_count > 0)
-		{
-			for (i = 0; i < mask_count; i++)
-			{
-				q_snprintf (labels[i], sizeof (labels[i]), "Mask %d", masks[i] + 1);
-				items[i] = labels[i];
-			}
-
-			sel = 0;
-
-			for (i = 0; i < mask_count; i++)
-			{
-				if (masks[i] == qre.luma_mask_sel)
-					sel = i;
-			}
-
-			if (QR_GUI_ComboFiltered ("mask", &sel, items, mask_count,
-			                          "The mask block the form below edits."))
-				qre.luma_mask_sel = masks[sel];
-		}
-
-		if (color_count > 0 || mask_count > 0)
 			QR_GUI_Spacing ();
+		}
 	}
 
 	for (ci = 0; ci < m->color_emissive_count; ci++)
@@ -2959,7 +2953,7 @@ static void QRE_EmissiveEditor (int g)
 		q_snprintf (label, sizeof (label), poly ? "Mask %d" : "Color %d", ci + 1);
 
 		QR_GUI_PushID (id);
-		open = ((poly ? qre.luma_mask_sel : qre.luma_color_sel) == ci) ? true : false;
+		open = (qre.luma_sel == ci) ? true : false;
 
 		if (open)
 		{
@@ -2971,6 +2965,10 @@ static void QRE_EmissiveEditor (int g)
 				for (k = ci; k + 1 < m->color_emissive_count; k++)
 					m->color_emissive[k] = m->color_emissive[k + 1];
 				m->color_emissive_count--;
+				if (qre.luma_sel > ci)
+					qre.luma_sel--;
+				if (qre.luma_sel >= m->color_emissive_count)
+					qre.luma_sel = m->color_emissive_count - 1;
 				if (m->color_emissive_count == 0)
 					m->has_color_emissive = false;
 				QRE_MarkDirty (m);
@@ -3090,7 +3088,7 @@ static void QRE_EmissiveEditor (int g)
 			block->has_factor = block->has_blend = true;
 			m->color_emissive_count++;
 			m->has_color_emissive = true;
-			qre.luma_color_sel = m->color_emissive_count - 1;
+			qre.luma_sel = m->color_emissive_count - 1;
 			QRE_MarkDirty (m);
 		}
 		QR_GUI_Tooltip ("Add a color block: it glows where the texture matches its color (up to ten)");
@@ -3117,7 +3115,7 @@ static void QRE_EmissiveEditor (int g)
 			block->poly_uv[3][0] = 0.25f; block->poly_uv[3][1] = 0.75f;
 			m->color_emissive_count++;
 			m->has_color_emissive = true;
-			qre.luma_mask_sel = m->color_emissive_count - 1;
+			qre.luma_sel = m->color_emissive_count - 1;
 			QRE_MarkDirty (m);
 		}
 		QR_GUI_Tooltip ("Add a mask block: a white square over the texture; drag its points to shape the glow (up to ten)");
@@ -3269,9 +3267,7 @@ static void QRE_ParamWidgets (int g)
 		if (qre_params[p].section && (!section || strcmp (section, qre_params[p].section)))
 		{
 			section = qre_params[p].section;
-			if (p == PARAM_LSTYLES)
-				QR_GUI_SectionTitle (section);
-			else if (section[0])
+			if (section[0])
 				QR_GUI_SectionHeader (section);
 			else
 				QR_GUI_Separator ();
@@ -3597,8 +3593,6 @@ static void QRE_MatSystemTab (void)
 
 	QRE_MatCvarReset ("rt_dtal_proxy_minarea");
 
-	QRE_MatCvarReset ("rt_dtal_minarea");
-
 	{
 		int groupMode = CVAR_TO_INT32 (rt_dtal_groups);
 
@@ -3639,8 +3633,6 @@ static void QRE_MatSystemTab (void)
 		Cvar_Set ("rt_dtal_proxy_model_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_proxy_model_minarea");
-
-	QRE_MatCvarReset ("rt_dtal_model_minarea");
 
 	maxpolys = CVAR_TO_INT32 (rt_dtal_model_maxpolys);
 	if (QR_GUI_SliderInt ("rt_dtal_model_maxpolys", &maxpolys, 0, 64,
@@ -3836,6 +3828,13 @@ static void QRE_OpenTexture (const char *texname)
 	QRE_ResolveGroup (name);
 	QRE_FramePickInit ();
 
+	{
+		const int digit = QRE_FrameDigit (name);
+
+		if (digit >= 0)
+			qre.frame_tex = digit;
+	}
+
 	QRE_Notify (va ("%s: %d material(s) in the group", name, qre.group_count));
 }
 
@@ -3861,7 +3860,7 @@ static void QRE_MatTexturePicker (void)
 			choice = i;
 	}
 
-	if (QR_GUI_ComboFiltered ("texture", &choice, items, count,
+	if (QR_GUI_ComboFiltered ("Material", &choice, items, count,
 	                          "Every texture the engine has; the search finds one by name. Choosing one opens its materials like a pick in the world.") &&
 	    choice >= 0 && choice < count)
 		QRE_OpenTexture (names[choice]);
@@ -3880,6 +3879,7 @@ static void QRE_MatEntitiesTab (void)
 	QR_GUI_Spacing ();
 
 	QR_GUI_SectionHeader ("Weapons");
+	QR_GUI_Separator ();
 
 	if (qre.entity_weapon_count == 0)
 		QR_GUI_LabelDim ("no weapon view model in this level");
@@ -3940,6 +3940,8 @@ static void QRE_MatEntitiesTab (void)
 
 			qre.entity_frame = qre.entity_anims[qre.entity_anim].first + frame;
 		}
+
+		qre.frame_tex = qre.entity_frame;
 	}
 }
 
@@ -3977,14 +3979,15 @@ static void QRE_PasteFrame (int g)
 	QRE_Notify (va ("settings pasted into %s", m->name));
 }
 
-// The frame slider above a model's texture frames: it picks the frame* block
-// the panel edits and shows that frame on the picked entity in the world (the
-// editor sets the entity's skin every frame, see QRE_EditorFrame), so a frame
-// is worked on where the model actually stands.
+// The frame slider above a model's or a texture's frames: it picks the frame*
+// block the panel edits, and shows that frame on the picked entity in the world
+// when the open group belongs to one (the editor sets the entity's skin every
+// frame, see QRE_EditorFrame), so a frame is worked on where the model stands.
 static void QRE_FrameControls (void)
 {
-	int i, frame;
-	int lo = -1, hi = -1;
+	const qboolean sprite = (qre.pick_model && qre.pick_model->type == mod_sprite) ? true : false;
+	int            i, frame;
+	int            lo = -1, hi = -1;
 
 	for (i = 0; i < qre.group_count; i++)
 	{
@@ -4004,16 +4007,21 @@ static void QRE_FrameControls (void)
 	if (qre.frame_tex < lo || qre.frame_tex > hi)
 		qre.frame_tex = lo;
 
-	QR_GUI_LabelDim ((qre.pick_model->type == mod_sprite)
-	                     ? "the frames of this sprite: the one below is shown and edited"
-	                     : "the texture frames of this model: the one below is shown and edited");
+	if (qre.pick_model == NULL)
+		QR_GUI_LabelDim ("the frames of this texture: the one below is shown and edited");
+	else
+		QR_GUI_LabelDim (sprite
+		                     ? "the frames of this sprite: the one below is shown and edited"
+		                     : "the texture frames of this model: the one below is shown and edited");
 	QR_GUI_Spacing ();
 
 	frame = qre.frame_tex;
 	if (QR_GUI_SliderInt ("frame", &frame, lo, hi,
-	                      (qre.pick_model->type == mod_sprite)
-	                          ? "The sprite frame the entity shows and the section below edits."
-	                          : "The model's texture frame: the entity shows it and the section below edits it."))
+	                      (qre.pick_model == NULL)
+	                          ? "The texture's frame the section below edits."
+	                          : (sprite
+	                                 ? "The sprite frame the entity shows and the section below edits."
+	                                 : "The model's texture frame: the entity shows it and the section below edits it.")))
 		qre.frame_tex = CLAMP (lo, frame, hi);
 }
 
@@ -4066,14 +4074,15 @@ static void QRE_BuildPanelGUI (void)
 	else if (qre.mat_tab == 1)
 		QRE_MatEntitiesTab ();
 
-	if (QRE_FrameGroup ())
+	if (QRE_FrameGroup () || QRE_GroupHasFrames ())
 	{
 		int frame_g = -1;
 
 		// one section edits the frame the slider picked, under a plain header:
 		// the frame* names are the model's or sprite's frames and the slider is
 		// what chooses between them (and what the entity shows)
-		QRE_FrameControls ();
+		if (qre.mat_tab == 0)
+			QRE_FrameControls ();
 
 		for (g = 0; g < qre.group_count; g++)
 		{
@@ -4087,7 +4096,10 @@ static void QRE_BuildPanelGUI (void)
 		if (frame_g < 0)
 		{
 			QR_GUI_LabelDim (va ("this %s has no frame %d",
-			                     (qre.pick_model->type == mod_sprite) ? "sprite" : "model", qre.frame_tex));
+			                     (qre.pick_model == NULL) ? "texture"
+			                     : (qre.pick_model->type == mod_sprite) ? "sprite"
+			                                                            : "model",
+			                     qre.frame_tex));
 		}
 		else
 		{
@@ -4105,6 +4117,19 @@ static void QRE_BuildPanelGUI (void)
 				QRE_PasteFrame (frame_g);
 
 			QRE_ParamWidgets (frame_g);
+			QR_GUI_PopID ();
+		}
+
+		// a group entry with no frame digit (a ring's base material) keeps its
+		// own section below the shown frame
+		for (g = 0; g < qre.group_count; g++)
+		{
+			if (QRE_FrameDigit (qre.group[g]->name) >= 0)
+				continue;
+
+			QR_GUI_PushID (qre.group[g]->name);
+			if (QR_GUI_Section (qre.group[g]->name, 1))
+				QRE_ParamWidgets (g);
 			QR_GUI_PopID ();
 		}
 	}

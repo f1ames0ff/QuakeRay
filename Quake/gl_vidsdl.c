@@ -3824,6 +3824,12 @@ static void RT_EmissiveLimitsChanged_f (cvar_t *var)
 	Atomic_StoreUInt32 (&rt_require_static_submit, true);
 }
 
+static void RT_DtalCollectChanged_f (cvar_t *var)
+{
+	(void)var;
+	RT_DtalRequestRebuild ();
+}
+
 // Both diagnostics run on the current map, so they do not wait for a map reload.
 static void RT_WorldCensusChanged_f (cvar_t *var)
 {
@@ -4068,6 +4074,9 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_dtal_clearance, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_groups, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_spacing, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_proxy, RT_DtalCollectChanged_f);
+	Cvar_SetCallback (&rt_dtal_proxy_minarea, RT_DtalCollectChanged_f);
+	Cvar_SetCallback (&rt_dtal_maxgroups, RT_DtalCollectChanged_f);
 	Cvar_SetCallback (&rt_worldcensus, RT_WorldCensusChanged_f);
 	Cvar_SetCallback (&rt_worldlights_stats, RT_WorldLightsStatsChanged_f);
 
