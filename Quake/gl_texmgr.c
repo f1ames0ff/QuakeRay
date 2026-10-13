@@ -2432,6 +2432,55 @@ int TexMgr_CollectGroupNames (const char *texname, char (*names)[MAX_QPATH], int
 
 /*
 ================
+TexMgr_CollectTextureNames
+
+The names of the textures the engine currently has, for the material editor's picker: one name
+per texture, in the editor's own spelling (what TexMgr_GroupName builds), the special fallbacks
+and the interface art left out and only the two namespaces the materials live in kept
+("textures/..." for a world texture, "progs/...:frameN" for a model's or sprite's skin).
+================
+*/
+int TexMgr_CollectTextureNames (char (*names)[MAX_QPATH], int max)
+{
+	gltexture_t *glt;
+	int          count = 0;
+
+	if (!names || max <= 0)
+		return 0;
+
+	for (glt = active_gltextures; glt && count < max; glt = glt->next)
+	{
+		char n[MAX_QPATH];
+		int  i, dup = 0;
+
+		if (!glt->name[0])
+			continue;
+
+		TexMgr_GroupName (glt->name, n, sizeof (n));
+
+		if (strncmp (n, "textures/", 9) && strncmp (n, "progs/", 6))
+			continue;
+
+		for (i = 0; i < count; i++)
+		{
+			if (!strcmp (names[i], n))
+			{
+				dup = 1;
+				break;
+			}
+		}
+
+		if (dup)
+			continue;
+
+		q_strlcpy (names[count++], n, MAX_QPATH);
+	}
+
+	return count;
+}
+
+/*
+================
 TexMgr_LoadRgbaForPreview
 
 The RGBA8 pixels of a texture's own source, for the editor's texture preview

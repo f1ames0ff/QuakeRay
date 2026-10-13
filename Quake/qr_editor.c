@@ -3747,6 +3747,73 @@ static void QRE_SelectEntityModel (qmodel_t *model)
 	QRE_OpenMaterial (model, NULL, NULL, glt);
 }
 
+#define QRE_TEXLIST_MAX 2048
+
+static int QRE_CompareTextureNames (const void *a, const void *b)
+{
+	return q_strcasecmp ((const char *) a, (const char *) b);
+}
+
+// Opens a texture by name the way a pick in the world does: the same normalisation, the same
+// group of materials and the same frame start, with the world pick left empty (nothing points at
+// it).
+static void QRE_OpenTexture (const char *texname)
+{
+	char  name[MAX_QPATH];
+	char *dot;
+
+	RT_MAT_NormalizeName (texname, name, sizeof (name));
+	dot = strrchr (name, '.');
+	if (dot && !strchr (dot, ':'))
+		*dot = '\0';
+
+	qre.pick_model = NULL;
+	qre.pick_surf = NULL;
+	qre.pick_ent = NULL;
+	qre.pick_glt = NULL;
+	qre.hover_model = NULL;
+	qre.hover_surf = NULL;
+	qre.hover_ent = NULL;
+	qre.hover_glt = NULL;
+
+	q_strlcpy (qre.pick_name, name, sizeof (qre.pick_name));
+
+	QRE_ResolveGroup (name);
+	QRE_FramePickInit ();
+
+	QRE_Notify (va ("%s: %d material(s) in the group", name, qre.group_count));
+}
+
+// The Materials tab's picker: every texture the engine has, in one searchable list, so a texture
+// nothing in the level points at can be opened without hunting for a surface that uses it.
+static void QRE_MatTexturePicker (void)
+{
+	static char names[QRE_TEXLIST_MAX][MAX_QPATH];
+
+	const char *items[QRE_TEXLIST_MAX];
+	int         count, i, choice = -1;
+
+	count = TexMgr_CollectTextureNames (names, QRE_TEXLIST_MAX);
+
+	if (count > 1)
+		qsort (names, count, MAX_QPATH, QRE_CompareTextureNames);
+
+	for (i = 0; i < count; i++)
+	{
+		items[i] = names[i];
+
+		if (!strcmp (names[i], qre.pick_name))
+			choice = i;
+	}
+
+	if (QR_GUI_ComboFiltered ("texture", &choice, items, count,
+	                          "Every texture the engine has; the search finds one by name. Choosing one opens its materials like a pick in the world.") &&
+	    choice >= 0 && choice < count)
+		QRE_OpenTexture (names[choice]);
+
+	QR_GUI_Spacing ();
+}
+
 static void QRE_MatEntitiesTab (void)
 {
 	int i;
@@ -3939,7 +4006,9 @@ static void QRE_BuildPanelGUI (void)
 		return;
 	}
 
-	if (qre.mat_tab == 1)
+	if (qre.mat_tab == 0)
+		QRE_MatTexturePicker ();
+	else if (qre.mat_tab == 1)
 		QRE_MatEntitiesTab ();
 
 	if (QRE_FrameGroup ())

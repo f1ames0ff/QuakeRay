@@ -983,9 +983,11 @@ int QR_GUI_ComboFiltered (const char *label, int *value, const char *const *item
 		}
 
 		ImGui::SetNextItemWidth (ImGui::GetContentRegionAvail ().x);
-		ImGui::InputTextWithHint ("##filter", "search...", filter, sizeof (filter));
+		const bool enter = ImGui::InputTextWithHint ("##filter", "search...", filter, sizeof (filter),
+		                                             ImGuiInputTextFlags_EnterReturnsTrue);
 
 		int shown = 0;
+		int single = -1;
 
 		for (int i = 0; i < count; i++)
 		{
@@ -1002,6 +1004,15 @@ int QR_GUI_ComboFiltered (const char *label, int *value, const char *const *item
 
 			ImGui::PopID ();
 			shown++;
+			single = i;
+		}
+
+		// a search that leaves one name needs no mouse: Enter takes it
+		if (enter && shown == 1)
+		{
+			*value = single;
+			changed = 1;
+			ImGui::CloseCurrentPopup ();
 		}
 
 		if (shown == 0)
@@ -1470,7 +1481,7 @@ int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, flo
 	PreviewView   view = PreviewViewLoad (view_id);
 	const bool    over = ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h));
 
-	if (over && ImGui::GetIO ().MouseWheel != 0.0f)
+	if (over && ImGui::GetIO ().KeyCtrl && ImGui::GetIO ().MouseWheel != 0.0f)
 	{
 		view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
 		PreviewViewStore (view_id, view);
@@ -1480,9 +1491,10 @@ int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, flo
 
 	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
 
-	// while the pointer is on the preview the wheel is the zoom's, not the
-	// panel's scroll
-	ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
+	// while the pointer is on the preview and Ctrl is down the wheel is the zoom's,
+	// not the panel's scroll
+	if (over && ImGui::GetIO ().KeyCtrl)
+		ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
 
 	const bool hovered = ImGui::IsItemHovered ();
 	const ImVec2 mouse = ImGui::GetIO ().MousePos;
@@ -1577,7 +1589,8 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	const ImGuiID view_id = ImGui::GetID ("##preview_view");
 	PreviewView   view = PreviewViewLoad (view_id);
 
-	if (ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h)) && ImGui::GetIO ().MouseWheel != 0.0f)
+	if (ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h)) && ImGui::GetIO ().KeyCtrl &&
+	    ImGui::GetIO ().MouseWheel != 0.0f)
 	{
 		view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
 		PreviewViewStore (view_id, view);
@@ -1596,9 +1609,10 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	ImGui::InvisibleButton ("##mask", size,
 	                        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
-	// while the pointer is on the preview the wheel is the zoom's, not the
+	// while the pointer is on the preview and Ctrl is down the wheel is the zoom's, not the
 	// panel's scroll
-	ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
+	if (ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h)) && ImGui::GetIO ().KeyCtrl)
+		ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
 
 	const ImGuiID item = ImGui::GetItemID ();
 	int           changed = 0;
