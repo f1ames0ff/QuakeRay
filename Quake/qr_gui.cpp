@@ -926,6 +926,53 @@ int QR_GUI_Combo (const char *label, int *value, const char *const *items, int c
 	return changed;
 }
 
+// A square button with a bin drawn in it, right-aligned in the row it follows: the luma colour
+// and mask blocks remove themselves with it, so the control reads the same in both.
+int QR_GUI_TrashButton (const char *label, int enabled)
+{
+	char id[192];
+	snprintf (id, sizeof (id), "##trash_%s", label);
+
+	const ImVec2 prev_max = ImGui::GetItemRectMax ();
+	const float  after    = (prev_max.x - ImGui::GetWindowPos ().x) + ImGui::GetStyle ().ItemSpacing.x;
+	const float  right    = ImGui::GetWindowContentRegionMax ().x - kResetButtonSize;
+	const float  x        = right > after ? right : after;
+
+	ImGui::SameLine (x);
+	ImGui::SetCursorPosY (ImGui::GetCursorPosY () +
+	                      (ImGui::GetFrameHeight () - kResetButtonSize) * 0.5f);
+
+	if (!enabled)
+		ImGui::BeginDisabled ();
+
+	ImGui::PushStyleColor (ImGuiCol_Button, ImVec4 (0.16f, 0.17f, 0.21f, 0.85f));
+	const bool pressed = ImGui::Button (id, ImVec2 (kResetButtonSize, kResetButtonSize));
+	ImGui::PopStyleColor ();
+
+	// The bin is drawn, not a glyph: the panel font has no trash character.
+	const ImVec2 mn  = ImGui::GetItemRectMin ();
+	const ImVec2 mx  = ImGui::GetItemRectMax ();
+	const ImU32  col = ImGui::GetColorU32 (ImGuiCol_Text, enabled ? 1.0f : 0.45f);
+	ImDrawList  *dl  = ImGui::GetWindowDrawList ();
+
+	const float cx  = (mn.x + mx.x) * 0.5f;
+	const float cy  = (mn.y + mx.y) * 0.5f;
+	const float w   = kResetButtonSize * 0.20f;
+	const float hgt = kResetButtonSize * 0.26f;
+	const float lid = cy - hgt * 0.55f;
+
+	dl->AddLine (ImVec2 (cx - w * 1.35f, lid), ImVec2 (cx + w * 1.35f, lid), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w * 0.55f, lid - 2.6f), ImVec2 (cx + w * 0.55f, lid - 2.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w, lid + 1.8f), ImVec2 (cx - w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx + w, lid + 1.8f), ImVec2 (cx + w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w * 0.82f, lid + hgt * 1.6f), ImVec2 (cx + w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+
+	if (!enabled)
+		ImGui::EndDisabled ();
+
+	return pressed ? 1 : 0;
+}
+
 // Case-insensitive substring test, so a search field finds "flame2" in "progs/flame2.mdl".
 static bool QRGuiTextHas (const char *haystack, const char *needle)
 {
@@ -1573,6 +1620,7 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	static float   drag_anchor[2] = {0.0f, 0.0f};
 	static float   drag_base[32][2];
 	static float   drag_edge_base[2][2];
+	static bool    drag_edge_perp = false;
 	static int     drag_base_count = 0;
 
 	float w = ImGui::GetContentRegionAvail ().x;
@@ -1664,7 +1712,23 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		}
 
 		if (hover_edge >= 0)
-			ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeAll);
+		{
+			if (ImGui::GetIO ().KeyCtrl)
+			{
+				// Ctrl drags the edge along its own normal: the cursor is the double arrow
+				// that points the way the edge will step
+				const int   q = (hover_edge + 1) % points;
+				const float ex = uv[q][0] - uv[hover_edge][0];
+				const float ey = uv[q][1] - uv[hover_edge][1];
+				const bool  edge_more_vertical = fabsf (ey) >= fabsf (ex);
+
+				ImGui::SetMouseCursor (edge_more_vertical ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+			}
+			else
+			{
+				ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeAll);
+			}
+		}
 	}
 
 	const float u = ClampF (view.u0 + (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f) * span, 0.0f, 1.0f);
@@ -1742,6 +1806,7 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 			const int q = (hover_edge + 1) % points;
 
 			drag_edge = hover_edge;
+			drag_edge_perp = ImGui::GetIO ().KeyCtrl ? true : false;
 			drag_edge_base[0][0] = uv[hover_edge][0];
 			drag_edge_base[0][1] = uv[hover_edge][1];
 			drag_edge_base[1][0] = uv[q][0];
@@ -1800,8 +1865,32 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		if (ImGui::IsItemActive () && ImGui::IsMouseDown (ImGuiMouseButton_Left))
 		{
 			const int   q = (drag_edge + 1) % points;
-			const float du = u - drag_anchor[0];
-			const float dv = v - drag_anchor[1];
+			float       du = u - drag_anchor[0];
+			float       dv = v - drag_anchor[1];
+
+			if (drag_edge_perp)
+			{
+				/* Ctrl: the edge steps along its own normal, so the motion is projected on the
+				   perpendicular and the edge keeps the direction it had. */
+				const float ex = drag_edge_base[1][0] - drag_edge_base[0][0];
+				const float ey = drag_edge_base[1][1] - drag_edge_base[0][1];
+				const float len = sqrtf (ex * ex + ey * ey);
+
+				if (len > 1e-8f)
+				{
+					const float nx = -ey / len;
+					const float ny = ex / len;
+					const float proj = du * nx + dv * ny;
+
+					du = nx * proj;
+					dv = ny * proj;
+				}
+				else
+				{
+					du = dv = 0.0f;
+				}
+			}
+
 			const float a0 = ClampF (drag_edge_base[0][0] + du, 0.0f, 1.0f);
 			const float b0 = ClampF (drag_edge_base[0][1] + dv, 0.0f, 1.0f);
 			const float a1 = ClampF (drag_edge_base[1][0] + du, 0.0f, 1.0f);

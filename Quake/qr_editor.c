@@ -2899,22 +2899,23 @@ static void QRE_EmissiveEditor (int g)
 
 		if (open)
 		{
+			if (QR_GUI_TrashButton (id, 1))
+			{
+				int k;
+
+				for (k = ci; k + 1 < m->color_emissive_count; k++)
+					m->color_emissive[k] = m->color_emissive[k + 1];
+				m->color_emissive_count--;
+				if (m->color_emissive_count == 0)
+					m->has_color_emissive = false;
+				QRE_MarkDirty (m);
+				QR_GUI_PopID ();
+				break;
+			}
+			QR_GUI_Tooltip ("Remove this color or mask block");
+
 			if (poly)
 			{
-				if (QR_GUI_Button ("Remove mask"))
-				{
-					int k;
-
-					for (k = ci; k + 1 < m->color_emissive_count; k++)
-						m->color_emissive[k] = m->color_emissive[k + 1];
-					m->color_emissive_count--;
-					if (m->color_emissive_count == 0)
-						m->has_color_emissive = false;
-					QRE_MarkDirty (m);
-					QR_GUI_PopID ();
-					break;
-				}
-				QR_GUI_Tooltip ("Remove this mask block");
 
 				// this block's own preview: the polygon editor draws and edits
 				// the mask over the texture
@@ -2939,7 +2940,7 @@ static void QRE_EmissiveEditor (int g)
 						}
 					}
 				}
-				QR_GUI_Tooltip ("Drag a point to move it, an edge to slide it, the mask to move the whole polygon, Ctrl+click to add a point, right-click a point to remove it");
+				QR_GUI_Tooltip ("Drag a point to move it, an edge to slide it, Ctrl+drag an edge to move it along its own normal, the mask to move the whole polygon, Ctrl+click to add a point, right-click a point to remove it");
 			}
 			else
 			{
