@@ -4305,8 +4305,11 @@ typedef struct
 
 static const qre_global_t qre_globals[] = {
 	{ "Global", "rt_model_lights",  QRE_G_BOOL,  0, 0,
-	  "Light a model or sprite from its emissive geometry (DTAL) instead of its generated dlight; the limits in the material editor's DTAL (models) section still bound what qualifies. With this off the is_light surface keeps its glow and only the cast light falls back to a dlight.",
-	  NULL, NULL, QRE_COND_NONE, "DTAL dynamic entities" },
+	  "Light a monster or another character model from its emissive geometry (DTAL) instead of its generated dlight; the limits in the material editor's DTAL (models) section still bound what qualifies. The level's own light models answer to the switch below instead. With this off the is_light surface keeps its glow and only the cast light falls back to a dlight.",
+	  NULL, NULL, QRE_COND_NONE, "DTAL models" },
+	{ NULL, "rt_level_lights",      QRE_G_BOOL,  0, 0,
+	  "Light the models named in rt_level_light_models -- the torches, the flames and the flying lights of the level -- from their emissive geometry instead of their generated dlight. With this off they keep their dlights, which are held to the reach of a moving light (rt_light_reach_dynamic); with it on their lights are rebuilt as they move, and the rooms they cross pay for it in their light lists.",
+	  NULL, NULL, QRE_COND_NONE, "DTAL level lights" },
 	{ "Global", "rt_brightness",    QRE_G_FLOAT, 0, 3,
 	  "The brightness of the whole ray-traced image." },
 	{ NULL,  "rt_globallight",      QRE_G_COLOR, 0, 0,

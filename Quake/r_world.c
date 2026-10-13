@@ -50,6 +50,8 @@ extern cvar_t rt_light_styles;
 extern cvar_t rt_light_styles_reach;
 extern cvar_t rt_wmodel_lights_batch;
 extern cvar_t rt_model_lights;
+extern cvar_t rt_level_lights;
+extern cvar_t rt_level_light_models;
 extern cvar_t rt_dtal_model_maxpolys;
 extern cvar_t rt_dtal_model_budget;
 extern cvar_t rt_dtal_model_minarea;
@@ -3573,6 +3575,48 @@ static rt_dtal_entry_t *RT_ModelLightCacheFind (struct rt_dtal_cache_s *cache, g
 	return NULL;
 }
 
+static qboolean RT_IsLevelLightModel (const char *name)
+{
+	const char *base = name;
+	const char *list;
+	const char *p;
+	cvar_t     *var;
+
+	if (!name || !name[0])
+		return false;
+
+	var = Cvar_FindVar ("rt_level_light_models");
+	if (!var || !var->string || !var->string[0])
+		return false;
+
+	for (p = name; *p; p++)
+	{
+		if (*p == '/' || *p == '\\')
+			base = p + 1;
+	}
+
+	list = var->string;
+
+	for (p = list; *p; )
+	{
+		char token[MAX_QPATH];
+		int  length = 0;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+
+		while (*p && *p != ' ' && *p != '\t' && length < (int)sizeof (token) - 1)
+			token[length++] = *p++;
+
+		token[length] = '\0';
+
+		if (length > 0 && (!q_strcasecmp (token, name) || !q_strcasecmp (token, base)))
+			return true;
+	}
+
+	return false;
+}
+
 /*
 =================
 RT_AddAliasEmissiveLights
@@ -3600,10 +3644,13 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
                                const QrVertex *pose2, float blend, int numverts, const uint32_t *indices,
                                int numindices, const QrTransform *transform)
 {
-	if (!CVAR_TO_BOOL (rt_model_lights) || !RT_AllowTexturedAreaLights ())
+	if (!model || !tex || !pose1 || !pose2 || !indices || !transform || numindices < 3)
 		return 0;
 
-	if (!model || !tex || !pose1 || !pose2 || !indices || !transform || numindices < 3)
+	if (!RT_AllowTexturedAreaLights ())
+		return 0;
+
+	if (!CVAR_TO_BOOL (RT_IsLevelLightModel (model->name) ? rt_level_lights : rt_model_lights))
 		return 0;
 
 	/* The revision is taken before the material is read. A synthesis that lands while the pieces

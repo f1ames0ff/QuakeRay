@@ -195,7 +195,9 @@ atomic_uint32_t rt_end_task_running;
 	/* DTAL: 1 lights an alias model from the triangles of the pose it draws, when its material
 	   is a light and carries an emissive mask; 0 keeps the fake dlight for it. The per-model cap
 	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
-	CVAR_DEF_T (rt_model_lights, "0") \
+	CVAR_DEF_T (rt_model_lights, "1") \
+	CVAR_DEF_T (rt_level_lights, "0") \
+	CVAR_DEF_T (rt_level_light_models, "flame.mdl flame2.mdl lavaball.mdl proj_balllava.mdl missile.mdl bolt1.mdl proj_lightning2.mdl w_spike.mdl misc_flame_big.mdl misc_flame_med.mdl misc_candle1.mdl misc_candle2.mdl misc_candle3.mdl misc_lightpost.mdl misc_lighttube.mdl misc_spark.mdl") \
 	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
 	CVAR_DEF_T (rt_dtal_model_budget, "512") \
 	CVAR_DEF_T (rt_dtal_model_minarea, "0") \
@@ -1108,6 +1110,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "r_particles");
 	RT_Bench_Setting (f, "r_fteparticles");
 	RT_Bench_Setting (f, "rt_model_lights");
+	RT_Bench_Setting (f, "rt_level_lights");
 	RT_Bench_Setting (f, "rt_dtal_model_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_model_budget");
 	RT_Bench_Setting (f, "rt_dtal_model_minarea");
