@@ -419,6 +419,13 @@ void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
         }
     }
 
+    if (light.spot && DotProduct(light.direction, light.direction) <= 0.0f)
+    {
+        light.direction[0] = 0.0f;
+        light.direction[1] = 0.0f;
+        light.direction[2] = -1.0f;
+    }
+
     RT_LIGHT_ResolveEmitter(emitter, &resolved);
 
     VectorAdd(emitter->position, resolved.offset, position);

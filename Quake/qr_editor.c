@@ -3182,6 +3182,9 @@ static void QRE_EmissiveEditor (int g)
 			}
 			qre.luma_sel = order[sel];
 
+			QR_GUI_LabelDim ("the color and mask blocks of this material: the one below is shown and edited");
+			QR_GUI_Spacing ();
+
 			if (QR_GUI_ComboFiltered ("colors & masks", &sel, items, count,
 			                          "The luma block the form below edits."))
 				qre.luma_sel = order[sel];
@@ -4534,6 +4537,24 @@ static void QRE_BuildPanelGUI (void)
 			QR_GUI_PopID ();
 		}
 	}
+	else if (qre.group_count == 1)
+	{
+		int actions;
+
+		QR_GUI_PushID (qre.group[0]->name);
+		QR_GUI_Separator ();
+		actions = QR_GUI_HeaderFrameActions (qre.group[0]->name, qre.mat_clip_valid ? 1 : 0,
+		                                     "Copy this material's settings to paste into another material.",
+		                                     "Paste the copied settings into this material.");
+
+		if (actions & 1)
+			QRE_CopyFrame (0);
+		if (actions & 2)
+			QRE_PasteFrame (0);
+
+		QRE_ParamWidgets (0);
+		QR_GUI_PopID ();
+	}
 	else
 	{
 		for (g = 0; g < qre.group_count; g++)
@@ -5521,7 +5542,11 @@ static void QRE_CustomLightsTab (void)
 {
 	int                count = 0;
 	rt_custom_light_t *lights = RT_CustomLights (&count);
+	char               labels[RT_CUSTOM_LIGHTS_MAX][32];
+	const char        *items[RT_CUSTOM_LIGHTS_MAX];
 	char               buf[96];
+	int                selected = -1;
+	int                choice = -1;
 	int                i;
 
 	QR_GUI_LabelDim ("lights the level does not have, kept in qray.lights.yaml");
@@ -5542,28 +5567,44 @@ static void QRE_CustomLightsTab (void)
 
 	for (i = 0; i < count; i++)
 	{
-		rt_custom_light_t *l = &lights[i];
+		q_snprintf (labels[i], sizeof (labels[i]), "Light %d", i + 1);
+		items[i] = labels[i];
+
+		if (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM &&
+		    qre.sel_light.uniqueID == (uint64_t)UINT32_MAX + 1 + (uint64_t)i)
+			selected = i;
+	}
+
+	if (selected >= 0)
+		choice = selected;
+
+	if (count > 0)
+	{
+		if (QR_GUI_ComboFiltered ("light", &choice, items, count,
+		                          "The lights this level carries; pick one and the form below edits it."))
+		{
+			QRE_SelectCustomLight (choice);
+			selected = choice;
+		}
+
+		QR_GUI_Spacing ();
+	}
+
+	if (selected >= 0 && selected < count)
+	{
+		rt_custom_light_t *l = &lights[selected];
 		rt_custom_light_t  orig;
 		qboolean           has_orig;
 		char               label[48];
 		int                style = CLAMP (0, l->style, RT_CUSTOM_STYLE_COUNT - 1);
-		int                selected = (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM &&
-		                               qre.sel_light.uniqueID == (uint64_t)UINT32_MAX + 1 + (uint64_t)i);
 		float              rgb[3];
 		int                en = 1;
 
-		has_orig = QRE_CustomOriginal (i, &orig);
+		has_orig = QRE_CustomOriginal (selected, &orig);
 
-		q_snprintf (label, sizeof (label), "Light %d", i + 1);
+		q_snprintf (label, sizeof (label), "Light %d", selected + 1);
 		QR_GUI_PushID (label);
 
-		if (QR_GUI_SectionSelected (label, selected))
-		{
-			QRE_SelectCustomLight (i);
-			selected = 1;
-		}
-
-		if (selected)
 		{
 			const char *tip = "A light the editor authored: uploaded like a dlight, with a style of its own.";
 			float       offs[3];
@@ -5692,10 +5733,10 @@ static void QRE_CustomLightsTab (void)
 			QR_GUI_SameLine ();
 			if (QR_GUI_Button ("Remove"))
 			{
-				RT_CustomLights_Remove (i);
+				RT_CustomLights_Remove (selected);
 				qre.sel_light_valid = false;
 				QR_GUI_PopID ();
-				break;
+				return;
 			}
 		}
 
