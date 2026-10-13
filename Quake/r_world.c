@@ -57,6 +57,7 @@ extern cvar_t rt_dtal_model_maxpolys;
 extern cvar_t rt_dtal_model_budget;
 extern cvar_t rt_dtal_model_minarea;
 extern cvar_t rt_dtal_minarea;
+extern cvar_t rt_dtal_proxy;
 extern cvar_t rt_dtal_maxpolys;
 extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_dtal_groups;
@@ -2181,6 +2182,11 @@ static void RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, cons
 	if (!(area > 0.0f) || !isfinite (area))
 		return;
 
+	/* An emitter is small enough to become a dlight only while the switch says so; off, the
+	   thresholds drop their emitters the way they always did. */
+	if (!CVAR_TO_BOOL (rt_dtal_proxy))
+		return;
+
 	/* The equal-area sphere: the proxy carries the flux of the patches it stands for. */
 	radius = sqrtf (area / 12.566370614f);
 
@@ -2800,7 +2806,8 @@ static void RT_DtalGroups_FillUpload (void)
 			dst->aliasIndex = build->memberAlias[index];
 		}
 
-		if (CVAR_TO_FLOAT (rt_dtal_minarea) > 0.0f && group->area < CVAR_TO_FLOAT (rt_dtal_minarea))
+		if (CVAR_TO_BOOL (rt_dtal_proxy) && CVAR_TO_FLOAT (rt_dtal_minarea) > 0.0f &&
+		    group->area < CVAR_TO_FLOAT (rt_dtal_minarea))
 		{
 			vec3_t center = { 0.0f, 0.0f, 0.0f };
 			vec3_t normal = { 0.0f, 0.0f, 0.0f };

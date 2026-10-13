@@ -75,6 +75,7 @@ extern qboolean        texmgr_live_material_replaced; // gl_texmgr.c
 extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea, rt_dtal_groups, rt_dtal_spacing;
+extern cvar_t rt_dtal_proxy;
 extern cvar_t rt_dtal_maxgroups;
 extern cvar_t rt_level_light_maxpolys;
 extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minarea;
@@ -3274,6 +3275,7 @@ static const char *const qre_mat_cvars[] = {
 	"rt_dtal_clearance",
 	"rt_dtal_maxpolys",
 	"rt_dtal_minarea",
+	"rt_dtal_proxy",
 	"rt_dtal_groups",
 	"rt_dtal_spacing",
 	"rt_dtal_maxgroups",
@@ -3494,6 +3496,16 @@ static void QRE_MatSystemTab (void)
 
 	QRE_MatCvarReset ("rt_dtal_debug");
 
+	{
+		int proxy = CVAR_TO_BOOL (rt_dtal_proxy) ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("small emitters light as one dlight", &proxy,
+		                     "An emitter under the two area thresholds below lights as one synthesized dlight of its own -- the sphere of its patches' area, at their power-weighted centroid, as a spot along their normal when the source casts in a cone -- instead of being dropped (rt_dtal_proxy). Off, the thresholds drop their emitters and nothing is synthesized."))
+			Cvar_Set ("rt_dtal_proxy", proxy ? "1" : "0");
+
+		QRE_MatCvarReset ("rt_dtal_proxy");
+	}
+
 	QR_GUI_Spacing ();
 
 	QR_GUI_SectionHeader ("DTAL (BSP)");
@@ -3514,7 +3526,7 @@ static void QRE_MatSystemTab (void)
 
 	value = CVAR_TO_FLOAT (rt_dtal_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_minarea", &value, 0.0f, 1024.0f,
-	                        "A DTAL polygon under this area, in world units squared, lights as one synthesized dlight of its own instead of an area light (0 off)."))
+	                        "An emitter under this area, in world units squared, lights as one synthesized dlight instead of an area light: a small DTAL polygon of its own, and a DTAL grid group whose patches add up to less than this (0 off; with rt_dtal_proxy off such emitters are dropped instead)."))
 		Cvar_Set ("rt_dtal_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_minarea");
@@ -3547,7 +3559,7 @@ static void QRE_MatSystemTab (void)
 
 	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
-	                        "A model's DTAL piece under this percentage of its bounding box face is not an area light: the model's small pieces light as one synthesized dlight (0 off)."))
+	                        "A model's DTAL piece under this percentage of its bounding box face is not an area light: the model's small pieces light as one synthesized dlight (0 off; with rt_dtal_proxy off such pieces are dropped instead)."))
 		Cvar_Set ("rt_dtal_model_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_model_minarea");
