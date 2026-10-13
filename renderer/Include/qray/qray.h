@@ -289,6 +289,10 @@ typedef enum QrGeometryUploadFlagBits
        by default: a surface whose emission a registered area light already
        counts must not add it again. */
     QR_GEOMETRY_UPLOAD_EMISSION_RAY_ONLY_BIT = 1024,
+
+    /* The layer-0 texture coordinates are scaled and shifted per material
+       (texture_scale_u/v, texture_offset_u/v) before they reach the shaders. */
+    QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT = 2048,
 } QrGeometryUploadFlagBits;
 typedef QrFlags QrGeometryUploadFlags;
 
@@ -311,6 +315,9 @@ typedef struct QrGeometryUploadInfo
 
     QrFloat4D                       layerColors[3];
     QrGeometryMaterialBlendType     layerBlendingTypes[3];
+
+    float                           texCoordScale[2];
+    float                           texCoordOffset[2];
 
     float                           defaultRoughness;
     float                           defaultMetallicity;
@@ -395,6 +402,7 @@ typedef enum QrRasterizedGeometryStateFlagBits
     // is the lit pipeline selector and only set while `r_particle_lighting` is on, so the traced
     // stand-ins of the classic sprites have to key on a flag the particle uploads always carry.
     QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE    = 128,
+    QR_RASTERIZED_GEOMETRY_STATE_TEXCOORD_TRANSFORM = 256,
 } QrRasterizedGeometryStateFlagBits;
 typedef uint32_t QrRasterizedGeometryStateFlags;
 
@@ -411,6 +419,9 @@ typedef struct QrRasterizedGeometryUploadInfo
     QrTransform                             transform;
 
     QrFloat4D                               color;
+
+    float                                   texCoordScale[2];
+    float                                   texCoordOffset[2];
 
     QrMaterial                              material;
     QrRasterizedGeometryStateFlags          pipelineState;

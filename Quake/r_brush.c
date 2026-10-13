@@ -229,7 +229,9 @@ void DrawGLPoly (
 			.pIndices = RT_GetFanIndices (numverts),
 			.transform = *transform,
 			.color = {color[0], color[1], color[2], alpha},
-			.material = tex ? tex->rtmaterial : QR_NO_MATERIAL,
+			.texCoordScale = {tex ? tex->rtuvscale[0] : 1.0f, tex ? tex->rtuvscale[1] : 1.0f},
+			.texCoordOffset = {tex ? tex->rtuvoffset[0] : 0.0f, tex ? tex->rtuvoffset[1] : 0.0f},
+			.material = tex ? RT_RASTER_MATERIAL (tex) : QR_NO_MATERIAL,
 			.pipelineState = QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE,
 			.blendFuncSrc = 0,
 			.blendFuncDst = 0,
@@ -250,6 +252,8 @@ void DrawGLPoly (
 			info.blendFuncSrc = QR_BLEND_FACTOR_SRC_ALPHA;
 			info.blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 		}
+		if (RT_UV_TRANSFORM_ACTIVE (tex))
+			info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_TEXCOORD_TRANSFORM;
 
 		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
 		QR_CHECK (r);
@@ -258,7 +262,8 @@ void DrawGLPoly (
 	{
 		QrGeometryUploadInfo info = {
 			.uniqueID = uniqueid,
-			.flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
+			.flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT |
+			         (RT_UV_TRANSFORM_ACTIVE (tex) ? QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT : 0),
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType = QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
 			.visibilityType = is_sky ? QR_GEOMETRY_VISIBILITY_TYPE_SKY : QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
@@ -268,6 +273,8 @@ void DrawGLPoly (
 			.pIndices = RT_GetFanIndices (numverts),
 			.layerColors = {{color[0], color[1], color[2], alpha}},
 			.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
+			.texCoordScale = {tex ? tex->rtuvscale[0] : 1.0f, tex ? tex->rtuvscale[1] : 1.0f},
+			.texCoordOffset = {tex ? tex->rtuvoffset[0] : 0.0f, tex ? tex->rtuvoffset[1] : 0.0f},
 			.geomMaterial = {tex ? tex->rtmaterial : QR_NO_MATERIAL},
 			.defaultRoughness = CVAR_TO_FLOAT (rt_brush_rough),
 			.defaultMetallicity = CVAR_TO_FLOAT (rt_brush_metal),

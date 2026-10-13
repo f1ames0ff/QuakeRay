@@ -478,6 +478,15 @@ void VertexCollector::CopyDataToStaging(const QrGeometryUploadInfo &info, uint32
     static_assert( offsetof( ShVertex, packedColor )    == offsetof( QrVertex, packedColor ) );
 
     memcpy( pDst, info.pVertices, info.vertexCount * sizeof( ShVertex ) );
+
+    if( info.flags & QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT )
+    {
+        for( uint32_t i = 0; i < info.vertexCount; i++ )
+        {
+            pDst[ i ].texCoord[0] = pDst[ i ].texCoord[0] * info.texCoordScale[0] + info.texCoordOffset[0];
+            pDst[ i ].texCoord[1] = pDst[ i ].texCoord[1] * info.texCoordScale[1] + info.texCoordOffset[1];
+        }
+    }
 }
 
 void VertexCollector::EndCollecting()

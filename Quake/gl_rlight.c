@@ -1818,6 +1818,17 @@ void RT_ClusterLists_f (void)
 	}
 }
 
+void RT_WorldLightStats (rt_world_report_t *out)
+{
+	out->lightsRegistered = rt_cluster_light_count;
+	out->lightsDropped = rt_light_diag_unresolved;
+	out->slotsGranted = rt_light_diag_granted;
+	out->slotsDenied = rt_light_diag_denied;
+	out->demandMax = rt_cluster_demand_max;
+	out->demandMedian = rt_cluster_demand_median;
+	out->demandP95 = rt_cluster_demand_p95;
+}
+
 void RT_ClusterLightReport_f (void)
 {
 	const int maxLines = (rt_light_report_file != NULL) ? RT_CLUSTER_MAX_LIGHTS

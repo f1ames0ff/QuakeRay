@@ -73,7 +73,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
        the raster overlay draws the raster particles - the same temporal treatment they get. The
        layer is written by the reflect/refract raygen at plain pixels and only for the panes it
        covered, so the mask gates the read. */
-    if (globalUniform.glassParticles != 0u && abs(glass) >= 4.0)
+    if (abs(glass) >= 4.0)
     {
         const float4 particleLayer = framebufQ2ParticleLayer_Sampled.Load(int3(pix, 0));
         hdr = particleLayer.rgb + hdr * (1.0 - particleLayer.a);

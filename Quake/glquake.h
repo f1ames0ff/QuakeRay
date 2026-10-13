@@ -786,6 +786,32 @@ typedef struct
 	double   particleResolveCacheAvgNs;
 } rt_prof_report_t;
 
+// The map side of the readout: what the cluster tables, the sky pass and the particle volume
+// hold for the map in play. Filled from the host tables on capture, so the panel and the dump
+// never disagree about the map they are showing.
+typedef struct
+{
+	int clusters;
+	int clustersWithoutRow;
+	int rowBytes;
+	int visdataBytes;
+	int skyTracing;
+	int skyHolding;
+	int volumeDims[3];
+	int volumeTexels;
+	int volumeEmpty;
+	int lightsRegistered;
+	int lightsDropped;
+	int slotsGranted;
+	int slotsDenied;
+	int demandMax;
+	int demandMedian;
+	int demandP95;
+} rt_world_report_t;
+
+void RT_WorldMapStats (rt_world_report_t *out);
+void RT_WorldLightStats (rt_world_report_t *out);
+
 enum
 {
 	RT_HOST_SPEED_TOTAL = 0,
@@ -810,6 +836,7 @@ enum
 	RT_STATS_RAYS = 1, // ray and frame rate counters
 	RT_STATS_PASSES,   // GPU frame total and per-pass timings
 	RT_STATS_PROFILE,  // CPU side of the frame
+	RT_STATS_WORLD,    // the map's clusters, rows, sky and particle volume
 };
 
 qboolean    RT_StatsPanel (int panel);
@@ -824,6 +851,8 @@ typedef struct
 	unsigned int     panels;
 	QrFrameStats     gpu;
 	rt_prof_report_t profile;
+	rt_world_report_t world;
+	qboolean          haveWorld;
 } rt_stats_snapshot_t;
 
 void RT_StatsCapture (rt_stats_snapshot_t *snap);
