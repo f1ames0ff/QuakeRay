@@ -120,6 +120,14 @@ extern QrVertex *rtallbrushvertices;
 static QrTexturedAreaLightUploadInfo rt_wldlights_emissive[MAX_WORLDLIGHTS_COUNT];
 static int                           rt_wldlights_emissive_count = 0;
 
+/* The map's small emitters, merged into one synthesized dlight each: a stored emitter is
+   re-emitted every frame the way the per-piece world lights are, so the proxy keeps its
+   identity while its surface stays put. See RT_EmitEmissiveProxyLight. */
+#define RT_WLDPROXY_MAX 1024
+
+static rt_emitter_light_t rt_wldlights_proxy[RT_WLDPROXY_MAX];
+static int                rt_wldlights_proxy_count = 0;
+
 static const msurface_t *rt_wldlights_emissive_surf[MAX_WORLDLIGHTS_COUNT];
 static gltexture_t      *rt_wldlights_emissive_tex[MAX_WORLDLIGHTS_COUNT];
 
@@ -155,6 +163,8 @@ typedef struct rt_emis_stats_s
 	atomic_uint32_t model_lights;
 	atomic_uint32_t model_capped;
 	atomic_uint32_t model_small;
+	atomic_uint32_t proxy;
+	atomic_uint32_t proxy_model;
 } rt_emis_stats_t;
 
 static rt_emis_stats_t rt_emis_stats;
@@ -1917,6 +1927,79 @@ static qboolean RT_LightBuried (vec3_t center, const float *normal, float cleara
 	return buried;
 }
 
+static void RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, const vec3_t center,
+                                       const vec3_t normal, const vec3_t offset, float area,
+                                       const vec3_t color, qboolean is_static)
+{
+	rt_emitter_light_t  local;
+	rt_emitter_light_t *light;
+	vec3_t              position, direction;
+	qboolean            traced;
+	float               radius;
+	int                 tries;
+
+	if (!(area > 0.0f) || !isfinite (area))
+		return;
+
+	/* The equal-area sphere: the proxy carries the flux of the patches it stands for. */
+	radius = sqrtf (area / 12.566370614f);
+
+	if (radius < 1.0f)
+		radius = 1.0f;
+
+	VectorAdd (center, offset, position);
+	VectorCopy (normal, direction);
+
+	if (VectorNormalize (direction) <= 0.0f)
+	{
+		direction[0] = 0.0f;
+		direction[1] = 0.0f;
+		direction[2] = 1.0f;
+	}
+
+	/* A proxy that landed inside a wall walks out along its own normal; bounded, so a point
+	   that cannot settle does not walk the map. */
+	for (tries = 0; tries < 4; tries++)
+	{
+		traced = false;
+
+		if (!RT_LightBuried (position, direction, radius, &traced))
+			break;
+
+		VectorMA (position, radius, direction, position);
+	}
+
+	if (is_static)
+	{
+		if (rt_wldlights_proxy_count >= RT_WLDPROXY_MAX)
+		{
+			rt_emis_stats.static_dropped++;
+			return;
+		}
+
+		light = &rt_wldlights_proxy[rt_wldlights_proxy_count++];
+	}
+	else
+	{
+		light = &local;
+	}
+
+	memset (light, 0, sizeof (*light));
+	light->name = name;
+	light->uniqueID = uniqueID;
+	light->kind = RT_LIGHT_KIND_MAP;
+	light->intensity = 1.0f;
+	light->radius = radius;
+	light->style = -1;
+	VectorCopy (position, light->position);
+	VectorCopy (color, light->color);
+
+	if (!is_static)
+		RT_LIGHT_Emit (light);
+
+	Atomic_AddUInt32 (&rt_emis_stats.proxy, 1);
+}
+
 static void RT_DtalGroups_Feed (const QrTexturedAreaLightUploadInfo *light_info, gltexture_t *light_tex,
                                 const msurface_t *surf);
 
@@ -3516,7 +3599,10 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
                                          const QrVertex *pose2, float blend, const QrTransform *transform,
                                          const vec3_t offset, float min_area, int max_lights, int budget)
 {
-	int uploaded = 0;
+	int    uploaded = 0;
+	float  proxy_area = 0.0f;
+	vec3_t proxy_center = { 0.0f, 0.0f, 0.0f };
+	vec3_t proxy_normal = { 0.0f, 0.0f, 0.0f };
 
 	for (int i = 0; i < numpieces && uploaded < max_lights; i++)
 	{
@@ -3578,7 +3664,29 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 
 		if (piece->uvarea * jacobian < min_area)
 		{
+			vec3_t piece_center, piece_normal;
+			float  area = piece->uvarea * jacobian;
+			float  side;
+
 			Atomic_AddUInt32 (&rt_emis_stats.model_small, 1);
+
+			piece_center[0] = (p0.data[0] + p1.data[0] + p2.data[0]) / 3.0f;
+			piece_center[1] = (p0.data[1] + p1.data[1] + p2.data[1]) / 3.0f;
+			piece_center[2] = (p0.data[2] + p1.data[2] + p2.data[2]) / 3.0f;
+
+			VectorCopy (cross, piece_normal);
+			VectorNormalize (piece_normal);
+
+			side = piece_normal[0] * (v0->normal[0] + v1->normal[0] + v2->normal[0]) +
+			       piece_normal[1] * (v0->normal[1] + v1->normal[1] + v2->normal[1]) +
+			       piece_normal[2] * (v0->normal[2] + v1->normal[2] + v2->normal[2]);
+
+			if (side < 0.0f)
+				VectorScale (piece_normal, -1.0f, piece_normal);
+
+			VectorMA (proxy_center, area, piece_center, proxy_center);
+			VectorMA (proxy_normal, area, piece_normal, proxy_normal);
+			proxy_area += area;
 			continue;
 		}
 
@@ -3627,6 +3735,14 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		Atomic_AddUInt32 (&rt_modellights_frame_count, 1);
 		Atomic_AddUInt32 (&rt_emis_stats.model_lights, 1);
 		uploaded++;
+	}
+
+	if (proxy_area > 0.0f)
+	{
+		VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
+		RT_EmitEmissiveProxyLight (base_uniqueid, tex ? tex->name : NULL, proxy_center, proxy_normal,
+		                           offset, proxy_area, params->color, false);
+		Atomic_AddUInt32 (&rt_emis_stats.proxy_model, 1);
 	}
 
 	return uploaded;
@@ -4231,6 +4347,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 			const float jacobian = VectorLength (ab);
 			int         uploaded = 0;
 			int         refused  = 0;
+			float       proxy_area = 0.0f;
+			vec3_t      proxy_center = { 0.0f, 0.0f, 0.0f };
+			vec3_t      proxy_normal = { 0.0f, 0.0f, 0.0f };
 
 			for (int i = 0; i < num; i++)
 			{
@@ -4238,8 +4357,26 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				if (area < min_area)
 				{
+					QrTexturedAreaLightUploadInfo piece = light_info;
+					vec3_t                      piece_center;
+
 					rt_emis_stats.too_small++;
 					refused++;
+
+					for (int k = 0; k < pieces[i].count; k++)
+						piece.uvVerts[k] = pieces[i].verts[k];
+
+					piece.numVerts = pieces[i].count;
+					piece.area     = area;
+					piece.fit      = 1;
+					VectorCopy (A, piece.A.data);
+					VectorCopy (B, piece.B.data);
+					VectorCopy (C, piece.C.data);
+
+					RT_TexturedAreaLightCenter (&piece, piece_center);
+					VectorMA (proxy_center, area, piece_center, proxy_center);
+					VectorMA (proxy_normal, area, light_info.normal.data, proxy_normal);
+					proxy_area += area;
 					continue;
 				}
 
@@ -4259,6 +4396,14 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				RT_UploadEmissiveLight (&piece, is_static_geom, s->surf, light_tex);
 				uploaded++;
+			}
+
+			if (proxy_area > 0.0f)
+			{
+				VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
+				RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL,
+				                           proxy_center, proxy_normal, vec3_origin, proxy_area, params.color,
+				                           is_static_geom);
 			}
 
 			if (uploaded > 0)
@@ -4353,7 +4498,14 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	if (light_info.area < min_area)
 	{
+		vec3_t center;
+
 		rt_emis_stats.too_small++;
+
+		RT_TexturedAreaLightCenter (&light_info, center);
+		RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL, center,
+		                           light_info.normal.data, vec3_origin, light_info.area, params.color,
+		                           is_static_geom);
 		return;
 	}
 
@@ -4467,6 +4619,7 @@ static void RT_CollectWorldEmissiveLights (void)
 static void RT_CollectWorldEmissiveLightsAndBuild (void)
 {
 	rt_wldlights_emissive_count = 0;
+	rt_wldlights_proxy_count = 0;
 	rt_wldlights_style_accepted_dirty = true;
 
 	memset (&rt_emis_stats, 0, sizeof (rt_emis_stats));
@@ -5080,6 +5233,11 @@ void RT_UploadAllWorldModelLights (void)
 	   in the view-model task, so the count of the frame just drawn is retired here and the next
 	   frame starts from zero. */
 	Atomic_StoreUInt32 (&rt_modellights_frame_count, 0);
+
+	/* The map's small emitters light as one synthesized dlight each; like the per-piece world
+	   lights they are re-emitted every frame, so their identity stays put. */
+	for (int i = 0; i < rt_wldlights_proxy_count; i++)
+		RT_LIGHT_Emit (&rt_wldlights_proxy[i]);
 
 	if (!RT_AllowTexturedAreaLights ())
 		return;
@@ -6904,6 +7062,11 @@ void RT_PrintEmissiveStats (void)
 	if (Atomic_LoadUInt32 (&rt_emis_stats.model_lights) || Atomic_LoadUInt32 (&rt_emis_stats.model_capped))
 		RT_LightReportPrint ("alias models: %i textured-area lights built from model geometry, %i models turned down by the frame budget\n",
 			(int) Atomic_LoadUInt32 (&rt_emis_stats.model_lights), (int) Atomic_LoadUInt32 (&rt_emis_stats.model_capped));
+
+	if (Atomic_LoadUInt32 (&rt_emis_stats.proxy))
+		RT_LightReportPrint ("dtal proxies: %i small emitters light as one synthesized dlight each (%i of them models, %i stored for the next frames)\n",
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.proxy), (int) Atomic_LoadUInt32 (&rt_emis_stats.proxy_model),
+			rt_wldlights_proxy_count);
 
 	if (CVAR_TO_FLOAT (rt_dtal_groups) > 0.0f)
 	{

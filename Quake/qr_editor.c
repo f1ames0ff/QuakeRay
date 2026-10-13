@@ -3514,7 +3514,7 @@ static void QRE_MatSystemTab (void)
 
 	value = CVAR_TO_FLOAT (rt_dtal_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_minarea", &value, 0.0f, 1024.0f,
-	                        "Drops a DTAL polygon under this area, in world units squared (0 off)."))
+	                        "A DTAL polygon under this area, in world units squared, lights as one synthesized dlight of its own instead of an area light (0 off)."))
 		Cvar_Set ("rt_dtal_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_minarea");
@@ -3547,7 +3547,7 @@ static void QRE_MatSystemTab (void)
 
 	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
-	                        "Drops a model's DTAL polygon under this percentage of the model's bounding box face (0 off)."))
+	                        "A model's DTAL piece under this percentage of its bounding box face is not an area light: the model's small pieces light as one synthesized dlight (0 off)."))
 		Cvar_Set ("rt_dtal_model_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_model_minarea");
