@@ -313,20 +313,28 @@ void TestDynamicBlasShape()
 
     using qray::rhi::DynamicShapeSortedFits;
 
+    // The sorted test is rank-wise dominance of the primitive counts (see DynamicBlasShape.h): a
+    // reordered list and any per-geometry counts within the envelope's sorted counts fit, while a
+    // count above the envelope's at any rank does not. The stride, the vertex count and the
+    // transform presence are not compared - the allocation does not depend on them (the filter key
+    // fixes the stride and the format, and the transform only selects a matrix address) - so the
+    // identity-change cases below are accepted.
     Require(DynamicShapeSortedFits(envelope, envelope), "an identical shape fits the sorted envelope");
     Require(DynamicShapeSortedFits(envelope, { 40, 200, 80, 1, 1, 12, 100, 80, 1, 1 }),
             "a permuted shape fits the sorted envelope");
+    Require(DynamicShapeSortedFits(envelope, { 40, 200, 64, 0, 0, 12, 100, 80, 1, 1 }),
+            "an identity change alone (stride, indexedness, transform) fits the sorted envelope");
     Require(DynamicShapeSortedFits(envelope, { 40, 200, 80, 1, 1 }),
             "a shorter permuted shape fits the sorted envelope");
+    Require(DynamicShapeSortedFits(envelope, { 12, 99, 80, 1, 1, 39, 199, 80, 1, 1 }),
+            "counts below the sorted envelope fit");
     Require(DynamicShapeSortedFits(envelope, std::vector<uint32_t>()), "an empty shape fits the sorted envelope");
     Require(!DynamicShapeSortedFits(envelope, { 12, 100, 80, 1, 1, 41, 200, 80, 1, 1 }),
-            "a growing primitive count does not fit the sorted envelope");
+            "a primitive count above the sorted envelope does not fit");
     Require(!DynamicShapeSortedFits(envelope, { 13, 100, 80, 1, 1, 40, 200, 80, 1, 1 }),
-            "a growing vertex count does not fit the sorted envelope");
+            "a second count above the sorted envelope does not fit");
     Require(!DynamicShapeSortedFits(envelope, { 12, 100, 80, 1, 1, 40, 200, 80, 1, 1, 5, 5, 80, 1, 1 }),
             "a growing geometry count does not fit the sorted envelope");
-    Require(!DynamicShapeSortedFits(envelope, { 12, 100, 64, 1, 1, 40, 200, 80, 1, 1 }),
-            "a changed stride does not fit the sorted envelope");
     Require(!DynamicShapeSortedFits(envelope, { 12, 100, 80, 1 }), "a malformed shape does not fit the sorted envelope");
     Require(!DynamicShapeSortedFits({ 12, 100, 80 }, { 12, 100, 80 }),
             "a malformed envelope does not fit the sorted envelope");

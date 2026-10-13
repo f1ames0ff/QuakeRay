@@ -164,6 +164,7 @@ public:
     void UploadLanePop();
     void SetUploadLockTracing(bool enable);
     void SetDynamicShapeSortedReuse(bool enable);
+    void SetDynamicShapeHeadroom(uint32_t percent);
     void ResetUploadLockStats();
     void GetUploadLockStats(QrUploadLockStats *pStats) const;
 

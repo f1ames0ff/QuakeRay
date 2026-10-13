@@ -27,6 +27,15 @@ inline bool DynamicShapeFits(const std::vector<uint32_t> &envelope, const std::v
     return true;
 }
 
+// The rank-wise dominance test behind `rt_dyn_blas_sorted`: the envelope's geometry count and its
+// primitive counts sorted in descending order must dominate the current list's, so any reordering
+// of the list fits. A BLAS allocation is a function of its geometry count and its per-geometry
+// primitive counts (the vertex count, the stride, the vertex format and the transform presence do
+// not enter vkGetAccelerationStructureBuildSizesKHR), and rank-wise dominance of the counts implies
+// the current primitive sum is at most the envelope's, so a build this test accepts always fits the
+// create-time allocation. The identity fields are not compared: the stride and the vertex format
+// are invariants of the filter key (VertexCollector) and of MakeGeometryDesc, and the transform
+// presence only selects a matrix address in the build range.
 inline bool DynamicShapeSortedFits(const std::vector<uint32_t> &envelope, const std::vector<uint32_t> &current)
 {
     if (envelope.size() % 5 != 0 || current.size() % 5 != 0 || current.size() > envelope.size())
@@ -41,40 +50,26 @@ inline bool DynamicShapeSortedFits(const std::vector<uint32_t> &envelope, const 
         return true;
     }
 
-    std::vector<uint32_t> envelopeOrder(envelope.size() / 5);
-    std::vector<uint32_t> currentOrder(geometryCount);
+    std::vector<uint32_t> envelopeCounts(envelope.size() / 5);
+    std::vector<uint32_t> currentCounts(geometryCount);
 
-    for (uint32_t i = 0; i < envelopeOrder.size(); i++)
+    for (size_t i = 0; i < envelopeCounts.size(); i++)
     {
-        envelopeOrder[i] = i;
+        envelopeCounts[i] = envelope[i * 5];
     }
-    for (uint32_t i = 0; i < currentOrder.size(); i++)
+    for (size_t i = 0; i < geometryCount; i++)
     {
-        currentOrder[i] = i;
+        currentCounts[i] = current[i * 5];
     }
 
-    const auto tupleGreater = [](const std::vector<uint32_t> &shape, uint32_t a, uint32_t b) {
-        for (uint32_t k = 0; k < 5; k++)
-        {
-            if (shape[size_t(a) * 5 + k] != shape[size_t(b) * 5 + k])
-            {
-                return shape[size_t(a) * 5 + k] > shape[size_t(b) * 5 + k];
-            }
-        }
-        return false;
-    };
+    const auto greater = [](uint32_t a, uint32_t b) { return a > b; };
 
-    std::sort(envelopeOrder.begin(), envelopeOrder.end(),
-              [&](uint32_t a, uint32_t b) { return tupleGreater(envelope, a, b); });
-    std::sort(currentOrder.begin(), currentOrder.end(),
-              [&](uint32_t a, uint32_t b) { return tupleGreater(current, a, b); });
+    std::sort(envelopeCounts.begin(), envelopeCounts.end(), greater);
+    std::sort(currentCounts.begin(), currentCounts.end(), greater);
 
-    for (size_t k = 0; k < geometryCount; k++)
+    for (size_t i = 0; i < geometryCount; i++)
     {
-        const uint32_t *c = &current[size_t(currentOrder[k]) * 5];
-        const uint32_t *e = &envelope[size_t(envelopeOrder[k]) * 5];
-
-        if (c[0] > e[0] || c[1] > e[1] || c[2] != e[2] || c[3] != e[3] || c[4] != e[4])
+        if (currentCounts[i] > envelopeCounts[i])
         {
             return false;
         }

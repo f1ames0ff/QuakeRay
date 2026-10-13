@@ -399,6 +399,10 @@ QRAPI QrResult QRCONV qrSetDynamicShapeSortedReuse(
     QrInstance                          qrInstance,
     QrBool32                            enable);
 
+QRAPI QrResult QRCONV qrSetDynamicShapeHeadroom(
+    QrInstance                          qrInstance,
+    uint32_t                            percent);
+
 QRAPI QrResult QRCONV qrUploadLockStatsReset(
     QrInstance                          qrInstance);
 
@@ -1637,6 +1641,8 @@ typedef struct QrDynamicBlasFilterCounters
     uint32_t    sortedShapeFails;
     uint32_t    geometryCount;
     uint32_t    envelopeCount;
+    uint32_t    envelopePrimitives;
+    uint32_t    listPrimitives;
     int64_t     failDeltaSum;
     int32_t     failDeltaMin;
     int32_t     failDeltaMax;

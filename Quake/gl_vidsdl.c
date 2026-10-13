@@ -188,7 +188,16 @@ atomic_uint32_t rt_end_task_running;
 	   whose alpha comparison has its sign inverted and which reads no other state. */ \
 	CVAR_DEF_T (rt_world_batch_merge, "1") \
 	CVAR_DEF_T (rt_brush_persistent, "1") \
-	CVAR_DEF_T (rt_dyn_blas_sorted, "0") \
+	/* 0 keeps the positional reuse test (the current list must be a prefix of the create-time
+	   shape with the identity fields equal); 1, the default, compares the primitive counts
+	   rank-wise instead - a superset of the positional test that also ignores the list order,
+	   because the allocation depends on the geometry count and the primitive counts alone. */ \
+	CVAR_DEF_T (rt_dyn_blas_sorted, "1") \
+	/* Percent of create-time slack in a dynamic BLAS handle: the create descriptors pad every \
+	   geometry's primitive and vertex counts by this much (with small floors) and append this \
+	   many percent more geometry slots, so a list that fluctuates within the padding reuses the \
+	   handle instead of being recreated; 0 restores the exact create-time envelope. */ \
+	CVAR_DEF_T (rt_dyn_blas_headroom, "25") \
 	/* 0 uploads the map's lights one call at a time, for measuring the batched path. */ \
 	CVAR_DEF_T (rt_wmodel_lights_batch, "1") \
 	/* DTAL: 1 lights an alias model from the triangles of the pose it draws, when its material
@@ -449,6 +458,8 @@ static uint32_t rt_bench_dyn_filter_len_samples[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint64_t rt_bench_dyn_filter_env_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint32_t rt_bench_dyn_filter_env_min[QR_DYNAMIC_BLAS_FILTER_MAX];
 static uint32_t rt_bench_dyn_filter_env_max[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_eprims_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_lprims_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
 static int64_t  rt_bench_dyn_filter_fdelta_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
 static int32_t  rt_bench_dyn_filter_fdelta_min[QR_DYNAMIC_BLAS_FILTER_MAX];
 static int32_t  rt_bench_dyn_filter_fdelta_max[QR_DYNAMIC_BLAS_FILTER_MAX];
@@ -493,6 +504,7 @@ static THREAD_LOCAL rt_prof_tls_t *rt_prof_tls;
 
 static qboolean          rt_upload_trace_on;
 static qboolean          rt_dyn_blas_sorted_on;
+static uint32_t          rt_dyn_blas_headroom_on = 25;
 extern atomic_uint32_t   rs_alias_enhanced_draws;
 extern atomic_uint32_t   rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
 extern atomic_uint32_t   rs_covered_surfaces, rs_covered_models, rs_covered_emissive_us;
@@ -809,6 +821,14 @@ void RT_Prof_FrameStart (void)
 		rt_dyn_blas_sorted_on = dyn_blas_sorted;
 		qrSetDynamicShapeSortedReuse (vulkan_globals.instance, dyn_blas_sorted);
 	}
+
+	const uint32_t dyn_blas_headroom = (uint32_t)CLAMP (0.0f, rt_dyn_blas_headroom.value, 100.0f);
+
+	if (dyn_blas_headroom != rt_dyn_blas_headroom_on)
+	{
+		rt_dyn_blas_headroom_on = dyn_blas_headroom;
+		qrSetDynamicShapeHeadroom (vulkan_globals.instance, dyn_blas_headroom);
+	}
 }
 
 void RT_Prof_FrameEnd (void)
@@ -947,6 +967,8 @@ static void RT_Bench_AddDynamicFilterStats (const QrFrameStats *stats)
 			rt_bench_dyn_filter_env_sum[slot] = 0;
 			rt_bench_dyn_filter_env_min[slot] = 0;
 			rt_bench_dyn_filter_env_max[slot] = 0;
+			rt_bench_dyn_filter_eprims_sum[slot] = 0;
+			rt_bench_dyn_filter_lprims_sum[slot] = 0;
 			rt_bench_dyn_filter_fdelta_sum[slot] = 0;
 			rt_bench_dyn_filter_fdelta_min[slot] = 0;
 			rt_bench_dyn_filter_fdelta_max[slot] = 0;
@@ -984,6 +1006,8 @@ static void RT_Bench_AddDynamicFilterStats (const QrFrameStats *stats)
 		if (rt_bench_dyn_filter_env_min[slot] == 0 || src->envelopeCount < rt_bench_dyn_filter_env_min[slot])
 			rt_bench_dyn_filter_env_min[slot] = src->envelopeCount;
 		rt_bench_dyn_filter_env_sum[slot] += src->envelopeCount;
+		rt_bench_dyn_filter_eprims_sum[slot] += src->envelopePrimitives;
+		rt_bench_dyn_filter_lprims_sum[slot] += src->listPrimitives;
 
 		rt_bench_dyn_filter_fdelta_sum[slot] += src->failDeltaSum;
 		if (src->failDeltaMin < rt_bench_dyn_filter_fdelta_min[slot])
@@ -1425,7 +1449,7 @@ qboolean RT_Bench_Report (const char *demo)
 		         rt_bench_dyn_blas_samples);
 
 	for (uint32_t i = 0; i < rt_bench_dyn_filter_count && rt_bench_dyn_blas_samples > 0; i++)
-		fprintf (f, "as.filter filter=0x%08x builds_avg=%.2f recreates_avg=%.2f pfail_avg=%.2f sord_avg=%.2f sset_avg=%.2f scount_avg=%.2f sshape_avg=%.2f len_avg=%.1f len_min=%u len_max=%u len_first=%u len_last=%u env_avg=%.1f env_min=%u env_max=%u fdelta_avg=%+.2f fdelta_min=%d fdelta_max=%d len_samples=%u\n",
+		fprintf (f, "as.filter filter=0x%08x builds_avg=%.2f recreates_avg=%.2f pfail_avg=%.2f sord_avg=%.2f sset_avg=%.2f scount_avg=%.2f sshape_avg=%.2f len_avg=%.1f len_min=%u len_max=%u len_first=%u len_last=%u env_avg=%.1f env_min=%u env_max=%u fdelta_avg=%+.2f fdelta_min=%d fdelta_max=%d len_samples=%u env_prims_avg=%.0f len_prims_avg=%.0f\n",
 		         rt_bench_dyn_filter_id[i],
 		         (double)rt_bench_dyn_filter_builds[i] / rt_bench_dyn_blas_samples,
 		         (double)rt_bench_dyn_filter_recreates[i] / rt_bench_dyn_blas_samples,
@@ -1451,7 +1475,13 @@ qboolean RT_Bench_Report (const char *demo)
 		             : 0.0,
 		         rt_bench_dyn_filter_fdelta_min[i],
 		         rt_bench_dyn_filter_fdelta_max[i],
-		         rt_bench_dyn_filter_len_samples[i]);
+		         rt_bench_dyn_filter_len_samples[i],
+		         rt_bench_dyn_filter_len_samples[i] > 0
+		             ? (double)rt_bench_dyn_filter_eprims_sum[i] / rt_bench_dyn_filter_len_samples[i]
+		             : 0.0,
+		         rt_bench_dyn_filter_len_samples[i] > 0
+		             ? (double)rt_bench_dyn_filter_lprims_sum[i] / rt_bench_dyn_filter_len_samples[i]
+		             : 0.0);
 
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");
@@ -1471,6 +1501,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_brush_persistent");
 	RT_Bench_Setting (f, "rt_dyn_blas_sorted");
+	RT_Bench_Setting (f, "rt_dyn_blas_headroom");
 	RT_Bench_Setting (f, "rt_upload_trace");
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");

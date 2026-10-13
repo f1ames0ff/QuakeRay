@@ -293,6 +293,127 @@ nvrhi::rt::InstanceDesc MakeInstanceDesc(const VkAccelerationStructureInstanceKH
     return result;
 }
 
+// The create-time headroom of a dynamic filter (see RhiAccelStructs.h, "Dynamic BLAS sizing and
+// replacement"): from the real build descriptors and the real shape - where the shape holds five
+// numbers per geometry: primitive count, vertex count (the engine's maxVertex), vertex stride,
+// uint32-indexedness and transform presence - builds the padded descriptors the handle is created
+// from and the padded shape that becomes its reuse envelope. Every real geometry keeps its identity
+// fields and gets its primitive and vertex counts padded by 'percent' with small floors; 'percent'
+// percent more slots are appended, sized from the list's mean counts and carrying the list's most
+// common stride/indexedness/transform triple, so a list that fluctuates within that padding reuses
+// the handle and its allocation.
+static void BuildDynamicHeadroom(const std::vector<nvrhi::rt::GeometryDesc> &geometries,
+                                 const std::vector<uint32_t> &shape, uint32_t percent,
+                                 std::vector<nvrhi::rt::GeometryDesc> &paddedGeometries,
+                                 std::vector<uint32_t> &paddedShape)
+{
+    constexpr uint32_t MIN_PRIMITIVE_PADDING = 16;
+    constexpr uint32_t MIN_VERTEX_PADDING = 32;
+    constexpr size_t   MIN_EXTRA_SLOTS = 8;
+
+    const size_t geometryCount = shape.size() / 5;
+
+    if (percent == 0 || geometryCount == 0 || geometryCount != geometries.size())
+    {
+        return;
+    }
+
+    const auto padCount = [percent](uint32_t value, uint32_t minimum) {
+        const uint32_t scaled = value + uint32_t((uint64_t(value) * percent + 99) / 100);
+
+        return scaled > value + minimum ? scaled : value + minimum;
+    };
+
+    uint64_t primitiveSum = 0;
+    uint64_t vertexSum = 0;
+
+    for (size_t i = 0; i < geometryCount; i++)
+    {
+        primitiveSum += shape[i * 5 + 0];
+        vertexSum += shape[i * 5 + 1];
+    }
+
+    // The extra slots stand in for geometries that are not in the list yet; the mean counts of the
+    // list are the estimator for them, and the most common identity triple is the one they carry,
+    // so a later frame's new entries pass the envelope's equality test as often as the data allows.
+    size_t   reference = 0;
+    size_t   referenceMatches = 0;
+
+    for (size_t i = 0; i < geometryCount; i++)
+    {
+        size_t matches = 0;
+
+        for (size_t k = 0; k < geometryCount; k++)
+        {
+            if (shape[i * 5 + 2] == shape[k * 5 + 2] && shape[i * 5 + 3] == shape[k * 5 + 3] &&
+                shape[i * 5 + 4] == shape[k * 5 + 4])
+            {
+                matches++;
+            }
+        }
+
+        if (matches > referenceMatches)
+        {
+            referenceMatches = matches;
+            reference = i;
+        }
+    }
+
+    const size_t   extraSlots = geometryCount * percent / 100 > MIN_EXTRA_SLOTS
+                                    ? geometryCount * percent / 100
+                                    : MIN_EXTRA_SLOTS;
+    const uint32_t reservePrimitives =
+        padCount(uint32_t((primitiveSum + geometryCount - 1) / geometryCount), MIN_PRIMITIVE_PADDING);
+    const uint32_t reserveVertices =
+        padCount(uint32_t((vertexSum + geometryCount - 1) / geometryCount), MIN_VERTEX_PADDING);
+
+    paddedGeometries.reserve(geometries.size() + extraSlots);
+    paddedShape.reserve((geometryCount + extraSlots) * 5);
+
+    for (size_t i = 0; i < geometryCount; i++)
+    {
+        nvrhi::rt::GeometryDesc padded = geometries[i];
+        nvrhi::rt::GeometryTriangles &triangles = padded.geometryData.triangles;
+        const bool indexed = triangles.indexFormat != nvrhi::Format::UNKNOWN;
+        const uint32_t primitiveCount = padCount(shape[i * 5 + 0], MIN_PRIMITIVE_PADDING);
+        const uint32_t vertexCount = padCount(shape[i * 5 + 1], MIN_VERTEX_PADDING);
+
+        if (indexed)
+        {
+            triangles.indexCount = primitiveCount * 3;
+        }
+        // The non-indexed primitive count derives from the vertex count (vertexCount / 3), so there
+        // the vertex padding is what reserves primitives.
+        triangles.vertexCount = vertexCount;
+
+        paddedGeometries.push_back(padded);
+        paddedShape.push_back(primitiveCount);
+        paddedShape.push_back(vertexCount);
+        paddedShape.push_back(shape[i * 5 + 2]);
+        paddedShape.push_back(shape[i * 5 + 3]);
+        paddedShape.push_back(shape[i * 5 + 4]);
+    }
+
+    for (size_t i = 0; i < extraSlots; i++)
+    {
+        nvrhi::rt::GeometryDesc padded = geometries[reference];
+        nvrhi::rt::GeometryTriangles &triangles = padded.geometryData.triangles;
+
+        if (triangles.indexFormat != nvrhi::Format::UNKNOWN)
+        {
+            triangles.indexCount = reservePrimitives * 3;
+        }
+        triangles.vertexCount = reserveVertices;
+
+        paddedGeometries.push_back(padded);
+        paddedShape.push_back(reservePrimitives);
+        paddedShape.push_back(reserveVertices);
+        paddedShape.push_back(shape[reference * 5 + 2]);
+        paddedShape.push_back(shape[reference * 5 + 3]);
+        paddedShape.push_back(shape[reference * 5 + 4]);
+    }
+}
+
 }
 
 namespace qray::rhi
@@ -1289,6 +1410,8 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
             shape.clear();
             shape.reserve(geoms.size() * 5);
 
+            uint32_t listPrimitives = 0;
+
             for (size_t i = 0; i < geoms.size(); i++)
             {
                 geometries.push_back(MakeGeometryDesc(geoms[i], ranges[i], vertexBufferAddress,
@@ -1301,6 +1424,7 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 shape.push_back(triangles.vertexStride);
                 shape.push_back(triangles.indexType == VK_INDEX_TYPE_UINT32 ? 1u : 0u);
                 shape.push_back(triangles.transformData.deviceAddress != 0 ? 1u : 0u);
+                listPrimitives += ranges[i].primitiveCount;
             }
 
             const bool replacingHandle = blas->handle != nullptr;
@@ -1310,6 +1434,12 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
             DynamicFilterCounters &predecessor = FilterCountersFor(blas->filter);
             predecessor.envelopeCount = uint32_t(blas->shape.size() / 5);
+            predecessor.envelopePrimitives = 0;
+            for (size_t k = 0; k + 4 < blas->shape.size(); k += 5)
+            {
+                predecessor.envelopePrimitives += blas->shape[k];
+            }
+            predecessor.listPrimitives = listPrimitives;
 
             if (replacingHandle && !shapeFits)
             {
@@ -1351,12 +1481,27 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
             {
                 const std::chrono::steady_clock::time_point createStart = std::chrono::steady_clock::now();
 
-                // Create from the very list this build uses, so the allocation covers the build
-                // (vulkan-raytracing.cpp:376-386 against :803-815). The replaced handle is not
-                // dropped while the queue may still read it - it goes through the frame context's
-                // retire queue (rt::AccelStructHandle is a ref-counted NVRHI handle, nvrhi.h:1835).
+                // Create from the padded list (see "Dynamic BLAS sizing and replacement" in the
+                // header): the allocation covers this frame's build and every later build whose
+                // shape the padded envelope accepts, and the same padded shape becomes that
+                // envelope, so the reuse test and the allocation cannot disagree. With the headroom
+                // off the padded list is the build list itself, which is the historical create from
+                // the very list this build uses (vulkan-raytracing.cpp:376-386 against :839-851).
+                // The replaced handle is not dropped while the queue may still read it - it goes
+                // through the frame context's retire queue (rt::AccelStructHandle is a ref-counted
+                // NVRHI handle, nvrhi.h:1835).
+                std::vector<nvrhi::rt::GeometryDesc> headroomGeometries;
+                std::vector<uint32_t> headroomShape;
+
+                if (dynamicHeadroomPercent > 0)
+                {
+                    BuildDynamicHeadroom(geometries, shape, dynamicHeadroomPercent, headroomGeometries,
+                                         headroomShape);
+                }
+
                 nvrhi::rt::AccelStructDesc desc;
-                desc.bottomLevelGeometries = geometries;
+                desc.bottomLevelGeometries =
+                    headroomGeometries.empty() ? geometries : headroomGeometries;
                 desc.setBuildFlags(DYNAMIC_BLAS_BUILD_FLAGS);
                 desc.setDebugName(blas->debugName);
 
@@ -1375,7 +1520,15 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 }
 
                 blas->handle = std::move(handle);
-                blas->shape.swap(shape);
+
+                if (headroomShape.empty())
+                {
+                    blas->shape.swap(shape);
+                }
+                else
+                {
+                    blas->shape.swap(headroomShape);
+                }
 
                 dynamicFrameCreateMs +=
                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - createStart)
@@ -2151,6 +2304,16 @@ const RhiAccelStructs::DynamicFilterCounters *RhiAccelStructs::GetDynamicFilterC
 void RhiAccelStructs::SetSortedShapeReuse(bool enable)
 {
     sortedShapeReuse = enable;
+}
+
+void RhiAccelStructs::SetDynamicHeadroom(uint32_t percent)
+{
+    if (percent > 100)
+    {
+        percent = 100;
+    }
+
+    dynamicHeadroomPercent = percent;
 }
 
 RhiAccelStructs::DynamicFilterCounters &RhiAccelStructs::FilterCountersFor(uint32_t filter)

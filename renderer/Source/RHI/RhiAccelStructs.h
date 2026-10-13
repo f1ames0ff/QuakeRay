@@ -116,11 +116,21 @@ class RhiFrameContext;
 //    ones, whose stride, vertex format, indexedness and transform presence are unchanged, and whose
 //    geometry count does not grow, with equal geometry and build flags
 //    (vkGetAccelerationStructureBuildSizesKHR). The handle is therefore reused while every build
-//    fits that create-time envelope and is recreated only when a build no longer does; a recreated
-//    handle retires the old one through RhiFrameContext::Retire and adopts the current shape as the
-//    new envelope. Geometry flags, the vertex format and the build flags are invariants of the
-//    filter key (VertexCollector) and of MakeGeometryDesc, so the remaining equalities hold by
-//    construction.
+//    fits its envelope and is recreated only when a build no longer does; a recreated handle
+//    retires the old one through RhiFrameContext::Retire and adopts a new envelope. Geometry flags,
+//    the vertex format and the build flags are invariants of the filter key (VertexCollector) and
+//    of MakeGeometryDesc, so the remaining equalities hold by construction.
+//  - `rt_dyn_blas_headroom` (percent, default 25; 0 restores the exact create-time envelope) makes
+//    the adopted envelope larger than the shape that created it: the create descriptors pad every
+//    geometry's primitive count (and vertex count) by the percentage with small floors, and the
+//    same percentage of extra geometry slots is appended, sized from the list's mean counts and
+//    carrying its most common stride/indexedness/transform triple, so a list that fluctuates within
+//    that padding reuses the handle and its allocation. The padded shape is built once, at create,
+//    by the same helper that pads the descriptors, so the envelope and the allocation cannot
+//    disagree, and no build is recorded for a shape the envelope rejected - i.e. every build fits
+//    the allocation and the build-time size guard inside NVRHI is only a last-resort safety net.
+//    The allocation cost of the padding is what DynamicFilterCounters::envelopePrimitives reports
+//    against listPrimitives (the same counters the as.filter bench row averages).
 //  - A dynamic filter that is empty in a frame records nothing and produces no instance, but its
 //    handle stays alive: a TLAS of an earlier frame may still reference it while the queue has not
 //    finished. The next frame that brings geometry either rebuilds it, while the frame's shape fits
@@ -308,6 +318,7 @@ public:
     nvrhi::IBuffer *GetParticleProxyBuffer(uint32_t frameIndex) const;
 
     void SetSortedShapeReuse(bool enable);
+    void SetDynamicHeadroom(uint32_t percent);
 
     void GetDynamicFrameCounters(uint32_t *builds, uint32_t *recreations, float *createMs) const;
 
@@ -323,6 +334,8 @@ public:
         uint32_t sortedShapeFails = 0;
         uint32_t geometryCount = 0;
         uint32_t envelopeCount = 0;
+        uint32_t envelopePrimitives = 0;
+        uint32_t listPrimitives = 0;
         int64_t  failDeltaSum = 0;
         int32_t  failDeltaMin = 0;
         int32_t  failDeltaMax = 0;
@@ -645,6 +658,7 @@ private:
     uint32_t dynamicFrameRecreations = 0;
     double   dynamicFrameCreateMs = 0.0;
     bool     sortedShapeReuse = false;
+    uint32_t dynamicHeadroomPercent = 25;
     static constexpr uint32_t MAX_DYNAMIC_FILTER_COUNTERS = 20;
     DynamicFilterCounters dynamicFrameFilters[MAX_DYNAMIC_FILTER_COUNTERS];
     DynamicFilterCounters dynamicFrameFilterOverflow;

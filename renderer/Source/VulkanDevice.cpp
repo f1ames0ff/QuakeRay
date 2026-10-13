@@ -1423,6 +1423,8 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
             pStats->dynamicFilters[i].sortedShapeFails = filters[i].sortedShapeFails;
             pStats->dynamicFilters[i].geometryCount = filters[i].geometryCount;
             pStats->dynamicFilters[i].envelopeCount = filters[i].envelopeCount;
+            pStats->dynamicFilters[i].envelopePrimitives = filters[i].envelopePrimitives;
+            pStats->dynamicFilters[i].listPrimitives = filters[i].listPrimitives;
             pStats->dynamicFilters[i].failDeltaSum = filters[i].failDeltaSum;
             pStats->dynamicFilters[i].failDeltaMin = filters[i].failDeltaMin;
             pStats->dynamicFilters[i].failDeltaMax = filters[i].failDeltaMax;
@@ -1536,6 +1538,14 @@ void VulkanDevice::SetDynamicShapeSortedReuse(bool enable)
     if (rhiAccelStructs != nullptr)
     {
         rhiAccelStructs->SetSortedShapeReuse(enable);
+    }
+}
+
+void VulkanDevice::SetDynamicShapeHeadroom(uint32_t percent)
+{
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->SetDynamicHeadroom(percent);
     }
 }
 
