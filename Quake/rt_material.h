@@ -26,6 +26,7 @@ typedef struct rt_emissive_s
     float    feather;        // pixels of edge softening (0 = a hard mask)
     float    factor;         // scales this block's emission (emissive_factor)
     int      blend;          // how the glow is composited; -1 = the material's / cvar
+    char     name[32];       // the editor's label for this block; empty until it is shown
     int      poly_count;
     float    poly_uv[RT_MAT_EMIS_POLY_MAX][2];
     /* Set while a file is read: a block that does not carry its own value

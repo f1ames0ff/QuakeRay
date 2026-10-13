@@ -2887,6 +2887,39 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 	}
 }
 
+// Gives a block the lowest free name of its kind ("Color 3", "Mask 1"); the
+// name stays with the block when the array is compacted, so a removal does not
+// renumber the blocks after it.
+static void QRE_EmissiveSetName (rt_material_t *m, rt_emissive_t *block)
+{
+	int n = 0;
+
+	for (;;)
+	{
+		char     probe[32];
+		qboolean used = false;
+		int      i;
+
+		n++;
+		q_snprintf (probe, sizeof (probe), (block->poly_count >= 3) ? "Mask %d" : "Color %d", n);
+
+		for (i = 0; i < m->color_emissive_count; i++)
+		{
+			if (&m->color_emissive[i] != block && !strcmp (m->color_emissive[i].name, probe))
+			{
+				used = true;
+				break;
+			}
+		}
+
+		if (!used)
+		{
+			q_strlcpy (block->name, probe, sizeof (block->name));
+			return;
+		}
+	}
+}
+
 // The Emissive section of a material: one list of its luma blocks, the form of
 // the chosen one (the eyedropper for a color, the polygon editor for a mask)
 // and the buttons that add a block.
@@ -2894,6 +2927,12 @@ static void QRE_EmissiveEditor (int g)
 {
 	rt_material_t *m = qre.group[g];
 	int            ci;
+
+	for (ci = 0; ci < m->color_emissive_count; ci++)
+	{
+		if (m->color_emissive[ci].name[0] == '\0')
+			QRE_EmissiveSetName (m, &m->color_emissive[ci]);
+	}
 
 	{
 		char        labels[RT_MAT_MAX_EMISSIVE_COLORS][32];
@@ -2917,10 +2956,7 @@ static void QRE_EmissiveEditor (int g)
 		{
 			for (i = 0; i < count; i++)
 			{
-				if (m->color_emissive[order[i]].poly_count >= 3)
-					q_snprintf (labels[i], sizeof (labels[i]), "Mask %d", order[i] + 1);
-				else
-					q_snprintf (labels[i], sizeof (labels[i]), "Color %d", order[i] + 1);
+				q_strlcpy (labels[i], m->color_emissive[order[i]].name, sizeof (labels[i]));
 				items[i] = labels[i];
 			}
 
@@ -2950,7 +2986,7 @@ static void QRE_EmissiveEditor (int g)
 
 		q_snprintf (id, sizeof (id), "cemis%d", ci);
 		poly = (m->color_emissive[ci].poly_count >= 3) ? true : false;
-		q_snprintf (label, sizeof (label), poly ? "Mask %d" : "Color %d", ci + 1);
+		q_strlcpy (label, m->color_emissive[ci].name, sizeof (label));
 
 		QR_GUI_PushID (id);
 		open = (qre.luma_sel == ci) ? true : false;
@@ -3088,6 +3124,7 @@ static void QRE_EmissiveEditor (int g)
 			block->has_factor = block->has_blend = true;
 			m->color_emissive_count++;
 			m->has_color_emissive = true;
+			QRE_EmissiveSetName (m, &m->color_emissive[m->color_emissive_count - 1]);
 			qre.luma_sel = m->color_emissive_count - 1;
 			QRE_MarkDirty (m);
 		}
@@ -3115,6 +3152,7 @@ static void QRE_EmissiveEditor (int g)
 			block->poly_uv[3][0] = 0.25f; block->poly_uv[3][1] = 0.75f;
 			m->color_emissive_count++;
 			m->has_color_emissive = true;
+			QRE_EmissiveSetName (m, &m->color_emissive[m->color_emissive_count - 1]);
 			qre.luma_sel = m->color_emissive_count - 1;
 			QRE_MarkDirty (m);
 		}
@@ -3941,7 +3979,18 @@ static void QRE_MatEntitiesTab (void)
 			qre.entity_frame = qre.entity_anims[qre.entity_anim].first + frame;
 		}
 
-		qre.frame_tex = qre.entity_frame;
+		{
+			int fg;
+
+			for (fg = 0; fg < qre.group_count; fg++)
+			{
+				if (QRE_FrameDigit (qre.group[fg]->name) == qre.entity_frame)
+					break;
+			}
+
+			if (fg < qre.group_count)
+				qre.frame_tex = qre.entity_frame;
+		}
 	}
 }
 
@@ -3983,9 +4032,10 @@ static void QRE_PasteFrame (int g)
 // block the panel edits, and shows that frame on the picked entity in the world
 // when the open group belongs to one (the editor sets the entity's skin every
 // frame, see QRE_EditorFrame), so a frame is worked on where the model stands.
-static void QRE_FrameControls (void)
+static void QRE_FrameControls (qboolean draw)
 {
-	const qboolean sprite = (qre.pick_model && qre.pick_model->type == mod_sprite) ? true : false;
+	const qboolean sprite  = (qre.pick_model && qre.pick_model->type == mod_sprite) ? true : false;
+	const qboolean texture = (qre.pick_model == NULL || qre.pick_model->type == mod_brush) ? true : false;
 	int            i, frame;
 	int            lo = -1, hi = -1;
 
@@ -4007,7 +4057,10 @@ static void QRE_FrameControls (void)
 	if (qre.frame_tex < lo || qre.frame_tex > hi)
 		qre.frame_tex = lo;
 
-	if (qre.pick_model == NULL)
+	if (!draw)
+		return;
+
+	if (texture)
 		QR_GUI_LabelDim ("the frames of this texture: the one below is shown and edited");
 	else
 		QR_GUI_LabelDim (sprite
@@ -4017,7 +4070,7 @@ static void QRE_FrameControls (void)
 
 	frame = qre.frame_tex;
 	if (QR_GUI_SliderInt ("frame", &frame, lo, hi,
-	                      (qre.pick_model == NULL)
+	                      texture
 	                          ? "The texture's frame the section below edits."
 	                          : (sprite
 	                                 ? "The sprite frame the entity shows and the section below edits."
@@ -4081,12 +4134,11 @@ static void QRE_BuildPanelGUI (void)
 		// one section edits the frame the slider picked, under a plain header:
 		// the frame* names are the model's or sprite's frames and the slider is
 		// what chooses between them (and what the entity shows)
-		if (qre.mat_tab == 0)
-			QRE_FrameControls ();
+		QRE_FrameControls ((qre.mat_tab == 0) ? true : false);
 
 		for (g = 0; g < qre.group_count; g++)
 		{
-			if (QRE_FrameDigit (qre.group[g]->name) == qre.frame_tex)
+			if (qre.frame_tex >= 0 && QRE_FrameDigit (qre.group[g]->name) == qre.frame_tex)
 			{
 				frame_g = g;
 				break;
@@ -4096,7 +4148,7 @@ static void QRE_BuildPanelGUI (void)
 		if (frame_g < 0)
 		{
 			QR_GUI_LabelDim (va ("this %s has no frame %d",
-			                     (qre.pick_model == NULL) ? "texture"
+			                     (qre.pick_model == NULL || qre.pick_model->type == mod_brush) ? "texture"
 			                     : (qre.pick_model->type == mod_sprite) ? "sprite"
 			                                                            : "model",
 			                     qre.frame_tex));
