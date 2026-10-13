@@ -3246,7 +3246,7 @@ static void QRE_EmissiveEditor (int g)
 						}
 					}
 				}
-				QR_GUI_Tooltip ("Drag a point to move it, an edge to slide it, Ctrl+drag an edge to move it along its own normal, the mask to move the whole polygon, Ctrl+click to add a point, right-click a point to remove it");
+				QR_GUI_Tooltip ("Drag a point to move it, an edge to slide it, Shift+drag an edge to move it along its own normal, the mask to move the whole polygon, Ctrl+click to add a point, right-click a point to remove it");
 			}
 			else
 			{

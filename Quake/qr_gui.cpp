@@ -1768,9 +1768,9 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 
 		if (hover_edge >= 0)
 		{
-			if (ImGui::GetIO ().KeyCtrl)
+			if (ImGui::GetIO ().KeyShift)
 			{
-				// Ctrl drags the edge along its own normal: the cursor is the double arrow
+				// Shift drags the edge along its own normal: the cursor is the double arrow
 				// that points the way the edge will step
 				const int   q = (hover_edge + 1) % points;
 				const float ex = uv[q][0] - uv[hover_edge][0];
@@ -1861,7 +1861,7 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 			const int q = (hover_edge + 1) % points;
 
 			drag_edge = hover_edge;
-			drag_edge_perp = ImGui::GetIO ().KeyCtrl ? true : false;
+			drag_edge_perp = ImGui::GetIO ().KeyShift ? true : false;
 			drag_edge_base[0][0] = uv[hover_edge][0];
 			drag_edge_base[0][1] = uv[hover_edge][1];
 			drag_edge_base[1][0] = uv[q][0];
