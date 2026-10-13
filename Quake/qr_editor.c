@@ -2778,19 +2778,21 @@ static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *o
 	if (p == PARAM_CEMIS)
 	{
 		// every block's color and tone controls count as one parameter, and the
-		// editor's own name for a block is not one of them
-		rt_emissive_t a[RT_MAT_MAX_EMISSIVE_COLORS];
-		rt_emissive_t b[RT_MAT_MAX_EMISSIVE_COLORS];
+		// editor's own name for a block is not one of them; the slots past the
+		// last block are not part of the list
+		rt_emissive_t a[RT_MAT_MAX_EMISSIVE_COLORS] = {0};
+		rt_emissive_t b[RT_MAT_MAX_EMISSIVE_COLORS] = {0};
 		int           i;
 
-		if (m->has_color_emissive != orig->has_color_emissive)
+		if (m->has_color_emissive != orig->has_color_emissive ||
+		    m->color_emissive_count != orig->color_emissive_count)
 			return true;
 
-		memcpy (a, m->color_emissive, sizeof (a));
-		memcpy (b, orig->color_emissive, sizeof (b));
-
-		for (i = 0; i < RT_MAT_MAX_EMISSIVE_COLORS; i++)
+		for (i = 0; i < m->color_emissive_count; i++)
 		{
+			a[i] = m->color_emissive[i];
+			b[i] = orig->color_emissive[i];
+
 			memset (a[i].name, 0, sizeof (a[i].name));
 			memset (b[i].name, 0, sizeof (b[i].name));
 		}
