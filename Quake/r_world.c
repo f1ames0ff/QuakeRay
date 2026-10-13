@@ -3589,10 +3589,9 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 
 		if (!params->glow)
 		{
-			/* The mask covers the whole triangle, so it is read over the whole triangle. */
-			if (min_area > 0.0f && piece.uvarea * scale < min_area)
-				continue;
-
+			/* The mask covers the whole triangle, so it is read over the whole triangle. The
+			   thresholds are applied where the pieces are uploaded: a piece under one of them
+			   lights as the synthesized dlight of its model instead of an area light. */
 			RT_ModelLightPieceAdd (pieces, &numpieces, RT_DTAL_MAX_PIECES, &piece);
 			continue;
 		}
@@ -3624,9 +3623,6 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 			/* More repetitions than a face may be cut into is beyond what models use; the
 			   triangle keeps its whole uv, and a black sample outside the glow stands for
 			   itself. */
-			if (min_area > 0.0f && piece.uvarea * scale < min_area)
-				continue;
-
 			RT_ModelLightPieceAdd (pieces, &numpieces, RT_DTAL_MAX_PIECES, &piece);
 			continue;
 		}
@@ -3650,9 +3646,6 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 
 				cut.numverts = n;
 				cut.uvarea   = (float) fabs (RT_UvPolyArea (clipped, n));
-
-				if (min_area > 0.0f && cut.uvarea * scale < min_area)
-					continue;
 
 				RT_ModelLightPieceAdd (pieces, &numpieces, RT_DTAL_MAX_PIECES, &cut);
 			}
@@ -3684,7 +3677,7 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 	vec3_t proxy_center = { 0.0f, 0.0f, 0.0f };
 	vec3_t proxy_normal = { 0.0f, 0.0f, 0.0f };
 
-	for (int i = 0; i < numpieces && uploaded < max_lights; i++)
+	for (int i = 0; i < numpieces; i++)
 	{
 		if (Atomic_LoadUInt32 (&rt_modellights_frame_count) >= (uint32_t) budget)
 		{
@@ -3769,6 +3762,9 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 			proxy_area += area;
 			continue;
 		}
+
+		if (uploaded >= max_lights)
+			continue;
 
 		/* The light leaves the triangle through its front, and the front of a model triangle is
 		   the side its vertex normals face: the geometric normal only says where the plane is,
