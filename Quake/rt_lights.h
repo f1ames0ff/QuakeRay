@@ -32,6 +32,13 @@ typedef struct rt_light_s
     qboolean force_rasterize;  // draw the emitter in the rasterized path
     qboolean has_style;
     int      style;            // an override of the emitter's light style
+    qboolean has_spot;
+    qboolean spot;             // a cone instead of a sphere (light_spot in the entry)
+    qboolean has_dir;
+    vec3_t   dir;              // the axis the cone looks along (one light's entry only)
+    qboolean has_angles;
+    float    angle_inner;      // the cone's full-intensity core, degrees
+    float    angle_outer;      // the cone's edge, degrees
     /* A light that follows its group: the editor writes an edit to every light
        of the same group (the emitter's model, e.g. flame.mdl) that carries the
        flag. With the flag off the light keeps its own values; turning it back on

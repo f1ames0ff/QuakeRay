@@ -302,7 +302,8 @@ void RT_LIGHT_Remove(const char *name)
 qboolean RT_LIGHT_HasFields(const rt_light_t *l)
 {
     return l && (l->has_radius || l->has_intensity || l->has_offset || l->has_color ||
-                 l->force_rasterize || l->has_style || !l->group_edit);
+                 l->force_rasterize || l->has_style || l->has_spot || l->has_dir || l->has_angles ||
+                 !l->group_edit);
 }
 
 rt_light_t *RT_LIGHT_FindEmitter(const char *name, uint64_t uniqueID)
@@ -392,23 +393,47 @@ void RT_LIGHT_ResolveEmitter(const rt_emitter_light_t *emitter, rt_emitter_resol
 void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
 {
     rt_emitter_resolved_t resolved;
+    rt_emitter_light_t    light = *emitter;
+    rt_light_t           *ov = (emitter->name && emitter->name[0])
+                                   ? RT_LIGHT_FindEmitter(emitter->name, emitter->uniqueID)
+                                   : NULL;
     vec3_t                position;
+
+    /* The entry's cone: spot, angles and -- for a light of one entry alone -- the axis. A group
+       entry carries the angles only, because the way a light of a model or a surface faces is
+       its geometry's to say. */
+    if (ov)
+    {
+        if (ov->has_spot)
+        {
+            light.spot = ov->spot;
+        }
+        if (ov->has_dir && !ov->group_edit)
+        {
+            VectorCopy(ov->dir, light.direction);
+        }
+        if (ov->has_angles)
+        {
+            light.angleInner = q_min(ov->angle_inner, ov->angle_outer) * 0.017453292519943295f;
+            light.angleOuter = q_max(ov->angle_inner, ov->angle_outer) * 0.017453292519943295f;
+        }
+    }
 
     RT_LIGHT_ResolveEmitter(emitter, &resolved);
 
     VectorAdd(emitter->position, resolved.offset, position);
     RT_FIXUP_LIGHT_INTENSITY(resolved.color, true);
 
-    if (emitter->spot && DotProduct(emitter->direction, emitter->direction) > 0.0f)
+    if (light.spot && DotProduct(light.direction, light.direction) > 0.0f)
     {
         QrSpotLightUploadInfo info = {
             .uniqueID = emitter->uniqueID,
             .color = {resolved.color[0], resolved.color[1], resolved.color[2]},
             .position = {position[0], position[1], position[2]},
-            .direction = {emitter->direction[0], emitter->direction[1], emitter->direction[2]},
+            .direction = {light.direction[0], light.direction[1], light.direction[2]},
             .radius = METRIC_TO_QUAKEUNIT(resolved.radius),
-            .angleOuter = emitter->angleOuter,
-            .angleInner = emitter->angleInner,
+            .angleOuter = light.angleOuter,
+            .angleInner = light.angleInner,
         };
 
         QrResult r = qrUploadSpotLight(vulkan_globals.instance, &info);
@@ -463,6 +488,16 @@ void RT_LIGHT_WriteEntry(FILE *f, const rt_light_t *l)
                 (int)(l->color[1] * 255.0f + 0.5f) & 0xff,
                 (int)(l->color[2] * 255.0f + 0.5f) & 0xff);
     }
+    if (l->has_spot)
+        fprintf(f, "    spot: %s\n", l->spot ? "true" : "false");
+    if (l->has_dir)
+        fprintf(f, "    dir: %.6g %.6g %.6g\n", l->dir[0], l->dir[1], l->dir[2]);
+    if (l->has_angles)
+    {
+        fprintf(f, "    angle_inner: %.6g\n", l->angle_inner);
+        fprintf(f, "    angle_outer: %.6g\n", l->angle_outer);
+    }
+
     if (l->force_rasterize)
     {
         fprintf(f, "    force_rasterize: true\n");
@@ -671,6 +706,33 @@ static int rt_light_parse_text(const char *text, int length)
             else if (!q_strcasecmp(key, "force_rasterize"))
             {
                 cur->force_rasterize = rt_light_parse_bool(value);
+            }
+            else if (!q_strcasecmp(key, "spot"))
+            {
+                cur->spot = rt_light_parse_bool(value);
+                cur->has_spot = true;
+            }
+            else if (!q_strcasecmp(key, "dir"))
+            {
+                float x = 0.0f, y = 0.0f, z = 0.0f;
+
+                if (sscanf(value, "%f %f %f", &x, &y, &z) == 3)
+                {
+                    cur->dir[0] = x;
+                    cur->dir[1] = y;
+                    cur->dir[2] = z;
+                    cur->has_dir = true;
+                }
+            }
+            else if (!q_strcasecmp(key, "angle_inner"))
+            {
+                cur->angle_inner = (float)atof(value);
+                cur->has_angles = true;
+            }
+            else if (!q_strcasecmp(key, "angle_outer"))
+            {
+                cur->angle_outer = (float)atof(value);
+                cur->has_angles = true;
             }
             else if (!q_strcasecmp(key, "light_style"))
             {
