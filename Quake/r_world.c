@@ -1927,79 +1927,6 @@ static qboolean RT_LightBuried (vec3_t center, const float *normal, float cleara
 	return buried;
 }
 
-static void RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, const vec3_t center,
-                                       const vec3_t normal, const vec3_t offset, float area,
-                                       const vec3_t color, qboolean is_static)
-{
-	rt_emitter_light_t  local;
-	rt_emitter_light_t *light;
-	vec3_t              position, direction;
-	qboolean            traced;
-	float               radius;
-	int                 tries;
-
-	if (!(area > 0.0f) || !isfinite (area))
-		return;
-
-	/* The equal-area sphere: the proxy carries the flux of the patches it stands for. */
-	radius = sqrtf (area / 12.566370614f);
-
-	if (radius < 1.0f)
-		radius = 1.0f;
-
-	VectorAdd (center, offset, position);
-	VectorCopy (normal, direction);
-
-	if (VectorNormalize (direction) <= 0.0f)
-	{
-		direction[0] = 0.0f;
-		direction[1] = 0.0f;
-		direction[2] = 1.0f;
-	}
-
-	/* A proxy that landed inside a wall walks out along its own normal; bounded, so a point
-	   that cannot settle does not walk the map. */
-	for (tries = 0; tries < 4; tries++)
-	{
-		traced = false;
-
-		if (!RT_LightBuried (position, direction, radius, &traced))
-			break;
-
-		VectorMA (position, radius, direction, position);
-	}
-
-	if (is_static)
-	{
-		if (rt_wldlights_proxy_count >= RT_WLDPROXY_MAX)
-		{
-			rt_emis_stats.static_dropped++;
-			return;
-		}
-
-		light = &rt_wldlights_proxy[rt_wldlights_proxy_count++];
-	}
-	else
-	{
-		light = &local;
-	}
-
-	memset (light, 0, sizeof (*light));
-	light->name = name;
-	light->uniqueID = uniqueID;
-	light->kind = RT_LIGHT_KIND_MAP;
-	light->intensity = 1.0f;
-	light->radius = radius;
-	light->style = -1;
-	VectorCopy (position, light->position);
-	VectorCopy (color, light->color);
-
-	if (!is_static)
-		RT_LIGHT_Emit (light);
-
-	Atomic_AddUInt32 (&rt_emis_stats.proxy, 1);
-}
-
 static void RT_DtalGroups_Feed (const QrTexturedAreaLightUploadInfo *light_info, gltexture_t *light_tex,
                                 const msurface_t *surf);
 
@@ -2240,6 +2167,89 @@ typedef struct rt_emissive_params_s
 	float      glow_mean;
 } rt_emissive_params_t;
 
+static void RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, const vec3_t center,
+                                       const vec3_t normal, const vec3_t offset, float area,
+                                       const vec3_t color, const rt_emissive_params_t *params, qboolean is_static)
+{
+	rt_emitter_light_t  local;
+	rt_emitter_light_t *light;
+	vec3_t              position, direction;
+	qboolean            traced;
+	float               radius;
+	int                 tries;
+
+	if (!(area > 0.0f) || !isfinite (area))
+		return;
+
+	/* The equal-area sphere: the proxy carries the flux of the patches it stands for. */
+	radius = sqrtf (area / 12.566370614f);
+
+	if (radius < 1.0f)
+		radius = 1.0f;
+
+	VectorAdd (center, offset, position);
+	VectorCopy (normal, direction);
+
+	if (VectorNormalize (direction) <= 0.0f)
+	{
+		direction[0] = 0.0f;
+		direction[1] = 0.0f;
+		direction[2] = 1.0f;
+	}
+
+	/* A proxy that landed inside a wall walks out along its own normal; bounded, so a point
+	   that cannot settle does not walk the map. */
+	for (tries = 0; tries < 4; tries++)
+	{
+		traced = false;
+
+		if (!RT_LightBuried (position, direction, radius, &traced))
+			break;
+
+		VectorMA (position, radius, direction, position);
+	}
+
+	if (is_static)
+	{
+		if (rt_wldlights_proxy_count >= RT_WLDPROXY_MAX)
+		{
+			rt_emis_stats.static_dropped++;
+			return;
+		}
+
+		light = &rt_wldlights_proxy[rt_wldlights_proxy_count++];
+	}
+	else
+	{
+		light = &local;
+	}
+
+	memset (light, 0, sizeof (*light));
+	light->name = name;
+	light->uniqueID = uniqueID;
+	light->kind = RT_LIGHT_KIND_MAP;
+	light->intensity = 1.0f;
+	light->radius = radius;
+	light->style = -1;
+	VectorCopy (position, light->position);
+	VectorCopy (color, light->color);
+
+	/* A source that casts in a cone keeps it: the proxy turns into a spot looking the way the
+	   patches it stands for face, with the cone the source's material asks for. */
+	if (params != NULL && params->angleOuter > 0.0f && params->angleOuter <= 1.5707963f)
+	{
+		light->spot = true;
+		VectorCopy (direction, light->direction);
+		light->angleInner = params->angleInner;
+		light->angleOuter = params->angleOuter;
+	}
+
+	if (!is_static)
+		RT_LIGHT_Emit (light);
+
+	Atomic_AddUInt32 (&rt_emis_stats.proxy, 1);
+}
+
 static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive_params_t *p)
 {
 	if (!light_tex || !light_tex->rtislight)
@@ -2400,6 +2410,8 @@ static QrDtalMemberUpload    *rt_dtal_members;
 static int                    rt_dtal_member_capacity;
 static int32_t               *rt_dtal_parent_source;
 static int                    rt_dtal_parent_source_capacity;
+static int                   *rt_dtal_group_proxy;
+static int                    rt_dtal_group_proxy_capacity;
 
 typedef struct rt_dtal_group_cluster_s
 {
@@ -2671,6 +2683,8 @@ static void RT_DtalGroups_FillUpload (void)
 	                     (int)sizeof (QrDtalMemberUpload)) ||
 	    !RT_DtalReserve ((void **)&rt_dtal_parent_source, &rt_dtal_parent_source_capacity, groupCount,
 	                     (int)sizeof (int32_t)) ||
+	    !RT_DtalReserve ((void **)&rt_dtal_group_proxy, &rt_dtal_group_proxy_capacity, groupCount,
+	                     (int)sizeof (int)) ||
 	    !RT_DtalReserve ((void **)&rt_dtal_group_clusters, &rt_dtal_group_cluster_capacity, groupCount,
 	                     (int)sizeof (rt_dtal_group_cluster_t)))
 	{
@@ -2713,6 +2727,7 @@ static void RT_DtalGroups_FillUpload (void)
 		parent->memberCount = (uint32_t) group->memberCount;
 
 		rt_dtal_parent_source[gi] = sourceIndex;
+		rt_dtal_group_proxy[gi] = -1;
 
 		rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
 		coverage->count = 0;
@@ -2783,6 +2798,48 @@ static void RT_DtalGroups_FillUpload (void)
 			dst->prob = build->memberProb[index];
 			dst->marginalProb = build->memberMarginal[index];
 			dst->aliasIndex = build->memberAlias[index];
+		}
+
+		if (CVAR_TO_FLOAT (rt_dtal_minarea) > 0.0f && group->area < CVAR_TO_FLOAT (rt_dtal_minarea))
+		{
+			vec3_t center = { 0.0f, 0.0f, 0.0f };
+			vec3_t normal = { 0.0f, 0.0f, 0.0f };
+			float  weight = 0.0f;
+			int    before;
+
+			for (int mi = 0; mi < group->memberCount; mi++)
+			{
+				const rt_dtal_member_t *member = &build->members[group->firstMember + mi];
+				const float             w = member->area * (member->refWeight > 0.0f ? member->refWeight : 1.0f);
+				vec3_t                  member_center, member_normal;
+
+				VectorCopy (member->center, member_center);
+				VectorCopy (member->normal, member_normal);
+
+				VectorMA (center, w, member_center, center);
+				VectorMA (normal, w, member_normal, normal);
+				weight += w;
+			}
+
+			if (weight > 0.0f)
+			{
+				vec3_t proxy_color;
+
+				VectorScale (center, 1.0f / weight, center);
+
+				VectorCopy (source->params.color, proxy_color);
+				VectorScale (proxy_color, RT_DtalSourceStyleScale (source), proxy_color);
+
+				before = rt_wldlights_proxy_count;
+
+				RT_EmitEmissiveProxyLight (group->uid,
+				                           source->canonical_tex ? source->canonical_tex->name : NULL,
+				                           center, normal, vec3_origin, group->area, proxy_color,
+				                           &source->params, true);
+
+				if (rt_wldlights_proxy_count > before)
+					rt_dtal_group_proxy[gi] = before;
+			}
 		}
 	}
 }
@@ -2954,6 +3011,16 @@ static void RT_DtalGroups_UpdateFrame (void)
 		parent->angleOuter = params.angleOuter;
 		parent->projector = params.projector ? 1.0f : 0.0f;
 		parent->estimatedPower = group->refPower;
+
+		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
+		    rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+		{
+			vec3_t proxy_color;
+
+			VectorCopy (params.color, proxy_color);
+			VectorScale (proxy_color, RT_DtalSourceStyleScale (source), proxy_color);
+			VectorCopy (proxy_color, rt_wldlights_proxy[rt_dtal_group_proxy[gi]].color);
+		}
 	}
 }
 
@@ -2967,6 +3034,9 @@ static void RT_DtalGroups_Register (void)
 		const rt_dtal_group_t         *group = &rt_dtal_build->groups[gi];
 		const rt_dtal_source_t        *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
 		const rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
+
+		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0)
+			continue;
 
 		if (coverage->count > 0)
 		{
@@ -2992,6 +3062,9 @@ static void RT_DtalGroupsDebugDraw (void)
 	{
 		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
 		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0)
+			continue;
 
 		if (mode == 2.0f)
 		{
@@ -3741,7 +3814,7 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 	{
 		VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
 		RT_EmitEmissiveProxyLight (base_uniqueid, tex ? tex->name : NULL, proxy_center, proxy_normal,
-		                           offset, proxy_area, params->color, false);
+		                           offset, proxy_area, params->color, params, false);
 		Atomic_AddUInt32 (&rt_emis_stats.proxy_model, 1);
 	}
 
@@ -4403,7 +4476,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 				VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
 				RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL,
 				                           proxy_center, proxy_normal, vec3_origin, proxy_area, params.color,
-				                           is_static_geom);
+				                           &params, is_static_geom);
 			}
 
 			if (uploaded > 0)
@@ -4505,7 +4578,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		RT_TexturedAreaLightCenter (&light_info, center);
 		RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL, center,
 		                           light_info.normal.data, vec3_origin, light_info.area, params.color,
-		                           is_static_geom);
+		                           &params, is_static_geom);
 		return;
 	}
 
@@ -5251,6 +5324,15 @@ void RT_UploadAllWorldModelLights (void)
 	if (rt_dtal_groups_active && rt_dtal_build != NULL)
 	{
 		RT_DtalGroups_UpdateFrame ();
+
+		if (rt_dtal_group_proxy != NULL)
+		{
+			for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+			{
+				if (rt_dtal_group_proxy[gi] >= 0)
+					VectorCopy (vec3_origin, rt_dtal_parents[gi].color.data);
+			}
+		}
 
 		if (rt_dtal_groups_rebuild_pending)
 		{

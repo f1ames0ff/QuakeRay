@@ -753,6 +753,11 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
             continue;
         }
 
+        if (IsColorTooDim(info.color.data))
+        {
+            continue;
+        }
+
         const ShLightEncoded encoded = EncodeAsDtalGroup(info, pTextureIndices[i]);
         AddLight(frameIndex, info.uniqueID, encoded);
         published++;
