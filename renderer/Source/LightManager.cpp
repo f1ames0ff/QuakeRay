@@ -741,6 +741,7 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
     }
 
     uint32_t published = 0;
+    bool     invalid = false;
 
     for (uint32_t i = 0; i < batch.groupCount; i++)
     {
@@ -750,6 +751,7 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
             info.memberCount > batch.memberCount - info.memberBase)
         {
             fprintf(stderr, "qray: DTAL group %u has an invalid member range - skipped\n", i);
+            invalid = true;
             continue;
         }
 
@@ -763,7 +765,7 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
         published++;
     }
 
-    if (published == 0)
+    if (published == 0 && invalid)
     {
         return false;
     }

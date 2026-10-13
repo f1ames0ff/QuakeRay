@@ -4069,7 +4069,7 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_brush_persistent, RT_BrushPersistentChanged_f);
-	Cvar_SetCallback (&rt_dtal_minarea, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_minarea, RT_DtalCollectChanged_f);
 	Cvar_SetCallback (&rt_dtal_maxpolys, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_clearance, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_groups, RT_EmissiveLimitsChanged_f);

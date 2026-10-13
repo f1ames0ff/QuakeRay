@@ -1542,6 +1542,8 @@ void RT_SkySettings_EndSession(void)
     rt_sky_level_block = rt_sky_session_block;
     rt_sky_level_mode = true;
     rt_sky_session_active = false;
+
+    RT_SkySettings_ApplyScope();
 }
 
 // The session was saved: what the save carried becomes the state. A save in
