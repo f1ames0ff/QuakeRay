@@ -3278,6 +3278,7 @@ static const char *const qre_mat_cvars[] = {
 	"rt_dtal_spacing",
 	"rt_dtal_maxgroups",
 	"rt_level_light_maxpolys",
+	"rt_dtal_debug",
 	"rt_dtal_model_minarea",
 	"rt_dtal_model_maxpolys",
 	"rt_dtal_model_budget",
@@ -3294,6 +3295,29 @@ static void QRE_MatCvarsRestore (void)
 	{
 		if (qre_mat_cvar_snapshot_set[i])
 			Cvar_Set (qre_mat_cvars[i], qre_mat_cvar_snapshot[i]);
+	}
+}
+
+static void QRE_MatCvarReset (const char *name)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
+	{
+		cvar_t  *var;
+		qboolean changed;
+
+		if (strcmp (qre_mat_cvars[i], name))
+			continue;
+
+		var = Cvar_FindVar (name);
+		changed = var != NULL && qre_mat_cvar_snapshot_set[i] &&
+		          strcmp (var->string ? var->string : "", qre_mat_cvar_snapshot[i]) != 0;
+
+		if (QR_GUI_ResetButton (name, changed))
+			Cvar_Set (name, qre_mat_cvar_snapshot[i]);
+
+		return;
 	}
 }
 
@@ -3468,6 +3492,8 @@ static void QRE_MatSystemTab (void)
 	                  "Draw the triangle area lights of the scene: the polygons (wireframe) or their centers and normals. The DTAL grid groups are drawn the same way, as their member patches and their parents (rt_dtal_debug)."))
 		Cvar_Set ("rt_dtal_debug", va ("%d", dbg));
 
+	QRE_MatCvarReset ("rt_dtal_debug");
+
 	QR_GUI_Spacing ();
 
 	QR_GUI_SectionHeader ("DTAL (BSP)");
@@ -3477,15 +3503,21 @@ static void QRE_MatSystemTab (void)
 	                        "A DTAL polygon facing solid geometry within this many units is not created (0 off)."))
 		Cvar_Set ("rt_dtal_clearance", va ("%.4g", value));
 
+	QRE_MatCvarReset ("rt_dtal_clearance");
+
 	maxpolys = CVAR_TO_INT32 (rt_dtal_maxpolys);
 	if (QR_GUI_SliderInt ("rt_dtal_maxpolys", &maxpolys, 0, 64,
 	                      "Caps one surface's DTAL pieces, the largest kept (0 = no cuts)."))
 		Cvar_Set ("rt_dtal_maxpolys", va ("%d", maxpolys));
 
+	QRE_MatCvarReset ("rt_dtal_maxpolys");
+
 	value = CVAR_TO_FLOAT (rt_dtal_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_minarea", &value, 0.0f, 1024.0f,
 	                        "Drops a DTAL polygon under this area, in world units squared (0 off)."))
 		Cvar_Set ("rt_dtal_minarea", va ("%.4g", value));
+
+	QRE_MatCvarReset ("rt_dtal_minarea");
 
 	{
 		int groupMode = CVAR_TO_INT32 (rt_dtal_groups);
@@ -3493,6 +3525,8 @@ static void QRE_MatSystemTab (void)
 		if (QR_GUI_SliderInt ("rt_dtal_groups", &groupMode, 0, 2,
 		                      "0 keeps one light per admitted DTAL piece; 1 merges compatible pieces per grid cell; 2 builds the same patches with one member per parent, for comparisons."))
 			Cvar_Set ("rt_dtal_groups", va ("%d", groupMode));
+
+		QRE_MatCvarReset ("rt_dtal_groups");
 	}
 
 	value = CVAR_TO_FLOAT (rt_dtal_spacing);
@@ -3500,10 +3534,14 @@ static void QRE_MatSystemTab (void)
 	                        "Edge of the world-aligned grid cell a DTAL group lives in, in world units."))
 		Cvar_Set ("rt_dtal_spacing", va ("%.4g", value));
 
+	QRE_MatCvarReset ("rt_dtal_spacing");
+
 	maxpolys = CVAR_TO_INT32 (rt_dtal_maxgroups);
 	if (QR_GUI_SliderInt ("rt_dtal_maxgroups", &maxpolys, 0, 8192,
 	                      "Caps the grid groups of the map: a group is a light of the light array, so a finer spacing reaches this budget and the map keeps its per-piece lights instead (0 = the engine's own ceiling)."))
 		Cvar_Set ("rt_dtal_maxgroups", va ("%d", maxpolys));
+
+	QRE_MatCvarReset ("rt_dtal_maxgroups");
 
 	QR_GUI_SectionHeader ("DTAL (models)");
 
@@ -3512,20 +3550,28 @@ static void QRE_MatSystemTab (void)
 	                        "Drops a model's DTAL polygon under this percentage of the model's bounding box face (0 off)."))
 		Cvar_Set ("rt_dtal_model_minarea", va ("%.4g", value));
 
+	QRE_MatCvarReset ("rt_dtal_model_minarea");
+
 	maxpolys = CVAR_TO_INT32 (rt_dtal_model_maxpolys);
 	if (QR_GUI_SliderInt ("rt_dtal_model_maxpolys", &maxpolys, 0, 64,
 	                      "Caps one model's DTAL pieces, the largest kept (0 = no cuts)."))
 		Cvar_Set ("rt_dtal_model_maxpolys", va ("%d", maxpolys));
+
+	QRE_MatCvarReset ("rt_dtal_model_maxpolys");
 
 	maxpolys = CVAR_TO_INT32 (rt_dtal_model_budget);
 	if (QR_GUI_SliderInt ("rt_dtal_model_budget", &maxpolys, 0, 4096,
 	                      "Caps the DTAL pieces every model of a frame may upload, the largest ranked first (0 = none)."))
 		Cvar_Set ("rt_dtal_model_budget", va ("%d", maxpolys));
 
+	QRE_MatCvarReset ("rt_dtal_model_budget");
+
 	maxpolys = CVAR_TO_INT32 (rt_level_light_maxpolys);
 	if (QR_GUI_SliderInt ("rt_level_light_maxpolys", &maxpolys, 0, 64,
 	                      "Caps the DTAL pieces one of the level's own light models (see rt_level_light_models) uploads: a torch flame is one or two pieces, not the crowd of micro-sources a character model may spend."))
 		Cvar_Set ("rt_level_light_maxpolys", va ("%d", maxpolys));
+
+	QRE_MatCvarReset ("rt_level_light_maxpolys");
 
 	QRE_MatWaterSection ();
 }
