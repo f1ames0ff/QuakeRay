@@ -240,6 +240,10 @@ UniformConstant
 image:2D:0:0:0:1:Unknown
 === descriptor set 0 binding 249: storage class
 UniformConstant
+=== descriptor set 0 binding 268
+image:2D:0:0:0:1:Unknown
+=== descriptor set 0 binding 268: storage class
+UniformConstant
 === descriptor set 0 binding 91
 image:2D:0:0:0:2:Rgba16f
 === descriptor set 0 binding 91: storage class

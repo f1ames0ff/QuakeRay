@@ -156,6 +156,7 @@ void main()
 
         bool histValid = false;
         uint histHash = 0u;
+        uint ownHistHash = 0xFFFFu;
 
         if (globalUniform.restirParams.z == 0u)
         {
@@ -202,6 +203,11 @@ void main()
 
                 histValid = true;
                 histHash = hist.candidateHash;
+
+                if (attempt == 0)
+                {
+                    ownHistHash = hist.candidateHash;
+                }
 
                 float memberPdfHist = 1.0;
                 const LightSample histLight = q2ReuseSampleStored(hist.lightIndex, surf.position, hist.pointRnd, hist.memberRnd, memberPdfHist);
@@ -275,7 +281,7 @@ void main()
         outReservoir.flags = (selLight != LIGHT_INDEX_NONE)
                                  ? (Q2_REUSE_FLAG_VALID | selFlags | ((globalUniform.frameId & 0x3Fu) << 2u))
                                  : 0u;
-        q2ReuseStore(pix, outReservoir);
+        q2ReuseStore(pix, outReservoir, (outReservoir.candidateHash != ownHistHash) ? 1u : 0u);
 
         if (selLight != LIGHT_INDEX_NONE)
         {

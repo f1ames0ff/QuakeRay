@@ -387,6 +387,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV
         alpha_color_hf = lerp(alpha_color_hf, 1.0, antilag_alpha_hf);
         alpha_moments_hf = lerp(alpha_moments_hf, 1.0, antilag_alpha_hf);
 
+        const float reuse_switch = (framebufQ2ReuseReservoirMeta_Sampled.Load(int3(ipos, 0)).z != 0u) ? 1.0 : 0.0;
+        alpha_color_hf = lerp(alpha_color_hf, 1.0, reuse_switch * Q2_FLT_REUSE_UNSTABLE);
+
         out_color_lf = q2MixSH(temporal_color_lf, color_curr_lf, alpha_color_lf);
         out_color_hf.rgb = lerp(temporal_color_hf.rgb, color_curr_hf.rgb, alpha_color_hf);
 

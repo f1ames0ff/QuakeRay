@@ -191,7 +191,7 @@ bool q2ReuseIsReceiverDependent(const ShLightEncoded l)
     return false;
 }
 
-void q2ReuseStore(const int2 pix, const Q2ReuseReservoir r)
+void q2ReuseStore(const int2 pix, const Q2ReuseReservoir r, const uint stateChanged)
 {
     framebufQ2ReuseReservoir[pix] = uint4(
         (r.lightIndex & 0xFFFFu) | ((r.m & 0xFFFFu) << 16u),
@@ -202,7 +202,8 @@ void q2ReuseStore(const int2 pix, const Q2ReuseReservoir r)
     framebufQ2ReuseReservoirMeta[pix] = uint4(
         (r.fingerprint & 0xFFFFu) | ((r.candidateHash & 0xFFFFu) << 16u),
         (r.cluster & 0xFFFFu) | ((r.slot & 0xFFu) << 16u) | ((r.flags & 0xFFu) << 24u),
-        0u, 0u);
+        stateChanged,
+        0u);
 }
 
 bool q2ReuseLoadPrev(const int2 pix, out Q2ReuseReservoir r)

@@ -128,10 +128,11 @@ struct ComposeImage
 // the three are part of the union so the per-list announcement below names their resting state and
 // the restore lists return the ones this module moves to it. The god-rays module owns their
 // contents and has to leave them in GENERAL (see the class comment).
-constexpr uint32_t COMPOSE_IMAGE_COUNT = 88;
+constexpr uint32_t COMPOSE_IMAGE_COUNT = 89;
 constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
 {
     { FB_IMAGE_INDEX_ALBEDO,                ComposeImageSize::Render }, //   0  framebufAlbedo           (adapter/gradient-reproj/atrous/PF)
+{ FB_IMAGE_INDEX_Q2_REUSE_RESERVOIR_META, ComposeImageSize::Render }, //   88 framebufQ2ReuseReservoirMeta (temporal SRV: reservoir sample-switch flag)
     { FB_IMAGE_INDEX_ALBEDO_PREV,           ComposeImageSize::Render }, //   1  framebufAlbedo_Prev      (gradient-reproj SRV)
     { FB_IMAGE_INDEX_IS_SKY,                ComposeImageSize::Render }, //   2  framebufIsSky            (adapter/atrous SRV)
     { FB_IMAGE_INDEX_NORMAL,                ComposeImageSize::Render }, //   3  framebufNormal           (reproj/atrous UAV, adapter/temporal/PF SRV)
@@ -221,8 +222,8 @@ constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
 { FB_IMAGE_INDEX_Q2_PARTICLE_LAYER, ComposeImageSize::Render }, // 130  framebufQ2ParticleLayer (checkerboard SRV, refl/refr UAV)
 };
 
-static_assert(COMPOSE_IMAGE_COUNT == 88,
-              "the per-slot image arrays of RhiRtComposePass.h are sized 87 (COMPOSE_IMAGES)");
+static_assert(COMPOSE_IMAGE_COUNT == 89,
+              "the per-slot image arrays of RhiRtComposePass.h are sized 89 (COMPOSE_IMAGES)");
 
 // One item of a pass's set 0: the engine image, the binding kind and whether the item is a sampler
 // (only the TAAU history carries one). 'isUAV' selects both the layout item and the set item type;
@@ -326,7 +327,7 @@ constexpr ComposeBinding GRADIENT_ATROUS_BINDINGS[GRADIENT_ATROUS_BINDING_COUNT]
 
 // CmQ2Temporal: 9 storage images and 21 sampled images; `[numthreads(15, 15, 1)]`. It reads the
 // `_PREV` histories and writes the current ones plus the a-trous inputs.
-constexpr uint32_t TEMPORAL_BINDING_COUNT = 30;
+constexpr uint32_t TEMPORAL_BINDING_COUNT = 31;
 constexpr ComposeBinding TEMPORAL_BINDINGS[TEMPORAL_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_Q2_HIST_COLOR_L_F_S_H,      true, false }, //  91  framebufQ2HistColorLF_SH
@@ -359,6 +360,7 @@ constexpr ComposeBinding TEMPORAL_BINDINGS[TEMPORAL_BINDING_COUNT] =
     { FB_IMAGE_INDEX_Q2_FILTERED_SPEC_PREV,      false, false }, // 224  framebufQ2FilteredSpec_Prev_Sampled
     { FB_IMAGE_INDEX_Q2_GRAD_L_F_PONG,           false, false }, // 236  framebufQ2GradLFPong_Sampled
     { FB_IMAGE_INDEX_Q2_GRAD_H_F_SPEC_PONG,      false, false }, // 238  framebufQ2GradHFSpecPong_Sampled
+    { FB_IMAGE_INDEX_Q2_REUSE_RESERVOIR_META,    false, false }, // 264  framebufQ2ReuseReservoirMeta_Sampled
 };
 
 // CmQ2AtrousLF: 4 storage images and 3 sampled images; the A4.5 pair fix reads the ping/pong LF
