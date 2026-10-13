@@ -262,6 +262,8 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_tal_selflit, "6") \
 	CVAR_DEF_T (rt_dtal_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_proxy, "1") \
+	CVAR_DEF_T (rt_dtal_proxy_minarea, "0") \
+	CVAR_DEF_T (rt_dtal_proxy_model_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
 	CVAR_DEF_T (rt_dtal_clearance, "1") \
 	CVAR_DEF_T (rt_dtal_groups, "0") \
@@ -1120,6 +1122,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_dtal_model_minarea");
 	RT_Bench_Setting (f, "rt_dtal_minarea");
 	RT_Bench_Setting (f, "rt_dtal_proxy");
+	RT_Bench_Setting (f, "rt_dtal_proxy_minarea");
+	RT_Bench_Setting (f, "rt_dtal_proxy_model_minarea");
 	RT_Bench_Setting (f, "rt_dtal_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_clearance");
 	RT_Bench_Setting (f, "rt_dtal_groups");

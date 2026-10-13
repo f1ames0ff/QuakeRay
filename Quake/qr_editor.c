@@ -76,6 +76,8 @@ extern cvar_t rt_truelight; // gl_vidsdl.c
 extern cvar_t rt_dtal_debug; // gl_vidsdl.c: draw the DTAL of models and sprites
 extern cvar_t rt_dtal_clearance, rt_dtal_maxpolys, rt_dtal_minarea, rt_dtal_groups, rt_dtal_spacing;
 extern cvar_t rt_dtal_proxy;
+extern cvar_t rt_dtal_proxy_minarea;
+extern cvar_t rt_dtal_proxy_model_minarea;
 extern cvar_t rt_dtal_maxgroups;
 extern cvar_t rt_level_light_maxpolys;
 extern cvar_t rt_dtal_model_budget, rt_dtal_model_maxpolys, rt_dtal_model_minarea;
@@ -3276,6 +3278,8 @@ static const char *const qre_mat_cvars[] = {
 	"rt_dtal_maxpolys",
 	"rt_dtal_minarea",
 	"rt_dtal_proxy",
+	"rt_dtal_proxy_minarea",
+	"rt_dtal_proxy_model_minarea",
 	"rt_dtal_groups",
 	"rt_dtal_spacing",
 	"rt_dtal_maxgroups",
@@ -3531,6 +3535,15 @@ static void QRE_MatSystemTab (void)
 
 	QRE_MatCvarReset ("rt_dtal_minarea");
 
+	value = CVAR_TO_FLOAT (rt_dtal_proxy_minarea);
+	if (QR_GUI_SliderFloat ("rt_dtal_proxy_minarea", &value, 0.0f, q_max (1.0f, CVAR_TO_FLOAT (rt_dtal_minarea)),
+	                        "A proxy is made only for an emitter at least this big, in world units squared, so a crowd of specks is dropped rather than lit; never more than rt_dtal_minarea (0 = every emitter under the threshold becomes one)."))
+		Cvar_Set ("rt_dtal_proxy_minarea", va ("%.4g", value));
+
+	QRE_MatCvarReset ("rt_dtal_proxy_minarea");
+
+	QRE_MatCvarReset ("rt_dtal_minarea");
+
 	{
 		int groupMode = CVAR_TO_INT32 (rt_dtal_groups);
 
@@ -3561,6 +3574,16 @@ static void QRE_MatSystemTab (void)
 	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
 	                        "A model's DTAL piece under this percentage of its bounding box face is not an area light: the model's small pieces light as one synthesized dlight (0 off; with rt_dtal_proxy off such pieces are dropped instead)."))
 		Cvar_Set ("rt_dtal_model_minarea", va ("%.4g", value));
+
+	QRE_MatCvarReset ("rt_dtal_model_minarea");
+
+	value = CVAR_TO_FLOAT (rt_dtal_proxy_model_minarea);
+	if (QR_GUI_SliderFloat ("rt_dtal_proxy_model_minarea", &value, 0.0f,
+	                        q_max (1.0f, CVAR_TO_FLOAT (rt_dtal_model_minarea)),
+	                        "A model's proxy is made only for its small pieces adding up to at least this percentage of the model's bounding box face; never more than rt_dtal_model_minarea (0 = all of them)."))
+		Cvar_Set ("rt_dtal_proxy_model_minarea", va ("%.4g", value));
+
+	QRE_MatCvarReset ("rt_dtal_proxy_model_minarea");
 
 	QRE_MatCvarReset ("rt_dtal_model_minarea");
 
@@ -5301,7 +5324,6 @@ static void QRE_LightEntityList (void)
 	const rt_tracked_light_t *lights;
 	int                       order[RT_TRACKED_LIGHTS_MAX];
 	int                       count = 0, live = 0, i, j;
-	int                       selected_any = 0;
 	char                      buf[96];
 
 	lights = RT_TRACK_Lights (&count);
@@ -5343,41 +5365,40 @@ static void QRE_LightEntityList (void)
 	QR_GUI_LabelDim (buf);
 	QR_GUI_Spacing ();
 
-	for (j = 0; j < live; j++)
+	if (live > 0)
 	{
-		const rt_tracked_light_t *l = &lights[order[j]];
-		char                      label[MAX_QPATH + 32];
-		char                      id[MAX_QPATH + 48];
-		int                       selected;
+		char        labels[RT_TRACKED_LIGHTS_MAX][MAX_QPATH + 32];
+		const char *items[RT_TRACKED_LIGHTS_MAX];
+		int         selected = -1;
+		int         choice = 0;
 
-		if (l->name[0])
-			q_snprintf (label, sizeof (label), "%s  [%s]", l->name, QRE_LightKindName (l->kind));
-		else
-			q_snprintf (label, sizeof (label), "(no emitter)  [%s]", QRE_LightKindName (l->kind));
-
-		q_snprintf (id, sizeof (id), "%s#%d", label, j);
-		QR_GUI_PushID (id);
-
-		selected = (qre.sel_light_valid && qre.sel_light.kind == l->kind &&
-		            qre.sel_light.uniqueID == l->uniqueID && !strcmp (qre.sel_light.name, l->name)) ? 1 : 0;
-
-		if (QR_GUI_SectionSelected (label, selected))
+		for (j = 0; j < live; j++)
 		{
-			QRE_SelectEntityLight (l);
-			selected = 1;
+			const rt_tracked_light_t *l = &lights[order[j]];
+
+			if (l->name[0])
+				q_snprintf (labels[j], sizeof (labels[j]), "%s  [%s]", l->name, QRE_LightKindName (l->kind));
+			else
+				q_snprintf (labels[j], sizeof (labels[j]), "(no emitter)  [%s]", QRE_LightKindName (l->kind));
+
+			items[j] = labels[j];
+
+			if (qre.sel_light_valid && qre.sel_light.kind == l->kind &&
+			    qre.sel_light.uniqueID == l->uniqueID && !strcmp (qre.sel_light.name, l->name))
+				selected = j;
 		}
 
-		if (selected)
-		{
-			QRE_LightEntityFields ();
-			selected_any = 1;
-		}
+		if (selected >= 0)
+			choice = selected;
 
-		QR_GUI_PopID ();
+		if (QR_GUI_Combo ("light", &choice, items, live,
+		                  "The lights this frame generated; pick one and the form below edits it."))
+			QRE_SelectEntityLight (&lights[order[choice]]);
+
+		QR_GUI_Spacing ();
 	}
 
-	if (!selected_any)
-		QRE_LightEntityFields ();
+	QRE_LightEntityFields ();
 }
 
 static void QRE_BuildLightPanelGUI (void)

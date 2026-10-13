@@ -58,6 +58,8 @@ extern cvar_t rt_dtal_model_budget;
 extern cvar_t rt_dtal_model_minarea;
 extern cvar_t rt_dtal_minarea;
 extern cvar_t rt_dtal_proxy;
+extern cvar_t rt_dtal_proxy_minarea;
+extern cvar_t rt_dtal_proxy_model_minarea;
 extern cvar_t rt_dtal_maxpolys;
 extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_dtal_groups;
@@ -2170,7 +2172,8 @@ typedef struct rt_emissive_params_s
 
 static void RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, const vec3_t center,
                                        const vec3_t normal, const vec3_t offset, float area,
-                                       const vec3_t color, const rt_emissive_params_t *params, qboolean is_static)
+                                       const vec3_t color, const rt_emissive_params_t *params,
+                                       float modelSize, qboolean is_static)
 {
 	rt_emitter_light_t  local;
 	rt_emitter_light_t *light;
@@ -2235,10 +2238,22 @@ static void RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, cons
 	light->uniqueID = uniqueID;
 	light->kind = RT_LIGHT_KIND_MAP;
 	light->intensity = 1.0f;
-	light->radius = radius;
 	light->style = -1;
 	VectorCopy (position, light->position);
 	VectorCopy (color, light->color);
+
+	/* The emitter's radius is metric. A light of a model states it the way the model's own
+	   dlight does -- as a fraction of the model the resolver multiplies back -- so the size
+	   slider means the same thing for a proxy as for the dlight the model would have cast. */
+	if (modelSize > 0.0f)
+	{
+		light->modelSize = modelSize;
+		light->radius = QUAKEUNIT_TO_METRIC (radius) / modelSize;
+	}
+	else
+	{
+		light->radius = QUAKEUNIT_TO_METRIC (radius);
+	}
 
 	/* A source that casts in a cone keeps it: the proxy turns into a spot looking the way the
 	   patches it stands for face, with the cone the source's material asks for. */
@@ -2807,7 +2822,8 @@ static void RT_DtalGroups_FillUpload (void)
 		}
 
 		if (CVAR_TO_BOOL (rt_dtal_proxy) && CVAR_TO_FLOAT (rt_dtal_minarea) > 0.0f &&
-		    group->area < CVAR_TO_FLOAT (rt_dtal_minarea))
+		    group->area < CVAR_TO_FLOAT (rt_dtal_minarea) &&
+		    group->area >= q_min (CVAR_TO_FLOAT (rt_dtal_minarea), CVAR_TO_FLOAT (rt_dtal_proxy_minarea)))
 		{
 			vec3_t center = { 0.0f, 0.0f, 0.0f };
 			vec3_t normal = { 0.0f, 0.0f, 0.0f };
@@ -2842,7 +2858,7 @@ static void RT_DtalGroups_FillUpload (void)
 				RT_EmitEmissiveProxyLight (group->uid,
 				                           source->canonical_tex ? source->canonical_tex->name : NULL,
 				                           center, normal, vec3_origin, group->area, proxy_color,
-				                           &source->params, true);
+				                           &source->params, 0.0f, true);
 
 				if (rt_wldlights_proxy_count > before)
 					rt_dtal_group_proxy[gi] = before;
@@ -3670,7 +3686,8 @@ more pieces than that can lower the count.
 static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int numpieces, const rt_emissive_params_t *params,
                                          gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
                                          const QrVertex *pose2, float blend, const QrTransform *transform,
-                                         const vec3_t offset, float min_area, int max_lights, int budget)
+                                         const vec3_t offset, float min_area, int max_lights, int budget,
+                                         float model_size, float proxy_floor)
 {
 	int    uploaded = 0;
 	float  proxy_area = 0.0f;
@@ -3813,11 +3830,11 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		uploaded++;
 	}
 
-	if (proxy_area > 0.0f)
+	if (proxy_area > 0.0f && proxy_area >= proxy_floor)
 	{
 		VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
 		RT_EmitEmissiveProxyLight (base_uniqueid, tex ? tex->name : NULL, proxy_center, proxy_normal,
-		                           offset, proxy_area, params->color, params, false);
+		                           offset, proxy_area, params->color, params, model_size, false);
 		Atomic_AddUInt32 (&rt_emis_stats.proxy_model, 1);
 	}
 
@@ -3958,16 +3975,20 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	VectorCopy (resolved.offset, light_offset);
 
 	float       min_area        = 0.0f;
+	float       proxy_floor     = 0.0f;
 	const float minarea_percent = CVAR_TO_FLOAT (rt_dtal_model_minarea);
+	const float size_x          = model->maxs[0] - model->mins[0];
+	const float size_y          = model->maxs[1] - model->mins[1];
+	const float size_z          = model->maxs[2] - model->mins[2];
+	const float model_size      = QUAKEUNIT_TO_METRIC (0.5f * sqrtf (size_x * size_x + size_y * size_y + size_z * size_z));
 
 	if (minarea_percent > 0.0f)
 	{
-		const float size_x = model->maxs[0] - model->mins[0];
-		const float size_y = model->maxs[1] - model->mins[1];
-		const float size_z = model->maxs[2] - model->mins[2];
-		const float face   = q_max (size_x * size_y, q_max (size_x * size_z, size_y * size_z));
+		const float face          = q_max (size_x * size_y, q_max (size_x * size_z, size_y * size_z));
+		const float floor_percent = q_min (minarea_percent, CVAR_TO_FLOAT (rt_dtal_proxy_model_minarea));
 
-		min_area = minarea_percent * 0.01f * face;
+		min_area    = minarea_percent * 0.01f * face;
+		proxy_floor = floor_percent * 0.01f * face;
 	}
 
 	int max_lights = (int) CVAR_TO_FLOAT (rt_dtal_model_maxpolys);
@@ -4004,7 +4025,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 
 	/* A material that moved between the snapshot and the read has no trustworthy pieces: light
 	   this frame, cache nothing. */
-	if (min_area <= 0.0f && cache != NULL && Atomic_LoadUInt32 (&rt_material_revision) == revision)
+	if (cache != NULL && Atomic_LoadUInt32 (&rt_material_revision) == revision)
 	{
 		uint32_t expected = 0;
 
@@ -4075,7 +4096,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	}
 
 	return RT_UploadAliasEmissivePieces (local, numpieces, &params, tex, base_uniqueid, pose1, pose2, blend, transform,
-	                                     light_offset, min_area, max_lights, budget);
+	                                     light_offset, min_area, max_lights, budget, model_size, proxy_floor);
 }
 
 static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
@@ -4121,6 +4142,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	const qboolean light_masked = (params.material != QR_NO_MATERIAL);
 
 	const float min_area = CVAR_TO_FLOAT (rt_dtal_minarea);
+	const float proxy_floor = q_min (min_area, CVAR_TO_FLOAT (rt_dtal_proxy_minarea));
 	int       max_polys  = (int) CVAR_TO_FLOAT (rt_dtal_maxpolys);
 
 	if (max_polys < 0)
@@ -4474,12 +4496,12 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 				uploaded++;
 			}
 
-			if (proxy_area > 0.0f)
+			if (proxy_area > 0.0f && proxy_area >= proxy_floor)
 			{
 				VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
 				RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL,
 				                           proxy_center, proxy_normal, vec3_origin, proxy_area, params.color,
-				                           &params, is_static_geom);
+				                           &params, 0.0f, is_static_geom);
 			}
 
 			if (uploaded > 0)
@@ -4578,10 +4600,14 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 		rt_emis_stats.too_small++;
 
-		RT_TexturedAreaLightCenter (&light_info, center);
-		RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL, center,
-		                           light_info.normal.data, vec3_origin, light_info.area, params.color,
-		                           &params, is_static_geom);
+		if (light_info.area >= proxy_floor)
+		{
+			RT_TexturedAreaLightCenter (&light_info, center);
+			RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL, center,
+			                           light_info.normal.data, vec3_origin, light_info.area, params.color,
+			                           &params, 0.0f, is_static_geom);
+		}
+
 		return;
 	}
 
