@@ -548,3 +548,22 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   (the shape tests follow the new contract), Release build exit 0. Follow-ups: the guard's own
   message stays the only exact byte figure (it must never fire), and the serial positional arm is
   the only arm left with recreations above zero.
+
+- 2026-10-13 (entity and upload attribution, the closing recon before the next master merge): the
+  upload trace (`rt_upload_trace 1`) on the headroom build separates the mutex convoy from the wall
+  again. Fuma (4K FSR Balanced, audit profile) under `r_tasks 1`: summed lock wait about 6.4 ms per
+  frame against about 0.9 ms of hold - the alias lane owns 3.38 ms of that wait over about 309 calls
+  per frame (hold 0.58), alpha 1.11, ents about 1.0, sprite 0.56 - and the bounds scan runs 635 calls
+  and 87.6k vertices per frame at 0.18 ms (about 20% of the hold). Under `r_tasks 0` the same trace
+  shows the wait at about zero (alias 0.007 ms) with the hold unchanged, so the convoy is a
+  task-mode contention artifact rather than burned CPU, and the entity stage's chunk wall stays at
+  1.4-2.0 ms (Fuma) and 2.3-3.5 ms (swamp) against a 2.87 ms serial stage. Both scenes are GPU-bound
+  at this preset: `gpu.frame` 19.5/22.4 ms against intervals 20.5/23.75 ms, the acquire/fence wait
+  8-12 ms, and the earlier ultra arm's CPU `frame - begin` 2.37/4.07 ms. Consequence: the
+  entity/upload work is CPU headroom for the ultra (~120 fps) target and the swamp margin, not the
+  lever for the 60 fps balanced target; the next stage works the GPU rows (`gpu.indirect` 6.39/6.55,
+  `gpu.setup` 3.45/5.17) once the master merge lands. The alias pose probe is unchanged
+  (`enhanced_draws` 0, `pose_static` 0 - every Q1 alias draw re-lerps). MCP note: `server_status`
+  matched this worktree (HEAD `329c6ecb`), but the AST tools answered MCP busy (heavy machine owner)
+  for the whole window, so the symbol work here is a file-read fallback; re-run the symbol checks
+  once the machine is free.
