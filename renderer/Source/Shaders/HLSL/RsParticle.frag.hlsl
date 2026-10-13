@@ -32,6 +32,7 @@ RsParticleFragOutput main( [[vk::location(0)]] float4 inColor     : COLOR0,
     const float lightGain  = rasterizerFragInfo.particleLook[2];
     const float lightFloor = rasterizerFragInfo.particleLook[3];
     const bool  debug      = rasterizerFragInfo.particleLook[0] > 0.5;
+    const bool  selfLit    = inLit.z < 0.0;
 
     const int2 cbPix = getCheckerboardPix(int2(fragCoord.xy));
 
@@ -59,7 +60,7 @@ RsParticleFragOutput main( [[vk::location(0)]] float4 inColor     : COLOR0,
     lf.CoCg /= Q2_STORAGE_SCALE_LF;
 
     const float3 ambient = q2SHToIrradiance(lf, (float3)0.0) * SMOKE_AMBIENT_GAIN;
-    const float3 factor  = lightGain * max(inLit + ambient, (float3)lightFloor);
+    const float3 factor  = selfLit ? (float3)lightGain : lightGain * max(inLit + ambient, (float3)lightFloor);
 
     const float4 albedo = getTextureSample(rasterizerFragInfo.textureIndex, inTexCoord);
 

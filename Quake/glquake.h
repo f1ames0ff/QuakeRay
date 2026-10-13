@@ -90,6 +90,11 @@ typedef struct particle_s
 	ptype_t            type;
 } particle_t;
 
+#define QR_PARTICLE_CLUSTER_SELF_LIT 0xFFFFFFFFu
+
+void     RT_ExplosionGlowAdd (const vec3_t org);
+qboolean RT_ExplosionGlowAt (const vec3_t pos, float *pIntensity);
+
 #define P_INVALID -1
 #ifdef PSET_SCRIPT
 void PScript_InitParticles (void);

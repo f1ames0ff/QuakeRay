@@ -50,14 +50,61 @@ gltexture_t *particletexture1, *particletexture2, *particletexture3, *particlete
 cvar_t r_particles = {"r_particles", "2", CVAR_ARCHIVE};         // johnfitz
 // cvar_t r_quadparticles = {"r_quadparticles", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t r_particle_lighting = {"r_particle_lighting", "1", CVAR_ARCHIVE};
-cvar_t r_particle_light_gain = {"r_particle_light_gain", "10.0", CVAR_ARCHIVE};
+cvar_t r_particle_light_gain = {"r_particle_light_gain", "1", CVAR_ARCHIVE};
 cvar_t r_particle_light_direct = {"r_particle_light_direct", "1", CVAR_ARCHIVE};
 cvar_t r_particle_light_floor = {"r_particle_light_floor", "0.001", CVAR_ARCHIVE};
 cvar_t r_particle_light_debug = {"r_particle_light_debug", "0", CVAR_NONE};
 cvar_t r_particles_points = {"r_particles_points", "1", CVAR_ARCHIVE};
+cvar_t r_particle_explosion_radius = {"r_particle_explosion_radius", "256", CVAR_ARCHIVE};
 
 #define QUAD_PARTICLES 0
 static uint32_t *quadindices = NULL;
+
+#define RT_EXPLOSION_GLOW_SLOTS 8
+#define RT_EXPLOSION_GLOW_LIFE  5.0f
+
+static vec3_t rt_explosion_glow_org[RT_EXPLOSION_GLOW_SLOTS];
+static float  rt_explosion_glow_end[RT_EXPLOSION_GLOW_SLOTS];
+static int    rt_explosion_glow_next;
+
+void RT_ExplosionGlowAdd (const vec3_t org)
+{
+	const int slot = rt_explosion_glow_next++ % RT_EXPLOSION_GLOW_SLOTS;
+
+	VectorCopy (org, rt_explosion_glow_org[slot]);
+	rt_explosion_glow_end[slot] = cl.time + RT_EXPLOSION_GLOW_LIFE;
+}
+
+qboolean RT_ExplosionGlowAt (const vec3_t pos, float *pIntensity)
+{
+	const float radius = r_particle_explosion_radius.value;
+	float       best   = 0.0f;
+
+	if (radius <= 0.0f)
+		return false;
+
+	for (int i = 0; i < RT_EXPLOSION_GLOW_SLOTS; i++)
+	{
+		float       dx, dy, dz, t;
+
+		if (rt_explosion_glow_end[i] <= cl.time)
+			continue;
+
+		dx = pos[0] - rt_explosion_glow_org[i][0];
+		dy = pos[1] - rt_explosion_glow_org[i][1];
+		dz = pos[2] - rt_explosion_glow_org[i][2];
+		t  = 1.0f - sqrt (dx * dx + dy * dy + dz * dz) / radius;
+
+		if (t > 0.0f && t * t > best)
+			best = t * t;
+	}
+
+	if (best <= 0.0f)
+		return false;
+
+	*pIntensity = best;
+	return true;
+}
 
 extern cvar_t r_showtris;
 
@@ -214,6 +261,7 @@ void R_InitParticles (void)
 	Cvar_RegisterVariable (&r_particle_light_floor);
 	Cvar_RegisterVariable (&r_particle_light_debug);
 	Cvar_RegisterVariable (&r_particles_points);
+	Cvar_RegisterVariable (&r_particle_explosion_radius);
 
 	R_InitParticleTextures (); // johnfitz
 	R_InitParticleIndexBuffer ();
@@ -443,6 +491,8 @@ void R_ParticleExplosion (vec3_t org)
 	int         i, j;
 	particle_t *p;
 
+	RT_ExplosionGlowAdd (org);
+
 	for (i = 0; i < 1024; i++)
 	{
 		p = R_NewClassicParticle (1024 - i);
@@ -484,6 +534,8 @@ void R_ParticleExplosion2 (vec3_t org, int colorStart, int colorLength)
 	particle_t *p;
 	int         colorMod = 0;
 
+	RT_ExplosionGlowAdd (org);
+
 	for (i = 0; i < 512; i++)
 	{
 		p = R_NewClassicParticle (512 - i);
@@ -512,6 +564,8 @@ void R_BlobExplosion (vec3_t org)
 {
 	int         i, j;
 	particle_t *p;
+
+	RT_ExplosionGlowAdd (org);
 
 	for (i = 0; i < 1024; i++)
 	{
@@ -964,14 +1018,19 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 			scale *= texturescalefactor; // johnfitz -- compensate for apparent size of different particle textures
 
 			byte *c = (byte *)&d_8to24table[(int)p->color];
+			float          glow    = 0.0f;
+			const qboolean selflit = RT_ExplosionGlowAt (p->org, &glow);
 
 			points[current_point].position[0] = p->org[0];
 			points[current_point].position[1] = p->org[1];
 			points[current_point].position[2] = p->org[2];
-			points[current_point].packedColor = RT_PackColorToUint32 (c[0], c[1], c[2], 255);
+			points[current_point].packedColor =
+				selflit ? RT_PackColorToUint32 ((byte)(c[0] * glow), (byte)(c[1] * glow), (byte)(c[2] * glow), 255)
+				        : RT_PackColorToUint32 (c[0], c[1], c[2], 255);
 			points[current_point].size = scale;
 			points[current_point].cluster =
-				lit_particles ? (uint32_t)RT_ParticleClusterAt (p->org) : 0u;
+				selflit ? QR_PARTICLE_CLUSTER_SELF_LIT
+				        : (lit_particles ? (uint32_t)RT_ParticleClusterAt (p->org) : 0u);
 			current_point++;
 		}
 
@@ -1021,10 +1080,15 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		scale *= texturescalefactor; // johnfitz -- compensate for apparent size of different particle textures
 
 		byte *c = (byte *)&d_8to24table[(int)p->color];
+		float          glow    = 0.0f;
+		const qboolean selflit = RT_ExplosionGlowAt (p->org, &glow);
 		// All vertices of one particle carry the same colour, so it is packed once per particle.
-		const uint32_t packed_color = RT_PackColorToUint32 (c[0], c[1], c[2], 255);
+		const uint32_t packed_color =
+			selflit ? RT_PackColorToUint32 ((byte)(c[0] * glow), (byte)(c[1] * glow), (byte)(c[2] * glow), 255)
+			        : RT_PackColorToUint32 (c[0], c[1], c[2], 255);
 		const uint32_t particle_cluster =
-			lit_particles ? (uint32_t)RT_ParticleClusterAt (p->org) : 0u;
+			selflit ? QR_PARTICLE_CLUSTER_SELF_LIT
+			        : (lit_particles ? (uint32_t)RT_ParticleClusterAt (p->org) : 0u);
 
 		vertices[current_vertex].position[0] = p->org[0];
 		vertices[current_vertex].position[1] = p->org[1];
@@ -1062,7 +1126,7 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 		vertices[current_vertex].packedColor = packed_color;
 		current_vertex++;
 
-		if (lit_particles)
+		if (lit_particles || selflit)
 		{
 			for (int v = 0; v < (QUAD_PARTICLES ? 4 : 3); ++v)
 				vertices[current_vertex - 1 - v].cluster = particle_cluster;

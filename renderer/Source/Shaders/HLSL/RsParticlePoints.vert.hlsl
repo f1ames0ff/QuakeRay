@@ -11,6 +11,8 @@
 #include "Q2ClusterLights.hlsli"
 #include "SmokeLight.hlsli"
 
+#define QR_PARTICLE_CLUSTER_SELF_LIT 0xFFFFFFFFu
+
 struct RasterizerVert_BT
 {
     float4x4 viewProj;
@@ -55,7 +57,9 @@ void main(
 
     outColor    = unpackLittleEndianUintColor(packedColor);
     outTexCoord = cornerTexCoord;
-    outLit      = smokeLightAt(worldPos, particleCluster, 0.0, rasterizerVertInfo.particleLook[1], 0.0);
+    outLit      = particleCluster == QR_PARTICLE_CLUSTER_SELF_LIT
+                      ? float3(0.0, 0.0, -1.0)
+                      : smokeLightAt(worldPos, particleCluster, 0.0, rasterizerVertInfo.particleLook[1], 0.0);
 
     outPosition = mul(rasterizerVertInfo.viewProj, float4(worldPos, 1.0));
     outViewDepth = outPosition.w;
