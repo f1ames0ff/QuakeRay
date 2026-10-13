@@ -3496,7 +3496,7 @@ static void QRE_MatSystemTab (void)
 	}
 
 	value = CVAR_TO_FLOAT (rt_dtal_spacing);
-	if (QR_GUI_SliderFloat ("rt_dtal_spacing", &value, 8.0f, 1024.0f,
+	if (QR_GUI_SliderFloat ("rt_dtal_spacing", &value, 1.0f, 1024.0f,
 	                        "Edge of the world-aligned grid cell a DTAL group lives in, in world units."))
 		Cvar_Set ("rt_dtal_spacing", va ("%.4g", value));
 
