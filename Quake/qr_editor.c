@@ -322,6 +322,8 @@ static struct
 	// the light editor's tabs: 0 = the selected emitter, 1 = the sky, clouds
 	// and sun (the global settings)
 	int light_tab;
+	int luma_color_sel; // the colour block the luma form edits (a block index)
+	int luma_mask_sel;  // the mask block the luma form edits, likewise
 
 	// the Global tab's "Global settings": on, the sky, sun and cloud settings
 	// belong to the config (all levels); off, they are saved for this level
@@ -2883,6 +2885,68 @@ static void QRE_EmissiveEditor (int g)
 	rt_material_t *m = qre.group[g];
 	int            ci;
 
+	// one dropdown per kind: the list is the blocks of that kind, and the form below edits the
+	// chosen one alone instead of an accordion of every block
+	{
+		char        labels[RT_MAT_MAX_EMISSIVE_COLORS][32];
+		const char *items[RT_MAT_MAX_EMISSIVE_COLORS];
+		int         colors[RT_MAT_MAX_EMISSIVE_COLORS], masks[RT_MAT_MAX_EMISSIVE_COLORS];
+		int         color_count = 0, mask_count = 0, i, sel;
+
+		for (ci = 0; ci < m->color_emissive_count; ci++)
+		{
+			if (m->color_emissive[ci].poly_count >= 3)
+				masks[mask_count++] = ci;
+			else
+				colors[color_count++] = ci;
+		}
+
+		if (color_count > 0)
+		{
+			for (i = 0; i < color_count; i++)
+			{
+				q_snprintf (labels[i], sizeof (labels[i]), "Color %d", colors[i] + 1);
+				items[i] = labels[i];
+			}
+
+			sel = 0;
+
+			for (i = 0; i < color_count; i++)
+			{
+				if (colors[i] == qre.luma_color_sel)
+					sel = i;
+			}
+
+			if (QR_GUI_ComboFiltered ("color", &sel, items, color_count,
+			                          "The color block the form below edits."))
+				qre.luma_color_sel = colors[sel];
+		}
+
+		if (mask_count > 0)
+		{
+			for (i = 0; i < mask_count; i++)
+			{
+				q_snprintf (labels[i], sizeof (labels[i]), "Mask %d", masks[i] + 1);
+				items[i] = labels[i];
+			}
+
+			sel = 0;
+
+			for (i = 0; i < mask_count; i++)
+			{
+				if (masks[i] == qre.luma_mask_sel)
+					sel = i;
+			}
+
+			if (QR_GUI_ComboFiltered ("mask", &sel, items, mask_count,
+			                          "The mask block the form below edits."))
+				qre.luma_mask_sel = masks[sel];
+		}
+
+		if (color_count > 0 || mask_count > 0)
+			QR_GUI_Spacing ();
+	}
+
 	for (ci = 0; ci < m->color_emissive_count; ci++)
 	{
 		char     id[32];
@@ -2895,10 +2959,11 @@ static void QRE_EmissiveEditor (int g)
 		q_snprintf (label, sizeof (label), poly ? "Mask %d" : "Color %d", ci + 1);
 
 		QR_GUI_PushID (id);
-		open = QR_GUI_Section (label, 1) ? true : false;
+		open = ((poly ? qre.luma_mask_sel : qre.luma_color_sel) == ci) ? true : false;
 
 		if (open)
 		{
+			QR_GUI_Label (label);
 			if (QR_GUI_TrashButton (id, 1))
 			{
 				int k;
@@ -3038,6 +3103,7 @@ static void QRE_EmissiveEditor (int g)
 			block->has_factor = block->has_blend = true;
 			m->color_emissive_count++;
 			m->has_color_emissive = true;
+			qre.luma_color_sel = m->color_emissive_count - 1;
 			QRE_MarkDirty (m);
 		}
 		QR_GUI_Tooltip ("Add a color block: it glows where the texture matches its color (up to ten)");
@@ -3064,6 +3130,7 @@ static void QRE_EmissiveEditor (int g)
 			block->poly_uv[3][0] = 0.25f; block->poly_uv[3][1] = 0.75f;
 			m->color_emissive_count++;
 			m->has_color_emissive = true;
+			qre.luma_mask_sel = m->color_emissive_count - 1;
 			QRE_MarkDirty (m);
 		}
 		QR_GUI_Tooltip ("Add a mask block: a white square over the texture; drag its points to shape the glow (up to ten)");
@@ -4085,6 +4152,9 @@ enum
 	QRE_LIGHT_F_OFFSET_Z,
 	QRE_LIGHT_F_COLOR,
 	QRE_LIGHT_F_STYLE,
+	QRE_LIGHT_F_SPOT,
+	QRE_LIGHT_F_DIR,
+	QRE_LIGHT_F_ANGLE,
 	QRE_LIGHT_F_FRAST,
 };
 
@@ -4127,6 +4197,13 @@ static void QRE_LightApply (rt_light_t *l, int field, float v0, float v1, float 
 		}
 		break;
 	case QRE_LIGHT_F_FRAST:     l->force_rasterize = b; break;
+	case QRE_LIGHT_F_SPOT:      l->spot = b; l->has_spot = true; break;
+	case QRE_LIGHT_F_DIR:       l->dir[0] = v0; l->dir[1] = v1; l->dir[2] = v2; l->has_dir = true; break;
+	case QRE_LIGHT_F_ANGLE:
+		l->angle_inner = q_min (v0, v1);
+		l->angle_outer = q_max (v0, v1);
+		l->has_angles = true;
+		break;
 	case QRE_LIGHT_F_STYLE:
 		l->style = (int)v0;
 		l->has_style = (v0 >= 0.0f);
@@ -4150,6 +4227,9 @@ static void QRE_LightApplyOriginal (rt_light_t *l, const rt_light_t *orig, int f
 		case QRE_LIGHT_F_COLOR:     l->has_color = false; break;
 		case QRE_LIGHT_F_STYLE:     l->has_style = false; break;
 		case QRE_LIGHT_F_FRAST:     l->force_rasterize = false; break;
+	case QRE_LIGHT_F_SPOT:      l->spot = false; l->has_spot = false; break;
+	case QRE_LIGHT_F_DIR:       l->dir[0] = l->dir[1] = l->dir[2] = 0.0f; l->has_dir = false; break;
+	case QRE_LIGHT_F_ANGLE:     l->angle_inner = l->angle_outer = 0.0f; l->has_angles = false; break;
 		default: break;
 		}
 	}
@@ -4163,6 +4243,13 @@ static void QRE_LightApplyOriginal (rt_light_t *l, const rt_light_t *orig, int f
 		case QRE_LIGHT_F_COLOR:     l->has_color = orig->has_color; VectorCopy (orig->color, l->color); break;
 		case QRE_LIGHT_F_STYLE:     l->has_style = orig->has_style; l->style = orig->style; break;
 		case QRE_LIGHT_F_FRAST:     l->force_rasterize = orig->force_rasterize; break;
+	case QRE_LIGHT_F_SPOT:      l->has_spot = orig->has_spot; l->spot = orig->spot; break;
+	case QRE_LIGHT_F_DIR:       l->has_dir = orig->has_dir; VectorCopy (orig->dir, l->dir); break;
+	case QRE_LIGHT_F_ANGLE:
+		l->has_angles = orig->has_angles;
+		l->angle_inner = orig->angle_inner;
+		l->angle_outer = orig->angle_outer;
+		break;
 		default: break;
 		}
 	}
@@ -4285,6 +4372,16 @@ static qboolean QRE_LightFieldChanged (const rt_light_t *l, const rt_light_t *or
 		       (l->has_color && orig && memcmp (orig->color, l->color, sizeof (l->color)) != 0);
 	case QRE_LIGHT_F_FRAST:
 		return l->force_rasterize != (orig ? orig->force_rasterize : false);
+	case QRE_LIGHT_F_SPOT:
+		return l->has_spot != (orig && orig->has_spot ? true : false) ||
+		       (l->has_spot && orig && orig->spot != l->spot);
+	case QRE_LIGHT_F_DIR:
+		return l->has_dir != (orig && orig->has_dir ? true : false) ||
+		       (l->has_dir && orig && memcmp (orig->dir, l->dir, sizeof (l->dir)) != 0);
+	case QRE_LIGHT_F_ANGLE:
+		return l->has_angles != (orig && orig->has_angles ? true : false) ||
+		       (l->has_angles && orig &&
+		        (orig->angle_inner != l->angle_inner || orig->angle_outer != l->angle_outer));
 	case QRE_LIGHT_F_STYLE:
 		return l->has_style != (orig && orig->has_style ? true : false) ||
 		       (l->has_style && orig && orig->style != l->style);
@@ -5377,10 +5474,51 @@ static void QRE_LightEntityFields (void)
 				QRE_LightResetField (light, QRE_LIGHT_F_STYLE);
 		}
 
+		{
+			int spot = light->spot ? 1 : 0;
+
+			if (QR_GUI_CheckboxMixed ("light_spot", &spot,
+			                          (group && QRE_LightGroupMixedMask (light, QRE_LIGHT_F_SPOT)) ? 1 : 0,
+			                          "Make the light a cone (a spotlight) instead of a sphere: this light's own entry aims it and sets the angles, a group entry sets the angles alone."))
+				QRE_LightWrite (light, QRE_LIGHT_F_SPOT, 0, 0, 0, spot != 0);
+			if (QR_GUI_ResetButton ("light_spot", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_SPOT)))
+				QRE_LightResetField (light, QRE_LIGHT_F_SPOT);
+		}
+
+		if (!group)
+		{
+			float dir[3] = { light->dir[0], light->dir[1], light->dir[2] };
+
+			if (QR_GUI_Vec3Input ("light_dir", dir, -1.0f, 1.0f, "The axis the cone looks along, X Y Z."))
+				QRE_LightWrite (light, QRE_LIGHT_F_DIR, dir[0], dir[1], dir[2], 0);
+			if (QR_GUI_ResetButton ("light_dir", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_DIR)))
+				QRE_LightResetField (light, QRE_LIGHT_F_DIR);
+		}
+		else
+		{
+			QR_GUI_LabelDim ("direction: the light's own geometry faces it; a group entry sets the angles alone");
+		}
+
+		{
+			float inner = light->angle_inner;
+			float outer = light->angle_outer;
+
+			if (QR_GUI_SliderFloat ("angle_inner", &inner, 0.0f, 90.0f,
+			                        "The cone's full-intensity core, in degrees."))
+				QRE_LightWrite (light, QRE_LIGHT_F_ANGLE, inner, outer, 0, 0);
+			if (QR_GUI_ResetButton ("angle_inner", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_ANGLE)))
+				QRE_LightResetField (light, QRE_LIGHT_F_ANGLE);
+
+			if (QR_GUI_SliderFloat ("angle_outer", &outer, 0.0f, 90.0f,
+			                        "The cone's edge, in degrees."))
+				QRE_LightWrite (light, QRE_LIGHT_F_ANGLE, inner, outer, 0, 0);
+			if (QR_GUI_ResetButton ("angle_outer", QRE_LightFieldChanged (light, orig, QRE_LIGHT_F_ANGLE)))
+				QRE_LightResetField (light, QRE_LIGHT_F_ANGLE);
+		}
+
 		if (qre.sel_light.kind == RT_LIGHT_KIND_MATERIAL || qre.sel_light.kind == RT_LIGHT_KIND_DLIGHT)
 		{
 			int fr = light->force_rasterize ? 1 : 0;
-
 			if (QR_GUI_CheckboxMixed ("force_rasterize", &fr,
 			                          (group && QRE_LightGroupMixedMask (light, QRE_LIGHT_F_FRAST)) ? 1 : 0,
 			                          "Draw the emitter in the rasterized path."))
