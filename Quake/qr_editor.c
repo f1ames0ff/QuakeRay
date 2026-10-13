@@ -441,6 +441,12 @@ typedef struct
 	qboolean       tmp_appended;
 	int            frame_tex;
 	int            luma_sel;
+	qmodel_t      *entity_sel_model;
+	qmodel_t      *entity_preview_model;
+	qre_anim_t     entity_anims[QRE_ANIM_MAX];
+	int            entity_anim_count;
+	int            entity_anim;
+	int            entity_frame;
 } qre_instance_t;
 
 static qre_instance_t qre_instances[2];
@@ -457,6 +463,12 @@ static void QRE_InstanceSave (qre_instance_t *dst)
 	q_strlcpy (dst->pick_name, qre.pick_name, sizeof (dst->pick_name));
 	dst->frame_tex = qre.frame_tex;
 	dst->luma_sel = qre.luma_sel;
+	dst->entity_sel_model = qre.entity_sel_model;
+	dst->entity_preview_model = qre.entity_preview_model;
+	memcpy (dst->entity_anims, qre.entity_anims, sizeof (dst->entity_anims));
+	dst->entity_anim_count = qre.entity_anim_count;
+	dst->entity_anim = qre.entity_anim;
+	dst->entity_frame = qre.entity_frame;
 	dst->group_count = qre.group_count;
 	dst->extra_count = qre.extra_count;
 	memcpy (dst->extra, qre.extra, sizeof (dst->extra));
@@ -485,9 +497,12 @@ static void QRE_InstanceSave (qre_instance_t *dst)
 	}
 }
 
+static void QRE_ResolveGroup (const char *texname);
+
 static void QRE_InstanceLoad (const qre_instance_t *src)
 {
-	int i;
+	qboolean resolve = false;
+	int      i;
 
 	qre.pick_model = src->pick_model;
 	qre.pick_surf = src->pick_surf;
@@ -496,6 +511,12 @@ static void QRE_InstanceLoad (const qre_instance_t *src)
 	q_strlcpy (qre.pick_name, src->pick_name, sizeof (qre.pick_name));
 	qre.frame_tex = src->frame_tex;
 	qre.luma_sel = src->luma_sel;
+	qre.entity_sel_model = src->entity_sel_model;
+	qre.entity_preview_model = src->entity_preview_model;
+	memcpy (qre.entity_anims, src->entity_anims, sizeof (qre.entity_anims));
+	qre.entity_anim_count = src->entity_anim_count;
+	qre.entity_anim = src->entity_anim;
+	qre.entity_frame = src->entity_frame;
 	qre.group_count = src->group_count;
 	qre.extra_count = src->extra_count;
 	memcpy (qre.extra, src->extra, sizeof (qre.extra));
@@ -507,9 +528,22 @@ static void QRE_InstanceLoad (const qre_instance_t *src)
 		if (src->group_kind[i] == -2)
 			qre.group[i] = &qre.tmp_mat;
 		else if (src->group_kind[i] == -1)
+		{
 			qre.group[i] = src->group[i];
+
+			if (qre.group[i] == NULL || !qre.group[i]->valid)
+				resolve = true;
+		}
 		else
 			qre.group[i] = &qre.extra[src->group_kind[i]];
+	}
+
+	if (resolve)
+	{
+		if (qre.pick_name[0])
+			QRE_ResolveGroup (qre.pick_name);
+		else
+			qre.group_count = 0;
 	}
 }
 
@@ -4088,7 +4122,7 @@ static void QRE_MatTexturePicker (void)
 	{
 		qre_texentry_t *e = &qre_texentries[i];
 
-		if (groups > 0 && !strcmp (qre_texentries[groups - 1].base, e->base))
+		if (groups > 0 && !q_strcasecmp (qre_texentries[groups - 1].base, e->base))
 		{
 			qre_texentry_t *prev = &qre_texentries[groups - 1];
 			const int       digit = QRE_FrameDigit (e->open_name);
@@ -4118,7 +4152,7 @@ static void QRE_MatTexturePicker (void)
 
 		items[i] = qre_texlabels[i];
 
-		if (!strcmp (qre_texentries[i].base, pick_base))
+		if (!q_strcasecmp (qre_texentries[i].base, pick_base))
 			choice = i;
 	}
 
@@ -7910,6 +7944,8 @@ static void QRE_BackToChooser (void)
 	qre.group_count = 0;
 	qre.extra_count = 0;
 	qre.tmp_appended = false;
+	memset (qre_instances, 0, sizeof (qre_instances));
+	qre_instance_cur = 0;
 	qre.sel_light_valid = false;
 	qre.custom_placing = false;
 	qre.custom_cloning = false;
