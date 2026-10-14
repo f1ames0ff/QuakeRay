@@ -1135,7 +1135,7 @@ void Host_Init (void)
 		DemoList_Init ();  // ericw
 		SaveList_Init ();
 #if RT_RENDERER
-		if (!COM_FileExists ("BlueNoise_LDR_RGBA_128.png", NULL))
+		if (!COM_FileExists ("textures/BlueNoise_LDR_RGBA_128.png", NULL))
 			Sys_Error ("the engine assets are missing");
 #endif
 		VID_Init ();
