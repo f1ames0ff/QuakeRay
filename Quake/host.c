@@ -316,7 +316,6 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&noexit);
 	Cvar_SetCallback (&noexit, Host_Callback_Notify);
 	Cvar_RegisterVariable (&skill);
-	Cvar_RegisterVariable (&developer);
 	Cvar_RegisterVariable (&coop);
 	Cvar_RegisterVariable (&deathmatch);
 
