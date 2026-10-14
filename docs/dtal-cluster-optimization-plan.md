@@ -11,9 +11,10 @@
   is specified in [dtal-distance-cluster-spec.md](dtal-distance-cluster-spec.md); revised 2026-10-14
   with the owner's decisions: the hierarchy is precomputed at the DTAL build and the frame only
   selects levels.
-- The precomputed core is implemented in `Quake/rt_dtal_lod.{h,c}` on the branch with its unit tests
-  in `tests/rt_lighting_tests.c`; the engine integration (build boundary, tick wiring, cvar
-  registration, diagnostics and captures) is the next step.
+- The precomputed core and its engine wiring are on the branch: the `rt_dtal_lod*` cvars, the
+  hierarchy build at the DTAL build boundary, the per-tick selection with frustum classification and
+  the light-report line live in `Quake/rt_dtal_lod.{h,c}` and `Quake/r_world.c`; registering the
+  merged representatives and the acceptance captures are the next step.
 - Code baseline inspected: `dac6cdc4`; implementation started from `d365d033` (the then-current
   `origin/master`).
 - Primary reproduction: fragmented static-world emissive geometry, especially lava floors and glowing walls.
