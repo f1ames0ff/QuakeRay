@@ -8,7 +8,9 @@
   are in [the Project A report](dtal-implementation-report.md) and [the Project B report](cluster-implementation-report.md),
   and the final simplifications are in [the refactoring report](lighting-refactoring-report.md).
 - The next layer after these projects - distance/visibility LOD clusters over the grouped parents -
-  is specified in [dtal-distance-cluster-spec.md](dtal-distance-cluster-spec.md).
+  is specified in [dtal-distance-cluster-spec.md](dtal-distance-cluster-spec.md); revised 2026-10-14
+  with the owner's decisions: the hierarchy is precomputed at the DTAL build and the frame only
+  selects levels.
 - Code baseline inspected: `dac6cdc4`; implementation started from `d365d033` (the then-current
   `origin/master`).
 - Primary reproduction: fragmented static-world emissive geometry, especially lava floors and glowing walls.
