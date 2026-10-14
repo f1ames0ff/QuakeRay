@@ -428,8 +428,11 @@ static struct
 	qboolean reset_pending;
 	qboolean prompt_from_flying;
 
-	// the pause state the editor found, restored when it closes
+	// the pause state the editor found, restored when it closes, and the
+	// Pause world switch: on (the default) holds the world as the editor always
+	// did, off lets it run around the editor camera
 	qboolean sv_paused_prev;
+	qboolean pause_world;
 
 	// the base-texture previews of the selected material (the emissive color
 	// picker): one slot per group entry in flight, so a section rebuild never
@@ -653,6 +656,18 @@ static void QRE_Notify (const char *fmt, ...)
 
 	QR_GUI_Notify (buf);
 	Con_Printf ("qr editor: %s\n", buf);
+}
+
+// The Pause world switch (System tab in the material editor, Global tab in the
+// light editor): on holds the server and the client clock, so the world stands
+// still as it always did while the editor ran; off sets the server running again
+// and lets cl.time advance, so poses, doors, textures and the water move around
+// the editor camera. The value the world had before the editor opened is given
+// back when it closes.
+static void QRE_SetWorldPaused (qboolean paused)
+{
+	qre.pause_world = paused;
+	sv.paused = paused ? true : false;
 }
 
 // The defaults of a material with no yaml entry: what the detached default is
@@ -3914,6 +3929,16 @@ static void QRE_MatSystemTab (void)
 	int                       dbg = CVAR_TO_INT32 (rt_dtal_debug);
 	int                       maxpolys;
 
+	{
+		int pause = qre.pause_world ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("Pause world", &pause,
+		                     "Hold the server and the client clock while the editor runs, so poses, doors, the water and the clouds stand still (on by default). Off, the world keeps running around the editor camera (the player still does not move), and the pause state the world had is given back when the editor closes."))
+			QRE_SetWorldPaused (pause != 0);
+
+		QR_GUI_Separator ();
+	}
+
 	if (dbg < 0 || dbg > 2)
 		dbg = 0;
 	if (QR_GUI_Combo ("debug DTAL", &dbg, dbg_modes, (int)countof (dbg_modes),
@@ -5377,6 +5402,16 @@ static void QRE_LightGlobalTab (void)
 
 	QR_GUI_LabelDim ("the light system itself: the sky, its clouds and the sun");
 	QR_GUI_Spacing ();
+
+	{
+		int pause = qre.pause_world ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("Pause world", &pause,
+		                     "Hold the server and the client clock while the editor runs, so every animation stands still (on by default). Off, the world keeps running around the editor camera."))
+			QRE_SetWorldPaused (pause != 0);
+
+		QR_GUI_Separator ();
+	}
 
 	for (i = 0; i < (int)countof (qre_globals); i++)
 	{
@@ -8718,7 +8753,10 @@ static void QRE_StartEditor (void)
 	// the held clock, so poses, textures, particles, the water warp and the
 	// clouds all stand still. cl.paused is deliberately not touched: the engine
 	// skips V_CalcRefdef -- and with it the editor camera -- while it is set.
+	// The Pause world switch (System tab / Global tab) turns the hold off and
+	// back on while the editor runs; the check behind it is QR_Editor_Frozen.
 	qre.sv_paused_prev = sv.paused;
+	qre.pause_world = true;
 	sv.paused = true;
 
 	QRE_CursorMode (true);
@@ -8848,6 +8886,11 @@ void QR_Editor_Init (void)
 qboolean QR_Editor_Active (void)
 {
 	return qre.active;
+}
+
+qboolean QR_Editor_Frozen (void)
+{
+	return qre.active && qre.pause_world;
 }
 
 qboolean QR_Editor_PanelOpen (void)

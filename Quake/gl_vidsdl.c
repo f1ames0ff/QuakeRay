@@ -3972,10 +3972,10 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float cameranear = GL_GetCameraNear (DEG2RAD (r_fovx), DEG2RAD (r_fovy));
 	float camerafar = GL_GetCameraFar ();
 
-	// The light editor's world is frozen: the traced water warp and the cloud
-	// drift follow this clock, so it takes the held client time while the
-	// editor runs instead of the wall clock.
-	const double frame_time = editor_active ? (double)cl.time : (double)SDL_GetTicks () / 1000.0;
+	// The editor's world hold: the traced water warp and the cloud drift follow
+	// this clock, so it takes the held client time while the world stands still
+	// (the Pause world switch on) and the wall clock once it is released.
+	const double frame_time = QR_Editor_Frozen () ? (double)cl.time : (double)SDL_GetTicks () / 1000.0;
 
 	QrDrawFrameInfo info = {
 		.worldUpVector = {0, 0, 1},

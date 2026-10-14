@@ -20,6 +20,10 @@ void QR_Editor_Init (void);
 
 // Editor mode state.
 qboolean QR_Editor_Active (void);   // the editor owns the view (flying or panel)
+// The editor is active with its Pause world switch on: the server and the client
+// clock are held, so the world stands still (the clock checks use this, not the
+// editor alone).
+qboolean QR_Editor_Frozen (void);
 qboolean QR_Editor_PanelOpen (void); // the material panel is on screen
 qboolean QR_Editor_Flying (void);   // active, no panel: free camera + crosshair aim
 qboolean QR_Editor_ShowViewModel (void); // the Entities tab previews a weapon in first person
