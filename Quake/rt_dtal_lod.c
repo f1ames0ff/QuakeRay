@@ -411,6 +411,9 @@ int RT_Dtal_Lod_Build(rt_dtal_lod_t *lod, const rt_dtal_lod_config_t *config, co
 
         for (int i = 0; i < count; i++)
         {
+            if (inputs[i].flags & RT_DTAL_LOD_INPUT_SINGLETON)
+                continue;
+
             int32_t cell[3];
             RT_DtalLodCellOf(inputs[i].origin, cellSize, cell);
 
@@ -457,6 +460,9 @@ int RT_Dtal_Lod_Build(rt_dtal_lod_t *lod, const rt_dtal_lod_config_t *config, co
 
         for (int i = 0; i < count; i++)
         {
+            if (inputs[i].flags & RT_DTAL_LOD_INPUT_SINGLETON)
+                continue;
+
             int32_t cell[3];
             RT_DtalLodCellOf(inputs[i].origin, cellSize, cell);
 
@@ -692,7 +698,7 @@ static void RT_DtalLodProcessGroup(rt_dtal_lod_t *lod, const rt_dtal_lod_config_
 
     uint32_t desired = RT_DTAL_LOD_NO_NODE;
 
-    if (effective >= 0)
+    if (!(input->flags & RT_DTAL_LOD_INPUT_SINGLETON) && effective >= 0)
     {
         int32_t cell[3];
         RT_DtalLodCellOf(input->origin, RT_DtalLodCellSize(config, effective), cell);

@@ -279,6 +279,14 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_dtal_groups, "1") \
 	CVAR_DEF_T (rt_dtal_spacing, "8") \
 	CVAR_DEF_T (rt_dtal_maxgroups, "2048") \
+	CVAR_DEF_T (rt_dtal_lod, "0") \
+	CVAR_DEF_T (rt_dtal_lod_start, "512") \
+	CVAR_DEF_T (rt_dtal_lod_screen, "2") \
+	CVAR_DEF_T (rt_dtal_lod_maxbands, "4") \
+	CVAR_DEF_T (rt_dtal_lod_offscreen, "1") \
+	CVAR_DEF_T (rt_dtal_lod_hysteresis, "0.15") \
+	CVAR_DEF_T (rt_dtal_lod_dwell, "0.25") \
+	CVAR_DEF_T (rt_dtal_lod_interval, "0.05") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
@@ -1547,6 +1555,9 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_dtal_groups");
 	RT_Bench_Setting (f, "rt_dtal_spacing");
 	RT_Bench_Setting (f, "rt_dtal_maxgroups");
+	RT_Bench_Setting (f, "rt_dtal_lod");
+	RT_Bench_Setting (f, "rt_dtal_lod_start");
+	RT_Bench_Setting (f, "rt_dtal_lod_screen");
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_sky_godrays");
 	RT_Bench_Setting (f, "rt_sky_godrays_intensity");
@@ -4279,6 +4290,12 @@ static void RT_DtalCollectChanged_f (cvar_t *var)
 	RT_DtalRequestRebuild ();
 }
 
+static void RT_DtalLodChanged_f (cvar_t *var)
+{
+	(void)var;
+	RT_DtalLodRequestRebuild ();
+}
+
 // Both diagnostics run on the current map, so they do not wait for a map reload.
 static void RT_WorldCensusChanged_f (cvar_t *var)
 {
@@ -4530,6 +4547,9 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_dtal_proxy, RT_DtalCollectChanged_f);
 	Cvar_SetCallback (&rt_dtal_proxy_minarea, RT_DtalCollectChanged_f);
 	Cvar_SetCallback (&rt_dtal_maxgroups, RT_DtalCollectChanged_f);
+	Cvar_SetCallback (&rt_dtal_lod_start, RT_DtalLodChanged_f);
+	Cvar_SetCallback (&rt_dtal_lod_screen, RT_DtalLodChanged_f);
+	Cvar_SetCallback (&rt_dtal_lod_maxbands, RT_DtalLodChanged_f);
 	Cvar_SetCallback (&rt_worldcensus, RT_WorldCensusChanged_f);
 	Cvar_SetCallback (&rt_worldlights_stats, RT_WorldLightsStatsChanged_f);
 

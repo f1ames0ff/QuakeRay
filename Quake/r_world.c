@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "../shared/rt_frame_policy.h"
 #include "rt_dtal_debug.h"
 #include "rt_dtal_groups.h"
+#include "rt_dtal_lod.h"
 #include "rt_lights.h"
 #include "gl_heap.h"
 
@@ -62,6 +63,14 @@ extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_dtal_groups;
 extern cvar_t rt_dtal_spacing;
 extern cvar_t rt_dtal_maxgroups;
+extern cvar_t rt_dtal_lod;
+extern cvar_t rt_dtal_lod_start;
+extern cvar_t rt_dtal_lod_screen;
+extern cvar_t rt_dtal_lod_maxbands;
+extern cvar_t rt_dtal_lod_offscreen;
+extern cvar_t rt_dtal_lod_hysteresis;
+extern cvar_t rt_dtal_lod_dwell;
+extern cvar_t rt_dtal_lod_interval;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_brush_persistent;
 
@@ -2391,6 +2400,167 @@ static uint64_t RT_DtalMix (uint64_t hash, uint64_t value)
 	return hash;
 }
 
+#define RT_DTAL_LOD_TICK_BUDGET 256
+
+static rt_dtal_lod_t       *rt_dtal_lod_state;
+static rt_dtal_lod_input_t *rt_dtal_lod_inputs;
+static int                  rt_dtal_lod_input_capacity;
+static uint32_t            *rt_dtal_lod_visibility;
+static int                  rt_dtal_lod_visibility_capacity;
+static qboolean             rt_dtal_lod_active;
+static qboolean             rt_dtal_lod_rebuild_pending;
+static double               rt_dtal_lod_last_tick;
+static int                  rt_dtal_lod_cursor;
+static rt_dtal_lod_stats_t  rt_dtal_lod_last_stats;
+
+void RT_DtalLodRequestRebuild (void)
+{
+	rt_dtal_lod_rebuild_pending = true;
+}
+
+static void RT_DtalLod_MakeConfig (rt_dtal_lod_config_t *config)
+{
+	memset (config, 0, sizeof (*config));
+	config->startDistance = CVAR_TO_FLOAT (rt_dtal_lod_start);
+	config->screenAngleDeg = CVAR_TO_FLOAT (rt_dtal_lod_screen);
+	config->maxBands = (int) CVAR_TO_FLOAT (rt_dtal_lod_maxbands);
+	config->offscreenShift = (int) CVAR_TO_FLOAT (rt_dtal_lod_offscreen);
+	config->hysteresis = CVAR_TO_FLOAT (rt_dtal_lod_hysteresis);
+	config->dwellSeconds = CVAR_TO_FLOAT (rt_dtal_lod_dwell);
+}
+
+static void RT_DtalLod_ResetState (void)
+{
+	if (rt_dtal_lod_state != NULL)
+		RT_Dtal_Lod_Reset (rt_dtal_lod_state);
+
+	rt_dtal_lod_active = false;
+	rt_dtal_lod_rebuild_pending = false;
+	rt_dtal_lod_last_tick = 0.0;
+	rt_dtal_lod_cursor = 0;
+	memset (&rt_dtal_lod_last_stats, 0, sizeof (rt_dtal_lod_last_stats));
+}
+
+static void RT_DtalLod_BuildHierarchy (void)
+{
+	rt_dtal_lod_rebuild_pending = false;
+	rt_dtal_lod_active = false;
+
+	if (rt_dtal_lod_state == NULL)
+		rt_dtal_lod_state = RT_Dtal_Lod_Create ();
+
+	if (rt_dtal_lod_state == NULL || rt_dtal_build == NULL)
+		return;
+
+	const int groupCount = rt_dtal_build->groupCount;
+
+	if (!RT_DtalReserve ((void **) &rt_dtal_lod_inputs, &rt_dtal_lod_input_capacity, groupCount,
+	                     (int) sizeof (rt_dtal_lod_input_t)) ||
+	    !RT_DtalReserve ((void **) &rt_dtal_lod_visibility, &rt_dtal_lod_visibility_capacity, groupCount,
+	                     (int) sizeof (uint32_t)))
+	{
+		Con_DWarning ("RT: the DTAL LOD state could not be allocated; the merges stay off\n");
+		return;
+	}
+
+	for (int gi = 0; gi < groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+		rt_dtal_lod_input_t    *input = &rt_dtal_lod_inputs[gi];
+
+		memset (input, 0, sizeof (*input));
+
+		input->uid = group->uid;
+		input->emissionKey = group->emissionKey;
+		input->styleKey = group->styleKey;
+		input->axis = group->axis;
+		input->passClass = 0u;
+		VectorCopy (group->center, input->origin);
+		VectorCopy (source->normal, input->normal);
+		input->area = group->area;
+		input->power = group->refPower;
+		input->boundsRadius = group->boundsRadius;
+
+		if (source->params.projector || (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0))
+			input->flags |= RT_DTAL_LOD_INPUT_SINGLETON;
+	}
+
+	rt_dtal_lod_config_t config;
+	RT_DtalLod_MakeConfig (&config);
+
+	if (!RT_Dtal_Lod_Build (rt_dtal_lod_state, &config, rt_dtal_lod_inputs, groupCount))
+	{
+		Con_DWarning ("RT: the DTAL LOD hierarchy refused this map (start %g, screen %g, bands %i); "
+		              "the merges stay off\n",
+		              config.startDistance, config.screenAngleDeg, config.maxBands);
+		RT_Dtal_Lod_Reset (rt_dtal_lod_state);
+		return;
+	}
+
+	rt_dtal_lod_active = true;
+	rt_dtal_lod_last_tick = 0.0;
+	rt_dtal_lod_cursor = 0;
+	memset (&rt_dtal_lod_last_stats, 0, sizeof (rt_dtal_lod_last_stats));
+}
+
+static void RT_DtalLod_Tick (void)
+{
+	if (!(CVAR_TO_FLOAT (rt_dtal_lod) > 0.0f))
+	{
+		if (rt_dtal_lod_active || rt_dtal_lod_rebuild_pending)
+			RT_DtalLod_ResetState ();
+
+		return;
+	}
+
+	if (!rt_dtal_groups_active || rt_dtal_build == NULL)
+	{
+		if (rt_dtal_lod_active || rt_dtal_lod_rebuild_pending)
+			RT_DtalLod_ResetState ();
+
+		return;
+	}
+
+	if (rt_dtal_lod_rebuild_pending || !rt_dtal_lod_active)
+		RT_DtalLod_BuildHierarchy ();
+
+	if (!rt_dtal_lod_active)
+		return;
+
+	const double interval = (double) CVAR_TO_FLOAT (rt_dtal_lod_interval);
+
+	if (rt_dtal_lod_last_tick != 0.0 && realtime - rt_dtal_lod_last_tick < interval)
+		return;
+
+	rt_dtal_lod_last_tick = realtime;
+
+	const int groupCount = rt_dtal_build->groupCount;
+
+	for (int gi = 0; gi < groupCount; gi++)
+	{
+		const rt_dtal_group_t *group = &rt_dtal_build->groups[gi];
+		vec3_t                 boundsMin, boundsMax;
+
+		VectorCopy (group->mins, boundsMin);
+		VectorCopy (group->maxs, boundsMax);
+
+		rt_dtal_lod_visibility[gi] = R_CullBox (boundsMin, boundsMax) ? RT_DTAL_LOD_OFF_FRUSTUM : RT_DTAL_LOD_VISIBLE;
+	}
+
+	rt_dtal_lod_config_t config;
+	RT_DtalLod_MakeConfig (&config);
+
+	if (RT_Dtal_Lod_Select (rt_dtal_lod_state, &config, rt_dtal_lod_inputs, groupCount, rt_dtal_lod_visibility,
+	                        r_refdef.vieworg, realtime, RT_DTAL_LOD_TICK_BUDGET, &rt_dtal_lod_cursor) >= 0)
+	{
+		const rt_dtal_lod_stats_t *stats = RT_Dtal_Lod_Stats (rt_dtal_lod_state);
+
+		if (stats != NULL)
+			rt_dtal_lod_last_stats = *stats;
+	}
+}
+
 static uint64_t RT_DtalEmissionKey (const QrTexturedAreaLightUploadInfo *li, gltexture_t *light_tex,
                                     texture_t *base_tex)
 {
@@ -2874,6 +3044,7 @@ static void RT_DtalGroups_Rebuild (void)
 	rt_dtal_groups_active = true;
 	rt_dtal_group_oversized = (int) rt_dtal_build->diag.oversizedPieces;
 	rt_dtal_group_builds++;
+	RT_DtalLodRequestRebuild ();
 }
 
 static void RT_DtalGroups_UpdateFrame (void)
@@ -5323,7 +5494,10 @@ void RT_UploadAllWorldModelLights (void)
 	}
 
 	if (rt_dtal_groups_active && rt_dtal_build != NULL)
+	{
 		RT_DtalGroups_UpdateFrame ();
+		RT_DtalLod_Tick ();
+	}
 
 	RT_RefreshStoredWorldProxyLights ();
 
@@ -7207,6 +7381,20 @@ void RT_PrintEmissiveStats (void)
 			rt_dtal_group_oversized, rt_dtal_group_budget_refused, rt_dtal_group_coverage_refused, rt_dtal_group_builds,
 			rt_dtal_group_reuses,
 			rt_dtal_groups_active ? "active" : (rt_dtal_groups_failed ? "failed, per-piece lights stay" : "inactive"));
+	}
+
+	if (CVAR_TO_FLOAT (rt_dtal_lod) > 0.0f)
+	{
+		const rt_dtal_lod_stats_t *lod_stats = &rt_dtal_lod_last_stats;
+
+		RT_LightReportPrint ("dtal lod (rt_dtal_lod %g, start %g, screen %g, bands %g): %i groups -> %llu merged in %llu nodes, %llu individual, %llu transitions, %llu degenerate refusals; %s\n",
+			CVAR_TO_FLOAT (rt_dtal_lod), CVAR_TO_FLOAT (rt_dtal_lod_start), CVAR_TO_FLOAT (rt_dtal_lod_screen),
+			CVAR_TO_FLOAT (rt_dtal_lod_maxbands),
+			(rt_dtal_lod_active && rt_dtal_lod_state != NULL) ? RT_Dtal_Lod_GroupCount (rt_dtal_lod_state) : 0,
+			(unsigned long long) lod_stats->mergedGroups, (unsigned long long) lod_stats->publishedNodes,
+			(unsigned long long) lod_stats->individualGroups, (unsigned long long) lod_stats->transitions,
+			(unsigned long long) lod_stats->degenerateRefused,
+			rt_dtal_lod_active ? "active (precomputed hierarchy)" : "inactive");
 	}
 
 	if (Atomic_LoadUInt32 (&rt_emis_stats.static_dropped) || rt_wldlights_emissive_count >= MAX_WORLDLIGHTS_COUNT)

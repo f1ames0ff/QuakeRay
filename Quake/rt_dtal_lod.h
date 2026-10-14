@@ -9,6 +9,7 @@ extern "C" {
 
 #define RT_DTAL_LOD_MAX_BANDS 16
 #define RT_DTAL_LOD_NO_NODE 0xFFFFFFFFu
+#define RT_DTAL_LOD_INPUT_SINGLETON 1u
 
 typedef enum
 {
@@ -35,6 +36,7 @@ typedef struct rt_dtal_lod_input_s
     uint32_t styleKey;
     int32_t  axis;
     uint32_t passClass;
+    uint32_t flags;
     float    origin[3];
     float    normal[3];
     float    area;

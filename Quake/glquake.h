@@ -652,6 +652,7 @@ void RT_ModelLightsCacheAlloc (qmodel_t *model);
 void RT_ModelLightsCacheFree (qmodel_t *model);
 void RT_DtalRebuild_f (void);
 void RT_DtalRequestRebuild (void);
+void RT_DtalLodRequestRebuild (void);
 
 QrTransform RT_GetModelTransform (const float model_matrix[16]);
 QrTransform RT_GetBrushModelMatrix (entity_t *e);

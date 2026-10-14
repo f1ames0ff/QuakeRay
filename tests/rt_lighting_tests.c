@@ -1398,6 +1398,35 @@ static void TestDtalLodConfigGuard(void)
     RT_Dtal_Lod_Destroy(lod);
 }
 
+static void TestDtalLodSingletonFlag(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod singleton flag allocation");
+
+    if (lod == NULL)
+        return;
+
+    rt_dtal_lod_input_t inputs[2];
+
+    MakeLodInput(&inputs[0], 111u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[1], 112u, 1.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    inputs[0].flags = RT_DTAL_LOD_INPUT_SINGLETON;
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, inputs, 2) == 1, "lod singleton flag build");
+
+    const float camera[3] = { 0.0f, 0.0f, 0.0f };
+
+    LodSelectAll(lod, &config, inputs, 2, NULL, camera, 1.0);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod singleton flag nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) == RT_DTAL_LOD_NO_NODE, "lod singleton flag group zero");
+    CHECK(RT_Dtal_Lod_Stats(lod)->individualGroups == 2, "lod singleton flag stats: %llu",
+          (unsigned long long)RT_Dtal_Lod_Stats(lod)->individualGroups);
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
 int main(void)
 {
     TestAliasEdgeCases();
@@ -1422,6 +1451,7 @@ int main(void)
     TestDtalLodBudgetAndExactlyOnce();
     TestDtalLodDegenerateRefusal();
     TestDtalLodConfigGuard();
+    TestDtalLodSingletonFlag();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);
 
