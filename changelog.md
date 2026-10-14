@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+- **A picked brush entity's texture frames answer the frame slider** — a model's or sprite's `frame*` group was driven by the slider (the entity showed the frame the panel edited), while a BSP entity's animated textures (a medkit's `+0_med25`…`+3_med25` ring) kept cycling with the clock: the panel opened the group on frame 0 however far the animation had run, and moving the slider only chose which frame's material section was edited. The slider now starts on the frame the picked entity draws at the held clock and pins it: while the entity's frame group is open on the Materials tab, `R_DrawTextureChains_Multitexture` resolves that entity's texture rings through the pin (`R_TextureForEntityFrame`, fed by `R_SetTextureFrameOverride`), so the medkit draws the frame the slider names — that frame's material, luma and all — and the clock's frame comes back the moment the panel stops showing the group (a pick elsewhere, another tab, or the editor closing). The pin names only the picked entity, so two medkits of one model do not change together, and a ring the pinned frame does not carry keeps animating with the clock; a brush entity whose textures have no frames is untouched.
+
+### Fixed
+- **The Luma colour picker and mask editor work on a material opened from the Materials list** — the texture preview a luma block's eyedropper and polygon editor draw was built only when a world pick stood behind the material (`QRE_PreviewFor` answered `NULL` without a `pick_glt`), so a material opened by name from the `Material` dropdown — which leaves the world pick empty on purpose — showed no preview at all: no pixels to click for a colour and no polygon overlay to drag for a mask. The preview now resolves the engine texture the material's own name carries (`TexMgr_FindTextureForMaterial`, matching the same normalized name the group enumeration uses) before falling back to the texture the pick landed on, so dropdown-opened medkit frames, world textures and model skins get their preview; each frame of a ring also shows its own pixels for the eyedropper instead of the frame the pick happened to land on.
+
 ## v0.50.0
 
 ### Added

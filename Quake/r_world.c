@@ -5081,7 +5081,7 @@ void R_DrawTextureChains_Multitexture (
 
 		RT_ClearBatch (cbx);
 
-		gltexture_t *diffuse_tex = R_TextureAnimation (t, ent_frame)->gltexture;
+		gltexture_t *diffuse_tex = R_TextureForEntityFrame (t, ent)->gltexture;
 		const qboolean alpha_test = (t->texturechains[chain]->flags & SURF_DRAWFENCE) != 0 ||
 		                            (diffuse_tex && diffuse_tex->rtalphatest);
 

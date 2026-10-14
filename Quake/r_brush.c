@@ -33,6 +33,10 @@ extern cvar_t rt_brush_metal, rt_brush_rough, rt_enable_pvs;
 
 #define MAX_EXTENT 18
 
+/* Mod_LoadTextures (gl_model.c) gives each animation frame two units of
+   anim_min/anim_total, so the "+N" frame index is anim_min / this. */
+#define RT_ANIM_FRAME_STEP 2
+
 struct lightmap_s *lightmaps;
 int                lightmap_count;
 int                last_lightmap_allocated;
@@ -172,6 +176,71 @@ texture_t *R_TextureAnimation (texture_t *base, int frame)
 	}
 
 	return base;
+}
+
+/*
+================
+R_AnimationFrameTexture
+
+The texture of one frame of an animation ring, counted the way the "+N" names
+count their frames, in the cycle the entity's frame selector picks. NULL when
+the ring does not have that frame.
+================
+*/
+static texture_t *R_AnimationFrameTexture (texture_t *base, int selector, int frame)
+{
+	texture_t *start, *t;
+
+	if (selector && base->alternate_anims)
+		base = base->alternate_anims;
+
+	start = base;
+
+	for (t = start; t != NULL; t = t->anim_next)
+	{
+		if (t->anim_min / RT_ANIM_FRAME_STEP == frame)
+			return t;
+
+		if (t->anim_next == NULL || t->anim_next == start)
+			break;
+	}
+
+	return NULL;
+}
+
+/* The material editor's frame pin: while the brush entity it picked draws, its
+   animated rings show the frame its slider names instead of the frame the clock
+   picks, so a texture frame is worked on where the model stands. Only that
+   entity's rings are pinned, and a ring without the frame keeps the clock. */
+static const entity_t *rt_texture_frame_ent;
+static int             rt_texture_frame = -1;
+
+void R_SetTextureFrameOverride (const entity_t *ent, int frame)
+{
+	rt_texture_frame_ent = (ent != NULL && frame >= 0) ? ent : NULL;
+	rt_texture_frame = (ent != NULL && frame >= 0) ? frame : -1;
+}
+
+/*
+================
+R_TextureForEntityFrame
+
+The texture an entity draws for a base texture: R_TextureAnimation at the
+entity's frame, with the editor's pin taking the place of the clock when it
+names this entity.
+================
+*/
+texture_t *R_TextureForEntityFrame (texture_t *base, const entity_t *ent)
+{
+	if (ent != NULL && ent == rt_texture_frame_ent && rt_texture_frame >= 0)
+	{
+		texture_t *pinned = R_AnimationFrameTexture (base, ent->frame, rt_texture_frame);
+
+		if (pinned)
+			return pinned;
+	}
+
+	return R_TextureAnimation (base, ent != NULL ? ent->frame : 0);
 }
 
 /*

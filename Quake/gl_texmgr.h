@@ -169,6 +169,10 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 // The engine's own animation-frame names of a texture ("textures/+Nname",
 // "progs/model.mdl:frameN"), for the editor's group of blocks. Returns the count.
 int TexMgr_CollectGroupNames (const char *texname, char (*names)[MAX_QPATH], int max);
+// The texture an editor material name resolves to, for a material the Materials
+// tab opened by name (no world pick points at it). NULL when no texture carries
+// the name.
+gltexture_t *TexMgr_FindTextureForMaterial (const char *name);
 int TexMgr_CollectTextureNames (char (*names)[MAX_QPATH], int max);
 unsigned int TexMgr_TextureListRevision (void);
 // Re-synthesizes the textures a material resolves to, so the editor's changes

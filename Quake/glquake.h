@@ -63,6 +63,12 @@ extern int glx, gly, glwidth, glheight;
 void       R_TimeRefresh_f (void);
 void       R_ReadPointFile_f (void);
 texture_t *R_TextureAnimation (texture_t *base, int frame);
+// The material editor's frame pin: while the named brush entity draws, its
+// animated texture rings show that "+N" frame instead of the clock's (frame < 0,
+// or a NULL entity, gives the clock back), and the texture an entity draws for a
+// base texture under the pin.
+void       R_SetTextureFrameOverride (const entity_t *ent, int frame);
+texture_t *R_TextureForEntityFrame (texture_t *base, const entity_t *ent);
 
 typedef enum
 {

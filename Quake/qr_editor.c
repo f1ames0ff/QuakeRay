@@ -305,6 +305,7 @@ static struct
 	entity_t     *frame_backup_ent;
 	int           frame_backup_value;
 	qboolean      frame_backup_is_sprite;
+	qboolean      frame_backup_is_brush;
 	qboolean      frame_backup_valid;
 
 	// snapshot of both material lists for Cancel/Exit
@@ -611,6 +612,19 @@ static int QRE_FrameDigit (const char *name)
 static void QRE_GroupBaseOf (const char *name, char *out, size_t outsize)
 {
 	RT_MAT_GroupBaseOf (name, out, outsize);
+}
+
+// The material name of an engine texture: normalized and stripped of a file
+// extension the way the group build names it ("maps/b_bh25.bsp:+3_med25" ->
+// "textures/+3_med25", "textures/+3_med25.png" -> the same minus ".png").
+static void QRE_MaterialName (const char *texname, char *out, size_t outsize)
+{
+	char *dot;
+
+	RT_MAT_NormalizeName (texname, out, outsize);
+	dot = strrchr (out, '.');
+	if (dot && !strchr (dot, ':'))
+		*dot = '\0';
 }
 
 static qboolean QRE_NameInGroup (const char *matname, const char *groupbase)
@@ -1445,6 +1459,16 @@ static qboolean QRE_GroupHasFrames (void)
 	return false;
 }
 
+// Whether the open group is the texture frames of a picked brush entity: the
+// clock picks their frame in the world, so the frame controls drive the entity
+// itself, as they drive a model's skin or a sprite's frame.
+static qboolean QRE_BrushFrames (void)
+{
+	return (qre.pick_ent != NULL && qre.pick_model != NULL &&
+	        qre.pick_model == qre.pick_ent->model &&
+	        qre.pick_model->type == mod_brush && QRE_GroupHasFrames ()) ? true : false;
+}
+
 // ---------------------------------------------------------------------------
 // Picking
 // ---------------------------------------------------------------------------
@@ -1753,9 +1777,25 @@ static gltexture_t *QRE_EntityTexture (entity_t *e)
 	return NULL;
 }
 
-// The texture frame the picked model or sprite shows now: the frame the slider
-// picked while the override is in place, and otherwise the texture the entity
-// draws in the world.
+// The texture a picked brush entity's surface draws now: the frame its texture's
+// animation ring is at, with the entity's frame and the clock the editor holds.
+static gltexture_t *QRE_BrushEntityTexture (entity_t *e, msurface_t *surf)
+{
+	texture_t *base;
+
+	if (e->model == NULL || e->model->type != mod_brush || surf == NULL || surf->texinfo == NULL)
+		return NULL;
+
+	base = surf->texinfo->texture;
+	if (base == NULL)
+		return NULL;
+
+	return R_TextureAnimation (base, e->frame)->gltexture;
+}
+
+// The texture frame the picked model, sprite or brush entity shows now: the
+// frame the slider picked while the override is in place, and otherwise the
+// texture the entity draws in the world.
 static int QRE_ActiveFrame (void)
 {
 	if (qre.frame_backup_valid && qre.frame_backup_ent == qre.pick_ent)
@@ -1763,18 +1803,29 @@ static int QRE_ActiveFrame (void)
 
 	if (qre.pick_ent)
 	{
+		char         name[MAX_QPATH];
 		gltexture_t *glt = QRE_EntityTexture (qre.pick_ent);
 
+		if (glt == NULL && qre.pick_model != NULL && qre.pick_model == qre.pick_ent->model &&
+		    qre.pick_model->type == mod_brush)
+			glt = QRE_BrushEntityTexture (qre.pick_ent, qre.pick_surf);
+
 		if (glt)
-			return QRE_FrameDigit (glt->name);
+		{
+			// a map texture's raw name is "maps/<map>.bsp:+N...", and only the
+			// normalized material name carries the frame digit the slider reads
+			QRE_MaterialName (glt->name, name, sizeof (name));
+			return QRE_FrameDigit (name);
+		}
 	}
 
 	return -1;
 }
 
 // The frame controls write into the picked entity -- its skin for a model, its
-// frame for a sprite -- so the world shows the frame the panel edits. The value
-// the entity had is kept once and given back when the panel stops driving it.
+// frame for a sprite, the drawn texture frame for a brush entity -- so the world
+// shows the frame the panel edits. The value the entity had is kept once and
+// given back when the panel stops driving it.
 static void QRE_FrameOverrideRelease (void)
 {
 	if (!qre.frame_backup_valid)
@@ -1782,7 +1833,9 @@ static void QRE_FrameOverrideRelease (void)
 
 	if (qre.frame_backup_ent)
 	{
-		if (qre.frame_backup_is_sprite)
+		if (qre.frame_backup_is_brush)
+			R_SetTextureFrameOverride (NULL, -1);
+		else if (qre.frame_backup_is_sprite)
 			qre.frame_backup_ent->frame = qre.frame_backup_value;
 		else
 			qre.frame_backup_ent->skinnum = qre.frame_backup_value;
@@ -1795,28 +1848,32 @@ static void QRE_FrameOverrideRelease (void)
 static void QRE_FrameOverrideApply (void)
 {
 	const qboolean sprite = (qre.pick_model && qre.pick_model->type == mod_sprite) ? true : false;
+	const qboolean brush = (qre.pick_model && qre.pick_model->type == mod_brush) ? true : false;
 
 	if (!qre.frame_backup_valid)
 	{
 		qre.frame_backup_ent = qre.pick_ent;
 		qre.frame_backup_is_sprite = sprite;
-		qre.frame_backup_value = sprite ? qre.pick_ent->frame : qre.pick_ent->skinnum;
+		qre.frame_backup_is_brush = brush;
+		qre.frame_backup_value = (sprite || brush) ? qre.pick_ent->frame : qre.pick_ent->skinnum;
 		qre.frame_backup_valid = true;
 	}
 
-	if (sprite)
+	if (brush)
+		R_SetTextureFrameOverride (qre.pick_ent, qre.frame_tex);
+	else if (sprite)
 		qre.pick_ent->frame = qre.frame_tex;
 	else
 		qre.pick_ent->skinnum = qre.frame_tex;
 }
 
-// A pick of a model or sprite starts the frame slider where the entity stands;
-// the entity the previous pick drove gets its own value back first.
+// A pick of a model, sprite or brush entity starts the frame slider where the
+// entity stands; the entity the previous pick drove gets its own value back first.
 static void QRE_FramePickInit (void)
 {
 	QRE_FrameOverrideRelease ();
 
-	if (!QRE_FrameGroup ())
+	if (!QRE_FrameGroup () && !QRE_BrushFrames ())
 	{
 		qre.frame_tex = -1;
 		return;
@@ -2403,8 +2460,7 @@ static void QRE_DrawLightWireframes (void)
 static void QRE_OpenMaterial (qmodel_t *model, msurface_t *surf, entity_t *ent, gltexture_t *glt)
 {
 	char texname[MAX_QPATH];
-	char *dot;
-	int   i;
+	int  i;
 
 	if (!glt)
 		return;
@@ -2423,10 +2479,7 @@ static void QRE_OpenMaterial (qmodel_t *model, msurface_t *surf, entity_t *ent, 
 	qre.hover_ent = NULL;
 	qre.hover_glt = NULL;
 
-	RT_MAT_NormalizeName (glt->name, texname, sizeof (texname));
-	dot = strrchr (texname, '.');
-	if (dot && !strchr (dot, ':'))
-		*dot = '\0';
+	QRE_MaterialName (glt->name, texname, sizeof (texname));
 
 	q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
 
@@ -2730,7 +2783,8 @@ void QR_Editor_UpdateView (void)
 	// frame the panel edits, and the entity's own value comes back as soon as
 	// the panel stops showing its group
 	if (qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 0 && qre.frame_tex >= 0 &&
-	    qre.pick_ent && qre.pick_ent->model == qre.pick_model && QRE_FrameGroup ())
+	    qre.pick_ent && qre.pick_ent->model == qre.pick_model &&
+	    (QRE_FrameGroup () || QRE_BrushFrames ()))
 		QRE_FrameOverrideApply ();
 	else
 		QRE_FrameOverrideRelease ();
@@ -2822,14 +2876,25 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 {
 	char          key[MAX_QPATH * 2 + 32];
 	qre_preview_t *slot;
+	gltexture_t  *frame_tex;
 	byte         *pixels = NULL;
 	int           i, victim = -1;
 	int           w = 0, h = 0;
 
-	if (!qre.pick_glt)
+	// the texture of the frame the material stands for: a model's skin or a
+	// sprite's frame, the engine texture the material's own name resolves to
+	// (the Materials tab opens those with no pick behind them), and only then
+	// the texture the pick happened to land on
+	frame_tex = QRE_FrameTexture (QRE_FrameDigit (m->name));
+	if (frame_tex == NULL)
+		frame_tex = TexMgr_FindTextureForMaterial (m->name);
+	if (frame_tex == NULL)
+		frame_tex = qre.pick_glt;
+
+	if (!m->filename_base[0] && !frame_tex)
 		return NULL;
 
-	q_snprintf (key, sizeof (key), "%s|%s|%p", m->name, m->filename_base, (void *)qre.pick_glt);
+	q_snprintf (key, sizeof (key), "%s|%s|%p", m->name, m->filename_base, (void *)frame_tex);
 
 	for (i = 0; i < QRE_PREVIEW_SLOTS; i++)
 	{
@@ -2869,14 +2934,8 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 
 	if (m->filename_base[0])
 		pixels = RT_MAT_LoadTexture (m, RT_MAT_TEX_BASE, &w, &h);
-	if (!pixels)
-	{
-		// the texture of the frame the material stands for: a model's skin or a
-		// sprite's frame, not the texture the pick happened to land on
-		gltexture_t *frame_tex = QRE_FrameTexture (QRE_FrameDigit (m->name));
-
-		pixels = TexMgr_LoadRgbaForPreview (frame_tex ? frame_tex : qre.pick_glt, &w, &h);
-	}
+	if (!pixels && frame_tex)
+		pixels = TexMgr_LoadRgbaForPreview (frame_tex, &w, &h);
 
 	if (!pixels || w <= 0 || h <= 0)
 	{
@@ -4108,13 +4167,9 @@ static int QRE_CompareTexEntries (const void *a, const void *b)
 // it).
 static void QRE_OpenTexture (const char *texname)
 {
-	char  name[MAX_QPATH];
-	char *dot;
+	char name[MAX_QPATH];
 
-	RT_MAT_NormalizeName (texname, name, sizeof (name));
-	dot = strrchr (name, '.');
-	if (dot && !strchr (dot, ':'))
-		*dot = '\0';
+	QRE_MaterialName (texname, name, sizeof (name));
 
 	qre.pick_model = NULL;
 	qre.pick_surf = NULL;
@@ -7042,12 +7097,8 @@ static void QRE_Cancel (void)
 	if (qre.pick_glt)
 	{
 		char texname[MAX_QPATH];
-		char *dot;
 
-		RT_MAT_NormalizeName (qre.pick_glt->name, texname, sizeof (texname));
-		dot = strrchr (texname, '.');
-		if (dot && !strchr (dot, ':'))
-			*dot = '\0';
+		QRE_MaterialName (qre.pick_glt->name, texname, sizeof (texname));
 		q_strlcpy (qre.pick_name, texname, sizeof (qre.pick_name));
 		QRE_ResolveGroup (texname);
 	}

@@ -2558,6 +2558,47 @@ int TexMgr_CollectGroupNames (const char *texname, char (*names)[MAX_QPATH], int
 
 /*
 ================
+TexMgr_FindTextureForMaterial
+
+The active texture an editor material name resolves to ("textures/+3_med25",
+"progs/x.mdl:frame2"): the first texture whose own name normalizes to exactly
+that name, so a material the Materials tab opened by name -- with no world pick
+behind it -- still finds the pixels its preview and colour picker need.
+================
+*/
+gltexture_t *TexMgr_FindTextureForMaterial (const char *name)
+{
+	gltexture_t *glt;
+	char         query[MAX_QPATH];
+	char         n[MAX_QPATH];
+
+	if (!name || !name[0])
+		return NULL;
+
+	TexMgr_GroupName (name, query, sizeof (query));
+
+	SDL_LockMutex (texmgr_mutex);
+
+	for (glt = active_gltextures; glt; glt = glt->next)
+	{
+		if (!glt->name[0])
+			continue;
+
+		TexMgr_GroupName (glt->name, n, sizeof (n));
+
+		if (!strcmp (n, query))
+		{
+			SDL_UnlockMutex (texmgr_mutex);
+			return glt;
+		}
+	}
+
+	SDL_UnlockMutex (texmgr_mutex);
+	return NULL;
+}
+
+/*
+================
 TexMgr_CollectTextureNames
 
 The names of the textures the engine currently has, for the material editor's picker: one name
