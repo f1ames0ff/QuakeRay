@@ -715,13 +715,17 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // the traced modes need the TLAS, so the rasterized frame records no top-level build.
     if (!sky.renderUiOnly && accelStructs != nullptr)
     {
+        BeginGpuPass(commandList, frameIndex, GPU_PASS_SETUP_BLAS);
         accelStructs->BuildStatic(commandList);
+        EndGpuPass(commandList, frameIndex, GPU_PASS_SETUP_BLAS);
 
         if (tracedFrame)
         {
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_SETUP_TLAS);
             accelStructs->BuildTopLevel(commandList, frameIndex, sky.rayCullMaskWorld,
                                         sky.allowGeometryWithSkyFlag, sky.disableRayTracedGeometry,
                                         sky.particleProxies, sky.particleProxyCount);
+            EndGpuPass(commandList, frameIndex, GPU_PASS_SETUP_TLAS);
         }
     }
 
@@ -774,7 +778,9 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
         // raster chain has no consumer of a normal.
         if (tracedFrame && accelStructs != nullptr)
         {
+            BeginGpuPass(commandList, frameIndex, GPU_PASS_SETUP_PREPROC);
             accelStructs->RecordVertexPreprocessing(commandList, frameIndex, worldUniformBuffer.Get());
+            EndGpuPass(commandList, frameIndex, GPU_PASS_SETUP_PREPROC);
         }
     }
 

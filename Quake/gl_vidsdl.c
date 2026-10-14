@@ -194,6 +194,7 @@ atomic_uint32_t rt_end_task_running;
 	   rank-wise instead - a superset of the positional test that also ignores the list order,
 	   because the allocation depends on the geometry count and the primitive counts alone. */ \
 	CVAR_DEF_T (rt_dyn_blas_sorted, "1") \
+CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	/* Percent of create-time slack in a dynamic BLAS handle: the create descriptors pad every \
 	   geometry's primitive and vertex counts by this much (with small floors) and append this \
 	   many percent more geometry slots, so a list that fluctuates within the padding reuses the \
@@ -512,6 +513,7 @@ static THREAD_LOCAL rt_prof_tls_t *rt_prof_tls;
 
 static qboolean          rt_upload_trace_on;
 static qboolean          rt_dyn_blas_sorted_on;
+static qboolean          rt_dyn_blas_update_on = true;
 static uint32_t          rt_dyn_blas_headroom_on = 25;
 extern atomic_uint32_t   rs_alias_enhanced_draws;
 extern atomic_uint32_t   rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
@@ -802,6 +804,14 @@ void RT_Prof_FrameStart (void)
 	{
 		rt_dyn_blas_sorted_on = dyn_blas_sorted;
 		qrSetDynamicShapeSortedReuse (vulkan_globals.instance, dyn_blas_sorted);
+	}
+
+	const qboolean dyn_blas_update = CVAR_TO_BOOL (rt_dyn_blas_update);
+
+	if (dyn_blas_update != rt_dyn_blas_update_on)
+	{
+		rt_dyn_blas_update_on = dyn_blas_update;
+		qrSetDynamicShapeRefit (vulkan_globals.instance, dyn_blas_update);
 	}
 
 	const uint32_t dyn_blas_headroom = (uint32_t)CLAMP (0.0f, rt_dyn_blas_headroom.value, 100.0f);
@@ -1510,6 +1520,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_brush_persistent");
 	RT_Bench_Setting (f, "rt_dyn_blas_sorted");
+	RT_Bench_Setting (f, "rt_dyn_blas_update");
 	RT_Bench_Setting (f, "rt_dyn_blas_headroom");
 	RT_Bench_Setting (f, "rt_upload_trace");
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");

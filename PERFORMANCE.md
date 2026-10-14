@@ -13,7 +13,7 @@ Use [ARCHITECTURE.md](ARCHITECTURE.md) to navigate from a counter to its produce
 
 The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/qr_audit_max.cfg), with volumetric sky Low (`rt_sky_clouds_quality 0`). Particles/FTE, smoke, enhanced models, viewmodel, GI level 2, NEE 2, reflection/refraction depth 8, denoising and glass effects remain enabled. Main captures use `rt_stats 0`, uncapped host FPS, vsync off and `vid_maxframelatency 0`; artistic strengths are the recorded preset values, not arbitrary slider maxima. The runner [sets/validates 4K and the effective preset](tests/perf/run_stress.ps1#L350).
 
-**Status (2026-10-14, Release, GI medium):** the Fuma balanced point holds a 60.8 FPS mean (16.4-16.5 ms) with 11.8-22.3% of intervals over the 16.67 ms budget (p95 16.8-16.95 ms) - a mean-level pass, not yet a stable-60 pass; Bogbottom measures a 52.8 FPS mean (18.8-19.1 ms) with essentially every interval over budget. At the audited maximum-quality preset (GI ultra, balanced) separate captures from the same campaign measure 50.4 / 45.8 FPS. The resolution-scaling section below shows the GPU as the frame's limiter at every tested point; the entity campaign's "about 37 / 24 FPS" reading was the Debug era and remains under "Controlled entity improvements" for provenance. Supplied saves are stress points, not all-map or long-gameplay coverage.
+**Status (2026-10-14, Release, GI medium):** the Fuma balanced point holds a 60.8-66 FPS mean (15.2-16.5 ms) with 1-22% of intervals over the 16.67 ms budget, and Bogbottom holds a 60.3-60.5 FPS mean (16.5-16.6 ms, p95 ~17.1 ms) after the vertex-preprocessing work below (its mover active in every verified capture); both remain mean-level passes, not yet stable-60 (Bogbottom's p99 is ~17.4 ms). At the audited maximum-quality preset (GI ultra, balanced) separate captures from the same campaign measure 50.4 / 45.8 FPS. The resolution-scaling section below shows the GPU as the frame's limiter at every tested point; the entity campaign's "about 37 / 24 FPS" reading was the Debug era and remains under "Controlled entity improvements" for provenance. Supplied saves are stress points, not all-map or long-gameplay coverage.
 
 ## Resolution scaling and the 60-FPS target (2026-10-14)
 
@@ -51,6 +51,18 @@ groups-off / groups-on at spacing 128 / the merged default. The default costs 1.
 4.7% on Bogbottom at this point (Bogbottom `clusters` 0.20 → 0.32 ms, `gpu.frame` +0.8 ms); the
 witness lines `rt_dtal_groups=1 rt_dtal_spacing=8 rt_dtal_maxgroups=2048` are in the
 `audit-dt-*` bench logs.
+
+**Follow-up (2026-10-14, evening): the setup bucket decomposed, Bogbottom at 60.** Three new GPU
+pass timers split the setup bucket (`setup_blas` / `setup_tlas` / `setup_preproc`), and the dynamic
+vertex preprocessing now dispatches 64 contiguous geometry chunks per instance instead of one
+workgroup per instance: Bogbottom's `setup_preproc` fell from 2.11 to 0.89 ms, its balanced point
+from 52.8 to 60.3-60.5 FPS (16.5-16.6 ms, p95 ~17.1, 0-2 intervals >19 ms in ~630 frames), and
+Fuma's to 64-66 FPS with `setup_preproc` 0.61; the remaining setup work is the dynamic BLAS builds
+and vertex-data copies inside `setup_tlas` (2.1 ms on Bogbottom, 1.4 on Fuma). The BLAS refit
+switch (`rt_dyn_blas_update`, default `0`) shows in the same timers: on, it saves about 0.5 ms of
+the bucket but stalls the frame's GPU-fence wait on 10-16% of frames, a net loss on this driver.
+Captures: `build/Release/audit-fin-*`, `audit-vp-*`, `audit-rf-*` (GI medium, balanced, movers
+active where noted).
 
 ## Measurement contract
 

@@ -1550,6 +1550,14 @@ void VulkanDevice::SetDynamicShapeHeadroom(uint32_t percent)
     }
 }
 
+void VulkanDevice::SetDynamicShapeRefit(bool enable)
+{
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->SetShapeRefit(enable);
+    }
+}
+
 void VulkanDevice::ResetUploadLockStats()
 {
     for (uint32_t i = 0; i < QR_UPLOAD_LANE_COUNT; ++i)

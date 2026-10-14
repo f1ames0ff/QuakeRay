@@ -60,8 +60,10 @@ namespace
 // them (vulkan-raytracing.cpp:803-815), so the flag has to be identical here and in createAccelStruct.
 constexpr nvrhi::rt::AccelStructBuildFlags STATIC_BLAS_BUILD_FLAGS =
     nvrhi::rt::AccelStructBuildFlags::PreferFastTrace;
-constexpr nvrhi::rt::AccelStructBuildFlags DYNAMIC_BLAS_BUILD_FLAGS =
-    nvrhi::rt::AccelStructBuildFlags::PreferFastBuild;
+const nvrhi::rt::AccelStructBuildFlags STATIC_MOVABLE_BLAS_BUILD_FLAGS =
+    nvrhi::rt::AccelStructBuildFlags::PreferFastTrace | nvrhi::rt::AccelStructBuildFlags::AllowUpdate;
+const nvrhi::rt::AccelStructBuildFlags DYNAMIC_BLAS_BUILD_FLAGS =
+    nvrhi::rt::AccelStructBuildFlags::PreferFastBuild | nvrhi::rt::AccelStructBuildFlags::AllowUpdate;
 constexpr nvrhi::rt::AccelStructBuildFlags TOP_LEVEL_BUILD_FLAGS =
     nvrhi::rt::AccelStructBuildFlags::PreferFastTrace;
 
@@ -91,6 +93,8 @@ const char *const VERTEX_PREPROCESS_SHADER_FILE_NAME = "CmVertexPreprocess.comp.
 // VERT_PREPROC_MODE_ONLY_DYNAMIC processes exactly the instances the push mask marks dynamic, which
 // is what the per-slot copies of this module need.
 constexpr uint32_t VERTEX_PREPROCESS_MODE_SPEC_ID = 0;
+constexpr uint32_t VERTEX_PREPROCESS_CHUNK_SPEC_ID = 1;
+constexpr uint32_t VERTEX_PREPROCESS_DYNAMIC_CHUNKS = 64;
 
 // The descriptor of a native wrap of an engine buffer that an acceleration-structure build reads.
 //
@@ -207,6 +211,35 @@ std::string MakeBlasDebugName(VertexCollectorFilterTypeFlags filter)
 // (VertexCollector.cpp:873-885). NVRHI copies the 12 floats into its own upload buffer at build time
 // and gives the build that device address (vulkan-raytracing.cpp:120-146), so the engine's device
 // transforms buffer is never referenced by NVRHI.
+// The topology identity of one geometry: everything a refit build may not change (the buffers,
+// their offsets and counts, the stride, the indexedness, the flags and the transform's presence),
+// and deliberately not the transform values, which a refit is meant to pick up.
+static void AppendGeometryIdentity(std::vector<uint64_t> &id,
+                                   const VkAccelerationStructureGeometryKHR &src,
+                                   const VkAccelerationStructureBuildRangeInfoKHR &range,
+                                   VkDeviceAddress vertexBufferAddress,
+                                   VkDeviceAddress indexBufferAddress,
+                                   nvrhi::IBuffer *vertexBuffer,
+                                   nvrhi::IBuffer *indexBuffer)
+{
+    const VkAccelerationStructureGeometryTrianglesDataKHR &triangles = src.geometry.triangles;
+    const bool indexed = triangles.indexType == VK_INDEX_TYPE_UINT32;
+
+    id.push_back(reinterpret_cast<uintptr_t>(vertexBuffer));
+    id.push_back(reinterpret_cast<uintptr_t>(indexBuffer));
+    id.push_back(triangles.vertexData.deviceAddress - vertexBufferAddress);
+    id.push_back(triangles.vertexStride);
+    id.push_back(triangles.maxVertex);
+    id.push_back(indexed ? 1u : 0u);
+    id.push_back(indexed ? (triangles.indexData.deviceAddress - indexBufferAddress) : 0u);
+    id.push_back(indexed ? triangles.indexType : 0u);
+    id.push_back(range.primitiveCount);
+    id.push_back(range.primitiveOffset);
+    id.push_back(range.firstVertex);
+    id.push_back((src.flags & VK_GEOMETRY_OPAQUE_BIT_KHR) != 0 ? 1u : 0u);
+    id.push_back(triangles.transformData.deviceAddress);
+}
+
 nvrhi::rt::GeometryDesc MakeGeometryDesc(const VkAccelerationStructureGeometryKHR &src,
                                          const VkAccelerationStructureBuildRangeInfoKHR &range,
                                          VkDeviceAddress vertexBufferAddress,
@@ -763,12 +796,14 @@ bool RhiAccelStructs::CreateVertexPreprocessing(const char *pShaderFolderPath)
     // the RHI pass is the dynamic-only one, set explicitly instead of relying on the blob's default
     // (the default happens to be the same mode, but the constant is the pipeline's contract).
     {
-        const nvrhi::ShaderSpecialization specialization =
-            nvrhi::ShaderSpecialization::UInt32(VERTEX_PREPROCESS_MODE_SPEC_ID,
-                                                VERT_PREPROC_MODE_ONLY_DYNAMIC);
+        const nvrhi::ShaderSpecialization specialization[2] =
+        {
+            nvrhi::ShaderSpecialization::UInt32(VERTEX_PREPROCESS_MODE_SPEC_ID, VERT_PREPROC_MODE_ONLY_DYNAMIC),
+            nvrhi::ShaderSpecialization::UInt32(VERTEX_PREPROCESS_CHUNK_SPEC_ID, VERTEX_PREPROCESS_DYNAMIC_CHUNKS),
+        };
 
         vertexPreprocessSpecializedShader =
-            device->createShaderSpecialization(vertexPreprocessShader.Get(), &specialization, 1);
+            device->createShaderSpecialization(vertexPreprocessShader.Get(), specialization, 2);
 
         if (vertexPreprocessSpecializedShader == nullptr)
         {
@@ -984,6 +1019,14 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
             primitiveCount += ranges[i].primitiveCount;
         }
 
+        blas.lastBuildId.reserve(geoms.size() * 12);
+
+        for (size_t i = 0; i < geoms.size(); i++)
+        {
+            AppendGeometryIdentity(blas.lastBuildId, geoms[i], ranges[i], vertexBufferAddress, indexBufferAddress,
+                                   vertexBuffer, indexBuffer);
+        }
+
         candidates.push_back(std::move(blas));
     }
 
@@ -996,12 +1039,43 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
     }
 
     // One structure per non-empty static component, created and recorded in the same call, so that
-    // the first frame that follows a level load is also the frame that builds.
+    // the first frame that follows a level load is also the frame that builds. A movable rebuild
+    // whose topology identity matches the last build refits the existing structure instead
+    // (PerformUpdate), so a moving mover costs a refit rather than a recreation and a full build.
     for (StaticBlas &candidate : candidates)
     {
+        const nvrhi::rt::AccelStructBuildFlags buildFlags =
+            rebuildMovable ? STATIC_MOVABLE_BLAS_BUILD_FLAGS : STATIC_BLAS_BUILD_FLAGS;
+
+        StaticBlas *existing = nullptr;
+
+        if (rebuildMovable)
+        {
+            for (StaticBlas &blas : staticBlas)
+            {
+                if (blas.filter == candidate.filter)
+                {
+                    existing = &blas;
+                    break;
+                }
+            }
+        }
+
+        if (rebuildMovable && shapeRefit && existing != nullptr && existing->handle != nullptr &&
+            !existing->lastBuildId.empty() && existing->lastBuildId == candidate.lastBuildId)
+        {
+            pCommandList->buildBottomLevelAccelStruct(
+                existing->handle.Get(), candidate.geometries.data(), candidate.geometries.size(),
+                buildFlags | nvrhi::rt::AccelStructBuildFlags::PerformUpdate);
+
+            existing->geometries = std::move(candidate.geometries);
+            existing->lastBuildId = std::move(candidate.lastBuildId);
+            continue;
+        }
+
         nvrhi::rt::AccelStructDesc desc;
         desc.bottomLevelGeometries = candidate.geometries;
-        desc.setBuildFlags(STATIC_BLAS_BUILD_FLAGS);
+        desc.setBuildFlags(buildFlags);
         desc.setDebugName(candidate.debugName);
 
         nvrhi::rt::AccelStructHandle handle = device->createAccelStruct(desc);
@@ -1014,7 +1088,7 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
         }
 
         pCommandList->buildBottomLevelAccelStruct(handle.Get(), candidate.geometries.data(),
-                                                  candidate.geometries.size(), STATIC_BLAS_BUILD_FLAGS);
+                                                  candidate.geometries.size(), buildFlags);
 
         candidate.handle = std::move(handle);
 
@@ -1022,16 +1096,6 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
         {
             staticBlas.push_back(std::move(candidate));
             continue;
-        }
-
-        StaticBlas *existing = nullptr;
-        for (StaticBlas &blas : staticBlas)
-        {
-            if (blas.filter == candidate.filter)
-            {
-                existing = &blas;
-                break;
-            }
         }
 
         if (existing == nullptr)
@@ -1043,6 +1107,7 @@ void RhiAccelStructs::BuildStatic(nvrhi::ICommandList *pCommandList)
         frameContext->Retire(std::move(existing->handle));
         existing->handle = std::move(candidate.handle);
         existing->geometries = std::move(candidate.geometries);
+        existing->lastBuildId = std::move(candidate.lastBuildId);
     }
 
     staticMovableRevision = movableRevision;
@@ -1429,6 +1494,16 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 listPrimitives += ranges[i].primitiveCount;
             }
 
+            std::vector<uint64_t> &buildId = blas->buildIdScratch;
+            buildId.clear();
+            buildId.reserve(geoms.size() * 12);
+
+            for (size_t i = 0; i < geoms.size(); i++)
+            {
+                AppendGeometryIdentity(buildId, geoms[i], ranges[i], vertexBufferAddress, indexBufferAddress,
+                                       copies.vertex.Get(), copies.index.Get());
+            }
+
             const bool replacingHandle = blas->handle != nullptr;
             const bool shapeFits =
                 replacingHandle && (sortedShapeReuse ? DynamicShapeSortedFits(blas->shape, shape)
@@ -1479,8 +1554,12 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
                 }
             }
 
+            bool createdThisFrame = false;
+
             if (blas->handle == nullptr || !shapeFits)
             {
+                createdThisFrame = true;
+
                 const std::chrono::steady_clock::time_point createStart = std::chrono::steady_clock::now();
 
                 // Create from the padded list (see "Dynamic BLAS sizing and replacement" in the
@@ -1545,8 +1624,18 @@ void RhiAccelStructs::AppendDynamicSlot(nvrhi::ICommandList *pCommandList,
 
             blas->active = true;
 
+            nvrhi::rt::AccelStructBuildFlags buildFlags = DYNAMIC_BLAS_BUILD_FLAGS;
+
+            if (shapeRefit && !createdThisFrame && !blas->lastBuildId.empty() &&
+                blas->lastBuildId == blas->buildIdScratch)
+            {
+                buildFlags = buildFlags | nvrhi::rt::AccelStructBuildFlags::PerformUpdate;
+            }
+
             pCommandList->buildBottomLevelAccelStruct(blas->handle.Get(), blas->geometries.data(),
-                                                      blas->geometries.size(), DYNAMIC_BLAS_BUILD_FLAGS);
+                                                      blas->geometries.size(), buildFlags);
+
+            blas->lastBuildId = blas->buildIdScratch;
 
             dynamicFrameBuilds++;
             DynamicFilterCounters &builtCounters = FilterCountersFor(blas->filter);
@@ -1871,8 +1960,10 @@ void RhiAccelStructs::RecordVertexPreprocessing(nvrhi::ICommandList *pCommandLis
         }
     }
 
-    // One dispatch, one workgroup per TLAS instance, exactly the engine's shape
-    // (VertexPreprocessing.cpp:88); the push constant is the range the descriptor-less layout
+    // One dispatch, one workgroup per (TLAS instance, geometry slice): the slice comes from the
+    // group's Y index and the dynamicChunkCount specialization the RHI's pipeline sets; the
+    // engine's own path keeps Y = 1, the constant's default and the historical shape
+    // (VertexPreprocessing.cpp:88). The push constant is the range the descriptor-less layout
     // declared, and it has to follow the state, which setPushConstants requires (nvrhi.h:3430-3440).
     nvrhi::ComputeState state;
     state.setPipeline(vertexPreprocessPipeline);
@@ -1881,7 +1972,7 @@ void RhiAccelStructs::RecordVertexPreprocessing(nvrhi::ICommandList *pCommandLis
 
     pCommandList->setComputeState(state);
     pCommandList->setPushConstants(&push, sizeof(push));
-    pCommandList->dispatch(push.tlasInstanceCount, 1, 1);
+    pCommandList->dispatch(push.tlasInstanceCount, VERTEX_PREPROCESS_DYNAMIC_CHUNKS, 1);
 }
 
 void RhiAccelStructs::WarnUnresolvedFilter(uint32_t filter)
@@ -2301,6 +2392,11 @@ const RhiAccelStructs::DynamicFilterCounters *RhiAccelStructs::GetDynamicFilterC
         *count = dynamicFrameFilterCount;
     }
     return dynamicFrameFilters;
+}
+
+void RhiAccelStructs::SetShapeRefit(bool enable)
+{
+    shapeRefit = enable;
 }
 
 void RhiAccelStructs::SetSortedShapeReuse(bool enable)

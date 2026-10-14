@@ -318,6 +318,7 @@ public:
     nvrhi::IBuffer *GetParticleProxyBuffer(uint32_t frameIndex) const;
 
     void SetSortedShapeReuse(bool enable);
+    void SetShapeRefit(bool enable);
     void SetDynamicHeadroom(uint32_t percent);
 
     void GetDynamicFrameCounters(uint32_t *builds, uint32_t *recreations, float *createMs) const;
@@ -360,6 +361,10 @@ private:
         // them but nulls the buffer pointers in its own copy (vulkan-raytracing.cpp:406-427), so
         // the build call needs this original vector, which therefore has to stay alive.
         std::vector<nvrhi::rt::GeometryDesc> geometries;
+
+        // The topology identity of the last build. When a movable rebuild brings the same
+        // identity, the structure is refit with PerformUpdate instead of recreated and rebuilt.
+        std::vector<uint64_t> lastBuildId;
     };
 
     struct DynamicBlas
@@ -378,6 +383,11 @@ private:
         // adopting the current shape as the new envelope, when it does not.
         std::vector<uint32_t> shape;
         std::vector<uint32_t> shapeScratch;
+
+        // The topology identity of the last build and the current frame's scratch copy: equal,
+        // the frame refits this structure with PerformUpdate instead of a full build.
+        std::vector<uint64_t> lastBuildId;
+        std::vector<uint64_t> buildIdScratch;
 
         // Whether this filter's BLAS was built in the slot's current frame; only an active entry is
         // added to the TLAS. Empty filters keep the handle but stay inactive.
@@ -658,6 +668,7 @@ private:
     uint32_t dynamicFrameRecreations = 0;
     double   dynamicFrameCreateMs = 0.0;
     bool     sortedShapeReuse = false;
+    bool     shapeRefit = false;
     uint32_t dynamicHeadroomPercent = 25;
     static constexpr uint32_t MAX_DYNAMIC_FILTER_COUNTERS = 20;
     DynamicFilterCounters dynamicFrameFilters[MAX_DYNAMIC_FILTER_COUNTERS];

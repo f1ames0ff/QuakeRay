@@ -202,6 +202,11 @@ QrResult qrSetDynamicShapeHeadroom(QrInstance qrInstance, uint32_t percent)
     return Call(qrInstance, &VulkanDevice::SetDynamicShapeHeadroom, percent);
 }
 
+QrResult qrSetDynamicShapeRefit(QrInstance qrInstance, QrBool32 enable)
+{
+    return Call(qrInstance, &VulkanDevice::SetDynamicShapeRefit, enable != 0);
+}
+
 QrResult qrUploadLockStatsReset(QrInstance qrInstance)
 {
     return Call(qrInstance, &VulkanDevice::ResetUploadLockStats);
@@ -515,6 +520,9 @@ const char *qrGetGpuPassName(uint32_t passIndex)
         "postui",
         "present",
         "particles",
+        "setup_blas",
+        "setup_tlas",
+        "setup_preproc",
     };
 
     if (passIndex >= QR_GPU_PASS_COUNT)

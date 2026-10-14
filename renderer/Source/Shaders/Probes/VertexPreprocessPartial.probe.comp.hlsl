@@ -24,6 +24,8 @@
 
 #define PROBE_DESC_SET 8
 
+[[vk::constant_id(1)]] const uint dynamicChunkCount = 1;
+
 [[vk::binding(0, PROBE_DESC_SET)]] RWStructuredBuffer<float> probeOutput;
 
 [numthreads(COMPUTE_VERT_PREPROC_GROUP_SIZE_X, 1, 1)]

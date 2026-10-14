@@ -39,7 +39,11 @@
 const int geomIndexOffset = globalUniform.instanceGeomInfoOffset[tlasInstanceIndex / 4][tlasInstanceIndex % 4];
 const int geomCount = globalUniform.instanceGeomCount[tlasInstanceIndex / 4][tlasInstanceIndex % 4];
 
-for (uint localGeomIndex = groupThreadID.x; localGeomIndex < geomCount; localGeomIndex += COMPUTE_VERT_PREPROC_GROUP_SIZE_X)
+const uint chunkCount = max(1u, dynamicChunkCount);
+const uint chunkFirst = (uint(geomCount) * groupID.y) / chunkCount;
+const uint chunkLast = (uint(geomCount) * (groupID.y + 1u)) / chunkCount;
+
+for (uint localGeomIndex = chunkFirst + groupThreadID.x; localGeomIndex < chunkLast; localGeomIndex += COMPUTE_VERT_PREPROC_GROUP_SIZE_X)
 {
     const ShGeometryInstance inst = geometryInstances[geomIndexOffset + localGeomIndex];
 
