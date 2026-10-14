@@ -399,6 +399,51 @@ Supports optional fullbright pixels.
 Based on code by MH from RMQEngine
 =============
 */
+// The physical radius of the drawn model: half the diagonal of the pose's
+// bounding box, in the metric units a light radius is measured in. An alias
+// model's frames are animation groups and pose1 is a pose inside one, so the
+// group that holds the pose names the box and the model's own scale is applied;
+// a model whose frame boxes are degenerate falls back to its bounding box.
+static float RT_AliasModelLightSize(const aliashdr_t *paliashdr, const lerpdata_t *lerpdata, const qmodel_t *model)
+{
+    float size[3];
+
+    if (paliashdr->numframes > 0)
+    {
+        float mins[3], maxs[3];
+        int   frame = CLAMP(0, lerpdata->pose1, paliashdr->numframes - 1);
+
+        for (int i = 0; i < paliashdr->numframes; i++)
+        {
+            if (lerpdata->pose1 >= paliashdr->frames[i].firstpose &&
+                lerpdata->pose1 < paliashdr->frames[i].firstpose + paliashdr->frames[i].numposes)
+            {
+                frame = i;
+                break;
+            }
+        }
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            mins[axis] = paliashdr->frames[frame].bboxmin.v[axis];
+            maxs[axis] = paliashdr->frames[frame].bboxmax.v[axis];
+        }
+
+        if (maxs[0] > mins[0] && maxs[1] > mins[1] && maxs[2] > mins[2])
+        {
+            for (int axis = 0; axis < 3; axis++)
+                size[axis] = (maxs[axis] - mins[axis]) * fabsf(paliashdr->scale[axis]);
+
+            return QUAKEUNIT_TO_METRIC(0.5f * sqrtf(size[0] * size[0] + size[1] * size[1] + size[2] * size[2]));
+        }
+    }
+
+    for (int axis = 0; axis < 3; axis++)
+        size[axis] = model->maxs[axis] - model->mins[axis];
+
+    return QUAKEUNIT_TO_METRIC(0.5f * sqrtf(size[0] * size[0] + size[1] * size[1] + size[2] * size[2]));
+}
+
 static void GL_DrawAliasFrame(
     cb_context_t* cbx, entity_t* e, aliashdr_t* paliashdr, lerpdata_t lerpdata, gltexture_t* tx, float entity_alpha,
     qboolean alphatest, int entuniqueid)
@@ -456,15 +501,16 @@ static void GL_DrawAliasFrame(
        churn the cluster lists every frame; a weapon that lights the room keeps its light_color
        and the dlight below. */
     const double prof_lights = RT_Prof_Begin ();
-    const int dtal_lights =
-        isfirstperson ? 0
-                      : RT_AddAliasEmissiveLights (e->model, tx, RT_GetAliasModelUniqueId (entuniqueid),
-                                                   GetModelVerticesForPose (e->model, paliashdr, lerpdata.pose1),
-                                                   GetModelVerticesForPose (e->model, paliashdr, lerpdata.pose2), blend,
-                                                   paliashdr->numverts_vbo, e->model->rtindices, paliashdr->numindexes,
-                                                   &transform);
+    qboolean dtal_qualifies = false;
 
-    if (dtal_lights <= 0 && tx && tx->rthaslightcolor && tx->rtislight && RT_AllowFakeLights ())
+    if (!isfirstperson)
+        RT_AddAliasEmissiveLights (e->model, tx, RT_GetAliasModelUniqueId (entuniqueid),
+                                   GetModelVerticesForPose (e->model, paliashdr, lerpdata.pose1),
+                                   GetModelVerticesForPose (e->model, paliashdr, lerpdata.pose2), blend,
+                                   paliashdr->numverts_vbo, e->model->rtindices, paliashdr->numindexes,
+                                   &transform, &dtal_qualifies);
+
+    if (!dtal_qualifies && tx && tx->rthaslightcolor && tx->rtislight && RT_AllowFakeLights ())
     {
         rt_emitter_light_t light;
 
@@ -476,6 +522,7 @@ static void GL_DrawAliasFrame(
         VectorCopy (tx->rtlightcolor, light.color);
         light.intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
         light.radius = CVAR_TO_FLOAT (rt_dlight_radius);
+        light.modelSize = RT_AliasModelLightSize (paliashdr, &lerpdata, e->model);
         light.style = -1;
 
         RT_LIGHT_Emit (&light);

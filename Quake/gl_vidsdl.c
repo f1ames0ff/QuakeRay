@@ -205,6 +205,9 @@ atomic_uint32_t rt_end_task_running;
 	   is a light and carries an emissive mask; 0 keeps the fake dlight for it. The per-model cap
 	   and the frame budget bound a crowd of glowing models (see RT_AddAliasEmissiveLights). */ \
 	CVAR_DEF_T (rt_model_lights, "1") \
+	CVAR_DEF_T (rt_level_lights, "0") \
+	CVAR_DEF_T (rt_level_light_maxpolys, "2") \
+	CVAR_DEF_T (rt_level_light_models, "flame.mdl flame2.mdl lavaball.mdl proj_balllava.mdl") \
 	CVAR_DEF_T (rt_dtal_model_maxpolys, "8") \
 	CVAR_DEF_T (rt_dtal_model_budget, "512") \
 	CVAR_DEF_T (rt_dtal_model_minarea, "0") \
@@ -221,7 +224,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_poi_key, "1") \
 	\
 	CVAR_DEF_T (rt_sky_sun, "1") \
-	CVAR_DEF_T (rt_sky_sun_color, "255 255 255") \
+	CVAR_DEF_T (rt_sky_sun_color, "255 238 191") \
 	CVAR_DEF_T (rt_sky_sun_size, "1.0") \
 	CVAR_DEF_T (rt_sky_sun_pitch, "140") \
 	CVAR_DEF_T (rt_sky_sun_yaw, "120") \
@@ -238,14 +241,14 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_sky_nee, "1") \
 	CVAR_DEF_T (rt_physical_sky, "1") \
 	CVAR_DEF_T (rt_physical_sun, "0") \
-	CVAR_DEF_T (rt_sky_color, "255 255 255") \
+	CVAR_DEF_T (rt_sky_color, "0 169 255") \
 	CVAR_DEF_T (rt_sky_brightness, "1.0") \
 	CVAR_DEF_T (rt_sky_light_mult, "1.0") \
 	CVAR_DEF_T (rt_brightness, "1.0") \
 	CVAR_DEF_T (rt_light_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_clouds, "1") \
 	CVAR_DEF_T (rt_sky_clouds_quality, "2") \
-	CVAR_DEF_T (rt_sky_clouds_color, "0 0 0") \
+	CVAR_DEF_T (rt_sky_clouds_color, "255 255 255") \
 	CVAR_DEF_T (rt_sky_clouds_alpha, "1.0") \
 	CVAR_DEF_T (rt_sky_clouds_coverage, "0.2") \
 	CVAR_DEF_T (rt_sky_clouds_density, "0.8") \
@@ -267,10 +270,14 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_emis_blendstr, "1") \
 	CVAR_DEF_T (rt_tal_selflit, "6") \
 	CVAR_DEF_T (rt_dtal_minarea, "0") \
+	CVAR_DEF_T (rt_dtal_proxy, "1") \
+	CVAR_DEF_T (rt_dtal_proxy_minarea, "0") \
+	CVAR_DEF_T (rt_dtal_proxy_model_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
 	CVAR_DEF_T (rt_dtal_clearance, "1") \
 	CVAR_DEF_T (rt_dtal_groups, "1") \
-	CVAR_DEF_T (rt_dtal_spacing, "128") \
+	CVAR_DEF_T (rt_dtal_spacing, "8") \
+	CVAR_DEF_T (rt_dtal_maxgroups, "2048") \
     \
 	CVAR_DEF_T (rt_reflrefr_depth, "2") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
@@ -1516,14 +1523,20 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "r_particles");
 	RT_Bench_Setting (f, "r_fteparticles");
 	RT_Bench_Setting (f, "rt_model_lights");
+	RT_Bench_Setting (f, "rt_level_lights");
+	RT_Bench_Setting (f, "rt_level_light_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_model_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_model_budget");
 	RT_Bench_Setting (f, "rt_dtal_model_minarea");
 	RT_Bench_Setting (f, "rt_dtal_minarea");
+	RT_Bench_Setting (f, "rt_dtal_proxy");
+	RT_Bench_Setting (f, "rt_dtal_proxy_minarea");
+	RT_Bench_Setting (f, "rt_dtal_proxy_model_minarea");
 	RT_Bench_Setting (f, "rt_dtal_maxpolys");
 	RT_Bench_Setting (f, "rt_dtal_clearance");
 	RT_Bench_Setting (f, "rt_dtal_groups");
 	RT_Bench_Setting (f, "rt_dtal_spacing");
+	RT_Bench_Setting (f, "rt_dtal_maxgroups");
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_sky_godrays");
 	RT_Bench_Setting (f, "rt_sky_godrays_intensity");
@@ -2967,9 +2980,9 @@ typedef enum
 } rt_color_index_t;
 
 static rt_color_t rt_colors[RT_COLOR_COUNT] = {
-	[RT_COLOR_SKY]         = {.cvar = &rt_sky_color,        .fallback = {32 / 255.0f, 0.0f, 64 / 255.0f}, .dirty = true},
-	[RT_COLOR_SUN]         = {.cvar = &rt_sky_sun_color,        .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
-	[RT_COLOR_CLOUDS]      = {.cvar = &rt_sky_clouds_color, .fallback = {0.0f, 0.0f, 0.0f},                .dirty = true},
+	[RT_COLOR_SKY]         = {.cvar = &rt_sky_color,        .fallback = {0.0f, 169 / 255.0f, 1.0f},       .dirty = true},
+	[RT_COLOR_SUN]         = {.cvar = &rt_sky_sun_color,        .fallback = {1.0f, 238 / 255.0f, 191 / 255.0f}, .dirty = true},
+	[RT_COLOR_CLOUDS]      = {.cvar = &rt_sky_clouds_color, .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_LIGHT]       = {.cvar = &rt_light_color,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_GLOBALLIGHT] = {.cvar = &rt_globallight,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_WATER]       = {.cvar = &rt_water_color,      .fallback = {171 / 255.0f, 193 / 255.0f, 210 / 255.0f}, .dirty = true},
@@ -4266,6 +4279,12 @@ static void RT_EmissiveLimitsChanged_f (cvar_t *var)
 	Atomic_StoreUInt32 (&rt_require_static_submit, true);
 }
 
+static void RT_DtalCollectChanged_f (cvar_t *var)
+{
+	(void)var;
+	RT_DtalRequestRebuild ();
+}
+
 // Both diagnostics run on the current map, so they do not wait for a map reload.
 static void RT_WorldCensusChanged_f (cvar_t *var)
 {
@@ -4509,11 +4528,14 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_brush_persistent, RT_BrushPersistentChanged_f);
-	Cvar_SetCallback (&rt_dtal_minarea, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_minarea, RT_DtalCollectChanged_f);
 	Cvar_SetCallback (&rt_dtal_maxpolys, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_clearance, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_groups, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_spacing, RT_EmissiveLimitsChanged_f);
+	Cvar_SetCallback (&rt_dtal_proxy, RT_DtalCollectChanged_f);
+	Cvar_SetCallback (&rt_dtal_proxy_minarea, RT_DtalCollectChanged_f);
+	Cvar_SetCallback (&rt_dtal_maxgroups, RT_DtalCollectChanged_f);
 	Cvar_SetCallback (&rt_worldcensus, RT_WorldCensusChanged_f);
 	Cvar_SetCallback (&rt_worldlights_stats, RT_WorldLightsStatsChanged_f);
 

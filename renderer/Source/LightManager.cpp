@@ -46,6 +46,9 @@ static_assert(LightManager::LIGHT_STATS_SLOT_COUNT == Q2_LIGHT_LIST_STATS_BUFFER
 
 namespace
 {
+    bool g_arrayOverflowWarned;
+    bool g_arrayOverflowed;
+
     VkDeviceSize GetLightStatsSlotSize()
     {
         return sizeof(uint32_t) * Q2_MAX_CLUSTERS * Q2_LIGHT_LIST_MAX_PER_CELL *
@@ -357,6 +360,13 @@ void qray::LightManager::PrepareForFrame(VkCommandBuffer cmd, uint32_t frameInde
     regLightCount = 0;
     dirLightCount = 0;
 
+    if (!g_arrayOverflowed)
+    {
+        g_arrayOverflowWarned = false;
+    }
+
+    g_arrayOverflowed = false;
+
     const uint32_t prevArrayEnd = GetLightArrayEnd(regLightCount_Prev, dirLightCount_Prev);
 
     if (prevArrayEnd > 0)
@@ -544,9 +554,15 @@ void qray::LightManager::AddLight(uint32_t frameIndex, uint64_t uniqueId,
 
     if (GetLightArrayEnd(regLightCount, dirLightCount) >= kLightArrayMaxSize)
     {
-        fprintf(stderr, "qray: light array overflow (regLightCount=%u dirLightCount=%u LIGHT_ARRAY_MAX_SIZE=%u) - dropping light(s)\n",
-                regLightCount, dirLightCount, kLightArrayMaxSize);
-        assert(0);
+        g_arrayOverflowed = true;
+
+        if (!g_arrayOverflowWarned)
+        {
+            g_arrayOverflowWarned = true;
+            fprintf(stderr, "qray: light array overflow (regLightCount=%u dirLightCount=%u LIGHT_ARRAY_MAX_SIZE=%u) - dropping light(s)\n",
+                    regLightCount, dirLightCount, kLightArrayMaxSize);
+        }
+
         return;
     }
 
@@ -725,6 +741,7 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
     }
 
     uint32_t published = 0;
+    bool     invalid = false;
 
     for (uint32_t i = 0; i < batch.groupCount; i++)
     {
@@ -734,6 +751,12 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
             info.memberCount > batch.memberCount - info.memberBase)
         {
             fprintf(stderr, "qray: DTAL group %u has an invalid member range - skipped\n", i);
+            invalid = true;
+            continue;
+        }
+
+        if (IsColorTooDim(info.color.data))
+        {
             continue;
         }
 
@@ -742,7 +765,7 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
         published++;
     }
 
-    if (published == 0)
+    if (published == 0 && invalid)
     {
         return false;
     }

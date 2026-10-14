@@ -237,6 +237,14 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 		VectorCopy (tx->rtlightcolor, light.color);
 		light.intensity = CVAR_TO_FLOAT (rt_dlight_intensity);
 		light.radius = CVAR_TO_FLOAT (rt_dlight_radius);
+		/* the light of a sprite is as big as the quad it draws */
+		{
+			const float dx = vertices[0].position[0] - vertices[2].position[0];
+			const float dy = vertices[0].position[1] - vertices[2].position[1];
+			const float dz = vertices[0].position[2] - vertices[2].position[2];
+
+			light.modelSize = QUAKEUNIT_TO_METRIC (0.5f * sqrtf (dx * dx + dy * dy + dz * dz));
+		}
 		light.style = -1;
 
 		RT_LIGHT_Emit (&light);

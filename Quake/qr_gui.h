@@ -91,6 +91,7 @@ int  QR_GUI_SliderFloatMixed (const char *label, float *value, float min, float 
 int  QR_GUI_SliderInt (const char *label, int *value, int min, int max, const char *tooltip);
 // items are count NUL-terminated strings.
 int  QR_GUI_Combo (const char *label, int *value, const char *const *items, int count, const char *tooltip);
+int  QR_GUI_ComboFiltered (const char *label, int *value, const char *const *items, int count, const char *tooltip);
 // A row of equal-width tabs; a click on another one selects it. Returns 1 when
 // the selection changed (the caller draws the content of *selected itself).
 int  QR_GUI_Tabs (const char *id, const char *const *items, int count, int *selected, int *reset_pressed);
@@ -106,8 +107,8 @@ int  QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const ch
 // changed.
 int  QR_GUI_ColorHex (const char *label, float rgb[3], int *enabled, const char *tooltip);
 int  QR_GUI_ColorHexMixed (const char *label, float rgb[3], int *enabled, int mixed, const char *tooltip);
-// A row of the luma list: a swatch/hex editor with a remove button.
-// Returns 1 when the color changed and 2 when remove was pressed (3 = both).
+// A row of the luma list: a swatch/hex editor.
+// Returns 1 when the color changed.
 int  QR_GUI_ColorRow (const char *id, float rgb[3], const char *tooltip);
 // A square button with a circular arrow, right-aligned in the current row.
 // Returns 1 when pressed; drawn grayed out while enabled is 0.
@@ -135,6 +136,17 @@ int  QR_GUI_DialogVertical (const char *title, const char *text, const char *fir
 // and fills out_u/out_v with the cursor's normalized position (0..1).
 int  QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, float *out_u, float *out_v);
 int  QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h, float (*uv)[2], int *count, int max_count);
+// A plain section header (a centered title, nothing to collapse) with the same
+// icon buttons at its right end: the copy icon always, the paste icon when the
+// caller has something to paste. Returns a bitmask of the buttons pressed
+// (1 = the first, 2 = the second).
+int  QR_GUI_HeaderFrameActions (const char *label, int show_paste,
+                                const char *tip_first, const char *tip_second);
+// The row of one luma block: its name on the left, and the copy, the paste (offered once
+// something is copied) and the remove icon at its right end. Returns a bitmask of the buttons
+// pressed (1 = copy, 2 = paste, 4 = remove).
+int  QR_GUI_BlockActions (const char *label, int show_paste,
+                          const char *tip_copy, const char *tip_paste, const char *tip_remove);
 // 1 while any ImGui item is being dragged or edited.
 int  QR_GUI_AnyItemActive (void);
 
