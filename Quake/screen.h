@@ -29,7 +29,7 @@ void SCR_Init (void);
 void SCR_LoadPics (void);
 void SCR_ScreenShot_f (void);
 
-void SCR_UpdateScreen (qboolean use_tasks);
+void SCR_UpdateScreen (qboolean wait_for_end);
 
 void SCR_CenterPrint (const char *str);
 

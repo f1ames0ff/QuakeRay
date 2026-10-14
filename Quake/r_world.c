@@ -790,13 +790,12 @@ static void R_MarkSurfacesPrepare (void *unused)
 R_MarkSurfaces -- johnfitz -- mark surfaces based on PVS and rebuild texture chains
 ===============
 */
-void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_t *store_efrags, task_handle_t *cull_surfaces, task_handle_t *chain_surfaces)
+void R_MarkSurfaces (task_handle_t before_mark, task_handle_t *store_efrags, task_handle_t *cull_surfaces, task_handle_t *chain_surfaces)
 {
 	const qboolean full_chains = rt_chain_consumed == NULL || Atomic_LoadUInt32 (&rt_require_static_submit) != 0 ||
 	                             Atomic_LoadUInt32 (&rt_require_world_light_recollect) != 0 || r_showtris.value != 0.0f;
 	rt_chain_full_frame = full_chains;
 
-	if (use_tasks)
 	{
 		const qboolean parallel_mark = (r_parallelmark.value != 0.0f) && rt_mark_parallel_built;
 		rt_mark_parallel_frame = parallel_mark;
@@ -831,13 +830,6 @@ void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_
 			*chain_surfaces = mark_surfaces;
 			*cull_surfaces = mark_surfaces;
 		}
-	}
-	else
-	{
-		rt_mark_parallel_frame = false;
-
-		R_MarkSurfacesPrepare (NULL);
-		R_MarkVisSurfaces (NULL);
 	}
 }
 

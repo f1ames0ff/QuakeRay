@@ -157,7 +157,7 @@ void R_Init (void);
 void R_InitTextures (void);
 void R_InitEfrags (void);
 void R_RenderView (
-	qboolean use_tasks, task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task); // must set r_refdef first
+	task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task); // must set r_refdef first
 void R_ViewChanged (vrect_t *pvrect, int lineadj, float aspect);
 // called whenever r_refdef or vid change
 // void R_InitSky (struct texture_s *mt);	// called at level load

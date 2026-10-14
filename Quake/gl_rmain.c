@@ -113,11 +113,6 @@ qboolean r_drawworld_cheatsafe, r_fullbright_cheatsafe, r_lightmap_cheatsafe; //
 
 cvar_t r_gpulightmapupdate = {"r_gpulightmapupdate", "0", CVAR_NONE};
 
-// Deprecated: r_tasks 0 is the legacy serial path. The engine is preparing to move to
-// multithreading; the r_tasks command and the fork it selects will be removed and the engine
-// will always run multithreaded.
-cvar_t r_tasks = {"r_tasks", "1", CVAR_NONE};
-
 extern cvar_t rt_dlight_intensity;
 extern cvar_t rt_dlight_radius;
 extern cvar_t rt_flashlight;
@@ -1329,7 +1324,7 @@ static void R_ClusterLightListsCommitTask (void *unused)
 R_RenderView
 ================
 */
-void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task)
+void R_RenderView (task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task)
 {
 	double time1, time2;
 
@@ -1361,7 +1356,6 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 	Atomic_StoreUInt32 (&rs_skypasses, 0u);
 	Atomic_StoreUInt32 (&rs_brushpasses, 0u);
 
-	if (use_tasks)
 	{
 		task_handle_t before_mark = Task_AllocateAndAssignFunc (R_SetupViewBeforeMark, NULL, 0);
 		Task_AddDependency (setup_frame_task, before_mark);
@@ -1371,7 +1365,7 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		task_handle_t store_efrags = INVALID_TASK_HANDLE;
 		task_handle_t cull_surfaces = INVALID_TASK_HANDLE;
 		task_handle_t chain_surfaces = INVALID_TASK_HANDLE;
-		R_MarkSurfaces (use_tasks, before_mark, &store_efrags, &cull_surfaces, &chain_surfaces);
+		R_MarkSurfaces (before_mark, &store_efrags, &cull_surfaces, &chain_surfaces);
 
 		task_handle_t draw_world_task = Task_AllocateAndAssignFunc (R_DrawWorldTask, NULL, 0);
 		Task_AddDependency (chain_surfaces, draw_world_task);
@@ -1446,19 +1440,6 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 			Task_Submit (cull_surfaces);
 			Task_Submit (chain_surfaces);
 		}
-	}
-	else
-	{
-		R_SetupViewBeforeMark (NULL);
-		R_MarkSurfaces (use_tasks, INVALID_TASK_HANDLE, NULL, NULL, NULL); // johnfitz -- create texture chains from PVS
-		R_DrawWorldTask (NULL);
-		R_DrawSkyAndWaterTask (NULL);
-		for (int i = 0; i < NUM_ENTITIES_CBX; ++i)
-			R_DrawEntitiesTask (i, NULL);
-		R_DrawAlphaEntitiesTask (NULL);
-		R_DrawParticlesTask (NULL);
-		R_DrawViewModelTask (NULL);
-		RT_ClusterLightListsUpload ();
 	}
 
 	// johnfitz
