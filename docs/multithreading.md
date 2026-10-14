@@ -18,18 +18,15 @@ before adapting a producer; document any unavailable tooling or incomplete cover
   Input, command execution and server/client simulation remain on the main-thread host path.
   Backend recording/submission is still an ordered end-frame operation; this platform does not
   authorize concurrent NVRHI command-list recording or bypass existing renderer locks.
-- The render frame runs as a dependency graph of tasks when `r_tasks 1` — the switch is the
-  `use_tasks` condition in [SCR_UpdateScreen](../Quake/gl_screen.c#L1161); `r_tasks` defaults to
-  `1` (owner decision, 2026-10-11). `r_tasks 0` is the deprecated legacy serial path: the cvar
-  and the fork it selects are slated for removal, after which the engine always runs
-  multithreaded.
-- In the serial path (`r_tasks 0`) the same producers run in fixed order on the main thread; the
-  frame contents and the NVRHI ray-tracing renderer are identical in both modes. With
-  `r_parallelmark 1` the world texture chains are rebuilt in surface-index order instead of the
-  scalar leaf first-touch order (owner-accepted 2026-10-11). The code-level guarantee is predicate
-  equivalence, not an identical chain: both paths chain exactly the surfaces that pass the same
-  PVS/backface/sky tests, and the parallel path only reorders the chaining within one texture. The
-  retained audit captures match in the modal/mean `calls_geometry` (not frame-exact), and the
+- The render frame always runs as a dependency graph of tasks. The `r_tasks` cvar and its serial
+  fork were retired on 2026-10-14 (`changelog.md`); [SCR_UpdateScreen](../Quake/gl_screen.c#L1145)'s
+  flag now only selects whether an out-of-band refresh joins the frame's end task before returning,
+  while the host frame keeps deferring the end task into the next begin.
+- With `r_parallelmark 1` the world texture chains are rebuilt in surface-index order instead of the
+  scalar leaf first-touch order (owner-accepted 2026-10-11); at `0` the scalar `R_MarkVisSurfaces`
+  runs as a single task. The code-level guarantee is predicate equivalence, not an identical chain:
+  both paths chain exactly the surfaces that pass the same PVS/backface/sky tests, and the parallel
+  path only reorders the chaining within one texture. The retained audit captures match in the modal/mean `calls_geometry` (not frame-exact), and the
   water-shot on/off provenance was not recorded (its fixtures were deleted), so those captures are
   not evidence of an identical chained set. Two shared dummy textures keep `rt_chain_index == 0` and
   are gathered into one surface bucket; this is benign because the slice chains each surface to its
@@ -38,7 +35,7 @@ before adapting a producer; document any unavailable tooling or incomplete cover
   uniform across all surfaces of one texture; if a future change makes such a flag per-texinfo,
   the per-texture slicing must be revisited because batch grouping would stop being
   order-invariant.
-- `cpu.wait_ms` is nonzero only in task mode: it is the main thread's join wait, not idle time.
+- `cpu.wait_ms` is the main thread's join wait, not idle time.
 
 ## The task system
 
@@ -225,21 +222,20 @@ serial branch is not ready for integration.
    transaction; enable/reset precedes submission. Compare interval/FPS between modes, not summed
    worker slot times. Update ARCHITECTURE.md/PERFORMANCE.md when boundaries or counters change.
 7. **Verify the final revision.** Build through `build_win.ps1 Debug -Tests`, run the relevant tests,
-   and compare the same binary with `r_tasks 0` and `r_tasks 1`. Check visual/scene correctness as
+   and compare matched captures against the task-frame baseline (the serial fork was retired on
+   2026-10-14; its bisection baseline no longer exists). Check visual/scene correctness as
    well as timing. Exercise applicable collisions, capacity limits, invalidation, map transitions,
    cold enable/disable and early/late completion. Test the production kernel/state machine with
    real payloads and controlled interleavings, not only predicates or manually simulated counters.
 8. **Hand off evidence.** Record source/binary identity, MCP inspections and gaps, the ownership map,
    new DAG edges, tests and capture identities. Separate observed gains from hypotheses and state
-   untested cases. `r_tasks` now defaults to `1` (owner decision, 2026-10-11); the serial path is
-   deprecated and kept only for bisection until the cvar and its fork are removed.
+   untested cases. The task frame is the engine's only render path since 2026-10-14.
 
 ## Measurement
 
-- Enable with `r_tasks 1`; the official runner takes it as
-  `-Overrides @('r_tasks 1')` (`tests/perf/run_stress.ps1`).
+- The task frame is the only render path; no override selects it.
 - Use `-StatsLevel 3 -EnableStatsAfterWarmup` to enable profiling in an already loaded game.
-  Combine it with `-Overrides @('r_tasks 1', 'rt_end_task_delay_ms 30')` for delayed-end activation.
+  Combine it with `-Overrides @('rt_end_task_delay_ms 30')` for delayed-end activation.
   Window dumps expose `cpu.window_id`, `cpu.window_frames` and `cpu.renderer_samples`; the runner
   requires multiple advancing windows, nonzero draw-frame averages and matching frame/result counts.
 - Task mode changes the meaning of the CPU counters: `cpu.wait_ms` is the join wait, and per-slot
@@ -272,9 +268,9 @@ The milestones below are **open acceptance goals**, not claims about implemented
 | M6. Meet the performance program | On the declared reference hardware, target at least 45 FPS at 3840x2160 FSR Quality throughout the maintained loaded-gameplay scene matrix. The mean and p95 frame intervals must be at most 22.22 ms; also report p99/max and hitches. Remove the CPU ceiling so lowering FSR internal resolution improves the frame interval instead of leaving it flat. | Matched captures for every maintained scene/preset meet the budget and demonstrate resolution-driven scaling. CPU critical-path and GPU timings are checked independently: GPU work above 22.22 ms requires GPU optimization too, not more CPU threads. Fixed-cost work and deviations from proportional scaling are reported, not hidden. |
 
 **Two release decisions, not one:** M1, M2, M4 and M5 gated the default-on *render* task path; the
-owner authorized that default on 2026-10-11 (`changelog.md`, Unreleased), and the serial fallback
-(`r_tasks 0`, deprecated) remains available while the M5 scene/transition matrix runs are
-completed under the default. Broader whole-frame CPU task parallelism additionally requires M3. M6
+owner authorized that default on 2026-10-11 (`changelog.md`), and the serial fallback was retired
+outright on 2026-10-14, so the M5 scene/transition matrix runs on the single task path. Broader
+whole-frame CPU task parallelism additionally requires M3. M6
 is the separate performance target; meeting one FPS number does not certify thread safety, and a
 GPU bottleneck does not make the task platform incomplete. Neither one short capture nor the
 historical ~40% uplift closes these gates.
@@ -285,9 +281,8 @@ its completion evidence exists; do not mark it done merely because tasks were ad
 
 ## Known limitations
 
-- `r_tasks` defaults to `1` (flipped 2026-10-11); `r_tasks 0` is the deprecated serial path kept
-  for bisection until the cvar, its fork and the serial compositions are removed and the engine
-  always runs multithreaded.
+- The serial fork is retired (2026-10-14): the engine always runs the multithreaded frame, and
+  `r_parallelmark 0` is the remaining serial-vs-chunked marker choice for world marking.
 - `r_gpulightmapupdate` now only selects the non-interpolated lightstyle path in `R_AnimateLight`;
   the GPU lightmap update task and the `lightmaps[].modified` field were removed in the Tier A port
   (see H14 in `docs/upstream-porting-synthesis.md`).

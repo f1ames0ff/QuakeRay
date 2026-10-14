@@ -29,8 +29,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "tasks.h"
 
 void          GL_WaitForDeviceIdle (void);
-qboolean      GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *x, int *y, int *width, int *height);
-task_handle_t GL_EndRendering (qboolean use_tasks, qboolean use_swapchain);
+qboolean      GL_BeginRendering (task_handle_t *begin_rendering_task, int *x, int *y, int *width, int *height);
+task_handle_t GL_EndRendering (void);
 void          GL_SynchronizeEndRenderingTask (void);
 
 extern int glx, gly, glwidth, glheight;
@@ -328,7 +328,7 @@ void  Fog_Init (void);
 void R_NewGame (void);
 
 void R_AnimateLight (void);
-void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_t *store_efrags, task_handle_t *cull_surfaces, task_handle_t *chain_surfaces);
+void R_MarkSurfaces (task_handle_t before_mark, task_handle_t *store_efrags, task_handle_t *cull_surfaces, task_handle_t *chain_surfaces);
 qboolean RT_ChainFullFrame (void);
 void RT_MarkParallel_NewMap (void);
 qboolean R_CullBox (vec3_t emins, vec3_t emaxs);

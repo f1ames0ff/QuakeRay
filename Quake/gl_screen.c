@@ -72,9 +72,6 @@ cvar_t scr_relconscale = {"scr_relconscale", "1", CVAR_ARCHIVE};
 extern cvar_t crosshair;
 extern cvar_t crosshair_def;
 extern cvar_t crosshair_size;
-extern cvar_t r_tasks;
-extern cvar_t r_showtris;
-extern cvar_t r_showbboxes;
 extern cvar_t rt_dtal_debug;
 
 qboolean scr_initialized; // ready to draw
@@ -867,7 +864,7 @@ void SCR_BeginLoadingPlaque (void)
 	scr_con_current = 0;
 
 	scr_drawloading = true;
-	SCR_UpdateScreen (false);
+	SCR_UpdateScreen (true);
 	scr_drawloading = false;
 
 	scr_disabled_for_loading = true;
@@ -945,7 +942,7 @@ int SCR_ModalMessage (const char *text, float timeout) // johnfitz -- timeout
 
 	// draw a fresh screen
 	scr_drawdialog = true;
-	SCR_UpdateScreen (false);
+	SCR_UpdateScreen (true);
 	scr_drawdialog = false;
 
 	S_ClearBuffer (); // so dma doesn't loop current sound
@@ -1145,7 +1142,7 @@ WARNING: be very careful calling this from elsewhere, because the refresh
 needs almost the entire 256k of stack space!
 ==================
 */
-void SCR_UpdateScreen (qboolean use_tasks)
+void SCR_UpdateScreen (qboolean wait_for_end)
 {
 	if (!scr_initialized || !con_initialized || in_update_screen)
 		return; // not initialized yet
@@ -1158,7 +1155,6 @@ void SCR_UpdateScreen (qboolean use_tasks)
 
 	in_update_screen = true;
 	RT_Prof_FrameStart ();
-	use_tasks = use_tasks && (Tasks_NumWorkers () > 1) && r_tasks.value && !r_showtris.value && !r_showbboxes.value;
 
 	if (scr_disabled_for_loading)
 	{
@@ -1178,7 +1174,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	con_forcedup = !cl.worldmodel || cls.signon != SIGNONS;
 
 	task_handle_t begin_rendering_task = INVALID_TASK_HANDLE;
-	if (!GL_BeginRendering (use_tasks, &begin_rendering_task, &glx, &gly, &glwidth, &glheight))
+	if (!GL_BeginRendering (&begin_rendering_task, &glx, &gly, &glwidth, &glheight))
 	{
 		in_update_screen = false;
 		return;
@@ -1186,7 +1182,6 @@ void SCR_UpdateScreen (qboolean use_tasks)
 
 	if (vid.recalc_refdef) SCR_CalcRefdef ();
 
-	if (use_tasks)
 	{
 		if (prev_end_rendering_task != INVALID_TASK_HANDLE)
 		{
@@ -1196,13 +1191,13 @@ void SCR_UpdateScreen (qboolean use_tasks)
 
 		task_handle_t draw_done_task = Task_AllocateAndAssignFunc (SCR_DrawDone, NULL, 0);
 		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (SCR_SetupFrame, NULL, 0);
-		V_RenderView (use_tasks, begin_rendering_task, setup_frame_task, draw_done_task);
+		V_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
 		task_handle_t draw_gui_task = Task_AllocateAndAssignFunc (SCR_DrawGUI, NULL, 0);
-		task_handle_t end_rendering_task = GL_EndRendering (use_tasks, true);
+		task_handle_t end_rendering_task = GL_EndRendering ();
 
 		Task_AddDependency (begin_rendering_task, draw_gui_task);
 		Task_AddDependency (setup_frame_task, draw_gui_task);
-		// while tasks are on, the GUI must not read the frame's uploaded lights
+		// The GUI must not read the frame's uploaded lights
 		// (the editor's panel and its wireframes) before the draw that uploads them
 		if (rt_editor_draw_done_task != INVALID_TASK_HANDLE)
 			Task_AddDependency (rt_editor_draw_done_task, draw_gui_task);
@@ -1218,15 +1213,10 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		RT_Prof_End (RT_PROF_WAIT, prof_wait);
 		prev_end_rendering_task = end_rendering_task;
 	}
-	else
+
+	if (wait_for_end)
 	{
 		GL_SynchronizeEndRenderingTask ();
-		SCR_SetupFrame (NULL);
-		V_RenderView (use_tasks, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE);
-		S_ExtraUpdate ();
-		SCR_DrawGUI (NULL);
-		SCR_DrawDone(NULL);
-		GL_EndRendering (false, true);
 	}
 
 	in_update_screen = false;

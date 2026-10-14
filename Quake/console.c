@@ -515,7 +515,7 @@ void Con_Printf (const char *fmt, ...)
 		if (!inupdate)
 		{
 			inupdate = true;
-			SCR_UpdateScreen (false);
+			SCR_UpdateScreen (true);
 			inupdate = false;
 		}
 	}
@@ -1250,7 +1250,7 @@ void Con_NotifyBox (const char *text)
 	do
 	{
 		t1 = Sys_DoubleTime ();
-		SCR_UpdateScreen (false);
+		SCR_UpdateScreen (true);
 		Sys_SendKeyEvents ();
 		Key_GetGrabbedInput (&lastkey, &lastchar);
 		Sys_Sleep (16);

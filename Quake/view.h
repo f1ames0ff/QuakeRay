@@ -37,7 +37,7 @@ extern float rt_ef_pickup_pulse;
 extern float rt_ef_suit_pulse;
 
 void  V_Init (void);
-void  V_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task);
+void  V_RenderView (task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task);
 void  V_CalcBlend (void);
 void  V_SetupFrame (void);
 float V_CalcRoll (vec3_t angles, vec3_t velocity);

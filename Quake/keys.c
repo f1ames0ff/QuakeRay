@@ -268,7 +268,7 @@ void Key_Console (int key)
 		key_lines[edit_line][1] = 0; // johnfitz -- otherwise old history items show up in the new edit line
 		key_linepos = 1;
 		if (cls.state == ca_disconnected)
-			SCR_UpdateScreen (false); // force an update, because the command may take some time
+			SCR_UpdateScreen (true); // force an update, because the command may take some time
 		return;
 
 	case K_TAB:
