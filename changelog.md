@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added
+- **A distance and visibility LOD over the grouped DTAL parents (`rt_dtal_lod`, default `0`)** —
+  the layer precomputes a hierarchy with the DTAL build: every group enters one node per band level
+  (`rt_dtal_lod_maxbands`, the cell of level `k` is `2*tan(rt_dtal_lod_screen/2)*rt_dtal_lod_start*2^k`
+  wide), each node carries its member list, total power, power-weighted centroid and normal, summed
+  area, a conservative bounds radius and a deterministic UID, and a node with fewer than two members
+  is never published. The frame only selects levels, every `rt_dtal_lod_interval` (50 ms) and within
+  a bounded budget: a group merges once it passes its band edge with `rt_dtal_lod_hysteresis` (0.15)
+  and splits once it returns inside the edge; off-frustum groups shift `rt_dtal_lod_offscreen` (1)
+  band coarser after `rt_dtal_lod_dwell` (0.25 s) of a stable visibility class; a group returning
+  inside the edge is unmerged with priority. The replacement is atomic and exactly-once — a group is
+  represented by its node or by itself, never both and never neither: a published node registers one
+  representative at the members' averaged normal, nudged off the surface and refused when it tests
+  buried or when its coverage union overflows the 16-cluster cap (its members then stay individual),
+  with one synthesized quad member of the summed area; the representative's colour and mean emission
+  refresh per frame as the power-weighted average of its members' current values through the same
+  keep-clamp that never lets a light drop out of the cluster lists, and the merged parents' GPU
+  members stay resident for the unmerge. `rt_light_report` gains a `dtal lod` line with the
+  merged/nodes/individual counts, the transitions, the refusals and the uploaded record counts.
+  Off during development; the release default is an owner decision, and the acceptance captures are
+  in [the implementation report](docs/dtal-lod-implementation-report.md).
+
 ## v0.50.0
 
 ### Added

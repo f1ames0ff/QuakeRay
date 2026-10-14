@@ -12,9 +12,10 @@
   with the owner's decisions: the hierarchy is precomputed at the DTAL build and the frame only
   selects levels.
 - The precomputed core and its engine wiring are on the branch: the `rt_dtal_lod*` cvars, the
-  hierarchy build at the DTAL build boundary, the per-tick selection with frustum classification and
-  the light-report line live in `Quake/rt_dtal_lod.{h,c}` and `Quake/r_world.c`; registering the
-  merged representatives and the acceptance captures are the next step.
+  hierarchy build at the DTAL build boundary, the per-tick selection with frustum classification,
+  the effective-representation pass (coverage union and the buried guard), the combined upload with
+  the synthesized quad representative and the LOD-aware registration all live in
+  `Quake/rt_dtal_lod.{h,c}` and `Quake/r_world.c`; the acceptance captures are the remaining step.
 - Code baseline inspected: `dac6cdc4`; implementation started from `d365d033` (the then-current
   `origin/master`).
 - Primary reproduction: fragmented static-world emissive geometry, especially lava floors and glowing walls.
