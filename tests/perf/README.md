@@ -56,11 +56,12 @@ intro rather than the place.
 powershell -File tests\perf\run_place.ps1 -Save qrt_start_bigroom -Mode both
 ```
 
-The runner copies the mode config into the game directory, starts the engine, loads the save once,
-dismisses the menu and then measures two arms, each from a reload of the same save so both start
-from the same snapshot:
+The runner copies the mode config into the game directory, starts the engine and loads the save
+once: the save path sends no menu keys (Escape toggles the menu, so a keypress could leave a
+capture behind the open main menu), and each arm then runs from a reload of the same save so both
+start from the same snapshot:
 
-1. `rt_cluster_sampling 1`, the save reloaded, `-Warmup` seconds (default 6) and `-Seconds`
+1. `rt_cluster_sampling 1`, the save reloaded, `-Warmup` seconds (default 3) and `-Seconds`
    seconds of measurement;
 2. `rt_cluster_sampling 0` over the same reload, warmup and time.
 
