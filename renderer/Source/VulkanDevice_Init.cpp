@@ -80,6 +80,8 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
 
     surface = GetSurfaceFromUser( instance, *info );
 
+    win32Hwnd = info->pWin32SurfaceInfo != nullptr ? info->pWin32SurfaceInfo->hwnd : nullptr;
+
     physDevice = std::make_shared< PhysicalDevice >( instance );
     queues     = std::make_shared< Queues >( physDevice->Get(), surface );
 
@@ -120,7 +122,9 @@ VulkanDevice::VulkanDevice( const QrInstanceCreateInfo* info )
 
     uniform             = std::make_shared<GlobalUniform>(device, memAllocator);
 
-    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager, presentWait2Enabled, swapchainMaintenance1Enabled);
+    swapchain           = std::make_shared<Swapchain>(device, surface, physDevice->Get(), cmdManager, presentWait2Enabled, swapchainMaintenance1Enabled,
+                                                       fullScreenExclusiveSupported, win32Hwnd, acquireFullScreenExclusiveMode, releaseFullScreenExclusiveMode);
+    swapchain->SetPrintFunction([this](const char *message) { Print(message); });
 
     worldSamplerManager     = std::make_shared<SamplerManager>(device, 8, info->textureSamplerForceMinificationFilterLinear,
                                                                rhiTextureTable.get());
@@ -912,6 +916,12 @@ void VulkanDevice::CreateDevice()
             return !std::strcmp(ext.extensionName, VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME);
         });
 
+    const bool fullScreenExclusiveExtensionSupported = std::any_of(supportedDeviceExtensions.cbegin(), supportedDeviceExtensions.cend(),
+        [](const VkExtensionProperties& ext)
+        {
+            return !std::strcmp(ext.extensionName, VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME);
+        });
+
     VkPhysicalDevicePresentId2FeaturesKHR presentId2Features = {};
     presentId2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR;
 
@@ -1027,6 +1037,11 @@ void VulkanDevice::CreateDevice()
         deviceExtensions.push_back(swapchainMaintenance1ExtensionName);
     }
 
+    if (fullScreenExclusiveExtensionSupported)
+    {
+        deviceExtensions.push_back(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME);
+    }
+
     enabledDeviceExtensions.clear();
     for (const char *n : deviceExtensions)
     {
@@ -1052,6 +1067,17 @@ void VulkanDevice::CreateDevice()
 
     presentWait2Enabled = presentWait2Supported && InitDeviceExtensionFunctions_PresentWait2(device);
     swapchainMaintenance1Enabled = swapchainMaintenance1Supported;
+
+    fullScreenExclusiveSupported = fullScreenExclusiveExtensionSupported;
+    if (fullScreenExclusiveSupported)
+    {
+        acquireFullScreenExclusiveMode = reinterpret_cast<PFN_vkAcquireFullScreenExclusiveModeEXT>(
+            vkGetDeviceProcAddr(device, "vkAcquireFullScreenExclusiveModeEXT"));
+        releaseFullScreenExclusiveMode = reinterpret_cast<PFN_vkReleaseFullScreenExclusiveModeEXT>(
+            vkGetDeviceProcAddr(device, "vkReleaseFullScreenExclusiveModeEXT"));
+
+        fullScreenExclusiveSupported = acquireFullScreenExclusiveMode != nullptr && releaseFullScreenExclusiveMode != nullptr;
+    }
 
     if (libconfig.vulkanValidation)
     {

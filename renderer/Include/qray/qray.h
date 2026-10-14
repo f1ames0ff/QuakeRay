@@ -1103,6 +1103,7 @@ typedef enum QrPresentMode
     QR_PRESENT_MODE_MAILBOX = 0,
     QR_PRESENT_MODE_VSYNC,
     QR_PRESENT_MODE_ADAPTIVE,
+    QR_PRESENT_MODE_IMMEDIATE,
 } QrPresentMode;
 
 typedef struct QrStartFrameInfo
@@ -1110,6 +1111,8 @@ typedef struct QrStartFrameInfo
     QrPresentMode   presentMode;
     uint32_t        maxFrameLatency;
     QrBool32        requestShaderReload;
+    QrBool32        wantFullscreenExclusive;
+    QrBool32        hasFocus;
 } QrStartFrameInfo;
 
 QRAPI QrResult QRCONV qrStartFrame(

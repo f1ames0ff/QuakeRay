@@ -377,17 +377,18 @@ static void BuildDynamicHeadroom(const std::vector<nvrhi::rt::GeometryDesc> &geo
         const bool indexed = triangles.indexFormat != nvrhi::Format::UNKNOWN;
         const uint32_t primitiveCount = padCount(shape[i * 5 + 0], MIN_PRIMITIVE_PADDING);
         const uint32_t vertexCount = padCount(shape[i * 5 + 1], MIN_VERTEX_PADDING);
+        // The non-indexed primitive count derives from the vertex count (vertexCount / 3), so the
+        // envelope element carries that same derivation and the allocation covers it.
+        const uint32_t envelopePrimitives = indexed ? primitiveCount : vertexCount / 3;
 
         if (indexed)
         {
             triangles.indexCount = primitiveCount * 3;
         }
-        // The non-indexed primitive count derives from the vertex count (vertexCount / 3), so there
-        // the vertex padding is what reserves primitives.
         triangles.vertexCount = vertexCount;
 
         paddedGeometries.push_back(padded);
-        paddedShape.push_back(primitiveCount);
+        paddedShape.push_back(envelopePrimitives);
         paddedShape.push_back(vertexCount);
         paddedShape.push_back(shape[i * 5 + 2]);
         paddedShape.push_back(shape[i * 5 + 3]);
@@ -398,15 +399,16 @@ static void BuildDynamicHeadroom(const std::vector<nvrhi::rt::GeometryDesc> &geo
     {
         nvrhi::rt::GeometryDesc padded = geometries[reference];
         nvrhi::rt::GeometryTriangles &triangles = padded.geometryData.triangles;
+        const bool indexed = triangles.indexFormat != nvrhi::Format::UNKNOWN;
 
-        if (triangles.indexFormat != nvrhi::Format::UNKNOWN)
+        if (indexed)
         {
             triangles.indexCount = reservePrimitives * 3;
         }
         triangles.vertexCount = reserveVertices;
 
         paddedGeometries.push_back(padded);
-        paddedShape.push_back(reservePrimitives);
+        paddedShape.push_back(indexed ? reservePrimitives : reserveVertices / 3);
         paddedShape.push_back(reserveVertices);
         paddedShape.push_back(shape[reference * 5 + 2]);
         paddedShape.push_back(shape[reference * 5 + 3]);

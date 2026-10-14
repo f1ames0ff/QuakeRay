@@ -229,6 +229,10 @@ private:
     std::shared_ptr<Swapchain>              swapchain;
     bool                                    presentWait2Enabled = false;
     bool                                    swapchainMaintenance1Enabled = false;
+    bool                                    fullScreenExclusiveSupported = false;
+    void                                   *win32Hwnd = nullptr;
+    PFN_vkAcquireFullScreenExclusiveModeEXT acquireFullScreenExclusiveMode = nullptr;
+    PFN_vkReleaseFullScreenExclusiveModeEXT releaseFullScreenExclusiveMode = nullptr;
     std::string                             printedPresentModeName;
     bool                                    printedPresentWaitActive = false;
     bool                                    printedRasterUploadWithoutFrame = false;

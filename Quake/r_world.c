@@ -6721,9 +6721,12 @@ void RT_PrintEmissiveStats (void)
 
 	for (int i = 0; i < rt_emis_watch_num; i++)
 	{
-		const rt_emis_watch_t *w = &rt_emis_watch[i];
+		rt_emis_watch_t *w = &rt_emis_watch[i];
 		RT_LightReportPrint ("  <%s> visible %i -> lights %i (rejected %i no material, %i no color, %i style off, %i degenerate, %i dark frame)\n",
-			w->name, w->surfaces, w->lights, w->no_material, w->no_color, w->style_off, w->degenerate, w->frame_off);
+			w->name, (int)Atomic_LoadUInt32 (&w->surfaces), (int)Atomic_LoadUInt32 (&w->lights),
+			(int)Atomic_LoadUInt32 (&w->no_material), (int)Atomic_LoadUInt32 (&w->no_color),
+			(int)Atomic_LoadUInt32 (&w->style_off), (int)Atomic_LoadUInt32 (&w->degenerate),
+			(int)Atomic_LoadUInt32 (&w->frame_off));
 
 		if (w->hist_frames > 0)
 			RT_LightReportPrint ("       since the filter was set: %i frames visible, lit %i, dark %i, %i with a lightstyle reject, %i on a dark animation frame, lights %i..%i%s\n",

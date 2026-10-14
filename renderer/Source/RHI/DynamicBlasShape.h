@@ -30,8 +30,9 @@ inline bool DynamicShapeFits(const std::vector<uint32_t> &envelope, const std::v
 // The rank-wise dominance test behind `rt_dyn_blas_sorted`: the envelope's geometry count and its
 // primitive counts sorted in descending order must dominate the current list's, so any reordering
 // of the list fits. A BLAS allocation is a function of its geometry count and its per-geometry
-// primitive counts (the vertex count, the stride, the vertex format and the transform presence do
-// not enter vkGetAccelerationStructureBuildSizesKHR), and rank-wise dominance of the counts implies
+// primitive counts (for a non-indexed geometry that count is the vertex count's quotient, which the
+// envelope element carries; the stride, the vertex format and the transform presence do not enter
+// vkGetAccelerationStructureBuildSizesKHR), and rank-wise dominance of the counts implies
 // the current primitive sum is at most the envelope's, so a build this test accepts always fits the
 // create-time allocation. The identity fields are not compared: the stride and the vertex format
 // are invariants of the filter key (VertexCollector) and of MakeGeometryDesc, and the transform

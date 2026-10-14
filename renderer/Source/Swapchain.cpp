@@ -23,6 +23,8 @@
 #include "QrException.h"
 #include "Utils.h"
 
+#include <vulkan/vulkan_win32.h>
+
 using namespace qray;
 
 namespace
@@ -61,7 +63,11 @@ Swapchain::Swapchain(
     VkPhysicalDevice _physDevice,
     std::shared_ptr<CommandBufferManager> _cmdManager,
     bool _presentWait2Supported,
-    bool _swapchainMaintenance1Supported)
+    bool _swapchainMaintenance1Supported,
+    bool _fullScreenExclusiveSupported,
+    void *_win32Hwnd,
+    PFN_vkAcquireFullScreenExclusiveModeEXT _acquireFullScreenExclusiveMode,
+    PFN_vkReleaseFullScreenExclusiveModeEXT _releaseFullScreenExclusiveMode)
     : device(_device)
     , surface(_surface)
     , physDevice(_physDevice)
@@ -70,6 +76,11 @@ Swapchain::Swapchain(
     , presentModeVsync(VK_PRESENT_MODE_FIFO_KHR)
     , presentModeAdaptive(VK_PRESENT_MODE_FIFO_KHR)
     , presentModeMailbox(VK_PRESENT_MODE_FIFO_KHR)
+    , presentModeImmediate(VK_PRESENT_MODE_FIFO_KHR)
+    , fullScreenExclusiveSupported(_fullScreenExclusiveSupported)
+    , exclusiveWin32Hwnd(_win32Hwnd)
+    , acquireFullScreenExclusive(_acquireFullScreenExclusiveMode)
+    , releaseFullScreenExclusive(_releaseFullScreenExclusiveMode)
     , requestedPresentMode(QR_PRESENT_MODE_MAILBOX)
     , surfaceExtent{ UINT32_MAX, UINT32_MAX }
     , isPresentMode(QR_PRESENT_MODE_MAILBOX)
@@ -118,6 +129,15 @@ Swapchain::Swapchain(
         {
             presentModeAdaptive = mode;
         }
+        else if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR)
+        {
+            presentModeImmediate = mode;
+        }
+    }
+
+    if (presentModeImmediate == VK_PRESENT_MODE_FIFO_KHR)
+    {
+        presentModeImmediate = presentModeMailbox;
     }
 }
 
@@ -195,6 +215,27 @@ bool Swapchain::RequestPresentMode(QrPresentMode mode)
     return requestedPresentMode != isPresentMode;
 }
 
+void Swapchain::SetFullscreenExclusive(bool want, bool focus)
+{
+    if (!want)
+    {
+        exclusiveDenied = false;
+    }
+
+    wantFullscreenExclusive = want;
+    hasFocus = focus;
+}
+
+void Swapchain::SetPrintFunction(PrintFunction pfnPrint)
+{
+    print = std::move(pfnPrint);
+}
+
+bool Swapchain::WantFullscreenExclusive() const
+{
+    return wantFullscreenExclusive && hasFocus && fullScreenExclusiveSupported && !exclusiveDenied;
+}
+
 void Swapchain::SetMaxFrameLatency(uint64_t frames)
 {
     maxFrameLatency = frames > 8 ? 8 : frames;
@@ -211,6 +252,7 @@ const char *Swapchain::GetPresentModeName() const
     {
     case QR_PRESENT_MODE_VSYNC:     return "fifo";
     case QR_PRESENT_MODE_ADAPTIVE:  return "fifo_relaxed";
+    case QR_PRESENT_MODE_IMMEDIATE: return "immediate";
     default:                        return "mailbox";
     }
 }
@@ -221,6 +263,7 @@ VkPresentModeKHR Swapchain::GetVkPresentMode(QrPresentMode mode) const
     {
     case QR_PRESENT_MODE_VSYNC:     return presentModeVsync;
     case QR_PRESENT_MODE_ADAPTIVE:  return presentModeAdaptive;
+    case QR_PRESENT_MODE_IMMEDIATE: return presentModeImmediate;
     default:                        return presentModeMailbox;
     }
 }
@@ -240,7 +283,7 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
     const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(requestedPresentMode);
     const bool parametersChanged =
         !AreExtentsEqual(requestedExtent, surfaceExtent) || requestedPresentMode != isPresentMode ||
-        usePresentWait2 != wantPresentWait2;
+        usePresentWait2 != wantPresentWait2 || WantFullscreenExclusive() != createdExclusive;
 
     const bool forceRecreate = recreateState.BeginAcquire(parametersChanged);
     if (parametersChanged)
@@ -273,6 +316,31 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
         }
     }
 
+    if (createdExclusive && !exclusiveAcquired && acquireFullScreenExclusive != nullptr)
+    {
+        if (acquireFullScreenExclusive(device, swapchain) == VK_SUCCESS)
+        {
+            exclusiveAcquired = true;
+
+            if (print)
+            {
+                print("RHI: full screen exclusive acquired");
+            }
+        }
+    }
+    else if (exclusiveAcquired && !createdExclusive && releaseFullScreenExclusive != nullptr)
+    {
+        if (releaseFullScreenExclusive(device, swapchain) == VK_SUCCESS)
+        {
+            exclusiveAcquired = false;
+
+            if (print)
+            {
+                print("RHI: full screen exclusive released");
+            }
+        }
+    }
+
     while (true)
     {
         const VkResult r = vkAcquireNextImageKHR(
@@ -292,7 +360,7 @@ void Swapchain::AcquireImage(VkSemaphore imageAvailableSemaphore)
             return;
         }
 
-        if (r == VK_ERROR_OUT_OF_DATE_KHR)
+        if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT)
         {
             ResetSurfaceCapabilitiesCache();
             TryRecreate(GetOptimalExtent(), requestedPresentMode, true);
@@ -377,7 +445,8 @@ bool Swapchain::TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode, boo
 {
     const bool wantPresentWait2 = surfacePresentWait2Supported && maxFrameLatency > 0 && IsWaitablePresentMode(mode);
 
-    if (!force && AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode && usePresentWait2 == wantPresentWait2)
+    if (!force && AreExtentsEqual(surfaceExtent, newExtent) && isPresentMode == mode && usePresentWait2 == wantPresentWait2 &&
+        WantFullscreenExclusive() == createdExclusive)
     {
         return false;
     }
@@ -396,6 +465,7 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
     surfaceExtent = { newWidth, newHeight };
     currentPresentId = 0;
     waitablePresentId = 0;
+    exclusiveAcquired = false;
 
     ResetSurfaceCapabilitiesCache();
 
@@ -474,8 +544,42 @@ void Swapchain::Create(uint32_t newWidth, uint32_t newHeight, QrPresentMode mode
     swapchainInfo.clipped = VK_FALSE;
     swapchainInfo.oldSwapchain = oldSwapchain;
 
+    const bool useExclusive = WantFullscreenExclusive();
+    VkSurfaceFullScreenExclusiveInfoEXT fullScreenExclusiveInfo = {};
+    VkSurfaceFullScreenExclusiveWin32InfoEXT fullScreenExclusiveWin32Info = {};
+
+    if (useExclusive)
+    {
+        fullScreenExclusiveWin32Info.sType = VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_WIN32_INFO_EXT;
+        fullScreenExclusiveWin32Info.hmonitor = MonitorFromWindow((HWND)exclusiveWin32Hwnd, MONITOR_DEFAULTTOPRIMARY);
+
+        fullScreenExclusiveInfo.sType = VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT;
+        fullScreenExclusiveInfo.pNext = &fullScreenExclusiveWin32Info;
+        fullScreenExclusiveInfo.fullScreenExclusive = VK_FULL_SCREEN_EXCLUSIVE_APPLICATION_CONTROLLED_EXT;
+        swapchainInfo.pNext = &fullScreenExclusiveInfo;
+    }
+
+    createdExclusive = false;
     r = vkCreateSwapchainKHR(device, &swapchainInfo, nullptr, &swapchain);
+
+    if (r != VK_SUCCESS && useExclusive)
+    {
+        swapchainInfo.pNext = nullptr;
+        r = vkCreateSwapchainKHR(device, &swapchainInfo, nullptr, &swapchain);
+
+        if (r == VK_SUCCESS)
+        {
+            exclusiveDenied = true;
+
+            if (print)
+            {
+                print("Warning: RHI: the driver refused a full screen exclusive swap chain, continuing without it");
+            }
+        }
+    }
+
     VK_CHECKERROR(r);
+    createdExclusive = useExclusive && !exclusiveDenied;
 
     if (oldSwapchain != VK_NULL_HANDLE)
     {

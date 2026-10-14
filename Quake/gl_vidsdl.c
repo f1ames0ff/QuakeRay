@@ -85,6 +85,7 @@ static void ClearAllStates (void);
 
 viddef_t        vid; // global video state
 modestate_t     modestate = MS_UNINIT;
+qboolean        vid_has_focus = true;
 extern qboolean scr_initialized;
 extern cvar_t   r_particles, host_maxfps;
 extern cvar_t   scr_showfps, scr_fov;
@@ -787,6 +788,23 @@ void RT_Prof_FrameStart (void)
 	rt_prof_capture_frame = enabled || rt_bench_active;
 	const double now = Sys_DoubleTime ();
 	RT_ProfWindowBeginFrame (&rt_prof_window, &rt_prof_window_sync, enabled, rt_prof_capture_frame, now, RT_Prof_ResetWindow, NULL);
+
+	const qboolean dyn_blas_sorted = CVAR_TO_BOOL (rt_dyn_blas_sorted);
+
+	if (dyn_blas_sorted != rt_dyn_blas_sorted_on)
+	{
+		rt_dyn_blas_sorted_on = dyn_blas_sorted;
+		qrSetDynamicShapeSortedReuse (vulkan_globals.instance, dyn_blas_sorted);
+	}
+
+	const uint32_t dyn_blas_headroom = (uint32_t)CLAMP (0.0f, rt_dyn_blas_headroom.value, 100.0f);
+
+	if (dyn_blas_headroom != rt_dyn_blas_headroom_on)
+	{
+		rt_dyn_blas_headroom_on = dyn_blas_headroom;
+		qrSetDynamicShapeHeadroom (vulkan_globals.instance, dyn_blas_headroom);
+	}
+
 	if (!rt_prof_capture_frame)
 		return;
 
@@ -813,22 +831,6 @@ void RT_Prof_FrameStart (void)
 	qrSetUploadLockTracing (vulkan_globals.instance, upload_trace);
 	if (upload_trace)
 		qrUploadLockStatsReset (vulkan_globals.instance);
-
-	const qboolean dyn_blas_sorted = CVAR_TO_BOOL (rt_dyn_blas_sorted);
-
-	if (dyn_blas_sorted != rt_dyn_blas_sorted_on)
-	{
-		rt_dyn_blas_sorted_on = dyn_blas_sorted;
-		qrSetDynamicShapeSortedReuse (vulkan_globals.instance, dyn_blas_sorted);
-	}
-
-	const uint32_t dyn_blas_headroom = (uint32_t)CLAMP (0.0f, rt_dyn_blas_headroom.value, 100.0f);
-
-	if (dyn_blas_headroom != rt_dyn_blas_headroom_on)
-	{
-		rt_dyn_blas_headroom_on = dyn_blas_headroom;
-		qrSetDynamicShapeHeadroom (vulkan_globals.instance, dyn_blas_headroom);
-	}
 }
 
 void RT_Prof_FrameEnd (void)
@@ -2619,6 +2621,7 @@ static const char *VID_VsyncModeName (int mode)
 	case VID_VSYNC_ON:        return "vsync";
 	case VID_VSYNC_ADAPTIVE:  return "adaptive";
 	case VID_VSYNC_FREESYNC:  return "freesync";
+	case VID_VSYNC_MAILBOX:   return "mailbox";
 	default:                  return "off";
 	}
 }
@@ -2630,7 +2633,8 @@ static QrPresentMode VID_PresentMode (void)
 	case VID_VSYNC_ON:        return QR_PRESENT_MODE_VSYNC;
 	case VID_VSYNC_ADAPTIVE:  return QR_PRESENT_MODE_ADAPTIVE;
 	case VID_VSYNC_FREESYNC:  return QR_PRESENT_MODE_VSYNC;
-	default:                  return QR_PRESENT_MODE_MAILBOX;
+	case VID_VSYNC_MAILBOX:   return QR_PRESENT_MODE_MAILBOX;
+	default:                  return QR_PRESENT_MODE_IMMEDIATE;
 	}
 }
 
@@ -2776,6 +2780,8 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, qboolean fu
 	SDL_ShowWindow (draw_context);
 	SDL_RaiseWindow (draw_context);
 
+	vid_has_focus = (SDL_GetWindowFlags (draw_context) & SDL_WINDOW_INPUT_FOCUS) != 0;
+
 	vid.width = VID_GetCurrentWidth ();
 	vid.height = VID_GetCurrentHeight ();
 	vid.conwidth = vid.width & 0xFFFFFFF8;
@@ -2827,7 +2833,7 @@ static void VID_Test (void)
 	old_width = VID_GetCurrentWidth ();
 	old_height = VID_GetCurrentHeight ();
 	old_refreshrate = VID_GetCurrentRefreshRate ();
-	old_fullscreen = VID_GetFullscreen () ? 1 : 0;
+	old_fullscreen = (int)vid_fullscreen.value;
 	VID_Restart (true);
 
 	// pop up confirmation dialoge
@@ -3302,6 +3308,8 @@ void GL_BeginRenderingTask (void *unused)
 		.presentMode = VID_PresentMode (),
 		.maxFrameLatency = (uint32_t)CLAMP (0, (int)vid_maxframelatency.value, 1),
 		.requestShaderReload = request_shaders_reload,
+		.wantFullscreenExclusive = (vid_fullscreen.value >= 2.0f) && modestate == MS_FULLSCREEN,
+		.hasFocus = vid_has_focus,
 	};
 
 	const double prof_begin = RT_Prof_Begin ();
@@ -3556,17 +3564,18 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// a third sample's RNG salt would collide with the sun disk stream.
 	const uint32_t nee_samples = (CVAR_TO_FLOAT (rt_nee_samples) < 1.5f) ? 1u : 2u;
 
-	// Q2RTX-style global illumination level (pt_num_bounce_rays): 0 disables the
-	// indirect pass, 1 mirrors the historical single-bounce behavior and 2 adds a
-	// second indirect bounce.
+	// The global illumination level: 0 disables the indirect pass; the four steps are low (a
+	// quarter-resolution grid, one bounce), medium (a quarter-resolution grid, two bounces), high
+	// (half resolution, one bounce) and ultra (half resolution, two bounces). Every bounce casts
+	// its own NEE rays (the light list, the sun, the sky).
 	const float gi_level = CLAMP (0.0f, CVAR_TO_FLOAT (rt_gi_level), 2.0f);
 
 	QrDrawFrameIlluminationParams illum_params = {
 	    .maxBounceShadows = CVAR_TO_UINT32 (rt_shadowrays),
-		// The level alone decides the bounce count, like Q2RTX pt_num_bounce_rays.
-		// rt_indir2bounces is kept for config compatibility but no longer forces the
-		// second bounce on at every level, which made medium and high identical.
-		.enableSecondBounceForIndirect = (gi_level >= 1.5f),
+		// The level alone decides the bounce count and the resolution tier (see above): the
+		// raygen derives both from giBounceRays, and this field reports whether the chain is
+		// longer than one bounce.
+		.enableSecondBounceForIndirect = ((gi_level >= 0.75f && gi_level < 1.25f) || (gi_level >= 1.75f)),
 		.cellWorldSize = METRIC_TO_QUAKEUNIT(2.0f),
 		.directDiffuseSensitivityToChange = CVAR_TO_FLOAT (rt_sensit_dir),
 		.indirectDiffuseSensitivityToChange = CVAR_TO_FLOAT (rt_sensit_indir),
@@ -4127,7 +4136,7 @@ static void VID_DescribeCurrentMode_f (void)
 	if (draw_context)
 		Con_Printf (
 			"%dx%dx%d %dHz %s\n", VID_GetCurrentWidth (), VID_GetCurrentHeight (), VID_GetCurrentBPP (), VID_GetCurrentRefreshRate (),
-			VID_GetFullscreen () ? "fullscreen" : "windowed");
+			VID_GetFullscreen () ? ((int)vid_fullscreen.value >= 2 ? "fullscreen exclusive" : "fullscreen") : "windowed");
 }
 
 /*
@@ -4792,7 +4801,7 @@ void VID_SyncCvars (void)
 			Cvar_SetValueQuick (&vid_height, VID_GetCurrentHeight ());
 		}
 		Cvar_SetValueQuick (&vid_refreshrate, VID_GetCurrentRefreshRate ());
-		Cvar_SetQuick (&vid_fullscreen, VID_GetFullscreen () ? "1" : "0");
+		Cvar_SetQuick (&vid_fullscreen, VID_GetFullscreen () ? ((int)vid_fullscreen.value >= 2 ? "2" : "1") : "0");
 		// don't sync vid_desktopfullscreen, it's a user preference that
 		// should persist even if we are in windowed mode.
 	}
@@ -4823,6 +4832,7 @@ enum
 {
 	VID_OPT_MODE,
 	VID_OPT_REFRESHRATE,
+	VID_OPT_FULLSCREEN,
 	VID_OPT_APPLY,
 
 	VID_OPT_UPSCALER,
@@ -4977,11 +4987,63 @@ static void VID_Menu_ChooseNextVsync (int dir)
 	int mode = (int)vid_vsync.value + dir;
 
 	if (mode < VID_VSYNC_OFF)
-		mode = VID_VSYNC_FREESYNC;
-	else if (mode > VID_VSYNC_FREESYNC)
+		mode = VID_VSYNC_MAILBOX;
+	else if (mode > VID_VSYNC_MAILBOX)
 		mode = VID_VSYNC_OFF;
 
 	Cvar_SetValueQuick (&vid_vsync, (float)mode);
+}
+
+/*
+================
+VID_Menu_GetFullscreenMode -- 0 windowed, 1 borderless, 2 fullscreen, 3 exclusive
+================
+*/
+static int VID_Menu_GetFullscreenMode (void)
+{
+	const int fullscreen = (int)vid_fullscreen.value;
+
+	if (fullscreen <= 0)
+		return 0;
+	if (fullscreen >= 2)
+		return 3;
+
+	return CVAR_TO_BOOL (vid_desktopfullscreen) ? 1 : 2;
+}
+
+/*
+================
+VID_Menu_ChooseNextFullscreen
+================
+*/
+static void VID_Menu_ChooseNextFullscreen (int dir)
+{
+	int mode = VID_Menu_GetFullscreenMode () + dir;
+
+	if (mode < 0)
+		mode = 3;
+	else if (mode > 3)
+		mode = 0;
+
+	switch (mode)
+	{
+	case 0:
+		Cvar_SetValueQuick (&vid_desktopfullscreen, 0.0f);
+		Cvar_SetValueQuick (&vid_fullscreen, 0.0f);
+		break;
+	case 1:
+		Cvar_SetValueQuick (&vid_desktopfullscreen, 1.0f);
+		Cvar_SetValueQuick (&vid_fullscreen, 1.0f);
+		break;
+	case 2:
+		Cvar_SetValueQuick (&vid_desktopfullscreen, 0.0f);
+		Cvar_SetValueQuick (&vid_fullscreen, 1.0f);
+		break;
+	default:
+		Cvar_SetValueQuick (&vid_desktopfullscreen, 0.0f);
+		Cvar_SetValueQuick (&vid_fullscreen, 2.0f);
+		break;
+	}
 }
 
 /*
@@ -5098,6 +5160,9 @@ static void VID_Menu_Adjust (int dir)
 		break;
 	case VID_OPT_REFRESHRATE:
 		VID_Menu_ChooseNextRate (-dir);
+		break;
+	case VID_OPT_FULLSCREEN:
+		VID_Menu_ChooseNextFullscreen (dir);
 		break;
 	case VID_OPT_VSYNC:
 		VID_Menu_ChooseNextVsync (dir);
@@ -5253,6 +5318,13 @@ static void VID_MenuDraw (cb_context_t *cbx)
 		case VID_OPT_REFRESHRATE:
 			M_Print (cbx, 16, y, "      Refresh rate");
 			M_Print (cbx, 184, y, va ("%i", (int)vid_refreshrate.value));
+			break;
+		case VID_OPT_FULLSCREEN:
+			M_Print (cbx, 16, y, "      Display mode");
+			{
+				static const char *names[4] = { "windowed", "borderless", "fullscreen", "exclusive" };
+				M_Print (cbx, 184, y, names[VID_Menu_GetFullscreenMode ()]);
+			}
 			break;
 		case VID_OPT_APPLY:
 			M_Print (cbx, 16, y, "             Apply");

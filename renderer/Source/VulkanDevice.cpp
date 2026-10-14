@@ -49,6 +49,7 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
 
     swapchain->RequestPresentMode(startInfo.presentMode);
     swapchain->SetMaxFrameLatency(startInfo.maxFrameLatency);
+    swapchain->SetFullscreenExclusive(startInfo.wantFullscreenExclusive != 0, startInfo.hasFocus != 0);
     swapchain->AcquireImage(imageAvailableSemaphores[frameIndex]);
 
     if (swapchain->IsPresentWaitActive() && !printedPresentWaitActive)

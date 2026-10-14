@@ -398,6 +398,9 @@ void R_ClearParticles (void)
 	for (i = 0; i < r_numparticles; i++)
 		particles[i].next = &particles[i + 1];
 	particles[r_numparticles - 1].next = NULL;
+
+	for (i = 0; i < RT_EXPLOSION_GLOW_SLOTS; i++)
+		rt_explosion_glow_end[i] = 0.0f;
 }
 
 /*
