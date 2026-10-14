@@ -109,7 +109,6 @@ vid_vsync 0
 host_maxfps 0
 rt_stats 3
 rt_stats_interval 0.2
-developer 0
 rt_ef_crt 0
 bind F4 "rt_stats_dump_start"
 bind F5 "rt_stats_dump_end"
