@@ -111,17 +111,30 @@ class RhiFrameContext;
 //  - NVRHI sizes each rt::IAccelStruct from the descriptors given to createAccelStruct and errors at
 //    build time if the allocation is smaller than the build requires, and neither rt::IAccelStruct
 //    nor the pinned NVRHI exposes the data buffer, its size, or the native VkDevice needed to query
-//    the requirement (there is no ASManager size wrapper either). The growth policy is therefore
-//    "recreate exactly when the geometry shape changes": the handle is created from the same
-//    descriptor list it is built with, and while a later frame's shape (per-geometry primitive
-//    counts, vertex counts, stride, indexedness and transform presence) matches the create-time one,
-//    the handle is reused and only rebuilt. A changed shape retires the old handle through
-//    RhiFrameContext::Retire and creates a new one for the new shape. This is the conservative
-//    fallback of the two policies the reconnaissance listed; it never under-allocates because the
-//    create-time and build-time descriptors are identical by construction.
+//    the requirement (there is no ASManager size wrapper either). The create-time size covers any
+//    later build whose per-geometry primitive counts and vertex counts are at most the create-time
+//    ones, whose stride, vertex format, indexedness and transform presence are unchanged, and whose
+//    geometry count does not grow, with equal geometry and build flags
+//    (vkGetAccelerationStructureBuildSizesKHR). The handle is therefore reused while every build
+//    fits its envelope and is recreated only when a build no longer does; a recreated handle
+//    retires the old one through RhiFrameContext::Retire and adopts a new envelope. Geometry flags,
+//    the vertex format and the build flags are invariants of the filter key (VertexCollector) and
+//    of MakeGeometryDesc, so the remaining equalities hold by construction.
+//  - `rt_dyn_blas_headroom` (percent, default 25; 0 restores the exact create-time envelope) makes
+//    the adopted envelope larger than the shape that created it: the create descriptors pad every
+//    geometry's primitive count (and vertex count) by the percentage with small floors, and the
+//    same percentage of extra geometry slots is appended, sized from the list's mean counts and
+//    carrying its most common stride/indexedness/transform triple, so a list that fluctuates within
+//    that padding reuses the handle and its allocation. The padded shape is built once, at create,
+//    by the same helper that pads the descriptors, so the envelope and the allocation cannot
+//    disagree, and no build is recorded for a shape the envelope rejected - i.e. every build fits
+//    the allocation and the build-time size guard inside NVRHI is only a last-resort safety net.
+//    The allocation cost of the padding is what DynamicFilterCounters::envelopePrimitives reports
+//    against listPrimitives (the same counters the as.filter bench row averages).
 //  - A dynamic filter that is empty in a frame records nothing and produces no instance, but its
 //    handle stays alive: a TLAS of an earlier frame may still reference it while the queue has not
-//    finished. The next frame that brings geometry either rebuilds it (same shape) or replaces it.
+//    finished. The next frame that brings geometry either rebuilds it, while the frame's shape fits
+//    the create-time envelope, or replaces it when it does not.
 //  - NVRHI never holds a reference to the BLAS an instance points at (it only transitions its state
 //    when the TLAS is recorded), so a replaced BLAS is protected from release solely by this module's
 //    retire call - every replaced handle goes through RhiFrameContext::Retire.
@@ -304,7 +317,37 @@ public:
     // the next BuildTopLevel of the same slot.
     nvrhi::IBuffer *GetParticleProxyBuffer(uint32_t frameIndex) const;
 
+    void SetSortedShapeReuse(bool enable);
+    void SetShapeRefit(bool enable);
+    void SetDynamicHeadroom(uint32_t percent);
+
+    void GetDynamicFrameCounters(uint32_t *builds, uint32_t *recreations, float *createMs) const;
+
+    struct DynamicFilterCounters
+    {
+        uint32_t filter = 0;
+        uint32_t builds = 0;
+        uint32_t recreates = 0;
+        uint32_t positionalFails = 0;
+        uint32_t sortedPassPositionalFails = 0;
+        uint32_t sortedFails = 0;
+        uint32_t sortedCountFails = 0;
+        uint32_t sortedShapeFails = 0;
+        uint32_t geometryCount = 0;
+        uint32_t envelopeCount = 0;
+        uint32_t envelopePrimitives = 0;
+        uint32_t listPrimitives = 0;
+        int64_t  failDeltaSum = 0;
+        int32_t  failDeltaMin = 0;
+        int32_t  failDeltaMax = 0;
+    };
+
+    const DynamicFilterCounters *GetDynamicFilterCounters(uint32_t *count) const;
+    void ResetDynamicFrameCounters();
+
 private:
+    DynamicFilterCounters &FilterCountersFor(uint32_t filter);
+
     struct StaticBlas
     {
         // The engine filter this structure mirrors (VertexCollectorFilterTypeFlags): the mapping
@@ -318,6 +361,10 @@ private:
         // them but nulls the buffer pointers in its own copy (vulkan-raytracing.cpp:406-427), so
         // the build call needs this original vector, which therefore has to stay alive.
         std::vector<nvrhi::rt::GeometryDesc> geometries;
+
+        // The topology identity of the last build. When a movable rebuild brings the same
+        // identity, the structure is refit with PerformUpdate instead of recreated and rebuilt.
+        std::vector<uint64_t> lastBuildId;
     };
 
     struct DynamicBlas
@@ -330,10 +377,17 @@ private:
         // which the copy inside createAccelStruct nulls).
         std::vector<nvrhi::rt::GeometryDesc> geometries;
 
-        // The geometry shape the current handle was created for (see the class comment): the
-        // per-geometry primitive count, vertex count, stride, indexedness and transform presence.
-        // Recreated when this changes.
+        // The create-time shape envelope of the current handle (see the class comment): the
+        // per-geometry primitive count and vertex count maxima, stride, indexedness and transform
+        // presence. The handle is reused while every build fits these maxima and is recreated,
+        // adopting the current shape as the new envelope, when it does not.
         std::vector<uint32_t> shape;
+        std::vector<uint32_t> shapeScratch;
+
+        // The topology identity of the last build and the current frame's scratch copy: equal,
+        // the frame refits this structure with PerformUpdate instead of a full build.
+        std::vector<uint64_t> lastBuildId;
+        std::vector<uint64_t> buildIdScratch;
 
         // Whether this filter's BLAS was built in the slot's current frame; only an active entry is
         // added to the TLAS. Empty filters keep the handle but stay inactive.
@@ -610,6 +664,16 @@ private:
     uint32_t dynamicBlasCount = 0;
     uint32_t dynamicActiveFilterCount = 0;
     uint32_t dynamicGeometryCount = 0;
+    uint32_t dynamicFrameBuilds = 0;
+    uint32_t dynamicFrameRecreations = 0;
+    double   dynamicFrameCreateMs = 0.0;
+    bool     sortedShapeReuse = false;
+    bool     shapeRefit = false;
+    uint32_t dynamicHeadroomPercent = 25;
+    static constexpr uint32_t MAX_DYNAMIC_FILTER_COUNTERS = 20;
+    DynamicFilterCounters dynamicFrameFilters[MAX_DYNAMIC_FILTER_COUNTERS];
+    DynamicFilterCounters dynamicFrameFilterOverflow;
+    uint32_t dynamicFrameFilterCount = 0;
     uint64_t dynamicVertexCount = 0;
     uint64_t dynamicPrimitiveCount = 0;
     uint64_t dynamicCopyBytes = 0;

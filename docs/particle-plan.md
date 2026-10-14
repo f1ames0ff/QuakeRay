@@ -178,10 +178,30 @@ scale to the content that actually exists.
   (no fallback); and the inline visibility `RayQuery` has no alpha any-hit, so emitter geometry in
   the path is opaque to it. Cross-check runs live in `%LOCALAPPDATA%\Temp\opencode` (`cc-*`,
   `cc2-*`, `fl-*`, `fl2-*`, `fl3-*`, `fl5-*`).
-- Known issue before using `rays_particle` as a proxy metric (Stage 4 verification, 2026-10-10):
-  the current `RtQ2ReflectRefract.rgen` blob declares `smokeRayStats` at set 7 binding 0 while the
-  pass binds the bindless cubemap table there (ray stats are at set 11); the pass interface comment
-  is stale. Resolve/verify before counting proxy rays.
+- Proxy ray counting (known issue raised 2026-10-10, fixed 2026-10-12): the `RtQ2ReflectRefract.rgen`
+  blob used to declare `smokeRayStats` at set 7 binding 0, aliasing the pass's bindless cubemap table
+  (the pass binds ray stats at set 11). The declaration now follows `SMOKE_RAY_STATS_SET`, which
+  `RaygenPrimary.hlsli` sets to the pass's ray-stats set; the interface recording was re-recorded and
+  CheckShaderProperties passes. The raster particle pipelines keep set 7. Count proxy rays again on the
+  next validation-enabled capture.
+- Explosion particles light themselves (owner decision, 2026-10-13; implemented): an explosion next to
+  particles used to light them unevenly - bright and dark sparks side by side at similar distances, from
+  the dlight's reach admission and the cluster boundaries (`rt_light_reach_dynamic` and 64 u cell edges) -
+  and the owner directed the class to be handled apart from the traced path. Particles inside a recent
+  blast radius now draw self-lit: the fill paths (`Quake/r_part.c` classic points and quads,
+  `Quake/r_part_fte.c` vertex conversion) ask a small registry of recent explosion origins
+  (`RT_ExplosionGlowAdd` fed by `R_ParticleExplosion`, `R_ParticleExplosion2` and `R_BlobExplosion`, and by
+  the FTE `*explosion*` effect dispatch; `RT_ExplosionGlowAt` in the fills) and, within
+  `r_particle_explosion_radius` (default 256, owner-tuned) with `r_particle_light_gain` defaulting to 1,
+  scale the particle colour by a squared falloff from the
+  blast centre and mark the vertex with the `QR_PARTICLE_CLUSTER_SELF_LIT` cluster; the vertex stages pass
+  the marker on and `RsParticle.frag` gives those particles `factor = lightGain` with the ambient skipped,
+  so the core is bright and the rim fades. The particles' ray queries disappear with the traced lighting.
+  The traced proxy copies in reflections keep the old path (follow-up).
+- Compute-stage ray query (2026-10-12): `Probes/SmokeLight.probe.comp.hlsl` pins a `cs_6_2` translation
+  unit that instantiates the smoke ray query through `SmokeLight.hlsli`; dxc emits `RayQueryKHR` and
+  `SPV_KHR_ray_query` for it, so a compute cache updater is not blocked at compile time (a
+  Compute-visible TLAS descriptor layout remains host work).
 
 ### Pointparticle distance gate (owner item, 2026-10-10)
 - Client-side gate in `CL_ParseParticles`: the message `count` scales linearly from 1 at `R/2` to 0 at `R`, and the message is dropped at `d >= R`; `R = r_part_emit_distance` (default 2048, 0 = off).

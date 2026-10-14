@@ -30,14 +30,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_dtal_debug.h"
 #include "rt_dtal_groups.h"
 #include "rt_lights.h"
+#include "gl_heap.h"
 
-extern cvar_t gl_fullbrights;
-extern cvar_t r_drawflat;
 extern cvar_t r_oldskyleaf;
 extern cvar_t r_showtris;
-extern cvar_t r_simd;
 extern cvar_t gl_zfix;
-extern cvar_t r_gpulightmapupdate;
 
 extern cvar_t rt_brush_metal;
 extern cvar_t rt_brush_rough;
@@ -69,6 +66,7 @@ extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_brush_persistent;
 
 extern atomic_uint32_t rt_require_static_submit;
+extern atomic_uint32_t rt_require_world_light_recollect;
 extern cvar_t rt_truelight;
 extern cvar_t rt_materials_only;
 extern cvar_t rt_dtal_debug;
@@ -82,9 +80,6 @@ extern cvar_t rt_particle_volume_check;
 cvar_t r_parallelmark = {"r_parallelmark", "1", CVAR_NONE};
 
 byte *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
-
-static int world_texstart[NUM_WORLD_CBX];
-static int world_texend[NUM_WORLD_CBX];
 
 extern QrVertex *rtallbrushvertices;
 
@@ -151,21 +146,22 @@ static float    rt_wldlights_style_accepted_reach = 0.0f;
 
 typedef struct rt_emis_stats_s
 {
-	int surfaces;
-	int no_material;
-	int no_color;
-	int style_off;
-	int degenerate;
-	int frame_off;
-	int static_queued;
-	int static_dropped;
-	int projector;
-	int dynamic;
-	int glow_lights;
-	int glow_faces;
-	int glow_fallback;
-	int too_small;
-	int poly_capped;
+	atomic_uint32_t surfaces;
+	atomic_uint32_t no_material;
+	atomic_uint32_t no_color;
+	atomic_uint32_t style_off;
+	atomic_uint32_t degenerate;
+	atomic_uint32_t frame_off;
+	atomic_uint32_t static_queued;
+	atomic_uint32_t static_dropped;
+	atomic_uint32_t proxy_dropped;
+	atomic_uint32_t projector;
+	atomic_uint32_t dynamic;
+	atomic_uint32_t glow_lights;
+	atomic_uint32_t glow_faces;
+	atomic_uint32_t glow_fallback;
+	atomic_uint32_t too_small;
+	atomic_uint32_t poly_capped;
 	atomic_uint32_t buried;
 	atomic_uint32_t model_lights;
 	atomic_uint32_t model_capped;
@@ -229,13 +225,13 @@ static void RT_EmisNoteSkip (const char *texture, const char *reason)
 typedef struct rt_emis_watch_s
 {
 	char name[32];
-	int  surfaces;
-	int  lights;
-	int  no_material;
-	int  no_color;
-	int  style_off;
-	int  degenerate;
-	int  frame_off;
+	atomic_uint32_t surfaces;
+	atomic_uint32_t lights;
+	atomic_uint32_t no_material;
+	atomic_uint32_t no_color;
+	atomic_uint32_t style_off;
+	atomic_uint32_t degenerate;
+	atomic_uint32_t frame_off;
 	int  hist_frames;
 	int  hist_lit;
 	int  hist_dark;
@@ -254,10 +250,13 @@ static char            rt_emis_watch_filter[64];
 
 static rt_emis_watch_t *RT_EmisWatch (const char *texture)
 {
-	const char *filter = rt_light_report_filter.string;
+	const char      *filter = rt_light_report_filter.string;
+	rt_emis_watch_t *result = NULL;
 
 	if (!filter[0] || !texture)
 		return NULL;
+
+	RT_EmisSkipLock ();
 
 	if (strcmp (filter, rt_emis_watch_filter))
 	{
@@ -266,24 +265,31 @@ static rt_emis_watch_t *RT_EmisWatch (const char *texture)
 		q_snprintf (rt_emis_watch_filter, sizeof (rt_emis_watch_filter), "%s", filter);
 	}
 
-	if (!strstr (texture, filter))
-		return NULL;
-
-	for (int i = 0; i < rt_emis_watch_num; i++)
+	if (strstr (texture, filter))
 	{
-		if (!strcmp (rt_emis_watch[i].name, texture))
-			return &rt_emis_watch[i];
+		for (int i = 0; i < rt_emis_watch_num; i++)
+		{
+			if (!strcmp (rt_emis_watch[i].name, texture))
+			{
+				result = &rt_emis_watch[i];
+				break;
+			}
+		}
+
+		if (result == NULL && rt_emis_watch_num < RT_EMIS_WATCH_MAX)
+		{
+			rt_emis_watch_t *watch = &rt_emis_watch[rt_emis_watch_num++];
+			memset (watch, 0, sizeof (*watch));
+			watch->hist_min_lights = 0x7FFFFFFF;
+			watch->min_style_scale = 1.0f;
+			q_snprintf (watch->name, sizeof (watch->name), "%s", texture);
+			result = watch;
+		}
 	}
 
-	if (rt_emis_watch_num >= RT_EMIS_WATCH_MAX)
-		return NULL;
+	RT_EmisSkipUnlock ();
 
-	rt_emis_watch_t *watch = &rt_emis_watch[rt_emis_watch_num++];
-	memset (watch, 0, sizeof (*watch));
-	watch->hist_min_lights = 0x7FFFFFFF;
-	watch->min_style_scale = 1.0f;
-	q_snprintf (watch->name, sizeof (watch->name), "%s", texture);
-	return watch;
+	return result;
 }
 
 static void RT_EmisWatchFrameEnd (void)
@@ -291,43 +297,43 @@ static void RT_EmisWatchFrameEnd (void)
 	for (int i = 0; i < rt_emis_watch_num; i++)
 	{
 		rt_emis_watch_t *w = &rt_emis_watch[i];
+		const uint32_t   surfaces = Atomic_LoadUInt32 (&w->surfaces);
+		const uint32_t   lights = Atomic_LoadUInt32 (&w->lights);
+		const uint32_t   style_off = Atomic_LoadUInt32 (&w->style_off);
+		const uint32_t   frame_off = Atomic_LoadUInt32 (&w->frame_off);
 
-		if (w->surfaces > 0)
+		if (surfaces > 0)
 		{
 			w->hist_frames++;
 			/* A frame that carries no light of its own is a dark frame: the surface is still
 			   there and still visible, it just does not glow on that frame. Counting it as lit
 			   would hide the blinks of a lamp behind a steady "lit" history. */
-			if (w->lights > 0 && w->frame_off == 0)
+			if (lights > 0 && frame_off == 0)
 				w->hist_lit++;
 			else
 				w->hist_dark++;
-			if (w->style_off > 0)
+			if (style_off > 0)
 				w->hist_style_off++;
-			if (w->frame_off > 0)
+			if (frame_off > 0)
 				w->hist_frame_off++;
-			if (w->lights < w->hist_min_lights)
-				w->hist_min_lights = w->lights;
-			if (w->lights > w->hist_max_lights)
-				w->hist_max_lights = w->lights;
+			if ((int) lights < w->hist_min_lights)
+				w->hist_min_lights = (int) lights;
+			if ((int) lights > w->hist_max_lights)
+				w->hist_max_lights = (int) lights;
 		}
 
-		w->surfaces = 0;
-		w->lights = 0;
-		w->no_material = 0;
-		w->no_color = 0;
-		w->style_off = 0;
-		w->degenerate = 0;
-		w->frame_off = 0;
+		Atomic_StoreUInt32 (&w->surfaces, 0);
+		Atomic_StoreUInt32 (&w->lights, 0);
+		Atomic_StoreUInt32 (&w->no_material, 0);
+		Atomic_StoreUInt32 (&w->no_color, 0);
+		Atomic_StoreUInt32 (&w->style_off, 0);
+		Atomic_StoreUInt32 (&w->degenerate, 0);
+		Atomic_StoreUInt32 (&w->frame_off, 0);
 		w->min_style_scale = 1.0f;
 		w->style_count = 0;
 	}
 }
 
-
-// RT: remove SIMD here, as the culling is not requires
-#undef USE_SIMD
-#undef USE_SSE2
 
 /*
 ===============
@@ -336,21 +342,9 @@ mark_surfaces_state_t
 */
 typedef struct
 {
-#if defined(USE_SIMD)
-	__m128 frustum_px[4];
-	__m128 frustum_py[4];
-	__m128 frustum_pz[4];
-	__m128 frustum_pd[4];
-	__m128 vieworg_px;
-	__m128 vieworg_py;
-	__m128 vieworg_pz;
-	int    frustum_ofsx[4];
-	int    frustum_ofsy[4];
-	int    frustum_ofsz[4];
-#endif
 	byte *vis;
 } mark_surfaces_state_t;
-mark_surfaces_state_t mark_surfaces_state;
+static mark_surfaces_state_t mark_surfaces_state;
 
 //==============================================================================
 //
@@ -413,367 +407,280 @@ static inline qboolean R_BackFaceCull (msurface_t *surf)
 	return false;
 }
 
-/*
-===============
-R_SetupWorldCBXTexRanges
-===============
-*/
-void R_SetupWorldCBXTexRanges (qboolean use_tasks)
-{
-	memset (world_texstart, 0, sizeof (world_texstart));
-	memset (world_texend, 0, sizeof (world_texend));
 
-	const int num_textures = cl.worldmodel->numtextures;
-	if (!use_tasks)
+#define RT_MARK_CHUNKS 64
+
+static uint32_t  rt_mark_numtextures;
+static uint32_t *rt_mark_tex_start;
+static uint32_t *rt_mark_tex_surfaces;
+static uint32_t *rt_mark_tex_polys;
+static qboolean  rt_mark_parallel_built;
+static qboolean  rt_mark_parallel_frame;
+static uint32_t *rt_chain_textures;
+static uint8_t  *rt_chain_consumed;
+static uint32_t  rt_chain_count;
+static qboolean  rt_chain_full_frame = true;
+
+static int RT_MarkChunkFirstLeaf (int chunk, int numleafs)
+{
+	return (int)((int64_t)chunk * numleafs / RT_MARK_CHUNKS);
+}
+
+static void RT_MarkParallel_Free (void)
+{
+	if (rt_mark_tex_start)
+		Mem_Free (rt_mark_tex_start);
+	if (rt_mark_tex_surfaces)
+		Mem_Free (rt_mark_tex_surfaces);
+	if (rt_mark_tex_polys)
+		Mem_Free (rt_mark_tex_polys);
+	if (rt_chain_textures)
+		Mem_Free (rt_chain_textures);
+	if (rt_chain_consumed)
+		Mem_Free (rt_chain_consumed);
+
+	rt_mark_tex_start = NULL;
+	rt_mark_tex_surfaces = NULL;
+	rt_mark_tex_polys = NULL;
+	rt_chain_textures = NULL;
+	rt_chain_consumed = NULL;
+	rt_chain_count = 0;
+	rt_chain_full_frame = true;
+	rt_mark_numtextures = 0;
+	rt_mark_parallel_built = false;
+}
+
+void RT_MarkParallel_NewMap (void)
+{
+	RT_MarkParallel_Free ();
+
+	const int numtextures = cl.worldmodel ? cl.worldmodel->numtextures : 0;
+	const int numsurfaces = cl.worldmodel ? cl.worldmodel->numsurfaces : 0;
+
+	if (numtextures <= 0 || numsurfaces <= 0)
+		return;
+
+	rt_chain_consumed = Mem_Alloc ((size_t)numtextures);
+	memset (rt_chain_consumed, 0, (size_t)numtextures);
+
+	for (int i = 0; i < numsurfaces; ++i)
 	{
-		world_texstart[0] = 0;
-		world_texend[0] = num_textures;
+		const msurface_t *surf = &cl.worldmodel->surfaces[i];
+		const texture_t  *tex;
+
+		if (!(surf->flags & (SURF_DRAWSKY | SURF_DRAWTURB)))
+			continue;
+
+		tex = surf->texinfo->texture;
+		if (tex && tex->rt_chain_index >= 0 && tex->rt_chain_index < numtextures)
+			rt_chain_consumed[tex->rt_chain_index] = 1;
+	}
+
+	for (int t = 0; t < numtextures; ++t)
+		if (cl.worldmodel->textures[t] && cl.worldmodel->textures[t]->anim_total)
+			rt_chain_consumed[t] = 1;
+
+	rt_chain_count = 0;
+	for (int t = 0; t < numtextures; ++t)
+		if (rt_chain_consumed[t])
+			++rt_chain_count;
+
+	if (rt_chain_count > 0)
+	{
+		rt_chain_textures = Mem_Alloc ((size_t)rt_chain_count * sizeof (uint32_t));
+
+		uint32_t cursor = 0;
+		for (int t = 0; t < numtextures; ++t)
+			if (rt_chain_consumed[t])
+				rt_chain_textures[cursor++] = (uint32_t)t;
+	}
+
+	rt_mark_numtextures = (uint32_t)numtextures;
+	rt_mark_tex_start = Mem_Alloc ((size_t)(numtextures + 1) * sizeof (uint32_t));
+	rt_mark_tex_surfaces = Mem_Alloc ((size_t)numsurfaces * sizeof (uint32_t));
+	rt_mark_tex_polys = Mem_Alloc ((size_t)numtextures * sizeof (uint32_t));
+
+	uint32_t *cursor = Mem_Alloc ((size_t)(numtextures + 1) * sizeof (uint32_t));
+	uint32_t  placed = 0;
+
+	for (int i = 0; i < numsurfaces; ++i)
+	{
+		const texture_t *tex = cl.worldmodel->surfaces[i].texinfo->texture;
+		const int        t = tex ? tex->rt_chain_index : -1;
+
+		if (t >= 0 && t < numtextures)
+			++rt_mark_tex_start[t + 1];
+	}
+
+	for (int t = 0; t < numtextures; ++t)
+		rt_mark_tex_start[t + 1] += rt_mark_tex_start[t];
+
+	for (int t = 0; t <= numtextures; ++t)
+		cursor[t] = rt_mark_tex_start[t];
+
+	for (int i = 0; i < numsurfaces; ++i)
+	{
+		const texture_t *tex = cl.worldmodel->surfaces[i].texinfo->texture;
+		const int        t = tex ? tex->rt_chain_index : -1;
+
+		if (t >= 0 && t < numtextures)
+		{
+			rt_mark_tex_surfaces[cursor[t]++] = (uint32_t)i;
+			++placed;
+		}
+	}
+
+	Mem_Free (cursor);
+
+	if (placed != (uint32_t)numsurfaces)
+	{
+		Con_DWarning ("r_parallelmark: %u of %d surfaces have no texture index, falling back to the serial marker\n", placed, numsurfaces);
+		RT_MarkParallel_Free ();
 		return;
 	}
 
-	int total_world_surfs = 0;
-	for (int i = 0; i < num_textures; ++i)
-	{
-		texture_t *t = cl.worldmodel->textures[i];
-		if (!t || !t->texturechains[chain_world] || t->texturechains[chain_world]->flags & (SURF_DRAWTURB | SURF_DRAWTILED | SURF_NOTEXTURE))
-			continue;
-		total_world_surfs += t->chain_size[chain_world];
-	}
-
-	const int num_surfs_per_cbx = (total_world_surfs + NUM_WORLD_CBX - 1) / NUM_WORLD_CBX;
-	int       current_cbx = 0;
-	int       num_assigned_to_cbx = 0;
-	for (int i = 0; i < num_textures; ++i)
-	{
-		texture_t *t = cl.worldmodel->textures[i];
-		if (!t || !t->texturechains[chain_world] || t->texturechains[chain_world]->flags & (SURF_DRAWTURB | SURF_DRAWTILED | SURF_NOTEXTURE))
-			continue;
-		assert (current_cbx < NUM_WORLD_CBX);
-		world_texend[current_cbx] = i + 1;
-		num_assigned_to_cbx += t->chain_size[chain_world];
-		if (num_assigned_to_cbx >= num_surfs_per_cbx)
-		{
-			current_cbx += 1;
-			if (current_cbx < NUM_WORLD_CBX)
-			{
-				world_texstart[current_cbx] = i + 1;
-			}
-			num_assigned_to_cbx = 0;
-		}
-	}
+	rt_mark_parallel_built = true;
 }
 
-#ifdef USE_SSE2
-/*
-===============
-R_BackFaceCullSIMD
-
-Performs backface culling for 32 planes
-===============
-*/
-static FORCE_INLINE uint32_t R_BackFaceCullSIMD (soa_plane_t *planes)
-{
-	__m128 px = mark_surfaces_state.vieworg_px;
-	__m128 py = mark_surfaces_state.vieworg_py;
-	__m128 pz = mark_surfaces_state.vieworg_pz;
-
-	uint32_t activelanes = 0;
-	for (int plane_index = 0; plane_index < 4; ++plane_index)
-	{
-		soa_plane_t *plane = planes + plane_index;
-
-		__m128 v0 = _mm_mul_ps (_mm_loadu_ps ((*plane) + 0), px);
-		__m128 v1 = _mm_mul_ps (_mm_loadu_ps ((*plane) + 4), px);
-
-		v0 = _mm_add_ps (v0, _mm_mul_ps (_mm_loadu_ps ((*plane) + 8), py));
-		v1 = _mm_add_ps (v1, _mm_mul_ps (_mm_loadu_ps ((*plane) + 12), py));
-
-		v0 = _mm_add_ps (v0, _mm_mul_ps (_mm_loadu_ps ((*plane) + 16), pz));
-		v1 = _mm_add_ps (v1, _mm_mul_ps (_mm_loadu_ps ((*plane) + 20), pz));
-
-		__m128 pd0 = _mm_loadu_ps ((*plane) + 24);
-		__m128 pd1 = _mm_loadu_ps ((*plane) + 28);
-
-		uint32_t plane_lanes = (uint32_t)(_mm_movemask_ps (_mm_cmplt_ps (pd0, v0)) | (_mm_movemask_ps (_mm_cmplt_ps (pd1, v1)) << 4));
-		activelanes |= plane_lanes << (plane_index * 8);
-	}
-	return activelanes;
-}
-
-/*
-===============
-R_CullBoxSIMD
-
-Performs frustum culling for 32 bounding boxes
-===============
-*/
-static FORCE_INLINE uint32_t R_CullBoxSIMD (soa_aabb_t *boxes, uint32_t activelanes)
-{
-	for (int frustum_index = 0; frustum_index < 4; ++frustum_index)
-	{
-		if (activelanes == 0)
-			break;
-
-		int    ofsx = mark_surfaces_state.frustum_ofsx[frustum_index];
-		int    ofsy = mark_surfaces_state.frustum_ofsy[frustum_index];
-		int    ofsz = mark_surfaces_state.frustum_ofsz[frustum_index];
-		__m128 px = mark_surfaces_state.frustum_px[frustum_index];
-		__m128 py = mark_surfaces_state.frustum_py[frustum_index];
-		__m128 pz = mark_surfaces_state.frustum_pz[frustum_index];
-		__m128 pd = mark_surfaces_state.frustum_pd[frustum_index];
-
-		uint32_t frustum_lanes = 0;
-		for (int boxes_index = 0; boxes_index < 4; ++boxes_index)
-		{
-			soa_aabb_t *box = boxes + boxes_index;
-			__m128      v0 = _mm_mul_ps (_mm_loadu_ps ((*box) + ofsx), px);
-			__m128      v1 = _mm_mul_ps (_mm_loadu_ps ((*box) + ofsx + 4), px);
-			v0 = _mm_add_ps (v0, _mm_mul_ps (_mm_loadu_ps ((*box) + ofsy), py));
-			v1 = _mm_add_ps (v1, _mm_mul_ps (_mm_loadu_ps ((*box) + ofsy + 4), py));
-			v0 = _mm_add_ps (v0, _mm_mul_ps (_mm_loadu_ps ((*box) + ofsz), pz));
-			v1 = _mm_add_ps (v1, _mm_mul_ps (_mm_loadu_ps ((*box) + ofsz + 4), pz));
-			frustum_lanes |= (uint32_t)(_mm_movemask_ps (_mm_cmplt_ps (pd, v0)) | (_mm_movemask_ps (_mm_cmplt_ps (pd, v1)) << 4)) << (boxes_index * 8);
-		}
-		activelanes &= frustum_lanes;
-	}
-
-	return activelanes;
-}
-#endif // defined(USE_SSE2)
-
-#if defined(USE_SIMD)
-/*
-===============
-R_MarkVisSurfacesSIMD
-===============
-*/
-void R_MarkVisSurfacesSIMD (qboolean *use_tasks)
+static void R_MarkLeafsChunked (int index, void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
-	msurface_t  *surf;
-	unsigned int i, k;
-	unsigned int numleafs = cl.worldmodel->numleafs;
-	unsigned int numsurfaces = cl.worldmodel->numsurfaces;
-	uint32_t    *vis = (uint32_t *)mark_surfaces_state.vis;
-	uint32_t    *surfvis = (uint32_t *)cl.worldmodel->surfvis;
-	soa_aabb_t  *leafbounds = cl.worldmodel->soa_leafbounds;
-
-	// iterate through leaves, marking surfaces
-	for (i = 0; i < numleafs; i += 32)
-	{
-		uint32_t mask = vis[i / 32];
-		if (mask == 0)
-			continue;
-
-		mask = R_CullBoxSIMD (&leafbounds[i / 8], mask);
-		while (mask != 0)
-		{
-			const int j = FindFirstBitNonZero (mask);
-			mask &= ~(1u << j);
-
-			mleaf_t *leaf = &cl.worldmodel->leafs[1 + i + j];
-			if (leaf->contents != CONTENTS_SKY || r_oldskyleaf.value)
-			{
-				unsigned int nummarksurfaces = leaf->nummarksurfaces;
-				int         *marksurfaces = leaf->firstmarksurface;
-				for (k = 0; k < nummarksurfaces; ++k)
-				{
-					unsigned int index = marksurfaces[k];
-					surfvis[index / 32] |= 1u << (index % 32);
-				}
-			}
-
-			// add static models
-			if (leaf->efrags)
-				R_StoreEfrags (&leaf->efrags);
-		}
-	}
-
-	uint32_t brushpolys = 0;
-	for (i = 0; i < numsurfaces; i += 32)
-	{
-		uint32_t mask = surfvis[i / 32];
-		if (mask == 0)
-			continue;
-
-		mask &= R_BackFaceCullSIMD (&cl.worldmodel->soa_surfplanes[i / 8]);
-		while (mask != 0)
-		{
-			const int j = FindFirstBitNonZero (mask);
-			mask &= ~(1u << j);
-
-			surf = &cl.worldmodel->surfaces[i + j];
-			++brushpolys;
-			R_ChainSurface (surf, chain_world);
-			if (surf->texinfo->texture->warpimage)
-				Atomic_StoreUInt32 (&surf->texinfo->texture->update_warp, true);
-		}
-	}
-
-	Atomic_AddUInt32 (&rs_brushpolys, brushpolys); // count wpolys here
-	R_SetupWorldCBXTexRanges (*use_tasks);
-
-	RT_Prof_End (RT_PROF_MARK, prof_start);
-}
-
-/*
-===============
-R_MarkLeafsSIMD
-===============
-*/
-void R_MarkLeafsSIMD (int index, void *unused)
-{
-	double prof_start = RT_Prof_Begin ();
-
-	unsigned int     j;
-	unsigned int     first_leaf = index * 32;
+	const int        numleafs = cl.worldmodel->numleafs;
+	const int        lo = RT_MarkChunkFirstLeaf (index, numleafs);
+	const int        hi = RT_MarkChunkFirstLeaf (index + 1, numleafs);
+	const qboolean   use_pvs = CVAR_TO_BOOL (rt_enable_pvs);
+	const qboolean   oldskyleaf = r_oldskyleaf.value != 0.0f;
+	const uint32_t  *vis = (const uint32_t *)mark_surfaces_state.vis;
 	atomic_uint32_t *surfvis = (atomic_uint32_t *)cl.worldmodel->surfvis;
-	soa_aabb_t      *leafbounds = cl.worldmodel->soa_leafbounds;
-	uint32_t        *vis = (uint32_t *)mark_surfaces_state.vis;
+	unsigned int     run_word = 0;
+	uint32_t         run_bits = 0;
 
-	uint32_t *mask = &vis[index];
-	if (*mask == 0)
+	for (int i = lo; i < hi; ++i)
 	{
-		RT_Prof_End (RT_PROF_MARK, prof_start);
-		return;
-	}
+		mleaf_t *leaf = &cl.worldmodel->leafs[1 + i];
 
-	*mask = R_CullBoxSIMD (&leafbounds[index * 4], *mask);
-
-	uint32_t mask_iter = *mask;
-	while (mask_iter != 0)
-	{
-		const int i = FindFirstBitNonZero (mask_iter);
-
-		mleaf_t *leaf = &cl.worldmodel->leafs[1 + first_leaf + i];
-		if (leaf->contents != CONTENTS_SKY || r_oldskyleaf.value)
+		if (use_pvs)
 		{
-			unsigned int nummarksurfaces = leaf->nummarksurfaces;
-			int         *marksurfaces = leaf->firstmarksurface;
-			for (j = 0; j < nummarksurfaces; ++j)
+			if (!(vis[i / 32] & (1u << (i % 32))))
+				continue;
+
+			if (R_CullBox (leaf->minmaxs, leaf->minmaxs + 3))
+				continue;
+		}
+
+		if (!oldskyleaf && leaf->contents == CONTENTS_SKY)
+			continue;
+
+		for (int j = 0; j < leaf->nummarksurfaces; ++j)
+		{
+			const unsigned int surf_index = (unsigned int)leaf->firstmarksurface[j];
+			const unsigned int word = surf_index >> 5;
+
+			if (word != run_word)
 			{
-				unsigned int surf_index = marksurfaces[j];
-				Atomic_OrUInt32 (&surfvis[surf_index / 32], 1u << (surf_index % 32));
+				if (run_bits != 0)
+					Atomic_OrUInt32 (&surfvis[run_word], run_bits);
+				run_word = word;
+				run_bits = 0;
 			}
+
+			run_bits |= 1u << (surf_index & 31);
 		}
-		const uint32_t bit_mask = ~(1u << i);
-		if (!leaf->efrags)
-		{
-			*mask &= bit_mask;
-		}
-		mask_iter &= bit_mask;
 	}
+
+	if (run_bits != 0)
+		Atomic_OrUInt32 (&surfvis[run_word], run_bits);
 
 	RT_Prof_End (RT_PROF_MARK, prof_start);
 }
 
-/*
-===============
-R_BackfaceCullSurfacesSIMD
-===============
-*/
-void R_BackfaceCullSurfacesSIMD (int index, void *unused)
+static void R_StoreMarkedEFrags (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
-	uint32_t   *surfvis = (uint32_t *)cl.worldmodel->surfvis;
-	msurface_t *surf;
+	const int       numleafs = cl.worldmodel->numleafs;
+	const qboolean  use_pvs = CVAR_TO_BOOL (rt_enable_pvs);
+	const uint32_t *vis = (const uint32_t *)mark_surfaces_state.vis;
 
-	uint32_t *mask = &surfvis[index];
-	if (*mask == 0)
+	for (int i = 0; i < numleafs; ++i)
 	{
-		RT_Prof_End (RT_PROF_CULL, prof_start);
-		return;
-	}
+		mleaf_t *leaf = &cl.worldmodel->leafs[1 + i];
 
-	*mask &= R_BackFaceCullSIMD (&cl.worldmodel->soa_surfplanes[index * 4]);
-
-	uint32_t mask_iter = *mask;
-	while (mask_iter != 0)
-	{
-		const int i = FindFirstBitNonZero (mask_iter);
-
-		surf = &cl.worldmodel->surfaces[(index * 32) + i];
-		if (surf->lightmaptexturenum >= 0)
-			Atomic_StoreUInt32 (&lightmaps[surf->lightmaptexturenum].modified, true);
-		if (surf->texinfo->texture->warpimage)
-			Atomic_StoreUInt32 (&surf->texinfo->texture->update_warp, true);
-
-		const uint32_t bit_mask = ~(1u << i);
-		mask_iter &= bit_mask;
-	}
-
-	RT_Prof_End (RT_PROF_CULL, prof_start);
-}
-
-/*
-===============
-R_StoreLeafEFrags
-===============
-*/
-void R_StoreLeafEFrags (void *unused)
-{
-	double prof_start = RT_Prof_Begin ();
-
-	unsigned int i;
-	unsigned int numleafs = cl.worldmodel->numleafs;
-	uint32_t    *vis = (uint32_t *)mark_surfaces_state.vis;
-	for (i = 0; i < numleafs; i += 32)
-	{
-		uint32_t mask = vis[i / 32];
-		while (mask != 0)
+		if (use_pvs)
 		{
-			const int j = FindFirstBitNonZero (mask);
-			mask &= ~(1u << j);
-			mleaf_t *leaf = &cl.worldmodel->leafs[1 + i + j];
-			R_StoreEfrags (&leaf->efrags);
+			if (!(vis[i / 32] & (1u << (i % 32))))
+				continue;
+
+			if (R_CullBox (leaf->minmaxs, leaf->minmaxs + 3))
+				continue;
 		}
+
+		if (leaf->efrags)
+			R_StoreEfrags (&leaf->efrags);
 	}
 
 	RT_Prof_End (RT_PROF_EFRAGS, prof_start);
 }
 
-/*
-===============
-R_ChainVisSurfaces
-===============
-*/
-void R_ChainVisSurfaces (qboolean *use_tasks)
+static void R_ChainTextureSlice (int index, void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
-	unsigned int i;
-	msurface_t  *surf;
-	unsigned int numsurfaces = cl.worldmodel->numsurfaces;
-	uint32_t    *surfvis = (uint32_t *)cl.worldmodel->surfvis;
-	uint32_t     brushpolys = 0;
-	for (i = 0; i < numsurfaces; i += 32)
-	{
-		uint32_t mask = surfvis[i / 32];
-		while (mask != 0)
-		{
-			const int j = FindFirstBitNonZero (mask);
-			mask &= ~(1u << j);
-			surf = &cl.worldmodel->surfaces[i + j];
-			++brushpolys;
-			R_ChainSurface (surf, chain_world);
-		}
-	}
+	const uint32_t chain_count = rt_chain_full_frame ? rt_mark_numtextures : rt_chain_count;
 
-	Atomic_AddUInt32 (&rs_brushpolys, brushpolys); // count wpolys here
-	R_SetupWorldCBXTexRanges (*use_tasks);
+	if ((uint32_t)index < chain_count)
+	{
+		const uint32_t  tindex = rt_chain_full_frame ? (uint32_t)index : rt_chain_textures[index];
+		const qboolean  use_pvs = CVAR_TO_BOOL (rt_enable_pvs);
+		const byte     *surfvis = (const byte *)cl.worldmodel->surfvis;
+		uint32_t        polys = 0;
+
+		for (uint32_t k = rt_mark_tex_start[tindex]; k < rt_mark_tex_start[tindex + 1]; ++k)
+		{
+			const unsigned int surf_index = rt_mark_tex_surfaces[k];
+			const byte         bit = (byte)(1u << (surf_index & 7));
+
+			if (!(surfvis[surf_index >> 3] & bit))
+				continue;
+
+			if (use_pvs && R_BackFaceCull (&cl.worldmodel->surfaces[surf_index]))
+				continue;
+
+			++polys;
+			R_ChainSurface (&cl.worldmodel->surfaces[surf_index], chain_world);
+		}
+
+		rt_mark_tex_polys[tindex] = polys;
+	}
 
 	RT_Prof_End (RT_PROF_CHAIN, prof_start);
 }
-#endif // defined(USE_SIMD)
+
+static void R_ChainTexturesFinish (void *unused)
+{
+	uint32_t polys = 0;
+
+	if (rt_chain_full_frame)
+	{
+		for (uint32_t t = 0; t < rt_mark_numtextures; ++t)
+			polys += rt_mark_tex_polys[t];
+	}
+	else
+	{
+		for (uint32_t i = 0; i < rt_chain_count; ++i)
+			polys += rt_mark_tex_polys[rt_chain_textures[i]];
+	}
+
+	Atomic_AddUInt32 (&rs_brushpolys, polys);
+}
 
 /*
 ===============
 R_MarkVisSurfaces
 ===============
 */
-void R_MarkVisSurfaces (qboolean *use_tasks)
+static void R_MarkVisSurfaces (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
@@ -812,10 +719,16 @@ void R_MarkVisSurfaces (qboolean *use_tasks)
                         continue;
                 }
 
+                if (!rt_chain_full_frame)
+                {
+                    const int tindex = surf->texinfo->texture ? surf->texinfo->texture->rt_chain_index : -1;
+
+                    if (tindex < 0 || tindex >= (int)rt_mark_numtextures || !rt_chain_consumed[tindex])
+                        continue;
+                }
+
                 ++brushpolys;
                 R_ChainSurface (surf, chain_world);
-                if (surf->texinfo->texture->warpimage)
-                    Atomic_StoreUInt32 (&surf->texinfo->texture->update_warp, true);
             }
         }
 
@@ -825,9 +738,13 @@ void R_MarkVisSurfaces (qboolean *use_tasks)
     }
 
 	Atomic_AddUInt32 (&rs_brushpolys, brushpolys); // count wpolys here
-	R_SetupWorldCBXTexRanges (*use_tasks);
 
 	RT_Prof_End (RT_PROF_MARK, prof_start);
+}
+
+qboolean RT_ChainFullFrame (void)
+{
+	return rt_chain_full_frame;
 }
 
 /*
@@ -862,37 +779,10 @@ static void R_MarkSurfacesPrepare (void *unused)
 
 	r_visframecount++;
 
-	// set all chains to null
-	for (i = 0; i < cl.worldmodel->numtextures; i++)
-		if (cl.worldmodel->textures[i])
-		{
-			cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
-			cl.worldmodel->textures[i]->chain_size[chain_world] = 0;
-		}
+	R_ClearTextureChains (cl.worldmodel, chain_world);
 
-#if defined(USE_SIMD)
-	if (use_simd)
-	{
+	if (rt_mark_parallel_frame && rt_mark_parallel_built)
 		memset (cl.worldmodel->surfvis, 0, (cl.worldmodel->numsurfaces + 31) / 8);
-		for (int frustum_index = 0; frustum_index < 4; ++frustum_index)
-		{
-			mplane_t *p = frustum + frustum_index;
-			byte      signbits = p->signbits;
-			__m128    vplane = _mm_loadu_ps (p->normal);
-			mark_surfaces_state.frustum_ofsx[frustum_index] = signbits & 1 ? 0 : 8;   // x min/max
-			mark_surfaces_state.frustum_ofsy[frustum_index] = signbits & 2 ? 16 : 24; // y min/max
-			mark_surfaces_state.frustum_ofsz[frustum_index] = signbits & 4 ? 32 : 40; // z min/max
-			mark_surfaces_state.frustum_px[frustum_index] = _mm_shuffle_ps (vplane, vplane, _MM_SHUFFLE (0, 0, 0, 0));
-			mark_surfaces_state.frustum_py[frustum_index] = _mm_shuffle_ps (vplane, vplane, _MM_SHUFFLE (1, 1, 1, 1));
-			mark_surfaces_state.frustum_pz[frustum_index] = _mm_shuffle_ps (vplane, vplane, _MM_SHUFFLE (2, 2, 2, 2));
-			mark_surfaces_state.frustum_pd[frustum_index] = _mm_shuffle_ps (vplane, vplane, _MM_SHUFFLE (3, 3, 3, 3));
-		}
-		__m128 pos = _mm_loadu_ps (r_refdef.vieworg);
-		mark_surfaces_state.vieworg_px = _mm_shuffle_ps (pos, pos, _MM_SHUFFLE (0, 0, 0, 0));
-		mark_surfaces_state.vieworg_py = _mm_shuffle_ps (pos, pos, _MM_SHUFFLE (1, 1, 1, 1));
-		mark_surfaces_state.vieworg_pz = _mm_shuffle_ps (pos, pos, _MM_SHUFFLE (2, 2, 2, 2));
-	}
-#endif
 }
 
 /*
@@ -902,44 +792,40 @@ R_MarkSurfaces -- johnfitz -- mark surfaces based on PVS and rebuild texture cha
 */
 void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_t *store_efrags, task_handle_t *cull_surfaces, task_handle_t *chain_surfaces)
 {
+	const qboolean full_chains = rt_chain_consumed == NULL || Atomic_LoadUInt32 (&rt_require_static_submit) != 0 ||
+	                             Atomic_LoadUInt32 (&rt_require_world_light_recollect) != 0 || r_showtris.value != 0.0f;
+	rt_chain_full_frame = full_chains;
+
 	if (use_tasks)
 	{
+		const qboolean parallel_mark = (r_parallelmark.value != 0.0f) && rt_mark_parallel_built;
+		rt_mark_parallel_frame = parallel_mark;
+
 		task_handle_t prepare_mark = Task_AllocateAndAssignFunc (R_MarkSurfacesPrepare, NULL, 0);
 		Task_AddDependency (before_mark, prepare_mark);
 		Task_Submit (prepare_mark);
-#if defined(USE_SIMD)
-		if (use_simd)
+
+		if (parallel_mark)
 		{
-			if (r_parallelmark.value)
-			{
-				unsigned int  numleafs = cl.worldmodel->numleafs;
-				task_handle_t mark_surfaces = Task_AllocateAndAssignIndexedFunc (R_MarkLeafsSIMD, (numleafs + 31) / 32, NULL, 0);
-				Task_AddDependency (prepare_mark, mark_surfaces);
-				Task_Submit (mark_surfaces);
+			task_handle_t mark_leafs = Task_AllocateAndAssignIndexedFunc (R_MarkLeafsChunked, RT_MARK_CHUNKS, NULL, 0);
+			Task_AddDependency (prepare_mark, mark_leafs);
 
-				*store_efrags = Task_AllocateAndAssignFunc (R_StoreLeafEFrags, NULL, 0);
-				Task_AddDependency (mark_surfaces, *store_efrags);
+			*store_efrags = Task_AllocateAndAssignFunc (R_StoreMarkedEFrags, NULL, 0);
+			Task_AddDependency (mark_leafs, *store_efrags);
 
-				unsigned int numsurfaces = cl.worldmodel->numsurfaces;
-				*cull_surfaces = Task_AllocateAndAssignIndexedFunc (R_BackfaceCullSurfacesSIMD, (numsurfaces + 31) / 32, NULL, 0);
-				Task_AddDependency (mark_surfaces, *cull_surfaces);
+			const uint32_t chain_slice_count = full_chains ? rt_mark_numtextures : rt_chain_count;
+			task_handle_t chain_slices = Task_AllocateAndAssignIndexedFunc (R_ChainTextureSlice, chain_slice_count > 0 ? chain_slice_count : 1, NULL, 0);
+			Task_AddDependency (mark_leafs, chain_slices);
 
-				*chain_surfaces = Task_AllocateAndAssignFunc ((task_func_t)R_ChainVisSurfaces, &use_tasks, sizeof (qboolean));
-				Task_AddDependency (*cull_surfaces, *chain_surfaces);
-			}
-			else
-			{
-				task_handle_t mark_surfaces = Task_AllocateAndAssignFunc ((task_func_t)R_MarkVisSurfacesSIMD, &use_tasks, sizeof (qboolean));
-				Task_AddDependency (prepare_mark, mark_surfaces);
-				*store_efrags = mark_surfaces;
-				*chain_surfaces = mark_surfaces;
-				*cull_surfaces = mark_surfaces;
-			}
+			*chain_surfaces = Task_AllocateAndAssignFunc (R_ChainTexturesFinish, NULL, 0);
+			Task_AddDependency (chain_slices, *chain_surfaces);
+			Task_Submit (chain_slices);
+
+			*cull_surfaces = mark_leafs;
 		}
 		else
-#endif
 		{
-			task_handle_t mark_surfaces = Task_AllocateAndAssignFunc ((task_func_t)R_MarkVisSurfaces, &use_tasks, sizeof (qboolean));
+			task_handle_t mark_surfaces = Task_AllocateAndAssignFunc (R_MarkVisSurfaces, NULL, 0);
 			Task_AddDependency (prepare_mark, mark_surfaces);
 			*store_efrags = mark_surfaces;
 			*chain_surfaces = mark_surfaces;
@@ -948,16 +834,10 @@ void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_
 	}
 	else
 	{
+		rt_mark_parallel_frame = false;
+
 		R_MarkSurfacesPrepare (NULL);
-		// iterate through leaves, marking surfaces
-#if defined(USE_SIMD)
-		if (use_simd)
-		{
-			R_MarkVisSurfacesSIMD (&use_tasks);
-		}
-		else
-#endif
-			R_MarkVisSurfaces (&use_tasks);
+		R_MarkVisSurfaces (NULL);
 	}
 }
 
@@ -966,30 +846,6 @@ void R_MarkSurfaces (qboolean use_tasks, task_handle_t before_mark, task_handle_
 // VBO SUPPORT
 //
 //==============================================================================
-
-static int R_NumTriangleIndicesForSurf (int vertcount)
-{
-	return q_max (0, 3 * (vertcount - 2));
-}
-
-/*
-================
-R_TriangleIndicesForSurf
-
-Writes out the triangle indices needed to draw s as a triangle list.
-The number of indices it will write is given by R_NumTriangleIndicesForSurf.
-================
-*/
-static void R_TriangleIndicesForSurf (int basevert, int vertcount, uint32_t *dest)
-{
-	int i;
-	for (i = 2; i < vertcount; i++)
-	{
-		*dest++ = basevert + i;
-		*dest++ = basevert + i - 1;
-		*dest++ = basevert;
-	}
-}
 
 static void RT_ClearBatch (cb_context_t *cbx)
 {
@@ -1499,24 +1355,6 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 	// i.e. uploaded once at the level load
     const qboolean is_static_geom = (s->model == cl.worldmodel) && !s->is_warp && !s->is_animated;
 
-#if 0
-	float constant_factor = 0.0f, slope_factor = 0.0f;
-	if (use_zbias)
-	{
-		if (vulkan_globals.depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT || vulkan_globals.depth_format == VK_FORMAT_D32_SFLOAT)
-		{
-			constant_factor = -4.f;
-			slope_factor = -0.125f;
-		}
-		else
-		{
-			constant_factor = -1.f;
-			slope_factor = -0.25f;
-		}
-	}
-	vkCmdSetDepthBias (cbx->cb, constant_factor, 0.0f, slope_factor);
-#endif
-
 	gltexture_t *diffuse_tex = r_lightmap_cheatsafe ? NULL : s->diffuse_tex;
 
 	const qboolean is_teleport_portal =
@@ -1588,12 +1426,6 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 	}
 	else
 	{
-		if (RT_StaticMovableCovers (s))
-		{
-			RT_ClearBatch (cbx);
-			return;
-		}
-
 		QrGeometryUploadInfo info = {
 			.uniqueID = RT_GetBrushSurfUniqueId (s->entuniqueid, s->model, s->surf, 0),
 			.flags = 
@@ -1739,25 +1571,42 @@ typedef struct
 static rt_dtal_debug_arrow_t rt_dtal_debug_arrow[RT_DTAL_DEBUG_MAX];
 static int                   rt_dtal_debug_num;
 static int                   rt_dtal_debug_frame = -1;
+static atomic_uint32_t       rt_dtal_debug_spin;
+
+static void RT_DtalDebugLock (void)
+{
+	uint32_t expected = 0;
+	while (!Atomic_CompareExchangeUInt32 (&rt_dtal_debug_spin, &expected, 1))
+		expected = 0;
+}
+
+static void RT_DtalDebugUnlock (void)
+{
+	Atomic_StoreUInt32 (&rt_dtal_debug_spin, 0);
+}
 
 static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area, qboolean projector)
 {
+	RT_DtalDebugLock ();
+
 	if (rt_dtal_debug_frame != r_framecount)
 	{
 		rt_dtal_debug_frame = r_framecount;
 		rt_dtal_debug_num = 0;
 	}
 
-	if (rt_dtal_debug_num >= RT_DTAL_DEBUG_MAX)
-		return;
+	if (rt_dtal_debug_num < RT_DTAL_DEBUG_MAX)
+	{
+		rt_dtal_debug_arrow_t *arrow = &rt_dtal_debug_arrow[rt_dtal_debug_num++];
 
-	rt_dtal_debug_arrow_t *arrow = &rt_dtal_debug_arrow[rt_dtal_debug_num++];
+		VectorCopy (center, arrow->center);
+		VectorCopy (normal, arrow->normal);
 
-	VectorCopy (center, arrow->center);
-	VectorCopy (normal, arrow->normal);
+		arrow->projector = projector;
+		arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+	}
 
-	arrow->projector = projector;
-	arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+	RT_DtalDebugUnlock ();
 }
 
 int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
@@ -1957,7 +1806,7 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 {
 	if (!is_static_geom)
 	{
-		rt_emis_stats.dynamic++;
+		Atomic_AddUInt32 (&rt_emis_stats.dynamic, 1);
 
 		QrTexturedAreaLightUploadInfo li = *light_info;
 		RT_ScaleEmissiveLightColor (li.color.data);
@@ -2054,13 +1903,13 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 			/* The stored light does not move, so the center it is placed by is derived here and
 			   not once per frame. */
 			RT_TexturedAreaLightCenter (&rt_wldlights_emissive[index], rt_wldlights_emissive_center[index]);
-			rt_emis_stats.static_queued++;
+			Atomic_AddUInt32 (&rt_emis_stats.static_queued, 1);
 			if (light_info->projector > 0.5f)
-				rt_emis_stats.projector++;
+				Atomic_AddUInt32 (&rt_emis_stats.projector, 1);
 		}
 		else
 		{
-			rt_emis_stats.static_dropped++;
+			Atomic_AddUInt32 (&rt_emis_stats.static_dropped, 1);
 
 			static qboolean warned = false;
 			if (!warned)
@@ -2262,7 +2111,7 @@ static qboolean RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, 
 	{
 		if (rt_wldlights_proxy_count >= RT_WLDPROXY_MAX)
 		{
-			rt_emis_stats.static_dropped++;
+			Atomic_AddUInt32 (&rt_emis_stats.proxy_dropped, 1);
 			return false;
 		}
 
@@ -3408,7 +3257,7 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const QrFloa
 
 			if (area < min_area)
 			{
-				rt_emis_stats.too_small++;
+				Atomic_AddUInt32 (&rt_emis_stats.too_small, 1);
 				*size_refused = true;
 				continue;
 			}
@@ -3423,7 +3272,7 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const QrFloa
 			li.meanEmiss = params->glow_mean;
 
 			if (!RT_EmissivePolyAdd (out, &num, out_max, &li))
-				rt_emis_stats.poly_capped++;
+				Atomic_AddUInt32 (&rt_emis_stats.poly_capped, 1);
 		}
 	}
 
@@ -4183,9 +4032,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	gltexture_t *light_tex = s->light_tex ? s->light_tex : s->diffuse_tex;
 	rt_emis_watch_t *watch = RT_EmisWatch (light_tex ? light_tex->name : NULL);
 
-	rt_emis_stats.surfaces++;
+	Atomic_AddUInt32 (&rt_emis_stats.surfaces, 1);
 	if (watch)
-		watch->surfaces++;
+		Atomic_AddUInt32 (&watch->surfaces, 1);
 
 	rt_emissive_params_t params;
 
@@ -4193,16 +4042,16 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	{
 		if (!light_tex || !light_tex->rtislight)
 		{
-			rt_emis_stats.no_material++;
+			Atomic_AddUInt32 (&rt_emis_stats.no_material, 1);
 			if (watch)
-				watch->no_material++;
+				Atomic_AddUInt32 (&watch->no_material, 1);
 			RT_EmisNoteSkip (light_tex ? light_tex->name : "<no texture>", "no light material");
 		}
 		else
 		{
-			rt_emis_stats.no_color++;
+			Atomic_AddUInt32 (&rt_emis_stats.no_color, 1);
 			if (watch)
-				watch->no_color++;
+				Atomic_AddUInt32 (&watch->no_color, 1);
 			RT_EmisNoteSkip (light_tex->name, "no light color");
 		}
 		return;
@@ -4244,9 +4093,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		}
 		else
 		{
-			rt_emis_stats.frame_off++;
+			Atomic_AddUInt32 (&rt_emis_stats.frame_off, 1);
 			if (watch)
-				watch->frame_off++;
+				Atomic_AddUInt32 (&watch->frame_off, 1);
 			RT_EmisNoteSkip (frame_tex->name, "dark animation frame");
 			VectorCopy (vec3_origin, params.color);
 		}
@@ -4258,9 +4107,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	if (vertcount < 3)
 	{
-		rt_emis_stats.degenerate++;
+		Atomic_AddUInt32 (&rt_emis_stats.degenerate, 1);
 		if (watch)
-			watch->degenerate++;
+			Atomic_AddUInt32 (&watch->degenerate, 1);
 		return;
 	}
 
@@ -4317,9 +4166,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	if (num_tris == 0 || total_area <= 0.0f)
 	{
-		rt_emis_stats.degenerate++;
+		Atomic_AddUInt32 (&rt_emis_stats.degenerate, 1);
 		if (watch)
-			watch->degenerate++;
+			Atomic_AddUInt32 (&watch->degenerate, 1);
 		return;
 	}
 
@@ -4337,6 +4186,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 		if (watch)
 		{
+			RT_EmisSkipLock ();
 			if (style_scale < watch->min_style_scale)
 				watch->min_style_scale = style_scale;
 			if (watch->style_count == 0)
@@ -4344,6 +4194,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 				for (int i = 0; i < MAXLIGHTMAPS && s->surf->styles[i] != 255; i++)
 					watch->styles[watch->style_count++] = s->surf->styles[i];
 			}
+			RT_EmisSkipUnlock ();
 		}
 
 		if (!is_static_geom)
@@ -4352,9 +4203,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 			if (style_scale <= 0.0f)
 			{
-				rt_emis_stats.style_off++;
+				Atomic_AddUInt32 (&rt_emis_stats.style_off, 1);
 				if (watch)
-					watch->style_off++;
+					Atomic_AddUInt32 (&watch->style_off, 1);
 				RT_EmisNoteSkip (light_tex->name, "lightstyle off");
 				return;
 			}
@@ -4529,7 +4380,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 					QrTexturedAreaLightUploadInfo piece = light_info;
 					vec3_t                      piece_center;
 
-					rt_emis_stats.too_small++;
+					Atomic_AddUInt32 (&rt_emis_stats.too_small, 1);
 					refused++;
 
 					for (int k = 0; k < pieces[i].count; k++)
@@ -4586,7 +4437,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 			if (uploaded > 0)
 			{
 				if (watch)
-					watch->lights += uploaded;
+					Atomic_AddUInt32 (&watch->lights, uploaded);
 
 				return;
 			}
@@ -4642,7 +4493,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	VectorCopy (params.color, light_info.color.data);
 
 	if (watch)
-		watch->lights++;
+		Atomic_AddUInt32 (&watch->lights, 1);
 
 	if (params.glow)
 	{
@@ -4655,8 +4506,8 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 			if (num > 0)
 			{
-				rt_emis_stats.glow_faces++;
-				rt_emis_stats.glow_lights += num;
+				Atomic_AddUInt32 (&rt_emis_stats.glow_faces, 1);
+				Atomic_AddUInt32 (&rt_emis_stats.glow_lights, num);
 
 				for (int i = 0; i < num; i++)
 					RT_UploadEmissiveLight (&polys[i], is_static_geom, s->surf, light_tex);
@@ -4670,14 +4521,14 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 		/* No glow polygon survived (too many repetitions, or a surface that has no uv fit):
 		   the whole surface keeps the light instead. */
-		rt_emis_stats.glow_fallback++;
+		Atomic_AddUInt32 (&rt_emis_stats.glow_fallback, 1);
 	}
 
 	if (light_info.area < min_area)
 	{
 		vec3_t center;
 
-		rt_emis_stats.too_small++;
+		Atomic_AddUInt32 (&rt_emis_stats.too_small, 1);
 
 		if (light_info.area >= proxy_floor)
 		{
@@ -4911,7 +4762,7 @@ static int RT_ResolveBrushSurfCluster (const rt_uploadsurf_state_t *s, const QrV
 static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, uint32_t *brushpasses)
 {
 	int num_surf_verts = s->surf->numedges;
-	int num_surf_indices = R_NumTriangleIndicesForSurf (num_surf_verts);
+	int num_surf_indices = RT_GetFanIndexCount (num_surf_verts);
 
 	if (s->model != cl.worldmodel)
 	{
@@ -4927,7 +4778,7 @@ static void RT_BatchSurface (cb_context_t *cbx, const rt_uploadsurf_state_t *s, 
 	}
 
 	const double prof_pack = RT_Prof_Begin ();
-	R_TriangleIndicesForSurf (cbx->batch_verts_count, num_surf_verts, &cbx->batch_indices[cbx->batch_indices_count]);
+	RT_WriteFanIndices (cbx->batch_verts_count, num_surf_verts, &cbx->batch_indices[cbx->batch_indices_count]);
 	QrVertex *batch_verts = &cbx->batch_verts[cbx->batch_verts_count];
 	memcpy (batch_verts, rtallbrushvertices + s->surf->vbo_firstvert, sizeof (QrVertex) * num_surf_verts);
 
@@ -5104,14 +4955,6 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 
 		for (s = t->texturechains[chain]; s; s = s->texturechains[chain])
 		{
-			if (model != cl.worldmodel)
-			{
-				// ericw -- this is copied from R_DrawSequentialPoly.
-				// If the poly is not part of the world we have to
-				// set this flag
-				Atomic_StoreUInt32 (&t->update_warp, true); // FIXME: one frame too late!
-			}
-
 			rt_uploadsurf_state_t cur_state = {
 				.entuniqueid = entuniqueid,
 				.ent = ent,
@@ -5231,6 +5074,9 @@ void R_DrawTextureChains_Multitexture (
 	rt_uploadsurf_state_t last_state = {0};
 	
 	uint32_t brushpasses = 0;
+	uint32_t coveredSurfaces = 0;
+	uint32_t visitedSurfaces = 0;
+	uint32_t coveredEmissiveUs = 0;
 	for (i = texstart; i < texend; ++i)
 	{
 		t = model->textures[i];
@@ -5254,6 +5100,8 @@ void R_DrawTextureChains_Multitexture (
 			if (s->flags & SURF_DRAWSKY)
 				continue;
 
+			visitedSurfaces++;
+
 			rt_uploadsurf_state_t cur_state = {
 				.entuniqueid = entuniqueid,
 				.ent = ent,
@@ -5272,6 +5120,23 @@ void R_DrawTextureChains_Multitexture (
 				.is_teleport = false,
 			};
 
+			if (RT_StaticMovableCovers (&cur_state))
+			{
+				coveredSurfaces++;
+
+				if (cur_state.model != cl.worldmodel)
+				{
+					const double prof_lights = RT_Prof_Begin ();
+					RT_AddEmissiveLight (&cur_state);
+
+					if (prof_lights != 0.0)
+						coveredEmissiveUs += (uint32_t)((Sys_DoubleTime () - prof_lights) * 1e6);
+
+					RT_Prof_End (RT_PROF_BRUSH_LIGHTS, prof_lights);
+				}
+				continue;
+			}
+
 			if (cur_state.lightmap_tex != last_state.lightmap_tex)
 			{
 				RT_FlushBatch (cbx, &last_state, &brushpasses);
@@ -5285,6 +5150,15 @@ void R_DrawTextureChains_Multitexture (
 	}
 
 	Atomic_AddUInt32 (&rs_brushpasses, brushpasses);
+
+	if (coveredSurfaces != 0)
+		Atomic_AddUInt32 (&rs_covered_surfaces, coveredSurfaces);
+
+	if (coveredEmissiveUs != 0)
+		Atomic_AddUInt32 (&rs_covered_emissive_us, coveredEmissiveUs);
+
+	if (ent != NULL && visitedSurfaces != 0 && coveredSurfaces == visitedSurfaces)
+		Atomic_AddUInt32 (&rs_covered_models, 1u);
 }
 
 /*
@@ -6074,8 +5948,8 @@ Two tables can be built, and the leaf count alone decides which one:
             everything any of those leafs reached. The union is wider than the row of a single
             leaf, which is why the grid only takes over when the identity table cannot be built.
 
-A PVS row names its cluster with bit + 1 - R_MarkLeafsSIMD and the renderer's own walk read it
-that way - so a row stands for the clusters 1..n and not for 0..n-1. The cell index is the bit
+A PVS row names its cluster with bit + 1, and the renderer's own walk reads it that way; so a
+row stands for the clusters 1..n and not for 0..n-1. The cell index is the bit
 index, which keeps the projection a copy of the bits when the clusters happen to be leafs.
 =================
 */
@@ -7294,17 +7168,22 @@ void RT_UploadWorldLights (void)
 void RT_PrintEmissiveStats (void)
 {
 	RT_LightReportPrint ("emissive pass: %i surfaces considered -> %i static world lights baked (whole map, %i projectors), %i entity lights uploaded (all passes)\n",
-		rt_emis_stats.surfaces, rt_emis_stats.static_queued, rt_emis_stats.projector, rt_emis_stats.dynamic);
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.surfaces), (int) Atomic_LoadUInt32 (&rt_emis_stats.static_queued),
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.projector), (int) Atomic_LoadUInt32 (&rt_emis_stats.dynamic));
 	RT_LightReportPrint ("rejected: %i no light material, %i no light color, %i lightstyle off, %i degenerate, %i of a dark animation frame\n",
-		rt_emis_stats.no_material, rt_emis_stats.no_color, rt_emis_stats.style_off, rt_emis_stats.degenerate, rt_emis_stats.frame_off);
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.no_material), (int) Atomic_LoadUInt32 (&rt_emis_stats.no_color),
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.style_off), (int) Atomic_LoadUInt32 (&rt_emis_stats.degenerate),
+		(int) Atomic_LoadUInt32 (&rt_emis_stats.frame_off));
 
-	if (rt_emis_stats.glow_lights || rt_emis_stats.glow_fallback)
+	if (Atomic_LoadUInt32 (&rt_emis_stats.glow_lights) || Atomic_LoadUInt32 (&rt_emis_stats.glow_fallback))
 		RT_LightReportPrint ("partial-glow textures: %i faces built %i polygon lights, %i faces fell back to the whole surface\n",
-			rt_emis_stats.glow_faces, rt_emis_stats.glow_lights, rt_emis_stats.glow_fallback);
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.glow_faces), (int) Atomic_LoadUInt32 (&rt_emis_stats.glow_lights),
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.glow_fallback));
 
-	if (rt_emis_stats.too_small || rt_emis_stats.poly_capped || Atomic_LoadUInt32 (&rt_emis_stats.buried) || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
+	if (Atomic_LoadUInt32 (&rt_emis_stats.too_small) || Atomic_LoadUInt32 (&rt_emis_stats.poly_capped) || Atomic_LoadUInt32 (&rt_emis_stats.buried) || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
 		RT_LightReportPrint ("dtal limits: %i surface polygons under rt_dtal_minarea, %i glow polygons cut by rt_dtal_maxpolys, %i model pieces under rt_dtal_model_minarea, %i polygons buried under rt_dtal_clearance\n",
-			rt_emis_stats.too_small, rt_emis_stats.poly_capped, (int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.buried));
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.too_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.poly_capped),
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.model_small), (int) Atomic_LoadUInt32 (&rt_emis_stats.buried));
 
 	if (Atomic_LoadUInt32 (&rt_buried_traces) || Atomic_LoadUInt32 (&rt_buried_hits) ||
 	    Atomic_LoadUInt32 (&rt_buried_model_traces) || Atomic_LoadUInt32 (&rt_buried_model_hits))
@@ -7321,6 +7200,11 @@ void RT_PrintEmissiveStats (void)
 			(int) Atomic_LoadUInt32 (&rt_emis_stats.proxy), (int) Atomic_LoadUInt32 (&rt_emis_stats.proxy_model),
 			rt_wldlights_proxy_count);
 
+	if (Atomic_LoadUInt32 (&rt_emis_stats.proxy_dropped))
+		RT_LightReportPrint ("WARNING: the stored dtal proxy list is full (%i/%i), %i dropped - "
+			"raise RT_WLDPROXY_MAX or reduce the small emitters\n",
+			rt_wldlights_proxy_count, RT_WLDPROXY_MAX, (int) Atomic_LoadUInt32 (&rt_emis_stats.proxy_dropped));
+
 	if (CVAR_TO_FLOAT (rt_dtal_groups) > 0.0f)
 	{
 		const int groups = rt_dtal_groups_active ? rt_dtal_build->groupCount : 0;
@@ -7333,10 +7217,10 @@ void RT_PrintEmissiveStats (void)
 			rt_dtal_groups_active ? "active" : (rt_dtal_groups_failed ? "failed, per-piece lights stay" : "inactive"));
 	}
 
-	if (rt_emis_stats.static_dropped || rt_wldlights_emissive_count >= MAX_WORLDLIGHTS_COUNT)
+	if (Atomic_LoadUInt32 (&rt_emis_stats.static_dropped) || rt_wldlights_emissive_count >= MAX_WORLDLIGHTS_COUNT)
 		RT_LightReportPrint ("WARNING: the static world-light list is full (%i/%i), %i dropped - "
 			"raise MAX_WORLDLIGHTS_COUNT or reduce emissive surfaces\n",
-			rt_wldlights_emissive_count, MAX_WORLDLIGHTS_COUNT, rt_emis_stats.static_dropped);
+			rt_wldlights_emissive_count, MAX_WORLDLIGHTS_COUNT, (int) Atomic_LoadUInt32 (&rt_emis_stats.static_dropped));
 
 	char skipTexture[RT_EMIS_SKIP_NAMES][32];
 	char skipReason[RT_EMIS_SKIP_NAMES][24];
@@ -7358,9 +7242,12 @@ void RT_PrintEmissiveStats (void)
 
 	for (int i = 0; i < rt_emis_watch_num; i++)
 	{
-		const rt_emis_watch_t *w = &rt_emis_watch[i];
+		rt_emis_watch_t *w = &rt_emis_watch[i];
 		RT_LightReportPrint ("  <%s> visible %i -> lights %i (rejected %i no material, %i no color, %i style off, %i degenerate, %i dark frame)\n",
-			w->name, w->surfaces, w->lights, w->no_material, w->no_color, w->style_off, w->degenerate, w->frame_off);
+			w->name, (int)Atomic_LoadUInt32 (&w->surfaces), (int)Atomic_LoadUInt32 (&w->lights),
+			(int)Atomic_LoadUInt32 (&w->no_material), (int)Atomic_LoadUInt32 (&w->no_color),
+			(int)Atomic_LoadUInt32 (&w->style_off), (int)Atomic_LoadUInt32 (&w->degenerate),
+			(int)Atomic_LoadUInt32 (&w->frame_off));
 
 		if (w->hist_frames > 0)
 			RT_LightReportPrint ("       since the filter was set: %i frames visible, lit %i, dark %i, %i with a lightstyle reject, %i on a dark animation frame, lights %i..%i%s\n",

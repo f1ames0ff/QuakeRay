@@ -21,6 +21,7 @@
 #include "QrException.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -93,9 +94,15 @@ uint32_t qray::Scene::GetVertexPreprocessingMode() const
 
 bool qray::Scene::Upload(uint32_t frameIndex, const QrGeometryUploadInfo &uploadInfo)
 {
-    assert(!DoesUniqueIDExist(uploadInfo.uniqueID));
+    const std::chrono::steady_clock::time_point boundsStart = std::chrono::steady_clock::now();
 
     AccumulateGeometryBounds(uploadInfo, aabbInitialized, aabbMin, aabbMax);
+
+    boundsScanSumNs.fetch_add(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - boundsStart).count()),
+        std::memory_order_relaxed);
+    boundsScanCalls.fetch_add(1, std::memory_order_relaxed);
+    boundsScanVerts.fetch_add(uploadInfo.vertexCount, std::memory_order_relaxed);
 
     if (uploadInfo.geomType == QR_GEOMETRY_TYPE_DYNAMIC)
     {
@@ -108,7 +115,9 @@ bool qray::Scene::Upload(uint32_t frameIndex, const QrGeometryUploadInfo &upload
 
         if (simpleIndex != UINT32_MAX)
         {
-            dynamicUniqueIDToSimpleIndex[uploadInfo.uniqueID] = simpleIndex;
+            const auto inserted = dynamicUniqueIDToSimpleIndex.insert_or_assign(uploadInfo.uniqueID, simpleIndex);
+            assert(inserted.second);
+            (void)inserted;
             return true;
         }
     }
@@ -123,7 +132,9 @@ bool qray::Scene::Upload(uint32_t frameIndex, const QrGeometryUploadInfo &upload
 
         if (simpleIndex != UINT32_MAX)
         {
-            staticUniqueIDToSimpleIndex[uploadInfo.uniqueID] = simpleIndex;
+            const auto inserted = staticUniqueIDToSimpleIndex.insert_or_assign(uploadInfo.uniqueID, simpleIndex);
+            assert(inserted.second);
+            (void)inserted;
 
             if (uploadInfo.geomType == QR_GEOMETRY_TYPE_STATIC_MOVABLE)
             {
@@ -150,6 +161,28 @@ void qray::Scene::GetAABB(float outMin[3], float outMax[3]) const
     outMax[0] = aabbMax[0];
     outMax[1] = aabbMax[1];
     outMax[2] = aabbMax[2];
+}
+
+uint64_t qray::Scene::GetBoundsScanSumNs() const
+{
+    return boundsScanSumNs.load(std::memory_order_relaxed);
+}
+
+uint64_t qray::Scene::GetBoundsScanCalls() const
+{
+    return boundsScanCalls.load(std::memory_order_relaxed);
+}
+
+uint64_t qray::Scene::GetBoundsScanVerts() const
+{
+    return boundsScanVerts.load(std::memory_order_relaxed);
+}
+
+void qray::Scene::ResetBoundsScanStats()
+{
+    boundsScanSumNs.store(0, std::memory_order_relaxed);
+    boundsScanCalls.store(0, std::memory_order_relaxed);
+    boundsScanVerts.store(0, std::memory_order_relaxed);
 }
 
 bool qray::Scene::UpdateTransform(const QrUpdateTransformInfo &updateInfo)

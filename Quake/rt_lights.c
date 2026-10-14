@@ -27,8 +27,14 @@ static atomic_uint32_t    rt_tracked_count;
 
 void RT_TRACK_BeginFrame(void)
 {
-    memset(rt_tracked, 0, sizeof(rt_tracked));
+    uint32_t tracked = Atomic_LoadUInt32(&rt_tracked_count);
     Atomic_StoreUInt32(&rt_tracked_count, 0);
+
+    if (tracked > RT_TRACKED_LIGHTS_MAX)
+        tracked = RT_TRACKED_LIGHTS_MAX;
+
+    for (uint32_t i = 0; i < tracked; ++i)
+        rt_tracked[i].ready = 0;
 }
 
 void RT_TRACK_Light(const vec3_t position, float radius, const vec3_t color,

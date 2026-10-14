@@ -137,13 +137,15 @@ class RhiRtDirectPass;
 // its own uncached table; the engine's raygen index for this shader (SBT_INDEX_RAYGEN_Q2_INDIRECT = 4)
 // has no NVRHI counterpart.
 //
-// The dispatch (a43_recon.md §5): the normal mode is `width x height`; the half mode is
-// `width x (height + 1) / 2` - the height is halved, the width stays full. The host chooses the mode
-// exactly as PathTracer.cpp:203-210 does, from `globalUniform.giBounceRays[0]`: the value in
-// (0.25, 0.75) selects the half dispatch. The raygen itself doubles the row back and picks the
-// checkerboard parity from `globalUniform.frameId & 1`, and stores zeros when `giBounceRays[0] <
-// 0.25`, so no host-side skip exists for `rt_gi_level 0`. The dispatch index is the packed texel, so
-// the images keep the render extents and `width`/`height` are the full render resolution.
+// The dispatch (a43_recon.md §5): low and medium take the quarter grid
+// (`(width + 1) / 2 x (height + 1) / 2`), high and ultra half of the rows (`width x (height + 1) / 2`),
+// and the off level the full `width x height` grid, which the raygen zero-stores. The host chooses
+// the tier from `globalUniform.giBounceRays[0]`: values below 0.25 are off, [0.25, 1.25) is the
+// quarter grid and 1.25 and above the half one. The raygen itself folds the packed texel back (both
+// axes for the quarter grid, with the frame counter alternating the parity) and stores zeros when the
+// level is below 0.25, so no host-side skip exists for `rt_gi_level 0`. The dispatch index is the
+// packed texel, so the images keep the render extents and `width`/`height` are the full render
+// resolution.
 //
 // The image-state contract (a43_recon.md §3.2): the engine leaves every framebuffer image in
 // VK_IMAGE_LAYOUT_GENERAL (= NVRHI's UnorderedAccess) and a native wrap keeps no state between
@@ -283,11 +285,10 @@ public:
     void SetRenderCubemaps(nvrhi::ITexture *pCubemap, nvrhi::ITexture *pEnvCubemap, nvrhi::ISampler *pSampler);
 
     // One call per frame, on the frame context's open command list of 'frameIndex', after
-    // RhiRtDirectPass::Render and before the compose chain of the same slot. 'numBounceRays' is
+    // RhiRtDirectPass::Render and before the compose chain of the same slot. 'giLevel' is
     // `ShGlobalUniform::giBounceRays[0]` exactly as the host wrote it into this frame's uniform
-    // (sky.uniform->GetData()->giBounceRays[0]) - the pass halves the dispatch height exactly when
-    // it is in (0.25, 0.75), the condition of PathTracer.cpp:203-210, and the shader's own
-    // half-res/zero behavior keys off the same uniform member. 'pTopLevel' is the slot's top-level
+    // (sky.uniform->GetData()->giBounceRays[0]) - the pass sizes the dispatch from it and the
+    // shader's own sub-resolution/zero behavior keys off the same uniform member. 'pTopLevel' is the slot's top-level
     // structure, 'pUniformBuffer' the engine's global uniform as a static constant-buffer wrap (the
     // same wrap the primary and direct passes take), 'vertexData' the seven set 3 buffers
     // ('RhiRtPrimaryPass::VertexData'; this pass builds its own set over the primary's layout
@@ -301,8 +302,9 @@ public:
     // through the frame context's retire queue), the per-slot sets 0-3, the set-5 set if the
     // blue-noise texture changed, the set-8 set if the render-cubemap pair changed, the clear of the
     // placeholder cube on the first list that binds the placeholder (the real cubes skip it), then
-    // one `dispatchRays(width, halfRes ? (height + 1) / 2 : height, 1)` over the direct pass's set-6
-    // set and the primary's sets 9/10/11. The five UAV images end the list in
+    // one `dispatchRays` sized for the level's resolution tier (the quarter, half or full grid; see
+    // the dispatch note in Render) over the direct pass's set-6 set and the primary's sets 9/10/11.
+    // The five UAV images end the list in
     // UnorderedAccess; the 9 SRV-only images are moved back there after the dispatch, so the next
     // frame's writers (and this pass's own UAVs) find the layout the engine knows.
     //
@@ -312,7 +314,7 @@ public:
     // validation refuses.
     void Render(nvrhi::ICommandList *pCommandList,
                 uint32_t frameIndex,
-                float numBounceRays,
+                float giLevel,
                 nvrhi::rt::IAccelStruct *pTopLevel,
                 nvrhi::IBuffer *pUniformBuffer,
                 const RhiRtPrimaryPass::VertexData &vertexData,

@@ -38,14 +38,16 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #define NUM_INDEX_BITS       8
 #define MAX_PENDING_TASKS    (1u << NUM_INDEX_BITS)
-#define MAX_EXECUTABLE_TASKS 256
 #define MAX_DEPENDENT_TASKS  16
 #define MAX_PAYLOAD_SIZE     32
 #define MAX_WORKERS          32
+#define MAX_EXECUTABLE_TASKS (MAX_PENDING_TASKS * MAX_WORKERS)
 #define WORKER_HUNK_SIZE     (1 * 1024 * 1024)
 #define WAIT_SPIN_COUNT      100
 
-COMPILE_TIME_ASSERT (tasks, MAX_PENDING_TASKS >= MAX_EXECUTABLE_TASKS);
+COMPILE_TIME_ASSERT (tasks, MAX_EXECUTABLE_TASKS >= MAX_PENDING_TASKS * MAX_WORKERS);
+COMPILE_TIME_ASSERT (tasks, MAX_PENDING_TASKS >= 256);
+COMPILE_TIME_ASSERT (tasks, MAX_EXECUTABLE_TASKS >= 256);
 
 typedef enum
 {
@@ -85,7 +87,6 @@ typedef struct
 } task_counter_t;
 
 static int                   num_workers = 0;
-static SDL_Thread          **worker_threads;
 static task_t                tasks[MAX_PENDING_TASKS];
 static task_queue_t         *free_task_queue;
 static task_queue_t         *executable_task_queue;
@@ -330,10 +331,11 @@ void Tasks_Init (void)
 	}
 
 	indexed_task_counters = Mem_Alloc (sizeof (task_counter_t) * num_workers * MAX_PENDING_TASKS);
-	worker_threads = (SDL_Thread **)Mem_Alloc (sizeof (SDL_Thread *) * num_workers);
 	for (int i = 0; i < num_workers; ++i)
 	{
-		worker_threads[i] = SDL_CreateThread (Task_Worker, "Task_Worker", (void *)(intptr_t)i);
+		SDL_Thread *worker = SDL_CreateThread (Task_Worker, "Task_Worker", (void *)(intptr_t)i);
+		if (worker)
+			SDL_DetachThread (worker);
 	}
 }
 

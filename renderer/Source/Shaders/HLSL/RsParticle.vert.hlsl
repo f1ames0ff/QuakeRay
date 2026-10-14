@@ -11,6 +11,8 @@
 #include "Q2ClusterLights.hlsli"
 #include "SmokeLight.hlsli"
 
+#define QR_PARTICLE_CLUSTER_SELF_LIT 0xFFFFFFFFu
+
 struct RasterizerVert_BT
 {
     float4x4 viewProj;
@@ -33,7 +35,9 @@ void main(
 {
     outColor    = color;
     outTexCoord = texCoord;
-    outLit      = smokeLightAt(position, particleCluster, 0.0, rasterizerVertInfo.particleLook[1], 0.0);
+    outLit      = particleCluster == QR_PARTICLE_CLUSTER_SELF_LIT
+                      ? float3(0.0, 0.0, -1.0)
+                      : smokeLightAt(position, particleCluster, 0.0, rasterizerVertInfo.particleLook[1], 0.0);
 
     outPosition = mul(rasterizerVertInfo.viewProj, float4(position, 1.0));
     /* The pane-depth test of the fragment needs the sprite's own view depth: the clip-space w is

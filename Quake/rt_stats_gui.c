@@ -199,11 +199,46 @@ static void RT_StatsOverlayGpu (const rt_stats_snapshot_t *snap)
 		RT_StatsOverlayMs (qrGetGpuPassName (i), snap->gpu.gpuPassMs[i], &rt_stats_series_gpu_pass[i]);
 }
 
+static void RT_StatsOverlayCpuSlotRow (const rt_stats_snapshot_t *snap, int slot)
+{
+	const rt_prof_report_t *rep = &snap->profile;
+
+	if (slot == RT_PROF_BEGIN)
+		RT_StatsOverlayNeutralMs ("begin (gpu wait)", rep->ms[slot], &rt_stats_series_cpu_slot[slot]);
+	else
+		RT_StatsOverlayMs (RT_ProfSlotName (slot), rep->ms[slot], &rt_stats_series_cpu_slot[slot]);
+}
+
+static const int *RT_StatsCpuSlots (int *count)
+{
+	static int slots[RT_PROF_COUNT];
+	static int slotCount = -1;
+
+	if (slotCount < 0)
+	{
+		int n = 0;
+
+		for (int i = 0; i < RT_PROF_COUNT; i++)
+		{
+			if (i == RT_PROF_FRAME || i == RT_PROF_WAIT || i == RT_PROF_DRAWFRAME)
+				continue;
+
+			slots[n++] = i;
+		}
+
+		slotCount = n;
+	}
+
+	*count = slotCount;
+	return slots;
+}
+
 static void RT_StatsOverlayCpu (const rt_stats_snapshot_t *snap)
 {
 	const rt_prof_report_t *rep = &snap->profile;
 	char                    st[64];
-	int                     i;
+	int                     slotCount;
+	const int              *slots;
 
 	if (!snap->haveProfile)
 	{
@@ -217,13 +252,10 @@ static void RT_StatsOverlayCpu (const rt_stats_snapshot_t *snap)
 	RT_StatsOverlayMs ("qrDrawFrame max", rep->ms[RT_PROF_DRAWFRAME], &rt_stats_series_cpu_draw);
 	RT_StatsOverlayMs ("qrDrawFrame avg", rep->averageMs[RT_PROF_DRAWFRAME], &rt_stats_series_cpu_draw_average);
 
-	for (i = 0; i < RT_PROF_COUNT; i++)
-	{
-		if (i == RT_PROF_FRAME || i == RT_PROF_WAIT || i == RT_PROF_DRAWFRAME)
-			continue;
+	slots = RT_StatsCpuSlots (&slotCount);
 
-		RT_StatsOverlayMs (RT_ProfSlotName (i), rep->ms[i], &rt_stats_series_cpu_slot[i]);
-	}
+	for (int i = 0; i < (slotCount + 1) / 2; i++)
+		RT_StatsOverlayCpuSlotRow (snap, slots[i]);
 
 	const int cacheFrames = rep->clusterCacheHits + rep->clusterCacheMisses;
 
@@ -243,6 +275,20 @@ static void RT_StatsOverlayCpu (const rt_stats_snapshot_t *snap)
 	q_snprintf (st, sizeof (st), "clust lights %i add %i drop %i", rep->clusterLights, rep->clusterAttempts,
 	            rep->clusterDropped);
 	QR_GUI_OverlayNote (st);
+}
+
+static void RT_StatsOverlayCpuSlotsTail (const rt_stats_snapshot_t *snap)
+{
+	int        slotCount;
+	const int *slots;
+
+	if (!snap->haveProfile)
+		return;
+
+	slots = RT_StatsCpuSlots (&slotCount);
+
+	for (int i = (slotCount + 1) / 2; i < slotCount; i++)
+		RT_StatsOverlayCpuSlotRow (snap, slots[i]);
 }
 
 static void RT_StatsOverlayRendererCpu (const rt_stats_snapshot_t *snap)
@@ -279,9 +325,9 @@ static void RT_StatsOverlayBudget (void)
 
 	RT_StatsOverlayMs ("WORLD", rt_world_draw_ms, &rt_stats_series_world);
 
-	q_snprintf (st, sizeof (st), "wpoly %u/%u epoly %u/%u lmap %u sky %u/%u", Atomic_LoadUInt32 (&rs_brushpolys),
+	q_snprintf (st, sizeof (st), "wpoly %u/%u epoly %u/%u sky %u/%u", Atomic_LoadUInt32 (&rs_brushpolys),
 	            Atomic_LoadUInt32 (&rs_brushpasses), Atomic_LoadUInt32 (&rs_aliaspolys), Atomic_LoadUInt32 (&rs_aliaspasses),
-	            Atomic_LoadUInt32 (&rs_dynamiclightmaps), Atomic_LoadUInt32 (&rs_skypolys), Atomic_LoadUInt32 (&rs_skypasses));
+	            Atomic_LoadUInt32 (&rs_skypolys), Atomic_LoadUInt32 (&rs_skypasses));
 	QR_GUI_OverlayNote (st);
 }
 
@@ -370,13 +416,15 @@ void RT_StatsDrawGui (void)
 	else if (snap->haveProfile)
 		q_snprintf (title, sizeof (title), "%.1f FPS", snap->profile.fps);
 
-	const int columns = (profile ? 3 : 0) + (passes ? 1 : 0) + (rays ? 1 : 0) + (world ? 1 : 0);
+	const int columns = (profile ? 4 : 0) + (passes ? 1 : 0) + (rays ? 1 : 0) + (world ? 1 : 0);
 	QR_GUI_OverlayBegin ("##rt_stats", 8.0f, 8.0f, 0.62f, title[0] ? title : NULL, columns);
 
 	if (profile)
 	{
 		QR_GUI_OverlaySection ("CPU max");
 		RT_StatsOverlayCpu (snap);
+		QR_GUI_OverlaySection ("CPU slots");
+		RT_StatsOverlayCpuSlotsTail (snap);
 		QR_GUI_OverlaySection ("DRAWFRAME CPU");
 		RT_StatsOverlayRendererCpu (snap);
 	}

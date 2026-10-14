@@ -31,6 +31,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 int RT_GetFanIndexCount (int vertexcount);
 
+// Writes (vertexcount - 2) fan triangles: (base+i, base+i-1, base) for i in [2, vertexcount).
+void RT_WriteFanIndices (int basevert, int vertexcount, uint32_t *dest);
+
 // Don't call if previously returned pointer is in use.
 // But no need to free it.
 const uint32_t *RT_GetFanIndices (int vertexcount);

@@ -26,6 +26,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gl_heap.h"
 #include "quakedef.h"
 
+extern cvar_t rt_brush_metal, rt_brush_rough;
+
 #define RT_SKY_CULLING 0
 
 #define MAX_CLIP_VERTS 64
@@ -984,6 +986,80 @@ static void RT_GetSkyTintColor (float color[3])
 	VectorScale (color, mult, color);
 }
 
+static uint64_t sky_batch_uniqueid;
+
+static void Sky_FlushPolyBatch (cb_context_t *cbx, float color[3])
+{
+	if (cbx->batch_verts_count == 0 || cbx->batch_indices_count == 0)
+		return;
+
+	const static QrTransform tr = RT_TRANSFORM_IDENTITY;
+
+	QrGeometryUploadInfo info = {
+		.uniqueID = sky_batch_uniqueid,
+		.flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT,
+		.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
+		.passThroughType = QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
+		.visibilityType = QR_GEOMETRY_VISIBILITY_TYPE_SKY,
+		.vertexCount = (uint32_t)cbx->batch_verts_count,
+		.pVertices = cbx->batch_verts,
+		.indexCount = (uint32_t)cbx->batch_indices_count,
+		.pIndices = cbx->batch_indices,
+		.layerColors = {{color[0], color[1], color[2], 1.0f}},
+		.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
+		.geomMaterial = {QR_NO_MATERIAL},
+		.defaultRoughness = CVAR_TO_FLOAT (rt_brush_rough),
+		.defaultMetallicity = CVAR_TO_FLOAT (rt_brush_metal),
+		.defaultEmission = 0,
+		.transform = tr,
+	};
+
+	QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+	QR_CHECK (r);
+
+	cbx->batch_verts_count = 0;
+	cbx->batch_indices_count = 0;
+}
+
+static void Sky_AppendPoly (cb_context_t *cbx, glpoly_t *p, float color[3], uint64_t uniqueid)
+{
+	const int numverts = p->numverts;
+
+	if (numverts == 0)
+		return;
+
+	const int numindices = RT_GetFanIndexCount (numverts);
+
+	if (numverts > MAX_BATCH_VERTS || numindices > MAX_BATCH_INDICES)
+		return;
+
+	if (cbx->batch_verts_count + numverts > MAX_BATCH_VERTS ||
+		cbx->batch_indices_count + numindices > MAX_BATCH_INDICES)
+	{
+		Sky_FlushPolyBatch (cbx, color);
+	}
+
+	QrVertex    *dst = &cbx->batch_verts[cbx->batch_verts_count];
+	const float *v = p->verts[0];
+
+	for (int i = 0; i < numverts; ++i, v += VERTEXSIZE)
+	{
+		dst[i] = (QrVertex){0};
+		dst[i].position[0] = v[0];
+		dst[i].position[1] = v[1];
+		dst[i].position[2] = v[2];
+		dst[i].texCoord[0] = v[3];
+		dst[i].texCoord[1] = v[4];
+		dst[i].packedColor = RT_PACKED_COLOR_WHITE;
+	}
+
+	RT_WriteFanIndices (cbx->batch_verts_count, numverts, &cbx->batch_indices[cbx->batch_indices_count]);
+
+	cbx->batch_verts_count += numverts;
+	cbx->batch_indices_count += numindices;
+	sky_batch_uniqueid = uniqueid;
+}
+
 /*
 ================
 Sky_ProcessPoly
@@ -1029,6 +1105,9 @@ void Sky_ProcessTextureChains (cb_context_t *cbx, float color[3])
 	if (!r_drawworld_cheatsafe)
 		return;
 
+	cbx->batch_verts_count = 0;
+	cbx->batch_indices_count = 0;
+
 	for (i = 0; i < cl.worldmodel->numtextures; i++)
 	{
 		t = cl.worldmodel->textures[i];
@@ -1038,9 +1117,12 @@ void Sky_ProcessTextureChains (cb_context_t *cbx, float color[3])
 
 		for (s = t->texturechains[chain_world]; s; s = s->texturechains[chain_world])
 		{
-			Sky_ProcessPoly (cbx, s->polys, color, RT_GetBrushSurfUniqueId (ENT_UNIQUEID_WORLD, cl.worldmodel, s, 0));
+			Sky_AppendPoly (cbx, s->polys, color, RT_GetBrushSurfUniqueId (ENT_UNIQUEID_WORLD, cl.worldmodel, s, 0));
+			Atomic_IncrementUInt32 (&rs_brushpasses);
 		}
 	}
+
+	Sky_FlushPolyBatch (cbx, color);
 }
 
 /*
@@ -1097,6 +1179,9 @@ void Sky_ProcessEntities (cb_context_t *cbx, float color[3])
 		e = cl_visedicts[i];
 
 		if (e->model->type != mod_brush)
+			continue;
+
+		if (!(e->model->used_specials & SURF_DRAWSKY))
 			continue;
 
 		if (CVAR_TO_BOOL (rt_enable_pvs))

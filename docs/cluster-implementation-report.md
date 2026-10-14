@@ -161,7 +161,19 @@ overflow path incremental, the sampling-on arm stops recomposing after the arm's
 misses stay at 1 in every block) and its cluster work on this route is 0.32-0.35 ms, of which
 0.05-0.06 ms is tail maintenance, against 0.20-0.22 ms fast-only; the CPU frame stays within about
 1 ms of the fast-only arm on the same blocks. `rt_cluster_assert 1` over the whole route reports
-no mismatches. The `rt_cluster_sampling` default stays off until that default is decided.
+no mismatches. The `rt_cluster_sampling` default is `1` now (owner decision, 2026-10-13): the
+owner's in-game A/B on the Arcane Dimensions `start` hub - the captured session there shows 93
+clusters at the 128-light cap - had the restored selection remove the hard-bounded dark patches the
+truncation left, and `rt_dtal_groups 1` on top of it read still better. Matched captures on
+`ad_tfuma` (Balanced, medium) are neutral across the four arms (A0B0 54.6, A0B1 54.5, A1B0 54.8,
+A1B1 55.8 fps; `gpu` 17.5-17.8 ms; cluster work 0.05-0.06 ms), and the `start` baseline puts the
+pressure the policy targets at `clusters` 0.76 ms with 93 clusters at the cap. The sampling-on `start` arm captured in the session reports the same 93 clusters as `93 clusters
+filled their 128 fast slots; the remaining accepted sources are sampled through the overflow tail`,
+with `clusters` 1.08 ms against the baseline's 0.76 ms (the two runs are single samples under a
+moving machine; read the cluster cost, not the fps gap). The `rt_dtal_groups 1` arms on `start`
+could not be captured (foreign machine activity stole focus mid-capture); the owner's in-game A/B
+covers the grouped path. The switch keeps its `0` arm (legacy fast-only policy) for A/B and
+bisection.
 
 The wide-reach stress case the tail maintenance was measured against is the Arcane Dimensions
 `start` hub (6125 clusters, 551 lights, a median of 183 accepted candidates per cluster and 823424

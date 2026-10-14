@@ -67,9 +67,11 @@ QuakeRay is still in development. Some maps and mods may have visual or compatib
 - Full path tracing and further lighting improvements
 - More visual effects
 - Improved Arcane Dimensions support
-- Production-ready whole-frame CPU multithreading: extend task coverage beyond render producers,
-  reduce measured serial/lock bottlenecks, harden scheduling and finish the correctness/scalability
-  matrix before enabling the render task path by default. See the
+- Production-ready whole-frame CPU multithreading: the render task path is already enabled by
+  default (`r_tasks 1` since 2026-10-11; `r_tasks 0` remains the deprecated serial path kept for
+  bisection). Continue by extending task coverage beyond render producers, reducing measured
+  serial/lock bottlenecks, hardening scheduling and completing the correctness/scalability matrix.
+  See the
   [multithreading milestones and acceptance gates](docs/multithreading.md#roadmap-to-production-ready-whole-frame-multithreading).
 
 These are goals, not promises of a release date.

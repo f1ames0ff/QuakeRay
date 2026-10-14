@@ -21,6 +21,9 @@
 #include "LightManager.h"
 #include "VertexPreprocessing.h"
 
+#include <atomic>
+#include <cstdint>
+
 namespace qray
 {
 
@@ -76,6 +79,11 @@ void FlushDeferredLightUploads();
     bool DoesUniqueIDExist(uint64_t uniqueID) const;
     bool DoesDynamicUniqueIDExist(uint64_t uniqueID) const;
 
+    uint64_t GetBoundsScanSumNs() const;
+    uint64_t GetBoundsScanCalls() const;
+    uint64_t GetBoundsScanVerts() const;
+    void ResetBoundsScanStats();
+
 private:
     bool TryGetStaticSimpleIndex(uint64_t uniqueID, uint32_t *result) const;
 
@@ -89,6 +97,10 @@ private:
 
     rgl::unordered_map<uint64_t, uint32_t> dynamicUniqueIDToSimpleIndex;
     rgl::unordered_map<uint64_t, uint32_t> staticUniqueIDToSimpleIndex;
+
+    std::atomic<uint64_t> boundsScanSumNs{0};
+    std::atomic<uint64_t> boundsScanCalls{0};
+    std::atomic<uint64_t> boundsScanVerts{0};
 
     std::vector<uint32_t> movableGeomIndices;
     bool toResubmitMovable;

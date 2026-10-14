@@ -75,7 +75,6 @@ cvar_t gl_cshiftpercent_powerup = {"gl_cshiftpercent_powerup", "100", CVAR_NONE}
 cvar_t r_viewmodel_quake = {"r_viewmodel_quake", "1", CVAR_ARCHIVE};
 
 float v_dmg_time, v_dmg_roll, v_dmg_pitch;
-float rt_dmg_value;
 qboolean rt_dmg_inthisframe;
 float rt_ef_damage_pulse;
 float rt_ef_damage_peak;
@@ -343,7 +342,6 @@ void V_ParseDamage (void)
 
 	v_dmg_time = v_kicktime.value;
 
-	rt_dmg_value = CLAMP (0.0f, count / 30.0f, 1.0f);
 	rt_dmg_inthisframe = true;
 }
 

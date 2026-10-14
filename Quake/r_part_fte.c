@@ -4945,7 +4945,12 @@ int PScript_RunParticleEffectTypeString (vec3_t org, vec3_t dir, float count, co
 	if (type < 0)
 		return 1;
 
-	return PScript_RunParticleEffectState (org, dir, count, type, NULL);
+	int r = PScript_RunParticleEffectState (org, dir, count, type, NULL);
+
+	if (r == 0 && q_strcasestr (name, "explosion"))
+		RT_ExplosionGlowAdd (org);
+
+	return r;
 }
 
 int PScript_EntParticleTrail (vec3_t oldorg, entity_t *ent, const char *name)
@@ -6917,7 +6922,24 @@ static void PScript_DrawParticleTypes (cb_context_t *cbx, float pframetime)
 			{
 				QrVertex *lit = (QrVertex *)info.pVertices;
 				for (uint32_t v = 0; v < info.vertexCount; v++)
-					lit[v].cluster = (uint32_t)RT_ParticleClusterAt (lit[v].position);
+				{
+					float glow = 0.0f;
+
+					if (RT_ExplosionGlowAt (lit[v].position, &glow))
+					{
+						const uint32_t pc = lit[v].packedColor;
+
+						lit[v].packedColor = RT_PackColorToUint32 ((byte)((pc & 0xFF) * glow),
+						                                           (byte)(((pc >> 8) & 0xFF) * glow),
+						                                           (byte)(((pc >> 16) & 0xFF) * glow),
+						                                           (byte)((pc >> 24) & 0xFF));
+						lit[v].cluster = QR_PARTICLE_CLUSTER_SELF_LIT;
+					}
+					else
+					{
+						lit[v].cluster = (uint32_t)RT_ParticleClusterAt (lit[v].position);
+					}
+				}
 
 				info.pipelineState |= QR_RASTERIZED_GEOMETRY_STATE_PARTICLE;
 				info.smokeLook.data[0] = CVAR_TO_BOOL (r_particle_light_debug) ? 1.0f : 0.0f;

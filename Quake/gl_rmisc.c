@@ -35,7 +35,6 @@ extern cvar_t r_flatlightstyles;
 extern cvar_t r_lerplightstyles;
 extern cvar_t gl_fullbrights;
 extern cvar_t gl_farclip;
-extern cvar_t r_waterquality;
 extern cvar_t r_waterwarp;
 extern cvar_t r_oldskyleaf;
 extern cvar_t r_drawworld;
@@ -50,7 +49,6 @@ extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
 extern cvar_t r_gpulightmapupdate;
 extern cvar_t r_tasks;
 extern cvar_t r_parallelmark;
-extern cvar_t r_usesops;
 
 extern cvar_t rt_elight_normaliz;
 
@@ -197,7 +195,6 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_drawviewmodel);
 	Cvar_RegisterVariable (&r_wateralpha);
 	Cvar_SetCallback (&r_wateralpha, R_SetWateralpha_f);
-	Cvar_RegisterVariable (&r_dynamic);
 #if defined(USE_SIMD)
 	Cvar_RegisterVariable (&r_simd);
 	Cvar_SetCallback (&r_simd, R_SIMD_f);
@@ -205,11 +202,9 @@ void R_Init (void)
 #endif
 	Cvar_RegisterVariable (&r_speeds);
 	Cvar_RegisterVariable (&r_pos);
-	Cvar_RegisterVariable (&gl_polyblend);
 	Cvar_RegisterVariable (&gl_nocolors);
 
 	// johnfitz -- new cvars
-	Cvar_RegisterVariable (&r_waterquality);
 	Cvar_RegisterVariable (&r_waterwarp);
 	Cvar_RegisterVariable (&r_flatlightstyles);
 	Cvar_RegisterVariable (&r_lerplightstyles);
@@ -237,7 +232,6 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_gpulightmapupdate);
 	Cvar_RegisterVariable (&r_tasks);
 	Cvar_RegisterVariable (&r_parallelmark);
-	Cvar_RegisterVariable (&r_usesops);
 
 	R_InitParticles ();
 	R_SmokeInit ();
@@ -433,6 +427,7 @@ void R_NewMap (void)
 		Atomic_StoreUInt32 (&rt_require_static_submit, true);
 	}
 	GL_PrepareSIMDData ();
+	RT_MarkParallel_NewMap ();
 	// ericw -- no longer load alias models into a VBO here, it's done in Mod_LoadAliasModel
 
 	r_framecount = 0;    // johnfitz -- paranoid?

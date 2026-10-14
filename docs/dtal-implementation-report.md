@@ -116,7 +116,7 @@ source bounds radius. Group bounds are used for reach eligibility, not just the 
 
 - `rt_dtal_groups`: `0` one light per admitted piece (legacy path with the corrected sampler),
   `1` grid groups, `2` diagnostic singleton groups over the same patches and sampler.
-- `rt_dtal_spacing`: validated grid edge, default `128` world units.
+- `rt_dtal_spacing`: validated grid edge, default `8` world units (`rt_dtal_maxgroups` bounds a finer grid).
 - Both are ordinary invalidating cvars (coalesced through the existing `rt_require_static_submit`
   boundary) and have Light Editor controls and benchmark-metadata entries.
 - `rt_light_report` prints admitted pieces, parents, members, oversized pieces, budget refusals and
@@ -165,8 +165,12 @@ After the integration fixes the grouped path was exercised on the stock maps:
 **Measured limitation:** on these two stock maps the parent count *increases* (66 → 109/121,
 269 → 358). Grid clipping splits medium and large emitters across cells faster than compatible
 pieces merge inside a cell. The reduction target is met only where many compatible pieces share
-cells (heavily fragmented emissive meshes); it is not demonstrated on `e1m7`/`e4m1`, and
-`rt_dtal_groups` therefore stays off by default. Screenshot pairs were taken with the denoiser off
+cells (heavily fragmented emissive meshes); it is not demonstrated on `e1m7`/`e4m1`. The default
+is `1` now (owner decision, 2026-10-13): the owner's in-game A/B on the Arcane Dimensions `start`
+hub, whose fragmented emissive geometry is the case the grouping targets, reads better with
+`rt_dtal_groups 1` than with the per-piece sources, while the parent-count increase measured here
+on `e1m7`/`e4m1` stays a known cost of the grid clipping on those maps. Screenshot pairs were taken
+with the denoiser off
 and without a guaranteed identical camera, so they are a smoke check only (bright pair means 28.09
 vs 27.04, dark pair 4.59 vs 3.99); they are not the required numerical reference and the grouped
 mean-preservation reference remains the CPU test.

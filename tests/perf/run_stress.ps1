@@ -1,6 +1,7 @@
 param(
-    [ValidateSet('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy', 'qr_swampy_start')][string[]]$Saves = @('qr_fuma_start'),
+    [ValidateSet('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy', 'qr_swampy_start', 'qr_ad_swamp')][string[]]$Saves = @('qr_fuma_start'),
     [ValidateSet('balanced', 'quality', 'performance', 'ultra')][string[]]$Presets = @('balanced'),
+    [ValidateSet('audit', 'medium')][string]$RtProfile = 'audit',
     [ValidateRange(2, 25)][int]$Seconds = 10,
     [ValidateRange(2, 30)][int]$Warmup = 5,
     [ValidateRange(1, 2)][int]$Repeats = 1,
@@ -37,7 +38,7 @@ $gameDir = Join-Path $Basedir 'ad'
 $exe = Join-Path $Basedir 'quakeray.exe'
 $console = Join-Path $Basedir 'qconsole.log'
 $config = Join-Path $gameDir 'config.cfg'
-$expectedMaps = @{ qr_fuma_start = 'ad_tfuma'; qr_ad_start = 'start'; qr_gpu_heavy = 'ad_swampy'; qr_swampy_start = 'ad_swampy' }
+$expectedMaps = @{ qr_fuma_start = 'ad_tfuma'; qr_ad_start = 'start'; qr_gpu_heavy = 'ad_swampy'; qr_swampy_start = 'ad_swampy'; qr_ad_swamp = 'ad_swampy' }
 $mapMode = $Saves[0] -eq 'qr_swampy_start'
 $runTag = ($Tag -replace '[^a-zA-Z0-9_-]', '_') + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' +
     [Guid]::NewGuid().ToString('N').Substring(0, 6)
@@ -59,6 +60,7 @@ $manifest = [ordered]@{
     EngineAssetsSha256 = (Get-FileHash (Join-Path $Basedir 'id1\qray.pkz') -Algorithm SHA256).Hash
     Saves = $Saves
     Presets = $Presets
+    RtProfile = $RtProfile
     Seconds = $Seconds
     Warmup = $Warmup
     Repeats = $Repeats
@@ -189,7 +191,8 @@ $results = @()
                 $initialStatsLevel = if ($EnableStatsAfterWarmup) { 0 } else { $StatsLevel }
                 $startStats = if ($EnableStatsAfterWarmup) { "rt_stats $StatsLevel;" } else { '' }
                 $mapCommand = if ($mapMode) { "map $($expectedMaps[$save])" } else { "load $save" }
-                $fixtureText = (Get-Content (Join-Path $PSScriptRoot 'qr_audit_max.cfg') -Raw) + "`n" +
+                $profileCfg = if ($RtProfile -eq 'medium') { 'qr_medium.cfg' } else { 'qr_audit_max.cfg' }
+                $fixtureText = (Get-Content (Join-Path $PSScriptRoot $profileCfg) -Raw) + "`n" +
                     "rt_upscale_fsr31 $fsr`n" + ($Overrides -join "`n") + "`n" + @"
 vid_unlock
 vid_fullscreen 0
@@ -242,12 +245,17 @@ echo QR_LOADED0_$id
                     }
                     [StressWin32]::SetForegroundWindow($window) | Out-Null
                     if (-not $mapMode) {
-                        Start-Sleep -Seconds 2
+                        Wait-Marker $process 'demo(s) in loop'
+                        Start-Sleep -Milliseconds 500
+                        [StressWin32]::SetForegroundWindow($window) | Out-Null
+                        Wait-Marker $process 'RHI: acceleration structures:'
+                        Start-Sleep -Milliseconds 300
                         Send-Key $window 0x77 0x42
                         Wait-Marker $process "QR_RESTART_$id"
-                        Start-Sleep -Seconds 2
+                        Start-Sleep -Milliseconds 800
                         Send-Key $window 0x79 0x43
                         Wait-Marker $process "QR_RELOAD_$id"
+                        Start-Sleep -Milliseconds 800
                         if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
                             Write-Host 'The restart sequence consumed the capture budget; this attempt is deferred.'
                             Send-Key $window 0x7a 0x57
@@ -255,7 +263,6 @@ echo QR_LOADED0_$id
                             break
                         }
                     }
-                    Send-Key $window 0x1B 0x01
                     Start-Sleep -Seconds $Warmup
                     Send-Key $window 0x76 0x41
                     Wait-Marker $process "QR_EFFECTIVE_$id"
@@ -334,8 +341,9 @@ echo QR_LOADED0_$id
                     $newBlock = $blocks[$oldBench..($blocks.Count - 1)]
                     $newBlock | Set-Content (Join-Path $output "$label.bench.log")
                     $settings = $newBlock | Where-Object { $_ -match '^settings ' } | Select-Object -Last 1
+                    $expectedClouds = if ($RtProfile -eq 'medium') { 1 } else { 0 }
                     if ($settings -notmatch 'vid=3840x2160@' -or $settings -notmatch "rt_upscale_fsr31=$fsr(?: |$)" -or
-                        $settings -notmatch 'rt_sky_clouds_quality=0(?: |$)') { throw 'Effective resolution/FSR/cloud quality does not match the requested target.' }
+                        $settings -notmatch "rt_sky_clouds_quality=$expectedClouds(?: |$)") { throw 'Effective resolution/FSR/cloud quality does not match the requested target.' }
                     if (($newBlock -join "`n") -notmatch "demo=maps/$($expectedMaps[$save])\.bsp") { throw 'Unexpected map in benchmark capture' }
                     $sampleRecord = $newBlock | Where-Object { $_ -match '^frame_samples file=' } | Select-Object -Last 1
                     if ($sampleRecord -notmatch '^frame_samples file=(\S+) samples=(\d+) dropped=0$') {

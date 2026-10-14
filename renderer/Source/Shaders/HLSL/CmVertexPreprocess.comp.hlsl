@@ -21,6 +21,7 @@
 #include "ShaderCommonHLSLFunc.hlsli"
 
 [[vk::constant_id(0)]] const uint preprocessMode = VERT_PREPROC_MODE_ONLY_DYNAMIC;
+[[vk::constant_id(1)]] const uint dynamicChunkCount = 1;
 
 [[vk::push_constant]] ConstantBuffer<ShVertPreprocessing> push;
 

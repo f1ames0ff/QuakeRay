@@ -44,11 +44,12 @@ const char *const PIXEL_SHADER_FILE_NAME  = "RsSky.frag.spv";
 // The blobs declare an 88-byte fragment block: color at offset 64, textureIndex at 80 and
 // emissionTextureIndex at 84, with no member after them (GLSL/RsSky.frag:32-37 and the
 // code-identical GLSL/RsSwapchain.frag:32-37; HLSL/RsSky.frag.hlsl:27-37 keeps the offsets). The
-// unused emissionMultiplier the old block ended with is gone, so the declaration is exactly what
-// the stage reads. The legacy RasterizedPushConst is 120 bytes since the smoke fields at 88/104
-// were appended (Rasterizer.cpp:70-72), but the sky stage reads only its first 88 bytes; the
-// module mirrors that legacy prefix, so both renderers give the stage the same bytes.
-constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
+// unused emissionMultiplier the old block ended with is gone, so the stage reads exactly the first
+// 88 bytes; the block is padded to RASTERIZED_PUSH_CONSTANT_SIZE anyway, because the passes that
+// share the frame's descriptor sets (the world/particle overlay and the sky pass) declare that
+// range for their push constants and Vulkan requires the ranges of layouts compatible for a set to
+// be the same.
+constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 124;
 
 // Both stages use SpecId 0 for their single constant: RsRasterizer.vert declares
 // applyVertexColorGamma, RsSky.frag declares alphaTest, each 4 bytes and written as a uint32
@@ -211,6 +212,8 @@ struct RasterSkyPushConstants
     float    c[4];
     uint32_t t;
     uint32_t e;
+    float    unused[8];
+    uint32_t particleProxy;
 
     explicit RasterSkyPushConstants(const RasterizedDataCollector::DrawInfo &info, const float *faceViewProj)
     {
@@ -222,6 +225,8 @@ struct RasterSkyPushConstants
         memcpy(c, info.color.Get(), 4 * sizeof(float));
         t = info.textureIndex;
         e = info.emissionTextureIndex;
+        memset(unused, 0, sizeof(unused));
+        particleProxy = 0u;
     }
 };
 
@@ -229,7 +234,9 @@ static_assert(offsetof(RasterSkyPushConstants, vp) == 0);
 static_assert(offsetof(RasterSkyPushConstants, c) == 64);
 static_assert(offsetof(RasterSkyPushConstants, t) == 80);
 static_assert(offsetof(RasterSkyPushConstants, e) == 84);
-static_assert(sizeof(RasterSkyPushConstants) == 88);
+static_assert(offsetof(RasterSkyPushConstants, unused) == 88);
+static_assert(offsetof(RasterSkyPushConstants, particleProxy) == 120);
+static_assert(sizeof(RasterSkyPushConstants) == RASTERIZED_PUSH_CONSTANT_SIZE);
 
 void LogMessage(const RhiRasterSkyPass::PrintFunction &print, const std::string &message)
 {

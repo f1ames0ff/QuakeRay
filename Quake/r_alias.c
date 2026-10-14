@@ -26,11 +26,26 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "rt_lights.h"
 
-extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; // johnfitz
+extern cvar_t r_lerpmodels, r_lerpmove; // johnfitz
 extern cvar_t scr_fov;
 
 extern cvar_t rt_model_rough, rt_model_metal, rt_enable_pvs;
 extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale, rt_viewm_normalize;
+extern cvar_t rt_upload_trace;
+
+atomic_uint32_t rs_alias_enhanced_draws;
+atomic_uint32_t rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
+
+#define RT_ALIAS_POSECACHE_SIZE 2048
+COMPILE_TIME_ASSERT (rt_alias_posecache_pow2, (RT_ALIAS_POSECACHE_SIZE & (RT_ALIAS_POSECACHE_SIZE - 1)) == 0);
+
+typedef struct
+{
+	const entity_t *ent;
+	const void     *model;
+	int             pose1;
+	qboolean        was_static;
+} rt_alias_posecache_t;
 
 float rt_viewmodel_depth_near = 0.0f;
 float rt_viewmodel_depth_far = 0.0f;
@@ -446,6 +461,30 @@ static void GL_DrawAliasFrame(
 
     int cluster = RT_ResolvePointCluster (lerpdata.origin);
 
+    if (rt_upload_trace.value != 0)
+    {
+        /* Sizing probe: an alias upload can reuse the previous frame's vertices only when it
+           uploads the raw pose block (no lerp, no forced cluster) and that block did not move
+           since the previous draw of the same entity. */
+
+        static THREAD_LOCAL rt_alias_posecache_t stride_posecache[RT_ALIAS_POSECACHE_SIZE];
+        const qboolean pose_static = (blend < FLT_EPSILON && cluster <= 0);
+        const size_t   slot = ((size_t)e / sizeof (void *)) & (RT_ALIAS_POSECACHE_SIZE - 1);
+        rt_alias_posecache_t *ce = &stride_posecache[slot];
+        const qboolean repeat = pose_static && ce->was_static && ce->ent == e && ce->model == e->model && ce->pose1 == lerpdata.pose1;
+
+        Atomic_AddUInt32 (&rs_alias_pose_draws, 1);
+        if (pose_static)
+            Atomic_AddUInt32 (&rs_alias_pose_static, 1);
+        if (repeat)
+            Atomic_AddUInt32 (&rs_alias_pose_repeat, 1);
+
+        ce->ent = e;
+        ce->model = e->model;
+        ce->pose1 = lerpdata.pose1;
+        ce->was_static = pose_static;
+    }
+
     /* The transform is the one the geometry upload below uses, so the light of the model stands
        exactly where the model is drawn. The light reads the model's own per-pose vertices, not
        the shared lerp scratch GetPoseVertices hands the geometry uploads: widening the window in
@@ -575,7 +614,9 @@ else
 		};
 
 		const double prof_upload = RT_Prof_Begin ();
+		qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_ALIAS);
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+		qrUploadLanePop (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
 		QR_CHECK(r);
 	}
@@ -585,6 +626,8 @@ Atomic_AddUInt32(&rs_aliaspasses, paliashdr->numtris);
 
 static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniqueid)
 {
+	Atomic_AddUInt32 (&rs_alias_enhanced_draws, 1);
+
 	lerpdata_t      lerpdata;
 	float           blend, entalpha;
 	uint64_t        baseid;
@@ -674,8 +717,8 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 
 			QrRasterizedGeometryUploadInfo info = {
 				.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_DEFAULT,
-				.vertexCount = paliashdr->numverts_vbo,
-				.pVertices = vertices,
+				.vertexCount = (uint32_t)surf->numverts,
+				.pVertices = vertices + surf->firstvertex_vbo,
 				.indexCount = surf->numindices,
 				.pIndices = e->model->rtindices + surf->firstindex,
 				.transform = transform,
@@ -721,8 +764,8 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				    isfirstperson ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON :
 				    isviewer ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON_VIEWER :
 				               QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
-				.vertexCount = paliashdr->numverts_vbo,
-				.pVertices = vertices,
+				.vertexCount = (uint32_t)surf->numverts,
+				.pVertices = vertices + surf->firstvertex_vbo,
 				.indexCount = surf->numindices,
 				.pIndices = e->model->rtindices + surf->firstindex,
 				.layerColors = {RT_COLOR_WHITE, {is_glass && tx ? tx->rtglasscolor[0] : 0.0f, is_glass && tx ? tx->rtglasscolor[1] : 0.0f, is_glass && tx ? tx->rtglasscolor[2] : 0.0f, 0.0f},
@@ -739,7 +782,9 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 			};
 
 			const double prof_upload = RT_Prof_Begin ();
+			qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_ALIAS_SURF);
 			QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+			qrUploadLanePop (vulkan_globals.instance);
 			RT_Prof_End (RT_PROF_ALIAS_UPLOAD, prof_upload);
 			QR_CHECK (r);
 		}

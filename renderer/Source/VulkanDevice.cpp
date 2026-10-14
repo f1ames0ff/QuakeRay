@@ -18,7 +18,9 @@
 #include "VulkanDevice.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstring>
 
 #include "HaltonSequence.h"
 #include "Matrix.h"
@@ -47,6 +49,7 @@ VkCommandBuffer VulkanDevice::BeginFrame(const QrStartFrameInfo &startInfo)
 
     swapchain->RequestPresentMode(startInfo.presentMode);
     swapchain->SetMaxFrameLatency(startInfo.maxFrameLatency);
+    swapchain->SetFullscreenExclusive(startInfo.wantFullscreenExclusive != 0, startInfo.hasFocus != 0);
     swapchain->AcquireImage(imageAvailableSemaphores[frameIndex]);
 
     if (swapchain->IsPresentWaitActive() && !printedPresentWaitActive)
@@ -1211,6 +1214,11 @@ void VulkanDevice::DrawFrame(const QrDrawFrameInfo *drawInfo)
     statsGpuFrameMs = 0.0f;
     std::fill_n(statsGpuPassMs, QR_GPU_PASS_COUNT, 0.0f);
 
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->ResetDynamicFrameCounters();
+    }
+
     VkCommandBuffer cmd = currentFrameState.GetCmdBuffer();
     const uint32_t frameIndex = currentFrameState.GetFrameIndex();
 
@@ -1388,6 +1396,41 @@ void VulkanDevice::GetFrameStatsEx(QrFrameStats *pStats) const
 
     pStats->rasterUploadBytes = statsRasterUploadBytes;
     pStats->rasterUploadDroppedBatches = statsRasterUploadDroppedBatches;
+
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->GetDynamicFrameCounters(&pStats->dynamicBlasBuilds, &pStats->dynamicBlasRecreations,
+                                                 &pStats->dynamicBlasCreateMs);
+
+        uint32_t filterCount = 0;
+        const rhi::RhiAccelStructs::DynamicFilterCounters *filters =
+            rhiAccelStructs->GetDynamicFilterCounters(&filterCount);
+
+        if (filterCount > QR_DYNAMIC_BLAS_FILTER_MAX)
+        {
+            filterCount = QR_DYNAMIC_BLAS_FILTER_MAX;
+        }
+
+        pStats->dynamicFilterCount = filterCount;
+        for (uint32_t i = 0; i < filterCount; i++)
+        {
+            pStats->dynamicFilters[i].filter = filters[i].filter;
+            pStats->dynamicFilters[i].builds = filters[i].builds;
+            pStats->dynamicFilters[i].recreates = filters[i].recreates;
+            pStats->dynamicFilters[i].positionalFails = filters[i].positionalFails;
+            pStats->dynamicFilters[i].sortedPassPositionalFails = filters[i].sortedPassPositionalFails;
+            pStats->dynamicFilters[i].sortedFails = filters[i].sortedFails;
+            pStats->dynamicFilters[i].sortedCountFails = filters[i].sortedCountFails;
+            pStats->dynamicFilters[i].sortedShapeFails = filters[i].sortedShapeFails;
+            pStats->dynamicFilters[i].geometryCount = filters[i].geometryCount;
+            pStats->dynamicFilters[i].envelopeCount = filters[i].envelopeCount;
+            pStats->dynamicFilters[i].envelopePrimitives = filters[i].envelopePrimitives;
+            pStats->dynamicFilters[i].listPrimitives = filters[i].listPrimitives;
+            pStats->dynamicFilters[i].failDeltaSum = filters[i].failDeltaSum;
+            pStats->dynamicFilters[i].failDeltaMin = filters[i].failDeltaMin;
+            pStats->dynamicFilters[i].failDeltaMax = filters[i].failDeltaMax;
+        }
+    }
 }
 
 void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
@@ -1416,9 +1459,148 @@ void VulkanDevice::GetAdapterInfo(QrAdapterInfo *pInfo) const
     pInfo->apiVersion = properties.apiVersion;
 }
 
+static uint64_t UploadNowNs()
+{
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
+static void UploadAtomicMax(std::atomic<uint64_t> &value, uint64_t candidate)
+{
+    uint64_t current = value.load(std::memory_order_relaxed);
+
+    while (candidate > current && !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed))
+    {
+    }
+}
+
+static thread_local uint32_t g_uploadLane = QR_UPLOAD_LANE_UNATTRIBUTED;
+static thread_local uint32_t g_uploadLaneStack[8];
+static thread_local uint32_t g_uploadLaneDepth = 0;
+
+VulkanDevice::UploadLockScope::UploadLockScope(VulkanDevice &device_, uint32_t lane_)
+    : device(device_), lane(lane_), enabled(false), waitNs(0), holdStartNs(0)
+{
+    enabled = device.uploadLockTracing.load(std::memory_order_relaxed) && lane < QR_UPLOAD_LANE_COUNT;
+
+    if (enabled)
+    {
+        const uint64_t t0 = UploadNowNs();
+        device.geometryUploadMutex.lock();
+        const uint64_t t1 = UploadNowNs();
+        waitNs = t1 - t0;
+        holdStartNs = t1;
+    }
+    else
+    {
+        device.geometryUploadMutex.lock();
+    }
+}
+
+VulkanDevice::UploadLockScope::~UploadLockScope()
+{
+    if (enabled)
+    {
+        const uint64_t holdNs = UploadNowNs() - holdStartNs;
+
+        device.uploadLockWaitSumNs[lane].fetch_add(waitNs, std::memory_order_relaxed);
+        UploadAtomicMax(device.uploadLockWaitMaxNs[lane], waitNs);
+        device.uploadLockHoldSumNs[lane].fetch_add(holdNs, std::memory_order_relaxed);
+        UploadAtomicMax(device.uploadLockHoldMaxNs[lane], holdNs);
+        device.uploadLockCalls[lane].fetch_add(1, std::memory_order_relaxed);
+    }
+
+    device.geometryUploadMutex.unlock();
+}
+
+void VulkanDevice::UploadLanePush(uint32_t lane)
+{
+    if (g_uploadLaneDepth < 8)
+        g_uploadLaneStack[g_uploadLaneDepth++] = g_uploadLane;
+
+    g_uploadLane = lane;
+}
+
+void VulkanDevice::UploadLanePop()
+{
+    if (g_uploadLaneDepth > 0)
+        g_uploadLane = g_uploadLaneStack[--g_uploadLaneDepth];
+}
+
+void VulkanDevice::SetUploadLockTracing(bool enable)
+{
+    uploadLockTracing.store(enable, std::memory_order_relaxed);
+}
+
+void VulkanDevice::SetDynamicShapeSortedReuse(bool enable)
+{
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->SetSortedShapeReuse(enable);
+    }
+}
+
+void VulkanDevice::SetDynamicShapeHeadroom(uint32_t percent)
+{
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->SetDynamicHeadroom(percent);
+    }
+}
+
+void VulkanDevice::SetDynamicShapeRefit(bool enable)
+{
+    if (rhiAccelStructs != nullptr)
+    {
+        rhiAccelStructs->SetShapeRefit(enable);
+    }
+}
+
+void VulkanDevice::ResetUploadLockStats()
+{
+    for (uint32_t i = 0; i < QR_UPLOAD_LANE_COUNT; ++i)
+    {
+        uploadLockWaitSumNs[i].store(0, std::memory_order_relaxed);
+        uploadLockWaitMaxNs[i].store(0, std::memory_order_relaxed);
+        uploadLockHoldSumNs[i].store(0, std::memory_order_relaxed);
+        uploadLockHoldMaxNs[i].store(0, std::memory_order_relaxed);
+        uploadLockCalls[i].store(0, std::memory_order_relaxed);
+    }
+
+    if (scene)
+        scene->ResetBoundsScanStats();
+}
+
+void VulkanDevice::GetUploadLockStats(QrUploadLockStats *pStats) const
+{
+    if (pStats == nullptr)
+        return;
+
+    std::memset(pStats, 0, sizeof(*pStats));
+    pStats->valid = true;
+
+    for (uint32_t i = 0; i < QR_UPLOAD_LANE_COUNT; ++i)
+    {
+        pStats->lanes[i].calls = uploadLockCalls[i].load(std::memory_order_relaxed);
+        pStats->lanes[i].waitSumNs = uploadLockWaitSumNs[i].load(std::memory_order_relaxed);
+        pStats->lanes[i].waitMaxNs = uploadLockWaitMaxNs[i].load(std::memory_order_relaxed);
+        pStats->lanes[i].holdSumNs = uploadLockHoldSumNs[i].load(std::memory_order_relaxed);
+        pStats->lanes[i].holdMaxNs = uploadLockHoldMaxNs[i].load(std::memory_order_relaxed);
+    }
+
+    if (scene)
+    {
+        pStats->boundsScanSumNs = scene->GetBoundsScanSumNs();
+        pStats->boundsScanCalls = scene->GetBoundsScanCalls();
+        pStats->boundsScanVerts = scene->GetBoundsScanVerts();
+    }
+}
+
 void VulkanDevice::UploadGeometry(const QrGeometryUploadInfo *uploadInfo)
 {
-    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
+    UploadLockScope geometryLock(*this, g_uploadLane);
     statsApiCallsGeometry.fetch_add(1, std::memory_order_relaxed);
 
     using namespace std::string_literals;
@@ -1536,7 +1718,7 @@ void VulkanDevice::UpdateGeometryTexCoords(const QrUpdateTexCoordsInfo *updateIn
 void VulkanDevice::UploadRasterizedGeometry(const QrRasterizedGeometryUploadInfo *pUploadInfo,
                                                 const float *pViewProjection, const QrViewport *pViewport)
 {
-    std::lock_guard<std::mutex> geometryLock(geometryUploadMutex);
+    UploadLockScope geometryLock(*this, g_uploadLane);
     statsApiCallsRasterized.fetch_add(1, std::memory_order_relaxed);
 
     if (pUploadInfo == nullptr)

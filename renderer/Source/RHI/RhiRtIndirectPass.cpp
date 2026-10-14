@@ -203,11 +203,12 @@ bool IsRenderCubemapSampler(const nvrhi::SamplerDesc &desc)
 constexpr uint32_t BLUE_NOISE_LAYER_COUNT = BLUE_NOISE_TEXTURE_COUNT;
 constexpr uint32_t BLUE_NOISE_EXTENT = BLUE_NOISE_TEXTURE_SIZE;
 
-// The half-res decision of PathTracer.cpp:203-210: the dispatch height is halved exactly when
-// `giBounceRays[0]` is in this open interval. The raygen reads the same uniform member for its own
-// row mapping and for the GI-off zero store, so the host and the shader cannot disagree.
-constexpr float HALF_RES_MIN_BOUNCE_RAYS = 0.25f;
-constexpr float HALF_RES_MAX_BOUNCE_RAYS = 0.75f;
+// The resolution tiers of the GI level: low and medium trace a quarter of the grid (half of each
+// dimension) and high and ultra half of it (the rows); the off level keeps the full grid and the
+// raygen stores zeros. The raygen reads the same uniform member for its own remap and for the off
+// zero store, so the host and the shader cannot disagree.
+constexpr float QUARTER_RES_MIN_LEVEL = 0.25f;
+constexpr float HALF_RES_MIN_LEVEL = 1.25f;
 
 void LogMessage(const RhiRtIndirectPass::PrintFunction &print, const std::string &message)
 {
@@ -705,7 +706,7 @@ void RhiRtIndirectPass::SetRenderCubemaps(nvrhi::ITexture *pCubemap, nvrhi::ITex
 
 void RhiRtIndirectPass::Render(nvrhi::ICommandList *pCommandList,
                                uint32_t frameIndex,
-                               float numBounceRays,
+                               float giLevel,
                                nvrhi::rt::IAccelStruct *pTopLevel,
                                nvrhi::IBuffer *pUniformBuffer,
                                const RhiRtPrimaryPass::VertexData &vertexData,
@@ -964,16 +965,26 @@ void RhiRtIndirectPass::Render(nvrhi::ICommandList *pCommandList,
 
     pCommandList->setRayTracingState(state);
 
-    // The dispatch: the full render resolution normally, the half-height one when the uniform's
-    // `giBounceRays[0]` selects the half mode - the exact condition of PathTracer.cpp:203-210, and
-    // the same uniform member the raygen reads for its row mapping. The raygen's DispatchRaysIndex
-    // is the checkerboard-packed texel itself, so the images stay at the render size and no dispatch
-    // index is unused. The width is never halved.
-    const bool halfRes = numBounceRays > HALF_RES_MIN_BOUNCE_RAYS &&
-                         numBounceRays < HALF_RES_MAX_BOUNCE_RAYS;
+    // The dispatch: the quarter grid for low and medium, half of the rows for high and ultra; the
+    // off level keeps the full render grid, which the raygen zero-stores. The raygen's
+    // DispatchRaysIndex is the packed texel itself, so the images stay at the render size and no
+    // dispatch index is unused.
+    const bool quarterRes = giLevel >= QUARTER_RES_MIN_LEVEL && giLevel < HALF_RES_MIN_LEVEL;
+    const bool halfRes = giLevel >= HALF_RES_MIN_LEVEL;
 
     nvrhi::rt::DispatchRaysArguments args;
-    args.setDimensions(width, halfRes ? (height + 1) / 2 : height, 1);
+    if (quarterRes)
+    {
+        args.setDimensions((width + 1) / 2, (height + 1) / 2, 1);
+    }
+    else if (halfRes)
+    {
+        args.setDimensions(width, (height + 1) / 2, 1);
+    }
+    else
+    {
+        args.setDimensions(width, height, 1);
+    }
     pCommandList->dispatchRays(args);
 
     // The sampled images end the list in the read-only layout (vulkan-resource-bindings.cpp:

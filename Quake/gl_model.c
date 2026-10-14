@@ -57,8 +57,6 @@ SDL_mutex *lightcache_mutex;
 
 extern cvar_t rt_brush_metal;
 extern cvar_t rt_brush_rough;
-extern cvar_t rt_model_metal;
-extern cvar_t rt_model_rough;
 extern cvar_t rt_enable_pvs;
 
 /*
@@ -331,9 +329,7 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 		mod->numclipnodes = 0;
 		SAFE_FREE (mod->marksurfaces);
 		mod->nummarksurfaces = 0;
-		SAFE_FREE (mod->soa_leafbounds);
 		SAFE_FREE (mod->surfvis);
-		SAFE_FREE (mod->soa_surfplanes);
 		SAFE_FREE (mod->textures);
 		mod->numtextures = 0;
 		SAFE_FREE (mod->visdata);
@@ -729,7 +725,6 @@ static void Mod_LoadTextureTask (int i, load_texture_task_args_t *args)
 		q_snprintf (texturename, sizeof (texturename), "%s_warp", texturename);
 		q_snprintf (rtname, sizeof (rtname), "%s_warp", rtname);
 		tx->warpimage = TexMgr_LoadImage (rtname, mod, texturename, WARPIMAGESIZE, WARPIMAGESIZE, SRC_RGBA, NULL, "", 0, TEXPREF_NOPICMIP | TEXPREF_WARPIMAGE);
-		Atomic_StoreUInt32 (&tx->update_warp, true);
 	}
 	else // regular texture
 	{
@@ -845,6 +840,7 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		pixels = mt.width * mt.height / 64 * 85;
 		tx = (texture_t *)Mem_Alloc (sizeof (texture_t) + pixels);
 		mod->textures[i] = tx;
+		tx->rt_chain_index = i;
 
 		memcpy (tx->name, mt.name, sizeof (tx->name));
 		tx->width = mt.width;
@@ -864,7 +860,6 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 			pixels = q_max (0, (mod_base + l->fileofs + l->filelen) - pixels_p);
 		}
 
-		Atomic_StoreUInt32 (&tx->update_warp, false); // johnfitz
 		tx->warpimage = NULL;                         // johnfitz
 		tx->shift = 0;                                // Q64 only
 
@@ -2601,6 +2596,11 @@ static void Mod_SetupSubmodels (qmodel_t *mod)
 
 		mod->numleafs = bm->visleafs;
 
+		mod->used_specials = 0;
+		for (int k = 0; k < mod->nummodelsurfaces; ++k)
+			mod->used_specials |= (SURF_DRAWSKY | SURF_DRAWTURB | SURF_DRAWWATER | SURF_DRAWLAVA | SURF_DRAWSLIME | SURF_DRAWTELE) &
+			                      mod->surfaces[mod->firstmodelsurface + k].flags;
+
 		if (i < mod->numsubmodels - 1)
 		{ // duplicate the basic information
 			char name[12];
@@ -3694,6 +3694,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		surf->numindexes = numtris * 3;
 		surf->firstindex = indexbase;
 		surf->numindices = numtris * 3;
+		surf->firstvertex_vbo = vertbase;
 		surf->numframes = numframes;
 		surf->numposes = 1;
 		surf->skinwidth = 0;
@@ -3767,7 +3768,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		pintriangle = (const md3Triangle_t *)((byte *)pinsurface + ReadLongUnaligned ((byte *)&pinsurface->ofsTriangles));
 		for (int t = 0; t < numtris; t++)
 			for (int k = 0; k < 3; k++)
-				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)(ReadLongUnaligned ((byte *)&pintriangle[t].indexes[2 - k]) + vertbase);
+				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)ReadLongUnaligned ((byte *)&pintriangle[t].indexes[2 - k]);
 
 		vertbase += numverts;
 		indexbase += numtris * 3;
@@ -4324,6 +4325,7 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 		surf->numindexes = (int)(mesh->numtris * 3);
 		surf->firstindex = (int)indexbase;
 		surf->numindices = (int)(mesh->numtris * 3);
+		surf->firstvertex_vbo = (int)vertbase;
 		surf->numframes = (int)numposes;
 		surf->numposes = 1;
 		for (int k = 0; k < 3; k++)
@@ -4352,7 +4354,7 @@ static qboolean Mod_LoadMD5Model (qmodel_t *mod, const void *buffer)
 
 		for (size_t t = 0; t < mesh->numtris; t++)
 			for (int k = 0; k < 3; k++)
-				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)mesh->indices[t * 3 + 2 - k] + (uint32_t)vertbase;
+				mod->rtindices[indexbase + t * 3 + k] = (uint32_t)mesh->indices[t * 3 + 2 - k];
 
 		for (p = 0; p < numposes; p++)
 		{

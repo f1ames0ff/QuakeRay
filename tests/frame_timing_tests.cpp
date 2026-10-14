@@ -1,5 +1,6 @@
 #include "CpuFrameProfiler.h"
 #include "GeometryBounds.h"
+#include "RHI/DynamicBlasShape.h"
 #include "rt_frame_policy.h"
 
 #include <array>
@@ -283,6 +284,62 @@ void BenchmarkGeometryBounds()
               << " ms, ratio " << scalar / simd << "x; 2097152 vertices per arm\n";
 }
 
+void TestDynamicBlasShape()
+{
+    using qray::rhi::DynamicShapeFits;
+    const std::vector<uint32_t> envelope = { 12, 100, 80, 1, 1, 40, 200, 80, 1, 1 };
+
+    Require(DynamicShapeFits(envelope, envelope), "an identical shape fits the envelope");
+    Require(DynamicShapeFits(envelope, { 12, 100, 80, 1, 1 }), "a shorter geometry count fits the envelope");
+    Require(DynamicShapeFits(envelope, { 8, 90, 80, 1, 1, 40, 200, 80, 1, 1 }), "shrunk bounds fit the envelope");
+    Require(DynamicShapeFits(envelope, std::vector<uint32_t>()), "an empty shape fits the envelope");
+
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 1, 1, 40, 200, 80, 1, 1, 5, 5, 80, 1, 1 }),
+            "a growing geometry count does not fit");
+    Require(!DynamicShapeFits(envelope, { 13, 100, 80, 1, 1, 40, 200, 80, 1, 1 }),
+            "a growing primitive count does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 101, 80, 1, 1, 40, 200, 80, 1, 1 }),
+            "a growing vertex count does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 64, 1, 1, 40, 200, 80, 1, 1 }),
+            "a changed stride does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 0, 1, 40, 200, 80, 1, 1 }),
+            "a changed index type does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 1, 0, 40, 200, 80, 1, 1 }),
+            "a changed transform presence does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 1 }), "a malformed shape does not fit");
+    Require(!DynamicShapeFits({ 12, 100, 80 }, { 12, 100, 80 }), "a malformed envelope does not fit");
+    Require(!DynamicShapeFits(envelope, { 12, 100, 80, 1, 1, 41, 200, 80, 1, 1 }),
+            "growth in a later geometry does not fit");
+
+    using qray::rhi::DynamicShapeSortedFits;
+
+    // The sorted test is rank-wise dominance of the primitive counts (see DynamicBlasShape.h): a
+    // reordered list and any per-geometry counts within the envelope's sorted counts fit, while a
+    // count above the envelope's at any rank does not. The stride, the vertex count and the
+    // transform presence are not compared - the allocation does not depend on them (the filter key
+    // fixes the stride and the format, and the transform only selects a matrix address) - so the
+    // identity-change cases below are accepted.
+    Require(DynamicShapeSortedFits(envelope, envelope), "an identical shape fits the sorted envelope");
+    Require(DynamicShapeSortedFits(envelope, { 40, 200, 80, 1, 1, 12, 100, 80, 1, 1 }),
+            "a permuted shape fits the sorted envelope");
+    Require(DynamicShapeSortedFits(envelope, { 40, 200, 64, 0, 0, 12, 100, 80, 1, 1 }),
+            "an identity change alone (stride, indexedness, transform) fits the sorted envelope");
+    Require(DynamicShapeSortedFits(envelope, { 40, 200, 80, 1, 1 }),
+            "a shorter permuted shape fits the sorted envelope");
+    Require(DynamicShapeSortedFits(envelope, { 12, 99, 80, 1, 1, 39, 199, 80, 1, 1 }),
+            "counts below the sorted envelope fit");
+    Require(DynamicShapeSortedFits(envelope, std::vector<uint32_t>()), "an empty shape fits the sorted envelope");
+    Require(!DynamicShapeSortedFits(envelope, { 12, 100, 80, 1, 1, 41, 200, 80, 1, 1 }),
+            "a primitive count above the sorted envelope does not fit");
+    Require(!DynamicShapeSortedFits(envelope, { 13, 100, 80, 1, 1, 40, 200, 80, 1, 1 }),
+            "a second count above the sorted envelope does not fit");
+    Require(!DynamicShapeSortedFits(envelope, { 12, 100, 80, 1, 1, 40, 200, 80, 1, 1, 5, 5, 80, 1, 1 }),
+            "a growing geometry count does not fit the sorted envelope");
+    Require(!DynamicShapeSortedFits(envelope, { 12, 100, 80, 1 }), "a malformed shape does not fit the sorted envelope");
+    Require(!DynamicShapeSortedFits({ 12, 100, 80 }, { 12, 100, 80 }),
+            "a malformed envelope does not fit the sorted envelope");
+}
+
 }
 
 int main(int argc, char **argv)
@@ -295,7 +352,8 @@ int main(int argc, char **argv)
         TestReportRunOwnership();
         TestCpuProfiler();
         TestGeometryBounds();
-        std::cout << "Frame policy, end-task routing, cache and report tests passed\n";
+        TestDynamicBlasShape();
+        std::cout << "Frame policy, end-task routing, cache, report, CPU timing, geometry bounds and dynamic BLAS shape tests passed\n";
         if (argc == 2 && std::strcmp(argv[1], "--bench-bounds") == 0)
             BenchmarkGeometryBounds();
         return 0;

@@ -59,13 +59,6 @@ function Send-Key([IntPtr]$hwnd, [string]$name) {
     Start-Sleep -Milliseconds 250
 }
 
-function Send-Raw([IntPtr]$hwnd, [int]$vk, [int]$sc) {
-    [PerfWin32]::Key($hwnd, $vk, $sc, $false)
-    Start-Sleep -Milliseconds 60
-    [PerfWin32]::Key($hwnd, $vk, $sc, $true)
-    Start-Sleep -Milliseconds 250
-}
-
 function Count-Text([string]$path, [string]$text) {
     try {
         $m = Select-String -Path $path -Pattern $text -SimpleMatch -ErrorAction SilentlyContinue
@@ -153,10 +146,7 @@ foreach ($m in $modes) {
         Start-Sleep -Seconds 2
     }
     Write-Host ("[{0}] save loaded: {1}" -f $m, $loaded)
-    Start-Sleep -Seconds 2
-
-    Send-Raw $hwnd 0x1B 0x01
-    Start-Sleep -Seconds $Warmup
+    Start-Sleep -Seconds (2 + $Warmup)
 
     foreach ($arm in @('F4', 'F5')) {
         $before = Count-Text $console 'In the beginning'

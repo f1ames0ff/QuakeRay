@@ -2,7 +2,7 @@
 
 Use [ARCHITECTURE.md](ARCHITECTURE.md) to navigate from a counter to its producer/backend entry point. This file separates measured results from architectural facts and unverified leads. Do not begin a repository-wide search or an optimization before selecting the relevant scenario and binary.
 
-**Evidence date:** 2026-10-08. **Source map:** `7a14d0fe`, inherited by `perf/architecture`. No new game run was performed to create this index. Numbers below are read from the retained per-frame captures, not from the example scenarios in the task or from overlay maxima.
+**Evidence date:** 2026-10-08. **Source map:** `7a14d0fe`, inherited by `perf/architecture`. These identify the sections authored at that point, not the whole file: later sections carry their own date, branch/revision and binary identity where they begin, so this file no longer has a single global evidence identity. No new game run was performed to create the 2026-10-08 sections of this index. Numbers below are read from the retained per-frame captures, not from the example scenarios in the task or from overlay maxima.
 
 ## Targets and current status
 
@@ -11,28 +11,90 @@ Use [ARCHITECTURE.md](ARCHITECTURE.md) to navigate from a counter to its produce
 | 3840x2160 / FSR Balanced (`rt_upscale_fsr31 3`) | Stable 60 FPS | 16.67 ms |
 | 3840x2160 / FSR Quality (`rt_upscale_fsr31 2`) | Stable 45 FPS | 22.22 ms |
 
-The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/qr_audit_max.cfg), with volumetric sky Low (`rt_sky_clouds_quality 0`). Particles/FTE, smoke, enhanced models, viewmodel, GI level 2, NEE 2, reflection/refraction depth 8, denoising and glass effects remain enabled. Main captures use `rt_stats 0`, uncapped host FPS, vsync off and `vid_maxframelatency 0`; artistic strengths are the recorded preset values, not arbitrary slider maxima. The runner [sets/validates 4K and the effective preset](tests/perf/run_stress.ps1#L169).
+The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/qr_audit_max.cfg), with volumetric sky Low (`rt_sky_clouds_quality 0`). Particles/FTE, smoke, enhanced models, viewmodel, GI level 2, NEE 2, reflection/refraction depth 8, denoising and glass effects remain enabled. Main captures use `rt_stats 0`, uncapped host FPS, vsync off and `vid_maxframelatency 0`; artistic strengths are the recorded preset values, not arbitrary slider maxima. The runner [sets/validates 4K and the effective preset](tests/perf/run_stress.ps1#L345).
 
-**Targets remain unmet.** The verified combined entity changes remove roughly 5.8 ms on Fuma and 9.0 ms on Bogbottom from opaque-entity CPU preparation, but the latest controlled results are only about 37 / 24 FPS. Supplied saves are stress points, not all-map or long-gameplay coverage.
+**Status (2026-10-14, Release, GI medium):** the Fuma balanced point holds a 60.8-66 FPS mean (15.2-16.5 ms) with 1-22% of intervals over the 16.67 ms budget, and Bogbottom holds a 60.3-60.5 FPS mean (16.5-16.6 ms, p95 ~17.1 ms) after the vertex-preprocessing work below (its mover active in every verified capture); both remain mean-level passes, not yet stable-60 (Bogbottom's p99 is ~17.4 ms). At the audited maximum-quality preset (GI ultra, balanced) separate captures from the same campaign measure 50.4 / 45.8 FPS. The resolution-scaling section below shows the GPU as the frame's limiter at every tested point; the entity campaign's "about 37 / 24 FPS" reading was the Debug era and remains under "Controlled entity improvements" for provenance. Supplied saves are stress points, not all-map or long-gameplay coverage.
+
+## Resolution scaling and the 60-FPS target (2026-10-14)
+
+Release binary, revision `e1cee587`, clean working tree; acceptance settings with `rt_gi_level 1`
+(medium), 5 s warmup + 10 s capture, `-StatsLevel 3`, `vid_fullscreen 0` and vsync off
+(`tests/perf/run_stress.ps1`). One runner invocation per point; the FSR preset changes the render
+resolution at the fixed 3840x2160 output, and the pixel share is `(1 / divisor)^2` with the
+helper's divisors ([RenderResolutionHelper.h](renderer/Source/RenderResolutionHelper.h#L205)):
+quality 1.5, balanced 1.7, performance 2.0, ultra performance 3.0. Balanced has three samples,
+quality and ultra two, performance one; cells are the exact means of the per-sample summary values.
+
+| FSR preset (render share of 4K) | Fuma FPS | Fuma interval | Bogbottom FPS | Bogbottom interval |
+| --- | ---: | ---: | ---: | ---: |
+| Quality (44.4%) | 48.4 | 20.66 ms | 45.6 | 21.92 ms |
+| Balanced (34.6%) | 60.8 | 16.43 ms | 52.8 | 18.94 ms |
+| Performance (25.0%) | 74.2 | 13.47 ms | 64.6 | 15.49 ms |
+| Ultra Performance (11.1%) | 105.8 | 9.45 ms | 73.2 | 13.66 ms |
+
+An unweighted least-squares fit of the interval against the pixel share over the four point means
+is linear - Fuma `interval ≈ 5.5 + 33.2·p` ms (R² 0.99), Bogbottom `≈ 10.2 + 25.3·p` ms (R² 0.96) -
+with residuals under 1.1 ms. The fit's intercept is the resolution-independent part; the host frame
+outside `SCR_UpdateScreen` measures ≈5.8 ms on Fuma and ≈8.6 ms on Bogbottom across the sweep
+(derived as interval − `cpu.frame_ms`). The fitted intercepts are extrapolations of the four
+measured points, not a zero-resolution frame, and need not equal the host term. The GPU snapshot
+holds 90-96% of the interval from Quality to Performance, 94% for Fuma at the 1280x720 render, and
+77% for Bogbottom there, where its fixed cost becomes visible; the total interval still scales with
+the pixel share at every tested point, so the GPU stays the frame's limiter - what is flat is the
+host term, not the frame. Captures: the completed `build/Release/audit-sc-*` runs (each with
+`summary.json` and a verified focus gate; 2026-10-14).
+
+The merged DTAL defaults (`rt_dtal_groups 1`, `rt_dtal_spacing 8`, `rt_dtal_maxgroups 2048`) were
+measured for the first time against the disabled and the legacy spacing-128 arms at the same point
+(three samples each): Fuma 60.8 / 58.8 / 59.7 FPS and Bogbottom 52.8 / 52.4 / 50.3 FPS for
+groups-off / groups-on at spacing 128 / the merged default. The default costs 1.9% on Fuma and
+4.7% on Bogbottom at this point (Bogbottom `clusters` 0.20 → 0.32 ms, `gpu.frame` +0.8 ms); the
+witness lines `rt_dtal_groups=1 rt_dtal_spacing=8 rt_dtal_maxgroups=2048` are in the
+`audit-dt-*` bench logs.
+
+**Follow-up (2026-10-14, evening): the setup bucket decomposed, Bogbottom at 60.** Three new GPU
+pass timers split the setup bucket (`setup_blas` / `setup_tlas` / `setup_preproc`), and the dynamic
+vertex preprocessing now dispatches 64 contiguous geometry chunks per instance instead of one
+workgroup per instance: Bogbottom's `setup_preproc` fell from 2.11 to 0.89 ms, its balanced point
+from 52.8 to 60.3-60.5 FPS (16.5-16.6 ms, p95 ~17.1, 0-2 intervals >19 ms in ~630 frames), and
+Fuma's to 64-66 FPS with `setup_preproc` 0.61; the remaining setup work is the dynamic BLAS builds
+and vertex-data copies inside `setup_tlas` (2.1 ms on Bogbottom, 1.4 on Fuma). The BLAS refit
+switch (`rt_dyn_blas_update`, default `0`) shows in the same timers: on, it saves about 0.5 ms of
+the bucket but stalls the frame's GPU-fence wait on 10-16% of frames, a net loss on this driver.
+Captures: `build/Release/audit-fin-*`, `audit-vp-*`, `audit-rf-*` (GI medium, balanced, movers
+active where noted).
 
 ## Measurement contract
 
 | Quantity | What it actually measures | Source / constraint |
 | --- | --- | --- |
-| `interval_ms`, FPS, p95/p99 | Screen-end to screen-end intervals; FPS = `1000 / mean(interval_ms)`. Includes work and waits between completed screen frames. The first partial interval is zero and excluded. | [`RT_Prof_FrameEnd`](Quake/gl_vidsdl.c#L541), [`summarize`](tests/perf/analyze_stress.py#L55). |
-| `host_interval_ms` | Unclamped host frame interval, distinct from simulation-scaled time. | [Raw host time assignment](Quake/host.c#L747), [sample field](Quake/gl_vidsdl.c#L555). |
-| `cpu.frame_ms` | Inclusive `SCR_UpdateScreen` wall time, including begin-frame waits and backend calls. **Not** the whole host frame, input, server, audio or all particle simulation. | [Screen bracket](Quake/gl_screen.c#L1161), [post-screen work](Quake/host.c#L1008). |
-| Quake CPU slots | Sum of calls to a slot in each captured frame. Parents contain children. `ents` is the opaque pass; entity-type slots also count the alpha pass. Fine-grained upload slots can also be invoked by world/weapon producers. | [Slot accumulator](Quake/gl_vidsdl.c#L488), [entity dispatch](Quake/gl_rmain.c#L790), [frame accumulation](Quake/gl_vidsdl.c#L563). |
-| `cpu.viewmodel_ms` / `cpu.vm_draw_ms` | Inclusive task versus narrower weapon/debug draw. Task includes entity/world-model lights, teleports and cluster publication. | [`R_DrawViewModelTask`](Quake/gl_rmain.c#L1211). Neither is a GPU weapon timer. |
-| `cpu.qrDrawFrame_ms` / `cpu.draw.*` | Inclusive renderer call versus its CPU phases. Entity geometry API preparation occurs earlier; `RHI_setup` contains several setup operations, not AS work alone. | [Call bracket](Quake/gl_vidsdl.c#L3213), [RHI setup recording](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666). |
-| `gpu.frame_ms` / `gpu.*` | Asynchronously completed timestamp-query snapshots for the timed NVRHI command list. Query results come from a reused frame slot, not the CPU sample's synchronized present latency. The separately submitted legacy Vulkan list, acquire/display pacing and scanout are not this timer's full scope. | [Read/poll queries](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L496), [frame-query bounds](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L662), [legacy submission](renderer/Source/VulkanDevice.cpp#L1105). |
-| `rt_stats 3` / statistics dumps | CPU/GPU inspection overlay and reporting-window aggregates. Quake slot maxima are per invocation in a window, not whole-frame percentiles; sequential entity chunks can differ from benchmark frame totals. | [`RT_Prof_End`](Quake/gl_vidsdl.c#L507), [`RT_Prof_Update`](Quake/gl_vidsdl.c#L600), [GUI](Quake/rt_stats_gui.c). |
+| `interval_ms`, FPS, p95/p99 | Screen-end to screen-end intervals; FPS = `1000 / mean(interval_ms)`. Includes work and waits between completed screen frames. The first partial interval is zero and excluded. | [`RT_Prof_FrameEnd`](Quake/gl_vidsdl.c#L853), [`summarize`](tests/perf/analyze_stress.py#L55). |
+| `host_interval_ms` | Unclamped host frame interval, distinct from simulation-scaled time. | [Raw host time assignment](Quake/host.c#L751), [sample field](Quake/gl_vidsdl.c#L886). |
+| `cpu.frame_ms` | Inclusive `SCR_UpdateScreen` wall time, including begin-frame waits and backend calls. **Not** the whole host frame, input, server, audio or all particle simulation. | [Screen bracket](Quake/gl_screen.c#L1160), [post-screen work](Quake/host.c#L1019). |
+| `cpu.begin_ms` | Wall time of `qrStartFrame` inside the begin-rendering task: the wait on the in-flight frame fence and on image acquire, i.e. GPU pacing rather than CPU work. Subtract it from `cpu.frame_ms` to see the graph's own cost. | [Begin task](Quake/gl_vidsdl.c#L3329), [BeginFrame fence/acquire](renderer/Source/VulkanDevice.cpp#L37). |
+| Quake CPU slots | Sum of calls to a slot in each captured frame. Parents contain children. `ents` is the opaque pass; entity-type slots also count the alpha pass. Fine-grained upload slots can also be invoked by world/weapon producers. | [Slot accumulator](Quake/gl_vidsdl.c#L561), [entity dispatch](Quake/gl_rmain.c#L797), [frame accumulation](Quake/gl_vidsdl.c#L581). |
+| `cpu.viewmodel_ms` / `cpu.vm_draw_ms` | Inclusive task versus narrower weapon/debug draw. Task includes entity/world-model lights, teleports and cluster publication. | [`R_DrawViewModelTask`](Quake/gl_rmain.c#L1265). Neither is a GPU weapon timer. |
+| `cpu.qrDrawFrame_ms` / `cpu.draw.*` | Inclusive renderer call versus its CPU phases. Entity geometry API preparation occurs earlier; `RHI_setup` contains several setup operations, not AS work alone. | [Call bracket](Quake/gl_vidsdl.c#L4030), [RHI setup recording](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666). |
+| `gpu.frame_ms` / `gpu.*` | Asynchronously completed timestamp-query snapshots for the timed NVRHI command list. Query results come from a reused frame slot, not the CPU sample's synchronized present latency. The separately submitted legacy Vulkan list, acquire/display pacing and scanout are not this timer's full scope. The `setup` section is split into `setup_blas` (the static BLAS sync), `setup_tlas` (the instance synthesis, the dynamic BLAS builds and the vertex-data copies) and `setup_preproc` (the dynamic-normal pass). | [Read/poll queries](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L496), [frame-query bounds](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L662), [legacy submission](renderer/Source/VulkanDevice.cpp#L1133). |
+| `rt_stats 3` / statistics dumps | CPU/GPU inspection overlay and reporting-window aggregates. Quake slot maxima are per invocation in a window, not whole-frame percentiles; sequential entity chunks can differ from benchmark frame totals. | [`RT_Prof_End`](Quake/gl_vidsdl.c#L780), [`RT_Prof_Update`](Quake/gl_vidsdl.c#L1216), [GUI](Quake/rt_stats_gui.c). |
 | `cpu.window_id`, `cpu.window_frames`, `cpu.renderer_samples` | Reporting-window identity, completed-frame denominator and available renderer CPU samples. Repeated window IDs are repeated snapshots, not new publications. These fields belong to statistics dumps, not the per-frame benchmark CSV. | [Window lifecycle](shared/rt_prof_window.h), `RT_StatsRecordWrite`; `run_stress.ps1 -StatsLevel 3` checks advancing complete windows. |
-| `calls_geometry`, `calls_raster`, `calls_lights` | Geometry/raster/light API call counts recorded with the frame. Useful workload checks, not triangle counts or standalone cost attribution. | [CSV serialization](Quake/gl_vidsdl.c#L763), [geometry API counter](renderer/Source/VulkanDevice.cpp#L1396). |
+| `calls_geometry`, `calls_raster`, `calls_lights` | Geometry/raster/light API call counts recorded with the frame. Useful workload checks, not triangle counts or standalone cost attribution. | [CSV serialization](Quake/gl_vidsdl.c#L1322), [geometry API counter](renderer/Source/VulkanDevice.cpp#L1604). |
 
-`rt_bench` enables CPU and GPU-pass collection while `rt_stats 0` avoids the overlay and per-ray statistics flag: [debug flags](Quake/gl_vidsdl.c#L3150), [CPU enable](Quake/gl_vidsdl.c#L3209). Benchmark samples are buffered; CSV writes happen [at reporting](Quake/gl_vidsdl.c#L732), not once per measured frame.
+`rt_bench` enables CPU and GPU-pass collection while `rt_stats 0` avoids the overlay and per-ray statistics flag: [debug flags](Quake/gl_vidsdl.c#L3975), [CPU enable](Quake/gl_vidsdl.c#L4026). Benchmark samples are buffered; CSV writes happen [at reporting](Quake/gl_vidsdl.c#L1595), not once per measured frame.
 
 Do not sum CPU and GPU frame times, add nested slots, assign `compose` entirely to particles, or derive an "unknown CPU" value by subtracting overlapping counters. **Unattributed/unknown:** dedicated input/server/audio/CPU-GUI costs, begin-frame fence/acquire wait, per-entity GPU costs and the internal staging/metadata/AS split not separately instrumented here. `cpu.wait_ms` is a task-join timer, not total GPU waiting.
+
+### PR gate: Debug vs Release
+
+Standing Debug/Release gate before every PR: build Debug and run CTest, then build Release
+(`.\build_win.ps1 Release`) and run one matched capture per save on both binaries with identical
+settings (4K, FSR Balanced, Medium) through `tests/perf/run_stress.ps1`, retrying a capture when the
+focus gate rejects it on this shared machine.
+
+Result on the stage-2.3 tree: swamp Debug 38.6 FPS / 25.90 ms (p95 27.69) vs Release 43.2 FPS /
+23.15 ms (p95 26.40); Fuma Debug 51.7 FPS / 19.33 ms (p95 24.47) vs Release 54.3 FPS / 18.40 ms
+(p95 19.22). Both saves remain below 60 FPS at the acceptance profile, matching the known GPU-bound
+state. The full trail is in [docs/fuma-cpu-optimization-plan.md](docs/fuma-cpu-optimization-plan.md).
 
 ## Scenarios and binary identities
 
@@ -71,6 +133,10 @@ Two live runs per save/preset, **8-second warmup + 10-second capture**, particle
 ### B0 CPU routing breakdown
 
 Balanced, milliseconds; the same two-run aggregation. Indented/type/subphase rows overlap their parents. Counter scopes and real functions are indexed in [ARCHITECTURE.md](ARCHITECTURE.md#subsystem-index).
+
+Note (2026-10-11): the `cpu.mark_ms` rows below predate the parallel marking path. With the default `r_parallelmark 1` the slot is the summed CPU of the per-chunk mark invocations, and `cpu.chain_ms`/`cpu.efrags_ms` are nonzero (per-texture chain slices and the serial efrag pass). Steady frames now chain only the consumed textures - the ones the sky, water and animated passes read - and the chain slot therefore sums that subset; frames with a static-submit or world-light-recollect window, and `r_showtris`, keep the full set, and `rs_brushpolys` reflects the same subset in steady frames. Compare those slots only within one binary.
+
+Note (2026-10-11): `ents c0`..`ents c5` nest inside `ents` and split the opaque entity stage by `NUM_ENTITIES_CBX` chunk, so their per-window maxima identify the slowest chunk rather than the summed work (acceptance profile: swamp chunk means 2.1-4.8 ms with the slowest at 4.8 against a 5.9 ms post-begin graph, Fuma 1.1-2.8 ms). A compile-time assert ties the slot range to `NUM_ENTITIES_CBX`.
 
 | Counter | Fuma | AD hub | Bogbottom |
 | --- | ---: | ---: | ---: |
@@ -132,8 +198,8 @@ Independent contributions, measured on their respective controlled arms:
 
 | Change | Concrete mechanism / code | Measured evidence |
 | --- | --- | --- |
-| C1: brush transform reuse | [`RT_GetBrushModelMatrix`](Quake/r_world.c#L958) retains the exact last entity/origin/angle matrix per thread; misses use unchanged arithmetic. | Fuma packing matrix slot **3.71 → 0.53 ms**; Bogbottom **4.14 → 0.62 ms** in the transform-only campaign. [Report](docs/entity-transform-reuse-performance.md). |
-| C2: SIMD bounds on C1 | [`Scene::Upload`](renderer/Source/Scene.cpp#L94) → [`AccumulateGeometryBounds`](renderer/Source/GeometryBounds.h#L52); same vertices, finite/range rules and operation order, scalar fallback. | C1 → C2 Bogbottom alias uploads **8.44 → 4.47 ms**, brush uploads **3.81 → 2.84 ms**; Fuma alias **3.46 → 1.80 ms**, brush **2.86 → 2.02 ms**. [Integration report](docs/entity-cpu-combined-performance.md), [SIMD semantics/tests](docs/scene-bounds-performance.md). |
+| C1: brush transform reuse | [`RT_GetBrushModelMatrix`](Quake/r_world.c#L857) retains the exact last entity/origin/angle matrix per thread; misses use unchanged arithmetic. | Fuma packing matrix slot **3.71 → 0.53 ms**; Bogbottom **4.14 → 0.62 ms** in the transform-only campaign. [Report](docs/entity-transform-reuse-performance.md). |
+| C2: SIMD bounds on C1 | [`Scene::Upload`](renderer/Source/Scene.cpp#L95) → [`AccumulateGeometryBounds`](renderer/Source/GeometryBounds.h#L52); same vertices, finite/range rules and operation order, scalar fallback. | C1 → C2 Bogbottom alias uploads **8.44 → 4.47 ms**, brush uploads **3.81 → 2.84 ms**; Fuma alias **3.46 → 1.80 ms**, brush **2.86 → 2.02 ms**. [Integration report](docs/entity-cpu-combined-performance.md), [SIMD semantics/tests](docs/scene-bounds-performance.md). |
 
 Both changes passed the full Debug CTest suite, **5/5**, including scalar-reference bounds checks, transform-cache tests and cloud/post-effects GPU smoke tests. Transform-copy correctness and input invalidation are tested; Fuma screenshots provide a visual smoke check, not pixel-identical temporal validation. No visibility deletion, quality preset reduction, particle/cluster rewrite, geometry persistence or GPU-shading change is part of C2. Neither solution was merged into master during this campaign.
 
@@ -151,9 +217,10 @@ p99 63.72 ms. CPU means: `frame` 47.13, `ents` 25.59 (alias 11.60, brush 15.28),
 for the multithreading workstream and matches the C2 order of magnitude.
 
 Runner note: the strict analyzer (`393323cf`) rejects captures where the startup main menu is still
-up (`key_game=0`, frozen `client_time`); `run_stress.ps1` sends Escape after the save-loaded marker
-and before warmup (`18b6005e`). The pose-gate capture above predates that change and came from an
-equivalent local script. After the change and the Bogbottom save sync, runner captures are
+up (`key_game=0`, frozen `client_time`); `run_stress.ps1` sent Escape after the save-loaded marker
+and before warmup (`18b6005e`) - later removed: Escape toggles the menu, so the presses could leave
+a capture behind it, and the save path now reloads with no menu keys at all (2026-10-14). The
+pose-gate capture above predates that change and came from an equivalent local script. After the change and the Bogbottom save sync, runner captures are
 `build/Debug/audit-esc-fix-20261009-114605-52d1c1` (exe `B01F8831…`, revision `bd559b6a`, old save,
 23.3 FPS / mean 42.96 / `alias_pose` 2.38) and
 `build/Debug/audit-pose-gate-0313b-20261009-131828-c4873b` (exe `01852035…`, revision `664b3ac7`,
@@ -164,7 +231,9 @@ resetting the measured state. Do not interact with the live window during a capt
 
 Black-load workaround (staged sequence, `426d2e07`): the fixture loads the save once and marks
 `QR_LOADED0`; the runner waits 2 s, triggers `restart` (F8, `QR_RESTART`), waits 2 s, triggers the
-reload (F9, `QR_RELOAD`), and only then dismisses the menu and proceeds. An immediate restart in the
+reload (F9, `QR_RELOAD`), and the save then runs; the Escape presses the sequence used to send after
+the reload were removed on 2026-10-14 (Escape toggles the menu and could leave a capture behind it).
+An immediate restart in the
 same command block did not cure the intermittent partial-load bug: the map must be loaded before the
 restart, so the waits are real wall time, not frames. Historical variants: in-block sequence
 (`audit-pose-gate-0313d-…`, 25.6 FPS / mean 39.07) and restart without reload (22.3 / 44.93).
@@ -284,16 +353,89 @@ completed-frame/result counts, not just nonempty columns. All three captures pas
 and recorded `FocusLosses=0`. QuakeRay MCP reads the added window-identity/count columns as
 reporting-window metrics; imported artifacts still do not carry MCP-verified provenance.
 
+## Dynamic BLAS reuse re-validated on the merged task graph (2026-10-09)
+
+The accepted sequential change on `perf/rhi-dyn-blas-clean` @ `dc89557a` (persistent descriptor and
+shape scratch plus handle reuse while each dynamic build fits its create-time envelope) was
+re-validated after the merge of `origin/master` `0c04f86f` (task graph, engine 0.40.0). Its
+pre-merge serial acceptance (Fuma outer `RHI_setup` -0.646 ms, frame mean -0.946 ms, +1.36 FPS;
+Bogbottom and fresh spawn neutral; Fuma Quality smoke -0.724 ms) is recorded in
+`stage5-rhi-setup-report.md` on `perf/rhi-dyn-blas-reuse`.
+
+Same-binary paired captures: staged runner, Balanced, 8 s warmup + 6 s capture, one save per
+invocation, ABBA order, `cpu.wait_ms` used to confirm the effective mode. Control =
+`perf/run-stress-capture-fixes` @ `9d7a6804` (engine sources byte-equal to master, exe `5374A9CB…`);
+candidate = clean @ `dc89557a` (exe `910D42E8…`), same `id1/qray.pkz` per arm.
+
+| Scenario | Arm | Control mean/p95 ms (FPS) | Clean mean/p95 ms (FPS) | Frame delta |
+| --- | --- | --- | --- | ---: |
+| Fuma | `r_tasks 0` | 27.51/28.48 (36.4); 27.47/28.33 (36.4) | 27.07/28.92 (36.9); 26.93/28.93 (37.1) | -0.49 ms |
+| Fuma | `r_tasks 1` | 20.04/22.78 (49.9); 20.72/24.20 (48.3) | 20.15/23.06 (49.6); 20.01/22.72 (50.0) | -0.30 ms, inside spread |
+| Bogbottom | `r_tasks 0` | 41.04/42.10 (24.4); 40.97/42.17 (24.4) | 40.58/41.82 (24.6); 40.53/41.61 (24.7) | -0.45 ms, `RHI_setup` neutral |
+| Bogbottom | `r_tasks 1` | 31.59/32.46 (31.7); 31.78/33.82 (31.5) | 31.56/32.50 (31.7); 32.09/36.62 (31.2) | +0.14 ms |
+
+Outer `RHI_setup` means: Fuma serial 3.14/3.11 control vs 2.57/2.71 clean; Fuma tasks 3.40/3.50 vs
+3.36/3.40; Bogbottom serial 4.19/4.19 vs 4.10/4.15; Bogbottom tasks 5.59/5.55 vs 5.54/5.56. The
+serial Fuma reduction reproduces the pre-merge result; under `r_tasks 1` it does not separate from
+the control, and no frame-level difference is resolvable. Percentiles in the tables are the
+higher-order statistic over `interval_ms` (first partial frame excluded).
+
+Mechanism, from the diagnostics twin `perf/rhi-dyn-blas-reuse` @ `3b5a18ec` (exe `FCD31349…`,
+`rhi_setup_diag` window bound by `bench_active`): handle recreations are 0.27-0.52 per
+benchmark-window frame in serial but chronic under `r_tasks 1` - 2.00 per benchmark-window frame on
+both scenarios (load/ramp frames excluded), with `dyn_create_ms`
+1.02 (Fuma) / 1.45-1.49 (Bogbottom), i.e. most of the task-mode `RHI_setup` increase. The per-index
+fit predicate cannot match across frames because the order of dynamic geometry inside a filter
+follows task completion order; the diagnostics-only branch with the older equality predicate also
+shows 2.00 recreations per benchmark-window frame under tasks (its serial ~1.3 figure comes from a
+trailing diagnostic window because that CSV predates the `bench_active` binding), so the churn is
+task-graph-driven, not specific to the envelope predicate. An order-insensitive create-time envelope
+(or a different reuse policy) is the
+recommended next bounded candidate in `docs/multithreading-integration.md` on `perf/rhi-dyn-blas-reuse` @ `58a7c19c` (the file is not present on this branch); its upside is bounded by
+the recreation cost, not assumed.
+
+Captures: `build/Debug/audit-s5d-ctrl-*`, `audit-s5d-clean-*`, `audit-s5d-reuse-*`,
+`audit-s5d-diag-*`; receipts and CTest logs under `build/Debug/audit-stage5d-*`. A third clean
+Bogbottom tasks repeat (35.56 ms, `rhi` 5.94; identical exe/pack/checks) was uniformly elevated
+across independent counters and is retained raw: with it the arm is 31.56/35.56/32.09 ms against
+the control's 31.59/31.78, so no gain is claimed either way (median 32.09 vs 31.69).
+
+### Extended coverage: AD hub and Quality (2026-10-10, `r_tasks 1`)
+
+The step-1 scene/preset matrix was extended on separately rebuilt matched binaries: control
+`9d7a6804` exe `EF499999…` / pack `9B52B09D…`, clean `6613e196` exe `8018D4B4…` / pack `EC2806C7…`,
+same staged runner, 8 s warmup + 6 s capture, two accepted repeats per cell (Fuma and Bogbottom
+Balanced are retained from the 2026-10-09 campaign).
+
+| Cell, `r_tasks 1` | Control mean/p95 ms (FPS) | Clean mean/p95 ms (FPS) |
+| --- | --- | --- |
+| AD hub, Balanced | 20.55/35.16 (48.7); 19.43/24.38 (51.5) | 20.29/25.66 (49.3); 19.31/22.98 (51.8) |
+| Fuma, Quality | 23.52/26.99 (42.5); 23.66/28.16 (42.3) | 23.63/27.23 (42.3); 23.57/26.88 (42.4) |
+| AD hub, Quality | 24.03/34.38 (41.6); 24.36/39.81 (41.0) | 23.13/30.42 (43.2); 24.46/36.59 (40.9) |
+| Bogbottom, Quality | 33.84/35.60 (29.5); 33.34/34.48 (30.0) | 34.52/39.09 (29.0); 33.57/37.20 (29.8) |
+
+Every cell stays inside its observed spread; no cell separates the candidate from the control, and
+the AD-family p95 tails show run-to-run sensitivity at these settings. One additional clean Fuma
+Quality pair (25.99/25.52 ms, `RHI_setup` 4.12/4.11) was contaminated - out-of-family tail and
+`RHI_setup` - and is retained raw rather than discarded; a same-binary rerun reproduced the
+control-level 23.63/23.57 ms. Captures: `audit-s5d-ctrl2-*` and `audit-s5d-clean2-*`. The shared
+machine was contended during this extension (another agent's campaign): invocations were retried
+until the guard found a quiet window; every accepted capture passed the focus/sample checks.
+
+Coverage after this extension: Fuma, AD hub and Bogbottom at Balanced and Quality with `r_tasks 1`,
+same-binary paired control/candidate. Serial-mode parity beyond Fuma/Bogbottom Balanced, fresh
+spawn, long gameplay and direct per-slice critical-path attribution remain open.
+
 ## Current CPU priorities
 
 Use C2's Bogbottom Balanced capture for the next CPU investigation, not a stale pre-fix profile. These are **observed inclusive costs**, not predicted savings:
 
 | Observed work | C2 cost | Functions to inspect | Unverified lead / smallest discriminating experiment |
 | --- | ---: | --- | --- |
-| Alias geometry APIs | 4.47 ms | [`R_DrawEnhancedModel`](Quake/r_alias.c#L533) → [`Scene::Upload`](renderer/Source/Scene.cpp#L94) → [`VertexCollector::AddGeometry`](renderer/Source/VertexCollector.cpp#L285) / [`WriteGeomInfo`](renderer/Source/GeomInfoManager.cpp#L303) | Separate remaining bounds/copy/metadata costs; record actual model surfaces and duplicated vertex bytes. Surface-local submission or invariant-attribute reuse helps only if those bytes dominate. Preserve indices, stable IDs and motion history. |
-| RHI setup | 4.60 ms | [RHI setup bracket](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666) → [`AppendDynamicSlot`](renderer/Source/RHI/RhiAccelStructs.cpp#L1146) / [`BuildTopLevel`](renderer/Source/RHI/RhiAccelStructs.cpp#L1799) | Split descriptor/shape preparation, copy/build recording and normal preprocessing. Persistent topology/refit is a hypothesis, not an enabled or proven solution; require deletion/opacity/animation/ownership invalidation. |
-| Brush light styles | 3.12 ms | [`RT_PackSurfaceLightStyles`](Quake/r_world.c#L1144) → [`RT_SurfacePackLightStyles`](Quake/r_world.c#L1106) → [`RT_NearestStyledLightDistance`](Quake/gl_rlight.c#L828) | Measure cache hits/collisions and reach-query work; transform/light/settings changes versus cache eviction must be distinguished before designing reuse. |
-| Other entity costs | Brush uploads 2.84 ms; alias posing 2.30 ms | [`RT_FlushBatch`](Quake/r_world.c#L1428), [`GetPoseVertices`](Quake/r_alias.c#L107) | Keep these separate from their parent entity/packing totals. Legacy brush light marking is only about 0.045 ms here, not a main target. |
+| Alias geometry APIs | 4.47 ms | [`R_DrawEnhancedModel`](Quake/r_alias.c#L627) → [`Scene::Upload`](renderer/Source/Scene.cpp#L95) → [`VertexCollector::AddGeometry`](renderer/Source/VertexCollector.cpp#L285) / [`WriteGeomInfo`](renderer/Source/GeomInfoManager.cpp#L313) | Separate remaining bounds/copy/metadata costs; record actual model surfaces and duplicated vertex bytes. Surface-local submission or invariant-attribute reuse helps only if those bytes dominate. Preserve indices, stable IDs and motion history. |
+| RHI setup | 4.60 ms | [RHI setup bracket](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666) → [`AppendDynamicSlot`](renderer/Source/RHI/RhiAccelStructs.cpp#L1336) / [`BuildTopLevel`](renderer/Source/RHI/RhiAccelStructs.cpp#L2108) | Split descriptor/shape preparation, copy/build recording and normal preprocessing. Persistent topology/refit is a hypothesis, not an enabled or proven solution; require deletion/opacity/animation/ownership invalidation. |
+| Brush light styles | 3.12 ms | [`RT_PackSurfaceLightStyles`](Quake/r_world.c#L1053) → [`RT_SurfacePackLightStyles`](Quake/r_world.c#L1015) → [`RT_NearestStyledLightDistance`](Quake/gl_rlight.c#L742) | Measure cache hits/collisions and reach-query work; transform/light/settings changes versus cache eviction must be distinguished before designing reuse. |
+| Other entity costs | Brush uploads 2.84 ms; alias posing 2.30 ms | [`RT_FlushBatch`](Quake/r_world.c#L1343), [`GetPoseVertices`](Quake/r_alias.c#L122) | Keep these separate from their parent entity/packing totals. The legacy brush light-marking chain was removed in the stage-2.3 cleanup (2026-10-11): its bits were zero at load and the frame counter never advanced, so nothing consumed it, and the historical ~0.045 ms observation no longer applies. |
 
 **Workstream boundary, updated 2026-10-10:** the staged cluster pipeline (`renderer/Source/ClusterLightLists.*`, `LightManager` publication, `gl_rlight.c`/`gl_rmain.c` cluster calls) is edited by the particle workstream (`calm-eagle`) with the owner's approval; the 2026-10-08 note that put cluster implementation with `crisp-pixel-2` is superseded for this path. Further parallel edits to the same functions still need coordination. The staged-split measurements are in [perf/stage0/cluster-split-2026-10-10.md](perf/stage0/cluster-split-2026-10-10.md); `clusters` and `clust topup` changed meaning there (pipeline wall incl. the task wait; the top-up row is the merge-complete wall).
 
@@ -380,7 +522,7 @@ tooling update adds no performance measurements to the historical tables above.
 3. Build/deploy **Debug** with `build_win.ps1`, not only a plain CMake build. Run the applicable CPU/reference tests and, when ownership permits, GPU smoke tests.
 4. Capture one save/preset per invocation; reload the same save, use live advancing simulation and warmup, keep focus, close the game before analysis. Maximum 300 seconds; the current runner allows at most two repeats.
 5. Require matching effective settings and workload/assets between arms. Feature ablations, frozen scenes, low-resolution modes and `-StatsLevel 3` are labeled diagnostic controls, not target-quality results. Legacy `run_place.ps1` presets disable particles and are not this baseline.
-6. Inspect `.frames.csv` and analyzer validity, not just FPS. The analyzer rejects dropped/nonfinite/incomplete/menu/paused/nonadvancing captures. [Screenshots occur after benchmark stop](tests/perf/run_stress.ps1#L240).
+6. Inspect `.frames.csv` and analyzer validity, not just FPS. The analyzer rejects dropped/nonfinite/incomplete/menu/paused/nonadvancing captures. [Screenshots occur after benchmark stop](tests/perf/run_stress.ps1#L308).
 7. Preserve independent solution branches/binaries; compare against a compatible control, repeat/interleave, check image/gameplay behavior, then update this index with scope and remaining gaps.
 
 ```powershell
@@ -391,7 +533,7 @@ ctest --test-dir build\Debug -C Debug --output-on-failure
 python tests/perf/analyze_stress.py build/Debug/audit-<tag>
 ```
 
-The process check is a guard, not a command to ignore its output and continue building. `run_stress.ps1` also [waits/checks other owners](tests/perf/run_stress.ps1#L93). CPU capture-tool tests: [test_analyze_stress.py](tests/perf/test_analyze_stress.py), [test_stress_budget.ps1](tests/perf/test_stress_budget.ps1). Source/reference tests: [frame_timing_tests.cpp](tests/frame_timing_tests.cpp), [rt_lighting_tests.c](tests/rt_lighting_tests.c); GPU tests: [renderer/Tests](renderer/Tests/).
+The process check is a guard, not a command to ignore its output and continue building. `run_stress.ps1` also [waits/checks other owners](tests/perf/run_stress.ps1#L127). CPU capture-tool tests: [test_analyze_stress.py](tests/perf/test_analyze_stress.py), [test_stress_budget.ps1](tests/perf/test_stress_budget.ps1). Source/reference tests: [frame_timing_tests.cpp](tests/frame_timing_tests.cpp), [rt_lighting_tests.c](tests/rt_lighting_tests.c); GPU tests: [renderer/Tests](renderer/Tests/).
 
 Index validation on 2026-10-08 reanalyzed all 12 B0 and 10 integration captures with the current analyzer and matched their stored summaries. The 126 documented baseline timing values and 24 controlled comparison values were checked against the stated aggregation/rounding rules; paired effective settings and every recorded asset/save hash matched. This was read-only evidence validation, not a new benchmark or GPU test run.
 

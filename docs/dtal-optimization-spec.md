@@ -316,7 +316,7 @@ Measure parent-count reduction, source/list losses under the unchanged policy, r
 | Control | Meaning | Development starting value |
 |---|---|---|
 | `rt_dtal_groups` | Singleton/group aggregation over the same corrected patch sampler | Off until bounded comparison tests pass |
-| `rt_dtal_spacing` | Validated grid cell edge in world units | 128, provisional |
+| `rt_dtal_spacing` | Validated grid cell edge in world units | 8, provisional |
 | `rt_dtal_rebuild` | Explicit regenerate command, extended | Existing command |
 | `rt_dtal_debug` | Keep current modes; add group/member views | Off |
 

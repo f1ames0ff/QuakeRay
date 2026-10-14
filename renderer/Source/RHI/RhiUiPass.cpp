@@ -41,11 +41,11 @@ const char *const PIXEL_SHADER_FILE_NAME  = "RsSwapchain.frag.spv";
 // emissionTextureIndex at 84, with no member after them (GLSL/RsSwapchain.frag:32-37;
 // HLSL/RsSwapchain.frag.hlsl:30-40 keeps the same offsets; the fragment blob is code-identical to
 // the RsSky.frag.spv RhiSkyPass loads). The unused emissionMultiplier the old block ended with is
-// gone, so the declaration is exactly what the stage reads. The legacy RasterizedPushConst is 120
-// bytes since the smoke fields at 88/104 were appended (Rasterizer.cpp:70-72), but the swapchain
-// fragment stage reads only its first 88 bytes; the pass mirrors that legacy prefix, so both
-// renderers give the stage the same bytes.
-constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 88;
+// gone, so the stage reads exactly the first 88 bytes; the block is padded to
+// RASTERIZED_PUSH_CONSTANT_SIZE anyway, because the passes that share the frame's descriptor sets
+// (the world/particle overlay and the sky pass) declare that range for their push constants and
+// Vulkan requires the ranges of layouts compatible for a set to be the same.
+constexpr uint32_t RASTERIZED_PUSH_CONSTANT_SIZE = 124;
 
 // Both stages use SpecId 0 for their single constant: RsRasterizer.vert declares
 // applyVertexColorGamma, RsSwapchain.frag declares alphaTest, each 4 bytes and written as a uint32
@@ -185,6 +185,8 @@ struct UiPushConstants
     float    c[4];
     uint32_t t;
     uint32_t e;
+    float    unused[8];
+    uint32_t particleProxy;
 
     explicit UiPushConstants(const RasterizedDataCollector::DrawInfo &info, const float *defaultViewProj)
     {
@@ -203,6 +205,8 @@ struct UiPushConstants
         memcpy(c, info.color.Get(), 4 * sizeof(float));
         t = info.textureIndex;
         e = info.emissionTextureIndex;
+        memset(unused, 0, sizeof(unused));
+        particleProxy = 0u;
     }
 };
 
@@ -210,7 +214,9 @@ static_assert(offsetof(UiPushConstants, vp) == 0);
 static_assert(offsetof(UiPushConstants, c) == 64);
 static_assert(offsetof(UiPushConstants, t) == 80);
 static_assert(offsetof(UiPushConstants, e) == 84);
-static_assert(sizeof(UiPushConstants) == 88);
+static_assert(offsetof(UiPushConstants, unused) == 88);
+static_assert(offsetof(UiPushConstants, particleProxy) == 120);
+static_assert(sizeof(UiPushConstants) == RASTERIZED_PUSH_CONSTANT_SIZE);
 
 // The legacy viewport of a DrawInfo, as an NVRHI viewport that makes the Vulkan backend emit the
 // legacy's own VkViewport. The legacy `vkCmdSetViewport` takes (x, y, w, +h) (Rasterizer.cpp:

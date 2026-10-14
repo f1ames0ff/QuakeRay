@@ -343,6 +343,77 @@ typedef struct QrUpdateTexCoordsInfo
     const void      *pTexCoordLayerData[3];
 } QrUpdateTexCoordsInfo;
 
+typedef enum QrUploadLane
+{
+    QR_UPLOAD_LANE_UNATTRIBUTED = 0,
+    QR_UPLOAD_LANE_ENTITIES_0,
+    QR_UPLOAD_LANE_ENTITIES_1,
+    QR_UPLOAD_LANE_ENTITIES_2,
+    QR_UPLOAD_LANE_ENTITIES_3,
+    QR_UPLOAD_LANE_ENTITIES_4,
+    QR_UPLOAD_LANE_ENTITIES_5,
+    QR_UPLOAD_LANE_WORLD,
+    QR_UPLOAD_LANE_ALPHA,
+    QR_UPLOAD_LANE_SKY,
+    QR_UPLOAD_LANE_WATER,
+    QR_UPLOAD_LANE_ANIMATED,
+    QR_UPLOAD_LANE_PARTICLES,
+    QR_UPLOAD_LANE_VIEWMODEL,
+    QR_UPLOAD_LANE_BRUSH,
+    QR_UPLOAD_LANE_SPRITE,
+    QR_UPLOAD_LANE_ALIAS,
+    QR_UPLOAD_LANE_ALIAS_SURF,
+    QR_UPLOAD_LANE_COUNT,
+} QrUploadLane;
+
+typedef struct QrUploadLockLaneStats
+{
+    uint64_t    calls;
+    uint64_t    waitSumNs;
+    uint64_t    waitMaxNs;
+    uint64_t    holdSumNs;
+    uint64_t    holdMaxNs;
+} QrUploadLockLaneStats;
+
+typedef struct QrUploadLockStats
+{
+    QrBool32                valid;
+    QrUploadLockLaneStats   lanes[QR_UPLOAD_LANE_COUNT];
+    uint64_t                boundsScanSumNs;
+    uint64_t                boundsScanCalls;
+    uint64_t                boundsScanVerts;
+} QrUploadLockStats;
+
+QRAPI QrResult QRCONV qrUploadLanePush(
+    QrInstance                          qrInstance,
+    uint32_t                            lane);
+
+QRAPI QrResult QRCONV qrUploadLanePop(
+    QrInstance                          qrInstance);
+
+QRAPI QrResult QRCONV qrSetUploadLockTracing(
+    QrInstance                          qrInstance,
+    QrBool32                            enable);
+
+QRAPI QrResult QRCONV qrSetDynamicShapeSortedReuse(
+    QrInstance                          qrInstance,
+    QrBool32                            enable);
+
+QRAPI QrResult QRCONV qrSetDynamicShapeHeadroom(
+    QrInstance                          qrInstance,
+    uint32_t                            percent);
+
+QRAPI QrResult QRCONV qrSetDynamicShapeRefit(
+    QrInstance                          qrInstance,
+    QrBool32                            enable);
+
+QRAPI QrResult QRCONV qrUploadLockStatsReset(
+    QrInstance                          qrInstance);
+
+QRAPI QrResult QRCONV qrGetUploadLockStats(
+    QrInstance                          qrInstance,
+    QrUploadLockStats                  *pStats);
+
 QRAPI QrResult QRCONV qrUploadGeometry(
     QrInstance                              qrInstance,
     const QrGeometryUploadInfo              *pUploadInfo);
@@ -1036,6 +1107,7 @@ typedef enum QrPresentMode
     QR_PRESENT_MODE_MAILBOX = 0,
     QR_PRESENT_MODE_VSYNC,
     QR_PRESENT_MODE_ADAPTIVE,
+    QR_PRESENT_MODE_IMMEDIATE,
 } QrPresentMode;
 
 typedef struct QrStartFrameInfo
@@ -1043,6 +1115,8 @@ typedef struct QrStartFrameInfo
     QrPresentMode   presentMode;
     uint32_t        maxFrameLatency;
     QrBool32        requestShaderReload;
+    QrBool32        wantFullscreenExclusive;
+    QrBool32        hasFocus;
 } QrStartFrameInfo;
 
 QRAPI QrResult QRCONV qrStartFrame(
@@ -1532,7 +1606,7 @@ QRAPI QrBool32 QRCONV qrIsRenderUpscaleTechniqueAvailable(
 QRAPI QrBool32 QRCONV qrIsSuspended(
     QrInstance                          qrInstance);
 
-#define QR_GPU_PASS_COUNT 18
+#define QR_GPU_PASS_COUNT 21
 
 #define QR_RAY_STATS_CATEGORY_COUNT 5
 
@@ -1560,6 +1634,27 @@ typedef enum QrCpuPassIndex
     QR_CPU_PASS_COUNT,
 } QrCpuPassIndex;
 
+#define QR_DYNAMIC_BLAS_FILTER_MAX 20
+
+typedef struct QrDynamicBlasFilterCounters
+{
+    uint32_t    filter;
+    uint32_t    builds;
+    uint32_t    recreates;
+    uint32_t    positionalFails;
+    uint32_t    sortedPassPositionalFails;
+    uint32_t    sortedFails;
+    uint32_t    sortedCountFails;
+    uint32_t    sortedShapeFails;
+    uint32_t    geometryCount;
+    uint32_t    envelopeCount;
+    uint32_t    envelopePrimitives;
+    uint32_t    listPrimitives;
+    int64_t     failDeltaSum;
+    int32_t     failDeltaMin;
+    int32_t     failDeltaMax;
+} QrDynamicBlasFilterCounters;
+
 typedef struct QrFrameStats
 {
     uint32_t    raysTotal;
@@ -1581,6 +1676,11 @@ typedef struct QrFrameStats
     uint32_t    raysParticle;
     uint64_t    rasterUploadBytes;
     uint32_t    rasterUploadDroppedBatches;
+    uint32_t    dynamicBlasBuilds;
+    uint32_t    dynamicBlasRecreations;
+    float       dynamicBlasCreateMs;
+    uint32_t    dynamicFilterCount;
+    QrDynamicBlasFilterCounters dynamicFilters[QR_DYNAMIC_BLAS_FILTER_MAX];
 } QrFrameStats;
 
 QRAPI QrResult QRCONV qrGetFrameStatsEx(

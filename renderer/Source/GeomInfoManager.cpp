@@ -298,6 +298,16 @@ void qray::GeomInfoManager::PrepareForFrame(uint32_t frameIndex)
 
     dynamicIDToGeomFrameInfo[frameIndex].clear();
     ResetOnlyDynamic(frameIndex);
+
+    for (const auto &entry : movableIDToGeomFrameInfo)
+    {
+        const GeomFrameInfo &info = entry.second;
+
+        ShGeometryInstance *dst = GetGeomInfoAddressByGlobalIndex(frameIndex, info.prevGlobalGeomIndex);
+
+        memcpy(dst->prevModel, info.model, sizeof(float) * 16);
+        MarkMovableHasPrevInfo(*dst);
+    }
 }
 
 uint32_t qray::GeomInfoManager::WriteGeomInfo(
@@ -455,8 +465,6 @@ void qray::GeomInfoManager::WriteInfoForNextUsage(
         return;
     }
 
-    assert(idToInfo->find(geomUniqueID) == idToInfo->end());
-
     GeomFrameInfo frameInfo = {};
     memcpy(frameInfo.model, src.model, sizeof(float) * 16);
     frameInfo.baseVertexIndex = src.baseVertexIndex;
@@ -465,7 +473,9 @@ void qray::GeomInfoManager::WriteInfoForNextUsage(
     frameInfo.indexCount = src.indexCount;
     frameInfo.prevGlobalGeomIndex = currentGlobalGeomIndex;
 
-    (*idToInfo)[geomUniqueID] = frameInfo;
+    const auto inserted = idToInfo->insert_or_assign(geomUniqueID, frameInfo);
+    assert(inserted.second);
+    (void)inserted;
 }
 
 void qray::GeomInfoManager::WriteStaticGeomInfoMaterials(

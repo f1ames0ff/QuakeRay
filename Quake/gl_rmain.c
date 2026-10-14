@@ -43,8 +43,9 @@ QrMediaType rt_cameramedia = QR_MEDIA_TYPE_VACUUM;
 qboolean    rt_lavaeffects = false;
 
 // johnfitz -- rendering statistics
-atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles, rs_fogpolys;
-atomic_uint32_t rs_dynamiclightmaps, rs_brushpasses, rs_aliaspasses, rs_skypasses;
+atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles;
+atomic_uint32_t rs_covered_surfaces, rs_covered_models, rs_covered_emissive_us;
+atomic_uint32_t rs_brushpasses, rs_aliaspasses, rs_skypasses;
 float           rt_world_draw_ms;
 
 //
@@ -74,13 +75,10 @@ cvar_t r_pos = {"r_pos", "0", CVAR_NONE};
 cvar_t r_fullbright = {"r_fullbright", "0", CVAR_NONE};
 cvar_t r_lightmap = {"r_lightmap", "0", CVAR_NONE};
 cvar_t r_wateralpha = {"r_wateralpha", "1", CVAR_ARCHIVE};
-cvar_t r_dynamic = {"r_dynamic", "0", CVAR_ARCHIVE}; // RT: was 1, but there are significant performance drops e.g. on E1M6 when lavaballs fly and touch a lot of surfaces
 #if defined(USE_SIMD)
 cvar_t r_simd = {"r_simd", "1", CVAR_ARCHIVE};
 #endif
 
-cvar_t gl_finish = {"gl_finish", "0", CVAR_NONE};
-cvar_t gl_polyblend = {"gl_polyblend", "1", CVAR_NONE};
 cvar_t gl_nocolors = {"gl_nocolors", "0", CVAR_NONE};
 
 // johnfitz -- new cvars
@@ -100,7 +98,6 @@ cvar_t r_nolerp_list = {
 	"v_xfist.mdl,progs/h2stuff/newfire.mdl",
 	CVAR_NONE};
 
-extern cvar_t r_vfog;
 // johnfitz
 
 cvar_t gl_zfix = {"gl_zfix", "1", CVAR_ARCHIVE}; // QuakeSpasm z-fighting fix
@@ -1093,15 +1090,34 @@ void R_DrawWorldTask (void *unused)
 {
 	double prof_start = RT_Prof_Begin ();
 
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_WORLD);
+
 	qrBeginDeferredLightUploads (vulkan_globals.instance, 0);
 
 	const qboolean static_submit = Atomic_ExchangeUInt32 (&rt_require_static_submit, false) != 0;
 	const qboolean light_recollect = Atomic_ExchangeUInt32 (&rt_require_world_light_recollect, false) != 0;
 
+	if (static_submit && !RT_ChainFullFrame ())
+	{
+		Con_DWarning ("RT: a static submit was deferred; the frame's chains were built before the request\n");
+
+		Atomic_StoreUInt32 (&rt_require_static_submit, true);
+
+		if (light_recollect)
+			Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
+
+		RT_StaticMovableUpdate ();
+		qrEndDeferredLightUploads (vulkan_globals.instance);
+		qrUploadLanePop (vulkan_globals.instance);
+		RT_Prof_End (RT_PROF_WORLD, prof_start);
+		return;
+	}
+
 	if (!static_submit && !light_recollect)
 	{
 		RT_StaticMovableUpdate ();
 		qrEndDeferredLightUploads (vulkan_globals.instance);
+		qrUploadLanePop (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1112,6 +1128,7 @@ void R_DrawWorldTask (void *unused)
 		RT_StaticMovableUpdate ();
 
 		qrEndDeferredLightUploads (vulkan_globals.instance);
+		qrUploadLanePop (vulkan_globals.instance);
 		RT_Prof_End (RT_PROF_WORLD, prof_start);
 		return;
 	}
@@ -1139,6 +1156,7 @@ void R_DrawWorldTask (void *unused)
 	RT_StaticMovableUpdate ();
 
 	qrEndDeferredLightUploads (vulkan_globals.instance);
+	qrUploadLanePop (vulkan_globals.instance);
 	RT_Prof_End (RT_PROF_WORLD, prof_start);
 }
 
@@ -1153,9 +1171,15 @@ static void R_DrawSkyAndWaterTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_SKY);
 	Sky_DrawSky (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
+	qrUploadLanePop (vulkan_globals.instance);
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_WATER);
 	R_DrawWorld_Water (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
+	qrUploadLanePop (vulkan_globals.instance);
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_ANIMATED);
 	R_DrawWorld_Animated (&vulkan_globals.secondary_cb_contexts[CBX_SKY_AND_WATER]);
+	qrUploadLanePop (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_SKY, prof_start);
 }
@@ -1177,7 +1201,12 @@ static void R_DrawEntitiesTask (int index, void *unused)
 	const int num_edicts_per_cb = (cl_numvisedicts + NUM_ENTITIES_CBX - 1) / NUM_ENTITIES_CBX;
 	int       startedict = index * num_edicts_per_cb;
 	int       endedict = q_min ((index + 1) * num_edicts_per_cb, cl_numvisedicts);
+	qrUploadLanePush (vulkan_globals.instance, (uint32_t)(QR_UPLOAD_LANE_ENTITIES_0 + index));
+	COMPILE_TIME_ASSERT (rt_ents_chunk_slots, RT_PROF_ENTS_CHUNK_5 - RT_PROF_ENTS_CHUNK_0 + 1 == NUM_ENTITIES_CBX);
+	const double prof_chunk = RT_Prof_Begin ();
 	R_DrawEntitiesOnList (&vulkan_globals.secondary_cb_contexts[cbx_index], false, index + chain_model_0, startedict, endedict);
+	RT_Prof_End (RT_PROF_ENTS_CHUNK_0 + index, prof_chunk);
+	qrUploadLanePop (vulkan_globals.instance);
 
 	qrEndDeferredLightUploads (vulkan_globals.instance);
 
@@ -1196,9 +1225,11 @@ static void R_DrawAlphaEntitiesTask (void *unused)
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES]);
 	qrBeginDeferredLightUploads (vulkan_globals.instance, 1u + NUM_ENTITIES_CBX);
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_ALPHA);
 	R_DrawEntitiesOnList (
 		&vulkan_globals.secondary_cb_contexts[CBX_ALPHA_ENTITIES], true, chain_alpha_model, 0,
 		cl_numvisedicts); // johnfitz -- true means this is the pass for alpha entities
+	qrUploadLanePop (vulkan_globals.instance);
 	qrEndDeferredLightUploads (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_ALPHA, prof_start);
@@ -1215,11 +1246,13 @@ static void R_DrawParticlesTask (void *unused)
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 	Fog_EnableGFog (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]); // johnfitz
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_PARTICLES);
 	R_DrawSmoke (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 	R_DrawParticles (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 #ifdef PSET_SCRIPT
 	PScript_DrawParticles (&vulkan_globals.secondary_cb_contexts[CBX_PARTICLES]);
 #endif
+	qrUploadLanePop (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_PARTICLES, prof_start);
 }
@@ -1233,6 +1266,8 @@ static void R_DrawViewModelTask (void *unused)
 {
 	double prof_task = RT_Prof_Begin ();
 	double prof_start;
+
+	qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_VIEWMODEL);
 
 	R_SetupContext (&vulkan_globals.secondary_cb_contexts[CBX_VIEW_MODEL]);
 
@@ -1259,6 +1294,7 @@ static void R_DrawViewModelTask (void *unused)
 	prof_start = RT_Prof_Begin ();
 	RT_UploadAllTeleports (); // RT
 	RT_Prof_End (RT_PROF_TELEPORTS, prof_start);
+	qrUploadLanePop (vulkan_globals.instance);
 
 	RT_Prof_End (RT_PROF_VIEWMODEL, prof_task);
 }
@@ -1316,10 +1352,11 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 	// johnfitz -- rendering statistics
 	Atomic_StoreUInt32 (&rs_brushpolys, 0u);
 	Atomic_StoreUInt32 (&rs_aliaspolys, 0u);
+	Atomic_StoreUInt32 (&rs_covered_surfaces, 0u);
+	Atomic_StoreUInt32 (&rs_covered_models, 0u);
+	Atomic_StoreUInt32 (&rs_covered_emissive_us, 0u);
 	Atomic_StoreUInt32 (&rs_skypolys, 0u);
 	Atomic_StoreUInt32 (&rs_particles, 0u);
-	Atomic_StoreUInt32 (&rs_fogpolys, 0u);
-	Atomic_StoreUInt32 (&rs_dynamiclightmaps, 0u);
 	Atomic_StoreUInt32 (&rs_aliaspasses, 0u);
 	Atomic_StoreUInt32 (&rs_skypasses, 0u);
 	Atomic_StoreUInt32 (&rs_brushpasses, 0u);
@@ -1389,12 +1426,6 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (begin_rendering_task, draw_particles_task);
 		Task_AddDependency (draw_particles_task, draw_done_task);
 
-		task_handle_t update_lightmaps_task = Task_AllocateAndAssignFunc (R_UpdateLightmaps, NULL, 0);
-		Task_AddDependency (cull_surfaces, update_lightmaps_task);
-		Task_AddDependency (begin_rendering_task, update_lightmaps_task);
-		Task_AddDependency (draw_world_task, update_lightmaps_task);
-		Task_AddDependency (update_lightmaps_task, draw_done_task);
-
 		Task_AddDependency (draw_world_task, draw_view_model_task);
 		Task_AddDependency (draw_sky_and_water_task, draw_view_model_task);
 		Task_AddDependency (draw_entities_task, draw_view_model_task);
@@ -1407,7 +1438,7 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		Task_AddDependency (draw_world_task, draw_particles_task);
 
 		task_handle_t tasks[] = {before_mark,          store_efrags,		                         draw_world_task,     draw_sky_and_water_task,
-		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task, update_lightmaps_task,
+		                         draw_view_model_task, draw_entities_task, draw_alpha_entities_task, draw_particles_task,
 		                         cluster_prepare_task, cluster_topup_task, cluster_finish_task, cluster_publish_task, cluster_commit_task};
 		Tasks_Submit ((sizeof (tasks) / sizeof (task_handle_t)), tasks);
 		if (store_efrags != cull_surfaces)
@@ -1428,8 +1459,6 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 		R_DrawParticlesTask (NULL);
 		R_DrawViewModelTask (NULL);
 		RT_ClusterLightListsUpload ();
-		if (r_gpulightmapupdate.value)
-			R_UpdateLightmaps (NULL);
 	}
 
 	// johnfitz
@@ -1443,9 +1472,11 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 			(int)cl.entities[cl.viewentity].origin[2], (int)cl.viewangles[PITCH], (int)cl.viewangles[YAW], (int)cl.viewangles[ROLL]);
 	else if (r_speeds.value == 2)
 		Con_Printf (
-			"%6.3f ms  %4u/%4u wpoly %4u/%4u epoly %3u lmap %4u/%4u sky\n", (time2 - time1) * 1000.0, rs_brushpolys, rs_brushpasses, rs_aliaspolys,
-			rs_aliaspasses, rs_dynamiclightmaps, rs_skypolys, rs_skypasses);
+			"%6.3f ms  %4u/%4u wpoly %4u/%4u epoly %4u/%4u sky\n", (time2 - time1) * 1000.0, Atomic_LoadUInt32 (&rs_brushpolys),
+			Atomic_LoadUInt32 (&rs_brushpasses), Atomic_LoadUInt32 (&rs_aliaspolys), Atomic_LoadUInt32 (&rs_aliaspasses),
+			Atomic_LoadUInt32 (&rs_skypolys), Atomic_LoadUInt32 (&rs_skypasses));
 	else if (r_speeds.value)
-		Con_Printf ("%3i ms  %4i wpoly %4i epoly %3i lmap\n", (int)((time2 - time1) * 1000), rs_brushpolys, rs_aliaspolys, rs_dynamiclightmaps);
+		Con_Printf ("%3i ms  %4i wpoly %4i epoly\n", (int)((time2 - time1) * 1000), (int) Atomic_LoadUInt32 (&rs_brushpolys),
+			(int) Atomic_LoadUInt32 (&rs_aliaspolys));
 	// johnfitz
 }

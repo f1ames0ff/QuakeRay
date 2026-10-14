@@ -56,11 +56,12 @@ intro rather than the place.
 powershell -File tests\perf\run_place.ps1 -Save qrt_start_bigroom -Mode both
 ```
 
-The runner copies the mode config into the game directory, starts the engine, loads the save once,
-dismisses the menu and then measures two arms, each from a reload of the same save so both start
-from the same snapshot:
+The runner copies the mode config into the game directory, starts the engine and loads the save
+once: the save path sends no menu keys (Escape toggles the menu, so a keypress could leave a
+capture behind the open main menu), and each arm then runs from a reload of the same save so both
+start from the same snapshot:
 
-1. `rt_cluster_sampling 1`, the save reloaded, `-Warmup` seconds (default 6) and `-Seconds`
+1. `rt_cluster_sampling 1`, the save reloaded, `-Warmup` seconds (default 3) and `-Seconds`
    seconds of measurement;
 2. `rt_cluster_sampling 0` over the same reload, warmup and time.
 
@@ -80,8 +81,9 @@ python tests\perf\analyze_bench.py build\Debug\ad\benchmark.log 4
   (`fps=` in the block header) is frames over wall seconds; an unfocused window sleeps 16 ms per
   frame in this engine, so wall fps is only comparable between runs that keep focus. The runner
   leaves the window in place, but do not cover it or work on the machine during a run.
-- Compare blocks that share `demo` (the save or map name), `vid`, `rt_light_reach_static` and the
-  `rt_cluster_sampling` flag. The two modes are compared within themselves: a CPU fix shows in
+- Compare blocks that share `demo` (the save or map name), `vid`, `rt_light_reach_static`, the
+  `rt_cluster_sampling` flag, `rt_gi_level` and the `rt_dtal_groups`/`rt_dtal_spacing`/
+  `rt_dtal_maxgroups` values. The two modes are compared within themselves: a CPU fix shows in
   `cpumax`, and `gpumax` tells whether the same fix leaves the GPU bound frame alone.
 - `cpumax` exists to make the CPU the frame's limiter: the cluster cost moves the frame there, and
   in `gpumax` the same cost hides under the GPU frame, which is what the mode is for.

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <functional>
 #include <list>
 #include <vector>
 
@@ -34,13 +35,19 @@ namespace qray
 class Swapchain
 {
 public:
+    using PrintFunction = std::function<void(const char *)>;
+
     Swapchain(
         VkDevice device,
         VkSurfaceKHR surface,
         VkPhysicalDevice physDevice,
         std::shared_ptr<CommandBufferManager> cmdManager,
         bool presentWait2Supported,
-        bool swapchainMaintenance1Supported);
+        bool swapchainMaintenance1Supported,
+        bool fullScreenExclusiveSupported,
+        void *win32Hwnd,
+        PFN_vkAcquireFullScreenExclusiveModeEXT acquireFullScreenExclusiveMode,
+        PFN_vkReleaseFullScreenExclusiveModeEXT releaseFullScreenExclusiveMode);
     ~Swapchain();
 
     Swapchain(const Swapchain &other) = delete;
@@ -50,6 +57,8 @@ public:
 
     bool RequestPresentMode(QrPresentMode mode);
     void SetMaxFrameLatency(uint64_t frames);
+    void SetFullscreenExclusive(bool want, bool focus);
+    void SetPrintFunction(PrintFunction pfnPrint);
     bool IsPresentWaitActive() const;
 
     void AcquireImage(VkSemaphore imageAvailableSemaphore);
@@ -84,6 +93,7 @@ private:
     void ResetSurfaceCapabilitiesCache() const;
     VkPresentModeKHR GetVkPresentMode(QrPresentMode mode) const;
     bool IsWaitablePresentMode(QrPresentMode mode) const;
+    bool WantFullscreenExclusive() const;
 
     bool TryRecreate(const VkExtent2D &newExtent, QrPresentMode mode, bool force = false);
 
@@ -106,6 +116,19 @@ private:
     VkPresentModeKHR presentModeVsync;
     VkPresentModeKHR presentModeAdaptive;
     VkPresentModeKHR presentModeMailbox;
+    VkPresentModeKHR presentModeImmediate;
+
+    bool fullScreenExclusiveSupported = false;
+    void *exclusiveWin32Hwnd = nullptr;
+    PFN_vkAcquireFullScreenExclusiveModeEXT acquireFullScreenExclusive = nullptr;
+    PFN_vkReleaseFullScreenExclusiveModeEXT releaseFullScreenExclusive = nullptr;
+    bool wantFullscreenExclusive = false;
+    bool hasFocus = false;
+    bool createdExclusive = false;
+    bool exclusiveDenied = false;
+    bool exclusiveAcquired = false;
+
+    PrintFunction print;
 
     QrPresentMode requestedPresentMode;
     VkExtent2D surfaceExtent;

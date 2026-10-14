@@ -66,7 +66,6 @@ static vmode_t *modelist = NULL;
 static int      nummodes;
 
 static qboolean vid_initialized = false;
-static qboolean has_focus = true;
 
 static SDL_Window   *draw_context;
 static SDL_SysWMinfo sys_wm_info;
@@ -86,8 +85,9 @@ static void ClearAllStates (void);
 
 viddef_t        vid; // global video state
 modestate_t     modestate = MS_UNINIT;
+qboolean        vid_has_focus = true;
 extern qboolean scr_initialized;
-extern cvar_t   r_particles, host_maxfps, r_gpulightmapupdate;
+extern cvar_t   r_particles, host_maxfps;
 extern cvar_t   scr_showfps, scr_fov;
 
 //====================================
@@ -107,7 +107,6 @@ static cvar_t                   vid_palettize = {"vid_palettize", "0", CVAR_ARCH
 cvar_t                          vid_filter = {"vid_filter", "1", CVAR_ARCHIVE};
 cvar_t                          vid_gamma = {"gamma", "1", CVAR_ARCHIVE};       // johnfitz -- moved here from view.c
 cvar_t                          vid_contrast = {"contrast", "1", CVAR_ARCHIVE}; // QuakeSpasm, MarkV
-cvar_t                          r_usesops = {"r_usesops", "1", CVAR_ARCHIVE};   // johnfitz
 
 task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
 atomic_uint32_t rt_end_task_running;
@@ -172,7 +171,7 @@ atomic_uint32_t rt_end_task_running;
 	   what a lava ball was measured to cost. */ \
 	CVAR_DEF_T (rt_cluster_incremental, "1") \
 	CVAR_DEF_T (rt_particle_resolve_cache, "1") \
-	CVAR_DEF_T (rt_cluster_sampling, "0") \
+	CVAR_DEF_T (rt_cluster_sampling, "1") \
 	CVAR_DEF_T (rt_cluster_assert, "0") \
 	/* A map's vis closes a liquid surface, and the cluster light lists are built from it, so a \
 	   light is also handed the clusters on the other side of the water that its reach covers. 0 \
@@ -189,7 +188,18 @@ atomic_uint32_t rt_end_task_running;
 	   -- it names a texture of the rasterizer's lightmap pass. 0 keeps the historical test, \
 	   whose alpha comparison has its sign inverted and which reads no other state. */ \
 	CVAR_DEF_T (rt_world_batch_merge, "1") \
-	CVAR_DEF_T (rt_brush_persistent, "0") \
+	CVAR_DEF_T (rt_brush_persistent, "1") \
+	/* 0 keeps the positional reuse test (the current list must be a prefix of the create-time
+	   shape with the identity fields equal); 1, the default, compares the primitive counts
+	   rank-wise instead - a superset of the positional test that also ignores the list order,
+	   because the allocation depends on the geometry count and the primitive counts alone. */ \
+	CVAR_DEF_T (rt_dyn_blas_sorted, "1") \
+CVAR_DEF_T (rt_dyn_blas_update, "0") \
+	/* Percent of create-time slack in a dynamic BLAS handle: the create descriptors pad every \
+	   geometry's primitive and vertex counts by this much (with small floors) and append this \
+	   many percent more geometry slots, so a list that fluctuates within the padding reuses the \
+	   handle instead of being recreated; 0 restores the exact create-time envelope. */ \
+	CVAR_DEF_T (rt_dyn_blas_headroom, "25") \
 	/* 0 uploads the map's lights one call at a time, for measuring the batched path. */ \
 	CVAR_DEF_T (rt_wmodel_lights_batch, "1") \
 	/* DTAL: 1 lights an alias model from the triangles of the pose it draws, when its material
@@ -266,7 +276,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_dtal_proxy_model_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
 	CVAR_DEF_T (rt_dtal_clearance, "1") \
-	CVAR_DEF_T (rt_dtal_groups, "0") \
+	CVAR_DEF_T (rt_dtal_groups, "1") \
 	CVAR_DEF_T (rt_dtal_spacing, "8") \
 	CVAR_DEF_T (rt_dtal_maxgroups, "2048") \
     \
@@ -384,6 +394,8 @@ atomic_uint32_t rt_end_task_running;
     CVAR_DEF_LIST (CVAR_DEF_T)
 #undef CVAR_DEF_T
 
+cvar_t rt_upload_trace = {"rt_upload_trace", "0", CVAR_NONE};
+
 cvar_t rt_light_report_filter = {"rt_light_report_filter", "", 0};
 cvar_t r_particles_overflow = {"r_particles_overflow", "0", CVAR_ARCHIVE};
 
@@ -434,6 +446,33 @@ static double   rt_prof_sum[RT_PROF_COUNT];
 static double   rt_renderer_cpu_sum[QR_CPU_PASS_COUNT];
 static float    rt_renderer_cpu_max[QR_CPU_PASS_COUNT];
 static int      rt_renderer_cpu_samples;
+static uint64_t rt_bench_dyn_blas_builds;
+static uint64_t rt_bench_dyn_blas_recreations;
+static double   rt_bench_dyn_blas_create_ms;
+static uint32_t rt_bench_dyn_blas_samples;
+static uint32_t rt_bench_dyn_filter_id[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_builds[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_recreates[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_pfail[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_sord[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_sset[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_scount[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_sshape[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_len_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_min[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_max[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_first[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_last[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_len_samples[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_env_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_env_min[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_env_max[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_eprims_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint64_t rt_bench_dyn_filter_lprims_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
+static int64_t  rt_bench_dyn_filter_fdelta_sum[QR_DYNAMIC_BLAS_FILTER_MAX];
+static int32_t  rt_bench_dyn_filter_fdelta_min[QR_DYNAMIC_BLAS_FILTER_MAX];
+static int32_t  rt_bench_dyn_filter_fdelta_max[QR_DYNAMIC_BLAS_FILTER_MAX];
+static uint32_t rt_bench_dyn_filter_count;
 
 /* rt_bench: the same slots, summed over a whole demo run instead of maximized over one
    `rt_stats_interval` window. The on-screen panel wants the worst frame of the window; a
@@ -449,9 +488,47 @@ static double   rt_bench_frame_min;
 static double   rt_bench_sum[RT_PROF_COUNT];
 static double   rt_bench_max[RT_PROF_COUNT];
 static double   rt_bench_host_sum[RT_HOST_SPEED_COUNT];
+static uint64_t rt_bench_covered_surfaces_sum;
+static uint64_t rt_bench_covered_models_sum;
+static uint64_t rt_bench_covered_emissive_us_sum;
 static int      rt_bench_host_frames;
 static double   rt_bench_frame_slots[RT_PROF_COUNT];
 static atomic_uint32_t rt_prof_spin;
+
+#define RT_PROF_TLS_SLOTS 64
+
+typedef struct
+{
+	double   sum[RT_PROF_COUNT];
+	double   max[RT_PROF_COUNT];
+	double   bench_sum[RT_PROF_COUNT];
+	double   bench_max[RT_PROF_COUNT];
+	uint32_t calls[RT_PROF_COUNT];
+	qboolean used;
+} rt_prof_tls_t;
+
+static rt_prof_tls_t rt_prof_tls_pool[RT_PROF_TLS_SLOTS];
+static uint32_t     rt_prof_tls_used;
+static THREAD_LOCAL rt_prof_tls_t *rt_prof_tls;
+
+static qboolean          rt_upload_trace_on;
+static qboolean          rt_dyn_blas_sorted_on;
+static qboolean          rt_dyn_blas_update_on = true;
+static uint32_t          rt_dyn_blas_headroom_on = 25;
+extern atomic_uint32_t   rs_alias_enhanced_draws;
+extern atomic_uint32_t   rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
+extern atomic_uint32_t   rs_covered_surfaces, rs_covered_models, rs_covered_emissive_us;
+static uint32_t          rt_upload_lock_frames;
+static QrUploadLockStats rt_upload_lock_acc;
+
+static const char *const rt_upload_lane_names[] =
+{
+	"unattributed", "ents 0", "ents 1", "ents 2", "ents 3", "ents 4", "ents 5",
+	"world", "alpha", "sky", "water", "animated", "particles", "viewmodel",
+	"brush", "sprite", "alias", "alias surf"
+};
+COMPILE_TIME_ASSERT (rt_upload_lane_names_count, countof (rt_upload_lane_names) == QR_UPLOAD_LANE_COUNT);
+COMPILE_TIME_ASSERT (rt_upload_lane_entities, (int)(QR_UPLOAD_LANE_ENTITIES_0 + NUM_ENTITIES_CBX) == (int)QR_UPLOAD_LANE_WORLD);
 
 static void RT_Prof_Lock (void)
 {
@@ -463,6 +540,73 @@ static void RT_Prof_Lock (void)
 static void RT_Prof_Unlock (void)
 {
 	Atomic_StoreUInt32 (&rt_prof_spin, 0);
+}
+
+static rt_prof_tls_t *RT_Prof_TLSGet (void)
+{
+	if (rt_prof_tls != NULL)
+		return rt_prof_tls;
+
+	RT_Prof_Lock ();
+	if (rt_prof_tls_used < RT_PROF_TLS_SLOTS)
+	{
+		rt_prof_tls = &rt_prof_tls_pool[rt_prof_tls_used++];
+		rt_prof_tls->used = true;
+	}
+	RT_Prof_Unlock ();
+
+	return rt_prof_tls;
+}
+
+static void RT_Prof_TLSAccumulate (int slot, double ms)
+{
+	rt_prof_tls_t *tls = RT_Prof_TLSGet ();
+
+	if (tls == NULL)
+		return;
+
+	tls->sum[slot] += ms;
+	if (ms > tls->max[slot])
+		tls->max[slot] = ms;
+	++tls->calls[slot];
+
+	if (rt_bench_active)
+	{
+		tls->bench_sum[slot] += ms;
+		if (ms > tls->bench_max[slot])
+			tls->bench_max[slot] = ms;
+	}
+}
+
+static void RT_Prof_MergeTLS (void)
+{
+	for (uint32_t i = 0; i < rt_prof_tls_used; ++i)
+	{
+		rt_prof_tls_t *tls = &rt_prof_tls_pool[i];
+
+		if (!tls->used)
+			continue;
+
+		for (int slot = 0; slot < RT_PROF_COUNT; ++slot)
+		{
+			if (tls->calls[slot] == 0)
+				continue;
+
+			rt_prof_sum[slot] += tls->sum[slot];
+			if (tls->max[slot] > rt_prof_ms[slot])
+				rt_prof_ms[slot] = tls->max[slot];
+			rt_bench_sum[slot] += tls->bench_sum[slot];
+			rt_bench_frame_slots[slot] += tls->bench_sum[slot];
+			if (tls->bench_max[slot] > rt_bench_max[slot])
+				rt_bench_max[slot] = tls->bench_max[slot];
+
+			tls->sum[slot] = 0.0;
+			tls->max[slot] = 0.0;
+			tls->bench_sum[slot] = 0.0;
+			tls->bench_max[slot] = 0.0;
+			tls->calls[slot] = 0;
+		}
+	}
 }
 
 static void RT_Prof_WindowLock (void *unused)
@@ -484,6 +628,17 @@ static void RT_Prof_ClearWindow (void *unused)
 	memset (rt_renderer_cpu_sum, 0, sizeof (rt_renderer_cpu_sum));
 	memset (rt_renderer_cpu_max, 0, sizeof (rt_renderer_cpu_max));
 	rt_renderer_cpu_samples = 0;
+
+	for (uint32_t i = 0; i < rt_prof_tls_used; ++i)
+	{
+		rt_prof_tls_t *tls = &rt_prof_tls_pool[i];
+
+		memset (tls->sum, 0, sizeof (tls->sum));
+		memset (tls->max, 0, sizeof (tls->max));
+		memset (tls->bench_sum, 0, sizeof (tls->bench_sum));
+		memset (tls->bench_max, 0, sizeof (tls->bench_max));
+		memset (tls->calls, 0, sizeof (tls->calls));
+	}
 }
 
 static void RT_Prof_ResetWindow (void *unused)
@@ -552,6 +707,14 @@ void RT_Bench_Start (void)
 	rt_bench_pending_end_serial = 0;
 	RT_Prof_Unlock ();
 	rt_bench_host_frames = 0;
+	rt_bench_covered_surfaces_sum = 0;
+	rt_bench_covered_models_sum = 0;
+	rt_bench_covered_emissive_us_sum = 0;
+	rt_bench_dyn_blas_builds = 0;
+	rt_bench_dyn_blas_recreations = 0;
+	rt_bench_dyn_blas_create_ms = 0;
+	rt_bench_dyn_blas_samples = 0;
+	rt_bench_dyn_filter_count = 0;
 	rt_cluster_cache_hits = 0;
 	rt_cluster_cache_misses = 0;
 	rt_cluster_miss_set = 0;
@@ -619,23 +782,12 @@ void RT_Prof_End (int slot, double start)
 	if (start == 0.0)
 		return;
 
-	const double ms = (Sys_DoubleTime () - start) * 1000.0;
-	RT_Prof_Lock ();
-	RT_Bench_Slot (slot, ms);
-	rt_prof_sum[slot] += ms;
-	if (ms > rt_prof_ms[slot])
-		rt_prof_ms[slot] = ms;
-	RT_Prof_Unlock ();
+	RT_Prof_TLSAccumulate (slot, (Sys_DoubleTime () - start) * 1000.0);
 }
 
 void RT_Prof_Sample (int slot, double ms)
 {
-	RT_Prof_Lock ();
-	RT_Bench_Slot (slot, ms);
-	rt_prof_sum[slot] += ms;
-	if (ms > rt_prof_ms[slot])
-		rt_prof_ms[slot] = ms;
-	RT_Prof_Unlock ();
+	RT_Prof_TLSAccumulate (slot, ms);
 }
 
 void RT_Prof_FrameStart (void)
@@ -645,6 +797,31 @@ void RT_Prof_FrameStart (void)
 	rt_prof_capture_frame = enabled || rt_bench_active;
 	const double now = Sys_DoubleTime ();
 	RT_ProfWindowBeginFrame (&rt_prof_window, &rt_prof_window_sync, enabled, rt_prof_capture_frame, now, RT_Prof_ResetWindow, NULL);
+
+	const qboolean dyn_blas_sorted = CVAR_TO_BOOL (rt_dyn_blas_sorted);
+
+	if (dyn_blas_sorted != rt_dyn_blas_sorted_on)
+	{
+		rt_dyn_blas_sorted_on = dyn_blas_sorted;
+		qrSetDynamicShapeSortedReuse (vulkan_globals.instance, dyn_blas_sorted);
+	}
+
+	const qboolean dyn_blas_update = CVAR_TO_BOOL (rt_dyn_blas_update);
+
+	if (dyn_blas_update != rt_dyn_blas_update_on)
+	{
+		rt_dyn_blas_update_on = dyn_blas_update;
+		qrSetDynamicShapeRefit (vulkan_globals.instance, dyn_blas_update);
+	}
+
+	const uint32_t dyn_blas_headroom = (uint32_t)CLAMP (0.0f, rt_dyn_blas_headroom.value, 100.0f);
+
+	if (dyn_blas_headroom != rt_dyn_blas_headroom_on)
+	{
+		rt_dyn_blas_headroom_on = dyn_blas_headroom;
+		qrSetDynamicShapeHeadroom (vulkan_globals.instance, dyn_blas_headroom);
+	}
+
 	if (!rt_prof_capture_frame)
 		return;
 
@@ -658,6 +835,19 @@ void RT_Prof_FrameStart (void)
 	}
 
 	RT_PointClusterCacheStats (NULL, NULL, &rt_particle_cache_total_ms_last, NULL);
+
+	const qboolean upload_trace = rt_upload_trace.value != 0;
+
+	if (upload_trace != rt_upload_trace_on)
+	{
+		rt_upload_trace_on = upload_trace;
+		rt_upload_lock_frames = 0;
+		memset (&rt_upload_lock_acc, 0, sizeof (rt_upload_lock_acc));
+	}
+
+	qrSetUploadLockTracing (vulkan_globals.instance, upload_trace);
+	if (upload_trace)
+		qrUploadLockStatsReset (vulkan_globals.instance);
 }
 
 void RT_Prof_FrameEnd (void)
@@ -668,12 +858,20 @@ void RT_Prof_FrameEnd (void)
 	const uint32_t end_serial = rt_end_task_current_serial;
 	rt_end_task_current_serial = 0;
 
-	RT_Prof_End (RT_PROF_FRAME, rt_prof_frame_start);
+	const double frame_ms = (Sys_DoubleTime () - rt_prof_frame_start) * 1000.0;
 
 	double cacheTotalMs;
 	RT_PointClusterCacheStats (NULL, NULL, &cacheTotalMs, NULL);
 	RT_Prof_Sample (RT_PROF_PARTICLES_RESOLVE, cacheTotalMs - rt_particle_cache_total_ms_last);
 	rt_particle_cache_total_ms_last = cacheTotalMs;
+
+	RT_Prof_Lock ();
+	RT_Prof_MergeTLS ();
+	RT_Bench_Slot (RT_PROF_FRAME, frame_ms);
+	rt_prof_sum[RT_PROF_FRAME] += frame_ms;
+	if (frame_ms > rt_prof_ms[RT_PROF_FRAME])
+		rt_prof_ms[RT_PROF_FRAME] = frame_ms;
+	RT_Prof_Unlock ();
 
 	RT_ProfWindowEndFrame (&rt_prof_window, &rt_prof_window_sync);
 	if (rt_bench_active)
@@ -714,9 +912,127 @@ void RT_Prof_FrameEnd (void)
 		for (int i = 0; i < RT_PROF_COUNT; ++i)
 			if (rt_bench_frame_slots[i] > rt_bench_max[i])
 				rt_bench_max[i] = rt_bench_frame_slots[i];
+
+		rt_bench_covered_surfaces_sum += Atomic_LoadUInt32 (&rs_covered_surfaces);
+		rt_bench_covered_models_sum += Atomic_LoadUInt32 (&rs_covered_models);
+		rt_bench_covered_emissive_us_sum += Atomic_LoadUInt32 (&rs_covered_emissive_us);
 		RT_Prof_Unlock ();
 		rt_bench_last_frame_end = now;
 		++rt_bench_frames;
+	}
+
+	if (rt_upload_trace_on)
+	{
+		QrUploadLockStats stats = {0};
+
+		qrGetUploadLockStats (vulkan_globals.instance, &stats);
+
+		if (stats.valid)
+		{
+			for (uint32_t i = 0; i < QR_UPLOAD_LANE_COUNT; ++i)
+			{
+				rt_upload_lock_acc.lanes[i].calls += stats.lanes[i].calls;
+				rt_upload_lock_acc.lanes[i].waitSumNs += stats.lanes[i].waitSumNs;
+				rt_upload_lock_acc.lanes[i].holdSumNs += stats.lanes[i].holdSumNs;
+
+				if (stats.lanes[i].waitMaxNs > rt_upload_lock_acc.lanes[i].waitMaxNs)
+					rt_upload_lock_acc.lanes[i].waitMaxNs = stats.lanes[i].waitMaxNs;
+				if (stats.lanes[i].holdMaxNs > rt_upload_lock_acc.lanes[i].holdMaxNs)
+					rt_upload_lock_acc.lanes[i].holdMaxNs = stats.lanes[i].holdMaxNs;
+			}
+
+			rt_upload_lock_acc.boundsScanSumNs += stats.boundsScanSumNs;
+			rt_upload_lock_acc.boundsScanCalls += stats.boundsScanCalls;
+			rt_upload_lock_acc.boundsScanVerts += stats.boundsScanVerts;
+
+			++rt_upload_lock_frames;
+		}
+	}
+}
+
+static void RT_Bench_AddDynamicFilterStats (const QrFrameStats *stats)
+{
+	uint32_t i;
+	uint32_t slot;
+
+	for (i = 0; i < stats->dynamicFilterCount; i++)
+	{
+		const QrDynamicBlasFilterCounters *src = &stats->dynamicFilters[i];
+
+		for (slot = 0; slot < rt_bench_dyn_filter_count; slot++)
+		{
+			if (rt_bench_dyn_filter_id[slot] == src->filter)
+				break;
+		}
+
+		if (slot == rt_bench_dyn_filter_count)
+		{
+			if (rt_bench_dyn_filter_count >= QR_DYNAMIC_BLAS_FILTER_MAX)
+				continue;
+
+			slot = rt_bench_dyn_filter_count++;
+			rt_bench_dyn_filter_id[slot] = src->filter;
+			rt_bench_dyn_filter_builds[slot] = 0;
+			rt_bench_dyn_filter_recreates[slot] = 0;
+			rt_bench_dyn_filter_pfail[slot] = 0;
+			rt_bench_dyn_filter_sord[slot] = 0;
+			rt_bench_dyn_filter_sset[slot] = 0;
+			rt_bench_dyn_filter_scount[slot] = 0;
+			rt_bench_dyn_filter_sshape[slot] = 0;
+			rt_bench_dyn_filter_len_sum[slot] = 0;
+			rt_bench_dyn_filter_len_first[slot] = 0;
+			rt_bench_dyn_filter_len_last[slot] = 0;
+			rt_bench_dyn_filter_len_samples[slot] = 0;
+			rt_bench_dyn_filter_env_sum[slot] = 0;
+			rt_bench_dyn_filter_env_min[slot] = 0;
+			rt_bench_dyn_filter_env_max[slot] = 0;
+			rt_bench_dyn_filter_eprims_sum[slot] = 0;
+			rt_bench_dyn_filter_lprims_sum[slot] = 0;
+			rt_bench_dyn_filter_fdelta_sum[slot] = 0;
+			rt_bench_dyn_filter_fdelta_min[slot] = 0;
+			rt_bench_dyn_filter_fdelta_max[slot] = 0;
+		}
+
+		rt_bench_dyn_filter_builds[slot] += src->builds;
+		rt_bench_dyn_filter_recreates[slot] += src->recreates;
+		rt_bench_dyn_filter_pfail[slot] += src->positionalFails;
+		rt_bench_dyn_filter_sord[slot] += src->sortedPassPositionalFails;
+		rt_bench_dyn_filter_sset[slot] += src->sortedFails;
+		rt_bench_dyn_filter_scount[slot] += src->sortedCountFails;
+		rt_bench_dyn_filter_sshape[slot] += src->sortedShapeFails;
+
+		if (rt_bench_dyn_filter_len_samples[slot] == 0)
+		{
+			rt_bench_dyn_filter_len_min[slot] = src->geometryCount;
+			rt_bench_dyn_filter_len_max[slot] = src->geometryCount;
+		}
+		else
+		{
+			if (src->geometryCount < rt_bench_dyn_filter_len_min[slot])
+				rt_bench_dyn_filter_len_min[slot] = src->geometryCount;
+			if (src->geometryCount > rt_bench_dyn_filter_len_max[slot])
+				rt_bench_dyn_filter_len_max[slot] = src->geometryCount;
+		}
+
+		rt_bench_dyn_filter_len_sum[slot] += src->geometryCount;
+		if (rt_bench_dyn_filter_len_first[slot] == 0)
+			rt_bench_dyn_filter_len_first[slot] = src->geometryCount;
+		rt_bench_dyn_filter_len_last[slot] = src->geometryCount;
+		rt_bench_dyn_filter_len_samples[slot]++;
+
+		if (rt_bench_dyn_filter_env_max[slot] == 0 || src->envelopeCount > rt_bench_dyn_filter_env_max[slot])
+			rt_bench_dyn_filter_env_max[slot] = src->envelopeCount;
+		if (rt_bench_dyn_filter_env_min[slot] == 0 || src->envelopeCount < rt_bench_dyn_filter_env_min[slot])
+			rt_bench_dyn_filter_env_min[slot] = src->envelopeCount;
+		rt_bench_dyn_filter_env_sum[slot] += src->envelopeCount;
+		rt_bench_dyn_filter_eprims_sum[slot] += src->envelopePrimitives;
+		rt_bench_dyn_filter_lprims_sum[slot] += src->listPrimitives;
+
+		rt_bench_dyn_filter_fdelta_sum[slot] += src->failDeltaSum;
+		if (src->failDeltaMin < rt_bench_dyn_filter_fdelta_min[slot])
+			rt_bench_dyn_filter_fdelta_min[slot] = src->failDeltaMin;
+		if (src->failDeltaMax > rt_bench_dyn_filter_fdelta_max[slot])
+			rt_bench_dyn_filter_fdelta_max[slot] = src->failDeltaMax;
 	}
 }
 
@@ -729,7 +1045,14 @@ static void RT_Prof_RecordRenderer (void)
 
 	RT_Prof_Lock ();
 	if (rt_bench_active)
+	{
 		rt_bench_renderer_stats = stats;
+		rt_bench_dyn_blas_builds += stats.dynamicBlasBuilds;
+		rt_bench_dyn_blas_recreations += stats.dynamicBlasRecreations;
+		rt_bench_dyn_blas_create_ms += stats.dynamicBlasCreateMs;
+		++rt_bench_dyn_blas_samples;
+		RT_Bench_AddDynamicFilterStats (&stats);
+	}
 
 	++rt_renderer_cpu_samples;
 	for (int i = 0; i < QR_CPU_PASS_COUNT; i++)
@@ -771,6 +1094,15 @@ static void RT_Prof_RecordEndResult (void *context)
 			rt_renderer_cpu_sum[i] += stats->cpuPassMs[i];
 			if (stats->cpuPassMs[i] > rt_renderer_cpu_max[i])
 				rt_renderer_cpu_max[i] = stats->cpuPassMs[i];
+		}
+
+		if (rt_bench_active)
+		{
+			rt_bench_dyn_blas_builds += stats->dynamicBlasBuilds;
+			rt_bench_dyn_blas_recreations += stats->dynamicBlasRecreations;
+			rt_bench_dyn_blas_create_ms += stats->dynamicBlasCreateMs;
+			++rt_bench_dyn_blas_samples;
+			RT_Bench_AddDynamicFilterStats (stats);
 		}
 	}
 
@@ -1079,6 +1411,40 @@ qboolean RT_Bench_Report (const char *demo)
 	fprintf (f, "cpu.main    %-17s avg_ms=%.2f\n", "frame minus wait",
 	         (slotSum[RT_PROF_FRAME] - slotSum[RT_PROF_WAIT]) / frames);
 
+	if (rt_upload_trace_on && rt_upload_lock_frames > 0)
+	{
+		const double uploadFrames = (double)rt_upload_lock_frames;
+
+		fprintf (f, "upload.lock frames=%u\n", rt_upload_lock_frames);
+
+		for (uint32_t i = 0; i < QR_UPLOAD_LANE_COUNT; ++i)
+		{
+			const QrUploadLockLaneStats *lane = &rt_upload_lock_acc.lanes[i];
+
+			if (lane->calls == 0)
+				continue;
+
+			fprintf (f, "upload.lane %-12s calls=%llu wait_avg_ms=%.3f wait_max_ms=%.3f hold_avg_ms=%.3f hold_max_ms=%.3f\n",
+			         rt_upload_lane_names[i], (unsigned long long)lane->calls,
+			         (double)lane->waitSumNs / uploadFrames / 1e6, (double)lane->waitMaxNs / 1e6,
+			         (double)lane->holdSumNs / uploadFrames / 1e6, (double)lane->holdMaxNs / 1e6);
+		}
+
+		fprintf (f, "upload.alias enhanced_draws=%u surf_calls=%llu pose_draws=%u pose_static=%u pose_repeat=%u\n",
+		         Atomic_LoadUInt32 (&rs_alias_enhanced_draws),
+		         (unsigned long long)rt_upload_lock_acc.lanes[QR_UPLOAD_LANE_ALIAS_SURF].calls,
+		         Atomic_LoadUInt32 (&rs_alias_pose_draws),
+		         Atomic_LoadUInt32 (&rs_alias_pose_static),
+		         Atomic_LoadUInt32 (&rs_alias_pose_repeat));
+
+		if (rt_upload_lock_acc.boundsScanCalls > 0)
+			fprintf (f, "upload.bounds calls=%llu verts=%llu avg_ms=%.3f per_call_us=%.2f\n",
+			         (unsigned long long)rt_upload_lock_acc.boundsScanCalls,
+			         (unsigned long long)rt_upload_lock_acc.boundsScanVerts,
+			         (double)rt_upload_lock_acc.boundsScanSumNs / uploadFrames / 1e6,
+			         (double)rt_upload_lock_acc.boundsScanSumNs / (double)rt_upload_lock_acc.boundsScanCalls / 1e3);
+	}
+
 	static const char *const hostPasses[RT_HOST_SPEED_COUNT] = {"tot", "server", "gfx", "snd"};
 	const int                hostFrames = rt_bench_host_frames > 0 ? rt_bench_host_frames : 1;
 
@@ -1089,6 +1455,53 @@ qboolean RT_Bench_Report (const char *demo)
 	         clusterHits, clusterMisses, clusterSet,
 	         clusterMove, clusterOther, rt_cluster_pub_skips, rt_cluster_pub_copies);
 
+	fprintf (f, "brush.covered surfaces_avg=%.1f models_avg=%.1f emissive_avg_ms=%.3f\n",
+	         (double)rt_bench_covered_surfaces_sum / frames,
+	         (double)rt_bench_covered_models_sum / frames,
+	         (double)rt_bench_covered_emissive_us_sum / frames / 1000.0);
+
+	if (rt_bench_dyn_blas_samples > 0)
+		fprintf (f, "as.dynamic builds_avg=%.2f recreations_avg=%.2f create_avg_ms=%.3f samples=%u\n",
+		         (double)rt_bench_dyn_blas_builds / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_blas_recreations / rt_bench_dyn_blas_samples,
+		         rt_bench_dyn_blas_create_ms / rt_bench_dyn_blas_samples,
+		         rt_bench_dyn_blas_samples);
+
+	for (uint32_t i = 0; i < rt_bench_dyn_filter_count && rt_bench_dyn_blas_samples > 0; i++)
+		fprintf (f, "as.filter filter=0x%08x builds_avg=%.2f recreates_avg=%.2f pfail_avg=%.2f sord_avg=%.2f sset_avg=%.2f scount_avg=%.2f sshape_avg=%.2f len_avg=%.1f len_min=%u len_max=%u len_first=%u len_last=%u env_avg=%.1f env_min=%u env_max=%u fdelta_avg=%+.2f fdelta_min=%d fdelta_max=%d len_samples=%u env_prims_avg=%.0f len_prims_avg=%.0f\n",
+		         rt_bench_dyn_filter_id[i],
+		         (double)rt_bench_dyn_filter_builds[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_recreates[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_pfail[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_sord[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_sset[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_scount[i] / rt_bench_dyn_blas_samples,
+		         (double)rt_bench_dyn_filter_sshape[i] / rt_bench_dyn_blas_samples,
+		         rt_bench_dyn_filter_len_samples[i] > 0
+		             ? (double)rt_bench_dyn_filter_len_sum[i] / rt_bench_dyn_filter_len_samples[i]
+		             : 0.0,
+		         rt_bench_dyn_filter_len_min[i],
+		         rt_bench_dyn_filter_len_max[i],
+		         rt_bench_dyn_filter_len_first[i],
+		         rt_bench_dyn_filter_len_last[i],
+		         rt_bench_dyn_filter_len_samples[i] > 0
+		             ? (double)rt_bench_dyn_filter_env_sum[i] / rt_bench_dyn_filter_len_samples[i]
+		             : 0.0,
+		         rt_bench_dyn_filter_env_min[i],
+		         rt_bench_dyn_filter_env_max[i],
+		         rt_bench_dyn_filter_pfail[i] > 0
+		             ? (double)rt_bench_dyn_filter_fdelta_sum[i] / (double)rt_bench_dyn_filter_pfail[i]
+		             : 0.0,
+		         rt_bench_dyn_filter_fdelta_min[i],
+		         rt_bench_dyn_filter_fdelta_max[i],
+		         rt_bench_dyn_filter_len_samples[i],
+		         rt_bench_dyn_filter_len_samples[i] > 0
+		             ? (double)rt_bench_dyn_filter_eprims_sum[i] / rt_bench_dyn_filter_len_samples[i]
+		             : 0.0,
+		         rt_bench_dyn_filter_len_samples[i] > 0
+		             ? (double)rt_bench_dyn_filter_lprims_sum[i] / rt_bench_dyn_filter_len_samples[i]
+		             : 0.0);
+
 	fprintf (f, "settings");
 	RT_Bench_Setting (f, "host_maxfps");
 	RT_Bench_Setting (f, "host_timescale");
@@ -1097,6 +1510,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "r_drawviewmodel");
 	RT_Bench_Setting (f, "r_enhancedmodels");
 	RT_Bench_Setting (f, "r_simd");
+	RT_Bench_Setting (f, "r_tasks");
+	RT_Bench_Setting (f, "r_parallelmark");
 	RT_Bench_Setting (f, "r_lerpmodels");
 	RT_Bench_Setting (f, "r_smoke");
 	RT_Bench_Setting (f, "rt_enable_pvs");
@@ -1104,6 +1519,10 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_truelight");
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_brush_persistent");
+	RT_Bench_Setting (f, "rt_dyn_blas_sorted");
+	RT_Bench_Setting (f, "rt_dyn_blas_update");
+	RT_Bench_Setting (f, "rt_dyn_blas_headroom");
+	RT_Bench_Setting (f, "rt_upload_trace");
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");
 	RT_Bench_Setting (f, "rt_cluster_sampling");
@@ -1249,6 +1668,7 @@ const char *RT_ProfSlotName (int slot)
 		const char *name;
 	} names[] = {
 		{ RT_PROF_SETUP, "setup" },
+		{ RT_PROF_BEGIN, "begin" },
 		{ RT_PROF_MARK, "mark" },
 		{ RT_PROF_EFRAGS, "efrags" },
 		{ RT_PROF_CULL, "cull" },
@@ -1259,7 +1679,12 @@ const char *RT_ProfSlotName (int slot)
 		{ RT_PROF_ENTS_ALIAS, "ents alias" },
 		{ RT_PROF_ENTS_BRUSH, "ents brush" },
 		{ RT_PROF_ENTS_SPRITE, "ents sprite" },
-		{ RT_PROF_BRUSH_LIGHTMARK, "brush lightmark" },
+		{ RT_PROF_ENTS_CHUNK_0, "ents c0" },
+		{ RT_PROF_ENTS_CHUNK_1, "ents c1" },
+		{ RT_PROF_ENTS_CHUNK_2, "ents c2" },
+		{ RT_PROF_ENTS_CHUNK_3, "ents c3" },
+		{ RT_PROF_ENTS_CHUNK_4, "ents c4" },
+		{ RT_PROF_ENTS_CHUNK_5, "ents c5" },
 		{ RT_PROF_ALPHA, "alpha" },
 		{ RT_PROF_PARTICLES, "particles" },
 		{ RT_PROF_VIEWMODEL, "viewmodel" },
@@ -2220,6 +2645,7 @@ static const char *VID_VsyncModeName (int mode)
 	case VID_VSYNC_ON:        return "vsync";
 	case VID_VSYNC_ADAPTIVE:  return "adaptive";
 	case VID_VSYNC_FREESYNC:  return "freesync";
+	case VID_VSYNC_MAILBOX:   return "mailbox";
 	default:                  return "off";
 	}
 }
@@ -2231,7 +2657,8 @@ static QrPresentMode VID_PresentMode (void)
 	case VID_VSYNC_ON:        return QR_PRESENT_MODE_VSYNC;
 	case VID_VSYNC_ADAPTIVE:  return QR_PRESENT_MODE_ADAPTIVE;
 	case VID_VSYNC_FREESYNC:  return QR_PRESENT_MODE_VSYNC;
-	default:                  return QR_PRESENT_MODE_MAILBOX;
+	case VID_VSYNC_MAILBOX:   return QR_PRESENT_MODE_MAILBOX;
+	default:                  return QR_PRESENT_MODE_IMMEDIATE;
 	}
 }
 
@@ -2377,6 +2804,8 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, qboolean fu
 	SDL_ShowWindow (draw_context);
 	SDL_RaiseWindow (draw_context);
 
+	vid_has_focus = (SDL_GetWindowFlags (draw_context) & SDL_WINDOW_INPUT_FOCUS) != 0;
+
 	vid.width = VID_GetCurrentWidth ();
 	vid.height = VID_GetCurrentHeight ();
 	vid.conwidth = vid.width & 0xFFFFFFF8;
@@ -2428,7 +2857,7 @@ static void VID_Test (void)
 	old_width = VID_GetCurrentWidth ();
 	old_height = VID_GetCurrentHeight ();
 	old_refreshrate = VID_GetCurrentRefreshRate ();
-	old_fullscreen = VID_GetFullscreen () ? 1 : 0;
+	old_fullscreen = (int)vid_fullscreen.value;
 	VID_Restart (true);
 
 	// pop up confirmation dialoge
@@ -2903,9 +3332,13 @@ void GL_BeginRenderingTask (void *unused)
 		.presentMode = VID_PresentMode (),
 		.maxFrameLatency = (uint32_t)CLAMP (0, (int)vid_maxframelatency.value, 1),
 		.requestShaderReload = request_shaders_reload,
+		.wantFullscreenExclusive = (vid_fullscreen.value >= 2.0f) && modestate == MS_FULLSCREEN,
+		.hasFocus = vid_has_focus,
 	};
 
+	const double prof_begin = RT_Prof_Begin ();
 	QrResult r = qrStartFrame (vulkan_globals.instance, &info);
+	RT_Prof_End (RT_PROF_BEGIN, prof_begin);
 	QR_CHECK (r);
 
 	request_shaders_reload = false;
@@ -3103,7 +3536,6 @@ extern float  r_fovx, r_fovy;
 extern cvar_t r_fastsky;
 extern float  skyflatcolor[3];
 extern float  skyfog;
-extern float    rt_dmg_value;
 extern qboolean rt_dmg_inthisframe;
 extern QrMediaType rt_cameramedia;
 extern qboolean rt_lavaeffects;
@@ -3156,17 +3588,18 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// a third sample's RNG salt would collide with the sun disk stream.
 	const uint32_t nee_samples = (CVAR_TO_FLOAT (rt_nee_samples) < 1.5f) ? 1u : 2u;
 
-	// Q2RTX-style global illumination level (pt_num_bounce_rays): 0 disables the
-	// indirect pass, 1 mirrors the historical single-bounce behavior and 2 adds a
-	// second indirect bounce.
+	// The global illumination level: 0 disables the indirect pass; the four steps are low (a
+	// quarter-resolution grid, one bounce), medium (a quarter-resolution grid, two bounces), high
+	// (half resolution, one bounce) and ultra (half resolution, two bounces). Every bounce casts
+	// its own NEE rays (the light list, the sun, the sky).
 	const float gi_level = CLAMP (0.0f, CVAR_TO_FLOAT (rt_gi_level), 2.0f);
 
 	QrDrawFrameIlluminationParams illum_params = {
 	    .maxBounceShadows = CVAR_TO_UINT32 (rt_shadowrays),
-		// The level alone decides the bounce count, like Q2RTX pt_num_bounce_rays.
-		// rt_indir2bounces is kept for config compatibility but no longer forces the
-		// second bounce on at every level, which made medium and high identical.
-		.enableSecondBounceForIndirect = (gi_level >= 1.5f),
+		// The level alone decides the bounce count and the resolution tier (see above): the
+		// raygen derives both from giBounceRays, and this field reports whether the chain is
+		// longer than one bounce.
+		.enableSecondBounceForIndirect = ((gi_level >= 0.75f && gi_level < 1.25f) || (gi_level >= 1.75f)),
 		.cellWorldSize = METRIC_TO_QUAKEUNIT(2.0f),
 		.directDiffuseSensitivityToChange = CVAR_TO_FLOAT (rt_sensit_dir),
 		.indirectDiffuseSensitivityToChange = CVAR_TO_FLOAT (rt_sensit_indir),
@@ -3727,7 +4160,7 @@ static void VID_DescribeCurrentMode_f (void)
 	if (draw_context)
 		Con_Printf (
 			"%dx%dx%d %dHz %s\n", VID_GetCurrentWidth (), VID_GetCurrentHeight (), VID_GetCurrentBPP (), VID_GetCurrentRefreshRate (),
-			VID_GetFullscreen () ? "fullscreen" : "windowed");
+			VID_GetFullscreen () ? ((int)vid_fullscreen.value >= 2 ? "fullscreen exclusive" : "fullscreen") : "windowed");
 }
 
 /*
@@ -4066,6 +4499,10 @@ void VID_Init (void)
 		CVAR_DEF_LIST (CVAR_DEF_T)
 #undef CVAR_DEF_T
 
+		rt_enable_pvs.flags |= CVAR_ROM;
+
+		Cvar_RegisterVariable (&rt_upload_trace);
+
 		/* Read-only: the incremental composition is the only mode the renderer selects. The
 		   legacy non-incremental path (0) composes every list of the scene on every frame, and
 		   the light a scene keeps was measured to flicker in it; an engine-side Cvar_SetROM is
@@ -4397,7 +4834,7 @@ void VID_SyncCvars (void)
 			Cvar_SetValueQuick (&vid_height, VID_GetCurrentHeight ());
 		}
 		Cvar_SetValueQuick (&vid_refreshrate, VID_GetCurrentRefreshRate ());
-		Cvar_SetQuick (&vid_fullscreen, VID_GetFullscreen () ? "1" : "0");
+		Cvar_SetQuick (&vid_fullscreen, VID_GetFullscreen () ? ((int)vid_fullscreen.value >= 2 ? "2" : "1") : "0");
 		// don't sync vid_desktopfullscreen, it's a user preference that
 		// should persist even if we are in windowed mode.
 	}
@@ -4428,6 +4865,7 @@ enum
 {
 	VID_OPT_MODE,
 	VID_OPT_REFRESHRATE,
+	VID_OPT_FULLSCREEN,
 	VID_OPT_APPLY,
 
 	VID_OPT_UPSCALER,
@@ -4582,11 +5020,63 @@ static void VID_Menu_ChooseNextVsync (int dir)
 	int mode = (int)vid_vsync.value + dir;
 
 	if (mode < VID_VSYNC_OFF)
-		mode = VID_VSYNC_FREESYNC;
-	else if (mode > VID_VSYNC_FREESYNC)
+		mode = VID_VSYNC_MAILBOX;
+	else if (mode > VID_VSYNC_MAILBOX)
 		mode = VID_VSYNC_OFF;
 
 	Cvar_SetValueQuick (&vid_vsync, (float)mode);
+}
+
+/*
+================
+VID_Menu_GetFullscreenMode -- 0 windowed, 1 borderless, 2 fullscreen, 3 exclusive
+================
+*/
+static int VID_Menu_GetFullscreenMode (void)
+{
+	const int fullscreen = (int)vid_fullscreen.value;
+
+	if (fullscreen <= 0)
+		return 0;
+	if (fullscreen >= 2)
+		return 3;
+
+	return CVAR_TO_BOOL (vid_desktopfullscreen) ? 1 : 2;
+}
+
+/*
+================
+VID_Menu_ChooseNextFullscreen
+================
+*/
+static void VID_Menu_ChooseNextFullscreen (int dir)
+{
+	int mode = VID_Menu_GetFullscreenMode () + dir;
+
+	if (mode < 0)
+		mode = 3;
+	else if (mode > 3)
+		mode = 0;
+
+	switch (mode)
+	{
+	case 0:
+		Cvar_SetValueQuick (&vid_desktopfullscreen, 0.0f);
+		Cvar_SetValueQuick (&vid_fullscreen, 0.0f);
+		break;
+	case 1:
+		Cvar_SetValueQuick (&vid_desktopfullscreen, 1.0f);
+		Cvar_SetValueQuick (&vid_fullscreen, 1.0f);
+		break;
+	case 2:
+		Cvar_SetValueQuick (&vid_desktopfullscreen, 0.0f);
+		Cvar_SetValueQuick (&vid_fullscreen, 1.0f);
+		break;
+	default:
+		Cvar_SetValueQuick (&vid_desktopfullscreen, 0.0f);
+		Cvar_SetValueQuick (&vid_fullscreen, 2.0f);
+		break;
+	}
 }
 
 /*
@@ -4703,6 +5193,9 @@ static void VID_Menu_Adjust (int dir)
 		break;
 	case VID_OPT_REFRESHRATE:
 		VID_Menu_ChooseNextRate (-dir);
+		break;
+	case VID_OPT_FULLSCREEN:
+		VID_Menu_ChooseNextFullscreen (dir);
 		break;
 	case VID_OPT_VSYNC:
 		VID_Menu_ChooseNextVsync (dir);
@@ -4858,6 +5351,13 @@ static void VID_MenuDraw (cb_context_t *cbx)
 		case VID_OPT_REFRESHRATE:
 			M_Print (cbx, 16, y, "      Refresh rate");
 			M_Print (cbx, 184, y, va ("%i", (int)vid_refreshrate.value));
+			break;
+		case VID_OPT_FULLSCREEN:
+			M_Print (cbx, 16, y, "      Display mode");
+			{
+				static const char *names[4] = { "windowed", "borderless", "fullscreen", "exclusive" };
+				M_Print (cbx, 184, y, names[VID_Menu_GetFullscreenMode ()]);
+			}
 			break;
 		case VID_OPT_APPLY:
 			M_Print (cbx, 16, y, "             Apply");
@@ -5018,14 +5518,4 @@ void SCR_ScreenShot_f (void)
 	{
 		Con_Printf ("screenshot: failed (%s)\n", qrGetResultDescription (result));
 	}
-}
-
-void VID_FocusGained (void)
-{
-	has_focus = true;
-}
-
-void VID_FocusLost (void)
-{
-	has_focus = false;
 }

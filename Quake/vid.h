@@ -76,9 +76,12 @@ enum
 	VID_VSYNC_ON,
 	VID_VSYNC_ADAPTIVE,
 	VID_VSYNC_FREESYNC,
+	VID_VSYNC_MAILBOX,
 };
 
 extern int vid_display_refresh;
+
+extern qboolean vid_has_focus;
 
 extern void (*vid_menudrawfn) (cb_context_t *cbx);
 extern void (*vid_menukeyfn) (int key);
@@ -100,8 +103,5 @@ void    *VID_GetWindow (void);
 qboolean VID_HasMouseOrInputFocus (void);
 qboolean VID_IsMinimized (void);
 void     VID_Lock (void);
-
-void VID_FocusGained (void);
-void VID_FocusLost (void);
 
 #endif /* __VID_DEFS_H */
