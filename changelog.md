@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.50.0
+
 ### Added
 - **The GPU pass timings split the acceleration-structure work** — the timing overlay, the benchmark rows and the stats dumps carry three sections beside `gpu.setup`: `setup_blas` (the static BLAS sync), `setup_tlas` (the frame's instance synthesis, the dynamic BLAS builds and the vertex-data copies) and `setup_preproc` (the dynamic-normal pass), so the bucket no longer hides which part of a scene's acceleration-structure work grows. On Bogbottom's 4K FSR Balanced point the split reads 0.7 / 2.5 / 2.1 ms against Fuma's 0.6 / 1.9 / 0.9, and it is what shaped the work below.
 - **`rt_dyn_blas_update` (default `0`) turns the BLAS refit on** — with it on, a dynamic or movable rebuild whose topology identity matches the structure's last build (the same buffers, offsets, primitive and vertex counts, strides, indexedness, flags and transform presence; the transform values are deliberately left out, because a refit is meant to pick them up) is recorded as an in-place refit (`MODE_UPDATE`; the structures are created with `AllowUpdate`) instead of a recreation and a full build. Measured on Bogbottom: the setup GPU work falls by about 0.5 ms, but the in-place updates stall the frame's GPU-fence wait by 5-8 ms on 10-16% of frames - a net loss on this driver - so the path ships off and stays as the bisection arm for a rework.
