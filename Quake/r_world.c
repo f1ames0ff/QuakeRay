@@ -50,14 +50,21 @@ extern cvar_t rt_light_styles;
 extern cvar_t rt_light_styles_reach;
 extern cvar_t rt_wmodel_lights_batch;
 extern cvar_t rt_model_lights;
+extern cvar_t rt_level_lights;
+extern cvar_t rt_level_light_maxpolys;
+extern cvar_t rt_level_light_models;
 extern cvar_t rt_dtal_model_maxpolys;
 extern cvar_t rt_dtal_model_budget;
 extern cvar_t rt_dtal_model_minarea;
 extern cvar_t rt_dtal_minarea;
+extern cvar_t rt_dtal_proxy;
+extern cvar_t rt_dtal_proxy_minarea;
+extern cvar_t rt_dtal_proxy_model_minarea;
 extern cvar_t rt_dtal_maxpolys;
 extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_dtal_groups;
 extern cvar_t rt_dtal_spacing;
+extern cvar_t rt_dtal_maxgroups;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_brush_persistent;
 
@@ -116,6 +123,18 @@ extern QrVertex *rtallbrushvertices;
 static QrTexturedAreaLightUploadInfo rt_wldlights_emissive[MAX_WORLDLIGHTS_COUNT];
 static int                           rt_wldlights_emissive_count = 0;
 
+/* The map's small emitters, merged into one synthesized dlight each: a stored emitter is
+   re-emitted every frame the way the per-piece world lights are, so the proxy keeps its
+   identity while its surface stays put. See RT_EmitEmissiveProxyLight. */
+#define RT_WLDPROXY_MAX 1024
+
+static rt_emitter_light_t rt_wldlights_proxy[RT_WLDPROXY_MAX];
+static int                rt_wldlights_proxy_count = 0;
+static int                rt_wldlights_proxy_world_count = 0;
+static const msurface_t  *rt_wldlights_proxy_surf[RT_WLDPROXY_MAX];
+static vec3_t             rt_wldlights_proxy_color[RT_WLDPROXY_MAX];
+static byte               rt_wldlights_proxy_style_accepted[RT_WLDPROXY_MAX][MAXLIGHTMAPS];
+
 static const msurface_t *rt_wldlights_emissive_surf[MAX_WORLDLIGHTS_COUNT];
 static gltexture_t      *rt_wldlights_emissive_tex[MAX_WORLDLIGHTS_COUNT];
 
@@ -151,6 +170,8 @@ typedef struct rt_emis_stats_s
 	atomic_uint32_t model_lights;
 	atomic_uint32_t model_capped;
 	atomic_uint32_t model_small;
+	atomic_uint32_t proxy;
+	atomic_uint32_t proxy_model;
 } rt_emis_stats_t;
 
 static rt_emis_stats_t rt_emis_stats;
@@ -2088,7 +2109,8 @@ static float RT_SurfaceLightStyleScale (const msurface_t *surf, const vec3_t cen
 =================
 RT_BuildWorldLightStyleAcceptance
 
-Runs the reach test of RT_SurfaceLightStyleScale once per stored light and keeps the answer.
+Runs the reach test of RT_SurfaceLightStyleScale once per stored light and proxy and keeps the
+answer.
 =================
 */
 static void RT_BuildWorldLightStyleAcceptance (void)
@@ -2096,6 +2118,7 @@ static void RT_BuildWorldLightStyleAcceptance (void)
 	const float reach = CVAR_TO_FLOAT (rt_light_styles_reach);
 
 	memset (rt_wldlights_style_accepted, 0, sizeof (rt_wldlights_style_accepted));
+	memset (rt_wldlights_proxy_style_accepted, 0, sizeof (rt_wldlights_proxy_style_accepted));
 
 	for (int i = 0; i < rt_wldlights_emissive_count; i++)
 	{
@@ -2116,18 +2139,37 @@ static void RT_BuildWorldLightStyleAcceptance (void)
 		}
 	}
 
+	for (int i = 0; i < rt_wldlights_proxy_world_count; i++)
+	{
+		const msurface_t *surf = rt_wldlights_proxy_surf[i];
+
+		if (surf == NULL)
+			continue;
+
+		for (int k = 0; k < MAXLIGHTMAPS && surf->styles[k] != 255; k++)
+		{
+			if (reach < 0.0f)
+			{
+				rt_wldlights_proxy_style_accepted[i][k] = 1;
+				continue;
+			}
+
+			const float dist = RT_NearestStyledLightDistance (surf->styles[k], rt_wldlights_proxy[i].position);
+
+			rt_wldlights_proxy_style_accepted[i][k] = (dist >= 0.0f && dist <= reach);
+		}
+	}
+
 	rt_wldlights_style_accepted_dirty = false;
 	rt_wldlights_style_accepted_reach = reach;
 }
 
-/* RT_SurfaceLightStyleScale for a stored world light: the reach test is the cached answer, the
-   style value is read per frame because it is what animates. */
-static float RT_WorldLightStyleScale (int index)
+/* RT_SurfaceLightStyleScale for a stored world light or proxy: the reach test is the cached
+   answer, the style value is read per frame because it is what animates. */
+static float RT_WorldLightStyleScale (const msurface_t *surf, const byte *accepted)
 {
-	const msurface_t *surf     = rt_wldlights_emissive_surf[index];
-	const byte       *accepted = rt_wldlights_style_accepted[index];
-	float             scale    = 1.0f;
-	qboolean          dims     = false;
+	float    scale = 1.0f;
+	qboolean dims  = false;
 
 	for (int k = 0; k < MAXLIGHTMAPS && surf->styles[k] != 255; k++)
 	{
@@ -2167,6 +2209,109 @@ typedef struct rt_emissive_params_s
 	float      glow_uvmax[2];
 	float      glow_mean;
 } rt_emissive_params_t;
+
+static qboolean RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, const vec3_t center,
+                                           const vec3_t normal, const vec3_t offset, float area,
+                                           const vec3_t color, const rt_emissive_params_t *params,
+                                           float modelSize, qboolean is_static)
+{
+	rt_emitter_light_t  local;
+	rt_emitter_light_t *light;
+	vec3_t              position, direction;
+	qboolean            traced;
+	float               radius;
+	int                 tries;
+
+	if (!(area > 0.0f) || !isfinite (area))
+		return false;
+
+	/* An emitter is small enough to become a dlight only while the switch says so; off, the
+	   thresholds drop their emitters the way they always did. */
+	if (!CVAR_TO_BOOL (rt_dtal_proxy))
+		return false;
+
+	/* The equal-area sphere: the proxy carries the flux of the patches it stands for. */
+	radius = sqrtf (area / 12.566370614f);
+
+	if (radius < 1.0f)
+		radius = 1.0f;
+
+	VectorAdd (center, offset, position);
+	VectorCopy (normal, direction);
+
+	if (VectorNormalize (direction) <= 0.0f)
+	{
+		direction[0] = 0.0f;
+		direction[1] = 0.0f;
+		direction[2] = 1.0f;
+	}
+
+	/* A proxy that landed inside a wall walks out along its own normal; bounded, so a point
+	   that cannot settle does not walk the map. */
+	for (tries = 0; tries < 4; tries++)
+	{
+		traced = false;
+
+		if (!RT_LightBuried (position, direction, radius, &traced))
+			break;
+
+		VectorMA (position, radius, direction, position);
+	}
+
+	if (is_static)
+	{
+		if (rt_wldlights_proxy_count >= RT_WLDPROXY_MAX)
+		{
+			rt_emis_stats.static_dropped++;
+			return false;
+		}
+
+		light = &rt_wldlights_proxy[rt_wldlights_proxy_count++];
+	}
+	else
+	{
+		light = &local;
+	}
+
+	memset (light, 0, sizeof (*light));
+	light->name = name;
+	light->uniqueID = uniqueID;
+	light->kind = RT_LIGHT_KIND_MAP;
+	light->intensity = 1.0f;
+	light->style = -1;
+	VectorCopy (position, light->position);
+	VectorCopy (color, light->color);
+
+	/* The emitter's radius is metric. A light of a model states it the way the model's own
+	   dlight does -- as a fraction of the model the resolver multiplies back -- so the size
+	   slider means the same thing for a proxy as for the dlight the model would have cast. */
+	if (modelSize > 0.0f)
+	{
+		light->modelSize = modelSize;
+		light->radius = QUAKEUNIT_TO_METRIC (radius) / modelSize;
+	}
+	else
+	{
+		light->radius = QUAKEUNIT_TO_METRIC (radius);
+	}
+
+	/* A source that casts in a cone keeps it: the proxy turns into a spot looking the way the
+	   patches it stands for face, with the cone the source's material asks for. */
+	if (params != NULL && params->angleOuter > 0.0f && params->angleOuter <= 1.5707963f)
+	{
+		light->spot = true;
+		VectorCopy (direction, light->direction);
+		light->angleInner = params->angleInner;
+		light->angleOuter = params->angleOuter;
+	}
+
+	if (!is_static)
+		RT_LIGHT_Emit (light);
+
+	Atomic_AddUInt32 (&rt_emis_stats.proxy, 1);
+
+	return true;
+}
 
 static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive_params_t *p)
 {
@@ -2328,6 +2473,8 @@ static QrDtalMemberUpload    *rt_dtal_members;
 static int                    rt_dtal_member_capacity;
 static int32_t               *rt_dtal_parent_source;
 static int                    rt_dtal_parent_source_capacity;
+static int                   *rt_dtal_group_proxy;
+static int                    rt_dtal_group_proxy_capacity;
 
 typedef struct rt_dtal_group_cluster_s
 {
@@ -2599,6 +2746,8 @@ static void RT_DtalGroups_FillUpload (void)
 	                     (int)sizeof (QrDtalMemberUpload)) ||
 	    !RT_DtalReserve ((void **)&rt_dtal_parent_source, &rt_dtal_parent_source_capacity, groupCount,
 	                     (int)sizeof (int32_t)) ||
+	    !RT_DtalReserve ((void **)&rt_dtal_group_proxy, &rt_dtal_group_proxy_capacity, groupCount,
+	                     (int)sizeof (int)) ||
 	    !RT_DtalReserve ((void **)&rt_dtal_group_clusters, &rt_dtal_group_cluster_capacity, groupCount,
 	                     (int)sizeof (rt_dtal_group_cluster_t)))
 	{
@@ -2641,6 +2790,7 @@ static void RT_DtalGroups_FillUpload (void)
 		parent->memberCount = (uint32_t) group->memberCount;
 
 		rt_dtal_parent_source[gi] = sourceIndex;
+		rt_dtal_group_proxy[gi] = -1;
 
 		rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
 		coverage->count = 0;
@@ -2715,6 +2865,61 @@ static void RT_DtalGroups_FillUpload (void)
 	}
 }
 
+static void RT_DtalGroups_EmitProxies (void)
+{
+	if (!rt_dtal_groups_active || rt_dtal_build == NULL || rt_dtal_group_proxy == NULL)
+		return;
+
+	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+		rt_dtal_group_proxy[gi] = -1;
+
+		if (CVAR_TO_BOOL (rt_dtal_proxy) && CVAR_TO_FLOAT (rt_dtal_minarea) > 0.0f &&
+		    group->area < CVAR_TO_FLOAT (rt_dtal_minarea) &&
+		    group->area >= q_min (CVAR_TO_FLOAT (rt_dtal_minarea), CVAR_TO_FLOAT (rt_dtal_proxy_minarea)))
+		{
+			vec3_t center = { 0.0f, 0.0f, 0.0f };
+			vec3_t normal = { 0.0f, 0.0f, 0.0f };
+			float  weight = 0.0f;
+
+			for (int mi = 0; mi < group->memberCount; mi++)
+			{
+				const rt_dtal_member_t *member = &rt_dtal_build->members[group->firstMember + mi];
+				const float             w = member->area * (member->refWeight > 0.0f ? member->refWeight : 1.0f);
+				vec3_t                  member_center, member_normal;
+
+				VectorCopy (member->center, member_center);
+				VectorCopy (member->normal, member_normal);
+
+				VectorMA (center, w, member_center, center);
+				VectorMA (normal, w, member_normal, normal);
+				weight += w;
+			}
+
+			if (weight > 0.0f)
+			{
+				vec3_t proxy_color;
+
+				VectorScale (center, 1.0f / weight, center);
+
+				VectorCopy (source->params.color, proxy_color);
+				VectorScale (proxy_color, RT_DtalSourceStyleScale (source), proxy_color);
+
+				if (RT_EmitEmissiveProxyLight (group->uid,
+				                               source->canonical_tex ? source->canonical_tex->name : NULL,
+				                               center, normal, vec3_origin, group->area, proxy_color,
+				                               &source->params, 0.0f, true))
+				{
+					rt_dtal_group_proxy[gi] = rt_wldlights_proxy_count - 1;
+				}
+			}
+		}
+	}
+}
+
 static void RT_DtalGroups_Rebuild (void)
 {
 	const float mode = CVAR_TO_FLOAT (rt_dtal_groups);
@@ -2780,11 +2985,16 @@ static void RT_DtalGroups_Rebuild (void)
 	rt_dtal_build_spacing = spacing;
 	rt_dtal_build_mode = mode;
 
+	const int groupBudget = (int) CVAR_TO_FLOAT (rt_dtal_maxgroups);
+
+	RT_Dtal_BuilderSetGroupBudget (rt_dtal_builder, groupBudget);
+
 	if (!RT_Dtal_BuilderBuild (rt_dtal_builder, spacing, mode >= 2.0f))
 	{
 		rt_dtal_groups_failed = true;
-		Con_DWarning ("RT: DTAL grid grouping refused this map (inputs %i); the per-piece lights stay\n",
-		              rt_dtal_group_inputs);
+		Con_DWarning ("RT: DTAL grid grouping refused this map (inputs %i, group budget %i); "
+		              "the per-piece lights stay\n",
+		              rt_dtal_group_inputs, groupBudget);
 		return;
 	}
 
@@ -2798,6 +3008,17 @@ static void RT_DtalGroups_Rebuild (void)
 		rt_dtal_build = NULL;
 		Con_DWarning ("RT: DTAL groups exceed the renderer member budget (%i); the per-piece lights stay\n",
 		              members);
+		return;
+	}
+
+	if (groupBudget > 0 && rt_dtal_build->groupCount > groupBudget)
+	{
+		const int groups = rt_dtal_build->groupCount;
+
+		rt_dtal_groups_failed = true;
+		rt_dtal_build = NULL;
+		Con_DWarning ("RT: DTAL groups exceed the budget (%i of %i); the per-piece lights stay\n",
+		              groups, groupBudget);
 		return;
 	}
 
@@ -2859,13 +3080,30 @@ static void RT_DtalGroups_UpdateFrame (void)
 		VectorScale (color, RT_DtalSourceStyleScale (source), color);
 		RT_ScaleEmissiveLightColor (color);
 
-		VectorCopy (color, parent->color.data);
 		parent->material = params.material;
 		parent->meanEmiss = params.meanEmiss;
 		parent->angleInner = params.angleInner;
 		parent->angleOuter = params.angleOuter;
 		parent->projector = params.projector ? 1.0f : 0.0f;
 		parent->estimatedPower = group->refPower;
+
+		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
+		    rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+		{
+			vec3_t proxy_color;
+
+			VectorCopy (vec3_origin, parent->color.data);
+
+			VectorCopy (params.color, proxy_color);
+			VectorScale (proxy_color, RT_DtalSourceStyleScale (source), proxy_color);
+			RT_KeepEmissiveLightColor (proxy_color);
+			VectorCopy (proxy_color, rt_wldlights_proxy[rt_dtal_group_proxy[gi]].color);
+		}
+		else
+		{
+			RT_KeepEmissiveLightColor (color);
+			VectorCopy (color, parent->color.data);
+		}
 	}
 }
 
@@ -2880,6 +3118,10 @@ static void RT_DtalGroups_Register (void)
 		const rt_dtal_source_t        *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
 		const rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
 
+		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
+		    rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+			continue;
+
 		if (coverage->count > 0)
 		{
 			RT_ClusterLightAddMulti (group->uid, group->center, source->reach, group->boundsRadius,
@@ -2889,6 +3131,60 @@ static void RT_DtalGroups_Register (void)
 		{
 			RT_ClusterLightAddPower (group->uid, group->center, source->reach, group->refPower);
 		}
+	}
+}
+
+static void RT_DtalGroupsDebugDraw (void)
+{
+	const float mode = CVAR_TO_FLOAT (rt_dtal_debug);
+	int         drawn = 0;
+
+	if (rt_dtal_build == NULL || mode <= 0.0f)
+		return;
+
+	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
+		    rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+			continue;
+
+		if (mode == 2.0f)
+		{
+			RT_DtalDebugAdd (group->center, source->normal, group->area, source->params.projector);
+			continue;
+		}
+
+		for (int mi = 0; mi < group->memberCount && drawn < RT_DTAL_DEBUG_MAX; mi++, drawn++)
+		{
+			const rt_dtal_member_t *member = &rt_dtal_build->members[group->firstMember + mi];
+			QrTexturedAreaLightUploadInfo li = {0};
+
+			for (int k = 0; k < 3; k++)
+			{
+				li.A.data[k] = member->A[k];
+				li.B.data[k] = member->B[k];
+				li.C.data[k] = member->C[k];
+				li.normal.data[k] = member->normal[k];
+				li.color.data[k] = source->params.color[k];
+			}
+
+			li.area = member->area;
+			li.numVerts = member->numVerts;
+
+			for (int k = 0; k < member->numVerts && k < MAX_TEXTURED_AREA_LIGHT_VERTS; k++)
+			{
+				li.uvVerts[k].data[0] = member->uv[k][0];
+				li.uvVerts[k].data[1] = member->uv[k][1];
+			}
+
+			RT_EmitEmissiveWirePolygon (&li);
+		}
+
+		if (drawn >= RT_DTAL_DEBUG_MAX)
+			break;
 	}
 }
 
@@ -3193,14 +3489,19 @@ void RT_ModelLightsCacheFree (qmodel_t *model)
 
 extern atomic_uint32_t rt_require_static_submit;
 
+void RT_DtalRequestRebuild (void)
+{
+	rt_dtal_groups_rebuild_pending = true;
+	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+}
+
 void RT_DtalRebuild_f (void)
 {
 	extern qmodel_t mod_known[];
 	extern int      mod_numknown;
 
 	GL_SynchronizeEndRenderingTask ();
-	rt_dtal_groups_rebuild_pending = true;
-	Atomic_StoreUInt32 (&rt_require_static_submit, true);
+	RT_DtalRequestRebuild ();
 
 	int models = 0;
 
@@ -3299,7 +3600,8 @@ whose texture map is not degenerate is cut down to the glow extents, once per re
 texture glows over part of itself (as a brush face is), and the best pieces are ranked and capped
 at what one model may light with. The uv of a vertex is the same in every pose; min_area is a
 world measure, so a caller that asks for it hands the pose and the transform in and keeps the
-filtered result out of the pose-keyed cache.
+filtered result out of the cache, whose skin-frame and material-revision key cannot tell two
+poses apart.
 =================
 */
 static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_count, const QrVertex *pose1,
@@ -3371,10 +3673,9 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 
 		if (!params->glow)
 		{
-			/* The mask covers the whole triangle, so it is read over the whole triangle. */
-			if (min_area > 0.0f && piece.uvarea * scale < min_area)
-				continue;
-
+			/* The mask covers the whole triangle, so it is read over the whole triangle. The
+			   thresholds are applied where the pieces are uploaded: a piece under one of them
+			   lights as the synthesized dlight of its model instead of an area light. */
 			RT_ModelLightPieceAdd (pieces, &numpieces, RT_DTAL_MAX_PIECES, &piece);
 			continue;
 		}
@@ -3406,9 +3707,6 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 			/* More repetitions than a face may be cut into is beyond what models use; the
 			   triangle keeps its whole uv, and a black sample outside the glow stands for
 			   itself. */
-			if (min_area > 0.0f && piece.uvarea * scale < min_area)
-				continue;
-
 			RT_ModelLightPieceAdd (pieces, &numpieces, RT_DTAL_MAX_PIECES, &piece);
 			continue;
 		}
@@ -3433,9 +3731,6 @@ static void RT_CollectAliasEmissivePieces (rt_dtal_piece_t *pieces, int *out_cou
 				cut.numverts = n;
 				cut.uvarea   = (float) fabs (RT_UvPolyArea (clipped, n));
 
-				if (min_area > 0.0f && cut.uvarea * scale < min_area)
-					continue;
-
 				RT_ModelLightPieceAdd (pieces, &numpieces, RT_DTAL_MAX_PIECES, &cut);
 			}
 		}
@@ -3459,11 +3754,15 @@ more pieces than that can lower the count.
 static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int numpieces, const rt_emissive_params_t *params,
                                          gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
                                          const QrVertex *pose2, float blend, const QrTransform *transform,
-                                         const vec3_t offset, float min_area, int max_lights, int budget)
+                                         const vec3_t offset, float min_area, int max_lights, int budget,
+                                         float model_size, float proxy_floor)
 {
-	int uploaded = 0;
+	int    uploaded = 0;
+	float  proxy_area = 0.0f;
+	vec3_t proxy_center = { 0.0f, 0.0f, 0.0f };
+	vec3_t proxy_normal = { 0.0f, 0.0f, 0.0f };
 
-	for (int i = 0; i < numpieces && uploaded < max_lights; i++)
+	for (int i = 0; i < numpieces; i++)
 	{
 		if (Atomic_LoadUInt32 (&rt_modellights_frame_count) >= (uint32_t) budget)
 		{
@@ -3523,9 +3822,34 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 
 		if (piece->uvarea * jacobian < min_area)
 		{
+			vec3_t piece_center, piece_normal;
+			float  area = piece->uvarea * jacobian;
+			float  side;
+
 			Atomic_AddUInt32 (&rt_emis_stats.model_small, 1);
+
+			piece_center[0] = (p0.data[0] + p1.data[0] + p2.data[0]) / 3.0f;
+			piece_center[1] = (p0.data[1] + p1.data[1] + p2.data[1]) / 3.0f;
+			piece_center[2] = (p0.data[2] + p1.data[2] + p2.data[2]) / 3.0f;
+
+			VectorCopy (cross, piece_normal);
+			VectorNormalize (piece_normal);
+
+			side = piece_normal[0] * (v0->normal[0] + v1->normal[0] + v2->normal[0]) +
+			       piece_normal[1] * (v0->normal[1] + v1->normal[1] + v2->normal[1]) +
+			       piece_normal[2] * (v0->normal[2] + v1->normal[2] + v2->normal[2]);
+
+			if (side < 0.0f)
+				VectorScale (piece_normal, -1.0f, piece_normal);
+
+			VectorMA (proxy_center, area, piece_center, proxy_center);
+			VectorMA (proxy_normal, area, piece_normal, proxy_normal);
+			proxy_area += area;
 			continue;
 		}
+
+		if (uploaded >= max_lights)
+			continue;
 
 		/* The light leaves the triangle through its front, and the front of a model triangle is
 		   the side its vertex normals face: the geometric normal only says where the plane is,
@@ -3574,6 +3898,17 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		uploaded++;
 	}
 
+	if (proxy_area > 0.0f && proxy_area >= proxy_floor)
+	{
+		VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
+
+		if (RT_EmitEmissiveProxyLight (base_uniqueid, tex ? tex->name : NULL, proxy_center, proxy_normal,
+		                              vec3_origin, proxy_area, params->color, params, model_size, false))
+		{
+			Atomic_AddUInt32 (&rt_emis_stats.proxy_model, 1);
+		}
+	}
+
 	return uploaded;
 }
 
@@ -3588,6 +3923,48 @@ static rt_dtal_entry_t *RT_ModelLightCacheFind (struct rt_dtal_cache_s *cache, g
 	return NULL;
 }
 
+static qboolean RT_IsLevelLightModel (const char *name)
+{
+	const char *base = name;
+	const char *list;
+	const char *p;
+	cvar_t     *var;
+
+	if (!name || !name[0])
+		return false;
+
+	var = Cvar_FindVar ("rt_level_light_models");
+	if (!var || !var->string || !var->string[0])
+		return false;
+
+	for (p = name; *p; p++)
+	{
+		if (*p == '/' || *p == '\\')
+			base = p + 1;
+	}
+
+	list = var->string;
+
+	for (p = list; *p; )
+	{
+		char token[MAX_QPATH];
+		int  length = 0;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+
+		while (*p && *p != ' ' && *p != '\t' && length < (int)sizeof (token) - 1)
+			token[length++] = *p++;
+
+		token[length] = '\0';
+
+		if (length > 0 && (!q_strcasecmp (token, name) || !q_strcasecmp (token, base)))
+			return true;
+	}
+
+	return false;
+}
+
 /*
 =================
 RT_AddAliasEmissiveLights
@@ -3598,9 +3975,10 @@ model actually glows. A brush face is collected once per map and re-emitted ever
 (RT_UploadAllWorldModelLights); a model moves and animates, so its lights are built here, in the
 draw path that knows the pose -- the same place the fake dlight of the model was uploaded before.
 
-The caller keeps that fake dlight when this returns zero, so a model the pass cannot light from
-its geometry (no light material, no emissive mask, the feature off, a frame the budget turned
-down) does not go dark.
+The caller keeps that fake dlight when the model cannot light from its geometry at all -- no light
+material, no emissive mask, the feature off for its kind; a frame the budget turned down leaves the
+model without pieces for that frame instead of switching its light to the dlight, so the kind of a
+model's light cannot flicker with the frame.
 
 Budget. Uploading every emissive triangle of every visible model would push the light array and
 the cluster lists with hundreds of tiny sources, so a model is capped at rt_dtal_model_maxpolys
@@ -3613,12 +3991,20 @@ RT_UploadAllWorldModelLights resets it once per frame after every draw has uploa
 */
 int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
                                const QrVertex *pose2, float blend, int numverts, const uint32_t *indices,
-                               int numindices, const QrTransform *transform)
+                               int numindices, const QrTransform *transform, qboolean *out_qualifies)
 {
-	if (!CVAR_TO_BOOL (rt_model_lights) || !RT_AllowTexturedAreaLights ())
-		return 0;
+	const qboolean level_light = RT_IsLevelLightModel (model ? model->name : NULL);
+
+	if (out_qualifies)
+		*out_qualifies = false;
 
 	if (!model || !tex || !pose1 || !pose2 || !indices || !transform || numindices < 3)
+		return 0;
+
+	if (!RT_AllowTexturedAreaLights ())
+		return 0;
+
+	if (!CVAR_TO_BOOL (level_light ? rt_level_lights : rt_model_lights))
 		return 0;
 
 	/* The revision is taken before the material is read. A synthesis that lands while the pieces
@@ -3660,23 +4046,39 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	VectorCopy (resolved.offset, light_offset);
 
 	float       min_area        = 0.0f;
+	float       proxy_floor     = 0.0f;
 	const float minarea_percent = CVAR_TO_FLOAT (rt_dtal_model_minarea);
+	const float size_x          = model->maxs[0] - model->mins[0];
+	const float size_y          = model->maxs[1] - model->mins[1];
+	const float size_z          = model->maxs[2] - model->mins[2];
+	const float model_size      = QUAKEUNIT_TO_METRIC (0.5f * sqrtf (size_x * size_x + size_y * size_y + size_z * size_z));
 
 	if (minarea_percent > 0.0f)
 	{
-		const float size_x = model->maxs[0] - model->mins[0];
-		const float size_y = model->maxs[1] - model->mins[1];
-		const float size_z = model->maxs[2] - model->mins[2];
-		const float face   = q_max (size_x * size_y, q_max (size_x * size_z, size_y * size_z));
+		const float face          = q_max (size_x * size_y, q_max (size_x * size_z, size_y * size_z));
+		const float floor_percent = q_min (minarea_percent, CVAR_TO_FLOAT (rt_dtal_proxy_model_minarea));
 
-		min_area = minarea_percent * 0.01f * face;
+		min_area    = minarea_percent * 0.01f * face;
+		proxy_floor = floor_percent * 0.01f * face;
 	}
 
 	int max_lights = (int) CVAR_TO_FLOAT (rt_dtal_model_maxpolys);
 	if (max_lights > RT_DTAL_MAX_PIECES)
 		max_lights = RT_DTAL_MAX_PIECES;
+
+	if (level_light)
+	{
+		const int cap = (int) CVAR_TO_FLOAT (rt_level_light_maxpolys);
+
+		if (cap < max_lights)
+			max_lights = cap;
+	}
+
 	if (max_lights <= 0)
 		return 0;
+
+	if (out_qualifies)
+		*out_qualifies = true;
 
 	int budget = (int) CVAR_TO_FLOAT (rt_dtal_model_budget);
 	if (budget < 0)
@@ -3765,7 +4167,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	}
 
 	return RT_UploadAliasEmissivePieces (local, numpieces, &params, tex, base_uniqueid, pose1, pose2, blend, transform,
-	                                     light_offset, min_area, max_lights, budget);
+	                                     light_offset, min_area, max_lights, budget, model_size, proxy_floor);
 }
 
 static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
@@ -3811,6 +4213,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	const qboolean light_masked = (params.material != QR_NO_MATERIAL);
 
 	const float min_area = CVAR_TO_FLOAT (rt_dtal_minarea);
+	const float proxy_floor = q_min (min_area, CVAR_TO_FLOAT (rt_dtal_proxy_minarea));
 	int       max_polys  = (int) CVAR_TO_FLOAT (rt_dtal_maxpolys);
 
 	if (max_polys < 0)
@@ -4113,6 +4516,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 			const float jacobian = VectorLength (ab);
 			int         uploaded = 0;
 			int         refused  = 0;
+			float       proxy_area = 0.0f;
+			vec3_t      proxy_center = { 0.0f, 0.0f, 0.0f };
+			vec3_t      proxy_normal = { 0.0f, 0.0f, 0.0f };
 
 			for (int i = 0; i < num; i++)
 			{
@@ -4120,8 +4526,26 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				if (area < min_area)
 				{
+					QrTexturedAreaLightUploadInfo piece = light_info;
+					vec3_t                      piece_center;
+
 					rt_emis_stats.too_small++;
 					refused++;
+
+					for (int k = 0; k < pieces[i].count; k++)
+						piece.uvVerts[k] = pieces[i].verts[k];
+
+					piece.numVerts = pieces[i].count;
+					piece.area     = area;
+					piece.fit      = 1;
+					VectorCopy (A, piece.A.data);
+					VectorCopy (B, piece.B.data);
+					VectorCopy (C, piece.C.data);
+
+					RT_TexturedAreaLightCenter (&piece, piece_center);
+					VectorMA (proxy_center, area, piece_center, proxy_center);
+					VectorMA (proxy_normal, area, light_info.normal.data, proxy_normal);
+					proxy_area += area;
 					continue;
 				}
 
@@ -4141,6 +4565,22 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 				RT_UploadEmissiveLight (&piece, is_static_geom, s->surf, light_tex);
 				uploaded++;
+			}
+
+			if (proxy_area > 0.0f && proxy_area >= proxy_floor)
+			{
+				int before = rt_wldlights_proxy_count;
+
+				VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
+				RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL,
+				                           proxy_center, proxy_normal, vec3_origin, proxy_area, params.color,
+				                           &params, 0.0f, is_static_geom);
+
+				if (rt_wldlights_proxy_count > before)
+				{
+					rt_wldlights_proxy_surf[before] = s->surf;
+					VectorCopy (params.color, rt_wldlights_proxy_color[before]);
+				}
 			}
 
 			if (uploaded > 0)
@@ -4235,7 +4675,26 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	if (light_info.area < min_area)
 	{
+		vec3_t center;
+
 		rt_emis_stats.too_small++;
+
+		if (light_info.area >= proxy_floor)
+		{
+			int before = rt_wldlights_proxy_count;
+
+			RT_TexturedAreaLightCenter (&light_info, center);
+			RT_EmitEmissiveProxyLight (light_info.uniqueID, light_tex ? light_tex->name : NULL, center,
+			                           light_info.normal.data, vec3_origin, light_info.area, params.color,
+			                           &params, 0.0f, is_static_geom);
+
+			if (rt_wldlights_proxy_count > before)
+			{
+				rt_wldlights_proxy_surf[before] = s->surf;
+				VectorCopy (params.color, rt_wldlights_proxy_color[before]);
+			}
+		}
+
 		return;
 	}
 
@@ -4349,6 +4808,7 @@ static void RT_CollectWorldEmissiveLights (void)
 static void RT_CollectWorldEmissiveLightsAndBuild (void)
 {
 	rt_wldlights_emissive_count = 0;
+	rt_wldlights_proxy_count = 0;
 	rt_wldlights_style_accepted_dirty = true;
 
 	memset (&rt_emis_stats, 0, sizeof (rt_emis_stats));
@@ -4361,7 +4821,9 @@ static void RT_CollectWorldEmissiveLightsAndBuild (void)
 
 	RT_DtalGroups_BeginCollect ();
 	RT_CollectWorldEmissiveLights ();
+	rt_wldlights_proxy_world_count = rt_wldlights_proxy_count;
 	RT_DtalGroups_Rebuild ();
+	RT_DtalGroups_EmitProxies ();
 }
 
 void RT_RecollectWorldEmissiveLights (void)
@@ -4956,6 +5418,28 @@ static void RT_KeepEmissiveLightColor (vec3_t color)
 	}
 }
 
+static void RT_RefreshStoredWorldProxyLights (void)
+{
+	for (int i = 0; i < rt_wldlights_proxy_world_count; i++)
+	{
+		const msurface_t *surf = rt_wldlights_proxy_surf[i];
+
+		if (surf == NULL)
+			continue;
+
+		VectorCopy (rt_wldlights_proxy_color[i], rt_wldlights_proxy[i].color);
+
+		if (CVAR_TO_BOOL (rt_light_styles))
+		{
+			const float style_scale = RT_WorldLightStyleScale (surf, rt_wldlights_proxy_style_accepted[i]);
+
+			VectorScale (rt_wldlights_proxy[i].color, style_scale, rt_wldlights_proxy[i].color);
+		}
+
+		RT_KeepEmissiveLightColor (rt_wldlights_proxy[i].color);
+	}
+}
+
 void RT_UploadAllWorldModelLights (void)
 {
 	/* Alias-model lights are counted while the parallel entity draws run; this runs after them
@@ -4973,9 +5457,17 @@ void RT_UploadAllWorldModelLights (void)
 	}
 
 	if (rt_dtal_groups_active && rt_dtal_build != NULL)
-	{
 		RT_DtalGroups_UpdateFrame ();
 
+	RT_RefreshStoredWorldProxyLights ();
+
+	/* The map's small emitters light as one synthesized dlight each; like the per-piece world
+	   lights they are re-emitted every frame, so their identity stays put. */
+	for (int i = 0; i < rt_wldlights_proxy_count; i++)
+		RT_LIGHT_Emit (&rt_wldlights_proxy[i]);
+
+	if (rt_dtal_groups_active && rt_dtal_build != NULL)
+	{
 		if (rt_dtal_groups_rebuild_pending)
 		{
 			Atomic_StoreUInt32 (&rt_require_static_submit, true);
@@ -4995,6 +5487,7 @@ void RT_UploadAllWorldModelLights (void)
 		}
 
 		RT_DtalGroups_Register ();
+		RT_DtalGroupsDebugDraw ();
 
 		return;
 	}
@@ -5035,7 +5528,7 @@ void RT_UploadAllWorldModelLights (void)
 
 		if (light_tex && light_tex->rtlightstyles && CVAR_TO_BOOL (rt_light_styles))
 		{
-			const float style_scale = RT_WorldLightStyleScale (i);
+			const float style_scale = RT_WorldLightStyleScale (surf, rt_wldlights_style_accepted[i]);
 
 			/* A switched-off style dims the light's emission to zero instead of dropping it
 			   from the light array: a missing id leaves a hole in every cluster list naming it.
@@ -6822,6 +7315,11 @@ void RT_PrintEmissiveStats (void)
 	if (Atomic_LoadUInt32 (&rt_emis_stats.model_lights) || Atomic_LoadUInt32 (&rt_emis_stats.model_capped))
 		RT_LightReportPrint ("alias models: %i textured-area lights built from model geometry, %i models turned down by the frame budget\n",
 			(int) Atomic_LoadUInt32 (&rt_emis_stats.model_lights), (int) Atomic_LoadUInt32 (&rt_emis_stats.model_capped));
+
+	if (Atomic_LoadUInt32 (&rt_emis_stats.proxy))
+		RT_LightReportPrint ("dtal proxies: %i small emitters light as one synthesized dlight each (%i of them models, %i stored for the next frames)\n",
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.proxy), (int) Atomic_LoadUInt32 (&rt_emis_stats.proxy_model),
+			rt_wldlights_proxy_count);
 
 	if (CVAR_TO_FLOAT (rt_dtal_groups) > 0.0f)
 	{

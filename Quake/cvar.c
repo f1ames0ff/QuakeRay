@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 
 static cvar_t *cvar_vars;
+static cvarcfgvalue_t cvar_cfgvalue;
 static char    cvar_null_string[] = "";
 
 //==============================================================================
@@ -670,6 +671,23 @@ void Cvar_WriteVariables (FILE *f)
 	for (var = cvar_vars; var; var = var->next)
 	{
 		if (var->flags & CVAR_ARCHIVE)
-			fprintf (f, "%s \"%s\"\n", var->name, var->string);
+		{
+			const char *value = cvar_cfgvalue ? cvar_cfgvalue (var) : NULL;
+
+			fprintf (f, "%s \"%s\"\n", var->name, value ? value : var->string);
+		}
 	}
+}
+
+/*
+============
+Cvar_SetConfigValueProvider
+
+The provider lets a subsystem keep a value of its own in the config while the
+live cvar carries something else (the per-level sky settings, see rt_lights.c).
+============
+*/
+void Cvar_SetConfigValueProvider (cvarcfgvalue_t provider)
+{
+	cvar_cfgvalue = provider;
 }

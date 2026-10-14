@@ -1261,15 +1261,34 @@ int RT_MAT_FrameDigit(const char *name)
 {
     if (!q_strncasecmp(name, "textures/+", 10) && name[10] >= '0' && name[10] <= '9')
     {
-        return name[10] - '0';
+        int         value = 0;
+        const char *p = name + 10;
+
+        while (*p >= '0' && *p <= '9' && value <= 9999)
+        {
+            value = value * 10 + (*p - '0');
+            p++;
+        }
+        return value;
     }
 
     {
         const char *p = strstr(name, ":frame");
 
-        if (p && p[6] >= '0' && p[6] <= '9' && (p[7] == '\0' || p[7] == '_'))
+        if (p && p[6] >= '0' && p[6] <= '9')
         {
-            return p[6] - '0';
+            int value = 0;
+
+            p += 6;
+            while (*p >= '0' && *p <= '9' && value <= 9999)
+            {
+                value = value * 10 + (*p - '0');
+                p++;
+            }
+            if (*p == '\0' || *p == '_')
+            {
+                return value;
+            }
         }
     }
     return -1;
@@ -1279,7 +1298,13 @@ void RT_MAT_GroupBaseOf(const char *name, char *out, size_t outsize)
 {
     if (!q_strncasecmp(name, "textures/+", 10) && name[10] >= '0' && name[10] <= '9')
     {
-        q_snprintf(out, outsize, "textures/%s", name + 11);
+        const char *p = name + 10;
+
+        while (*p >= '0' && *p <= '9')
+        {
+            p++;
+        }
+        q_snprintf(out, outsize, "textures/%s", p);
         return;
     }
 
@@ -1288,15 +1313,24 @@ void RT_MAT_GroupBaseOf(const char *name, char *out, size_t outsize)
 
         if (p && p[6] >= '0' && p[6] <= '9')
         {
-            size_t n = (size_t)(p - name);
+            const char *q = p + 6;
 
-            if (n >= outsize)
+            while (*q >= '0' && *q <= '9')
             {
-                n = outsize - 1;
+                q++;
             }
-            memcpy(out, name, n);
-            out[n] = '\0';
-            return;
+            if (*q == '\0' || *q == '_')
+            {
+                size_t n = (size_t)(p - name);
+
+                if (n >= outsize)
+                {
+                    n = outsize - 1;
+                }
+                memcpy(out, name, n);
+                out[n] = '\0';
+                return;
+            }
         }
     }
 

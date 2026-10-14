@@ -32,6 +32,13 @@ typedef struct rt_light_s
     qboolean force_rasterize;  // draw the emitter in the rasterized path
     qboolean has_style;
     int      style;            // an override of the emitter's light style
+    qboolean has_spot;
+    qboolean spot;             // a cone instead of a sphere (light_spot in the entry)
+    qboolean has_dir;
+    vec3_t   dir;              // the axis the cone looks along (one light's entry only)
+    qboolean has_angles;
+    float    angle_inner;      // the cone's full-intensity core, degrees
+    float    angle_outer;      // the cone's edge, degrees
     /* A light that follows its group: the editor writes an edit to every light
        of the same group (the emitter's model, e.g. flame.mdl) that carries the
        flag. With the flag off the light keeps its own values; turning it back on
@@ -132,13 +139,19 @@ typedef struct rt_emitter_light_s
     vec3_t      position;    // where the light's own geometry puts it
     vec3_t      color;       // the light's own color
     float       intensity;   // the light's own brightness
-    float       radius;      // the light's own size (rt_dlight_radius units)
+    float       radius;      // the light's own size: the fraction of the model's own size it
+                             // takes (rt_dlight_radius units), absolute when no model is behind it
     vec3_t      offset;      // the light's own offset from its pivot
     int         style;       // the light's own style, -1 when it has none
     qboolean    spot;
     vec3_t      direction;
     float       angleInner;
     float       angleOuter;
+    /* The physical radius of the model the light comes from, metric, when it is
+       a model's light: the radius above is then the fraction of the model's own
+       size the light takes, so two flames of one model at different sizes light
+       as differently as they look. 0 for a light that has no model behind it. */
+    float       modelSize;
 } rt_emitter_light_t;
 
 typedef struct rt_emitter_resolved_s
@@ -231,6 +244,40 @@ void RT_CustomLights_ChangeMap (const char *mapname);
 // after the worldspawn "fog" key has been parsed (R_NewMap), so the file's fog
 // wins over the map's own.
 void RT_CustomLights_ApplyFog (void);
+
+// ---------------------------------------------------------------------------
+// The level's sky, sun and cloud settings: the cvars the light editor's Global
+// tab drives, saved in the level's section under "sky:". Two sets live here:
+// the globals (the config's values) and the level's own. A loaded level drives
+// its own where the block authors a key and the globals elsewhere, the editor's
+// scope switch swaps the sets on screen, and the config always carries the
+// globals themselves (Cvar_SetConfigValueProvider -> RT_SkySettings_ConfigValue),
+// so one level's block never becomes another level's default.
+// ---------------------------------------------------------------------------
+
+// Whether a cvar is one of the settings a level's block may carry.
+qboolean RT_SkySettings_IsManaged (const char *cvar);
+// Whether the level now loaded carried a sky block.
+qboolean RT_SkySettings_LevelHasBlock (void);
+// The editor's Global settings checkbox: swapping the scope takes the live
+// values into the set they were edited in and puts the other set on screen.
+void RT_SkySettings_SetScope (qboolean level);
+// Whether this session changed the sky settings or their scope at all.
+qboolean RT_SkySettings_SessionDirty (void);
+// The live values belong to the active set, for the session's writer.
+void RT_SkySettings_CaptureScope (void);
+// Writes the level's "sky:" block (its own set) for the editor's session file;
+// returns the entries written.
+int  RT_SkySettings_WriteLevel (FILE *f);
+// The editor session: BeginSession snapshots the state, EndSession (Discard, or
+// an editor closed without saving) puts it back, and CommitSession (a save)
+// makes what the save carried the state -- in global scope the level's own set
+// goes away with the file's block.
+void RT_SkySettings_BeginSession (void);
+void RT_SkySettings_EndSession (void);
+void RT_SkySettings_CommitSession (qboolean global_scope);
+// The live values become the globals (the editor's Reset).
+void RT_SkySettings_AdoptGlobals (void);
 
 // The section key of a map and the file's writer, for the editor's session.
 void RT_CustomLights_LevelKey (const char *mapname, char *out, size_t outsize);

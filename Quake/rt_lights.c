@@ -103,10 +103,18 @@ static const char *rt_light_header =
     "#   An emitter without an entry uses the global rt_dlight_* settings.\n"
     "#\n"
     "# * one section per level, named after the map (the file name without path or\n"
-    "#   extension), with the custom dlights the level does not have and its fog.\n"
-    "#   A density of 0 draws no fog; \"enabled: false\" renders no fog while the\n"
-    "#   section's density and colour are kept for a later change:\n"
+    "#   extension), with the custom dlights the level does not have, its sky settings\n"
+    "#   and its fog. The `sky:` block carries the cvars the light editor's Global\n"
+    "#   tab drives (rt_sky*, rt_sky_clouds_*, rt_sky_sun*, rt_sky_godrays*): a key\n"
+    "#   it carries wins over the config's global value for as long as the level is\n"
+    "#   loaded, the rest of the level follows the globals, and the config keeps the\n"
+    "#   global values themselves. A density of 0 draws no fog; \"enabled: false\"\n"
+    "#   renders no fog while the section's density and colour are kept for a later\n"
+    "#   change:\n"
     "# start:\n"
+    "#   sky:\n"
+    "#     rt_sky_brightness: 2.5     # any cvar the Global tab drives\n"
+    "#     rt_sky_sun: 0.8            # its value in the console's own text form\n"
     "#   fog:\n"
     "#     color: 8899aa          # rrggbb\n"
     "#     density: 1.5           # 0 turns the fog off\n"
@@ -294,7 +302,8 @@ void RT_LIGHT_Remove(const char *name)
 qboolean RT_LIGHT_HasFields(const rt_light_t *l)
 {
     return l && (l->has_radius || l->has_intensity || l->has_offset || l->has_color ||
-                 l->force_rasterize || l->has_style || !l->group_edit);
+                 l->force_rasterize || l->has_style || l->has_spot || l->has_dir || l->has_angles ||
+                 !l->group_edit);
 }
 
 rt_light_t *RT_LIGHT_FindEmitter(const char *name, uint64_t uniqueID)
@@ -370,29 +379,68 @@ void RT_LIGHT_ResolveEmitter(const rt_emitter_light_t *emitter, rt_emitter_resol
         intensity *= style_scale;
     }
 
+    /* A light that comes from a model is as big as the model is: the emitter's
+       radius -- or the entry's light_radius -- is the fraction of the model's
+       own size the light takes, so a flame drawn large lights large. */
+    if (emitter->modelSize > 0.0f)
+    {
+        out->radius *= emitter->modelSize;
+    }
+
     VectorScale(out->color, intensity, out->color);
 }
 
 void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
 {
     rt_emitter_resolved_t resolved;
+    rt_emitter_light_t    light = *emitter;
+    rt_light_t           *ov = (emitter->name && emitter->name[0])
+                                   ? RT_LIGHT_FindEmitter(emitter->name, emitter->uniqueID)
+                                   : NULL;
     vec3_t                position;
+
+    /* The entry's cone: spot, angles and -- for a light of one entry alone -- the axis. A group
+       entry carries the angles only, because the way a light of a model or a surface faces is
+       its geometry's to say. */
+    if (ov)
+    {
+        if (ov->has_spot)
+        {
+            light.spot = ov->spot;
+        }
+        if (ov->has_dir && !ov->group_edit)
+        {
+            VectorCopy(ov->dir, light.direction);
+        }
+        if (ov->has_angles)
+        {
+            light.angleInner = q_min(ov->angle_inner, ov->angle_outer) * 0.017453292519943295f;
+            light.angleOuter = q_max(ov->angle_inner, ov->angle_outer) * 0.017453292519943295f;
+        }
+    }
+
+    if (light.spot && DotProduct(light.direction, light.direction) <= 0.0f)
+    {
+        light.direction[0] = 0.0f;
+        light.direction[1] = 0.0f;
+        light.direction[2] = 1.0f;
+    }
 
     RT_LIGHT_ResolveEmitter(emitter, &resolved);
 
     VectorAdd(emitter->position, resolved.offset, position);
     RT_FIXUP_LIGHT_INTENSITY(resolved.color, true);
 
-    if (emitter->spot && DotProduct(emitter->direction, emitter->direction) > 0.0f)
+    if (light.spot && DotProduct(light.direction, light.direction) > 0.0f)
     {
         QrSpotLightUploadInfo info = {
             .uniqueID = emitter->uniqueID,
             .color = {resolved.color[0], resolved.color[1], resolved.color[2]},
             .position = {position[0], position[1], position[2]},
-            .direction = {emitter->direction[0], emitter->direction[1], emitter->direction[2]},
+            .direction = {light.direction[0], light.direction[1], light.direction[2]},
             .radius = METRIC_TO_QUAKEUNIT(resolved.radius),
-            .angleOuter = emitter->angleOuter,
-            .angleInner = emitter->angleInner,
+            .angleOuter = light.angleOuter,
+            .angleInner = light.angleInner,
         };
 
         QrResult r = qrUploadSpotLight(vulkan_globals.instance, &info);
@@ -447,6 +495,16 @@ void RT_LIGHT_WriteEntry(FILE *f, const rt_light_t *l)
                 (int)(l->color[1] * 255.0f + 0.5f) & 0xff,
                 (int)(l->color[2] * 255.0f + 0.5f) & 0xff);
     }
+    if (l->has_spot)
+        fprintf(f, "    spot: %s\n", l->spot ? "true" : "false");
+    if (l->has_dir)
+        fprintf(f, "    dir: %.6g %.6g %.6g\n", l->dir[0], l->dir[1], l->dir[2]);
+    if (l->has_angles)
+    {
+        fprintf(f, "    angle_inner: %.6g\n", l->angle_inner);
+        fprintf(f, "    angle_outer: %.6g\n", l->angle_outer);
+    }
+
     if (l->force_rasterize)
     {
         fprintf(f, "    force_rasterize: true\n");
@@ -655,6 +713,33 @@ static int rt_light_parse_text(const char *text, int length)
             else if (!q_strcasecmp(key, "force_rasterize"))
             {
                 cur->force_rasterize = rt_light_parse_bool(value);
+            }
+            else if (!q_strcasecmp(key, "spot"))
+            {
+                cur->spot = rt_light_parse_bool(value);
+                cur->has_spot = true;
+            }
+            else if (!q_strcasecmp(key, "dir"))
+            {
+                float x = 0.0f, y = 0.0f, z = 0.0f;
+
+                if (sscanf(value, "%f %f %f", &x, &y, &z) == 3)
+                {
+                    cur->dir[0] = x;
+                    cur->dir[1] = y;
+                    cur->dir[2] = z;
+                    cur->has_dir = true;
+                }
+            }
+            else if (!q_strcasecmp(key, "angle_inner"))
+            {
+                cur->angle_inner = (float)atof(value);
+                cur->has_angles = true;
+            }
+            else if (!q_strcasecmp(key, "angle_outer"))
+            {
+                cur->angle_outer = (float)atof(value);
+                cur->has_angles = true;
             }
             else if (!q_strcasecmp(key, "light_style"))
             {
@@ -1177,6 +1262,364 @@ static qboolean RT_CustomBoolFromString(const char *s, qboolean *out)
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// The level's sky, sun and cloud settings. The cvars the light editor's Global
+// tab drives are managed here as two sets: the globals (the config's values,
+// which every level shares) and the level's own (the level's "sky:" block). The
+// active set drives the cvars: a loaded level drives its own where the block
+// authors a key and the globals elsewhere, and the editor's scope switch swaps
+// the sets on screen. The config always carries the globals, so one level's
+// block never leaks into another level's defaults.
+// ---------------------------------------------------------------------------
+
+static const char *const rt_sky_names[] = {
+    "rt_sky", "rt_sky_brightness", "rt_sky_light_mult", "rt_sky_color",
+    "rt_sky_ambient_lod", "rt_sky_nee", "rt_physical_sky",
+    "rt_sky_clouds", "rt_sky_clouds_color", "rt_sky_clouds_alpha",
+    "rt_sky_clouds_coverage", "rt_sky_clouds_density", "rt_sky_clouds_speed",
+    "rt_sky_clouds_quality", "rt_sky_clouds_height", "rt_sky_clouds_thickness",
+    "rt_physical_sun", "rt_sky_sun", "rt_sky_sun_color", "rt_sky_sun_size",
+    "rt_sky_sun_pitch", "rt_sky_sun_yaw",
+    "rt_sky_godrays", "rt_sky_godrays_intensity", "rt_sky_godrays_sky_threshold",
+};
+
+#define RT_SKY_COUNT (int)(sizeof(rt_sky_names) / sizeof(rt_sky_names[0]))
+#define RT_SKY_VALUE_MAX 96
+
+// The globals and the level's own set, and which of the two drives the cvars.
+static char     rt_sky_globals[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static qboolean rt_sky_globals_ready;
+static char     rt_sky_level_values[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static qboolean rt_sky_level_set[RT_SKY_COUNT];
+static qboolean rt_sky_level_mode;
+static qboolean rt_sky_level_block;
+static qboolean rt_sky_session_active;
+
+// The block the parser just read, applied once the whole file has been loaded.
+static int  rt_sky_parsed_count;
+static int  rt_sky_parsed_index[RT_SKY_COUNT];
+static char rt_sky_parsed_value[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+
+// The editor session's snapshot of the state above.
+static char     rt_sky_session_globals[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static char     rt_sky_session_values[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static qboolean rt_sky_session_set[RT_SKY_COUNT];
+static qboolean rt_sky_session_globals_ready;
+static qboolean rt_sky_session_level_mode;
+static qboolean rt_sky_session_block;
+
+static int RT_SkySettings_Index(const char *name)
+{
+    int i;
+
+    if (!name)
+        return -1;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        if (!q_strcasecmp(name, rt_sky_names[i]))
+            return i;
+    }
+
+    return -1;
+}
+
+static const char *RT_SkySettings_Live(int index)
+{
+    cvar_t *var = Cvar_FindVar(rt_sky_names[index]);
+
+    return (var && var->string) ? var->string : "";
+}
+
+static void RT_SkySettings_SetCvar(int index, const char *value)
+{
+    if (!value)
+        return;
+    if (strcmp(RT_SkySettings_Live(index), value))
+        Cvar_Set(rt_sky_names[index], value);
+}
+
+static void RT_SkySettings_CaptureGlobals(void)
+{
+    int i;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+        q_strlcpy(rt_sky_globals[i], RT_SkySettings_Live(i), RT_SKY_VALUE_MAX);
+
+    rt_sky_globals_ready = true;
+}
+
+// The value the config carries: the global wherever the level's own set owns
+// the live cvar, the live value itself where the globals do (a session that
+// edits them is editing the config's values), and the captured global for a
+// loaded level's block.
+static const char *RT_SkySettings_ConfigValue(const cvar_t *var)
+{
+    const int index = RT_SkySettings_Index(var ? var->name : NULL);
+
+    if (index < 0 || !rt_sky_globals_ready)
+        return NULL;
+    if (rt_sky_session_active && !rt_sky_level_mode)
+        return NULL;
+    if (rt_sky_session_active && rt_sky_level_mode)
+        return rt_sky_globals[index];
+    if (rt_sky_level_set[index])
+        return rt_sky_globals[index];
+
+    return NULL;
+}
+
+// The active set drives the cvars.
+static void RT_SkySettings_ApplyScope(void)
+{
+    int i;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        const char *value = rt_sky_globals[i];
+
+        if (rt_sky_level_mode && rt_sky_level_set[i])
+            value = rt_sky_level_values[i];
+
+        RT_SkySettings_SetCvar(i, value);
+    }
+}
+
+// The live cvars belong to the active set: an edit lands in the set it was made
+// in, and a value the level's set does not need anymore stops being part of it.
+void RT_SkySettings_CaptureScope(void)
+{
+    int i;
+
+    if (!rt_sky_globals_ready)
+        RT_SkySettings_CaptureGlobals();
+
+    if (!rt_sky_level_mode)
+    {
+        for (i = 0; i < RT_SKY_COUNT; i++)
+            q_strlcpy(rt_sky_globals[i], RT_SkySettings_Live(i), RT_SKY_VALUE_MAX);
+
+        return;
+    }
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        const char *live = RT_SkySettings_Live(i);
+
+        if (strcmp(live, rt_sky_globals[i]))
+        {
+            q_strlcpy(rt_sky_level_values[i], live, RT_SKY_VALUE_MAX);
+            rt_sky_level_set[i] = true;
+        }
+        else
+        {
+            rt_sky_level_set[i] = false;
+        }
+    }
+}
+
+// The block the parser read becomes the level's own set, and the level drives
+// the cvars: loading a map is the level's scope.
+void RT_SkySettings_ApplyParsed(void)
+{
+    int i;
+
+    if (!rt_sky_globals_ready)
+        RT_SkySettings_CaptureGlobals();
+
+    Cvar_SetConfigValueProvider(RT_SkySettings_ConfigValue);
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+        rt_sky_level_set[i] = false;
+
+    for (i = 0; i < rt_sky_parsed_count; i++)
+    {
+        rt_sky_level_set[rt_sky_parsed_index[i]] = true;
+        q_strlcpy(rt_sky_level_values[rt_sky_parsed_index[i]], rt_sky_parsed_value[i], RT_SKY_VALUE_MAX);
+    }
+
+    rt_sky_level_block = (rt_sky_parsed_count > 0) ? true : false;
+    rt_sky_level_mode = true;
+    RT_SkySettings_ApplyScope();
+}
+
+qboolean RT_SkySettings_IsManaged(const char *cvar)
+{
+    return (RT_SkySettings_Index(cvar) >= 0) ? true : false;
+}
+
+qboolean RT_SkySettings_LevelHasBlock(void)
+{
+    return rt_sky_level_block;
+}
+
+// The editor's "Global settings" box: swapping the scope takes whatever the
+// live cvars carry into the set they were edited in and puts the other set on
+// screen, so switching between global and local shows the values of each.
+void RT_SkySettings_SetScope(qboolean level)
+{
+    RT_SkySettings_CaptureScope();
+    rt_sky_level_mode = level;
+    RT_SkySettings_ApplyScope();
+}
+
+// Whether this session changed the sky settings or their scope at all.
+qboolean RT_SkySettings_SessionDirty(void)
+{
+    int i;
+
+    if (!rt_sky_session_active)
+        return false;
+
+    if (rt_sky_session_globals_ready != rt_sky_globals_ready ||
+        rt_sky_session_level_mode != rt_sky_level_mode ||
+        rt_sky_session_block != rt_sky_level_block)
+        return true;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        if (rt_sky_session_set[i] != rt_sky_level_set[i])
+            return true;
+        if (rt_sky_level_set[i] && strcmp(rt_sky_session_values[i], rt_sky_level_values[i]))
+            return true;
+        if (rt_sky_session_globals_ready && strcmp(rt_sky_session_globals[i], rt_sky_globals[i]))
+            return true;
+    }
+
+    return false;
+}
+
+// The level's block as the session writes it: its own set, which the capture
+// above has just brought up to date with the live cvars.
+int RT_SkySettings_WriteLevel(FILE *f)
+{
+    int i, written = 0;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        if (!rt_sky_level_set[i] || !rt_sky_level_values[i][0])
+            continue;
+
+        if (written == 0)
+            fprintf(f, "  sky:\n");
+
+        fprintf(f, "    %s: %s\n", rt_sky_names[i], rt_sky_level_values[i]);
+        written++;
+    }
+
+    return written;
+}
+
+void RT_SkySettings_BeginSession(void)
+{
+    int i;
+
+    rt_sky_session_globals_ready = rt_sky_globals_ready;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        q_strlcpy(rt_sky_session_globals[i], rt_sky_globals[i], RT_SKY_VALUE_MAX);
+        q_strlcpy(rt_sky_session_values[i], rt_sky_level_values[i], RT_SKY_VALUE_MAX);
+        rt_sky_session_set[i] = rt_sky_level_set[i];
+    }
+
+    rt_sky_session_block = rt_sky_level_block;
+    rt_sky_session_level_mode = rt_sky_level_mode;
+    rt_sky_session_active = true;
+}
+
+// Discard, or an editor closed without saving: the snapshot comes back, and the
+// level's own set is what drives a loaded level again.
+void RT_SkySettings_EndSession(void)
+{
+    int i;
+
+    if (!rt_sky_session_active)
+        return;
+
+    rt_sky_globals_ready = rt_sky_session_globals_ready;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        q_strlcpy(rt_sky_globals[i], rt_sky_session_globals[i], RT_SKY_VALUE_MAX);
+        q_strlcpy(rt_sky_level_values[i], rt_sky_session_values[i], RT_SKY_VALUE_MAX);
+        rt_sky_level_set[i] = rt_sky_session_set[i];
+    }
+
+    rt_sky_level_block = rt_sky_session_block;
+    rt_sky_level_mode = true;
+    rt_sky_session_active = false;
+
+    RT_SkySettings_ApplyScope();
+}
+
+// The session was saved: what the save carried becomes the state. A save in
+// global scope drops the level's own set with the file's block; a save in level
+// scope keeps exactly the entries the file now holds.
+void RT_SkySettings_CommitSession(qboolean global_scope)
+{
+    int i;
+
+    RT_SkySettings_CaptureScope();
+
+    rt_sky_level_block = false;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        if (global_scope)
+            rt_sky_level_set[i] = false;
+        else if (rt_sky_level_set[i])
+            rt_sky_level_block = true;
+    }
+
+    rt_sky_level_mode = true;
+    rt_sky_session_active = false;
+}
+
+// The live values become the globals (the editor's Reset).
+void RT_SkySettings_AdoptGlobals(void)
+{
+    RT_SkySettings_CaptureGlobals();
+}
+
+// The "sky:" block of a level section: one entry per cvar the light editor's
+// Global tab drives (see rt_sky_names), the value in the same text form the
+// console takes. A name the list does not know is ignored.
+static void RT_CustomParseSky(yaml_document_t *document, yaml_node_t *node)
+{
+    yaml_node_pair_t *field;
+
+    if (!node || node->type != YAML_MAPPING_NODE)
+        return;
+
+    for (field = node->data.mapping.pairs.start; field < node->data.mapping.pairs.top; field++)
+    {
+        yaml_node_t *fk = yaml_document_get_node(document, field->key);
+        yaml_node_t *fv = yaml_document_get_node(document, field->value);
+        char         fkb[96], fvb[RT_SKY_VALUE_MAX];
+        int          index;
+
+        if (!fk || !fv || fk->type != YAML_SCALAR_NODE || fv->type != YAML_SCALAR_NODE)
+            continue;
+        if (fk->data.scalar.length >= sizeof(fkb) || fv->data.scalar.length >= sizeof(fvb))
+            continue;
+
+        memcpy(fkb, fk->data.scalar.value, fk->data.scalar.length);
+        fkb[fk->data.scalar.length] = 0;
+        memcpy(fvb, fv->data.scalar.value, fv->data.scalar.length);
+        fvb[fv->data.scalar.length] = 0;
+
+        index = RT_SkySettings_Index(fkb);
+        if (index < 0 || rt_sky_parsed_count >= RT_SKY_COUNT)
+            continue;
+
+        rt_light_trim(fvb, sizeof(fvb));
+        rt_sky_parsed_index[rt_sky_parsed_count] = index;
+        q_strlcpy(rt_sky_parsed_value[rt_sky_parsed_count], fvb, RT_SKY_VALUE_MAX);
+        rt_sky_parsed_count++;
+    }
+}
+
 // The "fog:" block of a level section: colour ("rrggbb"), density (>= 0) and
 // the optional "enabled" (true/false, 1/0).
 static void RT_CustomParseFog(yaml_document_t *document, yaml_node_t *node)
@@ -1285,6 +1728,8 @@ static void RT_CustomLightsParse(const char *filebuf, int len, const char *level
 
                     if (!q_strcasecmp(fkb, "fog"))
                         RT_CustomParseFog(&document, fv);
+                    else if (!q_strcasecmp(fkb, "sky"))
+                        RT_CustomParseSky(&document, fv);
                     else if (!q_strcasecmp(fkb, "lights"))
                         RT_CustomParseLights(&document, fv, level);
                 }
@@ -1323,7 +1768,7 @@ static qboolean rt_custom_load_stream(FILE *f, const char *level)
     RT_CustomLightsParse(text, (int)got, level);
     Mem_Free(text);
 
-    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog) ? true : false;
+    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog || rt_sky_parsed_count > 0) ? true : false;
     return found;
 }
 
@@ -1353,7 +1798,7 @@ static qboolean rt_custom_load_vfs(const char *name, const char *level)
     RT_CustomLightsParse((const char *)buf, length, level);
     Mem_Free(buf);
 
-    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog) ? true : false;
+    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog || rt_sky_parsed_count > 0) ? true : false;
     return found;
 }
 
@@ -1365,9 +1810,13 @@ void RT_CustomLights_ChangeMap(const char *mapname)
     rt_custom_light_count = 0;
     RT_CustomFogSet(NULL);
     rt_custom_fog_applied = false;
+    rt_sky_parsed_count = 0;
 
     if (!mapname || !mapname[0] || !com_gamedir[0])
+    {
+        RT_SkySettings_ApplyParsed();
         return;
+    }
 
     RT_CustomLights_LevelKey(mapname, level, sizeof(level));
     q_snprintf(path, sizeof(path), "%s/qray.lights.yaml", com_gamedir);
@@ -1385,9 +1834,12 @@ void RT_CustomLights_ChangeMap(const char *mapname)
         }
     }
 
-    if (rt_custom_light_count > 0 || rt_custom_fog.has_fog)
-        Con_Printf("qr custom lights: %d light(s)%s on '%s'\n",
-                   rt_custom_light_count, rt_custom_fog.has_fog ? " and a fog" : "", level);
+    RT_SkySettings_ApplyParsed();
+
+    if (rt_custom_light_count > 0 || rt_custom_fog.has_fog || rt_sky_parsed_count > 0)
+        Con_Printf("qr custom lights: %d light(s)%s%s on '%s'\n",
+                   rt_custom_light_count, rt_custom_fog.has_fog ? " and a fog" : "",
+                   (rt_sky_parsed_count > 0) ? " and sky settings" : "", level);
 }
 
 void RT_CustomLights_WriteEntry(FILE *f, const rt_custom_light_t *l)

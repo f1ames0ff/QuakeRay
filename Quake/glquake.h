@@ -645,12 +645,13 @@ int RT_GetEntityUniqueId (const entity_t *ent);
 // the visible pass renders. pose1/pose2 and blend are what R_SetupAliasFrame produced, and the
 // per-pose vertices are the model's own arrays (m->rtvertices), never the shared lerp scratch of
 // GetPoseVertices -- the light must not widen the window in which the parallel geometry uploads
-// read that scratch. Returns the number of lights uploaded, and the caller keeps the fake dlight
-// of the model when it is zero: no light material, no emissive mask, the feature off, or a frame
-// the budget turned down.
+// read that scratch. Returns the number of lights uploaded; *out_qualifies says whether the model
+// is a DTAL light by its material and its switch at all (a frame the budget turned down leaves it
+// true), and the caller keeps the fake dlight of the model only when it is false: no light
+// material, no emissive mask, the feature off for the model's kind.
 int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
                                const QrVertex *pose2, float blend, int numverts, const uint32_t *indices,
-                               int numindices, const QrTransform *transform);
+                               int numindices, const QrTransform *transform, qboolean *out_qualifies);
 
 // DTAL cache of an alias model: allocated with its vertex buffers and freed with them. The cache
 // lives far longer than a frame (it holds the pieces for a handful of skin frames and is rebuilt
@@ -659,6 +660,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 void RT_ModelLightsCacheAlloc (qmodel_t *model);
 void RT_ModelLightsCacheFree (qmodel_t *model);
 void RT_DtalRebuild_f (void);
+void RT_DtalRequestRebuild (void);
 
 QrTransform RT_GetModelTransform (const float model_matrix[16]);
 QrTransform RT_GetBrushModelMatrix (entity_t *e);

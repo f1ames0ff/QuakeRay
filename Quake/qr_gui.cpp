@@ -695,6 +695,151 @@ void QR_GUI_SectionTitle (const char *label)
 	dl->AddText (ImVec2 (pos.x + x, pos.y), col, label);
 }
 
+// The bin icon of the remove buttons: drawn, because the panel font has no trash character.
+static void DrawBinIcon (const ImVec2 &mn, const ImVec2 &mx, ImU32 col)
+{
+	ImDrawList *dl  = ImGui::GetWindowDrawList ();
+	const float cx  = (mn.x + mx.x) * 0.5f;
+	const float cy  = (mn.y + mx.y) * 0.5f;
+	const float w   = (mx.x - mn.x) * 0.20f;
+	const float hgt = (mx.y - mn.y) * 0.26f;
+	const float lid = cy - hgt * 0.55f;
+
+	dl->AddLine (ImVec2 (cx - w * 1.35f, lid), ImVec2 (cx + w * 1.35f, lid), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w * 0.55f, lid - 2.6f), ImVec2 (cx + w * 0.55f, lid - 2.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w, lid + 1.8f), ImVec2 (cx - w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx + w, lid + 1.8f), ImVec2 (cx + w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+	dl->AddLine (ImVec2 (cx - w * 0.82f, lid + hgt * 1.6f), ImVec2 (cx + w * 0.82f, lid + hgt * 1.6f), col, 1.5f);
+}
+
+// The icon buttons of a block or section header row: 0 is the copy icon (two sheets), 1 the
+// paste icon (a clipboard), 2 the bin.
+static bool SectionIconButton (const char *id, float x, float y, float size, int kind)
+{
+	ImGui::SetCursorScreenPos (ImVec2 (x, y));
+	const bool pressed = ImGui::Button (id, ImVec2 (size, size));
+
+	const ImVec2 min = ImGui::GetItemRectMin ();
+	const ImVec2 max = ImGui::GetItemRectMax ();
+	const ImVec2 c ((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+	const float  r = size * 0.22f;
+	ImDrawList  *draw = ImGui::GetWindowDrawList ();
+	const ImU32  color = ImGui::GetColorU32 (ImGuiCol_Text);
+
+	if (kind == 0)
+	{
+		draw->AddRect (ImVec2 (c.x - r * 1.1f, c.y - r * 0.55f), ImVec2 (c.x + r * 0.5f, c.y + r * 1.1f), color, 1.0f, 0, 1.4f);
+		draw->AddRect (ImVec2 (c.x - r * 0.5f, c.y - r * 1.1f), ImVec2 (c.x + r * 1.1f, c.y + r * 0.55f), color, 1.0f, 0, 1.4f);
+	}
+	else if (kind == 1)
+	{
+		draw->AddRect (ImVec2 (c.x - r, c.y - r * 0.55f), ImVec2 (c.x + r, c.y + r * 1.2f), color, 1.0f, 0, 1.4f);
+		draw->AddRect (ImVec2 (c.x - r * 0.45f, c.y - r * 1.2f), ImVec2 (c.x + r * 0.45f, c.y - r * 0.5f), color, 0.0f, 0, 1.4f);
+	}
+	else
+	{
+		DrawBinIcon (min, max, color);
+	}
+
+	return pressed;
+}
+
+int QR_GUI_HeaderFrameActions (const char *label, int show_paste, const char *tip_first, const char *tip_second)
+{
+	const ImVec2 pos = ImGui::GetCursorScreenPos ();
+	const float  avail = ImGui::GetContentRegionAvail ().x;
+	const ImVec2 text = ImGui::CalcTextSize (label);
+	const float  row_h = (text.y > ImGui::GetFrameHeight ()) ? text.y : ImGui::GetFrameHeight ();
+	const float  text_x = (avail - text.x) * 0.5f;
+	const float  text_y = pos.y + (row_h - text.y) * 0.5f;
+	const ImU32  col = ImGui::GetColorU32 (ImGuiCol_Text);
+	ImDrawList  *dl = ImGui::GetWindowDrawList ();
+	int          result = 0;
+
+	// the row: a centered outlined title (the look the section headers use) and
+	// the icon buttons at its right end
+	ImGui::Dummy (ImVec2 (avail, row_h));
+
+	const ImVec2 below = ImGui::GetCursorPos ();
+
+	dl->AddText (ImVec2 (pos.x + text_x - 0.6f, text_y), col, label);
+	dl->AddText (ImVec2 (pos.x + text_x + 0.6f, text_y), col, label);
+	dl->AddText (ImVec2 (pos.x + text_x, text_y - 0.6f), col, label);
+	dl->AddText (ImVec2 (pos.x + text_x, text_y + 0.6f), col, label);
+	dl->AddText (ImVec2 (pos.x + text_x, text_y), col, label);
+
+	const float btn = row_h * 0.82f;
+	float       x = pos.x + avail - 3.0f - btn;
+
+	if (show_paste)
+	{
+		if (SectionIconButton ("##paste", x, pos.y + (row_h - btn) * 0.5f, btn, 1))
+			result |= 2;
+		if (tip_second && *tip_second)
+			ImGui::SetItemTooltip ("%s", tip_second);
+		x -= btn + 2.0f;
+	}
+
+	if (SectionIconButton ("##copy", x, pos.y + (row_h - btn) * 0.5f, btn, 0))
+		result |= 1;
+	if (tip_first && *tip_first)
+		ImGui::SetItemTooltip ("%s", tip_first);
+
+	// the buttons moved the cursor into the row; the layout continues below it
+	ImGui::SetCursorPos (below);
+	ImGui::Dummy (ImVec2 (0.0f, 0.0f));
+
+	return result;
+}
+
+// The row of one luma block: its name on the left, and the copy, the paste (offered once
+// something is copied) and the remove icon at its right end. The result is a bit field: 1 the
+// copy was pressed, 2 the paste, 4 the remove.
+int QR_GUI_BlockActions (const char *label, int show_paste, const char *tip_copy, const char *tip_paste, const char *tip_remove)
+{
+	const ImVec2 pos = ImGui::GetCursorScreenPos ();
+	const float  avail = ImGui::GetContentRegionAvail ().x;
+	const float  row_h = ImGui::GetFrameHeight ();
+	const float  btn = row_h * 0.82f;
+	const float  y = pos.y + (row_h - btn) * 0.5f;
+	const ImVec2 text = ImGui::CalcTextSize (label);
+	int          result = 0;
+
+	ImGui::Dummy (ImVec2 (avail, row_h));
+
+	const ImVec2 below = ImGui::GetCursorPos ();
+
+	ImGui::GetWindowDrawList ()->AddText (ImVec2 (pos.x, pos.y + (row_h - text.y) * 0.5f),
+	                                      ImGui::GetColorU32 (ImGuiCol_Text), label);
+
+	float x = pos.x + avail - btn;
+
+	if (SectionIconButton ("##remove", x, y, btn, 2))
+		result |= 4;
+	if (tip_remove && *tip_remove)
+		ImGui::SetItemTooltip ("%s", tip_remove);
+	x -= btn + 2.0f;
+
+	if (show_paste)
+	{
+		if (SectionIconButton ("##paste", x, y, btn, 1))
+			result |= 2;
+		if (tip_paste && *tip_paste)
+			ImGui::SetItemTooltip ("%s", tip_paste);
+		x -= btn + 2.0f;
+	}
+
+	if (SectionIconButton ("##copy", x, y, btn, 0))
+		result |= 1;
+	if (tip_copy && *tip_copy)
+		ImGui::SetItemTooltip ("%s", tip_copy);
+
+	ImGui::SetCursorPos (below);
+	ImGui::Dummy (ImVec2 (0.0f, 0.0f));
+
+	return result;
+}
+
 void QR_GUI_Spacing (void)
 {
 	ImGui::Spacing ();
@@ -874,6 +1019,106 @@ int QR_GUI_Combo (const char *label, int *value, const char *const *items, int c
 	ImGui::SetNextItemWidth (RowWidth (0.0f));
 	int changed = ImGui::Combo (id, value, items, count) ? 1 : 0;
 	ItemTooltip (tooltip);
+	return changed;
+}
+
+// Case-insensitive substring test, so a search field finds "flame2" in "progs/flame2.mdl".
+static bool QRGuiTextHas (const char *haystack, const char *needle)
+{
+	if (!needle || !needle[0])
+		return true;
+	if (!haystack)
+		return false;
+
+	for (; *haystack; haystack++)
+	{
+		const char *h = haystack;
+		const char *n = needle;
+
+		while (*h && *n &&
+		       ((*h >= 'A' && *h <= 'Z') ? *h + 32 : *h) == ((*n >= 'A' && *n <= 'Z') ? *n + 32 : *n))
+		{
+			h++;
+			n++;
+		}
+
+		if (!*n)
+			return true;
+	}
+
+	return false;
+}
+
+// A combo with a search field in its popup: the same label column, width and tooltip every row
+// uses, and the filter starts empty each time the popup opens. The list is filtered as it is
+// typed, the keyboard walks it like any combo's list, and the value changes only on a pick.
+int QR_GUI_ComboFiltered (const char *label, int *value, const char *const *items, int count, const char *tooltip)
+{
+	static char filter[128];
+
+	char id[192];
+	int  changed = 0;
+
+	if (count <= 0)
+	{
+		LabelColumn (label, tooltip);
+		ImGui::TextDisabled ("-");
+		return 0;
+	}
+
+	WidgetId (id, sizeof (id), label);
+	LabelColumn (label, tooltip);
+	ImGui::SetNextItemWidth (RowWidth (0.0f));
+
+	if (ImGui::BeginCombo (id, (*value >= 0 && *value < count) ? items[*value] : ""))
+	{
+		if (ImGui::IsWindowAppearing ())
+		{
+			filter[0] = '\0';
+			ImGui::SetKeyboardFocusHere ();
+		}
+
+		ImGui::SetNextItemWidth (ImGui::GetContentRegionAvail ().x);
+		const bool enter = ImGui::InputTextWithHint ("##filter", "search...", filter, sizeof (filter),
+		                                             ImGuiInputTextFlags_EnterReturnsTrue);
+
+		int shown = 0;
+		int single = -1;
+
+		for (int i = 0; i < count; i++)
+		{
+			if (!QRGuiTextHas (items[i], filter))
+				continue;
+
+			ImGui::PushID (i);
+
+			if (ImGui::Selectable (items[i], i == *value))
+			{
+				*value = i;
+				changed = 1;
+			}
+
+			ImGui::PopID ();
+			shown++;
+			single = i;
+		}
+
+		// a search that leaves one name needs no mouse: Enter takes it
+		if (enter && shown == 1)
+		{
+			*value = single;
+			changed = 1;
+			ImGui::CloseCurrentPopup ();
+		}
+
+		if (shown == 0)
+			ImGui::TextDisabled ("no match");
+
+		ImGui::EndCombo ();
+	}
+
+	ItemTooltip (tooltip);
+
 	return changed;
 }
 
@@ -1256,6 +1501,64 @@ int QR_GUI_AnyItemActive (void)
 	return ImGui::IsAnyItemActive () ? 1 : 0;
 }
 
+// The view of a texture preview: the zoom in [1, 5], which the wheel over the
+// preview raises, and the image coordinates of the view's top-left corner.
+// Every widget keeps its own under its ImGui ID. The wheel is anchored at the
+// cursor: the texel under the pointer holds its place while the view shrinks
+// around it, and the view stays inside the texture.
+struct PreviewView
+{
+	float zoom;
+	float u0;
+	float v0;
+};
+
+constexpr float kPreviewZoomMax = 5.0f;
+
+PreviewView PreviewViewLoad (ImGuiID id)
+{
+	ImGuiStorage *storage = ImGui::GetStateStorage ();
+	PreviewView   view;
+
+	view.zoom = storage->GetFloat (id, 1.0f);
+	view.u0 = storage->GetFloat (id + 1, 0.0f);
+	view.v0 = storage->GetFloat (id + 2, 0.0f);
+
+	view.zoom = ClampF (view.zoom, 1.0f, kPreviewZoomMax);
+	view.u0 = ClampF (view.u0, 0.0f, 1.0f - 1.0f / view.zoom);
+	view.v0 = ClampF (view.v0, 0.0f, 1.0f - 1.0f / view.zoom);
+
+	return view;
+}
+
+void PreviewViewStore (ImGuiID id, const PreviewView &view)
+{
+	ImGuiStorage *storage = ImGui::GetStateStorage ();
+
+	storage->SetFloat (id, view.zoom);
+	storage->SetFloat (id + 1, view.u0);
+	storage->SetFloat (id + 2, view.v0);
+}
+
+PreviewView PreviewViewWheel (PreviewView view, const ImVec2 &pos, const ImVec2 &size, float wheel)
+{
+	const ImVec2 mouse = ImGui::GetIO ().MousePos;
+	const float  sx = (size.x > 1.0f) ? size.x : 1.0f;
+	const float  sy = (size.y > 1.0f) ? size.y : 1.0f;
+	const float  fu = ClampF ((mouse.x - pos.x) / sx, 0.0f, 1.0f);
+	const float  fv = ClampF ((mouse.y - pos.y) / sy, 0.0f, 1.0f);
+	const float  cu = view.u0 + fu / view.zoom;
+	const float  cv = view.v0 + fv / view.zoom;
+
+	view.zoom = ClampF (view.zoom * powf (1.4f, wheel), 1.0f, kPreviewZoomMax);
+	view.u0 = cu - fu / view.zoom;
+	view.v0 = cv - fv / view.zoom;
+	view.u0 = ClampF (view.u0, 0.0f, 1.0f - 1.0f / view.zoom);
+	view.v0 = ClampF (view.v0, 0.0f, 1.0f - 1.0f / view.zoom);
+
+	return view;
+}
+
 int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, float *out_u, float *out_v)
 {
 	ImGui::PushID (id);
@@ -1270,7 +1573,24 @@ int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, flo
 	const ImVec2 pos = ImGui::GetCursorScreenPos ();
 	const ImVec2 size (w, h);
 
-	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (0.0f, 0.0f), ImVec2 (1.0f, 1.0f));
+	const ImGuiID view_id = ImGui::GetID ("##preview_view");
+	PreviewView   view = PreviewViewLoad (view_id);
+	const bool    over = ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h));
+
+	if (over && ImGui::GetIO ().KeyCtrl && ImGui::GetIO ().MouseWheel != 0.0f)
+	{
+		view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
+		PreviewViewStore (view_id, view);
+	}
+
+	const float span = 1.0f / view.zoom;
+
+	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
+
+	// while the pointer is on the preview and Ctrl is down the wheel is the zoom's,
+	// not the panel's scroll (the image has no item ID, so the owner is the view's)
+	if (over && ImGui::GetIO ().KeyCtrl)
+		ImGui::SetKeyOwner (ImGuiKey_MouseWheelY, view_id);
 
 	const bool hovered = ImGui::IsItemHovered ();
 	const ImVec2 mouse = ImGui::GetIO ().MousePos;
@@ -1278,8 +1598,8 @@ int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, flo
 
 	if (hovered)
 	{
-		float u = (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f);
-		float v = (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f);
+		float u = view.u0 + (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f) * span;
+		float v = view.v0 + (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f) * span;
 
 		u = u < 0.0f ? 0.0f : (u > 1.0f ? 1.0f : u);
 		v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
@@ -1349,6 +1669,7 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	static float   drag_anchor[2] = {0.0f, 0.0f};
 	static float   drag_base[32][2];
 	static float   drag_edge_base[2][2];
+	static bool    drag_edge_perp = false;
 	static int     drag_base_count = 0;
 
 	float w = ImGui::GetContentRegionAvail ().x;
@@ -1360,12 +1681,35 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	const float  h = w * (float)tex_h / (float)tex_w;
 	const ImVec2 pos = ImGui::GetCursorScreenPos ();
 	const ImVec2 mouse = ImGui::GetIO ().MousePos;
+	const ImVec2 size (w, h);
 
-	ImGui::Image ((ImTextureID)(uint64_t)texture, ImVec2 (w, h), ImVec2 (0.0f, 0.0f), ImVec2 (1.0f, 1.0f));
+	const ImGuiID view_id = ImGui::GetID ("##preview_view");
+	PreviewView   view = PreviewViewLoad (view_id);
+
+	if (ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h)) && ImGui::GetIO ().KeyCtrl &&
+	    ImGui::GetIO ().MouseWheel != 0.0f)
+	{
+		view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
+		PreviewViewStore (view_id, view);
+	}
+
+	const float span = 1.0f / view.zoom;
+
+	// the view maps the texture through the zoom, so a point of the polygon
+	// follows it and the pointer keeps reading the texel it is on
+	auto sx = [&] (float u) { return pos.x + (u - view.u0) / span * w; };
+	auto sy = [&] (float v) { return pos.y + (v - view.v0) / span * h; };
+
+	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
 
 	ImGui::SetCursorScreenPos (pos);
-	ImGui::InvisibleButton ("##mask", ImVec2 (w, h),
+	ImGui::InvisibleButton ("##mask", size,
 	                        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+
+	// while the pointer is on the preview and Ctrl is down the wheel is the zoom's, not the
+	// panel's scroll
+	if (ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h)) && ImGui::GetIO ().KeyCtrl)
+		ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
 
 	const ImGuiID item = ImGui::GetItemID ();
 	int           changed = 0;
@@ -1375,8 +1719,8 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	{
 		for (int p = 0; p < points; p++)
 		{
-			const float px = pos.x + uv[p][0] * w;
-			const float py = pos.y + uv[p][1] * h;
+			const float px = sx (uv[p][0]);
+			const float py = sy (uv[p][1]);
 
 			if (mouse.x >= px - grab && mouse.x <= px + grab && mouse.y >= py - grab && mouse.y <= py + grab)
 			{
@@ -1396,8 +1740,8 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		for (int p = 0; p < points; p++)
 		{
 			const int   q = (p + 1) % points;
-			const float ax = pos.x + uv[p][0] * w, ay = pos.y + uv[p][1] * h;
-			const float bx = pos.x + uv[q][0] * w, by = pos.y + uv[q][1] * h;
+			const float ax = sx (uv[p][0]), ay = sy (uv[p][1]);
+			const float bx = sx (uv[q][0]), by = sy (uv[q][1]);
 			const float dx = bx - ax, dy = by - ay;
 			const float len2 = dx * dx + dy * dy;
 			float       t = 0.0f;
@@ -1417,11 +1761,27 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		}
 
 		if (hover_edge >= 0)
-			ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeAll);
+		{
+			if (ImGui::GetIO ().KeyShift)
+			{
+				// Shift drags the edge along its own normal: the cursor is the double arrow
+				// that points the way the edge will step
+				const int   q = (hover_edge + 1) % points;
+				const float ex = uv[q][0] - uv[hover_edge][0];
+				const float ey = uv[q][1] - uv[hover_edge][1];
+				const bool  edge_more_vertical = fabsf (ey) >= fabsf (ex);
+
+				ImGui::SetMouseCursor (edge_more_vertical ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+			}
+			else
+			{
+				ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeAll);
+			}
+		}
 	}
 
-	const float u = ClampF ((mouse.x - pos.x) / (w > 1.0f ? w : 1.0f), 0.0f, 1.0f);
-	const float v = ClampF ((mouse.y - pos.y) / (h > 1.0f ? h : 1.0f), 0.0f, 1.0f);
+	const float u = ClampF (view.u0 + (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f) * span, 0.0f, 1.0f);
+	const float v = ClampF (view.v0 + (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f) * span, 0.0f, 1.0f);
 	const bool  inside = PointInPoly (uv, points, u, v);
 
 	if (ImGui::IsItemActivated ())
@@ -1495,6 +1855,7 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 			const int q = (hover_edge + 1) % points;
 
 			drag_edge = hover_edge;
+			drag_edge_perp = ImGui::GetIO ().KeyShift ? true : false;
 			drag_edge_base[0][0] = uv[hover_edge][0];
 			drag_edge_base[0][1] = uv[hover_edge][1];
 			drag_edge_base[1][0] = uv[q][0];
@@ -1553,8 +1914,32 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		if (ImGui::IsItemActive () && ImGui::IsMouseDown (ImGuiMouseButton_Left))
 		{
 			const int   q = (drag_edge + 1) % points;
-			const float du = u - drag_anchor[0];
-			const float dv = v - drag_anchor[1];
+			float       du = u - drag_anchor[0];
+			float       dv = v - drag_anchor[1];
+
+			if (drag_edge_perp)
+			{
+				/* Ctrl: the edge steps along its own normal, so the motion is projected on the
+				   perpendicular and the edge keeps the direction it had. */
+				const float ex = drag_edge_base[1][0] - drag_edge_base[0][0];
+				const float ey = drag_edge_base[1][1] - drag_edge_base[0][1];
+				const float len = sqrtf (ex * ex + ey * ey);
+
+				if (len > 1e-8f)
+				{
+					const float nx = -ey / len;
+					const float ny = ex / len;
+					const float proj = du * nx + dv * ny;
+
+					du = nx * proj;
+					dv = ny * proj;
+				}
+				else
+				{
+					du = dv = 0.0f;
+				}
+			}
+
 			const float a0 = ClampF (drag_edge_base[0][0] + du, 0.0f, 1.0f);
 			const float b0 = ClampF (drag_edge_base[0][1] + dv, 0.0f, 1.0f);
 			const float a1 = ClampF (drag_edge_base[1][0] + du, 0.0f, 1.0f);
@@ -1601,7 +1986,11 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	ImVec2      pts[32];
 
 	for (int p = 0; p < points; p++)
-		pts[p] = ImVec2 (pos.x + uv[p][0] * w, pos.y + uv[p][1] * h);
+		pts[p] = ImVec2 (sx (uv[p][0]), sy (uv[p][1]));
+
+	// the zoomed view may carry points outside the preview, so the mask and its
+	// handles are clipped to the box
+	dl->PushClipRect (pos, ImVec2 (pos.x + w, pos.y + h), true);
 
 	dl->AddConcavePolyFilled (pts, points, IM_COL32 (255, 255, 255, 128));
 	dl->AddPolyline (pts, points, IM_COL32 (255, 255, 255, 220), ImDrawFlags_Closed, 1.5f);
@@ -1627,6 +2016,8 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		dl->AddCircle (pts[p], 9.0f, IM_COL32 (0, 0, 0, 180), 16, 1.5f);
 	}
 
+	dl->PopClipRect ();
+
 	dl->AddRect (pos, ImVec2 (pos.x + w, pos.y + h), IM_COL32 (150, 160, 185, 255));
 
 	ImGui::PopID ();
@@ -1638,17 +2029,13 @@ int QR_GUI_ColorRow (const char *id, float rgb[3], const char *tooltip)
 	int result = 0;
 
 	ImGui::PushID (id);
-	ImGui::SetNextItemWidth (ImGui::GetContentRegionAvail ().x - kBrowseButtonW - ImGui::GetStyle ().ItemSpacing.x);
+	ImGui::SetNextItemWidth (RowWidth (0.0f));
 	if (ImGui::ColorEdit3 ("##color", rgb, ImGuiColorEditFlags_DisplayHex))
 		result |= 1;
 	if (tooltip && *tooltip)
 		ImGui::SetItemTooltip ("%s\nClick the swatch to pick, type the hex value", tooltip);
 	else
 		ImGui::SetItemTooltip ("Click the swatch to pick, type the hex value");
-	ImGui::SameLine ();
-	if (ImGui::Button ("x", ImVec2 (kBrowseButtonW, 0.0f)))
-		result |= 2;
-	ImGui::SetItemTooltip ("Remove this color");
 	ImGui::PopID ();
 
 	return result;
