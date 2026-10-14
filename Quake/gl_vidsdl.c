@@ -376,7 +376,7 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_q2_depthgrad, "1") \
 	CVAR_DEF_T (rt_q2_lightstats, "1") \
 	CVAR_DEF_T (rt_reflrefr_earlyout, "1") \
-	CVAR_DEF_T (rt_nee_samples, "1") \
+	CVAR_DEF_T (rt_nee_samples, "2") \
 	CVAR_DEF_T (rt_restir, "0") \
 	CVAR_DEF_T (rt_restir_candidates, "8") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
