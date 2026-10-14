@@ -2,8 +2,10 @@
 
 ## 1. Status and authoritative documents
 
-- Status: both projects are implemented, merged into `master`, and enabled by default (owner
-  decision, 2026-10-13); the delivered scope, checks, measured results and remaining limitations
+- Status: both projects are implemented and merged into `master`; the default-on enablement
+  (`rt_cluster_sampling`, `rt_dtal_groups`; owner decision, 2026-10-13) ships on the integration
+  branch `perf/rhi-dyn-blas-clean` (merge `e1cee587`), not on `origin/master`; the delivered
+  scope, checks, measured results and remaining limitations
   are in [the Project A report](dtal-implementation-report.md) and [the Project B report](cluster-implementation-report.md),
   and the final simplifications are in [the refactoring report](lighting-refactoring-report.md).
 - Code baseline inspected: `dac6cdc4`; implementation started from `d365d033` (the then-current

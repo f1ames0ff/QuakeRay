@@ -1472,9 +1472,11 @@ void R_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 			(int)cl.entities[cl.viewentity].origin[2], (int)cl.viewangles[PITCH], (int)cl.viewangles[YAW], (int)cl.viewangles[ROLL]);
 	else if (r_speeds.value == 2)
 		Con_Printf (
-			"%6.3f ms  %4u/%4u wpoly %4u/%4u epoly %4u/%4u sky\n", (time2 - time1) * 1000.0, rs_brushpolys, rs_brushpasses, rs_aliaspolys,
-			rs_aliaspasses, rs_skypolys, rs_skypasses);
+			"%6.3f ms  %4u/%4u wpoly %4u/%4u epoly %4u/%4u sky\n", (time2 - time1) * 1000.0, Atomic_LoadUInt32 (&rs_brushpolys),
+			Atomic_LoadUInt32 (&rs_brushpasses), Atomic_LoadUInt32 (&rs_aliaspolys), Atomic_LoadUInt32 (&rs_aliaspasses),
+			Atomic_LoadUInt32 (&rs_skypolys), Atomic_LoadUInt32 (&rs_skypasses));
 	else if (r_speeds.value)
-		Con_Printf ("%3i ms  %4i wpoly %4i epoly\n", (int)((time2 - time1) * 1000), rs_brushpolys, rs_aliaspolys);
+		Con_Printf ("%3i ms  %4i wpoly %4i epoly\n", (int)((time2 - time1) * 1000), (int) Atomic_LoadUInt32 (&rs_brushpolys),
+			(int) Atomic_LoadUInt32 (&rs_aliaspolys));
 	// johnfitz
 }

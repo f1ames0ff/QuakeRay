@@ -1618,12 +1618,13 @@ void RT_ClusterLightDumpHeader (FILE *f)
 		rt_cluster_vieworg[0], rt_cluster_vieworg[1], rt_cluster_vieworg[2],
 		cl.viewangles[0], cl.viewangles[1], cl.viewangles[2],
 		ENGINE_VERSION, host_framecount);
-	fprintf (f, "# cvars rt_cluster_sampling=%s rt_dtal_groups=%s rt_dtal_spacing=%s "
+	fprintf (f, "# cvars rt_cluster_sampling=%s rt_dtal_groups=%s rt_dtal_spacing=%s rt_dtal_maxgroups=%s "
 		"rt_light_reach_static=%s rt_light_reach_dynamic=%s rt_denoiser=%s rt_restir=%s "
 		"rt_antifirefly=%s rt_nee_samples=%s\n",
 		Cvar_VariableString ("rt_cluster_sampling"),
 		Cvar_VariableString ("rt_dtal_groups"),
 		Cvar_VariableString ("rt_dtal_spacing"),
+		Cvar_VariableString ("rt_dtal_maxgroups"),
 		Cvar_VariableString ("rt_light_reach_static"),
 		Cvar_VariableString ("rt_light_reach_dynamic"),
 		Cvar_VariableString ("rt_denoiser"),

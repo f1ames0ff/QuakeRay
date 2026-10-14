@@ -60,7 +60,7 @@ submitted tasks. When adding work:
 ## The render frame graph
 
 Entry: [SCR_UpdateScreen](../Quake/gl_screen.c#L1148) takes the tasks branch when the condition
-holds, builds the frame in [R_RenderView](../Quake/gl_rmain.c#L1312), and joins `draw_done` while
+holds, builds the frame in [R_RenderView](../Quake/gl_rmain.c#L1332), and joins `draw_done` while
 pumping extra audio updates.
 
 | Edge | Meaning |
@@ -89,7 +89,7 @@ the publication bookkeeping. The serial branch runs the same prepare/slice/finis
 stages inline with one slice.
 
 **Static-geometry window.** `R_DrawWorldTask` calls `qrBeginStaticGeometries` … `qrSubmitStaticGeometries`
-(`gl_rmain.c#L1121`/`#L1133`). Inside that window only `QR_GEOMETRY_TYPE_STATIC` and
+(`gl_rmain.c#L1138`/`#L1150`). Inside that window only `QR_GEOMETRY_TYPE_STATIC` and
 `STATIC_MOVABLE` uploads are accepted; `Scene::Upload` throws `QR_WRONG_FUNCTION_CALL` for dynamic
 geometry. Order every dynamic uploader after `draw_world_task`, and keep static uploads inside the
 world task.
@@ -139,23 +139,23 @@ The contract for work added to the graph:
 
 The graph currently relies on:
 
-- `VulkanDevice::geometryUploadMutex` in [VulkanDevice.cpp](../renderer/Source/VulkanDevice.cpp#L1450) —
+- `VulkanDevice::geometryUploadMutex` in [VulkanDevice.h](../renderer/Source/VulkanDevice.h#L340) —
   held by `UploadGeometry`, `UploadRasterizedGeometry`, `UpdateGeometryTransform`,
   `UpdateGeometryTexCoords`, `UploadDecal`, `UploadPortal`, `SubmitStaticGeometries`,
   `StartNewStaticScene`; the renderer's API counters are `std::atomic`;
 - `LightManager::registryMutex` — held by `AddLight`, `PrepareForFrame` and `Reset`
-  ([LightManager.cpp](../renderer/Source/LightManager.cpp#L351));
-- the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L476) — the once-per-frame TLS merge,
+  ([LightManager.h](../renderer/Source/LightManager.h#L173));
+- the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L495) — the once-per-frame TLS merge,
   the window publication/reset and `RT_Bench_Report`'s snapshot; per-invocation accumulation runs
   into a thread-local buffer without the lock (a thread claims its pool slot once);
-- the parallel-mark state in [r_world.c](../Quake/r_world.c#L390): `rt_mark_parallel_frame` is
+- the parallel-mark state in [r_world.c](../Quake/r_world.c#L418): `rt_mark_parallel_frame` is
   decided and written by the submitting thread before `Task_Submit(prepare_mark)`, which is what
   lets `R_MarkSurfacesPrepare` read it without a lock; `rt_mark_parallel_built` is fixed at map
   load. The same pre-submit path writes `rt_chain_full_frame` (full chains when
   `rt_require_static_submit` or `rt_require_world_light_recollect` is set, or `r_showtris` is on),
   and the `rt_chain_textures`/`rt_chain_consumed` arrays built in `RT_MarkParallel_NewMap` hold the
   steady-state consumed-texture subset the chain slices walk. `surfvis` (allocated with the world
-  model in [r_brush.c](../Quake/r_brush.c#L765), freed in
+  model in [r_brush.c](../Quake/r_brush.c#L772), freed in
   `Mod_FreeModelMemory`) is written by atomic word runs in the chunked marker and read by the chain
   slices after the `mark_leafs` edge; the `rt_mark_tex_start`/`rt_mark_tex_surfaces`/
   `rt_mark_tex_polys` arrays are built once in `RT_MarkParallel_NewMap`, each chain slice writes its
@@ -164,18 +164,18 @@ The graph currently relies on:
   [r_alias.c](../Quake/r_alias.c#L135)) and the fan/scratch buffers in
   [gl_heap.c](../Quake/gl_heap.c#L42);
 - thread-local caches with a reset generation: the surface-pack entity cache
-  ([r_world.c](../Quake/r_world.c#L880)) and the brush-cluster cache
-  ([r_world.c](../Quake/r_world.c#L4114)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
+  ([r_world.c](../Quake/r_world.c#L980)) and the brush-cluster cache
+  ([r_world.c](../Quake/r_world.c#L4702)). `RT_SurfacePacksReset` / `RT_BrushClusterCacheReset` bump
   the generation at map load and each thread clears its own table on first use. The buried-answer
   DTAL cache follows the same ownership rule through `RT_BuriedCacheReset`, and so does the
-  point-cluster resolve cache ([gl_rlight.c](../Quake/gl_rlight.c#L1108)): one slot table per thread
+  point-cluster resolve cache ([gl_rlight.c](../Quake/gl_rlight.c#L1114)): one slot table per thread
   with the map identity kept in the table, and per-thread hit/miss/nanosecond counters that
   `RT_PointClusterCacheStats` sums. Its readers all run on the main thread after the frame's join
   (`RT_Prof_FrameStart`, `RT_Prof_FrameEnd`, `RT_Prof_Update`), which is what keeps the unlocked sum
   correct;
 - the profiler/upload-trace thread-local slots: one `rt_prof_tls_pool` accumulator per thread
-  ([gl_vidsdl.c](../Quake/gl_vidsdl.c#L457)) and the upload-lane attribution stack
-  (`g_uploadLane`/`g_uploadLaneStack` in [VulkanDevice.cpp](../renderer/Source/VulkanDevice.cpp#L1438));
+  ([gl_vidsdl.c](../Quake/gl_vidsdl.c#L509)) and the upload-lane attribution stack
+  (`g_uploadLane`/`g_uploadLaneStack` in [VulkanDevice.cpp](../renderer/Source/VulkanDevice.cpp#L1479));
   the wait/hold counters they feed are atomic device counters, read once per frame in
   `RT_Prof_FrameEnd`;
 - the emissive skip-table and watch-table spinlock (`RT_EmisSkipLock`) — covers skip
@@ -249,8 +249,10 @@ serial branch is not ready for integration.
   28.49 → 20.00 ms, Bogbottom save 39.48 → 29.76 ms, AD hub 22.41 → 21.01 ms; FSR Quality — Fuma
   27.84 → 23.97 ms, Bogbottom fresh spawn 44.06 → 35.93 ms, AD hub 24.28 → 24.03 ms. The frame is
   still CPU-bound at 4K: the GPU time scales with the FSR mode (Bogbottom fresh spawn
-  26.9 → 15.0 ms from Quality to Ultra) while the graph's wall time stays at ~31–34 ms. See
-  PERFORMANCE.md for the full matrix and identities.
+  26.9 → 15.0 ms from Quality to Ultra) while the graph's wall time stays at ~31–34 ms. The
+  Debug-era reading is kept for provenance; on the 2026-10-14 Release binary the acceptance
+  profile is GPU-bound instead (the interval tracks the GPU snapshot down to a 1280x720 render).
+  See PERFORMANCE.md for the full matrix, this scaling fit and the identities.
 
 ## Roadmap to production-ready whole-frame multithreading
 

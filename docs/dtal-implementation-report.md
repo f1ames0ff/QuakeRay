@@ -116,7 +116,7 @@ source bounds radius. Group bounds are used for reach eligibility, not just the 
 
 - `rt_dtal_groups`: `0` one light per admitted piece (legacy path with the corrected sampler),
   `1` grid groups, `2` diagnostic singleton groups over the same patches and sampler.
-- `rt_dtal_spacing`: validated grid edge, default `128` world units.
+- `rt_dtal_spacing`: validated grid edge, default `8` world units (`rt_dtal_maxgroups` bounds a finer grid).
 - Both are ordinary invalidating cvars (coalesced through the existing `rt_require_static_submit`
   boundary) and have Light Editor controls and benchmark-metadata entries.
 - `rt_light_report` prints admitted pieces, parents, members, oversized pieces, budget refusals and

@@ -2,7 +2,7 @@
 
 Use [ARCHITECTURE.md](ARCHITECTURE.md) to navigate from a counter to its producer/backend entry point. This file separates measured results from architectural facts and unverified leads. Do not begin a repository-wide search or an optimization before selecting the relevant scenario and binary.
 
-**Evidence date:** 2026-10-08. **Source map:** `7a14d0fe`, inherited by `perf/architecture`. These identify the sections authored at that point, not the whole file: later sections carry their own date, branch/revision and binary identity where they begin, so this file no longer has a single global evidence identity. No new game run was performed to create this index. Numbers below are read from the retained per-frame captures, not from the example scenarios in the task or from overlay maxima.
+**Evidence date:** 2026-10-08. **Source map:** `7a14d0fe`, inherited by `perf/architecture`. These identify the sections authored at that point, not the whole file: later sections carry their own date, branch/revision and binary identity where they begin, so this file no longer has a single global evidence identity. No new game run was performed to create the 2026-10-08 sections of this index. Numbers below are read from the retained per-frame captures, not from the example scenarios in the task or from overlay maxima.
 
 ## Targets and current status
 
@@ -13,7 +13,44 @@ Use [ARCHITECTURE.md](ARCHITECTURE.md) to navigate from a counter to its produce
 
 The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/qr_audit_max.cfg), with volumetric sky Low (`rt_sky_clouds_quality 0`). Particles/FTE, smoke, enhanced models, viewmodel, GI level 2, NEE 2, reflection/refraction depth 8, denoising and glass effects remain enabled. Main captures use `rt_stats 0`, uncapped host FPS, vsync off and `vid_maxframelatency 0`; artistic strengths are the recorded preset values, not arbitrary slider maxima. The runner [sets/validates 4K and the effective preset](tests/perf/run_stress.ps1#L350).
 
-**Targets remain unmet.** The verified combined entity changes remove roughly 5.8 ms on Fuma and 9.0 ms on Bogbottom from opaque-entity CPU preparation, but the latest controlled results are only about 37 / 24 FPS. Supplied saves are stress points, not all-map or long-gameplay coverage.
+**Status (2026-10-14, Release, GI medium):** the Fuma balanced point holds a 60.8 FPS mean (16.4-16.5 ms) with 11.8-22.3% of intervals over the 16.67 ms budget (p95 16.8-16.95 ms) - a mean-level pass, not yet a stable-60 pass; Bogbottom measures a 52.8 FPS mean (18.8-19.1 ms) with essentially every interval over budget. At the audited maximum-quality preset (GI ultra, balanced) separate captures from the same campaign measure 50.4 / 45.8 FPS. The resolution-scaling section below shows the GPU as the frame's limiter at every tested point; the entity campaign's "about 37 / 24 FPS" reading was the Debug era and remains under "Controlled entity improvements" for provenance. Supplied saves are stress points, not all-map or long-gameplay coverage.
+
+## Resolution scaling and the 60-FPS target (2026-10-14)
+
+Release binary, revision `e1cee587`, clean working tree; acceptance settings with `rt_gi_level 1`
+(medium), 5 s warmup + 10 s capture, `-StatsLevel 3`, `vid_fullscreen 0` and vsync off
+(`tests/perf/run_stress.ps1`). One runner invocation per point; the FSR preset changes the render
+resolution at the fixed 3840x2160 output, and the pixel share is `(1 / divisor)^2` with the
+helper's divisors ([RenderResolutionHelper.h](renderer/Source/RenderResolutionHelper.h#L205)):
+quality 1.5, balanced 1.7, performance 2.0, ultra performance 3.0. Balanced has three samples,
+quality and ultra two, performance one; cells are the exact means of the per-sample summary values.
+
+| FSR preset (render share of 4K) | Fuma FPS | Fuma interval | Bogbottom FPS | Bogbottom interval |
+| --- | ---: | ---: | ---: | ---: |
+| Quality (44.4%) | 48.4 | 20.66 ms | 45.6 | 21.92 ms |
+| Balanced (34.6%) | 60.8 | 16.43 ms | 52.8 | 18.94 ms |
+| Performance (25.0%) | 74.2 | 13.47 ms | 64.6 | 15.49 ms |
+| Ultra Performance (11.1%) | 105.8 | 9.45 ms | 73.2 | 13.66 ms |
+
+An unweighted least-squares fit of the interval against the pixel share over the four point means
+is linear - Fuma `interval ≈ 5.5 + 33.2·p` ms (R² 0.99), Bogbottom `≈ 10.2 + 25.3·p` ms (R² 0.96) -
+with residuals under 1.1 ms. The fit's intercept is the resolution-independent part; the host frame
+outside `SCR_UpdateScreen` measures ≈5.8 ms on Fuma and ≈8.6 ms on Bogbottom across the sweep
+(derived as interval − `cpu.frame_ms`). The fitted intercepts are extrapolations of the four
+measured points, not a zero-resolution frame, and need not equal the host term. The GPU snapshot
+holds 90-96% of the interval from Quality to Performance, 94% for Fuma at the 1280x720 render, and
+77% for Bogbottom there, where its fixed cost becomes visible; the total interval still scales with
+the pixel share at every tested point, so the GPU stays the frame's limiter - what is flat is the
+host term, not the frame. Captures: the completed `build/Release/audit-sc-*` runs (each with
+`summary.json` and a verified focus gate; 2026-10-14).
+
+The merged DTAL defaults (`rt_dtal_groups 1`, `rt_dtal_spacing 8`, `rt_dtal_maxgroups 2048`) were
+measured for the first time against the disabled and the legacy spacing-128 arms at the same point
+(three samples each): Fuma 60.8 / 58.8 / 59.7 FPS and Bogbottom 52.8 / 52.4 / 50.3 FPS for
+groups-off / groups-on at spacing 128 / the merged default. The default costs 1.9% on Fuma and
+4.7% on Bogbottom at this point (Bogbottom `clusters` 0.20 → 0.32 ms, `gpu.frame` +0.8 ms); the
+witness lines `rt_dtal_groups=1 rt_dtal_spacing=8 rt_dtal_maxgroups=2048` are in the
+`audit-dt-*` bench logs.
 
 ## Measurement contract
 

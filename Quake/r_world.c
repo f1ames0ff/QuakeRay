@@ -154,6 +154,7 @@ typedef struct rt_emis_stats_s
 	atomic_uint32_t frame_off;
 	atomic_uint32_t static_queued;
 	atomic_uint32_t static_dropped;
+	atomic_uint32_t proxy_dropped;
 	atomic_uint32_t projector;
 	atomic_uint32_t dynamic;
 	atomic_uint32_t glow_lights;
@@ -1570,25 +1571,42 @@ typedef struct
 static rt_dtal_debug_arrow_t rt_dtal_debug_arrow[RT_DTAL_DEBUG_MAX];
 static int                   rt_dtal_debug_num;
 static int                   rt_dtal_debug_frame = -1;
+static atomic_uint32_t       rt_dtal_debug_spin;
+
+static void RT_DtalDebugLock (void)
+{
+	uint32_t expected = 0;
+	while (!Atomic_CompareExchangeUInt32 (&rt_dtal_debug_spin, &expected, 1))
+		expected = 0;
+}
+
+static void RT_DtalDebugUnlock (void)
+{
+	Atomic_StoreUInt32 (&rt_dtal_debug_spin, 0);
+}
 
 static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area, qboolean projector)
 {
+	RT_DtalDebugLock ();
+
 	if (rt_dtal_debug_frame != r_framecount)
 	{
 		rt_dtal_debug_frame = r_framecount;
 		rt_dtal_debug_num = 0;
 	}
 
-	if (rt_dtal_debug_num >= RT_DTAL_DEBUG_MAX)
-		return;
+	if (rt_dtal_debug_num < RT_DTAL_DEBUG_MAX)
+	{
+		rt_dtal_debug_arrow_t *arrow = &rt_dtal_debug_arrow[rt_dtal_debug_num++];
 
-	rt_dtal_debug_arrow_t *arrow = &rt_dtal_debug_arrow[rt_dtal_debug_num++];
+		VectorCopy (center, arrow->center);
+		VectorCopy (normal, arrow->normal);
 
-	VectorCopy (center, arrow->center);
-	VectorCopy (normal, arrow->normal);
+		arrow->projector = projector;
+		arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+	}
 
-	arrow->projector = projector;
-	arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+	RT_DtalDebugUnlock ();
 }
 
 int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
@@ -2093,7 +2111,7 @@ static qboolean RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, 
 	{
 		if (rt_wldlights_proxy_count >= RT_WLDPROXY_MAX)
 		{
-			Atomic_AddUInt32 (&rt_emis_stats.static_dropped, 1);
+			Atomic_AddUInt32 (&rt_emis_stats.proxy_dropped, 1);
 			return false;
 		}
 
@@ -7181,6 +7199,11 @@ void RT_PrintEmissiveStats (void)
 		RT_LightReportPrint ("dtal proxies: %i small emitters light as one synthesized dlight each (%i of them models, %i stored for the next frames)\n",
 			(int) Atomic_LoadUInt32 (&rt_emis_stats.proxy), (int) Atomic_LoadUInt32 (&rt_emis_stats.proxy_model),
 			rt_wldlights_proxy_count);
+
+	if (Atomic_LoadUInt32 (&rt_emis_stats.proxy_dropped))
+		RT_LightReportPrint ("WARNING: the stored dtal proxy list is full (%i/%i), %i dropped - "
+			"raise RT_WLDPROXY_MAX or reduce the small emitters\n",
+			rt_wldlights_proxy_count, RT_WLDPROXY_MAX, (int) Atomic_LoadUInt32 (&rt_emis_stats.proxy_dropped));
 
 	if (CVAR_TO_FLOAT (rt_dtal_groups) > 0.0f)
 	{

@@ -29,6 +29,7 @@ with handle:
                 'stamp': m.group(1), 'demo': m.group(2), 'frames': int(m.group(3)),
                 'seconds': float(m.group(4)), 'fps': float(m.group(5)),
                 'sampling': '?', 'reach': '?', 'reach_max': '?', 'vid': '?',
+                'gi': '?', 'dtal_groups': '?', 'dtal_spacing': '?', 'dtal_maxgroups': '?',
                 'slots': {}, 'hits': '-', 'misses': '-',
             }
             continue
@@ -40,6 +41,10 @@ with handle:
             for key, pattern in (('sampling', r'rt_cluster_sampling=(\S+)'),
                                  ('reach', r'rt_light_reach_static=(\S+)'),
                                  ('reach_dynamic', r'rt_light_reach_dynamic=(\S+)'),
+                                 ('gi', r'rt_gi_level=(\S+)'),
+                                 ('dtal_groups', r'rt_dtal_groups=(\S+)'),
+                                 ('dtal_spacing', r'rt_dtal_spacing=(\S+)'),
+                                 ('dtal_maxgroups', r'rt_dtal_maxgroups=(\S+)'),
                                  ('vid', r'vid=(\S+)')):
                 mm = re.search(pattern, body)
                 if mm:
@@ -62,12 +67,13 @@ if not blocks:
 print(f'{PATH}: {len(blocks)} block(s), showing the last {min(COUNT, len(blocks))}')
 print()
 
-header = f"{'#':>3} {'stamp':19} {'demo':18} {'samp':>4} {'reach':>5} {'frames':>7} {'sec':>6} {'wallfps':>7} " + \
+header = f"{'#':>3} {'stamp':19} {'demo':18} {'samp':>4} {'reach':>5} {'gi':>4} {'dtal':>12} {'frames':>7} {'sec':>6} {'wallfps':>7} " + \
          ' '.join(f'{name[:12]:>12}' for name in SLOTS) + f" {'hits':>6} {'miss':>5}"
 
 print(header)
 for i, b in enumerate(blocks[-COUNT:], start=len(blocks) - min(COUNT, len(blocks))):
-    row = (f"{i:>3} {b['stamp']:19} {b['demo'][:18]:18} {b['sampling']:>4} {b['reach']:>5} "
+    dtal = f"{b['dtal_groups']}/{b['dtal_spacing']}/{b['dtal_maxgroups']}"
+    row = (f"{i:>3} {b['stamp']:19} {b['demo'][:18]:18} {b['sampling']:>4} {b['reach']:>5} {b['gi']:>4} {dtal:>12} "
            f"{b['frames']:>7} {b['seconds']:>6.1f} {b['fps']:>7.1f} ")
     for name in SLOTS:
         value = b['slots'].get(name)
@@ -77,4 +83,4 @@ for i, b in enumerate(blocks[-COUNT:], start=len(blocks) - min(COUNT, len(blocks
 
 print()
 print('columns are cpu.slot averages, ms; "reach" is rt_light_reach_static; compare blocks with the same')
-print('demo, vid, reach and sampling flag only.')
+print('demo, vid, reach, sampling flag, GI level and DTAL settings only.')

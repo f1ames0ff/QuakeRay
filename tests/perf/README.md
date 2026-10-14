@@ -80,8 +80,9 @@ python tests\perf\analyze_bench.py build\Debug\ad\benchmark.log 4
   (`fps=` in the block header) is frames over wall seconds; an unfocused window sleeps 16 ms per
   frame in this engine, so wall fps is only comparable between runs that keep focus. The runner
   leaves the window in place, but do not cover it or work on the machine during a run.
-- Compare blocks that share `demo` (the save or map name), `vid`, `rt_light_reach_static` and the
-  `rt_cluster_sampling` flag. The two modes are compared within themselves: a CPU fix shows in
+- Compare blocks that share `demo` (the save or map name), `vid`, `rt_light_reach_static`, the
+  `rt_cluster_sampling` flag, `rt_gi_level` and the `rt_dtal_groups`/`rt_dtal_spacing`/
+  `rt_dtal_maxgroups` values. The two modes are compared within themselves: a CPU fix shows in
   `cpumax`, and `gpumax` tells whether the same fix leaves the GPU bound frame alone.
 - `cpumax` exists to make the CPU the frame's limiter: the cluster cost moves the frame there, and
   in `gpumax` the same cost hides under the GPU frame, which is what the mode is for.
