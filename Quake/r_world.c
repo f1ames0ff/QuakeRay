@@ -2417,6 +2417,9 @@ static rt_dtal_lod_stats_t  rt_dtal_lod_last_stats;
 
 typedef struct
 {
+	uint64_t uid;
+	uint64_t stamp;
+	uint32_t buried;
 	uint32_t coverage_count;
 	uint32_t coverage[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
 	uint32_t effective;
@@ -2424,6 +2427,7 @@ typedef struct
 
 static rt_dtal_lod_node_state_t *rt_dtal_lod_node_states;
 static int                       rt_dtal_lod_node_state_capacity;
+static uint64_t                  rt_dtal_lod_node_generation = 1;
 static uint8_t                  *rt_dtal_lod_group_merged;
 static int                       rt_dtal_lod_group_merged_capacity;
 
@@ -2473,6 +2477,7 @@ static void RT_DtalLod_ResetState (void)
 	rt_dtal_lod_group_records = 0;
 	rt_dtal_lod_coverage_refused = 0;
 	rt_dtal_lod_buried_refused = 0;
+	rt_dtal_lod_node_generation++;
 }
 
 static void RT_DtalLod_BuildHierarchy (void)
@@ -2536,6 +2541,7 @@ static void RT_DtalLod_BuildHierarchy (void)
 	rt_dtal_lod_last_tick = 0.0;
 	rt_dtal_lod_cursor = 0;
 	memset (&rt_dtal_lod_last_stats, 0, sizeof (rt_dtal_lod_last_stats));
+	rt_dtal_lod_node_generation++;
 }
 
 static void RT_DtalLod_MakeMemberQuad (const rt_dtal_lod_node_t *node, QrDtalMemberUpload *member)
@@ -2670,17 +2676,33 @@ static void RT_DtalLod_BuildEffective (void)
 
 		if (state->effective && clearance > 0.0f)
 		{
-			vec3_t   center;
-			qboolean traced = false;
+			const qboolean traceCached = state->stamp == rt_dtal_lod_node_generation && state->uid == node->uid;
+			qboolean       buried = 0;
 
-			VectorCopy (node->center, center);
+			if (traceCached)
+			{
+				buried = state->buried != 0;
+			}
+			else
+			{
+				vec3_t   center;
+				qboolean traced = false;
 
-			if (RT_LightBuried (center, node->normal, clearance, &traced))
+				VectorCopy (node->center, center);
+
+				buried = RT_LightBuried (center, node->normal, clearance, &traced);
+				state->buried = buried;
+			}
+
+			if (buried)
 			{
 				state->effective = 0;
 				rt_dtal_lod_buried_refused++;
 			}
 		}
+
+		state->uid = node->uid;
+		state->stamp = rt_dtal_lod_node_generation;
 
 		if (state->effective)
 		{
@@ -2852,13 +2874,19 @@ static void RT_DtalLod_Tick (void)
 	rt_dtal_lod_config_t config;
 	RT_DtalLod_MakeConfig (&config);
 
-	if (RT_Dtal_Lod_Select (rt_dtal_lod_state, &config, rt_dtal_lod_inputs, groupCount, rt_dtal_lod_visibility,
-	                        r_refdef.vieworg, realtime, RT_DTAL_LOD_TICK_BUDGET, &rt_dtal_lod_cursor) >= 0)
+	const int transitions = RT_Dtal_Lod_Select (rt_dtal_lod_state, &config, rt_dtal_lod_inputs, groupCount,
+	                                            rt_dtal_lod_visibility, r_refdef.vieworg, realtime,
+	                                            RT_DTAL_LOD_TICK_BUDGET, &rt_dtal_lod_cursor);
+
+	if (transitions >= 0)
 	{
 		const rt_dtal_lod_stats_t *stats = RT_Dtal_Lod_Stats (rt_dtal_lod_state);
 
 		if (stats != NULL)
 			rt_dtal_lod_last_stats = *stats;
+
+		if (transitions > 0)
+			rt_dtal_lod_node_generation++;
 
 		RT_DtalLod_BuildEffective ();
 	}
