@@ -3231,8 +3231,8 @@ static void GL_InitInstance (void)
 	QrWin32SurfaceCreateInfo win32Info = {.hinstance = wmInfo.info.win.hinstance, .hwnd = wmInfo.info.win.window};
 
 	const char pShaderPath[] = RT_OVERRIDEN_FOLDER "shaders/";
-	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "BlueNoise_LDR_RGBA_128.png";
-	const char pWaterTexturePath[] = RT_OVERRIDEN_FOLDER "WaterNormal_n.png";
+	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "textures/BlueNoise_LDR_RGBA_128.png";
+	const char pWaterTexturePath[] = RT_OVERRIDEN_FOLDER "textures/WaterNormal_n.png";
 
 	QrInstanceCreateInfo info = {
 		.pAppName = "QuakeRay",
