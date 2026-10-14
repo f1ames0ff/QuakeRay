@@ -145,7 +145,7 @@ The graph currently relies on:
   `StartNewStaticScene`; the renderer's API counters are `std::atomic`;
 - `LightManager::registryMutex` — held by `AddLight`, `PrepareForFrame` and `Reset`
   ([LightManager.h](../renderer/Source/LightManager.h#L173));
-- the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L495) — the once-per-frame TLS merge,
+- the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L533) — the once-per-frame TLS merge,
   the window publication/reset and `RT_Bench_Report`'s snapshot; per-invocation accumulation runs
   into a thread-local buffer without the lock (a thread claims its pool slot once);
 - the parallel-mark state in [r_world.c](../Quake/r_world.c#L418): `rt_mark_parallel_frame` is
@@ -174,7 +174,7 @@ The graph currently relies on:
   (`RT_Prof_FrameStart`, `RT_Prof_FrameEnd`, `RT_Prof_Update`), which is what keeps the unlocked sum
   correct;
 - the profiler/upload-trace thread-local slots: one `rt_prof_tls_pool` accumulator per thread
-  ([gl_vidsdl.c](../Quake/gl_vidsdl.c#L509)) and the upload-lane attribution stack
+  ([gl_vidsdl.c](../Quake/gl_vidsdl.c#L510)) and the upload-lane attribution stack
   (`g_uploadLane`/`g_uploadLaneStack` in [VulkanDevice.cpp](../renderer/Source/VulkanDevice.cpp#L1479));
   the wait/hold counters they feed are atomic device counters, read once per frame in
   `RT_Prof_FrameEnd`;
