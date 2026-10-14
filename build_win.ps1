@@ -151,9 +151,7 @@ if (-not (Test-Path $gameDir)) { New-Item -ItemType Directory -Path $gameDir -Fo
 
 # The engine assets live in one qray.pkz; loose copies left by earlier builds
 # would shadow it and are removed first.
-foreach ($stale in @("materials", "textures", "progs", "mdl_skins", "shaders", "gfx",
-                     "BlueNoise_LDR_RGBA_128.ktx2", "WaterNormal_n.ktx2",
-                     "BlueNoise_LDR_RGBA_128.png", "WaterNormal_n.png")) {
+foreach ($stale in @("materials", "textures", "progs", "mdl_skins", "shaders", "gfx")) {
     $stalePath = Join-Path $gameDir $stale
     if (Test-Path $stalePath) { Remove-Item $stalePath -Recurse -Force }
 }
@@ -203,7 +201,7 @@ foreach ($legacy in @("progs", "mdl_skins")) {
     }
 }
 
-foreach ($f in @("BlueNoise_LDR_RGBA_128.png", "WaterNormal_n.png")) {
+foreach ($f in @("textures/BlueNoise_LDR_RGBA_128.png", "textures/WaterNormal_n.png")) {
     $src = Join-Path $srcRoot $f
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stage $f) -Force
