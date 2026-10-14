@@ -147,6 +147,14 @@
 #             glass_ior: 1.52
 #             glass_thickness: 2
 #             glass_color: 88ccff
+#
+# `material_water: true` turns the surface into a liquid volume instead: the
+# traced path refracts it with `rt_refr_water` and bends it with the waves
+# and absorption of the Water / Acid settings, while the surface's own
+# texture supplies the albedo. The glass keys above do not apply, and a
+# material that asks for both is glass. Wins over `mirror` like glass does.
+#     e.g.  - name: textures/pool01
+#             material_water: true
 qray_materials:
   - name: textures/#lava1
     texture_emissive: textures/_lava1_luma.png

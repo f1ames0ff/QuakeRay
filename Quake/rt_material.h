@@ -88,6 +88,11 @@ typedef struct rt_material_s {
     qboolean force_rasterize;
     qboolean alpha_test;
     qboolean material_glass;
+    /* The surface is a liquid volume: the traced path refracts it with the water
+       index of refraction and absorbs what crosses it with the Water / Acid
+       settings, so its own texture supplies the albedo. Glass wins over it when
+       both are set. */
+    qboolean material_water;
     float    transparency;
     float    glass_ior;
     float    glass_thickness;

@@ -91,6 +91,7 @@ typedef struct gltexture_s
 	float                rtglassior;
 	float                rtglassthickness;
 	float                rtglasscolor[3];
+	qboolean             rtwater;
 	float                rtuvscale[2];
 	float                rtuvoffset[2];
 	qboolean             rtemissive;

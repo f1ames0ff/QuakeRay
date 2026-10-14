@@ -606,6 +606,8 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->alpha_test = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "material_glass"))
         mat->material_glass = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "material_water"))
+        mat->material_water = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "transparency"))
     {
         const float raw = (float)atof(value);

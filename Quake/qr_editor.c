@@ -122,7 +122,7 @@ enum
 	PARAM_BASEF,
 	PARAM_METALALPHA,
 	PARAM_MIRROR,
-	PARAM_GLASS,
+	PARAM_MATTYPE,
 	PARAM_TRANSPARENCY,
 	PARAM_GLASS_IOR,
 	PARAM_GLASS_THICKNESS,
@@ -179,9 +179,9 @@ static const struct qre_param_s
 	[PARAM_METALALPHA] = { NULL, "metalness_from_normal_alpha", QRE_T_BOOL, 0, 0, 0,
 	                     "Read metalness from the normal map's alpha channel instead of a flat factor." },
 	[PARAM_MIRROR]   = { NULL, "mirror",           QRE_T_BOOL,  0, 0, 0,
-	                     "Mirror-smooth reflection; roughness is forced to 0 unless material_glass takes precedence." },
-	[PARAM_GLASS]    = { NULL, "material_glass",   QRE_T_BOOL,  0, 0, 0,
-	                     "Glass: the traced path bends the rays through the surface and tints them with the diffuse texture, while transparency absorbs what passes. Wins over mirror; an alpha_test cutout keeps its holes." },
+	                     "Mirror-smooth reflection; roughness is forced to 0 unless glass or water takes precedence." },
+	[PARAM_MATTYPE]  = { NULL, "material",         QRE_T_COMBO, 0, 0, 0,
+	                     "The pass-through the surface takes: none keeps it solid, glass turns it into a refracting pane (the glass rows below set how it bends and tints), water turns it into a liquid volume that refracts and absorbs like the map's water (its look is the Water / Acid section of the System tab). Glass and water win over mirror." },
 	[PARAM_TRANSPARENCY] = { NULL, "transparency", QRE_T_FLOAT, 0, 1, 0.01f,
 	                     "How much light the glass passes and how much its texture absorbs: 1 passes the image with the glass colour alone (the texture blocks nothing), lower values dim it and absorb it per channel towards the diffuse texture, and 0 blocks the transmission entirely so only the reflection remains. Needs material_glass." },
 	[PARAM_GLASS_IOR] = { NULL, "glass_ior",       QRE_T_FLOAT, 0, 5, 0.01f,
@@ -221,6 +221,12 @@ static const struct qre_param_s
 // RT_MAT_EmissiveBlendName.
 static const char *const qre_emissive_blends[] = {
 	"cvar", "off", "normal", "screen", "overlay", "hard light", "color dodge"
+};
+
+// The pass-through types the material row offers; the index maps to the flags
+// QRE_GetInt/QRE_SetInt read: 0 nothing, 1 material_glass, 2 material_water.
+static const char *const qre_mat_types[] = {
+	"none", "glass", "water"
 };
 
 // ---------------------------------------------------------------------------
@@ -1093,8 +1099,9 @@ static int QRE_GetInt (const rt_material_t *m, int param)
 {
 	switch (param)
 	{
-	case PARAM_EBLEND: return m->emissive_blend;
-	default:           return 0; // the per-block controls are edited inside QRE_EmissiveEditor
+	case PARAM_EBLEND:  return m->emissive_blend;
+	case PARAM_MATTYPE: return m->material_glass ? 1 : (m->material_water ? 2 : 0);
+	default:            return 0; // the per-block controls are edited inside QRE_EmissiveEditor
 	}
 }
 
@@ -1108,7 +1115,6 @@ static qboolean QRE_GetBool (const rt_material_t *m, int param)
 	case PARAM_LSTYLES:    return m->light_styles;
 	case PARAM_METALALPHA: return m->metalness_from_normal_alpha;
 	case PARAM_MIRROR:     return m->mirror;
-	case PARAM_GLASS:      return m->material_glass;
 	case PARAM_EXACTN:     return m->exact_normals;
 	case PARAM_FRAST:      return m->force_rasterize;
 	default:               return false;
@@ -1186,6 +1192,19 @@ static void QRE_SetInt (int g, int param, int value)
 		QRE_MarkDirty (m);
 		break;
 	}
+	case PARAM_MATTYPE:
+	{
+		rt_material_t *m;
+
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->material_glass = (value == 1) ? true : false;
+		m->material_water = (value == 2) ? true : false;
+		// the pass-through type is baked into the uploaded geometry, so this
+		// has to re-submit the static world, not just the texture
+		QRE_MarkDirtyFull (m);
+		break;
+	}
 	default:
 		break; // the per-block controls are edited inside QRE_EmissiveEditor
 	}
@@ -1205,7 +1224,7 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	case PARAM_METALALPHA: m->metalness_from_normal_alpha = value; break;
 	case PARAM_MIRROR:
 		m->mirror = value;
-		if (value && !m->material_glass)
+		if (value && !m->material_glass && !m->material_water)
 		{
 			m->roughness_override = 0.0f;
 			m->has_roughness_override = false;
@@ -1213,12 +1232,6 @@ static void QRE_SetBool (int g, int param, qboolean value)
 		break;
 	case PARAM_EXACTN:     m->exact_normals = value; break;
 	case PARAM_FRAST:      m->force_rasterize = value; break;
-	case PARAM_GLASS:
-		// the pass-through type is baked into the uploaded geometry, so this
-		// has to re-submit the static world, not just the texture
-		m->material_glass = value;
-		QRE_MarkDirtyFull (m);
-		return;
 	default:               break;
 	}
 
@@ -1427,7 +1440,8 @@ static void QRE_ResolveGroup (const char *texname)
 	// the renderer ignores taken out of the way
 	for (i = 0; i < qre.group_count; i++)
 	{
-		if (qre.group[i]->mirror && !qre.group[i]->material_glass && qre.group[i]->has_roughness_override)
+		if (qre.group[i]->mirror && !qre.group[i]->material_glass && !qre.group[i]->material_water &&
+		    qre.group[i]->has_roughness_override)
 		{
 			qre.group[i]->roughness_override = 0.0f;
 			qre.group[i]->has_roughness_override = false;
@@ -3477,7 +3491,7 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	rt_material_t *m = qre.group[g];
 	// mirror drives roughness on its own (the synthesis gives it the last
 	// word): the override is meaningless there, and is locked at 0
-	const qboolean mirror_locks_rough = (p == PARAM_ROUGH && m->mirror && !m->material_glass);
+	const qboolean mirror_locks_rough = (p == PARAM_ROUGH && m->mirror && !m->material_glass && !m->material_water);
 	const qboolean is_light_locks_color = (p == PARAM_LCOLOR && !m->is_light);
 	// transparency and the per-material refraction only mean something once the
 	// material is glass
@@ -3575,10 +3589,21 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	}
 	case QRE_T_COMBO:
 	{
-		int idx = QRE_GetInt (m, p) + 1;
+		if (p == PARAM_MATTYPE)
+		{
+			int idx = QRE_GetInt (m, p);
 
-		if (QR_GUI_Combo (label, &idx, qre_emissive_blends, (int)countof (qre_emissive_blends), tip))
-			QRE_SetInt (g, p, idx - 1);
+			if (QR_GUI_Combo (label, &idx, qre_mat_types, (int)countof (qre_mat_types), tip))
+				QRE_SetInt (g, p, idx);
+			break;
+		}
+
+		{
+			int idx = QRE_GetInt (m, p) + 1;
+
+			if (QR_GUI_Combo (label, &idx, qre_emissive_blends, (int)countof (qre_emissive_blends), tip))
+				QRE_SetInt (g, p, idx - 1);
+		}
 		break;
 	}
 	default:
@@ -7273,7 +7298,15 @@ static const char *qre_yaml_header =
 	"#             transparency: 0.8\n"
 	"#             glass_ior: 1.52\n"
 	"#             glass_thickness: 2\n"
-	"#             glass_color: 88ccff\n";
+	"#             glass_color: 88ccff\n"
+	"#\n"
+	"# `material_water: true` turns the surface into a liquid volume instead: the\n"
+	"# traced path refracts it with `rt_refr_water` and bends it with the waves\n"
+	"# and absorption of the Water / Acid settings, while the surface's own\n"
+	"# texture supplies the albedo. The glass keys above do not apply, and a\n"
+	"# material that asks for both is glass. Wins over `mirror` like glass does.\n"
+	"#     e.g.  - name: textures/pool01\n"
+	"#             material_water: true\n";
 
 static void QRE_WriteColor (FILE *f, const char *key, const vec3_t rgb)
 {
@@ -7346,7 +7379,7 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    bump_scale: %.6g\n", m->bump_scale);
 	// mirror forces roughness_override to 0; the synthesis gives it the last
 	// word, so the dead override is not perpetuated by a save
-	if ((!m->mirror || m->material_glass) && m->has_roughness_override)
+	if ((!m->mirror || m->material_glass || m->material_water) && m->has_roughness_override)
 		fprintf (f, "    roughness_override: %.6g\n", m->roughness_override);
 	if (m->has_metalness_factor)
 		fprintf (f, "    metalness_factor: %.6g\n", m->metalness_factor);
@@ -7378,6 +7411,8 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    mirror: true\n");
 	if (m->material_glass)
 		fprintf (f, "    material_glass: true\n");
+	if (m->material_water)
+		fprintf (f, "    material_water: true\n");
 	if (m->material_glass && m->transparency != 1.0f)
 		fprintf (f, "    transparency: %.6g\n", m->transparency);
 	if (m->material_glass && m->glass_ior > 0.0f)

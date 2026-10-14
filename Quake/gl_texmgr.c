@@ -1416,6 +1416,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtglasscolor[0] = 1.0f;
 		glt->rtglasscolor[1] = 1.0f;
 		glt->rtglasscolor[2] = 1.0f;
+		glt->rtwater = false;
 		glt->rtuvscale[0] = glt->rtuvscale[1] = 1.0f;
 		glt->rtuvoffset[0] = glt->rtuvoffset[1] = 0.0f;
 		glt->rtemissive = false;
@@ -1462,6 +1463,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtglassior = mat->glass_ior;
 	glt->rtglassthickness = mat->glass_thickness;
 	VectorCopy (mat->glass_color, glt->rtglasscolor);
+	glt->rtwater = mat->material_water && !mat->material_glass;
 	glt->rtuvscale[0] = mat->texture_scale_u > 0.0f ? mat->texture_scale_u : 1.0f;
 	glt->rtuvscale[1] = mat->texture_scale_v > 0.0f ? mat->texture_scale_v : 1.0f;
 	glt->rtuvoffset[0] = mat->texture_offset_u;
@@ -1768,7 +1770,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		}
 
 		float rough;
-		if (glt->rtmirror && !glt->rtglass)
+		if (glt->rtmirror && !glt->rtglass && !glt->rtwater)
 			rough = 0.0f; // mirror has the last word; the panel locks the override
 		else if (mat->has_roughness_override)
 			rough = roughOverride;
@@ -2290,6 +2292,7 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtglasscolor[0] = 1.0f;
 	glt->rtglasscolor[1] = 1.0f;
 	glt->rtglasscolor[2] = 1.0f;
+	glt->rtwater = false;
 	glt->rtemissive = false;
 	glt->rtemissivecolor[0] = glt->rtemissivecolor[1] = glt->rtemissivecolor[2] = 0.0f;
 	glt->rtemissivecolorraw[0] = glt->rtemissivecolorraw[1] = glt->rtemissivecolorraw[2] = 0.0f;
