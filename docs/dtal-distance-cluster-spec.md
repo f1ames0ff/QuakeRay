@@ -2,7 +2,7 @@
 
 Status: specification for the layer after the merged DTAL projects (Project A grid groups, Project B
 cluster source selection; both in `master` via PR #51). Branch `perf/dtal-distance-clusters`.
-Owner idea, 2026-10-14. The defaults below are proposals to tune by capture; section 14 lists the
+Owner idea, 2026-10-14. The defaults below are proposals to tune by capture; section 15 lists the
 decisions that need the owner's word.
 
 ## 1. Purpose
@@ -146,7 +146,28 @@ if captures show the far-side case matters.
   (sources are about `theta0` in size at an edge). If captures show visible pop, stage 2 options are
   a short cross-fade or a distance offset tuned with the same captures.
 
-## 10. Integration
+## 10. Cadence, batching and asynchronous application
+
+The aggregation does not run every frame and does not publish every frame:
+
+- Cadence: the classification and cluster-assignment pass runs on `rt_dtal_lod_interval`
+  (default 50 ms, about 20 Hz) from the frame setup stage. Between ticks the published cluster set
+  is stable, so at most one membership update becomes visible per interval; hysteresis and dwell
+  (section 9) clamp the tick-to-tick changes further.
+- Batching: a tick consumes a bounded budget of groups (new and changed groups first, then a
+  resumable cursor over the rest), so a single tick cannot stall a frame regardless of the group
+  count; groups not yet visited keep their last classification until their turn.
+- Smoothing: a camera turn, a teleport or a map change marks the affected groups for
+  reclassification, and the dwell plus the bounded budget spread that change over several ticks
+  instead of one frame.
+- Asynchronous application: under `r_tasks 1` the pass runs as a task with its results
+  double-buffered and swapped at a frame boundary; under `r_tasks 0` it runs inline on the tick.
+  The ownership, lifetime and lock rules of [docs/multithreading.md](multithreading.md) apply to the
+  pass as to any existing light producer, including its adaptation checklist.
+- A tick touches the cluster lists only through the registration diff of the groups it changed; a
+  tick whose classification did not change costs the classification alone.
+
+## 11. Integration
 
 - Classification and aggregation run in the light setup stage of the frame (the world/light task
   path), `O(groups)` with per-group state, deterministic ordering, parallelizable under `r_tasks`.
@@ -160,7 +181,7 @@ if captures show the far-side case matters.
 - Diagnostics: `rt_light_report` gains cluster counts per band and class, transitions per frame, and
   the source-count reduction against `rt_dtal_lod 0`.
 
-## 11. Controls (proposed)
+## 12. Controls (proposed)
 
 | Cvar | Proposed default | Meaning |
 |---|---|---|
@@ -171,11 +192,12 @@ if captures show the far-side case matters.
 | `rt_dtal_lod_offscreen` | `1` (tune) | band shift for off-frustum / not-visible rows |
 | `rt_dtal_lod_hysteresis` | `0.15` | edge hysteresis fraction |
 | `rt_dtal_lod_dwell` | `0.25` | minimum class dwell, seconds |
+| `rt_dtal_lod_interval` | `0.05` | aggregation cadence, seconds |
 
 All archived and invalidating through the existing `rt_require_static_submit`/collect boundaries;
 the aggregation itself is per-frame and needs no rebuild.
 
-## 12. Tests and acceptance
+## 13. Tests and acceptance
 
 Unit tests (extend `tests/rt_lighting_tests.c`):
 
@@ -196,7 +218,7 @@ Integration:
 - the performance target: with the LOD on, the grouped defaults reach or beat the legacy-path
   milestone numbers on swamp and Fuma, removing the measured groups-on regression.
 
-## 13. Risks and limitations
+## 14. Risks and limitations
 
 - Average-normal fidelity is an approximation; bounded by `theta0` and the axis compatibility rule.
 - Occlusion detection is stage-1 conservative (frustum + visible rows); the purely behind-a-wall
@@ -209,7 +231,7 @@ Integration:
   and the distance gate keep the visible error bounded. If screenshots show the folded case, the
   representative can grow to a small grid of members (a stage-2 option).
 
-## 14. Decisions to confirm with the owner
+## 15. Decisions to confirm with the owner
 
 1. Representative model: synthetic averaged area light (proposed; matches "lights as one light by
    the average normal") or merged member sampling (higher fidelity, heavier).
