@@ -61,13 +61,13 @@
 // two bounce mip biases, Q2_INDIR_MAX_SPHERE_SOLID_ANGLE and the five rt_debugflags bits with
 // their comment), the DESC_SET_* block and the LIGHT_SAMPLE_METHOD pin (INDIR), the order of the
 // eleven functions, indirDbg / indirMaxSphereSolidAngle / indirSphotGain as the debug gates,
-// every early out (the level's off zero store, the sub-resolution remap, the sky store, the
+// every early out (the giBounceRays.x < 0.25 zero store, the half-res row out, the sky store, the
 // sky NEE gate of sampleLambertian and of the luminance test), the RNG streams and their exact
 // salts (Q2_RNG_INDIR_CELL_SELECT + 0/1/2u, Q2_RNG_INDIR_LIGHT_POINT, Q2_RNG_INDIR2_SUN_DISK,
 // Q2_RNG_INDIR_SUN_DISK, Q2_RNG_INDIR_SKY_NEE, RANDOM_SALT_SPEC_BOUNCE(1), RANDOM_SALT_DIFF_BOUNCE(2)),
 // the 0.99 of every random disk, the order of every accumulation, the 50.0 clamp, the 50.0
 // second-bounce debug gain that is applied after that clamp, the skyBsdfWeight of the sky branch,
-// the sub-resolution scale and its site, the specular demodulation against the accumulated direct
+// the half-res scale and its site, the specular demodulation against the accumulated direct
 // specular of the pixel, and the sanity store of the red SH.
 
 [[vk::constant_id(0)]] const uint maxAlbedoLayerCount = 0;
@@ -93,9 +93,9 @@
 #define Q2_RNG_INDIR_LIGHT_POINT 223
 #define Q2_RNG_INDIR_LIGHT_MEMBER 226
 #define Q2_RNG_INDIR_SUN_DISK    225
-// The first-bounce salts serve the first-bounce light NEE, and the deeper bounce reuses
-// them under its own shifted seed, so the 230/233 pair stays reserved for a dedicated
-// second-bounce stream; 235 is the second-bounce sun disk.
+// The first-bounce salts are used by the first-bounce light NEE. The 230/233 pair is
+// reserved for a second-bounce light NEE, which Q2RTX does not have and which this pass
+// therefore no longer traces (only 235, the second-bounce sun disk, is live).
 #define Q2_RNG_INDIR2_CELL_SELECT 230
 #define Q2_RNG_INDIR2_LIGHT_POINT 233
 #define Q2_RNG_INDIR2_SUN_DISK    235
@@ -121,7 +121,7 @@
 //   1<<17 (131072)  sphere/spot indirect NEE gain x100 (clamp applied first, then scaled)
 //   1<<18 (262144)  second bounce contribution x50 (applied after the final clamp)
 //   1<<19 (524288)  SANITY: flat red indirect channel, to prove the bits arrive here
-// 1<<18 is live for every level that casts a second bounce (rt_gi_level >= 1.25).
+// 1<<18 is inert unless rt_gi_level is 2 (the second bounce is the high GI level).
 #define INDIR_DBG_CLAMP_FLOOR   ( 1u << 15 )
 #define INDIR_DBG_CLAMP_FULL    ( 1u << 16 )
 #define INDIR_DBG_SPHOT_X100    ( 1u << 17 )
@@ -204,158 +204,8 @@ Surface traceBounce(const float3 originPosition, float originRoughness, uint ori
         bounceDir );
 }
 
-float3 q2SkyNeeDiffuse( const Surface surf, const uint seed )
-{
-    if ( globalUniform.skyNee == 0.0 )
-    {
-        return (float3)0.0;
-    }
-
-    if ( !q2ClusterSeesSky( surf.cluster ) )
-    {
-        return (float3)0.0;
-    }
-
-    const float2 u = rnd16_2( seed, Q2_RNG_INDIR_SKY_NEE );
-
-    float oneOverPdfSky;
-    const float3 skyDirection = sampleLambertian( surf.normal, u[ 0 ], u[ 1 ], oneOverPdfSky );
-
-    const float nl = dot( surf.normal, skyDirection );
-    const float ngl = dot( surf.normalGeom, skyDirection );
-    const float pdfSky = evalSkyNeePdf( surf.normal, skyDirection );
-
-    if ( nl <= 0.0 || ngl <= 0.0 || pdfSky <= 0.0 )
-    {
-        return (float3)0.0;
-    }
-
-    const float3 radiance = boostChroma(
-        getSkyAmbientMultiplied( skyDirection, surf.roughness * ( SKY_MIP_COUNT - 1.0 ) ) );
-
-    if ( getLuminance( radiance ) <= 0.0 )
-    {
-        return (float3)0.0;
-    }
-
-    const float3 vis = traceSkyVisibility( surf, skyDirection );
-    rayStatsAdd( RAY_STATS_CATEGORY_SHADOW_INDIRECT, 1 );
-
-    return evalBRDFLambertian( 1.0 ) * nl * radiance * vis * oneOverPdfSky;
-}
-
-// One light-list NEE sample at a bounce hit, the same for every bounce of the chain: the
-// selection uses the surface's own material, one candidate is sampled and shadow-tested. The
-// caller passes the bounce's seed, so the deeper bounces sample their own streams.
-float3 sampleClusterLightNee( const Surface surf, const uint seed, const bool isGradient )
-{
-    const float3 rng = float3(
-        rnd24( seed, Q2_RNG_INDIR_CELL_SELECT ),
-        rnd24( seed, Q2_RNG_INDIR_CELL_SELECT + 1u ),
-        rnd24( seed, Q2_RNG_INDIR_CELL_SELECT + 2u ) );
-
-    const float alpha       = square( surf.roughness );
-    const float phongExp    = q2RoughnessSquareToSpecPower( alpha );
-    const float phongScale  = min( 100.0, 1.0 / ( M_PI * max( alpha * alpha, 1e-4 ) ) );
-    const float phongWeight = clamp(
-        getLuminance( surf.specularColor ) /
-            ( getLuminance( surf.specularColor ) + getLuminance( surf.albedo ) ),
-        0.0, 0.9 );
-
-    uint  lightIndex = LIGHT_INDEX_NONE;
-    uint  lightSlot  = 0u;
-    float lightPdf   = 0.0;
-    q2SampleClusterLights( surf.cluster, surf.position, surf.normal, surf.toViewerDir,
-                           phongExp, phongScale, phongWeight, isGradient, rng,
-                           lightIndex, lightSlot, lightPdf );
-
-    if ( lightIndex == LIGHT_INDEX_NONE || lightPdf <= 0.0 )
-    {
-        return (float3)0.0;
-    }
-
-    const float2 pointRnd = rnd16_2( seed, Q2_RNG_INDIR_LIGHT_POINT );
-    const float2 memberRnd = float2(
-        rnd24( seed, Q2_RNG_INDIR_LIGHT_MEMBER ),
-        rnd24( seed, Q2_RNG_INDIR_LIGHT_MEMBER + 1u ) );
-    float memberPdf = 1.0;
-    LightSample light =
-        sampleLightNee( lightSources[ lightIndex ], surf.position, pointRnd, memberRnd, memberPdf );
-
-    if ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_SPHERE ||
-         lightSources[ lightIndex ].lightType == LIGHT_TYPE_SPOT )
-    {
-        light.dw = min( light.dw, indirMaxSphereSolidAngle() ) * indirSphotGain();
-    }
-
-    if ( getLuminance( light.color ) <= 0.0 )
-    {
-        return (float3)0.0;
-    }
-
-    bool lightTraced;
-    const float3 vis = traceLightVisibility( surf, light, lightIndex, lightTraced );
-
-    if ( lightTraced )
-    {
-        rayStatsAdd( RAY_STATS_CATEGORY_SHADOW_INDIRECT, 1 );
-    }
-
-    if ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_TRIANGLE ||
-         lightSources[ lightIndex ].lightType == LIGHT_TYPE_TEXTURED_AREA ||
-         lightSources[ lightIndex ].lightType == LIGHT_TYPE_DTAL_GROUP )
-    {
-        q2AccumulateLightStats( surf.cluster, lightSlot, surf.normal, getLuminance( vis ), 0u );
-    }
-
-    float3 d;
-    shadeDiffuse( surf, light, 1.0 / max( lightPdf * memberPdf, 1e-9 ), d );
-    return d * vis;
-}
-
-// The full NEE set at a bounce hit: the light list, the sun (with the attenuation over this
-// bounce's own length) and the sky. The same for every bounce; the seed separates the streams.
-float3 sampleDiffuseBounceNee( const Surface surf, const float3 previousPosition, const uint seed,
-                               const bool isGradient )
-{
-    float3 nee = sampleClusterLightNee( surf, seed, isGradient );
-
-    const float sunAttenuation = q2SunBounceAttenuation(
-        length( surf.position - previousPosition ), globalUniform.sunBounce.x );
-
-    if ( globalUniform.directionalLightExists != 0 && sunAttenuation > 0.0 )
-    {
-        const DirectionalLight sun =
-            decodeAsDirectionalLight( lightSources[ LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET ] );
-        const float2 sunRnd = rnd16_2( seed, Q2_RNG_INDIR2_SUN_DISK ) * 0.99;
-        const LightSample sunLight = sampleDirectionalLight( sun, surf.position, sunRnd );
-
-        if ( getLuminance( sunLight.color ) > 0.0 )
-        {
-            bool sunTraced;
-            const float3 sunVis = traceSunVisibility( surf, sunLight, sunTraced );
-
-            if ( sunTraced )
-            {
-                rayStatsAdd( RAY_STATS_CATEGORY_SHADOW_INDIRECT, 1 );
-            }
-
-            float3 d;
-            shadeDiffuse( surf, sunLight, 1.0, d );
-            nee += d * sunVis * sunAttenuation * globalUniform.sunBounce.y;
-        }
-    }
-
-    nee += q2SkyNeeDiffuse( surf, seed );
-    return nee;
-}
-
-// The diffuse part of the chain: the single bounce past the first, shaded with the full NEE set
-// (the light list, the sun, the sky). The caller applies the albedos of the upstream hits; the
-// return is the radiance arriving at `surf` along `bounceDir` (times the direction's
-// one-over-pdf, the second-bounce convention).
-float3 processDiffuseBounce( const uint seed, const Surface surf, const float3 bounceDir,
-                             float oneOverPdf, const bool isGradient )
+float3 processSecondDiffuseBounce(const uint seed, const Surface surf, const float3 bounceDir,
+                                  float oneOverPdf)
 {
     const Surface hitSurf = traceBounce(
         surf.position + surf.normalGeom * 0.01,
@@ -366,10 +216,39 @@ float3 processDiffuseBounce( const uint seed, const Surface surf, const float3 b
         return getSkyAmbientMultiplied( bounceDir, SKY_DIFFUSE_BOUNCE_LOD ) * oneOverPdf;
     }
 
-    const float3 indirect =
-        sampleDiffuseBounceNee( hitSurf, surf.position, seed + 2u * 64u, isGradient );
+    // Q2RTX processes analytic lights only in the first bounce pass, so the second bounce
+    // of the diffuse path is lit by the sky it can reach and by the sun alone: the
+    // `get_direct_illumination` call sits behind `spec_bounce_index == 0` and the light
+    // list would otherwise be sampled twice for the same pixel.
+    const float sunAttenuation = q2SunBounceAttenuation(
+        length( hitSurf.position - surf.position ), globalUniform.sunBounce.x );
 
-    float3 radiance = boostChroma( indirect * hitSurf.albedo );
+    float3 directDiffuse = (float3)0.0;
+
+    if ( globalUniform.directionalLightExists != 0 && sunAttenuation > 0.0 )
+    {
+        const DirectionalLight sun =
+            decodeAsDirectionalLight( lightSources[ LIGHT_ARRAY_DIRECTIONAL_LIGHT_OFFSET ] );
+        const float2 sunRnd = rnd16_2( seed, Q2_RNG_INDIR2_SUN_DISK ) * 0.99;
+        const LightSample sunLight = sampleDirectionalLight( sun, hitSurf.position, sunRnd );
+
+        if ( getLuminance( sunLight.color ) > 0.0 )
+        {
+            bool sunTraced;
+            const float3 sunVis = traceSunVisibility( hitSurf, sunLight, sunTraced );
+
+            if ( sunTraced )
+            {
+                rayStatsAdd( RAY_STATS_CATEGORY_SHADOW_INDIRECT, 1 );
+            }
+
+            float3 d;
+            shadeDiffuse( hitSurf, sunLight, 1.0, d );
+            directDiffuse += d * sunVis * sunAttenuation * globalUniform.sunBounce.y;
+        }
+    }
+
+    float3 radiance = boostChroma( directDiffuse * hitSurf.albedo );
 
     if ( ( hitSurf.geometryInstanceFlags & GEOM_INST_FLAG_EMISSION_RAY_ONLY ) != 0 )
     {
@@ -468,49 +347,39 @@ void main()
 {
     int2 pix = (int2)DispatchRaysIndex().xy;
 
-    // The level's off step: no indirect lighting at all. Storing zeros keeps the denoiser and the
-    // composite pass consistent - they only ever add the SH to the direct lighting.
-    const float giLevel = globalUniform.giBounceRays.x;
-    if ( giLevel < 0.25 )
+    // Q2RTX pt_num_bounce_rays == 0: no indirect lighting at all. Storing zeros
+    // keeps the denoiser and the composite pass consistent - they only ever add
+    // the SH to the direct lighting.
+    if ( globalUniform.giBounceRays.x < 0.25 )
     {
         imageStoreUnfilteredIndirectSH( pix, irradianceToSH( (float3)0.0, float3( 0.0, 0.0, 1.0 ) ) );
         return;
     }
 
-    // The level's resolution tiers: low and medium trace one pixel per 2x2 block (a quarter of the
-    // grid), high and ultra one per row pair (half). The traced positions rotate with the frame
-    // counter and the denoiser fills the rest, so every traced pixel stands in for the block it
-    // covers, hence the multiplied contribution below (Q2RTX's low step doubles its throughput the
-    // same way).
-    const bool halfRes = giLevel >= 1.25;
-    const bool quarterRes = !halfRes;
-
-    pix.y = pix.y * 2 + (int)( globalUniform.frameId & 1u );
-
-    if ( quarterRes )
+    // Q2RTX Low GI (pt_num_bounce_rays == 0.5): the host dispatches only half of the
+    // rows and the traced rows alternate every frame, so the denoiser fills the rest.
+    // Every traced pixel therefore stands in for two, hence the doubled contribution
+    // below (Q2RTX does the same with throughput.rgb *= 2).
+    const bool halfRes = globalUniform.giBounceRays.x < 0.75;
+    if ( halfRes )
     {
-        pix.x = pix.x * 2 + (int)( ( globalUniform.frameId >> 1 ) & 1u );
+        pix.y = pix.y * 2 + (int)( globalUniform.frameId & 1u );
+
+        // Odd render heights leave the last row of the half resolution grid without
+        // a partner; such a pixel keeps its previous value, like the untraced rows.
+        //
+        // textureSize(framebufQ2RngSeed_Sampled, 0).y is the texture's own height here:
+        // GetDimensions hands back uints and the golden's ivec2 component is an int, so the
+        // comparison takes a (int) cast, exact for every height this renderer creates.
+        uint seedTexWidth, seedTexHeight;
+        framebufQ2RngSeed_Sampled.GetDimensions(seedTexWidth, seedTexHeight);
+
+        if ( pix.y >= (int)seedTexHeight )
+        {
+            return;
+        }
     }
-
-    // Odd render dimensions leave the last row or column of the sub-resolution grid without
-    // a partner; such a pixel keeps its previous value, like the untraced ones.
-    //
-    // The seed texture is the render extent here: GetDimensions hands back uints and the
-    // golden's ivec2 component is an int, so the comparison takes a (int) cast, exact for
-    // every dimension this renderer creates.
-    uint seedTexWidth, seedTexHeight;
-    framebufQ2RngSeed_Sampled.GetDimensions(seedTexWidth, seedTexHeight);
-
-    if ( pix.x >= (int)seedTexWidth || pix.y >= (int)seedTexHeight )
-    {
-        return;
-    }
-    const float subsampleScale = quarterRes ? 4.0 : 2.0;
-
-    // The level picks the bounce count: medium and ultra cast two bounces, low and high one;
-    // every bounce carries its own NEE rays (the light list, the sun, the sky).
-    const bool twoBounces = ( giLevel >= 0.75 && giLevel < 1.25 ) || giLevel >= 1.75;
-    const uint giBounceCount = twoBounces ? 2u : 1u;
+    const float halfResScale = halfRes ? 2.0 : 1.0;
 
     const uint seed = framebufQ2RngSeed_Sampled.Load(int3(pix, 0)).r;
 
@@ -544,9 +413,70 @@ void main()
     else
     {
         const bool isGradient = q2GetIsGradient( pix );
+        const uint cluster    = hitSurf.cluster;
+
+        const float alpha       = square( hitSurf.roughness );
+        const float phongExp    = q2RoughnessSquareToSpecPower( alpha );
+        const float phongScale  = min( 100.0, 1.0 / ( M_PI * max( alpha * alpha, 1e-4 ) ) );
+        const float phongWeight = clamp(
+            getLuminance( hitSurf.specularColor ) /
+                ( getLuminance( hitSurf.specularColor ) + getLuminance( hitSurf.albedo ) ),
+            0.0, 0.9 );
 
         float3 directDiffuse = (float3)0.0;
-        directDiffuse += sampleClusterLightNee( hitSurf, seed, isGradient );
+        {
+            const float3 rng = float3(
+                rnd24( seed, Q2_RNG_INDIR_CELL_SELECT ),
+                rnd24( seed, Q2_RNG_INDIR_CELL_SELECT + 1u ),
+                rnd24( seed, Q2_RNG_INDIR_CELL_SELECT + 2u ) );
+
+            uint  lightIndex = LIGHT_INDEX_NONE;
+            uint  lightSlot  = 0u;
+            float lightPdf   = 0.0;
+            q2SampleClusterLights( cluster, hitSurf.position, hitSurf.normal, hitSurf.toViewerDir,
+                                   phongExp, phongScale, phongWeight, isGradient, rng,
+                                   lightIndex, lightSlot, lightPdf );
+
+            if ( lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0 )
+            {
+                const float2 pointRnd = rnd16_2( seed, Q2_RNG_INDIR_LIGHT_POINT );
+                const float2 memberRnd = float2(
+                    rnd24( seed, Q2_RNG_INDIR_LIGHT_MEMBER ),
+                    rnd24( seed, Q2_RNG_INDIR_LIGHT_MEMBER + 1u ) );
+                float memberPdf = 1.0;
+                LightSample light =
+                    sampleLightNee( lightSources[ lightIndex ], hitSurf.position, pointRnd, memberRnd, memberPdf );
+
+                if ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_SPHERE ||
+                     lightSources[ lightIndex ].lightType == LIGHT_TYPE_SPOT )
+                {
+                    light.dw = min( light.dw, indirMaxSphereSolidAngle() ) * indirSphotGain();
+                }
+
+                if ( getLuminance( light.color ) > 0.0 )
+                {
+                    bool lightTraced;
+                    const float3 vis =
+                        traceLightVisibility( hitSurf, light, lightIndex, lightTraced );
+
+                    if ( lightTraced )
+                    {
+                        rayStatsAdd( RAY_STATS_CATEGORY_SHADOW_INDIRECT, 1 );
+                    }
+
+                    if ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_TRIANGLE ||
+                         lightSources[ lightIndex ].lightType == LIGHT_TYPE_TEXTURED_AREA ||
+                         lightSources[ lightIndex ].lightType == LIGHT_TYPE_DTAL_GROUP )
+                    {
+                        q2AccumulateLightStats( cluster, lightSlot, hitSurf.normal, getLuminance( vis ), 0u );
+                    }
+
+                    float3 d;
+                    shadeDiffuse( hitSurf, light, 1.0 / max( lightPdf * memberPdf, 1e-9 ), d );
+                    directDiffuse += d * vis;
+                }
+            }
+        }
 
         // The first bounce ray is the specular one, so its sun bounce range shrinks with the
         // primary roughness the same way Q2RTX shortens it for is_specular_ray.
@@ -577,23 +507,23 @@ void main()
             }
         }
 
-        float3 deeperBounces = (float3)0.0;
-        if ( giBounceCount >= 2u )
+        float3 secondBounce = (float3)0.0;
+        if ( globalUniform.indirSecondBounce != 0u )
         {
             float oneOverPdfSecond;
             const float3 bounceDirSecond =
                 getDiffuseBounce( seed, 2u, hitSurf.normalGeom, oneOverPdfSecond );
-            deeperBounces = processDiffuseBounce(
-                seed, hitSurf, bounceDirSecond, oneOverPdfSecond, isGradient );
-            directDiffuse += deeperBounces;
+            secondBounce = processSecondDiffuseBounce(
+                seed, hitSurf, bounceDirSecond, oneOverPdfSecond );
+            directDiffuse += secondBounce;
         }
 
         directDiffuse = clamp( directDiffuse, (float3)0.0, (float3)50.0 );
 
         if ( indirDbg( INDIR_DBG_BOUNCE2_X50 ) )
         {
-            directDiffuse = clamp( directDiffuse - deeperBounces, (float3)0.0, (float3)50.0 )
-                + 50.0 * deeperBounces;
+            directDiffuse = clamp( directDiffuse - secondBounce, (float3)0.0, (float3)50.0 )
+                + 50.0 * secondBounce;
         }
 
         hitPos = hitSurf.position;
@@ -606,7 +536,7 @@ void main()
     }
 
     float3 diffuse, specular;
-    q2ShadeIndirect( surf, hitPos, hitRadiance * subsampleScale, oneOverSourcePdf, diffuse, specular );
+    q2ShadeIndirect( surf, hitPos, hitRadiance * halfResScale, oneOverSourcePdf, diffuse, specular );
 
     {
         // Read the unfiltered specular through the storage image, not the sampled view: this
@@ -625,7 +555,7 @@ void main()
 
     {
         SH sh = irradianceToSH( diffuse * skyBsdfWeight, safeNormalize( hitPos - surf.position ) );
-        accumulateSH( sh, irradianceToSH( q2SkyNee( surf, seed ) * subsampleScale, surf.normal ), 1.0 );
+        accumulateSH( sh, irradianceToSH( q2SkyNee( surf, seed ) * halfResScale, surf.normal ), 1.0 );
 
         if ( indirDbg( INDIR_DBG_SANITY ) )
         {

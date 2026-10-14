@@ -1341,8 +1341,8 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
         // The indirect / GI pass reads the G-buffer and the direct outputs and writes the unfiltered
         // indirect images the compose pass then filters; it records right after the direct pass. The
-        // GI level (sub-resolution tier and bounce count) is the engine's own giBounceRays[0],
-        // applied inside the pass (RhiRtIndirectPass.h documents the sizing).
+        // half-resolution switch is the engine's own giBounceRays[0], applied inside the pass
+        // (RhiRtIndirectPass.h documents the sizing).
         if (rtIndirectPass != nullptr && uniform != nullptr)
         {
             BeginGpuPass(commandList, frameIndex, GPU_PASS_INDIRECT);
