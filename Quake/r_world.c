@@ -2400,6 +2400,8 @@ static uint64_t RT_DtalMix (uint64_t hash, uint64_t value)
 	return hash;
 }
 
+static void RT_KeepEmissiveLightColor (vec3_t color);
+
 #define RT_DTAL_LOD_TICK_BUDGET 256
 
 static rt_dtal_lod_t       *rt_dtal_lod_state;
@@ -2412,6 +2414,30 @@ static qboolean             rt_dtal_lod_rebuild_pending;
 static double               rt_dtal_lod_last_tick;
 static int                  rt_dtal_lod_cursor;
 static rt_dtal_lod_stats_t  rt_dtal_lod_last_stats;
+
+typedef struct
+{
+	uint32_t coverage_count;
+	uint32_t coverage[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
+	uint32_t effective;
+} rt_dtal_lod_node_state_t;
+
+static rt_dtal_lod_node_state_t *rt_dtal_lod_node_states;
+static int                       rt_dtal_lod_node_state_capacity;
+static uint8_t                  *rt_dtal_lod_group_merged;
+static int                       rt_dtal_lod_group_merged_capacity;
+
+static QrDtalGroupUploadInfo *rt_dtal_lod_upload_parents;
+static int                    rt_dtal_lod_upload_parent_capacity;
+static QrDtalMemberUpload    *rt_dtal_lod_upload_members;
+static int                    rt_dtal_lod_upload_member_capacity;
+static int                    rt_dtal_lod_upload_parent_count;
+static int                    rt_dtal_lod_upload_member_count;
+
+static int rt_dtal_lod_node_records;
+static int rt_dtal_lod_group_records;
+static int rt_dtal_lod_coverage_refused;
+static int rt_dtal_lod_buried_refused;
 
 void RT_DtalLodRequestRebuild (void)
 {
@@ -2439,6 +2465,14 @@ static void RT_DtalLod_ResetState (void)
 	rt_dtal_lod_last_tick = 0.0;
 	rt_dtal_lod_cursor = 0;
 	memset (&rt_dtal_lod_last_stats, 0, sizeof (rt_dtal_lod_last_stats));
+
+	if (rt_dtal_lod_group_merged != NULL && rt_dtal_lod_group_merged_capacity > 0)
+		memset (rt_dtal_lod_group_merged, 0, (size_t) rt_dtal_lod_group_merged_capacity * sizeof (uint8_t));
+
+	rt_dtal_lod_node_records = 0;
+	rt_dtal_lod_group_records = 0;
+	rt_dtal_lod_coverage_refused = 0;
+	rt_dtal_lod_buried_refused = 0;
 }
 
 static void RT_DtalLod_BuildHierarchy (void)
@@ -2504,6 +2538,273 @@ static void RT_DtalLod_BuildHierarchy (void)
 	memset (&rt_dtal_lod_last_stats, 0, sizeof (rt_dtal_lod_last_stats));
 }
 
+static void RT_DtalLod_MakeMemberQuad (const rt_dtal_lod_node_t *node, QrDtalMemberUpload *member)
+{
+	const float nx = node->normal[0];
+	const float ny = node->normal[1];
+	const float nz = node->normal[2];
+	const float ax = (float) fabs (nx);
+	const float ay = (float) fabs (ny);
+	const float az = (float) fabs (nz);
+	float       rx = 0.0f, ry = 0.0f, rz = 0.0f;
+	vec3_t      tangentA, tangentB;
+
+	if (ax <= ay && ax <= az)
+		rx = 1.0f;
+	else if (ay <= az)
+		ry = 1.0f;
+	else
+		rz = 1.0f;
+
+	tangentA[0] = ny * rz - nz * ry;
+	tangentA[1] = nz * rx - nx * rz;
+	tangentA[2] = nx * ry - ny * rx;
+
+	float length = (float) sqrt ((double) (tangentA[0] * tangentA[0] + tangentA[1] * tangentA[1] + tangentA[2] * tangentA[2]));
+
+	if (!(length > 1e-6f))
+	{
+		tangentA[0] = 1.0f;
+		tangentA[1] = 0.0f;
+		tangentA[2] = 0.0f;
+		length = 1.0f;
+	}
+
+	tangentA[0] /= length;
+	tangentA[1] /= length;
+	tangentA[2] /= length;
+
+	tangentB[0] = ny * tangentA[2] - nz * tangentA[1];
+	tangentB[1] = nz * tangentA[0] - nx * tangentA[2];
+	tangentB[2] = nx * tangentA[1] - ny * tangentA[0];
+
+	const float side = (float) sqrt ((double) (node->area > 0.0f ? node->area : 1.0f));
+
+	memset (member, 0, sizeof (*member));
+
+	for (int i = 0; i < 3; i++)
+	{
+		member->A.data[i] = tangentA[i] * side;
+		member->B.data[i] = tangentB[i] * side;
+		member->C.data[i] = node->center[i] - 0.5f * (member->A.data[i] + member->B.data[i]);
+		member->normal.data[i] = node->normal[i];
+	}
+
+	member->area = node->area;
+	member->numVerts = 4.0f;
+	member->prob = 1.0f;
+	member->marginalProb = 1.0f;
+	member->aliasIndex = 0;
+	member->uv[0].data[0] = 0.0f;
+	member->uv[0].data[1] = 0.0f;
+	member->uv[1].data[0] = 1.0f;
+	member->uv[1].data[1] = 0.0f;
+	member->uv[2].data[0] = 1.0f;
+	member->uv[2].data[1] = 1.0f;
+	member->uv[3].data[0] = 0.0f;
+	member->uv[3].data[1] = 1.0f;
+}
+
+static void RT_DtalLod_BuildEffective (void)
+{
+	const uint32_t nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+	const int      groupCount = rt_dtal_build != NULL ? rt_dtal_build->groupCount : 0;
+
+	if (!RT_DtalReserve ((void **) &rt_dtal_lod_node_states, &rt_dtal_lod_node_state_capacity, (int) nodeCount,
+	                     (int) sizeof (rt_dtal_lod_node_state_t)) ||
+	    !RT_DtalReserve ((void **) &rt_dtal_lod_group_merged, &rt_dtal_lod_group_merged_capacity, groupCount,
+	                     (int) sizeof (uint8_t)))
+		return;
+
+	if (groupCount > 0)
+		memset (rt_dtal_lod_group_merged, 0, (size_t) groupCount * sizeof (uint8_t));
+
+	rt_dtal_lod_coverage_refused = 0;
+	rt_dtal_lod_buried_refused = 0;
+
+	const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+	const uint32_t           *members = RT_Dtal_Lod_Members (rt_dtal_lod_state);
+	const float               clearance = CVAR_TO_FLOAT (rt_dtal_clearance);
+
+	for (uint32_t n = 0; n < nodeCount; n++)
+	{
+		const rt_dtal_lod_node_t *node = &nodes[n];
+		rt_dtal_lod_node_state_t *state = &rt_dtal_lod_node_states[n];
+
+		state->coverage_count = 0;
+		state->effective = 1;
+
+		for (uint32_t m = 0; m < node->memberCount && state->effective; m++)
+		{
+			const uint32_t                 gi = members[node->firstMember + m];
+			const rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
+
+			for (uint32_t k = 0; k < coverage->count && state->effective; k++)
+			{
+				qboolean seen = false;
+
+				for (uint32_t c = 0; c < state->coverage_count; c++)
+				{
+					if (state->coverage[c] == coverage->clusters[k])
+					{
+						seen = true;
+						break;
+					}
+				}
+
+				if (seen)
+					continue;
+
+				if (state->coverage_count >= QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
+				{
+					state->effective = 0;
+					break;
+				}
+
+				state->coverage[state->coverage_count++] = coverage->clusters[k];
+			}
+		}
+
+		if (!state->effective)
+			rt_dtal_lod_coverage_refused++;
+
+		if (state->effective && clearance > 0.0f)
+		{
+			vec3_t   center;
+			qboolean traced = false;
+
+			VectorCopy (node->center, center);
+
+			if (RT_LightBuried (center, node->normal, clearance, &traced))
+			{
+				state->effective = 0;
+				rt_dtal_lod_buried_refused++;
+			}
+		}
+
+		if (state->effective)
+		{
+			for (uint32_t m = 0; m < node->memberCount; m++)
+				rt_dtal_lod_group_merged[members[node->firstMember + m]] = 1;
+		}
+	}
+}
+
+static int RT_DtalLod_BuildUpload (void)
+{
+	const uint32_t nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+	const int      groupCount = rt_dtal_build->groupCount;
+	const int      memberBudget = rt_dtal_build->memberCount;
+
+	rt_dtal_lod_upload_parent_count = 0;
+	rt_dtal_lod_upload_member_count = 0;
+	rt_dtal_lod_node_records = 0;
+	rt_dtal_lod_group_records = 0;
+
+	if (!RT_DtalReserve ((void **) &rt_dtal_lod_upload_parents, &rt_dtal_lod_upload_parent_capacity, groupCount,
+	                     (int) sizeof (QrDtalGroupUploadInfo)) ||
+	    !RT_DtalReserve ((void **) &rt_dtal_lod_upload_members, &rt_dtal_lod_upload_member_capacity, memberBudget,
+	                     (int) sizeof (QrDtalMemberUpload)))
+		return 0;
+
+	const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+	const uint32_t           *members = RT_Dtal_Lod_Members (rt_dtal_lod_state);
+
+	for (uint32_t n = 0; n < nodeCount; n++)
+	{
+		const rt_dtal_lod_node_state_t *state = &rt_dtal_lod_node_states[n];
+
+		if (!state->effective)
+			continue;
+
+		const rt_dtal_lod_node_t *node = &nodes[n];
+		QrDtalGroupUploadInfo    *parent = &rt_dtal_lod_upload_parents[rt_dtal_lod_upload_parent_count];
+		double                    color[3] = { 0.0, 0.0, 0.0 };
+		double                    meanEmiss = 0.0;
+		double                    weight = 0.0;
+		int                       first = -1;
+
+		for (uint32_t m = 0; m < node->memberCount; m++)
+		{
+			const uint32_t               gi = members[node->firstMember + m];
+			const QrDtalGroupUploadInfo *memberParent = &rt_dtal_parents[gi];
+			const double                 w = (double) rt_dtal_build->groups[gi].refPower;
+
+			if (first < 0)
+				first = (int) gi;
+
+			color[0] += w * (double) memberParent->color.data[0];
+			color[1] += w * (double) memberParent->color.data[1];
+			color[2] += w * (double) memberParent->color.data[2];
+			meanEmiss += w * (double) memberParent->meanEmiss;
+			weight += w;
+		}
+
+		if (first < 0)
+			continue;
+
+		if (!(weight > 0.0))
+			weight = 1.0;
+
+		memset (parent, 0, sizeof (*parent));
+
+		parent->uniqueID = node->uid;
+		parent->color.data[0] = (float) (color[0] / weight);
+		parent->color.data[1] = (float) (color[1] / weight);
+		parent->color.data[2] = (float) (color[2] / weight);
+		RT_KeepEmissiveLightColor (parent->color.data);
+
+		VectorCopy (node->center, parent->center.data);
+		VectorCopy (node->normal, parent->normal.data);
+
+		parent->material = rt_dtal_parents[first].material;
+		parent->area = node->area;
+		parent->meanEmiss = (float) (meanEmiss / weight);
+		parent->angleInner = rt_dtal_parents[first].angleInner;
+		parent->angleOuter = rt_dtal_parents[first].angleOuter;
+		parent->projector = 0.0f;
+		parent->reach = rt_dtal_parents[first].reach;
+		parent->estimatedPower = node->power;
+		parent->boundsRadius = node->boundsRadius;
+
+		for (int i = 0; i < 3; i++)
+		{
+			parent->boundsMin.data[i] = node->center[i] - node->boundsRadius;
+			parent->boundsMax.data[i] = node->center[i] + node->boundsRadius;
+		}
+
+		parent->memberBase = (uint32_t) rt_dtal_lod_upload_member_count;
+		parent->memberCount = 1;
+
+		RT_DtalLod_MakeMemberQuad (node, &rt_dtal_lod_upload_members[rt_dtal_lod_upload_member_count]);
+
+		rt_dtal_lod_upload_member_count++;
+		rt_dtal_lod_upload_parent_count++;
+		rt_dtal_lod_node_records++;
+	}
+
+	for (int gi = 0; gi < groupCount; gi++)
+	{
+		if (rt_dtal_lod_group_merged != NULL && rt_dtal_lod_group_merged[gi])
+			continue;
+
+		const rt_dtal_group_t *group = &rt_dtal_build->groups[gi];
+		QrDtalGroupUploadInfo *parent = &rt_dtal_lod_upload_parents[rt_dtal_lod_upload_parent_count];
+
+		*parent = rt_dtal_parents[gi];
+		parent->memberBase = (uint32_t) rt_dtal_lod_upload_member_count;
+
+		memcpy (&rt_dtal_lod_upload_members[rt_dtal_lod_upload_member_count], &rt_dtal_members[group->firstMember],
+		        (size_t) group->memberCount * sizeof (QrDtalMemberUpload));
+
+		rt_dtal_lod_upload_member_count += (int) group->memberCount;
+		rt_dtal_lod_upload_parent_count++;
+		rt_dtal_lod_group_records++;
+	}
+
+	return 1;
+}
+
 static void RT_DtalLod_Tick (void)
 {
 	if (!(CVAR_TO_FLOAT (rt_dtal_lod) > 0.0f))
@@ -2558,6 +2859,8 @@ static void RT_DtalLod_Tick (void)
 
 		if (stats != NULL)
 			rt_dtal_lod_last_stats = *stats;
+
+		RT_DtalLod_BuildEffective ();
 	}
 }
 
@@ -3124,11 +3427,45 @@ static void RT_DtalGroups_Register (void)
 	if (!rt_dtal_groups_active || rt_dtal_build == NULL)
 		return;
 
+	if (rt_dtal_lod_active && rt_dtal_lod_state != NULL)
+	{
+		const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+		const uint32_t            nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+		const uint32_t           *members = RT_Dtal_Lod_Members (rt_dtal_lod_state);
+		const float               nudge = 2.0f;
+
+		for (uint32_t n = 0; n < nodeCount; n++)
+		{
+			const rt_dtal_lod_node_state_t *state = &rt_dtal_lod_node_states[n];
+
+			if (!state->effective)
+				continue;
+
+			const rt_dtal_lod_node_t *node = &nodes[n];
+			const float               reach = rt_dtal_parents[members[node->firstMember]].reach;
+			vec3_t                    origin;
+
+			origin[0] = node->center[0] + nudge * node->normal[0];
+			origin[1] = node->center[1] + nudge * node->normal[1];
+			origin[2] = node->center[2] + nudge * node->normal[2];
+
+			if (state->coverage_count > 0)
+				RT_ClusterLightAddMulti (node->uid, origin, reach, node->boundsRadius, state->coverage,
+				                         state->coverage_count, node->power);
+			else
+				RT_ClusterLightAddPower (node->uid, origin, reach, node->power);
+		}
+	}
+
 	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
 	{
 		const rt_dtal_group_t         *group = &rt_dtal_build->groups[gi];
 		const rt_dtal_source_t        *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
 		const rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
+
+		if (rt_dtal_lod_active && rt_dtal_lod_state != NULL && rt_dtal_lod_group_merged != NULL &&
+		    rt_dtal_lod_group_merged[gi])
+			continue;
 
 		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
 		    rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
@@ -5513,17 +5850,35 @@ void RT_UploadAllWorldModelLights (void)
 			Atomic_StoreUInt32 (&rt_require_static_submit, true);
 		}
 
-		const QrDtalGroupUploadBatch batch = {
-			.groupCount = (uint32_t) rt_dtal_build->groupCount,
-			.pGroups = rt_dtal_parents,
-			.memberCount = (uint32_t) rt_dtal_build->memberCount,
-			.pMembers = rt_dtal_members,
-		};
-
-		if (batch.groupCount > 0 && batch.memberCount > 0)
+		if (rt_dtal_lod_active && rt_dtal_lod_state != NULL && RT_DtalLod_BuildUpload ())
 		{
-			QrResult r = qrUploadDtalGroups (vulkan_globals.instance, &batch);
-			QR_CHECK (r);
+			const QrDtalGroupUploadBatch batch = {
+				.groupCount = (uint32_t) rt_dtal_lod_upload_parent_count,
+				.pGroups = rt_dtal_lod_upload_parents,
+				.memberCount = (uint32_t) rt_dtal_lod_upload_member_count,
+				.pMembers = rt_dtal_lod_upload_members,
+			};
+
+			if (batch.groupCount > 0 && batch.memberCount > 0)
+			{
+				QrResult r = qrUploadDtalGroups (vulkan_globals.instance, &batch);
+				QR_CHECK (r);
+			}
+		}
+		else
+		{
+			const QrDtalGroupUploadBatch batch = {
+				.groupCount = (uint32_t) rt_dtal_build->groupCount,
+				.pGroups = rt_dtal_parents,
+				.memberCount = (uint32_t) rt_dtal_build->memberCount,
+				.pMembers = rt_dtal_members,
+			};
+
+			if (batch.groupCount > 0 && batch.memberCount > 0)
+			{
+				QrResult r = qrUploadDtalGroups (vulkan_globals.instance, &batch);
+				QR_CHECK (r);
+			}
 		}
 
 		RT_DtalGroups_Register ();
@@ -7387,13 +7742,15 @@ void RT_PrintEmissiveStats (void)
 	{
 		const rt_dtal_lod_stats_t *lod_stats = &rt_dtal_lod_last_stats;
 
-		RT_LightReportPrint ("dtal lod (rt_dtal_lod %g, start %g, screen %g, bands %g): %i groups -> %llu merged in %llu nodes, %llu individual, %llu transitions, %llu degenerate refusals; %s\n",
+		RT_LightReportPrint ("dtal lod (rt_dtal_lod %g, start %g, screen %g, bands %g): %i groups -> %llu merged in %llu nodes, %llu individual, %llu transitions, %llu degenerate refusals; %i node records + %i group records, %i coverage refusals, %i buried refusals; %s\n",
 			CVAR_TO_FLOAT (rt_dtal_lod), CVAR_TO_FLOAT (rt_dtal_lod_start), CVAR_TO_FLOAT (rt_dtal_lod_screen),
 			CVAR_TO_FLOAT (rt_dtal_lod_maxbands),
 			(rt_dtal_lod_active && rt_dtal_lod_state != NULL) ? RT_Dtal_Lod_GroupCount (rt_dtal_lod_state) : 0,
 			(unsigned long long) lod_stats->mergedGroups, (unsigned long long) lod_stats->publishedNodes,
 			(unsigned long long) lod_stats->individualGroups, (unsigned long long) lod_stats->transitions,
 			(unsigned long long) lod_stats->degenerateRefused,
+			rt_dtal_lod_node_records, rt_dtal_lod_group_records, rt_dtal_lod_coverage_refused,
+			rt_dtal_lod_buried_refused,
 			rt_dtal_lod_active ? "active (precomputed hierarchy)" : "inactive");
 	}
 
