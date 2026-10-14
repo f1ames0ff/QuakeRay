@@ -17,7 +17,7 @@ unavailable tools or coverage gaps.
 ### Lighting and editing
 
 - **Q2RTX-based ray-traced lighting**, with light bouncing around rooms, reflections and shadows.
-- **An indirect lighting quality ladder** (`rt_gi_level`) — off, low, medium, high and ultra trade the number of indirect bounces against their resolution; every bounce samples the light list, the sun and the sky, the second bounce included.
+- **An indirect lighting quality ladder** (`rt_gi_level`) — off, low, medium and high trade the number of indirect bounces against their resolution (low traces a half-height checkerboard tier the denoiser fills, medium is the full-resolution single bounce and high adds the second bounce); every bounce samples the light list, the sun and the sky.
 - **DTAL System (Dynamic Texture Area Lights)** — glowing textures on walls, models and moving objects act as light sources. Only the glowing parts emit light, following their shape, color and animation; nearby pieces group into a single area light by default.
 - **Lighting and Material Editor**, built into the game:
   - Change textures, shininess, glow and the light a surface gives off.

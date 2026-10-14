@@ -3581,18 +3581,17 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// a third sample's RNG salt would collide with the sun disk stream.
 	const uint32_t nee_samples = (CVAR_TO_FLOAT (rt_nee_samples) < 1.5f) ? 1u : 2u;
 
-	// The global illumination level: 0 disables the indirect pass; the four steps are low (a
-	// quarter-resolution grid, one bounce), medium (a quarter-resolution grid, two bounces), high
-	// (half resolution, one bounce) and ultra (half resolution, two bounces). Every bounce casts
-	// its own NEE rays (the light list, the sun, the sky).
+	// Q2RTX-style global illumination level (pt_num_bounce_rays): 0 disables the
+	// indirect pass, 1 mirrors the historical single-bounce behavior and 2 adds a
+	// second indirect bounce.
 	const float gi_level = CLAMP (0.0f, CVAR_TO_FLOAT (rt_gi_level), 2.0f);
 
 	QrDrawFrameIlluminationParams illum_params = {
 	    .maxBounceShadows = CVAR_TO_UINT32 (rt_shadowrays),
-		// The level alone decides the bounce count and the resolution tier (see above): the
-		// raygen derives both from giBounceRays, and this field reports whether the chain is
-		// longer than one bounce.
-		.enableSecondBounceForIndirect = ((gi_level >= 0.75f && gi_level < 1.25f) || (gi_level >= 1.75f)),
+		// The level alone decides the bounce count, like Q2RTX pt_num_bounce_rays.
+		// rt_indir2bounces is kept for config compatibility but no longer forces the
+		// second bounce on at every level, which made medium and high identical.
+		.enableSecondBounceForIndirect = (gi_level >= 1.5f),
 		.cellWorldSize = METRIC_TO_QUAKEUNIT(2.0f),
 		.directDiffuseSensitivityToChange = CVAR_TO_FLOAT (rt_sensit_dir),
 		.indirectDiffuseSensitivityToChange = CVAR_TO_FLOAT (rt_sensit_indir),

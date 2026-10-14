@@ -2300,17 +2300,15 @@ static const char *M_GetGiLevelName (void)
 		return "off";
 	if (v < 0.75f)
 		return "low";
-	if (v < 1.25f)
+	if (v < 1.5f)
 		return "medium";
-	if (v < 1.75f)
-		return "high";
 
-	return "ultra";
+	return "high";
 }
 
 static void M_StepGiLevel (int dir)
 {
-	static const float levels[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f };
+	static const float levels[] = { 0.0f, 0.5f, 1.0f, 2.0f };
 	const int numlevels = (int)(sizeof (levels) / sizeof (levels[0]));
 	const float cur = CVAR_TO_FLOAT (rt_gi_level);
 
