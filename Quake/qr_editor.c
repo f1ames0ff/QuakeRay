@@ -8657,11 +8657,10 @@ static void QR_Editor_Stop_f (void)
 // of the first reload of a material to <gamedir>/qre_dump.
 cvar_t qr_material_editor_debug = { "qr_material_editor_debug", "0", CVAR_NONE };
 
-/* The one developer switch: it is kept in step with the historical `developer`
-   cvar (either name sets the other) and it gates the editor commands. */
+/* The developer master switch: it gates the editor commands and the visibility
+   of the historical `developer` cvar, which exists only while it is on. */
 cvar_t qr_devmode = { "qr_devmode", "0", CVAR_NONE };
 
-static qboolean qre_devmode_syncing;
 static qboolean qre_devmode_on;
 
 static cmd_function_t *qre_devmode_editor_cmd;
@@ -8676,9 +8675,12 @@ static void QRE_DevmodeCommands (qboolean on)
 		if (qre_devmode_stop_cmd == NULL)
 			qre_devmode_stop_cmd = Cmd_AddCommand2 ("qr_editor_stop", QR_Editor_Stop_f, src_command);
 
+		if (!(developer.flags & CVAR_REGISTERED))
+			Cvar_RegisterVariable (&developer);
+
 		Observer_Register ();
 
-		Con_Printf ("devmode: on (qr_editor, qr_editor_stop and camera_observer are available)\n");
+		Con_Printf ("devmode: on (qr_editor, qr_editor_stop, camera_observer and the developer cvar are available)\n");
 	}
 	else
 	{
@@ -8694,6 +8696,7 @@ static void QRE_DevmodeCommands (qboolean on)
 		}
 
 		Observer_Unregister ();
+		Cvar_UnregisterVariable (&developer);
 
 		Con_Printf ("devmode: off (the dev commands are gone)\n");
 	}
@@ -8701,17 +8704,8 @@ static void QRE_DevmodeCommands (qboolean on)
 
 static void QRE_DevmodeChanged_f (cvar_t *var)
 {
-	// one switch under two names: mirror the value onto the other cvar first
-	// (the mirrored set lands back here and stops at the guard)
-	if (qre_devmode_syncing)
+	if (var != &qr_devmode)
 		return;
-
-	qre_devmode_syncing = true;
-	if (var == &qr_devmode)
-		Cvar_SetQuick (&developer, qr_devmode.string);
-	else
-		Cvar_SetQuick (&qr_devmode, developer.string);
-	qre_devmode_syncing = false;
 
 	if (CVAR_TO_BOOL (qr_devmode) == qre_devmode_on)
 		return;
@@ -8747,12 +8741,6 @@ void QR_Editor_Init (void)
 	Cvar_RegisterVariable (&qr_material_editor_debug);
 	Cvar_RegisterVariable (&qr_devmode);
 	Cvar_SetCallback (&qr_devmode, QRE_DevmodeChanged_f);
-	Cvar_SetCallback (&developer, QRE_DevmodeChanged_f);
-
-	// the merged switch starts in step with `developer`: a command line or a
-	// config may already carry a value (the mirror fires the callback above)
-	if (strcmp (developer.string, qr_devmode.string))
-		Cvar_SetQuick (&qr_devmode, developer.string);
 
 	// the font is part of the game data, next to the cursor artwork
 	font_size = COM_OpenFile ("gfx/Roboto-Regular.ttf", &font_handle, NULL);
