@@ -913,7 +913,7 @@ the entity origin, so any view position inside that will be valid
 */
 extern vrect_t scr_vrect;
 
-void V_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task)
+void V_RenderView (task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task)
 {
 	if (con_forcedup)
 	{
@@ -922,12 +922,10 @@ void V_RenderView (qboolean use_tasks, task_handle_t begin_rendering_task, task_
 
 	if (needs_relink)
 	{
-		if (use_tasks)
-			Sys_Error ("V_RenderView: entities needed relink in main draw");
-		CL_RelinkEntities ();
+		Sys_Error ("V_RenderView: entities needed relink in main draw");
 	}
 
-	R_RenderView (use_tasks, begin_rendering_task, setup_frame_task, draw_done_task);
+	R_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
 	return;
 }
 

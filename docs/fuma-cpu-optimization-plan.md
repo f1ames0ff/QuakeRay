@@ -7,8 +7,8 @@ marking and the stage-2.3 cleanup (the changelog below records the trail and the
 
 ## 1. State of the tree
 
-- `r_tasks` default is **1** (`69798c01`); `r_tasks 0` is the deprecated serial path kept for bisection.
-  Task-mode joins show up as `cpu.wait_ms > 0`.
+- The task frame is the only render path (`r_tasks` and its serial fork were retired on 2026-10-14).
+  Task-frame joins show up as `cpu.wait_ms > 0`.
 - The particle/cluster branch landed with PR #41 (cluster list publication, particle point transport, the
   stand-in gate, the water composite). The former "other lane" ownership is gone; new work on those paths
   must keep the contracts in `docs/multithreading.md` and `docs/branch-handoff-particle-cluster-cache.md`.
@@ -170,7 +170,7 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   frame intervals at or below 16.67 ms; report p99, max and the over-budget fraction.
 - Literal all-green ledger against the 5.5/11.1 ms thresholds without recolouring, hiding, resetting history
   or discarding frames; host, GPU and excluded rows reported separately.
-- Both `r_tasks 0` (bisection) and `r_tasks 1` (default) remain preserved while the fork exists.
+- The serial fork's bisection baseline is retired (2026-10-14); compare against the task-frame captures.
 
 ## 9. Rules and verification
 
@@ -275,7 +275,7 @@ with the RT renderer side; upstream vkQuake 1.37 has its own RT line as a refere
   H12 devstats gate; H04 prefix clearing in `RT_TRACK_BeginFrame`; H09 entity-side per-model sky
   classification (`used_specials`); H13 emissive-diagnostics ownership fix (atomic counters; the gate
   dropped as unmeasurable); the Debug duplicate-find consolidation in the renderer. The runner now
-  validates the clouds quality per profile and the bench settings record `r_tasks`/`r_parallelmark`.
+  validates the clouds quality per profile and the bench settings record `r_parallelmark`.
   Build and CTest green.
 - 2026-10-11 (parallel world marking, v2): the marking pipeline runs as `prepare -> mark_leafs
   (64 leaf chunks, word-run atomic OR into the shared surfvis mask) -> {store_efrags, chain_slices

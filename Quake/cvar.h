@@ -93,6 +93,8 @@ void Cvar_RegisterVariable (cvar_t *variable);
 // registers a cvar that already has the name, string, and optionally
 // the archive elements set.
 
+void Cvar_UnregisterVariable (cvar_t *variable);
+
 cvar_t *Cvar_Create (const char *name, const char *value);
 // creates+registers a cvar, otherwise just returns it.
 

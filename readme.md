@@ -2,7 +2,7 @@
 
 # QuakeRay engine
 
-QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, with improvements to materials, light sources, skies and visual effects. It runs on Vulkan using NVIDIA NVRHI.
+QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, with improvements to materials, light sources, skies and visual effects. It runs on Vulkan using NVIDIA NVRHI, with a multithreaded render frame built on the engine's own task graph.
 
 [Download](https://github.com/f1ames0ff/QuakeRay/releases) · [What's new](changelog.md) · [Report a problem](https://github.com/f1ames0ff/QuakeRay/issues)
 
@@ -17,7 +17,8 @@ unavailable tools or coverage gaps.
 ### Lighting and editing
 
 - **Q2RTX-based ray-traced lighting**, with light bouncing around rooms, reflections and shadows.
-- **DTAL System (Dynamic Texture Area Lights)** — glowing textures on walls, models and moving objects act as light sources. Only the glowing parts emit light, following their shape, color and animation.
+- **An indirect lighting quality ladder** (`rt_gi_level`) — off, low, medium, high and ultra trade the number of indirect bounces against their resolution; every bounce samples the light list, the sun and the sky, the second bounce included.
+- **DTAL System (Dynamic Texture Area Lights)** — glowing textures on walls, models and moving objects act as light sources. Only the glowing parts emit light, following their shape, color and animation; nearby pieces group into a single area light by default.
 - **Lighting and Material Editor**, built into the game:
   - Change textures, shininess, glow and the light a surface gives off.
   - Add and adjust lights, including spotlights, and change the sky, sun, clouds and fog.
@@ -27,6 +28,7 @@ unavailable tools or coverage gaps.
   - Take clean screenshots with **photocam**: the world freezes, the interface is hidden except the console, and the free camera flies with WASD and the mouse.
 - **ReSTIR direct light sampling, NEE (Next Event Estimation) and ASVGF denoising** for more stable lighting and a cleaner image.
 - **PBR materials**, with adjustable roughness, metalness, emission and normal maps.
+- **Texture overlays and per-material UV transforms** — `texture_overlay` paints an RGBA image over a material's base texture without replacing it (traced glass keeps its base look), and `texture_scale_u/v` / `texture_offset_u/v` resize and shift all of the material's texture maps at once.
 - **Ray-traced water**, with moving waves, reflections and refraction.
 - **Ray-traced glass materials**, with per-pane refraction, thickness and colour, and light that crosses a pane tinted and shifted.
 
@@ -40,8 +42,9 @@ unavailable tools or coverage gaps.
 - **Soft, lit smoke trails** for rockets, grenades and lava balls, with a classic smoke option.
 - **Smooth or classic texture filtering**, and a choice of particle styles.
 - **FSR 3.1 upscaling** to improve performance, plus adjustable lighting, cloud and reflection quality.
-- **CPU task-graph multithreading platform** — a reusable worker pool, scalar/indexed tasks, dependencies, synchronized upload channels and frame-aware profiling provide the foundation for adapting further CPU work. Render-scene producers already use it; this does not mean the whole engine or arbitrary existing code is worker-safe. Historical same-binary Debug A/B captures recorded FPS gains of around **40%** in selected CPU-bound scenes, not a guaranteed gain for every map or the final binary. On by default since 2026-10-11; `r_tasks 0` is the deprecated serial path kept for bisection. See the [agent adaptation checklist](docs/multithreading.md#agent-checklist-adapting-an-existing-solution) and [benchmark evidence](PERFORMANCE.md).
-- **Vsync options**, including adaptive vsync and a FreeSync mode.
+- **CPU task-graph multithreading platform** — a reusable worker pool, scalar/indexed tasks, dependencies, synchronized upload channels and frame-aware profiling provide the foundation for adapting further CPU work. Render-scene producers already use it; this does not mean the whole engine or arbitrary existing code is worker-safe. Historical same-binary Debug A/B captures recorded FPS gains of around **40%** in selected CPU-bound scenes, not a guaranteed gain for every map or the final binary. It has been the engine's only render path since 2026-10-14, when the `r_tasks` switch and its serial fork were retired. See the [agent adaptation checklist](docs/multithreading.md#agent-checklist-adapting-an-existing-solution) and [benchmark evidence](PERFORMANCE.md).
+- **A fullscreen mode choice** — windowed, borderless, or a real exclusive fullscreen (`vid_fullscreen 2`).
+- **Vsync options**, including adaptive vsync and a FreeSync mode; with vsync off the renderer prefers an immediate present mode for the least input lag.
 
 ### Game data and compatibility
 
@@ -67,10 +70,10 @@ QuakeRay is still in development. Some maps and mods may have visual or compatib
 - Full path tracing and further lighting improvements
 - More visual effects
 - Improved Arcane Dimensions support
-- Production-ready whole-frame CPU multithreading: the render task path is already enabled by
-  default (`r_tasks 1` since 2026-10-11; `r_tasks 0` remains the deprecated serial path kept for
-  bisection). Continue by extending task coverage beyond render producers, reducing measured
-  serial/lock bottlenecks, hardening scheduling and completing the correctness/scalability matrix.
+- Production-ready whole-frame CPU multithreading: the render task frame is the only path since the
+  serial fork was retired (2026-10-14). Continue by extending task coverage beyond render producers,
+  reducing measured serial/lock bottlenecks, hardening scheduling and completing the
+  correctness/scalability matrix.
   See the
   [multithreading milestones and acceptance gates](docs/multithreading.md#roadmap-to-production-ready-whole-frame-multithreading).
 

@@ -47,7 +47,6 @@ extern cvar_t r_nolerp_list;
 extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
 
 extern cvar_t r_gpulightmapupdate;
-extern cvar_t r_tasks;
 extern cvar_t r_parallelmark;
 
 extern cvar_t rt_elight_normaliz;
@@ -230,7 +229,6 @@ void R_Init (void)
 	Cvar_SetCallback (&r_slimealpha, R_SetSlimealpha_f);
 
 	Cvar_RegisterVariable (&r_gpulightmapupdate);
-	Cvar_RegisterVariable (&r_tasks);
 	Cvar_RegisterVariable (&r_parallelmark);
 
 	R_InitParticles ();
@@ -459,6 +457,10 @@ R_TimeRefresh_f
 For program optimization
 ====================
 */
+static void R_TimeRefreshNoop (void *unused)
+{
+}
+
 void R_TimeRefresh_f (void)
 {
 	int   i;
@@ -475,10 +477,26 @@ void R_TimeRefresh_f (void)
 	start = Sys_DoubleTime ();
 	for (i = 0; i < 128; i++)
 	{
-		GL_BeginRendering (false, NULL, &glx, &gly, &glwidth, &glheight);
 		r_refdef.viewangles[1] = i / 128.0 * 360.0;
-		R_RenderView (false, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE);
-		GL_EndRendering (false, false);
+
+		task_handle_t begin_rendering_task = INVALID_TASK_HANDLE;
+		if (!GL_BeginRendering (&begin_rendering_task, &glx, &gly, &glwidth, &glheight))
+			break;
+
+		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (R_TimeRefreshNoop, NULL, 0);
+		task_handle_t draw_done_task = Task_AllocateAndAssignFunc (R_TimeRefreshNoop, NULL, 0);
+		R_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
+		task_handle_t end_rendering_task = GL_EndRendering ();
+
+		Task_AddDependency (draw_done_task, end_rendering_task);
+
+		task_handle_t tasks[] = {begin_rendering_task, setup_frame_task, draw_done_task, end_rendering_task};
+		Tasks_Submit (sizeof (tasks) / sizeof (task_handle_t), tasks);
+
+		while (!Task_Join (draw_done_task, 10))
+			S_ExtraUpdate ();
+		prev_end_rendering_task = end_rendering_task;
+		GL_SynchronizeEndRenderingTask ();
 	}
 
 	// glFinish ();

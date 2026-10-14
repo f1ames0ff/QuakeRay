@@ -316,7 +316,6 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&noexit);
 	Cvar_SetCallback (&noexit, Host_Callback_Notify);
 	Cvar_RegisterVariable (&skill);
-	Cvar_RegisterVariable (&developer);
 	Cvar_RegisterVariable (&coop);
 	Cvar_RegisterVariable (&deathmatch);
 
@@ -1014,7 +1013,7 @@ void _Host_Frame (double time)
 	// have ended in has settled
 	CL_BenchShowPendingResults ();
 
-	SCR_UpdateScreen (true);
+	SCR_UpdateScreen (false);
 
 	double prof_particles = RT_Prof_Begin ();
 	CL_RunParticles (); // johnfitz -- seperated from rendering

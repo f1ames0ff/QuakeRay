@@ -1510,7 +1510,6 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "r_drawviewmodel");
 	RT_Bench_Setting (f, "r_enhancedmodels");
 	RT_Bench_Setting (f, "r_simd");
-	RT_Bench_Setting (f, "r_tasks");
 	RT_Bench_Setting (f, "r_parallelmark");
 	RT_Bench_Setting (f, "r_lerpmodels");
 	RT_Bench_Setting (f, "r_smoke");
@@ -3376,11 +3375,8 @@ void GL_SynchronizeEndRenderingTask (void)
 GL_BeginRendering
 =================
 */
-qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *x, int *y, int *width, int *height)
+qboolean GL_BeginRendering (task_handle_t *begin_rendering_task, int *x, int *y, int *width, int *height)
 {
-	if (!use_tasks)
-		GL_SynchronizeEndRenderingTask ();
-
 	if (vid.restart_next_frame)
 	{
 		VID_Restart (false);
@@ -3391,10 +3387,7 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 	*width = vid.width;
 	*height = vid.height;
 
-	if (use_tasks)
-		*begin_rendering_task = Task_AllocateAndAssignFunc (GL_BeginRenderingTask, NULL, 0);
-	else
-		GL_BeginRenderingTask (NULL);
+	*begin_rendering_task = Task_AllocateAndAssignFunc (GL_BeginRenderingTask, NULL, 0);
 
 	return true;
 }
@@ -4053,31 +4046,21 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 GL_EndRendering
 =================
 */
-task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
+task_handle_t GL_EndRendering (void)
 {
-	if (use_tasks)
-	{
-		if (++rt_end_task_serial == 0)
-			rt_end_task_serial = 1;
-		rt_end_task_current_serial = rt_end_task_serial;
+	if (++rt_end_task_serial == 0)
+		rt_end_task_serial = 1;
+	rt_end_task_current_serial = rt_end_task_serial;
 
-		RT_ProfWindowSubmitEnd (&rt_prof_window, &rt_prof_window_sync);
-	}
-	else
-		rt_end_task_current_serial = 0;
+	RT_ProfWindowSubmitEnd (&rt_prof_window, &rt_prof_window_sync);
 
 	end_rendering_parms_t parms = {
 		.serial = rt_end_task_current_serial,
-		.delay_ms = use_tasks ? (uint32_t)q_max (0.0f, CVAR_TO_FLOAT (rt_end_task_delay_ms)) : 0,
+		.delay_ms = (uint32_t)q_max (0.0f, CVAR_TO_FLOAT (rt_end_task_delay_ms)),
 		.vid_width = (float)vid.width,
 		.vid_height = (float)vid.height,
 	};
-	task_handle_t end_rendering_task = INVALID_TASK_HANDLE;
-	if (use_tasks)
-		end_rendering_task = Task_AllocateAndAssignFunc ((task_func_t)GL_EndRenderingTask, &parms, sizeof (parms));
-	else
-		GL_EndRenderingTask (&parms);
-	return end_rendering_task;
+	return Task_AllocateAndAssignFunc ((task_func_t)GL_EndRenderingTask, &parms, sizeof (parms));
 }
 
 /*

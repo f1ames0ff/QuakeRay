@@ -570,7 +570,7 @@ void Cvar_RegisterVariable (cvar_t *variable)
 	variable->flags |= CVAR_REGISTERED;
 
 	// copy the value off, because future sets will Mem_Free it
-	q_strlcpy (value, variable->string, sizeof (value));
+	q_strlcpy (value, variable->string ? variable->string : "0", sizeof (value));
 	variable->string = NULL;
 	variable->default_string = NULL;
 
@@ -583,6 +583,31 @@ void Cvar_RegisterVariable (cvar_t *variable)
 	Cvar_SetQuick (variable, value);
 	if (set_rom)
 		variable->flags |= CVAR_ROM;
+}
+
+void Cvar_UnregisterVariable (cvar_t *variable)
+{
+	cvar_t **link;
+
+	for (link = &cvar_vars; *link; link = &(*link)->next)
+	{
+		if (*link != variable)
+			continue;
+
+		*link = variable->next;
+		variable->next = NULL;
+		variable->flags &= ~CVAR_REGISTERED;
+
+		if (variable->string)
+			Mem_Free ((void *)variable->string);
+		if (variable->default_string)
+			Mem_Free ((void *)variable->default_string);
+
+		variable->string = NULL;
+		variable->default_string = NULL;
+		variable->value = 0.0f;
+		return;
+	}
 }
 
 /*
