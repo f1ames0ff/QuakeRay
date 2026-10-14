@@ -350,6 +350,7 @@ set(CORE_SOURCES
     shared/rt_alias.c
     Quake/rt_cluster_select.c
     Quake/rt_dtal_groups.c
+    Quake/rt_dtal_lod.c
     Quake/rt_material.c
     Quake/rt_lights.c
     Quake/rt_pkz.c
@@ -550,6 +551,7 @@ if(BUILD_TESTING)
         shared/rt_alias.c
         Quake/rt_cluster_select.c
         Quake/rt_dtal_groups.c
+        Quake/rt_dtal_lod.c
     )
     target_include_directories(rt_lighting_tests PRIVATE ${CMAKE_SOURCE_DIR}/Quake ${CMAKE_SOURCE_DIR}/shared)
 
