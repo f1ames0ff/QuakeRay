@@ -2410,6 +2410,7 @@ static int                  rt_dtal_lod_input_capacity;
 static uint32_t            *rt_dtal_lod_visibility;
 static int                  rt_dtal_lod_visibility_capacity;
 static qboolean             rt_dtal_lod_active;
+static qboolean             rt_dtal_lod_failed;
 static qboolean             rt_dtal_lod_rebuild_pending;
 static double               rt_dtal_lod_last_tick;
 static int                  rt_dtal_lod_cursor;
@@ -2446,6 +2447,7 @@ static int rt_dtal_lod_buried_refused;
 void RT_DtalLodRequestRebuild (void)
 {
 	rt_dtal_lod_rebuild_pending = true;
+	rt_dtal_lod_failed = false;
 }
 
 static void RT_DtalLod_MakeConfig (rt_dtal_lod_config_t *config)
@@ -2465,6 +2467,7 @@ static void RT_DtalLod_ResetState (void)
 		RT_Dtal_Lod_Reset (rt_dtal_lod_state);
 
 	rt_dtal_lod_active = false;
+	rt_dtal_lod_failed = false;
 	rt_dtal_lod_rebuild_pending = false;
 	rt_dtal_lod_last_tick = 0.0;
 	rt_dtal_lod_cursor = 0;
@@ -2534,6 +2537,7 @@ static void RT_DtalLod_BuildHierarchy (void)
 		              "the merges stay off\n",
 		              config.startDistance, config.screenAngleDeg, config.maxBands);
 		RT_Dtal_Lod_Reset (rt_dtal_lod_state);
+		rt_dtal_lod_failed = true;
 		return;
 	}
 
@@ -2831,7 +2835,7 @@ static void RT_DtalLod_Tick (void)
 {
 	if (!(CVAR_TO_FLOAT (rt_dtal_lod) > 0.0f))
 	{
-		if (rt_dtal_lod_active || rt_dtal_lod_rebuild_pending)
+		if (rt_dtal_lod_active || rt_dtal_lod_failed || rt_dtal_lod_rebuild_pending)
 			RT_DtalLod_ResetState ();
 
 		return;
@@ -2839,13 +2843,13 @@ static void RT_DtalLod_Tick (void)
 
 	if (!rt_dtal_groups_active || rt_dtal_build == NULL)
 	{
-		if (rt_dtal_lod_active || rt_dtal_lod_rebuild_pending)
+		if (rt_dtal_lod_active || rt_dtal_lod_failed || rt_dtal_lod_rebuild_pending)
 			RT_DtalLod_ResetState ();
 
 		return;
 	}
 
-	if (rt_dtal_lod_rebuild_pending || !rt_dtal_lod_active)
+	if (rt_dtal_lod_rebuild_pending || (!rt_dtal_lod_active && !rt_dtal_lod_failed))
 		RT_DtalLod_BuildHierarchy ();
 
 	if (!rt_dtal_lod_active)
