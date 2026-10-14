@@ -187,8 +187,8 @@ The aggregation does not run every frame and does not publish every frame:
 |---|---|---|
 | `rt_dtal_lod` | `0` during development; release default is an owner decision | master switch |
 | `rt_dtal_lod_start` | `512` (about the owner's 10 m example; tune) | merge start distance, world units |
-| `rt_dtal_lod_screen` | `2.0` (tune) | target cluster angular size, degrees |
-| `rt_dtal_lod_maxbands` | `4` (tune) | band cap |
+| `rt_dtal_lod_screen` | `2.0` (tune) | target angular size of one cluster cell seen from the camera, degrees (the cell subtends about `theta` at the band's near edge and `theta/2` at its far edge) |
+| `rt_dtal_lod_maxbands` | `4` (tune) | number of doubling distance bands (band `k` spans `[d0*2^k, d0*2^(k+1))`; the cell size doubles per band and caps at the last one) |
 | `rt_dtal_lod_offscreen` | `1` (tune) | band shift for off-frustum / not-visible rows |
 | `rt_dtal_lod_hysteresis` | `0.15` | edge hysteresis fraction |
 | `rt_dtal_lod_dwell` | `0.25` | minimum class dwell, seconds |
