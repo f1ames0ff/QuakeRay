@@ -152,6 +152,7 @@ private:
     void UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex);
     void BuildOverflow();
     void MarkTailDirty(uint32_t cluster);
+    void NoteStatsReset(uint32_t slot);
     bool BuildTailBlock(uint32_t cluster, float &outBeta);
     void RebuildDirtyTails();
     bool BuildGrid(const WorldLights &worldLights, float reach);
@@ -296,6 +297,7 @@ private:
         std::vector<std::pair<uint32_t, int32_t>> deniedDelta;
         std::vector<uint32_t>                     tailDirty;
         std::vector<uint32_t>                     appendedSlots;
+        std::vector<uint32_t>                     statsResets;
         uint32_t                                  reachGated = 0;
         uint32_t                                  topUpGrants = 0;
         uint32_t                                  violations = 0;

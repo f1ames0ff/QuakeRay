@@ -440,6 +440,7 @@ void ClusterLightLists::BeginSources(const WorldLights &worldLightsRef,
             topUpSlices[s].deniedDelta.clear();
             topUpSlices[s].tailDirty.clear();
             topUpSlices[s].appendedSlots.clear();
+            topUpSlices[s].statsResets.clear();
             topUpSlices[s].reachGated = 0;
             topUpSlices[s].topUpGrants = 0;
             topUpSlices[s].violations = 0;
@@ -491,6 +492,9 @@ void ClusterLightLists::FinishSources()
 
             for (uint32_t cluster : slice.tailDirty)
                 tailDirtyClusters.push_back(cluster);
+
+            for (uint32_t slot : slice.statsResets)
+                statsResets.push_back(slot);
 
             stats.reachGated += slice.reachGated;
             stats.topUpGrants += slice.topUpGrants;
@@ -1389,6 +1393,19 @@ void ClusterLightLists::MarkTailDirty(uint32_t cluster)
         tailDirtyClusters.push_back(cluster);
 }
 
+void ClusterLightLists::NoteStatsReset(uint32_t slot)
+{
+    if (!collectStatsResets)
+    {
+        return;
+    }
+
+    if (activeSliceTls)
+        activeSliceTls->statsResets.push_back(slot);
+    else
+        statsResets.push_back(slot);
+}
+
 /* Takes the origins, the leaves and the reaches this frame registered over the sources of the
    lights that were granted their slots again on it, in the place each of them already stands in.
 
@@ -1765,7 +1782,7 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
                 slotHoles[cluster]--;
 
                 if (collectStatsResets)
-                    statsResets.push_back(base + s);
+                    NoteStatsReset(base + s);
 
                 if (activeSliceTls && pendingValidate)
                     activeSliceTls->appendedSlots.push_back(base + s);
@@ -1786,7 +1803,7 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
         slotFill[cluster] = fill + 1;
 
         if (collectStatsResets)
-            statsResets.push_back(base + fill);
+            NoteStatsReset(base + fill);
 
         if (activeSliceTls && pendingValidate)
             activeSliceTls->appendedSlots.push_back(base + fill);
@@ -1844,7 +1861,7 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     pTopUp[farthest] = fromTopUp ? 1 : 0;
 
     if (collectStatsResets)
-        statsResets.push_back(base + farthest);
+        NoteStatsReset(base + farthest);
 
     MarkTailDirty(cluster);
     return true;

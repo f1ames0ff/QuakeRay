@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 namespace
@@ -510,6 +511,90 @@ void TestRegistryConsistency(const SyntheticMap &map)
           "a light lost from the renderer registry is detected");
 }
 
+void FeedParallel(qray::ClusterLightLists &lists, const qray::WorldLights &world,
+                  const std::vector<TestLight> &lights, uint32_t &frameIndex, qray::UserPrint *pPrint,
+                  uint32_t slices)
+{
+    std::vector<QrClusterLightSource> sources(lights.size());
+
+    for (size_t i = 0; i < lights.size(); i++)
+    {
+        sources[i].uniqueID = lights[i].uid;
+        sources[i].origin.data[0] = 1000.0f;
+        sources[i].origin.data[1] = 1000.0f;
+        sources[i].origin.data[2] = 1000.0f;
+        sources[i].cluster = lights[i].cluster;
+        sources[i].reach = 0.0f;
+        sources[i].radius = 0.0f;
+        sources[i].clusterCount = 0;
+        sources[i].pClusters = nullptr;
+        sources[i].power = 1.0f;
+    }
+
+    QrClusterLightSourcesUploadInfo upload = {};
+    upload.numLights = uint32_t(sources.size());
+    upload.pLights = sources.data();
+    upload.topUpReach = 1000000.0f;
+    upload.allowIncremental = 1;
+    upload.allowOverflow = 0;
+    upload.validate = 0;
+
+    lists.BeginSources(world, upload, nullptr, pPrint, frameIndex++, slices);
+
+    std::vector<std::thread> threads;
+
+    for (uint32_t s = 0; s < slices; s++)
+    {
+        threads.emplace_back([&lists, s, slices]()
+        {
+            lists.RunTopUpSlice(s, slices);
+        });
+    }
+
+    for (std::thread &thread : threads)
+    {
+        thread.join();
+    }
+
+    lists.FinishSources();
+}
+
+void TestParallelSlices(const SyntheticMap &big)
+{
+    std::vector<TestLight> first;
+    std::vector<TestLight> changed;
+
+    for (uint32_t i = 0; i < 200; i++)
+    {
+        first.push_back({ 9000 + i, 2 + (i % 100) });
+        changed.push_back({ 9500 + i, 2 + ((i * 37) % 100) });
+    }
+
+    qray::ClusterLightLists serial;
+    PrintState serialPrint;
+    qray::UserPrint serialPrinter(&CapturePrint, &serialPrint);
+    uint32_t serialFrame = 0;
+
+    FeedFrame(serial, big.world, first, serialFrame, &serialPrinter, 1000000.0f, 0, 0);
+    FeedFrame(serial, big.world, changed, serialFrame, &serialPrinter, 1000000.0f, 0, 0);
+
+    qray::ClusterLightLists parallel;
+    PrintState parallelPrint;
+    qray::UserPrint parallelPrinter(&CapturePrint, &parallelPrint);
+    uint32_t parallelFrame = 0;
+
+    FeedParallel(parallel, big.world, first, parallelFrame, &parallelPrinter, 8);
+    FeedParallel(parallel, big.world, changed, parallelFrame, &parallelPrinter, 8);
+
+    CHECK(parallel.GetStats().composedFrames == 0, "a frame of parallel slices patches the lists");
+    CHECK(parallel.GetStatsResetCount() > 0, "a frame of parallel slices collects the slots it changed");
+    CHECK(parallel.GetStatsResetCount() == serial.GetStatsResetCount(),
+          "parallel slices collect the resets of a whole-frame run (%u against %u)",
+          parallel.GetStatsResetCount(), serial.GetStatsResetCount());
+
+    CHECK(serialPrint.problems == 0 && parallelPrint.problems == 0, "the composition validation reports no mismatch");
+}
+
 } // namespace
 
 int main()
@@ -525,6 +610,7 @@ int main()
     TestTailBudget(big);
     TestStatsResets(map);
     TestRegistryConsistency(map);
+    TestParallelSlices(big);
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
 
