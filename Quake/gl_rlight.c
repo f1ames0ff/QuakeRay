@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "rt_lights.h"
+#include "rt_light_admit.h"
 
 extern cvar_t r_flatlightstyles; // johnfitz
 extern cvar_t r_lerplightstyles;
@@ -913,7 +914,6 @@ int rt_cluster_last_attempts; /* additions that frame attempted */
 int rt_cluster_last_dropped;  /* additions that frame lost to the cap */
 int rt_cluster_last_dirty;
 int rt_cluster_last_move_footprint;
-int rt_light_budget_used;
 
 int rt_cluster_demand_max;        /* most accepted candidates a cluster held before ranking */
 int rt_cluster_demand_median;     /* median of the per-cluster candidate counts */
@@ -921,6 +921,8 @@ int rt_cluster_demand_p95;        /* 95th percentile of the per-cluster candidat
 int rt_cluster_tail_entries;      /* overflow entries published */
 int rt_cluster_tail_clusters;     /* clusters with a non-empty overflow tail */
 int rt_cluster_tail_budget;       /* clusters whose tail did not fit the published budget */
+
+static rt_light_budget_t rt_light_budget;
 
 static SDL_mutex *rt_cluster_reg_mutex;
 
@@ -936,13 +938,13 @@ void RT_ClusterLightListsReset (void)
 	rt_light_diag_denied = 0;
 	rt_cluster_reg_attempts = 0;
 	rt_cluster_reg_dropped = 0;
-	rt_light_budget_used = 0;
+	RT_LightBudgetInit (&rt_light_budget);
 	VectorCopy (r_refdef.vieworg, rt_cluster_vieworg);
 }
 
 int RT_LightBudgetAvailable (void)
 {
-	return QR_CLUSTER_MAX_REGISTERED_LIGHTS - rt_light_budget_used;
+	return RT_LightBudgetRemaining (&rt_light_budget);
 }
 
 qboolean RT_LightBudgetTake (int count)
@@ -954,10 +956,7 @@ qboolean RT_LightBudgetTake (int count)
 
 	SDL_LockMutex (rt_cluster_reg_mutex);
 
-	taken = (count > 0 && count <= QR_CLUSTER_MAX_REGISTERED_LIGHTS - rt_light_budget_used);
-
-	if (taken)
-		rt_light_budget_used += count;
+	taken = RT_LightBudgetClaim (&rt_light_budget, count) != 0;
 
 	SDL_UnlockMutex (rt_cluster_reg_mutex);
 

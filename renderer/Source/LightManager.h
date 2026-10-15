@@ -42,6 +42,7 @@ public:
 
     static constexpr uint32_t LIGHT_STATS_CLUSTER_COUNT = 8192;
     static constexpr uint32_t LIGHT_STATS_SLOT_COUNT = 3;
+    static constexpr float    kLightMinColorSum = 0.0001f;
 
     static constexpr uint32_t CLUSTER_SKY_VIS_WORD_COUNT = LIGHT_STATS_CLUSTER_COUNT / 32;
 

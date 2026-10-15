@@ -2657,6 +2657,36 @@ void ClusterLightLists::GetClusterList(uint32_t cluster, uint64_t *pUniqueIds, u
     }
 }
 
+void ClusterLightLists::GetClusterSlots(uint32_t cluster, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const
+{
+    if (cluster >= numClusters)
+    {
+        if (pCount != nullptr)
+        {
+            *pCount = 0;
+        }
+
+        return;
+    }
+
+    const uint32_t  fill = slotFill[cluster];
+    const uint64_t *pSrc = &slotUids[size_t(cluster) * kMaxPerList];
+    const uint32_t  count = std::min(fill, maxCount);
+
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (pUniqueIds != nullptr)
+        {
+            pUniqueIds[i] = pSrc[i];
+        }
+    }
+
+    if (pCount != nullptr)
+    {
+        *pCount = count;
+    }
+}
+
 void ClusterLightLists::GetClusterTail(uint32_t cluster, uint64_t *pUniqueIds, float *pProb, float *pMarginal,
                                        uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount) const
 {

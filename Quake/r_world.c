@@ -5997,27 +5997,6 @@ static void RT_RegisterWorldModelLight (const QrTexturedAreaLightUploadInfo *lt,
 	}
 }
 
-/* The light manager drops a light whose colour channels sum to less than 0.0001
-   (IsColorTooDim in qray). A light style or a dark animation frame switching the light off must
-   not push the colour below that: a dropped id leaves a hole in every cluster list naming it,
-   which is the whole-scene flicker. Keep the faintest possible emission instead. */
-#define RT_MIN_EMISSIVE_COLOR_SUM 0.0002f
-
-void RT_KeepEmissiveLightColor (vec3_t color)
-{
-	float sum = 0.0f;
-
-	for (int i = 0; i < 3; i++)
-		if (color[i] > 0.0f)
-			sum += color[i];
-
-	if (sum < RT_MIN_EMISSIVE_COLOR_SUM)
-	{
-		const float c = RT_MIN_EMISSIVE_COLOR_SUM * (1.0f / 3.0f);
-		color[0] = color[1] = color[2] = c;
-	}
-}
-
 static void RT_RefreshStoredWorldProxyLights (void)
 {
 	for (int i = 0; i < rt_wldlights_proxy_world_count; i++)

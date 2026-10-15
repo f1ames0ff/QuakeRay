@@ -80,11 +80,14 @@ public:
     void Reset();
 
     const QrClusterLightStats &GetStats() const { return stats; }
+    uint32_t GetStatsResetCount() const { return uint32_t(statsResets.size()); }
+    bool     GetStatsHistoryCleared() const { return statsClearHistory; }
 
     // Slot accounting of the lights of the last frame, in the order the frame registered them,
     // and one cluster list as the lists were left for it.
     void GetGrants(uint32_t *pGranted, uint32_t *pDenied, uint32_t maxCount, uint32_t *pCount) const;
     void GetClusterList(uint32_t cluster, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const;
+    void GetClusterSlots(uint32_t cluster, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const;
     void GetClusterTail(uint32_t cluster, uint64_t *pUniqueIds, float *pProb, float *pMarginal,
                         uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount) const;
     void ValidateComposition(UserPrint *pUserPrint) const;
