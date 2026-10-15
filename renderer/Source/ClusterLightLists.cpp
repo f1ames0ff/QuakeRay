@@ -63,14 +63,6 @@ constexpr float kSourceMargin = 32.0f;        // Quake units
 
 static_assert(kSourceMargin >= kSourceQuantum * 1.7320508f, "the source margin must cover a whole quantum");
 
-/* Places of lights that left the scene that a frame may keep instead of composing. Keeping them
-   is what lets the lights that stay keep the places their slots name them by until a light
-   appears to take them, and it costs a bit of the membership set and a word of the grid that a
-   composition takes back. A set that keeps a quarter of its lights in places of lights that are
-   gone is the one that composes, and the handful is what keeps a set of a few lights from
-   composing over the couple of places a light that flickers leaves behind. */
-constexpr uint32_t kMaxTombstones = 16;
-
 /* The source index a slot holds while it names no light. A list keeps such a slot in the place
    a light left instead of closing it with the last slot of the cluster: the statistics and the
    sampling strata are addressed by the slot, so moving another light into it would re-sample
@@ -223,6 +215,9 @@ void ClusterLightLists::Reset()
     tailEntryCount = 0;
 
     stats = QrClusterLightStats{};
+    statsResets.clear();
+    collectStatsResets = false;
+    statsClearHistory = false;
     warnedAboutFullList = false;
 }
 
@@ -259,6 +254,9 @@ void ClusterLightLists::BeginSources(const WorldLights &worldLightsRef,
     stats.tailMs = 0.0f;
     stats.incrementalDirty = 0;
     stats.moveFootprint = 0;
+    statsResets.clear();
+    collectStatsResets = false;
+    statsClearHistory = false;
 
     const uint32_t clusterCount = worldLightsRef.GetClusterCount();
 
@@ -399,26 +397,36 @@ void ClusterLightLists::BeginSources(const WorldLights &worldLightsRef,
            granted its slots again once it has walked out of its quantum. */
         pendingShape = kShapeReuse;
     }
-    else if (composeable && compositionOrder && uploadInfo.allowIncremental != 0 &&
-             UpdateSourceSetBegin(worldLightsRef))
-    {
-        /* The light set the lists were built for is the frame's but for the lights that changed
-           on it -- the ones that moved, the ones that appeared and the ones that disappeared --
-           and the lists are wrong only where those lights reach: every other list of the scene
-           is the one the composition left. */
-        stats.reusedFrames = 1;
-        pendingShape = kShapeIncremental;
-    }
     else
     {
-        sources.swap(incoming); // the composition runs on the frame's own sources
-        // The counters are composed in the order of the sources, which is this frame's order,
-        // so there is nothing to map them through.
-        frameToSource.clear();
-        ComposeBegin(worldLightsRef, pUserPrint);
-        stats.composedFrames = 1;
-        compositionOrder = true;
-        pendingShape = kShapeCompose;
+        collectStatsResets = true;
+
+        const bool incremental = composeable && compositionOrder && uploadInfo.allowIncremental != 0 &&
+                                 UpdateSourceSetBegin(worldLightsRef);
+
+        if (incremental)
+        {
+            /* The light set the lists were built for is the frame's but for the lights that changed
+               on it -- the ones that moved, the ones that appeared and the ones that disappeared --
+               and the lists are wrong only where those lights reach: every other list of the scene
+               is the one the composition left. */
+            stats.reusedFrames = 1;
+            pendingShape = kShapeIncremental;
+        }
+        else
+        {
+            collectStatsResets = false;
+            statsResets.clear();
+            statsClearHistory = true;
+            sources.swap(incoming); // the composition runs on the frame's own sources
+            // The counters are composed in the order of the sources, which is this frame's order,
+            // so there is nothing to map them through.
+            frameToSource.clear();
+            ComposeBegin(worldLightsRef, pUserPrint);
+            stats.composedFrames = 1;
+            compositionOrder = true;
+            pendingShape = kShapeCompose;
+        }
     }
 
     if (pendingShape == kShapeIncremental || pendingShape == kShapeCompose)
@@ -615,7 +623,9 @@ void ClusterLightLists::FinishSources()
         }
 
         pendingLightManager->PrepareClusterListPublication(pendingFrameIndex, numClusters, offsets.data(), list.data(),
-                                                          listEntries, listGeneration, tails);
+                                                          listEntries, listGeneration, tails,
+                                                          statsResets.empty() ? nullptr : statsResets.data(),
+                                                          uint32_t(statsResets.size()), statsClearHistory);
         stats.publicationMask = pendingLightManager->GetLastPublicationMask();
     }
 
@@ -1469,9 +1479,7 @@ bool ClusterLightLists::UpdateSourceRecords()
    whatever the frame changed.
 
    Returns false for a frame this cannot be done for, which is a frame the caller composes: one
-   where the lights that changed are a large part of the set, because taking a light's slots
-   back costs a walk over every cluster of the map while the composition costs one PVS row per
-   light, and one whose tombstones have grown out of proportion to the lights that are left. */
+   the places and the records of the sources do not line up with the lights of the frame for. */
 bool ClusterLightLists::UpdateSourceSetBegin(const WorldLights &worldLightsRef)
 {
     const uint32_t added = stats.addedSources;
@@ -1502,31 +1510,10 @@ bool ClusterLightLists::UpdateSourceSetBegin(const WorldLights &worldLightsRef)
         return false;
     }
 
-    /* What a frame of this shape saves is one PVS row per light that did not change, and what it
-       costs that a composition does not is the walk over every cluster of the map that taking a
-       light's slots back is, once per cluster and not once per light; the composition is the
-       cheaper of the two only once almost the whole set changed, which is a frame of its own:
-       a light that appears or disappears on its own must never renumber the slots of the scene,
-       because every list of it is read by index and its statistics are addressed by that index. */
-    if (changed * 4 >= uint32_t(incoming.size()) * 3)
-    {
-        return false;
-    }
-
     /* The places the lights that appear are given: the ones kept of the frames before this one,
-       which hold no light, and the ones this frame's own lights give up. What the frame hands out
-       nothing for is what the set carries beyond the frame, and a composition is what takes that
-       back: it is a quarter of the frame's lights in places of lights that are gone, or more than
-       a handful of them, that is composed instead. The handful is what keeps a set of a few
-       hundred lights from composing over the places a couple of lights leave behind. */
+       which hold no light, and the ones this frame's own lights give up. */
     const uint32_t freePlaces = uint32_t(tombstoneIndices.size()) + removed;
     const uint32_t appended = (added > freePlaces) ? (added - freePlaces) : 0;
-    const uint32_t kept = freePlaces - added + appended;
-
-    if (kept > kMaxTombstones && kept * 4 > uint32_t(incoming.size()))
-    {
-        return false;
-    }
 
     const float  reach = topUpReach;
     const double tVis = NowMs();
@@ -1777,6 +1764,9 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
                 pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
                 slotHoles[cluster]--;
 
+                if (collectStatsResets)
+                    statsResets.push_back(base + s);
+
                 if (activeSliceTls && pendingValidate)
                     activeSliceTls->appendedSlots.push_back(base + s);
 
@@ -1794,6 +1784,9 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
         pTopUp[fill] = fromTopUp ? 1 : 0;
         pBits[sourceIndex >> 6] |= 1ull << (sourceIndex & 63);
         slotFill[cluster] = fill + 1;
+
+        if (collectStatsResets)
+            statsResets.push_back(base + fill);
 
         if (activeSliceTls && pendingValidate)
             activeSliceTls->appendedSlots.push_back(base + fill);
@@ -1849,6 +1842,9 @@ bool ClusterLightLists::AppendSlot(uint32_t cluster, uint32_t sourceIndex, float
     pDist2[farthest] = dist2;
     pSource[farthest] = sourceIndex;
     pTopUp[farthest] = fromTopUp ? 1 : 0;
+
+    if (collectStatsResets)
+        statsResets.push_back(base + farthest);
 
     MarkTailDirty(cluster);
     return true;
@@ -1929,7 +1925,6 @@ bool ClusterLightLists::BuildTailBlock(uint32_t cluster, float &outBeta)
     tailCandidates.clear();
 
     double fastMass = 0.0;
-    double tailMass = 0.0;
 
     for (const Candidate &candidate : candidateList)
     {
@@ -1938,15 +1933,29 @@ bool ClusterLightLists::BuildTailBlock(uint32_t cluster, float &outBeta)
         if (slotBits[size_t(cluster) * bitsWords + (candidate.source >> 6)] & mask)
             fastMass += double(candidate.mass);
         else
-        {
             tailCandidates.push_back({double(candidate.mass), candidate.uid, candidate.source});
-            tailMass += double(candidate.mass);
-        }
     }
 
     if (tailCandidates.empty())
     {
         return true;
+    }
+
+    const uint32_t perClusterCapacity =
+        std::max<uint32_t>(1, uint32_t(Q2_LIGHT_LIST_TAIL_CAPACITY) / std::max<uint32_t>(1, numClusters));
+
+    if (tailCandidates.size() > perClusterCapacity)
+    {
+        std::nth_element(tailCandidates.begin(), tailCandidates.begin() + perClusterCapacity, tailCandidates.end(),
+                         [](const TailCandidate &a, const TailCandidate &b) { return a.mass > b.mass; });
+        tailCandidates.resize(perClusterCapacity);
+    }
+
+    double tailMass = 0.0;
+
+    for (const TailCandidate &candidate : tailCandidates)
+    {
+        tailMass += candidate.mass;
     }
 
     std::sort(tailCandidates.begin(), tailCandidates.end(), [](const TailCandidate &a, const TailCandidate &b)

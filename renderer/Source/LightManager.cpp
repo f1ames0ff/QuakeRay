@@ -237,7 +237,9 @@ namespace
            angle is pulled strictly inside the outer one before the cosines are taken. The clamp
            stays in angle space and the outer angle keeps a floor, so the cosines of a beam
            narrow enough to round together still differ. */
-        const float angleOuter = std::max(info.angleOuter, static_cast<float>(kPi / 180.0));
+        const float angleOuter = std::isfinite(info.angleOuter)
+                                     ? std::max(info.angleOuter, static_cast<float>(kPi / 180.0))
+                                     : static_cast<float>(kPi / 180.0);
         const float angleInner = std::min(std::max(std::isfinite(info.angleInner) ? info.angleInner : 0.0f, 0.0f), angleOuter * 0.999f);
 
         ShLightEncoded light = {};
@@ -790,7 +792,7 @@ void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUplo
     }
 
     /* `!(x > 0)` rather than `x <= 0`: the latter takes a nan angle for a valid one. */
-    if (IsColorTooDim(info.color.data) || info.radius < 0.0f || !(info.angleOuter > 0.0f))
+    if (IsColorTooDim(info.color.data))
     {
         return;
     }
@@ -950,12 +952,27 @@ VkDeviceSize qray::LightManager::GetLightStatsClusterSize() const
     return GetLightStatsSlotSize() / LIGHT_STATS_CLUSTER_COUNT;
 }
 
+const uint32_t *qray::LightManager::GetClusterStatsResets(uint32_t frameIndex, uint32_t &count, bool &clearHistory) const
+{
+    const std::vector<uint32_t> &resets = statsSlotResets[frameIndex];
+
+    count = uint32_t(resets.size());
+    clearHistory = statsHistoryCleared[frameIndex];
+
+    return resets.empty() ? nullptr : resets.data();
+}
+
 bool qray::LightManager::PrepareClusterListPublication(uint32_t frameIndex, uint32_t numClusters,
                                                        const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
                                                        uint32_t totalLightCount, uint64_t listGeneration,
-                                                       const ClusterLightTailRange &tails)
+                                                       const ClusterLightTailRange &tails,
+                                                       const uint32_t *pStatsSlotResets, uint32_t statsSlotResetCount,
+                                                       bool clearStatsHistory)
 {
     publishPending = false;
+
+    statsSlotResets[frameIndex].clear();
+    statsHistoryCleared[frameIndex] = false;
 
     numClusters = std::min(numClusters, uint32_t(Q2_MAX_CLUSTERS));
     statsClusterTarget = numClusters;
@@ -1040,6 +1057,13 @@ bool qray::LightManager::PrepareClusterListPublication(uint32_t frameIndex, uint
     publishGeneration = listGeneration;
     publishLightUniqueIds = pLightUniqueIds;
     publishTails = tailsProvided ? tails : ClusterLightTailRange{};
+
+    if (statsSlotResetCount > 0 && pStatsSlotResets != nullptr)
+    {
+        statsSlotResets[frameIndex].assign(pStatsSlotResets, pStatsSlotResets + statsSlotResetCount);
+    }
+
+    statsHistoryCleared[frameIndex] = clearStatsHistory;
 
     uint32_t *pDstOffsets = static_cast<uint32_t *>(lightListOffsets->GetMapped(frameIndex));
 
@@ -1202,21 +1226,15 @@ void qray::LightManager::CommitClusterListPublication()
             }
         }
 
-        if (unresolved > 0)
+        if (unresolved > 0 && !warnedTailUnresolved)
         {
-            /* An accepted overflow source without a renderer record is a coherence failure:
-               publish a consistent fast-only frame instead of a distribution with holes. */
-            fprintf(stderr, "qray: %u overflow tail sources have no renderer record - the tail is left empty\n",
+            /* An accepted overflow source without a renderer record is a coherence failure, and
+               the entries that name it are dropped on their own: the rest of the frame's tail is
+               published the way it is, instead of the whole table going empty for one light. */
+            warnedTailUnresolved = true;
+
+            fprintf(stderr, "qray: %u overflow tail sources have no renderer record - those entries are dropped\n",
                     unresolved);
-
-            tailWordCount = 0;
-
-            uint32_t *pTailOffsets = static_cast<uint32_t *>(lightListTailOffsets->GetMapped(frameIndex));
-
-            for (uint32_t i = 0; i < 2 * Q2_MAX_CLUSTERS + 1; i++)
-            {
-                pTailOffsets[i] = 0;
-            }
         }
     }
 

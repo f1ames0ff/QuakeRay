@@ -913,6 +913,7 @@ int rt_cluster_last_attempts; /* additions that frame attempted */
 int rt_cluster_last_dropped;  /* additions that frame lost to the cap */
 int rt_cluster_last_dirty;
 int rt_cluster_last_move_footprint;
+int rt_light_budget_used;
 
 int rt_cluster_demand_max;        /* most accepted candidates a cluster held before ranking */
 int rt_cluster_demand_median;     /* median of the per-cluster candidate counts */
@@ -935,7 +936,32 @@ void RT_ClusterLightListsReset (void)
 	rt_light_diag_denied = 0;
 	rt_cluster_reg_attempts = 0;
 	rt_cluster_reg_dropped = 0;
+	rt_light_budget_used = 0;
 	VectorCopy (r_refdef.vieworg, rt_cluster_vieworg);
+}
+
+int RT_LightBudgetAvailable (void)
+{
+	return QR_CLUSTER_MAX_REGISTERED_LIGHTS - rt_light_budget_used;
+}
+
+qboolean RT_LightBudgetTake (int count)
+{
+	qboolean taken;
+
+	if (rt_cluster_reg_mutex == NULL)
+		rt_cluster_reg_mutex = SDL_CreateMutex ();
+
+	SDL_LockMutex (rt_cluster_reg_mutex);
+
+	taken = (count > 0 && count <= QR_CLUSTER_MAX_REGISTERED_LIGHTS - rt_light_budget_used);
+
+	if (taken)
+		rt_light_budget_used += count;
+
+	SDL_UnlockMutex (rt_cluster_reg_mutex);
+
+	return taken;
 }
 
 /* The reach a light of a moving entity is registered with, from rt_light_reach_dynamic: the

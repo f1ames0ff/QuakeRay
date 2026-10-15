@@ -886,7 +886,7 @@ QrTransform RT_GetBrushModelMatrix (entity_t *e)
 static qboolean  RT_FindNearestTeleport (const QrGeometryUploadInfo *info, uint8_t *result, qboolean *potentially_mirror);
 static QrFloat3D ApplyTransform (const QrTransform *transform, const vec3_t v);
 static gltexture_t *RT_CanonicalLightTex (texture_t *base, int alt);
-static void         RT_KeepEmissiveLightColor (vec3_t color);
+void RT_KeepEmissiveLightColor (vec3_t color);
 
 typedef struct rt_uploadsurf_state_t
 {
@@ -1853,6 +1853,11 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 {
 	if (!is_static_geom)
 	{
+		if (!RT_LightBudgetTake (1))
+		{
+			return;
+		}
+
 		Atomic_AddUInt32 (&rt_emis_stats.dynamic, 1);
 
 		QrTexturedAreaLightUploadInfo li = *light_info;
@@ -2446,7 +2451,7 @@ static uint64_t RT_DtalMix (uint64_t hash, uint64_t value)
 	return hash;
 }
 
-static void RT_KeepEmissiveLightColor (vec3_t color);
+void RT_KeepEmissiveLightColor (vec3_t color);
 
 #define RT_DTAL_LOD_TICK_BUDGET 256
 
@@ -3500,12 +3505,12 @@ static void RT_DtalGroups_UpdateFrame (void)
 	}
 }
 
-static void RT_DtalGroups_Register (void)
+static void RT_DtalGroups_Register (qboolean lodUploaded)
 {
 	if (!rt_dtal_groups_active || rt_dtal_build == NULL)
 		return;
 
-	if (rt_dtal_lod_active && rt_dtal_lod_state != NULL)
+	if (lodUploaded && rt_dtal_lod_state != NULL)
 	{
 		const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
 		const uint32_t            nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
@@ -3541,7 +3546,7 @@ static void RT_DtalGroups_Register (void)
 		const rt_dtal_source_t        *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
 		const rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
 
-		if (rt_dtal_lod_active && rt_dtal_lod_state != NULL && rt_dtal_lod_group_merged != NULL &&
+		if (lodUploaded && rt_dtal_lod_group_merged != NULL &&
 		    rt_dtal_lod_group_merged[gi])
 			continue;
 
@@ -5998,7 +6003,7 @@ static void RT_RegisterWorldModelLight (const QrTexturedAreaLightUploadInfo *lt,
    which is the whole-scene flicker. Keep the faintest possible emission instead. */
 #define RT_MIN_EMISSIVE_COLOR_SUM 0.0002f
 
-static void RT_KeepEmissiveLightColor (vec3_t color)
+void RT_KeepEmissiveLightColor (vec3_t color)
 {
 	float sum = 0.0f;
 
@@ -6066,18 +6071,21 @@ void RT_UploadAllWorldModelLights (void)
 
 	if (rt_dtal_groups_active && rt_dtal_build != NULL)
 	{
+		const qboolean lodUploaded = (rt_dtal_lod_active && rt_dtal_lod_state != NULL) &&
+		                             RT_DtalLod_BuildUpload () != 0;
+
 		if (rt_dtal_groups_rebuild_pending)
 		{
 			Atomic_StoreUInt32 (&rt_require_static_submit, true);
 		}
 
-		if (rt_dtal_lod_active && rt_dtal_lod_state != NULL && RT_DtalLod_BuildUpload ())
+		if (RT_LightBudgetTake (lodUploaded ? rt_dtal_lod_upload_parent_count : rt_dtal_build->groupCount))
 		{
 			const QrDtalGroupUploadBatch batch = {
-				.groupCount = (uint32_t) rt_dtal_lod_upload_parent_count,
-				.pGroups = rt_dtal_lod_upload_parents,
-				.memberCount = (uint32_t) rt_dtal_lod_upload_member_count,
-				.pMembers = rt_dtal_lod_upload_members,
+				.groupCount = (uint32_t) (lodUploaded ? rt_dtal_lod_upload_parent_count : rt_dtal_build->groupCount),
+				.pGroups = lodUploaded ? rt_dtal_lod_upload_parents : rt_dtal_parents,
+				.memberCount = (uint32_t) (lodUploaded ? rt_dtal_lod_upload_member_count : rt_dtal_build->memberCount),
+				.pMembers = lodUploaded ? rt_dtal_lod_upload_members : rt_dtal_members,
 			};
 
 			if (batch.groupCount > 0 && batch.memberCount > 0)
@@ -6085,24 +6093,10 @@ void RT_UploadAllWorldModelLights (void)
 				QrResult r = qrUploadDtalGroups (vulkan_globals.instance, &batch);
 				QR_CHECK (r);
 			}
-		}
-		else
-		{
-			const QrDtalGroupUploadBatch batch = {
-				.groupCount = (uint32_t) rt_dtal_build->groupCount,
-				.pGroups = rt_dtal_parents,
-				.memberCount = (uint32_t) rt_dtal_build->memberCount,
-				.pMembers = rt_dtal_members,
-			};
 
-			if (batch.groupCount > 0 && batch.memberCount > 0)
-			{
-				QrResult r = qrUploadDtalGroups (vulkan_globals.instance, &batch);
-				QR_CHECK (r);
-			}
+			RT_DtalGroups_Register (lodUploaded);
 		}
 
-		RT_DtalGroups_Register ();
 		RT_DtalGroupsDebugDraw ();
 
 		return;
@@ -6164,12 +6158,28 @@ void RT_UploadAllWorldModelLights (void)
 
 	if (CVAR_TO_BOOL (rt_wmodel_lights_batch))
 	{
-		/* The per-light cost is the call, not the light: hand the whole map over in one. */
-		QrResult r = qrUploadTexturedAreaLights (vulkan_globals.instance, rt_wldlights_emissive_upload,
-		                                         (uint32_t) rt_wldlights_emissive_count);
-		QR_CHECK (r);
+		int       emissiveCount = rt_wldlights_emissive_count;
+		const int emissiveBudget = RT_LightBudgetAvailable ();
 
-		for (int i = 0; i < rt_wldlights_emissive_count; i++)
+		if (emissiveCount > emissiveBudget)
+		{
+			emissiveCount = emissiveBudget;
+		}
+
+		if (emissiveCount > 0 && !RT_LightBudgetTake (emissiveCount))
+		{
+			emissiveCount = 0;
+		}
+
+		/* The per-light cost is the call, not the light: hand the whole map over in one. */
+		if (emissiveCount > 0)
+		{
+			QrResult r = qrUploadTexturedAreaLights (vulkan_globals.instance, rt_wldlights_emissive_upload,
+			                                         (uint32_t) emissiveCount);
+			QR_CHECK (r);
+		}
+
+		for (int i = 0; i < emissiveCount; i++)
 		{
 			RT_RegisterWorldModelLight (&rt_wldlights_emissive_upload[i], rt_wldlights_emissive_center[i]);
 		}
@@ -6179,6 +6189,11 @@ void RT_UploadAllWorldModelLights (void)
 		for (int i = 0; i < rt_wldlights_emissive_count; i++)
 		{
 			const QrTexturedAreaLightUploadInfo *lt = &rt_wldlights_emissive_upload[i];
+
+			if (!RT_LightBudgetTake (1))
+			{
+				break;
+			}
 
 			QrResult r = qrUploadTexturedAreaLight (vulkan_globals.instance, lt);
 			QR_CHECK (r);

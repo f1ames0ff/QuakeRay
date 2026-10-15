@@ -59,8 +59,7 @@ class WorldLights;
 // tombstone, which holds no slot and is the place the next light that appears is given, so that
 // no slot of any other light moves and a set that churns does not grow; and a light that appears
 // is granted the clusters it reaches from where it stands. Only the clusters the changes reach are
-// composed again, and the composition stays the answer wherever that cannot be proved right, which
-// is also what it does with the tombstones: it compacts them.
+// composed again, and the lists of every other cluster are the ones the composition left.
 class ClusterLightLists
 {
 public:
@@ -269,8 +268,7 @@ private:
        other light for as long as they are kept: every slot names its light by the place it holds,
        and a place that is kept names a light that is gone. They are kept because the lights that
        stay keep the places their slots name them by, and they are given back to the lights that
-       appear, so that a set that churns neither grows nor has to be composed; the set is
-       compacted by a composition once they outgrow the lights that are left. */
+       appear, so that a set that churns neither grows nor has to be composed. */
     std::vector<uint32_t> tombstoneIndices; // places in the sources
     /* Where each light of the frame stands in the sources: false while the sources are the
        frame's own lights in the frame's own order, true while they are the lights the lists
@@ -347,6 +345,10 @@ private:
     QrClusterLightStats stats{};
     bool warnedAboutFullList = false;
     bool warnedAboutClusterClamp = false;
+
+    std::vector<uint32_t> statsResets;   // kMaxPerList * cluster + slot
+    bool                  collectStatsResets = false;
+    bool                  statsClearHistory = false;
 
     // Sorted (uid, index) pairs of the live sources and of the frame being registered, used to
     // tell a light that moved from one that appeared or disappeared, and to put the per-light
