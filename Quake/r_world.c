@@ -1561,12 +1561,22 @@ static void RT_EmitEmissiveWirePolygon (const QrTexturedAreaLightUploadInfo *lt)
 
 #define RT_DTAL_DEBUG_MAX 4096
 
+enum
+{
+	RT_DTAL_DEBUG_KIND_NORMAL = 0,
+	RT_DTAL_DEBUG_KIND_PROJECTOR = 1,
+	RT_DTAL_DEBUG_KIND_NODE = 2,
+	RT_DTAL_DEBUG_KIND_MERGED = 3,
+	RT_DTAL_DEBUG_KIND_LINK = 4,
+	RT_DTAL_DEBUG_KIND_INDIVIDUAL = 5,
+};
+
 typedef struct
 {
 	vec3_t   center;
 	vec3_t   normal;
 	float    len;
-	qboolean projector;
+	int      kind;
 } rt_dtal_debug_arrow_t;
 
 static rt_dtal_debug_arrow_t rt_dtal_debug_arrow[RT_DTAL_DEBUG_MAX];
@@ -1586,7 +1596,7 @@ static void RT_DtalDebugUnlock (void)
 	Atomic_StoreUInt32 (&rt_dtal_debug_spin, 0);
 }
 
-static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area, qboolean projector)
+static void RT_DtalDebugAddArrow (const vec3_t center, const vec3_t normal, float len, int kind)
 {
 	RT_DtalDebugLock ();
 
@@ -1603,16 +1613,29 @@ static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float are
 		VectorCopy (center, arrow->center);
 		VectorCopy (normal, arrow->normal);
 
-		arrow->projector = projector;
-		arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+		arrow->kind = kind;
+		arrow->len = len;
 	}
 
 	RT_DtalDebugUnlock ();
 }
 
+static float RT_DtalDebugArrowLen (float area)
+{
+	return (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+}
+
+static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area, qboolean projector)
+{
+	RT_DtalDebugAddArrow (center, normal, RT_DtalDebugArrowLen (area),
+	                      projector ? RT_DTAL_DEBUG_KIND_PROJECTOR : RT_DTAL_DEBUG_KIND_NORMAL);
+}
+
 int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
 {
-	if (CVAR_TO_FLOAT (rt_dtal_debug) != 2.0f || rt_dtal_debug_frame != r_framecount || fb_w <= 0 || fb_h <= 0)
+	const float mode = CVAR_TO_FLOAT (rt_dtal_debug);
+
+	if ((mode != 2.0f && mode != 3.0f) || rt_dtal_debug_frame != r_framecount || fb_w <= 0 || fb_h <= 0)
 		return 0;
 
 	const float *m = vulkan_globals.view_projection_matrix;
@@ -1655,18 +1678,41 @@ int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
 		o[1] = sy0;
 		o[2] = sx1;
 		o[3] = sy1;
+		o[7] = 0.0f;
 
-		if (arrow->projector)
+		switch (arrow->kind)
 		{
+		case RT_DTAL_DEBUG_KIND_NODE:
+			o[4] = 0.25f;
+			o[5] = 0.85f;
+			o[6] = 1.0f;
+			break;
+		case RT_DTAL_DEBUG_KIND_MERGED:
+			o[4] = 1.0f;
+			o[5] = 0.45f;
+			o[6] = 0.1f;
+			break;
+		case RT_DTAL_DEBUG_KIND_LINK:
+			o[4] = 1.0f;
+			o[5] = 0.55f;
+			o[6] = 0.15f;
+			o[7] = 1.0f;
+			break;
+		case RT_DTAL_DEBUG_KIND_INDIVIDUAL:
+			o[4] = 0.35f;
+			o[5] = 1.0f;
+			o[6] = 0.35f;
+			break;
+		case RT_DTAL_DEBUG_KIND_PROJECTOR:
 			o[4] = 1.0f;
 			o[5] = 0.2f;
 			o[6] = 1.0f;
-		}
-		else
-		{
+			break;
+		default:
 			o[4] = (float) fabs (arrow->normal[0]);
 			o[5] = (float) fabs (arrow->normal[1]);
 			o[6] = (float) fabs (arrow->normal[2]);
+			break;
 		}
 
 		num++;
@@ -3515,6 +3561,118 @@ static void RT_DtalGroups_Register (void)
 	}
 }
 
+static qboolean RT_DtalLodGroupMerged (int gi)
+{
+	return rt_dtal_lod_active && rt_dtal_lod_group_merged != NULL && rt_dtal_lod_group_merged[gi] != 0;
+}
+
+static void RT_DtalLodDebugWireNode (const rt_dtal_lod_node_t *node, int *drawn)
+{
+	QrDtalMemberUpload            up;
+	QrTexturedAreaLightUploadInfo li = {0};
+
+	RT_DtalLod_MakeMemberQuad (node, &up);
+
+	for (int k = 0; k < 3; k++)
+	{
+		li.A.data[k] = up.A.data[k];
+		li.B.data[k] = up.B.data[k];
+		li.C.data[k] = up.C.data[k];
+		li.normal.data[k] = up.normal.data[k];
+	}
+
+	li.area = up.area;
+	li.numVerts = (int) up.numVerts;
+
+	for (int k = 0; k < li.numVerts && k < MAX_TEXTURED_AREA_LIGHT_VERTS; k++)
+	{
+		li.uvVerts[k].data[0] = up.uv[k].data[0];
+		li.uvVerts[k].data[1] = up.uv[k].data[1];
+	}
+
+	RT_EmitEmissiveWirePolygon (&li);
+	(*drawn)++;
+}
+
+static void RT_DtalLodDebugArrowNode (const rt_dtal_lod_node_t *node)
+{
+	RT_DtalDebugAddArrow (node->center, node->normal, RT_DtalDebugArrowLen (node->area), RT_DTAL_DEBUG_KIND_NODE);
+}
+
+static void RT_DtalLodDebugArrows (void)
+{
+	if (rt_dtal_build == NULL)
+		return;
+
+	if (!rt_dtal_lod_active || rt_dtal_lod_state == NULL)
+	{
+		for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+		{
+			const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+			const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+			if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 && rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+				continue;
+
+			RT_DtalDebugAddArrow (group->center, source->normal, RT_DtalDebugArrowLen (group->area), RT_DTAL_DEBUG_KIND_INDIVIDUAL);
+		}
+
+		return;
+	}
+
+	const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+	const uint32_t           *members = RT_Dtal_Lod_Members (rt_dtal_lod_state);
+	const uint32_t            nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+
+	for (uint32_t n = 0; n < nodeCount; n++)
+	{
+		const rt_dtal_lod_node_t *node = &nodes[n];
+
+		if (!rt_dtal_lod_node_states[n].effective)
+			continue;
+
+		RT_DtalLodDebugArrowNode (node);
+
+		for (uint32_t m = 0; m < node->memberCount; m++)
+		{
+			const uint32_t          gi = members[node->firstMember + m];
+			const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+
+			if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 && rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+				continue;
+
+			const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+			vec3_t                  dir;
+			float                   dist;
+
+			VectorSubtract (node->center, group->center, dir);
+			dist = (float) sqrt ((double) (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]));
+
+			if (dist > 1.0f)
+			{
+				VectorScale (dir, 1.0f / dist, dir);
+				RT_DtalDebugAddArrow (group->center, dir, dist, RT_DTAL_DEBUG_KIND_LINK);
+			}
+
+			RT_DtalDebugAddArrow (group->center, source->normal, RT_DtalDebugArrowLen (group->area), RT_DTAL_DEBUG_KIND_MERGED);
+		}
+	}
+
+	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 && rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+			continue;
+
+		if (RT_DtalLodGroupMerged (gi))
+			continue;
+
+		RT_DtalDebugAddArrow (group->center, source->normal, RT_DtalDebugArrowLen (group->area), RT_DTAL_DEBUG_KIND_INDIVIDUAL);
+	}
+}
+
 static void RT_DtalGroupsDebugDraw (void)
 {
 	const float mode = CVAR_TO_FLOAT (rt_dtal_debug);
@@ -3523,6 +3681,12 @@ static void RT_DtalGroupsDebugDraw (void)
 	if (rt_dtal_build == NULL || mode <= 0.0f)
 		return;
 
+	if (mode == 3.0f)
+	{
+		RT_DtalLodDebugArrows ();
+		return;
+	}
+
 	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
 	{
 		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
@@ -3530,6 +3694,9 @@ static void RT_DtalGroupsDebugDraw (void)
 
 		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
 		    rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+			continue;
+
+		if (RT_DtalLodGroupMerged (gi))
 			continue;
 
 		if (mode == 2.0f)
@@ -3566,6 +3733,28 @@ static void RT_DtalGroupsDebugDraw (void)
 
 		if (drawn >= RT_DTAL_DEBUG_MAX)
 			break;
+	}
+
+	if ((mode == 1.0f || mode == 2.0f) && rt_dtal_lod_active && rt_dtal_lod_state != NULL)
+	{
+		const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+		const uint32_t            nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+
+		for (uint32_t n = 0; n < nodeCount; n++)
+		{
+			if (mode == 1.0f)
+			{
+				if (drawn >= RT_DTAL_DEBUG_MAX)
+					break;
+
+				if (rt_dtal_lod_node_states[n].effective)
+					RT_DtalLodDebugWireNode (&nodes[n], &drawn);
+			}
+			else if (rt_dtal_lod_node_states[n].effective)
+			{
+				RT_DtalLodDebugArrowNode (&nodes[n]);
+			}
+		}
 	}
 }
 

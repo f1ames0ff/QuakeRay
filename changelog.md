@@ -20,7 +20,11 @@
   refresh per frame as the power-weighted average of its members' current values through the same
   keep-clamp that never lets a light drop out of the cluster lists, and the merged parents' GPU
   members stay resident for the unmerge. `rt_light_report` gains a `dtal lod` line with the
-  merged/nodes/individual counts, the transitions, the refusals and the uploaded record counts.
+  merged/nodes/individual counts, the transitions, the refusals and the uploaded record counts;
+  `rt_dtal_debug 3` draws the formed LOD — a cyan arrow on every published node, an orange arrow
+  on every merged group with a link to the node that absorbed it, and a green arrow on every group
+  still individual — while the wireframe and normal modes draw the effective set, a merged group
+  represented by its node.
   Off during development; the release default is an owner decision, and the acceptance captures are
   in [the implementation report](docs/dtal-lod-implementation-report.md).
 
