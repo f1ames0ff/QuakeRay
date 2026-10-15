@@ -39,7 +39,8 @@ receiver lists) and not a Project A grid group.
   normal axis, emission key, style key)`, grid edge `rt_dtal_spacing` (8), cap `rt_dtal_maxgroups`
   (2048), static per world generation, immutable member tables; parent parameters (colour, mask,
   animation) refresh per frame from the canonical source texture.
-- **Groups to cluster lists**: `RT_ClusterLightAddMulti` (union coverage up to 16 clusters, bounds
+- **Groups to cluster lists**: `RT_ClusterLightAddMulti` (union coverage up to
+  `QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS` (128) clusters, bounds
   radius, power) and `ClusterLightLists` composition. The incremental composition is the only mode
   the renderer selects (`rt_cluster_incremental` is `CVAR_ROM`, a saved `0` is ignored).
 - **Multithreading**: the render frame always runs as the task graph (`r_tasks` and its serial fork

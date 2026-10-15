@@ -15,7 +15,7 @@
   inside the edge is unmerged with priority. The replacement is atomic and exactly-once — a group is
   represented by its node or by itself, never both and never neither: a published node registers one
   representative at the members' averaged normal, nudged off the surface and refused when it tests
-  buried or when its coverage union overflows the 16-cluster cap (its members then stay individual),
+  buried or when its coverage union overflows the source-cluster cap (its members then stay individual),
   with one synthesized quad member of the summed area; the representative's colour and mean emission
   refresh per frame as the power-weighted average of its members' current values through the same
   keep-clamp that never lets a light drop out of the cluster lists, and the merged parents' GPU
@@ -29,6 +29,7 @@
   in [the implementation report](docs/dtal-lod-implementation-report.md).
 
 ### Changed
+- **A source covers up to `128` clusters rather than `16`** — the per-source cluster grants (a DTAL group's precomputed coverage, an LOD node's union, the water-cross extension) were capped at 16, and the group build failed the whole grouping when a group's coverage did not fit: a merged parent covered a handful of clusters where its individual pieces had lit the whole area, which read as dark patches around a merged lava field. The cap is 128 now (about 8 MB of host arrays, once), the DTAL LOD's coverage-union refusal scales with it, and the arrays that carry it — the registered lights, the leaf cache's across-water lists, the source-cluster buffer and the group and node coverage — all size themselves from the constant.
 - **`rt_nee_samples` defaults to `2`** — the direct pass traces two light samples per pixel again: the estimator divides by the sample count, so both values stay unbiased, and the second sample's shadow ray is the price of the noticeably smoother per-frame result. The default sat at `1` since the optimisation pass that matched Q2RTX's single sample; `1` stays one menu step away, the bench metadata records whichever value runs, and the value only affects the direct pass — the indirect pass never reads it.
 - **The four-step GI ladder is reverted to the previous levels** — at the same `rt_gi_level` the ladder traces a sparser buffer than the level it replaced (`1.5` went from the full-resolution two-bounce tier to a half-resolution single-bounce one, and the quarter tier amplifies each traced sample by four), which reads noticeably noisier in play, so the GI half of the four-step-ladder change is reverted: the raygen, the indirect pass sizing and the Video Options names and slider are the previous `off`/`low`/`medium`/`high` ladder again (`0`/`0.5`/`1`/`2`; `0.5` is the half-height checkerboard tier the denoiser fills, the level alone decides the bounce count and `1.5` and above add the second bounce, every traced tier is at full render resolution), and the deep-bounce sky weighting of the previous raygen returns with it. The display modes (`vid_fullscreen 2`, the `IMMEDIATE` present mode) and the branch audit fixes of the same commit stay.
 
