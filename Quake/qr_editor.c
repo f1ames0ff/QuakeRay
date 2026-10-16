@@ -3023,9 +3023,11 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		// brings the original override back with it
 		QRE_SetBool (g, p, QRE_GetBool (orig, p));
 		if (!QRE_GetBool (orig, p))
+		{
 			QRE_SetFloat (g, PARAM_ROUGH, QRE_GetFloat (orig, PARAM_ROUGH));
 			QRE_EnsureLive (g);
 			qre.group[g]->has_roughness_override = orig->has_roughness_override;
+		}
 		return;
 	}
 
