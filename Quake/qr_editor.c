@@ -1140,6 +1140,10 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_GLASS_IOR:
 		if (value != value || value < 0.0f)
 			value = 0.0f;
+		// the loader snaps an authored index in (0,1) to 1.0 (rt_material.c),
+		// so the setter does the same and the value round-trips
+		else if (value < 1.0f)
+			value = 1.0f;
 		m->glass_ior = CLAMP (0.0f, value, 5.0f);
 		break;
 	case PARAM_GLASS_THICKNESS:
