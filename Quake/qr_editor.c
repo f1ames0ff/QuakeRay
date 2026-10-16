@@ -368,7 +368,6 @@ static struct
 	qboolean stop_pending;
 	qboolean stop_pending_restore;
 	vec3_t   pick_impact;       // the last pick's hit point (QRE_TracePick)
-	unsigned pick_impact_frame; // the frame it was taken in
 
 	// the axis gizmo drag of the selected custom light
 	qboolean custom_dragging;
@@ -2078,7 +2077,6 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 		return false;
 
 	VectorCopy (bestimpact, qre.pick_impact);
-	qre.pick_impact_frame = (unsigned)host_framecount;
 
 	*out_model = bestmodel;
 	if (out_ent)
@@ -2090,6 +2088,21 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 	             (int)(*out_surf - bestmodel->surfaces), best,
 	             (*out_surf)->texinfo->texture->name);
 	return true;
+}
+
+// The surface point under the crosshair right now, stored in qre.pick_impact.
+// The light editor places and drags its lights on that point too, but its picks
+// do not run the material trace (and the input path runs before the frame's
+// pick), so its consumers ask for the impact themselves instead of requiring a
+// pick of the same host frame.
+static qboolean QRE_TraceImpact (void)
+{
+	qmodel_t    *model;
+	msurface_t  *surf;
+	entity_t    *ent;
+	gltexture_t *glt;
+
+	return QRE_TracePick (&model, &surf, &ent, &glt);
 }
 
 // ---------------------------------------------------------------------------
@@ -8829,7 +8842,9 @@ static void QRE_UpdateLightDrag (void)
 	if (!qre.light_dragging)
 		return;
 
-	if (qre.pick_impact_frame == (unsigned)host_framecount && (qre.pick_surf || qre.pick_ent))
+	// the light follows the surface under the crosshair, or hangs 128 units
+	// ahead of the camera when the ray hits nothing
+	if (QRE_TraceImpact ())
 		VectorMA (qre.pick_impact, -8.0f, vpn, target);
 	else
 		VectorMA (qre.cam_origin, 128.0f, vpn, target);
@@ -9101,7 +9116,7 @@ void QR_Editor_PlaceAtCrosshair (void)
 	if (cloning)
 		*l = qre.clone_source;
 
-	if (qre.pick_impact_frame == (unsigned)host_framecount && (qre.pick_surf || qre.pick_ent))
+	if (QRE_TraceImpact ())
 		VectorMA (qre.pick_impact, -8.0f, vpn, l->origin);
 	else
 		VectorMA (qre.cam_origin, 128.0f, vpn, l->origin);
