@@ -8528,7 +8528,7 @@ static void QRE_ResetCvar (const char *name)
 	cvar_t *var = name ? Cvar_FindVar (name) : NULL;
 
 	if (var && var->default_string && !(var->flags & CVAR_ROM))
-		QR_Editor_HostCvarSet (var, var->default_string);
+		QR_Editor_HostCvarSet (var->name, var->default_string);
 }
 
 static qboolean QRE_ResetRemoveFile (const char *path)
