@@ -2102,7 +2102,10 @@ static qboolean QRE_TraceImpact (void)
 	entity_t    *ent;
 	gltexture_t *glt;
 
-	return QRE_TracePick (&model, &surf, &ent, &glt);
+	// An alias/sprite winner is a hit without a surface (the pick leaves
+	// out_surf NULL and does not record an impact): the consumers keep their
+	// own fallback instead of using a stale point.
+	return QRE_TracePick (&model, &surf, &ent, &glt) && surf != NULL;
 }
 
 // ---------------------------------------------------------------------------
