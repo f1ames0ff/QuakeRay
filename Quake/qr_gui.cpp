@@ -1354,15 +1354,20 @@ int QR_GUI_ColorHex (const char *label, float rgb[3], int *enabled, const char *
 
 	ImGui::PushID (label);
 
-	bool en = *enabled != 0;
-	if (ImGui::Checkbox ("##enabled", &en))
+	// A NULL enabled means the colour has no off state (a custom light always
+	// carries one): the row draws the swatch alone, without the checkbox.
+	if (enabled)
 	{
-		*enabled = en ? 1 : 0;
-		result = 1;
-	}
-	ImGui::SetItemTooltip ("Enable the color");
+		bool en = *enabled != 0;
+		if (ImGui::Checkbox ("##enabled", &en))
+		{
+			*enabled = en ? 1 : 0;
+			result = 1;
+		}
+		ImGui::SetItemTooltip ("Enable the color");
 
-	ImGui::SameLine ();
+		ImGui::SameLine ();
+	}
 
 	// The item needs an explicit width: with the default one its swatch lands
 	// past the right edge of the panel and can never be clicked, which is what
@@ -1372,7 +1377,8 @@ int QR_GUI_ColorHex (const char *label, float rgb[3], int *enabled, const char *
 	{
 		// editing the color is what enables it; the checkbox above only shows
 		// the state and can turn it off again
-		*enabled = 1;
+		if (enabled)
+			*enabled = 1;
 		result = 1;
 	}
 	if (tooltip && *tooltip)

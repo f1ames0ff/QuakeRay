@@ -104,7 +104,7 @@ int  QR_GUI_Vec3InputMixed (const char *label, float v[3], float min, float max,
 // the browse button was pressed (both can be set: 3). An empty path shows NONE.
 int  QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const char *tooltip);
 // An enabled checkbox and a color editor with a hex field. Returns 1 if either
-// changed.
+// changed. A NULL enabled draws the editor alone: the colour has no off state.
 int  QR_GUI_ColorHex (const char *label, float rgb[3], int *enabled, const char *tooltip);
 int  QR_GUI_ColorHexMixed (const char *label, float rgb[3], int *enabled, int mixed, const char *tooltip);
 // A row of the luma list: a swatch/hex editor.
