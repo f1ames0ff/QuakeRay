@@ -581,6 +581,7 @@ static void     QRE_StopEditor (qboolean restore);
 static void     QRE_ClosePanel (void);
 static void     QRE_RequestExit (void);
 static void     QRE_StartMode (int mode);
+static void     QRE_ResetAll (void);
 static void     QRE_GlobalsRestore (void);
 static qboolean QRE_GlobalsTouched (void);
 static qboolean QRE_SkyTouched (void);
@@ -740,7 +741,7 @@ static void QRE_RestoreCustomSnapshot (void)
 	if (color[0] != qre.snap_fog_color[0] || color[1] != qre.snap_fog_color[1] ||
 	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
 	{
-		Cbuf_AddText (va ("fog %f %f %f %f\n", qre.snap_fog_density,
+		QR_Editor_HostCbufAddText (va ("fog %f %f %f %f\n", qre.snap_fog_density,
 		                  CLAMP (0.0f, qre.snap_fog_color[0], 1.0f),
 		                  CLAMP (0.0f, qre.snap_fog_color[1], 1.0f),
 		                  CLAMP (0.0f, qre.snap_fog_color[2], 1.0f)));
@@ -1283,6 +1284,98 @@ static void QRE_SetText (int g, int param, const char *value)
 	default:             break;
 	}
 	QRE_MarkDirtyFull (m);
+}
+
+// ---------------------------------------------------------------------------
+// Host actions (applied on the main thread)
+// ---------------------------------------------------------------------------
+// The panel is drawn by the SCR_DrawGUI task, but the cvars, the command buffer,
+// the cursor and the file dialog are host state, and the frame's render tasks
+// read cvars concurrently (a System-tab slider and R_DrawWorldTask must not race
+// on a cvar string). Every mutation the editor makes from a task is recorded
+// here and applied by QR_Editor_FlushDirty on the main thread before the frame
+// graph; on the main thread the same calls run directly, so console and
+// map-change paths keep their ordering.
+
+#define QRE_ACTIONS_MAX       256
+#define QRE_ACTION_VALUE_MAX  320
+
+static struct
+{
+	struct
+	{
+		char name[MAX_QPATH];
+		char value[QRE_ACTION_VALUE_MAX];
+	} sets[QRE_ACTIONS_MAX];
+	int      set_count;
+	char     cbuf[QRE_ACTIONS_MAX][QRE_ACTION_VALUE_MAX];
+	int      cbuf_count;
+	int      cursor_mode; // -1 none, 0 panel off, 1 panel on
+	qboolean cursor_reclaim; // the panel came back from the console: grab the cursor again
+	qboolean stop;
+	qboolean stop_restore;
+	int      browse_group;
+	int      browse_param;
+} qre_actions = { .cursor_mode = -1, .browse_group = -1 };
+
+void QR_Editor_HostCvarSet (const char *name, const char *value)
+{
+	int i;
+
+	if (!Tasks_IsWorker ())
+	{
+		Cvar_Set (name, value);
+		return;
+	}
+
+	// a dragged slider writes the same name every frame: keep the last value
+	for (i = 0; i < qre_actions.set_count; i++)
+	{
+		if (!strcmp (qre_actions.sets[i].name, name))
+		{
+			q_strlcpy (qre_actions.sets[i].value, value, sizeof (qre_actions.sets[i].value));
+			return;
+		}
+	}
+
+	if (qre_actions.set_count >= QRE_ACTIONS_MAX)
+		return;
+
+	q_strlcpy (qre_actions.sets[qre_actions.set_count].name, name, sizeof (qre_actions.sets[0].name));
+	q_strlcpy (qre_actions.sets[qre_actions.set_count].value, value, sizeof (qre_actions.sets[0].value));
+	qre_actions.set_count++;
+}
+
+void QR_Editor_HostCbufAddText (const char *text)
+{
+	if (!Tasks_IsWorker ())
+	{
+		Cbuf_AddText (text);
+		return;
+	}
+
+	if (qre_actions.cbuf_count >= QRE_ACTIONS_MAX)
+		return;
+
+	q_strlcpy (qre_actions.cbuf[qre_actions.cbuf_count], text, QRE_ACTION_VALUE_MAX);
+	qre_actions.cbuf_count++;
+}
+
+// The texture browse dialog belongs to the host too: a task only names the
+// field that asked for it.
+static void QRE_QueueBrowse (int g, int p)
+{
+	char file[MAX_QPATH];
+
+	if (!Tasks_IsWorker ())
+	{
+		if (QRE_BrowseTexture (file, sizeof (file)))
+			QRE_SetText (g, p, file);
+		return;
+	}
+
+	qre_actions.browse_group = g;
+	qre_actions.browse_param = p;
 }
 
 // ---------------------------------------------------------------------------
@@ -2153,6 +2246,14 @@ static int QRE_LightUnderCrosshair (void)
 // event hook), and picking a surface or a light turns it on too.
 static void QRE_CursorMode (qboolean on)
 {
+	// the panel draws in a task while the cursor and the input grabs are host
+	// state: a worker only records the request, the drain applies it
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.cursor_mode = on ? 1 : 0;
+		return;
+	}
+
 	if (on == qre.panel_open)
 		return;
 
@@ -2168,6 +2269,66 @@ static void QRE_CursorMode (qboolean on)
 	else
 	{
 		QRE_ClosePanel ();
+	}
+}
+
+// Applies what the editor recorded from a task: the main thread calls this
+// before the frame graph (QR_Editor_FlushDirty), so the render tasks, the
+// command buffer and the cursor see every edit of the previous frame.
+static void QRE_DrainActions (void)
+{
+	int i;
+
+	for (i = 0; i < qre_actions.set_count; i++)
+		Cvar_Set (qre_actions.sets[i].name, qre_actions.sets[i].value);
+	qre_actions.set_count = 0;
+
+	for (i = 0; i < qre_actions.cbuf_count; i++)
+		Cbuf_AddText (qre_actions.cbuf[i]);
+	qre_actions.cbuf_count = 0;
+
+	if (qre_actions.browse_group >= 0)
+	{
+		const int g = qre_actions.browse_group;
+		const int p = qre_actions.browse_param;
+		char      file[MAX_QPATH];
+
+		qre_actions.browse_group = -1;
+
+		if (g < qre.group_count && QRE_BrowseTexture (file, sizeof (file)))
+			QRE_SetText (g, p, file);
+	}
+
+	if (qre_actions.cursor_mode >= 0)
+	{
+		const qboolean on = (qre_actions.cursor_mode != 0) ? true : false;
+
+		qre_actions.cursor_mode = -1;
+		QRE_CursorMode (on);
+	}
+
+	if (qre_actions.cursor_reclaim)
+	{
+		qre_actions.cursor_reclaim = false;
+		IN_FreeCursorForGui ();
+		SDL_ShowCursor (SDL_DISABLE);
+	}
+
+	// A reset-all runs here, on the host: it writes cvars, reloads the
+	// materials and refreshes the config and the snapshots in the same frame,
+	// which would all read the pre-reset state if it ran in a task.
+	if (qre.reset_pending)
+	{
+		qre.reset_pending = false;
+		QRE_ResetAll ();
+	}
+
+	if (qre_actions.stop)
+	{
+		const qboolean restore = qre_actions.stop_restore;
+
+		qre_actions.stop = false;
+		QRE_StopEditor (restore);
 	}
 }
 
@@ -3449,7 +3610,6 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	{
 		char buf[MAX_QPATH];
 		int  res;
-		char file[MAX_QPATH];
 
 		q_strlcpy (buf, QRE_GetText (m, p), sizeof (buf));
 		res = QR_GUI_TexturePath (label, buf, sizeof (buf), tip);
@@ -3464,10 +3624,7 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 				QRE_SetText (g, p, buf);
 		}
 		if (res & 2)
-		{
-			if (QRE_BrowseTexture (file, sizeof (file)))
-				QRE_SetText (g, p, file);
-		}
+			QRE_QueueBrowse (g, p);
 		break;
 	}
 	case QRE_T_FLOAT:
@@ -3653,7 +3810,7 @@ static void QRE_MatCvarsRestore (void)
 	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
 	{
 		if (qre_mat_cvar_snapshot_set[i])
-			Cvar_Set (qre_mat_cvars[i], qre_mat_cvar_snapshot[i]);
+			QR_Editor_HostCvarSet (qre_mat_cvars[i], qre_mat_cvar_snapshot[i]);
 	}
 }
 
@@ -3674,7 +3831,7 @@ static void QRE_MatCvarReset (const char *name)
 		          strcmp (var->string ? var->string : "", qre_mat_cvar_snapshot[i]) != 0;
 
 		if (QR_GUI_ResetButton (name, changed))
-			Cvar_Set (name, qre_mat_cvar_snapshot[i]);
+			QR_Editor_HostCvarSet (name, qre_mat_cvar_snapshot[i]);
 
 		return;
 	}
@@ -3682,7 +3839,7 @@ static void QRE_MatCvarReset (const char *name)
 
 static void QRE_WaterColorSet (const char *name, const float rgb[3])
 {
-	Cvar_Set (name, va ("%d %d %d",
+	QR_Editor_HostCvarSet (name, va ("%d %d %d",
 	                    (int)(CLAMP (0.0f, rgb[0], 1.0f) * 255.0f + 0.5f),
 	                    (int)(CLAMP (0.0f, rgb[1], 1.0f) * 255.0f + 0.5f),
 	                    (int)(CLAMP (0.0f, rgb[2], 1.0f) * 255.0f + 0.5f)));
@@ -3771,7 +3928,7 @@ static void QRE_WaterRestore (void)
 	for (i = 0; i < (int)countof (qre_water); i++)
 	{
 		if (qre_water_snapshot_set[i])
-			Cvar_Set (qre_water[i].name, qre_water_snapshot[i]);
+			QR_Editor_HostCvarSet (qre_water[i].name, qre_water_snapshot[i]);
 	}
 
 	QRE_WaterColorSet ("rt_water_color", qre_water_color_snapshot);
@@ -3803,12 +3960,12 @@ static void QRE_MatWaterSection (void)
 
 		value = var->value;
 		if (QR_GUI_SliderFloat (qre_water[i].name, &value, qre_water[i].min, qre_water[i].max, qre_water[i].tip))
-			Cvar_Set (qre_water[i].name, va ("%.4g", value));
+			QR_Editor_HostCvarSet (qre_water[i].name, va ("%.4g", value));
 
 		changed = qre_water_snapshot_set[i] &&
 		          strcmp (var->string ? var->string : "", qre_water_snapshot[i]) != 0;
 		if (QR_GUI_ResetButton (qre_water[i].name, changed))
-			Cvar_Set (qre_water[i].name, qre_water_snapshot[i]);
+			QR_Editor_HostCvarSet (qre_water[i].name, qre_water_snapshot[i]);
 	}
 
 	{
@@ -3849,7 +4006,7 @@ static void QRE_MatSystemTab (void)
 		dbg = 0;
 	if (QR_GUI_Combo ("debug DTAL", &dbg, dbg_modes, (int)countof (dbg_modes),
 	                  "Draw the triangle area lights of the scene: the polygons (wireframe) or their centers and normals. The DTAL grid groups are drawn the same way, as their member patches and their parents (rt_dtal_debug)."))
-		Cvar_Set ("rt_dtal_debug", va ("%d", dbg));
+		QR_Editor_HostCvarSet ("rt_dtal_debug", va ("%d", dbg));
 
 	QRE_MatCvarReset ("rt_dtal_debug");
 
@@ -3858,7 +4015,7 @@ static void QRE_MatSystemTab (void)
 
 		if (QR_GUI_Checkbox ("small emitters light as one dlight", &proxy,
 		                     "An emitter under the two area thresholds below lights as one synthesized dlight of its own -- the sphere of its patches' area, at their power-weighted centroid, as a spot along their normal when the source casts in a cone -- instead of being dropped (rt_dtal_proxy). Off, the thresholds drop their emitters and nothing is synthesized."))
-			Cvar_Set ("rt_dtal_proxy", proxy ? "1" : "0");
+			QR_Editor_HostCvarSet ("rt_dtal_proxy", proxy ? "1" : "0");
 
 		QRE_MatCvarReset ("rt_dtal_proxy");
 	}
@@ -3870,28 +4027,28 @@ static void QRE_MatSystemTab (void)
 	value = CVAR_TO_FLOAT (rt_dtal_clearance);
 	if (QR_GUI_SliderFloat ("rt_dtal_clearance", &value, 0.0f, 16.0f,
 	                        "A DTAL polygon facing solid geometry within this many units is not created (0 off)."))
-		Cvar_Set ("rt_dtal_clearance", va ("%.4g", value));
+		QR_Editor_HostCvarSet ("rt_dtal_clearance", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_clearance");
 
 	maxpolys = CVAR_TO_INT32 (rt_dtal_maxpolys);
 	if (QR_GUI_SliderInt ("rt_dtal_maxpolys", &maxpolys, 0, 64,
 	                      "Caps one surface's DTAL pieces, the largest kept (0 = no cuts)."))
-		Cvar_Set ("rt_dtal_maxpolys", va ("%d", maxpolys));
+		QR_Editor_HostCvarSet ("rt_dtal_maxpolys", va ("%d", maxpolys));
 
 	QRE_MatCvarReset ("rt_dtal_maxpolys");
 
 	value = CVAR_TO_FLOAT (rt_dtal_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_minarea", &value, 0.0f, 1024.0f,
 	                        "An emitter under this area, in world units squared, lights as one synthesized dlight instead of an area light: a small DTAL polygon of its own, and a DTAL grid group whose patches add up to less than this (0 off; with rt_dtal_proxy off such emitters are dropped instead)."))
-		Cvar_Set ("rt_dtal_minarea", va ("%.4g", value));
+		QR_Editor_HostCvarSet ("rt_dtal_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_minarea");
 
 	value = CVAR_TO_FLOAT (rt_dtal_proxy_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_proxy_minarea", &value, 0.0f, q_max (1.0f, CVAR_TO_FLOAT (rt_dtal_minarea)),
 	                        "A proxy is made only for an emitter at least this big, in world units squared, so a crowd of specks is dropped rather than lit; never more than rt_dtal_minarea (0 = every emitter under the threshold becomes one)."))
-		Cvar_Set ("rt_dtal_proxy_minarea", va ("%.4g", value));
+		QR_Editor_HostCvarSet ("rt_dtal_proxy_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_proxy_minarea");
 
@@ -3900,7 +4057,7 @@ static void QRE_MatSystemTab (void)
 
 		if (QR_GUI_SliderInt ("rt_dtal_groups", &groupMode, 0, 2,
 		                      "0 keeps one light per admitted DTAL piece; 1 merges compatible pieces per grid cell; 2 builds the same patches with one member per parent, for comparisons."))
-			Cvar_Set ("rt_dtal_groups", va ("%d", groupMode));
+			QR_Editor_HostCvarSet ("rt_dtal_groups", va ("%d", groupMode));
 
 		QRE_MatCvarReset ("rt_dtal_groups");
 	}
@@ -3908,14 +4065,14 @@ static void QRE_MatSystemTab (void)
 	value = CVAR_TO_FLOAT (rt_dtal_spacing);
 	if (QR_GUI_SliderFloat ("rt_dtal_spacing", &value, 1.0f, 1024.0f,
 	                        "Edge of the world-aligned grid cell a DTAL group lives in, in world units."))
-		Cvar_Set ("rt_dtal_spacing", va ("%.4g", value));
+		QR_Editor_HostCvarSet ("rt_dtal_spacing", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_spacing");
 
 	maxpolys = CVAR_TO_INT32 (rt_dtal_maxgroups);
 	if (QR_GUI_SliderInt ("rt_dtal_maxgroups", &maxpolys, 0, 8192,
 	                      "Caps the grid groups of the map: a group is a light of the light array, so a finer spacing reaches this budget and the map keeps its per-piece lights instead (0 = the engine's own ceiling)."))
-		Cvar_Set ("rt_dtal_maxgroups", va ("%d", maxpolys));
+		QR_Editor_HostCvarSet ("rt_dtal_maxgroups", va ("%d", maxpolys));
 
 	QRE_MatCvarReset ("rt_dtal_maxgroups");
 
@@ -3924,7 +4081,7 @@ static void QRE_MatSystemTab (void)
 	value = CVAR_TO_FLOAT (rt_dtal_model_minarea);
 	if (QR_GUI_SliderFloat ("rt_dtal_model_minarea", &value, 0.0f, 100.0f,
 	                        "A model's DTAL piece under this percentage of its bounding box face is not an area light: the model's small pieces light as one synthesized dlight (0 off; with rt_dtal_proxy off such pieces are dropped instead)."))
-		Cvar_Set ("rt_dtal_model_minarea", va ("%.4g", value));
+		QR_Editor_HostCvarSet ("rt_dtal_model_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_model_minarea");
 
@@ -3932,28 +4089,28 @@ static void QRE_MatSystemTab (void)
 	if (QR_GUI_SliderFloat ("rt_dtal_proxy_model_minarea", &value, 0.0f,
 	                        q_max (1.0f, CVAR_TO_FLOAT (rt_dtal_model_minarea)),
 	                        "A model's proxy is made only for its small pieces adding up to at least this percentage of the model's bounding box face; never more than rt_dtal_model_minarea (0 = all of them)."))
-		Cvar_Set ("rt_dtal_proxy_model_minarea", va ("%.4g", value));
+		QR_Editor_HostCvarSet ("rt_dtal_proxy_model_minarea", va ("%.4g", value));
 
 	QRE_MatCvarReset ("rt_dtal_proxy_model_minarea");
 
 	maxpolys = CVAR_TO_INT32 (rt_dtal_model_maxpolys);
 	if (QR_GUI_SliderInt ("rt_dtal_model_maxpolys", &maxpolys, 0, 64,
 	                      "Caps one model's DTAL pieces, the largest kept (0 = no cuts)."))
-		Cvar_Set ("rt_dtal_model_maxpolys", va ("%d", maxpolys));
+		QR_Editor_HostCvarSet ("rt_dtal_model_maxpolys", va ("%d", maxpolys));
 
 	QRE_MatCvarReset ("rt_dtal_model_maxpolys");
 
 	maxpolys = CVAR_TO_INT32 (rt_dtal_model_budget);
 	if (QR_GUI_SliderInt ("rt_dtal_model_budget", &maxpolys, 0, 4096,
 	                      "Caps the DTAL pieces every model of a frame may upload, the largest ranked first (0 = none)."))
-		Cvar_Set ("rt_dtal_model_budget", va ("%d", maxpolys));
+		QR_Editor_HostCvarSet ("rt_dtal_model_budget", va ("%d", maxpolys));
 
 	QRE_MatCvarReset ("rt_dtal_model_budget");
 
 	maxpolys = CVAR_TO_INT32 (rt_level_light_maxpolys);
 	if (QR_GUI_SliderInt ("rt_level_light_maxpolys", &maxpolys, 0, 64,
 	                      "Caps the DTAL pieces one of the level's own light models (see rt_level_light_models) uploads: a torch flame is one or two pieces, not the crowd of micro-sources a character model may spend."))
-		Cvar_Set ("rt_level_light_maxpolys", va ("%d", maxpolys));
+		QR_Editor_HostCvarSet ("rt_level_light_maxpolys", va ("%d", maxpolys));
 
 	QRE_MatCvarReset ("rt_level_light_maxpolys");
 
@@ -5235,7 +5392,7 @@ static void QRE_GlobalsRestore (void)
 	for (i = 0; i < (int)countof (qre_globals); i++)
 	{
 		if (qre_globals_snapshot_set[i])
-			Cvar_Set (QRE_GlobalCvarName (&qre_globals[i]), qre_globals_snapshot[i]);
+			QR_Editor_HostCvarSet (QRE_GlobalCvarName (&qre_globals[i]), qre_globals_snapshot[i]);
 	}
 }
 
@@ -5253,7 +5410,7 @@ static void QRE_GlobalColorGet (const char *name, float rgb[3])
 
 static void QRE_GlobalColorSet (const char *name, const float rgb[3])
 {
-	Cvar_Set (name, va ("%d %d %d",
+	QR_Editor_HostCvarSet (name, va ("%d %d %d",
 	                    (int)(CLAMP (0.0f, rgb[0], 1.0f) * 255.0f + 0.5f),
 	                    (int)(CLAMP (0.0f, rgb[1], 1.0f) * 255.0f + 0.5f),
 	                    (int)(CLAMP (0.0f, rgb[2], 1.0f) * 255.0f + 0.5f)));
@@ -5352,7 +5509,7 @@ static void QRE_LightGlobalTab (void)
 			else
 				q_snprintf (caption, sizeof (caption), "%s", g->name);
 			if (QR_GUI_Button (caption))
-				Cvar_Set (g->action, "1");
+				QR_Editor_HostCvarSet (g->action, "1");
 			QR_GUI_Tooltip (g->tip);
 			continue;
 		}
@@ -5372,7 +5529,7 @@ static void QRE_LightGlobalTab (void)
 			int value = CVAR_TO_BOOL (*var) ? 1 : 0;
 
 			if (QR_GUI_Checkbox (g->label ? g->label : g->name, &value, g->tip))
-				Cvar_Set (g->name, value ? "1" : "0");
+				QR_Editor_HostCvarSet (g->name, value ? "1" : "0");
 			break;
 		}
 		case QRE_G_FLOAT:
@@ -5380,7 +5537,7 @@ static void QRE_LightGlobalTab (void)
 			float value = var->value;
 
 			if (QR_GUI_SliderFloat (g->name, &value, g->min, g->max, g->tip))
-				Cvar_Set (g->name, va ("%.4g", value));
+				QR_Editor_HostCvarSet (g->name, va ("%.4g", value));
 			break;
 		}
 		case QRE_G_INT:
@@ -5388,7 +5545,7 @@ static void QRE_LightGlobalTab (void)
 			int value = (int)(var->value + 0.5f);
 
 			if (QR_GUI_SliderInt (g->name, &value, (int)g->min, (int)g->max, g->tip))
-				Cvar_Set (g->name, va ("%d", value));
+				QR_Editor_HostCvarSet (g->name, va ("%d", value));
 			break;
 		}
 		case QRE_G_COLOR:
@@ -5410,7 +5567,7 @@ static void QRE_LightGlobalTab (void)
 			                         strcmp (var->string ? var->string : "", qre_globals_snapshot[i]) != 0;
 
 			if (QR_GUI_ResetButton (g->name, changed))
-				Cvar_Set (g->name, qre_globals_snapshot[i]);
+				QR_Editor_HostCvarSet (g->name, qre_globals_snapshot[i]);
 		}
 	}
 
@@ -5445,7 +5602,7 @@ static void QRE_LightGlobalTab (void)
 	}
 
 	if (changed)
-		Cbuf_AddText (va ("fog %f %f %f %f\n", density,
+		QR_Editor_HostCbufAddText (va ("fog %f %f %f %f\n", density,
 		                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
 
 	QR_GUI_Spacing ();
@@ -6291,19 +6448,11 @@ static void QRE_Frame (void)
 		return;
 	}
 
-	if (qre.reset_pending)
-	{
-		qre.reset_pending = false;
-		QRE_ResetAll ();
-	}
-
 	// While the console is up it owns the input; coming back, the panel needs
 	// its free cursor again (the console re-activated the relative mouse mode).
+	// The grab is host state: the drain (QR_Editor_DrainActions) applies it.
 	if (qre.panel_open && prev_key_dest != key_game && key_dest == key_game)
-	{
-		IN_FreeCursorForGui ();
-		SDL_ShowCursor (SDL_DISABLE);
-	}
+		qre_actions.cursor_reclaim = true;
 	prev_key_dest = key_dest;
 
 	if (QR_Editor_Flying ())
@@ -6323,10 +6472,24 @@ static void QRE_Frame (void)
 // frame after an edit with stale static geometry and defers the re-submit.
 void QR_Editor_FlushDirty (void)
 {
+	// what the tasks recorded reaches the host state first (cvars, commands,
+	// the cursor, a queued stop and a queued reset), then the materials are
+	// re-synthesized and the world's static re-submit is requested
+	QRE_DrainActions ();
+
 	if (!qre.active)
 		return;
 
 	QRE_FlushDirty ();
+}
+
+// Applies what the editor recorded from a task on the host thread: the panel
+// runs in SCR_DrawGUI while the cvars, the command buffer, the cursor and the
+// file dialog belong to the host, and the render tasks read cvars. The frame's
+// SCR_UpdateScreen calls this before V_RenderView.
+void QR_Editor_DrainActions (void)
+{
+	QRE_DrainActions ();
 }
 
 static void QRE_DrawChooser (void)
@@ -8187,7 +8350,7 @@ static void QRE_ClearSessionState (void)
 static void QRE_DtalDebugOff (void)
 {
 	if (CVAR_TO_INT32 (rt_dtal_debug) != 0)
-		Cvar_Set ("rt_dtal_debug", "0");
+		QR_Editor_HostCvarSet ("rt_dtal_debug", "0");
 }
 
 static void QRE_BackToChooser (void)
@@ -8241,7 +8404,7 @@ static void QRE_ResetCvar (const char *name)
 	cvar_t *var = name ? Cvar_FindVar (name) : NULL;
 
 	if (var && var->default_string && !(var->flags & CVAR_ROM))
-		Cvar_SetQuick (var, var->default_string);
+		QR_Editor_HostCvarSet (var->name, var->default_string);
 }
 
 static qboolean QRE_ResetRemoveFile (const char *path)
@@ -8518,6 +8681,15 @@ static qboolean QRE_BrowseTexture (char *out, size_t outsize)
 
 static void QRE_StopEditor (qboolean restore)
 {
+	if (Tasks_IsWorker ())
+	{
+		// the panel asked for the stop: the drain runs it on the main thread
+		// (SDL, the input grabs and the pause state are host state)
+		qre_actions.stop = true;
+		qre_actions.stop_restore = restore;
+		return;
+	}
+
 	if (!qre.active)
 		return;
 
@@ -8666,6 +8838,9 @@ static void QRE_StartEditor (void)
 
 	memset (&qre, 0, sizeof (qre));
 	memset (qre_instances, 0, sizeof (qre_instances));
+	memset (&qre_actions, 0, sizeof (qre_actions));
+	qre_actions.cursor_mode = -1;
+	qre_actions.browse_group = -1;
 	qre_instance_cur = 0;
 	qre.active = true;
 	qre.panel_open = false;
