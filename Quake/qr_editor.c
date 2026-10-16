@@ -7358,6 +7358,7 @@ static qboolean QRE_CopyFile (const char *from, const char *to)
 {
 	FILE    *in = fopen (from, "rb");
 	FILE    *out;
+	char     tmp[MAX_OSPATH + 8];
 	char     buf[8192];
 	size_t   n;
 	qboolean ok = true;
@@ -7365,7 +7366,12 @@ static qboolean QRE_CopyFile (const char *from, const char *to)
 	if (!in)
 		return false;
 
-	out = fopen (to, "wb");
+	// The target is written through a temporary file and moved over it, so a
+	// failure (or a dying process) leaves the previous generation intact
+	// instead of a truncated file.
+	q_snprintf (tmp, sizeof (tmp), "%s.tmp", to);
+
+	out = fopen (tmp, "wb");
 	if (!out)
 	{
 		fclose (in);
@@ -7384,10 +7390,25 @@ static qboolean QRE_CopyFile (const char *from, const char *to)
 		ok = false;
 
 	fclose (in);
-	if (fflush (out) != 0)
+	if (fflush (out) != 0 || ferror (out))
 		ok = false;
-	fclose (out);
-	return ok;
+	if (fclose (out) != 0) // a deferred write error can surface only here
+		ok = false;
+
+	if (!ok)
+	{
+		remove (tmp);
+		return false;
+	}
+
+	if (!MoveFileExA (tmp, to, MOVEFILE_REPLACE_EXISTING))
+	{
+		Con_DPrintf ("qr editor: cannot replace %s (%lu)\n", to, (unsigned long)GetLastError ());
+		remove (tmp);
+		return false;
+	}
+
+	return true;
 }
 
 // The names the target qray.materials.yaml already carries: the session file is
