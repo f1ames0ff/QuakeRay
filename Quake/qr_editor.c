@@ -7019,6 +7019,11 @@ static void QRE_ClosePanel (void)
 	if (!qre.panel_open)
 		return;
 
+	// a gizmo drag can be in flight when the panel opens over it (Tab is not
+	// blocked while dragging): closing the panel is a cancel, so the light
+	// returns to where it was, direction included
+	QRE_CustomGizmoCancel ();
+
 	qre.panel_open = false;
 
 	IN_Activate ();
@@ -9041,7 +9046,13 @@ static void QRE_CustomGizmoCancel (void)
 
 	lights = RT_CustomLights (&count);
 	if (lights && qre.custom_drag_index < count)
-		VectorCopy (qre.custom_drag_origin, lights[qre.custom_drag_index].origin);
+	{
+		// an arc drag moved the direction, not the origin
+		if (qre.custom_drag_dir)
+			VectorCopy (qre.custom_drag_dir_start, lights[qre.custom_drag_index].dir);
+		else
+			VectorCopy (qre.custom_drag_origin, lights[qre.custom_drag_index].origin);
+	}
 
 	qre.custom_dragging = false;
 	qre.gizmo_fly_drag = false;
