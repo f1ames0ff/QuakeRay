@@ -1654,13 +1654,16 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 
 	int points = count ? *count : 0;
 
-	if (tex_w <= 0 || tex_h <= 0 || !uv || points < 3 || max_count < points)
+	// The scratch buffers below are [32] big, so the capacity is clamped before
+	// the point count is validated against it.
+	if (max_count > 32)
+		max_count = 32;
+
+	if (tex_w <= 0 || tex_h <= 0 || !uv || points < 3 || points > max_count)
 	{
 		ImGui::PopID ();
 		return 0;
 	}
-	if (max_count > 32)
-		max_count = 32;
 
 	static int     drag_index = -1;
 	static int     drag_edge = -1;
