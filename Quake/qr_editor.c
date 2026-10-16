@@ -2945,6 +2945,13 @@ static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *o
 		return m->has_metalness_factor != orig->has_metalness_factor ||
 		       m->metalness_factor != orig->metalness_factor;
 
+	// the roughness slider authors its own override flag, so a drag that lands
+	// back on the original value is still a change: the flag is what the writer
+	// and the synthesis read
+	if (p == PARAM_ROUGH)
+		return m->has_roughness_override != orig->has_roughness_override ||
+		       m->roughness_override != orig->roughness_override;
+
 	if (p == PARAM_CEMIS)
 	{
 		// every block's color and tone controls count as one parameter, and the
