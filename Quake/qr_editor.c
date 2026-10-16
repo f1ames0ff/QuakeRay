@@ -5860,7 +5860,6 @@ static void QRE_CustomLightsTab (void)
 		char               label[48];
 		int                style = CLAMP (0, l->style, RT_CUSTOM_STYLE_COUNT - 1);
 		float              rgb[3];
-		int                en = 1;
 
 		has_orig = QRE_CustomOriginal (selected, &orig);
 
@@ -5906,7 +5905,7 @@ static void QRE_CustomLightsTab (void)
 			rgb[0] = l->color[0];
 			rgb[1] = l->color[1];
 			rgb[2] = l->color[2];
-			if (QR_GUI_ColorHex ("light_color", rgb, &en, "The color of the light."))
+			if (QR_GUI_ColorHex ("light_color", rgb, NULL, "The color of the light."))
 			{
 				l->color[0] = rgb[0];
 				l->color[1] = rgb[1];
