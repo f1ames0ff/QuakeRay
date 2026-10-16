@@ -171,7 +171,7 @@ static const struct qre_param_s
 	[PARAM_BUMP]     = { "Surface", "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
 	                     "How pronounced the normal map's bumps are. Needs texture_normals." },
 	[PARAM_ROUGH]    = { NULL, "roughness_override", QRE_T_FLOAT, 0, 1, 0.01f,
-	                     "Ignore the gloss map and pin the roughness (0..1). Mirror forces 0; glass keeps its override." },
+	                     "Ignore the gloss map and pin the roughness (0..1); 0 clears the override and hands the roughness back to the gloss map. Mirror forces 0; glass keeps its override." },
 	[PARAM_METAL]    = { NULL, "metalness_factor", QRE_T_FLOAT, 0, 1, 0.01f,
 	                     "How metal-like the surface is. With metalness_from_normal_alpha it scales that mask." },
 	[PARAM_BASEF]    = { NULL, "base_factor",      QRE_T_FLOAT, 0, 4, 0.01f,
@@ -1189,7 +1189,20 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_TOFFS_U:  m->texture_offset_u = value; break;
 	case PARAM_TOFFS_V:  m->texture_offset_v = value; break;
 	case PARAM_BUMP:     m->bump_scale = value; break;
-	case PARAM_ROUGH:    m->roughness_override = value; m->has_roughness_override = true; break;
+	case PARAM_ROUGH:
+		// 0 is not a pin: it clears the override, so the gloss map drives the
+		// roughness again (the row cannot show the difference otherwise)
+		if (value > 0.0f)
+		{
+			m->roughness_override = value;
+			m->has_roughness_override = true;
+		}
+		else
+		{
+			m->roughness_override = 0.0f;
+			m->has_roughness_override = false;
+		}
+		break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
 	case PARAM_EFACTOR:  m->emissive_factor = value; break;
@@ -3331,6 +3344,18 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		m = qre.group[g];
 		m->has_roughness_override = false;
 		m->roughness_override = orig->roughness_override;
+		QRE_MarkDirty (m);
+		return;
+	}
+
+	if (p == PARAM_ROUGH && orig->has_roughness_override && !(orig->roughness_override > 0.0f))
+	{
+		// the original pins the roughness at 0, which QRE_SetFloat cannot
+		// author (0 clears the override there): restore the flag directly
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->has_roughness_override = true;
+		m->roughness_override = 0.0f;
 		QRE_MarkDirty (m);
 		return;
 	}
