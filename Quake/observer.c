@@ -13,8 +13,8 @@
 #define OBSERVER_MIN_RADIUS    16.0f
 #define OBSERVER_MAX_RADIUS    8192.0f
 #define OBSERVER_MAX_ELEV      85.0f
-#define OBSERVER_SPEED_DEFAULT 45.0f
-#define OBSERVER_SPEED_STEP    15.0f
+#define OBSERVER_SPEED_DEFAULT 4.5f
+#define OBSERVER_SPEED_STEP    3.0f
 #define OBSERVER_SPEED_MAX     180.0f
 #define OBSERVER_ZOOM_RATE     0.005f
 
@@ -216,7 +216,7 @@ void Observer_Wheel (int y)
 	observer.speed += OBSERVER_SPEED_STEP * (float)y;
 	observer.speed = CLAMP (-OBSERVER_SPEED_MAX, observer.speed, OBSERVER_SPEED_MAX);
 
-	Con_Printf ("camera_observer: speed %.0f deg/s\n", observer.speed);
+	Con_Printf ("camera_observer: speed %.1f deg/s\n", observer.speed);
 }
 
 qboolean Observer_KeyEvent (int key, qboolean down)
