@@ -7622,10 +7622,19 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    light_styles: true\n");
 	if (m->has_color_emissive && m->color_emissive_count > 0)
 		QRE_WriteEmissiveBlocks (f, m);
+	// the material-level fallbacks of the legacy luma keys and the (engine-dead)
+	// up-offset the parser still reads: written when authored so a touched block
+	// does not lose them to the merge
+	if (m->color_emissive_threshold != 0.02f)
+		fprintf (f, "    luma_threshold: %.6g\n", m->color_emissive_threshold);
+	if (m->color_emissive_feather != 0.0f)
+		fprintf (f, "    luma_feather: %.6g\n", m->color_emissive_feather);
 	if (m->has_light_color)
 		QRE_WriteColor (f, "light_color", m->light_color);
 	if (m->light_brightness != 1.0f)
 		fprintf (f, "    light_brightness: %.6g\n", m->light_brightness);
+	if (m->light_upoffset != 0.0f)
+		fprintf (f, "    light_upoffset: %.6g\n", m->light_upoffset);
 	if (m->emissive_focus > 0.0f)
 		fprintf (f, "    light_focus: %.6g\n", m->emissive_focus);
 	if (m->emissive_focus_soft >= 0.0f)
