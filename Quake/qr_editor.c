@@ -4871,6 +4871,88 @@ enum
 	QRE_LIGHT_F_FRAST,
 };
 
+// One authored field of rt_light_t: the value, its "authored" flag and the
+// panel's field id. Every path that treats a field as a whole (copy the group's
+// values in, leave the group, reset to the original, notice a change) walks this
+// table instead of repeating the field list, so a new field is wired once and
+// the copies cannot drift apart.
+typedef struct
+{
+	int      field;         // the QRE_LIGHT_F_* id the panel addresses it by
+	size_t   has_offset;    // offsetof of the has_* flag, (size_t)-1 without one
+	size_t   value_offset;  // offsetof of the value (or the first of its channels)
+	size_t   value_size;    // sizeof the value
+	qboolean clear_value;   // an absent original clears the value too (not only the flag)
+} qre_light_field_t;
+
+#define QRE_LF_ROW(field, has, value, clear) \
+	{ field, offsetof (rt_light_t, has), offsetof (rt_light_t, value), sizeof (((rt_light_t *)0)->value), clear }
+#define QRE_LF_ROW_NOHAS(field, value) \
+	{ field, (size_t)-1, offsetof (rt_light_t, value), sizeof (((rt_light_t *)0)->value), false }
+
+static const qre_light_field_t qre_light_fields[] = {
+	QRE_LF_ROW (QRE_LIGHT_F_RADIUS, has_radius, radius, false),
+	QRE_LF_ROW (QRE_LIGHT_F_INTENSITY, has_intensity, intensity, false),
+	QRE_LF_ROW (QRE_LIGHT_F_OFFSET, has_offset, offset, false),
+	QRE_LF_ROW (QRE_LIGHT_F_COLOR, has_color, color, false),
+	QRE_LF_ROW_NOHAS (QRE_LIGHT_F_FRAST, force_rasterize),
+	QRE_LF_ROW (QRE_LIGHT_F_STYLE, has_style, style, false),
+	QRE_LF_ROW (QRE_LIGHT_F_SPOT, has_spot, spot, true),
+	QRE_LF_ROW (QRE_LIGHT_F_DIR, has_dir, dir, true),
+	// the cone's two floats are adjacent: one block copy covers them
+	{ QRE_LIGHT_F_ANGLE, offsetof (rt_light_t, has_angles), offsetof (rt_light_t, angle_inner),
+	  2 * sizeof (float), true },
+};
+
+static const qre_light_field_t *QRE_LightFieldFind (int field)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_light_fields); i++)
+	{
+		if (qre_light_fields[i].field == field)
+			return &qre_light_fields[i];
+	}
+
+	return NULL;
+}
+
+// Whether the field is authored on this light (a field without a flag counts as
+// authored: force_rasterize is its own value).
+static qboolean QRE_LightFieldAuthored (const rt_light_t *l, const qre_light_field_t *f)
+{
+	if (f->has_offset == (size_t)-1)
+	{
+		// a field without an authored flag (force_rasterize): its own value
+		// decides, so an original that lacks the field only counts as
+		// different when the light actually has it on
+		return (*(const qboolean *)((const char *)l + f->value_offset) != 0) ? true : false;
+	}
+
+	return (*(const qboolean *)((const char *)l + f->has_offset) != 0) ? true : false;
+}
+
+static const char *QRE_LightFieldValue (const rt_light_t *l, const qre_light_field_t *f)
+{
+	return (const char *)l + f->value_offset;
+}
+
+// Copies every field of src into dst, flags included: what joining a group and
+// leaving one both do.
+static void QRE_LightCopyFields (rt_light_t *dst, const rt_light_t *src)
+{
+	int i;
+
+	for (i = 0; i < (int)countof (qre_light_fields); i++)
+	{
+		const qre_light_field_t *f = &qre_light_fields[i];
+
+		if (f->has_offset != (size_t)-1)
+			*(qboolean *)((char *)dst + f->has_offset) = *(const qboolean *)((const char *)src + f->has_offset);
+		memcpy ((char *)dst + f->value_offset, QRE_LightFieldValue (src, f), f->value_size);
+	}
+}
+
 // The state the entry had when the editor started (NULL when it had none).
 static const rt_light_t *QRE_LightOriginal (const char *name)
 {
@@ -4929,43 +5011,40 @@ static void QRE_LightApply (rt_light_t *l, int field, float v0, float v1, float 
 // The field of the entry as the editor started with it (the has_ flag too).
 static void QRE_LightApplyOriginal (rt_light_t *l, const rt_light_t *orig, int field)
 {
+	const qre_light_field_t *f = QRE_LightFieldFind (field);
+	qboolean                 *has;
+	char                     *value;
+
+	if (!f)
+	{
+		QRE_TouchLight (l->name);
+		return;
+	}
+
+	has = (f->has_offset == (size_t)-1) ? NULL : (qboolean *)((char *)l + f->has_offset);
+	value = (char *)l + f->value_offset;
+
 	if (!orig)
 	{
 		// the light had no entry: the field goes back to "not authored"
-		switch (field)
+		if (has)
 		{
-		case QRE_LIGHT_F_RADIUS:    l->has_radius = false; break;
-		case QRE_LIGHT_F_INTENSITY: l->has_intensity = false; break;
-		case QRE_LIGHT_F_OFFSET:    l->has_offset = false; break;
-		case QRE_LIGHT_F_COLOR:     l->has_color = false; break;
-		case QRE_LIGHT_F_STYLE:     l->has_style = false; break;
-		case QRE_LIGHT_F_FRAST:     l->force_rasterize = false; break;
-	case QRE_LIGHT_F_SPOT:      l->spot = false; l->has_spot = false; break;
-	case QRE_LIGHT_F_DIR:       l->dir[0] = l->dir[1] = l->dir[2] = 0.0f; l->has_dir = false; break;
-	case QRE_LIGHT_F_ANGLE:     l->angle_inner = l->angle_outer = 0.0f; l->has_angles = false; break;
-		default: break;
+			*has = false;
+			if (f->clear_value)
+				memset (value, 0, f->value_size);
+		}
+		else
+		{
+			memset (value, 0, f->value_size);
 		}
 	}
 	else
 	{
-		switch (field)
-		{
-		case QRE_LIGHT_F_RADIUS:    l->has_radius = orig->has_radius; l->radius = orig->radius; break;
-		case QRE_LIGHT_F_INTENSITY: l->has_intensity = orig->has_intensity; l->intensity = orig->intensity; break;
-		case QRE_LIGHT_F_OFFSET:    l->has_offset = orig->has_offset; VectorCopy (orig->offset, l->offset); break;
-		case QRE_LIGHT_F_COLOR:     l->has_color = orig->has_color; VectorCopy (orig->color, l->color); break;
-		case QRE_LIGHT_F_STYLE:     l->has_style = orig->has_style; l->style = orig->style; break;
-		case QRE_LIGHT_F_FRAST:     l->force_rasterize = orig->force_rasterize; break;
-	case QRE_LIGHT_F_SPOT:      l->has_spot = orig->has_spot; l->spot = orig->spot; break;
-	case QRE_LIGHT_F_DIR:       l->has_dir = orig->has_dir; VectorCopy (orig->dir, l->dir); break;
-	case QRE_LIGHT_F_ANGLE:
-		l->has_angles = orig->has_angles;
-		l->angle_inner = orig->angle_inner;
-		l->angle_outer = orig->angle_outer;
-		break;
-		default: break;
-		}
+		if (has)
+			*has = (*(const qboolean *)((const char *)orig + f->has_offset) != 0) ? true : false;
+		memcpy (value, QRE_LightFieldValue (orig, f), f->value_size);
 	}
+
 	QRE_TouchLight (l->name);
 }
 
@@ -5069,38 +5148,20 @@ static void QRE_LightWrite (rt_light_t *l, int field, float v0, float v1, float 
 
 static qboolean QRE_LightFieldChanged (const rt_light_t *l, const rt_light_t *orig, int field)
 {
-	switch (field)
-	{
-	case QRE_LIGHT_F_RADIUS:
-		return l->has_radius != (orig && orig->has_radius ? true : false) ||
-		       (l->has_radius && orig && orig->radius != l->radius);
-	case QRE_LIGHT_F_INTENSITY:
-		return l->has_intensity != (orig && orig->has_intensity ? true : false) ||
-		       (l->has_intensity && orig && orig->intensity != l->intensity);
-	case QRE_LIGHT_F_OFFSET:
-		return l->has_offset != (orig && orig->has_offset ? true : false) ||
-		       (l->has_offset && orig && memcmp (orig->offset, l->offset, sizeof (l->offset)) != 0);
-	case QRE_LIGHT_F_COLOR:
-		return l->has_color != (orig && orig->has_color ? true : false) ||
-		       (l->has_color && orig && memcmp (orig->color, l->color, sizeof (l->color)) != 0);
-	case QRE_LIGHT_F_FRAST:
-		return l->force_rasterize != (orig ? orig->force_rasterize : false);
-	case QRE_LIGHT_F_SPOT:
-		return l->has_spot != (orig && orig->has_spot ? true : false) ||
-		       (l->has_spot && orig && orig->spot != l->spot);
-	case QRE_LIGHT_F_DIR:
-		return l->has_dir != (orig && orig->has_dir ? true : false) ||
-		       (l->has_dir && orig && memcmp (orig->dir, l->dir, sizeof (l->dir)) != 0);
-	case QRE_LIGHT_F_ANGLE:
-		return l->has_angles != (orig && orig->has_angles ? true : false) ||
-		       (l->has_angles && orig &&
-		        (orig->angle_inner != l->angle_inner || orig->angle_outer != l->angle_outer));
-	case QRE_LIGHT_F_STYLE:
-		return l->has_style != (orig && orig->has_style ? true : false) ||
-		       (l->has_style && orig && orig->style != l->style);
-	default:
+	const qre_light_field_t *f = QRE_LightFieldFind (field);
+	const qboolean           has_l = (f != NULL) ? QRE_LightFieldAuthored (l, f) : false;
+	const qboolean           has_o = (f != NULL && orig != NULL) ? QRE_LightFieldAuthored (orig, f) : false;
+
+	if (!f)
 		return false;
-	}
+
+	if (has_l != has_o)
+		return true;
+
+	if (!has_l)
+		return false;
+
+	return memcmp (QRE_LightFieldValue (l, f), QRE_LightFieldValue (orig, f), f->value_size) != 0;
 }
 
 // A member of the same group that follows it: the source of the values a light
@@ -5132,24 +5193,7 @@ static void QRE_LightJoinGroup (rt_light_t *l)
 
 	if (shared)
 	{
-		l->has_radius = shared->has_radius;
-		l->radius = shared->radius;
-		l->has_intensity = shared->has_intensity;
-		l->intensity = shared->intensity;
-		l->has_offset = shared->has_offset;
-		VectorCopy (shared->offset, l->offset);
-		l->has_color = shared->has_color;
-		VectorCopy (shared->color, l->color);
-		l->has_style = shared->has_style;
-		l->style = shared->style;
-		l->force_rasterize = shared->force_rasterize;
-		l->has_spot = shared->has_spot;
-		l->spot = shared->spot;
-		l->has_dir = shared->has_dir;
-		VectorCopy (shared->dir, l->dir);
-		l->has_angles = shared->has_angles;
-		l->angle_inner = shared->angle_inner;
-		l->angle_outer = shared->angle_outer;
+		QRE_LightCopyFields (l, shared);
 	}
 	l->group_edit = true;
 	QRE_TouchLight (l->name);
@@ -6123,27 +6167,8 @@ static void QRE_LightEntityFields (void)
 					if (own)
 					{
 						if (light)
-						{
-							own->has_radius = light->has_radius;
-							own->radius = light->radius;
-							own->has_intensity = light->has_intensity;
-							own->intensity = light->intensity;
-							own->has_offset = light->has_offset;
-							VectorCopy (light->offset, own->offset);
-							own->has_color = light->has_color;
-							VectorCopy (light->color, own->color);
-							own->has_style = light->has_style;
-							own->style = light->style;
-							own->force_rasterize = light->force_rasterize;
-							own->has_spot = light->has_spot;
-							own->spot = light->spot;
-							own->has_dir = light->has_dir;
-							VectorCopy (light->dir, own->dir);
-							own->has_angles = light->has_angles;
-							own->angle_inner = light->angle_inner;
-							own->angle_outer = light->angle_outer;
-						}
-						own->group_edit = false;
+						QRE_LightCopyFields (own, light);
+					own->group_edit = false;
 						QRE_TouchLight (own->name);
 						inst = own;
 						light = own;
