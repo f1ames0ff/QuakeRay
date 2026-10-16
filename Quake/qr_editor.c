@@ -2735,10 +2735,9 @@ void QR_Editor_UpdateView (void)
 	else
 		QRE_FrameOverrideRelease ();
 
-	// Before the frame renders: a re-synthesis replaces the material handles,
-	// and the world's static upload (R_DrawWorldTask) runs later in this frame,
-	// so the re-upload the flush asks for happens in the same frame.
-	QRE_FlushDirty ();
+	// the dirty materials are flushed by QR_Editor_FlushDirty on the host path
+	// before R_MarkSurfaces reads the static-submit flag (SCR_UpdateScreen):
+	// this task runs after that read, so a re-submit from here is a frame late
 }
 
 // ---------------------------------------------------------------------------
@@ -6297,8 +6296,20 @@ static void QRE_Frame (void)
 	if (qre.light_dragging)
 		QRE_UpdateLightDrag ();
 
-	// the normal path flushes before the render (QR_Editor_UpdateView); this
-	// covers the frames in which V_CalcRefdef does not run (paused, intermission)
+	// the dirty materials are flushed on the host path (QR_Editor_FlushDirty
+	// from SCR_UpdateScreen) before the frame's marking reads the flag
+}
+
+// The dirty materials of the editor, flushed where the frame can still take
+// them into account: SCR_UpdateScreen calls this on the main thread before
+// V_RenderView, whose R_MarkSurfaces reads rt_require_static_submit
+// synchronously. Flushing later (from the setup or GUI task) leaves the first
+// frame after an edit with stale static geometry and defers the re-submit.
+void QR_Editor_FlushDirty (void)
+{
+	if (!qre.active)
+		return;
+
 	QRE_FlushDirty ();
 }
 
