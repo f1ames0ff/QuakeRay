@@ -2144,6 +2144,12 @@ static void QRE_CursorMode (qboolean on)
 	{
 		qre.panel_open = true;
 
+		// The panel takes every key event (QR_Editor_GuiProcessEvent), so the
+		// key-up of a key held while the panel opens never reaches Key_Event:
+		// the movement button bits and keydown[] would stay set and drive the
+		// flying camera after the panel closes. Synthesize the missing key-ups.
+		Key_ClearStates ();
+
 		// free the cursor, keeping its motion events for ImGui
 		IN_FreeCursorForGui ();
 		SDL_ShowCursor (SDL_DISABLE);
