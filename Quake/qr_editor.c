@@ -206,10 +206,10 @@ static const struct qre_param_s
 	                     "Scales the texture_emissive mask's emission: below 1 it dims, above 1 it brightens." },
 	[PARAM_EBLEND]   = { NULL, "luma_blend", QRE_T_COMBO, 0, 0, 0,
 	                     "How the texture_emissive mask's glow is composited into the frame; cvar follows rt_emis_blend." },
-	[PARAM_EFOCUS]   = { "Light", "light_focus",   QRE_T_FLOAT, 1, 90, 0.01f,
-	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond. The edge is softened inward from this angle by light_focus_soft." },
-	[PARAM_ESOFT]    = { NULL, "light_focus_soft", QRE_T_FLOAT, 1, 90, 0.01f,
-	                     "How wide the beam's soft edge is, in absolute degrees: brightness holds to (light_focus - light_focus_soft) and then falls smoothly (smoothstep squared) to zero at the focus angle, so the edge always grows inward from it. In a projector it blurs the projected pattern too." },
+	[PARAM_EFOCUS]   = { "Light", "light_focus",   QRE_T_FLOAT, 0, 90, 0.01f,
+	                     "Makes the light the surface casts a beam: its half-angle around the normal, in degrees. Full brightness up to it, nothing beyond. The edge is softened inward from this angle by light_focus_soft. 0 authors no cone (a projector then uses its 45-degree default), which is what an unauthored light_focus means." },
+	[PARAM_ESOFT]    = { NULL, "light_focus_soft", QRE_T_FLOAT, 0, 90, 0.01f,
+	                     "How wide the beam's soft edge is, in absolute degrees: brightness holds to (light_focus - light_focus_soft) and then falls smoothly (smoothstep squared) to zero at the focus angle, so the edge always grows inward from it. In a projector it blurs the projected pattern too. An unauthored value shows the engine's own default: 45 degrees under a projector, a tenth of the focus angle otherwise; 0 is a nearly hard edge." },
 	[PARAM_EPROJ]    = { NULL, "light_projector", QRE_T_BOOL, 0, 0, 0,
 	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (light_focus; no key = 45 degrees) and light_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
 	[PARAM_CEMIS]    = { "Luma", "luma",   QRE_T_BOOL,  0, 0, 0,
@@ -1069,8 +1069,18 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_GLASS_THICKNESS: return m->glass_thickness;
 	case PARAM_LBRIGHT:  return m->light_brightness;
 	case PARAM_EFACTOR:  return m->emissive_factor;
-	case PARAM_EFOCUS:   return m->emissive_focus > 0.0f ? m->emissive_focus : 45.0f;
-	case PARAM_ESOFT:    return m->emissive_focus_soft >= 0.0f ? m->emissive_focus_soft : 45.0f;
+	// the shown value is the effective one: an unauthored focus is no cone (a
+	// projector uses its 45-degree default), an unauthored soft edge is the
+	// engine's own default, a tenth of the focus angle
+	case PARAM_EFOCUS:
+		if (m->emissive_focus > 0.0f)
+			return m->emissive_focus;
+		return m->emissive_projector ? 45.0f : 0.0f;
+	case PARAM_ESOFT:
+		if (m->emissive_focus_soft >= 0.0f)
+			return m->emissive_focus_soft;
+		return m->emissive_projector ? 45.0f
+		                             : (m->emissive_focus > 0.0f ? m->emissive_focus * 0.1f : 0.0f);
 	default:             return 0.0f;
 	}
 }
@@ -2962,6 +2972,17 @@ static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *o
 		return m->has_roughness_override != orig->has_roughness_override ||
 		       m->roughness_override != orig->roughness_override;
 
+	// the focus and its soft edge display the engine's own defaults while they
+	// are unauthored, so only a value that is authored on one side counts as a
+	// change (a projector toggle then does not make the rows look edited)
+	if (p == PARAM_EFOCUS)
+		return (m->emissive_focus > 0.0f || orig->emissive_focus > 0.0f) &&
+		       m->emissive_focus != orig->emissive_focus;
+
+	if (p == PARAM_ESOFT)
+		return (m->emissive_focus_soft >= 0.0f || orig->emissive_focus_soft >= 0.0f) &&
+		       m->emissive_focus_soft != orig->emissive_focus_soft;
+
 	if (p == PARAM_CEMIS)
 	{
 		// every block's color and tone controls count as one parameter, and the
@@ -3031,6 +3052,27 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		m->has_roughness_override = false;
 		m->roughness_override = orig->roughness_override;
 		QRE_MarkDirty (m);
+		return;
+	}
+
+	if (p == PARAM_EFOCUS && !(orig->emissive_focus > 0.0f))
+	{
+		// the original had no cone: put the unauthored state back instead of
+		// authoring the default the slider displays
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->emissive_focus = -1.0f;
+		QRE_MarkDirtyLight (m);
+		return;
+	}
+
+	if (p == PARAM_ESOFT && orig->emissive_focus_soft < 0.0f)
+	{
+		// likewise: the engine derives this one from the focus angle
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->emissive_focus_soft = -1.0f;
+		QRE_MarkDirtyLight (m);
 		return;
 	}
 
