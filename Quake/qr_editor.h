@@ -34,6 +34,13 @@ void QR_Editor_Pick (void);
 // Per-frame hooks.
 void QR_Editor_UpdateView (void);                  // camera move + r_refdef override (V_CalcRefdef)
 void QR_Editor_DrawPanel (cb_context_t *cbx);      // panel UI (SCR_DrawGUI)
+// Host-thread deferral for editor-driven host mutations: the panel runs in a
+// task, so its cvar and command writes are recorded by these and applied by
+// QR_Editor_DrainActions on the main thread (a call already on the host thread
+// applies immediately). SCR_UpdateScreen drains them before V_RenderView.
+void QR_Editor_HostCvarSet (const char *name, const char *value);
+void QR_Editor_HostCbufAddText (const char *text);
+void QR_Editor_DrainActions (void);
 
 // Input hooks (keys.c / in_sdl.c).
 qboolean QR_Editor_KeyEvent (int key, qboolean down);      // true = the key was consumed
