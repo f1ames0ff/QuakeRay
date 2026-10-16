@@ -22,6 +22,7 @@ typedef struct
 {
 	qboolean active;
 	qboolean zooming;
+	qboolean live;      // Space: the world runs (the clock hold and the server pause are off)
 	qboolean sv_paused_prev;
 	vec3_t   pivot;
 	float    radius;
@@ -128,11 +129,12 @@ static void Observer_Start (void)
 	observer.elevation = CLAMP (-OBSERVER_MAX_ELEV, OBSERVER_RAD2DEG (asin (CLAMP (-1.0f, ratio, 1.0f))), OBSERVER_MAX_ELEV);
 	observer.speed = OBSERVER_SPEED_DEFAULT;
 
+	observer.live = false;
 	observer.active = true;
 	observer.sv_paused_prev = sv.paused;
 	sv.paused = true;
 
-	Con_Printf ("camera_observer: on (wheel: rotation speed; mouse Y: vertical angle; RMB + mouse Y: zoom; Space: pause the world; ESC or camera_observer to leave)\n");
+	Con_Printf ("camera_observer: on (wheel: rotation speed; mouse Y: vertical angle; RMB + mouse Y: zoom; Space: pause or run the world; ESC or camera_observer to leave)\n");
 }
 
 void Observer_Stop (void)
@@ -142,6 +144,7 @@ void Observer_Stop (void)
 
 	observer.active = false;
 	observer.zooming = false;
+	observer.live = false;
 	sv.paused = observer.sv_paused_prev;
 
 	Con_Printf ("camera_observer: off\n");
@@ -162,7 +165,9 @@ qboolean Observer_Active (void)
 
 qboolean Observer_Frozen (void)
 {
-	return observer.active;
+	// Like the photocam's live mode: the Space toggle releases the clock hold
+	// (CL_ReadFromServer) with the server pause, so a running world animates.
+	return (observer.active && !observer.live) ? true : false;
 }
 
 void Observer_UpdateView (void)
@@ -230,14 +235,35 @@ qboolean Observer_KeyEvent (int key, qboolean down)
 		return true;
 	}
 
-	// Space freezes the world again or lets it run while the camera keeps
-	// orbiting; the key is swallowed so the jump bind never fires in here
+	// Space freezes the world again or lets it run; the server pause and the
+	// clock hold (Observer_Frozen) follow the same flag, as in the photocam's
+	// live mode, so a running world animates fully
 	if (key == K_SPACE)
 	{
 		if (down)
 		{
-			sv.paused = sv.paused ? false : true;
-			Con_Printf ("camera_observer: the world is %s\n", sv.paused ? "paused" : "running");
+			observer.live = observer.live ? false : true;
+
+			if (observer.live)
+			{
+				// no stale movement command runs the player off while watching
+				if (sv.active && svs.clients != NULL && svs.clients[0].edict != NULL)
+				{
+					memset (&svs.clients[0].cmd, 0, sizeof (svs.clients[0].cmd));
+
+					svs.clients[0].edict->v.velocity[0] = 0.0f;
+					svs.clients[0].edict->v.velocity[1] = 0.0f;
+					svs.clients[0].edict->v.velocity[2] = 0.0f;
+				}
+
+				sv.paused = false;
+			}
+			else
+			{
+				sv.paused = true;
+			}
+
+			Con_Printf ("camera_observer: the world is %s\n", observer.live ? "running" : "paused");
 		}
 		return true;
 	}
