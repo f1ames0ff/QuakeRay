@@ -8568,6 +8568,12 @@ static qboolean QRE_WriteLightSession (void)
 
 static qboolean QRE_WriteSession (void)
 {
+	// A drag whose mouse-up never arrived (the panel swallowed it when it
+	// opened over the light) is not a committed edit: the write must see the
+	// pre-drag values, not the frozen draft it left on the light.
+	QRE_CancelLightDrag ();
+	QRE_CustomGizmoCancel ();
+
 	if (qre.mode == QRE_MODE_LIGHT)
 		return QRE_WriteLightSession ();
 	return QRE_WriteMergedSession (qre.touched, qre.touched_count);
