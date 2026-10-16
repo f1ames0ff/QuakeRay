@@ -4652,7 +4652,12 @@ static const qre_light_field_t *QRE_LightFieldFind (int field)
 static qboolean QRE_LightFieldAuthored (const rt_light_t *l, const qre_light_field_t *f)
 {
 	if (f->has_offset == (size_t)-1)
-		return true;
+	{
+		// a field without an authored flag (force_rasterize): its own value
+		// decides, so an original that lacks the field only counts as
+		// different when the light actually has it on
+		return (*(const qboolean *)((const char *)l + f->value_offset) != 0) ? true : false;
+	}
 
 	return (*(const qboolean *)((const char *)l + f->has_offset) != 0) ? true : false;
 }
