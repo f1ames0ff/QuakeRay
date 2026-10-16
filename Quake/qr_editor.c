@@ -398,6 +398,9 @@ static struct
 
 	qboolean gizmo_fly_drag;
 	float    gizmo_fly_mouse[2];
+	float    gizmo_fly_dir[2];      // the axis' screen direction, frozen at the press
+	float    gizmo_fly_len;         // its pixel length, frozen at the press too
+	qboolean gizmo_fly_basis;       // whether the press could measure the axis
 	vec3_t   gizmo_fly_anchor_local;
 
 	// which of the two editors this is
@@ -7117,13 +7120,39 @@ static qboolean QRE_CustomGizmoBegin (float mx, float my)
 	return true;
 }
 
+// The selected axis' screen direction and pixel length for one gizmo origin:
+// what the cursor's movement is projected on. A flying drag freezes it at the
+// press (see QR_Editor_GizmoPress), because QRE_GizmoFlyFollow turns the camera
+// with the light and a live re-projection would feed that rotation back into
+// the mapping: the axis' screen length shrinks as the view turns toward it and
+// the world-space displacement grows with it, without bound.
+static qboolean QRE_GizmoAxisScreen (const vec3_t origin, float dir[2], float *pixlen)
+{
+	vec3_t tip;
+	float  ox, oy, ax, ay, dx, dy;
+
+	VectorMA (origin, QRE_GIZMO_LEN, qre.custom_drag_vector, tip);
+	if (!QRE_WorldToScreen (origin, &ox, &oy) || !QRE_WorldToScreen (tip, &ax, &ay))
+		return false;
+
+	dx = ax - ox;
+	dy = ay - oy;
+	*pixlen = sqrtf (dx * dx + dy * dy);
+	if (*pixlen < 1.0f)
+		return false;
+
+	dir[0] = dx / *pixlen;
+	dir[1] = dy / *pixlen;
+	return true;
+}
+
 static void QRE_CustomGizmoMove (float mx, float my)
 {
 	int                count = 0;
 	rt_custom_light_t *lights;
 	rt_custom_light_t *l;
-	vec3_t             origin, tip;
-	float              ox, oy, ax, ay, dirx, diry, pixlen, delta;
+	vec3_t             origin;
+	float              dirx, diry, pixlen, delta;
 
 	if (!qre.custom_dragging)
 		return;
@@ -7158,24 +7187,28 @@ static void QRE_CustomGizmoMove (float mx, float my)
 		return;
 	}
 
-	if (!QRE_WorldToScreen (origin, &ox, &oy))
-		return;
+	if (qre.gizmo_fly_drag)
+	{
+		if (!qre.gizmo_fly_basis)
+			return;
 
-	VectorMA (origin, QRE_GIZMO_LEN, qre.custom_drag_vector, tip);
-	if (!QRE_WorldToScreen (tip, &ax, &ay))
-		return;
+		dirx = qre.gizmo_fly_dir[0];
+		diry = qre.gizmo_fly_dir[1];
+		pixlen = qre.gizmo_fly_len;
+	}
+	else
+	{
+		float dir[2];
+
+		if (!QRE_GizmoAxisScreen (origin, dir, &pixlen))
+			return;
+
+		dirx = dir[0];
+		diry = dir[1];
+	}
 
 	if (mx < 0.0f)
 		return;
-
-	dirx = ax - ox;
-	diry = ay - oy;
-	pixlen = sqrtf (dirx * dirx + diry * diry);
-	if (pixlen < 1.0f)
-		return;
-
-	dirx /= pixlen;
-	diry /= pixlen;
 
 	// how far the cursor moved along the axis' screen direction, in world units
 	delta = ((mx - qre.custom_drag_mouse[0]) * dirx + (my - qre.custom_drag_mouse[1]) * diry) /
@@ -9393,6 +9426,7 @@ qboolean QR_Editor_GizmoPress (void)
 	qre.gizmo_fly_drag = true;
 	qre.gizmo_fly_mouse[0] = (float)glwidth * 0.5f;
 	qre.gizmo_fly_mouse[1] = (float)glheight * 0.5f;
+	qre.gizmo_fly_basis = false;
 
 	{
 		qre.gizmo_fly_anchor_local[0] = qre.gizmo_fly_anchor_local[1] = qre.gizmo_fly_anchor_local[2] = 0.0f;
@@ -9417,6 +9451,11 @@ qboolean QR_Editor_GizmoPress (void)
 				t = (denom > 1e-4f) ? (ee - b * d) / denom : 0.0f;
 				VectorMA (origin, t, e, anchor);
 				VectorSubtract (anchor, origin, qre.gizmo_fly_anchor_local);
+
+				// the drag keeps this screen basis: the camera turns with the
+				// light, so a live re-projection would feed that rotation back
+				// into the displacement
+				qre.gizmo_fly_basis = QRE_GizmoAxisScreen (origin, qre.gizmo_fly_dir, &qre.gizmo_fly_len);
 			}
 		}
 	}
