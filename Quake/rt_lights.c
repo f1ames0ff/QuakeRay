@@ -9,6 +9,7 @@
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "atomics.h"
+#include "qr_editor.h"
 
 #include <yaml.h>
 
@@ -1342,7 +1343,7 @@ static void RT_SkySettings_SetCvar(int index, const char *value)
     if (!value)
         return;
     if (strcmp(RT_SkySettings_Live(index), value))
-        Cvar_Set(rt_sky_names[index], value);
+        QR_Editor_HostCvarSet(rt_sky_names[index], value);
 }
 
 static void RT_SkySettings_CaptureGlobals(void)
