@@ -325,6 +325,9 @@ static struct
 	// QRE_CustomTouched compares to
 	rt_custom_light_t snap_custom[RT_CUSTOM_LIGHTS_MAX];
 	int               snap_custom_count;
+	// live index -> snapshot index, -1 for a light added in this session: a
+	// removal shifts the live list, and the per-field reset must follow
+	int               snap_custom_map[RT_CUSTOM_LIGHTS_MAX];
 	float             snap_fog_color[3];
 	float             snap_fog_density;
 
@@ -715,9 +718,13 @@ static void QRE_TakeCustomSnapshot (void)
 	int                count = 0;
 	rt_custom_light_t *lights = RT_CustomLights (&count);
 	float              color[4];
+	int                i;
 
 	memcpy (qre.snap_custom, lights, (size_t)count * sizeof (rt_custom_light_t));
 	qre.snap_custom_count = count;
+
+	for (i = 0; i < RT_CUSTOM_LIGHTS_MAX; i++)
+		qre.snap_custom_map[i] = (i < count) ? i : -1;
 
 	Fog_GetColor (color);
 	qre.snap_fog_color[0] = color[0];
@@ -734,6 +741,14 @@ static void QRE_RestoreCustomSnapshot (void)
 	if (qre.snap_custom_count > 0)
 		memcpy (lights, qre.snap_custom, (size_t)qre.snap_custom_count * sizeof (rt_custom_light_t));
 	RT_CustomLights_SetCount (qre.snap_custom_count);
+
+	// the live list matches the snapshot again
+	{
+		int i;
+
+		for (i = 0; i < RT_CUSTOM_LIGHTS_MAX; i++)
+			qre.snap_custom_map[i] = (i < qre.snap_custom_count) ? i : -1;
+	}
 
 	// the fog is engine state, not a cvar: it comes back through the same
 	// `fog` command the Global tab edits it with, and only when it differs
@@ -5552,9 +5567,13 @@ enum
 
 static qboolean QRE_CustomOriginal (int index, rt_custom_light_t *out)
 {
-	if (index >= 0 && index < qre.snap_custom_count)
+	// the snapshot slot the live light came from: a removal shifts the live
+	// list, so the index alone no longer identifies the original entry
+	const int snap = (index >= 0 && index < RT_CUSTOM_LIGHTS_MAX) ? qre.snap_custom_map[index] : -1;
+
+	if (snap >= 0 && snap < qre.snap_custom_count)
 	{
-		*out = qre.snap_custom[index];
+		*out = qre.snap_custom[snap];
 		return true;
 	}
 
@@ -5784,6 +5803,8 @@ static void QRE_CustomLightsTab (void)
 					copy->origin[2] += 32.0f;
 
 					(void)RT_CustomLights (&new_count);
+					if (new_count > 0)
+						qre.snap_custom_map[new_count - 1] = -1; // the copy has no original
 					QRE_SelectCustomLight (new_count - 1);
 				}
 				else
@@ -5802,6 +5823,17 @@ static void QRE_CustomLightsTab (void)
 			QR_GUI_SameLine ();
 			if (QR_GUI_Button ("Remove"))
 			{
+				// the live list shifts below: a drag or a gizmo that targets a
+				// light by index must not outlive the removal, and the snapshot
+				// mapping follows the shift
+				QRE_CancelLightDrag ();
+				QRE_CustomGizmoCancel ();
+
+				if (selected >= 0 && selected < RT_CUSTOM_LIGHTS_MAX - 1)
+					memmove (qre.snap_custom_map + selected, qre.snap_custom_map + selected + 1,
+					         (size_t)(RT_CUSTOM_LIGHTS_MAX - 1 - selected) * sizeof (qre.snap_custom_map[0]));
+				qre.snap_custom_map[RT_CUSTOM_LIGHTS_MAX - 1] = -1;
+
 				RT_CustomLights_Remove (selected);
 				qre.sel_light_valid = false;
 				QR_GUI_PopID ();
@@ -9183,6 +9215,8 @@ void QR_Editor_PlaceAtCrosshair (void)
 		int count = 0;
 
 		(void)RT_CustomLights (&count);
+		if (count > 0)
+			qre.snap_custom_map[count - 1] = -1; // added this session: no original
 		QRE_SelectCustomLight (count - 1);
 	}
 
