@@ -132,7 +132,7 @@ static void Observer_Start (void)
 	observer.sv_paused_prev = sv.paused;
 	sv.paused = true;
 
-	Con_Printf ("camera_observer: on (wheel: rotation speed; mouse Y: vertical angle; RMB + mouse Y: zoom; ESC or camera_observer to leave)\n");
+	Con_Printf ("camera_observer: on (wheel: rotation speed; mouse Y: vertical angle; RMB + mouse Y: zoom; Space: pause the world; ESC or camera_observer to leave)\n");
 }
 
 void Observer_Stop (void)
@@ -227,6 +227,18 @@ qboolean Observer_KeyEvent (int key, qboolean down)
 	if (key == K_ESCAPE && down)
 	{
 		Observer_Stop ();
+		return true;
+	}
+
+	// Space freezes the world again or lets it run while the camera keeps
+	// orbiting; the key is swallowed so the jump bind never fires in here
+	if (key == K_SPACE)
+	{
+		if (down)
+		{
+			sv.paused = sv.paused ? false : true;
+			Con_Printf ("camera_observer: the world is %s\n", sv.paused ? "paused" : "running");
+		}
 		return true;
 	}
 
