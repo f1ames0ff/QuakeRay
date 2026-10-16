@@ -6797,7 +6797,7 @@ static qboolean QRE_CustomGizmoBegin (float mx, float my)
 // with the light and a live re-projection would feed that rotation back into
 // the mapping: the axis' screen length shrinks as the view turns toward it and
 // the world-space displacement grows with it, without bound.
-static qboolean QRE_GizmoAxisScreen (const vec3_t origin, float dir[2], float *pixlen)
+static qboolean QRE_GizmoAxisScreen (vec3_t origin, float dir[2], float *pixlen)
 {
 	vec3_t tip;
 	float  ox, oy, ax, ay, dx, dy;
