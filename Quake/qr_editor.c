@@ -3857,8 +3857,13 @@ static const struct
 
 static char     qre_water_snapshot[countof (qre_water)][QRE_SNAPSHOT_MAX];
 static qboolean qre_water_snapshot_set[countof (qre_water)];
-static float    qre_water_color_snapshot[3];
-static float    qre_acid_color_snapshot[3];
+// the two colour cvars are snapshotted as strings, like every other value: the
+// editor's own writer rounds floats to integers, so a float snapshot could not
+// reproduce a hand-authored value and the session never settled
+static char     qre_water_color_snapshot[QRE_SNAPSHOT_MAX];
+static qboolean qre_water_color_snapshot_set;
+static char     qre_acid_color_snapshot[QRE_SNAPSHOT_MAX];
+static qboolean qre_acid_color_snapshot_set;
 
 static const char *const qre_mat_cvars[] = {
 	"rt_dtal_clearance",
@@ -3941,8 +3946,16 @@ static void QRE_TakeWaterSnapshot (void)
 		q_strlcpy (qre_water_snapshot[i], var->string ? var->string : "", sizeof (qre_water_snapshot[i]));
 	}
 
-	RT_GetWaterColor (qre_water_color_snapshot);
-	RT_GetAcidColor (qre_acid_color_snapshot);
+	{
+		cvar_t *var = Cvar_FindVar ("rt_water_color");
+
+		qre_water_color_snapshot_set = (var != NULL);
+		q_strlcpy (qre_water_color_snapshot, (var && var->string) ? var->string : "", sizeof (qre_water_color_snapshot));
+
+		var = Cvar_FindVar ("rt_water_acidcolor");
+		qre_acid_color_snapshot_set = (var != NULL);
+		q_strlcpy (qre_acid_color_snapshot, (var && var->string) ? var->string : "", sizeof (qre_acid_color_snapshot));
+	}
 
 	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
 	{
@@ -3962,7 +3975,6 @@ static void QRE_TakeWaterSnapshot (void)
 
 static qboolean QRE_WaterTouched (void)
 {
-	float color[3];
 	int   i;
 
 	for (i = 0; i < (int)countof (qre_water); i++)
@@ -3977,12 +3989,18 @@ static qboolean QRE_WaterTouched (void)
 			return true;
 	}
 
-	RT_GetWaterColor (color);
-	if (memcmp (color, qre_water_color_snapshot, sizeof (color)))
-		return true;
-	RT_GetAcidColor (color);
-	if (memcmp (color, qre_acid_color_snapshot, sizeof (color)) != 0)
-		return true;
+	{
+		cvar_t *var = Cvar_FindVar ("rt_water_color");
+
+		if (qre_water_color_snapshot_set && var &&
+		    strcmp (var->string ? var->string : "", qre_water_color_snapshot))
+			return true;
+
+		var = Cvar_FindVar ("rt_water_acidcolor");
+		if (qre_acid_color_snapshot_set && var &&
+		    strcmp (var->string ? var->string : "", qre_acid_color_snapshot))
+			return true;
+	}
 
 	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
 	{
@@ -4008,8 +4026,10 @@ static void QRE_WaterRestore (void)
 			QR_Editor_HostCvarSet (qre_water[i].name, qre_water_snapshot[i]);
 	}
 
-	QRE_WaterColorSet ("rt_water_color", qre_water_color_snapshot);
-	QRE_WaterColorSet ("rt_water_acidcolor", qre_acid_color_snapshot);
+	if (qre_water_color_snapshot_set)
+		Cvar_Set ("rt_water_color", qre_water_color_snapshot);
+	if (qre_acid_color_snapshot_set)
+		Cvar_Set ("rt_water_acidcolor", qre_acid_color_snapshot);
 
 	QRE_MatCvarsRestore ();
 }
@@ -4046,26 +4066,27 @@ static void QRE_MatWaterSection (void)
 	}
 
 	{
-		float rgb[3];
-		int   en = 1;
+		float   rgb[3];
+		int     en = 1;
+		cvar_t *var;
 
+		var = Cvar_FindVar ("rt_water_color");
 		RT_GetWaterColor (rgb);
 		if (QR_GUI_ColorHex ("rt_water_color", rgb, &en, "The color of the water surface."))
 			QRE_WaterColorSet ("rt_water_color", rgb);
-		if (QR_GUI_ResetButton ("rt_water_color", memcmp (rgb, qre_water_color_snapshot, sizeof (rgb)) != 0))
-		{
-			VectorCopy (qre_water_color_snapshot, rgb);
-			QRE_WaterColorSet ("rt_water_color", rgb);
-		}
+		if (QR_GUI_ResetButton ("rt_water_color",
+		                        qre_water_color_snapshot_set && var &&
+		                        strcmp (var->string ? var->string : "", qre_water_color_snapshot) != 0))
+			Cvar_Set ("rt_water_color", qre_water_color_snapshot);
 
+		var = Cvar_FindVar ("rt_water_acidcolor");
 		RT_GetAcidColor (rgb);
 		if (QR_GUI_ColorHex ("rt_water_acidcolor", rgb, &en, "The color of the acid."))
 			QRE_WaterColorSet ("rt_water_acidcolor", rgb);
-		if (QR_GUI_ResetButton ("rt_water_acidcolor", memcmp (rgb, qre_acid_color_snapshot, sizeof (rgb)) != 0))
-		{
-			VectorCopy (qre_acid_color_snapshot, rgb);
-			QRE_WaterColorSet ("rt_water_acidcolor", rgb);
-		}
+		if (QR_GUI_ResetButton ("rt_water_acidcolor",
+		                        qre_acid_color_snapshot_set && var &&
+		                        strcmp (var->string ? var->string : "", qre_acid_color_snapshot) != 0))
+			Cvar_Set ("rt_water_acidcolor", qre_acid_color_snapshot);
 	}
 
 	QR_GUI_Spacing ();
