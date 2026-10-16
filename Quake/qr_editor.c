@@ -594,6 +594,7 @@ static void     QRE_StopEditor (qboolean restore);
 static void     QRE_ClosePanel (void);
 static void     QRE_RequestExit (void);
 static void     QRE_StartMode (int mode);
+static void     QRE_ResetAll (void);
 static void     QRE_GlobalsRestore (void);
 static qboolean QRE_GlobalsTouched (void);
 static qboolean QRE_SkyTouched (void);
@@ -1382,6 +1383,7 @@ static struct
 	char     cbuf[QRE_ACTIONS_MAX][QRE_ACTION_VALUE_MAX];
 	int      cbuf_count;
 	int      cursor_mode; // -1 none, 0 panel off, 1 panel on
+	qboolean cursor_reclaim; // the panel came back from the console: grab the cursor again
 	qboolean stop;
 	qboolean stop_restore;
 	int      browse_group;
@@ -2422,6 +2424,22 @@ static void QRE_DrainActions (void)
 
 		qre_actions.cursor_mode = -1;
 		QRE_CursorMode (on);
+	}
+
+	if (qre_actions.cursor_reclaim)
+	{
+		qre_actions.cursor_reclaim = false;
+		IN_FreeCursorForGui ();
+		SDL_ShowCursor (SDL_DISABLE);
+	}
+
+	// A reset-all runs here, on the host: it writes cvars, reloads the
+	// materials and refreshes the config and the snapshots in the same frame,
+	// which would all read the pre-reset state if it ran in a task.
+	if (qre.reset_pending)
+	{
+		qre.reset_pending = false;
+		QRE_ResetAll ();
 	}
 
 	if (qre_actions.stop)
@@ -6681,19 +6699,11 @@ static void QRE_Frame (void)
 		return;
 	}
 
-	if (qre.reset_pending)
-	{
-		qre.reset_pending = false;
-		QRE_ResetAll ();
-	}
-
 	// While the console is up it owns the input; coming back, the panel needs
 	// its free cursor again (the console re-activated the relative mouse mode).
+	// The grab is host state: the drain (QR_Editor_DrainActions) applies it.
 	if (qre.panel_open && prev_key_dest != key_game && key_dest == key_game)
-	{
-		IN_FreeCursorForGui ();
-		SDL_ShowCursor (SDL_DISABLE);
-	}
+		qre_actions.cursor_reclaim = true;
 	prev_key_dest = key_dest;
 
 	if (QR_Editor_Flying ())
