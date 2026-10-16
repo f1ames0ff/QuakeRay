@@ -4027,9 +4027,9 @@ static void QRE_WaterRestore (void)
 	}
 
 	if (qre_water_color_snapshot_set)
-		Cvar_Set ("rt_water_color", qre_water_color_snapshot);
+		QR_Editor_HostCvarSet ("rt_water_color", qre_water_color_snapshot);
 	if (qre_acid_color_snapshot_set)
-		Cvar_Set ("rt_water_acidcolor", qre_acid_color_snapshot);
+		QR_Editor_HostCvarSet ("rt_water_acidcolor", qre_acid_color_snapshot);
 
 	QRE_MatCvarsRestore ();
 }
@@ -4077,7 +4077,7 @@ static void QRE_MatWaterSection (void)
 		if (QR_GUI_ResetButton ("rt_water_color",
 		                        qre_water_color_snapshot_set && var &&
 		                        strcmp (var->string ? var->string : "", qre_water_color_snapshot) != 0))
-			Cvar_Set ("rt_water_color", qre_water_color_snapshot);
+			QR_Editor_HostCvarSet ("rt_water_color", qre_water_color_snapshot);
 
 		var = Cvar_FindVar ("rt_water_acidcolor");
 		RT_GetAcidColor (rgb);
@@ -4086,7 +4086,7 @@ static void QRE_MatWaterSection (void)
 		if (QR_GUI_ResetButton ("rt_water_acidcolor",
 		                        qre_acid_color_snapshot_set && var &&
 		                        strcmp (var->string ? var->string : "", qre_acid_color_snapshot) != 0))
-			Cvar_Set ("rt_water_acidcolor", qre_acid_color_snapshot);
+			QR_Editor_HostCvarSet ("rt_water_acidcolor", qre_acid_color_snapshot);
 	}
 
 	QR_GUI_Spacing ();
