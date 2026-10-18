@@ -879,7 +879,6 @@ void RT_LIGHT_Reload(void)
 
     rt_light_load_vfs("lights.yaml");
     rt_light_load_vfs("qray.lights.yaml");
-    rt_light_load_directory(com_gamedir);
 }
 
 void RT_LIGHT_Init(void)

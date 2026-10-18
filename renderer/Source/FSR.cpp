@@ -271,7 +271,7 @@ void qray::FidelityFX::FSR::RecreateContext()
 
     if (versionId == 0)
     {
-        const char* msg = "FSR: no FSR provider found in the FidelityFX DLL";
+        const char* msg = "Warning: FSR: no FSR provider found in the FidelityFX DLL";
         OutputDebugStringA(msg);
         if (m_pUserPrint)
         {

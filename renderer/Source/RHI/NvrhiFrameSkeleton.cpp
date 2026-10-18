@@ -1844,8 +1844,13 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
     // once, after the engine has had a few frames to fill the table; the counter then stops.
     if (framesUntilFallbackLog > 0 && --framesUntilFallbackLog == 0)
     {
-        print(("RHI: the texture table holds " + std::to_string(textureTable->GetFallbackSlotCount()) +
-               " fallback slot(s) (unwrapable format/swizzle)").c_str());
+        const auto fallbackSlots = textureTable->GetFallbackSlotCount();
+
+        if (fallbackSlots > 0)
+        {
+            print(("RHI: the texture table holds " + std::to_string(fallbackSlots) +
+                   " fallback slot(s) (unwrapable format/swizzle)").c_str());
+        }
     }
 
     return true;
