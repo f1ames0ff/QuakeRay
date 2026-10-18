@@ -1148,7 +1148,6 @@ void RT_MAT_Init(void)
 
     rt_mat_load_cb("materials.yaml", &ctx);
     rt_mat_load_cb("qray.materials.yaml", &ctx);
-    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
 
     rt_mat_cmd = Cmd_AddCommand2("rt_mat", RT_MAT_Cmd, src_command);
 }
@@ -1219,7 +1218,6 @@ void RT_MAT_Reload(void)
     rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
     rt_mat_load_cb("materials.yaml", &ctx);
     rt_mat_load_cb("qray.materials.yaml", &ctx);
-    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
 
     if (rt_current_map[0])
     {

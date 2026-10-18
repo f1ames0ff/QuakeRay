@@ -299,7 +299,9 @@ void Cmd_Exec_f (void)
 #endif
 	if (!f)
 	{
-		if (cmd_warncmd.value)
+		// A missing autoexec.cfg is the normal state (the base pak's quake.rc
+		// always asks for it): warn about the other files only
+		if (cmd_warncmd.value && q_strcasecmp (Cmd_Argv (1), "autoexec.cfg"))
 			Con_Printf ("couldn't exec %s\n", Cmd_Argv (1));
 		return;
 	}

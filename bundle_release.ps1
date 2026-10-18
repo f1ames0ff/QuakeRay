@@ -7,8 +7,8 @@
     (qray.pkz -- the shaders, textures with the material textures and the model
     skins, luma and gloss maps among them, the axe cursor artwork, the GUI font
     and the BlueNoise / WaterNormal tables -- and the loose qray.materials.yaml
-    the editor rewrites) plus documentation into a single ZIP ready for
-    distribution.
+    the editor rewrites), the standard config as id1/config.cfg, and the
+    documentation into a single ZIP ready for distribution.
 
     The engine binary is taken from the Release configuration, which is built
     without debug information. Debug artifacts (.pdb/.ilk/.map) are never
@@ -110,6 +110,13 @@ foreach ($f in @("qray.pkz", "qray.materials.yaml")) {
         throw "id1\$f not found in $gameDir. Build the Release configuration first: .\build_win.ps1 Release"
     }
 }
+
+$standardConfig = Join-Path $repoRoot "Misc\default.cfg"
+if (-not (Test-Path $standardConfig)) {
+    throw "Misc\default.cfg not found"
+}
+Copy-Item $standardConfig (Join-Path $stageId1 "config.cfg") -Force
+Write-Host "Added id1\config.cfg"
 
 # 4) Documentation / license.
 foreach ($d in @("readme.md", "changelog.md", "LICENSE.txt")) {

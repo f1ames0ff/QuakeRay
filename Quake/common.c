@@ -3282,7 +3282,7 @@ void LOC_LoadFile (const char *file)
 			mz_zip_reader_end (&archive);
 			if (rw)
 				SDL_RWclose (rw);
-			Con_Printf ("Couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
+			Con_DPrintf ("Couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
 			return;
 		}
 		SDL_RWread (rw, localization.text, 1, sz);
