@@ -164,6 +164,7 @@ if (Test-Path $stalePak) { Remove-Item $stalePak -Force }
 # The material definitions are the one engine file the editor rewrites, so they
 # stay loose as the gamedir's qray.materials.yaml.
 Copy-Item (Join-Path $srcRoot "materials.yaml") (Join-Path $gameDir "qray.materials.yaml") -Force
+Copy-Item (Join-Path $PSScriptRoot "Misc\qray_defaults.cfg") (Join-Path $gameDir "qray_defaults.cfg") -Force
 
 $stage = Join-Path $BuildDir "qray_stage"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
