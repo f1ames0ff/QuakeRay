@@ -1141,6 +1141,8 @@ typedef struct QrDrawFrameTonemappingParams
     float       exposureBias;
 
     float       tonemapPower;
+    float       highlightDesaturation;
+    float       chromaPreservation;
     float       exposureSpeedUp;
     float       exposureSpeedDown;
     float       exposureLowPercentile;

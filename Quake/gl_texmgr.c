@@ -544,6 +544,31 @@ unlock_mutex:
 
 /*
 ================
+TexMgr_FindTextureByName
+================
+*/
+gltexture_t *TexMgr_FindTextureByName (const char *name)
+{
+	SDL_LockMutex (texmgr_mutex);
+	gltexture_t *glt = NULL;
+
+	if (name)
+	{
+		for (glt = active_gltextures; glt; glt = glt->next)
+		{
+			if (!strcmp (glt->name, name))
+				goto unlock_mutex;
+		}
+		glt = NULL;
+	}
+
+unlock_mutex:
+	SDL_UnlockMutex (texmgr_mutex);
+	return glt;
+}
+
+/*
+================
 TexMgr_NewTexture
 ================
 */

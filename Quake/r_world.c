@@ -3764,11 +3764,14 @@ static rt_dtal_entry_t *RT_ModelLightCacheFind (struct rt_dtal_cache_s *cache, g
 	return NULL;
 }
 
-static qboolean RT_IsLevelLightModel (const char *name)
+qboolean RT_IsLevelLightModel (const char *name)
 {
 	const char *base = name;
+	char        model[MAX_QPATH];
+	const char *colon;
 	const char *list;
 	const char *p;
+	size_t      len;
 	cvar_t     *var;
 
 	if (!name || !name[0])
@@ -3783,6 +3786,16 @@ static qboolean RT_IsLevelLightModel (const char *name)
 		if (*p == '/' || *p == '\\')
 			base = p + 1;
 	}
+
+	/* A material is named after the texture frame ("progs/flame2.mdl:frame0");
+	   the list names the model, so the frame suffix is not part of the match. */
+	colon = strchr (base, ':');
+	len = colon ? (size_t)(colon - base) : strlen (base);
+	if (len >= sizeof (model))
+		len = sizeof (model) - 1;
+	memcpy (model, base, len);
+	model[len] = '\0';
+	base = model;
 
 	list = var->string;
 

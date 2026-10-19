@@ -5,10 +5,59 @@
 - For profiling or optimization, then read [PERFORMANCE.md](PERFORMANCE.md), select the relevant capture and verify the current source/binary/settings before forming hypotheses.
 - All agents changing CPU producers, caches, uploads or their callers must read [docs/multithreading.md](docs/multithreading.md), including its adaptation checklist, before designing a change. The render frame always runs as the task graph now - the `r_tasks` cvar and its serial fork were retired on 2026-10-14 - so new and existing solutions must keep the task-frame invariants (ownership, lifetime, the adaptation checklist) instead of relying on a serial fallback; adding a worker is not a substitute for auditing ownership and lifetime.
 - Inspect the implicated caller, callee and ownership boundary first. Expand the search only when that route cannot answer the question.
+- **Before the first MCP call, install the locked QuakeRay MCP dependencies** with the commands in [MCP dependency setup](#mcp-dependency-setup). Both commands must exit 0.
 - **QuakeRay MCP is mandatory for every agent working in this repository**, including implementers, reviewers and any delegated agents. It is the primary engine-inspection and evidence interface, not an optional convenience. Follow the workflow below; do not silently substitute shell/IDE searches for available MCP inspection tools.
 - Runtime jobs are disabled by default. Operator activation requires `QUAKERAY_ENABLE_JOBS=1` in the MCP server environment; research additionally requires `QUAKERAY_ENABLE_RESEARCH=1`. The project configuration explicitly sets both to `0`.
 - Runtime jobs use the machine guard and enforce the one-game-instance rule. After changing server code or its environment configuration, disconnect/connect `quakeray` through `/mcps` in OpenCode.
 - Keep the architecture index and performance evidence current when changing a listed execution boundary or profiler counter. Unknown costs are not measurements, and unverified hypotheses are not conclusions.
+
+## MCP dependency setup
+
+The QuakeRay MCP is a local Python server. Every agent must install its locked dependencies before
+the first MCP call. `uv` and Python 3.10 or newer are required. From the repository root run:
+
+```powershell
+uv sync --locked --project tools/quakeray_mcp --python 3.10
+uv run --offline --frozen --project tools/quakeray_mcp python -B -m quakeray_mcp --selfcheck
+```
+
+`uv sync` must exit 0. The selfcheck must exit 0 and report `server_status`, `get_architecture`,
+`list_scenarios`, `read_stats`, `read_benchmarks` and `compare_runs`. If `uv` is missing, install
+it from <https://docs.astral.sh/uv/getting-started/installation/> first. If either command fails,
+stop and report the exact failure; do not bypass the engine MCP with shell or IDE searches.
+
+`opencode.jsonc` is machine-local and gitignored. The engine server must be configured under
+`mcp.servers.quakeray` as a local server running the command above. If the file is absent, create
+it with this engine entry; do not commit the file:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "quakeray": {
+        "type": "local",
+        "command": ["uv", "run", "--offline", "--frozen", "--project", "tools/quakeray_mcp", "python", "-B", "-m", "quakeray_mcp"],
+        "cwd": ".",
+        "environment": {
+          "QUAKERAY_BUILD": "build/Debug",
+          "QUAKERAY_IMPORT_ROOTS": "build/Debug/ad",
+          "QUAKERAY_ENABLE_JOBS": "0",
+          "QUAKERAY_ENABLE_RESEARCH": "0"
+        },
+        "protocol": "legacy",
+        "codemode": true,
+        "disabled": false,
+        "timeout": { "startup": 60000, "catalog": 30000, "execution": 30000 }
+      }
+    }
+  }
+}
+```
+
+The JetBrains IDE endpoint is a separate server (`quakeray_ide`) and is not the engine MCP. If
+`server_status` is not in the session catalog, verify this configuration and reconnect
+`quakeray` through `/mcps`.
 
 ## Mandatory engine-MCP workflow
 

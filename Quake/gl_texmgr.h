@@ -148,6 +148,7 @@ extern unsigned int d_8to24table_pants[256];
 // TEXTURE MANAGER
 
 gltexture_t *TexMgr_FindTexture (qmodel_t *owner, const char *name);
+gltexture_t *TexMgr_FindTextureByName (const char *name);
 gltexture_t *TexMgr_NewTexture (void);
 void         TexMgr_FreeTexture (gltexture_t *kill);
 void         TexMgr_FreeTextures (unsigned int flags, unsigned int mask);

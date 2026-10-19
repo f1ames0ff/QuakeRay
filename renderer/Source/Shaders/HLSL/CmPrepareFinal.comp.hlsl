@@ -159,7 +159,7 @@ float3 agxFilmic( const float3 color )
 }
 
 
-float3 finalizeColor( const float3 input_color )
+float3 finalizeColor( const float3 input_color, bool isSky )
 {
     const float lum = max( getLuminance( input_color ), exp2( min_log_luminance ) );
 
@@ -189,7 +189,7 @@ float3 finalizeColor( const float3 input_color )
 
     if( tonemap_type == 2u )
     {
-        operator_color = exposed_color / ( 1.0 + exposed_color );
+        operator_color = exposed_color * ( 1.0 + exposed_color / white_point_squared ) / ( 1.0 + exposed_color );
     }
     else if( tonemap_type == 3u )
     {
@@ -207,9 +207,28 @@ float3 finalizeColor( const float3 input_color )
         operator_color = exposed_color * ( mapped_luminance / scaled_luminance );
     }
 
-    const float3 mapped_color = tonemap_type == 0u ?
+    float3 mapped_color = tonemap_type == 0u ?
         exposed_color :
         lerp( curve_color, operator_color, saturate( tonemapping[0].tonemapPower ) );
+
+    if( tonemap_type != 0u && tonemapping[0].chromaPreservation > 0.0 )
+    {
+        const float3 input_positive = max( input_color, (float3)0.0 );
+        const float input_peak = colorPeak( input_positive );
+        const float mapped_peak = colorPeak( max( mapped_color, (float3)0.0 ) );
+        if( input_peak > 1e-6 && mapped_peak > 0.0 )
+        {
+            const float3 input_chroma = input_positive / input_peak;
+            mapped_color = lerp( mapped_color, input_chroma * mapped_peak,
+                                 saturate( tonemapping[0].chromaPreservation ) );
+        }
+    }
+
+    const float exposed_peak = colorPeak( exposed_color );
+    const float highlight_amount = !isSky && ( tonemap_type == 1u || tonemap_type == 2u ) ?
+        smoothstep( white_point, white_point * 2.0, exposed_peak ) *
+        saturate( tonemapping[0].highlightDesaturation ) : 0.0;
+    mapped_color = colorDesaturateHighlights( mapped_color, highlight_amount );
 
     return colorLimitPreserveHue( mapped_color, 1.0 );
 }
@@ -460,7 +479,9 @@ void main( uint3 dispatchThreadID : SV_DispatchThreadID )
         hdr *= exp2(correction * postEffectsControl.gameplayFeedback.w);
     }
 
-    float3 color = finalizeColor( hdr );
+    const float virtualdepth = framebufDepthWorld_Sampled.Load(int3( getCheckerboardPix( pix ), 0 )).r;
+    const bool isSky = virtualdepth > MAX_RAY_LENGTH;
+    float3 color = finalizeColor( hdr, isSky );
 
     color = applyVolumetrics( pix, color );
 #if SHIPPING_HACK

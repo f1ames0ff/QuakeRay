@@ -537,6 +537,8 @@ typedef struct rt_elight_s
 {
 	int      state;
 	vec3_t   origin;
+	vec3_t   color;
+	qboolean has_color;
 	float    intensity;
 	int      lightstyle;
 	qboolean is_around_poi;
@@ -684,7 +686,66 @@ void RT_ParseElights ()
 				struct_values.state |= STRUCT_STATE_FOUND_LIGHTSTYLE;
 			}
 		}
+		else if (strcmp (key, "color") == 0)
+		{
+			vec3_t tmpcolor;
+
+			if (sscanf (value, "%f %f %f", &tmpcolor[0], &tmpcolor[1], &tmpcolor[2]) == 3)
+			{
+				VectorCopy (tmpcolor, struct_values.color);
+				struct_values.has_color = true;
+			}
+		}
 	}
+}
+
+int RT_MapLightCount (void)
+{
+	return rt_elights_count;
+}
+
+qboolean RT_MapLightInfo (int index, vec3_t origin, vec3_t color, qboolean *hasColor,
+                          float *intensity, int *style)
+{
+	const rt_elight_t *src;
+	float              quake_intensity;
+
+	if (index < 0 || index >= rt_elights_count)
+		return false;
+
+	src = &rt_elights[index];
+
+	VectorCopy (src->origin, origin);
+
+	if (src->state & STRUCT_STATE_FOUND_APPLY_OFFSET)
+		origin[2] += METRIC_TO_QUAKEUNIT (0.75f);
+
+	if (color)
+		VectorCopy (src->color, color);
+
+	if (hasColor)
+		*hasColor = src->has_color;
+
+	if (src->state & STRUCT_STATE_FOUND_INTENSITY)
+		quake_intensity = src->intensity;
+	else if (src->state & STRUCT_STATE_FOUND_WITH_MODEL)
+		quake_intensity = CVAR_TO_FLOAT (rt_elight_default_mdl);
+	else
+		quake_intensity = CVAR_TO_FLOAT (rt_elight_default);
+
+	if (intensity)
+		*intensity = quake_intensity / q_max (CVAR_TO_FLOAT (rt_elight_normaliz), 1.0f);
+
+	if (style)
+		*style = (src->state & STRUCT_STATE_FOUND_LIGHTSTYLE) ? src->lightstyle : 0;
+
+	return true;
+}
+
+qboolean RT_MapLightIsLevelClass (int index)
+{
+	return index >= 0 && index < rt_elights_count &&
+	       (rt_elights[index].state & STRUCT_STATE_FOUND_WITH_MODEL) != 0;
 }
 
 qboolean RT_AllowFakeLights (void)

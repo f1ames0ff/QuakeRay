@@ -34,6 +34,13 @@ float3 colorLimitPreserveHue(float3 color, float limit)
     return color * min(1.0, max(limit, 0.0) / max(colorPeak(color), 1e-6));
 }
 
+float3 colorDesaturateHighlights(float3 color, float amount)
+{
+    const float peak = colorPeak(color);
+    const float3 white = (float3)max(peak, 0.0);
+    return lerp(color, white, saturate(amount));
+}
+
 float3 colorHighlightShoulder(float3 color, float kneeStart, float kneeW, float kneeA, float kneeB)
 {
     const float peak = colorPeak(color);

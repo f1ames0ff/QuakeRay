@@ -132,7 +132,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
          tonemapping[0].tmSlopeBlurSigma + tonemapping[0].frameTime + float(tonemapping[0].resetCurve) +
          tonemapping[0].kneeW + tonemapping[0].kneeA + tonemapping[0].kneeB +
          float(tonemapping[0].histogram[0]) + tonemapping[0].curve[0] + tonemapping[0].normalized[0] +
-         tonemapping[0].adaptedLuminance + tonemapping[0].avgLuminance + float(tonemapping[0].tonemapType);
+         tonemapping[0].adaptedLuminance + tonemapping[0].avgLuminance + float(tonemapping[0].tonemapType) +
+         tonemapping[0].highlightDesaturation + tonemapping[0].chromaPreservation;
 
     // ShLightEncoded
     v += lights[0].color.x + float(lights[0].lightType) + lights[0].data_0.x + lights[0].data_1.x +

@@ -366,6 +366,11 @@ void GLMesh_DeleteVertexBuffer (qmodel_t *m);
 
 int R_LightPoint (vec3_t p, lightcache_t *cache, vec3_t *lightcolor);
 void RT_ParseElights (void);
+int  RT_MapLightCount (void);
+qboolean RT_MapLightInfo (int index, vec3_t origin, vec3_t color, qboolean *hasColor,
+                          float *intensity, int *style);
+qboolean RT_MapLightIsLevelClass (int index);
+qboolean RT_IsLevelLightModel (const char *name);
 void RT_BuildStyledLightIndex (void);
 void RT_ColorsRefresh (void);
 void RT_UploadAllElights (void);

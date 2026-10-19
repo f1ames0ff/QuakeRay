@@ -424,6 +424,9 @@ static struct
 	qboolean exit_prompt;
 	qboolean reset_prompt;
 	qboolean reset_pending;
+	qboolean regen_prompt;
+	qboolean regen_pending;
+	qboolean force_write;
 	qboolean prompt_from_flying;
 
 	// the pause state the editor found, restored when it closes
@@ -588,6 +591,7 @@ static void     QRE_ClosePanel (void);
 static void     QRE_RequestExit (void);
 static void     QRE_StartMode (int mode);
 static void     QRE_ResetAll (void);
+static void     QRE_RegenerateLights (void);
 static void     QRE_GlobalsRestore (void);
 static qboolean QRE_GlobalsTouched (void);
 static qboolean QRE_SkyTouched (void);
@@ -2375,6 +2379,12 @@ static void QRE_DrainActions (void)
 		QRE_ResetAll ();
 	}
 
+	if (qre.regen_pending)
+	{
+		qre.regen_pending = false;
+		QRE_RegenerateLights ();
+	}
+
 	if (qre_actions.stop)
 	{
 		const qboolean restore = qre_actions.stop_restore;
@@ -3054,9 +3064,6 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 	int           i, victim = -1;
 	int           w = 0, h = 0;
 
-	if (!qre.pick_glt)
-		return NULL;
-
 	q_snprintf (key, sizeof (key), "%s|%s|%p", m->name, m->filename_base, (void *)qre.pick_glt);
 
 	for (i = 0; i < QRE_PREVIEW_SLOTS; i++)
@@ -3100,10 +3107,16 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 	if (!pixels)
 	{
 		// the texture of the frame the material stands for: a model's skin or a
-		// sprite's frame, not the texture the pick happened to land on
+		// sprite's frame; the pick is empty when the material was opened from
+		// the list, so its own engine texture stands in
 		gltexture_t *frame_tex = QRE_FrameTexture (QRE_FrameDigit (m->name));
 
-		pixels = TexMgr_LoadRgbaForPreview (frame_tex ? frame_tex : qre.pick_glt, &w, &h);
+		if (!frame_tex)
+			frame_tex = qre.pick_glt;
+		if (!frame_tex)
+			frame_tex = TexMgr_FindTextureByName (m->name);
+
+		pixels = TexMgr_LoadRgbaForPreview (frame_tex, &w, &h);
 	}
 
 	if (!pixels || w <= 0 || h <= 0)
@@ -5447,6 +5460,8 @@ static const qre_global_t qre_globals[] = {
 	  "1 enables sunlight and makes the sun the source of the god rays, following rt_sky_sun_pitch and rt_sky_sun_yaw; 0 disables sunlight and uses the bright areas of the classic sky texture for the god rays instead." },
 	{ "Sun", "rt_sky_sun",              QRE_G_FLOAT, 0, 10,
 	  "Strength of the sun: 1 is a usable daylight, 0 turns it off.", NULL, "rt_physical_sun" },
+	{ NULL,  "rt_sky_sun_disc",         QRE_G_FLOAT, 0, 20,
+	  "Brightness multiplier of the sun disc in the procedural sky; the sunlight itself is rt_sky_sun." },
 	{ NULL,  "rt_sky_sun_color",        QRE_G_COLOR, 0, 0,
 	  "The color of the sun: its light, the disc in the procedural sky and everything that reads it (the indirect sun, the god rays, the fog's shafts).",
 	  NULL },
@@ -5475,6 +5490,17 @@ static const qre_global_t qre_globals[] = {
 	  "Brightness of the simple fog's color, which is the sky's flat color (mode 1)." },
 	{ NULL,  "rt_volume_far",                QRE_G_FLOAT, 0, 4000,
 	  "How far from the camera the volumetric volume reaches (mode 2)." },
+
+	{ "Tonemap", "rt_tonemap_white",         QRE_G_FLOAT, 1, 40,
+	  "HDR white point: lower values make highlights (the sun, bright lights) brighter and clip them sooner; higher values preserve more cloud and highlight detail." },
+	{ NULL,      "rt_tonemap_chroma",        QRE_G_FLOAT, 0, 1,
+	  "Color preservation after the tone operator: 0 keeps the operator's own color response, 1 restores the input hue and saturation at the mapped brightness." },
+	{ NULL,      "rt_tonemap_desat",         QRE_G_FLOAT, 0, 1,
+	  "Optional highlight desaturation after color preservation: 0 keeps the mapped color, 1 bleeds overexposed highlights to white." },
+	{ NULL,      "rt_tonemap_max_log",       QRE_G_FLOAT, -4, 4,
+	  "Top of the HDR luminance range the tone curve covers: higher keeps more highlight detail before the shoulder." },
+	{ NULL,      "rt_tonemap_min_log",       QRE_G_FLOAT, -12, 0,
+	  "Bottom of the HDR luminance range the tone curve covers: lower keeps more shadow detail." },
 };
 
 static char     qre_globals_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];
@@ -5778,6 +5804,11 @@ static void QRE_LightGlobalTab (void)
 	QR_GUI_Spacing ();
 	QR_GUI_LabelDim ("the values above are saved to the config by Save; Cancel puts them back");
 	QR_GUI_LabelDim ("the fog is part of the level's session: it goes to qray.lights.yaml");
+
+	QR_GUI_Separator ();
+	if (QR_GUI_Button ("Regenerate from map"))
+		qre.regen_prompt = true;
+	QR_GUI_Tooltip ("Mark the level's light models (rt_level_light_models) as light materials and write their entries to qray.materials.yaml (created if missing).");
 }
 
 // ---------------------------------------------------------------------------
@@ -6709,6 +6740,18 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 			qre.reset_pending = (answer == 1);
 		}
 	}
+	else if (qre.regen_prompt)
+	{
+		int answer = QR_GUI_DialogCentered ("QuakeRay v." ENGINE_VER_STRING,
+		    "This will mark the level's light models as lights\nand write them to qray.materials.yaml\n(created if missing). Continue?",
+		    "Yes", "No");
+
+		if (answer != 0)
+		{
+			qre.regen_prompt = false;
+			qre.regen_pending = (answer == 1);
+		}
+	}
 	else if (qre.exit_prompt)
 	{
 		int answer = QR_GUI_DialogCentered ("QuakeRay v." ENGINE_VER_STRING,
@@ -7300,7 +7343,7 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 	// fire button and flies again); a text field keeps its own Tab
 	if (e->type == SDL_KEYDOWN && e->key.keysym.scancode == SDL_SCANCODE_TAB && !QR_GUI_WantsKeyboard ())
 	{
-		if (!qre.choosing && !qre.reset_prompt)
+		if (!qre.choosing && !qre.reset_prompt && !qre.regen_prompt)
 			QRE_CursorMode (false);
 		return true;
 	}
@@ -7316,6 +7359,10 @@ qboolean QR_Editor_GuiProcessEvent (const void *sdl_event)
 		else if (qre.reset_prompt)
 		{
 			qre.reset_prompt = false;
+		}
+		else if (qre.regen_prompt)
+		{
+			qre.regen_prompt = false;
 		}
 		else if (qre.exit_prompt)
 		{
@@ -8279,7 +8326,7 @@ static qboolean QRE_WriteLightSession (void)
 	char        legacy_emitter[MAX_OSPATH];
 	char        legacy_custom[MAX_OSPATH];
 	const char *emitter_source;
-	qboolean    custom_touched = QRE_CustomTouched ();
+	qboolean    custom_touched = QRE_CustomTouched () || qre.force_write;
 	qboolean    target_exists = QRE_FileExists (qre.target_file) ? true : false;
 	int         root_kind = target_exists ? QRE_FileLightsRootKind (qre.target_file) : QRE_LIGHTS_ROOT_NONE;
 	qboolean    merged_target = (root_kind != QRE_LIGHTS_ROOT_NONE);
@@ -8559,6 +8606,7 @@ static void QRE_ClearSessionState (void)
 {
 	qre.touched_count = 0;
 	qre.light_touched_count = 0;
+	qre.force_write = false;
 	qre.dirty_count = 0;
 	memset (qre.dirty_full, 0, sizeof (qre.dirty_full));
 	memset (qre.dirty_light, 0, sizeof (qre.dirty_light));
@@ -8578,6 +8626,8 @@ static void QRE_BackToChooser (void)
 	qre.exit_prompt = false;
 	qre.reset_prompt = false;
 	qre.reset_pending = false;
+	qre.regen_prompt = false;
+	qre.regen_pending = false;
 	qre.prompt_from_flying = false;
 	qre.panel_open = true;
 
@@ -8664,6 +8714,116 @@ static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
 	FindClose (h);
 }
 
+// Marks the level's light models as light materials and writes the entries to
+// qray.materials.yaml (created when missing). Only the models in
+// rt_level_light_models are touched; the map's own light entities are not.
+static void QRE_RegenerateLights (void)
+{
+	char target[MAX_OSPATH], editor[MAX_OSPATH], backup[MAX_OSPATH];
+	char saved_target[MAX_OSPATH], saved_editor[MAX_OSPATH], saved_backup[MAX_OSPATH];
+	const char *list = Cvar_VariableString ("rt_level_light_models");
+	const char *p = list;
+	int  saved_mode = qre.mode;
+	int  count = 0;
+
+	while (p && *p)
+	{
+		char           token[MAX_QPATH];
+		char           name[MAX_QPATH];
+		int            length = 0;
+		rt_material_t *mat;
+		rt_material_t  created;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+
+		while (*p && *p != ' ' && *p != '\t' && length < (int)sizeof (token) - 1)
+			token[length++] = *p++;
+
+		token[length] = '\0';
+
+		if (!token[0])
+			continue;
+
+		if (strchr (token, '/') || strchr (token, '\\'))
+			q_snprintf (name, sizeof (name), "%s:frame0", token);
+		else
+			q_snprintf (name, sizeof (name), "progs/%s:frame0", token);
+
+		mat = RT_MAT_Find (name);
+
+		if (!mat)
+		{
+			QRE_InitDefault (&created, name);
+			created.is_light = true;
+			RT_MAT_AppendGlobal (&created);
+			mat = RT_MAT_Find (name);
+		}
+
+		if (!mat)
+			continue;
+
+		mat->is_light = true;
+
+		if (mat->light_brightness <= 0.0f)
+			mat->light_brightness = 1.0f;
+
+		if (!mat->has_light_color && !mat->filename_emissive[0])
+		{
+			mat->has_light_color = true;
+			RT_GetGlobalLightColor (mat->light_color);
+		}
+
+		if (!QRE_NameInList (qre.touched, qre.touched_count, name))
+		{
+			QRE_MarkDirtyInternal (mat, true, true);
+			TexMgr_ReloadImagesForTextureName (name);
+			count++;
+		}
+	}
+
+	if (count == 0)
+	{
+		QRE_Notify ("rt_level_light_models is empty");
+		return;
+	}
+
+	q_strlcpy (saved_target, qre.target_file, sizeof (saved_target));
+	q_strlcpy (saved_editor, qre.editor_file, sizeof (saved_editor));
+	q_strlcpy (saved_backup, qre.backup_file, sizeof (saved_backup));
+
+	q_snprintf (target, sizeof (target), "%s/qray.materials.yaml", com_gamedir);
+	q_snprintf (editor, sizeof (editor), "%s/qray.materials.editor.yaml", com_gamedir);
+	q_snprintf (backup, sizeof (backup), "%s/qray.backup_materials.yaml", com_gamedir);
+
+	qre.mode = QRE_MODE_MATERIAL;
+	q_strlcpy (qre.target_file, target, sizeof (qre.target_file));
+	q_strlcpy (qre.editor_file, editor, sizeof (qre.editor_file));
+	q_strlcpy (qre.backup_file, backup, sizeof (qre.backup_file));
+
+	if (!QRE_WriteMergedSession (qre.touched, qre.touched_count) ||
+	    (QRE_FileExists (target) && !QRE_CopyFile (target, backup)) ||
+	    !QRE_CopyFile (editor, target))
+	{
+		qre.mode = saved_mode;
+		q_strlcpy (qre.target_file, saved_target, sizeof (qre.target_file));
+		q_strlcpy (qre.editor_file, saved_editor, sizeof (qre.editor_file));
+		q_strlcpy (qre.backup_file, saved_backup, sizeof (qre.backup_file));
+		QRE_Notify ("cannot write qray.materials.yaml");
+		return;
+	}
+
+	remove (editor);
+
+	qre.mode = saved_mode;
+	q_strlcpy (qre.target_file, saved_target, sizeof (qre.target_file));
+	q_strlcpy (qre.editor_file, saved_editor, sizeof (qre.editor_file));
+	q_strlcpy (qre.backup_file, saved_backup, sizeof (qre.backup_file));
+
+	QRE_Notify ("marked %d level light model%s in qray.materials.yaml",
+	            count, count == 1 ? "" : "s");
+}
+
 static void QRE_ResetAll (void)
 {
 	const int mode = qre.mode;
@@ -8676,6 +8836,7 @@ static void QRE_ResetAll (void)
 
 	if (mode == QRE_MODE_LIGHT)
 	{
+
 		q_snprintf (legacy, sizeof (legacy), "%s/lights.yaml", com_gamedir);
 		if (!QRE_ResetRemoveFile (legacy))
 			return;
@@ -8943,6 +9104,8 @@ static void QRE_StopEditor (qboolean restore)
 	qre.exit_prompt = false;
 	qre.reset_prompt = false;
 	qre.reset_pending = false;
+	qre.regen_prompt = false;
+	qre.regen_pending = false;
 	qre.pick_model = NULL;
 	qre.pick_surf = NULL;
 	qre.pick_ent = NULL;
@@ -9105,6 +9268,18 @@ static qboolean qre_devmode_on;
 
 static cmd_function_t *qre_devmode_editor_cmd;
 static cmd_function_t *qre_devmode_stop_cmd;
+static cmd_function_t *qre_devmode_regen_cmd;
+
+static void QRE_RegenerateLights_f (void)
+{
+	if (qre.mode != QRE_MODE_LIGHT || !qre.target_file[0])
+	{
+		Con_Printf ("qr_lights_regen: open the Light Editor first\n");
+		return;
+	}
+
+	QRE_RegenerateLights ();
+}
 
 static void QRE_DevmodeCommands (qboolean on)
 {
@@ -9114,6 +9289,8 @@ static void QRE_DevmodeCommands (qboolean on)
 			qre_devmode_editor_cmd = Cmd_AddCommand2 ("qr_editor", QR_Editor_Start_f, src_command);
 		if (qre_devmode_stop_cmd == NULL)
 			qre_devmode_stop_cmd = Cmd_AddCommand2 ("qr_editor_stop", QR_Editor_Stop_f, src_command);
+		if (qre_devmode_regen_cmd == NULL)
+			qre_devmode_regen_cmd = Cmd_AddCommand2 ("qr_lights_regen", QRE_RegenerateLights_f, src_command);
 
 		if (!(developer.flags & CVAR_REGISTERED))
 			Cvar_RegisterVariable (&developer);
@@ -9133,6 +9310,11 @@ static void QRE_DevmodeCommands (qboolean on)
 		{
 			Cmd_RemoveCommand (qre_devmode_stop_cmd);
 			qre_devmode_stop_cmd = NULL;
+		}
+		if (qre_devmode_regen_cmd != NULL)
+		{
+			Cmd_RemoveCommand (qre_devmode_regen_cmd);
+			qre_devmode_regen_cmd = NULL;
 		}
 
 		Observer_Unregister ();

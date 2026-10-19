@@ -33,6 +33,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_lights.h"
 #include "qr_editor.h"
 #include "photocam.h"
+#include "observer.h"
 #include "../shared/rt_frame_policy.h"
 #include "../shared/rt_prof_window.h"
 #include "SDL.h"
@@ -225,6 +226,7 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_poi_key, "1") \
 	\
 	CVAR_DEF_T (rt_sky_sun, "1") \
+	CVAR_DEF_T (rt_sky_sun_disc, "4") \
 	CVAR_DEF_T (rt_sky_sun_color, "255 238 191") \
 	CVAR_DEF_T (rt_sky_sun_size, "1.0") \
 	CVAR_DEF_T (rt_sky_sun_pitch, "140") \
@@ -346,6 +348,11 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_exposure_max_luminance, "1.0") \
 	CVAR_DEF_T (rt_local_exposure, "0.1") \
 	CVAR_DEF_T (rt_tonemap_power, "0.9") \
+	CVAR_DEF_T (rt_tonemap_min_log, "-8.0") \
+	CVAR_DEF_T (rt_tonemap_max_log, "0.0") \
+	CVAR_DEF_T (rt_tonemap_white, "20.0") \
+	CVAR_DEF_T (rt_tonemap_desat, "0.0") \
+	CVAR_DEF_T (rt_tonemap_chroma, "0.8") \
 	CVAR_DEF_T (rt_contrast, "0.9") \
 	CVAR_DEF_T (rt_tonemap, "1") \
 	\
@@ -3651,11 +3658,13 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// Exposure bias is in EV and darkens the image when negative; contrast blends
 	// the adaptive tone curve with Reinhard (Q2RTX tm_exposure_bias / tm_reinhard).
 	QrDrawFrameTonemappingParams tonemap_params = {
-		.minLogLuminance = -3.9f,
-		.maxLogLuminance = -2.8f,
-		.luminanceWhitePoint = 10.0f,
+		.minLogLuminance = CVAR_TO_FLOAT (rt_tonemap_min_log),
+		.maxLogLuminance = CVAR_TO_FLOAT (rt_tonemap_max_log),
+		.luminanceWhitePoint = CVAR_TO_FLOAT (rt_tonemap_white),
 		.exposureBias = CLAMP (-3.0f, CVAR_TO_FLOAT (rt_exposure_bias), 3.0f),
 		.tonemapPower = CLAMP (0.0f, CVAR_TO_FLOAT (rt_tonemap_power), 1.0f),
+		.highlightDesaturation = CLAMP (0.0f, CVAR_TO_FLOAT (rt_tonemap_desat), 1.0f),
+		.chromaPreservation = CLAMP (0.0f, CVAR_TO_FLOAT (rt_tonemap_chroma), 1.0f),
 		.exposureSpeedUp = CVAR_TO_FLOAT (rt_exposure_speed_up),
 		.exposureSpeedDown = CVAR_TO_FLOAT (rt_exposure_speed_down),
 		.exposureLowPercentile = CVAR_TO_FLOAT (rt_exposure_low_percentile),
@@ -3737,6 +3746,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	vec3_t sun_disc_color;
 	RT_GetSunColor (sun_disc_color);
+	VectorScale (sun_disc_color, CVAR_TO_FLOAT (rt_sky_sun_disc), sun_disc_color);
 
 	QrDrawFrameSkyParams sky_params = {
 		.skyType = CVAR_TO_BOOL (r_fastsky) ? QR_SKY_TYPE_COLOR
@@ -3792,10 +3802,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		// wanted over one again; the lookup behind it is done at load time.
 		if (Sky_GetBrightestPoint (cl.time, brightest_dir, brightest_color))
 		{
-			// The brightest point of a rasterized sky stands in for the sun, so
-			// it takes the sun's color like the directional light does -- and
-			// the same fraction of the light fixup.
-			RT_APPLY_SUN_COLOR (brightest_color);
 			RT_FIXUP_LIGHT_INTENSITY (brightest_color, true);
 			VectorScale (brightest_color, RT_SUN_LIGHT_INTENSITY_SCALE, brightest_color);
 			VectorScale (brightest_color, RT_SKY_RADIANCE_SCALE * CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_brightness), 10.0f), brightest_color);
@@ -3996,10 +4002,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	float cameranear = GL_GetCameraNear (DEG2RAD (r_fovx), DEG2RAD (r_fovy));
 	float camerafar = GL_GetCameraFar ();
 
-	// The light editor's world is frozen: the traced water warp and the cloud
-	// drift follow this clock, so it takes the held client time while the
-	// editor runs instead of the wall clock.
-	const double frame_time = editor_active ? (double)cl.time : (double)SDL_GetTicks () / 1000.0;
+	// The editor, photocam and observer run on the client clock: the traced
+	// water warp and the cloud drift follow it while one of them owns the view,
+	// so the Space toggle freezes and resumes the clouds without teleporting
+	// them to the wall clock's offset.
+	const qboolean held_clock = QR_Editor_Active () || PhotoCam_Active () || Observer_Active ();
+	const double frame_time = held_clock ? (double)cl.time : (double)SDL_GetTicks () / 1000.0;
 
 	QrDrawFrameInfo info = {
 		.worldUpVector = {0, 0, 1},
