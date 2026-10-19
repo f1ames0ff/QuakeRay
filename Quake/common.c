@@ -2737,12 +2737,14 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 			            requested == QR_FLAVOR_REMASTERED ? "remastered" : "classic",
 			            active_flavor == QR_FLAVOR_REMASTERED ? "remastered" : "classic");
 
-		// the Nightdive add-ons are content roots of the remastered flavor
 		if (active_flavor == QR_FLAVOR_REMASTERED)
 			COM_AddBaseDir (nightdive);
-		// a Steam classic install stays a fallback below the classic data only
-		else if (classic[0] && q_strcasecmp (classic, com_basedir))
+
+		if (classic[0] && q_strcasecmp (classic, com_basedir))
 			COM_AddBaseDir (classic);
+		if (remastered[0] && q_strcasecmp (remastered, com_basedir) &&
+		    q_strcasecmp (remastered, classic))
+			COM_AddBaseDir (remastered);
 	}
 
 	COM_AddBaseDir (com_basedir);

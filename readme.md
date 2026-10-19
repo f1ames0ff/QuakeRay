@@ -109,7 +109,7 @@ For a manual installation, copy the game files from your Quake installation into
 
 Place each mod in its own folder beside `id1`, then choose it from the **Mods** menu. Mods in a detected Steam installation can also appear there. Local files take priority over Steam files.
 
-Original and Remastered game files are handled separately. Use the version a mod was made for, and expect some mods to need further compatibility work.
+Original and Remastered game files are selected separately for the base game. The other installed Steam flavor stays available as a lower-priority content root, so its mods remain in the menu; use the version a mod was made for, and expect some mods to need further compatibility work.
 
 ## How to send bug reports
 
