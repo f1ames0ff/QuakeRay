@@ -2076,6 +2076,27 @@ void VulkanDevice::GetClusterLightTail(uint32_t cluster, uint64_t *pLightUniqueI
     clusterLightLists->GetClusterTail(cluster, pLightUniqueIds, pProb, pMarginal, pAlias, pBeta, maxCount, pCount);
 }
 
+void VulkanDevice::GetLightGridStats(QrLightGridStats *pStats)
+{
+    if (pStats == nullptr)
+    {
+        throw QrException(QR_WRONG_ARGUMENT, "Argument is null");
+    }
+
+    clusterLightLists->GetLightGridStats(pStats);
+}
+
+void VulkanDevice::GetLightGridList(uint32_t cell, uint64_t *pLightUniqueIds, uint32_t maxCount, uint32_t *pCount)
+{
+    clusterLightLists->GetLightGridList(cell, pLightUniqueIds, maxCount, pCount);
+}
+
+void VulkanDevice::GetLightGridTail(uint32_t cell, uint64_t *pLightUniqueIds, float *pProb, float *pMarginal,
+                                    uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount)
+{
+    clusterLightLists->GetLightGridTail(cell, pLightUniqueIds, pProb, pMarginal, pAlias, pBeta, maxCount, pCount);
+}
+
 void VulkanDevice::UploadWorldLights(const QrWorldLightsUploadInfo *pInfo)
 {
     if (pInfo == nullptr)

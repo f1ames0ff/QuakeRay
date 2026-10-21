@@ -53,18 +53,33 @@ At reach 25 m, 64 u center mode reports p95 = 8 and max = 8, while overlap repor
 ## Proposed first grid prototype
 
 - 2 cascades × 16³ = 8192 cells, cell 64 u and 128 u, camera-centred on a 512 u snap.
-- 128 fast slots + 128 tail entries per cell, using the existing list/tail buffers and the existing 16-strata + tail shader path.
+- 128 fast slots + 128 tail entries per cell, within the existing 128-entry list and 1,048,576-entry tail capacities, and the existing 16-strata + tail shader path.
 - Cells outside the 2 cascades fall back to the existing cluster list.
 - This covers the near field (2048 u = 52 m); the outer map keeps the cluster path until the cascade count/ABI is expanded.
 - The 64-ID id Tech 8 parameter is replaced by 128 + 128; the sampling loop and per-sample ray cost are unchanged.
+
+## 2A.1 builder on the branch
+
+The first prototype layer is implemented behind `rt_light_grid` (default `0`). It builds the two-cascade grid on the CPU, without changing shading:
+
+- 2 cascades × 16³ = 8192 cells; cells 64 u and 128 u; camera-centred on a 512 u snap.
+- 128 fast entries + 128 tail entries per cell.
+- A light is inserted into every cell its influence sphere (`reach + radius + 32`) intersects.
+- Fast entries are the nearest 128 candidates; the remaining candidates up to 128 form the alias tail.
+- The grid is rebuilt when the light set, its reach/origin, or the 512 u camera snap changes.
+- `rt_light_grid_report [cell]` prints cell counts, candidate percentiles, fast/tail entries, dropped tail candidates, build time, and the fast/tail UID lists of one cell.
+- Cell indices are `cascade * 4096 + (z * 16 + y) * 16 + x`.
+
+The builder does not feed the shaders yet; the direct-NEE path and the cluster fallback are the next step. `qray_light_grid_tests` covers the capacity split, the cascade index, empty/out-of-range sources and determinism.
 
 ## Missing measurements
 
 - `ad_tfuma`, `ad_swampy`, and the user's save at the same settings.
 - Change-frame cost at HEAD (M3; the legacy 30 ms figure predates `3e59c3da`).
 - `rt_gi_level 1` vs 2 with a cvar dump (A1).
-- CPU/GPU build cost of the actual 2-cascade grid.
+- CPU build cost on the real maps (the report prints it).
+- GPU publication cost and direct-NEE cost of the 2-cascade grid.
 
 ## Next step
 
-Implement the 2-cascade 128 + 128 grid behind `rt_light_grid 0/1`, reuse the existing publication and tail ABI, keep the cluster fallback, and measure build cost, direct cost, shadow-ray rejection, and quality before considering a new 5-cascade ABI.
+Publish the 2-cascade 128 + 128 grid to the renderer, route direct NEE through it behind `rt_light_grid 0/1`, keep the cluster fallback, and measure build cost, direct cost, shadow-ray rejection, and quality before considering a new 5-cascade ABI.

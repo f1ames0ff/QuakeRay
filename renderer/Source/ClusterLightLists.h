@@ -24,6 +24,7 @@
 #include <qray/qray.h>
 
 #include "Common.h"
+#include "LightGrid.h"
 
 namespace qray
 {
@@ -90,6 +91,10 @@ public:
     void GetClusterSlots(uint32_t cluster, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const;
     void GetClusterTail(uint32_t cluster, uint64_t *pUniqueIds, float *pProb, float *pMarginal,
                         uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount) const;
+    void GetLightGridStats(QrLightGridStats *pStats) const;
+    void GetLightGridList(uint32_t cell, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const;
+    void GetLightGridTail(uint32_t cell, uint64_t *pUniqueIds, float *pProb, float *pMarginal,
+                          uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount) const;
     void ValidateComposition(UserPrint *pUserPrint) const;
 
 private:
@@ -167,6 +172,7 @@ private:
     void  CountDenied(uint32_t sourceIndex);
     void  TickReachGated(bool gated);
     void  TickTopUpGrant();
+    void  UpdateLightGrid();
 
     const WorldLights *worldLights = nullptr;
     // Leaf count of the map the tables were prepared for, before clamping to the cluster cap.
@@ -321,6 +327,11 @@ private:
     int   gridDims[3] = { 1, 1, 1 };
     float gridMins[3] = {};
     float gridCell = 1.0f;
+
+    LightGrid lightGrid;
+    bool      gridAllowed = false;
+    float     gridViewOrigin[3] = {};
+    uint64_t  gridStamp = 0;
 
     std::vector<uint32_t> offsets;    // numClusters + 1
     std::vector<uint64_t> list;

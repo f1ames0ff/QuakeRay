@@ -446,6 +446,7 @@ void RT_BrushClusterCacheReset (void);
 void RT_ClusterLightReport_f (void);
 void RT_ClusterLists_f (void);
 void RT_GridStats_f (void);
+void RT_LightGridReport_f (void);
 void RT_ClusterLightDumpHeader (FILE *f);
 void RT_LightReport_f (void);
 void RT_PrintEmissiveStats (void);

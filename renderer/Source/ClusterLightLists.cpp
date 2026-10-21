@@ -214,6 +214,15 @@ void ClusterLightLists::Reset()
     tailInternalValid = true;
     tailEntryCount = 0;
 
+    lightGrid.Reset();
+    gridAllowed = false;
+    gridStamp = 0;
+
+    for (int i = 0; i < 3; i++)
+    {
+        gridViewOrigin[i] = 0.0f;
+    }
+
     stats = QrClusterLightStats{};
     statsResets.clear();
     collectStatsResets = false;
@@ -241,6 +250,13 @@ void ClusterLightLists::BeginSources(const WorldLights &worldLightsRef,
     topUpCount = 0;
     topUpAllClusters = false;
     topUpStartMs = 0.0;
+
+    gridAllowed = uploadInfo.allowGrid != 0;
+
+    for (int axis = 0; axis < 3; axis++)
+    {
+        gridViewOrigin[axis] = uploadInfo.viewOrigin.data[axis];
+    }
 
     // The flags and the pass timings describe this frame alone: what is left of them on a frame
     // that composed nothing is exactly zero.
@@ -633,10 +649,104 @@ void ClusterLightLists::FinishSources()
         stats.publicationMask = pendingLightManager->GetLastPublicationMask();
     }
 
+    UpdateLightGrid();
+
     stats.publishMs = float(NowMs() - tPublish);
     stats.totalMs = float(NowMs() - pipelineStartMs);
 
     pendingShape = kShapeNone;
+}
+
+void ClusterLightLists::UpdateLightGrid()
+{
+    if (!gridAllowed)
+    {
+        if (lightGrid.IsValid())
+        {
+            lightGrid.Reset();
+        }
+
+        gridStamp = 0;
+        return;
+    }
+
+    uint64_t hash = 1469598103934665603ull;
+
+    auto mix = [&hash](uint64_t value)
+    {
+        for (int byte = 0; byte < 8; byte++)
+        {
+            hash ^= (value >> (byte * 8)) & 0xffull;
+            hash *= 1099511628211ull;
+        }
+    };
+
+    auto mixFloat = [&mix](float value)
+    {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        mix(bits);
+    };
+
+    for (int axis = 0; axis < 3; axis++)
+    {
+        const double snapped = std::floor((std::isfinite(gridViewOrigin[axis]) ? double(gridViewOrigin[axis]) : 0.0) /
+                                          double(LightGrid::kSnap)) *
+                               double(LightGrid::kSnap);
+        mixFloat(float(snapped));
+    }
+
+    std::vector<LightGridSource> gridSources;
+    gridSources.reserve(sources.size());
+
+    for (const Source &source : sources)
+    {
+        if (source.tombstone)
+        {
+            continue;
+        }
+
+        gridSources.push_back({ source.uid, { source.origin[0], source.origin[1], source.origin[2] }, source.reach,
+                                source.radius, source.power });
+
+        mix(source.uid);
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            mixFloat(source.origin[axis]);
+        }
+
+        mixFloat(source.reach);
+        mixFloat(source.radius);
+    }
+
+    if (hash == gridStamp && lightGrid.IsValid())
+    {
+        return;
+    }
+
+    lightGrid.Build(gridSources.data(), uint32_t(gridSources.size()), gridViewOrigin);
+    gridStamp = hash;
+}
+
+void ClusterLightLists::GetLightGridStats(QrLightGridStats *pStats) const
+{
+    if (pStats != nullptr)
+    {
+        *pStats = lightGrid.GetStats();
+    }
+}
+
+void ClusterLightLists::GetLightGridList(uint32_t cell, uint64_t *pUniqueIds, uint32_t maxCount,
+                                         uint32_t *pCount) const
+{
+    lightGrid.GetCellList(cell, pUniqueIds, maxCount, pCount);
+}
+
+void ClusterLightLists::GetLightGridTail(uint32_t cell, uint64_t *pUniqueIds, float *pProb, float *pMarginal,
+                                         uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount) const
+{
+    lightGrid.GetCellTail(cell, pUniqueIds, pProb, pMarginal, pAlias, pBeta, maxCount, pCount);
 }
 
 void ClusterLightLists::SetSources(const WorldLights &worldLightsRef,

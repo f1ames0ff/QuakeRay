@@ -285,6 +285,7 @@ extern cvar_t rt_cluster_sampling;
 extern cvar_t rt_cluster_assert;
 extern cvar_t rt_cluster_water_cross;
 extern cvar_t rt_light_report_filter;
+extern cvar_t rt_light_grid;
 
 
 static qboolean StartsWith (const char *val, const char *begin)
@@ -1432,7 +1433,7 @@ void RT_ClusterLightListsPrepare (uint32_t sliceCount)
 	if (prof_resolve != 0.0)
 		RT_Prof_End (RT_PROF_CLUSTERS_RESOLVE, prof_resolve);
 
-	const QrClusterLightSourcesUploadInfo info = {
+	QrClusterLightSourcesUploadInfo info = {
 		.numLights = (uint32_t)rt_cluster_light_count,
 		.pLights = rt_cluster_sources,
 		.topUpReach = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach_static)),
@@ -1441,7 +1442,12 @@ void RT_ClusterLightListsPrepare (uint32_t sliceCount)
 		.allowIncremental = CVAR_TO_BOOL (rt_cluster_incremental) ? 1 : 0,
 		.allowOverflow = CVAR_TO_BOOL (rt_cluster_sampling) ? 1 : 0,
 		.validate = CVAR_TO_BOOL (rt_cluster_assert) ? 1 : 0,
+		.allowGrid = CVAR_TO_BOOL (rt_light_grid) ? 1 : 0,
 	};
+
+	info.viewOrigin.data[0] = rt_cluster_vieworg[0];
+	info.viewOrigin.data[1] = rt_cluster_vieworg[1];
+	info.viewOrigin.data[2] = rt_cluster_vieworg[2];
 
 	QrResult r = qrBeginClusterLightSources (vulkan_globals.instance, &info, sliceCount);
 	QR_CHECK (r);
@@ -1961,6 +1967,63 @@ void RT_GridStats_f (void)
 
 	for (int c = 0; c < cascades; c++)
 		RT_GridStatsCascade (c, camera, baseCell, mode);
+}
+
+void RT_LightGridReport_f (void)
+{
+	QrLightGridStats st;
+	const int         requestedCell = (Cmd_Argc () > 1) ? atoi (Cmd_Argv (1)) : -1;
+
+	if (qrGetLightGridStats (vulkan_globals.instance, &st) != QR_SUCCESS)
+	{
+		Con_Printf ("rt_light_grid_report: the renderer did not return the grid\n");
+		return;
+	}
+
+	Con_Printf ("light grid: enabled %u, sources %u, cells %u (%u cascades), occupied %u, fast %u, tail %u, dropped %u, tails %u, candidates p50 %u p95 %u max %u, build %.2f ms\n",
+		st.enabled, st.sources, st.cells, st.cascades, st.occupiedCells, st.fastEntries, st.tailEntries,
+		st.tailDropped, st.cellsWithTail, st.candidateMedian, st.candidateP95, st.candidateMax, st.buildMs);
+	Con_Printf ("  cell %.1f/%.1f, origin0 %.1f %.1f %.1f, origin1 %.1f %.1f %.1f\n",
+		st.cellSize[0], st.cellSize[1], st.origin[0].data[0], st.origin[0].data[1], st.origin[0].data[2],
+		st.origin[1].data[0], st.origin[1].data[1], st.origin[1].data[2]);
+
+	if (requestedCell >= 0)
+	{
+		uint64_t uids[128];
+		uint32_t count = 0;
+
+		if (qrGetLightGridList (vulkan_globals.instance, (uint32_t)requestedCell, uids,
+			(uint32_t)countof (uids), &count) != QR_SUCCESS)
+		{
+			Con_Printf ("  cell %i: the renderer did not return the list\n", requestedCell);
+			return;
+		}
+
+		Con_Printf ("  cell %i fast %u:", requestedCell, count);
+
+		for (uint32_t i = 0; i < count; i++)
+			Con_Printf (" %llu", (unsigned long long)uids[i]);
+
+		Con_Printf ("\n");
+
+		{
+			float    prob[128];
+			float    marginal[128];
+			uint32_t alias[128];
+			float    beta = 0.0f;
+
+			if (qrGetLightGridTail (vulkan_globals.instance, (uint32_t)requestedCell, uids, prob, marginal,
+				alias, &beta, (uint32_t)countof (uids), &count) == QR_SUCCESS)
+			{
+				Con_Printf ("  cell %i tail %u beta %.4f:", requestedCell, count, beta);
+
+				for (uint32_t i = 0; i < count; i++)
+					Con_Printf (" %llu", (unsigned long long)uids[i]);
+
+				Con_Printf ("\n");
+			}
+		}
+	}
 }
 
 void RT_WorldLightStats (rt_world_report_t *out)

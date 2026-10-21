@@ -46,6 +46,7 @@ set(renderer_SOURCES
     Source/BlueNoise.cpp
     Source/Tonemapping.cpp
     Source/ClusterLightLists.cpp
+    Source/LightGrid.cpp
     Source/LightManager.cpp
     Source/AutoBuffer.cpp
     Source/ASComponent.cpp
@@ -264,6 +265,20 @@ if(QR_BUILD_TESTS)
     endif()
     add_test(NAME qray_cluster_lists_tests COMMAND qray_cluster_lists_tests)
     set_tests_properties(qray_cluster_lists_tests PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
+
+    add_executable(qray_light_grid_tests
+        Tests/LightGridTests.cpp
+        Source/LightGrid.cpp
+        "${CMAKE_SOURCE_DIR}/shared/rt_alias.c"
+    )
+    target_compile_features(qray_light_grid_tests PRIVATE cxx_std_20)
+    target_include_directories(qray_light_grid_tests PRIVATE
+        Source
+        Include
+        "${CMAKE_SOURCE_DIR}/shared"
+    )
+    add_test(NAME qray_light_grid_tests COMMAND qray_light_grid_tests)
+    set_tests_properties(qray_light_grid_tests PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 endif()
 
 add_library(renderer STATIC

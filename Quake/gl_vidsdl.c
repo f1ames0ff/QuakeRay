@@ -173,6 +173,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_particle_resolve_cache, "1") \
 	CVAR_DEF_T (rt_cluster_sampling, "1") \
 	CVAR_DEF_T (rt_cluster_assert, "0") \
+	CVAR_DEF_T (rt_light_grid, "0") \
 	/* A map's vis closes a liquid surface, and the cluster light lists are built from it, so a \
 	   light is also handed the clusters on the other side of the water that its reach covers. 0 \
 	   restores the historical lists, in which a lamp above a pool lit nothing under it. */ \
@@ -1533,6 +1534,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_wmodel_lights_batch");
 	RT_Bench_Setting (f, "rt_cluster_incremental");
 	RT_Bench_Setting (f, "rt_cluster_sampling");
+	RT_Bench_Setting (f, "rt_light_grid");
 	RT_Bench_Setting (f, "rt_cluster_water_cross");
 	RT_Bench_Setting (f, "rt_cluster_dlights");
 	RT_Bench_Setting (f, "rt_light_reach_static");
@@ -3334,6 +3336,7 @@ static void GL_InitInstance (void)
 	Cmd_AddCommand ("rt_light_report_dump", RT_LightReportDump_f);
 	Cmd_AddCommand ("rt_cluster_lists", RT_ClusterLists_f);
 	Cmd_AddCommand ("rt_grid_stats", RT_GridStats_f);
+	Cmd_AddCommand ("rt_light_grid_report", RT_LightGridReport_f);
 	Cmd_AddCommand ("rt_dtal_rebuild", RT_DtalRebuild_f);
 	Cmd_AddCommand ("dlightspot", RT_DlightSpot_f);
 	Cmd_AddCommand ("fog", RT_Fog_Cmd);

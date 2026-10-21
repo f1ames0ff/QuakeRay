@@ -135,6 +135,11 @@ public:
     void GetClusterLightTail(uint32_t cluster, uint64_t *pLightUniqueIds, float *pProb, float *pMarginal,
                              uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount);
 
+    void GetLightGridStats(QrLightGridStats *pStats);
+    void GetLightGridList(uint32_t cell, uint64_t *pLightUniqueIds, uint32_t maxCount, uint32_t *pCount);
+    void GetLightGridTail(uint32_t cell, uint64_t *pLightUniqueIds, float *pProb, float *pMarginal,
+                          uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount);
+
     void UploadWorldLights(const QrWorldLightsUploadInfo *pInfo);
 
     void SetFogVolumes(uint32_t count, const QrFogVolume *pVolumes);
