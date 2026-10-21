@@ -200,6 +200,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     // render is broken; if it is right, the sampling (VP in GetShadow) is.
     if ((globalUniform.debugShowFlags & DEBUG_SHOW_FLAG_GOD_RAYS) != 0)
     {
+        if (push.passIndex == 0)
+        {
+            lightShaftHistory[pixelPos] = (float4)0;
+        }
         if (godRaysParams[0].godRaysEnabled == 0)
         {
             framebufGodRays[pixelPos] = float4(0.0, 1.0, 0.0, 0.0);

@@ -570,6 +570,7 @@ VulkanDevice::~VulkanDevice()
     rhiRtComposePass.reset();
     rhiBloomPass.reset();
     rhiRtGodRaysPass.reset();
+    rhiLightShaftVolumePass.reset();
     rhiShadowMapPass.reset();
     rhiUiPass.reset();
     rhiRtIndirectPass.reset();

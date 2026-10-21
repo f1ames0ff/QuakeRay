@@ -35,21 +35,18 @@
 
 static const float PI = 3.1415926535;
 
-float ScatterPhase_HenyeyGreenstein(float cosa, float g)
+float shaftPhase(float cosTheta, float asymmetry)
 {
-    const float g_sqr = g * g;
-    const float num = (1.0 - abs(g));
-    const float denom = sqrt(max(1.0 - 2.0 * g * cosa + g_sqr, 0.0));
-    const float frac = num / denom;
-    const float scale = g_sqr + (1.0 - g_sqr) / (4.0 * PI);
-    return scale * (frac * frac * frac);
+    const float k = 1.55 * asymmetry - 0.55 * asymmetry * asymmetry * asymmetry;
+    const float denominator = 1.0 + k * cosTheta;
+    return (1.0 - k * k) / (4.0 * PI * denominator * denominator);
 }
 
-float getDensity(float3 p)
+float shaftDensity(float3 p)
 {
-    float3 bounds = clamp(3.0 - 2.0 * abs((p - params.worldCenter.xyz) * params.worldHalfSizeInv.xyz),
-                          (float3)0, (float3)1);
-    return bounds.x * bounds.y * bounds.z;
+    const float3 distance = abs((p - params.worldCenter.xyz) * params.worldHalfSizeInv.xyz);
+    const float edge = max(distance.x, max(distance.y, distance.z));
+    return 1.0 - smoothstep(0.75, 1.5, edge);
 }
 
 float3 volumeRayDirection(float2 cellUv)
@@ -132,7 +129,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float jitter = hash1(seed) - 0.5;
     const float3 center = center0 + jitter * (centerZ - center0);
     const float3 toViewer = normalize(globalUniform.cameraPosition.xyz - center);
-    const float density = 0.02 * getDensity(center);
+    const float density = 0.02 * shaftDensity(center);
+    if (density <= 0.0)
+    {
+        lightShaftVolume[cell] = (float4)0;
+        return;
+    }
     float3 radiance = (float3)0;
 
     for (uint i = 0; i < shaftCount; ++i)
@@ -172,7 +174,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         }
 
         const float attenuation = radius * radius / (distToLight * distToLight + radius * radius);
-        const float phase = ScatterPhase_HenyeyGreenstein(
+        const float phase = shaftPhase(
             dot(-fromLight / distToLight, toViewer), 0.5);
 
         radiance += shaft.color.rgb * (cone * attenuation * phase);

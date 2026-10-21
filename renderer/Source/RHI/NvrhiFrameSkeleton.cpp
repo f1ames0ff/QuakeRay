@@ -1229,6 +1229,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                         else
                         {
                             godRaysPass->SetLightShaftVolume(nullptr, nullptr);
+                            godRaysParams.lightShaftCount = 0;
                         }
                     }
 
