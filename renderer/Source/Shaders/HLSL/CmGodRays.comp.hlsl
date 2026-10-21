@@ -115,6 +115,35 @@ struct GodRaysParams_BT
 };
 
 [[vk::binding(0, DESC_SET_GOD_RAYS_PARAMS)]] StructuredBuffer<GodRaysParams_BT> godRaysParams;
+[[vk::binding(0, 6)]] RaytracingAccelerationStructure topLevelAS;
+
+bool LightShaftVisible(float3 origin, float3 target)
+{
+    const float3 delta = target - origin;
+    const float distance = length(delta);
+
+    if (distance <= 0.05)
+    {
+        return true;
+    }
+
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH |
+             RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
+
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = delta / distance;
+    ray.TMin = 0.05;
+    ray.TMax = distance - 0.05;
+
+    query.TraceRayInline(topLevelAS, RAY_FLAG_NONE, globalUniform.rayCullMaskWorld, ray);
+
+    while (query.Proceed())
+    {
+    }
+
+    return query.CommittedStatus() == COMMITTED_NOTHING;
+}
 
 float GetShadow(float3 worldPos)
 {
@@ -390,15 +419,18 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         inscatterColor *= globalUniform.waterColorAndDensity.a * 30.0;
     }
 
-    if (push.passIndex == 0 && godRaysParams[0].lightShaftCount > 0 && !isSky)
+    if (push.passIndex == 0 && godRaysParams[0].lightShaftCount > 0 && !isSky && rayDistance > 0.0)
     {
         const uint shaftCount = min(godRaysParams[0].lightShaftCount, (uint)MAX_LIGHT_SHAFTS);
         const uint shaftSteps = clamp(godRaysParams[0].lightShaftSteps, 4u, 16u);
+        const float3 cameraPos = originalPos;
+        const float marchDistance = rayDistance;
+        const float shaftJitter = rndBlueNoise8(seed, 1).x;
 
         for (uint si = 0; si < shaftCount; ++si)
         {
             const LightShaft_BT shaft = godRaysParams[0].lightShafts[si];
-            const float3 lightPos = shaft.positionRadius.xyz;
+            const float3 source = shaft.positionRadius.xyz;
             const float radius = max(shaft.positionRadius.w, 0.001);
             float3 lightDir = shaft.direction.xyz;
 
@@ -409,23 +441,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
             lightDir = normalize(lightDir);
 
-            const float3 toLight = lightPos - surfacePos;
-            const float distanceToLight = length(toLight);
-
-            if (distanceToLight < 1.0)
-            {
-                continue;
-            }
-
-            const float3 stepVec = toLight / (float)(shaftSteps + 1);
-            float3 p = surfacePos;
+            // Move the march's shadow target off the emitting surface, so the
+            // shaft's own polygon cannot shadow the entire cone.
+            const float3 emitter = source + lightDir * max(radius, 0.5);
             float3 shaftColor = (float3)0;
 
             for (uint sj = 0; sj < shaftSteps; ++sj)
             {
-                p += stepVec;
-
-                const float3 fromLight = p - lightPos;
+                const float t = (float)(sj + shaftJitter) / (float)(shaftSteps + 1);
+                const float3 p = cameraPos + direction * (t * marchDistance);
+                const float3 fromLight = p - emitter;
                 const float distToLight = length(fromLight);
 
                 if (distToLight < 0.001)
@@ -441,38 +466,22 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
                     continue;
                 }
 
-                const float4 clip = mul(globalUniform.projection, mul(globalUniform.view, float4(p, 1.0)));
-                if (clip.w <= 0.0)
-                {
-                    continue;
-                }
-
-                const float2 uv = clip.xy / clip.w * 0.5 + 0.5;
-                if (any(uv < (float2)0) || any(uv > (float2)1))
-                {
-                    continue;
-                }
-
-                const int2 screenSize = int2(globalUniform.renderWidth, globalUniform.renderHeight);
-                const int2 sp = clamp(int2(uv * (float2)screenSize), int2(0, 0),
-                                      screenSize - int2(1, 1));
-                const float sceneDepth = framebufDepthWorld_Sampled.Load(int3(sp, 0)).x;
-                const float sampleDepth = length(p - globalUniform.cameraPosition.xyz);
-
-                if (sceneDepth + 2.0 < sampleDepth)
+                if (!LightShaftVisible(p, emitter))
                 {
                     continue;
                 }
 
                 const float attenuation = radius * radius / (distToLight * distToLight + radius * radius);
                 const float phase = ScatterPhase_HenyeyGreenstein(
-                    dot(normalize(surfacePos - p), lightDir), 0.5);
-                const float stepLength = distanceToLight / (float)(shaftSteps + 1);
+                    dot(-fromLight / distToLight, direction), 0.5);
+                const float stepLength = marchDistance / (float)(shaftSteps + 1);
+                const float density = 0.015 * getDensity(p);
 
-                shaftColor += shaft.color.rgb * (cone * attenuation * phase * stepLength * getDensity(p));
+                shaftColor += through * shaft.color.rgb *
+                              (cone * attenuation * phase * stepLength * density);
             }
 
-            inscatterColor += shaftColor * godRaysParams[0].lightShaftIntensity * 0.0001;
+            inscatterColor += shaftColor * godRaysParams[0].lightShaftIntensity;
         }
     }
 

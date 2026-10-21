@@ -1141,7 +1141,9 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
                 BeginGpuPass(commandList, frameIndex, GPU_PASS_GODRAYS);
                 godRaysPass->RenderInput(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
-                                         worldUniformBuffer.Get(), godRaysParams, false);
+                                         worldUniformBuffer.Get(),
+                                         accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
+                                         godRaysParams, false);
                 EndGpuPass(commandList, frameIndex, GPU_PASS_GODRAYS);
             }
             else if (shadowMapPass != nullptr && shadowMapPass->IsCreated())
@@ -1156,10 +1158,13 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                 float shadowMapVP[16];
                 float shadowMapDepthScale = 0.0f;
 
-                if (shadowMapPass->Render(commandList, sky.godRays.shadowLightDirection,
-                                          sky.godRays.aabbMin, sky.godRays.aabbMax,
-                                          sky.godRays.staticCollector, sky.godRays.dynamicCollector,
-                                          geometry, shadowMapVP, &shadowMapDepthScale))
+                const bool shadowRendered = shadowMapPass->Render(
+                    commandList, sky.godRays.shadowLightDirection,
+                    sky.godRays.aabbMin, sky.godRays.aabbMax,
+                    sky.godRays.staticCollector, sky.godRays.dynamicCollector,
+                    geometry, shadowMapVP, &shadowMapDepthScale);
+
+                if (shadowRendered)
                 {
                     memcpy(godRaysParams.sunDirection, sky.godRays.sunDirection,
                            sizeof(godRaysParams.sunDirection));
@@ -1192,7 +1197,9 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
                     godRaysReflectionsPending = godRaysPass->RenderInput(
                         commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
-                        worldUniformBuffer.Get(), godRaysParams,
+                        worldUniformBuffer.Get(),
+                        accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
+                        godRaysParams,
                         uniform != nullptr && uniform->reflectRefractMaxDepth > 0);
                 }
 

@@ -342,6 +342,15 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
         blueNoiseLayout = device->createBindingLayout(desc);
     }
 
+    // Set 6: the top-level acceleration structure the light-shaft shadow rays traverse.
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::All;
+        desc.addItem(nvrhi::BindingLayoutItem::RayTracingAccelStruct(0));
+
+        tlasLayout = device->createBindingLayout(desc);
+    }
+
     // The trace's push constant. The pinned backend skips a PushConstants item when it builds the
     // Vulkan descriptor set layout and takes the pipeline's single VkPushConstantRange from it
     // (vulkan-resource-bindings.cpp:90-94, :1110-1140), so the layout creates an empty descriptor
@@ -367,16 +376,16 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
 
     if (shadowLayout == nullptr || paramsLayout == nullptr || traceFramebufferLayout == nullptr ||
         filterFramebufferLayout == nullptr || uniformLayout == nullptr || blueNoiseLayout == nullptr ||
-        pushConstantLayout == nullptr || emptyLayout == nullptr)
+        tlasLayout == nullptr || pushConstantLayout == nullptr || emptyLayout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a god-rays pass binding layout");
         return false;
     }
 
     // The trace pipeline, in the engine's set order: 0 shadow, 1 params, 2 framebuffers, 3 uniform,
-    // 4 blue noise, 5 the descriptor-less push-constant layout. The blob declares exactly sets 0-4,
-    // so the list order is also the shader's set numbering (the backend places the regular layouts
-    // into descriptor sets in list order, vulkan-resource-bindings.cpp:1090-1099).
+    // 4 blue noise, 5 the cloud-shadow set, 6 the TLAS. The list order is also the shader's set
+    // numbering (the backend places the regular layouts into descriptor sets in list order,
+    // vulkan-resource-bindings.cpp:1090-1099).
     {
         if (!cloudShadowBinding.Create(device, frameContext, nvrhi::ShaderType::Compute, GOD_RAYS_PUSH_SIZE))
         {
@@ -390,6 +399,7 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
         desc.addBindingLayout(uniformLayout);
         desc.addBindingLayout(blueNoiseLayout);
         desc.addBindingLayout(cloudShadowBinding.GetLayout());
+        desc.addBindingLayout(tlasLayout);
 
         tracePipeline = rhi::createComputePipeline(device, desc, "RhiRtGodRaysPass trace");
     }
@@ -870,6 +880,43 @@ bool RhiRtGodRaysPass::PrepareUniformSet(Target &target, nvrhi::IBuffer *pUnifor
     return true;
 }
 
+bool RhiRtGodRaysPass::PrepareTlasSet(Target &target, nvrhi::rt::IAccelStruct *pTopLevel)
+{
+    if (pTopLevel == nullptr)
+    {
+        if (!warnedMissingTopLevel)
+        {
+            warnedMissingTopLevel = true;
+            LogMessage(print, "Warning: RHI: the god-rays pass has no top-level acceleration structure");
+        }
+        return false;
+    }
+
+    if (target.tlasSet != nullptr && target.topLevel == pTopLevel)
+    {
+        return true;
+    }
+
+    if (target.tlasSet != nullptr)
+    {
+        frameContext->Retire(target.tlasSet);
+    }
+    target.tlasSet = nullptr;
+
+    nvrhi::BindingSetDesc setDesc;
+    setDesc.addItem(nvrhi::BindingSetItem::RayTracingAccelStruct(0, pTopLevel));
+
+    target.tlasSet = device->createBindingSet(setDesc, tlasLayout);
+    if (target.tlasSet == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create the god-rays pass TLAS binding set");
+        return false;
+    }
+
+    target.topLevel = pTopLevel;
+    return true;
+}
+
 void RhiRtGodRaysPass::RecordDispatch(nvrhi::ICommandList *pCommandList,
                                       nvrhi::IComputePipeline *pPipeline,
                                       std::initializer_list<nvrhi::IBindingSet *> sets,
@@ -906,6 +953,7 @@ bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
                                    uint32_t width,
                                    uint32_t height,
                                    nvrhi::IBuffer *pUniformBuffer,
+                                   nvrhi::rt::IAccelStruct *pTopLevel,
                                    const Params &params,
                                    bool traceReflections)
 {
@@ -941,6 +989,11 @@ bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
 
     Target &target = *pTarget;
 
+    if (!PrepareTlasSet(target, pTopLevel))
+    {
+        return false;
+    }
+
     // The frame's params. The buffer is 672 bytes (the shader's element stride) and matches the CPU
     // mirror; the bytes are fully defined for the structured-buffer view.
     // RenderReflections does not write the buffer again: one write per frame feeds both trace
@@ -966,7 +1019,7 @@ bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
     const uint32_t passIndexPrimary = 0;
     RecordDispatch(pCommandList, tracePipeline,
                    { shadowSet, paramsSets[frameIndex], target.traceFramebufferSet,
-                     target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet() },
+                     target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet(), target.tlasSet },
                    traceGroupsX, traceGroupsY, 1, &passIndexPrimary);
 
     // The reflected-segment accumulation (passIndex 1) belongs after the host's reflect/refract
@@ -1078,7 +1131,7 @@ void RhiRtGodRaysPass::RenderReflections(nvrhi::ICommandList *pCommandList,
         const uint32_t passIndexReflections = 1;
         RecordDispatch(pCommandList, tracePipeline,
                        { shadowSet, paramsSets[frameIndex], target.traceFramebufferSet,
-                        target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet() },
+                        target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet(), target.tlasSet },
                        traceGroupsX, traceGroupsY, 1, &passIndexReflections);
     }
 
@@ -1166,6 +1219,14 @@ void RhiRtGodRaysPass::ReleaseTarget(Target &target)
 
     target.uniformSet = nullptr;
     target.uniformBuffer = nullptr;
+
+    if (frameContext != nullptr && target.tlasSet != nullptr)
+    {
+        frameContext->Retire(target.tlasSet);
+    }
+
+    target.tlasSet = nullptr;
+    target.topLevel = nullptr;
 
     // A released frame has no recorded input to continue from; a resize between the two entry
     // points therefore disarms the reflected half.

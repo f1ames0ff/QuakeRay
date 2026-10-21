@@ -385,6 +385,7 @@ public:
                      uint32_t width,
                      uint32_t height,
                      nvrhi::IBuffer *pUniformBuffer,
+                     nvrhi::rt::IAccelStruct *pTopLevel,
                      const Params &params,
                      bool traceReflections);
 
@@ -436,6 +437,8 @@ private:
         nvrhi::BindingSetHandle filterFramebufferSet;
         nvrhi::IBuffer *uniformBuffer = nullptr;
         nvrhi::BindingSetHandle uniformSet;
+        nvrhi::rt::IAccelStruct *topLevel = nullptr;
+        nvrhi::BindingSetHandle tlasSet;
 
         // The frame-scoped hand-off of the split entry points: set by RenderInput on the path that
         // defers the reflected half (the same path that returns true) and checked and consumed by
@@ -478,6 +481,9 @@ private:
     // false when the buffer is not the static constant-buffer wrap the shader's
     // `ConstantBuffer<ShGlobalUniform>` requires.
     bool PrepareUniformSet(Target &target, nvrhi::IBuffer *pUniformBuffer);
+
+    // Set 6: builds (or rebuilds, when the slot's TLAS changed) the acceleration-structure set.
+    bool PrepareTlasSet(Target &target, nvrhi::rt::IAccelStruct *pTopLevel);
 
     // Set 0: builds (or rebuilds, when either pointer changed) the shadow map set. Returns false
     // when no valid shadow map was set.
@@ -525,6 +531,7 @@ private:
     nvrhi::BindingLayoutHandle filterFramebufferLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle blueNoiseLayout;
+    nvrhi::BindingLayoutHandle tlasLayout;
     nvrhi::BindingLayoutHandle pushConstantLayout;
     nvrhi::BindingLayoutHandle emptyLayout;
 
@@ -562,6 +569,7 @@ private:
 
     // One-shot warnings for the inputs that can legitimately be missing for a few frames or are a
     // permanent host-side mistake.
+    bool warnedMissingTopLevel = false;
     bool warnedMissingShadowMap = false;
     bool warnedBadShadowMap = false;
     bool warnedShadowSampler = false;
