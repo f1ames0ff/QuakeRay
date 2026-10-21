@@ -156,7 +156,7 @@ cd QuakeRay
 .\build\Debug\quakeray.exe
 ```
 
-For an existing checkout, run `git submodule update --init --recursive` before building. If the compiler runs out of memory, try `.\build_win.ps1 Debug -Parallel 4`. Run `ctest --test-dir build\Debug` for the regular regression tests; build with `.\build_win.ps1 Debug -Tests` to add the renderer's GPU regression tests. Close any running QuakeRay instance first: `build_win.ps1` stops with `MACHINE_BUSY` while the game or another build is running.
+For an existing checkout, run `git submodule update --init --recursive` before building. The renderer is the `QuakeRaySDK` submodule at `renderer/`; host assets such as textures and cursor artwork live in the root `gfx/` folder. If the compiler runs out of memory, try `.\build_win.ps1 Debug -Parallel 4`. Run `ctest --test-dir build\Debug` for the regular regression tests; build with `.\build_win.ps1 Debug -Tests` to add the renderer's GPU regression tests. Close any running QuakeRay instance first: `build_win.ps1` stops with `MACHINE_BUSY` while the game or another build is running.
 
 Use **`build_win.ps1`**, not just a plain CMake build: it compiles the shaders, prepares the game assets and applies the pinned NVRHI patch (`third_party/nvrhi-max-binding-layouts.patch`); an IDE or manual CMake build has to apply that patch itself. Quake game files are still required, just as for a packaged release.
 
