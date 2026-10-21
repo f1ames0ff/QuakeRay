@@ -433,9 +433,23 @@ void main()
             uint  lightIndex = LIGHT_INDEX_NONE;
             uint  lightSlot  = 0u;
             float lightPdf   = 0.0;
-            q2SampleClusterLights( cluster, hitSurf.position, hitSurf.normal, hitSurf.toViewerDir,
-                                   phongExp, phongScale, phongWeight, isGradient, rng,
-                                   lightIndex, lightSlot, lightPdf );
+            bool  sampledFromGrid = false;
+            const int gridCell = q2GetLightGridCell(hitSurf.position);
+
+            if (gridCell >= 0)
+            {
+                q2SampleGridLights(gridCell, hitSurf.position, hitSurf.normal, hitSurf.toViewerDir,
+                                   phongExp, phongScale, phongWeight, rng,
+                                   lightIndex, lightSlot, lightPdf);
+                sampledFromGrid = lightIndex != LIGHT_INDEX_NONE;
+            }
+
+            if (!sampledFromGrid)
+            {
+                q2SampleClusterLights( cluster, hitSurf.position, hitSurf.normal, hitSurf.toViewerDir,
+                                       phongExp, phongScale, phongWeight, isGradient, rng,
+                                       lightIndex, lightSlot, lightPdf );
+            }
 
             if ( lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0 )
             {
@@ -464,9 +478,10 @@ void main()
                         rayStatsAdd( RAY_STATS_CATEGORY_SHADOW_INDIRECT, 1 );
                     }
 
-                    if ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_TRIANGLE ||
-                         lightSources[ lightIndex ].lightType == LIGHT_TYPE_TEXTURED_AREA ||
-                         lightSources[ lightIndex ].lightType == LIGHT_TYPE_DTAL_GROUP )
+                    if ( !sampledFromGrid &&
+                         ( lightSources[ lightIndex ].lightType == LIGHT_TYPE_TRIANGLE ||
+                           lightSources[ lightIndex ].lightType == LIGHT_TYPE_TEXTURED_AREA ||
+                           lightSources[ lightIndex ].lightType == LIGHT_TYPE_DTAL_GROUP ) )
                     {
                         q2AccumulateLightStats( cluster, lightSlot, hitSurf.normal, getLuminance( vis ), 0u );
                     }

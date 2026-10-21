@@ -329,6 +329,7 @@ private:
     float gridCell = 1.0f;
 
     LightGrid lightGrid;
+    QrLightGridStats gridStats{};
     bool      gridAllowed = false;
     bool      gridPublished = false;
     float     gridViewOrigin[3] = {};

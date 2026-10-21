@@ -348,8 +348,8 @@ void q2SampleGridLights(
 
     const uint cell = uint(gridCell);
     const uint base = q2LightGridOffsets[uint(Q2_LIGHT_GRID_HEADER_WORDS) + cell];
-    const uint end = q2LightGridOffsets[uint(Q2_LIGHT_GRID_HEADER_WORDS) + cell + 1u];
-    const int lightCount = (end > base) ? int(end - base) : 0;
+    const int lightCount = int(min(q2LightGridCounts[cell], uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL)));
+    const int listEnd = int(base) + lightCount;
 
     if (lightCount <= 0)
     {
@@ -370,7 +370,7 @@ void q2SampleGridLights(
     {
         const int nIdx = listStart + i * stride;
 
-        if (nIdx >= int(end))
+        if (nIdx >= listEnd)
         {
             masses[i] = 0.0;
             continue;
@@ -406,7 +406,7 @@ void q2SampleGridLights(
     {
         const int nIdx = listStart + i * stride;
 
-        if (nIdx >= int(end))
+        if (nIdx >= listEnd)
         {
             break;
         }
@@ -427,7 +427,7 @@ void q2SampleGridLights(
     {
         const int nIdx = listStart + i * stride;
 
-        if (nIdx >= int(end))
+        if (nIdx >= listEnd)
         {
             break;
         }

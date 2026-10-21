@@ -339,6 +339,11 @@ qray::LightManager::LightManager(
                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                              "Q2 light grid sources");
 
+    lightGridCounts = std::make_shared<AutoBuffer>(device, _allocator);
+    lightGridCounts->Create(sizeof(uint32_t) * Q2_LIGHT_GRID_CELLS,
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                            "Q2 light grid counts");
+
     lightStats.Init(_allocator, GetLightStatsSlotSize() * LIGHT_STATS_SLOT_COUNT,
                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -898,6 +903,7 @@ qray::LightManager::Buffers qray::LightManager::GetBuffers() const
         lightGridIds->GetDeviceLocal(),
         lightGridHeader->GetDeviceLocal(),
         lightGridSources->GetDeviceLocal(),
+        lightGridCounts->GetDeviceLocal(),
     };
 }
 
@@ -1424,6 +1430,11 @@ void qray::LightManager::PublishGridSources(uint32_t frameIndex, const LightGrid
     const uint32_t count = enabled ? std::min<uint32_t>(sourceCount, Q2_LIGHT_GRID_SOURCE_CAPACITY) : 0;
     pHeader[34] = count;
 
+    uint32_t *pOffsets = static_cast<uint32_t *>(lightGridOffsets->GetMapped(frameIndex));
+    memcpy(pOffsets, pHeader, sizeof(uint32_t) * Q2_LIGHT_GRID_HEADER_WORDS);
+    gridCopyPending[frameIndex] = true;
+    publishedGridIds[frameIndex] = 0;
+
     ShLightGridSource *pDst = static_cast<ShLightGridSource *>(lightGridSources->GetMapped(frameIndex));
 
     if (count > 0)
@@ -1607,6 +1618,7 @@ constexpr uint32_t BINDINGS[] =
     BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_IDS,
     BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_HEADER,
     BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_SOURCES,
+    BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_COUNTS,
 };
 
 void qray::LightManager::CreateDescriptors()
@@ -1690,6 +1702,7 @@ void qray::LightManager::UpdateDescriptors(uint32_t frameIndex)
         lightGridIds->GetDeviceLocal(),
         lightGridHeader->GetDeviceLocal(),
         lightGridSources->GetDeviceLocal(),
+        lightGridCounts->GetDeviceLocal(),
     };
     static_assert(std::size(BINDINGS) == std::size(buffers));
 

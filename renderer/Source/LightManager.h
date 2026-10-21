@@ -132,6 +132,7 @@ public:
         VkBuffer gridIds;
         VkBuffer gridHeader;
         VkBuffer gridSources;
+        VkBuffer gridCounts;
     };
 
     struct Copy
@@ -204,6 +205,7 @@ private:
     std::shared_ptr<AutoBuffer> lightGridIds;
     std::shared_ptr<AutoBuffer> lightGridHeader;
     std::shared_ptr<AutoBuffer> lightGridSources;
+    std::shared_ptr<AutoBuffer> lightGridCounts;
     bool                        gridCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
     bool                        gridSourcesCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
     uint32_t                    publishedGridIds[MAX_FRAMES_IN_FLIGHT] = {};

@@ -215,6 +215,7 @@ void ClusterLightLists::Reset()
     tailEntryCount = 0;
 
     lightGrid.Reset();
+    gridStats = {};
     gridAllowed = false;
     gridPublished = false;
     gridStamp = 0;
@@ -664,8 +665,6 @@ void ClusterLightLists::UpdateLightGrid()
     {
         if (gridPublished && pendingLightManager != nullptr)
         {
-            const QrLightGridStats disabled = {};
-            pendingLightManager->PublishGrid(pendingFrameIndex, disabled, nullptr, nullptr, 0, nullptr, 0);
             pendingLightManager->PublishGridSources(pendingFrameIndex, nullptr, 0, gridViewOrigin);
         }
 
@@ -674,6 +673,7 @@ void ClusterLightLists::UpdateLightGrid()
             lightGrid.Reset();
         }
 
+        gridStats = {};
         gridPublished = false;
         gridStamp = 0;
         return;
@@ -727,6 +727,7 @@ void ClusterLightLists::UpdateLightGrid()
 
         mixFloat(source.reach);
         mixFloat(source.radius);
+        mixFloat(source.power);
     }
 
     if (pendingPrint != nullptr && !gridSources.empty())
@@ -755,23 +756,43 @@ void ClusterLightLists::UpdateLightGrid()
         }
     }
 
-    if (hash == gridStamp && lightGrid.IsValid())
+    if (hash == gridStamp && gridPublished)
     {
         return;
     }
 
-    lightGrid.Build(gridSources.data(), uint32_t(gridSources.size()), gridViewOrigin);
+    gridStats = {};
+    gridStats.enabled = 1;
+    gridStats.cells = LightGrid::kCells;
+    gridStats.cascades = LightGrid::kCascades;
+    gridStats.sources = uint32_t(gridSources.size());
+
+    float snapOrigin[3];
+
+    for (int axis = 0; axis < 3; axis++)
+    {
+        const double value = std::isfinite(gridViewOrigin[axis]) ? double(gridViewOrigin[axis]) : 0.0;
+        snapOrigin[axis] = float(std::floor(value / double(LightGrid::kSnap)) * double(LightGrid::kSnap));
+    }
+
+    for (uint32_t cascade = 0; cascade < LightGrid::kCascades; cascade++)
+    {
+        const float cell = LightGrid::kBaseCell * float(1u << cascade);
+        const float bounds = cell * float(LightGrid::kDim);
+        gridStats.cellSize[cascade] = cell;
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            gridStats.origin[cascade].data[axis] = snapOrigin[axis] - bounds * 0.5f;
+        }
+    }
+
     gridStamp = hash;
 
     if (pendingLightManager != nullptr)
     {
         pendingLightManager->PublishGridSources(pendingFrameIndex, gridSources.data(), uint32_t(gridSources.size()),
                                                 gridViewOrigin);
-        const QrLightGridStats &gridStats = lightGrid.GetStats();
-        pendingLightManager->PublishGrid(pendingFrameIndex, gridStats, lightGrid.GetOffsets().data(),
-                                         lightGrid.GetIds().data(), uint32_t(lightGrid.GetIds().size()),
-                                         lightGrid.GetSourceUids().data(),
-                                         uint32_t(lightGrid.GetSourceUids().size()));
         gridPublished = true;
     }
 }
@@ -780,7 +801,7 @@ void ClusterLightLists::GetLightGridStats(QrLightGridStats *pStats) const
 {
     if (pStats != nullptr)
     {
-        *pStats = lightGrid.GetStats();
+        *pStats = gridStats;
     }
 }
 

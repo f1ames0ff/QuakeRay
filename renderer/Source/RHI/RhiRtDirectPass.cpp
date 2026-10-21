@@ -175,7 +175,7 @@ struct LightBufferBinding
     uint32_t structStride;
 };
 
-constexpr uint32_t LIGHT_BUFFER_COUNT = 12;
+constexpr uint32_t LIGHT_BUFFER_COUNT = 13;
 constexpr LightBufferBinding LIGHT_BUFFER_BINDINGS[LIGHT_BUFFER_COUNT] =
 {
     {
@@ -251,6 +251,12 @@ constexpr LightBufferBinding LIGHT_BUFFER_BINDINGS[LIGHT_BUFFER_COUNT] =
         uint64_t(sizeof(ShLightGridSource)) * Q2_LIGHT_GRID_SOURCE_CAPACITY,
         static_cast<uint32_t>(sizeof(ShLightGridSource)),
     },
+    {
+        BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_COUNTS,
+        false,
+        uint64_t(sizeof(uint32_t)) * Q2_LIGHT_GRID_CELLS,
+        static_cast<uint32_t>(sizeof(uint32_t)),
+    },
 };
 
 // The statistics buffer of the table above: the only item the light-statistics fill touches, and
@@ -298,6 +304,7 @@ const char *const LIGHT_BUFFER_DEBUG_NAMES[LIGHT_BUFFER_COUNT] =
     "q2 light grid ids",
     "q2 light grid header",
     "q2 light grid sources",
+    "q2 light grid counts",
 };
 
 // The descriptor of a native wrap of an engine device-local buffer that a shader reads as a
@@ -324,7 +331,8 @@ nvrhi::BufferDesc MakeLightBufferDesc(const LightBufferBinding &binding, std::st
     desc.structStride = binding.structStride;
     desc.canHaveUAVs = binding.isUAV ||
                        binding.binding == BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_OFFSETS ||
-                       binding.binding == BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_IDS;
+                       binding.binding == BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_IDS ||
+                       binding.binding == BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_COUNTS;
     desc.initialState = binding.isUAV ? nvrhi::ResourceStates::UnorderedAccess
                                       : nvrhi::ResourceStates::CopyDest;
     desc.keepInitialState = true;
@@ -565,6 +573,7 @@ bool RhiRtDirectPass::Create(nvrhi::IDevice *pDevice,
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2));
         desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(3));
+        desc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(4));
 
         gridBuildLayout = device->createBindingLayout(desc);
     }
@@ -1243,6 +1252,7 @@ bool RhiRtDirectPass::PrepareLightSet(nvrhi::ICommandList *pCommandList, Target 
         buffers.gridIds,
         buffers.gridHeader,
         buffers.gridSources,
+        buffers.gridCounts,
     };
 
     for (uint32_t i = 0; i < LIGHT_BUFFER_COUNT; i++)
@@ -1424,15 +1434,16 @@ bool RhiRtDirectPass::PrepareLightSet(nvrhi::ICommandList *pCommandList, Target 
 bool RhiRtDirectPass::PrepareGridBuildSet(Target &target)
 {
     const LightManager::Buffers buffers = lightManager->GetBuffers();
-    const VkBuffer rawHandles[4] =
+    const VkBuffer rawHandles[5] =
     {
         buffers.gridHeader,
         buffers.gridSources,
         buffers.gridOffsets,
         buffers.gridIds,
+        buffers.gridCounts,
     };
 
-    for (uint32_t i = 0; i < 4; i++)
+    for (uint32_t i = 0; i < 5; i++)
     {
         if (rawHandles[i] == VK_NULL_HANDLE)
         {
@@ -1442,7 +1453,7 @@ bool RhiRtDirectPass::PrepareGridBuildSet(Target &target)
 
     bool changed = false;
 
-    for (uint32_t i = 0; i < 4; i++)
+    for (uint32_t i = 0; i < 5; i++)
     {
         changed = changed || target.gridBuildHandles[i] != rawHandles[i];
     }
@@ -1460,6 +1471,7 @@ bool RhiRtDirectPass::PrepareGridBuildSet(Target &target)
         desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, target.lightWraps[11]));
         desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, target.lightWraps[8]));
         desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(3, target.lightWraps[9]));
+        desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(4, target.lightWraps[12]));
 
         target.gridBuildSet = device->createBindingSet(desc, gridBuildLayout);
 

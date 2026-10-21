@@ -13,6 +13,7 @@ struct ShLightGridSource
 [[vk::binding(1, 0)]] StructuredBuffer<ShLightGridSource> gridSources;
 [[vk::binding(2, 0)]] RWStructuredBuffer<uint> gridOffsets;
 [[vk::binding(3, 0)]] RWStructuredBuffer<uint> gridIds;
+[[vk::binding(4, 0)]] RWStructuredBuffer<uint> gridCounts;
 
 #define GRID_ID_INVALID 0xFFFFFFFFu
 
@@ -27,8 +28,16 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     const uint offsetBase = uint(Q2_LIGHT_GRID_HEADER_WORDS) + cell;
-    gridOffsets[offsetBase] = cell * uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL);
-    gridOffsets[offsetBase + 1u] = (cell + 1u) * uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL);
+    const uint base = cell * uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL);
+
+    gridOffsets[offsetBase] = base;
+    gridOffsets[offsetBase + 1u] = base + uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL);
+    gridCounts[cell] = 0u;
+
+    for (uint i = 0; i < uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL); i++)
+    {
+        gridIds[base + i] = GRID_ID_INVALID;
+    }
 
     if (gridHeader[0] == 0u)
     {
@@ -120,12 +129,22 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         }
     }
 
-    const uint base = cell * uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL);
+    uint compact[Q2_LIGHT_GRID_MAX_IDS_PER_CELL];
+    uint count = 0u;
 
     for (uint i = 0; i < uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL); i++)
     {
-        gridIds[base + i] = bestIndex[i] == GRID_ID_INVALID
-            ? GRID_ID_INVALID
-            : (bestIndex[i] & 0xFFFFu);
+        if (bestIndex[i] != GRID_ID_INVALID)
+        {
+            compact[count] = bestIndex[i];
+            count++;
+        }
     }
+
+    for (uint i = 0; i < uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL); i++)
+    {
+        gridIds[base + i] = i < count ? (compact[i] & 0xFFFFu) : GRID_ID_INVALID;
+    }
+
+    gridCounts[cell] = count;
 }
