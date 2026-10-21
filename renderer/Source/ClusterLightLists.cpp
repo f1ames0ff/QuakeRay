@@ -729,6 +729,32 @@ void ClusterLightLists::UpdateLightGrid()
         mixFloat(source.radius);
     }
 
+    if (pendingPrint != nullptr && !gridSources.empty())
+    {
+        static bool reportedGridSources = false;
+
+        if (!reportedGridSources)
+        {
+            reportedGridSources = true;
+
+            float minPower = 1e30f;
+            float maxPower = -1e30f;
+
+            for (const LightGridSource &source : gridSources)
+            {
+                minPower = std::min(minPower, source.power);
+                maxPower = std::max(maxPower, source.power);
+            }
+
+            char message[192];
+            snprintf(message, sizeof(message),
+                     "RT: grid sources %u, power %.4f..%.4f, camera %.1f %.1f %.1f\n",
+                     uint32_t(gridSources.size()), minPower, maxPower, gridViewOrigin[0], gridViewOrigin[1],
+                     gridViewOrigin[2]);
+            pendingPrint->Print(message);
+        }
+    }
+
     if (hash == gridStamp && lightGrid.IsValid())
     {
         return;

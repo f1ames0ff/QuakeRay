@@ -1488,6 +1488,15 @@ void RhiRtDirectPass::BuildLightGrid(nvrhi::ICommandList *pCommandList, uint32_t
     pCommandList->setComputeState(state);
 
     const uint32_t groups = (uint32_t(Q2_LIGHT_GRID_CELLS) + 63u) / 64u;
+
+    static bool reportedGridDispatch = false;
+
+    if (!reportedGridDispatch)
+    {
+        reportedGridDispatch = true;
+        LogMessage(print, "RHI: GPU light-grid builder dispatched " + std::to_string(groups) + " groups");
+    }
+
     pCommandList->dispatch(groups, 1, 1);
     pCommandList->commitBarriers();
 }

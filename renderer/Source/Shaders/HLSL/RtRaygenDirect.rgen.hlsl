@@ -97,9 +97,10 @@ void main()
                 q2SampleGridLights(gridCell, surf.position, surf.normal, surf.toViewerDir,
                                    phongExp, phongScale, phongWeight, rng,
                                    lightIndex, lightSlot, lightPdf);
-                sampledFromGrid = true;
+                sampledFromGrid = lightIndex != LIGHT_INDEX_NONE;
             }
-            else
+
+            if (!sampledFromGrid)
             {
                 q2SampleClusterLights(cluster, surf.position, surf.normal, surf.toViewerDir,
                                       phongExp, phongScale, phongWeight, isGradient, rng,

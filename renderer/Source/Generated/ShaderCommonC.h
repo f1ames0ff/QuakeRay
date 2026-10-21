@@ -451,8 +451,7 @@ struct ShQ2LightTail
 
 struct ShLightGridSource
 {
-    float    origin[3];
-    float    reach;
+    float    originReach[4];
     float    radius;
     float    power;
     uint32_t lightIndex;

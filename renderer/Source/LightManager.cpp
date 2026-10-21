@@ -1452,10 +1452,10 @@ void qray::LightManager::PublishGridSources(uint32_t frameIndex, const LightGrid
             minReach = std::min(minReach, source.reach);
             maxReach = std::max(maxReach, source.reach);
 
-            pDst[i].origin[0] = source.origin[0];
-            pDst[i].origin[1] = source.origin[1];
-            pDst[i].origin[2] = source.origin[2];
-            pDst[i].reach = source.reach;
+            pDst[i].originReach[0] = source.origin[0];
+            pDst[i].originReach[1] = source.origin[1];
+            pDst[i].originReach[2] = source.origin[2];
+            pDst[i].originReach[3] = source.reach;
             pDst[i].radius = source.radius;
             pDst[i].power = source.power;
             pDst[i].lightIndex = lightIndex & QR_LIGHT_GRID_ID_INDEX_MASK;

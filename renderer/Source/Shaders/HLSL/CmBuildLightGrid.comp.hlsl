@@ -2,8 +2,7 @@
 
 struct ShLightGridSource
 {
-    float3 origin;
-    float  reach;
+    float4 originReach;
     float  radius;
     float  power;
     uint   lightIndex;
@@ -69,8 +68,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     for (uint sourceIndex = 0u; sourceIndex < sourceCount; sourceIndex++)
     {
         const ShLightGridSource source = gridSources[sourceIndex];
-        const float influence = source.reach + source.radius + 32.0;
-        const float3 delta = max(abs(source.origin - center) - halfCell, 0.0);
+        const float influence = source.originReach.w + source.radius + 32.0;
+        const float3 delta = max(abs(source.originReach.xyz - center) - halfCell, 0.0);
         const float dist2 = dot(delta, delta);
 
         if (dist2 > influence * influence)
