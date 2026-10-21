@@ -78,28 +78,28 @@ Migration order:
 4. Cascaded and local irradiance/radiance volumes.
 5. Only then tune capacity, reach, cell size and cascade count.
 
-## Current scaffold
+## Current runtime
 
-The code on the branch now has the target grid shape as a CPU reference behind `rt_light_grid` (default `0`), without changing shading:
+The runtime path behind `rt_light_grid` (default `0`) now follows the target grid shape:
 
 - 8 cascades x 16^3 = 32,768 cells; base cell 80 u (about 2 m); first cascade 1,280 u bounds.
 - 64 IDs per cell, no tail; typed light IDs use the low 16 bits and type 0.
-- A light is inserted into every cell its influence sphere (`reach + radius + 32`) intersects.
-- IDs are ranked by estimated contribution (`power / distance^2`) and capped at 64 per cell.
-- The grid is rebuilt when the light set, its reach/origin, or the 640 u camera snap changes.
-- `rt_light_grid_report [cell]` prints cell counts, candidate percentiles, stored IDs, dropped IDs, build time, and one cell's light UIDs.
+- The CPU reference builder is no longer run in the frame. The GPU compute builder builds every cell, ranks candidates by `power / distance^2` (unit weight for zero-power map emitters), compacts the valid IDs, and publishes a per-cell count.
+- The grid is rebuilt when the light set, its origin, reach, radius or power, or the 640 u camera snap changes.
+- Direct NEE and indirect NEE sample the grid; particles and glass read the same typed cell lists. The cluster lists remain the fallback outside the cascades and for empty cells.
+- `rt_light_grid_report [cell]` still reports the CPU reference statistics; the runtime report is the GPU builder and does not keep a CPU cell list.
 - Cell indices are `cascade * 4096 + (z * 16 + y) * 16 + x`.
 
-This is a layout and reference build, not the runtime system. It still drops candidates above 64 and does not feed the shaders. `qray_light_grid_tests` covers the cascade index, capacity, empty/out-of-range sources and determinism.
+`qray_light_grid_tests` covers the cascade index, capacity, empty/out-of-range sources and determinism. `qray_cluster_lists_tests` covers the cluster fallback.
 
 ## Missing measurements
 
 - `ad_tfuma`, `ad_swampy`, and the user's save at the same settings.
 - Change-frame cost at HEAD (M3; the legacy 30 ms figure predates `3e59c3da`).
 - `rt_gi_level 1` vs 2 with a cvar dump (A1).
-- CPU reference build cost on the real maps (the report prints it).
 - GPU build/publication cost of the 8-cascade grid.
+- Grid discontinuity and denoiser artifacts on the dense AD scene.
 
 ## Next step
 
-Replace the CPU reference build with the GPU grid builder, publish the 8-cascade typed-ID table, then route direct NEE through it behind `rt_light_grid 0/1` with the cluster fallback. Volumes follow after the grid is stable.
+Implement the cascaded irradiance and radiance volumes: 16^3 x 6 cascades plus local 10^3 volumes, one cascade and one local volume updated per frame, and probe NEE through the typed grid. Capacity, reach and cell-size tuning stay deferred until the volume path exists.
