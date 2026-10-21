@@ -50,14 +50,6 @@ At reach 25 m, 64 u center mode reports p95 = 8 and max = 8, while overlap repor
 - **256 IDs/cell: full near-field coverage** at 64/128/256 u, but needs a new list buffer (8192 × 256 = 2,097,152 words, 8 MiB) or a larger tail.
 - **Reach 10 m + 64 IDs** is viable but changes the light domain; do not make it the default without a quality A/B.
 
-## Proposed first grid prototype
-
-- 2 cascades × 16³ = 8192 cells, cell 64 u and 128 u, camera-centred on a 512 u snap.
-- 128 fast slots + 128 tail entries per cell, within the existing 128-entry list and 1,048,576-entry tail capacities, and the existing 16-strata + tail shader path.
-- Cells outside the 2 cascades fall back to the existing cluster list.
-- This covers the near field (2048 u = 52 m); the outer map keeps the cluster path until the cascade count/ABI is expanded.
-- The 64-ID id Tech 8 parameter is replaced by 128 + 128; the sampling loop and per-sample ray cost are unchanged.
-
 ## Architecture-first target
 
 The capacity comparison is closed. The next work is the full id Tech 8 structure, not a 64/128 parameter sweep.
@@ -86,30 +78,28 @@ Migration order:
 4. Cascaded and local irradiance/radiance volumes.
 5. Only then tune capacity, reach, cell size and cascade count.
 
-The current two-cascade CPU builder is a scaffold and a test oracle. It is not the final grid, and its 128 + 128 layout is not the target ABI.
+## Current scaffold
 
-## 2A.1 builder on the branch
+The code on the branch now has the target grid shape as a CPU reference behind `rt_light_grid` (default `0`), without changing shading:
 
-The first prototype layer is implemented behind `rt_light_grid` (default `0`). It builds the two-cascade grid on the CPU, without changing shading:
-
-- 2 cascades × 16³ = 8192 cells; cells 64 u and 128 u; camera-centred on a 512 u snap.
-- 128 fast entries + 128 tail entries per cell.
+- 8 cascades x 16^3 = 32,768 cells; base cell 80 u (about 2 m); first cascade 1,280 u bounds.
+- 64 IDs per cell, no tail; typed light IDs use the low 16 bits and type 0.
 - A light is inserted into every cell its influence sphere (`reach + radius + 32`) intersects.
-- Fast entries are the nearest 128 candidates; the remaining candidates up to 128 form the alias tail.
-- The grid is rebuilt when the light set, its reach/origin, or the 512 u camera snap changes.
-- `rt_light_grid_report [cell]` prints cell counts, candidate percentiles, fast/tail entries, dropped tail candidates, build time, and the fast/tail UID lists of one cell.
+- IDs are ranked by estimated contribution (`power / distance^2`) and capped at 64 per cell.
+- The grid is rebuilt when the light set, its reach/origin, or the 640 u camera snap changes.
+- `rt_light_grid_report [cell]` prints cell counts, candidate percentiles, stored IDs, dropped IDs, build time, and one cell's light UIDs.
 - Cell indices are `cascade * 4096 + (z * 16 + y) * 16 + x`.
 
-The builder does not feed the shaders yet; the direct-NEE path and the cluster fallback are the next step. `qray_light_grid_tests` covers the capacity split, the cascade index, empty/out-of-range sources and determinism.
+This is a layout and reference build, not the runtime system. It still drops candidates above 64 and does not feed the shaders. `qray_light_grid_tests` covers the cascade index, capacity, empty/out-of-range sources and determinism.
 
 ## Missing measurements
 
 - `ad_tfuma`, `ad_swampy`, and the user's save at the same settings.
 - Change-frame cost at HEAD (M3; the legacy 30 ms figure predates `3e59c3da`).
 - `rt_gi_level 1` vs 2 with a cvar dump (A1).
-- CPU build cost on the real maps (the report prints it).
-- GPU publication cost and direct-NEE cost of the 2-cascade grid.
+- CPU reference build cost on the real maps (the report prints it).
+- GPU build/publication cost of the 8-cascade grid.
 
 ## Next step
 
-Publish the 2-cascade 128 + 128 grid to the renderer, route direct NEE through it behind `rt_light_grid 0/1`, keep the cluster fallback, and measure build cost, direct cost, shadow-ray rejection, and quality before considering a new 5-cascade ABI.
+Replace the CPU reference build with the GPU grid builder, publish the 8-cascade typed-ID table, then route direct NEE through it behind `rt_light_grid 0/1` with the cluster fallback. Volumes follow after the grid is stable.

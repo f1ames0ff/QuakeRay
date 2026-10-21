@@ -754,6 +754,13 @@ QRAPI QrResult QRCONV qrUploadDtalGroups(
 
 #define QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS 128
 
+#define QR_LIGHT_GRID_ID_INDEX_MASK 0xFFFFu
+#define QR_LIGHT_GRID_ID_TYPE_SHIFT 30
+#define QR_LIGHT_GRID_ID_TYPE_MASK 3u
+#define QR_LIGHT_GRID_ID_TYPE_LIGHT 0u
+#define QR_LIGHT_GRID_ID_TYPE_REFLECTION_PROBE 1u
+#define QR_LIGHT_GRID_ID_TYPE_DECAL 2u
+
 typedef struct QrClusterLightSource
 {
     uint64_t  uniqueID;
@@ -921,8 +928,8 @@ typedef struct QrLightGridStats
     uint32_t   candidateP95;
 
     float      buildMs;
-    float      cellSize[2];
-    QrFloat3D  origin[2];
+    float      cellSize[8];
+    QrFloat3D  origin[8];
 } QrLightGridStats;
 
 QRAPI QrResult QRCONV qrGetLightGridStats(

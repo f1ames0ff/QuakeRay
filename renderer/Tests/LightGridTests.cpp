@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <set>
 #include <vector>
 
 namespace
@@ -51,20 +50,6 @@ std::vector<uint64_t> ReadList(const qray::LightGrid &grid, uint32_t cell)
     uint32_t              count = 0;
 
     grid.GetCellList(cell, uids.data(), uint32_t(uids.size()), &count);
-    uids.resize(count);
-    return uids;
-}
-
-std::vector<uint64_t> ReadTail(const qray::LightGrid &grid, uint32_t cell, float *pBeta = nullptr)
-{
-    std::vector<uint64_t> uids(qray::LightGrid::kMaxTailPerCell);
-    std::vector<float>    prob(uids.size());
-    std::vector<float>    marginal(uids.size());
-    std::vector<uint32_t> alias(uids.size());
-    uint32_t              count = 0;
-
-    grid.GetCellTail(cell, uids.data(), prob.data(), marginal.data(), alias.data(), pBeta,
-                     uint32_t(uids.size()), &count);
     uids.resize(count);
     return uids;
 }
@@ -127,20 +112,11 @@ void TestFastTailCapacity()
     CHECK(grid.IsValid(), "the capacity test must build a valid grid");
 
     const uint32_t cell = CenterCell(0);
-    float          beta = 0.0f;
     const std::vector<uint64_t> list = ReadList(grid, cell);
-    const std::vector<uint64_t> tail = ReadTail(grid, cell, &beta);
 
-    CHECK(list.size() == qray::LightGrid::kMaxFastPerCell, "the fast list must stop at 128 entries");
-    CHECK(tail.size() == qray::LightGrid::kMaxTailPerCell, "the tail must stop at 128 entries");
-    CHECK(beta > 0.0f && beta <= 1.0f, "the tail must carry a valid beta");
-
-    std::set<uint64_t> seen(list.begin(), list.end());
-    seen.insert(tail.begin(), tail.end());
-
-    CHECK(seen.size() == qray::LightGrid::kMaxFastPerCell + qray::LightGrid::kMaxTailPerCell,
-          "the fast and tail lists must not overlap");
-    CHECK(grid.GetStats().tailDropped >= 44, "300 candidates must leave 44 candidates over the 256 capacity");
+    CHECK(list.size() == qray::LightGrid::kMaxFastPerCell, "the cell list must stop at 64 entries");
+    CHECK(grid.GetStats().fastEntries > 0, "the grid must report its stored id count");
+    CHECK(grid.GetStats().tailDropped >= 236, "300 candidates must leave 236 candidates over the 64 capacity");
 }
 
 void TestNoOverlapWhenOutOfCascade()

@@ -1,11 +1,8 @@
 #include "LightGrid.h"
 
-#include "rt_alias.h"
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <limits>
 
 namespace qray
 {
@@ -36,14 +33,9 @@ void LightGrid::Reset()
 {
     valid = false;
     stats = {};
+    sourceUids.clear();
     offsets.clear();
-    list.clear();
-    tailOffsets.clear();
-    tailUids.clear();
-    tailProb.clear();
-    tailMarginal.clear();
-    tailAlias.clear();
-    tailBeta.clear();
+    ids.clear();
 }
 
 void LightGrid::Build(const LightGridSource *sources, uint32_t sourceCount, const float viewOrigin[3])
@@ -55,12 +47,17 @@ void LightGrid::Build(const LightGridSource *sources, uint32_t sourceCount, cons
     stats.cells = kCells;
     stats.cascades = kCascades;
     stats.sources = sourceCount;
-    stats.cellSize[0] = kBaseCell;
-    stats.cellSize[1] = kBaseCell * 2.0f;
 
     if (sources == nullptr || sourceCount == 0 || viewOrigin == nullptr)
     {
         return;
+    }
+
+    sourceUids.resize(sourceCount);
+
+    for (uint32_t i = 0; i < sourceCount; i++)
+    {
+        sourceUids[i] = sources[i].uid;
     }
 
     float snapOrigin[3];
@@ -73,8 +70,8 @@ void LightGrid::Build(const LightGridSource *sources, uint32_t sourceCount, cons
 
     std::vector<uint32_t> cellCounts(kCells, 0);
 
-    auto visitSource = [&](const LightGridSource &source, uint32_t cascade, const float origin[3], float cell,
-                           uint32_t cellBase, auto &&visitor)
+    auto visitSource = [&](const LightGridSource &source, const float origin[3], float cell, uint32_t cellBase,
+                           auto &&visitor)
     {
         const float reach = std::isfinite(source.reach) && source.reach > 0.0f ? source.reach : 0.0f;
         const float radius = std::isfinite(source.radius) && source.radius > 0.0f ? source.radius : 0.0f;
@@ -145,7 +142,7 @@ void LightGrid::Build(const LightGridSource *sources, uint32_t sourceCount, cons
                     }
 
                     const uint32_t local = uint32_t((z * int(kDim) + y) * int(kDim) + x);
-                    visitor(cellBase + local, float(dist2), float(power / std::max(dist2, scale)));
+                    visitor(cellBase + local, float(power / std::max(dist2, scale)));
                 }
             }
         }
@@ -161,14 +158,15 @@ void LightGrid::Build(const LightGridSource *sources, uint32_t sourceCount, cons
         {
             origin[axis] = snapOrigin[axis] - bounds * 0.5f;
             stats.origin[cascade].data[axis] = origin[axis];
+            stats.cellSize[cascade] = cell;
         }
 
         const uint32_t cellBase = cascade * kCellsPerCascade;
 
         for (uint32_t sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)
         {
-            visitSource(sources[sourceIndex], cascade, origin, cell, cellBase,
-                        [&](uint32_t cellIndex, float, float) { cellCounts[cellIndex]++; });
+            visitSource(sources[sourceIndex], origin, cell, cellBase,
+                        [&](uint32_t cellIndex, float) { cellCounts[cellIndex]++; });
         }
     }
 
@@ -179,12 +177,12 @@ void LightGrid::Build(const LightGridSource *sources, uint32_t sourceCount, cons
         cellStart[i + 1] = cellStart[i] + cellCounts[i];
     }
 
-    std::vector<Candidate> cellCandidates(cellStart[kCells]);
-    std::vector<uint32_t> cellCursor(kCells);
+    std::vector<Candidate> candidates(cellStart[kCells]);
+    std::vector<uint32_t> cursor(kCells);
 
     for (uint32_t i = 0; i < kCells; i++)
     {
-        cellCursor[i] = cellStart[i];
+        cursor[i] = cellStart[i];
     }
 
     for (uint32_t cascade = 0; cascade < kCascades; cascade++)
@@ -202,166 +200,62 @@ void LightGrid::Build(const LightGridSource *sources, uint32_t sourceCount, cons
 
         for (uint32_t sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)
         {
-            const LightGridSource &source = sources[sourceIndex];
-
-            visitSource(source, cascade, origin, cell, cellBase,
-                        [&](uint32_t cellIndex, float dist2, float mass)
+            visitSource(sources[sourceIndex], origin, cell, cellBase,
+                        [&](uint32_t cellIndex, float mass)
             {
-                const uint32_t at = cellCursor[cellIndex]++;
-                cellCandidates[at] = { source.uid, sourceIndex, dist2, mass };
+                const uint32_t at = cursor[cellIndex]++;
+                candidates[at] = { sourceIndex, mass };
             });
         }
     }
 
     offsets.assign(kCells + 1, 0);
-    tailOffsets.assign(kCells + 1, 0);
-    tailBeta.assign(kCells, 0.0f);
-    list.clear();
-    tailUids.clear();
-    tailProb.clear();
-    tailMarginal.clear();
-    tailAlias.clear();
+    ids.clear();
 
+    uint32_t dropped = 0;
     std::vector<uint32_t> occupiedCounts;
     occupiedCounts.reserve(kCells);
-
-    std::vector<Candidate> tailCandidates;
-    std::vector<double> tailWeights;
-    std::vector<float> blockProb;
-    std::vector<uint32_t> blockAlias;
-    std::vector<float> blockMarginal;
 
     for (uint32_t cellIndex = 0; cellIndex < kCells; cellIndex++)
     {
         const uint32_t candidateCount = cellCounts[cellIndex];
 
-        offsets[cellIndex] = uint32_t(list.size());
-        tailOffsets[cellIndex] = uint32_t(tailUids.size());
+        offsets[cellIndex] = uint32_t(ids.size());
 
         if (candidateCount == 0)
         {
             continue;
         }
 
-        Candidate *candidates = cellCandidates.data() + cellStart[cellIndex];
+        Candidate *cellCandidates = candidates.data() + cellStart[cellIndex];
 
         occupiedCounts.push_back(candidateCount);
-
-        std::sort(candidates, candidates + candidateCount, [](const Candidate &a, const Candidate &b)
+        std::sort(cellCandidates, cellCandidates + candidateCount, [](const Candidate &a, const Candidate &b)
         {
-            if (a.dist2 != b.dist2)
+            if (a.mass != b.mass)
             {
-                return a.dist2 < b.dist2;
+                return a.mass > b.mass;
             }
 
-            return a.uid < b.uid;
+            return a.source < b.source;
         });
 
-        const uint32_t fastCount = std::min<uint32_t>(candidateCount, kMaxFastPerCell);
-        double fastMass = 0.0;
+        const uint32_t keep = std::min<uint32_t>(candidateCount, kMaxFastPerCell);
+        dropped += candidateCount - keep;
 
-        for (uint32_t i = 0; i < fastCount; i++)
+        for (uint32_t i = 0; i < keep; i++)
         {
-            list.push_back(candidates[i].uid);
-            fastMass += double(candidates[i].mass);
-        }
-
-        tailCandidates.clear();
-
-        for (uint32_t i = fastCount; i < candidateCount; i++)
-        {
-            tailCandidates.push_back(candidates[i]);
-        }
-
-        if (tailCandidates.empty())
-        {
-            continue;
-        }
-
-        if (tailCandidates.size() > kMaxTailPerCell)
-        {
-            stats.tailDropped += uint32_t(tailCandidates.size() - kMaxTailPerCell);
-            std::nth_element(tailCandidates.begin(), tailCandidates.begin() + kMaxTailPerCell,
-                             tailCandidates.end(), [](const Candidate &a, const Candidate &b)
-            {
-                if (a.mass != b.mass)
-                {
-                    return a.mass > b.mass;
-                }
-
-                return a.uid < b.uid;
-            });
-            tailCandidates.resize(kMaxTailPerCell);
-        }
-
-        double tailMass = 0.0;
-
-        for (const Candidate &candidate : tailCandidates)
-        {
-            tailMass += double(candidate.mass);
-        }
-
-        float beta = 0.0f;
-
-        if (fastCount == 0)
-        {
-            beta = 1.0f;
-        }
-        else if (fastMass > 0.0 || tailMass > 0.0)
-        {
-            const double ratio = tailMass / (fastMass + tailMass);
-            beta = float(ratio < 0.1 ? 0.1 : (ratio > 0.9 ? 0.9 : ratio));
-        }
-        else
-        {
-            beta = 0.5f;
-        }
-
-        const double floorWeight = 0.001 * (fastMass + tailMass + 1.0);
-
-        tailWeights.resize(tailCandidates.size());
-        blockProb.resize(tailCandidates.size());
-        blockAlias.resize(tailCandidates.size());
-        blockMarginal.resize(tailCandidates.size());
-
-        for (size_t i = 0; i < tailCandidates.size(); i++)
-        {
-            tailWeights[i] = double(tailCandidates[i].mass) + floorWeight;
-        }
-
-        if (!RT_Alias_Build(tailWeights.data(), int(tailCandidates.size()), blockProb.data(), blockAlias.data()))
-        {
-            continue;
-        }
-
-        RT_Alias_Marginals(blockProb.data(), blockAlias.data(), int(tailCandidates.size()), blockMarginal.data());
-
-        tailBeta[cellIndex] = beta;
-
-        for (size_t i = 0; i < tailCandidates.size(); i++)
-        {
-            tailUids.push_back(tailCandidates[i].uid);
-            tailProb.push_back(blockProb[i]);
-            tailAlias.push_back(blockAlias[i]);
-            tailMarginal.push_back(blockMarginal[i]);
+            ids.push_back(cellCandidates[i].source & QR_LIGHT_GRID_ID_INDEX_MASK);
         }
     }
 
-    offsets[kCells] = uint32_t(list.size());
-    tailOffsets[kCells] = uint32_t(tailUids.size());
+    offsets[kCells] = uint32_t(ids.size());
 
     stats.occupiedCells = uint32_t(occupiedCounts.size());
-    stats.fastEntries = uint32_t(list.size());
-    stats.tailEntries = uint32_t(tailUids.size());
+    stats.fastEntries = uint32_t(ids.size());
+    stats.tailEntries = 0;
+    stats.tailDropped = dropped;
     stats.cellsWithTail = 0;
-
-    for (uint32_t cellIndex = 0; cellIndex < kCells; cellIndex++)
-    {
-        if (tailOffsets[cellIndex + 1] > tailOffsets[cellIndex])
-        {
-            stats.cellsWithTail++;
-        }
-    }
 
     if (!occupiedCounts.empty())
     {
@@ -391,14 +285,55 @@ void LightGrid::GetCellList(uint32_t cell, uint64_t *pUniqueIds, uint32_t maxCou
     }
 
     const uint32_t begin = offsets[cell];
-    const uint32_t end = std::min<uint32_t>(offsets[cell + 1], uint32_t(list.size()));
+    const uint32_t end = std::min<uint32_t>(offsets[cell + 1], uint32_t(ids.size()));
+    uint32_t       written = 0;
+
+    for (uint32_t i = begin; i < end && written < maxCount; i++)
+    {
+        const uint32_t id = ids[i];
+        const uint32_t type = (id >> QR_LIGHT_GRID_ID_TYPE_SHIFT) & QR_LIGHT_GRID_ID_TYPE_MASK;
+        const uint32_t index = id & QR_LIGHT_GRID_ID_INDEX_MASK;
+
+        if (type != QR_LIGHT_GRID_ID_TYPE_LIGHT || index >= sourceUids.size())
+        {
+            continue;
+        }
+
+        if (pUniqueIds != nullptr)
+        {
+            pUniqueIds[written] = sourceUids[index];
+        }
+
+        written++;
+    }
+
+    if (pCount != nullptr)
+    {
+        *pCount = written;
+    }
+}
+
+void LightGrid::GetCellIds(uint32_t cell, uint32_t *pIds, uint32_t maxCount, uint32_t *pCount) const
+{
+    if (pCount != nullptr)
+    {
+        *pCount = 0;
+    }
+
+    if (!valid || cell >= kCells || cell + 1 >= offsets.size())
+    {
+        return;
+    }
+
+    const uint32_t begin = offsets[cell];
+    const uint32_t end = std::min<uint32_t>(offsets[cell + 1], uint32_t(ids.size()));
     const uint32_t count = std::min<uint32_t>(end > begin ? end - begin : 0, maxCount);
 
-    if (pUniqueIds != nullptr)
+    if (pIds != nullptr)
     {
         for (uint32_t i = 0; i < count; i++)
         {
-            pUniqueIds[i] = list[begin + i];
+            pIds[i] = ids[begin + i];
         }
     }
 
@@ -419,45 +354,6 @@ void LightGrid::GetCellTail(uint32_t cell, uint64_t *pUniqueIds, float *pProb, f
     if (pBeta != nullptr)
     {
         *pBeta = 0.0f;
-    }
-
-    if (!valid || cell >= kCells || cell + 1 >= tailOffsets.size())
-    {
-        return;
-    }
-
-    const uint32_t begin = tailOffsets[cell];
-    const uint32_t end = std::min<uint32_t>(tailOffsets[cell + 1], uint32_t(tailUids.size()));
-    const uint32_t count = std::min<uint32_t>(end > begin ? end - begin : 0, maxCount);
-
-    if (pBeta != nullptr && cell < tailBeta.size())
-    {
-        *pBeta = tailBeta[cell];
-    }
-
-    for (uint32_t i = 0; i < count; i++)
-    {
-        if (pUniqueIds != nullptr)
-        {
-            pUniqueIds[i] = tailUids[begin + i];
-        }
-        if (pProb != nullptr)
-        {
-            pProb[i] = tailProb[begin + i];
-        }
-        if (pMarginal != nullptr)
-        {
-            pMarginal[i] = tailMarginal[begin + i];
-        }
-        if (pAlias != nullptr)
-        {
-            pAlias[i] = tailAlias[begin + i];
-        }
-    }
-
-    if (pCount != nullptr)
-    {
-        *pCount = count;
     }
 }
 

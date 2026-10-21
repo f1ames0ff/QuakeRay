@@ -1980,16 +1980,23 @@ void RT_LightGridReport_f (void)
 		return;
 	}
 
-	Con_Printf ("light grid: enabled %u, sources %u, cells %u (%u cascades), occupied %u, fast %u, tail %u, dropped %u, tails %u, candidates p50 %u p95 %u max %u, build %.2f ms\n",
-		st.enabled, st.sources, st.cells, st.cascades, st.occupiedCells, st.fastEntries, st.tailEntries,
-		st.tailDropped, st.cellsWithTail, st.candidateMedian, st.candidateP95, st.candidateMax, st.buildMs);
-	Con_Printf ("  cell %.1f/%.1f, origin0 %.1f %.1f %.1f, origin1 %.1f %.1f %.1f\n",
-		st.cellSize[0], st.cellSize[1], st.origin[0].data[0], st.origin[0].data[1], st.origin[0].data[2],
-		st.origin[1].data[0], st.origin[1].data[1], st.origin[1].data[2]);
+	Con_Printf ("light grid: enabled %u, sources %u, cells %u (%u cascades), occupied %u, ids %u, dropped %u, candidates p50 %u p95 %u max %u, build %.2f ms\n",
+		st.enabled, st.sources, st.cells, st.cascades, st.occupiedCells, st.fastEntries,
+		st.tailDropped, st.candidateMedian, st.candidateP95, st.candidateMax, st.buildMs);
+	Con_Printf ("  cell sizes:");
+
+	for (uint32_t c = 0; c < st.cascades; c++)
+		Con_Printf (" %.1f", st.cellSize[c]);
+
+	Con_Printf ("\n");
+
+	for (uint32_t c = 0; c < st.cascades; c++)
+		Con_Printf ("  cascade %u origin %.1f %.1f %.1f\n", c, st.origin[c].data[0], st.origin[c].data[1],
+			st.origin[c].data[2]);
 
 	if (requestedCell >= 0)
 	{
-		uint64_t uids[128];
+		uint64_t uids[64];
 		uint32_t count = 0;
 
 		if (qrGetLightGridList (vulkan_globals.instance, (uint32_t)requestedCell, uids,
@@ -1999,30 +2006,12 @@ void RT_LightGridReport_f (void)
 			return;
 		}
 
-		Con_Printf ("  cell %i fast %u:", requestedCell, count);
+		Con_Printf ("  cell %i ids %u:", requestedCell, count);
 
 		for (uint32_t i = 0; i < count; i++)
 			Con_Printf (" %llu", (unsigned long long)uids[i]);
 
 		Con_Printf ("\n");
-
-		{
-			float    prob[128];
-			float    marginal[128];
-			uint32_t alias[128];
-			float    beta = 0.0f;
-
-			if (qrGetLightGridTail (vulkan_globals.instance, (uint32_t)requestedCell, uids, prob, marginal,
-				alias, &beta, (uint32_t)countof (uids), &count) == QR_SUCCESS)
-			{
-				Con_Printf ("  cell %i tail %u beta %.4f:", requestedCell, count, beta);
-
-				for (uint32_t i = 0; i < count; i++)
-					Con_Printf (" %llu", (unsigned long long)uids[i]);
-
-				Con_Printf ("\n");
-			}
-		}
 	}
 }
 
