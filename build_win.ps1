@@ -16,6 +16,10 @@ $anchorRoot = $PSScriptRoot
 Set-Location $anchorRoot
 [Environment]::CurrentDirectory = $anchorRoot
 
+if (-not (Test-Path (Join-Path $anchorRoot "renderer\CMakeLists.txt"))) {
+    throw "The renderer SDK submodule is missing. Run: git submodule update --init --recursive"
+}
+
 if (-not $BuildDir) {
     $BuildDir = Join-Path (Join-Path $anchorRoot "build") $Config
 } elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
