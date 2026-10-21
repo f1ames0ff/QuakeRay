@@ -390,6 +390,10 @@ float RT_ClusterLightReach (void);
 // Reach of a light of the map itself, from rt_light_reach_static: the distance such a light is
 // heard from where it stands. A setting of zero falls back to the cap of RT_ClusterLightReach.
 float RT_ClusterLightReachStatic (void);
+
+int RT_LightBudgetAvailable (void);
+qboolean RT_LightBudgetTake (int count);
+void RT_KeepEmissiveLightColor (vec3_t color);
 void RT_ClusterLightListsUpload (void);
 #define RT_CLUSTER_SLICES 16
 void RT_ClusterLightListsPrepare (uint32_t sliceCount);
@@ -652,6 +656,7 @@ void RT_ModelLightsCacheAlloc (qmodel_t *model);
 void RT_ModelLightsCacheFree (qmodel_t *model);
 void RT_DtalRebuild_f (void);
 void RT_DtalRequestRebuild (void);
+void RT_DtalLodRequestRebuild (void);
 
 QrTransform RT_GetModelTransform (const float model_matrix[16]);
 QrTransform RT_GetBrushModelMatrix (entity_t *e);

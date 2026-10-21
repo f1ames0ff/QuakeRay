@@ -2,12 +2,20 @@
 
 ## 1. Status and authoritative documents
 
-- Status: both projects are implemented and merged into `master`; the default-on enablement
-  (`rt_cluster_sampling`, `rt_dtal_groups`; owner decision, 2026-10-13) ships on the integration
-  branch `perf/rhi-dyn-blas-clean` (merge `e1cee587`), not on `origin/master`; the delivered
-  scope, checks, measured results and remaining limitations
+- Status: both projects are implemented and merged into `master` (PR #51, merge `5a82ef4b`,
+  2026-10-14); the default-on enablement (`rt_cluster_sampling`, `rt_dtal_groups`; owner decision,
+  2026-10-13) is included. The delivered scope, checks, measured results and remaining limitations
   are in [the Project A report](dtal-implementation-report.md) and [the Project B report](cluster-implementation-report.md),
   and the final simplifications are in [the refactoring report](lighting-refactoring-report.md).
+- The next layer after these projects - distance/visibility LOD clusters over the grouped parents -
+  is specified in [dtal-distance-cluster-spec.md](dtal-distance-cluster-spec.md); revised 2026-10-14
+  with the owner's decisions: the hierarchy is precomputed at the DTAL build and the frame only
+  selects levels.
+- The precomputed core and its engine wiring are on the branch: the `rt_dtal_lod*` cvars, the
+  hierarchy build at the DTAL build boundary, the per-tick selection with frustum classification,
+  the effective-representation pass (coverage union and the buried guard), the combined upload with
+  the synthesized quad representative and the LOD-aware registration all live in
+  `Quake/rt_dtal_lod.{h,c}` and `Quake/r_world.c`; the acceptance captures are the remaining step.
 - Code baseline inspected: `dac6cdc4`; implementation started from `d365d033` (the then-current
   `origin/master`).
 - Primary reproduction: fragmented static-world emissive geometry, especially lava floors and glowing walls.

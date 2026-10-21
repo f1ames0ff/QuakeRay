@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "rt_lights.h"
+#include "rt_light_admit.h"
 
 extern cvar_t r_flatlightstyles; // johnfitz
 extern cvar_t r_lerplightstyles;
@@ -920,6 +921,10 @@ int rt_cluster_demand_p95;        /* 95th percentile of the per-cluster candidat
 int rt_cluster_tail_entries;      /* overflow entries published */
 int rt_cluster_tail_clusters;     /* clusters with a non-empty overflow tail */
 int rt_cluster_tail_budget;       /* clusters whose tail did not fit the published budget */
+int rt_cluster_full;
+int rt_cluster_tail_dropped;
+
+static rt_light_budget_t rt_light_budget;
 
 static SDL_mutex *rt_cluster_reg_mutex;
 
@@ -935,7 +940,29 @@ void RT_ClusterLightListsReset (void)
 	rt_light_diag_denied = 0;
 	rt_cluster_reg_attempts = 0;
 	rt_cluster_reg_dropped = 0;
+	RT_LightBudgetInit (&rt_light_budget);
 	VectorCopy (r_refdef.vieworg, rt_cluster_vieworg);
+}
+
+int RT_LightBudgetAvailable (void)
+{
+	return RT_LightBudgetRemaining (&rt_light_budget);
+}
+
+qboolean RT_LightBudgetTake (int count)
+{
+	qboolean taken;
+
+	if (rt_cluster_reg_mutex == NULL)
+		rt_cluster_reg_mutex = SDL_CreateMutex ();
+
+	SDL_LockMutex (rt_cluster_reg_mutex);
+
+	taken = RT_LightBudgetClaim (&rt_light_budget, count) != 0;
+
+	SDL_UnlockMutex (rt_cluster_reg_mutex);
+
+	return taken;
 }
 
 /* The reach a light of a moving entity is registered with, from rt_light_reach_dynamic: the
@@ -1450,6 +1477,8 @@ void RT_ClusterLightListsFinish (void)
 		rt_cluster_tail_entries = (int)st.tailEntries;
 		rt_cluster_tail_clusters = (int)st.clustersWithTail;
 		rt_cluster_tail_budget = (int)st.tailBudgetExceeded;
+		rt_cluster_full = (int)st.fullClusters;
+		rt_cluster_tail_dropped = (int)st.tailCandidatesDropped;
 		rt_cluster_last_dirty = (int)st.incrementalDirty;
 		rt_cluster_last_move_footprint = (int)st.moveFootprint;
 		rt_cluster_last_pub_mask = (int)st.publicationMask;
@@ -1756,9 +1785,10 @@ void RT_ClusterLightReport_f (void)
 
 	RT_LightReportPrint ("RT lights: %i registered, %i dropped (no open leaf), %i cluster slots granted, %i denied\n",
 		rt_cluster_light_count, rt_light_diag_unresolved, rt_light_diag_granted, rt_light_diag_denied);
-	RT_LightReportPrint ("cluster demand: max %i, median %i, p95 %i; overflow tail: %i entries in %i clusters, %i clusters over budget\n",
+	RT_LightReportPrint ("cluster demand: max %i, median %i, p95 %i; %i full; overflow tail: %i entries in %i clusters, %i over budget, %i dropped\n",
 		rt_cluster_demand_max, rt_cluster_demand_median, rt_cluster_demand_p95,
-		rt_cluster_tail_entries, rt_cluster_tail_clusters, rt_cluster_tail_budget);
+		rt_cluster_full, rt_cluster_tail_entries, rt_cluster_tail_clusters, rt_cluster_tail_budget,
+		rt_cluster_tail_dropped);
 
 	int      viewCluster = -1;
 	int      viewFill = 0;

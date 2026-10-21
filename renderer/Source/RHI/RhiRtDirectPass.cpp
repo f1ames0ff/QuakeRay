@@ -9,9 +9,11 @@
 #include "../Generated/ShaderCommonC.h"
 #include "../LightManager.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <tuple>
+#include <vector>
 
 using namespace qray;
 
@@ -1327,13 +1329,14 @@ bool RhiRtDirectPass::PrepareLightSet(nvrhi::ICommandList *pCommandList, Target 
     // ResetLightStats fills. It is the second thing this pass adds to the list before the
     // dispatch that both reads the counters of slot frameId - 1 and accumulates into slot
     // frameId; setRayTracingState is what commits the barriers that order it against them.
-    RecordLightStatsFill(pCommandList, target, buffers.lightStats, frameId, lightStatsMode);
+    RecordLightStatsFill(pCommandList, target, buffers.lightStats, frameIndex, frameId, lightStatsMode);
 
     return true;
 }
 
 void RhiRtDirectPass::RecordLightStatsFill(nvrhi::ICommandList *pCommandList, const Target &target,
-                                           VkBuffer statsBuffer, uint32_t frameId, uint32_t lightStatsMode)
+                                           VkBuffer statsBuffer, uint32_t frameIndex, uint32_t frameId,
+                                           uint32_t lightStatsMode)
 {
     // The constant of this header is the engine's slot count; the two have to spin together.
     static_assert(LIGHT_STATS_SLOT_COUNT == LightManager::LIGHT_STATS_SLOT_COUNT,
@@ -1405,6 +1408,72 @@ void RhiRtDirectPass::RecordLightStatsFill(nvrhi::ICommandList *pCommandList, co
         // This slot is zero up to the target now, the pass's mirror of statsClusterCleared: the
         // next frames skip it again until the lists grow.
         statsClusterCleared[i] = clusterTarget;
+    }
+
+    uint32_t        statsResetCount = 0;
+    bool            clearStatsHistory = false;
+    const uint32_t *pStatsResets = lightManager->GetClusterStatsResets(frameIndex, statsResetCount, clearStatsHistory);
+
+    if (statsResetCount > 0 || clearStatsHistory)
+    {
+        if (!anyFill)
+        {
+            pCommandList->setBufferState(target.lightWraps[LIGHT_STATS_BUFFER_INDEX],
+                                         nvrhi::ResourceStates::CopyDest);
+            pCommandList->commitBarriers();
+            anyFill = true;
+        }
+
+        const uint32_t readSlots[2] = { (slot + 1u) % LIGHT_STATS_SLOT_COUNT, (slot + 2u) % LIGHT_STATS_SLOT_COUNT };
+
+        if (clearStatsHistory)
+        {
+            for (uint32_t r = 0; r < 2; r++)
+            {
+                vkCmdFillBuffer(nativeCmdBuffer, statsBuffer, slotSize * readSlots[r], slotSize, 0);
+                statsClusterCleared[readSlots[r]] = clusterTarget;
+            }
+        }
+
+        if (statsResetCount > 0 && pStatsResets != nullptr)
+        {
+            std::vector<uint32_t> resets(pStatsResets, pStatsResets + statsResetCount);
+            std::sort(resets.begin(), resets.end());
+            resets.erase(std::unique(resets.begin(), resets.end()), resets.end());
+
+            const VkDeviceSize slotBytes = VkDeviceSize(sizeof(uint32_t) * 2 * Q2_LIGHT_LIST_STATS_SIDES);
+
+            size_t i = 0;
+
+            while (i < resets.size())
+            {
+                const uint32_t first = resets[i];
+                const uint32_t cluster = first / uint32_t(Q2_LIGHT_LIST_MAX_PER_CELL);
+                const uint32_t slotInCluster = first % uint32_t(Q2_LIGHT_LIST_MAX_PER_CELL);
+
+                size_t j = i + 1;
+
+                while (j < resets.size() && resets[j] == resets[j - 1] + 1 &&
+                       resets[j] / uint32_t(Q2_LIGHT_LIST_MAX_PER_CELL) == cluster)
+                {
+                    j++;
+                }
+
+                if (cluster < clusterTarget)
+                {
+                    const VkDeviceSize byteOffset = VkDeviceSize(cluster) * clusterSize +
+                                                    VkDeviceSize(slotInCluster) * slotBytes;
+                    const VkDeviceSize byteSize = VkDeviceSize(j - i) * slotBytes;
+
+                    for (uint32_t r = 0; r < 2; r++)
+                    {
+                        vkCmdFillBuffer(nativeCmdBuffer, statsBuffer, slotSize * readSlots[r] + byteOffset, byteSize, 0);
+                    }
+                }
+
+                i = j;
+            }
+        }
     }
 
     if (anyFill)

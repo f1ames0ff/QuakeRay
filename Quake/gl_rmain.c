@@ -482,6 +482,11 @@ static void RT_UploadAllDlights ()
 		{
 			const rt_custom_light_t *l = &custom[i];
 			float                    intensity = (l->intensity > 0.0f) ? l->intensity : 1.0f;
+
+			if (!RT_LightBudgetTake (1))
+			{
+				continue;
+			}
 			vec3_t                   position, color;
 			uint64_t                 uid = (uint64_t)UINT32_MAX + 1 + (uint64_t)i;
 
@@ -498,6 +503,7 @@ static void RT_UploadAllDlights ()
 				intensity *= CLAMP (0.0f, (float)d_lightstylevalue[l->style] / 256.0f, 1.0f);
 			VectorScale (color, intensity, color);
 			RT_FIXUP_LIGHT_INTENSITY (color, true);
+			RT_KeepEmissiveLightColor (color);
 
 			QrSphericalLightUploadInfo info = {
 				.uniqueID = uid,
@@ -549,7 +555,7 @@ static void RT_UploadAllDlights ()
 		}
 	}
 
-	if (CVAR_TO_FLOAT (rt_flashlight) > 0.1f)
+	if (CVAR_TO_FLOAT (rt_flashlight) > 0.1f && RT_LightBudgetTake (1))
 	{
 		vec3_t pos;
 		VectorCopy (r_origin, pos);
@@ -575,7 +581,7 @@ static void RT_UploadAllDlights ()
 		QR_CHECK (r);
 	}
 
-	if (QR_Editor_TorchOn ())
+	if (QR_Editor_TorchOn () && RT_LightBudgetTake (1))
 	{
 		vec3_t position, color;
 
@@ -586,6 +592,7 @@ static void RT_UploadAllDlights ()
 		color[2] = 0.62f;
 		VectorScale (color, CVAR_TO_FLOAT (rt_dlight_intensity), color);
 		RT_FIXUP_LIGHT_INTENSITY (color, true);
+		RT_KeepEmissiveLightColor (color);
 
 		QrSphericalLightUploadInfo info = {
 			.uniqueID = (uint64_t)UINT32_MAX + 1 + RT_CUSTOM_LIGHTS_MAX,

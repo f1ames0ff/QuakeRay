@@ -59,8 +59,7 @@ class WorldLights;
 // tombstone, which holds no slot and is the place the next light that appears is given, so that
 // no slot of any other light moves and a set that churns does not grow; and a light that appears
 // is granted the clusters it reaches from where it stands. Only the clusters the changes reach are
-// composed again, and the composition stays the answer wherever that cannot be proved right, which
-// is also what it does with the tombstones: it compacts them.
+// composed again, and the lists of every other cluster are the ones the composition left.
 class ClusterLightLists
 {
 public:
@@ -81,11 +80,14 @@ public:
     void Reset();
 
     const QrClusterLightStats &GetStats() const { return stats; }
+    uint32_t GetStatsResetCount() const { return uint32_t(statsResets.size()); }
+    bool     GetStatsHistoryCleared() const { return statsClearHistory; }
 
     // Slot accounting of the lights of the last frame, in the order the frame registered them,
     // and one cluster list as the lists were left for it.
     void GetGrants(uint32_t *pGranted, uint32_t *pDenied, uint32_t maxCount, uint32_t *pCount) const;
     void GetClusterList(uint32_t cluster, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const;
+    void GetClusterSlots(uint32_t cluster, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const;
     void GetClusterTail(uint32_t cluster, uint64_t *pUniqueIds, float *pProb, float *pMarginal,
                         uint32_t *pAlias, float *pBeta, uint32_t maxCount, uint32_t *pCount) const;
     void ValidateComposition(UserPrint *pUserPrint) const;
@@ -150,6 +152,7 @@ private:
     void UnrecordCandidate(uint32_t cluster, uint32_t sourceIndex);
     void BuildOverflow();
     void MarkTailDirty(uint32_t cluster);
+    void NoteStatsReset(uint32_t slot);
     bool BuildTailBlock(uint32_t cluster, float &outBeta);
     void RebuildDirtyTails();
     bool BuildGrid(const WorldLights &worldLights, float reach);
@@ -269,8 +272,7 @@ private:
        other light for as long as they are kept: every slot names its light by the place it holds,
        and a place that is kept names a light that is gone. They are kept because the lights that
        stay keep the places their slots name them by, and they are given back to the lights that
-       appear, so that a set that churns neither grows nor has to be composed; the set is
-       compacted by a composition once they outgrow the lights that are left. */
+       appear, so that a set that churns neither grows nor has to be composed. */
     std::vector<uint32_t> tombstoneIndices; // places in the sources
     /* Where each light of the frame stands in the sources: false while the sources are the
        frame's own lights in the frame's own order, true while they are the lights the lists
@@ -295,6 +297,7 @@ private:
         std::vector<std::pair<uint32_t, int32_t>> deniedDelta;
         std::vector<uint32_t>                     tailDirty;
         std::vector<uint32_t>                     appendedSlots;
+        std::vector<uint32_t>                     statsResets;
         uint32_t                                  reachGated = 0;
         uint32_t                                  topUpGrants = 0;
         uint32_t                                  violations = 0;
@@ -347,6 +350,10 @@ private:
     QrClusterLightStats stats{};
     bool warnedAboutFullList = false;
     bool warnedAboutClusterClamp = false;
+
+    std::vector<uint32_t> statsResets;   // kMaxPerList * cluster + slot
+    bool                  collectStatsResets = false;
+    bool                  statsClearHistory = false;
 
     // Sorted (uid, index) pairs of the live sources and of the frame being registered, used to
     // tell a light that moved from one that appeared or disappeared, and to put the per-light

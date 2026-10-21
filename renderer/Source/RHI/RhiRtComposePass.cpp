@@ -128,7 +128,7 @@ struct ComposeImage
 // the three are part of the union so the per-list announcement below names their resting state and
 // the restore lists return the ones this module moves to it. The god-rays module owns their
 // contents and has to leave them in GENERAL (see the class comment).
-constexpr uint32_t COMPOSE_IMAGE_COUNT = 88;
+constexpr uint32_t COMPOSE_IMAGE_COUNT = 90;
 constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
 {
     { FB_IMAGE_INDEX_ALBEDO,                ComposeImageSize::Render }, //   0  framebufAlbedo           (adapter/gradient-reproj/atrous/PF)
@@ -211,6 +211,8 @@ constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
     { FB_IMAGE_INDEX_Q2_TAA_HISTORY_PREV,   ComposeImageSize::Upscaled }, // 120 framebufQ2TaaHistory_Prev (TAAU SRV + sampler)
     { FB_IMAGE_INDEX_Q2_RNG_SEED,           ComposeImageSize::Render }, // 121  framebufQ2RngSeed        (reproj UAV, raygen read)
     { FB_IMAGE_INDEX_Q2_RNG_SEED_PREV,      ComposeImageSize::Render }, // 122  framebufQ2RngSeed_Prev   (reproj SRV)
+    { FB_IMAGE_INDEX_Q2_CLUSTER,            ComposeImageSize::Render },
+    { FB_IMAGE_INDEX_Q2_CLUSTER_PREV,       ComposeImageSize::Render },
     { FB_IMAGE_INDEX_Q2_GLASS_FILTER,       ComposeImageSize::Render },
     { FB_IMAGE_INDEX_Q2_GLASS_REFLECTION,   ComposeImageSize::Render },
     { FB_IMAGE_INDEX_DEPTH_NDC,            ComposeImageSize::Render },
@@ -221,8 +223,8 @@ constexpr ComposeImage COMPOSE_IMAGES[COMPOSE_IMAGE_COUNT] =
 { FB_IMAGE_INDEX_Q2_PARTICLE_LAYER, ComposeImageSize::Render }, // 130  framebufQ2ParticleLayer (checkerboard SRV, refl/refr UAV)
 };
 
-static_assert(COMPOSE_IMAGE_COUNT == 88,
-              "the per-slot image arrays of RhiRtComposePass.h are sized 87 (COMPOSE_IMAGES)");
+static_assert(COMPOSE_IMAGE_COUNT == 90,
+              "the per-slot image arrays of RhiRtComposePass.h are sized 90 (COMPOSE_IMAGES)");
 
 // One item of a pass's set 0: the engine image, the binding kind and whether the item is a sampler
 // (only the TAAU history carries one). 'isUAV' selects both the layout item and the set item type;
@@ -238,7 +240,7 @@ struct ComposeBinding
 // bindings, all in set 0). The order is the reconnaissance's table order - the UAVs first, then the
 // SRVs. The reproject reads the `_PREV` roles and writes the current ones for the checkerboard half
 // the primary did not trace.
-constexpr uint32_t GRADIENT_REPROJECT_BINDING_COUNT = 27;
+constexpr uint32_t GRADIENT_REPROJECT_BINDING_COUNT = 29;
 constexpr ComposeBinding GRADIENT_REPROJECT_BINDINGS[GRADIENT_REPROJECT_BINDING_COUNT] =
 {
     { FB_IMAGE_INDEX_ALBEDO,               true, false }, //   0  framebufAlbedo
@@ -251,6 +253,7 @@ constexpr ComposeBinding GRADIENT_REPROJECT_BINDINGS[GRADIENT_REPROJECT_BINDING_
     { FB_IMAGE_INDEX_Q2_GRAD_H_F_SPEC_PING, true, false }, // 113  framebufQ2GradHFSpecPing
     { FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS,     true, false }, // 115  framebufQ2GradSmplPos
     { FB_IMAGE_INDEX_Q2_RNG_SEED,          true, false }, // 121  framebufQ2RngSeed
+    { FB_IMAGE_INDEX_Q2_CLUSTER,           true, false },
     { FB_IMAGE_INDEX_ALBEDO_PREV,          false, false }, // 125  framebufAlbedo_Prev_Sampled
     { FB_IMAGE_INDEX_NORMAL_PREV,          false, false }, // 128  framebufNormal_Prev_Sampled
     { FB_IMAGE_INDEX_NORMAL_GEOMETRY,      false, false }, // 129  framebufNormalGeometry_Sampled
@@ -268,6 +271,7 @@ constexpr ComposeBinding GRADIENT_REPROJECT_BINDINGS[GRADIENT_REPROJECT_BINDING_
     { FB_IMAGE_INDEX_Q2_METALLIC_PREV,     false, false }, // 210  framebufQ2Metallic_Prev_Sampled
     { FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS_PREV, false, false }, // 240 framebufQ2GradSmplPos_Prev_Sampled
     { FB_IMAGE_INDEX_Q2_RNG_SEED_PREV,     false, false }, // 246  framebufQ2RngSeed_Prev_Sampled
+    { FB_IMAGE_INDEX_Q2_CLUSTER_PREV,      false, false },
 };
 
 // CmQ2Adapter: 5 storage images and 12 sampled images (measured: exactly these 17 bindings, all in
@@ -773,7 +777,7 @@ constexpr FramebufferImageIndex CHAIN_RESTORE_IMAGES[CHAIN_RESTORE_COUNT] =
 
 // The reproject's sampled reads and the TAAU's: each call is self-contained, so it restores what it
 // read even when a later call of the frame is skipped.
-constexpr uint32_t GRADIENT_REPROJECT_RESTORE_COUNT = 17;
+constexpr uint32_t GRADIENT_REPROJECT_RESTORE_COUNT = 18;
 constexpr FramebufferImageIndex GRADIENT_REPROJECT_RESTORE_IMAGES[GRADIENT_REPROJECT_RESTORE_COUNT] =
 {
     FB_IMAGE_INDEX_ALBEDO_PREV,
@@ -793,6 +797,7 @@ constexpr FramebufferImageIndex GRADIENT_REPROJECT_RESTORE_IMAGES[GRADIENT_REPRO
     FB_IMAGE_INDEX_Q2_METALLIC_PREV,
     FB_IMAGE_INDEX_Q2_GRAD_SMPL_POS_PREV,
     FB_IMAGE_INDEX_Q2_RNG_SEED_PREV,
+    FB_IMAGE_INDEX_Q2_CLUSTER_PREV,
 };
 
 constexpr uint32_t TAAU_RESTORE_COUNT = 3;

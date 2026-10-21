@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "../shared/rt_frame_policy.h"
 #include "rt_dtal_debug.h"
 #include "rt_dtal_groups.h"
+#include "rt_dtal_lod.h"
 #include "rt_lights.h"
 #include "gl_heap.h"
 
@@ -62,6 +63,14 @@ extern cvar_t rt_dtal_clearance;
 extern cvar_t rt_dtal_groups;
 extern cvar_t rt_dtal_spacing;
 extern cvar_t rt_dtal_maxgroups;
+extern cvar_t rt_dtal_lod;
+extern cvar_t rt_dtal_lod_start;
+extern cvar_t rt_dtal_lod_screen;
+extern cvar_t rt_dtal_lod_maxbands;
+extern cvar_t rt_dtal_lod_offscreen;
+extern cvar_t rt_dtal_lod_hysteresis;
+extern cvar_t rt_dtal_lod_dwell;
+extern cvar_t rt_dtal_lod_interval;
 extern cvar_t rt_world_batch_merge;
 extern cvar_t rt_brush_persistent;
 
@@ -877,7 +886,7 @@ QrTransform RT_GetBrushModelMatrix (entity_t *e)
 static qboolean  RT_FindNearestTeleport (const QrGeometryUploadInfo *info, uint8_t *result, qboolean *potentially_mirror);
 static QrFloat3D ApplyTransform (const QrTransform *transform, const vec3_t v);
 static gltexture_t *RT_CanonicalLightTex (texture_t *base, int alt);
-static void         RT_KeepEmissiveLightColor (vec3_t color);
+void RT_KeepEmissiveLightColor (vec3_t color);
 
 typedef struct rt_uploadsurf_state_t
 {
@@ -1552,12 +1561,22 @@ static void RT_EmitEmissiveWirePolygon (const QrTexturedAreaLightUploadInfo *lt)
 
 #define RT_DTAL_DEBUG_MAX 4096
 
+enum
+{
+	RT_DTAL_DEBUG_KIND_NORMAL = 0,
+	RT_DTAL_DEBUG_KIND_PROJECTOR = 1,
+	RT_DTAL_DEBUG_KIND_NODE = 2,
+	RT_DTAL_DEBUG_KIND_MERGED = 3,
+	RT_DTAL_DEBUG_KIND_LINK = 4,
+	RT_DTAL_DEBUG_KIND_INDIVIDUAL = 5,
+};
+
 typedef struct
 {
 	vec3_t   center;
 	vec3_t   normal;
 	float    len;
-	qboolean projector;
+	int      kind;
 } rt_dtal_debug_arrow_t;
 
 static rt_dtal_debug_arrow_t rt_dtal_debug_arrow[RT_DTAL_DEBUG_MAX];
@@ -1577,7 +1596,7 @@ static void RT_DtalDebugUnlock (void)
 	Atomic_StoreUInt32 (&rt_dtal_debug_spin, 0);
 }
 
-static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area, qboolean projector)
+static void RT_DtalDebugAddArrow (const vec3_t center, const vec3_t normal, float len, int kind)
 {
 	RT_DtalDebugLock ();
 
@@ -1594,16 +1613,29 @@ static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float are
 		VectorCopy (center, arrow->center);
 		VectorCopy (normal, arrow->normal);
 
-		arrow->projector = projector;
-		arrow->len = (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+		arrow->kind = kind;
+		arrow->len = len;
 	}
 
 	RT_DtalDebugUnlock ();
 }
 
+static float RT_DtalDebugArrowLen (float area)
+{
+	return (float) CLAMP (12.0, 0.5 * sqrt (fmax (area, 0.0)), 64.0);
+}
+
+static void RT_DtalDebugAdd (const vec3_t center, const vec3_t normal, float area, qboolean projector)
+{
+	RT_DtalDebugAddArrow (center, normal, RT_DtalDebugArrowLen (area),
+	                      projector ? RT_DTAL_DEBUG_KIND_PROJECTOR : RT_DTAL_DEBUG_KIND_NORMAL);
+}
+
 int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
 {
-	if (CVAR_TO_FLOAT (rt_dtal_debug) != 2.0f || rt_dtal_debug_frame != r_framecount || fb_w <= 0 || fb_h <= 0)
+	const float mode = CVAR_TO_FLOAT (rt_dtal_debug);
+
+	if ((mode != 2.0f && mode != 3.0f) || rt_dtal_debug_frame != r_framecount || fb_w <= 0 || fb_h <= 0)
 		return 0;
 
 	const float *m = vulkan_globals.view_projection_matrix;
@@ -1646,18 +1678,41 @@ int RT_DtalDebugBuildArrows (float *out, int max_arrows, int fb_w, int fb_h)
 		o[1] = sy0;
 		o[2] = sx1;
 		o[3] = sy1;
+		o[7] = 0.0f;
 
-		if (arrow->projector)
+		switch (arrow->kind)
 		{
+		case RT_DTAL_DEBUG_KIND_NODE:
+			o[4] = 0.25f;
+			o[5] = 0.85f;
+			o[6] = 1.0f;
+			break;
+		case RT_DTAL_DEBUG_KIND_MERGED:
+			o[4] = 1.0f;
+			o[5] = 0.45f;
+			o[6] = 0.1f;
+			break;
+		case RT_DTAL_DEBUG_KIND_LINK:
+			o[4] = 1.0f;
+			o[5] = 0.55f;
+			o[6] = 0.15f;
+			o[7] = 1.0f;
+			break;
+		case RT_DTAL_DEBUG_KIND_INDIVIDUAL:
+			o[4] = 0.35f;
+			o[5] = 1.0f;
+			o[6] = 0.35f;
+			break;
+		case RT_DTAL_DEBUG_KIND_PROJECTOR:
 			o[4] = 1.0f;
 			o[5] = 0.2f;
 			o[6] = 1.0f;
-		}
-		else
-		{
+			break;
+		default:
 			o[4] = (float) fabs (arrow->normal[0]);
 			o[5] = (float) fabs (arrow->normal[1]);
 			o[6] = (float) fabs (arrow->normal[2]);
+			break;
 		}
 
 		num++;
@@ -1798,6 +1853,11 @@ static void RT_UploadEmissiveLight (const QrTexturedAreaLightUploadInfo *light_i
 {
 	if (!is_static_geom)
 	{
+		if (!RT_LightBudgetTake (1))
+		{
+			return;
+		}
+
 		Atomic_AddUInt32 (&rt_emis_stats.dynamic, 1);
 
 		QrTexturedAreaLightUploadInfo li = *light_info;
@@ -2391,6 +2451,527 @@ static uint64_t RT_DtalMix (uint64_t hash, uint64_t value)
 	return hash;
 }
 
+void RT_KeepEmissiveLightColor (vec3_t color);
+
+#define RT_DTAL_LOD_TICK_BUDGET 256
+
+static rt_dtal_lod_t       *rt_dtal_lod_state;
+static rt_dtal_lod_input_t *rt_dtal_lod_inputs;
+static int                  rt_dtal_lod_input_capacity;
+static uint32_t            *rt_dtal_lod_visibility;
+static int                  rt_dtal_lod_visibility_capacity;
+static qboolean             rt_dtal_lod_active;
+static qboolean             rt_dtal_lod_failed;
+static qboolean             rt_dtal_lod_rebuild_pending;
+static double               rt_dtal_lod_last_tick;
+static int                  rt_dtal_lod_cursor;
+static rt_dtal_lod_stats_t  rt_dtal_lod_last_stats;
+
+typedef struct
+{
+	uint64_t uid;
+	uint64_t stamp;
+	uint32_t buried;
+	uint32_t coverage_count;
+	uint32_t coverage[QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS];
+	uint32_t effective;
+} rt_dtal_lod_node_state_t;
+
+static rt_dtal_lod_node_state_t *rt_dtal_lod_node_states;
+static int                       rt_dtal_lod_node_state_capacity;
+static uint64_t                  rt_dtal_lod_node_generation = 1;
+static uint8_t                  *rt_dtal_lod_group_merged;
+static int                       rt_dtal_lod_group_merged_capacity;
+
+static QrDtalGroupUploadInfo *rt_dtal_lod_upload_parents;
+static int                    rt_dtal_lod_upload_parent_capacity;
+static QrDtalMemberUpload    *rt_dtal_lod_upload_members;
+static int                    rt_dtal_lod_upload_member_capacity;
+static int                    rt_dtal_lod_upload_parent_count;
+static int                    rt_dtal_lod_upload_member_count;
+
+static int rt_dtal_lod_node_records;
+static int rt_dtal_lod_group_records;
+static int rt_dtal_lod_coverage_refused;
+static int rt_dtal_lod_buried_refused;
+
+void RT_DtalLodRequestRebuild (void)
+{
+	rt_dtal_lod_rebuild_pending = true;
+	rt_dtal_lod_failed = false;
+}
+
+static qboolean RT_DtalSourceStyleAnimates (const rt_dtal_source_t *source)
+{
+	for (int i = 0; i < source->style_count; i++)
+	{
+		if (!source->accepted[i])
+			continue;
+
+		const int style = source->styles[i];
+
+		if (style < 0 || style >= MAX_LIGHTSTYLES)
+			continue;
+
+		const lightstyle_t *ls = &cl_lightstyle[style];
+
+		for (int j = 1; j < ls->length; j++)
+		{
+			if (ls->map[j] != ls->map[0])
+				return true;
+		}
+	}
+
+	return false;
+}
+
+static void RT_DtalLod_MakeConfig (rt_dtal_lod_config_t *config)
+{
+	memset (config, 0, sizeof (*config));
+	config->startDistance = CVAR_TO_FLOAT (rt_dtal_lod_start);
+	config->screenAngleDeg = CVAR_TO_FLOAT (rt_dtal_lod_screen);
+	config->maxBands = (int) CVAR_TO_FLOAT (rt_dtal_lod_maxbands);
+	config->offscreenShift = (int) CVAR_TO_FLOAT (rt_dtal_lod_offscreen);
+	config->hysteresis = CVAR_TO_FLOAT (rt_dtal_lod_hysteresis);
+	config->dwellSeconds = CVAR_TO_FLOAT (rt_dtal_lod_dwell);
+}
+
+static void RT_DtalLod_ResetState (void)
+{
+	if (rt_dtal_lod_state != NULL)
+		RT_Dtal_Lod_Reset (rt_dtal_lod_state);
+
+	rt_dtal_lod_active = false;
+	rt_dtal_lod_failed = false;
+	rt_dtal_lod_rebuild_pending = false;
+	rt_dtal_lod_last_tick = 0.0;
+	rt_dtal_lod_cursor = 0;
+	memset (&rt_dtal_lod_last_stats, 0, sizeof (rt_dtal_lod_last_stats));
+
+	if (rt_dtal_lod_group_merged != NULL && rt_dtal_lod_group_merged_capacity > 0)
+		memset (rt_dtal_lod_group_merged, 0, (size_t) rt_dtal_lod_group_merged_capacity * sizeof (uint8_t));
+
+	rt_dtal_lod_node_records = 0;
+	rt_dtal_lod_group_records = 0;
+	rt_dtal_lod_coverage_refused = 0;
+	rt_dtal_lod_buried_refused = 0;
+	rt_dtal_lod_node_generation++;
+}
+
+static void RT_DtalLod_BuildHierarchy (void)
+{
+	rt_dtal_lod_rebuild_pending = false;
+	rt_dtal_lod_active = false;
+
+	if (rt_dtal_lod_state == NULL)
+		rt_dtal_lod_state = RT_Dtal_Lod_Create ();
+
+	if (rt_dtal_lod_state == NULL || rt_dtal_build == NULL)
+		return;
+
+	const int groupCount = rt_dtal_build->groupCount;
+
+	if (!RT_DtalReserve ((void **) &rt_dtal_lod_inputs, &rt_dtal_lod_input_capacity, groupCount,
+	                     (int) sizeof (rt_dtal_lod_input_t)) ||
+	    !RT_DtalReserve ((void **) &rt_dtal_lod_visibility, &rt_dtal_lod_visibility_capacity, groupCount,
+	                     (int) sizeof (uint32_t)))
+	{
+		Con_DWarning ("RT: the DTAL LOD state could not be allocated; the merges stay off\n");
+		return;
+	}
+
+	for (int gi = 0; gi < groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+		rt_dtal_lod_input_t    *input = &rt_dtal_lod_inputs[gi];
+
+		memset (input, 0, sizeof (*input));
+
+		input->uid = group->uid;
+		input->emissionKey = group->emissionKey;
+		input->styleKey = group->styleKey;
+		input->axis = group->axis;
+		input->passClass = 0u;
+		VectorCopy (group->center, input->origin);
+		VectorCopy (source->normal, input->normal);
+		input->area = group->area;
+		input->power = group->refPower;
+		input->boundsRadius = group->boundsRadius;
+
+		if (source->params.projector || (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0) ||
+		    RT_DtalSourceStyleAnimates (source))
+			input->flags |= RT_DTAL_LOD_INPUT_SINGLETON;
+	}
+
+	rt_dtal_lod_config_t config;
+	RT_DtalLod_MakeConfig (&config);
+
+	if (!RT_Dtal_Lod_Build (rt_dtal_lod_state, &config, rt_dtal_lod_inputs, groupCount))
+	{
+		Con_DWarning ("RT: the DTAL LOD hierarchy refused this map (start %g, screen %g, bands %i); "
+		              "the merges stay off\n",
+		              config.startDistance, config.screenAngleDeg, config.maxBands);
+		RT_Dtal_Lod_Reset (rt_dtal_lod_state);
+		rt_dtal_lod_failed = true;
+		return;
+	}
+
+	rt_dtal_lod_active = true;
+	rt_dtal_lod_last_tick = 0.0;
+	rt_dtal_lod_cursor = 0;
+	memset (&rt_dtal_lod_last_stats, 0, sizeof (rt_dtal_lod_last_stats));
+	rt_dtal_lod_node_generation++;
+}
+
+static void RT_DtalLod_MakeMemberQuad (const rt_dtal_lod_node_t *node, QrDtalMemberUpload *member)
+{
+	const float nx = node->normal[0];
+	const float ny = node->normal[1];
+	const float nz = node->normal[2];
+	const float ax = (float) fabs (nx);
+	const float ay = (float) fabs (ny);
+	const float az = (float) fabs (nz);
+	float       rx = 0.0f, ry = 0.0f, rz = 0.0f;
+	vec3_t      tangentA, tangentB;
+
+	if (ax <= ay && ax <= az)
+		rx = 1.0f;
+	else if (ay <= az)
+		ry = 1.0f;
+	else
+		rz = 1.0f;
+
+	tangentA[0] = ny * rz - nz * ry;
+	tangentA[1] = nz * rx - nx * rz;
+	tangentA[2] = nx * ry - ny * rx;
+
+	float length = (float) sqrt ((double) (tangentA[0] * tangentA[0] + tangentA[1] * tangentA[1] + tangentA[2] * tangentA[2]));
+
+	if (!(length > 1e-6f))
+	{
+		tangentA[0] = 1.0f;
+		tangentA[1] = 0.0f;
+		tangentA[2] = 0.0f;
+		length = 1.0f;
+	}
+
+	tangentA[0] /= length;
+	tangentA[1] /= length;
+	tangentA[2] /= length;
+
+	tangentB[0] = ny * tangentA[2] - nz * tangentA[1];
+	tangentB[1] = nz * tangentA[0] - nx * tangentA[2];
+	tangentB[2] = nx * tangentA[1] - ny * tangentA[0];
+
+	const float side = (float) sqrt ((double) (node->area > 0.0f ? node->area : 1.0f));
+
+	memset (member, 0, sizeof (*member));
+
+	for (int i = 0; i < 3; i++)
+	{
+		member->A.data[i] = tangentA[i] * side;
+		member->B.data[i] = tangentB[i] * side;
+		member->C.data[i] = node->center[i] - 0.5f * (member->A.data[i] + member->B.data[i]);
+		member->normal.data[i] = node->normal[i];
+	}
+
+	member->area = node->area;
+	member->numVerts = 4.0f;
+	member->prob = 1.0f;
+	member->marginalProb = 1.0f;
+	member->aliasIndex = 0;
+	member->uv[0].data[0] = 0.0f;
+	member->uv[0].data[1] = 0.0f;
+	member->uv[1].data[0] = 1.0f;
+	member->uv[1].data[1] = 0.0f;
+	member->uv[2].data[0] = 1.0f;
+	member->uv[2].data[1] = 1.0f;
+	member->uv[3].data[0] = 0.0f;
+	member->uv[3].data[1] = 1.0f;
+}
+
+static void RT_DtalLod_BuildEffective (void)
+{
+	const uint32_t nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+	const int      groupCount = rt_dtal_build != NULL ? rt_dtal_build->groupCount : 0;
+
+	if (!RT_DtalReserve ((void **) &rt_dtal_lod_node_states, &rt_dtal_lod_node_state_capacity, (int) nodeCount,
+	                     (int) sizeof (rt_dtal_lod_node_state_t)) ||
+	    !RT_DtalReserve ((void **) &rt_dtal_lod_group_merged, &rt_dtal_lod_group_merged_capacity, groupCount,
+	                     (int) sizeof (uint8_t)))
+		return;
+
+	if (groupCount > 0)
+		memset (rt_dtal_lod_group_merged, 0, (size_t) groupCount * sizeof (uint8_t));
+
+	rt_dtal_lod_coverage_refused = 0;
+	rt_dtal_lod_buried_refused = 0;
+
+	const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+	const uint32_t           *members = RT_Dtal_Lod_Members (rt_dtal_lod_state);
+	const float               clearance = CVAR_TO_FLOAT (rt_dtal_clearance);
+
+	for (uint32_t n = 0; n < nodeCount; n++)
+	{
+		const rt_dtal_lod_node_t *node = &nodes[n];
+		rt_dtal_lod_node_state_t *state = &rt_dtal_lod_node_states[n];
+
+		state->coverage_count = 0;
+		state->effective = 1;
+
+		for (uint32_t m = 0; m < node->memberCount && state->effective; m++)
+		{
+			const uint32_t                 gi = members[node->firstMember + m];
+			const rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
+
+			for (uint32_t k = 0; k < coverage->count && state->effective; k++)
+			{
+				qboolean seen = false;
+
+				for (uint32_t c = 0; c < state->coverage_count; c++)
+				{
+					if (state->coverage[c] == coverage->clusters[k])
+					{
+						seen = true;
+						break;
+					}
+				}
+
+				if (seen)
+					continue;
+
+				if (state->coverage_count >= QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
+				{
+					state->effective = 0;
+					break;
+				}
+
+				state->coverage[state->coverage_count++] = coverage->clusters[k];
+			}
+		}
+
+		if (!state->effective)
+			rt_dtal_lod_coverage_refused++;
+
+		if (state->effective && clearance > 0.0f)
+		{
+			const qboolean traceCached = state->stamp == rt_dtal_lod_node_generation && state->uid == node->uid;
+			qboolean       buried = 0;
+
+			if (traceCached)
+			{
+				buried = state->buried != 0;
+			}
+			else
+			{
+				vec3_t   center;
+				qboolean traced = false;
+
+				VectorCopy (node->center, center);
+
+				buried = RT_LightBuried (center, node->normal, clearance, &traced);
+				state->buried = buried;
+			}
+
+			if (buried)
+			{
+				state->effective = 0;
+				rt_dtal_lod_buried_refused++;
+			}
+		}
+
+		state->uid = node->uid;
+		state->stamp = rt_dtal_lod_node_generation;
+
+		if (state->effective)
+		{
+			for (uint32_t m = 0; m < node->memberCount; m++)
+				rt_dtal_lod_group_merged[members[node->firstMember + m]] = 1;
+		}
+	}
+}
+
+static int RT_DtalLod_BuildUpload (void)
+{
+	const uint32_t nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+	const int      groupCount = rt_dtal_build->groupCount;
+	const int      memberBudget = rt_dtal_build->memberCount;
+
+	rt_dtal_lod_upload_parent_count = 0;
+	rt_dtal_lod_upload_member_count = 0;
+	rt_dtal_lod_node_records = 0;
+	rt_dtal_lod_group_records = 0;
+
+	if (!RT_DtalReserve ((void **) &rt_dtal_lod_upload_parents, &rt_dtal_lod_upload_parent_capacity, groupCount,
+	                     (int) sizeof (QrDtalGroupUploadInfo)) ||
+	    !RT_DtalReserve ((void **) &rt_dtal_lod_upload_members, &rt_dtal_lod_upload_member_capacity, memberBudget,
+	                     (int) sizeof (QrDtalMemberUpload)))
+		return 0;
+
+	const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+	const uint32_t           *members = RT_Dtal_Lod_Members (rt_dtal_lod_state);
+
+	for (uint32_t n = 0; n < nodeCount; n++)
+	{
+		const rt_dtal_lod_node_state_t *state = &rt_dtal_lod_node_states[n];
+
+		if (!state->effective)
+			continue;
+
+		const rt_dtal_lod_node_t *node = &nodes[n];
+		QrDtalGroupUploadInfo    *parent = &rt_dtal_lod_upload_parents[rt_dtal_lod_upload_parent_count];
+		double                    color[3] = { 0.0, 0.0, 0.0 };
+		double                    meanEmiss = 0.0;
+		double                    weight = 0.0;
+		int                       first = -1;
+
+		for (uint32_t m = 0; m < node->memberCount; m++)
+		{
+			const uint32_t               gi = members[node->firstMember + m];
+			const QrDtalGroupUploadInfo *memberParent = &rt_dtal_parents[gi];
+			const double                 w = (double) rt_dtal_build->groups[gi].refPower;
+
+			if (first < 0)
+				first = (int) gi;
+
+			color[0] += w * (double) memberParent->color.data[0];
+			color[1] += w * (double) memberParent->color.data[1];
+			color[2] += w * (double) memberParent->color.data[2];
+			meanEmiss += w * (double) memberParent->meanEmiss;
+			weight += w;
+		}
+
+		if (first < 0)
+			continue;
+
+		if (!(weight > 0.0))
+			weight = 1.0;
+
+		memset (parent, 0, sizeof (*parent));
+
+		parent->uniqueID = node->uid;
+		parent->color.data[0] = (float) (color[0] / weight);
+		parent->color.data[1] = (float) (color[1] / weight);
+		parent->color.data[2] = (float) (color[2] / weight);
+		RT_KeepEmissiveLightColor (parent->color.data);
+
+		VectorCopy (node->center, parent->center.data);
+		VectorCopy (node->normal, parent->normal.data);
+
+		parent->material = rt_dtal_parents[first].material;
+		parent->area = node->area;
+		parent->meanEmiss = (float) (meanEmiss / weight);
+		parent->angleInner = rt_dtal_parents[first].angleInner;
+		parent->angleOuter = rt_dtal_parents[first].angleOuter;
+		parent->projector = 0.0f;
+		parent->reach = rt_dtal_parents[first].reach;
+		parent->estimatedPower = node->power;
+		parent->boundsRadius = node->boundsRadius;
+
+		for (int i = 0; i < 3; i++)
+		{
+			parent->boundsMin.data[i] = node->center[i] - node->boundsRadius;
+			parent->boundsMax.data[i] = node->center[i] + node->boundsRadius;
+		}
+
+		parent->memberBase = (uint32_t) rt_dtal_lod_upload_member_count;
+		parent->memberCount = 1;
+
+		RT_DtalLod_MakeMemberQuad (node, &rt_dtal_lod_upload_members[rt_dtal_lod_upload_member_count]);
+
+		rt_dtal_lod_upload_member_count++;
+		rt_dtal_lod_upload_parent_count++;
+		rt_dtal_lod_node_records++;
+	}
+
+	for (int gi = 0; gi < groupCount; gi++)
+	{
+		if (rt_dtal_lod_group_merged != NULL && rt_dtal_lod_group_merged[gi])
+			continue;
+
+		const rt_dtal_group_t *group = &rt_dtal_build->groups[gi];
+		QrDtalGroupUploadInfo *parent = &rt_dtal_lod_upload_parents[rt_dtal_lod_upload_parent_count];
+
+		*parent = rt_dtal_parents[gi];
+		parent->memberBase = (uint32_t) rt_dtal_lod_upload_member_count;
+
+		memcpy (&rt_dtal_lod_upload_members[rt_dtal_lod_upload_member_count], &rt_dtal_members[group->firstMember],
+		        (size_t) group->memberCount * sizeof (QrDtalMemberUpload));
+
+		rt_dtal_lod_upload_member_count += (int) group->memberCount;
+		rt_dtal_lod_upload_parent_count++;
+		rt_dtal_lod_group_records++;
+	}
+
+	return 1;
+}
+
+static void RT_DtalLod_Tick (void)
+{
+	if (!(CVAR_TO_FLOAT (rt_dtal_lod) > 0.0f))
+	{
+		if (rt_dtal_lod_active || rt_dtal_lod_failed || rt_dtal_lod_rebuild_pending)
+			RT_DtalLod_ResetState ();
+
+		return;
+	}
+
+	if (!rt_dtal_groups_active || rt_dtal_build == NULL)
+	{
+		if (rt_dtal_lod_active || rt_dtal_lod_failed || rt_dtal_lod_rebuild_pending)
+			RT_DtalLod_ResetState ();
+
+		return;
+	}
+
+	if (rt_dtal_lod_rebuild_pending || (!rt_dtal_lod_active && !rt_dtal_lod_failed))
+		RT_DtalLod_BuildHierarchy ();
+
+	if (!rt_dtal_lod_active)
+		return;
+
+	const double interval = (double) CVAR_TO_FLOAT (rt_dtal_lod_interval);
+
+	if (rt_dtal_lod_last_tick != 0.0 && realtime - rt_dtal_lod_last_tick < interval)
+		return;
+
+	rt_dtal_lod_last_tick = realtime;
+
+	const int groupCount = rt_dtal_build->groupCount;
+
+	for (int gi = 0; gi < groupCount; gi++)
+	{
+		const rt_dtal_group_t *group = &rt_dtal_build->groups[gi];
+		vec3_t                 boundsMin, boundsMax;
+
+		VectorCopy (group->mins, boundsMin);
+		VectorCopy (group->maxs, boundsMax);
+
+		rt_dtal_lod_visibility[gi] = R_CullBox (boundsMin, boundsMax) ? RT_DTAL_LOD_OFF_FRUSTUM : RT_DTAL_LOD_VISIBLE;
+	}
+
+	rt_dtal_lod_config_t config;
+	RT_DtalLod_MakeConfig (&config);
+
+	const int transitions = RT_Dtal_Lod_Select (rt_dtal_lod_state, &config, rt_dtal_lod_inputs, groupCount,
+	                                            rt_dtal_lod_visibility, r_refdef.vieworg, realtime,
+	                                            RT_DTAL_LOD_TICK_BUDGET, &rt_dtal_lod_cursor);
+
+	if (transitions >= 0)
+	{
+		const rt_dtal_lod_stats_t *stats = RT_Dtal_Lod_Stats (rt_dtal_lod_state);
+
+		if (stats != NULL)
+			rt_dtal_lod_last_stats = *stats;
+
+		if (transitions > 0)
+			rt_dtal_lod_node_generation++;
+
+		RT_DtalLod_BuildEffective ();
+	}
+}
+
 static uint64_t RT_DtalEmissionKey (const QrTexturedAreaLightUploadInfo *li, gltexture_t *light_tex,
                                     texture_t *base_tex)
 {
@@ -2874,6 +3455,7 @@ static void RT_DtalGroups_Rebuild (void)
 	rt_dtal_groups_active = true;
 	rt_dtal_group_oversized = (int) rt_dtal_build->diag.oversizedPieces;
 	rt_dtal_group_builds++;
+	RT_DtalLodRequestRebuild ();
 }
 
 static void RT_DtalGroups_UpdateFrame (void)
@@ -2948,16 +3530,50 @@ static void RT_DtalGroups_UpdateFrame (void)
 	}
 }
 
-static void RT_DtalGroups_Register (void)
+static void RT_DtalGroups_Register (qboolean lodUploaded)
 {
 	if (!rt_dtal_groups_active || rt_dtal_build == NULL)
 		return;
+
+	if (lodUploaded && rt_dtal_lod_state != NULL)
+	{
+		const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+		const uint32_t            nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+		const uint32_t           *members = RT_Dtal_Lod_Members (rt_dtal_lod_state);
+		const float               nudge = 2.0f;
+
+		for (uint32_t n = 0; n < nodeCount; n++)
+		{
+			const rt_dtal_lod_node_state_t *state = &rt_dtal_lod_node_states[n];
+
+			if (!state->effective)
+				continue;
+
+			const rt_dtal_lod_node_t *node = &nodes[n];
+			const float               reach = rt_dtal_parents[members[node->firstMember]].reach;
+			vec3_t                    origin;
+
+			origin[0] = node->center[0] + nudge * node->normal[0];
+			origin[1] = node->center[1] + nudge * node->normal[1];
+			origin[2] = node->center[2] + nudge * node->normal[2];
+
+			if (state->coverage_count > 0)
+				RT_ClusterLightAddMulti (node->uid, origin, reach, node->boundsRadius, state->coverage,
+				                         state->coverage_count, node->power);
+			else
+				RT_ClusterLightAddPower (node->uid, origin, reach, node->power);
+		}
+	}
 
 	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
 	{
 		const rt_dtal_group_t         *group = &rt_dtal_build->groups[gi];
 		const rt_dtal_source_t        *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
 		const rt_dtal_group_cluster_t *coverage = &rt_dtal_group_clusters[gi];
+
+		if (lodUploaded && rt_dtal_lod_group_merged != NULL &&
+		    rt_dtal_lod_group_merged[gi])
+			continue;
 
 		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
 		    rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
@@ -2975,6 +3591,118 @@ static void RT_DtalGroups_Register (void)
 	}
 }
 
+static qboolean RT_DtalLodGroupMerged (int gi)
+{
+	return rt_dtal_lod_active && rt_dtal_lod_group_merged != NULL && rt_dtal_lod_group_merged[gi] != 0;
+}
+
+static void RT_DtalLodDebugWireNode (const rt_dtal_lod_node_t *node, int *drawn)
+{
+	QrDtalMemberUpload            up;
+	QrTexturedAreaLightUploadInfo li = {0};
+
+	RT_DtalLod_MakeMemberQuad (node, &up);
+
+	for (int k = 0; k < 3; k++)
+	{
+		li.A.data[k] = up.A.data[k];
+		li.B.data[k] = up.B.data[k];
+		li.C.data[k] = up.C.data[k];
+		li.normal.data[k] = up.normal.data[k];
+	}
+
+	li.area = up.area;
+	li.numVerts = (int) up.numVerts;
+
+	for (int k = 0; k < li.numVerts && k < MAX_TEXTURED_AREA_LIGHT_VERTS; k++)
+	{
+		li.uvVerts[k].data[0] = up.uv[k].data[0];
+		li.uvVerts[k].data[1] = up.uv[k].data[1];
+	}
+
+	RT_EmitEmissiveWirePolygon (&li);
+	(*drawn)++;
+}
+
+static void RT_DtalLodDebugArrowNode (const rt_dtal_lod_node_t *node)
+{
+	RT_DtalDebugAddArrow (node->center, node->normal, RT_DtalDebugArrowLen (node->area), RT_DTAL_DEBUG_KIND_NODE);
+}
+
+static void RT_DtalLodDebugArrows (void)
+{
+	if (rt_dtal_build == NULL)
+		return;
+
+	if (!rt_dtal_lod_active || rt_dtal_lod_state == NULL)
+	{
+		for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+		{
+			const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+			const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+			if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 && rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+				continue;
+
+			RT_DtalDebugAddArrow (group->center, source->normal, RT_DtalDebugArrowLen (group->area), RT_DTAL_DEBUG_KIND_INDIVIDUAL);
+		}
+
+		return;
+	}
+
+	const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+	const uint32_t           *members = RT_Dtal_Lod_Members (rt_dtal_lod_state);
+	const uint32_t            nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+
+	for (uint32_t n = 0; n < nodeCount; n++)
+	{
+		const rt_dtal_lod_node_t *node = &nodes[n];
+
+		if (!rt_dtal_lod_node_states[n].effective)
+			continue;
+
+		RT_DtalLodDebugArrowNode (node);
+
+		for (uint32_t m = 0; m < node->memberCount; m++)
+		{
+			const uint32_t          gi = members[node->firstMember + m];
+			const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+
+			if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 && rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+				continue;
+
+			const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+			vec3_t                  dir;
+			float                   dist;
+
+			VectorSubtract (node->center, group->center, dir);
+			dist = (float) sqrt ((double) (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]));
+
+			if (dist > 1.0f)
+			{
+				VectorScale (dir, 1.0f / dist, dir);
+				RT_DtalDebugAddArrow (group->center, dir, dist, RT_DTAL_DEBUG_KIND_LINK);
+			}
+
+			RT_DtalDebugAddArrow (group->center, source->normal, RT_DtalDebugArrowLen (group->area), RT_DTAL_DEBUG_KIND_MERGED);
+		}
+	}
+
+	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
+	{
+		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
+		const rt_dtal_source_t *source = &rt_dtal_sources[rt_dtal_parent_source[gi]];
+
+		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 && rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+			continue;
+
+		if (RT_DtalLodGroupMerged (gi))
+			continue;
+
+		RT_DtalDebugAddArrow (group->center, source->normal, RT_DtalDebugArrowLen (group->area), RT_DTAL_DEBUG_KIND_INDIVIDUAL);
+	}
+}
+
 static void RT_DtalGroupsDebugDraw (void)
 {
 	const float mode = CVAR_TO_FLOAT (rt_dtal_debug);
@@ -2983,6 +3711,12 @@ static void RT_DtalGroupsDebugDraw (void)
 	if (rt_dtal_build == NULL || mode <= 0.0f)
 		return;
 
+	if (mode == 3.0f)
+	{
+		RT_DtalLodDebugArrows ();
+		return;
+	}
+
 	for (int gi = 0; gi < rt_dtal_build->groupCount; gi++)
 	{
 		const rt_dtal_group_t  *group = &rt_dtal_build->groups[gi];
@@ -2990,6 +3724,9 @@ static void RT_DtalGroupsDebugDraw (void)
 
 		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
 		    rt_dtal_group_proxy[gi] < rt_wldlights_proxy_count)
+			continue;
+
+		if (RT_DtalLodGroupMerged (gi))
 			continue;
 
 		if (mode == 2.0f)
@@ -3026,6 +3763,28 @@ static void RT_DtalGroupsDebugDraw (void)
 
 		if (drawn >= RT_DTAL_DEBUG_MAX)
 			break;
+	}
+
+	if ((mode == 1.0f || mode == 2.0f) && rt_dtal_lod_active && rt_dtal_lod_state != NULL)
+	{
+		const rt_dtal_lod_node_t *nodes = RT_Dtal_Lod_Nodes (rt_dtal_lod_state);
+		const uint32_t            nodeCount = RT_Dtal_Lod_NodeCount (rt_dtal_lod_state);
+
+		for (uint32_t n = 0; n < nodeCount; n++)
+		{
+			if (mode == 1.0f)
+			{
+				if (drawn >= RT_DTAL_DEBUG_MAX)
+					break;
+
+				if (rt_dtal_lod_node_states[n].effective)
+					RT_DtalLodDebugWireNode (&nodes[n], &drawn);
+			}
+			else if (rt_dtal_lod_node_states[n].effective)
+			{
+				RT_DtalLodDebugArrowNode (&nodes[n]);
+			}
+		}
 	}
 }
 
@@ -5263,27 +6022,6 @@ static void RT_RegisterWorldModelLight (const QrTexturedAreaLightUploadInfo *lt,
 	}
 }
 
-/* The light manager drops a light whose colour channels sum to less than 0.0001
-   (IsColorTooDim in qray). A light style or a dark animation frame switching the light off must
-   not push the colour below that: a dropped id leaves a hole in every cluster list naming it,
-   which is the whole-scene flicker. Keep the faintest possible emission instead. */
-#define RT_MIN_EMISSIVE_COLOR_SUM 0.0002f
-
-static void RT_KeepEmissiveLightColor (vec3_t color)
-{
-	float sum = 0.0f;
-
-	for (int i = 0; i < 3; i++)
-		if (color[i] > 0.0f)
-			sum += color[i];
-
-	if (sum < RT_MIN_EMISSIVE_COLOR_SUM)
-	{
-		const float c = RT_MIN_EMISSIVE_COLOR_SUM * (1.0f / 3.0f);
-		color[0] = color[1] = color[2] = c;
-	}
-}
-
 static void RT_RefreshStoredWorldProxyLights (void)
 {
 	for (int i = 0; i < rt_wldlights_proxy_world_count; i++)
@@ -5323,7 +6061,10 @@ void RT_UploadAllWorldModelLights (void)
 	}
 
 	if (rt_dtal_groups_active && rt_dtal_build != NULL)
+	{
 		RT_DtalGroups_UpdateFrame ();
+		RT_DtalLod_Tick ();
+	}
 
 	RT_RefreshStoredWorldProxyLights ();
 
@@ -5334,25 +6075,32 @@ void RT_UploadAllWorldModelLights (void)
 
 	if (rt_dtal_groups_active && rt_dtal_build != NULL)
 	{
+		const qboolean lodUploaded = (rt_dtal_lod_active && rt_dtal_lod_state != NULL) &&
+		                             RT_DtalLod_BuildUpload () != 0;
+
 		if (rt_dtal_groups_rebuild_pending)
 		{
 			Atomic_StoreUInt32 (&rt_require_static_submit, true);
 		}
 
-		const QrDtalGroupUploadBatch batch = {
-			.groupCount = (uint32_t) rt_dtal_build->groupCount,
-			.pGroups = rt_dtal_parents,
-			.memberCount = (uint32_t) rt_dtal_build->memberCount,
-			.pMembers = rt_dtal_members,
-		};
-
-		if (batch.groupCount > 0 && batch.memberCount > 0)
+		if (RT_LightBudgetTake (lodUploaded ? rt_dtal_lod_upload_parent_count : rt_dtal_build->groupCount))
 		{
-			QrResult r = qrUploadDtalGroups (vulkan_globals.instance, &batch);
-			QR_CHECK (r);
+			const QrDtalGroupUploadBatch batch = {
+				.groupCount = (uint32_t) (lodUploaded ? rt_dtal_lod_upload_parent_count : rt_dtal_build->groupCount),
+				.pGroups = lodUploaded ? rt_dtal_lod_upload_parents : rt_dtal_parents,
+				.memberCount = (uint32_t) (lodUploaded ? rt_dtal_lod_upload_member_count : rt_dtal_build->memberCount),
+				.pMembers = lodUploaded ? rt_dtal_lod_upload_members : rt_dtal_members,
+			};
+
+			if (batch.groupCount > 0 && batch.memberCount > 0)
+			{
+				QrResult r = qrUploadDtalGroups (vulkan_globals.instance, &batch);
+				QR_CHECK (r);
+			}
+
+			RT_DtalGroups_Register (lodUploaded);
 		}
 
-		RT_DtalGroups_Register ();
 		RT_DtalGroupsDebugDraw ();
 
 		return;
@@ -5414,12 +6162,28 @@ void RT_UploadAllWorldModelLights (void)
 
 	if (CVAR_TO_BOOL (rt_wmodel_lights_batch))
 	{
-		/* The per-light cost is the call, not the light: hand the whole map over in one. */
-		QrResult r = qrUploadTexturedAreaLights (vulkan_globals.instance, rt_wldlights_emissive_upload,
-		                                         (uint32_t) rt_wldlights_emissive_count);
-		QR_CHECK (r);
+		int       emissiveCount = rt_wldlights_emissive_count;
+		const int emissiveBudget = RT_LightBudgetAvailable ();
 
-		for (int i = 0; i < rt_wldlights_emissive_count; i++)
+		if (emissiveCount > emissiveBudget)
+		{
+			emissiveCount = emissiveBudget;
+		}
+
+		if (emissiveCount > 0 && !RT_LightBudgetTake (emissiveCount))
+		{
+			emissiveCount = 0;
+		}
+
+		/* The per-light cost is the call, not the light: hand the whole map over in one. */
+		if (emissiveCount > 0)
+		{
+			QrResult r = qrUploadTexturedAreaLights (vulkan_globals.instance, rt_wldlights_emissive_upload,
+			                                         (uint32_t) emissiveCount);
+			QR_CHECK (r);
+		}
+
+		for (int i = 0; i < emissiveCount; i++)
 		{
 			RT_RegisterWorldModelLight (&rt_wldlights_emissive_upload[i], rt_wldlights_emissive_center[i]);
 		}
@@ -5429,6 +6193,11 @@ void RT_UploadAllWorldModelLights (void)
 		for (int i = 0; i < rt_wldlights_emissive_count; i++)
 		{
 			const QrTexturedAreaLightUploadInfo *lt = &rt_wldlights_emissive_upload[i];
+
+			if (!RT_LightBudgetTake (1))
+			{
+				break;
+			}
 
 			QrResult r = qrUploadTexturedAreaLight (vulkan_globals.instance, lt);
 			QR_CHECK (r);
@@ -7207,6 +7976,22 @@ void RT_PrintEmissiveStats (void)
 			rt_dtal_group_oversized, rt_dtal_group_budget_refused, rt_dtal_group_coverage_refused, rt_dtal_group_builds,
 			rt_dtal_group_reuses,
 			rt_dtal_groups_active ? "active" : (rt_dtal_groups_failed ? "failed, per-piece lights stay" : "inactive"));
+	}
+
+	if (CVAR_TO_FLOAT (rt_dtal_lod) > 0.0f)
+	{
+		const rt_dtal_lod_stats_t *lod_stats = &rt_dtal_lod_last_stats;
+
+		RT_LightReportPrint ("dtal lod (rt_dtal_lod %g, start %g, screen %g, bands %g): %i groups -> %llu merged in %llu nodes, %llu individual, %llu transitions, %llu degenerate refusals; %i node records + %i group records, %i coverage refusals, %i buried refusals; %s\n",
+			CVAR_TO_FLOAT (rt_dtal_lod), CVAR_TO_FLOAT (rt_dtal_lod_start), CVAR_TO_FLOAT (rt_dtal_lod_screen),
+			CVAR_TO_FLOAT (rt_dtal_lod_maxbands),
+			(rt_dtal_lod_active && rt_dtal_lod_state != NULL) ? RT_Dtal_Lod_GroupCount (rt_dtal_lod_state) : 0,
+			(unsigned long long) lod_stats->mergedGroups, (unsigned long long) lod_stats->publishedNodes,
+			(unsigned long long) lod_stats->individualGroups, (unsigned long long) lod_stats->transitions,
+			(unsigned long long) lod_stats->degenerateRefused,
+			rt_dtal_lod_node_records, rt_dtal_lod_group_records, rt_dtal_lod_coverage_refused,
+			rt_dtal_lod_buried_refused,
+			rt_dtal_lod_active ? "active (precomputed hierarchy)" : "inactive");
 	}
 
 	if (Atomic_LoadUInt32 (&rt_emis_stats.static_dropped) || rt_wldlights_emissive_count >= MAX_WORLDLIGHTS_COUNT)
