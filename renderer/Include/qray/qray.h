@@ -851,6 +851,7 @@ typedef struct QrClusterLightStats
     uint32_t moveFootprint;
 
     uint32_t tailEntries;
+    uint32_t tailCandidatesDropped;
     uint32_t clustersWithTail;
     uint32_t tailBudgetExceeded;
     uint32_t candidateMax;

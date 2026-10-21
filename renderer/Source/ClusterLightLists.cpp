@@ -821,6 +821,7 @@ void ClusterLightLists::ComposeBegin(const WorldLights &worldLightsRef, UserPrin
     tailBeta.assign(numClusters, 0.0f);
     tailEntryCount = 0;
     stats.tailEntries = 0;
+    stats.tailCandidatesDropped = 0;
     stats.clustersWithTail = 0;
     stats.tailBudgetExceeded = 0;
     stats.candidateMax = 0;
@@ -1963,6 +1964,7 @@ bool ClusterLightLists::BuildTailBlock(uint32_t cluster, float &outBeta)
 
     if (tailCandidates.size() > perClusterCapacity)
     {
+        stats.tailCandidatesDropped += uint32_t(tailCandidates.size() - perClusterCapacity);
         std::nth_element(tailCandidates.begin(), tailCandidates.begin() + perClusterCapacity, tailCandidates.end(),
                          [](const TailCandidate &a, const TailCandidate &b) { return a.mass > b.mass; });
         tailCandidates.resize(perClusterCapacity);
@@ -2033,6 +2035,7 @@ void ClusterLightLists::RebuildDirtyTails()
     }
 
     stats.tailEntries = 0;
+    stats.tailCandidatesDropped = 0;
     stats.clustersWithTail = 0;
     stats.tailBudgetExceeded = 0;
     stats.candidateMax = 0;
