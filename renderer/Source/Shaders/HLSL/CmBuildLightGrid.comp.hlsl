@@ -61,7 +61,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     for (uint i = 0; i < uint(Q2_LIGHT_GRID_MAX_IDS_PER_CELL); i++)
     {
-        bestScore[i] = 0.0;
+        bestScore[i] = -1.0;
         bestIndex[i] = GRID_ID_INVALID;
     }
 
@@ -78,7 +78,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         }
 
         const float scale = max(1.0, source.radius * source.radius);
-        const float score = source.power / max(dist2, scale);
+        const float weight = source.power > 0.0 ? source.power : 1.0;
+        const float score = weight / max(dist2, scale);
 
         if (!(score > bestScore[0]))
         {

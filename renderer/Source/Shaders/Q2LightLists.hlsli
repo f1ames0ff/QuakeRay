@@ -284,9 +284,9 @@ float q2LightSelectionMass(const ShLightEncoded encoded, const float3 p, const f
 
 float q2FastMass(float m, float stratumMax)
 {
-    if (!(stratumMax > 0.0))
+    if (!(m > 0.0))
     {
-        return 1.0;
+        return 0.0;
     }
 
     return max(m, 0.001 * stratumMax);
