@@ -12,6 +12,8 @@ else()
     set(QR_RENDERER_STANDALONE OFF)
 endif()
 
+include(GNUInstallDirs)
+
 set(renderer_CXX_STANDARD 20)
 
 # The renderer source + public headers + shaders live in this folder.
@@ -302,14 +304,14 @@ if(QR_BUILD_TESTS)
     endif()
 endif()
 
-add_library(qray_alias STATIC Source/rt_alias.c)
+add_library(qray_alias OBJECT Source/rt_alias.c)
 target_compile_features(qray_alias PRIVATE c_std_11)
-target_include_directories(qray_alias PUBLIC Source)
 
 add_library(renderer STATIC
     ${renderer_SOURCES}
     ${renderer_KTX_SOURCES}
     ${renderer_PUBLIC_HEADERS}
+    $<TARGET_OBJECTS:qray_alias>
 )
 
 target_compile_features(renderer PRIVATE cxx_std_20)
@@ -330,19 +332,99 @@ target_include_directories(renderer PRIVATE
 )
 
 # Public include dir (qray/qray.h) — needed by the host and by qray sources
-target_include_directories(renderer PUBLIC "Include")
+target_include_directories(renderer PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
 
-# Vulkan (found in the parent scope)
+# Vulkan (found in the parent scope or by the standalone package setup)
 target_link_libraries(renderer PUBLIC Vulkan::Vulkan)
-target_link_libraries(renderer PUBLIC qray_alias)
 
 # RHI layer: NVRHI built by the root CMakeLists (target nvrhi_vk is the static
 # Vulkan backend, nvrhi holds the shared interface and the validation layer).
-target_link_libraries(renderer PRIVATE nvrhi_vk nvrhi)
+target_link_libraries(renderer PRIVATE
+    $<BUILD_INTERFACE:nvrhi_vk>
+    $<BUILD_INTERFACE:nvrhi>
+)
 
 if(WIN32)
-    set(renderer_FFX_API_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Source/FidelityFX_SDK_1.1.4/src")
+    if(NOT DEFINED QR_FFX_SDK_ROOT OR QR_FFX_SDK_ROOT STREQUAL "")
+        set(QR_FFX_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Source/FidelityFX_SDK_1.1.4/src"
+            CACHE PATH "FidelityFX SDK root (contains ffx-api/include and PrebuiltSignedDLL)")
+    endif()
+
+    set(QR_FFX_INCLUDE_DIR "${QR_FFX_SDK_ROOT}/ffx-api/include")
+    set(QR_FFX_VK_LIBRARY "${QR_FFX_SDK_ROOT}/PrebuiltSignedDLL/amd_fidelityfx_vk.lib")
+
+    if(NOT EXISTS "${QR_FFX_INCLUDE_DIR}/ffx_api/ffx_api.h" OR
+       NOT EXISTS "${QR_FFX_VK_LIBRARY}")
+        message(FATAL_ERROR
+            "FidelityFX SDK was not found at QR_FFX_SDK_ROOT=${QR_FFX_SDK_ROOT}. "
+            "Install the AMD FidelityFX SDK and set QR_FFX_SDK_ROOT, or provide "
+            "the ffx-api headers and amd_fidelityfx_vk.lib.")
+    endif()
+
+    add_library(qray_ffx INTERFACE)
+    target_include_directories(qray_ffx INTERFACE
+        $<BUILD_INTERFACE:${QR_FFX_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/ffx>
+    )
+    target_link_libraries(qray_ffx INTERFACE
+        $<BUILD_INTERFACE:${QR_FFX_VK_LIBRARY}>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_LIBDIR}/amd_fidelityfx_vk.lib>
+    )
+
     target_sources(renderer PRIVATE "Source/FSR.cpp")
-    target_include_directories(renderer PRIVATE "${renderer_FFX_API_DIR}/ffx-api/include")
-    target_link_libraries(renderer PUBLIC "${renderer_FFX_API_DIR}/PrebuiltSignedDLL/amd_fidelityfx_vk.lib")
+    target_link_libraries(renderer PRIVATE $<BUILD_INTERFACE:qray_ffx>)
 endif()
+
+include(CMakePackageConfigHelpers)
+
+set(QRAY_RENDERER_CONFIG_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/qray_renderer")
+set(QRAY_RENDERER_VERSION "1.3.0")
+
+if(WIN32)
+    install(TARGETS renderer
+        EXPORT qray_rendererTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+    install(FILES Include/qray/qray.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/qray)
+    install(DIRECTORY "${QR_FFX_SDK_ROOT}/ffx-api/include/ffx_api"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ffx)
+    install(FILES "${QR_FFX_SDK_ROOT}/PrebuiltSignedDLL/amd_fidelityfx_vk.lib"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(FILES "${QR_FFX_SDK_ROOT}/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
+else()
+    install(TARGETS renderer
+        EXPORT qray_rendererTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+    install(FILES Include/qray/qray.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/qray)
+endif()
+
+install(EXPORT qray_rendererTargets
+    FILE qray_rendererTargets.cmake
+    NAMESPACE qray::
+    DESTINATION ${QRAY_RENDERER_CONFIG_INSTALL_DIR}
+)
+
+configure_package_config_file(
+    cmake/qray_rendererConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/qray_rendererConfig.cmake"
+    INSTALL_DESTINATION ${QRAY_RENDERER_CONFIG_INSTALL_DIR}
+)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/qray_rendererConfigVersion.cmake"
+    VERSION ${QRAY_RENDERER_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/qray_rendererConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/qray_rendererConfigVersion.cmake"
+    DESTINATION ${QRAY_RENDERER_CONFIG_INSTALL_DIR}
+)

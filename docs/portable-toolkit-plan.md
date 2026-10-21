@@ -101,20 +101,20 @@ What is already true:
 - The alias-table implementation is renderer-owned: `renderer/Source/rt_alias.*` builds as `qray_alias`, and both host and tests link it instead of compiling `shared/rt_alias.c`.
 - The host-owned texture and cursor assets are out of `renderer/`: `renderer/Source/textures` is now `gfx/textures`, and `renderer/gfx` is now the root `gfx/` folder. `build_win.ps1` stages both from `gfx/`; the Debug build and asset pack still pass.
 - `renderer/CMakeLists.txt` has a standalone `project(qray_renderer VERSION 1.3.0)`, finds Vulkan and NVRHI when configured from its own directory, and `cmake -S renderer -B <dir>` now configures successfully.
+- The package installs `renderer.lib`, `include/qray/qray.h`, the FSR API headers/provider, and `qray_rendererConfig.cmake` plus `qray_rendererTargets.cmake`. A clean consumer that supplies NVRHI and Vulkan configures and links against `qray::renderer`.
+- FSR is exposed through the `qray_ffx` interface target: the build tree uses `QR_FFX_SDK_ROOT`, while the installed tree gets `qray::ffx` from the package config. The in-tree provider remains the default; an installed AMD SDK can override it.
 
-What still blocks treating `renderer/` as a self-contained CMake package:
+What still blocks calling the package complete:
 
-- There is no install/export interface or generated `qray_rendererConfig.cmake` yet. `qray_alias`, `renderer` and NVRHI are visible only inside the source build.
-- The standalone configuration still needs `QR_NVRHI_SOURCE_DIR` (defaulting to the sibling `third_party/nvrhi`) or a pre-existing `nvrhi` target. That is a source-tree dependency, not an installed package dependency.
+- The standalone configuration still needs `QR_NVRHI_SOURCE_DIR` (defaulting to the sibling `third_party/nvrhi`) or a pre-existing `nvrhi` target. The installed package requires the consumer to provide `nvrhi` and `nvrhi_vk` targets; this is documented in the config but not yet a findable package dependency.
 - `QR_BUILD_TESTS` pulls `${CMAKE_SOURCE_DIR}/Quake/rt_light_admit.c` for the cluster test; that test is skipped in standalone mode, but it still lives beside the renderer tests.
 - Shader compilation and runtime asset staging are PowerShell steps outside CMake.
 
 Required before moving `renderer/` to its own repository:
 
-1. Add an install/export interface with a `qray_rendererConfig.cmake` and package version, including `qray_alias` and the public `qray/qray.h`.
-2. Split the Quake-host cluster test out of `renderer/Tests`, or move it to the host test tree and keep only engine-free tests in the package.
-3. Decide whether NVRHI is consumed as a source subdirectory or an installed package; document the dependency contract and remove the hard-coded sibling path from the package default.
-4. Keep shader output and `gfx/` staging as host-side deployment steps, separate from the renderer library target.
+1. Split the Quake-host cluster test out of `renderer/Tests`, or move it to the host test tree and keep only engine-free tests in the package.
+2. Decide whether NVRHI is consumed as a source subdirectory or an installed package; document the dependency contract and remove the hard-coded sibling path from the package default.
+3. Keep shader output and `gfx/` staging as host-side deployment steps, separate from the renderer library target.
 
 ## 4.1 Current code anchors
 

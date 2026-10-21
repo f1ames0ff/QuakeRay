@@ -1,0 +1,34 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(Vulkan)
+
+if(NOT TARGET nvrhi)
+    find_package(nvrhi CONFIG QUIET)
+endif()
+
+if(NOT TARGET nvrhi OR NOT TARGET nvrhi_vk)
+    message(FATAL_ERROR
+        "QuakeRay SDK needs the NVRHI targets nvrhi and nvrhi_vk. "
+        "Add NVRHI to the build before find_package(qray_renderer), or install "
+        "an NVRHI package that provides those targets.")
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/qray_rendererTargets.cmake")
+
+set_property(TARGET qray::renderer APPEND PROPERTY INTERFACE_LINK_LIBRARIES nvrhi_vk nvrhi)
+
+if(WIN32)
+    if(NOT TARGET qray::ffx)
+        add_library(qray::ffx UNKNOWN IMPORTED)
+        set_target_properties(qray::ffx PROPERTIES
+            IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/amd_fidelityfx_vk.lib"
+            INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/ffx"
+        )
+    endif()
+
+    set_property(TARGET qray::renderer APPEND PROPERTY INTERFACE_LINK_LIBRARIES qray::ffx)
+endif()
+
+check_required_components(qray_renderer)
