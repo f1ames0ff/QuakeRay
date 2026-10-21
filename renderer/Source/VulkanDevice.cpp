@@ -887,8 +887,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             sky.godRays.sunStepScale = stepScales[quality];
         }
         sky.godRays.lightShaftCount = lightShaftCount;
-        sky.godRays.lightShaftIntensity = (drawInfo.pSkyParams != nullptr)
-            ? std::max(drawInfo.pSkyParams->lightShaftsIntensity, 0.0f) : 1.0f;
+        sky.godRays.lightShaftIntensity = 1.0f;
         sky.godRays.lightShaftSteps = (drawInfo.pSkyParams != nullptr)
             ? std::min(16u, 8u + std::min(drawInfo.pSkyParams->lightShaftsResolution, 2u) * 4u) : 12u;
 
@@ -931,6 +930,8 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             memcpy (sky.godRays.lightShafts[i].direction, lightShafts[i].direction, sizeof (lightShafts[i].direction));
             memcpy (sky.godRays.lightShafts[i].color, lightShafts[i].color, sizeof (lightShafts[i].color));
             memcpy (sky.godRays.lightShafts[i].cone, lightShafts[i].cone, sizeof (lightShafts[i].cone));
+            memcpy (sky.godRays.lightShafts[i].tangentU, lightShafts[i].tangentU, sizeof (lightShafts[i].tangentU));
+            memcpy (sky.godRays.lightShafts[i].tangentV, lightShafts[i].tangentV, sizeof (lightShafts[i].tangentV));
         }
 
         sky.godRays.hasAabb = scene->HasAABB();

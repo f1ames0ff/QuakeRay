@@ -138,6 +138,7 @@ enum
 	PARAM_ESOFT,
 	PARAM_EPROJ,
 	PARAM_LSHAFTS,
+	PARAM_LSHAFTS_POWER,
 	PARAM_CEMIS,
 	PARAM_EFACTOR,
 	PARAM_EBLEND,
@@ -216,6 +217,8 @@ static const struct qre_param_s
 	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (light_focus; no key = 45 degrees) and light_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
 	[PARAM_LSHAFTS]  = { NULL, "light_shafts",   QRE_T_BOOL, 0, 0, 0,
 	                     "Draw volumetric light shafts from this projector's beam, so the cone is visible in the air. The shafts follow the light's colour, cone and reach; a light without them stays invisible in the air, while the surfaces it lights do not change." },
+	[PARAM_LSHAFTS_POWER] = { NULL, "light_shafts_power", QRE_T_FLOAT, 0, 16, 0.01f,
+	                     "Strength of this light type's volumetric shafts. Applies only while light_shafts is on; it does not change the surface lighting." },
 	[PARAM_CEMIS]    = { "Luma", "luma",   QRE_T_BOOL,  0, 0, 0,
 	                     "Glow by color: every block below matches its own color and carries its own threshold, feather, emissive_factor and blend." },
 };
@@ -1127,6 +1130,7 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_GLASS_IOR: return m->glass_ior;
 	case PARAM_GLASS_THICKNESS: return m->glass_thickness;
 	case PARAM_LBRIGHT:  return m->light_brightness;
+	case PARAM_LSHAFTS_POWER: return m->light_shafts_power;
 	case PARAM_EFACTOR:  return m->emissive_factor;
 	// the shown value is the effective one: an unauthored focus is no cone (a
 	// projector uses its 45-degree default), an unauthored soft edge is the
@@ -1212,6 +1216,7 @@ static void QRE_SetFloat (int g, int param, float value)
 		break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
+	case PARAM_LSHAFTS_POWER: m->light_shafts_power = CLAMP (0.0f, value, 16.0f); break;
 	case PARAM_EFACTOR:  m->emissive_factor = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
 	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
@@ -1241,6 +1246,7 @@ static void QRE_SetFloat (int g, int param, float value)
 	if (param == PARAM_LBRIGHT || param == PARAM_EFOCUS || param == PARAM_ESOFT)
 		QRE_MarkDirtyLight (m);
 	else if (param == PARAM_GLASS_IOR || param == PARAM_GLASS_THICKNESS || param == PARAM_EFACTOR ||
+	         param == PARAM_LSHAFTS_POWER ||
 	         param == PARAM_TSCALE_U || param == PARAM_TSCALE_V ||
 	         param == PARAM_TOFFS_U || param == PARAM_TOFFS_V)
 		QRE_MarkDirtyFull (m);
@@ -4305,16 +4311,6 @@ static void QRE_LightShaftGlobalControls (qboolean material_reset)
 		QRE_MatCvarReset ("rt_light_shafts");
 
 	{
-		float value = CVAR_TO_FLOAT (rt_light_shafts_intensity);
-
-		if (QR_GUI_SliderFloat ("rt_light_shafts_intensity", &value, 0.0f, 4.0f,
-		                        "Scale the volumetric light shafts without changing the source lights."))
-			QR_Editor_HostCvarSet ("rt_light_shafts_intensity", va ("%.4g", value));
-		if (material_reset)
-			QRE_MatCvarReset ("rt_light_shafts_intensity");
-	}
-
-	{
 		static const char *const resolutions[] = { "low", "medium", "high" };
 		int resolution = CLAMP (0, CVAR_TO_INT32 (rt_light_shafts_resolution), 2);
 
@@ -6670,8 +6666,6 @@ static const qre_global_t qre_globals[] = {
 	  "Sun-shaft resolution and cost: low, medium, high, ultra or extreme." },
 	{ NULL,  "rt_light_shafts", QRE_G_BOOL, 0, 0,
 	  "Draw the light shafts of projectors and custom spot lights that enable them." },
-	{ NULL,  "rt_light_shafts_intensity", QRE_G_FLOAT, 0, 4,
-	  "Strength of the light shafts cast by projector and custom spot lights.", NULL, "rt_light_shafts" },
 	{ NULL,  "rt_light_shafts_resolution", QRE_G_INT, 0, 2,
 	  "Light-shaft reconstruction quality: low, medium or high. Higher settings keep a longer stable history (less flicker, more lag).", NULL, "rt_light_shafts" },
 
@@ -7084,6 +7078,7 @@ enum
 	QRE_CUSTOM_F_ANGLE_INNER,
 	QRE_CUSTOM_F_ANGLE_OUTER,
 	QRE_CUSTOM_F_SHAFTS,
+	QRE_CUSTOM_F_SHAFTS_POWER,
 };
 
 static qboolean QRE_CustomOriginal (int index, rt_custom_light_t *out)
@@ -7104,6 +7099,7 @@ static qboolean QRE_CustomOriginal (int index, rt_custom_light_t *out)
 	out->color[0] = out->color[1] = out->color[2] = 1.0f;
 	out->dir[0] = 1.0f;
 	out->angle_outer = 30.0f;
+	out->light_shafts_power = 1.0f;
 	return false;
 }
 
@@ -7123,6 +7119,7 @@ static qboolean QRE_CustomFieldChanged (const rt_custom_light_t *l, const rt_cus
 	case QRE_CUSTOM_F_ANGLE_INNER: return l->angle_inner != orig->angle_inner;
 	case QRE_CUSTOM_F_ANGLE_OUTER: return l->angle_outer != orig->angle_outer;
 	case QRE_CUSTOM_F_SHAFTS:    return l->light_shafts != orig->light_shafts;
+	case QRE_CUSTOM_F_SHAFTS_POWER: return l->light_shafts_power != orig->light_shafts_power;
 	default: return false;
 	}
 }
@@ -7145,6 +7142,7 @@ static void QRE_CustomResetField (rt_custom_light_t *l, const rt_custom_light_t 
 	case QRE_CUSTOM_F_ANGLE_INNER: l->angle_inner = orig->angle_inner; break;
 	case QRE_CUSTOM_F_ANGLE_OUTER: l->angle_outer = orig->angle_outer; break;
 	case QRE_CUSTOM_F_SHAFTS:    l->light_shafts = orig->light_shafts; break;
+	case QRE_CUSTOM_F_SHAFTS_POWER: l->light_shafts_power = orig->light_shafts_power; break;
 	default: break;
 	}
 	RT_CustomLightValidate (l);
@@ -7320,6 +7318,14 @@ static void QRE_CustomLightsTab (void)
 				}
 				if (QR_GUI_ResetButton ("light_shafts", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_SHAFTS)))
 					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_SHAFTS);
+
+				if (QR_GUI_SliderFloat ("light_shafts_power", &l->light_shafts_power, 0.0f, 16.0f,
+				                        "Strength of this custom light's volumetric shafts; it does not change the light itself."))
+				{
+				}
+				if (QR_GUI_ResetButton ("light_shafts_power",
+				                        QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_SHAFTS_POWER)))
+					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_SHAFTS_POWER);
 
 				QR_GUI_Separator ();
 				QR_GUI_SectionHeader ("Light shafts (global)");
@@ -9062,6 +9068,8 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    light_projector: true\n");
 	if (m->light_shafts)
 		fprintf (f, "    light_shafts: true\n");
+	if (m->light_shafts_power != 1.0f)
+		fprintf (f, "    light_shafts_power: %.6g\n", m->light_shafts_power);
 	if (m->mirror)
 		fprintf (f, "    mirror: true\n");
 	if (m->material_glass)

@@ -503,7 +503,7 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
     }
 
     // The per-slot params buffers and the sets over them. The buffer is created with the shader's
-    // measured element stride 4256, not a reduced CPU size, and with the write helper's state
+    // measured element stride 6304, not a reduced CPU size, and with the write helper's state
     // contract: keepInitialState = true and initialState = CopyDest, which `writeBuffer` requires
     // and the SRV binding then transitions out of before the dispatch (RhiResources.h:25-33).
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -1160,7 +1160,7 @@ bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
         return false;
     }
 
-    // The frame's params. The buffer is 4256 bytes (the shader's element stride) and matches the CPU
+    // The frame's params. The buffer is 6304 bytes (the shader's element stride) and matches the CPU
     // mirror; the bytes are fully defined for the structured-buffer view.
     // RenderReflections does not write the buffer again: one write per frame feeds both trace
     // dispatches, the bytes the legacy's two `Trace` copies of the same host struct produce.

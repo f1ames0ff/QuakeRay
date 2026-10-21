@@ -324,6 +324,7 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->texture_scale_u = 1.0f;
     mat->texture_scale_v = 1.0f;
     mat->light_brightness = 1.0f;
+    mat->light_shafts_power = 1.0f;
     mat->light_styles = false;
     mat->color_emissive_threshold = 0.02f;
 }
@@ -545,6 +546,8 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->emissive_projector = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_shafts"))
         mat->light_shafts = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "light_shafts_power"))
+        mat->light_shafts_power = CLAMP(0.0f, (float)atof(value), 16.0f);
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))

@@ -54,6 +54,8 @@ public:
         float direction[4];
         float color[4];
         float cone[4];
+        float tangentU[4];
+        float tangentV[4];
     };
 
     struct Params
@@ -127,7 +129,7 @@ private:
     Target targets[MAX_FRAMES_IN_FLIGHT];
 };
 
-static_assert(sizeof(RhiLightShaftVolumePass::Params) == 4144,
-              "LightShaftVolumeParams_BT is 4144 bytes");
+static_assert(sizeof(RhiLightShaftVolumePass::Params) == 6192,
+              "LightShaftVolumeParams_BT is 6192 bytes");
 
 }

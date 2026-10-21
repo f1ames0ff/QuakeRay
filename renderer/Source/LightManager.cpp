@@ -788,11 +788,30 @@ void qray::LightManager::AddTexturedAreaLight(uint32_t frameIndex, const QrTextu
             shaft.direction[0] = direction[0];
             shaft.direction[1] = direction[1];
             shaft.direction[2] = direction[2];
-            shaft.color[0] = info.color.data[0];
-            shaft.color[1] = info.color.data[1];
-            shaft.color[2] = info.color.data[2];
+            const float power = info.lightShaftsPower > 0.0f ? info.lightShaftsPower : 1.0f;
+            shaft.color[0] = info.color.data[0] * power;
+            shaft.color[1] = info.color.data[1] * power;
+            shaft.color[2] = info.color.data[2] * power;
             shaft.cone[0] = std::cos(std::max(0.0f, std::min(info.angleInner, info.angleOuter)));
             shaft.cone[1] = std::cos(std::max(0.0f, info.angleOuter));
+
+            const float lengthA = std::sqrt(info.A.data[0] * info.A.data[0] +
+                                            info.A.data[1] * info.A.data[1] +
+                                            info.A.data[2] * info.A.data[2]);
+            const float lengthB = std::sqrt(info.B.data[0] * info.B.data[0] +
+                                            info.B.data[1] * info.B.data[1] +
+                                            info.B.data[2] * info.B.data[2]);
+            if (lengthA > 0.0001f && lengthB > 0.0001f)
+            {
+                for (int k = 0; k < 3; k++)
+                {
+                    shaft.tangentU[k] = info.A.data[k] / lengthA;
+                    shaft.tangentV[k] = info.B.data[k] / lengthB;
+                }
+                shaft.tangentU[3] = 0.5f * lengthA;
+                shaft.tangentV[3] = 0.5f * lengthB;
+            }
+
             AddLightShaft(shaft);
         }
     }
@@ -858,11 +877,36 @@ bool qray::LightManager::AddDtalGroups(uint32_t frameIndex, const QrDtalGroupUpl
                 shaft.direction[0] = direction[0];
                 shaft.direction[1] = direction[1];
                 shaft.direction[2] = direction[2];
-                shaft.color[0] = info.color.data[0];
-                shaft.color[1] = info.color.data[1];
-                shaft.color[2] = info.color.data[2];
+                const float power = info.lightShaftsPower > 0.0f ? info.lightShaftsPower : 1.0f;
+                shaft.color[0] = info.color.data[0] * power;
+                shaft.color[1] = info.color.data[1] * power;
+                shaft.color[2] = info.color.data[2] * power;
                 shaft.cone[0] = std::cos(std::max(0.0f, std::min(info.angleInner, info.angleOuter)));
                 shaft.cone[1] = std::cos(std::max(0.0f, info.angleOuter));
+
+                const QrDtalMemberUpload *pMember = batch.pMembers != nullptr
+                    ? &batch.pMembers[info.memberBase] : nullptr;
+                const float lengthA = pMember != nullptr
+                    ? std::sqrt(pMember->A.data[0] * pMember->A.data[0] +
+                                pMember->A.data[1] * pMember->A.data[1] +
+                                pMember->A.data[2] * pMember->A.data[2]) : 0.0f;
+                const float lengthB = pMember != nullptr
+                    ? std::sqrt(pMember->B.data[0] * pMember->B.data[0] +
+                                pMember->B.data[1] * pMember->B.data[1] +
+                                pMember->B.data[2] * pMember->B.data[2]) : 0.0f;
+                if (lengthA > 0.0001f && lengthB > 0.0001f)
+                {
+                    const QrDtalMemberUpload &member = *pMember;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        shaft.tangentU[k] = member.A.data[k] / lengthA;
+                        shaft.tangentV[k] = member.B.data[k] / lengthB;
+                    }
+                    const float halfArea = 0.5f * std::sqrt(std::max(info.area, 0.0f));
+                    shaft.tangentU[3] = halfArea;
+                    shaft.tangentV[3] = halfArea;
+                }
+
                 AddLightShaft(shaft);
             }
         }
@@ -920,9 +964,10 @@ void qray::LightManager::AddSpotlight(uint32_t frameIndex, const QrSpotLightUplo
             shaft.direction[0] = direction[0];
             shaft.direction[1] = direction[1];
             shaft.direction[2] = direction[2];
-            shaft.color[0] = info.color.data[0];
-            shaft.color[1] = info.color.data[1];
-            shaft.color[2] = info.color.data[2];
+            const float power = info.lightShaftsPower > 0.0f ? info.lightShaftsPower : 1.0f;
+            shaft.color[0] = info.color.data[0] * power;
+            shaft.color[1] = info.color.data[1] * power;
+            shaft.color[2] = info.color.data[2] * power;
             shaft.cone[0] = std::cos(std::max(0.0f, std::min(info.angleInner, info.angleOuter)));
             shaft.cone[1] = std::cos(std::max(0.0f, info.angleOuter));
             AddLightShaft(shaft);

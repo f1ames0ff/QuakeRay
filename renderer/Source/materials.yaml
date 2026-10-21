@@ -92,6 +92,7 @@
 # `light_shafts: true` draws a projector's cone as volumetric shafts in the air.
 # It needs `is_light` and `light_projector`; the shafts use the material's light
 # colour, cone and reach, and a light without the key stays invisible in the air.
+# `light_shafts_power` (default 1) scales only this material's shafts.
 #
 # `texture_overlay: textures/foo_grunge.png` paints over the base texture:
 # its RGB lands where its alpha is set, while `base_factor` still dims or

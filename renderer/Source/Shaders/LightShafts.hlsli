@@ -25,6 +25,8 @@ struct LightShaft_BT
     float4 direction;
     float4 color;
     float4 cone;
+    float4 tangentU;
+    float4 tangentV;
 };
 
 struct LightShaftVolumeParams_BT

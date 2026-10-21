@@ -197,6 +197,8 @@ public:
             float direction[4] = {};
             float color[4] = {};
             float cone[4] = {};
+            float tangentU[4] = {};
+            float tangentV[4] = {};
         };
 
         struct GodRays

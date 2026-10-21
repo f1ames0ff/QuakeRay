@@ -1194,6 +1194,10 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                sizeof(godRaysParams.lightShafts[i].color));
                         memcpy(godRaysParams.lightShafts[i].cone, sky.godRays.lightShafts[i].cone,
                                sizeof(godRaysParams.lightShafts[i].cone));
+                        memcpy(godRaysParams.lightShafts[i].tangentU, sky.godRays.lightShafts[i].tangentU,
+                               sizeof(godRaysParams.lightShafts[i].tangentU));
+                        memcpy(godRaysParams.lightShafts[i].tangentV, sky.godRays.lightShafts[i].tangentV,
+                               sizeof(godRaysParams.lightShafts[i].tangentV));
                     }
 
                     if (lightShaftVolumePass != nullptr && lightShaftVolumePass->IsCreated() &&
@@ -1216,6 +1220,10 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                    sizeof(volumeParams.lightShafts[i].color));
                             memcpy(volumeParams.lightShafts[i].cone, sky.godRays.lightShafts[i].cone,
                                    sizeof(volumeParams.lightShafts[i].cone));
+                            memcpy(volumeParams.lightShafts[i].tangentU, sky.godRays.lightShafts[i].tangentU,
+                                   sizeof(volumeParams.lightShafts[i].tangentU));
+                            memcpy(volumeParams.lightShafts[i].tangentV, sky.godRays.lightShafts[i].tangentV,
+                                   sizeof(volumeParams.lightShafts[i].tangentV));
                         }
 
                         if (lightShaftVolumePass->Render(

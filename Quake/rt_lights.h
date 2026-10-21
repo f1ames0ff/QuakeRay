@@ -153,6 +153,7 @@ typedef struct rt_emitter_light_s
        as differently as they look. 0 for a light that has no model behind it. */
     float       modelSize;
     qboolean    light_shafts;
+    float       light_shafts_power;
 } rt_emitter_light_t;
 
 typedef struct rt_emitter_resolved_s
@@ -207,6 +208,7 @@ typedef struct rt_custom_light_s
     float    angle_inner;
     float    angle_outer;
     qboolean light_shafts;
+    float    light_shafts_power;
 } rt_custom_light_t;
 
 // The fog a level's section carries: it replaces the map's own worldspawn "fog"

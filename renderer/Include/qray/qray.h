@@ -632,6 +632,7 @@ typedef struct QrTexturedAreaLightUploadInfo
     int             fit;
     int             isStatic;
     QrBool32        lightShafts;
+    float           lightShaftsPower;
 } QrTexturedAreaLightUploadInfo;
 
 /* Spot lights are regular lights in the light array: any number of them can be uploaded. */
@@ -650,6 +651,7 @@ typedef struct QrSpotLightUploadInfo
     // Inner cone half-angle. In radians; the intensity is full below it.
     float           angleInner;
     QrBool32        lightShafts;
+    float           lightShaftsPower;
 } QrSpotLightUploadInfo;
 
 QRAPI QrResult QRCONV qrUploadDirectionalLight(
@@ -737,6 +739,7 @@ typedef struct QrDtalGroupUploadInfo
     uint32_t        memberBase;
     uint32_t        memberCount;
     QrBool32        lightShafts;
+    float           lightShaftsPower;
 } QrDtalGroupUploadInfo;
 
 typedef struct QrDtalGroupUploadBatch

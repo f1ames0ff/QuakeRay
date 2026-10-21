@@ -50,6 +50,8 @@ public:
         float direction[4];
         float color[4];
         float cone[4];
+        float tangentU[4];
+        float tangentV[4];
     };
 
     uint32_t CollectLightShafts(LightShaft *out, uint32_t max);
