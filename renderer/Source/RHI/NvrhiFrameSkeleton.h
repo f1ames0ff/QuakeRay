@@ -47,6 +47,7 @@ class RhiRasterOverlayPass;
 class RhiRasterSkyPass;
 class RhiRtComposePass;
 class RhiRtDirectPass;
+class RhiLightShaftVolumePass;
 class RhiRtGodRaysPass;
 class RhiRtIndirectPass;
 class RhiRtPrimaryPass;
@@ -412,6 +413,7 @@ public:
                                 RhiBloomPass *pBloomPass,
                                 RhiShadowMapPass *pShadowMapPass,
                                 RhiRtGodRaysPass *pGodRaysPass,
+                                RhiLightShaftVolumePass *pLightShaftVolumePass,
                                 RhiUiPass *pUiPass,
                                 FrameMode mode,
                                 PrintFunction pfnPrint);
@@ -631,6 +633,7 @@ private:
     // is drawn without shafts.
     RhiShadowMapPass *shadowMapPass = nullptr;
     RhiRtGodRaysPass *godRaysPass = nullptr;
+    RhiLightShaftVolumePass *lightShaftVolumePass = nullptr;
 
     // The 2D-UI pass (RhiUiPass, RHI/RhiUiPass.h), driven in the traced chain once the compose ran:
     // it draws the frame's SWAPCHAIN overlay into the compose's upscaled image. Not owned; null

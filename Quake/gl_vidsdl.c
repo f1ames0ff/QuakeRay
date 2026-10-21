@@ -3787,7 +3787,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.godRaysEnabled = CVAR_TO_BOOL (rt_sky_godrays),
 		.godRaysIntensity = CVAR_TO_FLOAT (rt_sky_godrays_intensity),
 		.godRaysQuality = CVAR_TO_UINT32 (rt_sky_godrays_quality),
-		.lightShaftsEnabled = CVAR_TO_BOOL (rt_light_shafts),
+		.lightShaftsEnabled = !materials_only && CVAR_TO_BOOL (rt_light_shafts),
 		.lightShaftsIntensity = CVAR_TO_FLOAT (rt_light_shafts_intensity),
 		.lightShaftsResolution = CVAR_TO_UINT32 (rt_light_shafts_resolution),
 		.godRaysFromSkyTexture = 0,
@@ -3856,8 +3856,10 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	}
 
 	QrDrawFrameVolumetricParams volumetric_params = {
-		.enable = !materials_only && CVAR_TO_UINT32 (rt_volume_type) != 0,
-		.useSimpleDepthBased = CVAR_TO_UINT32 (rt_volume_type) == 1,
+		.enable = !materials_only &&
+			(CVAR_TO_UINT32 (rt_volume_type) != 0 || CVAR_TO_BOOL (rt_light_shafts)),
+		.useSimpleDepthBased = CVAR_TO_UINT32 (rt_volume_type) == 1 &&
+			!CVAR_TO_BOOL (rt_light_shafts),
 		.volumetricFar = CVAR_TO_FLOAT (rt_volume_far),
 		.ambientColor = RT_VEC3 (volume_ambient_color),
 		.scaterring = materials_only ? 0.0f : CVAR_TO_FLOAT (rt_volume_scatter),

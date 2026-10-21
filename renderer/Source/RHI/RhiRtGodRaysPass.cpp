@@ -249,6 +249,11 @@ RhiRtGodRaysPass::~RhiRtGodRaysPass()
     emptyLayout = nullptr;
     pushConstantLayout = nullptr;
     blueNoiseLayout = nullptr;
+    lightShaftVolumeLayout = nullptr;
+    lightShaftVolumeFallback = nullptr;
+    lightShaftVolumeFallbackSampler = nullptr;
+    lightShaftVolumeTexture = nullptr;
+    lightShaftVolumeSampler = nullptr;
     uniformLayout = nullptr;
     filterFramebufferLayout = nullptr;
     traceFramebufferLayout = nullptr;
@@ -342,13 +347,17 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
         blueNoiseLayout = device->createBindingLayout(desc);
     }
 
-    // Set 6: the top-level acceleration structure the light-shaft shadow rays traverse.
+    // Set 6: the froxel light-shaft volume and its sampler.
     {
         nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::All;
-        desc.addItem(nvrhi::BindingLayoutItem::RayTracingAccelStruct(0));
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
+                                   .setShaderResourceOffset(0)
+                                   .setSamplerOffset(0));
+        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
+        desc.addItem(nvrhi::BindingLayoutItem::Sampler(1));
 
-        tlasLayout = device->createBindingLayout(desc);
+        lightShaftVolumeLayout = device->createBindingLayout(desc);
     }
 
     // The trace's push constant. The pinned backend skips a PushConstants item when it builds the
@@ -376,16 +385,42 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
 
     if (shadowLayout == nullptr || paramsLayout == nullptr || traceFramebufferLayout == nullptr ||
         filterFramebufferLayout == nullptr || uniformLayout == nullptr || blueNoiseLayout == nullptr ||
-        tlasLayout == nullptr || pushConstantLayout == nullptr || emptyLayout == nullptr)
+        lightShaftVolumeLayout == nullptr || pushConstantLayout == nullptr || emptyLayout == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a god-rays pass binding layout");
         return false;
     }
 
+    {
+        nvrhi::TextureDesc desc;
+        desc.dimension = nvrhi::TextureDimension::Texture3D;
+        desc.format = nvrhi::Format::RGBA16_FLOAT;
+        desc.width = 1;
+        desc.height = 1;
+        desc.depth = 1;
+        desc.mipLevels = 1;
+        desc.isUAV = true;
+        desc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
+        desc.keepInitialState = true;
+        lightShaftVolumeFallback = rhi::createTexture(device, desc, "RhiRtGodRaysPass light-shaft volume fallback");
+        lightShaftVolumeFallbackSampler = rhi::createSampler(
+            device, nvrhi::SamplerDesc()
+                        .setMinFilter(true)
+                        .setMagFilter(true)
+                        .setMipFilter(true)
+                        .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp),
+            "RhiRtGodRaysPass light-shaft volume sampler");
+        if (lightShaftVolumeFallback == nullptr || lightShaftVolumeFallbackSampler == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the god-rays light-shaft volume fallback");
+            return false;
+        }
+    }
+
     // The trace pipeline, in the engine's set order: 0 shadow, 1 params, 2 framebuffers, 3 uniform,
-    // 4 blue noise, 5 the cloud-shadow set, 6 the TLAS. The list order is also the shader's set
-    // numbering (the backend places the regular layouts into descriptor sets in list order,
-    // vulkan-resource-bindings.cpp:1090-1099).
+    // 4 blue noise, 5 the cloud-shadow set, 6 the light-shaft volume. The list order is also the
+    // shader's set numbering (the backend places the regular layouts into descriptor sets in list
+    // order, vulkan-resource-bindings.cpp:1090-1099).
     {
         if (!cloudShadowBinding.Create(device, frameContext, nvrhi::ShaderType::Compute, GOD_RAYS_PUSH_SIZE))
         {
@@ -399,7 +434,7 @@ bool RhiRtGodRaysPass::Create(nvrhi::IDevice *pDevice,
         desc.addBindingLayout(uniformLayout);
         desc.addBindingLayout(blueNoiseLayout);
         desc.addBindingLayout(cloudShadowBinding.GetLayout());
-        desc.addBindingLayout(tlasLayout);
+        desc.addBindingLayout(lightShaftVolumeLayout);
 
         tracePipeline = rhi::createComputePipeline(device, desc, "RhiRtGodRaysPass trace");
     }
@@ -558,6 +593,61 @@ void RhiRtGodRaysPass::SetBlueNoiseTexture(nvrhi::ITexture *pBlueNoise)
     }
 
     blueNoiseTexture = pBlueNoise;
+}
+
+void RhiRtGodRaysPass::SetLightShaftVolume(nvrhi::ITexture *pVolume, nvrhi::ISampler *pVolumeSampler)
+{
+    lightShaftVolumeTexture = pVolume;
+    lightShaftVolumeSampler = pVolumeSampler;
+}
+
+bool RhiRtGodRaysPass::PrepareLightShaftVolumeSet(Target &target, nvrhi::ICommandList *pCommandList)
+{
+    nvrhi::ITexture *texture = lightShaftVolumeTexture != nullptr
+        ? lightShaftVolumeTexture : lightShaftVolumeFallback.Get();
+    nvrhi::ISampler *sampler = lightShaftVolumeSampler != nullptr
+        ? lightShaftVolumeSampler : lightShaftVolumeFallbackSampler.Get();
+
+    if (texture == nullptr || sampler == nullptr)
+    {
+        return false;
+    }
+
+    if (target.lightShaftVolumeSet != nullptr &&
+        target.lightShaftVolumeTexture == texture &&
+        target.lightShaftVolumeSampler == sampler)
+    {
+        return true;
+    }
+
+    if (texture == lightShaftVolumeFallback.Get() && !lightShaftVolumeFallbackCleared)
+    {
+        pCommandList->clearTextureFloat(lightShaftVolumeFallback, nvrhi::AllSubresources,
+                                        nvrhi::Color(0.f, 0.f, 0.f, 0.f));
+        pCommandList->setTextureState(lightShaftVolumeFallback, nvrhi::AllSubresources,
+                                      nvrhi::ResourceStates::NonPixelShaderResource);
+        lightShaftVolumeFallbackCleared = true;
+    }
+
+    if (target.lightShaftVolumeSet != nullptr)
+    {
+        frameContext->Retire(target.lightShaftVolumeSet);
+    }
+    target.lightShaftVolumeSet = nullptr;
+
+    nvrhi::BindingSetDesc setDesc;
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, texture));
+    setDesc.addItem(nvrhi::BindingSetItem::Sampler(1, sampler));
+    target.lightShaftVolumeSet = device->createBindingSet(setDesc, lightShaftVolumeLayout);
+    if (target.lightShaftVolumeSet == nullptr)
+    {
+        LogMessage(print, "Warning: RHI: failed to create the god-rays light-shaft volume set");
+        return false;
+    }
+
+    target.lightShaftVolumeTexture = texture;
+    target.lightShaftVolumeSampler = sampler;
+    return true;
 }
 
 bool RhiRtGodRaysPass::PrepareShadowSet()
@@ -880,43 +970,6 @@ bool RhiRtGodRaysPass::PrepareUniformSet(Target &target, nvrhi::IBuffer *pUnifor
     return true;
 }
 
-bool RhiRtGodRaysPass::PrepareTlasSet(Target &target, nvrhi::rt::IAccelStruct *pTopLevel)
-{
-    if (pTopLevel == nullptr)
-    {
-        if (!warnedMissingTopLevel)
-        {
-            warnedMissingTopLevel = true;
-            LogMessage(print, "Warning: RHI: the god-rays pass has no top-level acceleration structure");
-        }
-        return false;
-    }
-
-    if (target.tlasSet != nullptr && target.topLevel == pTopLevel)
-    {
-        return true;
-    }
-
-    if (target.tlasSet != nullptr)
-    {
-        frameContext->Retire(target.tlasSet);
-    }
-    target.tlasSet = nullptr;
-
-    nvrhi::BindingSetDesc setDesc;
-    setDesc.addItem(nvrhi::BindingSetItem::RayTracingAccelStruct(0, pTopLevel));
-
-    target.tlasSet = device->createBindingSet(setDesc, tlasLayout);
-    if (target.tlasSet == nullptr)
-    {
-        LogMessage(print, "Warning: RHI: failed to create the god-rays pass TLAS binding set");
-        return false;
-    }
-
-    target.topLevel = pTopLevel;
-    return true;
-}
-
 void RhiRtGodRaysPass::RecordDispatch(nvrhi::ICommandList *pCommandList,
                                       nvrhi::IComputePipeline *pPipeline,
                                       std::initializer_list<nvrhi::IBindingSet *> sets,
@@ -953,7 +1006,6 @@ bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
                                    uint32_t width,
                                    uint32_t height,
                                    nvrhi::IBuffer *pUniformBuffer,
-                                   nvrhi::rt::IAccelStruct *pTopLevel,
                                    const Params &params,
                                    bool traceReflections)
 {
@@ -989,7 +1041,7 @@ bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
 
     Target &target = *pTarget;
 
-    if (!PrepareTlasSet(target, pTopLevel))
+    if (!PrepareLightShaftVolumeSet(target, pCommandList))
     {
         return false;
     }
@@ -1019,7 +1071,8 @@ bool RhiRtGodRaysPass::RenderInput(nvrhi::ICommandList *pCommandList,
     const uint32_t passIndexPrimary = 0;
     RecordDispatch(pCommandList, tracePipeline,
                    { shadowSet, paramsSets[frameIndex], target.traceFramebufferSet,
-                     target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet(), target.tlasSet },
+                     target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet(),
+                     target.lightShaftVolumeSet },
                    traceGroupsX, traceGroupsY, 1, &passIndexPrimary);
 
     // The reflected-segment accumulation (passIndex 1) belongs after the host's reflect/refract
@@ -1131,7 +1184,8 @@ void RhiRtGodRaysPass::RenderReflections(nvrhi::ICommandList *pCommandList,
         const uint32_t passIndexReflections = 1;
         RecordDispatch(pCommandList, tracePipeline,
                        { shadowSet, paramsSets[frameIndex], target.traceFramebufferSet,
-                        target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet(), target.tlasSet },
+                        target.uniformSet, blueNoiseSet, cloudShadowBinding.GetSet(),
+                     target.lightShaftVolumeSet },
                        traceGroupsX, traceGroupsY, 1, &passIndexReflections);
     }
 
@@ -1220,13 +1274,14 @@ void RhiRtGodRaysPass::ReleaseTarget(Target &target)
     target.uniformSet = nullptr;
     target.uniformBuffer = nullptr;
 
-    if (frameContext != nullptr && target.tlasSet != nullptr)
+    if (frameContext != nullptr && target.lightShaftVolumeSet != nullptr)
     {
-        frameContext->Retire(target.tlasSet);
+        frameContext->Retire(target.lightShaftVolumeSet);
     }
 
-    target.tlasSet = nullptr;
-    target.topLevel = nullptr;
+    target.lightShaftVolumeSet = nullptr;
+    target.lightShaftVolumeTexture = nullptr;
+    target.lightShaftVolumeSampler = nullptr;
 
     // A released frame has no recorded input to continue from; a resize between the two entry
     // points therefore disarms the reflected half.

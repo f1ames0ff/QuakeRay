@@ -82,6 +82,7 @@ set(renderer_SOURCES
     Source/RHI/RhiRtComposePass.cpp
     Source/RHI/RhiRtDirectPass.cpp
     Source/RHI/RhiRtGodRaysPass.cpp
+    Source/RHI/RhiLightShaftVolumePass.cpp
     Source/RHI/RhiRtIndirectPass.cpp
     Source/RHI/RhiRtPrimaryPass.cpp
     Source/RHI/RhiRtReflRefrPass.cpp

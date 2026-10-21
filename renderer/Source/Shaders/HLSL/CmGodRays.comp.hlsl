@@ -71,6 +71,7 @@
 #include "ShaderCommonHLSLFunc.hlsli"
 #include "CloudShadowWorld.hlsli"
 #include "Random.hlsli"
+#include "LightShafts.hlsli"
 
 // The GLSL original declares the workgroup size here; in HLSL it is an attribute of the
 // entry point instead, so the shader itself carries [numthreads(16, 16, 1)].
@@ -85,16 +86,6 @@ struct GodRaysPush_BT
 
 [[vk::binding(0, DESC_SET_GOD_RAYS_SHADOW)]] Texture2D<float4> texShadowMap;
 [[vk::binding(1, DESC_SET_GOD_RAYS_SHADOW)]] SamplerState texShadowMap_Sampler;
-
-#define MAX_LIGHT_SHAFTS 8
-
-struct LightShaft_BT
-{
-    float4 positionRadius;
-    float4 direction;
-    float4 color;
-    float4 cone;
-};
 
 struct GodRaysParams_BT
 {
@@ -115,35 +106,8 @@ struct GodRaysParams_BT
 };
 
 [[vk::binding(0, DESC_SET_GOD_RAYS_PARAMS)]] StructuredBuffer<GodRaysParams_BT> godRaysParams;
-[[vk::binding(0, 6)]] RaytracingAccelerationStructure topLevelAS;
-
-bool LightShaftVisible(float3 origin, float3 target)
-{
-    const float3 delta = target - origin;
-    const float distance = length(delta);
-
-    if (distance <= 0.05)
-    {
-        return true;
-    }
-
-    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH |
-             RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
-
-    RayDesc ray;
-    ray.Origin = origin;
-    ray.Direction = delta / distance;
-    ray.TMin = 0.05;
-    ray.TMax = distance - 0.05;
-
-    query.TraceRayInline(topLevelAS, RAY_FLAG_NONE, globalUniform.rayCullMaskWorld, ray);
-
-    while (query.Proceed())
-    {
-    }
-
-    return query.CommittedStatus() == COMMITTED_NOTHING;
-}
+[[vk::binding(0, 6)]] Texture3D<float4> lightShaftVolume;
+[[vk::binding(1, 6)]] SamplerState lightShaftVolumeSampler;
 
 float GetShadow(float3 worldPos)
 {
@@ -196,6 +160,19 @@ float getStep(float t, float density)
 {
     const float scale = clamp(godRaysParams[0].sunStepScale, 0.25, 4.0);
     return max(1.0, lerp(20.0, 5.0, density) * scale);
+}
+
+float3 lightShaftVolumeUVW(float3 world)
+{
+    float4 ndc = mul(globalUniform.volumeViewProj, float4(world, 1.0));
+    ndc.xy /= ndc.w;
+
+    const float nearPlane = globalUniform.volumeCameraNear;
+    const float farPlane = max(globalUniform.volumeCameraFar, nearPlane + 0.001);
+    const float distance = length(world - globalUniform.cameraPosition.xyz);
+    const float z = saturate((distance - nearPlane) / (farPlane - nearPlane));
+
+    return float3(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5, z);
 }
 
 [numthreads(16, 16, 1)]
@@ -421,68 +398,27 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     if (push.passIndex == 0 && godRaysParams[0].lightShaftCount > 0 && !isSky && rayDistance > 0.0)
     {
-        const uint shaftCount = min(godRaysParams[0].lightShaftCount, (uint)MAX_LIGHT_SHAFTS);
-        const uint shaftSteps = clamp(godRaysParams[0].lightShaftSteps, 4u, 16u);
-        const float3 cameraPos = originalPos;
-        const float marchDistance = rayDistance;
-        const float shaftJitter = rndBlueNoise8(seed, 1).x;
+        const uint shaftSteps = clamp(godRaysParams[0].lightShaftSteps, 4u, 32u);
+        const float nearPlane = max(globalUniform.volumeCameraNear, 0.0);
+        const float farPlane = max(globalUniform.volumeCameraFar, nearPlane + 0.001);
+        const float marchEnd = min(rayDistance, farPlane);
+        float3 shaftColor = (float3)0;
 
-        for (uint si = 0; si < shaftCount; ++si)
+        if (marchEnd > nearPlane)
         {
-            const LightShaft_BT shaft = godRaysParams[0].lightShafts[si];
-            const float3 source = shaft.positionRadius.xyz;
-            const float radius = max(shaft.positionRadius.w, 0.001);
-            float3 lightDir = shaft.direction.xyz;
+            const float stepLength = (marchEnd - nearPlane) / (float)shaftSteps;
 
-            if (dot(lightDir, lightDir) <= 0.000001)
+            for (uint si = 0; si < shaftSteps; ++si)
             {
-                continue;
+                const float t = nearPlane + ((float)si + 0.5) * stepLength;
+                const float3 p = originalPos + direction * t;
+                const float3 uvw = lightShaftVolumeUVW(p);
+                const float4 volume = lightShaftVolume.SampleLevel(lightShaftVolumeSampler, uvw, 0.0);
+                shaftColor += volume.rgb * stepLength;
             }
-
-            lightDir = normalize(lightDir);
-
-            // Move the march's shadow target off the emitting surface, so the
-            // shaft's own polygon cannot shadow the entire cone.
-            const float3 emitter = source + lightDir * max(radius, 0.5);
-            float3 shaftColor = (float3)0;
-
-            for (uint sj = 0; sj < shaftSteps; ++sj)
-            {
-                const float t = (float)(sj + shaftJitter) / (float)(shaftSteps + 1);
-                const float3 p = cameraPos + direction * (t * marchDistance);
-                const float3 fromLight = p - emitter;
-                const float distToLight = length(fromLight);
-
-                if (distToLight < 0.001)
-                {
-                    continue;
-                }
-
-                const float cosAngle = dot(fromLight / distToLight, lightDir);
-                const float cone = smoothstep(shaft.cone.y, shaft.cone.x, cosAngle);
-
-                if (cone <= 0.0)
-                {
-                    continue;
-                }
-
-                if (!LightShaftVisible(p, emitter))
-                {
-                    continue;
-                }
-
-                const float attenuation = radius * radius / (distToLight * distToLight + radius * radius);
-                const float phase = ScatterPhase_HenyeyGreenstein(
-                    dot(-fromLight / distToLight, direction), 0.5);
-                const float stepLength = marchDistance / (float)(shaftSteps + 1);
-                const float density = 0.015 * getDensity(p);
-
-                shaftColor += through * shaft.color.rgb *
-                              (cone * attenuation * phase * stepLength * density);
-            }
-
-            inscatterColor += shaftColor * godRaysParams[0].lightShaftIntensity * 0.01;
         }
+
+        inscatterColor += shaftColor * godRaysParams[0].lightShaftIntensity * 0.01;
     }
 
     if (push.passIndex != 0)

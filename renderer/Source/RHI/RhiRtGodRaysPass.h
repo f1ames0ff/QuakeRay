@@ -37,7 +37,8 @@ namespace rhi
 class RhiFrameContext;
 }
 
-// The RHI module of the legacy god rays: the half-resolution volumetric sunlight march into image 63
+// The RHI module of the legacy god rays: the half-resolution volumetric sunlight march, and the
+// smooth light-shaft volume sampled along the same view rays, into image 63
 // (GOD_RAYS) and the full-resolution bilateral upscale into image 64 (GOD_RAYS_FILTERED), which
 // `CmPrepareFinal` consumes. The legacy reference is the `GodRays` class (GodRays.{h,cpp}) and the
 // host block that drives it (VulkanDevice.cpp:906-1028). The RHI module keeps the block's split
@@ -353,6 +354,8 @@ public:
     // it, a replaced one rebuilds the set; the entry points skip until a valid texture is set.
     void SetBlueNoiseTexture(nvrhi::ITexture *pBlueNoise);
 
+    void SetLightShaftVolume(nvrhi::ITexture *pVolume, nvrhi::ISampler *pVolumeSampler);
+
     // The input half of the frame's god-rays block (the legacy :964-1006, with the trace(0) at
     // :1003): the params write, the primary march (passIndex 0) and, on the two self-contained
     // paths, the bilateral filter. One call per traced frame, on the frame context's open command
@@ -385,7 +388,6 @@ public:
                      uint32_t width,
                      uint32_t height,
                      nvrhi::IBuffer *pUniformBuffer,
-                     nvrhi::rt::IAccelStruct *pTopLevel,
                      const Params &params,
                      bool traceReflections);
 
@@ -437,8 +439,9 @@ private:
         nvrhi::BindingSetHandle filterFramebufferSet;
         nvrhi::IBuffer *uniformBuffer = nullptr;
         nvrhi::BindingSetHandle uniformSet;
-        nvrhi::rt::IAccelStruct *topLevel = nullptr;
-        nvrhi::BindingSetHandle tlasSet;
+        nvrhi::BindingSetHandle lightShaftVolumeSet;
+        nvrhi::ITexture *lightShaftVolumeTexture = nullptr;
+        nvrhi::ISampler *lightShaftVolumeSampler = nullptr;
 
         // The frame-scoped hand-off of the split entry points: set by RenderInput on the path that
         // defers the reflected half (the same path that returns true) and checked and consumed by
@@ -483,7 +486,7 @@ private:
     bool PrepareUniformSet(Target &target, nvrhi::IBuffer *pUniformBuffer);
 
     // Set 6: builds (or rebuilds, when the slot's TLAS changed) the acceleration-structure set.
-    bool PrepareTlasSet(Target &target, nvrhi::rt::IAccelStruct *pTopLevel);
+    bool PrepareLightShaftVolumeSet(Target &target, nvrhi::ICommandList *pCommandList);
 
     // Set 0: builds (or rebuilds, when either pointer changed) the shadow map set. Returns false
     // when no valid shadow map was set.
@@ -531,7 +534,7 @@ private:
     nvrhi::BindingLayoutHandle filterFramebufferLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle blueNoiseLayout;
-    nvrhi::BindingLayoutHandle tlasLayout;
+    nvrhi::BindingLayoutHandle lightShaftVolumeLayout;
     nvrhi::BindingLayoutHandle pushConstantLayout;
     nvrhi::BindingLayoutHandle emptyLayout;
 
@@ -564,12 +567,17 @@ private:
     nvrhi::ITexture *blueNoiseSetTexture = nullptr;
     nvrhi::BindingSetHandle blueNoiseSet;
 
+    nvrhi::TextureHandle lightShaftVolumeFallback;
+    nvrhi::SamplerHandle lightShaftVolumeFallbackSampler;
+    bool lightShaftVolumeFallbackCleared = false;
+    nvrhi::ITexture *lightShaftVolumeTexture = nullptr;
+    nvrhi::ISampler *lightShaftVolumeSampler = nullptr;
+
     // One entry per engine frame slot (MAX_FRAMES_IN_FLIGHT, Common.h:31).
     Target targets[MAX_FRAMES_IN_FLIGHT];
 
     // One-shot warnings for the inputs that can legitimately be missing for a few frames or are a
     // permanent host-side mistake.
-    bool warnedMissingTopLevel = false;
     bool warnedMissingShadowMap = false;
     bool warnedBadShadowMap = false;
     bool warnedShadowSampler = false;

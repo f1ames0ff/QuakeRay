@@ -24,6 +24,7 @@
 #include "RhiPostEffectPass.h"
 #include "RhiRtComposePass.h"
 #include "RhiRtDirectPass.h"
+#include "RhiLightShaftVolumePass.h"
 #include "RhiRtGodRaysPass.h"
 #include "RhiRtIndirectPass.h"
 #include "RhiRtPrimaryPass.h"
@@ -108,6 +109,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
                                        RhiBloomPass *pBloomPass,
                                        RhiShadowMapPass *pShadowMapPass,
                                        RhiRtGodRaysPass *pGodRaysPass,
+                                       RhiLightShaftVolumePass *pLightShaftVolumePass,
                                        RhiUiPass *pUiPass,
                                        FrameMode mode,
                                        PrintFunction pfnPrint)
@@ -130,6 +132,7 @@ NvrhiFrameSkeleton::NvrhiFrameSkeleton(nvrhi::IDevice *pDevice,
     , bloomPass(pBloomPass)
     , shadowMapPass(pShadowMapPass)
     , godRaysPass(pGodRaysPass)
+    , lightShaftVolumePass(pLightShaftVolumePass)
     , uiPass(pUiPass)
     , frameMode(mode)
     , textureTable(pTextureTable)
@@ -1141,9 +1144,7 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
 
                 BeginGpuPass(commandList, frameIndex, GPU_PASS_GODRAYS);
                 godRaysPass->RenderInput(commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
-                                         worldUniformBuffer.Get(),
-                                         accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
-                                         godRaysParams, false);
+                                         worldUniformBuffer.Get(), godRaysParams, false);
                 EndGpuPass(commandList, frameIndex, GPU_PASS_GODRAYS);
             }
             else if (shadowMapPass != nullptr && shadowMapPass->IsCreated())
@@ -1195,11 +1196,41 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                                sizeof(godRaysParams.lightShafts[i].cone));
                     }
 
+                    if (lightShaftVolumePass != nullptr && lightShaftVolumePass->IsCreated() &&
+                        sky.godRays.lightShaftCount > 0)
+                    {
+                        RhiLightShaftVolumePass::Params volumeParams = {};
+                        volumeParams.lightShaftCount = sky.godRays.lightShaftCount;
+                        memcpy(volumeParams.worldCenter, sky.godRays.worldCenter,
+                               sizeof(volumeParams.worldCenter));
+                        memcpy(volumeParams.worldHalfSizeInv, sky.godRays.worldHalfSizeInv,
+                               sizeof(volumeParams.worldHalfSizeInv));
+
+                        for (uint32_t i = 0; i < sky.godRays.lightShaftCount; i++)
+                        {
+                            memcpy(volumeParams.lightShafts[i].position, sky.godRays.lightShafts[i].position,
+                                   sizeof(volumeParams.lightShafts[i].position));
+                            memcpy(volumeParams.lightShafts[i].direction, sky.godRays.lightShafts[i].direction,
+                                   sizeof(volumeParams.lightShafts[i].direction));
+                            memcpy(volumeParams.lightShafts[i].color, sky.godRays.lightShafts[i].color,
+                                   sizeof(volumeParams.lightShafts[i].color));
+                            memcpy(volumeParams.lightShafts[i].cone, sky.godRays.lightShafts[i].cone,
+                                   sizeof(volumeParams.lightShafts[i].cone));
+                        }
+
+                        if (lightShaftVolumePass->Render(
+                                commandList, frameIndex, worldUniformBuffer.Get(),
+                                accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
+                                volumeParams))
+                        {
+                            godRaysPass->SetLightShaftVolume(lightShaftVolumePass->GetTexture(frameIndex),
+                                                             lightShaftVolumePass->GetSampler());
+                        }
+                    }
+
                     godRaysReflectionsPending = godRaysPass->RenderInput(
                         commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
-                        worldUniformBuffer.Get(),
-                        accelStructs != nullptr ? accelStructs->GetTopLevel(frameIndex) : nullptr,
-                        godRaysParams,
+                        worldUniformBuffer.Get(), godRaysParams,
                         uniform != nullptr && uniform->reflectRefractMaxDepth > 0);
                 }
 
