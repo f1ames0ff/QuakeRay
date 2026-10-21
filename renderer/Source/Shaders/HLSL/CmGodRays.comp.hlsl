@@ -108,6 +108,13 @@ struct GodRaysParams_BT
 [[vk::binding(0, DESC_SET_GOD_RAYS_PARAMS)]] StructuredBuffer<GodRaysParams_BT> godRaysParams;
 [[vk::binding(0, 6)]] Texture3D<float4> lightShaftVolume;
 [[vk::binding(1, 6)]] SamplerState lightShaftVolumeSampler;
+[[vk::binding(0, 7)]] Texture2D<float4> lightShaftHistoryPrev;
+[[vk::binding(1, 7), vk::image_format("rgba16f")]] RWTexture2D<float4> lightShaftHistory;
+[[vk::binding(2, 7)]] SamplerState lightShaftHistorySampler;
+
+#define LIGHT_SHAFT_VOLUME_SIZE_X 160
+#define LIGHT_SHAFT_VOLUME_SIZE_Y 88
+#define LIGHT_SHAFT_VOLUME_SIZE_Z 64
 
 float GetShadow(float3 worldPos)
 {
@@ -213,6 +220,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         if (push.passIndex == 0)
         {
             framebufGodRays[pixelPos] = (float4)0;
+            lightShaftHistory[pixelPos] = (float4)0;
         }
         return;
     }
@@ -223,6 +231,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         if (push.passIndex == 0)
         {
             framebufGodRays[pixelPos] = (float4)0;
+            lightShaftHistory[pixelPos] = (float4)0;
         }
         return;
     }
@@ -273,6 +282,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         if (push.passIndex == 0)
         {
             framebufGodRays[pixelPos] = (float4)0;
+            lightShaftHistory[pixelPos] = (float4)0;
         }
         return;
     }
@@ -398,27 +408,48 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     if (push.passIndex == 0 && godRaysParams[0].lightShaftCount > 0 && !isSky && rayDistance > 0.0)
     {
-        const uint shaftSteps = clamp(godRaysParams[0].lightShaftSteps, 4u, 32u);
-        const float nearPlane = max(globalUniform.volumeCameraNear, 0.0);
-        const float farPlane = max(globalUniform.volumeCameraFar, nearPlane + 0.001);
-        const float marchEnd = min(rayDistance, farPlane);
-        float3 shaftColor = (float3)0;
+        const float3 noise = rndBlueNoise8(seed, 1).xyz;
+        float3 uvw = lightShaftVolumeUVW(surfacePos);
+        uvw += (noise * 2.0 - 1.0) *
+               float3(2.0 / LIGHT_SHAFT_VOLUME_SIZE_X,
+                      2.0 / LIGHT_SHAFT_VOLUME_SIZE_Y,
+                      2.0 / LIGHT_SHAFT_VOLUME_SIZE_Z);
 
-        if (marchEnd > nearPlane)
+        const float3 current = lightShaftVolume.SampleLevel(
+            lightShaftVolumeSampler, saturate(uvw), 0.0).rgb;
+        float3 accumulated = current;
+        float historyLength = 1.0;
+
+        const float4 previousClip = mul(globalUniform.projectionPrev,
+                                        mul(globalUniform.viewPrev, float4(surfacePos, 1.0)));
+        const float2 previousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
+
+        if (previousClip.w > 0.0 && all(previousUv >= (float2)0) && all(previousUv <= (float2)1))
         {
-            const float stepLength = (marchEnd - nearPlane) / (float)shaftSteps;
+            const int2 previousPixel = int2(previousUv * float2(globalUniform.renderWidth,
+                                                                 globalUniform.renderHeight));
+            const int2 previousPixelClamped = clamp(previousPixel, int2(0, 0),
+                                                    int2((int)globalUniform.renderWidth - 1,
+                                                         (int)globalUniform.renderHeight - 1));
+            const float previousDepth = framebufDepthWorld_Sampled.Load(
+                int3(previousPixelClamped, 0)).x;
+            const float4 previous = lightShaftHistoryPrev.SampleLevel(
+                lightShaftHistorySampler, previousUv, 0.0);
 
-            for (uint si = 0; si < shaftSteps; ++si)
+            if (previous.a > 0.0 && abs(previousDepth - rayDistance) <= max(1.0, rayDistance * 0.05))
             {
-                const float t = nearPlane + ((float)si + 0.5) * stepLength;
-                const float3 p = originalPos + direction * t;
-                const float3 uvw = lightShaftVolumeUVW(p);
-                const float4 volume = lightShaftVolume.SampleLevel(lightShaftVolumeSampler, uvw, 0.0);
-                shaftColor += volume.rgb * stepLength;
+                const float maxHistory = (float)clamp(godRaysParams[0].lightShaftSteps, 4u, 32u);
+                historyLength = min(previous.a + 1.0, maxHistory);
+                accumulated = lerp(previous.rgb, current, 1.0 / historyLength);
             }
         }
 
-        inscatterColor += shaftColor * godRaysParams[0].lightShaftIntensity * 0.01;
+        lightShaftHistory[pixelPos] = float4(accumulated, historyLength);
+        inscatterColor += accumulated * godRaysParams[0].lightShaftIntensity * 0.01;
+    }
+    else if (push.passIndex == 0)
+    {
+        lightShaftHistory[pixelPos] = (float4)0;
     }
 
     if (push.passIndex != 0)

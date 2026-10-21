@@ -56,9 +56,9 @@ public:
     struct Params
     {
         uint32_t lightShaftCount;
-        uint32_t historyValid;
         uint32_t pad0;
         uint32_t pad1;
+        uint32_t pad2;
         float worldCenter[4];
         float worldHalfSizeInv[4];
         LightShaft lightShafts[MAX_LIGHT_SHAFTS];
@@ -93,14 +93,12 @@ private:
     {
         nvrhi::TextureHandle texture;
         nvrhi::BindingSetHandle uavSet;
-        nvrhi::BindingSetHandle historySet;
         nvrhi::BindingSetHandle paramsSet;
         nvrhi::BindingSetHandle uniformSet;
         nvrhi::BindingSetHandle tlasSet;
         nvrhi::BufferHandle paramsBuffer;
         nvrhi::IBuffer *uniformBuffer = nullptr;
         nvrhi::rt::IAccelStruct *topLevel = nullptr;
-        bool historyValid = false;
     };
 
     bool PrepareUniformSet(Target &target, nvrhi::IBuffer *pUniformBuffer);
@@ -118,8 +116,9 @@ private:
     nvrhi::BindingLayoutHandle paramsLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle volumeLayout;
-    nvrhi::BindingLayoutHandle historyLayout;
+    nvrhi::ShaderHandle prefixShader;
     nvrhi::ComputePipelineHandle volumePipeline;
+    nvrhi::ComputePipelineHandle prefixPipeline;
     nvrhi::SamplerHandle sampler;
 
     Target targets[MAX_FRAMES_IN_FLIGHT];

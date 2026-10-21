@@ -890,7 +890,7 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
         sky.godRays.lightShaftIntensity = (drawInfo.pSkyParams != nullptr)
             ? std::max(drawInfo.pSkyParams->lightShaftsIntensity, 0.0f) : 1.0f;
         sky.godRays.lightShaftSteps = (drawInfo.pSkyParams != nullptr)
-            ? std::min(32u, 12u + std::min(drawInfo.pSkyParams->lightShaftsResolution, 2u) * 8u) : 20u;
+            ? std::min(16u, 8u + std::min(drawInfo.pSkyParams->lightShaftsResolution, 2u) * 4u) : 12u;
 
         if (godRaysOn)
         {

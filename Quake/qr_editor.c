@@ -4320,7 +4320,7 @@ static void QRE_LightShaftGlobalControls (qboolean material_reset)
 
 		if (QR_GUI_Combo ("rt_light_shafts_resolution", &resolution, resolutions,
 		                  (int)countof (resolutions),
-		                  "Resolution of the light-shaft march: higher settings sample the volume more finely and cost more."))
+		                  "Light-shaft reconstruction quality: higher settings keep a longer stable volume history and cost more."))
 			QR_Editor_HostCvarSet ("rt_light_shafts_resolution", va ("%d", resolution));
 		if (material_reset)
 			QRE_MatCvarReset ("rt_light_shafts_resolution");
@@ -6673,7 +6673,7 @@ static const qre_global_t qre_globals[] = {
 	{ NULL,  "rt_light_shafts_intensity", QRE_G_FLOAT, 0, 4,
 	  "Strength of the light shafts cast by projector and custom spot lights.", NULL, "rt_light_shafts" },
 	{ NULL,  "rt_light_shafts_resolution", QRE_G_INT, 0, 2,
-	  "Resolution of the light-shaft march: low, medium or high. Higher resolutions sample the shafts more finely and cost more.", NULL, "rt_light_shafts" },
+	  "Light-shaft reconstruction quality: low, medium or high. Higher settings keep a longer stable volume history and cost more.", NULL, "rt_light_shafts" },
 
 	{ "Volumetric fog", "rt_volume_type",    QRE_G_INT,   0, 2,
 	  "0 off, 1 a simple depth-based fog (the density and the color below), 2 the volumetric pass the sky light feeds." },

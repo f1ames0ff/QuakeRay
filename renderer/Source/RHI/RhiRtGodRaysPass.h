@@ -488,6 +488,9 @@ private:
     // Set 6: builds (or rebuilds, when the slot's TLAS changed) the acceleration-structure set.
     bool PrepareLightShaftVolumeSet(Target &target, nvrhi::ICommandList *pCommandList);
 
+    bool PrepareLightShaftHistory(uint32_t width, uint32_t height);
+    void ReleaseLightShaftHistory();
+
     // Set 0: builds (or rebuilds, when either pointer changed) the shadow map set. Returns false
     // when no valid shadow map was set.
     bool PrepareShadowSet();
@@ -535,6 +538,7 @@ private:
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle blueNoiseLayout;
     nvrhi::BindingLayoutHandle lightShaftVolumeLayout;
+    nvrhi::BindingLayoutHandle lightShaftHistoryLayout;
     nvrhi::BindingLayoutHandle pushConstantLayout;
     nvrhi::BindingLayoutHandle emptyLayout;
 
@@ -572,6 +576,13 @@ private:
     bool lightShaftVolumeFallbackCleared = false;
     nvrhi::ITexture *lightShaftVolumeTexture = nullptr;
     nvrhi::ISampler *lightShaftVolumeSampler = nullptr;
+
+    nvrhi::SamplerHandle lightShaftHistorySampler;
+    nvrhi::TextureHandle lightShaftHistoryTextures[MAX_FRAMES_IN_FLIGHT];
+    nvrhi::BindingSetHandle lightShaftHistorySets[MAX_FRAMES_IN_FLIGHT];
+    uint32_t lightShaftHistoryWidth = 0;
+    uint32_t lightShaftHistoryHeight = 0;
+    bool lightShaftHistoryCleared = false;
 
     // One entry per engine frame slot (MAX_FRAMES_IN_FLIGHT, Common.h:31).
     Target targets[MAX_FRAMES_IN_FLIGHT];
