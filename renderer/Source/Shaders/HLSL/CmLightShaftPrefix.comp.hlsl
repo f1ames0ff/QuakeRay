@@ -14,6 +14,9 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
+// Independent implementation of the standard front-to-back prefix integral;
+// no reference renderer source is copied.
+
 #define DESC_SET_LIGHT_SHAFT_VOLUME 0
 #define DESC_SET_GLOBAL_UNIFORM 1
 

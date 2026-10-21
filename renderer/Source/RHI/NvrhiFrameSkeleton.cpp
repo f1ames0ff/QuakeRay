@@ -1226,6 +1226,10 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                             godRaysPass->SetLightShaftVolume(lightShaftVolumePass->GetTexture(frameIndex),
                                                              lightShaftVolumePass->GetSampler());
                         }
+                        else
+                        {
+                            godRaysPass->SetLightShaftVolume(nullptr, nullptr);
+                        }
                     }
 
                     godRaysReflectionsPending = godRaysPass->RenderInput(

@@ -106,6 +106,8 @@ struct GodRaysParams_BT
 };
 
 [[vk::binding(0, DESC_SET_GOD_RAYS_PARAMS)]] StructuredBuffer<GodRaysParams_BT> godRaysParams;
+// The light-shaft reconstruction below is an independent implementation of standard
+// froxel integration and reprojected filtering; no reference renderer source is copied.
 [[vk::binding(0, 6)]] Texture3D<float4> lightShaftVolume;
 [[vk::binding(1, 6)]] SamplerState lightShaftVolumeSampler;
 [[vk::binding(0, 7)]] Texture2D<float4> lightShaftHistoryPrev;
@@ -171,15 +173,15 @@ float getStep(float t, float density)
 
 float3 lightShaftVolumeUVW(float3 world)
 {
-    float4 ndc = mul(globalUniform.volumeViewProj, float4(world, 1.0));
-    ndc.xy /= ndc.w;
+    const float4 clip = mul(globalUniform.volumeViewProj, float4(world, 1.0));
+    const float2 screen = clip.xy * (0.5 / clip.w) + 0.5;
 
     const float nearPlane = globalUniform.volumeCameraNear;
     const float farPlane = max(globalUniform.volumeCameraFar, nearPlane + 0.001);
-    const float distance = length(world - globalUniform.cameraPosition.xyz);
-    const float z = saturate((distance - nearPlane) / (farPlane - nearPlane));
+    const float radialDistance = length(world - globalUniform.cameraPosition.xyz);
+    const float normalizedDepth = (radialDistance - nearPlane) / (farPlane - nearPlane);
 
-    return float3(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5, z);
+    return float3(screen, saturate(normalizedDepth));
 }
 
 [numthreads(16, 16, 1)]
@@ -336,6 +338,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             // Q2RTX clears in both passes: a reflection whose segment misses
             // the world box shows no god rays at all
             framebufGodRays[pixelPos] = (float4)0;
+            if (push.passIndex == 0)
+            {
+                lightShaftHistory[pixelPos] = (float4)0;
+            }
             return;
         }
 
@@ -345,6 +351,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     else
     {
         framebufGodRays[pixelPos] = (float4)0;
+        if (push.passIndex == 0)
+        {
+            lightShaftHistory[pixelPos] = (float4)0;
+        }
         return;
     }
 
@@ -436,11 +446,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             const float4 previous = lightShaftHistoryPrev.SampleLevel(
                 lightShaftHistorySampler, previousUv, 0.0);
 
-            if (previous.a > 0.0 && abs(previousDepth - rayDistance) <= max(1.0, rayDistance * 0.05))
+            const float cameraTravel = length(globalUniform.cameraPosition.xyz -
+                                              globalUniform.cameraPositionPrev.xyz);
+
+            if (previous.a > 0.0 && cameraTravel < 100.0 &&
+                abs(previousDepth - rayDistance) <= max(1.0, rayDistance * 0.05))
             {
                 const float maxHistory = (float)clamp(godRaysParams[0].lightShaftSteps, 4u, 32u);
-                historyLength = min(previous.a + 1.0, maxHistory);
-                accumulated = lerp(previous.rgb, current, 1.0 / historyLength);
+                const float previousAge = min(max(previous.a, 0.0), maxHistory - 1.0);
+                const float currentWeight = 1.0 / (previousAge + 1.0);
+                historyLength = previousAge + 1.0;
+                accumulated = current * currentWeight + previous.rgb * (1.0 - currentWeight);
             }
         }
 

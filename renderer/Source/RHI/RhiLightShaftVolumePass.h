@@ -14,6 +14,9 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
+// Independent implementation of a frustum froxel lighting/prefix pass and its history
+// resources; no reference renderer source is copied.
+
 #pragma once
 
 #include <cstddef>

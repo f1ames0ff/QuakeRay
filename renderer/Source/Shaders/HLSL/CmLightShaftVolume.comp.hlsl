@@ -14,6 +14,9 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
+// Independent implementation of standard froxel volumetric techniques; no reference
+// renderer source is copied.
+
 #define DESC_SET_TLAS 0
 #define DESC_SET_LIGHT_SHAFT_PARAMS 1
 #define DESC_SET_GLOBAL_UNIFORM 2
@@ -49,22 +52,23 @@ float getDensity(float3 p)
     return bounds.x * bounds.y * bounds.z;
 }
 
+float3 volumeRayDirection(float2 cellUv)
+{
+    const float2 ndc = cellUv * 2.0 - 1.0;
+    float4 farPoint = mul(globalUniform.volumeViewProjInv, float4(ndc, 1.0, 1.0));
+    farPoint.xyz /= farPoint.w;
+    return normalize(farPoint.xyz - globalUniform.cameraPosition.xyz);
+}
+
 float3 volumeGetCenter(int3 cell)
 {
-    const float3 local = ((float3)cell + 0.5) /
-                         float3(LIGHT_SHAFT_VOLUME_SIZE_X, LIGHT_SHAFT_VOLUME_SIZE_Y, LIGHT_SHAFT_VOLUME_SIZE_Z);
-
-    float4 ndc = float4(local.x * 2.0 - 1.0, local.y * 2.0 - 1.0, 0.1, 1.0);
-    float4 worldPos = mul(globalUniform.volumeViewProjInv, ndc);
-    worldPos.xyz /= worldPos.w;
-
-    const float3 cameraPos = globalUniform.cameraPosition.xyz;
-    const float3 direction = normalize(worldPos.xyz - cameraPos);
+    const float2 cellUv = ((float2)cell.xy + 0.5) /
+                          float2(LIGHT_SHAFT_VOLUME_SIZE_X, LIGHT_SHAFT_VOLUME_SIZE_Y);
     const float nearPlane = max(globalUniform.volumeCameraNear, 0.001);
     const float farPlane = max(globalUniform.volumeCameraFar, nearPlane + 0.001);
-    const float distance = lerp(nearPlane, farPlane, saturate(local.z));
-
-    return cameraPos + direction * distance;
+    const float distance = nearPlane + (farPlane - nearPlane) * saturate((cell.z + 0.5) /
+                                                                          (float)LIGHT_SHAFT_VOLUME_SIZE_Z);
+    return globalUniform.cameraPosition.xyz + volumeRayDirection(cellUv) * distance;
 }
 
 float hash1(uint value)
