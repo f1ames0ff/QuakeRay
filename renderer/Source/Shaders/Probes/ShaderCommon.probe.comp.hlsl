@@ -902,6 +902,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     v += float(framebufQ2Cluster_Sampled.Load(int3(pix, 0)).x);
     v += framebufAlbedo_Sampled.SampleLevel(framebufQ2Cluster_Sampler, uv, 0.0).x;
 
+    // framebufQ2Cluster_Prev  r32ui
+    framebufQ2Cluster_Prev[pix] = uint4(1u, 1u, 1u, 1u);
+    v += float(framebufQ2Cluster_Prev[pix].x);
+    v += float(framebufQ2Cluster_Prev_Sampled.Load(int3(pix, 0)).x);
+    v += framebufAlbedo_Sampled.SampleLevel(framebufQ2Cluster_Prev_Sampler, uv, 0.0).x;
+
     // framebufQ2GlassFilter  rgba16f
     framebufQ2GlassFilter[pix] = float4(1.0, 1.0, 1.0, 1.0);
     v += float(framebufQ2GlassFilter[pix].x);

@@ -399,6 +399,11 @@ void RT_LIGHT_ResolveEmitter(const rt_emitter_light_t *emitter, rt_emitter_resol
 
 void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
 {
+    if (!RT_LightBudgetTake (1))
+    {
+        return;
+    }
+
     rt_emitter_resolved_t resolved;
     rt_emitter_light_t    light = *emitter;
     rt_light_t           *ov = (emitter->name && emitter->name[0])
@@ -437,6 +442,7 @@ void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
 
     VectorAdd(emitter->position, resolved.offset, position);
     RT_FIXUP_LIGHT_INTENSITY(resolved.color, true);
+    RT_KeepEmissiveLightColor(resolved.color);
 
     if (light.spot && DotProduct(light.direction, light.direction) > 0.0f)
     {

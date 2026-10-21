@@ -752,7 +752,7 @@ QRAPI QrResult QRCONV qrUploadDtalGroups(
 
 #define QR_CLUSTER_MAX_REGISTERED_LIGHTS 4095
 
-#define QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS 16
+#define QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS 128
 
 typedef struct QrClusterLightSource
 {
@@ -851,6 +851,7 @@ typedef struct QrClusterLightStats
     uint32_t moveFootprint;
 
     uint32_t tailEntries;
+    uint32_t tailCandidatesDropped;
     uint32_t clustersWithTail;
     uint32_t tailBudgetExceeded;
     uint32_t candidateMax;

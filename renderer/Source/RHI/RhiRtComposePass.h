@@ -378,12 +378,12 @@ private:
         // not as VkImages, because they are what the change detection compares; a change in any of
         // them or in any of the three sizes means the engine re-created the framebuffers (or the
         // resolution changed) and the wraps and the sets have to follow.
-        uint64_t imageHandles[88] = {};
+        uint64_t imageHandles[90] = {};
         uint32_t width = 0;
         uint32_t height = 0;
         uint32_t upscaledWidth = 0;
         uint32_t upscaledHeight = 0;
-        nvrhi::TextureHandle engineTextures[88];
+        nvrhi::TextureHandle engineTextures[90];
         nvrhi::BindingSetHandle gradientReprojectSet;
         nvrhi::BindingSetHandle adapterSet;
         nvrhi::BindingSetHandle gradientImgSet;

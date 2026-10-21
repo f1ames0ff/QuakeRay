@@ -4458,7 +4458,7 @@ static void QRE_MatWaterSection (void)
 
 static void QRE_MatSystemTab (void)
 {
-	static const char *const dbg_modes[] = { "off", "wireframe", "normals" };
+	static const char *const dbg_modes[] = { "off", "wireframe", "normals", "lod" };
 	float                     value;
 	int                       dbg = CVAR_TO_INT32 (rt_dtal_debug);
 	int                       maxpolys;
@@ -4473,10 +4473,10 @@ static void QRE_MatSystemTab (void)
 		QR_GUI_Separator ();
 	}
 
-	if (dbg < 0 || dbg > 2)
+	if (dbg < 0 || dbg > 3)
 		dbg = 0;
 	if (QR_GUI_Combo ("debug DTAL", &dbg, dbg_modes, (int)countof (dbg_modes),
-	                  "Draw the triangle area lights of the scene: the polygons (wireframe) or their centers and normals. The DTAL grid groups are drawn the same way, as their member patches and their parents (rt_dtal_debug)."))
+	                  "Draw the triangle area lights of the scene: the polygons (wireframe) or their centers and normals. The DTAL grid groups are drawn the same way, as their member patches and their parents; the wireframe and normal modes draw the effective set, where a group merged into an LOD node is represented by the node, and `lod` draws the formed LOD itself: an arrow on every published node, an arrow on every merged group with a link to the node that absorbed it, and an arrow on every group still individual (rt_dtal_debug)."))
 		QR_Editor_HostCvarSet ("rt_dtal_debug", va ("%d", dbg));
 
 	QRE_MatCvarReset ("rt_dtal_debug");

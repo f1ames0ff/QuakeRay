@@ -154,6 +154,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     const int2 ipos = pos_grad * Q2_GRAD_DWN + found_offset;
 
+    framebufQ2Cluster[ipos] =
+               framebufQ2Cluster_Prev_Sampled.Load(int3(found_pos_prev, 0));
+
     framebufQ2RngSeed[ipos] =
                framebufQ2RngSeed_Prev_Sampled.Load(int3(found_pos_prev, 0));
 

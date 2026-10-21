@@ -128,7 +128,10 @@ The contract for work added to the graph:
 - Touch profiler/bench state only through the `RT_Prof_*` helpers: per-invocation slots accumulate
   into a thread-local buffer, and the per-frame merge and the window publication/reset run under
   the profiler lock. The cluster statistics are written by the cluster prepare/slice/finish chain
-  (the finish task runs on a worker) and read on the main thread only after the frame's join.
+  (the finish task runs on a worker) and read on the main thread only after the frame's join. The
+  DTAL LOD selection, its effective-representation pass and the combined upload arrays follow the
+  same rule: they are written inside the viewmodel task's light stage and read by the light report
+  only after the frame's join.
 - `Mem_*` uses mimalloc, but allocator thread safety does not make its owner/container safe.
   Audit allocation, publication, reallocation and freeing together; do not assume hunk/zone helpers
   are interchangeable worker allocators. The console's buffer lock likewise does not authorize

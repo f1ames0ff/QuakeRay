@@ -7,6 +7,7 @@
 #include "rt_alias.h"
 #include "rt_cluster_select.h"
 #include "rt_dtal_groups.h"
+#include "rt_dtal_lod.h"
 #include "rt_brush_transform_cache.h"
 
 static int g_failures = 0;
@@ -971,6 +972,461 @@ static void TestBrushTransformCache(void)
     }
 }
 
+static rt_dtal_lod_config_t MakeLodConfig(void)
+{
+    rt_dtal_lod_config_t config;
+
+    memset(&config, 0, sizeof(config));
+    config.startDistance = 512.0f;
+    config.screenAngleDeg = 2.0f;
+    config.maxBands = 4;
+    config.offscreenShift = 1;
+    config.hysteresis = 0.15f;
+    config.dwellSeconds = 0.25f;
+
+    return config;
+}
+
+static void MakeLodInput(rt_dtal_lod_input_t *input, uint64_t uid, double ox, double oy, double oz, float power, float area,
+                         float nx, float ny, float nz)
+{
+    memset(input, 0, sizeof(*input));
+    input->uid = uid;
+    input->emissionKey = 7u;
+    input->styleKey = 1u;
+    input->axis = 2;
+    input->passClass = 0u;
+    input->origin[0] = (float)ox;
+    input->origin[1] = (float)oy;
+    input->origin[2] = (float)oz;
+    input->normal[0] = nx;
+    input->normal[1] = ny;
+    input->normal[2] = nz;
+    input->area = area;
+    input->power = power;
+    input->boundsRadius = (float)(sqrt((double)area) * 0.5);
+}
+
+static double LodCellSize(const rt_dtal_lod_config_t *config, int level)
+{
+    const double radians = (double)config->screenAngleDeg * 3.14159265358979323846 / 180.0;
+
+    return 2.0 * tan(radians * 0.5) * (double)config->startDistance * pow(2.0, (double)level);
+}
+
+static int LodSelectAll(rt_dtal_lod_t *lod, const rt_dtal_lod_config_t *config, const rt_dtal_lod_input_t *inputs, int count,
+                        const uint32_t *visibility, const float camera[3], double now)
+{
+    return RT_Dtal_Lod_Select(lod, config, inputs, count, visibility, camera, now, 0, NULL);
+}
+
+static void TestDtalLodHierarchyAndAggregates(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod allocation");
+
+    if (lod == NULL)
+        return;
+
+    rt_dtal_lod_input_t inputs[2];
+
+    MakeLodInput(&inputs[0], 11u, 0.0, 0.0, 600.0, 2.0f, 4.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[1], 12u, 2.0, 0.0, 600.0, 1.0f, 2.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, inputs, 2) == 1, "lod build");
+    CHECK(RT_Dtal_Lod_GroupCount(lod) == 2, "lod group count: %d", RT_Dtal_Lod_GroupCount(lod));
+
+    const float camera[3] = { 0.0f, 0.0f, 0.0f };
+    const int   transitions = LodSelectAll(lod, &config, inputs, 2, NULL, camera, 1.0);
+
+    CHECK(transitions == 2, "lod merge transitions: %d", transitions);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 1, "lod node count: %u", RT_Dtal_Lod_NodeCount(lod));
+
+    const rt_dtal_lod_node_t *node = &RT_Dtal_Lod_Nodes(lod)[0];
+    const double              cellSize = LodCellSize(&config, 0);
+
+    CHECK(node->band == 0, "lod node band: %d", node->band);
+    CHECK(node->cell[0] == (int32_t)floor(0.0 / cellSize), "lod cell x: %d", node->cell[0]);
+    CHECK(node->cell[1] == (int32_t)floor(0.0 / cellSize), "lod cell y: %d", node->cell[1]);
+    CHECK(node->cell[2] == (int32_t)floor(600.0 / cellSize), "lod cell z: %d", node->cell[2]);
+    CHECK(node->memberCount == 2, "lod member count: %u", node->memberCount);
+    CHECK(fabs((double)node->power - 3.0) <= 1e-4, "lod power: %.6f", (double)node->power);
+    CHECK(fabs((double)node->center[0] - 2.0 / 3.0) <= 1e-4, "lod center x: %.6f", (double)node->center[0]);
+    CHECK(fabs((double)node->center[2] - 600.0) <= 1e-3, "lod center z: %.6f", (double)node->center[2]);
+    CHECK(fabs((double)node->normal[2] - 1.0) <= 1e-5, "lod normal z: %.6f", (double)node->normal[2]);
+    CHECK(fabs((double)node->area - 6.0) <= 1e-4, "lod area: %.6f", (double)node->area);
+
+    double expectedRadius = 0.0;
+
+    for (int m = 0; m < 2; m++)
+    {
+        const double dx = (double)inputs[m].origin[0] - (double)node->center[0];
+        const double dy = (double)inputs[m].origin[1] - (double)node->center[1];
+        const double dz = (double)inputs[m].origin[2] - (double)node->center[2];
+        const double bound = sqrt(dx * dx + dy * dy + dz * dz) + (double)inputs[m].boundsRadius;
+
+        if (bound > expectedRadius)
+            expectedRadius = bound;
+    }
+
+    CHECK(fabs((double)node->boundsRadius - expectedRadius) <= 1e-3, "lod bounds: %.6f vs %.6f",
+          (double)node->boundsRadius, expectedRadius);
+    CHECK(RT_Dtal_Lod_Members(lod)[0] == 0u && RT_Dtal_Lod_Members(lod)[1] == 1u, "lod member order");
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) == 0u && RT_Dtal_Lod_GroupNode(lod, 1) == 0u, "lod group node mapping");
+
+    const rt_dtal_lod_stats_t *stats = RT_Dtal_Lod_Stats(lod);
+
+    CHECK(stats->mergedGroups == 2 && stats->individualGroups == 0 && stats->publishedNodes == 1, "lod stats: %llu/%llu/%llu",
+          (unsigned long long)stats->mergedGroups, (unsigned long long)stats->individualGroups,
+          (unsigned long long)stats->publishedNodes);
+    CHECK(stats->bandGroups[0] == 2, "lod band groups: %llu", (unsigned long long)stats->bandGroups[0]);
+    CHECK(stats->degenerateRefused == 0, "lod refusals: %llu", (unsigned long long)stats->degenerateRefused);
+
+    rt_dtal_lod_input_t far[2];
+
+    MakeLodInput(&far[0], 21u, 0.0, 0.0, 524288.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&far[1], 22u, 1.0, 0.0, 524288.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, far, 2) == 1, "lod far build");
+    CHECK(LodSelectAll(lod, &config, far, 2, NULL, camera, 2.0) == 2, "lod far transitions");
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 1, "lod far nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+
+    node = &RT_Dtal_Lod_Nodes(lod)[0];
+    CHECK(node->band == 3, "lod clamp band: %d", node->band);
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
+static void TestDtalLodSingletonCellsAndReset(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod singleton allocation");
+
+    if (lod == NULL)
+        return;
+
+    const float camera[3] = { 0.0f, 0.0f, 0.0f };
+
+    rt_dtal_lod_input_t single;
+
+    MakeLodInput(&single, 31u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, &single, 1) == 1, "lod singleton build");
+    LodSelectAll(lod, &config, &single, 1, NULL, camera, 1.0);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod singleton nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) == RT_DTAL_LOD_NO_NODE, "lod singleton mapping");
+    CHECK(RT_Dtal_Lod_Stats(lod)->individualGroups == 1, "lod singleton stats");
+
+    rt_dtal_lod_input_t distant[2];
+
+    MakeLodInput(&distant[0], 41u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&distant[1], 42u, 40.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, distant, 2) == 1, "lod cell split build");
+    LodSelectAll(lod, &config, distant, 2, NULL, camera, 1.0);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod cell split nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+
+    rt_dtal_lod_input_t merged[2];
+
+    MakeLodInput(&merged[0], 51u, 0.0, 0.0, 600.0, 2.0f, 4.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&merged[1], 52u, 2.0, 0.0, 600.0, 1.0f, 2.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, merged, 2) == 1, "lod determinism build first");
+    LodSelectAll(lod, &config, merged, 2, NULL, camera, 1.0);
+
+    const int firstNodes = (int)RT_Dtal_Lod_NodeCount(lod);
+    uint64_t  firstUid = 0;
+
+    if (firstNodes == 1)
+        firstUid = RT_Dtal_Lod_Nodes(lod)[0].uid;
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, merged, 2) == 1, "lod determinism build second");
+    LodSelectAll(lod, &config, merged, 2, NULL, camera, 1.0);
+
+    const int secondNodes = (int)RT_Dtal_Lod_NodeCount(lod);
+    uint64_t  secondUid = 0;
+
+    if (secondNodes == 1)
+        secondUid = RT_Dtal_Lod_Nodes(lod)[0].uid;
+
+    CHECK(firstNodes == 1 && secondNodes == 1 && firstUid == secondUid, "lod determinism uid: %llu vs %llu",
+          (unsigned long long)firstUid, (unsigned long long)secondUid);
+
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 5) == RT_DTAL_LOD_NO_NODE, "lod out of range mapping");
+    CHECK(RT_Dtal_Lod_GroupNode(lod, -1) == RT_DTAL_LOD_NO_NODE, "lod negative mapping");
+
+    RT_Dtal_Lod_Reset(lod);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod reset nodes");
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) == RT_DTAL_LOD_NO_NODE, "lod reset mapping");
+    CHECK(LodSelectAll(lod, &config, merged, 2, NULL, camera, 2.0) == -1, "lod select before build");
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
+static void TestDtalLodHysteresisAndUnmerge(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod hysteresis allocation");
+
+    if (lod == NULL)
+        return;
+
+    rt_dtal_lod_input_t inputs[2];
+
+    MakeLodInput(&inputs[0], 61u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[1], 62u, 2.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, inputs, 2) == 1, "lod hysteresis build");
+
+    const float cameraFar[3] = { 0.0f, 0.0f, 0.0f };
+    const float cameraMid[3] = { 0.0f, 0.0f, 80.0f };
+    const float cameraNear[3] = { 0.0f, 0.0f, 170.0f };
+
+    CHECK(LodSelectAll(lod, &config, inputs, 2, NULL, cameraFar, 1.0) == 2, "lod approach merge");
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) != RT_DTAL_LOD_NO_NODE, "lod merged far");
+    CHECK(LodSelectAll(lod, &config, inputs, 2, NULL, cameraMid, 1.1) == 0, "lod hysteresis hold");
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) != RT_DTAL_LOD_NO_NODE, "lod still merged mid");
+    CHECK(LodSelectAll(lod, &config, inputs, 2, NULL, cameraNear, 1.2) == 2, "lod unmerge near");
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) == RT_DTAL_LOD_NO_NODE, "lod split near");
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod split nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+    CHECK(LodSelectAll(lod, &config, inputs, 2, NULL, cameraMid, 1.3) == 0, "lod unmerge hysteresis hold");
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) == RT_DTAL_LOD_NO_NODE, "lod still split mid");
+    CHECK(LodSelectAll(lod, &config, inputs, 2, NULL, cameraFar, 1.4) == 2, "lod remerge far");
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) != RT_DTAL_LOD_NO_NODE, "lod merged again");
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
+static void TestDtalLodDwellVisibility(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod dwell allocation");
+
+    if (lod == NULL)
+        return;
+
+    rt_dtal_lod_input_t inputs[2];
+
+    MakeLodInput(&inputs[0], 71u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[1], 72u, 2.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, inputs, 2) == 1, "lod dwell build");
+
+    const float    camera[3] = { 0.0f, 0.0f, 0.0f };
+    const uint32_t visible[2] = { RT_DTAL_LOD_VISIBLE, RT_DTAL_LOD_VISIBLE };
+    const uint32_t hidden[2] = { RT_DTAL_LOD_OFF_FRUSTUM, RT_DTAL_LOD_OFF_FRUSTUM };
+
+    CHECK(LodSelectAll(lod, &config, inputs, 2, visible, camera, 1.0) == 2, "lod dwell initial merge");
+    CHECK(RT_Dtal_Lod_Nodes(lod)[0].band == 0, "lod dwell band: %d", RT_Dtal_Lod_Nodes(lod)[0].band);
+
+    LodSelectAll(lod, &config, inputs, 2, hidden, camera, 1.1);
+    CHECK(RT_Dtal_Lod_Nodes(lod)[0].band == 0, "lod dwell pending");
+    LodSelectAll(lod, &config, inputs, 2, hidden, camera, 1.2);
+    CHECK(RT_Dtal_Lod_Nodes(lod)[0].band == 0, "lod dwell pending second");
+    LodSelectAll(lod, &config, inputs, 2, hidden, camera, 1.5);
+    CHECK(RT_Dtal_Lod_Nodes(lod)[0].band == 1, "lod dwell shift: %d", RT_Dtal_Lod_Nodes(lod)[0].band);
+
+    LodSelectAll(lod, &config, inputs, 2, visible, camera, 2.0);
+    CHECK(RT_Dtal_Lod_Nodes(lod)[0].band == 1, "lod dwell back pending");
+    LodSelectAll(lod, &config, inputs, 2, visible, camera, 2.4);
+    CHECK(RT_Dtal_Lod_Nodes(lod)[0].band == 0, "lod dwell back: %d", RT_Dtal_Lod_Nodes(lod)[0].band);
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
+static void TestDtalLodBudgetAndExactlyOnce(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod budget allocation");
+
+    if (lod == NULL)
+        return;
+
+    rt_dtal_lod_input_t inputs[5];
+
+    MakeLodInput(&inputs[0], 81u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[1], 82u, 2.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[2], 83u, 0.0, 0.0, 900.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[3], 84u, 2.0, 0.0, 900.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[4], 85u, 80.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, inputs, 5) == 1, "lod budget build");
+
+    const float camera[3] = { 0.0f, 0.0f, 0.0f };
+    int         cursor = 0;
+
+    for (int tick = 0; tick < 6; tick++)
+        RT_Dtal_Lod_Select(lod, &config, inputs, 5, NULL, camera, 1.0 + 0.1 * (double)tick, 2, &cursor);
+
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 2, "lod budget nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+    CHECK(RT_Dtal_Lod_Stats(lod)->mergedGroups == 4, "lod budget merged: %llu",
+          (unsigned long long)RT_Dtal_Lod_Stats(lod)->mergedGroups);
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 4) == RT_DTAL_LOD_NO_NODE, "lod budget lone group");
+
+    for (int g = 0; g < 5; g++)
+    {
+        const uint32_t published = RT_Dtal_Lod_GroupNode(lod, g);
+        int            occurrences = 0;
+
+        for (uint32_t n = 0; n < RT_Dtal_Lod_NodeCount(lod); n++)
+        {
+            const rt_dtal_lod_node_t *node = &RT_Dtal_Lod_Nodes(lod)[n];
+
+            for (uint32_t m = 0; m < node->memberCount; m++)
+                if (RT_Dtal_Lod_Members(lod)[node->firstMember + m] == (uint32_t)g)
+                    occurrences++;
+        }
+
+        CHECK(occurrences == (published != RT_DTAL_LOD_NO_NODE ? 1 : 0), "lod exactly once group %d: %d", g, occurrences);
+    }
+
+    rt_dtal_lod_t *full = RT_Dtal_Lod_Create();
+
+    CHECK(full != NULL, "lod budget full allocation");
+
+    if (full != NULL)
+    {
+        CHECK(RT_Dtal_Lod_Build(full, &config, inputs, 5) == 1, "lod budget full build");
+        LodSelectAll(full, &config, inputs, 5, NULL, camera, 1.0);
+        CHECK(RT_Dtal_Lod_NodeCount(full) == RT_Dtal_Lod_NodeCount(lod), "lod budget node parity");
+
+        if (RT_Dtal_Lod_NodeCount(full) == RT_Dtal_Lod_NodeCount(lod))
+        {
+            for (uint32_t n = 0; n < RT_Dtal_Lod_NodeCount(lod); n++)
+                CHECK(RT_Dtal_Lod_Nodes(full)[n].uid == RT_Dtal_Lod_Nodes(lod)[n].uid, "lod budget node uid parity %u", n);
+        }
+
+        RT_Dtal_Lod_Destroy(full);
+    }
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
+static void TestDtalLodDegenerateRefusal(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod degenerate allocation");
+
+    if (lod == NULL)
+        return;
+
+    const float camera[3] = { 0.0f, 0.0f, 0.0f };
+
+    rt_dtal_lod_input_t opposite[2];
+
+    MakeLodInput(&opposite[0], 91u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&opposite[1], 92u, 1.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, -1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, opposite, 2) == 1, "lod opposite build");
+    LodSelectAll(lod, &config, opposite, 2, NULL, camera, 1.0);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod opposite nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) == RT_DTAL_LOD_NO_NODE && RT_Dtal_Lod_GroupNode(lod, 1) == RT_DTAL_LOD_NO_NODE,
+          "lod opposite mapping");
+    CHECK(RT_Dtal_Lod_Stats(lod)->degenerateRefused >= 1, "lod opposite refusal: %llu",
+          (unsigned long long)RT_Dtal_Lod_Stats(lod)->degenerateRefused);
+
+    rt_dtal_lod_input_t dark[2];
+
+    MakeLodInput(&dark[0], 93u, 0.0, 0.0, 600.0, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&dark[1], 94u, 1.0, 0.0, 600.0, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, dark, 2) == 1, "lod dark build");
+    LodSelectAll(lod, &config, dark, 2, NULL, camera, 1.0);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod dark nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+    CHECK(RT_Dtal_Lod_Stats(lod)->degenerateRefused >= 1, "lod dark refusal: %llu",
+          (unsigned long long)RT_Dtal_Lod_Stats(lod)->degenerateRefused);
+
+    rt_dtal_lod_input_t empty[2];
+
+    MakeLodInput(&empty[0], 95u, 0.0, 0.0, 600.0, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&empty[1], 96u, 1.0, 0.0, 600.0, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, empty, 2) == 1, "lod empty build");
+    LodSelectAll(lod, &config, empty, 2, NULL, camera, 1.0);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod empty nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+    CHECK(RT_Dtal_Lod_Stats(lod)->degenerateRefused >= 1, "lod empty refusal: %llu",
+          (unsigned long long)RT_Dtal_Lod_Stats(lod)->degenerateRefused);
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
+static void TestDtalLodConfigGuard(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod guard allocation");
+
+    if (lod == NULL)
+        return;
+
+    rt_dtal_lod_input_t inputs[2];
+
+    MakeLodInput(&inputs[0], 101u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[1], 102u, 1.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, inputs, 2) == 1, "lod guard build");
+
+    const float          camera[3] = { 0.0f, 0.0f, 0.0f };
+    rt_dtal_lod_config_t shifted = config;
+
+    shifted.startDistance = 640.0f;
+    CHECK(RT_Dtal_Lod_Select(lod, &shifted, inputs, 2, NULL, camera, 1.0, 0, NULL) == -1, "lod guard start mismatch");
+
+    shifted = config;
+    shifted.screenAngleDeg = 3.0f;
+    CHECK(RT_Dtal_Lod_Select(lod, &shifted, inputs, 2, NULL, camera, 1.0, 0, NULL) == -1, "lod guard screen mismatch");
+
+    shifted = config;
+    shifted.maxBands = 3;
+    CHECK(RT_Dtal_Lod_Select(lod, &shifted, inputs, 2, NULL, camera, 1.0, 0, NULL) == -1, "lod guard bands mismatch");
+
+    CHECK(RT_Dtal_Lod_Select(lod, &config, inputs, 2, NULL, camera, 1.0, 0, NULL) == 2, "lod guard matching config");
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
+static void TestDtalLodSingletonFlag(void)
+{
+    rt_dtal_lod_config_t config = MakeLodConfig();
+    rt_dtal_lod_t       *lod = RT_Dtal_Lod_Create();
+
+    CHECK(lod != NULL, "lod singleton flag allocation");
+
+    if (lod == NULL)
+        return;
+
+    rt_dtal_lod_input_t inputs[2];
+
+    MakeLodInput(&inputs[0], 111u, 0.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    MakeLodInput(&inputs[1], 112u, 1.0, 0.0, 600.0, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+    inputs[0].flags = RT_DTAL_LOD_INPUT_SINGLETON;
+
+    CHECK(RT_Dtal_Lod_Build(lod, &config, inputs, 2) == 1, "lod singleton flag build");
+
+    const float camera[3] = { 0.0f, 0.0f, 0.0f };
+
+    LodSelectAll(lod, &config, inputs, 2, NULL, camera, 1.0);
+    CHECK(RT_Dtal_Lod_NodeCount(lod) == 0, "lod singleton flag nodes: %u", RT_Dtal_Lod_NodeCount(lod));
+    CHECK(RT_Dtal_Lod_GroupNode(lod, 0) == RT_DTAL_LOD_NO_NODE, "lod singleton flag group zero");
+    CHECK(RT_Dtal_Lod_Stats(lod)->individualGroups == 2, "lod singleton flag stats: %llu",
+          (unsigned long long)RT_Dtal_Lod_Stats(lod)->individualGroups);
+
+    RT_Dtal_Lod_Destroy(lod);
+}
+
 int main(void)
 {
     TestAliasEdgeCases();
@@ -988,6 +1444,14 @@ int main(void)
     TestClusterSelectionOrderIdentity();
     TestBuilderBudgetFailure();
     TestBrushTransformCache();
+    TestDtalLodHierarchyAndAggregates();
+    TestDtalLodSingletonCellsAndReset();
+    TestDtalLodHysteresisAndUnmerge();
+    TestDtalLodDwellVisibility();
+    TestDtalLodBudgetAndExactlyOnce();
+    TestDtalLodDegenerateRefusal();
+    TestDtalLodConfigGuard();
+    TestDtalLodSingletonFlag();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);
 

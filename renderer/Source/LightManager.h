@@ -42,6 +42,7 @@ public:
 
     static constexpr uint32_t LIGHT_STATS_CLUSTER_COUNT = 8192;
     static constexpr uint32_t LIGHT_STATS_SLOT_COUNT = 3;
+    static constexpr float    kLightMinColorSum = 0.0001f;
 
     static constexpr uint32_t CLUSTER_SKY_VIS_WORD_COUNT = LIGHT_STATS_CLUSTER_COUNT / 32;
 
@@ -89,7 +90,9 @@ public:
     bool PrepareClusterListPublication(uint32_t frameIndex, uint32_t numClusters,
                                        const uint32_t *pOffsets, const uint64_t *pLightUniqueIds,
                                        uint32_t totalLightCount, uint64_t listGeneration,
-                                       const ClusterLightTailRange &tails);
+                                       const ClusterLightTailRange &tails,
+                                       const uint32_t *pStatsSlotResets, uint32_t statsSlotResetCount,
+                                       bool clearStatsHistory);
     void RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount);
     void CommitClusterListPublication();
 
@@ -102,6 +105,8 @@ public:
 
     uint32_t GetLightStatsClusterTarget() const;
     VkDeviceSize GetLightStatsClusterSize() const;
+
+    const uint32_t *GetClusterStatsResets(uint32_t frameIndex, uint32_t &count, bool &clearHistory) const;
 
     VkDescriptorSetLayout GetDescSetLayout();
     VkDescriptorSet GetDescSet(uint32_t frameIndex);
@@ -264,6 +269,10 @@ private:
 
     uint32_t statsClusterTarget = LIGHT_STATS_CLUSTER_COUNT;
     uint32_t statsClusterCleared[LIGHT_STATS_SLOT_COUNT] = {};
+
+    std::vector<uint32_t> statsSlotResets[MAX_FRAMES_IN_FLIGHT];
+    bool                  statsHistoryCleared[MAX_FRAMES_IN_FLIGHT] = {};
+    bool                  warnedTailUnresolved = false;
 
     std::shared_ptr<AutoBuffer> prevToCurIndex;
     std::shared_ptr<AutoBuffer> curToPrevIndex;

@@ -16,7 +16,7 @@ float g_arrows[kMaxArrows * RT_DTAL_DEBUG_FLOATS_PER_ARROW];
 
 extern "C" void RT_DtalDebugDrawGui (int mode, unsigned int frame_id, float dt, int fb_x, int fb_y, int fb_w, int fb_h, int drawable_h)
 {
-	if (mode != 2 || !QR_GUI_Ready ())
+	if ((mode != 2 && mode != 3) || !QR_GUI_Ready ())
 		return;
 
 	const bool own_frame = QR_GUI_BeginFrame (frame_id, dt, fb_x, fb_y, fb_w, fb_h, drawable_h) != 0;
@@ -36,6 +36,13 @@ extern "C" void RT_DtalDebugDrawGui (int mode, unsigned int frame_id, float dt, 
 
 		if (len < 3.0f)
 			continue;
+
+		if (a[7] > 0.5f)
+		{
+			dl->AddCircleFilled (ImVec2 (x0, y0), 1.5f, col);
+			dl->AddLine (ImVec2 (x0, y0), ImVec2 (x1, y1), col, 1.0f);
+			continue;
+		}
 
 		const float ang = std::atan2 (dy, dx);
 		const float head = len < 18.0f ? len * 0.5f : 12.0f;

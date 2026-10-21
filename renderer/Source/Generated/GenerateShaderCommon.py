@@ -959,7 +959,7 @@ if Q2_CORE_ENABLED:
         "Q2TaaHistory"                  : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_UPSCALED_SIZE | FRAMEBUF_FLAGS_STORE_PREV),
         "Q2RngSeed"                     : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
 
-        "Q2Cluster"                     : (UINT32,    CHANNELS_R,    0),
+        "Q2Cluster"                     : (UINT32,    CHANNELS_R,    FRAMEBUF_FLAGS_STORE_PREV),
         "Q2GlassFilter"                 : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
         "Q2GlassReflection"             : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),
         "Q2GlassHistory"                : (FLOAT16,   CHANNELS_RGBA, FRAMEBUF_FLAGS_STORE_PREV),

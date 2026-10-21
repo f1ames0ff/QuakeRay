@@ -350,6 +350,8 @@ set(CORE_SOURCES
     shared/rt_alias.c
     Quake/rt_cluster_select.c
     Quake/rt_dtal_groups.c
+    Quake/rt_dtal_lod.c
+    Quake/rt_light_admit.c
     Quake/rt_material.c
     Quake/rt_lights.c
     Quake/rt_pkz.c
@@ -550,6 +552,7 @@ if(BUILD_TESTING)
         shared/rt_alias.c
         Quake/rt_cluster_select.c
         Quake/rt_dtal_groups.c
+        Quake/rt_dtal_lod.c
     )
     target_include_directories(rt_lighting_tests PRIVATE ${CMAKE_SOURCE_DIR}/Quake ${CMAKE_SOURCE_DIR}/shared)
 
@@ -560,6 +563,23 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME rt_lighting_tests COMMAND rt_lighting_tests)
+
+    add_executable(rt_light_admit_tests
+        tests/rt_light_admit_tests.c
+        Quake/rt_light_admit.c
+    )
+    target_include_directories(rt_light_admit_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/Quake
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+    )
+
+    if(MSVC)
+        target_compile_options(rt_light_admit_tests PRIVATE /W4)
+    else()
+        target_compile_options(rt_light_admit_tests PRIVATE -Wall -Wextra)
+    endif()
+
+    add_test(NAME rt_light_admit_tests COMMAND rt_light_admit_tests)
 
     add_executable(gui_draw_tests tests/gui_draw_tests.cpp Quake/qr_gui.cpp)
     target_include_directories(gui_draw_tests PRIVATE

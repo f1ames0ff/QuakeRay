@@ -362,7 +362,8 @@ private:
     // the lists the device holds can name, and mirrors that function's statsClusterCleared in the
     // pass. Does nothing while the mode is Q2_LIGHT_STATS_DISABLED.
     void RecordLightStatsFill(nvrhi::ICommandList *pCommandList, const Target &target,
-                              VkBuffer statsBuffer, uint32_t frameId, uint32_t lightStatsMode);
+                              VkBuffer statsBuffer, uint32_t frameIndex, uint32_t frameId,
+                              uint32_t lightStatsMode);
 
     nvrhi::IDevice *device = nullptr;
     PrintFunction print;
