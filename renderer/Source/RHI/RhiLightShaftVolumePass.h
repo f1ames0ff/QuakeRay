@@ -39,9 +39,9 @@ public:
     using PrintFunction = std::function<void(const char *)>;
 
     static constexpr uint32_t MAX_LIGHT_SHAFTS = 64;
-    static constexpr uint32_t VOLUME_SIZE_X = 128;
-    static constexpr uint32_t VOLUME_SIZE_Y = 72;
-    static constexpr uint32_t VOLUME_SIZE_Z = 48;
+    static constexpr uint32_t VOLUME_SIZE_X = 160;
+    static constexpr uint32_t VOLUME_SIZE_Y = 88;
+    static constexpr uint32_t VOLUME_SIZE_Z = 64;
     static constexpr uint32_t GROUP_SIZE_X = 4;
     static constexpr uint32_t GROUP_SIZE_Y = 4;
 
@@ -56,9 +56,9 @@ public:
     struct Params
     {
         uint32_t lightShaftCount;
+        uint32_t historyValid;
         uint32_t pad0;
         uint32_t pad1;
-        uint32_t pad2;
         float worldCenter[4];
         float worldHalfSizeInv[4];
         LightShaft lightShafts[MAX_LIGHT_SHAFTS];
@@ -93,12 +93,14 @@ private:
     {
         nvrhi::TextureHandle texture;
         nvrhi::BindingSetHandle uavSet;
+        nvrhi::BindingSetHandle historySet;
         nvrhi::BindingSetHandle paramsSet;
         nvrhi::BindingSetHandle uniformSet;
         nvrhi::BindingSetHandle tlasSet;
         nvrhi::BufferHandle paramsBuffer;
         nvrhi::IBuffer *uniformBuffer = nullptr;
         nvrhi::rt::IAccelStruct *topLevel = nullptr;
+        bool historyValid = false;
     };
 
     bool PrepareUniformSet(Target &target, nvrhi::IBuffer *pUniformBuffer);
@@ -116,6 +118,7 @@ private:
     nvrhi::BindingLayoutHandle paramsLayout;
     nvrhi::BindingLayoutHandle uniformLayout;
     nvrhi::BindingLayoutHandle volumeLayout;
+    nvrhi::BindingLayoutHandle historyLayout;
     nvrhi::ComputePipelineHandle volumePipeline;
     nvrhi::SamplerHandle sampler;
 

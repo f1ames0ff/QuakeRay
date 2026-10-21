@@ -18,17 +18,20 @@
 #define DESC_SET_LIGHT_SHAFT_PARAMS 1
 #define DESC_SET_GLOBAL_UNIFORM 2
 #define DESC_SET_LIGHT_SHAFT_VOLUME 3
+#define DESC_SET_LIGHT_SHAFT_HISTORY 4
 
 #include "ShaderCommonHLSLFunc.hlsli"
 #include "LightShafts.hlsli"
 
-#define LIGHT_SHAFT_VOLUME_SIZE_X 128
-#define LIGHT_SHAFT_VOLUME_SIZE_Y 72
-#define LIGHT_SHAFT_VOLUME_SIZE_Z 48
+#define LIGHT_SHAFT_VOLUME_SIZE_X 160
+#define LIGHT_SHAFT_VOLUME_SIZE_Y 88
+#define LIGHT_SHAFT_VOLUME_SIZE_Z 64
 
 [[vk::binding(0, DESC_SET_TLAS)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(0, DESC_SET_LIGHT_SHAFT_PARAMS)]] ConstantBuffer<LightShaftVolumeParams_BT> params;
 [[vk::binding(0, DESC_SET_LIGHT_SHAFT_VOLUME), vk::image_format("rgba16f")]] RWTexture3D<float4> lightShaftVolume;
+[[vk::binding(0, DESC_SET_LIGHT_SHAFT_HISTORY)]] Texture3D<float4> lightShaftVolumeHistory;
+[[vk::binding(1, DESC_SET_LIGHT_SHAFT_HISTORY)]] SamplerState lightShaftVolumeHistorySampler;
 
 static const float PI = 3.1415926535;
 
@@ -65,6 +68,29 @@ float3 volumeGetCenter(int3 cell)
     const float distance = lerp(nearPlane, farPlane, saturate(local.z));
 
     return cameraPos + direction * distance;
+}
+
+float3 volumeToPreviousSample(float3 world)
+{
+    float4 ndc = mul(globalUniform.volumeViewProj_Prev, float4(world, 1.0));
+    ndc.xy /= ndc.w;
+
+    const float nearPlane = max(globalUniform.volumeCameraNear, 0.001);
+    const float farPlane = max(globalUniform.volumeCameraFar, nearPlane + 0.001);
+    const float distance = length(world - globalUniform.cameraPositionPrev.xyz);
+    const float z = saturate((distance - nearPlane) / (farPlane - nearPlane));
+
+    return float3(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5, z);
+}
+
+float hash1(uint value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    value ^= value >> 16;
+    return (float)(value & 0x00ffffffu) / 16777215.0;
 }
 
 bool lightShaftVisible(float3 origin, float3 target)
@@ -112,7 +138,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const float3 center = volumeGetCenter(cell);
+    const float3 center0 = volumeGetCenter(cell);
+    const float3 centerX = volumeGetCenter(cell + int3(1, 0, 0));
+    const float3 centerY = volumeGetCenter(cell + int3(0, 1, 0));
+    const float3 centerZ = volumeGetCenter(cell + int3(0, 0, 1));
+
+    const uint seed = (uint)(cell.x * 1973 + cell.y * 9277 + cell.z * 26699 +
+                             (int)globalUniform.frameId * 7331);
+    const float3 jitter = float3(hash1(seed), hash1(seed + 1), hash1(seed + 2)) - 0.5;
+
+    const float3 center = center0 + jitter.x * (centerX - center0) +
+                          jitter.y * (centerY - center0) + jitter.z * (centerZ - center0);
     const float3 toViewer = normalize(globalUniform.cameraPosition.xyz - center);
     const float density = 0.02 * getDensity(center);
     float3 radiance = (float3)0;
@@ -160,5 +196,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         radiance += shaft.color.rgb * (cone * attenuation * phase);
     }
 
-    lightShaftVolume[cell] = float4(radiance * density, 0.0);
+    float4 current = float4(radiance * density, 0.0);
+    if (params.historyValid != 0)
+    {
+        const float3 previousUVW = volumeToPreviousSample(center);
+        if (all(previousUVW >= (float3)0) && all(previousUVW <= (float3)1))
+        {
+            const float4 previous = lightShaftVolumeHistory.SampleLevel(
+                lightShaftVolumeHistorySampler, previousUVW, 0.0);
+            current = lerp(previous, current, 0.05);
+        }
+    }
+
+    lightShaftVolume[cell] = current;
 }

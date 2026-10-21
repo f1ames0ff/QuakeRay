@@ -105,6 +105,17 @@ bool RhiLightShaftVolumePass::Create(nvrhi::IDevice *pDevice,
         volumeLayout = device->createBindingLayout(desc);
     }
 
+    {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.setBindingOffsets(nvrhi::VulkanBindingOffsets()
+                                   .setShaderResourceOffset(0)
+                                   .setSamplerOffset(0));
+        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
+        desc.addItem(nvrhi::BindingLayoutItem::Sampler(1));
+        historyLayout = device->createBindingLayout(desc);
+    }
+
     sampler = rhi::createSampler(device, nvrhi::SamplerDesc()
                                              .setMinFilter(true)
                                              .setMagFilter(true)
@@ -113,7 +124,7 @@ bool RhiLightShaftVolumePass::Create(nvrhi::IDevice *pDevice,
                                  "RhiLightShaftVolumePass sampler");
 
     if (tlasLayout == nullptr || paramsLayout == nullptr || uniformLayout == nullptr ||
-        volumeLayout == nullptr || sampler == nullptr)
+        volumeLayout == nullptr || historyLayout == nullptr || sampler == nullptr)
     {
         LogMessage(print, "Warning: RHI: failed to create a light-shaft volume binding layout");
         return false;
@@ -126,6 +137,7 @@ bool RhiLightShaftVolumePass::Create(nvrhi::IDevice *pDevice,
         desc.addBindingLayout(paramsLayout);
         desc.addBindingLayout(uniformLayout);
         desc.addBindingLayout(volumeLayout);
+        desc.addBindingLayout(historyLayout);
         volumePipeline = rhi::createComputePipeline(device, desc, "RhiLightShaftVolumePass");
     }
 
@@ -140,6 +152,20 @@ bool RhiLightShaftVolumePass::Create(nvrhi::IDevice *pDevice,
         if (!CreateVolumeTarget(targets[i], i))
         {
             LogMessage(print, "Warning: RHI: failed to create a light-shaft volume target");
+            return false;
+        }
+    }
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        const uint32_t previous = (i + 1) % MAX_FRAMES_IN_FLIGHT;
+        nvrhi::BindingSetDesc setDesc;
+        setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, targets[previous].texture));
+        setDesc.addItem(nvrhi::BindingSetItem::Sampler(1, sampler));
+        targets[i].historySet = device->createBindingSet(setDesc, historyLayout);
+        if (targets[i].historySet == nullptr)
+        {
+            LogMessage(print, "Warning: RHI: failed to create the light-shaft volume history set");
             return false;
         }
     }
@@ -269,7 +295,8 @@ bool RhiLightShaftVolumePass::Render(nvrhi::ICommandList *pCommandList,
     }
 
     Target &target = targets[frameIndex];
-    if (target.texture == nullptr || target.uavSet == nullptr || target.paramsSet == nullptr)
+    if (target.texture == nullptr || target.uavSet == nullptr || target.historySet == nullptr ||
+        target.paramsSet == nullptr)
     {
         return false;
     }
@@ -279,7 +306,10 @@ bool RhiLightShaftVolumePass::Render(nvrhi::ICommandList *pCommandList,
         return false;
     }
 
-    rhi::writeBuffer(pCommandList, target.paramsBuffer, &params, sizeof(params));
+    Params frameParams = params;
+    frameParams.historyValid = targets[(frameIndex + 1) % MAX_FRAMES_IN_FLIGHT].historyValid ? 1u : 0u;
+
+    rhi::writeBuffer(pCommandList, target.paramsBuffer, &frameParams, sizeof(frameParams));
     pCommandList->setTextureState(target.texture, nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::UnorderedAccess);
 
@@ -289,6 +319,7 @@ bool RhiLightShaftVolumePass::Render(nvrhi::ICommandList *pCommandList,
     state.addBindingSet(target.paramsSet);
     state.addBindingSet(target.uniformSet);
     state.addBindingSet(target.uavSet);
+    state.addBindingSet(target.historySet);
     pCommandList->setComputeState(state);
 
     const uint32_t groupsX = (VOLUME_SIZE_X + GROUP_SIZE_X - 1) / GROUP_SIZE_X;
@@ -297,6 +328,7 @@ bool RhiLightShaftVolumePass::Render(nvrhi::ICommandList *pCommandList,
 
     pCommandList->setTextureState(target.texture, nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::NonPixelShaderResource);
+    target.historyValid = true;
 
     return true;
 }

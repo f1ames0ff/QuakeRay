@@ -30,9 +30,9 @@ struct LightShaft_BT
 struct LightShaftVolumeParams_BT
 {
     uint lightShaftCount;
+    uint historyValid;
     uint pad0;
     uint pad1;
-    uint pad2;
     float4 worldCenter;
     float4 worldHalfSizeInv;
     LightShaft_BT lightShafts[MAX_LIGHT_SHAFTS];
