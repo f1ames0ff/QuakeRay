@@ -325,11 +325,16 @@ private:
         // Set 6: the eight device-local engine buffers as the slot wraps them (the raw handles are
         // the key) and the set over the wraps, plus the seven copy-source wraps of this slot's
         // pending light copies, keyed by their staging handles.
-        VkBuffer lightHandles[10] = {};
-        nvrhi::BufferHandle lightWraps[10];
+        VkBuffer lightHandles[12] = {};
+        nvrhi::BufferHandle lightWraps[12];
         nvrhi::BindingSetHandle lightSet;
-        VkBuffer lightStagingHandles[9] = {};
-        nvrhi::BufferHandle lightStagingWraps[9];
+        VkBuffer lightStagingHandles[11] = {};
+        nvrhi::BufferHandle lightStagingWraps[11];
+
+        VkBuffer gridBuildHandles[4] = {};
+        nvrhi::BufferHandle gridHeaderWrap;
+        nvrhi::BufferHandle gridSourcesWrap;
+        nvrhi::BindingSetHandle gridBuildSet;
     };
 
     bool LoadShader(const char *pFileName, nvrhi::ShaderType type, nvrhi::ShaderHandle &result);
@@ -354,6 +359,8 @@ private:
     // Returns false when an engine buffer or a pending copy source is missing.
     bool PrepareLightSet(nvrhi::ICommandList *pCommandList, Target &target, uint32_t frameIndex,
                          uint32_t frameId, uint32_t lightStatsMode);
+    bool PrepareGridBuildSet(Target &target);
+    void BuildLightGrid(nvrhi::ICommandList *pCommandList, uint32_t frameIndex);
 
     // The ranged statistics fill of the frame: it is recorded on the set-6 wrap of the engine's
     // statistics buffer inside 'target' (the same wrap the binding set binds, which is what makes
@@ -389,6 +396,8 @@ private:
     // items). Every other layout is the primary's.
     nvrhi::BindingLayoutHandle framebufferLayout;
     nvrhi::BindingLayoutHandle lightLayout;
+    nvrhi::BindingLayoutHandle gridBuildLayout;
+    nvrhi::ComputePipelineHandle gridBuildPipeline;
 
     // The frame id each slot's set 6 was prepared for: one preparation per frame, whether
     // EnsureLightSet (the reflect/refract sibling asking early) or Render made it.

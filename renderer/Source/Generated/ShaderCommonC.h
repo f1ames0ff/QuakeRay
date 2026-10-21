@@ -51,6 +51,8 @@ namespace qray
 #define BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL (11)
 #define BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_OFFSETS (12)
 #define BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_IDS (13)
+#define BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_HEADER (14)
+#define BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_SOURCES (15)
 #define BINDING_DECAL_INSTANCES (0)
 #define BINDING_PORTAL_INSTANCES (0)
 #define BINDING_LPM_PARAMS (0)
@@ -193,6 +195,8 @@ namespace qray
 #define Q2_LIGHT_GRID_CELLS (32768)
 #define Q2_LIGHT_GRID_MAX_IDS_PER_CELL (64)
 #define Q2_LIGHT_GRID_HEADER_WORDS (64)
+#define Q2_LIGHT_GRID_SOURCE_CAPACITY (4096)
+#define Q2_LIGHT_GRID_SOURCE_STRIDE (32)
 #define COMPUTE_Q2_LIGHT_LIST_GROUP_SIZE_X (64)
 #define PORTAL_INDEX_NONE (63)
 #define PORTAL_MAX_COUNT (63)
@@ -443,6 +447,16 @@ struct ShQ2LightTail
     uint32_t aliasIndex;
     float prob;
     float marginalProb;
+};
+
+struct ShLightGridSource
+{
+    float    origin[3];
+    float    reach;
+    float    radius;
+    float    power;
+    uint32_t lightIndex;
+    uint32_t pad;
 };
 
 struct ShVertPreprocessing

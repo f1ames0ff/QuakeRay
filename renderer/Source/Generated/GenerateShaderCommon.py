@@ -255,6 +255,8 @@ CONST = {
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL"         : 11,
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_OFFSETS"      : 12,
     "BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_IDS"          : 13,
+    "BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_HEADER"       : 14,
+    "BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_SOURCES"      : 15,
     "BINDING_DECAL_INSTANCES"                   : 0,
     "BINDING_PORTAL_INSTANCES"                  : 0,
     "BINDING_LPM_PARAMS"                        : 0,
@@ -424,6 +426,8 @@ CONST = {
     "Q2_LIGHT_GRID_CELLS"                   : 32768,
     "Q2_LIGHT_GRID_MAX_IDS_PER_CELL"        : 64,
     "Q2_LIGHT_GRID_HEADER_WORDS"            : 64,
+    "Q2_LIGHT_GRID_SOURCE_CAPACITY"          : 4096,
+    "Q2_LIGHT_GRID_SOURCE_STRIDE"            : 32,
     "COMPUTE_Q2_LIGHT_LIST_GROUP_SIZE_X"    : 64,
 
     "PORTAL_INDEX_NONE"                     : 63,

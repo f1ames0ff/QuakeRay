@@ -666,6 +666,7 @@ void ClusterLightLists::UpdateLightGrid()
         {
             const QrLightGridStats disabled = {};
             pendingLightManager->PublishGrid(pendingFrameIndex, disabled, nullptr, nullptr, 0, nullptr, 0);
+            pendingLightManager->PublishGridSources(pendingFrameIndex, nullptr, 0, gridViewOrigin);
         }
 
         if (lightGrid.IsValid())
@@ -738,6 +739,8 @@ void ClusterLightLists::UpdateLightGrid()
 
     if (pendingLightManager != nullptr)
     {
+        pendingLightManager->PublishGridSources(pendingFrameIndex, gridSources.data(), uint32_t(gridSources.size()),
+                                                gridViewOrigin);
         const QrLightGridStats &gridStats = lightGrid.GetStats();
         pendingLightManager->PublishGrid(pendingFrameIndex, gridStats, lightGrid.GetOffsets().data(),
                                          lightGrid.GetIds().data(), uint32_t(lightGrid.GetIds().size()),

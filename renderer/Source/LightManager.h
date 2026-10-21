@@ -31,6 +31,7 @@ namespace qray
 {
 
 struct ShLightEncoded;
+struct LightGridSource;
 
 constexpr uint64_t kLightUidHole = ~0ull;
 
@@ -99,6 +100,8 @@ public:
     void PublishGrid(uint32_t frameIndex, const QrLightGridStats &stats, const uint32_t *pOffsets,
                      const uint32_t *pIds, uint32_t totalIds, const uint64_t *pSourceUids,
                      uint32_t sourceCount);
+    void PublishGridSources(uint32_t frameIndex, const LightGridSource *pSources, uint32_t sourceCount,
+                            const float viewOrigin[3]);
 
     uint32_t GetLastPublicationMask() const { return publicationMask; }
 
@@ -127,6 +130,8 @@ public:
         VkBuffer tailEntries;
         VkBuffer gridOffsets;
         VkBuffer gridIds;
+        VkBuffer gridHeader;
+        VkBuffer gridSources;
     };
 
     struct Copy
@@ -146,6 +151,8 @@ public:
         Copy tailEntries;
         Copy gridOffsets;
         Copy gridIds;
+        Copy gridHeader;
+        Copy gridSources;
     };
 
     Buffers GetBuffers() const;
@@ -195,8 +202,12 @@ private:
 
     std::shared_ptr<AutoBuffer> lightGridOffsets;
     std::shared_ptr<AutoBuffer> lightGridIds;
+    std::shared_ptr<AutoBuffer> lightGridHeader;
+    std::shared_ptr<AutoBuffer> lightGridSources;
     bool                        gridCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
+    bool                        gridSourcesCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
     uint32_t                    publishedGridIds[MAX_FRAMES_IN_FLIGHT] = {};
+    uint32_t                    publishedGridSources[MAX_FRAMES_IN_FLIGHT] = {};
 
     std::shared_ptr<AutoBuffer> clusterSkyVis;
     bool                        clusterSkyVisCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
