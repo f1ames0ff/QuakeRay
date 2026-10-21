@@ -90,7 +90,33 @@ Material path:
 - Material-handle replacement can force a static resubmit; measure it.
 - A 1x1 updateable RME override is the cheapest constant-scalar path (candidate, not fact).
 
-## 4. Current code anchors
+## 4. Baseline check — 2026-10-22
+
+Branch `feat/portable-toolkit`, based on `master` (`cd88fc77`).
+
+What is already true:
+
+- `renderer/Include/qray/qray.h` is the public C ABI, and `QR_API_VERSION` is `1.03.0000`.
+- The renderer's C++ sources do not include `Quake/` headers. The remaining engine-facing layer is the `Qr*` contract in `qray.h`.
+- The host-owned texture and cursor assets are out of `renderer/`: `renderer/Source/textures` is now `gfx/textures`, and `renderer/gfx` is now the root `gfx/` folder. `build_win.ps1` stages both from `gfx/`; the Debug build and asset pack still pass.
+
+What still blocks treating `renderer/` as a self-contained CMake package:
+
+- `renderer/CMakeLists.txt` has no `project()` or package version. `QR_API_VERSION` is the only version source today.
+- It relies on the parent build for `Vulkan::Vulkan`, `nvrhi`, `nvrhi_vk` and `${CMAKE_SOURCE_DIR}/shared`; there is no `find_package`, install/export or generated `qray_rendererConfig.cmake`.
+- `ClusterLightLists.cpp` includes `rt_alias.h` and calls `RT_Alias_Build`/`RT_Alias_Marginals`, whose implementation is `shared/rt_alias.c` compiled by the host. The static renderer library therefore has an unresolved host symbol.
+- `QR_BUILD_TESTS` pulls `${CMAKE_SOURCE_DIR}/Quake/rt_light_admit.c` and `shared/rt_alias.c`, so the test target is not standalone.
+- Shader compilation and runtime asset staging are PowerShell steps outside CMake.
+
+Required before moving `renderer/` to its own repository:
+
+1. Move the alias-table implementation into the renderer or a renderer-owned support library and remove the host symbol dependency.
+2. Give the package a `project(qray_renderer VERSION 1.3.0 ...)`, an install/export interface and a `qray_rendererConfig.cmake`.
+3. Split the Quake-host tests out of `renderer/Tests`, or add a standalone test configuration with no `${CMAKE_SOURCE_DIR}` references.
+4. Make Vulkan and NVRHI explicit package dependencies, with CMake options and a documented dependency setup.
+5. Keep shader output and `gfx/` staging as host-side deployment steps, separate from the renderer library target.
+
+## 4.1 Current code anchors
 
 - `renderer/Include/qray/qray.h` — existing C ABI.
 - `renderer/Source/ClusterLightLists.cpp`, `renderer/Source/LightManager.cpp` — lighting runtime.
