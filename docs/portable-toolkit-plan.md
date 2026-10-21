@@ -107,14 +107,13 @@ What is already true:
 What still blocks calling the package complete:
 
 - The standalone configuration still needs `QR_NVRHI_SOURCE_DIR` (defaulting to the sibling `third_party/nvrhi`) or a pre-existing `nvrhi` target. The installed package requires the consumer to provide `nvrhi` and `nvrhi_vk` targets; this is documented in the config but not yet a findable package dependency.
-- `QR_BUILD_TESTS` pulls `${CMAKE_SOURCE_DIR}/Quake/rt_light_admit.c` for the cluster test; that test is skipped in standalone mode, but it still lives beside the renderer tests.
+- The Quake-host cluster test now lives in the root `tests/qray_cluster_lists_tests.cpp`; `renderer/Tests` is engine-free.
 - Shader compilation and runtime asset staging are PowerShell steps outside CMake.
 
 Required before moving `renderer/` to its own repository:
 
-1. Split the Quake-host cluster test out of `renderer/Tests`, or move it to the host test tree and keep only engine-free tests in the package.
-2. Decide whether NVRHI is consumed as a source subdirectory or an installed package; document the dependency contract and remove the hard-coded sibling path from the package default.
-3. Keep shader output and `gfx/` staging as host-side deployment steps, separate from the renderer library target.
+1. Decide whether NVRHI is consumed as a source subdirectory or an installed package; document the dependency contract and remove the hard-coded sibling path from the package default.
+2. Keep shader output and `gfx/` staging as host-side deployment steps, separate from the renderer library target.
 
 ## 4.1 Current code anchors
 

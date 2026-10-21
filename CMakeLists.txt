@@ -585,6 +585,23 @@ if(BUILD_TESTING)
 
     add_test(NAME rt_light_admit_tests COMMAND rt_light_admit_tests)
 
+    add_executable(qray_cluster_lists_tests
+        tests/qray_cluster_lists_tests.cpp
+        Quake/rt_light_admit.c
+    )
+    target_compile_features(qray_cluster_lists_tests PRIVATE cxx_std_20)
+    target_include_directories(qray_cluster_lists_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/renderer/Source
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+        ${CMAKE_SOURCE_DIR}/Quake
+    )
+    target_link_libraries(qray_cluster_lists_tests PRIVATE renderer nvrhi nvrhi_vk)
+    if(WIN32)
+        target_link_libraries(qray_cluster_lists_tests PRIVATE user32)
+    endif()
+    add_test(NAME qray_cluster_lists_tests COMMAND qray_cluster_lists_tests)
+    set_tests_properties(qray_cluster_lists_tests PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
+
     add_executable(gui_draw_tests tests/gui_draw_tests.cpp Quake/qr_gui.cpp)
     target_include_directories(gui_draw_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/Quake

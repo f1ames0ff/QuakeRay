@@ -285,23 +285,6 @@ if(QR_BUILD_TESTS)
     add_test(NAME qray_dtal_perf COMMAND qray_dtal_perf "${QR_DTAL_PROBE}" "${QR_PROBE_DIR}/DtalPerf.baseline.txt")
     set_tests_properties(qray_dtal_perf PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 
-    if(NOT QR_RENDERER_STANDALONE)
-        add_executable(qray_cluster_lists_tests
-            Tests/ClusterLightListsTests.cpp
-            "${CMAKE_SOURCE_DIR}/Quake/rt_light_admit.c"
-        )
-        target_compile_features(qray_cluster_lists_tests PRIVATE cxx_std_20)
-        target_include_directories(qray_cluster_lists_tests PRIVATE
-            Source
-            "${CMAKE_SOURCE_DIR}/Quake"
-        )
-        target_link_libraries(qray_cluster_lists_tests PRIVATE renderer nvrhi nvrhi_vk)
-        if(WIN32)
-            target_link_libraries(qray_cluster_lists_tests PRIVATE user32)
-        endif()
-        add_test(NAME qray_cluster_lists_tests COMMAND qray_cluster_lists_tests)
-        set_tests_properties(qray_cluster_lists_tests PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
-    endif()
 endif()
 
 add_library(qray_alias OBJECT Source/rt_alias.c)
