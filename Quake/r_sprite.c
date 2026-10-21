@@ -286,7 +286,9 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType = (tx && tx->rtglass)
 			    ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT
-			    : QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED,
+			    : (tx && tx->rtwater)
+			          ? QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT
+			          : QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED,
 			.visibilityType = QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
 			.vertexCount = countof (vertices),
 			.pVertices = vertices,

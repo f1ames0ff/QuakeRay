@@ -88,6 +88,7 @@ typedef struct rt_material_s {
     qboolean force_rasterize;
     qboolean alpha_test;
     qboolean material_glass;
+    qboolean material_water;
     float    transparency;
     float    glass_ior;
     float    glass_thickness;

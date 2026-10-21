@@ -574,6 +574,7 @@ else
 	{
 		qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
 		qboolean is_glass = tx && tx->rtglass;
+		qboolean is_watermat = tx && tx->rtwater;
 		qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
 		QrGeometryUploadInfo info = {
@@ -588,6 +589,7 @@ else
 			.passThroughType =
 			    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 			    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+			    is_watermat ? QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT :
 			    // MF_HOLEY models (index 255 = transparent) must keep their alpha in the
 			    // traced path too, where the alpha test runs in the any-hit shader.
 			    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
@@ -744,6 +746,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 		{
 			qboolean is_invis = (isfirstperson || isviewer) && (cl.items & IT_INVISIBILITY);
 			qboolean is_glass = tx && tx->rtglass;
+			qboolean is_watermat = tx && tx->rtwater;
 			qboolean exact_normals = tx ? tx->rtexactnormals : 0;
 
 			QrGeometryUploadInfo info = {
@@ -758,6 +761,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.passThroughType =
 				    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
 				    is_glass ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
+				    is_watermat ? QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT :
 				    alphatest ? QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED :
 				                QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE,
 				.visibilityType =
