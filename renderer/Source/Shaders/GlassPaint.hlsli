@@ -1,6 +1,8 @@
 #ifndef GLASS_PAINT_HLSLI_
 #define GLASS_PAINT_HLSLI_
 
+#include "Q2LightGrid.hlsli"
+
 #ifdef Q2_REFL_REFR_SHADER
 float4 shadeGlassPaint(const ShHitInfo pane, const RayCone cone, const float3 rayDir, const int2 pix)
 {
@@ -54,7 +56,38 @@ float4 shadeGlassPaint(const ShHitInfo pane, const RayCone cone, const float3 ra
         }
     }
 
-    if (surf.cluster < Q2_MAX_CLUSTERS)
+    const int  gridCell  = q2GetLightGridCell(surf.position);
+    const uint gridCount = q2GetLightGridCount(gridCell);
+
+    if (gridCount > 0u)
+    {
+        const uint count = min(gridCount, uint(SMOKE_CLUSTER_SCAN));
+
+        for (uint i = 0u; i < count; i++)
+        {
+            const uint index = q2GetLightGridLight(gridCell, i);
+
+            if (index == uint(LIGHT_INDEX_NONE) ||
+                index < LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET ||
+                index >= LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET + globalUniform.lightCount)
+            {
+                continue;
+            }
+
+            float memberPdf = 1.0;
+            const LightSample light = sampleLightNee(lightSources[index], surf.position,
+                                                float2(0.5, 0.5), float2(0.5, 0.5), memberPdf);
+            const float3 direction = safeNormalize(light.position - surf.position);
+            if (light.dw > 0.0 && dot(surf.normal, direction) > 0.0 &&
+                smokeVisible(surf.position, direction, length(light.position - surf.position)))
+            {
+                float3 diffuse;
+                shadeDiffuse(surf, light, 1.0 / max(memberPdf, 1e-9), diffuse);
+                direct += diffuse;
+            }
+        }
+    }
+    else if (surf.cluster < Q2_MAX_CLUSTERS)
     {
         const uint count = min(q2GetClusterLightCount(surf.cluster), uint(SMOKE_CLUSTER_SCAN));
         for (uint i = 0u; i < count; i++)

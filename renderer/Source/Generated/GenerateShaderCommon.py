@@ -424,6 +424,7 @@ CONST = {
     "Q2_LIGHT_LIST_STATS_SIDES"             : 6,
     "Q2_LIGHT_LIST_STATS_BUFFERS"           : 3,
     "Q2_LIGHT_GRID_CASCADES"                : 8,
+    "Q2_LIGHT_GRID_DIM"                     : 16,
     "Q2_LIGHT_GRID_CELLS"                   : 32768,
     "Q2_LIGHT_GRID_MAX_IDS_PER_CELL"        : 64,
     "Q2_LIGHT_GRID_HEADER_WORDS"            : 64,

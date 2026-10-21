@@ -50,6 +50,8 @@
 #ifndef SMOKE_LIGHT_HLSLI_
 #define SMOKE_LIGHT_HLSLI_
 
+#include "Q2LightGrid.hlsli"
+
 #ifndef SMOKE_LIGHT_EXTERNAL_TLAS
 #define SMOKE_TLAS_SET 5
 [[vk::binding(0, SMOKE_TLAS_SET)]] RaytracingAccelerationStructure topLevelAS;
@@ -199,7 +201,35 @@ float3 smokeLightAt(const float3 worldPos, const uint cluster, const float seed,
     uint     bestLight  = uint(LIGHT_INDEX_NONE);
     float    bestWeight = 0.0;
 
-    if (cluster < uint(Q2_MAX_CLUSTERS))
+    const int  gridCell  = q2GetLightGridCell(worldPos);
+    const uint gridCount = q2GetLightGridCount(gridCell);
+
+    if (gridCount > 0u)
+    {
+        const uint count = min(gridCount, uint(SMOKE_CLUSTER_SCAN));
+
+        for (uint i = 0u; i < count; i++)
+        {
+            const uint li = q2GetLightGridLight(gridCell, i);
+
+            if (li == uint(LIGHT_INDEX_NONE) ||
+                li < uint(LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET) ||
+                li >= uint(LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET) + globalUniform.lightCount)
+            {
+                continue;
+            }
+
+            const float w = smokeLightWeight(lightSources[li], worldPos);
+
+            if (w > bestWeight)
+            {
+                bestWeight = w;
+                bestLight  = li;
+            }
+        }
+    }
+
+    if (bestLight == uint(LIGHT_INDEX_NONE) && cluster < uint(Q2_MAX_CLUSTERS))
     {
         const uint count = min(q2GetClusterLightCount(cluster), uint(SMOKE_CLUSTER_SCAN));
 
