@@ -63,6 +63,8 @@ extern int glx, gly, glwidth, glheight;
 void       R_TimeRefresh_f (void);
 void       R_ReadPointFile_f (void);
 texture_t *R_TextureAnimation (texture_t *base, int frame);
+void       R_SetTextureFrameOverride (const entity_t *ent, int frame);
+texture_t *R_TextureForEntityFrame (texture_t *base, const entity_t *ent);
 
 typedef enum
 {

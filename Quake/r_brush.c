@@ -33,6 +33,8 @@ extern cvar_t rt_brush_metal, rt_brush_rough, rt_enable_pvs;
 
 #define MAX_EXTENT 18
 
+#define RT_ANIM_FRAME_STEP 2
+
 struct lightmap_s *lightmaps;
 int                lightmap_count;
 int                last_lightmap_allocated;
@@ -172,6 +174,49 @@ texture_t *R_TextureAnimation (texture_t *base, int frame)
 	}
 
 	return base;
+}
+
+static texture_t *R_AnimationFrameTexture (texture_t *base, int selector, int frame)
+{
+	texture_t *start, *t;
+
+	if (selector && base->alternate_anims)
+		base = base->alternate_anims;
+
+	start = base;
+
+	for (t = start; t != NULL; t = t->anim_next)
+	{
+		if (t->anim_min / RT_ANIM_FRAME_STEP == frame)
+			return t;
+
+		if (t->anim_next == NULL || t->anim_next == start)
+			break;
+	}
+
+	return NULL;
+}
+
+static const entity_t *rt_texture_frame_ent;
+static int             rt_texture_frame = -1;
+
+void R_SetTextureFrameOverride (const entity_t *ent, int frame)
+{
+	rt_texture_frame_ent = (ent != NULL && frame >= 0) ? ent : NULL;
+	rt_texture_frame = (ent != NULL && frame >= 0) ? frame : -1;
+}
+
+texture_t *R_TextureForEntityFrame (texture_t *base, const entity_t *ent)
+{
+	if (ent != NULL && ent == rt_texture_frame_ent && rt_texture_frame >= 0)
+	{
+		texture_t *pinned = R_AnimationFrameTexture (base, ent->frame, rt_texture_frame);
+
+		if (pinned)
+			return pinned;
+	}
+
+	return R_TextureAnimation (base, ent != NULL ? ent->frame : 0);
 }
 
 /*

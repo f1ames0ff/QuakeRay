@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.50.22
+
+### Added
+- **Brush entities show the texture frame the editor selects** — the frame slider of a picked brush entity now drives the animated texture ring that entity draws, instead of only choosing which frame's material the panel edits. The pick starts on the frame the entity is currently showing, the pin applies to that entity alone (two medkits of the same model stay independent), and the clock-driven frame returns when the panel stops showing the group. A ring without the selected frame keeps animating with the clock. Materials opened by name also resolve their own engine texture for the luma preview and colour picker.
+- **`Pause world` lets the editor watch a running world** — the material editor's System tab and the light editor's Global tab carry a `Pause world` checkbox, on by default. Off, the server and the client clock run again while the editor camera and the player's frozen position stay in place, so doors, poses, animated textures, particles, the traced water warp and the cloud drift can be watched in motion; the pause state the world had before the editor opened is restored when the session closes.
+
 ## v0.50.17
 
 ### Added

@@ -309,6 +309,7 @@ static struct
 	entity_t     *frame_backup_ent;
 	int           frame_backup_value;
 	qboolean      frame_backup_is_sprite;
+	qboolean      frame_backup_is_brush;
 	qboolean      frame_backup_valid;
 
 	// snapshot of both material lists for Cancel/Exit
@@ -435,6 +436,7 @@ static struct
 
 	// the pause state the editor found, restored when it closes
 	qboolean sv_paused_prev;
+	qboolean pause_world;
 
 	// the base-texture previews of the selected material (the emissive color
 	// picker): one slot per group entry in flight, so a section rebuild never
@@ -642,6 +644,16 @@ static int QRE_FrameDigit (const char *name)
 static void QRE_GroupBaseOf (const char *name, char *out, size_t outsize)
 {
 	RT_MAT_GroupBaseOf (name, out, outsize);
+}
+
+static void QRE_MaterialName (const char *texname, char *out, size_t outsize)
+{
+	char *dot;
+
+	RT_MAT_NormalizeName (texname, out, outsize);
+	dot = strrchr (out, '.');
+	if (dot && !strchr (dot, ':'))
+		*dot = '\0';
 }
 
 static qboolean QRE_NameInGroup (const char *matname, const char *groupbase)
@@ -1563,6 +1575,7 @@ static struct
 	int      cbuf_count;
 	int      cursor_mode; // -1 none, 0 panel off, 1 panel on
 	qboolean cursor_reclaim; // the panel came back from the console: grab the cursor again
+	int      pause_world; // -1 none, 0 running, 1 paused
 	qboolean stop;
 	qboolean stop_restore;
 	int      browse_group;
@@ -1571,7 +1584,19 @@ static struct
 	int      texture_group;
 	int      texture_param;
 	char     texture_value[MAX_QPATH];
-} qre_actions = { .cursor_mode = -1, .browse_group = -1 };
+} qre_actions = { .cursor_mode = -1, .pause_world = -1, .browse_group = -1 };
+
+static void QRE_SetWorldPaused (qboolean paused)
+{
+	if (!Tasks_IsWorker ())
+	{
+		qre.pause_world = paused;
+		sv.paused = paused;
+		return;
+	}
+
+	qre_actions.pause_world = paused ? 1 : 0;
+}
 
 static void QRE_QueueTexture (int g, int p, const char *value)
 {
@@ -1797,6 +1822,13 @@ static qboolean QRE_GroupHasFrames (void)
 	}
 
 	return false;
+}
+
+static qboolean QRE_BrushFrames (void)
+{
+	return (qre.pick_ent != NULL && qre.pick_model != NULL &&
+	        qre.pick_model == qre.pick_ent->model &&
+	        qre.pick_model->type == mod_brush && QRE_GroupHasFrames ()) ? true : false;
 }
 
 // ---------------------------------------------------------------------------
@@ -2107,9 +2139,23 @@ static gltexture_t *QRE_EntityTexture (entity_t *e)
 	return NULL;
 }
 
-// The texture frame the picked model or sprite shows now: the frame the slider
-// picked while the override is in place, and otherwise the texture the entity
-// draws in the world.
+static gltexture_t *QRE_BrushEntityTexture (entity_t *e, msurface_t *surf)
+{
+	texture_t *base;
+
+	if (e->model == NULL || e->model->type != mod_brush || surf == NULL || surf->texinfo == NULL)
+		return NULL;
+
+	base = surf->texinfo->texture;
+	if (base == NULL)
+		return NULL;
+
+	return R_TextureAnimation (base, e->frame)->gltexture;
+}
+
+// The texture frame the picked model, sprite or brush entity shows now: the
+// frame the slider picked while the override is in place, and otherwise the
+// texture the entity draws in the world.
 static int QRE_ActiveFrame (void)
 {
 	if (qre.frame_backup_valid && qre.frame_backup_ent == qre.pick_ent)
@@ -2117,10 +2163,18 @@ static int QRE_ActiveFrame (void)
 
 	if (qre.pick_ent)
 	{
+		char         name[MAX_QPATH];
 		gltexture_t *glt = QRE_EntityTexture (qre.pick_ent);
 
+		if (glt == NULL && qre.pick_model != NULL && qre.pick_model == qre.pick_ent->model &&
+		    qre.pick_model->type == mod_brush)
+			glt = QRE_BrushEntityTexture (qre.pick_ent, qre.pick_surf);
+
 		if (glt)
-			return QRE_FrameDigit (glt->name);
+		{
+			QRE_MaterialName (glt->name, name, sizeof (name));
+			return QRE_FrameDigit (name);
+		}
 	}
 
 	return -1;
@@ -2136,7 +2190,9 @@ static void QRE_FrameOverrideRelease (void)
 
 	if (qre.frame_backup_ent)
 	{
-		if (qre.frame_backup_is_sprite)
+		if (qre.frame_backup_is_brush)
+			R_SetTextureFrameOverride (NULL, -1);
+		else if (qre.frame_backup_is_sprite)
 			qre.frame_backup_ent->frame = qre.frame_backup_value;
 		else
 			qre.frame_backup_ent->skinnum = qre.frame_backup_value;
@@ -2149,16 +2205,20 @@ static void QRE_FrameOverrideRelease (void)
 static void QRE_FrameOverrideApply (void)
 {
 	const qboolean sprite = (qre.pick_model && qre.pick_model->type == mod_sprite) ? true : false;
+	const qboolean brush = (qre.pick_model && qre.pick_model->type == mod_brush) ? true : false;
 
 	if (!qre.frame_backup_valid)
 	{
 		qre.frame_backup_ent = qre.pick_ent;
 		qre.frame_backup_is_sprite = sprite;
-		qre.frame_backup_value = sprite ? qre.pick_ent->frame : qre.pick_ent->skinnum;
+		qre.frame_backup_is_brush = brush;
+		qre.frame_backup_value = (sprite || brush) ? qre.pick_ent->frame : qre.pick_ent->skinnum;
 		qre.frame_backup_valid = true;
 	}
 
-	if (sprite)
+	if (brush)
+		R_SetTextureFrameOverride (qre.pick_ent, qre.frame_tex);
+	else if (sprite)
 		qre.pick_ent->frame = qre.frame_tex;
 	else
 		qre.pick_ent->skinnum = qre.frame_tex;
@@ -2170,7 +2230,7 @@ static void QRE_FramePickInit (void)
 {
 	QRE_FrameOverrideRelease ();
 
-	if (!QRE_FrameGroup ())
+	if (!QRE_FrameGroup () && !QRE_BrushFrames ())
 	{
 		qre.frame_tex = -1;
 		return;
@@ -2557,6 +2617,13 @@ static void QRE_DrainActions (void)
 	for (i = 0; i < qre_actions.cbuf_count; i++)
 		Cbuf_AddText (qre_actions.cbuf[i]);
 	qre_actions.cbuf_count = 0;
+
+	if (qre_actions.pause_world >= 0)
+	{
+		qre.pause_world = (qre_actions.pause_world != 0) ? true : false;
+		sv.paused = qre.pause_world;
+		qre_actions.pause_world = -1;
+	}
 
 	if (qre_actions.texture_pending)
 	{
@@ -3193,7 +3260,8 @@ void QR_Editor_UpdateView (void)
 	// frame the panel edits, and the entity's own value comes back as soon as
 	// the panel stops showing its group
 	if (qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 0 && qre.frame_tex >= 0 &&
-	    qre.pick_ent && qre.pick_ent->model == qre.pick_model && QRE_FrameGroup ())
+	    qre.pick_ent && qre.pick_ent->model == qre.pick_model &&
+	    (QRE_FrameGroup () || QRE_BrushFrames ()))
 		QRE_FrameOverrideApply ();
 	else
 		QRE_FrameOverrideRelease ();
@@ -3350,7 +3418,7 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 		if (!frame_tex)
 			frame_tex = qre.pick_glt;
 		if (!frame_tex)
-			frame_tex = TexMgr_FindTextureByName (m->name);
+			frame_tex = TexMgr_FindTextureByNormalizedName (m->name);
 
 		pixels = TexMgr_LoadRgbaForPreview (frame_tex, &w, &h);
 	}
@@ -4394,6 +4462,16 @@ static void QRE_MatSystemTab (void)
 	float                     value;
 	int                       dbg = CVAR_TO_INT32 (rt_dtal_debug);
 	int                       maxpolys;
+
+	{
+		int pause = qre.pause_world ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("Pause world", &pause,
+		                     "Hold the server and the client clock while the editor runs, so poses, doors, the water and the clouds stand still (on by default). Off, the world keeps running around the editor camera (the player still does not move), and the pause state the world had is given back when the editor closes."))
+			QRE_SetWorldPaused (pause != 0);
+
+		QR_GUI_Separator ();
+	}
 
 	if (dbg < 0 || dbg > 2)
 		dbg = 0;
@@ -6716,6 +6794,16 @@ static void QRE_LightGlobalTab (void)
 
 	QR_GUI_LabelDim ("the light system itself: the sky, its clouds and the sun");
 	QR_GUI_Spacing ();
+
+	{
+		int pause = qre.pause_world ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("Pause world", &pause,
+		                     "Hold the server and the client clock while the editor runs, so every animation stands still (on by default). Off, the world keeps running around the editor camera."))
+			QRE_SetWorldPaused (pause != 0);
+
+		QR_GUI_Separator ();
+	}
 
 	for (i = 0; i < (int)countof (qre_globals); i++)
 	{
@@ -11152,6 +11240,7 @@ static void QRE_StartEditor (void)
 	QRE_TextureBrowserCancelBuild ();
 	qre_textbrowser_built = false;
 	qre_actions.cursor_mode = -1;
+	qre_actions.pause_world = -1;
 	qre_actions.browse_group = -1;
 	qre_instance_cur = 0;
 	qre.active = true;
@@ -11168,6 +11257,7 @@ static void QRE_StartEditor (void)
 	// clouds all stand still. cl.paused is deliberately not touched: the engine
 	// skips V_CalcRefdef -- and with it the editor camera -- while it is set.
 	qre.sv_paused_prev = sv.paused;
+	qre.pause_world = true;
 	sv.paused = true;
 
 	QRE_CursorMode (true);
@@ -11316,6 +11406,11 @@ void QR_Editor_Init (void)
 qboolean QR_Editor_Active (void)
 {
 	return qre.active;
+}
+
+qboolean QR_Editor_Frozen (void)
+{
+	return qre.active && qre.pause_world;
 }
 
 qboolean QR_Editor_PanelOpen (void)

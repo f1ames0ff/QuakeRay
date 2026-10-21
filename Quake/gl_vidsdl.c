@@ -4006,7 +4006,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	// water warp and the cloud drift follow it while one of them owns the view,
 	// so the Space toggle freezes and resumes the clouds without teleporting
 	// them to the wall clock's offset.
-	const qboolean held_clock = QR_Editor_Active () || PhotoCam_Active () || Observer_Active ();
+	const qboolean held_clock = QR_Editor_Frozen () || PhotoCam_Active () || Observer_Active ();
 	const double frame_time = held_clock ? (double)cl.time : (double)SDL_GetTicks () / 1000.0;
 
 	QrDrawFrameInfo info = {

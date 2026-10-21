@@ -499,7 +499,7 @@ float CL_LerpPoint (void)
 
 	// The light editor, photocam and the camera observer hold the clock: no lerp
 	// may pull cl.time forward while the world is meant to stand still.
-	if (QR_Editor_Active () || PhotoCam_Frozen () || Observer_Frozen ())
+	if (QR_Editor_Frozen () || PhotoCam_Frozen () || Observer_Frozen ())
 		return 1;
 
 	f = cl.mtime[0] - cl.mtime[1];
@@ -1069,7 +1069,7 @@ int CL_ReadFromServer (void)
 	// The light editor, photocam and the camera observer freeze the client clock
 	// with the server: their cameras run on host frames, and a frozen cl.time
 	// holds every animation that reads it (textures, poses, particles) still.
-	if (!QR_Editor_Active () && !PhotoCam_Frozen () && !Observer_Frozen ())
+	if (!QR_Editor_Frozen () && !PhotoCam_Frozen () && !Observer_Frozen ())
 		cl.time += host_frametime;
 
 	needs_relink = true;
