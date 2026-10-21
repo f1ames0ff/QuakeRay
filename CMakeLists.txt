@@ -347,7 +347,6 @@ set(CORE_SOURCES
     Quake/r_sprite.c
     Quake/r_world.c
     Quake/rt_dtal_debug.cpp
-    shared/rt_alias.c
     Quake/rt_cluster_select.c
     Quake/rt_dtal_groups.c
     Quake/rt_dtal_lod.c
@@ -472,6 +471,7 @@ add_executable(quakeray ${ALL_SOURCES})
 target_include_directories(quakeray PRIVATE
     ${CMAKE_SOURCE_DIR}/Quake
     ${CMAKE_SOURCE_DIR}/shared
+    ${CMAKE_SOURCE_DIR}/renderer/Source
 )
 
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -549,12 +549,16 @@ if(BUILD_TESTING)
 
     add_executable(rt_lighting_tests
         tests/rt_lighting_tests.c
-        shared/rt_alias.c
         Quake/rt_cluster_select.c
         Quake/rt_dtal_groups.c
         Quake/rt_dtal_lod.c
     )
-    target_include_directories(rt_lighting_tests PRIVATE ${CMAKE_SOURCE_DIR}/Quake ${CMAKE_SOURCE_DIR}/shared)
+    target_include_directories(rt_lighting_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/Quake
+        ${CMAKE_SOURCE_DIR}/shared
+        ${CMAKE_SOURCE_DIR}/renderer/Source
+    )
+    target_link_libraries(rt_lighting_tests PRIVATE qray_alias)
 
     if(MSVC)
         target_compile_options(rt_lighting_tests PRIVATE /W4)

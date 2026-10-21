@@ -250,13 +250,11 @@ if(QR_BUILD_TESTS)
     add_executable(qray_cluster_lists_tests
         Tests/ClusterLightListsTests.cpp
         "${CMAKE_SOURCE_DIR}/Quake/rt_light_admit.c"
-        "${CMAKE_SOURCE_DIR}/shared/rt_alias.c"
     )
     target_compile_features(qray_cluster_lists_tests PRIVATE cxx_std_20)
     target_include_directories(qray_cluster_lists_tests PRIVATE
         Source
         "${CMAKE_SOURCE_DIR}/Quake"
-        "${CMAKE_SOURCE_DIR}/shared"
     )
     target_link_libraries(qray_cluster_lists_tests PRIVATE renderer nvrhi nvrhi_vk)
     if(WIN32)
@@ -265,6 +263,10 @@ if(QR_BUILD_TESTS)
     add_test(NAME qray_cluster_lists_tests COMMAND qray_cluster_lists_tests)
     set_tests_properties(qray_cluster_lists_tests PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 endif()
+
+add_library(qray_alias STATIC Source/rt_alias.c)
+target_compile_features(qray_alias PRIVATE c_std_11)
+target_include_directories(qray_alias PUBLIC Source)
 
 add_library(renderer STATIC
     ${renderer_SOURCES}
@@ -292,12 +294,9 @@ target_include_directories(renderer PRIVATE
 # Public include dir (qray/qray.h) — needed by the host and by qray sources
 target_include_directories(renderer PUBLIC "Include")
 
-# The shared alias-table utility is compiled into the host executable; the renderer
-# links the function at the final link, so only its header directory is needed here.
-target_include_directories(renderer PRIVATE "${CMAKE_SOURCE_DIR}/shared")
-
 # Vulkan (found in the parent scope)
 target_link_libraries(renderer PUBLIC Vulkan::Vulkan)
+target_link_libraries(renderer PUBLIC qray_alias)
 
 # RHI layer: NVRHI built by the root CMakeLists (target nvrhi_vk is the static
 # Vulkan backend, nvrhi holds the shared interface and the validation layer).
