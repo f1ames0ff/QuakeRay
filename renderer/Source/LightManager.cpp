@@ -1431,10 +1431,26 @@ void qray::LightManager::PublishGridSources(uint32_t frameIndex, const LightGrid
         ResolveCacheEntry cache[kResolveCacheSize];
         memset(cache, 0xFF, sizeof(cache));
 
+        uint32_t resolvedCount = 0;
+        float    minPower = 1e30f;
+        float    maxPower = -1e30f;
+        float    minReach = 1e30f;
+        float    maxReach = -1e30f;
+
         for (uint32_t i = 0; i < count; i++)
         {
             const LightGridSource &source = pSources[i];
             const uint32_t lightIndex = ResolveLightUid(frameIndex, source.uid, cache);
+
+            if (lightIndex != uint32_t(LIGHT_INDEX_NONE))
+            {
+                resolvedCount++;
+            }
+
+            minPower = std::min(minPower, source.power);
+            maxPower = std::max(maxPower, source.power);
+            minReach = std::min(minReach, source.reach);
+            maxReach = std::max(maxReach, source.reach);
 
             pDst[i].origin[0] = source.origin[0];
             pDst[i].origin[1] = source.origin[1];
@@ -1444,6 +1460,15 @@ void qray::LightManager::PublishGridSources(uint32_t frameIndex, const LightGrid
             pDst[i].power = source.power;
             pDst[i].lightIndex = lightIndex & QR_LIGHT_GRID_ID_INDEX_MASK;
             pDst[i].pad = 0;
+        }
+
+        static bool loggedGridSources = false;
+
+        if (!loggedGridSources)
+        {
+            loggedGridSources = true;
+            fprintf(stderr, "qray: grid sources %u, resolved %u, power %.4f..%.4f, reach %.1f..%.1f\n",
+                    count, resolvedCount, minPower, maxPower, minReach, maxReach);
         }
     }
 

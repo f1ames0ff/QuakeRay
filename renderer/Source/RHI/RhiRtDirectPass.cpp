@@ -1024,14 +1024,6 @@ void RhiRtDirectPass::ReleaseLightTarget(Target &target)
             frameContext->Retire(target.gridBuildSet);
         }
 
-        if (target.gridHeaderWrap != nullptr)
-        {
-            frameContext->Retire(target.gridHeaderWrap);
-        }
-        if (target.gridSourcesWrap != nullptr)
-        {
-            frameContext->Retire(target.gridSourcesWrap);
-        }
 
         for (nvrhi::BufferHandle &wrap : target.lightWraps)
         {
@@ -1066,8 +1058,6 @@ void RhiRtDirectPass::ReleaseLightTarget(Target &target)
     std::memset(target.lightStagingHandles, 0, sizeof(target.lightStagingHandles));
 
     target.gridBuildSet = nullptr;
-    target.gridHeaderWrap = nullptr;
-    target.gridSourcesWrap = nullptr;
     std::memset(target.gridBuildHandles, 0, sizeof(target.gridBuildHandles));
 }
 
@@ -1459,47 +1449,15 @@ bool RhiRtDirectPass::PrepareGridBuildSet(Target &target)
 
     if (changed)
     {
-        target.gridHeaderWrap = nullptr;
-        target.gridSourcesWrap = nullptr;
         target.gridBuildSet = nullptr;
-
-        nvrhi::BufferDesc headerDesc;
-        headerDesc.byteSize = uint64_t(sizeof(uint32_t)) * Q2_LIGHT_GRID_HEADER_WORDS;
-        headerDesc.structStride = sizeof(uint32_t);
-        headerDesc.canHaveUAVs = false;
-        headerDesc.initialState = nvrhi::ResourceStates::CopyDest;
-        headerDesc.keepInitialState = true;
-        headerDesc.debugName = "RhiRtDirectPass grid header";
-
-        nvrhi::BufferDesc sourcesDesc;
-        sourcesDesc.byteSize = uint64_t(sizeof(ShLightGridSource)) * Q2_LIGHT_GRID_SOURCE_CAPACITY;
-        sourcesDesc.structStride = sizeof(ShLightGridSource);
-        sourcesDesc.canHaveUAVs = false;
-        sourcesDesc.initialState = nvrhi::ResourceStates::CopyDest;
-        sourcesDesc.keepInitialState = true;
-        sourcesDesc.debugName = "RhiRtDirectPass grid sources";
-
-        target.gridHeaderWrap = device->createHandleForNativeBuffer(
-            nvrhi::ObjectTypes::VK_Buffer,
-            nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(rawHandles[0]))), headerDesc);
-        target.gridSourcesWrap = device->createHandleForNativeBuffer(
-            nvrhi::ObjectTypes::VK_Buffer,
-            nvrhi::Object(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(rawHandles[1]))), sourcesDesc);
-
-        if (target.gridHeaderWrap == nullptr || target.gridSourcesWrap == nullptr)
-        {
-            LogMessage(print, "Warning: RHI: failed to wrap the GPU light-grid buffers");
-            return false;
-        }
-
         std::memcpy(target.gridBuildHandles, rawHandles, sizeof(target.gridBuildHandles));
     }
 
     if (target.gridBuildSet == nullptr)
     {
         nvrhi::BindingSetDesc desc;
-        desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, target.gridHeaderWrap));
-        desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, target.gridSourcesWrap));
+        desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, target.lightWraps[10]));
+        desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, target.lightWraps[11]));
         desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, target.lightWraps[8]));
         desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(3, target.lightWraps[9]));
 
@@ -1531,6 +1489,7 @@ void RhiRtDirectPass::BuildLightGrid(nvrhi::ICommandList *pCommandList, uint32_t
 
     const uint32_t groups = (uint32_t(Q2_LIGHT_GRID_CELLS) + 63u) / 64u;
     pCommandList->dispatch(groups, 1, 1);
+    pCommandList->commitBarriers();
 }
 
 void RhiRtDirectPass::RecordLightStatsFill(nvrhi::ICommandList *pCommandList, const Target &target,

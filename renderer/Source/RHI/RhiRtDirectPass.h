@@ -332,8 +332,6 @@ private:
         nvrhi::BufferHandle lightStagingWraps[11];
 
         VkBuffer gridBuildHandles[4] = {};
-        nvrhi::BufferHandle gridHeaderWrap;
-        nvrhi::BufferHandle gridSourcesWrap;
         nvrhi::BindingSetHandle gridBuildSet;
     };
 
