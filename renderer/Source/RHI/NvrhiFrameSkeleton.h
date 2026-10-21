@@ -209,7 +209,7 @@ public:
             float lightShaftIntensity = 0.0f;
             uint32_t lightShaftSteps = 8;
             uint32_t lightShaftCount = 0;
-            GodRaysLightShaft lightShafts[8] = {};
+            GodRaysLightShaft lightShafts[64] = {};
             float aabbMin[3] = {};
             float aabbMax[3] = {};
             float shadowLightDirection[3] = {};     // the shadow map's from-sun light direction

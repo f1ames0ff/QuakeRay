@@ -42,7 +42,7 @@ public:
 
     static constexpr uint32_t LIGHT_STATS_CLUSTER_COUNT = 8192;
     static constexpr uint32_t LIGHT_STATS_SLOT_COUNT = 3;
-    static constexpr uint32_t MAX_LIGHT_SHAFTS = 8;
+    static constexpr uint32_t MAX_LIGHT_SHAFTS = 64;
 
     struct LightShaft
     {

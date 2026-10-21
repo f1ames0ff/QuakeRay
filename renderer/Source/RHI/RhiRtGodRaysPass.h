@@ -242,11 +242,11 @@ public:
     // blob's own, verified with `spirv-dis` over `renderer\Build\CmGodRays.comp.spv`: the original
     // members keep offsets 0, 16, 32, 48, 64 (MatrixStride 16, RowMajor), 128, 132, 136, 140 and
     // 144; the light-shaft members follow at 148, 152 and 156 and the array at 160. The shader's
-    // `ArrayStride` is 672 and the buffer is created with `structStride = GOD_RAYS_PARAMS_STRIDE`.
+    // `ArrayStride` is 4256 and the buffer is created with `structStride = GOD_RAYS_PARAMS_STRIDE`.
     // This is deliberately not the legacy `GodRays::Params` layout (GodRays.h:44-56), which is the
     // same field sequence but was bound as a plain storage buffer of its own size; the members and
     // their meaning are identical.
-    static constexpr uint32_t MAX_LIGHT_SHAFTS = 8;
+    static constexpr uint32_t MAX_LIGHT_SHAFTS = 64;
 
     struct LightShaft
     {
@@ -289,8 +289,8 @@ public:
         LightShaft lightShafts[MAX_LIGHT_SHAFTS];
     };
 
-    // The shader's structured-buffer element stride (measured ArrayStride 672), and the size of the
-    // one-element buffer that carries Params.
+    // The shader's structured-buffer element stride, and the size of the one-element buffer that
+    // carries Params.
     static constexpr uint32_t GOD_RAYS_PARAMS_STRIDE =
         160 + MAX_LIGHT_SHAFTS * uint32_t(sizeof(LightShaft));
 
@@ -595,10 +595,10 @@ private:
 };
 
 // The CPU mirror has to match the measured member layout member by member; the shader's element
-// stride is GOD_RAYS_PARAMS_STRIDE (672), not this size, which is why the buffer is created with
-// the stride, not with sizeof().
-static_assert(sizeof(RhiRtGodRaysPass::Params) == 672,
-              "GodRaysParams_BT is 672 bytes; the structured buffer uses the 672-byte stride");
+// stride is GOD_RAYS_PARAMS_STRIDE, not this size, which is why the buffer is created with the
+// stride, not with sizeof().
+static_assert(sizeof(RhiRtGodRaysPass::Params) == 4256,
+              "GodRaysParams_BT is 4256 bytes; the structured buffer uses the 4256-byte stride");
 static_assert(offsetof(RhiRtGodRaysPass::Params, sunDirection) == 0, "measured member offset");
 static_assert(offsetof(RhiRtGodRaysPass::Params, sunColor) == 16, "measured member offset");
 static_assert(offsetof(RhiRtGodRaysPass::Params, worldCenter) == 32, "measured member offset");

@@ -17,7 +17,7 @@
 #ifndef LIGHT_SHAFTS_HLSLI_
 #define LIGHT_SHAFTS_HLSLI_
 
-#define MAX_LIGHT_SHAFTS 8
+#define MAX_LIGHT_SHAFTS 64
 
 struct LightShaft_BT
 {

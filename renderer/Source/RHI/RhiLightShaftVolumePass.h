@@ -38,7 +38,7 @@ class RhiLightShaftVolumePass final
 public:
     using PrintFunction = std::function<void(const char *)>;
 
-    static constexpr uint32_t MAX_LIGHT_SHAFTS = 8;
+    static constexpr uint32_t MAX_LIGHT_SHAFTS = 64;
     static constexpr uint32_t VOLUME_SIZE_X = 128;
     static constexpr uint32_t VOLUME_SIZE_Y = 72;
     static constexpr uint32_t VOLUME_SIZE_Z = 48;
@@ -121,5 +121,8 @@ private:
 
     Target targets[MAX_FRAMES_IN_FLIGHT];
 };
+
+static_assert(sizeof(RhiLightShaftVolumePass::Params) == 4144,
+              "LightShaftVolumeParams_BT is 4144 bytes");
 
 }
