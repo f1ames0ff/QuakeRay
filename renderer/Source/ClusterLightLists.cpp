@@ -1198,7 +1198,7 @@ void ClusterLightLists::FillLists(UserPrint *pUserPrint)
         else
         {
             snprintf(buffer, sizeof(buffer),
-                     "RT: %u clusters reached the %u light limit, farther lights are not sampled "
+                     "Warning: RT: %u clusters reached the %u light limit, farther lights are not sampled "
                      "there (Q2_LIGHT_LIST_MAX_PER_CELL)\n",
                      stats.fullClusters, kMaxPerList);
         }

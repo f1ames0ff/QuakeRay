@@ -56,6 +56,11 @@ sys_socket_t WIPX_Init (void)
 	if (COM_CheckParm ("-noipx"))
 		return INVALID_SOCKET;
 
+	// AF_IPX was removed from current Windows: never start the driver unless
+	// the user asks for it, so a normal start neither fails nor says so
+	if (!COM_CheckParm ("-ipx"))
+		return INVALID_SOCKET;
+
 	if (winsock_initialized == 0)
 	{
 		err = WSAStartup (MAKEWORD (1, 1), &winsockdata);

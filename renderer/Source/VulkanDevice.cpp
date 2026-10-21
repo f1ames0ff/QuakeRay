@@ -827,23 +827,6 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
     sky.particleProxies = particleProxies.empty() ? nullptr : particleProxies.data();
     sky.particleProxyCount = static_cast<uint32_t>(particleProxies.size());
 
-    // Temporary diagnostics of the traced particle capture (removed once FTE is verified).
-    {
-        static uint32_t particleCaptureDiagFrame = 0;
-        if ((particleCaptureDiagFrame++ % 120u) == 0u)
-        {
-            const auto &stats = rasterizedDataCollector->GetParticleCaptureStats();
-            Print(("QR particle capture: draws=" + std::to_string(stats.candidateDraws) +
-                   " sprites=" + std::to_string(stats.capturedSprites) +
-                   " tris=" + std::to_string(stats.capturedTriangles) +
-                   " rejBlend=" + std::to_string(stats.rejectedBlend) +
-                   " rejCap=" + std::to_string(stats.rejectedCap) +
-                   " rejLines=" + std::to_string(stats.rejectedLines) +
-                   (particleProxyGateOpen ? " gate=open" : " gate=closed") +
-                   " proxies=" + std::to_string(particleProxies.size())).c_str());
-        }
-    }
-
     sky.swapchainDraws = swapchainDraws.data();
     sky.swapchainDrawCount = static_cast<uint32_t>(swapchainDraws.size());
     sky.swapchainVertexStaging = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(

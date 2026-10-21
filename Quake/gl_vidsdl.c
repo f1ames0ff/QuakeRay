@@ -2917,7 +2917,32 @@ void VID_Lock (void)
 
 static void RT_PrintMessage (const char *pMessage, void *pUserData)
 {
-	Con_Warning (pMessage);
+	char     buffer[2048];
+	qboolean warning;
+	size_t   len;
+
+	if (!pMessage || !pMessage[0])
+		return;
+
+	// The renderer reports everything through this one callback: capability
+	// and statistics lines are information, while failures carry their own
+	// "Warning: " prefix. Print the rest as plain lines (the warning colour
+	// stays for the failures) and make sure a message without a newline never
+	// glues itself to the next console line.
+	warning = (q_strncasecmp (pMessage, "Warning: ", 9) == 0) ? true : false;
+
+	q_strlcpy (buffer, warning ? pMessage + 9 : pMessage, sizeof (buffer));
+	len = strlen (buffer);
+	if (len > 0 && buffer[len - 1] != '\n' && len + 1 < sizeof (buffer))
+	{
+		buffer[len] = '\n';
+		buffer[len + 1] = '\0';
+	}
+
+	if (warning)
+		Con_Warning ("%s", buffer);
+	else
+		Con_Printf ("%s", buffer);
 }
 
 static void RT_LoadFile (const char *pFilePath, void *pUserData, const void **ppOutData,
@@ -3211,7 +3236,6 @@ static void RT_Color (void)
 	}
 
 	RT_ColorSet (c, color);
-	RT_ColorPrint (c);
 }
 
 // Color settings are commands backed by archivable cvars: the command parses the

@@ -1192,6 +1192,10 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 
 		task_handle_t draw_done_task = Task_AllocateAndAssignFunc (SCR_DrawDone, NULL, 0);
 		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (SCR_SetupFrame, NULL, 0);
+		// the editor's queued host actions land and its dirty materials are
+		// re-synthesized before the marking below reads the static-submit
+		// flag (R_MarkSurfaces) and the frame's tasks read the host state
+		QR_Editor_FlushDirty ();
 		V_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
 		task_handle_t draw_gui_task = Task_AllocateAndAssignFunc (SCR_DrawGUI, NULL, 0);
 		task_handle_t end_rendering_task = GL_EndRendering ();

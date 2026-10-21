@@ -9,6 +9,7 @@
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "atomics.h"
+#include "qr_editor.h"
 
 #include <yaml.h>
 
@@ -884,7 +885,6 @@ void RT_LIGHT_Reload(void)
 
     rt_light_load_vfs("lights.yaml");
     rt_light_load_vfs("qray.lights.yaml");
-    rt_light_load_directory(com_gamedir);
 }
 
 void RT_LIGHT_Init(void)
@@ -1348,7 +1348,7 @@ static void RT_SkySettings_SetCvar(int index, const char *value)
     if (!value)
         return;
     if (strcmp(RT_SkySettings_Live(index), value))
-        Cvar_Set(rt_sky_names[index], value);
+        QR_Editor_HostCvarSet(rt_sky_names[index], value);
 }
 
 static void RT_SkySettings_CaptureGlobals(void)
