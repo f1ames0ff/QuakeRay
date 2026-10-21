@@ -481,7 +481,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
                               (cone * attenuation * phase * stepLength * density);
             }
 
-            inscatterColor += shaftColor * godRaysParams[0].lightShaftIntensity;
+            inscatterColor += shaftColor * godRaysParams[0].lightShaftIntensity * 0.01;
         }
     }
 

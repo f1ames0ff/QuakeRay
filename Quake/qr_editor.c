@@ -90,6 +90,7 @@ float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
 qboolean Fog_Enabled (void);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
+extern cvar_t rt_light_shafts, rt_light_shafts_intensity, rt_light_shafts_resolution;
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -4251,6 +4252,9 @@ static const char *const qre_mat_cvars[] = {
 	"rt_dtal_model_minarea",
 	"rt_dtal_model_maxpolys",
 	"rt_dtal_model_budget",
+	"rt_light_shafts",
+	"rt_light_shafts_intensity",
+	"rt_light_shafts_resolution",
 };
 
 static char     qre_mat_cvar_snapshot[countof (qre_mat_cvars)][QRE_SNAPSHOT_MAX];
@@ -4480,6 +4484,34 @@ static void QRE_MatSystemTab (void)
 
 		QR_GUI_Separator ();
 	}
+
+	QR_GUI_SectionHeader ("Light shafts");
+	{
+		int enabled = CVAR_TO_BOOL (rt_light_shafts) ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("light_shafts", &enabled,
+		                     "Master switch for the volumetric shafts of projector materials and custom spot lights."))
+			QR_Editor_HostCvarSet ("rt_light_shafts", enabled ? "1" : "0");
+		QRE_MatCvarReset ("rt_light_shafts");
+
+		value = CVAR_TO_FLOAT (rt_light_shafts_intensity);
+		if (QR_GUI_SliderFloat ("light_shafts_intensity", &value, 0.0f, 4.0f,
+		                        "Scale the volumetric light shafts without changing the source lights."))
+			QR_Editor_HostCvarSet ("rt_light_shafts_intensity", va ("%.4g", value));
+		QRE_MatCvarReset ("rt_light_shafts_intensity");
+
+		{
+			static const char *const resolutions[] = { "low", "medium", "high" };
+			int resolution = CLAMP (0, CVAR_TO_INT32 (rt_light_shafts_resolution), 2);
+
+			if (QR_GUI_Combo ("light_shafts_resolution", &resolution, resolutions,
+			                  (int)countof (resolutions),
+			                  "Resolution of the light-shaft march: higher settings sample the volume more finely and cost more."))
+				QR_Editor_HostCvarSet ("rt_light_shafts_resolution", va ("%d", resolution));
+			QRE_MatCvarReset ("rt_light_shafts_resolution");
+		}
+	}
+	QR_GUI_Separator ();
 
 	if (dbg < 0 || dbg > 3)
 		dbg = 0;
@@ -6022,6 +6054,37 @@ static void QRE_BuildPanelGUI (void)
 			if (QR_GUI_Section (qre.group[g]->name, 1))
 				QRE_ParamWidgets (g);
 			QR_GUI_PopID ();
+		}
+	}
+
+	if (qre.mat_tab == 0)
+	{
+		QR_GUI_Separator ();
+		QR_GUI_SectionHeader ("Light shafts");
+		{
+			int enabled = CVAR_TO_BOOL (rt_light_shafts) ? 1 : 0;
+			float value = CVAR_TO_FLOAT (rt_light_shafts_intensity);
+
+			if (QR_GUI_Checkbox ("light_shafts (global)", &enabled,
+			                     "Master switch for the volumetric shafts of projector materials and custom spot lights."))
+				QR_Editor_HostCvarSet ("rt_light_shafts", enabled ? "1" : "0");
+			QRE_MatCvarReset ("rt_light_shafts");
+
+			if (QR_GUI_SliderFloat ("light_shafts_intensity", &value, 0.0f, 4.0f,
+			                        "Scale the volumetric light shafts without changing the source lights."))
+				QR_Editor_HostCvarSet ("rt_light_shafts_intensity", va ("%.4g", value));
+			QRE_MatCvarReset ("rt_light_shafts_intensity");
+
+			{
+				static const char *const resolutions[] = { "low", "medium", "high" };
+				int resolution = CLAMP (0, CVAR_TO_INT32 (rt_light_shafts_resolution), 2);
+
+				if (QR_GUI_Combo ("light_shafts_resolution", &resolution, resolutions,
+				                  (int)countof (resolutions),
+				                  "Resolution of the light-shaft march: higher settings sample the volume more finely and cost more."))
+					QR_Editor_HostCvarSet ("rt_light_shafts_resolution", va ("%d", resolution));
+				QRE_MatCvarReset ("rt_light_shafts_resolution");
+			}
 		}
 	}
 
