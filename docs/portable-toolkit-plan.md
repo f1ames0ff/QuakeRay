@@ -115,6 +115,14 @@ Required before moving `renderer/` to its own repository:
 1. Decide whether NVRHI is consumed as a source subdirectory or an installed package; document the dependency contract and remove the hard-coded sibling path from the package default.
 2. Keep shader output and `gfx/` staging as host-side deployment steps, separate from the renderer library target.
 
+## 4.2 SDK import — 2026-10-22
+
+- `renderer/` is now the `QuakeRaySDK` git submodule at `cb8ddb82`.
+- The SDK `main` contains the package install/export path, `qray_rendererConfig.cmake`, the FSR provider and the engine-free tests.
+- The Quake cluster test moved to the host tree as `tests/qray_cluster_lists_tests.cpp`.
+- A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
+- The host build still fails one performance check, `qray_dtal_perf`, with a roughly 2x GPU timing regression while the other 9 tests pass; the failure is environmental/clock-sensitive until re-measured on an idle machine.
+
 ## 4.1 Current code anchors
 
 - `renderer/Include/qray/qray.h` — existing C ABI.
