@@ -5,6 +5,13 @@
 # ============================================================================
 cmake_minimum_required(VERSION 3.20)
 
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(qray_renderer VERSION 1.3.0 LANGUAGES C CXX)
+    set(QR_RENDERER_STANDALONE ON)
+else()
+    set(QR_RENDERER_STANDALONE OFF)
+endif()
+
 set(renderer_CXX_STANDARD 20)
 
 # The renderer source + public headers + shaders live in this folder.
@@ -147,6 +154,35 @@ if(WIN32)
 endif()
 
 option(QR_BUILD_TESTS "Build headless renderer GPU regression tests" OFF)
+if(QR_RENDERER_STANDALONE)
+    if(NOT WIN32)
+        message(FATAL_ERROR "qray_renderer currently supports Win32 only")
+    endif()
+
+    find_package(Vulkan REQUIRED)
+
+    if(NOT TARGET nvrhi)
+        if(NOT DEFINED QR_NVRHI_SOURCE_DIR)
+            set(QR_NVRHI_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/nvrhi")
+        endif()
+
+        if(NOT EXISTS "${QR_NVRHI_SOURCE_DIR}/CMakeLists.txt")
+            message(FATAL_ERROR
+                "NVRHI was not found. Set QR_NVRHI_SOURCE_DIR to the NVRHI source tree "
+                "or provide an existing nvrhi target.")
+        endif()
+
+        set(NVRHI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+        set(NVRHI_INSTALL OFF CACHE BOOL "" FORCE)
+        set(NVRHI_WITH_VULKAN ON CACHE BOOL "" FORCE)
+        set(NVRHI_WITH_DX11 OFF CACHE BOOL "" FORCE)
+        set(NVRHI_WITH_DX12 OFF CACHE BOOL "" FORCE)
+        set(NVRHI_WITH_VALIDATION ON CACHE BOOL "" FORCE)
+        set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "" FORCE)
+        add_subdirectory("${QR_NVRHI_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/nvrhi")
+    endif()
+endif()
+
 if(QR_BUILD_TESTS)
     add_executable(qray_swapchain_policy Tests/SwapchainPolicyTests.cpp)
     target_compile_features(qray_swapchain_policy PRIVATE cxx_std_20)
@@ -247,21 +283,23 @@ if(QR_BUILD_TESTS)
     add_test(NAME qray_dtal_perf COMMAND qray_dtal_perf "${QR_DTAL_PROBE}" "${QR_PROBE_DIR}/DtalPerf.baseline.txt")
     set_tests_properties(qray_dtal_perf PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 
-    add_executable(qray_cluster_lists_tests
-        Tests/ClusterLightListsTests.cpp
-        "${CMAKE_SOURCE_DIR}/Quake/rt_light_admit.c"
-    )
-    target_compile_features(qray_cluster_lists_tests PRIVATE cxx_std_20)
-    target_include_directories(qray_cluster_lists_tests PRIVATE
-        Source
-        "${CMAKE_SOURCE_DIR}/Quake"
-    )
-    target_link_libraries(qray_cluster_lists_tests PRIVATE renderer nvrhi nvrhi_vk)
-    if(WIN32)
-        target_link_libraries(qray_cluster_lists_tests PRIVATE user32)
+    if(NOT QR_RENDERER_STANDALONE)
+        add_executable(qray_cluster_lists_tests
+            Tests/ClusterLightListsTests.cpp
+            "${CMAKE_SOURCE_DIR}/Quake/rt_light_admit.c"
+        )
+        target_compile_features(qray_cluster_lists_tests PRIVATE cxx_std_20)
+        target_include_directories(qray_cluster_lists_tests PRIVATE
+            Source
+            "${CMAKE_SOURCE_DIR}/Quake"
+        )
+        target_link_libraries(qray_cluster_lists_tests PRIVATE renderer nvrhi nvrhi_vk)
+        if(WIN32)
+            target_link_libraries(qray_cluster_lists_tests PRIVATE user32)
+        endif()
+        add_test(NAME qray_cluster_lists_tests COMMAND qray_cluster_lists_tests)
+        set_tests_properties(qray_cluster_lists_tests PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
     endif()
-    add_test(NAME qray_cluster_lists_tests COMMAND qray_cluster_lists_tests)
-    set_tests_properties(qray_cluster_lists_tests PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 endif()
 
 add_library(qray_alias STATIC Source/rt_alias.c)
