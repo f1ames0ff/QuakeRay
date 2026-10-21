@@ -58,6 +58,36 @@ At reach 25 m, 64 u center mode reports p95 = 8 and max = 8, while overlap repor
 - This covers the near field (2048 u = 52 m); the outer map keeps the cluster path until the cascade count/ABI is expanded.
 - The 64-ID id Tech 8 parameter is replaced by 128 + 128; the sampling loop and per-sample ray cost are unchanged.
 
+## Architecture-first target
+
+The capacity comparison is closed. The next work is the full id Tech 8 structure, not a 64/128 parameter sweep.
+
+Target grid, following the public id Tech 8 cascaded light grid:
+
+- 16 x 16 x 16 cells per cascade, 8 exponential cascades = 32,768 cells.
+- First cascade 32 m bounds, 2 m^3 per cell; later cascades double.
+- 64 typed IDs per cell: lights 16-bit, reflection probes 8-bit, decals 16-bit.
+- One ID table, typed entries, and per-type index arrays; about 30 MB for the grid.
+- GPU build and publication; the CPU builder is a reference oracle, not the runtime path.
+- World-space cell lookup for direct NEE, indirect NEE, particles and glass; the cluster list stays as the fallback outside the cascades.
+
+Target volumes:
+
+- 16 x 16 x 16 x 6 cascaded irradiance volumes, plus local 10 x 10 x 10 volumes.
+- One cascade and one volume updated per frame, interleaved.
+- 64 / 32 / 16 visibility rays per probe by quality.
+- Probe NEE reads the same typed grid; no separate per-probe light list.
+
+Migration order:
+
+1. Grid ABI: 8 cascades, 32,768 cells, 64 typed IDs, new publication buffers. No tail in v1.
+2. GPU grid builder and publication.
+3. Direct NEE, then indirect NEE, particles and glass; keep the cluster fallback.
+4. Cascaded and local irradiance/radiance volumes.
+5. Only then tune capacity, reach, cell size and cascade count.
+
+The current two-cascade CPU builder is a scaffold and a test oracle. It is not the final grid, and its 128 + 128 layout is not the target ABI.
+
 ## 2A.1 builder on the branch
 
 The first prototype layer is implemented behind `rt_light_grid` (default `0`). It builds the two-cascade grid on the CPU, without changing shading:
