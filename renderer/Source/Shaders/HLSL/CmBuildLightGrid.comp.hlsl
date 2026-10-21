@@ -77,6 +77,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     for (uint sourceIndex = 0u; sourceIndex < sourceCount; sourceIndex++)
     {
         const ShLightGridSource source = gridSources[sourceIndex];
+
+        if (source.lightIndex == GRID_ID_INVALID)
+        {
+            continue;
+        }
+
         const float influence = source.originReach.w + source.radius + 32.0;
         const float3 delta = max(abs(source.originReach.xyz - center) - halfCell, 0.0);
         const float dist2 = dot(delta, delta);

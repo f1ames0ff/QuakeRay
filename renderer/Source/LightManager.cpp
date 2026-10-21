@@ -1442,6 +1442,9 @@ void qray::LightManager::PublishGridSources(uint32_t frameIndex, const LightGrid
         ResolveCacheEntry cache[kResolveCacheSize];
         memset(cache, 0xFF, sizeof(cache));
 
+        const ShLightEncoded *pEncodedLights =
+            static_cast<const ShLightEncoded *>(lightsBuffer->GetMapped(frameIndex));
+
         uint32_t resolvedCount = 0;
         float    minPower = 1e30f;
         float    maxPower = -1e30f;
@@ -1458,8 +1461,18 @@ void qray::LightManager::PublishGridSources(uint32_t frameIndex, const LightGrid
                 resolvedCount++;
             }
 
-            minPower = std::min(minPower, source.power);
-            maxPower = std::max(maxPower, source.power);
+            float power = source.power;
+
+            if (power <= 0.0f && lightIndex != uint32_t(LIGHT_INDEX_NONE) && pEncodedLights != nullptr)
+            {
+                const float *color = pEncodedLights[lightIndex].color;
+                power = std::max(1.0e-4f, 0.2126f * std::fabs(color[0]) +
+                                              0.7152f * std::fabs(color[1]) +
+                                              0.0722f * std::fabs(color[2]));
+            }
+
+            minPower = std::min(minPower, power);
+            maxPower = std::max(maxPower, power);
             minReach = std::min(minReach, source.reach);
             maxReach = std::max(maxReach, source.reach);
 
@@ -1468,8 +1481,8 @@ void qray::LightManager::PublishGridSources(uint32_t frameIndex, const LightGrid
             pDst[i].originReach[2] = source.origin[2];
             pDst[i].originReach[3] = source.reach;
             pDst[i].radius = source.radius;
-            pDst[i].power = source.power;
-            pDst[i].lightIndex = lightIndex & QR_LIGHT_GRID_ID_INDEX_MASK;
+            pDst[i].power = power;
+            pDst[i].lightIndex = lightIndex;
             pDst[i].pad = 0;
         }
 
