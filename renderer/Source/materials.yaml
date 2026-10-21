@@ -89,6 +89,10 @@
 #             light_focus_soft: 8
 #             light_projector: true
 #
+# `light_shafts: true` draws a projector's cone as volumetric shafts in the air.
+# It needs `is_light` and `light_projector`; the shafts use the material's light
+# colour, cone and reach, and a light without the key stays invisible in the air.
+#
 # `texture_overlay: textures/foo_grunge.png` paints over the base texture:
 # its RGB lands where its alpha is set, while `base_factor` still dims or
 # lifts the base underneath. The overlay's alpha is only the paint's

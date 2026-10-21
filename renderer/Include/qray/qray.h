@@ -631,6 +631,7 @@ typedef struct QrTexturedAreaLightUploadInfo
 
     int             fit;
     int             isStatic;
+    QrBool32        lightShafts;
 } QrTexturedAreaLightUploadInfo;
 
 /* Spot lights are regular lights in the light array: any number of them can be uploaded. */
@@ -648,6 +649,7 @@ typedef struct QrSpotLightUploadInfo
 
     // Inner cone half-angle. In radians; the intensity is full below it.
     float           angleInner;
+    QrBool32        lightShafts;
 } QrSpotLightUploadInfo;
 
 QRAPI QrResult QRCONV qrUploadDirectionalLight(
@@ -734,6 +736,7 @@ typedef struct QrDtalGroupUploadInfo
 
     uint32_t        memberBase;
     uint32_t        memberCount;
+    QrBool32        lightShafts;
 } QrDtalGroupUploadInfo;
 
 typedef struct QrDtalGroupUploadBatch
@@ -1188,6 +1191,9 @@ typedef struct QrDrawFrameSkyParams
     uint32_t    skyCloudsQuality;
     uint32_t    godRaysQuality;
     float       sunDiscSize;
+    QrBool32    lightShaftsEnabled;
+    float       lightShaftsIntensity;
+    uint32_t    lightShaftsResolution;
 } QrDrawFrameSkyParams;
 
 #define QR_LIGHT_STYLE_COUNT 64

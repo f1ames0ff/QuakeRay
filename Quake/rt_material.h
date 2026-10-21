@@ -66,6 +66,7 @@ typedef struct rt_material_s {
     float emissive_focus;
     float emissive_focus_soft;
     qboolean emissive_projector;
+    qboolean light_shafts;
     float base_factor;
     qboolean is_light;
     qboolean light_styles;

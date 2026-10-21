@@ -86,6 +86,16 @@ struct GodRaysPush_BT
 [[vk::binding(0, DESC_SET_GOD_RAYS_SHADOW)]] Texture2D<float4> texShadowMap;
 [[vk::binding(1, DESC_SET_GOD_RAYS_SHADOW)]] SamplerState texShadowMap_Sampler;
 
+#define MAX_LIGHT_SHAFTS 8
+
+struct LightShaft_BT
+{
+    float4 positionRadius;
+    float4 direction;
+    float4 color;
+    float4 cone;
+};
+
 struct GodRaysParams_BT
 {
     float4 sunDirection;
@@ -97,7 +107,11 @@ struct GodRaysParams_BT
     float godRaysIntensity;
     float godRaysEccentricity;
     uint godRaysEnabled;
-    float _padding;
+    float sunStepScale;
+    uint lightShaftCount;
+    float lightShaftIntensity;
+    uint lightShaftSteps;
+    LightShaft_BT lightShafts[MAX_LIGHT_SHAFTS];
 };
 
 [[vk::binding(0, DESC_SET_GOD_RAYS_PARAMS)]] StructuredBuffer<GodRaysParams_BT> godRaysParams;
@@ -151,7 +165,8 @@ float getDensity(float3 p)
 
 float getStep(float t, float density)
 {
-    return max(1.0, lerp(20.0, 5.0, density));
+    const float scale = clamp(godRaysParams[0].sunStepScale, 0.25, 4.0);
+    return max(1.0, lerp(20.0, 5.0, density) * scale);
 }
 
 [numthreads(16, 16, 1)]
@@ -196,7 +211,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    if (getLuminance(godRaysParams[0].sunColor.rgb) == 0.0)
+    if (getLuminance(godRaysParams[0].sunColor.rgb) == 0.0 &&
+        godRaysParams[0].lightShaftCount == 0)
     {
         if (push.passIndex == 0)
         {
@@ -372,6 +388,92 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (medium == MEDIA_TYPE_WATER)
     {
         inscatterColor *= globalUniform.waterColorAndDensity.a * 30.0;
+    }
+
+    if (push.passIndex == 0 && godRaysParams[0].lightShaftCount > 0 && !isSky)
+    {
+        const uint shaftCount = min(godRaysParams[0].lightShaftCount, (uint)MAX_LIGHT_SHAFTS);
+        const uint shaftSteps = clamp(godRaysParams[0].lightShaftSteps, 4u, 16u);
+
+        for (uint si = 0; si < shaftCount; ++si)
+        {
+            const LightShaft_BT shaft = godRaysParams[0].lightShafts[si];
+            const float3 lightPos = shaft.positionRadius.xyz;
+            const float radius = max(shaft.positionRadius.w, 0.001);
+            float3 lightDir = shaft.direction.xyz;
+
+            if (dot(lightDir, lightDir) <= 0.000001)
+            {
+                continue;
+            }
+
+            lightDir = normalize(lightDir);
+
+            const float3 toLight = lightPos - surfacePos;
+            const float distanceToLight = length(toLight);
+
+            if (distanceToLight < 1.0)
+            {
+                continue;
+            }
+
+            const float3 stepVec = toLight / (float)(shaftSteps + 1);
+            float3 p = surfacePos;
+            float3 shaftColor = (float3)0;
+
+            for (uint sj = 0; sj < shaftSteps; ++sj)
+            {
+                p += stepVec;
+
+                const float3 fromLight = p - lightPos;
+                const float distToLight = length(fromLight);
+
+                if (distToLight < 0.001)
+                {
+                    continue;
+                }
+
+                const float cosAngle = dot(fromLight / distToLight, lightDir);
+                const float cone = smoothstep(shaft.cone.y, shaft.cone.x, cosAngle);
+
+                if (cone <= 0.0)
+                {
+                    continue;
+                }
+
+                const float4 clip = mul(globalUniform.projection, mul(globalUniform.view, float4(p, 1.0)));
+                if (clip.w <= 0.0)
+                {
+                    continue;
+                }
+
+                const float2 uv = clip.xy / clip.w * 0.5 + 0.5;
+                if (any(uv < (float2)0) || any(uv > (float2)1))
+                {
+                    continue;
+                }
+
+                const int2 screenSize = int2(globalUniform.renderWidth, globalUniform.renderHeight);
+                const int2 sp = clamp(int2(uv * (float2)screenSize), int2(0, 0),
+                                      screenSize - int2(1, 1));
+                const float sceneDepth = framebufDepthWorld_Sampled.Load(int3(sp, 0)).x;
+                const float sampleDepth = length(p - globalUniform.cameraPosition.xyz);
+
+                if (sceneDepth + 2.0 < sampleDepth)
+                {
+                    continue;
+                }
+
+                const float attenuation = radius * radius / (distToLight * distToLight + radius * radius);
+                const float phase = ScatterPhase_HenyeyGreenstein(
+                    dot(normalize(surfacePos - p), lightDir), 0.5);
+                const float stepLength = distanceToLight / (float)(shaftSteps + 1);
+
+                shaftColor += shaft.color.rgb * (cone * attenuation * phase * stepLength * getDensity(p));
+            }
+
+            inscatterColor += shaftColor * godRaysParams[0].lightShaftIntensity * 0.0001;
+        }
     }
 
     if (push.passIndex != 0)

@@ -866,29 +866,70 @@ bool VulkanDevice::RenderThroughRhi(const QrDrawFrameInfo &drawInfo)
             (drawInfo.pSkyParams->skyType == QR_SKY_TYPE_RASTERIZED_GEOMETRY) &&
             (drawInfo.pSkyParams->godRaysFromSkyTexture != 0);
 
-        const bool godRaysOn = godRaysEnabled && (sunExists || useSkyBrightest);
+        const bool sunShaftsOn = godRaysEnabled && (sunExists || useSkyBrightest);
+        const bool lightShaftsEnabled = drawInfo.pSkyParams != nullptr &&
+                                        drawInfo.pSkyParams->lightShaftsEnabled != 0;
+        LightManager::LightShaft lightShafts[LightManager::MAX_LIGHT_SHAFTS] = {};
+        const uint32_t lightShaftCount = lightShaftsEnabled
+            ? scene->GetLightManager()->CollectLightShafts(lightShafts, LightManager::MAX_LIGHT_SHAFTS)
+            : 0;
+        const bool lightShaftsOn = lightShaftCount > 0;
+        const bool godRaysOn = sunShaftsOn || lightShaftsOn;
 
         sky.godRays.enabled = godRaysOn;
         sky.godRays.intensity = 0.05f * godRaysIntensity;
         sky.godRays.eccentricity = 0.75f;
+        {
+            static constexpr float stepScales[5] = {2.0f, 1.5f, 1.0f, 0.75f, 0.5f};
+            const uint32_t quality = (drawInfo.pSkyParams != nullptr)
+                ? std::min(drawInfo.pSkyParams->godRaysQuality, 4u) : 2u;
+            sky.godRays.sunStepScale = stepScales[quality];
+        }
+        sky.godRays.lightShaftCount = lightShaftCount;
+        sky.godRays.lightShaftIntensity = (drawInfo.pSkyParams != nullptr)
+            ? std::max(drawInfo.pSkyParams->lightShaftsIntensity, 0.0f) : 1.0f;
+        sky.godRays.lightShaftSteps = (drawInfo.pSkyParams != nullptr)
+            ? std::min(16u, 6u + std::min(drawInfo.pSkyParams->lightShaftsResolution, 2u) * 4u) : 10u;
 
         if (godRaysOn)
         {
             for (int k = 0; k < 3; k++)
             {
-                if (useSkyBrightest)
+                if (sunShaftsOn && useSkyBrightest)
                 {
                     sky.godRays.shadowLightDirection[k] = -drawInfo.pSkyParams->godRaysSkyDirection.data[k];
                     sky.godRays.sunDirection[k] = drawInfo.pSkyParams->godRaysSkyDirection.data[k];
                     sky.godRays.sunColor[k] = drawInfo.pSkyParams->godRaysSkyColor.data[k];
                 }
-                else
+                else if (sunShaftsOn)
                 {
                     sky.godRays.shadowLightDirection[k] = sunDir[k];
                     sky.godRays.sunDirection[k] = -sunDir[k];
                     sky.godRays.sunColor[k] = sunColor[k];
                 }
             }
+        }
+
+        if (!sunShaftsOn && lightShaftsOn)
+        {
+            const bool validDirection =
+                lightShafts[0].direction[0] * lightShafts[0].direction[0] +
+                lightShafts[0].direction[1] * lightShafts[0].direction[1] +
+                lightShafts[0].direction[2] * lightShafts[0].direction[2] > 0.0001f;
+
+            for (int k = 0; k < 3; k++)
+            {
+                sky.godRays.shadowLightDirection[k] =
+                    validDirection ? lightShafts[0].direction[k] : (k == 2 ? 1.0f : 0.0f);
+            }
+        }
+
+        for (uint32_t i = 0; i < lightShaftCount; i++)
+        {
+            memcpy (sky.godRays.lightShafts[i].position, lightShafts[i].position, sizeof (lightShafts[i].position));
+            memcpy (sky.godRays.lightShafts[i].direction, lightShafts[i].direction, sizeof (lightShafts[i].direction));
+            memcpy (sky.godRays.lightShafts[i].color, lightShafts[i].color, sizeof (lightShafts[i].color));
+            memcpy (sky.godRays.lightShafts[i].cone, lightShafts[i].cone, sizeof (lightShafts[i].cone));
         }
 
         sky.godRays.hasAabb = scene->HasAABB();

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Projector and custom spot lights can cast volumetric light shafts** — a material light with `is_light` and `light_projector` shows the `light_shafts` toggle, and a custom spot light shows the same toggle in its own form. The shaft follows the source's colour, cone, direction and reach; DTAL groups inherit the material flag, while a custom light is independent. `rt_light_shafts` is the master switch, `rt_light_shafts_intensity` scales the result, and `rt_light_shafts_resolution` is a low/medium/high dropdown that trades march detail for cost. The existing sun shafts gain a low/medium/high/ultra/extreme resolution dropdown as well.
+
 ## v0.50.22
 
 ### Added

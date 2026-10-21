@@ -530,6 +530,7 @@ static void RT_UploadAllDlights ()
 					.radius = info.radius,
 					.angleOuter = angleOuter,
 					.angleInner = angleInner,
+					.lightShafts = l->light_shafts ? 1 : 0,
 				};
 
 				QrResult r = qrUploadSpotLight (vulkan_globals.instance, &spot);

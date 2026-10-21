@@ -136,6 +136,7 @@ static const char *rt_light_header =
     "#       dir: 0 0 1           # the axis of the cone, X Y Z\n"
     "#       angle_inner: 0       # degrees, the cone's full-intensity core\n"
     "#       angle_outer: 30      # degrees, where the cone falls to nothing\n"
+    "#       light_shafts: true   # draw the cone as volumetric shafts\n"
     "#       style: candle        # optional, a light style of the engine\n";
 
 // The name the editor and the renderer agree on: the normalized texture name
@@ -454,6 +455,7 @@ void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
             .radius = METRIC_TO_QUAKEUNIT(resolved.radius),
             .angleOuter = light.angleOuter,
             .angleInner = light.angleInner,
+            .lightShafts = light.light_shafts ? 1 : 0,
         };
 
         QrResult r = qrUploadSpotLight(vulkan_globals.instance, &info);
@@ -1230,6 +1232,13 @@ static qboolean RT_CustomParseLight(yaml_document_t *document, yaml_node_t *node
         }
         else if (!q_strcasecmp(fkb, "dir"))
             sscanf(fvb, "%f %f %f", &l->dir[0], &l->dir[1], &l->dir[2]);
+        else if (!q_strcasecmp(fkb, "light_shafts"))
+        {
+            qboolean shafts;
+
+            if (RT_CustomBoolFromString(fvb, &shafts))
+                l->light_shafts = shafts;
+        }
         else if (!q_strcasecmp(fkb, "angle_inner"))
             l->angle_inner = (float)atof(fvb);
         else if (!q_strcasecmp(fkb, "angle_outer"))
@@ -1877,6 +1886,8 @@ void RT_CustomLights_WriteEntry(FILE *f, const rt_custom_light_t *l)
         fprintf(f, "      dir: %.6g %.6g %.6g\n", l->dir[0], l->dir[1], l->dir[2]);
         fprintf(f, "      angle_inner: %.6g\n", l->angle_inner);
         fprintf(f, "      angle_outer: %.6g\n", l->angle_outer);
+        if (l->light_shafts)
+            fprintf(f, "      light_shafts: true\n");
     }
 
     if (l->style > 0)

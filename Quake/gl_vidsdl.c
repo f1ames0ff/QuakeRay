@@ -133,6 +133,9 @@ atomic_uint32_t rt_end_task_running;
 	   shafts are, and what they cost. */ \
 	CVAR_DEF_T (rt_sky_godrays_quality, "2") \
 	CVAR_DEF_T (rt_sky_godrays_sky_threshold, "0.75") \
+	CVAR_DEF_T (rt_light_shafts, "1") \
+	CVAR_DEF_T (rt_light_shafts_intensity, "1") \
+	CVAR_DEF_T (rt_light_shafts_resolution, "1") \
 	CVAR_DEF_T (rt_denoiser, "1") \
 	CVAR_DEF_T (rt_no_textures, "0") \
 	/* No pass reads forceAntiFirefly: CmQ2Adapter's anti-firefly is not gated by
@@ -1570,6 +1573,9 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_sky_godrays_intensity");
 	RT_Bench_Setting (f, "rt_sky_godrays_quality");
 	RT_Bench_Setting (f, "rt_sky_godrays_sky_threshold");
+	RT_Bench_Setting (f, "rt_light_shafts");
+	RT_Bench_Setting (f, "rt_light_shafts_intensity");
+	RT_Bench_Setting (f, "rt_light_shafts_resolution");
 	RT_Bench_Setting (f, "rt_physical_sky");
 	RT_Bench_Setting (f, "rt_physical_sun");
 	RT_Bench_Setting (f, "rt_sky_sun_size");
@@ -3781,6 +3787,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		.godRaysEnabled = CVAR_TO_BOOL (rt_sky_godrays),
 		.godRaysIntensity = CVAR_TO_FLOAT (rt_sky_godrays_intensity),
 		.godRaysQuality = CVAR_TO_UINT32 (rt_sky_godrays_quality),
+		.lightShaftsEnabled = CVAR_TO_BOOL (rt_light_shafts),
+		.lightShaftsIntensity = CVAR_TO_FLOAT (rt_light_shafts_intensity),
+		.lightShaftsResolution = CVAR_TO_UINT32 (rt_light_shafts_resolution),
 		.godRaysFromSkyTexture = 0,
 		.godRaysSkyDirection = {{0.0f, 0.0f, 0.0f}},
 		.godRaysSkyColor = {{0.0f, 0.0f, 0.0f}},

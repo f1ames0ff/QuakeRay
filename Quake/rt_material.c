@@ -543,6 +543,8 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
     }
     else if (!q_strcasecmp(key, "light_projector") || !q_strcasecmp(key, "emissive_projector"))
         mat->emissive_projector = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "light_shafts"))
+        mat->light_shafts = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))

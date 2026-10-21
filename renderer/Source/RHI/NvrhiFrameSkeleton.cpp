@@ -1172,7 +1172,23 @@ bool NvrhiFrameSkeleton::Render(const Swapchain *pSwapchain, uint32_t frameIndex
                     godRaysParams.shadowMapDepthScale = shadowMapDepthScale;
                     godRaysParams.godRaysIntensity = sky.godRays.intensity;
                     godRaysParams.godRaysEccentricity = sky.godRays.eccentricity;
+                    godRaysParams.sunStepScale = sky.godRays.sunStepScale;
                     godRaysParams.godRaysEnabled = 1;
+                    godRaysParams.lightShaftCount = sky.godRays.lightShaftCount;
+                    godRaysParams.lightShaftIntensity = sky.godRays.lightShaftIntensity;
+                    godRaysParams.lightShaftSteps = sky.godRays.lightShaftSteps;
+
+                    for (uint32_t i = 0; i < sky.godRays.lightShaftCount; i++)
+                    {
+                        memcpy(godRaysParams.lightShafts[i].position, sky.godRays.lightShafts[i].position,
+                               sizeof(godRaysParams.lightShafts[i].position));
+                        memcpy(godRaysParams.lightShafts[i].direction, sky.godRays.lightShafts[i].direction,
+                               sizeof(godRaysParams.lightShafts[i].direction));
+                        memcpy(godRaysParams.lightShafts[i].color, sky.godRays.lightShafts[i].color,
+                               sizeof(godRaysParams.lightShafts[i].color));
+                        memcpy(godRaysParams.lightShafts[i].cone, sky.godRays.lightShafts[i].cone,
+                               sizeof(godRaysParams.lightShafts[i].cone));
+                    }
 
                     godRaysReflectionsPending = godRaysPass->RenderInput(
                         commandList, frameIndex, sky.framebuffers, sky.width, sky.height,
