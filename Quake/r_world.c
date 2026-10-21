@@ -2501,6 +2501,30 @@ void RT_DtalLodRequestRebuild (void)
 	rt_dtal_lod_failed = false;
 }
 
+static qboolean RT_DtalSourceStyleAnimates (const rt_dtal_source_t *source)
+{
+	for (int i = 0; i < source->style_count; i++)
+	{
+		if (!source->accepted[i])
+			continue;
+
+		const int style = source->styles[i];
+
+		if (style < 0 || style >= MAX_LIGHTSTYLES)
+			continue;
+
+		const lightstyle_t *ls = &cl_lightstyle[style];
+
+		for (int j = 1; j < ls->length; j++)
+		{
+			if (ls->map[j] != ls->map[0])
+				return true;
+		}
+	}
+
+	return false;
+}
+
 static void RT_DtalLod_MakeConfig (rt_dtal_lod_config_t *config)
 {
 	memset (config, 0, sizeof (*config));
@@ -2575,7 +2599,8 @@ static void RT_DtalLod_BuildHierarchy (void)
 		input->power = group->refPower;
 		input->boundsRadius = group->boundsRadius;
 
-		if (source->params.projector || (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0))
+		if (source->params.projector || (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0) ||
+		    RT_DtalSourceStyleAnimates (source))
 			input->flags |= RT_DTAL_LOD_INPUT_SINGLETON;
 	}
 
