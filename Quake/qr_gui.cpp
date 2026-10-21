@@ -17,8 +17,11 @@
 #include <qray/qray.h>
 
 #include <vector>
+#include <string>
+#include <unordered_map>
 #include <cstdio>
 #include <cstring>
+#include <climits>
 #include <cmath>
 #include <cfloat>
 #include <algorithm>
@@ -65,6 +68,28 @@ int          g_fb_x = 0, g_fb_y = 0, g_fb_w = 0, g_fb_h = 0, g_drawable_h = 0;
 
 char   g_notify[256] = "";
 double g_notify_time = -1000.0;
+
+struct TextureBrowserFolder
+{
+	std::string              path;
+	std::string              label;
+	int                      parent = -1;
+	std::vector<int>         children;
+};
+
+bool                            g_texbrowser_active = false;
+bool                            g_texbrowser_rebuild = true;
+char                            g_texbrowser_filter[128] = "";
+std::string                     g_texbrowser_current;
+std::vector<TextureBrowserFolder> g_texbrowser_folders;
+std::vector<int>                g_texbrowser_item_folder;
+std::vector<int>                g_texbrowser_visible;
+unsigned int                    g_texbrowser_revision = 0;
+int                             g_texbrowser_count = -1;
+int                             g_texbrowser_folder = -1;
+int                             g_texbrowser_selected = -1;
+bool                            g_texbrowser_focus_filter = false;
+bool                            g_texbrowser_focus_window = false;
 
 std::vector<QrVertex> g_verts;
 std::vector<uint32_t> g_indices;
@@ -279,20 +304,26 @@ void UploadDrawData (void)
 				continue;
 
 			g_indices.resize (cmd.ElemCount);
-			unsigned maxv = 0;
+			unsigned minv = UINT_MAX, maxv = 0;
 			const ImDrawIdx *src = dl->IdxBuffer.Data + cmd.IdxOffset;
 			for (unsigned i = 0; i < cmd.ElemCount; i++)
 			{
 				unsigned idx = (unsigned)src[i];
 				g_indices[i] = idx;
+				if (idx < minv)
+					minv = idx;
 				if (idx > maxv)
 					maxv = idx;
 			}
+			if (minv == UINT_MAX)
+				continue;
+			for (unsigned i = 0; i < cmd.ElemCount; i++)
+				g_indices[i] -= minv;
 
 			QrRasterizedGeometryUploadInfo info = {};
 			info.renderType = QR_RASTERIZED_GEOMETRY_RENDER_TYPE_SWAPCHAIN;
-			info.vertexCount = maxv + 1;
-			info.pVertices = g_verts.data () + cmd.VtxOffset;
+			info.vertexCount = maxv - minv + 1;
+			info.pVertices = g_verts.data () + cmd.VtxOffset + minv;
 			info.indexCount = cmd.ElemCount;
 			info.pIndices = g_indices.data ();
 			info.transform = identity;
@@ -1237,12 +1268,13 @@ int QR_GUI_Vec3InputMixed (const char *label, float v[3], float min, float max, 
 	return changed;
 }
 
-int QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const char *tooltip)
+int QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const char *tooltip, const char *error)
 {
 	char id[192];
 	WidgetId (id, sizeof (id), label);
 
-	int result = 0;
+	int        result = 0;
+	const bool invalid = error && error[0];
 
 	LabelColumn (label, tooltip);
 	ImGui::SetNextItemWidth (RowWidth (kBrowseButtonW + ImGui::GetStyle ().ItemSpacing.x));
@@ -1251,11 +1283,29 @@ int QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const cha
 	// or when the field loses focus: a path reaches the loader once, complete,
 	// instead of on every keystroke, so partial names never search the disks
 	// and never ask for a full static re-submit.
+	if (invalid)
+	{
+		ImGui::PushStyleColor (ImGuiCol_FrameBg, ImVec4 (0.30f, 0.10f, 0.10f, 1.0f));
+		ImGui::PushStyleColor (ImGuiCol_FrameBgHovered, ImVec4 (0.40f, 0.13f, 0.13f, 1.0f));
+		ImGui::PushStyleColor (ImGuiCol_FrameBgActive, ImVec4 (0.46f, 0.16f, 0.16f, 1.0f));
+		ImGui::PushStyleColor (ImGuiCol_Border, ImVec4 (0.95f, 0.32f, 0.28f, 1.0f));
+		ImGui::PushStyleVar (ImGuiStyleVar_FrameBorderSize, 1.0f);
+	}
 	if (ImGui::InputTextWithHint (id, "NONE", buf, capacity, ImGuiInputTextFlags_EnterReturnsTrue))
 		result |= 1;
 	if (ImGui::IsItemDeactivatedAfterEdit ())
 		result |= 1;
-	ItemTooltip (tooltip);
+	if (invalid)
+	{
+		if (tooltip && tooltip[0])
+			ImGui::SetItemTooltip ("%s\n%s", tooltip, error);
+		else
+			ImGui::SetItemTooltip ("%s", error);
+		ImGui::PopStyleVar ();
+		ImGui::PopStyleColor (4);
+	}
+	else
+		ItemTooltip (tooltip);
 
 	ImGui::SameLine ();
 	ImGui::PushID (label);
@@ -1265,6 +1315,513 @@ int QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const cha
 	ImGui::PopID ();
 
 	return result;
+}
+
+static std::string QrTextureBrowserBaseName (const char *name)
+{
+	std::string out = name ? name : "";
+
+	for (char &c : out)
+	{
+		if (c == '\\')
+			c = '/';
+	}
+
+	const size_t slash = out.find_last_of ('/');
+	const size_t dot = out.find_last_of ('.');
+
+	if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+	{
+		std::string ext = out.substr (dot);
+
+		for (char &c : ext)
+		{
+			if (c >= 'A' && c <= 'Z')
+				c = (char)(c + 32);
+		}
+
+		if (ext == ".tga" || ext == ".png" || ext == ".jpg" || ext == ".jpeg")
+			out.erase (dot);
+	}
+
+	for (char &c : out)
+	{
+		if (c >= 'A' && c <= 'Z')
+			c = (char)(c + 32);
+	}
+
+	return out;
+}
+
+static std::string QrTextureBrowserEllipsize (const char *text, float width)
+{
+	std::string out = text ? text : "";
+
+	if (out.empty () || ImGui::CalcTextSize (out.c_str ()).x <= width)
+		return out;
+
+	while (!out.empty ())
+	{
+		out.pop_back ();
+		std::string shortened = out + "...";
+
+		if (ImGui::CalcTextSize (shortened.c_str ()).x <= width)
+			return shortened;
+	}
+
+	return "...";
+}
+
+static int QrTextureBrowserCompare (const std::string &a, const std::string &b)
+{
+	const size_t count = a.size() < b.size() ? a.size() : b.size();
+
+	for (size_t i = 0; i < count; i++)
+	{
+		char ca = a[i];
+		char cb = b[i];
+
+		if (ca >= 'A' && ca <= 'Z')
+			ca = (char)(ca + 32);
+		if (cb >= 'A' && cb <= 'Z')
+			cb = (char)(cb + 32);
+		if (ca != cb)
+			return (unsigned char)ca < (unsigned char)cb ? -1 : 1;
+	}
+
+	if (a.size() == b.size())
+		return 0;
+	return a.size() < b.size() ? -1 : 1;
+}
+
+static int QrTextureBrowserAddFolder (const std::string &path, std::unordered_map<std::string, int> &index)
+{
+	const auto found = index.find (path);
+
+	if (found != index.end())
+		return found->second;
+
+	const size_t slash = path.find_last_of ('/');
+	const int    parent = slash == std::string::npos ? -1 : QrTextureBrowserAddFolder (path.substr (0, slash), index);
+	TextureBrowserFolder folder;
+
+	folder.path = path;
+	folder.label = slash == std::string::npos ? path : path.substr (slash + 1);
+	folder.parent = parent;
+
+	const int index_value = (int)g_texbrowser_folders.size();
+	g_texbrowser_folders.push_back (folder);
+	index[path] = index_value;
+
+	if (parent >= 0)
+		g_texbrowser_folders[parent].children.push_back (index_value);
+
+	return index_value;
+}
+
+static bool QrTextureBrowserFolderIsAncestor (const std::string &parent, const std::string &child)
+{
+	return child.size() > parent.size() &&
+	       child.compare (0, parent.size(), parent) == 0 &&
+	       child[parent.size()] == '/';
+}
+
+static void QrTextureBrowserBuild (const char *const *items, const char *const *sources,
+                                  const char *const *trees, int count,
+                                  unsigned int revision, const char *active_mod)
+{
+	if (!g_texbrowser_rebuild && revision == g_texbrowser_revision && count == g_texbrowser_count)
+		return;
+
+	std::unordered_map<std::string, int> index;
+
+	g_texbrowser_folders.clear();
+	g_texbrowser_item_folder.assign (count > 0 ? count : 0, -1);
+
+	for (int i = 0; i < count; i++)
+	{
+		const char *source = (sources && sources[i] && sources[i][0]) ? sources[i] : "game";
+		const char *tree = (trees && trees[i]) ? trees[i] : "";
+		std::string folder = source;
+
+		if (tree[0])
+			folder += "/" + std::string (tree);
+
+		g_texbrowser_item_folder[i] = QrTextureBrowserAddFolder (folder, index);
+	}
+
+	for (TextureBrowserFolder &folder : g_texbrowser_folders)
+	{
+		std::sort (folder.children.begin(), folder.children.end(), [](int a, int b) {
+			return QrTextureBrowserCompare (g_texbrowser_folders[a].label, g_texbrowser_folders[b].label) < 0;
+		});
+	}
+
+	g_texbrowser_revision = revision;
+	g_texbrowser_count = count;
+	g_texbrowser_rebuild = false;
+	g_texbrowser_selected = -1;
+	g_texbrowser_folder = -1;
+
+	const std::string current = QrTextureBrowserBaseName (g_texbrowser_current.c_str());
+
+	if (!current.empty())
+	{
+		for (int i = 0; i < count; i++)
+		{
+			if (QrTextureBrowserBaseName (items[i]) == current)
+			{
+				g_texbrowser_selected = i;
+				g_texbrowser_folder = g_texbrowser_item_folder[i];
+				break;
+			}
+		}
+	}
+
+	if (active_mod && active_mod[0])
+	{
+		for (int i = 0; i < (int)g_texbrowser_folders.size(); i++)
+		{
+			if (g_texbrowser_folders[i].parent < 0 &&
+			    QrTextureBrowserCompare (g_texbrowser_folders[i].path, active_mod) == 0)
+			{
+				g_texbrowser_folder = i;
+				break;
+			}
+		}
+	}
+
+	if (g_texbrowser_selected >= 0 && g_texbrowser_folder >= 0)
+	{
+		const int           selected_folder = g_texbrowser_item_folder[g_texbrowser_selected];
+		const std::string  &root = g_texbrowser_folders[g_texbrowser_folder].path;
+
+		if (selected_folder < 0 ||
+		    (g_texbrowser_folders[selected_folder].path != root &&
+		     !QrTextureBrowserFolderIsAncestor (root, g_texbrowser_folders[selected_folder].path)))
+			g_texbrowser_selected = -1;
+	}
+}
+
+static void QrTextureBrowserDrawFolder (int index)
+{
+	const TextureBrowserFolder &folder = g_texbrowser_folders[index];
+	ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+
+	if (folder.parent < 0)
+		flags |= ImGuiTreeNodeFlags_DefaultOpen;
+	if (g_texbrowser_folder >= 0 &&
+	    QrTextureBrowserFolderIsAncestor (folder.path, g_texbrowser_folders[g_texbrowser_folder].path))
+		flags |= ImGuiTreeNodeFlags_DefaultOpen;
+	if (g_texbrowser_folder == index)
+		flags |= ImGuiTreeNodeFlags_Selected;
+
+	if (folder.children.empty())
+		flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+	const bool open = ImGui::TreeNodeEx (folder.path.c_str(), flags, "%s", folder.label.c_str());
+
+	if (ImGui::IsItemClicked())
+	{
+		g_texbrowser_folder = index;
+		g_texbrowser_filter[0] = '\0';
+	}
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip ("%s", folder.path.c_str());
+
+	if (!(flags & ImGuiTreeNodeFlags_NoTreePushOnOpen) && open)
+	{
+		for (int child : folder.children)
+			QrTextureBrowserDrawFolder (child);
+		ImGui::TreePop();
+	}
+}
+
+void QR_GUI_TextureBrowserReset (const char *current)
+{
+	g_texbrowser_active = true;
+	g_texbrowser_rebuild = true;
+	g_texbrowser_filter[0] = '\0';
+	g_texbrowser_current = current ? current : "";
+	g_texbrowser_folder = -1;
+	g_texbrowser_selected = -1;
+	g_texbrowser_visible.clear();
+	g_texbrowser_focus_filter = true;
+	g_texbrowser_focus_window = true;
+}
+
+int QR_GUI_TextureBrowser (const char *const *items, const char *const *sources, const char *const *trees,
+                           int count, unsigned int revision, const char *active_mod, int loading,
+                           QrTexturePreviewCallback preview, void *preview_userdata,
+                           char *out, size_t out_capacity)
+{
+	if (!g_ready || !g_texbrowser_active)
+		return 0;
+
+	QrTextureBrowserBuild (items, sources, trees, count, revision, active_mod);
+
+	const ImVec2 display = ImGui::GetIO ().DisplaySize;
+	const float  width = display.x * 0.72f;
+	const float  height = display.y - 32.0f;
+	int          action = 0;
+
+	QR_GUI_Backdrop (0.58f);
+
+	ImGui::SetNextWindowPos (ImVec2 (0.0f, 0.0f));
+	ImGui::SetNextWindowSize (display);
+	ImGui::PushStyleColor (ImGuiCol_WindowBg, ImVec4 (0.0f, 0.0f, 0.0f, 0.58f));
+	ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
+	ImGui::Begin ("##texture_browser_block", nullptr,
+	              ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
+	              ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+	              ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing);
+	ImGui::InvisibleButton ("##block", display);
+	ImGui::End ();
+	ImGui::PopStyleVar ();
+	ImGui::PopStyleColor ();
+
+	ImGui::SetNextWindowPos (ImVec2 (16.0f, 16.0f));
+	ImGui::SetNextWindowSize (ImVec2 (width, height));
+	if (g_texbrowser_focus_window)
+	{
+		ImGui::SetNextWindowFocus ();
+		g_texbrowser_focus_window = false;
+	}
+	ImGui::PushStyleColor (ImGuiCol_WindowBg, ImVec4 (0.09f, 0.09f, 0.11f, 0.98f));
+	ImGui::Begin ("##texture_browser", nullptr,
+	              ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+	              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+
+	ImGui::TextColored (ImVec4 (1.0f, 0.55f, 0.25f, 1.0f), "TEXTURE BROWSER");
+	ImGui::SameLine ();
+	ImGui::TextDisabled ("active mod: %s", active_mod && active_mod[0] ? active_mod : "-");
+
+	const float close_width = ImGui::CalcTextSize ("Close").x + ImGui::GetStyle ().FramePadding.x * 2.0f;
+	ImGui::SameLine (ImGui::GetWindowContentRegionMax ().x - close_width);
+	if (ImGui::Button ("Close"))
+		action = 2;
+
+	ImGui::Separator ();
+
+	if (g_texbrowser_focus_filter)
+	{
+		ImGui::SetKeyboardFocusHere ();
+		g_texbrowser_focus_filter = false;
+	}
+
+	ImGui::SetNextItemWidth (-FLT_MIN);
+	ImGui::InputTextWithHint ("##texture_filter", "filter textures by name...", g_texbrowser_filter, sizeof (g_texbrowser_filter));
+
+	g_texbrowser_visible.clear ();
+	for (int i = 0; i < count; i++)
+	{
+		if (g_texbrowser_folder >= 0)
+		{
+			const int item_folder = g_texbrowser_item_folder[i];
+
+			if (item_folder < 0)
+				continue;
+
+			const std::string &selected = g_texbrowser_folders[g_texbrowser_folder].path;
+			const std::string &candidate = g_texbrowser_folders[item_folder].path;
+
+			if (candidate != selected && !QrTextureBrowserFolderIsAncestor (selected, candidate))
+				continue;
+		}
+		if (!QRGuiTextHas (items[i], g_texbrowser_filter))
+			continue;
+
+		g_texbrowser_visible.push_back (i);
+	}
+
+	if (loading)
+		ImGui::TextDisabled ("scanning game and mod assets... %d textures so far", count);
+	else if (g_texbrowser_folder >= 0)
+		ImGui::TextDisabled ("%d of %d textures — %s",
+		                    (int)g_texbrowser_visible.size (), count,
+		                    g_texbrowser_folders[g_texbrowser_folder].path.c_str ());
+	else
+		ImGui::TextDisabled ("%d of %d textures", (int)g_texbrowser_visible.size (), count);
+
+	const float footer_height = ImGui::GetFrameHeightWithSpacing () + ImGui::GetTextLineHeightWithSpacing () + 8.0f;
+	float       content_height = ImGui::GetContentRegionAvail ().y - footer_height;
+
+	if (content_height < 100.0f)
+		content_height = 100.0f;
+
+	float folder_width = ImGui::GetContentRegionAvail ().x * 0.30f;
+
+	if (folder_width < 220.0f)
+		folder_width = 220.0f;
+
+	ImGui::BeginChild ("##texture_folders", ImVec2 (folder_width, content_height), true);
+	ImGui::TextDisabled ("Folders");
+	ImGui::Separator ();
+	if (ImGui::Selectable ("All textures", g_texbrowser_folder < 0))
+	{
+		g_texbrowser_folder = -1;
+		g_texbrowser_filter[0] = '\0';
+	}
+
+	{
+		std::vector<int> roots;
+
+		for (int i = 0; i < (int)g_texbrowser_folders.size(); i++)
+		{
+			if (g_texbrowser_folders[i].parent < 0)
+				roots.push_back (i);
+		}
+
+		std::sort (roots.begin(), roots.end(), [](int a, int b) {
+			return QrTextureBrowserCompare (g_texbrowser_folders[a].label, g_texbrowser_folders[b].label) < 0;
+		});
+
+		for (int root : roots)
+			QrTextureBrowserDrawFolder (root);
+	}
+	ImGui::EndChild ();
+
+	ImGui::SameLine ();
+
+	ImGui::BeginChild ("##texture_list", ImVec2 (0.0f, content_height), true);
+	if (g_texbrowser_visible.empty ())
+	{
+		ImGui::TextDisabled (loading ? "scanning game and mod assets..." : "no textures match");
+	}
+	else
+	{
+		const float image_size = 128.0f;
+		const float tile_gap = 10.0f;
+		const float text_height = ImGui::GetTextLineHeight ();
+		const float row_step = image_size + text_height + 10.0f + ImGui::GetStyle ().ItemSpacing.y;
+		const float available_width = ImGui::GetContentRegionAvail ().x;
+		const float start_x = ImGui::GetCursorPosX ();
+		const float start_y = ImGui::GetCursorPosY ();
+		int         columns = (int)((available_width + tile_gap) / (image_size + tile_gap));
+		int         row_count;
+		int         request_first;
+		int         request_last;
+
+		if (columns < 1)
+			columns = 1;
+		row_count = ((int)g_texbrowser_visible.size () + columns - 1) / columns;
+		request_first = (int)(ImGui::GetScrollY () / row_step) - 1;
+		if (request_first < 0)
+			request_first = 0;
+		request_last = request_first + (int)(ImGui::GetWindowHeight () / row_step) + 4;
+		if (request_last > row_count)
+			request_last = row_count;
+
+		for (int row = 0; row < row_count; row++)
+		{
+			if (row < request_first || row >= request_last)
+				continue;
+
+			ImGui::SetCursorPos (ImVec2 (start_x, start_y + row * row_step));
+
+			for (int column = 0; column < columns; column++)
+			{
+				const int visible_index = row * columns + column;
+				int       item;
+				int       preview_width = 0;
+				int       preview_height = 0;
+				int64_t   preview_texture;
+				ImVec2    tile_pos;
+				ImDrawList *draw_list;
+				std::string label;
+
+				if (visible_index >= (int)g_texbrowser_visible.size ())
+					break;
+
+				item = g_texbrowser_visible[visible_index];
+
+				if (column > 0)
+					ImGui::SameLine (0.0f, tile_gap);
+
+				ImGui::PushID (item);
+				ImGui::BeginGroup ();
+
+				tile_pos = ImGui::GetCursorScreenPos ();
+				ImGui::InvisibleButton ("##tile", ImVec2 (image_size, image_size));
+
+				if (ImGui::IsItemClicked ())
+				{
+					g_texbrowser_selected = item;
+					if (ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left))
+						action = 1;
+				}
+				if (ImGui::IsItemHovered ())
+					ImGui::SetTooltip ("%s", items[item]);
+
+				preview_texture = preview ? preview (item, &preview_width, &preview_height,
+				                                    (row >= request_first && row < request_last)
+				                                    ? preview_userdata : nullptr) : 0;
+				draw_list = ImGui::GetWindowDrawList ();
+
+				if (preview_texture > 0)
+				{
+					draw_list->AddImage ((ImTextureID)(uint64_t)preview_texture, tile_pos,
+					                     ImVec2 (tile_pos.x + image_size, tile_pos.y + image_size));
+				}
+				else
+				{
+					draw_list->AddRectFilled (tile_pos, ImVec2 (tile_pos.x + image_size, tile_pos.y + image_size),
+					                          IM_COL32 (28, 30, 36, 255));
+					draw_list->AddText (ImVec2 (tile_pos.x + 8.0f, tile_pos.y + 8.0f),
+					                    IM_COL32 (130, 134, 145, 255),
+					                    preview_texture < 0 ? "loading..." : "no preview");
+				}
+
+				if (item == g_texbrowser_selected)
+					draw_list->AddRect (tile_pos, ImVec2 (tile_pos.x + image_size, tile_pos.y + image_size),
+					                    IM_COL32 (255, 180, 60, 255), 0.0f, 0, 2.5f);
+				else if (ImGui::IsItemHovered ())
+					draw_list->AddRect (tile_pos, ImVec2 (tile_pos.x + image_size, tile_pos.y + image_size),
+					                    IM_COL32 (210, 215, 230, 255), 0.0f, 0, 1.0f);
+
+				label = QrTextureBrowserEllipsize (items[item], image_size);
+				ImGui::TextUnformatted (label.c_str ());
+				ImGui::EndGroup ();
+				ImGui::PopID ();
+			}
+		}
+
+		ImGui::SetCursorPos (ImVec2 (start_x, start_y + row_count * row_step));
+		ImGui::Dummy (ImVec2 (1.0f, 1.0f));
+	}
+	ImGui::EndChild ();
+
+	ImGui::Separator ();
+
+	if (g_texbrowser_selected >= 0 && g_texbrowser_selected < count)
+		ImGui::TextUnformatted (items[g_texbrowser_selected]);
+	else
+		ImGui::TextDisabled ("no texture selected");
+
+	if (g_texbrowser_selected < 0 || g_texbrowser_selected >= count)
+		ImGui::BeginDisabled ();
+	if (ImGui::Button ("Select"))
+		action = 1;
+	if (g_texbrowser_selected < 0 || g_texbrowser_selected >= count)
+		ImGui::EndDisabled ();
+
+	ImGui::SameLine ();
+	if (ImGui::Button ("Cancel"))
+		action = 2;
+
+	if (ImGui::IsKeyPressed (ImGuiKey_Escape))
+		action = 2;
+
+	ImGui::End ();
+	ImGui::PopStyleColor ();
+
+	if (action != 0)
+		g_texbrowser_active = false;
+
+	if (action == 1 && g_texbrowser_selected >= 0 && g_texbrowser_selected < count && out && out_capacity > 0)
+		std::snprintf (out, out_capacity, "%s", items[g_texbrowser_selected]);
+
+	return action;
 }
 
 // A square button with a circular arrow, right-aligned in its row: a parameter

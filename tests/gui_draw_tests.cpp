@@ -6,6 +6,7 @@
 #include <qray/qray.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -111,23 +112,31 @@ QrResult QRCONV qrUploadRasterizedGeometry(QrInstance, const QrRasterizedGeometr
     Require(info->vertexCount > 0 && info->vertexCount <= unsigned(list.VtxBuffer.Size) - command.VtxOffset,
             "uploaded vertex span must stay inside the draw list");
     Require(info->scissor.width > 0 && info->scissor.height > 0, "visible draw command must have a scissor");
-    unsigned maxIndex = 0;
+    unsigned minIndex = UINT_MAX, maxIndex = 0;
     for (unsigned i = 0; i < command.ElemCount; ++i)
     {
         const unsigned index = unsigned(list.IdxBuffer[int(command.IdxOffset + i)]);
-        Require(static_cast<const uint32_t *>(info->pIndices)[i] == index,
-                "ImGui indices are already local to VtxOffset");
-        Require(index < info->vertexCount, "every index must belong to the uploaded vertex span");
+        minIndex = std::min(minIndex, index);
+        maxIndex = std::max(maxIndex, index);
+    }
+    Require(minIndex != UINT_MAX, "a visible command must reference at least one vertex");
+    Require(info->vertexCount == maxIndex - minIndex + 1,
+            "uploaded vertex count must cover the command's compact local span");
+    for (unsigned i = 0; i < command.ElemCount; ++i)
+    {
+        const unsigned index = unsigned(list.IdxBuffer[int(command.IdxOffset + i)]);
+        const unsigned local = index - minIndex;
+        Require(static_cast<const uint32_t *>(info->pIndices)[i] == local,
+                "uploaded indices must be rebased to the compact vertex span");
+        Require(local < info->vertexCount, "every index must belong to the uploaded vertex span");
         const ImDrawVert &source = list.VtxBuffer[int(command.VtxOffset + index)];
-        const QrVertex &vertex = info->pVertices[index];
+        const QrVertex &vertex = info->pVertices[local];
         Require(vertex.position[0] == source.pos.x && vertex.position[1] == source.pos.y,
                 "vertex offset must select the original vertex position");
         Require(vertex.texCoord[0] == source.uv.x && vertex.texCoord[1] == source.uv.y,
                 "vertex UVs must be preserved across rollover");
         Require(vertex.packedColor == source.col, "vertex color must be preserved across rollover");
-        maxIndex = std::max(maxIndex, index);
     }
-    Require(info->vertexCount == maxIndex + 1, "uploaded vertex count must cover the command's local indices");
     uploadedIndices += command.ElemCount;
     if (command.VtxOffset != 0)
         ++offsetCommands;

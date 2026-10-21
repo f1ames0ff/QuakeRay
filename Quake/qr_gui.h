@@ -102,7 +102,13 @@ int  QR_GUI_Vec3Input (const char *label, float v[3], float min, float max, cons
 int  QR_GUI_Vec3InputMixed (const char *label, float v[3], float min, float max, const unsigned char mixed[3], const char *tooltip);
 // A path field with a "..." button: returns 1 when the text changed and 2 when
 // the browse button was pressed (both can be set: 3). An empty path shows NONE.
-int  QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const char *tooltip);
+int  QR_GUI_TexturePath (const char *label, char *buf, size_t capacity, const char *tooltip, const char *error);
+typedef int64_t (*QrTexturePreviewCallback) (int index, int *width, int *height, void *userdata);
+void QR_GUI_TextureBrowserReset (const char *current);
+int  QR_GUI_TextureBrowser (const char *const *items, const char *const *sources, const char *const *trees,
+                            int count, unsigned int revision, const char *active_mod, int loading,
+                            QrTexturePreviewCallback preview, void *preview_userdata,
+                            char *out, size_t out_capacity);
 // An enabled checkbox and a color editor with a hex field. Returns 1 if either
 // changed. A NULL enabled draws the editor alone: the colour has no off state.
 int  QR_GUI_ColorHex (const char *label, float rgb[3], int *enabled, const char *tooltip);

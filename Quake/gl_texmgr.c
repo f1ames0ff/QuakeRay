@@ -58,6 +58,7 @@ extern cvar_t rt_model_metal;
 
 static int          numgltextures;
 static gltexture_t *active_gltextures, *free_gltextures;
+static TexMgrTextureResolver texmgr_external_resolver;
 static unsigned int texmgr_list_revision;
 gltexture_t        *notexture, *nulltexture, *whitetexture, *greytexture;
 
@@ -336,8 +337,8 @@ static void TexMgr_RT_SpecialFullbright (unsigned width, unsigned height, uint32
 		              rtspecial_info.size.width, rtspecial_info.size.height);
 
 		resized = (uint32_t *)Mem_Alloc ((size_t)rtspecial_info.size.width * rtspecial_info.size.height * 4);
-		stbir_resize_uint8 ((byte *)fullbright, (int)width, (int)height, 0,
-		                    (byte *)resized, (int)rtspecial_info.size.width, (int)rtspecial_info.size.height, 0, 4);
+		TexMgr_ResizeRgba ((byte *)fullbright, (int)width, (int)height,
+		                   (byte *)resized, (int)rtspecial_info.size.width, (int)rtspecial_info.size.height);
 
 		fullbright = resized;
 		width = rtspecial_info.size.width;
@@ -1418,6 +1419,38 @@ static qboolean TexMgr_ApplyLightMaterial (gltexture_t *glt, const QrMaterialCre
 	return replaced;
 }
 
+static byte *TexMgr_LoadMaterialTexture (const rt_material_t *mat, int which, int *width, int *height)
+{
+	const char   *path = NULL;
+	gltexture_t  *source;
+	byte         *pixels;
+
+	pixels = RT_MAT_LoadTexture (mat, which, width, height);
+	if (pixels)
+		return pixels;
+
+	switch (which)
+	{
+	case RT_MAT_TEX_BASE:     path = mat->filename_base; break;
+	case RT_MAT_TEX_NORMALS:  path = mat->filename_normals; break;
+	case RT_MAT_TEX_EMISSIVE: path = mat->filename_emissive; break;
+	case RT_MAT_TEX_OVERLAY:  path = mat->filename_overlay; break;
+	case RT_MAT_TEX_GLOSS:    path = mat->filename_gloss; break;
+	default:                  break;
+	}
+
+	if (!path || !path[0])
+		return NULL;
+
+	source = TexMgr_FindTextureByNormalizedName (path);
+	if (source)
+		return TexMgr_LoadRgbaForPreview (source, width, height);
+	if (texmgr_external_resolver)
+		return texmgr_external_resolver (path, width, height);
+
+	return NULL;
+}
+
 static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
@@ -1497,25 +1530,25 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	const int npix = tw * th;
 
 	int bw = 0, bh = 0;
-	byte *baseTex = RT_MAT_LoadTexture (mat, RT_MAT_TEX_BASE, &bw, &bh);
+	byte *baseTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_BASE, &bw, &bh);
 	int nw = 0, nh = 0;
-	byte *normTex = RT_MAT_LoadTexture (mat, RT_MAT_TEX_NORMALS, &nw, &nh);
+	byte *normTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_NORMALS, &nw, &nh);
 	int ew = 0, eh = 0;
-	byte *emisTex = RT_MAT_LoadTexture (mat, RT_MAT_TEX_EMISSIVE, &ew, &eh);
+	byte *emisTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_EMISSIVE, &ew, &eh);
 	glt->rtemissivetex = (emisTex != NULL);
 	int gw = 0, gh = 0;
-	byte *glossTex = RT_MAT_LoadTexture (mat, RT_MAT_TEX_GLOSS, &gw, &gh);
+	byte *glossTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_GLOSS, &gw, &gh);
 	int lw = 0, lh = 0;
-	byte *overlayTex = RT_MAT_LoadTexture (mat, RT_MAT_TEX_OVERLAY, &lw, &lh);
+	byte *overlayTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_OVERLAY, &lw, &lh);
 	int overlayPixels = 0;
 	unsigned overlayCovMax = 0;
 	unsigned long long overlayCovSum = 0;
 
 	byte *baseBuf = NULL, *normBuf = NULL, *emisBuf = NULL, *glossBuf = NULL, *overlayBuf = NULL;
-	if (baseTex) { baseBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (baseTex, bw, bh, 0, baseBuf, tw, th, 0, 4); Mem_Free (baseTex); }
-	if (normTex) { normBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (normTex, nw, nh, 0, normBuf, tw, th, 0, 4); Mem_Free (normTex); }
-	if (emisTex) { emisBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (emisTex, ew, eh, 0, emisBuf, tw, th, 0, 4); Mem_Free (emisTex); }
-	if (glossTex) { glossBuf = (byte *)Mem_Alloc (npix * 4); stbir_resize_uint8 (glossTex, gw, gh, 0, glossBuf, tw, th, 0, 4); Mem_Free (glossTex); }
+	if (baseTex) { baseBuf = (byte *)Mem_Alloc (npix * 4); TexMgr_ResizeRgba (baseTex, bw, bh, baseBuf, tw, th); Mem_Free (baseTex); }
+	if (normTex) { normBuf = (byte *)Mem_Alloc (npix * 4); TexMgr_ResizeRgba (normTex, nw, nh, normBuf, tw, th); Mem_Free (normTex); }
+	if (emisTex) { emisBuf = (byte *)Mem_Alloc (npix * 4); TexMgr_ResizeRgba (emisTex, ew, eh, emisBuf, tw, th); Mem_Free (emisTex); }
+	if (glossTex) { glossBuf = (byte *)Mem_Alloc (npix * 4); TexMgr_ResizeRgba (glossTex, gw, gh, glossBuf, tw, th); Mem_Free (glossTex); }
 	if (overlayTex)
 	{
 		const int ln = lw * lh;
@@ -1531,7 +1564,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		}
 		overlayPixels = ln;
 		overlayBuf = (byte *)Mem_Alloc (npix * 4);
-		stbir_resize_uint8 (overlayTex, lw, lh, 0, overlayBuf, tw, th, 0, 4);
+		TexMgr_ResizeRgba (overlayTex, lw, lh, overlayBuf, tw, th);
 		Mem_Free (overlayTex);
 
 		if (overlayCovMax == 0)
@@ -2628,6 +2661,126 @@ int TexMgr_CollectTextureNames (char (*names)[MAX_QPATH], int max)
 	}
 
 	return count;
+}
+
+gltexture_t *TexMgr_FindTextureByNormalizedName (const char *name)
+{
+	char         target[MAX_QPATH];
+	gltexture_t *glt;
+
+	if (!name || !name[0])
+		return NULL;
+
+	TexMgr_GroupName (name, target, sizeof (target));
+
+	for (glt = active_gltextures; glt; glt = glt->next)
+	{
+		char candidate[MAX_QPATH];
+
+		if (!glt->name[0])
+			continue;
+
+		TexMgr_GroupName (glt->name, candidate, sizeof (candidate));
+		if (!q_strcasecmp (target, candidate))
+			return glt;
+	}
+
+	return NULL;
+}
+
+qboolean TexMgr_TextureNameExists (const char *name)
+{
+	return TexMgr_FindTextureByNormalizedName (name) != NULL;
+}
+
+static void TexMgr_ResizeRgbaBilinear (const byte *src, int src_width, int src_height,
+                                       byte *dst, int dst_width, int dst_height)
+{
+	int x, y;
+
+	for (y = 0; y < dst_height; y++)
+	{
+		const float sy = ((float)y + 0.5f) * (float)src_height / (float)dst_height - 0.5f;
+		int         y0 = (int)floorf (sy);
+		float       fy = sy - (float)y0;
+
+		if (y0 < 0)
+		{
+			y0 = 0;
+			fy = 0.0f;
+		}
+		if (y0 >= src_height - 1)
+		{
+			y0 = src_height - 1;
+			fy = 0.0f;
+		}
+
+		for (x = 0; x < dst_width; x++)
+		{
+			const float sx = ((float)x + 0.5f) * (float)src_width / (float)dst_width - 0.5f;
+			int         x0 = (int)floorf (sx);
+			float       fx = sx - (float)x0;
+			const int   x1 = x0 + 1 < src_width ? x0 + 1 : src_width - 1;
+			const int   y1 = y0 + 1 < src_height ? y0 + 1 : src_height - 1;
+			const byte *p00;
+			const byte *p10;
+			const byte *p01;
+			const byte *p11;
+			byte       *out;
+			int         c;
+
+			if (x0 < 0)
+			{
+				x0 = 0;
+				fx = 0.0f;
+			}
+			if (x0 >= src_width - 1)
+			{
+				x0 = src_width - 1;
+				fx = 0.0f;
+			}
+
+			p00 = src + ((size_t)y0 * src_width + x0) * 4;
+			p10 = src + ((size_t)y0 * src_width + x1) * 4;
+			p01 = src + ((size_t)y1 * src_width + x0) * 4;
+			p11 = src + ((size_t)y1 * src_width + x1) * 4;
+			out = dst + ((size_t)y * dst_width + x) * 4;
+
+			for (c = 0; c < 4; c++)
+			{
+				const float top = (float)p00[c] + ((float)p10[c] - (float)p00[c]) * fx;
+				const float bottom = (float)p01[c] + ((float)p11[c] - (float)p01[c]) * fx;
+
+				out[c] = (byte)(top + (bottom - top) * fy + 0.5f);
+			}
+		}
+	}
+}
+
+qboolean TexMgr_ResizeRgba (const byte *src, int src_width, int src_height,
+                            byte *dst, int dst_width, int dst_height)
+{
+	if (!src || !dst || src_width <= 0 || src_height <= 0 || dst_width <= 0 || dst_height <= 0)
+		return false;
+
+	if (src_width == dst_width && src_height == dst_height)
+	{
+		memcpy (dst, src, (size_t)src_width * src_height * 4);
+		return true;
+	}
+
+	if (dst_width > src_width || dst_height > src_height)
+	{
+		TexMgr_ResizeRgbaBilinear (src, src_width, src_height, dst, dst_width, dst_height);
+		return true;
+	}
+
+	return stbir_resize_uint8 (src, src_width, src_height, 0, dst, dst_width, dst_height, 0, 4) != 0;
+}
+
+void TexMgr_SetExternalTextureResolver (TexMgrTextureResolver resolver)
+{
+	texmgr_external_resolver = resolver;
 }
 
 unsigned int TexMgr_TextureListRevision (void)

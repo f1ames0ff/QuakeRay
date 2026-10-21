@@ -36,6 +36,7 @@
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "rt_dtal_debug.h"
+#include "rt_pkz.h"
 #include "keys.h"
 #include "client.h"
 #include "server.h"
@@ -52,7 +53,6 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <commdlg.h>
 
 #include "qr_editor.h"
 #include "qr_gui.h"
@@ -444,6 +444,15 @@ static struct
 	int     dirty_count;
 	char    touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int     touched_count;
+
+	char    texture_error_text[MAX_QPATH];
+	char    texture_error_reason[64];
+	int     texture_error_group;
+	int     texture_error_param;
+
+	qboolean texture_browser_open;
+	int      texture_browser_group;
+	int      texture_browser_param;
 } qre;
 
 // The panel keeps one form instance per tab: the Materials tab and the Entities tab each hold
@@ -574,11 +583,14 @@ static void QRE_InstanceLoad (const qre_instance_t *src)
 	}
 }
 
+static void QRE_TextureErrorClear (void);
+
 static void QRE_InstanceSwitch (int inst)
 {
 	if (qre_instance_cur >= 0)
 		QRE_InstanceSave (&qre_instances[qre_instance_cur]);
 
+	QRE_TextureErrorClear ();
 	QRE_InstanceLoad (&qre_instances[inst]);
 	qre_instance_cur = inst;
 }
@@ -604,7 +616,12 @@ static void     QRE_ResetAll (void);
 static void     QRE_CancelLightDrag (void);
 static void     QRE_UpdateLightDrag (void);
 static void     QRE_CustomGizmoCancel (void);
-static qboolean QRE_BrowseTexture (char *out, size_t outsize);
+static void     QRE_QueueTexture (int g, int p, const char *value);
+static void     QRE_OpenTextureBrowser (int g, int p);
+static qboolean QRE_TextureBrowserHasName (const char *name);
+static byte *QRE_TextureBrowserResolve (const char *name, int *width, int *height);
+static void QRE_TextureBrowserPumpBuild (void);
+static void QRE_TexturePreviewPump (void);
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -961,7 +978,7 @@ static void QRE_FlushDirty (void)
 
 	if (full)
 		Atomic_StoreUInt32 (&rt_require_static_submit, true);
-	else if (lights)
+	if (lights)
 		Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 }
 
@@ -1202,8 +1219,10 @@ static void QRE_SetFloat (int g, int param, float value)
 
 	if (param == PARAM_LBRIGHT || param == PARAM_EFOCUS || param == PARAM_ESOFT)
 		QRE_MarkDirtyLight (m);
-	else if (param == PARAM_GLASS_IOR || param == PARAM_GLASS_THICKNESS)
-		QRE_MarkDirtyFull (m); // the values ride the uploaded geometry
+	else if (param == PARAM_GLASS_IOR || param == PARAM_GLASS_THICKNESS || param == PARAM_EFACTOR ||
+	         param == PARAM_TSCALE_U || param == PARAM_TSCALE_V ||
+	         param == PARAM_TOFFS_U || param == PARAM_TOFFS_V)
+		QRE_MarkDirtyFull (m);
 	else
 		QRE_MarkDirty (m);
 }
@@ -1219,7 +1238,7 @@ static void QRE_SetInt (int g, int param, int value)
 		QRE_EnsureLive (g);
 		m = qre.group[g];
 		m->emissive_blend = value;
-		QRE_MarkDirty (m);
+		QRE_MarkDirtyFull (m);
 		break;
 	}
 	default:
@@ -1258,7 +1277,7 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	default:               break;
 	}
 
-	if (param == PARAM_ISLIGHT)
+	if (param == PARAM_ISLIGHT || param == PARAM_CEMIS)
 		QRE_MarkDirtyFull (m);
 	else if (param == PARAM_EPROJ)
 		QRE_MarkDirtyLight (m);
@@ -1268,15 +1287,95 @@ static void QRE_SetBool (int g, int param, qboolean value)
 
 // The texture keys name files under the game directories: separators become
 // forward slashes, a leading ./ or / is dropped, and an absolute path inside
-// the game directory is made relative to it, the form the loader searches and
+// a game directory is made relative to it, the form the loader searches and
 // the yaml carries.
+static const char *QRE_ActiveGameName (void)
+{
+	const char *name = COM_SkipPath (com_gamedir);
+
+	return name[0] ? name : GAMENAME;
+}
+
+static qboolean QRE_ModDirHasContent (const char *path)
+{
+	static const char *const markers[] = { "pak0.pak", "progs.dat", "csprogs.dat", "maps", "textures" };
+	char                     probe[MAX_OSPATH];
+	int                      i;
+
+	for (i = 0; i < (int)countof (markers); i++)
+	{
+		if ((size_t)q_snprintf (probe, sizeof (probe), "%s/%s", path, markers[i]) >= sizeof (probe))
+			continue;
+		if (Sys_FileType (probe) == FS_ENT_FILE || Sys_FileType (probe) == FS_ENT_DIRECTORY)
+			return true;
+	}
+
+	return false;
+}
+
+static void QRE_ActiveModDir (char *out, size_t outsize)
+{
+	const char *game = QRE_ActiveGameName ();
+	char        path[MAX_OSPATH];
+	char        probe[MAX_OSPATH];
+	int         i;
+
+	for (i = com_numbasedirs - 1; i >= 0; i--)
+	{
+		if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", com_basedirs[i], game) >= sizeof (path))
+			continue;
+		if ((size_t)q_snprintf (probe, sizeof (probe), "%s/textures", path) >= sizeof (probe))
+			continue;
+		if (Sys_FileType (probe) == FS_ENT_DIRECTORY)
+		{
+			q_strlcpy (out, path, outsize);
+			return;
+		}
+	}
+
+	for (i = com_numbasedirs - 1; i >= 0; i--)
+	{
+		if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", com_basedirs[i], game) >= sizeof (path))
+			continue;
+		if (QRE_ModDirHasContent (path))
+		{
+			q_strlcpy (out, path, outsize);
+			return;
+		}
+	}
+
+	q_strlcpy (out, com_gamedir, outsize);
+}
+
+static void QRE_StripRootPrefix (char *path, const char *prefix)
+{
+	char   norm[MAX_OSPATH];
+	size_t len;
+	size_t i;
+
+	q_strlcpy (norm, prefix, sizeof (norm));
+	for (i = 0; norm[i]; i++)
+	{
+		if (norm[i] == '\\')
+			norm[i] = '/';
+	}
+	len = strlen (norm);
+	while (len > 0 && norm[len - 1] == '/')
+		norm[--len] = '\0';
+
+	if (len == 0 || strlen (path) <= len + 1 || path[len] != '/')
+		return;
+	if (!q_strncasecmp (path, norm, len))
+		memmove (path, path + len + 1, strlen (path + len + 1) + 1);
+}
+
 static void QRE_NormalizeTexturePath (char *path)
 {
-	char   gamedir[MAX_OSPATH];
-	char  *src = path;
-	char  *dst = path;
-	size_t glen;
-	size_t i;
+	const char *game = QRE_ActiveGameName ();
+	char        candidate[MAX_OSPATH];
+	char       *src = path;
+	char       *dst = path;
+	int         i;
 
 	while (*src == ' ' || *src == '\t')
 		src++;
@@ -1289,39 +1388,81 @@ static void QRE_NormalizeTexturePath (char *path)
 		*dst++ = (*src == '\\') ? '/' : *src;
 	*dst = '\0';
 
-	q_strlcpy (gamedir, com_gamedir, sizeof (gamedir));
-	for (i = 0; gamedir[i]; i++)
+	for (i = 0; i < com_numbasedirs; i++)
 	{
-		if (gamedir[i] == '\\')
-			gamedir[i] = '/';
-	}
-	glen = strlen (gamedir);
-	while (glen > 0 && gamedir[glen - 1] == '/')
-		gamedir[--glen] = '\0';
-
-	if (glen > 0 && !q_strncasecmp (path, gamedir, glen) && path[glen] == '/')
-	{
-		memmove (path, path + glen + 1, strlen (path + glen + 1) + 1);
+		if ((size_t)q_snprintf (candidate, sizeof (candidate), "%s/%s", com_basedirs[i], game) >= sizeof (candidate))
+			continue;
+		QRE_StripRootPrefix (path, candidate);
 	}
 }
 
-static void QRE_SetText (int g, int param, const char *value)
+static qboolean QRE_TexturePathAbsolute (const char *path)
 {
-	QRE_EnsureLive (g);
-	rt_material_t *m = qre.group[g];
-	char           path[MAX_QPATH];
+	return path[0] == '/' ||
+	       (((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) &&
+	        path[1] == ':');
+}
+
+static qboolean QRE_TexturePathExists (const char *path)
+{
+	static const char *const exts[] = { "tga", "jpg", "png" };
+	char                     name[MAX_QPATH];
+	const char              *dot = strrchr (path, '.');
+	int                      i;
+
+	if (dot && dot[1])
+		return COM_FileExists (path, NULL);
+
+	for (i = 0; i < (int)countof (exts); i++)
+	{
+		q_snprintf (name, sizeof (name), "%s.%s", path, exts[i]);
+		if (COM_FileExists (name, NULL))
+			return true;
+	}
+
+	return false;
+}
+
+static void QRE_TextureErrorClear (void)
+{
+	qre.texture_error_text[0] = '\0';
+	qre.texture_error_reason[0] = '\0';
+	qre.texture_error_group = -1;
+	qre.texture_error_param = -1;
+}
+
+static void QRE_TextureErrorSet (int g, int p, const char *text, const char *reason)
+{
+	qre.texture_error_group = g;
+	qre.texture_error_param = p;
+	q_strlcpy (qre.texture_error_text, text, sizeof (qre.texture_error_text));
+	q_strlcpy (qre.texture_error_reason, reason, sizeof (qre.texture_error_reason));
+}
+
+static qboolean QRE_TextureErrorActive (int g, int p)
+{
+	return qre.texture_error_text[0] != '\0' &&
+	       qre.texture_error_group == g &&
+	       qre.texture_error_param == p;
+}
+
+static void QRE_SetTextDirect (int g, int param, const char *value)
+{
+	rt_material_t *m;
+	char           path[MAX_OSPATH];
 
 	q_strlcpy (path, value, sizeof (path));
 	QRE_NormalizeTexturePath (path);
 
-	// A path that stays absolute points outside the game directories, where
-	// the material loader cannot find it: keep the current value and say so.
-	if (path[0] == '/' ||
-	    (((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) &&
-	     path[1] == ':'))
+	QRE_EnsureLive (g);
+	m = qre.group[g];
+
+	if (param == PARAM_BASE && strcmp (m->filename_base, path))
 	{
-		QRE_Notify ("the texture must be inside %s", com_gamedir);
-		return;
+		m->color_emissive_count = 0;
+		m->has_color_emissive = false;
+		memset (m->color_emissive, 0, sizeof (m->color_emissive));
+		qre.luma_sel = -1;
 	}
 
 	switch (param)
@@ -1333,7 +1474,58 @@ static void QRE_SetText (int g, int param, const char *value)
 	case PARAM_GLOSS:    q_strlcpy (m->filename_gloss, path, sizeof (m->filename_gloss)); break;
 	default:             break;
 	}
+	QRE_TextureErrorClear ();
 	QRE_MarkDirtyFull (m);
+}
+
+static void QRE_SetTextHost (int g, int param, const char *value)
+{
+	char path[MAX_OSPATH];
+	char active[MAX_OSPATH];
+
+	q_strlcpy (path, value, sizeof (path));
+	QRE_NormalizeTexturePath (path);
+
+	if (!q_strcasecmp (path, "NONE"))
+		path[0] = '\0';
+
+	// A path that stays absolute points outside the game directories, where
+	// the material loader cannot find it: keep the current value and say so.
+	if (QRE_TexturePathAbsolute (path))
+	{
+		QRE_ActiveModDir (active, sizeof (active));
+		QRE_TextureErrorSet (g, param, path, "texture must be inside the game directories");
+		QRE_Notify ("the texture must be inside %s", active);
+		return;
+	}
+
+	if (strlen (path) >= MAX_QPATH)
+	{
+		QRE_TextureErrorSet (g, param, path, "texture path is too long");
+		QRE_Notify ("the texture path is too long");
+		return;
+	}
+
+	if (path[0] && !QRE_TexturePathExists (path) && !TexMgr_TextureNameExists (path) &&
+	    !RT_MAT_Find (path) && !QRE_TextureBrowserHasName (path))
+	{
+		QRE_TextureErrorSet (g, param, path, "texture not found");
+		QRE_Notify ("texture not found: %s", path);
+		return;
+	}
+
+	QRE_SetTextDirect (g, param, path);
+}
+
+static void QRE_SetText (int g, int param, const char *value)
+{
+	if (Tasks_IsWorker ())
+	{
+		QRE_QueueTexture (g, param, value);
+		return;
+	}
+
+	QRE_SetTextHost (g, param, value);
 }
 
 // ---------------------------------------------------------------------------
@@ -1366,7 +1558,19 @@ static struct
 	qboolean stop_restore;
 	int      browse_group;
 	int      browse_param;
+	qboolean texture_pending;
+	int      texture_group;
+	int      texture_param;
+	char     texture_value[MAX_QPATH];
 } qre_actions = { .cursor_mode = -1, .browse_group = -1 };
+
+static void QRE_QueueTexture (int g, int p, const char *value)
+{
+	qre_actions.texture_pending = true;
+	qre_actions.texture_group = g;
+	qre_actions.texture_param = p;
+	q_strlcpy (qre_actions.texture_value, value, sizeof (qre_actions.texture_value));
+}
 
 void QR_Editor_HostCvarSet (const char *name, const char *value)
 {
@@ -1411,16 +1615,13 @@ void QR_Editor_HostCbufAddText (const char *text)
 	qre_actions.cbuf_count++;
 }
 
-// The texture browse dialog belongs to the host too: a task only names the
+// The texture browser's catalog belongs to the host too: a task only names the
 // field that asked for it.
 static void QRE_QueueBrowse (int g, int p)
 {
-	char file[MAX_QPATH];
-
 	if (!Tasks_IsWorker ())
 	{
-		if (QRE_BrowseTexture (file, sizeof (file)))
-			QRE_SetText (g, p, file);
+		QRE_OpenTextureBrowser (g, p);
 		return;
 	}
 
@@ -1493,6 +1694,7 @@ static void QRE_ResolveGroup (const char *texname)
 	char groupbase[MAX_QPATH];
 	int  pass, i, k;
 
+	QRE_TextureErrorClear ();
 	QRE_GroupBaseOf (texname, groupbase, sizeof (groupbase));
 
 	qre.group_count = 0;
@@ -2335,6 +2537,9 @@ static void QRE_DrainActions (void)
 {
 	int i;
 
+	QRE_TextureBrowserPumpBuild ();
+	QRE_TexturePreviewPump ();
+
 	for (i = 0; i < qre_actions.set_count; i++)
 		Cvar_Set (qre_actions.sets[i].name, qre_actions.sets[i].value);
 	qre_actions.set_count = 0;
@@ -2343,16 +2548,25 @@ static void QRE_DrainActions (void)
 		Cbuf_AddText (qre_actions.cbuf[i]);
 	qre_actions.cbuf_count = 0;
 
+	if (qre_actions.texture_pending)
+	{
+		const int g = qre_actions.texture_group;
+		const int p = qre_actions.texture_param;
+
+		qre_actions.texture_pending = false;
+		if (g >= 0 && g < qre.group_count)
+			QRE_SetTextHost (g, p, qre_actions.texture_value);
+	}
+
 	if (qre_actions.browse_group >= 0)
 	{
 		const int g = qre_actions.browse_group;
 		const int p = qre_actions.browse_param;
-		char      file[MAX_QPATH];
 
 		qre_actions.browse_group = -1;
 
-		if (g < qre.group_count && QRE_BrowseTexture (file, sizeof (file)))
-			QRE_SetText (g, p, file);
+		if (g < qre.group_count)
+			QRE_OpenTextureBrowser (g, p);
 	}
 
 	if (qre_actions.cursor_mode >= 0)
@@ -3103,8 +3317,20 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 	slot->last_frame = (unsigned)host_framecount;
 
 	if (m->filename_base[0])
+	{
+		gltexture_t *override_tex;
+
 		pixels = RT_MAT_LoadTexture (m, RT_MAT_TEX_BASE, &w, &h);
-	if (!pixels)
+		if (!pixels)
+		{
+			override_tex = TexMgr_FindTextureByNormalizedName (m->filename_base);
+			if (override_tex)
+				pixels = TexMgr_LoadRgbaForPreview (override_tex, &w, &h);
+		}
+		if (!pixels)
+			pixels = QRE_TextureBrowserResolve (m->filename_base, &w, &h);
+	}
+	else
 	{
 		// the texture of the frame the material stands for: a model's skin or a
 		// sprite's frame; the pick is empty when the material was opened from
@@ -3331,7 +3557,7 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		m->color_emissive_count = orig->color_emissive_count;
 		m->emissive_blend = orig->emissive_blend;
 		memcpy (m->color_emissive, orig->color_emissive, sizeof (m->color_emissive));
-		QRE_MarkDirty (m);
+		QRE_MarkDirtyFull (m);
 		return;
 	}
 
@@ -3348,7 +3574,7 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 		QRE_SetBool (g, p, QRE_GetBool (orig, p));
 		break;
 	case QRE_T_TEXT:
-		QRE_SetText (g, p, QRE_GetText (orig, p));
+		QRE_SetTextDirect (g, p, QRE_GetText (orig, p));
 		break;
 	case QRE_T_COLOR:
 	{
@@ -3537,7 +3763,7 @@ static void QRE_EmissiveEditor (int g)
 				q_strlcpy (keep, m->color_emissive[ci].name, sizeof (keep));
 				m->color_emissive[ci] = qre.luma_clip;
 				q_strlcpy (m->color_emissive[ci].name, keep, sizeof (keep));
-				QRE_MarkDirty (m);
+				QRE_MarkDirtyFull (m);
 			}
 			if (actions & 4)
 			{
@@ -3552,7 +3778,7 @@ static void QRE_EmissiveEditor (int g)
 					qre.luma_sel = m->color_emissive_count - 1;
 				if (m->color_emissive_count == 0)
 					m->has_color_emissive = false;
-				QRE_MarkDirty (m);
+				QRE_MarkDirtyFull (m);
 				QR_GUI_PopID ();
 				break;
 			}
@@ -3579,7 +3805,7 @@ static void QRE_EmissiveEditor (int g)
 							m = qre.group[g];
 							memcpy (m->color_emissive[ci].poly_uv, poly_uv, sizeof (poly_uv));
 							m->color_emissive[ci].poly_count = poly_count;
-							QRE_MarkDirty (m);
+							QRE_MarkDirtyFull (m);
 						}
 					}
 				}
@@ -3590,7 +3816,7 @@ static void QRE_EmissiveEditor (int g)
 				                                 "The color this block matches, up to the threshold's distance.");
 
 				if (res & 1)
-					QRE_MarkDirty (m);
+					QRE_MarkDirtyFull (m);
 
 				// this block's own preview: the eyedropper picks a color into it
 				{
@@ -3611,14 +3837,14 @@ static void QRE_EmissiveEditor (int g)
 							m->color_emissive[ci].color[0] = pix[0] / 255.0f;
 							m->color_emissive[ci].color[1] = pix[1] / 255.0f;
 							m->color_emissive[ci].color[2] = pix[2] / 255.0f;
-							QRE_MarkDirty (m);
+							QRE_MarkDirtyFull (m);
 						}
 					}
 				}
 
 				if (QR_GUI_SliderFloat ("luma_threshold", &m->color_emissive[ci].threshold, 0.0f, 1.0f,
 				                        "How far a pixel's color may differ from this block's color and still glow."))
-					QRE_MarkDirty (m);
+					QRE_MarkDirtyFull (m);
 			}
 			{
 				int feather = (int)(m->color_emissive[ci].feather + 0.5f);
@@ -3627,12 +3853,12 @@ static void QRE_EmissiveEditor (int g)
 				                      "Softens this block's mask edge over this many pixels, extending it outward without dimming the pixels it selected."))
 				{
 					m->color_emissive[ci].feather = (float)feather;
-					QRE_MarkDirty (m);
+					QRE_MarkDirtyFull (m);
 				}
 			}
 			if (QR_GUI_SliderFloat ("emissive_factor", &m->color_emissive[ci].factor, 0.0f, 5.0f,
 			                        "Scales this block's emission: below 1 it dims, above 1 it brightens."))
-				QRE_MarkDirty (m);
+				QRE_MarkDirtyFull (m);
 			{
 				int idx = m->color_emissive[ci].blend + 1;
 
@@ -3640,7 +3866,7 @@ static void QRE_EmissiveEditor (int g)
 				                  "How this block's glow is composited into the frame (normal, screen, overlay...)."))
 				{
 					m->color_emissive[ci].blend = idx - 1;
-					QRE_MarkDirty (m);
+					QRE_MarkDirtyFull (m);
 				}
 			}
 		}
@@ -3669,7 +3895,7 @@ static void QRE_EmissiveEditor (int g)
 			m->has_color_emissive = true;
 			QRE_EmissiveSetName (m, &m->color_emissive[m->color_emissive_count - 1]);
 			qre.luma_sel = m->color_emissive_count - 1;
-			QRE_MarkDirty (m);
+			QRE_MarkDirtyFull (m);
 		}
 		QR_GUI_Tooltip ("Add a color block: it glows where the texture matches its color (up to ten)");
 		QR_GUI_SameLine ();
@@ -3697,7 +3923,7 @@ static void QRE_EmissiveEditor (int g)
 			m->has_color_emissive = true;
 			QRE_EmissiveSetName (m, &m->color_emissive[m->color_emissive_count - 1]);
 			qre.luma_sel = m->color_emissive_count - 1;
-			QRE_MarkDirty (m);
+			QRE_MarkDirtyFull (m);
 		}
 		QR_GUI_Tooltip ("Add a mask block: a white square over the texture; drag its points to shape the glow (up to ten)");
 	}
@@ -3726,11 +3952,16 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	{
 	case QRE_T_TEXT:
 	{
-		char buf[MAX_QPATH];
-		int  res;
+		char           buf[MAX_QPATH];
+		int            res;
+		const qboolean texture_error = QRE_TextureErrorActive (g, p);
 
-		q_strlcpy (buf, QRE_GetText (m, p), sizeof (buf));
-		res = QR_GUI_TexturePath (label, buf, sizeof (buf), tip);
+		if (texture_error)
+			q_strlcpy (buf, qre.texture_error_text, sizeof (buf));
+		else
+			q_strlcpy (buf, QRE_GetText (m, p), sizeof (buf));
+		res = QR_GUI_TexturePath (label, buf, sizeof (buf), tip,
+		                          texture_error ? qre.texture_error_reason : NULL);
 		if (res & 1)
 		{
 			// NONE typed by hand means "no texture", as an empty field does.
@@ -3740,6 +3971,8 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 				buf[0] = '\0';
 			if (strcmp (buf, QRE_GetText (m, p)))
 				QRE_SetText (g, p, buf);
+			else if (texture_error)
+				QRE_TextureErrorClear ();
 		}
 		if (res & 2)
 			QRE_QueueBrowse (g, p);
@@ -4405,6 +4638,803 @@ static qre_texentry_t qre_texentries[QRE_TEXLIST_MAX];
 static char           qre_texlabels[QRE_TEXLIST_MAX][MAX_QPATH + 16];
 static unsigned int   qre_texlist_revision;
 static int            qre_texlist_count;
+
+#define QRE_TEXTBROWSER_MAX 32768
+#define QRE_TEXTBROWSER_ORIGIN_MAX 64
+#define QRE_TEXTBROWSER_PREVIEW_BATCH 32
+#define QRE_TEXPREVIEW_KEY  (MAX_QPATH * 2 + 2)
+
+enum
+{
+	QRE_TB_LOADED,
+	QRE_TB_FILE,
+	QRE_TB_BSP,
+	QRE_TB_MDL,
+	QRE_TB_LMP,
+};
+
+typedef struct
+{
+	char          names[QRE_TEXTBROWSER_MAX][MAX_QPATH];
+	char          sources[QRE_TEXTBROWSER_MAX][32];
+	char          assets[QRE_TEXTBROWSER_MAX][MAX_QPATH];
+	char          trees[QRE_TEXTBROWSER_MAX][MAX_QPATH];
+	int           offsets[QRE_TEXTBROWSER_MAX];
+	int           widths[QRE_TEXTBROWSER_MAX];
+	int           heights[QRE_TEXTBROWSER_MAX];
+	int           filepos[QRE_TEXTBROWSER_MAX];
+	unsigned short origins[QRE_TEXTBROWSER_MAX];
+	unsigned char kinds[QRE_TEXTBROWSER_MAX];
+	int           order[QRE_TEXTBROWSER_MAX];
+	int           entry_index[QRE_TEXTBROWSER_MAX];
+	const char   *items[QRE_TEXTBROWSER_MAX];
+	const char   *item_sources[QRE_TEXTBROWSER_MAX];
+	const char   *item_trees[QRE_TEXTBROWSER_MAX];
+	char          origin_paths[QRE_TEXTBROWSER_ORIGIN_MAX][MAX_OSPATH];
+	unsigned char origin_is_pak[QRE_TEXTBROWSER_ORIGIN_MAX];
+	int           origin_count;
+	int           count;
+	int           raw_count;
+	unsigned int  revision;
+} qre_textbrowser_catalog_t;
+
+static qre_textbrowser_catalog_t  qre_textbrowser_catalogs[2];
+static qre_textbrowser_catalog_t *qre_textbrowser_active = &qre_textbrowser_catalogs[0];
+static qre_textbrowser_catalog_t *qre_textbrowser_building = &qre_textbrowser_catalogs[1];
+static qre_textbrowser_catalog_t *qre_textbrowser_sort_catalog;
+static qboolean                   qre_textbrowser_built;
+static qboolean                   qre_textbrowser_loading;
+static qboolean                   qre_textbrowser_build_wanted;
+static task_handle_t              qre_textbrowser_build_task = INVALID_TASK_HANDLE;
+static unsigned int               qre_textbrowser_build_generation;
+
+typedef struct
+{
+	char name[MAX_QPATH];
+	int  filepos;
+	int  filelen;
+} qre_textbrowser_pakfile_t;
+
+typedef struct
+{
+	char                     filename[MAX_OSPATH];
+	char                     source[32];
+	int                      numfiles;
+	qre_textbrowser_pakfile_t *files;
+} qre_textbrowser_pak_t;
+
+typedef struct
+{
+	char filename[MAX_OSPATH];
+	char source[32];
+} qre_textbrowser_dir_t;
+
+typedef struct
+{
+	char name[MAX_QPATH];
+	char source[32];
+} qre_textbrowser_pkzfile_t;
+
+typedef struct
+{
+	atomic_uint32_t          cancel;
+	atomic_uint32_t          done;
+	int                      generation;
+	qre_textbrowser_catalog_t *catalog;
+	qre_textbrowser_pak_t     paks[QRE_TEXTBROWSER_ORIGIN_MAX];
+	int                       numpaks;
+	qre_textbrowser_dir_t     dirs[QRE_TEXTBROWSER_ORIGIN_MAX];
+	int                       numdirs;
+	qre_textbrowser_pkzfile_t *pkz;
+	int                        numpkz;
+	int                        maxpkz;
+	char                     (*loaded)[MAX_QPATH];
+	int                        numloaded;
+} qre_textbrowser_build_job_t;
+
+static qre_textbrowser_build_job_t *qre_textbrowser_build_job;
+
+typedef struct
+{
+	char         key[QRE_TEXPREVIEW_KEY];
+	char         asset[MAX_QPATH];
+	char         origin[MAX_OSPATH];
+	int          item;
+	int          kind;
+	int          packed;
+	int          filepos;
+	int          offset;
+	int          width;
+	int          height;
+	unsigned int request_id;
+} qre_textbrowser_preview_request_t;
+
+typedef struct
+{
+	qre_textbrowser_preview_request_t request;
+	byte                             *thumb;
+	int                               width;
+	int                               height;
+	qboolean                          ready;
+} qre_textbrowser_preview_result_t;
+
+typedef struct
+{
+	atomic_uint32_t                cancel;
+	atomic_uint32_t                done;
+	unsigned int                   epoch;
+	int                            count;
+	qre_textbrowser_preview_request_t requests[QRE_TEXTBROWSER_PREVIEW_BATCH];
+	qre_textbrowser_preview_result_t  results[QRE_TEXTBROWSER_PREVIEW_BATCH];
+} qre_textbrowser_preview_job_t;
+
+#define QRE_TEXPREVIEW_SIZE 128
+#define QRE_TEXPREVIEW_MAX  512
+
+typedef struct
+{
+	char        key[QRE_TEXPREVIEW_KEY];
+	QrMaterial  mat;
+	byte       *pixels;
+	int         w, h;
+	int         item;
+	unsigned    last_frame;
+	unsigned int request_id;
+} qre_texpreview_t;
+
+static qre_texpreview_t        qre_texpreviews[QRE_TEXPREVIEW_MAX];
+static unsigned char           qre_textbrowser_preview_state[QRE_TEXTBROWSER_MAX];
+static qre_textbrowser_preview_request_t qre_textbrowser_preview_queue[QRE_TEXPREVIEW_MAX];
+static int                     qre_textbrowser_preview_queue_count;
+static qre_textbrowser_preview_job_t *qre_textbrowser_preview_job;
+static task_handle_t           qre_textbrowser_preview_task = INVALID_TASK_HANDLE;
+static unsigned int            qre_textbrowser_preview_request_id;
+static unsigned int            qre_textbrowser_preview_epoch;
+
+#define qre_textbrowser_names        (qre_textbrowser_active->names)
+#define qre_textbrowser_sources      (qre_textbrowser_active->sources)
+#define qre_textbrowser_assets       (qre_textbrowser_active->assets)
+#define qre_textbrowser_trees        (qre_textbrowser_active->trees)
+#define qre_textbrowser_offsets      (qre_textbrowser_active->offsets)
+#define qre_textbrowser_widths       (qre_textbrowser_active->widths)
+#define qre_textbrowser_heights      (qre_textbrowser_active->heights)
+#define qre_textbrowser_filepos      (qre_textbrowser_active->filepos)
+#define qre_textbrowser_origins      (qre_textbrowser_active->origins)
+#define qre_textbrowser_kinds        (qre_textbrowser_active->kinds)
+#define qre_textbrowser_entry_index  (qre_textbrowser_active->entry_index)
+#define qre_textbrowser_items        (qre_textbrowser_active->items)
+#define qre_textbrowser_item_sources (qre_textbrowser_active->item_sources)
+#define qre_textbrowser_item_trees   (qre_textbrowser_active->item_trees)
+#define qre_textbrowser_count        (qre_textbrowser_active->count)
+#define qre_textbrowser_raw_count    (qre_textbrowser_active->raw_count)
+#define qre_textbrowser_revision     (qre_textbrowser_active->revision)
+
+static void QRE_TextureBrowserPumpBuild (void);
+static void QRE_TexturePreviewPump (void);
+static void QRE_TextureBrowserBuildWorker (void *payload);
+static void QRE_TexturePreviewWorker (void *payload);
+
+static void QRE_TexturePreviewClear (void)
+{
+	int i;
+
+	for (i = 0; i < QRE_TEXPREVIEW_MAX; i++)
+	{
+		qre_texpreview_t *slot = &qre_texpreviews[i];
+
+		if (slot->mat != QR_NO_MATERIAL)
+			qrDestroyMaterial (vulkan_globals.instance, slot->mat);
+		if (slot->pixels)
+			Mem_Free (slot->pixels);
+		memset (slot, 0, sizeof (*slot));
+		slot->item = -1;
+	}
+
+	memset (qre_textbrowser_preview_state, 0, sizeof (qre_textbrowser_preview_state));
+	qre_textbrowser_preview_queue_count = 0;
+	qre_textbrowser_preview_epoch++;
+	if (qre_textbrowser_preview_job)
+		Atomic_StoreUInt32 (&qre_textbrowser_preview_job->cancel, 1);
+}
+
+static byte *QRE_TextureBrowserLoadIndexedFile (const char *origin, int packed, const char *asset,
+                                               int filepos, int offset, int width, int height)
+{
+	FILE       *file;
+	byte       *data;
+	byte       *out;
+	const byte *palette = (const byte *)d_8to24table;
+	char        path[MAX_OSPATH];
+	int         i, size;
+
+	if (width <= 0 || height <= 0 || offset < 0 || filepos < 0)
+		return NULL;
+
+	size = width * height;
+	data = (byte *)Mem_Alloc (size);
+	if (!data)
+		return NULL;
+
+	if (origin && origin[0])
+	{
+		if (packed)
+			q_strlcpy (path, origin, sizeof (path));
+		else if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", origin, asset) >= sizeof (path))
+		{
+			Mem_Free (data);
+			return NULL;
+		}
+	}
+	else if ((size_t)q_snprintf (path, sizeof (path), "%s", asset) >= sizeof (path))
+	{
+		Mem_Free (data);
+		return NULL;
+	}
+
+	file = fopen (path, "rb");
+	if (!file)
+	{
+		Mem_Free (data);
+		return NULL;
+	}
+
+	if (fseek (file, filepos + offset, SEEK_SET) != 0 || fread (data, 1, size, file) != (size_t)size)
+	{
+		fclose (file);
+		Mem_Free (data);
+		return NULL;
+	}
+	fclose (file);
+
+	out = (byte *)Mem_Alloc (size * 4);
+	if (!out)
+	{
+		Mem_Free (data);
+		return NULL;
+	}
+
+	for (i = 0; i < size; i++)
+	{
+		const int index = data[i];
+		out[i * 4 + 0] = palette[index * 4 + 0];
+		out[i * 4 + 1] = palette[index * 4 + 1];
+		out[i * 4 + 2] = palette[index * 4 + 2];
+		out[i * 4 + 3] = palette[index * 4 + 3];
+	}
+
+	Mem_Free (data);
+	return out;
+}
+
+static byte *QRE_TextureBrowserLoadEntry (int raw, int *width, int *height)
+{
+	const char *name = qre_textbrowser_names[raw];
+	const char *asset = qre_textbrowser_assets[raw];
+	const int   origin = qre_textbrowser_origins[raw];
+	const char *origin_path = (origin >= 0 && origin < qre_textbrowser_active->origin_count)
+	                          ? qre_textbrowser_active->origin_paths[origin] : NULL;
+	const int   packed = (origin >= 0 && origin < qre_textbrowser_active->origin_count)
+	                     ? qre_textbrowser_active->origin_is_pak[origin] : 0;
+
+	switch (qre_textbrowser_kinds[raw])
+	{
+	case QRE_TB_LOADED:
+	{
+		gltexture_t *source = TexMgr_FindTextureByNormalizedName (name);
+		byte        *pixels = source ? TexMgr_LoadRgbaForPreview (source, width, height) : NULL;
+
+		if (!pixels)
+			pixels = Image_LoadImage (name, width, height);
+		return pixels;
+	}
+	case QRE_TB_FILE:
+		if (origin_path && !packed)
+		{
+			char path[MAX_OSPATH];
+
+			if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", origin_path, asset) < sizeof (path))
+				return Image_LoadImageOSPath (path, width, height);
+		}
+		{
+			char image_name[MAX_QPATH];
+			char *dot;
+
+			q_strlcpy (image_name, asset, sizeof (image_name));
+			dot = strrchr (image_name, '.');
+			if (dot)
+				*dot = '\0';
+			return Image_LoadImage (image_name, width, height);
+		}
+	case QRE_TB_BSP:
+	case QRE_TB_MDL:
+	case QRE_TB_LMP:
+		if (width)
+			*width = qre_textbrowser_widths[raw];
+		if (height)
+			*height = qre_textbrowser_heights[raw];
+		return QRE_TextureBrowserLoadIndexedFile (origin_path, packed, asset,
+		                                          qre_textbrowser_filepos[raw],
+		                                          qre_textbrowser_offsets[raw],
+		                                          qre_textbrowser_widths[raw],
+		                                          qre_textbrowser_heights[raw]);
+	default:
+		return NULL;
+	}
+}
+
+static qboolean QRE_TextureBrowserHasName (const char *name)
+{
+	int i;
+
+	if (!name || !name[0])
+		return false;
+
+	for (i = 0; i < qre_textbrowser_raw_count; i++)
+	{
+		if (!q_strcasecmp (qre_textbrowser_names[i], name))
+			return true;
+	}
+
+	return false;
+}
+
+static byte *QRE_TextureBrowserResolve (const char *name, int *width, int *height)
+{
+	int i;
+
+	if (!name || !name[0])
+		return NULL;
+
+	for (i = 0; i < qre_textbrowser_raw_count; i++)
+	{
+		if (!q_strcasecmp (qre_textbrowser_names[i], name))
+			return QRE_TextureBrowserLoadEntry (i, width, height);
+	}
+
+	return NULL;
+}
+
+static void QRE_TexturePreviewKey (int item, char *out, size_t outsize)
+{
+	const int raw = qre_textbrowser_entry_index[item];
+
+	q_snprintf (out, outsize, "%s|%s", qre_textbrowser_sources[raw], qre_textbrowser_names[raw]);
+}
+
+static qre_texpreview_t *QRE_TexturePreviewFindSlot (const char *key)
+{
+	int i;
+
+	for (i = 0; i < QRE_TEXPREVIEW_MAX; i++)
+	{
+		if (key && !strcmp (qre_texpreviews[i].key, key))
+			return &qre_texpreviews[i];
+	}
+
+	return NULL;
+}
+
+static qre_texpreview_t *QRE_TexturePreviewTakeSlot (const char *key)
+{
+	qre_texpreview_t *slot;
+	int               i, victim = -1;
+
+	slot = QRE_TexturePreviewFindSlot (key);
+	if (slot)
+		return slot;
+
+	for (i = 0; i < QRE_TEXPREVIEW_MAX; i++)
+	{
+		if (!qre_texpreviews[i].key[0])
+		{
+			victim = i;
+			break;
+		}
+		if (victim < 0 || qre_texpreviews[i].last_frame < qre_texpreviews[victim].last_frame)
+			victim = i;
+	}
+
+	if (victim < 0 || qre_texpreviews[victim].last_frame >= (unsigned)host_framecount)
+		return NULL;
+
+	slot = &qre_texpreviews[victim];
+	if (slot->item >= 0 && slot->item < qre_textbrowser_count)
+		qre_textbrowser_preview_state[slot->item] = 0;
+	if (slot->mat != QR_NO_MATERIAL)
+	{
+		qrDestroyMaterial (vulkan_globals.instance, slot->mat);
+		slot->mat = QR_NO_MATERIAL;
+	}
+	if (slot->pixels)
+	{
+		Mem_Free (slot->pixels);
+		slot->pixels = NULL;
+	}
+	memset (slot, 0, sizeof (*slot));
+	slot->item = -1;
+	slot->last_frame = (unsigned)host_framecount;
+	q_strlcpy (slot->key, key, sizeof (slot->key));
+	return slot;
+}
+
+static qboolean QRE_TexturePreviewMakeRequest (int item, qre_textbrowser_preview_request_t *request)
+{
+	const int   raw = qre_textbrowser_entry_index[item];
+	const char *name = qre_textbrowser_names[raw];
+	const char *source = qre_textbrowser_sources[raw];
+	int         chosen = -1;
+	int         i;
+
+	for (i = 0; i < qre_textbrowser_raw_count; i++)
+	{
+		if (qre_textbrowser_kinds[i] == QRE_TB_LOADED || q_strcasecmp (qre_textbrowser_names[i], name))
+			continue;
+		if (!strcmp (qre_textbrowser_sources[i], source))
+		{
+			chosen = i;
+			break;
+		}
+	}
+
+	if (chosen < 0)
+	{
+		for (i = 0; i < qre_textbrowser_raw_count; i++)
+		{
+			if (qre_textbrowser_kinds[i] != QRE_TB_LOADED &&
+			    !q_strcasecmp (qre_textbrowser_names[i], name))
+			{
+				chosen = i;
+				break;
+			}
+		}
+	}
+
+	if (chosen < 0)
+		return false;
+
+	memset (request, 0, sizeof (*request));
+	QRE_TexturePreviewKey (item, request->key, sizeof (request->key));
+	q_strlcpy (request->asset, qre_textbrowser_assets[chosen], sizeof (request->asset));
+	request->item = item;
+	request->kind = qre_textbrowser_kinds[chosen];
+	request->filepos = qre_textbrowser_filepos[chosen];
+	request->offset = qre_textbrowser_offsets[chosen];
+	request->width = qre_textbrowser_widths[chosen];
+	request->height = qre_textbrowser_heights[chosen];
+
+	if (qre_textbrowser_origins[chosen] != 0xffff &&
+	    qre_textbrowser_origins[chosen] < qre_textbrowser_active->origin_count)
+	{
+		const int origin = qre_textbrowser_origins[chosen];
+
+		q_strlcpy (request->origin, qre_textbrowser_active->origin_paths[origin], sizeof (request->origin));
+		request->packed = qre_textbrowser_active->origin_is_pak[origin];
+	}
+
+	return true;
+}
+
+static qboolean QRE_TexturePreviewQueued (const char *key)
+{
+	int i;
+
+	for (i = 0; i < qre_textbrowser_preview_queue_count; i++)
+	{
+		if (!strcmp (qre_textbrowser_preview_queue[i].key, key))
+			return true;
+	}
+
+	if (qre_textbrowser_preview_job)
+	{
+		for (i = 0; i < qre_textbrowser_preview_job->count; i++)
+		{
+			if (!strcmp (qre_textbrowser_preview_job->requests[i].key, key))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+static byte *QRE_TextureBrowserLoadPreviewRequest (const qre_textbrowser_preview_request_t *request,
+                                                   int *width, int *height)
+{
+	if (request->kind == QRE_TB_FILE)
+	{
+		if (request->origin[0] && !request->packed)
+		{
+			char path[MAX_OSPATH];
+
+			if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", request->origin, request->asset) < sizeof (path))
+				return Image_LoadImageOSPath (path, width, height);
+		}
+		{
+			char name[MAX_QPATH];
+			char *dot;
+
+			q_strlcpy (name, request->asset, sizeof (name));
+			dot = strrchr (name, '.');
+			if (dot)
+				*dot = '\0';
+			return Image_LoadImage (name, width, height);
+		}
+	}
+
+	if (width)
+		*width = request->width;
+	if (height)
+		*height = request->height;
+	return QRE_TextureBrowserLoadIndexedFile (request->origin, request->packed, request->asset,
+	                                          request->filepos, request->offset,
+	                                          request->width, request->height);
+}
+
+static void QRE_TexturePreviewWorker (void *payload)
+{
+	qre_textbrowser_preview_job_t *job = *(qre_textbrowser_preview_job_t **)payload;
+	int                            i, j;
+
+	if (!job)
+		return;
+
+	for (i = 0; i < job->count; i++)
+	{
+		qre_textbrowser_preview_request_t *request = &job->requests[i];
+		qre_textbrowser_preview_result_t  *result = &job->results[i];
+		byte                              *pixels;
+		byte                              *scaled;
+		byte                              *thumb;
+		int                                sw = 0, sh = 0, tw, th, ow, oh, ox, oy;
+		float                              scale;
+
+		if (Atomic_LoadUInt32 (&job->cancel))
+			goto done;
+
+		result->request = *request;
+		result->ready = true;
+		pixels = QRE_TextureBrowserLoadPreviewRequest (request, &sw, &sh);
+		if (!pixels || sw <= 0 || sh <= 0)
+		{
+			if (pixels)
+				Mem_Free (pixels);
+			continue;
+		}
+
+		scale = (float)QRE_TEXPREVIEW_SIZE / (float)(sw > sh ? sw : sh);
+		tw = (int)(sw * scale + 0.5f);
+		th = (int)(sh * scale + 0.5f);
+		if (tw < 1)
+			tw = 1;
+		if (th < 1)
+			th = 1;
+
+		scaled = (byte *)Mem_Alloc (tw * th * 4);
+		thumb = (byte *)Mem_Alloc (QRE_TEXPREVIEW_SIZE * QRE_TEXPREVIEW_SIZE * 4);
+		if (!scaled || !thumb)
+		{
+			Mem_Free (pixels);
+			if (scaled)
+				Mem_Free (scaled);
+			if (thumb)
+				Mem_Free (thumb);
+			continue;
+		}
+		memset (thumb, 0, QRE_TEXPREVIEW_SIZE * QRE_TEXPREVIEW_SIZE * 4);
+
+		if (!TexMgr_ResizeRgba (pixels, sw, sh, scaled, tw, th))
+		{
+			Mem_Free (pixels);
+			Mem_Free (scaled);
+			Mem_Free (thumb);
+			continue;
+		}
+
+		ow = tw;
+		oh = th;
+		ox = (QRE_TEXPREVIEW_SIZE - ow) / 2;
+		oy = (QRE_TEXPREVIEW_SIZE - oh) / 2;
+		for (j = 0; j < oh; j++)
+			memcpy (thumb + ((oy + j) * QRE_TEXPREVIEW_SIZE + ox) * 4,
+			        scaled + j * ow * 4, ow * 4);
+
+		Mem_Free (pixels);
+		Mem_Free (scaled);
+
+		result->request = *request;
+		result->thumb = thumb;
+		result->width = QRE_TEXPREVIEW_SIZE;
+		result->height = QRE_TEXPREVIEW_SIZE;
+		result->ready = true;
+	}
+
+done:
+	Atomic_StoreUInt32 (&job->done, 1);
+}
+
+static void QRE_TexturePreviewSubmit (void)
+{
+	qre_textbrowser_preview_job_t *job;
+	int                            count, i;
+
+	if (qre_textbrowser_preview_task != INVALID_TASK_HANDLE || qre_textbrowser_preview_job)
+		return;
+	if (qre_textbrowser_preview_queue_count <= 0)
+		return;
+
+	count = qre_textbrowser_preview_queue_count;
+	if (count > QRE_TEXTBROWSER_PREVIEW_BATCH)
+		count = QRE_TEXTBROWSER_PREVIEW_BATCH;
+
+	job = (qre_textbrowser_preview_job_t *)Mem_Alloc (sizeof (*job));
+	if (!job)
+		return;
+
+	job->epoch = qre_textbrowser_preview_epoch;
+	job->count = count;
+	for (i = 0; i < count; i++)
+		job->requests[i] = qre_textbrowser_preview_queue[i];
+
+	qre_textbrowser_preview_queue_count -= count;
+	if (qre_textbrowser_preview_queue_count > 0)
+		memmove (qre_textbrowser_preview_queue, qre_textbrowser_preview_queue + count,
+		         (size_t)qre_textbrowser_preview_queue_count * sizeof (qre_textbrowser_preview_queue[0]));
+
+	qre_textbrowser_preview_job = job;
+	qre_textbrowser_preview_task = Task_AllocateAssignFuncAndSubmit (QRE_TexturePreviewWorker, &job, sizeof (job));
+}
+
+static void QRE_TexturePreviewPump (void)
+{
+	qre_textbrowser_preview_job_t *job;
+	int                            i, uploaded = 0;
+
+	if (qre_textbrowser_preview_task != INVALID_TASK_HANDLE)
+	{
+		if (!qre_textbrowser_preview_job ||
+		    !Atomic_LoadUInt32 (&qre_textbrowser_preview_job->done))
+			return;
+		Task_Join (qre_textbrowser_preview_task, SDL_MUTEX_MAXWAIT);
+		qre_textbrowser_preview_task = INVALID_TASK_HANDLE;
+	}
+
+	job = qre_textbrowser_preview_job;
+	if (!job)
+	{
+		QRE_TexturePreviewSubmit ();
+		return;
+	}
+
+	for (i = 0; i < job->count && uploaded < 4; i++)
+	{
+		qre_textbrowser_preview_result_t *result = &job->results[i];
+
+		if (!result->ready)
+			continue;
+
+		if (job->epoch != qre_textbrowser_preview_epoch || !qre.texture_browser_open)
+		{
+			if (result->thumb)
+			{
+				Mem_Free (result->thumb);
+				result->thumb = NULL;
+			}
+			continue;
+		}
+
+		if (!result->thumb)
+		{
+			if (result->request.item >= 0 && result->request.item < qre_textbrowser_count)
+				qre_textbrowser_preview_state[result->request.item] = 2;
+			continue;
+		}
+
+		if (result->thumb)
+		{
+			qre_texpreview_t *slot = QRE_TexturePreviewTakeSlot (result->request.key);
+
+			if (!slot || slot->mat != QR_NO_MATERIAL)
+			{
+				Mem_Free (result->thumb);
+				result->thumb = NULL;
+				if (result->request.item >= 0 && result->request.item < qre_textbrowser_count)
+					qre_textbrowser_preview_state[result->request.item] =
+						(slot && slot->mat != QR_NO_MATERIAL) ? 1 : 0;
+			}
+			else
+			{
+				QrMaterialCreateInfo info;
+				QrMaterial          mat = QR_NO_MATERIAL;
+
+				memset (&info, 0, sizeof (info));
+				info.size.width = QRE_TEXPREVIEW_SIZE;
+				info.size.height = QRE_TEXPREVIEW_SIZE;
+				info.textures.pDataAlbedoAlpha = result->thumb;
+				info.filter = QR_SAMPLER_FILTER_LINEAR;
+				info.addressModeU = QR_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+				info.addressModeV = QR_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+
+				if (qrCreateMaterial (vulkan_globals.instance, &info, &mat) == QR_SUCCESS)
+				{
+					slot->mat = mat;
+					slot->pixels = result->thumb;
+					slot->w = QRE_TEXPREVIEW_SIZE;
+					slot->h = QRE_TEXPREVIEW_SIZE;
+					slot->item = result->request.item;
+					slot->last_frame = (unsigned)host_framecount;
+					slot->request_id = result->request.request_id;
+					result->thumb = NULL;
+				}
+				else
+				{
+					Mem_Free (result->thumb);
+					result->thumb = NULL;
+					if (result->request.item >= 0 && result->request.item < qre_textbrowser_count)
+						qre_textbrowser_preview_state[result->request.item] = 2;
+				}
+			}
+			uploaded++;
+		}
+	}
+
+	for (i = 0; i < job->count; i++)
+	{
+		if (job->results[i].thumb)
+			return;
+	}
+
+	Mem_Free (job);
+	qre_textbrowser_preview_job = NULL;
+	QRE_TexturePreviewSubmit ();
+}
+
+static int64_t QRE_TexturePreviewFor (int index, int *out_width, int *out_height, void *userdata)
+{
+	char             key[QRE_TEXPREVIEW_KEY];
+	qre_texpreview_t *slot;
+	qre_textbrowser_preview_request_t request;
+	const qboolean    allow_request = (userdata != NULL) ? true : false;
+
+	if (index < 0 || index >= qre_textbrowser_count)
+		return 0;
+
+	QRE_TexturePreviewKey (index, key, sizeof (key));
+	slot = QRE_TexturePreviewFindSlot (key);
+	if (slot)
+	{
+		qre_textbrowser_preview_state[index] = 1;
+		if (allow_request)
+			slot->last_frame = (unsigned)host_framecount;
+		if (out_width)
+			*out_width = slot->w;
+		if (out_height)
+			*out_height = slot->h;
+		return (int64_t)slot->mat;
+	}
+
+	if (qre_textbrowser_preview_state[index] == 2)
+		return 0;
+	if (qre_textbrowser_preview_state[index] == 1 || QRE_TexturePreviewQueued (key))
+	{
+		qre_textbrowser_preview_state[index] = 1;
+		return -1;
+	}
+	if (!allow_request)
+		return 0;
+	if (qre_textbrowser_preview_queue_count >= QRE_TEXPREVIEW_MAX)
+		return -1;
+	if (!QRE_TexturePreviewMakeRequest (index, &request))
+	{
+		qre_textbrowser_preview_state[index] = 2;
+		return 0;
+	}
+
+	request.request_id = ++qre_textbrowser_preview_request_id;
+	if (!request.request_id)
+		request.request_id = ++qre_textbrowser_preview_request_id;
+	qre_textbrowser_preview_queue[qre_textbrowser_preview_queue_count++] = request;
+	qre_textbrowser_preview_state[index] = 1;
+	return -1;
+}
 
 static int QRE_CompareTexEntries (const void *a, const void *b)
 {
@@ -6690,6 +7720,36 @@ void QR_Editor_DrainActions (void)
 	QRE_DrainActions ();
 }
 
+static void QRE_TextureBrowserGUI (void)
+{
+	char chosen[MAX_QPATH];
+	int  action;
+	int  count;
+
+	if (!qre.texture_browser_open)
+		return;
+
+	count = qre_textbrowser_loading ? 0 : qre_textbrowser_count;
+	action = QR_GUI_TextureBrowser (qre_textbrowser_items, qre_textbrowser_item_sources,
+	                                qre_textbrowser_item_trees, count,
+	                                qre_textbrowser_revision, QRE_ActiveGameName (),
+	                                qre_textbrowser_loading ? 1 : 0,
+	                                QRE_TexturePreviewFor, (void *)1, chosen, sizeof (chosen));
+
+	if (action == 1)
+	{
+		const int g = qre.texture_browser_group;
+		const int p = qre.texture_browser_param;
+
+		qre.texture_browser_open = false;
+		QRE_SetText (g, p, chosen);
+	}
+	else if (action == 2)
+	{
+		qre.texture_browser_open = false;
+	}
+}
+
 static void QRE_DrawChooser (void)
 {
 	int answer = QR_GUI_DialogVertical ("QuakeRay v." ENGINE_VER_STRING,
@@ -6778,10 +7838,17 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 	else
 		QRE_BuildFlyingOverlay ();
 
-	QRE_DrawHints ();
-	QRE_DrawOverlay ();
-	RT_DtalDebugDrawGui (CVAR_TO_INT32 (rt_dtal_debug), (unsigned int)host_framecount, (float)host_frametime,
-	                     glx, gly, glwidth, glheight, vid.height);
+	if (qre.texture_browser_open)
+	{
+		QRE_TextureBrowserGUI ();
+	}
+	else
+	{
+		QRE_DrawHints ();
+		QRE_DrawOverlay ();
+		RT_DtalDebugDrawGui (CVAR_TO_INT32 (rt_dtal_debug), (unsigned int)host_framecount, (float)host_frametime,
+		                     glx, gly, glwidth, glheight, vid.height);
+	}
 
 	qre.panel_drawing = false;
 
@@ -7397,6 +8464,8 @@ static void QRE_ClosePanel (void)
 	// blocked while dragging): closing the panel is a cancel, so the light
 	// returns to where it was, direction included
 	QRE_CustomGizmoCancel ();
+	QRE_TextureErrorClear ();
+	qre.texture_browser_open = false;
 
 	qre.panel_open = false;
 
@@ -8621,6 +9690,8 @@ static void QRE_DtalDebugOff (void)
 static void QRE_BackToChooser (void)
 {
 	QRE_CursorMode (true);
+	QRE_TextureErrorClear ();
+	qre.texture_browser_open = false;
 
 	qre.choosing = true;
 	qre.exit_prompt = false;
@@ -9011,46 +10082,871 @@ static void QRE_RequestExit (void)
 	qre.exit_prompt = true;
 }
 
-// ---------------------------------------------------------------------------
-// Texture browse (Win32 open dialog)
-// ---------------------------------------------------------------------------
-
-static qboolean QRE_BrowseTexture (char *out, size_t outsize)
+static qboolean QRE_TextureBrowserImage (const char *name)
 {
-	char          initdir[MAX_OSPATH];
-	char          result[MAX_OSPATH];
-	OPENFILENAMEA ofn;
+	const char *dot = strrchr (name, '.');
 
-	q_snprintf (initdir, sizeof (initdir), "%s", com_gamedir);
-
-	memset (&ofn, 0, sizeof (ofn));
-	result[0] = '\0';
-	ofn.lStructSize = sizeof (ofn);
-	ofn.lpstrFilter = "Images (*.png;*.tga;*.jpg;*.jpeg)\0*.png;*.tga;*.jpg;*.jpeg\0All files (*.*)\0*.*\0";
-	ofn.lpstrFile = result;
-	ofn.nMaxFile = sizeof (result);
-	ofn.lpstrInitialDir = initdir;
-	ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-	if (!GetOpenFileNameA (&ofn))
+	if (!dot)
 		return false;
 
-	// The canonical relative form: normalize the separators and strip the game
-	// directory prefix (the dialog returns backslashes, com_gamedir mixes them).
-	QRE_NormalizeTexturePath (result);
+	return !q_strcasecmp (dot, ".tga") || !q_strcasecmp (dot, ".png") ||
+	       !q_strcasecmp (dot, ".jpg") || !q_strcasecmp (dot, ".jpeg");
+}
 
-	// A path that stays absolute points outside the game directory, where the
-	// material loader cannot find it.
-	if (result[0] == '/' ||
-	    (((result[0] >= 'a' && result[0] <= 'z') || (result[0] >= 'A' && result[0] <= 'Z')) &&
-	     result[1] == ':'))
+static int QRE_ReadLong (const void *data)
+{
+	const byte *p = (const byte *)data;
+
+	return (int)(p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned)p[3] << 24));
+}
+
+static void QRE_TextureBrowserDirname (const char *path, char *out, size_t outsize)
+{
+	char *slash;
+
+	q_strlcpy (out, path ? path : "", outsize);
+	slash = strrchr (out, '/');
+	if (slash)
+		*slash = '\0';
+	else
+		out[0] = '\0';
+}
+
+static qboolean QRE_TextureBrowserWantedFile (const char *name)
+{
+	const char *dot;
+
+	if (!name || !name[0])
+		return false;
+	if (QRE_TextureBrowserImage (name))
+		return true;
+
+	dot = strrchr (name, '.');
+	if (!dot)
+		return false;
+
+	return !q_strcasecmp (dot, ".bsp") || !q_strcasecmp (dot, ".mdl") || !q_strcasecmp (dot, ".lmp");
+}
+
+static int QRE_TextureBrowserAddOrigin (qre_textbrowser_catalog_t *catalog, const char *path, int is_pak)
+{
+	int i;
+
+	if (!catalog || !path || !path[0])
+		return -1;
+
+	for (i = 0; i < catalog->origin_count; i++)
 	{
-		QRE_Notify ("the texture must be inside %s", com_gamedir);
-		return false;
+		if (catalog->origin_is_pak[i] == (unsigned char)(is_pak ? 1 : 0) &&
+		    !strcmp (catalog->origin_paths[i], path))
+			return i;
 	}
 
-	q_strlcpy (out, result, outsize);
-	return true;
+	if (catalog->origin_count >= QRE_TEXTBROWSER_ORIGIN_MAX)
+		return -1;
+
+	i = catalog->origin_count++;
+	q_strlcpy (catalog->origin_paths[i], path, sizeof (catalog->origin_paths[i]));
+	catalog->origin_is_pak[i] = (unsigned char)(is_pak ? 1 : 0);
+	return i;
+}
+
+static byte *QRE_TextureBrowserReadPath (const char *path, int *outlen)
+{
+	FILE *file;
+	byte *data;
+	long  len;
+
+	if (outlen)
+		*outlen = 0;
+	if (!path || !path[0])
+		return NULL;
+
+	file = fopen (path, "rb");
+	if (!file)
+		return NULL;
+
+	if (fseek (file, 0, SEEK_END) != 0 || (len = ftell (file)) <= 0)
+	{
+		fclose (file);
+		return NULL;
+	}
+	rewind (file);
+
+	data = (byte *)Mem_Alloc ((size_t)len + 1);
+	if (!data || fread (data, 1, (size_t)len, file) != (size_t)len)
+	{
+		fclose (file);
+		if (data)
+			Mem_Free (data);
+		return NULL;
+	}
+	fclose (file);
+	data[len] = 0;
+	if (outlen)
+		*outlen = (int)len;
+	return data;
+}
+
+static byte *QRE_TextureBrowserReadPak (FILE *file, int filepos, int filelen)
+{
+	byte *data;
+
+	if (!file || filepos < 0 || filelen <= 0)
+		return NULL;
+
+	data = (byte *)Mem_Alloc ((size_t)filelen + 1);
+	if (!data)
+		return NULL;
+
+	if (fseek (file, filepos, SEEK_SET) != 0 || fread (data, 1, (size_t)filelen, file) != (size_t)filelen)
+	{
+		Mem_Free (data);
+		return NULL;
+	}
+	data[filelen] = 0;
+	return data;
+}
+
+static void QRE_TextureBrowserAddEntry (qre_textbrowser_catalog_t *catalog,
+                                       const char *source, const char *name, const char *tree,
+                                       int kind, const char *asset, int offset, int width, int height,
+                                       int origin, int filepos)
+{
+	char   path[MAX_QPATH];
+	size_t i;
+
+	if (!catalog || !name || !name[0] || catalog->raw_count >= QRE_TEXTBROWSER_MAX)
+		return;
+
+	q_strlcpy (path, name, sizeof (path));
+	for (i = 0; path[i]; i++)
+	{
+		if (path[i] == '\\')
+			path[i] = '/';
+	}
+
+	while (path[0] == '.' && path[1] == '/')
+		memmove (path, path + 2, strlen (path + 2) + 1);
+	while (path[0] == '/')
+		memmove (path, path + 1, strlen (path + 1) + 1);
+
+	if (!path[0])
+		return;
+
+	i = (size_t)catalog->raw_count++;
+	q_strlcpy (catalog->names[i], path, MAX_QPATH);
+	q_strlcpy (catalog->sources[i], source ? source : "", sizeof (catalog->sources[0]));
+	q_strlcpy (catalog->assets[i], asset ? asset : "", sizeof (catalog->assets[0]));
+	q_strlcpy (catalog->trees[i], tree ? tree : "", sizeof (catalog->trees[0]));
+	catalog->kinds[i] = (unsigned char)kind;
+	catalog->offsets[i] = offset;
+	catalog->widths[i] = width;
+	catalog->heights[i] = height;
+	catalog->origins[i] = (unsigned short)(origin >= 0 ? origin : 0xffff);
+	catalog->filepos[i] = filepos;
+}
+
+static void QRE_TextureBrowserAddImage (qre_textbrowser_catalog_t *catalog, const char *source,
+                                        const char *name, int origin, int filepos)
+{
+	char path[MAX_QPATH];
+	char tree[MAX_QPATH];
+	char *dot;
+
+	q_strlcpy (path, name, sizeof (path));
+	dot = strrchr (path, '.');
+	if (dot && QRE_TextureBrowserImage (path))
+		*dot = '\0';
+	QRE_TextureBrowserDirname (path, tree, sizeof (tree));
+	QRE_TextureBrowserAddEntry (catalog, source, path, tree, QRE_TB_FILE, name, 0, 0, 0, origin, filepos);
+}
+
+static void QRE_TextureBrowserAddBSP (qre_textbrowser_catalog_t *catalog, const char *source,
+                                     const char *asset, const byte *file, int len,
+                                     int origin, int filepos)
+{
+	const byte *lump;
+	char        raw[MAX_QPATH];
+	char        tree[MAX_QPATH];
+	char        name[MAX_QPATH];
+	int         version, lumpofs, lumplen, num, i;
+
+	if (!file || len < (int)sizeof (dheader_t))
+		return;
+
+	version = QRE_ReadLong (file + offsetof (dheader_t, version));
+	if (version != BSPVERSION)
+		return;
+
+	lumpofs = QRE_ReadLong (file + offsetof (dheader_t, lumps) + LUMP_TEXTURES * sizeof (lump_t));
+	lumplen = QRE_ReadLong (file + offsetof (dheader_t, lumps) + LUMP_TEXTURES * sizeof (lump_t) + sizeof (int));
+	if (lumpofs <= 0 || lumplen <= 0 || lumpofs + lumplen > len)
+		return;
+
+	QRE_TextureBrowserDirname (asset, tree, sizeof (tree));
+	lump = file + lumpofs;
+	num = QRE_ReadLong (lump);
+	if (num <= 0 || 4 + (int)sizeof (int) * num > lumplen)
+		return;
+
+	for (i = 0; i < num && catalog->raw_count < QRE_TEXTBROWSER_MAX; i++)
+	{
+		const miptex_t *mt;
+		int             dataofs, absolute, width, height;
+
+		dataofs = QRE_ReadLong (lump + offsetof (dmiptexlump_t, dataofs) + sizeof (int) * i);
+		if (dataofs < 0)
+			continue;
+
+		absolute = lumpofs + dataofs;
+		if (absolute < lumpofs || absolute + (int)sizeof (miptex_t) > len)
+			continue;
+
+		mt = (const miptex_t *)(file + absolute);
+		width = QRE_ReadLong (&mt->width);
+		height = QRE_ReadLong (&mt->height);
+		if (width <= 0 || height <= 0 || absolute + (int)sizeof (miptex_t) + width * height > len)
+			continue;
+
+		q_snprintf (raw, sizeof (raw), "%s:%.16s", asset, mt->name);
+		q_strlwr (raw);
+		RT_MAT_NormalizeName (raw, name, sizeof (name));
+		QRE_TextureBrowserAddEntry (catalog, source, name, tree, QRE_TB_BSP, asset,
+		                            absolute + (int)sizeof (miptex_t), width, height,
+		                            origin, filepos);
+	}
+}
+
+static void QRE_TextureBrowserAddMDL (qre_textbrowser_catalog_t *catalog, const char *source,
+                                     const char *asset, const byte *file, int len,
+                                     int origin, int filepos)
+{
+	int   numskins, skinwidth, skinheight, i;
+	byte *p;
+	byte *end;
+	char  tree[MAX_QPATH];
+
+	if (!file || len < (int)sizeof (mdl_t))
+		return;
+
+	if (QRE_ReadLong (file + offsetof (mdl_t, ident)) != IDPOLYHEADER ||
+	    QRE_ReadLong (file + offsetof (mdl_t, version)) != ALIAS_VERSION)
+		return;
+
+	numskins = QRE_ReadLong (file + offsetof (mdl_t, numskins));
+	skinwidth = QRE_ReadLong (file + offsetof (mdl_t, skinwidth));
+	skinheight = QRE_ReadLong (file + offsetof (mdl_t, skinheight));
+	if (numskins <= 0 || numskins > MAX_SKINS || skinwidth <= 0 || skinheight <= 0)
+		return;
+
+	QRE_TextureBrowserDirname (asset, tree, sizeof (tree));
+	p = (byte *)file + sizeof (mdl_t);
+	end = (byte *)file + len;
+
+	for (i = 0; i < numskins && catalog->raw_count < QRE_TEXTBROWSER_MAX; i++)
+	{
+		int type;
+		int size = skinwidth * skinheight;
+
+		if (p + sizeof (aliasskintype_t) > end)
+			break;
+		type = QRE_ReadLong (p);
+
+		if (type == ALIAS_SKIN_SINGLE)
+		{
+			byte *skin = p + sizeof (aliasskintype_t);
+			char  raw[MAX_QPATH];
+			char  name[MAX_QPATH];
+
+			if (skin + size > end)
+				break;
+			q_snprintf (raw, sizeof (raw), "%s:frame%i", asset, i);
+			q_strlwr (raw);
+			RT_MAT_NormalizeName (raw, name, sizeof (name));
+			QRE_TextureBrowserAddEntry (catalog, source, name, tree, QRE_TB_MDL, asset,
+			                            (int)(skin - file), skinwidth, skinheight,
+			                            origin, filepos);
+			p = skin + size;
+		}
+		else if (type == ALIAS_SKIN_GROUP)
+		{
+			byte *group = p + sizeof (aliasskintype_t);
+			int   groupskins;
+			byte *interval;
+			byte *skin;
+			int   j;
+
+			if (group + sizeof (daliasskingroup_t) > end)
+				break;
+			groupskins = QRE_ReadLong (group + offsetof (daliasskingroup_t, numskins));
+			interval = group + sizeof (daliasskingroup_t);
+			skin = interval + groupskins * sizeof (daliasskininterval_t);
+			if (groupskins <= 0 || skin + groupskins * size > end)
+				break;
+
+			for (j = 0; j < groupskins && catalog->raw_count < QRE_TEXTBROWSER_MAX; j++)
+			{
+				char raw[MAX_QPATH];
+				char name[MAX_QPATH];
+
+				q_snprintf (raw, sizeof (raw), "%s:frame%i_%i", asset, i, j);
+				q_strlwr (raw);
+				RT_MAT_NormalizeName (raw, name, sizeof (name));
+				QRE_TextureBrowserAddEntry (catalog, source, name, tree, QRE_TB_MDL, asset,
+				                            (int)(skin - file), skinwidth, skinheight,
+				                            origin, filepos);
+				skin += size;
+			}
+
+			p = skin;
+		}
+		else
+			break;
+	}
+}
+
+static void QRE_TextureBrowserAddLMP (qre_textbrowser_catalog_t *catalog, const char *source,
+                                     const char *asset, const byte *file, int len,
+                                     int origin, int filepos)
+{
+	char tree[MAX_QPATH];
+	int  width, height;
+
+	if (!file || len < 8 || q_strncasecmp (asset, "progs/", 6))
+		return;
+
+	width = QRE_ReadLong (file);
+	height = QRE_ReadLong (file + 4);
+	if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || 8 + width * height > len)
+		return;
+
+	QRE_TextureBrowserDirname (asset, tree, sizeof (tree));
+	QRE_TextureBrowserAddEntry (catalog, source, asset, tree, QRE_TB_LMP, asset, 8, width, height,
+	                            origin, filepos);
+}
+
+static void QRE_TextureBrowserAddFileData (qre_textbrowser_catalog_t *catalog,
+                                          const char *source, const char *name,
+                                          const byte *data, int len,
+                                          int origin, int filepos)
+{
+	const char *dot;
+
+	if (!name || !name[0])
+		return;
+
+	dot = strrchr (name, '.');
+	if (!dot)
+		return;
+
+	if (QRE_TextureBrowserImage (name))
+		QRE_TextureBrowserAddImage (catalog, source, name, origin, filepos);
+	else if (!q_strcasecmp (dot, ".bsp"))
+		QRE_TextureBrowserAddBSP (catalog, source, name, data, len, origin, filepos);
+	else if (!q_strcasecmp (dot, ".mdl"))
+		QRE_TextureBrowserAddMDL (catalog, source, name, data, len, origin, filepos);
+	else if (!q_strcasecmp (dot, ".lmp"))
+		QRE_TextureBrowserAddLMP (catalog, source, name, data, len, origin, filepos);
+}
+
+static void QRE_TextureBrowserScanDir (qre_textbrowser_catalog_t *catalog, const char *source,
+                                       const char *root, const char *relative, int depth, int origin,
+                                       const atomic_uint32_t *cancel)
+{
+	WIN32_FIND_DATAA find;
+	HANDLE           handle;
+	char             pattern[MAX_OSPATH];
+	char             child[MAX_QPATH];
+
+	if (depth > 8)
+		return;
+
+	if ((size_t)q_snprintf (pattern, sizeof (pattern), "%s/%s/*", root, relative) >= sizeof (pattern))
+		return;
+
+	handle = FindFirstFileA (pattern, &find);
+	if (handle == INVALID_HANDLE_VALUE)
+		return;
+
+	do
+	{
+		if (cancel && Atomic_LoadUInt32 ((atomic_uint32_t *) cancel))
+			break;
+		if (!strcmp (find.cFileName, ".") || !strcmp (find.cFileName, ".."))
+			continue;
+
+		if ((size_t)q_snprintf (child, sizeof (child), "%s/%s", relative, find.cFileName) >= sizeof (child))
+			continue;
+
+		if (find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			QRE_TextureBrowserScanDir (catalog, source, root, child, depth + 1, origin, cancel);
+		else if (QRE_TextureBrowserImage (child))
+			QRE_TextureBrowserAddImage (catalog, source, child, origin, 0);
+		else if (QRE_TextureBrowserWantedFile (child))
+		{
+			char  path[MAX_OSPATH];
+			byte *data = NULL;
+			int   len = 0;
+
+			if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", root, child) < sizeof (path))
+				data = QRE_TextureBrowserReadPath (path, &len);
+			if (data)
+			{
+				QRE_TextureBrowserAddFileData (catalog, source, child, data, len, origin, 0);
+				Mem_Free (data);
+			}
+		}
+	} while (FindNextFileA (handle, &find));
+
+	FindClose (handle);
+}
+
+static void QRE_TextureBrowserSourceFromPath (const char *path, char *out, size_t outsize)
+{
+	char   tmp[MAX_OSPATH];
+	char  *base;
+	char  *slash;
+	size_t len;
+
+	q_strlcpy (tmp, path ? path : "", sizeof (tmp));
+
+	for (len = 0; tmp[len]; len++)
+	{
+		if (tmp[len] == '\\')
+			tmp[len] = '/';
+	}
+	while (len > 0 && tmp[len - 1] == '/')
+		tmp[--len] = '\0';
+
+	base = strrchr (tmp, '/');
+	base = base ? base + 1 : tmp;
+
+	{
+		const char *dot = strrchr (base, '.');
+
+		if (dot && (!q_strcasecmp (dot, ".pak") || !q_strcasecmp (dot, ".pkz")))
+		{
+			slash = strrchr (tmp, '/');
+			if (slash)
+			{
+				*slash = '\0';
+				base = strrchr (tmp, '/');
+				base = base ? base + 1 : tmp;
+			}
+		}
+	}
+
+	q_strlcpy (out, base, outsize);
+}
+
+typedef struct
+{
+	qre_textbrowser_build_job_t *job;
+	const char                  *source;
+} qre_textbrowser_pkz_context_t;
+
+static int QRE_TextureBrowserCollectPkzFile (const char *name, void *context)
+{
+	qre_textbrowser_pkz_context_t *ctx = (qre_textbrowser_pkz_context_t *) context;
+
+	if (!ctx || !ctx->job || !name || !name[0])
+		return 0;
+
+	if (ctx->job->numpkz >= ctx->job->maxpkz)
+	{
+		int   max = ctx->job->maxpkz ? ctx->job->maxpkz * 2 : 1024;
+		void *files;
+
+		if (max > QRE_TEXTBROWSER_MAX)
+			max = QRE_TEXTBROWSER_MAX;
+		if (max <= ctx->job->maxpkz)
+			return 0;
+
+		files = Mem_Realloc (ctx->job->pkz, (size_t)max * sizeof (ctx->job->pkz[0]));
+		if (!files)
+			return 0;
+		ctx->job->pkz = (qre_textbrowser_pkzfile_t *) files;
+		ctx->job->maxpkz = max;
+	}
+
+	q_strlcpy (ctx->job->pkz[ctx->job->numpkz].name, name, MAX_QPATH);
+	q_strlcpy (ctx->job->pkz[ctx->job->numpkz].source, ctx->source ? ctx->source : "",
+	           sizeof (ctx->job->pkz[ctx->job->numpkz].source));
+	ctx->job->numpkz++;
+	return 0;
+}
+
+static qre_textbrowser_build_job_t *QRE_TextureBrowserCreateBuildJob (void)
+{
+	static const char *const pkz_exts[] = { ".tga", ".png", ".jpg", ".jpeg" };
+	static const char *const pkz_dirs[] = { "textures/", "progs/" };
+	qre_textbrowser_build_job_t *job;
+	searchpath_t                *search;
+	char                         source[32];
+
+	job = (qre_textbrowser_build_job_t *)Mem_Alloc (sizeof (*job));
+	if (!job)
+		return NULL;
+
+	job->catalog = qre_textbrowser_building;
+	job->loaded = (char (*)[MAX_QPATH])Mem_Alloc ((size_t)QRE_TEXTBROWSER_MAX * MAX_QPATH);
+	if (job->loaded)
+		job->numloaded = TexMgr_CollectTextureNames (job->loaded, QRE_TEXTBROWSER_MAX);
+
+	for (search = com_searchpaths; search; search = search->next)
+	{
+		if (search->pack)
+		{
+			qre_textbrowser_pak_t *pak;
+			int                   i, count = 0;
+
+			if (job->numpaks >= QRE_TEXTBROWSER_ORIGIN_MAX)
+				break;
+
+			for (i = 0; i < search->pack->numfiles; i++)
+			{
+				if (QRE_TextureBrowserWantedFile (search->pack->files[i].name))
+					count++;
+			}
+			if (!count)
+				continue;
+
+			pak = &job->paks[job->numpaks++];
+			q_strlcpy (pak->filename, search->pack->filename, sizeof (pak->filename));
+			QRE_TextureBrowserSourceFromPath (search->pack->filename, source, sizeof (source));
+			q_strlcpy (pak->source, source, sizeof (pak->source));
+			pak->files = (qre_textbrowser_pakfile_t *)Mem_Alloc ((size_t)count * sizeof (pak->files[0]));
+			if (!pak->files)
+				continue;
+
+			for (i = 0; i < search->pack->numfiles; i++)
+			{
+				const packfile_t *file = &search->pack->files[i];
+
+				if (!QRE_TextureBrowserWantedFile (file->name))
+					continue;
+				q_strlcpy (pak->files[pak->numfiles].name, file->name, MAX_QPATH);
+				pak->files[pak->numfiles].filepos = file->filepos;
+				pak->files[pak->numfiles].filelen = file->filelen;
+				pak->numfiles++;
+			}
+		}
+		else if (search->rt_pkz)
+		{
+			qre_textbrowser_pkz_context_t ctx;
+			int                            d, e;
+
+			QRE_TextureBrowserSourceFromPath (search->filename, source, sizeof (source));
+			ctx.job = job;
+			ctx.source = source;
+			for (d = 0; d < (int)countof (pkz_dirs); d++)
+			{
+				for (e = 0; e < (int)countof (pkz_exts); e++)
+					RT_PKZ_ListFiles (pkz_dirs[d], pkz_exts[e], QRE_TextureBrowserCollectPkzFile, &ctx);
+			}
+		}
+		else
+		{
+			qre_textbrowser_dir_t *dir;
+
+			if (job->numdirs >= QRE_TEXTBROWSER_ORIGIN_MAX)
+				break;
+
+			dir = &job->dirs[job->numdirs++];
+			q_strlcpy (dir->filename, search->filename, sizeof (dir->filename));
+			QRE_TextureBrowserSourceFromPath (search->filename, source, sizeof (source));
+			q_strlcpy (dir->source, source, sizeof (dir->source));
+		}
+	}
+
+	return job;
+}
+
+static void QRE_TextureBrowserFreeBuildJob (qre_textbrowser_build_job_t *job)
+{
+	int i;
+
+	if (!job)
+		return;
+
+	for (i = 0; i < job->numpaks; i++)
+	{
+		if (job->paks[i].files)
+			Mem_Free (job->paks[i].files);
+	}
+	if (job->pkz)
+		Mem_Free (job->pkz);
+	if (job->loaded)
+		Mem_Free (job->loaded);
+	Mem_Free (job);
+}
+
+static int QRE_TextureBrowserCompare (const void *a, const void *b)
+{
+	const int *ia = (const int *) a;
+	const int *ib = (const int *) b;
+	const qre_textbrowser_catalog_t *catalog = qre_textbrowser_sort_catalog
+	                                           ? qre_textbrowser_sort_catalog : qre_textbrowser_active;
+	const char *sa = catalog->sources[*ia];
+	const char *sb = catalog->sources[*ib];
+	const char *na = catalog->names[*ia];
+	const char *nb = catalog->names[*ib];
+	int         cmp = q_strcasecmp (sa, sb);
+
+	if (!cmp)
+		cmp = q_strcasecmp (na, nb);
+	if (!cmp)
+		cmp = strcmp (na, nb);
+
+	return cmp;
+}
+
+static void QRE_TextureBrowserAddLoaded (qre_textbrowser_catalog_t *catalog,
+                                         const char *name)
+{
+	char tree[MAX_QPATH];
+
+	QRE_TextureBrowserDirname (name, tree, sizeof (tree));
+	QRE_TextureBrowserAddEntry (catalog, "loaded", name, tree, QRE_TB_LOADED, "", 0, 0, 0, -1, 0);
+}
+
+static void QRE_TextureBrowserAddPak (qre_textbrowser_catalog_t *catalog,
+                                      const qre_textbrowser_pak_t *pak,
+                                      const atomic_uint32_t *cancel)
+{
+	FILE *file;
+	int   origin, i;
+
+	file = fopen (pak->filename, "rb");
+	if (!file)
+		return;
+
+	origin = QRE_TextureBrowserAddOrigin (catalog, pak->filename, 1);
+	for (i = 0; i < pak->numfiles; i++)
+	{
+		const qre_textbrowser_pakfile_t *entry = &pak->files[i];
+		byte                            *data;
+		int                              len = 0;
+
+		if (Atomic_LoadUInt32 ((atomic_uint32_t *) cancel))
+			break;
+
+		if (QRE_TextureBrowserImage (entry->name))
+		{
+			QRE_TextureBrowserAddImage (catalog, pak->source, entry->name, origin, entry->filepos);
+			continue;
+		}
+
+		data = QRE_TextureBrowserReadPak (file, entry->filepos, entry->filelen);
+		if (!data)
+			continue;
+		len = entry->filelen;
+		QRE_TextureBrowserAddFileData (catalog, pak->source, entry->name, data, len, origin, entry->filepos);
+		Mem_Free (data);
+	}
+
+	fclose (file);
+}
+
+static void QRE_TextureBrowserAddDir (qre_textbrowser_catalog_t *catalog,
+                                      const qre_textbrowser_dir_t *dir,
+                                      const atomic_uint32_t *cancel)
+{
+	static const char *const loose_dirs[] = { "textures", "progs", "gfx", "vault", "maps" };
+	char                     path[MAX_OSPATH];
+	int                      d, origin;
+
+	origin = QRE_TextureBrowserAddOrigin (catalog, dir->filename, 0);
+	for (d = 0; d < (int)countof (loose_dirs); d++)
+	{
+		if (cancel && Atomic_LoadUInt32 ((atomic_uint32_t *) cancel))
+			return;
+		if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", dir->filename, loose_dirs[d]) < sizeof (path) &&
+		    Sys_FileType (path) == FS_ENT_DIRECTORY)
+			QRE_TextureBrowserScanDir (catalog, dir->source, dir->filename, loose_dirs[d], 0, origin, cancel);
+	}
+}
+
+static void QRE_TextureBrowserBuildWorker (void *payload)
+{
+	qre_textbrowser_build_job_t *job = *(qre_textbrowser_build_job_t **)payload;
+	qre_textbrowser_catalog_t   *catalog;
+	int                          i, unique, previous;
+
+	if (!job || !job->catalog)
+		return;
+
+	catalog = job->catalog;
+	catalog->raw_count = 0;
+	catalog->origin_count = 0;
+
+	for (i = 0; i < job->numloaded; i++)
+		QRE_TextureBrowserAddLoaded (catalog, job->loaded[i]);
+
+	for (i = 0; i < job->numpaks; i++)
+	{
+		if (Atomic_LoadUInt32 (&job->cancel))
+			goto done;
+		QRE_TextureBrowserAddPak (catalog, &job->paks[i], &job->cancel);
+	}
+
+	for (i = 0; i < job->numdirs; i++)
+	{
+		if (Atomic_LoadUInt32 (&job->cancel))
+			goto done;
+		QRE_TextureBrowserAddDir (catalog, &job->dirs[i], &job->cancel);
+	}
+
+	for (i = 0; i < job->numpkz; i++)
+	{
+		if (Atomic_LoadUInt32 (&job->cancel))
+			goto done;
+		QRE_TextureBrowserAddImage (catalog, job->pkz[i].source, job->pkz[i].name, -1, 0);
+	}
+
+	if (Atomic_LoadUInt32 (&job->cancel))
+		goto done;
+
+	for (i = 0; i < catalog->raw_count; i++)
+		catalog->order[i] = i;
+
+	qre_textbrowser_sort_catalog = catalog;
+	if (catalog->raw_count > 1)
+		qsort (catalog->order, catalog->raw_count, sizeof (catalog->order[0]), QRE_TextureBrowserCompare);
+	qre_textbrowser_sort_catalog = NULL;
+
+	unique = 0;
+	previous = -1;
+	for (i = 0; i < catalog->raw_count; i++)
+	{
+		const int index = catalog->order[i];
+
+		if (previous < 0 ||
+		    q_strcasecmp (catalog->sources[index], catalog->sources[previous]) ||
+		    q_strcasecmp (catalog->names[index], catalog->names[previous]))
+		{
+			catalog->items[unique] = catalog->names[index];
+			catalog->item_sources[unique] = catalog->sources[index];
+			catalog->item_trees[unique] = catalog->trees[index];
+			catalog->entry_index[unique] = index;
+			unique++;
+			previous = index;
+		}
+	}
+
+	catalog->count = unique;
+
+done:
+	Atomic_StoreUInt32 (&job->done, 1);
+}
+
+static void QRE_TextureBrowserStartBuild (void)
+{
+	qre_textbrowser_build_job_t *job;
+
+	if (qre_textbrowser_built)
+		return;
+
+	if (qre_textbrowser_build_task != INVALID_TASK_HANDLE)
+	{
+		qre_textbrowser_build_wanted = true;
+		qre_textbrowser_loading = true;
+		return;
+	}
+
+	qre_textbrowser_building = (qre_textbrowser_active == &qre_textbrowser_catalogs[0])
+	                           ? &qre_textbrowser_catalogs[1] : &qre_textbrowser_catalogs[0];
+	qre_textbrowser_preview_epoch++;
+	job = QRE_TextureBrowserCreateBuildJob ();
+	if (!job)
+	{
+		qre_textbrowser_loading = false;
+		return;
+	}
+
+	job->generation = (int)++qre_textbrowser_build_generation;
+	qre_textbrowser_build_job = job;
+	qre_textbrowser_loading = true;
+	qre_textbrowser_build_task = Task_AllocateAssignFuncAndSubmit (QRE_TextureBrowserBuildWorker, &job, sizeof (job));
+	Con_Printf ("qr editor: texture catalog scanning in the background\n");
+}
+
+static void QRE_TextureBrowserPumpBuild (void)
+{
+	qre_textbrowser_build_job_t *job;
+	qboolean                     commit;
+
+	if (qre_textbrowser_build_task == INVALID_TASK_HANDLE)
+		return;
+	if (!qre_textbrowser_build_job ||
+	    !Atomic_LoadUInt32 (&qre_textbrowser_build_job->done))
+		return;
+
+	Task_Join (qre_textbrowser_build_task, SDL_MUTEX_MAXWAIT);
+	qre_textbrowser_build_task = INVALID_TASK_HANDLE;
+	job = qre_textbrowser_build_job;
+	qre_textbrowser_build_job = NULL;
+	commit = job && qre.active && job->generation == (int)qre_textbrowser_build_generation &&
+	         !Atomic_LoadUInt32 (&job->cancel);
+
+	if (commit)
+	{
+		qre_textbrowser_catalog_t *done = job->catalog;
+
+		done->revision = qre_textbrowser_active->revision + 1;
+		qre_textbrowser_active = done;
+		qre_textbrowser_building = (done == &qre_textbrowser_catalogs[0])
+		                           ? &qre_textbrowser_catalogs[1] : &qre_textbrowser_catalogs[0];
+		qre_textbrowser_built = true;
+		QRE_TexturePreviewClear ();
+		Con_Printf ("qr editor: texture catalog ready: %d entries\n", qre_textbrowser_active->count);
+	}
+
+	QRE_TextureBrowserFreeBuildJob (job);
+	qre_textbrowser_loading = false;
+
+	if (qre_textbrowser_build_wanted && !qre_textbrowser_built && qre.active)
+	{
+		qre_textbrowser_build_wanted = false;
+		QRE_TextureBrowserStartBuild ();
+	}
+}
+
+static void QRE_TextureBrowserCancelBuild (void)
+{
+	if (qre_textbrowser_build_job)
+		Atomic_StoreUInt32 (&qre_textbrowser_build_job->cancel, 1);
+	qre_textbrowser_build_wanted = false;
+	qre_textbrowser_loading = false;
+}
+
+static void QRE_OpenTextureBrowser (int g, int p)
+{
+	char active[MAX_OSPATH];
+
+	if (g < 0 || g >= qre.group_count)
+		return;
+
+	QRE_TexturePreviewClear ();
+	TexMgr_SetExternalTextureResolver (QRE_TextureBrowserResolve);
+	QRE_ActiveModDir (active, sizeof (active));
+
+	qre.texture_browser_open = true;
+	qre.texture_browser_group = g;
+	qre.texture_browser_param = p;
+
+	QR_GUI_TextureBrowserReset (QRE_GetText (qre.group[g], p));
+	if (!qre_textbrowser_built)
+	{
+		QRE_TextureBrowserStartBuild ();
+		Con_Printf ("qr editor: texture browser: scanning, active mod %s\n", active);
+	}
+	else
+	{
+		Con_Printf ("qr editor: texture browser: %d entries, active mod %s\n",
+		            qre_textbrowser_active->count, active);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -9097,6 +10993,7 @@ static void QRE_StopEditor (qboolean restore)
 	qre.active = false;
 	qre.choosing = false;
 	qre.panel_open = false;
+	qre.texture_browser_open = false;
 	qre.torch = false;
 	qre.entity_preview_model = NULL;
 	qre.entity_sel_model = NULL;
@@ -9115,7 +11012,9 @@ static void QRE_StopEditor (qboolean restore)
 	qre.hover_ent = NULL;
 	qre.hover_glt = NULL;
 
+	QRE_TextureBrowserCancelBuild ();
 	QRE_FreePreview ();
+	QRE_TexturePreviewClear ();
 
 	// the world runs again: only lift the pause the editor itself set, so a
 	// pause toggled meanwhile is left as the player left it; a session the
@@ -9219,6 +11118,8 @@ static void QRE_StartEditor (void)
 	memset (&qre, 0, sizeof (qre));
 	memset (qre_instances, 0, sizeof (qre_instances));
 	memset (&qre_actions, 0, sizeof (qre_actions));
+	QRE_TextureBrowserCancelBuild ();
+	qre_textbrowser_built = false;
 	qre_actions.cursor_mode = -1;
 	qre_actions.browse_group = -1;
 	qre_instance_cur = 0;
@@ -9782,6 +11683,8 @@ void QR_Editor_Shutdown (void)
 	// re-applies the touched materials and the renderer is what is leaving.
 	if (qre.active)
 	{
+		QRE_TextureBrowserCancelBuild ();
+		QRE_TexturePreviewClear ();
 		QRE_FreePreview ();
 		QRE_FreeSnapshot ();
 		QRE_FreeLightSnapshot ();

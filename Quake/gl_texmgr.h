@@ -171,6 +171,12 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 // "progs/model.mdl:frameN"), for the editor's group of blocks. Returns the count.
 int TexMgr_CollectGroupNames (const char *texname, char (*names)[MAX_QPATH], int max);
 int TexMgr_CollectTextureNames (char (*names)[MAX_QPATH], int max);
+gltexture_t *TexMgr_FindTextureByNormalizedName (const char *name);
+qboolean TexMgr_TextureNameExists (const char *name);
+qboolean TexMgr_ResizeRgba (const byte *src, int src_width, int src_height,
+                            byte *dst, int dst_width, int dst_height);
+typedef byte *(*TexMgrTextureResolver) (const char *name, int *width, int *height);
+void TexMgr_SetExternalTextureResolver (TexMgrTextureResolver resolver);
 unsigned int TexMgr_TextureListRevision (void);
 // Re-synthesizes the textures a material resolves to, so the editor's changes
 // become visible without a map reload. Returns the number of reloaded textures.

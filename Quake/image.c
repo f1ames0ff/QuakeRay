@@ -109,6 +109,15 @@ byte *Image_LoadImage (const char *name, int *width, int *height)
 		return data;
 	}
 
+	q_snprintf (loadfilename, sizeof (loadfilename), "%s.jpeg", name);
+	COM_FOpenFile (loadfilename, &f, NULL);
+	if (f)
+	{
+		byte *data = stbi_load_from_file (f, width, height, NULL, 4);
+		fclose (f);
+		return data;
+	}
+
 	q_snprintf (loadfilename, sizeof (loadfilename), "%s.png", name);
 	COM_FOpenFile (loadfilename, &f, NULL);
 	if (f)

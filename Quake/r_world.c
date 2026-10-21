@@ -159,6 +159,7 @@ typedef struct rt_emis_stats_s
 	atomic_uint32_t dynamic;
 	atomic_uint32_t glow_lights;
 	atomic_uint32_t glow_faces;
+	atomic_uint32_t glow_no_support;
 	atomic_uint32_t glow_fallback;
 	atomic_uint32_t too_small;
 	atomic_uint32_t poly_capped;
@@ -3192,12 +3193,14 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const QrFloa
                                     const vec3_t A, const vec3_t B, const rt_emissive_params_t *params,
                                     const QrTexturedAreaLightUploadInfo *base,
                                     QrTexturedAreaLightUploadInfo *out, int out_max, float min_area,
-                                    qboolean *size_refused)
+                                    qboolean *size_refused, qboolean *no_support)
 {
 	float uvmin[2] = {surfuv[0].data[0], surfuv[0].data[1]};
 	float uvmax[2] = {surfuv[0].data[0], surfuv[0].data[1]};
 
 	*size_refused = false;
+	if (no_support)
+		*no_support = true;
 
 	for (int i = 1; i < vertcount; i++)
 	{
@@ -3220,7 +3223,11 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const QrFloa
 	const int tiles = (tilemaxx - tileminx + 1) * (tilemaxy - tileminy + 1);
 
 	if (tiles <= 0 || tiles > RT_MAX_EMISSIVE_POLYS_PER_FACE)
+	{
+		if (no_support)
+			*no_support = false;
 		return 0;
+	}
 
 	vec3_t ab;
 	CrossProduct (A, B, ab);
@@ -3244,6 +3251,9 @@ static int RT_EmissiveGlowPolygons (const rt_uploadsurf_state_t *s, const QrFloa
 
 			if (uvare <= 1e-9f)
 				continue;
+
+			if (no_support)
+				*no_support = false;
 
 			const float area = uvare * jacobian;
 
@@ -4506,8 +4516,9 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 		{
 			QrTexturedAreaLightUploadInfo polys[RT_MAX_EMISSIVE_POLYS_PER_FACE];
 			qboolean                  size_refused = false;
+			qboolean                  no_support = false;
 			const int num = RT_EmissiveGlowPolygons (s, light_info.uvVerts, light_info.numVerts, A, B, &params,
-			                                        &light_info, polys, max_polys, min_area, &size_refused);
+			                                        &light_info, polys, max_polys, min_area, &size_refused, &no_support);
 
 			if (num > 0)
 			{
@@ -4522,6 +4533,12 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 			if (size_refused)
 				return;
+
+			if (no_support)
+			{
+				Atomic_AddUInt32 (&rt_emis_stats.glow_no_support, 1);
+				return;
+			}
 		}
 
 		/* No glow polygon survived (too many repetitions, or a surface that has no uv fit):
@@ -7180,9 +7197,11 @@ void RT_PrintEmissiveStats (void)
 		(int) Atomic_LoadUInt32 (&rt_emis_stats.style_off), (int) Atomic_LoadUInt32 (&rt_emis_stats.degenerate),
 		(int) Atomic_LoadUInt32 (&rt_emis_stats.frame_off));
 
-	if (Atomic_LoadUInt32 (&rt_emis_stats.glow_lights) || Atomic_LoadUInt32 (&rt_emis_stats.glow_fallback))
-		RT_LightReportPrint ("partial-glow textures: %i faces built %i polygon lights, %i faces fell back to the whole surface\n",
+	if (Atomic_LoadUInt32 (&rt_emis_stats.glow_lights) || Atomic_LoadUInt32 (&rt_emis_stats.glow_no_support) ||
+	    Atomic_LoadUInt32 (&rt_emis_stats.glow_fallback))
+		RT_LightReportPrint ("partial-glow textures: %i faces built %i polygon lights, %i faces had no glow support, %i faces fell back to the whole surface\n",
 			(int) Atomic_LoadUInt32 (&rt_emis_stats.glow_faces), (int) Atomic_LoadUInt32 (&rt_emis_stats.glow_lights),
+			(int) Atomic_LoadUInt32 (&rt_emis_stats.glow_no_support),
 			(int) Atomic_LoadUInt32 (&rt_emis_stats.glow_fallback));
 
 	if (Atomic_LoadUInt32 (&rt_emis_stats.too_small) || Atomic_LoadUInt32 (&rt_emis_stats.poly_capped) || Atomic_LoadUInt32 (&rt_emis_stats.buried) || Atomic_LoadUInt32 (&rt_emis_stats.model_small))
