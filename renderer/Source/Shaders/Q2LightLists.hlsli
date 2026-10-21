@@ -292,6 +292,173 @@ float q2FastMass(float m, float stratumMax)
     return max(m, 0.001 * stratumMax);
 }
 
+#define Q2_LIGHT_GRID_ID_INDEX_MASK 0xFFFFu
+#define Q2_LIGHT_GRID_ID_TYPE_SHIFT 30u
+#define Q2_LIGHT_GRID_ID_TYPE_MASK 3u
+#define Q2_LIGHT_GRID_ID_TYPE_LIGHT 0u
+
+int q2GetLightGridCell(const float3 p)
+{
+    if (q2LightGridOffsets[0] == 0u)
+    {
+        return -1;
+    }
+
+    const uint cascades = min(q2LightGridOffsets[1], uint(Q2_LIGHT_GRID_CASCADES));
+
+    for (uint cascade = 0; cascade < cascades; cascade++)
+    {
+        const float3 origin = float3(
+            asfloat(q2LightGridOffsets[2u + cascade * 3u + 0u]),
+            asfloat(q2LightGridOffsets[2u + cascade * 3u + 1u]),
+            asfloat(q2LightGridOffsets[2u + cascade * 3u + 2u]));
+        const float cell = asfloat(q2LightGridOffsets[2u + uint(Q2_LIGHT_GRID_CASCADES) * 3u + cascade]);
+
+        if (!(cell > 0.0))
+        {
+            continue;
+        }
+
+        const float3 rel = (p - origin) / cell;
+
+        if (all(rel >= 0.0) && all(rel < 16.0))
+        {
+            const int3 ic = int3(floor(rel));
+            return int(cascade * uint(Q2_LIGHT_GRID_CELLS / Q2_LIGHT_GRID_CASCADES) +
+                       uint((ic.z * 16 + ic.y) * 16 + ic.x));
+        }
+    }
+
+    return -1;
+}
+
+void q2SampleGridLights(
+    const int gridCell, const float3 p, const float3 n, const float3 V,
+    const float phongExp, const float phongScale, const float phongWeight, const float3 rng,
+    out uint outLightIndex, out uint outSlot, out float outPdf)
+{
+    outLightIndex = LIGHT_INDEX_NONE;
+    outSlot = 0u;
+    outPdf = 0.0;
+
+    if (gridCell < 0 || gridCell >= int(Q2_LIGHT_GRID_CELLS))
+    {
+        return;
+    }
+
+    const uint cell = uint(gridCell);
+    const uint base = q2LightGridOffsets[uint(Q2_LIGHT_GRID_HEADER_WORDS) + cell];
+    const uint end = q2LightGridOffsets[uint(Q2_LIGHT_GRID_HEADER_WORDS) + cell + 1u];
+    const int lightCount = (end > base) ? int(end - base) : 0;
+
+    if (lightCount <= 0)
+    {
+        return;
+    }
+
+    const float partitions = ceil((float)lightCount / (float)Q2_MAX_BRUTEFORCE_SAMPLING);
+    float r0 = rng.x * partitions;
+    const int fpart = (int)min(floor(r0), partitions - 1.0);
+    r0 -= (float)fpart;
+    const int stride = (int)partitions;
+    const int listStart = int(base) + fpart;
+
+    float masses[Q2_MAX_BRUTEFORCE_SAMPLING];
+    float stratumMax = 0.0;
+
+    for (int i = 0; i < Q2_MAX_BRUTEFORCE_SAMPLING; i++)
+    {
+        const int nIdx = listStart + i * stride;
+
+        if (nIdx >= int(end))
+        {
+            masses[i] = 0.0;
+            continue;
+        }
+
+        const uint id = q2LightGridIds[uint(nIdx)];
+
+        if (((id >> Q2_LIGHT_GRID_ID_TYPE_SHIFT) & Q2_LIGHT_GRID_ID_TYPE_MASK) != Q2_LIGHT_GRID_ID_TYPE_LIGHT)
+        {
+            masses[i] = 0.0;
+            continue;
+        }
+
+        const uint li = id & Q2_LIGHT_GRID_ID_INDEX_MASK;
+
+        if (li < uint(LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET) ||
+            li >= uint(LIGHT_ARRAY_REGULAR_LIGHTS_OFFSET) + globalUniform.lightCount)
+        {
+            masses[i] = 0.0;
+            continue;
+        }
+
+        const ShLightEncoded l = lightSources[li];
+        float m = q2LightSelectionMass(l, p, n, V, phongExp, phongScale, phongWeight);
+        m *= abs(getLuminance(l.color));
+        masses[i] = m;
+        stratumMax = max(stratumMax, m);
+    }
+
+    float massSum = 0.0;
+
+    for (int i = 0; i < Q2_MAX_BRUTEFORCE_SAMPLING; i++)
+    {
+        const int nIdx = listStart + i * stride;
+
+        if (nIdx >= int(end))
+        {
+            break;
+        }
+
+        massSum += q2FastMass(masses[i], stratumMax);
+    }
+
+    if (!(massSum > 0.0))
+    {
+        return;
+    }
+
+    float r = r0 * massSum;
+    float pdf = 0.0;
+    int selected = -1;
+
+    for (int i = 0; i < Q2_MAX_BRUTEFORCE_SAMPLING; i++)
+    {
+        const int nIdx = listStart + i * stride;
+
+        if (nIdx >= int(end))
+        {
+            break;
+        }
+
+        pdf = q2FastMass(masses[i], stratumMax);
+        r -= pdf;
+
+        if (r <= 0.0)
+        {
+            selected = nIdx;
+            break;
+        }
+    }
+
+    if (selected < 0)
+    {
+        return;
+    }
+
+    const uint id = q2LightGridIds[uint(selected)];
+
+    if (((id >> Q2_LIGHT_GRID_ID_TYPE_SHIFT) & Q2_LIGHT_GRID_ID_TYPE_MASK) != Q2_LIGHT_GRID_ID_TYPE_LIGHT)
+    {
+        return;
+    }
+
+    outLightIndex = id & Q2_LIGHT_GRID_ID_INDEX_MASK;
+    outSlot = uint(selected) - base;
+    outPdf = pdf / (massSum * partitions);
+}
+
 void q2SampleClusterLights(
     const uint cluster, const float3 p, const float3 n, const float3 V,
     const float phongExp, const float phongScale, const float phongWeight,

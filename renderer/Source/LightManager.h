@@ -96,6 +96,10 @@ public:
     void RunClusterListPublishSlice(uint32_t slice, uint32_t sliceCount);
     void CommitClusterListPublication();
 
+    void PublishGrid(uint32_t frameIndex, const QrLightGridStats &stats, const uint32_t *pOffsets,
+                     const uint32_t *pIds, uint32_t totalIds, const uint64_t *pSourceUids,
+                     uint32_t sourceCount);
+
     uint32_t GetLastPublicationMask() const { return publicationMask; }
 
     void SetClusterSkyVisibility(const uint8_t *pBits, uint32_t numClusters);
@@ -121,6 +125,8 @@ public:
         VkBuffer dtalMembers;
         VkBuffer tailOffsets;
         VkBuffer tailEntries;
+        VkBuffer gridOffsets;
+        VkBuffer gridIds;
     };
 
     struct Copy
@@ -138,6 +144,8 @@ public:
         Copy dtalMembers;
         Copy tailOffsets;
         Copy tailEntries;
+        Copy gridOffsets;
+        Copy gridIds;
     };
 
     Buffers GetBuffers() const;
@@ -184,6 +192,11 @@ private:
     std::shared_ptr<AutoBuffer> lightListLights;
     std::shared_ptr<AutoBuffer> lightListTailOffsets;
     std::shared_ptr<AutoBuffer> lightListTailEntries;
+
+    std::shared_ptr<AutoBuffer> lightGridOffsets;
+    std::shared_ptr<AutoBuffer> lightGridIds;
+    bool                        gridCopyPending[MAX_FRAMES_IN_FLIGHT] = {};
+    uint32_t                    publishedGridIds[MAX_FRAMES_IN_FLIGHT] = {};
 
     std::shared_ptr<AutoBuffer> clusterSkyVis;
     bool                        clusterSkyVisCopyPending[MAX_FRAMES_IN_FLIGHT] = {};

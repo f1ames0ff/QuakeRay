@@ -58,6 +58,7 @@ void main()
     const bool useGlobalRestir = globalUniform.restirParams.x != 0u;
     const bool isGradient = useGlobalRestir ? false : q2GetIsGradient(pix);
     const uint cluster = framebufQ2Cluster_Sampled.Load(int3(pix, 0)).r;
+    const int  gridCell = useGlobalRestir ? -1 : q2GetLightGridCell(surf.position);
 
     const float alpha = square(surf.roughness);
     const float phongExp = q2RoughnessSquareToSpecPower(alpha);
@@ -76,6 +77,7 @@ void main()
         uint lightIndex = LIGHT_INDEX_NONE;
         uint lightSlot = 0u;
         float lightPdf = 0.0;
+        bool sampledFromGrid = false;
 
         if (useGlobalRestir)
         {
@@ -90,9 +92,19 @@ void main()
                 rnd24(seed, saltBase + 1u),
                 rnd24(seed, saltBase + 2u));
 
-            q2SampleClusterLights(cluster, surf.position, surf.normal, surf.toViewerDir,
-                                  phongExp, phongScale, phongWeight, isGradient, rng,
-                                  lightIndex, lightSlot, lightPdf);
+            if (gridCell >= 0)
+            {
+                q2SampleGridLights(gridCell, surf.position, surf.normal, surf.toViewerDir,
+                                   phongExp, phongScale, phongWeight, rng,
+                                   lightIndex, lightSlot, lightPdf);
+                sampledFromGrid = true;
+            }
+            else
+            {
+                q2SampleClusterLights(cluster, surf.position, surf.normal, surf.toViewerDir,
+                                      phongExp, phongScale, phongWeight, isGradient, rng,
+                                      lightIndex, lightSlot, lightPdf);
+            }
         }
 
         if (lightIndex != LIGHT_INDEX_NONE && lightPdf > 0.0)
@@ -120,7 +132,7 @@ void main()
                     rayStatsAdd(RAY_STATS_CATEGORY_SHADOW_DIRECT, 1);
                 }
 
-                if (!useGlobalRestir &&
+                if (!useGlobalRestir && !sampledFromGrid &&
                     (lightSources[lightIndex].lightType == LIGHT_TYPE_TRIANGLE ||
                      lightSources[lightIndex].lightType == LIGHT_TYPE_TEXTURED_AREA ||
                      lightSources[lightIndex].lightType == LIGHT_TYPE_DTAL_GROUP))

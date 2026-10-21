@@ -147,6 +147,8 @@ void unpackGeometryAndPrimitiveIndex(uint geomAndPrimIndex, out int geometryInde
 [[vk::binding(BINDING_LIGHT_SOURCES_DTAL_MEMBERS, DESC_SET_LIGHT_SOURCES)]]          StructuredBuffer<ShDtalMember> dtalMembers;
 [[vk::binding(BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS, DESC_SET_LIGHT_SOURCES)]] StructuredBuffer<uint> q2LightListTailOffsets;
 [[vk::binding(BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL, DESC_SET_LIGHT_SOURCES)]]         StructuredBuffer<ShQ2LightTail> q2LightListTail;
+[[vk::binding(BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_OFFSETS, DESC_SET_LIGHT_SOURCES)]]      StructuredBuffer<uint> q2LightGridOffsets;
+[[vk::binding(BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_IDS, DESC_SET_LIGHT_SOURCES)]]          StructuredBuffer<uint> q2LightGridIds;
 #endif
 
 

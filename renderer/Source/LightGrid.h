@@ -35,6 +35,9 @@ public:
 
     bool IsValid() const { return valid; }
     const QrLightGridStats &GetStats() const { return stats; }
+    const std::vector<uint32_t> &GetOffsets() const { return offsets; }
+    const std::vector<uint32_t> &GetIds() const { return ids; }
+    const std::vector<uint64_t> &GetSourceUids() const { return sourceUids; }
 
     void GetCellList(uint32_t cell, uint64_t *pUniqueIds, uint32_t maxCount, uint32_t *pCount) const;
     void GetCellIds(uint32_t cell, uint32_t *pIds, uint32_t maxCount, uint32_t *pCount) const;

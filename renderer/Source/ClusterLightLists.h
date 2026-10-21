@@ -330,6 +330,7 @@ private:
 
     LightGrid lightGrid;
     bool      gridAllowed = false;
+    bool      gridPublished = false;
     float     gridViewOrigin[3] = {};
     uint64_t  gridStamp = 0;
 

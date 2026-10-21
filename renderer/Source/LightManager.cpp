@@ -313,6 +313,18 @@ qray::LightManager::LightManager(
                                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                                  "Q2 light list tail entries");
 
+    lightGridOffsets = std::make_shared<AutoBuffer>(device, _allocator);
+    lightGridOffsets->Create(sizeof(uint32_t) * (Q2_LIGHT_GRID_HEADER_WORDS + Q2_LIGHT_GRID_CELLS + 1),
+                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                             "Q2 light grid offsets");
+
+    lightGridIds = std::make_shared<AutoBuffer>(device, _allocator);
+    lightGridIds->Create(sizeof(uint32_t) * Q2_LIGHT_GRID_CELLS * Q2_LIGHT_GRID_MAX_IDS_PER_CELL,
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                         "Q2 light grid ids");
+
     lightStats.Init(_allocator, GetLightStatsSlotSize() * LIGHT_STATS_SLOT_COUNT,
                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -868,6 +880,8 @@ qray::LightManager::Buffers qray::LightManager::GetBuffers() const
         dtalMembersBuffer->GetDeviceLocal(),
         lightListTailOffsets->GetDeviceLocal(),
         lightListTailEntries->GetDeviceLocal(),
+        lightGridOffsets->GetDeviceLocal(),
+        lightGridIds->GetDeviceLocal(),
     };
 }
 
@@ -925,6 +939,20 @@ qray::LightManager::FrameCopies qray::LightManager::GetFrameCopies(uint32_t fram
         };
     }
 
+    if (gridCopyPending[frame])
+    {
+        copies.gridOffsets =
+        {
+            lightGridOffsets->GetStaging(frame),
+            sizeof(uint32_t) * (Q2_LIGHT_GRID_HEADER_WORDS + Q2_LIGHT_GRID_CELLS + 1),
+        };
+        copies.gridIds =
+        {
+            lightGridIds->GetStaging(frame),
+            sizeof(uint32_t) * publishedGridIds[frame],
+        };
+    }
+
     return copies;
 }
 
@@ -940,6 +968,7 @@ void qray::LightManager::ConsumeFrameCopies(uint32_t frame)
 
     clusterSkyVisCopyPending[frame] = false;
     dtalMembersCopyPending[frame] = false;
+    gridCopyPending[frame] = false;
 }
 
 uint32_t qray::LightManager::GetLightStatsClusterTarget() const
@@ -1252,6 +1281,78 @@ void qray::LightManager::CommitClusterListPublication()
     publishPending = false;
 }
 
+void qray::LightManager::PublishGrid(uint32_t frameIndex, const QrLightGridStats &stats,
+                                     const uint32_t *pOffsets, const uint32_t *pIds, uint32_t totalIds,
+                                     const uint64_t *pSourceUids, uint32_t sourceCount)
+{
+    assert(frameIndex < MAX_FRAMES_IN_FLIGHT);
+
+    uint32_t *pGrid = static_cast<uint32_t *>(lightGridOffsets->GetMapped(frameIndex));
+
+    memset(pGrid, 0, sizeof(uint32_t) * (Q2_LIGHT_GRID_HEADER_WORDS + Q2_LIGHT_GRID_CELLS + 1));
+    pGrid[0] = (pOffsets != nullptr && pIds != nullptr && stats.enabled != 0) ? 1u : 0u;
+    pGrid[1] = stats.cascades;
+
+    for (uint32_t cascade = 0; cascade < stats.cascades && cascade < Q2_LIGHT_GRID_CASCADES; cascade++)
+    {
+        for (uint32_t axis = 0; axis < 3; axis++)
+        {
+            float value = stats.origin[cascade].data[axis];
+            memcpy(&pGrid[2 + cascade * 3 + axis], &value, sizeof(value));
+        }
+    }
+
+    for (uint32_t cascade = 0; cascade < stats.cascades && cascade < Q2_LIGHT_GRID_CASCADES; cascade++)
+    {
+        float value = stats.cellSize[cascade];
+        memcpy(&pGrid[2 + Q2_LIGHT_GRID_CASCADES * 3 + cascade], &value, sizeof(value));
+    }
+
+    if (pGrid[0] != 0)
+    {
+        const uint32_t count = std::min<uint32_t>(totalIds, Q2_LIGHT_GRID_CELLS * Q2_LIGHT_GRID_MAX_IDS_PER_CELL);
+        uint32_t      *pDstOffsets = pGrid + Q2_LIGHT_GRID_HEADER_WORDS;
+        uint32_t      *pDstIds = static_cast<uint32_t *>(lightGridIds->GetMapped(frameIndex));
+
+        for (uint32_t cell = 0; cell <= Q2_LIGHT_GRID_CELLS; cell++)
+        {
+            pDstOffsets[cell] = std::min(pOffsets[cell], count);
+        }
+
+        ResolveCacheEntry cache[kResolveCacheSize];
+        memset(cache, 0xFF, sizeof(cache));
+
+        std::vector<uint32_t> sourceToLight(sourceCount, uint32_t(LIGHT_INDEX_NONE));
+
+        for (uint32_t source = 0; source < sourceCount; source++)
+        {
+            sourceToLight[source] = ResolveLightUid(frameIndex, pSourceUids[source], cache);
+        }
+
+        for (uint32_t i = 0; i < count; i++)
+        {
+            const uint32_t id = pIds[i];
+            const uint32_t type = (id >> QR_LIGHT_GRID_ID_TYPE_SHIFT) & QR_LIGHT_GRID_ID_TYPE_MASK;
+            const uint32_t index = id & QR_LIGHT_GRID_ID_INDEX_MASK;
+
+            const uint32_t resolved =
+                (type == QR_LIGHT_GRID_ID_TYPE_LIGHT && index < sourceCount)
+                    ? sourceToLight[index]
+                    : uint32_t(LIGHT_INDEX_NONE);
+
+            pDstIds[i] = (type << QR_LIGHT_GRID_ID_TYPE_SHIFT) | (resolved & QR_LIGHT_GRID_ID_INDEX_MASK);
+        }
+
+        publishedGridIds[frameIndex] = count;
+    }
+    else
+    {
+        publishedGridIds[frameIndex] = 0;
+    }
+
+    gridCopyPending[frameIndex] = true;
+}
+
 void qray::LightManager::SetClusterSkyVisibility(const uint8_t *pBits, uint32_t numClusters)
 {
     uint32_t words[CLUSTER_SKY_VIS_WORD_COUNT];
@@ -1379,6 +1480,8 @@ constexpr uint32_t BINDINGS[] =
     BINDING_LIGHT_SOURCES_DTAL_MEMBERS,
     BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL_OFFSETS,
     BINDING_LIGHT_SOURCES_Q2_LIGHT_LIST_TAIL,
+    BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_OFFSETS,
+    BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_IDS,
 };
 
 void qray::LightManager::CreateDescriptors()
@@ -1458,6 +1561,8 @@ void qray::LightManager::UpdateDescriptors(uint32_t frameIndex)
         dtalMembersBuffer->GetDeviceLocal(),
         lightListTailOffsets->GetDeviceLocal(),
         lightListTailEntries->GetDeviceLocal(),
+        lightGridOffsets->GetDeviceLocal(),
+        lightGridIds->GetDeviceLocal(),
     };
     static_assert(std::size(BINDINGS) == std::size(buffers));
 

@@ -216,6 +216,7 @@ void ClusterLightLists::Reset()
 
     lightGrid.Reset();
     gridAllowed = false;
+    gridPublished = false;
     gridStamp = 0;
 
     for (int i = 0; i < 3; i++)
@@ -661,11 +662,18 @@ void ClusterLightLists::UpdateLightGrid()
 {
     if (!gridAllowed)
     {
+        if (gridPublished && pendingLightManager != nullptr)
+        {
+            const QrLightGridStats disabled = {};
+            pendingLightManager->PublishGrid(pendingFrameIndex, disabled, nullptr, nullptr, 0, nullptr, 0);
+        }
+
         if (lightGrid.IsValid())
         {
             lightGrid.Reset();
         }
 
+        gridPublished = false;
         gridStamp = 0;
         return;
     }
@@ -727,6 +735,16 @@ void ClusterLightLists::UpdateLightGrid()
 
     lightGrid.Build(gridSources.data(), uint32_t(gridSources.size()), gridViewOrigin);
     gridStamp = hash;
+
+    if (pendingLightManager != nullptr)
+    {
+        const QrLightGridStats &gridStats = lightGrid.GetStats();
+        pendingLightManager->PublishGrid(pendingFrameIndex, gridStats, lightGrid.GetOffsets().data(),
+                                         lightGrid.GetIds().data(), uint32_t(lightGrid.GetIds().size()),
+                                         lightGrid.GetSourceUids().data(),
+                                         uint32_t(lightGrid.GetSourceUids().size()));
+        gridPublished = true;
+    }
 }
 
 void ClusterLightLists::GetLightGridStats(QrLightGridStats *pStats) const

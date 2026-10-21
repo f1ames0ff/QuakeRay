@@ -175,7 +175,7 @@ struct LightBufferBinding
     uint32_t structStride;
 };
 
-constexpr uint32_t LIGHT_BUFFER_COUNT = 8;
+constexpr uint32_t LIGHT_BUFFER_COUNT = 10;
 constexpr LightBufferBinding LIGHT_BUFFER_BINDINGS[LIGHT_BUFFER_COUNT] =
 {
     {
@@ -227,6 +227,18 @@ constexpr LightBufferBinding LIGHT_BUFFER_BINDINGS[LIGHT_BUFFER_COUNT] =
         uint64_t(sizeof(ShQ2LightTail)) * Q2_LIGHT_LIST_TAIL_CAPACITY,
         static_cast<uint32_t>(sizeof(ShQ2LightTail)),
     },
+    {
+        BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_OFFSETS,
+        false,
+        uint64_t(sizeof(uint32_t)) * (Q2_LIGHT_GRID_HEADER_WORDS + Q2_LIGHT_GRID_CELLS + 1),
+        static_cast<uint32_t>(sizeof(uint32_t)),
+    },
+    {
+        BINDING_LIGHT_SOURCES_Q2_LIGHT_GRID_IDS,
+        false,
+        uint64_t(sizeof(uint32_t)) * Q2_LIGHT_GRID_CELLS * Q2_LIGHT_GRID_MAX_IDS_PER_CELL,
+        static_cast<uint32_t>(sizeof(uint32_t)),
+    },
 };
 
 // The statistics buffer of the table above: the only item the light-statistics fill touches, and
@@ -244,7 +256,7 @@ static_assert(sizeof(ShLightEncoded) == 160,
 // copies into: the light-array prefix (binding 0), the list offsets (4), the list words (5), the
 // sky visibility (8), the DTAL group members (9) and the two overflow tail buffers (10, 11). The
 // statistics buffer (6) has no copy. The order is `FrameCopies`'s.
-constexpr uint32_t LIGHT_COPY_COUNT = 7;
+constexpr uint32_t LIGHT_COPY_COUNT = 9;
 constexpr uint32_t LIGHT_COPY_BUFFER_INDICES[LIGHT_COPY_COUNT] =
 {
     0, // lights
@@ -254,6 +266,8 @@ constexpr uint32_t LIGHT_COPY_BUFFER_INDICES[LIGHT_COPY_COUNT] =
     5, // dtalMembers
     6, // tailOffsets
     7, // tailEntries
+    8, // gridOffsets
+    9, // gridIds
 };
 
 const char *const LIGHT_BUFFER_DEBUG_NAMES[LIGHT_BUFFER_COUNT] =
@@ -266,6 +280,8 @@ const char *const LIGHT_BUFFER_DEBUG_NAMES[LIGHT_BUFFER_COUNT] =
     "dtal group members",
     "q2 light list tail offsets",
     "q2 light list tail entries",
+    "q2 light grid offsets",
+    "q2 light grid ids",
 };
 
 // The descriptor of a native wrap of an engine device-local buffer that a shader reads as a
@@ -1160,6 +1176,8 @@ bool RhiRtDirectPass::PrepareLightSet(nvrhi::ICommandList *pCommandList, Target 
         buffers.dtalMembers,
         buffers.tailOffsets,
         buffers.tailEntries,
+        buffers.gridOffsets,
+        buffers.gridIds,
     };
 
     for (uint32_t i = 0; i < LIGHT_BUFFER_COUNT; i++)
@@ -1258,6 +1276,8 @@ bool RhiRtDirectPass::PrepareLightSet(nvrhi::ICommandList *pCommandList, Target 
         copies.dtalMembers,
         copies.tailOffsets,
         copies.tailEntries,
+        copies.gridOffsets,
+        copies.gridIds,
     };
 
     for (uint32_t i = 0; i < LIGHT_COPY_COUNT; i++)
