@@ -140,7 +140,7 @@ Required before moving `renderer/` to its own repository:
 - The host-specific Q3 window callback and multi-view work are deliberately not
   part of this API change.
 
-## 4.3 Editor extraction — started 2026-10-22
+## 4.3 Editor extraction — parked 2026-10-22
 
 - SDK branch: `feature/editor`.
 - New optional target `quakerayeditor` builds `quakerayeditor.exe`.
@@ -156,6 +156,11 @@ Required before moving `renderer/` to its own repository:
 - The coupled `Quake/qr_editor.c` and `Quake/qr_gui.cpp` remain in the Quake
   host. The next work is the engine-free editor core plus the map/material
   adapter; the files are not copied into the SDK.
+- **Parked after the scene-loading viewport.** The current editor only shows a
+  viewport over the SDK; the OBJ test scene is a checker-textured room with a
+  cube, and there is no editor UI, selection, authoring, PAK/texture loading or
+  sidecar persistence yet. The branch and in-tree build remain available, but
+  the editor is not an active workstream.
 
 ## 4.4 Current code anchors
 
