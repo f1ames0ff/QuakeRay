@@ -117,11 +117,13 @@ Required before moving `renderer/` to its own repository:
 
 ## 4.1 SDK import — 2026-10-22
 
-- `renderer/` is now the `QuakeRaySDK` git submodule at `cb8ddb82`.
+- `renderer/` was imported as the `QuakeRaySDK` git submodule at `cb8ddb82`;
+  the current spatial branch points at the `feature/universalize` commit
+  recorded in section 4.5.
 - The SDK `main` contains the package install/export path, `qray_rendererConfig.cmake`, the FSR provider and the engine-free tests.
 - The Quake cluster test moved to the host tree as `tests/qray_cluster_lists_tests.cpp`.
 - A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
-- The full host CTest suite passes (10/10) after the SDK integration. `qray_dtal_perf` was initially clock-sensitive and passed on a warm GPU without changing the baseline.
+- The full host CTest suite passes (12/12 after the spatial contract test) after the SDK integration. `qray_dtal_perf` was initially clock-sensitive and passed on a warm GPU without changing the baseline.
 
 ## 4.2 Readback contract — 2026-10-22
 
@@ -168,8 +170,9 @@ Required before moving `renderer/` to its own repository:
   normalizes the data into its existing right-handed, Z-up, 40-units-per-meter
   scene space, so the tuned renderer constants and cloud/sky shaders remain
   unchanged. Geometry conversion is folded into the instance transform; light
-  positions/directions/areas/powers, cluster bounds/reaches, fog, particles,
-  sky fields and frame camera data are converted at their upload boundaries.
+  positions/directions/areas, the relative power of positional lights, cluster
+  bounds/reaches, fog, particles, sky fields and frame camera data are
+  converted at their upload boundaries.
 - Screen-space `SWAPCHAIN` raster geometry is exempt. Left-handed worlds,
   arbitrary rotations and non-uniform instance scale remain host-side
   conversion or unsupported cases.
