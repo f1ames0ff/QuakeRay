@@ -1,6 +1,7 @@
 # Repository entry point
 
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) first. Use its subsystem routes and real entry points instead of rediscovering the whole repository.
+- Renderer source lives in the `renderer` submodule (`QuakeRaySDK`). Make and commit renderer changes in that repository first, push the SDK branch, and then update the host submodule pointer; do not edit the submodule as an ordinary vendored tree.
 - Build only through `.\build_win.ps1 Debug`; see [Build policy](#build-policy) for the toolchain, configuration and environment rules.
 - For profiling or optimization, then read [PERFORMANCE.md](PERFORMANCE.md), select the relevant capture and verify the current source/binary/settings before forming hypotheses.
 - All agents changing CPU producers, caches, uploads or their callers must read [docs/multithreading.md](docs/multithreading.md), including its adaptation checklist, before designing a change. The render frame always runs as the task graph now - the `r_tasks` cvar and its serial fork were retired on 2026-10-14 - so new and existing solutions must keep the task-frame invariants (ownership, lifetime, the adaptation checklist) instead of relying on a serial fallback; adding a worker is not a substitute for auditing ownership and lifetime.
