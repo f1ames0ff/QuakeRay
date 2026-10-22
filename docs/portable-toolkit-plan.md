@@ -138,7 +138,18 @@ Required before moving `renderer/` to its own repository:
 - The host-specific Q3 window callback and multi-view work are deliberately not
   part of this API change.
 
-## 4.3 Current code anchors
+## 4.3 Editor extraction — started 2026-10-22
+
+- SDK branch: `feature/editor`.
+- New optional target `quakerayeditor` builds `quakerayeditor.exe`.
+- The first commit is the standalone Win32 application shell and CMake
+  integration; it already links `qray::renderer` but does not yet own a scene,
+  editor core, or viewport render loop.
+- The coupled `Quake/qr_editor.c` and `Quake/qr_gui.cpp` remain in the Quake
+  host. The next work is an engine-free editor core plus a Quake map adapter;
+  the files are not copied into the SDK.
+
+## 4.4 Current code anchors
 
 - `renderer/Include/qray/qray.h` — existing C ABI.
 - `renderer/Source/ClusterLightLists.cpp`, `renderer/Source/LightManager.cpp` — lighting runtime.
