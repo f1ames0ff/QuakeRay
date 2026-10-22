@@ -1,7 +1,7 @@
 # Repository entry point
 
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) first. Use its subsystem routes and real entry points instead of rediscovering the whole repository.
-- Build only through `.\build_win.ps1 Debug`: it prepares the MSVC environment, applies the pinned NVRHI patch and deploys the runtime assets. A bare `cmake --build build\Debug` in a shell without that environment fails with C1083 on standard headers and must not be used for builds or verification.
+- Build only through `.\build_win.ps1 Debug`; see [Build policy](#build-policy) for the toolchain, configuration and environment rules.
 - For profiling or optimization, then read [PERFORMANCE.md](PERFORMANCE.md), select the relevant capture and verify the current source/binary/settings before forming hypotheses.
 - All agents changing CPU producers, caches, uploads or their callers must read [docs/multithreading.md](docs/multithreading.md), including its adaptation checklist, before designing a change. The render frame always runs as the task graph now - the `r_tasks` cvar and its serial fork were retired on 2026-10-14 - so new and existing solutions must keep the task-frame invariants (ownership, lifetime, the adaptation checklist) instead of relying on a serial fallback; adding a worker is not a substitute for auditing ownership and lifetime.
 - Inspect the implicated caller, callee and ownership boundary first. Expand the search only when that route cannot answer the question.
@@ -10,6 +10,37 @@
 - Runtime jobs are disabled by default. Operator activation requires `QUAKERAY_ENABLE_JOBS=1` in the MCP server environment; research additionally requires `QUAKERAY_ENABLE_RESEARCH=1`. The project configuration explicitly sets both to `0`.
 - Runtime jobs use the machine guard and enforce the one-game-instance rule. After changing server code or its environment configuration, disconnect/connect `quakeray` through `/mcps` in OpenCode.
 - Keep the architecture index and performance evidence current when changing a listed execution boundary or profiler counter. Unknown costs are not measurements, and unverified hypotheses are not conclusions.
+
+## Build policy
+
+**Always build the Debug configuration unless the user explicitly asks for another one.**
+
+- The only supported entry point is `.\build_win.ps1 Debug`: it prepares the MSVC environment
+  (`VsDevCmd`), applies the pinned NVRHI patch, takes the machine guard and deploys the runtime
+  assets.
+- Never run a bare `cmake --build build\Debug` (or `ninja`) in a shell without that environment: it
+  fails at compile time with C1083 on standard headers (`assert.h`, `sys/types.h`), so it must not be
+  used for builds, tests or verification.
+- Debug is what builds, tests, verification runs and artifacts handed to the user use.
+- A Release build happens only when the request names it explicitly; do not move to Release on your
+  own initiative.
+
+## One game instance at a time
+
+**Never launch QuakeRay while another instance is already running.**
+
+Several agents share this machine, and a running test owns the GPU, the window focus and the
+timings.
+
+- Before launching `quakeray.exe` - directly or through a runner such as
+  `tests/perf/run_place.ps1` or `tests/perf/run_menu.ps1` - check for a running instance first
+  (`Get-Process quakeray, qray_* -ErrorAction SilentlyContinue` on Windows).
+- If one is running, wait until it exits before launching your own. Two concurrent instances
+  compete for the GPU, steal window focus and break the other agent's automated input and
+  measurements.
+- While another agent's performance run is in flight, prefer waiting until it finishes before
+  starting other heavyweight work on the same machine - GPU smoke tests, benchmarks, or a fully
+  parallel build.
 
 ## MCP dependency setup
 
