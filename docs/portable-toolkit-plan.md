@@ -123,7 +123,22 @@ Required before moving `renderer/` to its own repository:
 - A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
 - The full host CTest suite passes (10/10) after the SDK integration. `qray_dtal_perf` was initially clock-sensitive and passed on a warm GPU without changing the baseline.
 
-## 4.2 Current code anchors
+## 4.2 Readback contract — 2026-10-22
+
+- `qray.h` is now `1.04.0000`; the package version is `1.4.0`.
+- `qrGetFrameReadbackRequirements`, `qrRequestFrameReadback` and
+  `qrGetFrameReadbackStatus` expose asynchronous readback of the final LDR
+  backbuffer.
+- The SDK copies the final composited image, including UI, into a per-frame-slot
+  staging texture and completes it after that slot's previous submission has
+  been reaped. The frame path does not call `vkDeviceWaitIdle`; the host owns
+  `pDst` until it observes completion.
+- `includeUi = QR_FALSE` and `RGBA16F` are not supported in this revision and
+  return `QR_FEATURE_UNAVAILABLE`; the blocking screenshot path remains separate.
+- The host-specific Q3 window callback and multi-view work are deliberately not
+  part of this API change.
+
+## 4.3 Current code anchors
 
 - `renderer/Include/qray/qray.h` — existing C ABI.
 - `renderer/Source/ClusterLightLists.cpp`, `renderer/Source/LightManager.cpp` — lighting runtime.
