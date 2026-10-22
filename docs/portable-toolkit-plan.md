@@ -118,8 +118,8 @@ Required before moving `renderer/` to its own repository:
 ## 4.1 SDK import — 2026-10-22
 
 - `renderer/` was imported as the `QuakeRaySDK` git submodule at `cb8ddb82`;
-  the current spatial branch points at the `feature/universalize` commit
-  recorded in section 4.5.
+  the current spatial work uses the `feature/universalize` branch; see
+  section 4.5 and `git log` for the current commit.
 - The SDK `main` contains the package install/export path, `qray_rendererConfig.cmake`, the FSR provider and the engine-free tests.
 - The Quake cluster test moved to the host tree as `tests/qray_cluster_lists_tests.cpp`.
 - A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
@@ -162,15 +162,16 @@ Required before moving `renderer/` to its own repository:
 
 ## 4.5 Spatial contract — implementation 2026-10-22
 
-- SDK branch: `feature/universalize` at `9859af4`; host branch:
-  `feature/adapt-qray-sdk` at `c7f67315`.
+- SDK branch: `feature/universalize`; host branch: `feature/adapt-qray-sdk`.
+  See `git log` for the current revision of each branch.
 - `QrSpatialConvention` declares the host's canonical signed axes,
   right-handedness and `unitsPerMeter`. `qrSetSpatialConvention` accepts it
   once after instance creation, before the first spatial upload or drawn frame.
 - The host may use its own units and a Z-up or Y-up right-handed frame. The SDK
   normalizes the data into its existing right-handed, Z-up, 40-units-per-meter
   scene space, so the tuned renderer constants and cloud/sky shaders remain
-  unchanged. Geometry conversion is folded into the instance transform; light
+  unchanged. Geometry conversion is folded into the instance transform except
+  for the world-light face and smoke raster vertex arrays; light
   positions/directions/areas, the relative power of positional lights, cluster
   bounds/reaches, fog, particles, sky fields and frame camera data are
   converted at their upload boundaries.
