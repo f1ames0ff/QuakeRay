@@ -96,11 +96,11 @@ Branch `feat/portable-toolkit`, based on `master` (`cd88fc77`).
 
 What is already true:
 
-- `renderer/Include/qray/qray.h` is the public C ABI, and `QR_API_VERSION` is `1.04.0000`.
+- `renderer/Include/qray/qray.h` is the public C ABI, and `QR_API_VERSION` is `1.05.0000`.
 - The renderer's C++ sources do not include `Quake/` headers. The remaining engine-facing layer is the `Qr*` contract in `qray.h`.
 - The alias-table implementation is renderer-owned: `renderer/Source/rt_alias.*` builds as `qray_alias`, and both host and tests link it instead of compiling `shared/rt_alias.c`.
 - The host-owned texture and cursor assets are out of `renderer/`: `renderer/Source/textures` is now `gfx/textures`, and `renderer/gfx` is now the root `gfx/` folder. `build_win.ps1` stages both from `gfx/`; the Debug build and asset pack still pass.
-- `renderer/CMakeLists.txt` has a standalone `project(qray_renderer VERSION 1.4.0)`, finds Vulkan and NVRHI when configured from its own directory, and `cmake -S renderer -B <dir>` now configures successfully.
+- `renderer/CMakeLists.txt` has a standalone `project(qray_renderer VERSION 1.5.0)`, finds Vulkan and NVRHI when configured from its own directory, and `cmake -S renderer -B <dir>` now configures successfully.
 - The package installs `renderer.lib`, `include/qray/qray.h`, the FSR API headers/provider, and `qray_rendererConfig.cmake` plus `qray_rendererTargets.cmake`. A clean consumer that supplies NVRHI and Vulkan configures and links against `qray::renderer`.
 - FSR is exposed through the `qray_ffx` interface target: the build tree uses `QR_FFX_SDK_ROOT`, while the installed tree gets `qray::ffx` from the package config. The in-tree provider remains the default; an installed AMD SDK can override it.
 
@@ -125,7 +125,7 @@ Required before moving `renderer/` to its own repository:
 
 ## 4.2 Readback contract — 2026-10-22
 
-- `qray.h` is now `1.04.0000`; the package version is `1.4.0`.
+- `qray.h` is now `1.05.0000`; the package version is `1.5.0`.
 - `qrGetFrameReadbackRequirements`, `qrRequestFrameReadback` and
   `qrGetFrameReadbackStatus` expose asynchronous readback of the final LDR
   backbuffer.
@@ -157,6 +157,28 @@ Required before moving `renderer/` to its own repository:
 - `Quake/gl_rlight.c`, `Quake/r_world.c` — Quake host / reference adapter inputs.
 - `Quake/qr_editor.c`, `Quake/qr_gui.cpp` — in-engine editor (coupled).
 - `renderer/Source/VulkanDevice.cpp`, `ASManager` — Vulkan/AS ownership.
+
+## 4.5 Spatial contract — implementation 2026-10-22
+
+- SDK branch: `feature/universalize`; host branch: `feature/adapt-qray-sdk`.
+- `QrSpatialConvention` declares the host's canonical signed axes,
+  right-handedness and `unitsPerMeter`. `qrSetSpatialConvention` accepts it
+  once after instance creation, before the first spatial upload or drawn frame.
+- The host may use its own units and a Z-up or Y-up right-handed frame. The SDK
+  normalizes the data into its existing right-handed, Z-up, 40-units-per-meter
+  scene space, so the tuned renderer constants and cloud/sky shaders remain
+  unchanged. Geometry conversion is folded into the instance transform; light
+  positions/directions/areas/powers, cluster bounds/reaches, fog, particles,
+  sky fields and frame camera data are converted at their upload boundaries.
+- Screen-space `SWAPCHAIN` raster geometry is exempt. Left-handed worlds,
+  arbitrary rotations and non-uniform instance scale remain host-side
+  conversion or unsupported cases.
+- QuakeRay subscribes with the identity convention and keeps all existing
+  Quake-unit/Z-up data unchanged.
+- The current 10,000-scene-unit (250 m) ray/sky envelope is a known limitation,
+  not a units contract.
+- SDK documentation: `renderer/docs/spatial-contract.md` and
+  `renderer/docs/embedding.md`.
 
 ## 5. Phases
 
