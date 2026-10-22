@@ -79,7 +79,7 @@ Clustering:
 - PVS is optional; clusters are required.
 - `QR_CLUSTER_MAX_REGISTERED_LIGHTS = 4095`; `QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS = 128` (seed clusters per light, not a per-cluster cap).
 - `Q2_MAX_CLUSTERS = 8192`; per-cell fast cap 128; tail 1M; `kTopUpSources = 8`.
-- No-PVS default: 8 fast slots plus the alias tail; a hard 8-ceiling exists only with `rt_cluster_sampling 0`.
+- No-PVS default: the SDK synthesizes all-visible PVS rows when the host omits both PVS tables, so each cluster sees the lights its sources reach; the top-up pass remains. A hard 8-ceiling exists only with `rt_cluster_sampling 0`.
 - A non-BSP host provides `QraySpatialProvider` (`HOST_PARTITION`, `CORE_GRID`, `HOST_DENSE_MAP`), or accepts the measured no-PVS quality.
 
 Material path:
@@ -123,7 +123,7 @@ Required before moving `renderer/` to its own repository:
 - The SDK `main` contains the package install/export path, `qray_rendererConfig.cmake`, the FSR provider and the engine-free tests.
 - The Quake cluster test moved to the host tree as `tests/qray_cluster_lists_tests.cpp`.
 - A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
-- The full host CTest suite passes (12/12 after the spatial contract test) after the SDK integration. `qray_dtal_perf` was initially clock-sensitive and passed on a warm GPU without changing the baseline.
+- The functional CTest suite passes (13/13 excluding the clock-sensitive `qray_dtal_perf` guard) after the SDK integration. `qray_spatial_twin_gpu` is the new engine-free identity/Y-up/mirrored readback test; `qray_worldlights_tests` covers no-PVS all-visible synthesis. `qray_dtal_perf` remains sensitive to GPU clocks and is not used as a correctness gate.
 
 ## 4.2 Readback contract — 2026-10-22
 
@@ -167,21 +167,35 @@ Required before moving `renderer/` to its own repository:
 - `QrSpatialConvention` declares the host's canonical signed axes,
   right-handedness and `unitsPerMeter`. `qrSetSpatialConvention` accepts it
   once after instance creation, before the first spatial upload or drawn frame.
-- The host may use its own units and a Z-up or Y-up right-handed frame. The SDK
-  normalizes the data into its existing right-handed, Z-up, 40-units-per-meter
-  scene space, so the tuned renderer constants and cloud/sky shaders remain
-  unchanged. Geometry conversion is folded into the instance transform except
-  for the world-light face and smoke raster vertex arrays; light
-  positions/directions/areas, the relative power of positional lights, cluster
-  bounds/reaches, fog, particles, sky fields and frame camera data are
-  converted at their upload boundaries.
-- Screen-space `SWAPCHAIN` raster geometry is exempt. Left-handed worlds,
-  arbitrary rotations and non-uniform instance scale remain host-side
-  conversion or unsupported cases.
+- The host may use its own units and a Z-up or Y-up frame in either handedness.
+  The SDK normalizes the data into its existing right-handed, Z-up,
+  40-units-per-meter scene space, so the tuned renderer constants and
+  cloud/sky shaders remain unchanged. Geometry conversion is folded into the
+  instance transform except for the world-light face and smoke raster vertex
+  arrays; light positions/directions/areas, the relative power of positional
+  lights, cluster bounds/reaches, fog, particles, sky fields and frame camera
+  data are converted at their upload boundaries.
+- A left-handed frame is mirrored into canonical space and indexed triangle
+  winding is reversed for geometry, polygon lights and world-light faces. The
+  host supplies its native handedness view matrix. Arbitrary world rotations
+  and non-uniform instance scale remain host-side conversion.
+- Screen-space `SWAPCHAIN` raster geometry is exempt and never locks the
+  world frame.
 - QuakeRay subscribes with the identity convention and keeps all existing
   Quake-unit/Z-up data unchanged.
-- The current 10,000-scene-unit (250 m) ray clamp and the 20,000-scene-unit
-  sky sentinel are known envelopes, not units contracts.
+- `rayLength` is host-controlled up to the 10,000,000-scene-unit safety
+  ceiling. The world-depth target is `R32_SFLOAT`; the shader sky sentinel
+  follows `2 * rayLength`. The former 250 m envelope is retired.
+- `qrSetSmokeWindDirection` supplies wind in host scene space. If a cluster
+  upload omits both PVS tables, the SDK synthesizes all-visible rows so the
+  no-PVS path no longer degrades to top-up only.
+- `qray_spatial_twin_gpu` renders identity, Y-up/meter and mirrored twins from
+  independently authored host data and compares final LDR readback. It covers
+  geometry, camera, directed/spherical lights, a world-light cluster with
+  omitted PVS tables, level fog, a particle upload and the readback path.
+  `qray_worldlights_tests` checks the synthesized all-visible rows. Water,
+  clouds and UI remain covered by the existing host/runtime tests and
+  source-level boundary checks, not by this twin.
 - SDK documentation: `renderer/docs/spatial-contract.md` and
   `renderer/docs/embedding.md`.
 
@@ -258,7 +272,7 @@ Required before moving `renderer/` to its own repository:
 | Risk | Observation | Mitigation |
 |---|---|---|
 | Core capability gap | A host needs skinned meshes, lightmaps or water and the core lacks them | Treat as a core feature request; do not hide it in the adapter |
-| No-PVS quality | OLEF >2% or cluster 0 empty | Host provides visibility; or core adds a spatial/visibility provider |
+| No-PVS quality | OLEF >2% or cluster 0 empty | Omitted PVS tables synthesize all-visible rows; a host with occlusion data can still provide PVS; a spatial provider remains a separate quality option |
 | Material cost | Texture re-synthesis >16 ms per edit | 1x1 updateable RME override; measure before promising interactivity |
 | Editor extraction | 9,156-line `qr_editor.c`, 106 `Cvar_`, 49 `cl.` | In-engine prototype first; extract a shared core, do not move the file |
 | Stable IDs | No map corpus; recompile/orphan behavior untested | Build a two-BSP corpus; report unresolved entries; never guess |
