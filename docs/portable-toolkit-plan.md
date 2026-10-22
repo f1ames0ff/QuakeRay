@@ -144,12 +144,18 @@ Required before moving `renderer/` to its own repository:
 
 - SDK branch: `feature/editor`.
 - New optional target `quakerayeditor` builds `quakerayeditor.exe`.
-- The first commit is the standalone Win32 application shell and CMake
-  integration; it already links `qray::renderer` but does not yet own a scene,
-  editor core, or viewport render loop.
+- The editor owns a Win32 window and a `QrInstance`, loads a Wavefront OBJ or a
+  Quake BSP29 map, uploads the static geometry with a checker material, adds a
+  directional light and renders the SDK viewport. BSP faces use texinfo-derived
+  UVs and the camera starts at `info_player_start`.
+- CMake deploys the FSR provider, the default scene, the compiled shader
+  directory and the blue-noise texture next to the executable when their source
+  paths are configured.
+- BSP loading is geometry-only for now: PAK extraction, Quake texture loading,
+  an editor core, selection, authoring and sidecar persistence remain.
 - The coupled `Quake/qr_editor.c` and `Quake/qr_gui.cpp` remain in the Quake
-  host. The next work is an engine-free editor core plus a Quake map adapter;
-  the files are not copied into the SDK.
+  host. The next work is the engine-free editor core plus the map/material
+  adapter; the files are not copied into the SDK.
 
 ## 4.4 Current code anchors
 
