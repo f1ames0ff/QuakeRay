@@ -162,7 +162,8 @@ Required before moving `renderer/` to its own repository:
 
 ## 4.5 Spatial contract — implementation 2026-10-22
 
-- SDK branch: `feature/universalize`; host branch: `feature/adapt-qray-sdk`.
+- SDK branch: `feature/universalize` at `9859af4`; host branch:
+  `feature/adapt-qray-sdk` at `c7f67315`.
 - `QrSpatialConvention` declares the host's canonical signed axes,
   right-handedness and `unitsPerMeter`. `qrSetSpatialConvention` accepts it
   once after instance creation, before the first spatial upload or drawn frame.
@@ -178,8 +179,8 @@ Required before moving `renderer/` to its own repository:
   conversion or unsupported cases.
 - QuakeRay subscribes with the identity convention and keeps all existing
   Quake-unit/Z-up data unchanged.
-- The current 10,000-scene-unit (250 m) ray/sky envelope is a known limitation,
-  not a units contract.
+- The current 10,000-scene-unit (250 m) ray clamp and the 20,000-scene-unit
+  sky sentinel are known envelopes, not units contracts.
 - SDK documentation: `renderer/docs/spatial-contract.md` and
   `renderer/docs/embedding.md`.
 
