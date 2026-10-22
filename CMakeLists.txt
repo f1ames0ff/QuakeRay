@@ -347,7 +347,6 @@ set(CORE_SOURCES
     Quake/r_sprite.c
     Quake/r_world.c
     Quake/rt_dtal_debug.cpp
-    shared/rt_alias.c
     Quake/rt_cluster_select.c
     Quake/rt_dtal_groups.c
     Quake/rt_dtal_lod.c
@@ -472,6 +471,7 @@ add_executable(quakeray ${ALL_SOURCES})
 target_include_directories(quakeray PRIVATE
     ${CMAKE_SOURCE_DIR}/Quake
     ${CMAKE_SOURCE_DIR}/shared
+    ${CMAKE_SOURCE_DIR}/renderer/Source
 )
 
 if(QUAKERAY_PLATFORM_WINDOWS)
@@ -549,12 +549,16 @@ if(BUILD_TESTING)
 
     add_executable(rt_lighting_tests
         tests/rt_lighting_tests.c
-        shared/rt_alias.c
         Quake/rt_cluster_select.c
         Quake/rt_dtal_groups.c
         Quake/rt_dtal_lod.c
     )
-    target_include_directories(rt_lighting_tests PRIVATE ${CMAKE_SOURCE_DIR}/Quake ${CMAKE_SOURCE_DIR}/shared)
+    target_include_directories(rt_lighting_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/Quake
+        ${CMAKE_SOURCE_DIR}/shared
+        ${CMAKE_SOURCE_DIR}/renderer/Source
+    )
+    target_link_libraries(rt_lighting_tests PRIVATE qray_alias)
 
     if(MSVC)
         target_compile_options(rt_lighting_tests PRIVATE /W4)
@@ -580,6 +584,23 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME rt_light_admit_tests COMMAND rt_light_admit_tests)
+
+    add_executable(qray_cluster_lists_tests
+        tests/qray_cluster_lists_tests.cpp
+        Quake/rt_light_admit.c
+    )
+    target_compile_features(qray_cluster_lists_tests PRIVATE cxx_std_20)
+    target_include_directories(qray_cluster_lists_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/renderer/Source
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+        ${CMAKE_SOURCE_DIR}/Quake
+    )
+    target_link_libraries(qray_cluster_lists_tests PRIVATE renderer nvrhi nvrhi_vk)
+    if(WIN32)
+        target_link_libraries(qray_cluster_lists_tests PRIVATE user32)
+    endif()
+    add_test(NAME qray_cluster_lists_tests COMMAND qray_cluster_lists_tests)
+    set_tests_properties(qray_cluster_lists_tests PROPERTIES TIMEOUT 300 ENVIRONMENT "VK_LOADER_LAYERS_DISABLE=~implicit~")
 
     add_executable(gui_draw_tests tests/gui_draw_tests.cpp Quake/qr_gui.cpp)
     target_include_directories(gui_draw_tests PRIVATE

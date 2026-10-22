@@ -16,6 +16,10 @@ $anchorRoot = $PSScriptRoot
 Set-Location $anchorRoot
 [Environment]::CurrentDirectory = $anchorRoot
 
+if (-not (Test-Path (Join-Path $anchorRoot "renderer\CMakeLists.txt"))) {
+    throw "The renderer SDK submodule is missing. Run: git submodule update --init --recursive"
+}
+
 if (-not $BuildDir) {
     $BuildDir = Join-Path (Join-Path $anchorRoot "build") $Config
 } elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
@@ -146,6 +150,7 @@ if ($exitCode -ne 0)
 }
 
 $srcRoot = Join-Path $PSScriptRoot "renderer\Source"
+$assetRoot = Join-Path $PSScriptRoot "gfx"
 $gameDir = Join-Path $BuildDir "id1"
 if (-not (Test-Path $gameDir)) { New-Item -ItemType Directory -Path $gameDir -Force | Out-Null }
 
@@ -184,25 +189,23 @@ if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
 
 if ($exitCode -eq 0)
 {
-foreach ($sub in @("textures", "progs", "mdl_skins")) {
-    $src = Join-Path $srcRoot $sub
-    if (Test-Path $src) {
-        Copy-Item $src (Join-Path $stage $sub) -Recurse -Force
-    }
+$src = Join-Path $assetRoot "textures"
+if (Test-Path $src) {
+    Copy-Item $src (Join-Path $stage "textures") -Recurse -Force
 }
 
 # the material definitions name model masks as progs/... and mdl_skins/...:
 # stage those two folders at the archive root as well, next to their
 # textures/ copies, so every reference resolves
 foreach ($legacy in @("progs", "mdl_skins")) {
-    $src = Join-Path $srcRoot "textures\$legacy"
+    $src = Join-Path $assetRoot "textures\$legacy"
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stage $legacy) -Recurse -Force
     }
 }
 
 foreach ($f in @("textures/BlueNoise_LDR_RGBA_128.png", "textures/WaterNormal_n.png")) {
-    $src = Join-Path $srcRoot $f
+    $src = Join-Path $assetRoot $f
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $stage $f) -Force
     }
@@ -210,7 +213,7 @@ foreach ($f in @("textures/BlueNoise_LDR_RGBA_128.png", "textures/WaterNormal_n.
 
 $stageGfx = Join-Path $stage "gfx"
 New-Item -ItemType Directory -Path $stageGfx -Force | Out-Null
-Copy-Item -Path (Join-Path $PSScriptRoot "renderer\gfx\*") -Destination $stageGfx -Recurse -Force
+Get-ChildItem -Path $assetRoot -File | Copy-Item -Destination $stageGfx -Force
 Copy-Item (Join-Path $PSScriptRoot "third_party\imgui\fonts\Roboto-Regular.ttf") (Join-Path $stageGfx "Roboto-Regular.ttf") -Force
 
 # The engine's own UI pack: its menu artwork reaches the game through qray.pkz.
