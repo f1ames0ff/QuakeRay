@@ -123,7 +123,7 @@ Required before moving `renderer/` to its own repository:
 - The SDK `main` contains the package install/export path, `qray_rendererConfig.cmake`, the FSR provider and the engine-free tests.
 - The Quake cluster test moved to the host tree as `tests/qray_cluster_lists_tests.cpp`.
 - A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
-- The functional CTest suite passes (13/13 excluding the clock-sensitive `qray_dtal_perf` guard) after the SDK integration. `qray_spatial_twin_gpu` is the new engine-free identity/Y-up/mirrored readback test; `qray_worldlights_tests` covers no-PVS all-visible synthesis. `qray_dtal_perf` remains sensitive to GPU clocks and is not used as a correctness gate.
+- The full CTest suite passes (14/14) after the SDK integration. `qray_spatial_twin_gpu` is the new engine-free identity/Y-up/mirrored readback test; `qray_worldlights_tests` covers no-PVS all-visible synthesis. `qray_dtal_perf` now performs a heavy warm-up before timing, and its baseline remains tied to the machine's GPU clock/power state; re-record it with `--update` after a hardware or power-plan change.
 
 ## 4.2 Readback contract — 2026-10-22
 
