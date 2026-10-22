@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>QuakeRay Portable Toolkit — Architecture (rev 4)</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --ink: #111827;
+    --muted: #6b7280;
+    --line: #cfd4e0;
+    --host: #eaf2ff;
+    --adapter: #fff4e5;
+    --authoring: #e9f7ee;
+    --runtime: #f3ecff;
+    --lighting: #fdeaea;
+    --rtcore: #e6f7f9;
+    --platform: #f2f3f5;
+    --output: #eef2ff;
+    --danger: #b00020;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 20% 0%, #ffffff 0%, var(--bg) 55%, #eef1f8 100%);
+    color: var(--ink);
+    font-family: Inter, "Segoe UI", Arial, sans-serif;
+  }
+  .wrap {
+    max-width: 1860px;
+    margin: 28px auto 48px;
+    padding: 0 22px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid #e3e7f0;
+    border-radius: 22px;
+    box-shadow: 0 18px 50px rgba(17, 24, 39, 0.08);
+    padding: 26px 26px 18px;
+  }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 28px;
+    letter-spacing: -0.4px;
+  }
+  .subtitle {
+    margin: 0 0 18px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 26px;
+    align-items: center;
+    margin: 0 0 18px;
+    padding: 12px 16px;
+    border: 1px solid #e3e7f0;
+    border-radius: 14px;
+    background: #fbfcff;
+    font-size: 12.5px;
+    color: #374151;
+  }
+  .legend b { color: #111827; }
+  .swatch {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border-radius: 4px;
+    border: 1.5px solid #9aa4b2;
+    vertical-align: -2px;
+    margin-right: 6px;
+  }
+  .solid-line, .dashed-line {
+    display: inline-block;
+    width: 26px; height: 0;
+    border-top: 2.5px solid #374151;
+    vertical-align: 4px;
+    margin-right: 6px;
+  }
+  .dashed-line { border-top-style: dashed; }
+  svg { width: 100%; height: auto; display: block; }
+  .box { fill: #ffffff; stroke: var(--line); stroke-width: 2; rx: 14; }
+  .current { stroke: #1a73e8; }
+  .future { stroke: #8a94a6; stroke-dasharray: 8 5; }
+  .host { fill: var(--host); }
+  .adapter { fill: var(--adapter); }
+  .authoring { fill: var(--authoring); }
+  .runtime { fill: var(--runtime); }
+  .lighting { fill: var(--lighting); }
+  .rtcore { fill: var(--rtcore); }
+  .platform { fill: var(--platform); }
+  .output { fill: var(--output); }
+  .danger { fill: #fff5f5; stroke: var(--danger); stroke-dasharray: 8 5; }
+  .layer {
+    font: 700 12px Inter, "Segoe UI", Arial, sans-serif;
+    fill: #6b7280;
+    letter-spacing: 1.6px;
+  }
+  .title {
+    font: 700 17px Inter, "Segoe UI", Arial, sans-serif;
+    fill: #111827;
+  }
+  .sub {
+    font: 600 10.5px Inter, "Segoe UI", Arial, sans-serif;
+    fill: #6b7280;
+    letter-spacing: 0.7px;
+    text-transform: uppercase;
+  }
+  .body {
+    font: 13px Inter, "Segoe UI", Arial, sans-serif;
+    fill: #374151;
+  }
+  .small {
+    font: 11px Inter, "Segoe UI", Arial, sans-serif;
+    fill: #6b7280;
+  }
+  .note {
+    font: 12px Inter, "Segoe UI", Arial, sans-serif;
+    fill: var(--danger);
+  }
+  .arrow { stroke: #555b66; stroke-width: 2; fill: none; }
+  .arrow-dashed { stroke: #7b8494; stroke-width: 2; fill: none; stroke-dasharray: 6 5; }
+  .bus { stroke: #7b8494; stroke-width: 2; fill: none; }
+  .arrow-label {
+    font: 11px Inter, "Segoe UI", Arial, sans-serif;
+    fill: #6b7280;
+  }
+  .footer {
+    margin-top: 10px;
+    color: #6b7280;
+    font-size: 11.5px;
+    line-height: 1.6;
+    border-top: 1px solid #e3e7f0;
+    padding-top: 12px;
+  }
+  .footer code {
+    background: #f3f4f6;
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: #374151;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>QuakeRay Portable Toolkit — Architecture (rev 5 · Goal A)</h1>
+    <p class="subtitle">
+      <b>Goal A: standalone toolkit.</b> QuakeRay owns the window, Vulkan device and swapchain; host adapters
+      import another engine's data. The existing <code>qray.h</code> upload path is preserved; there is no
+      monolithic <code>QrayFrame</code> and no second scene-transfer path. Geometry is read-only; the editor
+      edits lights, materials and DTAL groups only. Embedded GPU (Goal B) is deferred.
+    </p>
+
+    <div class="legend">
+      <span><span class="solid-line"></span><b>solid</b> = current code</span>
+      <span><span class="dashed-line"></span><b>dashed</b> = planned / future</span>
+      <span><span class="swatch" style="background:var(--host)"></span>hosts</span>
+      <span><span class="swatch" style="background:var(--adapter)"></span>adapter</span>
+      <span><span class="swatch" style="background:var(--authoring)"></span>authoring</span>
+      <span><span class="swatch" style="background:var(--runtime)"></span>runtime contracts</span>
+      <span><span class="swatch" style="background:var(--lighting)"></span>lighting</span>
+      <span><span class="swatch" style="background:var(--rtcore)"></span>RT core</span>
+      <span><span class="swatch" style="background:var(--danger);border-color:var(--danger)"></span>invariant</span>
+    </div>
+
+    <svg viewBox="0 0 1800 1250" role="img" aria-label="QuakeRay portable toolkit architecture diagram">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#555b66"/>
+        </marker>
+        <marker id="arrow-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8494"/>
+        </marker>
+        <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#b00020"/>
+        </marker>
+      </defs>
+
+      <!-- background -->
+      <rect x="0" y="0" width="1800" height="1250" fill="transparent"/>
+
+      <!-- HOSTS -->
+      <text x="40" y="124" class="layer">HOSTS &amp; TOOLS</text>
+
+      <rect x="40" y="140" width="260" height="120" class="box host current"/>
+      <text x="56" y="168" class="title">Quake host</text>
+      <text x="56" y="186" class="sub">quakeray.exe · existing game</text>
+      <text x="56" y="210" class="body">
+        <tspan x="56" dy="0">BSP v29 · WAD2</tspan>
+        <tspan x="56" dy="18">PVS / leaf clusters</tspan>
+        <tspan x="56" dy="18">entity lights</tspan>
+      </text>
+
+      <rect x="320" y="140" width="260" height="120" class="box host future"/>
+      <text x="336" y="168" class="title">Other host</text>
+      <text x="336" y="186" class="sub">future · any engine</text>
+      <text x="336" y="210" class="body">
+        <tspan x="336" dy="0">any game / engine</tspan>
+        <tspan x="336" dy="18">read-only world import</tspan>
+        <tspan x="336" dy="18">source-level adapter</tspan>
+      </text>
+
+      <rect x="600" y="140" width="260" height="120" class="box host current"/>
+      <text x="616" y="168" class="title">In-engine editor</text>
+      <text x="616" y="186" class="sub">current</text>
+      <text x="616" y="210" class="body">
+        <tspan x="616" dy="0">qr_editor.c · qr_gui.cpp</tspan>
+        <tspan x="616" dy="18">read-only geometry</tspan>
+        <tspan x="616" dy="18">lights / materials / DTAL</tspan>
+      </text>
+
+      <rect x="880" y="140" width="260" height="120" class="box host future"/>
+      <text x="896" y="168" class="title">qray_editor</text>
+      <text x="896" y="186" class="sub">planned</text>
+      <text x="896" y="210" class="body">
+        <tspan x="896" dy="0">standalone</tspan>
+        <tspan x="896" dy="18">same editor core</tspan>
+        <tspan x="896" dy="18">RT preview</tspan>
+      </text>
+
+      <!-- AUTHORING COLUMN -->
+      <text x="1200" y="124" class="layer">AUTHORING (no engine headers)</text>
+
+      <rect x="1200" y="140" width="560" height="120" class="box authoring future"/>
+      <text x="1216" y="168" class="title">Editor core</text>
+      <text x="1216" y="186" class="sub">shared · host-neutral</text>
+      <text x="1216" y="210" class="body">
+        <tspan x="1216" dy="0">panels · selection · inspector · undo</tspan>
+        <tspan x="1216" dy="18">host callbacks: pick, camera, re-synthesize, apply</tspan>
+      </text>
+
+      <rect x="1200" y="300" width="560" height="120" class="box authoring future"/>
+      <text x="1216" y="328" class="title">QraySidecar — versioned JSON</text>
+      <text x="1216" y="346" class="sub">authoring intent, not runtime structs</text>
+      <text x="1216" y="370" class="body">
+        <tspan x="1216" dy="0">materials · lights · DTAL groups</tspan>
+        <tspan x="1216" dy="18">validate refs · reject stale · report orphans</tspan>
+      </text>
+
+      <rect x="1200" y="460" width="560" height="120" class="box authoring future"/>
+      <text x="1216" y="488" class="title">Stable identity — by purpose</text>
+      <text x="1216" y="506" class="sub">three namespaces, never mixed</text>
+      <text x="1216" y="530" class="body">
+        <tspan x="1216" dy="0">SourceSurfaceKey: source map + face / fingerprint</tspan>
+        <tspan x="1216" dy="18">AuthoringUUID: authored objects</tspan>
+        <tspan x="1216" dy="18">runtime uniqueID: GPU / history namespace</tspan>
+      </text>
+
+      <rect x="1200" y="620" width="560" height="120" class="box authoring future"/>
+      <text x="1216" y="648" class="title">Merge / Compile</text>
+      <text x="1216" y="666" class="sub">intent → current runtime representation</text>
+      <text x="1216" y="690" class="body">
+        <tspan x="1216" dy="0">engine data + sidecar overrides</tspan>
+        <tspan x="1216" dy="18">per-entry report: applied / rebound / orphan</tspan>
+        <tspan x="1216" dy="18">event-driven; no per-frame merge</tspan>
+      </text>
+
+      <rect x="1200" y="780" width="560" height="160" class="box danger"/>
+      <text x="1216" y="808" class="title" fill="#b00020">Invariants</text>
+      <text x="1216" y="826" class="sub" fill="#b00020">non-negotiable</text>
+      <text x="1216" y="850" class="note">
+        <tspan x="1216" dy="0">No monolithic QrayFrame</tspan>
+        <tspan x="1216" dy="20">No BLAS/TLAS through the host contract</tspan>
+        <tspan x="1216" dy="20">No second scene-transfer path</tspan>
+        <tspan x="1216" dy="20">PVS optional · clusters required</tspan>
+        <tspan x="1216" dy="20">No per-frame conversion of unchanged data</tspan>
+      </text>
+
+      <!-- ADAPTER -->
+      <text x="40" y="304" class="layer">ADAPTER BOUNDARY</text>
+
+      <rect x="40" y="320" width="560" height="150" class="box adapter future"/>
+      <text x="56" y="348" class="title">IQrayHost</text>
+      <text x="56" y="366" class="sub">host-owned adapter · conformance-tested</text>
+      <text x="56" y="390" class="body">
+        <tspan x="56" dy="0">Attach · Detach · Caps</tspan>
+        <tspan x="56" dy="18">SurfaceKey / ResolveSurface · LightKey</tspan>
+        <tspan x="56" dy="18">Refresh(QrayFrameUpdates) · EvaluateStyles</tspan>
+        <tspan x="56" dy="18">ApplySidecar → per-entry report · LoadAuthoredLights</tspan>
+        <tspan x="56" dy="18">Pick (optional; core RT pick possible)</tspan>
+      </text>
+
+      <rect x="620" y="320" width="520" height="150" class="box adapter future"/>
+      <text x="636" y="348" class="title">Host importers</text>
+      <text x="636" y="366" class="sub">host-owned loading + conversion</text>
+      <text x="636" y="390" class="body">
+        <tspan x="636" dy="0">Quake (current): BSP v29 · WAD2 · PVS/leafs</tspan>
+        <tspan x="636" dy="18">Other hosts: any engine with a source-level adapter</tspan>
+        <tspan x="636" dy="18">asset model varies; fingerprint map + dependencies</tspan>
+      </text>
+
+      <!-- RUNTIME CONTRACTS -->
+      <text x="40" y="486" class="small" fill="#4b5563">Adapters are host-owned; our modules provide the contract, reference Quake adapter, and conformance tests.</text>
+      <text x="40" y="504" class="layer">RUNTIME CONTRACTS</text>
+
+      <rect x="40" y="520" width="340" height="170" class="box runtime future"/>
+      <text x="56" y="548" class="title">QraySceneAsset</text>
+      <text x="56" y="566" class="sub">static map resources</text>
+      <text x="56" y="590" class="body">
+        <tspan x="56" dy="0">surfaces · materials</tspan>
+        <tspan x="56" dy="18">authored lights · DTAL groups</tspan>
+        <tspan x="56" dy="18">source keys · load / update / release</tspan>
+        <tspan x="56" dy="18">no BLAS / TLAS</tspan>
+      </text>
+
+      <rect x="400" y="520" width="260" height="170" class="box runtime future"/>
+      <text x="416" y="548" class="title">QrayFrameView</text>
+      <text x="416" y="566" class="sub">per view</text>
+      <text x="416" y="590" class="body">
+        <tspan x="416" dy="0">camera</tspan>
+        <tspan x="416" dy="18">view · exposure</tspan>
+        <tspan x="416" dy="18">frame index</tspan>
+      </text>
+
+      <rect x="680" y="520" width="340" height="170" class="box runtime future"/>
+      <text x="696" y="548" class="title">QrayFrameUpdates</text>
+      <text x="696" y="566" class="sub">per-frame delta only</text>
+      <text x="696" y="590" class="body">
+        <tspan x="696" dy="0">transforms · dlights</tspan>
+        <tspan x="696" dy="18">particles · material updates</tspan>
+        <tspan x="696" dy="18">lifetime; no world re-supply</tspan>
+      </text>
+
+      <text x="40" y="714" class="note">No monolithic QrayFrame: these are three contracts over arrays owned by the host or core.</text>
+
+      <!-- C ABI -->
+      <text x="40" y="744" class="layer">EXISTING C ABI — qray.h (PRESERVED)</text>
+
+      <rect x="40" y="758" width="980" height="162" class="box runtime current"/>
+      <text x="56" y="786" class="title">renderer/Include/qray/qray.h</text>
+      <text x="56" y="804" class="sub">existing upload path · no new scene-transfer path</text>
+      <text x="56" y="828" class="body">
+        <tspan x="56" dy="0">qrUploadGeometry · qrUpdateGeometryTransform · qrCreateMaterial</tspan>
+        <tspan x="56" dy="18">qrUploadSphericalLight · qrUploadDtalGroups</tspan>
+        <tspan x="56" dy="18">qrBeginClusterLightSources / qrRunSlice / qrFinish / qrPublish / qrCommit</tspan>
+        <tspan x="56" dy="18">serial form: qrUploadClusterLightSources</tspan>
+        <tspan x="56" dy="18">BLAS / TLAS stay inside the RT core</tspan>
+      </text>
+
+      <!-- LIGHTING / RT CORE / PLATFORM -->
+      <text x="40" y="954" class="layer">LIGHTING · RT CORE · PLATFORM</text>
+
+      <rect x="40" y="970" width="460" height="190" class="box lighting current"/>
+      <text x="56" y="998" class="title">Lighting</text>
+      <text x="56" y="1016" class="sub">cluster composition · DTAL runtime · publication</text>
+      <text x="56" y="1040" class="body">
+        <tspan x="56" dy="0">current: renderer + Quake/rt_dtal_*</tspan>
+        <tspan x="56" dy="18">registry · publication · stats</tspan>
+        <tspan x="56" dy="18">PVS optional · clusters required</tspan>
+        <tspan x="56" dy="18">no-PVS fallback: 8 lights / cluster</tspan>
+        <tspan x="56" dy="18">target: qray_lighting (Stage 1)</tspan>
+      </text>
+
+      <rect x="520" y="970" width="460" height="190" class="box rtcore current"/>
+      <text x="536" y="998" class="title">RT core</text>
+      <text x="536" y="1016" class="sub">NVRHI / Vulkan</text>
+      <text x="536" y="1040" class="body">
+        <tspan x="536" dy="0">BLAS / TLAS owner: VulkanDevice / ASManager</tspan>
+        <tspan x="536" dy="18">RT passes · ASVGF · materials</tspan>
+        <tspan x="536" dy="18">existing renderer/ target</tspan>
+        <tspan x="536" dy="18">host never supplies acceleration structures</tspan>
+      </text>
+
+      <rect x="1000" y="1100" width="220" height="90" class="box platform current"/>
+      <text x="1016" y="1124" class="title">Platform</text>
+      <text x="1016" y="1140" class="sub">minimal host services</text>
+      <text x="1016" y="1162" class="body">
+        <tspan x="1016" dy="0">window · input</tspan>
+        <tspan x="1016" dy="18">filesystem · GPU device</tspan>
+      </text>
+
+      <rect x="1240" y="970" width="520" height="120" class="box output current"/>
+      <text x="1256" y="998" class="title">Output</text>
+      <text x="1256" y="1016" class="sub">what the host and editor see</text>
+      <text x="1256" y="1040" class="body">
+        <tspan x="1256" dy="0">RT image</tspan>
+        <tspan x="1256" dy="18">editor overlay</tspan>
+        <tspan x="1256" dy="18">pixels</tspan>
+      </text>
+
+      <!-- ARROWS: hosts to adapter -->
+      <path d="M170 260 L170 320" class="arrow" marker-end="url(#arrow)"/>
+      <path d="M450 260 L450 320" class="arrow-dashed" marker-end="url(#arrow-dashed)"/>
+
+      <!-- ARROWS: editors to editor core -->
+      <path d="M730 260 L730 290 L1480 290 L1480 260" class="arrow" marker-end="url(#arrow)"/>
+      <path d="M1010 260 L1010 300 L1480 300 L1480 260" class="arrow-dashed" marker-end="url(#arrow-dashed)"/>
+      <text x="760" y="284" class="arrow-label">authoring UI</text>
+
+      <!-- AUTHORING CHAIN -->
+      <path d="M1480 260 L1480 300" class="arrow" marker-end="url(#arrow)"/>
+      <path d="M1480 420 L1480 460" class="arrow" marker-end="url(#arrow)"/>
+      <path d="M1480 580 L1480 620" class="arrow" marker-end="url(#arrow)"/>
+      <text x="1490" y="446" class="arrow-label">identity</text>
+      <text x="1490" y="604" class="arrow-label">resolve</text>
+
+      <!-- MERGE TO C ABI -->
+      <path d="M1200 680 L1040 680 L1040 750 L1020 758" class="arrow-dashed" marker-end="url(#arrow-dashed)"/>
+      <text x="1032" y="704" class="arrow-label">apply (event-driven)</text>
+
+      <!-- HOST DATA BUS TO RUNTIME CONTRACTS -->
+      <path d="M320 470 L320 500" class="bus"/>
+      <path d="M880 470 L880 500" class="bus"/>
+      <path d="M320 500 L880 500" class="bus"/>
+      <path d="M210 500 L210 520" class="arrow" marker-end="url(#arrow)"/>
+      <path d="M530 500 L530 520" class="arrow" marker-end="url(#arrow)"/>
+      <path d="M850 500 L850 520" class="arrow" marker-end="url(#arrow)"/>
+      <text x="540" y="492" class="arrow-label">host data / deltas</text>
+
+      <!-- CONTRACTS TO C ABI -->
+      <path d="M210 690 L210 758" class="arrow" marker-end="url(#arrow)"/>
+      <path d="M530 690 L530 758" class="arrow" marker-end="url(#arrow)"/>
+      <path d="M850 690 L850 758" class="arrow" marker-end="url(#arrow)"/>
+      <text x="224" y="734" class="arrow-label">existing upload calls</text>
+
+      <!-- C ABI TO LIGHTING -->
+      <path d="M300 920 L300 970" class="arrow" marker-end="url(#arrow)"/>
+      <text x="312" y="948" class="arrow-label">publish lists</text>
+
+      <!-- LIGHTING TO RT CORE -->
+      <path d="M500 1065 L520 1065" class="arrow" marker-end="url(#arrow)"/>
+
+      <!-- RT CORE TO OUTPUT -->
+      <path d="M980 1042 L1240 1042" class="arrow" marker-end="url(#arrow)"/>
+      <text x="1080" y="1034" class="arrow-label">pixels</text>
+
+      <!-- PLATFORM TO RT CORE -->
+      <path d="M1000 1145 L980 1145" class="arrow" marker-end="url(#arrow)"/>
+      <text x="986" y="1139" class="arrow-label">device</text>
+
+      <!-- Footer -->
+      <text x="40" y="1210" class="small">
+        Source anchors: renderer/Include/qray/qray.h · renderer/Source/ClusterLightLists.cpp · LightManager.cpp ·
+        Quake/gl_rlight.c · r_world.c · Quake/rt_dtal_* · Quake/qr_editor.c · qr_gui.cpp · VulkanDevice / ASManager
+      </text>
+      <text x="40" y="1230" class="small">
+        Scope: Goal A — standalone toolkit. Host adapters are host-owned; Quake is the reference. Embedded GPU (Goal B) is deferred; proprietary hosts need a separate licensing path.
+      </text>
+    </svg>
+
+    <div class="footer">
+      <b>Read the diagram left-to-right, top-to-bottom.</b>
+      Hosts feed the adapter; the adapter fills the three runtime contracts; the contracts call the existing
+      <code>qray.h</code> upload API; lighting publishes cluster/DTAL lists; the RT core renders. The authoring
+      column is the only mutable state: it writes a versioned sidecar, resolves identity, and applies intent
+      through the same existing upload API. Dashed boxes are the planned reorganization; solid boxes exist today.
+    </div>
+  </div>
+</div>
+</body>
+</html>
