@@ -121,7 +121,7 @@ Required before moving `renderer/` to its own repository:
 - The SDK `main` contains the package install/export path, `qray_rendererConfig.cmake`, the FSR provider and the engine-free tests.
 - The Quake cluster test moved to the host tree as `tests/qray_cluster_lists_tests.cpp`.
 - A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
-- The host build still fails one performance check, `qray_dtal_perf`, with a roughly 2x GPU timing regression while the other 9 tests pass; the failure is environmental/clock-sensitive until re-measured on an idle machine.
+- The full host CTest suite passes (10/10) after the SDK integration. `qray_dtal_perf` was initially clock-sensitive and passed on a warm GPU without changing the baseline.
 
 ## 4.2 Current code anchors
 
