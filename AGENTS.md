@@ -26,7 +26,7 @@ uv run --offline --frozen --project tools/quakeray_mcp python -B -m quakeray_mcp
 it from <https://docs.astral.sh/uv/getting-started/installation/> first. If either command fails,
 stop and report the exact failure; do not bypass the engine MCP with shell or IDE searches.
 
-`opencode.jsonc` is machine-local and gitignored. The engine server must be configured under
+`.mcp.json` is machine-local and gitignored. The engine server must be configured under
 `mcp.servers.quakeray` as a local server running the command above. If the file is absent, create
 it with this engine entry; do not commit the file:
 
