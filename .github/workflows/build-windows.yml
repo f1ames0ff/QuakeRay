@@ -1,3 +1,14 @@
+# Repository policy allows local actions only, so this workflow deliberately
+# contains no "uses:" step: nothing from the marketplace is allowed to run here.
+# Everything is done with the tools the windows-2022 image already ships - git,
+# CMake, Ninja, the MSVC build tools and the Vulkan SDK - and with the
+# repository's own entry point, build_win.ps1, which applies the pinned NVRHI
+# patch, compiles the shaders and deploys the runtime assets.
+#
+# Tests: the GPU tests are labelled "gpu" and are skipped here. A hosted runner
+# has no Vulkan device, and those tests fail hard rather than skipping when
+# device creation fails, so running them would report a failure that says
+# nothing about the change. Run "ctest -L gpu" locally for that coverage.
 name: Windows CI
 
 on:
@@ -5,32 +16,68 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: ${{ matrix.configuration }}
     runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
         configuration: [Release, Debug]
+
+    env:
+      QR_CONFIG: ${{ matrix.configuration }}
+
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - name: Check out the sources
+        shell: pwsh
+        env:
+          # refs/heads/<branch> for a push, refs/pull/<n>/merge for a pull
+          # request - in both cases exactly the commit that has to be built.
+          QR_REF: ${{ github.ref }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          git init -q .
+          git remote add origin "https://github.com/$env:GITHUB_REPOSITORY.git"
+          git fetch --no-tags --depth 1 origin $env:QR_REF
+          if ($LASTEXITCODE -ne 0) { throw "fetch of $env:QR_REF failed" }
+          git checkout --force FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { throw "checkout of FETCH_HEAD failed" }
+          git submodule update --init --recursive --depth 1
+          if ($LASTEXITCODE -ne 0) { throw "submodule checkout failed" }
+          git log -1 --format='building %H %s'
 
-    - name: Apply the NVRHI patch
-      shell: pwsh
-      run: git -C third_party/nvrhi apply "$env:GITHUB_WORKSPACE/third_party/nvrhi-max-binding-layouts.patch"
+      - name: Check the toolchain
+        shell: pwsh
+        run: |
+          if (-not $env:VULKAN_SDK) {
+            throw "VULKAN_SDK is not set. build_shaders.ps1 needs the Vulkan SDK for dxc."
+          }
+          Write-Host "VULKAN_SDK = $env:VULKAN_SDK"
+          Write-Host "cmake      = $((Get-Command cmake).Source)"
+          Write-Host "ninja      = $((Get-Command ninja).Source)"
 
-    - name: Build QuakeRay
-      run: |
-        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
-        cmake --build build
+      - name: Build
+        shell: pwsh
+        run: |
+          & .\build_win.ps1 $env:QR_CONFIG -Tests
+          if ($LASTEXITCODE -ne 0) { throw "build_win.ps1 exited with $LASTEXITCODE" }
 
-    - name: Upload QuakeRay
-      uses: actions/upload-artifact@v4
-      with:
-        name: QuakeRay-${{ matrix.configuration }}
-        path: |
-            build/quakeray.exe
-            build/*.dll
+      - name: Test
+        shell: pwsh
+        run: |
+          ctest --test-dir "build\$env:QR_CONFIG" --output-on-failure -LE gpu
+          if ($LASTEXITCODE -ne 0) { throw "ctest exited with $LASTEXITCODE" }
+
+      - name: Show the build receipt
+        shell: pwsh
+        run: Get-Content "build\$env:QR_CONFIG\qray-build.json"
