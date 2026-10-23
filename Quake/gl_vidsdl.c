@@ -3335,7 +3335,7 @@ static void GL_InitInstance (void)
 		.sceneYAxis = QR_AXIS_POSITIVE_Y,
 		.sceneZAxis = QR_AXIS_POSITIVE_Z,
 		.hostIsRightHanded = QR_TRUE,
-		.unitsPerMeter = QR_SCENE_UNITS_PER_METER,
+		.reserved0 = 0,
 	};
 	r = qrSetSpatialConvention (vulkan_globals.instance, &spatial);
 	QR_CHECK (r);

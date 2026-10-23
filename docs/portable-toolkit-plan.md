@@ -173,6 +173,9 @@ Required before moving `renderer/` to its own repository:
 
 ## 4.5 Spatial contract — implementation 2026-10-22
 
+This section records the 2026-10-22 API state. The meter-only follow-up below
+supersedes its `unitsPerMeter` and Quake-unit compatibility details.
+
 - SDK branch: `feature/universalize`; host branch: `feature/adapt-qray-sdk`.
   See `git log` for the current revision of each branch.
 - `QrSpatialConvention` declares the host's canonical signed axes,
@@ -209,6 +212,25 @@ Required before moving `renderer/` to its own repository:
   source-level boundary checks, not by this twin.
 - SDK documentation: `renderer/docs/spatial-contract.md` and
   `renderer/docs/embedding.md`.
+
+## 4.6 Meter-only spatial API — implementation 2026-10-23
+
+- The public API is `1.06.0000`; `QrSpatialConvention` version 2 retains its
+  layout but replaces `unitsPerMeter` with a zero-required reserved field.
+  Every host now supplies lengths and positions in meters, areas in square
+  meters, and inverse lengths per meter.
+- The renderer keeps its private right-handed, Z-up scale of 40 scene
+  units/meter. This preserves tuned renderer constants while removing host
+  unit selection and conversion from the public ABI.
+- `Quake/qr_spatial_adapter.*` is the Quake host boundary. It converts geometry,
+  lights, clusters, fog, particles, rasterized world data, and frame parameters
+  to meters, compensates for the legacy relative-light intensity fix, and
+  leaves `SWAPCHAIN` data in pixels. Array scratch is thread-local and valid
+  until each synchronous SDK upload returns.
+- The spatial CPU contract tests cover meter scaling and rejected legacy
+  conventions; the GPU twin uses meter-valued identity, Y-up and mirrored
+  scenes. The optional standalone editor remains a separate consumer and must
+  be adapted before its Quake-unit scene data is used with API 1.06.
 
 ## 5. Phases
 
