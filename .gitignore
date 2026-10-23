@@ -4,7 +4,7 @@ build-cmake/
 dist/
 .idea
 .vscode
-opencode.jsonc
+.mcp.jsonc
 history.txt
 qray.txt
 

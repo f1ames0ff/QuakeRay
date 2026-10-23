@@ -78,14 +78,14 @@ uv sync --locked --project tools/quakeray_mcp --python 3.10
 uv run --offline --frozen --project tools/quakeray_mcp python -B -m quakeray_mcp --selfcheck
 ```
 
-The local, gitignored `opencode.jsonc` registers `quakeray` under `mcp.servers` (see
+The local, gitignored `../../.mcp.jsonc` registers `quakeray` under `mcp.servers` (see
 [AGENTS.md](../../AGENTS.md#mcp-dependency-setup)). It inherits existing permission policy;
 it does not change global configuration or add blanket permission grants. A missing Debug
 runtime does not prevent documentation/status inspection. The registration runs
 `uv run --offline --frozen` without `--no-sync`, so a worktree whose `.venv` is missing or
 stale gets it created and installed from `uv.lock` and the local uv cache before the server
 starts; normal startup stays offline and never rewrites the lock. Once the local
-`opencode.jsonc` is present, a fresh worktree needs no separate virtualenv setup. The
+`../../.mcp.jsonc` is present, a fresh worktree needs no separate virtualenv setup. The
 machine-wide `uv sync` above remains the one-time network step before the first start on a
 machine with a cold uv cache.
 Use `/mcps` in OpenCode to inspect/reconnect the server after development changes. If the
