@@ -79,7 +79,7 @@ Clustering:
 - PVS is optional; clusters are required.
 - `QR_CLUSTER_MAX_REGISTERED_LIGHTS = 4095`; `QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS = 128` (seed clusters per light, not a per-cluster cap).
 - `Q2_MAX_CLUSTERS = 8192`; per-cell fast cap 128; tail 1M; `kTopUpSources = 8`.
-- No-PVS default: 8 fast slots plus the alias tail; a hard 8-ceiling exists only with `rt_cluster_sampling 0`.
+- No-PVS default: the SDK synthesizes all-visible PVS rows when the host omits both PVS tables, so each cluster sees the lights its sources reach; the top-up pass remains. A hard 8-ceiling exists only with `rt_cluster_sampling 0`.
 - A non-BSP host provides `QraySpatialProvider` (`HOST_PARTITION`, `CORE_GRID`, `HOST_DENSE_MAP`), or accepts the measured no-PVS quality.
 
 Material path:
@@ -96,11 +96,11 @@ Branch `feat/portable-toolkit`, based on `master` (`cd88fc77`).
 
 What is already true:
 
-- `renderer/Include/qray/qray.h` is the public C ABI, and `QR_API_VERSION` is `1.03.0000`.
+- `renderer/Include/qray/qray.h` is the public C ABI, and `QR_API_VERSION` is `1.05.0000`.
 - The renderer's C++ sources do not include `Quake/` headers. The remaining engine-facing layer is the `Qr*` contract in `qray.h`.
 - The alias-table implementation is renderer-owned: `renderer/Source/rt_alias.*` builds as `qray_alias`, and both host and tests link it instead of compiling `shared/rt_alias.c`.
 - The host-owned texture and cursor assets are out of `renderer/`: `renderer/Source/textures` is now `gfx/textures`, and `renderer/gfx` is now the root `gfx/` folder. `build_win.ps1` stages both from `gfx/`; the Debug build and asset pack still pass.
-- `renderer/CMakeLists.txt` has a standalone `project(qray_renderer VERSION 1.3.0)`, finds Vulkan and NVRHI when configured from its own directory, and `cmake -S renderer -B <dir>` now configures successfully.
+- `renderer/CMakeLists.txt` has a standalone `project(qray_renderer VERSION 1.5.0)`, finds Vulkan and NVRHI when configured from its own directory, and `cmake -S renderer -B <dir>` now configures successfully.
 - The package installs `renderer.lib`, `include/qray/qray.h`, the FSR API headers/provider, and `qray_rendererConfig.cmake` plus `qray_rendererTargets.cmake`. A clean consumer that supplies NVRHI and Vulkan configures and links against `qray::renderer`.
 - FSR is exposed through the `qray_ffx` interface target: the build tree uses `QR_FFX_SDK_ROOT`, while the installed tree gets `qray::ffx` from the package config. The in-tree provider remains the default; an installed AMD SDK can override it.
 
@@ -117,13 +117,52 @@ Required before moving `renderer/` to its own repository:
 
 ## 4.1 SDK import — 2026-10-22
 
-- `renderer/` is now the `QuakeRaySDK` git submodule at `cb8ddb82`.
+- `renderer/` was imported as the `QuakeRaySDK` git submodule at `cb8ddb82`;
+  the current spatial work uses the `feature/universalize` branch; see
+  section 4.5 and `git log` for the current commit.
 - The SDK `main` contains the package install/export path, `qray_rendererConfig.cmake`, the FSR provider and the engine-free tests.
 - The Quake cluster test moved to the host tree as `tests/qray_cluster_lists_tests.cpp`.
 - A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
-- The full host CTest suite passes (10/10) after the SDK integration. `qray_dtal_perf` was initially clock-sensitive and passed on a warm GPU without changing the baseline.
+- The full CTest suite passes (14/14) after the SDK integration. `qray_spatial_twin_gpu` is the new engine-free identity/Y-up/mirrored readback test; `qray_worldlights_tests` covers no-PVS all-visible synthesis. `qray_dtal_perf` now performs a heavy warm-up before timing, and its baseline remains tied to the machine's GPU clock/power state; re-record it with `--update` after a hardware or power-plan change.
 
-## 4.2 Current code anchors
+## 4.2 Readback contract — 2026-10-22
+
+- `qray.h` is now `1.05.0000`; the package version is `1.5.0`.
+- `qrGetFrameReadbackRequirements`, `qrRequestFrameReadback` and
+  `qrGetFrameReadbackStatus` expose asynchronous readback of the final LDR
+  backbuffer.
+- The SDK copies the final composited image, including UI, into a per-frame-slot
+  staging texture and completes it after that slot's previous submission has
+  been reaped. The frame path does not call `vkDeviceWaitIdle`; the host owns
+  `pDst` until it observes completion.
+- `includeUi = QR_FALSE` and `RGBA16F` are not supported in this revision and
+  return `QR_FEATURE_UNAVAILABLE`; the blocking screenshot path remains separate.
+- The host-specific Q3 window callback and multi-view work are deliberately not
+  part of this API change.
+
+## 4.3 Editor extraction — parked 2026-10-22
+
+- SDK branch: `feature/editor`.
+- New optional target `quakerayeditor` builds `quakerayeditor.exe`.
+- The editor owns a Win32 window and a `QrInstance`, loads a Wavefront OBJ or a
+  Quake BSP29 map, uploads the static geometry with a checker material, adds a
+  directional light and renders the SDK viewport. BSP faces use texinfo-derived
+  UVs and the camera starts at `info_player_start`.
+- CMake deploys the FSR provider, the default scene, the compiled shader
+  directory and the blue-noise texture next to the executable when their source
+  paths are configured.
+- BSP loading is geometry-only for now: PAK extraction, Quake texture loading,
+  an editor core, selection, authoring and sidecar persistence remain.
+- The coupled `Quake/qr_editor.c` and `Quake/qr_gui.cpp` remain in the Quake
+  host. The next work is the engine-free editor core plus the map/material
+  adapter; the files are not copied into the SDK.
+- **Parked after the scene-loading viewport.** The current editor only shows a
+  viewport over the SDK; the OBJ test scene is a checker-textured room with a
+  cube, and there is no editor UI, selection, authoring, PAK/texture loading or
+  sidecar persistence yet. The branch and in-tree build remain available, but
+  the editor is not an active workstream.
+
+## 4.4 Current code anchors
 
 - `renderer/Include/qray/qray.h` — existing C ABI.
 - `renderer/Source/ClusterLightLists.cpp`, `renderer/Source/LightManager.cpp` — lighting runtime.
@@ -131,6 +170,45 @@ Required before moving `renderer/` to its own repository:
 - `Quake/gl_rlight.c`, `Quake/r_world.c` — Quake host / reference adapter inputs.
 - `Quake/qr_editor.c`, `Quake/qr_gui.cpp` — in-engine editor (coupled).
 - `renderer/Source/VulkanDevice.cpp`, `ASManager` — Vulkan/AS ownership.
+
+## 4.5 Spatial contract — implementation 2026-10-22
+
+- SDK branch: `feature/universalize`; host branch: `feature/adapt-qray-sdk`.
+  See `git log` for the current revision of each branch.
+- `QrSpatialConvention` declares the host's canonical signed axes,
+  right-handedness and `unitsPerMeter`. `qrSetSpatialConvention` accepts it
+  once after instance creation, before the first spatial upload or drawn frame.
+- The host may use its own units and a Z-up or Y-up frame in either handedness.
+  The SDK normalizes the data into its existing right-handed, Z-up,
+  40-units-per-meter scene space, so the tuned renderer constants and
+  cloud/sky shaders remain unchanged. Geometry conversion is folded into the
+  instance transform except for the world-light face and smoke raster vertex
+  arrays; light positions/directions/areas, the relative power of positional
+  lights, cluster bounds/reaches, fog, particles, sky fields and frame camera
+  data are converted at their upload boundaries.
+- A left-handed frame is mirrored into canonical space and indexed triangle
+  winding is reversed for geometry, polygon lights and world-light faces. The
+  host supplies its native handedness view matrix. Arbitrary world rotations
+  and non-uniform instance scale remain host-side conversion.
+- Screen-space `SWAPCHAIN` raster geometry is exempt and never locks the
+  world frame.
+- QuakeRay subscribes with the identity convention and keeps all existing
+  Quake-unit/Z-up data unchanged.
+- `rayLength` is host-controlled up to the 10,000,000-scene-unit safety
+  ceiling. The world-depth target is `R32_SFLOAT`; the shader sky sentinel
+  follows `2 * rayLength`. The former 250 m envelope is retired.
+- `qrSetSmokeWindDirection` supplies wind in host scene space. If a cluster
+  upload omits both PVS tables, the SDK synthesizes all-visible rows so the
+  no-PVS path no longer degrades to top-up only.
+- `qray_spatial_twin_gpu` renders identity, Y-up/meter and mirrored twins from
+  independently authored host data and compares final LDR readback. It covers
+  geometry, camera, directed/spherical lights, a world-light cluster with
+  omitted PVS tables, level fog, a particle upload and the readback path.
+  `qray_worldlights_tests` checks the synthesized all-visible rows. Water,
+  clouds and UI remain covered by the existing host/runtime tests and
+  source-level boundary checks, not by this twin.
+- SDK documentation: `renderer/docs/spatial-contract.md` and
+  `renderer/docs/embedding.md`.
 
 ## 5. Phases
 
@@ -205,7 +283,7 @@ Required before moving `renderer/` to its own repository:
 | Risk | Observation | Mitigation |
 |---|---|---|
 | Core capability gap | A host needs skinned meshes, lightmaps or water and the core lacks them | Treat as a core feature request; do not hide it in the adapter |
-| No-PVS quality | OLEF >2% or cluster 0 empty | Host provides visibility; or core adds a spatial/visibility provider |
+| No-PVS quality | OLEF >2% or cluster 0 empty | Omitted PVS tables synthesize all-visible rows; a host with occlusion data can still provide PVS; a spatial provider remains a separate quality option |
 | Material cost | Texture re-synthesis >16 ms per edit | 1x1 updateable RME override; measure before promising interactivity |
 | Editor extraction | 9,156-line `qr_editor.c`, 106 `Cvar_`, 49 `cl.` | In-engine prototype first; extract a shared core, do not move the file |
 | Stable IDs | No map corpus; recompile/orphan behavior untested | Build a two-BSP corpus; report unresolved entries; never guess |

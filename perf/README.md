@@ -21,7 +21,7 @@ Run the GPU tests:
 ctest --test-dir build\Debug -R qray_dtal_perf --output-on-failure
 ```
 
-The first run writes the baseline to `build\Debug\renderer\Tests\DtalPerf.baseline.txt` and passes. Later runs compare each case (`small`, `medium`, `large`, `huge`; more lights and samples per thread per case) with a 20 per cent tolerance. Accept intentionally changed numbers with:
+The first run writes the baseline to `build\Debug\renderer\Tests\DtalPerf.baseline.txt` and passes. Later runs compare each case (`small`, `medium`, `large`, `huge`; more lights and samples per thread per case) with a 20 per cent tolerance. The probe performs a short heavy warm-up before timing because short GPU dispatches otherwise report idle-clock values. A baseline recorded under a different power plan, driver or GPU clock state can still be stale: verify the result after a warm-up and re-record it with the command below when the machine has changed. Accept intentionally changed numbers with:
 
 ```powershell
 build\Debug\renderer\Tests\qray_dtal_perf.exe build\Debug\renderer\Tests\DtalPerf.comp.spv build\Debug\renderer\Tests\DtalPerf.baseline.txt --update

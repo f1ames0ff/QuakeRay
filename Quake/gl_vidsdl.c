@@ -3328,6 +3328,18 @@ static void GL_InitInstance (void)
 	QrResult r = qrCreateInstance (&info, &vulkan_globals.instance);
 	QR_CHECK (r);
 
+	QrSpatialConvention spatial = {
+		.size = sizeof (QrSpatialConvention),
+		.version = QR_SPATIAL_CONVENTION_VERSION,
+		.sceneXAxis = QR_AXIS_POSITIVE_X,
+		.sceneYAxis = QR_AXIS_POSITIVE_Y,
+		.sceneZAxis = QR_AXIS_POSITIVE_Z,
+		.hostIsRightHanded = QR_TRUE,
+		.unitsPerMeter = QR_SCENE_UNITS_PER_METER,
+	};
+	r = qrSetSpatialConvention (vulkan_globals.instance, &spatial);
+	QR_CHECK (r);
+
 	RT_MAT_Init ();
 	RT_LIGHT_Init ();
 
