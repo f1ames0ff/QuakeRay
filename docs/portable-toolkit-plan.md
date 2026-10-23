@@ -182,23 +182,24 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
   right-handedness and `unitsPerMeter`. `qrSetSpatialConvention` accepts it
   once after instance creation, before the first spatial upload or drawn frame.
 - The host may use its own units and a Z-up or Y-up frame in either handedness.
-  The SDK normalizes the data into its existing right-handed, Z-up,
-  40-units-per-meter scene space, so the tuned renderer constants and
-  cloud/sky shaders remain unchanged. Geometry conversion is folded into the
+  The SDK maps the data into its existing right-handed, Z-up scene space and
+  keeps a 1:1 meter scale. Geometry conversion is folded into the
   instance transform except for the world-light face and smoke raster vertex
-  arrays; light positions/directions/areas, the relative power of positional
-  lights, cluster bounds/reaches, fog, particles, sky fields and frame camera
-  data are converted at their upload boundaries.
+  arrays; light positions/directions/areas, cluster bounds/reaches, fog,
+  particles, sky fields and frame camera data are converted at their upload
+  boundaries. Relative light power remains the host's calibrated value; the
+  Quake adapter removes its legacy unit-area factor before the SDK encodes
+  the metric emitting area.
 - A left-handed frame is mirrored into canonical space and indexed triangle
   winding is reversed for geometry, polygon lights and world-light faces. The
   host supplies its native handedness view matrix. Arbitrary world rotations
   and non-uniform instance scale remain host-side conversion.
 - Screen-space `SWAPCHAIN` raster geometry is exempt and never locks the
   world frame.
-- QuakeRay subscribes with the identity convention and keeps all existing
-  Quake-unit/Z-up data unchanged.
-- `rayLength` is host-controlled up to the 10,000,000-scene-unit safety
-  ceiling. The world-depth target is `R32_SFLOAT`; the shader sky sentinel
+- QuakeRay subscribes with the identity convention and converts its existing
+  Quake-unit/Z-up data to meters at the host adapter boundary.
+- `rayLength` is host-controlled up to the 250,000 m safety ceiling. The
+  world-depth target is `R32_SFLOAT`; the shader sky sentinel
   follows `2 * rayLength`. The former 250 m envelope is retired.
 - `qrSetSmokeWindDirection` supplies wind in host scene space. If a cluster
   upload omits both PVS tables, the SDK synthesizes all-visible rows so the
@@ -219,9 +220,9 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
   layout but replaces `unitsPerMeter` with a zero-required reserved field.
   Every host now supplies lengths and positions in meters, areas in square
   meters, and inverse lengths per meter.
-- The renderer keeps its private right-handed, Z-up scale of 40 scene
-  units/meter. This preserves tuned renderer constants while removing host
-  unit selection and conversion from the public ABI.
+- The renderer keeps its private right-handed, Z-up frame at a 1:1 meter
+  scale. Internal spatial constants are expressed directly in meters, areas
+  in square meters and inverse lengths per meter.
 - `Quake/qr_spatial_adapter.*` is the Quake host boundary. It converts geometry,
   lights, clusters, fog, particles, rasterized world data, and frame parameters
   to meters, compensates for the legacy relative-light intensity fix, and
