@@ -1,3 +1,24 @@
+# Repository policy allows local actions only, so this workflow deliberately
+# contains no "uses:" step: nothing from the marketplace is allowed to run here.
+# Everything is done with the tools the windows-2022 image already ships - git,
+# CMake, Ninja and the MSVC build tools - and with the repository's own entry
+# point, build_win.ps1, which applies the pinned NVRHI patch, compiles the
+# shaders and deploys the runtime assets.
+#
+# The image does not ship the Vulkan SDK, and the project needs it for two
+# reasons: NVRHI refuses headers older than VK_HEADER_VERSION 318 and needs
+# vulkan.hpp, and build_shaders.ps1 needs a dxc that was built with
+# -DENABLE_SPIRV_CODEGEN=ON. The dxc that ships in the Windows SDK is not that
+# dxc - it fails with "SPIR-V CodeGen not available" - so the step below
+# installs the SDK, pinned to the version the project is developed against. If
+# the vendor installer refuses to cooperate in a headless session, the step
+# assembles the same three pieces - headers, vulkan-1.lib, dxc - from their
+# upstream releases instead of skipping the dependency.
+#
+# Tests: the GPU tests are labelled "gpu" and are skipped here. A hosted runner
+# has no Vulkan device, and those tests fail hard rather than skipping when
+# device creation fails, so running them would report a failure that says
+# nothing about the change. Run "ctest -L gpu" locally for that coverage.
 name: Windows CI
 
 on:
@@ -5,32 +26,173 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: ${{ matrix.configuration }}
     runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
         configuration: [Release, Debug]
+
+    env:
+      QR_CONFIG: ${{ matrix.configuration }}
+
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - name: Check out the sources
+        shell: pwsh
+        env:
+          # refs/heads/<branch> for a push, refs/pull/<n>/merge for a pull
+          # request - in both cases exactly the commit that has to be built.
+          QR_REF: ${{ github.ref }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          git init -q .
+          git remote add origin "https://github.com/$env:GITHUB_REPOSITORY.git"
+          git fetch --no-tags --depth 1 origin $env:QR_REF
+          if ($LASTEXITCODE -ne 0) { throw "fetch of $env:QR_REF failed" }
+          git checkout --force FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { throw "checkout of FETCH_HEAD failed" }
+          git submodule update --init --recursive --depth 1
+          if ($LASTEXITCODE -ne 0) { throw "submodule checkout failed" }
+          git log -1 --format='building %H %s'
 
-    - name: Apply the NVRHI patch
-      shell: pwsh
-      run: git -C third_party/nvrhi apply "$env:GITHUB_WORKSPACE/third_party/nvrhi-max-binding-layouts.patch"
+      - name: Install the Vulkan SDK
+        shell: pwsh
+        env:
+          QR_VULKAN_SDK_VERSION: 1.4.321.1
+          QR_DXC_VERSION: v1.9.2609
+          QR_DXC_ASSET: dxc_2026_09_29.zip
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:QR_VULKAN_SDK_VERSION
 
-    - name: Build QuakeRay
-      run: |
-        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
-        cmake --build build
+          # The three things the build actually consumes from an SDK.
+          function Test-Sdk([string] $root) {
+            if (-not (Test-Path (Join-Path $root 'Bin\dxc.exe'))) { return $false }
+            if (-not (Test-Path (Join-Path $root 'Lib\vulkan-1.lib'))) { return $false }
+            $core = Join-Path $root 'Include\vulkan\vulkan_core.h'
+            if (-not (Test-Path $core)) { return $false }
+            if (-not (Test-Path (Join-Path $root 'Include\vulkan\vulkan.hpp'))) { return $false }
+            # NVRHI refuses anything below 1.4.318 (see third_party/nvrhi).
+            $match = Select-String -Path $core -Pattern 'define VK_HEADER_VERSION (\d+)' | Select-Object -First 1
+            return [int] $match.Matches.Groups[1].Value -ge 318
+          }
 
-    - name: Upload QuakeRay
-      uses: actions/upload-artifact@v4
-      with:
-        name: QuakeRay-${{ matrix.configuration }}
-        path: |
-            build/quakeray.exe
-            build/*.dll
+          # A future image may start shipping the SDK; prefer it over a download.
+          $sdk = Get-ChildItem "${env:ProgramFiles}\VulkanSDK" -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if ($sdk -and (Test-Sdk $sdk)) {
+            Write-Host "using the preinstalled SDK at $sdk"
+          } else {
+            $sdk = $null
+            Write-Host "the image has no usable Vulkan SDK, installing $version"
+
+            $target = Join-Path $env:RUNNER_TEMP "vulkan-sdk\$version"
+            $installer = Join-Path $env:RUNNER_TEMP 'vulkan_sdk.exe'
+            $url = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
+            curl.exe --location --fail --silent --show-error --retry 3 --output $installer $url
+            if ($LASTEXITCODE -ne 0) { throw "download of $url failed with $LASTEXITCODE" }
+            $bytes = (Get-Item $installer).Length
+            if ($bytes -lt 100MB) { throw "the installer is only $bytes bytes, refusing to run it" }
+
+            # NSIS: /S is silent, and /D= has to be the last argument and
+            # unquoted, which is also why the target path must not be quoted.
+            $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$target" -Wait -PassThru
+            Write-Host "the installer exited with $($process.ExitCode)"
+
+            if (Test-Sdk $target) {
+              $sdk = $target
+            } else {
+              # The installer keeps its components in its own session and can
+              # return before they land, so instead of fighting it, assemble the
+              # same three pieces from their upstream releases. Nothing is
+              # skipped: the build still gets real headers, a real import
+              # library and a real dxc with SPIR-V code generation.
+              Write-Host "the installer produced no usable SDK, assembling one from upstream releases"
+              $sdk = Join-Path $env:RUNNER_TEMP 'vulkan-sdk-minimal'
+
+              $headerTag = 'vulkan-sdk-' + (($version -split '\.')[0..2] -join '.') + '.0'
+              $headersZip = Join-Path $env:RUNNER_TEMP 'vulkan-headers.zip'
+              $headersUrl = "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/$headerTag.zip"
+              curl.exe --location --fail --silent --show-error --retry 3 --output $headersZip $headersUrl
+              if ($LASTEXITCODE -ne 0) { throw "download of $headersUrl failed with $LASTEXITCODE" }
+              Expand-Archive -Path $headersZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Force
+              $headersRoot = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Directory |
+                Select-Object -First 1 -ExpandProperty FullName
+
+              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Include') | Out-Null
+              Copy-Item (Join-Path $headersRoot 'include\*') (Join-Path $sdk 'Include') -Recurse -Force
+              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Lib') | Out-Null
+              Copy-Item 'Windows\misc\x64\vulkan-1.lib' (Join-Path $sdk 'Lib') -Force
+
+              $dxcZip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
+              $dxcUrl = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$env:QR_DXC_VERSION/$env:QR_DXC_ASSET"
+              curl.exe --location --fail --silent --show-error --retry 3 --output $dxcZip $dxcUrl
+              if ($LASTEXITCODE -ne 0) { throw "download of $dxcUrl failed with $LASTEXITCODE" }
+              Expand-Archive -Path $dxcZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'dxc') -Force
+              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Bin') | Out-Null
+              Copy-Item (Join-Path $env:RUNNER_TEMP 'dxc\bin\x64\*') (Join-Path $sdk 'Bin') -Force
+            }
+          }
+
+          # Fail here rather than inside the build if the install did not land.
+          foreach ($required in 'Bin\dxc.exe', 'Include\vulkan\vulkan.hpp', 'Lib\vulkan-1.lib') {
+            if (-not (Test-Path (Join-Path $sdk $required))) {
+              throw "$required is missing from $sdk"
+            }
+          }
+          Get-Content (Join-Path $sdk 'InstallationLog.txt') -ErrorAction SilentlyContinue |
+            Select-String -Pattern 'Version' | Select-Object -First 1
+
+          "VULKAN_SDK=$sdk" | Add-Content $env:GITHUB_ENV
+          (Join-Path $sdk 'Bin') | Add-Content $env:GITHUB_PATH
+
+      - name: Check the toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:VULKAN_SDK) {
+            throw "VULKAN_SDK is not set. build_shaders.ps1 needs the Vulkan SDK for dxc."
+          }
+          $dxc = Join-Path $env:VULKAN_SDK 'Bin\dxc.exe'
+          if (-not (Test-Path $dxc)) { throw "$dxc is missing" }
+
+          # The reason this step exists: a dxc that reports --version happily
+          # still cannot emit SPIR-V, and the build would fail much later.
+          $probe = Join-Path $env:RUNNER_TEMP 'spirv-probe.hlsl'
+          Set-Content -Path $probe -Value '[numthreads(1, 1, 1)] void main() { }'
+          $out = Join-Path $env:RUNNER_TEMP 'spirv-probe.spv'
+          & $dxc -spirv -T cs_6_6 -E main $probe -Fo $out
+          if ($LASTEXITCODE -ne 0) { throw "$dxc cannot emit SPIR-V (exit $LASTEXITCODE)" }
+          if (-not (Test-Path $out)) { throw "$dxc produced no SPIR-V" }
+
+          Write-Host "VULKAN_SDK = $env:VULKAN_SDK"
+          Write-Host "dxc        = $dxc"
+          Write-Host "cmake      = $((Get-Command cmake).Source)"
+          Write-Host "ninja      = $((Get-Command ninja).Source)"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          & .\build_win.ps1 $env:QR_CONFIG -Tests
+          if ($LASTEXITCODE -ne 0) { throw "build_win.ps1 exited with $LASTEXITCODE" }
+
+      - name: Test
+        shell: pwsh
+        run: |
+          ctest --test-dir "build\$env:QR_CONFIG" --output-on-failure -LE gpu
+          if ($LASTEXITCODE -ne 0) { throw "ctest exited with $LASTEXITCODE" }
+
+      - name: Show the build receipt
+        shell: pwsh
+        run: Get-Content "build\$env:QR_CONFIG\qray-build.json"

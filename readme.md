@@ -160,6 +160,21 @@ For an existing checkout, run `git submodule update --init --recursive` before b
 
 Use **`build_win.ps1`**, not just a plain CMake build: it compiles the shaders, prepares the game assets and applies the pinned NVRHI patch (`third_party/nvrhi-max-binding-layouts.patch`); an IDE or manual CMake build has to apply that patch itself. Quake game files are still required, just as for a packaged release.
 
+### Standalone editor
+
+The optional editor is built separately and writes only into the project:
+
+```powershell
+.\build_editor.ps1
+.\build\editor\editor\quakerayeditor.exe
+```
+
+`build_editor.ps1` prepares the MSVC and Vulkan environment, builds the shaders,
+applies the pinned NVRHI patch for the duration of the build, and reuses the
+repository `gfx/textures` assets. The executable and its runtime assets are
+deployed under `build\editor\editor\`. No user-profile or AppData paths are
+used.
+
 ## Credits and license
 
 Created and maintained by **f1ames0ff**, building on Quake, QuakeSpasm and vkQuake, with the renderer derived from NVIDIA's Quake 2 RTX, and the work of many contributors. See [AUTHORS.md](AUTHORS.md) for credits and [changelog.md](changelog.md) for release notes.

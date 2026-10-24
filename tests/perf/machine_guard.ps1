@@ -6,8 +6,12 @@ function Enter-QuakeRayMachine {
         try { $locked = $mutex.WaitOne([TimeSpan]::FromSeconds($TimeoutSeconds)) }
         catch [System.Threading.AbandonedMutexException] { $locked = $true }
         if (-not $locked) { throw 'MACHINE_BUSY: QuakeRay machine guard is occupied; defer this operation.' }
+        # A terminated process keeps its entry visible to Get-Process while another
+        # handle to it stays open; such an entry owns no threads and cannot contend
+        # with a measurement run.
         $busy = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)'
+            $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)' -and
+            $_.Threads.Count -gt 0
         })
         if ($busy.Count) { throw "MACHINE_BUSY: foreign game/build processes are running: $($busy.Id -join ', ')." }
         $ancestors = @($PID)
