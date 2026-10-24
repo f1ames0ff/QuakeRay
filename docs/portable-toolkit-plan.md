@@ -1,6 +1,6 @@
 # QuakeRay Portable Toolkit — Plan
 
-Status: draft. Revision 7. Date: 2026-10-24.
+Status: draft. Revision 8. Date: 2026-10-24.
 
 Diagram: [architecture-portable-toolkit.html](architecture-portable-toolkit.html)
 
@@ -19,20 +19,23 @@ QuakeRay Portable Toolkit is a **source-level toolkit**, not an engine. The supp
 
 Out of scope for this plan:
 
-- **Goal B — embedded GPU**: host-owned `VkDevice`, queue, target images and synchronization; rendering inside the host engine's viewport.
+- **Host-owned GPU integration**: host-owned `VkDevice`, queues, target images and
+  synchronization; rendering inside the host engine's viewport. This is excluded
+  from the roadmap, not a deferred phase of Goal A.
 - Per-engine adapters and loaders: host engines implement their own adapters.
 - Linux/non-Win32, proprietary-host licensing, Unreal/Unity/Source integration.
 - Geometry editing, BSP compilation, game logic, entity authoring.
 - MDL v10 / skeletal animation unless it becomes a generic core capability.
 
-Goal B is a future mode, gated by a product and licensing decision. No host-owned-target,
-device-embedding or output-mode interface is frozen in this revision; those names and contracts
-must be designed only if Goal B is approved.
+Host-owned device/target/output integration would be a separate product and
+licensing decision. It is not scheduled, has no reserved API identifiers, and
+cannot be enabled by a host adapter alone.
 
 ## 2. Planned responsibility split
 
-This section is target architecture, not a claim that every named interface already
-exists. The current SDK contract is the public C ABI in `qray.h`.
+This section is target architecture, not a claim that every named interface
+already exists. The transport ABI remains the public C ABI in `qray.h`; the
+optional C++20 host-driver layer lowers through that same ABI.
 
 | Area | QuakeRay modules | Host engine |
 |---|---|---|
@@ -43,14 +46,17 @@ exists. The current SDK contract is the public C ABI in `qray.h`.
 | Host contracts | `IQrayHost`, `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar` | Implements the host interface and supplies the renderer transport data |
 | Assets | — | Map/model/texture loaders, material mapping, unit/coordinate conversion |
 | Spatial | Cluster consumer | BSP/PVS or a future spatial provider (`QraySpatialProvider` placeholder) |
-| GPU | Owns device/window in Goal A | Provides device/target/sync only in Goal B |
+| GPU | Owns window, Vulkan/NVRHI device, swapchain, targets and synchronization | Supplies window, data and host composition inputs |
 | Game logic | — | Entity I/O, triggers, AI, animation, save/load |
 
 Rules:
 
 - `lighting`, `authoring` and `editor core` do not include engine headers and do not know about Quake.
 - The Quake adapter lives in `hosts/quake` and is the reference implementation, not part of the core.
-- If a host cannot express its data, that is a **core capability gap** (for example, skinned meshes or lightmaps), not an adapter bug. An adapter cannot invent a renderer feature.
+- If a host cannot express its data through these contracts, classify the
+  limitation as host-owned preprocessing, an SDK core gap, or out-of-scope
+  integration. Do not label an intentionally host-owned effect as an SDK
+  defect.
 - The host adapter is responsible for performance: no per-frame world rebuild, no copies of unchanged data, no hidden allocations in the frame path.
 
 ## 3. Planned target architecture
@@ -354,13 +360,6 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 - A second real host is optional evidence for broader adapter portability, not a
   release prerequisite for SDK contract version 1.0.
 
-### Phase 6 — Future Goal B (only if chosen)
-
-- Host-target/device/output concepts (working names only; none are reserved API
-  identifiers) and external device/queue/target/sync.
-- Host-owned adapter; BLAS/TLAS remain core-owned.
-- Product and licensing decision first.
-
 ## 6. Acceptance criteria
 
 - **Goal A:** `quakerayeditor` loads a Quake map, renders RT, edits material and
@@ -376,7 +375,7 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 ## 7. Non-goals
 
 - Per-engine loaders/converters in the QuakeRay repository.
-- Embedded GPU rendering (Goal B) in the current plan.
+- Host-owned Vulkan device, queue, target and synchronization integration.
 - Linux/non-Win32, proprietary-host licensing, UE/Unity/Source integration.
 - Geometry editing, BSP compilation, entity authoring, game logic.
 - MDL v10/skeletal animation unless it becomes a generic core capability.
@@ -386,12 +385,12 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 
 | Risk | Observation | Mitigation |
 |---|---|---|
-| Core capability gap | A host needs skinned meshes, lightmaps or water and the core lacks them | Treat as a core feature request; do not hide it in the adapter |
+| Scope classification | Host-owned deformation, stencil/RTT, arbitrary blend equations or multi-view is mistaken for an SDK gap | State the division explicitly; require an equivalent upload or a host-owned composition path |
 | No-PVS quality | OLEF >2% or cluster 0 empty | Omitted PVS tables synthesize all-visible rows; a host with occlusion data can still provide PVS; a spatial provider remains a separate quality option |
 | Material cost | Texture re-synthesis >16 ms per edit | 1x1 updateable RME override; measure before promising interactivity |
 | Editor extraction | 9,156-line `qr_editor.c`, 106 `Cvar_`, 49 `cl.` | In-engine prototype first; extract a shared core, do not move the file |
 | Stable IDs | No map corpus; recompile/orphan behavior untested | Build a two-BSP corpus; report unresolved entries; never guess |
-| Adapter leakage | Quake assumptions in the core | Include-path guard + second-host conformance tests |
+| Adapter leakage | Quake assumptions in the core | Include-path guard, package consumer and the QuakeRay reference integration |
 | Zero-overhead claims | No HEAD baseline; missing counters | Phase 0 baseline; add counters; measure before claiming |
 
 ## 9. Open decisions
@@ -399,4 +398,3 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 - Whether a second real host should be added later to broaden observed adapter portability.
 - Whether HL1-style lightmaps become an explicit core term or the product is framed as "RT relight".
 - Whether the shared editor core reuses `qr_gui` panels or starts a new UI; the current plan prefers reuse.
-- Goal B output/device contracts remain undesigned and unreserved.
