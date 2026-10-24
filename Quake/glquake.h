@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "atomics.h"
 #include "tasks.h"
+#include "qr_spatial_adapter.h"
 
 void          GL_WaitForDeviceIdle (void);
 qboolean      GL_BeginRendering (task_handle_t *begin_rendering_task, int *x, int *y, int *width, int *height);
@@ -556,7 +557,7 @@ static inline uint32_t RT_PackColorToUint32_FromFloat01(float r, float g, float 
 		(dst)[2] = (z);           \
 	} while (0)
 
-#define QUAKEUNIT_IN_METERS    0.025f
+#define QUAKEUNIT_IN_METERS    QR_QUAKE_UNIT_IN_METERS
 #define QUAKEUNIT_TO_METRIC(x) ((x)*QUAKEUNIT_IN_METERS)
 #define METRIC_TO_QUAKEUNIT(x) ((x) / QUAKEUNIT_IN_METERS)
 

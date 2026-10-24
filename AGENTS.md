@@ -59,6 +59,41 @@ The JetBrains IDE endpoint is a separate server (`quakeray_ide`) and is not the 
 `server_status` is not in the session catalog, verify this configuration and reconnect
 `quakeray` through `/mcps`.
 
+## Codex CLI and desktop
+
+Codex does not read OpenCode's `.mcp.json` or `opencode.json`. It loads MCP servers from
+`%CODEX_HOME%\config.toml` (normally `%USERPROFILE%\.codex\config.toml`) under
+`[mcp_servers.quakeray]`.
+
+Register the server once with the Codex CLI. Use `uv --directory` so stdio startup does not
+depend on the Codex process working directory:
+
+```powershell
+codex mcp add quakeray `
+  --env QUAKERAY_ROOT=C:\absolute\path\to\rhi-setup-stage5 `
+  --env QUAKERAY_BUILD=C:\absolute\path\to\rhi-setup-stage5\build\Debug `
+  --env QUAKERAY_IMPORT_ROOTS=C:\absolute\path\to\rhi-setup-stage5\build\Debug\ad `
+  --env QUAKERAY_ENABLE_JOBS=0 `
+  --env QUAKERAY_ENABLE_RESEARCH=0 `
+  -- C:\Users\YOUR_USER\.local\bin\uv.exe `
+  --directory C:\absolute\path\to\rhi-setup-stage5 `
+  run --offline --frozen `
+  --project C:\absolute\path\to\rhi-setup-stage5\tools\quakeray_mcp `
+  python -B -m quakeray_mcp
+```
+
+If PowerShell script execution policy blocks `codex.ps1`, invoke the installed
+`codex.exe` directly. Verify registration with `codex mcp list` and `codex mcp get quakeray`.
+Before registering, confirm the same server/project passes the standalone `--selfcheck`
+command above. Do not add `--selfcheck` to the registered stdio server command; that mode
+prints diagnostics and exits instead of serving MCP.
+
+Codex builds the MCP tool catalog when a thread starts. Adding or changing
+`mcp_servers.quakeray` does not hot-add tools to the current thread: restart Codex or
+resume the thread after the configuration change. A running thread that reports
+"MCP is unavailable" before `server_status` can be queried is not evidence that the
+registered server is broken.
+
 ## Mandatory engine-MCP workflow
 
 1. After reading the architecture entry point, discover the registered `quakeray` tools and call `server_status` before investigation or changes. Check its source HEAD, working changes, runtime readiness and process ownership against this worktree. Do not use evidence from a different checkout or stale binary.

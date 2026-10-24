@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "palette.h"
 #include "qr_gui.h"
+#include "qr_gpu_context.h"
 #include "cursor.h"
 #include "rt_material.h"
 #include "rt_lights.h"
@@ -98,7 +99,7 @@ static cvar_t                   vid_fullscreen = {"vid_fullscreen", "0", CVAR_AR
 static cvar_t                   vid_width = {"vid_width", "-1", CVAR_ARCHIVE};         // RT: set to "-1", so we have 
 static cvar_t                   vid_height = {"vid_height", "-1", CVAR_ARCHIVE};       //     desktop resolution at the first time
 static cvar_t                   vid_refreshrate = {"vid_refreshrate", "60", CVAR_ARCHIVE};
-cvar_t                          vid_vsync = {"vid_vsync", "2", CVAR_ARCHIVE};
+cvar_t                          vid_vsync = {"vid_vsync", "0", CVAR_ARCHIVE};
 static cvar_t                   vid_maxframelatency = {"vid_maxframelatency", "0", CVAR_ROM};
 
 int                             vid_display_refresh = 0;
@@ -278,8 +279,8 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_dtal_proxy_model_minarea, "0") \
 	CVAR_DEF_T (rt_dtal_maxpolys, "64") \
 	CVAR_DEF_T (rt_dtal_clearance, "1") \
-	CVAR_DEF_T (rt_dtal_groups, "1") \
-	CVAR_DEF_T (rt_dtal_spacing, "8") \
+	CVAR_DEF_T (rt_dtal_groups, "0") \
+	CVAR_DEF_T (rt_dtal_spacing, "128") \
 	CVAR_DEF_T (rt_dtal_maxgroups, "2048") \
 	CVAR_DEF_T (rt_dtal_lod, "0") \
 	CVAR_DEF_T (rt_dtal_lod_start, "512") \
@@ -290,7 +291,7 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_dtal_lod_dwell, "0.25") \
 	CVAR_DEF_T (rt_dtal_lod_interval, "0.05") \
     \
-	CVAR_DEF_T (rt_reflrefr_depth, "2") \
+	CVAR_DEF_T (rt_reflrefr_depth, "8") \
 	CVAR_DEF_T (rt_refr_glass, "1.52") \
 	CVAR_DEF_T (rt_refr_water, "1.33") \
 	CVAR_DEF_T (rt_glass_shadows, "1") \
@@ -417,6 +418,12 @@ cvar_t r_particles_overflow = {"r_particles_overflow", "0", CVAR_ARCHIVE};
 // The sun editor is a mode, not a setting: it must not come back on after a
 // restart, which would grab the sun without anybody asking for it.
 cvar_t rt_sky_sun_edit = {"rt_sky_sun_edit", "0", 0};
+
+static void RT_LockCvar (cvar_t *var)
+{
+	var->flags &= ~CVAR_ARCHIVE;
+	var->flags |= CVAR_ROM;
+}
 
 
 /*
@@ -3325,8 +3332,12 @@ static void GL_InitInstance (void)
 		.godRaysQuality = CVAR_TO_UINT32 (rt_sky_godrays_quality),
 	};
 
-	QrResult r = qrCreateInstance (&info, &vulkan_globals.instance);
+	QrResult r = QR_GpuCreateInstance (&info, &vulkan_globals.instance);
 	QR_CHECK (r);
+
+	r = QR_GpuValidateSharedContext (vulkan_globals.instance);
+	QR_CHECK (r);
+	Con_Printf ("Shared GPU context: SDK-owned NVRHI/Vulkan device validated\n");
 
 	QrSpatialConvention spatial = {
 		.size = sizeof (QrSpatialConvention),
@@ -3335,7 +3346,7 @@ static void GL_InitInstance (void)
 		.sceneYAxis = QR_AXIS_POSITIVE_Y,
 		.sceneZAxis = QR_AXIS_POSITIVE_Z,
 		.hostIsRightHanded = QR_TRUE,
-		.unitsPerMeter = QR_SCENE_UNITS_PER_METER,
+		.reserved0 = 0,
 	};
 	r = qrSetSpatialConvention (vulkan_globals.instance, &spatial);
 	QR_CHECK (r);
@@ -4542,7 +4553,11 @@ void VID_Init (void)
 		CVAR_DEF_LIST (CVAR_DEF_T)
 #undef CVAR_DEF_T
 
-		rt_enable_pvs.flags |= CVAR_ROM;
+		RT_LockCvar (&rt_enable_pvs);
+		RT_LockCvar (&rt_nee_samples);
+		RT_LockCvar (&rt_restir);
+		RT_LockCvar (&rt_restir_candidates);
+		RT_LockCvar (&rt_reflrefr_depth);
 
 		Cvar_RegisterVariable (&rt_upload_trace);
 

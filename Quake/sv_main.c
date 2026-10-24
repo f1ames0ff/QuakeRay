@@ -835,7 +835,7 @@ void SV_BuildEntityState (edict_t *ent, entity_state_t *state)
 byte       *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
 
 cvar_t sv_water_vis = {"sv_water_vis", "1", CVAR_NONE};
-cvar_t sv_novis = {"sv_novis", "1", CVAR_NONE};
+cvar_t sv_novis = {"sv_novis", "1", CVAR_ROM};
 
 static qboolean SV_WaterSeesEntity (vec3_t org, edict_t *ent)
 {

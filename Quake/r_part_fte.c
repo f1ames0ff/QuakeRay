@@ -29,7 +29,7 @@ The engine has a few builtins.
 #include "quakedef.h"
 #include "gl_heap.h"
 
-cvar_t r_fteparticles = {"r_fteparticles", "1", CVAR_ARCHIVE};
+cvar_t r_fteparticles = {"r_fteparticles", "0", CVAR_ARCHIVE};
 cvar_t r_part_emit_distance = {"r_part_emit_distance", "2048"};
 
 #ifdef PSET_SCRIPT

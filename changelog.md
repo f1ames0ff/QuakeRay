@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.51.0
+
+### Added
+- **Split release versioning** — QuakeRay host is `0.51.0`; the packaged
+  QuakeRay SDK is `0.2.0`. The public renderer C ABI remains independently
+  versioned at `1.06.0000`.
+- **SDK-owned shared GPU context** — the SDK now negotiates host Vulkan/NVRHI
+  requirements before creating its single device, returns the same NVRHI device
+  to the host as a borrowed context, and defines `BeforeRenderer` /
+  `BeforePresent` recording hooks. QuakeRay uses this path as the reference
+  host and validates a host-created NVRHI buffer during initialization.
+- **Portable host contracts** — the SDK documents the adapter boundary, lifecycle,
+  units, ordering, materials, lights, sky, post effects and explicit fallbacks
+  for pre-2005 engine features. Raster particle and traced-proxy transparency
+  now share the same vertex/draw/texture alpha contract, and conflicting
+  particle/smoke render states are rejected.
+- **Self-contained package contract** — the installed CMake target exports its
+  required compile definitions, carries the pinned NVRHI layout patch, validates
+  `c_MaxBindingLayouts >= 13`, and follows GNU install directories for the
+  FidelityFX runtime.
+
+### Changed
+- **The standard renderer profile is fixed and reproducible** — new installs
+  start with `vid_vsync 0`, `vid_maxframelatency 0`, `fov 90`,
+  `rt_dtal_groups 0`, `rt_dtal_spacing 128` and `r_fteparticles 0`.
+  `rt_enable_pvs 0`, `sv_novis 1`, `rt_restir 0`, `rt_nee_samples 2`,
+  `rt_restir_candidates 8` and `rt_reflrefr_depth 8` are read-only, so saved
+  configurations cannot silently replace the benchmarked lighting and
+  visibility policy. The stress runner rejects captures that do not report
+  this effective profile.
+
 ## v0.50.22
 
 ### Added
