@@ -1,6 +1,6 @@
 # QuakeRay Portable Toolkit — Plan
 
-Status: draft. Revision 6. Date: 2026-10-24.
+Status: draft. Revision 7. Date: 2026-10-24.
 
 Diagram: [architecture-portable-toolkit.html](architecture-portable-toolkit.html)
 
@@ -12,8 +12,9 @@ QuakeRay Portable Toolkit is a **source-level toolkit**, not an engine. The supp
 - A host engine implements an adapter that imports its map/assets into the toolkit contracts.
 - The coupled Quake editor edits lights, materials and DTAL controls. The standalone
   `quakerayeditor` now previews OBJ/BSP29 scenes, picks surfaces/lights, edits material,
-  light and render settings, and writes its session material/level documents. A generic
-  engine-free authoring core and generalized sidecar still remain future work.
+  light and render settings, and writes its session material/level documents. The SDK
+  now exposes the source-level host contracts and sidecar semantic model; a shared
+  engine-free editor core and file codec still remain future work.
 - The existing `quakeray.exe` is the **reference Quake host**, not a new binary. There is no separate `qray_game` product.
 
 Out of scope for this plan:
@@ -39,7 +40,7 @@ exists. The current SDK contract is the public C ABI in `qray.h`.
 | Lighting | `lighting`: clusters, DTAL runtime, registry, publication | Provides cluster/spatial data and light sources |
 | Authoring | `authoring`: sidecar model, merge, stable IDs | Maps its assets to the model |
 | Editor | current `quakerayeditor` + future shared editor core | Provides picking/selection/apply hooks if embedding the editor |
-| Planned contracts | `IQrayHost`, `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar` placeholders | Implements the future host interface; passes conformance tests |
+| Host contracts | `IQrayHost`, `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar` | Implements the host interface and supplies the renderer transport data |
 | Assets | — | Map/model/texture loaders, material mapping, unit/coordinate conversion |
 | Spatial | Cluster consumer | BSP/PVS or a future spatial provider (`QraySpatialProvider` placeholder) |
 | GPU | Owns device/window in Goal A | Provides device/target/sync only in Goal B |
@@ -65,13 +66,18 @@ Layers:
 
 The existing `qray.h` upload path is preserved. There is no second scene-transfer path and no monolithic `QrayFrame`.
 
-Planned logical contracts (these are not present in the current `qray.h` ABI):
+Implemented source-level logical contracts in `renderer/Include/qray/host_contract.h`
+(these are not a second part of the `qray.h` C ABI):
 
 - `QraySceneAsset` — static map resources: surfaces, materials, authored lights, DTAL groups, source keys. Consumed at bind/load; core copies synchronously.
 - `QrayFrameView` — camera, projection, viewport, exposure, `viewId`, `QR_VIEW_RESET_HISTORY`.
 - `QrayFrameUpdates` — typed deltas (transform, texcoords, material contents, light add/modify, DTAL) and typed streams (particles, dynamic geometry).
 - `IQrayHost` — `Caps`, `Attach`/`Detach`, `SurfaceKey`/`ResolveSurface`/`LightKey`, `Refresh`, `EvaluateStyles`, `ApplySidecar` with per-entry report, `LoadAuthoredLights`, optional `Pick`.
 - `QraySidecar` — versioned authoring intent: materials, lights, DTAL groups. Not a serialization of runtime structs.
+
+`QraySceneBinding` lowers scene and frame records into the existing `qr*`
+calls. `host-driver-contract.md` in the SDK defines ownership, supported
+updates, failure behavior and the unsupported-feature boundary.
 
 Ownership rule: **borrow for the call, copy before return.** No `qray.h` entry point retains a host pointer. Core owns GPU resources and BLAS/TLAS. The host never supplies acceleration structures.
 
@@ -318,10 +324,15 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 
 ### Phase 2 — Contract spec and conformance
 
-- Freeze `IQrayHost`, `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar`.
-- Versioning, capability flags, ownership/lifetime, borrowed views, delta/stream split.
-- Mock/synthetic host and conformance tests.
-- No engine headers in `lighting`, `authoring`, `editor core`.
+- **Implemented foundation:** source-level `IQrayHost`, `QraySceneAsset`,
+  `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar`, versioned headers,
+  capability flags, ownership/lifetime and file codec boundary.
+- **Implemented lowering:** `QraySceneBinding` uses the existing `qray.h`
+  upload/draw calls and never introduces a second scene path.
+- **Implemented conformance:** fake-transport call-order and validation tests,
+  installed-package linkage and the existing Quake/GPU regression routes.
+- **Remaining authoring work:** shared engine-free editor core, generic file
+  codec and migration of the existing YAML writers.
 
 ### Phase 3 — Standalone editor extraction
 
@@ -336,11 +347,12 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 - Counters: `staticSubmits`, `materialUpdates`, `materialBytes`, `authoringActive`, allocation count.
 - No hidden `Refresh` rebuilds; no `vkDeviceWaitIdle` in the normal frame path.
 
-### Phase 5 — Second host validation
+### Phase 5 — Direct reference-host validation
 
-- A host-owned adapter for a second engine, starting with a data-only static map + lights + editor sidecar.
-- The adapter is not part of the core; it must pass the conformance tests.
-- This proves adapter thickness, not non-BSP genericity.
+- Use the existing QuakeRay adapter and task graph as the required real-host validation.
+- Run the contract through the same meter boundary and production renderer path.
+- A second real host is optional evidence for broader adapter portability, not a
+  release prerequisite for SDK contract version 1.0.
 
 ### Phase 6 — Future Goal B (only if chosen)
 
@@ -384,7 +396,7 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 
 ## 9. Open decisions
 
-- Which second host to validate first (host-owned adapter; data-only first).
+- Whether a second real host should be added later to broaden observed adapter portability.
 - Whether HL1-style lightmaps become an explicit core term or the product is framed as "RT relight".
 - Whether the shared editor core reuses `qr_gui` panels or starts a new UI; the current plan prefers reuse.
 - Goal B output/device contracts remain undesigned and unreserved.

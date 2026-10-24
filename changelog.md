@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.0
+## v0.1.0
 
 ### Added
 - **Portable host contracts** — the SDK documents the adapter boundary, lifecycle,

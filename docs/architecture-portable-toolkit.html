@@ -147,12 +147,13 @@
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>QuakeRay Portable Toolkit — Architecture (rev 6 · Goal A)</h1>
+    <h1>QuakeRay Portable Toolkit — Architecture (rev 7 · Goal A)</h1>
     <p class="subtitle">
       <b>Goal A: standalone toolkit.</b> QuakeRay owns the window, Vulkan device and swapchain; host adapters
       import another engine's data. The existing <code>qray.h</code> upload path is preserved; there is no
-      monolithic <code>QrayFrame</code> and no second scene-transfer path. Geometry is read-only; the
-      editor works on lighting, material and session data only. Embedded GPU (Goal B) is deferred.
+      monolithic <code>QrayFrame</code> and no second scene-transfer path. The source-level scene, frame,
+      update, host and sidecar contracts are implemented in <code>host_contract.h</code>. Geometry is
+      read-only; the editor works on lighting, material and session data only. Embedded GPU (Goal B) is deferred.
     </p>
 
     <div class="legend">
@@ -233,15 +234,15 @@
         <tspan x="1216" dy="18">host callbacks: pick, camera, re-synthesize, apply</tspan>
       </text>
 
-      <rect x="1200" y="300" width="560" height="120" class="box authoring future"/>
-      <text x="1216" y="328" class="title">QraySidecar — versioned JSON</text>
-      <text x="1216" y="346" class="sub">authoring intent, not runtime structs</text>
+      <rect x="1200" y="300" width="560" height="120" class="box authoring current"/>
+      <text x="1216" y="328" class="title">QraySidecar — versioned semantic intent</text>
+      <text x="1216" y="346" class="sub">host-owned file codec · SDK validation/reporting</text>
       <text x="1216" y="370" class="body">
         <tspan x="1216" dy="0">materials · lights · DTAL groups</tspan>
         <tspan x="1216" dy="18">validate refs · reject stale · report orphans</tspan>
       </text>
 
-      <rect x="1200" y="460" width="560" height="120" class="box authoring future"/>
+      <rect x="1200" y="460" width="560" height="120" class="box authoring current"/>
       <text x="1216" y="488" class="title">Stable identity — by purpose</text>
       <text x="1216" y="506" class="sub">three namespaces, never mixed</text>
       <text x="1216" y="530" class="body">
@@ -250,9 +251,9 @@
         <tspan x="1216" dy="18">runtime uniqueID: GPU / history namespace</tspan>
       </text>
 
-      <rect x="1200" y="620" width="560" height="120" class="box authoring future"/>
-      <text x="1216" y="648" class="title">Merge / Compile</text>
-      <text x="1216" y="666" class="sub">intent → current runtime representation</text>
+      <rect x="1200" y="620" width="560" height="120" class="box authoring current"/>
+      <text x="1216" y="648" class="title">Validate / Lower</text>
+      <text x="1216" y="666" class="sub">QraySceneBinding → existing qray.h calls</text>
       <text x="1216" y="690" class="body">
         <tspan x="1216" dy="0">engine data + sidecar overrides</tspan>
         <tspan x="1216" dy="18">per-entry report: applied / rebound / orphan</tspan>
@@ -273,7 +274,7 @@
       <!-- ADAPTER -->
       <text x="40" y="304" class="layer">ADAPTER BOUNDARY</text>
 
-      <rect x="40" y="320" width="560" height="150" class="box adapter future"/>
+      <rect x="40" y="320" width="560" height="150" class="box adapter current"/>
       <text x="56" y="348" class="title">IQrayHost</text>
       <text x="56" y="366" class="sub">host-owned adapter · conformance-tested</text>
       <text x="56" y="390" class="body">
@@ -297,26 +298,26 @@
       <text x="40" y="486" class="small" fill="#4b5563">Adapters are host-owned; our modules provide the contract, reference Quake adapter, and conformance tests.</text>
       <text x="40" y="504" class="layer">RUNTIME CONTRACTS</text>
 
-      <rect x="40" y="520" width="340" height="170" class="box runtime future"/>
+      <rect x="40" y="520" width="340" height="170" class="box runtime current"/>
       <text x="56" y="548" class="title">QraySceneAsset</text>
       <text x="56" y="566" class="sub">static map resources</text>
       <text x="56" y="590" class="body">
         <tspan x="56" dy="0">surfaces · materials</tspan>
         <tspan x="56" dy="18">authored lights · DTAL groups</tspan>
-        <tspan x="56" dy="18">source keys · load / update / release</tspan>
+        <tspan x="56" dy="18">source keys · borrowed through Bind · generation replace</tspan>
         <tspan x="56" dy="18">no BLAS / TLAS</tspan>
       </text>
 
-      <rect x="400" y="520" width="260" height="170" class="box runtime future"/>
+      <rect x="400" y="520" width="260" height="170" class="box runtime current"/>
       <text x="416" y="548" class="title">QrayFrameView</text>
       <text x="416" y="566" class="sub">per view</text>
       <text x="416" y="590" class="body">
         <tspan x="416" dy="0">camera</tspan>
         <tspan x="416" dy="18">view · exposure</tspan>
-        <tspan x="416" dy="18">frame index</tspan>
+        <tspan x="416" dy="18">viewId · one camera per frame</tspan>
       </text>
 
-      <rect x="680" y="520" width="340" height="170" class="box runtime future"/>
+      <rect x="680" y="520" width="340" height="170" class="box runtime current"/>
       <text x="696" y="548" class="title">QrayFrameUpdates</text>
       <text x="696" y="566" class="sub">per-frame delta only</text>
       <text x="696" y="590" class="body">
@@ -434,7 +435,7 @@
 
       <!-- Footer -->
       <text x="40" y="1210" class="small">
-        Source anchors: renderer/Include/qray/qray.h · renderer/Source/ClusterLightLists.cpp · LightManager.cpp ·
+        Source anchors: renderer/Include/qray/qray.h · host_contract.h · HostContracts.cpp · ClusterLightLists.cpp · LightManager.cpp ·
         Quake/gl_rlight.c · r_world.c · Quake/rt_dtal_* · Quake/qr_editor.c · qr_gui.cpp · VulkanDevice / ASManager
       </text>
       <text x="40" y="1230" class="small">
@@ -447,7 +448,7 @@
       Hosts feed the adapter; the adapter fills the three runtime contracts; the contracts call the existing
       <code>qray.h</code> upload API; lighting publishes cluster/DTAL lists; the RT core renders. The authoring
       column is the only mutable state: it writes a versioned sidecar, resolves identity, and applies intent
-      through the same existing upload API. Dashed boxes are the planned reorganization; solid boxes exist today.
+      through the same existing upload API. Solid contracts exist today; the dashed editor-core box remains future work.
     </div>
   </div>
 </div>
