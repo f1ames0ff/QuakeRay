@@ -2365,6 +2365,9 @@ static const char *M_GetReflDepthName (void)
 
 static void M_StepReflDepth (int dir)
 {
+	if (rt_reflrefr_depth.flags & CVAR_ROM)
+		return;
+
 	static const float depths[] = { 0.0f, 1.0f, 2.0f, 4.0f, 8.0f };
 	const int numdepths = (int)(sizeof (depths) / sizeof (depths[0]));
 	const float cur = CVAR_TO_FLOAT (rt_reflrefr_depth);

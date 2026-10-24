@@ -85,6 +85,10 @@ python tests\perf\analyze_bench.py build\Debug\ad\benchmark.log 4
   `rt_cluster_sampling` flag, `rt_gi_level` and the `rt_dtal_groups`/`rt_dtal_spacing`/
   `rt_dtal_maxgroups` values. The two modes are compared within themselves: a CPU fix shows in
   `cpumax`, and `gpumax` tells whether the same fix leaves the GPU bound frame alone.
+- `run_stress.ps1` rejects a capture unless the effective settings carry the standard
+  `vid_vsync`, frame-latency, FOV, PVS, ReSTIR/NEE, reflection-depth, DTAL and FTE-particle policy.
+  The accepted policy is recorded in the capture's `bench.log`; changing a test requires changing
+  the validator as well.
 - `cpumax` exists to make the CPU the frame's limiter: the cluster cost moves the frame there, and
   in `gpumax` the same cost hides under the GPU frame, which is what the mode is for.
 - `rt_cluster_assert 1` must never appear in a performance run: the validator walks every cluster,

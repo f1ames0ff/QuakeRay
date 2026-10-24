@@ -38,6 +38,14 @@ The remaining gap is GPU-bound in the cloud pass: with clouds enabled, `gpu.fram
 `build/Release/audit-current-release-menu-closed-*`, and
 `build/Release/audit-current-release-historical-no-clouds-*`.
 
+The owner then made that historical policy the engine standard: `rt_dtal_groups 0`,
+`rt_dtal_spacing 128`, `r_fteparticles 0`, plus read-only `rt_enable_pvs 0`, `sv_novis 1`,
+`rt_restir 0`, `rt_nee_samples 2`, `rt_restir_candidates 8` and `rt_reflrefr_depth 8`.
+`vid_vsync` now defaults to `0`; `vid_maxframelatency 0` and `fov 90` remain standard. A full
+Release capture with no cvar overrides except `rt_gi_level 1` measured 54.8 FPS (18.24 ms mean,
+p95 20.92, p99 23.58), with the same effective profile and no BLAS recreations. Capture:
+`build/Release/audit-standard-profile-release-*`.
+
 ## Resolution scaling and the 60-FPS target (2026-10-14)
 
 Release binary, revision `e1cee587`, clean working tree; acceptance settings with `rt_gi_level 1`

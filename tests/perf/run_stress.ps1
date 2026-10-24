@@ -370,6 +370,16 @@ echo QR_LOADED0_$id
                     $expectedClouds = if ($RtProfile -eq 'medium') { 1 } else { 0 }
                     if ($settings -notmatch 'vid=3840x2160@' -or $settings -notmatch "rt_upscale_fsr31=$fsr(?: |$)" -or
                         $settings -notmatch "rt_sky_clouds_quality=$expectedClouds(?: |$)") { throw 'Effective resolution/FSR/cloud quality does not match the requested target.' }
+                    foreach ($expected in @(
+                        'vsync=0', 'vid_maxframelatency=0', 'fov=90',
+                        'rt_enable_pvs=0', 'sv_novis=1', 'rt_restir=0',
+                        'rt_nee_samples=2', 'rt_restir_candidates=8',
+                        'rt_reflrefr_depth=8', 'rt_dtal_groups=0',
+                        'rt_dtal_spacing=128', 'r_fteparticles=0')) {
+                        if ($settings -notmatch "(?:^| )$([regex]::Escape($expected))(?: |$)") {
+                            throw "Effective settings do not contain the standard '$expected'."
+                        }
+                    }
                     if (($newBlock -join "`n") -notmatch "demo=maps/$($expectedMaps[$save])\.bsp") { throw 'Unexpected map in benchmark capture' }
                     $sampleRecord = $newBlock | Where-Object { $_ -match '^frame_samples file=' } | Select-Object -Last 1
                     if ($sampleRecord -notmatch '^frame_samples file=(\S+) samples=(\d+) dropped=0$') {

@@ -13,6 +13,16 @@
   `c_MaxBindingLayouts >= 13`, and follows GNU install directories for the
   FidelityFX runtime.
 
+### Changed
+- **The standard renderer profile is fixed and reproducible** — new installs
+  start with `vid_vsync 0`, `vid_maxframelatency 0`, `fov 90`,
+  `rt_dtal_groups 0`, `rt_dtal_spacing 128` and `r_fteparticles 0`.
+  `rt_enable_pvs 0`, `sv_novis 1`, `rt_restir 0`, `rt_nee_samples 2`,
+  `rt_restir_candidates 8` and `rt_reflrefr_depth 8` are read-only, so saved
+  configurations cannot silently replace the benchmarked lighting and
+  visibility policy. The stress runner rejects captures that do not report
+  this effective profile.
+
 ## v0.50.22
 
 ### Added
