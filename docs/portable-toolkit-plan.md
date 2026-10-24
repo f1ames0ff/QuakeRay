@@ -325,6 +325,10 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
   SDK-owned shared GPU access. `QrayGpuRequirements` is passed before
   `vkCreateDevice`; `QrayGpuContext` returns the borrowed NVRHI device, native
   Vulkan handles, queue roles/counts and negotiated capabilities.
+- The integration rules are in
+  `renderer/docs/gpu-context.md`: one `QrInstance` owns one device; a host must
+  not create a second device or allocator path for participating resources and
+  must release host resources before destroying the instance.
 - Requirements cover Vulkan API version, frames in flight, instance/device
   extensions, NVRHI features, formats/sample counts, queue counts, preferred
   physical device, native device validation and an optional Vulkan feature
