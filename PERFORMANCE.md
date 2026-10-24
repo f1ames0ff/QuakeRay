@@ -15,6 +15,29 @@ The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/q
 
 **Status (2026-10-14, Release, GI medium — the four-step ladder's medium, a quarter-resolution grid with two bounces):** the Fuma balanced point holds a 60.8-66 FPS mean (15.2-16.5 ms) with 1-22% of intervals over the 16.67 ms budget, and Bogbottom holds a 60.3-60.5 FPS mean (16.5-16.6 ms, p95 ~17.1 ms) after the vertex-preprocessing work below (its mover active in every verified capture); both remain mean-level passes, not yet stable-60 (Bogbottom's p99 is ~17.4 ms). At the audited maximum-quality preset (GI ultra, balanced) separate captures from the same campaign measure 50.4 / 45.8 FPS. The resolution-scaling section below shows the GPU as the frame's limiter at every tested point; the entity campaign's "about 37 / 24 FPS" reading was the Debug era and remains under "Controlled entity improvements" for provenance. Supplied saves are stress points, not all-map or long-gameplay coverage.
 
+## Bogbottom regression check (2026-10-24)
+
+The historical result above was reproduced with its original identity: Release, `qr_ad_swamp.sav`
+SHA `9318AE31…`, `maps/ad_swampy.bsp`, 3840x2160 FSR Balanced, `qr_audit_max.cfg`, `rt_gi_level 1`,
+volumetric clouds Low, `rt_dtal_groups 0` and `rt_dtal_spacing 128`. The current `r_tasks` command no
+longer exists because the render frame always runs as a task graph. The runner now closes the menu
+after loading the save and waits for the RHI map-load marker instead of the obsolete
+`demo(s) in loop` message.
+
+Current Release binary SHA `CC4EEA7F…` and asset SHA `24F7E3CA…` measured 55.2 FPS (18.11 ms mean,
+p95 19.42, p99 23.36). A preceding equivalent point with the profile's spacing 32 measured
+55.1 / 54.3 FPS (18.16 / 18.43 ms). Dynamic BLAS recreations were zero throughout, so the old
+9-FPS collapse was the stale `rt_brush_persistent 0` / `rt_dyn_blas_sorted 0` configuration, not
+the SDK split or the Debug/Release label.
+
+The remaining gap is GPU-bound in the cloud pass: with clouds enabled, `gpu.frame` was 17.44 ms and
+`gpu.clouds` 2.62 ms; disabling only clouds produced 62.0 FPS, 16.12 ms mean and `gpu.frame`
+14.61 ms. The setup buckets stayed at the historical scale (`setup_tlas` 2.14 ms,
+`setup_preproc` 0.89 ms). Captures:
+`build/Release/audit-current-release-historical-exact-*`,
+`build/Release/audit-current-release-menu-closed-*`, and
+`build/Release/audit-current-release-historical-no-clouds-*`.
+
 ## Resolution scaling and the 60-FPS target (2026-10-14)
 
 Release binary, revision `e1cee587`, clean working tree; acceptance settings with `rt_gi_level 1`

@@ -139,10 +139,10 @@ The contract for work added to the graph:
 
 The graph currently relies on:
 
-- `VulkanDevice::geometryUploadMutex` in [VulkanDevice.h](../renderer/Source/VulkanDevice.h#L340) —
+- `VulkanDevice::geometryUploadMutex` in [VulkanDevice.h](../renderer/Source/VulkanDevice.h#L370) —
   held by `UploadGeometry`, `UploadRasterizedGeometry`, `UpdateGeometryTransform`,
-  `UpdateGeometryTexCoords`, `UploadDecal`, `UploadPortal`, `SubmitStaticGeometries`,
-  `StartNewStaticScene`; the renderer's API counters are `std::atomic`;
+  `UpdateGeometryTexCoords`, `UploadParticles`, `SetParticleProxyGate`, `UploadDecal`, `UploadPortal`,
+  `SubmitStaticGeometries`, `StartNewStaticScene`; the renderer's API counters are `std::atomic`;
 - `LightManager::registryMutex` — held by `AddLight`, `PrepareForFrame` and `Reset`
   ([LightManager.h](../renderer/Source/LightManager.h#L173));
 - the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L533) — the once-per-frame TLS merge,

@@ -2673,11 +2673,35 @@ static void COM_SetupBaseDirs (qboolean explicit_basedir)
 				            have == QR_FLAVOR_REMASTERED ? "remastered" : "classic");
 		}
 
+		if (!COM_CheckParm ("-nosteam"))
+		{
+			char steamroot[MAX_OSPATH];
+
+			if (QR_Resources_SteamDir (steamroot, sizeof (steamroot)))
+			{
+				if (QR_Resources_FlavorDir (steamroot, QR_FLAVOR_ORIGINAL))
+					q_strlcpy (classic, steamroot, sizeof (classic));
+				QR_Resources_RemasteredDir (remastered, sizeof (remastered));
+			}
+		}
+
+		QR_Resources_NightdiveDir (nightdive, sizeof (nightdive));
+
+		// An explicit basedir is the write target and takes precedence, but it
+		// does not make an installed Steam copy unavailable as engine data.
+		if (remastered[0])
+			COM_AddBaseDir (nightdive);
+		if (classic[0])
+			COM_AddBaseDir (classic);
+		if (remastered[0])
+			COM_AddBaseDir (remastered);
+
 		if (q_strcasecmp (host_parms->basedir, com_basedir))
 			COM_AddBaseDir (host_parms->basedir);
 		COM_AddBaseDir (com_basedir);
 		if (host_parms->userdir != host_parms->basedir)
 			COM_AddBaseDir (host_parms->userdir);
+		Con_Printf ("Quake data root: %s\n", com_basedir);
 		return;
 	}
 

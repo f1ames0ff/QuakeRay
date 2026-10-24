@@ -1,6 +1,6 @@
 # QuakeRay Portable Toolkit — Plan
 
-Status: draft. Revision 5. Date: 2026-10-21.
+Status: draft. Revision 6. Date: 2026-10-24.
 
 Diagram: [architecture-portable-toolkit.html](architecture-portable-toolkit.html)
 
@@ -10,7 +10,10 @@ QuakeRay Portable Toolkit is a **source-level toolkit**, not an engine. The supp
 
 - QuakeRay owns the window, Vulkan device and swapchain.
 - A host engine implements an adapter that imports its map/assets into the toolkit contracts.
-- The standalone `qray_editor` renders the RT preview and edits lights, materials and DTAL groups.
+- The coupled Quake editor edits lights, materials and DTAL controls. The standalone
+  `quakerayeditor` now previews OBJ/BSP29 scenes, picks surfaces/lights, edits material,
+  light and render settings, and writes its session material/level documents. A generic
+  engine-free authoring core and generalized sidecar still remain future work.
 - The existing `quakeray.exe` is the **reference Quake host**, not a new binary. There is no separate `qray_game` product.
 
 Out of scope for this plan:
@@ -21,19 +24,24 @@ Out of scope for this plan:
 - Geometry editing, BSP compilation, game logic, entity authoring.
 - MDL v10 / skeletal animation unless it becomes a generic core capability.
 
-Goal B is a future mode, gated by a product and licensing decision. The contracts leave room for it (`IRenderTarget`, `QrOutputMode`, `qrQueryDeviceRequirements`), but no implementation is planned here.
+Goal B is a future mode, gated by a product and licensing decision. No host-owned-target,
+device-embedding or output-mode interface is frozen in this revision; those names and contracts
+must be designed only if Goal B is approved.
 
-## 2. Responsibility split
+## 2. Planned responsibility split
+
+This section is target architecture, not a claim that every named interface already
+exists. The current SDK contract is the public C ABI in `qray.h`.
 
 | Area | QuakeRay modules | Host engine |
 |---|---|---|
 | RT rendering | `rtcore`: NVRHI/Vulkan passes, ASVGF, materials | — |
 | Lighting | `lighting`: clusters, DTAL runtime, registry, publication | Provides cluster/spatial data and light sources |
 | Authoring | `authoring`: sidecar model, merge, stable IDs | Maps its assets to the model |
-| Editor | `editor core` + `qray_editor` | Provides picking/selection/apply hooks if embedding the editor |
-| Contracts | `IQrayHost`, `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar` | Implements `IQrayHost`; passes conformance tests |
+| Editor | current `quakerayeditor` + future shared editor core | Provides picking/selection/apply hooks if embedding the editor |
+| Planned contracts | `IQrayHost`, `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar` placeholders | Implements the future host interface; passes conformance tests |
 | Assets | — | Map/model/texture loaders, material mapping, unit/coordinate conversion |
-| Spatial | Cluster consumer | BSP/PVS or a spatial provider; `QraySpatialProvider` |
+| Spatial | Cluster consumer | BSP/PVS or a future spatial provider (`QraySpatialProvider` placeholder) |
 | GPU | Owns device/window in Goal A | Provides device/target/sync only in Goal B |
 | Game logic | — | Entity I/O, triggers, AI, animation, save/load |
 
@@ -44,20 +52,20 @@ Rules:
 - If a host cannot express its data, that is a **core capability gap** (for example, skinned meshes or lightmaps), not an adapter bug. An adapter cannot invent a renderer feature.
 - The host adapter is responsible for performance: no per-frame world rebuild, no copies of unchanged data, no hidden allocations in the frame path.
 
-## 3. Architecture
+## 3. Planned target architecture
 
 Layers:
 
 - `rtcore` — NVRHI/Vulkan RT renderer, passes, ASVGF, materials, BLAS/TLAS ownership.
 - `lighting` — cluster composition, DTAL runtime, registry, publication; no Vulkan, no engine headers.
 - `authoring` — `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, sidecar, stable IDs, merge.
-- `editor` — shared editor core + standalone `qray_editor`; read-only geometry.
+- `editor` — current standalone `quakerayeditor`, plus a future shared editor core.
 - `hosts` — source-level adapters; Quake is the reference.
 - `platform` — window, input, filesystem, GPU device.
 
 The existing `qray.h` upload path is preserved. There is no second scene-transfer path and no monolithic `QrayFrame`.
 
-Contracts:
+Planned logical contracts (these are not present in the current `qray.h` ABI):
 
 - `QraySceneAsset` — static map resources: surfaces, materials, authored lights, DTAL groups, source keys. Consumed at bind/load; core copies synchronously.
 - `QrayFrameView` — camera, projection, viewport, exposure, `viewId`, `QR_VIEW_RESET_HISTORY`.
@@ -80,7 +88,9 @@ Clustering:
 - `QR_CLUSTER_MAX_REGISTERED_LIGHTS = 4095`; `QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS = 128` (seed clusters per light, not a per-cluster cap).
 - `Q2_MAX_CLUSTERS = 8192`; per-cell fast cap 128; tail 1M; `kTopUpSources = 8`.
 - No-PVS default: the SDK synthesizes all-visible PVS rows when the host omits both PVS tables, so each cluster sees the lights its sources reach; the top-up pass remains. A hard 8-ceiling exists only with `rt_cluster_sampling 0`.
-- A non-BSP host provides `QraySpatialProvider` (`HOST_PARTITION`, `CORE_GRID`, `HOST_DENSE_MAP`), or accepts the measured no-PVS quality.
+- A non-BSP host can use a future `QraySpatialProvider` contract
+  (`HOST_PARTITION`, `CORE_GRID`, `HOST_DENSE_MAP`: planned names, not reserved identifiers),
+  or accept the measured no-PVS quality today.
 
 Material path:
 
@@ -140,27 +150,27 @@ Required before moving `renderer/` to its own repository:
 - The host-specific Q3 window callback and multi-view work are deliberately not
   part of this API change.
 
-## 4.3 Editor extraction — parked 2026-10-22
+## 4.3 Standalone editor — current state
 
-- SDK branch: `feature/editor`.
-- New optional target `quakerayeditor` builds `quakerayeditor.exe`.
-- The editor owns a Win32 window and a `QrInstance`, loads a Wavefront OBJ or a
-  Quake BSP29 map, uploads the static geometry with a checker material, adds a
-  directional light and renders the SDK viewport. BSP faces use texinfo-derived
-  UVs and the camera starts at `info_player_start`.
+- Historical extraction branch: `feature/editor`; current SDK work is on
+  `feature/host-contracts`.
+- The optional `quakerayeditor` target builds `quakerayeditor.exe`.
+- The editor owns a Win32 window and a `QrInstance`, previews Wavefront OBJ and
+  Quake BSP29 scenes, resolves BSP textures/lights, and starts at
+  `info_player_start`.
 - CMake deploys the FSR provider, the default scene, the compiled shader
   directory and the blue-noise texture next to the executable when their source
   paths are configured.
-- BSP loading is geometry-only for now: PAK extraction, Quake texture loading,
-  an editor core, selection, authoring and sidecar persistence remain.
+- Current authoring covers viewport picking, selected lights, material
+  parameters, global render settings, and session writes to material/level
+  documents. PAK/archive extraction beyond the current BSP path and a generic
+  engine-free authoring core remain.
 - The coupled `Quake/qr_editor.c` and `Quake/qr_gui.cpp` remain in the Quake
   host. The next work is the engine-free editor core plus the map/material
   adapter; the files are not copied into the SDK.
-- **Parked after the scene-loading viewport.** The current editor only shows a
-  viewport over the SDK; the OBJ test scene is a checker-textured room with a
-  cube, and there is no editor UI, selection, authoring, PAK/texture loading or
-  sidecar persistence yet. The branch and in-tree build remain available, but
-  the editor is not an active workstream.
+- The current panel has `Scene`, `Entities`, `Render` and `Materials` tabs.
+  Remaining work is documented in `renderer/docs/editor-parity.md`; this plan
+  does not present the current session writer as the final generic sidecar.
 
 ## 4.4 Current code anchors
 
@@ -192,8 +202,9 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
   the metric emitting area.
 - A left-handed frame is mirrored into canonical space and indexed triangle
   winding is reversed for geometry, polygon lights and world-light faces. The
-  host supplies its native handedness view matrix. Arbitrary world rotations
-  and non-uniform instance scale remain host-side conversion.
+  host supplies its native handedness view matrix. Arbitrary instance rotations
+  and non-uniform scale are converted by the SDK; only a non-axis-aligned world
+  convention has to be rotated by the host.
 - Screen-space `SWAPCHAIN` raster geometry is exempt and never locks the
   world frame.
 - QuakeRay subscribes with the identity convention and converts its existing
@@ -233,6 +244,61 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
   scenes. The optional standalone editor remains a separate consumer and must
   be adapted before its Quake-unit scene data is used with API 1.06.
 
+## 4.7 Renderer host contract and API docs — implementation 2026-10-24
+
+- SDK package version `1.6.0`; public API `1.06.0000`. The installed target now
+  exports `QR_STATIC` and `QR_USE_SURFACE_WIN32`, plus `NOMINMAX` for C++
+  consumers, instead of requiring a second host to reproduce renderer-local
+  CMake switches.
+- `renderer/docs/host-contract.md` defines the adapter boundary and maps BSP /
+  lightmap, vertex-animated, multi-stage shader, material/skeletal and
+  Source-era renderer data through the current ABI. Unsupported multi-pass,
+  stencil, blend-equation and render-to-texture effects have explicit host
+  fallbacks rather than implied support.
+- `renderer/docs/api.md` now records state lifetime, RGBA8 material/cubemap
+  inputs, SWAPCHAIN pixel geometry, raster ordering, blend limits and the
+  source-level versioning rule. `renderer/docs/sky-and-atmosphere.md` covers
+  the sky/cloud/atmosphere payload and validation sequence. Focused guides now
+  also cover sun/god rays, lights/dlights/DTAL/NEE, and indirect
+  GI/ReSTIR/denoiser; `host-feature-matrix.md` is the feature-to-ABI entry
+  point. All are installed with the other SDK documents.
+- Raster ordering is explicitly host-owned: the SDK preserves upload order,
+  never infers camera depth, and does not sort within a batch. The upload lock
+  makes concurrent calls safe but does not define their relative order, so a
+  host with overlapping blended producers must serialize or prepare the order
+  before upload. The fixed `DEFAULT` world/particle/point/smoke category order
+  is documented separately; interleaving those categories does not survive.
+  Conflicting `SMOKE|PARTICLE` states, particle/smoke state on non-`DEFAULT`
+  uploads and depth state on `SWAPCHAIN` are rejected; the particle-proxy gate
+  shares the same upload lock.
+- Lit particle raster and traced particle proxies now use the same source alpha
+  product, `drawColor.a * vertexColor.a * textureAlpha`; premultiplied RGB is
+  not multiplied by alpha a second time. `qrUploadParticles` now shares the
+  geometry upload mutex, closing the prior collector race.
+- The SDK ships its required NVRHI binding-layout patch, checks the source
+  limit during standalone configure, and the package consumer asserts
+  `c_MaxBindingLayouts >= 13`. The FidelityFX imported target now follows
+  `CMAKE_INSTALL_INCLUDEDIR`/`LIBDIR`, including relocatable custom layouts.
+- `renderer/Tests/PackageConsumer` is a minimal installed-package probe. A
+  clean consumer built and linked through `qray::renderer` without defining the
+  SDK's public compile switches itself.
+- Verification: `build_win.ps1 Debug` passed with shader compilation and asset
+  staging; the full CTest run passed 15/15, including raster and traced-proxy
+  particle-alpha gates and `qray_dtal_perf`. All 81 HLSL/probe pairs pass the
+  full shader-property/reflection checker. The default and custom
+  `inc`/`lib64` installed-package consumers build, link and run. The guarded
+  `tests/perf/run_menu.ps1 -Smoke -Validation` run passed menu, base-map load,
+  in-game menu, return to UI-only rendering and resize with
+  `ValidationEnabled=True`, `ValidationErrorCount=0` and process exit code 0.
+  The runner writes the same result tuple to
+  `build/Debug/menu-candidate-bc6a6b7c.stdout.result.json`.
+  The tested host binary SHA-256 is
+  `7407A302A351EAED4572DABD842AAF7073B5332A840351F87A1931CADA5DED85`;
+  the SDK checkout is `fccd3ea` plus the documented working-tree changes.
+- `build/Debug/id1/screenshot0052.png` records the loaded traced world and
+  `screenshot0054.png` records the post-return UI-only frame. These are smoke
+  evidence, not a visual-equivalence or performance acceptance result.
+
 ## 5. Phases
 
 ### Phase 0 — Baseline and scope
@@ -260,7 +326,7 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 ### Phase 3 — Standalone editor extraction
 
 - Extract a shared editor core from `qr_gui` and the authoring model.
-- `qray_editor` loads a Quake map through the reference adapter.
+- `quakerayeditor` loads a Quake map through its current BSP preview path.
 - Same fixed-camera image as the in-engine editor within tolerance.
 - No game logic; no per-engine adapter code in the editor core.
 
@@ -278,13 +344,16 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 
 ### Phase 6 — Future Goal B (only if chosen)
 
-- `IRenderTarget`, `QrOutputMode`, external device/queue/target/sync.
+- Host-target/device/output concepts (working names only; none are reserved API
+  identifiers) and external device/queue/target/sync.
 - Host-owned adapter; BLAS/TLAS remain core-owned.
 - Product and licensing decision first.
 
 ## 6. Acceptance criteria
 
-- **Goal A:** `qray_editor` loads a Quake map, renders RT, edits one material and one light, saves the sidecar, reloads, and reports per-entry binding status; no game logic; no per-engine code in the core.
+- **Goal A:** `quakerayeditor` loads a Quake map, renders RT, edits material and
+  light state, saves and reloads its documents, and reports per-entry binding
+  status; no game logic; no per-engine code in the core.
 - **Conformance:** `lighting`/`authoring`/`editor core` compile without engine headers; a mock host passes the contract tests; capability flags are honored.
 - **No hidden work:** with the editor off and no edits, `staticSubmits = 0`, `materialUpdates = 0`, no new allocations/locks, unchanged geometry uploads equal.
 - **Material path:** a common roughness/emission edit does not trigger geometry re-upload; cost is measured.
@@ -318,4 +387,4 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 - Which second host to validate first (host-owned adapter; data-only first).
 - Whether HL1-style lightmaps become an explicit core term or the product is framed as "RT relight".
 - Whether the shared editor core reuses `qr_gui` panels or starts a new UI; the current plan prefers reuse.
-- Whether `QrOutputMode` is reserved now or added when Goal B is chosen.
+- Goal B output/device contracts remain undesigned and unreserved.

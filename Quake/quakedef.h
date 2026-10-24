@@ -40,8 +40,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef QUAKESPASM_VER_SUFFIX
 #define QUAKESPASM_VER_SUFFIX // optional version suffix string literal like "-beta1"
 #endif
-#define ENGINE_VERSION   0.50
-#define ENGINE_VER_PATCH 22 // helper to print a string like 0.92.1
+#define ENGINE_VERSION   1.1
+#define ENGINE_VER_PATCH 0 // helper to print a string like 1.1.0
 #ifndef ENGINE_VER_SUFFIX
 #define ENGINE_VER_SUFFIX "" // optional version suffix like -beta1
 #endif
@@ -291,7 +291,9 @@ static inline int FindFirstBitNonZero (const uint32_t mask)
 
 #include "platform.h"
 
-#define QR_USE_SURFACE_WIN32
+#ifndef QR_USE_SURFACE_WIN32
+	#define QR_USE_SURFACE_WIN32
+#endif
 #include <qray/qray.h>
 #define RT_RENDERER 1
 

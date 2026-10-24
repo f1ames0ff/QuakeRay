@@ -639,6 +639,26 @@ void M_ToggleMenu_f (void)
 
 /*
 ================
+M_CloseMenu_f
+================
+*/
+static void M_CloseMenu_f (void)
+{
+	if (key_dest == key_menu)
+	{
+		M_MenuChanged ();
+		IN_Activate ();
+		key_dest = key_game;
+		m_state = m_none;
+	}
+	else if (key_dest == key_console)
+	{
+		Con_ToggleConsole_f ();
+	}
+}
+
+/*
+================
 M_InScrollbar
 ================
 */
@@ -5383,6 +5403,7 @@ static void M_Menu_Credits_f (void) {}
 void M_Init (void)
 {
 	Cmd_AddCommand ("togglemenu", M_ToggleMenu_f);
+	Cmd_AddCommand ("menu_close", M_CloseMenu_f);
 
 	Cmd_AddCommand ("menu_main", M_Menu_Main_f);
 	Cmd_AddCommand ("menu_singleplayer", M_Menu_SinglePlayer_f);

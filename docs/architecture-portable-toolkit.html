@@ -147,12 +147,12 @@
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>QuakeRay Portable Toolkit — Architecture (rev 5 · Goal A)</h1>
+    <h1>QuakeRay Portable Toolkit — Architecture (rev 6 · Goal A)</h1>
     <p class="subtitle">
       <b>Goal A: standalone toolkit.</b> QuakeRay owns the window, Vulkan device and swapchain; host adapters
       import another engine's data. The existing <code>qray.h</code> upload path is preserved; there is no
-      monolithic <code>QrayFrame</code> and no second scene-transfer path. Geometry is read-only; the editor
-      edits lights, materials and DTAL groups only. Embedded GPU (Goal B) is deferred.
+      monolithic <code>QrayFrame</code> and no second scene-transfer path. Geometry is read-only; the
+      editor works on lighting, material and session data only. Embedded GPU (Goal B) is deferred.
     </p>
 
     <div class="legend">
@@ -213,13 +213,13 @@
         <tspan x="616" dy="18">lights / materials / DTAL</tspan>
       </text>
 
-      <rect x="880" y="140" width="260" height="120" class="box host future"/>
-      <text x="896" y="168" class="title">qray_editor</text>
-      <text x="896" y="186" class="sub">planned</text>
+      <rect x="880" y="140" width="260" height="120" class="box host current"/>
+      <text x="896" y="168" class="title">quakerayeditor</text>
+      <text x="896" y="186" class="sub">current · standalone</text>
       <text x="896" y="210" class="body">
-        <tspan x="896" dy="0">standalone</tspan>
-        <tspan x="896" dy="18">same editor core</tspan>
-        <tspan x="896" dy="18">RT preview</tspan>
+        <tspan x="896" dy="0">OBJ / BSP29 preview</tspan>
+        <tspan x="896" dy="18">picking · lights · materials</tspan>
+        <tspan x="896" dy="18">session writes · generic core planned</tspan>
       </text>
 
       <!-- AUTHORING COLUMN -->

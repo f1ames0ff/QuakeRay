@@ -101,10 +101,33 @@ public static class StressWin32 {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool connect);
+    [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     public static bool OwnsFocus(int process) {
         uint owner;
         GetWindowThreadProcessId(GetForegroundWindow(), out owner);
         return owner == process;
+    }
+    public static bool ForceFocus(IntPtr window) {
+        IntPtr foreground = GetForegroundWindow();
+        uint ignored;
+        uint foregroundThread = GetWindowThreadProcessId(foreground, out ignored);
+        uint currentThread = GetCurrentThreadId();
+        bool attached = foregroundThread != 0 && foregroundThread != currentThread &&
+            AttachThreadInput(currentThread, foregroundThread, true);
+        try {
+            ShowWindow(window, 9);
+            BringWindowToTop(window);
+            SetForegroundWindow(window);
+            SetFocus(window);
+        }
+        finally {
+            if (attached) AttachThreadInput(currentThread, foregroundThread, false);
+        }
+        return GetForegroundWindow() == window;
     }
     public static void Key(IntPtr window, int key, int scan, bool up) {
         int data = 1 | (scan << 16);
@@ -124,7 +147,7 @@ function Wait-Idle {
     }
     $reported = $false
     while ($true) {
-        $busy = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)' })
+        $busy = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)' -and $_.Threads.Count -gt 0 })
         $runners = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" |
             Where-Object { $_.ProcessId -notin $ancestors -and (Test-StressExternalRunnerOwner $_.CommandLine) })
         if ($busy.Count -eq 0 -and $runners.Count -eq 0) { return }
@@ -205,7 +228,7 @@ bind F5 "rt_bench stop; $endDump echo QR_STOP_$id"
 bind F6 "screenshot"
 bind F7 "mapname; vid_describecurrentmode; echo QR_EFFECTIVE_$id"
 bind F8 "restart; echo QR_RESTART_$id"
-bind F9 "load $save; echo QR_RELOAD_$id"
+bind F9 "load $save; wait; menu_close; echo QR_RELOAD_$id"
 bind F11 "toggleconsole; quit"
 $mapCommand
 echo QR_LOADED0_$id
@@ -243,11 +266,9 @@ echo QR_LOADED0_$id
                         $null = $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))
                         break
                     }
-                    [StressWin32]::SetForegroundWindow($window) | Out-Null
+                    [StressWin32]::ForceFocus($window) | Out-Null
                     if (-not $mapMode) {
-                        Wait-Marker $process 'demo(s) in loop'
-                        Start-Sleep -Milliseconds 500
-                        [StressWin32]::SetForegroundWindow($window) | Out-Null
+                        [StressWin32]::ForceFocus($window) | Out-Null
                         Wait-Marker $process 'RHI: acceleration structures:'
                         Start-Sleep -Milliseconds 300
                         Send-Key $window 0x77 0x42
@@ -268,7 +289,7 @@ echo QR_LOADED0_$id
                     Wait-Marker $process "QR_EFFECTIVE_$id"
                     for ($focusTry = 0; $focusTry -lt 10; $focusTry++) {
                         if ([StressWin32]::OwnsFocus($process.Id)) { break }
-                        [StressWin32]::SetForegroundWindow($window) | Out-Null
+                        [StressWin32]::ForceFocus($window) | Out-Null
                         Start-Sleep -Milliseconds 300
                     }
                     if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Runtime lacks foreground focus; refusing a contaminated measurement.' }
@@ -289,16 +310,21 @@ echo QR_LOADED0_$id
                         if (Test-QuakeRayStopRequested) { break }
                         if (-not [StressWin32]::OwnsFocus($process.Id)) {
                             if ($null -eq $focusLostSince) { $focusLostSince = Get-Date; $focusLosses++ }
-                            [StressWin32]::SetForegroundWindow($window) | Out-Null
+                            [StressWin32]::ForceFocus($window) | Out-Null
                             if (((Get-Date) - $focusLostSince).TotalSeconds -gt 3) { throw 'Focus was lost during capture.' }
                         } else {
                             $focusLostSince = $null
                         }
                         if ((Get-Date) -ge $nextOwnerCheck) {
                             $foreign = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-                                $_.Id -ne $process.Id -and $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)'
+                                $_.Id -ne $process.Id -and
+                                $_.Threads.Count -gt 0 -and
+                                $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)'
                             })
-                            if ($foreign.Count) { throw 'MACHINE_BUSY: foreign heavy activity contaminated this capture.' }
+                            if ($foreign.Count) {
+                                $owners = ($foreign | ForEach-Object { "$($_.Id):$($_.ProcessName)" }) -join ', '
+                                throw "MACHINE_BUSY: foreign heavy activity contaminated this capture: $owners"
+                            }
                             $nextOwnerCheck = (Get-Date).AddSeconds(1)
                         }
                         Start-Sleep -Milliseconds 100

@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.0
+
+### Added
+- **Portable host contracts** — the SDK documents the adapter boundary, lifecycle,
+  units, ordering, materials, lights, sky, post effects and explicit fallbacks
+  for pre-2005 engine features. Raster particle and traced-proxy transparency
+  now share the same vertex/draw/texture alpha contract, and conflicting
+  particle/smoke render states are rejected.
+- **Self-contained package contract** — the installed CMake target exports its
+  required compile definitions, carries the pinned NVRHI layout patch, validates
+  `c_MaxBindingLayouts >= 13`, and follows GNU install directories for the
+  FidelityFX runtime.
+
 ## v0.50.22
 
 ### Added
