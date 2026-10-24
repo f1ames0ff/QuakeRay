@@ -1,8 +1,11 @@
 # Changelog
 
-## v0.1.0
+## v0.51.0
 
 ### Added
+- **Split release versioning** — QuakeRay host is `0.51.0`; the packaged
+  QuakeRay SDK is `0.2.0`. The public renderer C ABI remains independently
+  versioned at `1.06.0000`.
 - **SDK-owned shared GPU context** — the SDK now negotiates host Vulkan/NVRHI
   requirements before creating its single device, returns the same NVRHI device
   to the host as a borrowed context, and defines `BeforeRenderer` /

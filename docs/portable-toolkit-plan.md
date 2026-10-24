@@ -129,11 +129,11 @@ Branch `feat/portable-toolkit`, based on `master` (`cd88fc77`).
 
 What is already true:
 
-- `renderer/Include/qray/qray.h` is the public C ABI, and `QR_API_VERSION` is `1.05.0000`.
+- `renderer/Include/qray/qray.h` is the public C ABI, and `QR_API_VERSION` is `1.06.0000`.
 - The renderer's C++ sources do not include `Quake/` headers. The remaining engine-facing layer is the `Qr*` contract in `qray.h`.
 - The alias-table implementation is renderer-owned: `renderer/Source/rt_alias.*` builds as `qray_alias`, and both host and tests link it instead of compiling `shared/rt_alias.c`.
 - The host-owned texture and cursor assets are out of `renderer/`: `renderer/Source/textures` is now `gfx/textures`, and `renderer/gfx` is now the root `gfx/` folder. `build_win.ps1` stages both from `gfx/`; the Debug build and asset pack still pass.
-- `renderer/CMakeLists.txt` has a standalone `project(qray_renderer VERSION 1.5.0)`, finds Vulkan and NVRHI when configured from its own directory, and `cmake -S renderer -B <dir>` now configures successfully.
+- `renderer/CMakeLists.txt` has a standalone `project(qray_renderer VERSION 0.2.0)`, finds Vulkan and NVRHI when configured from its own directory, and `cmake -S renderer -B <dir>` now configures successfully.
 - The package installs `renderer.lib`, `include/qray/qray.h`, the FSR API headers/provider, and `qray_rendererConfig.cmake` plus `qray_rendererTargets.cmake`. A clean consumer that supplies NVRHI and Vulkan configures and links against `qray::renderer`.
 - FSR is exposed through the `qray_ffx` interface target: the build tree uses `QR_FFX_SDK_ROOT`, while the installed tree gets `qray::ffx` from the package config. The in-tree provider remains the default; an installed AMD SDK can override it.
 
@@ -272,7 +272,7 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 
 ## 4.7 Renderer host contract and API docs — implementation 2026-10-24
 
-- SDK package version `0.1.0`; public API `1.06.0000`. The installed target now
+- SDK package version `0.2.0`; public API `1.06.0000`. The installed target now
   exports `QR_STATIC` and `QR_USE_SURFACE_WIN32`, plus `NOMINMAX` for C++
   consumers, instead of requiring a second host to reproduce renderer-local
   CMake switches.
