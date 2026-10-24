@@ -3,6 +3,11 @@
 ## v0.1.0
 
 ### Added
+- **SDK-owned shared GPU context** — the SDK now negotiates host Vulkan/NVRHI
+  requirements before creating its single device, returns the same NVRHI device
+  to the host as a borrowed context, and defines `BeforeRenderer` /
+  `BeforePresent` recording hooks. QuakeRay uses this path as the reference
+  host and validates a host-created NVRHI buffer during initialization.
 - **Portable host contracts** — the SDK documents the adapter boundary, lifecycle,
   units, ordering, materials, lights, sky, post effects and explicit fallbacks
   for pre-2005 engine features. Raster particle and traced-proxy transparency

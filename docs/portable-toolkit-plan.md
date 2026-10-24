@@ -1,6 +1,6 @@
 # QuakeRay Portable Toolkit — Plan
 
-Status: draft. Revision 8. Date: 2026-10-24.
+Status: draft. Revision 9. Date: 2026-10-24.
 
 Diagram: [architecture-portable-toolkit.html](architecture-portable-toolkit.html)
 
@@ -9,6 +9,8 @@ Diagram: [architecture-portable-toolkit.html](architecture-portable-toolkit.html
 QuakeRay Portable Toolkit is a **source-level toolkit**, not an engine. The supported integration mode is **Goal A: standalone**.
 
 - QuakeRay owns the window, Vulkan device and swapchain.
+- A C++ host can declare all device requirements before creation and receive
+  the SDK-owned NVRHI/Vulkan device as a borrowed shared context.
 - A host engine implements an adapter that imports its map/assets into the toolkit contracts.
 - The coupled Quake editor edits lights, materials and DTAL controls. The standalone
   `quakerayeditor` now previews OBJ/BSP29 scenes, picks surfaces/lights, edits material,
@@ -46,7 +48,7 @@ optional C++20 host-driver layer lowers through that same ABI.
 | Host contracts | `IQrayHost`, `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar` | Implements the host interface and supplies the renderer transport data |
 | Assets | — | Map/model/texture loaders, material mapping, unit/coordinate conversion |
 | Spatial | Cluster consumer | BSP/PVS or a future spatial provider (`QraySpatialProvider` placeholder) |
-| GPU | Owns window, Vulkan/NVRHI device, swapchain, targets and synchronization | Supplies window, data and host composition inputs |
+| GPU | Owns window, Vulkan/NVRHI device, swapchain, targets and synchronization | Declares requirements before creation; borrows the shared device and records through frame hooks |
 | Game logic | — | Entity I/O, triggers, AI, animation, save/load |
 
 Rules:
@@ -84,6 +86,12 @@ Implemented source-level logical contracts in `renderer/Include/qray/host_contra
 `QraySceneBinding` lowers scene and frame records into the existing `qr*`
 calls. `host-driver-contract.md` in the SDK defines ownership, supported
 updates, failure behavior and the unsupported-feature boundary.
+
+`gpu_context.h` exposes the SDK-owned NVRHI/Vulkan context. The host passes
+instance/device extensions, NVRHI features, Vulkan features, queue counts,
+formats and native validation callbacks before `vkCreateDevice`. It receives
+the negotiated NVRHI device and Vulkan handles after creation. The SDK remains
+the sole device owner and preserves the single submission/present pipeline.
 
 Ownership rule: **borrow for the call, copy before return.** No `qray.h` entry point retains a host pointer. Core owns GPU resources and BLAS/TLAS. The host never supplies acceleration structures.
 
@@ -258,7 +266,7 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 
 ## 4.7 Renderer host contract and API docs — implementation 2026-10-24
 
-- SDK package version `1.6.0`; public API `1.06.0000`. The installed target now
+- SDK package version `0.1.0`; public API `1.06.0000`. The installed target now
   exports `QR_STATIC` and `QR_USE_SURFACE_WIN32`, plus `NOMINMAX` for C++
   consumers, instead of requiring a second host to reproduce renderer-local
   CMake switches.
@@ -295,7 +303,7 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
   clean consumer built and linked through `qray::renderer` without defining the
   SDK's public compile switches itself.
 - Verification: `build_win.ps1 Debug` passed with shader compilation and asset
-  staging; the full CTest run passed 15/15, including raster and traced-proxy
+  staging; the full CTest run passed 17/17, including raster and traced-proxy
   particle-alpha gates and `qray_dtal_perf`. All 81 HLSL/probe pairs pass the
   full shader-property/reflection checker. The default and custom
   `inc`/`lib64` installed-package consumers build, link and run. The guarded
@@ -310,6 +318,40 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
 - `build/Debug/id1/screenshot0052.png` records the loaded traced world and
   `screenshot0054.png` records the post-return UI-only frame. These are smoke
   evidence, not a visual-equivalence or performance acceptance result.
+
+## 4.8 Shared GPU context — implementation 2026-10-24
+
+- `renderer/Include/qray/gpu_context.h` adds a versioned C++20 contract for
+  SDK-owned shared GPU access. `QrayGpuRequirements` is passed before
+  `vkCreateDevice`; `QrayGpuContext` returns the borrowed NVRHI device, native
+  Vulkan handles, queue roles/counts and negotiated capabilities.
+- Requirements cover Vulkan API version, frames in flight, instance/device
+  extensions, NVRHI features, formats/sample counts, queue counts, preferred
+  physical device, native device validation and an optional Vulkan feature
+  chain callback. The SDK merges them with its own RT/NVRHI requirements and
+  selects a physical device that satisfies both.
+- The host can create NVRHI resources on the returned device. It cannot destroy
+  the device or outlive `qrDestroyInstance`; host resources must be released
+  first.
+- `qrSetGpuFrameHooks` exposes two record-only phases:
+  `BeforeRenderer` and `BeforePresent`. Both receive the SDK's already-open
+  NVRHI command list. The SDK owns submission, synchronization and present.
+- The renderer constructor is now failure-safe: partial Vulkan/NVRHI objects
+  are destroyed before instance creation error propagation.
+- Verification: `qray_gpu_context_tests` covers requirements and contract
+  metadata; `qray_spatial_twin_gpu` passes create-time extension/format/NVRHI
+  requirements, retrieves the shared context, creates a host NVRHI buffer,
+  records host work in both frame phases and renders the full RT twin scene.
+- QuakeRay is adapted through `Quake/qr_gpu_context.cpp`: the reference host
+  uses the requirements API, validates the returned shared context and creates
+  a probe NVRHI buffer during initialization. A valid `qr_ad_swamp` capture
+  completed with rendered RT frames after the adaptation:
+  `build/Debug/audit-sdk-gpu-context-final4-20261024-224348-2e1ca9`.
+  The capture contains 116 frames, `Shared GPU context: SDK-owned
+  NVRHI/Vulkan device validated` in its console log, executable SHA-256
+  `F0359DACD68CEBD12F822BFBD54501A63DAE343144714BF4EAEAF3C9D131CCAD`.
+  Its 34.9 FPS Debug figure is smoke evidence, not a performance acceptance
+  result.
 
 ## 5. Phases
 

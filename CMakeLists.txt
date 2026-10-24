@@ -356,6 +356,7 @@ set(CORE_SOURCES
     Quake/rt_pkz.c
     Quake/rt_stats_gui.c
     Quake/qr_editor.c
+    Quake/qr_gpu_context.cpp
     Quake/qr_resources.c
     Quake/qr_spatial_adapter.cpp
     Quake/qr_gui.cpp

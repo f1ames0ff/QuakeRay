@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "palette.h"
 #include "qr_gui.h"
+#include "qr_gpu_context.h"
 #include "cursor.h"
 #include "rt_material.h"
 #include "rt_lights.h"
@@ -3331,8 +3332,12 @@ static void GL_InitInstance (void)
 		.godRaysQuality = CVAR_TO_UINT32 (rt_sky_godrays_quality),
 	};
 
-	QrResult r = qrCreateInstance (&info, &vulkan_globals.instance);
+	QrResult r = QR_GpuCreateInstance (&info, &vulkan_globals.instance);
 	QR_CHECK (r);
+
+	r = QR_GpuValidateSharedContext (vulkan_globals.instance);
+	QR_CHECK (r);
+	Con_Printf ("Shared GPU context: SDK-owned NVRHI/Vulkan device validated\n");
 
 	QrSpatialConvention spatial = {
 		.size = sizeof (QrSpatialConvention),

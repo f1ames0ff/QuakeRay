@@ -147,14 +147,15 @@
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>QuakeRay Portable Toolkit — Architecture (rev 8 · Goal A)</h1>
+    <h1>QuakeRay Portable Toolkit — Architecture (rev 9 · Goal A)</h1>
     <p class="subtitle">
       <b>Goal A: standalone toolkit.</b> QuakeRay owns the window, Vulkan device and swapchain; host adapters
       import another engine's data. The existing <code>qray.h</code> upload path is preserved; there is no
       monolithic <code>QrayFrame</code> and no second scene-transfer path. The source-level scene, frame,
       update, host and sidecar contracts are implemented in <code>host_contract.h</code>. Geometry is
-      read-only; the editor works on lighting, material and session data only. Host-owned Vulkan
-      device/target integration is excluded from this roadmap.
+      read-only; the editor works on lighting, material and session data only. A C++ host declares
+      device requirements before creation and receives the SDK-owned NVRHI/Vulkan device as a shared
+      context. Host-owned Vulkan device/target integration is excluded.
     </p>
 
     <div class="legend">
@@ -436,7 +437,7 @@
 
       <!-- Footer -->
       <text x="40" y="1210" class="small">
-        Source anchors: renderer/Include/qray/qray.h · host_contract.h · HostContracts.cpp · ClusterLightLists.cpp · LightManager.cpp ·
+        Source anchors: renderer/Include/qray/qray.h · host_contract.h · gpu_context.h · HostContracts.cpp · GpuContext.cpp · Quake/qr_gpu_context.cpp · ClusterLightLists.cpp · LightManager.cpp ·
         Quake/gl_rlight.c · r_world.c · Quake/rt_dtal_* · Quake/qr_editor.c · qr_gui.cpp · VulkanDevice / ASManager
       </text>
       <text x="40" y="1230" class="small">
