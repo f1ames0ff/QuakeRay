@@ -48,7 +48,7 @@ optional C++20 host-driver layer lowers through that same ABI.
 | Host contracts | `IQrayHost`, `QraySceneAsset`, `QrayFrameView`, `QrayFrameUpdates`, `QraySidecar` | Implements the host interface and supplies the renderer transport data |
 | Assets | — | Map/model/texture loaders, material mapping, unit/coordinate conversion |
 | Spatial | Cluster consumer | BSP/PVS or a future spatial provider (`QraySpatialProvider` placeholder) |
-| GPU | Owns window, Vulkan/NVRHI device, swapchain, targets and synchronization | Declares requirements before creation; borrows the shared device and records through frame hooks |
+| GPU | Owns window, Vulkan/NVRHI device, swapchain, targets and synchronization | May declare requirements before creation; borrows the shared device and records through frame hooks |
 | Game logic | — | Entity I/O, triggers, AI, animation, save/load |
 
 Rules:
@@ -122,6 +122,9 @@ Material path:
 
 ## 4. Baseline check — 2026-10-22
 
+This section is a historical snapshot. Current package/API values and the
+shared GPU contract are recorded in sections 4.7 and 4.8.
+
 Branch `feat/portable-toolkit`, based on `master` (`cd88fc77`).
 
 What is already true:
@@ -148,14 +151,17 @@ Required before moving `renderer/` to its own repository:
 ## 4.1 SDK import — 2026-10-22
 
 - `renderer/` was imported as the `QuakeRaySDK` git submodule at `cb8ddb82`;
-  the current spatial work uses the `feature/universalize` branch; see
-  section 4.5 and `git log` for the current commit.
+  the spatial work at that snapshot used the `feature/universalize` branch;
+  see section 4.5 and `git log` for the historical commit.
 - The SDK `main` contains the package install/export path, `qray_rendererConfig.cmake`, the FSR provider and the engine-free tests.
 - The Quake cluster test moved to the host tree as `tests/qray_cluster_lists_tests.cpp`.
 - A clean consumer project configured and linked `qray::renderer` from an installed prefix with external NVRHI targets.
 - The full CTest suite passes (14/14) after the SDK integration. `qray_spatial_twin_gpu` is the new engine-free identity/Y-up/mirrored readback test; `qray_worldlights_tests` covers no-PVS all-visible synthesis. `qray_dtal_perf` now performs a heavy warm-up before timing, and its baseline remains tied to the machine's GPU clock/power state; re-record it with `--update` after a hardware or power-plan change.
 
 ## 4.2 Readback contract — 2026-10-22
+
+Historical snapshot; current package/API values are recorded in sections 4.7
+and 4.8.
 
 - `qray.h` is now `1.05.0000`; the package version is `1.5.0`.
 - `qrGetFrameReadbackRequirements`, `qrRequestFrameReadback` and
@@ -281,7 +287,8 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
   the sky/cloud/atmosphere payload and validation sequence. Focused guides now
   also cover sun/god rays, lights/dlights/DTAL/NEE, and indirect
   GI/ReSTIR/denoiser; `host-feature-matrix.md` is the feature-to-ABI entry
-  point. All are installed with the other SDK documents.
+  point. `renderer/docs/README.md` is the single index and recommended reading
+  order for every SDK document. All are installed with the package.
 - Raster ordering is explicitly host-owned: the SDK preserves upload order,
   never infers camera depth, and does not sort within a batch. The upload lock
   makes concurrent calls safe but does not define their relative order, so a
@@ -350,11 +357,11 @@ supersedes its `unitsPerMeter` and Quake-unit compatibility details.
   uses the requirements API, validates the returned shared context and creates
   a probe NVRHI buffer during initialization. A valid `qr_ad_swamp` capture
   completed with rendered RT frames after the adaptation:
-  `build/Debug/audit-sdk-gpu-context-final4-20261024-224348-2e1ca9`.
-  The capture contains 116 frames, `Shared GPU context: SDK-owned
+  `build/Debug/audit-sdk-gpu-context-docs-final-20261024-231244-aac95f`.
+  The capture contains 121 frames, `Shared GPU context: SDK-owned
   NVRHI/Vulkan device validated` in its console log, executable SHA-256
-  `F0359DACD68CEBD12F822BFBD54501A63DAE343144714BF4EAEAF3C9D131CCAD`.
-  Its 34.9 FPS Debug figure is smoke evidence, not a performance acceptance
+  `3276D9C16651976C563F0F291636C30B533BC2CAADD9FBE442C6C01A2F72F0CC`.
+  Its 36.2 FPS Debug figure is smoke evidence, not a performance acceptance
   result.
 
 ## 5. Phases

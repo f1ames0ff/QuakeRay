@@ -84,7 +84,9 @@ codex mcp add quakeray `
 
 If PowerShell script execution policy blocks `codex.ps1`, invoke the installed
 `codex.exe` directly. Verify registration with `codex mcp list` and `codex mcp get quakeray`.
-The server command itself must also pass the `--selfcheck` command above.
+Before registering, confirm the same server/project passes the standalone `--selfcheck`
+command above. Do not add `--selfcheck` to the registered stdio server command; that mode
+prints diagnostics and exits instead of serving MCP.
 
 Codex builds the MCP tool catalog when a thread starts. Adding or changing
 `mcp_servers.quakeray` does not hot-add tools to the current thread: restart Codex or
