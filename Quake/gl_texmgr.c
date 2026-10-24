@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gl_heap.h"
 #include "rt_material.h"
 #include "sys.h"
+#include "texmgr_emissive.h"
 
 #include "SDL.h"
 
@@ -1697,7 +1698,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	byte  *colorBlend = NULL;
 	float *colorDist  = NULL;
 	float *colorRaw   = NULL;
-	if (use_color_emissive && !emisBuf && !fullbrightOverride)
+	if (use_color_emissive && !emisBuf)
 	{
 		colorEmis  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
 		colorBlend = (byte *)Mem_Alloc ((size_t)npix);
@@ -1851,23 +1852,24 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 		float emiss = 0.0f;
 		float emissRaw = 0.0f;
+		byte  emissBlend = (byte)emisBlendCode;
 		if (emisBuf)
 		{
 			emissRaw = (0.2126f * emisBuf[i * 4 + 0] + 0.7152f * emisBuf[i * 4 + 1] + 0.0722f * emisBuf[i * 4 + 2]) / 255.0f;
 			emiss = emissRaw * mat->emissive_factor;
 		}
-		if (fullbrightOverride)
+		if (colorEmis || fullbrightOverride)
 		{
-			const float fb = fullbrightOverride[i * 4 + 2] / 255.0f;
-			if (fb > emiss)
-				emiss = fb;
-			if (fb > emissRaw)
-				emissRaw = fb;
-		}
-		else if (colorEmis)
-		{
-			emiss = colorEmis[i];
-			emissRaw = colorRaw[i];
+			const texmgr_emissive_texel_t composed = TexMgr_ComposeEmissiveTexel(
+				colorEmis != NULL, colorEmis ? colorEmis[i] : 0.0f,
+				colorRaw ? colorRaw[i] : 0.0f, colorBlend ? colorBlend[i] : 0,
+				fullbrightOverride != NULL,
+				fullbrightOverride ? fullbrightOverride[i * 4 + 2] / 255.0f : 0.0f,
+				(byte)emisBlendCode);
+
+			emiss = composed.emissive;
+			emissRaw = composed.raw;
+			emissBlend = composed.blend;
 		}
 
 		if (emissRaw != emiss)
@@ -1924,7 +1926,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		rme[i * 4 + 0] = CLAMP (0, (int)(rough * 255), 255);
 		rme[i * 4 + 1] = CLAMP (0, (int)(metal * 255), 255);
 		rme[i * 4 + 2] = CLAMP (0, (int)(emissOut * 255), 255);
-		rme[i * 4 + 3] = colorBlend ? colorBlend[i] : (byte)emisBlendCode;
+		rme[i * 4 + 3] = emissBlend;
 
 		if (normBuf)
 		{
