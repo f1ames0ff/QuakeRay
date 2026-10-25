@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **Interactive presentation is paced by default** — QuakeRay now starts in
+  `vid_vsync 1` (FIFO), and `vid_maxframelatency` is a read-only `1`. The
+  `VK_KHR_present_id2` / `VK_KHR_present_wait2` cap waits for the previous
+  displayed frame before acquiring the next image, so the FPS counter reports
+  cadence rather than an uncapped submission rate. Uncapped presentation
+  remains available to other SDK hosts through
+  `QrStartFrameInfo::maxFrameLatency = 0`; QuakeRay no longer exposes that
+  interactive mode as a setting.
+- **The swapchain log reports the selected path** — the renderer now prints the
+  actual fallback `VkPresentModeKHR`, the swapchain image count and whether
+  present-wait is active instead of echoing only the requested logical mode.
+
 ## v0.51.0
 
 ### Added
@@ -23,7 +38,7 @@
 
 ### Changed
 - **The standard renderer profile is fixed and reproducible** — new installs
-  start with `vid_vsync 0`, `vid_maxframelatency 0`, `fov 90`,
+  start with `vid_vsync 1`, read-only `vid_maxframelatency 1`, `fov 90`,
   `rt_dtal_groups 0`, `rt_dtal_spacing 128` and `r_fteparticles 0`.
   `rt_enable_pvs 0`, `sv_novis 1`, `rt_restir 0`, `rt_nee_samples 2`,
   `rt_restir_candidates 8` and `rt_reflrefr_depth 8` are read-only, so saved

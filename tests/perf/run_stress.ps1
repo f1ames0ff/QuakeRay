@@ -9,9 +9,12 @@ param(
     [string]$Basedir = '',
     [string]$Tag = 'baseline',
     [string[]]$Overrides = @(),
+    [ValidateSet(0, 1, 2, 3, 4)][int]$ExpectedVsync = 1,
+    [ValidateSet(1)][int]$ExpectedMaxFrameLatency = 1,
     [ValidateRange(0, 3)][int]$StatsLevel = 0,
     [switch]$NoSound,
     [switch]$EnableStatsAfterWarmup,
+    [switch]$MoveDuringCapture,
     [switch]$Screenshot
 )
 
@@ -68,6 +71,9 @@ $manifest = [ordered]@{
     StatsLevel = $StatsLevel
     NoSound = [bool]$NoSound
     EnableStatsAfterWarmup = [bool]$EnableStatsAfterWarmup
+    MoveDuringCapture = [bool]$MoveDuringCapture
+    ExpectedVsync = $ExpectedVsync
+    ExpectedMaxFrameLatency = $ExpectedMaxFrameLatency
     Overrides = $Overrides
     LoaderLayers = $env:VK_INSTANCE_LAYERS
     LoaderLayersDisabled = $env:VK_LOADER_LAYERS_DISABLE
@@ -295,8 +301,14 @@ echo QR_LOADED0_$id
                     if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Runtime lacks foreground focus; refusing a contaminated measurement.' }
                     Send-Key $window 0x73 0x3e
                     Wait-Marker $process "QR_START_$id"
+                    if ($MoveDuringCapture) {
+                        [StressWin32]::Key($window, 0x44, 0x20, $false)
+                    }
                     if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds ($Seconds + $shutdownReserve))) {
                         Write-Host 'Start marker consumed the capture budget; this attempt is deferred.'
+                        if ($MoveDuringCapture) {
+                            [StressWin32]::Key($window, 0x44, 0x20, $true)
+                        }
                         Send-Key $window 0x74 0x3f
                         Send-Key $window 0x7a 0x57
                         $null = $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))
@@ -328,6 +340,9 @@ echo QR_LOADED0_$id
                             $nextOwnerCheck = (Get-Date).AddSeconds(1)
                         }
                         Start-Sleep -Milliseconds 100
+                    }
+                    if ($MoveDuringCapture) {
+                        [StressWin32]::Key($window, 0x44, 0x20, $true)
                     }
                     Send-Key $window 0x74 0x3f
                     if (-not (Test-QuakeRayStopRequested)) { Wait-Marker $process "QR_STOP_$id" }
@@ -371,7 +386,7 @@ echo QR_LOADED0_$id
                     if ($settings -notmatch 'vid=3840x2160@' -or $settings -notmatch "rt_upscale_fsr31=$fsr(?: |$)" -or
                         $settings -notmatch "rt_sky_clouds_quality=$expectedClouds(?: |$)") { throw 'Effective resolution/FSR/cloud quality does not match the requested target.' }
                     foreach ($expected in @(
-                        'vsync=0', 'vid_maxframelatency=0', 'fov=90',
+                        "vsync=$ExpectedVsync", "vid_maxframelatency=$ExpectedMaxFrameLatency", 'fov=90',
                         'rt_enable_pvs=0', 'sv_novis=1', 'rt_restir=0',
                         'rt_nee_samples=2', 'rt_restir_candidates=8',
                         'rt_reflrefr_depth=8', 'rt_dtal_groups=0',

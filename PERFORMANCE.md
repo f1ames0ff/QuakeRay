@@ -11,7 +11,7 @@ Use [ARCHITECTURE.md](ARCHITECTURE.md) to navigate from a counter to its produce
 | 3840x2160 / FSR Balanced (`rt_upscale_fsr31 3`) | Stable 60 FPS | 16.67 ms |
 | 3840x2160 / FSR Quality (`rt_upscale_fsr31 2`) | Stable 45 FPS | 22.22 ms |
 
-The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/qr_audit_max.cfg), with volumetric sky Low (`rt_sky_clouds_quality 0`). Particles/FTE, smoke, enhanced models, viewmodel, GI level 2, NEE 2, reflection/refraction depth 8, denoising and glass effects remain enabled. Main captures use `rt_stats 0`, uncapped host FPS, vsync off and `vid_maxframelatency 0`; artistic strengths are the recorded preset values, not arbitrary slider maxima. The runner [sets/validates 4K and the effective preset](tests/perf/run_stress.ps1#L345).
+The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/qr_audit_max.cfg), with volumetric sky Low (`rt_sky_clouds_quality 0`). Particles/FTE, smoke, enhanced models, viewmodel, GI level 2, NEE 2, reflection/refraction depth 8, denoising and glass effects remain enabled. Main captures use `rt_stats 0`, uncapped host FPS, FIFO and read-only `vid_maxframelatency 1`, so their FPS is the paced display cadence rather than an uncapped submission rate. Artistic strengths are the recorded preset values, not arbitrary slider maxima. The runner [sets/validates 4K and the effective preset](tests/perf/run_stress.ps1#L345).
 
 **Status (2026-10-14, Release, GI medium — the four-step ladder's medium, a quarter-resolution grid with two bounces):** the Fuma balanced point holds a 60.8-66 FPS mean (15.2-16.5 ms) with 1-22% of intervals over the 16.67 ms budget, and Bogbottom holds a 60.3-60.5 FPS mean (16.5-16.6 ms, p95 ~17.1 ms) after the vertex-preprocessing work below (its mover active in every verified capture); both remain mean-level passes, not yet stable-60 (Bogbottom's p99 is ~17.4 ms). At the audited maximum-quality preset (GI ultra, balanced) separate captures from the same campaign measure 50.4 / 45.8 FPS. The resolution-scaling section below shows the GPU as the frame's limiter at every tested point; the entity campaign's "about 37 / 24 FPS" reading was the Debug era and remains under "Controlled entity improvements" for provenance. Supplied saves are stress points, not all-map or long-gameplay coverage.
 
@@ -41,7 +41,9 @@ The remaining gap is GPU-bound in the cloud pass: with clouds enabled, `gpu.fram
 The owner then made that historical policy the engine standard: `rt_dtal_groups 0`,
 `rt_dtal_spacing 128`, `r_fteparticles 0`, plus read-only `rt_enable_pvs 0`, `sv_novis 1`,
 `rt_restir 0`, `rt_nee_samples 2`, `rt_restir_candidates 8` and `rt_reflrefr_depth 8`.
-`vid_vsync` now defaults to `0`; `vid_maxframelatency 0` and `fov 90` remain standard. A full
+`vid_vsync` now defaults to `1` and `vid_maxframelatency` is a read-only `1`; `fov 90`
+remains standard. Captures made before this pacing change used vsync off and are not directly
+comparable with the current honest-mode FPS. A historical full
 Release capture with no cvar overrides except `rt_gi_level 1` measured 54.8 FPS (18.24 ms mean,
 p95 20.92, p99 23.58), with the same effective profile and no BLAS recreations. Capture:
 `build/Release/audit-standard-profile-release-*`.
