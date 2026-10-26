@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Changed
+- **Scene recording overlaps waitable-FIFO acquisition** — the end task now
+  records framebuffer-independent scene commands while the separate acquire task
+  waits for the previous display. A per-frame exactly-once gate joins acquisition
+  immediately before final present recording, and the next begin depends on both
+  the previous end and acquire tasks. GPU frame hooks retain early acquisition
+  because their `BeforeRenderer` contract includes the real backbuffer.
+- **Cloud shadow sampling reuses per-ray constants** — the cloud cubemap
+  precomputes its Henyey-Greenstein phases and both cloud marchers precompute the
+  sun-sample tangent/bitangent basis once per invocation instead of rebuilding
+  them for every 32-step shadow sample. The resulting samples and pixel values
+  are unchanged.
 - **Interactive presentation is paced by default** — QuakeRay now starts in
   `vid_vsync 1` (FIFO), and `vid_maxframelatency` is a read-only `1`. The
   `VK_KHR_present_id2` / `VK_KHR_present_wait2` cap waits for the previous

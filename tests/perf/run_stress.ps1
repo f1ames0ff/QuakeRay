@@ -1,5 +1,7 @@
 param(
-    [ValidateSet('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy', 'qr_swampy_start', 'qr_ad_swamp')][string[]]$Saves = @('qr_fuma_start'),
+    [string[]]$Saves = @('qr_fuma_start'),
+    [ValidateSet('id1', 'mg1', 'mg3', 'ad')][string]$Game = 'ad',
+    [ValidatePattern('^[A-Za-z0-9_./-]+$')][string[]]$Maps = @(),
     [ValidateSet('balanced', 'quality', 'performance', 'ultra')][string[]]$Presets = @('balanced'),
     [ValidateSet('audit', 'medium')][string]$RtProfile = 'audit',
     [ValidateRange(2, 25)][int]$Seconds = 10,
@@ -11,16 +13,38 @@ param(
     [string[]]$Overrides = @(),
     [ValidateSet(0, 1, 2, 3, 4)][int]$ExpectedVsync = 1,
     [ValidateSet(1)][int]$ExpectedMaxFrameLatency = 1,
+    [ValidateSet(0, 1)][int]$ExpectedRestir = 0,
     [ValidateRange(0, 3)][int]$StatsLevel = 0,
     [switch]$NoSound,
     [switch]$EnableStatsAfterWarmup,
+    [switch]$Scheduled,
     [switch]$MoveDuringCapture,
+    [switch]$AllowProfileOverrides,
     [switch]$Screenshot
 )
 
 $ErrorActionPreference = 'Stop'
 if ($EnableStatsAfterWarmup -and $StatsLevel -ne 3) {
     throw 'EnableStatsAfterWarmup requires StatsLevel 3.'
+}
+if ($Scheduled -and $MoveDuringCapture) {
+    throw 'Scheduled captures cannot inject movement input.'
+}
+if ($Scheduled -and $Screenshot) {
+    throw 'Scheduled captures do not take interactive screenshots.'
+}
+if ($Maps.Count -gt 1) {
+    throw 'Run one map per invocation; release the GPU between short runs.'
+}
+if ($Maps.Count -eq 1) {
+    $Saves = @($Maps[0])
+} else {
+    $knownSaves = @('qr_fuma_start', 'qr_ad_start', 'qr_gpu_heavy', 'qr_swampy_start', 'qr_ad_swamp')
+    foreach ($saveName in $Saves) {
+        if ($saveName -notin $knownSaves) {
+            throw "Unknown save scenario '$saveName'; provide a map through -Maps instead."
+        }
+    }
 }
 . (Join-Path $PSScriptRoot 'stress_budget.ps1')
 . (Join-Path $PSScriptRoot 'machine_guard.ps1')
@@ -35,23 +59,55 @@ if ($minimumCaptureSeconds -gt $MaxRunSeconds) {
 }
 $mutex = Enter-QuakeRayMachine
 try {
+$ancestors = @(Get-QuakeRayProcessAncestorIds)
 if (-not $Basedir) { $Basedir = Join-Path $PSScriptRoot '..\..\build\Debug' }
 $Basedir = (Resolve-Path $Basedir).Path
-$gameDir = Join-Path $Basedir 'ad'
+$gameDir = Join-Path $Basedir $Game
 $exe = Join-Path $Basedir 'quakeray.exe'
 $console = Join-Path $Basedir 'qconsole.log'
 $config = Join-Path $gameDir 'config.cfg'
+$scheduledWarmupFrames = if ($Scheduled) { [int][math]::Ceiling($Warmup * 60.0) } else { 0 }
+$scheduledCaptureFrames = if ($Scheduled) { [int][math]::Ceiling($Seconds * 60.0) } else { 0 }
 $expectedMaps = @{ qr_fuma_start = 'ad_tfuma'; qr_ad_start = 'start'; qr_gpu_heavy = 'ad_swampy'; qr_swampy_start = 'ad_swampy'; qr_ad_swamp = 'ad_swampy' }
-$mapMode = $Saves[0] -eq 'qr_swampy_start'
+$mapMode = $Maps.Count -eq 1 -or $Saves[0] -eq 'qr_swampy_start'
+if ($Maps.Count -eq 1) {
+    $expectedMaps[$Saves[0]] = (Split-Path -Leaf $Maps[0]) -replace '\.bsp$', ''
+}
 $runTag = ($Tag -replace '[^a-zA-Z0-9_-]', '_') + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' +
     [Guid]::NewGuid().ToString('N').Substring(0, 6)
 $output = (New-Item -ItemType Directory -Path (Join-Path $Basedir "audit-$runTag")).FullName
 
 if (-not (Test-Path $exe)) { throw "Missing Debug runtime: $exe" }
+if (-not (Test-Path $gameDir)) {
+    New-Item -ItemType Directory -Path $gameDir | Out-Null
+}
 if (-not $mapMode) {
     foreach ($save in $Saves) {
         if (-not (Test-Path (Join-Path $gameDir "$save.sav"))) { throw "Missing save: $save" }
     }
+}
+
+try {
+    $activeDisplays = @(
+        Get-CimInstance Win32_VideoController -ErrorAction Stop |
+            Where-Object { $_.CurrentHorizontalResolution -gt 0 -and $_.CurrentVerticalResolution -gt 0 } |
+            ForEach-Object {
+                [ordered]@{
+                    Name = $_.Name
+                    PnpDeviceId = $_.PNPDeviceID
+                    DriverVersion = $_.DriverVersion
+                    Width = $_.CurrentHorizontalResolution
+                    Height = $_.CurrentVerticalResolution
+                    RefreshHz = $_.CurrentRefreshRate
+                    VideoModeDescription = $_.VideoModeDescription
+                }
+            }
+    )
+} catch {
+    $activeDisplays = @(Get-QuakeRayActiveDisplays)
+}
+if (-not $activeDisplays.Count) {
+    throw 'MACHINE_GUARD_UNAVAILABLE: no active display mode was reported.'
 }
 
 $manifest = [ordered]@{
@@ -61,6 +117,8 @@ $manifest = [ordered]@{
     Executable = $exe
     ExecutableSha256 = (Get-FileHash $exe -Algorithm SHA256).Hash
     EngineAssetsSha256 = (Get-FileHash (Join-Path $Basedir 'id1\qray.pkz') -Algorithm SHA256).Hash
+    Game = $Game
+    Maps = $Maps
     Saves = $Saves
     Presets = $Presets
     RtProfile = $RtProfile
@@ -71,12 +129,18 @@ $manifest = [ordered]@{
     StatsLevel = $StatsLevel
     NoSound = [bool]$NoSound
     EnableStatsAfterWarmup = [bool]$EnableStatsAfterWarmup
+    Scheduled = [bool]$Scheduled
+    ScheduledWarmupFrames = $scheduledWarmupFrames
+    ScheduledCaptureFrames = $scheduledCaptureFrames
     MoveDuringCapture = [bool]$MoveDuringCapture
+    AllowProfileOverrides = [bool]$AllowProfileOverrides
     ExpectedVsync = $ExpectedVsync
     ExpectedMaxFrameLatency = $ExpectedMaxFrameLatency
+    ExpectedRestir = $ExpectedRestir
     Overrides = $Overrides
     LoaderLayers = $env:VK_INSTANCE_LAYERS
     LoaderLayersDisabled = $env:VK_LOADER_LAYERS_DISABLE
+    ActiveDisplays = $activeDisplays
     Assets = @()
 }
 $assetNames = @('pak0.pak', 'pak1.pak', 'pak2.pak', 'qray.materials.yaml', 'qray.lights.yaml')
@@ -145,24 +209,21 @@ public static class StressWin32 {
 
 function Wait-Idle {
     $deadline = Get-StressDeadline -Deadline $script:RunDeadline -MaximumSeconds 300
-    $ancestors = @($PID)
-    $ancestor = Get-CimInstance Win32_Process -Filter "ProcessId=$PID"
-    while ($ancestor -and $ancestor.ParentProcessId -gt 0 -and $ancestor.ParentProcessId -notin $ancestors) {
-        $ancestors += $ancestor.ParentProcessId
-        $ancestor = Get-CimInstance Win32_Process -Filter "ProcessId=$($ancestor.ParentProcessId)"
-    }
     $reported = $false
     while ($true) {
         $busy = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)' -and $_.Threads.Count -gt 0 })
-        $runners = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" |
-            Where-Object { $_.ProcessId -notin $ancestors -and (Test-StressExternalRunnerOwner $_.CommandLine) })
-        if ($busy.Count -eq 0 -and $runners.Count -eq 0) { return }
+        $runners = @(Get-QuakeRayExternalRunnerProcesses -ExcludedProcessIds $ancestors |
+            Where-Object { Test-StressExternalRunnerOwner $_.CommandLine })
+        $gpuBusy = @(Get-QuakeRayGpuBusyProcesses -ExcludedProcessIds $ancestors)
+        if ($busy.Count -eq 0 -and $runners.Count -eq 0 -and $gpuBusy.Count -eq 0) { return }
         if (-not $reported) {
-            Write-Host "Waiting for GPU/build owners: $($busy.Id -join ', '); runners: $($runners.ProcessId -join ', ')"
+            $gpuOwners = ($gpuBusy | ForEach-Object { "$($_.ProcessId):$($_.ProcessName)" }) -join ', '
+            Write-Host "Waiting for GPU/build owners: $($busy.Id -join ', '); runners: $($runners.ProcessId -join ', '); GPU: $gpuOwners"
             $reported = $true
         }
         if ((Get-Date) -ge $deadline) {
-            throw "Another agent still owns the machine after 5 minutes or the shared deadline expired; defer this run: $($busy.Id -join ', '); runners $($runners.ProcessId -join ', ')."
+            $gpuOwners = ($gpuBusy | ForEach-Object { "$($_.ProcessId):$($_.ProcessName)" }) -join ', '
+            throw "Another agent still owns the machine after 5 minutes or the shared deadline expired; defer this run: $($busy.Id -join ', '); runners $($runners.ProcessId -join ', '); GPU $gpuOwners."
         }
         Start-Sleep -Seconds 10
     }
@@ -206,7 +267,8 @@ $results = @()
                 }
                 $id = [Guid]::NewGuid().ToString('N').Substring(0, 8)
                 $fixture = Join-Path $gameDir "qs_$id.cfg"
-                $label = "$save-$preset-$repeat"
+                $label = if ($Maps.Count -eq 1) { "$Game-$($Maps[0])-$preset-$repeat" -replace '[^A-Za-z0-9_.-]', '_' }
+                    else { "$save-$preset-$repeat" }
                 $savedConfig = if (Test-Path $config) { [System.IO.File]::ReadAllBytes($config) } else { $null }
                 $process = $null
                 $oldDumps = @(Get-ChildItem $gameDir -Filter 'stats-*.dump' | ForEach-Object FullName)
@@ -221,14 +283,28 @@ $results = @()
                 $startStats = if ($EnableStatsAfterWarmup) { "rt_stats $StatsLevel;" } else { '' }
                 $mapCommand = if ($mapMode) { "map $($expectedMaps[$save])" } else { "load $save" }
                 $profileCfg = if ($RtProfile -eq 'medium') { 'qr_medium.cfg' } else { 'qr_audit_max.cfg' }
-                $fixtureText = (Get-Content (Join-Path $PSScriptRoot $profileCfg) -Raw) + "`n" +
-                    "rt_upscale_fsr31 $fsr`n" + ($Overrides -join "`n") + "`n" + @"
-vid_unlock
-vid_fullscreen 0
-vid_width 3840
-vid_height 2160
-vid_restart
-rt_stats $initialStatsLevel
+                if ($Scheduled) {
+                    $warmupWaits = 'wait;' * $scheduledWarmupFrames
+                    $captureWaits = 'wait;' * $scheduledCaptureFrames
+                    $flushWaits = 'wait;' * 3
+                    $startupWaits = 'wait;' * 30
+                    $fixtureTail = @"
+$startupWaits
+$mapCommand
+echo QR_LOADED0_$id
+mapname
+menu_close
+echo QR_MAP_$id
+$warmupWaits
+$startStats rt_bench start; $startDump echo QR_START_$id
+$captureWaits
+rt_bench stop; $endDump echo QR_STOP_$id
+$flushWaits
+echo QR_QUIT_$id
+toggleconsole; quit
+"@
+                } else {
+                    $fixtureTail = @"
 bind F4 "$startStats rt_bench start; $startDump echo QR_START_$id"
 bind F5 "rt_bench stop; $endDump echo QR_STOP_$id"
 bind F6 "screenshot"
@@ -238,11 +314,23 @@ bind F9 "load $save; wait; menu_close; echo QR_RELOAD_$id"
 bind F11 "toggleconsole; quit"
 $mapCommand
 echo QR_LOADED0_$id
+mapname
+echo QR_MAP_$id
 "@
+                }
+                $fixtureText = (Get-Content (Join-Path $PSScriptRoot $profileCfg) -Raw) + "`n" +
+                    "rt_upscale_fsr31 $fsr`n" + ($Overrides -join "`n") + "`n" + @"
+vid_unlock
+vid_fullscreen 0
+vid_width 3840
+vid_height 2160
+vid_restart
+rt_stats $initialStatsLevel
+"@ + "`r`n" + $fixtureTail
                 $fixtureText | Set-Content $fixture -Encoding Ascii
                 Copy-Item $fixture (Join-Path $output "$label.cfg")
                 try {
-                    $arguments = @('-basedir', '.', '-game', 'ad', '-window', '-width', 1280, '-height', 720,
+                    $arguments = @('-basedir', '.', '-game', $Game, '-window', '-width', 1280, '-height', 720,
                         '-condebug', '+exec', "qs_$id.cfg")
                     if ($NoSound) { $arguments += '-nosound' }
                     $env:SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS = '0'
@@ -263,7 +351,54 @@ echo QR_LOADED0_$id
                     $process = Start-Process @launch
                     $null = $process.Handle
                     Wait-Marker $process "QR_LOADED0_$id"
+                    Wait-Marker $process "QR_MAP_$id"
                     $process.Refresh()
+                    if ($Scheduled) {
+                        $focusLosses = 0
+                        Wait-Marker $process "QR_START_$id"
+                        $gpuBusy = @(Get-QuakeRayGpuBusyProcesses -ExcludedProcessIds ($ancestors + @($process.Id)))
+                        if ($gpuBusy.Count) {
+                            $owners = ($gpuBusy | ForEach-Object { "$($_.ProcessId):$($_.ProcessName)" }) -join ', '
+                            throw "MACHINE_BUSY: foreign GPU activity contaminated this capture before it started: $owners"
+                        }
+
+                        $deadline = Get-StressDeadline -Deadline $script:RunDeadline.AddSeconds(-$shutdownReserve) -MaximumSeconds $MaxRunSeconds
+                        $nextOwnerCheck = Get-Date
+                        while ($true) {
+                            if (Test-QuakeRayStopRequested) { throw 'CANCELLED: owned runtime stopped; capture remains unaccepted.' }
+                            $process.Refresh()
+                            if ((Test-Path $console) -and (Get-Content $console -Raw) -match [regex]::Escape("QR_STOP_$id")) { break }
+                            if ($process.HasExited) { throw "Runtime exited with code $($process.ExitCode) before QR_STOP_$id" }
+                            if ((Get-Date) -ge $deadline) { throw "Timed out waiting for QR_STOP_$id" }
+                            if ((Get-Date) -ge $nextOwnerCheck) {
+                                $foreign = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+                                    $_.Id -ne $process.Id -and
+                                    $_.Threads.Count -gt 0 -and
+                                    $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)'
+                                })
+                                if ($foreign.Count) {
+                                    $owners = ($foreign | ForEach-Object { "$($_.Id):$($_.ProcessName)" }) -join ', '
+                                    throw "MACHINE_BUSY: foreign heavy activity contaminated this capture: $owners"
+                                }
+                                $gpuBusy = @(Get-QuakeRayGpuBusyProcesses -ExcludedProcessIds ($ancestors + @($process.Id)))
+                                if ($gpuBusy.Count) {
+                                    $owners = ($gpuBusy | ForEach-Object { "$($_.ProcessId):$($_.ProcessName)" }) -join ', '
+                                    throw "MACHINE_BUSY: foreign GPU activity contaminated this capture: $owners"
+                                }
+                                $nextOwnerCheck = (Get-Date).AddSeconds(1)
+                            }
+                            Start-Sleep -Milliseconds 100
+                        }
+                        $gpuBusy = @(Get-QuakeRayGpuBusyProcesses -ExcludedProcessIds ($ancestors + @($process.Id)))
+                        if ($gpuBusy.Count) {
+                            $owners = ($gpuBusy | ForEach-Object { "$($_.ProcessId):$($_.ProcessName)" }) -join ', '
+                            throw "MACHINE_BUSY: foreign GPU activity contaminated this capture: $owners"
+                        }
+                        if (-not $process.WaitForExit((Get-StressExitTimeout -Deadline $script:RunDeadline))) {
+                            throw 'Runtime did not exit within the remaining budget'
+                        }
+                        if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
+                    } else {
                     $window = $process.MainWindowHandle
                     if ($window -eq [IntPtr]::Zero) { throw 'No runtime window' }
                     if (-not (Test-StressBudget -Deadline $script:RunDeadline -RequiredSeconds $minimumCaptureSeconds)) {
@@ -299,6 +434,11 @@ echo QR_LOADED0_$id
                         Start-Sleep -Milliseconds 300
                     }
                     if (-not [StressWin32]::OwnsFocus($process.Id)) { throw 'Runtime lacks foreground focus; refusing a contaminated measurement.' }
+                    $gpuBusy = @(Get-QuakeRayGpuBusyProcesses -ExcludedProcessIds ($ancestors + @($process.Id)))
+                    if ($gpuBusy.Count) {
+                        $owners = ($gpuBusy | ForEach-Object { "$($_.ProcessId):$($_.ProcessName)" }) -join ', '
+                        throw "MACHINE_BUSY: foreign GPU activity contaminated this capture before it started: $owners"
+                    }
                     Send-Key $window 0x73 0x3e
                     Wait-Marker $process "QR_START_$id"
                     if ($MoveDuringCapture) {
@@ -341,6 +481,14 @@ echo QR_LOADED0_$id
                         }
                         Start-Sleep -Milliseconds 100
                     }
+                    $gpuBusy = @(Get-QuakeRayGpuBusyProcesses -ExcludedProcessIds ($ancestors + @($process.Id)))
+                    if ($gpuBusy.Count) {
+                        $owners = ($gpuBusy | ForEach-Object { "$($_.ProcessId):$($_.ProcessName)" }) -join ', '
+                        throw "MACHINE_BUSY: foreign GPU activity contaminated this capture: $owners"
+                    }
+                    if ($focusLosses -ne 0) {
+                        throw "Capture lost runtime focus $focusLosses time(s); refusing a contaminated measurement."
+                    }
                     if ($MoveDuringCapture) {
                         [StressWin32]::Key($window, 0x44, 0x20, $true)
                     }
@@ -355,6 +503,7 @@ echo QR_LOADED0_$id
                         throw 'Runtime did not exit within the remaining budget'
                     }
                     if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
+                    }
                     if (Test-QuakeRayStopRequested) { throw 'CANCELLED: owned runtime stopped; capture remains unaccepted.' }
                     $windowChecks = $null
                     if ($StatsLevel -gt 0) {
@@ -383,19 +532,35 @@ echo QR_LOADED0_$id
                     $newBlock | Set-Content (Join-Path $output "$label.bench.log")
                     $settings = $newBlock | Where-Object { $_ -match '^settings ' } | Select-Object -Last 1
                     $expectedClouds = if ($RtProfile -eq 'medium') { 1 } else { 0 }
+                    $profileSettings = if ($RtProfile -eq 'medium' -and -not $AllowProfileOverrides) {
+                        @('rt_gi_level=1', 'rt_sky_godrays=1', 'rt_sky_godrays_quality=1',
+                          'rt_sky_clouds=1', 'rt_physical_sky=1', 'rt_physical_sun=1',
+                          'rt_sky_nee=1', 'rt_denoiser=1', 'r_particles=1', 'r_smoke=1',
+                          'rt_renderscale=0', 'rt_upscale_dlss=0', 'rt_dtal_lod=0',
+                          'rt_q2_lightstats=1')
+                    } else {
+                        @()
+                    }
                     if ($settings -notmatch 'vid=3840x2160@' -or $settings -notmatch "rt_upscale_fsr31=$fsr(?: |$)" -or
                         $settings -notmatch "rt_sky_clouds_quality=$expectedClouds(?: |$)") { throw 'Effective resolution/FSR/cloud quality does not match the requested target.' }
                     foreach ($expected in @(
                         "vsync=$ExpectedVsync", "vid_maxframelatency=$ExpectedMaxFrameLatency", 'fov=90',
-                        'rt_enable_pvs=0', 'sv_novis=1', 'rt_restir=0',
+                        'rt_enable_pvs=0', 'sv_novis=1', "rt_restir=$ExpectedRestir",
                         'rt_nee_samples=2', 'rt_restir_candidates=8',
                         'rt_reflrefr_depth=8', 'rt_dtal_groups=0',
-                        'rt_dtal_spacing=128', 'r_fteparticles=0')) {
+                        'rt_dtal_spacing=128', 'r_fteparticles=0') + $profileSettings) {
                         if ($settings -notmatch "(?:^| )$([regex]::Escape($expected))(?: |$)") {
                             throw "Effective settings do not contain the standard '$expected'."
                         }
                     }
-                    if (($newBlock -join "`n") -notmatch "demo=maps/$($expectedMaps[$save])\.bsp") { throw 'Unexpected map in benchmark capture' }
+                    if ($mapMode) {
+                        $expectedMapMarker = "`"mapname`" is `"$($expectedMaps[$save])`""
+                        if ((Get-Content $console -Raw) -notmatch [regex]::Escape($expectedMapMarker)) {
+                            throw 'Unexpected map in benchmark capture'
+                        }
+                    } elseif (($newBlock -join "`n") -notmatch "demo=$([regex]::Escape("maps/$($expectedMaps[$save]).bsp"))") {
+                        throw 'Unexpected map in benchmark capture'
+                    }
                     $sampleRecord = $newBlock | Where-Object { $_ -match '^frame_samples file=' } | Select-Object -Last 1
                     if ($sampleRecord -notmatch '^frame_samples file=(\S+) samples=(\d+) dropped=0$') {
                         throw 'Per-frame benchmark samples are missing or truncated; rebuild the audit instrumentation.'
@@ -410,7 +575,15 @@ echo QR_LOADED0_$id
                     }
                     Copy-Item $console (Join-Path $output "$label.console.log")
                     if (-not $manifest.Contains('CaptureChecks')) { $manifest.CaptureChecks = [ordered]@{} }
-                    $manifest.CaptureChecks[$label] = @{ FocusVerified = ($focusLosses -eq 0); FocusLosses = $focusLosses; Completed = $true; StatsLevel = $StatsLevel }
+                    $manifest.CaptureChecks[$label] = @{
+                        FocusVerified = (-not $Scheduled -and $focusLosses -eq 0)
+                        FocusLosses = $focusLosses
+                        ScheduledCommands = [bool]$Scheduled
+                        ScheduledWarmupFrames = $scheduledWarmupFrames
+                        ScheduledCaptureFrames = $scheduledCaptureFrames
+                        Completed = $true
+                        StatsLevel = $StatsLevel
+                    }
                     if ($null -ne $windowChecks) { $manifest.CaptureChecks[$label].ProfilerWindows = $windowChecks }
                     $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $output 'manifest.json') -Encoding UTF8
                     $results += [PSCustomObject]@{ Save = $save; Preset = $preset; Repeat = $repeat; Output = $output;
