@@ -546,6 +546,7 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/renderer/Include
         ${CMAKE_SOURCE_DIR}/shared
     )
+    target_link_libraries(frame_timing_tests PRIVATE Vulkan::Vulkan)
     target_compile_definitions(frame_timing_tests PRIVATE QR_STATIC)
     add_test(NAME frame_timing_tests COMMAND frame_timing_tests)
 

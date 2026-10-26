@@ -461,6 +461,11 @@ static void R_TimeRefreshNoop (void *unused)
 {
 }
 
+static void R_TimeRefreshDrawDone (gl_end_rendering_context_t **context)
+{
+	GL_CaptureEndRenderingSnapshot (*context);
+}
+
 void R_TimeRefresh_f (void)
 {
 	int   i;
@@ -483,10 +488,12 @@ void R_TimeRefresh_f (void)
 		if (!GL_BeginRendering (&begin_rendering_task, &glx, &gly, &glwidth, &glheight))
 			break;
 
+		gl_end_rendering_context_t *end_rendering_context = GL_CreateEndRenderingContext ();
 		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (R_TimeRefreshNoop, NULL, 0);
-		task_handle_t draw_done_task = Task_AllocateAndAssignFunc (R_TimeRefreshNoop, NULL, 0);
+		task_handle_t draw_done_task = Task_AllocateAndAssignFunc (
+			R_TimeRefreshDrawDone, &end_rendering_context, sizeof (end_rendering_context));
 		R_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
-		task_handle_t end_rendering_task = GL_EndRendering ();
+		task_handle_t end_rendering_task = GL_EndRendering (end_rendering_context);
 
 		Task_AddDependency (draw_done_task, end_rendering_task);
 
