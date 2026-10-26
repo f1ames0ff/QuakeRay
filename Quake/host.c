@@ -726,14 +726,6 @@ qboolean Host_FilterTime (float time)
 		maxfps = CLAMP (10.0, host_maxfps.value, 1000.0);
 	}
 
-	if ((int)vid_vsync.value == VID_VSYNC_FREESYNC && vid_display_refresh > 10)
-	{
-		const float cap = (float)(vid_display_refresh - 3);
-
-		if (maxfps <= 0.0f || cap < maxfps)
-			maxfps = cap;
-	}
-
 	if (maxfps > 0.0f)
 	{
 		// Check if we still have more than 2ms till next frame and if so wait for "1ms"

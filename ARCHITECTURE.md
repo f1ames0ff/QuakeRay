@@ -229,6 +229,10 @@ Only a frame with successful acquisition and presentation rearms a forced SUBOPT
 Presentation fences are per image; teardown waits pending fences before retiring presentation resources.
 Acquire polls those fences with `vkGetFenceStatus`, so completed presentation operations feed the
 main FPS counter without blocking the renderer. FIFO pacing remains a separate `present_wait2` path.
+QuakeRay maps `vid_vsync 1` to Adaptive (`VK_PRESENT_MODE_FIFO_RELAXED_KHR`), `2` to VSync
+(`VK_PRESENT_MODE_FIFO_KHR`) and `3` to Off (`VK_PRESENT_MODE_IMMEDIATE_KHR`). No other host
+values are accepted. SDK requests map directly to their selected Vulkan mode; an unsupported request
+fails instead of selecting an unrelated mode.
 
 | Boundary | Entry / lifetime rule | Timing interpretation |
 | --- | --- | --- |

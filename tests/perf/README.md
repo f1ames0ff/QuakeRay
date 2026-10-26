@@ -17,7 +17,7 @@ config files run. Every block records the mode that was really in force in its `
 
 Everything that shapes the cluster system is pinned in `qr_perf_common.cfg` and is identical in
 both modes: `rt_light_reach_static 25`, `rt_light_reach_dynamic 10`, `rt_cluster_incremental 1`,
-`rt_cluster_assert 0`, `rt_stats 0`, `vid_vsync 0`, `host_maxfps 0`, and both
+`rt_cluster_assert 0`, `rt_stats 0`, `vid_vsync 3`, `host_maxfps 0`, and both
 particle systems are off (`r_particles 0`, `r_fteparticles 0`) so the known particle-side engine
 issue cannot distort the cluster measurements. The benchmark records the settings it ran under in
 its block header, so a report says which load shape it is.

@@ -9,9 +9,10 @@ param(
     [ValidateRange(1, 2)][int]$Repeats = 1,
     [ValidateRange(30, 300)][int]$MaxRunSeconds = 300,
     [string]$Basedir = '',
+    [ValidateSet(0, 1, 2)][int]$Fullscreen = 0,
     [string]$Tag = 'baseline',
     [string[]]$Overrides = @(),
-    [ValidateSet(0, 1, 2, 3, 4)][int]$ExpectedVsync = 1,
+    [ValidateSet(1, 2, 3)][int]$ExpectedVsync = 1,
     [ValidateSet(1)][int]$ExpectedMaxFrameLatency = 1,
     [ValidateSet(0, 1)][int]$ExpectedRestir = 0,
     [ValidateRange(0, 3)][int]$StatsLevel = 0,
@@ -124,6 +125,7 @@ $manifest = [ordered]@{
     RtProfile = $RtProfile
     Seconds = $Seconds
     Warmup = $Warmup
+    Fullscreen = $Fullscreen
     Repeats = $Repeats
     MaxRunSeconds = $MaxRunSeconds
     StatsLevel = $StatsLevel
@@ -321,7 +323,7 @@ echo QR_MAP_$id
                 $fixtureText = (Get-Content (Join-Path $PSScriptRoot $profileCfg) -Raw) + "`n" +
                     "rt_upscale_fsr31 $fsr`n" + ($Overrides -join "`n") + "`n" + @"
 vid_unlock
-vid_fullscreen 0
+vid_fullscreen $Fullscreen
 vid_width 3840
 vid_height 2160
 vid_restart

@@ -2669,11 +2669,10 @@ static const char *VID_VsyncModeName (int mode)
 {
 	switch (mode)
 	{
-	case VID_VSYNC_ON:        return "vsync";
 	case VID_VSYNC_ADAPTIVE:  return "adaptive";
-	case VID_VSYNC_FREESYNC:  return "freesync";
-	case VID_VSYNC_MAILBOX:   return "mailbox";
-	default:                  return "off";
+	case VID_VSYNC_ON:        return "vsync";
+	case VID_VSYNC_OFF:       return "off";
+	default:                  return "unknown";
 	}
 }
 
@@ -2681,17 +2680,24 @@ static QrPresentMode VID_PresentMode (void)
 {
 	switch ((int)vid_vsync.value)
 	{
-	case VID_VSYNC_ON:        return QR_PRESENT_MODE_VSYNC;
 	case VID_VSYNC_ADAPTIVE:  return QR_PRESENT_MODE_ADAPTIVE;
-	case VID_VSYNC_FREESYNC:  return QR_PRESENT_MODE_VSYNC;
-	case VID_VSYNC_MAILBOX:   return QR_PRESENT_MODE_MAILBOX;
-	default:                  return QR_PRESENT_MODE_IMMEDIATE;
+	case VID_VSYNC_ON:        return QR_PRESENT_MODE_VSYNC;
+	case VID_VSYNC_OFF:       return QR_PRESENT_MODE_IMMEDIATE;
+	default:                  return QR_PRESENT_MODE_ADAPTIVE;
 	}
 }
 
 static void VID_Vsync_f (cvar_t *var)
 {
-	Con_Printf ("Video: vsync mode is %s\n", VID_VsyncModeName ((int)var->value));
+	const int mode = (int)CLAMP (VID_VSYNC_ADAPTIVE, var->value, VID_VSYNC_OFF);
+
+	if ((int)var->value != mode)
+		Cvar_SetValueQuick (var, (float)mode);
+
+	if ((int)var->value == VID_VSYNC_OFF)
+		Con_Printf ("Video: vsync is off (immediate; tearing may occur)\n");
+	else
+		Con_Printf ("Video: vsync mode is %s\n", VID_VsyncModeName ((int)var->value));
 }
 
 static void VID_CloudsQuality_f (cvar_t *var)
@@ -5231,10 +5237,10 @@ static void VID_Menu_ChooseNextVsync (int dir)
 {
 	int mode = (int)vid_vsync.value + dir;
 
-	if (mode < VID_VSYNC_OFF)
-		mode = VID_VSYNC_MAILBOX;
-	else if (mode > VID_VSYNC_MAILBOX)
+	if (mode < VID_VSYNC_ADAPTIVE)
 		mode = VID_VSYNC_OFF;
+	else if (mode > VID_VSYNC_OFF)
+		mode = VID_VSYNC_ADAPTIVE;
 
 	Cvar_SetValueQuick (&vid_vsync, (float)mode);
 }

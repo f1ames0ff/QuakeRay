@@ -105,7 +105,7 @@ function Run-Arm([string]$Directory, [string]$Name, [bool]$RunSmoke) {
 cl_startdemos 0
 stopdemo
 disconnect
-vid_vsync 0
+vid_vsync 3
 host_maxfps 0
 rt_stats 3
 rt_stats_interval 0.2

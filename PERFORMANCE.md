@@ -41,7 +41,8 @@ The remaining gap is GPU-bound in the cloud pass: with clouds enabled, `gpu.fram
 The owner then made that historical policy the engine standard: `rt_dtal_groups 0`,
 `rt_dtal_spacing 128`, `r_fteparticles 0`, plus read-only `rt_enable_pvs 0`, `sv_novis 1`,
 `rt_restir 0`, `rt_nee_samples 2`, `rt_restir_candidates 8` and `rt_reflrefr_depth 8`.
-`vid_vsync` now defaults to `1` and `vid_maxframelatency` is a read-only `1`; `fov 90`
+`vid_vsync` defaults to `1` (Adaptive, `VK_PRESENT_MODE_FIFO_RELAXED_KHR`) and
+`vid_maxframelatency` is a read-only `1`; `fov 90`
 remains standard. Captures made before this pacing change used vsync off and are not directly
 comparable with the current honest-mode FPS. A historical full
 Release capture with no cvar overrides except `rt_gi_level 1` measured 54.8 FPS (18.24 ms mean,
