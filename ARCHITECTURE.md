@@ -227,6 +227,8 @@ Swapchain recreation episodes and maintenance-extension pair selection share the
 [`SwapchainPolicy.h`](renderer/Source/SwapchainPolicy.h), exercised by `qray_swapchain_policy` in CTest.
 Only a frame with successful acquisition and presentation rearms a forced SUBOPTIMAL rebuild.
 Presentation fences are per image; teardown waits pending fences before retiring presentation resources.
+Acquire polls those fences with `vkGetFenceStatus`, so completed presentation operations feed the
+main FPS counter without blocking the renderer. FIFO pacing remains a separate `present_wait2` path.
 
 | Boundary | Entry / lifetime rule | Timing interpretation |
 | --- | --- | --- |
