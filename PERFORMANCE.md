@@ -102,6 +102,7 @@ active where noted).
 | Quantity | What it actually measures | Source / constraint |
 | --- | --- | --- |
 | `interval_ms`, FPS, p95/p99 | Screen-end to screen-end intervals; FPS = `1000 / mean(interval_ms)`. Includes work and waits between completed screen frames. The first partial interval is zero and excluded. | [`RT_Prof_FrameEnd`](Quake/gl_vidsdl.c#L853), [`summarize`](tests/perf/analyze_stress.py#L55). |
+| `scr_showfps` / `QrFrameStats.fpsX10` | Completed presentation rate over a 500 ms fence window when per-image presentation fences are available; otherwise renderer FPS. Fence status is polled non-blockingly and never paces rendering. | [`PollPresentFences`](renderer/Source/Swapchain.cpp#L481), [`SCR_DrawFPS`](Quake/gl_screen.c#L567). |
 | `host_interval_ms` | Unclamped host frame interval, distinct from simulation-scaled time. | [Raw host time assignment](Quake/host.c#L751), [sample field](Quake/gl_vidsdl.c#L886). |
 | `cpu.frame_ms` | Inclusive `SCR_UpdateScreen` wall time, including begin-frame waits and backend calls. **Not** the whole host frame, input, server, audio or all particle simulation. | [Screen bracket](Quake/gl_screen.c#L1160), [post-screen work](Quake/host.c#L1019). |
 | `cpu.begin_ms` | Wall time of `qrStartFrame` inside the begin-rendering task: the wait on the in-flight frame fence and frame-slot preparation. Image acquisition and its present wait are a separate task. | [Begin task](Quake/gl_vidsdl.c#L3395), [BeginFrame](renderer/Source/VulkanDevice.cpp#L256). |

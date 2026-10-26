@@ -584,7 +584,12 @@ void SCR_DrawFPS (cb_context_t *cbx)
 	// update value every 3/4 second
 	if (elapsed_time > 0.75)
 	{
-		lastfps = frames / elapsed_time;
+		uint32_t fps_x10 = 0;
+		if (vulkan_globals.instance != NULL &&
+		    qrGetFrameStats (vulkan_globals.instance, NULL, &fps_x10) == QR_SUCCESS && fps_x10 != 0)
+			lastfps = fps_x10 / 10.0;
+		else
+			lastfps = frames / elapsed_time;
 		oldtime = realtime;
 		oldframecount = r_framecount;
 	}
