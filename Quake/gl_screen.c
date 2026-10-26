@@ -584,7 +584,12 @@ void SCR_DrawFPS (cb_context_t *cbx)
 	// update value every 3/4 second
 	if (elapsed_time > 0.75)
 	{
-		lastfps = frames / elapsed_time;
+		uint32_t fps_x10 = 0;
+		if (vulkan_globals.instance != NULL &&
+		    qrGetFrameStats (vulkan_globals.instance, NULL, &fps_x10) == QR_SUCCESS && fps_x10 != 0)
+			lastfps = fps_x10 / 10.0;
+		else
+			lastfps = frames / elapsed_time;
 		oldtime = realtime;
 		oldframecount = r_framecount;
 	}
@@ -1127,8 +1132,9 @@ static void SCR_SetupFrame (void *unused)
 SCR_DrawDone
 ==================
 */
-static void SCR_DrawDone (void *unused)
+static void SCR_DrawDone (gl_end_rendering_context_t **context)
 {
+	GL_CaptureEndRenderingSnapshot (*context);
 	r_framecount++;
 }
 
@@ -1189,16 +1195,25 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 			Task_AddDependency (prev_end_rendering_task, begin_rendering_task);
 			prev_end_rendering_task = INVALID_TASK_HANDLE;
 		}
+		if (prev_acquire_rendering_task != INVALID_TASK_HANDLE)
+		{
+			Task_AddDependency (prev_acquire_rendering_task, begin_rendering_task);
+			prev_acquire_rendering_task = INVALID_TASK_HANDLE;
+		}
 
-		task_handle_t draw_done_task = Task_AllocateAndAssignFunc (SCR_DrawDone, NULL, 0);
+		gl_end_rendering_context_t *end_rendering_context = GL_CreateEndRenderingContext ();
+		task_handle_t draw_done_task = Task_AllocateAndAssignFunc (
+			SCR_DrawDone, &end_rendering_context, sizeof (end_rendering_context));
 		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (SCR_SetupFrame, NULL, 0);
+		task_handle_t acquire_rendering_task = Task_AllocateAndAssignFunc (GL_AcquireRenderingTask, NULL, 0);
+		Task_AddDependency (begin_rendering_task, acquire_rendering_task);
 		// the editor's queued host actions land and its dirty materials are
 		// re-synthesized before the marking below reads the static-submit
 		// flag (R_MarkSurfaces) and the frame's tasks read the host state
 		QR_Editor_FlushDirty ();
 		V_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
 		task_handle_t draw_gui_task = Task_AllocateAndAssignFunc (SCR_DrawGUI, NULL, 0);
-		task_handle_t end_rendering_task = GL_EndRendering ();
+		task_handle_t end_rendering_task = GL_EndRendering (end_rendering_context);
 
 		Task_AddDependency (begin_rendering_task, draw_gui_task);
 		Task_AddDependency (setup_frame_task, draw_gui_task);
@@ -1208,8 +1223,7 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 			Task_AddDependency (rt_editor_draw_done_task, draw_gui_task);
 		Task_AddDependency (draw_gui_task, draw_done_task);
 		Task_AddDependency (draw_done_task, end_rendering_task);
-
-		task_handle_t tasks[] = {begin_rendering_task, setup_frame_task, draw_done_task, draw_gui_task, end_rendering_task};
+		task_handle_t tasks[] = {begin_rendering_task, acquire_rendering_task, setup_frame_task, draw_done_task, draw_gui_task, end_rendering_task};
 		Tasks_Submit (sizeof (tasks) / sizeof (task_handle_t), tasks);
 
 		double prof_wait = RT_Prof_Begin ();
@@ -1217,6 +1231,7 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 			S_ExtraUpdate ();
 		RT_Prof_End (RT_PROF_WAIT, prof_wait);
 		prev_end_rendering_task = end_rendering_task;
+		prev_acquire_rendering_task = acquire_rendering_task;
 	}
 
 	if (wait_for_end)

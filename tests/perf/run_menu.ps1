@@ -105,7 +105,7 @@ function Run-Arm([string]$Directory, [string]$Name, [bool]$RunSmoke) {
 cl_startdemos 0
 stopdemo
 disconnect
-vid_vsync 0
+vid_vsync 3
 host_maxfps 0
 rt_stats 3
 rt_stats_interval 0.2
@@ -159,6 +159,9 @@ echo QR_MENU_READY_$tag
             GpuMedianMs = Median (Values $capture.Rows 'gpu.frame_ms')
             RasterMedian = Median (Values $capture.Rows 'calls_raster')
             Capture = $capture.Path
+            ValidationEnabled = [bool]$Validation
+            ValidationErrorCount = $null
+            ProcessExitCode = $null
         }
         Send-Key $window 0x75 0x40
 
@@ -196,9 +199,16 @@ echo QR_MENU_READY_$tag
         Send-Key $window 0x7a 0x57
         if (-not $process.WaitForExit(15000)) { throw "$Name did not exit cleanly" }
         if ($process.ExitCode -ne 0) { throw "$Name exited with code $($process.ExitCode)" }
-        if ($Validation -and (Select-String $console -Pattern 'VUID-|Validation Error|NVRHI::ERROR' -Quiet)) {
-            throw "Renderer validation errors; see $console"
+        $result.ProcessExitCode = $process.ExitCode
+        if ($Validation) {
+            $validationErrors = @(Select-String $console -Pattern 'VUID-|Validation Error|NVRHI::ERROR')
+            $result.ValidationErrorCount = $validationErrors.Count
+            if ($validationErrors.Count -ne 0) {
+                throw "Renderer validation errors; see $console"
+            }
         }
+        $resultPath = [System.IO.Path]::ChangeExtension($stdout, '.result.json')
+        $result | ConvertTo-Json -Depth 3 | Set-Content $resultPath -Encoding Utf8
         return $result
     } finally {
         if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }

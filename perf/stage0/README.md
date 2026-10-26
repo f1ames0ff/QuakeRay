@@ -27,7 +27,7 @@ dumps: mean, p95 and the delta against the baseline arm for every frozen column.
 2. Launch the game with Arcane Dimensions and pin the machine-dependent settings by hand, once per
    session: the same resolution for every run (the reference runs use 3840x2160), the same upscaler
    (reference: `rt_upscale_fsr31 5`), the same demo, route and driver. The control configs pin
-   `vid_vsync 0`, `host_maxfps 0`, `rt_stats 3` and `rt_stats_interval 0.2`.
+   `vid_vsync 3`, `host_maxfps 0`, `rt_stats 3` and `rt_stats_interval 0.2`.
 3. Load demo and benchmark: `exec particle_heavy`, then `playdemo ad_particle_heavy`, or
    `rt_bench ad_particle_heavy` to also append the frame-level profile to `benchmark.log`.
    `particle_idle` stands at the same viewpoint without firing. Record both demos once with

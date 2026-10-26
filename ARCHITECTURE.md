@@ -2,7 +2,7 @@
 
 Start here to locate code, not to learn the engine from scratch. Read [PERFORMANCE.md](PERFORMANCE.md) for measured costs, binary identities and capture locations before proposing an optimization.
 
-**Verified source snapshot:** `b4088595`, 2026-10-11 (stage-2.3 cleanup). This snapshot includes entity profiling, exact brush-transform reuse, the parallel world marking and the stage-2.3 dead-code cleanup; it is not an assertion about master or another worktree. Function names are the durable lookup keys; `#L` links identify their locations at this snapshot. Recheck a changed function and its immediate caller/callee, not the entire repository.
+**Verified source snapshot:** `1e155f61` plus the current dirty worktree, inspected 2026-10-26. This is not an assertion about master or another worktree. Function names are the durable lookup keys; recheck a changed function and its immediate caller/callee rather than treating a line anchor as durable.
 
 Engine MCP use is mandatory for all agents under [AGENTS.md](AGENTS.md#mandatory-engine-mcp-workflow).
 Start with `quakeray.server_status`, then use scoped `find_symbol` (`query`, `file`) and the available
@@ -18,7 +18,7 @@ missing, with an explicit fallback reason. Do not assume another open project's 
 | Why are entities expensive? | [Geometry upload paths](#geometry-upload-paths) | Brush/alias preparation → `Scene::Upload` → staging/metadata → RHI AS recording. |
 | What runs on the GPU? | [GPU execution graph](#gpu-execution-graph), [GPU pass index](#gpu-pass-index) | `NvrhiFrameSkeleton::Render`, then only the implicated pass/shader. |
 | Is something culled? | [Visibility facts](#visibility-facts) | World marking, entity rejection and RT instance masks are different mechanisms. |
-| Is the CPU waiting for the GPU/display? | [Synchronization and lifetime](#synchronization-and-lifetime) | Begin-frame fence/acquire, RHI slot reuse, queue submission, present. |
+| Is the CPU waiting for the GPU/display? | [Synchronization and lifetime](#synchronization-and-lifetime) | Begin-frame fence, the acquire branch, RHI slot reuse, queue submission, present. |
 | Where do assets, gameplay, UI or audio enter? | [Subsystem index](#subsystem-index) | Open the named entry point before expanding the search. |
 
 ## Coarse frame map
@@ -29,7 +29,8 @@ Game: main → Host_Frame → _Host_Frame
  ├─ Server simulation ticks: Host_ServerFrame → SV_Physics → QuakeC
  ├─ Client update: CL_ReadFromServer → CL_RelinkEntities / CL_UpdateTEnts
  ├─ Screen frame: SCR_UpdateScreen
- │   ├─ Begin renderer frame: fence / swapchain acquire / collector reset
+ │   ├─ Begin renderer frame: frame fence / slot preparation / collector reset
+ │   │   └─ Acquire task: present wait / swapchain image, overlapping CPU producers
  │   ├─ View setup and visibility / texture chaining
  │   ├─ CPU render-scene producers
  │   │   ├─ Static world submission / light recollection when dirty
@@ -50,10 +51,11 @@ This is not a conventional raster `depth → opaque → transparent → viewmode
 | Boundary | Real entry point → next call |
 | --- | --- |
 | Process loop | [`main`, `Quake/main_sdl.c:54`](Quake/main_sdl.c#L54) → [`Host_Frame`, `Quake/host.c:1056`](Quake/host.c#L1056) → [`_Host_Frame`, `:915`](Quake/host.c#L915). |
-| Screen / view | [`SCR_UpdateScreen`, `Quake/gl_screen.c:1148`](Quake/gl_screen.c#L1148) → [`V_RenderView`, `Quake/view.c:916`](Quake/view.c#L916) → [`R_RenderView`, `Quake/gl_rmain.c:1312`](Quake/gl_rmain.c#L1332). |
-| Begin-frame API | [`GL_BeginRenderingTask`, `Quake/gl_vidsdl.c:3021`](Quake/gl_vidsdl.c#L3329) → `qrStartFrame` → [`VulkanDevice::StartFrame`, `:1175`](renderer/Source/VulkanDevice.cpp#L1176) → [`BeginFrame`, `:37`](renderer/Source/VulkanDevice.cpp#L37). |
-| End-frame API | [`GL_EndRenderingTask`, `Quake/gl_vidsdl.c:3257`](Quake/gl_vidsdl.c#L3569), [call/profiler bracket around `qrDrawFrame`, `:3718`](Quake/gl_vidsdl.c#L4031) → [`VulkanDevice::DrawFrame`, `:1195`](renderer/Source/VulkanDevice.cpp#L1196). |
-| Backend orchestration | [`VulkanDevice::RenderThroughRhi`, `:733`](renderer/Source/VulkanDevice.cpp#L734) → [`NvrhiFrameSkeleton::Render`, `:623`](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L623) → [`RhiFrameContext::EndSlot`, `:130`](renderer/Source/RHI/RhiFrameContext.cpp#L130) → [`Swapchain::Present`, `:306`](renderer/Source/Swapchain.cpp#L374). |
+| Screen / view | [`SCR_UpdateScreen`](Quake/gl_screen.c#L1146) → [`V_RenderView`, `Quake/view.c:916`](Quake/view.c#L916) → [`R_RenderView`](Quake/gl_rmain.c#L1334). |
+| Begin-frame API | [`GL_BeginRenderingTask`](Quake/gl_vidsdl.c#L3395) → [`qrStartFrame`](renderer/Source/qray.cpp#L502) → [`VulkanDevice::StartFrame`](renderer/Source/VulkanDevice.cpp#L1545) → [`BeginFrame`](renderer/Source/VulkanDevice.cpp#L256). This advances and prepares the frame slot but does not acquire an image. |
+| Acquire-frame API | [`GL_AcquireRenderingTask`](Quake/gl_vidsdl.c#L3431) → [`qrAcquireFrame`](renderer/Source/qray.cpp#L509) → [`VulkanDevice::AcquireFrame`](renderer/Source/VulkanDevice.cpp#L314) → [`Swapchain::AcquireImage`](renderer/Source/Swapchain.cpp#L279). |
+| End-frame API | [`SCR_DrawDone`](Quake/gl_screen.c#L1130) builds the heap snapshot after setup/viewmodel and every producer; [`GL_EndRendering`](Quake/gl_vidsdl.c#L4286) schedules [`GL_EndRenderingTask`](Quake/gl_vidsdl.c#L4247), which calls [`qrDrawFrame`](Quake/gl_vidsdl.c#L4259) → [`VulkanDevice::DrawFrame`](renderer/Source/VulkanDevice.cpp#L1566). |
+| Backend orchestration | [`VulkanDevice::RenderThroughRhi`](renderer/Source/VulkanDevice.cpp#L1077) → [`NvrhiFrameSkeleton::Render`](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L834) → [`RhiFrameContext::EndSlot`](renderer/Source/RHI/RhiFrameContext.cpp#L130) → [`Swapchain::Present`](renderer/Source/Swapchain.cpp#L387). |
 
 The C ABI is [renderer/Include/qray/qray.h](renderer/Include/qray/qray.h); its dispatch wrappers are [renderer/Source/qray.cpp](renderer/Source/qray.cpp). The renderer is [statically linked from `renderer/`](CMakeLists.txt#L238). `GL_*`/`gl_*` are inherited names, not evidence of an OpenGL backend. The [selected frame mode is `Traced`](renderer/Source/VulkanDevice_Init.cpp#L474).
 
@@ -61,7 +63,7 @@ The C ABI is [renderer/Include/qray/qray.h](renderer/Include/qray/qray.h); its d
 
 The scoped Terror Fuma producer investigation and its 4K FSR Balanced / volumetric sky Medium requirements are in [docs/fuma-cpu-optimization-plan.md](docs/fuma-cpu-optimization-plan.md). It covers entity slices, sky/water, alpha and upload contention; the particle and cluster workstream landed separately with PR #41 ([hand-off record](docs/branch-handoff-particle-cluster-cache.md)).
 
-Order for an accepted, fully loaded game frame; conditional simulation ticks, map rebuilds and debug paths are abbreviated. **The render frame always runs as the task graph** (the `r_tasks` switch and its serial fork were retired on 2026-10-14): [the `SCR_UpdateScreen` task path](Quake/gl_screen.c#L1185) builds it, and the producer order follows [the `R_RenderView` task branch](Quake/gl_rmain.c#L1359). Workers must not touch shared non-atomic state: pose and scratch buffers are thread-local, geometry uploads take the device mutex, and profiler slots accumulate in thread-local buffers merged once per frame under a spinlock. The threading contract, the frame graph edges and the rules for adding producers are in [docs/multithreading.md](docs/multithreading.md).
+Order for an accepted, fully loaded game frame; conditional simulation ticks, map rebuilds and debug paths are abbreviated. **The render frame always runs as the task graph** (the `r_tasks` switch and its serial fork were retired on 2026-10-14): [the `SCR_UpdateScreen` task path](Quake/gl_screen.c#L1186) builds it, and the producer order follows [the `R_RenderView` task branch](Quake/gl_rmain.c#L1334). Workers must not touch shared non-atomic state: pose and scratch buffers are thread-local, geometry uploads take the device mutex, and profiler slots accumulate in thread-local buffers merged once per frame under a spinlock. The threading contract, the frame graph edges and the rules for adding producers are in [docs/multithreading.md](docs/multithreading.md).
 
 ```mermaid
 flowchart TD
@@ -70,7 +72,8 @@ flowchart TD
     input --> simulation["CL_SendCmd / Host_ServerFrame / optional CSQC physics"]
     simulation --> client["CL_ReadFromServer / relink / temporary entities"]
     client --> screen["SCR_UpdateScreen / CPU frame timer begins"]
-    screen --> beginFrame["GL_BeginRendering / qrStartFrame<br/>fence wait, acquire, dynamic collector reset"]
+    screen --> beginFrame["GL_BeginRendering / qrStartFrame<br/>fence wait, slot preparation, dynamic collector reset"]
+    beginFrame --> acquire["GL_AcquireRenderingTask / qrAcquireFrame<br/>present wait + swapchain image"]
     beginFrame --> view["SCR_SetupFrame / V_RenderView / R_SetupViewBeforeMark<br/>cpu.setup"]
     view --> visibility["R_MarkSurfaces<br/>cpu.mark; collect static efrags and chains"]
     visibility --> world["R_DrawWorldTask<br/>cpu.world; static upload / light recollection when dirty"]
@@ -80,13 +83,23 @@ flowchart TD
     alpha --> particles["R_DrawParticlesTask<br/>cpu.particles; smoke + classic + FTE"]
     particles --> weapon["R_DrawViewModelTask<br/>cpu.viewmodel; vm_draw + lights + teleports"]
     weapon --> cluster["cluster_prepare_task → cluster_topup_task (16 slices) → cluster_finish_task → cluster_publish_task (16 slices) → cluster_commit_task<br/>clust lists / clust topup / clust upload / clust publish"]
-    cluster --> gui["SCR_DrawGUI / S_ExtraUpdate / SCR_DrawDone"]
-    gui --> backend["GL_EndRendering / qrDrawFrame<br/>cpu.qrDrawFrame; RHI recording / submissions / Present call"]
+    cluster --> gui["SCR_DrawGUI / S_ExtraUpdate"]
+    gui --> drawDone["SCR_DrawDone / draw_done<br/>capture immutable QrDrawFrameInfo snapshot"]
+    drawDone --> sceneRecord["GL_EndRendering / qrDrawFrame<br/>snapshot-backed scene recording"]
+    sceneRecord --> acquireJoin["FrameAcquireGate at present boundary"]
+    acquire --> acquireJoin
+    acquireJoin --> backend["final present recording / submissions / Present call"]
     backend --> screenEnd["RT_Prof_FrameEnd<br/>screen-end interval sample"]
     screenEnd --> tail["CL_RunParticles / R_SmokeUpdate / BGM_Update / S_Update / CL_DecayLights"]
     classDef wait fill:#fff0d6,stroke:#ab7100,color:#222
-    class beginFrame wait
+    class beginFrame,acquire wait
 ```
+
+The acquire branch depends only on begin and can overlap this frame's CPU producers. The end task
+starts after `draw_done` and records scene commands before joining the already-running acquire at its
+present boundary. `previous-end → begin` and `previous-acquire → begin` remain. This overlaps
+acquisition with the current frame's producer and scene-recording branches, not backend recording with
+another frame's producers or backend; `FrameState` still exposes one active frame index.
 
 [`_Host_Frame`](Quake/host.c#L915) can run networking/server simulation at a different rate from rendering. Classic particle and smoke simulation runs [after `SCR_UpdateScreen`](Quake/host.c#L1017); FTE's draw path also advances particle state using [particle dt](Quake/r_part_fte.c#L7057). Do not move all simulation into a fictitious pre-render `WorldUpdate()` node.
 
@@ -214,20 +227,33 @@ Swapchain recreation episodes and maintenance-extension pair selection share the
 [`SwapchainPolicy.h`](renderer/Source/SwapchainPolicy.h), exercised by `qray_swapchain_policy` in CTest.
 Only a frame with successful acquisition and presentation rearms a forced SUBOPTIMAL rebuild.
 Presentation fences are per image; teardown waits pending fences before retiring presentation resources.
+Acquire polls those fences with `vkGetFenceStatus`, so completed presentation operations feed the
+main FPS counter without blocking the renderer. FIFO pacing remains a separate `present_wait2` path.
+QuakeRay maps `vid_vsync 1` to Adaptive (`VK_PRESENT_MODE_FIFO_RELAXED_KHR`), `2` to VSync
+(`VK_PRESENT_MODE_FIFO_KHR`) and `3` to Off (`VK_PRESENT_MODE_IMMEDIATE_KHR`). No other host
+values are accepted. SDK requests map directly to their selected Vulkan mode; an unsupported request
+fails instead of selecting an unrelated mode.
 
 | Boundary | Entry / lifetime rule | Timing interpretation |
 | --- | --- | --- |
-| Start / acquire | [`VulkanDevice::BeginFrame`](renderer/Source/VulkanDevice.cpp#L37) waits/resets engine fences, then [`Swapchain::AcquireImage`](renderer/Source/Swapchain.cpp#L277) can wait for present pacing or an image. | Inside `cpu.frame_ms`, **before** `qrDrawFrame`; no dedicated begin-frame/acquire CSV slot. |
+| Start / prepare | [`VulkanDevice::BeginFrame`](renderer/Source/VulkanDevice.cpp#L256) waits/resets engine fences, advances the frame slot, takes the previous slot's pending pre-frame command without submitting it, and prepares frame managers, collector and `Scene`. `qrStartFrame` does not acquire a swapchain image. | Happens before the setup/producer branch; acquisition is a separate task. |
+| Acquire | [`GL_AcquireRenderingTask`](Quake/gl_vidsdl.c#L3431) → `qrAcquireFrame` → [`VulkanDevice::AcquireFrame`](renderer/Source/VulkanDevice.cpp#L314) → [`FrameAcquireGate`](renderer/Source/FrameAcquireGate.h) → [`Swapchain::AcquireImage`](renderer/Source/Swapchain.cpp#L279). It waits for the waitable-FIFO present dependency, submits any pending pre-frame command through its original `CommandBufferManager` slot, then sets the main frame wait semaphore. [`qrDrawFrame`](renderer/Source/VulkanDevice.cpp#L1620) retains lazy acquire for hosts that do not call `qrAcquireFrame`. | Depends only on begin and overlaps the current frame's CPU producers and scene recording. The end task joins it after recording and before the final present pass; `previous-acquire → next-begin` covers early exits. |
 | RHI slot reuse | [`RhiFrameContext::BeginSlot`](renderer/Source/RHI/RhiFrameContext.cpp#L74) waits for the slot's completed graphics submission, drains retired resources, runs GC and opens its list. [`EndSlot`](renderer/Source/RHI/RhiFrameContext.cpp#L130) stores the new submission identity. | `cpu.draw.slot_wait_ms`, `slot_GC`, `RHI_submit`; do not substitute the engine fence for the RHI lifetime boundary. |
 | Static rebuild | [`R_NewMap`](Quake/gl_rmisc.c#L394), editor/cvar invalidation → [`ASManager::SubmitStaticGeometry`](renderer/Source/ASManager.cpp#L401): device idle, static staging/build, copy-fence wait. RHI static generation is checked by [`BuildStatic`](renderer/Source/RHI/RhiAccelStructs.cpp#L909). | Can hitch on reload/invalidation; normal warmed `cpu.world_ms` does not measure this event. |
 | Dynamic geometry / history | [`Scene::PrepareForFrame`](renderer/Source/Scene.cpp#L62) and [`ASManager::BeginDynamicGeometry`](renderer/Source/ASManager.cpp#L452) reset the current collector and preserve previous data. [`AppendDynamicSlot`](renderer/Source/RHI/RhiAccelStructs.cpp#L1336) copies used vertex/index prefixes, groups geometry by filter and rebuilds active BLASes. | Per-frame copies and shape checks; [dynamic flags use `PreferFastBuild`](renderer/Source/RHI/RhiAccelStructs.cpp#L65), not an enabled refit policy. Stable geometry IDs also feed [`WriteGeomInfo`](renderer/Source/GeomInfoManager.cpp#L313) / motion history. |
 | Brush caches | [`RT_GetBrushModelMatrix`](Quake/r_world.c#L857): last-entity thread-local exact-input reuse. [`RT_PackSurfaceLightStyles`](Quake/r_world.c#L1053): surface/entity/texture/transform/settings cache. [`RT_BrushClusterCacheReset`](Quake/r_world.c#L4715) is called when brush vertex storage is rebuilt. | Preserve keys, map/light invalidation and ownership; `rt_brush_persistent` [defaults to on](Quake/gl_vidsdl.c#L191) since the mover demo acceptance, and `0` keeps the per-frame dynamic path. |
-| Submission / display | RHI list [signals the render-finished semaphore](renderer/Source/RHI/RhiFrameContext.cpp#L130); [the `RenderThroughRhi` submission tail](renderer/Source/VulkanDevice.cpp#L1133) also submits the legacy list, then calls [`Swapchain::Present`](renderer/Source/Swapchain.cpp#L374). | CPU submit/present buckets measure API call time, not GPU completion or scanout. |
+| Submission / display | RHI list [signals the render-finished semaphore](renderer/Source/RHI/RhiFrameContext.cpp#L130); [the `RenderThroughRhi` submission tail](renderer/Source/VulkanDevice.cpp#L1077) also submits the legacy list, then calls [`Swapchain::Present`](renderer/Source/Swapchain.cpp#L387). | CPU submit/present buckets measure API call time, not GPU completion or scanout. |
 | Diagnostics | [Screenshot handling waits for device idle](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L1817); [focus loss/pause/minimize sleeps](Quake/main_sdl.c#L110) and [audio locks](Quake/snd_dma.c#L827) are other blockers. | Keep screenshots outside capture; reject unfocused/paused runs. |
 
-The opt-in render graph relies on thread-local alias/brush scratch and caches, ordered static/dynamic
-producers and synchronized geometry APIs. Keep those ownership boundaries when adding producers;
-the host joins the previous end task before input can mutate its frame inputs.
+The task render graph relies on thread-local alias/brush scratch and caches, ordered static/dynamic
+producers and synchronized geometry APIs. Keep those ownership boundaries when adding producers.
+`SCR_DrawDone` builds an immutable heap-owned deep `QrDrawFrameInfo` snapshot after setup/viewmodel
+and every producer has finished. This ordering is required for `vulkan_globals.view_matrix`, camera
+derived values and viewmodel bob to describe the same rendered frame. The end task's draw inputs come
+only from that snapshot and it frees it after recording. The host still joins the previous end and
+acquire tasks before input. `previous-end → begin`, `previous-acquire → begin`, host input
+synchronization, ordered backend recording and the one-active-index `FrameState` remain; acquisition
+overlaps the current frame's producer and scene-recording branches only.
 
 The reporting-window lifecycle is shared production code in [shared/rt_prof_window.h](shared/rt_prof_window.h),
 called by `RT_Prof_FrameStart`, `RT_Prof_EndTaskRecord` and `RT_Prof_Update` in `Quake/gl_vidsdl.c`.

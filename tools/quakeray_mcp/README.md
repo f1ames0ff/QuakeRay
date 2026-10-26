@@ -78,20 +78,27 @@ uv sync --locked --project tools/quakeray_mcp --python 3.10
 uv run --offline --frozen --project tools/quakeray_mcp python -B -m quakeray_mcp --selfcheck
 ```
 
-The local, gitignored `../../.mcp.jsonc` registers `quakeray` under `mcp.servers` (see
+For OpenCode, the local gitignored `../../.mcp.json` or `.mcp.jsonc` registers `quakeray` under `mcp.servers` (see
 [AGENTS.md](../../AGENTS.md#mcp-dependency-setup)). It inherits existing permission policy;
 it does not change global configuration or add blanket permission grants. A missing Debug
 runtime does not prevent documentation/status inspection. The registration runs
 `uv run --offline --frozen` without `--no-sync`, so a worktree whose `.venv` is missing or
 stale gets it created and installed from `uv.lock` and the local uv cache before the server
 starts; normal startup stays offline and never rewrites the lock. Once the local
-`../../.mcp.jsonc` is present, a fresh worktree needs no separate virtualenv setup. The
+`../../.mcp.json` or `.mcp.jsonc` is present, a fresh worktree needs no separate virtualenv setup. The
 machine-wide `uv sync` above remains the one-time network step before the first start on a
 machine with a cold uv cache.
 Use `/mcps` in OpenCode to inspect/reconnect the server after development changes. If the
 OpenCode CLI is installed on PATH, `opencode mcp list` provides the same connection check.
-The implementation was connected and called through this session's OpenCode MCP integration;
-the shell environment used for development did not have the `opencode` CLI on PATH.
+The implementation has been exercised through OpenCode and Codex MCP clients.
+
+Codex does not read this OpenCode configuration. Register the server in
+`%USERPROFILE%\.codex\config.toml` with `codex mcp add quakeray ...`, using
+`uv --directory <repo-root>` in the server command so startup is independent of Codex's
+working directory. `codex mcp list` verifies the registration. Codex loads MCP catalogs at
+thread startup, so restart or resume the thread after adding or changing the server. The
+repository-level [AGENTS.md](../../AGENTS.md#codex-cli-and-desktop) contains the concrete
+command and environment variables.
 
 Any MCP host can launch the same command array over stdio. Keep its working directory at
 the repository root and set `QUAKERAY_ROOT` explicitly when necessary. Logging goes to stderr;

@@ -358,7 +358,7 @@ quakeray MCP facade (thin)          tools/quakeray_mcp
 
 ### 4.2 OpenCode configuration
 
-Project-local `../.mcp.jsonc` is now registered and tested. The one-time package/environment
+Project-local `../.mcp.json` or the local `.mcp.jsonc` is now registered and tested. The one-time package/environment
 install is `uv sync --locked --project tools/quakeray_mcp --python 3.10` (the only network
 step); the launch command below then syncs the environment from `uv.lock` and the local uv
 cache whenever `.venv` is missing or stale, offline, without rewriting the lock. The reference

@@ -356,7 +356,9 @@ set(CORE_SOURCES
     Quake/rt_pkz.c
     Quake/rt_stats_gui.c
     Quake/qr_editor.c
+    Quake/qr_gpu_context.cpp
     Quake/qr_resources.c
+    Quake/qr_spatial_adapter.cpp
     Quake/qr_gui.cpp
     Quake/sbar.c
     Quake/snd_codec.c
@@ -544,6 +546,7 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/renderer/Include
         ${CMAKE_SOURCE_DIR}/shared
     )
+    target_link_libraries(frame_timing_tests PRIVATE Vulkan::Vulkan)
     target_compile_definitions(frame_timing_tests PRIVATE QR_STATIC)
     add_test(NAME frame_timing_tests COMMAND frame_timing_tests)
 

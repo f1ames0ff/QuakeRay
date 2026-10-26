@@ -1,19 +1,56 @@
 #include "CpuFrameProfiler.h"
+#include "CommandBufferManager.h"
+#include "FrameAcquireGate.h"
 #include "GeometryBounds.h"
 #include "RHI/DynamicBlasShape.h"
 #include "rt_frame_policy.h"
 
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <random>
 #include <stdexcept>
 #include <thread>
 #include <vector>
+
+namespace qray
+{
+
+class TestCommandBufferManager
+{
+public:
+    explicit TestCommandBufferManager(VkCommandBuffer command)
+        : command(command)
+    {
+    }
+
+    VkCommandBuffer StartGraphicsCmd()
+    {
+        ++startCount;
+        return command;
+    }
+
+    uint32_t GetStartCount() const
+    {
+        return startCount;
+    }
+
+private:
+    VkCommandBuffer command;
+    uint32_t startCount = 0;
+};
+
+}
+
+#define CommandBufferManager TestCommandBufferManager
+#include "FrameState.h"
+#undef CommandBufferManager
 
 namespace
 {
@@ -133,6 +170,13 @@ void TestCpuProfiler()
     }
     Require(profiler.GetMilliseconds()[QR_CPU_PASS_PREPARE] > first, "multiple intervals accumulate");
 
+    profiler.Add(QR_CPU_PASS_FRAME_FENCE_WAIT, 1.25f);
+    profiler.Add(QR_CPU_PASS_FRAME_FENCE_WAIT, 0.75f);
+    Require(profiler.GetMilliseconds()[QR_CPU_PASS_FRAME_FENCE_WAIT] == 2.0f,
+            "measured intervals accumulate without a scope");
+    profiler.Add(QR_CPU_PASS_COUNT, 1.0f);
+    profiler.Add(static_cast<QrCpuPassIndex>(-1), 1.0f);
+
     profiler.Begin(QR_CPU_PASS_COUNT);
     profiler.End(QR_CPU_PASS_COUNT);
     profiler.Begin(static_cast<QrCpuPassIndex>(-1));
@@ -150,6 +194,212 @@ void TestCpuProfiler()
     profiler.Reset(true);
     profiler.End(QR_CPU_PASS_UI);
     Require(profiler.GetMilliseconds()[QR_CPU_PASS_UI] == 0.0f, "reset discards an unfinished interval");
+
+    profiler.Add(QR_CPU_PASS_PRESENT_WAIT, 1.0f);
+    Require(profiler.GetMilliseconds()[QR_CPU_PASS_PRESENT_WAIT] == 1.0f,
+            "measured intervals can be added after reset");
+}
+
+void TestFrameStateSlots()
+{
+    qray::FrameState state;
+    const auto commandA = reinterpret_cast<VkCommandBuffer>(static_cast<uintptr_t>(0x10));
+    const auto commandB = reinterpret_cast<VkCommandBuffer>(static_cast<uintptr_t>(0x20));
+    const auto semaphoreA = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x30));
+    const auto semaphoreB = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x40));
+
+    Require(state.GetFrameIndex() == qray::MAX_FRAMES_IN_FLIGHT - 1,
+            "frame state starts on the last slot");
+
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    Require(state.GetSemaphoreForWaitAndRemove(&waitStage) == VK_NULL_HANDLE,
+            "the initial slot has no wait semaphore");
+
+    state.SetSemaphore(semaphoreA, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    state.OnBeginFrame(commandA);
+    Require(state.WasFrameStarted(), "the first slot starts independently");
+
+    Require(state.IncrementFrameIndexAndGet() == 0, "the next frame advances to slot zero");
+    Require(!state.WasFrameStarted(), "started state does not leak into the next slot");
+    Require(state.GetSemaphoreForWaitAndRemove(&waitStage) == VK_NULL_HANDLE,
+            "wait semaphore does not leak into the next slot");
+
+    state.SetSemaphore(semaphoreB, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    state.OnBeginFrame(commandB);
+    Require(state.GetCmdBuffer() == commandB, "the second slot owns its command buffer");
+
+    Require(state.IncrementFrameIndexAndGet() == qray::MAX_FRAMES_IN_FLIGHT - 1,
+            "the third frame returns to the first slot");
+    Require(state.WasFrameStarted(), "the first slot keeps its in-flight state");
+    Require(state.GetCmdBuffer() == commandA, "the first command buffer is preserved");
+    Require(state.GetSemaphoreForWaitAndRemove(&waitStage) == semaphoreA,
+            "the first wait semaphore is preserved");
+    Require(waitStage == VK_PIPELINE_STAGE_TRANSFER_BIT,
+            "the first semaphore wait stage is preserved");
+    state.OnEndFrame();
+    Require(!state.WasFrameStarted(), "ending the first slot leaves only that slot idle");
+
+    Require(state.IncrementFrameIndexAndGet() == 0, "the fourth frame returns to slot zero");
+    Require(state.GetCmdBuffer() == commandB, "the second command buffer is preserved");
+    Require(state.GetSemaphoreForWaitAndRemove(&waitStage) == semaphoreB,
+            "the second wait semaphore is preserved");
+    Require(waitStage == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            "the second semaphore wait stage is preserved");
+    state.OnEndFrame();
+}
+
+void TestFrameStatePreFrameSlotOwnership()
+{
+    qray::FrameState state;
+    const auto preFrameCommand = reinterpret_cast<VkCommandBuffer>(static_cast<uintptr_t>(0x50));
+    const auto frameCommandN = reinterpret_cast<VkCommandBuffer>(static_cast<uintptr_t>(0x60));
+    const auto frameCommandNPlusOne = reinterpret_cast<VkCommandBuffer>(static_cast<uintptr_t>(0x70));
+    const auto semaphoreN = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x80));
+    const auto semaphoreNPlusOne = reinterpret_cast<VkSemaphore>(static_cast<uintptr_t>(0x90));
+    const uint32_t slotN = state.GetFrameIndex();
+    const uint32_t slotNPlusOne = (slotN + 1) % qray::MAX_FRAMES_IN_FLIGHT;
+    auto commandBuffers = std::make_shared<qray::TestCommandBufferManager>(preFrameCommand);
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
+    Require(slotN != slotNPlusOne, "the tested pre-frame slots are distinct");
+
+    state.SetSemaphore(semaphoreN, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    Require(state.GetCmdBufferForMaterials(commandBuffers) == preFrameCommand,
+            "the pre-frame command is created in the current slot");
+    Require(commandBuffers->GetStartCount() == 1, "the pre-frame command is created once");
+
+    state.OnBeginFrame(frameCommandN);
+    Require(state.GetCmdBufferForMaterials(commandBuffers) == frameCommandN,
+            "materials use the frame command after the slot's frame starts");
+    Require(commandBuffers->GetStartCount() == 1, "an active frame creates no pre-frame command");
+
+    Require(state.IncrementFrameIndexAndGet() == slotNPlusOne, "the frame advances past the pre-frame slot");
+    Require(!state.WasFrameStarted(), "the next slot has no frame command");
+    Require(state.GetSemaphoreForWaitAndRemove(&waitStage) == VK_NULL_HANDLE,
+            "the next slot has no wait semaphore");
+    Require(waitStage == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            "the next slot keeps its default wait stage");
+    Require(state.GetPreFrameCmdAndRemove(slotNPlusOne) == VK_NULL_HANDLE,
+            "the next slot does not own the previous slot's pre-frame command");
+
+    Require(state.GetPreFrameCmdAndRemove(slotN) == preFrameCommand,
+            "the pre-frame command is retrieved from the slot where it was created");
+    Require(state.GetPreFrameCmdAndRemove(slotN) == VK_NULL_HANDLE,
+            "the retrieved pre-frame command cannot be taken twice");
+
+    state.SetSemaphore(semaphoreNPlusOne, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    state.OnBeginFrame(frameCommandNPlusOne);
+    Require(state.GetCmdBuffer() == frameCommandNPlusOne,
+            "the next slot owns only its frame command");
+
+    Require(state.IncrementFrameIndexAndGet() == slotN, "the frame wraps back to the pre-frame slot");
+    Require(state.GetCmdBuffer() == frameCommandN, "the original slot keeps its frame command");
+    Require(state.GetSemaphoreForWaitAndRemove(&waitStage) == semaphoreN,
+            "the original slot keeps its wait semaphore");
+    Require(waitStage == VK_PIPELINE_STAGE_TRANSFER_BIT,
+            "the original slot keeps its semaphore wait stage");
+    state.OnEndFrame();
+
+    Require(state.IncrementFrameIndexAndGet() == slotNPlusOne, "the frame returns to the next slot");
+    Require(state.GetCmdBuffer() == frameCommandNPlusOne, "the next slot keeps its frame command");
+    Require(state.GetSemaphoreForWaitAndRemove(&waitStage) == semaphoreNPlusOne,
+            "the next slot keeps its wait semaphore");
+    Require(waitStage == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            "the next slot keeps its semaphore wait stage");
+    state.OnEndFrame();
+}
+
+void TestFrameAcquireGate()
+{
+    qray::FrameAcquireGate gate;
+    std::atomic<uint32_t> calls{0};
+    std::atomic<bool> running{false};
+    std::atomic<bool> release{false};
+    std::atomic<bool> waiterStarted{false};
+    std::atomic<bool> waiterReturned{false};
+
+    std::thread owner([&] {
+        gate.Acquire([&] {
+            ++calls;
+            running.store(true, std::memory_order_release);
+            while (!release.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+        });
+    });
+
+    while (!running.load(std::memory_order_acquire))
+    {
+        std::this_thread::yield();
+    }
+
+    std::thread waiter([&] {
+        waiterStarted.store(true, std::memory_order_release);
+        gate.Acquire([&] {
+            ++calls;
+        });
+        waiterReturned.store(true, std::memory_order_release);
+    });
+
+    while (!waiterStarted.load(std::memory_order_acquire))
+    {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    Require(!waiterReturned.load(std::memory_order_acquire),
+            "a concurrent acquire waits for the owner");
+
+    release.store(true, std::memory_order_release);
+    owner.join();
+    waiter.join();
+
+    Require(calls.load(std::memory_order_acquire) == 1,
+            "concurrent acquire callers execute exactly once");
+    Require(waiterReturned.load(std::memory_order_acquire),
+            "a concurrent acquire returns after completion");
+
+    gate.Acquire([&] {
+        ++calls;
+    });
+    Require(calls.load(std::memory_order_acquire) == 1,
+            "a completed acquire is not repeated");
+
+    gate.Reset();
+    gate.Acquire([&] {
+        ++calls;
+    });
+    Require(calls.load(std::memory_order_acquire) == 2,
+            "reset opens the next frame's acquire gate");
+
+    gate.Reset();
+    try
+    {
+        gate.Acquire([] {
+            throw std::runtime_error("injected acquire failure");
+        });
+        Require(false, "an acquire failure is propagated");
+    }
+    catch (const std::runtime_error &error)
+    {
+        Require(std::strcmp(error.what(), "injected acquire failure") == 0,
+                "the original acquire failure reaches the caller");
+    }
+
+    try
+    {
+        gate.Acquire([&] {
+            ++calls;
+        });
+        Require(false, "a recorded acquire failure is not forgotten");
+    }
+    catch (const std::runtime_error &error)
+    {
+        Require(std::strcmp(error.what(), "injected acquire failure") == 0,
+                "later callers observe the recorded acquire failure");
+    }
+    Require(calls.load(std::memory_order_acquire) == 2,
+            "a failed acquire is not retried as a second acquisition");
 }
 
 void CheckBounds(const QrGeometryUploadInfo &info, bool preinitialized)
@@ -351,9 +601,12 @@ int main(int argc, char **argv)
         TestCacheGeneration();
         TestReportRunOwnership();
         TestCpuProfiler();
+        TestFrameStateSlots();
+        TestFrameStatePreFrameSlotOwnership();
+        TestFrameAcquireGate();
         TestGeometryBounds();
         TestDynamicBlasShape();
-        std::cout << "Frame policy, end-task routing, cache, report, CPU timing, geometry bounds and dynamic BLAS shape tests passed\n";
+        std::cout << "Frame policy, end-task routing, cache, report, CPU timing, frame state/pre-frame ownership, acquire gate, geometry bounds and dynamic BLAS shape tests passed\n";
         if (argc == 2 && std::strcmp(argv[1], "--bench-bounds") == 0)
             BenchmarkGeometryBounds();
         return 0;

@@ -11,9 +11,43 @@ Use [ARCHITECTURE.md](ARCHITECTURE.md) to navigate from a counter to its produce
 | 3840x2160 / FSR Balanced (`rt_upscale_fsr31 3`) | Stable 60 FPS | 16.67 ms |
 | 3840x2160 / FSR Quality (`rt_upscale_fsr31 2`) | Stable 45 FPS | 22.22 ms |
 
-The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/qr_audit_max.cfg), with volumetric sky Low (`rt_sky_clouds_quality 0`). Particles/FTE, smoke, enhanced models, viewmodel, GI level 2, NEE 2, reflection/refraction depth 8, denoising and glass effects remain enabled. Main captures use `rt_stats 0`, uncapped host FPS, vsync off and `vid_maxframelatency 0`; artistic strengths are the recorded preset values, not arbitrary slider maxima. The runner [sets/validates 4K and the effective preset](tests/perf/run_stress.ps1#L345).
+The audited maximum-quality preset is [tests/perf/qr_audit_max.cfg](tests/perf/qr_audit_max.cfg), with volumetric sky Low (`rt_sky_clouds_quality 0`). Particles/FTE, smoke, enhanced models, viewmodel, GI level 2, NEE 2, reflection/refraction depth 8, denoising and glass effects remain enabled. Main captures use `rt_stats 0`, uncapped host FPS, FIFO and read-only `vid_maxframelatency 1`, so their FPS is the paced display cadence rather than an uncapped submission rate. Artistic strengths are the recorded preset values, not arbitrary slider maxima. The runner [sets/validates 4K and the effective preset](tests/perf/run_stress.ps1#L345).
 
 **Status (2026-10-14, Release, GI medium — the four-step ladder's medium, a quarter-resolution grid with two bounces):** the Fuma balanced point holds a 60.8-66 FPS mean (15.2-16.5 ms) with 1-22% of intervals over the 16.67 ms budget, and Bogbottom holds a 60.3-60.5 FPS mean (16.5-16.6 ms, p95 ~17.1 ms) after the vertex-preprocessing work below (its mover active in every verified capture); both remain mean-level passes, not yet stable-60 (Bogbottom's p99 is ~17.4 ms). At the audited maximum-quality preset (GI ultra, balanced) separate captures from the same campaign measure 50.4 / 45.8 FPS. The resolution-scaling section below shows the GPU as the frame's limiter at every tested point; the entity campaign's "about 37 / 24 FPS" reading was the Debug era and remains under "Controlled entity improvements" for provenance. Supplied saves are stress points, not all-map or long-gameplay coverage.
+
+## Bogbottom regression check (2026-10-24)
+
+The historical result above was reproduced with its original identity: Release, `qr_ad_swamp.sav`
+SHA `9318AE31…`, `maps/ad_swampy.bsp`, 3840x2160 FSR Balanced, `qr_audit_max.cfg`, `rt_gi_level 1`,
+volumetric clouds Low, `rt_dtal_groups 0` and `rt_dtal_spacing 128`. The current `r_tasks` command no
+longer exists because the render frame always runs as a task graph. The runner now closes the menu
+after loading the save and waits for the RHI map-load marker instead of the obsolete
+`demo(s) in loop` message.
+
+Current Release binary SHA `CC4EEA7F…` and asset SHA `24F7E3CA…` measured 55.2 FPS (18.11 ms mean,
+p95 19.42, p99 23.36). A preceding equivalent point with the profile's spacing 32 measured
+55.1 / 54.3 FPS (18.16 / 18.43 ms). Dynamic BLAS recreations were zero throughout, so the old
+9-FPS collapse was the stale `rt_brush_persistent 0` / `rt_dyn_blas_sorted 0` configuration, not
+the SDK split or the Debug/Release label.
+
+The remaining gap is GPU-bound in the cloud pass: with clouds enabled, `gpu.frame` was 17.44 ms and
+`gpu.clouds` 2.62 ms; disabling only clouds produced 62.0 FPS, 16.12 ms mean and `gpu.frame`
+14.61 ms. The setup buckets stayed at the historical scale (`setup_tlas` 2.14 ms,
+`setup_preproc` 0.89 ms). Captures:
+`build/Release/audit-current-release-historical-exact-*`,
+`build/Release/audit-current-release-menu-closed-*`, and
+`build/Release/audit-current-release-historical-no-clouds-*`.
+
+The owner then made that historical policy the engine standard: `rt_dtal_groups 0`,
+`rt_dtal_spacing 128`, `r_fteparticles 0`, plus read-only `rt_enable_pvs 0`, `sv_novis 1`,
+`rt_restir 0`, `rt_nee_samples 2`, `rt_restir_candidates 8` and `rt_reflrefr_depth 8`.
+`vid_vsync` defaults to `1` (Adaptive, `VK_PRESENT_MODE_FIFO_RELAXED_KHR`) and
+`vid_maxframelatency` is a read-only `1`; `fov 90`
+remains standard. Captures made before this pacing change used vsync off and are not directly
+comparable with the current honest-mode FPS. A historical full
+Release capture with no cvar overrides except `rt_gi_level 1` measured 54.8 FPS (18.24 ms mean,
+p95 20.92, p99 23.58), with the same effective profile and no BLAS recreations. Capture:
+`build/Release/audit-standard-profile-release-*`.
 
 ## Resolution scaling and the 60-FPS target (2026-10-14)
 
@@ -69,12 +103,13 @@ active where noted).
 | Quantity | What it actually measures | Source / constraint |
 | --- | --- | --- |
 | `interval_ms`, FPS, p95/p99 | Screen-end to screen-end intervals; FPS = `1000 / mean(interval_ms)`. Includes work and waits between completed screen frames. The first partial interval is zero and excluded. | [`RT_Prof_FrameEnd`](Quake/gl_vidsdl.c#L853), [`summarize`](tests/perf/analyze_stress.py#L55). |
+| `scr_showfps` / `QrFrameStats.fpsX10` | Completed presentation rate over a 500 ms fence window when per-image presentation fences are available; otherwise renderer FPS. Fence status is polled non-blockingly and never paces rendering. | [`PollPresentFences`](renderer/Source/Swapchain.cpp#L481), [`SCR_DrawFPS`](Quake/gl_screen.c#L567). |
 | `host_interval_ms` | Unclamped host frame interval, distinct from simulation-scaled time. | [Raw host time assignment](Quake/host.c#L751), [sample field](Quake/gl_vidsdl.c#L886). |
 | `cpu.frame_ms` | Inclusive `SCR_UpdateScreen` wall time, including begin-frame waits and backend calls. **Not** the whole host frame, input, server, audio or all particle simulation. | [Screen bracket](Quake/gl_screen.c#L1160), [post-screen work](Quake/host.c#L1019). |
-| `cpu.begin_ms` | Wall time of `qrStartFrame` inside the begin-rendering task: the wait on the in-flight frame fence and on image acquire, i.e. GPU pacing rather than CPU work. Subtract it from `cpu.frame_ms` to see the graph's own cost. | [Begin task](Quake/gl_vidsdl.c#L3329), [BeginFrame fence/acquire](renderer/Source/VulkanDevice.cpp#L37). |
+| `cpu.begin_ms` | Wall time of `qrStartFrame` inside the begin-rendering task: the wait on the in-flight frame fence and frame-slot preparation. Image acquisition and its present wait are a separate task. | [Begin task](Quake/gl_vidsdl.c#L3395), [BeginFrame](renderer/Source/VulkanDevice.cpp#L256). |
 | Quake CPU slots | Sum of calls to a slot in each captured frame. Parents contain children. `ents` is the opaque pass; entity-type slots also count the alpha pass. Fine-grained upload slots can also be invoked by world/weapon producers. | [Slot accumulator](Quake/gl_vidsdl.c#L561), [entity dispatch](Quake/gl_rmain.c#L797), [frame accumulation](Quake/gl_vidsdl.c#L581). |
 | `cpu.viewmodel_ms` / `cpu.vm_draw_ms` | Inclusive task versus narrower weapon/debug draw. Task includes entity/world-model lights, teleports and cluster publication. | [`R_DrawViewModelTask`](Quake/gl_rmain.c#L1265). Neither is a GPU weapon timer. |
-| `cpu.qrDrawFrame_ms` / `cpu.draw.*` | Inclusive renderer call versus its CPU phases. Entity geometry API preparation occurs earlier; `RHI_setup` contains several setup operations, not AS work alone. | [Call bracket](Quake/gl_vidsdl.c#L4030), [RHI setup recording](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666). |
+| `cpu.qrDrawFrame_ms` / `cpu.draw.*` | Inclusive renderer call versus its CPU phases. It now includes scene recording before the present boundary and the residual join with an acquisition that may already be in flight. Entity geometry API preparation occurs earlier; `RHI_setup` contains several setup operations, not AS work alone. | [End task](Quake/gl_vidsdl.c#L4247), [RHI setup recording](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L834). |
 | `gpu.frame_ms` / `gpu.*` | Asynchronously completed timestamp-query snapshots for the timed NVRHI command list. Query results come from a reused frame slot, not the CPU sample's synchronized present latency. The separately submitted legacy Vulkan list, acquire/display pacing and scanout are not this timer's full scope. The `setup` section is split into `setup_blas` (the static BLAS sync), `setup_tlas` (the instance synthesis, the dynamic BLAS builds and the vertex-data copies) and `setup_preproc` (the dynamic-normal pass). | [Read/poll queries](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L496), [frame-query bounds](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L662), [legacy submission](renderer/Source/VulkanDevice.cpp#L1133). |
 | `rt_stats 3` / statistics dumps | CPU/GPU inspection overlay and reporting-window aggregates. Quake slot maxima are per invocation in a window, not whole-frame percentiles; sequential entity chunks can differ from benchmark frame totals. | [`RT_Prof_End`](Quake/gl_vidsdl.c#L780), [`RT_Prof_Update`](Quake/gl_vidsdl.c#L1216), [GUI](Quake/rt_stats_gui.c). |
 | `cpu.window_id`, `cpu.window_frames`, `cpu.renderer_samples` | Reporting-window identity, completed-frame denominator and available renderer CPU samples. Repeated window IDs are repeated snapshots, not new publications. These fields belong to statistics dumps, not the per-frame benchmark CSV. | [Window lifecycle](shared/rt_prof_window.h), `RT_StatsRecordWrite`; `run_stress.ps1 -StatsLevel 3` checks advancing complete windows. |
@@ -82,7 +117,7 @@ active where noted).
 
 `rt_bench` enables CPU and GPU-pass collection while `rt_stats 0` avoids the overlay and per-ray statistics flag: [debug flags](Quake/gl_vidsdl.c#L3975), [CPU enable](Quake/gl_vidsdl.c#L4026). Benchmark samples are buffered; CSV writes happen [at reporting](Quake/gl_vidsdl.c#L1595), not once per measured frame.
 
-Do not sum CPU and GPU frame times, add nested slots, assign `compose` entirely to particles, or derive an "unknown CPU" value by subtracting overlapping counters. **Unattributed/unknown:** dedicated input/server/audio/CPU-GUI costs, begin-frame fence/acquire wait, per-entity GPU costs and the internal staging/metadata/AS split not separately instrumented here. `cpu.wait_ms` is a task-join timer, not total GPU waiting.
+Do not sum CPU and GPU frame times, add nested slots, assign `compose` entirely to particles, or derive an "unknown CPU" value by subtracting overlapping counters. **Unattributed/unknown:** dedicated input/server/audio/CPU-GUI costs, per-entity GPU costs and the internal staging/metadata/AS split not separately instrumented here. `cpu.wait_ms` is a task-join timer, not total GPU waiting.
 
 ### PR gate: Debug vs Release
 

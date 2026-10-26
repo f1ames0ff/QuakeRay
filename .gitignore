@@ -4,6 +4,7 @@ build-cmake/
 dist/
 .idea
 .vscode
+.mcp.json
 .mcp.jsonc
 history.txt
 qray.txt

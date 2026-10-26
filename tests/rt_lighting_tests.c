@@ -9,6 +9,7 @@
 #include "rt_dtal_groups.h"
 #include "rt_dtal_lod.h"
 #include "rt_brush_transform_cache.h"
+#include "texmgr_emissive.h"
 
 static int g_failures = 0;
 static int g_checks = 0;
@@ -1427,6 +1428,35 @@ static void TestDtalLodSingletonFlag(void)
     RT_Dtal_Lod_Destroy(lod);
 }
 
+static void TestEmissiveTexelMerge(void)
+{
+    texmgr_emissive_texel_t texel;
+
+    texel = TexMgr_ComposeEmissiveTexel(0, 0.0f, 0.0f, 0, 0, 0.0f, 7u);
+    CHECK(texel.emissive == 0.0f && texel.raw == 0.0f && texel.blend == 7u,
+          "emissive empty texel");
+
+    texel = TexMgr_ComposeEmissiveTexel(1, 0.25f, 0.75f, 3u, 0, 0.0f, 7u);
+    CHECK(texel.emissive == 0.25f && texel.raw == 0.75f && texel.blend == 3u,
+          "emissive colour-only texel");
+
+    texel = TexMgr_ComposeEmissiveTexel(0, 0.0f, 0.0f, 0u, 1, 0.5f, 7u);
+    CHECK(texel.emissive == 0.5f && texel.raw == 0.5f && texel.blend == 7u,
+          "emissive fullbright-only texel");
+
+    texel = TexMgr_ComposeEmissiveTexel(1, 0.8f, 1.0f, 3u, 1, 0.4f, 7u);
+    CHECK(texel.emissive == 0.8f && texel.raw == 1.0f && texel.blend == 3u,
+          "emissive colour wins texel");
+
+    texel = TexMgr_ComposeEmissiveTexel(1, 0.2f, 0.6f, 3u, 1, 0.5f, 7u);
+    CHECK(texel.emissive == 0.5f && texel.raw == 0.6f && texel.blend == 7u,
+          "emissive fullbright wins texel");
+
+    texel = TexMgr_ComposeEmissiveTexel(1, 0.5f, 0.5f, 3u, 1, 0.5f, 7u);
+    CHECK(texel.emissive == 0.5f && texel.raw == 0.5f && texel.blend == 3u,
+          "emissive tie keeps authored blend");
+}
+
 int main(void)
 {
     TestAliasEdgeCases();
@@ -1452,6 +1482,7 @@ int main(void)
     TestDtalLodDegenerateRefusal();
     TestDtalLodConfigGuard();
     TestDtalLodSingletonFlag();
+    TestEmissiveTexelMerge();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);
 

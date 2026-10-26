@@ -21,7 +21,7 @@ Run the GPU tests:
 ctest --test-dir build\Debug -R qray_dtal_perf --output-on-failure
 ```
 
-The first run writes the baseline to `build\Debug\renderer\Tests\DtalPerf.baseline.txt` and passes. Later runs compare each case (`small`, `medium`, `large`, `huge`; more lights and samples per thread per case) with a 20 per cent tolerance. Accept intentionally changed numbers with:
+The first run writes the baseline to `build\Debug\renderer\Tests\DtalPerf.baseline.txt` and passes. Later runs compare each case (`small`, `medium`, `large`, `huge`; more lights and samples per thread per case) with a 20 per cent tolerance. The probe performs a short heavy warm-up before timing because short GPU dispatches otherwise report idle-clock values. A baseline recorded under a different power plan, driver or GPU clock state can still be stale: verify the result after a warm-up and re-record it with the command below when the machine has changed. Accept intentionally changed numbers with:
 
 ```powershell
 build\Debug\renderer\Tests\qray_dtal_perf.exe build\Debug\renderer\Tests\DtalPerf.comp.spv build\Debug\renderer\Tests\DtalPerf.baseline.txt --update
@@ -47,7 +47,7 @@ perf\compare_benchmark.ps1 -Benchmark ...\ad\benchmark.log
 
 A metric that is worse by more than the tolerance (default 20 per cent; `-Tolerance 0.1` to tighten) fails the run with exit code 1. `fps` and `cluster:hits` fail when they drop; `cluster:misses` and the millisecond slots fail when they rise. `-Index 0` selects an earlier block when a log holds several runs.
 
-Recommended scenario for the DTAL-heavy case: Arcane Dimensions start with the torches and dynamic lights in view, 3840x2160, FSR 3.1 ultra performance (`rt_upscale_fsr31 5`), `vid_vsync 0`, the same route and settings on every run. Keep `rt_stats 0` while the benchmark runs so the profiler panels do not add work, and compare runs made on the same machine and driver.
+Recommended scenario for the DTAL-heavy case: Arcane Dimensions start with the torches and dynamic lights in view, 3840x2160, FSR 3.1 ultra performance (`rt_upscale_fsr31 5`), `vid_vsync 3`, the same route and settings on every run. Keep `rt_stats 0` while the benchmark runs so the profiler panels do not add work, and compare runs made on the same machine and driver.
 
 ### Strict coverage
 
@@ -77,7 +77,7 @@ Record the baseline with the same flags (`-Update -Samples ...`): a plain `-Upda
 
 ### Particle Stage 0 workflow
 
-Stage 0 of `docs/particle-plan.md` is the measurement gate for the particle work, and these runs are its evidence. The planned control demos are `ad_particle_heavy` (dense particle trail) and `ad_particle_idle` (the same viewpoint at rest), recorded on Arcane Dimensions `start` from one saved `setpos`/`setangle`. Record them once, keep demos and logs out of git, and hold the settings fixed on every run (`vid_vsync 0`, `rt_stats 0`, the same resolution, FSR/DLSS and render scale as the stored baseline). Stage 2 adds the transport switch `r_particles_points` (default `1`, archived): a compact-point run holds it on, and `perf\stage0\arm_points_off.cfg` holds it at `0` for the legacy `QrVertex` transport, so pin it on every run like the settings above:
+Stage 0 of `docs/particle-plan.md` is the measurement gate for the particle work, and these runs are its evidence. The planned control demos are `ad_particle_heavy` (dense particle trail) and `ad_particle_idle` (the same viewpoint at rest), recorded on Arcane Dimensions `start` from one saved `setpos`/`setangle`. Record them once, keep demos and logs out of git, and hold the settings fixed on every run (`vid_vsync 3`, `rt_stats 0`, the same resolution, FSR/DLSS and render scale as the stored baseline). Stage 2 adds the transport switch `r_particles_points` (default `1`, archived): a compact-point run holds it on, and `perf\stage0\arm_points_off.cfg` holds it at `0` for the legacy `QrVertex` transport, so pin it on every run like the settings above:
 
 1. `rt_bench ad_particle_heavy quit` plays the demo and appends a block to `<game>\benchmark.log` (for example `build\Debug\ad\benchmark.log`).
 2. `rt_stats_dump_start`, replay the same demo window, `rt_stats_dump_end` writes `stats-<datetime>.dump`.

@@ -18,8 +18,12 @@ before adapting a producer; document any unavailable tooling or incomplete cover
   Input, command execution and server/client simulation remain on the main-thread host path.
   Backend recording/submission is still an ordered end-frame operation; this platform does not
   authorize concurrent NVRHI command-list recording or bypass existing renderer locks.
+- Swapchain acquisition is a separate task after begin and may overlap the current frame's CPU
+  producers. The end task records the scene after `draw_done`, then joins acquire at the present
+  boundary. `FrameState` still has one active frame index, so this is not full two-frame
+  producer/backend overlap.
 - The render frame always runs as a dependency graph of tasks. The `r_tasks` cvar and its serial
-  fork were retired on 2026-10-14 (`changelog.md`); [SCR_UpdateScreen](../Quake/gl_screen.c#L1145)'s
+  fork were retired on 2026-10-14 (`changelog.md`); [SCR_UpdateScreen](../Quake/gl_screen.c#L1146)'s
   flag now only selects whether an out-of-band refresh joins the frame's end task before returning,
   while the host frame keeps deferring the end task into the next begin.
 - With `r_parallelmark 1` the world texture chains are rebuilt in surface-index order instead of the
@@ -56,14 +60,15 @@ submitted tasks. When adding work:
 
 ## The render frame graph
 
-Entry: [SCR_UpdateScreen](../Quake/gl_screen.c#L1148) takes the tasks branch when the condition
-holds, builds the frame in [R_RenderView](../Quake/gl_rmain.c#L1332), and joins `draw_done` while
-pumping extra audio updates.
+Entry: [SCR_UpdateScreen](../Quake/gl_screen.c#L1146) builds the task graph, builds the render graph
+in [R_RenderView](../Quake/gl_rmain.c#L1334), and joins `draw_done` while pumping extra audio updates.
 
 | Edge | Meaning |
 | --- | --- |
-| `prev_end_rendering_task -> begin_rendering_task` | a new frame never reuses swapchain/frame state before the previous frame's end task finished |
-| `begin_rendering_task -> setup_frame_task`, `setup_frame_task -> before_mark`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: fence/acquire, scene collector reset, light-registry frame preparation) happens before the setup pass, and the setup pass before everything that reads it |
+| `prev_end_rendering_task -> begin_rendering_task`, `prev_acquire_rendering_task -> begin_rendering_task` | a new frame never reuses swapchain/gate state before the previous frame's end and acquire tasks finished |
+| `begin_rendering_task -> setup_frame_task`, `setup_frame_task -> before_mark`, `begin_rendering_task -> before_mark` | frame start (`qrStartFrame`: frame fence, slot preparation, scene collector reset, light-registry frame preparation) happens before the setup pass, and the setup pass before everything that reads it; `qrStartFrame` does not acquire the swapchain image |
+| `begin_rendering_task -> acquire_rendering_task` | acquisition starts only after the frame slot is prepared and advances in parallel with the setup/producer branch |
+| `acquire_rendering_task -> qrDrawFrame present boundary -> end_rendering_task` | no task-graph edge blocks end at `draw_done`; the end task records scene commands, then `FrameAcquireGate` joins the already-running acquire and pending pre-frame submission before final present recording |
 | `before_mark -> prepare_mark -> mark_leafs`, then `mark_leafs -> store_efrags` and `mark_leafs -> chain_slices -> chain_finish` (`r_parallelmark 1`; `cull_surfaces` aliases `mark_leafs`; with `r_parallelmark 0` one scalar `mark_surfaces` serves all three handles) | the efrag store and the visibility chain run after the view is set up; `R_MarkSurfaces` decides `rt_mark_parallel_frame` and `rt_chain_full_frame` and writes both **before** `Task_Submit(prepare_mark)`, `prepare_mark` clears the world texture chains and (on the parallel path) zeroes the shared `surfvis` bitmask, `mark_leafs` fills `surfvis` with atomic word runs, `chain_slices` rebuilds the world texture chains per texture in parallel (in steady frames only for the consumed set - the textures whose chains the sky, water and animated passes read; the full set when a static-submit or world-light-recollect window is open or `r_showtris` is on) and `chain_finish` publishes the chain totals |
 | `store_efrags -> draw_sky_and_water_task`, `chain_surfaces -> draw_sky_and_water_task`, `store_efrags -> draw_entities_task`, `-> draw_alpha_entities_task` | the sky/water producer runs after the efrag pass and the rebuilt chains; the entity drawers run after the efrag pass added the entities to the frame's visible list |
 | `chain_surfaces -> draw_world_task` | the visibility output feeds the world task |
@@ -73,7 +78,15 @@ pumping extra audio updates.
 | `cluster_prepare_task -> cluster_topup_task` (indexed, `RT_CLUSTER_SLICES` = 16) `-> cluster_finish_task -> cluster_publish_task` (indexed, `RT_CLUSTER_SLICES`) `-> cluster_commit_task` | the per-cluster top-up runs in slices over the frame's work list; the finish merges the slices, fills the lists, rebuilds the tails and prepares the publication; the publish slices resolve the list words in parallel and the commit writes the tails and the publication bookkeeping |
 | `cluster_commit_task -> draw_done_task` | the publication and the cluster stats readback are complete before the join |
 | `draw_gui_task -> draw_done_task`, producers `-> draw_done_task` | the GUI and every producer feed the join point |
-| `draw_done_task -> end_rendering_task` | the renderer recording/end task runs last |
+| `draw_done_task -> end_rendering_task`, `acquire_rendering_task -> qrDrawFrame present boundary -> end_rendering_task` | the end task waits for the producer/GUI branch, performs ordered scene recording, then joins acquisition before final present recording |
+
+`GL_AcquireRenderingTask` calls `qrAcquireFrame`; `VulkanDevice::AcquireFrame` waits for the
+waitable-FIFO present dependency, submits the pending pre-frame command through the
+`CommandBufferManager` slot that owned it, and then installs the main frame wait semaphore.
+`FrameAcquireGate` is an exactly-once, failure-propagating barrier between that worker call and the
+end task. `qrDrawFrame` still acquires lazily when a host does not call `qrAcquireFrame`. Acquisition
+overlaps the current frame's CPU producers and scene command recording; only final present recording
+waits for the image, and this is not another frame's backend overlap.
 
 `draw_entities_task` is indexed with `NUM_ENTITIES_CBX` (6) slices, so several workers draw entity
 ranges in parallel. `cluster_topup_task` is indexed with `RT_CLUSTER_SLICES` (16) slices over
@@ -93,14 +106,21 @@ world task.
 
 **The end-task boundary.** `GL_EndRenderingTask` is the one producer that outlives its frame: the
 main thread joins `draw_done` inside `SCR_UpdateScreen`, then continues into the host tail while the
-end task still runs. The task reads frame inputs that only the main thread owns (cvars, `cl.time`,
-`cl.items`, `cl.stats`, the editor flags), so `_Host_Frame` joins it with
-`GL_SynchronizeEndRenderingTask()` before the frame handles input: key events, the menus and
-`Cbuf_Execute` must all follow the join; menu and key handlers can mutate cvars without going
-through the command buffer. Do not move that join later without moving those reads into a frame-owned
-snapshot. Debug builds check the boundary: the end task raises `rt_end_task_running` and the input
-phase asserts it is clear, and `rt_end_task_delay_ms` stretches the task to exercise the check. The
-task's profiler results carry a frame serial and are merged into the sample of their own frame
+end task still runs. `SCR_DrawDone` copies `QrDrawFrameInfo`, every pointed-to parameter/post-effect
+value and the nested referenced values into an immutable heap-owned snapshot after `setup_frame`,
+viewmodel and every producer has completed. It must not move earlier: `V_CalcRefdef` and
+`R_SetupMatrices` run on that branch, and capturing before them pairs a stale camera matrix with the
+current viewmodel transform. The end task's draw inputs come only from that snapshot, never host
+stack values, cvars or `cl.*` globals, and it frees the snapshot after `qrDrawFrame` and profiler
+recording. That removes the end task's host-global read dependency, but
+`_Host_Frame` still joins it with `GL_SynchronizeEndRenderingTask()` before handling input:
+`previous-end -> begin`, `previous-acquire -> begin`, host input synchronization and ordered
+backend/frame-state lifetime remain requirements. The synchronizer joins the end first, then the
+acquire; normally the end's present-boundary gate has already joined it, and the second join covers
+early renderer exits. Debug builds check the boundary: the end task raises `rt_end_task_running` and
+the input phase asserts it is clear, and `rt_end_task_delay_ms` stretches the task to exercise the
+check.
+The task's profiler results carry a frame serial and are merged into the sample of their own frame
 (`RT_Prof_EndTaskRecord`). The shared production component [rt_prof_window.h](../shared/rt_prof_window.h)
 owns the reporting-window lifecycle. `RT_Prof_FrameStart` joins any previous end task before applying
 enable/disable changes, so the first captured frame cannot be reset after submission. An end-result
@@ -139,10 +159,10 @@ The contract for work added to the graph:
 
 The graph currently relies on:
 
-- `VulkanDevice::geometryUploadMutex` in [VulkanDevice.h](../renderer/Source/VulkanDevice.h#L340) —
+- `VulkanDevice::geometryUploadMutex` in [VulkanDevice.h](../renderer/Source/VulkanDevice.h#L370) —
   held by `UploadGeometry`, `UploadRasterizedGeometry`, `UpdateGeometryTransform`,
-  `UpdateGeometryTexCoords`, `UploadDecal`, `UploadPortal`, `SubmitStaticGeometries`,
-  `StartNewStaticScene`; the renderer's API counters are `std::atomic`;
+  `UpdateGeometryTexCoords`, `UploadParticles`, `SetParticleProxyGate`, `UploadDecal`, `UploadPortal`,
+  `SubmitStaticGeometries`, `StartNewStaticScene`; the renderer's API counters are `std::atomic`;
 - `LightManager::registryMutex` — held by `AddLight`, `PrepareForFrame` and `Reset`
   ([LightManager.h](../renderer/Source/LightManager.h#L173));
 - the profiler spinlock in [gl_vidsdl.c](../Quake/gl_vidsdl.c#L533) — the once-per-frame TLS merge,
@@ -209,17 +229,19 @@ serial branch is not ready for integration.
    slices must not mutate the same model/cache entry without protection. Thread-local caches need
    reset generations; shared caches need protected lookup, computation/publication and invalidation.
    Do not create a separate worker pool or parallel backend recording path without a design review.
-4. **Wire both paths.** Put the shared kernel in the appropriate existing producer, or wire the new
-   producer into both branches of `R_RenderView`. Register dependencies before submission. Require
+4. **Wire the task graph.** Put the shared kernel in the appropriate existing producer, or add a
+   producer to `R_RenderView`. Register dependencies before submission. Require
    setup/visibility/entity-list readiness for the data read; require `draw_world_task` completion
-   before dynamic uploads. Join outputs before GUI/viewmodel/end-frame consumers read them, and
-   include new frame work in the `draw_done_task` boundary. Some visibility handles alias each other
-   outside parallel-mark mode; do not assume they always name distinct tasks or add self-edges.
-5. **Respect frame lifetime.** A copied payload does not extend pointed-to stack or temporary data.
-   Do not let work outlive the frame's join unless it has an explicit frame-owned snapshot and
-   synchronization contract. Keep the end-task join before input, menus and commands. Map changes,
-   resource rebuilding and freeing must wait for the tasks that still reference the old generation.
-   Do not join from a worker or call main-thread device-idle helpers there.
+   before dynamic uploads. Join CPU-producer outputs before `draw_done_task`; keep acquisition on its
+   own `begin -> acquire -> end` branch and keep backend recording behind both branches. Some
+   visibility handles alias each other outside parallel-mark mode; do not assume they always name
+   distinct tasks or add self-edges.
+5. **Respect frame lifetime.** A copied task payload or outer `QrDrawFrameInfo` does not extend
+   pointed-to stack or temporary data. Work that outlives the producer graph must own every nested
+   value and have an explicit synchronization contract; `SCR_DrawDone`'s capture and the end task's
+   heap-snapshot ownership are the example. Keep the end-task join before input, menus and commands. Map changes, resource
+   rebuilding and freeing must wait for the tasks that still reference the old generation. Do not
+   join from a worker or call main-thread device-idle helpers there.
 6. **Preserve instrumentation.** Use `RT_Prof_*` and the shared window component, not direct writes
    or a new ad hoc pending counter. Result data and completion acknowledgement are one locked
    transaction; enable/reset precedes submission. Compare interval/FPS between modes, not summed

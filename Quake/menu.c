@@ -639,6 +639,26 @@ void M_ToggleMenu_f (void)
 
 /*
 ================
+M_CloseMenu_f
+================
+*/
+static void M_CloseMenu_f (void)
+{
+	if (key_dest == key_menu)
+	{
+		M_MenuChanged ();
+		IN_Activate ();
+		key_dest = key_game;
+		m_state = m_none;
+	}
+	else if (key_dest == key_console)
+	{
+		Con_ToggleConsole_f ();
+	}
+}
+
+/*
+================
 M_InScrollbar
 ================
 */
@@ -2345,6 +2365,9 @@ static const char *M_GetReflDepthName (void)
 
 static void M_StepReflDepth (int dir)
 {
+	if (rt_reflrefr_depth.flags & CVAR_ROM)
+		return;
+
 	static const float depths[] = { 0.0f, 1.0f, 2.0f, 4.0f, 8.0f };
 	const int numdepths = (int)(sizeof (depths) / sizeof (depths[0]));
 	const float cur = CVAR_TO_FLOAT (rt_reflrefr_depth);
@@ -5383,6 +5406,7 @@ static void M_Menu_Credits_f (void) {}
 void M_Init (void)
 {
 	Cmd_AddCommand ("togglemenu", M_ToggleMenu_f);
+	Cmd_AddCommand ("menu_close", M_CloseMenu_f);
 
 	Cmd_AddCommand ("menu_main", M_Menu_Main_f);
 	Cmd_AddCommand ("menu_singleplayer", M_Menu_SinglePlayer_f);

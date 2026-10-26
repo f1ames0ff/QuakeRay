@@ -5,6 +5,69 @@
 ### Added
 - **Projector and custom spot lights can cast volumetric light shafts** — a material light with `is_light` and `light_projector` shows the `light_shafts` toggle and a per-material `light_shafts_power`, and a custom spot light shows the same toggle and power in its own form. The shaft follows the source's colour, cone, direction and reach; DTAL groups inherit the material flags and power, while a custom light is independent. DTAL and textured-area shafts take their per-froxel sample from the nearest point on the emitter plane instead of one centre point, so the beam starts across the whole surface and a single shadow ray keeps the area smooth; corner sampling of the whole area made the shaft visibly grainy. The scattering is accumulated in a frustum-aligned 160x88x64 volume, jittered along the view ray, prefix-integrated front to back along z, then reconstructed with a dithered volume lookup and a full-resolution screen-space history that reprojects 2x2 G-buffer taps and validates depth and normal. This keeps the shafts smooth and removes both the grid stair-stepping and the depth bands of the old march. Up to 64 simultaneous shaft sources are collected per frame, so large DTAL sets no longer lose their projectors after the first eight. `rt_light_shafts` is the master switch and `rt_light_shafts_resolution` is a low/medium/high dropdown that trades reconstruction stability against response time. The existing sun shafts gain a low/medium/high/ultra/extreme resolution dropdown as well.
 
+### Changed
+- **Presentation has three explicit host modes and never silently falls back**
+  — `vid_vsync 1` is the default Adaptive mode and maps to
+  `VK_PRESENT_MODE_FIFO_RELAXED_KHR`, `2` is VSync and maps to
+  `VK_PRESENT_MODE_FIFO_KHR`, and `3` is Off and maps to
+  `VK_PRESENT_MODE_IMMEDIATE_KHR`. Values outside `1`–`3` are normalized to
+  that range. An unsupported requested Vulkan mode returns
+  `QR_FEATURE_UNAVAILABLE`; the renderer does not substitute another mode.
+- **Scene recording overlaps waitable-FIFO acquisition** — the end task now
+  records framebuffer-independent scene commands while the separate acquire task
+  waits for the previous display. A per-frame exactly-once gate joins acquisition
+  immediately before final present recording, and the next begin depends on both
+  the previous end and acquire tasks. GPU frame hooks retain early acquisition
+  because their `BeforeRenderer` contract includes the real backbuffer.
+- **Cloud shadow sampling reuses per-ray constants** — the cloud cubemap
+  precomputes its Henyey-Greenstein phases and both cloud marchers precompute the
+  sun-sample tangent/bitangent basis once per invocation instead of rebuilding
+  them for every 32-step shadow sample. The resulting samples and pixel values
+  are unchanged.
+- **Interactive presentation is paced by default** — QuakeRay starts in
+  `vid_vsync 1` (Adaptive, `VK_PRESENT_MODE_FIFO_RELAXED_KHR`), and
+  `vid_maxframelatency` is a read-only `1`. The
+  `VK_KHR_present_id2` / `VK_KHR_present_wait2` cap waits for the previous
+  displayed frame before acquiring the next image, so the FPS counter reports
+  cadence rather than an uncapped submission rate. Uncapped presentation
+  remains available to other SDK hosts through
+  `QrStartFrameInfo::maxFrameLatency = 0`; QuakeRay no longer exposes that
+  interactive mode as a setting.
+- **The swapchain log reports the selected path** — the renderer now prints the
+  actual fallback `VkPresentModeKHR`, the swapchain image count and whether
+  present-wait is active instead of echoing only the requested logical mode.
+
+## v0.51.0
+
+### Added
+- **Split release versioning** — QuakeRay host is `0.51.0`; the packaged
+  QuakeRay SDK is `0.2.0`. The public renderer C ABI remains independently
+  versioned at `1.06.0000`.
+- **SDK-owned shared GPU context** — the SDK now negotiates host Vulkan/NVRHI
+  requirements before creating its single device, returns the same NVRHI device
+  to the host as a borrowed context, and defines `BeforeRenderer` /
+  `BeforePresent` recording hooks. QuakeRay uses this path as the reference
+  host and validates a host-created NVRHI buffer during initialization.
+- **Portable host contracts** — the SDK documents the adapter boundary, lifecycle,
+  units, ordering, materials, lights, sky, post effects and explicit fallbacks
+  for pre-2005 engine features. Raster particle and traced-proxy transparency
+  now share the same vertex/draw/texture alpha contract, and conflicting
+  particle/smoke render states are rejected.
+- **Self-contained package contract** — the installed CMake target exports its
+  required compile definitions, carries the pinned NVRHI layout patch, validates
+  `c_MaxBindingLayouts >= 13`, and follows GNU install directories for the
+  FidelityFX runtime.
+
+### Changed
+- **The standard renderer profile is fixed and reproducible** — new installs
+  start with `vid_vsync 1`, read-only `vid_maxframelatency 1`, `fov 90`,
+  `rt_dtal_groups 0`, `rt_dtal_spacing 128` and `r_fteparticles 0`.
+  `rt_enable_pvs 0`, `sv_novis 1`, `rt_restir 0`, `rt_nee_samples 2`,
+  `rt_restir_candidates 8` and `rt_reflrefr_depth 8` are read-only, so saved
+  configurations cannot silently replace the benchmarked lighting and
+  visibility policy. The stress runner rejects captures that do not report
+  this effective profile.
+
 ## v0.50.22
 
 ### Added

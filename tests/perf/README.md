@@ -17,7 +17,7 @@ config files run. Every block records the mode that was really in force in its `
 
 Everything that shapes the cluster system is pinned in `qr_perf_common.cfg` and is identical in
 both modes: `rt_light_reach_static 25`, `rt_light_reach_dynamic 10`, `rt_cluster_incremental 1`,
-`rt_cluster_assert 0`, `rt_stats 0`, `vid_vsync 0`, `host_maxfps 0`, and both
+`rt_cluster_assert 0`, `rt_stats 0`, `vid_vsync 3`, `host_maxfps 0`, and both
 particle systems are off (`r_particles 0`, `r_fteparticles 0`) so the known particle-side engine
 issue cannot distort the cluster measurements. The benchmark records the settings it ran under in
 its block header, so a report says which load shape it is.
@@ -85,6 +85,10 @@ python tests\perf\analyze_bench.py build\Debug\ad\benchmark.log 4
   `rt_cluster_sampling` flag, `rt_gi_level` and the `rt_dtal_groups`/`rt_dtal_spacing`/
   `rt_dtal_maxgroups` values. The two modes are compared within themselves: a CPU fix shows in
   `cpumax`, and `gpumax` tells whether the same fix leaves the GPU bound frame alone.
+- `run_stress.ps1` rejects a capture unless the effective settings carry the standard
+  `vid_vsync`, frame-latency, FOV, PVS, ReSTIR/NEE, reflection-depth, DTAL and FTE-particle policy.
+  The accepted policy is recorded in the capture's `bench.log`; changing a test requires changing
+  the validator as well.
 - `cpumax` exists to make the CPU the frame's limiter: the cluster cost moves the frame there, and
   in `gpumax` the same cost hides under the GPU frame, which is what the mode is for.
 - `rt_cluster_assert 1` must never appear in a performance run: the validator walks every cluster,
