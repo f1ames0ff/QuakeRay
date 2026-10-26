@@ -41,7 +41,8 @@ The remaining gap is GPU-bound in the cloud pass: with clouds enabled, `gpu.fram
 The owner then made that historical policy the engine standard: `rt_dtal_groups 0`,
 `rt_dtal_spacing 128`, `r_fteparticles 0`, plus read-only `rt_enable_pvs 0`, `sv_novis 1`,
 `rt_restir 0`, `rt_nee_samples 2`, `rt_restir_candidates 8` and `rt_reflrefr_depth 8`.
-`vid_vsync` now defaults to `1` and `vid_maxframelatency` is a read-only `1`; `fov 90`
+`vid_vsync` defaults to `1` (Adaptive, `VK_PRESENT_MODE_FIFO_RELAXED_KHR`) and
+`vid_maxframelatency` is a read-only `1`; `fov 90`
 remains standard. Captures made before this pacing change used vsync off and are not directly
 comparable with the current honest-mode FPS. A historical full
 Release capture with no cvar overrides except `rt_gi_level 1` measured 54.8 FPS (18.24 ms mean,
@@ -102,12 +103,13 @@ active where noted).
 | Quantity | What it actually measures | Source / constraint |
 | --- | --- | --- |
 | `interval_ms`, FPS, p95/p99 | Screen-end to screen-end intervals; FPS = `1000 / mean(interval_ms)`. Includes work and waits between completed screen frames. The first partial interval is zero and excluded. | [`RT_Prof_FrameEnd`](Quake/gl_vidsdl.c#L853), [`summarize`](tests/perf/analyze_stress.py#L55). |
+| `scr_showfps` / `QrFrameStats.fpsX10` | Completed presentation rate over a 500 ms fence window when per-image presentation fences are available; otherwise renderer FPS. Fence status is polled non-blockingly and never paces rendering. | [`PollPresentFences`](renderer/Source/Swapchain.cpp#L481), [`SCR_DrawFPS`](Quake/gl_screen.c#L567). |
 | `host_interval_ms` | Unclamped host frame interval, distinct from simulation-scaled time. | [Raw host time assignment](Quake/host.c#L751), [sample field](Quake/gl_vidsdl.c#L886). |
 | `cpu.frame_ms` | Inclusive `SCR_UpdateScreen` wall time, including begin-frame waits and backend calls. **Not** the whole host frame, input, server, audio or all particle simulation. | [Screen bracket](Quake/gl_screen.c#L1160), [post-screen work](Quake/host.c#L1019). |
-| `cpu.begin_ms` | Wall time of `qrStartFrame` inside the begin-rendering task: the wait on the in-flight frame fence and on image acquire, i.e. GPU pacing rather than CPU work. Subtract it from `cpu.frame_ms` to see the graph's own cost. | [Begin task](Quake/gl_vidsdl.c#L3329), [BeginFrame fence/acquire](renderer/Source/VulkanDevice.cpp#L37). |
+| `cpu.begin_ms` | Wall time of `qrStartFrame` inside the begin-rendering task: the wait on the in-flight frame fence and frame-slot preparation. Image acquisition and its present wait are a separate task. | [Begin task](Quake/gl_vidsdl.c#L3395), [BeginFrame](renderer/Source/VulkanDevice.cpp#L256). |
 | Quake CPU slots | Sum of calls to a slot in each captured frame. Parents contain children. `ents` is the opaque pass; entity-type slots also count the alpha pass. Fine-grained upload slots can also be invoked by world/weapon producers. | [Slot accumulator](Quake/gl_vidsdl.c#L561), [entity dispatch](Quake/gl_rmain.c#L797), [frame accumulation](Quake/gl_vidsdl.c#L581). |
 | `cpu.viewmodel_ms` / `cpu.vm_draw_ms` | Inclusive task versus narrower weapon/debug draw. Task includes entity/world-model lights, teleports and cluster publication. | [`R_DrawViewModelTask`](Quake/gl_rmain.c#L1265). Neither is a GPU weapon timer. |
-| `cpu.qrDrawFrame_ms` / `cpu.draw.*` | Inclusive renderer call versus its CPU phases. Entity geometry API preparation occurs earlier; `RHI_setup` contains several setup operations, not AS work alone. | [Call bracket](Quake/gl_vidsdl.c#L4030), [RHI setup recording](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L666). |
+| `cpu.qrDrawFrame_ms` / `cpu.draw.*` | Inclusive renderer call versus its CPU phases. It now includes scene recording before the present boundary and the residual join with an acquisition that may already be in flight. Entity geometry API preparation occurs earlier; `RHI_setup` contains several setup operations, not AS work alone. | [End task](Quake/gl_vidsdl.c#L4247), [RHI setup recording](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L834). |
 | `gpu.frame_ms` / `gpu.*` | Asynchronously completed timestamp-query snapshots for the timed NVRHI command list. Query results come from a reused frame slot, not the CPU sample's synchronized present latency. The separately submitted legacy Vulkan list, acquire/display pacing and scanout are not this timer's full scope. The `setup` section is split into `setup_blas` (the static BLAS sync), `setup_tlas` (the instance synthesis, the dynamic BLAS builds and the vertex-data copies) and `setup_preproc` (the dynamic-normal pass). | [Read/poll queries](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L496), [frame-query bounds](renderer/Source/RHI/NvrhiFrameSkeleton.cpp#L662), [legacy submission](renderer/Source/VulkanDevice.cpp#L1133). |
 | `rt_stats 3` / statistics dumps | CPU/GPU inspection overlay and reporting-window aggregates. Quake slot maxima are per invocation in a window, not whole-frame percentiles; sequential entity chunks can differ from benchmark frame totals. | [`RT_Prof_End`](Quake/gl_vidsdl.c#L780), [`RT_Prof_Update`](Quake/gl_vidsdl.c#L1216), [GUI](Quake/rt_stats_gui.c). |
 | `cpu.window_id`, `cpu.window_frames`, `cpu.renderer_samples` | Reporting-window identity, completed-frame denominator and available renderer CPU samples. Repeated window IDs are repeated snapshots, not new publications. These fields belong to statistics dumps, not the per-frame benchmark CSV. | [Window lifecycle](shared/rt_prof_window.h), `RT_StatsRecordWrite`; `run_stress.ps1 -StatsLevel 3` checks advancing complete windows. |
@@ -115,7 +117,7 @@ active where noted).
 
 `rt_bench` enables CPU and GPU-pass collection while `rt_stats 0` avoids the overlay and per-ray statistics flag: [debug flags](Quake/gl_vidsdl.c#L3975), [CPU enable](Quake/gl_vidsdl.c#L4026). Benchmark samples are buffered; CSV writes happen [at reporting](Quake/gl_vidsdl.c#L1595), not once per measured frame.
 
-Do not sum CPU and GPU frame times, add nested slots, assign `compose` entirely to particles, or derive an "unknown CPU" value by subtracting overlapping counters. **Unattributed/unknown:** dedicated input/server/audio/CPU-GUI costs, begin-frame fence/acquire wait, per-entity GPU costs and the internal staging/metadata/AS split not separately instrumented here. `cpu.wait_ms` is a task-join timer, not total GPU waiting.
+Do not sum CPU and GPU frame times, add nested slots, assign `compose` entirely to particles, or derive an "unknown CPU" value by subtracting overlapping counters. **Unattributed/unknown:** dedicated input/server/audio/CPU-GUI costs, per-entity GPU costs and the internal staging/metadata/AS split not separately instrumented here. `cpu.wait_ms` is a task-join timer, not total GPU waiting.
 
 ### PR gate: Debug vs Release
 

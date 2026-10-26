@@ -111,6 +111,7 @@ cvar_t                          vid_gamma = {"gamma", "1", CVAR_ARCHIVE};       
 cvar_t                          vid_contrast = {"contrast", "1", CVAR_ARCHIVE}; // QuakeSpasm, MarkV
 
 task_handle_t prev_end_rendering_task = INVALID_TASK_HANDLE;
+task_handle_t prev_acquire_rendering_task = INVALID_TASK_HANDLE;
 atomic_uint32_t rt_end_task_running;
 
 // RT
@@ -1572,6 +1573,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_dtal_lod");
 	RT_Bench_Setting (f, "rt_dtal_lod_start");
 	RT_Bench_Setting (f, "rt_dtal_lod_screen");
+	RT_Bench_Setting (f, "rt_q2_lightstats");
 	RT_Bench_Setting (f, "rt_shadowrays");
 	RT_Bench_Setting (f, "rt_sky_godrays");
 	RT_Bench_Setting (f, "rt_sky_godrays_intensity");
@@ -1580,6 +1582,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_physical_sky");
 	RT_Bench_Setting (f, "rt_physical_sun");
 	RT_Bench_Setting (f, "rt_sky_sun_size");
+	RT_Bench_Setting (f, "rt_sky_nee");
 	RT_Bench_Setting (f, "rt_sky_clouds");
 	RT_Bench_Setting (f, "rt_sky_clouds_coverage");
 	RT_Bench_Setting (f, "rt_sky_clouds_density");
@@ -2666,11 +2669,10 @@ static const char *VID_VsyncModeName (int mode)
 {
 	switch (mode)
 	{
-	case VID_VSYNC_ON:        return "vsync";
 	case VID_VSYNC_ADAPTIVE:  return "adaptive";
-	case VID_VSYNC_FREESYNC:  return "freesync";
-	case VID_VSYNC_MAILBOX:   return "mailbox";
-	default:                  return "off";
+	case VID_VSYNC_ON:        return "vsync";
+	case VID_VSYNC_OFF:       return "off";
+	default:                  return "unknown";
 	}
 }
 
@@ -2678,17 +2680,24 @@ static QrPresentMode VID_PresentMode (void)
 {
 	switch ((int)vid_vsync.value)
 	{
-	case VID_VSYNC_ON:        return QR_PRESENT_MODE_VSYNC;
 	case VID_VSYNC_ADAPTIVE:  return QR_PRESENT_MODE_ADAPTIVE;
-	case VID_VSYNC_FREESYNC:  return QR_PRESENT_MODE_VSYNC;
-	case VID_VSYNC_MAILBOX:   return QR_PRESENT_MODE_MAILBOX;
-	default:                  return QR_PRESENT_MODE_IMMEDIATE;
+	case VID_VSYNC_ON:        return QR_PRESENT_MODE_VSYNC;
+	case VID_VSYNC_OFF:       return QR_PRESENT_MODE_IMMEDIATE;
+	default:                  return QR_PRESENT_MODE_ADAPTIVE;
 	}
 }
 
 static void VID_Vsync_f (cvar_t *var)
 {
-	Con_Printf ("Video: vsync mode is %s\n", VID_VsyncModeName ((int)var->value));
+	const int mode = (int)CLAMP (VID_VSYNC_ADAPTIVE, var->value, VID_VSYNC_OFF);
+
+	if ((int)var->value != mode)
+		Cvar_SetValueQuick (var, (float)mode);
+
+	if ((int)var->value == VID_VSYNC_OFF)
+		Con_Printf ("Video: vsync is off (immediate; tearing may occur)\n");
+	else
+		Con_Printf ("Video: vsync mode is %s\n", VID_VsyncModeName ((int)var->value));
 }
 
 static void VID_CloudsQuality_f (cvar_t *var)
@@ -3421,6 +3430,12 @@ void GL_BeginRenderingTask (void *unused)
 	}
 }
 
+void GL_AcquireRenderingTask (void *unused)
+{
+	QrResult r = qrAcquireFrame (vulkan_globals.instance);
+	QR_CHECK (r);
+}
+
 /*
 =================
 GL_SynchronizeEndRenderingTask
@@ -3432,6 +3447,12 @@ void GL_SynchronizeEndRenderingTask (void)
 	{
 		Task_Join (prev_end_rendering_task, SDL_MUTEX_MAXWAIT);
 		prev_end_rendering_task = INVALID_TASK_HANDLE;
+	}
+
+	if (prev_acquire_rendering_task != INVALID_TASK_HANDLE)
+	{
+		Task_Join (prev_acquire_rendering_task, SDL_MUTEX_MAXWAIT);
+		prev_acquire_rendering_task = INVALID_TASK_HANDLE;
 	}
 }
 
@@ -3579,14 +3600,124 @@ static const char *GetUpscalerOptionName (int i, QrRenderUpscaleTechnique techni
 
 typedef struct end_rendering_parms_s
 {
-	uint32_t serial;
-	uint32_t delay_ms;
-	float    vid_width;
-	float    vid_height;
+	uint32_t                    serial;
+	uint32_t                    delay_ms;
+	gl_end_rendering_context_t *context;
 } end_rendering_parms_t;
+
+typedef struct gl_draw_frame_snapshot_s
+{
+	QrDrawFrameInfo                              info;
+	QrDrawFrameRenderResolutionParams            render_resolution;
+	QrExtent2D                                   pixelized_render_size;
+	QrDrawFrameIlluminationParams                illumination;
+	uint64_t                                     ignored_first_person_light_id;
+	QrDrawFrameVolumetricParams                  volumetric;
+	QrDrawFrameTonemappingParams                 tonemapping;
+	QrDrawFrameBloomParams                       bloom;
+	QrDrawFrameReflectRefractParams              reflect_refract;
+	QrDrawFrameSkyParams                         sky;
+	QrDrawFrameTexturesParams                    textures;
+	QrDrawFrameLevelFogParams                    level_fog;
+	QrDrawFrameDebugParams                       debug;
+	QrPostEffectWipe                             post_wipe;
+	QrPostEffectRadialBlur                       post_radial_blur;
+	QrPostEffectChromaticAberration              post_chromatic_aberration;
+	QrPostEffectInverseBlackAndWhite             post_inverse_black_and_white;
+	QrPostEffectHueShift                         post_hue_shift;
+	QrPostEffectDistortedSides                   post_distorted_sides;
+	QrPostEffectWaves                            post_waves;
+	QrPostEffectColorTint                        post_color_tint;
+	QrPostEffectCRT                              post_crt;
+	QrPostEffectsBloomParams                     post_bloom;
+	QrPostEffectsNearDofParams                   post_near_dof;
+	QrPostEffectsSharpenParams                   post_sharpen;
+	QrPostEffectsGameplayFeedback                post_gameplay_feedback;
+	QrPostEffectsVignetteParams                  post_vignette;
+	QrPostEffectsFilmGrainParams                 post_film_grain;
+} gl_draw_frame_snapshot_t;
+
+struct gl_end_rendering_context_s
+{
+	gl_draw_frame_snapshot_t *snapshot;
+};
 
 #define DEG2RAD(a) ((a)*M_PI_DIV_180)
 #define FROMCOLOR255(a) {((a)[0] / 255.0f), ((a)[1] / 255.0f), ((a)[2] / 255.0f)}
+
+static gl_draw_frame_snapshot_t *GL_CreateDrawFrameSnapshot (const QrDrawFrameInfo *info)
+{
+	gl_draw_frame_snapshot_t *snapshot = Mem_Alloc (sizeof (*snapshot));
+	memset (snapshot, 0, sizeof (*snapshot));
+	snapshot->info = *info;
+
+#define COPY_FRAME_PARAM(field, owned) \
+	do \
+	{ \
+		if (snapshot->info.field != NULL) \
+		{ \
+			snapshot->owned = *snapshot->info.field; \
+			snapshot->info.field = &snapshot->owned; \
+		} \
+	} while (0)
+
+	COPY_FRAME_PARAM (pRenderResolutionParams, render_resolution);
+	COPY_FRAME_PARAM (pIlluminationParams, illumination);
+	COPY_FRAME_PARAM (pVolumetricParams, volumetric);
+	COPY_FRAME_PARAM (pTonemappingParams, tonemapping);
+	COPY_FRAME_PARAM (pBloomParams, bloom);
+	COPY_FRAME_PARAM (pReflectRefractParams, reflect_refract);
+	COPY_FRAME_PARAM (pSkyParams, sky);
+	COPY_FRAME_PARAM (pTexturesParams, textures);
+	COPY_FRAME_PARAM (pLevelFogParams, level_fog);
+	COPY_FRAME_PARAM (pDebugParams, debug);
+
+#undef COPY_FRAME_PARAM
+
+	if (snapshot->render_resolution.pPixelizedRenderSize != NULL)
+	{
+		snapshot->pixelized_render_size = *snapshot->render_resolution.pPixelizedRenderSize;
+		snapshot->render_resolution.pPixelizedRenderSize = &snapshot->pixelized_render_size;
+	}
+
+	if (snapshot->illumination.lightUniqueIdIgnoreFirstPersonViewerShadows != NULL)
+	{
+		snapshot->ignored_first_person_light_id =
+			*snapshot->illumination.lightUniqueIdIgnoreFirstPersonViewerShadows;
+		snapshot->illumination.lightUniqueIdIgnoreFirstPersonViewerShadows =
+			&snapshot->ignored_first_person_light_id;
+	}
+
+#define COPY_POST_EFFECT(field, owned) \
+	do \
+	{ \
+		if (snapshot->info.postEffectParams.field != NULL) \
+		{ \
+			snapshot->owned = *snapshot->info.postEffectParams.field; \
+			snapshot->info.postEffectParams.field = &snapshot->owned; \
+		} \
+	} while (0)
+
+	COPY_POST_EFFECT (pWipe, post_wipe);
+	COPY_POST_EFFECT (pRadialBlur, post_radial_blur);
+	COPY_POST_EFFECT (pChromaticAberration, post_chromatic_aberration);
+	COPY_POST_EFFECT (pInverseBlackAndWhite, post_inverse_black_and_white);
+	COPY_POST_EFFECT (pHueShift, post_hue_shift);
+	COPY_POST_EFFECT (pDistortedSides, post_distorted_sides);
+	COPY_POST_EFFECT (pWaves, post_waves);
+	COPY_POST_EFFECT (pColorTint, post_color_tint);
+	COPY_POST_EFFECT (pCRT, post_crt);
+	COPY_POST_EFFECT (pBloom, post_bloom);
+	COPY_POST_EFFECT (pNearDof, post_near_dof);
+	COPY_POST_EFFECT (pSharpen, post_sharpen);
+	COPY_POST_EFFECT (pGameplayFeedback, post_gameplay_feedback);
+	COPY_POST_EFFECT (pVignette, post_vignette);
+	COPY_POST_EFFECT (pFilmGrain, post_film_grain);
+
+#undef COPY_POST_EFFECT
+
+	return snapshot;
+}
 
 extern float  GL_GetCameraNear (float radfovx, float radfovy);
 extern float  GL_GetCameraFar (void);
@@ -3621,17 +3752,12 @@ static void ResolutionToQray (QrDrawFrameRenderResolutionParams *dst, const QrEx
 
 /*
 =================
-GL_EndRenderingTask
+GL_BuildEndRenderingSnapshot
 =================
 */
-static void GL_EndRenderingTask (end_rendering_parms_t *parms)
+static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 {
-	Atomic_StoreUInt32 (&rt_end_task_running, 1);
-
-	if (parms->delay_ms > 0)
-		SDL_Delay (parms->delay_ms);
-
-	const QrExtent2D winsize = {.width = parms->vid_width, .height = parms->vid_height};
+	const QrExtent2D winsize = {.width = vid.width, .height = vid.height};
 	const qboolean editor_active = QR_Editor_Active ();
 
 	QrDrawFrameRenderResolutionParams resolution_params = {0};
@@ -4085,24 +4211,54 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	};
 	memcpy (info.view, vulkan_globals.view_matrix, 16 * sizeof(float));
 
+	return GL_CreateDrawFrameSnapshot (&info);
+}
+
+gl_end_rendering_context_t *GL_CreateEndRenderingContext (void)
+{
+	gl_end_rendering_context_t *context = Mem_Alloc (sizeof (*context));
+	memset (context, 0, sizeof (*context));
+	return context;
+}
+
+void GL_CaptureEndRenderingSnapshot (gl_end_rendering_context_t *context)
+{
+	assert (context != NULL);
+	assert (context->snapshot == NULL);
+	context->snapshot = GL_BuildEndRenderingSnapshot ();
+}
+
+static void GL_EndRenderingTask (end_rendering_parms_t *parms)
+{
+	Atomic_StoreUInt32 (&rt_end_task_running, 1);
+
+	if (parms->delay_ms > 0)
+		SDL_Delay (parms->delay_ms);
+
+	assert (parms->context != NULL);
+	gl_draw_frame_snapshot_t *snapshot = parms->context->snapshot;
+	assert (snapshot != NULL);
+
 	double prof_start = RT_Prof_Begin ();
-	QrResult r = qrDrawFrame (vulkan_globals.instance, &info);
+	QrResult r = qrDrawFrame (vulkan_globals.instance, &snapshot->info);
 	QR_CHECK (r);
 
 	if (parms->serial != 0)
 	{
 		QrFrameStats stats = {0};
-		const qboolean stats_valid = (r == QR_SUCCESS && info.enableCpuProfiling) && qrGetFrameStatsEx (vulkan_globals.instance, &stats) == QR_SUCCESS && stats.cpuTimingValid;
+		const qboolean stats_valid = (r == QR_SUCCESS && snapshot->info.enableCpuProfiling) && qrGetFrameStatsEx (vulkan_globals.instance, &stats) == QR_SUCCESS && stats.cpuTimingValid;
 
 		RT_Prof_EndTaskRecord (parms->serial, prof_start, stats_valid ? &stats : NULL);
 	}
 	else
 	{
 		RT_Prof_End (RT_PROF_DRAWFRAME, prof_start);
-		if (r == QR_SUCCESS && info.enableCpuProfiling)
+		if (r == QR_SUCCESS && snapshot->info.enableCpuProfiling)
 			RT_Prof_RecordRenderer ();
 	}
 
+	Mem_Free (snapshot);
+	Mem_Free (parms->context);
 	Atomic_StoreUInt32 (&rt_end_task_running, 0);
 }
 
@@ -4111,8 +4267,10 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 GL_EndRendering
 =================
 */
-task_handle_t GL_EndRendering (void)
+task_handle_t GL_EndRendering (gl_end_rendering_context_t *context)
 {
+	assert (context != NULL);
+
 	if (++rt_end_task_serial == 0)
 		rt_end_task_serial = 1;
 	rt_end_task_current_serial = rt_end_task_serial;
@@ -4122,8 +4280,7 @@ task_handle_t GL_EndRendering (void)
 	end_rendering_parms_t parms = {
 		.serial = rt_end_task_current_serial,
 		.delay_ms = (uint32_t)q_max (0.0f, CVAR_TO_FLOAT (rt_end_task_delay_ms)),
-		.vid_width = (float)vid.width,
-		.vid_height = (float)vid.height,
+		.context = context,
 	};
 	return Task_AllocateAndAssignFunc ((task_func_t)GL_EndRenderingTask, &parms, sizeof (parms));
 }
@@ -5080,10 +5237,10 @@ static void VID_Menu_ChooseNextVsync (int dir)
 {
 	int mode = (int)vid_vsync.value + dir;
 
-	if (mode < VID_VSYNC_OFF)
-		mode = VID_VSYNC_MAILBOX;
-	else if (mode > VID_VSYNC_MAILBOX)
+	if (mode < VID_VSYNC_ADAPTIVE)
 		mode = VID_VSYNC_OFF;
+	else if (mode > VID_VSYNC_OFF)
+		mode = VID_VSYNC_ADAPTIVE;
 
 	Cvar_SetValueQuick (&vid_vsync, (float)mode);
 }

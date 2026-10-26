@@ -87,7 +87,7 @@ function Snapshot-Dump([string]$target) {
 }
 
 $cfgText = @"
-vid_vsync 0
+vid_vsync 3
 host_maxfps 0
 r_particles 2
 r_particle_lighting 1

@@ -3,8 +3,27 @@
 ## Unreleased
 
 ### Changed
-- **Interactive presentation is paced by default** — QuakeRay now starts in
-  `vid_vsync 1` (FIFO), and `vid_maxframelatency` is a read-only `1`. The
+- **Presentation has three explicit host modes and never silently falls back**
+  — `vid_vsync 1` is the default Adaptive mode and maps to
+  `VK_PRESENT_MODE_FIFO_RELAXED_KHR`, `2` is VSync and maps to
+  `VK_PRESENT_MODE_FIFO_KHR`, and `3` is Off and maps to
+  `VK_PRESENT_MODE_IMMEDIATE_KHR`. Values outside `1`–`3` are normalized to
+  that range. An unsupported requested Vulkan mode returns
+  `QR_FEATURE_UNAVAILABLE`; the renderer does not substitute another mode.
+- **Scene recording overlaps waitable-FIFO acquisition** — the end task now
+  records framebuffer-independent scene commands while the separate acquire task
+  waits for the previous display. A per-frame exactly-once gate joins acquisition
+  immediately before final present recording, and the next begin depends on both
+  the previous end and acquire tasks. GPU frame hooks retain early acquisition
+  because their `BeforeRenderer` contract includes the real backbuffer.
+- **Cloud shadow sampling reuses per-ray constants** — the cloud cubemap
+  precomputes its Henyey-Greenstein phases and both cloud marchers precompute the
+  sun-sample tangent/bitangent basis once per invocation instead of rebuilding
+  them for every 32-step shadow sample. The resulting samples and pixel values
+  are unchanged.
+- **Interactive presentation is paced by default** — QuakeRay starts in
+  `vid_vsync 1` (Adaptive, `VK_PRESENT_MODE_FIFO_RELAXED_KHR`), and
+  `vid_maxframelatency` is a read-only `1`. The
   `VK_KHR_present_id2` / `VK_KHR_present_wait2` cap waits for the previous
   displayed frame before acquiring the next image, so the FPS counter reports
   cadence rather than an uncapped submission rate. Uncapped presentation

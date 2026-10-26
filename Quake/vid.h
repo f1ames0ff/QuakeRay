@@ -72,11 +72,9 @@ extern viddef_t vid; // global video state
 
 enum
 {
-	VID_VSYNC_OFF = 0,
-	VID_VSYNC_ON,
-	VID_VSYNC_ADAPTIVE,
-	VID_VSYNC_FREESYNC,
-	VID_VSYNC_MAILBOX,
+	VID_VSYNC_ADAPTIVE = 1, // VK_PRESENT_MODE_FIFO_RELAXED_KHR
+	VID_VSYNC_ON,           // VK_PRESENT_MODE_FIFO_KHR
+	VID_VSYNC_OFF,          // VK_PRESENT_MODE_IMMEDIATE_KHR
 };
 
 extern int vid_display_refresh;
