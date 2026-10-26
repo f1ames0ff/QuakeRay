@@ -3424,11 +3424,6 @@ void GL_BeginRenderingTask (void *unused)
 	}
 }
 
-/*
-=================
-GL_AcquireRenderingTask
-=================
-*/
 void GL_AcquireRenderingTask (void *unused)
 {
 	QrResult r = qrAcquireFrame (vulkan_globals.instance);
@@ -3604,11 +3599,6 @@ typedef struct end_rendering_parms_s
 	gl_end_rendering_context_t *context;
 } end_rendering_parms_t;
 
-/*
- * GL_EndRenderingTask may outlive the render producer graph.  Keep every
- * pointer reachable from QrDrawFrameInfo in this heap-owned snapshot so the
- * end task never dereferences host stack values, cvars or cl.* globals.
- */
 typedef struct gl_draw_frame_snapshot_s
 {
 	QrDrawFrameInfo                              info;
@@ -4218,11 +4208,6 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 	return GL_CreateDrawFrameSnapshot (&info);
 }
 
-/*
-=================
-GL_CreateEndRenderingContext
-=================
-*/
 gl_end_rendering_context_t *GL_CreateEndRenderingContext (void)
 {
 	gl_end_rendering_context_t *context = Mem_Alloc (sizeof (*context));
@@ -4230,15 +4215,6 @@ gl_end_rendering_context_t *GL_CreateEndRenderingContext (void)
 	return context;
 }
 
-/*
-=================
-GL_CaptureEndRenderingSnapshot
-
-This runs in the draw_done task after setup/view and every producer has
-finished.  The host joins draw_done before starting the next frame, so these
-sources are stable while the immutable snapshot is built.
-=================
-*/
 void GL_CaptureEndRenderingSnapshot (gl_end_rendering_context_t *context)
 {
 	assert (context != NULL);
@@ -4246,11 +4222,6 @@ void GL_CaptureEndRenderingSnapshot (gl_end_rendering_context_t *context)
 	context->snapshot = GL_BuildEndRenderingSnapshot ();
 }
 
-/*
-=================
-GL_EndRenderingTask
-=================
-*/
 static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 {
 	Atomic_StoreUInt32 (&rt_end_task_running, 1);

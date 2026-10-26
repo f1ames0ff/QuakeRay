@@ -48,7 +48,6 @@ private:
 
 }
 
-// Keep the production header's slot logic while substituting its command-buffer factory in this TU.
 #define CommandBufferManager TestCommandBufferManager
 #include "FrameState.h"
 #undef CommandBufferManager

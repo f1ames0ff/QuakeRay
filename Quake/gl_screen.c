@@ -1218,10 +1218,6 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 			Task_AddDependency (rt_editor_draw_done_task, draw_gui_task);
 		Task_AddDependency (draw_gui_task, draw_done_task);
 		Task_AddDependency (draw_done_task, end_rendering_task);
-		// The end task joins image acquisition inside qrDrawFrame after recording
-		// the scene, so backend recording overlaps the present wait. A task edge
-		// here would serialize those two independent branches again.
-
 		task_handle_t tasks[] = {begin_rendering_task, acquire_rendering_task, setup_frame_task, draw_done_task, draw_gui_task, end_rendering_task};
 		Tasks_Submit (sizeof (tasks) / sizeof (task_handle_t), tasks);
 
