@@ -1,4 +1,4 @@
-// qr_editor.c -- qr light editor: realtime material editor for the qray renderer.
+﻿// qr_editor.c -- qr light editor: realtime material editor for the qray renderer.
 //
 // Console commands: qr_editor (which opens the mode chooser) / qr_editor_stop.
 //
@@ -6658,7 +6658,7 @@ static const qre_global_t qre_globals[] = {
 	{ NULL,  "rt_light_shafts", QRE_G_BOOL, 0, 0,
 	  "Draw the light shafts of projectors and custom spot lights that enable them." },
 	{ NULL,  "rt_light_shafts_resolution", QRE_G_INT, 0, 2,
-	  "Light-shaft reconstruction quality: low, medium or high. Higher settings keep a longer stable history (less flicker, more lag).", NULL, "rt_light_shafts" },
+	  "Light-shaft quality: low, medium or high. Higher settings trace more of each emitter's area, for softer and steadier shafts, and cost more.", NULL, "rt_light_shafts" },
 
 	{ "Volumetric fog", "rt_volume_type",    QRE_G_INT,   0, 2,
 	  "0 off, 1 a simple depth-based fog (the density and the color below), 2 the volumetric pass the sky light feeds." },
