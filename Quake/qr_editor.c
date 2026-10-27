@@ -4309,18 +4309,6 @@ static void QRE_LightShaftGlobalControls (qboolean material_reset)
 		QR_Editor_HostCvarSet ("rt_light_shafts", enabled ? "1" : "0");
 	if (material_reset)
 		QRE_MatCvarReset ("rt_light_shafts");
-
-	{
-		static const char *const resolutions[] = { "low", "medium", "high" };
-		int resolution = CLAMP (0, CVAR_TO_INT32 (rt_light_shafts_resolution), 2);
-
-		if (QR_GUI_Combo ("rt_light_shafts_resolution", &resolution, resolutions,
-		                  (int)countof (resolutions),
-		                  "Light-shaft reconstruction quality: higher settings keep a longer stable history (less flicker, more lag)."))
-			QR_Editor_HostCvarSet ("rt_light_shafts_resolution", va ("%d", resolution));
-		if (material_reset)
-			QRE_MatCvarReset ("rt_light_shafts_resolution");
-	}
 }
 
 static void QRE_WaterColorSet (const char *name, const float rgb[3])
@@ -5970,6 +5958,13 @@ static void QRE_BuildPanelGUI (void)
 	else if (qre.mat_tab == 1)
 		QRE_MatEntitiesTab ();
 
+	if (qre.mat_tab == 0)
+	{
+		QR_GUI_Separator ();
+		QR_GUI_SectionHeader ("Light shafts");
+		QRE_LightShaftGlobalControls (true);
+	}
+
 	if (QRE_FrameGroup () || QRE_GroupHasFrames ())
 	{
 		int frame_g = -1;
@@ -6060,13 +6055,6 @@ static void QRE_BuildPanelGUI (void)
 				QRE_ParamWidgets (g);
 			QR_GUI_PopID ();
 		}
-	}
-
-	if (qre.mat_tab == 0)
-	{
-		QR_GUI_Separator ();
-		QR_GUI_SectionHeader ("Light shafts");
-		QRE_LightShaftGlobalControls (true);
 	}
 
 	QR_GUI_EndScroll ();

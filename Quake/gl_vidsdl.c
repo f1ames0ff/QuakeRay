@@ -3959,16 +3959,14 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		c[7] = CVAR_TO_FLOAT (rt_sky_clouds_height);
 		c[8] = CVAR_TO_FLOAT (rt_sky_clouds_thickness);
 	}
-	else if (!CVAR_TO_BOOL (r_fastsky) && !CVAR_TO_BOOL (rt_physical_sun))
+	else if (!CVAR_TO_BOOL (r_fastsky))
 	{
 		vec3_t brightest_dir, brightest_color;
 
-		// The shafts of a classic sky are not drawn any more: rt_sky_godrays is read
-		// only for the procedural sky, and with rt_physical_sky 0 nothing on this
-		// path reaches the frame. What is sent here is the aim a shaft *would* have
-		// over a sky that is a picture -- the brightest point of the texture,
-		// dressed as the sun -- kept for the record and for the day the shafts are
-		// wanted over one again; the lookup behind it is done at load time.
+		// A classic sky is a picture drawn from the skybox: the shafts follow the
+		// brightest spot of that picture above rt_sky_godrays_sky_threshold, dressed
+		// as the sun, whatever rt_physical_sun says about the level's sunlight. The
+		// lookup behind it is done at load time.
 		if (Sky_GetBrightestPoint (cl.time, brightest_dir, brightest_color))
 		{
 			RT_FIXUP_LIGHT_INTENSITY (brightest_color, true);
