@@ -371,6 +371,7 @@ dlightspot_t *CL_AllocDlightSpot (int key);
 void      CL_DecayLights (void);
 
 void CL_RelinkEntities (void);
+void CL_FinishRelink (void);
 
 void CL_Init (void);
 

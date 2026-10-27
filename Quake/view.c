@@ -922,7 +922,7 @@ void V_RenderView (task_handle_t begin_rendering_task, task_handle_t setup_frame
 
 	if (needs_relink)
 	{
-		Sys_Error ("V_RenderView: entities needed relink in main draw");
+		CL_FinishRelink ();
 	}
 
 	R_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
