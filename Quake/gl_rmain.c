@@ -465,6 +465,7 @@ static void RT_UploadAllDlights ()
 			VectorCopy (l->dir, light.direction);
 			light.angleInner = l->angleInner;
 			light.angleOuter = l->angleOuter;
+			light.light_shafts = true;
 		}
 
 		RT_LIGHT_Emit (&light);

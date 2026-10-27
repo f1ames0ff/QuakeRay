@@ -216,7 +216,7 @@ static const struct qre_param_s
 	[PARAM_EPROJ]    = { NULL, "light_projector", QRE_T_BOOL, 0, 0, 0,
 	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (light_focus; no key = 45 degrees) and light_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
 	[PARAM_LSHAFTS]  = { NULL, "light_shafts",   QRE_T_BOOL, 0, 0, 0,
-	                     "Draw volumetric light shafts from this projector's beam, so the cone is visible in the air. The shafts follow the light's colour, cone and reach; a light without them stays invisible in the air, while the surfaces it lights do not change." },
+	                     "Draw volumetric light shafts from this surface, so the light it casts is visible in the air. The shafts follow the light's colour, its whole area and its cone; a light without them stays invisible in the air, while the surfaces it lights do not change." },
 	[PARAM_LSHAFTS_POWER] = { NULL, "light_shafts_power", QRE_T_FLOAT, 0, 16, 0.01f,
 	                     "Strength of this light type's volumetric shafts. Applies only while light_shafts is on; it does not change the surface lighting." },
 	[PARAM_CEMIS]    = { "Luma", "luma",   QRE_T_BOOL,  0, 0, 0,
@@ -4172,7 +4172,10 @@ static void QRE_ParamWidgets (int g)
 		if (p >= PARAM_LSTYLES && p <= PARAM_EPROJ && !qre.group[g]->is_light)
 			continue;
 
-		if (p == PARAM_LSHAFTS && (!qre.group[g]->is_light || !qre.group[g]->emissive_projector))
+		if (p == PARAM_LSHAFTS && !qre.group[g]->is_light)
+			continue;
+
+		if (p == PARAM_LSHAFTS_POWER && !qre.group[g]->light_shafts)
 			continue;
 
 		if ((p == PARAM_EFACTOR || p == PARAM_EBLEND) && qre.group[g]->filename_emissive[0] == '\0')
@@ -8870,8 +8873,9 @@ static const char *qre_yaml_header =
 	"# of each point it lights, over the same cone (`light_focus`; no key = 45\n"
 	"# degrees), and `light_focus_soft` also blurs the projected pattern (the\n"
 	"# mask is read from a blurrier mip as the edge grows).\n"
-	"# `light_shafts: true` draws the projector's cone as volumetric shafts in\n"
-	"# the air; it has no effect without `light_projector` and `is_light`.\n"
+	"# `light_shafts: true` draws this surface's light as volumetric shafts in\n"
+	"# the air; it needs `is_light` and follows the light's whole emitting area\n"
+	"# and its cone (`light_focus`, or a hemisphere when none is authored).\n"
 	"#     e.g.  - name: textures/window1_2\n"
 	"#             light_focus: 45\n"
 	"#             light_focus_soft: 8\n"
