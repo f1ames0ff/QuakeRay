@@ -1,4 +1,4 @@
-// qr_editor.c -- qr light editor: realtime material editor for the qray renderer.
+﻿// qr_editor.c -- qr light editor: realtime material editor for the qray renderer.
 //
 // Console commands: qr_editor (which opens the mode chooser) / qr_editor_stop.
 //
@@ -90,6 +90,7 @@ float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
 qboolean Fog_Enabled (void);
 extern cvar_t rt_dlight_radius, rt_dlight_intensity; // gl_vidsdl.c
+extern cvar_t rt_light_shafts, rt_light_shafts_intensity, rt_light_shafts_resolution;
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -136,6 +137,8 @@ enum
 	PARAM_EFOCUS,
 	PARAM_ESOFT,
 	PARAM_EPROJ,
+	PARAM_LSHAFTS,
+	PARAM_LSHAFTS_POWER,
 	PARAM_CEMIS,
 	PARAM_EFACTOR,
 	PARAM_EBLEND,
@@ -212,6 +215,10 @@ static const struct qre_param_s
 	                     "How wide the beam's soft edge is, in absolute degrees: brightness holds to (light_focus - light_focus_soft) and then falls smoothly (smoothstep squared) to zero at the focus angle, so the edge always grows inward from it. In a projector it blurs the projected pattern too. An unauthored value shows the engine's own default: 45 degrees under a projector, a tenth of the focus angle otherwise; 0 is a nearly hard edge." },
 	[PARAM_EPROJ]    = { NULL, "light_projector", QRE_T_BOOL, 0, 0, 0,
 	                     "Gobo: the light reads its emissive mask along the direction of each point it lights instead of at a point on the surface, so the pattern is projected across the beam instead of washing out. The mask is read over the same cone (light_focus; no key = 45 degrees) and light_focus_soft blurs the projected pattern too, reading it from a blurrier mip as the edge grows." },
+	[PARAM_LSHAFTS]  = { NULL, "light_shafts",   QRE_T_BOOL, 0, 0, 0,
+	                     "Draw volumetric light shafts from this surface, so the light it casts is visible in the air. The shafts follow the light's colour, its whole area and its cone; a light without them stays invisible in the air, while the surfaces it lights do not change." },
+	[PARAM_LSHAFTS_POWER] = { NULL, "light_shafts_power", QRE_T_FLOAT, 0, 16, 0.01f,
+	                     "Strength of this light type's volumetric shafts. Applies only while light_shafts is on; it does not change the surface lighting." },
 	[PARAM_CEMIS]    = { "Luma", "luma",   QRE_T_BOOL,  0, 0, 0,
 	                     "Glow by color: every block below matches its own color and carries its own threshold, feather, emissive_factor and blend." },
 };
@@ -1123,6 +1130,7 @@ static float QRE_GetFloat (const rt_material_t *m, int param)
 	case PARAM_GLASS_IOR: return m->glass_ior;
 	case PARAM_GLASS_THICKNESS: return m->glass_thickness;
 	case PARAM_LBRIGHT:  return m->light_brightness;
+	case PARAM_LSHAFTS_POWER: return m->light_shafts_power;
 	case PARAM_EFACTOR:  return m->emissive_factor;
 	// the shown value is the effective one: an unauthored focus is no cone (a
 	// projector uses its 45-degree default), an unauthored soft edge is the
@@ -1156,6 +1164,7 @@ static qboolean QRE_GetBool (const rt_material_t *m, int param)
 	{
 	case PARAM_ISLIGHT:    return m->is_light;
 	case PARAM_EPROJ:      return m->emissive_projector;
+	case PARAM_LSHAFTS:    return m->light_shafts;
 	case PARAM_CEMIS:      return m->has_color_emissive;
 	case PARAM_LSTYLES:    return m->light_styles;
 	case PARAM_METALALPHA: return m->metalness_from_normal_alpha;
@@ -1207,6 +1216,7 @@ static void QRE_SetFloat (int g, int param, float value)
 		break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
+	case PARAM_LSHAFTS_POWER: m->light_shafts_power = CLAMP (0.0f, value, 16.0f); break;
 	case PARAM_EFACTOR:  m->emissive_factor = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
 	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
@@ -1236,6 +1246,7 @@ static void QRE_SetFloat (int g, int param, float value)
 	if (param == PARAM_LBRIGHT || param == PARAM_EFOCUS || param == PARAM_ESOFT)
 		QRE_MarkDirtyLight (m);
 	else if (param == PARAM_GLASS_IOR || param == PARAM_GLASS_THICKNESS || param == PARAM_EFACTOR ||
+	         param == PARAM_LSHAFTS_POWER ||
 	         param == PARAM_TSCALE_U || param == PARAM_TSCALE_V ||
 	         param == PARAM_TOFFS_U || param == PARAM_TOFFS_V)
 		QRE_MarkDirtyFull (m);
@@ -1282,6 +1293,7 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	{
 	case PARAM_ISLIGHT:    m->is_light = value; break;
 	case PARAM_EPROJ:      m->emissive_projector = value; break;
+	case PARAM_LSHAFTS:    m->light_shafts = value; break;
 	case PARAM_CEMIS:      m->has_color_emissive = value; break;
 	case PARAM_LSTYLES:    m->light_styles = value; break;
 	case PARAM_METALALPHA: m->metalness_from_normal_alpha = value; break;
@@ -1298,7 +1310,7 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	default:               break;
 	}
 
-	if (param == PARAM_ISLIGHT || param == PARAM_CEMIS)
+	if (param == PARAM_ISLIGHT || param == PARAM_LSHAFTS || param == PARAM_CEMIS)
 		QRE_MarkDirtyFull (m);
 	else if (param == PARAM_EPROJ)
 		QRE_MarkDirtyLight (m);
@@ -4160,6 +4172,12 @@ static void QRE_ParamWidgets (int g)
 		if (p >= PARAM_LSTYLES && p <= PARAM_EPROJ && !qre.group[g]->is_light)
 			continue;
 
+		if (p == PARAM_LSHAFTS && !qre.group[g]->is_light)
+			continue;
+
+		if (p == PARAM_LSHAFTS_POWER && !qre.group[g]->light_shafts)
+			continue;
+
 		if ((p == PARAM_EFACTOR || p == PARAM_EBLEND) && qre.group[g]->filename_emissive[0] == '\0')
 			continue;
 
@@ -4243,6 +4261,9 @@ static const char *const qre_mat_cvars[] = {
 	"rt_dtal_model_minarea",
 	"rt_dtal_model_maxpolys",
 	"rt_dtal_model_budget",
+	"rt_light_shafts",
+	"rt_light_shafts_intensity",
+	"rt_light_shafts_resolution",
 };
 
 static char     qre_mat_cvar_snapshot[countof (qre_mat_cvars)][QRE_SNAPSHOT_MAX];
@@ -4280,6 +4301,17 @@ static void QRE_MatCvarReset (const char *name)
 
 		return;
 	}
+}
+
+static void QRE_LightShaftGlobalControls (qboolean material_reset)
+{
+	int enabled = CVAR_TO_BOOL (rt_light_shafts) ? 1 : 0;
+
+	if (QR_GUI_Checkbox ("rt_light_shafts", &enabled,
+	                     "Master switch for the volumetric light shafts of projector materials and custom spot lights."))
+		QR_Editor_HostCvarSet ("rt_light_shafts", enabled ? "1" : "0");
+	if (material_reset)
+		QRE_MatCvarReset ("rt_light_shafts");
 }
 
 static void QRE_WaterColorSet (const char *name, const float rgb[3])
@@ -4472,6 +4504,10 @@ static void QRE_MatSystemTab (void)
 
 		QR_GUI_Separator ();
 	}
+
+	QR_GUI_SectionHeader ("Light shafts");
+	QRE_LightShaftGlobalControls (true);
+	QR_GUI_Separator ();
 
 	if (dbg < 0 || dbg > 3)
 		dbg = 0;
@@ -5925,6 +5961,13 @@ static void QRE_BuildPanelGUI (void)
 	else if (qre.mat_tab == 1)
 		QRE_MatEntitiesTab ();
 
+	if (qre.mat_tab == 0)
+	{
+		QR_GUI_Separator ();
+		QR_GUI_SectionHeader ("Light shafts");
+		QRE_LightShaftGlobalControls (true);
+	}
+
 	if (QRE_FrameGroup () || QRE_GroupHasFrames ())
 	{
 		int frame_g = -1;
@@ -6610,6 +6653,12 @@ static const qre_global_t qre_globals[] = {
 	  "Strength of the sun shafts.", NULL, "rt_sky_godrays" },
 	{ NULL,  "rt_sky_godrays_sky_threshold", QRE_G_FLOAT, 0, 1,
 	  "How bright a sky area must be to pull the god rays to itself; the rays come from the centre of everything above it, and from the brightest point when nothing is (0 leaves the brightest point alone)." },
+	{ NULL,  "rt_sky_godrays_quality", QRE_G_INT, 0, 4,
+	  "Sun-shaft resolution and cost: low, medium, high, ultra or extreme." },
+	{ NULL,  "rt_light_shafts", QRE_G_BOOL, 0, 0,
+	  "Draw the light shafts of projectors and custom spot lights that enable them." },
+	{ NULL,  "rt_light_shafts_resolution", QRE_G_INT, 0, 2,
+	  "Light-shaft quality: low, medium or high. Higher settings trace more of each emitter's area, for softer and steadier shafts, and cost more.", NULL, "rt_light_shafts" },
 
 	{ "Volumetric fog", "rt_volume_type",    QRE_G_INT,   0, 2,
 	  "0 off, 1 a simple depth-based fog (the density and the color below), 2 the volumetric pass the sky light feeds." },
@@ -6879,7 +6928,27 @@ static void QRE_LightGlobalTab (void)
 		{
 			int value = (int)(var->value + 0.5f);
 
-			if (QR_GUI_SliderInt (g->name, &value, (int)g->min, (int)g->max, g->tip))
+			if (!strcmp (g->name, "rt_light_shafts_resolution"))
+			{
+				static const char *const resolutions[] = { "low", "medium", "high" };
+
+				value = CLAMP (0, value, 2);
+				if (QR_GUI_Combo ("light_shafts_resolution", &value, resolutions,
+				                  (int)countof (resolutions), g->tip))
+					QR_Editor_HostCvarSet (g->name, va ("%d", value));
+			}
+			else if (!strcmp (g->name, "rt_sky_godrays_quality"))
+			{
+				static const char *const resolutions[] = {
+					"low", "medium", "high", "ultra", "extreme"
+				};
+
+				value = CLAMP (0, value, 4);
+				if (QR_GUI_Combo ("sunshafts_resolution", &value, resolutions,
+				                  (int)countof (resolutions), g->tip))
+					QR_Editor_HostCvarSet (g->name, va ("%d", value));
+			}
+			else if (QR_GUI_SliderInt (g->name, &value, (int)g->min, (int)g->max, g->tip))
 				QR_Editor_HostCvarSet (g->name, va ("%d", value));
 			break;
 		}
@@ -6999,6 +7068,8 @@ enum
 	QRE_CUSTOM_F_DIR,
 	QRE_CUSTOM_F_ANGLE_INNER,
 	QRE_CUSTOM_F_ANGLE_OUTER,
+	QRE_CUSTOM_F_SHAFTS,
+	QRE_CUSTOM_F_SHAFTS_POWER,
 };
 
 static qboolean QRE_CustomOriginal (int index, rt_custom_light_t *out)
@@ -7019,6 +7090,7 @@ static qboolean QRE_CustomOriginal (int index, rt_custom_light_t *out)
 	out->color[0] = out->color[1] = out->color[2] = 1.0f;
 	out->dir[0] = 1.0f;
 	out->angle_outer = 30.0f;
+	out->light_shafts_power = 1.0f;
 	return false;
 }
 
@@ -7037,6 +7109,8 @@ static qboolean QRE_CustomFieldChanged (const rt_custom_light_t *l, const rt_cus
 	case QRE_CUSTOM_F_DIR:       return memcmp (l->dir, orig->dir, sizeof (l->dir)) != 0;
 	case QRE_CUSTOM_F_ANGLE_INNER: return l->angle_inner != orig->angle_inner;
 	case QRE_CUSTOM_F_ANGLE_OUTER: return l->angle_outer != orig->angle_outer;
+	case QRE_CUSTOM_F_SHAFTS:    return l->light_shafts != orig->light_shafts;
+	case QRE_CUSTOM_F_SHAFTS_POWER: return l->light_shafts_power != orig->light_shafts_power;
 	default: return false;
 	}
 }
@@ -7058,6 +7132,8 @@ static void QRE_CustomResetField (rt_custom_light_t *l, const rt_custom_light_t 
 	case QRE_CUSTOM_F_DIR:       VectorCopy (orig->dir, l->dir); break;
 	case QRE_CUSTOM_F_ANGLE_INNER: l->angle_inner = orig->angle_inner; break;
 	case QRE_CUSTOM_F_ANGLE_OUTER: l->angle_outer = orig->angle_outer; break;
+	case QRE_CUSTOM_F_SHAFTS:    l->light_shafts = orig->light_shafts; break;
+	case QRE_CUSTOM_F_SHAFTS_POWER: l->light_shafts_power = orig->light_shafts_power; break;
 	default: break;
 	}
 	RT_CustomLightValidate (l);
@@ -7223,6 +7299,28 @@ static void QRE_CustomLightsTab (void)
 				}
 				if (QR_GUI_ResetButton ("light_angle_outer", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_ANGLE_OUTER)))
 					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_ANGLE_OUTER);
+
+				{
+					int shafts = l->light_shafts ? 1 : 0;
+
+					if (QR_GUI_Checkbox ("light_shafts", &shafts,
+					                     "Draw the spot's cone as volumetric shafts in the air; the direction, cone and colour are the light's own."))
+						l->light_shafts = shafts ? true : false;
+				}
+				if (QR_GUI_ResetButton ("light_shafts", QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_SHAFTS)))
+					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_SHAFTS);
+
+				if (QR_GUI_SliderFloat ("light_shafts_power", &l->light_shafts_power, 0.0f, 16.0f,
+				                        "Strength of this custom light's volumetric shafts; it does not change the light itself."))
+				{
+				}
+				if (QR_GUI_ResetButton ("light_shafts_power",
+				                        QRE_CustomFieldChanged (l, &orig, QRE_CUSTOM_F_SHAFTS_POWER)))
+					QRE_CustomResetField (l, &orig, QRE_CUSTOM_F_SHAFTS_POWER);
+
+				QR_GUI_Separator ();
+				QR_GUI_SectionHeader ("Light shafts (global)");
+				QRE_LightShaftGlobalControls (false);
 			}
 
 			if (QR_GUI_Button ("Duplicate"))
@@ -8775,6 +8873,9 @@ static const char *qre_yaml_header =
 	"# of each point it lights, over the same cone (`light_focus`; no key = 45\n"
 	"# degrees), and `light_focus_soft` also blurs the projected pattern (the\n"
 	"# mask is read from a blurrier mip as the edge grows).\n"
+	"# `light_shafts: true` draws this surface's light as volumetric shafts in\n"
+	"# the air; it needs `is_light` and follows the light's whole emitting area\n"
+	"# and its cone (`light_focus`, or a hemisphere when none is authored).\n"
 	"#     e.g.  - name: textures/window1_2\n"
 	"#             light_focus: 45\n"
 	"#             light_focus_soft: 8\n"
@@ -8957,6 +9058,10 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 		fprintf (f, "    light_focus_soft: %.6g\n", m->emissive_focus_soft);
 	if (m->emissive_projector)
 		fprintf (f, "    light_projector: true\n");
+	if (m->light_shafts)
+		fprintf (f, "    light_shafts: true\n");
+	if (m->light_shafts_power != 1.0f)
+		fprintf (f, "    light_shafts_power: %.6g\n", m->light_shafts_power);
 	if (m->mirror)
 		fprintf (f, "    mirror: true\n");
 	if (m->material_glass)

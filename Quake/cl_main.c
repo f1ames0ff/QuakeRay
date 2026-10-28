@@ -127,6 +127,8 @@ void CL_ClearState (void)
 	// wipe the entire cl structure
 	CL_FreeState ();
 
+	needs_relink = false;
+
 	r_vieworg_valid = false;
 
 	SZ_Clear (&cls.message);
@@ -723,6 +725,15 @@ static void RT_OffsetFromCamera (vec3_t out_position, float offset_right, float 
 
 		VectorMA (r_origin, fraction * disttoend, tolight, out_position);
 	}
+}
+
+void CL_FinishRelink (void)
+{
+	if (!needs_relink)
+		return;
+
+	CL_RelinkEntities ();
+	needs_relink = false;
 }
 
 /*
