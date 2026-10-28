@@ -470,6 +470,8 @@ void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
             .color = {resolved.color[0], resolved.color[1], resolved.color[2]},
             .position = {position[0], position[1], position[2]},
             .radius = METRIC_TO_QUAKEUNIT(resolved.radius),
+            .lightShafts = light.light_shafts ? 1 : 0,
+            .lightShaftsPower = light.light_shafts_power > 0.0f ? light.light_shafts_power : 1.0f,
         };
 
         QrResult r = qrUploadSphericalLight(vulkan_globals.instance, &info);
