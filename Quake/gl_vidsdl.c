@@ -147,7 +147,7 @@ atomic_uint32_t rt_end_task_running;
 	CVAR_DEF_T (rt_light_shafts_temporal, "1") \
 	CVAR_DEF_T (rt_light_shafts_sun, "0") \
 	CVAR_DEF_T (rt_light_shafts_debug, "0") \
-	CVAR_DEF_T (rt_light_shafts_rays, "131072") \
+	CVAR_DEF_T (rt_light_shafts_rays, "1048576") \
 	CVAR_DEF_T (rt_denoiser, "1") \
 	CVAR_DEF_T (rt_no_textures, "0") \
 	/* No pass reads forceAntiFirefly: CmQ2Adapter's anti-firefly is not gated by
