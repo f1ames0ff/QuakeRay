@@ -50,9 +50,11 @@
 
 #include "SDL.h"
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 #include "qr_editor.h"
 #include "qr_gui.h"
@@ -60,6 +62,9 @@
 #include "observer.h"
 
 #include <ctype.h>
+#ifndef _WIN32
+#include <dirent.h>
+#endif
 #include <errno.h>
 #include <math.h>
 #include <stdarg.h>
@@ -9142,12 +9147,21 @@ static qboolean QRE_CopyFile (const char *from, const char *to)
 		return false;
 	}
 
+#ifdef _WIN32
 	if (!MoveFileExA (tmp, to, MOVEFILE_REPLACE_EXISTING))
 	{
 		Con_DPrintf ("qr editor: cannot replace %s (%lu)\n", to, (unsigned long)GetLastError ());
 		remove (tmp);
 		return false;
 	}
+#else
+	if (rename (tmp, to) != 0)
+	{
+		Con_DPrintf ("qr editor: cannot replace %s (%s)\n", to, strerror (errno));
+		remove (tmp);
+		return false;
+	}
+#endif
 
 	return true;
 }
@@ -9984,6 +9998,7 @@ static void QRE_ResetRemoveOptional (const char *path)
 		remove (path);
 }
 
+#ifdef _WIN32
 static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
 {
 	char            pattern[MAX_OSPATH];
@@ -10008,6 +10023,12 @@ static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
 
 	FindClose (h);
 }
+#else
+static void QRE_ResetRemoveLegacyMaterials (const char *gamedir)
+{
+	(void)gamedir;
+}
+#endif
 
 // Marks the level's light models as light materials and writes the entries to
 // qray.materials.yaml (created when missing). Only the models in
@@ -10678,6 +10699,7 @@ static void QRE_TextureBrowserScanDir (qre_textbrowser_catalog_t *catalog, const
                                        const char *root, const char *relative, int depth, int origin,
                                        const atomic_uint32_t *cancel)
 {
+#ifdef _WIN32
 	WIN32_FIND_DATAA find;
 	HANDLE           handle;
 	char             pattern[MAX_OSPATH];
@@ -10724,6 +10746,56 @@ static void QRE_TextureBrowserScanDir (qre_textbrowser_catalog_t *catalog, const
 	} while (FindNextFileA (handle, &find));
 
 	FindClose (handle);
+#else
+	DIR *dir;
+	struct dirent *entry;
+	char pattern[MAX_OSPATH];
+
+	if (depth > 8)
+		return;
+
+	if ((size_t)q_snprintf (pattern, sizeof (pattern), "%s/%s", root, relative) >= sizeof (pattern))
+		return;
+
+	dir = opendir (pattern);
+	if (!dir)
+		return;
+
+	while ((entry = readdir (dir)) != NULL)
+	{
+		char child[MAX_QPATH];
+		char path[MAX_OSPATH];
+
+		if (cancel && Atomic_LoadUInt32 ((atomic_uint32_t *) cancel))
+			break;
+		if (!strcmp (entry->d_name, ".") || !strcmp (entry->d_name, ".."))
+			continue;
+
+		if ((size_t)q_snprintf (child, sizeof (child), "%s/%s", relative, entry->d_name) >= sizeof (child))
+			continue;
+		if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", root, child) >= sizeof (path))
+			continue;
+
+		if (Sys_FileType (path) == FS_ENT_DIRECTORY)
+			QRE_TextureBrowserScanDir (catalog, source, root, child, depth + 1, origin, cancel);
+		else if (QRE_TextureBrowserImage (child))
+			QRE_TextureBrowserAddImage (catalog, source, child, origin, 0);
+		else if (QRE_TextureBrowserWantedFile (child))
+		{
+			byte *data = NULL;
+			int   len = 0;
+
+			data = QRE_TextureBrowserReadPath (path, &len);
+			if (data)
+			{
+				QRE_TextureBrowserAddFileData (catalog, source, child, data, len, origin, 0);
+				Mem_Free (data);
+			}
+		}
+	}
+
+	closedir (dir);
+#endif
 }
 
 static void QRE_TextureBrowserSourceFromPath (const char *path, char *out, size_t outsize)
