@@ -831,7 +831,7 @@ if(QUAKERAY_PLATFORM_WINDOWS)
     add_custom_target(qray_deploy_fidelityfx ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"
+            "${QR_FFX_VK_RUNTIME_DLL}"
             "$<TARGET_FILE_DIR:quakeray>"
         COMMENT "Copying amd_fidelityfx_vk.dll..."
         VERBATIM

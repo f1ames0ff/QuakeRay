@@ -4,7 +4,8 @@ param(
     [string]$BuildDir = "",
     [int]$Parallel = 0,
     [switch]$PkzOnly,
-    [switch]$Tests
+    [switch]$Tests,
+    [switch]$ForceFFXProvider
 )
 
 $ErrorActionPreference = "Stop"
@@ -109,7 +110,32 @@ $exitCode = 0
 
 if (-not $PkzOnly)
 {
-    $cmakeArgs = @("-B", $BuildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Config", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
+    # The FidelityFX FSR 3.1 Vulkan provider is built from the vendored SDK
+    # sources by the SDK's own Windows build system. The renderer links this
+    # output; no checked-in provider binary is used. It is cached in the build
+    # directory and rebuilt only when missing or -ForceFFXProvider is passed.
+    $ffxOut = Join-Path $BuildDir "ffx"
+    $ffxLib = Join-Path $ffxOut "amd_fidelityfx_vk.lib"
+    $ffxDll = Join-Path $ffxOut "amd_fidelityfx_vk.dll"
+    if ($ForceFFXProvider -or -not (Test-Path $ffxLib) -or -not (Test-Path $ffxDll))
+    {
+        $ffxScript = Join-Path $anchorRoot "renderer\Source\FidelityFX_SDK_1.1.4\windows\build_provider.ps1"
+        if (-not (Test-Path $ffxScript))
+        {
+            throw "The FidelityFX source build script is missing: $ffxScript"
+        }
+        Write-Host "Building the FSR 3.1 provider from FidelityFX SDK 1.1.4 sources..." -ForegroundColor Yellow
+        # The provider is always built Release: it is a self-contained DLL with its own CRT and
+        # the previous checked-in provider was Release too, so the Debug engine links the same ABI.
+        & $ffxScript -OutDir $ffxOut -Config "Release"
+        if (-not (Test-Path $ffxLib) -or -not (Test-Path $ffxDll))
+        {
+            throw "The FidelityFX source build did not produce amd_fidelityfx_vk.lib/.dll in $ffxOut."
+        }
+    }
+
+    $cmakeArgs = @("-B", $BuildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Config", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DQR_FFX_VK_LIBRARY=$ffxLib", "-DQR_FFX_VK_RUNTIME_DLL=$ffxDll")
 
     if ($Tests)
     {

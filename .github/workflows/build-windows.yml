@@ -3,7 +3,9 @@
 # Everything is done with the tools the windows-2022 image already ships - git,
 # CMake, Ninja and the MSVC build tools - and with the repository's own entry
 # point, build_win.ps1, which applies the pinned NVRHI patch, compiles the
-# shaders and deploys the runtime assets.
+# shaders, builds the FSR 3.1 Vulkan provider from the vendored FidelityFX
+# sources and deploys the runtime assets. A separate step checks that the
+# source-built provider exports the five FFX API entry points.
 #
 # The image does not ship the Vulkan SDK, and the project needs it for two
 # reasons: NVRHI refuses headers older than VK_HEADER_VERSION 318 and needs
@@ -184,8 +186,36 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          & .\build_win.ps1 $env:QR_CONFIG -Tests
+          & .\build_win.ps1 $env:QR_CONFIG -Tests -ForceFFXProvider
           if ($LASTEXITCODE -ne 0) { throw "build_win.ps1 exited with $LASTEXITCODE" }
+
+      - name: Check the source-built FSR provider
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = "build\$env:QR_CONFIG\ffx\amd_fidelityfx_vk.dll"
+          $lib = "build\$env:QR_CONFIG\ffx\amd_fidelityfx_vk.lib"
+          if (-not (Test-Path $dll)) { throw "$dll was not produced by the FidelityFX source build" }
+          if (-not (Test-Path $lib)) { throw "$lib was not produced by the FidelityFX source build" }
+          Write-Host "provider DLL: $((Get-Item $dll).Length) bytes"
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe was not found" }
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio C++ tools were not found" }
+          $dumpbin = Get-ChildItem (Join-Path $vs "VC\Tools\MSVC") -Recurse -Filter dumpbin.exe |
+            Where-Object { $_.FullName -like '*Hostx64\x64\dumpbin.exe' } |
+            Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe was not found under $vs" }
+
+          $exports = & $dumpbin.FullName /exports $dll
+          if ($LASTEXITCODE -ne 0) { throw "dumpbin failed with $LASTEXITCODE" }
+          foreach ($name in 'ffxCreateContext', 'ffxDestroyContext', 'ffxConfigure', 'ffxQuery', 'ffxDispatch') {
+            if (-not ($exports -match [regex]::Escape($name))) {
+              throw "$name is not exported by $dll"
+            }
+          }
+          Write-Host "source-built provider exports verified"
 
       - name: Test
         shell: pwsh
