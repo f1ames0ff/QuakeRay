@@ -137,6 +137,15 @@ if (-not $PkzOnly)
     $cmakeArgs = @("-B", $BuildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Config", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DQR_FFX_VK_LIBRARY=$ffxLib", "-DQR_FFX_VK_RUNTIME_DLL=$ffxDll")
 
+    # The Windows SDK's dxc.exe is on PATH and lacks SPIR-V codegen; force the
+    # Vulkan SDK's copy when one is configured.
+    if ($env:VULKAN_SDK) {
+        $vulkanDxc = Join-Path $env:VULKAN_SDK "Bin\dxc.exe"
+        if (Test-Path $vulkanDxc) {
+            $cmakeArgs += "-DQR_DXC=$vulkanDxc"
+        }
+    }
+
     if ($Tests)
     {
         $cmakeArgs += "-DQR_BUILD_TESTS=ON"
