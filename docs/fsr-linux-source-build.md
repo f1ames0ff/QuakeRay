@@ -3,7 +3,8 @@
 Status: 2026-11-03. The renderer links a locally built FidelityFX FSR 3.1
 Vulkan provider on both platforms. No checked-in `amd_fidelityfx_vk` binary is
 used. The Linux build and an FSR-active in-game run are verified below; the
-Windows build path uses AMD's SDK CMake and is wired into `build_win.ps1`.
+Windows source build and its five-export check pass in Windows CI, and the
+in-game Windows run remains a manual GPU gate.
 
 ## Source layout
 
@@ -171,6 +172,8 @@ gate once the renderer and host commits are pushed.
   not use it; the FFX API still exposes the five required symbols.
 - The Linux build needs a `glslangValidator` and Vulkan headers; these are
   found through `GLSLANG_VALIDATOR`/`VULKAN_HEADERS_DIR` (or the Vulkan SDK).
-- The Windows provider build was not executable in this Linux worktree. Its
-  inputs and SDK CMake invocation follow AMD's 1.1.4 build recipe; the
-  remaining gate is a Windows build of `build_win.ps1 Debug` and a run.
+- Windows CI run `42023882552` (2026-11-05) passed both the Debug and Release
+  jobs: `build_win.ps1` built the provider from the vendored sources, the
+  export check found all five `ffx*` functions in `amd_fidelityfx_vk.dll`, and
+  CTest passed. The hosted runner has no Vulkan device, so an in-game Windows
+  run remains the final manual GPU gate.
