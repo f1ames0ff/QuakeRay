@@ -198,6 +198,25 @@ jobs:
           }
           Write-Host "source-built provider exports verified"
 
+      - name: Debug test dependency diagnostics
+        if: matrix.configuration == 'Debug'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem (Join-Path $vs "VC\Tools\MSVC") -Recurse -Filter dumpbin.exe |
+            Where-Object { $_.FullName -like '*Hostx64\x64\dumpbin.exe' } |
+            Select-Object -First 1
+          foreach ($exe in @('build\Debug\qray_cluster_lists_tests.exe', 'build\Debug\renderer\qray_gpu_context_tests.exe')) {
+            Write-Host "=== $exe ==="
+            & $dumpbin.FullName /dependents $exe
+          }
+          Write-Host "=== build\Debug DLLs ==="
+          Get-ChildItem build\Debug -Filter *.dll | Select-Object -ExpandProperty Name
+          Write-Host "=== build\Debug\renderer DLLs ==="
+          Get-ChildItem build\Debug\renderer -Filter *.dll | Select-Object -ExpandProperty Name
+
       - name: Test
         shell: pwsh
         run: |
