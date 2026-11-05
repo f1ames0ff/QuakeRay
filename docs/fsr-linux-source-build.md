@@ -24,7 +24,7 @@ the provider links the SDK's own backend, upscaler, and ffx-api sources.
 
 ## Patches
 
-The vendored tree and `patches/` carry five changes:
+The vendored tree and `patches/` carry six changes:
 
 | Patch | Why |
 | --- | --- |
@@ -33,10 +33,11 @@ The vendored tree and `patches/` carry five changes:
 | `0003-vk-scratch-alignment` | GCC at `-O2` emits an aligned SSE store (`movaps`) into the Vulkan scratch buffer's `EffectContext` array. The SDK laid the array out at an 8-byte offset, so the store faulted. Every scratch array now starts at a 16-byte boundary. |
 | `0004-ffx-api-entry-linux` | `FFX_API_ENTRY` is empty on non-Windows compilers instead of `__declspec(dllexport)`. |
 | `0005-ffx-provider-msvc-literal` | `0xF5A5'CA1Eui64` is MSVC-only; use `0xF5A5CA1Eull`. |
+| `0006-ffx-api-include-case` | Two `ffx-api` headers used `<FidelityFx/...>`; Linux is case-sensitive, and the tracked symlink workaround broke the Windows source copy. The headers now use `<FidelityFX/...>`. |
 
 The alignment patch was verified by rebuilding the provider at `-O2 -g`: the
 previous build segfaulted in `CreateBackendContextVK`, the patched build runs
-and dispatches FSR. All five patches were also applied in sequence to pristine
+and dispatches FSR. All six patches were also applied in sequence to pristine
 upstream 1.1.4 files with `git apply --check`; every patch applied cleanly,
 which exercises the external-SDK path used by the Windows build script.
 
