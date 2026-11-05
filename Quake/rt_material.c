@@ -5,6 +5,10 @@
 #include "rt_material.h"
 #include "rt_pkz.h"
 
+#ifndef _WIN32
+#include <dirent.h>
+#endif
+
 #include <yaml.h>
 
 #ifdef _MSC_VER
@@ -324,6 +328,7 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->texture_scale_u = 1.0f;
     mat->texture_scale_v = 1.0f;
     mat->light_brightness = 1.0f;
+    mat->light_shafts_power = 1.0f;
     mat->light_styles = false;
     mat->color_emissive_threshold = 0.02f;
 }
@@ -543,6 +548,10 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
     }
     else if (!q_strcasecmp(key, "light_projector") || !q_strcasecmp(key, "emissive_projector"))
         mat->emissive_projector = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "light_shafts"))
+        mat->light_shafts = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "light_shafts_power"))
+        mat->light_shafts_power = CLAMP(0.0f, (float)atof(value), 16.0f);
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))
@@ -1014,57 +1023,86 @@ static int rt_mat_load_any(const char *name, rt_material_t *dest, int max_items)
 
 static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *ctx), void *ctx)
 {
-    char pattern[MAX_OSPATH];
-    WIN32_FIND_DATAA fd;
-    HANDLE h;
+	char pattern[MAX_OSPATH];
 
-    q_snprintf(pattern, sizeof(pattern), "%s/materials/*.yaml", dir);
-    h = FindFirstFileA(pattern, &fd);
-    if (h != INVALID_HANDLE_VALUE)
-    {
-        do
-        {
-            char path[MAX_OSPATH];
+#ifdef _WIN32
+	WIN32_FIND_DATAA fd;
+	HANDLE h;
 
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            {
-                continue;
-            }
-            // the editor's own files: the session file is not a materials file
-            // until it is saved, and the backup never is
-            if (!q_strcasecmp(fd.cFileName, "materials.editor.yaml") ||
-                !q_strcasecmp(fd.cFileName, "backup_materials.yaml") ||
-                !q_strcasecmp(fd.cFileName, "qray.materials.editor.yaml") ||
-                !q_strcasecmp(fd.cFileName, "qray.backup_materials.yaml"))
-            {
-                continue;
-            }
-            q_snprintf(path, sizeof(path), "%s/materials/%s", dir, fd.cFileName);
-            if (cb(path, ctx))
-            {
-                break;
-            }
-        } while (FindNextFileA(h, &fd));
-        FindClose(h);
-    }
+	q_snprintf(pattern, sizeof(pattern), "%s/materials/*.yaml", dir);
+	h = FindFirstFileA(pattern, &fd);
+	if (h != INVALID_HANDLE_VALUE)
+	{
+		do
+		{
+			char path[MAX_OSPATH];
 
-    q_snprintf(pattern, sizeof(pattern), "%s/materials.yaml", dir);
-    if (Sys_FileTime(pattern) != -1)
-    {
-        cb(pattern, ctx);
-    }
+			if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			{
+				continue;
+			}
+			// the editor's own files: the session file is not a materials file
+			// until it is saved, and the backup never is
+			if (!q_strcasecmp(fd.cFileName, "materials.editor.yaml") ||
+			    !q_strcasecmp(fd.cFileName, "backup_materials.yaml") ||
+			    !q_strcasecmp(fd.cFileName, "qray.materials.editor.yaml") ||
+			    !q_strcasecmp(fd.cFileName, "qray.backup_materials.yaml"))
+			{
+				continue;
+			}
+			q_snprintf(path, sizeof(path), "%s/materials/%s", dir, fd.cFileName);
+			if (cb(path, ctx))
+			{
+				break;
+			}
+		} while (FindNextFileA(h, &fd));
+		FindClose(h);
+	}
+#else
+	DIR *d;
+	struct dirent *e;
 
-    q_snprintf(pattern, sizeof(pattern), "%s/qray.materials.yaml", dir);
-    if (Sys_FileTime(pattern) != -1)
-    {
-        cb(pattern, ctx);
-    }
+	q_snprintf(pattern, sizeof(pattern), "%s/materials", dir);
+	d = opendir(pattern);
+	if (d)
+	{
+		while ((e = readdir(d)) != NULL)
+		{
+			char path[MAX_OSPATH];
+			size_t n = strlen(e->d_name);
+
+			if (n < 5 || q_strcasecmp(e->d_name + n - 5, ".yaml") != 0)
+			{
+				continue;
+			}
+			if (!q_strcasecmp(e->d_name, "materials.editor.yaml") ||
+			    !q_strcasecmp(e->d_name, "backup_materials.yaml") ||
+			    !q_strcasecmp(e->d_name, "qray.materials.editor.yaml") ||
+			    !q_strcasecmp(e->d_name, "qray.backup_materials.yaml"))
+			{
+				continue;
+			}
+			q_snprintf(path, sizeof(path), "%s/materials/%s", dir, e->d_name);
+			if (cb(path, ctx))
+			{
+				break;
+			}
+		}
+		closedir(d);
+	}
+#endif
+
+	q_snprintf(pattern, sizeof(pattern), "%s/materials.yaml", dir);
+	if (Sys_FileTime(pattern) != -1)
+	{
+		cb(pattern, ctx);
+	}
 }
 
 typedef struct {
-    rt_material_t *dest;
-    int *count;
-    int max;
+	rt_material_t *dest;
+	int *count;
+	int max;
 } rt_mat_load_ctx_t;
 
 static int rt_mat_load_cb(const char *name, void *vctx)

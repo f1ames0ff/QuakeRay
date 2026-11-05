@@ -1,9 +1,12 @@
 # FSR upscaler luma-history format mismatch
 
-Date: 2026-10-09. Status: fixed and verified. The rebuilt provider is vendored at
-`renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/amd_fidelityfx_vk.dll` (with a
-README next to it), deployment is deterministic, and the validation smoke runs that
-previously reported the warning now report zero occurrences with FSR active.
+Date: 2026-10-09. Status: fixed and verified. The validation smoke runs that previously
+reported the warning now report zero occurrences with FSR active.
+
+> 2026-11-03: the checked-in provider binary has been removed. The FSR 3.1 provider is now
+> built from the vendored FidelityFX SDK 1.1.4 sources on both platforms; see
+> `renderer/Source/FidelityFX_SDK_1.1.4/README.md`. The rebuild recipe and hashes below are
+> preserved as the historical record of the original luma-history fix.
 
 ## Symptom
 
@@ -69,7 +72,10 @@ cmake --build <work>\ffx-api\build --config Release --target amd_fidelityfx_vk -
 The SDK ships its shader compiler (`sdk/tools/binary_store/FidelityFX_SC.exe`) and only needs the
 Vulkan SDK for `find_package(Vulkan)`. Output: `<work>\ffx-api\bin\amd_fidelityfx_vk.dll`.
 
-## Vended provider
+## Historical vendored provider (removed)
+
+The binary described here was replaced by the source build; this section records the
+verification that was done before the switch.
 
 - Rebuilt DLL: 9,320,960 bytes, SHA256
   `2C6E430782D66EDC99A07396A679B6846C4BA4887B48F28F3E9CA08FD048D794`, FileVersion 1.0.1.0,
@@ -85,7 +91,8 @@ Vulkan SDK for `find_package(Vulkan)`. Output: `<work>\ffx-api\bin\amd_fidelityf
   `qray_deploy_fidelityfx` target instead of a `quakeray` POST_BUILD step. Under Ninja a
   POST_BUILD command only runs when the executable relinks, so a provider-only change could
   otherwise leave existing build trees with the stale DLL.
-- Provenance note: `renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/README.md`.
+- Provenance note: the current source build and its patches are documented in
+  `renderer/Source/FidelityFX_SDK_1.1.4/README.md`.
 
 ## Verification (2026-10-09)
 
