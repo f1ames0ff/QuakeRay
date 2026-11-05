@@ -24,6 +24,33 @@ set -euo pipefail
 anchor_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$anchor_root"
 
+# NVRHI's stock c_MaxBindingLayouts is below what the direct/indirect RT
+# pipelines need. build_win.ps1 applies the pinned patch for the duration of
+# the build; mirror that here so a fresh Linux checkout is not left with a
+# binary whose RT pass is unavailable.
+nvrhi_dir="$anchor_root/third_party/nvrhi"
+nvrhi_patch="$anchor_root/third_party/nvrhi-max-binding-layouts.patch"
+nvrhi_patched_here=0
+cleanup_nvrhi() {
+    if [[ "$nvrhi_patched_here" == "1" ]]; then
+        git -C "$nvrhi_dir" apply --reverse "$nvrhi_patch" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup_nvrhi EXIT
+
+if [[ -f "$nvrhi_patch" && -f "$nvrhi_dir/include/nvrhi/nvrhi.h" ]]; then
+    if git -C "$nvrhi_dir" apply --check --reverse "$nvrhi_patch" >/dev/null 2>&1; then
+        echo "NVRHI patch is already applied, leaving it in place"
+    else
+        if ! git -C "$nvrhi_dir" apply "$nvrhi_patch"; then
+            echo "error: failed to apply $nvrhi_patch to third_party/nvrhi" >&2
+            exit 1
+        fi
+        nvrhi_patched_here=1
+        echo "Applied the NVRHI patch for this build"
+    fi
+fi
+
 build_dir="${QR_BUILD_DIR:-$anchor_root/build/linux-debug}"
 sdk_root="${QR_FFX_SDK_ROOT:-$anchor_root/renderer/Source/FidelityFX_SDK_1.1.4/src}"
 ffx_out="$build_dir/ffx"

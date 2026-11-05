@@ -56,6 +56,12 @@ with `-DQR_FFX_VK_SO=<that path>`. The `.so` carries the
 `libamd_fidelityfx_vk.so` SONAME and is found through the executable's
 `RUNPATH`.
 
+The script also applies the pinned
+`third_party/nvrhi-max-binding-layouts.patch` for the build and reverses it on
+exit, exactly like `build_win.ps1`. A fresh checkout therefore builds a binary
+with the RT pass enabled instead of silently falling back to "the frame cannot
+be drawn".
+
 The provider exports the five FFX API entry points:
 
 ```text
