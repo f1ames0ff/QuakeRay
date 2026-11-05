@@ -119,6 +119,18 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Lib') | Out-Null
             Copy-Item 'Windows\misc\x64\vulkan-1.lib' (Join-Path $sdk 'Lib') -Force
 
+            # The CPU tests that are linked against the Vulkan backend import
+            # vulkan-1.dll even though they never create a device. The hosted
+            # image has no system loader, so supply one in the minimal SDK's
+            # Bin directory (which is on PATH for the test step).
+            $loaderZip = Join-Path $env:RUNNER_TEMP 'vulkan-loader.nupkg'
+            $loaderUrl = 'https://api.nuget.org/v3-flatcontainer/silk.net.vulkan.loader.native/2025.9.12/silk.net.vulkan.loader.native.2025.9.12.nupkg'
+            curl.exe --location --fail --silent --show-error --retry 3 --max-time 300 --output $loaderZip $loaderUrl
+            if ($LASTEXITCODE -ne 0) { throw "download of $loaderUrl failed with $LASTEXITCODE" }
+            Expand-Archive -Path $loaderZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'vulkan-loader') -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Bin') | Out-Null
+            Copy-Item (Join-Path $env:RUNNER_TEMP 'vulkan-loader\runtimes\win-x64\native\vulkan-1.dll') (Join-Path $sdk 'Bin') -Force
+
             $dxcZip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
             $dxcUrl = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$env:QR_DXC_VERSION/$env:QR_DXC_ASSET"
             curl.exe --location --fail --silent --show-error --retry 3 --max-time 600 --output $dxcZip $dxcUrl
@@ -197,25 +209,6 @@ jobs:
             }
           }
           Write-Host "source-built provider exports verified"
-
-      - name: Debug test dependency diagnostics
-        if: matrix.configuration == 'Debug'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          $dumpbin = Get-ChildItem (Join-Path $vs "VC\Tools\MSVC") -Recurse -Filter dumpbin.exe |
-            Where-Object { $_.FullName -like '*Hostx64\x64\dumpbin.exe' } |
-            Select-Object -First 1
-          foreach ($exe in @('build\Debug\qray_cluster_lists_tests.exe', 'build\Debug\renderer\qray_gpu_context_tests.exe')) {
-            Write-Host "=== $exe ==="
-            & $dumpbin.FullName /dependents $exe
-          }
-          Write-Host "=== build\Debug DLLs ==="
-          Get-ChildItem build\Debug -Filter *.dll | Select-Object -ExpandProperty Name
-          Write-Host "=== build\Debug\renderer DLLs ==="
-          Get-ChildItem build\Debug\renderer -Filter *.dll | Select-Object -ExpandProperty Name
 
       - name: Test
         shell: pwsh
