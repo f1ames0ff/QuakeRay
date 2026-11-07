@@ -51,7 +51,8 @@ volume are updated per frame, matching the report's interleaved update.
 - `GetCascadeLookup` / `GetLocalLookup` return the `(0,0,0)` probe and the eight weights indexed
   `[z][y][x]`, matching the probe layout `(z * dim + y) * dim + x`.
 - `SampleIrradiance` prefers a local volume, then the cascade, and trilinearly blends the eight
-  probes with `EvaluateIrradiance`.
+  probes with `EvaluateIrradiance`. It returns false outside all volumes; the final gather keeps
+  the existing screen-space SH as the fallback.
 
 ## Tests
 
