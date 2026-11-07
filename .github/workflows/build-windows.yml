@@ -94,55 +94,48 @@ jobs:
           if ($sdk -and (Test-Sdk $sdk)) {
             Write-Host "using the preinstalled SDK at $sdk"
           } else {
-            $sdk = $null
-            Write-Host "the image has no usable Vulkan SDK, installing $version"
+            # The hosted image does not ship a usable Vulkan SDK. The NSIS
+            # installer can hang in a headless session (it spawns a child
+            # process tree that Start-Process -Wait keeps waiting on), so
+            # assemble the three pieces the build consumes directly from their
+            # upstream releases: headers, the checked-in import library, and a
+            # dxc with SPIR-V code generation.
+            Write-Host "the image has no usable Vulkan SDK, assembling one from upstream releases"
+            $sdk = Join-Path $env:RUNNER_TEMP 'vulkan-sdk-minimal'
 
-            $target = Join-Path $env:RUNNER_TEMP "vulkan-sdk\$version"
-            $installer = Join-Path $env:RUNNER_TEMP 'vulkan_sdk.exe'
-            $url = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
-            curl.exe --location --fail --silent --show-error --retry 3 --output $installer $url
-            if ($LASTEXITCODE -ne 0) { throw "download of $url failed with $LASTEXITCODE" }
-            $bytes = (Get-Item $installer).Length
-            if ($bytes -lt 100MB) { throw "the installer is only $bytes bytes, refusing to run it" }
+            $headerTag = 'vulkan-sdk-' + (($version -split '\.')[0..2] -join '.') + '.0'
+            $headersZip = Join-Path $env:RUNNER_TEMP 'vulkan-headers.zip'
+            $headersUrl = "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/$headerTag.zip"
+            curl.exe --location --fail --silent --show-error --retry 3 --max-time 600 --output $headersZip $headersUrl
+            if ($LASTEXITCODE -ne 0) { throw "download of $headersUrl failed with $LASTEXITCODE" }
+            Expand-Archive -Path $headersZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Force
+            $headersRoot = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Directory |
+              Select-Object -First 1 -ExpandProperty FullName
 
-            # NSIS: /S is silent, and /D= has to be the last argument and
-            # unquoted, which is also why the target path must not be quoted.
-            $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$target" -Wait -PassThru
-            Write-Host "the installer exited with $($process.ExitCode)"
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Include') | Out-Null
+            Copy-Item (Join-Path $headersRoot 'include\*') (Join-Path $sdk 'Include') -Recurse -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Lib') | Out-Null
+            Copy-Item 'Windows\misc\x64\vulkan-1.lib' (Join-Path $sdk 'Lib') -Force
 
-            if (Test-Sdk $target) {
-              $sdk = $target
-            } else {
-              # The installer keeps its components in its own session and can
-              # return before they land, so instead of fighting it, assemble the
-              # same three pieces from their upstream releases. Nothing is
-              # skipped: the build still gets real headers, a real import
-              # library and a real dxc with SPIR-V code generation.
-              Write-Host "the installer produced no usable SDK, assembling one from upstream releases"
-              $sdk = Join-Path $env:RUNNER_TEMP 'vulkan-sdk-minimal'
+            # The CPU tests that are linked against the Vulkan backend import
+            # vulkan-1.dll even though they never create a device. The hosted
+            # image has no system loader, so supply one in the minimal SDK's
+            # Bin directory (which is on PATH for the test step).
+            $loaderZip = Join-Path $env:RUNNER_TEMP 'vulkan-loader.nupkg'
+            $loaderUrl = 'https://api.nuget.org/v3-flatcontainer/silk.net.vulkan.loader.native/2025.9.12/silk.net.vulkan.loader.native.2025.9.12.nupkg'
+            curl.exe --location --fail --silent --show-error --retry 3 --max-time 300 --output $loaderZip $loaderUrl
+            if ($LASTEXITCODE -ne 0) { throw "download of $loaderUrl failed with $LASTEXITCODE" }
+            Expand-Archive -Path $loaderZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'vulkan-loader') -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Bin') | Out-Null
+            Copy-Item (Join-Path $env:RUNNER_TEMP 'vulkan-loader\runtimes\win-x64\native\vulkan-1.dll') (Join-Path $sdk 'Bin') -Force
 
-              $headerTag = 'vulkan-sdk-' + (($version -split '\.')[0..2] -join '.') + '.0'
-              $headersZip = Join-Path $env:RUNNER_TEMP 'vulkan-headers.zip'
-              $headersUrl = "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/$headerTag.zip"
-              curl.exe --location --fail --silent --show-error --retry 3 --output $headersZip $headersUrl
-              if ($LASTEXITCODE -ne 0) { throw "download of $headersUrl failed with $LASTEXITCODE" }
-              Expand-Archive -Path $headersZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Force
-              $headersRoot = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Directory |
-                Select-Object -First 1 -ExpandProperty FullName
-
-              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Include') | Out-Null
-              Copy-Item (Join-Path $headersRoot 'include\*') (Join-Path $sdk 'Include') -Recurse -Force
-              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Lib') | Out-Null
-              Copy-Item 'Windows\misc\x64\vulkan-1.lib' (Join-Path $sdk 'Lib') -Force
-
-              $dxcZip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
-              $dxcUrl = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$env:QR_DXC_VERSION/$env:QR_DXC_ASSET"
-              curl.exe --location --fail --silent --show-error --retry 3 --output $dxcZip $dxcUrl
-              if ($LASTEXITCODE -ne 0) { throw "download of $dxcUrl failed with $LASTEXITCODE" }
-              Expand-Archive -Path $dxcZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'dxc') -Force
-              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Bin') | Out-Null
-              Copy-Item (Join-Path $env:RUNNER_TEMP 'dxc\bin\x64\*') (Join-Path $sdk 'Bin') -Force
-            }
+            $dxcZip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
+            $dxcUrl = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$env:QR_DXC_VERSION/$env:QR_DXC_ASSET"
+            curl.exe --location --fail --silent --show-error --retry 3 --max-time 600 --output $dxcZip $dxcUrl
+            if ($LASTEXITCODE -ne 0) { throw "download of $dxcUrl failed with $LASTEXITCODE" }
+            Expand-Archive -Path $dxcZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'dxc') -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Bin') | Out-Null
+            Copy-Item (Join-Path $env:RUNNER_TEMP 'dxc\bin\x64\*') (Join-Path $sdk 'Bin') -Force
           }
 
           # Fail here rather than inside the build if the install did not land.
