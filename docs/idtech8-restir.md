@@ -80,6 +80,8 @@ of `rt_nee_samples` independent rays.
 
 ## Next
 
+- ReSTIR GI for the indirect pass (the report's ReSTIR GI / one-sample-per-pixel path) is not part
+  of this branch; only direct NEE uses the reservoir.
 - Cascaded/local irradiance and radiance volumes (`feat/idtech8-volumes`): one cascade and one local
   volume per frame, probe NEE through the typed grid.
 - Then tune reservoir history length, spatial tap count/radius, grid capacity/reach/cell size and
