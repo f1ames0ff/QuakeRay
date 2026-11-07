@@ -25,6 +25,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_lights.h"
 #include "rt_light_admit.h"
 
+#include <math.h>
+#include <stdlib.h>
+
 extern cvar_t r_flatlightstyles; // johnfitz
 extern cvar_t r_lerplightstyles;
 extern cvar_t r_gpulightmapupdate;
@@ -282,6 +285,7 @@ extern cvar_t rt_cluster_sampling;
 extern cvar_t rt_cluster_assert;
 extern cvar_t rt_cluster_water_cross;
 extern cvar_t rt_light_report_filter;
+extern cvar_t rt_light_grid;
 
 
 static qboolean StartsWith (const char *val, const char *begin)
@@ -1490,7 +1494,7 @@ void RT_ClusterLightListsPrepare (uint32_t sliceCount)
 	if (prof_resolve != 0.0)
 		RT_Prof_End (RT_PROF_CLUSTERS_RESOLVE, prof_resolve);
 
-	const QrClusterLightSourcesUploadInfo info = {
+	QrClusterLightSourcesUploadInfo info = {
 		.numLights = (uint32_t)rt_cluster_light_count,
 		.pLights = rt_cluster_sources,
 		.topUpReach = METRIC_TO_QUAKEUNIT (CVAR_TO_FLOAT (rt_light_reach_static)),
@@ -1499,7 +1503,12 @@ void RT_ClusterLightListsPrepare (uint32_t sliceCount)
 		.allowIncremental = CVAR_TO_BOOL (rt_cluster_incremental) ? 1 : 0,
 		.allowOverflow = CVAR_TO_BOOL (rt_cluster_sampling) ? 1 : 0,
 		.validate = CVAR_TO_BOOL (rt_cluster_assert) ? 1 : 0,
+		.allowGrid = CVAR_TO_BOOL (rt_light_grid) ? 1 : 0,
 	};
+
+	info.viewOrigin.data[0] = rt_cluster_vieworg[0];
+	info.viewOrigin.data[1] = rt_cluster_vieworg[1];
+	info.viewOrigin.data[2] = rt_cluster_vieworg[2];
 
 	QrResult r = qrBeginClusterLightSources (vulkan_globals.instance, &info, sliceCount);
 	QR_CHECK (r);
@@ -1819,6 +1828,251 @@ void RT_ClusterLists_f (void)
 		RT_FormatLightId (id, sizeof (id), tailUids[i]);
 		RT_LightReportPrint ("  tail %3i  prob %.5f marginal %.6f alias %u  %s%s\n", i, tailProb[i],
 			tailMarginal[i], tailAlias[i], id, (di >= 0) ? "" : "  (not in the frame's registry table)");
+	}
+}
+
+static int RT_GridStatsCompare (const void *a, const void *b)
+{
+	const uint32_t va = *(const uint32_t *)a;
+	const uint32_t vb = *(const uint32_t *)b;
+
+	return (va > vb) - (va < vb);
+}
+
+static uint32_t RT_GridStatsPercentile (const uint32_t *sorted, uint32_t count, int percent)
+{
+	uint32_t index;
+
+	if (count == 0)
+		return 0;
+
+	index = (uint32_t)(((uint64_t)count * (uint64_t)percent) / 100u);
+
+	if (index >= count)
+		index = count - 1;
+
+	return sorted[index];
+}
+
+static void RT_GridStatsCascade (int cascade, const vec3_t camera, float baseCell, int mode)
+{
+	const int      dim = 16;
+	const uint32_t cellCount = (uint32_t)(dim * dim * dim);
+	const float    cell = baseCell * (float)(1 << cascade);
+	const float    bounds = cell * (float)dim;
+	const float    snap = 512.0f;
+	float          origin[3];
+	uint32_t      *counts;
+	uint32_t      *sorted;
+	uint32_t       occupied = 0;
+	uint32_t       inserted = 0;
+	uint32_t       over64 = 0;
+	uint32_t       over96 = 0;
+	uint32_t       over128 = 0;
+	uint32_t       maxCount = 0;
+	uint64_t       total = 0;
+	int            i, x, y, z, li;
+
+	for (i = 0; i < 3; i++)
+		origin[i] = (float)(floor((double)camera[i] / snap) * snap - bounds * 0.5f);
+
+	counts = (uint32_t *)calloc(cellCount, sizeof(uint32_t));
+	sorted = (uint32_t *)malloc(cellCount * sizeof(uint32_t));
+
+	if (counts == NULL || sorted == NULL)
+	{
+		free(counts);
+		free(sorted);
+		Con_Printf ("rt_grid_stats: out of memory for cascade %i\n", cascade);
+		return;
+	}
+
+	for (li = 0; li < rt_cluster_light_count; li++)
+	{
+		const rt_cluster_light_t *light = &rt_cluster_lights[li];
+		const float influence = light->reach + light->radius + 32.0f;
+		int hit = 0;
+
+		if (mode == 0)
+		{
+			const int cx = (int)floor((double)(light->origin[0] - origin[0]) / cell);
+			const int cy = (int)floor((double)(light->origin[1] - origin[1]) / cell);
+			const int cz = (int)floor((double)(light->origin[2] - origin[2]) / cell);
+
+			if (cx >= 0 && cx < dim && cy >= 0 && cy < dim && cz >= 0 && cz < dim)
+			{
+				counts[(cz * dim + cy) * dim + cx]++;
+				hit = 1;
+			}
+		}
+		else
+		{
+			int lo[3];
+			int hi[3];
+
+			for (i = 0; i < 3; i++)
+			{
+				lo[i] = (int)floor((double)(light->origin[i] - influence - origin[i]) / cell);
+				hi[i] = (int)floor((double)(light->origin[i] + influence - origin[i]) / cell);
+
+				if (lo[i] < 0)
+					lo[i] = 0;
+				if (hi[i] >= dim)
+					hi[i] = dim - 1;
+			}
+
+			for (z = lo[2]; z <= hi[2]; z++)
+			{
+				const double cz = (double)origin[2] + ((double)z + 0.5) * cell;
+				double dz = fabs((double)light->origin[2] - cz) - cell * 0.5;
+
+				if (dz < 0.0)
+					dz = 0.0;
+
+				for (y = lo[1]; y <= hi[1]; y++)
+				{
+					const double cy = (double)origin[1] + ((double)y + 0.5) * cell;
+					double dy = fabs((double)light->origin[1] - cy) - cell * 0.5;
+
+					if (dy < 0.0)
+						dy = 0.0;
+
+					for (x = lo[0]; x <= hi[0]; x++)
+					{
+						const double cx = (double)origin[0] + ((double)x + 0.5) * cell;
+						double dx = fabs((double)light->origin[0] - cx) - cell * 0.5;
+
+						if (dx < 0.0)
+							dx = 0.0;
+
+						if (dx * dx + dy * dy + dz * dz <= (double)influence * (double)influence)
+						{
+							counts[(z * dim + y) * dim + x]++;
+							hit = 1;
+						}
+					}
+				}
+			}
+		}
+
+		if (hit)
+			inserted++;
+	}
+
+	for (i = 0; i < (int)cellCount; i++)
+	{
+		const uint32_t count = counts[i];
+
+		if (count == 0)
+			continue;
+
+		sorted[occupied++] = count;
+		total += count;
+
+		if (count > maxCount)
+			maxCount = count;
+		if (count > 64)
+			over64++;
+		if (count > 96)
+			over96++;
+		if (count > 128)
+			over128++;
+	}
+
+	qsort (sorted, occupied, sizeof(uint32_t), RT_GridStatsCompare);
+
+	Con_Printf ("rt_grid_stats cascade %i: cell %.1f bounds %.1f mode %s lights %i inserted %u cells %u occupied %u mean %.2f p50 %u p95 %u p99 %u max %u over64 %u over96 %u over128 %u\n",
+		cascade, cell, bounds, (mode == 0) ? "center" : "overlap", rt_cluster_light_count, inserted, cellCount,
+		occupied, (occupied > 0) ? (double)total / (double)occupied : 0.0,
+		RT_GridStatsPercentile (sorted, occupied, 50), RT_GridStatsPercentile (sorted, occupied, 95),
+		RT_GridStatsPercentile (sorted, occupied, 99), maxCount, over64, over96, over128);
+
+	free (counts);
+	free (sorted);
+}
+
+void RT_GridStats_f (void)
+{
+	float  baseCell = 64.0f;
+	int    cascades = 5;
+	int    mode = 0;
+	vec3_t camera;
+
+	if (Cmd_Argc () > 1)
+		baseCell = (float)atof (Cmd_Argv (1));
+	if (Cmd_Argc () > 2)
+		cascades = atoi (Cmd_Argv (2));
+	if (Cmd_Argc () > 3)
+		mode = atoi (Cmd_Argv (3));
+
+	if (!(baseCell >= 8.0f))
+		baseCell = 8.0f;
+	if (cascades < 1)
+		cascades = 1;
+	if (cascades > 6)
+		cascades = 6;
+	if (mode != 1)
+		mode = 0;
+
+	if (rt_cluster_light_count <= 0)
+	{
+		Con_Printf ("rt_grid_stats: no registered lights; load a map and let a frame register them\n");
+		return;
+	}
+
+	VectorCopy (r_refdef.vieworg, camera);
+
+	Con_Printf ("rt_grid_stats: lights %i, base cell %.1f, cascades %i, mode %s, camera %.1f %.1f %.1f\n",
+		rt_cluster_light_count, baseCell, cascades, (mode == 0) ? "center" : "overlap",
+		camera[0], camera[1], camera[2]);
+
+	for (int c = 0; c < cascades; c++)
+		RT_GridStatsCascade (c, camera, baseCell, mode);
+}
+
+void RT_LightGridReport_f (void)
+{
+	QrLightGridStats st;
+	const int         requestedCell = (Cmd_Argc () > 1) ? atoi (Cmd_Argv (1)) : -1;
+
+	if (qrGetLightGridStats (vulkan_globals.instance, &st) != QR_SUCCESS)
+	{
+		Con_Printf ("rt_light_grid_report: the renderer did not return the grid\n");
+		return;
+	}
+
+	Con_Printf ("light grid: enabled %u, sources %u, cells %u (%u cascades), occupied %u, ids %u, dropped %u, candidates p50 %u p95 %u max %u, build %.2f ms\n",
+		st.enabled, st.sources, st.cells, st.cascades, st.occupiedCells, st.fastEntries,
+		st.tailDropped, st.candidateMedian, st.candidateP95, st.candidateMax, st.buildMs);
+	Con_Printf ("  cell sizes:");
+
+	for (uint32_t c = 0; c < st.cascades; c++)
+		Con_Printf (" %.1f", st.cellSize[c]);
+
+	Con_Printf ("\n");
+
+	for (uint32_t c = 0; c < st.cascades; c++)
+		Con_Printf ("  cascade %u origin %.1f %.1f %.1f\n", c, st.origin[c].data[0], st.origin[c].data[1],
+			st.origin[c].data[2]);
+
+	if (requestedCell >= 0)
+	{
+		uint64_t uids[64];
+		uint32_t count = 0;
+
+		if (qrGetLightGridList (vulkan_globals.instance, (uint32_t)requestedCell, uids,
+			(uint32_t)countof (uids), &count) != QR_SUCCESS)
+		{
+			Con_Printf ("  cell %i: the renderer did not return the list\n", requestedCell);
+			return;
+		}
+
+		Con_Printf ("  cell %i ids %u:", requestedCell, count);
+
+		for (uint32_t i = 0; i < count; i++)
+			Con_Printf (" %llu", (unsigned long long)uids[i]);
+
+		Con_Printf ("\n");
 	}
 }
 
