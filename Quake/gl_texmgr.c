@@ -29,7 +29,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "sys.h"
 #include "texmgr_emissive.h"
 
+#if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
+#include <SDL2/SDL.h>
+#else
 #include "SDL.h"
+#endif
 
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #define STB_IMAGE_RESIZE_STATIC
@@ -40,6 +44,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "stb_image_resize.h"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
+#endif
+
+#ifndef max
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef min
+#define min(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
 static cvar_t gl_picmip = {"gl_picmip", "0", CVAR_NONE};
@@ -1476,6 +1488,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtglasscolor[1] = 1.0f;
 		glt->rtglasscolor[2] = 1.0f;
 		glt->rtwater = false;
+		glt->rtlightshafts = false;
+		glt->rtlightshaftspower = 1.0f;
 		glt->rtuvscale[0] = glt->rtuvscale[1] = 1.0f;
 		glt->rtuvoffset[0] = glt->rtuvoffset[1] = 0.0f;
 		glt->rtemissive = false;
@@ -1514,6 +1528,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	}
 	TexMgr_EmissiveCone (mat, &glt->rtemisangleinner, &glt->rtemisangleouter);
 	glt->rtemisprojector = mat->emissive_projector;
+	glt->rtlightshafts = mat->light_shafts;
+	glt->rtlightshaftspower = mat->light_shafts_power;
 	glt->rtmirror = mat->mirror;
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
@@ -2362,6 +2378,8 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtemisangleinner = 0.0f;
 	glt->rtemisangleouter = 0.0f;
 	glt->rtemisprojector = false;
+	glt->rtlightshafts = false;
+	glt->rtlightshaftspower = 1.0f;
 	glt->rtemisuvmin[0] = glt->rtemisuvmin[1] = 0.0f;
 	glt->rtemisuvmax[0] = glt->rtemisuvmax[1] = 1.0f;
 	glt->rtemissiveglow = 0.0f;

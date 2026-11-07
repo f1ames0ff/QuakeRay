@@ -2105,6 +2105,8 @@ typedef struct rt_emissive_params_s
 	float      angleInner;
 	float      angleOuter;
 	qboolean   projector;
+	qboolean   light_shafts;
+	float      light_shafts_power;
 	vec3_t     color;
 	/* The texture glows over part of itself, so the light is built from polygons over those
 	   extents instead of from the whole surface. */
@@ -2207,6 +2209,8 @@ static qboolean RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, 
 		VectorCopy (direction, light->direction);
 		light->angleInner = params->angleInner;
 		light->angleOuter = params->angleOuter;
+		light->light_shafts = params->light_shafts;
+		light->light_shafts_power = params->light_shafts_power;
 	}
 
 	if (!is_static)
@@ -2249,6 +2253,8 @@ static qboolean RT_EmissiveLightParamsForTex(gltexture_t *light_tex, rt_emissive
 	p->angleInner = light_tex->rtemisangleinner;
 	p->angleOuter = light_tex->rtemisangleouter;
 	p->projector = light_tex->rtemisprojector;
+	p->light_shafts = light_tex->rtlightshafts;
+	p->light_shafts_power = light_tex->rtlightshaftspower > 0.0f ? light_tex->rtlightshaftspower : 1.0f;
 
 	if (light_tex->rthaslightcolor)
 	{
@@ -3114,6 +3120,8 @@ static void RT_DtalGroups_Feed (const QrTexturedAreaLightUploadInfo *light_info,
 	source->params.angleInner = light_info->angleInner;
 	source->params.angleOuter = light_info->angleOuter;
 	source->params.projector = light_info->projector > 0.5f;
+	source->params.light_shafts = light_info->lightShafts != 0;
+	source->params.light_shafts_power = light_info->lightShaftsPower > 0.0f ? light_info->lightShaftsPower : 1.0f;
 	VectorCopy (light_info->color.data, source->params.color);
 	VectorCopy (light_info->normal.data, source->normal);
 	source->reach = RT_ClusterLightReachStatic ();
@@ -3208,6 +3216,8 @@ static void RT_DtalGroups_FillUpload (void)
 		parent->angleInner = source->params.angleInner;
 		parent->angleOuter = source->params.angleOuter;
 		parent->projector = source->params.projector ? 1.0f : 0.0f;
+		parent->lightShafts = source->params.light_shafts ? 1 : 0;
+		parent->lightShaftsPower = source->params.light_shafts_power;
 		parent->reach = source->reach;
 		parent->estimatedPower = group->refPower;
 		parent->boundsRadius = group->boundsRadius;
@@ -3511,6 +3521,7 @@ static void RT_DtalGroups_UpdateFrame (void)
 		parent->angleInner = params.angleInner;
 		parent->angleOuter = params.angleOuter;
 		parent->projector = params.projector ? 1.0f : 0.0f;
+		parent->lightShaftsPower = params.light_shafts_power;
 		parent->estimatedPower = group->refPower;
 
 		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
@@ -4494,6 +4505,8 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		li.angleInner = params->angleInner;
 		li.angleOuter = params->angleOuter;
 		li.projector = params->projector ? 1.0f : 0.0f;
+		li.lightShafts = params->light_shafts ? 1 : 0;
+		li.lightShaftsPower = params->light_shafts_power;
 		li.fit       = 1;
 		li.isStatic  = 0;
 
@@ -5092,6 +5105,8 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	light_info.angleInner = params.angleInner;
 	light_info.angleOuter = params.angleOuter;
 	light_info.projector = params.projector ? 1.0f : 0.0f;
+	light_info.lightShafts = params.light_shafts ? 1 : 0;
+	light_info.lightShaftsPower = params.light_shafts_power;
 	light_info.area      = total_area;
 	light_info.fit       = 0;
 	light_info.isStatic  = is_static_geom ? 1 : 0;
@@ -6164,6 +6179,8 @@ void RT_UploadAllWorldModelLights (void)
 				li->angleInner = params.angleInner;
 				li->angleOuter = params.angleOuter;
 				li->projector = params.projector ? 1.0f : 0.0f;
+				li->lightShafts = params.light_shafts ? 1 : 0;
+				li->lightShaftsPower = params.light_shafts_power;
 				VectorCopy (params.color, li->color.data);
 			}
 			else

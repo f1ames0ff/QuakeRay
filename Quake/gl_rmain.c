@@ -465,6 +465,7 @@ static void RT_UploadAllDlights ()
 			VectorCopy (l->dir, light.direction);
 			light.angleInner = l->angleInner;
 			light.angleOuter = l->angleOuter;
+			light.light_shafts = true;
 		}
 
 		RT_LIGHT_Emit (&light);
@@ -510,6 +511,8 @@ static void RT_UploadAllDlights ()
 				.color = {color[0], color[1], color[2]},
 				.position = {position[0], position[1], position[2]},
 				.radius = METRIC_TO_QUAKEUNIT (l->radius),
+				.lightShafts = l->light_shafts ? 1 : 0,
+				.lightShaftsPower = l->light_shafts_power > 0.0f ? l->light_shafts_power : 1.0f,
 			};
 
 			if (l->spot && (l->dir[0] != 0.0f || l->dir[1] != 0.0f || l->dir[2] != 0.0f))
@@ -530,6 +533,8 @@ static void RT_UploadAllDlights ()
 					.radius = info.radius,
 					.angleOuter = angleOuter,
 					.angleInner = angleInner,
+					.lightShafts = l->light_shafts ? 1 : 0,
+					.lightShaftsPower = l->light_shafts_power > 0.0f ? l->light_shafts_power : 1.0f,
 				};
 
 				QrResult r = qrUploadSpotLight (vulkan_globals.instance, &spot);

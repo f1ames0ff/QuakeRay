@@ -3,17 +3,19 @@
 # Everything is done with the tools the windows-2022 image already ships - git,
 # CMake, Ninja and the MSVC build tools - and with the repository's own entry
 # point, build_win.ps1, which applies the pinned NVRHI patch, compiles the
-# shaders and deploys the runtime assets.
+# shaders, builds the FSR 3.1 Vulkan provider from the vendored FidelityFX
+# sources and deploys the runtime assets. A separate step checks that the
+# source-built provider exports the five FFX API entry points.
 #
 # The image does not ship the Vulkan SDK, and the project needs it for two
 # reasons: NVRHI refuses headers older than VK_HEADER_VERSION 318 and needs
 # vulkan.hpp, and build_shaders.ps1 needs a dxc that was built with
 # -DENABLE_SPIRV_CODEGEN=ON. The dxc that ships in the Windows SDK is not that
 # dxc - it fails with "SPIR-V CodeGen not available" - so the step below
-# installs the SDK, pinned to the version the project is developed against. If
-# the vendor installer refuses to cooperate in a headless session, the step
-# assembles the same three pieces - headers, vulkan-1.lib, dxc - from their
-# upstream releases instead of skipping the dependency.
+# assembles the three pieces the build consumes - headers, the checked-in
+# vulkan-1.lib, and a dxc with SPIR-V code generation - from their upstream
+# releases. It deliberately avoids the NSIS installer, which can hang in a
+# headless session.
 #
 # Tests: the GPU tests are labelled "gpu" and are skipped here. A hosted runner
 # has no Vulkan device, and those tests fail hard rather than skipping when
@@ -29,7 +31,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -94,55 +96,48 @@ jobs:
           if ($sdk -and (Test-Sdk $sdk)) {
             Write-Host "using the preinstalled SDK at $sdk"
           } else {
-            $sdk = $null
-            Write-Host "the image has no usable Vulkan SDK, installing $version"
+            # The hosted image does not ship a usable Vulkan SDK. The NSIS
+            # installer can hang in a headless session (it spawns a child
+            # process tree that Start-Process -Wait keeps waiting on), so
+            # assemble the three pieces the build consumes directly from their
+            # upstream releases: headers, the checked-in import library, and a
+            # dxc with SPIR-V code generation.
+            Write-Host "the image has no usable Vulkan SDK, assembling one from upstream releases"
+            $sdk = Join-Path $env:RUNNER_TEMP 'vulkan-sdk-minimal'
 
-            $target = Join-Path $env:RUNNER_TEMP "vulkan-sdk\$version"
-            $installer = Join-Path $env:RUNNER_TEMP 'vulkan_sdk.exe'
-            $url = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
-            curl.exe --location --fail --silent --show-error --retry 3 --output $installer $url
-            if ($LASTEXITCODE -ne 0) { throw "download of $url failed with $LASTEXITCODE" }
-            $bytes = (Get-Item $installer).Length
-            if ($bytes -lt 100MB) { throw "the installer is only $bytes bytes, refusing to run it" }
+            $headerTag = 'vulkan-sdk-' + (($version -split '\.')[0..2] -join '.') + '.0'
+            $headersZip = Join-Path $env:RUNNER_TEMP 'vulkan-headers.zip'
+            $headersUrl = "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/$headerTag.zip"
+            curl.exe --location --fail --silent --show-error --retry 3 --max-time 600 --output $headersZip $headersUrl
+            if ($LASTEXITCODE -ne 0) { throw "download of $headersUrl failed with $LASTEXITCODE" }
+            Expand-Archive -Path $headersZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Force
+            $headersRoot = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Directory |
+              Select-Object -First 1 -ExpandProperty FullName
 
-            # NSIS: /S is silent, and /D= has to be the last argument and
-            # unquoted, which is also why the target path must not be quoted.
-            $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$target" -Wait -PassThru
-            Write-Host "the installer exited with $($process.ExitCode)"
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Include') | Out-Null
+            Copy-Item (Join-Path $headersRoot 'include\*') (Join-Path $sdk 'Include') -Recurse -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Lib') | Out-Null
+            Copy-Item 'Windows\misc\x64\vulkan-1.lib' (Join-Path $sdk 'Lib') -Force
 
-            if (Test-Sdk $target) {
-              $sdk = $target
-            } else {
-              # The installer keeps its components in its own session and can
-              # return before they land, so instead of fighting it, assemble the
-              # same three pieces from their upstream releases. Nothing is
-              # skipped: the build still gets real headers, a real import
-              # library and a real dxc with SPIR-V code generation.
-              Write-Host "the installer produced no usable SDK, assembling one from upstream releases"
-              $sdk = Join-Path $env:RUNNER_TEMP 'vulkan-sdk-minimal'
+            # The CPU tests that are linked against the Vulkan backend import
+            # vulkan-1.dll even though they never create a device. The hosted
+            # image has no system loader, so supply one in the minimal SDK's
+            # Bin directory (which is on PATH for the test step).
+            $loaderZip = Join-Path $env:RUNNER_TEMP 'vulkan-loader.nupkg'
+            $loaderUrl = 'https://api.nuget.org/v3-flatcontainer/silk.net.vulkan.loader.native/2025.9.12/silk.net.vulkan.loader.native.2025.9.12.nupkg'
+            curl.exe --location --fail --silent --show-error --retry 3 --max-time 300 --output $loaderZip $loaderUrl
+            if ($LASTEXITCODE -ne 0) { throw "download of $loaderUrl failed with $LASTEXITCODE" }
+            Expand-Archive -Path $loaderZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'vulkan-loader') -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Bin') | Out-Null
+            Copy-Item (Join-Path $env:RUNNER_TEMP 'vulkan-loader\runtimes\win-x64\native\vulkan-1.dll') (Join-Path $sdk 'Bin') -Force
 
-              $headerTag = 'vulkan-sdk-' + (($version -split '\.')[0..2] -join '.') + '.0'
-              $headersZip = Join-Path $env:RUNNER_TEMP 'vulkan-headers.zip'
-              $headersUrl = "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/$headerTag.zip"
-              curl.exe --location --fail --silent --show-error --retry 3 --output $headersZip $headersUrl
-              if ($LASTEXITCODE -ne 0) { throw "download of $headersUrl failed with $LASTEXITCODE" }
-              Expand-Archive -Path $headersZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Force
-              $headersRoot = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'vulkan-headers') -Directory |
-                Select-Object -First 1 -ExpandProperty FullName
-
-              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Include') | Out-Null
-              Copy-Item (Join-Path $headersRoot 'include\*') (Join-Path $sdk 'Include') -Recurse -Force
-              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Lib') | Out-Null
-              Copy-Item 'Windows\misc\x64\vulkan-1.lib' (Join-Path $sdk 'Lib') -Force
-
-              $dxcZip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
-              $dxcUrl = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$env:QR_DXC_VERSION/$env:QR_DXC_ASSET"
-              curl.exe --location --fail --silent --show-error --retry 3 --output $dxcZip $dxcUrl
-              if ($LASTEXITCODE -ne 0) { throw "download of $dxcUrl failed with $LASTEXITCODE" }
-              Expand-Archive -Path $dxcZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'dxc') -Force
-              New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Bin') | Out-Null
-              Copy-Item (Join-Path $env:RUNNER_TEMP 'dxc\bin\x64\*') (Join-Path $sdk 'Bin') -Force
-            }
+            $dxcZip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
+            $dxcUrl = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$env:QR_DXC_VERSION/$env:QR_DXC_ASSET"
+            curl.exe --location --fail --silent --show-error --retry 3 --max-time 600 --output $dxcZip $dxcUrl
+            if ($LASTEXITCODE -ne 0) { throw "download of $dxcUrl failed with $LASTEXITCODE" }
+            Expand-Archive -Path $dxcZip -DestinationPath (Join-Path $env:RUNNER_TEMP 'dxc') -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'Bin') | Out-Null
+            Copy-Item (Join-Path $env:RUNNER_TEMP 'dxc\bin\x64\*') (Join-Path $sdk 'Bin') -Force
           }
 
           # Fail here rather than inside the build if the install did not land.
@@ -184,8 +179,36 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          & .\build_win.ps1 $env:QR_CONFIG -Tests
+          & .\build_win.ps1 $env:QR_CONFIG -Tests -ForceFFXProvider
           if ($LASTEXITCODE -ne 0) { throw "build_win.ps1 exited with $LASTEXITCODE" }
+
+      - name: Check the source-built FSR provider
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = "build\$env:QR_CONFIG\ffx\amd_fidelityfx_vk.dll"
+          $lib = "build\$env:QR_CONFIG\ffx\amd_fidelityfx_vk.lib"
+          if (-not (Test-Path $dll)) { throw "$dll was not produced by the FidelityFX source build" }
+          if (-not (Test-Path $lib)) { throw "$lib was not produced by the FidelityFX source build" }
+          Write-Host "provider DLL: $((Get-Item $dll).Length) bytes"
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe was not found" }
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio C++ tools were not found" }
+          $dumpbin = Get-ChildItem (Join-Path $vs "VC\Tools\MSVC") -Recurse -Filter dumpbin.exe |
+            Where-Object { $_.FullName -like '*Hostx64\x64\dumpbin.exe' } |
+            Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe was not found under $vs" }
+
+          $exports = & $dumpbin.FullName /exports $dll
+          if ($LASTEXITCODE -ne 0) { throw "dumpbin failed with $LASTEXITCODE" }
+          foreach ($name in 'ffxCreateContext', 'ffxDestroyContext', 'ffxConfigure', 'ffxQuery', 'ffxDispatch') {
+            if (-not ($exports -match [regex]::Escape($name))) {
+              throw "$name is not exported by $dll"
+            }
+          }
+          Write-Host "source-built provider exports verified"
 
       - name: Test
         shell: pwsh
@@ -196,3 +219,21 @@ jobs:
       - name: Show the build receipt
         shell: pwsh
         run: Get-Content "build\$env:QR_CONFIG\qray-build.json"
+
+      - name: Upload the manual Windows build
+        if: github.event_name == 'workflow_dispatch' && matrix.configuration == 'Release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "ci-windows-$env:GITHUB_RUN_ID"
+          $zip = Join-Path $env:RUNNER_TEMP "quakeray-windows-$env:QR_CONFIG.zip"
+          $paths = @()
+          $paths += (Get-ChildItem "build\$env:QR_CONFIG" -File -Filter *.dll | Select-Object -ExpandProperty FullName)
+          $paths += (Resolve-Path "build\$env:QR_CONFIG\quakeray.exe").Path
+          $paths += (Resolve-Path "build\$env:QR_CONFIG\id1").Path
+          Compress-Archive -Path $paths -DestinationPath $zip -Force
+          gh release create $tag $zip --repo $env:GITHUB_REPOSITORY --title "Windows build $env:GITHUB_RUN_ID" --notes "Manual Windows build for Proton testing." --prerelease
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with $LASTEXITCODE" }
+          Write-Host "Release: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
