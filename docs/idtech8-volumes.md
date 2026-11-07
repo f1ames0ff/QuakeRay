@@ -1,4 +1,4 @@
-# id Tech 8 Volumes — ABI and CPU reference
+# id Tech 8 Cascaded Irradiance Volumes
 
 Status: first slice. Date: 2026-11-07.
 
@@ -6,8 +6,8 @@ Branch: `feat/idtech8-volumes`, stacked on `feat/idtech8-restir`.
 
 ## Scope of this slice
 
-This commit adds the volume ABI and the CPU sampling oracle, the same way the grid work started
-with a CPU candidate histogram before the GPU builder:
+The volume ABI and CPU oracle came first (same pattern as the grid's CPU candidate histogram).
+The GPU path is now added on top:
 
 - 6 nested cascades x 16^3 probes, first cascade 1,280 u (32 m) and every next one doubling.
 - 10^3 hand-placed local volumes, up to 128 slots.
@@ -19,8 +19,23 @@ with a CPU candidate histogram before the GPU builder:
 - SH helpers: `AccumulateRadiance`, `NormalizeSh` (4*pi / sampleCount) and the Lambertian
   convolution `EvaluateIrradiance` (0.886227 for L0, 1.023328 for L1).
 
-The CPU reference is not wired into the frame. The next commits add the GPU probe atlas, the
-per-frame visibility/ray pass, the irradiance update and the final-gather sampling.
+## GPU path
+
+- `RhiRtDirectPass` owns a 152,576-probe `ShLightVolumeProbe` atlas (7.3 MB) bound at set 6
+  binding 18. It is allocated once and cleared when the 640 u camera snap moves.
+- A second ray-tracing pipeline (`RtLightVolume.rgen.hlsl`) runs one dispatch of 4,096 probes per
+  frame, for `cascade = frameId % 6`. Each probe traces 16 directions, shades the hit with the sun
+  NEE and emission, uses the uniform sky fallback on a miss, and stores the SH4 integration.
+- The indirect raygen (`RtQ2Indirect.rgen.hlsl`) samples the atlas at the surface position with the
+  same trilinear lookup as the CPU oracle, converts the integrated coefficients to the screen SH
+  layout `(L0, Ly, Lz, Lx)` and adds them with the host weight.
+- Host cvars: `rt_light_volume` (default 0) and `rt_light_volume_weight` (default 1).
+- The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
+  direct/indirect path keeps working and the atlas stays zero.
+
+Limitations of this GPU slice: local volumes are not written/sampled yet; hit shading uses sun,
+emission and the sky miss (no local-light NEE on the hit); 16 probe rays is the low quality
+setting; the atlas is cleared on a snap change and refills one cascade per frame.
 
 ## Constants
 
@@ -69,9 +84,9 @@ volume are updated per frame, matching the report's interleaved update.
 
 ## Next
 
-1. GPU probe atlas and the volume layout buffer (the 48 B record is already fixed).
-2. One compute dispatch per frame for the scheduled cascade/local volume: 64/32/16 visibility
-   rays per probe, packed hit records, world radiance cache.
-3. Irradiance update into the atlas and a final-gather lookup in the indirect pass.
+1. Local-volume GPU update: the same raygen with the local 10^3 probe grid and its origin/bounds.
+2. Hit shading with local-light NEE through the typed grid; the current hit uses sun + emission +
+   the sky miss only.
+3. The world radiance cache and the 64/32/16 quality tiers; 16 probe rays is the current setting.
 4. The 4-coefficient SH can grow to 9 coefficients only after the atlas layout and sampling are
    stable; the report's 2-band SH matches the current choice.
