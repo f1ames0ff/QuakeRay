@@ -107,7 +107,8 @@ The direct-light ReSTIR reservoir is implemented on `feat/idtech8-restir` (see
 reuse, four spatial taps, grid-based candidates when `rt_light_grid` covers the point, and a
 64-sample history cap.
 
-The next feature branch is `feat/idtech8-volumes`: implement the cascaded irradiance and
-radiance volumes (16^3 x 6 cascades plus local 10^3 volumes), one cascade and one local volume
-updated per frame, and probe NEE through the typed grid. Capacity, reach and cell-size tuning
-stay deferred until the volume path exists.
+The next feature branch is `feat/idtech8-volumes`: the volume ABI and CPU oracle are started there
+(see `docs/idtech8-volumes.md`) — 6 nested 16^3 cascades, 10^3 local volumes, 48-byte SH4 probes,
+trilinear lookup with local-volume precedence, and one cascade plus one local volume per frame.
+The GPU probe atlas, the visibility/update pass and the final-gather sampling are the remaining
+commits. Capacity, reach and cell-size tuning stay deferred until the volume path exists.
