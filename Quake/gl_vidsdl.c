@@ -4722,10 +4722,9 @@ void VID_Init (void)
 
 		RT_LockCvar (&rt_enable_pvs);
 		RT_LockCvar (&rt_nee_samples);
-		RT_LockCvar (&rt_restir);
-		RT_LockCvar (&rt_restir_candidates);
-		RT_LockCvar (&rt_light_volume);
-		RT_LockCvar (&rt_light_volume_weight);
+		/* The ReSTIR and light-volume switches are runtime quality controls, not benchmark
+		   constants: locking them as CVAR_ROM before the +commands run silently forced every
+		   command-line test back to 0. The benchmark report still records their values. */
 		RT_LockCvar (&rt_reflrefr_depth);
 
 		Cvar_RegisterVariable (&rt_upload_trace);
