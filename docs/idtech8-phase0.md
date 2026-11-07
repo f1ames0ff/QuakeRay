@@ -102,4 +102,12 @@ The runtime path behind `rt_light_grid` (default `0`) now follows the target gri
 
 ## Next step
 
-Implement the cascaded irradiance and radiance volumes: 16^3 x 6 cascades plus local 10^3 volumes, one cascade and one local volume updated per frame, and probe NEE through the typed grid. Capacity, reach and cell-size tuning stay deferred until the volume path exists.
+The direct-light ReSTIR reservoir is implemented on `feat/idtech8-restir` (see
+`docs/idtech8-restir.md`): weightSum/sampleCount/selectedTarget records, two-slot temporal
+reuse, four spatial taps, grid-based candidates when `rt_light_grid` covers the point, and a
+64-sample history cap.
+
+The next feature branch is `feat/idtech8-volumes`: implement the cascaded irradiance and
+radiance volumes (16^3 x 6 cascades plus local 10^3 volumes), one cascade and one local volume
+updated per frame, and probe NEE through the typed grid. Capacity, reach and cell-size tuning
+stay deferred until the volume path exists.
