@@ -74,8 +74,9 @@ of `rt_nee_samples` independent rays.
   SPIR-V, all four extensions the generator passes) under Wine; it produced SPIR-V with no
   diagnostics.
 - `CheckShaderProperties.py` reflection recordings were not regenerated on this Linux host (no
-  dxc). Run `python CheckShaderProperties.py --record --force` where the Vulkan SDK dxc is
-  available before enforcing the checker on this branch.
+  native dxc/spirv-dis; the compiler runs under Wine only). Run
+  `python CheckShaderProperties.py --record --force` where the Vulkan SDK dxc is available before
+  enforcing the checker on this branch.
 - Runtime quality/A-B measurement on the AD maps with `rt_light_grid 1 rt_restir 1` is still open.
 
 ## Next
