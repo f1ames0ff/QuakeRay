@@ -34,10 +34,11 @@ The GPU path is now added on top:
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
 
-Limitations of this GPU slice: local volumes are not written/sampled yet; hit shading uses sun,
-emission and the sky miss (no local-light NEE on the hit); 16 probe rays is the low quality
-setting; the atlas is cleared on a snap change and refills one cascade per frame. The volume SH is
-added on top of the screen-space GI (not a replacement); 0.25 is the tested first-slice weight.
+Limitations of this GPU slice: local volumes are not written/sampled yet; 16 probe rays is the low
+quality setting; the atlas is cleared on a snap change and refills one cascade per frame. Hit
+shading uses sun NEE, one grid/cluster light NEE and emission; the sky miss uses the uniform sky
+fallback. The volume SH is added on top of the screen-space GI (not a replacement); 0.25 is the
+tested first-slice weight.
 
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 
@@ -100,8 +101,8 @@ volume are updated per frame, matching the report's interleaved update.
 ## Next
 
 1. Local-volume GPU update: the same raygen with the local 10^3 probe grid and its origin/bounds.
-2. Hit shading with local-light NEE through the typed grid; the current hit uses sun + emission +
-   the sky miss only.
-3. The world radiance cache and the 64/32/16 quality tiers; 16 probe rays is the current setting.
+2. The world radiance cache and the 64/32/16 quality tiers; 16 probe rays is the current setting.
+3. Local-volume GPU updates and a final-gather replacement/blend policy once the cascade field is
+   tuned.
 4. The 4-coefficient SH can grow to 9 coefficients only after the atlas layout and sampling are
    stable; the report's 2-band SH matches the current choice.
