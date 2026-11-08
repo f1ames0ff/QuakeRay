@@ -398,7 +398,7 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_restir, "0") \
 	CVAR_DEF_T (rt_restir_candidates, "8") \
 	CVAR_DEF_T (rt_light_volume, "0") \
-	CVAR_DEF_T (rt_light_volume_weight, "1") \
+	CVAR_DEF_T (rt_light_volume_weight, "0.25") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
 	CVAR_DEF_T (rt_stats_interval, "0.2") \
 	CVAR_DEF_T (rt_end_task_delay_ms, "0") \
@@ -3803,7 +3803,7 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.restirEnabled = CVAR_TO_BOOL (rt_restir) ? 1u : 0u,
 		.restirCandidates = (uint32_t)CLAMP (1.0f, CVAR_TO_FLOAT (rt_restir_candidates), 64.0f),
 		.lightVolumeEnabled = CVAR_TO_BOOL (rt_light_volume) ? 1u : 0u,
-		.lightVolumeWeight = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_volume_weight), 4.0f),
+		.lightVolumeWeight = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_volume_weight), 1.0f),
 		.giBounceRays = gi_level,
 		// Q2RTX pt_sun_bounce_range / sun_bounce: how far the sun reaches into an
 		// indirect bounce (game units, 0 turns indirect sunlight off) and a

@@ -29,13 +29,29 @@ The GPU path is now added on top:
 - The indirect raygen (`RtQ2Indirect.rgen.hlsl`) samples the atlas at the surface position with the
   same trilinear lookup as the CPU oracle, converts the integrated coefficients to the screen SH
   layout `(L0, Ly, Lz, Lx)` and adds them with the host weight.
-- Host cvars: `rt_light_volume` (default 0) and `rt_light_volume_weight` (default 1).
+- Host cvars: `rt_light_volume` (default 0) and `rt_light_volume_weight` (default 0.25,
+  clamped to 0..1; the volume SH is added on top of the screen-space GI in this first slice).
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
 
-Limitations of this GPU slice: local volumes are not written/sampled yet; hit shading uses sun,
-emission and the sky miss (no local-light NEE on the hit); 16 probe rays is the low quality
-setting; the atlas is cleared on a snap change and refills one cascade per frame.
+Limitations of this GPU slice: local volumes are not written/sampled yet; 16 probe rays is the low
+quality setting; the atlas is cleared on a snap change and refills one cascade per frame. Hit
+shading uses sun NEE, one grid/cluster light NEE and emission; the sky miss uses the uniform sky
+fallback. The volume SH is added on top of the screen-space GI (not a replacement); 0.25 is the
+tested first-slice weight.
+
+## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
+
+Build `ci-windows-42412543551`, `e1m1` (`the Slipgate Complex`), `rt_light_grid 1 rt_restir 1
+rt_light_volume 1 rt_light_volume_weight 0.25`:
+
+- `NVRHI::ERROR` count: 0; the volume pipeline and shader table were created (no
+  "light-volume update pipeline is unavailable" warning).
+- `rt_light_volume` reported `1`, `rt_light_volume_weight` reported `0.25` through `cvarlist`
+  (the earlier `RT_LockCvar` ROM lock silently forced these command-line values to 0 and is removed).
+- Mean RGB on the same spawn: volume on `[64.5, 41.5, 35.9]`, volume off `[66.3, 29.3, 19.8]`;
+  the world-space volume therefore reaches the final gather. At weight 1/4 the tint is much
+  stronger, which is why the default is 0.25 and the feature stays opt-in.
 
 ## Constants
 
@@ -85,8 +101,8 @@ volume are updated per frame, matching the report's interleaved update.
 ## Next
 
 1. Local-volume GPU update: the same raygen with the local 10^3 probe grid and its origin/bounds.
-2. Hit shading with local-light NEE through the typed grid; the current hit uses sun + emission +
-   the sky miss only.
-3. The world radiance cache and the 64/32/16 quality tiers; 16 probe rays is the current setting.
+2. The world radiance cache and the 64/32/16 quality tiers; 16 probe rays is the current setting.
+3. Local-volume GPU updates and a final-gather replacement/blend policy once the cascade field is
+   tuned.
 4. The 4-coefficient SH can grow to 9 coefficients only after the atlas layout and sampling are
    stable; the report's 2-band SH matches the current choice.
