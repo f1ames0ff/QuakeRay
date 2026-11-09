@@ -88,6 +88,23 @@ Observations:
   tuning needs a torch-corridor/reference view.
 - Frame times are not captured yet; `rt_stats_dump` is the next measurement step.
 
+## AD ReSTIR isolation
+
+The AD energy gap is not a light-count cap: `rt_light_report` shows 1577 registered lights
+(< the 4096-entry array), 0 dropped, and the power range is `0..36.7M` after the map-light fix.
+The gap also does not follow the candidate count or the grid: 32 candidates gives
+`[32.6, 26.1, 17.3]` and the global-array path gives `[41.7, 32.2, 20.9]`, both darker than the
+8-candidate grid path `[50.5, 37.8, 19.6]`.
+
+The remaining difference is the source-PDF floor. `q2SampleGridLights` selects with
+`q2FastMass(m, stratumMax) = max(m, 0.001 * stratumMax)`; the non-ReSTIR path divides the selected
+shade by that floored `lightPdf`, so the tiny AD map lights (radius about 0.01 m) are over-weighted
+relative to their true solid-angle contribution. The ReSTIR target is
+`globalLightTargetUnfloored` (exact mass), so the reservoir estimates the unfloored contribution
+and is darker than the floored reference. The earlier global proxy floor was removed because it
+over-brightened the grid target; the next tuning is a grid-local target floor that matches
+`q2FastMass` without reintroducing the global proxy.
+
 ## Motion-vector GI: final decision
 
 The two screen-space motion images were tested for the GI history in the indirect pass: the
