@@ -34,18 +34,23 @@ form will live in `renderer/Source/Shaders/RestirGi.hlsli` and share this layout
   out-of-range or non-finite UV rejects the history.
 - **Merge**: the current bounce sample and the reprojected history reservoir are merged with the
   same target/pdf identity as the CPU twin; the history is capped at 64 samples.
+- **Spatial taps**: four neighbours of the reprojected pixel (2 pixels away) are read from the same
+  previous-frame slot and merged with the same identity; the slot is not written by the current
+  frame, so the taps cannot race with the current store.
 - **Visibility reuse**: when the merged representative is the history sample, the raygen traces a
   bounce towards its stored direction and compares the hit position with the stored
   `position + direction * distance`. A miss or a position outside
   `0.5 + 0.005 * distance` falls back to the current sample.
-- **Shading**: the selected sample's direction, distance and radiance feed `q2ShadeIndirect`; the
-  cosine pdf is used for the reused sample (the current sample keeps its sampled pdf).
+- **Shading**: the selected sample's direction, distance and radiance feed `q2ShadeIndirect`; a
+  reused sample evaluates `evalSpecularBouncePdf` at its direction (the first bounce is a
+  Smith-GGX sample), so `target/pdf` stays consistent. The exact BSDF pdf replaced the earlier
+  cosine approximation.
 - **Host switch**: `rt_restir_gi` (default 0); the uniform gate is `giReservoirParams.x`.
 
 Limitations of this slice: the buffer is full-resolution (a half-resolution layout is the next
-memory step); only temporal reuse is implemented (no spatial taps yet); the reused sample uses the
-cosine pdf rather than the exact BSDF pdf; the visibility trace adds one indirect ray when the
-history wins; the reservoir stores a view-dependent radiance, so reuse is approximate.
+memory step); reprojection uses the camera term only (object motion is rejected by the visibility
+validation, not reprojected); the visibility trace adds one indirect ray when a reused sample
+wins; the reservoir stores a view-dependent radiance, so reuse is approximate.
 
 ## Why the CPU twin first
 
@@ -55,10 +60,9 @@ the next commit.
 
 ## Next
 
-1. Spatial taps from the history slot (four neighbours) with world-position validation, like the
-   direct branch.
-2. Half-resolution reservoir storage and a packed record once the temporal path is stable.
-3. The exact BSDF pdf for a reused sample instead of the cosine approximation.
-4. Feed the selected bounce into the world radiance cache so neighbours share the shading.
-5. Denoiser interaction: the ReSTIR GI estimate should replace the raw indirect SH, not be blended
+1. Motion-vector reprojection for dynamic objects (the framebuffer motion binding in the indirect
+   pass stalled the first builds; a separate set is the next attempt).
+2. Half-resolution reservoir storage and a packed record once the temporal/tap path is stable.
+3. Feed the selected bounce into the world radiance cache so neighbours share the shading.
+4. Denoiser interaction: the ReSTIR GI estimate should replace the raw indirect SH, not be blended
    twice with the SVGF history.
