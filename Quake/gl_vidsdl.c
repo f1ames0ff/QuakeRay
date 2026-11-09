@@ -3930,8 +3930,11 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 
 	for (int i = 0; i < (int)illum_params.lightVolumeLocalCount; i++)
 	{
-		VectorCopy (rt_light_volume_locals[i].origin, illum_params.lightVolumeLocal[i].origin.data);
-		illum_params.lightVolumeLocal[i].bounds = rt_light_volume_locals[i].bounds;
+		/* The command stores Quake units; the renderer scene is metric. */
+		VectorScale (rt_light_volume_locals[i].origin, QUAKEUNIT_IN_METERS,
+		             illum_params.lightVolumeLocal[i].origin.data);
+		illum_params.lightVolumeLocal[i].bounds =
+			rt_light_volume_locals[i].bounds * QUAKEUNIT_IN_METERS;
 	}
 
 	QrDrawFrameBloomParams bloom_params = {
