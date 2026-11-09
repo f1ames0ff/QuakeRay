@@ -86,9 +86,15 @@ Fix:
 - `LightVolumeTests.cpp`: literals moved to meters; 85 checks, 0 failures.
 
 Hot-swap verification on the existing cull-fix build (`ci-windows-42671545279`, e1m1,
-`rt_radiance_cache 1`, split 0): world-radiance-cache hits over 30 frames went from ~55 to
-**58,582** (max 984/frame, 501 misses, 0 `NVRHI::ERROR`). The shader constants are verified in the
-runtime; the host-side local-volume conversion needs the next build.
+`rt_radiance_cache 1`, split 0), 30 frames:
+
+- cascade constants only: **62,631** cache hits (max 998/frame);
+- camera-local volume bounds 512 Quake units with the shader-side `0.0254` conversion:
+  **166,727** hits (max 8,178/frame), +104,096 from the local volume, 0 `NVRHI::ERROR`.
+
+The host patch applies the same `QUAKEUNIT_IN_METERS` factor, so both the cascade and the local
+volume paths are verified; only a full build of the host conversion remains (GitHub Actions
+outage).
 
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 
