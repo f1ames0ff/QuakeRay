@@ -59,6 +59,19 @@ Limitations of this slice: the visibility trace adds one indirect ray when a reu
 the reservoir stores a view-dependent radiance, so reuse is approximate; the history has no
 surface-normal validation.
 
+## History validation (normal + age)
+
+The selected sample packs its receiver normal and frame into the reservoir's free `pad` word:
+8+8-bit octahedral normal in the low 16 bits, the frame in the high 16. The history merge and the
+four spatial taps now require `q2GiHistoryValid`: the stored receiver normal must be within 25
+degrees of the current geometric normal (`dot >= 0.9`) and the sample must be at most 64 frames
+old. This rejects wrong-surface reuse that the geometric visibility trace alone accepted and
+bounds stale history.
+
+`renderer/Source/RestirGiReservoir.h` carries the CPU twin of the pack/unpack/validation math;
+`qray_restir_gi_tests` covers the normal round-trip, the same/folded/opposite cases and the age
+limit (35 checks total).
+
 ## Motion-vector isolation (e1m1, build `ci-windows-42593822566` unless noted)
 
 The first slice rejected the motion images because both over-brightened the field. The isolation
