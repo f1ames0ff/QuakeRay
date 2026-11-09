@@ -123,6 +123,22 @@ style timing and reservoir variance. The absolute means differ from the earlier 
 pair because the map's flickering lights were captured in a different phase; the on/off gap is the
 comparable metric.
 
+## AD capacity/reach sweep
+
+`ad_swampy`, build `ci-windows-42590816027`, `rt_truelight 0`, grid/ReSTIR/volume on:
+
+| `rt_light_reach_static` / `_dynamic` | grid | mean RGB | `gpu.frame` |
+|---|---|---:|---:|
+| 25 / 10 (default) | on | `[37.4]` | 9.42 ms |
+| 50 / 20 | on | `[35.1]` | 10.08 ms |
+| 100 / 40 | on | `[36.6]` | 9.52 ms |
+| 25 / 10 | off | `[35.9]` | 7.11 ms |
+
+The reach sweep stays inside the map's flicker variation (<2.5 mean units) and does not improve the
+AD image; the grid costs about 2.3 ms over the cluster path. Keep the defaults. The remaining AD
+difference is the direct ReSTIR target/pdf gap (~2.5 after the floored-mass fix), not capacity or
+reach.
+
 ## Motion-vector GI: resolved
 
 The earlier note that the motion images over-brighten the GI field was based on the camera path
