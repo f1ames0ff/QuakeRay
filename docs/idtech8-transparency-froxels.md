@@ -35,7 +35,10 @@ stored in the probe buffer. The pipeline declares the seven shader set positions
 global uniform and set 6 is the shared light layout, so the fill reads the same grid and light
 sources as the RT passes.
 
-The glass/particle consumers are the next commit; until then the filled buffer is not sampled.
+The glass consumer is `GlassPaint.hlsli`: when `rt_transparency_froxel` is 1 it adds the froxel
+irradiance divided by pi to the direct glass lighting. Particles still use their existing
+screen-space lightfield; moving them to the froxel needs the world position in the raster path and
+is the next consumer step. The reflect/refract shader compiles with the set-6 froxel buffer.
 
 ## Tests
 
