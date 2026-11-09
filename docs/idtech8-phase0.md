@@ -94,7 +94,10 @@ The runtime path behind `rt_light_grid` (default `0`) now follows the target gri
 
 ## Missing measurements
 
-- `ad_tfuma`, `ad_swampy`, and the user's save at the same settings.
+- `ad_tfuma`, `ad_swampy`, and the user's save at the same settings. The local data has only
+  `id1`, `rogue` and `hipnotic`; the AD installation and save are needed from the operator.
+- The first id1 tuning matrix (grid/ReSTIR/volume/cache/GI on/off and reach 10/15/25 m) is in
+  `docs/idtech8-tuning.md`; frame times are not captured yet.
 - Change-frame cost at HEAD (M3; the legacy 30 ms figure predates `3e59c3da`).
 - `rt_gi_level 1` vs 2 with a cvar dump (A1).
 - GPU build/publication cost of the 8-cascade grid.
