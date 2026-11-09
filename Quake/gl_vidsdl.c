@@ -1991,6 +1991,9 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "indirect", snap->gpu.raysPerCategory[2]);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "shadow dir", snap->gpu.raysPerCategory[3]);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "shadow ind", snap->gpu.raysPerCategory[4]);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "cache hit", snap->gpu.raysPerCategory[6]);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "cache miss", snap->gpu.raysPerCategory[7]);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "cache active", snap->gpu.raysPerCategory[8]);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "rg entry points", snap->gpu.apiCalls);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "geometry", snap->gpu.apiCallsGeometry);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "raster", snap->gpu.apiCallsRasterized);

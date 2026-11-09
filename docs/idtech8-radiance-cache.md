@@ -66,6 +66,9 @@ Build `ci-windows-42589617713`, `e1m1`, `rt_light_volume 1`:
    pass that consumes them, so the cache is filled without shading inside the probe loop.
 2. Feed the cache from the final gather / indirect raygen as well, so screen-space and world-space
    reuse share one cache.
-3. The report's 25 cm cell quantization and explicit active-cell counters; the current base cell is
-   16 u (about 40 cm) and the active set is implicit in the writes.
+3. The report's 25 cm cell quantization. The explicit active-cell counters are implemented: each
+   cache slot carries a frame tag (1 MB of `uint` tags at set 6 binding 22); the first insert of a
+   slot in a frame exchanges the tag and increments `RAY_STATS_CATEGORY_CACHE_ACTIVE`, so
+   `rt_stats_dump` reports the per-frame active set. The hit/miss counters are categories 6 and 7.
+   The base cell is still 16 u (about 40 cm).
 4. Denoise/upscale policy after the cache and volume fields are stable.
