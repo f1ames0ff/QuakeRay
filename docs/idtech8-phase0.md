@@ -119,8 +119,9 @@ The volume stack continues in `docs/idtech8-volumes.md`:
 
 Remaining plan items, in report order:
 
-1. World radiance cache between visibility sampling and the volume update (spatial hash, LOD cells,
-   shaded-entry reuse across frames) so probe rays stop shading on the hit.
+1. World radiance cache between visibility sampling and the volume update: the first slice is on
+   `feat/idtech8-radiance-cache` (spatial hash, LOD cells, 30-frame reuse); the separate visibility
+   and cache-shading passes are the next commits.
 2. ReSTIR GI / indirect: reuse indirect samples the way `feat/idtech8-restir` reuses direct lights.
 3. Transparencies froxel irradiance volume and the final-gather replacement/blend policy.
 4. AD measurements (`ad_tfuma`, `ad_swampy`, the user's save) and the deferred capacity/reach/cell
