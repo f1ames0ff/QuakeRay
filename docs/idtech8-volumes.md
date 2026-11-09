@@ -45,10 +45,11 @@ The GPU path is now added on top:
   direct/indirect path keeps working and the atlas stays zero.
 
 Known issue (2026-11-09): the probe raygen's ray-stat counts show 65,536 `INDIRECT` rays per frame
-(4096 probes x 16) but only ~126 `SHADOW_INDIRECT` rays, and the world-radiance-cache lookups behind
-the non-sky branch never execute (`cache hit/miss/active` stay 0 on both `e1m1` and `ad_swampy`).
-Nearly every probe ray is classified as sky, so the volume sees only the sky radiance. The probe
-hit path needs a separate fix; the counters in the active-cell branch make the issue measurable.
+(4096 probes x 16) but only ~126 `SHADOW_INDIRECT` rays. The world-radiance-cache counters are
+nonzero only on the rare frames that reach geometry (`9 hit / 3 miss / 3 active` across eight
+dumps), so nearly every probe ray is classified as sky and the volume sees only the sky radiance.
+The probe hit path needs a separate fix; the counters in the active-cell branch make the issue
+measurable.
 
 Limitations of this GPU slice: the local volumes are session-placed through the console, not yet
 authored in a level file; the atlas is cleared on a snap change and refills one cascade and one
