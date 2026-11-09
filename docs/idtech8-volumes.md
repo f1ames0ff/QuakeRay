@@ -29,16 +29,18 @@ The GPU path is now added on top:
 - The indirect raygen (`RtQ2Indirect.rgen.hlsl`) samples the atlas at the surface position with the
   same trilinear lookup as the CPU oracle, converts the integrated coefficients to the screen SH
   layout `(L0, Ly, Lz, Lx)` and adds them with the host weight.
-- Host cvars: `rt_light_volume` (default 0) and `rt_light_volume_weight` (default 0.25,
-  clamped to 0..1; the volume SH is added on top of the screen-space GI in this first slice).
+- Host cvars: `rt_light_volume` (default 0), `rt_light_volume_weight` (default 0.25, clamped to
+  0..1; the volume SH is added on top of the screen-space GI in this first slice) and
+  `rt_light_volume_rays` (default 16, clamped to 16..64). The report's quality tiers are 64/32/16
+  visibility rays per probe; the shader loops and normalizes by the actual count, so 32 is also
+  accepted as an intermediate step.
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
 
-Limitations of this GPU slice: local volumes are not written/sampled yet; 16 probe rays is the low
-quality setting; the atlas is cleared on a snap change and refills one cascade per frame. Hit
-shading uses sun NEE, one grid/cluster light NEE and emission; the sky miss uses the uniform sky
-fallback. The volume SH is added on top of the screen-space GI (not a replacement); 0.25 is the
-tested first-slice weight.
+Limitations of this GPU slice: local volumes are not written/sampled yet; the atlas is cleared on
+a snap change and refills one cascade per frame. Hit shading uses sun NEE, one grid/cluster light
+NEE and emission; the sky miss uses the uniform sky fallback. The volume SH is added on top of the
+screen-space GI (not a replacement); 0.25 is the tested first-slice weight.
 
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 
@@ -101,7 +103,8 @@ volume are updated per frame, matching the report's interleaved update.
 ## Next
 
 1. Local-volume GPU update: the same raygen with the local 10^3 probe grid and its origin/bounds.
-2. The world radiance cache and the 64/32/16 quality tiers; 16 probe rays is the current setting.
+2. The world radiance cache: the report splits visibility sampling, cache shading and the volume
+   update; this slice still shades the probe ray directly.
 3. Local-volume GPU updates and a final-gather replacement/blend policy once the cascade field is
    tuned.
 4. The 4-coefficient SH can grow to 9 coefficients only after the atlas layout and sampling are
