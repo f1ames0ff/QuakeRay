@@ -39,19 +39,46 @@ Observations:
 - Reach 10/15/25 m changes the mean by less than 1.5 at the spawn; the near-black fraction stays
   0.001, so the current reach is not visibly cutting lights in this room.
 
-## AD measurements: blocked on data
+## AD measurements
 
-The repository has no Arcane Dimensions installation and the local Quake data has only `id1`,
-`rogue` and `hipnotic` paks. The planned `ad_tfuma`, `ad_swampy` and the user's save cannot be
-measured here.
+Arcane Dimensions 1.50 is installed under `<basedir>/ad` and the maps load without saves
+(`map ad_tfuma`, `map ad_swampy`). The legacy map-light path has to be selected with
+`rt_truelight 0`; the default `rt_truelight 1` skips `RT_UploadAllElights` entirely, so a plain
+`"light"` entity mod map stayed black.
 
-Needed from the operator:
+The map-light fix (`feat/idtech8-ad-lights`) also accepts a plain `"light"` entity with a positive
+intensity and carries its `_color`. Before the fix `ad_tfuma` reported one grid source and mean
+`[3.6, 5.4, 5.4]` (90.1% near-black); after it and with `rt_truelight 0`:
 
-- an AD installation with `ad_tfuma` and `ad_swampy` (or the specific map names in the save), and
-- the save file / start point and the settings used for the reference image.
+| map | grid sources | mean RGB | near-black |
+|---|---:|---|---:|
+| `ad_tfuma` (Terror Fuma) | 651 | `[44.7, 35.6, 23.6]` | 0.037 |
+| `ad_swampy` | 1577 | `[49.5, 36.5, 17.7]` | 0.037 |
 
-Once present, the same matrix should run on the 347-light start; the grid full-cell fallback and
-the volume/local-volume fields are the parts most likely to differ from `id1`.
+The `ad_swampy` feature matrix (grid 1, ReSTIR 1, volume 1, cache 0, GI 0):
+
+| configuration | mean RGB | near-black |
+|---|---|---:|
+| baseline | `[49.5, 36.5, 17.7]` | 0.037 |
+| grid 0 | `[52.0, 39.3, 21.3]` | 0.019 |
+| ReSTIR 0 | `[61.1, 45.7, 22.5]` | 0.013 |
+| volume 0 | `[49.5, 36.1, 16.7]` | 0.045 |
+
+Observations:
+
+- The plain-light fix plus `rt_truelight 0` is what turns the AD maps from black to lit; the
+  651/1577 grid sources match the AD light counts.
+- The grid path is slightly darker on `ad_swampy` (`[49.5, ...]`, 3.7% near-black) than the
+  cluster path (`[52.0, ...]`, 1.9%); the full-cell fallback keeps every light reachable, but the
+  grid ranking (`power` is zero for the legacy map lights, see `RT_LIGHT_Emit`) still changes the
+  sampled set. This is the deferred grid-capacity/reach tuning target.
+- ReSTIR off is brighter than on (`[61.1, ...]` vs `[49.5, ...]`): with 1577 lights the reservoir
+  loses energy relative to the non-ReSTIR path. The `id1` direction was the opposite, so the AD
+  target/candidate weighting needs a separate tuning pass (the zero map-light power is the first
+  suspect).
+- The volume path changes little here (`[49.5, 36.1, 16.7]` vs `[49.5, 36.5, 17.7]`); weight
+  tuning needs a torch-corridor/reference view.
+- Frame times are not captured yet; `rt_stats_dump` is the next measurement step.
 
 ## Deferred tuning
 
