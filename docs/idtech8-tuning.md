@@ -105,6 +105,24 @@ and is darker than the floored reference. The earlier global proxy floor was rem
 over-brightened the grid target; the next tuning is a grid-local target floor that matches
 `q2FastMass` without reintroducing the global proxy.
 
+### Floored-mass target fix
+
+`q2SampleGridLights` now returns the floored selection mass of the winner, and the ReSTIR target
+uses `mass * luminance(color)` instead of the unfloored `q2LightSelectionMass`. This makes
+`target/pdf` match the grid source pdf for the tiny AD map lights.
+
+`ad_swampy`, build `ci-windows-42590816027`, `rt_truelight 0`:
+
+| configuration | mean RGB | near-black |
+|---|---|---:|
+| ReSTIR 1 (floored mass) | `[43.9, 36.1, 25.3]` | 0.028 |
+| ReSTIR 0 | `[46.4, 38.0, 26.0]` | 0.024 |
+
+The gap is now ~2.5/1.9/0.7 instead of ~11/8/7 before the fix; the remaining difference is light
+style timing and reservoir variance. The absolute means differ from the earlier `[50.5]`/`[61.7]`
+pair because the map's flickering lights were captured in a different phase; the on/off gap is the
+comparable metric.
+
 ## Motion-vector GI: final decision
 
 The two screen-space motion images were tested for the GI history in the indirect pass: the
