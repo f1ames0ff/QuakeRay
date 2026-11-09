@@ -107,8 +107,21 @@ The direct-light ReSTIR reservoir is implemented on `feat/idtech8-restir` (see
 reuse, four spatial taps, grid-based candidates when `rt_light_grid` covers the point, and a
 64-sample history cap.
 
-The next feature branch is `feat/idtech8-volumes`: the volume ABI and CPU oracle are started there
-(see `docs/idtech8-volumes.md`) — 6 nested 16^3 cascades, 10^3 local volumes, 48-byte SH4 probes,
-trilinear lookup with local-volume precedence, and one cascade plus one local volume per frame.
-The GPU probe atlas, the visibility/update pass and the final-gather sampling are the remaining
-commits. Capacity, reach and cell-size tuning stay deferred until the volume path exists.
+The volume stack continues in `docs/idtech8-volumes.md`:
+
+- `feat/idtech8-volumes` (PR #71): GPU probe atlas, one-cascade update, final gather, local-light
+  NEE on probe hits, and the 85-check CPU ABI oracle.
+- `feat/idtech8-volume-quality`: `rt_light_volume_rays` selects the report's 64/32/16
+  visibility-ray tiers; the update loop and normalization use the actual count.
+- `feat/idtech8-volume-local`: one 10^3 hand-placed local volume per frame on top of the cascade;
+  `rt_light_volume_local_add` / `_clear` / `_list` manage up to eight slots and the lookup prefers
+  the smallest containing local volume.
+
+Remaining plan items, in report order:
+
+1. World radiance cache between visibility sampling and the volume update (spatial hash, LOD cells,
+   shaded-entry reuse across frames) so probe rays stop shading on the hit.
+2. ReSTIR GI / indirect: reuse indirect samples the way `feat/idtech8-restir` reuses direct lights.
+3. Transparencies froxel irradiance volume and the final-gather replacement/blend policy.
+4. AD measurements (`ad_tfuma`, `ad_swampy`, the user's save) and the deferred capacity/reach/cell
+   tuning; only after the volume path is stable.
