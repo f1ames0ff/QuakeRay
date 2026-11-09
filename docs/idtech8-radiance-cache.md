@@ -39,6 +39,16 @@ The hash, LOD and lookup math live in `renderer/Source/RadianceCache.h/.cpp` and
 - The cache is not cleared on a map change; the key includes the world cell and the age check
   drops stale entries, so entries from another level are simply never hit.
 
+## Runtime evidence: split path (Proton 11.0, RADV RX 9070 XT)
+
+Build `ci-windows-42589617713`, `e1m1`, `rt_light_volume 1`:
+
+- `rt_radiance_cache_split 0`: mean RGB `[64.1, 41.7, 35.9]`.
+- `rt_radiance_cache_split 1`: `[64.0, 41.6, 35.9]`, mean absolute channel difference 2.3,
+  `cvarlist` confirms `1`, `NVRHI::ERROR` count 0.
+- The 20.9 MB hit buffer, the second raygen and the UAV transition pair run without a validation
+  error; the split image matches the combined raygen within the run-to-run noise.
+
 ## Tests
 
 `qray_radiance_cache_tests` (23 checks locally):
