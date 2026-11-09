@@ -30,8 +30,11 @@ form will live in `renderer/Source/Shaders/RestirGi.hlsli` and share this layout
   resolution (1280 x 720 x 2 x 48 B = 88 MB for the tested size), bound as a UAV at set 9
   binding 0. The buffer is recreated on a size change and cleared once.
 - **Slot**: `frameId & 1` is the current slot; the other one is the history.
-- **Reprojection**: the raygen projects the current pixel with `framebufMotionDlss_Sampled`; an
-  out-of-range or non-finite UV rejects the history.
+- **Reprojection**: the raygen projects the current world position with the previous frame's
+  `volumeViewProj`; an out-of-range or non-finite UV rejects the history. The screen-space motion
+  images (regular and DLSS) were tried in a separate set 10 and both reprojected to wrong history
+  pixels for this pass, over-brightening the reused field; the motion set stays allocated but is
+  not read until the convention is resolved.
 - **Merge**: the current bounce sample and the reprojected history reservoir are merged with the
   same target/pdf identity as the CPU twin; the history is capped at 64 samples.
 - **Spatial taps**: four neighbours of the reprojected pixel (2 pixels away) are read from the same
@@ -45,12 +48,14 @@ form will live in `renderer/Source/Shaders/RestirGi.hlsli` and share this layout
   reused sample evaluates `evalSpecularBouncePdf` at its direction (the first bounce is a
   Smith-GGX sample), so `target/pdf` stays consistent. The exact BSDF pdf replaced the earlier
   cosine approximation.
+- **Half-resolution storage**: when `rt_gi_level` selects the half-row dispatch, the buffer keeps
+  one record per traced row pair and the shader shifts the row index; the configure and render
+  checks use the same row count.
 - **Host switch**: `rt_restir_gi` (default 0); the uniform gate is `giReservoirParams.x`.
 
-Limitations of this slice: the buffer is full-resolution (a half-resolution layout is the next
-memory step); reprojection uses the camera term only (object motion is rejected by the visibility
-validation, not reprojected); the visibility trace adds one indirect ray when a reused sample
-wins; the reservoir stores a view-dependent radiance, so reuse is approximate.
+Limitations of this slice: reprojection uses the camera term only; the screen-space motion images
+over-brightened this pass and are not read; the visibility trace adds one indirect ray when a
+reused sample wins; the reservoir stores a view-dependent radiance, so reuse is approximate.
 
 ## Why the CPU twin first
 
