@@ -80,6 +80,17 @@ Observations:
   tuning needs a torch-corridor/reference view.
 - Frame times are not captured yet; `rt_stats_dump` is the next measurement step.
 
+## Motion-vector GI: final decision
+
+The two screen-space motion images were tested for the GI history in the indirect pass: the
+regular image gave `rt_restir_gi 1` mean `[72.9, 49.5, 41.9]` and the DLSS image `[72.0, 47.5,
+40.5]`, against `[64.3, 41.6, 35.8]` with the cache off. Both reproject to wrong history pixels for
+this pass and over-brighten the reused field. The camera projection (`volumeViewProj_Prev`) is the
+shipped path: build `ci-windows-42549702028` gives `[64.5, 40.2, 34.6]` vs `[63.5, 41.6, 35.8]`
+and `ci-windows-42550491186` (half rows) gives `[64.4, 40.3, 34.7]` vs `[66.4, 42.7, 36.7]`. The
+motion set 10 stays allocated but is not read; a future fix needs the exact motion convention for
+the indirect pass, not a different image.
+
 ## Deferred tuning
 
 - The grid capacity question is closed by `docs/idtech8-phase0.md`: 64 IDs/cell is below the AD
