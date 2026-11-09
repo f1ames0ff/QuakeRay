@@ -24,6 +24,29 @@ distance and outgoing radiance.
 `renderer/Source/RestirGiReservoir.h` is the CPU twin; `qray_restir_gi_tests` covers it. The GPU
 form will live in `renderer/Source/Shaders/RestirGi.hlsli` and share this layout and math.
 
+## GPU path
+
+- **Buffer**: `RhiRtIndirectPass` owns a two-slot `RestirGiReservoir` buffer at the full render
+  resolution (1280 x 720 x 2 x 48 B = 88 MB for the tested size), bound as a UAV at set 9
+  binding 0. The buffer is recreated on a size change and cleared once.
+- **Slot**: `frameId & 1` is the current slot; the other one is the history.
+- **Reprojection**: the raygen projects the current pixel with `framebufMotionDlss_Sampled`; an
+  out-of-range or non-finite UV rejects the history.
+- **Merge**: the current bounce sample and the reprojected history reservoir are merged with the
+  same target/pdf identity as the CPU twin; the history is capped at 64 samples.
+- **Visibility reuse**: when the merged representative is the history sample, the raygen traces a
+  bounce towards its stored direction and compares the hit position with the stored
+  `position + direction * distance`. A miss or a position outside
+  `0.5 + 0.005 * distance` falls back to the current sample.
+- **Shading**: the selected sample's direction, distance and radiance feed `q2ShadeIndirect`; the
+  cosine pdf is used for the reused sample (the current sample keeps its sampled pdf).
+- **Host switch**: `rt_restir_gi` (default 0); the uniform gate is `giReservoirParams.x`.
+
+Limitations of this slice: the buffer is full-resolution (a half-resolution layout is the next
+memory step); only temporal reuse is implemented (no spatial taps yet); the reused sample uses the
+cosine pdf rather than the exact BSDF pdf; the visibility trace adds one indirect ray when the
+history wins; the reservoir stores a view-dependent radiance, so reuse is approximate.
+
 ## Why the CPU twin first
 
 The direct ReSTIR branch started the same way: the reservoir math and the history cap are the part
@@ -32,13 +55,10 @@ the next commit.
 
 ## Next
 
-1. GPU reservoir buffer at the indirect render resolution, two history slots plus a current slot;
-   a new binding on the indirect pass (set 9, not the shared set 6).
-2. Temporal reprojection with the G-buffer motion vectors and normal/depth validation; spatial
-   taps from the history slot with the same world-position validation as the direct branch.
-3. Target: `bsdf * radiance / pdf` at the receiving pixel; visibility reuse for the selected
-   direction when the history sample is not the current one.
-4. Feed the selected bounce into `RtQ2Indirect.rgen`'s SH path and let the world radiance cache
-   shade neighbours instead of retracing.
+1. Spatial taps from the history slot (four neighbours) with world-position validation, like the
+   direct branch.
+2. Half-resolution reservoir storage and a packed record once the temporal path is stable.
+3. The exact BSDF pdf for a reused sample instead of the cosine approximation.
+4. Feed the selected bounce into the world radiance cache so neighbours share the shading.
 5. Denoiser interaction: the ReSTIR GI estimate should replace the raw indirect SH, not be blended
    twice with the SVGF history.
