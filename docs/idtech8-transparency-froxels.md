@@ -22,6 +22,14 @@ sampling oracle; the GPU image and its update pass are the next commits.
 `renderer/Source/TransparencyFroxelVolume.h/.cpp` is the oracle; `qray_transparency_froxel_tests`
 covers it.
 
+## GPU image
+
+`RhiRtDirectPass` owns the 6.3 MB probe buffer at set 6 binding 20, allocated once and cleared on
+creation. `Shaders/TransparencyFroxels.hlsli` carries the GPU layout, the SH accumulation helpers
+and the trilinear `q2SampleTransparencyFroxel`; the light-scattering fill pass and the glass /
+particle consumers are the next commits. Until the fill exists the buffer stays zero and no
+shader reads it.
+
 ## Tests
 
 `qray_transparency_froxel_tests` (16 checks locally):
