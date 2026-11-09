@@ -122,7 +122,8 @@ Remaining plan items, in report order:
 1. World radiance cache between visibility sampling and the volume update: the first slice is on
    `feat/idtech8-radiance-cache` (spatial hash, LOD cells, 30-frame reuse); the separate visibility
    and cache-shading passes are the next commits.
-2. ReSTIR GI / indirect: reuse indirect samples the way `feat/idtech8-restir` reuses direct lights.
+2. ReSTIR GI / indirect: `feat/idtech8-restir-gi` starts with the 48-byte reservoir twin and its
+   tests; the GPU history slots, reprojection and visibility reuse are the next commits.
 3. Transparencies froxel irradiance volume and the final-gather replacement/blend policy.
 4. AD measurements (`ad_tfuma`, `ad_swampy`, the user's save) and the deferred capacity/reach/cell
    tuning; only after the volume path is stable.
