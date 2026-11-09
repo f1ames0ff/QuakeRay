@@ -140,10 +140,12 @@ being the reference. The isolation on e1m1 (build `ci-windows-42593822566`) show
 Both signs agree (spawn motion is small) and the same-pixel control matches the motion path, so the
 vectors are not the defect: the old camera path projected with the volumetric fog projection and
 mostly rejected the history. `HitInfo.hlsli` stores `motion = previousUV - currentUV`, so
-`previousUV = currentUV + motion` is the convention; the fallback now uses
-`viewPrev`/`projectionPrev`, the motion-vector matrices. AD `ad_swampy`, `rt_truelight 0`: GI on
-`[36.8, 28.9, 17.7]` vs off `[34.1, 26.8, 16.3]`, 0 errors. The accumulated field is broadly
-brighter with unchanged p99/max tails; it is the converged estimate, not fireflies.
+`previousUV = currentUV + motion` is the convention. The camera fallback was also tried with
+`viewPrev`/`projectionPrev` and an `abs(w)` clip guard, and still stays at the no-history mean
+(`[63.9, 40.2, 34.6]`), so it remains a conservative fallback only. AD `ad_swampy`,
+`rt_truelight 0`: GI on `[36.8, 28.9, 17.7]` vs off `[34.1, 26.8, 16.3]`, 0 errors. The accumulated
+field is broadly brighter with unchanged p99/max tails; it is the converged estimate, not
+fireflies.
 
 ## Deferred tuning## Deferred tuning
 
