@@ -44,14 +44,20 @@ The GPU path is now added on top:
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
 
-Fixed on `fix/idtech8-volume-probe-hits`: the probe rays inherited the primary pass's
-`RAY_FLAG_CULL_FRONT_FACING_TRIANGLES`, which culls the single-sided map surfaces the probes look
-at. A diagnostic that traced one camera ray and one probe ray per invocation with `RAY_FLAG_NONE`
-hit both (volume-on deltas: `SHADOW_DIRECT` +5,229, `SHADOW_INDIRECT` +2,233, against +0 with the
-culled `traceIndirectRay`). The probe trace now uses a dedicated `traceVolumeRay` with
-`RAY_FLAG_NONE` and the same indirect cull mask; the primary/direct/indirect passes keep their
-cull. Runtime re-verification of the cache counters and the volume image is on
-`test/idtech8-volume-probe-fix-runtime`.
+Probe cull fix (`fix/idtech8-volume-probe-hits`): the probe rays inherited the primary pass's
+`RAY_FLAG_CULL_FRONT_FACING_TRIANGLES`. A diagnostic that traced one camera ray and one probe ray
+per invocation with `RAY_FLAG_NONE` hit both (volume-on deltas: `SHADOW_DIRECT` +5,229,
+`SHADOW_INDIRECT` +2,233, against +0 with the culled `traceIndirectRay`). The probe trace now uses
+a dedicated `traceVolumeRay` with `RAY_FLAG_NONE` and the same indirect cull mask; the
+primary/direct/indirect passes keep their cull.
+
+Runtime on `test/idtech8-volume-probe-fix-runtime` shows the fix is necessary but not sufficient:
+with the probe trace on `RAY_FLAG_NONE`, the cascade probes at the e1m1 spawn still produce only
+~55-60 cache hits over 30 frames, and a hand-placed local volume at the spawn camera gives the same
+~55. A local volume at the world origin gives 1,549, so the trace/cache work and the remaining
+loss is the probe placement/visibility (most sample positions do not see geometry), not the cull.
+The volume still reads mostly sky; the next step is to validate the probe positions against the
+actual scene bounds before the probe loop.
 
 Limitations of this GPU slice: the local volumes are session-placed through the console, not yet
 authored in a level file; the atlas is cleared on a snap change and refills one cascade and one
