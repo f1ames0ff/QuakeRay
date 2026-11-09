@@ -53,11 +53,12 @@ primary/direct/indirect passes keep their cull.
 
 Runtime on `test/idtech8-volume-probe-fix-runtime` shows the fix is necessary but not sufficient:
 with the probe trace on `RAY_FLAG_NONE`, the cascade probes at the e1m1 spawn still produce only
-~55-60 cache hits over 30 frames, and a hand-placed local volume at the spawn camera gives the same
-~55. A local volume at the world origin gives 1,549, so the trace/cache work and the remaining
-loss is the probe placement/visibility (most sample positions do not see geometry), not the cull.
-The volume still reads mostly sky; the next step is to validate the probe positions against the
-actual scene bounds before the probe loop.
+~55-60 cache hits over 30 frames. A camera-local volume bounds sweep does not change that — 128:
+59, 256: 47, 512: 55 hits — while a local volume at the world origin gives 1,549. The trace and
+cache work and shrinking the probe cube does not help, so the remaining loss is the sampled ray
+directions or the per-probe position mapping, not the cull and not the cube size. The volume still
+reads mostly sky. The next diagnostic is a fixed-direction (axis) probe-ray hit counter, which
+needs a new build; GitHub Actions was in a major outage at this point.
 
 Limitations of this GPU slice: the local volumes are session-placed through the console, not yet
 authored in a level file; the atlas is cleared on a snap change and refills one cascade and one
