@@ -44,12 +44,14 @@ The GPU path is now added on top:
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
 
-Known issue (2026-11-09): the probe raygen's ray-stat counts show 65,536 `INDIRECT` rays per frame
-(4096 probes x 16) but only ~126 `SHADOW_INDIRECT` rays. The world-radiance-cache counters are
-nonzero only on the rare frames that reach geometry (`9 hit / 3 miss / 3 active` across eight
-dumps), so nearly every probe ray is classified as sky and the volume sees only the sky radiance.
-The probe hit path needs a separate fix; the counters in the active-cell branch make the issue
-measurable.
+Fixed on `fix/idtech8-volume-probe-hits`: the probe rays inherited the primary pass's
+`RAY_FLAG_CULL_FRONT_FACING_TRIANGLES`, which culls the single-sided map surfaces the probes look
+at. A diagnostic that traced one camera ray and one probe ray per invocation with `RAY_FLAG_NONE`
+hit both (volume-on deltas: `SHADOW_DIRECT` +5,229, `SHADOW_INDIRECT` +2,233, against +0 with the
+culled `traceIndirectRay`). The probe trace now uses a dedicated `traceVolumeRay` with
+`RAY_FLAG_NONE` and the same indirect cull mask; the primary/direct/indirect passes keep their
+cull. Runtime re-verification of the cache counters and the volume image is on
+`test/idtech8-volume-probe-fix-runtime`.
 
 Limitations of this GPU slice: the local volumes are session-placed through the console, not yet
 authored in a level file; the atlas is cleared on a snap change and refills one cascade and one

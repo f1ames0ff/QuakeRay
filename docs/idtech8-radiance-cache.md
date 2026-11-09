@@ -59,9 +59,9 @@ one-shot runs read zero.
 
 The volume pass adds exactly 4096 x 16 = 65,536 `INDIRECT` counts when `rt_light_volume 1`
 (475,456 vs 409,920 off), so its `rayStatsAdd` calls reach the host and the counter wiring is
-verified end to end. The hit rate is still very low: the same frames add only ~126
-`SHADOW_INDIRECT` counts, so almost every probe ray is classified as sky. That is a pre-existing
-light-volume issue (recorded in `docs/idtech8-volumes.md`); the cache counters make it measurable.
+verified end to end. The cache lookups were rare because the probe rays inherited the primary
+pass's front-face cull and missed the single-sided geometry; `fix/idtech8-volume-probe-hits`
+removes that cull for the probe trace (`docs/idtech8-volumes.md`).
 
 ## Tests
 
