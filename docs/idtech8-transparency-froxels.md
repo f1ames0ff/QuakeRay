@@ -42,6 +42,17 @@ irradiance divided by pi to the direct glass lighting. The particle consumer in
 the particle pass already binds the direct light layout at set 6. Both shaders compile with the
 set-6 froxel buffer.
 
+## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
+
+- Glass build `ci-windows-42552478516`, `e1m1`: `rt_transparency_froxel 0` mean RGB
+  `[64.2, 41.8, 36.0]`, `1` `[63.9, 41.7, 36.0]` (difference 2.0), `cvarlist` 1, 0
+  `NVRHI::ERROR`.
+- Particle build `ci-windows-42553218368`: off `[64.1, 41.7, 35.9]`, on `[64.5, 41.6, 35.9]`
+  (difference 2.0), 0 `NVRHI::ERROR`.
+- Both spawn-view deltas are near the same-configuration run-to-run noise (1.8): the fill and both
+  consumers run, but the view has little glass/particle coverage. A dedicated view or a debug tint
+  is the next visual proof.
+
 ## Tests
 
 `qray_transparency_froxel_tests` (16 checks locally):
