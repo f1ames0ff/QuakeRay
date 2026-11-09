@@ -63,6 +63,25 @@ rt_light_volume 1 rt_light_volume_weight 0.25`:
   the world-space volume therefore reaches the final gather. At weight 1/4 the tint is much
   stronger, which is why the default is 0.25 and the feature stays opt-in.
 
+## Runtime evidence: quality tiers and local volumes (Proton 11.0, RADV RX 9070 XT)
+
+Build `ci-windows-42538583016` (quality tiers + local volumes), `e1m1`, `the Slipgate Complex`,
+`rt_light_grid 1 rt_restir 1 rt_light_volume 1 rt_light_volume_weight 0.25`:
+
+- `rt_light_volume_rays 16`: mean RGB `[64.3, 41.7, 35.9]`.
+- `rt_light_volume_rays 64`: mean RGB `[64.8, 41.7, 36.0]`, mean absolute channel difference 2.1
+  against the 16-ray frame. `cvarlist` reports `64`; `NVRHI::ERROR` count 0.
+- Local volume at the view origin (`rt_light_volume_local_add 512`): mean RGB
+  `[65.2, 41.9, 36.2]` vs `[64.3, 41.7, 35.9]` without it, mean absolute channel difference 3.0.
+  The run-to-run difference of the same configuration is 1.8, so the 512 u volume changes only the
+  surfaces inside its 256 u half-extent.
+
+The local lookup itself is proven by a temporary debug build (renderer `20530a3`, release
+`ci-windows-42539730885`) that replaces every local-volume sample with a green SH: with
+`rt_light_volume_local_add 16384` the frame mean is `[11.9, 121.3, 9.2]` and 98% of samples are
+green-dominant, while the same build without a local volume stays neutral. The production shader
+keeps the normal SH.
+
 ## Constants
 
 | | value |
