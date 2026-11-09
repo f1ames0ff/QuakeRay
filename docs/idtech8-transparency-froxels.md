@@ -36,9 +36,11 @@ global uniform and set 6 is the shared light layout, so the fill reads the same 
 sources as the RT passes.
 
 The glass consumer is `GlassPaint.hlsli`: when `rt_transparency_froxel` is 1 it adds the froxel
-irradiance divided by pi to the direct glass lighting. Particles still use their existing
-screen-space lightfield; moving them to the froxel needs the world position in the raster path and
-is the next consumer step. The reflect/refract shader compiles with the set-6 froxel buffer.
+irradiance divided by pi to the direct glass lighting. The particle consumer in
+`RsParticle.frag.hlsl` reconstructs the world position from the scene depth along the view ray
+(`framebufDepthWorld_Sampled` + `volumeViewProjInv`) and adds the froxel irradiance to its ambient;
+the particle pass already binds the direct light layout at set 6. Both shaders compile with the
+set-6 froxel buffer.
 
 ## Tests
 
