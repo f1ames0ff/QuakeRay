@@ -55,6 +55,11 @@ set-6 froxel buffer.
 - Both spawn-view deltas are near the same-configuration run-to-run noise (1.8): the fill and both
   consumers run, but the view has little glass/particle coverage. A dedicated view or a debug tint
   is the next visual proof.
+- Quality tiers on `ad_swampy` (`rt_truelight 0`, `rt_transparency_froxel 1`, build
+  `ci-windows-42585380398`): low `[49.4, 36.4, 17.7]` (0.044 near-black), medium
+  `[49.6, 36.5, 17.9]` (0.039), high `[49.8, 36.7, 17.9]` (0.036); `cvarlist` confirms 0/1/2 and
+  `NVRHI::ERROR` is 0 for all three. The high tier's 50.3 MB buffer and 16k-group fill run
+  without a crash.
 
 ## Tests
 
