@@ -72,18 +72,21 @@ showed the old camera path was the outlier, not the motion vectors:
 | GI on, same-pixel control `previousUV = currentUV` | `[74.8, 50.3, 42.1]` |
 | GI on, old `volumeViewProj_Prev` camera path | `[64.5, 40.2, 34.6]` |
 | GI on, main-matrix camera path, `w > 1e-6` guard | `[64.1, 40.3, 34.7]` |
+| GI on, main-matrix camera path, `abs(w)` guard | `[63.9, 40.2, 34.6]` |
 | GI on, final combined branch (motion primary) | `[73.5, 49.2, 41.4]` |
 
 Both signs agree within noise (the spawn motion is small), and the same-pixel control matches the
 motion path: the reprojection source, not the sign, caused the difference. The luminance
 histograms keep the same p99/max tails, so the lift is a broad convergence change, not fireflies.
 
-The camera path had a second defect behind the first: `Matrix::MakeProjectionMatrix` writes
-`w = -z_view`, so a point in front of the camera has a **negative** clip w. The camera reprojection
-guarded on `w > 1e-6`, which rejected every pixel; both the `volumeViewProj_Prev` and the
-main-matrix camera paths were effectively no-history paths (their means stay near GI-off). The
-fallback now uses `abs(w) > 1e-6`; the shipping path is the motion primary, with the corrected
-camera projection for a non-finite motion sample.
+The camera path could not be recovered: `Matrix::MakeProjectionMatrix` writes `w = -z_view`, but
+switching the guard from `w > 1e-6` to `abs(w)` and switching the matrix pair from
+`volumeViewProj_Prev` to `viewPrev`/`projectionPrev` both leave the mean at the no-history value
+(`[63.9, 40.2, 34.6]` and `[64.1, 40.3, 34.7]`). The world-position projection therefore still
+does not land on the pixel's history for this pass; the fallback is kept as a conservative
+no-history path for a non-finite motion sample, and the motion vectors are the shipping
+reprojection. A future camera fallback needs a per-pixel reference comparison, not another matrix
+swap.
 
 AD 1.50, `ad_swampy`, build `ci-windows-42593822566`, `rt_truelight 0`: GI on
 `[36.8, 28.9, 17.7]` vs off `[34.1, 26.8, 16.3]` (+8% on the mean), 0 `NVRHI::ERROR`.
