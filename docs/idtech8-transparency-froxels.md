@@ -10,10 +10,13 @@ The report shares one froxel irradiance volume across every transparency (partic
 and stores it during the light-scattering froxel dispatch. This slice adds the ABI and the CPU
 sampling oracle; the GPU image and its update pass are the next commits.
 
-- **Grid**: 64 x 32 x 64 froxels = 131,072 probes, one world-space box (`origin` + `size` per
-  axis), independent of the camera snap.
-- **Probe**: 4-coefficient RGB SH (L0, L1x, L1y, L1z), 48 bytes; the volume is 6.3 MB at this
-  resolution.
+- **Grid**: one world-space box (`origin` + `size` per axis), independent of the camera snap.
+  Three tiers share the layout: low 32 x 16 x 32, medium 64 x 32 x 64 (the CPU oracle) and high
+  128 x 64 x 128. The high tier is the report's ~50 MB budget (128 x 64 x 128 x 48 B = 50.3 MB);
+  the GPU buffer is allocated at that high size and the active dimensions come from
+  `transparencyFroxelParams.yzw` (`rt_transparency_froxel_quality`, default 1 = medium).
+- **Probe**: 4-coefficient RGB SH (L0, L1x, L1y, L1z), 48 bytes. Four coefficients are the
+  report's 2-band SH; the medium grid is 6.3 MB and the high grid is 50.3 MB.
 - **Lookup**: trilinear blend of the eight surrounding froxels and the Lambertian SH convolution
   (`0.886227` for L0, `1.023328` for L1).
 - **SH helpers**: `AccumulateRadiance`, `NormalizeSh` (4*pi / sampleCount) and
