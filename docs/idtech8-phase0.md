@@ -125,6 +125,8 @@ Remaining plan items, in report order:
 2. ReSTIR GI / indirect: `feat/idtech8-restir-gi` has the 48-byte reservoir twin and the GPU
    two-slot history buffer at set 9 with motion-vector reprojection and visibility reuse; spatial
    taps and the half-resolution layout are next.
-3. Transparencies froxel irradiance volume and the final-gather replacement/blend policy.
+3. Transparencies froxel irradiance volume: `feat/idtech8-transparency-froxels` starts with the
+   64 x 32 x 64 SH4 CPU oracle; the GPU image and light-scattering update are next. The
+   final-gather replacement/blend policy follows.
 4. AD measurements (`ad_tfuma`, `ad_swampy`, the user's save) and the deferred capacity/reach/cell
    tuning; only after the volume path is stable.
