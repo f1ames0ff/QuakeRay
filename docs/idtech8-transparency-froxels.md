@@ -61,6 +61,10 @@ set-6 froxel buffer.
   `NVRHI::ERROR` is 0 for all three. The high tier's 50.3 MB buffer and 16k-group fill run
   without a crash.
 
+- Developer proof: build `ci-windows-42591987829` with `rt_transparency_froxel 2` (green replaces
+  the froxel contribution) gives 0.9% green-dominant pixels on `ad_swampy` and 0.8% on `ad_tfuma`,
+  with 0 `NVRHI::ERROR`; the small fraction is the glass/particle coverage in the spawn view.
+
 ## Tests
 
 `qray_transparency_froxel_tests` (16 checks locally):
