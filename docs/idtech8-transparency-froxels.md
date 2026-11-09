@@ -65,6 +65,14 @@ set-6 froxel buffer.
   the froxel contribution) gives 0.9% green-dominant pixels on `ad_swampy` and 0.8% on `ad_tfuma`,
   with 0 `NVRHI::ERROR`; the small fraction is the glass/particle coverage in the spawn view.
 
+## Blend policy
+
+The glass and particle consumers multiply the sampled froxel irradiance by
+`transparencyFroxelBlendParams.x`, the new host cvar `rt_transparency_froxel_blend` (0..1, default
+1). 0 disables the froxel contribution without stopping the fill, 1 keeps the original additive
+behavior, and intermediate values mix it with the screen-space GI. The debug value
+`rt_transparency_froxel 2` bypasses the weight (it is a proof, not lighting).
+
 ## Tests
 
 `qray_transparency_froxel_tests` (16 checks locally):
