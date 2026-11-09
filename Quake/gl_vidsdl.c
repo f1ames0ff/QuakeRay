@@ -402,6 +402,7 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_light_volume_rays, "16") \
 	CVAR_DEF_T (rt_radiance_cache, "0") \
 	CVAR_DEF_T (rt_radiance_cache_age, "30") \
+	CVAR_DEF_T (rt_radiance_cache_split, "0") \
 	CVAR_DEF_T (rt_radiance_cache_cell, "16") \
 	CVAR_DEF_T (rt_radiance_cache_lod, "1024") \
 	CVAR_DEF_T (rt_restir_gi, "0") \
@@ -1620,6 +1621,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_light_volume_rays");
 	RT_Bench_Setting (f, "rt_radiance_cache");
 	RT_Bench_Setting (f, "rt_radiance_cache_age");
+	RT_Bench_Setting (f, "rt_radiance_cache_split");
 	RT_Bench_Setting (f, "rt_radiance_cache_cell");
 	RT_Bench_Setting (f, "rt_radiance_cache_lod");
 	RT_Bench_Setting (f, "rt_restir_gi");
@@ -3899,6 +3901,7 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.radianceCacheCellSize = CLAMP (1.0f, CVAR_TO_FLOAT (rt_radiance_cache_cell), 256.0f),
 		.radianceCacheLodDistance = CLAMP (64.0f, CVAR_TO_FLOAT (rt_radiance_cache_lod), 65536.0f),
 		.radianceCacheAge = CLAMP (0.0f, CVAR_TO_FLOAT (rt_radiance_cache_age), 600.0f),
+		.radianceCacheSplitEnabled = CVAR_TO_BOOL (rt_radiance_cache_split) ? 1u : 0u,
 		.restirGiEnabled = CVAR_TO_BOOL (rt_restir_gi) ? 1u : 0u,
 		.transparencyFroxelEnabled = CVAR_TO_BOOL (rt_transparency_froxel) ? 1u : 0u,
 		.transparencyFroxelQuality = (uint32_t)CLAMP (0, CVAR_TO_INT32 (rt_transparency_froxel_quality), 2),

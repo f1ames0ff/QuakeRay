@@ -26,8 +26,12 @@ The hash, LOD and lookup math live in `renderer/Source/RadianceCache.h/.cpp` and
 
 ## Limitations of this slice
 
-- The pass still traces and shades in one raygen. The report's separate visibility pass, packed
-  hit buffer and indirect cache-shading dispatch are the next step.
+- The split path (`Feat/idtech8-radiance-cache-split`, host cvar `rt_radiance_cache_split`) is now
+  implemented: the volume raygen trace writes one 64-byte packed hit record per probe ray into a
+  20.9 MB buffer (set 6 binding 21), and a second raygen (`RtLightVolumeShade.rgen`) reconstructs
+  the hit from the record, runs the sun/local-light NEE and the cache lookup, and writes the probe
+  SH. The visibility and shade dispatches are paired on the same list with a UAV transition
+  between them. The non-split path remains the default.
 - A cache entry stores the final shaded radiance, including the view-dependent local-light term.
   Reusing it across probe rays is an approximation; the report's cache is also reused across rays,
   but its shading stage has the full surface inputs.
