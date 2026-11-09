@@ -55,14 +55,22 @@ intensity and carries its `_color`. Before the fix `ad_tfuma` reported one grid 
 | `ad_tfuma` (Terror Fuma) | 651 | `[44.7, 35.6, 23.6]` | 0.037 |
 | `ad_swampy` | 1577 | `[49.5, 36.5, 17.7]` | 0.037 |
 
-The `ad_swampy` feature matrix (grid 1, ReSTIR 1, volume 1, cache 0, GI 0):
+The map-light power fix (`RT_LIGHT_Emit` now uses luminance(resolved.color)) makes the cluster
+power range nonzero: `power 0.0000..36,736,236` instead of `0..0`. The post-fix `ad_swampy` matrix
+(build `ci-windows-42586988356`, grid 1, ReSTIR 1, volume 1, cache 0, GI 0):
 
 | configuration | mean RGB | near-black |
 |---|---|---:|
-| baseline | `[49.5, 36.5, 17.7]` | 0.037 |
+| baseline | `[50.5, 37.8, 19.6]` | 0.028 |
 | grid 0 | `[52.0, 39.3, 21.3]` | 0.019 |
-| ReSTIR 0 | `[61.1, 45.7, 22.5]` | 0.013 |
+| ReSTIR 0 | `[61.7, 46.3, 23.4]` | 0.013 |
+| ReSTIR 1, candidates 32 | `[32.6, 26.1, 17.3]` | 0.091 |
+| ReSTIR 1, grid 0 | `[41.7, 32.2, 20.9]` | 0.058 |
 | volume 0 | `[49.5, 36.1, 16.7]` | 0.045 |
+
+Frame time from `rt_stats_dump` on `ad_swampy` (build `ci-windows-42586988356`, baseline):
+`gpu.frame 10.85 ms`, `gpu.pass direct 3.36 ms`, `indirect 0.78 ms`, `clouds 2.66 ms`,
+`setup 2.49 ms`, `compose 0.56 ms`; the remaining passes are below 0.3 ms.
 
 Observations:
 
@@ -72,10 +80,10 @@ Observations:
   cluster path (`[52.0, ...]`, 1.9%); the full-cell fallback keeps every light reachable, but the
   grid ranking (`power` is zero for the legacy map lights, see `RT_LIGHT_Emit`) still changes the
   sampled set. This is the deferred grid-capacity/reach tuning target.
-- ReSTIR off is brighter than on (`[61.1, ...]` vs `[49.5, ...]`): with 1577 lights the reservoir
-  loses energy relative to the non-ReSTIR path. The `id1` direction was the opposite, so the AD
-  target/candidate weighting needs a separate tuning pass (the zero map-light power is the first
-  suspect).
+- ReSTIR off is still brighter than on (`[61.7, ...]` vs `[50.5, ...]`): the map-light power fix
+  did not remove the energy loss. Raising the candidates to 32 makes it worse (`[32.6, ...]`) and
+  the global-array path without the grid is still darker (`[41.7, ...]`), so the loss is in the
+  target/pdf weighting or the light-count/candidate distribution, not in the grid candidate count.
 - The volume path changes little here (`[49.5, 36.1, 16.7]` vs `[49.5, 36.5, 17.7]`); weight
   tuning needs a torch-corridor/reference view.
 - Frame times are not captured yet; `rt_stats_dump` is the next measurement step.
