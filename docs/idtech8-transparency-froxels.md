@@ -26,9 +26,16 @@ covers it.
 
 `RhiRtDirectPass` owns the 6.3 MB probe buffer at set 6 binding 20, allocated once and cleared on
 creation. `Shaders/TransparencyFroxels.hlsli` carries the GPU layout, the SH accumulation helpers
-and the trilinear `q2SampleTransparencyFroxel`; the light-scattering fill pass and the glass /
-particle consumers are the next commits. Until the fill exists the buffer stays zero and no
-shader reads it.
+and the trilinear `q2SampleTransparencyFroxel`.
+
+The light-scattering fill is `CmBuildTransparencyFroxels.comp.hlsl`: a compute dispatch over all
+131,072 probes, eight Fibonacci directions per probe, one grid light per direction (the strongest
+in the cell, up to four candidates), and a smooth radius falloff. The result is the SH4 integral
+stored in the probe buffer. The pipeline declares the seven shader set positions; set 2 is the
+global uniform and set 6 is the shared light layout, so the fill reads the same grid and light
+sources as the RT passes.
+
+The glass/particle consumers are the next commit; until then the filled buffer is not sampled.
 
 ## Tests
 
