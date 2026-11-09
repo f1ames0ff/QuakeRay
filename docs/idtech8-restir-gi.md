@@ -59,6 +59,20 @@ Limitations of this slice: the visibility trace adds one indirect ray when a reu
 the reservoir stores a view-dependent radiance, so reuse is approximate; the history has no
 surface-normal validation.
 
+## History validation (normal + age) — runtime finding
+
+Hot-swap runtime on the GI build (`ci-windows-42598327333`, e1m1, `rt_restir_gi 1`):
+
+- pre-validation motion build: `[73.5, 49.2, 41.4]` vs off `[63.7, 41.8, 36.0]`;
+- validation shader: `[64.0, 41.6, 35.9]`, i.e. the normal check rejects almost every history
+  sample and the pass falls back to no history;
+- age-only variant (normal check bypassed): `[92.6, 75.4, 45.1]`, so the age/merge path also
+  changes the accumulation rather than behaving like the pre-validation path.
+
+The CPU twin passes (35 checks), so the shader's pack/decode or the merge pad propagation differs
+from the twin. The branch is **not shippable** until the packed normal is debugged; the shipped GI
+remains the motion build `[73.5]`.
+
 ## History validation (normal + age)
 
 The selected sample packs its receiver normal and frame into the reservoir's free `pad` word:
