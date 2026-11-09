@@ -49,6 +49,22 @@ Build `ci-windows-42589617713`, `e1m1`, `rt_light_volume 1`:
 - The 20.9 MB hit buffer, the second raygen and the UAV transition pair run without a validation
   error; the split image matches the combined raygen within the run-to-run noise.
 
+## Runtime counters and the volume-probe hit issue
+
+Build `ci-windows-42596608531`, `e1m1` and `ad_swampy`, `rt_radiance_cache 1`,
+`rt_radiance_cache_split 0` and `1`, `rt_stats_panels 1`: the dump prints the three new rows
+(`gpu.rays cache hit/miss/active`) but they read 0 on both maps. The counters themselves are wired:
+the volume pass adds exactly 4096 x 16 = 65,536 `INDIRECT` counts when `rt_light_volume 1` (475,456
+vs 409,920 with it off), so its `rayStatsAdd` calls reach the host. The cache calls are skipped
+because nearly every probe ray is classified as sky: the same run adds only ~126
+`SHADOW_INDIRECT` counts for those 65,536 rays, and the cache lookup sits behind the non-sky
+branch.
+
+This is a pre-existing light-volume issue, not a counter issue: the probe rays do not report
+geometry hits, so the volume probes (and the cache) only ever see sky. The counters make it
+visible; the probe hit path needs a separate fix before the runtime active-cell count can be
+non-zero.
+
 ## Tests
 
 `qray_radiance_cache_tests` (23 checks locally):
