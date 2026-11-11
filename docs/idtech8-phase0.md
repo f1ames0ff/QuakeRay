@@ -103,14 +103,17 @@ The runtime path behind `rt_light_grid` (default `0`) now follows the target gri
 - GPU build/publication cost of the 8-cascade grid.
 - Grid discontinuity and denoiser artifacts on the dense AD scene.
 
-## Status at 2026-11-09
+## Status at 2026-11-11
 
-The idtech8 stack is open as one PR per feature:
+The idtech8 stack is merged into `master` (PRs #69-#91; the merged-tree CI run
+`43051782413` is green). One PR per feature:
 
 - `#69` light grid, `#70` direct ReSTIR, `#71` volumes, `#72` volume quality tiers, `#73` local
   volumes, `#74` world radiance cache, `#75` ReSTIR GI, `#76` tuning, `#77` transparency froxels,
   `#78` AD map lights, `#79` radiance-cache visibility/shading split, `#80` ReSTIR candidate target,
-  `#81` GI motion reprojection, `#82` radiance-cache active-cell counters.
+  `#81` GI motion reprojection, `#82` radiance-cache active-cell counters, `#83/#84` volume probe
+  cull and unit fixes, `#85/#90` transparency blend and its static A/B, `#86/#88` GI history/tap
+  validation, `#89` froxel metric world box, `#91` radiance-cache multi-frame reuse.
 
 Runtime evidence:
 
@@ -119,21 +122,22 @@ Runtime evidence:
 - AD 1.50 loaded without saves (`rt_truelight 0`): `ad_tfuma` 651 grid sources
   `[44.7, 35.6, 23.6]`, `ad_swampy` 1577 sources `[50.5, 37.8, 19.6]`, power range
   `0..36,736,236`, `gpu.frame 10.85 ms`;
-- radiance-cache split off/on `[64.1, 41.7, 35.9]` / `[64.0, 41.6, 35.9]`;
-- GI motion reprojection on/off `[73.5, 49.2, 41.4]` / `[63.7, 41.8, 36.0]`, same-pixel control
-  `[74.8, 50.3, 42.1]`; AD `ad_swampy` on/off `[36.8, 28.9, 17.7]` / `[34.1, 26.8, 16.3]`;
-- transparency tiers q0/q1/q2 `[49.4]`/`[49.6]`/`[49.8]` and the green consumer proof (0.9%/0.8%).
+- radiance-cache split off/on `[64.1, 41.7, 35.9]` / `[64.0, 41.6, 35.9]`; active-cell counters
+  nonzero on frames that reach geometry; multi-frame reuse baseline `[63.75, 36.91, 29.62]` vs
+  accumulated `[69.81, 43.31, 35.22]` (image diff 6.64);
+- GI: motion reprojection `[73.5, 49.2, 41.4]` vs off `[63.7, 41.8, 36.0]`; receiver-normal
+  history/tap validation `[69.4, 40.3, 32.1]` (unbiased on/off, counters 12.24M/59k main and
+  ~1.6M/46k taps);
+- volume probes: unit fix (`32.512 m` cube, `16.256 m` snap) and `RAY_FLAG_NONE`; e1m1 cascade
+  64,059 cache hits per 30 frames, camera-local +104k;
+- transparency: tiers q0/q1/q2 `[49.4]`/`[49.6]`/`[49.8]`; froxel box metric 32.512 m; blend
+  0/0.5/1 on the static test map `[7.54]`/`[8.36]`/`[8.38]` red with the other channels stable
+  to 0.02 (`tests/maps/idtech8_test_glass.map`).
 
-Known issue: the volume probe raygen reports 4096 x 16 `INDIRECT` rays but only ~126
-`SHADOW_INDIRECT` rays, so nearly every probe ray is classified as sky; the radiance-cache lookups
-behind the non-sky branch (and the active-cell counters) therefore stay at zero. Recorded in
-`docs/idtech8-volumes.md` and `docs/idtech8-radiance-cache.md`.
+Remaining work is the report's advanced follow-up, not missing first slices:
 
-Remaining work, in priority order:
-
-1. Fix the volume probe hit path so the probe rays reach geometry.
-2. ReSTIR GI first-slice gaps: normal/age validation of the reused reservoir and the view-dependent
-   radiance approximation.
-3. Transparency blend policy and a scene with dedicated glass/particle coverage.
-4. Remaining AD tuning: grid capacity/reach and the ReSTIR-off/on gap after the target fix
-   (`[43.9, 36.1, 25.3]` vs `[46.4, 38.0, 26.0]`).
+1. Feed the radiance cache from the final gather / indirect raygen and add multi-bounce reuse.
+2. ReSTIR GI: further tap/visibility refinements and the view-dependent radiance approximation.
+3. Transparency: production blend tuning and broader froxel coverage.
+4. AD tuning: the ReSTIR-off/on gap after the target fix (`[43.9, 36.1, 25.3]` vs
+   `[46.4, 38.0, 26.0]`).
