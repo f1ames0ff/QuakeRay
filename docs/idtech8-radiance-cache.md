@@ -75,6 +75,24 @@ baseline mean `[63.75, 36.91, 29.62]` (24,696 hits) vs accumulation `[69.81, 43.
 (15,459 hits), mean absolute image difference 6.64, 0 `NVRHI::ERROR`. The hit-count difference is
 run-state; the image shift is the accumulated cell radiance.
 
+## Indirect feed and second-bounce reuse
+
+The indirect raygen now feeds the cache: the first-bounce `hitRadiance` is stored at
+`hitSurf.position`, and the second diffuse bounce (GI level 2) looks up the hit cell before running
+its NEE, reusing the stored radiance when present. The same pass is what fills the cache in normal
+gameplay; the volume probes then reuse those entries.
+
+Runtime e1m1, `rt_gi_level 2`, split, 30 dumps:
+
+| cache | mean RGB | hits | misses | active |
+|---|---|---:|---:|---:|
+| off | `[69.41, 42.47, 34.52]` | 0 | 0 | 0 |
+| on | `[65.78, 36.93, 29.29]` | 11,337,693 | 20 | 876 |
+
+Mean absolute image difference 6.3, 0 `NVRHI::ERROR`. The cache path is active end to end; the
+~8% darkening is the first-slice approximation of reusing the stored outgoing radiance for the
+second bounce (the cache stays opt-in).
+
 ## Tests
 
 `qray_radiance_cache_tests` (23 checks locally):
