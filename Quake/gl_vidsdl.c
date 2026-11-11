@@ -408,6 +408,7 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_restir_gi, "0") \
 	CVAR_DEF_T (rt_transparency_froxel, "0") \
 	CVAR_DEF_T (rt_transparency_froxel_quality, "1") \
+	CVAR_DEF_T (rt_transparency_froxel_blend, "1") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
 	CVAR_DEF_T (rt_stats_interval, "0.2") \
 	CVAR_DEF_T (rt_end_task_delay_ms, "0") \
@@ -1627,6 +1628,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_restir_gi");
 	RT_Bench_Setting (f, "rt_transparency_froxel");
 	RT_Bench_Setting (f, "rt_transparency_froxel_quality");
+	RT_Bench_Setting (f, "rt_transparency_froxel_blend");
 	RT_Bench_Setting (f, "rt_renderscale");
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
 	RT_Bench_Setting (f, "rt_upscale_dlss");
@@ -3908,6 +3910,7 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.restirGiEnabled = CVAR_TO_BOOL (rt_restir_gi) ? 1u : 0u,
 		.transparencyFroxelEnabled = (uint32_t)CLAMP (0, CVAR_TO_INT32 (rt_transparency_froxel), 2),
 		.transparencyFroxelQuality = (uint32_t)CLAMP (0, CVAR_TO_INT32 (rt_transparency_froxel_quality), 2),
+		.transparencyFroxelBlend = CLAMP (0.0f, CVAR_TO_FLOAT (rt_transparency_froxel_blend), 1.0f),
 		.giBounceRays = gi_level,
 		// Q2RTX pt_sun_bounce_range / sun_bounce: how far the sun reaches into an
 		// indirect bounce (game units, 0 turns indirect sunlight off) and a
