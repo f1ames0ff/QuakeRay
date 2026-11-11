@@ -66,6 +66,36 @@ local volume per frame. Hit shading uses sun NEE, one grid/cluster light NEE and
 miss uses the uniform sky fallback. The volume SH is added on top of the screen-space GI (not a
 replacement); 0.25 is the tested first-slice weight.
 
+## Probe-unit fix (2026-11-09)
+
+The probe path was not a cull problem after all. The renderer scene is metric: the camera uniform
+reads `x = 12` for Quake `x = 480`, while `Q2_LIGHT_VOLUME_BASE_BOUNDS`/`_SNAP` were the report's
+Quake values 1280/640. The probe cube was therefore 1280 m across (~40x the map), every cascade
+origin snapped to 0, and every probe sat outside the level; the volume saw only sky.
+
+Measured with a shader that encoded the first probe's position into a ray-stat:
+`probePosition.x = -600` for a camera at 12 m, i.e. `origin = 0`, `bounds = 1280`.
+
+Fix:
+
+- `LightVolumeGpu.hlsli`: `Q2_LIGHT_VOLUME_BASE_BOUNDS 32.512`, `_SNAP 16.256` (1280/640 Quake
+  units x 0.0254 m).
+- `LightVolume.h`: `kBaseBounds = 32.512f`, `kSnap = 16.256f`.
+- `gl_vidsdl.c`: local-volume origins and bounds are converted with `QUAKEUNIT_IN_METERS` before
+  the upload.
+- `LightVolumeTests.cpp`: literals moved to meters; 85 checks, 0 failures.
+
+Hot-swap verification on the existing cull-fix build (`ci-windows-42671545279`, e1m1,
+`rt_radiance_cache 1`, split 0), 30 frames:
+
+- cascade constants only: **62,631** cache hits (max 998/frame);
+- camera-local volume bounds 512 Quake units with the shader-side `0.0254` conversion:
+  **166,727** hits (max 8,178/frame), +104,096 from the local volume, 0 `NVRHI::ERROR`.
+
+The host patch applies the same `QUAKEUNIT_IN_METERS` factor, so both the cascade and the local
+volume paths are verified; only a full build of the host conversion remains (GitHub Actions
+outage).
+
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 
 Build `ci-windows-42412543551`, `e1m1` (`the Slipgate Complex`), `rt_light_grid 1 rt_restir 1
