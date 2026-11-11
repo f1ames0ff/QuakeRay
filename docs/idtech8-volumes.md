@@ -44,12 +44,21 @@ The GPU path is now added on top:
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
 
-Known issue (2026-11-09): the probe raygen's ray-stat counts show 65,536 `INDIRECT` rays per frame
-(4096 probes x 16) but only ~126 `SHADOW_INDIRECT` rays. The world-radiance-cache counters are
-nonzero only on the rare frames that reach geometry (`9 hit / 3 miss / 3 active` across eight
-dumps), so nearly every probe ray is classified as sky and the volume sees only the sky radiance.
-The probe hit path needs a separate fix; the counters in the active-cell branch make the issue
-measurable.
+Probe cull fix (`fix/idtech8-volume-probe-hits`): the probe rays inherited the primary pass's
+`RAY_FLAG_CULL_FRONT_FACING_TRIANGLES`. A diagnostic that traced one camera ray and one probe ray
+per invocation with `RAY_FLAG_NONE` hit both (volume-on deltas: `SHADOW_DIRECT` +5,229,
+`SHADOW_INDIRECT` +2,233, against +0 with the culled `traceIndirectRay`). The probe trace now uses
+a dedicated `traceVolumeRay` with `RAY_FLAG_NONE` and the same indirect cull mask; the
+primary/direct/indirect passes keep their cull.
+
+Runtime on `test/idtech8-volume-probe-fix-runtime` shows the fix is necessary but not sufficient:
+with the probe trace on `RAY_FLAG_NONE`, the cascade probes at the e1m1 spawn still produce only
+~55-60 cache hits over 30 frames. A camera-local volume bounds sweep does not change that — 128:
+59, 256: 47, 512: 55 hits — while a local volume at the world origin gives 1,549. The trace and
+cache work and shrinking the probe cube does not help, so the remaining loss is the sampled ray
+directions or the per-probe position mapping, not the cull and not the cube size. The volume still
+reads mostly sky. The next diagnostic is a fixed-direction (axis) probe-ray hit counter, which
+needs a new build; GitHub Actions was in a major outage at this point.
 
 Limitations of this GPU slice: the local volumes are session-placed through the console, not yet
 authored in a level file; the atlas is cleared on a snap change and refills one cascade and one
