@@ -94,42 +94,46 @@ The runtime path behind `rt_light_grid` (default `0`) now follows the target gri
 
 ## Missing measurements
 
-- `ad_tfuma`, `ad_swampy`, and the user's save at the same settings.
+- `ad_tfuma`, `ad_swampy`, and the user's save at the same settings. The local data has only
+  `id1`, `rogue` and `hipnotic`; the AD installation and save are needed from the operator.
+- The first id1 tuning matrix (grid/ReSTIR/volume/cache/GI on/off and reach 10/15/25 m) is in
+  `docs/idtech8-tuning.md`; frame times are not captured yet.
 - Change-frame cost at HEAD (M3; the legacy 30 ms figure predates `3e59c3da`).
 - `rt_gi_level 1` vs 2 with a cvar dump (A1).
 - GPU build/publication cost of the 8-cascade grid.
 - Grid discontinuity and denoiser artifacts on the dense AD scene.
 
-## Next step
+## Status at 2026-11-09
 
-The direct-light ReSTIR reservoir is implemented on `feat/idtech8-restir` (see
-`docs/idtech8-restir.md`): weightSum/sampleCount/selectedTarget records, two-slot temporal
-reuse, four spatial taps, grid-based candidates when `rt_light_grid` covers the point, and a
-64-sample history cap.
+The idtech8 stack is open as one PR per feature:
 
-The volume stack continues in `docs/idtech8-volumes.md`:
+- `#69` light grid, `#70` direct ReSTIR, `#71` volumes, `#72` volume quality tiers, `#73` local
+  volumes, `#74` world radiance cache, `#75` ReSTIR GI, `#76` tuning, `#77` transparency froxels,
+  `#78` AD map lights, `#79` radiance-cache visibility/shading split, `#80` ReSTIR candidate target,
+  `#81` GI motion reprojection, `#82` radiance-cache active-cell counters.
 
-- `feat/idtech8-volumes` (PR #71): GPU probe atlas, one-cascade update, final gather, local-light
-  NEE on probe hits, and the 85-check CPU ABI oracle.
-- `feat/idtech8-volume-quality`: `rt_light_volume_rays` selects the report's 64/32/16
-  visibility-ray tiers; the update loop and normalization use the actual count.
-- `feat/idtech8-volume-local`: one 10^3 hand-placed local volume per frame on top of the cascade;
-  `rt_light_volume_local_add` / `_clear` / `_list` manage up to eight slots and the lookup prefers
-  the smallest containing local volume.
+Runtime evidence:
 
-Remaining plan items, in report order:
+- grid on/off, direct ReSTIR on/off, volume on/off, quality tiers, local volumes: in
+  `docs/idtech8-restir.md`, `docs/idtech8-volumes.md`, `docs/idtech8-tuning.md`;
+- AD 1.50 loaded without saves (`rt_truelight 0`): `ad_tfuma` 651 grid sources
+  `[44.7, 35.6, 23.6]`, `ad_swampy` 1577 sources `[50.5, 37.8, 19.6]`, power range
+  `0..36,736,236`, `gpu.frame 10.85 ms`;
+- radiance-cache split off/on `[64.1, 41.7, 35.9]` / `[64.0, 41.6, 35.9]`;
+- GI motion reprojection on/off `[73.5, 49.2, 41.4]` / `[63.7, 41.8, 36.0]`, same-pixel control
+  `[74.8, 50.3, 42.1]`; AD `ad_swampy` on/off `[36.8, 28.9, 17.7]` / `[34.1, 26.8, 16.3]`;
+- transparency tiers q0/q1/q2 `[49.4]`/`[49.6]`/`[49.8]` and the green consumer proof (0.9%/0.8%).
 
-1. World radiance cache between visibility sampling and the volume update: the first slice is on
-   `feat/idtech8-radiance-cache` (spatial hash, LOD cells, 30-frame reuse); the separate visibility
-   and cache-shading passes are the next commits.
-2. ReSTIR GI / indirect: `feat/idtech8-restir-gi` has the 48-byte reservoir twin and the GPU
-   two-slot history buffer at set 9 with motion-vector reprojection and visibility reuse; spatial
-   taps and the half-resolution layout are next.
-3. Transparencies froxel irradiance volume: `feat/idtech8-transparency-froxels` has the
-   64 x 32 x 64 SH4 CPU oracle, the GPU image, the 131k-probe compute fill and the glass/particle
-   consumers behind `rt_transparency_froxel`. The report's 2-band SH/50 MB target, the quality
-   tiers and the final-gather replacement/blend policy remain.
-4. AD measurements (`ad_tfuma`, `ad_swampy`, the user's save) and the deferred capacity/reach/cell
-   tuning. The local data has only `id1`, `rogue` and `hipnotic`; the AD maps and save are the
-   blocking input. The id1 tuning matrix and the motion-vector GI limitation are recorded in
-   `docs/idtech8-tuning.md` and `docs/idtech8-restir-gi.md`.
+Known issue: the volume probe raygen reports 4096 x 16 `INDIRECT` rays but only ~126
+`SHADOW_INDIRECT` rays, so nearly every probe ray is classified as sky; the radiance-cache lookups
+behind the non-sky branch (and the active-cell counters) therefore stay at zero. Recorded in
+`docs/idtech8-volumes.md` and `docs/idtech8-radiance-cache.md`.
+
+Remaining work, in priority order:
+
+1. Fix the volume probe hit path so the probe rays reach geometry.
+2. ReSTIR GI first-slice gaps: normal/age validation of the reused reservoir and the view-dependent
+   radiance approximation.
+3. Transparency blend policy and a scene with dedicated glass/particle coverage.
+4. Remaining AD tuning: grid capacity/reach and the ReSTIR-off/on gap after the target fix
+   (`[43.9, 36.1, 25.3]` vs `[46.4, 38.0, 26.0]`).
