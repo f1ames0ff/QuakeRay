@@ -109,6 +109,15 @@ through `TransparencyFroxels.hlsli`.
 monotonic, so this is not yet a clean visual A/B; the green coverage is 0.044% at this view. The
 unit fix is required regardless: it puts the fill probes back in the scene.
 
+## Static glass A/B (test map)
+
+`tests/maps/idtech8_test_glass.map` is a one-brush static glass view (glass2, one fixed light, the
+player start facing the pane), built with ericw-tools qbsp. On the static map the blend no longer
+competes with scene animation: blend 0/0.5/1 red means **7.54 / 8.36 / 8.38**, green
+91.16/91.15/91.14 and blue 109.27/109.05/109.04 — the blend lifts red by 0.84 while the other
+channels stay within 0.02. The scene is static, so this is the dedicated A/B the animated maps
+could not provide. The map and its material entry are documented in `tests/maps/README.md`.
+
 ## Tests
 
 `qray_transparency_froxel_tests` (16 checks locally):
