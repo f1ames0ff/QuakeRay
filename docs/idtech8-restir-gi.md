@@ -97,6 +97,16 @@ Runtime (hot-swap on `ci-windows-42598327333`, e1m1, `rt_restir_gi 1`): the vali
   most taps and removed the spatial contribution (measured `[64.5]`). Taps keep `q2GiUsable` and
   rely on the merge target and the visibility trace.
 
+## Tap validation experiment (not merged)
+
+Validating the four spatial taps against the **previous-frame G-buffer normal** at the tap pixel
+(`fetchGbufferSurface_NoAlbedoViewDir_Prev`) compiles and runs, but rejects most useful taps: the
+primary writes one checkerboard parity per frame, so half of the previous G-buffer normals are a
+frame stale or zero. Runtime e1m1, GI on/off: `[69.4, 40.1, 31.9]` vs `[67.6, 39.4, 31.2]`
+(+1.8), against main-history-only validation `[72.1, 48.3, 41.0]` vs `[63.2, 42.0, 36.1]` (+8.9).
+The tap path stays on `q2GiUsable` plus the merge target and the visibility trace; a correct tap
+validation needs the tap receiver's normal stored with the reservoir, not a G-buffer fetch.
+
 ## Motion-vector isolation (e1m1, build `ci-windows-42593822566` unless noted)
 
 The first slice rejected the motion images because both over-brightened the field. The isolation
