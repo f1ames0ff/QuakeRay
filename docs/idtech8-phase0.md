@@ -113,7 +113,7 @@ The idtech8 stack is merged into `master` (PRs #69-#91; the merged-tree CI run
   `#78` AD map lights, `#79` radiance-cache visibility/shading split, `#80` ReSTIR candidate target,
   `#81` GI motion reprojection, `#82` radiance-cache active-cell counters, `#83/#84` volume probe
   cull and unit fixes, `#85/#90` transparency blend and its static A/B, `#86/#88` GI history/tap
-  validation, `#89` froxel metric world box, `#91` radiance-cache multi-frame reuse.
+  validation, `#89` froxel metric world box, `#91` radiance-cache multi-frame reuse, `#93` cache feed from the indirect raygen.
 
 Runtime evidence:
 
@@ -124,7 +124,8 @@ Runtime evidence:
   `0..36,736,236`, `gpu.frame 10.85 ms`;
 - radiance-cache split off/on `[64.1, 41.7, 35.9]` / `[64.0, 41.6, 35.9]`; active-cell counters
   nonzero on frames that reach geometry; multi-frame reuse baseline `[63.75, 36.91, 29.62]` vs
-  accumulated `[69.81, 43.31, 35.22]` (image diff 6.64);
+  accumulated `[69.81, 43.31, 35.22]` (image diff 6.64); indirect feed/second-bounce reuse
+  `[69.41, 42.47, 34.52]` vs `[65.78, 36.93, 29.29]` (11.34M hits/20 misses, diff 6.3);
 - GI: motion reprojection `[73.5, 49.2, 41.4]` vs off `[63.7, 41.8, 36.0]`; receiver-normal
   history/tap validation `[69.4, 40.3, 32.1]` (unbiased on/off, counters 12.24M/59k main and
   ~1.6M/46k taps);
@@ -136,7 +137,8 @@ Runtime evidence:
 
 Remaining work is the report's advanced follow-up, not missing first slices:
 
-1. Feed the radiance cache from the final gather / indirect raygen and add multi-bounce reuse.
+1. Radiance cache: feed the final gather (not only the indirect bounce) and extend the reuse
+   beyond the second bounce.
 2. ReSTIR GI: further tap/visibility refinements and the view-dependent radiance approximation.
 3. Transparency: production blend tuning and broader froxel coverage.
 4. AD tuning: the ReSTIR-off/on gap after the target fix (`[43.9, 36.1, 25.3]` vs
