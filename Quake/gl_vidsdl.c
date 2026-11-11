@@ -1819,6 +1819,77 @@ static void RT_StatsPrintPanels (const char *prefix)
 
 /*
 ================
+rt_light_volume_local_add / _clear / _list
+
+The GPU irradiance volumes support eight hand-placed local 10^3 volumes on top of the six
+cascades. The command places one at the current view origin; the renderer updates one slot per
+frame and prefers the smallest containing local volume over the cascades. The list is session
+state, so a map change keeps the slots the user placed.
+================
+*/
+typedef struct
+{
+	vec3_t origin;
+	float  bounds;
+} rt_light_volume_local_t;
+
+static rt_light_volume_local_t rt_light_volume_locals[QR_LIGHT_VOLUME_MAX_LOCAL];
+static int rt_light_volume_local_count;
+
+static void RT_LightVolumeLocalAdd_f (void)
+{
+	float bounds = 512.0f;
+
+	if (Cmd_Argc () > 1)
+		bounds = (float)atof (Cmd_Argv (1));
+
+	if (!(bounds > 0.0f))
+	{
+		Con_Printf ("rt_light_volume_local_add: bounds must be greater than 0\n");
+		return;
+	}
+
+	if (rt_light_volume_local_count >= QR_LIGHT_VOLUME_MAX_LOCAL)
+	{
+		Con_Printf ("rt_light_volume_local_add: all %d slots are used; clear first\n",
+		            QR_LIGHT_VOLUME_MAX_LOCAL);
+		return;
+	}
+
+	rt_light_volume_local_t *volume = &rt_light_volume_locals[rt_light_volume_local_count];
+	VectorCopy (r_origin, volume->origin);
+	volume->bounds = bounds;
+
+	Con_Printf ("rt_light_volume_local: slot %d at %.1f %.1f %.1f, bounds %.1f\n",
+	            rt_light_volume_local_count,
+	            volume->origin[0], volume->origin[1], volume->origin[2], volume->bounds);
+	rt_light_volume_local_count++;
+}
+
+static void RT_LightVolumeLocalClear_f (void)
+{
+	rt_light_volume_local_count = 0;
+	Con_Printf ("rt_light_volume_local: cleared\n");
+}
+
+static void RT_LightVolumeLocalList_f (void)
+{
+	if (rt_light_volume_local_count == 0)
+	{
+		Con_Printf ("rt_light_volume_local: no volumes\n");
+		return;
+	}
+
+	for (int i = 0; i < rt_light_volume_local_count; i++)
+	{
+		const rt_light_volume_local_t *volume = &rt_light_volume_locals[i];
+		Con_Printf ("  %d: %.1f %.1f %.1f bounds %.1f\n", i,
+		            volume->origin[0], volume->origin[1], volume->origin[2], volume->bounds);
+	}
+}
+
+/*
+================
 RT_Stats_f -- rt_stats 1, 2 or 3
 
 The argument is the level of the readout, and each level stands for the panels
@@ -3382,6 +3453,9 @@ static void GL_InitInstance (void)
 	Cmd_AddCommand ("rt_cluster_lists", RT_ClusterLists_f);
 	Cmd_AddCommand ("rt_grid_stats", RT_GridStats_f);
 	Cmd_AddCommand ("rt_light_grid_report", RT_LightGridReport_f);
+	Cmd_AddCommand ("rt_light_volume_local_add", RT_LightVolumeLocalAdd_f);
+	Cmd_AddCommand ("rt_light_volume_local_clear", RT_LightVolumeLocalClear_f);
+	Cmd_AddCommand ("rt_light_volume_local_list", RT_LightVolumeLocalList_f);
 	Cmd_AddCommand ("rt_dtal_rebuild", RT_DtalRebuild_f);
 	Cmd_AddCommand ("dlightspot", RT_DlightSpot_f);
 	Cmd_AddCommand ("fog", RT_Fog_Cmd);
@@ -3821,6 +3895,17 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.fixedAlbedo = CVAR_TO_BOOL (rt_no_textures) ? 2.0f : 0.0f,
 		.lightUniqueIdIgnoreFirstPersonViewerShadows = NULL,
 	};
+
+	// Hand-placed local irradiance volumes (rt_light_volume_local_add). The GPU updates one
+	// 10^3 volume per frame and prefers the smallest containing local volume over the cascades.
+	illum_params.lightVolumeLocalCount =
+	    (uint32_t)CLAMP (0, rt_light_volume_local_count, QR_LIGHT_VOLUME_MAX_LOCAL);
+
+	for (int i = 0; i < (int)illum_params.lightVolumeLocalCount; i++)
+	{
+		VectorCopy (rt_light_volume_locals[i].origin, illum_params.lightVolumeLocal[i].origin.data);
+		illum_params.lightVolumeLocal[i].bounds = rt_light_volume_locals[i].bounds;
+	}
 
 	QrDrawFrameBloomParams bloom_params = {
 		.bloomIntensity = 0.0f,

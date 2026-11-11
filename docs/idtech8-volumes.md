@@ -26,21 +26,29 @@ The GPU path is now added on top:
 - A second ray-tracing pipeline (`RtLightVolume.rgen.hlsl`) runs one dispatch of 4,096 probes per
   frame, for `cascade = frameId % 6`. Each probe traces 16 directions, shades the hit with the sun
   NEE and emission, uses the uniform sky fallback on a miss, and stores the SH4 integration.
+- The update dispatch is 4,096 cascade probes plus one 10^3 local volume per frame; the local slot
+  is `frameId % localVolumeCount`, so the report's one-cascade + one-volume schedule is kept. The
+  atlas is cleared when the local-volume list changes.
 - The indirect raygen (`RtQ2Indirect.rgen.hlsl`) samples the atlas at the surface position with the
   same trilinear lookup as the CPU oracle, converts the integrated coefficients to the screen SH
-  layout `(L0, Ly, Lz, Lx)` and adds them with the host weight.
+  layout `(L0, Ly, Lz, Lx)` and adds them with the host weight. A point inside a local volume
+  reads the local 10^3 field; the smallest containing local volume wins over the cascades.
 - Host cvars: `rt_light_volume` (default 0), `rt_light_volume_weight` (default 0.25, clamped to
   0..1; the volume SH is added on top of the screen-space GI in this first slice) and
   `rt_light_volume_rays` (default 16, clamped to 16..64). The report's quality tiers are 64/32/16
   visibility rays per probe; the shader loops and normalizes by the actual count, so 32 is also
   accepted as an intermediate step.
+- Hand-placed local volumes: `rt_light_volume_local_add [bounds]` places a 10^3 volume at the
+  current view origin (default bounds 512 u), `rt_light_volume_local_clear` drops the list and
+  `rt_light_volume_local_list` prints it. Up to 8 slots; the list is session state.
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
 
-Limitations of this GPU slice: local volumes are not written/sampled yet; the atlas is cleared on
-a snap change and refills one cascade per frame. Hit shading uses sun NEE, one grid/cluster light
-NEE and emission; the sky miss uses the uniform sky fallback. The volume SH is added on top of the
-screen-space GI (not a replacement); 0.25 is the tested first-slice weight.
+Limitations of this GPU slice: the local volumes are session-placed through the console, not yet
+authored in a level file; the atlas is cleared on a snap change and refills one cascade and one
+local volume per frame. Hit shading uses sun NEE, one grid/cluster light NEE and emission; the sky
+miss uses the uniform sky fallback. The volume SH is added on top of the screen-space GI (not a
+replacement); 0.25 is the tested first-slice weight.
 
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 
@@ -54,6 +62,25 @@ rt_light_volume 1 rt_light_volume_weight 0.25`:
 - Mean RGB on the same spawn: volume on `[64.5, 41.5, 35.9]`, volume off `[66.3, 29.3, 19.8]`;
   the world-space volume therefore reaches the final gather. At weight 1/4 the tint is much
   stronger, which is why the default is 0.25 and the feature stays opt-in.
+
+## Runtime evidence: quality tiers and local volumes (Proton 11.0, RADV RX 9070 XT)
+
+Build `ci-windows-42538583016` (quality tiers + local volumes), `e1m1`, `the Slipgate Complex`,
+`rt_light_grid 1 rt_restir 1 rt_light_volume 1 rt_light_volume_weight 0.25`:
+
+- `rt_light_volume_rays 16`: mean RGB `[64.3, 41.7, 35.9]`.
+- `rt_light_volume_rays 64`: mean RGB `[64.8, 41.7, 36.0]`, mean absolute channel difference 2.1
+  against the 16-ray frame. `cvarlist` reports `64`; `NVRHI::ERROR` count 0.
+- Local volume at the view origin (`rt_light_volume_local_add 512`): mean RGB
+  `[65.2, 41.9, 36.2]` vs `[64.3, 41.7, 35.9]` without it, mean absolute channel difference 3.0.
+  The run-to-run difference of the same configuration is 1.8, so the 512 u volume changes only the
+  surfaces inside its 256 u half-extent.
+
+The local lookup itself is proven by a temporary debug build (renderer `20530a3`, release
+`ci-windows-42539730885`) that replaces every local-volume sample with a green SH: with
+`rt_light_volume_local_add 16384` the frame mean is `[11.9, 121.3, 9.2]` and 98% of samples are
+green-dominant, while the same build without a local volume stays neutral. The production shader
+keeps the normal SH.
 
 ## Constants
 
@@ -105,7 +132,7 @@ volume are updated per frame, matching the report's interleaved update.
 1. Local-volume GPU update: the same raygen with the local 10^3 probe grid and its origin/bounds.
 2. The world radiance cache: the report splits visibility sampling, cache shading and the volume
    update; this slice still shades the probe ray directly.
-3. Local-volume GPU updates and a final-gather replacement/blend policy once the cascade field is
-   tuned.
+3. A final-gather replacement/blend policy once the cascade field is tuned, and level-file
+   authoring for the local volumes.
 4. The 4-coefficient SH can grow to 9 coefficients only after the atlas layout and sampling are
    stable; the report's 2-band SH matches the current choice.
