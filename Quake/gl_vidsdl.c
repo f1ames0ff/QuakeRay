@@ -397,6 +397,8 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_nee_samples, "2") \
 	CVAR_DEF_T (rt_restir, "0") \
 	CVAR_DEF_T (rt_restir_candidates, "8") \
+	CVAR_DEF_T (rt_light_volume, "0") \
+	CVAR_DEF_T (rt_light_volume_weight, "0.25") \
 	CVAR_DEF_T (rt_stats_panels, "0") \
 	CVAR_DEF_T (rt_stats_interval, "0.2") \
 	CVAR_DEF_T (rt_end_task_delay_ms, "0") \
@@ -1605,6 +1607,8 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_nee_samples");
 	RT_Bench_Setting (f, "rt_restir");
 	RT_Bench_Setting (f, "rt_restir_candidates");
+	RT_Bench_Setting (f, "rt_light_volume");
+	RT_Bench_Setting (f, "rt_light_volume_weight");
 	RT_Bench_Setting (f, "rt_renderscale");
 	RT_Bench_Setting (f, "rt_upscale_fsr31");
 	RT_Bench_Setting (f, "rt_upscale_dlss");
@@ -3798,6 +3802,8 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.neeLightSamples = nee_samples,
 		.restirEnabled = CVAR_TO_BOOL (rt_restir) ? 1u : 0u,
 		.restirCandidates = (uint32_t)CLAMP (1.0f, CVAR_TO_FLOAT (rt_restir_candidates), 64.0f),
+		.lightVolumeEnabled = CVAR_TO_BOOL (rt_light_volume) ? 1u : 0u,
+		.lightVolumeWeight = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_volume_weight), 1.0f),
 		.giBounceRays = gi_level,
 		// Q2RTX pt_sun_bounce_range / sun_bounce: how far the sun reaches into an
 		// indirect bounce (game units, 0 turns indirect sunlight off) and a
@@ -4716,9 +4722,9 @@ void VID_Init (void)
 
 		RT_LockCvar (&rt_enable_pvs);
 		RT_LockCvar (&rt_nee_samples);
-		/* The ReSTIR switches are runtime quality controls, not benchmark constants: locking
-		   them as CVAR_ROM before the +commands run silently forced +rt_restir 1 back to 0.
-		   The benchmark report still records their values. */
+		/* The ReSTIR and light-volume switches are runtime quality controls, not benchmark
+		   constants: locking them as CVAR_ROM before the +commands run silently forced every
+		   command-line test back to 0. The benchmark report still records their values. */
 		RT_LockCvar (&rt_reflrefr_depth);
 
 		Cvar_RegisterVariable (&rt_upload_trace);
