@@ -59,6 +59,20 @@ Limitations of this slice: the visibility trace adds one indirect ray when a reu
 the reservoir stores a view-dependent radiance, so reuse is approximate; the history has no
 surface-normal validation.
 
+## History validation (normal + age) — runtime finding
+
+Hot-swap runtime on the GI build (`ci-windows-42598327333`, e1m1, `rt_restir_gi 1`):
+
+- pre-validation motion build: `[73.5, 49.2, 41.4]` vs off `[63.7, 41.8, 36.0]`;
+- validation shader: `[64.0, 41.6, 35.9]`, i.e. the normal check rejects almost every history
+  sample and the pass falls back to no history;
+- age-only variant (normal check bypassed): `[92.6, 75.4, 45.1]`, so the age/merge path also
+  changes the accumulation rather than behaving like the pre-validation path.
+
+The CPU twin passes (35 checks), so the shader's pack/decode or the merge pad propagation differs
+from the twin. The branch is **not shippable** until the packed normal is debugged; the shipped GI
+remains the motion build `[73.5]`.
+
 ## History validation (normal + age)
 
 The selected sample packs its receiver normal and frame into the reservoir's free `pad` word:
@@ -69,8 +83,19 @@ old. This rejects wrong-surface reuse that the geometric visibility trace alone 
 bounds stale history.
 
 `renderer/Source/RestirGiReservoir.h` carries the CPU twin of the pack/unpack/validation math;
-`qray_restir_gi_tests` covers the normal round-trip, the same/folded/opposite cases and the age
-limit (35 checks total).
+`qray_restir_gi_tests` covers the normal round-trip, the same/folded/opposite cases, the age limit
+and the per-frame age touch (39 checks total).
+
+Runtime (hot-swap on `ci-windows-42598327333`, e1m1, `rt_restir_gi 1`): the validated build is
+`[72.0, 49.2, 41.7]` against the pre-validation motion build `[73.5, 49.2, 41.4]` and GI off
+`[63.7, 41.8, 36.0]`. Two issues were fixed on the way:
+
+- the age in `pad` must be **refreshed every frame** (`q2GiTouch`); using the selected sample's
+  origin frame aged long-lived samples out and reset the accumulation (measured `[61.8]`);
+- the normal check applies to the **main history only**. The four spatial taps store the selected
+  sample's origin normal, not the tap receiver's; validating it against the current pixel rejected
+  most taps and removed the spatial contribution (measured `[64.5]`). Taps keep `q2GiUsable` and
+  rely on the merge target and the visibility trace.
 
 ## Motion-vector isolation (e1m1, build `ci-windows-42593822566` unless noted)
 
