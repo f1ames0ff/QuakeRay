@@ -129,6 +129,18 @@ swap.
 AD 1.50, `ad_swampy`, build `ci-windows-42593822566`, `rt_truelight 0`: GI on
 `[36.8, 28.9, 17.7]` vs off `[34.1, 26.8, 16.3]` (+8% on the mean), 0 `NVRHI::ERROR`.
 
+## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
+
+- Build `ci-windows-42549702028`, `e1m1`, `rt_gi_level 1`, camera reprojection + taps + source pdf:
+  `rt_restir_gi 0` mean RGB `[63.5, 41.6, 35.8]`, `1` `[64.5, 40.2, 34.6]`, mean absolute channel
+  difference 3.0, `NVRHI::ERROR` 0.
+- Build `ci-windows-42550491186`, `rt_gi_level 0.5` (half-row dispatch): off `[66.4, 42.7, 36.7]`,
+  on `[64.4, 40.3, 34.7]`, difference 3.8, 0 `NVRHI::ERROR`; the half-sized buffer and the
+  `y >> 1` indexing render without a crash.
+- The screen-space motion images (regular and DLSS) over-brightened the reused field
+  (`[72.9, 49.5, 41.9]` and `[72.0, 47.5, 40.5]` against off `[64.3, 41.6, 35.8]`); the camera
+  projection is the verified path.
+
 ## Why the CPU twin first
 
 The direct ReSTIR branch started the same way: the reservoir math and the history cap are the part
