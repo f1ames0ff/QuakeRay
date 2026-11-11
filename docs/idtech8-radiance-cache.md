@@ -91,7 +91,12 @@ Runtime e1m1, `rt_gi_level 2`, split, 30 dumps:
 
 Mean absolute image difference 6.3, 0 `NVRHI::ERROR`. The cache path is active end to end; the
 ~8% darkening is the first-slice approximation of reusing the stored outgoing radiance for the
-second bounce (the cache stays opt-in).
+second bounce (the cache stays opt-in). A one-launch grouped A/B (cache off/on/on/off, four
+screenshots) gives off means `[65.47]`/`[65.96]` and on `[69.06]`/`[66.08]`; the per-pixel signal
+(6.3-9.3) sits at the scene-noise level (7.4-8.5), so the functional proof is the counter pair
+(11.34M hits / 20 misses vs 0), not the image delta. The final-gather feed stores the receiver's
+indirect `diffuse + specular` at `surf.position` as well, so screen-space GI reaches the same
+cache; its image effect is likewise below the animated-scene noise and is not chased further.
 
 ## Tests
 
