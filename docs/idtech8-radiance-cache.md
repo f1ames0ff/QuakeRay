@@ -49,6 +49,20 @@ Build `ci-windows-42589617713`, `e1m1`, `rt_light_volume 1`:
 - The 20.9 MB hit buffer, the second raygen and the UAV transition pair run without a validation
   error; the split image matches the combined raygen within the run-to-run noise.
 
+## Runtime counters and the volume-probe hit issue
+
+Build `ci-windows-42596608531`, `e1m1`, `rt_radiance_cache 1`, `rt_radiance_cache_split 1`,
+`rt_stats_panels 1`, with eight dumps over consecutive frames: the new rows are nonzero on frames
+that reach geometry (`gpu.rays cache hit 9`, `cache miss 3`, `cache active 3`), and zero on frames
+whose cascade has no hits. A single dump can land on one of the latter, which is why the first
+one-shot runs read zero.
+
+The volume pass adds exactly 4096 x 16 = 65,536 `INDIRECT` counts when `rt_light_volume 1`
+(475,456 vs 409,920 off), so its `rayStatsAdd` calls reach the host and the counter wiring is
+verified end to end. The hit rate is still very low: the same frames add only ~126
+`SHADOW_INDIRECT` counts, so almost every probe ray is classified as sky. That is a pre-existing
+light-volume issue (recorded in `docs/idtech8-volumes.md`); the cache counters make it measurable.
+
 ## Tests
 
 `qray_radiance_cache_tests` (23 checks locally):
@@ -66,6 +80,9 @@ Build `ci-windows-42589617713`, `e1m1`, `rt_light_volume 1`:
    pass that consumes them, so the cache is filled without shading inside the probe loop.
 2. Feed the cache from the final gather / indirect raygen as well, so screen-space and world-space
    reuse share one cache.
-3. The report's 25 cm cell quantization and explicit active-cell counters; the current base cell is
-   16 u (about 40 cm) and the active set is implicit in the writes.
+3. The report's 25 cm cell quantization. The explicit active-cell counters are implemented: each
+   cache slot carries a frame tag (1 MB of `uint` tags at set 6 binding 22); the first insert of a
+   slot in a frame exchanges the tag and increments `RAY_STATS_CATEGORY_CACHE_ACTIVE`, so
+   `rt_stats_dump` reports the per-frame active set. The hit/miss counters are categories 6 and 7.
+   The base cell is still 16 u (about 40 cm).
 4. Denoise/upscale policy after the cache and volume fields are stable.
