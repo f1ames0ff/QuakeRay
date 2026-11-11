@@ -29,7 +29,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -189,3 +189,21 @@ jobs:
       - name: Show the build receipt
         shell: pwsh
         run: Get-Content "build\$env:QR_CONFIG\qray-build.json"
+
+      - name: Upload the manual Windows build
+        if: github.event_name == 'workflow_dispatch' && matrix.configuration == 'Release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "ci-windows-$env:GITHUB_RUN_ID"
+          $zip = Join-Path $env:RUNNER_TEMP "quakeray-windows-$env:QR_CONFIG.zip"
+          $paths = @()
+          $paths += (Get-ChildItem "build\$env:QR_CONFIG" -File -Filter *.dll | Select-Object -ExpandProperty FullName)
+          $paths += (Resolve-Path "build\$env:QR_CONFIG\quakeray.exe").Path
+          $paths += (Resolve-Path "build\$env:QR_CONFIG\id1").Path
+          Compress-Archive -Path $paths -DestinationPath $zip -Force
+          gh release create $tag $zip --repo $env:GITHUB_REPOSITORY --title "Windows build $env:GITHUB_RUN_ID" --notes "Manual Windows build for Proton testing." --prerelease
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with $LASTEXITCODE" }
+          Write-Host "Release: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
