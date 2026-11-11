@@ -30,11 +30,13 @@ form will live in `renderer/Source/Shaders/RestirGi.hlsli` and share this layout
   resolution (1280 x 720 x 2 x 48 B = 88 MB for the tested size), bound as a UAV at set 9
   binding 0. The buffer is recreated on a size change and cleared once.
 - **Slot**: `frameId & 1` is the current slot; the other one is the history.
-- **Reprojection**: the raygen projects the current world position with the previous frame's
-  `volumeViewProj`; an out-of-range or non-finite UV rejects the history. The screen-space motion
-  images (regular and DLSS) were tried in a separate set 10 and both reprojected to wrong history
-  pixels for this pass, over-brightening the reused field; the motion set stays allocated but is
-  not read until the convention is resolved.
+- **Reprojection**: the raygen reads the engine's DLSS motion image in set 10 and computes
+  `previousUV = currentUV + motion`. `HitInfo.hlsli` stores `motion = previousUV - currentUV`, so
+  this is the same convention the verified direct-ReSTIR path uses. A non-finite sample falls back
+  to `viewPrev`/`projectionPrev`, the main camera pair that also builds the motion vectors; an
+  out-of-range or non-finite UV rejects the history. The earlier camera path used
+  `volumeViewProj_Prev`, the volumetric fog projection, which lands on a different pixel (see the
+  isolation below).
 - **Merge**: the current bounce sample and the reprojected history reservoir are merged with the
   same target/pdf identity as the CPU twin; the history is capped at 64 samples.
 - **Spatial taps**: four neighbours of the reprojected pixel (2 pixels away) are read from the same
@@ -53,9 +55,41 @@ form will live in `renderer/Source/Shaders/RestirGi.hlsli` and share this layout
   checks use the same row count.
 - **Host switch**: `rt_restir_gi` (default 0); the uniform gate is `giReservoirParams.x`.
 
-Limitations of this slice: reprojection uses the camera term only; the screen-space motion images
-over-brightened this pass and are not read; the visibility trace adds one indirect ray when a
-reused sample wins; the reservoir stores a view-dependent radiance, so reuse is approximate.
+Limitations of this slice: the visibility trace adds one indirect ray when a reused sample wins;
+the reservoir stores a view-dependent radiance, so reuse is approximate; the history has no
+surface-normal validation.
+
+## Motion-vector isolation (e1m1, build `ci-windows-42593822566` unless noted)
+
+The first slice rejected the motion images because both over-brightened the field. The isolation
+showed the old camera path was the outlier, not the motion vectors:
+
+| configuration | mean RGB |
+|---|---|
+| GI off | `[63.7, 41.8, 36.0]` |
+| GI on, `previousUV = currentUV - motion` (minus) | `[73.6, 49.0, 41.5]` |
+| GI on, `previousUV = currentUV + motion` (plus) | `[74.0, 48.9, 41.4]` |
+| GI on, same-pixel control `previousUV = currentUV` | `[74.8, 50.3, 42.1]` |
+| GI on, old `volumeViewProj_Prev` camera path | `[64.5, 40.2, 34.6]` |
+| GI on, main-matrix camera path, `w > 1e-6` guard | `[64.1, 40.3, 34.7]` |
+| GI on, main-matrix camera path, `abs(w)` guard | `[63.9, 40.2, 34.6]` |
+| GI on, final combined branch (motion primary) | `[73.5, 49.2, 41.4]` |
+
+Both signs agree within noise (the spawn motion is small), and the same-pixel control matches the
+motion path: the reprojection source, not the sign, caused the difference. The luminance
+histograms keep the same p99/max tails, so the lift is a broad convergence change, not fireflies.
+
+The camera path could not be recovered: `Matrix::MakeProjectionMatrix` writes `w = -z_view`, but
+switching the guard from `w > 1e-6` to `abs(w)` and switching the matrix pair from
+`volumeViewProj_Prev` to `viewPrev`/`projectionPrev` both leave the mean at the no-history value
+(`[63.9, 40.2, 34.6]` and `[64.1, 40.3, 34.7]`). The world-position projection therefore still
+does not land on the pixel's history for this pass; the fallback is kept as a conservative
+no-history path for a non-finite motion sample, and the motion vectors are the shipping
+reprojection. A future camera fallback needs a per-pixel reference comparison, not another matrix
+swap.
+
+AD 1.50, `ad_swampy`, build `ci-windows-42593822566`, `rt_truelight 0`: GI on
+`[36.8, 28.9, 17.7]` vs off `[34.1, 26.8, 16.3]` (+8% on the mean), 0 `NVRHI::ERROR`.
 
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 
