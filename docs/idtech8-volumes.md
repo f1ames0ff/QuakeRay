@@ -44,11 +44,57 @@ The GPU path is now added on top:
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
 
+Probe cull fix (`fix/idtech8-volume-probe-hits`): the probe rays inherited the primary pass's
+`RAY_FLAG_CULL_FRONT_FACING_TRIANGLES`. A diagnostic that traced one camera ray and one probe ray
+per invocation with `RAY_FLAG_NONE` hit both (volume-on deltas: `SHADOW_DIRECT` +5,229,
+`SHADOW_INDIRECT` +2,233, against +0 with the culled `traceIndirectRay`). The probe trace now uses
+a dedicated `traceVolumeRay` with `RAY_FLAG_NONE` and the same indirect cull mask; the
+primary/direct/indirect passes keep their cull.
+
+Runtime on `test/idtech8-volume-probe-fix-runtime` shows the fix is necessary but not sufficient:
+with the probe trace on `RAY_FLAG_NONE`, the cascade probes at the e1m1 spawn still produce only
+~55-60 cache hits over 30 frames. A camera-local volume bounds sweep does not change that — 128:
+59, 256: 47, 512: 55 hits — while a local volume at the world origin gives 1,549. The trace and
+cache work and shrinking the probe cube does not help, so the remaining loss is the sampled ray
+directions or the per-probe position mapping, not the cull and not the cube size. The volume still
+reads mostly sky. The next diagnostic is a fixed-direction (axis) probe-ray hit counter, which
+needs a new build; GitHub Actions was in a major outage at this point.
+
 Limitations of this GPU slice: the local volumes are session-placed through the console, not yet
 authored in a level file; the atlas is cleared on a snap change and refills one cascade and one
 local volume per frame. Hit shading uses sun NEE, one grid/cluster light NEE and emission; the sky
 miss uses the uniform sky fallback. The volume SH is added on top of the screen-space GI (not a
 replacement); 0.25 is the tested first-slice weight.
+
+## Probe-unit fix (2026-11-09)
+
+The probe path was not a cull problem after all. The renderer scene is metric: the camera uniform
+reads `x = 12` for Quake `x = 480`, while `Q2_LIGHT_VOLUME_BASE_BOUNDS`/`_SNAP` were the report's
+Quake values 1280/640. The probe cube was therefore 1280 m across (~40x the map), every cascade
+origin snapped to 0, and every probe sat outside the level; the volume saw only sky.
+
+Measured with a shader that encoded the first probe's position into a ray-stat:
+`probePosition.x = -600` for a camera at 12 m, i.e. `origin = 0`, `bounds = 1280`.
+
+Fix:
+
+- `LightVolumeGpu.hlsli`: `Q2_LIGHT_VOLUME_BASE_BOUNDS 32.512`, `_SNAP 16.256` (1280/640 Quake
+  units x 0.0254 m).
+- `LightVolume.h`: `kBaseBounds = 32.512f`, `kSnap = 16.256f`.
+- `gl_vidsdl.c`: local-volume origins and bounds are converted with `QUAKEUNIT_IN_METERS` before
+  the upload.
+- `LightVolumeTests.cpp`: literals moved to meters; 85 checks, 0 failures.
+
+Hot-swap verification on the existing cull-fix build (`ci-windows-42671545279`, e1m1,
+`rt_radiance_cache 1`, split 0), 30 frames:
+
+- cascade constants only: **62,631** cache hits (max 998/frame);
+- camera-local volume bounds 512 Quake units with the shader-side `0.0254` conversion:
+  **166,727** hits (max 8,178/frame), +104,096 from the local volume, 0 `NVRHI::ERROR`.
+
+The host patch applies the same `QUAKEUNIT_IN_METERS` factor, so both the cascade and the local
+volume paths are verified; only a full build of the host conversion remains (GitHub Actions
+outage).
 
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 

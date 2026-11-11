@@ -1993,6 +1993,9 @@ static void RT_StatsDumpWrite (FILE *f, const rt_stats_dump_job_t *job)
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "indirect", snap->gpu.raysPerCategory[2]);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "shadow dir", snap->gpu.raysPerCategory[3]);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "shadow ind", snap->gpu.raysPerCategory[4]);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "cache hit", snap->gpu.raysPerCategory[6]);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "cache miss", snap->gpu.raysPerCategory[7]);
+		fprintf (f, "%-11s %-17s %u\n", "gpu.rays", "cache active", snap->gpu.raysPerCategory[8]);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "rg entry points", snap->gpu.apiCalls);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "geometry", snap->gpu.apiCallsGeometry);
 		fprintf (f, "%-11s %-17s %u\n", "gpu.calls", "raster", snap->gpu.apiCallsRasterized);
@@ -3930,8 +3933,11 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 
 	for (int i = 0; i < (int)illum_params.lightVolumeLocalCount; i++)
 	{
-		VectorCopy (rt_light_volume_locals[i].origin, illum_params.lightVolumeLocal[i].origin.data);
-		illum_params.lightVolumeLocal[i].bounds = rt_light_volume_locals[i].bounds;
+		/* The command stores Quake units; the renderer scene is metric. */
+		VectorScale (rt_light_volume_locals[i].origin, QUAKEUNIT_IN_METERS,
+		             illum_params.lightVolumeLocal[i].origin.data);
+		illum_params.lightVolumeLocal[i].bounds =
+			rt_light_volume_locals[i].bounds * QUAKEUNIT_IN_METERS;
 	}
 
 	QrDrawFrameBloomParams bloom_params = {
