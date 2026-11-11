@@ -3906,7 +3906,7 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.radianceCacheAge = CLAMP (0.0f, CVAR_TO_FLOAT (rt_radiance_cache_age), 600.0f),
 		.radianceCacheSplitEnabled = CVAR_TO_BOOL (rt_radiance_cache_split) ? 1u : 0u,
 		.restirGiEnabled = CVAR_TO_BOOL (rt_restir_gi) ? 1u : 0u,
-		.transparencyFroxelEnabled = CVAR_TO_BOOL (rt_transparency_froxel) ? 1u : 0u,
+		.transparencyFroxelEnabled = (uint32_t)CLAMP (0, CVAR_TO_INT32 (rt_transparency_froxel), 2),
 		.transparencyFroxelQuality = (uint32_t)CLAMP (0, CVAR_TO_INT32 (rt_transparency_froxel_quality), 2),
 		.giBounceRays = gi_level,
 		// Q2RTX pt_sun_bounce_range / sun_bounce: how far the sun reaches into an
