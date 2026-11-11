@@ -73,6 +73,16 @@ The glass and particle consumers multiply the sampled froxel irradiance by
 behavior, and intermediate values mix it with the screen-space GI. The debug value
 `rt_transparency_froxel 2` bypasses the weight (it is a proof, not lighting).
 
+## Blend runtime (build `ci-windows-43045581398`)
+
+One e1m1 run, four screenshots with the blend bound to keys (0, 0.5, 1, 1):
+means `[64.13, 41.64, 35.89]`, `[65.05, 42.55, 36.77]`, `[64.94, 42.99, 37.05]`,
+`[65.62, 43.03, 36.97]`. The frame-to-frame noise between two blend-1 captures is a mean absolute
+difference of 6.37 (80.8% of pixels >6); blend 0 vs 1 is 7.30 (82.8%) — not separable. The spawn
+view has under 1% glass/particle coverage, so the blend delta is far below the animated-scene
+noise. `cvarlist` confirms the cvar, and the earlier green proof shows the froxel value reaches
+both consumers; a dedicated glass/particle scene is needed for a visible A/B.
+
 ## Tests
 
 `qray_transparency_froxel_tests` (16 checks locally):
