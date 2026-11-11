@@ -26,14 +26,28 @@ The hash, LOD and lookup math live in `renderer/Source/RadianceCache.h/.cpp` and
 
 ## Limitations of this slice
 
-- The pass still traces and shades in one raygen. The report's separate visibility pass, packed
-  hit buffer and indirect cache-shading dispatch are the next step.
+- The split path (`Feat/idtech8-radiance-cache-split`, host cvar `rt_radiance_cache_split`) is now
+  implemented: the volume raygen trace writes one 64-byte packed hit record per probe ray into a
+  20.9 MB buffer (set 6 binding 21), and a second raygen (`RtLightVolumeShade.rgen`) reconstructs
+  the hit from the record, runs the sun/local-light NEE and the cache lookup, and writes the probe
+  SH. The visibility and shade dispatches are paired on the same list with a UAV transition
+  between them. The non-split path remains the default.
 - A cache entry stores the final shaded radiance, including the view-dependent local-light term.
   Reusing it across probe rays is an approximation; the report's cache is also reused across rays,
   but its shading stage has the full surface inputs.
 - Writes are not atomic: colliding invocations race and the last writer wins.
 - The cache is not cleared on a map change; the key includes the world cell and the age check
   drops stale entries, so entries from another level are simply never hit.
+
+## Runtime evidence: split path (Proton 11.0, RADV RX 9070 XT)
+
+Build `ci-windows-42589617713`, `e1m1`, `rt_light_volume 1`:
+
+- `rt_radiance_cache_split 0`: mean RGB `[64.1, 41.7, 35.9]`.
+- `rt_radiance_cache_split 1`: `[64.0, 41.6, 35.9]`, mean absolute channel difference 2.3,
+  `cvarlist` confirms `1`, `NVRHI::ERROR` count 0.
+- The 20.9 MB hit buffer, the second raygen and the UAV transition pair run without a validation
+  error; the split image matches the combined raygen within the run-to-run noise.
 
 ## Tests
 
