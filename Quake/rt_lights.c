@@ -475,7 +475,17 @@ void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
     RT_TRACK_Light(position, METRIC_TO_QUAKEUNIT(resolved.radius), resolved.color,
                    emitter->uniqueID, emitter->kind, emitter->name ? emitter->name : "");
 
-    if (emitter->kind == RT_LIGHT_KIND_MAP || CVAR_TO_FLOAT(rt_cluster_dlights) != 0)
+    if (emitter->kind == RT_LIGHT_KIND_MAP)
+    {
+        /* A map light's resolved colour already carries its intensity, so its luminance is the
+           ranking power. RT_ClusterLightAdd left the map lights at zero power, which made the
+           grid/ReSTIR candidate ranking treat every torch as equal and lost energy on the AD
+           maps (1577 sources, ReSTIR off was brighter than on). */
+        const float power = resolved.color[0] * 0.2125f + resolved.color[1] * 0.7154f +
+                            resolved.color[2] * 0.0721f;
+        RT_ClusterLightAddPower(emitter->uniqueID, position, RT_ClusterLightReach(), power);
+    }
+    else if (CVAR_TO_FLOAT(rt_cluster_dlights) != 0)
     {
         RT_ClusterLightAdd(emitter->uniqueID, position, RT_ClusterLightReach());
     }

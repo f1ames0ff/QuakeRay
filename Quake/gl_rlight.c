@@ -864,9 +864,14 @@ void RT_UploadAllElights ()
 			quake_intensity = src->state & STRUCT_STATE_FOUND_WITH_MODEL ? CVAR_TO_FLOAT (rt_elight_default_mdl) : CVAR_TO_FLOAT (rt_elight_default);
 		}
 
-		qboolean accept = 
-			quake_intensity >= CVAR_TO_FLOAT (rt_elight_threshold) &&
-			CVAR_TO_FLOAT (rt_elight_threshold) >= 0;
+		/* A map light is a light whenever it states a positive intensity. The original filter
+		   required a non-negative rt_elight_threshold, so the plain "light" entities that AD and
+		   other mods use (no model, no style) were silently dropped and only the few emissive
+		   models reached the RT light lists. The threshold stays as an optional ceiling: a
+		   non-negative value still filters the weak lights. */
+		const float threshold = CVAR_TO_FLOAT (rt_elight_threshold);
+		qboolean accept = quake_intensity > 0.0f &&
+			(threshold < 0.0f || quake_intensity >= threshold);
 
 		if (src->state & STRUCT_STATE_FOUND_WITH_MODEL)
 		{
@@ -893,6 +898,10 @@ void RT_UploadAllElights ()
 			light.kind = RT_LIGHT_KIND_MAP;
 			VectorCopy (src->origin, light.position);
 			RT_INIT_DEFAULT_LIGHT_COLOR (light.color);
+			if (src->has_color)
+			{
+				VectorCopy (src->color, light.color);
+			}
 			light.intensity = quake_intensity / CVAR_TO_FLOAT (rt_elight_normaliz);
 			light.radius = CVAR_TO_FLOAT (rt_elight_radius);
 			light.style = (src->state & STRUCT_STATE_FOUND_LIGHTSTYLE) ? src->lightstyle : -1;
