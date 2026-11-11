@@ -83,6 +83,18 @@ view has under 1% glass/particle coverage, so the blend delta is far below the a
 noise. `cvarlist` confirms the cvar, and the earlier green proof shows the froxel value reaches
 both consumers; a dedicated glass/particle scene is needed for a visible A/B.
 
+## AD blend A/B attempt
+
+A lit AD scene (`ad_swampy`, `rt_truelight 0`, master `ci-windows-43051875171`) was used for the
+blend 0/0.5/1 A/B in one session. The means were `[65.24, 53.60, 38.18]`, `[66.12, 54.44, 38.98]`,
+`[65.44, 53.55, 37.83]`; the frame-to-frame noise between two blend-1 captures is a 5.87 mean
+absolute difference over 76.5% of pixels, while blend 0 vs 1 is 5.93/75.9% — still not separable.
+The froxel-covered glass/particle area is under 1% in these views, so the signal is far below the
+animated-light noise. Freezing attempts (`pause`, `host_framerate`) either opened the pause menu
+(which swallows the bound keys) or prevented the screenshot sequence. A purpose-built static
+glass/particle view is required for the visual A/B; the cvar plumbing is confirmed by `cvarlist`
+and the green consumer proof (`rt_transparency_froxel 2`, 0.9%/0.8% green-dominant pixels).
+
 ## Tests
 
 `qray_transparency_froxel_tests` (16 checks locally):
