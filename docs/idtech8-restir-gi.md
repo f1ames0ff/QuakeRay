@@ -97,6 +97,16 @@ Runtime (hot-swap on `ci-windows-42598327333`, e1m1, `rt_restir_gi 1`): the vali
   most taps and removed the spatial contribution (measured `[64.5]`). Taps keep `q2GiUsable` and
   rely on the merge target and the visibility trace.
 
+## Receiver-normal experiment (not merged)
+
+The clean design stores the **receiver pixel's normal** in `pad` and refreshes it every frame, so
+both the main history and the spatial taps validate against the receiver. It compiles and the CPU
+twin passes (44 checks), but runtime e1m1 shows GI on/off `[69.4, 40.3, 32.1]` vs
+`[69.4, 40.3, 32.0]` — the history is effectively disabled, while the shipped main-only validation
+gives `[72.1, 48.3, 41.0]` vs `[63.2, 42.0, 36.1]`. The next step is an accepted/rejected counter
+for the main history and each tap to find why the receiver-normal check fails; the branch
+`feat/idtech8-restir-gi-receiver-normal` is kept for that debug.
+
 ## Motion-vector isolation (e1m1, build `ci-windows-42593822566` unless noted)
 
 The first slice rejected the motion images because both over-brightened the field. The isolation
