@@ -105,18 +105,65 @@ and is darker than the floored reference. The earlier global proxy floor was rem
 over-brightened the grid target; the next tuning is a grid-local target floor that matches
 `q2FastMass` without reintroducing the global proxy.
 
-## Motion-vector GI: final decision
+### Floored-mass target fix
 
-The two screen-space motion images were tested for the GI history in the indirect pass: the
-regular image gave `rt_restir_gi 1` mean `[72.9, 49.5, 41.9]` and the DLSS image `[72.0, 47.5,
-40.5]`, against `[64.3, 41.6, 35.8]` with the cache off. Both reproject to wrong history pixels for
-this pass and over-brighten the reused field. The camera projection (`volumeViewProj_Prev`) is the
-shipped path: build `ci-windows-42549702028` gives `[64.5, 40.2, 34.6]` vs `[63.5, 41.6, 35.8]`
-and `ci-windows-42550491186` (half rows) gives `[64.4, 40.3, 34.7]` vs `[66.4, 42.7, 36.7]`. The
-motion set 10 stays allocated but is not read; a future fix needs the exact motion convention for
-the indirect pass, not a different image.
+`q2SampleGridLights` now returns the floored selection mass of the winner, and the ReSTIR target
+uses `mass * luminance(color)` instead of the unfloored `q2LightSelectionMass`. This makes
+`target/pdf` match the grid source pdf for the tiny AD map lights.
 
-## Deferred tuning
+`ad_swampy`, build `ci-windows-42590816027`, `rt_truelight 0`:
+
+| configuration | mean RGB | near-black |
+|---|---|---:|
+| ReSTIR 1 (floored mass) | `[43.9, 36.1, 25.3]` | 0.028 |
+| ReSTIR 0 | `[46.4, 38.0, 26.0]` | 0.024 |
+
+The gap is now ~2.5/1.9/0.7 instead of ~11/8/7 before the fix; the remaining difference is light
+style timing and reservoir variance. The absolute means differ from the earlier `[50.5]`/`[61.7]`
+pair because the map's flickering lights were captured in a different phase; the on/off gap is the
+comparable metric.
+
+## AD capacity/reach sweep
+
+`ad_swampy`, build `ci-windows-42590816027`, `rt_truelight 0`, grid/ReSTIR/volume on:
+
+| `rt_light_reach_static` / `_dynamic` | grid | mean RGB | `gpu.frame` |
+|---|---|---:|---:|
+| 25 / 10 (default) | on | `[37.4]` | 9.42 ms |
+| 50 / 20 | on | `[35.1]` | 10.08 ms |
+| 100 / 40 | on | `[36.6]` | 9.52 ms |
+| 25 / 10 | off | `[35.9]` | 7.11 ms |
+
+The reach sweep stays inside the map's flicker variation (<2.5 mean units) and does not improve the
+AD image; the grid costs about 2.3 ms over the cluster path. Keep the defaults. The remaining AD
+difference is the direct ReSTIR target/pdf gap (~2.5 after the floored-mass fix), not capacity or
+reach.
+
+## Motion-vector GI: resolved
+
+The earlier note that the motion images over-brighten the GI field was based on the camera path
+being the reference. The isolation on e1m1 (build `ci-windows-42593822566`) showed the old
+`volumeViewProj_Prev` camera reprojection was the outlier:
+
+| configuration | mean RGB |
+|---|---|
+| GI off | `[63.7, 41.8, 36.0]` |
+| GI on, `current - motion` | `[73.6, 49.0, 41.5]` |
+| GI on, `current + motion` | `[74.0, 48.9, 41.4]` |
+| GI on, same-pixel control | `[74.8, 50.3, 42.1]` |
+| GI on, old camera path | `[64.5, 40.2, 34.6]` |
+
+Both signs agree (spawn motion is small) and the same-pixel control matches the motion path, so the
+vectors are not the defect: the old camera path projected with the volumetric fog projection and
+mostly rejected the history. `HitInfo.hlsli` stores `motion = previousUV - currentUV`, so
+`previousUV = currentUV + motion` is the convention. The camera fallback was also tried with
+`viewPrev`/`projectionPrev` and an `abs(w)` clip guard, and still stays at the no-history mean
+(`[63.9, 40.2, 34.6]`), so it remains a conservative fallback only. AD `ad_swampy`,
+`rt_truelight 0`: GI on `[36.8, 28.9, 17.7]` vs off `[34.1, 26.8, 16.3]`, 0 errors. The accumulated
+field is broadly brighter with unchanged p99/max tails; it is the converged estimate, not
+fireflies.
+
+## Deferred tuning## Deferred tuning
 
 - The grid capacity question is closed by `docs/idtech8-phase0.md`: 64 IDs/cell is below the AD
   p95, 128 IDs is insufficient at 64/128 u, and the shipped 64-ID grid relies on the full-cell
