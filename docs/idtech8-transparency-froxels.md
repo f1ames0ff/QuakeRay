@@ -95,6 +95,20 @@ animated-light noise. Freezing attempts (`pause`, `host_framerate`) either opene
 glass/particle view is required for the visual A/B; the cvar plumbing is confirmed by `cvarlist`
 and the green consumer proof (`rt_transparency_froxel 2`, 0.9%/0.8% green-dominant pixels).
 
+## Froxel world box units
+
+The fill and both consumers used a fixed world box `(-4096, -2048, -4096)` size
+`(8192, 4096, 8192)` in the report's **Quake units**, while the renderer scene is metric. The fill
+probes were therefore kilometres apart and the sampled cells were empty; the blend weight had
+almost nothing to scale. The box is now a camera-centered **32.512 m** cube (the report's 1280 u),
+shared by `CmBuildTransparencyFroxels.comp.hlsl`, `GlassPaint.hlsli` and `RsParticle.frag.hlsl`
+through `TransparencyFroxels.hlsli`.
+
+`ad_swampy` blend 0/0.5/1 means: `[64.85, 53.21, 37.90]`, `[66.75, 55.00, 39.61]`,
+`[65.78, 54.03, 38.67]`. The per-pixel animated noise is still 5.3 and the 0.5 point is not
+monotonic, so this is not yet a clean visual A/B; the green coverage is 0.044% at this view. The
+unit fix is required regardless: it puts the fill probes back in the scene.
+
 ## Tests
 
 `qray_transparency_froxel_tests` (16 checks locally):
