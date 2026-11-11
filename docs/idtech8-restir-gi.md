@@ -97,6 +97,20 @@ Runtime (hot-swap on `ci-windows-42598327333`, e1m1, `rt_restir_gi 1`): the vali
   most taps and removed the spatial contribution (measured `[64.5]`). Taps keep `q2GiUsable` and
   rely on the merge target and the visibility trace.
 
+## Receiver-normal validation
+
+The reservoir `pad` stores the **receiver pixel's normal** and the current frame, refreshed every
+frame before the store (`q2GiUpdateReceiver`). The main history and all four taps validate against
+that normal, which is the receiver at the pixel the reservoir belongs to; the selected sample's
+origin normal is no longer involved.
+
+Runtime e1m1 (hot-swap, master `ci-windows-43051875171`): GI on `[69.4, 40.3, 32.1]` vs off
+`[69.4, 40.3, 32.0]`. The on/off equality is the **correct** result for an unbiased estimator: the
+non-ReSTIR path and the ReSTIR path now estimate the same field, while the earlier main-only
+validation was over-bright (`[72.1]` vs `[63.2]`) because the unvalidated taps reused wrong-normal
+radiance. Acceptance counters over 30 frames: main history **12.24M accepted / 59k rejected**;
+taps about **1.6M accepted / 46k rejected** per frame. History and taps are fully active.
+
 ## Motion-vector isolation (e1m1, build `ci-windows-42593822566` unless noted)
 
 The first slice rejected the motion images because both over-brightened the field. The isolation
