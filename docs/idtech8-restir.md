@@ -79,6 +79,29 @@ of `rt_nee_samples` independent rays.
   enforcing the checker on this branch.
 - Runtime quality/A-B measurement on the AD maps with `rt_light_grid 1 rt_restir 1` is still open.
 
+## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
+
+Three issues found by the first `e1m1` run are fixed and re-verified:
+
+- `RT_LockCvar` made `rt_restir`/`rt_restir_candidates` `CVAR_ROM` before the `+commands` ran, so
+  `+rt_restir 1` silently stayed 0. The switches are now runtime-settable; `cvarlist rt_restir`
+  reports `1`.
+- NVRHI reported 13,233 `Unknown prior state of buffer RhiRtDirectPass restir reservoirs` errors
+  because the non-permanent reservoir buffer was never announced to the per-list tracker. The
+  buffer is announced as `UnorderedAccess` before each light-set preparation; the rebuilt run
+  reports 0 `NVRHI::ERROR`.
+- The grid builder caps a cell at 64 IDs and silently drops the tail. A full cell now returns no
+  grid sample, so direct/indirect use the cluster lists and ReSTIR uses the global array. With the
+  same `e1m1` spawn, `rt_light_grid 1` and `rt_light_grid 0` mean RGB are `[50.8, 25.2, 16.6]` and
+  `[50.9, 24.2, 15.8]` — the missing torches are back.
+- The ReSTIR target reused `globalLightTarget`'s proxy floor, so grid `target/pdf` no longer
+  equalled `1/pdf`; the reservoir over-brightened. `globalLightTargetUnfloored` matches the grid
+  sampler's mass and brings the on/off means to `[66.5, 29.4, 19.9]` vs `[51.0, 24.3, 16.0]`
+  (the remaining difference is temporal accumulation and light-style timing; quality tuning open).
+
+Run artifacts: Windows builds `ci-windows-42411715058` (fixed state) and
+`ci-windows-42412541105` (cvar lock + target fix), screenshots in the session's runtime directories.
+
 ## Next
 
 - ReSTIR GI for the indirect pass (the report's ReSTIR GI / one-sample-per-pixel path) is not part
