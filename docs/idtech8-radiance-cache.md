@@ -63,6 +63,18 @@ verified end to end. The cache lookups were rare because the probe rays inherite
 pass's front-face cull and missed the single-sided geometry; `fix/idtech8-volume-probe-hits`
 removes that cull for the probe trace (`docs/idtech8-volumes.md`).
 
+## Multi-frame reuse
+
+A revisited cell now accumulates its radiance with a running average instead of overwriting it:
+`pad.x` is the sample count, capped at 64; the new sample blends with `1 / samples`, so the first
+sample is stored exactly and later visits converge to the cell average. The shader and the CPU
+twin share the rule (`q2RadianceCachePut` / `RadianceCache::Put`).
+
+Runtime hot-swap on the master build, e1m1, `rt_radiance_cache 1`, `rt_light_volume 1`, split:
+baseline mean `[63.75, 36.91, 29.62]` (24,696 hits) vs accumulation `[69.81, 43.31, 35.22]`
+(15,459 hits), mean absolute image difference 6.64, 0 `NVRHI::ERROR`. The hit-count difference is
+run-state; the image shift is the accumulated cell radiance.
+
 ## Tests
 
 `qray_radiance_cache_tests` (23 checks locally):
