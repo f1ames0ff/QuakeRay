@@ -403,7 +403,7 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_radiance_cache, "0") \
 	CVAR_DEF_T (rt_radiance_cache_age, "30") \
 	CVAR_DEF_T (rt_radiance_cache_split, "0") \
-	CVAR_DEF_T (rt_radiance_cache_cell, "16") \
+	CVAR_DEF_T (rt_radiance_cache_cell, "10") \
 	CVAR_DEF_T (rt_radiance_cache_lod, "1024") \
 	CVAR_DEF_T (rt_restir_gi, "0") \
 	CVAR_DEF_T (rt_transparency_froxel, "0") \

@@ -1,17 +1,16 @@
 # id Tech 8 Cascaded Irradiance Volumes
 
-Status: first slice. Date: 2026-11-07.
+Status: active implementation (cascades, local volumes, split cache pass, metric 32.0 m / 16.0 m; updated 2026-11-17).
 
-Branch: `feat/idtech8-volumes`, stacked on `feat/idtech8-restir`.
+Branch: `feat/idtech8-volumes` (merged), updated in `fix/idtech8-correctness`.
 
-## Scope of this slice
+## Scope and architecture
 
-The volume ABI and CPU oracle came first (same pattern as the grid's CPU candidate histogram).
-The GPU path is now added on top:
+The volume ABI and CPU oracle match the GPU cascade and local-volume pipeline:
 
-- 6 nested cascades x 16^3 probes, first cascade 1,280 u (32 m) and every next one doubling.
+- 6 nested cascades x 16^3 probes, first cascade 32.0 m (`LightVolume::kBaseBounds` / `Q2_LIGHT_VOLUME_BASE_BOUNDS`) and every next one doubling (cascade 5 = 1024.0 m).
 - 10^3 hand-placed local volumes, up to 128 slots.
-- Probe position = cell centre; cascade centre snapped to 640 u (the grid's rebuild snap).
+- Probe position = cell centre; cascade centre snapped to 16.0 m (`LightVolume::kSnap` / `Q2_LIGHT_VOLUME_SNAP`).
 - 4-coefficient RGB SH per probe (L0, L1x, L1y, L1z), 48 B per probe.
 - Interleaved update schedule: one cascade and one local volume per frame.
 - Trilinear lookup with local volumes taking precedence over cascades; the smallest containing
@@ -22,24 +21,17 @@ The GPU path is now added on top:
 ## GPU path
 
 - `RhiRtDirectPass` owns a 152,576-probe `ShLightVolumeProbe` atlas (7.3 MB) bound at set 6
-  binding 18. It is allocated once and cleared when the 640 u camera snap moves.
-- A second ray-tracing pipeline (`RtLightVolume.rgen.hlsl`) runs one dispatch of 4,096 probes per
-  frame, for `cascade = frameId % 6`. Each probe traces 16 directions, shades the hit with the sun
-  NEE and emission, uses the uniform sky fallback on a miss, and stores the SH4 integration.
-- The update dispatch is 4,096 cascade probes plus one 10^3 local volume per frame; the local slot
-  is `frameId % localVolumeCount`, so the report's one-cascade + one-volume schedule is kept. The
-  atlas is cleared when the local-volume list changes.
-- The indirect raygen (`RtQ2Indirect.rgen.hlsl`) samples the atlas at the surface position with the
-  same trilinear lookup as the CPU oracle, converts the integrated coefficients to the screen SH
-  layout `(L0, Ly, Lz, Lx)` and adds them with the host weight. A point inside a local volume
-  reads the local 10^3 field; the smallest containing local volume wins over the cascades.
+  binding 18. It is allocated once and cleared when the 16.0 m camera snap moves.
+- A second ray-tracing pipeline (`RtLightVolume.rgen.hlsl`) dispatches 4,096 probes per frame
+  (plus one active local 10^3 volume when configured), tracing 16..64 directions with `traceVolumeRay` (`RAY_FLAG_NONE`), shading hits with sun NEE, grid/cluster light NEE and emission, using uniform sky fallback on misses, and integrating into SH4.
+- `RtLightVolumeShade.rgen.hlsl` supports the split visibility/cache-shading path via `ShLightVolumeHit` indexed by `invocation`.
+- Both `RtQ2Indirect.rgen.hlsl`'s final gather (`q2SampleLightVolumeSH`) and second-bounce cache miss (`q2EvaluateLightVolumeIrradiance`) share `q2InterpolateLightVolumeSh` (local-first trilinear interpolation).
 - Host cvars: `rt_light_volume` (default 0), `rt_light_volume_weight` (default 0.25, clamped to
-  0..1; the volume SH is added on top of the screen-space GI in this first slice) and
-  `rt_light_volume_rays` (default 16, clamped to 16..64). The report's quality tiers are 64/32/16
+  0..1) and `rt_light_volume_rays` (default 16, clamped to 16..64). The quality tiers are 64/32/16
   visibility rays per probe; the shader loops and normalizes by the actual count, so 32 is also
   accepted as an intermediate step.
 - Hand-placed local volumes: `rt_light_volume_local_add [bounds]` places a 10^3 volume at the
-  current view origin (default bounds 512 u), `rt_light_volume_local_clear` drops the list and
+  current view origin (default bounds 512 u converted to meters), `rt_light_volume_local_clear` drops the list and
   `rt_light_volume_local_list` prints it. Up to 8 slots; the list is session state.
 - The volume pipeline and table are optional: if the shader/pipeline cannot be created, the
   direct/indirect path keeps working and the atlas stays zero.
@@ -60,13 +52,9 @@ directions or the per-probe position mapping, not the cull and not the cube size
 reads mostly sky. The next diagnostic is a fixed-direction (axis) probe-ray hit counter, which
 needs a new build; GitHub Actions was in a major outage at this point.
 
-Limitations of this GPU slice: the local volumes are session-placed through the console, not yet
-authored in a level file; the atlas is cleared on a snap change and refills one cascade and one
-local volume per frame. Hit shading uses sun NEE, one grid/cluster light NEE and emission; the sky
-miss uses the uniform sky fallback. The volume SH is added on top of the screen-space GI (not a
-replacement); 0.25 is the tested first-slice weight.
+Remaining limitations: local volumes are session-placed through the console rather than authored in a level file; the atlas is cleared on a snap change and refills one cascade and one local volume per frame; hit shading uses sun NEE, one grid/cluster light NEE and emission while sky misses use uniform sky fallback.
 
-## Probe-unit fix (2026-11-09)
+## Historical probe-unit fix (2026-11-09, superseded by 2026-11-17 metric unification)
 
 The probe path was not a cull problem after all. The renderer scene is metric: the camera uniform
 reads `x = 12` for Quake `x = 480`, while `Q2_LIGHT_VOLUME_BASE_BOUNDS`/`_SNAP` were the report's
@@ -92,9 +80,13 @@ Hot-swap verification on the existing cull-fix build (`ci-windows-42671545279`, 
 - camera-local volume bounds 512 Quake units with the shader-side `0.0254` conversion:
   **166,727** hits (max 8,178/frame), +104,096 from the local volume, 0 `NVRHI::ERROR`.
 
-The host patch applies the same `QUAKEUNIT_IN_METERS` factor, so both the cascade and the local
-volume paths are verified; only a full build of the host conversion remains (GitHub Actions
-outage).
+The host patch initially used `QUAKEUNIT_IN_METERS` (0.0254). On 2026-11-17 (`965f027`), the engine's canonical `QR_QUAKE_UNIT_IN_METERS = 0.025f` scale was unified across both host and renderer (`32.0 m` / `16.0 m`).
+
+## Correctness updates (2026-11-17, `fix/idtech8-correctness`)
+
+- Split volume trace cull & hit-buffer indexing (`60b9044`): `RtLightVolume.rgen.hlsl` split branch now calls `traceVolumeRay` (`RAY_FLAG_NONE`) instead of culled `traceIndirectRay`, and both `RtLightVolume.rgen.hlsl` and `RtLightVolumeShade.rgen.hlsl` index `lightVolumeHits` by local `invocation` instead of `probeIndex` (which previously overran the per-dispatch buffer when local volumes or cascades > 0 ran).
+- Metric unit unification (`965f027`): `kBaseBounds = 32.0f`, `kSnap = 16.0f`, `Q2_LIGHT_VOLUME_BASE_BOUNDS = 32.0`, `Q2_LIGHT_VOLUME_SNAP = 16.0`.
+- Second-bounce irradiance query (`b80703c`): `q2EvaluateLightVolumeIrradiance` evaluates Ramamoorthi-Hanrahan irradiance matching `LightVolume::EvaluateIrradiance` for second-bounce radiance-cache misses.
 
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 
@@ -134,15 +126,15 @@ keeps the normal SH.
 |---|---:|
 | cascades | 6 |
 | cascade probes | 16^3 = 4,096 |
-| first cascade bounds | 1,280 u |
-| cascade 5 bounds | 40,960 u |
+| first cascade bounds | 32.0 m (`1,280 u`) |
+| cascade 5 bounds | 1024.0 m (`40,960 u`) |
 | local volume probes | 10^3 = 1,000 |
 | local volume slots | 128 |
 | total probe slots | 152,576 |
 | probe record | 48 B (SH4 RGB) |
 
-Cascade `c` has `bounds = 1280 * 2^c`, `cell = bounds / 16`. The camera origin is snapped to
-640 u on every axis, so a moving camera crosses a rebuild boundary at most once per 640 u.
+Cascade `c` has `bounds = 32.0 * 2^c` m, `cell = bounds / 16` m. The camera origin is snapped to
+16.0 m (`640 u`) on every axis using `std::round` / `floor(x / snap + 0.5) * snap`, so a moving camera crosses a rebuild boundary at most once per 16.0 m.
 
 ## Update schedule
 
@@ -173,12 +165,10 @@ volume are updated per frame, matching the report's interleaved update.
 - constant-environment SH (pi * radiance), a directional lobe, and zero-sample normalization;
 - the interleaved update schedule with zero, one and two active local volumes.
 
-## Next
+## Follow-up
 
-1. Local-volume GPU update: the same raygen with the local 10^3 probe grid and its origin/bounds.
-2. The world radiance cache: the report splits visibility sampling, cache shading and the volume
-   update; this slice still shades the probe ray directly.
-3. A final-gather replacement/blend policy once the cascade field is tuned, and level-file
+1. A final-gather replacement/blend policy once the cascade field is tuned, and level-file
    authoring for the local volumes.
-4. The 4-coefficient SH can grow to 9 coefficients only after the atlas layout and sampling are
+2. Live Windows Debug validation of the split volume path (`rt_radiance_cache_split 1`) and cascades > 0 / local volumes after the `traceVolumeRay` + `invocation` fix.
+3. The 4-coefficient SH can grow to 9 coefficients only after the atlas layout and sampling are
    stable; the report's 2-band SH matches the current choice.

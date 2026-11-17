@@ -31,8 +31,8 @@ Observations:
   (`[64.0, ...]` vs `[65.4, ...]`); the torch loss that motivated the fallback is not visible in
   either configuration.
 - Direct ReSTIR is the largest single contribution: turning it off drops mean R from 64 to 47.5.
-- The volume path adds the warm tint (R/G/B `[64.0, 41.7, 35.9]` vs `[67.2, 29.5, 19.9]`); the
-  0.25 weight is the tested first slice.
+- The volume path adds the warm tint (R/G/B `[64.0, 41.7, 35.9]` vs `[67.2, 29.5, 19.9]`); `0.25`
+  was the tested default weight in that build.
 - The world radiance cache and GI are close to the noise floor at this spawn (2.0 and 2.4 mean
   absolute channel difference against the same-configuration run-to-run 1.8). Their selection is
   proven by the debug-tint builds (green history/cache counters), not by the mean.
@@ -173,3 +173,13 @@ fireflies.
   times.
 - Volume weight, local-volume bounds and GI history age need a scene with stronger local-light
   variation than the `e1m1` spawn; AD or a torch corridor is the next target.
+
+## Post-fix re-tuning note (2026-11-17, `fix/idtech8-correctness`)
+
+All historical tables above were captured before the six correctness fixes on `fix/idtech8-correctness`
+(unified `0.025` metric conversion, `rt_radiance_cache_cell 10` = `0.25 m` cell / `25.6 m` LOD,
+`q2RestirTarget` removing duplicate luminance on grid candidates, `q2GiTarget` / `q2GiWeight` ReSTIR
+GI estimator + validation, radiance-cache normal hash + 4-slot probing + second-bounce `bounceBrdf`
+/ volume fallback, and pre-`ReflRefr` froxel dispatch). Re-run the `e1m1`, `ad_swampy`, and
+`idtech8_test_glass` A/B sweeps on a fresh Windows Debug build (`.\build_win.ps1 Debug`) before
+changing any defaults.

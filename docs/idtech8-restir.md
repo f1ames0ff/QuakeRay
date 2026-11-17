@@ -1,8 +1,8 @@
 # id Tech 8 ReSTIR — direct-light reservoirs
 
-Status: first implementation. Date: 2026-11-07.
+Status: active implementation (updated 2026-11-17).
 
-Branch: `feat/idtech8-restir`, built from `feat/idtech8-grid-v2` (grid port PR #69).
+Branch: `feat/idtech8-restir` (merged), updated in `fix/idtech8-correctness`.
 
 ## What is implemented
 
@@ -49,9 +49,7 @@ of `rt_nee_samples` independent rays.
 
 ## Deliberate approximations
 
-- The target is the existing `globalLightTarget`, not the full BRDF integrand. The single-frame
-  weight is exactly the legacy RIS pdf, so `rt_restir` with no valid history reproduces the old
-  estimate. Temporal/spatial merges inherit the target mismatch as bias, as in practical ReSTIR.
+- The target is `q2RestirTarget` (`max(mass, proxy * 1e-3) * max(getLuminance(encoded.color), 0.0) * scale`, `0.0` for directional lights), not the full BRDF integrand. All four evaluation sites (grid candidates, uniform initial candidates, empty-cell fallback and `q2RestirMergeHistory`) use `q2RestirTarget`. Prior to `2dba65a`, the grid branch multiplied `q2SampleGridLights`'s already luminance-weighted `outMass` by luminance a second time and omitted textured-area `meanEmiss`, while uniform/history paths used `globalLightTargetUnfloored`.
 - History-length capping is the only bias control. There is no pairwise MIS weight, no spatial
   pass resolution step and no reservoir pair (two lights per reservoir).
 - Motion vectors are the primary reprojection source; a failed/out-of-range reprojection uses the
@@ -66,8 +64,8 @@ of `rt_nee_samples` independent rays.
 
 ## Validation
 
-- CPU `qray_restir_reservoir_tests`: 32 checks, 0 failures (local g++ build).
-- CPU `qray_light_grid_tests`: 16 checks, 0 failures.
+- CPU `qray_restir_reservoir_tests`: 36 checks, 0 failures (includes luminance-scale `W == 1/pdf` invariance and consistent merge tests).
+- CPU `qray_light_grid_tests`: 21 checks, 0 failures.
 - Windows CI builds Debug and Release and runs the non-GPU tests; shader compilation is part of the
   build (`build_shaders.ps1`).
 - `RtRaygenDirect.rgen.hlsl` was compiled locally with the Vulkan SDK dxc 1.9.2609 (`lib_6_3`,
@@ -102,11 +100,7 @@ Three issues found by the first `e1m1` run are fixed and re-verified:
 Run artifacts: Windows builds `ci-windows-42411715058` (fixed state) and
 `ci-windows-42412541105` (cvar lock + target fix), screenshots in the session's runtime directories.
 
-## Next
+## Follow-up
 
-- ReSTIR GI for the indirect pass (the report's ReSTIR GI / one-sample-per-pixel path) is not part
-  of this branch; only direct NEE uses the reservoir.
-- Cascaded/local irradiance and radiance volumes (`feat/idtech8-volumes`): one cascade and one local
-  volume per frame, probe NEE through the typed grid.
-- Then tune reservoir history length, spatial tap count/radius, grid capacity/reach/cell size and
-  measure the AD stress scenes.
+- ReSTIR GI and cascaded irradiance volumes are implemented (see `docs/idtech8-restir-gi.md` and `docs/idtech8-volumes.md`).
+- Re-measure `ad_tfuma` / `ad_swampy` with unified `q2RestirTarget` on a fresh Windows Debug build (`.\build_win.ps1 Debug`) and tune reservoir history length, spatial tap radius and grid capacity if needed.
