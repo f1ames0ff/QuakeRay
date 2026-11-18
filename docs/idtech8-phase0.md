@@ -80,12 +80,12 @@ Migration order:
 
 ## Current runtime
 
-The runtime path behind `rt_light_grid` (default `0`) now follows the target grid shape:
+The runtime path behind `rt_light_grid` (default `0`) follows the metric cascaded grid shape (`QR_QUAKE_UNIT_IN_METERS = 0.025f`):
 
-- 8 cascades x 16^3 = 32,768 cells; base cell 80 u (about 2 m); first cascade 1,280 u bounds.
+- 8 cascades x 16^3 = 32,768 cells; base cell `2.0 m` (`80 u`); first cascade `32.0 m` bounds (`1,280 u`); influence margin `0.8 m` (`32 u`); min distance^2 `6.25e-4`.
 - 64 IDs per cell, no tail; typed light IDs use the low 16 bits and type 0.
 - The CPU reference builder is no longer run in the frame. The GPU compute builder builds every cell, ranks candidates by `power / distance^2` (unit weight for zero-power map emitters), compacts the valid IDs, and publishes a per-cell count.
-- The grid is rebuilt when the light set, its origin, reach, radius or power, or the 640 u camera snap changes.
+- The grid is rebuilt when the light set, its origin, reach, radius or power, or the `16.0 m` (`640 u`) camera snap changes. `RhiRtDirectPass::EnsureLightSet` dispatches `PrepareUniformSet`, `BuildLightGrid` and `DispatchTransparencyFroxels` before `ReflRefr` glass runs.
 - Direct NEE and indirect NEE sample the grid; particles and glass read the same typed cell lists. The cluster lists remain the fallback outside the cascades and for empty cells.
 - `rt_light_grid_report [cell]` still reports the CPU reference statistics; the runtime report is the GPU builder and does not keep a CPU cell list.
 - Cell indices are `cascade * 4096 + (z * 16 + y) * 16 + x`.
@@ -135,11 +135,19 @@ Runtime evidence:
   0/0.5/1 on the static test map `[7.54]`/`[8.36]`/`[8.38]` red with the other channels stable
   to 0.02 (`tests/maps/idtech8_test_glass.map`).
 
-Remaining work is the report's advanced follow-up, not missing first slices:
+### Status at 2026-11-17 (post-audit correctness fixes, `fix/idtech8-correctness`)
 
-1. Radiance cache: feed the final gather (not only the indirect bounce) and extend the reuse
-   beyond the second bounce.
-2. ReSTIR GI: further tap/visibility refinements and the view-dependent radiance approximation.
-3. Transparency: production blend tuning and broader froxel coverage.
-4. AD tuning: the ReSTIR-off/on gap after the target fix (`[43.9, 36.1, 25.3]` vs
-   `[46.4, 38.0, 26.0]`).
+After the `14cd1788` / `6dfe04a` baseline, six correctness slices resolved architectural issues found across the idtech8 stack (details and commit SHAs in `docs/idtech8-handoff.md`):
+
+1. Split volume cull & hit-buffer indexing (`traceVolumeRay` + `invocation` index).
+2. Unified metric scale (`QR_QUAKE_UNIT_IN_METERS = 0.025f`): `32.0 m` / `16.0 m` volumes & froxels, `2.0 m` / `16.0 m` / `0.8 m` grid, `0.25 m` cache cell (`rt_radiance_cache_cell 10`) / `25.6 m` LOD, metric cluster-light & indirect hit origins.
+3. Pass ordering (`EnsureLightSet` prepares uniforms, grid and froxels before `ReflRefr` glass) and particle `inViewDepth` world reconstruction.
+4. Direct ReSTIR unified `q2RestirTarget` across grid/uniform/fallback/history, removing the duplicate luminance factor.
+5. ReSTIR GI `q2GiTarget` and `W = q2GiWeight(reservoir)` shading, full history & tap surface/age/normal validation, and removal of corrupt `rayStatsAdd` counters.
+6. Radiance cache normal quantization, 4-slot linear probing, second-bounce `bounceBrdf` & `q2EvaluateLightVolumeIrradiance` miss fallback, and removal of final-gather cache writes.
+
+Remaining follow-up after these fixes:
+
+1. Windows Debug build & live GPU verification (`.\build_win.ps1 Debug`, DXC SPIR-V build, and fresh A/B measurements for AD ReSTIR, radiance cache, ReSTIR GI and static glass).
+2. ReSTIR GI view-dependent radiance approximation and optional multi-bounce cache reuse.
+3. Production material mapping & blend tuning for transparency froxels.

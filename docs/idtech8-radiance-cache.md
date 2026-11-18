@@ -1,43 +1,56 @@
-# id Tech 8 World Radiance Cache (first slice)
+# id Tech 8 World Radiance Cache
 
-Status: first slice. Date: 2026-11-09.
+Status: active implementation (normal-aware hash, 4-slot probing, outgoing radiometry; updated 2026-11-17).
 
-Branch: `feat/idtech8-radiance-cache`, stacked on `feat/idtech8-volume-local`.
+Branch: `feat/idtech8-radiance-cache` (merged), updated in `fix/idtech8-correctness`.
 
-## Scope of this slice
+## Scope and architecture
 
-The report separates the volume update into visibility sampling, a world-space radiance cache and
-the irradiance-volume update. This slice adds the cache between shading and the volume integration:
+The cache stores outgoing surface radiance between shading and volume/indirect reuse:
 
-- **Cache**: 2^18 entries x 32 B (8 MB), a 1D spatial hash over quantized hit positions.
-- **Entry**: `float4 radiance` (xyz used), `uint key`, `uint frame`, two padding words.
-- **Cell size**: `rt_radiance_cache_cell` (default 16 u) times the LOD; the LOD is
-  `2^floor(log2(1 + distance / rt_radiance_cache_lod))`, so far hits use coarser cells.
+- **Cache**: 2^18 entries x 32 B (8 MB), a 1D spatial + normal hash over quantized hit positions
+  and quantized geometric normals (`7` bins per axis, 9 bits), with 4-slot linear probing
+  (`kProbeSteps = 4` / `Q2_RADIANCE_CACHE_PROBE_STEPS 4u`).
+- **Entry**: `float4 radiance` (xyz outgoing radiance), `uint key`, `uint frame`, `uint pad[2]`
+  (`pad[0]` stores accumulated sample count up to 64).
+- **Cell size & LOD**: `rt_radiance_cache_cell` (host default `10` u = `0.25 m` after
+  `QR_QUAKE_UNIT_IN_METERS = 0.025f`; `VulkanDevice.cpp` fallback `0.25f`) times the LOD; the LOD
+  is `2^floor(log2(1 + distance / lodDistance))`, where `rt_radiance_cache_lod` (`1024 u`)
+  converts to `25.6 m` (clamped at `>= 0.25 m`).
 - **Reuse window**: `rt_radiance_cache_age` (default 30 frames, capped at 600). A stored entry is
   valid while `frame - storedFrame <= age`.
-- **Lookup**: the volume probe raygen checks the cache for a hit position before shading. A hit
-  returns the stored radiance; a miss shades with the existing sun / grid-cluster NEE path and
-  inserts the result. Collisions overwrite the slot.
+- **Probing & replacement**: `q2RadianceCacheGet` probes up to 4 contiguous slots `(index + step) & mask`.
+  `q2RadianceCachePut` prefers an existing slot with matching key (averaging only if non-expired,
+  resetting `samples = 1` on expired match), else the first empty or expired slot, else the oldest
+  live slot among the 4.
+- **Lookup callers**:
+  - Volume probe shading (`LightVolumeShade.hlsli`): queries `(hit.position, hit.normalGeom)`
+    before shading with sun/local NEE and emission, inserting on miss.
+  - Indirect first-bounce hit (`RtQ2Indirect.rgen.hlsl`): inserts outgoing `hitRadiance` keyed by
+    `(hitSurf.position, hitSurf.normalGeom)`.
+  - Indirect second diffuse bounce (`processSecondDiffuseBounce`): queries
+    `(hitSurf.position, hitSurf.normalGeom)` and multiplies the hit outgoing radiance by
+    `bounceBrdf = evalBRDFLambertian(1.0) * max(dot(surf.normal, bounceDir), 0.0)` and
+    `oneOverPdf` (`M_PI / cos`). On cache miss, it falls back to
+    `q2EvaluateLightVolumeIrradiance` (`volumeIrradiance * evalBRDFLambertian(1.0)`) when inside a
+    volume, or sun NEE outside volumes, and does not insert partial lighting back into the cache.
 - **Host switch**: `rt_radiance_cache` (default 0). The cache is allocated eagerly with the pass so
   set 6 always has a valid descriptor; the shader gate keeps it off.
 
-The hash, LOD and lookup math live in `renderer/Source/RadianceCache.h/.cpp` and
-`renderer/Source/Shaders/RadianceCache.hlsli`; `qray_radiance_cache_tests` covers the CPU twin.
+The hash, normal quantization, linear probing, LOD and lookup math live in
+`renderer/Source/RadianceCache.h/.cpp` and `renderer/Source/Shaders/RadianceCache.hlsli`;
+`qray_radiance_cache_tests` covers the CPU twin.
 
-## Limitations of this slice
+## Known limitations
 
-- The split path (`Feat/idtech8-radiance-cache-split`, host cvar `rt_radiance_cache_split`) is now
-  implemented: the volume raygen trace writes one 64-byte packed hit record per probe ray into a
-  20.9 MB buffer (set 6 binding 21), and a second raygen (`RtLightVolumeShade.rgen`) reconstructs
-  the hit from the record, runs the sun/local-light NEE and the cache lookup, and writes the probe
-  SH. The visibility and shade dispatches are paired on the same list with a UAV transition
-  between them. The non-split path remains the default.
-- A cache entry stores the final shaded radiance, including the view-dependent local-light term.
-  Reusing it across probe rays is an approximation; the report's cache is also reused across rays,
-  but its shading stage has the full surface inputs.
-- Writes are not atomic: colliding invocations race and the last writer wins.
-- The cache is not cleared on a map change; the key includes the world cell and the age check
-  drops stale entries, so entries from another level are simply never hit.
+- **Writes are not atomic**: colliding or concurrent GPU invocations writing to the same chosen slot
+  still race (the 4-slot probe reduces spatial/normal bucket collisions and keeps opposite walls
+  separated, but does not lock entries).
+- **View-dependent local shading**: reusing stored outgoing diffuse+emissive hit radiance across rays
+  remains an approximation (specular/diffuse separation at cache level is not stored separately).
+- **No explicit clear on map change**: entries carry world cell + quantized normal + age, so stale
+  entries from an old level expire naturally or miss.
+- The non-split volume path remains the default unless `rt_radiance_cache_split` is set.
 
 ## Runtime evidence: split path (Proton 11.0, RADV RX 9070 XT)
 
@@ -75,49 +88,45 @@ baseline mean `[63.75, 36.91, 29.62]` (24,696 hits) vs accumulation `[69.81, 43.
 (15,459 hits), mean absolute image difference 6.64, 0 `NVRHI::ERROR`. The hit-count difference is
 run-state; the image shift is the accumulated cell radiance.
 
-## Indirect feed and second-bounce reuse
+## Indirect feed and second-bounce reuse (historical 2026-11-11 baseline vs 2026-11-17 fix)
 
-The indirect raygen now feeds the cache: the first-bounce `hitRadiance` is stored at
-`hitSurf.position`, and the second diffuse bounce (GI level 2) looks up the hit cell before running
-its NEE, reusing the stored radiance when present. The same pass is what fills the cache in normal
-gameplay; the volume probes then reuse those entries.
-
-Runtime e1m1, `rt_gi_level 2`, split, 30 dumps:
+On the merged baseline (`ci-windows-43060164059`), the indirect raygen fed the cache from first
+bounce, second bounce and final gather (`diffuse + specular`), while `processSecondDiffuseBounce`
+returned `cachedRadiance * oneOverPdf` without `bounceBrdf`. Runtime e1m1, `rt_gi_level 2`, split,
+30 dumps (historical pre-fix build):
 
 | cache | mean RGB | hits | misses | active |
 |---|---|---:|---:|---:|
 | off | `[69.41, 42.47, 34.52]` | 0 | 0 | 0 |
 | on | `[65.78, 36.93, 29.29]` | 11,337,693 | 20 | 876 |
 
-Mean absolute image difference 6.3, 0 `NVRHI::ERROR`. The cache path is active end to end; the
-~8% darkening is the first-slice approximation of reusing the stored outgoing radiance for the
-second bounce (the cache stays opt-in). A one-launch grouped A/B (cache off/on/on/off, four
-screenshots) gives off means `[65.47]`/`[65.96]` and on `[69.06]`/`[66.08]`; the per-pixel signal
-(6.3-9.3) sits at the scene-noise level (7.4-8.5), so the functional proof is the counter pair
-(11.34M hits / 20 misses vs 0), not the image delta. The final-gather feed stores the receiver's
-indirect `diffuse + specular` at `surf.position` as well, so screen-space GI reaches the same
-cache; its image effect is likewise below the animated-scene noise and is not chased further.
+Mean absolute image difference 6.3, 0 `NVRHI::ERROR`.
+
+In `fix/idtech8-correctness` (`965f027` + `b80703c`, 2026-11-17):
+- Final-gather `q2RadianceCachePut(surf.position, diffuse + specular)` was removed (the cache now
+  stores outgoing radiance from full-NEE bounce hits and volume probe hits only).
+- Second-bounce `q2RadianceCachePut` was removed so indoor second bounces without local-light NEE
+  do not overwrite cache cells with zero/sun-only estimates; misses inside a volume fall back to
+  `q2EvaluateLightVolumeIrradiance`.
+- `processSecondDiffuseBounce` multiplies returned outgoing radiance by
+  `evalBRDFLambertian(1.0) * max(dot(surf.normal, bounceDir), 0.0)` so `oneOverPdf` cancels cleanly.
 
 ## Tests
 
-`qray_radiance_cache_tests` (23 checks locally):
+`qray_radiance_cache_tests` (62 checks locally):
 
 - 32-byte entry layout and the 2^18 power-of-two size;
 - hash determinism, zero input and one-bit spread;
 - stable lookup for the same position/camera and a different key in the next cell;
-- LOD growth at 0, 1 and 3 LOD distances;
-- put/get round-trip, max-age expiry, clear and overwrite;
-- key mismatch (a colliding or different slot is a miss).
+- metric 0.25 m base cells (`rt_radiance_cache_cell 10`) and 25.6 m LOD threshold;
+- normal quantization separation (opposite/orthogonal normals stay isolated, degenerate normal
+  falls back to `+Z`, unnormalized vectors match unit vectors);
+- 4-slot linear probing: coexistence of 4 colliding keys, in-place averaging at non-zero probe step,
+  expired-slot reclamation resetting `samples = 1`, and oldest-slot eviction on a 5th live key;
+- put/get round-trip, max-age expiry, clear, overwrite and counter tracking.
 
-## Next
+## Follow-up
 
-1. Split the volume raygen into a visibility pass that writes packed hit records and a cache-shading
-   pass that consumes them, so the cache is filled without shading inside the probe loop.
-2. Feed the cache from the final gather / indirect raygen as well, so screen-space and world-space
-   reuse share one cache.
-3. The report's 25 cm cell quantization. The explicit active-cell counters are implemented: each
-   cache slot carries a frame tag (1 MB of `uint` tags at set 6 binding 22); the first insert of a
-   slot in a frame exchanges the tag and increments `RAY_STATS_CATEGORY_CACHE_ACTIVE`, so
-   `rt_stats_dump` reports the per-frame active set. The hit/miss counters are categories 6 and 7.
-   The base cell is still 16 u (about 40 cm).
-4. Denoise/upscale policy after the cache and volume fields are stable.
+1. Re-verify `e1m1` / `ad_swampy` runtime images and hit/miss/active counters on Windows Debug after
+   `965f027` (`0.25 m` cell / `25.6 m` LOD) and `b80703c` (normal hash + probing + `bounceBrdf`).
+2. Multi-bounce reuse beyond bounce 2 or atomic entry updates if profiling shows slot races matter.

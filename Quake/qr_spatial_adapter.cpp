@@ -95,6 +95,7 @@ QrResult UploadClusterLightSources(QrInstance instance,
     std::vector<QrClusterLightSource> &sources = ThreadScratch<QrClusterLightSource>();
 
     converted.topUpReach *= QR_QUAKE_UNIT_IN_METERS;
+    QuakePointToMeters(converted.viewOrigin);
 
     if (uploadInfo->pLights != nullptr && uploadInfo->numLights > 0)
     {
@@ -469,6 +470,8 @@ extern "C" QrResult QRCONV QR_QuakeDrawFrame(QrInstance instance, const QrDrawFr
         illumination = *drawInfo->pIlluminationParams;
         illumination.cellWorldSize *= QR_QUAKE_UNIT_IN_METERS;
         illumination.sunBounceRange *= QR_QUAKE_UNIT_IN_METERS;
+        illumination.radianceCacheCellSize *= QR_QUAKE_UNIT_IN_METERS;
+        illumination.radianceCacheLodDistance *= QR_QUAKE_UNIT_IN_METERS;
         converted.pIlluminationParams = &illumination;
     }
 

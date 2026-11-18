@@ -1,49 +1,46 @@
-# id Tech 8 Transparency Froxel Irradiance Volume (first slice)
+# id Tech 8 Transparency Froxel Irradiance Volume
 
-Status: first slice. Date: 2026-11-09.
+Status: active implementation (metric 32.0 m box, pre-`ReflRefr` dispatch, particle `inViewDepth` reconstruction; updated 2026-11-17).
 
-Branch: `feat/idtech8-transparency-froxels`, stacked on `feat/idtech8-restir-gi`.
+Branch: `feat/idtech8-transparency-froxels` (merged), updated in `fix/idtech8-correctness`.
 
-## Scope of this slice
+## Scope and architecture
 
-The report shares one froxel irradiance volume across every transparency (particles, glass, decals)
-and stores it during the light-scattering froxel dispatch. This slice adds the ABI and the CPU
-sampling oracle; the GPU image and its update pass are the next commits.
+The engine shares one camera-centered froxel irradiance volume across transparents (particles and
+glass) and fills it during frame preparation before `ReflRefr` runs:
 
-- **Grid**: one world-space box (`origin` + `size` per axis), independent of the camera snap.
-  Three tiers share the layout: low 32 x 16 x 32, medium 64 x 32 x 64 (the CPU oracle) and high
-  128 x 64 x 128. The high tier is the report's ~50 MB budget (128 x 64 x 128 x 48 B = 50.3 MB);
-  the GPU buffer is allocated at that high size and the active dimensions come from
-  `transparencyFroxelParams.yzw` (`rt_transparency_froxel_quality`, default 1 = medium).
-- **Probe**: 4-coefficient RGB SH (L0, L1x, L1y, L1z), 48 bytes. Four coefficients are the
-  report's 2-band SH; the medium grid is 6.3 MB and the high grid is 50.3 MB.
+- **Grid**: camera-centered `32.0 m` (`Q2_TRANSPARENCY_FROXEL_BOX_SIZE = 32.0`, matching
+  `QR_QUAKE_UNIT_IN_METERS = 0.025f`) world-space box. Three tiers share the layout: low
+  32 x 16 x 32, medium 64 x 32 x 64 (the CPU oracle) and high 128 x 64 x 128 (48 B/probe =
+  50.3 MB max allocation); active dimensions come from `transparencyFroxelParams.yzw`
+  (`rt_transparency_froxel_quality`, default 1 = medium).
+- **Probe**: 4-coefficient RGB SH (L0, L1x, L1y, L1z), 48 bytes.
 - **Lookup**: trilinear blend of the eight surrounding froxels and the Lambertian SH convolution
   (`0.886227` for L0, `1.023328` for L1).
 - **SH helpers**: `AccumulateRadiance`, `NormalizeSh` (4*pi / sampleCount) and
   `EvaluateIrradiance`, the same math as the probe volumes.
 
 `renderer/Source/TransparencyFroxelVolume.h/.cpp` is the oracle; `qray_transparency_froxel_tests`
-covers it.
+(16 checks, 0 failures) covers it.
 
-## GPU image
+## GPU pipeline and pass ordering
 
-`RhiRtDirectPass` owns the 6.3 MB probe buffer at set 6 binding 20, allocated once and cleared on
-creation. `Shaders/TransparencyFroxels.hlsli` carries the GPU layout, the SH accumulation helpers
-and the trilinear `q2SampleTransparencyFroxel`.
+`RhiRtDirectPass` owns the probe buffer at set 6 binding 20, allocated once and cleared on creation.
+`Shaders/TransparencyFroxels.hlsli` carries the GPU layout, SH helpers and trilinear
+`q2SampleTransparencyFroxel`.
 
-The light-scattering fill is `CmBuildTransparencyFroxels.comp.hlsl`: a compute dispatch over all
-131,072 probes, eight Fibonacci directions per probe, one grid light per direction (the strongest
-in the cell, up to four candidates), and a smooth radius falloff. The result is the SH4 integral
-stored in the probe buffer. The pipeline declares the seven shader set positions; set 2 is the
-global uniform and set 6 is the shared light layout, so the fill reads the same grid and light
-sources as the RT passes.
+`CmBuildTransparencyFroxels.comp.hlsl` fills the active probe grid using eight Fibonacci
+directions per probe (`samplePosition = position + direction * 1.6` m), selecting one grid light
+per direction and applying smooth radius falloff into SH4. `RhiRtDirectPass::EnsureLightSet`
+takes `pUniformBuffer` (`worldUniformBuffer.Get()` from `NvrhiFrameSkeleton.cpp`) and dispatches
+`PrepareUniformSet`, `BuildLightGrid` and `DispatchTransparencyFroxels` before `ReflRefr` runs,
+keeping both glass and primary/direct passes synchronized with the current frame's lights and froxels.
 
 The glass consumer is `GlassPaint.hlsli`: when `rt_transparency_froxel` is 1 it adds the froxel
-irradiance divided by pi to the direct glass lighting. The particle consumer in
-`RsParticle.frag.hlsl` reconstructs the world position from the scene depth along the view ray
-(`framebufDepthWorld_Sampled` + `volumeViewProjInv`) and adds the froxel irradiance to its ambient;
-the particle pass already binds the direct light layout at set 6. Both shaders compile with the
-set-6 froxel buffer.
+irradiance divided by pi multiplied by `transparencyFroxelBlendParams.x` (`rt_transparency_froxel_blend`).
+The particle consumer in `RsParticle.frag.hlsl` reconstructs the particle's world position from its
+own fragment view-space depth (`inViewDepth` via camera `invProjection` and `invView`) instead of
+the opaque wall depth behind the particle.
 
 ## Runtime evidence (Proton 11.0, RADV RX 9070 XT)
 
@@ -95,14 +92,14 @@ animated-light noise. Freezing attempts (`pause`, `host_framerate`) either opene
 glass/particle view is required for the visual A/B; the cvar plumbing is confirmed by `cvarlist`
 and the green consumer proof (`rt_transparency_froxel 2`, 0.9%/0.8% green-dominant pixels).
 
-## Froxel world box units
+## Historical froxel world box fix (2026-11-11 vs 2026-11-17 metric unification)
 
-The fill and both consumers used a fixed world box `(-4096, -2048, -4096)` size
-`(8192, 4096, 8192)` in the report's **Quake units**, while the renderer scene is metric. The fill
-probes were therefore kilometres apart and the sampled cells were empty; the blend weight had
-almost nothing to scale. The box is now a camera-centered **32.512 m** cube (the report's 1280 u),
-shared by `CmBuildTransparencyFroxels.comp.hlsl`, `GlassPaint.hlsli` and `RsParticle.frag.hlsl`
-through `TransparencyFroxels.hlsli`.
+Before `fix/idtech8-transparency-froxel-box`, the fill and both consumers used a fixed world box
+`(-4096, -2048, -4096)` size `(8192, 4096, 8192)` in Quake units. Moving it to a camera-centered
+`32.512 m` cube restored probes to the scene, and on `2026-11-17` (`965f027` + `832573a`) the box
+and fill step were unified with `QR_QUAKE_UNIT_IN_METERS = 0.025f` (`32.0 m` cube, `1.6 m` sample
+step), pre-`ReflRefr` dispatch ordering (`EnsureLightSet`) was fixed, and particle lookup switched to
+camera `invProjection` + `inViewDepth` + `invView`.
 
 `ad_swampy` blend 0/0.5/1 means: `[64.85, 53.21, 37.90]`, `[66.75, 55.00, 39.61]`,
 `[65.78, 54.03, 38.67]`. The per-pixel animated noise is still 5.3 and the 0.5 point is not
@@ -128,12 +125,8 @@ could not provide. The map and its material entry are documented in `tests/maps/
 - halfway between two froxels blends L0 by half;
 - the SH helpers produce a brighter lobe along its direction and stay non-negative.
 
-## Next
+## Follow-up
 
-1. The GPU image: an RGBA16F (or RGB9E5) atlas with the same 64 x 32 x 64 layout, sampled by the
-   glass and particle shaders with a single world-space lookup.
-2. The light-scattering update: accumulate the clustered/grid light contributions into the froxels
-   once per frame, reusing the existing volumetric dispatch when possible.
-3. The report's 2-band SH and 50 MB budget: the first GPU slice should measure the current 4-band
-   SH first and only grow the layout after the sampling is stable.
-4. A quality tier (32 x 16 x 32) for low settings, matching the volume/quality pattern.
+1. Re-verify `tests/maps/idtech8_test_glass.map` and particle transparency on Windows Debug after
+   `832573a` (pre-`ReflRefr` froxel dispatch and `inViewDepth` particle world reconstruction).
+2. Production blend tuning (`rt_transparency_froxel_blend`) and broader material mapping for mods.

@@ -1,19 +1,25 @@
-# ReSTIR GI / Indirect (first slice)
+# ReSTIR GI / Indirect
 
-Status: first slice. Date: 2026-11-09.
+Status: active implementation (estimator, validation and telemetry fixed 2026-11-17).
 
-Branch: `feat/idtech8-restir-gi`, stacked on `feat/idtech8-radiance-cache`.
+Branch: `feat/idtech8-restir-gi` (merged), updated in `fix/idtech8-correctness`.
 
-## Scope of this slice
+## Architecture
 
-The direct-light ReSTIR branch reuses light samples across frames and neighbours. This branch starts
-the same treatment for the indirect bounce: a reservoir of path samples with a direction, hit
-distance and outgoing radiance.
+The indirect raygen (`RtQ2Indirect.rgen.hlsl`) builds a per-pixel path reservoir (`ShRestirGiReservoir` /
+`RestirGiReservoir`, 48 bytes) carrying the selected bounce direction, hit distance and outgoing
+radiance:
 
 - **Record**: `RestirGiReservoir` is 48 bytes: `direction[4]` (xyz, w = distance),
-  `radiance[4]` (xyz, w = padding), `weightSum`, `selectedTarget`, `sampleCount`, `pad`.
-- **Estimator**: `W = weightSum / (sampleCount * selectedTarget)`.
-- **Add**: one source sample with `target / pdf` and `target`; `u` picks the representative.
+  `radiance[4]` (xyz outgoing radiance, w = zeroed padding), `weightSum`, `selectedTarget`,
+  `sampleCount`, `pad` (16-bit octahedral receiver normal + 16-bit update frame).
+- **Target**: `q2GiTarget` / `RestirGiTarget(radiance, receiverNormal, sampleDirection)` =
+  `luminance(radiance) * max(dot(receiverNormal, sampleDirection), 0.0)` (`0.0` for non-positive or
+  non-finite inputs).
+- **Estimator**: `W = weightSum / (sampleCount * selectedTarget)`. Current bounce sample inserts
+  `weight = currentTarget * max(oneOverSourcePdf, 0.0)`, so `q2GiWeight(reservoir)` directly
+  yields `1 / pdf` for a single candidate and the proper RIS combined weight after temporal/spatial
+  merges (passed directly into `q2ShadeIndirect` as `shadingWeight`).
 - **Merge**: a source reservoir contributes `target(y) * weightSum / target(x_selected)` to the
   receiving weight sum and its whole source count to `M`, the standard ReSTIR identity.
 - **History cap**: `RestirGiClampHistory` scales the count and weight sum together at 64 samples,
@@ -21,8 +27,8 @@ distance and outgoing radiance.
 - **Validation**: non-finite weights/targets, zero targets, zero-length directions and out-of-range
   counts are rejected.
 
-`renderer/Source/RestirGiReservoir.h` is the CPU twin; `qray_restir_gi_tests` covers it. The GPU
-form will live in `renderer/Source/Shaders/RestirGi.hlsli` and share this layout and math.
+`renderer/Source/RestirGiReservoir.h` is the CPU twin and `renderer/Source/Shaders/RestirGi.hlsli`
+is the GPU form (`qray_restir_gi_tests`: 56 checks, 0 failures).
 
 ## GPU path
 
@@ -37,29 +43,48 @@ form will live in `renderer/Source/Shaders/RestirGi.hlsli` and share this layout
   out-of-range or non-finite UV rejects the history. The earlier camera path used
   `volumeViewProj_Prev`, the volumetric fog projection, which lands on a different pixel (see the
   isolation below).
-- **Merge**: the current bounce sample and the reprojected history reservoir are merged with the
-  same target/pdf identity as the CPU twin; the history is capped at 64 samples.
-- **Spatial taps**: four neighbours of the reprojected pixel (2 pixels away) are read from the same
-  previous-frame slot and merged with the same identity; the slot is not written by the current
-  frame, so the taps cannot race with the current store.
-- **Visibility reuse**: when the merged representative is the history sample, the raygen traces a
-  bounce towards its stored direction and compares the hit position with the stored
-  `position + direction * distance`. A miss or a position outside
-  `0.5 + 0.005 * distance` falls back to the current sample.
-- **Shading**: the selected sample's direction, distance and radiance feed `q2ShadeIndirect`; a
-  reused sample evaluates `evalSpecularBouncePdf` at its direction (the first bounce is a
-  Smith-GGX sample), so `target/pdf` stays consistent. The exact BSDF pdf replaced the earlier
-  cosine approximation.
+- **Merge**: the current bounce sample, reprojected history reservoir (`frameId > 0`) and four
+  spatial taps (2 pixels away in the previous-frame slot) are merged using `q2GiTarget` and capped at
+  64 samples. Spatial taps run even if the center history sample is invalid/dark.
+- **History & tap validation**: both the temporal history and every spatial tap must pass
+  `q2GiUsable`, `q2GiHistoryValid` (packed receiver normal & age <= 64 frames) and
+  `q2GiSurfaceMatches` (previous G-buffer position + geometric normal).
+- **Visibility reuse**: when the merged representative is a usable history sample differing from the
+  current candidate, the raygen traces a bounce (`traceBounce`, which already accounts for
+  `RAY_STATS_CATEGORY_INDIRECT`) towards its stored direction and compares the hit position with the
+  stored `position + direction * distance`. A miss or a position outside `0.5 + 0.005 * distance`
+  falls back to the current sample; a visible geometry hit sets `skyBsdfWeight = 1.0`.
+- **Shading**: the selected sample's direction, distance, radiance and combined reservoir weight
+  `shadingWeight = q2GiWeight(reservoir)` feed `q2ShadeIndirect`.
 - **Half-resolution storage**: when `rt_gi_level` selects the half-row dispatch, the buffer keeps
   one record per traced row pair and the shader shifts the row index; the configure and render
   checks use the same row count.
 - **Host switch**: `rt_restir_gi` (default 0); the uniform gate is `giReservoirParams.x`.
 
-Limitations of this slice: the visibility trace adds one indirect ray when a reused sample wins;
-the reservoir stores a view-dependent radiance, so reuse is approximate; the history has no
-surface-normal validation.
+Known limitations: the visibility trace adds one indirect ray when a reused sample wins; the
+reservoir stores outgoing radiance rather than decoupling BSDF/view-dependent highlights.
 
-## History validation (normal + age) — runtime finding
+## Correctness updates (2026-11-17, `05870d0`)
+
+Audit of `6dfe04a` found and fixed five bugs in the GPU ReSTIR GI path:
+
+1. **Broken single-frame `weightSum` & unused `q2GiWeight`**: `current` previously added weight `1.0`
+   regardless of target or `oneOverSourcePdf`, and shading read `reservoir.radiance.w` (the source
+   pixel's `1/pdf`) instead of `q2GiWeight(reservoir)` (`W`). Temporal/spatial merges therefore used
+   corrupted weights. Now `currentWeight = currentTarget * max(oneOverSourcePdf, 0.0)`,
+   `radiance.w` is zeroed, and `q2ShadeIndirect` receives `shadingWeight = q2GiWeight(reservoir)`.
+2. **Un-gated `historyValid`**: `q2GiHistoryValid(history, surf.normalGeom)` and
+   `q2GiSurfaceMatches(historySurface, surf)` were never enforced in `historyValid`, allowing stale
+   or mismatched-surface temporal reuse; both are now enforced (alongside `frameId > 0`).
+3. **Skipped spatial taps on unusable center history**: spatial taps now execute inside the valid
+   reprojection region regardless of center history usability, and each tap validates
+   `q2GiUsable && q2GiHistoryValid && q2GiSurfaceMatches`.
+4. **Misleading `skyBsdfWeight` on reused geometry**: visible history reuse resets `skyBsdfWeight = 1.0`.
+5. **Bogus `rayStatsAdd` calls**: removed the five misattributed ReSTIR GI counter calls
+   (`CACHE_HIT`/`CACHE_MISS`/`SHADOW_INDIRECT`/`SHADOW_DIRECT`) and duplicate `INDIRECT` count after
+   `traceBounce`.
+
+## Historical runtime findings (prior to `05870d0`)
 
 Hot-swap runtime on the GI build (`ci-windows-42598327333`, e1m1, `rt_restir_gi 1`):
 
@@ -113,7 +138,7 @@ taps about **1.6M accepted / 46k rejected** per frame. History and taps are full
 
 ## Motion-vector isolation (e1m1, build `ci-windows-42593822566` unless noted)
 
-The first slice rejected the motion images because both over-brightened the field. The isolation
+The initial slice rejected the motion images because both over-brightened the field. The isolation
 showed the old camera path was the outlier, not the motion vectors:
 
 | configuration | mean RGB |
@@ -155,17 +180,9 @@ AD 1.50, `ad_swampy`, build `ci-windows-42593822566`, `rt_truelight 0`: GI on
   (`[72.9, 49.5, 41.9]` and `[72.0, 47.5, 40.5]` against off `[64.3, 41.6, 35.8]`); the camera
   projection is the verified path.
 
-## Why the CPU twin first
+## Follow-up
 
-The direct ReSTIR branch started the same way: the reservoir math and the history cap are the part
-that is easy to get subtly wrong, and they are testable without a GPU. The shader integration is
-the next commit.
-
-## Next
-
-1. Motion-vector reprojection for dynamic objects (the framebuffer motion binding in the indirect
-   pass stalled the first builds; a separate set is the next attempt).
-2. Half-resolution reservoir storage and a packed record once the temporal/tap path is stable.
-3. Feed the selected bounce into the world radiance cache so neighbours share the shading.
-4. Denoiser interaction: the ReSTIR GI estimate should replace the raw indirect SH, not be blended
-   twice with the SVGF history.
+1. Re-verify `rt_restir_gi 0/1` on Windows Debug after `05870d0` (confirming unbiased mean
+   convergence with genuine `W` weighting and clean `rayStats` counters).
+2. View-dependent / BRDF decoupling if specular glossy indirect reuse shows energy shift.
+3. Multi-bounce integration or optional packed half-res reservoir tuning.
