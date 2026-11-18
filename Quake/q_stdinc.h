@@ -32,6 +32,9 @@
 #include <sys/types.h>
 #include <stddef.h>
 #include <limits.h>
+#ifndef _WIN32 /* others we support without sys/param.h? */
+#include <sys/param.h>
+#endif
 
 #include <stdio.h>
 
@@ -160,7 +163,9 @@ typedef int   fixed16_t;
 
 #if !defined(PATH_MAX)
 /* equivalent values? */
-#if defined(_WIN32) && defined(_MAX_PATH)
+#if defined(MAXPATHLEN)
+#define PATH_MAX MAXPATHLEN
+#elif defined(_WIN32) && defined(_MAX_PATH)
 #define PATH_MAX _MAX_PATH
 #elif defined(_WIN32) && defined(MAX_PATH)
 #define PATH_MAX MAX_PATH
@@ -233,6 +238,18 @@ typedef ptrdiff_t ssize_t;
 
 /*==========================================================================*/
 
+#ifndef max
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef min
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
+#if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
+#include <SDL2/SDL.h>
+#else
 #include "SDL.h"
+#endif
 
 #endif /* __QSTDINC_H */

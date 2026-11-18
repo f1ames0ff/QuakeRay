@@ -37,15 +37,23 @@ option(ENABLE_MIMALLOC  "Use mimalloc allocator"              OFF)
 # ============================================================================
 # Platform detection
 # ============================================================================
-if(NOT WIN32)
-    message(FATAL_ERROR "QuakeRay builds on Windows only.")
+if(WIN32)
+    set(QUAKERAY_PLATFORM_WINDOWS ON)
+elseif(APPLE)
+    set(QUAKERAY_PLATFORM_MACOS ON)
+else()
+    set(QUAKERAY_PLATFORM_LINUX ON)
 endif()
-
-set(QUAKERAY_PLATFORM_WINDOWS ON)
 
 # ============================================================================
 # Compiler settings
 # ============================================================================
+if(QUAKERAY_PLATFORM_LINUX)
+    add_compile_definitions(_GNU_SOURCE)
+endif()
+
+include(CheckCCompilerFlag)
+
 if(MSVC)
     # Match VS project: /W4, WX, no exceptions, multiprocessor.
     # The strict flags are scoped to C only: the vendored qray renderer
@@ -62,6 +70,36 @@ if(MSVC)
 
     # Disable exception handling (C project)
     add_compile_options($<$<COMPILE_LANGUAGE:C>:/EHsc->)
+
+else()
+    # GCC/Clang flags matching Makefile
+    add_compile_options(-Wall -Wno-trigraphs -Wno-unused-function)
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
+        add_compile_options(-O3)
+    endif()
+
+    check_c_compiler_flag(-fweb COMPILER_HAS_FWEB)
+    check_c_compiler_flag(-frename-registers COMPILER_HAS_FRENAME)
+    check_c_compiler_flag(-fno-asynchronous-unwind-tables COMPILER_HAS_NO_ASYNC_UNWIND)
+    check_c_compiler_flag(-fno-ident COMPILER_HAS_NO_IDENT)
+
+    if(COMPILER_HAS_FWEB)
+        add_compile_options(-fweb)
+    endif()
+    if(COMPILER_HAS_FRENAME)
+        add_compile_options(-frename-registers)
+    endif()
+    if(COMPILER_HAS_NO_ASYNC_UNWIND)
+        add_compile_options(-fno-asynchronous-unwind-tables)
+    endif()
+    if(COMPILER_HAS_NO_IDENT)
+        add_compile_options(-fno-ident)
+    endif()
+endif()
+
+if(QUAKERAY_PLATFORM_LINUX)
+    link_libraries(m dl pthread)
 endif()
 
 # ============================================================================
@@ -107,6 +145,8 @@ if(QUAKERAY_PLATFORM_WINDOWS)
         )
         set(Vulkan_FOUND TRUE)
     endif()
+else()
+    find_package(Vulkan REQUIRED)
 endif()
 
 # ============================================================================
@@ -135,24 +175,30 @@ if(QUAKERAY_PLATFORM_WINDOWS)
     set_target_properties(SDL2::SDL2main PROPERTIES
         IMPORTED_LOCATION "${SDL2_LIB_DIR}/SDL2main.lib"
     )
+else()
+    find_package(SDL2 REQUIRED)
 endif()
 
 # ============================================================================
-# OpenAL Soft — vendored source (third_party/openal-soft)
+# OpenAL Soft — vendored on Windows, the system library elsewhere
 # ============================================================================
-set(ALSOFT_UTILS          OFF CACHE BOOL "" FORCE)
-set(ALSOFT_EXAMPLES       OFF CACHE BOOL "" FORCE)
-set(ALSOFT_TESTS          OFF CACHE BOOL "" FORCE)
-set(ALSOFT_INSTALL        OFF CACHE BOOL "" FORCE)
-set(ALSOFT_WERROR         OFF CACHE BOOL "" FORCE)
-set(ALSOFT_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
-set(ALSOFT_EMBED_HRTF_DATA ON CACHE BOOL "" FORCE)
+if(QUAKERAY_PLATFORM_WINDOWS)
+    set(ALSOFT_UTILS          OFF CACHE BOOL "" FORCE)
+    set(ALSOFT_EXAMPLES       OFF CACHE BOOL "" FORCE)
+    set(ALSOFT_TESTS          OFF CACHE BOOL "" FORCE)
+    set(ALSOFT_INSTALL        OFF CACHE BOOL "" FORCE)
+    set(ALSOFT_WERROR         OFF CACHE BOOL "" FORCE)
+    set(ALSOFT_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
+    set(ALSOFT_EMBED_HRTF_DATA ON CACHE BOOL "" FORCE)
 
-get_directory_property(QUAKERAY_COMPILE_OPTIONS COMPILE_OPTIONS)
-set_directory_properties(PROPERTIES COMPILE_OPTIONS "")
-set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
-add_subdirectory(third_party/openal-soft)
-set_directory_properties(PROPERTIES COMPILE_OPTIONS "${QUAKERAY_COMPILE_OPTIONS}")
+    get_directory_property(QUAKERAY_COMPILE_OPTIONS COMPILE_OPTIONS)
+    set_directory_properties(PROPERTIES COMPILE_OPTIONS "")
+    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+    add_subdirectory(third_party/openal-soft)
+    set_directory_properties(PROPERTIES COMPILE_OPTIONS "${QUAKERAY_COMPILE_OPTIONS}")
+else()
+    find_package(OpenAL REQUIRED)
+endif()
 
 # ============================================================================
 # Windows bundled codec libraries
@@ -434,7 +480,22 @@ if(QUAKERAY_PLATFORM_WINDOWS)
         Quake/sys_sdl_win.c
     )
     set(PLATFORM_RESOURCE Windows/QuakeRay.rc)
-    set_property(SOURCE Windows/QuakeRay.rc PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Windows/QuakeRay.ico")
+elseif(QUAKERAY_PLATFORM_LINUX)
+    set(PLATFORM_SOURCES
+        Quake/net_bsd.c
+        Quake/net_udp.c
+        Quake/pl_linux.c
+        Quake/sys_sdl_unix.c
+    )
+    set(PLATFORM_RESOURCE "")
+elseif(QUAKERAY_PLATFORM_MACOS)
+    set(PLATFORM_SOURCES
+        Quake/net_bsd.c
+        Quake/net_udp.c
+        Quake/pl_osx.m
+        Quake/sys_sdl_unix.c
+    )
+    set(PLATFORM_RESOURCE "")
 endif()
 
 # --- mimalloc (optional) ---
@@ -495,6 +556,8 @@ target_compile_definitions(quakeray PRIVATE
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_compile_definitions(quakeray PRIVATE WIN32 _WINDOWS)
+elseif(QUAKERAY_PLATFORM_LINUX)
+    target_compile_definitions(quakeray PRIVATE LINUX)
 endif()
 
 # MSVC Release: /GS- (no buffer security check)
@@ -516,6 +579,9 @@ if(BUILD_AUDIO_TESTS)
     enable_testing()
     add_executable(audio_regression Misc/audio_regression.c)
     target_link_libraries(audio_regression PRIVATE OpenAL::OpenAL)
+    if(NOT WIN32)
+        target_link_libraries(audio_regression PRIVATE m)
+    endif()
     add_test(NAME audio_regression COMMAND audio_regression)
     set_tests_properties(audio_regression PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null")
     if(WIN32)
@@ -527,6 +593,8 @@ endif()
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE SDL2::SDL2 SDL2::SDL2main)
+else()
+    target_link_libraries(quakeray PRIVATE SDL2::SDL2)
 endif()
 
 # ============================================================================
@@ -633,6 +701,10 @@ add_custom_command(TARGET quakeray POST_BUILD
 
 if(QUAKERAY_PLATFORM_WINDOWS)
     target_link_libraries(quakeray PRIVATE ws2_32 winmm shell32 ole32)
+elseif(QUAKERAY_PLATFORM_LINUX)
+    target_link_libraries(quakeray PRIVATE m dl pthread)
+elseif(QUAKERAY_PLATFORM_MACOS)
+    target_link_libraries(quakeray PRIVATE m dl pthread)
 endif()
 
 # Codec libs
@@ -654,6 +726,34 @@ if(QUAKERAY_PLATFORM_WINDOWS)
     endif()
     if(USE_CODEC_MIKMOD)
         target_link_libraries(quakeray PRIVATE codec::mikmod)
+    endif()
+else()
+    if(USE_CODEC_MP3)
+        find_library(MAD_LIB mad REQUIRED)
+        target_link_libraries(quakeray PRIVATE ${MAD_LIB})
+    endif()
+    if(USE_CODEC_VORBIS)
+        find_package(Vorbis REQUIRED)
+        target_link_libraries(quakeray PRIVATE Vorbis::Vorbis Vorbis::Vorbisfile)
+        find_package(OGG REQUIRED)
+        target_link_libraries(quakeray PRIVATE OGG::OGG)
+    endif()
+    if(USE_CODEC_FLAC)
+        find_package(FLAC REQUIRED)
+        target_link_libraries(quakeray PRIVATE FLAC::FLAC)
+    endif()
+    if(USE_CODEC_OPUS)
+        find_package(Opus REQUIRED)
+        find_package(Opusfile REQUIRED)
+        target_link_libraries(quakeray PRIVATE Opus::Opus Opusfile::Opusfile)
+    endif()
+    if(USE_CODEC_XMP)
+        find_library(XMP_LIB xmp REQUIRED)
+        target_link_libraries(quakeray PRIVATE ${XMP_LIB})
+    endif()
+    if(USE_CODEC_MIKMOD)
+        find_library(MIKMOD_LIB mikmod REQUIRED)
+        target_link_libraries(quakeray PRIVATE ${MIKMOD_LIB})
     endif()
 endif()
 
@@ -731,7 +831,7 @@ if(QUAKERAY_PLATFORM_WINDOWS)
     add_custom_target(qray_deploy_fidelityfx ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:quakeray>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/renderer/Source/FidelityFX_SDK_1.1.4/src/PrebuiltSignedDLL/amd_fidelityfx_vk.dll"
+            "${QR_FFX_VK_RUNTIME_DLL}"
             "$<TARGET_FILE_DIR:quakeray>"
         COMMENT "Copying amd_fidelityfx_vk.dll..."
         VERBATIM
