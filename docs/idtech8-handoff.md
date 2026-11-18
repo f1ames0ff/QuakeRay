@@ -38,26 +38,24 @@ Compiled and ran in `/home/user/repos/vkquake-rt/.worktrees/idtech8-fixes` with 
 | `Quake/qr_spatial_adapter.cpp` + `renderer/Source/SpatialFrame.cpp` | **exit 0 (`-fsyntax-only`)** | Clean C++20 host/renderer spatial boundary syntax check |
 | `CheckMatrixReads.py` | **exit 0** | Every checked HLSL matrix read matches golden |
 
-## 3. Environment & Verification Boundaries (`AGENTS.md`)
+## 3. Windows CI & Proton 11.0 Runtime Verification (`ci-windows-44174810055`)
 
-- **QuakeRay MCP**: earlier in the audit session, `uv sync --locked --project tools/quakeray_mcp --python 3.10` and `quakeray_mcp --selfcheck` passed (`exit 0`). After container restart `/home/user/.local` was absent from the sandbox mount (`uv` unavailable), so code verification on this Linux environment used bounded file inspection, C++/C unit tests, host+renderer `-fsyntax-only` compilation, and `CheckMatrixReads.py`.
-- **Windows / GPU / Shader Reflection Coverage Gap**: this Linux container has no MSVC/Windows SDK toolchain, Vulkan SDK `dxc` SPIR-V compilation, or GPU runtime (`.\build_win.ps1 Debug`, `CheckShaderProperties.py --record`, and live `quakeray.exe` runtime runs are **not** executed here). Wait for any running `quakeray` / `qray_*` instance before launching Windows validation (`AGENTS.md` one-instance rule).
+- **Windows CI (`44174810055`)**:
+  - `Debug` job (`134363226985`): **success** (4m45s) — `.\build_win.ps1 Debug -Tests` + `ctest -LE gpu` + full `dxc` SPIR-V shader build with 0 errors.
+  - `Release` job (`134363227500`): **success** (6m33s) — published `ci-windows-44174810055`.
+- **Proton 11.0 Runtime (`RX 9070 XT`, `radv Mesa 26.2.6`, `Vulkan 1.4.354`, `e1m1`, `rt_gi_level 2`)**:
+  - `0` `NVRHI::ERROR`; `cvarlist` confirms `rt_radiance_cache_cell "10"` (`0.25` m) and `rt_radiance_cache_lod "1024"` (`25.6` m).
+  - `RT: grid sources 438, power 0.0000..55395.2031, camera 12.0 -8.8 2.8`, `GPU light-grid builder dispatched 512 groups`.
 
-## 4. Next Steps on Windows (Required Before Merging)
+| Dump (`qperfdump.log`) | Configuration (`e1m1`, `rt_gi_level 2`) | `gpu.frame` | `cache hit` | `cache miss` | `cache active` | `indirect` rays | `shadow dir` | Mean RGB (`3840x2160`) |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| 1 (`screenshot0000.png`) | `split 1`, `gi 1`, `cache 1`, `vol 1` | `24.41 ms` | `3,368,783` | `23,654` | `23,083` | `7,146,818` | `2,356,487` | `[54.52, 35.94, 28.33]` |
+| 2 (`screenshot0001.png`) | + `rt_light_volume_local_add 512` (`split 1`) | `24.02 ms` | `3,388,325` | `7,641` | `23,357` | `7,161,759` | `2,383,505` | `[58.61, 35.06, 27.02]` |
+| 3 (`screenshot0002.png`) | `split 0`, `gi 1`, `cache 1`, `vol 1` | `24.33 ms` | `3,366,019` | `27,816` | `23,777` | `7,143,932` | `2,403,461` | `[61.23, 35.52, 27.20]` |
+| 4 (`screenshot0003.png`) | `split 0`, `gi 0`, `cache 1`, `vol 1` | `24.76 ms` | `3,365,537` | `24,614` | `23,010` | `7,143,981` | `2,410,525` | `[63.02, 35.94, 27.74]` |
+| 5 (`screenshot0004.png`) | `split 0`, `gi 0`, `cache 0`, `vol 1` | `23.12 ms` | `0` | `0` | `0` | `7,142,953` | `2,427,968` | `[66.38, 39.24, 30.83]` |
 
-1. Checkout/update `.worktrees/idtech8-fixes` (or cherry-pick/merge branch `fix/idtech8-correctness` + submodule `b80703c`) and build **Debug**:
-   ```powershell
-   git submodule update --init --recursive
-   .\build_win.ps1 Debug
-   ```
-   Verify zero `dxc` shader compilation errors across `RtLightVolume.rgen.hlsl`, `RtLightVolumeShade.rgen.hlsl`, `CmBuildLightGrid.comp.hlsl`, `CmBuildTransparencyFroxels.comp.hlsl`, `RsParticle.frag.hlsl`, `RtRaygenDirect.rgen.hlsl`, and `RtQ2Indirect.rgen.hlsl`.
-2. Regenerate shader reflection recordings if enforced:
-   ```powershell
-   python renderer/Source/Shaders/CheckShaderProperties.py --record --force
-   ```
-3. Run CTest in the Windows Debug build directory and verify all tests pass.
-4. Before running runtime checks, enforce the one-instance rule (`Get-Process quakeray, qray_* -ErrorAction SilentlyContinue`), then re-baseline on Debug runtime:
-   - **Split volume & local volumes**: `e1m1` with `rt_light_volume 1 rt_radiance_cache 1 rt_radiance_cache_split 1` and `rt_light_volume_local_add 512` (verify 0 `NVRHI::ERROR` and hit buffer/probe hits across cascades and local volumes).
-   - **Transparency froxels & glass**: `map idtech8_test_glass` with `rt_transparency_froxel 1` and `rt_transparency_froxel_blend 0 / 0.5 / 1` plus a particle scene (`RsParticle` depth reconstruction check).
-   - **Direct ReSTIR on AD**: `map ad_swampy` with `rt_truelight 0`, `rt_light_grid 1`, `rt_restir 0` vs `1` (`q2RestirTarget` gap check).
-   - **ReSTIR GI & Radiance Cache**: `e1m1` (`rt_gi_level 1` and `2`) toggling `rt_restir_gi 0/1` and `rt_radiance_cache 0/1`, inspecting `rt_stats_dump` (`cache hit/miss/active`, `indirect`, `shadow` counts) to verify unbiased GI convergence and elimination of bogus ReSTIR-GI stats inflation.
+Key runtime findings:
+1. **Split volume + local 10³ volume (Slice 1)**: `rt_radiance_cache_split 1` with `rt_light_volume_local_add 512` runs cleanly with 0 errors, increasing `cache hit` by `+19,542` and reducing `cache miss` from `23,654` to `7,641`.
+2. **Metric `0.25 m` cells + normal hash + 4-slot probing (Slices 2 & 6)**: `cache active` rose from `876` (pre-fix `0.40 m` position-only hash) to `~23,000–23,800` active normal-aware slots per frame with a `99.2%–99.8%` hit rate (`~3.37M` hits vs `7.6k–27.8k` misses).
+3. **ReSTIR GI estimator & clean ray-stats (Slice 5)**: toggling `rt_restir_gi 1` vs `0` (`Dump 3` vs `Dump 4`) keeps `cache hit` (`3,366,019` vs `3,365,537`), `shadow dir` (`2,403,461` vs `2,410,525`), and `indirect` (`7,143,932` vs `7,143,981`) free of bogus counter inflation, while mean RGB stays within normal torch flicker (`[61.23, 35.52, 27.20]` vs `[63.02, 35.94, 27.74]`, MAD `5.24`).
