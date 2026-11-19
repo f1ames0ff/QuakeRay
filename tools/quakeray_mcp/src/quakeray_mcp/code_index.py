@@ -9,6 +9,7 @@ import time
 import tempfile
 
 from .errors import EvidenceError
+from .platform_support import DEFAULT_BUILD_SUBDIR
 from urllib.parse import unquote, urlparse
 
 
@@ -98,7 +99,12 @@ class CodeIndex:
     def __init__(self, root, executable):
         self.root = Path(root).resolve()
         self.executable = Path(executable)
-        self.database = self.root / "build/Debug/compile_commands.json"
+        candidates = []
+        if os.environ.get("QUAKERAY_BUILD"):
+            candidates.append((self.root / os.environ["QUAKERAY_BUILD"]) / "compile_commands.json")
+        candidates.append(self.root / DEFAULT_BUILD_SUBDIR / "compile_commands.json")
+        candidates.append(self.root / "build/Debug/compile_commands.json")
+        self.database = next((p for p in candidates if p.is_file()), candidates[0])
         self.symbols = {}
         self.version = subprocess.run([str(self.executable), '--version'], capture_output=True, encoding='utf-8', timeout=5).stdout.splitlines()[0] if self.executable.is_file() else 'unavailable'
 

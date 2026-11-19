@@ -84,7 +84,6 @@ class ProtocolTests(unittest.TestCase):
     def test_stdio_modern(self):
         anyio.run(self.exercise, self.subprocess_target(), "auto")
 
-    @unittest.skipUnless(os.name == "nt", "Windows job APIs")
     def test_opt_in_job_catalog_and_debug_only_schema(self):
         import tempfile
         async def check():
@@ -107,7 +106,6 @@ class ProtocolTests(unittest.TestCase):
                     service.close()
         anyio.run(check)
 
-    @unittest.skipUnless(os.name == 'nt', 'Windows extension APIs')
     def test_research_catalog_schemas(self):
         import tempfile
         from unittest.mock import patch
