@@ -4,9 +4,9 @@ from pathlib import Path
 import uuid
 import re
 from .asset_inventory import inventory
-
 from .errors import EvidenceError
 from .parsers import parse_benchmarks, parse_stats
+from .platform_support import EXE_NAME
 
 
 def bounded_bytes(path, maximum=64 * 1024 * 1024):
@@ -126,7 +126,7 @@ def prepare_records(directory, store_root, identifier, result, analyzer):
                                             'loader_layers': manifest.get('LoaderLayers')}}
             verified = bool(valid_assets and save_hash and focus and hardware and drivers and
                             provenance['binary_identity'] == 'build_receipt_matched' and
-                            file_hash(runtime / 'quakeray.exe') == manifest.get('ExecutableSha256') and
+                            file_hash(runtime / EXE_NAME) == manifest.get('ExecutableSha256') and
                             file_hash(runtime / 'id1/qray.pkz') == manifest.get('EngineAssetsSha256'))
         records.append({"schema_version": 1, "run_id": "run_" + uuid.uuid4().hex, "job_id": identifier,
                         "arm": "baseline" if path.is_relative_to(directory / 'baseline') else 'candidate',

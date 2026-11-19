@@ -10,7 +10,6 @@ from quakeray_mcp.job_store import JobStore
 from quakeray_mcp.research import ResearchStore
 
 
-@unittest.skipUnless(os.name == "nt", "Windows shared store")
 class ResearchTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

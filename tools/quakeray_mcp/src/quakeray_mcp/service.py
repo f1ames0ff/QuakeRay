@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import threading
 
@@ -11,6 +12,13 @@ from .compare import compare_records
 from .errors import EvidenceError
 from .parsers import load_analyzer, metric_summaries, parse_benchmarks, parse_stats
 from .paths import ApprovedPaths
+from .platform_support import (
+    DEFAULT_BUILD_SUBDIR,
+    EXE_NAME,
+    HEAVY_PROCESS_RE,
+    IS_WINDOWS,
+    default_state_root,
+)
 
 
 MAX_RESPONSE_BYTES = 32768
@@ -49,18 +57,19 @@ class EvidenceService:
         self.code_index = None
         clangd = os.environ.get("QUAKERAY_CLANGD")
         if clangd == 'auto':
-            clangd = str(Path(os.environ.get('LOCALAPPDATA', '')) / 'QuakeRayMCP/tools/clangd-23.1.0/clangd_23.1.0/bin/clangd.exe')
+            if IS_WINDOWS:
+                clangd = str(Path(os.environ.get('LOCALAPPDATA', '')) / 'QuakeRayMCP/tools/clangd-23.1.0/clangd_23.1.0/bin/clangd.exe')
+            else:
+                clangd = shutil.which('clangd') or ''
         if clangd:
             from .code_index import CodeIndex
             self.code_index = CodeIndex(self.root, clangd)
         enabled = os.environ.get("QUAKERAY_ENABLE_JOBS") == "1" if enable_jobs is None else enable_jobs
         if enabled:
-            if os.name != "nt":
-                raise EvidenceError("PROCESS_CONTAINMENT_FAILED", "Runtime jobs require Windows")
             from .jobs import JobManager
             common = self.source_identity()["git_common_directory"] or str(self.root)
             repo_id = hashlib.sha256(str((self.root / common).resolve()).encode()).hexdigest()[:24]
-            state = state_root or Path(os.environ["LOCALAPPDATA"]) / "QuakeRayMCP" / repo_id / "jobs"
+            state = state_root or default_state_root(repo_id)
             self.jobs = JobManager(self.root, state)
             if os.environ.get("QUAKERAY_ENABLE_RESEARCH") == "1":
                 from .research import ResearchStore
@@ -89,8 +98,31 @@ class EvidenceService:
                 "git_common_directory": git("rev-parse", "--git-common-dir")}
 
     def process_status(self):
-        if os.name != "nt":
-            return {"status": "unavailable", "instances": [], "reason": "Windows process inspection required"}
+        if not IS_WINDOWS:
+            instances = []
+            try:
+                for entry in os.listdir("/proc"):
+                    if not entry.isdigit():
+                        continue
+                    proc_dir = Path("/proc") / entry
+                    try:
+                        stat_text = (proc_dir / "stat").read_text(encoding="utf-8", errors="replace")
+                        rparen = stat_text.rfind(")")
+                        if rparen < 0:
+                            continue
+                        state = stat_text[rparen + 1 :].split()[0]
+                        if state == "Z":
+                            continue
+                        comm = (proc_dir / "comm").read_text(encoding="utf-8", errors="replace").strip()
+                        raw_cmd = (proc_dir / "cmdline").read_bytes().split(b"\x00", 1)[0]
+                        exe_name = Path(raw_cmd.decode("utf-8", errors="replace")).name if raw_cmd else ""
+                        if HEAVY_PROCESS_RE.match(comm) or (exe_name and HEAVY_PROCESS_RE.match(exe_name)):
+                            instances.append({"Id": int(entry), "ProcessName": comm})
+                    except (OSError, IndexError, ValueError):
+                        continue
+                return {"status": "observed", "instances": instances}
+            except OSError:
+                return {"status": "unavailable", "instances": [], "reason": "/proc process query failed"}
         script = "@(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(quakeray|qray_|cmake$|ninja$|cl$|link$)' } | Select-Object Id,ProcessName) | ConvertTo-Json -Compress"
         try:
             result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
@@ -105,7 +137,7 @@ class EvidenceService:
         return {"phase": "P0-P5-gated" if self.research or self.code_index else "P0-P2-gated" if self.jobs else "P0-P1", "source": self.source_identity(),
                 "runtime": {"id": "debug", "requested_build_config": "Debug", "verified_build_config": None,
                             "exists": runtime.is_dir(),
-                            "executable_exists": (runtime / "quakeray.exe").is_file(),
+                            "executable_exists": (runtime / EXE_NAME).is_file(),
                             "engine_pack_exists": (runtime / "id1/qray.pkz").is_file()},
                 "processes": self.process_status(),
                 "capabilities": {"read_only": not bool(self.jobs), "game_launch": bool(self.jobs), "build": bool(self.jobs),
@@ -122,7 +154,7 @@ class EvidenceService:
                 missing.append("save")
             elif actual_hash.upper() != expected_hash:
                 missing.append("matching_save_hash")
-            for name, path in (("executable", self.paths.runtime / "quakeray.exe"),
+            for name, path in (("executable", self.paths.runtime / EXE_NAME),
                                ("engine_pack", self.paths.runtime / "id1/qray.pkz"), ("mod_pak", game / "pak0.pak")):
                 if not path.is_file():
                     missing.append(name)
@@ -278,7 +310,7 @@ class EvidenceService:
 
     def _start_capture(self, operation, scenario_id, runtime_id, idempotency_key, warmup_s, seconds, repeats, stats_level):
         self.jobs.runtime_health(self.paths.runtime)
-        if not (self.paths.runtime / "quakeray.exe").is_file() or not (self.paths.runtime / "id1/qray.pkz").is_file():
+        if not (self.paths.runtime / EXE_NAME).is_file() or not (self.paths.runtime / "id1/qray.pkz").is_file():
             raise EvidenceError("ENV_MISSING_BUILD", "A complete Debug runtime is required")
         match = next((row for row in self.list_scenarios()["scenarios"] if row["scenario_id"] == scenario_id), None)
         if match is None or match["missing"]:
@@ -296,7 +328,7 @@ class EvidenceService:
 
     def start_menu_ab(self, candidate_runtime, idempotency_key, seconds=8, smoke=False, validation=False, baseline_runtime=None):
         self.jobs.runtime_health(self.paths.runtime)
-        if not (self.paths.runtime / "quakeray.exe").is_file() or not (self.paths.runtime / "id1/pak0.pak").is_file():
+        if not (self.paths.runtime / EXE_NAME).is_file() or not (self.paths.runtime / "id1/pak0.pak").is_file():
             raise EvidenceError("ENV_MISSING_GAME_DATA", "A complete base-game Debug runtime is required")
         arguments = {"idempotency_key": idempotency_key, "runtime_id": candidate_runtime,
                      "seconds": seconds, "smoke": smoke, "validation": validation}
@@ -306,7 +338,7 @@ class EvidenceService:
                 raise EvidenceError("ENV_MISSING_BUILD", "Operator must register QUAKERAY_BASELINE_RUNTIME")
             baseline = Path(configured).resolve()
             self.jobs.runtime_health(baseline)
-            if not (baseline / "quakeray.exe").is_file() or not (baseline / "id1/pak0.pak").is_file():
+            if not (baseline / EXE_NAME).is_file() or not (baseline / "id1/pak0.pak").is_file():
                 raise EvidenceError("ENV_MISSING_GAME_DATA", "Registered baseline runtime is incomplete")
             arguments["baseline"] = str(baseline)
         return self.jobs.start("menu", arguments, self.jobs.worker_command("menu", arguments, self.paths.runtime), 300)
@@ -393,15 +425,15 @@ class EvidenceService:
         source = Path(record['worktree']).resolve()
         arguments = {'idempotency_key': idempotency_key, 'experiment_id': experiment_id,
                      'source_root': str(source), 'parallel': parallel, 'tests': True}
-        runtime = source / 'build/Debug'
+        runtime = source / DEFAULT_BUILD_SUBDIR
         return self.jobs.start('build', arguments, self.jobs.worker_command('build', arguments, runtime), 1500)
 
     def start_experiment_suite(self, experiment_id, scenario_id, idempotency_key, seconds=6, warmup_s=8, order='baseline_first'):
         record = self.research.read(experiment_id)
-        candidate = Path(record['worktree']).resolve() / 'build/Debug'
+        candidate = Path(record['worktree']).resolve() / DEFAULT_BUILD_SUBDIR
         self.jobs.runtime_health(candidate)
         self.jobs.runtime_health(self.paths.runtime)
-        if not (candidate / 'quakeray.exe').is_file() or not (candidate / 'id1/qray.pkz').is_file():
+        if not (candidate / EXE_NAME).is_file() or not (candidate / 'id1/qray.pkz').is_file():
             raise EvidenceError('ENV_MISSING_BUILD', 'Build the isolated experiment candidate first')
         match = next((value for value in self.list_scenarios()['scenarios'] if value['scenario_id'] == scenario_id), None)
         if not match or match['missing']:
