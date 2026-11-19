@@ -101,5 +101,22 @@ python tests\perf\analyze_bench.py build\Debug\ad\benchmark.log 4
 | `qr_perf_common.cfg` | cluster and measurement settings shared by both modes |
 | `qr_perf_gpumax.cfg` | GPU-bound overrides |
 | `qr_perf_cpumax.cfg` | CPU-bound overrides |
-| `run_place.ps1` | runs one save in one or both modes and prints the two blocks |
+| `machine_guard.py` | Linux flock guard, `/proc` + DRM fdinfo monitor, X11 focus/XTest helpers, AD staging |
+| `run_place.ps1` / `run_place.py` | runs one save in one or both modes and prints the two blocks |
+| `run_stress.ps1` / `run_stress.py` | stress/audit capture runner and manifest generator |
+| `run_menu.ps1` / `run_menu.py` | menu UI-only capture & smoke runner |
+| `run_map_suite.ps1` / `run_map_suite.py` | multi-map stress suite orchestrator |
 | `analyze_bench.py` | prints the last `benchmark.log` blocks as a table |
+
+## Linux runners
+
+On Linux (`X11` with `wmctrl`, `xprop`, `xrandr`, and `libXtst`), use the Python counterparts. `run_menu.py` runs in scripted mode by default (pass `--interactive` for XTest keystrokes), and `run_stress.py` / `run_map_suite.py` default to `--fullscreen 2` (borderless `3840x2160` on Linux X11). External AD assets can be staged via hardlinks using `--ad-dir`:
+
+```bash
+python3 tests/perf/run_menu.py --candidate build/linux-debug --seconds 4 --smoke
+python3 tests/perf/run_stress.py --basedir build/linux-debug --ad-dir /path/to/quake-ad --save qr_fuma_start --preset balanced --rt-profile medium --seconds 5 --warmup 3 --stats-level 3 --no-sound
+python3 tests/perf/run_place.py --basedir build/linux-debug --ad-dir /path/to/quake-ad --save qr_ad_swamp --mode cpumax --seconds 4 --warmup 2 --no-sound
+python3 tests/perf/run_map_suite.py --basedir build/linux-debug --ad-dir /path/to/quake-ad --game ad --maps ad_tfuma --preset balanced --rt-profile medium --seconds 4 --warmup 3 --no-sound
+python3 -m unittest discover -s tests/perf -p "test_*.py" -v
+```
+
