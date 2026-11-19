@@ -117,7 +117,16 @@ if (-not $PkzOnly)
     $ffxOut = Join-Path $BuildDir "ffx"
     $ffxLib = Join-Path $ffxOut "amd_fidelityfx_vk.lib"
     $ffxDll = Join-Path $ffxOut "amd_fidelityfx_vk.dll"
-    if ($ForceFFXProvider -or -not (Test-Path $ffxLib) -or -not (Test-Path $ffxDll))
+    $ffxRoot = Join-Path $anchorRoot "renderer\Source\FidelityFX_SDK_1.1.4"
+    $ffxStale = $false
+    if ((Test-Path $ffxDll) -and (Test-Path $ffxRoot))
+    {
+        $dllTime = (Get-Item $ffxDll).LastWriteTimeUtc
+        $ffxStale = $null -ne (Get-ChildItem -Path $ffxRoot -Recurse -File |
+            Where-Object { $_.LastWriteTimeUtc -gt $dllTime } |
+            Select-Object -First 1)
+    }
+    if ($ForceFFXProvider -or $ffxStale -or -not (Test-Path $ffxLib) -or -not (Test-Path $ffxDll))
     {
         $ffxScript = Join-Path $anchorRoot "renderer\Source\FidelityFX_SDK_1.1.4\windows\build_provider.ps1"
         if (-not (Test-Path $ffxScript))
